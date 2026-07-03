@@ -1,0 +1,350 @@
+"""On-demand encrypted BLE session with a Govee light, plus high-level commands.
+
+This module owns the Bluetooth connection lifecycle (via bleak /
+bleak-retry-connector) and orchestration (handshake, idle-disconnect, ack
+handling, status retries). All byte-level protocol logic lives in
+``govee_ble_local.protocol``.
+"""
+from __future__ import annotations
+
+import asyncio
+import logging
+
+from bleak.backends.characteristic import BleakGATTCharacteristic
+from bleak.backends.device import BLEDevice
+from bleak.exc import BleakError
+from bleak_retry_connector import BleakClientWithServiceCache, establish_connection
+
+from . import protocol as p
+from .const import (
+    CONNECT_MAX_ATTEMPTS,
+    DISCONNECT_DELAY,
+    METADATA_FIELD_TIMEOUT,
+    NOTIFY_CHAR_UUID,
+    PSK,
+    STATUS_CHUNK_ACCEPTED,
+    STATUS_CHUNK_REQUIRED,
+    STATUS_CHUNK_TIMEOUT,
+    WRITE_CHAR_UUID,
+)
+from .models import GoveeBleStatus
+
+_LOGGER = logging.getLogger(__name__)
+
+
+class GoveeBleClient:
+    """Maintains an on-demand encrypted BLE session with the light."""
+
+    def __init__(self, ble_device: BLEDevice) -> None:
+        self._ble_device = ble_device
+        self._client: BleakClientWithServiceCache | None = None
+        self._session_key: bytes | None = None
+        self._lock = asyncio.Lock()
+        self._notify_queue: asyncio.Queue[bytes] = asyncio.Queue()
+        self._disconnect_timer: asyncio.TimerHandle | None = None
+        self._expire_task: asyncio.Task[None] | None = None
+
+    @property
+    def address(self) -> str:
+        return self._ble_device.address
+
+    def update_ble_device(self, ble_device: BLEDevice) -> None:
+        """Swap in a fresh BLEDevice (e.g. from a new advertisement)."""
+        self._ble_device = ble_device
+
+    # -- connection lifecycle ------------------------------------------------
+
+    def _on_notify(self, _characteristic: BleakGATTCharacteristic, data: bytearray) -> None:
+        self._notify_queue.put_nowait(bytes(data))
+
+    async def _connect(self) -> None:
+        if self._client is not None and self._client.is_connected:
+            return
+        _LOGGER.debug("Connecting to Govee %s", self._ble_device.address)
+        try:
+            self._client = await establish_connection(
+                BleakClientWithServiceCache,
+                self._ble_device,
+                self._ble_device.address,
+                disconnected_callback=self._on_disconnect,
+                max_attempts=CONNECT_MAX_ATTEMPTS,
+            )
+            await self._client.start_notify(NOTIFY_CHAR_UUID, self._on_notify)
+            await self._handshake()
+        except BleakError:
+            _LOGGER.error("Failed to connect to %s", self._ble_device.address, exc_info=True)
+            raise
+        _LOGGER.debug("Connected and authenticated with %s", self._ble_device.address)
+
+    def _on_disconnect(self, _client: BleakClientWithServiceCache) -> None:
+        _LOGGER.debug("Govee %s disconnected", self._ble_device.address)
+        self._session_key = None
+
+    async def _drain_notify_queue(self) -> None:
+        while not self._notify_queue.empty():
+            self._notify_queue.get_nowait()
+
+    async def _handshake(self) -> None:
+        await self._drain_notify_queue()
+        assert self._client is not None
+
+        _LOGGER.debug("Starting handshake with %s", self._ble_device.address)
+        tx1 = p.encrypt_packet(PSK, p.build_plaintext(p.cmd_handshake(0x01)))
+        await self._client.write_gatt_char(WRITE_CHAR_UUID, tx1, response=False)
+        rx1 = await asyncio.wait_for(self._notify_queue.get(), timeout=10)
+        rx1_plain = p.decrypt_packet(PSK, rx1)
+        if rx1_plain[0] != 0xE7 or rx1_plain[1] != 0x01:
+            _LOGGER.warning(
+                "Unexpected handshake response from %s: %s",
+                self._ble_device.address,
+                rx1_plain.hex(),
+            )
+            raise BleakError(f"Unexpected handshake response: {rx1_plain.hex()}")
+        self._session_key = rx1_plain[2:18]
+        _LOGGER.debug("Session key established for %s", self._ble_device.address)
+
+        tx2 = p.encrypt_packet(PSK, p.build_plaintext(p.cmd_handshake(0x02)))
+        await self._client.write_gatt_char(WRITE_CHAR_UUID, tx2, response=False)
+        try:
+            await asyncio.wait_for(self._notify_queue.get(), timeout=3)
+        except asyncio.TimeoutError:
+            _LOGGER.debug("No TX2 ack from %s (usually harmless)", self._ble_device.address)
+        await self._drain_notify_queue()
+
+    def _cancel_disconnect_timer(self) -> None:
+        if self._disconnect_timer is not None:
+            self._disconnect_timer.cancel()
+            self._disconnect_timer = None
+
+    def _schedule_disconnect(self) -> None:
+        self._cancel_disconnect_timer()
+        loop = asyncio.get_running_loop()
+        self._disconnect_timer = loop.call_later(DISCONNECT_DELAY, self._on_disconnect_timer)
+
+    def _on_disconnect_timer(self) -> None:
+        # Fire the actual disconnect as a lock-guarded task so it can't tear
+        # the connection down mid-command.
+        self._disconnect_timer = None
+        self._expire_task = asyncio.create_task(self._async_timed_disconnect())
+
+    async def _async_timed_disconnect(self) -> None:
+        async with self._lock:
+            # If an operation started after the timer fired it scheduled a fresh
+            # timer while we waited for the lock - so we're not idle anymore.
+            if self._disconnect_timer is not None:
+                return
+            await self._disconnect_locked()
+
+    # -- commands ------------------------------------------------------------
+
+    async def send_command(self, prefix: bytes) -> bytes | None:
+        """Connect if needed, send one command, return the decrypted ack (or None).
+
+        The returned ack is best-effort only: with write-without-response the
+        next notification isn't reliably the echo of *this* write, so callers
+        should not treat it as confirmation (re-query status instead).
+        """
+        async with self._lock:
+            await self._connect()
+            assert self._client is not None and self._session_key is not None
+            self._cancel_disconnect_timer()
+            # Clear stale/late notifications so a leftover packet isn't consumed
+            # as this command's ack.
+            await self._drain_notify_queue()
+
+            plaintext = p.build_plaintext(prefix)
+            ciphertext = p.encrypt_packet(self._session_key, plaintext)
+            _LOGGER.debug("Sending command %s to %s", plaintext.hex(), self._ble_device.address)
+            await self._client.write_gatt_char(WRITE_CHAR_UUID, ciphertext, response=False)
+
+            ack = None
+            try:
+                resp = await asyncio.wait_for(self._notify_queue.get(), timeout=3)
+                ack = p.decrypt_packet(self._session_key, resp)
+                _LOGGER.debug("Ack for %s: %s", plaintext.hex(), ack.hex())
+            except asyncio.TimeoutError:
+                _LOGGER.warning(
+                    "No ack notification for command %s to %s",
+                    prefix.hex(),
+                    self._ble_device.address,
+                )
+
+            self._schedule_disconnect()
+            return ack
+
+    async def set_zone(self, zone: int, on: bool) -> None:
+        await self.send_command(p.cmd_set_zone(zone, on))
+
+    async def set_brightness_pct(self, pct: int) -> None:
+        await self.send_command(p.cmd_set_brightness(pct))
+
+    async def set_rgb_color(self, r: int, g: int, b: int) -> None:
+        await self.send_command(p.cmd_set_rgb(r, g, b))
+
+    async def set_color_temp_kelvin(self, kelvin: int) -> None:
+        await self.send_command(p.cmd_set_color_temp(kelvin))
+
+    async def set_segment_color(self, segment_mask: int, r: int, g: int, b: int) -> None:
+        await self.send_command(p.cmd_set_segment_color(segment_mask, r, g, b))
+
+    async def set_segment_brightness(self, segment_mask: int, pct: int) -> None:
+        await self.send_command(p.cmd_set_segment_brightness(segment_mask, pct))
+
+    async def set_scene(self, scene_id: tuple[int, int]) -> None:
+        await self.send_command(p.cmd_set_scene(scene_id))
+
+    async def set_scene_full(self, scene_code: int, scenceParam_b64: str) -> bool:
+        """Upload full effect data (a3-chunk burst) then activate it. Correct
+        regardless of whether the device has the scene cached. Returns whether a
+        completion ack was seen (diagnostic only)."""
+        chunks = p.build_scene_chunks(scenceParam_b64)
+        async with self._lock:
+            await self._connect()
+            assert self._client is not None and self._session_key is not None
+            self._cancel_disconnect_timer()
+            await self._drain_notify_queue()
+
+            _LOGGER.debug(
+                "Uploading %d scene chunks (burst) for code %d to %s",
+                len(chunks),
+                scene_code,
+                self._ble_device.address,
+            )
+            for chunk_prefix in chunks:
+                plaintext = p.build_plaintext(chunk_prefix)
+                ciphertext = p.encrypt_packet(self._session_key, plaintext)
+                await self._client.write_gatt_char(WRITE_CHAR_UUID, ciphertext, response=False)
+
+            ack_received = False
+            try:
+                resp = await asyncio.wait_for(self._notify_queue.get(), timeout=3)
+                p.decrypt_packet(self._session_key, resp)
+                ack_received = True
+            except asyncio.TimeoutError:
+                # Acks aren't reliably 1:1 with the write; the burst already
+                # went out, so proceed to activation regardless.
+                _LOGGER.debug("No ack after scene upload to %s - activating anyway", self._ble_device.address)
+
+            self._schedule_disconnect()
+
+        await self.set_scene((scene_code & 0xFF, (scene_code >> 8) & 0xFF))
+        # Large uploads need a moment before the device can answer anything else.
+        await asyncio.sleep(min(0.2 + 0.1 * len(chunks), 2.0))
+        return ack_received
+
+    # -- status / metadata ---------------------------------------------------
+
+    async def _query_status_chunks(self) -> dict[int, bytes]:
+        assert self._client is not None and self._session_key is not None
+        await self._drain_notify_queue()
+        plaintext = p.build_plaintext(p.cmd_status_query())
+        ciphertext = p.encrypt_packet(self._session_key, plaintext)
+        _LOGGER.debug("Requesting status from %s", self._ble_device.address)
+        await self._client.write_gatt_char(WRITE_CHAR_UUID, ciphertext, response=False)
+
+        chunks: dict[int, bytes] = {}
+        try:
+            while not set(STATUS_CHUNK_REQUIRED).issubset(chunks):
+                resp = await asyncio.wait_for(self._notify_queue.get(), timeout=STATUS_CHUNK_TIMEOUT)
+                pt = p.decrypt_packet(self._session_key, resp)
+                if pt[0] != 0xAC:
+                    continue
+                if pt[1] not in STATUS_CHUNK_ACCEPTED:
+                    _LOGGER.debug("Ignoring status chunk 0x%02x from %s", pt[1], self._ble_device.address)
+                    continue
+                chunks[pt[1]] = pt[2:19]
+        except asyncio.TimeoutError:
+            _LOGGER.debug(
+                "Status query from %s incomplete: got chunks %s",
+                self._ble_device.address,
+                sorted(chunks.keys()),
+            )
+        return chunks
+
+    async def get_status(self) -> GoveeBleStatus:
+        """Query current device status (zones, brightness, scene, versions, MACs)."""
+        async with self._lock:
+            await self._connect()
+            self._cancel_disconnect_timer()
+
+            chunks = await self._query_status_chunks()
+            if not chunks:
+                # The device can be briefly unresponsive after a large op and may
+                # even drop the connection; one quick retry (re-connecting first)
+                # avoids flagging unavailable over a transient blip.
+                _LOGGER.debug("Empty status from %s, retrying once", self._ble_device.address)
+                await asyncio.sleep(0.5)
+                await self._connect()
+                chunks = await self._query_status_chunks()
+
+            self._schedule_disconnect()
+
+            if not chunks:
+                raise BleakError(f"No status response from {self._ble_device.address}")
+
+            status = p.parse_status(self._ble_device.address, chunks)
+            _LOGGER.debug("Status from %s: %s", self._ble_device.address, status)
+            return status
+
+    async def _query_metadata_field(self, field_id: int) -> bytes:
+        """Query a device metadata field (`ab` opcode); return the raw
+        reassembled payload (header included), or b"" if no response."""
+        assert self._client is not None and self._session_key is not None
+        await self._drain_notify_queue()
+        plaintext = p.build_plaintext(p.cmd_metadata_field(field_id))
+        ciphertext = p.encrypt_packet(self._session_key, plaintext)
+        await self._client.write_gatt_char(WRITE_CHAR_UUID, ciphertext, response=False)
+
+        chunks: dict[int, bytes] = {}
+        try:
+            while 0xFF not in chunks:
+                resp = await asyncio.wait_for(self._notify_queue.get(), timeout=METADATA_FIELD_TIMEOUT)
+                pt = p.decrypt_packet(self._session_key, resp)
+                if pt[0] != 0xAB:
+                    continue
+                chunks[pt[1]] = pt[2:19]
+        except asyncio.TimeoutError:
+            _LOGGER.debug(
+                "Metadata field 0x%02x from %s incomplete: got %s",
+                field_id,
+                self._ble_device.address,
+                sorted(chunks.keys()),
+            )
+
+        if not chunks:
+            return b""
+        ordered = sorted(k for k in chunks if k != 0xFF)
+        if 0xFF in chunks:
+            ordered.append(0xFF)
+        return b"".join(chunks[s] for s in ordered)
+
+    async def get_serial_number(self) -> str | None:
+        """Query the device serial/UID string (`ab` field 0x05). Returns None
+        if unavailable or the payload doesn't decode cleanly."""
+        async with self._lock:
+            await self._connect()
+            self._cancel_disconnect_timer()
+            raw = await self._query_metadata_field(0x05)
+            self._schedule_disconnect()
+
+        value = p.parse_metadata_field_text(raw)
+        if value is None:
+            _LOGGER.debug("Serial field from %s did not parse cleanly: %s", self._ble_device.address, raw.hex())
+        return value
+
+    # -- teardown ------------------------------------------------------------
+
+    async def disconnect(self) -> None:
+        """Cancel any pending idle timer and tear down the connection, waiting
+        for any in-flight command to finish first."""
+        self._cancel_disconnect_timer()
+        async with self._lock:
+            await self._disconnect_locked()
+
+    async def _disconnect_locked(self) -> None:
+        """Actual teardown. Caller must hold self._lock."""
+        if self._client is not None and self._client.is_connected:
+            _LOGGER.debug("Disconnecting from %s (idle)", self._ble_device.address)
+            await self._client.disconnect()
+        self._client = None
+        self._session_key = None
