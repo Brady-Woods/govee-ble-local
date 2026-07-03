@@ -203,6 +203,18 @@ class TestParseStatus(unittest.TestCase):
         st = p.parse_status("5C:E7:53:F4:74:57", STATUS_SCENE_MODE)
         self.assertIsNone(st.segments)
 
+    def test_rgb_color_read_back_from_uniform_segments(self):
+        # Real capture: device set to solid green via set_rgb_color(0,255,0).
+        # All segments report (0,255,0), so the solid color IS readable via the
+        # fuller query's per-segment data.
+        st = p.parse_status("D4:13:68:21:D0:75", STATUS_WITH_SEGMENTS)
+        self.assertEqual(st.rgb_color, (0, 255, 0))
+
+    def test_rgb_color_none_without_segments(self):
+        # Short query -> no segments -> no color read-back.
+        st = p.parse_status("5C:E7:53:F4:74:57", STATUS_SCENE_MODE)
+        self.assertIsNone(st.rgb_color)
+
     def test_empty_chunks_all_none(self):
         st = p.parse_status("5C:E7:53:F4:74:57", {})
         for val in (st.ble_mac, st.wifi_mac, st.hardware_version, st.brightness_pct,

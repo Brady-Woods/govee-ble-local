@@ -106,15 +106,39 @@ async def auto_scene(c: GoveeBleClient, p: DeviceProfile) -> Result:
     return Result("scene", PASS if ok else FAIL, f"{scene.name}: set {scene.scene_id}, read {st.scene_id}")
 
 
+async def _read_rgb(c: GoveeBleClient, retries: int = 5) -> tuple[int, int, int] | None:
+    """Read the solid RGB back via the per-segment data (retry: chunks drop)."""
+    for _ in range(retries):
+        st = await c.get_status(with_segments=True)
+        if st.rgb_color is not None:
+            return st.rgb_color
+        await asyncio.sleep(1.0)
+    return None
+
+
 async def auto_rgb(c: GoveeBleClient, p: DeviceProfile) -> Result:
     await c.set_rgb_color(255, 0, 0)
-    return Result("rgb", INCONCLUSIVE, "command sent; device has no color read-back (verify visually)")
+    await asyncio.sleep(_SETTLE)
+    rgb = await _read_rgb(c)
+    if rgb is None:
+        return Result("rgb", INCONCLUSIVE, "segment chunks dropped; couldn't read color back")
+    return Result("rgb", PASS if rgb == (255, 0, 0) else FAIL, f"set (255,0,0), read {rgb}")
 
 
 async def auto_color_temp(c: GoveeBleClient, p: DeviceProfile) -> Result:
-    lo, _hi = p.capabilities.color_temp
+    # No Kelvin read-back exists, but the rendered tint shows up as segment RGB.
+    # Verify the tint moves the right way: warm has less blue than cool.
+    lo, hi = p.capabilities.color_temp
     await c.set_color_temp_kelvin(lo)
-    return Result("color_temp", INCONCLUSIVE, "command sent; no read-back (verify visually)")
+    await asyncio.sleep(_SETTLE)
+    warm = await _read_rgb(c)
+    await c.set_color_temp_kelvin(hi)
+    await asyncio.sleep(_SETTLE)
+    cool = await _read_rgb(c)
+    if warm is None or cool is None:
+        return Result("color_temp", INCONCLUSIVE, "segment chunks dropped; couldn't read tint back")
+    ok = cool[2] > warm[2]  # cooler temperature -> more blue
+    return Result("color_temp", PASS if ok else FAIL, f"warm={warm} cool={cool} (expect cool bluer)")
 
 
 async def auto_segments(c: GoveeBleClient, p: DeviceProfile) -> Result:
