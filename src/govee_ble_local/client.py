@@ -23,6 +23,7 @@ from .const import (
     NOTIFY_CHAR_UUID,
     PSK,
     STATUS_CHUNK_ACCEPTED,
+    STATUS_CHUNK_ACCEPTED_FULL,
     STATUS_CHUNK_REQUIRED,
     STATUS_CHUNK_TIMEOUT,
     WRITE_CHAR_UUID,
@@ -71,8 +72,10 @@ class GoveeBleClient:
             )
             await self._client.start_notify(NOTIFY_CHAR_UUID, self._on_notify)
             await self._handshake()
-        except BleakError:
-            _LOGGER.error("Failed to connect to %s", self._ble_device.address, exc_info=True)
+        except BleakError as err:
+            # Connection failures are expected/transient (contention, range);
+            # log briefly without a full traceback and let the caller decide.
+            _LOGGER.debug("Connection to %s failed: %s", self._ble_device.address, err)
             raise
         _LOGGER.debug("Connected and authenticated with %s", self._ble_device.address)
 
@@ -234,12 +237,14 @@ class GoveeBleClient:
 
     # -- status / metadata ---------------------------------------------------
 
-    async def _query_status_chunks(self) -> dict[int, bytes]:
+    async def _query_status_chunks(self, full: bool = False) -> dict[int, bytes]:
         assert self._client is not None and self._session_key is not None
         await self._drain_notify_queue()
-        plaintext = p.build_plaintext(p.cmd_status_query())
+        trigger = p.cmd_status_query_full() if full else p.cmd_status_query()
+        accepted = STATUS_CHUNK_ACCEPTED_FULL if full else STATUS_CHUNK_ACCEPTED
+        plaintext = p.build_plaintext(trigger)
         ciphertext = p.encrypt_packet(self._session_key, plaintext)
-        _LOGGER.debug("Requesting status from %s", self._ble_device.address)
+        _LOGGER.debug("Requesting status from %s (full=%s)", self._ble_device.address, full)
         await self._client.write_gatt_char(WRITE_CHAR_UUID, ciphertext, response=False)
 
         chunks: dict[int, bytes] = {}
@@ -249,7 +254,7 @@ class GoveeBleClient:
                 pt = p.decrypt_packet(self._session_key, resp)
                 if pt[0] != 0xAC:
                     continue
-                if pt[1] not in STATUS_CHUNK_ACCEPTED:
+                if pt[1] not in accepted:
                     _LOGGER.debug("Ignoring status chunk 0x%02x from %s", pt[1], self._ble_device.address)
                     continue
                 chunks[pt[1]] = pt[2:19]
@@ -261,13 +266,18 @@ class GoveeBleClient:
             )
         return chunks
 
-    async def get_status(self) -> GoveeBleStatus:
-        """Query current device status (zones, brightness, scene, versions, MACs)."""
+    async def get_status(self, with_segments: bool = False) -> GoveeBleStatus:
+        """Query current device status (zones, brightness, scene, versions, MACs).
+
+        with_segments=True uses the fuller query that also returns per-segment
+        state — a longer, drop-prone burst, so ``status.segments`` may still be
+        None on a given poll even when requested.
+        """
         async with self._lock:
             await self._connect()
             self._cancel_disconnect_timer()
 
-            chunks = await self._query_status_chunks()
+            chunks = await self._query_status_chunks(full=with_segments)
             if not chunks:
                 # The device can be briefly unresponsive after a large op and may
                 # even drop the connection; one quick retry (re-connecting first)
@@ -275,7 +285,7 @@ class GoveeBleClient:
                 _LOGGER.debug("Empty status from %s, retrying once", self._ble_device.address)
                 await asyncio.sleep(0.5)
                 await self._connect()
-                chunks = await self._query_status_chunks()
+                chunks = await self._query_status_chunks(full=with_segments)
 
             self._schedule_disconnect()
 

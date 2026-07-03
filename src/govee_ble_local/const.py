@@ -35,3 +35,7 @@ METADATA_FIELD_TIMEOUT = 2  # seconds to wait for each `ab` metadata field chunk
 # data. REQUIRED gates a successful read; ACCEPTED is what we store.
 STATUS_CHUNK_REQUIRED = (0x00, 0x01, 0x02, 0x03, 0x04, 0xFF)
 STATUS_CHUNK_ACCEPTED = STATUS_CHUNK_REQUIRED
+# The fuller query additionally returns per-segment chunks 0x05-0x08. It's a
+# longer, drop-prone notification burst, so it's opt-in (get_status
+# with_segments=True) and best-effort — segment data may be missing on a poll.
+STATUS_CHUNK_ACCEPTED_FULL = STATUS_CHUNK_REQUIRED + (0x05, 0x06, 0x07, 0x08)

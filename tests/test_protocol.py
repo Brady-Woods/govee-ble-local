@@ -141,6 +141,7 @@ class TestCommandBuilders(unittest.TestCase):
 
     def test_status_and_metadata_queries(self):
         self.assertEqual(p.cmd_status_query(), bytes([0xAC, 0x03, 0x02, 0x41, 0x30]))
+        self.assertEqual(p.cmd_status_query_full(), bytes([0xAC, 0x03, 0x03, 0x41, 0x30, 0xA5]))
         self.assertEqual(p.cmd_metadata_field(0x05), bytes([0xAB, 0x01, 0x05]))
 
 

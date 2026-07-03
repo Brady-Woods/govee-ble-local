@@ -80,6 +80,11 @@ def cmd_status_query() -> bytes:
     return bytes([0xAC, 0x03, 0x02, 0x41, 0x30])
 
 
+def cmd_status_query_full() -> bytes:
+    # Fuller query -> additionally returns per-segment chunks 0x05-0x08.
+    return bytes([0xAC, 0x03, 0x03, 0x41, 0x30, 0xA5])
+
+
 def cmd_metadata_field(field_id: int) -> bytes:
     return bytes([0xAB, 0x01, field_id])
 
