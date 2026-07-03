@@ -1,0 +1,19 @@
+sku: H60A6
+name: Govee Ceiling Light Pro
+
+# How to recognize this model from its BLE advertisement.
+match:
+  local_name_prefixes: ["GVH60A6"]
+
+# What the device can do. Consumers (e.g. the Home Assistant integration)
+# generate entities/behavior from this, so support is data-driven.
+capabilities:
+  brightness: true
+  rgb: true
+  color_temp: { min_kelvin: 2700, max_kelvin: 6500 }
+  zones: [upper, lower]   # two physical zones: upper ring, lower panel
+  segments: 12            # individually-addressable segments (0 = none)
+  scenes: true
+
+scenes_file: scenes.yaml
+notes: NOTES.md

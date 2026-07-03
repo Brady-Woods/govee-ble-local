@@ -21,6 +21,7 @@ dependencies = [
     "bleak>=0.21",
     "bleak-retry-connector>=3.0.0",
     "cryptography>=41.0.0",
+    "PyYAML>=6.0",
 ]
 
 [project.optional-dependencies]
@@ -34,4 +35,4 @@ Repository = "https://github.com/Brady-Woods/govee-ble-local"
 where = ["src"]
 
 [tool.setuptools.package-data]
-govee_ble_local = ["py.typed"]
+govee_ble_local = ["py.typed", "devices/**/*.yaml", "devices/**/*.md"]
