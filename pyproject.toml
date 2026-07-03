@@ -27,8 +27,8 @@ dependencies = [
 test = ["pytest", "pytest-asyncio"]
 
 [project.urls]
-Homepage = "https://github.com/bradywoods/govee-ble-local"
-Repository = "https://github.com/bradywoods/govee-ble-local"
+Homepage = "https://github.com/Brady-Woods/govee-ble-local"
+Repository = "https://github.com/Brady-Woods/govee-ble-local"
 
 [tool.setuptools.packages.find]
 where = ["src"]

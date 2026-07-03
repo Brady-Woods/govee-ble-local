@@ -6,7 +6,7 @@ A standalone Python library implementing Govee's encrypted BLE control
 protocol (AES + RC4 handshake, packet framing, command construction, and
 status parsing), reverse-engineered from packet captures. It's the protocol
 engine behind the
-[`hass-govee-ble-local`](https://github.com/bradywoods/hass-govee-ble-local)
+[`hass-govee-ble-local`](https://github.com/Brady-Woods/hass-govee-ble-local)
 Home Assistant integration, but has no Home Assistant dependency and can be
 used on its own.
 
@@ -66,7 +66,7 @@ asyncio.run(main())
 The wire protocol — opcodes, the encryption scheme, status chunk layout, and
 the reverse-engineering history — is documented in the Home Assistant
 integration repo's
-[`PROTOCOL.md`](https://github.com/bradywoods/hass-govee-ble-local/blob/master/custom_components/govee_h60a6/PROTOCOL.md).
+[`PROTOCOL.md`](https://github.com/Brady-Woods/hass-govee-ble-local/blob/master/custom_components/govee_h60a6/PROTOCOL.md).
 
 ## License
 
