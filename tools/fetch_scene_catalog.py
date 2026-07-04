@@ -6,14 +6,21 @@ and writes it to devices/<sku>/scenes.yaml. Curated "working: false" flags are
 preserved across regenerations (existing file wins), and a per-SKU seed of
 known-broken scenes is applied on first generation.
 
+The same live endpoint serves older (plaintext-protocol) SKUs too, so this
+also covers scene catalogs for the legacy models in LEGACY_SKUS - no need to
+hand-convert the JSON dumps some other tools ship in-repo.
+
 Usage:
     python3 tools/fetch_scene_catalog.py --sku H60A6
+    python3 tools/fetch_scene_catalog.py --sku H6006 H6053 H6199
+    python3 tools/fetch_scene_catalog.py --legacy   # all known legacy SKUs
 """
 from __future__ import annotations
 
 import argparse
 import json
 import sys
+import time
 import urllib.request
 from pathlib import Path
 
@@ -21,6 +28,20 @@ import yaml
 
 LIBRARY_URL = "https://app2.govee.com/appsku/v1/light-effect-libraries"
 APP_VERSION = "5.6.01"
+
+# Legacy (plaintext-protocol) SKUs, as supported by Beshelmek/govee_ble_lights.
+LEGACY_SKUS: tuple[str, ...] = (
+    "H6006", "H6009", "H6010", "H601A", "H601B", "H6046", "H6047", "H604A",
+    "H604B", "H6053", "H6054", "H6056", "H6057", "H6059", "H605C", "H6061",
+    "H6062", "H6065", "H6066", "H6067", "H6072", "H6076", "H6078", "H6088",
+    "H6102", "H610A", "H610B", "H6138", "H6139", "H6143", "H6144", "H615E",
+    "H6171", "H6172", "H6173", "H617C", "H617E", "H617F", "H618A", "H618C",
+    "H618E", "H618F", "H6196", "H6199", "H619A", "H619C", "H619E", "H61A0",
+    "H61A1", "H61A2", "H61A5", "H61A8", "H61B2", "H61C3", "H61C5", "H61E0",
+    "H61E1", "H6602", "H6609", "H7020", "H7021", "H7033", "H7041", "H7050",
+    "H7051", "H7055", "H705A", "H705B", "H705C", "H7060", "H7061", "H7062",
+    "H7065", "H7066", "H7090", "H70B1",
+)
 
 # Curated knowledge: scenes that don't render correctly over BLE, by SKU.
 # Applied on first generation; hand-edits in an existing scenes.yaml take
@@ -102,23 +123,46 @@ def build_yaml(scenes: list[dict], sku: str, existing: dict) -> str:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--sku", default="H60A6")
-    ap.add_argument("--out", default=None, help="output scenes.yaml (default: packaged device folder)")
+    ap.add_argument("--sku", nargs="+", default=None, help="one or more SKUs (default: H60A6)")
+    ap.add_argument("--legacy", action="store_true", help="fetch all SKUs in LEGACY_SKUS")
+    ap.add_argument("--out", default=None, help="output scenes.yaml (single-SKU runs only)")
+    ap.add_argument("--delay", type=float, default=0.3, help="seconds between requests in a multi-SKU run")
     args = ap.parse_args()
 
-    repo_root = Path(__file__).resolve().parent.parent
-    out = (
-        Path(args.out)
-        if args.out
-        else repo_root / "src" / "govee_ble_local" / "devices" / args.sku.lower() / "scenes.yaml"
-    )
-    out.parent.mkdir(parents=True, exist_ok=True)
+    skus = list(args.sku) if args.sku else []
+    if args.legacy:
+        skus.extend(s for s in LEGACY_SKUS if s not in skus)
+    if not skus:
+        skus = ["H60A6"]
 
-    scenes = fetch(args.sku)
-    existing = load_existing_flags(out)
-    out.write_text(build_yaml(scenes, args.sku, existing), encoding="utf-8")
-    broken = sum(1 for s in scenes if s["name"].casefold() in BROKEN_SEED.get(args.sku.upper(), {}))
-    print(f"Wrote {len(scenes)} scenes ({broken} flagged broken) to {out}")
+    if args.out and len(skus) > 1:
+        ap.error("--out can only be used with a single --sku")
+
+    repo_root = Path(__file__).resolve().parent.parent
+    devices_dir = repo_root / "src" / "govee_ble_local" / "devices"
+
+    fetched = 0
+    skipped: list[str] = []
+    for i, sku in enumerate(skus):
+        if i > 0:
+            time.sleep(args.delay)
+        out = Path(args.out) if args.out else devices_dir / sku.lower() / "scenes.yaml"
+
+        scenes = fetch(sku)
+        if not scenes:
+            print(f"{sku}: no scene catalog available from the API - skipping")
+            skipped.append(sku)
+            continue
+
+        out.parent.mkdir(parents=True, exist_ok=True)
+        existing = load_existing_flags(out)
+        out.write_text(build_yaml(scenes, sku, existing), encoding="utf-8")
+        broken = sum(1 for s in scenes if s["name"].casefold() in BROKEN_SEED.get(sku.upper(), {}))
+        print(f"{sku}: wrote {len(scenes)} scenes ({broken} flagged broken) to {out}")
+        fetched += 1
+
+    if len(skus) > 1:
+        print(f"\n{fetched} fetched, {len(skipped)} skipped (no catalog): {', '.join(skipped) or 'none'}")
     return 0
 
 
