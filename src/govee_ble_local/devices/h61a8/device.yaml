@@ -1,0 +1,35 @@
+sku: H61A8
+name: Govee LED Rope Light (segmented)
+
+# Confirmed against real captures: advertises as "Govee_H61A8_631F" - a
+# different advertising scheme from both H60A6's "GVH60A6..." and H6006's
+# "ihoment_H6006..." prefixes.
+match:
+  local_name_prefixes: ["Govee_H61A8"]
+
+# Performs a real, successful e7/PSK/AES-RC4 handshake at every connect
+# (confirmed repeatedly across every capture) but the resulting session key
+# is never actually used - every subsequent frame, status and control alike,
+# is plaintext (checksum-verified, not decrypted). "handshake_only" performs
+# the same handshake ritual as the real app rather than skipping it outright
+# - see messages.Encryption's docstring for why. Shares H60A6's color
+# command layout exactly (confirmed byte-for-byte against real capture
+# data). Status/segment readback uses the aa-field family plus a paginated
+# per-segment extension H6006 lacks. See PROTOCOL.md §13.
+protocol:
+  encryption: handshake_only
+  color_scheme: h60a6
+  status_scheme: segment_fields
+
+# What the device can do. No zones (confirmed global power) and no
+# color_temp (no confirmed capability on this SKU - it's a colored LED rope,
+# not a white-light bulb).
+capabilities:
+  brightness: true
+  rgb: true
+  segments: 20            # individually-addressable segments, confirmed via
+                           # 5 pages of `aa a5` paginated status
+  scenes: true
+
+scenes_file: scenes.yaml
+notes: NOTES.md

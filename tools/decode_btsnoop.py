@@ -31,6 +31,7 @@ For multi-device extraction with raw + annotated output files, see
 from __future__ import annotations
 
 import pathlib
+import re
 import struct
 import sys
 from dataclasses import dataclass, field
@@ -70,20 +71,36 @@ class HciRecord:
     body: bytes  # HCI packet, without the leading pkt_type byte
 
 
-def iter_hci_records(path: str | pathlib.Path):
-    data = pathlib.Path(path).read_bytes()
-    offset = 16  # skip the 16-byte btsnoop file header ("btsnoop\0" + version + datalink type)
-    while offset + 24 <= len(data):
-        orig_len, incl_len, flags, drops, ts = struct.unpack(">IIIIq", data[offset : offset + 24])
-        offset += 24
-        payload = data[offset : offset + incl_len]
-        offset += incl_len
-        if not payload:
-            continue
-        pkt_type, body = payload[0], payload[1:]
-        unix_s = (ts - BTSNOOP_EPOCH_OFFSET) / 1e6
-        direction = "rcvd" if flags & 0x01 else "sent"
-        yield HciRecord(unix_s, direction, pkt_type, body)
+def iter_hci_records(path: str | pathlib.Path | list[str | pathlib.Path]):
+    """Yield HCI records from one file, or chronologically chain several.
+
+    Android keeps only 2 btsnoop generations (``btsnoop_hci.log.last`` then
+    ``btsnoop_hci.log``, oldest first) and rotates on every Bluetooth radio
+    restart. A single BLE connection can legitimately span that rotation
+    boundary - analyzing the two files independently breaks connection-handle
+    continuity for it: the newer file alone never sees that connection's
+    "Connection Complete" event, so its address is unresolvable for the
+    entire time it appears there (confirmed in practice - a real Finger
+    Sketch session's later half went "unidentified" this way until both
+    files were fed through as one chronological stream). Pass a list in
+    oldest-to-newest order - i.e. ``[btsnoop_hci.log.last, btsnoop_hci.log]``
+    - to get correct, continuous handle resolution across the boundary.
+    """
+    paths = [path] if isinstance(path, (str, pathlib.Path)) else path
+    for one_path in paths:
+        data = pathlib.Path(one_path).read_bytes()
+        offset = 16  # skip the 16-byte btsnoop file header ("btsnoop\0" + version + datalink type)
+        while offset + 24 <= len(data):
+            orig_len, incl_len, flags, drops, ts = struct.unpack(">IIIIq", data[offset : offset + 24])
+            offset += 24
+            payload = data[offset : offset + incl_len]
+            offset += incl_len
+            if not payload:
+                continue
+            pkt_type, body = payload[0], payload[1:]
+            unix_s = (ts - BTSNOOP_EPOCH_OFFSET) / 1e6
+            direction = "rcvd" if flags & 0x01 else "sent"
+            yield HciRecord(unix_s, direction, pkt_type, body)
 
 
 # --------------------------------------------------------------------------
@@ -94,6 +111,31 @@ def iter_hci_records(path: str | pathlib.Path):
 def _format_addr(addr_bytes: bytes) -> str:
     """BD_ADDR is transmitted least-significant-octet first; reverse for display."""
     return ":".join(f"{b:02x}" for b in reversed(addr_bytes))
+
+
+_EMBEDDED_NAME_RE = re.compile(rb"(Govee_[A-Za-z0-9]+(?:_[A-Za-z0-9]+)*|GVH[0-9A-Za-z]+|ihoment_[A-Za-z0-9]+(?:_[A-Za-z0-9]+)*)")
+
+
+def extract_embedded_name(value: bytes) -> str | None:
+    """Look for a Govee-style device name embedded anywhere in raw ATT bytes.
+
+    Every BLE connection performs standard GATT service discovery, which
+    includes reading the Generic Access Service's Device Name characteristic
+    (e.g. a "Read By Type Response" carrying literal ASCII like
+    "Govee_H6052_3477") - present regardless of whether this capture also
+    saw an advertising packet for the connecting address. This matters
+    because some devices/reconnects use a different (rotating/private) BLE
+    address than whatever address their advertisement was seen under, which
+    defeats address-keyed name resolution entirely - this is a second,
+    independent identity source keyed by nothing but the bytes on the wire.
+    """
+    m = _EMBEDDED_NAME_RE.search(value)
+    if not m:
+        return None
+    try:
+        return m.group(1).decode("ascii")
+    except UnicodeDecodeError:
+        return None
 
 
 def _parse_ad_structures(data: bytes) -> str | None:
@@ -130,13 +172,28 @@ class BleSessionMap:
             return
         event_code, param_len = body[0], body[1]
         params = body[2 : 2 + param_len]
-        # Deliberately not clearing addr_for_handle on Disconnection Complete: this
-        # map is queried after a full pass over the capture, and a handle that
-        # disconnects before EOF would otherwise be unresolvable at query time even
-        # though it was valid for the whole time its packets were being sent. A
-        # reused handle simply gets overwritten by its next Connection Complete.
+        # NOTE: addr_for_handle intentionally reflects "whichever address this
+        # handle currently means" and gets overwritten (not merged) on every
+        # Connection Complete, because handle numbers are small integers the
+        # controller freely reuses across unrelated connection instances once
+        # a prior one disconnects. That's fine as long as callers resolve each
+        # event's address *live*, in chronological order (see iter_att_events),
+        # so a query mid-way through the capture only ever sees the handle
+        # mapping that was actually true at that moment. Querying this map
+        # only after a full pass over the whole file - i.e. "what does handle
+        # N mean by EOF" - is a bug: it silently relabels every earlier event
+        # that used a since-reused handle number under the LATER device's
+        # identity (confirmed in practice: an old H61A8 session's packets got
+        # merged into a same-handle H60A6 session's device bucket this way).
+        if event_code == 0x05 and len(params) >= 3:  # Disconnection Complete (top-level event, not LE Meta)
+            # Drop the mapping so a stale address can't leak into any event
+            # that (incorrectly) arrives for this handle after its connection
+            # has actually ended, before the next Connection Complete reuses
+            # the number for an unrelated device.
+            handle = struct.unpack("<H", params[1:3])[0]
+            self.addr_for_handle.pop(handle, None)
+            return
         if event_code != 0x3E or not params:  # LE Meta Event
-
             return
         subevent = params[0]
         sub = params[1:]
@@ -223,15 +280,33 @@ class AttEvent:
     direction: str  # "WRITE" or "NOTIFY"
     att_handle: int | None
     value: bytes
+    addr: str | None = None  # resolved LIVE, as of this event's moment - see iter_att_events
 
 
-def iter_att_events(path: str | pathlib.Path):
+def iter_att_events(path: str | pathlib.Path | list[str | pathlib.Path], session: BleSessionMap | None = None):
     """Yield every ATT PDU in the capture, tagged with connection handle and
-    direction. Does not filter by device - callers select connection handles
-    of interest via ``BleSessionMap``."""
+    direction, plus the address that handle actually meant *at that moment*.
+
+    Walks Event and ACL records together in one single chronological pass
+    (both are already file-ordered by ``iter_hci_records``) so each ACL
+    packet's connection handle is resolved against the ``BleSessionMap``
+    state as it stood right then - not after a full pass over the entire
+    capture. Handle numbers are small integers the controller reuses across
+    unrelated connections once a prior one disconnects; resolving "after the
+    fact" would retroactively relabel an earlier device's traffic under
+    whichever later device happened to reuse its handle number (this
+    happened in practice - see the note on ``BleSessionMap.feed_event``).
+
+    Pass a fresh ``BleSessionMap`` (or omit to use an internal one) - by the
+    time iteration completes, its ``name_for_addr`` is also fully populated
+    from every advertising report seen, for callers that want a bulk lookup.
+    """
+    if session is None:
+        session = BleSessionMap()
     for rec in iter_hci_records(path):
         if rec.pkt_type == 0x04:
-            continue  # events are consumed separately via BleSessionMap.feed_event
+            session.feed_event(rec.body)
+            continue
         if rec.pkt_type != 0x02 or len(rec.body) < 4:
             continue
         handle_flags = struct.unpack("<H", rec.body[0:2])[0]
@@ -252,7 +327,8 @@ def iter_att_events(path: str | pathlib.Path):
         else:
             att_handle = None
             value = att_pdu[1:]
-        yield AttEvent(rec.t_unix, chandle, opcode, name, direction, att_handle, value)
+        addr = session.addr_for_handle.get(chandle)
+        yield AttEvent(rec.t_unix, chandle, opcode, name, direction, att_handle, value, addr)
 
 
 # --------------------------------------------------------------------------
@@ -272,32 +348,40 @@ class PlainEvent:
     status: str  # "OK" (a Govee 20-byte frame), "HANDSHAKE", "OTHER" (non-Govee ATT traffic), "FAIL" (decrypt failed)
     data: bytes  # for OK/HANDSHAKE: the 20-byte plaintext frame; for OTHER/FAIL: the raw value
     opcode_name: str = ""  # ATT opcode label (e.g. "ReadByGroupTypeReq") - populated for OTHER/FAIL
+    addr: str | None = None  # propagated from AttEvent.addr - the live-resolved address, if any
 
 
 def decrypt_all(events: list[AttEvent]):
     """Per-connection-handle: auto-detect plaintext vs. encrypted, decrypt
     accordingly, yield a PlainEvent per input event."""
-    session_key_by_handle: dict[int, bytes] = {}
+    # Keyed by (addr, chandle) rather than chandle alone: addresses are far
+    # less likely to collide across genuinely-different connections than
+    # small reused handle numbers are, so this also reduces (does not fully
+    # eliminate, since addresses can themselves rotate) the odds of a stale
+    # session key from a disconnected device's handshake leaking into a
+    # later, unrelated connection that happens to reuse the same handle.
+    session_key_by_conn: dict[tuple[str | None, int], bytes] = {}
     for ev in events:
+        conn = (ev.addr, ev.chandle)
         if len(ev.value) != FRAME_LEN:
-            yield PlainEvent(ev.t, ev.chandle, ev.direction, "OTHER", ev.value, ev.opcode_name)
+            yield PlainEvent(ev.t, ev.chandle, ev.direction, "OTHER", ev.value, ev.opcode_name, ev.addr)
             continue
         if _checksum_ok(ev.value):  # already-plaintext frame (older, unencrypted devices)
-            yield PlainEvent(ev.t, ev.chandle, ev.direction, "OK", ev.value, ev.opcode_name)
+            yield PlainEvent(ev.t, ev.chandle, ev.direction, "OK", ev.value, ev.opcode_name, ev.addr)
             continue
         psk_pt = p.decrypt_packet(PSK, ev.value)
         if _checksum_ok(psk_pt) and psk_pt[0] == 0xE7 and psk_pt[1] in (0x01, 0x02):
             if psk_pt[1] == 0x01 and ev.direction == "NOTIFY":
-                session_key_by_handle[ev.chandle] = psk_pt[2:18]
-            yield PlainEvent(ev.t, ev.chandle, ev.direction, "HANDSHAKE", psk_pt, ev.opcode_name)
+                session_key_by_conn[conn] = psk_pt[2:18]
+            yield PlainEvent(ev.t, ev.chandle, ev.direction, "HANDSHAKE", psk_pt, ev.opcode_name, ev.addr)
             continue
-        session_key = session_key_by_handle.get(ev.chandle)
+        session_key = session_key_by_conn.get(conn)
         if session_key is not None:
             pt = p.decrypt_packet(session_key, ev.value)
             if _checksum_ok(pt):
-                yield PlainEvent(ev.t, ev.chandle, ev.direction, "OK", pt, ev.opcode_name)
+                yield PlainEvent(ev.t, ev.chandle, ev.direction, "OK", pt, ev.opcode_name, ev.addr)
                 continue
-        yield PlainEvent(ev.t, ev.chandle, ev.direction, "FAIL", ev.value, ev.opcode_name)
+        yield PlainEvent(ev.t, ev.chandle, ev.direction, "FAIL", ev.value, ev.opcode_name, ev.addr)
 
 
 # --------------------------------------------------------------------------
@@ -369,11 +453,7 @@ def format_annotated_line(t_rel: float, direction: str, data: bytes, decoded: De
 def main() -> int:
     path = sys.argv[1] if len(sys.argv) > 1 else "btsnoop_hci.log"
     session = BleSessionMap()
-    events = []
-    for rec in iter_hci_records(path):
-        if rec.pkt_type == 0x04:
-            session.feed_event(rec.body)
-    events = list(iter_att_events(path))
+    events = list(iter_att_events(path, session))
     if not events:
         print("No ATT events found")
         return 1
@@ -383,7 +463,11 @@ def main() -> int:
     others = sum(1 for e in decoded if e.status == "OTHER")
     print(f"{len(events)} ATT events, {fails} failed to decrypt, {others} non-20-byte/non-Govee\n")
     for e in decoded:
-        name = session.name_for_handle(e.chandle) or "?"
+        # e.addr is the address as it was resolved *at that event's moment*
+        # (handles get reused across unrelated connections) - name_for_addr
+        # is a simple whole-capture lookup, which is fine for names (they
+        # don't change mid-capture the way handle->address bindings do).
+        name = (session.name_for_addr.get(e.addr) if e.addr else None) or "?"
         if e.status in ("FAIL", "OTHER"):
             print(f"t+{e.t - t0:9.3f}s h={e.chandle:3d} ({name}) {e.direction:<7s} {e.status:9s} 0x{e.data.hex()}")
             continue

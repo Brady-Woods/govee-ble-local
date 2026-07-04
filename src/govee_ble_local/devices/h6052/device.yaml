@@ -1,0 +1,30 @@
+sku: H6052
+name: Govee RGBWW Bulb
+
+# Confirmed real advertised name: "Govee_H6052_3477".
+match:
+  local_name_prefixes: ["Govee_H6052"]
+
+# No handshake at all (confirmed zero e7 frames in a real, complete
+# capture); uses H6006's `33 05 0D` color layout, not H60A6's. Initially
+# mischaracterized in an earlier pass as sharing H60A6's segment-command
+# layout - that was traced to a device-grouping bug (fixed; see
+# PROTOCOL.md §14.2) that had merged a different device's traffic into
+# this SKU's bucket. A clean, bug-free capture shows no segment or zone
+# traffic at all - see PROTOCOL.md §15.2.
+protocol:
+  encryption: none
+  color_scheme: h6006
+  status_scheme: none
+
+# What the device can do. No zones, no segments - confirmed absent from a
+# clean capture. Color temp range is unusually wide (2000-9000K observed
+# live) compared to the 2700-6500K every other device tested so far uses.
+capabilities:
+  brightness: true
+  rgb: true
+  color_temp: { min_kelvin: 2000, max_kelvin: 9000 }
+  scenes: true
+
+scenes_file: scenes.yaml
+notes: NOTES.md

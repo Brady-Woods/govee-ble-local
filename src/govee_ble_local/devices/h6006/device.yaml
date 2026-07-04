@@ -1,0 +1,28 @@
+sku: H6006
+name: Govee (legacy) RGBWW Bulb
+
+# How to recognize this model from its BLE advertisement. Confirmed against
+# real captures (e.g. "ihoment_H6006_0EEB", "ihoment_H6006_60AF") - this is a
+# genuinely different advertising scheme from H60A6's "GVH60A6..." prefix,
+# not a typo.
+match:
+  local_name_prefixes: ["ihoment_H6006"]
+
+# No handshake at all (confirmed zero e7 frames in every capture); RGB/
+# color-temp use a different byte layout than H60A6's. See PROTOCOL.md §12.
+protocol:
+  encryption: none
+  color_scheme: h6006
+  status_scheme: none
+
+# What the device can do. Consumers (e.g. the Home Assistant integration)
+# generate entities/behavior from this, so support is data-driven. No zones,
+# no segments - confirmed absent from every capture.
+capabilities:
+  brightness: true
+  rgb: true
+  color_temp: { min_kelvin: 2700, max_kelvin: 6500 }
+  scenes: true
+
+scenes_file: scenes.yaml
+notes: NOTES.md

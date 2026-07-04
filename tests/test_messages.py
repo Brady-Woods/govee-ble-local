@@ -56,6 +56,63 @@ class TestBuildersMatchLegacyApi(unittest.TestCase):
         self.assertEqual(m.build_scene((0x01, 0x0A)), p.cmd_set_scene((0x01, 0x0A)))
         self.assertEqual(m.build_metadata_query(0x05), p.cmd_metadata_field(0x05))
         self.assertEqual(m.build_handshake(0x01), p.cmd_handshake(0x01))
+        # color_scheme passthrough (H6006's alternate layout) delegates identically too.
+        self.assertEqual(m.build_rgb(10, 20, 30, "h6006"), p.cmd_set_rgb(10, 20, 30, "h6006"))
+        self.assertEqual(m.build_color_temp(4000, "h6006"), p.cmd_set_color_temp(4000, "h6006"))
+
+
+class TestH6006ColorScheme(unittest.TestCase):
+    """H6006's alternate `33 05 0D` color/color-temp layout - structure
+    confirmed byte-exact against real capture data (PROTOCOL.md §12.2,
+    devices/h6006/captures/2026-07-03_manual-test_annotated.log). Default
+    (color_scheme="h60a6") stays untouched - covered by every other test in
+    this file that calls build_rgb/build_color_temp with no scheme arg."""
+
+    def test_rgb_layout(self) -> None:
+        self.assertEqual(m.build_rgb(255, 0, 0, "h6006"), bytes([0x33, 0x05, 0x0D, 0xFF, 0x00, 0x00]))
+        self.assertEqual(m.build_rgb(0, 255, 0, "h6006"), bytes([0x33, 0x05, 0x0D, 0x00, 0xFF, 0x00]))
+
+    def test_color_temp_layout(self) -> None:
+        # Structure: tint RGB, 2-byte kelvin, tint RGB repeated. Tint values
+        # come from the same kelvin_to_rgb approximation h60a6 uses (a
+        # pre-existing, accepted gap vs. the real app's exact tint table -
+        # see PROTOCOL.md §4.1), not a literal capture-byte match.
+        ar, ag, ab = p.kelvin_to_rgb(2700)
+        expected = bytes([0x33, 0x05, 0x0D, ar, ag, ab, (2700 >> 8) & 0xFF, 2700 & 0xFF, ar, ag, ab])
+        self.assertEqual(m.build_color_temp(2700, "h6006"), expected)
+
+    def test_default_scheme_unchanged(self) -> None:
+        self.assertEqual(m.build_rgb(1, 2, 3), bytes([0x33, 0x05, 0x15, 0x01, 1, 2, 3, 0, 0, 0, 0, 0, 0xFF, 0x1F]))
+
+
+class TestProtocol(unittest.TestCase):
+    def test_default_matches_legacy_h60a6_behavior(self) -> None:
+        self.assertEqual(m.Protocol(), m.Protocol("aes_rc4_psk", "h60a6", "full"))
+
+    def test_all_known_combos_construct(self) -> None:
+        for combo in m.KNOWN_PROTOCOL_COMBOS:
+            m.Protocol(*combo)  # must not raise
+
+    def test_unimplemented_combo_rejected(self) -> None:
+        with self.assertRaises(ValueError):
+            m.Protocol("none", "h60a6", "full")
+
+    def test_power_scheme_defaults_binary(self) -> None:
+        self.assertEqual(m.Protocol().power_scheme, "binary")
+
+    def test_plug_relay_requires_a_registered_combo(self) -> None:
+        # H5083's real combo (handshake_only/h6006/none/plug_relay) must be
+        # registered; an arbitrary combo pairing plug_relay with something
+        # else not yet confirmed live should still be rejected.
+        m.Protocol("handshake_only", "h6006", "none", "plug_relay")  # must not raise
+        with self.assertRaises(ValueError):
+            m.Protocol("aes_rc4_psk", "h60a6", "full", "plug_relay")
+
+    def test_segment_status_page_count(self) -> None:
+        self.assertEqual(m.segment_status_page_count(20), 5)
+        self.assertEqual(m.segment_status_page_count(12), 3)
+        self.assertEqual(m.segment_status_page_count(1), 1)
+        self.assertEqual(m.segment_status_page_count(0), 0)
 
 
 class TestDeserializeRoundTrip(unittest.TestCase):
@@ -70,6 +127,20 @@ class TestDeserializeRoundTrip(unittest.TestCase):
         self.assertEqual((pwr.name, pwr.fields["on"]), ("power", True))
         zone = m.deserialize(_frame(m.build_zone(1, False)), "WRITE")
         self.assertEqual((zone.name, zone.fields["zone"], zone.fields["on"]), ("zone", 1, False))
+
+    def test_power_plug_relay_scheme(self) -> None:
+        # H5083's smart-plug power encoding (0x10/0x11, not 0x00/0x01) -
+        # PROTOCOL.md §15.3. build_power(..., "plug_relay") round-trips
+        # through deserialize correctly, and doesn't get misread as truthy
+        # by a naive bool(state) (0x10 is truthy but must decode as OFF).
+        off = m.build_power(False, "plug_relay")
+        on = m.build_power(True, "plug_relay")
+        self.assertEqual(off, bytes([0x33, 0x01, 0x10]))
+        self.assertEqual(on, bytes([0x33, 0x01, 0x11]))
+        off_msg = m.deserialize(_frame(off), "WRITE")
+        on_msg = m.deserialize(_frame(on), "WRITE")
+        self.assertEqual((off_msg.name, off_msg.fields["on"]), ("power", False))
+        self.assertEqual((on_msg.name, on_msg.fields["on"]), ("power", True))
 
     def test_scene_and_color_temp(self) -> None:
         sc = m.deserialize(_frame(m.build_scene((0x7B, 0x00))), "WRITE")
@@ -92,13 +163,38 @@ class TestDeserializeRoundTrip(unittest.TestCase):
         self.assertEqual(ack.fields["cmd"], 0x04)
         self.assertFalse(ack.sendable)
 
+    def test_segment_status_query_direction_gating(self) -> None:
+        # WRITE side is the sendable trigger (mirrors status_query/metadata_query).
+        query = m.deserialize(_frame(m.build_segment_status_query(3)), "WRITE")
+        self.assertEqual(query.name, "segment_status_query")
+        self.assertTrue(query.understood and query.sendable)
+        self.assertEqual(query.fields["page"], 3)
+        self.assertTrue(m.is_sendable("segment_status_query"))
+        self.assertEqual(m.serialize("segment_status_query", 3), m.build_segment_status_query(3))
+        # NOTIFY side (real per-page data) is understood but not independently sendable.
+        body = bytes([0xA5, 3]) + bytes([100, 255, 0, 0, 90, 0, 255, 0, 80, 0, 0, 255, 0, 0, 0, 0]) + bytes(0)
+        data = m.deserialize(_frame(bytes([0xAA]) + body), "NOTIFY")
+        self.assertEqual(data.name, "segment_status_chunk")
+        self.assertTrue(data.understood)
+        self.assertFalse(data.sendable)
+
 
 class TestStubsAndGating(unittest.TestCase):
     def test_stubs_recognized_but_not_sendable(self) -> None:
+        # This fixture's bytes (0x6A48AEDD, big-endian) decode to a real,
+        # plausible unix timestamp (2026-07-04 06:57:33 UTC) - confirmed
+        # against real H61A8 capture data as the phone pushing its current
+        # wall-clock time to the device on connect (see messages.py's
+        # cmd == 0x09 handler and PROTOCOL.md). It's understood but still
+        # not sendable (we don't yet build/send this frame ourselves).
         clock = m.deserialize(_frame(bytes([0x33, 0x09, 0x6A, 0x48, 0xAE, 0xDD, 0x01, 0xF9])), "WRITE")
         ee = m.deserialize(_frame(bytes([0xEE, 0x20, 0x0A])), "NOTIFY")
         a4 = m.deserialize(_frame(bytes([0xA4, 0x58, 0x00])), "NOTIFY")
-        for msg, name in ((clock, "clock"), (ee, "stub_ee"), (a4, "stub_a4")):
+        self.assertEqual(clock.name, "clock_sync")
+        self.assertTrue(clock.understood)
+        self.assertFalse(clock.sendable)
+        self.assertFalse(m.is_sendable("clock_sync"))
+        for msg, name in ((ee, "stub_ee"), (a4, "stub_a4")):
             self.assertEqual(msg.name, name)
             self.assertFalse(msg.understood, name)
             self.assertFalse(msg.sendable, name)
@@ -111,7 +207,7 @@ class TestStubsAndGating(unittest.TestCase):
 
     def test_serialize_gates_non_sendable(self) -> None:
         self.assertEqual(m.serialize("brightness", 50), m.build_brightness(50))
-        for name in ("clock", "wifi_provision", "status_field", "ack", "definitely_not_a_command"):
+        for name in ("clock_sync", "wifi_provision", "status_field", "ack", "definitely_not_a_command"):
             with self.assertRaises(m.UnsupportedCommand):
                 m.serialize(name)
 
@@ -173,6 +269,33 @@ class TestChunkReassembler(unittest.TestCase):
         reasm.feed("NOTIFY", bytes([0xAC, 0x00]) + bytes(18))  # one lonely chunk
         notes = reasm.flush()
         self.assertTrue(any(not n.understood and "never completed" in n.summary for n in notes))
+
+    def test_segment_pages_reassemble_via_real_parser(self) -> None:
+        # H61A8-style paginated per-segment status: 5 pages of 4 records
+        # each = 20 segments (PROTOCOL.md §13.1).
+        reasm = m.ChunkReassembler("D1:C7:C2:06:63:1F", segment_pages=5)
+        pages = {
+            1: bytes([100, 255, 0, 0, 90, 0, 255, 0, 80, 0, 0, 255, 0, 0, 0, 0]),
+            2: bytes([70, 255, 255, 0, 60, 255, 127, 0, 50, 139, 0, 255, 0, 0, 0, 0]),
+            3: bytes([41, 0, 255, 0, 30, 0, 255, 255, 20, 255, 255, 255, 0, 0, 0, 0]),
+            4: bytes([10, 139, 0, 255, 1, 0, 255, 255, 100, 0, 255, 0, 0, 0, 0, 0]),
+            5: bytes([100, 255, 255, 0, 100, 255, 127, 0, 100, 255, 0, 0, 100, 0, 0, 255]),
+        }
+        result = None
+        for page in sorted(pages):
+            result = reasm.feed("NOTIFY", bytes([0xAA, 0xA5, page]) + pages[page] + bytes(1))
+        assert result is not None
+        self.assertEqual(result.name, "segment_status")
+        segments = result.fields["segments"]
+        self.assertEqual(len(segments), 20)
+        self.assertEqual((segments[0].index, segments[0].brightness_pct, segments[0].r, segments[0].g, segments[0].b), (0, 100, 255, 0, 0))
+        self.assertEqual((segments[19].index, segments[19].brightness_pct), (19, 100))
+
+    def test_segment_pages_no_data_yet_returns_none(self) -> None:
+        # A page whose body is all-zero is the query echo, not real data - the
+        # reassembler must not treat it as page 1 of a completed poll.
+        reasm = m.ChunkReassembler("D1:C7:C2:06:63:1F", segment_pages=1)
+        self.assertIsNone(reasm.feed("NOTIFY", bytes([0xAA, 0xA5, 1]) + bytes(17)))
 
 
 if __name__ == "__main__":

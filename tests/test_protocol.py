@@ -144,6 +144,19 @@ class TestCommandBuilders(unittest.TestCase):
         self.assertEqual(p.cmd_status_query_full(), bytes([0xAC, 0x03, 0x03, 0x41, 0x30, 0xA5]))
         self.assertEqual(p.cmd_metadata_field(0x05), bytes([0xAB, 0x01, 0x05]))
 
+    def test_set_rgb_h6006_color_scheme(self):
+        # H6006's alternate layout: no mode byte/mask/checksum-tail dance,
+        # just the opcode plus raw RGB - PROTOCOL.md §12.2.
+        self.assertEqual(p.cmd_set_rgb(255, 0, 0, "h6006"), bytes([0x33, 0x05, 0x0D, 0xFF, 0x00, 0x00]))
+
+    def test_set_color_temp_h6006_color_scheme(self):
+        cmd = p.cmd_set_color_temp(2700, "h6006")
+        ar, ag, ab = p.kelvin_to_rgb(2700)
+        self.assertEqual(cmd[:3], bytes([0x33, 0x05, 0x0D]))
+        self.assertEqual(cmd[3:6], bytes([ar, ag, ab]))
+        self.assertEqual((cmd[6] << 8) | cmd[7], 2700)
+        self.assertEqual(cmd[8:11], bytes([ar, ag, ab]))  # tint repeated
+
 
 class TestKelvinToRgb(unittest.TestCase):
     def test_reference_points_within_tolerance(self):
@@ -237,6 +250,27 @@ class TestParseSegmentRecords(unittest.TestCase):
     def test_missing_chunk_returns_none(self):
         partial = {k: v for k, v in STATUS_WITH_SEGMENTS.items() if k != 0x07}
         self.assertIsNone(p.parse_segment_records(partial))
+
+
+class TestParseSegmentPages(unittest.TestCase):
+    """H61A8-style paginated per-segment status (`aa a5 <page>`) - same
+    record shape as parse_segment_records, different outer framing."""
+
+    def test_real_shaped_pages(self):
+        pages = {
+            1: bytes([100, 255, 0, 0, 90, 0, 255, 0, 80, 0, 0, 255, 0, 0, 0, 0]),
+            2: bytes([70, 255, 255, 0, 60, 255, 127, 0, 50, 139, 0, 255, 100, 255, 255, 255]),
+        }
+        segs = p.parse_segment_pages(pages)
+        self.assertIsNotNone(segs)
+        self.assertEqual(len(segs), 8)
+        self.assertEqual(segs[0], GoveeBleSegment(0, 100, 255, 0, 0))
+        self.assertEqual(segs[4], GoveeBleSegment(4, 70, 255, 255, 0))
+        self.assertEqual(segs[7], GoveeBleSegment(7, 100, 255, 255, 255))
+
+    def test_missing_or_short_page_returns_none(self):
+        self.assertIsNone(p.parse_segment_pages({}))
+        self.assertIsNone(p.parse_segment_pages({1: bytes(10)}))  # too short (< 16 bytes)
 
 
 class TestParseMetadataFieldText(unittest.TestCase):

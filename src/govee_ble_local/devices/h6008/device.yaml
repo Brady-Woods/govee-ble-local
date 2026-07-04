@@ -1,0 +1,29 @@
+sku: H6008
+name: Govee RGBWW Bulb
+
+# Confirmed real advertised names: "GVH60082691", "GVH60087A93" - same
+# no-underscore naming convention as H60A6, a different one from H6006/
+# H6052/H61A8's "Ihoment_"/"Govee_<sku>_<suffix>" scheme.
+match:
+  local_name_prefixes: ["GVH6008"]
+
+# Performs the real e7/PSK/AES-RC4 handshake at every connect, but every
+# frame afterward - status and control alike - is plaintext (checksum-
+# verified directly on the wire, no decryption needed). Uses H6006's
+# `33 05 0D` color layout, not H60A6's. A fourth distinct protocol
+# combination - see PROTOCOL.md §15.1.
+protocol:
+  encryption: handshake_only
+  color_scheme: h6006
+  status_scheme: none
+
+# What the device can do. No zones, no segments - confirmed absent from
+# capture. Color temp range matches the standard 2700-6500K.
+capabilities:
+  brightness: true
+  rgb: true
+  color_temp: { min_kelvin: 2700, max_kelvin: 6500 }
+  scenes: true
+
+scenes_file: scenes.yaml
+notes: NOTES.md

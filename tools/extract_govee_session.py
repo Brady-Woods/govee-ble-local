@@ -21,6 +21,9 @@ Usage:
     python3 tools/extract_govee_session.py btsnoop_hci.log.last --out-dir out/
     python3 tools/extract_govee_session.py btsnoop_hci.log.last --keep-heartbeat
     python3 tools/extract_govee_session.py btsnoop_hci.log.last --name-pattern govee --all
+    # Pass both retained generations, OLDEST FIRST, when a connection may span the
+    # rotation boundary (recommended whenever both are available):
+    python3 tools/extract_govee_session.py btsnoop_hci.log.last btsnoop_hci.log --out-dir out/ --all
 """
 from __future__ import annotations
 
@@ -38,10 +41,10 @@ from decode_btsnoop import (
     DecodedMessage,
     decode_frame,
     decrypt_all,
+    extract_embedded_name,
     format_annotated_line,
     format_left,
     iter_att_events,
-    iter_hci_records,
     note as annotate,
 )
 from decode_btsnoop import PlainEvent  # noqa: E402
@@ -69,30 +72,56 @@ class DeviceSession:
         return f"unidentified_{addr_tag}"
 
 
-def _build_session_map(path: str) -> BleSessionMap:
+def _group_by_device(path: str | list[str]) -> dict[str, DeviceSession]:
+    # A single, fresh BleSessionMap fed live as iter_att_events walks the
+    # capture chronologically - each event's .addr reflects whatever that
+    # connection handle actually meant *at that moment*. Handle numbers are
+    # small integers the controller reuses across unrelated connections once
+    # a prior one disconnects; resolving addresses from a separately
+    # pre-built (whole-file) session map instead of this live one would
+    # retroactively relabel an earlier device's traffic under whichever
+    # later device happened to reuse its handle number - confirmed in
+    # practice (an old H61A8 session's packets got merged into a same-handle
+    # H60A6 session's device bucket this way before this fix).
     session = BleSessionMap()
-    for rec in iter_hci_records(path):
-        if rec.pkt_type == 0x04:
-            session.feed_event(rec.body)
-    return session
-
-
-def _group_by_device(path: str, session: BleSessionMap) -> dict[str, DeviceSession]:
-    events = list(iter_att_events(path))
+    events = list(iter_att_events(path, session))
     decoded = list(decrypt_all(events))
 
-    by_addr: dict[str, DeviceSession] = {}
+    # Pass 1: resolve the best available name per RESOLVED ADDRESS (never per
+    # connection handle - see above). Prefer a name recovered directly from
+    # GATT traffic (extract_embedded_name) over advertising-based
+    # resolution - some devices/reconnects use a different (rotating/
+    # private) address than whatever address their advertisement was seen
+    # under in this specific capture window, which breaks address-keyed
+    # resolution but not a name read straight off the wire.
+    name_for_key: dict[str, str] = {}
     for ev in decoded:
-        addr = session.addr_for_handle.get(ev.chandle)
-        if addr is None:
-            addr = f"handle-{ev.chandle}"  # connection established before capture start
-        name = session.name_for_addr.get(addr)
-        if addr not in by_addr:
-            by_addr[addr] = DeviceSession(addr=addr, name=name, events=[])
-        elif name and not by_addr[addr].name:
-            by_addr[addr].name = name
-        by_addr[addr].events.append(ev)
-    return by_addr
+        key = ev.addr or f"handle-{ev.chandle}"
+        if key in name_for_key:
+            continue
+        name = session.name_for_addr.get(ev.addr) if ev.addr else None
+        if name is None:
+            name = extract_embedded_name(ev.data)
+        if name:
+            name_for_key[key] = name
+
+    # Pass 2: group by resolved NAME when available - this unifies multiple
+    # reconnects of the same physical device even if each used a different
+    # address, which grouping by raw address alone would incorrectly split
+    # into separate device buckets. Falls back to the live-resolved address,
+    # then a synthetic per-handle key, only when no name could be resolved at
+    # all (e.g. events before the capture's first Connection Complete).
+    by_key: dict[str, DeviceSession] = {}
+    for ev in decoded:
+        addr_key = ev.addr or f"handle-{ev.chandle}"
+        name = name_for_key.get(addr_key)
+        key = name or addr_key
+        if key not in by_key:
+            by_key[key] = DeviceSession(addr=ev.addr or addr_key, name=name, events=[])
+        elif name and not by_key[key].name:
+            by_key[key].name = name
+        by_key[key].events.append(ev)
+    return by_key
 
 
 def _select_devices(
@@ -379,7 +408,14 @@ def generate_config(dev: DeviceSession, config_dir: Path, keep_heartbeat: bool) 
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("btsnoop_log", help="path to a btsnoop_hci.log(.last) file")
+    ap.add_argument(
+        "btsnoop_log",
+        nargs="+",
+        help="path to a btsnoop_hci.log(.last) file. Pass both generations, OLDEST FIRST "
+        "(btsnoop_hci.log.last then btsnoop_hci.log), to correctly resolve device identity for any "
+        "connection that spans the rotation boundary - analyzing them separately can leave such a "
+        "connection's later half unresolvable (see iter_hci_records's docstring in decode_btsnoop.py).",
+    )
     ap.add_argument("--out-dir", default="govee_capture_out", help="output directory (default: %(default)s)")
     ap.add_argument("--name-pattern", default=DEFAULT_NAME_PATTERN, help="regex to match advertised device names (default: %(default)r)")
     ap.add_argument("--all", action="store_true", help="include every device seen, ignoring --name-pattern")
@@ -396,8 +432,7 @@ def main() -> int:
     )
     args = ap.parse_args()
 
-    session = _build_session_map(args.btsnoop_log)
-    by_addr = _group_by_device(args.btsnoop_log, session)
+    by_addr = _group_by_device(args.btsnoop_log)
     included, excluded = _select_devices(by_addr, args.name_pattern, args.all)
 
     if not included:

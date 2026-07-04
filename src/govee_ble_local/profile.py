@@ -14,7 +14,15 @@ import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+from . import messages
+from .const import ZONE_LOWER, ZONE_UPPER
+
+if TYPE_CHECKING:
+    # Only for type hints - this module deliberately stays free of the
+    # bleak dependency at runtime (client.py is the only thing that needs it).
+    from .client import GoveeBleClient
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -66,6 +74,7 @@ class DeviceProfile:
     name: str
     local_name_prefixes: tuple[str, ...]
     capabilities: Capabilities
+    protocol: messages.Protocol = messages.Protocol()
     scenes: tuple[Scene, ...] = ()
     notes: str | None = None
     source_dir: Path | None = None
@@ -85,6 +94,20 @@ class DeviceProfile:
     def selectable_scenes(self) -> list[Scene]:
         """Scenes safe to expose (working), sorted case-insensitively by name."""
         return sorted((s for s in self.scenes if s.working), key=lambda s: s.name.casefold())
+
+
+_ZONE_NAME_TO_ID = {"upper": ZONE_UPPER, "lower": ZONE_LOWER}
+
+
+async def set_power(client: "GoveeBleClient", profile: DeviceProfile, on: bool) -> None:
+    """Turn a device fully on/off: per-zone if it has zones, else the global
+    power opcode. Centralizes logic tools/device_test.py would otherwise
+    duplicate across power_off()/_restore_neutral()."""
+    if profile.capabilities.zones:
+        for zone_name in profile.capabilities.zones:
+            await client.set_zone(_ZONE_NAME_TO_ID[zone_name], on)
+    else:
+        await client.set_power(on)
 
 
 # --------------------------------------------------------------------------
@@ -112,6 +135,20 @@ def _parse_capabilities(raw: dict[str, Any]) -> Capabilities:
         zones=tuple(raw.get("zones", ()) or ()),
         segments=int(raw.get("segments", 0)),
         scenes=bool(raw.get("scenes", False)),
+    )
+
+
+def _parse_protocol(raw: dict[str, Any]) -> messages.Protocol:
+    """Build a messages.Protocol from a device.yaml `protocol:` section
+    (absent/empty -> Protocol() defaults, today's H60A6-only behavior).
+    Validation (is this a combination anything actually implements) happens
+    inside Protocol.__post_init__ itself, so a bad device.yaml raises
+    ValueError right here at load time - not confusingly mid-connection."""
+    return messages.Protocol(
+        encryption=raw.get("encryption", "aes_rc4_psk"),
+        color_scheme=raw.get("color_scheme", "h60a6"),
+        status_scheme=raw.get("status_scheme", "full"),
+        power_scheme=raw.get("power_scheme", "binary"),
     )
 
 
@@ -152,6 +189,7 @@ def load_profile(device_dir: str | os.PathLike[str]) -> DeviceProfile:
         name=definition["name"],
         local_name_prefixes=tuple(match.get("local_name_prefixes", ()) or ()),
         capabilities=_parse_capabilities(definition.get("capabilities", {})),
+        protocol=_parse_protocol(definition.get("protocol", {})),
         scenes=scenes,
         notes=notes,
         source_dir=device_dir,

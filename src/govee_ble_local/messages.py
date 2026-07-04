@@ -27,9 +27,10 @@ import graph stays acyclic.
 """
 from __future__ import annotations
 
+import datetime
 import logging
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any, Callable, Literal
 
 from .const import (
     MAX_COLOR_TEMP_KELVIN,
@@ -38,7 +39,7 @@ from .const import (
     STATUS_CHUNK_ACCEPTED_FULL,
     STATUS_CHUNK_REQUIRED,
 )
-from .protocol import kelvin_to_rgb, parse_metadata_field_text, parse_status
+from .protocol import kelvin_to_rgb, parse_metadata_field_text, parse_segment_pages, parse_status
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -80,6 +81,86 @@ class DecodedMessage:
 
 
 # --------------------------------------------------------------------------
+# Protocol axes: which wire-mechanics a given device model needs. Three
+# independent, orthogonal properties (not one bundled "device family" enum -
+# confirmed genuinely independent by cross-device capture analysis, see
+# PROTOCOL.md §13.5): whether the connection is encrypted, which byte layout
+# color/color-temp commands use, and which status/metadata query mechanism
+# the device implements.
+# --------------------------------------------------------------------------
+
+# "aes_rc4_psk": full H60A6-style encryption, session key actually used to
+#   frame every subsequent write/notification.
+# "handshake_only": the device performs the same real e7/PSK/AES-RC4
+#   handshake (confirmed repeatedly in real H61A8 captures - PROTOCOL.md
+#   §13.5), but the resulting session key is never used afterward - every
+#   frame, status and control alike, is plaintext (checksum-verified, not
+#   decrypted). Replicating the real app's handshake ritual here is a
+#   deliberate, evidence-backed choice: skipping it outright is unverified
+#   and risks the device rejecting commands if firmware gates on it.
+# "none": no handshake at all (confirmed zero e7 frames in every H6006
+#   capture) - plaintext from the very first write.
+Encryption = Literal["aes_rc4_psk", "handshake_only", "none"]
+
+# "h60a6": `33 05 15 01 ...` - shared by H60A6 and H61A8 (confirmed
+#   byte-for-byte identical on real H61A8 capture data, including the
+#   segment-color/segment-brightness/scene-activate sub-commands).
+# "h6006": `33 05 0D ...` - the legacy plaintext-generation layout.
+ColorScheme = Literal["h60a6", "h6006"]
+
+# "full": H60A6's chunked `0xAC` status query (zones/brightness/scene/MACs/
+#   segments all in one aggregate).
+# "none": no working status readback (H6006 - the `aa`-field family exists
+#   but isn't understood well enough to synthesize a GoveeBleStatus).
+# "segment_fields": the `aa`-field family plus paginated per-segment
+#   readback via `aa a5 <page>` (H61A8) - real, confirmed, working.
+StatusScheme = Literal["full", "none", "segment_fields"]
+
+# "binary": `33 01 <0x00=off|0x01=on>` - every light/strip device confirmed
+#   so far.
+# "plug_relay": `33 01 <0x10=off|0x11=on>` - H5083 (Govee's smart plug
+#   family). Same opcode, same low-bit-carries-on/off convention, different
+#   constant tag in the next bit up - confirmed via a real repeated manual
+#   toggle test (PROTOCOL.md §15.3). Which literal value is ON vs. OFF
+#   could not be independently cross-checked against physical device state
+#   from the capture alone (a plug has no other observable state, e.g. no
+#   rendered color) - `0x11`=on follows the same low-bit convention as
+#   every other opcode in this protocol, but treat that as the working
+#   hypothesis until confirmed live.
+PowerScheme = Literal["binary", "plug_relay"]
+
+# Explicit allow-list so a device.yaml can't declare a combination nothing
+# actually implements.
+KNOWN_PROTOCOL_COMBOS: frozenset[tuple[Encryption, ColorScheme, StatusScheme, PowerScheme]] = frozenset(
+    {
+        ("aes_rc4_psk", "h60a6", "full", "binary"),  # H60A6
+        ("none", "h6006", "none", "binary"),  # H6006
+        ("handshake_only", "h60a6", "segment_fields", "binary"),  # H61A8
+        ("none", "h6006", "none", "binary"),  # H6052 (duplicate of H6006's combo - a distinct device, same wire mechanics)
+        ("handshake_only", "h6006", "none", "binary"),  # H6008
+        ("handshake_only", "h6006", "none", "plug_relay"),  # H5083
+    }
+)
+
+
+@dataclass(frozen=True)
+class Protocol:
+    """Which wire-mechanics a device needs. Defaults are byte-identical to
+    this project's original (H60A6-only) behavior, so ``Protocol()`` with no
+    args changes nothing for existing callers."""
+
+    encryption: Encryption = "aes_rc4_psk"
+    color_scheme: ColorScheme = "h60a6"
+    status_scheme: StatusScheme = "full"
+    power_scheme: PowerScheme = "binary"
+
+    def __post_init__(self) -> None:
+        combo = (self.encryption, self.color_scheme, self.status_scheme, self.power_scheme)
+        if combo not in KNOWN_PROTOCOL_COMBOS:
+            raise ValueError(f"Unimplemented protocol combination {combo!r} - see messages.KNOWN_PROTOCOL_COMBOS")
+
+
+# --------------------------------------------------------------------------
 # Encode: build_* return the pre-framing prefix (opcode + payload). Framing
 # (pad to 19 + XOR checksum) is done by protocol.build_plaintext downstream.
 # These are the single definition of each command's byte layout.
@@ -102,7 +183,9 @@ def build_metadata_query(field_id: int) -> bytes:
     return bytes([0xAB, 0x01, field_id])
 
 
-def build_power(on: bool) -> bytes:
+def build_power(on: bool, power_scheme: PowerScheme = "binary") -> bytes:
+    if power_scheme == "plug_relay":
+        return bytes([0x33, 0x01, 0x11 if on else 0x10])
     return bytes([0x33, 0x01, 1 if on else 0])
 
 
@@ -115,13 +198,30 @@ def build_brightness(pct: int) -> bytes:
     return bytes([0x33, 0x04, pct])
 
 
-def build_rgb(r: int, g: int, b: int) -> bytes:
+def build_rgb(r: int, g: int, b: int, color_scheme: ColorScheme = "h60a6") -> bytes:
+    if color_scheme == "h6006":
+        # Legacy plaintext-generation layout: no mode byte/mask/checksum-tail
+        # dance, just the opcode plus raw RGB. Confirmed byte-exact against
+        # real H6006 capture data - see devices/h6006/captures/*.log and
+        # PROTOCOL.md §12.2. build_plaintext zero-pads the rest.
+        return bytes([0x33, 0x05, 0x0D, r, g, b])
     return bytes([0x33, 0x05, 0x15, 0x01, r, g, b, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0x1F])
 
 
-def build_color_temp(kelvin: int) -> bytes:
+def build_color_temp(kelvin: int, color_scheme: ColorScheme = "h60a6") -> bytes:
     kelvin = max(MIN_COLOR_TEMP_KELVIN, min(MAX_COLOR_TEMP_KELVIN, kelvin))
     ar, ag, ab = kelvin_to_rgb(kelvin)
+    if color_scheme == "h6006":
+        # Structure confirmed byte-exact against real capture data: tint RGB,
+        # then the 2-byte kelvin value, then the same tint RGB repeated - e.g.
+        # a real 2700K capture is `33 05 0d ff ae 54 0a 8c ff ae 54` (+ zero
+        # pad). See devices/h6006/captures/2026-07-03_manual-test_annotated.log:165.
+        # The tint bytes themselves come from this project's own kelvin_to_rgb
+        # approximation (shared with the h60a6 scheme below), which doesn't
+        # reproduce the real app's exact tint table bit-for-bit at every
+        # kelvin value - a pre-existing, accepted gap (see PROTOCOL.md §4.1),
+        # not something specific to this color_scheme.
+        return bytes([0x33, 0x05, 0x0D, ar, ag, ab, (kelvin >> 8) & 0xFF, kelvin & 0xFF, ar, ag, ab])
     return bytes(
         [
             0x33, 0x05, 0x15, 0x01,
@@ -165,6 +265,19 @@ def build_scene(scene_id: tuple[int, int]) -> bytes:
     return bytes([0x33, 0x05, 0x04, scene_id[0], scene_id[1]])
 
 
+def build_segment_status_query(page: int) -> bytes:
+    """Query one page of per-segment status (H61A8's `status_scheme=
+    'segment_fields'`). `page` is 1-based; each page's NOTIFY response holds
+    4 `[brightness_pct, r, g, b]` records - see PROTOCOL.md §13.1 and
+    protocol.parse_segment_pages. build_plaintext zero-pads the rest."""
+    return bytes([0xAA, 0xA5, page])
+
+
+def segment_status_page_count(segment_count: int) -> int:
+    """How many `aa a5` pages (4 records each) cover `segment_count` segments."""
+    return -(-segment_count // 4) if segment_count > 0 else 0
+
+
 # Calibration (rotation adjustment). Sendable per design decision, though the
 # device gives no readback to confirm the result. Direction: 0x01 = clockwise,
 # 0x02 = counter-clockwise (confirmed against a real cw-then-ccw user action;
@@ -205,6 +318,7 @@ _BUILDERS: dict[str, Callable[..., bytes]] = {
     "segment_brightness": build_segment_brightness,
     "scene_activate": build_scene,
     "calibration": build_calibration_rotate,  # representative; see build_calibration_*
+    "segment_status_query": build_segment_status_query,
 }
 
 
@@ -317,8 +431,15 @@ def _decode_0x33(payload: bytes, direction: str) -> DecodedMessage:
 
     if cmd == 0x01:  # POWER
         state, tail = rest[0], rest[1:]
-        label = {0: "OFF", 1: "ON"}.get(state, f"UNKNOWN(0x{state:02X})")
-        return DecodedMessage("power", True, True, _join(f"POWER: {label}", _pad_note(tail)), fields={"on": bool(state)})
+        # 0x00/0x01: "binary" power_scheme (every light/strip device).
+        # 0x10/0x11: "plug_relay" power_scheme (H5083 - PROTOCOL.md §15.3).
+        # Confirmed as a real repeated toggle; which literal means ON vs OFF
+        # follows the same low-bit convention as everything else in this
+        # protocol (bit 0 set = on) but wasn't independently cross-checked
+        # against physical device state - see messages.PowerScheme.
+        known = {0x00: ("OFF", False), 0x01: ("ON", True), 0x10: ("OFF", False), 0x11: ("ON", True)}
+        label, on = known.get(state, (f"UNKNOWN(0x{state:02X})", bool(state)))
+        return DecodedMessage("power", True, True, _join(f"POWER: {label}", _pad_note(tail)), fields={"on": on})
 
     if cmd == 0x04:  # BRIGHTNESS
         pct, tail = rest[0], rest[1:]
@@ -353,25 +474,64 @@ def _decode_0x33(payload: bytes, direction: str) -> DecodedMessage:
         if mode == 0x15:  # H60A6 RGB / color-temp / segment (ambiguous standalone)
             return DecodedMessage("color_rgb", True, False, f"COLOR (H60A6-style mode=SEGMENTS-or-RGB/0x15): payload=0x{sub.hex()}", "partial")
 
+        if mode == 0x0A:  # DIY/gradient custom-effect activate (distinct from mode 0x04's catalog scene activate)
+            # Confirmed across 2 devices (H6641, H61A8): sent immediately after
+            # every 0xA3 scene/effect upload completes, with the WRITE/upload
+            # pair repeating every few seconds while a gradient-style effect is
+            # active (different chunk counts each repeat -> genuinely new
+            # frame data each time, consistent with an animated effect, not a
+            # static one). The value bytes' exact meaning (an effect id/
+            # checksum reference?) is not confirmed.
+            return DecodedMessage("effect_activate", True, False, f"EFFECT ACTIVATE (DIY/gradient, mode 0x0A): value=0x{sub.hex()} (exact field meaning unconfirmed - see PROTOCOL.md)", "partial", {"raw": sub})
+
         return DecodedMessage("color_unknown", False, False, f"COLOR: UNKNOWN sub-mode 0x{mode:02X}, payload=0x{sub.hex()}", "unknown")
 
-    if cmd == 0x09 and len(rest) >= 6:  # STUB: clock/time-sync (partly understood, not actionable)
+    if cmd == 0xA3 and rest:
+        # Confirmed across 2 devices (H6641, H61A8) as a real, repeatable
+        # toggle: the value byte alternates 0x01/0x00 in sequence. Structure
+        # is solid; what it actually enables/disables is not yet confirmed.
+        val, tail = rest[0], rest[1:]
+        label = {0x00: "OFF/0", 0x01: "ON/1"}.get(val, f"0x{val:02X}")
+        return DecodedMessage("toggle_a3", False, False, _join(f"TOGGLE (cmd 0xA3, meaning unconfirmed): {label}", _pad_note(tail)), "unknown", {"value": val})
+
+    if cmd == 0x09 and len(rest) >= 6:  # clock/time-sync family (two sub-formats)
         ts_val = int.from_bytes(rest[0:4], "big")
         extra_bytes = rest[4:6]
+        # Confirmed (H61A8, real capture): the first 0x09 write sent right
+        # after connect carries a big-endian unix timestamp of the phone's
+        # current wall-clock time - verified by decoding a real capture's
+        # first 0x09 frame and finding it matches the actual capture
+        # date/time exactly (to the second). This is the phone pushing its
+        # clock to the device, presumably to support schedule/timer/sunrise
+        # features. The epoch-range check below distinguishes this confirmed
+        # variant from a second, structurally different 0x09 sub-format seen
+        # repeating periodically thereafter (extra leading byte, e.g. 0x0C)
+        # whose fields are NOT yet decoded - likely a schedule/alarm payload,
+        # since it also embeds 16-bit values that happen to decode as
+        # plausible calendar years (e.g. 0x07EA = 2026). That periodic
+        # variant is reported separately, still as unconfirmed.
+        if 1_600_000_000 <= ts_val <= 2_000_000_000:
+            dt = datetime.datetime.fromtimestamp(ts_val, tz=datetime.timezone.utc)
+            return DecodedMessage(
+                "clock_sync", understood=True, sendable=False,
+                summary=_join(
+                    f"DEVICE TIME SYNC (cmd 0x09): unix_ts={ts_val} ({dt.isoformat()})",
+                    f"bytes[4:6]=0x{extra_bytes.hex()} (meaning unknown)",
+                    _pad_note(rest[6:]),
+                ),
+                confidence="partial",
+                fields={"unix_ts": ts_val},
+            )
         return DecodedMessage(
-            "clock", understood=False, sendable=False,
-            summary=_join(
-                f"UNKNOWN cmd 0x09: bytes[0:4] as big-endian uint32 = {ts_val} (plausible unix timestamp, unconfirmed)",
-                f"bytes[4:6]=0x{extra_bytes.hex()} (meaning unknown)",
-                _pad_note(rest[6:]),
-            ),
+            "clock_periodic_unknown", understood=False, sendable=False,
+            summary=f"UNKNOWN cmd 0x09 (periodic sub-format, distinct from confirmed time-sync above): payload=0x{rest.hex()}",
             confidence="unknown",
         )
 
     return DecodedMessage("cmd_unknown", False, False, _join(f"UNKNOWN cmd 0x{cmd:02X}: payload=0x{rest.hex()}"), "unknown")
 
 
-def _decode_0xAA(payload: bytes) -> DecodedMessage:
+def _decode_0xAA(payload: bytes, direction: str = "NOTIFY") -> DecodedMessage:
     """0xAA status/keepalive family (unencrypted analog of 0xAC). byte[0] is a
     field id; layouts only partly understood."""
     field_id, rest = payload[0], payload[1:]
@@ -393,6 +553,25 @@ def _decode_0xAA(payload: bytes) -> DecodedMessage:
     if field_id == 0x14 and len(rest) >= 6:
         addr = _format_addr(rest[0:6])
         return DecodedMessage("status_field", True, False, _join(f"STATUS field 0x14: device MAC={addr} (byte order/exact field role partly cross-checked)", _pad_note(rest[6:])), "partial", {"field": 0x14, "mac": addr})
+
+    if field_id == 0xA5 and rest:
+        # Per-segment color/brightness readback, paginated: WRITE queries one
+        # page number; NOTIFY returns that page's 4 segment records, each a
+        # [brightness_pct, r, g, b] 4-byte group - the exact same record shape
+        # protocol.parse_segment_records already uses for H60A6's 0xAC chunks
+        # 0x05-0x08. Confirmed across 4 devices (H6047/H6052/H6641/H61A8);
+        # H61A8 paginates up to page 5 (up to 20 segments).
+        page, body = rest[0], rest[1:]
+        if direction == "WRITE":
+            # The sendable trigger (messages.build_segment_status_query) -
+            # mirrors the status_query/metadata_query naming pattern.
+            return DecodedMessage("segment_status_query", True, True, f"SEGMENT_STATUS query trigger: page={page}", fields={"page": page})
+        if len(body) >= 16 and any(body[:16]):
+            records = [tuple(body[i : i + 4]) for i in range(0, 16, 4)]
+            base = (page - 1) * 4
+            parts = ", ".join(f"seg{base + i}=(bri={r[0]}%,rgb=({r[1]},{r[2]},{r[3]}))" for i, r in enumerate(records))
+            return DecodedMessage("segment_status_chunk", True, False, f"STATUS field 0xA5 page={page}: {parts}", "partial", {"page": page, "segments": records})
+        return DecodedMessage("segment_status_chunk", True, False, _join(f"STATUS field 0xA5 page={page} query echo", _pad_note(body)), "partial", {"page": page})
 
     return DecodedMessage("status_field", False, False, f"STATUS field 0x{field_id:02X}: raw=0x{rest.hex()}", "unknown", {"field": field_id})
 
@@ -470,7 +649,7 @@ def deserialize(frame: bytes, direction: str = "WRITE") -> DecodedMessage:
     elif opcode == 0xAC:
         d = _decode_0xAC(payload, direction)
     elif opcode == 0xAA:
-        d = _decode_0xAA(payload)
+        d = _decode_0xAA(payload, direction)
     elif opcode == 0xAB:
         d = _decode_0xAB(payload, direction)
     elif opcode == 0xA3:
@@ -502,7 +681,7 @@ def dispatch_incoming(frame: bytes, direction: str = "NOTIFY") -> DecodedMessage
     if not msg.understood:
         if msg.name in ("wifi_provision",) or msg.raw[:1] in (b"\xa1",):
             _LOGGER.debug("Dropping un-actionable incoming %s (content redacted)", msg.name)
-        elif msg.name in ("stub_ee", "stub_a4", "clock"):
+        elif msg.name in ("stub_ee", "stub_a4", "clock_periodic_unknown"):
             _LOGGER.debug("Dropping recognized-but-un-actionable incoming %s: %s", msg.name, frame.hex())
         else:
             _LOGGER.info("Dropping unrecognized incoming frame: %s", frame.hex())
@@ -528,13 +707,18 @@ class ChunkReassembler:
     sequence. Call ``flush()`` at end of stream to report incomplete groups.
     """
 
-    def __init__(self, address: str):
+    def __init__(self, address: str, segment_pages: int = 0):
         self._address = address
         self._ac_buf: dict[int, bytes] = {}
         self._ac_full = False
         self._ab_buf: dict[int, bytes] = {}
         self._ab_field_id: int | None = None
         self._a3_buf: dict[int, bytes] = {}
+        # 0 = this device doesn't page aa a5 (no status_scheme="segment_fields"
+        # capability); otherwise the number of pages a full poll needs
+        # (messages.segment_status_page_count).
+        self._segment_pages = segment_pages
+        self._aa5_buf: dict[int, bytes] = {}
 
     def feed(self, direction: str, data: bytes) -> DecodedMessage | None:
         if len(data) != FRAME_LEN:
@@ -548,6 +732,8 @@ class ChunkReassembler:
             return self._feed_a3(direction, payload)
         if opcode == 0xA1:
             return self._feed_a1(direction, payload)
+        if opcode == 0xAA:
+            return self._feed_aa(direction, payload)
         return None
 
     def flush(self) -> list[DecodedMessage]:
@@ -558,7 +744,31 @@ class ChunkReassembler:
             notes.append(DecodedMessage("metadata_incomplete", False, False, f"DEVICE_META response never completed - only got chunks {sorted(self._ab_buf.keys())} before the capture ended", "unknown"))
         if self._a3_buf:
             notes.append(DecodedMessage("scene_incomplete", False, False, f"SCENE_DATA upload never completed - only got chunks {sorted(self._a3_buf.keys())} before the capture ended", "unknown"))
+        if self._aa5_buf:
+            notes.append(DecodedMessage("segment_status_incomplete", False, False, f"SEGMENT_STATUS poll never completed - only got page(s) {sorted(self._aa5_buf.keys())} before the capture ended", "unknown"))
         return notes
+
+    # -- 0xAA aa a5 per-segment status via protocol.parse_segment_pages -----
+
+    def _feed_aa(self, direction: str, payload: bytes) -> DecodedMessage | None:
+        field_id, rest = payload[0], payload[1:]
+        if field_id != 0xA5 or direction != "NOTIFY" or len(rest) < 17:
+            return None
+        page, body = rest[0], rest[1:17]
+        if not any(body):
+            return None  # query echo / no data yet this poll
+        self._aa5_buf[page] = body
+        if self._segment_pages and set(range(1, self._segment_pages + 1)).issubset(self._aa5_buf):
+            buf, self._aa5_buf = self._aa5_buf, {}
+            segments = parse_segment_pages(buf)
+            return DecodedMessage(
+                "segment_status",
+                True,
+                False,
+                f"SEGMENT_STATUS reassembled ({len(buf)} pages via protocol.parse_segment_pages)",
+                fields={"segments": segments},
+            )
+        return None
 
     # -- 0xAC status via protocol.parse_status ------------------------------
 
@@ -670,6 +880,7 @@ CAPABILITY_BY_MESSAGE: dict[str, str] = {
     "zone": "zones",
     "segment_color": "segments",
     "segment_brightness": "segments",
+    "segment_status_query": "segments",
     "scene_activate": "scenes",
     "scene_data": "scenes",
     "scene": "scenes",

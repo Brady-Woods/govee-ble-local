@@ -49,7 +49,7 @@ from bleak import BleakScanner  # noqa: E402
 
 from govee_ble_local import GoveeBleClient, profile as profile_mod  # noqa: E402
 from govee_ble_local.const import ZONE_LOWER, ZONE_UPPER  # noqa: E402
-from govee_ble_local.models import GoveeBleStatus  # noqa: E402
+from govee_ble_local.models import GoveeBleStatus, uniform_rgb  # noqa: E402
 from govee_ble_local.profile import DeviceProfile  # noqa: E402
 
 PASS, FAIL, INCONCLUSIVE, SKIP = "PASS", "FAIL", "INCONCLUSIVE", "SKIP"
@@ -72,7 +72,39 @@ def _confirm(prompt: str) -> bool:
 # --------------------------------------------------------------------------
 
 
+def _status_guard(p: DeviceProfile, name: str) -> Result | None:
+    """Returns a SKIP Result if `name` needs status_scheme='full' read-back
+    and this device doesn't have it - the SET side of the underlying
+    capability may still work fine (segment/rgb checks have their own
+    protocol-aware read-back path instead; this guard is only for checks
+    with no alternate verification, e.g. identity/brightness/scene). Called
+    explicitly rather than folded into CHECKS' guard= lambdas because those
+    gate on *capability* (does this even apply), not *read-back mechanism*
+    (can we verify it) - conflating the two would incorrectly skip a
+    capability that's real and sendable, just not read-back-verifiable here.
+    """
+    if p.protocol.status_scheme != "full":
+        return Result(name, SKIP, f"status readback unsupported (status_scheme={p.protocol.status_scheme!r}) - use --mode interactive")
+    return None
+
+
+async def auto_power(c: GoveeBleClient, p: DeviceProfile) -> Result:
+    """Global on/off (`set_power`) for devices without zones - e.g. H5083,
+    a smart plug whose entire function is this opcode. Zoned devices (H60A6)
+    exercise power via the zones check instead. No status_scheme currently
+    reads global on/off state back (GoveeBleStatus only has zone_upper_on/
+    zone_lower_on), so this always sends the real command but can only
+    report PASS/FAIL for ack receipt, not confirmed device state."""
+    await c.set_power(False)
+    await asyncio.sleep(_SETTLE)
+    await c.set_power(True)
+    await asyncio.sleep(_SETTLE)
+    return Result("power", INCONCLUSIVE, "sent OFF then ON, both acked - no status read-back exists to confirm actual device state (use --mode interactive)")
+
+
 async def auto_identity(c: GoveeBleClient, p: DeviceProfile) -> Result:
+    if (guard := _status_guard(p, "identity")) is not None:
+        return guard
     st = await c.get_status()
     ok = st.ble_mac is not None and st.hardware_version is not None
     return Result("identity", PASS if ok else FAIL, f"mac={st.ble_mac} hw={st.hardware_version}")
@@ -84,6 +116,8 @@ async def auto_serial(c: GoveeBleClient, p: DeviceProfile) -> Result:
 
 
 async def auto_brightness(c: GoveeBleClient, p: DeviceProfile) -> Result:
+    if (guard := _status_guard(p, "brightness")) is not None:
+        return guard
     for target in (30, 80):
         await c.set_brightness_pct(target)
         await asyncio.sleep(_SETTLE)
@@ -116,27 +150,51 @@ async def auto_scene(c: GoveeBleClient, p: DeviceProfile) -> Result:
     else:
         await c.set_scene(scene.scene_id)
     await asyncio.sleep(_SETTLE)
+    # The activate/upload command above is real and sendable regardless of
+    # status_scheme - only the read-back verification below needs
+    # status_scheme='full' (no other scheme confirms scene_id).
+    if p.protocol.status_scheme != "full":
+        return Result("scene", INCONCLUSIVE, f"{scene.name}: sent, but status readback unsupported (status_scheme={p.protocol.status_scheme!r}) - use --mode interactive to confirm")
     st = await c.get_status()
     ok = st.scene_id == scene.scene_id
     return Result("scene", PASS if ok else FAIL, f"{scene.name}: set {scene.scene_id}, read {st.scene_id}")
 
 
-async def _read_rgb(c: GoveeBleClient, retries: int = 5) -> tuple[int, int, int] | None:
-    """Read the solid RGB back via the per-segment data (retry: chunks drop)."""
-    for _ in range(retries):
-        st = await c.get_status(with_segments=True)
-        if st.rgb_color is not None:
-            return st.rgb_color
-        await asyncio.sleep(1.0)
-    return None
+async def _read_segments(c: GoveeBleClient, p: DeviceProfile, retries: int = 5):
+    """Read current per-segment state back, via whichever mechanism this
+    device's status_scheme actually supports. Returns None if status
+    readback isn't available at all (status_scheme='none') or every poll's
+    chunks dropped (retry: both mechanisms are drop-prone over BLE)."""
+    if p.protocol.status_scheme == "full":
+        for _ in range(retries):
+            st = await c.get_status(with_segments=True)
+            if st.segments:
+                return st.segments
+            await asyncio.sleep(1.0)
+        return None
+    if p.protocol.status_scheme == "segment_fields":
+        for _ in range(retries):
+            try:
+                return await c.get_segment_status()
+            except Exception:  # noqa: BLE001 - a dropped poll, retry like the "full" path above
+                await asyncio.sleep(1.0)
+        return None
+    return None  # status_scheme == "none": no readback mechanism exists
+
+
+async def _read_rgb(c: GoveeBleClient, p: DeviceProfile, retries: int = 5) -> tuple[int, int, int] | None:
+    """Read the solid RGB back via whichever per-segment mechanism this
+    device supports (see _read_segments); None if unavailable/dropped."""
+    segments = await _read_segments(c, p, retries)
+    return uniform_rgb(segments)
 
 
 async def auto_rgb(c: GoveeBleClient, p: DeviceProfile) -> Result:
     await c.set_rgb_color(255, 0, 0)
     await asyncio.sleep(_SETTLE)
-    rgb = await _read_rgb(c)
+    rgb = await _read_rgb(c, p)
     if rgb is None:
-        return Result("rgb", INCONCLUSIVE, "segment chunks dropped; couldn't read color back")
+        return Result("rgb", INCONCLUSIVE, "no segment read-back available or chunks dropped; couldn't confirm color")
     return Result("rgb", PASS if rgb == (255, 0, 0) else FAIL, f"set (255,0,0), read {rgb}")
 
 
@@ -146,12 +204,12 @@ async def auto_color_temp(c: GoveeBleClient, p: DeviceProfile) -> Result:
     lo, hi = p.capabilities.color_temp
     await c.set_color_temp_kelvin(lo)
     await asyncio.sleep(_SETTLE)
-    warm = await _read_rgb(c)
+    warm = await _read_rgb(c, p)
     await c.set_color_temp_kelvin(hi)
     await asyncio.sleep(_SETTLE)
-    cool = await _read_rgb(c)
+    cool = await _read_rgb(c, p)
     if warm is None or cool is None:
-        return Result("color_temp", INCONCLUSIVE, "segment chunks dropped; couldn't read tint back")
+        return Result("color_temp", INCONCLUSIVE, "no segment read-back available or chunks dropped; couldn't confirm tint")
     ok = cool[2] > warm[2]  # cooler temperature -> more blue
     return Result("color_temp", PASS if ok else FAIL, f"warm={warm} cool={cool} (expect cool bluer)")
 
@@ -160,20 +218,28 @@ async def auto_segments(c: GoveeBleClient, p: DeviceProfile) -> Result:
     await c.set_segment_color(1 << 0, 255, 0, 0)
     await c.set_segment_brightness(1 << 0, 50)
     await asyncio.sleep(_SETTLE)
-    for _ in range(5):  # segment chunks drop often; retry a few times
-        st = await c.get_status(with_segments=True)
-        if st.segments:
-            seg = st.segments[0]
-            ok = (seg.r, seg.g, seg.b) == (255, 0, 0) and abs(seg.brightness_pct - 50) <= 1
-            return Result("segments", PASS if ok else FAIL,
-                          f"seg0 read bri={seg.brightness_pct} rgb=({seg.r},{seg.g},{seg.b})")
-        await asyncio.sleep(1.0)
-    return Result("segments", INCONCLUSIVE, "segment chunks dropped on all polls (BLE contention)")
+    segments = await _read_segments(c, p)
+    if not segments:
+        return Result("segments", INCONCLUSIVE, "no segment data on any poll (BLE contention, or status_scheme='none')")
+    seg = segments[0]
+    ok = (seg.r, seg.g, seg.b) == (255, 0, 0) and abs(seg.brightness_pct - 50) <= 1
+    return Result("segments", PASS if ok else FAIL,
+                  f"seg0 read bri={seg.brightness_pct} rgb=({seg.r},{seg.g},{seg.b})")
 
 
 # --------------------------------------------------------------------------
 # Interactive checks (human confirms the physical result)
 # --------------------------------------------------------------------------
+
+
+async def ix_power(c: GoveeBleClient, p: DeviceProfile) -> Result:
+    await c.set_power(False)
+    await asyncio.sleep(_SETTLE)
+    off = _confirm("Device is now OFF?")
+    await c.set_power(True)
+    await asyncio.sleep(_SETTLE)
+    on = _confirm("Device is now ON?")
+    return Result("power", PASS if off and on else FAIL, "")
 
 
 async def ix_brightness(c: GoveeBleClient, p: DeviceProfile) -> Result:
@@ -246,6 +312,7 @@ async def ix_scene(c: GoveeBleClient, p: DeviceProfile) -> Result:
 CHECKS = [
     ("identity", lambda p: True, auto_identity, None),
     ("serial", lambda p: True, auto_serial, None),
+    ("power", lambda p: not p.capabilities.zones, auto_power, ix_power),
     ("brightness", lambda p: p.capabilities.brightness, auto_brightness, ix_brightness),
     ("rgb", lambda p: p.capabilities.rgb, auto_rgb, ix_rgb),
     ("color_temp", lambda p: p.capabilities.color_temp is not None, auto_color_temp, ix_color_temp),
@@ -258,13 +325,9 @@ CHECKS = [
 async def power_off(c: GoveeBleClient, p: DeviceProfile) -> None:
     """Turn the device fully off: both zones for zoned devices (verified on
     H60A6 - one of the four states auto_zones already cycles through), the
-    global power opcode otherwise (verified on H6006)."""
+    global power opcode otherwise (verified on H6006/H61A8)."""
     try:
-        if p.capabilities.zones:
-            await c.set_zone(ZONE_UPPER, False)
-            await c.set_zone(ZONE_LOWER, False)
-        else:
-            await c.set_power(False)
+        await profile_mod.set_power(c, p, False)
     except Exception:  # noqa: BLE001 - best-effort
         pass
 
@@ -272,9 +335,7 @@ async def power_off(c: GoveeBleClient, p: DeviceProfile) -> None:
 async def _restore_neutral(c: GoveeBleClient, p: DeviceProfile) -> None:
     """Fallback when the pre-test snapshot is unavailable: leave the device
     on and usable rather than in an unknown state."""
-    if p.capabilities.zones:
-        await c.set_zone(ZONE_UPPER, True)
-        await c.set_zone(ZONE_LOWER, True)
+    await profile_mod.set_power(c, p, True)
     await c.set_brightness_pct(100)
     if p.capabilities.color_temp:
         await c.set_color_temp_kelvin(3500)
@@ -414,7 +475,7 @@ async def resolve_targets(args: argparse.Namespace):
 async def test_one(device, prof: DeviceProfile, args: argparse.Namespace) -> tuple[int, int]:
     """Run the capability suite against one device. Returns (fail, inconclusive)."""
     print(f"\n=== Testing {prof.name} ({prof.sku}) via {device.address} — mode={args.mode} ===\n")
-    client = GoveeBleClient(device)
+    client = GoveeBleClient(device, prof.protocol, prof.capabilities.segments)
     results: list[Result] = []
     initial_status: GoveeBleStatus | None = None
     try:

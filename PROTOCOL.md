@@ -1392,3 +1392,446 @@ dissector. The per-device, heartbeat-collapsed capture (raw + 2-column
 annotated) is committed at
 `src/govee_ble_local/devices/h6006/captures/2026-07-03_manual-test_*.log`
 for anyone who wants to check any of the above against the actual bytes.
+
+## 13. Cross-device confirmation pass: H6047 / H6052 / H6641 / H61A8 (per-segment LED strips/ropes, gradient & DIY effects)
+
+Five more devices were exercised live (H6008, H6052, H61A8, H6641, H6047) to
+confirm the architecture generalizes and to fully document every message
+these devices actually send/receive — not just the subset needed to settle
+the H6006-vs-H60A6 design question. H6008's session data was lost to Android
+btsnoop log rotation before it could be captured (§13.7 covers the fix);
+the other four all produced usable, deeply-analyzed captures. All new
+decodes below are wired into `messages.py`'s `deserialize()`, not just
+documented here.
+
+### 13.1 Confirmed: per-segment status readback, `aa a5` field (4 devices)
+
+Paginated query/response, same shape as this project's own `ac`
+per-segment status (§5.3) but living in the plaintext `aa` field family
+instead:
+
+```
+WRITE   aa a5 <page> <16-byte zero pad>
+NOTIFY  aa a5 <page> [bri,r,g,b] x4
+```
+
+`page` is 1-based; each page returns 4 segment records of
+`[brightness_pct 0-100, r, g, b]`, identical in shape to
+`protocol.parse_segment_records()`. H61A8 (the device explicitly described
+as an LED rope "with per segment control") paginates through page 5,
+confirming **20 addressable segments**; H6047/H6641 paginate fewer pages,
+consistent with fewer physical segments. Real, varied RGB values were
+observed in every slot of every page across repeat queries (a 4th-slot-
+always-zero pattern seen in one single query turned out to be the actual
+live device state at that moment — a later query of the same page showed a
+non-zero value there), so all 4 slots per page are genuinely addressable,
+not 3-of-4 padding.
+
+**Correction (§15.2): H6052 does not actually belong in this section.**
+A later, clean re-capture (after the device-grouping bug fix in §14.2)
+shows H6052 has no `aa a5` traffic, no segment-mask commands, and no `33
+05 15` traffic at all - it's a plain, non-segmented bulb using H6006's
+color layout. Its inclusion here was traced to that same grouping bug
+merging a different device's segment-status traffic into H6052's bucket
+in the original (buggy) extraction this section was written from. Every
+other claim in this section (H6047/H6641/H61A8) was independently
+re-verified after the fix and stands as written.
+
+### 13.2 Confirmed: DIY/gradient effect activation, `33 05 0a` (2 devices)
+
+```
+WRITE  33 05 0a <2-byte value> <13-byte zero pad>
+NOTIFY 33 05 00 ... (bare ack)
+```
+
+Sent immediately after every `a3` scene/effect-data upload completes
+(H6641, H61A8), with the WRITE/upload pair repeating every few seconds
+while a gradient-style effect is active — each repeat carries a **different**
+chunk count, i.e. genuinely new frame data each time, consistent with an
+animated effect rather than a static one. This is a sibling to the existing
+`33 05 04 <code>` (catalog scene activate, §7) for the DIY/gradient path
+specifically — matches the user-facing "gradient mode" feature on these
+segment-capable devices. The 2-byte value's exact meaning (an effect id? a
+frame/checksum reference into the just-uploaded `a3` data?) is not
+confirmed.
+
+### 13.3 Confirmed: `33 09` clock-sync generalizes to this device family, and has a 2nd unexplained sub-format
+
+§12.4 established `33 09` as a likely clock-sync write for H6006. This pass
+confirms it decisively for H61A8: the very first `33 09` frame of the
+connection, `33 09 6a 49 5f bd 01 f9 <pad>`, decodes byte\[0:4] as a
+big-endian Unix timestamp of **`1783193533` = `2026-07-04T19:32:13Z`** —
+matching the real wall-clock moment of capture to the second. `messages.py`
+now returns this as `understood=True` (kind `clock_sync`) whenever the
+4-byte value falls in a plausible epoch range (~2020-2033), rather than the
+old always-unconfirmed "STUB" framing.
+
+A second, structurally different `33 09` variant then repeats periodically
+for the rest of the connection (e.g. `33 09 0c 20 36 06 01 f9 00 04 07 ea 07
+e6 5f 49 6a 00 00`) — same cmd byte, but the naive "first 4 bytes as a
+timestamp" interpretation gives nonsense 1976-era dates for these, so they
+are a **different sub-format**, not more clock-sync writes. Its own leading
+byte (`0x0c`) and an embedded 16-bit value that happens to equal `2026`
+(`0x07EA`) hint at a schedule/alarm/timer payload, but the field layout is
+not deciphered. `messages.py` now reports this variant separately as
+`clock_periodic_unknown` so it's not conflated with the confirmed case.
+
+### 13.4 Real, repeatable, but still unexplained: `33 a3 <0x00|0x01>` toggle
+
+```
+WRITE  33 a3 <0x00|0x01> <16-byte zero pad>
+NOTIFY 33 a3 00 ... (bare ack)
+```
+
+Confirmed across 2 devices (H6641, H61A8) as a genuine toggle — the value
+byte alternates and the frame is well-formed and acked — but what it
+enables/disables is not confirmed. On H61A8 the single observed toggle
+(`-> ON`) was immediately preceded by a short run of `33 05 15` RGB writes
+with an incrementing extra byte (`0x20`, then `0x40` — plausibly a hue/
+gradient-position sweep) and immediately followed by two rapid `33 05 04`
+scene-code activations (`code=0` then `code=1`). That sequence is
+consistent with — but does not prove — this being the "gradient mode
+on/off" UI switch the user description called out; treat it as a
+hypothesis, not a confirmed field.
+
+### 13.5 Confirmed: encryption, color scheme, and power style are independent axes
+
+Cross-referencing all 6 devices tested to date (H60A6, H6006, H6047, H6052,
+H6641, H61A8) shows these three protocol properties vary independently
+rather than travelling together as one "family":
+
+| | encryption | color scheme (`33 05`) | status scheme | power |
+|---|---|---|---|---|
+| H60A6 | AES-ECB+RC4, PSK handshake | `33 05 15` | `ac` full chunked | per-zone |
+| H6006 | none, no handshake | `33 05 0d` | `aa` field-based | global |
+| H6047/H6641/H61A8 | plaintext data (see below) | `33 05 15` (H60A6-style) | `aa` field-based | global |
+| H6052 *(corrected - §15.2)* | none, no handshake | `33 05 0d` (H6006-style) | `aa` field-based | global |
+
+H6047 and H61A8 both send a real, successful `e7`/PSK/AES-RC4 handshake at
+connect, but then every subsequent frame — status **and** control — is
+plaintext, bypassing the negotiated session key entirely (confirmed by
+computing the wire-byte XOR checksum directly with no decryption step and
+getting a match). H6641 skips the handshake altogether, like H6006. All
+four nonetheless use H60A6's `33 05 15` RGB/color-temp layout, not H6006's
+`33 05 0d` — proving color scheme is not tied to encryption. This is the
+key evidence behind treating `encryption` / `color_scheme` / `status_scheme`
+as separate, orthogonal `Protocol` fields in the still-pending
+re-architecture plan, rather than one bundled "device family" enum.
+
+### 13.6 Still unresolved (raw bytes documented, not decoded)
+
+Surface-level only — not enough repeat samples or corroborating context to
+confirm a meaning, so left as `UNKNOWN`/`unconfirmed` in the decoder rather
+than guessed at:
+
+- `aa` field `0x36` — `00...00` on query, `01 01 00...` on response.
+- `aa` field `0x23` — response `ff 00 00 00 80 00 00 00 80 00 00 00 80 00
+  00 00 80`: a repeating `00 00 00 80` group appears 4 times after a
+  leading `ff`, suggestive of a 4-way (per-zone/per-group?) bitmask, but
+  unconfirmed.
+- `aa` field `0x12` — response `ff 64 00 00 80 0f 00...`; byte\[1]=`0x64`
+  (100 decimal) looks brightness-percent-shaped, unconfirmed.
+- `aa` field `0x11` — response `00 1e 0f 00...`; `0x1e` = 30 decimal,
+  possibly related to the calibration ±30° range noted elsewhere in this
+  doc, unconfirmed.
+- `aa` field `0x05` — response `0d ff ff ff 0b b8 00...`: `ff ff ff` (white)
+  followed by `0b b8` = 3000 decimal reads very plausibly as a color-temp
+  status readback (3000K), but only one sample was captured.
+- `aa` field `0x04` — response `5a 00 00...` (`0x5a` = 90 decimal), single
+  sample, no working hypothesis.
+- `aa` fields `0xa3`, `0xa6`, `0xac` — always all-zero in every sample
+  captured (both query and response); likely reserved/not-applicable-to-
+  this-device fields the app queries as part of a fixed enumeration rather
+  than anything meaningful for these SKUs. `0xa6`'s single non-zero
+  response (`01`) did not correlate in time with the `33 a3` toggle of
+  §13.4, so that hoped-for link is not confirmed.
+- `ee 20 5a <18-byte zero pad>` — same unexplained NOTIFY-only stub family
+  as §12.6, one more data point, still no hypothesis.
+
+### 13.7 Tooling fixes made during this pass
+
+- **Android btsnoop log rotation**: only 2 generations are kept
+  (`btsnoop_hci.log` + `.log.last`), rotated on every Bluetooth radio
+  restart. Repeatedly toggling airplane mode (needed to get online for
+  scene-catalog downloads mid-test) restarts the BT radio and rotated
+  session data out of the retention window before it could be pulled —
+  this is why H6008 has no usable capture. Fixed at the source by removing
+  `bluetooth` from the airplane-mode-affected radio list:
+  `adb shell settings put global airplane_mode_radios cell,uwb,wifi,wimax`
+  — confirmed effective on the H61A8 re-test (`.log.last` was unchanged
+  across the whole session afterward).
+- **Device name resolution across rotating BLE addresses**: several of
+  these devices connect under a different (rotating/private) address than
+  the one their advertisement was seen under, defeating address-keyed
+  grouping. Fixed by extracting the device name directly from the GATT
+  "Read By Type Response" for the standard Device Name characteristic
+  (`extract_embedded_name()` in `tools/decode_btsnoop.py`) and grouping
+  captured events by resolved name first, address second
+  (`tools/extract_govee_session.py`'s `_group_by_device()`).
+
+## 14. "Finger Sketch" (per-segment DIY paint effect) — in-progress investigation
+
+A live test on H61A8 exercised the app's "Finger Sketch" feature: a
+per-segment paint tool exposing many addressable points along the rope,
+6 named animation patterns (Clockwise, Counterclockwise, Cycle, Gradient,
+Twinkle, Breath), and a speed setting. This confirms §6.1's existing note
+that Finger Sketch is a DIY/custom effect: it uses the exact same
+upload-then-activate mechanism as any other custom effect (`a3`
+chunked upload, immediately followed by `33 05 0a <value>`), just with a
+different, much smaller and structurally distinct payload than a catalog
+scene. The device itself was also seen going through ordinary `33 01`
+power cycling and normal `33 05 15` RGB writes during setup, all already
+covered elsewhere in this doc — nothing new there.
+
+**Confirmed:**
+- Every UI edit (adding/moving a color) re-uploads the *entire* current
+  sketch state as a small `a3` payload and re-sends `33 05 0a`
+  immediately after — the payload is not a diff/delta.
+- The payload grows in exact 17-byte increments (one more `a3` chunk) as
+  each additional color is added to the sketch: observed sizes 32 -> 49 ->
+  66 -> 83 bytes as the user progressively painted more of the 8 colors.
+- Once the sketch settles, most (not all — see below) per-color entries
+  take a clean **6-byte record**: `[running_index, marker_byte, 0x02,
+  R, G, B]`. Decoded records from the real capture matched named colors
+  exactly, e.g. `03 02 00 00 ff`=BLUE, `04 88 02 00 ff ff`=CYAN, `05 89 02
+  8b 00 ff`=PURPLE (`(139,0,255)`, the same value this project already
+  uses for Govee's "Purple" elsewhere), `06 8a 02 ff ff ff`=WHITE.
+- A byte early in the payload (`effect_data[1]`) moves independently
+  across a small integer range (`0x02, 0x09, 0x0A, 0x0F, 0x13, 0x14` =
+  2,9,10,15,19,20) while every color record stays byte-for-byte identical
+  in the surrounding writes — strong, clean evidence this is the **speed**
+  control, isolated from color data.
+
+**Not yet solved (flagging honestly rather than guessing further):**
+- The `marker_byte` in each 6-byte record (`0x84`-`0x8B` were observed)
+  does **not** land in the `0-19` segment index space this project's own
+  `aa a5` per-segment readback already uses (§13.1) for this same device.
+  Finger Sketch appears to address segments through its own internal
+  scheme, not the one the regular per-segment status query uses — which
+  index space it actually is (a palette slot? a different point
+  resolution than the physical 20 segments?) is unconfirmed.
+  Correspondingly, the "colors at the beginning and end of the rope, all
+  others off" placement the tester described could not be independently
+  verified from the marker bytes alone.
+- The record layout is not always exactly 6 bytes: the very last upload of
+  this session (capturing an actively-being-edited color, right as the
+  capture was cut off) showed one record with an extra byte inserted
+  before its marker byte (7 bytes instead of 6), shifting every record
+  after it. This looks like a transient "currently being dragged" encoding
+  distinct from the settled form, but that's a hypothesis, not a
+  confirmed finding.
+- No byte was conclusively isolated as the 6-way pattern-type selector
+  (Clockwise/Counterclockwise/Cycle/Gradient/Twinkle/Breath); nothing in
+  this capture showed a byte cycling cleanly through 6 small values the
+  way the speed byte did through many.
+- One very short (7-byte) non-Govee-shaped `WRITE a5 02 83 ff 14 fe 3b`
+  appeared once, right as Finger Sketch mode was entered. Too short to be
+  a normal 20-byte Govee frame; likely unrelated BLE/GATT housekeeping
+  rather than a real opcode, but not confirmed either way.
+
+**Recommended follow-up** (the tester already planned to test Finger
+Sketch on H60A6 next): repeat with a much simpler sketch — one color at a
+time with a pause after each addition, and each of the 6 animation
+patterns triggered individually with color data held constant — to
+cleanly isolate the pattern-selector byte and pin down the marker-byte
+indexing scheme before wiring a decoder for this payload into
+`messages.py`. Deliberately not wiring one yet: the record-boundary
+ambiguity above means a decoder written now would likely mis-parse the
+in-progress-edit case.
+
+### 14.1 Follow-up on real H60A6: same activation mechanism confirmed, payload itself still opaque (genuinely encrypted this time)
+
+The H60A6 Finger Sketch test happened as planned. Two findings:
+
+- **Activation mechanism generalizes exactly as documented above**:
+  `33 05 0A <2-byte value>` repeats every few seconds while Finger Sketch
+  is active, same as H61A8/H6641. One difference worth noting: H60A6's
+  value stayed **constant** (`20 03`) across the whole session, whereas
+  H61A8's varied between repeats (`84 03` vs `20 03` in different
+  sessions) - consistent with the value being effect/session-scoped
+  rather than something that changes with every edit.
+- **The actual per-point color/pattern/speed data could not be read this
+  time** - and for a legitimate reason, not a gap in effort: unlike
+  H61A8/H6641/H6047 (which send Finger Sketch data in plaintext despite
+  completing a real handshake - §13.5's "vestigial handshake" pattern),
+  H60A6 is genuinely, fully encrypted end-to-end (confirmed via its real
+  zone-based `33 30` power command, chunked `ac`-style full status
+  readback, and `ab` metadata queries all matching §1-§11 exactly - see
+  §14.2). The Finger Sketch upload itself rides on a distinct write
+  pattern (a ~32-38 byte blob immediately followed by a separate 4-byte
+  write, both to the *same* ATT handle as every other Govee command,
+  right before each `33 05 0A` reactivation) that does **not** decrypt
+  with this project's known `encrypt_packet`/`decrypt_packet` scheme
+  (AES-ECB the first 16 bytes + RC4 the last 4, fixed to a 20-byte frame)
+  using the session key derived from this same connection's handshake -
+  tried against both the session key and the raw PSK, blocked 16 bytes
+  at a time, with no resulting structure. Likely a distinct bulk-transfer
+  sub-format (larger single writes made possible by the MTU negotiated at
+  connect, rather than manual `0xA3` chunking) with its own encryption
+  framing not yet reverse-engineered. Flagged honestly as unresolved
+  rather than guessed at.
+
+### 14.2 A tooling bug found and fixed during this investigation (important - affects trust in *any* multi-device capture from this project)
+
+While investigating why the H60A6 bucket initially looked wrong (it showed
+plaintext `aa`-family status/heartbeat traffic and global power - the
+*other* devices' signature, not H60A6's own well-established encrypted/
+zone-based one), traced it to a real bug in `tools/decode_btsnoop.py` and
+`tools/extract_govee_session.py`:
+
+- **Root cause**: `BleSessionMap.addr_for_handle` was queried *after* a
+  full pass over the entire capture file to resolve which address a given
+  BLE connection handle meant. But handle numbers are small integers the
+  controller freely reuses across unrelated connections once a prior one
+  disconnects. Resolving "what does handle 5 mean" using its *final*
+  value (as of EOF) retroactively relabels every earlier event that used
+  handle 5 under whichever *later* device happened to reuse that number.
+  Confirmed happening in practice: an earlier H61A8 test's packets were
+  merged into the newer H60A6 session's device bucket this way, because
+  both happened to reuse the same handle number at different times in the
+  same capture file.
+- **Fix**: `iter_att_events` now resolves each event's address *live*, in
+  one single chronological pass (walking Event and ACL records together,
+  exactly as they're ordered in the file), stamping each event with
+  whatever the handle meant *at that moment* - not what it meant by the
+  time the whole file had been read. `BleSessionMap.feed_event` also now
+  clears a handle's mapping on Disconnection Complete, so a stray
+  post-disconnect packet can't inherit a stale address either.
+  `extract_govee_session.py`'s `_group_by_device` was simplified to match
+  (one shared, freshly-fed session map; grouping keyed by the live
+  address, never by raw handle).
+- **A second, related gap fixed at the same time**: Android's btsnoop
+  retention keeps exactly 2 generations (`.log.last` then `.log`,
+  rotating on every Bluetooth radio restart - see §13.7). A single BLE
+  connection can legitimately span that rotation boundary. Analyzing the
+  two files independently (as this project's tooling always had) means
+  the *newer* file alone never sees that connection's "Connection
+  Complete" event, so its address is unresolvable for however much of the
+  connection appears there - which is exactly why half of the H61A8
+  Finger Sketch color-picking data (§14's actual finding) initially
+  looked "missing" when re-checked against `.log` alone. Fixed by
+  extending `iter_hci_records`/`iter_att_events` to accept multiple paths
+  and treat them as one chronological stream, and `extract_govee_session.py`'s
+  CLI now takes multiple positional paths (`nargs="+"`) - pass both
+  generations, oldest first, whenever both are available.
+- **Verified the fix doesn't retroactively invalidate §14's actual
+  findings**: re-ran the corrected tool against the original H61A8
+  capture with both btsnoop generations passed together (rather than
+  separately, as originally analyzed) and confirmed the exact same 6-byte
+  color records (including the BLUE/CYAN/PURPLE/WHITE values quoted in
+  §14) reassemble identically - they were correctly attributed to H61A8
+  all along, just split across the file-rotation boundary. Nothing in
+  §14 needed correction. The bug was real and worth fixing, but this
+  specific finding survived it.
+
+## 15. Two more devices confirmed: H6008 (fourth protocol combo) and H5083 (first smart plug)
+
+A fresh multi-device pull (H6008 and H6052 retested close together, then
+H5083 - a smart plug - after a considerable gap) surfaced one genuinely new
+device family and filled in H6008's previously-empty capture (§13.7 - its
+data had been lost to log rotation before that fix).
+
+### 15.1 H6008: plaintext data, H6006 color scheme, but *with* a handshake - a fourth distinct combo
+
+H6008 finally has a real, complete session. Confirmed:
+
+- Performs the real `e7`/PSK/AES-RC4 handshake at every connect (like
+  H61A8/H6047), but every frame afterward - status and control alike - is
+  provably plaintext (checksum-verified directly on the wire bytes, no
+  decryption needed). Another "vestigial handshake" device.
+- Uses H6006's `33 05 0D` RGB/color-temp layout (not H60A6's `33 05 15`) -
+  confirmed byte-exact: real captures show `33 05 0d ff 00 00 ...` for
+  solid red, and the same tint/kelvin/tint structure for color-temp (2700K,
+  3000K, 3100K, 3600K, 6000K, 6500K all exercised live).
+- Global (not zone) power (`33 01 <0|1>`), standard brightness (`33 04
+  <pct>`), and a full scene-upload-then-activate cycle (`0xA3` chunked
+  burst + `33 05 04 <code>`) - all real, all ACKed.
+
+This is `(encryption="handshake_only", color_scheme="h6006", ...)` - a
+combination this library's `messages.KNOWN_PROTOCOL_COMBOS` does not yet
+have an entry for (the only `"h6006"` combo registered pairs it with
+`encryption="none"`, from H6006 itself). Confirms encryption and color
+scheme really are independent axes yet again, this time in a direction not
+previously observed: plaintext-with-real-handshake paired with the
+*legacy* color layout, not just H60A6's. Not yet wired into the library -
+flagging the exact combo needed if/when this device gets a real
+`device.yaml`.
+
+### 15.2 H6052 retested: corrects an earlier mischaracterization, plus one new finding
+
+This retest is what surfaced the correction applied above to §13/§13.5: a
+clean capture (both btsnoop generations fed through correctly) shows H6052
+sending real, ACKed `33 05 0D` (H6006-style) commands for solid RGB,
+brightness, and color temperature - not `33 05 15`. No segment-mask
+commands and no `aa a5` traffic anywhere in the session. No handshake
+frames either (confirmed `encryption: none`, like H6006, not
+`handshake_only`). The earlier claim that this device shared H60A6's
+segment-command layout was wrong - see the correction note in §13.1 for
+why (the device-grouping bug fixed in §14.2).
+
+**New finding: DIY/gradient effect activation (`33 05 0A`) does not
+require the h60a6 color scheme or per-segment addressing.** Later in the
+same session, H6052 uploads scene/effect data (`0xA3` chunked burst) and
+activates it via `33 05 0A 20 03 ...` - the exact same opcode documented
+in §13.2/§14 for H61A8/H6641, both of which use `33 05 15`. H6052 has
+neither segments nor the h60a6 color scheme, yet the same activation
+mechanism works. This means `33 05 0A` is better understood as a general
+effect-activation opcode available wherever `scenes: true` holds, not
+something coupled to the segment/h60a6-color-scheme device family it was
+first observed on.
+
+Also confirmed live: an unusually wide color-temperature range (2000K-
+9000K, vs. the 2700-6500K every other tested device uses).
+
+### 15.3 H5083: first smart plug, and it renumbers two opcodes
+
+A new device model, `ihoment_H5083_A2D1` - Govee's smart plug family. Like
+H6008/H61A8/H6047, it performs the real handshake but sends all subsequent
+data as plaintext (checksum-verified). Two confirmed differences from every
+light/strip device documented so far - this device swaps in different
+opcode numbers for the same two concepts, not new concepts:
+
+- **Power uses `33 01 <0x10|0x11>`, not `<0x00|0x01>`.** Observed as a
+  rapid, repeated toggle (`0x10, 0x11, 0x10, 0x11, ...`, ~1s apart -
+  consistent with a manual on/off test in the app), always ACKed. The low
+  bit still carries on/off (`0x10`=`0b10000`, `0x11`=`0b10001`) with a
+  constant `0x1` tag in the next bit up - plausibly a "this is a
+  relay/switch, not a light dimmer" marker within a shared opcode
+  namespace, though that's a hypothesis, not confirmed. Which literal value
+  means ON vs. OFF could not be independently verified from the capture
+  alone (a plug has no other observable state to cross-check against, e.g.
+  no rendered color) - by the low-bit convention used everywhere else in
+  this protocol, `0x11` (bit set) = ON is the natural reading, but treat
+  that as the working hypothesis, not a confirmed fact, until checked
+  against a physical plug's actual state.
+- **Clock-sync uses `33 B5 <4-byte unix ts> 01 f9 <11x00>`, not `33 09`.**
+  Structurally identical to the `33 09` pattern documented in §4/§12.4/§14
+  (same 2-byte `01 f9` tag, same padding), and the leading 4 bytes decode
+  to real, sequentially-increasing Unix timestamps matching the actual
+  capture time to the second (e.g. `6a 49 90 1a` = `1783205914` =
+  `2026-07-04T22:58:34Z`). Same concept, different opcode number for this
+  device family.
+
+**Newly seen, not yet decoded:**
+- `33 B2 <8 bytes> <9x00>` - sent exactly once, immediately after the
+  handshake completes, real ACK. No repeat in this capture, so no
+  correlation available yet; possibly a one-time session/registration
+  step. Not decoded.
+- `aa B0 00 00 <15x00>` then `aa B0 00 01 <15x00>` - a fixed pair of
+  queries, sent back-to-back every poll cycle, response identical to the
+  query both times in this capture (i.e. always reads back as sent - no
+  observed state change). Doesn't correlate with the power toggle timing.
+  Possibly two independent static capability/config flags (e.g.
+  overload-protection, child-lock) rather than live state; unconfirmed.
+- `ab 02 <field?> <value?> ...` (WRITE) - a metadata *write*, distinct from
+  the already-understood `ab 01 <field_id>` *query*. Sent once; its
+  response was never captured (the poll for metadata field `0x02` that
+  followed didn't complete before the capture ended). Not decoded.
+- `aa 12` field also appears (always all-zero here) - the same
+  still-unconfirmed field number flagged for H61A8 in §13.6, now also seen
+  on this unrelated device family; consistent cross-device but still not
+  understood.
+
+None of this is wired into `messages.py`/the device-profile system yet -
+this section documents what a live H5083 test surfaced, for a future pass
+if/when this device gets real library support.

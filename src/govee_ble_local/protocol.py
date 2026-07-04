@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import math
+from typing import TYPE_CHECKING
 
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
@@ -18,6 +19,12 @@ except ImportError:  # cryptography < 43
     from cryptography.hazmat.primitives.ciphers.algorithms import ARC4
 
 from .models import GoveeBleSegment, GoveeBleStatus
+
+if TYPE_CHECKING:
+    # Only for type hints - .messages imports FROM this module at module
+    # level, so importing it back at module level here would be circular.
+    # cmd_* functions below import it lazily inside the function body instead.
+    from . import messages
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -112,16 +119,16 @@ def cmd_set_brightness(pct: int) -> bytes:
     return messages.build_brightness(pct)
 
 
-def cmd_set_rgb(r: int, g: int, b: int) -> bytes:
+def cmd_set_rgb(r: int, g: int, b: int, color_scheme: messages.ColorScheme = "h60a6") -> bytes:
     from . import messages
 
-    return messages.build_rgb(r, g, b)
+    return messages.build_rgb(r, g, b, color_scheme)
 
 
-def cmd_set_color_temp(kelvin: int) -> bytes:
+def cmd_set_color_temp(kelvin: int, color_scheme: messages.ColorScheme = "h60a6") -> bytes:
     from . import messages
 
-    return messages.build_color_temp(kelvin)
+    return messages.build_color_temp(kelvin, color_scheme)
 
 
 def cmd_set_segment_color(segment_mask: int, r: int, g: int, b: int) -> bytes:
@@ -230,6 +237,14 @@ def parse_metadata_field_text(raw: bytes) -> str | None:
         return None
 
 
+def _decode_segment_group(body: bytes, start_index: int) -> list[GoveeBleSegment]:
+    """Decode consecutive [brightness_pct, r, g, b] 4-byte records from a flat
+    byte string, starting at ``start_index``. Shared by ``parse_segment_records``
+    (H60A6's 0xAC chunks 0x05-0x08) and ``parse_segment_pages`` (H61A8's
+    paginated `aa a5`) - same record shape, different outer framing."""
+    return [GoveeBleSegment(start_index + i, *body[i * 4 : i * 4 + 4]) for i in range(len(body) // 4)]
+
+
 def parse_segment_records(chunks: dict[int, bytes]) -> list[GoveeBleSegment] | None:
     """Extract per-segment (brightness, r, g, b) state from status chunks
     0x05-0x08 (+ the tail of 0xFF).
@@ -264,11 +279,22 @@ def parse_segment_records(chunks: dict[int, bytes]) -> list[GoveeBleSegment] | N
     segments: list[GoveeBleSegment] = []
     pos = header_len
     for _group in range(3):
-        for _ in range(4):
-            brightness, r, g, b = stream[pos : pos + 4]
-            segments.append(GoveeBleSegment(len(segments), brightness, r, g, b))
-            pos += 4
-        pos += marker_len
+        segments.extend(_decode_segment_group(stream[pos : pos + group_size], len(segments)))
+        pos += group_size + marker_len
+    return segments
+
+
+def parse_segment_pages(pages: dict[int, bytes]) -> list[GoveeBleSegment] | None:
+    """Assemble H61A8-style paginated per-segment status (`aa a5 <page>`,
+    1-based page, 16-byte body = 4 records/page) into one flat, 0-indexed
+    list. See PROTOCOL.md §13.1. Returns None if any page's body is too
+    short (treated as "segment data unavailable this poll", not an error).
+    """
+    if not pages or any(len(body) < 16 for body in pages.values()):
+        return None
+    segments: list[GoveeBleSegment] = []
+    for page in sorted(pages):
+        segments.extend(_decode_segment_group(pages[page][:16], len(segments)))
     return segments
 
 

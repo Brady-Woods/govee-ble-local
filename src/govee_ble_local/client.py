@@ -32,25 +32,50 @@ from .const import (
     STATUS_CHUNK_TIMEOUT,
     WRITE_CHAR_UUID,
 )
-from .models import GoveeBleStatus
+from .models import GoveeBleSegment, GoveeBleStatus
 
 _LOGGER = logging.getLogger(__name__)
 
 FRAME_LEN = messages.FRAME_LEN
 
 
-class GoveeBleClient:
-    """Maintains an on-demand encrypted BLE session with the light."""
+class UnsupportedStatusQuery(RuntimeError):
+    """Raised by get_status()/get_segment_status() when the device's
+    status_scheme can't support what was asked - fails fast and clearly
+    instead of attempting a query that can only time out."""
 
-    def __init__(self, ble_device: BLEDevice) -> None:
+
+class GoveeBleClient:
+    """Maintains an on-demand BLE session with the light. Encryption/color
+    layout/status mechanics all vary by device model - see ``messages.Protocol``
+    - but the orchestration here (connect, write, dispatch, disconnect) is
+    shared across all of them."""
+
+    def __init__(
+        self,
+        ble_device: BLEDevice,
+        protocol: messages.Protocol = messages.Protocol(),
+        segment_count: int = 0,
+    ) -> None:
         self._ble_device = ble_device
+        self._protocol = protocol
+        # Only meaningful when protocol.status_scheme == "segment_fields"
+        # (drives aa a5 paging math) - sourced from DeviceProfile.capabilities.
+        # segments by callers that have a profile; 0 otherwise.
+        self._segment_count = segment_count
         self._client: BleakClientWithServiceCache | None = None
         self._session_key: bytes | None = None
         # Key used to decrypt incoming notifications: the PSK during the
         # handshake (when there's no session key yet, and the TX2 ack is still
         # PSK-framed), the session key afterwards. Swapped only once the
         # handshake fully completes, so both handshake replies decrypt with PSK.
+        # Only consulted when protocol.encryption == "aes_rc4_psk".
         self._rx_key: bytes = PSK
+        # Readiness gate, replacing "self._session_key is not None": true once
+        # the connection is usable for commands, however that was reached -
+        # after a real handshake (aes_rc4_psk/handshake_only) or immediately
+        # after start_notify (none, which skips the handshake entirely).
+        self._ready = False
         self._lock = asyncio.Lock()
         self._notify_queue: asyncio.Queue[messages.DecodedMessage] = asyncio.Queue()
         self._disconnect_timer: asyncio.TimerHandle | None = None
@@ -67,12 +92,17 @@ class GoveeBleClient:
     # -- connection lifecycle ------------------------------------------------
 
     def _dispatch(self, raw: bytes) -> None:
-        """Handle one incoming notification: decrypt, decode, and either queue
-        it (understood) or log-and-drop it (stub / unknown / redacted)."""
+        """Handle one incoming notification: decrypt (if this device
+        encrypts), decode, and either queue it (understood) or log-and-drop
+        it (stub / unknown / redacted)."""
         if len(raw) != FRAME_LEN:
             _LOGGER.debug("Ignoring %d-byte notification from %s", len(raw), self._ble_device.address)
             return
-        plaintext = p.decrypt_packet(self._rx_key, raw)
+        # "handshake_only" devices go through the real handshake (so
+        # self._rx_key does get swapped to a session key, same as
+        # "aes_rc4_psk") but never actually encrypt subsequent frames - see
+        # messages.Encryption's docstring. Only "aes_rc4_psk" decrypts here.
+        plaintext = p.decrypt_packet(self._rx_key, raw) if self._protocol.encryption == "aes_rc4_psk" else raw
         msg = messages.dispatch_incoming(plaintext, "NOTIFY")
         if msg.understood:
             self._notify_queue.put_nowait(msg)
@@ -94,7 +124,18 @@ class GoveeBleClient:
                 max_attempts=CONNECT_MAX_ATTEMPTS,
             )
             await self._client.start_notify(NOTIFY_CHAR_UUID, self._on_notify)
-            await self._handshake()
+            if self._protocol.encryption == "none":
+                # Confirmed zero handshake frames in every capture of this
+                # protocol family (e.g. H6006) - nothing to do before the
+                # connection is usable.
+                self._ready = True
+            else:
+                # Both "aes_rc4_psk" and "handshake_only" perform the real
+                # e7/PSK/AES-RC4 exchange - see messages.Encryption's
+                # docstring for why "handshake_only" still does this even
+                # though it won't use the resulting key for framing.
+                await self._handshake()
+                self._ready = True
         except BleakError as err:
             # Connection failures are expected/transient (contention, range);
             # log briefly without a full traceback and let the caller decide.
@@ -104,6 +145,7 @@ class GoveeBleClient:
 
     def _on_disconnect(self, _client: BleakClientWithServiceCache) -> None:
         _LOGGER.debug("Govee %s disconnected", self._ble_device.address)
+        self._ready = False
         self._session_key = None
         self._rx_key = PSK
 
@@ -166,10 +208,14 @@ class GoveeBleClient:
     # -- commands ------------------------------------------------------------
 
     async def _write(self, prefix: bytes) -> None:
-        """Frame, encrypt (session key), and write one command prefix."""
-        assert self._client is not None and self._session_key is not None
-        ciphertext = p.encrypt_packet(self._session_key, p.build_plaintext(prefix))
-        await self._client.write_gatt_char(WRITE_CHAR_UUID, ciphertext, response=False)
+        """Frame (and encrypt with the session key, if this device actually
+        uses encryption for framing) one command prefix, then write it."""
+        assert self._client is not None and self._ready
+        frame = p.build_plaintext(prefix)
+        if self._protocol.encryption == "aes_rc4_psk":
+            assert self._session_key is not None
+            frame = p.encrypt_packet(self._session_key, frame)
+        await self._client.write_gatt_char(WRITE_CHAR_UUID, frame, response=False)
 
     async def send_command(self, prefix: bytes) -> bytes | None:
         """Connect if needed, send one command, return the decrypted ack (or None).
@@ -207,8 +253,10 @@ class GoveeBleClient:
         """Global on/off (`33 01`). Confirmed on the plaintext-protocol
         generation (H6006); devices with zones (H60A6) use those for on/off
         instead - see set_zone - but this opcode is still sendable there too
-        (untested whether the device honors it independent of zone state)."""
-        await self.send_command(messages.build_power(on))
+        (untested whether the device honors it independent of zone state).
+        Encodes on/off per this device's power_scheme (binary 0/1, or
+        plug_relay 0x10/0x11 for H5083 - see messages.PowerScheme)."""
+        await self.send_command(messages.build_power(on, self._protocol.power_scheme))
 
     async def set_zone(self, zone: int, on: bool) -> None:
         await self.send_command(messages.build_zone(zone, on))
@@ -217,10 +265,10 @@ class GoveeBleClient:
         await self.send_command(messages.build_brightness(pct))
 
     async def set_rgb_color(self, r: int, g: int, b: int) -> None:
-        await self.send_command(messages.build_rgb(r, g, b))
+        await self.send_command(messages.build_rgb(r, g, b, self._protocol.color_scheme))
 
     async def set_color_temp_kelvin(self, kelvin: int) -> None:
-        await self.send_command(messages.build_color_temp(kelvin))
+        await self.send_command(messages.build_color_temp(kelvin, self._protocol.color_scheme))
 
     async def set_segment_color(self, segment_mask: int, r: int, g: int, b: int) -> None:
         await self.send_command(messages.build_segment_color(segment_mask, r, g, b))
@@ -272,7 +320,7 @@ class GoveeBleClient:
         """Trigger a status query and reassemble the chunked response into a
         GoveeBleStatus (via messages.ChunkReassembler -> protocol.parse_status).
         Returns None if the response never completed within the timeout."""
-        assert self._client is not None and self._session_key is not None
+        assert self._client is not None and self._ready
         await self._drain_notify_queue()
         reasm = messages.ChunkReassembler(self._ble_device.address)
         trigger = messages.build_status_query(full=full)
@@ -294,10 +342,21 @@ class GoveeBleClient:
     async def get_status(self, with_segments: bool = False) -> GoveeBleStatus:
         """Query current device status (zones, brightness, scene, versions, MACs).
 
+        Only supported when ``protocol.status_scheme == "full"`` (the `0xAC`
+        chunked scheme) - raises ``UnsupportedStatusQuery`` immediately
+        otherwise, rather than attempting a query that can only time out.
+        Devices with ``status_scheme == "segment_fields"`` (e.g. H61A8) use
+        ``get_segment_status()`` instead.
+
         with_segments=True uses the fuller query that also returns per-segment
         state — a longer, drop-prone burst, so ``status.segments`` may still be
         None on a given poll even when requested.
         """
+        if self._protocol.status_scheme != "full":
+            raise UnsupportedStatusQuery(
+                f"get_status() needs status_scheme='full'; this device is "
+                f"{self._protocol.status_scheme!r} - use get_segment_status() if applicable"
+            )
         async with self._lock:
             await self._connect()
             self._cancel_disconnect_timer()
@@ -320,11 +379,67 @@ class GoveeBleClient:
             _LOGGER.debug("Status from %s: %s", self._ble_device.address, status)
             return status
 
+    async def _read_segment_status(self) -> list[GoveeBleSegment] | None:
+        """Page through `aa a5` (1..n) and reassemble via
+        messages.ChunkReassembler -> protocol.parse_segment_pages. Returns
+        None if any page's response never arrived within the timeout."""
+        assert self._client is not None and self._ready
+        await self._drain_notify_queue()
+        n_pages = messages.segment_status_page_count(self._segment_count)
+        reasm = messages.ChunkReassembler(self._ble_device.address, segment_pages=n_pages)
+        for page in range(1, n_pages + 1):
+            await self._write(messages.build_segment_status_query(page))
+            try:
+                msg = await asyncio.wait_for(self._notify_queue.get(), timeout=STATUS_CHUNK_TIMEOUT)
+            except asyncio.TimeoutError:
+                _LOGGER.debug("Segment status page %d from %s did not arrive in time", page, self._ble_device.address)
+                return None
+            result = reasm.feed("NOTIFY", msg.raw)
+            if result is not None and "segments" in result.fields:
+                segments = result.fields["segments"]
+                assert segments is None or isinstance(segments, list)
+                return segments
+        return None
+
+    async def get_segment_status(self) -> list[GoveeBleSegment]:
+        """Query current per-segment (brightness, r, g, b) state.
+
+        Only supported when ``protocol.status_scheme == "segment_fields"``
+        (H61A8's paginated `aa a5` readback) - raises
+        ``UnsupportedStatusQuery`` immediately otherwise. Devices with
+        ``status_scheme == "full"`` (H60A6) get segment state via
+        ``get_status(with_segments=True).segments`` instead.
+        """
+        if self._protocol.status_scheme != "segment_fields":
+            raise UnsupportedStatusQuery(
+                f"get_segment_status() needs status_scheme='segment_fields'; this device is {self._protocol.status_scheme!r}"
+            )
+        if self._segment_count <= 0:
+            raise UnsupportedStatusQuery("segment_count must be > 0 (pass it from DeviceProfile.capabilities.segments)")
+        async with self._lock:
+            await self._connect()
+            self._cancel_disconnect_timer()
+
+            segments = await self._read_segment_status()
+            if segments is None:
+                _LOGGER.debug("Empty segment status from %s, retrying once", self._ble_device.address)
+                await asyncio.sleep(0.5)
+                await self._connect()
+                segments = await self._read_segment_status()
+
+            self._schedule_disconnect()
+
+            if segments is None:
+                raise BleakError(f"No segment status response from {self._ble_device.address}")
+
+            _LOGGER.debug("Segment status from %s: %s", self._ble_device.address, segments)
+            return segments
+
     async def _read_metadata_field(self, field_id: int) -> str | None:
         """Query a device metadata field (`ab` opcode) and return its
         reassembled ASCII value (via messages.ChunkReassembler ->
         protocol.parse_metadata_field_text), or None if unavailable."""
-        assert self._client is not None and self._session_key is not None
+        assert self._client is not None and self._ready
         await self._drain_notify_queue()
         reasm = messages.ChunkReassembler(self._ble_device.address)
         trigger = messages.build_metadata_query(field_id)
