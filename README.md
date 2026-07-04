@@ -22,7 +22,9 @@ pip install govee-ble-local        # once published
 pip install -e .
 ```
 
-Requires Python 3.11+. Depends on `bleak`, `bleak-retry-connector`, and `cryptography`.
+Requires Python 3.11+. Depends on `bleak`, `bleak-retry-connector`,
+`cryptography`, and `PyYAML` (the last is only used by the device-profile layer
+and is imported lazily, so the pure `protocol` module needs neither it nor `bleak`).
 
 ## Quick start
 
@@ -55,7 +57,11 @@ asyncio.run(main())
   `set_color_temp_kelvin`, `set_segment_color`, `set_segment_brightness`,
   `set_scene`, `set_scene_full`, `get_status`, `get_serial_number`,
   `update_ble_device`, `disconnect`.
+  `get_status(with_segments=True)` additionally reads per-segment state (a
+  longer, drop-prone query, so `status.segments` may still be `None`).
 - **`GoveeBleStatus`** / **`GoveeBleSegment`** — parsed state dataclasses.
+  `GoveeBleStatus.rgb_color` derives the current solid color from the segment
+  data (requires `with_segments=True`; `None` for multi-color/scene states).
 - **`govee_ble_local.protocol`** — the pure, Bluetooth-free protocol functions
   (crypto, framing, `cmd_*` command builders, `parse_status`,
   `build_scene_chunks`, `kelvin_to_rgb`, …). Importable and testable without
@@ -64,9 +70,7 @@ asyncio.run(main())
 ## Protocol
 
 The wire protocol — opcodes, the encryption scheme, status chunk layout, and
-the reverse-engineering history — is documented in the Home Assistant
-integration repo's
-[`PROTOCOL.md`](https://github.com/Brady-Woods/hass-govee-ble-local/blob/master/custom_components/govee_h60a6/PROTOCOL.md).
+the reverse-engineering history — is documented in [`PROTOCOL.md`](PROTOCOL.md).
 
 ## License
 

@@ -3,11 +3,12 @@
 
 Exercises everything the device's profile says it supports, in one of two modes:
 
-  --mode auto         Send commands and verify via status read-back where the
-                      protocol supports it (zones, brightness, scene, segments,
-                      identity). Capabilities with no read-back (RGB, color
-                      temp) are smoke-tested (sent without error) and reported
-                      INCONCLUSIVE. No human needed.
+  --mode auto         Send commands and verify via status read-back. Zones,
+                      brightness, scene, segments, and identity read back
+                      directly; RGB and color temp are verified through the
+                      per-segment color data (with_segments read-back), falling
+                      back to INCONCLUSIVE only when those chunks drop on a poll.
+                      No human needed.
 
   --mode interactive  Drive each capability and ask a human to confirm what
                       they see on the physical device.

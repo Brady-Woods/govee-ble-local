@@ -22,6 +22,5 @@ protocol was reverse-engineered against.
 ## Full protocol reference
 
 The complete reverse-engineered protocol (encryption, framing, opcodes, status
-chunk layout, and the investigation history) is documented in the Home
-Assistant integration repo's
-[`PROTOCOL.md`](https://github.com/Brady-Woods/hass-govee-ble-local/blob/master/custom_components/govee_h60a6/PROTOCOL.md).
+chunk layout, and the investigation history) is documented in this library's
+[`PROTOCOL.md`](https://github.com/Brady-Woods/govee-ble-local/blob/master/PROTOCOL.md).
