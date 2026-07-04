@@ -25,7 +25,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-test = ["pytest", "pytest-asyncio"]
+test = ["pytest", "pytest-asyncio", "pytest-cov"]
 typing = ["mypy", "types-PyYAML"]
 
 [project.urls]
@@ -39,6 +39,16 @@ strict = true
 [[tool.mypy.overrides]]
 module = ["bleak_retry_connector"]
 ignore_missing_imports = true
+
+[tool.coverage.run]
+source = ["govee_ble_local"]
+# client.py is the thin bleak I/O wrapper, exercised by the real-device suite
+# in tools/ (device_test.py), not by unit tests - so exclude it from the
+# unit-coverage gate rather than pretend it's unit-covered.
+omit = ["*/client.py"]
+
+[tool.coverage.report]
+show_missing = true
 
 [tool.setuptools.packages.find]
 where = ["src"]

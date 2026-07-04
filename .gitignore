@@ -5,6 +5,10 @@ build/
 dist/
 .pytest_cache/
 .mypy_cache/
+.coverage
+.coverage.*
+htmlcov/
 .venv/
+.venv-check/
 venv/
 .DS_Store
