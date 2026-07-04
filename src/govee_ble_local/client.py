@@ -203,6 +203,13 @@ class GoveeBleClient:
             self._schedule_disconnect()
             return ack
 
+    async def set_power(self, on: bool) -> None:
+        """Global on/off (`33 01`). Confirmed on the plaintext-protocol
+        generation (H6006); devices with zones (H60A6) use those for on/off
+        instead - see set_zone - but this opcode is still sendable there too
+        (untested whether the device honors it independent of zone state)."""
+        await self.send_command(messages.build_power(on))
+
     async def set_zone(self, zone: int, on: bool) -> None:
         await self.send_command(messages.build_zone(zone, on))
 

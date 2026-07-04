@@ -22,11 +22,18 @@ RSSI, manufacturer data) and matches it to a device profile. Selection:
                          model in range (a full sweep of every distinct model),
                          unless narrowed with --pick/--sku.
 
+When testing finishes (any mode), each device is either restored to how it
+was found (``--after restore``, the default - captured before any commands
+are sent) or turned off (``--after off``). Restoration is best-effort: color
+is only knowable when segments read back a uniform solid, so an active scene
+is restored by re-activating its scene id instead of the solid color path.
+
 Examples:
     python3 tools/device_test.py --scan                     # list candidates, exit
     python3 tools/device_test.py --mode auto                # sweep best-signal per model
     python3 tools/device_test.py --pick 0 --mode auto       # just candidate 0
     python3 tools/device_test.py --sku H60A6 --mode interactive  # prompt to pick
+    python3 tools/device_test.py --mode auto --after off    # turn devices off when done
 """
 from __future__ import annotations
 
@@ -42,6 +49,7 @@ from bleak import BleakScanner  # noqa: E402
 
 from govee_ble_local import GoveeBleClient, profile as profile_mod  # noqa: E402
 from govee_ble_local.const import ZONE_LOWER, ZONE_UPPER  # noqa: E402
+from govee_ble_local.models import GoveeBleStatus  # noqa: E402
 from govee_ble_local.profile import DeviceProfile  # noqa: E402
 
 PASS, FAIL, INCONCLUSIVE, SKIP = "PASS", "FAIL", "INCONCLUSIVE", "SKIP"
@@ -247,15 +255,60 @@ CHECKS = [
 ]
 
 
-async def restore(c: GoveeBleClient, p: DeviceProfile) -> None:
-    """Leave the device in a sane, on, neutral state."""
+async def power_off(c: GoveeBleClient, p: DeviceProfile) -> None:
+    """Turn the device fully off: both zones for zoned devices (verified on
+    H60A6 - one of the four states auto_zones already cycles through), the
+    global power opcode otherwise (verified on H6006)."""
     try:
         if p.capabilities.zones:
-            await c.set_zone(ZONE_UPPER, True)
-            await c.set_zone(ZONE_LOWER, True)
-        await c.set_brightness_pct(100)
-        if p.capabilities.color_temp:
-            await c.set_color_temp_kelvin(3500)
+            await c.set_zone(ZONE_UPPER, False)
+            await c.set_zone(ZONE_LOWER, False)
+        else:
+            await c.set_power(False)
+    except Exception:  # noqa: BLE001 - best-effort
+        pass
+
+
+async def _restore_neutral(c: GoveeBleClient, p: DeviceProfile) -> None:
+    """Fallback when the pre-test snapshot is unavailable: leave the device
+    on and usable rather than in an unknown state."""
+    if p.capabilities.zones:
+        await c.set_zone(ZONE_UPPER, True)
+        await c.set_zone(ZONE_LOWER, True)
+    await c.set_brightness_pct(100)
+    if p.capabilities.color_temp:
+        await c.set_color_temp_kelvin(3500)
+
+
+async def restore_initial(c: GoveeBleClient, p: DeviceProfile, initial: GoveeBleStatus | None) -> None:
+    """Best-effort: put the device back how it was before testing started.
+
+    Restores brightness and color/scene from the pre-test status snapshot,
+    then zones *last*. Order matters: activating a scene or solid color can
+    re-light the fixture as a side effect (confirmed live - restoring a scene
+    while zones were both off turned them back on), so the zone state must be
+    the final command sent or an originally-off device would end up on.
+
+    Color is approximate: a solid color is only knowable when segments read
+    back uniform (``rgb_color``), so a scene that was playing is restored by
+    re-activating its last-known scene id instead (works only if the device
+    still has it cached, which it should since it was already playing it).
+    Falls back to a neutral on/bright/mid-temp state if no snapshot was taken
+    (e.g. the initial status query itself failed).
+    """
+    try:
+        if initial is None:
+            await _restore_neutral(c, p)
+            return
+        if initial.brightness_pct is not None:
+            await c.set_brightness_pct(initial.brightness_pct)
+        if p.capabilities.rgb and initial.rgb_color is not None:
+            await c.set_rgb_color(*initial.rgb_color)
+        elif p.capabilities.scenes and initial.scene_id is not None:
+            await c.set_scene(initial.scene_id)
+        if p.capabilities.zones and initial.zone_upper_on is not None and initial.zone_lower_on is not None:
+            await c.set_zone(ZONE_UPPER, initial.zone_upper_on)
+            await c.set_zone(ZONE_LOWER, initial.zone_lower_on)
     except Exception:  # noqa: BLE001 - best-effort cleanup
         pass
 
@@ -335,7 +388,7 @@ async def resolve_targets(args: argparse.Namespace):
         if not sys.stdin.isatty():
             print("Interactive mode needs a TTY — pass --pick <index> or --sku <model>.")
             return []
-        idx = int(input("Select device index: ").strip())
+        idx = int(input("Select device index (0-based, per the [N] above): ").strip())
         if not 0 <= idx < len(candidates):
             print(f"Invalid index {idx}")
             return []
@@ -363,7 +416,14 @@ async def test_one(device, prof: DeviceProfile, args: argparse.Namespace) -> tup
     print(f"\n=== Testing {prof.name} ({prof.sku}) via {device.address} — mode={args.mode} ===\n")
     client = GoveeBleClient(device)
     results: list[Result] = []
+    initial_status: GoveeBleStatus | None = None
     try:
+        if args.after == "restore":
+            try:
+                initial_status = await client.get_status(with_segments=True)
+            except Exception as err:  # noqa: BLE001 - best-effort; falls back to a neutral restore
+                print(f"   (couldn't read initial state before testing: {err}; will restore to a neutral state instead)")
+
         for name, guard, auto_fn, ix_fn in CHECKS:
             if not guard(prof):
                 results.append(Result(name, SKIP, "not in device capabilities"))
@@ -376,7 +436,11 @@ async def test_one(device, prof: DeviceProfile, args: argparse.Namespace) -> tup
                 res = Result(name, FAIL, f"exception: {err}")
             results.append(res)
             print(f"   {res.status}: {res.detail}" if res.detail else f"   {res.status}")
-        await restore(client, prof)
+
+        if args.after == "off":
+            await power_off(client, prof)
+        else:
+            await restore_initial(client, prof, initial_status)
     finally:
         await client.disconnect()
 
@@ -416,8 +480,13 @@ def main() -> int:
     ap.add_argument("--sku", default=None, help="device SKU (else matched from advertised name)")
     ap.add_argument("--mode", choices=["auto", "interactive"], default="auto")
     ap.add_argument("--scan", action="store_true", help="scan, list candidates, and exit")
-    ap.add_argument("--pick", type=int, default=None, help="select candidate index non-interactively")
-    ap.add_argument("--scan-timeout", type=float, default=10.0, dest="scan_timeout")
+    ap.add_argument("--pick", type=int, default=None, help="select candidate index non-interactively (0-based, per the [N] shown)")
+    ap.add_argument("--scan-timeout", type=float, default=25.0, dest="scan_timeout",
+                     help="seconds to scan for devices - longer gives weak-signal devices more chances to be seen (default: %(default)s)")
+    ap.add_argument("--after", choices=["restore", "off"], default="restore",
+                     help="what to do when testing finishes: 'restore' puts the device back how it was "
+                     "before testing started (best-effort; falls back to a neutral on state if the initial "
+                     "read fails), 'off' turns it off (default: %(default)s)")
     return asyncio.run(run(ap.parse_args()))
 
 
