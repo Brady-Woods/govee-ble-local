@@ -1,9 +1,15 @@
 # Govee H60A6 BLE Protocol Reference
 
 > **Where this lives:** this reference is part of the **govee-ble-local**
-> library, which implements the protocol below (`protocol.py`, `client.py`,
-> `const.py`, `models.py`) and packages the H60A6 device profile under
-> `devices/h60a6/`. "This project" throughout means that library. Scene data is
+> library, which implements the protocol below and packages the H60A6 device
+> profile under `devices/h60a6/`. "This project" throughout means that library.
+> The wire format has a single source of truth — `messages.py`, a bidirectional
+> codec that both **builds** commands and **decodes** frames (with sendability
+> gated: opcodes we've seen but don't understand are decoded on receive but
+> never constructible). `protocol.py` holds the crypto/framing/parser
+> primitives; `client.py` is the BLE session (every incoming frame is pushed
+> through the codec, and anything not understood is logged and dropped);
+> `const.py`/`models.py` hold constants and dataclasses. Scene data is
 > now captured into the device profile (`devices/h60a6/scenes.yaml`) rather than
 > fetched at runtime. References to Home Assistant files (`light.py`,
 > `switch.py`, `entity.py`, `__init__.py`, `coordinator.py`) belong to the
@@ -102,13 +108,12 @@ matters is the scene-upload completion ack (§6) and status queries (§5).
 | `ac 03 03 41 30 a5` | Status query trigger (see §5.3 - supersedes the originally-documented `ac 03 02 41 30`, which only returns a subset of chunks). |
 | `a3 <seq> <17 bytes>` | Scene/effect data chunk (see §6). |
 | `ab 01 <field_id> ...` | Device metadata field query (see §8). |
-| `33 09 6a 47 <2 bytes> 01 f9` | Sent by the app once per connection, immediately after the handshake and before the status/device-info query. Purpose unclear - newly found (2026-07-02, a ~2.5 hour capture spanning multiple connect cycles). `6a 47` was constant across every observed instance; the following 2 bytes varied between connections in a way roughly consistent with elapsed time (differed by ~7 across two connections ~6.7s apart), suggesting a session counter or partial timestamp rather than anything device-specific. Device's ack is a generic `33 09 00...00` echo with no distinguishing content. Not implemented or required by this project - status queries and commands work fine without ever sending this - but worth documenting since it's a real, consistently-observed part of the app's own connection sequence that this project has never replicated. |
+| `33 09 6a 47 <2 bytes> 01 f9` | Sent by the app once per connection, immediately after the handshake and before the status/device-info query. Purpose unclear - newly found (2026-07-02, a ~2.5 hour capture spanning multiple connect cycles). `6a 47` was constant across every observed instance; the following 2 bytes varied between connections in a way roughly consistent with elapsed time (differed by ~7 across two connections ~6.7s apart), suggesting a session counter or partial timestamp rather than anything device-specific. Device's ack is a generic `33 09 00...00` echo with no distinguishing content. Not implemented or required by this project - status queries and commands work fine without ever sending this - but worth documenting since it's a real, consistently-observed part of the app's own connection sequence that this project has never replicated. **Update (§12.4):** a cross-device capture from a different Govee generation (H6006) sent the same command with the same shape, and reading the 4 middle bytes as one big-endian Unix timestamp landed within a minute of an independently-derived timestamp from that device's own `ab` field `0x04` response in the same connection - upgrading this from "session counter or partial timestamp" to very likely a clock write/sync, and explaining why `6a 47` looked constant (it's the slow-changing high half of a 4-byte timestamp, not a fixed tag). |
+| `33 42 01` (enter), `33 42 02 <dir>` (rotate), `33 42 ff` (confirm/apply), `33 42 00` (exit) | **Calibration** (rotation adjustment) - previously confirmed to exist and be BLE-exposed (see below) but never captured. Found 2026-07-04 in a live capture from a second physical H60A6 unit (`D4:13:68:21:D0:75`), as a burst tightly isolated in time from all other traffic: `01` (enter) → several `02 <dir>` → `ff` (confirm) → `00` (exit), sometimes repeated as a second enter/rotate/exit cycle. `dir`: direction confirmed by correlating capture order against a real, deliberate clockwise-then-counter-clockwise user action - the first `02 <dir>` sent was `0x01` (matching the stated first action, clockwise), and the switch to `0x02` matched the stated second action (counter-clockwise). No magnitude byte anywhere in the payload - each `02 <dir>` write is a single fixed-size nudge, sent repeatedly (interleaved `0x01`/`0x02` in this capture) for a larger adjustment, consistent with a tap-to-nudge UI rather than a drag-to-a-value one. Acks are the same generic all-zero `33 42 00...00` pattern as every other `0x33` command - and the WRITE-direction "exit mode" command happens to be byte-identical to that ack pattern, so direction is the only thing that distinguishes a real exit command from a bare acknowledgment here. This capture had only one full `ac` status query, taken *before* the calibration burst, so which status field calibration actually changes is still unconfirmed. **Sendable** in the codec (`messages.build_calibration_enter/rotate/confirm/exit`), though there's no readback to confirm the physical result. |
 
 Confirmed **not** available over BLE (cloud-only, per live testing with
 phone in airplane mode — see §9): Power-off Memory setting, device display
-name. Confirmed available but not yet mapped: calibration (rotation
-adjustment) - a real, BLE-exposed feature the app uses, but the exact
-command was not captured/decoded.
+name.
 
 **`33 05 15 01` is also documented for a different Govee product
 generation (H6072) as a "switch to color mode" trigger** — sent as a
@@ -944,6 +949,13 @@ time-stamped signed token is exactly what that would look like. Not
 something to surface in any UI even if its exact purpose were nailed
 down further.
 
+**Cross-device confirmation (§12.3):** the same field, requested with the
+identical `ab 01 04` format and chunking scheme, was independently found
+to be time-based on the H6006 too - a completely different,
+plaintext-protocol device generation. Its response's first 10 characters
+likewise decode as a Unix timestamp matching the capture's actual date.
+Not an H60A6-specific behavior.
+
 **Firmware version still not found anywhere**, re-confirmed by explicitly
 re-examining every byte of both `ab` field responses actually queried by
 the app (`0x02`, `0x04`, `0x05`) and the full `ac` status response
@@ -1017,9 +1029,13 @@ model, and calibration.
    travels over WiFi, not the BLE characteristic this project uses.
 2. **Firmware version** — not located anywhere in the BLE protocol
    surface explored so far (§8).
-3. **Calibration** — confirmed to exist and be BLE-exposed (app-observable
-   rotation adjustment, ±30° tested), but the actual command was not
-   captured/decoded.
+3. **Calibration** — command captured and decoded 2026-07-04 (§4:
+   `33 42 01`/`33 42 02 <dir>`/`33 42 ff`/`33 42 00`); direction confirmed
+   via a real clockwise-then-counter-clockwise test. Still open: no
+   magnitude/degree field was observed (each rotate write appears to be a
+   fixed-size nudge, not a value), and no before/after status query was
+   captured in the same session, so which status field this actually
+   changes - and whether it's readable back at all - remains unconfirmed.
 4. **Power-off Memory / device name** — confirmed cloud-only, not
    achievable via BLE at all (§9), so not actually "unresolved" so much as
    out of scope for a BLE-only implementation.
@@ -1096,8 +1112,8 @@ SKU:
 - [Beshelmek/govee_ble_lights](https://github.com/Beshelmek/govee_ble_lights) —
   a real, actively-maintained HA custom integration for many Govee BLE
   light SKUs (does not include the H60A6, or any H60-series device;
-  supports mostly strip/bulb models like H6072, H6199, H61A0, etc.). Its
-  source was fetched and read directly (`govee_utils.py`, `light.py`,
+  supports mostly strip/bulb models like H6006, H6072, H6199, H61A0, etc.).
+  Its source was fetched and read directly (`govee_utils.py`, `light.py`,
   `govee_api.py`). Useful as genuine independent corroboration of parts of
   our own command-side reverse engineering:
   - Its generic multi-chunk packet builder (`prepareMultiplePacketsData`)
@@ -1123,6 +1139,14 @@ SKU:
     bear on the zone-state status-parsing mystery in §5.2 at all; its
     `get_device_state` function is the unrelated official Govee cloud
     "Open API," not BLE.
+  - **Independently verified against a real device (§12)**: a live BLE
+    capture from an H6006 (one of the SKUs this project supports) confirms
+    `POWER`/`BRIGHTNESS`/`SCENE ACTIVATE` match this project's source
+    exactly, but also reveals two real capabilities its `light.py` never
+    wires up at all - color temperature and a status/metadata query
+    mechanism (§12.2/§12.3) - plus opcodes (`33 09`, `0xA1`, `0xEE`) it
+    never sends and that no source found in this document had previously
+    explained, for any device.
 - [grantwhitney3/govee-scenes](https://github.com/grantwhitney3/govee-scenes) -
   the repo itself is thin (a config-driven scene-application script, no
   scene decoding or SKU validation of its own), but it depends on a PyPI
@@ -1222,3 +1246,149 @@ per-device wrapping quirks) for replaying pre-existing template data, not
 the *meaning* of the data itself. This isn't a gap specific to how this
 project searched - it appears to be a gap in the entire public
 reverse-engineering corpus for this product family.
+
+## 12. Cross-device confirmation: H6006 (plaintext-protocol generation)
+
+A live capture from a physically different, older Govee device — the
+**H6006** (an ihoment-branded RGBWW bulb, one of the 76 SKUs
+[Beshelmek/govee_ble_lights](https://github.com/Beshelmek/govee_ble_lights)
+supports; see §11) — was taken to check upstream's assumptions against real
+traffic and see how much of this project's own H60A6 findings generalize
+across device generations. Address `98:17:3c:3c:0e:eb`, advertised name
+`ihoment_H6006_0EEB`, captured 2026-07-03 via `adb bugreport` ->
+`btsnoop_hci.log.last`, decoded with this project's own
+`tools/extract_govee_session.py`/`decode_btsnoop.py` (§12.7) — not a
+third-party dissector.
+
+**Structural finding first**: unlike the H60A6, this generation sends every
+command **unencrypted** — no `0xE7` handshake, no AES/RC4 wrapping. The
+20-byte/XOR-checksum plaintext frame shape underneath (§2) is identical,
+though. Encryption is a wrapper this project's H60A6 happens to use, not a
+different base framing — the same frame shape spans both generations.
+
+### 12.1 Confirmed identical to upstream and to this project
+
+`POWER` (`33 01 <0|1>`), `BRIGHTNESS` (`33 04 <pct>`), and `SCENE ACTIVATE`
+(`33 05 04 <id_lo> <id_hi>`) are byte-for-byte identical to both upstream's
+`light.py` and this project's own §4/§7. Also reconfirms §4's existing "ack
+payload is not meaningful" note directly: H6006's ack is always
+`33 <cmd> 00...00` regardless of what was actually sent — a `POWER: ON`
+write's ack carries the identical bytes as a `POWER: OFF` write's ack. Worth
+being explicit about because a decoder that doesn't special-case direction
+will silently misreport the ack as a real value — a mistake this project's
+own capture-decoding tooling made on the first pass and had to fix.
+
+### 12.2 New capability: color temperature (absent from upstream)
+
+`33 05 0D <r> <g> <b> <k_hi> <k_lo> <r> <g> <b> <8 zero-pad>` — used for
+both plain RGB (`kelvin=0`) and color temperature (`kelvin != 0`), a real
+feature upstream's public source does not implement for BLE control at all
+(its `GoveeBluetoothLight` only wires up power/brightness/RGB/scene, never
+color temp).
+
+Confirmed **exact** match against this project's own §4.1 tint table:
+2700K -> `(255,174,84)`, 6500K -> `(255,249,251)` — identical to the two
+H60A6 reference points, not just close. Two unrelated device generations
+producing byte-identical tint values at the same two Kelvin points is
+strong evidence this is a shared, precise Govee-wide table or algorithm,
+not a coincidence of the McCamy approximation happening to fit twice.
+
+### 12.3 New: status/metadata query family (absent from upstream)
+
+- `aa <field_id> ...` — a plaintext-generation sibling of this project's
+  `ac` status query (§5): same conceptual role (heartbeat, version, device
+  info), different opcode number and field layout. Confirmed field ids:
+  `0x01` (heartbeat/online poll, sent every ~2s, response toggles a single
+  byte — exact meaning of that byte unconfirmed), `0x06`/`0x20`/`0x21`
+  (ASCII version-like strings, e.g. `"1.00.59"`/`"1.02.00"` — which is
+  app/firmware/hardware/WiFi-module version is unconfirmed), `0x07`
+  sub-field `0x02` (the device's own MAC address plus 2 trailing bytes,
+  unconfirmed).
+- `ab 01 <field_id>` / chunked response — byte-for-byte the same request
+  format and chunking scheme (`seq 0x00...0xFF`-terminated) as this
+  project's own `ab` implementation (§8), confirmed identical across two
+  completely different device generations, not something H60A6-specific.
+  Field `0x04` was requested and its reassembled 141-character response
+  has the same shape as H60A6's: first 10 characters (`1783141927`) decode
+  as a Unix timestamp of `2026-07-04T05:12:07Z` — this capture's actual
+  UTC moment — independently reproducing §8's H60A6 finding (`0x04` is
+  time-based, not a static cert) on a
+  totally different device, within the same connection as §12.4 below.
+
+### 12.4 New: likely clock-sync command, resolving part of §4's `33 09` mystery
+
+H6006 sends `33 09 6a 48 96 60 01 f9 <10-byte zero pad>` once per
+connection, in the same position in the connection sequence (immediately
+after the handshake-equivalent, before the status/metadata queries) as §4
+documents for the H60A6's `33 09 6a 47 <2 bytes> 01 f9`.
+
+Interpreting all 4 middle bytes as one big-endian `uint32` gives
+`0x6a489660` = `1783141984` — a Unix timestamp landing within a minute of
+the independently-derived timestamp from the `ab` field `0x04` response in
+the *same connection* (`1783141927`, §12.3). Two different mechanisms in
+one connection producing timestamps 57 seconds apart is strong evidence
+`33 09` is genuinely time-related, not a coincidence.
+
+This also resolves §4's original framing of `6a 47` as "constant across
+every observed instance": it isn't a fixed 2-byte tag, it's the
+slow-changing high half of a 4-byte Unix timestamp (a `uint32` timestamp's
+top byte only changes roughly every 194 days, so it reads as "constant"
+across any pair of captures taken close together in time). Upgrades §4's
+original hedge ("suggesting a session counter or partial timestamp") to
+**very likely a clock write/sync** — though whether the device actually
+uses this value for anything, or just acknowledges it, remains unconfirmed.
+
+### 12.5 Deciphered opcode `0xA1` — WiFi provisioning (SSID/password) exchange
+
+Previously-unknown opcode, sent once per connection (WRITE direction only,
+~40s after connect in this capture) as 4 chunks using the identical
+`seq 0x00 (header) ... 0xFF (terminator)` scheme as `a3`/`ab`:
+
+```
+a1 11 00 <item_count> <pad>    (header)
+a1 11 01 <REDACTED>            (data)
+a1 11 02 <REDACTED>            (data)
+a1 11 ff <pad>                 (terminator)
+```
+
+**Confirmed sensitive — content deliberately not reproduced here or
+anywhere else in this repo.** The data chunks carry length-prefixed ASCII
+strings that can span a chunk boundary; reassembling them (concatenating
+everything after the const/seq bytes, then parsing the result as a stream
+of `[length byte][ASCII string]` pairs) cleanly yields exactly the two
+items the header announces — **the device's WiFi SSID and password, in
+plaintext.** This is presumably how the app provisions the bulb's own WiFi
+radio (a separate radio/path from the BLE control this project uses)
+during setup.
+
+Structurally solid (chunking/length-prefix scheme, item count, the `0x11`
+constant tag, a short unexplained trailer after the second string); the
+actual string content must never be captured into a log, test fixture, or
+this document again. `decode_btsnoop.py`'s `REDACT_OPCODES` enforces this
+at the tooling level — opcode `0xA1`'s raw bytes are replaced with a
+placeholder before being written anywhere (raw and annotated output alike),
+so this applies automatically to any future capture too, not just this one.
+
+### 12.6 Still unresolved
+
+- `ee <sub> <value> <18-byte zero pad>` — NOTIFY-direction only, `sub`
+  byte is `0x11` once then `0x20` for every subsequent instance, `value` a
+  single byte that varies (`0x0a`, `0x01`, `0x64`, `0x32`, repeating) — no
+  working hypothesis yet. Nothing in this capture (brightness, an
+  RSSI-like signal, elapsed time) correlates cleanly with `value`.
+- A short unexplained trailer after `0xA1`'s second (redacted) string (§12.5).
+- `aa` field `0x07` sub-field `0x03`, and which of fields `0x06`/`0x20`/
+  `0x21` is firmware vs. hardware vs. WiFi-module version (§12.3) — three
+  different-looking version strings queried, no way from this capture
+  alone to tell which is which.
+
+### 12.7 Tooling
+
+Captured via `adb bugreport` ->
+`FS/data/misc/bluetooth/logs/btsnoop_hci.log.last`, decoded with this
+project's own `tools/extract_govee_session.py` (built on
+`tools/decode_btsnoop.py` — see `tools/README.md`), not a third-party
+dissector. The per-device, heartbeat-collapsed capture (raw + 2-column
+annotated) is committed at
+`src/govee_ble_local/devices/h6006/captures/2026-07-03_manual-test_*.log`
+for anyone who wants to check any of the above against the actual bytes.

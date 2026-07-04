@@ -17,7 +17,6 @@ try:
 except ImportError:  # cryptography < 43
     from cryptography.hazmat.primitives.ciphers.algorithms import ARC4
 
-from .const import MAX_COLOR_TEMP_KELVIN, MIN_COLOR_TEMP_KELVIN
 from .models import GoveeBleSegment, GoveeBleStatus
 
 _LOGGER = logging.getLogger(__name__)
@@ -68,90 +67,85 @@ def format_mac(mac_bytes: bytes) -> str:
 
 # --------------------------------------------------------------------------
 # Command builders (return the pre-framing "prefix"; frame with build_plaintext)
+#
+# These are thin, stable wrappers over the single encode source of truth in
+# ``messages.py`` (the ``build_*`` functions). Byte output is identical - the
+# wrappers exist so the historic ``protocol.cmd_*`` API keeps working. The
+# import is function-local to keep the import graph acyclic (``messages``
+# imports primitives from this module at load time).
 # --------------------------------------------------------------------------
 
 
 def cmd_handshake(step: int) -> bytes:
-    return bytes([0xE7, step])
+    from . import messages
+
+    return messages.build_handshake(step)
 
 
 def cmd_status_query() -> bytes:
-    # Short query -> chunks 0x00-0x04 + 0xFF (the reliable variant).
-    return bytes([0xAC, 0x03, 0x02, 0x41, 0x30])
+    from . import messages
+
+    return messages.build_status_query(full=False)
 
 
 def cmd_status_query_full() -> bytes:
-    # Fuller query -> additionally returns per-segment chunks 0x05-0x08.
-    return bytes([0xAC, 0x03, 0x03, 0x41, 0x30, 0xA5])
+    from . import messages
+
+    return messages.build_status_query(full=True)
 
 
 def cmd_metadata_field(field_id: int) -> bytes:
-    return bytes([0xAB, 0x01, field_id])
+    from . import messages
+
+    return messages.build_metadata_query(field_id)
 
 
 def cmd_set_zone(zone: int, on: bool) -> bytes:
-    return bytes([0x33, 0x30, zone, 1 if on else 0])
+    from . import messages
+
+    return messages.build_zone(zone, on)
 
 
 def cmd_set_brightness(pct: int) -> bytes:
-    pct = max(0, min(100, pct))
-    return bytes([0x33, 0x04, pct])
+    from . import messages
+
+    return messages.build_brightness(pct)
 
 
 def cmd_set_rgb(r: int, g: int, b: int) -> bytes:
-    return bytes([0x33, 0x05, 0x15, 0x01, r, g, b, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0x1F])
+    from . import messages
+
+    return messages.build_rgb(r, g, b)
 
 
 def cmd_set_color_temp(kelvin: int) -> bytes:
-    kelvin = max(MIN_COLOR_TEMP_KELVIN, min(MAX_COLOR_TEMP_KELVIN, kelvin))
-    ar, ag, ab = kelvin_to_rgb(kelvin)
-    return bytes(
-        [
-            0x33, 0x05, 0x15, 0x01,
-            0xFF, 0xFF, 0xFF,
-            (kelvin >> 8) & 0xFF, kelvin & 0xFF,
-            ar, ag, ab,
-            0xFF, 0x1F,
-        ]
-    )
+    from . import messages
+
+    return messages.build_color_temp(kelvin)
 
 
 def cmd_set_segment_color(segment_mask: int, r: int, g: int, b: int) -> bytes:
     """Per-segment RGB. `segment_mask` is a 16-bit little-endian bitmask
     (bits 0-11 confirmed on the H60A6)."""
-    mask_lo = segment_mask & 0xFF
-    mask_hi = (segment_mask >> 8) & 0xFF
-    return bytes(
-        [
-            0x33, 0x05, 0x15, 0x01,
-            r, g, b,
-            0x00, 0x00, 0x00, 0x00, 0x00,
-            mask_lo, mask_hi,
-            0x00, 0x00, 0x00, 0x00, 0x00,
-        ]
-    )
+    from . import messages
+
+    return messages.build_segment_color(segment_mask, r, g, b)
 
 
 def cmd_set_segment_brightness(segment_mask: int, pct: int) -> bytes:
     """Per-segment brightness (0-100). Same bitmask scheme as
     cmd_set_segment_color but sub-opcode 0x02."""
-    pct = max(0, min(100, pct))
-    mask_lo = segment_mask & 0xFF
-    mask_hi = (segment_mask >> 8) & 0xFF
-    return bytes(
-        [
-            0x33, 0x05, 0x15, 0x02,
-            pct,
-            mask_lo, mask_hi,
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        ]
-    )
+    from . import messages
+
+    return messages.build_segment_brightness(segment_mask, pct)
 
 
 def cmd_set_scene(scene_id: tuple[int, int]) -> bytes:
     """Bare scene activation (works only if the device already has the scene
     cached; prefer a full upload via build_scene_chunks otherwise)."""
-    return bytes([0x33, 0x05, 0x04, scene_id[0], scene_id[1]])
+    from . import messages
+
+    return messages.build_scene(scene_id)
 
 
 def kelvin_to_rgb(kelvin: int) -> tuple[int, int, int]:
