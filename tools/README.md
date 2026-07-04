@@ -70,9 +70,17 @@ manufacturer data), matches a profile, and lets you pick one:
 
 ```bash
 python3 tools/device_test.py --scan                    # list candidates
+python3 tools/device_test.py --mode auto               # sweep: best-signal device per supported model
 python3 tools/device_test.py --pick 0 --mode auto      # automated, candidate 0
 python3 tools/device_test.py --sku H60A6 --mode interactive   # prompts to pick
 ```
+
+Selection: **interactive** mode prompts you to pick one device; **auto** mode
+(non-interactive) automatically tests the strongest-signal device from *each*
+supported model in range — a full sweep across every distinct model — unless
+narrowed with `--pick`/`--sku`. Every check drives a real command through the
+codec (`messages.build_*`) and verifies via status read-back (`parse_*`), so a
+run exercises the codec end-to-end against hardware.
 
 - **auto** — sends commands and verifies via status read-back. Identity,
   brightness, zones, scenes, and segments read back directly; RGB and color

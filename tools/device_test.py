@@ -13,13 +13,19 @@ Exercises everything the device's profile says it supports, in one of two modes:
   --mode interactive  Drive each capability and ask a human to confirm what
                       they see on the physical device.
 
-The device is chosen from a live scan (works cross-platform, incl. macOS where
-BLE MACs aren't exposed): the suite scrapes each Govee advertisement (local
-name, RSSI, manufacturer data) and matches it to a device profile.
+Devices come from a live scan (works cross-platform, incl. macOS where BLE
+MACs aren't exposed): the suite scrapes each Govee advertisement (local name,
+RSSI, manufacturer data) and matches it to a device profile. Selection:
+
+  - interactive mode  -> prompts you to pick one device (needs a TTY).
+  - auto mode         -> tests the strongest-signal device from EACH supported
+                         model in range (a full sweep of every distinct model),
+                         unless narrowed with --pick/--sku.
 
 Examples:
     python3 tools/device_test.py --scan                     # list candidates, exit
-    python3 tools/device_test.py --pick 0 --mode auto       # test candidate 0
+    python3 tools/device_test.py --mode auto                # sweep best-signal per model
+    python3 tools/device_test.py --pick 0 --mode auto       # just candidate 0
     python3 tools/device_test.py --sku H60A6 --mode interactive  # prompt to pick
 """
 from __future__ import annotations
@@ -276,47 +282,85 @@ async def scan_candidates(timeout: float):
     return candidates
 
 
-async def resolve_target(args: argparse.Namespace):
-    """Scan, list candidates, and select one (--pick / TTY prompt / lone match)."""
+async def resolve_targets(args: argparse.Namespace):
+    """Scan, list candidates, and select which device(s) to test.
+
+    - ``--pick N`` / ``--sku X``: one specific device.
+    - interactive mode (``--mode interactive``): prompt for one (needs a TTY).
+    - otherwise (non-interactive/auto): the best-signal device from *each*
+      supported model, so a full run covers every distinct Govee model in range.
+
+    Returns a list of (device, profile). Empty means nothing to do.
+    """
     print(f"Scanning {args.scan_timeout:.0f}s for Govee devices...")
-    candidates = await scan_candidates(args.scan_timeout)
+    candidates = await scan_candidates(args.scan_timeout)  # already RSSI-desc sorted
     if not candidates:
         print("No Govee devices advertising nearby.")
-        return None, None
+        return []
     print(f"Found {len(candidates)} candidate(s):")
     for i, (dev, adv, name, prof) in enumerate(candidates):
         print(_describe(i, dev, adv, name, prof))
     if args.scan:
-        return None, None
+        return []
+
+    # Explicit index wins, in any mode.
     if args.pick is not None:
-        idx = args.pick
-    elif sys.stdin.isatty():
-        idx = int(input("Select device index: ").strip())
-    elif len(candidates) == 1:
-        idx = 0
-    else:
-        print("Multiple candidates and no TTY — pass --pick <index>.")
-        return None, None
-    if not 0 <= idx < len(candidates):
-        print(f"Invalid index {idx}")
-        return None, None
-    dev, _adv, name, prof = candidates[idx]
+        if not 0 <= args.pick < len(candidates):
+            print(f"Invalid index {args.pick}")
+            return []
+        dev, _adv, name, prof = candidates[args.pick]
+        prof = profile_mod.load_by_sku(args.sku) if args.sku else prof
+        if prof is None:
+            print(f"No profile matched {name!r}; pass --sku.")
+            return []
+        return [(dev, prof)]
+
+    supported = [(dev, adv, name, prof) for (dev, adv, name, prof) in candidates if prof is not None]
+
+    # A specific SKU: best-signal device advertising that model.
     if args.sku:
         prof = profile_mod.load_by_sku(args.sku)
-    if prof is None:
-        print(f"No profile matched {name!r}; pass --sku.")
-        return None, None
-    return dev, prof
+        if prof is None:
+            print(f"Unknown --sku {args.sku!r}")
+            return []
+        matching = [c for c in supported if c[3].sku.casefold() == args.sku.casefold()]
+        if not matching:
+            print(f"No advertising device matched --sku {args.sku}.")
+            return []
+        best = matching[0]  # candidates are RSSI-desc, so the first is strongest
+        return [(best[0], prof)]
+
+    # Interactive: prompt for a single device.
+    if args.mode == "interactive":
+        if not sys.stdin.isatty():
+            print("Interactive mode needs a TTY — pass --pick <index> or --sku <model>.")
+            return []
+        idx = int(input("Select device index: ").strip())
+        if not 0 <= idx < len(candidates):
+            print(f"Invalid index {idx}")
+            return []
+        dev, _adv, name, prof = candidates[idx]
+        if prof is None:
+            print(f"No profile matched {name!r}; pass --sku.")
+            return []
+        return [(dev, prof)]
+
+    # Non-interactive (auto): the best-signal device per supported model.
+    if not supported:
+        print("No devices matching a known profile in range (auto mode tests supported models only).")
+        return []
+    best_by_sku: dict[str, tuple] = {}
+    for dev, _adv, _name, prof in supported:
+        best_by_sku.setdefault(prof.sku, (dev, prof))  # first per SKU = strongest RSSI
+    targets = list(best_by_sku.values())
+    print(f"\nAuto-selected the strongest device for {len(targets)} supported model(s): "
+          f"{', '.join(sorted(best_by_sku))}")
+    return targets
 
 
-async def run(args: argparse.Namespace) -> int:
-    device, prof = await resolve_target(args)
-    if args.scan:
-        return 0
-    if device is None:
-        return 2
-
-    print(f"\nTesting {prof.name} ({prof.sku}) via {device.address} — mode={args.mode}\n")
+async def test_one(device, prof: DeviceProfile, args: argparse.Namespace) -> tuple[int, int]:
+    """Run the capability suite against one device. Returns (fail, inconclusive)."""
+    print(f"\n=== Testing {prof.name} ({prof.sku}) via {device.address} — mode={args.mode} ===\n")
     client = GoveeBleClient(device)
     results: list[Result] = []
     try:
@@ -336,13 +380,35 @@ async def run(args: argparse.Namespace) -> int:
     finally:
         await client.disconnect()
 
-    print("\n=== summary ===")
+    print(f"\n--- {prof.sku} summary ---")
     width = max(len(r.name) for r in results)
     for r in results:
         print(f"  {r.name:<{width}}  {r.status}")
     tally = {s: sum(1 for r in results if r.status == s) for s in (PASS, FAIL, INCONCLUSIVE, SKIP)}
-    print(f"\n  {tally[PASS]} pass, {tally[FAIL]} fail, {tally[INCONCLUSIVE]} inconclusive, {tally[SKIP]} skip")
-    return 1 if tally[FAIL] else 0
+    print(f"  {tally[PASS]} pass, {tally[FAIL]} fail, {tally[INCONCLUSIVE]} inconclusive, {tally[SKIP]} skip")
+    return tally[FAIL], tally[INCONCLUSIVE]
+
+
+async def run(args: argparse.Namespace) -> int:
+    targets = await resolve_targets(args)
+    if args.scan:
+        return 0
+    if not targets:
+        return 2
+
+    total_fail = 0
+    per_device: list[tuple[str, int, int]] = []
+    for device, prof in targets:
+        fail, inconclusive = await test_one(device, prof, args)
+        total_fail += fail
+        per_device.append((f"{prof.sku} ({device.address})", fail, inconclusive))
+
+    if len(per_device) > 1:
+        print("\n=== overall ===")
+        for label, fail, inconclusive in per_device:
+            verdict = "FAIL" if fail else ("INCONCLUSIVE" if inconclusive else "PASS")
+            print(f"  {label:<28} {verdict}  ({fail} fail, {inconclusive} inconclusive)")
+    return 1 if total_fail else 0
 
 
 def main() -> int:
