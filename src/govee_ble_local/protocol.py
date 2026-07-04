@@ -198,12 +198,12 @@ def build_scene_chunks(scenceParam_b64: str) -> list[bytes]:
     """
     import base64
 
-    data = bytearray(base64.b64decode(scenceParam_b64))
+    raw = bytearray(base64.b64decode(scenceParam_b64))
     # Byte 0 of the API's raw scenceParam is an "unconfirmed template" flag;
     # the device silently no-ops unless this bit is set, even though it still
     # acks. The real app always sends it set.
-    data[0] |= 0x08
-    data = bytes(data)
+    raw[0] |= 0x08
+    data = bytes(raw)
     content_len = 2 + len(data)
     chunk_count = -(-content_len // 17)  # ceiling division
     content = bytes([0x01, chunk_count]) + data
@@ -308,7 +308,7 @@ def parse_status(address: str, chunks: dict[int, bytes]) -> GoveeBleStatus:
             status.zone_lower_on = bool(terminator[14 + shift])
             status.zone_upper_on = bool(terminator[15 + shift])
 
-    if has_chunk00 and len(chunk00) >= 16:
+    if chunk00 is not None and len(chunk00) >= 16:
         status.brightness_pct = chunk00[10]
         status.scene_id = (chunk00[14], chunk00[15])
 

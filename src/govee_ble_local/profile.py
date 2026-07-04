@@ -12,8 +12,9 @@ from __future__ import annotations
 
 import logging
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -91,14 +92,15 @@ class DeviceProfile:
 # --------------------------------------------------------------------------
 
 
-def _load_yaml(path: Path) -> dict:
+def _load_yaml(path: Path) -> dict[str, Any]:
     import yaml  # lazy: only needed when actually loading a profile
 
     with path.open("r", encoding="utf-8") as fh:
-        return yaml.safe_load(fh) or {}
+        loaded: dict[str, Any] = yaml.safe_load(fh) or {}
+    return loaded
 
 
-def _parse_capabilities(raw: dict) -> Capabilities:
+def _parse_capabilities(raw: dict[str, Any]) -> Capabilities:
     ct = raw.get("color_temp")
     color_temp = None
     if ct:
@@ -113,7 +115,7 @@ def _parse_capabilities(raw: dict) -> Capabilities:
     )
 
 
-def _parse_scenes(raw_list: list[dict]) -> tuple[Scene, ...]:
+def _parse_scenes(raw_list: list[dict[str, Any]]) -> tuple[Scene, ...]:
     scenes: list[Scene] = []
     for entry in raw_list:
         scenes.append(
@@ -128,7 +130,7 @@ def _parse_scenes(raw_list: list[dict]) -> tuple[Scene, ...]:
     return tuple(scenes)
 
 
-def load_profile(device_dir: str | os.PathLike) -> DeviceProfile:
+def load_profile(device_dir: str | os.PathLike[str]) -> DeviceProfile:
     """Load a DeviceProfile from a folder containing device.yaml (+ scenes.yaml)."""
     device_dir = Path(device_dir)
     definition = _load_yaml(device_dir / "device.yaml")

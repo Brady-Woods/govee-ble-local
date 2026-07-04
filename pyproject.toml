@@ -26,10 +26,19 @@ dependencies = [
 
 [project.optional-dependencies]
 test = ["pytest", "pytest-asyncio"]
+typing = ["mypy", "types-PyYAML"]
 
 [project.urls]
 Homepage = "https://github.com/Brady-Woods/govee-ble-local"
 Repository = "https://github.com/Brady-Woods/govee-ble-local"
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+
+[[tool.mypy.overrides]]
+module = ["bleak_retry_connector"]
+ignore_missing_imports = true
 
 [tool.setuptools.packages.find]
 where = ["src"]
