@@ -17,18 +17,25 @@ class Capability(str, Enum):
 
 
 class Encryption(str, Enum):
-    """How a device secures its command channel (independent of everything else).
+    """How a device secures its command channel.
 
-    - AES_RC4_PSK: e7 handshake -> session key; every frame encrypted with it
-      (H60A6, H5083, ...).
-    - HANDSHAKE_ONLY: performs the e7 handshake but sends application frames in
-      plaintext (some older strips — verify per device).
-    - NONE: no handshake at all; plaintext frames (H6006, ...).
+    Per the app (BleUtil advertisement `encrypt` flag + BgcInfo `encryptVersion`)
+    this is binary at heart — encrypted or not — with two encrypted variants:
+
+    - NONE: encrypt flag clear -> no handshake, plaintext frames (H6006, H6052,
+      H61A8, ...).
+    - AES_RC4_PSK: encrypt flag set, BgcInfo version 1 (or no BgcInfo) -> e7 01
+      handshake, session key, AES-ECB+RC4 per frame (H60A6, H5083, ...).
+    - AES_GCM: encrypt flag set, BgcInfo version 2 -> e7 1a handshake, AES-GCM
+      (Controller4AesGcm). Newer devices.
+
+    (There is no "handshake-only" mode — a device either uses the encrypted
+    channel or sends plaintext.)
     """
 
-    AES_RC4_PSK = "aes_rc4_psk"
-    HANDSHAKE_ONLY = "handshake_only"
     NONE = "none"
+    AES_RC4_PSK = "aes_rc4_psk"
+    AES_GCM = "aes_gcm"
 
 
 @dataclass(frozen=True)

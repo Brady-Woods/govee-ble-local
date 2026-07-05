@@ -23,6 +23,7 @@ from ..const import (
     FRAME_LEN,
     HANDSHAKE_TIMEOUT,
     IDLE_DISCONNECT_DELAY,
+    BGC_INFO_CHAR_UUID,
     NOTIFY_CHAR_UUID,
     PSK,
     WRITE_CHAR_UUID,
@@ -31,6 +32,7 @@ from ..crypto import decrypt, encrypt
 from ..exceptions import (
     GoveeBleConnectionError,
     GoveeBleHandshakeError,
+    GoveeBleNotSupported,
     GoveeBleTimeout,
 )
 from ..models import Encryption
@@ -136,15 +138,49 @@ class GoveeConnection:
                 raise GoveeBleConnectionError(f"connect to {self.address} failed: {err}") from err
         await self._prepare_session()
 
+    async def _read_bgc_encrypt_version(self) -> int | None:
+        """Read the BGC-info characteristic and return the device's
+        encryptVersion (0/1/2), or None if the characteristic is absent.
+        Port of BgcInfoReader.a()/d(): parse data[0] (format); for format 1 or
+        2 the version is data[1]."""
+        assert self._client is not None
+        char = self._client.services.get_characteristic(BGC_INFO_CHAR_UUID)
+        if char is None:
+            return None
+        try:
+            data = bytes(await self._client.read_gatt_char(char))
+        except BleakError as err:
+            _LOGGER.debug("%s: BGC read failed: %s", self.address, err)
+            return None
+        if len(data) < 2 or data[0] not in (1, 2):
+            return 0
+        return data[1]
+
     async def _prepare_session(self) -> None:
-        """Run the handshake (if the encryption mode needs one), then send any
-        post-handshake unlock frames and mark the session ready."""
+        """Discover the encryption mode (BGC read refines the advertisement's
+        encrypt flag), run the handshake if needed, send post-handshake unlock
+        frames, and mark the session ready."""
         self._session_key = None
         self._ready = False
         self._drain()
         assert self._client is not None
+        # BGC-info read is authoritative for the version (1=RC4, 2=GCM). If the
+        # characteristic is absent we keep the advertisement-derived mode.
+        bgc_version = await self._read_bgc_encrypt_version()
+        if bgc_version == 2:
+            self._encryption = Encryption.AES_GCM
+        elif bgc_version == 1:
+            self._encryption = Encryption.AES_RC4_PSK
+        elif bgc_version == 0 and self._encryption is not Encryption.NONE:
+            # BGC explicitly reports no encryption but keep any advertisement
+            # signal (isEncryptionSupported = checkSupport(adv) OR bgc.g()).
+            pass
         try:
-            if self._encryption is not Encryption.NONE:
+            if self._encryption is Encryption.AES_GCM:
+                raise GoveeBleNotSupported(
+                    f"{self.address}: AES-GCM (V2) handshake not yet implemented"
+                )
+            if self._encryption is Encryption.AES_RC4_PSK:
                 await self._handshake()
             self._ready = True
             self._drain()

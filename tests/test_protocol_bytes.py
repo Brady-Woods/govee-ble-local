@@ -86,3 +86,30 @@ def test_color_temp_h60a6_structure() -> None:
 
 def test_scene() -> None:
     assert controllers.scene((0x00, 0x64))[:5].hex() == "3305040064"
+
+
+# --- advertisement identification (BleUtil.parseBleBroadcastPact) -----------
+from govee_ble_local import identify  # noqa: E402
+
+
+def test_identify_encrypted_vs_plaintext_from_real_adv() -> None:
+    # Real advertised (company_id -> mfg value) pairs from live scans.
+    # 0x8843 header low byte 0x43 has bit 0x40 -> encrypted; 0x8802/0x8801 don't.
+    h60a6 = identify.identify("GVH60A67457", {0x8843: bytes.fromhex("ec0001030100")})
+    assert h60a6 is not None and h60a6.encrypted is True
+    h5083 = identify.identify("ihoment_H5083_A2D1", {0x8843: bytes.fromhex("ec00020200")})
+    assert h5083 is not None and h5083.sku == "H5083" and h5083.encrypted is True
+    h6006 = identify.identify("ihoment_H6006_60AF", {0x8802: bytes.fromhex("ec00010101")})
+    assert h6006 is not None and h6006.encrypted is False
+    h61a8 = identify.identify("Govee_H61A8_631F", {0x8802: bytes.fromhex("ec00020201")})
+    assert h61a8 is not None and h61a8.sku == "H61A8" and h61a8.encrypted is False
+
+
+def test_sku_from_name() -> None:
+    assert identify.sku_from_local_name("ihoment_H5083_A2D1") == "H5083"
+    assert identify.sku_from_local_name("Govee_H61A8_631F") == "H61A8"
+    assert identify.sku_from_local_name("GVH60A67457") == "H60A6"
+
+
+def test_identify_rejects_non_govee() -> None:
+    assert identify.identify("SomeOtherDevice", {0x1234: b"\x00\x01"}) is None

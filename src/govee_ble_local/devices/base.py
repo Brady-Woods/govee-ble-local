@@ -15,6 +15,7 @@ from bleak.backends.device import BLEDevice
 
 from ..ble import controllers
 from ..ble.controllers import ColorScheme
+from ..identify import identify
 from ..models import Capability, DeviceState, Encryption
 from ..transport.connection import GoveeConnection, now_ts
 
@@ -53,11 +54,26 @@ class GoveeDevice:
         self._secret = secret
         self._state = DeviceState(optimistic=True)
         self._callbacks: list[StateCallback] = []
+        # Encryption is decided by the device's own advertisement (the app's
+        # `encrypt` flag), not a per-SKU guess. Fall back to the class default
+        # only when no usable advertisement is available (e.g. address-only
+        # construction on reconnect).
         self._connection = GoveeConnection(
             ble_device,
-            encryption=self._encryption,
+            encryption=self._resolve_encryption(advertisement_data),
             unlock_frames=self._unlock_frames if self.requires_secret else None,
         )
+
+    def _resolve_encryption(self, advertisement_data: Any | None) -> Encryption:
+        mfg = getattr(advertisement_data, "manufacturer_data", None)
+        name = getattr(advertisement_data, "local_name", None) or self._ble_device.name
+        if mfg:
+            adv = identify(name, mfg)
+            if adv is not None:
+                # V2/AES-GCM is distinguished later by the BgcInfo read; the
+                # advertisement only says encrypted-vs-not.
+                return Encryption.AES_RC4_PSK if adv.encrypted else Encryption.NONE
+        return self._encryption
 
     # -- identity / state (properties: HA convention) -----------------------
 

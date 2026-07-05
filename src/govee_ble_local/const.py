@@ -13,6 +13,9 @@ from typing import Final
 SERVICE_UUID: Final = "00010203-0405-0607-0809-0a0b0c0d1910"
 WRITE_CHAR_UUID: Final = "00010203-0405-0607-0809-0a0b0c0d2b11"
 NOTIFY_CHAR_UUID: Final = "00010203-0405-0607-0809-0a0b0c0d2b10"
+# "BGC info" characteristic (Constants.b()): read at connect to learn the
+# device's encryptVersion (0=plaintext, 1=AES-RC4-PSK, 2=AES-GCM).
+BGC_INFO_CHAR_UUID: Final = "00010203-0405-0607-0809-0a0b0c0d2b12"
 
 # --- Encryption ------------------------------------------------------------
 # The pre-shared key used for the e7 handshake (AES-ECB + RC4). In the app
