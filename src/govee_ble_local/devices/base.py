@@ -262,15 +262,24 @@ class SegmentControl(GoveeDevice):
 
 
 class SceneControl(GoveeDevice):
-    """Activate a built-in scene by its numeric id (33 05 04 <hi> <lo>).
+    """Built-in scene activation.
 
-    This is bare activation of a scene already stored on the device
-    (capture-confirmed on H6006/H60A6). Scene ids are device/account-specific;
-    a catalog (name -> id) can be sourced from the cloud scene list."""
+    The scene code is sent little-endian (33 05 04 <lo> <hi>). Some devices
+    activate a cached scene directly (set_scene); others require uploading the
+    scene's effect blob first via the a3-chunk burst, then activating
+    (set_scene_full)."""
 
-    async def set_scene(self, scene_id: int) -> None:
-        await self._connection.send(controllers.scene(((scene_id >> 8) & 0xFF, scene_id & 0xFF)))
+    async def set_scene(self, scene_code: int) -> None:
+        """Bare-activate a scene already stored on the device."""
+        await self._connection.send(controllers.scene((scene_code & 0xFF, (scene_code >> 8) & 0xFF)))
         self._notify_state()
+
+    async def set_scene_full(self, scene_code: int, param_b64: str) -> None:
+        """Upload the scene's effect blob (a3-chunk burst) then activate it —
+        correct regardless of whether the device has the scene cached."""
+        for chunk in controllers.scene_chunks(param_b64):
+            await self._connection.send(chunk, expect_ack=False)
+        await self.set_scene(scene_code)
 
 
 class ZoneControl(GoveeDevice):

@@ -123,8 +123,32 @@ def zone_power(zone: int, on: bool) -> bytes:
 
 
 def scene(scene_id: tuple[int, int]) -> bytes:
-    """Activate a built-in scene by its 2-byte id (33 05 04 <hi> <lo>)."""
+    """Activate a built-in scene: 33 05 04 <b0> <b1> (code is little-endian,
+    so callers pass (code & 0xFF, code >> 8))."""
     return build_frame(PRO_WRITE, CMD_MODE, bytes([MODE_SCENE, scene_id[0], scene_id[1]]))
+
+
+def scene_chunks(param_b64: str) -> list[bytes]:
+    """Split a scene's effect blob into the a3-chunk upload burst.
+
+    Each returned frame is `a3 <seq> <=17 bytes>` (seq 0,1,...; last = 0xFF),
+    already framed+checksummed. byte0 of the blob gets bit 0x08 set (the
+    device silently no-ops without it). Send these, then activate via scene()."""
+    import base64
+
+    raw = bytearray(base64.b64decode(param_b64))
+    raw[0] |= 0x08
+    data = bytes(raw)
+    chunk_count = -(-(2 + len(data)) // 17)  # ceil
+    content = bytes([0x01, chunk_count]) + data
+    pieces = -(-len(content) // 17)
+    out: list[bytes] = []
+    for i in range(pieces):
+        piece = content[i * 17 : (i + 1) * 17]  # <=17 data bytes
+        seq = 0xFF if i == pieces - 1 else i
+        # a3 <seq> <17 data bytes> <checksum> (build_frame zero-pads + checksums)
+        out.append(build_frame(0xA3, seq, piece))
+    return out
 
 
 # --- plug / transport-adjacent --------------------------------------------
