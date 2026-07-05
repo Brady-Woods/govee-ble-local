@@ -121,12 +121,12 @@ StatusScheme = Literal["full", "none", "segment_fields"]
 #   so far.
 # "plug_relay": `33 01 <0x10=off|0x11=on>` - H5083 (Govee's smart plug
 #   family). Same opcode, same low-bit-carries-on/off convention, different
-#   constant tag in the next bit up; `0x11`=on confirmed via live control.
-#   Critically, the power command alone is not enough: it gets a real ACK
-#   but the relay doesn't actually flip unless immediately followed by a
-#   `33 B5` clock-sync write (build_clock_sync(0xB5)) - confirmed live,
-#   this is what GoveeBleClient.set_power() does for this power_scheme.
-#   See PROTOCOL.md §15.3.
+#   constant tag in the next bit up; `0x11`=on is from the app capture, NOT
+#   verified against physical state. In the app capture every power write is
+#   immediately followed by a `33 B5` clock-sync write, so set_power() sends
+#   both - but note H5083 CONTROL DOES NOT WORK YET: the device requires a
+#   real challenge-response handshake that build_handshake() only stubs, so
+#   it silently drops all commands. See h5083/NOTES.md and PROTOCOL.md §15.3.
 PowerScheme = Literal["binary", "plug_relay"]
 
 # Explicit allow-list so a device.yaml can't declare a combination nothing

@@ -1518,6 +1518,23 @@ key evidence behind treating `encryption` / `color_scheme` / `status_scheme`
 as separate, orthogonal `Protocol` fields in the still-pending
 re-architecture plan, rather than one bundled "device family" enum.
 
+> ⚠️ **Correction (2026-07-05): "data is plaintext" does NOT mean the
+> handshake is a no-op that can be stubbed.** This section originally
+> implied the `handshake_only` handshake was vestigial ritual. Live testing
+> of H5083 (the only member of this family tested against real hardware)
+> proved the opposite: the handshake is a **mandatory challenge-response
+> authentication gate**. The real app sends 16-17 bytes of per-session key
+> material in step 1 and a *computed* step-2 response; the device replies to
+> our all-zeros `build_handshake()` stub (so the client thinks it
+> succeeded) but never authenticates the session and then **silently drops
+> every command**. H60A6 works with the same stub only because its handshake
+> is device-driven (the device generates and returns the key; client input
+> is irrelevant). H61A8 and H6008 use the identical stub and so are expected
+> to fail the same way, though only H5083 has been live-confirmed. Making
+> these devices controllable requires implementing the real handshake, which
+> needs reverse-engineering the Govee app — it is not recoverable from BLE
+> captures. See §15.3's warning and h5083/NOTES.md.
+
 ### 13.6 Still unresolved (raw bytes documented, not decoded)
 
 Surface-level only — not enough repeat samples or corroborating context to
@@ -1785,9 +1802,23 @@ Also confirmed live: an unusually wide color-temperature range (2000K-
 
 ### 15.3 H5083: first smart plug, and it renumbers two opcodes
 
+> ⚠️ **Control of H5083 does not work from this library yet.** Live testing
+> (2026-07-05) proved the device silently ignores every command we send.
+> Root cause: it requires a genuine challenge-response handshake (the real
+> app's handshake carries 16-17 bytes of per-session key material and a
+> computed step-2 response), but `messages.build_handshake()` sends an
+> all-zeros stub. H60A6 tolerates that stub (device-driven key exchange);
+> H5083 replies to it but never authenticates the session, then drops all
+> commands. A random-nonce handshake and a no-handshake connection both
+> fail too, and no W1->N1->W2 relationship is derivable from the PSK +
+> captures - the algorithm lives in the Govee app and needs
+> app-level reverse-engineering. Everything below is the *observed app
+> protocol*, which is accurate; it is simply unreachable until the
+> handshake is implemented. See §13.5 and h5083/NOTES.md.
+
 A new device model, `ihoment_H5083_A2D1` - Govee's smart plug family. Like
 H6008/H61A8/H6047, it performs the real handshake but sends all subsequent
-data as plaintext (checksum-verified). Two confirmed differences from every
+data as plaintext (checksum-verified). Two differences from every
 light/strip device documented so far - this device swaps in different
 opcode numbers for the same two concepts, not new concepts:
 
@@ -1804,27 +1835,23 @@ opcode numbers for the same two concepts, not new concepts:
   this protocol, `0x11` (bit set) = ON is the natural reading, but treat
   that as the working hypothesis, not a confirmed fact, until checked
   against a physical plug's actual state.
-- **Clock-sync uses `33 B5 <4-byte unix ts> 01 f9 <11x00>`, not `33 09` -
-  and, confirmed via live testing, it's a *required companion to every
-  power command*, not just a once-per-connection write like every other
-  device's clock-sync.** Structurally identical to the `33 09` pattern
-  documented in §4/§12.4/§14 (same 2-byte `01 f9` tag, same padding), and
-  the leading 4 bytes decode to real, sequentially-increasing Unix
-  timestamps matching the actual capture time to the second (e.g.
-  `6a 49 90 1a` = `1783205914` = `2026-07-04T22:58:34Z`). A second, fresh
-  capture (specifically toggling this plug via the real app, both to
-  confirm the byte values *and* to get ground truth on why control wasn't
-  working) showed **every single `33 01 <0x10|0x11>` power command
-  immediately followed, within ~10-40ms, by a `33 B5` write** - not once
-  per connection, but once per power toggle, every time, with no
-  exceptions across two independent captures (11 total toggles). Live
-  testing confirmed this is load-bearing, not incidental: sending
-  `33 01` alone gets a real ACK from the device, but the relay never
-  actually flips; adding the `33 B5` follow-up immediately after is what
-  makes on/off control actually work. `GoveeBleClient.set_power()` now
-  sends both, for `power_scheme: plug_relay` devices specifically -
-  `messages.build_clock_sync(cmd)` generalizes the existing `33 09`
-  builder/decoder to take the opcode as a parameter.
+- **Clock-sync uses `33 B5 <4-byte unix ts> 01 f9 <11x00>`, not `33 09`,
+  and in the app capture follows *every* power command** (not just once
+  per connection like other devices' `33 09`). Structurally identical to
+  the `33 09` pattern documented in §4/§12.4/§14 (same 2-byte `01 f9` tag,
+  same padding), and the leading 4 bytes decode to real,
+  sequentially-increasing Unix timestamps matching the capture time to the
+  second (e.g. `6a 49 90 1a` = `1783205914` = `2026-07-04T22:58:34Z`).
+  Across two independent captures (11 total toggles), **every single
+  `33 01 <0x10|0x11>` power command was immediately followed, within
+  ~10-40ms, by a `33 B5` write** - once per power toggle, with no
+  exceptions. `GoveeBleClient.set_power()` mirrors this for
+  `power_scheme: plug_relay` (`messages.build_clock_sync(cmd)` generalizes
+  the `33 09` builder/decoder to take the opcode as a parameter).
+  ⚠️ Whether the `33 B5` follow-up is actually *required* for the relay to
+  flip is **unverified** - an earlier "confirmed live" claim here was
+  wrong: the device never ACKed our writes at all, because the handshake
+  (see the warning at the top of this section) never authenticated.
 
 **Newly seen, not yet decoded:**
 - `33 B2 <8 bytes> <9x00>` - sent exactly once, immediately after the
