@@ -63,9 +63,10 @@ class GoveeDevice:
         # `encrypt` flag), not a per-SKU guess. Fall back to the class default
         # only when no usable advertisement is available (e.g. address-only
         # construction on reconnect).
+        self._resolved_encryption = self._resolve_encryption(advertisement_data)
         self._connection = GoveeConnection(
             ble_device,
-            encryption=self._resolve_encryption(advertisement_data),
+            encryption=self._resolved_encryption,
             unlock_frames=self._unlock_frames if self.requires_secret else None,
         )
 
@@ -155,6 +156,27 @@ class GoveeDevice:
             _LOGGER.warning("%s: secret required but none set; commands will fail", self.address)
             return []
         return [controllers.secret_check(self._secret)]
+
+    async def read_secret(self) -> bytes | None:
+        """Read this device's 8-byte secret directly over BLE (`aa b1`).
+
+        Fully offline (no cloud). Only works while the device is UNBOUND
+        (factory-reset / not yet paired to a Govee account); a bound device
+        declines and this returns None. The secret is stable, so a value read
+        here keeps working after you re-pair in the Govee app.
+        """
+        # A dedicated connection with NO unlock frames — we don't have the
+        # secret yet, so we can't do the 33 b2 check first.
+        conn = GoveeConnection(self._ble_device, encryption=self._resolved_encryption)
+        try:
+            reply = await conn.send(controllers.secret_read())
+        finally:
+            await conn.disconnect()
+        if reply and len(reply) >= 11 and reply[0] == 0xAA and reply[1] == 0xB1 and reply[2] == 0x01:
+            secret = reply[3:11]
+            self._secret = secret
+            return secret
+        return None
 
 
 class PowerMixin(GoveeDevice):

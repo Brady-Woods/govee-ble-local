@@ -78,7 +78,7 @@ def test_scene() -> None:
 
 
 # --- advertisement identification (BleUtil.parseBleBroadcastPact) -----------
-from govee_ble_local import identify  # noqa: E402
+import govee_ble_local.identify as identify  # noqa: E402
 
 
 def test_identify_encrypted_vs_plaintext_from_real_adv() -> None:

@@ -16,17 +16,21 @@ from .exceptions import (
     GoveeBleNotSupported,
     GoveeBleTimeout,
 )
-from .models import Capability, DeviceState, Segment
+from .identify import GoveeAdvertisement
+from .models import Capability, DeviceState, Segment, Zone
 from .registry import (
     create_device,
     device_class_for_sku,
     is_supported_sku,
     supported_skus,
 )
+from .scanner import DiscoveredDevice, discover, match, supported
 
 __all__ = [
     "Capability",
     "DeviceState",
+    "DiscoveredDevice",
+    "GoveeAdvertisement",
     "GoveeBleAuthError",
     "GoveeBleConnectionError",
     "GoveeBleError",
@@ -38,8 +42,12 @@ __all__ = [
     "LOCAL_NAME_PREFIXES",
     "MANUFACTURER_IDS",
     "Segment",
+    "Zone",
     "create_device",
     "device_class_for_sku",
+    "discover",
     "is_supported_sku",
+    "match",
+    "supported",
     "supported_skus",
 ]
