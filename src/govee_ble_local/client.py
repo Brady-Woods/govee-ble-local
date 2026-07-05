@@ -284,8 +284,17 @@ class GoveeBleClient:
         instead - see set_zone - but this opcode is still sendable there too
         (untested whether the device honors it independent of zone state).
         Encodes on/off per this device's power_scheme (binary 0/1, or
-        plug_relay 0x10/0x11 for H5083 - see messages.PowerScheme)."""
+        plug_relay 0x10/0x11 for H5083 - see messages.PowerScheme).
+
+        plug_relay devices additionally need a clock-sync-shaped follow-up
+        (`33 B5 <unix ts> 01 f9`) sent immediately after every power command -
+        confirmed live: the real app sends this after every single power
+        toggle (not just once per connection like every other device's
+        clock-sync), and without it the device ACKs the power command but
+        the relay never actually flips."""
         await self.send_command(messages.build_power(on, self._protocol.power_scheme))
+        if self._protocol.power_scheme == "plug_relay":
+            await self.send_command(messages.build_clock_sync(0xB5))
 
     async def set_zone(self, zone: int, on: bool) -> None:
         await self.send_command(messages.build_zone(zone, on))

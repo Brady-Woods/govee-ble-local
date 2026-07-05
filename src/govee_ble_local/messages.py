@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import datetime
 import logging
+import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Literal
 
@@ -120,13 +121,12 @@ StatusScheme = Literal["full", "none", "segment_fields"]
 #   so far.
 # "plug_relay": `33 01 <0x10=off|0x11=on>` - H5083 (Govee's smart plug
 #   family). Same opcode, same low-bit-carries-on/off convention, different
-#   constant tag in the next bit up - confirmed via a real repeated manual
-#   toggle test (PROTOCOL.md §15.3). Which literal value is ON vs. OFF
-#   could not be independently cross-checked against physical device state
-#   from the capture alone (a plug has no other observable state, e.g. no
-#   rendered color) - `0x11`=on follows the same low-bit convention as
-#   every other opcode in this protocol, but treat that as the working
-#   hypothesis until confirmed live.
+#   constant tag in the next bit up; `0x11`=on confirmed via live control.
+#   Critically, the power command alone is not enough: it gets a real ACK
+#   but the relay doesn't actually flip unless immediately followed by a
+#   `33 B5` clock-sync write (build_clock_sync(0xB5)) - confirmed live,
+#   this is what GoveeBleClient.set_power() does for this power_scheme.
+#   See PROTOCOL.md §15.3.
 PowerScheme = Literal["binary", "plug_relay"]
 
 # Explicit allow-list so a device.yaml can't declare a combination nothing
@@ -169,6 +169,19 @@ class Protocol:
 
 def build_handshake(step: int) -> bytes:
     return bytes([0xE7, step])
+
+
+def build_clock_sync(cmd: int = 0x09) -> bytes:
+    """Push the phone's current wall-clock time: <cmd> <4-byte big-endian
+    unix ts> 01 f9. `cmd` is 0x09 on every device confirmed so far except
+    H5083's smart-plug family, which uses 0xB5 for the same concept - see
+    _decode_clock_sync's docstring and PROTOCOL.md §15.3. On H5083
+    specifically this must be sent immediately after every build_power()
+    call (confirmed live: the device ACKs build_power() alone but the
+    relay never actually flips without this follow-up) - see
+    GoveeBleClient.set_power()."""
+    ts = int(time.time())
+    return bytes([cmd, (ts >> 24) & 0xFF, (ts >> 16) & 0xFF, (ts >> 8) & 0xFF, ts & 0xFF, 0x01, 0xF9])
 
 
 def build_status_query(full: bool = False) -> bytes:
@@ -307,6 +320,7 @@ def build_calibration_exit() -> bytes:
 # round-trip sendability. Stubs and receive-only types are deliberately absent.
 _BUILDERS: dict[str, Callable[..., bytes]] = {
     "handshake": build_handshake,
+    "clock_sync": build_clock_sync,
     "status_query": build_status_query,
     "metadata_query": build_metadata_query,
     "power": build_power,
@@ -389,6 +403,45 @@ def _checksum_ok(pt20: bytes) -> bool:
 # --------------------------------------------------------------------------
 # Decode: deserialize() one 20-byte plaintext frame -> DecodedMessage
 # --------------------------------------------------------------------------
+
+
+def _decode_clock_sync(cmd: int, rest: bytes) -> DecodedMessage:
+    """Shared by cmd 0x09 (H60A6/H6006/H61A8/H6052/H6008) and cmd 0xB5
+    (H5083's smart-plug family - same concept, different opcode number,
+    per PROTOCOL.md §15.3). Both carry a big-endian unix timestamp of the
+    phone's current wall-clock time in bytes[0:4], plus a `01 f9` tag whose
+    meaning is unconfirmed.
+
+    Confirmed on H5083 specifically: the real app sends this immediately
+    after EVERY power command, not just once per connection like every
+    other device - without it, the device ACKs the power command but the
+    relay never actually flips (confirmed live: adding this call after
+    build_power() is what made real on/off control start working)."""
+    ts_val = int.from_bytes(rest[0:4], "big")
+    extra_bytes = rest[4:6]
+    if 1_600_000_000 <= ts_val <= 2_000_000_000:
+        dt = datetime.datetime.fromtimestamp(ts_val, tz=datetime.timezone.utc)
+        return DecodedMessage(
+            "clock_sync", understood=True, sendable=True,
+            summary=_join(
+                f"DEVICE TIME SYNC (cmd 0x{cmd:02X}): unix_ts={ts_val} ({dt.isoformat()})",
+                f"bytes[4:6]=0x{extra_bytes.hex()} (meaning unknown)",
+                _pad_note(rest[6:]),
+            ),
+            confidence="partial",
+            fields={"unix_ts": ts_val, "cmd": cmd},
+        )
+    # A second, structurally different sub-format (confirmed on cmd 0x09;
+    # not yet seen on 0xB5) repeats periodically after connect - the naive
+    # "first 4 bytes as a timestamp" interpretation gives nonsense dates for
+    # these, so they're a different sub-format, not more clock-sync writes.
+    # Not decoded; reported separately so it's not conflated with the
+    # confirmed case above.
+    return DecodedMessage(
+        "clock_periodic_unknown", understood=False, sendable=False,
+        summary=f"UNKNOWN cmd 0x{cmd:02X} (periodic sub-format, distinct from confirmed time-sync above): payload=0x{rest.hex()}",
+        confidence="unknown",
+    )
 
 
 def _decode_0x33(payload: bytes, direction: str) -> DecodedMessage:
@@ -494,39 +547,8 @@ def _decode_0x33(payload: bytes, direction: str) -> DecodedMessage:
         label = {0x00: "OFF/0", 0x01: "ON/1"}.get(val, f"0x{val:02X}")
         return DecodedMessage("toggle_a3", False, False, _join(f"TOGGLE (cmd 0xA3, meaning unconfirmed): {label}", _pad_note(tail)), "unknown", {"value": val})
 
-    if cmd == 0x09 and len(rest) >= 6:  # clock/time-sync family (two sub-formats)
-        ts_val = int.from_bytes(rest[0:4], "big")
-        extra_bytes = rest[4:6]
-        # Confirmed (H61A8, real capture): the first 0x09 write sent right
-        # after connect carries a big-endian unix timestamp of the phone's
-        # current wall-clock time - verified by decoding a real capture's
-        # first 0x09 frame and finding it matches the actual capture
-        # date/time exactly (to the second). This is the phone pushing its
-        # clock to the device, presumably to support schedule/timer/sunrise
-        # features. The epoch-range check below distinguishes this confirmed
-        # variant from a second, structurally different 0x09 sub-format seen
-        # repeating periodically thereafter (extra leading byte, e.g. 0x0C)
-        # whose fields are NOT yet decoded - likely a schedule/alarm payload,
-        # since it also embeds 16-bit values that happen to decode as
-        # plausible calendar years (e.g. 0x07EA = 2026). That periodic
-        # variant is reported separately, still as unconfirmed.
-        if 1_600_000_000 <= ts_val <= 2_000_000_000:
-            dt = datetime.datetime.fromtimestamp(ts_val, tz=datetime.timezone.utc)
-            return DecodedMessage(
-                "clock_sync", understood=True, sendable=False,
-                summary=_join(
-                    f"DEVICE TIME SYNC (cmd 0x09): unix_ts={ts_val} ({dt.isoformat()})",
-                    f"bytes[4:6]=0x{extra_bytes.hex()} (meaning unknown)",
-                    _pad_note(rest[6:]),
-                ),
-                confidence="partial",
-                fields={"unix_ts": ts_val},
-            )
-        return DecodedMessage(
-            "clock_periodic_unknown", understood=False, sendable=False,
-            summary=f"UNKNOWN cmd 0x09 (periodic sub-format, distinct from confirmed time-sync above): payload=0x{rest.hex()}",
-            confidence="unknown",
-        )
+    if cmd in (0x09, 0xB5) and len(rest) >= 6:  # clock/time-sync family (two sub-formats; two opcodes)
+        return _decode_clock_sync(cmd, rest)
 
     return DecodedMessage("cmd_unknown", False, False, _join(f"UNKNOWN cmd 0x{cmd:02X}: payload=0x{rest.hex()}"), "unknown")
 

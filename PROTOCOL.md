@@ -1804,13 +1804,27 @@ opcode numbers for the same two concepts, not new concepts:
   this protocol, `0x11` (bit set) = ON is the natural reading, but treat
   that as the working hypothesis, not a confirmed fact, until checked
   against a physical plug's actual state.
-- **Clock-sync uses `33 B5 <4-byte unix ts> 01 f9 <11x00>`, not `33 09`.**
-  Structurally identical to the `33 09` pattern documented in §4/§12.4/§14
-  (same 2-byte `01 f9` tag, same padding), and the leading 4 bytes decode
-  to real, sequentially-increasing Unix timestamps matching the actual
-  capture time to the second (e.g. `6a 49 90 1a` = `1783205914` =
-  `2026-07-04T22:58:34Z`). Same concept, different opcode number for this
-  device family.
+- **Clock-sync uses `33 B5 <4-byte unix ts> 01 f9 <11x00>`, not `33 09` -
+  and, confirmed via live testing, it's a *required companion to every
+  power command*, not just a once-per-connection write like every other
+  device's clock-sync.** Structurally identical to the `33 09` pattern
+  documented in §4/§12.4/§14 (same 2-byte `01 f9` tag, same padding), and
+  the leading 4 bytes decode to real, sequentially-increasing Unix
+  timestamps matching the actual capture time to the second (e.g.
+  `6a 49 90 1a` = `1783205914` = `2026-07-04T22:58:34Z`). A second, fresh
+  capture (specifically toggling this plug via the real app, both to
+  confirm the byte values *and* to get ground truth on why control wasn't
+  working) showed **every single `33 01 <0x10|0x11>` power command
+  immediately followed, within ~10-40ms, by a `33 B5` write** - not once
+  per connection, but once per power toggle, every time, with no
+  exceptions across two independent captures (11 total toggles). Live
+  testing confirmed this is load-bearing, not incidental: sending
+  `33 01` alone gets a real ACK from the device, but the relay never
+  actually flips; adding the `33 B5` follow-up immediately after is what
+  makes on/off control actually work. `GoveeBleClient.set_power()` now
+  sends both, for `power_scheme: plug_relay` devices specifically -
+  `messages.build_clock_sync(cmd)` generalizes the existing `33 09`
+  builder/decoder to take the opcode as a parameter.
 
 **Newly seen, not yet decoded:**
 - `33 B2 <8 bytes> <9x00>` - sent exactly once, immediately after the

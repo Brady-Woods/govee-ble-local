@@ -14,14 +14,23 @@ and the first to need a genuinely different `power_scheme`.
   `<0x00|0x01>`.** Every light/strip device documented so far uses the
   simple binary encoding; this device's power opcode carries the same
   low-bit on/off convention but with a constant `0x1` tag in the next bit
-  up. Confirmed via a real, repeated manual toggle test (`0x10, 0x11, 0x10,
-  0x11, ...`, always ACKed). **Which literal value is actually ON vs. OFF
-  was not independently verified against physical device state** - a plug
-  has no other observable state to cross-check against (no rendered
-  color/brightness). `0x11` (bit set) = ON follows the low-bit convention
-  used everywhere else in this protocol and is what this library encodes,
-  but treat it as the working hypothesis, not a confirmed fact, until
-  checked against a physical plug. See PROTOCOL.md §15.3.
+  up. `0x11` = ON, confirmed via live control (see below), not just the
+  low-bit-convention guess this was originally flagged as.
+- **The power command alone is not enough - confirmed via live testing.**
+  `33 01 <val>` gets a real ACK from the device, but the relay does not
+  actually flip unless it's immediately followed by a `33 B5` clock-sync
+  write (see below). This was the actual root cause of "the switch
+  toggles in Home Assistant but the plug doesn't respond" - not a
+  Bluetooth/connectivity issue, and not (as first suspected) the ON/OFF
+  value mapping. `GoveeBleClient.set_power()` now sends both writes for
+  this device's `power_scheme: plug_relay`.
+- **Clock-sync (`33 B5`) is required after every power command, not just
+  once per connection like every other device's clock-sync (`33 09`).** A
+  second, fresh capture - specifically toggling this plug via the real
+  app while diagnosing the control failure above - showed every single
+  power command immediately followed (~10-40ms later) by a `33 B5 <unix
+  ts> 01 f9` write, with no exceptions across 11 toggles in two
+  independent captures. See PROTOCOL.md §15.3.
 - **No working status readback** (`status_scheme: none`) - the `aa`-field
   family is present but not understood for this device either.
   `tools/device_test.py`'s new `power` check therefore sends real OFF/ON

@@ -179,21 +179,46 @@ class TestDeserializeRoundTrip(unittest.TestCase):
         self.assertFalse(data.sendable)
 
 
-class TestStubsAndGating(unittest.TestCase):
-    def test_stubs_recognized_but_not_sendable(self) -> None:
+class TestClockSync(unittest.TestCase):
+    """cmd 0x09 (most devices) / 0xB5 (H5083's smart-plug family) - see
+    PROTOCOL.md §15.3. Confirmed real and, for H5083, actually required
+    after every power command - not just a receive-only stub."""
+
+    def test_decode_confirmed_timestamp(self) -> None:
         # This fixture's bytes (0x6A48AEDD, big-endian) decode to a real,
         # plausible unix timestamp (2026-07-04 06:57:33 UTC) - confirmed
         # against real H61A8 capture data as the phone pushing its current
-        # wall-clock time to the device on connect (see messages.py's
-        # cmd == 0x09 handler and PROTOCOL.md). It's understood but still
-        # not sendable (we don't yet build/send this frame ourselves).
+        # wall-clock time to the device on connect.
         clock = m.deserialize(_frame(bytes([0x33, 0x09, 0x6A, 0x48, 0xAE, 0xDD, 0x01, 0xF9])), "WRITE")
-        ee = m.deserialize(_frame(bytes([0xEE, 0x20, 0x0A])), "NOTIFY")
-        a4 = m.deserialize(_frame(bytes([0xA4, 0x58, 0x00])), "NOTIFY")
         self.assertEqual(clock.name, "clock_sync")
         self.assertTrue(clock.understood)
-        self.assertFalse(clock.sendable)
-        self.assertFalse(m.is_sendable("clock_sync"))
+        self.assertTrue(clock.sendable)
+        self.assertTrue(m.is_sendable("clock_sync"))
+
+    def test_decode_b5_opcode_same_as_09(self) -> None:
+        # Same fixture bytes, H5083's cmd byte (0xB5 instead of 0x09) under
+        # the same top-level 0x33 opcode.
+        clock = m.deserialize(_frame(bytes([0x33, 0xB5, 0x6A, 0x48, 0xAE, 0xDD, 0x01, 0xF9])), "WRITE")
+        self.assertEqual(clock.name, "clock_sync")
+        self.assertTrue(clock.understood)
+        self.assertEqual(clock.fields["cmd"], 0xB5)
+
+    def test_build_default_opcode_09(self) -> None:
+        frame = m.build_clock_sync()
+        self.assertEqual(frame[0], 0x09)
+        self.assertEqual(len(frame), 7)
+        self.assertEqual(frame[5:7], bytes([0x01, 0xF9]))
+
+    def test_build_b5_opcode_for_plug(self) -> None:
+        frame = m.build_clock_sync(0xB5)
+        self.assertEqual(frame[0], 0xB5)
+        self.assertEqual(frame[5:7], bytes([0x01, 0xF9]))
+
+
+class TestStubsAndGating(unittest.TestCase):
+    def test_stubs_recognized_but_not_sendable(self) -> None:
+        ee = m.deserialize(_frame(bytes([0xEE, 0x20, 0x0A])), "NOTIFY")
+        a4 = m.deserialize(_frame(bytes([0xA4, 0x58, 0x00])), "NOTIFY")
         for msg, name in ((ee, "stub_ee"), (a4, "stub_a4")):
             self.assertEqual(msg.name, name)
             self.assertFalse(msg.understood, name)
@@ -207,7 +232,7 @@ class TestStubsAndGating(unittest.TestCase):
 
     def test_serialize_gates_non_sendable(self) -> None:
         self.assertEqual(m.serialize("brightness", 50), m.build_brightness(50))
-        for name in ("clock_sync", "wifi_provision", "status_field", "ack", "definitely_not_a_command"):
+        for name in ("wifi_provision", "status_field", "ack", "definitely_not_a_command"):
             with self.assertRaises(m.UnsupportedCommand):
                 m.serialize(name)
 
