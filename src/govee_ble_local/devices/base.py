@@ -14,7 +14,8 @@ from typing import Any, ClassVar
 from bleak.backends.device import BLEDevice
 
 from ..ble import controllers
-from ..models import Capability, DeviceState
+from ..ble.controllers import ColorScheme
+from ..models import Capability, DeviceState, Encryption
 from ..transport.connection import GoveeConnection, now_ts
 
 _LOGGER = logging.getLogger(__name__)
@@ -33,6 +34,10 @@ class GoveeDevice:
     requires_secret: ClassVar[bool] = False
     #: True if power uses the plug relay encoding (0x10/0x11) vs binary (0x00/0x01).
     _relay_power: ClassVar[bool] = False
+    #: Command-channel encryption mode.
+    _encryption: ClassVar[Encryption] = Encryption.AES_RC4_PSK
+    #: RGB/color-temp byte-layout family.
+    _color_scheme: ClassVar[ColorScheme] = "h60a6"
 
     def __init__(
         self,
@@ -50,6 +55,7 @@ class GoveeDevice:
         self._callbacks: list[StateCallback] = []
         self._connection = GoveeConnection(
             ble_device,
+            encryption=self._encryption,
             unlock_frames=self._unlock_frames if self.requires_secret else None,
         )
 
@@ -146,3 +152,45 @@ class PowerMixin(GoveeDevice):
 
     async def turn_off(self) -> None:
         await self.set_power(False)
+
+
+class BrightnessMixin(GoveeDevice):
+    """Brightness control (1..100)."""
+
+    @property
+    def brightness(self) -> int | None:
+        return self._state.brightness
+
+    async def set_brightness(self, pct: int) -> None:
+        await self._connection.send(controllers.brightness(pct))
+        self._state.brightness = max(1, min(100, pct))
+        self._notify_state()
+
+
+class RGBMixin(GoveeDevice):
+    """Solid RGB color control."""
+
+    @property
+    def rgb_color(self) -> tuple[int, int, int] | None:
+        return self._state.rgb_color
+
+    async def set_rgb(self, rgb: tuple[int, int, int]) -> None:
+        r, g, b = rgb
+        await self._connection.send(controllers.rgb(r, g, b, self._color_scheme))
+        self._state.rgb_color = (r, g, b)
+        self._state.color_temp_kelvin = None
+        self._notify_state()
+
+
+class ColorTempMixin(GoveeDevice):
+    """Color-temperature control (Kelvin)."""
+
+    @property
+    def color_temp_kelvin(self) -> int | None:
+        return self._state.color_temp_kelvin
+
+    async def set_color_temp(self, kelvin: int) -> None:
+        await self._connection.send(controllers.color_temp(kelvin, self._color_scheme))
+        self._state.color_temp_kelvin = kelvin
+        self._state.rgb_color = None
+        self._notify_state()

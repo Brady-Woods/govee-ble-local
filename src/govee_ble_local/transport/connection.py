@@ -33,6 +33,7 @@ from ..exceptions import (
     GoveeBleHandshakeError,
     GoveeBleTimeout,
 )
+from ..models import Encryption
 from . import handshake
 
 _LOGGER = logging.getLogger(__name__)
@@ -41,25 +42,33 @@ NotifyCallback = Callable[[bytes], None]
 
 
 class GoveeConnection:
-    """One on-demand, encrypted BLE session with a Govee device."""
+    """One on-demand BLE session with a Govee device.
+
+    The command channel is secured per `encryption`: AES_RC4_PSK negotiates a
+    session key and encrypts every frame with it; HANDSHAKE_ONLY performs the
+    handshake but sends plaintext; NONE skips the handshake entirely.
+    """
 
     def __init__(
         self,
         ble_device: BLEDevice,
         *,
+        encryption: Encryption = Encryption.AES_RC4_PSK,
         on_notify: NotifyCallback | None = None,
         unlock_frames: Callable[[], list[bytes]] | None = None,
         idle_disconnect: float = IDLE_DISCONNECT_DELAY,
     ) -> None:
         self._ble_device = ble_device
+        self._encryption = encryption
         self._on_notify = on_notify
-        # Frames to send (encrypted) immediately after every handshake, before
-        # any user command — e.g. the plug family's `33 b2` secret-key check.
-        # A provider (not a static list) so a device can supply/refresh it lazily.
+        # Frames to send immediately after every handshake, before any user
+        # command — e.g. the plug family's `33 b2` secret-key check. A provider
+        # (not a static list) so a device can supply/refresh it lazily.
         self._unlock_frames = unlock_frames
         self._idle_disconnect = idle_disconnect
         self._client: BleakClientWithServiceCache | None = None
         self._session_key: bytes | None = None
+        self._ready = False  # connected AND handshake done (or not needed)
         self._rx: asyncio.Queue[bytes] = asyncio.Queue()
         self._lock = asyncio.Lock()
         self._idle_timer: asyncio.TimerHandle | None = None
@@ -70,7 +79,13 @@ class GoveeConnection:
 
     @property
     def is_connected(self) -> bool:
-        return self._client is not None and self._client.is_connected and self._session_key is not None
+        return self._client is not None and self._client.is_connected and self._ready
+
+    def _decrypt_rx(self, raw: bytes) -> bytes:
+        """Decrypt an application notification per the encryption mode."""
+        if self._encryption is Encryption.AES_RC4_PSK and self._session_key is not None:
+            return decrypt(raw, self._session_key)
+        return raw  # HANDSHAKE_ONLY / NONE: plaintext on the wire
 
     def update_ble_device(self, ble_device: BLEDevice) -> None:
         self._ble_device = ble_device
@@ -83,10 +98,10 @@ class GoveeConnection:
             _LOGGER.debug("%s: ignoring %d-byte notification", self.address, len(raw))
             return
         self._rx.put_nowait(raw)
-        # Post-handshake frames are decryptable now; surface them to the owner.
-        if self._session_key is not None and self._on_notify is not None:
+        # Once ready, application notifications are decodable; surface them.
+        if self._ready and self._on_notify is not None:
             try:
-                self._on_notify(decrypt(raw, self._session_key))
+                self._on_notify(self._decrypt_rx(raw))
             except Exception:  # pragma: no cover - callback must never break the pump
                 _LOGGER.exception("%s: on_notify callback failed", self.address)
 
@@ -119,41 +134,52 @@ class GoveeConnection:
                 await self._client.start_notify(NOTIFY_CHAR_UUID, self._handle_notify)
             except BleakError as err:
                 raise GoveeBleConnectionError(f"connect to {self.address} failed: {err}") from err
-        await self._handshake()
+        await self._prepare_session()
 
-    async def _handshake(self) -> None:
+    async def _prepare_session(self) -> None:
+        """Run the handshake (if the encryption mode needs one), then send any
+        post-handshake unlock frames and mark the session ready."""
         self._session_key = None
+        self._ready = False
         self._drain()
         assert self._client is not None
         try:
-            await self._raw_write(handshake.build_step1(PSK))
-            reply1 = await asyncio.wait_for(self._rx.get(), timeout=HANDSHAKE_TIMEOUT)
-            key = handshake.parse_session_key(reply1, PSK)
-            if key is None:
-                raise GoveeBleHandshakeError(
-                    f"{self.address}: unexpected handshake step-1 reply"
-                )
-            await self._raw_write(handshake.build_step2(PSK))
-            try:
-                await asyncio.wait_for(self._rx.get(), timeout=COMMAND_ACK_TIMEOUT)
-            except asyncio.TimeoutError:
-                _LOGGER.debug("%s: no step-2 ack (usually harmless)", self.address)
-            self._session_key = key
+            if self._encryption is not Encryption.NONE:
+                await self._handshake()
+            self._ready = True
             self._drain()
-            _LOGGER.debug("%s: session established", self.address)
+            _LOGGER.debug("%s: session ready (%s)", self.address, self._encryption.value)
             # Post-handshake unlock (e.g. secret-key check) — must run before
             # any user command, while we still hold the lock.
             if self._unlock_frames is not None:
                 for frame in self._unlock_frames():
                     await self._send_raw_locked(frame, expect_ack=True)
         except asyncio.TimeoutError as err:
+            self._ready = False
             raise GoveeBleTimeout(f"{self.address}: handshake timed out") from err
         except BleakError as err:
+            self._ready = False
             raise GoveeBleHandshakeError(f"{self.address}: handshake failed: {err}") from err
+
+    async def _handshake(self) -> None:
+        await self._raw_write(handshake.build_step1(PSK))
+        reply1 = await asyncio.wait_for(self._rx.get(), timeout=HANDSHAKE_TIMEOUT)
+        key = handshake.parse_session_key(reply1, PSK)
+        if key is None:
+            raise GoveeBleHandshakeError(f"{self.address}: unexpected handshake step-1 reply")
+        await self._raw_write(handshake.build_step2(PSK))
+        try:
+            await asyncio.wait_for(self._rx.get(), timeout=COMMAND_ACK_TIMEOUT)
+        except asyncio.TimeoutError:
+            _LOGGER.debug("%s: no step-2 ack (usually harmless)", self.address)
+        # AES_RC4_PSK uses the key to frame commands; HANDSHAKE_ONLY performs the
+        # ritual but sends plaintext, so the key is parsed and then unused.
+        self._session_key = key
 
     def _on_disconnect(self, _client: BleakClientWithServiceCache) -> None:
         _LOGGER.debug("%s: disconnected", self.address)
         self._session_key = None
+        self._ready = False
 
     async def disconnect(self) -> None:
         async with self._lock:
@@ -162,6 +188,7 @@ class GoveeConnection:
 
     async def _disconnect_locked(self) -> None:
         self._session_key = None
+        self._ready = False
         client, self._client = self._client, None
         if client is not None:
             try:
@@ -176,16 +203,20 @@ class GoveeConnection:
         await self._client.write_gatt_char(WRITE_CHAR_UUID, frame, response=False)
 
     async def _send_raw_locked(self, frame_plaintext: bytes, *, expect_ack: bool) -> bytes | None:
-        """Encrypt+write one frame and await a best-effort ack. Caller holds the
-        lock and guarantees the session is established."""
-        assert self._session_key is not None
+        """Frame (encrypting per the mode) + write, then await a best-effort ack.
+        Caller holds the lock and guarantees the session is ready."""
         self._drain()
-        await self._raw_write(encrypt(frame_plaintext, self._session_key))
+        if self._encryption is Encryption.AES_RC4_PSK:
+            assert self._session_key is not None
+            wire = encrypt(frame_plaintext, self._session_key)
+        else:
+            wire = frame_plaintext
+        await self._raw_write(wire)
         if not expect_ack:
             return None
         try:
             raw = await asyncio.wait_for(self._rx.get(), timeout=COMMAND_ACK_TIMEOUT)
-            return decrypt(raw, self._session_key)
+            return self._decrypt_rx(raw)
         except asyncio.TimeoutError:
             _LOGGER.debug("%s: no ack for %s", self.address, frame_plaintext[:2].hex())
             return None
