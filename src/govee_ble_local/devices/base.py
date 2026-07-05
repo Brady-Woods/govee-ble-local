@@ -18,6 +18,7 @@ from ..ble.controllers import ColorScheme
 from ..identify import identify
 from ..exceptions import GoveeBleNotSupported
 from ..models import Capability, DeviceState, Encryption, Zone
+from ..scenes import load_scenes
 from ..transport.connection import GoveeConnection, now_ts
 
 _LOGGER = logging.getLogger(__name__)
@@ -280,6 +281,23 @@ class SceneControl(GoveeDevice):
         for chunk in controllers.scene_chunks(param_b64):
             await self._connection.send(chunk, expect_ack=False)
         await self.set_scene(scene_code)
+
+    @property
+    def scene_names(self) -> list[str]:
+        """Built-in scene names available for this device's SKU."""
+        return sorted(load_scenes(self.sku))
+
+    async def set_scene_by_name(self, name: str) -> None:
+        """Activate a built-in scene by name (from the bundled catalog).
+        Uploads the effect blob when the catalog provides one, else bare-activates."""
+        catalog = load_scenes(self.sku)
+        scene = catalog.get(name)
+        if scene is None:
+            raise GoveeBleNotSupported(f"{self.sku}: unknown scene {name!r}")
+        if scene.param:
+            await self.set_scene_full(scene.code, scene.param)
+        else:
+            await self.set_scene(scene.code)
 
 
 class ZoneControl(GoveeDevice):
