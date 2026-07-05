@@ -112,18 +112,39 @@ class GoveeBleClient:
         self._dispatch(bytes(data))
 
     async def _connect(self) -> None:
-        if self._client is not None and self._client.is_connected:
+        # Transport connection and application-level readiness (handshake
+        # completed, or not needed) are two separate things that must be
+        # checked separately - confirmed live as a real bug: if the GATT
+        # transport connects but the handshake then times out (a bare
+        # TimeoutError from asyncio.wait_for, not a BleakError - see the
+        # except clause below), the old code's single combined check
+        # (`self._client is not None and self._client.is_connected`) treated
+        # that as "already connected", returning immediately on every later
+        # call without ever retrying the handshake - permanently stuck with
+        # self._ready == False and every subsequent write() hitting its
+        # assertion, until the transport actually dropped and reset state
+        # via _on_disconnect. Checking self._ready here too means a stalled
+        # handshake gets retried on the next command instead.
+        if self._client is None or not self._client.is_connected:
+            _LOGGER.debug("Connecting to Govee %s", self._ble_device.address)
+            try:
+                self._client = await establish_connection(
+                    BleakClientWithServiceCache,
+                    self._ble_device,
+                    self._ble_device.address,
+                    disconnected_callback=self._on_disconnect,
+                    max_attempts=CONNECT_MAX_ATTEMPTS,
+                )
+                await self._client.start_notify(NOTIFY_CHAR_UUID, self._on_notify)
+            except BleakError as err:
+                # Connection failures are expected/transient (contention,
+                # range); log briefly without a full traceback and let the
+                # caller decide.
+                _LOGGER.debug("Connection to %s failed: %s", self._ble_device.address, err)
+                raise
+        if self._ready:
             return
-        _LOGGER.debug("Connecting to Govee %s", self._ble_device.address)
         try:
-            self._client = await establish_connection(
-                BleakClientWithServiceCache,
-                self._ble_device,
-                self._ble_device.address,
-                disconnected_callback=self._on_disconnect,
-                max_attempts=CONNECT_MAX_ATTEMPTS,
-            )
-            await self._client.start_notify(NOTIFY_CHAR_UUID, self._on_notify)
             if self._protocol.encryption == "none":
                 # Confirmed zero handshake frames in every capture of this
                 # protocol family (e.g. H6006) - nothing to do before the
@@ -136,10 +157,8 @@ class GoveeBleClient:
                 # though it won't use the resulting key for framing.
                 await self._handshake()
                 self._ready = True
-        except BleakError as err:
-            # Connection failures are expected/transient (contention, range);
-            # log briefly without a full traceback and let the caller decide.
-            _LOGGER.debug("Connection to %s failed: %s", self._ble_device.address, err)
+        except (BleakError, TimeoutError) as err:
+            _LOGGER.debug("Handshake with %s failed: %s", self._ble_device.address, err)
             raise
         _LOGGER.debug("Connected and authenticated with %s", self._ble_device.address)
 
