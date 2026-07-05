@@ -261,6 +261,18 @@ class SegmentControl(GoveeDevice):
         self._notify_state()
 
 
+class SceneControl(GoveeDevice):
+    """Activate a built-in scene by its numeric id (33 05 04 <hi> <lo>).
+
+    This is bare activation of a scene already stored on the device
+    (capture-confirmed on H6006/H60A6). Scene ids are device/account-specific;
+    a catalog (name -> id) can be sourced from the cloud scene list."""
+
+    async def set_scene(self, scene_id: int) -> None:
+        await self._connection.send(controllers.scene(((scene_id >> 8) & 0xFF, scene_id & 0xFF)))
+        self._notify_state()
+
+
 class ZoneControl(GoveeDevice):
     """Named-zone control for devices with physical zones (e.g. H60A6
     ring/panel). Zone power uses the dedicated 33 30 command; zone color uses
