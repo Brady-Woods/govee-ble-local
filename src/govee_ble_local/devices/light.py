@@ -9,7 +9,14 @@ from typing import ClassVar
 
 from ..ble.controllers import ColorScheme
 from ..models import Capability, Encryption
-from .base import BrightnessMixin, ColorTempMixin, GoveeDevice, PowerMixin, RGBMixin
+from .base import (
+    BrightnessMixin,
+    ColorTempMixin,
+    GoveeDevice,
+    PowerMixin,
+    RGBMixin,
+    SegmentControl,
+)
 
 _LIGHT_CAPS = frozenset(
     {Capability.POWER, Capability.BRIGHTNESS, Capability.RGB, Capability.COLOR_TEMP}
@@ -48,3 +55,35 @@ class GoveeLightH6052(GoveeRgbLight):
     _color_scheme: ClassVar[ColorScheme] = "h6006"
     min_kelvin: ClassVar[int] = 2000
     max_kelvin: ClassVar[int] = 9000
+
+
+class GoveeLightH6008(GoveeRgbLight):
+    """H6008 — h6006 color scheme. Encryption is discovered from the
+    advertisement at runtime; NONE is only the address-only fallback."""
+
+    skus: ClassVar[tuple[str, ...]] = ("H6008",)
+    _encryption: ClassVar[Encryption] = Encryption.NONE
+    _color_scheme: ClassVar[ColorScheme] = "h6006"
+
+
+class GoveeLightH6047(GoveeRgbLight):
+    """H6047 — h60a6 (SubModeColorV2 0x15) color scheme, like H60A6."""
+
+    skus: ClassVar[tuple[str, ...]] = ("H6047",)
+    _encryption: ClassVar[Encryption] = Encryption.AES_RC4_PSK
+    _color_scheme: ClassVar[ColorScheme] = "h60a6"
+
+
+class GoveeStripH61A8(PowerMixin, BrightnessMixin, RGBMixin, SegmentControl, GoveeDevice):
+    """H61A8 — segmented LED rope (dreamcolorlightv1). Plaintext channel
+    (advertisement encrypt flag clear), 0x0b color mode with a per-segment
+    bitmask, no color-temperature. RGB applies to all segments; use
+    set_segment_rgb() for individual segments."""
+
+    skus: ClassVar[tuple[str, ...]] = ("H61A8",)
+    capabilities: ClassVar[frozenset[Capability]] = frozenset(
+        {Capability.POWER, Capability.BRIGHTNESS, Capability.RGB, Capability.SEGMENTS}
+    )
+    _encryption: ClassVar[Encryption] = Encryption.NONE
+    _color_scheme: ClassVar[ColorScheme] = "h61a8"
+    _segments: ClassVar[int] = 15

@@ -6,7 +6,14 @@ from typing import Any
 from bleak.backends.device import BLEDevice
 
 from .devices.base import GoveeDevice
-from .devices.light import GoveeLightH60A6, GoveeLightH6006, GoveeLightH6052
+from .devices.light import (
+    GoveeLightH60A6,
+    GoveeLightH6006,
+    GoveeLightH6008,
+    GoveeLightH6047,
+    GoveeLightH6052,
+    GoveeStripH61A8,
+)
 from .devices.plug import GoveePlug
 from .exceptions import GoveeBleNotSupported
 
@@ -15,7 +22,10 @@ _DEVICE_CLASSES: tuple[type[GoveeDevice], ...] = (
     GoveePlug,
     GoveeLightH60A6,
     GoveeLightH6006,
+    GoveeLightH6008,
+    GoveeLightH6047,
     GoveeLightH6052,
+    GoveeStripH61A8,
 )
 
 # SKU (upper-case) -> class, built from each class's `skus`.

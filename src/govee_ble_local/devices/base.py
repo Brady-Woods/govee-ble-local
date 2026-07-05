@@ -39,6 +39,8 @@ class GoveeDevice:
     _encryption: ClassVar[Encryption] = Encryption.AES_RC4_PSK
     #: RGB/color-temp byte-layout family.
     _color_scheme: ClassVar[ColorScheme] = "h60a6"
+    #: Number of addressable segments (drives the whole-device color mask).
+    _segments: ClassVar[int] = 13
 
     def __init__(
         self,
@@ -192,7 +194,7 @@ class RGBMixin(GoveeDevice):
 
     async def set_rgb(self, rgb: tuple[int, int, int]) -> None:
         r, g, b = rgb
-        await self._connection.send(controllers.rgb(r, g, b, self._color_scheme))
+        await self._connection.send(controllers.rgb(r, g, b, self._color_scheme, self._segments))
         self._state.rgb_color = (r, g, b)
         self._state.color_temp_kelvin = None
         self._notify_state()
@@ -206,7 +208,22 @@ class ColorTempMixin(GoveeDevice):
         return self._state.color_temp_kelvin
 
     async def set_color_temp(self, kelvin: int) -> None:
-        await self._connection.send(controllers.color_temp(kelvin, self._color_scheme))
+        await self._connection.send(controllers.color_temp(kelvin, self._color_scheme, self._segments))
         self._state.color_temp_kelvin = kelvin
         self._state.rgb_color = None
+        self._notify_state()
+
+
+class SegmentControl(GoveeDevice):
+    """Per-segment RGB control (segmented strips/ropes)."""
+
+    async def set_segment_rgb(self, indices: list[int], rgb: tuple[int, int, int]) -> None:
+        """Set the color of specific segment indices (0-based)."""
+        r, g, b = rgb
+        mask = 0
+        for i in indices:
+            mask |= 1 << i
+        await self._connection.send(
+            controllers.segment_rgb(mask, r, g, b, self._color_scheme)
+        )
         self._notify_state()

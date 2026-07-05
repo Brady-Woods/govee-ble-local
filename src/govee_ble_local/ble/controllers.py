@@ -30,7 +30,8 @@ COLOR_H6006 = 0x0D         # 33 05 0d ...     (H6006/H6052 scheme)
 POWER_ON, POWER_OFF = 0x01, 0x00
 RELAY_ON, RELAY_OFF = 0x11, 0x10  # plug_relay family (H5080/H5083...)
 
-ColorScheme = Literal["h60a6", "h6006"]
+ColorScheme = Literal["h60a6", "h6006", "h61a8"]
+COLOR_H61A8 = 0x0B  # dreamcolorlightv1.SubModeColor (subModeCommandType 11)
 
 
 # --- power / brightness ----------------------------------------------------
@@ -49,43 +50,57 @@ def brightness(pct: int) -> bytes:
 
 
 # --- color -----------------------------------------------------------------
-def rgb(r: int, g: int, b: int, scheme: ColorScheme = "h60a6") -> bytes:
-    """Set a solid RGB color. Layout differs by device generation."""
+def _all_segments_mask(segments: int) -> tuple[int, int]:
+    """The 2-byte 'select every segment' bitmask (BleUtil.makeBytes4SelectPos-
+    ByOneBit with all positions set). e.g. 13 segments -> (0xff, 0x1f)."""
+    bits = (1 << max(0, min(16, segments))) - 1
+    return bits & 0xFF, (bits >> 8) & 0xFF
+
+
+def rgb(r: int, g: int, b: int, scheme: ColorScheme = "h6006", segments: int = 13) -> bytes:
+    """Set a solid RGB color. Each family's SubModeColor.getWriteBytes:
+    - h6006 (tablelampv1, sub-cmd 0x0d): [0x0d, r,g,b, 0,0, 0,0,0]
+    - h60a6 (SubModeColorV2, sub-cmd 0x15): [0x15, 1, r,g,b, 0,0, 0,0,0, mask_lo,mask_hi]
+    - h61a8 (dreamcolorlightv1.SubModeColor, sub-cmd 0x0b): [0x0b, r,g,b, mask_lo,mask_hi]
+    Whole-device color selects every segment (all-bits mask)."""
+    lo, hi = _all_segments_mask(segments)
     if scheme == "h6006":
-        return build_frame(PRO_WRITE, CMD_MODE, bytes([COLOR_H6006, r, g, b]))
+        return build_frame(PRO_WRITE, CMD_MODE, bytes([COLOR_H6006, r, g, b, 0, 0, 0, 0, 0]))
+    if scheme == "h61a8":
+        return build_frame(PRO_WRITE, CMD_MODE, bytes([COLOR_H61A8, r, g, b, lo, hi]))
     return build_frame(
         PRO_WRITE, CMD_MODE,
-        bytes([COLOR_H60A6, 0x01, r, g, b, 0, 0, 0, 0, 0, 0xFF, 0x1F]),
+        bytes([COLOR_H60A6, 0x01, r, g, b, 0, 0, 0, 0, 0, lo, hi]),
     )
 
 
-def color_temp(kelvin: int, scheme: ColorScheme = "h6006") -> bytes:
-    """Set color temperature (Kelvin).
-
-    h6006 layout is an exact port of tablelampv1.SubModeColor.getWriteBytes for
-    the color-temp case: sub-cmd 0x0d, WHITE in the RGB slot, the raw 16-bit
-    Kelvin, then a cosmetic tint. The app derives the tint from a lookup table
+def color_temp(kelvin: int, scheme: ColorScheme = "h6006", segments: int = 13) -> bytes:
+    """Set color temperature (Kelvin) — exact ports of each SubModeColor's
+    color-temp path: WHITE in the RGB slot, the raw 16-bit Kelvin, then a
+    cosmetic tint. The app looks the tint up in a table
     (Constant.getTemColorByKelvin) and sends (0,0,0) when the Kelvin isn't a
-    table entry - which is the common case - so we send (0,0,0): the raw Kelvin
-    at bytes[4:6] is what actually drives the device.
+    table entry (the common case), so we send (0,0,0): the raw Kelvin drives it.
     """
     khi, klo = (kelvin >> 8) & 0xFF, kelvin & 0xFF
+    lo, hi = _all_segments_mask(segments)
     if scheme == "h6006":
         return build_frame(PRO_WRITE, CMD_MODE, bytes([COLOR_H6006, 0xFF, 0xFF, 0xFF, khi, klo, 0x00, 0x00, 0x00]))
-    # NOTE: the "h60a6" scheme here is NOT yet verified against the Java. The
-    # per-family SubModeColor classes differ (dreamcolorlightv1 uses sub-cmd
-    # 0x0b + segment bitmask, not 0x15). Left as a placeholder pending a
-    # faithful per-family port; do not rely on this for h60a6-scheme devices.
+    if scheme == "h61a8":
+        # dreamcolorlightv1.SubModeColor has no color-temp path (RGB rope, no CT).
+        raise ValueError("h61a8 has no color-temperature capability")
     return build_frame(
         PRO_WRITE, CMD_MODE,
-        bytes([COLOR_H60A6, 0x01, 0xFF, 0xFF, 0xFF, khi, klo, 0x00, 0x00, 0x00, 0xFF, 0x1F]),
+        bytes([COLOR_H60A6, 0x01, 0xFF, 0xFF, 0xFF, khi, klo, 0x00, 0x00, 0x00, lo, hi]),
     )
 
 
-def segment_color(segment_mask: int, r: int, g: int, b: int) -> bytes:
-    """Set the color of one or more segments (h60a6-scheme devices with
-    segments, e.g. H61A8). `segment_mask` is a 16-bit bitmask of segments."""
+def segment_rgb(segment_mask: int, r: int, g: int, b: int, scheme: ColorScheme = "h61a8") -> bytes:
+    """Set the color of specific segments. `segment_mask` is a 16-bit bitmask.
+    Same per-family layouts as rgb(), with the mask selecting the target
+    segments instead of all of them."""
     lo, hi = segment_mask & 0xFF, (segment_mask >> 8) & 0xFF
+    if scheme == "h61a8":
+        return build_frame(PRO_WRITE, CMD_MODE, bytes([COLOR_H61A8, r, g, b, lo, hi]))
     return build_frame(
         PRO_WRITE, CMD_MODE,
         bytes([COLOR_H60A6, 0x01, r, g, b, 0, 0, 0, 0, 0, lo, hi]),
