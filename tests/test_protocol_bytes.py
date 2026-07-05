@@ -66,22 +66,11 @@ def test_rgb_layouts() -> None:
     assert h[12:14].hex() == "ff1f"
 
 
-def test_color_temp_h6006_structure() -> None:
-    # Layout: 33 05 0d <tint rgb> <kelvin hi,lo> <tint rgb repeated>. The tint
-    # is a cosmetic approximation (kelvin_to_rgb); the raw Kelvin drives color.
+def test_color_temp_h6006_matches_java() -> None:
+    # Exact port of tablelampv1.SubModeColor: 33 05 0d ff ff ff <k_hi> <k_lo>
+    # 00 00 00  (WHITE in the RGB slot, raw Kelvin, no tint for out-of-table K).
     f = controllers.color_temp(2700, "h6006")
-    assert f[:3].hex() == "33050d"
-    assert f[6:8].hex() == "0a8c"          # 2700 = 0x0A8C
-    assert f[3:6] == f[8:11]               # tint repeated
-    assert f[3:6] == bytes(controllers.kelvin_to_rgb(2700))
-
-
-def test_color_temp_h60a6_structure() -> None:
-    # 33 05 15 01 ff ff ff <kelvin hi,lo> <tint rgb> ff 1f
-    f = controllers.color_temp(5000, "h60a6")
-    assert f[:7].hex() == "3305150 1ffffff".replace(" ", "")
-    assert f[7:9].hex() == "1388"          # 5000 = 0x1388
-    assert f[12:14].hex() == "ff1f"
+    assert f[:11].hex() == "33050dffffff0a8c000000"  # 2700 = 0x0A8C
 
 
 def test_scene() -> None:

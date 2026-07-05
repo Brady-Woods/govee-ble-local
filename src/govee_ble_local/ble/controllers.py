@@ -8,7 +8,6 @@ device captures (see PROTOCOL.md).
 """
 from __future__ import annotations
 
-import math
 from typing import Literal
 
 from .frame import PRO_READ, PRO_WRITE, build_frame
@@ -32,7 +31,6 @@ POWER_ON, POWER_OFF = 0x01, 0x00
 RELAY_ON, RELAY_OFF = 0x11, 0x10  # plug_relay family (H5080/H5083...)
 
 ColorScheme = Literal["h60a6", "h6006"]
-MIN_KELVIN, MAX_KELVIN = 2700, 6500
 
 
 # --- power / brightness ----------------------------------------------------
@@ -61,17 +59,26 @@ def rgb(r: int, g: int, b: int, scheme: ColorScheme = "h60a6") -> bytes:
     )
 
 
-def color_temp(kelvin: int, scheme: ColorScheme = "h60a6") -> bytes:
-    """Set color temperature (Kelvin). Sends the raw Kelvin plus a cosmetic
-    black-body tint (kelvin_to_rgb)."""
-    kelvin = max(MIN_KELVIN, min(MAX_KELVIN, kelvin))
-    tr, tg, tb = kelvin_to_rgb(kelvin)
+def color_temp(kelvin: int, scheme: ColorScheme = "h6006") -> bytes:
+    """Set color temperature (Kelvin).
+
+    h6006 layout is an exact port of tablelampv1.SubModeColor.getWriteBytes for
+    the color-temp case: sub-cmd 0x0d, WHITE in the RGB slot, the raw 16-bit
+    Kelvin, then a cosmetic tint. The app derives the tint from a lookup table
+    (Constant.getTemColorByKelvin) and sends (0,0,0) when the Kelvin isn't a
+    table entry - which is the common case - so we send (0,0,0): the raw Kelvin
+    at bytes[4:6] is what actually drives the device.
+    """
     khi, klo = (kelvin >> 8) & 0xFF, kelvin & 0xFF
     if scheme == "h6006":
-        return build_frame(PRO_WRITE, CMD_MODE, bytes([COLOR_H6006, tr, tg, tb, khi, klo, tr, tg, tb]))
+        return build_frame(PRO_WRITE, CMD_MODE, bytes([COLOR_H6006, 0xFF, 0xFF, 0xFF, khi, klo, 0x00, 0x00, 0x00]))
+    # NOTE: the "h60a6" scheme here is NOT yet verified against the Java. The
+    # per-family SubModeColor classes differ (dreamcolorlightv1 uses sub-cmd
+    # 0x0b + segment bitmask, not 0x15). Left as a placeholder pending a
+    # faithful per-family port; do not rely on this for h60a6-scheme devices.
     return build_frame(
         PRO_WRITE, CMD_MODE,
-        bytes([COLOR_H60A6, 0x01, 0xFF, 0xFF, 0xFF, khi, klo, tr, tg, tb, 0xFF, 0x1F]),
+        bytes([COLOR_H60A6, 0x01, 0xFF, 0xFF, 0xFF, khi, klo, 0x00, 0x00, 0x00, 0xFF, 0x1F]),
     )
 
 
@@ -116,26 +123,3 @@ def secret_check(secret: bytes) -> bytes:
 def status_field(field: int = CMD_STATUS_FIELD) -> bytes:
     """Read a status field (aa <field>), e.g. 0x01 = online/heartbeat poll."""
     return build_frame(PRO_READ, field)
-
-
-# --- helpers ---------------------------------------------------------------
-def kelvin_to_rgb(kelvin: int) -> tuple[int, int, int]:
-    """Approximate black-body RGB tint for a color temperature (cosmetic;
-    the raw Kelvin value drives the actual color). Verified against H60A6
-    reference points (2700K/6500K)."""
-    temp = kelvin / 100.0
-    red = 255.0 if temp <= 66 else 329.698727446 * ((temp - 60) ** -0.1332047592)
-    if temp <= 66:
-        green = 99.4708025861 * math.log(temp) - 161.1195681661
-    else:
-        green = 288.1221695283 * ((temp - 60) ** -0.0755148492)
-    if temp >= 66:
-        blue = 255.0
-    elif temp <= 19:
-        blue = 0.0
-    else:
-        blue = 138.5177312231 * math.log(temp - 10) - 305.0447927307
-    def clamp(v: float) -> int:
-        return max(0, min(255, round(v)))
-
-    return (clamp(red), clamp(green), clamp(blue))
