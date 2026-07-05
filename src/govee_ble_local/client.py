@@ -98,11 +98,21 @@ class GoveeBleClient:
         if len(raw) != FRAME_LEN:
             _LOGGER.debug("Ignoring %d-byte notification from %s", len(raw), self._ble_device.address)
             return
-        # "handshake_only" devices go through the real handshake (so
-        # self._rx_key does get swapped to a session key, same as
-        # "aes_rc4_psk") but never actually encrypt subsequent frames - see
-        # messages.Encryption's docstring. Only "aes_rc4_psk" decrypts here.
-        plaintext = p.decrypt_packet(self._rx_key, raw) if self._protocol.encryption == "aes_rc4_psk" else raw
+        # "handshake_only" devices go through the real handshake, and both
+        # handshake replies ARE genuinely PSK-encrypted on the wire even
+        # though every frame *after* the handshake completes is plaintext -
+        # see messages.Encryption's docstring. Gating decryption on
+        # self._protocol.encryption alone (i.e. "only aes_rc4_psk ever
+        # decrypts") was a real bug, confirmed live: it left the handshake
+        # replies themselves undecrypted garbage for "handshake_only"
+        # devices, so _handshake() never recognized its own response and
+        # timed out waiting for it every single time. Gate on self._ready
+        # instead - not yet ready means still inside (or before) the
+        # handshake, where decryption is always needed regardless of scheme;
+        # "none" devices reach self._ready almost immediately (no handshake
+        # to wait for), so this still never decrypts anything for them.
+        needs_decrypt = self._protocol.encryption == "aes_rc4_psk" or not self._ready
+        plaintext = p.decrypt_packet(self._rx_key, raw) if needs_decrypt else raw
         msg = messages.dispatch_incoming(plaintext, "NOTIFY")
         if msg.understood:
             self._notify_queue.put_nowait(msg)
