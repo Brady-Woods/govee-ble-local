@@ -47,6 +47,20 @@ class Segment:
     brightness: int | None = None  # 0..100
 
 
+@dataclass(frozen=True)
+class Zone:
+    """A named physical zone of a device (e.g. H60A6's ring / panel).
+
+    `power_index` addresses the zone-on/off command (33 30 <index>);
+    `segments` lists the segment bit-indices that make up this zone (for
+    zone-level color via the segment mask).
+    """
+
+    name: str
+    power_index: int
+    segments: tuple[int, ...] = ()
+
+
 @dataclass
 class DeviceState:
     """Best-known device state. Fields are None when unknown/unsupported.

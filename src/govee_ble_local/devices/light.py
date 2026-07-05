@@ -8,7 +8,7 @@ from __future__ import annotations
 from typing import ClassVar
 
 from ..ble.controllers import ColorScheme
-from ..models import Capability, Encryption
+from ..models import Capability, Encryption, Zone
 from .base import (
     BrightnessMixin,
     ColorTempMixin,
@@ -16,6 +16,7 @@ from .base import (
     PowerMixin,
     RGBMixin,
     SegmentControl,
+    ZoneControl,
 )
 
 _LIGHT_CAPS = frozenset(
@@ -31,12 +32,31 @@ class GoveeRgbLight(PowerMixin, BrightnessMixin, RGBMixin, ColorTempMixin, Govee
     max_kelvin: ClassVar[int] = 6500
 
 
-class GoveeLightH60A6(GoveeRgbLight):
-    """H60A6 — AES-RC4-PSK, h60a6 color scheme. (Confirmed.)"""
+class GoveeLightH60A6(GoveeRgbLight, SegmentControl, ZoneControl):
+    """H60A6 — "Ceiling Light Pro". AES-RC4-PSK, h60a6 (SubModeColorV2 0x15)
+    color scheme. Two physical zones (upper ring, lower panel) + 12
+    individually-addressable segments.
+
+    - Whole-device: power / brightness / RGB / color-temp (verified).
+    - Segments: set_segment_rgb / set_segment_brightness via the 0x15 mask
+      (mask confirmed live to address individual segments).
+    - Zones: set_zone_power("ring"|"panel", on) via the verified 33 30 command
+      (panel=0, ring=1). set_zone_rgb() colors a zone's segments.
+
+    NOTE: the segment->zone split below (ring=0-10, panel=11) is a best-guess
+    default - the app protocol does not encode which segment bits belong to
+    which zone (confirmed absent from the source). It can be overridden per
+    install; zone *power* (33 30) is exact regardless."""
 
     skus: ClassVar[tuple[str, ...]] = ("H60A6",)
     _encryption: ClassVar[Encryption] = Encryption.AES_RC4_PSK
     _color_scheme: ClassVar[ColorScheme] = "h60a6"
+    _segments: ClassVar[int] = 12
+    capabilities: ClassVar[frozenset[Capability]] = _LIGHT_CAPS | {Capability.SEGMENTS}
+    zones: ClassVar[tuple[Zone, ...]] = (
+        Zone("panel", power_index=0, segments=(11,)),
+        Zone("ring", power_index=1, segments=tuple(range(0, 11))),
+    )
 
 
 class GoveeLightH6006(GoveeRgbLight):

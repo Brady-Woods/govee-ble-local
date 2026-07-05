@@ -16,7 +16,8 @@ from bleak.backends.device import BLEDevice
 from ..ble import controllers
 from ..ble.controllers import ColorScheme
 from ..identify import identify
-from ..models import Capability, DeviceState, Encryption
+from ..exceptions import GoveeBleNotSupported
+from ..models import Capability, DeviceState, Encryption, Zone
 from ..transport.connection import GoveeConnection, now_ts
 
 _LOGGER = logging.getLogger(__name__)
@@ -41,6 +42,8 @@ class GoveeDevice:
     _color_scheme: ClassVar[ColorScheme] = "h60a6"
     #: Number of addressable segments (drives the whole-device color mask).
     _segments: ClassVar[int] = 13
+    #: Named physical zones (e.g. H60A6 ring/panel), empty if none.
+    zones: ClassVar[tuple[Zone, ...]] = ()
 
     def __init__(
         self,
@@ -214,16 +217,47 @@ class ColorTempMixin(GoveeDevice):
         self._notify_state()
 
 
+def _mask(indices: list[int] | tuple[int, ...]) -> int:
+    mask = 0
+    for i in indices:
+        mask |= 1 << i
+    return mask
+
+
 class SegmentControl(GoveeDevice):
-    """Per-segment RGB control (segmented strips/ropes)."""
+    """Per-segment RGB/brightness control (segmented strips/ropes/rings)."""
 
     async def set_segment_rgb(self, indices: list[int], rgb: tuple[int, int, int]) -> None:
         """Set the color of specific segment indices (0-based)."""
         r, g, b = rgb
-        mask = 0
-        for i in indices:
-            mask |= 1 << i
-        await self._connection.send(
-            controllers.segment_rgb(mask, r, g, b, self._color_scheme)
-        )
+        await self._connection.send(controllers.segment_rgb(_mask(indices), r, g, b, self._color_scheme))
+        self._notify_state()
+
+    async def set_segment_brightness(self, indices: list[int], pct: int) -> None:
+        """Set brightness (1..100) on specific segment indices (h60a6 scheme)."""
+        await self._connection.send(controllers.segment_brightness(_mask(indices), pct, self._color_scheme))
+        self._notify_state()
+
+
+class ZoneControl(GoveeDevice):
+    """Named-zone control for devices with physical zones (e.g. H60A6
+    ring/panel). Zone power uses the dedicated 33 30 command; zone color uses
+    the segment mask of the zone's segments."""
+
+    def _zone(self, name: str) -> Zone:
+        for z in self.zones:
+            if z.name == name:
+                return z
+        raise GoveeBleNotSupported(f"{self.sku}: unknown zone {name!r}; have {[z.name for z in self.zones]}")
+
+    async def set_zone_power(self, zone: str, on: bool) -> None:
+        await self._connection.send(controllers.zone_power(self._zone(zone).power_index, on))
+        self._notify_state()
+
+    async def set_zone_rgb(self, zone: str, rgb: tuple[int, int, int]) -> None:
+        z = self._zone(zone)
+        if not z.segments:
+            raise GoveeBleNotSupported(f"{self.sku}: zone {zone!r} has no segment mapping")
+        r, g, b = rgb
+        await self._connection.send(controllers.segment_rgb(_mask(z.segments), r, g, b, self._color_scheme))
         self._notify_state()

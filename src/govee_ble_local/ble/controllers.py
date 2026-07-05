@@ -16,6 +16,7 @@ from .frame import PRO_READ, PRO_WRITE, build_frame
 CMD_POWER = 0x01           # 33 01 <val>           (SwitchController, cmd 1)
 CMD_BRIGHTNESS = 0x04      # 33 04 <pct>           (BrightnessController, cmd 4)
 CMD_MODE = 0x05            # 33 05 <sub> ...       (AbsModeController: color/scene)
+CMD_ZONE = 0x30            # 33 30 <zone> <state>  (H60A6 zone on/off)
 CMD_SECRET_CHECK = 0xB2    # 33 b2 <secret>        (SINGLE_CHECK_SECRET_KEY)
 CMD_SECRET_READ = 0xB1     # aa b1                 (SINGLE_READ_SECRET_KEY)
 CMD_SYNC_TIME = 0xB5       # 33 b5 <ts> 01 f9      (plug family; 0x09 on lights)
@@ -105,6 +106,20 @@ def segment_rgb(segment_mask: int, r: int, g: int, b: int, scheme: ColorScheme =
         PRO_WRITE, CMD_MODE,
         bytes([COLOR_H60A6, 0x01, r, g, b, 0, 0, 0, 0, 0, lo, hi]),
     )
+
+
+def segment_brightness(segment_mask: int, pct: int, scheme: ColorScheme = "h60a6") -> bytes:
+    """Set brightness (0-100) on specific segments (h60a6/SubModeColorV2 only):
+    33 05 15 02 <pct> <mask_lo> <mask_hi> ..."""
+    lo, hi = segment_mask & 0xFF, (segment_mask >> 8) & 0xFF
+    pct = max(0, min(100, pct))
+    return build_frame(PRO_WRITE, CMD_MODE, bytes([COLOR_H60A6, 0x02, pct, lo, hi]))
+
+
+def zone_power(zone: int, on: bool) -> bytes:
+    """Turn a physical zone on/off (H60A6: 33 30 <zone> <state>; zone 0 = lower
+    panel, 1 = upper ring). Verified in v1."""
+    return build_frame(PRO_WRITE, CMD_ZONE, bytes([zone, 1 if on else 0]))
 
 
 def scene(scene_id: tuple[int, int]) -> bytes:
