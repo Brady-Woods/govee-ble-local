@@ -1,0 +1,222 @@
+"""The encrypted BLE session: connect, handshake, send/receive.
+
+Owns the bleak connection, runs the e7 handshake to negotiate the session
+key, then encrypts every outgoing frame and decrypts every notification with
+it. Raw ciphertext is queued from the notify callback and decrypted at the
+point of use (PSK during the handshake, session key afterwards).
+"""
+from __future__ import annotations
+
+import asyncio
+import logging
+import time
+from collections.abc import Callable
+
+from bleak.backends.characteristic import BleakGATTCharacteristic
+from bleak.backends.device import BLEDevice
+from bleak.exc import BleakError
+from bleak_retry_connector import BleakClientWithServiceCache, establish_connection
+
+from ..const import (
+    COMMAND_ACK_TIMEOUT,
+    CONNECT_MAX_ATTEMPTS,
+    FRAME_LEN,
+    HANDSHAKE_TIMEOUT,
+    IDLE_DISCONNECT_DELAY,
+    NOTIFY_CHAR_UUID,
+    PSK,
+    WRITE_CHAR_UUID,
+)
+from ..crypto import decrypt, encrypt
+from ..exceptions import (
+    GoveeBleConnectionError,
+    GoveeBleHandshakeError,
+    GoveeBleTimeout,
+)
+from . import handshake
+
+_LOGGER = logging.getLogger(__name__)
+
+NotifyCallback = Callable[[bytes], None]
+
+
+class GoveeConnection:
+    """One on-demand, encrypted BLE session with a Govee device."""
+
+    def __init__(
+        self,
+        ble_device: BLEDevice,
+        *,
+        on_notify: NotifyCallback | None = None,
+        unlock_frames: Callable[[], list[bytes]] | None = None,
+        idle_disconnect: float = IDLE_DISCONNECT_DELAY,
+    ) -> None:
+        self._ble_device = ble_device
+        self._on_notify = on_notify
+        # Frames to send (encrypted) immediately after every handshake, before
+        # any user command — e.g. the plug family's `33 b2` secret-key check.
+        # A provider (not a static list) so a device can supply/refresh it lazily.
+        self._unlock_frames = unlock_frames
+        self._idle_disconnect = idle_disconnect
+        self._client: BleakClientWithServiceCache | None = None
+        self._session_key: bytes | None = None
+        self._rx: asyncio.Queue[bytes] = asyncio.Queue()
+        self._lock = asyncio.Lock()
+        self._idle_timer: asyncio.TimerHandle | None = None
+
+    @property
+    def address(self) -> str:
+        return self._ble_device.address
+
+    @property
+    def is_connected(self) -> bool:
+        return self._client is not None and self._client.is_connected and self._session_key is not None
+
+    def update_ble_device(self, ble_device: BLEDevice) -> None:
+        self._ble_device = ble_device
+
+    # -- notify pump --------------------------------------------------------
+
+    def _handle_notify(self, _char: BleakGATTCharacteristic, data: bytearray) -> None:
+        raw = bytes(data)
+        if len(raw) != FRAME_LEN:
+            _LOGGER.debug("%s: ignoring %d-byte notification", self.address, len(raw))
+            return
+        self._rx.put_nowait(raw)
+        # Post-handshake frames are decryptable now; surface them to the owner.
+        if self._session_key is not None and self._on_notify is not None:
+            try:
+                self._on_notify(decrypt(raw, self._session_key))
+            except Exception:  # pragma: no cover - callback must never break the pump
+                _LOGGER.exception("%s: on_notify callback failed", self.address)
+
+    def _drain(self) -> None:
+        while not self._rx.empty():
+            self._rx.get_nowait()
+
+    # -- lifecycle ----------------------------------------------------------
+
+    async def connect(self) -> None:
+        """Connect (if needed) and run the handshake."""
+        async with self._lock:
+            self._cancel_idle_timer()
+            if self.is_connected:
+                self._schedule_idle_timer()
+                return
+            await self._connect_locked()
+            self._schedule_idle_timer()
+
+    async def _connect_locked(self) -> None:
+        if self._client is None or not self._client.is_connected:
+            try:
+                self._client = await establish_connection(
+                    BleakClientWithServiceCache,
+                    self._ble_device,
+                    self._ble_device.address,
+                    disconnected_callback=self._on_disconnect,
+                    max_attempts=CONNECT_MAX_ATTEMPTS,
+                )
+                await self._client.start_notify(NOTIFY_CHAR_UUID, self._handle_notify)
+            except BleakError as err:
+                raise GoveeBleConnectionError(f"connect to {self.address} failed: {err}") from err
+        await self._handshake()
+
+    async def _handshake(self) -> None:
+        self._session_key = None
+        self._drain()
+        assert self._client is not None
+        try:
+            await self._raw_write(handshake.build_step1(PSK))
+            reply1 = await asyncio.wait_for(self._rx.get(), timeout=HANDSHAKE_TIMEOUT)
+            key = handshake.parse_session_key(reply1, PSK)
+            if key is None:
+                raise GoveeBleHandshakeError(
+                    f"{self.address}: unexpected handshake step-1 reply"
+                )
+            await self._raw_write(handshake.build_step2(PSK))
+            try:
+                await asyncio.wait_for(self._rx.get(), timeout=COMMAND_ACK_TIMEOUT)
+            except asyncio.TimeoutError:
+                _LOGGER.debug("%s: no step-2 ack (usually harmless)", self.address)
+            self._session_key = key
+            self._drain()
+            _LOGGER.debug("%s: session established", self.address)
+            # Post-handshake unlock (e.g. secret-key check) — must run before
+            # any user command, while we still hold the lock.
+            if self._unlock_frames is not None:
+                for frame in self._unlock_frames():
+                    await self._send_raw_locked(frame, expect_ack=True)
+        except asyncio.TimeoutError as err:
+            raise GoveeBleTimeout(f"{self.address}: handshake timed out") from err
+        except BleakError as err:
+            raise GoveeBleHandshakeError(f"{self.address}: handshake failed: {err}") from err
+
+    def _on_disconnect(self, _client: BleakClientWithServiceCache) -> None:
+        _LOGGER.debug("%s: disconnected", self.address)
+        self._session_key = None
+
+    async def disconnect(self) -> None:
+        async with self._lock:
+            self._cancel_idle_timer()
+            await self._disconnect_locked()
+
+    async def _disconnect_locked(self) -> None:
+        self._session_key = None
+        client, self._client = self._client, None
+        if client is not None:
+            try:
+                await client.disconnect()
+            except BleakError as err:
+                _LOGGER.debug("%s: disconnect error: %s", self.address, err)
+
+    # -- I/O ----------------------------------------------------------------
+
+    async def _raw_write(self, frame: bytes) -> None:
+        assert self._client is not None
+        await self._client.write_gatt_char(WRITE_CHAR_UUID, frame, response=False)
+
+    async def _send_raw_locked(self, frame_plaintext: bytes, *, expect_ack: bool) -> bytes | None:
+        """Encrypt+write one frame and await a best-effort ack. Caller holds the
+        lock and guarantees the session is established."""
+        assert self._session_key is not None
+        self._drain()
+        await self._raw_write(encrypt(frame_plaintext, self._session_key))
+        if not expect_ack:
+            return None
+        try:
+            raw = await asyncio.wait_for(self._rx.get(), timeout=COMMAND_ACK_TIMEOUT)
+            return decrypt(raw, self._session_key)
+        except asyncio.TimeoutError:
+            _LOGGER.debug("%s: no ack for %s", self.address, frame_plaintext[:2].hex())
+            return None
+
+    async def send(self, frame_plaintext: bytes, *, expect_ack: bool = True) -> bytes | None:
+        """Connect+handshake if needed, then encrypt and send one 20-byte
+        plaintext frame; return the decrypted next notification (best-effort ack)."""
+        async with self._lock:
+            self._cancel_idle_timer()
+            if not self.is_connected:
+                await self._connect_locked()
+            ack = await self._send_raw_locked(frame_plaintext, expect_ack=expect_ack)
+            self._schedule_idle_timer()
+            return ack
+
+    # -- idle disconnect ----------------------------------------------------
+
+    def _cancel_idle_timer(self) -> None:
+        if self._idle_timer is not None:
+            self._idle_timer.cancel()
+            self._idle_timer = None
+
+    def _schedule_idle_timer(self) -> None:
+        self._cancel_idle_timer()
+        if self._idle_disconnect > 0:
+            loop = asyncio.get_running_loop()
+            self._idle_timer = loop.call_later(
+                self._idle_disconnect, lambda: asyncio.ensure_future(self.disconnect())
+            )
+
+
+def now_ts() -> int:
+    """Current unix timestamp (for sync_time frames)."""
+    return int(time.time())
