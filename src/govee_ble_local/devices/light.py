@@ -52,14 +52,12 @@ class GoveeLightH60A6(GoveeRgbLight, SegmentControl, ZoneControl, StatusReadable
     ALL 13 segments are the addressable ring/main light.
 
     The H60A6 has two INDEPENDENT light elements, each toggled via 33 30
-    (VM4LightH60A6.specialDealSnapshot): index 1 = ring/main (Q1.j()),
-    index 0 = background/panel (Q1.r()). Cloud names them mainLightToggle /
-    backgroundLightToggle. RGB scenes and segment color drive the ring only;
-    the background is a separate element with its own state (this is why a
-    scene leaves the background unchanged). We expose its power via
-    set_zone_power("background", ...); its color path is not yet identified in
-    the source, so "background" has no segment mapping (set_zone_rgb refuses)
-    rather than incorrectly coloring a ring segment."""
+    (VM4LightH60A6.specialDealSnapshot uses toggle indices 0 and 1). Cloud names
+    them mainLightToggle / backgroundLightToggle. Verified live: the MAIN light
+    is toggle index 0, and the BACKGROUND (the addressable RGBIC ring) is index
+    1. RGB scenes and segment colour drive the ring (background); the main light
+    is a plain element with power only, so "main" has no segment mapping
+    (set_zone_rgb refuses) rather than colouring a ring segment."""
 
     skus: ClassVar[tuple[str, ...]] = ("H60A6",)
     _encryption: ClassVar[Encryption] = Encryption.AES_RC4_PSK
@@ -67,8 +65,8 @@ class GoveeLightH60A6(GoveeRgbLight, SegmentControl, ZoneControl, StatusReadable
     _segments: ClassVar[int] = 13
     capabilities: ClassVar[frozenset[Capability]] = _LIGHT_CAPS | {Capability.SEGMENTS}
     zones: ClassVar[tuple[Zone, ...]] = (
-        Zone("main", power_index=1, segments=tuple(range(0, 13))),   # ring (all 13 segments)
-        Zone("background", power_index=0, segments=()),              # separate panel: power only
+        Zone("main", power_index=0, segments=()),                        # primary light: power only
+        Zone("background", power_index=1, segments=tuple(range(0, 13))), # RGBIC ring (all 13 segments)
     )
 
 

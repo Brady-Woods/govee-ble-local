@@ -16,6 +16,7 @@ against. It can break if Govee changes the backend; the offline paths
 from __future__ import annotations
 
 import base64
+import json
 import time
 import uuid
 from dataclasses import dataclass
@@ -50,18 +51,13 @@ class CloudDevice:
     """One device as reported by the account API."""
 
     sku: str
-    device: str            # Govee device id (last 6 bytes = BLE MAC)
+    device: str            # Govee device id (embeds the Wi-Fi MAC in its last 6 octets)
     name: str
     secret: bytes | None   # 8-byte BLE secret (decoded from secretCode), if present
     pact_type: int | None
     pact_code: int | None
     goods_type: int | None
-
-    @property
-    def ble_mac(self) -> str | None:
-        """Best-effort BLE MAC from the device id (last 6 octets)."""
-        parts = self.device.split(":")
-        return ":".join(parts[-6:]) if len(parts) >= 6 else None
+    ble_mac: str | None = None   # the device's BLE MAC (from deviceSettings.address)
 
 
 class GoveeCloudError(GoveeBleError):
@@ -149,14 +145,34 @@ class GoveeCloudAccount:
                         pass
             return None
 
-        secret_b64 = d.get("secretCode") or d.get("secret_code")
+        # The BLE secret and the real BLE MAC live inside deviceExt.deviceSettings,
+        # which is itself a JSON string (not top-level). e.g.
+        #   deviceSettings = '{"address":"98:17:3C:B1:A2:D1","secretCode":"..base64..",
+        #                      "bleName":"ihoment_H5083_A2D1","wifiMac":"98:17:3C:B1:A2:D0",...}'
+        # (the top-level `device` id embeds the Wi-Fi MAC, one off the BLE MAC.)
+        ext = d.get("deviceExt")
+        settings: dict[str, Any] = {}
+        if isinstance(ext, dict):
+            raw_settings = ext.get("deviceSettings")
+            if isinstance(raw_settings, str) and raw_settings:
+                try:
+                    settings = json.loads(raw_settings)
+                except (ValueError, TypeError):
+                    settings = {}
+
+        secret_b64 = d.get("secretCode") or d.get("secret_code") or settings.get("secretCode")
         secret: bytes | None = None
         if isinstance(secret_b64, str) and secret_b64:
             try:
                 secret = base64.b64decode(secret_b64)
             except (ValueError, TypeError):
                 secret = None
-        ext = d.get("deviceExt")
+
+        ble_mac = settings.get("address")
+        if not (isinstance(ble_mac, str) and ble_mac):
+            parts = str(d.get("device", "")).split(":")
+            ble_mac = ":".join(parts[-6:]) if len(parts) >= 6 else None
+
         ext_name = ext.get("deviceName") if isinstance(ext, dict) else None
         return CloudDevice(
             sku=str(d.get("sku", "")).upper(),
@@ -166,6 +182,7 @@ class GoveeCloudAccount:
             pact_type=_int("pactType", "pact_type"),
             pact_code=_int("pactCode", "pact_code"),
             goods_type=_int("goodsType", "goods_type"),
+            ble_mac=ble_mac if isinstance(ble_mac, str) else None,
         )
 
     async def get_scene_effect_strs(self, param_ids: list[int]) -> dict[int, str]:
