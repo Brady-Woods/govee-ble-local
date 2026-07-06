@@ -141,17 +141,21 @@ class GoveeDevice:
                 _LOGGER.exception("%s: state callback failed", self.address)
 
     async def update(self) -> DeviceState:
-        """Refresh device state: ensure the connection is alive, then read
-        state back if the device supports it (else keep optimistic state)."""
-        await self._connection.connect()
+        """Refresh device state.
+
+        Devices with read-back (StatusReadable) connect and read real state.
+        Optimistic devices do NO I/O here — connecting just to "poll" a device
+        with nothing to read wastes scarce BLE connection slots and blocks
+        setup when the device is momentarily unreachable; their state reflects
+        the last command sent, and commands connect on demand."""
         await self._read_state()
         self._notify_state()
         return self._state
 
     async def _read_state(self) -> None:
         """Refresh ``self._state`` from the device over BLE. Default: no
-        read-back — state stays optimistic (last command sent). Devices that
-        expose real status override this (see StatusReadable)."""
+        read-back and no connection — state stays optimistic (last command
+        sent). Devices that expose real status override this (StatusReadable)."""
         return None
 
     async def stop(self) -> None:
@@ -406,13 +410,18 @@ class StatusReadable(GoveeDevice):
     control rather than only the last command this library sent."""
 
     async def _read_state(self) -> None:
-        frames = await self._connection.query(controllers.status_query(full=True))
+        frames = await self._connection.query(
+            controllers.status_query(full=True), timeout=5.0
+        )
         chunks: dict[int, bytes] = {}
         for frame in frames:
             if len(frame) == 20 and frame[0] == 0xAC:
                 chunks[frame[1]] = frame[2:19]
-        if not set(status.STATUS_CHUNK_REQUIRED).issubset(chunks):
-            # Incomplete read this poll — keep the prior (optimistic) state.
+        # Parse as soon as we have the useful data: chunk 0x00 (brightness) and a
+        # terminator chunk (0x05 in the full burst, else 0xFF) carrying zone
+        # on/off. The 0xFF tail is only needed for the last segment's colour, so
+        # don't gate the whole read on it — brightness + on/off come first.
+        if 0x00 not in chunks or not (0x05 in chunks or 0xFF in chunks):
             _LOGGER.debug("%s: incomplete status read (chunks %s)", self.address, sorted(chunks))
             return
         parsed = status.parse_status(chunks)
