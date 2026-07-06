@@ -179,6 +179,72 @@ class GoveeDevice:
             return secret
         return None
 
+    # -- optional capability API --------------------------------------------
+    #
+    # Declared on the base so the full public surface is typed and discoverable
+    # from a `GoveeDevice` handle (e.g. the one `create_device` returns). Each
+    # capability mixin below overrides the relevant members; a device that does
+    # NOT mix a capability in raises GoveeBleNotSupported (or reports None for a
+    # state property). Guard calls with `Capability.X in device.capabilities`.
+
+    @property
+    def brightness(self) -> int | None:
+        return None
+
+    @property
+    def rgb_color(self) -> tuple[int, int, int] | None:
+        return None
+
+    @property
+    def color_temp_kelvin(self) -> int | None:
+        return None
+
+    @property
+    def scene_names(self) -> list[str]:
+        return []
+
+    def _unsupported(self, feature: str) -> GoveeBleNotSupported:
+        return GoveeBleNotSupported(f"{self.sku}: {feature} not supported")
+
+    async def set_power(self, on: bool) -> None:
+        raise self._unsupported("power")
+
+    async def turn_on(self) -> None:
+        raise self._unsupported("power")
+
+    async def turn_off(self) -> None:
+        raise self._unsupported("power")
+
+    async def set_brightness(self, pct: int) -> None:
+        raise self._unsupported("brightness")
+
+    async def set_rgb(self, rgb: tuple[int, int, int]) -> None:
+        raise self._unsupported("rgb")
+
+    async def set_color_temp(self, kelvin: int) -> None:
+        raise self._unsupported("color-temp")
+
+    async def set_segment_rgb(self, indices: list[int], rgb: tuple[int, int, int]) -> None:
+        raise self._unsupported("segment rgb")
+
+    async def set_segment_brightness(self, indices: list[int], pct: int) -> None:
+        raise self._unsupported("segment brightness")
+
+    async def set_scene(self, scene_code: int) -> None:
+        raise self._unsupported("scenes")
+
+    async def set_scene_full(self, scene_code: int, param_b64: str) -> None:
+        raise self._unsupported("scenes")
+
+    async def set_scene_by_name(self, name: str) -> None:
+        raise self._unsupported("scenes")
+
+    async def set_zone_power(self, zone: str, on: bool) -> None:
+        raise self._unsupported("zones")
+
+    async def set_zone_rgb(self, zone: str, rgb: tuple[int, int, int]) -> None:
+        raise self._unsupported("zones")
+
 
 class PowerMixin(GoveeDevice):
     """on/off control."""
