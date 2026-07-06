@@ -20,7 +20,8 @@ def test_parse_status_brightness_and_zones() -> None:
     st = status.parse_status({0x00: chunk00, 0xFF: terminator})
     assert st.brightness == 40
     assert st.is_on is True                               # any zone on
-    assert st.zone_power == {0: False, 1: True}           # index 0 off, index 1 on
+    # byte15 (=1) -> power_index 0 (main), byte14 (=0) -> power_index 1 (background)
+    assert st.zone_power == {0: True, 1: False}
     assert st.segments == []
     assert st.rgb_color is None
 

@@ -497,6 +497,15 @@ class StatusReadable(GoveeDevice):
             if reply is not None:
                 self._state.scene_code = status.parse_active_scene(reply)
 
+        # Overall power gates everything: when the device is off, no zone,
+        # segment, colour or scene is lit — force them off rather than reporting
+        # stale last-on values.
+        if self._state.is_on is False:
+            self._state.zone_power = {z.power_index: False for z in self.zones}
+            self._state.segments = []
+            self._state.rgb_color = None
+            self._state.scene_code = None
+
         await self._read_device_info()
 
     async def _read_device_info(self) -> None:
