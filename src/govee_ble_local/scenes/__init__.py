@@ -18,6 +18,8 @@ class Scene:
     code: int
     param: str | None       # base64 effect blob (None -> bare activate)
     category: str | None = None
+    param_id: int | None = None   # scenceParamId (to resolve placeholders via cloud)
+    placeholder: bool = False     # True: real blob only from the authenticated API
 
 
 @lru_cache(maxsize=None)
@@ -29,6 +31,9 @@ def load_scenes(sku: str) -> dict[str, Scene]:
         return {}
     data = json.loads(raw)
     return {
-        name: Scene(name, int(v["code"]), v.get("param"), v.get("category"))
+        name: Scene(
+            name, int(v["code"]), v.get("param"), v.get("category"),
+            v.get("param_id"), bool(v.get("placeholder", False)),
+        )
         for name, v in data.items()
     }

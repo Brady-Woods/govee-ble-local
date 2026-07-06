@@ -109,8 +109,15 @@ def segment_rgb(segment_mask: int, r: int, g: int, b: int, scheme: ColorScheme =
 
 
 def segment_brightness(segment_mask: int, pct: int, scheme: ColorScheme = "h60a6") -> bytes:
-    """Set brightness (0-100) on specific segments (h60a6/SubModeColorV2 only):
-    33 05 15 02 <pct> <mask_lo> <mask_hi> ..."""
+    """Set brightness (0-100) on specific segments (h60a6 SubModeColor opType 2):
+    33 05 15 02 <pct> <mask_lo> <mask_hi> ...
+
+    Only the 0x15 family (H60A6/H6047) supports per-segment brightness. The
+    h61a8 dreamcolorlightv1 SubModeColor (0x0b) has no per-segment brightness
+    path (verified in the h61 split), so we refuse rather than emit an invalid
+    0x15 frame to a 0x0b device."""
+    if scheme == "h61a8":
+        raise ValueError("h61a8 has no per-segment brightness (use set_brightness for the whole device)")
     lo, hi = segment_mask & 0xFF, (segment_mask >> 8) & 0xFF
     pct = max(0, min(100, pct))
     return build_frame(PRO_WRITE, CMD_MODE, bytes([COLOR_H60A6, 0x02, pct, lo, hi]))

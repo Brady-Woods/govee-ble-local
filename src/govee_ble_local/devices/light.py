@@ -37,29 +37,37 @@ class GoveeRgbLight(PowerMixin, BrightnessMixin, RGBMixin, ColorTempMixin, Scene
 
 class GoveeLightH60A6(GoveeRgbLight, SegmentControl, ZoneControl):
     """H60A6 — "Ceiling Light Pro". AES-RC4-PSK, h60a6 (SubModeColorV2 0x15)
-    color scheme. Two physical zones (upper ring, lower panel) + 12
+    color scheme. Two physical zones (upper ring, lower panel) + 13
     individually-addressable segments.
 
-    - Whole-device: power / brightness / RGB / color-temp (verified).
+    - Whole-device: power / brightness / RGB / color-temp 2700-6500K (verified).
     - Segments: set_segment_rgb / set_segment_brightness via the 0x15 mask
       (mask confirmed live to address individual segments).
-    - Zones: set_zone_power("ring"|"panel", on) via the verified 33 30 command
-      (panel=0, ring=1). set_zone_rgb() colors a zone's segments.
+    - Zones: set_zone_power("main"|"background", on) via the verified 33 30
+      command (panel=0, ring=1). set_zone_rgb() colors a zone's segments.
 
-    NOTE: the segment->zone split below (ring=0-10, panel=11) is a best-guess
-    default - the app protocol does not encode which segment bits belong to
-    which zone (confirmed absent from the source). It can be overridden per
-    install; zone *power* (33 30) is exact regardless."""
+    Segment count = 13, verified against SubModeColorV1.isAllChoose()
+    (Arrays.copyOf(checkSet, 13)) and ColorModeSegmentView's 13-element list.
+    ALL 13 segments are the addressable ring/main light.
+
+    The H60A6 has two INDEPENDENT light elements, each toggled via 33 30
+    (VM4LightH60A6.specialDealSnapshot): index 1 = ring/main (Q1.j()),
+    index 0 = background/panel (Q1.r()). Cloud names them mainLightToggle /
+    backgroundLightToggle. RGB scenes and segment color drive the ring only;
+    the background is a separate element with its own state (this is why a
+    scene leaves the background unchanged). We expose its power via
+    set_zone_power("background", ...); its color path is not yet identified in
+    the source, so "background" has no segment mapping (set_zone_rgb refuses)
+    rather than incorrectly coloring a ring segment."""
 
     skus: ClassVar[tuple[str, ...]] = ("H60A6",)
     _encryption: ClassVar[Encryption] = Encryption.AES_RC4_PSK
     _color_scheme: ClassVar[ColorScheme] = "h60a6"
-    _segments: ClassVar[int] = 12
+    _segments: ClassVar[int] = 13
     capabilities: ClassVar[frozenset[Capability]] = _LIGHT_CAPS | {Capability.SEGMENTS}
-    # Cloud names these mainLightToggle / backgroundLightToggle.
     zones: ClassVar[tuple[Zone, ...]] = (
-        Zone("main", power_index=1, segments=tuple(range(0, 11))),   # ring
-        Zone("background", power_index=0, segments=(11,)),           # lower panel
+        Zone("main", power_index=1, segments=tuple(range(0, 13))),   # ring (all 13 segments)
+        Zone("background", power_index=0, segments=()),              # separate panel: power only
     )
 
 
@@ -84,24 +92,41 @@ class GoveeLightH6052(GoveeRgbLight):
 
 
 class GoveeLightH6008(GoveeRgbLight):
-    """H6008 — h6006 color scheme. Encryption is discovered from the
-    advertisement at runtime; NONE is only the address-only fallback."""
+    """H6008 — legacy bulb handled by the bulblightv3 module (verified against
+    the split). Its SubModeColor writes 0x0d with layout
+    [0x0d, r,g,b, kelvin_hi, kelvin_lo, tint_r,tint_g,tint_b] — byte-identical
+    to our h6006 scheme (tint 0,0,0 for non-table kelvins). Plaintext (no
+    crypto in bulblightv3/ble); encryption still resolved from the advert at
+    runtime, NONE is the fallback. Not segmented.
+
+    Color-temp range is bulblightv3's own Support.getColorTemRange() = 2700-6500
+    (this module does NOT use the dynamic KelvinConfig the tablelampv1 bulbs do,
+    so the value is fixed, not the 2000-9000 cloud-API figure)."""
 
     skus: ClassVar[tuple[str, ...]] = ("H6008",)
     _encryption: ClassVar[Encryption] = Encryption.NONE
     _color_scheme: ClassVar[ColorScheme] = "h6006"
-    min_kelvin: ClassVar[int] = 2000  # per Govee API
-    max_kelvin: ClassVar[int] = 9000
+    min_kelvin: ClassVar[int] = 2700
+    max_kelvin: ClassVar[int] = 6500
 
 
 class GoveeLightH6047(GoveeRgbLight, SegmentControl):
-    """H6047 — h60a6 (SubModeColorV2 0x15) color scheme, like H60A6, with
-    per-segment control (segmentedColorRgb; 15 segments per the Govee API)."""
+    """H6047 — h60a6 (SubModeColor sub-cmd 0x15) color scheme, like H60A6,
+    with per-segment control (segmentedColorRgb).
+
+    Corrected against the h6047 split (com.govee.h6047.ble):
+    - 10 segments (Support.getGoodsType4ColorSegment -> 10 for H6047; the
+      Govee cloud API's "15" was wrong for the BLE layout).
+    - Plaintext channel: the h6047 BLE module has no encryption/handshake.
+      Encryption is still resolved from the advertisement at runtime; NONE is
+      the accurate fallback.
+    Color-temp range 2200-6500K (Support.getColorTemRange). The device also
+    exposes Music mode (sub-cmd 0x13) and legacy DIY, deliberately not wired."""
 
     skus: ClassVar[tuple[str, ...]] = ("H6047",)
-    _encryption: ClassVar[Encryption] = Encryption.AES_RC4_PSK
+    _encryption: ClassVar[Encryption] = Encryption.NONE
     _color_scheme: ClassVar[ColorScheme] = "h60a6"
-    _segments: ClassVar[int] = 15
+    _segments: ClassVar[int] = 10
     min_kelvin: ClassVar[int] = 2200
     max_kelvin: ClassVar[int] = 6500
     capabilities: ClassVar[frozenset[Capability]] = _LIGHT_CAPS | {Capability.SEGMENTS}
