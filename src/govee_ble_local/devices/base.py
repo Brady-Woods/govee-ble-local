@@ -123,6 +123,10 @@ class GoveeDevice:
         return self._state.hardware_version
 
     @property
+    def firmware_version(self) -> str | None:
+        return self._state.firmware_version
+
+    @property
     def serial_number(self) -> str | None:
         return self._state.serial_number
 
@@ -438,7 +442,7 @@ class StatusReadable(GoveeDevice):
         if 0x00 not in chunks or not (0x05 in chunks or 0xFF in chunks):
             _LOGGER.debug("%s: incomplete status read (chunks %s)", self.address, sorted(chunks))
             return
-        parsed = status.parse_status(chunks, self.address)
+        parsed = status.parse_status(chunks)
         if parsed.is_on is not None:
             self._state.is_on = parsed.is_on
         if parsed.brightness is not None:
@@ -448,17 +452,31 @@ class StatusReadable(GoveeDevice):
         if parsed.rgb_color is not None:
             self._state.rgb_color = parsed.rgb_color
             self._state.color_temp_kelvin = None
-        if parsed.wifi_mac:
-            self._state.wifi_mac = parsed.wifi_mac
-        if parsed.hardware_version:
-            self._state.hardware_version = parsed.hardware_version
         self._state.optimistic = False
 
-        # Serial number is static; read it once (ab field 0x05).
+        # Device info is static; read it once via commandType 0x07 (single-frame
+        # aa 07 <sel> responses): 0x11 = wifi MAC + software + hardware version
+        # (BasicWifiInfoController), 0x02 = serial/UID (SnController).
+        if self._state.wifi_mac is None:
+            info = await self._read_info_frame(0x11)
+            wifi = status.parse_wifi_info(info) if info else None
+            if wifi is not None:
+                self._state.wifi_mac, self._state.firmware_version, self._state.hardware_version = wifi
         if self._state.serial_number is None:
-            frames = await self._connection.query(
-                controllers.metadata_query(0x05), opcode=0xAB, timeout=3.0
-            )
-            serial = status.parse_metadata_text(frames)
-            if serial:
-                self._state.serial_number = serial
+            info = await self._read_info_frame(0x02)
+            sn = status.parse_sn(info) if info else None
+            if sn is not None:
+                self._state.serial_number = sn
+
+    async def _read_info_frame(self, selector: int) -> bytes | None:
+        """Read a single aa 07 <selector> device-info response frame."""
+        frames = await self._connection.query(
+            controllers.device_info_query(selector),
+            opcode=0xAA,
+            terminal=0x07,
+            timeout=2.0,
+        )
+        for frame in frames:
+            if len(frame) >= 3 and frame[0] == 0xAA and frame[1] == 0x07 and frame[2] == selector:
+                return frame
+        return None

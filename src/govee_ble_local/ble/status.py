@@ -47,63 +47,46 @@ def _uniform_rgb(segments: list[Segment]) -> tuple[int, int, int] | None:
     return colours.pop() if len(colours) == 1 else None
 
 
-def format_mac(mac_bytes: bytes) -> str:
-    return ":".join(f"{b:02X}" for b in mac_bytes)
+def _version(b: bytes) -> str:
+    """Govee 3-byte version -> "X.YY.ZZ" (BasicWifiInfoController.u)."""
+    return f"{b[0]}.{b[1]:02d}.{b[2]:02d}"
 
 
-def _parse_device_info(chunks: dict[int, bytes], address: str) -> tuple[str | None, str | None]:
-    """Extract (wifi_mac, hardware_version) from the status chunks by anchoring
-    on the device's own BLE MAC (little-endian) in the joined 0x01-0x04 stream.
-    Layout (relative to the anchor): +9..15 = Wi-Fi MAC (reversed), +20..23 =
-    hardware version bytes. Verified byte-exact in v1."""
-    stream = b"".join(chunks.get(k, b"") for k in (0x01, 0x02, 0x03, 0x04, 0xFF))
-    try:
-        own = bytes(int(b, 16) for b in address.split(":"))
-    except ValueError:
-        return None, None
-    anchor = stream.find(own[::-1])
-    if anchor == -1:
-        return None, None
-    wifi_mac = None
-    wifi_bytes = stream[anchor + 9 : anchor + 15]
-    if len(wifi_bytes) == 6:
-        wifi_mac = format_mac(wifi_bytes[::-1])
-    hardware_version = None
-    hw = stream[anchor + 20 : anchor + 23]
-    if len(hw) == 3:
-        hardware_version = f"{hw[0]}.{hw[1]:02d}.{hw[2]:02d}"
-    return wifi_mac, hardware_version
-
-
-def parse_metadata_text(frames: list[bytes]) -> str | None:
-    """Reassemble an `ab` metadata-field response (0xAB NOTIFY chunks) into its
-    ASCII value: 5-byte header then an ASCII string, zero-padded. Used for the
-    serial-number read (`ab 01 05`)."""
-    chunks: dict[int, bytes] = {}
-    for frame in frames:
-        if len(frame) == 20 and frame[0] == 0xAB:
-            chunks[frame[1]] = frame[2:19]
-    if not chunks:
+def parse_wifi_info(frame: bytes) -> tuple[str, str, str] | None:
+    """Parse a BasicWifiInfoController response (aa 07 11): returns
+    (wifi_mac, software_version, hardware_version). Layout after the
+    proType+commandType: [0x11, wifiMac(6, forward), soft(3), hard(3)]."""
+    if len(frame) < 15 or frame[0] != 0xAA or frame[1] != 0x07 or frame[2] != 0x11:
         return None
-    raw = b"".join(chunks[t] for t in sorted(chunks))
-    if len(raw) <= 5:
-        return None
-    value = raw[5:].rstrip(b"\x00")
-    try:
-        return value.decode("ascii") or None
-    except UnicodeDecodeError:
-        return None
+    wifi_mac = ":".join(f"{b:02X}" for b in frame[3:9])   # z5=true -> forward order
+    software = _version(frame[9:12])
+    hardware = _version(frame[12:15])
+    return wifi_mac, software, hardware
 
 
-def parse_status(chunks: dict[int, bytes], address: str | None = None) -> DeviceState:
+def parse_sn(frame: bytes) -> str | None:
+    """Parse an SnController response (aa 07 02): an 8-byte UID formatted as
+    colon-hex, reversed (toAddressBytes z5=false), with a leading "00:00:"
+    stripped. Returns None for an all-zero/invalid UID."""
+    if len(frame) < 11 or frame[0] != 0xAA or frame[1] != 0x07 or frame[2] != 0x02:
+        return None
+    uid = frame[3:11]
+    if not any(uid):
+        return None
+    sn = ":".join(f"{b:02X}" for b in reversed(uid))
+    if sn.startswith("00:00:"):
+        sn = sn[6:]
+    return sn
+
+
+def parse_status(chunks: dict[int, bytes]) -> DeviceState:
     """Build a DeviceState from reassembled 0xAC status chunks.
 
     Zone truth table (chunk 0x00 present -> shift 0), captured live:
       byte 14 = LOWER zone on, byte 15 = UPPER zone on (in the terminator chunk,
       0x05 in the full query else 0xFF). brightness is chunk 0x00 byte 10.
     When chunk 0x00 is absent (RGB/color-temp mode omits it) every offset in the
-    terminator shifts by 1. When `address` is given, wifi_mac + hardware_version
-    are also extracted from the joined stream.
+    terminator shifts by 1.
     """
     state = DeviceState()
     chunk00 = chunks.get(0x00)
@@ -126,7 +109,4 @@ def parse_status(chunks: dict[int, bytes], address: str | None = None) -> Device
 
     if lower is not None or upper is not None:
         state.is_on = bool(lower or upper)
-
-    if address is not None:
-        state.wifi_mac, state.hardware_version = _parse_device_info(chunks, address)
     return state

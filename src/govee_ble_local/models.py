@@ -78,4 +78,5 @@ class DeviceState:
     # Device-info (static-ish), populated where the device supports read-back.
     wifi_mac: str | None = None
     hardware_version: str | None = None
+    firmware_version: str | None = None
     serial_number: str | None = None

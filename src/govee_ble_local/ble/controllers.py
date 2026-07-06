@@ -186,10 +186,11 @@ def status_field(field: int = CMD_STATUS_FIELD) -> bytes:
     return build_frame(PRO_READ, field)
 
 
-def metadata_query(field_id: int) -> bytes:
-    """Read a device-metadata field (ab 01 <field>); the response is a burst of
-    0xAB chunks (5-byte header + ASCII). field 0x05 = serial/UID."""
-    return build_frame(0xAB, 0x01, bytes([field_id]))
+def device_info_query(selector: int) -> bytes:
+    """Read device info via commandType 0x07 (aa 07 <selector>). Selectors
+    (from BasicWifiInfoController / SnController): 0x11 = wifi MAC + software +
+    hardware version; 0x02 = serial/UID. Response is a single aa 07 <sel> frame."""
+    return build_frame(PRO_READ, 0x07, bytes([selector]))
 
 
 def status_query(full: bool = False) -> bytes:
