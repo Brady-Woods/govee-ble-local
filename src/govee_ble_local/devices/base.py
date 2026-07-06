@@ -336,6 +336,11 @@ class ColorTempMixin(GoveeDevice):
         self._notify_state()
 
 
+def _prefer(a: str | None, b: str | None) -> str | None:
+    """First of two version strings that is present and non-zero ("0.00.00")."""
+    return a if (a and a != "0.00.00") else b
+
+
 def _mask(indices: list[int] | tuple[int, ...]) -> int:
     mask = 0
     for i in indices:
@@ -454,19 +459,37 @@ class StatusReadable(GoveeDevice):
             self._state.color_temp_kelvin = None
         self._state.optimistic = False
 
-        # Device info is static; read it once via commandType 0x07 (single-frame
-        # aa 07 <sel> responses): 0x11 = wifi MAC + software + hardware version
-        # (BasicWifiInfoController), 0x02 = serial/UID (SnController).
-        if self._state.wifi_mac is None:
-            info = await self._read_info_frame(0x11)
-            wifi = status.parse_wifi_info(info) if info else None
-            if wifi is not None:
-                self._state.wifi_mac, self._state.firmware_version, self._state.hardware_version = wifi
-        if self._state.serial_number is None:
-            info = await self._read_info_frame(0x02)
-            sn = status.parse_sn(info) if info else None
-            if sn is not None:
-                self._state.serial_number = sn
+        await self._read_device_info()
+
+    async def _read_device_info(self) -> None:
+        """Read static device info via commandType 0x07 (single-frame aa 07 <sel>):
+        0x10 = serial + software + hardware version (BasicInfoController, works for
+        BLE-only devices), 0x11 = wifi MAC + versions (BasicWifiInfoController).
+        Combined so BLE devices get versions+serial and WiFi devices also get the
+        MAC. Retried for a few polls, then left alone (it's static)."""
+        attempts = getattr(self, "_info_attempts", 0)
+        if self._state.hardware_version is not None or attempts >= 3:
+            return
+        self._info_attempts = attempts + 1
+
+        basic = status.parse_basic_info(await self._read_info_frame(0x10) or b"")
+        wifi = status.parse_wifi_info(await self._read_info_frame(0x11) or b"")
+
+        serial = software = hardware = None
+        if basic is not None:
+            serial, software, hardware = basic
+        if wifi is not None:
+            wifi_mac, wsoft, whard = wifi
+            software = _prefer(software, wsoft)
+            hardware = _prefer(hardware, whard)
+            if wifi_mac != "00:00:00:00:00:00":
+                self._state.wifi_mac = wifi_mac
+        if serial:
+            self._state.serial_number = serial
+        if software and software != "0.00.00":
+            self._state.firmware_version = software
+        if hardware and hardware != "0.00.00":
+            self._state.hardware_version = hardware
 
     async def _read_info_frame(self, selector: int) -> bytes | None:
         """Read a single aa 07 <selector> device-info response frame."""

@@ -64,19 +64,31 @@ def parse_wifi_info(frame: bytes) -> tuple[str, str, str] | None:
     return wifi_mac, software, hardware
 
 
+def _uid_to_serial(uid: bytes) -> str | None:
+    """8-byte UID -> reversed colon-hex, leading 00:00: stripped (toAddressBytes
+    z5=false). None if all-zero."""
+    if not any(uid):
+        return None
+    sn = ":".join(f"{b:02X}" for b in reversed(uid))
+    return sn[6:] if sn.startswith("00:00:") else sn
+
+
+def parse_basic_info(frame: bytes) -> tuple[str | None, str, str] | None:
+    """Parse a BasicInfoController response (aa 07 10) for a BLE (non-WiFi)
+    device: returns (serial, software_version, hardware_version). Layout after
+    proType+commandType: [0x10, uid(8), soft(3), hard(3)]."""
+    if len(frame) < 17 or frame[0] != 0xAA or frame[1] != 0x07 or frame[2] != 0x10:
+        return None
+    return _uid_to_serial(frame[3:11]), _version(frame[11:14]), _version(frame[14:17])
+
+
 def parse_sn(frame: bytes) -> str | None:
     """Parse an SnController response (aa 07 02): an 8-byte UID formatted as
     colon-hex, reversed (toAddressBytes z5=false), with a leading "00:00:"
     stripped. Returns None for an all-zero/invalid UID."""
     if len(frame) < 11 or frame[0] != 0xAA or frame[1] != 0x07 or frame[2] != 0x02:
         return None
-    uid = frame[3:11]
-    if not any(uid):
-        return None
-    sn = ":".join(f"{b:02X}" for b in reversed(uid))
-    if sn.startswith("00:00:"):
-        sn = sn[6:]
-    return sn
+    return _uid_to_serial(frame[3:11])
 
 
 def parse_status(chunks: dict[int, bytes]) -> DeviceState:

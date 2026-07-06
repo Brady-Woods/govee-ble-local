@@ -43,6 +43,13 @@ def test_parse_wifi_info() -> None:
     assert status.parse_wifi_info(_frame(0x33, 0x05, 0x11)) is None  # wrong opcode
 
 
+def test_parse_basic_info() -> None:
+    """aa 07 10 -> (serial UID reversed, software X.YY.ZZ, hardware X.YY.ZZ)."""
+    frame = _frame(0xAA, 0x07, 0x10, 0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11, 1, 4, 3, 1, 0, 0)
+    assert status.parse_basic_info(frame) == ("11:22:33:44:55:66:77:88", "1.04.03", "1.00.00")
+    assert status.parse_basic_info(_frame(0xAA, 0x07, 0x11)) is None  # wrong selector
+
+
 def test_parse_sn() -> None:
     """aa 07 02 -> 8-byte UID reversed to colon-hex, leading 00:00: stripped."""
     frame = _frame(0xAA, 0x07, 0x02, 0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11)
