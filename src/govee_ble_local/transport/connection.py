@@ -17,6 +17,7 @@ from bleak.backends.device import BLEDevice
 from bleak.exc import BleakError
 from bleak_retry_connector import BleakClientWithServiceCache, establish_connection
 
+from ..ble.frame import PRO_WRITE
 from ..const import (
     COMMAND_ACK_TIMEOUT,
     CONNECT_MAX_ATTEMPTS,
@@ -26,11 +27,14 @@ from ..const import (
     BGC_INFO_CHAR_UUID,
     NOTIFY_CHAR_UUID,
     PSK,
+    WRITE_ACK_TIMEOUT,
+    WRITE_ATTEMPTS,
     WRITE_CHAR_UUID,
 )
 from ..crypto import decrypt, encrypt
 from ..exceptions import (
     GoveeBleConnectionError,
+    GoveeBleError,
     GoveeBleHandshakeError,
     GoveeBleNotSupported,
     GoveeBleTimeout,
@@ -238,16 +242,18 @@ class GoveeConnection:
         assert self._client is not None
         await self._client.write_gatt_char(WRITE_CHAR_UUID, frame, response=False)
 
-    async def _send_raw_locked(self, frame_plaintext: bytes, *, expect_ack: bool) -> bytes | None:
-        """Frame (encrypting per the mode) + write, then await a best-effort ack.
-        Caller holds the lock and guarantees the session is ready."""
-        self._drain()
+    def _encrypt(self, frame_plaintext: bytes) -> bytes:
         if self._encryption is Encryption.AES_RC4_PSK:
             assert self._session_key is not None
-            wire = encrypt(frame_plaintext, self._session_key)
-        else:
-            wire = frame_plaintext
-        await self._raw_write(wire)
+            return encrypt(frame_plaintext, self._session_key)
+        return frame_plaintext
+
+    async def _send_raw_locked(self, frame_plaintext: bytes, *, expect_ack: bool) -> bytes | None:
+        """Frame (encrypting per the mode) + write, then await a best-effort ack
+        (the next notification, unmatched). Used for internal frames (handshake
+        unlock); user commands go through send() which verifies the ack."""
+        self._drain()
+        await self._raw_write(self._encrypt(frame_plaintext))
         if not expect_ack:
             return None
         try:
@@ -257,16 +263,68 @@ class GoveeConnection:
             _LOGGER.debug("%s: no ack for %s", self.address, frame_plaintext[:2].hex())
             return None
 
+    async def _await_write_ack(self, command_type: int, timeout: float) -> bytes | None:
+        """Collect notifications until one matches a write reply [0x33,
+        command_type] (skipping unrelated status pushes), or return None on
+        timeout."""
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
+        while True:
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                return None
+            try:
+                raw = await asyncio.wait_for(self._rx.get(), timeout=remaining)
+            except asyncio.TimeoutError:
+                return None
+            dec = self._decrypt_rx(raw)
+            if len(dec) >= 2 and dec[0] == PRO_WRITE and dec[1] == command_type:
+                return dec
+
     async def send(self, frame_plaintext: bytes, *, expect_ack: bool = True) -> bytes | None:
-        """Connect+handshake if needed, then encrypt and send one 20-byte
-        plaintext frame; return the decrypted next notification (best-effort ack)."""
+        """Connect+handshake if needed, then send one 20-byte plaintext frame.
+
+        For a write (proType 0x33) with expect_ack, this MIRRORS the app's comm
+        layer (AbsSingleController.m/t + ControllerComm): it waits for a reply
+        matching [0x33, commandType], treats byte[2]==0 as success, retries the
+        write within a ~6 s budget, and raises GoveeBleError on an explicit
+        device rejection (byte[2]!=0) or on no-ack timeout — so callers only
+        commit optimistic state after a confirmed ACK. Non-write sends (reads)
+        keep the best-effort next-notification behavior."""
         async with self._lock:
             self._cancel_idle_timer()
             if not self.is_connected:
                 await self._connect_locked()
-            ack = await self._send_raw_locked(frame_plaintext, expect_ack=expect_ack)
-            self._schedule_idle_timer()
-            return ack
+            try:
+                if expect_ack and frame_plaintext[:1] == bytes([PRO_WRITE]):
+                    return await self._send_write_verified(frame_plaintext)
+                return await self._send_raw_locked(frame_plaintext, expect_ack=expect_ack)
+            finally:
+                self._schedule_idle_timer()
+
+    async def _send_write_verified(self, frame_plaintext: bytes) -> bytes:
+        command_type = frame_plaintext[1]
+        for attempt in range(WRITE_ATTEMPTS):
+            self._drain()
+            await self._raw_write(self._encrypt(frame_plaintext))
+            ack = await self._await_write_ack(command_type, WRITE_ACK_TIMEOUT)
+            if ack is not None:
+                _LOGGER.debug(
+                    "%s: write 0x%02X ack %s", self.address, command_type, ack[:4].hex()
+                )
+                if len(ack) >= 3 and ack[2] != 0:
+                    raise GoveeBleError(
+                        f"{self.address}: device rejected write 0x{command_type:02X} "
+                        f"(status 0x{ack[2]:02X})"
+                    )
+                return ack
+            _LOGGER.debug(
+                "%s: no ack for write 0x%02X (attempt %d/%d)",
+                self.address, command_type, attempt + 1, WRITE_ATTEMPTS,
+            )
+        raise GoveeBleTimeout(
+            f"{self.address}: no ack for write 0x{command_type:02X} after {WRITE_ATTEMPTS} attempts"
+        )
 
     async def query(
         self,

@@ -193,6 +193,16 @@ def device_info_query(selector: int) -> bytes:
     return build_frame(PRO_READ, 0x07, bytes([selector]))
 
 
+def power_query() -> bytes:
+    """Read on/off (aa 01 01); reply aa 01 <on>. (SwitchController)"""
+    return build_frame(PRO_READ, CMD_POWER, bytes([0x01]))
+
+
+def brightness_query() -> bytes:
+    """Read brightness (aa 04 01); reply aa 04 <pct>. (BrightnessController)"""
+    return build_frame(PRO_READ, CMD_BRIGHTNESS, bytes([0x01]))
+
+
 def mode_query() -> bytes:
     """Read the current mode (aa 05 01). The reply is aa 05 <subMode> <data>:
     subMode 0x04 = scene (data = little-endian scene code), 0x15/0x0d/0x0b =

@@ -13,6 +13,7 @@ from .base import (
     BrightnessMixin,
     ColorTempMixin,
     GoveeDevice,
+    PolledLight,
     PowerMixin,
     RGBMixin,
     SceneControl,
@@ -70,7 +71,7 @@ class GoveeLightH60A6(GoveeRgbLight, SegmentControl, ZoneControl, StatusReadable
     )
 
 
-class GoveeLightH6006(GoveeRgbLight):
+class GoveeLightH6006(GoveeRgbLight, PolledLight):
     """H6006 — plaintext (no handshake), h6006 color scheme. (Confirmed.)"""
 
     skus: ClassVar[tuple[str, ...]] = ("H6006",)
@@ -80,7 +81,7 @@ class GoveeLightH6006(GoveeRgbLight):
     max_kelvin: ClassVar[int] = 9000
 
 
-class GoveeLightH6052(GoveeRgbLight):
+class GoveeLightH6052(GoveeRgbLight, PolledLight):
     """H6052 — plaintext (no handshake), h6006 color scheme, wide CT range."""
 
     skus: ClassVar[tuple[str, ...]] = ("H6052",)
@@ -90,7 +91,7 @@ class GoveeLightH6052(GoveeRgbLight):
     max_kelvin: ClassVar[int] = 9000
 
 
-class GoveeLightH6008(GoveeRgbLight):
+class GoveeLightH6008(GoveeRgbLight, PolledLight):
     """H6008 — legacy bulb handled by the bulblightv3 module (verified against
     the split). Its SubModeColor writes 0x0d with layout
     [0x0d, r,g,b, kelvin_hi, kelvin_lo, tint_r,tint_g,tint_b] — byte-identical
@@ -109,7 +110,7 @@ class GoveeLightH6008(GoveeRgbLight):
     max_kelvin: ClassVar[int] = 6500
 
 
-class GoveeLightH6047(GoveeRgbLight, SegmentControl):
+class GoveeLightH6047(GoveeRgbLight, SegmentControl, PolledLight):
     """H6047 — h60a6 (SubModeColor sub-cmd 0x15) color scheme, like H60A6,
     with per-segment control (segmentedColorRgb).
 
@@ -131,7 +132,7 @@ class GoveeLightH6047(GoveeRgbLight, SegmentControl):
     capabilities: ClassVar[frozenset[Capability]] = _LIGHT_CAPS | {Capability.SEGMENTS}
 
 
-class GoveeStripH61A8(PowerMixin, BrightnessMixin, RGBMixin, SegmentControl, SceneControl, GoveeDevice):
+class GoveeStripH61A8(PowerMixin, BrightnessMixin, RGBMixin, SegmentControl, SceneControl, PolledLight, GoveeDevice):
     """H61A8 — segmented LED rope (dreamcolorlightv1). Plaintext channel
     (advertisement encrypt flag clear), 0x0b color mode with a per-segment
     bitmask, no color-temperature. RGB applies to all segments; use

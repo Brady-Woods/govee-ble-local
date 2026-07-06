@@ -45,6 +45,26 @@ def test_parse_wifi_info() -> None:
     assert status.parse_wifi_info(_frame(0x33, 0x05, 0x11)) is None  # wrong opcode
 
 
+def test_parse_power_and_brightness() -> None:
+    assert status.parse_power(_frame(0xAA, 0x01, 0x01)) is True
+    assert status.parse_power(_frame(0xAA, 0x01, 0x00)) is False
+    assert status.parse_power(_frame(0xAA, 0x04, 0x01)) is None  # wrong cmd
+    assert status.parse_brightness(_frame(0xAA, 0x04, 50)) == 50
+    assert status.parse_brightness(_frame(0xAA, 0x04, 200)) == round(200 / 255 * 100)  # 0-255 rescaled
+    assert status.parse_brightness(_frame(0x33, 0x04, 50)) is None  # wrong opcode
+
+
+def test_parse_broadcast_onoff() -> None:
+    from govee_ble_local.identify import parse_broadcast_onoff
+
+    # company id high byte 0x88; value = [0xEC, pactHi, pactLo, pactCode, onoff, ...]
+    cid = 0x88 << 8 | 0x43
+    assert parse_broadcast_onoff({cid: bytes([0xEC, 0, 0, 0, 1])}) is True
+    assert parse_broadcast_onoff({cid: bytes([0xEC, 0, 0, 0, 0])}) is False
+    assert parse_broadcast_onoff({cid: bytes([0xEC, 0, 0])}) is None  # too short
+    assert parse_broadcast_onoff({0x004C: bytes([0xEC, 0, 0, 0, 1])}) is None  # not Govee marker
+
+
 def test_parse_active_scene() -> None:
     """aa 05 04 <lo> <hi> -> little-endian scene code; other sub-modes -> None."""
     assert status.parse_active_scene(_frame(0xAA, 0x05, 0x04, 0x82, 0x4A)) == 0x4A82

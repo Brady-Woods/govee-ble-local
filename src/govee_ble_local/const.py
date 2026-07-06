@@ -49,3 +49,8 @@ HANDSHAKE_TIMEOUT: Final = 10.0
 COMMAND_ACK_TIMEOUT: Final = 3.0
 IDLE_DISCONNECT_DELAY: Final = 8.0
 CONNECT_MAX_ATTEMPTS: Final = 4
+# Write-ACK (mirrors the app's ControllerComm/AbsSingleController): a command's
+# reply must match [0x33, commandType] and succeed with byte[2] == 0. The write
+# is retried within a ~6 s budget (the app's write timeout).
+WRITE_ACK_TIMEOUT: Final = 2.0   # per attempt
+WRITE_ATTEMPTS: Final = 3

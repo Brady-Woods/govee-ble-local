@@ -83,6 +83,21 @@ def parse_manufacturer_data(mfg: dict[int, bytes]) -> tuple[bool, int, int, int]
     return None
 
 
+def parse_broadcast_onoff(mfg: dict[int, bytes]) -> bool | None:
+    """The device's on/off state from its advertisement — PASSIVE, no connection.
+
+    Port of BleUtil.parseBleBroadOnOff + AbsBaseBleModel.A: the byte right after
+    pactType(2)+pactCode(1) in the Govee mfg data (scanRecord i+8; bleak value
+    index 4) == 1 means ON. Returns True/False, or None if the advertisement
+    doesn't carry it (not a Govee broadcast / too short)."""
+    for company_id, value in mfg.items():
+        marker_hi = (company_id >> 8) & 0xFF
+        if marker_hi != _MARKER[0] or len(value) < 5 or value[0] != _MARKER[1]:
+            continue
+        return value[4] == 1
+    return None
+
+
 def identify(name: str | None, mfg: dict[int, bytes]) -> GoveeAdvertisement | None:
     """Identify a Govee device from its advertised name + manufacturer data."""
     if not name or not any(name.startswith(p) for p in LOCAL_NAME_PREFIXES):

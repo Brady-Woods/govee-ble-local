@@ -15,7 +15,7 @@ from bleak.backends.device import BLEDevice
 
 from ..ble import controllers, status
 from ..ble.controllers import ColorScheme
-from ..identify import identify
+from ..identify import identify, parse_broadcast_onoff
 from ..exceptions import GoveeBleNotSupported
 from ..models import Capability, DeviceState, Encryption, Zone
 from ..scenes import load_scenes
@@ -139,7 +139,22 @@ class GoveeDevice:
         self._ble_device = ble_device
         if advertisement_data is not None:
             self._advertisement = advertisement_data
+            self.ingest_advertisement(advertisement_data)
         self._connection.update_ble_device(ble_device)
+
+    def ingest_advertisement(self, advertisement_data: Any | None) -> bool:
+        """Update PASSIVE state (on/off) from a BLE advertisement — no
+        connection/slot used. Govee lights broadcast on/off in their mfg data
+        (parse_broadcast_onoff). Returns True if the state changed."""
+        mfg = getattr(advertisement_data, "manufacturer_data", None)
+        if not mfg:
+            return False
+        on = parse_broadcast_onoff(mfg)
+        if on is None or on == self._state.is_on:
+            return False
+        self._state.is_on = on
+        self._notify_state()
+        return True
 
     def register_callback(self, callback: StateCallback) -> Callable[[], None]:
         """Subscribe to state changes. Returns an unregister function."""
@@ -173,7 +188,19 @@ class GoveeDevice:
     async def _read_state(self) -> None:
         """Refresh ``self._state`` from the device over BLE. Default: no
         read-back and no connection — state stays optimistic (last command
-        sent). Devices that expose real status override this (StatusReadable)."""
+        sent). Devices that expose real status override this (StatusReadable,
+        PolledLight)."""
+        return None
+
+    async def _read_reply(self, frame: bytes, command_type: int) -> bytes | None:
+        """Send a single-frame read and return the reply matching
+        [0xAA, command_type] (caller validates any sub-selector), or None."""
+        frames = await self._connection.query(
+            frame, opcode=0xAA, terminal=command_type, timeout=2.0
+        )
+        for reply in frames:
+            if len(reply) >= 2 and reply[0] == 0xAA and reply[1] == command_type:
+                return reply
         return None
 
     async def stop(self) -> None:
@@ -538,13 +565,38 @@ class StatusReadable(GoveeDevice):
                 if hardware != "0.00.00" and not self._state.hardware_version:
                     self._state.hardware_version = hardware
 
-    async def _read_reply(self, frame: bytes, command_type: int) -> bytes | None:
-        """Send a single-frame read and return the reply frame matching
-        [0xAA, command_type] (caller validates the sub-selector), or None."""
-        frames = await self._connection.query(
-            frame, opcode=0xAA, terminal=command_type, timeout=2.0
+
+class PolledLight(GoveeDevice):
+    """Light families that report state via the simple single-frame reads shared
+    across the app's light modules (Compose4InfoBleIot): aa 01 (power),
+    aa 04 (brightness), aa 05 (mode -> active scene). on/off also arrives
+    passively from advertisements, so a device the advert says is off is not
+    connected to at all.
+
+    RGB / color-temperature are NOT polled: the connected colour-read parse is
+    scheme-specific and inconsistent across families (verified in the app), so
+    those stay optimistic (set from the last command)."""
+
+    async def _read_state(self) -> None:
+        # If the passive advertisement already says the device is off, there is
+        # nothing lit to read — skip the connection entirely (slot-friendly).
+        if self._state.is_on is False:
+            self._state.scene_code = None
+            return
+
+        power = status.parse_power(await self._read_reply(controllers.power_query(), 0x01) or b"")
+        if power is not None:
+            self._state.is_on = power
+        bright = status.parse_brightness(
+            await self._read_reply(controllers.brightness_query(), 0x04) or b""
         )
-        for reply in frames:
-            if len(reply) >= 2 and reply[0] == 0xAA and reply[1] == command_type:
-                return reply
-        return None
+        if bright is not None:
+            self._state.brightness = bright
+        if Capability.SCENES in self.capabilities:
+            reply = await self._read_reply(controllers.mode_query(), 0x05)
+            if reply is not None:
+                self._state.scene_code = status.parse_active_scene(reply)
+        self._state.optimistic = False
+
+        if self._state.is_on is False:
+            self._state.scene_code = None

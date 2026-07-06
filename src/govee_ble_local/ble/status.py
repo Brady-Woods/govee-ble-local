@@ -120,6 +120,23 @@ def parse_sn(frame: bytes) -> str | None:
     return _uid_to_serial(frame[3:11])
 
 
+def parse_power(frame: bytes) -> bool | None:
+    """aa 01 reply -> on/off (SwitchController: data[0] != 0)."""
+    if len(frame) < 3 or frame[0] != 0xAA or frame[1] != 0x01:
+        return None
+    return frame[2] != 0
+
+
+def parse_brightness(frame: bytes) -> int | None:
+    """aa 04 reply -> brightness (BrightnessController: data[0]). The light
+    families we poll use a 0-100 scale (same as the write path); if a device
+    ever reports 0-255 it's rescaled."""
+    if len(frame) < 3 or frame[0] != 0xAA or frame[1] != 0x04:
+        return None
+    value = frame[2]
+    return round(value / 255 * 100) if value > 100 else value
+
+
 def parse_active_scene(frame: bytes) -> int | None:
     """From a mode-read reply (aa 05 <subMode> <data>): the active scene code if
     the device is in scene sub-mode (0x04), else None. The code is
