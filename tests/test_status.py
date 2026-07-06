@@ -54,6 +54,15 @@ def test_parse_power_and_brightness() -> None:
     assert status.parse_brightness(_frame(0x33, 0x04, 50)) is None  # wrong opcode
 
 
+def test_parse_bar_switch_h6047() -> None:
+    # aa 36 <left> <right> (verified live on H6047)
+    assert status.parse_bar_switch(_frame(0xAA, 0x36, 1, 1)) == (True, True)
+    assert status.parse_bar_switch(_frame(0xAA, 0x36, 0, 1)) == (False, True)  # left off
+    assert status.parse_bar_switch(_frame(0xAA, 0x36, 1, 0)) == (True, False)  # right off
+    assert status.parse_bar_switch(_frame(0xAA, 0x01, 1, 1)) is None  # wrong cmd
+    assert controllers.bar_switch_query()[:2].hex() == "aa36"
+
+
 def test_parse_broadcast_onoff() -> None:
     from govee_ble_local.identify import parse_broadcast_onoff
 

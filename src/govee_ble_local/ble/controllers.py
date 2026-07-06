@@ -17,6 +17,7 @@ CMD_POWER = 0x01           # 33 01 <val>           (SwitchController, cmd 1)
 CMD_BRIGHTNESS = 0x04      # 33 04 <pct>           (BrightnessController, cmd 4)
 CMD_MODE = 0x05            # 33 05 <sub> ...       (AbsModeController: color/scene)
 CMD_ZONE = 0x30            # 33 30 <zone> <state>  (H60A6 zone on/off)
+CMD_BAR_SWITCH = 0x36      # 33 36 <left> <right>  (H6047 compose-light-switch)
 CMD_SECRET_CHECK = 0xB2    # 33 b2 <secret>        (SINGLE_CHECK_SECRET_KEY)
 CMD_SECRET_READ = 0xB1     # aa b1                 (SINGLE_READ_SECRET_KEY)
 CMD_SYNC_TIME = 0xB5       # 33 b5 <ts> 01 f9      (plug family; 0x09 on lights)
@@ -127,6 +128,22 @@ def zone_power(zone: int, on: bool) -> bytes:
     """Turn a physical zone on/off (H60A6: 33 30 <zone> <state>; zone 0 = lower
     panel, 1 = upper ring). Verified in v1."""
     return build_frame(PRO_WRITE, CMD_ZONE, bytes([zone, 1 if on else 0]))
+
+
+def bar_switch(left: bool, right: bool) -> bytes:
+    """Turn the H6047's two bars on/off in one frame: 33 36 <left> <right>.
+
+    Ported from com.govee.h6047 (NewDetailVm.I5 -> Controller4ExtBytes.e(
+    {0x36, left, right}); 0x36 = value_compose_light_switch). Unlike the H60A6's
+    per-zone 33 30 command, the H6047 carries BOTH bar states in a single write,
+    so callers must pass the intended state of both bars."""
+    return build_frame(PRO_WRITE, CMD_BAR_SWITCH, bytes([1 if left else 0, 1 if right else 0]))
+
+
+def bar_switch_query() -> bytes:
+    """Read the H6047's two bar states: aa 36 -> reply aa 36 <left> <right>
+    (verified live). 0x30 is push-only; 0x36 is the readable one."""
+    return build_frame(PRO_READ, CMD_BAR_SWITCH)
 
 
 def scene(scene_id: tuple[int, int]) -> bytes:

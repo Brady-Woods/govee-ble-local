@@ -475,6 +475,37 @@ class ZoneControl(GoveeDevice):
         self._notify_state()
 
 
+class BarSwitchControl(ZoneControl):
+    """Zone control for the H6047's two light bars (left = power_index 0, right =
+    1). The H6047 carries BOTH bar states in one `33 36 <left> <right>` frame
+    (com.govee.h6047 NewDetailVm.I5), so toggling one bar re-sends the other
+    bar's last-known state. State is tracked optimistically (the write fully
+    determines both bars); a failed send doesn't commit, so HA reverts."""
+
+    async def set_zone_power(self, zone: str, on: bool) -> None:
+        z = self._zone(zone)
+        zp = self._state.zone_power
+        # Intended state of both bars: unknown bars default to on (a fresh device
+        # powers both on), then apply the requested change.
+        target = {0: zp.get(0, True), 1: zp.get(1, True)}
+        target[z.power_index] = on
+        await self._connection.send(controllers.bar_switch(target[0], target[1]))
+        zp.update(target)
+        self._notify_state()
+
+    async def _read_state(self) -> None:
+        # Poll power/brightness/scene via the sibling PolledLight, then read the
+        # two bar states back from aa 36 (verified live: reply aa 36 <l> <r>).
+        await super()._read_state()
+        if self._state.is_on is False:
+            self._state.zone_power = {0: False, 1: False}
+            return
+        reply = await self._read_reply(controllers.bar_switch_query(), controllers.CMD_BAR_SWITCH)
+        bars = status.parse_bar_switch(reply or b"")
+        if bars is not None:
+            self._state.zone_power = {0: bars[0], 1: bars[1]}
+
+
 class StatusReadable(GoveeDevice):
     """Devices that report state via the 0xAC status burst (H60A6 family).
 

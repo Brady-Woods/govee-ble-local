@@ -127,6 +127,16 @@ def parse_power(frame: bytes) -> bool | None:
     return frame[2] != 0
 
 
+def parse_bar_switch(frame: bytes) -> tuple[bool, bool] | None:
+    """aa 36 reply -> (left_on, right_on) for the H6047's two bars.
+
+    byte[2] = left, byte[3] = right (H6048OnOffNotifyParse; verified live:
+    33 36 00 01 -> aa 36 00 01, 33 36 01 00 -> aa 36 01 00)."""
+    if len(frame) < 4 or frame[0] != 0xAA or frame[1] != 0x36:
+        return None
+    return frame[2] == 1, frame[3] == 1
+
+
 def parse_brightness(frame: bytes) -> int | None:
     """aa 04 reply -> brightness (BrightnessController: data[0]). The light
     families we poll use a 0-100 scale (same as the write path); if a device

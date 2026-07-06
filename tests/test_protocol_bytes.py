@@ -77,6 +77,21 @@ def test_scene() -> None:
     assert controllers.scene((0x00, 0x64))[:5].hex() == "3305040064"
 
 
+def test_zone_power_h60a6() -> None:
+    # H60A6 per-zone: 33 30 <zone> <state>
+    assert controllers.zone_power(1, True)[:4].hex() == "33300101"
+    assert controllers.zone_power(0, False)[:4].hex() == "33300000"
+
+
+def test_bar_switch_h6047() -> None:
+    # H6047 compose-light-switch (com.govee.h6047 NewDetailVm.I5): one frame
+    # carries both bars -> 33 36 <left> <right>.
+    assert controllers.bar_switch(True, True)[:4].hex() == "33360101"
+    assert controllers.bar_switch(True, False)[:4].hex() == "33360100"   # right off
+    assert controllers.bar_switch(False, True)[:4].hex() == "33360001"   # left off
+    assert controllers.bar_switch(False, False)[:4].hex() == "33360000"
+
+
 # --- advertisement identification (BleUtil.parseBleBroadcastPact) -----------
 import govee_ble_local.identify as identify  # noqa: E402
 

@@ -10,6 +10,7 @@ from typing import ClassVar
 from ..ble.controllers import ColorScheme
 from ..models import Capability, Encryption, Zone
 from .base import (
+    BarSwitchControl,
     BrightnessMixin,
     ColorTempMixin,
     GoveeDevice,
@@ -110,7 +111,7 @@ class GoveeLightH6008(GoveeRgbLight, PolledLight):
     max_kelvin: ClassVar[int] = 6500
 
 
-class GoveeLightH6047(GoveeRgbLight, SegmentControl, PolledLight):
+class GoveeLightH6047(GoveeRgbLight, SegmentControl, BarSwitchControl, PolledLight):
     """H6047 — h60a6 (SubModeColor sub-cmd 0x15) color scheme, like H60A6,
     with per-segment control (segmentedColorRgb).
 
@@ -120,6 +121,11 @@ class GoveeLightH6047(GoveeRgbLight, SegmentControl, PolledLight):
     - Plaintext channel: the h6047 BLE module has no encryption/handshake.
       Encryption is still resolved from the advertisement at runtime; NONE is
       the accurate fallback.
+    - Two light bars (left/right) with independent on/off, exposed as zones.
+      Unlike the H60A6's per-zone 33 30, the H6047 uses one combined frame
+      33 36 <left> <right> (NewDetailVm.I5 -> value_compose_light_switch 0x36);
+      BarSwitchControl re-sends both bar states on each toggle. Left = bar 0,
+      right = bar 1 (5 segments each, per Support.getGoodsType4ColorSegment=10).
     Color-temp range 2200-6500K (Support.getColorTemRange). The device also
     exposes Music mode (sub-cmd 0x13) and legacy DIY, deliberately not wired."""
 
@@ -130,6 +136,10 @@ class GoveeLightH6047(GoveeRgbLight, SegmentControl, PolledLight):
     min_kelvin: ClassVar[int] = 2200
     max_kelvin: ClassVar[int] = 6500
     capabilities: ClassVar[frozenset[Capability]] = _LIGHT_CAPS | {Capability.SEGMENTS}
+    zones: ClassVar[tuple[Zone, ...]] = (
+        Zone("left", power_index=0, segments=tuple(range(0, 5))),
+        Zone("right", power_index=1, segments=tuple(range(5, 10))),
+    )
 
 
 class GoveeStripH61A8(PowerMixin, BrightnessMixin, RGBMixin, SegmentControl, SceneControl, PolledLight, GoveeDevice):
