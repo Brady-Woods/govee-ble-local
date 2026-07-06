@@ -268,6 +268,44 @@ class GoveeConnection:
             self._schedule_idle_timer()
             return ack
 
+    async def query(
+        self, frame_plaintext: bytes, *, timeout: float = 3.0, terminal: int = 0xFF
+    ) -> list[bytes]:
+        """Send a query trigger and collect the resulting NOTIFY burst.
+
+        Returns the decrypted 20-byte frames received until a terminal chunk
+        (an 0xAC frame whose chunk tag == ``terminal``) arrives or ``timeout``
+        elapses. Used for the multi-chunk status read-back."""
+        async with self._lock:
+            self._cancel_idle_timer()
+            if not self.is_connected:
+                await self._connect_locked()
+            self._drain()
+            if self._encryption is Encryption.AES_RC4_PSK:
+                assert self._session_key is not None
+                wire = encrypt(frame_plaintext, self._session_key)
+            else:
+                wire = frame_plaintext
+            await self._raw_write(wire)
+
+            loop = asyncio.get_running_loop()
+            deadline = loop.time() + timeout
+            frames: list[bytes] = []
+            while True:
+                remaining = deadline - loop.time()
+                if remaining <= 0:
+                    break
+                try:
+                    raw = await asyncio.wait_for(self._rx.get(), timeout=remaining)
+                except asyncio.TimeoutError:
+                    break
+                dec = self._decrypt_rx(raw)
+                frames.append(dec)
+                if len(dec) >= 2 and dec[0] == 0xAC and dec[1] == terminal:
+                    break
+            self._schedule_idle_timer()
+            return frames
+
     # -- idle disconnect ----------------------------------------------------
 
     def _cancel_idle_timer(self) -> None:

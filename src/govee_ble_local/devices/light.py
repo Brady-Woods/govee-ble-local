@@ -17,6 +17,7 @@ from .base import (
     RGBMixin,
     SceneControl,
     SegmentControl,
+    StatusReadable,
     ZoneControl,
 )
 
@@ -35,7 +36,7 @@ class GoveeRgbLight(PowerMixin, BrightnessMixin, RGBMixin, ColorTempMixin, Scene
     max_kelvin: ClassVar[int] = 6500
 
 
-class GoveeLightH60A6(GoveeRgbLight, SegmentControl, ZoneControl):
+class GoveeLightH60A6(GoveeRgbLight, SegmentControl, ZoneControl, StatusReadable):
     """H60A6 — "Ceiling Light Pro". AES-RC4-PSK, h60a6 (SubModeColorV2 0x15)
     color scheme. Two physical zones (upper ring, lower panel) + 13
     individually-addressable segments.

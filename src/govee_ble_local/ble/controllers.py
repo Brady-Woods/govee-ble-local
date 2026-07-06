@@ -184,3 +184,12 @@ def secret_check(secret: bytes) -> bytes:
 def status_field(field: int = CMD_STATUS_FIELD) -> bytes:
     """Read a status field (aa <field>), e.g. 0x01 = online/heartbeat poll."""
     return build_frame(PRO_READ, field)
+
+
+def status_query(full: bool = False) -> bytes:
+    """Trigger the H60A6-family status read-back (a burst of 0xAC NOTIFY
+    chunks). full=True also requests per-segment colour (adds the 0xa5 sub):
+    ac 03 02 41 30 (short) / ac 03 03 41 30 a5 (full)."""
+    if full:
+        return build_frame(0xAC, 0x03, bytes([0x03, 0x41, 0x30, 0xA5]))
+    return build_frame(0xAC, 0x03, bytes([0x02, 0x41, 0x30]))

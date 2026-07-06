@@ -9,6 +9,6 @@ obtain a device's BLE secret + protocol metadata:
 
 Requires the optional `aiohttp` dependency (install `govee-ble-local[cloud]`).
 """
-from .account import CloudDevice, GoveeCloudAccount
+from .account import CloudDevice, GoveeCloudAccount, GoveeCloudError
 
-__all__ = ["CloudDevice", "GoveeCloudAccount"]
+__all__ = ["CloudDevice", "GoveeCloudAccount", "GoveeCloudError"]

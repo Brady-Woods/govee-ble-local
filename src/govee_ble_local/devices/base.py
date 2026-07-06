@@ -13,7 +13,7 @@ from typing import Any, ClassVar
 
 from bleak.backends.device import BLEDevice
 
-from ..ble import controllers
+from ..ble import controllers, status
 from ..ble.controllers import ColorScheme
 from ..identify import identify
 from ..exceptions import GoveeBleNotSupported
@@ -141,10 +141,18 @@ class GoveeDevice:
                 _LOGGER.exception("%s: state callback failed", self.address)
 
     async def update(self) -> DeviceState:
-        """Refresh device state. Devices without read-back just ensure the
-        connection is alive and return the optimistic state."""
+        """Refresh device state: ensure the connection is alive, then read
+        state back if the device supports it (else keep optimistic state)."""
         await self._connection.connect()
+        await self._read_state()
+        self._notify_state()
         return self._state
+
+    async def _read_state(self) -> None:
+        """Refresh ``self._state`` from the device over BLE. Default: no
+        read-back — state stays optimistic (last command sent). Devices that
+        expose real status override this (see StatusReadable)."""
+        return None
 
     async def stop(self) -> None:
         await self._connection.disconnect()
@@ -388,3 +396,33 @@ class ZoneControl(GoveeDevice):
         r, g, b = rgb
         await self._connection.send(controllers.segment_rgb(_mask(z.segments), r, g, b, self._color_scheme))
         self._notify_state()
+
+
+class StatusReadable(GoveeDevice):
+    """Devices that report state via the 0xAC status burst (H60A6 family).
+
+    A full status query returns brightness, zone on/off, and per-segment colour,
+    letting `update()` reflect changes made from the Govee app / physical
+    control rather than only the last command this library sent."""
+
+    async def _read_state(self) -> None:
+        frames = await self._connection.query(controllers.status_query(full=True))
+        chunks: dict[int, bytes] = {}
+        for frame in frames:
+            if len(frame) == 20 and frame[0] == 0xAC:
+                chunks[frame[1]] = frame[2:19]
+        if not set(status.STATUS_CHUNK_REQUIRED).issubset(chunks):
+            # Incomplete read this poll — keep the prior (optimistic) state.
+            _LOGGER.debug("%s: incomplete status read (chunks %s)", self.address, sorted(chunks))
+            return
+        parsed = status.parse_status(chunks)
+        if parsed.is_on is not None:
+            self._state.is_on = parsed.is_on
+        if parsed.brightness is not None:
+            self._state.brightness = parsed.brightness
+        if parsed.segments:
+            self._state.segments = parsed.segments
+        if parsed.rgb_color is not None:
+            self._state.rgb_color = parsed.rgb_color
+            self._state.color_temp_kelvin = None
+        self._state.optimistic = False
