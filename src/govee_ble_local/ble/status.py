@@ -147,8 +147,9 @@ def parse_status(chunks: dict[int, bytes], address: str | None = None) -> Device
     if terminator is not None:
         shift = 0 if chunk00 is not None else 1
         if len(terminator) >= 16 + shift:
-            lower = bool(terminator[14 + shift])
-            upper = bool(terminator[15 + shift])
+            lower = bool(terminator[14 + shift])   # zone power_index 0 (H60A6: main)
+            upper = bool(terminator[15 + shift])   # zone power_index 1 (H60A6: background)
+            state.zone_power = {0: lower, 1: upper}
 
     if chunk00 is not None and len(chunk00) >= 16:
         state.brightness = chunk00[10]

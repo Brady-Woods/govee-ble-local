@@ -273,6 +273,9 @@ class GoveeDevice:
     async def set_scene_by_name(self, name: str) -> None:
         raise self._unsupported("scenes")
 
+    def zone_is_on(self, zone: str) -> bool | None:
+        return None
+
     async def set_zone_power(self, zone: str, on: bool) -> None:
         raise self._unsupported("zones")
 
@@ -424,8 +427,16 @@ class ZoneControl(GoveeDevice):
                 return z
         raise GoveeBleNotSupported(f"{self.sku}: unknown zone {name!r}; have {[z.name for z in self.zones]}")
 
+    def zone_is_on(self, zone: str) -> bool | None:
+        """Read-back power state of a named zone (from the polled status), or
+        None if unknown / not read back."""
+        return self._state.zone_power.get(self._zone(zone).power_index)
+
     async def set_zone_power(self, zone: str, on: bool) -> None:
-        await self._connection.send(controllers.zone_power(self._zone(zone).power_index, on))
+        z = self._zone(zone)
+        await self._connection.send(controllers.zone_power(z.power_index, on))
+        # Optimistic until the next poll confirms it.
+        self._state.zone_power[z.power_index] = on
         self._notify_state()
 
     async def set_zone_rgb(self, zone: str, rgb: tuple[int, int, int]) -> None:
@@ -462,6 +473,8 @@ class StatusReadable(GoveeDevice):
         parsed = status.parse_status(chunks, self.address)
         if parsed.is_on is not None:
             self._state.is_on = parsed.is_on
+        if parsed.zone_power:
+            self._state.zone_power = parsed.zone_power
         if parsed.brightness is not None:
             self._state.brightness = parsed.brightness
         if parsed.segments:
