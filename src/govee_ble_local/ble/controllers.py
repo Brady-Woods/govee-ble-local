@@ -193,6 +193,13 @@ def device_info_query(selector: int) -> bytes:
     return build_frame(PRO_READ, 0x07, bytes([selector]))
 
 
+def mode_query() -> bytes:
+    """Read the current mode (aa 05 01). The reply is aa 05 <subMode> <data>:
+    subMode 0x04 = scene (data = little-endian scene code), 0x15/0x0d/0x0b =
+    color, 0x13 = music. This is how the app knows the active scene."""
+    return build_frame(PRO_READ, CMD_MODE, bytes([0x01]))
+
+
 def status_query(full: bool = False) -> bytes:
     """Trigger the H60A6-family status read-back (a burst of 0xAC NOTIFY
     chunks). full=True also requests per-segment colour (adds the 0xa5 sub):

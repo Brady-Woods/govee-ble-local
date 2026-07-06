@@ -233,6 +233,10 @@ class GoveeDevice:
     def scene_names(self) -> list[str]:
         return []
 
+    @property
+    def active_scene(self) -> str | None:
+        return None
+
     def _unsupported(self, feature: str) -> GoveeBleNotSupported:
         return GoveeBleNotSupported(f"{self.sku}: {feature} not supported")
 
@@ -383,6 +387,19 @@ class SceneControl(GoveeDevice):
         """Built-in scene names available for this device's SKU."""
         return sorted(load_scenes(self.sku))
 
+    @property
+    def active_scene(self) -> str | None:
+        """Name of the scene currently active on the device (from the polled
+        scene_code), or None if unknown / not in scene mode. Requires a device
+        that reads its mode back (StatusReadable)."""
+        code = self._state.scene_code
+        if code is None:
+            return None
+        for name, scene in load_scenes(self.sku).items():
+            if scene.code == code:
+                return name
+        return None
+
     async def set_scene_by_name(self, name: str) -> None:
         """Activate a built-in scene by name (from the bundled catalog).
         Uploads the effect blob when the catalog provides one, else bare-activates."""
@@ -460,6 +477,13 @@ class StatusReadable(GoveeDevice):
             self._state.wifi_mac = parsed.wifi_mac
         self._state.optimistic = False
 
+        # Active scene: read the current mode (aa 05 01); scene_code is set when
+        # the device is in scene sub-mode, else cleared (it's in color/music).
+        if Capability.SCENES in self.capabilities:
+            reply = await self._read_reply(controllers.mode_query(), 0x05)
+            if reply is not None:
+                self._state.scene_code = status.parse_active_scene(reply)
+
         await self._read_device_info()
 
     async def _read_device_info(self) -> None:
@@ -476,11 +500,13 @@ class StatusReadable(GoveeDevice):
         self._info_attempts = attempts + 1
 
         if need_serial:
-            serial = status.parse_sn(await self._read_info_frame(0x02) or b"")
+            reply = await self._read_reply(controllers.device_info_query(0x02), 0x07)
+            serial = status.parse_sn(reply or b"")
             if serial:
                 self._state.serial_number = serial
         if need_wifi:
-            wifi = status.parse_wifi_info(await self._read_info_frame(0x11) or b"")
+            reply = await self._read_reply(controllers.device_info_query(0x11), 0x07)
+            wifi = status.parse_wifi_info(reply or b"")
             if wifi is not None:
                 wifi_mac, software, hardware = wifi
                 if wifi_mac != "00:00:00:00:00:00":
@@ -490,15 +516,13 @@ class StatusReadable(GoveeDevice):
                 if hardware != "0.00.00" and not self._state.hardware_version:
                     self._state.hardware_version = hardware
 
-    async def _read_info_frame(self, selector: int) -> bytes | None:
-        """Read a single aa 07 <selector> device-info response frame."""
+    async def _read_reply(self, frame: bytes, command_type: int) -> bytes | None:
+        """Send a single-frame read and return the reply frame matching
+        [0xAA, command_type] (caller validates the sub-selector), or None."""
         frames = await self._connection.query(
-            controllers.device_info_query(selector),
-            opcode=0xAA,
-            terminal=0x07,
-            timeout=2.0,
+            frame, opcode=0xAA, terminal=command_type, timeout=2.0
         )
-        for frame in frames:
-            if len(frame) >= 3 and frame[0] == 0xAA and frame[1] == 0x07 and frame[2] == selector:
-                return frame
+        for reply in frames:
+            if len(reply) >= 2 and reply[0] == 0xAA and reply[1] == command_type:
+                return reply
         return None

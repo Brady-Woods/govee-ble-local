@@ -43,6 +43,13 @@ def test_parse_wifi_info() -> None:
     assert status.parse_wifi_info(_frame(0x33, 0x05, 0x11)) is None  # wrong opcode
 
 
+def test_parse_active_scene() -> None:
+    """aa 05 04 <lo> <hi> -> little-endian scene code; other sub-modes -> None."""
+    assert status.parse_active_scene(_frame(0xAA, 0x05, 0x04, 0x82, 0x4A)) == 0x4A82
+    assert status.parse_active_scene(_frame(0xAA, 0x05, 0x15, 0x01)) is None  # color mode
+    assert status.parse_active_scene(_frame(0x33, 0x05, 0x04)) is None  # wrong opcode
+
+
 def test_parse_basic_info() -> None:
     """aa 07 10 -> (serial UID reversed, software X.YY.ZZ, hardware X.YY.ZZ)."""
     frame = _frame(0xAA, 0x07, 0x10, 0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11, 1, 4, 3, 1, 0, 0)

@@ -74,6 +74,7 @@ class DeviceState:
     rgb_color: tuple[int, int, int] | None = None
     color_temp_kelvin: int | None = None
     segments: list[Segment] = field(default_factory=list)
+    scene_code: int | None = None            # active scene code, if in scene mode
     optimistic: bool = False                 # True if not read back from the device
     # Device-info (static-ish), populated where the device supports read-back.
     wifi_mac: str | None = None

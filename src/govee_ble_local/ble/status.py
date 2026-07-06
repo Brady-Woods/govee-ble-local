@@ -120,6 +120,15 @@ def parse_sn(frame: bytes) -> str | None:
     return _uid_to_serial(frame[3:11])
 
 
+def parse_active_scene(frame: bytes) -> int | None:
+    """From a mode-read reply (aa 05 <subMode> <data>): the active scene code if
+    the device is in scene sub-mode (0x04), else None. The code is
+    little-endian (matches the 33 05 04 <lo> <hi> write)."""
+    if len(frame) < 5 or frame[0] != 0xAA or frame[1] != 0x05 or frame[2] != 0x04:
+        return None
+    return frame[3] | (frame[4] << 8)
+
+
 def parse_status(chunks: dict[int, bytes], address: str | None = None) -> DeviceState:
     """Build a DeviceState from reassembled 0xAC status chunks.
 
