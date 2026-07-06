@@ -75,3 +75,7 @@ class DeviceState:
     color_temp_kelvin: int | None = None
     segments: list[Segment] = field(default_factory=list)
     optimistic: bool = False                 # True if not read back from the device
+    # Device-info (static-ish), populated where the device supports read-back.
+    wifi_mac: str | None = None
+    hardware_version: str | None = None
+    serial_number: str | None = None

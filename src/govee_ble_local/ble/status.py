@@ -47,14 +47,63 @@ def _uniform_rgb(segments: list[Segment]) -> tuple[int, int, int] | None:
     return colours.pop() if len(colours) == 1 else None
 
 
-def parse_status(chunks: dict[int, bytes]) -> DeviceState:
+def format_mac(mac_bytes: bytes) -> str:
+    return ":".join(f"{b:02X}" for b in mac_bytes)
+
+
+def _parse_device_info(chunks: dict[int, bytes], address: str) -> tuple[str | None, str | None]:
+    """Extract (wifi_mac, hardware_version) from the status chunks by anchoring
+    on the device's own BLE MAC (little-endian) in the joined 0x01-0x04 stream.
+    Layout (relative to the anchor): +9..15 = Wi-Fi MAC (reversed), +20..23 =
+    hardware version bytes. Verified byte-exact in v1."""
+    stream = b"".join(chunks.get(k, b"") for k in (0x01, 0x02, 0x03, 0x04, 0xFF))
+    try:
+        own = bytes(int(b, 16) for b in address.split(":"))
+    except ValueError:
+        return None, None
+    anchor = stream.find(own[::-1])
+    if anchor == -1:
+        return None, None
+    wifi_mac = None
+    wifi_bytes = stream[anchor + 9 : anchor + 15]
+    if len(wifi_bytes) == 6:
+        wifi_mac = format_mac(wifi_bytes[::-1])
+    hardware_version = None
+    hw = stream[anchor + 20 : anchor + 23]
+    if len(hw) == 3:
+        hardware_version = f"{hw[0]}.{hw[1]:02d}.{hw[2]:02d}"
+    return wifi_mac, hardware_version
+
+
+def parse_metadata_text(frames: list[bytes]) -> str | None:
+    """Reassemble an `ab` metadata-field response (0xAB NOTIFY chunks) into its
+    ASCII value: 5-byte header then an ASCII string, zero-padded. Used for the
+    serial-number read (`ab 01 05`)."""
+    chunks: dict[int, bytes] = {}
+    for frame in frames:
+        if len(frame) == 20 and frame[0] == 0xAB:
+            chunks[frame[1]] = frame[2:19]
+    if not chunks:
+        return None
+    raw = b"".join(chunks[t] for t in sorted(chunks))
+    if len(raw) <= 5:
+        return None
+    value = raw[5:].rstrip(b"\x00")
+    try:
+        return value.decode("ascii") or None
+    except UnicodeDecodeError:
+        return None
+
+
+def parse_status(chunks: dict[int, bytes], address: str | None = None) -> DeviceState:
     """Build a DeviceState from reassembled 0xAC status chunks.
 
     Zone truth table (chunk 0x00 present -> shift 0), captured live:
       byte 14 = LOWER zone on, byte 15 = UPPER zone on (in the terminator chunk,
       0x05 in the full query else 0xFF). brightness is chunk 0x00 byte 10.
     When chunk 0x00 is absent (RGB/color-temp mode omits it) every offset in the
-    terminator shifts by 1.
+    terminator shifts by 1. When `address` is given, wifi_mac + hardware_version
+    are also extracted from the joined stream.
     """
     state = DeviceState()
     chunk00 = chunks.get(0x00)
@@ -77,4 +126,7 @@ def parse_status(chunks: dict[int, bytes]) -> DeviceState:
 
     if lower is not None or upper is not None:
         state.is_on = bool(lower or upper)
+
+    if address is not None:
+        state.wifi_mac, state.hardware_version = _parse_device_info(chunks, address)
     return state

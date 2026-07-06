@@ -269,13 +269,19 @@ class GoveeConnection:
             return ack
 
     async def query(
-        self, frame_plaintext: bytes, *, timeout: float = 3.0, terminal: int = 0xFF
+        self,
+        frame_plaintext: bytes,
+        *,
+        timeout: float = 3.0,
+        opcode: int = 0xAC,
+        terminal: int = 0xFF,
     ) -> list[bytes]:
         """Send a query trigger and collect the resulting NOTIFY burst.
 
         Returns the decrypted 20-byte frames received until a terminal chunk
-        (an 0xAC frame whose chunk tag == ``terminal``) arrives or ``timeout``
-        elapses. Used for the multi-chunk status read-back."""
+        (an ``opcode`` frame whose chunk tag == ``terminal``) arrives or
+        ``timeout`` elapses. Used for the multi-chunk status (0xAC) and
+        metadata (0xAB) read-backs."""
         async with self._lock:
             self._cancel_idle_timer()
             if not self.is_connected:
@@ -301,7 +307,7 @@ class GoveeConnection:
                     break
                 dec = self._decrypt_rx(raw)
                 frames.append(dec)
-                if len(dec) >= 2 and dec[0] == 0xAC and dec[1] == terminal:
+                if len(dec) >= 2 and dec[0] == opcode and dec[1] == terminal:
                     break
             self._schedule_idle_timer()
             return frames

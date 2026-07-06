@@ -31,6 +31,32 @@ def test_parse_status_all_zones_off() -> None:
     assert st.is_on is False
 
 
+def test_parse_metadata_text_serial() -> None:
+    """A metadata (ab) response decodes to its ASCII value after the 5-byte
+    header."""
+    body = b"\x00\x00\x00\x00\x00" + b"1AB2C3D4E5"  # 5-byte header + ascii serial
+    frame = bytes([0xAB, 0xFF]) + body[:17]
+    frame = frame + b"\x00" * (20 - len(frame))
+    assert status.parse_metadata_text([frame]) == "1AB2C3D4E5"
+    assert status.parse_metadata_text([]) is None
+    assert status.parse_metadata_text([bytes([0x33] + [0] * 19)]) is None  # wrong opcode
+
+
+def test_parse_device_info_wifi_mac_and_hw() -> None:
+    """wifi_mac + hardware_version are anchored on the device's own BLE MAC
+    (little-endian) in the joined 0x01-0x04 stream."""
+    address = "AA:BB:CC:DD:EE:05"
+    own_le = bytes.fromhex("05EEDDCCBBAA")            # reversed own MAC
+    wifi_le = bytes.fromhex("112233445566")            # wifi MAC stored little-endian
+    # anchor at offset 3; +9..15 wifi, +20..23 hw = (1, 2, 30)
+    blob = b"\x00\x00\x00" + own_le + b"\x00\x00\x00" + wifi_le + b"\x00\x00\x00\x00\x00" + bytes([1, 2, 30])
+    # split into chunks 0x01..0x04 (17 bytes each) — one chunk is enough here
+    chunks = {0x00: bytes(16), 0x01: blob[:17], 0x02: blob[17:34], 0x05: bytes(16)}
+    st = status.parse_status(chunks, address)
+    assert st.wifi_mac == "66:55:44:33:22:11"
+    assert st.hardware_version == "1.02.30"
+
+
 def test_parse_segments_uniform_rgb() -> None:
     # 12 records of [brightness, r, g, b], all red -> uniform rgb.
     record = bytes([50, 255, 0, 0])

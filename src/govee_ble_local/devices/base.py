@@ -112,6 +112,20 @@ class GoveeDevice:
     def is_on(self) -> bool | None:
         return self._state.is_on
 
+    # -- device info (populated by read-back where supported) ---------------
+
+    @property
+    def wifi_mac(self) -> str | None:
+        return self._state.wifi_mac
+
+    @property
+    def hardware_version(self) -> str | None:
+        return self._state.hardware_version
+
+    @property
+    def serial_number(self) -> str | None:
+        return self._state.serial_number
+
     # -- lifecycle ----------------------------------------------------------
 
     def set_secret(self, secret: bytes) -> None:
@@ -424,7 +438,7 @@ class StatusReadable(GoveeDevice):
         if 0x00 not in chunks or not (0x05 in chunks or 0xFF in chunks):
             _LOGGER.debug("%s: incomplete status read (chunks %s)", self.address, sorted(chunks))
             return
-        parsed = status.parse_status(chunks)
+        parsed = status.parse_status(chunks, self.address)
         if parsed.is_on is not None:
             self._state.is_on = parsed.is_on
         if parsed.brightness is not None:
@@ -434,4 +448,17 @@ class StatusReadable(GoveeDevice):
         if parsed.rgb_color is not None:
             self._state.rgb_color = parsed.rgb_color
             self._state.color_temp_kelvin = None
+        if parsed.wifi_mac:
+            self._state.wifi_mac = parsed.wifi_mac
+        if parsed.hardware_version:
+            self._state.hardware_version = parsed.hardware_version
         self._state.optimistic = False
+
+        # Serial number is static; read it once (ab field 0x05).
+        if self._state.serial_number is None:
+            frames = await self._connection.query(
+                controllers.metadata_query(0x05), opcode=0xAB, timeout=3.0
+            )
+            serial = status.parse_metadata_text(frames)
+            if serial:
+                self._state.serial_number = serial

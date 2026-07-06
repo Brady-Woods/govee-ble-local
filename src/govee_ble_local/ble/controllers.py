@@ -186,6 +186,12 @@ def status_field(field: int = CMD_STATUS_FIELD) -> bytes:
     return build_frame(PRO_READ, field)
 
 
+def metadata_query(field_id: int) -> bytes:
+    """Read a device-metadata field (ab 01 <field>); the response is a burst of
+    0xAB chunks (5-byte header + ASCII). field 0x05 = serial/UID."""
+    return build_frame(0xAB, 0x01, bytes([field_id]))
+
+
 def status_query(full: bool = False) -> bytes:
     """Trigger the H60A6-family status read-back (a burst of 0xAC NOTIFY
     chunks). full=True also requests per-segment colour (adds the 0xa5 sub):
