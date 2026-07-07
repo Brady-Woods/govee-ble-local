@@ -67,3 +67,42 @@ def test_h6641_registered_and_h60a6_scheme() -> None:
     assert (dev.min_kelvin, dev.max_kelvin) == (2000, 9000)
     # h60a6 colour scheme: 33 05 15 01 <rgb> ... <mask> (all-segments mask ff ff)
     assert controllers.rgb(255, 0, 0, dev._color_scheme, dev._segments)[:4].hex() == "33051501"
+
+
+def test_scene_stub_bare_activated_real_uploaded(monkeypatch: object) -> None:
+    """0xff-stub scene params must be bare-activated (33 05 04 <code>), not
+    uploaded (verified against the app's BLE capture); real blobs still upload."""
+    import base64
+    from unittest.mock import AsyncMock as _AsyncMock
+
+    from govee_ble_local.devices import base as basemod
+    from govee_ble_local.scenes import Scene
+
+    stub = base64.b64encode(bytes([0x50, 0x20, 0x00, 0xFF] + [0] * 40)).decode()
+    real = base64.b64encode(bytes([0x50, 0x54, 0x00, 0x02] + [0] * 40)).decode()
+    scenes = {
+        "Aurora": Scene("Aurora", 0x4A82, stub),
+        "Graffiti": Scene("Graffiti", 0x4A94, real),
+        "Sunrise": Scene("Sunrise", 0x4A83, None),  # bare by design
+    }
+    monkeypatch.setattr(basemod, "load_scenes", lambda sku: scenes)  # type: ignore[attr-defined]
+
+    dev = create_device(BLEDevice("AA:BB:CC:DD:EE:03", "GVH60A6", details={}), "H60A6")
+    dev._connection.send = _AsyncMock()  # type: ignore[attr-defined]
+
+    async def go() -> None:
+        await dev.set_scene_by_name("Aurora")    # stub -> bare-activate
+        n_after_aurora = dev._connection.send.call_count  # type: ignore[attr-defined]
+        assert n_after_aurora == 1, "stub scene must be a single bare-activate"
+        await dev.set_scene_by_name("Sunrise")   # no param -> bare-activate
+        await dev.set_scene_by_name("Graffiti")  # real -> upload (a3 chunks) + activate
+
+    asyncio.run(go())
+    frames = [c.args[0] for c in dev._connection.send.call_args_list]  # type: ignore[attr-defined]
+    # Aurora + Sunrise: one 33 05 04 each; no a3 frames among them.
+    assert frames[0][:3].hex() == "330504"
+    assert frames[1][:3].hex() == "330504"
+    # Graffiti uploaded: at least one a3 chunk before its final 33 05 04.
+    graffiti = frames[2:]
+    assert any(f[:1].hex() == "a3" for f in graffiti), "real blob must upload a3 chunks"
+    assert graffiti[-1][:3].hex() == "330504"

@@ -392,13 +392,33 @@ class SegmentControl(GoveeDevice):
         self._notify_state()
 
 
+def _scene_param_is_stub(param_b64: str | None) -> bool:
+    """A scene whose library param is a placeholder STUB (0xff at byte[3]).
+
+    Confirmed against a real H60A6 btsnoop capture (78 scenes cycled): the app
+    uploads an a3 effect blob ONLY for scenes with a real param (byte[3] !=
+    0xff) and *bare-activates* the 0xff-stub scenes (Aurora, Dandelion, …) with
+    just 33 05 04 <code>. Uploading a stub corrupts those scenes, so we must
+    bare-activate them exactly like the app."""
+    if not param_b64:
+        return False
+    import base64
+
+    try:
+        raw = base64.b64decode(param_b64)
+    except Exception:  # noqa: BLE001
+        return False
+    return len(raw) >= 4 and raw[3] == 0xFF
+
+
 class SceneControl(GoveeDevice):
     """Built-in scene activation.
 
-    The scene code is sent little-endian (33 05 04 <lo> <hi>). Some devices
-    activate a cached scene directly (set_scene); others require uploading the
-    scene's effect blob first via the a3-chunk burst, then activating
-    (set_scene_full)."""
+    The scene code is sent little-endian (33 05 04 <lo> <hi>). Some scenes
+    carry a real effect blob that must be uploaded via the a3-chunk burst before
+    activating (set_scene_full); the rest (device-built-in, and the 0xff-stub
+    "placeholder" scenes) are bare-activated by code (set_scene) — verified
+    against the app's own BLE behavior."""
 
     async def set_scene(self, scene_code: int) -> None:
         """Bare-activate a scene already stored on the device."""
@@ -437,7 +457,10 @@ class SceneControl(GoveeDevice):
         scene = catalog.get(name)
         if scene is None:
             raise GoveeBleNotSupported(f"{self.sku}: unknown scene {name!r}")
-        if scene.param:
+        # Upload the effect blob only for real params. A 0xff-stub/placeholder
+        # param must NOT be uploaded (it corrupts the scene) — the app
+        # bare-activates those by code, so we do too.
+        if scene.param and not scene.placeholder and not _scene_param_is_stub(scene.param):
             await self.set_scene_full(scene.code, scene.param)
         else:
             await self.set_scene(scene.code)
