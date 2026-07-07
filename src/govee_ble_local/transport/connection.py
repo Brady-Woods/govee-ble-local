@@ -128,8 +128,8 @@ class GoveeConnection:
             self._schedule_idle_timer()
 
     async def _connect_locked(self) -> None:
-        if self._client is None or not self._client.is_connected:
-            try:
+        try:
+            if self._client is None or not self._client.is_connected:
                 self._client = await establish_connection(
                     BleakClientWithServiceCache,
                     self._ble_device,
@@ -138,21 +138,29 @@ class GoveeConnection:
                     max_attempts=CONNECT_MAX_ATTEMPTS,
                 )
                 await self._client.start_notify(NOTIFY_CHAR_UUID, self._handle_notify)
-            except BleakError as err:
-                raise GoveeBleConnectionError(f"connect to {self.address} failed: {err}") from err
-        await self._prepare_session()
+            await self._prepare_session()
+        except BleakError as err:
+            # A failed / half-open connect (notify or session-prep dropped mid-way
+            # on a flaky link) must not leave a stale client behind: the next
+            # attempt would reuse it and hit "Service Discovery has not been
+            # performed yet". Tear it down so every retry starts clean.
+            await self._disconnect_locked()
+            raise GoveeBleConnectionError(f"connect to {self.address} failed: {err}") from err
+        except Exception:
+            await self._disconnect_locked()
+            raise
 
     async def _read_bgc_encrypt_version(self) -> int | None:
         """Read the BGC-info characteristic and return the device's
         encryptVersion (0/1/2), or None if the characteristic is absent.
         Port of BgcInfoReader.a()/d(): parse data[0] (format); for format 1 or
         2 the version is data[1]."""
-        assert self._client is not None
-        char = self._client.services.get_characteristic(BGC_INFO_CHAR_UUID)
+        client = self._require_client()
+        char = client.services.get_characteristic(BGC_INFO_CHAR_UUID)
         if char is None:
             return None
         try:
-            data = bytes(await self._client.read_gatt_char(char))
+            data = bytes(await client.read_gatt_char(char))
         except BleakError as err:
             _LOGGER.debug("%s: BGC read failed: %s", self.address, err)
             return None
@@ -167,7 +175,7 @@ class GoveeConnection:
         self._session_key = None
         self._ready = False
         self._drain()
-        assert self._client is not None
+        self._require_client()
         # BGC-info read is authoritative for the version (1=RC4, 2=GCM). If the
         # characteristic is absent we keep the advertisement-derived mode.
         bgc_version = await self._read_bgc_encrypt_version()
@@ -220,6 +228,9 @@ class GoveeConnection:
         _LOGGER.debug("%s: disconnected", self.address)
         self._session_key = None
         self._ready = False
+        # Drop the stale client so the next connect re-establishes from scratch
+        # (a dropped client can otherwise be reused with its services wiped).
+        self._client = None
 
     async def disconnect(self) -> None:
         async with self._lock:
@@ -238,9 +249,17 @@ class GoveeConnection:
 
     # -- I/O ----------------------------------------------------------------
 
+    def _require_client(self) -> BleakClientWithServiceCache:
+        """Return the live client, or raise cleanly if it was dropped mid-flow
+        (the disconnect callback nulls it) so callers surface a catchable
+        GoveeBleConnectionError instead of an AssertionError."""
+        client = self._client
+        if client is None:
+            raise GoveeBleConnectionError(f"{self.address}: connection lost")
+        return client
+
     async def _raw_write(self, frame: bytes) -> None:
-        assert self._client is not None
-        await self._client.write_gatt_char(WRITE_CHAR_UUID, frame, response=False)
+        await self._require_client().write_gatt_char(WRITE_CHAR_UUID, frame, response=False)
 
     def _encrypt(self, frame_plaintext: bytes) -> bytes:
         if self._encryption is Encryption.AES_RC4_PSK:

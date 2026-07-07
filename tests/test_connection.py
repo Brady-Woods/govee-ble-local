@@ -7,8 +7,13 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from bleak.backends.device import BLEDevice
+from bleak.exc import BleakError
 
-from govee_ble_local.exceptions import GoveeBleError, GoveeBleTimeout
+from govee_ble_local.exceptions import (
+    GoveeBleConnectionError,
+    GoveeBleError,
+    GoveeBleTimeout,
+)
 from govee_ble_local.models import Encryption
 from govee_ble_local.transport import connection as conn_mod
 from govee_ble_local.transport.connection import GoveeConnection
@@ -82,4 +87,51 @@ def test_read_send_is_unverified() -> None:
         _write_feeding(c, _frame(0xAA, 0xB1, 0x01))           # a read reply
         result = await c.send(_frame(0xAA, 0xB1))             # 0xAA read: no ack check
         assert result is not None and result[:2] == bytes([0xAA, 0xB1])
+    asyncio.run(run())
+
+
+def test_on_disconnect_clears_client() -> None:
+    # A device-initiated disconnect must drop the client so it can't be reused
+    # with wiped services ("Service Discovery has not been performed yet").
+    c = _conn()
+    assert c.is_connected
+    c._on_disconnect(c._client)
+    assert c._client is None
+    assert not c.is_connected
+
+
+def test_connect_failure_tears_down_client(monkeypatch: pytest.MonkeyPatch) -> None:
+    # If the connect half-succeeds (client established) but start_notify drops on
+    # a flaky link, _connect_locked must disconnect + null the client so the next
+    # attempt re-establishes cleanly instead of reusing a stale one.
+    async def run() -> None:
+        dev = BLEDevice("AA:BB:CC:DD:EE:FF", "GVH60A6X", details={})
+        c = GoveeConnection(dev, encryption=Encryption.NONE)
+        c._idle_disconnect = 0
+        bad = MagicMock()
+        bad.is_connected = True
+        bad.start_notify = AsyncMock(side_effect=BleakError("boom"))
+        bad.disconnect = AsyncMock()
+
+        async def fake_establish(*_a: object, **_k: object) -> MagicMock:
+            return bad
+
+        monkeypatch.setattr(conn_mod, "establish_connection", fake_establish)
+        with pytest.raises(GoveeBleConnectionError):
+            await c._connect_locked()
+        assert c._client is None          # torn down, not left stale
+        bad.disconnect.assert_awaited()   # half-open client cleaned up
+
+    asyncio.run(run())
+
+
+def test_raw_write_after_drop_raises_cleanly() -> None:
+    # If the disconnect callback nulls the client mid-flow, a subsequent write
+    # raises a catchable GoveeBleConnectionError, not an AssertionError.
+    async def run() -> None:
+        c = _conn()
+        c._client = None
+        with pytest.raises(GoveeBleConnectionError):
+            await c._raw_write(_frame(0x33, 0x01, 0x01))
+
     asyncio.run(run())
