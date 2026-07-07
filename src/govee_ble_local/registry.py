@@ -12,6 +12,7 @@ from .devices.light import (
     GoveeLightH6008,
     GoveeLightH6047,
     GoveeLightH6052,
+    GoveeLightH6641,
     GoveeStripH61A8,
 )
 from .devices.plug import GoveePlug
@@ -25,6 +26,7 @@ _DEVICE_CLASSES: tuple[type[GoveeDevice], ...] = (
     GoveeLightH6008,
     GoveeLightH6047,
     GoveeLightH6052,
+    GoveeLightH6641,
     GoveeStripH61A8,
 )
 

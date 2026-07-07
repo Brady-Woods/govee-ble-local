@@ -51,3 +51,19 @@ def test_h6047_failed_send_does_not_commit_state() -> None:
 
     asyncio.run(go())
     assert dev.zone_is_on("left") is None  # unchanged (unknown)  # type: ignore[attr-defined]
+
+
+def test_h6641_registered_and_h60a6_scheme() -> None:
+    from govee_ble_local.ble import controllers
+    from govee_ble_local.identify import sku_from_local_name
+    from govee_ble_local.registry import supported_skus
+
+    assert "H6641" in supported_skus()
+    assert sku_from_local_name("GVH66411A2B") == "H6641"
+    assert sku_from_local_name("Govee_H6641_1A2B") == "H6641"
+
+    dev = create_device(BLEDevice("AA:BB:CC:DD:EE:02", "GVH6641", details={}), "H6641")
+    assert type(dev).__name__ == "GoveeLightH6641"
+    assert (dev.min_kelvin, dev.max_kelvin) == (2000, 9000)
+    # h60a6 colour scheme: 33 05 15 01 <rgb> ... <mask> (all-segments mask ff ff)
+    assert controllers.rgb(255, 0, 0, dev._color_scheme, dev._segments)[:4].hex() == "33051501"

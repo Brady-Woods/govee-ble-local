@@ -82,6 +82,28 @@ class GoveeLightH6006(GoveeRgbLight, PolledLight):
     max_kelvin: ClassVar[int] = 9000
 
 
+class GoveeLightH6641(GoveeRgbLight, PolledLight):
+    """H6641 — RGBIC light strip (goodsType 247), handled by the shared h61d3
+    module (also H6640/H41E5/H41E6). Plaintext channel; h60a6 (SubModeColorV2
+    sub-cmd 0x15) colour scheme — the RGB/colour-temp write layout is
+    byte-identical to the H60A6/H6047 path (verified against h61d3
+    SubModeColor.getWriteBytes: [0x15, 0x01, r,g,b, kelvin?, tint?, mask0..3]).
+    Color-temp 2000-9000K (H61D3Support goodsType-247 range).
+
+    Whole-device colour selects every segment via the 0x15 mask; the strip's
+    segment count is dynamic (LED count / 3), so we set all 16 mask bits to cover
+    the whole strip. Per-segment control isn't exposed (count isn't read back).
+    Scenes activate once an H6641 catalog is bundled (empty effect list until
+    then; the light otherwise works fully)."""
+
+    skus: ClassVar[tuple[str, ...]] = ("H6641",)
+    _encryption: ClassVar[Encryption] = Encryption.NONE
+    _color_scheme: ClassVar[ColorScheme] = "h60a6"
+    _segments: ClassVar[int] = 16
+    min_kelvin: ClassVar[int] = 2000
+    max_kelvin: ClassVar[int] = 9000
+
+
 class GoveeLightH6052(GoveeRgbLight, PolledLight):
     """H6052 — plaintext (no handshake), h6006 color scheme, wide CT range."""
 
