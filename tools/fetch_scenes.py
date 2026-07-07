@@ -115,24 +115,75 @@ def resolve_placeholders(email: str, password: str, skus: list[str]) -> None:
     asyncio.run(run())
 
 
+def _valid_resolved(entry: dict[str, object]) -> bool:
+    """True if an existing catalog entry is already a complete, usable
+    definition we should PRESERVE rather than clobber with a fresh public
+    fetch: it has an integer code and is NOT flagged as an unresolved
+    placeholder. The ``placeholder`` flag is the source of truth — --resolve
+    pops it once the real blob is baked in. We deliberately do NOT re-run the
+    0xff-stub heuristic on the param here: a resolved effect blob can legitimately
+    carry 0xff at byte[3], and re-checking would wrongly discard it. A
+    ``param``-less (bare-activate) scene is valid too."""
+    return isinstance(entry.get("code"), int) and not entry.get("placeholder")
+
+
+def _merge(existing: dict[str, dict], fresh: dict[str, dict]) -> dict[str, dict]:
+    """Combine a fresh public fetch with an existing catalog: take fresh data,
+    but keep any existing entry that's already valid/resolved (never replace a
+    real effect blob with a fresh 0xff stub), and keep entries that dropped out
+    of the public library. This makes re-running idempotent and non-destructive
+    once placeholders have been resolved via --resolve."""
+    merged: dict[str, dict] = {}
+    for name, fr in fresh.items():
+        ex = existing.get(name)
+        merged[name] = ex if (ex is not None and _valid_resolved(ex)) else fr
+    for name, ex in existing.items():
+        merged.setdefault(name, ex)  # scene no longer public but we have it
+    return merged
+
+
+def scene_capable_skus() -> list[str]:
+    """All supported SKUs whose device declares Capability.SCENES (so new
+    families are covered automatically as they're added to the registry)."""
+    from govee_ble_local.models import Capability
+    from govee_ble_local.registry import device_class_for_sku, supported_skus
+
+    out: list[str] = []
+    for sku in supported_skus():
+        cls = device_class_for_sku(sku)
+        if cls is not None and Capability.SCENES in cls.capabilities:
+            out.append(sku)
+    return out
+
+
 def main(skus: list[str]) -> None:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     for sku in skus:
+        path = OUT_DIR / f"{sku.upper()}.json"
         try:
-            scenes = fetch(sku)
+            fresh = fetch(sku)
         except Exception as err:  # noqa: BLE001
             print(f"{sku}: FETCH FAILED: {err}")
             continue
-        (OUT_DIR / f"{sku.upper()}.json").write_text(json.dumps(scenes, indent=1, sort_keys=True))
-        ph = sum(1 for v in scenes.values() if v.get("placeholder"))
-        print(f"{sku}: {len(scenes)} scenes -> scenes/{sku.upper()}.json ({ph} placeholders)")
+        existing = json.loads(path.read_text()) if path.exists() else {}
+        scenes = _merge(existing, fresh)
+        path.write_text(json.dumps(scenes, indent=1, sort_keys=True))
+        kept = sum(1 for n in scenes if n in existing and _valid_resolved(existing[n]))
+        placeholders = sorted(n for n, v in scenes.items() if v.get("placeholder"))
+        note = f"; {len(placeholders)} placeholders (run --resolve)" if placeholders else ""
+        print(
+            f"{sku}: {len(scenes)} scenes -> scenes/{sku.upper()}.json "
+            f"[{kept} preserved]{note}"
+        )
+        if placeholders:
+            print(f"    unresolved placeholders: {', '.join(placeholders)}")
 
 
 if __name__ == "__main__":
     import os
 
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
-    skus = args or ["H60A6", "H6006", "H6008", "H6047", "H6052", "H61A8"]
+    skus = args or scene_capable_skus()
     if "--resolve" in sys.argv:
         email = os.environ.get("GOVEE_EMAIL", "")
         password = os.environ.get("GOVEE_PASSWORD", "")
