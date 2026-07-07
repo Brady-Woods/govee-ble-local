@@ -135,3 +135,19 @@ def test_raw_write_after_drop_raises_cleanly() -> None:
             await c._raw_write(_frame(0x33, 0x01, 0x01))
 
     asyncio.run(run())
+
+
+def test_command_opens_warm_window_read_does_not() -> None:
+    """A user command (0x33 write) opens the ~30s warm window; a read (0xAA)
+    does not, so idle devices/polls still release the slot on the base delay."""
+    async def run() -> None:
+        c = _conn()
+        assert c._active_until == 0.0
+        _write_feeding(c, _frame(0xAA, 0xB1, 0x01))
+        await c.send(_frame(0xAA, 0xB1))            # read: no warm window
+        assert c._active_until == 0.0
+        _write_feeding(c, _frame(0x33, 0x01, 0x00))
+        t0 = asyncio.get_running_loop().time()
+        await c.send(_frame(0x33, 0x01, 0x01))      # command: warm window opens
+        assert c._active_until >= t0 + 29
+    asyncio.run(run())

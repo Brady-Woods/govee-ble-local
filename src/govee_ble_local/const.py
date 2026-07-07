@@ -48,6 +48,11 @@ CONNECT_TIMEOUT: Final = 20.0
 HANDSHAKE_TIMEOUT: Final = 10.0
 COMMAND_ACK_TIMEOUT: Final = 3.0
 IDLE_DISCONNECT_DELAY: Final = 8.0
+# After a user command (a 0x33 write) keep the connection warm this long so rapid
+# sequential changes are responsive (no reconnect handshake each time). Routine
+# polls/reads use the shorter base delay above, so idle devices still release the
+# adapter's scarce slots quickly. Dial down if slot contention appears.
+ACTIVE_IDLE_DELAY: Final = 30.0
 CONNECT_MAX_ATTEMPTS: Final = 4
 # Write-ACK (mirrors the app's ControllerComm/AbsSingleController): a command's
 # reply must match [0x33, commandType] and succeed with byte[2] == 0. The write

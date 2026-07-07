@@ -106,3 +106,30 @@ def test_scene_stub_bare_activated_real_uploaded(monkeypatch: object) -> None:
     graffiti = frames[2:]
     assert any(f[:1].hex() == "a3" for f in graffiti), "real blob must upload a3 chunks"
     assert graffiti[-1][:3].hex() == "330504"
+
+
+def test_scene_sets_optimistic_state_and_color_clears_it(monkeypatch: object) -> None:
+    """set_scene reflects the scene immediately (active_scene), and switching to
+    a solid colour clears scene_code so HA shows the right effect without waiting
+    for a poll."""
+    from unittest.mock import AsyncMock as _AsyncMock
+
+    from govee_ble_local.devices import base as basemod
+    from govee_ble_local.scenes import Scene
+
+    monkeypatch.setattr(  # type: ignore[attr-defined]
+        basemod, "load_scenes", lambda sku: {"Rainbow": Scene("Rainbow", 0x4A85, None)}
+    )
+    dev = create_device(BLEDevice("AA:BB:CC:DD:EE:04", "GVH60A6", details={}), "H60A6")
+    dev._connection.send = _AsyncMock()  # type: ignore[attr-defined]
+
+    async def go() -> None:
+        await dev.set_scene(0x4A85)  # type: ignore[attr-defined]
+        assert dev.state.scene_code == 0x4A85
+        assert dev.state.is_on is True
+        assert dev.active_scene == "Rainbow"  # type: ignore[attr-defined]
+        await dev.set_rgb((255, 0, 0))  # type: ignore[attr-defined]
+        assert dev.state.scene_code is None  # solid colour exits scene mode
+        assert dev.active_scene is None  # type: ignore[attr-defined]
+
+    asyncio.run(go())

@@ -19,6 +19,7 @@ from bleak_retry_connector import BleakClientWithServiceCache, establish_connect
 
 from ..ble.frame import PRO_WRITE
 from ..const import (
+    ACTIVE_IDLE_DELAY,
     COMMAND_ACK_TIMEOUT,
     CONNECT_MAX_ATTEMPTS,
     FRAME_LEN,
@@ -78,6 +79,7 @@ class GoveeConnection:
         self._rx: asyncio.Queue[bytes] = asyncio.Queue()
         self._lock = asyncio.Lock()
         self._idle_timer: asyncio.TimerHandle | None = None
+        self._active_until = 0.0  # monotonic; warm-window end after a user command
 
     @property
     def address(self) -> str:
@@ -314,6 +316,11 @@ class GoveeConnection:
             self._cancel_idle_timer()
             if not self.is_connected:
                 await self._connect_locked()
+            # A user command (a 0x33 write) opens a warm window so rapid
+            # follow-up changes reuse this connection instead of reconnecting.
+            # Routine reads/polls don't extend it, keeping slot usage low.
+            if frame_plaintext[:1] == bytes([PRO_WRITE]):
+                self._active_until = asyncio.get_running_loop().time() + ACTIVE_IDLE_DELAY
             try:
                 if expect_ack and frame_plaintext[:1] == bytes([PRO_WRITE]):
                     return await self._send_write_verified(frame_plaintext)
@@ -398,11 +405,15 @@ class GoveeConnection:
 
     def _schedule_idle_timer(self) -> None:
         self._cancel_idle_timer()
-        if self._idle_disconnect > 0:
-            loop = asyncio.get_running_loop()
-            self._idle_timer = loop.call_later(
-                self._idle_disconnect, lambda: asyncio.ensure_future(self.disconnect())
-            )
+        if self._idle_disconnect <= 0:
+            return
+        loop = asyncio.get_running_loop()
+        # Base idle after any activity, but never cut short a warm window opened
+        # by a recent user command (a poll firing mid-window won't shorten it).
+        delay = max(self._idle_disconnect, self._active_until - loop.time())
+        self._idle_timer = loop.call_later(
+            delay, lambda: asyncio.ensure_future(self.disconnect())
+        )
 
 
 def now_ts() -> int:

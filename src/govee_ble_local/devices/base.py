@@ -353,6 +353,7 @@ class RGBMixin(GoveeDevice):
         await self._connection.send(controllers.rgb(r, g, b, self._color_scheme, self._segments))
         self._state.rgb_color = (r, g, b)
         self._state.color_temp_kelvin = None
+        self._state.scene_code = None  # a solid colour exits scene mode
         self._notify_state()
 
 
@@ -367,6 +368,7 @@ class ColorTempMixin(GoveeDevice):
         await self._connection.send(controllers.color_temp(kelvin, self._color_scheme, self._segments))
         self._state.color_temp_kelvin = kelvin
         self._state.rgb_color = None
+        self._state.scene_code = None  # a solid colour exits scene mode
         self._notify_state()
 
 
@@ -423,6 +425,13 @@ class SceneControl(GoveeDevice):
     async def set_scene(self, scene_code: int) -> None:
         """Bare-activate a scene already stored on the device."""
         await self._connection.send(controllers.scene((scene_code & 0xFF, (scene_code >> 8) & 0xFF)))
+        # Optimistic (matches the other setters; poll reconciles): reflect the
+        # just-activated scene immediately so HA shows the right effect instead
+        # of the stale polled one. A scene isn't a solid colour.
+        self._state.scene_code = scene_code
+        self._state.is_on = True
+        self._state.rgb_color = None
+        self._state.color_temp_kelvin = None
         self._notify_state()
 
     async def set_scene_full(self, scene_code: int, param_b64: str) -> None:
