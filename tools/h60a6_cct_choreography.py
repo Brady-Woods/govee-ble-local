@@ -6,13 +6,10 @@ pauses so you can watch the light; commands rely on the built-in write ACK (a 0x
 if the device doesn't ack). Kelvin range from the profile: 2700 (warm/low) .. 6500 (cool/high),
 midpoint 4600.
 
-IMPORTANT model note (H60A6):
-  * `background` owns all 13 RGBIC segments; `main` is power-only (no segment mask).
-  * `set_color_temp()` uses the all-13-segments mask (0x1FFF) — so it is the SAME frame as
-    `set_zone_color_temp("background", k)`. There is currently NO command that sets the main
-    panel to an independent kelvin. The "main panel" and "invert" steps below are therefore
-    expected to be degenerate (main tracks the background); they are kept so the run
-    *demonstrates* that limitation. The per-segment stretch is where independent CCT is real.
+Model note (H60A6, live-verified): indices 0..11 are the background RGBIC ring; the HIGHEST
+index (12) is the MAIN PANEL, independently addressable. So set_zone_color_temp("main", k) =
+mask 0x1000, set_zone_color_temp("background", k) = 0x0FFF, and whole-device set_color_temp =
+0x1FFF (both). The main / background / invert steps below therefore genuinely separate.
 
     GOVEE_H60A6_ADDRESS=AA:BB:CC:DD:EE:FF python3 tools/h60a6_cct_choreography.py
     python3 tools/h60a6_cct_choreography.py --address AA:BB:CC:DD:EE:FF [--capture frames.jsonl]
@@ -107,11 +104,11 @@ async def main() -> int:
             dev.set_zone_color_temp("background", MIN_K),
         )
         await do("background OFF", dev.set_zone_power("background", False))
-        # 4. main panel at max (cool), then off  [degenerate: main tracks background]
+        # 4. main panel (index 12) at max (cool), then off
         await group(
-            f"main panel ON @ max {MAX_K}K (cool) — NOTE main == whole-device mask (0x1FFF)",
+            f"main panel ON @ max {MAX_K}K (cool)",
             dev.set_zone_power("main", True),
-            dev.set_color_temp(MAX_K),
+            dev.set_zone_color_temp("main", MAX_K),
         )
         await do("main panel OFF", dev.set_zone_power("main", False))
         # 5. both on at the same kelvin
@@ -121,12 +118,11 @@ async def main() -> int:
             dev.set_zone_power("background", True),
             dev.set_color_temp(MID_K),
         )
-        # 6. invert: background high, main low  [expected degenerate -> both end at MIN]
+        # 6. invert: background high (cool), main low (warm) — genuinely independent now
         await group(
-            f"INVERT attempt: background @ {MAX_K}K then main @ {MIN_K}K "
-            "(same mask -> expect both = MIN; demonstrates the model gap)",
+            f"INVERT: background @ {MAX_K}K (cool), main panel @ {MIN_K}K (warm)",
             dev.set_zone_color_temp("background", MAX_K),
-            dev.set_color_temp(MIN_K),
+            dev.set_zone_color_temp("main", MIN_K),
         )
 
         # ── STRETCH: independent per-segment CCT on the 13 background segments ──

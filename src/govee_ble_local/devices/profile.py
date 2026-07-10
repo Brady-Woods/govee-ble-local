@@ -49,11 +49,15 @@ _LIGHT = frozenset({_C.POWER, _C.BRIGHTNESS, _C.RGB, _C.COLOR_TEMP, _C.SCENES})
 
 PROFILES: tuple[DeviceProfile, ...] = (
     # H60A6 — ceiling pro: AES, dual zone, 13 segments, dialect-B scenes, full status read-back.
+    # Segment map (live-verified): indices 0..11 are the background RGBIC ring; the HIGHEST
+    # index (12) is the MAIN PANEL — an independently-addressable segment (read-back holds it
+    # distinct from 0..11). So per-zone colour/CCT is real: main = mask 0x1000, background =
+    # 0x0FFF, whole-device = 0x1FFF (both).
     DeviceProfile(
         skus=("H60A6",), capabilities=_LIGHT | {_C.SEGMENTS},
         color_scheme="h60a6", encryption=Encryption.AES_RC4_PSK, segments=13,
-        zones=(Zone("main", power_index=0, segments=()),
-               Zone("background", power_index=1, segments=tuple(range(13)))),
+        zones=(Zone("main", power_index=0, segments=(12,)),
+               Zone("background", power_index=1, segments=tuple(range(12)))),
         scene_versions=frozenset({0, 1, 2, 3, 5}), scene_dialect="B_h60a6",
         min_kelvin=2700, max_kelvin=6500, readback="status",
     ),
