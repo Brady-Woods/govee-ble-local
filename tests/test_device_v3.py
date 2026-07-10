@@ -153,6 +153,29 @@ def test_mechanism_b_assembles_positional_segments() -> None:
     assert segs[7].brightness == 57 and segs[7].rgb == (7, 0, 0)
 
 
+def test_read_secret_bootstrap() -> None:
+    # aa b1 reply: selector 0x01 + 8-byte secret; readable on an unbound plug (no secret set)
+    d = _dev("H5080")
+    secret = bytes(range(1, 9))
+    d._conn.query = AsyncMock(  # type: ignore[attr-defined]
+        return_value=[_frame(0xAA, 0xB1, 0x01, *secret)]
+    )
+    assert asyncio.run(d.read_secret()) == secret
+
+
+def test_ingest_advertisement_onoff() -> None:
+    d = _dev("H60A6")
+
+    class _Adv:
+        def __init__(self, on: int) -> None:
+            self.manufacturer_data = {0x8801: bytes([0xEC, 0, 0, 0, on])}
+
+    assert d.ingest_advertisement(_Adv(1)) is True and d.state.is_on is True
+    assert d.ingest_advertisement(_Adv(1)) is False          # unchanged -> no event
+    assert d.ingest_advertisement(_Adv(0)) is True and d.state.is_on is False
+    assert d.ingest_advertisement(object()) is False          # no manufacturer_data
+
+
 def test_readback_status_maps_to_state() -> None:
     # feed the real captured H60A6 0xAC burst through Device._read_status via a mock query
     burst = [bytes.fromhex(h) for h in (

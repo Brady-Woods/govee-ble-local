@@ -14,7 +14,7 @@ from typing import Any
 from bleak.backends.device import BLEDevice
 
 from ..exceptions import GoveeBleNotSupported
-from ..identify import identify
+from ..identify import identify, parse_broadcast_onoff
 from ..models import Capability, DeviceState, Encryption
 from ..scenes import Scene, load_scenes, scene_upload_params
 from ..transport.connection import GoveeConnection, now_ts
@@ -145,6 +145,23 @@ class Device:
     def update_ble_device(self, ble_device: BLEDevice) -> None:
         self._ble_device = ble_device
         self._conn.update_ble_device(ble_device)
+
+    def ingest_advertisement(self, advertisement_data: Any) -> bool:
+        """Update passive state from a BLE advertisement — no connection needed.
+
+        Reads on/off from the Govee manufacturer data (identify.parse_broadcast_onoff);
+        returns True if `state.is_on` changed (so a caller can notify selectively).
+        Restores the v2 device-level ingest so consumers don't parse adverts inline."""
+        self._advertisement = advertisement_data
+        mfg = getattr(advertisement_data, "manufacturer_data", None)
+        if not mfg:
+            return False
+        on = parse_broadcast_onoff(mfg)
+        if on is None or on == self._state.is_on:
+            return False
+        self._state.is_on = on
+        self._notify()
+        return True
 
     async def stop(self) -> None:
         await self._conn.disconnect()
@@ -351,6 +368,16 @@ class Device:
             if len(reply) >= 2 and reply[0] == 0xAA and reply[1] == command_type:
                 return reply
         return None
+
+    async def read_secret(self) -> bytes | None:
+        """Read the 8-byte account-lock secret off the device (aa b1), or None.
+
+        For the SETUP/bootstrap case: an unbound plug returns its secret without one
+        being supplied, so call this BEFORE set_secret() (while `_secret` is None the
+        post-handshake unlock step sends nothing, avoiding the secret chicken-and-egg).
+        Restores the v2 auto-read; the frame builder is build.secret_read()."""
+        reply = await self._read_reply(build.secret_read(), 0xB1)
+        return parse.parse_secret(reply) if reply else None
 
 
 def make_device(
