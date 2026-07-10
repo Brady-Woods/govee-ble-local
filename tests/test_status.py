@@ -12,24 +12,27 @@ def test_status_query_frames() -> None:
     assert len(short) == 20 and len(full) == 20
 
 
+def _terminator(zone0: int, zone1: int) -> bytes:
+    """A realistic status terminator carrying the zone TLV `30 02 z0 z1 a5`
+    (matches real H60A6 captures; zone bits are anchored on the 0xA5 marker)."""
+    return bytes([0] * 12) + bytes([0x30, 0x02, zone0, zone1, 0xA5])
+
+
 def test_parse_status_brightness_and_zones() -> None:
-    # chunk 0x00 present -> shift 0; byte10 = brightness; terminator 0xFF
-    # byte14 = lower zone, byte15 = upper zone.
+    # chunk 0x00 byte10 = brightness; zone on/off from the `30 02 z0 z1 a5` TLV.
     chunk00 = bytes([0] * 10 + [40] + [0] * 5)          # brightness = 40%
-    terminator = bytes([0] * 14 + [0, 1])                # lower off, upper on
-    st = status.parse_status({0x00: chunk00, 0xFF: terminator})
+    st = status.parse_status({0x00: chunk00, 0xFF: _terminator(1, 0)})  # zone0 on, zone1 off
     assert st.brightness == 40
     assert st.is_on is True                               # any zone on
-    # byte15 (=1) -> power_index 0 (main), byte14 (=0) -> power_index 1 (background)
+    # zone_power keys match the 33 30 <index> command order (index 0 -> zone0).
     assert st.zone_power == {0: True, 1: False}
     assert st.segments == []
     assert st.rgb_color is None
 
 
 def test_parse_status_all_zones_off() -> None:
-    chunk00 = bytes([0] * 16)
-    terminator = bytes([0] * 16)                          # both zones off
-    st = status.parse_status({0x00: chunk00, 0xFF: terminator})
+    st = status.parse_status({0x00: bytes([0] * 16), 0xFF: _terminator(0, 0)})
+    assert st.zone_power == {0: False, 1: False}
     assert st.is_on is False
 
 
@@ -99,20 +102,31 @@ def test_parse_sn() -> None:
     assert status.parse_sn(_frame(0x33, 0x05)) is None  # wrong opcode
 
 
-def test_parse_segments_uniform_rgb() -> None:
-    # 12 records of [brightness, r, g, b], all red -> uniform rgb.
-    record = bytes([50, 255, 0, 0])
-    stream = bytearray(b"\x00" * 19)                      # 19-byte header
-    for group in range(3):
-        stream += record * 4                              # 4 records
-        if group < 2:
-            stream += b"\x00\x00\x00"                     # inter-group marker
-    # split into 17-byte chunk bodies for tags 0x05..0x08, 0xFF
-    stream = bytes(stream)
-    tags = (0x05, 0x06, 0x07, 0x08, 0xFF)
-    chunks = {tags[i]: stream[i * 17 : (i + 1) * 17] for i in range(len(tags))}
-    chunks[0x00] = bytes([0] * 16)                        # present -> shift 0
-    st = status.parse_status(chunks)
-    assert len(st.segments) == 12
-    assert all(s.rgb == (255, 0, 0) and s.brightness == 50 for s in st.segments)
-    assert st.rgb_color == (255, 0, 0)
+def _color_group(gi: int, nrec: int, rgb: tuple[int, int, int], bright: int) -> bytes:
+    """A 0xA5 colour-group TLV: [0xA5, len, group_index, nrec×[brightness,r,g,b]]."""
+    recs = b"".join(bytes([bright, *rgb]) for _ in range(nrec))
+    return bytes([0xA5, 1 + 4 * nrec, gi]) + recs
+
+
+def test_parse_segments_color_groups() -> None:
+    # H60A6-shape: 13 segments as 0xA5 groups 4,4,4,1 (all red), preceded by the
+    # device-info + zone TLVs the walker must skip. Old fixed 3x4=12 walk dropped seg 12.
+    header = bytes([0x00, 0x00, 0x00, 0x80, 0x41, 0x02, 0x02, 0x01, 0x30, 0x02, 0x01, 0x01])
+    blob = header + b"".join((
+        _color_group(1, 4, (255, 0, 0), 50),
+        _color_group(2, 4, (255, 0, 0), 100),
+        _color_group(3, 4, (255, 0, 0), 100),
+        _color_group(4, 1, (255, 0, 0), 100),
+    ))
+    st = status.parse_status({0x05: blob})
+    assert len(st.segments) == 13                         # all 13, incl. the partial last group
+    assert [s.index for s in st.segments] == list(range(13))
+    assert all(s.rgb == (255, 0, 0) for s in st.segments)
+    assert st.segments[0].brightness == 50 and st.segments[12].brightness == 100
+    assert st.rgb_color == (255, 0, 0)                    # uniform colour
+    # the 30 02 01 01 zone TLV in the header is also decoded
+    assert st.zone_power == {0: True, 1: True}
+
+
+def test_parse_segments_none_when_no_group() -> None:
+    assert status.parse_segments({0x00: bytes(16), 0x05: bytes(16)}) == []

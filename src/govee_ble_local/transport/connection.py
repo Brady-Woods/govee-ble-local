@@ -42,6 +42,7 @@ from ..exceptions import (
 )
 from ..models import Encryption
 from . import handshake
+from .framelog import FrameLog
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -64,10 +65,13 @@ class GoveeConnection:
         on_notify: NotifyCallback | None = None,
         unlock_frames: Callable[[], list[bytes]] | None = None,
         idle_disconnect: float = IDLE_DISCONNECT_DELAY,
+        frame_log: str | None = None,
     ) -> None:
         self._ble_device = ble_device
         self._encryption = encryption
         self._on_notify = on_notify
+        # Optional bidirectional frame capture (frame_log arg or $GOVEE_FRAME_LOG).
+        self._framelog = FrameLog.resolve(frame_log, ble_device.address)
         # Frames to send immediately after every handshake, before any user
         # command — e.g. the plug family's `33 b2` secret-key check. A provider
         # (not a static list) so a device can supply/refresh it lazily.
@@ -106,6 +110,10 @@ class GoveeConnection:
             _LOGGER.debug("%s: ignoring %d-byte notification", self.address, len(raw))
             return
         self._rx.put_nowait(raw)
+        if self._framelog is not None:
+            # plaintext only once the session key is available (post-handshake)
+            plain = self._decrypt_rx(raw) if self._ready else None
+            self._framelog.record("rx", wire=raw, plain=plain, enc=self._encryption.value)
         # Once ready, application notifications are decodable; surface them.
         if self._ready and self._on_notify is not None:
             try:
@@ -212,12 +220,18 @@ class GoveeConnection:
             raise GoveeBleHandshakeError(f"{self.address}: handshake failed: {err}") from err
 
     async def _handshake(self) -> None:
-        await self._raw_write(handshake.build_step1(PSK))
+        step1 = handshake.build_step1(PSK)
+        if self._framelog is not None:  # e7 handshake TX (wire = ciphertext)
+            self._framelog.record("tx", wire=step1, enc="e7")
+        await self._raw_write(step1)
         reply1 = await asyncio.wait_for(self._rx.get(), timeout=HANDSHAKE_TIMEOUT)
         key = handshake.parse_session_key(reply1, PSK)
         if key is None:
             raise GoveeBleHandshakeError(f"{self.address}: unexpected handshake step-1 reply")
-        await self._raw_write(handshake.build_step2(PSK))
+        step2 = handshake.build_step2(PSK)
+        if self._framelog is not None:
+            self._framelog.record("tx", wire=step2, enc="e7")
+        await self._raw_write(step2)
         try:
             await asyncio.wait_for(self._rx.get(), timeout=COMMAND_ACK_TIMEOUT)
         except asyncio.TimeoutError:
@@ -265,9 +279,20 @@ class GoveeConnection:
 
     def _encrypt(self, frame_plaintext: bytes) -> bytes:
         if self._encryption is Encryption.AES_RC4_PSK:
-            assert self._session_key is not None
-            return encrypt(frame_plaintext, self._session_key)
-        return frame_plaintext
+            if self._session_key is None:
+                # The link dropped between the is_connected check and this write
+                # (the disconnect callback nulls the key). Raise a clean, catchable
+                # error instead of a bare AssertionError; the caller's next send
+                # reconnects and re-handshakes.
+                raise GoveeBleConnectionError(
+                    f"{self.address}: session key lost (disconnected mid-send)"
+                )
+            wire = encrypt(frame_plaintext, self._session_key)
+        else:
+            wire = frame_plaintext
+        if self._framelog is not None:  # single TX choke point for app frames
+            self._framelog.record("tx", wire=wire, plain=frame_plaintext, enc=self._encryption.value)
+        return wire
 
     async def _send_raw_locked(self, frame_plaintext: bytes, *, expect_ack: bool) -> bytes | None:
         """Frame (encrypting per the mode) + write, then await a best-effort ack
@@ -371,12 +396,7 @@ class GoveeConnection:
             if not self.is_connected:
                 await self._connect_locked()
             self._drain()
-            if self._encryption is Encryption.AES_RC4_PSK:
-                assert self._session_key is not None
-                wire = encrypt(frame_plaintext, self._session_key)
-            else:
-                wire = frame_plaintext
-            await self._raw_write(wire)
+            await self._raw_write(self._encrypt(frame_plaintext))
 
             loop = asyncio.get_running_loop()
             deadline = loop.time() + timeout

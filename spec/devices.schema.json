@@ -1,0 +1,314 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://govee-ble-local/spec/devices.schema.json",
+  "title": "Govee BLE device registry",
+  "description": "Machine-readable registry of Govee BLE device families and their GATT/command surface. Companion to GOVEE_BLE_GATT_PROTOCOL.md; intended to be consumed by clients (e.g. govee_ble_local) and to generate the per-device tables in the Markdown spec.",
+  "type": "object",
+  "required": ["spec_version", "transport", "families"],
+  "additionalProperties": false,
+  "properties": {
+    "spec_version": {
+      "type": "string",
+      "description": "SemVer of this registry document.",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+    },
+    "source_app": {
+      "type": "string",
+      "description": "APK the data was extracted from, e.g. 'com.govee.home 7.5.12 (1088)'."
+    },
+    "hex_note": {
+      "type": "string",
+      "description": "All byte values in this file are written as hex strings like '0x33' unless stated otherwise."
+    },
+    "transport": { "$ref": "#/$defs/transport" },
+    "name_parsing": { "$ref": "#/$defs/name_parsing" },
+    "advertisement": { "$ref": "#/$defs/advertisement" },
+    "timing": { "$ref": "#/$defs/timing" },
+    "secret": {
+      "type": "object",
+      "description": "Per-device authorization secret used by families with encryption: secret_key_pairing (the 0xB1/0xB2 path). Not the AES cipher key.",
+      "additionalProperties": true
+    },
+    "scenes": {
+      "type": "object",
+      "description": "Scene upload/activation model: the two 0xA3 dialects, placeholder handling, cloud scene-library + effect-strs API, and the AA 05 15 kelvin read-back.",
+      "additionalProperties": true
+    },
+    "command_catalog": {
+      "type": "array",
+      "description": "Shared command opcodes (BleProtocolConstants). Per-family device-specific opcodes live in family.opcodes.",
+      "items": { "$ref": "#/$defs/catalog_entry" }
+    },
+    "families": {
+      "type": "array",
+      "description": "One entry per protocol family (a family may serve many SKUs).",
+      "items": { "$ref": "#/$defs/family" }
+    }
+  },
+  "$defs": {
+    "hexByte": {
+      "type": "string",
+      "pattern": "^0x[0-9a-fA-F]{2}$",
+      "description": "A single byte as a hex string, e.g. '0x33'."
+    },
+    "uuid": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+    },
+    "confidence": {
+      "type": "string",
+      "enum": ["high", "medium", "low"],
+      "description": "high = controllers/SubMode classes read directly; medium = extracted by survey; low = inferred."
+    },
+    "transport": {
+      "type": "object",
+      "description": "Defaults shared by all families unless a family overrides them.",
+      "required": ["service_uuid", "write_char_uuid", "notify_char_uuid", "cccd_uuid", "frame"],
+      "additionalProperties": false,
+      "properties": {
+        "service_uuid": { "$ref": "#/$defs/uuid" },
+        "write_char_uuid": { "$ref": "#/$defs/uuid" },
+        "notify_char_uuid": { "$ref": "#/$defs/uuid" },
+        "bgc_info_char_uuid": { "$ref": "#/$defs/uuid", "description": "encryptVersion / broadcast-capability read (service 1910)." },
+        "cccd_uuid": { "$ref": "#/$defs/uuid" },
+        "frame": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "length": { "type": "integer", "const": 20 },
+            "checksum": { "type": "string", "const": "xor[0..18] @ byte19" },
+            "pro_type": {
+              "type": "object",
+              "description": "Header byte (byte 0) values.",
+              "additionalProperties": { "$ref": "#/$defs/hexByte" }
+            }
+          }
+        }
+      }
+    },
+    "family": {
+      "type": "object",
+      "required": ["id", "category", "models", "confidence"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "description": "Stable family id, usually the pact/package name (e.g. 'h60ax', 'dreamcolorlightv1')." },
+        "category": {
+          "type": "string",
+          "enum": ["rgbic_strip", "rgb_strip", "bulb", "light_bar", "panel", "string_light", "neon", "net_light", "lamp", "car_light", "tv_backlight", "hdmi_sync", "grow_light", "splicing_panel", "plug", "button", "sensor", "other_light"],
+          "description": "Physical device category. Lighting + plug + button/sensor scope."
+        },
+        "models": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "^[A-Za-z0-9]+$" },
+          "description": "SKU model numbers this family serves, e.g. ['H60A6','H1250']."
+        },
+        "goods_types": {
+          "type": "array",
+          "items": { "type": "integer" },
+          "description": "Govee goodsType/pactCode integer ids, when known."
+        },
+        "delivery": {
+          "type": "string",
+          "enum": ["base_apk", "feature_split"],
+          "description": "Whether the family ships in base.apk or as an on-demand pact_* split."
+        },
+        "connectivity": {
+          "type": "array",
+          "items": { "type": "string", "enum": ["ble", "wifi", "iot"] }
+        },
+        "gatt": {
+          "type": "object",
+          "description": "Only present when the family overrides transport defaults.",
+          "additionalProperties": false,
+          "properties": {
+            "service_uuid": { "$ref": "#/$defs/uuid" },
+            "write_char_uuid": { "$ref": "#/$defs/uuid" },
+            "notify_char_uuid": { "$ref": "#/$defs/uuid" },
+            "note": { "type": "string" }
+          }
+        },
+        "protocol": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "single_packet": { "type": "boolean", "default": true },
+            "multi_dialects": {
+              "type": "array",
+              "items": { "type": "string", "enum": ["0xA1", "0xA3", "0xAC"] },
+              "description": "Multi-packet dialects used (0xA1 MultiPackageManager, 0xA3 MultipleControllerCommV1, 0xAC single-read/multi-reply)."
+            },
+            "mode_command": { "$ref": "#/$defs/hexByte", "default": "0x05" }
+          }
+        },
+        "submodes": {
+          "type": "object",
+          "description": "Sub-mode type byte (the byte after mode command 0x05) per function. Null/absent = unsupported by the family.",
+          "additionalProperties": false,
+          "properties": {
+            "color": { "$ref": "#/$defs/hexByte" },
+            "color_alt": { "$ref": "#/$defs/hexByte", "description": "Secondary/versioned color sub-mode (e.g. color_v2 0x15, background-color 0x0D)." },
+            "scene": { "$ref": "#/$defs/hexByte" },
+            "music": { "$ref": "#/$defs/hexByte" },
+            "music_alt": { "$ref": "#/$defs/hexByte" },
+            "diy": { "$ref": "#/$defs/hexByte" },
+            "diy_old": { "$ref": "#/$defs/hexByte" },
+            "video": { "$ref": "#/$defs/hexByte" },
+            "mic": { "$ref": "#/$defs/hexByte" },
+            "game": { "$ref": "#/$defs/hexByte" }
+          }
+        },
+        "opcodes": {
+          "type": "array",
+          "description": "Device-specific command opcodes beyond the shared catalog.",
+          "items": {
+            "type": "object",
+            "required": ["name", "cmd"],
+            "additionalProperties": false,
+            "properties": {
+              "name": { "type": "string" },
+              "cmd": { "$ref": "#/$defs/hexByte" },
+              "pro_type": { "type": "string", "description": "Header byte if not the default write 0x33 (hex like '0x33', or a note when unresolved between two builders)." },
+              "payload": { "type": "string", "description": "Human-readable payload layout, e.g. '[zone, state]'." },
+              "readable": { "type": "boolean" },
+              "applies_to": { "type": "string", "description": "Comma-separated SKU list when an opcode is scoped to specific models within the family (e.g. 'H5121, H5129'). Absent = whole family." },
+              "note": { "type": "string" }
+            }
+          }
+        },
+        "specs": {
+          "type": "object",
+          "description": "Device errata / capability limits.",
+          "additionalProperties": false,
+          "properties": {
+            "segments": { "type": ["integer", "string"], "description": "Segment/IC count, or a note when SKU-dependent." },
+            "kelvin_range": {
+              "type": "array",
+              "items": { "type": "integer" },
+              "minItems": 2,
+              "maxItems": 2,
+              "description": "[min, max] CCT in kelvin."
+            },
+            "brightness_range": {
+              "type": "array",
+              "items": { "type": "integer" },
+              "description": "[min, max] on the wire (before any scaling)."
+            },
+            "brightness_scaling": { "type": "string", "description": "e.g. '1-100 -> 20-254' or 'raw percent'." },
+            "scene_versions": {
+              "type": "array",
+              "items": { "type": "integer" },
+              "description": "versionArray accepted for scene uploads (maps sceneType -> comType per protocol §4.4)."
+            }
+          }
+        },
+        "encryption": {
+          "type": "string",
+          "enum": ["none", "aes_v1", "aes_gcm_v2", "secret_key_pairing"],
+          "description": "BLE-layer encryption. 'secret_key_pairing' = 0xB1/0xB2 8-byte secret (not payload cipher)."
+        },
+        "notify": {
+          "type": "array",
+          "description": "Inbound notify sub-types (byte after 0xEE) this family emits.",
+          "items": {
+            "type": "object",
+            "required": ["sub_type", "meaning"],
+            "additionalProperties": false,
+            "properties": {
+              "sub_type": { "$ref": "#/$defs/hexByte" },
+              "meaning": { "type": "string" }
+            }
+          }
+        },
+        "pact": {
+          "type": "object",
+          "description": "Protocol negotiation: which (pactType, pactCode) versions the family accepts (from the advertisement / scene versionArray).",
+          "additionalProperties": false,
+          "properties": {
+            "scene_versions": { "type": "array", "items": { "type": "integer" }, "description": "sceneType values accepted -> comType (see protocol §4.4)." },
+            "note": { "type": "string" }
+          }
+        },
+        "name_prefixes": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Advertised BLE name prefixes that resolve to this family (e.g. 'ihoment_H6047', 'GVH6047')."
+        },
+        "confidence": { "$ref": "#/$defs/confidence" },
+        "sources": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Decompiled file:line citations backing this entry."
+        }
+      }
+    },
+    "catalog_entry": {
+      "type": "object",
+      "required": ["opcode", "name", "category"],
+      "additionalProperties": false,
+      "properties": {
+        "opcode": { "$ref": "#/$defs/hexByte" },
+        "name": { "type": "string" },
+        "category": { "type": "string" },
+        "direction": { "type": "string", "enum": ["W", "R", "W/R", "notify"] },
+        "payload": { "type": "string" },
+        "meaning": { "type": "string" },
+        "source": { "type": "string" }
+      }
+    },
+    "name_parsing": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "note": { "type": "string" },
+        "prefixes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["prefix", "rule"],
+            "additionalProperties": false,
+            "properties": {
+              "prefix": { "type": "string" },
+              "rule": { "type": "string" },
+              "example": { "type": "string" },
+              "source": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "advertisement": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "record_length": { "type": "integer" },
+        "manufacturer_ad_type": { "$ref": "#/$defs/hexByte" },
+        "company_id": { "type": "string" },
+        "layout": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "offset": { "type": "string" },
+              "field": { "type": "string" },
+              "meaning": { "type": "string" }
+            }
+          }
+        },
+        "note": { "type": "string" },
+        "source": { "type": "string" }
+      }
+    },
+    "timing": {
+      "type": "object",
+      "description": "Connection + command timing constants (milliseconds unless noted).",
+      "additionalProperties": true,
+      "properties": {
+        "connection": { "type": "object", "additionalProperties": true },
+        "command": { "type": "object", "additionalProperties": true },
+        "multi_packet": { "type": "object", "additionalProperties": true },
+        "ota": { "type": "object", "additionalProperties": true }
+      }
+    }
+  }
+}

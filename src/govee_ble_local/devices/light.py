@@ -5,8 +5,10 @@ Covers the older single-zone bulbs/lamps. Segment/scene-rich strips
 """
 from __future__ import annotations
 
-from typing import ClassVar
+import base64
+from typing import Any, ClassVar
 
+from ..ble import controllers
 from ..ble.controllers import ColorScheme
 from ..models import Capability, Encryption, Zone
 from .base import (
@@ -65,11 +67,36 @@ class GoveeLightH60A6(GoveeRgbLight, SegmentControl, ZoneControl, StatusReadable
     _encryption: ClassVar[Encryption] = Encryption.AES_RC4_PSK
     _color_scheme: ClassVar[ColorScheme] = "h60a6"
     _segments: ClassVar[int] = 13
+    # H60A6 bundled scenes are all sceneType 5 (73) / 0 (static, 11). Type-5/0x50 scenes
+    # route via the DIY path (dialect B, commByte 0x58), NOT parseSceneV1 — implemented in
+    # _scene_upload_frames below. Kept for API symmetry; the dialect-A table isn't used here.
+    _scene_versions: ClassVar[frozenset[int]] = frozenset({0, 1, 2, 3, 5})
     capabilities: ClassVar[frozenset[Capability]] = _LIGHT_CAPS | {Capability.SEGMENTS}
     zones: ClassVar[tuple[Zone, ...]] = (
         Zone("main", power_index=0, segments=()),                        # primary light: power only
         Zone("background", power_index=1, segments=tuple(range(0, 13))), # RGBIC ring (all 13 segments)
     )
+
+    def _scene_upload_frames(self, scene: Any) -> list[bytes] | None:
+        """H60A6 dialect-B upload (commByte 0x58). sceneType-5 / byte0==0x50 scenes
+        route to the DIY path; the value is ``decode(scenceParam)[1:]`` (drop the
+        0x50 header — verified byte-exact vs ``toBytes(parse(param))``). The
+        DIY-first length gate then picks the frame form::
+
+            u16le(value[0:2]) + 2 == len(value)  -> DIY      -> 0xA3 (scene_upload_a3, strip 1)
+            else                                 -> graffiti -> 0xA4-MTU (scene_upload_a4_mtu)
+
+        (e.g. Christmas = DIY/0xA3; Aurora, Halloween B = ... per the gate.) Non-type-5
+        (static) scenes fall through to activate-only via the base."""
+        param = scene.param
+        if scene.scene_type == 5 and param:
+            value = base64.b64decode(param)[1:]
+            if len(value) >= 2:
+                is_diy = (value[0] | (value[1] << 8)) + 2 == len(value)
+                if is_diy:
+                    return controllers.scene_upload_a3(param, controllers.COMM_H60A6, strip=1)
+                return controllers.scene_upload_a4_mtu(value, controllers.COMM_H60A6)
+        return super()._scene_upload_frames(scene)
 
 
 class GoveeLightH6006(GoveeRgbLight, PolledLight):
@@ -80,6 +107,10 @@ class GoveeLightH6006(GoveeRgbLight, PolledLight):
     _color_scheme: ClassVar[ColorScheme] = "h6006"
     min_kelvin: ClassVar[int] = 2000  # per Govee API
     max_kelvin: ClassVar[int] = 9000
+    # Bulbs UPLOAD type-1 RGB scenes: the apply path (Support.is2NewScenesMode ->
+    # ScenesOp.parseScene(sceneM, {1})) hardcodes version 1 and ignores supportScenesOp
+    # ({0}). So version 1 → comType 1, strip 0, 0xA3. (source Q1)
+    _scene_versions: ClassVar[frozenset[int]] = frozenset({1})
 
 
 class GoveeLightH6641(GoveeRgbLight, PolledLight):
@@ -102,16 +133,33 @@ class GoveeLightH6641(GoveeRgbLight, PolledLight):
     _segments: ClassVar[int] = 16
     min_kelvin: ClassVar[int] = 2000
     max_kelvin: ClassVar[int] = 9000
+    # versionArray (h61d3 goodsType 247). Bundled scenes are sceneType 2 (rgbic) →
+    # V2 comType 2, strip 0 → dialect-A upload. (source Q4 / handoff)
+    _scene_versions: ClassVar[frozenset[int]] = frozenset({0, 1, 2, 3, 10})
 
 
 class GoveeLightH6052(GoveeRgbLight, PolledLight):
-    """H6052 — plaintext (no handshake), h6006 color scheme, wide CT range."""
+    """H6052 — plaintext (no handshake), h6006 color scheme, wide CT range.
+
+    Scenes (goodsType 22, versionArray {0,1,4,5}): type-3 graffiti is NOT uploadable
+    (needs version 3, which H6052 lacks) → activate-only. type-5 (byte0=0x13) uploads
+    via the DIY professional-graffiti path (MultipleDiyInScenesController, commByte 9 =
+    DiyGraffitiV3.a(), which == decode(param)[1:] for catalog scenes). (source Q2/Q3)"""
 
     skus: ClassVar[tuple[str, ...]] = ("H6052",)
     _encryption: ClassVar[Encryption] = Encryption.NONE
     _color_scheme: ClassVar[ColorScheme] = "h6006"
     min_kelvin: ClassVar[int] = 2000
     max_kelvin: ClassVar[int] = 9000
+    _scene_versions: ClassVar[frozenset[int]] = frozenset({0, 1, 4, 5})
+
+    def _scene_upload_frames(self, scene: Any) -> list[bytes] | None:
+        param = scene.param
+        if scene.scene_type == 5 and param:
+            raw = base64.b64decode(param)
+            if raw and raw[0] == 0x13:  # DiyGraffitiV3 professional-graffiti, commByte 9
+                return controllers.scene_upload_a3(param, controllers.COMM_H6052_GRAFFITI, strip=1)
+        return super()._scene_upload_frames(scene)  # type-3 → activate-only (no version 3)
 
 
 class GoveeLightH6008(GoveeRgbLight, PolledLight):
@@ -131,6 +179,7 @@ class GoveeLightH6008(GoveeRgbLight, PolledLight):
     _color_scheme: ClassVar[ColorScheme] = "h6006"
     min_kelvin: ClassVar[int] = 2700
     max_kelvin: ClassVar[int] = 6500
+    _scene_versions: ClassVar[frozenset[int]] = frozenset({1})  # type-1 upload (see H6006, Q1)
 
 
 class GoveeLightH6047(GoveeRgbLight, SegmentControl, BarSwitchControl, PolledLight):
@@ -158,6 +207,9 @@ class GoveeLightH6047(GoveeRgbLight, SegmentControl, BarSwitchControl, PolledLig
     min_kelvin: ClassVar[int] = 2200
     max_kelvin: ClassVar[int] = 6500
     capabilities: ClassVar[frozenset[Capability]] = _LIGHT_CAPS | {Capability.SEGMENTS}
+    # versionArray (h6047). Bundled scenes are sceneType 2 (rgbic) → V2 comType 2,
+    # strip 0 → dialect-A upload. (source Q4 / handoff)
+    _scene_versions: ClassVar[frozenset[int]] = frozenset({0, 1, 2, 3})
     zones: ClassVar[tuple[Zone, ...]] = (
         Zone("left", power_index=0, segments=tuple(range(0, 5))),
         Zone("right", power_index=1, segments=tuple(range(5, 10))),
@@ -178,3 +230,6 @@ class GoveeStripH61A8(PowerMixin, BrightnessMixin, RGBMixin, SegmentControl, Sce
     _encryption: ClassVar[Encryption] = Encryption.NONE
     _color_scheme: ClassVar[ColorScheme] = "h61a8"
     _segments: ClassVar[int] = 15
+    # versionArray (dreamcolorlightv1). Bundled scenes are sceneType 2 (rgbic) → V2
+    # comType 2, strip 0 → dialect-A upload. Aligned to the confirmed spec set. (Q4)
+    _scene_versions: ClassVar[frozenset[int]] = frozenset({0, 1, 2, 3})

@@ -67,6 +67,14 @@ def fetch(sku: str) -> dict[str, dict[str, object]]:
             pid = eff.get("scenceParamId")
             if pid is not None:
                 entry["param_id"] = int(pid)
+            # Path-B upload drivers (see SCENE_UPLOAD_REVIEW.md): scene_type +
+            # cmd_version pick the a3 commByte; bigEffectStr flags fetch-required.
+            if eff.get("sceneType") is not None:
+                entry["scene_type"] = int(eff["sceneType"])
+            if eff.get("cmdVersion") is not None:
+                entry["cmd_version"] = int(eff["cmdVersion"])
+            if eff.get("bigEffectStr"):
+                entry["big_effect"] = True
             if _is_placeholder(param):
                 # real blob must come from the authenticated effect-strs endpoint
                 entry["placeholder"] = True
@@ -133,10 +141,20 @@ def _merge(existing: dict[str, dict], fresh: dict[str, dict]) -> dict[str, dict]
     real effect blob with a fresh 0xff stub), and keep entries that dropped out
     of the public library. This makes re-running idempotent and non-destructive
     once placeholders have been resolved via --resolve."""
+    # Public metadata that is safe to refresh on a preserved (resolved) entry — it does
+    # NOT touch the param/placeholder resolution, only the upload-driver fields.
+    _refresh = ("scene_type", "cmd_version", "big_effect", "category")
     merged: dict[str, dict] = {}
     for name, fr in fresh.items():
         ex = existing.get(name)
-        merged[name] = ex if (ex is not None and _valid_resolved(ex)) else fr
+        if ex is not None and _valid_resolved(ex):
+            keep = dict(ex)  # preserve resolved param/placeholder state...
+            for k in _refresh:  # ...but pull in fresh public metadata (e.g. scene_type)
+                if k in fr:
+                    keep[k] = fr[k]
+            merged[name] = keep
+        else:
+            merged[name] = fr
     for name, ex in existing.items():
         merged.setdefault(name, ex)  # scene no longer public but we have it
     return merged
@@ -154,6 +172,48 @@ def scene_capable_skus() -> list[str]:
         if cls is not None and Capability.SCENES in cls.capabilities:
             out.append(sku)
     return out
+
+
+def audit() -> None:
+    """Report per-SKU scene-upload READINESS (read-only, no cloud). For each
+    scene-capable SKU, run every bundled scene through the device's real
+    ``_scene_upload_frames`` routing and bucket it:
+      upload      = a dialect burst is produced (0xA3 / 0xA4-MTU)
+      activate    = correctly bare-activated (no param, or static sceneType 0)
+      BLOCKED     = has a real effect blob + non-static sceneType but NO upload path
+                    (would silently activate-only — the gap to close)
+      placeholder = unresolved 0xFF stub (needs `--resolve` with account creds)
+    """
+    from bleak.backends.device import BLEDevice
+
+    from govee_ble_local.registry import create_device
+    from govee_ble_local.scenes import load_scenes
+
+    print(f"{'SKU':7s} {'total':>5s} {'upload':>16s} {'activate':>8s} {'BLOCKED':>7s} {'placeh':>6s}  versions")
+    for sku in scene_capable_skus():
+        cat = load_scenes(sku)
+        if not cat:
+            print(f"{sku:7s} (no catalog)"); continue
+        dev = create_device(BLEDevice(f"00:00:00:00:00:{0:02x}", sku, details={}), sku)
+        upload = activate = blocked = placeholder = 0
+        dialects: set[str] = set()
+        for scene in cat.values():
+            if scene.placeholder:
+                placeholder += 1
+            try:
+                frames = dev._scene_upload_frames(scene)  # type: ignore[attr-defined]
+            except Exception:  # noqa: BLE001
+                frames = None
+            if frames:
+                upload += 1
+                dialects.add("0xA4" if any(f[0] == 0xA4 for f in frames) else "0xA3")
+            elif scene.param and scene.scene_type not in (0, None):
+                blocked += 1
+            else:
+                activate += 1
+        vers = sorted(getattr(dev, "_scene_versions", frozenset()))
+        u = f"{upload}{sorted(dialects) if dialects else ''}"
+        print(f"{sku:7s} {len(cat):5d} {u:>16s} {activate:8d} {blocked:7d} {placeholder:6d}  {vers}")
 
 
 def main(skus: list[str]) -> None:
@@ -184,7 +244,9 @@ if __name__ == "__main__":
 
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
     skus = args or scene_capable_skus()
-    if "--resolve" in sys.argv:
+    if "--audit" in sys.argv:
+        audit()
+    elif "--resolve" in sys.argv:
         email = os.environ.get("GOVEE_EMAIL", "")
         password = os.environ.get("GOVEE_PASSWORD", "")
         if not email or not password:

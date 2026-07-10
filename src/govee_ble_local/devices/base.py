@@ -18,7 +18,7 @@ from ..ble.controllers import ColorScheme
 from ..identify import identify, parse_broadcast_onoff
 from ..exceptions import GoveeBleNotSupported
 from ..models import Capability, DeviceState, Encryption, Zone
-from ..scenes import load_scenes
+from ..scenes import load_scenes, scene_upload_params
 from ..transport.connection import GoveeConnection, now_ts
 
 _LOGGER = logging.getLogger(__name__)
@@ -45,6 +45,10 @@ class GoveeDevice:
     _segments: ClassVar[int] = 13
     #: Named physical zones (e.g. H60A6 ring/panel), empty if none.
     zones: ClassVar[tuple[Zone, ...]] = ()
+    #: Scene-versions this device supports (its ``versionArray``, a static per-goodsType
+    #: set from the app). Drives Path-B library-scene upload: a scene uploads only if its
+    #: required version is here (see scenes.scene_upload_params). Empty → activate-only.
+    _scene_versions: ClassVar[frozenset[int]] = frozenset()
 
     def __init__(
         self,
@@ -294,7 +298,9 @@ class GoveeDevice:
     async def set_scene(self, scene_code: int) -> None:
         raise self._unsupported("scenes")
 
-    async def set_scene_full(self, scene_code: int, param_b64: str) -> None:
+    async def set_scene_full(
+        self, scene_code: int, param_b64: str, comm_byte: int, *, strip: int = 0
+    ) -> None:
         raise self._unsupported("scenes")
 
     async def set_scene_by_name(self, name: str) -> None:
@@ -394,25 +400,6 @@ class SegmentControl(GoveeDevice):
         self._notify_state()
 
 
-def _scene_param_is_stub(param_b64: str | None) -> bool:
-    """A scene whose library param is a placeholder STUB (0xff at byte[3]).
-
-    Confirmed against a real H60A6 btsnoop capture (78 scenes cycled): the app
-    uploads an a3 effect blob ONLY for scenes with a real param (byte[3] !=
-    0xff) and *bare-activates* the 0xff-stub scenes (Aurora, Dandelion, …) with
-    just 33 05 04 <code>. Uploading a stub corrupts those scenes, so we must
-    bare-activate them exactly like the app."""
-    if not param_b64:
-        return False
-    import base64
-
-    try:
-        raw = base64.b64decode(param_b64)
-    except Exception:  # noqa: BLE001
-        return False
-    return len(raw) >= 4 and raw[3] == 0xFF
-
-
 class SceneControl(GoveeDevice):
     """Built-in scene activation.
 
@@ -434,10 +421,15 @@ class SceneControl(GoveeDevice):
         self._state.color_temp_kelvin = None
         self._notify_state()
 
-    async def set_scene_full(self, scene_code: int, param_b64: str) -> None:
-        """Upload the scene's effect blob (a3-chunk burst) then activate it —
-        correct regardless of whether the device has the scene cached."""
-        for chunk in controllers.scene_chunks(param_b64):
+    async def set_scene_full(
+        self, scene_code: int, param_b64: str, comm_byte: int, *, strip: int = 0
+    ) -> None:
+        """Upload the scene's effect blob (Path-B a3-chunk burst) then activate it.
+
+        ``comm_byte`` is the scene-version comType at a3_start byte 4; ``strip`` drops
+        that many leading param bytes (per sceneType). The app always activates too, so
+        we upload then send ``33 05 04``."""
+        for chunk in controllers.scene_upload_a3(param_b64, comm_byte, strip=strip):
             await self._connection.send(chunk, expect_ack=False)
         await self.set_scene(scene_code)
 
@@ -459,20 +451,37 @@ class SceneControl(GoveeDevice):
                 return name
         return None
 
+    def _scene_upload_frames(self, scene: Any) -> list[bytes] | None:
+        """Build the scene-upload frame burst for a catalog scene, or None to
+        activate-only. Default = **dialect A** (library scene): the a3 burst per
+        ``scene_upload_params(sceneType, versionArray)``. Devices whose scenes use
+        the dialect-B / DIY encoding (H60A6) override this."""
+        param = scene.param
+        if param is None:
+            return None
+        sel = scene_upload_params(scene.scene_type, self._scene_versions)
+        if sel is None:
+            return None
+        comm_byte, strip = sel
+        return controllers.scene_upload_a3(param, comm_byte, strip=strip)
+
     async def set_scene_by_name(self, name: str) -> None:
         """Activate a built-in scene by name (from the bundled catalog).
-        Uploads the effect blob when the catalog provides one, else bare-activates."""
+
+        Always sends the ``33 05 04 <code>`` activation (the app does this for every
+        scene). It ALSO uploads the effect blob first when ``_scene_upload_frames``
+        yields a burst (dialect A for most SKUs; dialect B / 0xA4-MTU for the H60A6).
+        When no upload is resolved (static/unsupported scene-type, or no param) it is
+        activate-only, which is correct for device-resident scenes."""
         catalog = load_scenes(self.sku)
         scene = catalog.get(name)
         if scene is None:
             raise GoveeBleNotSupported(f"{self.sku}: unknown scene {name!r}")
-        # Upload the effect blob only for real params. A 0xff-stub/placeholder
-        # param must NOT be uploaded (it corrupts the scene) — the app
-        # bare-activates those by code, so we do too.
-        if scene.param and not scene.placeholder and not _scene_param_is_stub(scene.param):
-            await self.set_scene_full(scene.code, scene.param)
-        else:
-            await self.set_scene(scene.code)
+        frames = self._scene_upload_frames(scene)
+        if frames is not None:
+            for chunk in frames:
+                await self._connection.send(chunk, expect_ack=False)
+        await self.set_scene(scene.code)
 
 
 class ZoneControl(GoveeDevice):

@@ -1,0 +1,1117 @@
+# Govee BLE device registry — lighting + smart-plug scope.
+# Conforms to devices.schema.json. Companion to GOVEE_BLE_GATT_PROTOCOL.md.
+# Hex bytes are strings ("0x33"). Sub-mode bytes ride under mode command 0x05.
+# confidence: high = SubMode/controller classes read directly; medium = survey; low = inferred.
+# Excluded per project scope: BBQ, thermo-hygrometer / sensor, appliance (humidifier, ice maker).
+#
+# CAPABILITY PROVENANCE (see GOVEE_BLE_GATT_PROTOCOL.md §18.6): entries here mirror the app's COMPILED
+# per-goodsType Support/Config classes — there is NO cloud capability/spec profile. Device identity
+# (sku/goodsType/pactType/pactCode) is cloud-provided but also derivable offline from the BLE advert
+# (Govee_<SKU>_<suffix> -> goodsType via a compiled table). The only capability read live from the device is
+# the IC/segment count via BLE opcode 0x40 (ControllerOnlyReadIcSegmentNum); IC-driven families (h61d3) use it,
+# static families (h60ax/h6047) use hard-coded getColorPieceSize. So a local client can be fully cloud-free.
+
+spec_version: "1.0.0"
+source_app: "com.govee.home 7.5.12 (1088)"
+hex_note: "All byte values are hex strings like 0x33 unless noted."
+
+transport:
+  service_uuid: "00010203-0405-0607-0809-0a0b0c0d1910"
+  write_char_uuid: "00010203-0405-0607-0809-0a0b0c0d2b11"
+  notify_char_uuid: "00010203-0405-0607-0809-0a0b0c0d2b10"
+  bgc_info_char_uuid: "00010203-0405-0607-0809-0a0b0c0d2b12"
+  cccd_uuid: "00002902-0000-1000-8000-00805f9b34fb"
+  frame:
+    length: 20
+    checksum: "xor[0..18] @ byte19"
+    pro_type:
+      write: "0x33"
+      read: "0xaa"
+      notify: "0xee"
+      multi_write: "0xa1"
+      multi_write_v1: "0xa3"
+      multi_read: "0xa2"
+      multi_reply_read: "0xac"
+
+# ─────────────── Over-the-air identification (name -> SKU -> protocol) ───────────────
+name_parsing:
+  note: >-
+    The advertised BLE name encodes the SKU. BaseBleProcessor splits/substrings by prefix to derive
+    skuCode, then Pact.d(skuCode) -> goodsType, and GoodsType/Pact -> highest (pactType, pactCode).
+  prefixes:
+    - { prefix: "ihoment_", rule: "split('_') = [brand, skuCode, tail]; sku = skuCode_tail", example: "ihoment_H6159_1A2B -> H6159", source: "base2home/main/choose/BaseBleProcessor.java:98" }
+    - { prefix: "Govee_",   rule: "same as ihoment_", example: "Govee_H613839_XYZ -> H613839", source: "BaseBleProcessor.java:98" }
+    - { prefix: "Minger_",  rule: "same as ihoment_", example: "Minger_H6104_.. -> H6104", source: "BaseBleProcessor.java:98" }
+    - { prefix: "GBK_",     rule: "split('_') = [GBK, skuCode, tail]", example: "GBK_H5083_1234 -> H5083", source: "BaseBleProcessor.java:145" }
+    - { prefix: "GVH",      rule: "substring(2); skuCode up to '_' or 5 chars", example: "GVH6159_XXXX -> H6159", source: "BaseBleProcessor.java:181" }
+    - { prefix: "GVR",      rule: "same as GVH", example: "GVR6184_XXXX -> H6184", source: "BaseBleProcessor.java:181" }
+    - { prefix: "GV",       rule: "skuCode = 'H' + substring(2,6)", example: "GV5122ABCD -> H5122", source: "BaseBleProcessor.java:233" }
+
+advertisement:
+  record_length: 62
+  manufacturer_ad_type: "0xff"
+  company_id: "0xEC88 (on the wire: 0x88 0xEC)"
+  note: >-
+    Passive identity + state. Walk AD structures [len][type][data]; on an AD with len>=6 and
+    type 0xFF (manufacturer): byte+2 packs bit6=encrypted-flag and low-nibble=protocol version;
+    company id 0x88 0xEC at +3/+4; then pactType (u16 BE) and pactCode. Thermo/sensor variants add
+    a service-data (type 0x03) prefix. Drives identification, capability, and connectionless state.
+  layout:
+    - { offset: "+0", field: "ad_length", meaning: ">= 6" }
+    - { offset: "+1", field: "ad_type", meaning: "0xFF manufacturer-specific" }
+    - { offset: "+2", field: "flags", meaning: "bit6 = encrypted; low nibble = protocol version (>=1)" }
+    - { offset: "+3..+4", field: "company_id", meaning: "0x88 0xEC (Govee)" }
+    - { offset: "+5..+6", field: "pact_type", meaning: "u16 big-endian" }
+    - { offset: "+7", field: "pact_code", meaning: "u8" }
+  source: "base2home/pact/BleUtil.java:829 parseBleBroadcastPact"
+
+# ─────────────── Timing & reliability (ms unless noted) ───────────────
+timing:
+  connection:
+    connect_timeout_ms: 60000
+    service_discovery_timeout_ms: 180000
+    reconnect_window_ms: 15000
+    auto_disconnect_gatt_status: 19
+    source: "ble/BleController.java:41-47; AbsBluetoothGattCallback.java:78"
+  command:
+    read_timeout_ms: 3000
+    write_timeout_ms: 6000
+    read_retries: 3
+    write_retries: 6
+    read_retry_interval_ms: 100
+    write_retry_interval_ms: 200
+    encryption_handshake_timeout_ms: 6000
+    write_type: "write-with-response"
+    ack: "onCharacteristicWrite(status); response matched by echoed [proType,cmd]; write success when value[2]==0"
+    fail_disconnect_threshold: 10
+    source: "base2light/ble/comm/ControllerComm.java:20-38; AbsBleComm; RunnableSendMsg; RunnableOvertime -> Event4ResponseOverTime"
+  multi_packet:
+    inter_packet_delay_ms: 300
+    source: "ble/multi/MultiPackageManager.java:209; base2light/ble/comm/MultipleControllerComm.java"
+  ota:
+    inter_packet_delay_ms: 30
+    retry_max: 2
+    source: "base2light/ble/ota/OtaManager.java:93,160"
+  mtu:
+    default: 23
+    requested: 512
+    source: "h70b2/origin/ble/MtuConfig.java"
+
+# ─────────────── Per-device authorization secret (families tagged `encryption: secret_key_pairing`) ───────────────
+# IMPORTANT (C0 — wire cipher vs account-lock): `encryption: secret_key_pairing` denotes the optional
+# ACCOUNT-LOCK (this 8-byte secret), NOT the on-wire cipher. The WIRE cipher (plaintext / "V1" AES-ECB+RC4 /
+# "V2" AES-GCM) is resolved at RUNTIME per device — NOT by SKU: from the advertisement encrypted-bit
+# ("V1" = hybrid: AES-128-ECB/NoPadding on full 16-byte blocks + RC4 on the trailing len%16 remainder, same
+#  key; a 20-byte frame = 1 AES block + 4 RC4 bytes. Source: com/govee/encryp/ble/Safe.java d()/b()/f()/g().
+#  See GOVEE_BLE_GATT_PROTOCOL.md §9.2 for the byte-level codec.)
+# (manuf-data flags & 0x40; BleUtil.java:839) OR the on-device BGC-info characteristic (BgcInfoReader: byte0
+# encryptVersion 1=V1 / 2=V2). There is NO SKU->cipher table in the app. So a secret_key_pairing device may
+# still run PLAINTEXT on the wire (H6047/H61A8/H6641 observed plaintext); a data-driven client must read the
+# advert/BGC at connect to select the cipher, and treat this field only as "has account-lock". Account-lock is
+# present on all curated SKUs EXCEPT the legacy bulbs H6006/H6008.
+secret:
+  description: >-
+    Per-device 8-byte authorization token ("secretCode") = the optional ACCOUNT-LOCK (anti-hijack "safe
+    bind"), orthogonal to the wire cipher (see the note above / §9). Families tagged
+    `encryption: secret_key_pairing` gate control on it: after connect the client must present the secret
+    (BLE 0xB2) or the device ignores commands.
+  size_bytes: 8
+  encoding: "base64 when stored/transported; raw 8 bytes on the wire"
+  origin: "device-generated. First obtained by reading BLE 0xB1 during pairing (scanBleInfo.j())."
+  ble:
+    read:  { opcode: "0xb1", reply: "[0x01] + 8 secret bytes", note: "device -> app; SecretKeyControllerV1.parseValidBytes" }
+    auth_write: { opcode: "0xb2", payload: "8 raw bytes (base64-decoded secretCode)", note: "app -> device after connect to authorize the session" }
+  local_cache: "SecretKeyConfig — persisted HashMap<bleAddress, secretCode> (getSecretKey/saveSecretKey)"
+  cloud_api:
+    hosts:
+      app_api: "app.govee.com"        # Constant.java:165 (prod; dev/pda variants exist). Account/app-level calls.
+      device_api: "device.govee.com"  # Constant.java:177 (prod). Device bind/settings/list calls — where secretCode lives.
+      note: "Authenticated (account token). The device/rest/... paths below are served by device.govee.com, NOT the app host."
+    upload_on_bind:
+      host: "device.govee.com"
+      method: POST
+      path: "device/rest/devices/v1/bind"       # UrlConstants.f30910o
+      multi_path: "device/rest/devices/v1/multi-bind"   # UrlConstants.f30929x0
+      note: "secretCode is embedded inside the deviceExt JSON of DeviceBindRequest (BindExt.secretCode = scanBleInfo.j())"
+    retrieve:
+      host: "device.govee.com"
+      note: "the account device-list returns each bound device's deviceExt/bleExt JSON containing secretCode; read via bleExt.getSecretCode()"
+      device_settings_path: "device/rest/devices/v1/settings"   # UrlConstants.f30928x
+  acquisition_paths:
+    - "Original pairing client: read 0xB1 from device (pre-bind), cache locally + upload in bind deviceExt."
+    - "Any other client (2nd phone / reinstall / third-party): fetch secretCode from the account device record (bleExt), then write 0xB2 to authorize."
+  sources: ["base2light/ble/controller/SecretKeyControllerV1.java:44", "base2light/pact/AbsPairAc4SecretV1.java:115,427", "base2home/device/net/DeviceBindRequest.java", "base2home/device/net/AddMultipleDeviceReq.java:118", "base2home/UrlConstants.java:134,191", "base2home/Constant.java:165,177", "base2light/kt/comm/DefInfo.java:98", "base2home/config/SecretKeyConfig via *config/SecretKeyConfig.java"]
+
+# ─────────────── Scene upload / activation model ───────────────
+scenes:
+  activate:
+    frame: "33 05 04 <sceneCode little-endian>"
+    note: "Always sent. Renders a scene the device already has resident (built-in or previously uploaded)."
+  upload:
+    proType: "0xa3 OR 0xa4 (MTU) — UNRESOLVED; see proType_note"
+    proType_note: >-
+      Two builders exist for the DIY/graffiti dialect. Hardware capture used 0xA3 (MultiController,
+      commByte@byte4); the decompiled scene-apply default is 0xA4-MTU (Compose4DefWrite4Multi,
+      commByte@byte6). The live default likely depends on MTU negotiation. NEEDS an official-app
+      btsnoop of an H60A6 scene upload to settle. See dialects.diy_graffiti.builders.
+    builder: "MultipleControllerCommV1.makeSendBytesV2/V1 (0xA3 form) or makeSendBytesMtu (0xA4 MTU form)"
+    frame_0xa3: "START: A3 00 01 <packetCount> <commBytes...> <inline value>; MIDDLE: A3 <seq> <17 value>; END: A3 FF <final <=17 value> (data-bearing)"
+    packet_count: "total frame count (start + middles + 0xFF end)"
+    inline_value_bytes: "15 - len(commBytes)  (0xA3 form)"
+    terminator: "seq 0xFF, carries the last data chunk (NOT an empty frame)"
+    dialects:
+      legacy_scene:
+        comm_byte: "scene-version constant: V1=0x01, V2=0x02, V3=0x07, V6=0x0C (MULTI_V*_NEW_SCENES), chosen by sceneType via ScenesOp.parseSceneV1"
+        value: "decoded cloud scenceParam (V3/graffiti strips leading 2 bytes)"
+        path: "SceneControllerNoEventV1 <- ScenesOp.parseSceneV1"
+      diy_graffiti:
+        comm_byte: "device DIY/graffiti protocol code (H60A6 = 0x58 = constant 88, from H60A6DiyParse/getProtocolCode)"
+        value: "effect parsed then RE-SERIALIZED (H60A6GraffitiParse.toBytes() = [0x20, bgR,bgG,bgB, brightness, showType, layerCount, ...]); raw 0x50 header consumed"
+        builders:
+          a3_form: "H60A6DiyParse.makeBleController:468/494 -> MultiController.f.a(bytes,(byte)88) -> makeSendBytesV1((byte)-93 == 0xA3, 88, bytes); commByte 0x58 at byte4. HARDWARE-VALIDATED (live H60A6 capture: A3 00 01 .. 58 ..)."
+          a4_mtu_form: "H60A6GraffitiParse.makeBleController:228-238 -> Compose4DefWrite4Multi.m.d((byte)88, toBytes(), <negotiated MTU>, ...) -> makeSendBytesMtu((byte)-92 == 0xA4, 88, effectBytes, mtu); proType 0xA4, commByte 88 in the MTU layout (not byte4). isNeedMtuPackage()=true (:204)."
+        dispatch: "BaseSceneViewMode.handleDiyNewConfig (~:1055) calls iDiyParse.makeBleController POLYMORPHICALLY — the concrete IDiyParse selected for the effect decides the builder: H60A6DiyParse => 0xA3, H60A6GraffitiParse => 0xA4-MTU. THIS is why the live default is unresolved without a capture."
+        note: "H60A6 scenes with scenceParam byte0==0x50 use THIS dialect. 0x58 == 0x50|0x08 is arithmetic coincidence; the app uses a constant code (88) + re-encoded value, NOT a bitwise OR on value[0]. proType 0xA3 vs 0xA4 unresolved (see upload.proType_note)."
+    sources: ["base2light/ble/comm/MultipleControllerCommV1.java:743,785,902 (makeSendBytesV0/V1/V2)", "base2light/kt/general_controller/MultiController.java:54 (a()->makeSendBytesV1 0xA3=-93)", "base2light/kt/ble/Compose4DefWrite4Multi.java:234-241 (d()->makeSendBytesMtu 0xA4=-92)", "pact_h60a0/adjust/h60a6/diy/H60A6DiyParse.java:468,494,254", "pact_h60a0/adjust/h60a6/diy/H60A6GraffitiParse.java:197,204,228-238", "base2light/pact/newdetail/content/scene/BaseSceneViewMode.java:~1055 (handleDiyNewConfig; polymorphic iDiyParse dispatch)"]
+  dispatch:
+    # HOW a library scene becomes an upload — the (sceneType, version) gate. Implement this to know, per
+    # scene, whether to UPLOAD (and with which commByte + leading-byte strip) or ACTIVATE-only.
+    # Self-contained: no Java needed. All commBytes = the controller's getCommandType(); strips verified byte-exact.
+    inputs:
+      sceneType: "server DTO field CategoryV1.LightEffect.sceneType. 0=static 1=rgb 2=rgbic 3=graffiti 4=cube 5=diy 6=compose."
+      version_array: "STATIC per-goodsType constant — NOT a cloud field, NOT a BLE read. Hardcoded per family; see families[].specs.scene_versions and dispatch.family_apply below."
+      value: "Encode.decryByBase64(scenceParam) with Base64 NO_WRAP, THEN the per-row strip. NOTE frames are zero-padded to 20B; never infer field ends from length."
+    rule: >-
+      Pick the FIRST table row where version_array.contains(version) AND sceneType==type. No match => the
+      parser returns null => NO upload; the device only gets the scenes.activate frame (activate-only).
+    table:  # source base2light/ble/ScenesOp.java parseSceneV1:603-640, helpers l/m/n:439-490; comBytes from MultiNewScenesControllerV1..V10.getCommandType()
+      - { version: 1,  scene_type: 1, kind: rgb,            controller: V1, comm_byte: 0x01, strip: 0, validate: "ScenesRgb.isValidProtocolBytes" }
+      - { version: 2,  scene_type: 2, kind: rgbic,          controller: V2, comm_byte: 0x02, strip: 0, validate: "ScenesRgbIC.isValidProtocolBytes" }
+      - { version: 3,  scene_type: 3, kind: graffiti,       controller: V3, comm_byte: 0x07, strip: 2, validate: "ShareDiy.isValidGraffitiBytes (byte0==1 && len>=9)" }
+      - { version: 6,  scene_type: 6, kind: compose,        controller: "V5 (H60B0 if byte0==0x51)", comm_byte: 0x0a, strip: 1 }
+      - { version: 7,  scene_type: 5, kind: diy_h610b,      controller: V6, comm_byte: 0x0c, strip: 1, note: "if speed!=-1, overwrite value[3]=speed" }
+      - { version: 8,  scene_type: 5, kind: diy_k,          controller: V7, comm_byte: 0x0c, strip: "1 + prepend subOpType" }
+      - { version: 9,  scene_type: 5, kind: h6078_graffiti, controller: V7, comm_byte: 0x0c, strip: "1 + prepend subOpType (3 simple / 9 profession)", validate: "ShareDiy.isValidH6078Graffiti{Simple|Profession}" }
+      - { version: 10, scene_type: 5, kind: common_diy,     controller: "byte0-dispatch: V7 / V4 / MultiDiyFixedDeviceController", comm_byte: "0x0c / 0x04 / 0x58" }
+      - { version: 11, scene_type: 5, kind: h6092,          controller: V8, comm_byte: 0x56, strip: "1 + prepend subOpType" }
+      - { version: 12, scene_type: 5, kind: h6022_graffiti, controller: "byte0 in {0x40,0x41} ? V10 : V4", comm_byte: "0x58 / 0x04", strip: "0 / 1" }
+      - { version: 13, scene_type: 5, kind: h1630_graffiti, controller: V10, comm_byte: 0x58, strip: 1 }
+    no_match_examples: "sceneType 0 (static) and 4 (cube) have NO parseSceneV1 row => null => activate-only. (Legacy parseScene handles version-4 cube for type 4/5; not on the parseSceneV1 path.)"
+    bypasses:
+      # TWO curated families do NOT use parseSceneV1. Miss these and your dispatch will mis-handle them.
+      bulbs_hardcoded_v1: >-
+        bulblightv3 (H6006, H6008 + siblings) apply = Comm.makeSceneCmd4IotComm -> Support.is2NewScenesMode
+        (bulblightv3/pact/Support.java:137-147): sceneM!=null ? ScenesOp.parseScene(sceneM, {1}) :
+        ScenesOp.parseEffect(str, sceneCode, {1}). The versionArray is a HARDCODED {1} — supportScenesOp
+        (which returns {0} for H6006/H6008, :322-323) is NOT consulted on the apply path. => a type-1 RGB
+        library scene UPLOADS (controller V1, comm_byte 0x01, strip 0) whenever its blob is in the local
+        catalog (ScenesM); otherwise it falls back to activate-by-code. DO NOT gate bulb type-1 upload on
+        scene_versions {0}; treat version 1 as always available for bulbs.
+      tablelamp_h6052_type5_diy: >-
+        H6052 (goodsType 22) type-5 scenes use H6052ScenesViewMode:45 -> Diy.parseScenes4Diy
+        (tablelampv1/adjust/Diy.java:98) -> MultipleDiyInScenesController, NOT parseSceneV1. comm_byte = 3
+        (simple DiyGraffiti, value=DiyGraffiti.b()), 4 (DiyProtocol.toBytes), or 9 (professional
+        DiyGraffitiV3, value=DiyGraffitiV3.a()). Non-type-5 H6052 scenes DO go through parseSceneV1 with
+        version_array {0,1,4,5}: only version 1 / type 1 (RGB) matches. Type-3 graffiti needs version 3,
+        which {0,1,4,5} lacks => parseSceneV1 null => type-3 is NOT uploadable on H6052.
+    family_apply:  # per curated family: the version_array actually used at apply time + the resulting path
+      h60ax:
+        curated_sku: H60A6
+        version_array: [0, 1, 2, 3, 5]
+        path: parseSceneV1
+        note: "type 1/2/3 -> comByte 1/2/7. graffiti/DIY (type 5) go via the DIY dialect (scenes.upload.dialects.diy_graffiti, commByte 0x58, 0xA3 or 0xA4-MTU), NOT parseSceneV1."
+      h6047:
+        curated_sku: H6047
+        version_array: [0, 1, 2, 3]
+        path: parseSceneV1
+        note: "type 1/2/3 -> comByte 1/2/7."
+      h61d3:
+        curated_sku: H6641
+        version_array: [0, 1, 2, 3, 10]
+        path: parseSceneV1
+        note: "type 5 version 10 -> CommonDiy byte0-dispatch."
+      dreamcolorlightv1:
+        curated_sku: H61A8
+        version_array: [1, 2]
+        path: "parseSceneV1(str, scene, 1, 2)"
+        note: "dreamcolor passes versions {1,2} explicitly (Support.java:1108); type 1/2 -> comByte 1/2."
+      tablelampv1:
+        curated_sku: H6052
+        version_array: "H6052 (gt 22) = {0,1,4,5} ; H6078 (gt 128) = {0,1,5,9}"
+        path: "type 5 -> Diy.parseScenes4Diy (comByte 3/4/9); other types -> parseSceneV1"
+        note: "H6052 type-3 graffiti NOT uploadable (version_array has no 3)."
+      bulblightv3:
+        curated_sku: "H6006, H6008"
+        version_array: "supportScenesOp: gt 64/111 = {0,1}; gt 311 = {0,1,2,3,5,6}; else = {0}"
+        path: "parseScene(sceneM, {1}) or parseEffect(str, code, {1}) -- HARDCODED {1}"
+        note: "type-1 RGB uploads regardless of the {0} capability value (the {1} is hardcoded on the apply path)."
+    sources: ["base2light/ble/ScenesOp.java:535-640 (parseEffect/parseScene/parseSceneV1)", "bulblightv3/pact/Support.java:137-147,322-323 (is2NewScenesMode + supportScenesOp)", "tablelampv1/pact/Support.java:130,193 (isH6078 + supportScenesOpSet)", "tablelampv1/adjust/Diy.java:98-112 (parseScenes4Diy)", "tablelampv1/newAdjust/h6052/H6052ScenesViewMode.java:45-47", "base2light/ble/MultipleDiyInScenesController.java:13-25 (comByte 3/4/9)", "base2light/ac/diy/DiyGraffitiV3.java:154-173 (a() re-encode)"]
+
+  placeholder:
+    decision: "Per scene, the 0xA3 upload is prepended ONLY IF ScenesOp.parseSceneV1(...) != null; the 33 05 04 activation is always sent. (BaseSceneViewMode.java:757-781)"
+    stub_flag: "bigEffectStr == 1 (CategoryV1.isBigEffectScene). Fetch trigger = (bigEffectStr==1 AND scenceParam empty)."
+    not_byte3: >-
+      A decoded param byte3==0xFF is NOT a decision variable anywhere in the apply path. Verified: a grep
+      for any [3]-index gate across ScenesOp / ShareDiy / ScenesRgbIC / ScenesRgb / the scene-content dir
+      returns ZERO. The upload-vs-activate outcome is decided purely by whether parseSceneV1 returns
+      non-null, and its per-type validators gate on byte[0] + length + sceneType (ShareDiy.isValidComposeBytes
+      -> bytes[0]==10; isValidGraffitiBytes -> byte[0]==1 && len>=9; ScenesRgbIC/ScenesRgb anchor on byte[0]),
+      never byte3. (Earlier note wrongly attributed this to KmpH60A6DiyProtocol.parseBytes — that class is
+      NOT on the parseSceneV1 path.) A client using a byte[3]==0xFF -> activate-only heuristic is applying an
+      invented rule and will skip a required upload.
+    fetch_when_stub: "If bigEffectStr==1 and param empty, fetch the real blob then upload."
+    sources: ["base2light/pact/newdetail/content/scene/BaseSceneViewMode.java:476,757-781", "base2light/ble/ScenesOp.java:603-640", "base2light/ac/diy/local/ShareDiy.java:128,148,167-183"]
+  cloud_api:
+    library:
+      endpoints: ["GET /bff-app/v2/devices/scenes", "GET /bff-app/v2/devices/categories/scenes", "GET /bff-app/v2/devices/scenes/new", "GET /bff-app/v1/light-effect-libraries"]
+      query: "?sku=<SKU>&device=<MAC>"
+      per_effect_fields: [sceneCode, scenceParam, scenceParamId, sceneType, cmdVersion, bigEffectStr, "specialEffect[] (per-SKU overrides)", "rules[] (version gating)", speedInfo, "diyEffectCode[]", hasToneColors]
+      version_fields_note: "sceneType (0=static,1=rgb,2=rgbic,3=graffiti,4=cube,5=diy,6=compose) + cmdVersion are the version discriminators for the legacy dialect. bigEffectStr flags a fetch-required stub. A client must NOT drop these."
+      source: "base2light/pact/api/ScenesApi.java:93-139; CategoryV1.LightEffect (base2light/.../CategoryV1.java:94-138)"
+    effect_strs:
+      endpoint: "POST /bff-app/v1/devices/scenes/effect-strs (v2: /bff-app/v2/...)"
+      request: "{ scenceParamIds: [<int>] }"
+      response: "{ effectStrs: [ { scenceParamId: <int>, effectStr: <base64 blob> } ] }"
+      keyed_by: scenceParamId
+      note: "Authenticated real-blob fetch for bigEffectStr stubs; effectStr is written back into scenceParam and then uploaded."
+      source: "base2light/pact/api/ScenesApi.java:117-123; SceneBigEffectReq/Rsp/Bean"
+  mode_read_kelvin:
+    query: "AA 05 01"
+    reply: "aa 05 15 01 <kelvin u16 big-endian> ...  (kelvin at reply bytes [4:6])"
+    note: "DIFFERENT layout from the write (33 05 15 01 FF FF FF <kelvin>). Parsed by OpInfo4Detail.parseModeValidBytes -> SubMode4Color (isColorTem@0, kelvin=getSignedShort(v1,v2))."
+    source: "base2light/pact/newdetail/OpInfo4Detail.java:744-813; sub/SubMode4Color.java:55-59; ble/BleUtil.java:305"
+
+# ─────────────── Shared command catalog (BleProtocolConstants) ───────────────
+# Device-specific opcodes live in families[].opcodes. Duplicate byte values are resolved by context.
+command_catalog:
+  # power / brightness / mode
+  - { opcode: "0x01", name: SINGLE_SWITCH,     category: power,       direction: W/R, payload: "[on]", meaning: "power on/off (also main switch / heartbeat)" }
+  - { opcode: "0x04", name: SINGLE_BRIGHTNESS, category: brightness,  direction: W/R, payload: "[level]", meaning: "brightness" }
+  - { opcode: "0x05", name: SINGLE_MODE,       category: mode,        direction: W/R, payload: "[subMode, ...]", meaning: "mode: color/scene/music/diy/video (sub-mode byte per device)" }
+  - { opcode: "0x00", name: SINGLE_HEART_BEAT, category: power,       direction: R,   meaning: "keep-alive" }
+  # settings
+  - { opcode: "0x16", name: LIGHT_INDICATOR,   category: settings, direction: W/R, payload: "[enable, sH,sM,eH,eM] or [enable,FF,FF,FF,FF] forever", meaning: "status-LED schedule (also value_low_energy_on_off, EnergySaving)", source: "LightIndicatorController.java:44" }
+  - { opcode: "0xa6", name: LOGO,              category: settings, direction: W/R, payload: "[opType,brightness,r,g,b]", meaning: "logo light on/off/color", source: "LogoController.java:43" }
+  - { opcode: "0x41", name: ON_OFF_MEMORY,     category: settings, direction: W/R, payload: "[2,type] or [open]", meaning: "power-on memory (H70BX variant 0x42)", source: "OnOffMemoryController.java" }
+  - { opcode: "0x35", name: WITHOUT_INTERRUPT, category: settings, direction: W/R, payload: "[open]", meaning: "do-not-disturb", source: "WithoutInterruptController.java:42" }
+  - { opcode: "0x36", name: WORRY_FREE_AT_NIGHT, category: settings, direction: W/R, payload: "[open,openH,openM,closeH,closeM,progress,brightness]", meaning: "worry-free-at-night dimming schedule", source: "h6057/origin/ble/WorryFreeAtNightController.java" }
+  - { opcode: "0x37", name: PROMPT_TONE,       category: settings, direction: W/R, payload: "[tone]", meaning: "prompt/notification tone", source: "h6057/origin/ble/PromptToneController.java:40" }
+  - { opcode: "0x13", name: NIGHT_MODE,        category: settings, direction: W/R, meaning: "night mode" }
+  - { opcode: "0x33", name: SINGLE_VOLUME,     category: settings, direction: W/R, payload: "[volume]", meaning: "device volume", source: "VolumeController.java:41" }
+  - { opcode: "0x38", name: GUIDE_INIT_LIGHT,  category: settings, direction: W/R, payload: "[open]", meaning: "init/guide light", source: "InitLightController.java:34" }
+  # timers
+  - { opcode: "0x0a", name: SINGLE_AUTO_TIME,  category: timers, direction: W/R, payload: "[open,openH,openM,closeH,closeM,group,repeat]", meaning: "auto on/off timer (per group)", source: "AutoTimeController.java:59" }
+  - { opcode: "0x0b", name: SINGLE_DELAY_CLOSE,category: timers, direction: W/R, payload: "[open,hours,minutes]", meaning: "countdown auto-off", source: "DelayCloseController.java:31" }
+  - { opcode: "0x11", name: SINGLE_SLEEP,      category: timers, direction: W/R, payload: "[enable,startBri,closeTime,curTime, ...V1 sound / V2 +color-temp]", meaning: "sleep/fade-out timer", source: "SleepController.java:53" }
+  - { opcode: "0x12", name: SINGLE_WAKEUP,     category: timers, direction: W/R, payload: "[enable,endBri,wakeH,wakeM,repeat,wakeTime, ...V1 sound / V2 +color-temp]", meaning: "wake-up/sunrise timer", source: "WakeUpController.java:71" }
+  - { opcode: "0x23", name: SINGLE_NEW_TIME_V1,category: timers, direction: W/R, payload: "[group, enableAndType, hour, minute, repeat]; group 0xFF returns 4x4B", meaning: "multi-slot timer", source: "NewTimerV1Controller.java:82" }
+  - { opcode: "0x09", name: SINGLE_SYNC_TIME,  category: timers, direction: W,   payload: "[hour,min,sec,week,0x01,tzHour,tzMin] (lights); plugs use 0xB5", meaning: "set device clock", source: "SyncTimeController.java" }
+  # device-info / version
+  - { opcode: "0x07", name: SINGLE_DEVICE_INFO, category: device_info, direction: R, payload: "sub-selector: 0x02 UID, 0x03 hard, 0x04 soft, 0x07 dsp, 0x0A/0x0B MCU, 0x10/0x11 UID/wifi+versions", meaning: "device info block", source: "BasicInfoController/SnController/BasicWifiInfoController" }
+  - { opcode: "0x06", name: SINGLE_SOFT_VERSION, category: device_info, direction: R, meaning: "firmware version string" }
+  - { opcode: "0x14", name: SINGLE_WIFI_MAC,     category: device_info, direction: R, payload: "6-byte MAC", meaning: "wifi MAC" }
+  - { opcode: "0x20", name: SINGLE_WIFI_HARD_VERSION, category: device_info, direction: R, meaning: "wifi module HW version" }
+  - { opcode: "0x21", name: SINGLE_WIFI_SOFT_VERSION, category: device_info, direction: R, meaning: "wifi module SW version" }
+  - { opcode: "0x22", name: SINGLE_WIFI_DSP_VERSION,  category: device_info, direction: R, meaning: "DSP version" }
+  # IC / segment (RGBIC)
+  # Per-segment COLOUR read-back is NOT uniform across curated devices — three mechanisms:
+  #   (A) 0xAC -> 0xA5-group TLV (base2light Controller4ColorInfoByGroup): H60A6, H6047, H6641. TLV [type 0xA5, len,
+  #       groupIndex, records]; record = 4 B [brightness,R,G,B] (or 3 B [R,G,B] on SKUs lacking part-brightness, e.g.
+  #       H6641 ".p" path); 4 records/group; group count = ceil(N/4). N = getColorPieceSize (per SKU) and is DISTINCT
+  #       from the write/addressable segment count (H6047: read-back 12 != write 10).
+  #   (B) per-group discrete controllers over 0xAA-notify (BulbGroupColor): H61A8 — cmd 0xA2 => 3 B [R,G,B] (V1, no
+  #       brightness); cmd 0xA5 => 4 B [brightness,R,G,B], 3/group (V2). Firmware-versioned.
+  #   (C) single colour in the 0x0D mode-report fanned across zones (SubMode4Color.syncColor): H6052 (2 zones). Bulbs
+  #       H6006/H6008 have NO per-segment read (getColorPieceSize=0).
+  # => a segment-colour parser must select A/B/C by SKU and drive N from the read-back count, never a fixed 12.
+  - { opcode: "0x40", name: IC_NUM,             category: ic, direction: R, meaning: "IC/segment count (also splicing/connect-status contexts)" }
+  - { opcode: "0x42", name: WRITE_CHECK_IC,     category: ic, direction: W, meaning: "refresh/write-check IC" }
+  - { opcode: "0x43", name: CHECK_IC_AMOUNT,    category: ic, direction: W/R, meaning: "IC amount check / H6640-H6641 cut-calibration" }
+  - { opcode: "0x46", name: CHECK_IC,           category: ic, direction: W/R, payload: "[ic,(sub),kelvinLo,kelvinHi]", meaning: "detect IC chip" }
+  - { opcode: "0x24", name: READ_IC_POINT,      category: ic, direction: R, meaning: "IC point list" }
+  # scene / diy
+  - { opcode: "0x01", name: MULTI_V1_NEW_SCENES, category: scene, direction: W, meaning: "scene comType (sceneType 1). V2=0x02, V3=0x07, V4=0x0A; via 0xA3", source: "MultiNewScenesControllerV1" }
+  - { opcode: "0x28", name: SINGLE_DELETE_SCENE, category: scene, direction: W, meaning: "delete scene" }
+  - { opcode: "0x29", name: SINGLE_SORT_SCENE,   category: scene, direction: W, meaning: "reorder scenes" }
+  - { opcode: "0x27", name: SET_PREVIEW_EFFECT,  category: scene, direction: W, meaning: "preview effect before apply" }
+  - { opcode: "0x02", name: MULTI_DIY,           category: diy, direction: W, meaning: "DIY animation upload (via 0xA1/0xA3); graffiti/template/cube variants 0x53-0x5F" }
+  # music
+  - { opcode: "0x41", name: MULTI_V1_NEW_MUSIC,  category: music, direction: W, meaning: "music effect table / multi-music" }
+  - { opcode: "0x70", name: MUSIC_LIB_NOTIFY,        category: music, direction: notify, meaning: "music-lib/white-noise state push" }
+  - { opcode: "0x71", name: MUSIC_LIB_READ_PLAYER_STATE, category: music, direction: R, payload: "[musicType,state,voiceCodeLo,voiceCodeHi]", meaning: "player state" }
+  - { opcode: "0x72", name: MUSIC_LIB_READ_PRESET_INFO,  category: music, direction: R, payload: "[count,curIndex]", meaning: "preset info" }
+  - { opcode: "0x73", name: MUSIC_LIB_READ_PRESET_COLOR, category: music, direction: R, payload: "paged [flag,hi,mid,lo]", meaning: "preset color palette" }
+  - { opcode: "0x74", name: MUSIC_LIB_READ_PRESET_SCENES,category: music, direction: R, payload: "paged [sceneLo,sceneHi,codeLo,codeHi]", meaning: "preset scenes" }
+  - { opcode: "0x75", name: MUSIC_LIB_SET_PLAY_STATE,    category: music, direction: W, meaning: "set play/pause/select" }
+  - { opcode: "0x76", name: MUSIC_LIB_SET_PREVIEW_EFFECT,category: music, direction: W, payload: "[musicType,state,defaultLight,r,g,b,kLo,kHi,voiceSw,vol,codeLo,codeHi]", meaning: "preview white-noise/music effect" }
+  - { opcode: "0x77", name: MUSIC_LIB_REMOVE_PRESET_SCENES, category: music, direction: W, meaning: "remove preset scene — CONSTANT-ONLY (no builder found; direction/meaning inferred from constant name)" }
+  - { opcode: "0x78", name: MUSIC_LIB_SORT_PRESET_SCENES,   category: music, direction: W, meaning: "reorder preset scenes — CONSTANT-ONLY (no builder found; direction/meaning inferred from constant name)" }
+  - { opcode: "0x79", name: MUSIC_LIB_SET_VOLUME,    category: music, direction: W/R, payload: "[volume]", meaning: "music-lib volume" }
+  - { opcode: "0x7a", name: MUSIC_LIB_SET_SWITCH,    category: music, direction: W/R, payload: "[!on]", meaning: "white-noise/music-lib master on/off" }
+  # feast / carousel / movie
+  - { opcode: "0x54", name: MOVIE_FEAST_ON_OFF, category: feast, direction: W/R, meaning: "movie/feast sync on-off", source: "MovieOpenController.java" }
+  - { opcode: "0x50", name: MOVIE_FEAST_SET_SUB_DEVICE, category: feast, direction: W, meaning: "movie-feast set sub-device (multi)" }
+  - { opcode: "0x60", name: MODULE_FEAST_CAROUSEL, category: feast, direction: W, meaning: "feast module / carousel (0x61 v2)" }
+  - { opcode: "0x62", name: MULTI_COMBINATION_EFFECT, category: feast, direction: W, meaning: "combination effect — CONSTANT-ONLY (no builder found; direction/meaning inferred from constant name)" }
+  # video / camera / recognition
+  - { opcode: "0x30", name: LIGHT_DIRECTION,    category: video, direction: R,   meaning: "read light direction (TV backlight); also zone/calibration in some families" }
+  - { opcode: "0x31", name: CAMERA_POSITION,    category: video, direction: W/R, meaning: "camera position (TV backlight)" }
+  - { opcode: "0x32", name: CHECK_INSTALL_CAMERA, category: video, direction: W/R, meaning: "camera detection/install" }
+  - { opcode: "0xa9", name: VIDEO_MODE_PARAMS,  category: video, direction: W/R, meaning: "video mode params / white-balance / AI" }
+  - { opcode: "0xed", name: NOTIFY_RECOGNITION, category: video, direction: notify, meaning: "AI/video-recognition status" }
+  # calibration
+  - { opcode: "0x30", name: CALIBRATION,        category: calibration, direction: W, meaning: "factory/segment calibration (context-dependent, overloaded with 0x30)" }
+  - { opcode: "0x39", name: CHECK_DIRECTION,    category: calibration, direction: W/R, meaning: "direction auto-calibration" }
+  # secret / ota / pact
+  - { opcode: "0xb1", name: READ_SECRET_KEY,    category: secret, direction: R, payload: "reply [1]+8-byte secret", meaning: "read pairing secret", source: "SecretKeyController.java" }
+  - { opcode: "0xb2", name: CHECK_SECRET_KEY,   category: secret, direction: W, payload: "8-byte (base64-decoded) secret", meaning: "auth pairing" }
+  - { opcode: "0xee", name: OTA_PREPARE,        category: ota, direction: W, meaning: "enter OTA mode (also NOTIFY carrier header)" }
+  - { opcode: "0xef", name: SINGLE_PACT,        category: pact, direction: W/R, meaning: "protocol/pact negotiation" }
+  - { opcode: "0xab", name: DYNAMIC_API_SUPPORT,category: pact, direction: R, meaning: "query dynamic-API capability" }
+  # wifi provisioning
+  - { opcode: "0x17", name: WIFI_LINK_START,    category: wifi, direction: W, meaning: "wifi pairing/link start" }
+  - { opcode: "0x11", name: MULTI_WIFI,         category: wifi, direction: W, meaning: "wifi provisioning payload (multi)" }
+  - { opcode: "0xa3", name: GRADUAL_CHANGE_WIFI_BLE, category: wifi, direction: W/R, payload: "[0/1]", meaning: "gradual/fade on BLE<->wifi handoff" }
+  # daysync / alarm (present in firmware; app-side under com/govee/daySync)
+  - { opcode: "0x63", name: DAYSYNC_OP,         category: daysync, direction: W, meaning: "time/weather-based automation op (0x64 length-check, 0x65 weather-group, 0xF0 sub-mode) — CONSTANT-ONLY (no builder found; direction/meaning inferred from constant names)" }
+  - { opcode: "0x84", name: SET_DEVICE_ALARM_CLOCK, category: alarm, direction: W, meaning: "set alarm (0x85 op, 0x83 display remind) — CONSTANT-ONLY (constants defined, device-specific; no builder found; direction/meaning inferred)" }
+
+families:
+  # ─────────────────────────── Feature splits (deeply analysed) ───────────────────────────
+  - id: h60ax
+    category: rgbic_strip
+    models: [H60A0, H60A1, H60A4, H60A6, H60C1, H1270, H1232, H1250, H1252, H12D0, H80A1, H80A4]
+    goods_types: [188, 235, 302, 303, 324, 346, 356, 370, 373, 390]
+    delivery: feature_split
+    connectivity: [ble, wifi]
+    protocol: { single_packet: true, multi_dialects: ["0xA1", "0xA3", "0xAC"], mode_command: "0x05" }
+    submodes: { color: "0x15", color_alt: "0x0d", scene: "0x04", music: "0x13", diy: "0x0a" }
+    opcodes:
+      - { name: zone_power, cmd: "0x30", payload: "[zoneIndex, state]", readable: true, note: "H60A6 dual-zone; notify state in bit 1 of each byte" }
+      - { name: per_segment_color_read, cmd: "0xa5", readable: true, payload: "mechanism (A): reply groups [groupIndex, 4x{brightness,R,G,B}]; group count = ceil(getColorPieceSize/4); H60A6 pieceCount=13 (goodsType 303); records are 4-byte incl brightness (NOT [segIndex,R,G,B]). See IC/segment note." }
+      - { name: on_off_memory, cmd: "0x41", payload: "[2, mode]" }
+      - { name: child_switch, cmd: "0x36", payload: "[!on, second]" }
+      - { name: head_calibration, cmd: "0x42", payload: "0xFF start / 0x00 reset / [2,2] left / [2,1] right" }
+      - { name: scene_diy_graffiti_upload, cmd: "0x58", pro_type: "0xa3 or 0xa4(MTU)", payload: "multi-packet; value = re-encoded graffiti toBytes()", note: "commByte 0x58 (const 88), NOT a scene comType. proType UNRESOLVED: 0xA3 (commByte@4, hardware-tested) vs 0xA4 MTU (commByte@6, decompiled scene-apply default). See scenes.upload.proType_note." }
+      - { name: mode_read_kelvin, cmd: "0x05", readable: true, note: "AA 05 01 reply carries kelvin (u16 BE) at [4:6] under color sub-mode 0x15; see scenes.mode_read_kelvin" }
+    # scene_versions = the versionArray fed to ScenesOp.parseSceneV1; STATIC per-goodsType constant from
+    # pact_h60a0/pact/Support.supportScenesOpSet (H60A6 goodsType 303 -> {0,1,2,3,5}). The 0/5 match no
+    # parseSceneV1 branch, so only sceneTypes 1/2/3 take dialect A (comType 1/2/7); graffiti uses dialect B.
+    specs: { segments: "13 (H60A6); 3-17 per SKU", kelvin_range: [2700, 6500], scene_versions: [0, 1, 2, 3, 5] }
+    encryption: secret_key_pairing
+    notify:
+      - { sub_type: "0x11", meaning: "wifi connect result (byte0==0 connected)" }
+      - { sub_type: "0x30", meaning: "per-zone on/off (bit 1 of main/zone0/zone1 bytes)" }
+      - { sub_type: "0x20", meaning: "brightness" }
+    confidence: high
+    sources: ["pact_h60a0/ble/Mode.java", "pact_h60a0/adjust/h60a6/VM4LightH60A6.java:336,1203-1205,1392", "pact_h60a0/pact/Support.java"]
+
+  - id: h6047
+    category: light_bar
+    models: [H6047, H6043, H6042, H6039, H6038, H6048, H8048]
+    goods_types: [119, 196, 197, 277, 288, 298]
+    delivery: feature_split
+    connectivity: [ble, wifi]
+    protocol: { single_packet: true, multi_dialects: ["0xA1", "0xA3", "0xAC"], mode_command: "0x05" }
+    submodes: { color: "0x15", scene: "0x04", music: "0x13", diy: "0x0a", video: "0x00" }
+    opcodes:
+      - { name: compose_light_switch, cmd: "0x36", readable: true, payload: "H6047 [left,right]; others [position(0|1), state]; read AA 36" }
+      - { name: swap_light, cmd: "0x34", payload: "[] (empty)" }
+      - { name: light_direction, cmd: "0x30", readable: true, note: "live (H6048OnOffNotifyParse, Info4Detail)" }
+      - { name: camera_position, cmd: "0x31", note: "CONSTANT-ONLY — BleProtocol=49; no controller/parser wired in split; not confirmed live" }
+      - { name: check_install_camera, cmd: "0x32", note: "CONSTANT-ONLY — BleProtocol=50; no usage in split; not confirmed live" }
+      - { name: calibration, cmd: "0x44", payload: "[on/off]" }
+      - { name: white_balance, cmd: "0xa9", note: "read/parse confirmed (Info4Detail.parseWhiteBalance); no dedicated write controller found in split" }
+      - { name: per_segment_color_read, cmd: "0xa5", readable: true, payload: "mechanism (A) 0xAC->0xA5-group (Controller4ColorInfoByGroup, Info4Detail:377); [groupIndex, 4x{brightness,R,G,B}]; count = getColorPieceSize (H6047=12), 4/group" }
+    # kelvin is per-SKU (KelvinConfig / Support.getColorTemRange): H6047/H6043/H6042 (119/196/197)=[2200,6500],
+    # H6039(277)/H6038(288)=[2700,6500], H6048(298)=[2000,9000]. kelvin_range below = H6047 (curated), NOT a family envelope.
+    # segments: TWO distinct counts. WRITE/addressable = getGoodsType4ColorSegment; READ-BACK pieces = getColorPieceSize. They differ (H6047: read 12 != write 10) — the 0xA5 read walk MUST use the read-back count.
+    specs: { segments: "write/addressable per SKU (getGoodsType4ColorSegment): H6047/H6043/H6042=10, H6039=12, H6038=24, H6048=22 (else-branch=10; NO SKU returns 5 - a prior '5' was unsourced). Read-back pieces (getColorPieceSize): default 12, H6038=24, H6048=22 -> H6047/H6043/H6042 read 12 groups-of-4 but only 10 writable", kelvin_range: [2200, 6500], scene_versions: [0, 1, 2, 3] }
+    encryption: secret_key_pairing
+    notify:
+      - { sub_type: "0x11", meaning: "wifi connect result" }
+      - { sub_type: "0x30", meaning: "H6048 on/off (byte2 left, byte3 right)" }
+      - { sub_type: "0x40", meaning: "device status / IC sum" }
+    confidence: high
+    sources: ["h6047/ble/Mode.java", "h6047/ble/controller/ComposeLightController.java", "h6047/ble/BleProtocol.java", "h6047/pact/Support.java"]
+
+  - id: bulblightv3
+    category: bulb
+    models: [H6001, H6002, H6003, H6004, H6005, H6006, H6008, H6009, H600A, H600B, H600C, H600D, H6010, H6011, H6013, H601A, H601B, H601C, H601D, H601E, H601F, H8015, H801A, H801C, H801D, H1401, H14A1, H14C0, H14C1, H14C2, H1501]
+    goods_types: [0, 9, 10, 20, 31, 64, 111, 311, 328, 342, 348]   # 328 = H6008 (proven). H6006 = LEGACY bulb handled by the bulblight-v1 pkg (SKU-STRING matched: BulbLightApplication:97, SettingAc:327 — NOT bulblightv3); goodsType = old-bulb 20 cluster (shared H6001/H6005; there is NO dedicated H6006<->goodsType binding anywhere in the app). 0/9/10 = legacy broadcast codes.
+    delivery: feature_split
+    connectivity: [ble, wifi, iot]
+    protocol: { single_packet: true, multi_dialects: ["0xA3"], mode_command: "0x05" }   # write=0x33 / read=0xAA single; scene/DIY upload=0xA3 (makeSendBytesV1). 0xA1 NOT used as a write dialect in bulblightv3/h6001.
+    # color 0x0d = native path (H6008 / goodsType>=64); color_alt 0x02 = legacy old-bulb path (H6001, and H6006 — the 0x0d gate checkSupportH6005Fuc is H6001-only, so H6006 uses 0x02)
+    submodes: { color: "0x0d", color_alt: "0x02", scene: "0x04", music: "0x05", diy: "0x0a" }
+    opcodes:
+      - { name: color_temp_type, cmd: "0x26", payload: "[1|2] display type (H601EF)" }
+    specs: { kelvin_range: [2700, 6500], scene_versions: [0], brightness_range: [1, 100], brightness_scaling: "legacy non-H6005: 1-100 -> 20-254; H6005/H6001-new: raw percent" }   # H6006 (legacy, gt~20) may report [2000,9000]; H6008(328)=[2700,6500]. No per-segment read (getColorPieceSize=0).
+    encryption: none
+    notify:
+      - { sub_type: "0x11", meaning: "wifi connect (v3)" }
+      - { sub_type: "0x20", meaning: "brightness push (v2)" }
+    confidence: high
+    sources: ["bulblightv3/ble/SubModeColor.java", "bulblightv3/pact/Support.java", "h6001/sku/Sku.java", "bulblightv1/iot/Cmd.java (IoT-only v1: H6003/H6004)"]
+
+  - id: h61d3
+    category: rgbic_strip
+    models: [H61B0, H61B3, H61B6, H61B8, H61B9, H61D2, H61D3, H61D4, H61D5, H61D6, H61E5, H61E6, H61F2, H61F5, H61F6, H1A42, H1A43, H1A44, H1A45, H1AB1, H1AB2, H1AB3, H1B6A, H6640, H6641, H703A, H703B]
+    goods_types: [202, 239, 242, 246, 247, 261, 263, 264, 299, 367, 375, 384, 387, 388, 389, 400]
+    delivery: feature_split
+    connectivity: [ble, wifi]
+    protocol: { single_packet: true, multi_dialects: ["0xA3"], mode_command: "0x05" }   # only 0xA3 verifiable in split BLE code; 0xA1/0xAC were assumed, not found
+    submodes: { color: "0x15", scene: "0x04", music: "0x13", diy: "0x0a" }
+    opcodes:
+      - { name: read_ic_count, cmd: "0x40", readable: true }
+      - { name: check_ic, cmd: "0x46", payload: "H6640 uses 0x43" }
+      - { name: read_ic_point, cmd: "0x24", readable: true }
+      - { name: take_photo, cmd: "0x26", payload: "a()=[1,100,R,G,B] start / b()=[0] stop" }
+      - { name: video_recognition, cmd: "0xed" }
+      - { name: secret_write, cmd: "0xb2", note: "read 0xB1; 8-byte base64-decoded secret" }
+    # kelvin: H6641/247 = [2000,9000] (H61D3Support.m/e0 :1210,:1055; KelvinConfig v0); other h61d3 SKUs vary. kelvin_range below = H6641 (curated).
+    specs: { segments: "H6641/247 read-back N = ceil(IC_count / 5) [d=5 RESOLVED: H61D3Support.e() sets r0=5 @L8c before the 247 branch, which inherits it at Lb3]; 4 records/group; mechanism (A) 0xAC->0xA5-group (Controller4ColorInfoByGroup, Info4Detail:464); record = 4-byte [brightness,R,G,B] (part_brightness/T0 true for 247)", kelvin_range: [2000, 9000], scene_versions: [0, 1, 2, 3, 10] }
+    encryption: secret_key_pairing
+    notify:
+      - { sub_type: "0x11", meaning: "wifi connect result" }
+      - { sub_type: "0x26", meaning: "take-photo key-press exit" }
+      - { sub_type: "0x30", meaning: "device info" }
+      - { sub_type: "0xed", meaning: "video-recognition state" }
+    confidence: high
+    sources: ["h61d3/ble/Mode.java", "h61d3/ble/BleProtocol.java", "h61d3/ble/controller/*", "h61d3/pact/H61D3Support.java"]
+
+  # ─────────────────────────── Smart plug (base.apk) ───────────────────────────
+  - id: h5080
+    category: plug
+    models: [H5080, H5082, H5083, H5085, H5089, H5160, H5161]
+    goods_types: [43, 50, 90, 307]   # 43 = 1-outlet (H5080/H5083/H5085); 50/307 = 2-outlet; 90 = 3-outlet
+    delivery: base_apk
+    connectivity: [ble, wifi]
+    protocol: { single_packet: true, multi_dialects: ["0xA1"] }   # NO mode_command: a plug has no 0x05 mode. Verified opcode set is {0x01,0x12,0x13,0x15,0x16,0x1f,0xB0,0xB3,0xB4,0xB5,0xAB}+secret. multi 0xA1 = multi-outlet (BleMultiComm).
+    # Not a light: no color/scene/music sub-modes. Relay + timers only.
+    opcodes:
+      - { name: relay_switch, cmd: "0x01", readable: true, payload: "1 byte [baseMask|onBit]: relay0 0x11/0x10, relay1 0x22/0x20, relay2 0x44/0x40, all 0xFF/0xF0; read parses per-relay bits" }
+      - { name: heartbeat, cmd: "0x01", readable: true, note: "HeartControllerV2 parses per-relay state" }
+      - { name: sync_time, cmd: "0xb5", payload: "[4-byte BE unix seconds, 0x01, tzHour(signed), tzMin(signed)]" }
+      - { name: spec, cmd: "0xb3", readable: true, note: "read device spec — a single OPAQUE byte @ validBytes[0] (SpecController:19 stores bArr[0], surfaced to the UI as a display string via Model.getSpec; NOT bit-decoded anywhere in source). Actionable plug state is the 0x01 relay mask above." }
+      - { name: new_timer, cmd: "0xb4", payload: "[group|slot, enableAndType, hour, minute, repeat]; read preamble [type,0xFF]" }
+      - { name: timer_count, cmd: "0x12", readable: true, note: "number of timers" }
+      - { name: timer_delete, cmd: "0x15", payload: "[group, timerIdx]" }
+      - { name: turn_on_off_delay, cmd: "0xb0", payload: "[index, delayType, min/60, min%60]" }
+      - { name: new_timer_v2, cmd: "0x13", note: "V2 timer add (NewTimerControllerV2; H5083NewDetailViewModel.k1) — shipping H5083 detail path" }
+      - { name: not_disturb, cmd: "0x16", note: "do-not-disturb window (H5083NewDetailViewModel.J0)" }
+      - { name: child_lock_indicator, cmd: "0x1f", note: "child-lock / light-indicator switch (SWITCH_OP_TYPE; H5083NewDetailViewModel.D); H71xx base" }
+      - { name: ota_pact, cmd: "0xab", readable: true, note: "OTA / pact capability (H5083NewDetailViewModel.D0)" }
+      - { name: secret_read, cmd: "0xb1", readable: true }
+      - { name: secret_write, cmd: "0xb2", payload: "8-byte (base64-decoded) secret" }
+    encryption: secret_key_pairing
+    notify: [{ sub_type: "0x11", meaning: "wifi connect result (byte0==0 connected)" }]
+    confidence: high
+    sources: ["h5080/pact/Support.java:26,56", "h5080/ble/controller/SwitchControllerV2.java:61", "h5080/ble/controller/SyncTimeController.java:24", "h5080/ble/controller/NewTimerController.java:69", "h5080/ble/controller/TurnOnOffDelayController.java:96", "h5080/ble/BleConstants.java"]
+
+  # ─────────────────────────── RGB/RGBIC strips & bulbs (base.apk) ───────────────────────────
+  - id: h6159
+    category: rgbic_strip
+    models: [H6159, H6110, H6109, H614A, H614B, H614E]
+    delivery: base_apk
+    connectivity: [ble, wifi]
+    protocol: { single_packet: true, multi_dialects: ["0xA1"] }
+    submodes: { color: "0x02", scene: "0x04", music: "0x03", music_alt: "0x0e", diy: "0x0a", color_alt: "0x0d" }
+    encryption: none
+    confidence: high
+    sources: ["h6159/ble/Mode.java", "h6159/ble/SubModeColor.java:110"]
+
+  - id: h6160
+    category: rgbic_strip
+    models: [H6160, H6163, H6117]
+    delivery: base_apk
+    connectivity: [ble, wifi]
+    protocol: { single_packet: true, multi_dialects: ["0xA1"] }
+    submodes: { color: "0x02", color_alt: "0x0b", scene: "0x04", music: "0x03", music_alt: "0x01", diy: "0x0a" }
+    opcodes: [{ name: bulb_string_color_read, cmd: "0xa2", readable: true }]
+    encryption: none
+    confidence: medium
+    sources: ["h6160/ble/Mode.java (extends AbsBle4Old)", "h6160/ble/v1/BulbStringColorController.java:22"]
+
+  - id: h6102
+    category: rgbic_strip
+    models: [H6102]
+    delivery: base_apk
+    connectivity: [ble]
+    protocol: { single_packet: true, multi_dialects: ["0xA1"] }
+    submodes: { color: "0x02", scene: "0x04", music: "0x01", diy: "0x0a" }
+    opcodes: [{ name: current_limit, cmd: "0x0e" }]
+    encryption: none
+    confidence: high
+    sources: ["h6102/ble/Mode.java", "h6102/ble/controller/LimitController.java:27"]
+
+  - id: h6104
+    category: rgbic_strip
+    models: [H6104]
+    delivery: base_apk
+    connectivity: [ble, wifi]
+    gatt:
+      service_uuid: "0000ffe0-0000-1000-8000-00805f9b34fb"
+      write_char_uuid: "0000ffe1-0000-1000-8000-00805f9b34fb"
+      note: "Overrides default vendor service with the generic ffe0/ffe1 UART."
+    protocol: { single_packet: true, multi_dialects: ["0xA1"] }
+    submodes: { color: "0x02", scene: "0x04", music: "0x01", diy: "0x0a", video: "0x00" }
+    opcodes:
+      - { name: direction, cmd: "0x13", payload: "[dir]" }
+      - { name: ip_read, cmd: "0x15", readable: true, payload: "4-byte IP + 4-byte int" }
+      - { name: multi_diy, cmd: "0x02", pro_type: "0xa1" }
+    encryption: none
+    confidence: high
+    sources: ["h6104/ble/BleComm.java:8-9", "h6104/ble/Mode.java", "h6104/ble/controller/*"]
+
+  - id: h6105
+    category: rgbic_strip
+    models: [H6105]
+    delivery: base_apk
+    connectivity: [ble]
+    submodes: { color: "0x02", scene: "0x04", music: "0x03", diy: "0x0a" }
+    encryption: none
+    confidence: medium
+    sources: ["h6105/ble/Mode.java"]
+
+  - id: h6113
+    category: rgbic_strip
+    models: [H6113]
+    delivery: base_apk
+    connectivity: [ble]
+    protocol: { single_packet: true, multi_dialects: ["0xA1"] }
+    submodes: { color: "0x02", music: "0x03", diy: "0x0a" }   # no scene sub-mode
+    opcodes: [{ name: multi_diy, cmd: "0x02", pro_type: "0xa1" }]
+    encryption: none
+    confidence: high
+    sources: ["h6113/ble/Mode.java (no SubModeScenes)"]
+
+  - id: h6114
+    category: rgbic_strip
+    models: [H6114]
+    delivery: base_apk
+    connectivity: [ble]
+    protocol: { single_packet: true, multi_dialects: ["0xA1"] }
+    submodes: { color: "0x02", scene: "0x04", music: "0x03", diy: "0x0a" }
+    opcodes: [{ name: multi_diy, cmd: "0x02", pro_type: "0xa1" }]
+    encryption: none
+    confidence: high
+    sources: ["h6114/ble/Mode.java"]
+
+  - id: h6119
+    category: rgbic_strip
+    models: [H6119]
+    delivery: base_apk
+    connectivity: [ble]
+    submodes: { color: "0x02", color_alt: "0x15", scene: "0x04", music: "0x0c", diy: "0x0a" }
+    opcodes:
+      - { name: bulb_string_color_read, cmd: "0xa5", readable: true }
+      - { name: gradual, cmd: "0x14" }
+    encryption: none
+    confidence: medium
+    sources: ["h6119/ble/Mode.java", "h6119/ble/SubModeColorV2.java:286"]
+
+  - id: h612526
+    category: rgbic_strip
+    models: [H6125, H6126]
+    delivery: base_apk
+    connectivity: [ble]
+    submodes: { color: "0x0b", scene: "0x04", music: "0x0c", diy: "0x0a" }
+    opcodes:
+      - { name: light_num, cmd: "0x0f", readable: true }
+      - { name: read_light_color, cmd: "0xa2", readable: true }
+      - { name: gradual, cmd: "0x14" }
+    encryption: none
+    confidence: high
+    sources: ["h612526/ble/SubModeColor.java:188", "h612526/ble/controller/*"]
+
+  - id: h6127
+    category: rgbic_strip
+    models: [H6107, H6116, H6127, H6161]
+    delivery: base_apk
+    connectivity: [ble]
+    submodes: { color: "0x02", scene: "0x04", music: "0x01", music_alt: "0x03", diy: "0x0a", diy_old: "0x07" }
+    encryption: none
+    confidence: medium
+    sources: ["h6127/ble/Mode.java", "h6127/ble/SubModeMusic.java:100", "h6127/ble/SubModeMusicV1.java:110"]
+
+  - id: h6129
+    category: rgbic_strip
+    models: [H6129]
+    delivery: base_apk
+    connectivity: [ble]
+    submodes: { color: "0x02", scene: "0x04", music: "0x03", diy: "0x0a", diy_old: "0x07" }
+    encryption: none
+    confidence: medium
+    sources: ["h6129/ble/Mode.java"]
+
+  - id: h613839
+    category: rgbic_strip
+    models: [H6138, H6139, H613A, H613B, H613C, H613D, H613E, H613F]
+    delivery: base_apk
+    connectivity: [ble, wifi]
+    submodes: { color: "0x02", color_alt: "0x0d", scene: "0x04", music: "0x03", music_alt: "0x0e", diy: "0x0a" }
+    encryption: secret_key_pairing
+    confidence: medium
+    sources: ["h613839/ble/Mode.java", "h613839/sku/Model.java:106 (secretCode)"]
+
+  - id: h6181
+    category: rgb_strip
+    models: [H6181]
+    delivery: base_apk
+    connectivity: [ble]
+    submodes: { color: "0x02", scene: "0x04", diy: "0x0a", mic: "0xff" }   # mic is a flag stub
+    encryption: none
+    confidence: medium
+    sources: ["h6181/ble/Mode.java", "h6181/ble/SubModeMic.java"]
+
+  - id: h6182
+    category: rgb_strip
+    models: [H6182]
+    delivery: base_apk
+    connectivity: [ble, wifi]
+    submodes: { color: "0x02", scene: "0x04", music: "0x03", diy: "0x0a" }
+    notify: [{ sub_type: "0x11", meaning: "wifi connect status" }]
+    encryption: none
+    confidence: medium
+    sources: ["h6182/ble/Mode.java", "h6182/ble/WifiNotifyParse.java"]
+
+  - id: h6185
+    category: rgb_strip
+    models: [H6185]
+    delivery: base_apk
+    connectivity: [ble]
+    submodes: { color: "0x02", scene: "0x04", diy: "0x0a", mic: "0x05" }
+    opcodes: [{ name: mic, cmd: "0x05", note: "AbsOnlyWriteSingleController; set_mode=1, rhythm_point=3" }]
+    encryption: none
+    confidence: high
+    sources: ["h6185/ble/Mode.java", "h6185/ble/controller/MicController.java:21"]
+
+  - id: h6101
+    category: rgb_strip
+    models: [H6101]
+    delivery: base_apk
+    connectivity: [ble]
+    gatt:
+      service_uuid: "0000ffe0-0000-1000-8000-00805f9b34fb"
+      write_char_uuid: "0000ffe1-0000-1000-8000-00805f9b34fb"
+      note: "ffe0/ffe1 UART; single-packet only (no multi)."
+    protocol: { single_packet: true, multi_dialects: [] }
+    submodes: { color: "0x02", music: "0x01", video: "0x00" }
+    opcodes:
+      - { name: calibration, cmd: "0x08" }
+      - { name: calibration_ok_read, cmd: "0x01", readable: true }
+    encryption: none
+    confidence: high
+    sources: ["h6101/ble/BleComm.java:8-9", "h6101/ble/Mode.java", "h6101/ble/controller/CalibrationController.java:14"]
+
+  # ─────────────────────────── Generic light abstractions & families (base.apk) ───────────────────────────
+  - id: dreamcolorlightv1
+    category: rgbic_strip
+    models: [H6102, H611B, H611Z, H6123, H612A, H612B, H612C, H612D, H612E, H612F, H6168, H617A, H619A, H61A0, H61A8, H61A9, H61E0, H61E1, H70A1, H70A2, H70A3]
+    goods_types: [17, 18, 70, 73, 204, 207]   # 207 = H61A8, 204 = H61A9 (RGBIC outdoor neon rope)
+    delivery: base_apk
+    connectivity: [ble, wifi]
+    protocol: { single_packet: true, multi_dialects: ["0xA1", "0xA3"] }
+    submodes: { color: "0x0b", color_alt: "0x15", scene: "0x04", music: "0x11", music_alt: "0x13", diy: "0x0a" }
+    opcodes:
+      - { name: current_limit, cmd: "0x0e" }
+      - { name: light_num, cmd: "0x0f", readable: true }
+      - { name: gradual, cmd: "0x14" }
+      - { name: gradual_wifi_ble, cmd: "0xa3" }
+      - { name: read_ic, cmd: "0x40", readable: true }
+      - { name: refresh_ic, cmd: "0x42" }
+      - { name: check_ic, cmd: "0x46" }
+      - { name: bulb_string_color_read, cmd: "0xa2", readable: true, note: "mechanism (B) — NOT the 0xAC/0xA5-group path. Per-group discrete controllers over 0xAA-notify; firmware split: cmd 0xA2 => 3-byte [R,G,B] records (BulbGroupColor, no brightness); cmd 0xA5 => 4-byte [brightness,R,G,B], 3 records/group (BulbGroupColorV2)" }
+    specs: { segments: "IC-count driven; H61A8 default 15 (getBulbStringMaxNum). Mechanism (B) read-back — see bulb_string_color_read note (0xA2 V1 3-byte / 0xA5 V2 4-byte, firmware-versioned); part_brightness=true (supportPartBrightness4BleWifi 207)", scene_versions: [0, 1, 2, 3] }
+    encryption: secret_key_pairing
+    confidence: high
+    sources: ["dreamcolorlightv1/ble/Mode.java:80-116", "dreamcolorlightv1/ble/BleProtocol.java:15-20"]
+
+  - id: dreamcolorlightv2
+    category: rgbic_strip
+    models: [H6102, H6116, H6117, H611A, H6125, H6126, H6127, H6143, H6144, H6145, H6146, H6147, H6161, H6163, H6171, H6184]
+    delivery: base_apk
+    connectivity: [ble, wifi]
+    protocol: { single_packet: true, multi_dialects: ["0xA1", "0xA3"] }
+    submodes: { color: "0x0b", color_alt: "0x15", scene: "0x04", music: "0x11", music_alt: "0x13", diy: "0x0a" }
+    opcodes:
+      - { name: gradual, cmd: "0x14" }
+      - { name: gradual_wifi_ble, cmd: "0xa3" }
+      - { name: bulb_string_color_read, cmd: "0xa2", readable: true }
+    encryption: none
+    confidence: medium
+    sources: ["dreamcolorlightv2/ble/Mode.java:12-42", "dreamcolorlightv2/ble/BleProtocol.java"]
+
+  - id: rgblight
+    category: rgb_strip
+    models: []
+    delivery: base_apk
+    connectivity: [ble, wifi]
+    protocol: { single_packet: true, multi_dialects: ["0xA1", "0xA3"] }
+    # Modern transport-only shell; sub-mode bytes assembled by shared base2light.pact.newdetail layer.
+    encryption: none
+    confidence: low
+    sources: ["rgblight/ble/BleComm.java", "base2light/pact/newdetail/sub/*"]
+
+  - id: rgbiclight
+    category: rgbic_strip
+    models: []
+    delivery: base_apk
+    connectivity: [ble, wifi]
+    protocol: { single_packet: true, multi_dialects: ["0xA1", "0xA3"] }
+    encryption: none
+    confidence: low
+    sources: ["rgbiclight/ble/BleComm.java", "base2light/pact/newdetail/sub/*"]
+
+  - id: stringlightv2
+    category: string_light
+    models: [H6109, H6110, H6118, H6121, H6138, H6141, H6142, H6154, H6159, H6160, H6170, H6178, H6192, H6194, H6195, H6196, H6197]
+    goods_types: [2, 39, 68, 78, 143]
+    delivery: base_apk
+    connectivity: [ble, wifi]
+    protocol: { single_packet: true, multi_dialects: ["0xA1"] }
+    submodes: { color: "0x0d", color_alt: "0x02", scene: "0x04", music: "0x0e", music_alt: "0x13", diy: "0x0a", mic: "0x05" }
+    opcodes: [{ name: current_limit, cmd: "0x0e" }]
+    encryption: secret_key_pairing
+    confidence: high
+    sources: ["stringlightv2/ble/Mode.java:16-40", "stringlightv2/ble/BleProtocol.java:5-13"]
+
+  - id: bulblightstringv1
+    category: string_light
+    models: [H7002, H7005]
+    goods_types: [3]
+    delivery: base_apk
+    connectivity: [ble]
+    protocol: { single_packet: true, multi_dialects: ["0xA1"] }
+    submodes: { color: "0x0b", scene: "0x09", music: "0x0e" }
+    opcodes:
+      - { name: bulb_num, cmd: "0x0f" }
+      - { name: bulb_string_color_read, cmd: "0xa2", readable: true }
+      - { name: multi_scene, cmd: "0x01", pro_type: "0xa1" }
+    encryption: none
+    confidence: high
+    sources: ["bulblightstringv1/ble/Mode.java:8-22", "bulblightstringv1/ble/controller/MultipleScenesController.java:48"]
+
+  - id: barelightv1
+    category: neon
+    models: [H6145, H6146, H6147, H6171]
+    delivery: base_apk
+    connectivity: [ble]
+    protocol: { single_packet: true, multi_dialects: ["0xA1"] }
+    submodes: { color: "0x0b", color_alt: "0x15", scene: "0x04", music: "0x0c", diy: "0x0a" }
+    opcodes:
+      - { name: gradual, cmd: "0x14" }
+      - { name: gradual_wifi_ble, cmd: "0xa3" }
+      - { name: light_num, cmd: "0x0f", readable: true }
+    encryption: none
+    confidence: medium
+    sources: ["barelightv1/ble/Mode.java:28-52 (no BleNotifyComm)"]
+
+  # ─────────────────────────── Lamps / car / misc lights (base.apk) ───────────────────────────
+  - id: tablelampv1
+    category: lamp
+    models: [H6052, H6078]
+    goods_types: [22, 128]
+    delivery: base_apk
+    connectivity: [ble, wifi]
+    submodes: { color: "0x0d", scene: "0x04", music: "0x0f", music_alt: "0x13", diy: "0x0a" }
+    opcodes:
+      - { name: light_indicator, cmd: "0x16", payload: "[enable, sH,sM,eH,eM] or [enable,FF,FF,FF,FF]", note: "NewLightIndicatorController" }
+    # Scene encoding (validated against the scene catalog): sceneType0 (null param) -> activate-only 33 05 04 <code>;
+    # sceneType3 (graffiti) -> dialect A (ScenesOp.parseSceneV1 -> MultiNewScenesControllerV3, comType 7, decoded param w/ first 2 bytes stripped);
+    # sceneType5 (DIY-in-scenes) -> tablelampv1-specific: H6052ScenesViewMode -> Diy.parseScenes4Diy -> MultipleDiyInScenesController
+    #   via SceneControllerNoEventV2 (proType 0xA3). commByte chosen by first-matching parser on the decoded param's byte0:
+    #   DiyProtocol(byte0==0)->4, DiyGraffiti(byte0==1)->3, DiyGraffitiV3(byte0==0x13, parserParamsV5)->9. value = the parser's re-encode.
+    #   Every H6052 catalog type-5 param is byte0=0x13 -> commByte 9 (DiyGraffitiV3.a()). This is the LIBRARY-scene path and is
+    #   DISTINCT from the DIY-EDITOR path (H6052Diy{Normal,Pro}GraffitiParse, getProtocolCode 3/9).
+    pact:
+      note: "sceneType5 library scenes -> MultipleDiyInScenesController via SceneControllerNoEventV2 (0xA3); commByte = 4/3/9 by decoded byte0 = 0/1/0x13 (DiyProtocol/DiyGraffiti/DiyGraffitiV3). Catalog H6052 type5 all byte0=0x13 => commByte 9. sceneType3 -> dialect A comType 7 (strip 2). NOT the DIY-editor H6052Diy*GraffitiParse (3/9)."
+    # H6052 kelvin: KelvinConfig [2000,9000] is the LIVE value (H6052NewDetailVM); family Support.getColorTemKelvinRange [2200,6500] is vestigial.
+    specs: { segments: "H6052=2, H6078=1 (getColorSize). Mechanism (C) — NO 0xA5-group read; colour from the 0x0D mode-report (single colour fanned across zones, SubMode4Color.syncColor)", kelvin_range: [2000, 9000], scene_versions: [0, 1, 4, 5], brightness_range: [1, 100] }
+    encryption: none
+    confidence: high
+    sources: ["tablelampv1/newAdjust/h6052/H6052ScenesViewMode.java:45", "tablelampv1/adjust/Diy.java:98-111", "base2light/ble/MultipleDiyInScenesController.java:12-22", "base2light/ac/diy/v2/DiyProtocolParser.java:1558-1573", "base2light/ac/diy/local/ShareDiy.java:224,364", "tablelampv1/ble/Mode.java", "tablelampv1/ble/NewLightIndicatorController.java:51", "tablelampv1/pact/Support.java:27,30"]
+
+  - id: homelightv1
+    category: lamp
+    models: [H6148]
+    delivery: base_apk
+    connectivity: [ble, wifi]
+    submodes: { color: "0x0d", scene: "0x04", music: "0x0f", diy: "0x0a" }
+    encryption: none
+    confidence: high
+    sources: ["homelightv1/ble/Mode.java", "homelightv1/ble/SubModeColor.java:150"]
+
+  - id: hollowlamp
+    category: panel
+    models: [H6050, H6051, H6055, H6058, H6059, H6073]
+    goods_types: [27, 37, 42, 58, 59, 84, 395]
+    delivery: base_apk
+    connectivity: [ble, wifi]
+    submodes: { color: "0x0d", scene: "0x04", music: "0x0e", music_alt: "0x0f", diy: "0x0a" }
+    opcodes:
+      - { name: local_color, cmd: "0xa5", readable: true }
+      - { name: auto_induction, cmd: "0xa6" }
+      - { name: sensitive, cmd: "0xa7" }
+      - { name: multi_music, cmd: "0x41" }
+    encryption: secret_key_pairing
+    confidence: high
+    sources: ["hollowlamp/ble/Mode.java", "hollowlamp/ble/controller/*", "hollowlamp/ble/GroupOpV2.java:31 (group secret)"]
+
+  - id: carlightv1
+    category: car_light
+    models: [H6118, H6194]
+    delivery: base_apk
+    connectivity: [ble]
+    submodes: { color: "0x0d", scene: "0x04", music: "0x0e", music_alt: "0x13", diy: "0x0a" }
+    encryption: secret_key_pairing
+    confidence: medium
+    sources: ["carlightv1/ble/Mode.java", "carlightv1/ble/SubModeColor.java:132"]
+
+  - id: h604a
+    category: rgbic_strip
+    models: [H604A, H604B, H604C, H604D]
+    delivery: base_apk
+    connectivity: [ble, wifi]
+    submodes: { color: "0x15", scene: "0x04", music: "0x13", diy: "0x0a", video: "0x00" }
+    opcodes:
+      - { name: swap_light, cmd: "0x34" }
+      - { name: start_time, cmd: "0x35" }
+      - { name: compose_light, cmd: "0x36" }
+      - { name: ic_num, cmd: "0x40" }
+      - { name: multi_music, cmd: "0x41" }
+      - { name: cali_light_belt, cmd: "0xa7" }
+      - { name: check_light, cmd: "0xaa", readable: true }
+    encryption: none
+    confidence: high
+    sources: ["h604a/ble/Mode.java:15-20", "h604a/ble/controller/*"]
+
+  - id: h6057
+    category: lamp
+    models: [H6057]
+    goods_types: [104]
+    delivery: base_apk
+    connectivity: [ble, wifi]
+    submodes: { color: "0x0d", scene: "0x04", music: "0x13", diy: "0x0a", game: "0x0b" }
+    opcodes:
+      - { name: preset_info, cmd: "0x24" }
+      - { name: preset_color, cmd: "0x25" }
+      - { name: preset_scene, cmd: "0x26" }
+      - { name: preview_effect, cmd: "0x27" }
+      - { name: delete_preset_scene, cmd: "0x28" }
+      - { name: sort_preset_scene, cmd: "0x29" }
+      - { name: play_voice, cmd: "0x31" }
+      - { name: get_detail, cmd: "0x34" }
+      - { name: energy_saving, cmd: "0x16" }
+      - { name: local_color, cmd: "0xa5", readable: true }
+    encryption: none
+    confidence: high
+    sources: ["h6057/origin/ble/Mode.java:28-36", "h6057/origin/ble/controller/*"]
+
+  - id: h1162
+    category: hdmi_sync
+    models: [H1162, H1163, H1167, H1168]
+    delivery: base_apk
+    connectivity: [ble, wifi]
+    # Music/HDMI Sync Box; uses shared light mode set.
+    encryption: none
+    confidence: low
+    sources: ["h1162/ble/*"]
+
+  # ─────────────────────────── Splicing panels & grow lights (H70xx, base.apk) ───────────────────────────
+  - id: h70b1
+    category: splicing_panel
+    models: [H70B1]
+    delivery: base_apk
+    connectivity: [ble, wifi]
+    protocol: { single_packet: true, multi_dialects: ["0xA1"] }
+    submodes: { color: "0x0d", scene: "0x04", music: "0x13", diy: "0x0a" }
+    opcodes: [{ name: splicing, cmd: "0x40" }]
+    encryption: none
+    confidence: medium
+    sources: ["h70b1/origin/ble/Mode.java:23-40"]
+
+  - id: h70b2
+    category: splicing_panel
+    models: [H70B2]
+    delivery: base_apk
+    connectivity: [ble, wifi]
+    protocol: { single_packet: true, multi_dialects: ["0xA1"] }
+    submodes: { color: "0x0d", scene: "0x04", music: "0x13", diy: "0x0a" }
+    encryption: none
+    confidence: medium
+    sources: ["h70b2/origin/ble/Ble.java (reuses H70B1 comm; adds MTU negotiation)"]
+
+  - id: h70bx
+    category: splicing_panel
+    models: [H70B1, H70B2, H70BC]
+    delivery: base_apk
+    connectivity: [ble, wifi]
+    opcodes:
+      - { name: change_splicing, cmd: "0x40" }
+      - { name: read_sub_device_version, cmd: "0x43" }
+    encryption: none
+    confidence: medium
+    sources: ["h70bx/controller/ControllerChangeSplicing.java:87", "h70bx/present/SkuItemClickManager.java"]
+
+  - id: h705a
+    category: rgbic_strip
+    models: [H705a, H705b, H705D, H705E, H705F, H3401, H61C2, H61C3, H61C5, H7067, H7068, H7069, H706A, H706B, H706C]
+    delivery: base_apk
+    connectivity: [ble, wifi]
+    protocol: { single_packet: true, multi_dialects: ["0xA1", "0xA3"] }
+    encryption: none
+    confidence: low
+    sources: ["h705a/ble/* (shared newDetail modes)"]
+
+  - id: h7004
+    category: grow_light
+    models: [H7004]
+    delivery: base_apk
+    connectivity: [ble]
+    protocol: { single_packet: true, multi_dialects: [] }
+    opcodes: [{ name: red_blue, cmd: "0x01", note: "SubModeRedBlue 41/61/81 -> 1/2/3 by LED count" }]
+    encryption: none
+    confidence: high
+    sources: ["h7004/ble/Mode.java:7-15", "h7004/ble/controller/RedBlueController.java"]
+
+  - id: h7017
+    category: grow_light
+    models: [H7017]
+    delivery: base_apk
+    connectivity: [ble]
+    protocol: { single_packet: true, multi_dialects: [] }
+    encryption: none
+    confidence: medium
+    sources: ["h7017/ble/* (plant-mode; adjust/RedBlueController)"]
+
+  - id: h7022
+    category: string_light
+    models: [H7022]
+    delivery: base_apk
+    connectivity: [ble, wifi]
+    protocol: { single_packet: true, multi_dialects: ["0xA1"] }
+    opcodes:
+      - { name: scenes_mode, cmd: "0x01", pro_type: "0xa1" }
+      - { name: bulb_num, cmd: "0x0f" }
+      - { name: read_bulb_color, cmd: "0xa2", readable: true }
+    encryption: none
+    confidence: medium
+    sources: ["h7022/ble/*", "h7022/scenes/ble/ScenesModeController.java:41"]
+
+  # ─────────────────────────── TV backlights & HDMI sync (base.apk) ───────────────────────────
+  - id: tvlightv1
+    category: tv_backlight
+    models: [H6179]
+    delivery: base_apk
+    connectivity: [ble, wifi]
+    submodes: { color: "0x0d", scene: "0x04", music: "0x0e", diy: "0x0a" }
+    opcodes: [{ name: segment_limit, cmd: "0x0e" }]
+    encryption: none
+    confidence: medium
+    sources: ["tvlightv1/ble/Mode.java:9-24"]
+
+  - id: pact_tvlightv2
+    category: tv_backlight
+    models: [H6198, H6199]
+    delivery: base_apk
+    connectivity: [ble, wifi]
+    submodes: { color: "0x0b", color_alt: "0x15", scene: "0x04", music: "0x0c", music_alt: "0x13", diy: "0x0a", video: "0x00" }
+    opcodes:
+      - { name: check_camera, cmd: "0x32" }
+      - { name: camera_position, cmd: "0x31" }
+      - { name: light_direction, cmd: "0x30" }
+      - { name: start_time, cmd: "0x34" }
+      - { name: gradual, cmd: "0xa3" }
+    encryption: none
+    confidence: high
+    sources: ["pact_tvlightv2/ble/Mode.java:8-43", "pact_tvlightv2/ble/controller/*"]
+
+  - id: pact_tvlightv3
+    category: tv_backlight
+    models: [H6046, H6053, H6056]
+    delivery: base_apk
+    connectivity: [ble, wifi, iot]
+    submodes: { color: "0x0d", color_alt: "0x15", scene: "0x04", music: "0x0c", music_alt: "0x13", diy: "0x0a" }
+    opcodes:
+      - { name: swap_light, cmd: "0x34" }
+      - { name: single_light, cmd: "0x33" }
+    encryption: none
+    confidence: high
+    sources: ["pact_tvlightv3/ble/Mode.java:9-38"]
+
+  - id: pact_tvlightv4
+    category: tv_backlight
+    models: [H6049, H6054]
+    delivery: base_apk
+    connectivity: [ble, wifi, iot]
+    submodes: { color: "0x0d", color_alt: "0x15", scene: "0x04", music: "0x0c", music_alt: "0x13", diy: "0x0a", video: "0x00" }
+    opcodes:
+      - { name: check_camera, cmd: "0x32" }
+      - { name: camera_position, cmd: "0x31" }
+      - { name: light_direction, cmd: "0x30" }
+      - { name: swap_light, cmd: "0x34" }
+      - { name: start_time, cmd: "0x35" }
+    encryption: none
+    confidence: high
+    sources: ["pact_tvlightv4/ble/Mode.java:8-43"]
+
+  - id: pact_h605b
+    category: hdmi_sync
+    models: [H605B, H605C, H605D, H6601, H6602, H6603, H6604, H6608, H8604]
+    delivery: base_apk
+    connectivity: [ble, wifi, iot]
+    submodes: { color: "0x15", scene: "0x04", music: "0x13", diy: "0x0a", video: "0x00" }
+    opcodes:
+      - { name: check_camera, cmd: "0x32" }
+      - { name: camera_position, cmd: "0x31" }
+      - { name: light_direction_hdmi, cmd: "0x30" }
+      - { name: calibration, cmd: "0x44" }
+      - { name: white_balance_ai_hdmi, cmd: "0xa9" }
+      - { name: usb_check_state, cmd: "0x37" }
+      - { name: light_install_notify, cmd: "0x23" }
+      - { name: cali_light_notify, cmd: "0x25" }
+    encryption: none
+    confidence: high
+    sources: ["pact_h605b/ble/Mode.java:20-49", "pact_h605b/ble/controller/**"]
+
+  # ─────────────── Button / contact-trigger sensor family ───────────────
+  - id: h512x
+    category: sensor
+    models: [H5121, H5122, H5123, H5124, H5125, H5126, H5129, H5130]
+    goods_types: [130, 131, 132, 139, 144, 145, 206, 238]  # +206 H5129 (H5129Config:98), +238 H5130 (H5130Config:148)
+    delivery: feature_split
+    connectivity: [ble]
+    # name_prefixes UNVERIFIED: no broadcast parser for these SKUs exists in the split to confirm
+    # advertised names. The only confirmed sibling is GVH5127 (H5127, BleBroadcast4H5127:32), which
+    # suggests a "GVH512x" family pattern — but the earlier ["ihoment_H512","GVH512","GV5122"] entries
+    # were synthesized from generic prefix rules and are NOT source-confirmed, so they are removed.
+    name_prefixes: []
+    # Coin-cell contact/trigger sensors. Per-SKU device type:
+    #   H5121 Motion Sensor (130) · H5122 Button Sensor (131) · H5123 Door/Window (132)
+    #   H5124 Vibration (139) · H5125 Button Remote (144) · H5126 Button Switch (145)
+    #   H5129 Outdoor Motion (206) · H5130 Pressure Sensor (238).  Buttons: H5122/H5125/H5126.
+    # Not a light: no color/scene/music sub-modes.
+    # SETTINGS SCOPE: adjustable command sets belong ONLY to the motion (H5121/H5129) and pressure
+    # (H5130) SKUs. Buttons (H5122/H5125/H5126), door (H5123) and vibration (H5124) have NO settings
+    # command set here — H5122Config.goToSettingPage()=false; their events arrive via cloud push
+    # (WarnMessage), not local BLE config writes.
+    protocol: { single_packet: true, multi_dialects: [] }
+    opcodes:
+      # commV1 subsystem — MOTION sensors only (CommandDistanceLevel/CommandIntervalTime imported by
+      # H5121 & H5129 dialogs; Command4H5129LiSenSwitch is H5129-only). NOT applicable to buttons.
+      - { name: distance_level, cmd: "0x01", readable: true, applies_to: "H5121, H5129", payload: "[sensThreshold,1,1,level]; H5129 3-step thresholds 80/40/20", note: "detection sensitivity (motion only)" }
+      - { name: interval_time, cmd: "0x02", readable: true, applies_to: "H5121, H5129", payload: "[seconds] default 60 (range 60-180)", note: "report/blackout interval (motion only)" }
+      - { name: light_sensor_switch, cmd: "0x03", applies_to: "H5129", payload: "[0/1]", note: "H5129 outdoor light-sensor enable (H5129 only)" }
+      # H5130 (pressure sensor) subsystem — H5130 only. cmd 0x02-0x06 collide by number with the
+      # motion opcodes above but are a distinct command set (different SKU, different BleComm).
+      - { name: cur_pressure_read, cmd: "0x02", readable: true, applies_to: "H5130", note: "H5130 current pressure (u8)" }
+      - { name: pressure_threshold, cmd: "0x03", readable: true, applies_to: "H5130", payload: "[threshold]", note: "H5130" }
+      - { name: has_pressure_time, cmd: "0x04", readable: true, applies_to: "H5130", payload: "[u16 BE seconds]", note: "H5130 press-hold duration" }
+      - { name: no_pressure_time, cmd: "0x05", readable: true, applies_to: "H5130", payload: "[u16 BE seconds]", note: "H5130 release duration" }
+      - { name: light_is_display, cmd: "0x06", readable: true, applies_to: "H5130", payload: "[0/1]", note: "H5130 LED on/off" }
+    notify: [{ sub_type: "0x05", meaning: "H5130 current-pressure push (Event4CurPressure); commV1 SKUs push triggers via cloud WarnMessage" }]
+    encryption: none
+    confidence: high
+    sources: ["splits/dec2/h512x/.../h5121/config/h5122/H5122Config.java:46,139,161", "h5121/config/h5129/H5129Config.java:98", "h5121/config/h5130/H5130Config.java:148", "h5121/ble/commV1/{CommandDistanceLevel,CommandIntervalTime,Command4H5129LiSenSwitch}.java", "h5121/ble/other/* (H5130)", "h5121/ble/commV1/BleComm.java:20-25", "h512x/Constant512x.java"]

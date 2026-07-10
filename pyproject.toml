@@ -33,9 +33,19 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-test = ["pytest", "pytest-asyncio", "pytest-cov"]
+# kaitaistruct: runtime for the spec/*.ksy readers under tests/spec_gen (offline
+#   spec-conformance suite). jsonschema: validates spec/devices.yaml. The Kaitai
+#   *compiler* is a build tool (JS, no JVM) invoked by tools/gen_kaitai.sh — the
+#   generated readers are committed, so running the tests needs only the runtime.
+test = ["pytest", "pytest-asyncio", "pytest-cov", "kaitaistruct>=0.10", "jsonschema>=4.0"]
 cloud = ["aiohttp>=3.9"]
 typing = ["mypy", "types-PyYAML"]
+
+[tool.pytest.ini_options]
+# async fixtures/tests (e.g. tests/test_h60a6_live.py) run without per-test markers
+asyncio_mode = "auto"
+# only collect the test suite; tools/*_test.py are CLIs, not pytest modules
+testpaths = ["tests"]
 
 [project.urls]
 Homepage = "https://github.com/Brady-Woods/govee-ble-local"

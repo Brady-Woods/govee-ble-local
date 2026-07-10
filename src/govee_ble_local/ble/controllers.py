@@ -8,9 +8,17 @@ device captures (see PROTOCOL.md).
 """
 from __future__ import annotations
 
+import time
 from typing import Literal
 
+from ..crypto import checksum
 from .frame import PRO_READ, PRO_WRITE, build_frame
+
+# H60A6 dialect-B scene/DIY protocol code (getProtocolCode() = 88). Used as the
+# commByte for both the 0xA3 DIY and 0xA4-MTU graffiti upload forms.
+COMM_H60A6 = 0x58
+# H6052 type-5 professional-graffiti commByte (MultipleDiyInScenesController -> DiyGraffitiV3.a()).
+COMM_H6052_GRAFFITI = 0x09
 
 # --- opcodes (BleConstants + observed) -------------------------------------
 CMD_POWER = 0x01           # 33 01 <val>           (SwitchController, cmd 1)
@@ -153,11 +161,13 @@ def scene(scene_id: tuple[int, int]) -> bytes:
 
 
 def scene_chunks(param_b64: str) -> list[bytes]:
-    """Split a scene's effect blob into the a3-chunk upload burst.
+    """LEGACY / diagnostic only — do NOT use for production scene upload.
 
-    Each returned frame is `a3 <seq> <=17 bytes>` (seq 0,1,...; last = 0xFF),
-    already framed+checksummed. byte0 of the blob gets bit 0x08 set (the
-    device silently no-ops without it). Send these, then activate via scene()."""
+    This is the historical builder: it ORs ``0x08`` onto blob byte 0 and omits the
+    a3_start ``commByte``. Hardware + Java review showed this is wrong (the byte 4
+    slot is a device/scene ``commByte``; the `0x50|0x08 == 0x58` match on H60A6 was
+    a coincidence). Kept only so the `tools/*_ab_*` A/B experiments can reproduce the
+    old framing. Production uses :func:`scene_upload_a3`."""
     import base64
 
     raw = bytearray(base64.b64decode(param_b64))
@@ -175,14 +185,99 @@ def scene_chunks(param_b64: str) -> list[bytes]:
     return out
 
 
+def scene_upload_a3(param_b64: str, comm_byte: int, *, strip: int = 0) -> list[bytes]:
+    """Path-B (scene-library) a3 upload burst — the corrected framing.
+
+    Byte-stream chunked into ``0xA3`` frames (seq 0,1,…; last = ``0xFF``,
+    **data-bearing**): ``[0x01(marker), packet_count, comm_byte, <value…>]``.
+    - ``comm_byte`` (frame byte 4) is the scene-version comType chosen by the caller
+      from ``(sceneType, versionArray)`` (see ``scenes.scene_upload_params``); NOT
+      ``value[0] | 0x08``.
+    - ``value`` = base64-decoded ``scenceParam`` verbatim, minus ``strip`` leading
+      bytes (0 for rgb/rgbic, 2 for graffiti/V3, 1 for compose — per the Java review).
+      No re-encode is applied (library scenes upload the param ~verbatim).
+
+    ``packet_count`` = total frames incl. START and the data-bearing terminator.
+    """
+    import base64
+
+    value = base64.b64decode(param_b64)[strip:]
+    stream = bytes([0x01, 0x00, comm_byte & 0xFF]) + value
+    pieces = -(-len(stream) // 17)  # ceil; packet_count fits in one byte
+    stream = bytes([0x01, pieces & 0xFF, comm_byte & 0xFF]) + value
+    out: list[bytes] = []
+    for i in range(pieces):
+        piece = stream[i * 17 : (i + 1) * 17]
+        seq = 0xFF if i == pieces - 1 else i  # last frame is data-bearing
+        out.append(build_frame(0xA3, seq, piece))
+    return out
+
+
+def scene_upload_a4_mtu(value: bytes, comm_byte: int, *, mtu: int = 20) -> list[bytes]:
+    """0xA4-MTU multi-packet scene upload — MultipleControllerCommV1.makeSendBytesMtu.
+
+    Used by the H60A6 graffiti dialect-B path (commByte 0x58). Frame forms
+    (seq_marker @ bytes 1-2, u16 LE)::
+
+        START  [A4 00 00 01 cntLo cntHi comm  value×(mtu-8)]   seq_marker 0x0000
+        MIDDLE [A4 seqLo seqHi           value×(mtu-4)]        seq = 1-based index
+        END    [A4 FF FF                 value]                seq_marker 0xFFFF
+
+    ``cnt`` = total frame count. The END frame is **data-bearing** (carries the last
+    value chunk); there is no separate empty terminator in the multi-packet case.
+    Frames are exact-length with a trailing BCC (NOT zero-padded to 20), so the END
+    is naturally short and ``START.value ++ MIDDLEs ++ END.value == value`` byte-exact.
+    ``mtu`` is the app-internal MtuConfig size (default 20), not the GATT ATT MTU.
+
+    Verified vs makeSendBytesMtu: Aurora (187 B, mtu 20) -> 12 frames =
+    START(12) + 10×MIDDLE(16) + END(15).
+    """
+    def _f(body: bytes) -> bytes:
+        return body + bytes([checksum(body)])
+
+    start_cap, mid_cap = mtu - 8, mtu - 4
+    head, rest = value[:start_cap], value[start_cap:]
+    chunks = [rest[i : i + mid_cap] for i in range(0, len(rest), mid_cap)]
+    total = 1 + (len(chunks) if chunks else 1)  # START + (data frames | empty END)
+    out = [_f(bytes([0xA4, 0x00, 0x00, 0x01, total & 0xFF, (total >> 8) & 0xFF,
+                     comm_byte & 0xFF]) + head)]
+    if not chunks:  # small case: START holds all; empty terminator END
+        out.append(_f(bytes([0xA4, 0xFF, 0xFF])))
+        return out
+    last = len(chunks) - 1
+    for idx, chunk in enumerate(chunks):
+        if idx == last:  # data-bearing END
+            out.append(_f(bytes([0xA4, 0xFF, 0xFF]) + chunk))
+        else:            # MIDDLE, 1-based packet index
+            seq = idx + 1
+            out.append(_f(bytes([0xA4, seq & 0xFF, (seq >> 8) & 0xFF]) + chunk))
+    return out
+
+
 # --- plug / transport-adjacent --------------------------------------------
 def sync_time(unix_ts: int) -> bytes:
-    """Push wall-clock time: 33 b5 <4-byte big-endian ts> 01 f9. Required
-    after every power command on the plug family for the relay to actuate."""
+    """Push wall-clock time: ``33 b5 <4-byte BE ts> 01 <tzHour> <tzMin>``.
+
+    Layout confirmed against ``h5080/ble/controller/SyncTimeController.java``: the
+    plug family uses cmd ``0xB5`` with a 4-byte big-endian Unix timestamp, a
+    constant ``0x01``, then the **local UTC offset** as signed hour + signed
+    minute bytes (DST-aware; the app derives it from ``TimeZoneUtil``). Both the
+    hour and minute bytes carry the sign, e.g. UTC-7 -> ``F9 00``,
+    UTC-3:30 -> ``FD E2`` (-3, -30). (Previously the offset was hardcoded to
+    ``01 F9`` = UTC-7 / tzMin 0, wrong for every other zone.) Required after
+    every power command on the plug family for the relay to actuate."""
     ts = unix_ts & 0xFFFFFFFF
+    off = time.localtime(unix_ts).tm_gmtoff or 0   # seconds east of UTC, DST-aware
+    tz_hour = int(off / 3600)                       # truncate toward zero, signed
+    tz_min = int((abs(off) % 3600) / 60)            # magnitude minutes...
+    if off < 0:
+        tz_min = -tz_min                            # ...with the same sign as the hour
     return build_frame(
         PRO_WRITE, CMD_SYNC_TIME,
-        bytes([(ts >> 24) & 0xFF, (ts >> 16) & 0xFF, (ts >> 8) & 0xFF, ts & 0xFF, 0x01, 0xF9]),
+        bytes([
+            (ts >> 24) & 0xFF, (ts >> 16) & 0xFF, (ts >> 8) & 0xFF, ts & 0xFF,
+            0x01, tz_hour & 0xFF, tz_min & 0xFF,
+        ]),
     )
 
 

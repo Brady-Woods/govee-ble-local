@@ -15,29 +15,56 @@ from ..models import DeviceState, Segment
 STATUS_CHUNK_REQUIRED = (0x00, 0x01, 0x02, 0x03, 0x04, 0xFF)
 STATUS_CHUNK_FULL = STATUS_CHUNK_REQUIRED + (0x05, 0x06, 0x07, 0x08)
 
-_HEADER_LEN = 19
-_GROUP = 4 * 4       # 4 records x [brightness, r, g, b]
-_MARKER = 3          # inter-group marker
-
-
 def parse_segments(chunks: dict[int, bytes]) -> list[Segment]:
-    """Per-segment [brightness, r, g, b] records from chunks 0x05-0x08 (+0xFF
-    tail). Returns [] if the segment chunks are absent or truncated."""
-    if any(k not in chunks for k in (0x05, 0x06, 0x07, 0x08)):
+    """Per-segment colour from the reassembled 0xAC status burst (mechanism A —
+    H60A6 / H6047 / H6641).
+
+    The reassembled blob is a TLV stream; segment colour comes in **0xA5 groups**:
+    ``[0xA5, len, group_index, records…]`` where each record is 4 bytes
+    ``[brightness, R, G, B]``. Groups are 1-indexed and carry 4 records each except
+    a final partial group, so segment *i* sits at ``4*(group_index-1)+k``. The TLV
+    is self-delimiting (record count = ``(len-1)//4``), so this needs no fixed layout
+    or per-SKU count — the H60A6 yields all 13 (groups 4,4,4,1), unlike the old fixed
+    ``3×4=12`` walk which dropped the 13th. Returns [] if no colour group is present.
+
+    NOTE: mechanism B (H61A8, 0xAA-notify BulbGroupColor: 0xA2=3-byte / 0xA5=4-byte)
+    and C (H6052, 0x0D mode-report) are different transports — not handled here.
+    """
+    if not chunks:
         return []
-    stream = b"".join(chunks.get(k, b"") for k in (0x05, 0x06, 0x07, 0x08, 0xFF))
-    need = _HEADER_LEN + 2 * (_GROUP + _MARKER) + _GROUP
-    if len(stream) < need:
+    # Reassemble all chunk bodies in tag order (0xFF sorts last) so a group that
+    # spans a chunk boundary stays contiguous.
+    blob = b"".join(chunks[t] for t in sorted(chunks))
+    return _parse_color_groups(blob)
+
+
+def _parse_color_groups(blob: bytes) -> list[Segment]:
+    """Walk the 0xA5 colour-group TLV run in a reassembled status blob."""
+    n = len(blob)
+    # Anchor on the first valid group (type 0xA5, len = 1+4k, group_index == 1),
+    # skipping the device-info TLVs that precede it.
+    i = 0
+    while i + 2 < n:
+        ln = blob[i + 1]
+        if blob[i] == 0xA5 and 1 <= ln and i + 2 + ln <= n and (ln - 1) % 4 == 0 and blob[i + 2] == 1:
+            break
+        i += 1
+    else:
         return []
-    segments: list[Segment] = []
-    pos = _HEADER_LEN
-    for _group in range(3):
-        for _ in range(4):
-            brightness, r, g, b = stream[pos : pos + 4]
-            segments.append(Segment(len(segments), (r, g, b), brightness))
-            pos += 4
-        pos += _MARKER
-    return segments
+    segs: dict[int, Segment] = {}
+    while i + 2 <= n and blob[i] == 0xA5:
+        ln = blob[i + 1]
+        val = blob[i + 2 : i + 2 + ln]
+        if len(val) < ln or ln < 1:
+            break
+        group_index = val[0]
+        records = val[1:]
+        for k in range(len(records) // 4):
+            brightness, r, g, b = records[k * 4 : k * 4 + 4]
+            idx = 4 * (group_index - 1) + k
+            segs[idx] = Segment(idx, (r, g, b), brightness)
+        i += 2 + ln
+    return [segs[k] for k in sorted(segs)]
 
 
 def _uniform_rgb(segments: list[Segment]) -> tuple[int, int, int] | None:
@@ -156,6 +183,21 @@ def parse_active_scene(frame: bytes) -> int | None:
     return frame[3] | (frame[4] << 8)
 
 
+def _zone_bits(terminator: bytes) -> tuple[int, int] | None:
+    """Locate the zone on/off TLV ``30 02 <zone0> <zone1> a5`` in the status
+    terminator chunk and return (zone0, zone1). Anchored on the 0xA5 stream marker
+    that always follows the 2-byte value, so it's robust to the offset drifting with
+    device mode. Returns None if the TLV isn't present."""
+    start = 0
+    while True:
+        i = terminator.find(b"\x30\x02", start)
+        if i == -1:
+            return None
+        if i + 4 < len(terminator) and terminator[i + 4] == 0xA5:
+            return terminator[i + 2], terminator[i + 3]
+        start = i + 1
+
+
 def parse_status(chunks: dict[int, bytes], address: str | None = None) -> DeviceState:
     """Build a DeviceState from reassembled 0xAC status chunks.
 
@@ -170,16 +212,19 @@ def parse_status(chunks: dict[int, bytes], address: str | None = None) -> Device
     chunk00 = chunks.get(0x00)
     terminator = chunks.get(0x05) or chunks.get(0xFF)
 
-    lower = upper = None
+    # Zone on/off is a TLV in the status stream: [0x30, 0x02, zone0, zone1] followed
+    # by the 0xA5 stream marker. Anchor on that TLV rather than a fixed byte offset:
+    # the offset drifts with device mode (whether chunk 0x00 is present) and a fixed
+    # read can land on the 0xA5 marker, reporting a zone as permanently on. zone_power
+    # keys match the 33 30 <index> command order (index 0 -> zone0), so set_zone_power
+    # and zone_is_on agree. (Verified byte-exact against H60A6 captures: power-off ->
+    # both bytes 0; per-zone toggles flip the matching byte.)
+    z0 = z1 = None
     if terminator is not None:
-        shift = 0 if chunk00 is not None else 1
-        if len(terminator) >= 16 + shift:
-            lower = bool(terminator[14 + shift])
-            upper = bool(terminator[15 + shift])
-            # byte 15 = power_index 0 (H60A6 main), byte 14 = power_index 1
-            # (background). (Verified live: the earlier 14->main mapping was
-            # reversed.)
-            state.zone_power = {0: upper, 1: lower}
+        zbytes = _zone_bits(terminator)
+        if zbytes is not None:
+            z0, z1 = zbytes
+            state.zone_power = {0: bool(z0), 1: bool(z1)}
 
     if chunk00 is not None and len(chunk00) >= 16:
         state.brightness = chunk00[10]
@@ -189,8 +234,8 @@ def parse_status(chunks: dict[int, bytes], address: str | None = None) -> Device
     if rgb is not None:
         state.rgb_color = rgb
 
-    if lower is not None or upper is not None:
-        state.is_on = bool(lower or upper)
+    if z0 is not None or z1 is not None:
+        state.is_on = bool(z0 or z1)
 
     if address is not None:
         state.wifi_mac, state.hardware_version = _anchor_device_info(chunks, address)

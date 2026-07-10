@@ -4,10 +4,30 @@ Fixtures are real bytes captured from Govee devices / the app.
 """
 from __future__ import annotations
 
+import os
+import time
+from contextlib import contextmanager
+
 from govee_ble_local import crypto
 from govee_ble_local.ble import controllers, frame
 from govee_ble_local.const import PSK
 from govee_ble_local.transport import handshake
+
+
+@contextmanager
+def _tz(name: str):
+    """Pin the process timezone so timezone-dependent frames are deterministic."""
+    prev = os.environ.get("TZ")
+    os.environ["TZ"] = name
+    time.tzset()
+    try:
+        yield
+    finally:
+        if prev is None:
+            os.environ.pop("TZ", None)
+        else:
+            os.environ["TZ"] = prev
+        time.tzset()
 
 
 def test_checksum_and_frame() -> None:
@@ -40,9 +60,28 @@ def test_secret_check_matches_capture() -> None:
 
 
 def test_sync_time_matches_capture() -> None:
-    # Real app frame: 33 b5 6a 49 90 1a 01 f9 ... d7
-    got = controllers.sync_time(0x6A49901A)
+    # Real app frame captured 2026-07-04 in Pacific time (PDT = UTC-7):
+    #   33 b5 6a 49 90 1a 01 f9 00 ... d7   (tzHour=-7=0xf9, tzMin=0)
+    # Pin the tz so the signed-offset bytes reproduce the capture deterministically.
+    with _tz("America/Los_Angeles"):
+        got = controllers.sync_time(0x6A49901A)
     assert got.hex() == "33b56a49901a01f90000000000000000000000d7"
+
+
+def test_sync_time_half_hour_zone() -> None:
+    # Regression for the old hardcoded UTC-7: a +5:30 zone must encode both the
+    # hour and the (signed) minute byte. India = UTC+5:30 -> tzHour=0x05, tzMin=0x1e.
+    with _tz("Asia/Kolkata"):
+        got = controllers.sync_time(0x6A49901A)
+    assert got[:9].hex() == "33b56a49901a01051e"
+
+
+def test_sync_time_negative_half_hour_zone() -> None:
+    # A negative half-hour zone signs BOTH bytes. Newfoundland DST = UTC-2:30
+    # -> tzHour=-2=0xfe, tzMin=-30=0xe2.
+    with _tz("America/St_Johns"):
+        got = controllers.sync_time(0x6A49901A)
+    assert got[6:9].hex() == "01fee2"
 
 
 def test_power_relay_and_binary() -> None:

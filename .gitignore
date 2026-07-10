@@ -12,3 +12,10 @@ htmlcov/
 .venv-check/
 venv/
 .DS_Store
+# userland Node + Kaitai compiler for tools/gen_kaitai.sh (generated readers are
+# committed under tests/spec_gen, so this toolchain is only needed to regenerate)
+.toolchain/
+# local BLE captures / frame logs — never commit raw captures
+*.jsonl
+btsnoop*.log
+govee_capture/
