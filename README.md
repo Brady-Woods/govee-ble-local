@@ -1,18 +1,18 @@
 # govee-ble-local
 
-**Local Bluetooth LE control of Govee lights — no cloud, no LAN API.**
+**Local Bluetooth LE control of Govee devices — no cloud, no LAN API.**
 
-A standalone Python library implementing Govee's encrypted BLE control
-protocol (AES + RC4 handshake, packet framing, command construction, and
-status parsing), reverse-engineered from packet captures. It's the protocol
-engine behind the
+A standalone Python library implementing Govee's BLE control protocol (AES-ECB+RC4
+handshake, 20-byte command framing, multi-packet scene upload, and status read-back),
+derived from the decompiled Govee Home app and verified against real hardware. It's the
+protocol engine behind the
 [`hass-govee-ble-local`](https://github.com/Brady-Woods/hass-govee-ble-local)
-Home Assistant integration, but has no Home Assistant dependency and can be
-used on its own.
+Home Assistant integration, but has no Home Assistant dependency and can be used on its own.
 
-> ⚠️ **Unofficial.** Not affiliated with or endorsed by Govee. Reverse-engineered;
-> behavior may change with device firmware. Verified on the **H60A6** (Ceiling
-> Light Pro); other BLE models may work but are untested.
+> ⚠️ **Unofficial.** Not affiliated with or endorsed by Govee. Reverse-engineered from the
+> app + hardware; behavior may change with device firmware. Live-verified on the **H60A6**
+> (Ceiling Light Pro); the other curated SKUs are modelled from the app and are not all
+> hardware-verified (see the profile notes).
 
 ## Install
 
@@ -22,55 +22,75 @@ pip install govee-ble-local        # once published
 pip install -e .
 ```
 
-Requires Python 3.11+. Depends on `bleak`, `bleak-retry-connector`,
-`cryptography`, and `PyYAML` (the last is only used by the device-profile layer
-and is imported lazily, so the pure `protocol` module needs neither it nor `bleak`).
+Requires Python 3.11+. Depends on `bleak`, `bleak-retry-connector`, `cryptography`,
+`PyYAML`, and `kaitaistruct` (the shipped, spec-generated wire parser).
 
 ## Quick start
 
 ```python
 import asyncio
-from bleak import BleakScanner
-from govee_ble_local import GoveeBleClient, ZONE_UPPER, ZONE_LOWER
+from govee_ble_local import create_device, discover
 
 async def main():
-    device = await BleakScanner.find_device_by_address("D4:13:68:21:D0:75")
-    client = GoveeBleClient(device)
+    # Active-scan for supported Govee devices (strongest advertisement per address).
+    devices = await discover(timeout=8.0)
+    found = next(d for d in devices if d.sku == "H60A6")
 
-    await client.set_brightness_pct(60)
-    await client.set_rgb_color(255, 0, 0)
-    await client.set_zone(ZONE_UPPER, True)
-    await client.set_zone(ZONE_LOWER, False)
+    dev = create_device(found.ble_device, found.sku)
 
-    status = await client.get_status()
-    print(status)   # zones, brightness, scene, MACs, hardware version
+    await dev.turn_on()
+    await dev.set_brightness(60)             # percent
+    await dev.set_rgb((255, 0, 0))
+    await dev.set_zone_power("background", False)
 
-    await client.disconnect()
+    state = await dev.update()               # read-back into dev.state
+    print(state.is_on, state.brightness, state.rgb_color, state.segments)
+
+    await dev.stop()
 
 asyncio.run(main())
 ```
 
 ## API
 
-- **`GoveeBleClient(ble_device)`** — on-demand encrypted session with idle
-  auto-disconnect. Methods: `set_zone`, `set_brightness_pct`, `set_rgb_color`,
-  `set_color_temp_kelvin`, `set_segment_color`, `set_segment_brightness`,
-  `set_scene`, `set_scene_full`, `get_status`, `get_serial_number`,
-  `update_ble_device`, `disconnect`.
-  `get_status(with_segments=True)` additionally reads per-segment state (a
-  longer, drop-prone query, so `status.segments` may still be `None`).
-- **`GoveeBleStatus`** / **`GoveeBleSegment`** — parsed state dataclasses.
-  `GoveeBleStatus.rgb_color` derives the current solid color from the segment
-  data (requires `with_segments=True`; `None` for multi-color/scene states).
-- **`govee_ble_local.protocol`** — the pure, Bluetooth-free protocol functions
-  (crypto, framing, `cmd_*` command builders, `parse_status`,
-  `build_scene_chunks`, `kelvin_to_rgb`, …). Importable and testable without
-  `bleak` installed.
+The library follows Home-Assistant BLE-library conventions: identify a device from its
+advertisement, build a capability-driven `Device`, then drive it.
+
+- **`discover(timeout=10.0, *, supported_only=True)`** — active-scan → `list[DiscoveredDevice]`
+  (`.ble_device`, `.advertisement`, `.sku`, `.rssi`, `.supported`). `supported(name, mfg)` and
+  `match(ble_device, adv)` are the passive-matcher hooks for a HA-style scanner.
+- **`create_device(ble_device, sku, advertisement_data=None, *, secret=None, frame_log=None)`**
+  — construct a `Device` for the SKU (raises `GoveeBleNotSupported` if uncurated).
+  `is_supported_sku(sku)` / `supported_skus()` / `device_profile_for(sku)` query the table.
+- **`Device`** — one capability-gated class (behaviour comes from its `DeviceProfile`, not
+  subclasses). Commands are ACK-confirmed on the wire:
+  `turn_on` / `turn_off` / `set_power`, `set_brightness`, `set_rgb`, `set_color_temp`,
+  `set_segment_rgb` / `set_segment_brightness`, `set_zone_power` / `set_zone_rgb`,
+  `set_scene` / `set_scene_by_name`, and `update()` (read-back). Introspection:
+  `capabilities`, `zones`, `min_kelvin` / `max_kelvin`, `scene_names`, `state`,
+  `register_callback`. Methods for unsupported capabilities raise `GoveeBleNotSupported`.
+- **`DeviceState`** — parsed state: `is_on`, `brightness` (0–100), `rgb_color`,
+  `color_temp_kelvin`, `segments` (`list[Segment]`), `zone_power`, `scene_code`, plus
+  device-info (`serial_number`, `wifi_mac`, `hardware_version`, `firmware_version`, `ble_mac`).
+- **`Capability`** — `POWER`, `BRIGHTNESS`, `RGB`, `COLOR_TEMP`, `SEGMENTS`, `SCENES`.
+
+Curated SKUs: **H60A6**, **H6047**, **H61A8**, **H6006/H6008**, **H6052**, **H6641**, and the
+plug family (**H5080/H5082/H5083/H5085/H5089/H5160/H5161**). Segment-colour read-back and some
+scene dialects on the non-H60A6 SKUs are source-modelled and not yet hardware-verified.
+
+## Diagnostics & session capture
+
+The library logs under the `govee_ble_local.*` hierarchy and can capture a full protocol
+session (over a local adapter or a Home Assistant Bluetooth proxy) for analysis. Enable the
+flow trace, or the per-frame firehose, and decode a capture with the bundled
+`govee-ble-analyze` CLI. See [`docs/DIAGNOSTICS.md`](docs/DIAGNOSTICS.md).
 
 ## Protocol
 
-The wire protocol — opcodes, the encryption scheme, status chunk layout, and
-the reverse-engineering history — is documented in [`PROTOCOL.md`](PROTOCOL.md).
+The wire protocol is specified as Kaitai Struct definitions — [`spec/govee_ble.ksy`](spec/govee_ble.ksy)
+(command/reply frames) and [`spec/govee_adv.ksy`](spec/govee_adv.ksy) (advertisements) — with the
+per-device table in [`spec/devices.yaml`](spec/devices.yaml). The runtime readers under
+`govee_ble_local/_generated/` are generated from those.
 
 ## License
 

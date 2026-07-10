@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "govee-ble-local"
-version = "2.0.0.dev0"
-description = "Local Bluetooth LE control of Govee lights — no cloud, no LAN API."
+version = "3.0.0.dev0"
+description = "Local Bluetooth LE control of Govee devices — no cloud, no LAN API."
 readme = "README.md"
 license = { text = "MIT" }
 authors = [{ name = "Brady Woods" }]
