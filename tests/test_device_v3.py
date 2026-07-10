@@ -125,6 +125,22 @@ def _frame(*payload: int) -> bytes:
     return bytes(b)
 
 
+# Real captured H60A6 0xAC status burst (13 segments, both zones on, brightness 0x50).
+# Device-agnostic parse — reused to exercise mechanism-A status read-back for H6047 too.
+_STATUS_BURST = [bytes.fromhex(h) for h in (
+    "ac000a000c0300010101040150050415010000e8",
+    "ac010707065774f453e75c0711105674f453e7f0",
+    "ac025cdb2d0100290104030000070d115ce753d9",
+    "ac03f474560100290104031104001e0f0f120749",
+    "ac04ff640000800f00231000000080000000808f",
+    "ac0500000080000000804102020130020101a57e",
+    "ac06110132ff00006400ff00640000ff64ff00ec",
+    "ac0700a511026400ff00640000ff64ff000064e2",
+    "ac0800ff00a51103640000ff64ff00006400ff77",
+    "acff00640000ffa5050464ff00000000000000f7",
+)]
+
+
 def test_mechanism_c_reads_single_rgb() -> None:
     # H6052: 0x05 sub-mode 0x0D report body [R,G,B] -> state.rgb_color
     d = _dev("H6052")
@@ -153,6 +169,51 @@ def test_mechanism_b_assembles_positional_segments() -> None:
     assert segs[7].brightness == 57 and segs[7].rgb == (7, 0, 0)
 
 
+def test_plug_reads_relay_state() -> None:
+    # Item 1: plug read-back polls aa 01 (raw relay bitmask) -> state.is_on
+    d = _dev("H5080")
+    assert d.profile.readback == "plug"
+    d._conn.query = AsyncMock(return_value=[_frame(0xAA, 0x01, 0x01)])  # type: ignore[attr-defined]
+    asyncio.run(d._read_plug())
+    assert d.state.is_on is True and d.state.optimistic is False
+    d._conn.query = AsyncMock(return_value=[_frame(0xAA, 0x01, 0x00)])  # type: ignore[attr-defined]
+    asyncio.run(d._read_plug())
+    assert d.state.is_on is False
+
+
+def test_h6047_status_readback_populates_segments() -> None:
+    # Item 2: H6047 now uses mechanism-A status read-back (like H60A6/H6641)
+    assert profile_for("H6047").readback == "status"
+    d = _dev("H6047")
+    d._conn.query = AsyncMock(return_value=_STATUS_BURST)  # type: ignore[attr-defined]
+    asyncio.run(d._read_status())
+    assert len(d.state.segments) == 13   # parser takes N from the reply, not a fixed count
+    assert d.state.zone_power == {0: True, 1: True}
+
+
+def test_device_info_populates_state_once() -> None:
+    # Item 3: update() reads aa 07 basic/wifi/sn once and fills the static fields
+    d = _dev("H60A6")
+
+    def _info(frame: bytes, **_kw: object) -> list[bytes]:
+        sel = frame[2]
+        if sel == 0x10:
+            return [_frame(0xAA, 0x07, 0x10, 0x5C, 0xE7, 0x53, 0xF4, 0x74, 0x56, 0, 0, 1, 2, 3, 1, 0, 5)]
+        if sel == 0x11:
+            return [_frame(0xAA, 0x07, 0x11, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 4, 5, 6, 7, 8, 9)]
+        if sel == 0x02:
+            return [_frame(0xAA, 0x07, 0x02, 0x5C, 0xE7, 0x53, 0xF4, 0x74, 0x56, 0, 0)]
+        return []
+
+    d._conn.query = AsyncMock(side_effect=_info)  # type: ignore[attr-defined]
+    asyncio.run(d._read_device_info())
+    assert d.state.serial_number == "56:74:F4:53:E7:5C"
+    assert d.state.wifi_mac == "AA:BB:CC:DD:EE:FF"
+    assert d.state.firmware_version == "1.02.03" and d.state.hardware_version == "1.00.05"
+    assert d.state.ble_mac is None            # no reply carries a distinct BLE MAC
+    assert d._device_info_read is True        # gated to once
+
+
 def test_read_secret_bootstrap() -> None:
     # aa b1 reply: selector 0x01 + 8-byte secret; readable on an unbound plug (no secret set)
     d = _dev("H5080")
@@ -178,20 +239,8 @@ def test_ingest_advertisement_onoff() -> None:
 
 def test_readback_status_maps_to_state() -> None:
     # feed the real captured H60A6 0xAC burst through Device._read_status via a mock query
-    burst = [bytes.fromhex(h) for h in (
-        "ac000a000c0300010101040150050415010000e8",
-        "ac010707065774f453e75c0711105674f453e7f0",
-        "ac025cdb2d0100290104030000070d115ce753d9",
-        "ac03f474560100290104031104001e0f0f120749",
-        "ac04ff640000800f00231000000080000000808f",
-        "ac0500000080000000804102020130020101a57e",
-        "ac06110132ff00006400ff00640000ff64ff00ec",
-        "ac0700a511026400ff00640000ff64ff000064e2",
-        "ac0800ff00a51103640000ff64ff00006400ff77",
-        "acff00640000ffa5050464ff00000000000000f7",
-    )]
     d = _dev("H60A6")
-    d._conn.query = AsyncMock(return_value=burst)  # type: ignore[attr-defined]
+    d._conn.query = AsyncMock(return_value=_STATUS_BURST)  # type: ignore[attr-defined]
     # scene mode-read returns nothing usable -> scene_code stays None
     asyncio.run(d._read_status())
     assert d.state.is_on is True and d.state.brightness == 0x50

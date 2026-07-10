@@ -56,6 +56,7 @@ class Device:
         self._sku = (sku or profile.skus[0]).upper()
         self._secret = secret
         self._state = DeviceState(optimistic=True)
+        self._device_info_read = False   # device-info (mac/hw/fw/sn) read once, lazily
         self._callbacks: list[StateCallback] = []
         enc = self._resolve_encryption(advertisement_data)
         self._conn = GoveeConnection(
@@ -299,13 +300,53 @@ class Device:
             await self._read_status()
         elif self.profile.readback == "polled":
             await self._read_polled()
+        elif self.profile.readback == "plug":
+            await self._read_plug()
         # Segment / single-colour read-back layered on top (spec Change 7).
         if self.profile.color_readback == "mechanism_b":
             await self._read_mechanism_b()
         elif self.profile.color_readback == "mechanism_c":
             await self._read_mechanism_c()
+        # Device-info (mac/hw/fw/serial) — static-ish, read once on the first good poll.
+        if not self._device_info_read and self.profile.readback != "none":
+            await self._read_device_info()
         self._notify()
         return self._state
+
+    async def _read_plug(self) -> None:
+        """Poll a plug's relay state (aa 01 -> raw relay bitmask; any bit set = on),
+        so state.is_on reflects the device rather than the last command sent."""
+        power = parse.parse_power(await self._read_reply(build.power_query(), 0x01) or b"")
+        if power is not None:
+            self._state.is_on = bool(power)
+            self._state.optimistic = False
+
+    async def _read_device_info(self) -> None:
+        """Populate the static device-info fields from the aa 07 replies. Selector-aware:
+        device fw/hw + serial come from BASIC (0x10); wifi_mac from WIFI (0x11) — whose
+        sw/hw are the *wifi-module* versions and must NOT clobber the device's; SN (0x02)
+        is only a serial fallback. Best-effort + once; unanswered selectors leave fields
+        None. ble_mac stays None unless a reply carries a MAC distinct from the connectable
+        address (none confirmed yet — the connectable address is otherwise the BLE MAC)."""
+        self._device_info_read = True   # don't retry every poll even if it yields nothing
+        basic = parse.parse_device_info(
+            await self._read_reply(build.device_info_query(0x10), 0x07) or b"")
+        if basic is not None:
+            if basic.serial is not None:
+                self._state.serial_number = basic.serial
+            if basic.sw_version is not None:
+                self._state.firmware_version = basic.sw_version
+            if basic.hw_version is not None:
+                self._state.hardware_version = basic.hw_version
+        wifi = parse.parse_device_info(
+            await self._read_reply(build.device_info_query(0x11), 0x07) or b"")
+        if wifi is not None and wifi.wifi_mac is not None:
+            self._state.wifi_mac = wifi.wifi_mac
+        if self._state.serial_number is None:   # SN read only if basic didn't carry it
+            sn = parse.parse_device_info(
+                await self._read_reply(build.device_info_query(0x02), 0x07) or b"")
+            if sn is not None and sn.serial is not None:
+                self._state.serial_number = sn.serial
 
     async def _read_mechanism_b(self) -> None:
         """H61A8 per-segment colour: request each 0xA5 (V2) batch (AA A5 <seq>) and

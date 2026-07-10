@@ -83,3 +83,8 @@ class DeviceState:
     hardware_version: str | None = None
     firmware_version: str | None = None
     serial_number: str | None = None
+    # A device-reported BLE MAC, IFF a device-info reply carries one distinct from the
+    # connectable address (relevant only for rotating/random advertised addresses). No
+    # curated SKU is confirmed to report this yet — stays None; the connectable address
+    # is otherwise the Bluetooth MAC.
+    ble_mac: str | None = None

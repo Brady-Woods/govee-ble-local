@@ -58,13 +58,17 @@ PROFILES: tuple[DeviceProfile, ...] = (
         min_kelvin=2700, max_kelvin=6500, readback="status",
     ),
     # H6047 — bar light: plaintext, two bars (combined 33 36), 10 segments, dialect-A scenes.
+    # Mechanism-A status read-back (0xAC -> 0xA5 groups), the SAME path as H60A6 — so
+    # `status` populates power/brightness/zones + per-segment colours. Read-back group
+    # count (getColorPieceSize=12) can exceed the write segment count (10); the parser
+    # takes N from the reply, not a fixed count. Not yet live-verified on H6047.
     DeviceProfile(
         skus=("H6047",), capabilities=_LIGHT | {_C.SEGMENTS},
         color_scheme="h60a6", encryption=Encryption.NONE, segments=10,
         zones=(Zone("left", power_index=0, segments=tuple(range(0, 5))),
                Zone("right", power_index=1, segments=tuple(range(5, 10)))),
         scene_versions=frozenset({0, 1, 2, 3}), bar_switch=True,
-        min_kelvin=2200, max_kelvin=6500, readback="polled",
+        min_kelvin=2200, max_kelvin=6500, readback="status",
     ),
     # H61A8 — rope: plaintext, 0x0b scheme, 15 segments, no CCT, dialect-A scenes.
     # Mechanism-B per-segment colour read-back (spec Change 7): 0xAA 0xA5 (V2, adds
@@ -112,10 +116,13 @@ PROFILES: tuple[DeviceProfile, ...] = (
         scene_versions=frozenset({0, 1, 2, 3, 10}), readback="status",
     ),
     # Plug family — power-only, AES + account-lock, relay encoding.
+    # `plug` read-back polls the relay state (aa 01 -> raw relay bitmask; any bit set = on),
+    # so state.is_on reflects the device, not just the last command. Not yet live-verified
+    # (secret-gated H5083); the aa-01-vs-plug-spec answer + bit->on/off mapping need hardware.
     DeviceProfile(
         skus=("H5080", "H5082", "H5083", "H5085", "H5089", "H5160", "H5161"),
         capabilities=frozenset({_C.POWER}), encryption=Encryption.AES_RC4_PSK,
-        requires_secret=True, relay=True, readback="none",
+        requires_secret=True, relay=True, readback="plug",
     ),
 )
 
