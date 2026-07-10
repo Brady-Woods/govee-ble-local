@@ -114,3 +114,9 @@ def test_device_info_zero_fields_are_none() -> None:
     assert info.wifi_mac is None and info.sw_version is None and info.hw_version is None
     good = parse.parse_device_info(f(0xAA, 0x07, 0x11, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 4, 5, 6, 7, 8, 9))
     assert good is not None and good.wifi_mac == "AA:BB:CC:DD:EE:FF" and good.sw_version == "4.05.06"
+
+
+def test_gradual() -> None:
+    assert parse.parse_gradual(f(0xAA, 0xA3, 0x01)) is True
+    assert parse.parse_gradual(f(0xAA, 0xA3, 0x00)) is False
+    assert parse.parse_gradual(f(0xAA, 0x04, 0x01)) is None   # wrong command

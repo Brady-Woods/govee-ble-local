@@ -75,6 +75,7 @@ class DeviceState:
     color_temp_kelvin: int | None = None
     segments: list[Segment] = field(default_factory=list)
     scene_code: int | None = None            # active scene code, if in scene mode
+    gradual: bool | None = None              # 0xA3 gradual/fade-on-handoff flag (gradual-capable SKUs)
     # Per-zone power, keyed by the zone's power_index (e.g. H60A6 0=main, 1=background).
     zone_power: dict[int, bool] = field(default_factory=dict)
     optimistic: bool = False                 # True if not read back from the device

@@ -27,6 +27,7 @@ CMD_MODE = 0x05
 CMD_DEVICE_INFO = 0x07
 CMD_ZONE = 0x30            # light_direction_or_zone
 CMD_BAR_SWITCH = 0x36      # compose_light_switch
+CMD_GRADUAL_WIFI_BLE = 0xA3   # gradual/fade on BLE<->wifi handoff (W/R flag)
 CMD_SECRET_READ = 0xB1
 CMD_SECRET_WRITE = 0xB2
 CMD_PLUG_SPEC = 0xB3
@@ -222,6 +223,16 @@ def mode_query() -> bytes:
 
 def bar_switch_query() -> bytes:
     return frame(PRO_READ, CMD_BAR_SWITCH)
+
+
+def gradual(on: bool) -> bytes:
+    """33 A3 <0/1>: gradual/fade on the BLE<->wifi control handoff (GRADUAL_CHANGE_WIFI_BLE)."""
+    return frame(PRO_WRITE, CMD_GRADUAL_WIFI_BLE, 1 if on else 0)
+
+
+def gradual_query() -> bytes:
+    """AA A3: read the gradual flag (reply = gradual_read, state @ byte0)."""
+    return frame(PRO_READ, CMD_GRADUAL_WIFI_BLE)
 
 
 def secret_read() -> bytes:

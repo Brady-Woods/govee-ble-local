@@ -85,6 +85,12 @@ def parse_plug_spec(frame: bytes) -> int | None:
     return None if b is None else int(b.spec)
 
 
+def parse_gradual(frame: bytes) -> bool | None:
+    """AA A3 reply (gradual_read): gradual/fade-on-handoff enabled iff byte0 == 1."""
+    b = _read_reply(frame, _Command.gradual_wifi_ble)
+    return None if b is None else bool(b.state)
+
+
 # ── mode (0x05) read replies ─────────────────────────────────────────────────
 def _mode_read(frame: bytes) -> Any:
     f = _parse(frame)

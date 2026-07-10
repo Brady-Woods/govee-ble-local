@@ -326,6 +326,16 @@ class Device:
                 await self._conn.send(chunk, expect_ack=False)
         await self.set_scene(scene.code)
 
+    # -- misc settings ------------------------------------------------------
+    async def set_gradual(self, on: bool) -> None:
+        """Toggle the gradual/fade-on-BLE↔wifi-handoff flag (0xA3). Only SKUs whose profile
+        sets ``gradual`` (e.g. H61A8) support it; others raise GoveeBleNotSupported."""
+        if not self.profile.gradual:
+            raise GoveeBleNotSupported(f"{self._sku}: gradual (BLE/wifi fade) not supported")
+        await self._conn.send(build.gradual(on))
+        self._state.gradual = on
+        self._notify()
+
     # -- read-back ----------------------------------------------------------
     async def update(self) -> DeviceState:
         if self.profile.readback == "status":
@@ -339,6 +349,10 @@ class Device:
             await self._read_mechanism_b()
         elif self.profile.color_readback == "mechanism_c":
             await self._read_mechanism_c()
+        if self.profile.gradual:
+            g = parse.parse_gradual(await self._read_reply(build.gradual_query(), 0xA3) or b"")
+            if g is not None:
+                self._state.gradual = g
         # Device-info (mac/hw/fw/serial) — static-ish, read once on the first good poll.
         if not self._device_info_read and self.profile.readback != "none":
             await self._read_device_info()

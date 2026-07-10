@@ -38,6 +38,7 @@ class DeviceProfile:
     requires_secret: bool = False
     relay: bool = False
     bar_switch: bool = False          # H6047: both bars in one 33 36 frame
+    gradual: bool = False             # supports the 0xA3 gradual/fade-on-handoff flag (W/R)
     readback: ReadBack = "none"
     # Segment-colour read-back mechanism layered on top of `readback` (spec Change 7):
     # "" none | "mechanism_b" (H61A8 0xAA 0xA2/0xA5 per-batch) | "mechanism_c" (H6052 0x0D).
@@ -84,7 +85,7 @@ PROFILES: tuple[DeviceProfile, ...] = (
         capabilities=frozenset({_C.POWER, _C.BRIGHTNESS, _C.RGB, _C.SEGMENTS, _C.SCENES}),
         color_scheme="h61a8", encryption=Encryption.NONE, segments=15,
         scene_versions=frozenset({0, 1, 2, 3}), readback="polled",
-        color_readback="mechanism_b", color_readback_per_batch=3,
+        color_readback="mechanism_b", color_readback_per_batch=3, gradual=True,
     ),
     # H6006 / H6008 — legacy bulbs: plaintext, 0x0d scheme, type-1 rgb scene upload (version {1}).
     DeviceProfile(

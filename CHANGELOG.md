@@ -17,6 +17,8 @@ readers. Clean break from the v2 `GoveeBleClient` API.
   + `build.segment_color_temp()` (the 0x15 CCT frame's segment mask, previously all-segments only).
 - Read-back: plug relay power, H6047 segment colours (mechanism-A status), and device-info
   (`serial` / `wifi_mac` / `firmware` / `hardware`), plus `DeviceState.ble_mac`.
+- `Device.set_gradual()` — the `0xA3` gradual/fade-on-BLE↔wifi-handoff flag (curated: H61A8;
+  read back into `DeviceState.gradual` on `update()`).
 - `Device.read_secret()` and `Device.ingest_advertisement()` restored (v2 parity).
 - Diagnostics: a coherent `govee_ble_local.*` log-level scheme, a `govee_ble_local.frames`
   frame-tier logger for full-session capture (incl. over a Home Assistant Bluetooth proxy),
@@ -42,8 +44,10 @@ readers. Clean break from the v2 `GoveeBleClient` API.
 - Modeled the reassembled `0xAC` nested TLV values (source-verified, `Compose4BaseInfoSingleRead`):
   `status_tlv` switches `0x05→mode_status`, `0x07→device_info_read`, `0xA5→color_group_status`;
   `status_reply` uses `repeat: until type==0` + `if: type != 0` to survive the trailing zero-pad.
-- Added `gradual_read` (0xA3) and tag-grouped `color_strip_write` (modeled; not yet surfaced as
-  `Device` methods).
+- Added `gradual_read` (0xA3) — now surfaced (`Device.set_gradual`) — and tag-grouped
+  `color_strip_write`, which is modeled but **not exposed**: it has no curated-SKU binding in
+  `devices.yaml` (needs source: which SKU uses `MultipleColorStripControllerV1` / comType 0x40, and
+  whether it complements or replaces `set_segment_rgb`).
 - Fixed a YAML-1.1 boolean id trap (`id: on` → parsed as `.true`); renamed to `state` / `on_flag`.
 - `devices.yaml`: H60A6 segment→zone map; H6641 colour records are 4-byte; mechanism-B/C read-back
   and scene-dialect notes.

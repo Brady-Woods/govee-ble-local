@@ -105,6 +105,14 @@ def test_zone_and_segment_color_temp() -> None:
         asyncio.run(_dev("H6006").set_segment_color_temp([0], 3000))
 
 
+def test_gradual_setting() -> None:
+    d = _dev("H61A8")                       # only curated SKU with the 0xA3 gradual flag
+    asyncio.run(d.set_gradual(True))
+    assert _sent(d)[0][:3].hex() == "33a301" and d.state.gradual is True
+    with pytest.raises(GoveeBleNotSupported):
+        asyncio.run(_dev("H60A6").set_gradual(True))   # profile.gradual = False
+
+
 def test_scene_dialect_routing() -> None:
     def upload(sku: str, scene: Scene) -> list[bytes] | None:
         return _dev(sku)._scene_upload_frames(scene)

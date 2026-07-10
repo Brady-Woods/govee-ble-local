@@ -84,6 +84,12 @@ def test_segment_and_zone_and_bar() -> None:
     assert bytes(bar.body.params)[:2] == b"\x01\x00"
 
 
+def test_gradual() -> None:
+    assert b.gradual(True)[:3].hex() == "33a301"
+    assert b.gradual(False)[:3].hex() == "33a300"
+    assert b.gradual_query()[:2].hex() == "aaa3"
+
+
 def test_scene_activate_and_plug_and_secret() -> None:
     s = _p(b.scene_activate(0x4A82)).body.params
     assert s.sub_type == F.SubMode.scene and s.params.effect == 0x4A82
