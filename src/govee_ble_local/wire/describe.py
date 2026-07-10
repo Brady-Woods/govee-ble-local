@@ -21,7 +21,10 @@ use :func:`analyze_status_bursts` for those.
 from __future__ import annotations
 
 import collections
+from io import BytesIO as _BytesIO
 from typing import Any
+
+from kaitaistruct import KaitaiStream as _KaitaiStream
 
 from .._generated.govee_ble_frame import GoveeBleFrame as _GBF  # type: ignore[attr-defined]
 from . import reassemble as _reassemble
@@ -188,8 +191,17 @@ def analyze_status_bursts(
     types: collections.Counter[int] = collections.Counter()
     gaps: list[str] = []
     for b in complete:
-        for t, _val in _reassemble.walk_tlvs(_reassemble.reassemble(b)):
+        buf = _reassemble.reassemble(b)
+        try:
+            reply = _F.StatusReply(_KaitaiStream(_BytesIO(buf)))
+        except Exception:  # noqa: BLE001 - a "complete" burst that still won't parse = malformed
+            malformed += 1
+            continue
+        for tlv in reply.tlvs:
+            t = int(tlv.type)
+            if t == 0:                     # trailing zero-pad sentinel
+                continue
             types[t] += 1
-            if t not in KNOWN_STATUS_REPLY_TLVS:
+            if t not in KNOWN_STATUS_REPLY_TLVS:  # unknown type -> value falls to raw bytes
                 gaps.append(f"0xAC reply TLV type 0x{t:02x} not modelled")
     return types, gaps, malformed

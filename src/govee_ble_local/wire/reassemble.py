@@ -6,13 +6,12 @@ through the 0xFF terminator (chunks de-duplicated + index-ordered — devices do
 The joined buffer is then parsed straight from the ksy ``status_reply`` type (generated
 reader) — a ``[type, len, value]`` TLV stream (Compose4BaseInfoSingleRead.u) that types
 every value (switch / brightness / zone / seg-info / colour groups / 0x07 device-info) and
-terminates on the trailing zero pad. ``walk_tlvs`` remains only for the offline analyzer's
-unknown-type detection (:mod:`.describe`).
+terminates on the trailing zero pad. The offline analyzer (:mod:`.describe`) parses the same
+buffer with the same generated reader and flags any TLV type outside the modelled set.
 """
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterator
 from dataclasses import dataclass, field
 from io import BytesIO as _BytesIO
 from typing import Any
@@ -67,20 +66,6 @@ def reassemble(frames: list[bytes]) -> bytes:
     for i, fr in enumerate(ordered):
         buf += fr[7:19] if i == 0 else fr[2:19]
     return bytes(buf)
-
-
-def walk_tlvs(buf: bytes) -> Iterator[tuple[int, bytes]]:
-    """Yield (type, value) for each ``[type, len, value]`` TLV; stop at zero padding."""
-    i, n = 0, len(buf)
-    while i + 2 <= n:
-        t, ln = buf[i], buf[i + 1]
-        if t == 0 and ln == 0:            # trailing zero pad
-            break
-        val = buf[i + 2 : i + 2 + ln]
-        if len(val) < ln:                 # truncated tail
-            break
-        yield t, val
-        i += 2 + ln
 
 
 def parse_status(frames: list[bytes]) -> StatusReply:

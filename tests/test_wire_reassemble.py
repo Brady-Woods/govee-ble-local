@@ -50,12 +50,12 @@ def test_out_of_order_chunks_reassemble_by_index() -> None:
     assert r.reassemble(shuffled) == r.reassemble(frames)
 
 
-def test_tlv_walk_stops_on_padding() -> None:
-    # a minimal buffer: switch on, brightness 60, then zero pad
-    buf = bytes([0x01, 1, 1, 0x04, 1, 60, 0, 0, 0, 0])
-    got = dict(r.walk_tlvs(buf))
-    assert got[0x01] == b"\x01" and got[0x04] == bytes([60])
-    assert 0x00 not in got  # padding terminates the walk
+def test_parse_status_stops_on_padding() -> None:
+    # the generated status_reply reader terminates on the trailing zero pad (repeat-until
+    # type==0) — a burst padded to the frame boundary parses cleanly to just the real TLVs.
+    frames = [bytes.fromhex(h) for h in _BURST]
+    st = r.parse_status(frames)
+    assert st.is_on is True and st.brightness == 0x50   # no throw, no phantom TLVs from the pad
 
 
 def test_parse_status_extracts_device_info() -> None:
