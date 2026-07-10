@@ -1,13 +1,14 @@
 """govee-ble-local: local Bluetooth LE control of Govee devices.
 
-Ported from the decompiled Govee Home app. Public API mirrors Home Assistant
-BLE-library conventions (led-ble / switchbot).
+Spec-first (v3): device behaviour is driven by a data ``DeviceProfile`` and the
+Kaitai-generated wire layer, not per-SKU subclasses. Public API mirrors Home
+Assistant BLE-library conventions.
 """
 from __future__ import annotations
 
 from .const import LOCAL_NAME_PREFIXES, MANUFACTURER_IDS
-from .devices.base import GoveeDevice
-from .devices.plug import GoveePlug
+from .devices.device import Device
+from .devices.profile import DeviceProfile
 from .exceptions import (
     GoveeBleAuthError,
     GoveeBleConnectionError,
@@ -20,7 +21,7 @@ from .identify import GoveeAdvertisement
 from .models import Capability, DeviceState, Segment, Zone
 from .registry import (
     create_device,
-    device_class_for_sku,
+    device_profile_for,
     is_supported_sku,
     supported_skus,
 )
@@ -28,6 +29,8 @@ from .scanner import DiscoveredDevice, discover, match, supported
 
 __all__ = [
     "Capability",
+    "Device",
+    "DeviceProfile",
     "DeviceState",
     "DiscoveredDevice",
     "GoveeAdvertisement",
@@ -37,14 +40,12 @@ __all__ = [
     "GoveeBleHandshakeError",
     "GoveeBleNotSupported",
     "GoveeBleTimeout",
-    "GoveeDevice",
-    "GoveePlug",
     "LOCAL_NAME_PREFIXES",
     "MANUFACTURER_IDS",
     "Segment",
     "Zone",
     "create_device",
-    "device_class_for_sku",
+    "device_profile_for",
     "discover",
     "is_supported_sku",
     "match",

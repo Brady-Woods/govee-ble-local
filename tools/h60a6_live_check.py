@@ -89,13 +89,13 @@ async def refresh(dev, want=None, attempts: int = 5):  # type: ignore[no-untyped
 
 async def read_kelvin(dev) -> int | None:  # type: ignore[no-untyped-def]
     """Kelvin from the mode read-back (aa 05 15 01 <kelvin u2be>), Kaitai-validated."""
-    from govee_ble_local.ble import controllers
+    from govee_ble_local.wire import build as controllers
 
     try:
         from govee_ble_local._generated.govee_ble_frame import GoveeBleFrame as GBF
     except Exception:
         GBF = None
-    frames = await dev._connection.query(
+    frames = await dev._conn.query(
         controllers.mode_query(), opcode=0xAA, terminal=0x05, timeout=3.0
     )
     for fr in frames:
@@ -132,7 +132,7 @@ class Runner:
                 if attempt == 1:
                     print(f"  (recovering from {type(err).__name__}; reconnecting…)")
                     try:
-                        await self.dev._connection.connect()
+                        await self.dev._conn.connect()
                     except Exception:  # noqa: BLE001
                         pass
                     continue
@@ -212,7 +212,7 @@ class Runner:
         """Address ALL segments: set each of the 13 individually to a cycling R/G/B
         colour, then read every segment back and verify its dominant channel."""
         dev = self.dev
-        n = dev._segments
+        n = dev.profile.segments
         palette = [(255, 0, 0), (0, 255, 0), (0, 0, 255)]
         await dev.set_brightness(80)
         for i in range(n):
@@ -268,10 +268,10 @@ async def main() -> int:
     from govee_ble_local.scenes import load_scenes
 
     dev = create_device(dev_ble, "H60A6", advertisement_data=adv)
-    dev._connection._idle_disconnect = 0  # keep the ONE connection alive for the whole run
+    dev._conn._idle_disconnect = 0  # keep the ONE connection alive for the whole run
     print(f"Connecting to H60A6 {dev.address} …")
-    await dev._connection.connect()
-    print(f"Connected. encryption={dev._connection._encryption.value}"
+    await dev._conn.connect()
+    print(f"Connected. encryption={dev._conn._encryption.value}"
           + (f"  capture -> {args.capture}" if args.capture else ""))
 
     catalog = load_scenes("H60A6")
@@ -298,7 +298,7 @@ async def main() -> int:
         if static:
             await r.group(f"scene static/activate-only ({static})", lambda: r.scene(static, "static"))
     finally:
-        await dev._connection.disconnect()
+        await dev._conn.disconnect()
 
     print("\n" + "=" * 60 + "\nSUMMARY")
     for name, ok, note in r.results:

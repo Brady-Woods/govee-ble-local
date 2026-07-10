@@ -1,52 +1,30 @@
-"""SKU -> device-class registry and the device factory."""
+"""SKU -> device factory (data-driven from the DeviceProfile table)."""
 from __future__ import annotations
 
 from typing import Any
 
 from bleak.backends.device import BLEDevice
 
-from .devices.base import GoveeDevice
-from .devices.light import (
-    GoveeLightH60A6,
-    GoveeLightH6006,
-    GoveeLightH6008,
-    GoveeLightH6047,
-    GoveeLightH6052,
-    GoveeLightH6641,
-    GoveeStripH61A8,
-)
-from .devices.plug import GoveePlug
+from .devices.device import Device, make_device
+from .devices.profile import DeviceProfile, profile_for, supported_skus
 from .exceptions import GoveeBleNotSupported
 
-# Register concrete device classes here as families are ported.
-_DEVICE_CLASSES: tuple[type[GoveeDevice], ...] = (
-    GoveePlug,
-    GoveeLightH60A6,
-    GoveeLightH6006,
-    GoveeLightH6008,
-    GoveeLightH6047,
-    GoveeLightH6052,
-    GoveeLightH6641,
-    GoveeStripH61A8,
-)
-
-# SKU (upper-case) -> class, built from each class's `skus`.
-_BY_SKU: dict[str, type[GoveeDevice]] = {
-    sku.upper(): cls for cls in _DEVICE_CLASSES for sku in cls.skus
-}
+__all__ = [
+    "Device",
+    "create_device",
+    "device_profile_for",
+    "is_supported_sku",
+    "supported_skus",
+]
 
 
-def supported_skus() -> list[str]:
-    """All SKUs this library can currently control."""
-    return sorted(_BY_SKU)
-
-
-def device_class_for_sku(sku: str) -> type[GoveeDevice] | None:
-    return _BY_SKU.get(sku.upper())
+def device_profile_for(sku: str) -> DeviceProfile | None:
+    """The DeviceProfile for `sku`, or None if unsupported."""
+    return profile_for(sku)
 
 
 def is_supported_sku(sku: str) -> bool:
-    return sku.upper() in _BY_SKU
+    return profile_for(sku) is not None
 
 
 def create_device(
@@ -55,9 +33,9 @@ def create_device(
     advertisement_data: Any | None = None,
     *,
     secret: bytes | None = None,
-) -> GoveeDevice:
-    """Construct the right device class for `sku`."""
-    cls = device_class_for_sku(sku)
-    if cls is None:
+) -> Device:
+    """Construct a capability-driven Device for `sku`."""
+    dev = make_device(ble_device, sku, advertisement_data, secret=secret)
+    if dev is None:
         raise GoveeBleNotSupported(f"unsupported SKU: {sku}")
-    return cls(ble_device, advertisement_data, sku=sku.upper(), secret=secret)
+    return dev

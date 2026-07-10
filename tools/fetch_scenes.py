@@ -164,12 +164,12 @@ def scene_capable_skus() -> list[str]:
     """All supported SKUs whose device declares Capability.SCENES (so new
     families are covered automatically as they're added to the registry)."""
     from govee_ble_local.models import Capability
-    from govee_ble_local.registry import device_class_for_sku, supported_skus
+    from govee_ble_local.registry import device_profile_for, supported_skus
 
     out: list[str] = []
     for sku in supported_skus():
-        cls = device_class_for_sku(sku)
-        if cls is not None and Capability.SCENES in cls.capabilities:
+        p = device_profile_for(sku)
+        if p is not None and Capability.SCENES in p.capabilities:
             out.append(sku)
     return out
 
