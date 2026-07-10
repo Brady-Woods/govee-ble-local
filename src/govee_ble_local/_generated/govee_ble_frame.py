@@ -2407,7 +2407,10 @@ class GoveeBleFrame(KaitaiStruct):
 
 
     class StatusReply(KaitaiStruct):
-        """Reassembled 0xAC status reply = a sequence of [type, len, value] TLVs. Value left opaque here; 0xA5 -> color_group_read, 0x30 -> two zone on/off bits, 0x41 -> seg/IC info."""
+        """Reassembled 0xAC status reply = a sequence of [type, len, value] TLVs. The buffer is a plain
+        byte stream (the client de-chunks first), so it IS fully Kaitai-expressible — see the GAP on
+        status_tlv for the nested value types (0x07 device-info, 0x05 mode) still left raw.
+        """
         def __init__(self, _io, _parent=None, _root=None):
             super(GoveeBleFrame.StatusReply, self).__init__(_io)
             self._parent = _parent

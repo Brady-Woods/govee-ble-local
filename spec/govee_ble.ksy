@@ -415,7 +415,10 @@ types:
   #  0x11 sleep, 0x12 wakeup, 0x23 timers, 0x30 zone on/off (2 bits), 0x41 seg/IC info, 0xA5 colour group.
   #  For 0xA5 feed value to color_group_read (record_count from the per-SKU count, see devices.yaml).
   status_reply:
-    doc: "Reassembled 0xAC status reply = a sequence of [type, len, value] TLVs. Value left opaque here; 0xA5 -> color_group_read, 0x30 -> two zone on/off bits, 0x41 -> seg/IC info."
+    doc: |
+      Reassembled 0xAC status reply = a sequence of [type, len, value] TLVs. The buffer is a plain
+      byte stream (the client de-chunks first), so it IS fully Kaitai-expressible — see the GAP on
+      status_tlv for the nested value types (0x07 device-info, 0x05 mode) still left raw.
     seq:
       - { id: tlvs, type: status_tlv, repeat: eos }
   status_tlv:
@@ -431,7 +434,20 @@ types:
             0x04: status_brightness
             0x30: status_zone
             0x41: status_seg_info
-        doc: "typed for 0x01/0x04/0x30/0x41; 0xA5 colour groups -> feed to color_group_read (record count per-SKU); 0x05 mode / 0x07 device-info are nested; unmatched types stay raw"
+        doc: |
+          Typed for 0x01/0x04/0x30/0x41. GAP — the nested TLV VALUES below are Kaitai-expressible
+          (this is the REASSEMBLED buffer, a plain byte stream) but are NOT yet modelled; called out
+          for Java-source modelling so the runtime heuristics can be replaced by spec-driven parsing:
+            * 0x07 device-info — a nested [selector, ...] block; observed selectors 0x06 = BLE MAC
+              (6B, little-endian), 0x10 = basic [uid, sw, hw], 0x11 = wifi [mac, sw, hw], mirroring the
+              aa 07 device_info_read sub-types. UNTIL modelled, the client extracts wifi_mac +
+              hardware_version by a MAC-anchor heuristic (wire.reassemble.anchor_device_info: find the
+              device's own BLE MAC little-endian, then +9..15 = MAC, +20..23 = version). Model from
+              Compose4BaseInfoSingleRead.u + the per-selector 0x07 sub-parser.
+            * 0x05 mode — a nested mode block (sub-mode + params), same shape as the 0x05 frame body.
+            * 0xA5 colour group -> color_group_read, but record_count is per-SKU (externally-keyed, not
+              in the TLV), so the client walks it (wire.reassemble.parse_status), not switched here.
+          Unmatched types stay raw.
   status_switch:     { seq: [ { id: on, type: u1 } ] }
   status_brightness: { seq: [ { id: brightness, type: u1 } ] }
   status_zone:       { doc: "0x30 in the 0xAC reply: zone0 = bit0 of byte0, zone1 = bit0 of byte1 (VM4LightH60A6.o:103)", seq: [ { id: zone_a, type: u1 }, { id: zone_b, type: u1 } ] }

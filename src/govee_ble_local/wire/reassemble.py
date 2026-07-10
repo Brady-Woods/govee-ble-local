@@ -88,6 +88,11 @@ def anchor_device_info(frames: list[bytes], address: str) -> tuple[str | None, s
     This is the ONLY place BLE-only devices (e.g. H60A6) report hw + MAC — their ``aa 07``
     wifi query returns zeros. Byte-exact port of v2 ``ble/status._anchor_device_info``
     (chunk payload = frame[2:19]; stream skips chunk 0x00). Zero fields are dropped (None).
+
+    HEURISTIC by necessity: the 0x07 device-info TLV *value* inside the reassembled 0xAC
+    buffer is not yet modelled in the ksy (documented GAP on ``status_tlv``). When that
+    sub-structure is modelled from the Java source, this MAC-anchor can be replaced by a
+    spec-driven walk of the 0x07 TLV.
     """
     chunks: dict[int, bytes] = {}
     for fr in frames:
