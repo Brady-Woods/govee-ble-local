@@ -115,6 +115,44 @@ def test_h6641_segment_control_wired() -> None:
     assert f[12] == 0x07                     # mask lo: segments {0,1,2} = 0b111
 
 
+def _frame(*payload: int) -> bytes:
+    b = bytearray(20)
+    b[: len(payload)] = bytes(payload)
+    x = 0
+    for c in b[:19]:
+        x ^= c
+    b[19] = x
+    return bytes(b)
+
+
+def test_mechanism_c_reads_single_rgb() -> None:
+    # H6052: 0x05 sub-mode 0x0D report body [R,G,B] -> state.rgb_color
+    d = _dev("H6052")
+    d._conn.query = AsyncMock(return_value=[_frame(0xAA, 0x05, 0x0D, 255, 128, 64)])  # type: ignore[attr-defined]
+    asyncio.run(d._read_mechanism_c())
+    assert d.state.rgb_color == (255, 128, 64)
+
+
+def test_mechanism_b_assembles_positional_segments() -> None:
+    # H61A8: 15 segments / 3-per-batch = 5 batches, requested AA A5 <seq>; each V2 batch
+    # = [brightness,r,g,b]*3. Segments assemble positionally across the batches.
+    d = _dev("H61A8")
+
+    def _batch(frame: bytes, **_kw: object) -> list[bytes]:
+        seq = frame[2]                       # AA A5 <batch_seq>
+        groups = []
+        for i in range(3):
+            seg = (seq - 1) * 3 + i
+            groups += [50 + seg, seg, 0, 0]  # brightness encodes segment index, R=index
+        return [_frame(0xAA, 0xA5, seq, *groups)]
+
+    d._conn.query = AsyncMock(side_effect=_batch)  # type: ignore[attr-defined]
+    asyncio.run(d._read_mechanism_b())
+    segs = d.state.segments
+    assert [s.index for s in segs] == list(range(15))
+    assert segs[7].brightness == 57 and segs[7].rgb == (7, 0, 0)
+
+
 def test_readback_status_maps_to_state() -> None:
     # feed the real captured H60A6 0xAC burst through Device._read_status via a mock query
     burst = [bytes.fromhex(h) for h in (

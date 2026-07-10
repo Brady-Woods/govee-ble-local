@@ -14,6 +14,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from ..models import Segment
 from .._generated.govee_ble_frame import GoveeBleFrame as _GBF  # type: ignore[attr-defined]
 
 # The generated reader is untyped; treat it as Any so attribute chains don't need stubs.
@@ -109,6 +110,55 @@ def parse_kelvin(frame: bytes) -> int | None:
     if m is None or int(m.selector_or_sub_mode) != 0x15:
         return None
     return int(m.rest.kelvin)
+
+
+def parse_mode_color_0d(frame: bytes) -> tuple[int, int, int] | None:
+    """AA 05 0D reply (H6052, mechanism C): a single (r, g, b) colour fanned across
+    the device's zones, or None. Spec Change 7 / mode_color_0d_report. (Default-strategy
+    families reuse 0x0D as [gradual_flag, kelvin]; only H6052 reads it as RGB.)"""
+    m = _mode_read(frame)
+    if m is None or int(m.selector_or_sub_mode) != 0x0D:
+        return None
+    rb = m.rest
+    return (int(rb.r), int(rb.g), int(rb.b))
+
+
+# ── mechanism-B per-group colour read-back (H61A8; 0xAA 0xA2 V1 / 0xA5 V2) ──────
+def parse_bulb_group_batch(
+    frame: bytes,
+) -> tuple[int, list[tuple[int | None, int, int, int]]] | None:
+    """One mechanism-B batch reply (spec Change 7). Returns ``(batch_seq, groups)`` where
+    each group is ``(brightness|None, r, g, b)`` — brightness is None for the V1 (0xA2)
+    colour-only form. The segment index is POSITIONAL (assembled by the caller via
+    :func:`bulb_groups_to_segments`), never carried in the frame."""
+    f = _parse(frame)
+    if f is None or f.pro_type != _ProType.read:
+        return None
+    cmd = getattr(f.body, "command", None)
+    body = getattr(f.body, "body", None)
+    if body is None:
+        return None
+    if cmd == _Command.local_color_read:            # V2 (0xA5): [brightness, r, g, b]
+        return (int(body.batch_seq),
+                [(int(g.brightness), int(g.r), int(g.g), int(g.b)) for g in body.groups])
+    if cmd == _Command.bulb_string_color_read:      # V1 (0xA2): [r, g, b]
+        return (int(body.batch_seq),
+                [(None, int(g.r), int(g.g), int(g.b)) for g in body.groups])
+    return None
+
+
+def bulb_groups_to_segments(
+    batches: list[tuple[int, list[tuple[int | None, int, int, int]]]], per_batch: int
+) -> list[Segment]:
+    """Assemble mechanism-B batches into positional segments:
+    ``index = (batch_seq - 1) * per_batch + i`` (per_batch is a client constant:
+    V1 = 4, V2 = 3 — not frame-encoded)."""
+    segs: dict[int, Segment] = {}
+    for batch_seq, groups in batches:
+        for i, (brightness, r, g, b) in enumerate(groups):
+            idx = (batch_seq - 1) * per_batch + i
+            segs[idx] = Segment(index=idx, rgb=(r, g, b), brightness=brightness or 0)
+    return [segs[k] for k in sorted(segs)]
 
 
 # ── device info (AA 07 10/11/02) ─────────────────────────────────────────────

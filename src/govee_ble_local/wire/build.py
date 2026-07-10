@@ -219,6 +219,16 @@ def plug_spec_query() -> bytes:
     return frame(PRO_READ, CMD_PLUG_SPEC)
 
 
+CMD_BULB_COLOR_V1 = 0xA2   # bulb_string_color_read (mechanism-B V1: colour only)
+CMD_BULB_COLOR_V2 = 0xA5   # local_color_read       (mechanism-B V2: + brightness)
+
+
+def bulb_group_query(batch_seq: int, *, v2: bool = True) -> bytes:
+    """Mechanism-B per-group colour read request: ``AA <A5|A2> <batch_seq>`` (1-based
+    batch number, AbsSingleController.p). V2 (0xA5) carries per-segment brightness."""
+    return frame(PRO_READ, CMD_BULB_COLOR_V2 if v2 else CMD_BULB_COLOR_V1, batch_seq & 0xFF)
+
+
 def device_info_query(selector: int) -> bytes:
     """aa 07 <selector> (0x10 basic, 0x11 wifi, 0x02 sn)."""
     return frame(PRO_READ, CMD_DEVICE_INFO, selector & 0xFF)

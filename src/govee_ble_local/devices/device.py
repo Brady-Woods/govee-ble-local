@@ -282,8 +282,36 @@ class Device:
             await self._read_status()
         elif self.profile.readback == "polled":
             await self._read_polled()
+        # Segment / single-colour read-back layered on top (spec Change 7).
+        if self.profile.color_readback == "mechanism_b":
+            await self._read_mechanism_b()
+        elif self.profile.color_readback == "mechanism_c":
+            await self._read_mechanism_c()
         self._notify()
         return self._state
+
+    async def _read_mechanism_b(self) -> None:
+        """H61A8 per-segment colour: request each 0xA5 (V2) batch (AA A5 <seq>) and
+        assemble positional segments. per_batch/batch-count are client constants
+        (not frame-encoded); modeled from source, not yet live-verified."""
+        per_batch = self.profile.color_readback_per_batch or 3
+        batch_count = -(-self.profile.segments // per_batch)  # ceil
+        batches: list[tuple[int, list[tuple[int | None, int, int, int]]]] = []
+        for seq in range(1, batch_count + 1):
+            reply = await self._read_reply(build.bulb_group_query(seq, v2=True), 0xA5)
+            parsed = parse.parse_bulb_group_batch(reply) if reply else None
+            if parsed is not None:
+                batches.append(parsed)
+        segs = parse.bulb_groups_to_segments(batches, per_batch)
+        if segs:
+            self._state.segments = segs
+
+    async def _read_mechanism_c(self) -> None:
+        """H6052 single colour from the 0x05 sub-mode 0x0D mode report."""
+        reply = await self._read_reply(build.mode_query(), 0x05)
+        rgb = parse.parse_mode_color_0d(reply) if reply else None
+        if rgb is not None:
+            self._state.rgb_color = rgb
 
     async def _read_status(self) -> None:
         frames = await self._conn.query(build.status_query(full=True), timeout=5.0)

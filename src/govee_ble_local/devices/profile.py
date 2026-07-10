@@ -39,6 +39,10 @@ class DeviceProfile:
     relay: bool = False
     bar_switch: bool = False          # H6047: both bars in one 33 36 frame
     readback: ReadBack = "none"
+    # Segment-colour read-back mechanism layered on top of `readback` (spec Change 7):
+    # "" none | "mechanism_b" (H61A8 0xAA 0xA2/0xA5 per-batch) | "mechanism_c" (H6052 0x0D).
+    color_readback: str = ""
+    color_readback_per_batch: int = 3   # mechanism-B groups per batch frame (V2 = 3, V1 = 4)
 
 
 _LIGHT = frozenset({_C.POWER, _C.BRIGHTNESS, _C.RGB, _C.COLOR_TEMP, _C.SCENES})
@@ -63,15 +67,16 @@ PROFILES: tuple[DeviceProfile, ...] = (
         min_kelvin=2200, max_kelvin=6500, readback="polled",
     ),
     # H61A8 — rope: plaintext, 0x0b scheme, 15 segments, no CCT, dialect-A scenes.
-    # SEGMENTS = per-segment CONTROL only. GAP: mechanism-B read-back (BulbGroupColor —
-    # 0xA2 3-byte / 0xA5 4-byte per-group over 0xAA-notify) is NOT modeled in the ksy
-    # (read_command has no 0xa2 case; per-frame group framing unspecified), so segment
-    # colour read-back is not wired — `polled` covers power/brightness/scene only.
+    # Mechanism-B per-segment colour read-back (spec Change 7): 0xAA 0xA5 (V2, adds
+    # brightness) / 0xA2 (V1) per-batch frames, segment = (batch_seq-1)*per_batch+i.
+    # 15 segments / 3-per-batch = 5 batches. Modeled from source; not yet live-verified
+    # (no H61A8 hardware). `polled` covers power/brightness/scene.
     DeviceProfile(
         skus=("H61A8",),
         capabilities=frozenset({_C.POWER, _C.BRIGHTNESS, _C.RGB, _C.SEGMENTS, _C.SCENES}),
         color_scheme="h61a8", encryption=Encryption.NONE, segments=15,
         scene_versions=frozenset({0, 1, 2, 3}), readback="polled",
+        color_readback="mechanism_b", color_readback_per_batch=3,
     ),
     # H6006 / H6008 — legacy bulbs: plaintext, 0x0d scheme, type-1 rgb scene upload (version {1}).
     DeviceProfile(
@@ -85,13 +90,15 @@ PROFILES: tuple[DeviceProfile, ...] = (
         scene_versions=frozenset({1}), readback="polled",
     ),
     # H6052 — table lamp: plaintext, 0x0d scheme; type-5 scenes via dialect B_h6052 (commByte 9).
-    # GAP: mechanism-C read-back (colour from the 0x0D mode-report, fanned to 2 zones) is NOT
-    # modeled — the ksy treats 0x0d as write-only (no reply body), so colour read-back is not
-    # wired; `polled` covers power/brightness/scene only.
+    # Mechanism-C colour read-back (spec Change 7): the 0x05 sub-mode 0x0D report body is
+    # [R,G,B], a single colour fanned across the 2 zones (H6052InfoDetail custom strategy).
+    # Modeled from source; not yet live-verified (no H6052 hardware). `polled` covers
+    # power/brightness/scene.
     DeviceProfile(
         skus=("H6052",), capabilities=_LIGHT, color_scheme="h6006",
         encryption=Encryption.NONE, min_kelvin=2000, max_kelvin=9000,
         scene_versions=frozenset({0, 1, 4, 5}), scene_dialect="B_h6052", readback="polled",
+        color_readback="mechanism_c",
     ),
     # H6641 — RGBIC strip (goodsType 247): plaintext, 0x15 scheme, dialect-A scenes.
     # Mechanism A read-back (0xAC -> 0xA5 groups, Controller4ColorInfoByGroup) — the SAME

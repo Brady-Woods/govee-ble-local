@@ -79,3 +79,28 @@ def test_notify() -> None:
     zone = parse.parse_notify(f(0xEE, 0x30, 0x00, 0x01, 0x01, 0x00))
     assert zone is not None and zone.sub_type == 0x30 and zone.zone_flags == (0x01, 0x01, 0x00)
     assert parse.parse_notify(f(0x33, 0x01, 0x01)) is None  # not a notify
+
+
+# ── mechanism-B per-group colour (H61A8) + mechanism-C 0x0D colour (H6052) ─────
+def test_mechanism_b_v2_batch_and_assembly() -> None:
+    # AA A5 <batch_seq> then 3 groups of [brightness, r, g, b]
+    b1 = parse.parse_bulb_group_batch(f(0xAA, 0xA5, 1, 50, 255, 0, 0, 60, 0, 255, 0, 70, 0, 0, 255))
+    assert b1 == (1, [(50, 255, 0, 0), (60, 0, 255, 0), (70, 0, 0, 255)])
+    b2 = parse.parse_bulb_group_batch(f(0xAA, 0xA5, 2, 80, 255, 255, 0, 90, 0, 255, 255, 100, 255, 0, 255))
+    segs = parse.bulb_groups_to_segments([b1, b2], per_batch=3)
+    assert [s.index for s in segs] == [0, 1, 2, 3, 4, 5]        # positional across batches
+    assert segs[3].rgb == (255, 255, 0) and segs[3].brightness == 80
+
+
+def test_mechanism_b_v1_has_no_brightness() -> None:
+    # AA A2 (V1): 4 groups of [r, g, b], no brightness byte
+    b = parse.parse_bulb_group_batch(f(0xAA, 0xA2, 1, 255, 0, 0, 0, 255, 0, 0, 0, 255, 9, 9, 9))
+    assert b == (1, [(None, 255, 0, 0), (None, 0, 255, 0), (None, 0, 0, 255), (None, 9, 9, 9)])
+    segs = parse.bulb_groups_to_segments([b], per_batch=4)
+    assert len(segs) == 4 and segs[0].rgb == (255, 0, 0) and segs[0].brightness == 0
+
+
+def test_mechanism_c_mode_0d_rgb() -> None:
+    assert parse.parse_mode_color_0d(f(0xAA, 0x05, 0x0D, 255, 128, 64)) == (255, 128, 64)
+    assert parse.parse_mode_color_0d(f(0xAA, 0x05, 0x15, 0x01, 0x0A, 0x8C)) is None  # cct, not 0x0D
+    assert parse.parse_mode_color_0d(f(0x33, 0x05, 0x0D, 1, 2, 3)) is None            # write

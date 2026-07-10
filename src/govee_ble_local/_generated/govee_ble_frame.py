@@ -374,6 +374,102 @@ class GoveeBleFrame(KaitaiStruct):
             pass
 
 
+    class BulbGroupColorRead(KaitaiStruct):
+        """Mechanism-B V1 batch frame (BulbGroupColor.parseBytes). Reply = [AA][A2][body]; this type = body
+        (validBytes after the 2-byte header). 4 colour groups per frame, 3 bytes each [R,G,B], POSITIONAL
+        (segment = (batch_seq-1)*4 + i; no per-group index/brightness byte — that is the V1↔V2 difference).
+        Source: BulbGroupColor.java:15-29 (loop is hardcoded 4), BulbStringColorController.java:32-44 (cmd 0xA2),
+        consumer BleOpV1.java:318-345 (batch accumulate).
+        """
+        def __init__(self, _io, _parent=None, _root=None):
+            super(GoveeBleFrame.BulbGroupColorRead, self).__init__(_io)
+            self._parent = _parent
+            self._root = _root
+            self._read()
+
+        def _read(self):
+            self.batch_seq = self._io.read_u1()
+            self.groups = []
+            for i in range(4):
+                self.groups.append(GoveeBleFrame.BulbRgbGroup(self._io, self, self._root))
+
+
+
+        def _fetch_instances(self):
+            pass
+            for i in range(len(self.groups)):
+                pass
+                self.groups[i]._fetch_instances()
+
+
+
+    class BulbGroupColorReadV2(KaitaiStruct):
+        """Mechanism-B V2 batch frame (BulbGroupColorV2.parseBytes). Reply = [AA][A5][body]; this type = body.
+        Each group = 4 bytes [brightness, R, G, B] — the leading byte is BRIGHTNESS, confirmed at the consumer:
+        BulbGroupColorV2.f109039c -> SubModeColorV2.f109110e = colors.brightnessSet (SubModeColorV2.f:70).
+        Segment is POSITIONAL (= (batch_seq-1)*groups_per_batch + i), NOT the leading byte. groups_per_batch is
+        a CLIENT controller constant (BulbStringColorControllerV2.f109046g, default 3) — NOT frame-encoded;
+        modelled at 3 (H61A8: 15 segments / 3 = 5 batches). Trailing bytes = zero padding. (A V3 variant,
+        BulbStringColorControllerV3, also exists.) Source: BulbGroupColorV2.java:18-39,
+        BulbStringColorControllerV2.java:41-53, consumer BleOpV1.java:349-377.
+        """
+        def __init__(self, _io, _parent=None, _root=None):
+            super(GoveeBleFrame.BulbGroupColorReadV2, self).__init__(_io)
+            self._parent = _parent
+            self._root = _root
+            self._read()
+
+        def _read(self):
+            self.batch_seq = self._io.read_u1()
+            self.groups = []
+            for i in range(3):
+                self.groups.append(GoveeBleFrame.BulbRgbGroupV2(self._io, self, self._root))
+
+
+
+        def _fetch_instances(self):
+            pass
+            for i in range(len(self.groups)):
+                pass
+                self.groups[i]._fetch_instances()
+
+
+
+    class BulbRgbGroup(KaitaiStruct):
+        def __init__(self, _io, _parent=None, _root=None):
+            super(GoveeBleFrame.BulbRgbGroup, self).__init__(_io)
+            self._parent = _parent
+            self._root = _root
+            self._read()
+
+        def _read(self):
+            self.r = self._io.read_u1()
+            self.g = self._io.read_u1()
+            self.b = self._io.read_u1()
+
+
+        def _fetch_instances(self):
+            pass
+
+
+    class BulbRgbGroupV2(KaitaiStruct):
+        def __init__(self, _io, _parent=None, _root=None):
+            super(GoveeBleFrame.BulbRgbGroupV2, self).__init__(_io)
+            self._parent = _parent
+            self._root = _root
+            self._read()
+
+        def _read(self):
+            self.brightness = self._io.read_u1()
+            self.r = self._io.read_u1()
+            self.g = self._io.read_u1()
+            self.b = self._io.read_u1()
+
+
+        def _fetch_instances(self):
+            pass
+
+
     class CctReadReply(KaitaiStruct):
         """Mode 0x15 CCT read reply. kelvin = u2be at frame bytes 4-5 (e.g. 0x0A8C=2700, 0x1964=6500); NO FF FF FF white point (unlike the write, which is [op, FF FF FF, kHi, kLo, ...]). Source: SubModeColorV2.parse / ComposeChange2ColorMode.result."""
         def __init__(self, _io, _parent=None, _root=None):
@@ -1411,6 +1507,35 @@ class GoveeBleFrame(KaitaiStruct):
             pass
 
 
+    class ModeColor0dReport(KaitaiStruct):
+        """Mode 0x05 sub-mode 0x0D colour read-back. Frame = [proType][05][0D][body…]; this type = the body
+        (bytes after the 0x0D sub-mode byte). Body interpretation is DEVICE-SPECIFIC — chosen by the
+        IParseStrategy each device's *InfoDetail installs on its SubMode4Color:
+          * H6052 (tablelampv1, CUSTOM strategy) => [R, G, B]: a SINGLE colour (ColorUtils.G(vb0,vb1,vb2))
+            fanned across the device's zones (getColorSize: H6052=2). This resolves the old "0x0d is write-only"
+            note — H6052 DOES read colour back, as these 3 bytes. Source: H6052InfoDetail.parseModeValidBytes
+            :323-346 (validBytes[0]==0x0D -> colour strategy on validBytes[1:]) + :141-147.
+          * DEFAULT SubMode4Color strategy (most other families) => [gradual_flag, kelvin u16-be], NOT RGB
+            (iParseStrategy: q(vb0==1); s(getSignedShort(vb1,vb2))). For those devices reinterpret r as the
+            gradual flag and g,b as the big-endian kelvin.
+        Modelled as the H6052 RGB form (the curated device). Trailing frame bytes are zero padding (unparsed).
+        """
+        def __init__(self, _io, _parent=None, _root=None):
+            super(GoveeBleFrame.ModeColor0dReport, self).__init__(_io)
+            self._parent = _parent
+            self._root = _root
+            self._read()
+
+        def _read(self):
+            self.r = self._io.read_u1()
+            self.g = self._io.read_u1()
+            self.b = self._io.read_u1()
+
+
+        def _fetch_instances(self):
+            pass
+
+
     class ModePayload(KaitaiStruct):
         def __init__(self, _io, _parent=None, _root=None):
             super(GoveeBleFrame.ModePayload, self).__init__(_io)
@@ -1493,7 +1618,12 @@ class GoveeBleFrame(KaitaiStruct):
         def _read(self):
             self.selector_or_sub_mode = self._io.read_u1()
             _on = self.selector_or_sub_mode
-            if _on == 19:
+            if _on == 13:
+                pass
+                self._raw_rest = self._io.read_bytes_full()
+                _io__raw_rest = KaitaiStream(BytesIO(self._raw_rest))
+                self.rest = GoveeBleFrame.ModeColor0dReport(_io__raw_rest, self, self._root)
+            elif _on == 19:
                 pass
                 self._raw_rest = self._io.read_bytes_full()
                 _io__raw_rest = KaitaiStream(BytesIO(self._raw_rest))
@@ -1511,7 +1641,10 @@ class GoveeBleFrame(KaitaiStruct):
         def _fetch_instances(self):
             pass
             _on = self.selector_or_sub_mode
-            if _on == 19:
+            if _on == 13:
+                pass
+                self.rest._fetch_instances()
+            elif _on == 19:
                 pass
                 self.rest._fetch_instances()
             elif _on == 21:
@@ -1887,6 +2020,11 @@ class GoveeBleFrame(KaitaiStruct):
                 self._raw_body = self._io.read_bytes_full()
                 _io__raw_body = KaitaiStream(BytesIO(self._raw_body))
                 self.body = GoveeBleFrame.BrightnessReadReply(_io__raw_body, self, self._root)
+            elif _on == GoveeBleFrame.Command.bulb_string_color_read:
+                pass
+                self._raw_body = self._io.read_bytes_full()
+                _io__raw_body = KaitaiStream(BytesIO(self._raw_body))
+                self.body = GoveeBleFrame.BulbGroupColorRead(_io__raw_body, self, self._root)
             elif _on == GoveeBleFrame.Command.compose_light_switch:
                 pass
                 self._raw_body = self._io.read_bytes_full()
@@ -1897,6 +2035,11 @@ class GoveeBleFrame(KaitaiStruct):
                 self._raw_body = self._io.read_bytes_full()
                 _io__raw_body = KaitaiStream(BytesIO(self._raw_body))
                 self.body = GoveeBleFrame.DeviceInfoRead(_io__raw_body, self, self._root)
+            elif _on == GoveeBleFrame.Command.local_color_read:
+                pass
+                self._raw_body = self._io.read_bytes_full()
+                _io__raw_body = KaitaiStream(BytesIO(self._raw_body))
+                self.body = GoveeBleFrame.BulbGroupColorReadV2(_io__raw_body, self, self._root)
             elif _on == GoveeBleFrame.Command.mode:
                 pass
                 self._raw_body = self._io.read_bytes_full()
@@ -1928,10 +2071,16 @@ class GoveeBleFrame(KaitaiStruct):
             if _on == GoveeBleFrame.Command.brightness:
                 pass
                 self.body._fetch_instances()
+            elif _on == GoveeBleFrame.Command.bulb_string_color_read:
+                pass
+                self.body._fetch_instances()
             elif _on == GoveeBleFrame.Command.compose_light_switch:
                 pass
                 self.body._fetch_instances()
             elif _on == GoveeBleFrame.Command.device_info:
+                pass
+                self.body._fetch_instances()
+            elif _on == GoveeBleFrame.Command.local_color_read:
                 pass
                 self.body._fetch_instances()
             elif _on == GoveeBleFrame.Command.mode:

@@ -319,10 +319,18 @@ command_catalog:
   #       groupIndex, records]; record = 4 B [brightness,R,G,B] (or 3 B [R,G,B] on SKUs lacking part-brightness, e.g.
   #       H6641 ".p" path); 4 records/group; group count = ceil(N/4). N = getColorPieceSize (per SKU) and is DISTINCT
   #       from the write/addressable segment count (H6047: read-back 12 != write 10).
-  #   (B) per-group discrete controllers over 0xAA-notify (BulbGroupColor): H61A8 — cmd 0xA2 => 3 B [R,G,B] (V1, no
-  #       brightness); cmd 0xA5 => 4 B [brightness,R,G,B], 3/group (V2). Firmware-versioned.
-  #   (C) single colour in the 0x0D mode-report fanned across zones (SubMode4Color.syncColor): H6052 (2 zones). Bulbs
-  #       H6006/H6008 have NO per-segment read (getColorPieceSize=0).
+  #   (B) per-group discrete controllers over 0xAA-notify (BulbGroupColor): H61A8. MULTI-FRAME batches — device
+  #       sends maxGroup frames, each [AA][cmd][batch_seq][groups]; segment is POSITIONAL = (batch_seq-1)*perBatch+i.
+  #       V1 cmd 0xA2 = 4 groups/frame x 3 B [R,G,B], NO brightness (BulbGroupColor, hardcoded 4). V2 cmd 0xA5 =
+  #       3 groups/frame x 4 B [brightness,R,G,B] (BulbGroupColorV2; leading byte = brightness, CONFIRMED via
+  #       SubModeColorV2.f:70 f109110e=brightnessSet). H61A8=15 segments => V2 5 batches x 3. perBatch is a CLIENT
+  #       controller constant (f109046g), not frame-encoded. Request = AA <cmd> <batch_seq>. A V3 variant exists.
+  #       ksy: read_command 0xA2->bulb_group_color_read, 0xA5->bulb_group_color_read_v2. NOT a gap — layout modelled.
+  #   (C) single colour in the 0x0D mode-report, fanned across zones: H6052 (getColorSize=2). NOT write-only —
+  #       0x05 mode report sub-mode 0x0D body = [R,G,B] (H6052InfoDetail.parseModeValidBytes:323-346 b6==0x0D ->
+  #       custom strategy ColorUtils.G(vb0,vb1,vb2), :141-147). ksy: mode_read 0x0d -> mode_color_0d_report.
+  #       (Devices on the DEFAULT SubMode4Color strategy read 0x0D as [gradual_flag, kelvin u16be] instead — see
+  #       that ksy type.) Bulbs H6006/H6008 have NO per-segment read (getColorPieceSize=0).
   # => a segment-colour parser must select A/B/C by SKU and drive N from the read-back count, never a fixed 12.
   - { opcode: "0x40", name: IC_NUM,             category: ic, direction: R, meaning: "IC/segment count (also splicing/connect-status contexts)" }
   - { opcode: "0x42", name: WRITE_CHECK_IC,     category: ic, direction: W, meaning: "refresh/write-check IC" }
@@ -722,8 +730,8 @@ families:
       - { name: read_ic, cmd: "0x40", readable: true }
       - { name: refresh_ic, cmd: "0x42" }
       - { name: check_ic, cmd: "0x46" }
-      - { name: bulb_string_color_read, cmd: "0xa2", readable: true, note: "mechanism (B) — NOT the 0xAC/0xA5-group path. Per-group discrete controllers over 0xAA-notify; firmware split: cmd 0xA2 => 3-byte [R,G,B] records (BulbGroupColor, no brightness); cmd 0xA5 => 4-byte [brightness,R,G,B], 3 records/group (BulbGroupColorV2)" }
-    specs: { segments: "IC-count driven; H61A8 default 15 (getBulbStringMaxNum). Mechanism (B) read-back — see bulb_string_color_read note (0xA2 V1 3-byte / 0xA5 V2 4-byte, firmware-versioned); part_brightness=true (supportPartBrightness4BleWifi 207)", scene_versions: [0, 1, 2, 3] }
+      - { name: bulb_string_color_read, cmd: "0xa2", readable: true, note: "mechanism (B), MODELLED in ksy (read_command 0xA2->bulb_group_color_read, 0xA5->bulb_group_color_read_v2). Multi-frame batches [AA][cmd][batch_seq][groups]; segment POSITIONAL = (batch_seq-1)*perBatch+i. V1 0xA2 = 4 groups/frame x 3B [R,G,B], no brightness (BulbGroupColor). V2 0xA5 = 3 groups/frame x 4B [brightness,R,G,B] (BulbGroupColorV2; leading byte=brightness, confirmed SubModeColorV2.f:70). perBatch = client constant f109046g (not frame-encoded). Request AA <cmd> <batch_seq>." }
+    specs: { segments: "IC-count driven; H61A8 default 15 (getBulbStringMaxNum) => V2 5 batches x 3. Mechanism (B) read-back — see bulb_string_color_read note; part_brightness=true (supportPartBrightness4BleWifi 207)", scene_versions: [0, 1, 2, 3] }
     encryption: secret_key_pairing
     confidence: high
     sources: ["dreamcolorlightv1/ble/Mode.java:80-116", "dreamcolorlightv1/ble/BleProtocol.java:15-20"]
@@ -828,7 +836,7 @@ families:
     pact:
       note: "sceneType5 library scenes -> MultipleDiyInScenesController via SceneControllerNoEventV2 (0xA3); commByte = 4/3/9 by decoded byte0 = 0/1/0x13 (DiyProtocol/DiyGraffiti/DiyGraffitiV3). Catalog H6052 type5 all byte0=0x13 => commByte 9. sceneType3 -> dialect A comType 7 (strip 2). NOT the DIY-editor H6052Diy*GraffitiParse (3/9)."
     # H6052 kelvin: KelvinConfig [2000,9000] is the LIVE value (H6052NewDetailVM); family Support.getColorTemKelvinRange [2200,6500] is vestigial.
-    specs: { segments: "H6052=2, H6078=1 (getColorSize). Mechanism (C) — NO 0xA5-group read; colour from the 0x0D mode-report (single colour fanned across zones, SubMode4Color.syncColor)", kelvin_range: [2000, 9000], scene_versions: [0, 1, 4, 5], brightness_range: [1, 100] }
+    specs: { segments: "H6052=2, H6078=1 (getColorSize). Mechanism (C), MODELLED in ksy (mode_read 0x0d->mode_color_0d_report). NOT write-only: 0x05 mode-report sub-mode 0x0D body = [R,G,B] single colour fanned across the zones (H6052InfoDetail.parseModeValidBytes:323-346 b6==0x0D -> ColorUtils.G(vb0,vb1,vb2), :141-147). NO 0xA5-group read.", kelvin_range: [2000, 9000], scene_versions: [0, 1, 4, 5], brightness_range: [1, 100] }
     encryption: none
     confidence: high
     sources: ["tablelampv1/newAdjust/h6052/H6052ScenesViewMode.java:45", "tablelampv1/adjust/Diy.java:98-111", "base2light/ble/MultipleDiyInScenesController.java:12-22", "base2light/ac/diy/v2/DiyProtocolParser.java:1558-1573", "base2light/ac/diy/local/ShareDiy.java:224,364", "tablelampv1/ble/Mode.java", "tablelampv1/ble/NewLightIndicatorController.java:51", "tablelampv1/pact/Support.java:27,30"]

@@ -98,16 +98,17 @@ def test_modeled_read_reply_is_clean():
     assert not issues and label == "read/switch"
 
 
-def test_mechanism_b_read_reply_flagged_soft():
-    # AA A2 (BulbGroupColor / mechanism B) — read_command has no 0xa2 case -> opaque -> soft gap
-    assert _soft(_frame(0xAA, 0xA2, 0x01, 0x02, 0x03))
-    assert not _hard(_frame(0xAA, 0xA2, 0x01, 0x02, 0x03))
+def test_mechanism_b_read_reply_now_modelled():
+    # AA A2 / AA A5 (BulbGroupColor V1/V2, mechanism B) are now typed in the ksy
+    # (spec Change 7) -> decoded, not opaque -> no soft/hard gap.
+    for f in (_frame(0xAA, 0xA2, 0x01, 0x02, 0x03), _frame(0xAA, 0xA5, 0x01, 50, 2, 3)):
+        assert not _soft(f) and not _hard(f)
 
 
-def test_mechanism_c_mode_0d_read_flagged_soft():
-    # AA 05 0D (mechanism C: 0x0d mode-report reply) — not modelled -> soft gap
-    assert any("0x0d" in r for r in _soft(_frame(0xAA, 0x05, 0x0D, 0xFF, 0x00, 0x00)))
-    # AA 05 04 (scene code) is read in wire.parse -> NOT flagged
+def test_mechanism_c_mode_0d_read_now_modelled():
+    # AA 05 0D (mechanism C: 0x0d mode-colour report) is now typed -> no soft gap.
+    assert not _soft(_frame(0xAA, 0x05, 0x0D, 0xFF, 0x00, 0x00))
+    # AA 05 04 (scene code) is read in wire.parse -> also not flagged
     assert not _soft(_frame(0xAA, 0x05, 0x04, 0x82, 0x4A))
 
 

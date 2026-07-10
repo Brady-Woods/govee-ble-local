@@ -225,6 +225,8 @@ types:
             'command::compose_light_switch': bar_switch_read
             'command::secret_read': secret_read_reply
             'command::plug_spec': plug_spec_read
+            'command::bulb_string_color_read': bulb_group_color_read      # 0xA2 mechanism-B V1 (H61A8)
+            'command::local_color_read': bulb_group_color_read_v2         # 0xA5 mechanism-B V2 (H61A8)
         doc: >-
           read selector (request) or device-state echo (REPLY). body[0] == the controller's validBytes[0]
           (frame offset 2). Reply bodies are now typed for switch / brightness / device_info / bar / secret /
@@ -253,7 +255,8 @@ types:
           cases:
             0x15: cct_read_reply
             0x13: music_read_reply
-        doc: "0x15 => cct_read_reply; 0x13 => music_read_reply; 0x01 request / 0x0d have opaque/op-only rest"
+            0x0d: mode_color_0d_report
+        doc: "0x15 => cct_read_reply; 0x13 => music_read_reply; 0x0d => mode_color_0d_report (DEVICE-SPECIFIC body, see that type); 0x01 = request."
 
   cct_read_reply:
     doc: >-
@@ -284,6 +287,64 @@ types:
       - { id: color_r,         type: u1, if: 'spec_color_flag != 0', doc: "bArr[4]: specified-colour R (only when spec_color_flag != 0)" }
       - { id: color_g,         type: u1, if: 'spec_color_flag != 0', doc: "bArr[5]" }
       - { id: color_b,         type: u1, if: 'spec_color_flag != 0', doc: "bArr[6]" }
+
+  mode_color_0d_report:
+    doc: |
+      Mode 0x05 sub-mode 0x0D colour read-back. Frame = [proType][05][0D][body…]; this type = the body
+      (bytes after the 0x0D sub-mode byte). Body interpretation is DEVICE-SPECIFIC — chosen by the
+      IParseStrategy each device's *InfoDetail installs on its SubMode4Color:
+        * H6052 (tablelampv1, CUSTOM strategy) => [R, G, B]: a SINGLE colour (ColorUtils.G(vb0,vb1,vb2))
+          fanned across the device's zones (getColorSize: H6052=2). This resolves the old "0x0d is write-only"
+          note — H6052 DOES read colour back, as these 3 bytes. Source: H6052InfoDetail.parseModeValidBytes
+          :323-346 (validBytes[0]==0x0D -> colour strategy on validBytes[1:]) + :141-147.
+        * DEFAULT SubMode4Color strategy (most other families) => [gradual_flag, kelvin u16-be], NOT RGB
+          (iParseStrategy: q(vb0==1); s(getSignedShort(vb1,vb2))). For those devices reinterpret r as the
+          gradual flag and g,b as the big-endian kelvin.
+      Modelled as the H6052 RGB form (the curated device). Trailing frame bytes are zero padding (unparsed).
+    seq:
+      - { id: r, type: u1, doc: "H6052: red. Default-strategy devices: gradual_flag (byte==1)." }
+      - { id: g, type: u1, doc: "H6052: green. Default-strategy devices: kelvin hi." }
+      - { id: b, type: u1, doc: "H6052: blue.  Default-strategy devices: kelvin lo." }
+
+  # ── Mechanism-B per-group colour read-back (H61A8; 0xAA-notify commands 0xA2/0xA5) ──
+  # MULTI-FRAME: the device sends maxGroup batch frames; the client accumulates them into a segment array
+  # by batch number (offset = (batch_seq-1) * groups_per_batch). H61A8 = 15 segments = 5 batches x 3 groups.
+  # Request = AA <cmd> <batch_seq> (AbsSingleController.p() = the batch number). This type models ONE batch frame.
+  bulb_group_color_read:      # command 0xA2 (V1) — colour only, no brightness
+    doc: |
+      Mechanism-B V1 batch frame (BulbGroupColor.parseBytes). Reply = [AA][A2][body]; this type = body
+      (validBytes after the 2-byte header). 4 colour groups per frame, 3 bytes each [R,G,B], POSITIONAL
+      (segment = (batch_seq-1)*4 + i; no per-group index/brightness byte — that is the V1↔V2 difference).
+      Source: BulbGroupColor.java:15-29 (loop is hardcoded 4), BulbStringColorController.java:32-44 (cmd 0xA2),
+      consumer BleOpV1.java:318-345 (batch accumulate).
+    seq:
+      - { id: batch_seq, type: u1, doc: "1-based batch number (BulbGroupColor f109035a); client offset = (batch_seq-1)*4" }
+      - { id: groups, type: bulb_rgb_group, repeat: expr, repeat-expr: 4, doc: "4 colour groups. Rest of frame = zero padding." }
+  bulb_rgb_group:
+    seq:
+      - { id: r, type: u1 }
+      - { id: g, type: u1 }
+      - { id: b, type: u1 }
+
+  bulb_group_color_read_v2:   # command 0xA5 (V2) — adds per-segment brightness
+    doc: |
+      Mechanism-B V2 batch frame (BulbGroupColorV2.parseBytes). Reply = [AA][A5][body]; this type = body.
+      Each group = 4 bytes [brightness, R, G, B] — the leading byte is BRIGHTNESS, confirmed at the consumer:
+      BulbGroupColorV2.f109039c -> SubModeColorV2.f109110e = colors.brightnessSet (SubModeColorV2.f:70).
+      Segment is POSITIONAL (= (batch_seq-1)*groups_per_batch + i), NOT the leading byte. groups_per_batch is
+      a CLIENT controller constant (BulbStringColorControllerV2.f109046g, default 3) — NOT frame-encoded;
+      modelled at 3 (H61A8: 15 segments / 3 = 5 batches). Trailing bytes = zero padding. (A V3 variant,
+      BulbStringColorControllerV3, also exists.) Source: BulbGroupColorV2.java:18-39,
+      BulbStringColorControllerV2.java:41-53, consumer BleOpV1.java:349-377.
+    seq:
+      - { id: batch_seq, type: u1, doc: "1-based batch number (f109037a; logged 'group', 1..maxGroup=5 for H61A8); client offset = (batch_seq-1)*3" }
+      - { id: groups, type: bulb_rgb_group_v2, repeat: expr, repeat-expr: 3, doc: "3 groups = controller default (f109046g); count is client-set, not in the frame." }
+  bulb_rgb_group_v2:
+    seq:
+      - { id: brightness, type: u1, doc: "per-segment brightness (BulbGroupColorV2 bArr2[0] -> SubModeColorV2 brightnessSet)" }
+      - { id: r, type: u1 }
+      - { id: g, type: u1 }
+      - { id: b, type: u1 }
 
   # ── 0xAA READ replies (body[0] = validBytes[0] = frame offset 2). Verified vs each controller's parseValidBytes. ──
   switch_read_reply:
