@@ -13,10 +13,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from io import BytesIO as _BytesIO
 from typing import Any
-
-from kaitaistruct import KaitaiStream as _KaitaiStream
 
 from ..models import Segment
 from .._generated.govee_ble_frame import GoveeBleFrame as _GBF  # type: ignore[attr-defined]
@@ -200,9 +197,9 @@ class DeviceInfo:
     dsp_version: int | None = None
 
 
-def _device_info_from(sel: int, info: Any) -> DeviceInfo | None:
-    """Shared selector -> DeviceInfo mapping for the device_info_read body (used by both the
-    single-frame aa 07 reply and the 0xAC status 0x07 TLV — identical layout)."""
+def device_info_from(sel: int, info: Any) -> DeviceInfo | None:
+    """Shared selector -> DeviceInfo mapping for a parsed device_info_read body (used by the
+    single-frame aa 07 reply AND the 0xAC status 0x07 TLV — identical layout)."""
     if sel == 0x10:
         return DeviceInfo(
             serial=_uid_serial(bytes(info.uid)),
@@ -226,19 +223,7 @@ def parse_device_info(frame: bytes) -> DeviceInfo | None:
     b = _read_reply(frame, _Command.device_info)
     if b is None:
         return None
-    return _device_info_from(int(b.selector), b.info)
-
-
-def parse_device_info_body(value: bytes) -> DeviceInfo | None:
-    """Parse a ``[selector, info]`` device-info block via the generated reader — the SAME
-    layout the ksy models for the aa 07 reply AND the 0xAC status ``0x07`` TLV
-    (Compose4BaseInfoSingleRead.w). Lets the status path use the spec model instead of the
-    old MAC-anchor heuristic."""
-    try:
-        b = _F.DeviceInfoRead(_KaitaiStream(_BytesIO(bytes(value))))
-    except Exception:  # noqa: BLE001 - unmodelled selector / truncated -> not for us
-        return None
-    return _device_info_from(int(b.selector), b.info)
+    return device_info_from(int(b.selector), b.info)
 
 
 # ── notifications (0xEE) ─────────────────────────────────────────────────────

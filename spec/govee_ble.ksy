@@ -227,6 +227,8 @@ types:
             'command::plug_spec': plug_spec_read
             'command::bulb_string_color_read': bulb_group_color_read      # 0xA2 mechanism-B V1 (H61A8)
             'command::local_color_read': bulb_group_color_read_v2         # 0xA5 mechanism-B V2 (H61A8)
+            'command::ic_num': ic_segment_read                            # 0x40 live IC/segment count (ControllerOnlyReadIcSegmentNum)
+            'command::gradual_wifi_ble': gradual_read                     # 0xA3 gradual-on flag (ControllerGradual4BleWifi.h)
         doc: >-
           read selector (request) or device-state echo (REPLY). body[0] == the controller's validBytes[0]
           (frame offset 2). Reply bodies are now typed for switch / brightness / device_info / bar / secret /
@@ -346,6 +348,21 @@ types:
       - { id: g, type: u1 }
       - { id: b, type: u1 }
 
+  ic_segment_read:   # command 0x40 — live IC/segment capability read
+    doc: |
+      AA 40 reply (ControllerOnlyReadIcSegmentNum, base2light/kt/general_controller). The ONLY live-BLE
+      capability read: reports the addressable IC (lamp-bead) count and the segment count, so a client can
+      discover segmentation at runtime instead of relying on the per-SKU device table. FIXED layout (not
+      parameterized). Source: ControllerOnlyReadIcSegmentNum.c():getSignedShort(it2[0],it2[1]) + it2[2].
+    seq:
+      - { id: ic_count, type: u2be, doc: "IC / lamp-bead count (getSignedShort = big-endian, hi@byte0)" }
+      - { id: segment, type: u1, doc: "segment (group) count = it2[2]" }
+
+  gradual_read:      # command 0xA3 — gradual (fade-between-colours) on/off
+    doc: "AA A3 reply (ControllerGradual4BleWifi.h:100-101): gradual mode on iff byte0 == 1 (validBytes length 17; only byte0 is read)."
+    seq:
+      - { id: state, type: u1, doc: "1 = gradual enabled, else off (id 'on' avoided: YAML-boolean)" }
+
   # ── 0xAA READ replies (body[0] = validBytes[0] = frame offset 2). Verified vs each controller's parseValidBytes. ──
   switch_read_reply:
     doc: "AA 01 reply (SwitchController.parseValidBytes): state @ body[0]. LIGHTS: 0=off else on. PLUGS (h5080 SwitchControllerV2): this SAME 0x01 reply is a RELAY BITMASK (bit i = relay i on), not boolean — interpret per device."
@@ -416,17 +433,24 @@ types:
   #  For 0xA5 feed value to color_group_read (record_count from the per-SKU count, see devices.yaml).
   status_reply:
     doc: |
-      Reassembled 0xAC status reply = a sequence of [type, len, value] TLVs. The buffer is a plain
-      byte stream (the client de-chunks first), so it IS fully Kaitai-expressible — see the GAP on
-      status_tlv for the nested value types (0x07 device-info, 0x05 mode) still left raw.
+      Reassembled 0xAC status reply = a sequence of [type, len, value] TLVs. The buffer is de-chunked from
+      the 0xAC frames, which are zero-padded to the 20-byte frame boundary, so the buffer usually has
+      TRAILING ZERO PADDING. Terminate on that: no real TLV type is 0x00, and the walker
+      (Compose4BaseInfoSingleRead.u:299-326) also stops once fewer than 2 bytes remain. So parse until a
+      type-0 sentinel or EOF — repeat: eos would instead throw on the padding (a lone trailing 0 byte has
+      no room for its len). The trailing type-0 element, if present, is the padding sentinel (no len/value).
     seq:
-      - { id: tlvs, type: status_tlv, repeat: eos }
+      - id: tlvs
+        type: status_tlv
+        repeat: until
+        repeat-until: '_.type == 0 or _io.eof'
   status_tlv:
     seq:
       - { id: type, type: u1 }
-      - { id: len, type: u1 }
+      - { id: len, type: u1, if: 'type != 0' }        # type 0 = trailing zero padding: no len/value follow
       - id: value
         size: len
+        if: 'type != 0'
         type:
           switch-on: type
           cases:
@@ -452,7 +476,7 @@ types:
             * 0xA5 colour group -> color_group_status. Record COUNT = (len-1)/record_size (from the TLV
               len); record_size is the only externally-keyed bit (3B vs 4B), fixed per SKU.
           Unmatched types stay raw.
-  status_switch:     { seq: [ { id: on, type: u1 } ] }
+  status_switch:     { doc: "0x01 on/off state (1=on)", seq: [ { id: state, type: u1 } ] }
   status_brightness: { seq: [ { id: brightness, type: u1 } ] }
   status_zone:       { doc: "0x30 in the 0xAC reply: zone0 = bit0 of byte0, zone1 = bit0 of byte1 (VM4LightH60A6.o:103)", seq: [ { id: zone_a, type: u1 }, { id: zone_b, type: u1 } ] }
   status_seg_info:   { doc: "0x41 seg/IC info (VM4LightH60A6.o:99 reads byte1)", seq: [ { id: b0, type: u1 }, { id: ic_or_seg, type: u1 } ] }
@@ -489,6 +513,27 @@ types:
       - { id: r, type: u1 }
       - { id: g, type: u1 }
       - { id: b, type: u1 }
+
+  # ── multi-packet per-segment colour/brightness WRITE value (comType 0x40; H6047/H61A8/H60A6 write path) ──
+  # Client-built value carried via the 0xA3 multi dialect (a3_start), commByte 0x40. The write-side mirror of the
+  # 0xA5 read: instead of one group per segment, it GROUPS segments by distinct colour / distinct brightness value,
+  # each group tagged (0x00 = colour, 0x01 = brightness) with its member segment indices. Source:
+  # AbsMultipleControllerV14ColorStrip:29-99 (MultipleColorStripControllerV1/V2). Feed a REASSEMBLED value here.
+  color_strip_write:
+    doc: "[group_count][group × group_count]; group_count = (#distinct colours) + (#distinct brightness values, if a brightnessSet was set)."
+    seq:
+      - { id: group_count, type: u1 }
+      - { id: groups, type: color_strip_group, repeat: expr, repeat-expr: group_count }
+  color_strip_group:
+    doc: "tag 0x00 = colour group [0, count, R, G, B, idx×count]; tag 0x01 = brightness group [1, count, brightness, idx×count]. idx = 1-byte segment indices."
+    seq:
+      - { id: tag, type: u1, doc: "0 = colour, 1 = brightness" }
+      - { id: pixel_count, type: u1 }
+      - { id: r, type: u1, if: 'tag == 0' }
+      - { id: g, type: u1, if: 'tag == 0' }
+      - { id: b, type: u1, if: 'tag == 0' }
+      - { id: brightness, type: u1, if: 'tag == 1' }
+      - { id: indices, type: u1, repeat: expr, repeat-expr: pixel_count, doc: "segment indices this colour/brightness applies to" }
 
   switch_payload:
     seq:
@@ -941,7 +986,7 @@ types:
     seq:
       - { id: speed, type: u1 }           # i()
       - { id: direction, type: u1 }
-      - { id: on, type: u1 }              # bool
+      - { id: on_flag, type: u1 }         # bool (id 'on' avoided: YAML-boolean)
       - { id: seg_count, type: u1 }
       - { id: seg, type: u1, repeat: expr, repeat-expr: seg_count, doc: "per-segment index bytes" }
       - { id: l0, type: u1 }

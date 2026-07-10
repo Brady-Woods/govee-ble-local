@@ -1,21 +1,30 @@
-"""Reassemble multi-packet 0xAC status bursts and walk the reply's TLV stream.
+"""Reassemble multi-packet 0xAC status bursts, then parse them via the spec model.
 
-Cross-frame de-chunking isn't expressible in Kaitai, so the client joins the burst
-first — the FIRST frame contributes its data at offset 7 (12 bytes), subsequent frames
-at offset 2 (17 bytes), through the 0xFF terminator — then walks the buffer as a
-``[type, len, value]`` TLV stream (Compose4BaseInfoSingleRead.u). Known reply types:
-0x01 switch, 0x04 brightness, 0x30 zone (2 on/off bits), 0x41 seg/IC info, and 0xA5
-colour groups (``[group_index, records×4B [brightness,R,G,B]]``, spec color_group_read).
+Only the cross-frame de-chunk is hand-done (Kaitai can't join frames): the FIRST frame
+contributes its data at offset 7 (12 bytes), subsequent frames at offset 2 (17 bytes),
+through the 0xFF terminator (chunks de-duplicated + index-ordered — devices double-deliver).
+The joined buffer is then parsed straight from the ksy ``status_reply`` type (generated
+reader) — a ``[type, len, value]`` TLV stream (Compose4BaseInfoSingleRead.u) that types
+every value (switch / brightness / zone / seg-info / colour groups / 0x07 device-info) and
+terminates on the trailing zero pad. ``walk_tlvs`` remains only for the offline analyzer's
+unknown-type detection (:mod:`.describe`).
 """
 from __future__ import annotations
 
 import logging
 from collections.abc import Iterator
 from dataclasses import dataclass, field
+from io import BytesIO as _BytesIO
+from typing import Any
+
+from kaitaistruct import KaitaiStream as _KaitaiStream
 
 from ..models import Segment
+from .._generated.govee_ble_frame import GoveeBleFrame as _GBF  # type: ignore[attr-defined]
 
 _LOGGER = logging.getLogger(__name__)
+_F: Any = _GBF   # generated reader (untyped -> Any so attribute chains don't need stubs)
+_RECORDS_PER_GROUP = 4   # oneGroupColorSize: index stride, not the (len-derived) record count
 
 TYPE_SWITCH = 0x01
 TYPE_BRIGHTNESS = 0x04
@@ -74,42 +83,49 @@ def walk_tlvs(buf: bytes) -> Iterator[tuple[int, bytes]]:
         i += 2 + ln
 
 
-def _add_color_group(val: bytes, segs: dict[int, Segment]) -> None:
-    """0xA5 group: value[0] = 1-based group_index, then 4-byte [brightness,R,G,B] records."""
-    if not val:
-        return
-    gi = val[0]
-    recs = val[1:]
-    for k in range(len(recs) // 4):
-        brightness, r, g, b = recs[k * 4 : k * 4 + 4]
-        idx = 4 * (gi - 1) + k
-        segs[idx] = Segment(index=idx, rgb=(r, g, b), brightness=brightness)
-
-
 def parse_status(frames: list[bytes]) -> StatusReply:
-    """Reassemble a 0xAC burst and decode switch / brightness / zone / segments + device-info.
+    """Reassemble a 0xAC burst and decode it via the generated ``status_reply`` reader.
 
-    The top-level TLV framing is walked here (defensively — it stops on zero-pad / truncation,
-    which the ksy's ``repeat: eos`` status_reply can't survive on a real padded burst), but each
-    typed VALUE uses the spec model: the ``0x07`` device-info is parsed by the generated
-    ``device_info_read`` reader (``parse.parse_device_info_body``) — giving wifi_mac / hw / sw /
-    serial for BLE-only devices (H60A6) straight from the spec, retiring the old MAC-anchor
-    heuristic. First non-None wins (basic 0x10 precedes wifi 0x11 in the stream)."""
-    from . import parse   # local import: parse is a peer; keep module import graph acyclic
+    Only the cross-frame de-chunk (:func:`reassemble`) is hand-done — Kaitai can't join
+    frames. The reassembled buffer is then parsed straight from the spec model: the ksy
+    ``status_reply`` walks the TLV stream (``repeat: until type == 0`` handles the trailing
+    zero pad) and types every value — switch / brightness / zone / seg-info / colour groups /
+    ``0x07`` device-info (== ``device_info_read``). No client-side TLV or value hand-parsing.
+
+    Segment global index = ``(group_index-1) * 4 + k`` (oneGroupColorSize stride; the per-group
+    record COUNT comes from the TLV len). Device-info: first non-None wins (basic 0x10 precedes
+    wifi 0x11), giving wifi_mac / hw / sw / serial for BLE-only devices (H60A6) from the spec."""
+    from . import parse   # local import: parse is a peer; keep the module import graph acyclic
 
     st = StatusReply()
+    buf = reassemble(frames)
+    try:
+        reply = _F.StatusReply(_KaitaiStream(_BytesIO(buf)))
+    except Exception as exc:  # noqa: BLE001 - malformed/truncated burst -> empty state
+        _LOGGER.debug("status reply did not parse (%d bytes): %r", len(buf), exc)
+        return st
+
     segs: dict[int, Segment] = {}
-    for t, val in walk_tlvs(reassemble(frames)):
-        if t == TYPE_SWITCH and val:
-            st.is_on = bool(val[0])
-        elif t == TYPE_BRIGHTNESS and val:
-            st.brightness = val[0]
-        elif t == TYPE_ZONE and len(val) >= 2:
-            st.zone_power = {0: bool(val[0]), 1: bool(val[1])}
-        elif t == TYPE_COLOR_GROUP:
-            _add_color_group(val, segs)
-        elif t == TYPE_DEVICE_INFO:
-            info = parse.parse_device_info_body(val)
+    for tlv in reply.tlvs:
+        typ = int(tlv.type)
+        if typ == 0:                       # trailing zero-pad sentinel
+            continue
+        v = tlv.value
+        if typ == TYPE_SWITCH:
+            st.is_on = bool(v.state)
+        elif typ == TYPE_BRIGHTNESS:
+            st.brightness = int(v.brightness)
+        elif typ == TYPE_ZONE:
+            st.zone_power = {0: bool(v.zone_a), 1: bool(v.zone_b)}
+        elif typ == TYPE_COLOR_GROUP:
+            base = (int(v.group_index) - 1) * _RECORDS_PER_GROUP
+            for k, rec in enumerate(v.records):
+                segs[base + k] = Segment(
+                    index=base + k, rgb=(int(rec.r), int(rec.g), int(rec.b)),
+                    brightness=int(rec.brightness),
+                )
+        elif typ == TYPE_DEVICE_INFO:
+            info = parse.device_info_from(int(v.selector), v.info)
             if info is not None:
                 if info.serial is not None and st.serial_number is None:
                     st.serial_number = info.serial
