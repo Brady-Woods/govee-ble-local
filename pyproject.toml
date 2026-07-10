@@ -65,7 +65,6 @@ ignore_missing_imports = true
 [[tool.mypy.overrides]]
 module = ["govee_ble_local._generated.*"]
 ignore_errors = true
-follow_imports = "skip"
 
 [tool.coverage.run]
 source = ["govee_ble_local"]
