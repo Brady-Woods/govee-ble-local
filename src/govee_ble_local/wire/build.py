@@ -97,15 +97,14 @@ def color_rgb(r: int, g: int, b: int, scheme: ColorScheme, segments: int = 13) -
 
 
 def color_temp(kelvin: int, scheme: ColorScheme, segments: int = 13) -> bytes:
-    """Colour temperature: WHITE in the RGB slot + raw u2be Kelvin + (0,0,0) tint."""
-    khi, klo = (kelvin >> 8) & 0xFF, kelvin & 0xFF
-    lo, hi = _mask_le(all_segments_mask(segments))
-    if scheme == "h6006":
-        return frame(PRO_WRITE, CMD_MODE, SUB_COLOR_0D, 0xFF, 0xFF, 0xFF, khi, klo, 0, 0, 0)
+    """Whole-device colour temperature (WHITE slot + raw u2be Kelvin). On the 0x15 family
+    this is just segment_color_temp with the all-segments mask."""
     if scheme == "h61a8":
         raise ValueError("h61a8 has no colour-temperature capability")
-    return frame(PRO_WRITE, CMD_MODE, SUB_COLOR_15, OP15_SET_COLOR,
-                 0xFF, 0xFF, 0xFF, khi, klo, 0, 0, 0, lo, hi)
+    if scheme == "h6006":
+        khi, klo = (kelvin >> 8) & 0xFF, kelvin & 0xFF
+        return frame(PRO_WRITE, CMD_MODE, SUB_COLOR_0D, 0xFF, 0xFF, 0xFF, khi, klo, 0, 0, 0)
+    return segment_color_temp(all_segments_mask(segments), kelvin, scheme)
 
 
 def segment_rgb(mask: int, r: int, g: int, b: int, scheme: ColorScheme) -> bytes:
@@ -114,6 +113,20 @@ def segment_rgb(mask: int, r: int, g: int, b: int, scheme: ColorScheme) -> bytes
     if scheme == "h61a8":
         return frame(PRO_WRITE, CMD_MODE, SUB_COLOR_0B, r, g, b, lo, hi)
     return frame(PRO_WRITE, CMD_MODE, SUB_COLOR_15, OP15_SET_COLOR, r, g, b, 0, 0, 0, 0, 0, lo, hi)
+
+
+def segment_color_temp(mask: int, kelvin: int, scheme: ColorScheme) -> bytes:
+    """Colour temperature on selected segments (mask). Only the 0x15 family embeds a
+    segment mask in the CCT frame — h6006's 0x0d has no mask (whole-device only) and
+    h61a8 has no CCT at all — so masked CCT is 0x15-only."""
+    if scheme == "h61a8":
+        raise ValueError("h61a8 has no colour-temperature capability")
+    if scheme == "h6006":
+        raise ValueError("h6006 colour-temperature is whole-device only (no segment mask)")
+    khi, klo = (kelvin >> 8) & 0xFF, kelvin & 0xFF
+    lo, hi = _mask_le(mask)
+    return frame(PRO_WRITE, CMD_MODE, SUB_COLOR_15, OP15_SET_COLOR,
+                 0xFF, 0xFF, 0xFF, khi, klo, 0, 0, 0, lo, hi)
 
 
 def segment_brightness(mask: int, pct: int, scheme: ColorScheme) -> bytes:

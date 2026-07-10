@@ -79,6 +79,27 @@ def test_zone_bar_vs_direct() -> None:
     assert _sent(h6047)[0][:2].hex() == "3336"
 
 
+def test_zone_and_segment_color_temp() -> None:
+    # per-zone / masked CCT: the 0x15 CCT frame carries a segment mask (H60A6)
+    d = _dev("H60A6")
+    asyncio.run(d.set_zone_color_temp("background", 3000))   # 13 segments -> mask 0x1FFF
+    f = _sent(d)[0]
+    assert f.hex().startswith("33051501")                    # mode/0x15/set-color
+    assert (f[4], f[5], f[6]) == (0xFF, 0xFF, 0xFF)          # WHITE slot
+    assert (f[7], f[8]) == (0x0B, 0xB8)                       # kelvin 3000, u2be
+    assert (f[12], f[13]) == (0xFF, 0x1F)                    # mask 0x1FFF, little-endian
+
+    d2 = _dev("H60A6")
+    asyncio.run(d2.set_segment_color_temp([0, 1, 2], 3000))
+    assert _sent(d2)[0][12:14] == bytes([0x07, 0x00])        # mask {0,1,2}
+
+    # capability gating: no COLOR_TEMP (H61A8) / no SEGMENTS (bulb) -> not supported
+    with pytest.raises(GoveeBleNotSupported):
+        asyncio.run(_dev("H61A8").set_zone_color_temp("segment", 3000))
+    with pytest.raises(GoveeBleNotSupported):
+        asyncio.run(_dev("H6006").set_segment_color_temp([0], 3000))
+
+
 def test_scene_dialect_routing() -> None:
     def upload(sku: str, scene: Scene) -> list[bytes] | None:
         return _dev(sku)._scene_upload_frames(scene)

@@ -65,7 +65,8 @@ advertisement, build a capability-driven `Device`, then drive it.
 - **`Device`** — one capability-gated class (behaviour comes from its `DeviceProfile`, not
   subclasses). Commands are ACK-confirmed on the wire:
   `turn_on` / `turn_off` / `set_power`, `set_brightness`, `set_rgb`, `set_color_temp`,
-  `set_segment_rgb` / `set_segment_brightness`, `set_zone_power` / `set_zone_rgb`,
+  `set_segment_rgb` / `set_segment_brightness` / `set_segment_color_temp`,
+  `set_zone_power` / `set_zone_rgb` / `set_zone_color_temp`,
   `set_scene` / `set_scene_by_name`, and `update()` (read-back). Introspection:
   `capabilities`, `zones`, `min_kelvin` / `max_kelvin`, `scene_names`, `state`,
   `register_callback`. Methods for unsupported capabilities raise `GoveeBleNotSupported`.

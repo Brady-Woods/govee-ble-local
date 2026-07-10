@@ -224,6 +224,18 @@ class Device:
         await self._conn.send(build.segment_brightness(_mask(indices), pct, self.profile.color_scheme))
         self._notify()
 
+    async def set_segment_color_temp(self, indices: list[int], kelvin: int) -> None:
+        """Colour temperature on selected segments (0x15 family only — the CCT frame
+        carries the segment mask). Raises GoveeBleNotSupported for non-maskable schemes."""
+        self._require(Capability.SEGMENTS)
+        self._require(Capability.COLOR_TEMP)
+        try:
+            frame = build.segment_color_temp(_mask(indices), kelvin, self.profile.color_scheme)
+        except ValueError as exc:
+            raise GoveeBleNotSupported(f"{self._sku}: {exc}") from exc
+        await self._conn.send(frame)
+        self._notify()
+
     # -- zones --------------------------------------------------------------
     def _zone(self, name: str) -> Any:
         for z in self.profile.zones:
@@ -253,6 +265,20 @@ class Device:
             raise GoveeBleNotSupported(f"{self._sku}: zone {name!r} has no segments")
         r, g, b = rgb
         await self._conn.send(build.segment_rgb(_mask(z.segments), r, g, b, self.profile.color_scheme))
+        self._notify()
+
+    async def set_zone_color_temp(self, name: str, kelvin: int) -> None:
+        """Colour temperature for one zone (its segment mask). Physically supported on the
+        0x15 family (H60A6/H6047), whose CCT frame carries a segment mask."""
+        self._require(Capability.COLOR_TEMP)
+        z = self._zone(name)
+        if not z.segments:
+            raise GoveeBleNotSupported(f"{self._sku}: zone {name!r} has no segments")
+        try:
+            frame = build.segment_color_temp(_mask(z.segments), kelvin, self.profile.color_scheme)
+        except ValueError as exc:
+            raise GoveeBleNotSupported(f"{self._sku}: {exc}") from exc
+        await self._conn.send(frame)
         self._notify()
 
     # -- scenes -------------------------------------------------------------

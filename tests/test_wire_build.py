@@ -54,6 +54,22 @@ def test_color_temp() -> None:
         b.color_temp(4000, "h61a8", 15)
 
 
+def test_segment_color_temp_carries_mask() -> None:
+    # masked CCT (0x15 family): same layout as color_temp but an arbitrary seg mask
+    f = b.segment_color_temp(0x0007, 3000, "h60a6")
+    assert f[:4].hex() == "33051501"                 # mode / 0x15 / set-color
+    assert (f[4], f[5], f[6]) == (0xFF, 0xFF, 0xFF)  # WHITE slot
+    assert (f[7], f[8]) == (0x0B, 0xB8)              # kelvin 3000, u2be
+    assert (f[12], f[13]) == (0x07, 0x00)            # seg mask {0,1,2}, little-endian
+    # whole-device color_temp is just the all-segments mask on the same builder
+    assert b.color_temp(3000, "h60a6", 13) == b.segment_color_temp((1 << 13) - 1, 3000, "h60a6")
+    # non-0x15 schemes can't mask CCT
+    with pytest.raises(ValueError):
+        b.segment_color_temp(0x1, 3000, "h6006")
+    with pytest.raises(ValueError):
+        b.segment_color_temp(0x1, 3000, "h61a8")
+
+
 def test_segment_and_zone_and_bar() -> None:
     m = _p(b.segment_brightness(0x0004, 75, "h60a6")).body.params
     assert m.params.op_type == F.Op15.set_brightness
