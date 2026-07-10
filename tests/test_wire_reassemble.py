@@ -33,6 +33,23 @@ def test_parse_real_h60a6_burst() -> None:
     assert st.segments[0].brightness == 50 and st.segments[1].brightness == 100
 
 
+def test_doubled_delivery_reassembles_identically() -> None:
+    # devices double-deliver each chunk (ac00 ac00 ac01 ac01 ...); reassemble must
+    # dedup by chunk index so duplicates don't drift the offset-based join.
+    frames = [bytes.fromhex(h) for h in _BURST]
+    doubled = [f for fr in frames for f in (fr, fr)]      # each chunk twice
+    assert r.reassemble(doubled) == r.reassemble(frames)
+    st = r.parse_status(doubled)
+    assert len(st.segments) == 13 and st.brightness == 0x50
+    assert st.zone_power == {0: True, 1: True}
+
+
+def test_out_of_order_chunks_reassemble_by_index() -> None:
+    frames = [bytes.fromhex(h) for h in _BURST]
+    shuffled = [frames[3], frames[0], frames[-1], frames[1], frames[2], *frames[4:-1]]
+    assert r.reassemble(shuffled) == r.reassemble(frames)
+
+
 def test_tlv_walk_stops_on_padding() -> None:
     # a minimal buffer: switch on, brightness 60, then zero pad
     buf = bytes([0x01, 1, 1, 0x04, 1, 60, 0, 0, 0, 0])

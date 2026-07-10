@@ -31,11 +31,21 @@ class StatusReply:
 
 
 def reassemble(frames: list[bytes]) -> bytes:
-    """Join a 0xAC burst (in arrival order): first frame data @ offset 7, rest @ offset 2."""
-    buf = bytearray()
-    for i, fr in enumerate(frames):
+    """Join a 0xAC burst: first chunk's data @ offset 7, the rest @ offset 2.
+
+    The burst is keyed by the chunk index at byte 1 (``ac 00, ac 01, … ac FF``).
+    Devices double-deliver each notification (duplicate GATT callbacks), so chunks
+    are first collapsed to one per index (first wins) and ordered by index — the
+    join is offset-by-*position*, so an un-deduped duplicate would splice in at the
+    wrong offset and drift the TLV walk. 0xFF (terminator) sorts last naturally."""
+    unique: dict[int, bytes] = {}
+    for fr in frames:
         if len(fr) < 19:
             continue
+        unique.setdefault(fr[1], fr)
+    ordered = [unique[k] for k in sorted(unique)]
+    buf = bytearray()
+    for i, fr in enumerate(ordered):
         buf += fr[7:19] if i == 0 else fr[2:19]
     return bytes(buf)
 
