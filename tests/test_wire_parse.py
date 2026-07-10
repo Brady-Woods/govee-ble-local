@@ -104,3 +104,13 @@ def test_mechanism_c_mode_0d_rgb() -> None:
     assert parse.parse_mode_color_0d(f(0xAA, 0x05, 0x0D, 255, 128, 64)) == (255, 128, 64)
     assert parse.parse_mode_color_0d(f(0xAA, 0x05, 0x15, 0x01, 0x0A, 0x8C)) is None  # cct, not 0x0D
     assert parse.parse_mode_color_0d(f(0x33, 0x05, 0x0D, 1, 2, 3)) is None            # write
+
+
+def test_device_info_zero_fields_are_none() -> None:
+    # aa 07 11 with all-zero mac + versions -> None (not "00:00:.." / "0.00.00"), so a zeroed
+    # aa 07 reply can't clobber the 0xAC-anchored wifi_mac/hardware (H60A6 regression fix).
+    info = parse.parse_device_info(f(0xAA, 0x07, 0x11, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0))
+    assert info is not None
+    assert info.wifi_mac is None and info.sw_version is None and info.hw_version is None
+    good = parse.parse_device_info(f(0xAA, 0x07, 0x11, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 4, 5, 6, 7, 8, 9))
+    assert good is not None and good.wifi_mac == "AA:BB:CC:DD:EE:FF" and good.sw_version == "4.05.06"

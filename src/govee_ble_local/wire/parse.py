@@ -167,8 +167,17 @@ def bulb_groups_to_segments(
 
 
 # ── device info (AA 07 10/11/02) ─────────────────────────────────────────────
-def _version(v: Any) -> str:
-    return f"{int(v.major)}.{int(v.minor):02d}.{int(v.patch):02d}"
+def _version(v: Any) -> str | None:
+    """Govee 3-byte version -> "X.YY.ZZ", or None for the 0.00.00 zero sentinel (a
+    device that doesn't populate this field — e.g. H60A6's aa 07 wifi reply)."""
+    major, minor, patch = int(v.major), int(v.minor), int(v.patch)
+    if major == 0 and minor == 0 and patch == 0:
+        return None
+    return f"{major}.{minor:02d}.{patch:02d}"
+
+
+def _mac_or_none(raw: bytes) -> str | None:
+    return ":".join(f"{b:02X}" for b in raw) if any(raw) else None
 
 
 def _uid_serial(uid: bytes) -> str | None:
@@ -204,7 +213,7 @@ def parse_device_info(frame: bytes) -> DeviceInfo | None:
         )
     if sel == 0x11:
         return DeviceInfo(
-            wifi_mac=":".join(f"{x:02X}" for x in bytes(info.wifi_mac)),
+            wifi_mac=_mac_or_none(bytes(info.wifi_mac)),
             sw_version=_version(info.wifi_sw_version),
             hw_version=_version(info.wifi_hw_version),
         )

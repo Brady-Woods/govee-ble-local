@@ -434,6 +434,13 @@ class Device:
             self._state.zone_power = st.zone_power
         if st.segments:
             self._state.segments = st.segments
+        # Wi-Fi MAC + hardware version are anchored in the 0xAC stream on the device's own
+        # BLE MAC — the ONLY source for BLE-only devices (H60A6); aa 07 returns zeros there.
+        wifi_mac, hw_ver = reassemble.anchor_device_info(ac, self.address)
+        if wifi_mac is not None:
+            self._state.wifi_mac = wifi_mac
+        if hw_ver is not None:
+            self._state.hardware_version = hw_ver
         if Capability.SCENES in self.capabilities:
             reply = await self._read_reply(build.mode_query(), 0x05)
             if reply is not None:

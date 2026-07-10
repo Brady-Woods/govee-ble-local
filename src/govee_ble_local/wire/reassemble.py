@@ -80,6 +80,38 @@ def _add_color_group(val: bytes, segs: dict[int, Segment]) -> None:
         segs[idx] = Segment(index=idx, rgb=(r, g, b), brightness=brightness)
 
 
+def anchor_device_info(frames: list[bytes], address: str) -> tuple[str | None, str | None]:
+    """``(wifi_mac, hardware_version)`` from a 0xAC status burst, anchored on the device's
+    own BLE MAC (little-endian) within the joined ``0x01..0x04 + 0xFF`` chunk stream:
+    ``+9..15`` = Wi-Fi MAC (reversed), ``+20..23`` = hardware version (``X.YY.ZZ``).
+
+    This is the ONLY place BLE-only devices (e.g. H60A6) report hw + MAC — their ``aa 07``
+    wifi query returns zeros. Byte-exact port of v2 ``ble/status._anchor_device_info``
+    (chunk payload = frame[2:19]; stream skips chunk 0x00). Zero fields are dropped (None).
+    """
+    chunks: dict[int, bytes] = {}
+    for fr in frames:
+        if len(fr) >= 3 and fr[0] == 0xAC:
+            chunks[fr[1]] = fr[2:19]
+    stream = b"".join(chunks.get(k, b"") for k in (0x01, 0x02, 0x03, 0x04, 0xFF))
+    try:
+        own = bytes(int(b, 16) for b in address.split(":"))
+    except ValueError:
+        return None, None
+    anchor = stream.find(own[::-1])
+    if anchor == -1:
+        return None, None
+    wifi_mac: str | None = None
+    wb = stream[anchor + 9 : anchor + 15]
+    if len(wb) == 6 and any(wb):
+        wifi_mac = ":".join(f"{b:02X}" for b in wb[::-1])
+    hw_ver: str | None = None
+    hw = stream[anchor + 20 : anchor + 23]
+    if len(hw) == 3 and any(hw):
+        hw_ver = f"{hw[0]}.{hw[1]:02d}.{hw[2]:02d}"
+    return wifi_mac, hw_ver
+
+
 def parse_status(frames: list[bytes]) -> StatusReply:
     """Reassemble a 0xAC burst and decode switch / brightness / zone / segment colours."""
     st = StatusReply()

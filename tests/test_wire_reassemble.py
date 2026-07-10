@@ -58,6 +58,17 @@ def test_tlv_walk_stops_on_padding() -> None:
     assert 0x00 not in got  # padding terminates the walk
 
 
+def test_anchor_device_info() -> None:
+    # BLE-only devices (H60A6) report wifi_mac + hardware_version ONLY in the 0xAC stream,
+    # anchored on their own BLE MAC (little-endian): +9..15 = MAC (reversed), +20..23 = version.
+    frames = [bytes.fromhex(h) for h in _BURST]
+    wifi, hw = r.anchor_device_info(frames, "5C:E7:53:F4:74:57")
+    assert wifi == "5C:E7:53:F4:74:56" and hw == "1.04.03"
+    # MAC not present in the stream -> no anchor; a malformed address -> no anchor
+    assert r.anchor_device_info(frames, "11:22:33:44:55:66") == (None, None)
+    assert r.anchor_device_info(frames, "not-a-mac") == (None, None)
+
+
 def test_empty_and_short() -> None:
     assert r.parse_status([]).segments == []
     assert r.parse_status([b"\x00" * 4]).is_on is None

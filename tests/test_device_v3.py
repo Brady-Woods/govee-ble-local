@@ -272,3 +272,14 @@ def test_readback_status_maps_to_state() -> None:
     assert d.state.is_on is True and d.state.brightness == 0x50
     assert d.state.zone_power == {0: True, 1: True}
     assert len(d.state.segments) == 13
+
+
+def test_read_status_anchors_device_info() -> None:
+    # BLE-only H60A6 reports wifi_mac + hardware_version ONLY via the 0xAC anchor (on its
+    # own BLE MAC). A device whose address matches the burst gets them populated.
+    d = make_device(BLEDevice("5C:E7:53:F4:74:57", "H60A6", details={}), "H60A6")
+    assert d is not None
+    d._conn.query = AsyncMock(return_value=_STATUS_BURST)  # type: ignore[attr-defined]
+    asyncio.run(d._read_status())
+    assert d.state.wifi_mac == "5C:E7:53:F4:74:56"
+    assert d.state.hardware_version == "1.04.03"
