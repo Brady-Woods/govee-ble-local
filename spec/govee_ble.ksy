@@ -432,26 +432,63 @@ types:
           cases:
             0x01: status_switch
             0x04: status_brightness
+            0x05: mode_status
+            0x07: device_info_read      # same [selector, info] block as the aa 07 reply (Compose4BaseInfoSingleRead.w)
             0x30: status_zone
             0x41: status_seg_info
+            0xa5: color_group_status     # one colour group; curated devices are all 4-byte (see type doc)
         doc: |
-          Typed for 0x01/0x04/0x30/0x41. GAP — the nested TLV VALUES below are Kaitai-expressible
-          (this is the REASSEMBLED buffer, a plain byte stream) but are NOT yet modelled; called out
-          for Java-source modelling so the runtime heuristics can be replaced by spec-driven parsing:
-            * 0x07 device-info — a nested [selector, ...] block; observed selectors 0x06 = BLE MAC
-              (6B, little-endian), 0x10 = basic [uid, sw, hw], 0x11 = wifi [mac, sw, hw], mirroring the
-              aa 07 device_info_read sub-types. UNTIL modelled, the client extracts wifi_mac +
-              hardware_version by a MAC-anchor heuristic (wire.reassemble.anchor_device_info: find the
-              device's own BLE MAC little-endian, then +9..15 = MAC, +20..23 = version). Model from
-              Compose4BaseInfoSingleRead.u + the per-selector 0x07 sub-parser.
-            * 0x05 mode — a nested mode block (sub-mode + params), same shape as the 0x05 frame body.
-            * 0xA5 colour group -> color_group_read, but record_count is per-SKU (externally-keyed, not
-              in the TLV), so the client walks it (wire.reassemble.parse_status), not switched here.
+          Full walker = Compose4BaseInfoSingleRead.u:292 — a header-less [type, len, value] walk
+          (i += 2 + len). u() itself handles 0x01/0x04/0x05/0x07/0x11(sleep)/0x12(wakeup)/0x23(timers);
+          EVERYTHING else (0x30, 0x41, 0xA5, ...) is passed to the caller's fallback lambda with the FULL
+          [type,len,value] re-prepended. All value types below are modelled (the value is a bounded
+          size:len substream, so record counts come from len — no external count needed):
+            * 0x07 device-info == device_info_read. u.w():424-485 parses ONLY selector 0x10 (basic:
+              [uid8, sw3, hw3, dsp u16le]) and 0x11 (wifi: [mac6 REVERSED, sw3, hw3]); other selectors are
+              logged and ignored here. Same layout as the single-frame aa 07 reply -> RETIRES the old
+              MAC-anchor heuristic.
+            * 0x05 mode == [sub_mode, params] (delegated to the caller's .g() lambda; same shape as the
+              0x05 mode frame body / SubMode dispatch).
+            * 0xA5 colour group -> color_group_status. Record COUNT = (len-1)/record_size (from the TLV
+              len); record_size is the only externally-keyed bit (3B vs 4B), fixed per SKU.
           Unmatched types stay raw.
   status_switch:     { seq: [ { id: on, type: u1 } ] }
   status_brightness: { seq: [ { id: brightness, type: u1 } ] }
   status_zone:       { doc: "0x30 in the 0xAC reply: zone0 = bit0 of byte0, zone1 = bit0 of byte1 (VM4LightH60A6.o:103)", seq: [ { id: zone_a, type: u1 }, { id: zone_b, type: u1 } ] }
   status_seg_info:   { doc: "0x41 seg/IC info (VM4LightH60A6.o:99 reads byte1)", seq: [ { id: b0, type: u1 }, { id: ic_or_seg, type: u1 } ] }
+  mode_status:
+    doc: "0xAC TLV 0x05 — device's active mode: [sub_mode, params]. Same [sub_mode, params] shape as the 0x05 mode frame body (SubMode dispatch, u():349 -> .g() lambda). sub_mode seen = the active mode: colour (0x15/0x0D), CCT, scene (0x04), music (0x13), diy (0x0a). params layout is per sub_mode / device (see mode_read / color_* types); left size-eos here."
+    seq:
+      - { id: sub_mode, type: u1, enum: sub_mode }
+      - { id: params, size-eos: true }
+  color_group_status:
+    doc: |
+      0xAC TLV 0xA5 — ONE colour group (Controller4ColorInfoByGroup). group_index @ value[0] is 1-based
+      (VM read loop iterates group 1..maxGroup; request byte = group number). Records fill the rest of the
+      TLV: COUNT = (len-1)/record_size (the walker's own count is a caller-supplied per-SKU constant
+      'oneGroupColorSize', but len == 1 + count*record_size, so len is authoritative and robust for a
+      short last group). record_size is caller/SKU-selected: 4-byte [brightness,R,G,B] via generateReadController
+      -> q():174 when the SKU supports part-brightness; 3-byte [R,G,B] via generateReadController4OnlyColor
+      -> p():157 otherwise. ALL CURATED devices are 4-byte: H60A6 (VM4LightH60A6:302), H6047 (VM4H6038:872),
+      H6641 (VM4LightH61d3:269, count=4). 3-byte is used by non-curated colour-only families (tvlightv2,
+      rgblight, bulblightstringv1, h7022, h6160). Modelled 4-byte here (the curated form); for a 3-byte SKU
+      each record is color_group_rec_rgb. Global segment index (client-assembled) = (group_index-1)*count + k.
+      NOTE the reply's group_index byte is read but DISCARDED in the 4-byte callback path — the client tracks
+      the group by its per-group READ REQUEST, not this byte.
+    seq:
+      - { id: group_index, type: u1, doc: "1-based group number (K(value[0]))" }
+      - { id: records, type: color_group_rec, repeat: eos, doc: "count = (len-1)/4; 4-byte [brightness,R,G,B]" }
+  color_group_rec:       # 4-byte record (part-brightness SKUs; all curated)
+    seq:
+      - { id: brightness, type: u1 }
+      - { id: r, type: u1 }
+      - { id: g, type: u1 }
+      - { id: b, type: u1 }
+  color_group_rec_rgb:   # 3-byte record (colour-only SKUs; reference — not wired into the 0xA5 case)
+    seq:
+      - { id: r, type: u1 }
+      - { id: g, type: u1 }
+      - { id: b, type: u1 }
 
   switch_payload:
     seq:

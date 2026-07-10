@@ -58,15 +58,15 @@ def test_tlv_walk_stops_on_padding() -> None:
     assert 0x00 not in got  # padding terminates the walk
 
 
-def test_anchor_device_info() -> None:
-    # BLE-only devices (H60A6) report wifi_mac + hardware_version ONLY in the 0xAC stream,
-    # anchored on their own BLE MAC (little-endian): +9..15 = MAC (reversed), +20..23 = version.
-    frames = [bytes.fromhex(h) for h in _BURST]
-    wifi, hw = r.anchor_device_info(frames, "5C:E7:53:F4:74:57")
-    assert wifi == "5C:E7:53:F4:74:56" and hw == "1.04.03"
-    # MAC not present in the stream -> no anchor; a malformed address -> no anchor
-    assert r.anchor_device_info(frames, "11:22:33:44:55:66") == (None, None)
-    assert r.anchor_device_info(frames, "not-a-mac") == (None, None)
+def test_parse_status_extracts_device_info() -> None:
+    # BLE-only devices (H60A6) report device-info ONLY in the 0xAC stream, via the 0x07 TLV
+    # (parsed by the generated device_info_read reader — no MAC-anchor heuristic, no address).
+    st = r.parse_status([bytes.fromhex(h) for h in _BURST])
+    assert st.wifi_mac == "5C:E7:53:F4:74:56"       # 0x11 wifi TLV
+    assert st.hardware_version == "1.04.03"          # matches the old anchor's value
+    assert st.firmware_version == "1.00.41"          # bonus vs the anchor (sw was not extracted before)
+    assert st.serial_number == "2D:DB:5C:E7:53:F4:74:56"   # 0x10 basic uid
+    assert not hasattr(r, "anchor_device_info")      # heuristic retired
 
 
 def test_empty_and_short() -> None:

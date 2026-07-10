@@ -315,10 +315,17 @@ command_catalog:
   - { opcode: "0x22", name: SINGLE_WIFI_DSP_VERSION,  category: device_info, direction: R, meaning: "DSP version" }
   # IC / segment (RGBIC)
   # Per-segment COLOUR read-back is NOT uniform across curated devices — three mechanisms:
-  #   (A) 0xAC -> 0xA5-group TLV (base2light Controller4ColorInfoByGroup): H60A6, H6047, H6641. TLV [type 0xA5, len,
-  #       groupIndex, records]; record = 4 B [brightness,R,G,B] (or 3 B [R,G,B] on SKUs lacking part-brightness, e.g.
-  #       H6641 ".p" path); 4 records/group; group count = ceil(N/4). N = getColorPieceSize (per SKU) and is DISTINCT
-  #       from the write/addressable segment count (H6047: read-back 12 != write 10).
+  #   (A) 0xAC -> 0xA5-group TLV (base2light Controller4ColorInfoByGroup): H60A6, H6047, H6641. Each 0xA5 TLV =
+  #       ONE group [group_index(1-based), record x count]; record = 4 B [brightness,R,G,B] via
+  #       generateReadController->q():174. ALL THREE CURATED DEVICES ARE 4-BYTE (H60A6 VM4LightH60A6:302,
+  #       H6047 VM4H6038:872, H6641 VM4LightH61d3:269 count=4) — supportPartBrightness=true. The 3 B [R,G,B]
+  #       variant (generateReadController4OnlyColor->p():157) is used ONLY by non-curated colour-only families
+  #       (tvlightv2, rgblight, bulblightstringv1, h7022, h6160). [Corrected: an earlier note wrongly cited an
+  #       H6641 3-byte ".p" path — H6641 is 4-byte.] Record COUNT per group = (len-1)/record_size (== the caller's
+  #       per-SKU oneGroupColorSize, usually 4). Global segment idx = (group_index-1)*count + k; the reply's
+  #       group_index byte is discarded in the 4-byte callback (client tracks group by its per-group request).
+  #       Group count = ceil(N / count). N = getColorPieceSize (per SKU), DISTINCT from the write/addressable
+  #       segment count (H6047: read-back 12 != write 10). ksy: status_tlv 0xA5 -> color_group_status.
   #   (B) per-group discrete controllers over 0xAA-notify (BulbGroupColor): H61A8. MULTI-FRAME batches — device
   #       sends maxGroup frames, each [AA][cmd][batch_seq][groups]; segment is POSITIONAL = (batch_seq-1)*perBatch+i.
   #       V1 cmd 0xA2 = 4 groups/frame x 3 B [R,G,B], NO brightness (BulbGroupColor, hardcoded 4). V2 cmd 0xA5 =

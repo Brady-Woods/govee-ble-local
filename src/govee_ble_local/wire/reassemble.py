@@ -19,6 +19,7 @@ _LOGGER = logging.getLogger(__name__)
 
 TYPE_SWITCH = 0x01
 TYPE_BRIGHTNESS = 0x04
+TYPE_DEVICE_INFO = 0x07
 TYPE_ZONE = 0x30
 TYPE_SEG_INFO = 0x41
 TYPE_COLOR_GROUP = 0xA5
@@ -31,6 +32,11 @@ class StatusReply:
     brightness: int | None = None            # raw 0-255 (percent mapping is UI-layer)
     zone_power: dict[int, bool] = field(default_factory=dict)
     segments: list[Segment] = field(default_factory=list)
+    # Device-info from the 0x07 TLV (BLE-only devices report it ONLY here — was the MAC-anchor).
+    serial_number: str | None = None
+    wifi_mac: str | None = None
+    firmware_version: str | None = None
+    hardware_version: str | None = None
 
 
 def reassemble(frames: list[bytes]) -> bytes:
@@ -80,45 +86,17 @@ def _add_color_group(val: bytes, segs: dict[int, Segment]) -> None:
         segs[idx] = Segment(index=idx, rgb=(r, g, b), brightness=brightness)
 
 
-def anchor_device_info(frames: list[bytes], address: str) -> tuple[str | None, str | None]:
-    """``(wifi_mac, hardware_version)`` from a 0xAC status burst, anchored on the device's
-    own BLE MAC (little-endian) within the joined ``0x01..0x04 + 0xFF`` chunk stream:
-    ``+9..15`` = Wi-Fi MAC (reversed), ``+20..23`` = hardware version (``X.YY.ZZ``).
-
-    This is the ONLY place BLE-only devices (e.g. H60A6) report hw + MAC — their ``aa 07``
-    wifi query returns zeros. Byte-exact port of v2 ``ble/status._anchor_device_info``
-    (chunk payload = frame[2:19]; stream skips chunk 0x00). Zero fields are dropped (None).
-
-    HEURISTIC by necessity: the 0x07 device-info TLV *value* inside the reassembled 0xAC
-    buffer is not yet modelled in the ksy (documented GAP on ``status_tlv``). When that
-    sub-structure is modelled from the Java source, this MAC-anchor can be replaced by a
-    spec-driven walk of the 0x07 TLV.
-    """
-    chunks: dict[int, bytes] = {}
-    for fr in frames:
-        if len(fr) >= 3 and fr[0] == 0xAC:
-            chunks[fr[1]] = fr[2:19]
-    stream = b"".join(chunks.get(k, b"") for k in (0x01, 0x02, 0x03, 0x04, 0xFF))
-    try:
-        own = bytes(int(b, 16) for b in address.split(":"))
-    except ValueError:
-        return None, None
-    anchor = stream.find(own[::-1])
-    if anchor == -1:
-        return None, None
-    wifi_mac: str | None = None
-    wb = stream[anchor + 9 : anchor + 15]
-    if len(wb) == 6 and any(wb):
-        wifi_mac = ":".join(f"{b:02X}" for b in wb[::-1])
-    hw_ver: str | None = None
-    hw = stream[anchor + 20 : anchor + 23]
-    if len(hw) == 3 and any(hw):
-        hw_ver = f"{hw[0]}.{hw[1]:02d}.{hw[2]:02d}"
-    return wifi_mac, hw_ver
-
-
 def parse_status(frames: list[bytes]) -> StatusReply:
-    """Reassemble a 0xAC burst and decode switch / brightness / zone / segment colours."""
+    """Reassemble a 0xAC burst and decode switch / brightness / zone / segments + device-info.
+
+    The top-level TLV framing is walked here (defensively — it stops on zero-pad / truncation,
+    which the ksy's ``repeat: eos`` status_reply can't survive on a real padded burst), but each
+    typed VALUE uses the spec model: the ``0x07`` device-info is parsed by the generated
+    ``device_info_read`` reader (``parse.parse_device_info_body``) — giving wifi_mac / hw / sw /
+    serial for BLE-only devices (H60A6) straight from the spec, retiring the old MAC-anchor
+    heuristic. First non-None wins (basic 0x10 precedes wifi 0x11 in the stream)."""
+    from . import parse   # local import: parse is a peer; keep module import graph acyclic
+
     st = StatusReply()
     segs: dict[int, Segment] = {}
     for t, val in walk_tlvs(reassemble(frames)):
@@ -130,5 +108,16 @@ def parse_status(frames: list[bytes]) -> StatusReply:
             st.zone_power = {0: bool(val[0]), 1: bool(val[1])}
         elif t == TYPE_COLOR_GROUP:
             _add_color_group(val, segs)
+        elif t == TYPE_DEVICE_INFO:
+            info = parse.parse_device_info_body(val)
+            if info is not None:
+                if info.serial is not None and st.serial_number is None:
+                    st.serial_number = info.serial
+                if info.wifi_mac is not None and st.wifi_mac is None:
+                    st.wifi_mac = info.wifi_mac
+                if info.sw_version is not None and st.firmware_version is None:
+                    st.firmware_version = info.sw_version
+                if info.hw_version is not None and st.hardware_version is None:
+                    st.hardware_version = info.hw_version
     st.segments = [segs[k] for k in sorted(segs)]
     return st

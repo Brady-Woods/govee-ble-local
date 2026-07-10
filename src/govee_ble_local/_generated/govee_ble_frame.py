@@ -584,6 +584,41 @@ class GoveeBleFrame(KaitaiStruct):
 
 
 
+    class ColorGroupRec(KaitaiStruct):
+        def __init__(self, _io, _parent=None, _root=None):
+            super(GoveeBleFrame.ColorGroupRec, self).__init__(_io)
+            self._parent = _parent
+            self._root = _root
+            self._read()
+
+        def _read(self):
+            self.brightness = self._io.read_u1()
+            self.r = self._io.read_u1()
+            self.g = self._io.read_u1()
+            self.b = self._io.read_u1()
+
+
+        def _fetch_instances(self):
+            pass
+
+
+    class ColorGroupRecRgb(KaitaiStruct):
+        def __init__(self, _io, _parent=None, _root=None):
+            super(GoveeBleFrame.ColorGroupRecRgb, self).__init__(_io)
+            self._parent = _parent
+            self._root = _root
+            self._read()
+
+        def _read(self):
+            self.r = self._io.read_u1()
+            self.g = self._io.read_u1()
+            self.b = self._io.read_u1()
+
+
+        def _fetch_instances(self):
+            pass
+
+
     class ColorGroupRecord(KaitaiStruct):
         def __init__(self, _io, _parent=None, _root=None):
             super(GoveeBleFrame.ColorGroupRecord, self).__init__(_io)
@@ -617,6 +652,44 @@ class GoveeBleFrame(KaitaiStruct):
 
         def _fetch_instances(self):
             pass
+
+
+    class ColorGroupStatus(KaitaiStruct):
+        """0xAC TLV 0xA5 — ONE colour group (Controller4ColorInfoByGroup). group_index @ value[0] is 1-based
+        (VM read loop iterates group 1..maxGroup; request byte = group number). Records fill the rest of the
+        TLV: COUNT = (len-1)/record_size (the walker's own count is a caller-supplied per-SKU constant
+        'oneGroupColorSize', but len == 1 + count*record_size, so len is authoritative and robust for a
+        short last group). record_size is caller/SKU-selected: 4-byte [brightness,R,G,B] via generateReadController
+        -> q():174 when the SKU supports part-brightness; 3-byte [R,G,B] via generateReadController4OnlyColor
+        -> p():157 otherwise. ALL CURATED devices are 4-byte: H60A6 (VM4LightH60A6:302), H6047 (VM4H6038:872),
+        H6641 (VM4LightH61d3:269, count=4). 3-byte is used by non-curated colour-only families (tvlightv2,
+        rgblight, bulblightstringv1, h7022, h6160). Modelled 4-byte here (the curated form); for a 3-byte SKU
+        each record is color_group_rec_rgb. Global segment index (client-assembled) = (group_index-1)*count + k.
+        NOTE the reply's group_index byte is read but DISCARDED in the 4-byte callback path — the client tracks
+        the group by its per-group READ REQUEST, not this byte.
+        """
+        def __init__(self, _io, _parent=None, _root=None):
+            super(GoveeBleFrame.ColorGroupStatus, self).__init__(_io)
+            self._parent = _parent
+            self._root = _root
+            self._read()
+
+        def _read(self):
+            self.group_index = self._io.read_u1()
+            self.records = []
+            i = 0
+            while not self._io.is_eof():
+                self.records.append(GoveeBleFrame.ColorGroupRec(self._io, self, self._root))
+                i += 1
+
+
+
+        def _fetch_instances(self):
+            pass
+            for i in range(len(self.records)):
+                pass
+                self.records[i]._fetch_instances()
+
 
 
     class ColorLegacy(KaitaiStruct):
@@ -1654,6 +1727,23 @@ class GoveeBleFrame(KaitaiStruct):
                 pass
 
 
+    class ModeStatus(KaitaiStruct):
+        """0xAC TLV 0x05 — device's active mode: [sub_mode, params]. Same [sub_mode, params] shape as the 0x05 mode frame body (SubMode dispatch, u():349 -> .g() lambda). sub_mode seen = the active mode: colour (0x15/0x0D), CCT, scene (0x04), music (0x13), diy (0x0a). params layout is per sub_mode / device (see mode_read / color_* types); left size-eos here."""
+        def __init__(self, _io, _parent=None, _root=None):
+            super(GoveeBleFrame.ModeStatus, self).__init__(_io)
+            self._parent = _parent
+            self._root = _root
+            self._read()
+
+        def _read(self):
+            self.sub_mode = KaitaiStream.resolve_enum(GoveeBleFrame.SubMode, self._io.read_u1())
+            self.params = self._io.read_bytes_full()
+
+
+        def _fetch_instances(self):
+            pass
+
+
     class MultiA1(KaitaiStruct):
         """comType@1, position@2, 16 data bytes@3..18. position 0x00 = start (data[0] = packet count), 0xFF = end."""
         def __init__(self, _io, _parent=None, _root=None):
@@ -2482,6 +2572,11 @@ class GoveeBleFrame(KaitaiStruct):
                 self._raw_value = self._io.read_bytes(self.len)
                 _io__raw_value = KaitaiStream(BytesIO(self._raw_value))
                 self.value = GoveeBleFrame.StatusSwitch(_io__raw_value, self, self._root)
+            elif _on == 165:
+                pass
+                self._raw_value = self._io.read_bytes(self.len)
+                _io__raw_value = KaitaiStream(BytesIO(self._raw_value))
+                self.value = GoveeBleFrame.ColorGroupStatus(_io__raw_value, self, self._root)
             elif _on == 4:
                 pass
                 self._raw_value = self._io.read_bytes(self.len)
@@ -2492,11 +2587,21 @@ class GoveeBleFrame(KaitaiStruct):
                 self._raw_value = self._io.read_bytes(self.len)
                 _io__raw_value = KaitaiStream(BytesIO(self._raw_value))
                 self.value = GoveeBleFrame.StatusZone(_io__raw_value, self, self._root)
+            elif _on == 5:
+                pass
+                self._raw_value = self._io.read_bytes(self.len)
+                _io__raw_value = KaitaiStream(BytesIO(self._raw_value))
+                self.value = GoveeBleFrame.ModeStatus(_io__raw_value, self, self._root)
             elif _on == 65:
                 pass
                 self._raw_value = self._io.read_bytes(self.len)
                 _io__raw_value = KaitaiStream(BytesIO(self._raw_value))
                 self.value = GoveeBleFrame.StatusSegInfo(_io__raw_value, self, self._root)
+            elif _on == 7:
+                pass
+                self._raw_value = self._io.read_bytes(self.len)
+                _io__raw_value = KaitaiStream(BytesIO(self._raw_value))
+                self.value = GoveeBleFrame.DeviceInfoRead(_io__raw_value, self, self._root)
             else:
                 pass
                 self.value = self._io.read_bytes(self.len)
@@ -2508,13 +2613,22 @@ class GoveeBleFrame(KaitaiStruct):
             if _on == 1:
                 pass
                 self.value._fetch_instances()
+            elif _on == 165:
+                pass
+                self.value._fetch_instances()
             elif _on == 4:
                 pass
                 self.value._fetch_instances()
             elif _on == 48:
                 pass
                 self.value._fetch_instances()
+            elif _on == 5:
+                pass
+                self.value._fetch_instances()
             elif _on == 65:
+                pass
+                self.value._fetch_instances()
+            elif _on == 7:
                 pass
                 self.value._fetch_instances()
             else:
