@@ -63,6 +63,10 @@ PROFILES: tuple[DeviceProfile, ...] = (
         min_kelvin=2200, max_kelvin=6500, readback="polled",
     ),
     # H61A8 — rope: plaintext, 0x0b scheme, 15 segments, no CCT, dialect-A scenes.
+    # SEGMENTS = per-segment CONTROL only. GAP: mechanism-B read-back (BulbGroupColor —
+    # 0xA2 3-byte / 0xA5 4-byte per-group over 0xAA-notify) is NOT modeled in the ksy
+    # (read_command has no 0xa2 case; per-frame group framing unspecified), so segment
+    # colour read-back is not wired — `polled` covers power/brightness/scene only.
     DeviceProfile(
         skus=("H61A8",),
         capabilities=frozenset({_C.POWER, _C.BRIGHTNESS, _C.RGB, _C.SEGMENTS, _C.SCENES}),
@@ -81,17 +85,24 @@ PROFILES: tuple[DeviceProfile, ...] = (
         scene_versions=frozenset({1}), readback="polled",
     ),
     # H6052 — table lamp: plaintext, 0x0d scheme; type-5 scenes via dialect B_h6052 (commByte 9).
+    # GAP: mechanism-C read-back (colour from the 0x0D mode-report, fanned to 2 zones) is NOT
+    # modeled — the ksy treats 0x0d as write-only (no reply body), so colour read-back is not
+    # wired; `polled` covers power/brightness/scene only.
     DeviceProfile(
         skus=("H6052",), capabilities=_LIGHT, color_scheme="h6006",
         encryption=Encryption.NONE, min_kelvin=2000, max_kelvin=9000,
         scene_versions=frozenset({0, 1, 4, 5}), scene_dialect="B_h6052", readback="polled",
     ),
     # H6641 — RGBIC strip (goodsType 247): plaintext, 0x15 scheme, dialect-A scenes.
-    # (Whole-strip colour today; per-segment read-back is IC-driven — future work.)
+    # Mechanism A read-back (0xAC -> 0xA5 groups, Controller4ColorInfoByGroup) — the SAME
+    # path as the H60A6, so per-segment control + read-back come for free via wire.reassemble.
+    # Count is IC-driven (N = ceil(IC_count/5), read live via 0x40); `segments=16` is only the
+    # whole-device mask width (16-bit) — read-back reports the actual group count. NOTE: wired
+    # from the shared mechanism-A source; not yet live-verified on an H6641.
     DeviceProfile(
-        skus=("H6641",), capabilities=_LIGHT, color_scheme="h60a6",
+        skus=("H6641",), capabilities=_LIGHT | {_C.SEGMENTS}, color_scheme="h60a6",
         encryption=Encryption.NONE, segments=16, min_kelvin=2000, max_kelvin=9000,
-        scene_versions=frozenset({0, 1, 2, 3, 10}), readback="polled",
+        scene_versions=frozenset({0, 1, 2, 3, 10}), readback="status",
     ),
     # Plug family — power-only, AES + account-lock, relay encoding.
     DeviceProfile(

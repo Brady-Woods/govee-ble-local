@@ -105,6 +105,16 @@ def test_scene_dialect_routing() -> None:
     assert f and all(fr[0] == 0xA3 for fr in f)
 
 
+def test_h6641_segment_control_wired() -> None:
+    # H6641 mechanism-A: per-segment control + status read-back now exposed.
+    d = _dev("H6641")
+    assert Capability.SEGMENTS in d.capabilities and d.profile.readback == "status"
+    asyncio.run(d.set_segment_rgb([0, 1, 2], (0, 0, 255)))
+    f = _sent(d)[0]
+    assert f.hex().startswith("33051501")   # 0x15 set-color (RGBIC per-segment)
+    assert f[12] == 0x07                     # mask lo: segments {0,1,2} = 0b111
+
+
 def test_readback_status_maps_to_state() -> None:
     # feed the real captured H60A6 0xAC burst through Device._read_status via a mock query
     burst = [bytes.fromhex(h) for h in (
