@@ -19,7 +19,7 @@ import pytest_asyncio
 
 pytest.importorskip("kaitaistruct", reason="Kaitai runtime not installed")
 _gb = pytest.importorskip(
-    "spec_gen.govee_ble_frame", reason="run tools/gen_kaitai.sh to generate the Kaitai reader"
+    "govee_ble_local._generated.govee_ble_frame", reason="run tools/gen_kaitai.sh to generate the Kaitai reader"
 )
 GoveeBleFrame = _gb.GoveeBleFrame
 

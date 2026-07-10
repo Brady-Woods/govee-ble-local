@@ -27,8 +27,7 @@ import sys
 from pathlib import Path
 
 _REPO = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(_REPO / "src"))
-sys.path.insert(0, str(_REPO / "tests"))  # spec_gen.govee_ble_frame (generated reader)
+sys.path.insert(0, str(_REPO / "src"))  # govee_ble_local + ._generated (shipped reader)
 
 
 async def find_device(address: str | None):
@@ -93,7 +92,7 @@ async def read_kelvin(dev) -> int | None:  # type: ignore[no-untyped-def]
     from govee_ble_local.ble import controllers
 
     try:
-        from spec_gen.govee_ble_frame import GoveeBleFrame as GBF
+        from govee_ble_local._generated.govee_ble_frame import GoveeBleFrame as GBF
     except Exception:
         GBF = None
     frames = await dev._connection.query(

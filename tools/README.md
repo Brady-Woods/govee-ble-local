@@ -5,7 +5,7 @@ Developer/analysis utilities. Run them from the repo root (most add `../src` to
 
 | Tool | What it does |
 | --- | --- |
-| `gen_kaitai.sh` | Compile `spec/*.ksy` → `tests/spec_gen/*.py` with the pure-JS Kaitai compiler (no JVM). The generated readers are **committed**, so running the tests needs only `pip install -e .[test]`. Re-run only after editing a `.ksy`. First run downloads a userland Node into `.toolchain/` (gitignored). |
+| `gen_kaitai.sh` | Compile `spec/*.ksy` → `src/govee_ble_local/_generated/*.py` with the pure-JS Kaitai compiler (no JVM). The generated readers are **committed**, so running the tests needs only `pip install -e .[test]`. Re-run only after editing a `.ksy`. First run downloads a userland Node into `.toolchain/` (gitignored). |
 | `fetch_scenes.py [SKU…]` | Fetch Govee's built-in scene library per SKU (public endpoint) into `src/govee_ble_local/scenes/<SKU>.json`. `--resolve` (with `GOVEE_EMAIL`/`GOVEE_PASSWORD`) bakes real blobs for placeholder scenes via the authenticated `effect-strs` endpoint. `--audit` prints per-SKU upload readiness (upload / activate / blocked / placeholder) with no cloud call. |
 | `decrypt_btsnoop.py <log>` | Decrypt a Govee AES-RC4-PSK btsnoop capture: derives the per-connection session key from the `e7` handshake, decrypts every ATT write/notify, BCC-validates, resolves device MAC per ACL handle. `--starts` dumps multi-packet START frames; `--dump a1,a3,a4`; `--all`. |
 | `btsnoop_mtu_scan.py <log>` | Decryption-free scan: ATT Exchange-MTU values + write-length histogram (`--protype` adds a first-byte histogram of 20-byte writes). Works on encrypted links (ATT headers are plaintext). |
@@ -33,5 +33,5 @@ Developer/analysis utilities. Run them from the repo root (most add `../src` to
 
 `spec/` is the machine-readable protocol reference: `govee_ble.ksy` / `govee_adv.ksy` (Kaitai frame + advert),
 `devices.yaml` (+ `devices.schema.json`, the device/capability table). `gen_kaitai.sh` compiles the `.ksy` to
-the committed readers under `tests/spec_gen/`; the offline suite (`pytest`) round-trips the library's frames
+the committed readers under `src/govee_ble_local/_generated/`; the offline suite (`pytest`) round-trips the library's frames
 through those readers and validates `devices.yaml` against its schema.

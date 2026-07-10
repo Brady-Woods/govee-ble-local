@@ -22,10 +22,10 @@ import pathlib
 import sys
 
 _ROOT = pathlib.Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(_ROOT / "tests"))  # for the generated spec_gen package
+sys.path.insert(0, str(_ROOT / "src"))  # for govee_ble_local._generated (shipped reader)
 
 try:
-    from spec_gen.govee_ble_frame import GoveeBleFrame
+    from govee_ble_local._generated.govee_ble_frame import GoveeBleFrame
 except Exception as exc:  # noqa: BLE001
     raise SystemExit(f"generated reader missing — run tools/gen_kaitai.sh first ({exc})")
 

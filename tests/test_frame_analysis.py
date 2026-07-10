@@ -11,7 +11,7 @@ import sys
 import pytest
 
 pytest.importorskip("kaitaistruct", reason="Kaitai runtime not installed")
-pytest.importorskip("spec_gen.govee_ble_frame", reason="run tools/gen_kaitai.sh")
+pytest.importorskip("govee_ble_local._generated.govee_ble_frame", reason="run tools/gen_kaitai.sh")
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "tools"))
 import analyze_frame_log as afl  # noqa: E402

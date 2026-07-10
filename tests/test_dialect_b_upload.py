@@ -16,7 +16,7 @@ from bleak.backends.device import BLEDevice
 
 pytest.importorskip("kaitaistruct", reason="Kaitai runtime not installed")
 gb = pytest.importorskip(
-    "spec_gen.govee_ble_frame", reason="run tools/gen_kaitai.sh to generate the reader"
+    "govee_ble_local._generated.govee_ble_frame", reason="run tools/gen_kaitai.sh to generate the reader"
 )
 GBF = gb.GoveeBleFrame
 

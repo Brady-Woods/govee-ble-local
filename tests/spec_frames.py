@@ -4,7 +4,7 @@ Kaitai generates readers only, so these builders encode the same layouts by hand
 (the ``.ksy`` doc says "the write side is symmetric"). They are intentionally
 **independent of** ``govee_ble_local.ble.controllers`` so the spec can be tested
 on its own terms: build here → parse with the Kaitai-generated reader
-(``tests/spec_gen``) → assert the fields, then (live suite) send to a real device.
+(``govee_ble_local._generated``) → assert the fields, then (live suite) send to a real device.
 
 Every builder returns a 20-byte frame with the trailing XOR checksum
 (``checksum = XOR of bytes 0..18``, per §4.1 / ``govee_ble.ksy`` meta doc).

@@ -16,7 +16,7 @@ import pytest
 
 pytest.importorskip("kaitaistruct", reason="Kaitai runtime not installed")
 gb = pytest.importorskip(
-    "spec_gen.govee_ble_frame", reason="run tools/gen_kaitai.sh to generate the Kaitai reader"
+    "govee_ble_local._generated.govee_ble_frame", reason="run tools/gen_kaitai.sh to generate the Kaitai reader"
 )
 GoveeBleFrame = gb.GoveeBleFrame
 
@@ -25,7 +25,7 @@ from govee_ble_local.ble import controllers  # noqa: E402
 from govee_ble_local.scenes import load_scenes  # noqa: E402
 
 _adv = pytest.importorskip(
-    "spec_gen.govee_advertisement", reason="run tools/gen_kaitai.sh to generate the adv reader"
+    "govee_ble_local._generated.govee_advertisement", reason="run tools/gen_kaitai.sh to generate the adv reader"
 )
 GoveeAdvertisement = _adv.GoveeAdvertisement
 

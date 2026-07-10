@@ -30,14 +30,16 @@ dependencies = [
     # alongside HA core's own cryptography pin as it moves.
     "cryptography>=41.0.0,<49",
     "PyYAML>=6.0",
+    # Runtime: the spec/*.ksy-generated readers under govee_ble_local/_generated are
+    # the library's wire parser (pure-Python, small). The Kaitai *compiler* stays a
+    # build tool (JS, no JVM) invoked by tools/gen_kaitai.sh; the readers are committed.
+    "kaitaistruct>=0.10",
 ]
 
 [project.optional-dependencies]
-# kaitaistruct: runtime for the spec/*.ksy readers under tests/spec_gen (offline
-#   spec-conformance suite). jsonschema: validates spec/devices.yaml. The Kaitai
-#   *compiler* is a build tool (JS, no JVM) invoked by tools/gen_kaitai.sh — the
-#   generated readers are committed, so running the tests needs only the runtime.
-test = ["pytest", "pytest-asyncio", "pytest-cov", "kaitaistruct>=0.10", "jsonschema>=4.0"]
+# jsonschema: validates spec/devices.yaml against its schema (test-only).
+# (kaitaistruct is a runtime dep — see [project].dependencies.)
+test = ["pytest", "pytest-asyncio", "pytest-cov", "jsonschema>=4.0"]
 cloud = ["aiohttp>=3.9"]
 typing = ["mypy", "types-PyYAML"]
 
@@ -56,8 +58,14 @@ python_version = "3.11"
 strict = true
 
 [[tool.mypy.overrides]]
-module = ["bleak_retry_connector", "aiohttp"]
+module = ["bleak_retry_connector", "aiohttp", "kaitaistruct"]
 ignore_missing_imports = true
+
+# Kaitai-generated readers — not hand-written, exclude from strict checking.
+[[tool.mypy.overrides]]
+module = ["govee_ble_local._generated.*"]
+ignore_errors = true
+follow_imports = "skip"
 
 [tool.coverage.run]
 source = ["govee_ble_local"]

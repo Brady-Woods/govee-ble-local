@@ -1,6 +1,6 @@
-"""Make ``govee_ble_local`` (src layout), the Kaitai-generated readers
-(``tests/spec_gen``), and the spec builders (``tests/spec_frames``) importable
-whether or not the package is installed editable."""
+"""Make ``govee_ble_local`` (src layout) — including the shipped Kaitai readers
+under ``govee_ble_local._generated`` — and the spec builders (``tests/spec_frames``)
+importable whether or not the package is installed editable."""
 from __future__ import annotations
 
 import pathlib

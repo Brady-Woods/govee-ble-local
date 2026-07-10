@@ -4,7 +4,7 @@
 #
 #   bash tools/gen_kaitai.sh
 #
-# Output: tests/spec_gen/{govee_ble_frame,govee_advertisement}.py (committed, so
+# Output: src/govee_ble_local/_generated/{govee_ble_frame,govee_advertisement}.py (committed, so
 # environments without Node can still run the offline spec suite).
 #
 # Uses the pure-JS kaitai-struct-compiler (no JVM). It needs Node + the two npm
@@ -43,4 +43,4 @@ fi
 # 3. generate
 export NODE_PATH="$PWD/.toolchain/ksc/node_modules"
 node tools/kaitai_gen.js
-echo ">> done: tests/spec_gen/"
+echo ">> done: src/govee_ble_local/_generated/"

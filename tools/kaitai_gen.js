@@ -13,7 +13,7 @@ const yaml = require("js-yaml");
 
 const REPO = path.resolve(__dirname, "..");
 const SPEC_DIR = path.join(REPO, "spec");
-const OUT_DIR = path.join(REPO, "tests", "spec_gen");
+const OUT_DIR = path.join(REPO, "src", "govee_ble_local", "_generated");
 
 const KSY_FILES = ["govee_ble.ksy", "govee_adv.ksy"];
 
