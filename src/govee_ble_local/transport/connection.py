@@ -33,6 +33,7 @@ from ..const import (
     WRITE_CHAR_UUID,
 )
 from ..crypto import decrypt, encrypt
+from ..wire.describe import describe_frame
 from ..exceptions import (
     GoveeBleConnectionError,
     GoveeBleError,
@@ -45,6 +46,11 @@ from . import handshake
 from .framelog import FrameLog
 
 _LOGGER = logging.getLogger(__name__)
+# Dedicated frame-tier logger: the full-session firehose (every TX/RX frame). Kept OFF
+# by default (it inherits the root level, but callers enable it explicitly, e.g. HA
+# `logger: logs: govee_ble_local.frames: debug`). Guarded by isEnabledFor so it costs
+# nothing when disabled. This is the capture surface over a Bluetooth proxy.
+_FRAMES = logging.getLogger("govee_ble_local.frames")
 
 NotifyCallback = Callable[[bytes], None]
 
@@ -102,6 +108,26 @@ class GoveeConnection:
     def update_ble_device(self, ble_device: BLEDevice) -> None:
         self._ble_device = ble_device
 
+    # -- capture ------------------------------------------------------------
+
+    def _capture(self, direction: str, *, wire: bytes, plain: bytes | None, enc: str) -> None:
+        """Route one frame to the persistent JSONL sink (if configured) AND the
+        frame-tier logger (if enabled). The single choke point for session capture,
+        so file and logger share one shape — and it works identically over a proxy."""
+        if self._framelog is not None:
+            self._framelog.record(direction, wire=wire, plain=plain, enc=enc)
+        if _FRAMES.isEnabledFor(logging.DEBUG):
+            if plain is not None:
+                label = describe_frame(plain, direction)[0]
+                _FRAMES.debug(
+                    "%s %s %s plain=%s wire=%s enc=%s",
+                    self.address, direction, label, plain.hex(), wire.hex(), enc,
+                )
+            else:
+                _FRAMES.debug(
+                    "%s %s cipher plain= wire=%s enc=%s", self.address, direction, wire.hex(), enc
+                )
+
     # -- notify pump --------------------------------------------------------
 
     def _handle_notify(self, _char: BleakGATTCharacteristic, data: bytearray) -> None:
@@ -110,10 +136,16 @@ class GoveeConnection:
             _LOGGER.debug("%s: ignoring %d-byte notification", self.address, len(raw))
             return
         self._rx.put_nowait(raw)
-        if self._framelog is not None:
-            # plaintext only once the session key is available (post-handshake)
-            plain = self._decrypt_rx(raw) if self._ready else None
-            self._framelog.record("rx", wire=raw, plain=plain, enc=self._encryption.value)
+        # plaintext only once the session key is available (post-handshake)
+        plain = self._decrypt_rx(raw) if self._ready else None
+        self._capture("rx", wire=raw, plain=plain, enc=self._encryption.value)
+        # Surface a frame the spec can't model (unknown opcode/command/sub-type or a
+        # device rejection) so a live session shows it instead of dropping it silently.
+        if plain is not None:
+            label, issues = describe_frame(plain, "rx")
+            for severity, reason in issues:
+                if severity == "hard":
+                    _LOGGER.warning("%s: RX %s — %s (%s)", self.address, label, reason, plain.hex())
         # Once ready, application notifications are decodable; surface them.
         if self._ready and self._on_notify is not None:
             try:
@@ -206,7 +238,7 @@ class GoveeConnection:
                 await self._handshake()
             self._ready = True
             self._drain()
-            _LOGGER.debug("%s: session ready (%s)", self.address, self._encryption.value)
+            _LOGGER.info("%s: session ready (%s)", self.address, self._encryption.value)
             # Post-handshake unlock (e.g. secret-key check) — must run before
             # any user command, while we still hold the lock.
             if self._unlock_frames is not None:
@@ -221,16 +253,14 @@ class GoveeConnection:
 
     async def _handshake(self) -> None:
         step1 = handshake.build_step1(PSK)
-        if self._framelog is not None:  # e7 handshake TX (wire = ciphertext)
-            self._framelog.record("tx", wire=step1, enc="e7")
+        self._capture("tx", wire=step1, plain=None, enc="e7")  # e7 handshake (wire = ciphertext)
         await self._raw_write(step1)
         reply1 = await asyncio.wait_for(self._rx.get(), timeout=HANDSHAKE_TIMEOUT)
         key = handshake.parse_session_key(reply1, PSK)
         if key is None:
             raise GoveeBleHandshakeError(f"{self.address}: unexpected handshake step-1 reply")
         step2 = handshake.build_step2(PSK)
-        if self._framelog is not None:
-            self._framelog.record("tx", wire=step2, enc="e7")
+        self._capture("tx", wire=step2, plain=None, enc="e7")
         await self._raw_write(step2)
         try:
             await asyncio.wait_for(self._rx.get(), timeout=COMMAND_ACK_TIMEOUT)
@@ -241,7 +271,7 @@ class GoveeConnection:
         self._session_key = key
 
     def _on_disconnect(self, _client: BleakClientWithServiceCache) -> None:
-        _LOGGER.debug("%s: disconnected", self.address)
+        _LOGGER.info("%s: disconnected", self.address)
         self._session_key = None
         self._ready = False
         # Drop the stale client so the next connect re-establishes from scratch
@@ -290,8 +320,7 @@ class GoveeConnection:
             wire = encrypt(frame_plaintext, self._session_key)
         else:
             wire = frame_plaintext
-        if self._framelog is not None:  # single TX choke point for app frames
-            self._framelog.record("tx", wire=wire, plain=frame_plaintext, enc=self._encryption.value)
+        self._capture("tx", wire=wire, plain=frame_plaintext, enc=self._encryption.value)
         return wire
 
     async def _send_raw_locked(self, frame_plaintext: bytes, *, expect_ack: bool) -> bytes | None:
@@ -355,6 +384,8 @@ class GoveeConnection:
 
     async def _send_write_verified(self, frame_plaintext: bytes) -> bytes:
         command_type = frame_plaintext[1]
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug("%s: TX %s", self.address, describe_frame(frame_plaintext, "tx")[0])
         for attempt in range(WRITE_ATTEMPTS):
             self._drain()
             await self._raw_write(self._encrypt(frame_plaintext))
@@ -364,6 +395,11 @@ class GoveeConnection:
                     "%s: write 0x%02X ack %s", self.address, command_type, ack[:4].hex()
                 )
                 if len(ack) >= 3 and ack[2] != 0:
+                    # A genuine control failure the user must act on.
+                    _LOGGER.error(
+                        "%s: device rejected write 0x%02X (status 0x%02X)",
+                        self.address, command_type, ack[2],
+                    )
                     raise GoveeBleError(
                         f"{self.address}: device rejected write 0x{command_type:02X} "
                         f"(status 0x{ack[2]:02X})"
@@ -373,6 +409,9 @@ class GoveeConnection:
                 "%s: no ack for write 0x%02X (attempt %d/%d)",
                 self.address, command_type, attempt + 1, WRITE_ATTEMPTS,
             )
+        _LOGGER.error(
+            "%s: no ack for write 0x%02X after %d attempts", self.address, command_type, WRITE_ATTEMPTS
+        )
         raise GoveeBleTimeout(
             f"{self.address}: no ack for write 0x{command_type:02X} after {WRITE_ATTEMPTS} attempts"
         )

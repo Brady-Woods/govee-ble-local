@@ -9,10 +9,13 @@ colour groups (``[group_index, records×4B [brightness,R,G,B]]``, spec color_gro
 """
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 
 from ..models import Segment
+
+_LOGGER = logging.getLogger(__name__)
 
 TYPE_SWITCH = 0x01
 TYPE_BRIGHTNESS = 0x04
@@ -41,6 +44,7 @@ def reassemble(frames: list[bytes]) -> bytes:
     unique: dict[int, bytes] = {}
     for fr in frames:
         if len(fr) < 19:
+            _LOGGER.debug("status burst: skipping short chunk (%d bytes)", len(fr))
             continue
         unique.setdefault(fr[1], fr)
     ordered = [unique[k] for k in sorted(unique)]

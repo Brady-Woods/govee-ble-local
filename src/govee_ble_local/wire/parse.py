@@ -11,11 +11,14 @@ can read it as a relay bitmask while lights treat non-zero as on.
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Any
 
 from ..models import Segment
 from .._generated.govee_ble_frame import GoveeBleFrame as _GBF  # type: ignore[attr-defined]
+
+_LOGGER = logging.getLogger(__name__)
 
 # The generated reader is untyped; treat it as Any so attribute chains don't need stubs.
 _F: Any = _GBF
@@ -30,7 +33,9 @@ def _parse(frame: bytes) -> Any:
         return None
     try:
         return _F.from_bytes(bytes(frame))
-    except Exception:  # noqa: BLE001 - unknown enum / truncated frame -> not for us
+    except Exception as exc:  # noqa: BLE001 - unknown enum / truncated frame -> not for us
+        # A matched reply that won't parse is worth a breadcrumb (unknown enum / truncated).
+        _LOGGER.debug("frame did not parse against the spec: %s (%r)", bytes(frame).hex(), exc)
         return None
 
 

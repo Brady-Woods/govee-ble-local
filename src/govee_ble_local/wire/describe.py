@@ -1,0 +1,195 @@
+"""Describe + classify a single frame against the Kaitai spec.
+
+One shared implementation used by BOTH the runtime logging (transport/connection.py
+maps the severity to a log level) and the offline analyzer (tools/analyze_frame_log.py
+buckets the severities into a report). It answers two questions about a plaintext frame:
+
+  * a human LABEL (e.g. ``write/mode/color_rgbic_15``, ``ack/mode``, ``read/mode/sub=0x15``,
+    ``status-chunk``, ``multi-chunk/0xa4``), and
+  * a list of ISSUES ``[(severity, reason)]`` where severity is one of:
+      ``hard``     — a valid frame whose STRUCTURE the spec doesn't represent (real gap:
+                     unknown proType/command/sub-mode/notify-sub, a parse failure, or a
+                     device write-ACK rejection). Runtime logs these at WARNING/ERROR.
+      ``soft``     — a known opcode whose BODY is opaque (raw bytes): the spec models the
+                     frame but not this payload. Runtime logs at DEBUG.
+      ``artifact`` — invalid checksum / wrong length: not a real plaintext frame
+                     (ciphertext or corruption), not a spec gap.
+
+``0xAC`` status replies are multi-frame bursts and can't be judged one frame at a time —
+use :func:`analyze_status_bursts` for those.
+"""
+from __future__ import annotations
+
+import collections
+from typing import Any
+
+from .._generated.govee_ble_frame import GoveeBleFrame as _GBF  # type: ignore[attr-defined]
+from . import reassemble as _reassemble
+
+# The generated reader is untyped; treat it as Any so attribute chains don't need stubs.
+_F: Any = _GBF
+_PT = _F.ProType
+_CMD = _F.Command
+_SUB = _F.SubMode
+_NSUB = _F.NotifySub
+
+# TLV types the reassembled 0xAC status reply is known to carry
+# (Compose4BaseInfoSingleRead.u): switch/brightness/mode/device-info/... + zone/seg/colour.
+KNOWN_STATUS_REPLY_TLVS: frozenset[int] = frozenset(
+    {0x00, 0x01, 0x04, 0x05, 0x07, 0x11, 0x12, 0x23, 0x30, 0x41, 0xA5}
+)
+
+
+def checksum_ok(frame: bytes) -> bool:
+    """True if the frame is 20 bytes and byte 19 is the XOR of bytes 0..18."""
+    x = 0
+    for b in frame[:19]:
+        x ^= b
+    return len(frame) == 20 and frame[19] == x
+
+
+def _opaque(x: object) -> bool:
+    """True if the Kaitai reader left this body as raw bytes (no modelled layout)."""
+    return isinstance(x, (bytes, bytearray))
+
+
+def describe_frame(plain: bytes, direction: str = "?") -> tuple[str, list[tuple[str, str]]]:
+    """Return ``(label, issues)`` for one plaintext frame. See the module docstring."""
+    if plain and plain[0] == 0xAC:
+        # 0xAC status request/reply — a reply chunk is NOT parseable alone (it's a burst
+        # fragment). Handled in analyze_status_bursts; don't try to parse it here.
+        return ("status-chunk", [])
+    if plain and plain[0] in (0xA1, 0xA3, 0xA4) and len(plain) != 20:
+        return (f"multi-chunk/0x{plain[0]:02x}", [])   # variable-length upload chunk (e.g. 0xA4 END, 19 B)
+    if len(plain) != 20:
+        return (f"len={len(plain)}", [("artifact", f"not 20 bytes (len {len(plain)})")])
+    if not checksum_ok(plain):
+        return ("bad_checksum", [("artifact", "invalid BCC — likely undecrypted ciphertext / corrupt")])
+    try:
+        f = _F.from_bytes(plain)
+    except Exception as exc:  # noqa: BLE001
+        return ("parse_error", [("hard", f"kaitai parse failed: {exc!r}")])
+
+    pt = f.pro_type
+    if not isinstance(pt, _PT):
+        return (f"proType=0x{plain[0]:02x}", [("hard", f"unknown proType 0x{plain[0]:02x}")])
+
+    issues: list[tuple[str, str]] = []
+    body = f.body
+    label = pt.name
+
+    if direction == "rx" and pt == _PT.write:
+        # Device write-ACK echo: [0x33, command, result, zeros]; byte2 = result (0 = success).
+        # The ksy models only the write COMMAND — command vs ack is direction-keyed (both are
+        # 0x33), so a lone frame can't tell them apart; parse it as an ack here (byte2 = result).
+        cmd = getattr(body, "command", None)
+        name = cmd.name if isinstance(cmd, _CMD) else f"0x{plain[1]:02x}"
+        if plain[2] != 0:
+            return (f"ack/{name}", [("hard", f"device REJECTED {name} write (result 0x{plain[2]:02x})")])
+        return (f"ack/{name}", [])
+
+    if pt == _PT.write:
+        cmd = getattr(body, "command", None)
+        if not isinstance(cmd, _CMD):
+            return (f"write/cmd=0x{plain[1]:02x}", [("hard", f"unknown command 0x{plain[1]:02x} (write)")])
+        label = f"write/{cmd.name}"
+        params = getattr(body, "params", None)
+        if cmd == _CMD.mode:
+            st = getattr(params, "sub_type", None)
+            if st is not None and not isinstance(st, _SUB):
+                return (f"write/mode/sub=0x{plain[2]:02x}", [("hard", f"unknown mode sub_type 0x{plain[2]:02x}")])
+            if isinstance(st, _SUB):
+                label += f"/{st.name}"
+                if _opaque(getattr(params, "params", None)):
+                    issues.append(("soft", f"write mode/{st.name} payload not modelled"))
+        elif _opaque(params):
+            issues.append(("soft", f"write {cmd.name} payload not modelled"))
+
+    elif pt == _PT.read:
+        cmd = getattr(body, "command", None)
+        if not isinstance(cmd, _CMD):
+            return (f"read/cmd=0x{plain[1]:02x}", [("hard", f"unknown command 0x{plain[1]:02x} (read)")])
+        label = f"read/{cmd.name}"
+        rb = getattr(body, "body", None)
+        if cmd == _CMD.mode:                       # mode_read: 0x15/0x13 typed; others opaque
+            sel = getattr(rb, "selector_or_sub_mode", None)
+            if sel is not None:
+                label += f"/sub=0x{sel:02x}"
+            # 0x01 = request selector (no reply body); 0x04 = scene code (read in wire.parse)
+            if _opaque(getattr(rb, "rest", None)) and sel not in (0x01, 0x04):
+                issues.append(("soft", f"mode read sub 0x{sel:02x} reply not modelled"))
+        elif _opaque(rb):                          # e.g. 0xa2 BulbGroupColor (mechanism B)
+            issues.append(("soft", f"read {cmd.name} reply not modelled (opaque)"))
+
+    elif pt == _PT.notify:
+        st = getattr(body, "sub_type", None)
+        if not isinstance(st, _NSUB):
+            return (f"notify/sub=0x{plain[1]:02x}", [("hard", f"unknown notify sub_type 0x{plain[1]:02x}")])
+        label = f"notify/{st.name}"
+        if _opaque(getattr(body, "data", None)):
+            issues.append(("soft", f"notify {st.name} payload not modelled"))
+    # multi_* / handshake: structural only.
+    return (label, issues)
+
+
+def analyze_status_bursts(
+    rx_ac: list[bytes],
+) -> tuple[collections.Counter[int], list[str], int]:
+    """Group RX ``0xAC`` reply chunks into bursts and walk each reassembled TLV stream.
+
+    A status burst is the index sequence ``ac 00, ac 01, … ac FF`` (byte1 = chunk index;
+    0xFF = terminator). Grouping keys on that index — a new ``index==0x00`` starts a fresh
+    burst, ``0xFF`` closes it — so a dropped terminator (which would otherwise concatenate
+    two reads and drift the walk into phantom TLVs) is caught as *malformed* instead of
+    mis-reported. Chunks are de-duplicated (the device double-delivers each notification).
+    Only complete bursts are walked; a TLV type outside :data:`KNOWN_STATUS_REPLY_TLVS`
+    is then a real spec gap.
+
+    Returns ``(tlv_type_counts, gaps, malformed_burst_count)``.
+    """
+    def _dedup(chunks: list[bytes]) -> list[bytes] | None:
+        """One chunk per index (first wins); a conflicting duplicate index => None (malformed)."""
+        seen: dict[int, bytes] = {}
+        order: list[bytes] = []
+        for fr in chunks:
+            i = fr[1]
+            if i in seen:
+                if seen[i] != fr:
+                    return None
+                continue
+            seen[i] = fr
+            order.append(fr)
+        return order
+
+    complete: list[list[bytes]] = []
+    malformed = 0
+    cur: list[bytes] = []
+    for fr in rx_ac:
+        idx = fr[1] if len(fr) >= 2 else -1
+        if idx == 0x00:                 # start of a burst
+            if cur:                     # previous burst never terminated -> merged/truncated
+                malformed += 1
+            cur = [fr]
+        elif idx == 0xFF:               # terminator closes the burst
+            if cur:
+                cur.append(fr)
+                deduped = _dedup(cur)
+                if deduped is None:
+                    malformed += 1
+                else:
+                    complete.append(deduped)
+                cur = []
+            # stray terminator with no open burst -> ignore
+        elif cur:                       # interior chunk of an open burst
+            cur.append(fr)
+    if cur:                             # trailing chunks with no terminator
+        malformed += 1
+
+    types: collections.Counter[int] = collections.Counter()
+    gaps: list[str] = []
+    for b in complete:
+        for t, _val in _reassemble.walk_tlvs(_reassemble.reassemble(b)):
+            types[t] += 1
+            if t not in KNOWN_STATUS_REPLY_TLVS:
+                gaps.append(f"0xAC reply TLV type 0x{t:02x} not modelled")
+    return types, gaps, malformed

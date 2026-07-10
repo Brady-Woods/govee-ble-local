@@ -36,6 +36,11 @@ dependencies = [
     "kaitaistruct>=0.10",
 ]
 
+[project.scripts]
+# Decode a captured session (JSONL frame log, or a govee_ble_local.frames logger dump via
+# --from-frames-log) and report spec coverage/gaps. Available from an installed wheel.
+govee-ble-analyze = "govee_ble_local.debug:main"
+
 [project.optional-dependencies]
 # jsonschema: validates spec/devices.yaml against its schema (test-only).
 # (kaitaistruct is a runtime dep — see [project].dependencies.)

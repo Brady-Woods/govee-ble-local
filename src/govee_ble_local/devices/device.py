@@ -7,6 +7,7 @@ kept :class:`~..transport.connection.GoveeConnection`.
 from __future__ import annotations
 
 import base64
+import logging
 import time
 from collections.abc import Callable
 from typing import Any
@@ -20,6 +21,8 @@ from ..scenes import Scene, load_scenes, scene_upload_params
 from ..transport.connection import GoveeConnection, now_ts
 from ..wire import build, parse, reassemble
 from .profile import DeviceProfile, profile_for
+
+_LOGGER = logging.getLogger(__name__)
 
 StateCallback = Callable[[DeviceState], None]
 
@@ -49,6 +52,7 @@ class Device:
         *,
         sku: str | None = None,
         secret: bytes | None = None,
+        frame_log: str | None = None,
     ) -> None:
         self.profile = profile
         self._ble_device = ble_device
@@ -57,12 +61,14 @@ class Device:
         self._secret = secret
         self._state = DeviceState(optimistic=True)
         self._device_info_read = False   # device-info (mac/hw/fw/sn) read once, lazily
+        self._polled_once = False        # for the one-time INFO "first poll" line
         self._callbacks: list[StateCallback] = []
         enc = self._resolve_encryption(advertisement_data)
         self._conn = GoveeConnection(
             ble_device,
             encryption=enc,
             unlock_frames=self._unlock_frames if profile.requires_secret else None,
+            frame_log=frame_log,
         )
 
     def _resolve_encryption(self, adv: Any | None) -> Encryption:
@@ -310,8 +316,20 @@ class Device:
         # Device-info (mac/hw/fw/serial) — static-ish, read once on the first good poll.
         if not self._device_info_read and self.profile.readback != "none":
             await self._read_device_info()
+        if not self._polled_once and self.profile.readback != "none":
+            _LOGGER.info("%s (%s) first poll: %s", self.address, self._sku, self._state_summary())
+            self._polled_once = True
+        elif _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug("%s (%s) state: %s", self.address, self._sku, self._state_summary())
         self._notify()
         return self._state
+
+    def _state_summary(self) -> str:
+        s = self._state
+        return (
+            f"on={s.is_on} bri={s.brightness} rgb={s.rgb_color} kelvin={s.color_temp_kelvin} "
+            f"segs={len(s.segments)} zones={s.zone_power} scene={s.scene_code}"
+        )
 
     async def _read_plug(self) -> None:
         """Poll a plug's relay state (aa 01 -> raw relay bitmask; any bit set = on),
@@ -373,7 +391,15 @@ class Device:
 
     async def _read_status(self) -> None:
         frames = await self._conn.query(build.status_query(full=True), timeout=5.0)
-        st = reassemble.parse_status([f for f in frames if f and f[0] == 0xAC])
+        ac = [f for f in frames if f and f[0] == 0xAC]
+        st = reassemble.parse_status(ac)
+        if st.is_on is None and not st.segments and not st.zone_power:
+            # The device answered (or didn't) but no usable TLVs came back — state left
+            # stale. This is the signal for "mechanism-A doesn't work here" (e.g. H6047).
+            _LOGGER.warning(
+                "%s (%s): status read returned no usable data (%d 0xAC of %d frames); state left stale",
+                self.address, self._sku, len(ac), len(frames),
+            )
         if st.is_on is not None:
             self._state.is_on = st.is_on
         if st.brightness is not None:
@@ -427,7 +453,10 @@ def make_device(
     advertisement_data: Any | None = None,
     *,
     secret: bytes | None = None,
+    frame_log: str | None = None,
 ) -> Device | None:
     """Build a capability-driven Device for `sku`, or None if unsupported."""
     p = profile_for(sku)
-    return None if p is None else Device(p, ble_device, advertisement_data, sku=sku, secret=secret)
+    if p is None:
+        return None
+    return Device(p, ble_device, advertisement_data, sku=sku, secret=secret, frame_log=frame_log)

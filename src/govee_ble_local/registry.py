@@ -33,9 +33,14 @@ def create_device(
     advertisement_data: Any | None = None,
     *,
     secret: bytes | None = None,
+    frame_log: str | None = None,
 ) -> Device:
-    """Construct a capability-driven Device for `sku`."""
-    dev = make_device(ble_device, sku, advertisement_data, secret=secret)
+    """Construct a capability-driven Device for `sku`.
+
+    Pass ``frame_log=<path>`` to persist a JSONL session capture for this device (the
+    frame-tier logger ``govee_ble_local.frames`` is the other, filesystem-free, capture
+    surface — see the diagnostics docs)."""
+    dev = make_device(ble_device, sku, advertisement_data, secret=secret, frame_log=frame_log)
     if dev is None:
         raise GoveeBleNotSupported(f"unsupported SKU: {sku}")
     return dev
