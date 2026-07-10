@@ -395,7 +395,7 @@ families:
     protocol: { single_packet: true, multi_dialects: ["0xA1", "0xA3", "0xAC"], mode_command: "0x05" }
     submodes: { color: "0x15", color_alt: "0x0d", scene: "0x04", music: "0x13", diy: "0x0a" }
     opcodes:
-      - { name: zone_power, cmd: "0x30", payload: "[zoneIndex, state]", readable: true, note: "H60A6 dual-zone; notify state in bit 1 of each byte" }
+      - { name: zone_power, cmd: "0x30", payload: "[zoneIndex, state]", readable: true, note: "H60A6 dual-zone; notify state in bit 1 of each byte. zone 0 = MAIN PANEL = segment-mask index 12; zone 1 = BACKGROUND RGBIC ring = segment indices 0-11. HARDWARE-VERIFIED (segment-map probe: driving idx12 vs 0-11 to opposite colours, the device read-back holds idx12 distinct). The 0x15 colour/CCT seg_mask thus addresses the panel via bit 12, the ring via 0x0FFF, whole device via 0x1FFF." }
       - { name: per_segment_color_read, cmd: "0xa5", readable: true, payload: "mechanism (A): reply groups [groupIndex, 4x{brightness,R,G,B}]; group count = ceil(getColorPieceSize/4); H60A6 pieceCount=13 (goodsType 303); records are 4-byte incl brightness (NOT [segIndex,R,G,B]). See IC/segment note." }
       - { name: on_off_memory, cmd: "0x41", payload: "[2, mode]" }
       - { name: child_switch, cmd: "0x36", payload: "[!on, second]" }
@@ -405,7 +405,7 @@ families:
     # scene_versions = the versionArray fed to ScenesOp.parseSceneV1; STATIC per-goodsType constant from
     # pact_h60a0/pact/Support.supportScenesOpSet (H60A6 goodsType 303 -> {0,1,2,3,5}). The 0/5 match no
     # parseSceneV1 branch, so only sceneTypes 1/2/3 take dialect A (comType 1/2/7); graffiti uses dialect B.
-    specs: { segments: "13 (H60A6); 3-17 per SKU", kelvin_range: [2700, 6500], scene_versions: [0, 1, 2, 3, 5] }
+    specs: { segments: "13 (H60A6): indices 0-11 = background RGBIC ring, index 12 = main panel (the two 0x30 zones; hardware-verified — see zone_power note); 3-17 per SKU", kelvin_range: [2700, 6500], scene_versions: [0, 1, 2, 3, 5] }
     encryption: secret_key_pairing
     notify:
       - { sub_type: "0x11", meaning: "wifi connect result (byte0==0 connected)" }
