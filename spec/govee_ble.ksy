@@ -404,14 +404,14 @@ types:
             0x02: device_info_sn
   device_info_basic:      # AA 07 10
     seq:
-      - { id: uid, size: 8, doc: "8-byte device UID (atomic id; rendered MAC-style, leading 00:00 stripped)" }
+      - { id: uid, size: 8, doc: "8-byte device UID (atomic id; app renders MAC-style byte-REVERSED via toAddressBytes(hFirst=false), leading 00:00 stripped)" }
       - { id: sw_version, type: version3 }
       - { id: hw_version, type: version3 }
       - { id: dsp_version, type: u2le, doc: "DSP version (LE); 0 when absent (short replies pad to 0)" }
       - { id: pad, size-eos: true, doc: "zero padding to the 20-byte frame" }
   device_info_wifi:       # AA 07 11
     seq:
-      - { id: wifi_mac, size: 6, doc: "6-byte Wi-Fi MAC (atomic id)" }
+      - { id: wifi_mac, size: 6, doc: "6-byte Wi-Fi MAC (atomic id; FORWARD byte order via toAddressBytes(hFirst=true))" }
       - { id: wifi_sw_version, type: version3 }
       - { id: wifi_hw_version, type: version3 }
       - { id: pad, size-eos: true, doc: "zero padding to the 20-byte frame" }
@@ -468,7 +468,7 @@ types:
           [type,len,value] re-prepended. All value types below are modelled (the value is a bounded
           size:len substream, so record counts come from len — no external count needed):
             * 0x07 device-info == device_info_read. u.w():424-485 parses ONLY selector 0x10 (basic:
-              [uid8, sw3, hw3, dsp u16le]) and 0x11 (wifi: [mac6 REVERSED, sw3, hw3]); other selectors are
+              [uid8 (byte-REVERSED), sw3, hw3, dsp u16le]) and 0x11 (wifi: [mac6 (FORWARD), sw3, hw3]); other selectors are
               logged and ignored here. Same layout as the single-frame aa 07 reply -> RETIRES the old
               MAC-anchor heuristic.
             * 0x05 mode == [sub_mode, params] (delegated to the caller's .g() lambda; same shape as the
@@ -1164,15 +1164,27 @@ types:
   #  mode-report single colour) are NOT this type — see devices.yaml "IC / segment" note.
   color_group_read:
     doc: |
-      One 0xA5 group of the per-segment colour reply: group_index then record_count records. record_count
-      is supplied by the caller (= 4, except the last group = N - 4*(groups-1)); it is NOT the TLV length.
-      Records are 4-byte [brightness,R,G,B] on part-brightness SKUs; on SKUs without it (e.g. H6641 ".p"
-      firmware path) they are 3-byte [R,G,B] with no brightness — parse those with color_group_record_rgb.
+      One 0xA5 group of the per-segment colour reply: group_index then record_count records. PARAMETRIC —
+      the caller passes the two bits that are NOT in the byte stream, and the type switches internally:
+        * record_count  = records in this group (= oneGroupColorSize, usually 4; last group = N - count*(g-1)).
+        * has_brightness = 1 -> 4-byte [brightness,R,G,B] (color_group_record); 0 -> 3-byte [R,G,B]
+          (color_group_record_rgb). Selected per SKU by supportPartBrightness. ALL CURATED devices
+          (H60A6/H6047/H6641) are has_brightness=1 (4-byte). 3-byte is only non-curated colour-only families
+          (tvlightv2, rgblight, bulblightstringv1, h7022, h6160). [record_size can't be auto-detected from the
+          TLV len: len 13 == 4*3+1 == 3*4+1, so 3B and 4B are ambiguous — hence the explicit param.]
     params:
       - { id: record_count, type: u1 }
+      - { id: has_brightness, type: u1 }
     seq:
       - { id: group_index, type: u1 }
-      - { id: records, type: color_group_record, repeat: expr, repeat-expr: record_count }
+      - id: records
+        repeat: expr
+        repeat-expr: record_count
+        type:
+          switch-on: has_brightness
+          cases:
+            1: color_group_record          # 4-byte [brightness,R,G,B]
+            0: color_group_record_rgb       # 3-byte [R,G,B]
   color_group_record:
     seq:
       - { id: brightness, type: u1 }
@@ -1184,3 +1196,41 @@ types:
       - { id: r, type: u1 }
       - { id: g, type: u1 }
       - { id: b, type: u1 }
+
+  # ─────────── PARAMETRIC client-invoked types (Tier C: discriminator is NOT in the frame) ───────────
+  # A type reached through a frame `switch-on` case cannot receive a parameter, so these are STANDALONE:
+  # the client invokes them directly, passing the one bit of context it holds (from devices.yaml). This
+  # keeps 100% of byte STRUCTURE in the grammar — nothing is hand-parsed by the client.
+  op15_color_typed:    # SubModeColorV1 op 0x01 WRITE — typed counterpart of the size-eos `op15_color`
+    doc: |
+      op 0x01 colour write, parametric on the opType the client is issuing (SubModeColorV1.getWriteBytes):
+        variant 1  = basic            -> [r,g,b, seg_mask]
+        variant 12 = H60A1/H60A6 RGB  -> [r,g,b, 00 00 00 00 00, seg_mask]
+        variant 11 = H60A1/H60A6 CCT  -> [r,g,b, kelvin(BE), tintR, tintG, tintB, seg_mask]
+      (The frame-path `op15_color` is size-eos because a captured frame carries no opType; use THIS when you
+      are building/decoding a known write. Devices.yaml `color_scheme` + the write op pick the variant.)
+    params:
+      - { id: variant, type: u1 }
+    seq:
+      - { id: r, type: u1 }
+      - { id: g, type: u1 }
+      - { id: b, type: u1 }
+      - { id: zeros, size: 5, if: 'variant == 12' }
+      - { id: kelvin, type: u2be, if: 'variant == 11' }
+      - { id: tint_r, type: u1, if: 'variant == 11' }
+      - { id: tint_g, type: u1, if: 'variant == 11' }
+      - { id: tint_b, type: u1, if: 'variant == 11' }
+      - { id: seg_mask, type: u2le }
+  mode_color_0d_typed:   # 0x0D colour-report body — typed counterpart of mode_color_0d_report
+    doc: |
+      0x0D colour mode-report body, parametric on the device's parse strategy (devices.yaml `mode_0d_kind`):
+        kind 0 = default SubMode4Color strategy -> [gradual_flag, kelvin u16-be]
+        kind 1 = H6052 custom strategy          -> [R, G, B]
+    params:
+      - { id: kind, type: u1 }
+    seq:
+      - { id: gradual_flag, type: u1, if: 'kind == 0' }
+      - { id: kelvin, type: u2be, if: 'kind == 0' }
+      - { id: r, type: u1, if: 'kind == 1' }
+      - { id: g, type: u1, if: 'kind == 1' }
+      - { id: b, type: u1, if: 'kind == 1' }

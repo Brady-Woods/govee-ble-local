@@ -556,23 +556,34 @@ class GoveeBleFrame(KaitaiStruct):
 
 
     class ColorGroupRead(KaitaiStruct):
-        """One 0xA5 group of the per-segment colour reply: group_index then record_count records. record_count
-        is supplied by the caller (= 4, except the last group = N - 4*(groups-1)); it is NOT the TLV length.
-        Records are 4-byte [brightness,R,G,B] on part-brightness SKUs; on SKUs without it (e.g. H6641 ".p"
-        firmware path) they are 3-byte [R,G,B] with no brightness — parse those with color_group_record_rgb.
+        """One 0xA5 group of the per-segment colour reply: group_index then record_count records. PARAMETRIC —
+        the caller passes the two bits that are NOT in the byte stream, and the type switches internally:
+          * record_count  = records in this group (= oneGroupColorSize, usually 4; last group = N - count*(g-1)).
+          * has_brightness = 1 -> 4-byte [brightness,R,G,B] (color_group_record); 0 -> 3-byte [R,G,B]
+            (color_group_record_rgb). Selected per SKU by supportPartBrightness. ALL CURATED devices
+            (H60A6/H6047/H6641) are has_brightness=1 (4-byte). 3-byte is only non-curated colour-only families
+            (tvlightv2, rgblight, bulblightstringv1, h7022, h6160). [record_size can't be auto-detected from the
+            TLV len: len 13 == 4*3+1 == 3*4+1, so 3B and 4B are ambiguous — hence the explicit param.]
         """
-        def __init__(self, record_count, _io, _parent=None, _root=None):
+        def __init__(self, record_count, has_brightness, _io, _parent=None, _root=None):
             super(GoveeBleFrame.ColorGroupRead, self).__init__(_io)
             self._parent = _parent
             self._root = _root
             self.record_count = record_count
+            self.has_brightness = has_brightness
             self._read()
 
         def _read(self):
             self.group_index = self._io.read_u1()
             self.records = []
             for i in range(self.record_count):
-                self.records.append(GoveeBleFrame.ColorGroupRecord(self._io, self, self._root))
+                _on = self.has_brightness
+                if _on == 0:
+                    pass
+                    self.records.append(GoveeBleFrame.ColorGroupRecordRgb(self._io, self, self._root))
+                elif _on == 1:
+                    pass
+                    self.records.append(GoveeBleFrame.ColorGroupRecord(self._io, self, self._root))
 
 
 
@@ -580,7 +591,13 @@ class GoveeBleFrame(KaitaiStruct):
             pass
             for i in range(len(self.records)):
                 pass
-                self.records[i]._fetch_instances()
+                _on = self.has_brightness
+                if _on == 0:
+                    pass
+                    self.records[i]._fetch_instances()
+                elif _on == 1:
+                    pass
+                    self.records[i]._fetch_instances()
 
 
 
@@ -1722,6 +1739,60 @@ class GoveeBleFrame(KaitaiStruct):
             pass
 
 
+    class ModeColor0dTyped(KaitaiStruct):
+        """0x0D colour mode-report body, parametric on the device's parse strategy (devices.yaml `mode_0d_kind`):
+          kind 0 = default SubMode4Color strategy -> [gradual_flag, kelvin u16-be]
+          kind 1 = H6052 custom strategy          -> [R, G, B]
+        """
+        def __init__(self, kind, _io, _parent=None, _root=None):
+            super(GoveeBleFrame.ModeColor0dTyped, self).__init__(_io)
+            self._parent = _parent
+            self._root = _root
+            self.kind = kind
+            self._read()
+
+        def _read(self):
+            if self.kind == 0:
+                pass
+                self.gradual_flag = self._io.read_u1()
+
+            if self.kind == 0:
+                pass
+                self.kelvin = self._io.read_u2be()
+
+            if self.kind == 1:
+                pass
+                self.r = self._io.read_u1()
+
+            if self.kind == 1:
+                pass
+                self.g = self._io.read_u1()
+
+            if self.kind == 1:
+                pass
+                self.b = self._io.read_u1()
+
+
+
+        def _fetch_instances(self):
+            pass
+            if self.kind == 0:
+                pass
+
+            if self.kind == 0:
+                pass
+
+            if self.kind == 1:
+                pass
+
+            if self.kind == 1:
+                pass
+
+            if self.kind == 1:
+                pass
+
+
+
     class ModePayload(KaitaiStruct):
         def __init__(self, _io, _parent=None, _root=None):
             super(GoveeBleFrame.ModePayload, self).__init__(_io)
@@ -2170,6 +2241,67 @@ class GoveeBleFrame(KaitaiStruct):
 
         def _fetch_instances(self):
             pass
+
+
+    class Op15ColorTyped(KaitaiStruct):
+        """op 0x01 colour write, parametric on the opType the client is issuing (SubModeColorV1.getWriteBytes):
+          variant 1  = basic            -> [r,g,b, seg_mask]
+          variant 12 = H60A1/H60A6 RGB  -> [r,g,b, 00 00 00 00 00, seg_mask]
+          variant 11 = H60A1/H60A6 CCT  -> [r,g,b, kelvin(BE), tintR, tintG, tintB, seg_mask]
+        (The frame-path `op15_color` is size-eos because a captured frame carries no opType; use THIS when you
+        are building/decoding a known write. Devices.yaml `color_scheme` + the write op pick the variant.)
+        """
+        def __init__(self, variant, _io, _parent=None, _root=None):
+            super(GoveeBleFrame.Op15ColorTyped, self).__init__(_io)
+            self._parent = _parent
+            self._root = _root
+            self.variant = variant
+            self._read()
+
+        def _read(self):
+            self.r = self._io.read_u1()
+            self.g = self._io.read_u1()
+            self.b = self._io.read_u1()
+            if self.variant == 12:
+                pass
+                self.zeros = self._io.read_bytes(5)
+
+            if self.variant == 11:
+                pass
+                self.kelvin = self._io.read_u2be()
+
+            if self.variant == 11:
+                pass
+                self.tint_r = self._io.read_u1()
+
+            if self.variant == 11:
+                pass
+                self.tint_g = self._io.read_u1()
+
+            if self.variant == 11:
+                pass
+                self.tint_b = self._io.read_u1()
+
+            self.seg_mask = self._io.read_u2le()
+
+
+        def _fetch_instances(self):
+            pass
+            if self.variant == 12:
+                pass
+
+            if self.variant == 11:
+                pass
+
+            if self.variant == 11:
+                pass
+
+            if self.variant == 11:
+                pass
+
+            if self.variant == 11:
+                pass
+
 
 
     class PlugSpecRead(KaitaiStruct):

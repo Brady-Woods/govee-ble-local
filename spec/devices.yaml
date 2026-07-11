@@ -1,10 +1,10 @@
 # Govee BLE device registry — lighting + smart-plug scope.
-# Conforms to devices.schema.json. Companion to GOVEE_BLE_GATT_PROTOCOL.md.
+# Conforms to devices.schema.json. Companion to docs/GOVEE_BLE_GATT_PROTOCOL.md.
 # Hex bytes are strings ("0x33"). Sub-mode bytes ride under mode command 0x05.
 # confidence: high = SubMode/controller classes read directly; medium = survey; low = inferred.
 # Excluded per project scope: BBQ, thermo-hygrometer / sensor, appliance (humidifier, ice maker).
 #
-# CAPABILITY PROVENANCE (see GOVEE_BLE_GATT_PROTOCOL.md §18.6): entries here mirror the app's COMPILED
+# CAPABILITY PROVENANCE (see docs/GOVEE_BLE_GATT_PROTOCOL.md §18.6): entries here mirror the app's COMPILED
 # per-goodsType Support/Config classes — there is NO cloud capability/spec profile. Device identity
 # (sku/goodsType/pactType/pactCode) is cloud-provided but also derivable offline from the BLE advert
 # (Govee_<SKU>_<suffix> -> goodsType via a compiled table). The only capability read live from the device is
@@ -103,7 +103,7 @@ timing:
 # "V2" AES-GCM) is resolved at RUNTIME per device — NOT by SKU: from the advertisement encrypted-bit
 # ("V1" = hybrid: AES-128-ECB/NoPadding on full 16-byte blocks + RC4 on the trailing len%16 remainder, same
 #  key; a 20-byte frame = 1 AES block + 4 RC4 bytes. Source: com/govee/encryp/ble/Safe.java d()/b()/f()/g().
-#  See GOVEE_BLE_GATT_PROTOCOL.md §9.2 for the byte-level codec.)
+#  See docs/GOVEE_BLE_GATT_PROTOCOL.md §9.2 for the byte-level codec.)
 # (manuf-data flags & 0x40; BleUtil.java:839) OR the on-device BGC-info characteristic (BgcInfoReader: byte0
 # encryptVersion 1=V1 / 2=V2). There is NO SKU->cipher table in the app. So a secret_key_pairing device may
 # still run PLAINTEXT on the wire (H6047/H61A8/H6641 observed plaintext); a data-driven client must read the
@@ -395,6 +395,7 @@ families:
   # ─────────────────────────── Feature splits (deeply analysed) ───────────────────────────
   - id: h60ax
     category: rgbic_strip
+    client_profile: { has_brightness: true, color_scheme: h60a6, wire_cipher: runtime }   # 4-byte seg colour (verified); op15 colour
     models: [H60A0, H60A1, H60A4, H60A6, H60C1, H1270, H1232, H1250, H1252, H12D0, H80A1, H80A4]
     goods_types: [188, 235, 302, 303, 324, 346, 356, 370, 373, 390]
     delivery: feature_split
@@ -423,6 +424,7 @@ families:
 
   - id: h6047
     category: light_bar
+    client_profile: { has_brightness: true, color_scheme: h60a6, wire_cipher: runtime }
     models: [H6047, H6043, H6042, H6039, H6038, H6048, H8048]
     goods_types: [119, 196, 197, 277, 288, 298]
     delivery: feature_split
@@ -452,6 +454,7 @@ families:
 
   - id: bulblightv3
     category: bulb
+    client_profile: { has_brightness: false, color_scheme: h6006, mode_0d_kind: cct, wire_cipher: runtime }   # no seg read; 0x0d colour+CCT
     models: [H6001, H6002, H6003, H6004, H6005, H6006, H6008, H6009, H600A, H600B, H600C, H600D, H6010, H6011, H6013, H601A, H601B, H601C, H601D, H601E, H601F, H8015, H801A, H801C, H801D, H1401, H14A1, H14C0, H14C1, H14C2, H1501]
     goods_types: [0, 9, 10, 20, 31, 64, 111, 311, 328, 342, 348]   # 328 = H6008 (proven). H6006 = LEGACY bulb handled by the bulblight-v1 pkg (SKU-STRING matched: BulbLightApplication:97, SettingAc:327 — NOT bulblightv3); goodsType = old-bulb 20 cluster (shared H6001/H6005; there is NO dedicated H6006<->goodsType binding anywhere in the app). 0/9/10 = legacy broadcast codes.
     delivery: feature_split
@@ -471,6 +474,7 @@ families:
 
   - id: h61d3
     category: rgbic_strip
+    client_profile: { has_brightness: true, color_scheme: h60a6, wire_cipher: runtime }   # H6641 4-byte seg colour (verified count=4)
     models: [H61B0, H61B3, H61B6, H61B8, H61B9, H61D2, H61D3, H61D4, H61D5, H61D6, H61E5, H61E6, H61F2, H61F5, H61F6, H1A42, H1A43, H1A44, H1A45, H1AB1, H1AB2, H1AB3, H1B6A, H6640, H6641, H703A, H703B]
     goods_types: [202, 239, 242, 246, 247, 261, 263, 264, 299, 367, 375, 384, 387, 388, 389, 400]
     delivery: feature_split
@@ -723,6 +727,7 @@ families:
   # ─────────────────────────── Generic light abstractions & families (base.apk) ───────────────────────────
   - id: dreamcolorlightv1
     category: rgbic_strip
+    client_profile: { has_brightness: true, color_scheme: h61a8, wire_cipher: runtime }   # Mechanism-B: 0xA5 V2 = 4-byte [bri,RGB]; 0xA2 V1 = 3-byte (firmware-versioned)
     models: [H6102, H611B, H611Z, H6123, H612A, H612B, H612C, H612D, H612E, H612F, H6168, H617A, H619A, H61A0, H61A8, H61A9, H61E0, H61E1, H70A1, H70A2, H70A3]
     goods_types: [17, 18, 70, 73, 204, 207]   # 207 = H61A8, 204 = H61A9 (RGBIC outdoor neon rope)
     delivery: base_apk
@@ -826,6 +831,7 @@ families:
   # ─────────────────────────── Lamps / car / misc lights (base.apk) ───────────────────────────
   - id: tablelampv1
     category: lamp
+    client_profile: { has_brightness: false, color_scheme: h6006, mode_0d_kind: rgb, wire_cipher: runtime }   # H6052 0x0D report = [R,G,B] (verified H6052InfoDetail)
     models: [H6052, H6078]
     goods_types: [22, 128]
     delivery: base_apk

@@ -58,3 +58,8 @@ readers. Clean break from the v2 `GoveeBleClient` API.
 - Fixed a YAML-1.1 boolean id trap (`id: on` → parsed as `.true`); renamed to `state` / `on_flag`.
 - `devices.yaml`: H60A6 segment→zone map; H6641 colour records are 4-byte; mechanism-B/C read-back
   and scene-dialect notes.
+- Adopted the parametric **Tier-C** grammar variants (`op15_color_typed`, `mode_color_0d_typed`;
+  joining `color_group_read`) so the ksy owns 100% of byte structure — the client passes one
+  discriminator and the branch runs inside the grammar. `devices.yaml` gained per-family
+  `client_profile` blocks (discriminators as data) + schema support. Readers regenerated; additive,
+  no runtime behaviour change.

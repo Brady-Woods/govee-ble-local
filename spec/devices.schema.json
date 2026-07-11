@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://govee-ble-local/spec/devices.schema.json",
   "title": "Govee BLE device registry",
-  "description": "Machine-readable registry of Govee BLE device families and their GATT/command surface. Companion to GOVEE_BLE_GATT_PROTOCOL.md; intended to be consumed by clients (e.g. govee_ble_local) and to generate the per-device tables in the Markdown spec.",
+  "description": "Machine-readable registry of Govee BLE device families and their GATT/command surface. Companion to docs/GOVEE_BLE_GATT_PROTOCOL.md; intended to be consumed by clients (e.g. govee_ble_local) and to generate the per-device tables in the Markdown spec.",
   "type": "object",
   "required": ["spec_version", "transport", "families"],
   "additionalProperties": false,
@@ -232,6 +232,17 @@
           "type": "array",
           "items": { "type": "string" },
           "description": "Advertised BLE name prefixes that resolve to this family (e.g. 'ihoment_H6047', 'GVH6047')."
+        },
+        "client_profile": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "The discriminators a thin client feeds to the parametric .ksy types (the bits NOT in the byte stream). Lets the client be data-driven instead of hardcoding per-SKU structure.",
+          "properties": {
+            "has_brightness": { "type": "boolean", "description": "Per-segment colour read-back record size: true = 4-byte [brightness,R,G,B] (color_group_read has_brightness=1), false = 3-byte [R,G,B]. From supportPartBrightness." },
+            "color_scheme": { "type": "string", "description": "Colour-write byte-layout family driving op15/0x0d variant selection (e.g. 'h60a6', 'h6006', 'h61a8')." },
+            "mode_0d_kind": { "type": "string", "enum": ["rgb", "cct"], "description": "0x0D colour mode-report body (mode_color_0d_typed kind): 'rgb' = H6052 custom [R,G,B]; 'cct' = default strategy [gradual_flag, kelvin]." },
+            "wire_cipher": { "type": "string", "enum": ["runtime"], "description": "Always 'runtime': the plaintext/V1/V2 cipher is resolved per-connection from the advert encrypted-bit / BGC-info, never from a static per-SKU value." }
+          }
         },
         "confidence": { "$ref": "#/$defs/confidence" },
         "sources": {
