@@ -8,7 +8,19 @@ model, from which the shipped readers are generated).
 
 ## [Unreleased]
 
-_Nothing yet._
+### Fixed
+- `Device._read_status()` (the `0xAC` status read-back for `readback="status"` devices, e.g. H60A6)
+  now **retries once** on an empty parse before leaving state stale. A dropped BLE notification
+  mid-burst yields a truncated or empty reassembled buffer — reported in the field as
+  `status reply did not parse (0 bytes): ... requested 1 bytes, but only 0 bytes available` and
+  `status reply did not parse (148 bytes): ... requested 17 bytes, but only 12 bytes available`
+  (`wire/reassemble.py` DEBUG log). This was already non-fatal (fields are applied conditionally,
+  so a failed parse can't erase known-good state) and already surfaced a WARNING
+  (`"... state left stale"`), but a single dropped notification cost a whole poll cycle; a fresh
+  query is independent and usually succeeds immediately. Both the retry-attempt DEBUG line and the
+  final WARNING now also report which `0xAC` chunk indices were actually received (e.g.
+  `0x00,0x01,0x02,0x04,0xff`, or `<none>`), to distinguish a dropped-mid-burst from a
+  completely-empty read on any future occurrence.
 
 ## [1.0.0] — 2026-07-11
 
