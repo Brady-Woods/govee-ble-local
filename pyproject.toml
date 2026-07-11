@@ -29,10 +29,12 @@ dependencies = [
     # conflicting with HA's 48.0.1 requirement). Revisit this ceiling
     # alongside HA core's own cryptography pin as it moves.
     "cryptography>=41.0.0,<49",
-    "PyYAML>=6.0",
-    # Runtime: the spec/*.ksy-generated readers under govee_ble_local/_generated are
-    # the library's wire parser (pure-Python, small). The Kaitai *compiler* stays a
-    # build tool (JS, no JVM) invoked by tools/gen_kaitai.sh; the readers are committed.
+    # Runtime wire parser: the spec/*.ksy-generated readers under govee_ble_local/_generated
+    # subclass KaitaiStruct + use KaitaiStream, so this is required at runtime. It is the ONE
+    # accepted non-HA-default dependency — pure-Python, stdlib-only, zero-dep, MIT. The Kaitai
+    # *compiler* (ksc, JS) stays a dev tool (tools/gen_kaitai.sh); the readers are committed.
+    # See CLAUDE.local.md for the dependency policy (bleak / bleak-retry-connector / cryptography
+    # are HA defaults; new runtime deps need justification; never require a version ahead of HA).
     "kaitaistruct>=0.10",
 ]
 
@@ -41,22 +43,25 @@ dependencies = [
 # --from-frames-log) and report spec coverage/gaps. Available from an installed wheel.
 govee-ble-analyze = "govee_ble_local.debug:main"
 
+[project.urls]
+Homepage = "https://github.com/Brady-Woods/govee-ble-local"
+Repository = "https://github.com/Brady-Woods/govee-ble-local"
+Changelog = "https://github.com/Brady-Woods/govee-ble-local/blob/master/CHANGELOG.md"
+
 [project.optional-dependencies]
-# jsonschema: validates spec/devices.yaml against its schema (test-only).
-# (kaitaistruct is a runtime dep — see [project].dependencies.)
-test = ["pytest", "pytest-asyncio", "pytest-cov", "jsonschema>=4.0"]
+# Dev/test/docs only — NOT runtime. PyYAML + jsonschema validate spec/devices.yaml in the
+# test suite (the runtime device table is hardcoded Python in devices/profile.py; nothing under
+# src/ imports yaml). See CLAUDE.local.md for the dependency policy.
+test = ["pytest", "pytest-asyncio", "pytest-cov", "jsonschema>=4.0", "PyYAML>=6.0"]
 cloud = ["aiohttp>=3.9"]
 typing = ["mypy", "types-PyYAML"]
+docs = ["pdoc"]
 
 [tool.pytest.ini_options]
 # async fixtures/tests (e.g. tests/test_h60a6_live.py) run without per-test markers
 asyncio_mode = "auto"
 # only collect the test suite; tools/*_test.py are CLIs, not pytest modules
 testpaths = ["tests"]
-
-[project.urls]
-Homepage = "https://github.com/Brady-Woods/govee-ble-local"
-Repository = "https://github.com/Brady-Woods/govee-ble-local"
 
 [tool.mypy]
 python_version = "3.11"

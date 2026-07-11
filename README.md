@@ -16,14 +16,18 @@ Home Assistant integration, but has no Home Assistant dependency and can be used
 
 ## Install
 
+Not on PyPI yet — install from source:
+
 ```bash
-pip install govee-ble-local        # once published
-# or, from source:
-pip install -e .
+pip install "git+https://github.com/Brady-Woods/govee-ble-local.git"
+# or, from a clone (editable):
+git clone https://github.com/Brady-Woods/govee-ble-local.git
+cd govee-ble-local && pip install -e .
 ```
 
-Requires Python 3.11+. Depends on `bleak`, `bleak-retry-connector`, `cryptography`,
-`PyYAML`, and `kaitaistruct` (the shipped, spec-generated wire parser).
+Requires Python 3.11+. Runtime dependencies are deliberately minimal and Home-Assistant-friendly:
+`bleak`, `bleak-retry-connector`, `cryptography` (all shipped with HA), plus `kaitaistruct` (a
+pure-Python, stdlib-only wire-parser runtime). Dev/test/docs extras: `.[test]`, `.[typing]`, `.[docs]`.
 
 ## Quick start
 
@@ -79,6 +83,10 @@ Curated SKUs: **H60A6**, **H6047**, **H61A8**, **H6006/H6008**, **H6052**, **H66
 plug family (**H5080/H5082/H5083/H5085/H5089/H5160/H5161**). Segment-colour read-back and some
 scene dialects on the non-H60A6 SKUs are source-modelled and not yet hardware-verified.
 
+The full API reference is generated from the docstrings with [`pdoc`](https://pdoc.dev)
+(`pip install '.[docs]' && bash tools/gen_docs.sh` → `docs/api/`); `govee_ble_local.__all__` is the
+public contract.
+
 ## Diagnostics & session capture
 
 The library logs under the `govee_ble_local.*` hierarchy and can capture a full protocol
@@ -91,7 +99,13 @@ flow trace, or the per-frame firehose, and decode a capture with the bundled
 The wire protocol is specified as Kaitai Struct definitions — [`spec/govee_ble.ksy`](spec/govee_ble.ksy)
 (command/reply frames) and [`spec/govee_adv.ksy`](spec/govee_adv.ksy) (advertisements) — with the
 per-device table in [`spec/devices.yaml`](spec/devices.yaml). The runtime readers under
-`govee_ble_local/_generated/` are generated from those.
+`govee_ble_local/_generated/` are generated from those (source of truth: the decompiled Govee app).
+
+## Contributing & versioning
+
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) for development setup, branching, commit, and release
+conventions. Changes are tracked in [`CHANGELOG.md`](CHANGELOG.md); the project follows
+[Semantic Versioning](https://semver.org/). Live hardware tests run against the curated SKUs above.
 
 ## License
 

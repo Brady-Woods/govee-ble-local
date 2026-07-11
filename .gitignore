@@ -19,3 +19,7 @@ venv/
 *.jsonl
 btsnoop*.log
 govee_capture/
+# private local operating guide (personal preferences; not shared)
+CLAUDE.local.md
+# generated API reference (pdoc) — regenerate on demand via tools/gen_docs.sh
+docs/api/

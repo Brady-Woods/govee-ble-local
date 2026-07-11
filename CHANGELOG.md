@@ -31,6 +31,13 @@ readers. Clean break from the v2 `GoveeBleClient` API.
   heuristic are all retired. Only the cross-frame de-chunk stays hand-done (Kaitai can't join
   frames). The offline analyzer uses the same reader.
 - README + version brought to the v3 API; description now "Govee devices" (plugs included).
+- **Dependency hygiene:** `PyYAML` moved to the `test` extra — it isn't used at runtime (the device
+  table is hardcoded Python; `yaml` appears only in the test suite). Runtime deps are now
+  `bleak` / `bleak-retry-connector` / `cryptography` (HA defaults) + `kaitaistruct` (the one accepted
+  pure-Python exception). Added `[project.urls]`.
+- **Docs:** README install-from-source instructions (not yet on PyPI); a `pdoc` API reference
+  (`.[docs]` extra + `tools/gen_docs.sh`); a `CONTRIBUTING.md` (branching / commit / changelog /
+  release conventions); project conventions recorded for maintainers.
 
 ### Fixed
 - H60A6 segment→zone map corrected (index 12 = main panel, 0–11 = background ring), making
