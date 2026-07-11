@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "govee-ble-local"
-version = "3.0.0.dev0"
+version = "1.0.0"
 description = "Local Bluetooth LE control of Govee devices — no cloud, no LAN API."
 readme = "README.md"
 license = { text = "MIT" }
@@ -12,7 +12,7 @@ authors = [{ name = "Brady Woods" }]
 requires-python = ">=3.11"
 keywords = ["govee", "bluetooth", "ble", "home-assistant", "led", "light"]
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 5 - Production/Stable",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
     "Topic :: Home Automation",

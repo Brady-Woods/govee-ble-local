@@ -1,15 +1,23 @@
 # Changelog
 
 Notable changes to `govee-ble-local`. Format loosely follows
-[Keep a Changelog](https://keepachangelog.com/); this project is pre-1.0 and versioned in
-`pyproject.toml`. Entries are grouped **Added / Changed / Fixed / Spec** (Spec = the Kaitai
-`spec/*.ksy` + `spec/devices.yaml` protocol model, from which the shipped readers are generated).
+[Keep a Changelog](https://keepachangelog.com/); the project follows
+[Semantic Versioning](https://semver.org/) and is versioned in `pyproject.toml`. Entries are grouped
+**Added / Changed / Fixed / Spec** (Spec = the Kaitai `spec/*.ksy` + `spec/devices.yaml` protocol
+model, from which the shipped readers are generated).
 
-## [Unreleased] — 3.0.0.dev0
+## [Unreleased]
 
-Ground-up **v3 rewrite**: a data-driven `DeviceProfile` table + one capability-gated `Device`
-class over a spec-first `wire/` layer (build / parse / reassemble) and the shipped, ksy-generated
-readers. Clean break from the v2 `GoveeBleClient` API.
+_Nothing yet._
+
+## [1.0.0] — 2026-07-11
+
+First public release. Prior `v1`/`v2`/`v3` were internal rewrite generations (never tagged or
+published); `1.0.0` is the initial Semantic-Versioning baseline, committing to the
+`govee_ble_local.__all__` public API. This release is the ground-up **v3-generation rewrite**: a
+data-driven `DeviceProfile` table + one capability-gated `Device` class over a spec-first `wire/`
+layer (build / parse / reassemble) and the shipped, ksy-generated readers. Clean break from the
+old `GoveeBleClient` API.
 
 ### Added
 - Capability-driven `Device` + `create_device()` / `discover()` / `DeviceProfile` public API.

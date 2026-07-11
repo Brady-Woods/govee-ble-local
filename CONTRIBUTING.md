@@ -44,7 +44,7 @@ the `_generated/` readers and commit them.
 
 ## Releases (Semantic Versioning — https://semver.org/)
 
-Pre-1.0 today; not published to PyPI yet. To cut a release: bump `version` in `pyproject.toml`
+`1.0.0` is the initial public baseline; not published to PyPI yet. To cut a release: bump `version` in `pyproject.toml`
 (MAJOR = breaking public API, MINOR = additive, PATCH = fixes), move `[Unreleased]` → `[X.Y.Z] - DATE`
 in `CHANGELOG.md`, then tag `git tag vX.Y.Z` and publish a GitHub Release. The public API contract is
 `govee_ble_local.__all__`.
