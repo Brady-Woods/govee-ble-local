@@ -63,3 +63,7 @@ readers. Clean break from the v2 `GoveeBleClient` API.
   discriminator and the branch runs inside the grammar. `devices.yaml` gained per-family
   `client_profile` blocks (discriminators as data) + schema support. Readers regenerated; additive,
   no runtime behaviour change.
+- `spec/` is now a self-documenting protocol package: added the canonical protocol docs
+  (`spec/docs/GOVEE_BLE_GATT_PROTOCOL.md`, `SCENE_UPLOAD_ENCODING.md`, `USING_THE_KSY.md`) and an
+  executable reference codec (`spec/govee_reference.py`) — the framing layer Kaitai can't express
+  (AES-ECB+RC4 decrypt, `0xAC` reassemble, XOR BCC) + dispatch wiring, with a self-test.
