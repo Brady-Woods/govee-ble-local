@@ -16,7 +16,7 @@ from bleak.backends.device import BLEDevice
 
 from ..exceptions import GoveeBleNotSupported
 from ..identify import identify, parse_broadcast_onoff
-from ..models import Capability, DeviceState, Encryption
+from ..models import Capability, DeviceState, Encryption, Segment
 from ..scenes import Scene, load_scenes, scene_upload_params
 from ..transport.connection import GoveeConnection, now_ts
 from ..wire import build, parse, reassemble
@@ -347,6 +347,8 @@ class Device:
         # Segment / single-colour read-back layered on top (spec Change 7).
         if self.profile.color_readback == "mechanism_b":
             await self._read_mechanism_b()
+        elif self.profile.color_readback == "mechanism_a_direct":
+            await self._read_mechanism_a_direct()
         elif self.profile.color_readback == "mechanism_c":
             await self._read_mechanism_c()
         if self.profile.gradual:
@@ -407,15 +409,12 @@ class Device:
                 self._state.serial_number = sn.serial
 
     async def _read_mechanism_b(self) -> None:
-        """Per-segment colour via direct per-group requests (AA A5 <seq>, V2): request each
-        batch and assemble positional segments. Shared by H61A8, H6047, and H6641
-        (Controller4ColorInfoByGroup); only the per-SKU batch math differs, and it's the one
-        externally-keyed part of this path — per_batch/batch-count are client constants (not
-        frame-encoded), source-modeled and not yet live-verified. See each SKU's profile comment
-        for its specific open questions (H6641 has two: an approximated group *count*, via
-        `color_readback_segments` falling back to `segments` instead of a live 0x40 IC read;
-        and an unconfirmed per-reply record *count*, since the shared ksy reader hardcodes 3
-        records/reply for the V2 controller H6641 may not actually use)."""
+        """H61A8's per-segment colour via BulbGroupColorV2 (AA A5 <seq>, V2): request each
+        batch and assemble positional segments. per_batch/batch-count are client constants
+        (not frame-encoded, the controller's own fixed group size), source-modeled and not
+        yet live-verified. NOT shared with H6047/H6641 — they use a different controller
+        (Controller4ColorInfoByGroup, a different group size) via `_read_mechanism_a_direct`;
+        the two only happen to share the wire opcode (0xA5), not the reply layout."""
         per_batch = self.profile.color_readback_per_batch or 3
         seg_count = self.profile.color_readback_segments or self.profile.segments
         batch_count = -(-seg_count // per_batch)  # ceil
@@ -428,6 +427,46 @@ class Device:
         segs = parse.bulb_groups_to_segments(batches, per_batch)
         if segs:
             self._state.segments = segs
+
+    async def _read_mechanism_a_direct(self) -> None:
+        """H6047/H6641 per-segment colour via Controller4ColorInfoByGroup's direct per-group
+        requests (AA A5 <group>) — a different controller from H61A8's mechanism_b
+        (BulbGroupColorV2); they only share the wire opcode. Group size is a fixed client
+        constant (`color_readback_per_batch`, source-confirmed 4 for both curated SKUs). The
+        total piece count — and hence the group count — comes from either a static per-SKU
+        value (`color_readback_segments`/`segments`, e.g. H6047's getColorPieceSize=12) or,
+        when `color_readback_live_ic` is set (H6641), a live `0x40` IC-count read: the device
+        reports its OWN group count directly (`ic_segment_read.segment`), sidestepping any
+        client-side group-count-divisor assumption."""
+        group_size = self.profile.color_readback_per_batch or 4
+        if self.profile.color_readback_live_ic:
+            ic_reply = await self._read_reply(build.ic_count_query(), 0x40)
+            ic = parse.parse_ic_count(ic_reply) if ic_reply else None
+            if ic is None:
+                _LOGGER.debug(
+                    "%s (%s): live IC-count read failed; skipping segment colour read-back",
+                    self.address, self._sku,
+                )
+                return
+            total, group_count = ic.ic_count, ic.segment_count
+        else:
+            total = self.profile.color_readback_segments or self.profile.segments
+            group_count = -(-total // group_size)  # ceil
+
+        segs: dict[int, Segment] = {}
+        for g in range(1, group_count + 1):
+            reply = await self._read_reply(build.bulb_group_query(g, v2=True), 0xA5)
+            expected = max(0, min(group_size, total - (g - 1) * group_size))
+            parsed = parse.parse_direct_color_group(reply, expected) if reply else None
+            if parsed is None:
+                continue
+            group_index, records = parsed
+            base = (group_index - 1) * group_size
+            for k, (brightness, r, gg, b) in enumerate(records):
+                idx = base + k
+                segs[idx] = Segment(index=idx, rgb=(r, gg, b), brightness=brightness)
+        if segs:
+            self._state.segments = [segs[k] for k in sorted(segs)]
 
     async def _read_mechanism_c(self) -> None:
         """H6052 single colour from the 0x05 sub-mode 0x0D mode report."""

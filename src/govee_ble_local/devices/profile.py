@@ -41,16 +41,21 @@ class DeviceProfile:
     gradual: bool = False             # supports the 0xA3 gradual/fade-on-handoff flag (W/R)
     readback: ReadBack = "none"
     # Segment-colour read-back mechanism layered on top of `readback` (spec Change 7):
-    # "" none | "mechanism_b" (H61A8 0xAA 0xA2/0xA5 per-batch) | "mechanism_c" (H6052 0x0D).
+    # "" none | "mechanism_b" (H61A8 BulbGroupColorV2, 0xAA 0xA2/0xA5 per-batch, group size 3) |
+    # "mechanism_a_direct" (H6047/H6641 Controller4ColorInfoByGroup, 0xAA 0xA5 per-group direct
+    # request, group size 4 — a DIFFERENT controller from mechanism_b that happens to share the
+    # 0xA5 wire opcode) | "mechanism_c" (H6052 0x0D).
     color_readback: str = ""
-    color_readback_per_batch: int = 3   # mechanism-B groups per batch frame (V2 = 3, V1 = 4)
-    # mechanism-B batch-count divisor, when the READ-BACK piece count differs from the
-    # WRITE/addressable `segments` count (both are per-SKU facts from devices.yaml — e.g. H6047:
-    # write=10 getGoodsType4ColorSegment, read=12 getColorPieceSize). None -> falls back to
-    # `segments`. Leave None where the true count is only knowable live (e.g. H6641: IC-driven,
-    # ceil(IC/5) via a 0x40 read this library does not yet perform — an explicit approximation,
-    # not a fix; see the H6641 profile comment).
+    color_readback_per_batch: int = 3   # group size per reply (mechanism_b V2=3, V1=4; mechanism_a_direct=4)
+    # Static read-back piece count, when it differs from the WRITE/addressable `segments` count
+    # (both per-SKU facts from devices.yaml — e.g. H6047: write=10 getGoodsType4ColorSegment,
+    # read=12 getColorPieceSize). None -> falls back to `segments`. Ignored when
+    # `color_readback_live_ic` is True (the live 0x40 read supplies the count instead).
     color_readback_segments: int | None = None
+    # mechanism_a_direct only: read the live 0x40 IC count first and use the device's OWN
+    # reported group count (ic_segment_read.segment) instead of a static color_readback_segments
+    # — for SKUs whose true segmentation isn't knowable from the static device table (H6641).
+    color_readback_live_ic: bool = False
 
 
 _LIGHT = frozenset({_C.POWER, _C.BRIGHTNESS, _C.RGB, _C.COLOR_TEMP, _C.SCENES})
@@ -70,14 +75,17 @@ PROFILES: tuple[DeviceProfile, ...] = (
         min_kelvin=2700, max_kelvin=6500, readback="status",
     ),
     # H6047 — bar light: plaintext, two bars (combined 33 36), 10 segments, dialect-A scenes.
-    # SOURCE-CONFIRMED (was wrongly modeled as mechanism-A): H6047 (goodsType 119) does NOT
-    # dispatch the 0xAC status burst — that's gated to the h6038-family's *newdetail* SKUs
-    # (288/277/298). H6047 reads per-segment colour via a DIRECT per-group request instead
-    # (mechanism A-direct: proType 0xAA, `aa a5 <group>`, Controller4ColorInfoByGroup via
-    # Compose4InfoBleIot, Support.isGoodsTypeH6047:177) — same decode as H61A8's mechanism_b.
-    # `ac 03 03 41 30 a5` returns ZERO frames for this SKU; confirmed live. Read-back piece
-    # count = getColorPieceSize = 12 (distinct from the write/addressable count = 10).
-    # `polled` covers power/brightness/scene; not yet live-verified against real hardware.
+    # SOURCE-CONFIRMED (was wrongly modeled as mechanism-A, then as H61A8's mechanism_b — both
+    # corrected): H6047 (goodsType 119) does NOT dispatch the 0xAC status burst — that's gated
+    # to the h6038-family's *newdetail* SKUs (288/277/298). It reads per-segment colour via a
+    # DIRECT per-group request instead (mechanism A-direct: proType 0xAA, `aa a5 <group>`,
+    # Controller4ColorInfoByGroup via Compose4InfoBleIot, Support.isGoodsTypeH6047:177) — a
+    # DIFFERENT controller from H61A8's mechanism_b (BulbGroupColorV2); they only share the wire
+    # opcode. Group size CONFIRMED 4 ("count=getColorPieceSize (=12), 4/group", devices.yaml —
+    # not a guess). `ac 03 03 41 30 a5` returns ZERO frames for this SKU; confirmed live.
+    # Read-back piece count = getColorPieceSize = 12 (distinct from the write/addressable
+    # count = 10). `polled` covers power/brightness/scene; not yet live-verified against real
+    # hardware (the mechanism_a_direct decode itself is source-confirmed, not approximated).
     DeviceProfile(
         skus=("H6047",), capabilities=_LIGHT | {_C.SEGMENTS},
         color_scheme="h60a6", encryption=Encryption.NONE, segments=10,
@@ -85,7 +93,7 @@ PROFILES: tuple[DeviceProfile, ...] = (
                Zone("right", power_index=1, segments=tuple(range(5, 10)))),
         scene_versions=frozenset({0, 1, 2, 3}), bar_switch=True,
         min_kelvin=2200, max_kelvin=6500, readback="polled",
-        color_readback="mechanism_b", color_readback_per_batch=3, color_readback_segments=12,
+        color_readback="mechanism_a_direct", color_readback_per_batch=4, color_readback_segments=12,
     ),
     # H61A8 — rope: plaintext, 0x0b scheme, 15 segments, no CCT, dialect-A scenes.
     # Mechanism-B per-segment colour read-back (spec Change 7): 0xAA 0xA5 (V2, adds
@@ -122,31 +130,29 @@ PROFILES: tuple[DeviceProfile, ...] = (
         color_readback="mechanism_c",
     ),
     # H6641 — RGBIC strip (goodsType 247): plaintext, 0x15 scheme, dialect-A scenes.
-    # SOURCE-CONFIRMED (was wrongly modeled as mechanism-A): H61D3Support.f0(247)=false routes
-    # connect to connectBleSuc (adjustNew/VM4Light.b0:875), NOT the afterConnected 0xAC path
-    # (built only for goodsType 263) — so 247 never dispatches the 0xAC status burst.
-    # `ac 03 03 41 30 a5` returns ZERO frames for this SKU; confirmed live. Colour read-back is
-    # per-group DIRECT instead (mechanism A-direct: proType 0xAA, `aa a5 <group>`, after a 0x40
-    # IC read) — same decode as H61A8's mechanism_b.
-    # GAP (not fixed here): the true group count is IC-driven — ceil(IC_count/5) from a live
-    # 0x40 read (H61D3Support.e(), d=5 resolved) — which this library does not yet perform.
-    # `segments=16` is only the whole-device write-mask width, NOT the read-back count; using it
-    # for mechanism_b's batch math (below, no color_readback_segments override) is an
-    # APPROXIMATION until a 0x40 read is wired. `polled` covers power/brightness/scene; not yet
-    # live-verified against real hardware.
-    # SEPARATE, ALSO-OPEN GAP: `color_readback_per_batch` here is 3, matching the shared V2
-    # `bulb_group_color_read_v2` reader (BulbStringColorControllerV2.f109046g — a HARDCODED,
-    # non-parametric client constant in the ksy, NOT the "d=5" IC-math figure above; that "5" is
-    # mechanism-A's unrelated group-count divisor and does NOT apply to this per-request reply
-    # format). Whether H6641 actually uses this V2 controller (3 records/reply, same as H61A8)
-    # or a *V3* variant (BulbStringColorControllerV3, mentioned but not modeled in the ksy,
-    # possibly a different per-reply count/layout) is UNCONFIRMED — 3 is a placeholder
-    # extrapolation, not a source-verified value for this SKU.
+    # SOURCE-CONFIRMED (was wrongly modeled as mechanism-A, then as H61A8's mechanism_b — both
+    # corrected): H61D3Support.f0(247)=false routes connect to connectBleSuc
+    # (adjustNew/VM4Light.b0:875), NOT the afterConnected 0xAC path (built only for goodsType
+    # 263) — so 247 never dispatches the 0xAC status burst. `ac 03 03 41 30 a5` returns ZERO
+    # frames for this SKU; confirmed live. Colour read-back is per-group DIRECT instead
+    # (mechanism A-direct: proType 0xAA, `aa a5 <group>`, Controller4ColorInfoByGroup via
+    # Compose4InfoBleIot) — a DIFFERENT controller from H61A8's mechanism_b (BulbGroupColorV2);
+    # they only share the wire opcode. Group size CONFIRMED 4 ("4 records/group", devices.yaml —
+    # the SAME parser class as H60A6/H6047, not a guess).
+    # BOTH prior open approximations are now closed:
+    #  - group SIZE (was uncertain 3 vs 4 vs an unmodeled V3 controller): resolved to 4 above,
+    #    the correct Controller4ColorInfoByGroup constant, source-confirmed independently for
+    #    this SKU family (not extrapolated from H61A8, which uses an unrelated controller).
+    #  - group COUNT (was a static write-mask-width approximation, ceil(16/n)): now read LIVE
+    #    via `color_readback_live_ic` — a `0x40` IC-count read returns the device's OWN
+    #    precomputed group count (ic_segment_read.segment) directly, sidestepping any client-side
+    #    ceil-division/divisor assumption (H61D3Support.e()'s "d=5" is not needed here).
+    # `polled` covers power/brightness/scene; not yet live-verified against real hardware.
     DeviceProfile(
         skus=("H6641",), capabilities=_LIGHT | {_C.SEGMENTS}, color_scheme="h60a6",
         encryption=Encryption.NONE, segments=16, min_kelvin=2000, max_kelvin=9000,
         scene_versions=frozenset({0, 1, 2, 3, 10}), readback="polled",
-        color_readback="mechanism_b", color_readback_per_batch=3,
+        color_readback="mechanism_a_direct", color_readback_per_batch=4, color_readback_live_ic=True,
     ),
     # Plug family — power-only, AES + account-lock, relay encoding.
     # `plug` read-back polls the relay state (aa 01 -> raw relay bitmask; any bit set = on),

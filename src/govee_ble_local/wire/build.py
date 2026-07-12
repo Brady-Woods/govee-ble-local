@@ -258,6 +258,17 @@ def device_info_query(selector: int) -> bytes:
     return frame(PRO_READ, CMD_DEVICE_INFO, selector & 0xFF)
 
 
+CMD_IC_NUM = 0x40   # ic_num (ic_segment_read reply): live IC/segment capability read
+
+
+def ic_count_query() -> bytes:
+    """aa 40: read the live IC (lamp-bead) count + device-computed group/segment count
+    (ControllerOnlyReadIcSegmentNum). The ONLY live-BLE capability read — lets a client
+    discover true segmentation (e.g. H6641's mechanism A-direct group count) instead of
+    relying on the static per-SKU table."""
+    return frame(PRO_READ, CMD_IC_NUM)
+
+
 def status_query(full: bool = False) -> bytes:
     """0xAC status request: [AC, 03, N, cmd…]. full = dual-zone (adds 0xA5)."""
     if full:

@@ -108,6 +108,11 @@ def test_queries() -> None:
     assert list(sq.body.requested_types) == [0x41, 0x30, 0xA5]
 
 
+def test_ic_count_query() -> None:
+    assert b.ic_count_query().hex().startswith("aa40")
+    assert _p(b.ic_count_query()).body.command == F.Command.ic_num
+
+
 # ── scene uploads: reassemble back to the input value ────────────────────────
 def _reassemble_a4(frames: list[bytes]) -> bytes:
     parsed = [F.from_bytes(f) for f in frames]

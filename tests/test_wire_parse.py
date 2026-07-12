@@ -106,6 +106,28 @@ def test_mechanism_c_mode_0d_rgb() -> None:
     assert parse.parse_mode_color_0d(f(0x33, 0x05, 0x0D, 1, 2, 3)) is None            # write
 
 
+# ── mechanism A-direct: Controller4ColorInfoByGroup (H6047/H6641, group size 4) ─
+def test_direct_color_group_full_and_partial() -> None:
+    # a full group (4 records) and a caller-supplied SHORTER expected count (the final,
+    # partial group) — the frame itself has no length field; the caller decides.
+    full = f(0xAA, 0xA5, 1, 10, 255, 0, 0, 20, 0, 255, 0, 30, 0, 0, 255, 40, 1, 2, 3)
+    result = parse.parse_direct_color_group(full, expected_records=4)
+    assert result == (1, [(10, 255, 0, 0), (20, 0, 255, 0), (30, 0, 0, 255), (40, 1, 2, 3)])
+
+    # same frame, but the caller only expects 2 real records for this (final) group
+    result2 = parse.parse_direct_color_group(full, expected_records=2)
+    assert result2 == (1, [(10, 255, 0, 0), (20, 0, 255, 0)])
+
+    assert parse.parse_direct_color_group(f(0x33, 0xA5, 1), expected_records=4) is None  # write
+    assert parse.parse_direct_color_group(f(0xAA, 0xA2, 1), expected_records=4) is None  # wrong cmd
+
+
+def test_ic_count() -> None:
+    ic = parse.parse_ic_count(f(0xAA, 0x40, 0x00, 0x0A, 0x03))  # ic_count=10 (u2be), segment=3
+    assert ic is not None and ic.ic_count == 10 and ic.segment_count == 3
+    assert parse.parse_ic_count(f(0xAA, 0x01, 0x01)) is None   # wrong command
+
+
 def test_device_info_zero_fields_are_none() -> None:
     # aa 07 11 with all-zero mac + versions -> None (not "00:00:.." / "0.00.00"), so a zeroed
     # aa 07 reply can't clobber the 0xAC-anchored wifi_mac/hardware (H60A6 regression fix).

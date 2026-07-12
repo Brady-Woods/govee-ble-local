@@ -172,6 +172,58 @@ def bulb_groups_to_segments(
     return [segs[k] for k in sorted(segs)]
 
 
+# ── mechanism A-direct: per-group colour via Controller4ColorInfoByGroup ────────
+# H60A6/H6047/H6641 share this PARSER (group size 4, confirmed independently for H6047 —
+# "count=getColorPieceSize (=12), 4/group" — and H6641 — "4 records/group", devices.yaml).
+# It is a DIFFERENT, unrelated controller from H61A8's BulbGroupColorV2/mechanism-B (group
+# size 3) — they only share the wire opcode (0xAA read, command 0xA5), not the reply layout.
+# The frame is a fixed 20-byte zero-padded Govee frame like every other, with NO explicit
+# length field (unlike the embedded-0xAC-TLV variant of this same parser, which derives its
+# record count from the TLV's own `len` byte) — so a bare direct reply's record count can't be
+# length-derived; the real app already knows the total count in advance (getColorPieceSize, or
+# a live 0x40 IC read) and simply reads the fixed group size except a shorter final group. This
+# mirrors that: the CALLER supplies `expected_records`, computed from its own already-known
+# total. Hand-decoded (bypassing the generated bulb_group_color_read_v2 type, which is
+# H61A8-specific and would misdecode this format) — the same "shared opcode, per-SKU body"
+# precedent as parse_mode_color_0d.
+def parse_direct_color_group(
+    frame: bytes, expected_records: int
+) -> tuple[int, list[tuple[int, int, int, int]]] | None:
+    """One ``AA A5 <group>`` direct reply: ``(group_index, records)`` where each record is
+    ``(brightness, r, g, b)``. Returns at most ``expected_records`` (and at most what actually
+    fits in the frame), never more — the caller determines how many are real for this group."""
+    f = _parse(frame)
+    if f is None or f.pro_type != _ProType.read:
+        return None
+    if getattr(f.body, "command", None) != _Command.local_color_read:
+        return None
+    group_index = frame[2]
+    body = bytes(frame)[3:19]   # after [proType, command, group_index]; before the BCC byte
+    n = max(0, min(expected_records, len(body) // 4))
+    records = [
+        (body[i * 4], body[i * 4 + 1], body[i * 4 + 2], body[i * 4 + 3]) for i in range(n)
+    ]
+    return (group_index, records)
+
+
+@dataclass(frozen=True)
+class IcCount:
+    """AA 40 reply (ic_segment_read / ControllerOnlyReadIcSegmentNum): the device's OWN
+    live IC (lamp-bead) count and its precomputed group/segment count — lets a client
+    discover the true segmentation instead of relying on a static per-SKU table, and without
+    needing to re-derive the group-count divisor client-side."""
+    ic_count: int
+    segment_count: int
+
+
+def parse_ic_count(frame: bytes) -> IcCount | None:
+    """AA 40 reply: live IC count + device-reported group/segment count."""
+    b = _read_reply(frame, _Command.ic_num)
+    if b is None:
+        return None
+    return IcCount(ic_count=int(b.ic_count), segment_count=int(b.segment))
+
+
 # ── device info (AA 07 10/11/02) ─────────────────────────────────────────────
 def _version(v: Any) -> str | None:
     """Govee 3-byte version -> "X.YY.ZZ", or None for the 0.00.00 zero sentinel (a

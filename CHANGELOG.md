@@ -10,6 +10,31 @@ model, from which the shipped readers are generated).
 
 _Nothing yet._
 
+## [1.0.2] — 2026-07-12
+
+### Fixed
+- **H6047/H6641's `1.0.1` colour read-back fix reused the wrong controller's decoder.** `1.0.1`
+  correctly identified that neither SKU dispatches the `0xAC` status burst, but wired their
+  per-segment colour read-back onto H61A8's `mechanism_b` (`BulbGroupColorV2`) decoder —
+  a *different, unrelated controller* that only happens to share the `0xA5` wire opcode with
+  the one H6047/H6641 actually use (`Controller4ColorInfoByGroup`, confirmed via a full re-read
+  of `devices.yaml`: *"SAME PARSER ... but TWO different TRANSPORTS"*, explicitly distinct from
+  H61A8's separately-listed `BulbGroupColor`/mechanism-B). The two decoders disagree on group
+  size (3 vs 4), so segment indices were silently misassigned. Caught by the test suite itself
+  before any further guessing — a second wrong per-batch value (5, conflating two unrelated
+  "5"s from two different code paths) was caught the same way and never shipped.
+- New `color_readback="mechanism_a_direct"` (`wire.parse.parse_direct_color_group`,
+  `Device._read_mechanism_a_direct`) correctly decodes `Controller4ColorInfoByGroup`'s per-group
+  reply — group size **4**, source-confirmed independently for both SKUs
+  (`devices.yaml`: *"4/group"* / *"4 records/group"*), not extrapolated from H61A8.
+- **H6641's group-count approximation is now resolved, not just documented**: a live `0x40`
+  IC-count read (`build.ic_count_query`, `wire.parse.parse_ic_count`, the already-modeled
+  `ic_segment_read` ksy type) returns the device's own precomputed group count directly —
+  no client-side ceil-division/divisor guess needed. New `DeviceProfile.color_readback_live_ic`
+  flag gates this per-SKU (H6641 only; H6047 keeps its static, source-confirmed piece count).
+- `Device._read_mechanism_b` is now H61A8-only again (its docstring no longer over-claims
+  sharing with H6047/H6641).
+
 ## [1.0.1] — 2026-07-12
 
 ### Fixed
