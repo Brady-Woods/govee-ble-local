@@ -8,6 +8,14 @@ model, from which the shipped readers are generated).
 
 ## [Unreleased]
 
+_Nothing yet._
+
+## [1.0.3] — 2026-07-12
+
+Field-tested and confirmed live on H60A6 before merge (see PR discussion): a truncated 9-of-11-chunk
+burst recovered fully on retry with no warning; an H6047/H6641-style zero-chunk case correctly
+logged `state left stale` with chunk indices after the retry, rather than papering over it.
+
 ### Fixed
 - `Device._read_status()` (the `0xAC` status read-back for `readback="status"` devices, e.g. H60A6)
   now **retries once** on an empty parse before leaving state stale. A dropped BLE notification
