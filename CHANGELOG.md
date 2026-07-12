@@ -10,6 +10,34 @@ model, from which the shipped readers are generated).
 
 _Nothing yet._
 
+## [1.0.1] — 2026-07-12
+
+### Fixed
+- **H6047 and H6641 never actually answer the `0xAC` status burst** — they were wrongly modeled
+  as mechanism-A (the same `0xAC → 0xA5` path as H60A6), which produced a deterministic
+  zero-frame read on real hardware (source-confirmed, not a wire/timing issue: `H6047`, goodsType
+  119, routes to `Compose4InfoBleIot`, `Support.isGoodsTypeH6047:177`; `H6641`, goodsType 247,
+  never reaches the `afterConnected` `0xAC` dispatch at all, `H61D3Support.f0(247)=false`). Both
+  read per-segment colour via **direct per-group requests** instead (`AA A5 <group>`,
+  `Controller4ColorInfoByGroup` — the same decode H61A8 already used as `mechanism_b`).
+  `DeviceProfile.readback` for both switches `"status"` → `"polled"` (power/brightness/scene via
+  `aa 01/04/05`); `color_readback="mechanism_b"` added for both, reusing the existing decoder.
+  New `DeviceProfile.color_readback_segments` field lets H6047's batch math use its true
+  read-back piece count (`getColorPieceSize`=12) instead of its write/addressable count (10),
+  which differ for this SKU.
+  **Two related approximations remain open (flagged in `profile.py`, not fixed by this change):**
+  H6641's true colour-group *count* is IC-driven (needs a live `0x40` read this library doesn't
+  perform yet — falls back to the write-mask width as an approximation), and its per-reply
+  *record count* assumption (3, matching H61A8's `BulbStringColorControllerV2`) is unconfirmed —
+  H6641 may use an unmodeled `V3` controller with a different count/layout. Neither SKU is yet
+  live-verified.
+
+### Spec
+- `devices.yaml` / `docs/GOVEE_BLE_GATT_PROTOCOL.md`: documented the H6047/H6641 `0xAC`
+  non-dispatch (source citations above) and their `per_segment_color_read` direct-request
+  transport; reconciled `H61D3Support.e()`'s divisor (`d ∈ {3,4}` → `d ∈ {3,4,5}`, H6641/247 = 5)
+  against the `ceil(IC/5)` group-count math.
+
 ## [1.0.0] — 2026-07-11
 
 First public release. Prior `v1`/`v2`/`v3` were internal rewrite generations (never tagged or

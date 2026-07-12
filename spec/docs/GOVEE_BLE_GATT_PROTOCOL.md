@@ -565,6 +565,20 @@ segment index = `(group_index − 1) × count + k`. All of these are modelled in
 (`status_tlv` → `status_switch`/`status_brightness`/`mode_status`/`device_info_read`/`status_zone`/
 `status_seg_info`/`color_group_status`); only the `0x05` `params` sub-layout stays device-specific.
 
+> **Not every SKU answers `0xAC` — some read `0xA5` colour groups *directly*.** The record layout above
+> (4-byte `[brightness,R,G,B]`) is shared, but the *transport* is not. The `0xAC` status burst is dispatched
+> only by the SKUs whose connect flow builds a `Compose4BaseInfoSingleRead`: **H60A6**, and — within the two
+> RGBIC families that otherwise look identical — only specific goodsTypes (`h6038` family: the `newdetail`
+> VMs at goodsTypes **277/288/298**, e.g. `VM4H6038.java:240` `[41,30,36,a5]`; `h61d3` family: goodsType
+> **263** only, gated by `H61D3Support.f0`). The curated **H6047** (goodsType 119) and **H6641** (goodsType
+> 247) do **not** — they route to `Compose4InfoBleIot` (`Support.isGoodsTypeH6047:177`;
+> `adjustNew/VM4Light.b0:875` → `connectBleSuc`) and read each colour group with a **direct per-group request
+> `AA A5 <group>`** (`Controller4ColorInfoByGroup`, proType `0xAA` via `AbsControllerNoEvent4Single.getProType:153`).
+> The records are identical; only the transport differs (no burst, no `0xAC`). Sending H60A6's
+> `AC 03 03 41 30 A5` to an H6047/H6641 returns **zero frames** deterministically — it is never dispatched.
+> H6641 additionally reads IC count first (`0x40`, `VM4Light.C5:197`); group count = `ceil(IC / 5)`. In
+> `devices.yaml` this is the `per_segment_color_read` opcode (`0xa5`) on the `h6047`/`h61d3` families.
+
 > **Trailing padding:** the reassembled buffer is zero-padded to the last frame's 20-byte boundary, so it
 > usually ends in `0x00` bytes. `u()` stops once fewer than 2 bytes remain; no real TLV type is `0x00`.
 > A consumer must therefore terminate on a `0x00` type byte (or EOF), **not** parse to end-of-buffer — the
@@ -1559,7 +1573,8 @@ How the app maps a device to its protocol/capabilities (decompiled-verified):
   the `updateDeviceIc` / `updateDeviceSegmentCount` POSTs push *locally-determined* values UP for persistence.
 - **The only capability read live from the device** is the **IC / segment count**, via BLE opcode **`0x40`**
   (`ControllerOnlyReadIcSegmentNum` → `{IC count u16, segment}`; `ControllerIcNum` → IC-group list; refresh `0x42`).
-  IC-driven families (h61d3/H6641) compute segment count from it (`H61D3Support.e()` → `ceil(IC/d)`, `d`∈{3,4});
+  IC-driven families (h61d3/H6641) compute segment count from it (`H61D3Support.e()` → `ceil(IC/d)`, `d`∈{3,4,5}
+  by goodsType — **H6641/247 → `d`=5**, `H61D3Support.e()` sets `r0=5` before the 247 branch);
   static families (H60A6, H6047) ignore it and use the hard-coded `getColorPieceSize`.
 
 **Implication for a local (no-cloud) client:** derive `goodsType` from the advertisement, then key a compiled

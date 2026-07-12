@@ -407,11 +407,18 @@ class Device:
                 self._state.serial_number = sn.serial
 
     async def _read_mechanism_b(self) -> None:
-        """H61A8 per-segment colour: request each 0xA5 (V2) batch (AA A5 <seq>) and
-        assemble positional segments. per_batch/batch-count are client constants
-        (not frame-encoded); modeled from source, not yet live-verified."""
+        """Per-segment colour via direct per-group requests (AA A5 <seq>, V2): request each
+        batch and assemble positional segments. Shared by H61A8, H6047, and H6641
+        (Controller4ColorInfoByGroup); only the per-SKU batch math differs, and it's the one
+        externally-keyed part of this path — per_batch/batch-count are client constants (not
+        frame-encoded), source-modeled and not yet live-verified. See each SKU's profile comment
+        for its specific open questions (H6641 has two: an approximated group *count*, via
+        `color_readback_segments` falling back to `segments` instead of a live 0x40 IC read;
+        and an unconfirmed per-reply record *count*, since the shared ksy reader hardcodes 3
+        records/reply for the V2 controller H6641 may not actually use)."""
         per_batch = self.profile.color_readback_per_batch or 3
-        batch_count = -(-self.profile.segments // per_batch)  # ceil
+        seg_count = self.profile.color_readback_segments or self.profile.segments
+        batch_count = -(-seg_count // per_batch)  # ceil
         batches: list[tuple[int, list[tuple[int | None, int, int, int]]]] = []
         for seq in range(1, batch_count + 1):
             reply = await self._read_reply(build.bulb_group_query(seq, v2=True), 0xA5)

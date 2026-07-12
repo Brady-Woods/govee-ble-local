@@ -139,10 +139,40 @@ def test_scene_dialect_routing() -> None:
     assert f and all(fr[0] == 0xA3 for fr in f)
 
 
-def test_h6641_segment_control_wired() -> None:
-    # H6641 mechanism-A: per-segment control + status read-back now exposed.
+def test_h6641_mechanism_b_readback_is_approximate() -> None:
+    # H6641 (goodsType 247): H61D3Support.f0(247)=false, so it never dispatches the 0xAC status
+    # burst either — same per-group direct `aa a5 <group>` mechanism_b path as H6047/H61A8.
+    # TWO open, unconfirmed approximations here (both flagged in the profile comment, neither
+    # fixed by this change): (1) no color_readback_segments override, so batch math falls back
+    # to the write-mask width (segments=16) instead of the true IC-driven count; (2) per_batch=3
+    # matches the shared ksy V2 reader's HARDCODED 3-records-per-reply (BulbStringColorControllerV2),
+    # not confirmed for H6641 (which may use an unmodeled V3 controller instead).
+    p = profile_for("H6641")
+    assert p.readback == "polled" and p.color_readback == "mechanism_b"
+    assert p.color_readback_segments is None and p.color_readback_per_batch == 3
+
     d = _dev("H6641")
-    assert Capability.SEGMENTS in d.capabilities and d.profile.readback == "status"
+
+    def _batch(frame: bytes, **_kw: object) -> list[bytes]:
+        seq = frame[2]
+        groups = []
+        for i in range(3):
+            seg = (seq - 1) * 3 + i
+            groups += [50 + seg, seg, 0, 0]
+        return [_frame(0xAA, 0xA5, seq, *groups)]
+
+    d._conn.query = AsyncMock(side_effect=_batch)  # type: ignore[attr-defined]
+    asyncio.run(d._read_mechanism_b())
+    # ceil(16/3) = 6 batches * 3 = 18 positions read — an approximation of the real IC count.
+    assert [s.index for s in d.state.segments] == list(range(18))
+
+
+def test_h6641_segment_control_wired() -> None:
+    # H6641: per-segment control (write) + mechanism-B colour read-back (per-group direct
+    # `aa a5 <group>` — the 0xAC status burst is source-confirmed to return zero for gt 247).
+    d = _dev("H6641")
+    assert Capability.SEGMENTS in d.capabilities
+    assert d.profile.readback == "polled" and d.profile.color_readback == "mechanism_b"
     asyncio.run(d.set_segment_rgb([0, 1, 2], (0, 0, 255)))
     f = _sent(d)[0]
     assert f.hex().startswith("33051501")   # 0x15 set-color (RGBIC per-segment)
@@ -160,7 +190,8 @@ def _frame(*payload: int) -> bytes:
 
 
 # Real captured H60A6 0xAC status burst (13 segments, both zones on, brightness 0x50).
-# Device-agnostic parse — reused to exercise mechanism-A status read-back for H6047 too.
+# H60A6-specific — H6047/H6641 do NOT answer the 0xAC status burst at all (source-confirmed;
+# see their profile.py comments), so this is not reused for those SKUs.
 _STATUS_BURST = [bytes.fromhex(h) for h in (
     "ac000a000c0300010101040150050415010000e8",
     "ac010707065774f453e75c0711105674f453e7f0",
@@ -215,14 +246,29 @@ def test_plug_reads_relay_state() -> None:
     assert d.state.is_on is False
 
 
-def test_h6047_status_readback_populates_segments() -> None:
-    # Item 2: H6047 now uses mechanism-A status read-back (like H60A6/H6641)
-    assert profile_for("H6047").readback == "status"
+def test_h6047_mechanism_b_readback() -> None:
+    # H6047 (goodsType 119) does NOT answer the 0xAC status burst — Support.isGoodsTypeH6047:177
+    # routes it to Compose4InfoBleIot instead: per-group DIRECT `aa a5 <group>` reads, the SAME
+    # decode as H61A8. Read-back piece count = getColorPieceSize = 12 (not the write count 10),
+    # via color_readback_segments; per_batch = 3 -> ceil(12/3) = 4 batches.
+    p = profile_for("H6047")
+    assert p.readback == "polled" and p.color_readback == "mechanism_b"
+    assert p.color_readback_segments == 12
+
     d = _dev("H6047")
-    d._conn.query = AsyncMock(return_value=_STATUS_BURST)  # type: ignore[attr-defined]
-    asyncio.run(d._read_status())
-    assert len(d.state.segments) == 13   # parser takes N from the reply, not a fixed count
-    assert d.state.zone_power == {0: True, 1: True}
+
+    def _batch(frame: bytes, **_kw: object) -> list[bytes]:
+        seq = frame[2]                       # AA A5 <batch_seq>
+        groups = []
+        for i in range(3):
+            seg = (seq - 1) * 3 + i
+            groups += [50 + seg, seg, 0, 0]  # brightness encodes segment index, R=index
+        return [_frame(0xAA, 0xA5, seq, *groups)]
+
+    d._conn.query = AsyncMock(side_effect=_batch)  # type: ignore[attr-defined]
+    asyncio.run(d._read_mechanism_b())
+    segs = d.state.segments
+    assert [s.index for s in segs] == list(range(12))   # 12 read-back positions, not 10 write
 
 
 def test_device_info_populates_state_once() -> None:

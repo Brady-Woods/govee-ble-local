@@ -314,18 +314,24 @@ command_catalog:
   - { opcode: "0x21", name: SINGLE_WIFI_SOFT_VERSION, category: device_info, direction: R, meaning: "wifi module SW version" }
   - { opcode: "0x22", name: SINGLE_WIFI_DSP_VERSION,  category: device_info, direction: R, meaning: "DSP version" }
   # IC / segment (RGBIC)
-  # Per-segment COLOUR read-back is NOT uniform across curated devices — three mechanisms:
-  #   (A) 0xAC -> 0xA5-group TLV (base2light Controller4ColorInfoByGroup): H60A6, H6047, H6641. Each 0xA5 TLV =
-  #       ONE group [group_index(1-based), record x count]; record = 4 B [brightness,R,G,B] via
-  #       generateReadController->q():174. ALL THREE CURATED DEVICES ARE 4-BYTE (H60A6 VM4LightH60A6:302,
-  #       H6047 VM4H6038:872, H6641 VM4LightH61d3:269 count=4) — supportPartBrightness=true. The 3 B [R,G,B]
-  #       variant (generateReadController4OnlyColor->p():157) is used ONLY by non-curated colour-only families
-  #       (tvlightv2, rgblight, bulblightstringv1, h7022, h6160). [Corrected: an earlier note wrongly cited an
-  #       H6641 3-byte ".p" path — H6641 is 4-byte.] Record COUNT per group = (len-1)/record_size (== the caller's
-  #       per-SKU oneGroupColorSize, usually 4). Global segment idx = (group_index-1)*count + k; the reply's
-  #       group_index byte is discarded in the 4-byte callback (client tracks group by its per-group request).
-  #       Group count = ceil(N / count). N = getColorPieceSize (per SKU), DISTINCT from the write/addressable
-  #       segment count (H6047: read-back 12 != write 10). ksy: status_tlv 0xA5 -> color_group_status.
+  # Per-segment COLOUR read-back is NOT uniform — same PARSER (Controller4ColorInfoByGroup, 0xA5 group, 4-byte
+  # [brightness,R,G,B] record via generateReadController->q():174) but TWO different TRANSPORTS, plus B/C:
+  #   (A) 0xAC STATUS BURST carrying a 0xA5 TLV (aggregated read via Compose4BaseInfoSingleRead ->
+  #       ControllerSingleRead; request = [0xAC][0x03][count][types...], proType 0xAC per
+  #       AbsController4BleSingleSendMultiBack.getProType:191). Used by: H60A6 (VM4LightH60A6$afterConnected...:158,
+  #       requests [0x41,0x30]+conditional 0xA5); and — within the h6047/h61d3 families — the NEWDETAIL siblings
+  #       ONLY: H6038/H6039/H6048 (gt 288/277/298, per-SKU type-sets e.g. VM4H6038:240 [41,30,36,a5]) and h61d3
+  #       gt 263. NOT the H6047 or H6641 SKUs (see A-direct). Reassembled 0xA5 TLV = ONE group [group_index(1-based),
+  #       record x count]; COUNT = (len-1)/record_size (== caller oneGroupColorSize, usually 4). ksy: status_tlv 0xA5
+  #       -> color_group_status. Group count = ceil(N/count); N = getColorPieceSize (H6047-family read-back 12 != write 10).
+  #   (A-direct) SAME parser/record, NO 0xAC burst: per-group DIRECT reads `0xAA 0xA5 <group>` issued individually via
+  #       Compose4InfoBleIot (Controller4ColorInfoByGroup; proType 0xAA per AbsControllerNoEvent4Single.getProType:153,
+  #       cmd 0xA5). Used by **H6047 (gt 119)** — old detail/NewDetailVm (Support.isGoodsTypeH6047:177), and
+  #       **H6641 (gt 247)** — adjustNew/VM4Light, gated by H61D3Support.f0(247)=false @b0:875 so it takes the
+  #       connectBleSuc path, which first reads 0x40 IC-count (C5:197 -> group count = ceil(IC/5)) then P5:288 issues
+  #       the per-group reads. ** These SKUs return ZERO to the 0xAC status request `ac 03 03 41 30 a5` (that is
+  #       H60A6's set) — deterministically, because they never dispatch a 0xAC status read. Read colour via per-group
+  #       `aa a5 <group>` instead. ** [The 3 B [R,G,B] p():157 record variant is non-curated colour-only SKUs.]
   #   (B) per-group discrete controllers over 0xAA-notify (BulbGroupColor): H61A8. MULTI-FRAME batches — device
   #       sends maxGroup frames, each [AA][cmd][batch_seq][groups]; segment is POSITIONAL = (batch_seq-1)*perBatch+i.
   #       V1 cmd 0xA2 = 4 groups/frame x 3 B [R,G,B], NO brightness (BulbGroupColor, hardcoded 4). V2 cmd 0xA5 =
@@ -429,7 +435,7 @@ families:
     goods_types: [119, 196, 197, 277, 288, 298]
     delivery: feature_split
     connectivity: [ble, wifi]
-    protocol: { single_packet: true, multi_dialects: ["0xA1", "0xA3", "0xAC"], mode_command: "0x05" }
+    protocol: { single_packet: true, multi_dialects: ["0xA1", "0xA3", "0xAC"], mode_command: "0x05" }   # CAVEAT: 0xAC STATUS-read is goodsType-specific within this family — the newdetail SKUs H6038/H6039/H6048 (288/277/298) dispatch it; the H6047 SKU (119, old detail/NewDetailVm -> Compose4InfoBleIot, Support.isGoodsTypeH6047:177) does NOT (per-seg colour via direct `aa a5`, see per_segment_color_read).
     submodes: { color: "0x15", scene: "0x04", music: "0x13", diy: "0x0a", video: "0x00" }
     opcodes:
       - { name: compose_light_switch, cmd: "0x36", readable: true, payload: "H6047 [left,right]; others [position(0|1), state]; read AA 36" }
@@ -439,7 +445,7 @@ families:
       - { name: check_install_camera, cmd: "0x32", note: "CONSTANT-ONLY — BleProtocol=50; no usage in split; not confirmed live" }
       - { name: calibration, cmd: "0x44", payload: "[on/off]" }
       - { name: white_balance, cmd: "0xa9", note: "read/parse confirmed (Info4Detail.parseWhiteBalance); no dedicated write controller found in split" }
-      - { name: per_segment_color_read, cmd: "0xa5", readable: true, payload: "mechanism (A) 0xAC->0xA5-group (Controller4ColorInfoByGroup, Info4Detail:377); [groupIndex, 4x{brightness,R,G,B}]; count = getColorPieceSize (H6047=12), 4/group" }
+      - { name: per_segment_color_read, cmd: "0xa5", readable: true, payload: "PARSER Controller4ColorInfoByGroup: [groupIndex, count x {brightness,R,G,B}] 4-byte records, count=getColorPieceSize (=12), 4/group. TRANSPORT is goodsType-specific: H6038/H6039/H6048 (288/277/298) aggregate 0xA5 into the 0xAC status burst (mechanism A); the H6047 SKU (119) reads per-group DIRECT `aa a5 <group>` via Compose4InfoBleIot (mechanism A-direct, proType 0xAA) and does NOT answer `ac 03 03 41 30 a5`." }
     # kelvin is per-SKU (KelvinConfig / Support.getColorTemRange): H6047/H6043/H6042 (119/196/197)=[2200,6500],
     # H6039(277)/H6038(288)=[2700,6500], H6048(298)=[2000,9000]. kelvin_range below = H6047 (curated), NOT a family envelope.
     # segments: TWO distinct counts. WRITE/addressable = getGoodsType4ColorSegment; READ-BACK pieces = getColorPieceSize. They differ (H6047: read 12 != write 10) — the 0xA5 read walk MUST use the read-back count.
@@ -479,17 +485,18 @@ families:
     goods_types: [202, 239, 242, 246, 247, 261, 263, 264, 299, 367, 375, 384, 387, 388, 389, 400]
     delivery: feature_split
     connectivity: [ble, wifi]
-    protocol: { single_packet: true, multi_dialects: ["0xA3"], mode_command: "0x05" }   # only 0xA3 verifiable in split BLE code; 0xA1/0xAC were assumed, not found
+    protocol: { single_packet: true, multi_dialects: ["0xA3"], mode_command: "0x05" }   # RESOLVED (was "0xA1/0xAC assumed, not found"): H6641/247 does NOT dispatch a 0xAC status burst — H61D3Support.f0(247)=false routes connect to connectBleSuc (adjustNew/VM4Light.b0:875), NOT the afterConnected 0xAC path (which builds an ac-status read ONLY for gt 263). Flag CONFIRMED for 247. Colour = direct per-group `aa a5` after a 0x40 IC read (see per_segment_color_read).
     submodes: { color: "0x15", scene: "0x04", music: "0x13", diy: "0x0a" }
     opcodes:
       - { name: read_ic_count, cmd: "0x40", readable: true }
       - { name: check_ic, cmd: "0x46", payload: "H6640 uses 0x43" }
       - { name: read_ic_point, cmd: "0x24", readable: true }
+      - { name: per_segment_color_read, cmd: "0xa5", readable: true, payload: "H6641/247: per-group DIRECT read (proType 0xAA) `aa a5 <group>` via Compose4InfoBleIot; PARSER Controller4ColorInfoByGroup -> [groupIndex, count x {brightness,R,G,B}] 4-byte records; group count = ceil(IC/5) from the prior 0x40 IC read (adjustNew/VM4Light.C5:197 -> P5:288-321). NOT a 0xAC status burst — `ac 03 03 41 30 a5` returns zero for 247. mechanism A-direct." }
       - { name: take_photo, cmd: "0x26", payload: "a()=[1,100,R,G,B] start / b()=[0] stop" }
       - { name: video_recognition, cmd: "0xed" }
       - { name: secret_write, cmd: "0xb2", note: "read 0xB1; 8-byte base64-decoded secret" }
     # kelvin: H6641/247 = [2000,9000] (H61D3Support.m/e0 :1210,:1055; KelvinConfig v0); other h61d3 SKUs vary. kelvin_range below = H6641 (curated).
-    specs: { segments: "H6641/247 read-back N = ceil(IC_count / 5) [d=5 RESOLVED: H61D3Support.e() sets r0=5 @L8c before the 247 branch, which inherits it at Lb3]; 4 records/group; mechanism (A) 0xAC->0xA5-group (Controller4ColorInfoByGroup, Info4Detail:464); record = 4-byte [brightness,R,G,B] (part_brightness/T0 true for 247)", kelvin_range: [2000, 9000], scene_versions: [0, 1, 2, 3, 10] }
+    specs: { segments: "H6641/247 read-back N = ceil(IC_count / 5) [d=5 RESOLVED: H61D3Support.e() sets r0=5 @L8c before the 247 branch, which inherits it at Lb3]; 4 records/group; mechanism A-DIRECT: per-group direct `aa a5 <group>` reads (Controller4ColorInfoByGroup via Compose4InfoBleIot, proType 0xAA) — NOT the 0xAC status burst; record = 4-byte [brightness,R,G,B] (part_brightness/T0 true for 247)", kelvin_range: [2000, 9000], scene_versions: [0, 1, 2, 3, 10] }
     encryption: secret_key_pairing
     notify:
       - { sub_type: "0x11", meaning: "wifi connect result" }
