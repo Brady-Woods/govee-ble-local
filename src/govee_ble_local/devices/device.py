@@ -41,6 +41,15 @@ def _mask(indices: list[int] | tuple[int, ...]) -> int:
     return m
 
 
+def _chunk_indices(ac_frames: list[bytes]) -> str:
+    """Format the chunk-index byte (frame[1]) of each received 0xAC frame, for diagnosing a
+    dropped/truncated status burst (e.g. ``0x00,0x01,0x02,0x04,0xff`` — index 3 missing)."""
+    if not ac_frames:
+        return "<none>"
+    idx = sorted({f[1] for f in ac_frames if len(f) >= 2})
+    return ",".join(f"0x{i:02x}" for i in idx)
+
+
 class Device:
     """A Govee BLE device driven entirely by its ``DeviceProfile``."""
 
@@ -475,16 +484,35 @@ class Device:
         if rgb is not None:
             self._state.rgb_color = rgb
 
-    async def _read_status(self) -> None:
+    async def _query_status(self) -> tuple[reassemble.StatusReply, list[bytes], list[bytes]]:
         frames = await self._conn.query(build.status_query(full=True), timeout=5.0)
         ac = [f for f in frames if f and f[0] == 0xAC]
-        st = reassemble.parse_status(ac)
-        if st.is_on is None and not st.segments and not st.zone_power:
-            # The device answered (or didn't) but no usable TLVs came back — state left
-            # stale. This is the signal for "mechanism-A doesn't work here" (e.g. H6047).
+        return reassemble.parse_status(ac), ac, frames
+
+    @staticmethod
+    def _status_empty(st: reassemble.StatusReply) -> bool:
+        return st.is_on is None and not st.segments and not st.zone_power
+
+    async def _read_status(self) -> None:
+        st, ac, frames = await self._query_status()
+        if self._status_empty(st):
+            # The device answered (or didn't) but no usable TLVs came back — most often a
+            # dropped/truncated 0xAC burst (a BLE notification lost mid-sequence, so the
+            # reassembled buffer ends mid-TLV or is empty). Retry once with a fresh query —
+            # a new burst is independent, so this self-heals most single-poll losses — before
+            # leaving state stale. This is also the signal for "mechanism-A doesn't work here"
+            # for a device that reliably returns nothing (e.g. H6047).
+            _LOGGER.debug(
+                "%s (%s): status read empty on first attempt (%d 0xAC of %d frames, "
+                "chunks %s); retrying once",
+                self.address, self._sku, len(ac), len(frames), _chunk_indices(ac),
+            )
+            st, ac, frames = await self._query_status()
+        if self._status_empty(st):
             _LOGGER.warning(
-                "%s (%s): status read returned no usable data (%d 0xAC of %d frames); state left stale",
-                self.address, self._sku, len(ac), len(frames),
+                "%s (%s): status read returned no usable data after retry "
+                "(%d 0xAC of %d frames, chunks %s); state left stale",
+                self.address, self._sku, len(ac), len(frames), _chunk_indices(ac),
             )
         if st.is_on is not None:
             self._state.is_on = st.is_on

@@ -209,6 +209,25 @@ _STATUS_BURST = [bytes.fromhex(h) for h in (
 )]
 
 
+def _status_query_mock(bursts: list[list[bytes]]) -> AsyncMock:
+    """A ``d._conn.query`` mock that routes ONLY 0xAC status-query triggers through `bursts`
+    (one entry consumed per status-query call; recorded on `.status_calls`), and returns an
+    empty reply for anything else — e.g. the scene mode-query (0xAA) H60A6 also issues
+    alongside status read-back, which would otherwise be miscounted as a retry."""
+    it = iter(bursts)
+    mock = AsyncMock()
+    mock.status_calls = 0
+
+    async def _query(frame: bytes, **_kw: object) -> list[bytes]:
+        if frame and frame[0] == 0xAC:
+            mock.status_calls += 1
+            return next(it)
+        return []
+
+    mock.side_effect = _query
+    return mock
+
+
 def test_mechanism_c_reads_single_rgb() -> None:
     # H6052: 0x05 sub-mode 0x0D report body [R,G,B] -> state.rgb_color
     d = _dev("H6052")
@@ -344,3 +363,48 @@ def test_read_status_populates_device_info() -> None:
     assert d.state.hardware_version == "1.04.03"
     assert d.state.firmware_version == "1.00.41"
     assert d.state.serial_number == "2D:DB:5C:E7:53:F4:74:56"
+
+
+def test_read_status_retries_once_then_recovers(caplog: pytest.LogCaptureFixture) -> None:
+    # A dropped/truncated 0xAC burst (e.g. a lost BLE notification) yields an empty parse on
+    # the first attempt; a fresh query is independent and usually succeeds — retry once before
+    # giving up. Recovery -> no WARNING, but the retry-attempt DEBUG line is emitted.
+    d = _dev("H60A6")
+    mock = _status_query_mock([[], _STATUS_BURST])
+    d._conn.query = mock  # type: ignore[attr-defined]
+    with caplog.at_level("DEBUG", logger="govee_ble_local.devices.device"):
+        asyncio.run(d._read_status())
+    assert mock.status_calls == 2
+    assert d.state.is_on is True and d.state.brightness == 0x50
+    assert not [r for r in caplog.records if r.levelname == "WARNING"]
+    assert any("retrying once" in r.message for r in caplog.records)
+
+
+def test_read_status_warns_and_preserves_state_after_two_empty_reads(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # Both attempts come back empty (0xAC never arrived, or arrived truncated both times):
+    # WARNING logged once, and existing good state is NOT erased (fields are applied
+    # conditionally — an empty StatusReply carries no fields to overwrite with).
+    d = _dev("H60A6")
+    d._conn.query = _status_query_mock([_STATUS_BURST])  # type: ignore[attr-defined]
+    asyncio.run(d._read_status())
+    assert d.state.is_on is True  # seed known-good state
+
+    d._conn.query = _status_query_mock([[], []])  # type: ignore[attr-defined]
+    with caplog.at_level("DEBUG", logger="govee_ble_local.devices.device"):
+        asyncio.run(d._read_status())
+    assert d._conn.query.status_calls == 2  # type: ignore[attr-defined]
+    warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+    assert len(warnings) == 1 and "state left stale" in warnings[0].message
+    assert "<none>" in warnings[0].message  # chunk-index diagnostic: nothing received
+    assert d.state.is_on is True  # unchanged — not erased by the empty reply
+
+
+def test_read_status_no_retry_when_first_attempt_succeeds() -> None:
+    # The common path: don't pay the retry cost when the first query already succeeds.
+    d = _dev("H60A6")
+    mock = _status_query_mock([_STATUS_BURST])
+    d._conn.query = mock  # type: ignore[attr-defined]
+    asyncio.run(d._read_status())
+    assert mock.status_calls == 1
