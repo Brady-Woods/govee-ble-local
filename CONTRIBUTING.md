@@ -44,10 +44,22 @@ the `_generated/` readers and commit them.
 
 ## Releases (Semantic Versioning — https://semver.org/)
 
-`1.0.0` is the initial public baseline; not published to PyPI yet. To cut a release: bump `version` in `pyproject.toml`
-(MAJOR = breaking public API, MINOR = additive, PATCH = fixes), move `[Unreleased]` → `[X.Y.Z] - DATE`
-in `CHANGELOG.md`, then tag `git tag vX.Y.Z` and publish a GitHub Release. The public API contract is
+`1.0.0` is the initial public baseline; not published to PyPI yet. The public API contract is
 `govee_ble_local.__all__`.
+
+**A version bump and a release are one action, not two.** `origin/master`'s `pyproject.toml`
+version must always have a matching tag and a published (non-prerelease) GitHub Release with
+built artifacts attached — a bumped-but-untagged version on `master` is an incomplete release,
+not a "cut the tag later" backlog item. To cut a release, in one sitting:
+1. Bump `version` in `pyproject.toml` (MAJOR = breaking public API, MINOR = additive, PATCH = fixes)
+   and move `[Unreleased]` → `[X.Y.Z] - DATE` in `CHANGELOG.md`.
+2. `python -m build`; smoke-verify the sdist/wheel (installs, imports, correct version + runtime deps).
+3. `git tag -a vX.Y.Z -m "..."`, `git push origin vX.Y.Z`.
+4. `gh release create vX.Y.Z --notes-file <the CHANGELOG section> dist/*.whl dist/*.tar.gz`.
+
+Use `--prerelease` tags (e.g. `vX.Y.Zrc1`) only to hand a client a testable build of an unmerged
+branch/PR — once that work merges to `master` under its real version number, it still needs the
+real, non-prerelease tag + release; the prerelease doesn't substitute for it.
 
 ## Diagnostics
 
