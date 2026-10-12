@@ -70,7 +70,10 @@ def test_lines_are_ascii_json(tmp_path: Path) -> None:
 def test_write_error_is_swallowed(tmp_path: Path) -> None:
     bad = tmp_path / "no" / "such" / "dir" / "cap.jsonl"
     good = tmp_path / "good.jsonl"
+    # A missing directory now disables the log up front (OPS-1); the writer must also
+    # survive a failure that only appears at write time.
     FrameLog(str(bad), "A").record("tx", wire=b"\x01")
+    framelog._enqueue((str(bad), "x\n"))
     # the writer thread must survive the OSError and keep serving later records
     FrameLog(str(good), "B").record("tx", wire=b"\x02")
     lines = _wait_for_lines(good, 1)
@@ -98,9 +101,8 @@ def test_batching_across_paths_preserves_all_records(tmp_path: Path) -> None:
         lb.record("rx", wire=bytes([i]))
     assert len(_wait_for_lines(a, 5)) == 5
     assert len(_wait_for_lines(b, 5)) == 5
-    # Ordering is NOT asserted: when the writer meets a record for another path it
-    # re-queues it at the tail, so interleaved paths can reorder (observed behavior).
-    assert sorted(json.loads(x)["wire"] for x in a.read_text().splitlines()) == [f"{i:02x}" for i in range(5)]
-    assert isinstance(framelog._QUEUE, queue.SimpleQueue)
+    # Per-path arrival order is preserved (see test_framelog_hardening).
+    assert [json.loads(x)["wire"] for x in a.read_text().splitlines()] == [f"{i:02x}" for i in range(5)]
+    assert isinstance(framelog._QUEUE, queue.Queue) and framelog._QUEUE.maxsize > 0
     _wait_queue_empty()
     assert os.path.exists(a)
