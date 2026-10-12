@@ -83,7 +83,8 @@ def _is_placeholder(param_b64: str | None) -> bool:
 def fetch(sku: str, app_version: str = DEFAULT_APP_VERSION) -> dict[str, dict[str, object]]:
     url = f"{LIBRARY_URL}?sku={urllib.parse.quote(validate_sku(sku), safe='')}"
     req = urllib.request.Request(url, headers={"AppVersion": app_version})
-    with urllib.request.urlopen(req, timeout=20) as resp:
+    # Fixed https LIBRARY_URL; the only variable part (sku) is validated and URL-quoted above.
+    with urllib.request.urlopen(req, timeout=20) as resp:  # nosec B310
         payload = json.load(resp)
     scenes: dict[str, dict[str, object]] = {}
     for category in payload.get("data", {}).get("categories", []):

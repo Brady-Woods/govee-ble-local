@@ -21,7 +21,8 @@ def aes_ecb_block(key16: bytes, block16: bytes, *, encrypt: bool) -> bytes:
         raise GoveeBleInvalidValue(f"AES key must be exactly 16 bytes, got {len(key16)}")
     if len(block16) != 16:
         raise GoveeBleInvalidValue(f"AES block must be exactly 16 bytes, got {len(block16)}")
-    cipher = Cipher(algorithms.AES(key16), modes.ECB())
+    # The Govee BLE protocol mandates AES-ECB (single 16-byte blocks); not a free choice.
+    cipher = Cipher(algorithms.AES(key16), modes.ECB())  # nosec B305
     op = cipher.encryptor() if encrypt else cipher.decryptor()
     return op.update(block16) + op.finalize()
 

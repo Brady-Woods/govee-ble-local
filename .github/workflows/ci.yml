@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   quality:
-    name: Type-check & tests (py${{ matrix.python-version }})
+    name: Lint, type-check, security & tests (py${{ matrix.python-version }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -22,6 +22,8 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - name: Run quality gate
+        env:
+          CI: "true"  # makes the pip-audit stage mandatory (no offline skip)
         run: bash scripts/check.sh
 
   lowest-deps:
