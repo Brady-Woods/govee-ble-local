@@ -220,7 +220,7 @@ def test_gradual_setting() -> None:
 
 def test_scene_dialect_routing() -> None:
     def upload(sku: str, scene: Scene) -> list[bytes] | None:
-        return _dev(sku)._scene_upload_frames(scene)
+        return _dev(sku).scene_upload_frames(scene)
 
     def param(*head: int) -> str:
         return base64.b64encode(bytes(list(head) + [0] * 30)).decode()

@@ -49,4 +49,4 @@ def test_device_methods_delegate() -> None:
     assert d is not None
     sc = Scene("d", 1, _b64(0xFF, 3, 0, 7, 8, 9), scene_type=5)
     expect = scene_upload_frames(sc, d.profile.scene_dialect, d.profile.scene_versions)
-    assert expect and d.scene_upload_frames(sc) == expect == d._scene_upload_frames(sc)
+    assert expect and d.scene_upload_frames(sc) == expect == d.scene_upload_frames(sc)

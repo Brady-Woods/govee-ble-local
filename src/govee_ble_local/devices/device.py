@@ -6,6 +6,7 @@ Behaviour is gated by ``profile.capabilities`` and dispatched to the spec-first
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from collections.abc import Callable
@@ -93,6 +94,10 @@ class Device:
         # optimistic state. update() snapshots it before each read and discards the reply if it
         # moved, so a stale read never overwrites a newer setter. Not a lock: setters never wait.
         self._mutation_seq = 0
+        # Serializes the bar-switch read-modify-write in set_zone_power (one frame carries both
+        # bars). Lock order: this is OUTERMOST, the connection lock inner; never take it from
+        # inside a connection operation.
+        self._bar_lock = asyncio.Lock()
         self._discarded_reads = 0        # cumulative count of discarded stale reads
         self._callbacks: list[StateCallback] = []
         self._advert_ignore_until = 0.0   # monotonic; see ADVERT_SUPPRESS_SECONDS
@@ -500,22 +505,8 @@ class Device:
         GoveeBleError if that read-back fails. Raises GoveeBleNotSupported for an unknown zone."""
         z = self._zone(name)
         if self.profile.bar_switch:
-            # One frame carries BOTH bars, so the other bar's current state must be
-            # known - never assume it (assuming "on" turned the other bar ON).
-            zp = self._state.zone_power
-            if len(zp) < 2:
-                await self._read_bar_switch()
-                zp = self._state.zone_power
-            other = 1 - z.power_index
-            if other not in zp:
-                raise GoveeBleError(
-                    f"{self._sku}: state of the other bar is unknown (read-back failed); "
-                    "not changing it blindly")
-            target = {0: zp.get(0, False), 1: zp.get(1, False)}
-            target[z.power_index] = on
-            await self._conn.send(build.bar_switch(target[0], target[1]))
-            self._mutated()
-            self._state.zone_power = dict(target)
+            async with self._bar_lock:
+                await self._set_bar_power(z.power_index, on)
         else:
             await self._conn.send(build.zone_power(z.power_index, on))
             self._mutated()
@@ -525,12 +516,39 @@ class Device:
         self._mark_authoritative()
         self._notify()
 
-    async def _read_bar_switch(self) -> None:
+    async def _set_bar_power(self, index: int, on: bool) -> None:
+        """Bar-switch read-modify-write; the caller holds ``_bar_lock``."""
+        # One frame carries BOTH bars, so the other bar's current state must be
+        # known - never assume it (assuming "on" turned the other bar ON).
+        zp = self._state.zone_power
+        discarded = False
+        if len(zp) < 2:
+            discarded = await self._read_bar_switch()
+            zp = self._state.zone_power
+        other = 1 - index
+        if other not in zp:
+            if discarded:
+                raise GoveeBleError(f"{self._sku}: state changed during read; retry")
+            raise GoveeBleError(
+                f"{self._sku}: state of the other bar is unknown (read-back failed); "
+                "not changing it blindly")
+        target = {0: zp.get(0, False), 1: zp.get(1, False)}
+        target[index] = on
+        await self._conn.send(build.bar_switch(target[0], target[1]))
+        self._mutated()
+        self._state.zone_power = dict(target)
+
+    async def _read_bar_switch(self) -> bool:
+        """Read the bar switch into state; True if the reply was discarded as stale."""
         seq = self._mutation_seq
         reply = await self._read_reply(build.bar_switch_query(), build.CMD_BAR_SWITCH)
         bars = parse.parse_bar_switch(reply or b"")
-        if bars is not None and not self._stale(seq, "bar-switch"):
-            self._state.zone_power = {0: bars[0], 1: bars[1]}
+        if bars is None:
+            return False
+        if self._stale(seq, "bar-switch"):
+            return True
+        self._state.zone_power = {0: bars[0], 1: bars[1]}
+        return False
 
     async def set_zone_rgb(self, name: str, rgb: tuple[int, int, int]) -> None:
         """Set the colour of one zone (its segment mask).
@@ -585,9 +603,6 @@ class Device:
         dialect and supported scene versions), or None when it is activate-only. Pure: no I/O."""
         return scene_upload_frames(scene, self.profile.scene_dialect, self.profile.scene_versions)
 
-    # Alias used by tools/fetch_scenes.py and tests.
-    _scene_upload_frames = scene_upload_frames
-
     async def set_scene_by_name(self, name: str) -> None:
         """Upload (if the scene needs it) and activate a bundled scene by name.
 
@@ -596,7 +611,7 @@ class Device:
         scene = load_scenes(self._sku).get(name)
         if scene is None:
             raise GoveeBleNotSupported(f"{self._sku}: unknown scene {name!r}")
-        frames = self._scene_upload_frames(scene)
+        frames = self.scene_upload_frames(scene)
         if frames:
             await self._conn.send_unacked(frames)
         await self.set_scene(scene.code)
@@ -647,7 +662,12 @@ class Device:
                 self._state.gradual = g
         # Device-info (mac/hw/fw/serial) — static-ish, read once on the first good poll.
         if not self._device_info_read and self.profile.readback != "none":
-            await self._read_device_info()
+            try:
+                await self._read_device_info()
+            except GoveeBleError as err:
+                # Flag stays False so the next poll retries; the state read above is still good.
+                _LOGGER.debug("%s (%s): device-info read failed (%s); retrying next poll",
+                              self.address, self._sku, err)
         if self._discarded_reads != discarded_before:
             _LOGGER.debug(
                 "%s (%s): poll partially discarded (state newer than poll)", self.address, self._sku)
