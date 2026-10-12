@@ -15,7 +15,7 @@ pytest.importorskip("kaitaistruct", reason="Kaitai runtime not installed")
 pytest.importorskip("govee_ble_local._generated.govee_ble_frame", reason="run tools/gen_kaitai.sh")
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "tools"))
-import analyze_frame_log as afl  # noqa: E402
+import analyze_frame_log as afl
 
 
 def _frame(*body: int) -> bytes:
@@ -33,8 +33,8 @@ def test_main_flags_unknown(tmp_path: pathlib.Path) -> None:
     good = _frame(0x33, 0x01, 0x01).hex()
     bad = _frame(0x99, 0x01).hex()
     log.write_text(
-        '{"dir":"tx","plain":"%s","enc":"none"}\n'
+        f'{{"dir":"tx","plain":"{good}","enc":"none"}}\n'
         '{"dir":"rx","plain":null,"enc":"e7"}\n'   # ciphertext-only → skipped
-        '{"dir":"tx","plain":"%s","enc":"none"}\n' % (good, bad)
+        f'{{"dir":"tx","plain":"{bad}","enc":"none"}}\n'
     )
     assert afl.main([str(log)]) == 1  # hard issue present → non-zero

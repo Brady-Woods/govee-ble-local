@@ -7,8 +7,8 @@ import pytest
 
 pytest.importorskip("aiohttp")
 
-from govee_ble_local.cloud import account as acc  # noqa: E402
-from govee_ble_local.cloud.account import GoveeCloudAccount, GoveeCloudError  # noqa: E402
+from govee_ble_local.cloud import account as acc
+from govee_ble_local.cloud.account import GoveeCloudAccount, GoveeCloudError
 
 
 def _acct(**kw: Any) -> GoveeCloudAccount:
@@ -118,7 +118,7 @@ class _Resp:
     def __init__(self, status: int, payload: Any = None, exc: Exception | None = None) -> None:
         self.status, self._payload, self._exc = status, payload, exc
 
-    async def __aenter__(self) -> "_Resp":
+    async def __aenter__(self) -> _Resp:
         return self
 
     async def __aexit__(self, *a: object) -> None:

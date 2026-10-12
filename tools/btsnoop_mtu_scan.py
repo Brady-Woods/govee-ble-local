@@ -15,7 +15,6 @@ import argparse
 import collections
 import os
 import struct
-import sys
 
 
 MAX_RECORD = 1 << 20  # 1 MiB: far above any real HCI record; guards against corrupt headers
@@ -49,7 +48,7 @@ def _att_pdus(path: str):
     """Yield (att_opcode, att_pdu_len) for ATT PDUs (CID 0x0004), skipping L2CAP
     continuation fragments. att_pdu_len comes from the L2CAP length (robust to a
     truncated 'included length' capture)."""
-    for datalink, data in _records(path):
+    for _datalink, data in _records(path):
         pkt = data
         # datalink 1002 = HCI UART/H4: first byte = HCI packet type. Try that; if the
         # first byte isn't ACL(0x02) we skip. (1001 = raw HCI ACL; handled the same way.)

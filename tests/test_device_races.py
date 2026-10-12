@@ -125,7 +125,10 @@ async def test_bar_switch_read_does_not_overwrite_set_zone_power() -> None:
 
 
 async def test_mechanism_b_segments_not_overwritten_by_stale_poll() -> None:
-    g = Gate(lambda f: f[0] == 0xAA and f[1] == 0xA5, [_reply(0xAA, 0xA5, 1, 50, 7, 0, 0, 50, 7, 0, 0, 50, 7, 0, 0)])
+    g = Gate(
+        lambda f: f[0] == 0xAA and f[1] == 0xA5,
+        [_reply(0xAA, 0xA5, 1, 50, 7, 0, 0, 50, 7, 0, 0, 50, 7, 0, 0)],
+    )
     d = _dev("H61A8", {0x01: [_reply(0xAA, 0x01, 0x01)]}, gates=[g])
     await _poll_during(d, g, lambda: d.set_segment_rgb([0], (9, 9, 9)))
     assert d.state.segments[0].rgb == (9, 9, 9)

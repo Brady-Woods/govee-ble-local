@@ -24,7 +24,21 @@ def test_shipped_catalogs(sku, count):
 
 
 @pytest.mark.parametrize(
-    "sku", ["", "  ", "../H6006", "H6006/../x", "H60.6", "a/b", "H6", "H60060606", "H60 06", "H6006.json", "H60\x00A", None],
+    "sku",
+    [
+        "",
+        "  ",
+        "../H6006",
+        "H6006/../x",
+        "H60.6",
+        "a/b",
+        "H6",
+        "H60060606",
+        "H60 06",
+        "H6006.json",
+        "H60\x00A",
+        None,
+    ],
 )
 def test_bad_sku(sku):
     with pytest.raises(GoveeBleInvalidValue):

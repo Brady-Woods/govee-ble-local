@@ -6,7 +6,6 @@ is silent when off; and the frames-log -> JSONL converter round-trips into the a
 """
 from __future__ import annotations
 
-import asyncio
 import logging
 from unittest.mock import AsyncMock, MagicMock
 
@@ -43,16 +42,14 @@ def _conn() -> GoveeConnection:
     return c
 
 
-def test_rejected_write_logs_error(caplog: pytest.LogCaptureFixture) -> None:
-    async def run() -> None:
-        c = _conn()
+async def test_rejected_write_logs_error(caplog: pytest.LogCaptureFixture) -> None:
+    c = _conn()
 
-        async def fake_write(_wire: bytes) -> None:
-            c._rx.put_nowait(_bcc(0x33, 0x01, 0x02))       # byte2 != 0 -> rejection
-        c._raw_write = AsyncMock(side_effect=fake_write)
-        with caplog.at_level(logging.ERROR, logger=_CONN_LOGGER), pytest.raises(GoveeBleError):
-            await c.send(_bcc(0x33, 0x01, 0x01))
-    asyncio.run(run())
+    async def fake_write(_wire: bytes) -> None:
+        c._rx.put_nowait(_bcc(0x33, 0x01, 0x02))       # byte2 != 0 -> rejection
+    c._raw_write = AsyncMock(side_effect=fake_write)
+    with caplog.at_level(logging.ERROR, logger=_CONN_LOGGER), pytest.raises(GoveeBleError):
+        await c.send(_bcc(0x33, 0x01, 0x01))
     assert any("rejected" in r.message for r in caplog.records if r.levelno == logging.ERROR)
 
 

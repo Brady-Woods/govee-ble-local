@@ -14,7 +14,7 @@ from govee_ble_local.const import FRAME_LEN
 from govee_ble_local.crypto import checksum_ok, encrypt
 from govee_ble_local.exceptions import (
     GoveeBleAuthError,
-    GoveeBleConnectionError,
+    GoveeBleError,
     GoveeBleInvalidValue,
     GoveeBleTimeout,
 )
@@ -239,7 +239,7 @@ async def test_start_notify_failure_closes_link(monkeypatch, exc) -> None:
     fake = FakeGovee()
     fake.fail_start_notify = True
     c = _make(monkeypatch, fake)
-    with pytest.raises(Exception):
+    with pytest.raises((RuntimeError, BleakError, GoveeBleError)):
         await c.connect()
     assert all(not cl.is_connected for cl in fake.clients)
     assert c._client is None and c._ready is False
@@ -255,7 +255,7 @@ async def test_operation_timeout_during_establish_leaves_no_tracked_garbage(monk
     monkeypatch.setattr(conn_mod, "OPERATION_TIMEOUT", 0.05)
     c = GoveeConnection(ble_device(ADDR, "x"), encryption=Encryption.NONE)
     c._idle_disconnect = 0
-    with pytest.raises(Exception):
+    with pytest.raises((GoveeBleTimeout, TimeoutError)):
         await c.connect()
     assert c._client is None and c._ready is False and not c._lock.locked()
     assert fake.clients == []
@@ -280,9 +280,9 @@ def test_named_constants_in_use() -> None:
 
 
 def test_known_rx_types_unchanged() -> None:
-    assert conn_mod._KNOWN_RX_PRO_TYPES == frozenset(
+    assert frozenset(
         {0x33, 0xAA, 0xAC, 0xEE, 0xA1, 0xA3, 0xA4, 0xE7}
-    )
+    ) == conn_mod._KNOWN_RX_PRO_TYPES
 
 
 def test_mask_helper_recomputes_checksum() -> None:

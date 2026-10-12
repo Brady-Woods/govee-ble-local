@@ -11,11 +11,12 @@ import pytest
 
 pytest.importorskip("kaitaistruct", reason="Kaitai runtime not installed")
 
-import spec_frames as sf  # noqa: E402
+import spec_frames as sf
 
 # Skip cleanly if the generated reader hasn't been produced (needs tools/gen_kaitai.sh).
 gb = pytest.importorskip(
-    "govee_ble_local._generated.govee_ble_frame", reason="run tools/gen_kaitai.sh to generate the Kaitai reader"
+    "govee_ble_local._generated.govee_ble_frame",
+    reason="run tools/gen_kaitai.sh to generate the Kaitai reader",
 )
 GoveeBleFrame = gb.GoveeBleFrame
 

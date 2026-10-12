@@ -36,7 +36,9 @@ def test_tool_compiles(path: Path, tmp_path: Path) -> None:
 
 @pytest.mark.parametrize("name", ARGPARSE_TOOLS)
 def test_tool_help_exits_zero(name: str) -> None:
-    r = subprocess.run([sys.executable, str(TOOLS / name), "--help"], capture_output=True, text=True, timeout=60)
+    r = subprocess.run(  # noqa: S603 - fixed argv, sys.executable
+        [sys.executable, str(TOOLS / name), "--help"], capture_output=True, text=True, timeout=60
+    )
     assert r.returncode == 0, r.stderr
     assert "usage" in r.stdout.lower()
 
@@ -92,7 +94,9 @@ def test_fetch_main_exits_nonzero_on_failure(monkeypatch: pytest.MonkeyPatch, tm
     monkeypatch.setattr(fs, "fetch", boom)
     assert fs.main(["H60A6", "H61A8"]) == 2
     assert "FETCH FAILED" in capsys.readouterr().err
-    monkeypatch.setattr(fs, "fetch", lambda sku, app_version="": {"x": {"code": 1, "param": None, "category": None}})
+    monkeypatch.setattr(
+        fs, "fetch", lambda sku, app_version="": {"x": {"code": 1, "param": None, "category": None}}
+    )
     assert fs.main(["H60A6"]) == 0
     assert (tmp_path / "H60A6.json").exists()
 

@@ -44,7 +44,7 @@ def frame(*b: int) -> bytes:
 class FakeClient:
     """One BLE link. Created per establish_connection call."""
 
-    def __init__(self, device: "FakeGovee", disconnected_callback: Callable[[Any], None] | None):
+    def __init__(self, device: FakeGovee, disconnected_callback: Callable[[Any], None] | None):
         self.device = device
         self.is_connected = True
         self._disconnected_callback = disconnected_callback

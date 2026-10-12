@@ -22,6 +22,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import base64
+import contextlib
 import os
 import sys
 from pathlib import Path
@@ -79,7 +80,7 @@ async def refresh(dev, want=None, attempts: int = 5):  # type: ignore[no-untyped
     for _ in range(attempts):
         try:
             await dev.update()
-        except Exception as err:  # noqa: BLE001
+        except Exception as err:
             print(f"      (update error: {err})")
         if want is None or want(dev.state):
             return dev.state
@@ -107,7 +108,7 @@ async def read_kelvin(dev) -> int | None:  # type: ignore[no-untyped-def]
                 # No blanket except: an attribute-path mistake must fail loudly.
                 try:
                     parsed = GBF.from_bytes(fr)
-                except Exception as err:  # noqa: BLE001 - malformed frame, say so
+                except Exception as err:
                     print(f"  (kaitai could not parse {fr.hex()}: {err}; skipping)")
                     continue
                 mode = parsed.body.body
@@ -139,13 +140,11 @@ class Runner:
             except GoveeBleError as err:
                 if attempt == 1:
                     print(f"  (recovering from {type(err).__name__}; reconnecting…)")
-                    try:
+                    with contextlib.suppress(Exception):
                         await self.dev.connect()
-                    except Exception:  # noqa: BLE001
-                        pass
                     continue
                 ok, note = False, f"EXC {type(err).__name__}: {err}"
-            except Exception as err:  # noqa: BLE001
+            except Exception as err:
                 ok, note = False, f"EXC {type(err).__name__}: {err}"
                 break
         self.results.append((name, ok, note))

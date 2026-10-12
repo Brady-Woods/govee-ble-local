@@ -32,7 +32,8 @@ def test_h60a6_diy_length_gate() -> None:
     assert scene_upload_frames(sc, "B_h60a6", frozenset()) == build.scene_upload_a3(value, build.COMM_H60A6)
     long = bytes([3, 0, 7, 8, 9, 10])                  # length mismatch -> a4 MTU
     sc2 = Scene("d", 1, _b64(0xFF, *long), scene_type=5)
-    assert scene_upload_frames(sc2, "B_h60a6", frozenset()) == build.scene_upload_a4_mtu(long, build.COMM_H60A6)
+    expected = build.scene_upload_a4_mtu(long, build.COMM_H60A6)
+    assert scene_upload_frames(sc2, "B_h60a6", frozenset()) == expected
     assert scene_upload_frames(Scene("d", 1, _b64(0xFF, 1), scene_type=5), "B_h60a6", frozenset()) is None
 
 

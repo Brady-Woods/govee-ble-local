@@ -41,7 +41,7 @@ async def main(address: str, sku: str) -> None:
             try:
                 ack = await conn.send(f)
                 status = "ok" if ack is not None and ack[2] == 0 else f"ack={ack!r}"
-            except Exception as err:  # noqa: BLE001 - report, keep probing
+            except Exception as err:
                 status = f"FAILED {err}"
             print(f"   {f[:4].hex()} {status}")
         print(f"   ({(time.monotonic() - t) * 1000:.0f} ms) {label}")
@@ -88,7 +88,7 @@ async def main(address: str, sku: str) -> None:
                 if was_on is not None:
                     await send("global", build.switch(was_on))
                 await state("restored")
-            except Exception as err:  # noqa: BLE001
+            except Exception as err:
                 print(f"   RESTORE FAILED ({err}); check the fixture's power state manually")
         await dev.stop()
 

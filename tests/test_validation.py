@@ -18,7 +18,7 @@ SCHEMES = ["h60a6", "h6006", "h61a8"]
 def test_color_rgb_channel_out_of_range(scheme: str, bad: int, pos: int) -> None:
     rgb = [0, 0, 0]
     rgb[pos] = bad
-    with pytest.raises(GoveeBleInvalidValue, match="0..255"):
+    with pytest.raises(GoveeBleInvalidValue, match=r"0\.\.255"):
         b.color_rgb(*rgb, scheme)  # type: ignore[arg-type]
 
 

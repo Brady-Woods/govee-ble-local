@@ -27,8 +27,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from govee_ble_local.const import PSK  # noqa: E402
-from govee_ble_local.crypto import checksum_ok, decrypt  # noqa: E402
+from govee_ble_local.const import PSK
+from govee_ble_local.crypto import checksum_ok, decrypt
 
 HANDSHAKE = 0xE7
 # ATT opcodes carrying a value we care about.
@@ -81,10 +81,7 @@ def _att_pdus(path: str):
             sub = data[3]
             p = data[4:]
             # params: status(1) handle(2) role(1) peer_addr_type(1) peer_addr(6) ...
-            if sub == 0x01 and len(p) >= 11:           # LE Connection Complete
-                h = struct.unpack("<H", p[1:3])[0] & 0x0FFF
-                addr[h] = _addr_str(p[5:11])
-            elif sub == 0x0A and len(p) >= 11:         # LE Enhanced Connection Complete
+            if sub in (0x01, 0x0A) and len(p) >= 11:  # LE Connection Complete / Enhanced Connection Complete
                 h = struct.unpack("<H", p[1:3])[0] & 0x0FFF
                 addr[h] = _addr_str(p[5:11])
             continue

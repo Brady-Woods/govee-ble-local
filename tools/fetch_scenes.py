@@ -75,7 +75,7 @@ def _is_placeholder(param_b64: str | None) -> bool:
     import base64
     try:
         raw = base64.b64decode(param_b64)
-    except Exception:  # noqa: BLE001
+    except Exception:
         return False
     return len(raw) >= 4 and raw[3] == 0xFF
 
@@ -83,7 +83,7 @@ def _is_placeholder(param_b64: str | None) -> bool:
 def fetch(sku: str, app_version: str = DEFAULT_APP_VERSION) -> dict[str, dict[str, object]]:
     url = f"{LIBRARY_URL}?sku={urllib.parse.quote(validate_sku(sku), safe='')}"
     req = urllib.request.Request(url, headers={"AppVersion": app_version})
-    with urllib.request.urlopen(req, timeout=20) as resp:  # noqa: S310
+    with urllib.request.urlopen(req, timeout=20) as resp:
         payload = json.load(resp)
     scenes: dict[str, dict[str, object]] = {}
     for category in payload.get("data", {}).get("categories", []):
@@ -227,7 +227,9 @@ def audit() -> None:
     from govee_ble_local.registry import create_device
     from govee_ble_local.scenes import load_scenes
 
-    print(f"{'SKU':7s} {'total':>5s} {'upload':>16s} {'activate':>8s} {'BLOCKED':>7s} {'placeh':>6s}  versions")
+    print(
+        f"{'SKU':7s} {'total':>5s} {'upload':>16s} {'activate':>8s} {'BLOCKED':>7s} {'placeh':>6s}  versions"
+    )
     for sku in scene_capable_skus():
         cat = load_scenes(sku)
         if not cat:
@@ -240,7 +242,7 @@ def audit() -> None:
                 placeholder += 1
             try:
                 frames = dev.scene_upload_frames(scene)
-            except Exception:  # noqa: BLE001
+            except Exception:
                 frames = None
             if frames:
                 upload += 1
@@ -265,7 +267,7 @@ def main(skus: list[str], app_version: str = DEFAULT_APP_VERSION) -> int:
             existing = json.loads(path.read_text()) if path.exists() else {}
             if not isinstance(existing, dict):
                 raise ValueError(f"existing {path.name} is not a JSON object")
-        except Exception as err:  # noqa: BLE001
+        except Exception as err:
             print(f"{sku}: FETCH FAILED: {err}", file=sys.stderr)
             failures += 1
             continue

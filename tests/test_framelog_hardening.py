@@ -189,6 +189,6 @@ def test_all_frames_flushed_at_process_exit(tmp_path: Path) -> None:
         f"for i in range({n}):\n"
         "    log.record('tx', wire=i.to_bytes(2, 'big'))\n"
     )
-    subprocess.run([sys.executable, "-c", code], check=True, timeout=60)
+    subprocess.run([sys.executable, "-c", code], check=True, timeout=60)  # noqa: S603 - fixed argv, sys.executable
     lines = _lines(path)
     assert [json.loads(x)["wire"] for x in lines] == [i.to_bytes(2, "big").hex() for i in range(n)]

@@ -9,7 +9,7 @@ import pytest
 import govee_ble_local as pkg
 from govee_ble_local import Capability, Encryption, GoveeBleError, GoveeBleInvalidValue
 from govee_ble_local.devices import profile as prof
-from govee_ble_local.devices.profile import PROFILES, DeviceProfile
+from govee_ble_local.devices.profile import PROFILES
 from govee_ble_local.exceptions import GoveeBleNotSupported
 
 

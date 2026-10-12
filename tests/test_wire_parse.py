@@ -6,7 +6,7 @@ import pytest
 
 pytest.importorskip("kaitaistruct", reason="Kaitai runtime not installed")
 
-from govee_ble_local.wire import parse  # noqa: E402
+from govee_ble_local.wire import parse
 
 
 def f(*payload: int) -> bytes:
