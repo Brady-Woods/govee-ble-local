@@ -174,6 +174,17 @@ def parse_bulb_group_batch(
     return None
 
 
+def group_base_index(group_index: int, group_size: int) -> int | None:
+    """First segment index of a 1-based group: ``(group_index - 1) * group_size``.
+
+    Returns None (and logs at DEBUG) for ``group_index < 1`` - device data is untrusted and
+    a 0/garbage index would otherwise yield negative segment indices."""
+    if group_index < 1:
+        _LOGGER.debug("skipping colour group with invalid index %d", group_index)
+        return None
+    return (group_index - 1) * group_size
+
+
 def bulb_groups_to_segments(
     batches: list[tuple[int, list[tuple[int | None, int, int, int]]]], per_batch: int
 ) -> list[Segment]:
@@ -182,9 +193,11 @@ def bulb_groups_to_segments(
     V1 = 4, V2 = 3 — not frame-encoded)."""
     segs: list[Segment] = []
     for batch_seq, groups in batches:
+        base = group_base_index(batch_seq, per_batch)
+        if base is None:
+            continue
         for i, (brightness, r, g, b) in enumerate(groups):
-            idx = (batch_seq - 1) * per_batch + i
-            segs.append(Segment(index=idx, rgb=(r, g, b), brightness=brightness or 0))
+            segs.append(Segment(index=base + i, rgb=(r, g, b), brightness=brightness))
     return merge_segments(segs)
 
 
@@ -205,7 +218,9 @@ def direct_groups_to_segments(
     into positional segments: ``index = (group_index - 1) * group_size + k``."""
     segs: list[Segment] = []
     for group_index, records in groups:
-        base = (group_index - 1) * group_size
+        base = group_base_index(group_index, group_size)
+        if base is None:
+            continue
         for k, (brightness, r, g, b) in enumerate(records):
             segs.append(Segment(index=base + k, rgb=(r, g, b), brightness=brightness))
     return merge_segments(segs)

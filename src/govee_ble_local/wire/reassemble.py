@@ -141,7 +141,9 @@ def parse_status(frames: list[bytes]) -> StatusReply:
         elif typ == TYPE_ZONE:
             st.zone_power = {0: bool(v.zone_a), 1: bool(v.zone_b)}
         elif typ == TYPE_COLOR_GROUP:
-            base = (int(v.group_index) - 1) * _RECORDS_PER_GROUP
+            base = parse.group_base_index(int(v.group_index), _RECORDS_PER_GROUP)
+            if base is None:
+                continue
             for k, rec in enumerate(v.records):
                 segs.append(Segment(
                     index=base + k, rgb=(int(rec.r), int(rec.g), int(rec.b)),

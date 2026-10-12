@@ -40,7 +40,7 @@ def test_direct_groups_to_segments_positions() -> None:
 
 def test_bulb_groups_to_segments_uses_merge() -> None:
     out = parse.bulb_groups_to_segments([(2, [(None, 1, 2, 3)]), (1, [(5, 4, 5, 6)])], 3)
-    assert [(s.index, s.brightness) for s in out] == [(0, 5), (3, 0)]
+    assert [(s.index, s.brightness) for s in out] == [(0, 5), (3, None)]
 
 
 def test_find_reply() -> None:
