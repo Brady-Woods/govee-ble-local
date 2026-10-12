@@ -55,7 +55,7 @@ class Scene:
     category: str | None = None
     param_id: int | None = None   # scenceParamId (to resolve placeholders via cloud)
     placeholder: bool = False     # True: real blob only from the authenticated API
-    # Path-B upload drivers (from the scene-library DTO); see SCENE_UPLOAD_REVIEW.md.
+    # Path-B upload drivers (from the scene-library DTO); see spec/docs/SCENE_UPLOAD_ENCODING.md.
     scene_type: int | None = None  # 0 static,1 rgb,2 rgbic,3 graffiti,4 cube,5 diy,6 compose
     cmd_version: int | None = None
     big_effect: bool = False       # bigEffectStr==1: fetch-required when param is empty

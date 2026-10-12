@@ -1,8 +1,8 @@
-"""Capability-driven device — one class, configured by a :class:`DeviceProfile`.
+"""Capability-driven device: one class, configured by a :class:`DeviceProfile`.
 
-Replaces the v2 mixin hierarchy: behaviour is gated by ``profile.capabilities`` and
-dispatched to the spec-first :mod:`..wire` layer (build / parse / reassemble) over the
-kept :class:`~..transport.connection.GoveeConnection`.
+Behaviour is gated by ``profile.capabilities`` and dispatched to the spec-first
+:mod:`..wire` layer (build / parse / reassemble) over a
+:class:`~..transport.connection.GoveeConnection`.
 """
 from __future__ import annotations
 
@@ -12,11 +12,12 @@ from collections.abc import Callable
 from typing import Any, Never
 
 from bleak.backends.device import BLEDevice
+from bleak.backends.scanner import AdvertisementData
 
 from ..const import INFO_READ_TIMEOUT, STATUS_READ_TIMEOUT
 from ..exceptions import GoveeBleError, GoveeBleInvalidValue, GoveeBleNotSupported
 from ..identify import identify, parse_broadcast_onoff
-from ..models import Capability, DeviceState, Encryption, Segment
+from ..models import Capability, DeviceState, Encryption, Segment, Zone
 from ..scenes import Scene, load_scenes, scene_names_by_code, scene_upload_frames
 from ..transport.connection import GoveeConnection
 from ..wire import build, parse, reassemble
@@ -74,7 +75,7 @@ class Device:
         self,
         profile: DeviceProfile,
         ble_device: BLEDevice,
-        advertisement_data: Any | None = None,
+        advertisement_data: AdvertisementData | None = None,
         *,
         sku: str | None = None,
         secret: bytes | None = None,
@@ -107,7 +108,7 @@ class Device:
             **conn_kw,
         )
 
-    def _resolve_encryption(self, adv: Any | None) -> Encryption:
+    def _resolve_encryption(self, adv: AdvertisementData | None) -> Encryption:
         mfg = getattr(adv, "manufacturer_data", None)
         name = getattr(adv, "local_name", None) or self._ble_device.name
         if mfg:
@@ -120,30 +121,37 @@ class Device:
     # -- identity / state ---------------------------------------------------
     @property
     def address(self) -> str:
+        """BLE address of the underlying device."""
         return self._ble_device.address
 
     @property
     def name(self) -> str:
+        """Advertised name, falling back to the address."""
         return self._ble_device.name or self.address
 
     @property
     def sku(self) -> str:
+        """Upper-case SKU this device was built for."""
         return self._sku
 
     @property
     def capabilities(self) -> frozenset[Capability]:
+        """Capabilities enabled by the profile."""
         return self.profile.capabilities
 
     @property
-    def zones(self) -> tuple:  # type: ignore[type-arg]
+    def zones(self) -> tuple[Zone, ...]:
+        """The profile's independently-switchable zones (empty for unzoned devices)."""
         return self.profile.zones
 
     @property
     def min_kelvin(self) -> int | None:
+        """Lowest supported colour temperature, or None if unconstrained."""
         return self.profile.min_kelvin
 
     @property
     def max_kelvin(self) -> int | None:
+        """Highest supported colour temperature, or None if unconstrained."""
         return self.profile.max_kelvin
 
     @property
@@ -153,24 +161,31 @@ class Device:
 
     @property
     def state(self) -> DeviceState:
+        """The live (optimistic until first read-back) device state."""
         return self._state
 
     @property
     def is_on(self) -> bool | None:
+        """Power state, or None if unknown."""
         return self._state.is_on
 
     @property
     def scene_names(self) -> list[str]:
+        """Sorted names of the bundled scenes; empty without the SCENES capability."""
         return sorted(load_scenes(self._sku)) if Capability.SCENES in self.capabilities else []
 
     @property
     def active_scene(self) -> str | None:
+        """Name of the active scene, or None if no scene (or an uncatalogued code) is active."""
         code = self._state.scene_code
         if code is None:
             return None
         return scene_names_by_code(self._sku).get(code)
 
     def register_callback(self, cb: StateCallback) -> Callable[[], None]:
+        """Register a state-change callback; returns a function that unregisters it.
+
+        A callback that raises is logged and does not affect other callbacks."""
         self._callbacks.append(cb)
         return lambda: self._callbacks.remove(cb) if cb in self._callbacks else None
 
@@ -198,6 +213,9 @@ class Device:
         return secret
 
     def set_secret(self, secret: bytes) -> None:
+        """Set the account-lock secret used by the next unlock handshake.
+
+        Raises GoveeBleInvalidValue if it is not exactly ``build.SECRET_LEN`` bytes."""
         self._secret = self._checked_secret(secret)
 
     def _check_kelvin(self, kelvin: int) -> None:
@@ -207,15 +225,16 @@ class Device:
                 f"{self._sku}: kelvin must be within {lo}..{hi}, got {kelvin!r}")
 
     def update_ble_device(self, ble_device: BLEDevice) -> None:
+        """Swap in a fresh BLEDevice (e.g. a new scanner path) for later connects."""
         self._ble_device = ble_device
         self._conn.update_ble_device(ble_device)
 
-    def ingest_advertisement(self, advertisement_data: Any) -> bool:
+    def ingest_advertisement(self, advertisement_data: AdvertisementData) -> bool:
         """Update passive state from a BLE advertisement — no connection needed.
 
         Reads on/off from the Govee manufacturer data (identify.parse_broadcast_onoff);
-        returns True if `state.is_on` changed (so a caller can notify selectively).
-        Restores the v2 device-level ingest so consumers don't parse adverts inline."""
+        returns True if `state.is_on` changed (so a caller can notify selectively). Ignored
+        for ``ADVERT_SUPPRESS_SECONDS`` after a command or authoritative read."""
         mfg = getattr(advertisement_data, "manufacturer_data", None)
         if not mfg:
             return False
@@ -278,6 +297,10 @@ class Device:
             self._state.zone_power = {z.power_index: on for z in self.profile.zones}
 
     async def set_power(self, on: bool) -> None:
+        """Switch the device on or off.
+
+        Raises GoveeBleNotSupported without POWER; connection errors propagate. Relay (plug)
+        devices get a best-effort sync-time follow-up whose failure is only logged."""
         self._require(Capability.POWER)
         await self._conn.send_many(self._power_frames(on))
         self._mutated()
@@ -334,7 +357,7 @@ class Device:
         if brightness is not None:
             self._state.brightness = brightness
         if rgb is not None:
-            self._state.rgb_color, self._state.color_temp_kelvin = tuple(rgb), None  # type: ignore[assignment]
+            self._state.rgb_color, self._state.color_temp_kelvin = (rgb[0], rgb[1], rgb[2]), None
             self._state.scene_code = None
         elif kelvin is not None:
             self._state.color_temp_kelvin, self._state.rgb_color = kelvin, None
@@ -343,9 +366,13 @@ class Device:
         self._notify()
 
     async def turn_off(self) -> None:
+        """Power off; equivalent to ``set_power(False)``."""
         await self.set_power(False)
 
     async def set_brightness(self, pct: int) -> None:
+        """Set brightness in percent (clamped to 1..100; 0 is never sent).
+
+        Raises GoveeBleNotSupported without BRIGHTNESS."""
         self._require(Capability.BRIGHTNESS)
         pct = max(1, min(100, pct))  # 0 is not "off" on these devices; never send it
         await self._conn.send(build.brightness(pct))
@@ -356,6 +383,9 @@ class Device:
 
     # -- colour -------------------------------------------------------------
     async def set_rgb(self, rgb: tuple[int, int, int]) -> None:
+        """Set the whole-device colour (clears colour temperature and active scene).
+
+        Raises GoveeBleNotSupported without RGB; GoveeBleInvalidValue for out-of-range channels."""
         self._require(Capability.RGB)
         r, g, b = rgb
         await self._conn.send(build.color_rgb(r, g, b, self.profile.color_scheme, self.profile.segments))
@@ -367,6 +397,10 @@ class Device:
         self._notify()
 
     async def set_color_temp(self, kelvin: int) -> None:
+        """Set the whole-device colour temperature (clears rgb and active scene).
+
+        Raises GoveeBleNotSupported without COLOR_TEMP; GoveeBleInvalidValue if outside the
+        profile's kelvin range."""
         self._require(Capability.COLOR_TEMP)
         self._check_kelvin(kelvin)
         await self._conn.send(build.color_temp(kelvin, self.profile.color_scheme, self.profile.segments))
@@ -378,6 +412,9 @@ class Device:
         self._notify()
 
     async def set_segment_rgb(self, indices: list[int], rgb: tuple[int, int, int]) -> None:
+        """Set the colour of selected segments (indices 0..15).
+
+        Raises GoveeBleNotSupported without SEGMENTS; GoveeBleInvalidValue for a bad index."""
         self._require(Capability.SEGMENTS)
         r, g, b = rgb
         await self._conn.send(build.segment_rgb(_mask(indices), r, g, b, self.profile.color_scheme))
@@ -444,16 +481,23 @@ class Device:
         self._notify()
 
     # -- zones --------------------------------------------------------------
-    def _zone(self, name: str) -> Any:
+    def _zone(self, name: str) -> Zone:
         for z in self.profile.zones:
             if z.name == name:
                 return z
         raise GoveeBleNotSupported(f"{self._sku}: unknown zone {name!r}")
 
     def zone_is_on(self, name: str) -> bool | None:
+        """Last known power state of zone ``name``, or None if unknown.
+
+        Raises GoveeBleNotSupported for an unknown zone."""
         return self._state.zone_power.get(self._zone(name).power_index)
 
     async def set_zone_power(self, name: str, on: bool) -> None:
+        """Switch one zone on or off.
+
+        On bar-switch devices the other bar's state is read first if unknown and preserved;
+        GoveeBleError if that read-back fails. Raises GoveeBleNotSupported for an unknown zone."""
         z = self._zone(name)
         if self.profile.bar_switch:
             # One frame carries BOTH bars, so the other bar's current state must be
@@ -483,11 +527,16 @@ class Device:
 
     async def _read_bar_switch(self) -> None:
         seq = self._mutation_seq
-        bars = parse.parse_bar_switch(await self._read_reply(build.bar_switch_query(), build.CMD_BAR_SWITCH) or b"")
+        reply = await self._read_reply(build.bar_switch_query(), build.CMD_BAR_SWITCH)
+        bars = parse.parse_bar_switch(reply or b"")
         if bars is not None and not self._stale(seq, "bar-switch"):
             self._state.zone_power = {0: bars[0], 1: bars[1]}
 
     async def set_zone_rgb(self, name: str, rgb: tuple[int, int, int]) -> None:
+        """Set the colour of one zone (its segment mask).
+
+        Raises GoveeBleNotSupported without SEGMENTS/RGB, for an unknown zone, or a zone
+        without segments."""
         self._require(Capability.SEGMENTS)
         self._require(Capability.RGB)
         z = self._zone(name)
@@ -518,6 +567,9 @@ class Device:
 
     # -- scenes -------------------------------------------------------------
     async def set_scene(self, code: int) -> None:
+        """Activate a scene by its BLE code (no upload).
+
+        Raises GoveeBleNotSupported without SCENES."""
         self._require(Capability.SCENES)
         await self._conn.send(build.scene_activate(code))
         self._mutated()
@@ -533,10 +585,13 @@ class Device:
         dialect and supported scene versions), or None when it is activate-only. Pure: no I/O."""
         return scene_upload_frames(scene, self.profile.scene_dialect, self.profile.scene_versions)
 
-    # Kept: tools/fetch_scenes.py and tests call the old private name.
+    # Alias used by tools/fetch_scenes.py and tests.
     _scene_upload_frames = scene_upload_frames
 
     async def set_scene_by_name(self, name: str) -> None:
+        """Upload (if the scene needs it) and activate a bundled scene by name.
+
+        Raises GoveeBleNotSupported without SCENES or for an unknown name."""
         self._require(Capability.SCENES)
         scene = load_scenes(self._sku).get(name)
         if scene is None:
@@ -586,14 +641,16 @@ class Device:
             await self._read_mechanism_a_direct()
         if self.profile.gradual:
             seq = self._mutation_seq
-            g = parse.parse_gradual(await self._read_reply(build.gradual_query(), build.CMD_GRADUAL_WIFI_BLE) or b"")
+            reply = await self._read_reply(build.gradual_query(), build.CMD_GRADUAL_WIFI_BLE)
+            g = parse.parse_gradual(reply or b"")
             if g is not None and not self._stale(seq, "gradual"):
                 self._state.gradual = g
         # Device-info (mac/hw/fw/serial) — static-ish, read once on the first good poll.
         if not self._device_info_read and self.profile.readback != "none":
             await self._read_device_info()
         if self._discarded_reads != discarded_before:
-            _LOGGER.debug("%s (%s): poll partially discarded (state newer than poll)", self.address, self._sku)
+            _LOGGER.debug(
+                "%s (%s): poll partially discarded (state newer than poll)", self.address, self._sku)
         elif not self._polled_once and self.profile.readback != "none":
             _LOGGER.info("%s (%s) first poll: %s", self.address, self._sku, self._state_summary())
             self._polled_once = True
@@ -799,7 +856,8 @@ class Device:
             applied = True
             self._state.is_on = bool(power)
         seq = self._mutation_seq
-        raw = parse.parse_brightness(await self._read_reply(build.brightness_query(), build.CMD_BRIGHTNESS) or b"")
+        reply = await self._read_reply(build.brightness_query(), build.CMD_BRIGHTNESS)
+        raw = parse.parse_brightness(reply or b"")
         if raw is not None and not self._stale(seq, "brightness"):
             applied = True
             self._state.brightness = self._brightness_pct(raw)
@@ -816,7 +874,8 @@ class Device:
             self._mark_authoritative()
 
     async def _read_reply(self, frame: bytes, command_type: int) -> bytes | None:
-        frames = await self._conn.query(frame, opcode=build.PRO_READ, terminal=command_type, timeout=INFO_READ_TIMEOUT)
+        frames = await self._conn.query(
+            frame, opcode=build.PRO_READ, terminal=command_type, timeout=INFO_READ_TIMEOUT)
         return parse.find_reply(frames, command_type)
 
     async def read_secret(self) -> bytes | None:
@@ -825,7 +884,7 @@ class Device:
         For the SETUP/bootstrap case: an unbound plug returns its secret without one
         being supplied, so call this BEFORE set_secret() (while `_secret` is None the
         post-handshake unlock step sends nothing, avoiding the secret chicken-and-egg).
-        Restores the v2 auto-read; the frame builder is build.secret_read()."""
+        The frame builder is build.secret_read()."""
         reply = await self._read_reply(build.secret_read(), build.CMD_SECRET_READ)
         return parse.parse_secret(reply) if reply else None
 
@@ -833,7 +892,7 @@ class Device:
 def make_device(
     ble_device: BLEDevice,
     sku: str,
-    advertisement_data: Any | None = None,
+    advertisement_data: AdvertisementData | None = None,
     *,
     secret: bytes | None = None,
     frame_log: str | None = None,
