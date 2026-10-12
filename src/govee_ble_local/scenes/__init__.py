@@ -72,3 +72,12 @@ def load_scenes(sku: str) -> dict[str, Scene]:
         )
         for name, v in data.items()
     }
+
+
+@lru_cache(maxsize=None)
+def scene_names_by_code(sku: str) -> dict[int, str]:
+    """Reverse index {code: name} for a SKU's catalog (first name wins)."""
+    out: dict[int, str] = {}
+    for name, scene in load_scenes(sku).items():
+        out.setdefault(scene.code, name)
+    return out

@@ -83,6 +83,13 @@ NotifyCallback = Callable[[bytes], None]
 _T = TypeVar("_T")
 
 
+def _carries_secret(plain: bytes) -> bool:
+    return len(plain) >= 2 and (
+        (plain[0] == PRO_WRITE and plain[1] == 0xB2)  # secret check write
+        or (plain[0] == 0xAA and plain[1] == 0xB1)    # secret read reply
+    )
+
+
 class _LinkLost(Exception):
     """Internal: the link dropped while waiting on a reply (queue sentinel)."""
 
@@ -159,7 +166,11 @@ class GoveeConnection:
 
     def _capture(self, direction: str, *, wire: bytes, plain: bytes | None, enc: str) -> None:
         """Route one frame to the persistent JSONL sink (if configured) AND the
-        frame-tier logger (if enabled) - one choke point, one shape."""
+        frame-tier logger (if enabled) - one choke point, one shape. Account-lock
+        secret payloads (33 b2 write / aa b1 read reply) are masked: captures end
+        up in logs and diagnostics downloads."""
+        if plain is not None and _carries_secret(plain):
+            plain = plain[:2] + b"\xff" * 17 + plain[19:]
         if self._framelog is not None:
             self._framelog.record(direction, wire=wire, plain=plain, enc=enc)
         if _FRAMES.isEnabledFor(logging.DEBUG):

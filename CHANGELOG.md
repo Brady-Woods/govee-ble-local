@@ -10,6 +10,65 @@ model, from which the shipped readers are generated).
 
 _Nothing yet._
 
+## [1.1.0] — 2026-10-12
+
+Reliability overhaul driven by five days of live frame captures (11 devices, 2 ESPHome proxies +
+a local adapter) and validated live on the same hardware: steady-state polls went from ~7.7 s
+with a 5 s stall (H60A6) and ~40 % failures to 1.5–4.5 s with no failures.
+
+### Fixed
+- **Handshake raced the device.** The device delivers its `e7 01` reply twice and re-sends the
+  `e7 02` echo ~1 s later. The duplicate step-1 reply was consumed as the step-2 "ack", so the
+  first query fired while the confirm was still in flight; ~90 % of H60A6 sessions then lost the
+  `0xFF` terminator of their first status burst (5 s stall + retry on every poll). Replies are
+  now matched by content, the real confirm is awaited, and late retransmits are dropped.
+- Frames failing the XOR checksum are dropped at the notify pump (they were the source of the
+  intermittent "unknown proType 0x67/0x7f/0xa5" warnings: handshake echoes decrypted with the
+  session key that happened to pass the checksum).
+- A link that stops acknowledging writes (half-dead while bleak still reports "connected") is
+  torn down and the write retried once on a fresh link, instead of failing the command.
+- A disconnect wakes pending waits immediately; a late disconnect callback from a superseded
+  client no longer clears the current one.
+- The idle-disconnect timer can no longer fire after newer activity (it used to disconnect
+  right after a command and force a reconnect); its task is now held so it can't be GC'd.
+- `establish_connection` gets `ble_device_callback`, so retries use the freshest proxy path.
+- Every public operation has a hard deadline (`OPERATION_TIMEOUT`) and raises only
+  `GoveeBleError` subclasses (bleak/asyncio errors no longer leak out of `send`/`query`).
+- 0xAC reassembly joins only the contiguous chunk prefix (a gap used to splice later chunks at
+  the wrong offset and decode garbage as real state) and decodes a truncated burst up to its last
+  whole TLV, so a lost tail yields partial-but-true state without a retry; queries end on a short
+  idle gap instead of the full timeout when a terminator is lost.
+- 0x0d bulbs (H6006/H6008/H6052): the mode report is `[r, g, b, kelvin u2be]`; white + kelvin is
+  colour-temperature mode. H6052's "mechanism C" decoded it as RGB-only (reporting white instead
+  of 2700 K, live capture `aa 05 0d ff ff ff 0a 8c`) and issued a duplicate mode query; all three
+  bulbs now read colour/CCT back from the report they already send.
+- Polled devices always re-read power (previously skipped once a device was off, so a light
+  turned on externally was never noticed).
+- H6047: changing one bar no longer assumes the other bar is ON when its state is unknown (it
+  turned the other bar on); the bar state is read back (`aa 36`) and polled.
+- Advertised on/off is ignored for 15 s after a command/read (stale broadcasts flipped state).
+- Brightness is never sent as 0; the reported-brightness scale is an explicit profile field
+  (`brightness_max`) instead of a `>100 means 0-255` guess.
+- Scene uploads are paced instead of blasted (dropped frames over proxies).
+- Account-lock secrets are masked in frame captures (logs/diagnostics).
+- `FrameLog` file writes moved off the event loop.
+- Cloud client: request timeouts, the documented-but-missing re-login on 401, no response bodies
+  in error messages, no forced login when a token is supplied.
+
+### Added
+- `Device.turn_on(brightness=, rgb=, kelvin=, power=)` / `turn_off()` and
+  `GoveeConnection.send_many()`: multi-attribute changes go out as one batched, ack-verified
+  operation on one connection. Whole-fixture power on zoned fixtures: H6047 is one `33 36` frame.
+- `GoveeBleAuthError` is raised when a device rejects its secret key.
+- `Device.encryption` (the negotiated channel mode); colour temperature read back from the mode
+  report; segment writes update `state.segments`.
+- `tools/power_semantics_probe.py`: hardware experiment for global vs. zone power.
+- Fake-peripheral test harness (`tests/fake_ble.py`) reproducing the captured failure modes;
+  release workflow publishing to PyPI via trusted publishing.
+
+### Removed
+- Dead code: `ble/frame.py`, duplicate `checksum_ok`, unused `CONNECT_TIMEOUT`.
+
 ## [1.0.3] — 2026-07-12
 
 Field-tested and confirmed live on H60A6 before merge (see PR discussion): a truncated 9-of-11-chunk

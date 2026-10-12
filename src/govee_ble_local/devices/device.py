@@ -17,7 +17,7 @@ from bleak.backends.device import BLEDevice
 from ..exceptions import GoveeBleNotSupported
 from ..identify import identify, parse_broadcast_onoff
 from ..models import Capability, DeviceState, Encryption, Segment
-from ..scenes import Scene, load_scenes, scene_upload_params
+from ..scenes import Scene, load_scenes, scene_names_by_code, scene_upload_params
 from ..transport.connection import GoveeConnection, now_ts
 from ..wire import build, parse, reassemble
 from .profile import DeviceProfile, profile_for
@@ -146,10 +146,7 @@ class Device:
         code = self._state.scene_code
         if code is None:
             return None
-        for name, sc in load_scenes(self._sku).items():
-            if sc.code == code:
-                return name
-        return None
+        return scene_names_by_code(self._sku).get(code)
 
     def register_callback(self, cb: StateCallback) -> Callable[[], None]:
         self._callbacks.append(cb)
@@ -470,8 +467,6 @@ class Device:
             await self._read_mechanism_b()
         elif self.profile.color_readback == "mechanism_a_direct":
             await self._read_mechanism_a_direct()
-        elif self.profile.color_readback == "mechanism_c":
-            await self._read_mechanism_c()
         if self.profile.gradual:
             g = parse.parse_gradual(await self._read_reply(build.gradual_query(), 0xA3) or b"")
             if g is not None:
@@ -493,6 +488,19 @@ class Device:
             f"on={s.is_on} bri={s.brightness} rgb={s.rgb_color} kelvin={s.color_temp_kelvin} "
             f"segs={len(s.segments)} zones={s.zone_power} scene={s.scene_code}"
         )
+
+    def _apply_mode_reply(self, reply: bytes) -> None:
+        """Fold an aa 05 mode report into state: active scene, or the colour /
+        colour temperature of the solid-colour sub-mode."""
+        self._state.scene_code = parse.parse_active_scene(reply)
+        kelvin = parse.parse_kelvin(reply)
+        if kelvin:
+            self._state.color_temp_kelvin, self._state.rgb_color = kelvin, None
+            return
+        mode_0d = parse.parse_mode_0d(reply)
+        if mode_0d is not None:
+            rgb, kelvin = mode_0d
+            self._state.rgb_color, self._state.color_temp_kelvin = rgb, kelvin
 
     async def _read_plug(self) -> None:
         """Poll a plug's relay state (aa 01 -> raw relay bitmask; any bit set = on),
@@ -590,13 +598,6 @@ class Device:
         if segs:
             self._state.segments = [segs[k] for k in sorted(segs)]
 
-    async def _read_mechanism_c(self) -> None:
-        """H6052 single colour from the 0x05 sub-mode 0x0D mode report."""
-        reply = await self._read_reply(build.mode_query(), 0x05)
-        rgb = parse.parse_mode_color_0d(reply) if reply else None
-        if rgb is not None:
-            self._state.rgb_color = rgb
-
     async def _query_status(self) -> tuple[reassemble.StatusReply, list[bytes], list[bytes]]:
         frames = await self._conn.query(build.status_query(full=True), timeout=5.0)
         ac = [f for f in frames if f and f[0] == 0xAC]
@@ -648,10 +649,7 @@ class Device:
         if Capability.SCENES in self.capabilities:
             reply = await self._read_reply(build.mode_query(), 0x05)
             if reply is not None:
-                self._state.scene_code = parse.parse_active_scene(reply)
-                kelvin = parse.parse_kelvin(reply)
-                if kelvin:
-                    self._state.color_temp_kelvin, self._state.rgb_color = kelvin, None
+                self._apply_mode_reply(reply)
         self._state.optimistic = False
         self._mark_authoritative()
 
@@ -666,13 +664,10 @@ class Device:
             self._state.brightness = self._brightness_pct(raw)
         if self.profile.bar_switch:
             await self._read_bar_switch()
-        if Capability.SCENES in self.capabilities:
+        if Capability.SCENES in self.capabilities or self.profile.color_scheme == "h6006":
             reply = await self._read_reply(build.mode_query(), 0x05)
             if reply is not None:
-                self._state.scene_code = parse.parse_active_scene(reply)
-                kelvin = parse.parse_kelvin(reply)
-                if kelvin:
-                    self._state.color_temp_kelvin, self._state.rgb_color = kelvin, None
+                self._apply_mode_reply(reply)
         self._state.optimistic = False
         self._mark_authoritative()
 

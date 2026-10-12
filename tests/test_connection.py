@@ -255,3 +255,15 @@ async def test_closed_connection_refuses_io(monkeypatch, fast) -> None:
     await c.close()
     with pytest.raises(GoveeBleConnectionError):
         await c.send(frame(0x33, 0x01, 0x01))
+
+
+async def test_secret_is_masked_in_frame_capture(monkeypatch, fast, caplog) -> None:
+    import logging
+
+    caplog.set_level(logging.DEBUG, logger="govee_ble_local.frames")
+    fake = FakeGovee()
+    secret = bytes([0x61, 0x55, 0x21, 0x09, 0x0B, 0x73, 0x5C, 0x54])
+    c = _make(monkeypatch, fake, unlock_frames=lambda: [frame(0x33, 0xB2, *secret)])
+    await c.connect()
+    assert fake.received[0][2:10] == secret  # the device still gets the real key
+    assert secret.hex() not in caplog.text

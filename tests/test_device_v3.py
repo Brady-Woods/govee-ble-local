@@ -316,12 +316,14 @@ def _status_query_mock(bursts: list[list[bytes]]) -> AsyncMock:
     return mock
 
 
-def test_mechanism_c_reads_single_rgb() -> None:
-    # H6052: 0x05 sub-mode 0x0D report body [R,G,B] -> state.rgb_color
+def test_mode_0d_report_reads_colour_or_cct() -> None:
+    # 0x0d bulbs (H6006/H6008/H6052): aa 05 0d [r g b kelvin-u2be]. White + kelvin = CCT mode
+    # (live capture: aa 05 0d ff ff ff 0a 8c = 2700 K); anything else is an RGB colour.
     d = _dev("H6052")
-    d._conn.query = AsyncMock(return_value=[_frame(0xAA, 0x05, 0x0D, 255, 128, 64)])  # type: ignore[attr-defined]
-    asyncio.run(d._read_mechanism_c())
-    assert d.state.rgb_color == (255, 128, 64)
+    d._apply_mode_reply(_frame(0xAA, 0x05, 0x0D, 0xFF, 0xFF, 0xFF, 0x0A, 0x8C))
+    assert d.state.color_temp_kelvin == 2700 and d.state.rgb_color is None
+    d._apply_mode_reply(_frame(0xAA, 0x05, 0x0D, 255, 128, 64, 0, 0))
+    assert d.state.rgb_color == (255, 128, 64) and d.state.color_temp_kelvin is None
 
 
 def test_mechanism_b_assembles_positional_segments() -> None:

@@ -44,7 +44,7 @@ class DeviceProfile:
     # "" none | "mechanism_b" (H61A8 BulbGroupColorV2, 0xAA 0xA2/0xA5 per-batch, group size 3) |
     # "mechanism_a_direct" (H6047/H6641 Controller4ColorInfoByGroup, 0xAA 0xA5 per-group direct
     # request, group size 4 — a DIFFERENT controller from mechanism_b that happens to share the
-    # 0xA5 wire opcode) | "mechanism_c" (H6052 0x0D).
+    # 0xA5 wire opcode). 0x0d bulbs read colour/CCT from the polled 0x05 mode report instead.
     color_readback: str = ""
     color_readback_per_batch: int = 3   # group size per reply (mechanism_b V2=3, V1=4; mechanism_a_direct=4)
     # Static read-back piece count, when it differs from the WRITE/addressable `segments` count
@@ -123,15 +123,13 @@ PROFILES: tuple[DeviceProfile, ...] = (
         scene_versions=frozenset({1}), readback="polled",
     ),
     # H6052 — table lamp: plaintext, 0x0d scheme; type-5 scenes via dialect B_h6052 (commByte 9).
-    # Mechanism-C colour read-back (spec Change 7): the 0x05 sub-mode 0x0D report body is
-    # [R,G,B], a single colour fanned across the 2 zones (H6052InfoDetail custom strategy).
-    # Modeled from source; not yet live-verified (no H6052 hardware). `polled` covers
-    # power/brightness/scene.
+    # Colour read-back comes from the polled 0x05 report like every 0x0d bulb: [R,G,B,kelvin u2be]
+    # (live: `aa 05 0d ff ff ff 0a 8c` = CCT 2700 K; the earlier "mechanism C" reading of it as an
+    # RGB-only body reported white instead of 2700 K).
     DeviceProfile(
         skus=("H6052",), capabilities=_LIGHT, color_scheme="h6006",
         encryption=Encryption.NONE, min_kelvin=2000, max_kelvin=9000,
         scene_versions=frozenset({0, 1, 4, 5}), scene_dialect="B_h6052", readback="polled",
-        color_readback="mechanism_c",
     ),
     # H6641 — RGBIC strip (goodsType 247): plaintext, 0x15 scheme, dialect-A scenes.
     # SOURCE-CONFIRMED (was wrongly modeled as mechanism-A, then as H61A8's mechanism_b — both
