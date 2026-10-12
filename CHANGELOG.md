@@ -8,7 +8,82 @@ model, from which the shipped readers are generated).
 
 ## [Unreleased]
 
-_Nothing yet._
+Hardening release candidate: input validation, connection/lifecycle reliability, secret handling
+and packaging. Behaviour changes that can affect callers are listed under **Behaviour changes**.
+
+### Added
+- `GoveeBleInvalidValue` (a `ValueError` subclass, also a `GoveeBleError`): raised for bad setter
+  input: colour channels, kelvin outside the device's `min_kelvin`/`max_kelvin`, segment/zone
+  indices and masks, scene payloads, secret length. Builders and AES/RC4 key lengths are validated too.
+- `Device.connect()`, an `idle_disconnect` argument on `Device`/`create_device`, and
+  `Device.scene_upload_frames(scene)` (the planned upload frames, or `None`).
+- `__version__` and more public exports: `Encryption`, `Scene`, `StateCallback`, `profile_for`,
+  `GoveeBleInvalidValue`.
+- `app_version` argument on the cloud account (overrides the `appVersion` request header).
+- `govee-ble-analyze --from-frames-log` input is validated (malformed lines are skipped, reported
+  and counted).
+- Dev tooling: `dev` and `audit` extras, `scripts/audit.sh`, a `[tool.vulture]` config, an
+  independent AES reference test (`pycryptodome`, test-only), ruff/mypy-strict/bandit/pip-audit
+  gates in `scripts/check.sh` and CI, and a tag-triggered PyPI trusted-publishing workflow.
+
+### Changed
+- `kaitaistruct>=0.11` (was unpinned below); SPDX `license = "MIT"` metadata; classifiers, `Issues`
+  URL and a markdown `readme` content type for PyPI.
+- The sdist no longer bundles `tests/`; it carries only `src/`, `pyproject.toml`, `README.md`,
+  `LICENSE` and `CHANGELOG.md`.
+- Profile fields are `Literal`-typed and validated at construction.
+- Segment merge / scene planning moved into `wire/` and `scenes/`; `Device` uses public
+  `scene_upload_frames`; the private scene alias was removed.
+- CI: SHA-pinned actions with minimal permissions, Python 3.11-3.13 matrix, lowest-dependency job;
+  optional test dependencies fail instead of skipping when `CI` is set.
+
+### Fixed
+- A disconnect racing an in-flight acknowledgement no longer leaves the write waiting or raises a
+  non-library error; a link lost while the write lock is held raises a typed error.
+- A slow poll can no longer overwrite state set by a newer setter (mutation-sequence guard).
+- Relay power: power frames are acknowledged and the resulting state is applied; time sync is
+  best-effort.
+- Bar-switch devices (H6047): the read-modify-write of the two-bar frame is serialized; the other
+  bar's state is read before use.
+- Lifecycle leaks: client/link no longer leaked on handshake, device-info and disconnect error
+  paths; detached disconnects are bounded in time.
+- Plaintext receive queue (no decrypt with a stale session key); a queued frame arriving at the
+  deadline is not lost; the end-of-burst sentinel is never dropped.
+- Device-info link errors no longer fail `update()`; device info is retried.
+- Encryption fallback when the advertised mode is wrong; secret length is checked.
+- State callbacks no longer break the notify pump or each other (exceptions are logged).
+- Colour groups with an invalid index are skipped instead of producing negative segment indices;
+  V1 segment brightness stays `None`.
+- Cloud client: response shapes are validated (status checked before JSON parsing, token type
+  check); the owned session is closed when login fails; one malformed device secret no longer
+  fails the whole account.
+- Scene catalogs: SKUs are validated, malformed catalogs and bad base64 raise library errors, and
+  catalog writes by `tools/fetch_scenes.py` are atomic.
+- Hardware tools: SKU/path validation, argparse, btsnoop length caps, restore-in-`finally`;
+  `tools/decrypt_btsnoop.py`/`btsnoop_mtu_scan.py` mask the account secret.
+
+### Security
+- Frame-log files are created `0600`, written with `O_NOFOLLOW`, refused if not a regular file,
+  bounded (oldest records dropped when full) and flushed at interpreter exit; a dead writer is
+  revived. Docs now state that captures are sensitive (the session key is derivable from them).
+- Cloud responses are shape-validated; malformed device secrets are never echoed.
+- Secret masking in captures shares one implementation and recomputes the frame checksum.
+- CI runs `bandit` (Medium+) and `pip-audit`; the three accepted `cryptography` advisories are
+  documented (AES-ECB/ARC4 only; PKCS#7/X.509 unused).
+
+### Behaviour changes (may affect callers)
+- Bar-switch devices: `set_zone_power` raises when the other bar's state is unknown and cannot be
+  read, instead of assuming it is on.
+- `GoveeBleAuthError` is no longer retried.
+- `send(expect_ack=True)` rejects non-write frames.
+- Setters raise `GoveeBleInvalidValue` (still a `ValueError`) for invalid input, including kelvin
+  outside the profile's `min_kelvin`/`max_kelvin`. (Brightness percent is still clamped to 1..100.)
+- `Capability` and `Encryption` are `StrEnum`: `str(member)` now returns the value
+  (e.g. `"power"`), not `"Capability.POWER"`.
+- `load_scenes` returns copies (mutating the result does not affect the cache) and raises library
+  errors for malformed catalogs.
+- Cloud `get_devices` returns `secret=None` and logs a warning for a malformed secret rather than
+  failing.
 
 ## [1.1.0] — 2026-10-12
 

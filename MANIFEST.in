@@ -1,0 +1,11 @@
+# sdist contents: the package, metadata and top-level docs only. No tests, tools, spec,
+# docs, scripts or CI config (those live in the git repo, not on PyPI).
+include LICENSE README.md CHANGELOG.md pyproject.toml
+graft src
+prune tests
+prune tools
+prune spec
+prune docs
+prune scripts
+prune .github
+global-exclude *.py[cod] __pycache__ .DS_Store

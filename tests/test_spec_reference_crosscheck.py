@@ -9,6 +9,7 @@ import pathlib
 import random
 
 import pytest
+from conftest import require_optional
 
 from govee_ble_local import crypto
 from govee_ble_local.wire import reassemble as ra
@@ -92,7 +93,7 @@ def test_reassemble_random_agree() -> None:
 
 
 def test_aes_rc4_framing_agrees_when_pycryptodome_present() -> None:
-    pytest.importorskip("Crypto.Cipher.AES", reason="pycryptodome is not a project dependency")
+    require_optional("Crypto.Cipher.AES", reason="pycryptodome (declared in the test extra)")
     r = _rng()
     for _ in range(N_RANDOM):
         key = _rand_bytes(r, 16)

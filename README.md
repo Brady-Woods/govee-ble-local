@@ -29,7 +29,8 @@ pip install 'govee-ble-local[cloud]'
 
 Requires Python 3.11+. Runtime dependencies are deliberately minimal and Home-Assistant-friendly:
 `bleak`, `bleak-retry-connector`, `cryptography` (all shipped with HA), plus `kaitaistruct` (a
-pure-Python, stdlib-only wire-parser runtime). Dev/test/docs extras: `.[test]`, `.[typing]`, `.[docs]`.
+pure-Python, stdlib-only wire-parser runtime). Dev extras: `.[dev]` (everything a contributor needs), or individually `.[test]`, `.[typing]`,
+`.[lint]`, `.[audit]`, `.[docs]`.
 
 ## Quick start
 
