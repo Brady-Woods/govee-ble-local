@@ -444,6 +444,7 @@ class GoveeConnection:
         await self._require_client().write_gatt_char(WRITE_CHAR_UUID, frame, response=False)
 
     def _encrypt(self, frame_plaintext: bytes) -> bytes:
+        """Pure transform: plaintext frame -> wire bytes (no logging/capture)."""
         if self._encryption is Encryption.AES_RC4_PSK:
             if self._session_key is None:
                 raise GoveeBleConnectionError(
@@ -452,8 +453,13 @@ class GoveeConnection:
             wire = encrypt(frame_plaintext, self._session_key)
         else:
             wire = frame_plaintext
-        self._capture("tx", wire=wire, plain=frame_plaintext, enc=self._encryption.value)
         return wire
+
+    async def _send_frame(self, frame_plaintext: bytes) -> None:
+        """Encrypt one plaintext frame, capture/log it as TX, then write it."""
+        wire = self._encrypt(frame_plaintext)
+        self._capture("tx", wire=wire, plain=frame_plaintext, enc=self._encryption.value)
+        await self._raw_write(wire)
 
     async def _run(self, op: Callable[[], Awaitable[_T]], *, extend_warm: bool) -> _T:
         """Run one public operation: lock, deadline, idle-timer bookkeeping, and
@@ -497,7 +503,7 @@ class GoveeConnection:
                 return await self._write_locked(frame_plaintext)
             await self._ensure_connected_locked()
             self._drain()
-            await self._raw_write(self._encrypt(frame_plaintext))
+            await self._send_frame(frame_plaintext)
             if not expect_ack:
                 return None
             # Non-write with expect_ack: best-effort "next notification" reply.
@@ -545,7 +551,7 @@ class GoveeConnection:
             await self._ensure_connected_locked()
             self._drain()
             for frame in frames:
-                await self._raw_write(self._encrypt(frame))
+                await self._send_frame(frame)
                 await asyncio.sleep(gap)
 
         await self._run(op, extend_warm=True)
@@ -556,7 +562,7 @@ class GoveeConnection:
             _LOGGER.debug("%s: TX %s", self.address, describe_frame(frame_plaintext, "tx")[0])
         for attempt in range(WRITE_ATTEMPTS):
             self._drain()
-            await self._raw_write(self._encrypt(frame_plaintext))
+            await self._send_frame(frame_plaintext)
             ack = await self._await_reply(PRO_WRITE, command_type, WRITE_ACK_TIMEOUT)
             if ack is not None:
                 if len(ack) >= 3 and ack[2] != 0:
@@ -610,7 +616,7 @@ class GoveeConnection:
         async def op() -> list[bytes]:
             await self._ensure_connected_locked()
             self._drain()
-            await self._raw_write(self._encrypt(frame_plaintext))
+            await self._send_frame(frame_plaintext)
             loop = asyncio.get_running_loop()
             deadline = loop.time() + timeout
             frames: list[bytes] = []
