@@ -51,6 +51,8 @@ class FakeClient:
 
     async def read_gatt_char(self, _char: Any) -> bytearray:
         self.device.bgc_reads += 1
+        if self.device.bgc_read_error is not None:
+            raise self.device.bgc_read_error
         return bytearray(self.device.bgc or b"")
 
     async def disconnect(self) -> None:
@@ -111,10 +113,24 @@ class FakeGovee:
         self.received: list[bytes] = []  # decrypted application frames
         self.read_replies: dict[int, bytes] = {}  # 0xAA command -> reply frame
         self.on_write: Callable[[FakeClient, bytes], None] | None = None
+        # -- failure-injection knobs (all default OFF) --
+        self.establish_error: BaseException | None = None  # raised by establish()
+        self.establish_calls = 0
+        self.bgc_read_error: BaseException | None = None
+        self.withhold_e7_reply = False    # never answer e7 01
+        self.withhold_e7_confirm = False  # never echo e7 02
+        self.drop_on_e7 = False           # drop the link when e7 01 arrives
+        self.app_write_error: BaseException | None = None  # raised on post-handshake writes
+        self.no_ack_cmds: set[int] = set()  # 0x33 commands that are never acked
+        self.ack_then_drop_links = 0      # first N links: ack the first 0x33 write and
+                                          # disconnect in the SAME loop tick
 
     # -- establish_connection stand-in ---------------------------------------
     async def establish(self, _cls: Any, _device: Any, _name: str, **kwargs: Any) -> FakeClient:
         self.connect_kwargs = kwargs
+        self.establish_calls += 1
+        if self.establish_error is not None:
+            raise self.establish_error
         client = FakeClient(self, kwargs.get("disconnected_callback"))
         if len(self.clients) < self.dead_links:
             client.dead = True
@@ -129,22 +145,42 @@ class FakeGovee:
         if self.encrypted:
             hs = decrypt(data, PSK)
             if hs[:2] == b"\xe7\x01":
+                if self.drop_on_e7:
+                    asyncio.get_running_loop().call_soon(client.drop)
+                    return
+                if self.withhold_e7_reply:
+                    return
                 reply = encrypt(frame(0xE7, 0x01, *SESSION_KEY), PSK)
                 client.push(reply)
                 client.push(reply)  # double delivery
                 return
             if hs[:2] == b"\xe7\x02":
+                if self.withhold_e7_confirm:
+                    return
                 client.push(data, 0.01)                 # immediate echo
                 client.push(data, self.late_echo_delay)  # late retransmit
                 return
             plain = decrypt(data, SESSION_KEY)
         else:
             plain = data
+        if self.app_write_error is not None:
+            raise self.app_write_error
         self.received.append(plain)
         if self.on_write is not None:
             self.on_write(client, plain)
             return
         key = SESSION_KEY if self.encrypted else None
+        if plain[0] == 0x33 and plain[1] in self.no_ack_cmds:
+            return
+        if plain[0] == 0x33 and self.clients.index(client) < self.ack_then_drop_links:
+            ack = self._wire(frame(0x33, plain[1], self.ack_status), key)
+
+            def ack_and_drop() -> None:
+                client._notify(None, bytearray(ack))  # type: ignore[misc]
+                client.drop()  # same tick: ack queued, then link-lost sentinel
+
+            asyncio.get_running_loop().call_later(0.005, ack_and_drop)
+            return
         if plain[0] == 0x33:
             client.push(self._wire(frame(0x33, plain[1], self.ack_status), key), 0.005)
         elif plain[0] == 0xAC:
