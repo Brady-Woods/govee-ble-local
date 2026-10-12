@@ -14,7 +14,8 @@ whole -- directly answering whether 0xA4 scene uploads are 20 B or MTU-sized.
     python3 tools/decrypt_btsnoop.py <capture.log> [--dump a1,a3,a4] [--all] [--limit N]
 
 --all dumps every decoded frame; default dumps only the scene/DIY opcodes. Frame bytes
-only -- never keys/secrets.
+only -- never keys/secrets: account-secret frames (33 b2 writes, aa b1 replies) are masked
+(payload blanked, header kept) before printing. Session keys are never printed.
 """
 from __future__ import annotations
 
@@ -29,6 +30,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from govee_ble_local.const import PSK
 from govee_ble_local.crypto import checksum_ok, decrypt
+from govee_ble_local.transport.connection import _carries_secret, _mask_secret
 
 HANDSHAKE = 0xE7
 # ATT opcodes carrying a value we care about.
@@ -164,7 +166,8 @@ def main(path: str, dump_types: set[int], show_all: bool, limit: int, starts_onl
         if starts_only and not (is_multi and len(frame) > 1 and frame[1] == 0x00):
             continue
         if (show_all or pro in dump_types) and dumped < limit:
-            print(f"  {peer} h{handle:#05x} {direction} {mode:5s} {len(frame):3d}B  {frame.hex()}")
+            shown = _mask_secret(frame) if _carries_secret(frame) else frame
+            print(f"  {peer} h{handle:#05x} {direction} {mode:5s} {len(frame):3d}B  {shown.hex()}")
             dumped += 1
 
     print(f"  handshakes (session keys derived): {handshakes}")

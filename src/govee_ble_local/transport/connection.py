@@ -106,6 +106,10 @@ _RX_QUEUE_MAX = 64
 # Upper bound on client.disconnect(): a wedged proxy must not hold the device lock forever.
 DISCONNECT_TIMEOUT = 5.0
 
+# query(): byte 1 of the final frame of a 0xAC burst (the app's "last packet" marker).
+# const.py has no name for it, so it is defined here.
+QUERY_TERMINAL = 0xFF
+
 NotifyCallback = Callable[[bytes], None]
 _T = TypeVar("_T")
 
@@ -580,7 +584,9 @@ class GoveeConnection:
         one reconnect instead of a failed command. ``expect_ack=False`` sends the
         frame once and returns None. Only writes have an ack to wait for: a
         non-write frame with ``expect_ack=True`` raises GoveeBleInvalidValue
-        (use :meth:`query` to read replies)."""
+        (use :meth:`query` to read replies). A frame shorter than 2 bytes (no commandType)
+        raises GoveeBleInvalidValue before any I/O."""
+        self._check_frame(frame_plaintext)
         is_write = frame_plaintext[:1] == bytes([PRO_WRITE])
         if expect_ack and not is_write:
             raise GoveeBleInvalidValue(
@@ -598,11 +604,20 @@ class GoveeConnection:
 
         return await self._run(op, extend_warm=is_write)
 
+    def _check_frame(self, frame: bytes) -> None:
+        if len(frame) < 2:
+            raise GoveeBleInvalidValue(
+                f"{self.address}: frame must be at least 2 bytes (proType, commandType); "
+                f"got {len(frame)}"
+            )
+
     async def send_many(self, frames: list[bytes]) -> None:
         """Send several write frames back to back under ONE lock acquisition and
         one connection (each still individually ack-verified), so a multi-part
         change (e.g. power + brightness + colour) can't be interleaved with a
         poll and never pays more than one connect."""
+        for frame in frames:
+            self._check_frame(frame)
 
         async def op() -> None:
             for frame in frames:
@@ -687,8 +702,8 @@ class GoveeConnection:
         frame_plaintext: bytes,
         *,
         timeout: float = QUERY_DEFAULT_TIMEOUT,
-        opcode: int = 0xAC,
-        terminal: int = 0xFF,
+        opcode: int = PRO_MULTI_AC,
+        terminal: int = QUERY_TERMINAL,
         idle_gap: float | None = BURST_IDLE_GAP,
     ) -> list[bytes]:
         """Send a query trigger and collect the resulting NOTIFY burst.

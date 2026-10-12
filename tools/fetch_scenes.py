@@ -14,10 +14,14 @@ the library and no runtime cloud call is needed.
 from __future__ import annotations
 
 import argparse
+import base64
+import binascii
+import contextlib
 import json
 import os
 import pathlib
 import re
+import tempfile
 import sys
 import urllib.parse
 import urllib.request
@@ -27,6 +31,8 @@ LIBRARY_URL = "https://app2.govee.com/appsku/v1/light-effect-libraries"
 # --app-version or $GOVEE_APP_VERSION if Govee starts rejecting this value.
 DEFAULT_APP_VERSION = "7.5.20"
 OUT_DIR = pathlib.Path(__file__).resolve().parent.parent / "src" / "govee_ble_local" / "scenes"
+# Upper bound on the library response body; real catalogs are well under 1 MiB.
+MAX_RESPONSE_BYTES = 8 * 1024 * 1024
 _SKU_RE = re.compile(r"[A-Za-z0-9]{3,8}")
 
 
@@ -57,6 +63,25 @@ def validate_entry(name: object, entry: dict[str, object]) -> None:
         v = entry.get(key)
         if v is not None and not isinstance(v, typ):
             raise ValueError(f"{name}: '{key}' must be {typ.__name__} or null, got {type(v).__name__}")
+    param = entry.get("param")
+    if isinstance(param, str) and param:
+        try:
+            base64.b64decode(param, validate=True)
+        except (binascii.Error, ValueError) as err:
+            raise ValueError(f"{name}: 'param' is not valid base64: {err}") from err
+
+
+def write_catalog(path: pathlib.Path, data: object) -> None:
+    """Write a catalog atomically: temp file in the same directory, then ``os.replace``."""
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(json.dumps(data, indent=1, sort_keys=True))
+        os.replace(tmp, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        raise
 
 
 def _is_placeholder(param_b64: str | None) -> bool:
@@ -85,7 +110,10 @@ def fetch(sku: str, app_version: str = DEFAULT_APP_VERSION) -> dict[str, dict[st
     req = urllib.request.Request(url, headers={"AppVersion": app_version})
     # Fixed https LIBRARY_URL; the only variable part (sku) is validated and URL-quoted above.
     with urllib.request.urlopen(req, timeout=20) as resp:  # nosec B310
-        payload = json.load(resp)
+        raw = resp.read(MAX_RESPONSE_BYTES + 1)
+    if len(raw) > MAX_RESPONSE_BYTES:
+        raise ValueError(f"library response for {sku} exceeds {MAX_RESPONSE_BYTES} bytes; refusing")
+    payload = json.loads(raw)
     scenes: dict[str, dict[str, object]] = {}
     for category in payload.get("data", {}).get("categories", []):
         for scene in category.get("scenes", []):
@@ -105,7 +133,7 @@ def fetch(sku: str, app_version: str = DEFAULT_APP_VERSION) -> dict[str, dict[st
             pid = eff.get("scenceParamId")
             if pid is not None:
                 entry["param_id"] = int(pid)
-            # Path-B upload drivers (see SCENE_UPLOAD_REVIEW.md): scene_type +
+            # Path-B upload drivers (see spec/docs/SCENE_UPLOAD_ENCODING.md): scene_type +
             # cmd_version pick the a3 commByte; bigEffectStr flags fetch-required.
             if eff.get("sceneType") is not None:
                 entry["scene_type"] = int(eff["sceneType"])
@@ -151,10 +179,11 @@ def resolve_placeholders(email: str, password: str, skus: list[str]) -> None:
                 for v in data.values():
                     pid = v.get("param_id")
                     if v.get("placeholder") and pid in real:
+                        validate_entry(f"param_id {pid}", {"code": 0, "param": real[pid]})
                         v["param"] = real[pid]
                         v.pop("placeholder", None)
                         fixed += 1
-                path.write_text(json.dumps(data, indent=1, sort_keys=True))
+                write_catalog(path, data)
                 print(f"{sku}: resolved {fixed}/{len(ids)} placeholder scenes")
         finally:
             await acct.close()
@@ -273,7 +302,7 @@ def main(skus: list[str], app_version: str = DEFAULT_APP_VERSION) -> int:
             failures += 1
             continue
         scenes = _merge(existing, fresh)
-        path.write_text(json.dumps(scenes, indent=1, sort_keys=True))
+        write_catalog(path, scenes)
         kept = sum(1 for n in scenes if n in existing and _valid_resolved(existing[n]))
         placeholders = sorted(n for n, v in scenes.items() if v.get("placeholder"))
         note = f"; {len(placeholders)} placeholders (run --resolve)" if placeholders else ""

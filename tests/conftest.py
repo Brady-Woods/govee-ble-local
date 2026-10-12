@@ -21,10 +21,11 @@ import pytest  # noqa: E402
 
 
 def optional_deps_required() -> bool:
-    """True on CI (``CI`` set) or with ``GOVEE_REQUIRE_OPTIONAL_TESTS=1``: a missing optional
+    """True on CI (``CI`` truthy: 1/true/yes) or with ``GOVEE_REQUIRE_OPTIONAL_TESTS=1``: a missing optional
     test dependency must FAIL rather than silently skip (conformance protection must not vanish)."""
     flag = os.environ.get("GOVEE_REQUIRE_OPTIONAL_TESTS", "")
-    return bool(os.environ.get("CI")) or flag.lower() in ("1", "true", "yes")
+    truthy = ("1", "true", "yes")
+    return os.environ.get("CI", "").lower() in truthy or flag.lower() in truthy
 
 
 def require_optional(modname: str, *, reason: str | None = None):  # type: ignore[no-untyped-def]

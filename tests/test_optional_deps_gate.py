@@ -21,7 +21,10 @@ def test_missing_module_skips_without_flags(clean_env: pytest.MonkeyPatch) -> No
         require_optional(_MISSING, reason="r")
 
 
-@pytest.mark.parametrize(("var", "val"), [("CI", "true"), ("GOVEE_REQUIRE_OPTIONAL_TESTS", "1")])
+@pytest.mark.parametrize(
+    ("var", "val"),
+    [("CI", "true"), ("CI", "1"), ("CI", "YES"), ("GOVEE_REQUIRE_OPTIONAL_TESTS", "1")],
+)
 def test_missing_module_fails_when_required(
     clean_env: pytest.MonkeyPatch, var: str, val: str
 ) -> None:
@@ -39,4 +42,10 @@ def test_present_module_is_returned_in_both_modes(clean_env: pytest.MonkeyPatch)
 
 def test_flag_zero_is_not_required(clean_env: pytest.MonkeyPatch) -> None:
     clean_env.setenv("GOVEE_REQUIRE_OPTIONAL_TESTS", "0")
+    assert optional_deps_required() is False
+
+
+@pytest.mark.parametrize("val", ["false", "0", "", "no"])
+def test_ci_falsy_is_not_required(clean_env: pytest.MonkeyPatch, val: str) -> None:
+    clean_env.setenv("CI", val)
     assert optional_deps_required() is False

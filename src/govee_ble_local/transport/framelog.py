@@ -26,6 +26,7 @@ import json
 import logging
 import os
 import queue
+import stat
 import threading
 import time
 from typing import Final
@@ -44,10 +45,19 @@ _failed_paths: set[str] = set()
 _drop_warned = False
 
 
+class _NotRegularFileError(OSError):
+    """The capture path is not a regular file (FIFO, device, ...): refused."""
+
+
 def _write_batch(path: str, lines: list[str]) -> None:
     try:
-        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+        # O_NOFOLLOW: never write through a symlink; O_NONBLOCK: opening a FIFO must not hang.
+        flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND | getattr(os, "O_NOFOLLOW", 0)
+        flags |= getattr(os, "O_NONBLOCK", 0)
+        fd = os.open(path, flags, 0o600)
         with os.fdopen(fd, "a", encoding="ascii") as fh:
+            if not stat.S_ISREG(os.fstat(fh.fileno()).st_mode):
+                raise _NotRegularFileError("not a regular file")
             fh.write("".join(lines))
     except Exception as err:  # noqa: BLE001 - logging must never break I/O or kill the writer
         if path not in _failed_paths:
@@ -160,4 +170,6 @@ class FrameLog:
             "wire": wire.hex(),
             "enc": enc,
         }
+        if _writer is None or not _writer.is_alive():
+            _ensure_writer()  # a dead writer must not silently swallow every later record
         _enqueue((self._path, json.dumps(rec) + "\n"))

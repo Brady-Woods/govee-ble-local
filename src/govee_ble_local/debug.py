@@ -28,22 +28,26 @@ _FRAME_LINE = re.compile(
 )
 
 
-def frames_log_to_records(text: str) -> list[dict[str, object]]:
-    """Convert captured ``govee_ble_local.frames`` logger output into analyzer records
-    ``{dir, plain, wire, enc}`` (empty plain -> None, i.e. ciphertext-only)."""
-    records: list[dict[str, object]] = []
-    for line in text.splitlines():
+def _numbered_frame_records(text: str) -> list[tuple[int, dict[str, object]]]:
+    out: list[tuple[int, dict[str, object]]] = []
+    for lineno, line in enumerate(text.splitlines(), 1):
         m = _FRAME_LINE.search(line)
         if not m:
             continue
         plain = m.group("plain")
-        records.append({
+        out.append((lineno, {
             "dir": m.group("dir"),
             "plain": plain.lower() or None,
             "wire": m.group("wire").lower(),
             "enc": m.group("enc"),
-        })
-    return records
+        }))
+    return out
+
+
+def frames_log_to_records(text: str) -> list[dict[str, object]]:
+    """Convert captured ``govee_ble_local.frames`` logger output into analyzer records
+    ``{dir, plain, wire, enc}`` (empty plain -> None, i.e. ciphertext-only)."""
+    return [rec for _, rec in _numbered_frame_records(text)]
 
 
 def _record_problem(rec: object) -> str | None:
@@ -59,6 +63,21 @@ def _record_problem(rec: object) -> str | None:
         except ValueError as err:
             return f"invalid hex in 'plain': {err}"
     return None
+
+
+def _checked_frames_log(text: str, path: str) -> tuple[list[dict[str, object]], int]:
+    """Convert frames-log text to records, applying the JSONL per-record validation: invalid
+    records are skipped and reported on stderr as ``path:lineno: reason``."""
+    good: list[dict[str, object]] = []
+    skipped = 0
+    for lineno, rec in _numbered_frame_records(text):
+        problem = _record_problem(rec)
+        if problem is not None:
+            print(f"{path}:{lineno}: {problem}", file=sys.stderr)
+            skipped += 1
+            continue
+        good.append(rec)
+    return good, skipped
 
 
 def _load_jsonl_checked(paths: list[str]) -> tuple[list[dict[str, object]], int]:
@@ -161,13 +180,13 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.from_frames_log:
             with open(args.from_frames_log, encoding="utf-8") as fh:
-                records = frames_log_to_records(fh.read())
+                records, skipped = _checked_frames_log(fh.read(), args.from_frames_log)
             if args.out:
                 with open(args.out, "w", encoding="utf-8") as out:
                     for rec in records:
                         out.write(json.dumps(rec) + "\n")
                 print(f"wrote {len(records)} records to {args.out}\n")
-            return analyze(records)
+            return analyze(records, skipped)
 
         if not args.paths:
             ap.error("give a JSONL capture path, or --from-frames-log FILE")
