@@ -27,6 +27,7 @@ from typing import Any
 from kaitaistruct import KaitaiStream as _KaitaiStream
 
 from .._generated.govee_ble_frame import GoveeBleFrame as _GBF  # type: ignore[attr-defined]
+from ..crypto import checksum_ok
 from . import reassemble as _reassemble
 
 # The generated reader is untyped; treat it as Any so attribute chains don't need stubs.
@@ -43,12 +44,6 @@ KNOWN_STATUS_REPLY_TLVS: frozenset[int] = frozenset(
 )
 
 
-def checksum_ok(frame: bytes) -> bool:
-    """True if the frame is 20 bytes and byte 19 is the XOR of bytes 0..18."""
-    x = 0
-    for b in frame[:19]:
-        x ^= b
-    return len(frame) == 20 and frame[19] == x
 
 
 def _opaque(x: object) -> bool:

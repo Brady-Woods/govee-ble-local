@@ -24,6 +24,11 @@ from .profile import DeviceProfile, profile_for
 
 _LOGGER = logging.getLogger(__name__)
 
+# After a command or an authoritative read, ignore the advertised on/off for this
+# long: Govee refreshes the broadcast on/off byte lazily, so a stale advertisement
+# arriving right after a toggle would otherwise flip the state straight back.
+ADVERT_SUPPRESS_SECONDS = 15.0
+
 StateCallback = Callable[[DeviceState], None]
 
 
@@ -72,6 +77,7 @@ class Device:
         self._device_info_read = False   # device-info (mac/hw/fw/sn) read once, lazily
         self._polled_once = False        # for the one-time INFO "first poll" line
         self._callbacks: list[StateCallback] = []
+        self._advert_ignore_until = 0.0   # monotonic; see ADVERT_SUPPRESS_SECONDS
         enc = self._resolve_encryption(advertisement_data)
         self._conn = GoveeConnection(
             ble_device,
@@ -117,6 +123,11 @@ class Device:
     @property
     def max_kelvin(self) -> int | None:
         return self.profile.max_kelvin
+
+    @property
+    def encryption(self) -> Encryption:
+        """The command-channel mode in use (advertisement + BGC refined)."""
+        return self._conn.encryption
 
     @property
     def state(self) -> DeviceState:
@@ -175,33 +186,99 @@ class Device:
         on = parse_broadcast_onoff(mfg)
         if on is None or on == self._state.is_on:
             return False
+        if time.monotonic() < self._advert_ignore_until:
+            return False  # fresher state from a command/read; advert lags
         self._state.is_on = on
         self._notify()
         return True
 
     async def stop(self) -> None:
-        await self._conn.disconnect()
+        """Disconnect and refuse further I/O (the owner is being torn down)."""
+        await self._conn.close()
+
+    def _mark_authoritative(self) -> None:
+        self._advert_ignore_until = time.monotonic() + ADVERT_SUPPRESS_SECONDS
+
+    def _brightness_pct(self, raw: int) -> int:
+        full = self.profile.brightness_max
+        return raw if full == 100 else round(raw * 100 / full)
 
     # -- power / brightness -------------------------------------------------
+    def _power_frames(self, on: bool) -> list[bytes]:
+        """Frames for whole-device power. Zoned fixtures switch their zones
+        (the proven path: H6047 both bars in ONE 33 36 frame, H60A6 one 33 30
+        frame per zone); everything else uses the global 33 01 switch."""
+        if self.profile.bar_switch:
+            return [build.bar_switch(on, on)]
+        if self.profile.zones:
+            return [build.zone_power(z.power_index, on) for z in self.profile.zones]
+        return [build.switch(on, relay=self.profile.relay)]
+
+    def _apply_power(self, on: bool) -> None:
+        self._state.is_on = on
+        if self.profile.zones:
+            self._state.zone_power = {z.power_index: on for z in self.profile.zones}
+
     async def set_power(self, on: bool) -> None:
         self._require(Capability.POWER)
-        await self._conn.send(build.switch(on, relay=self.profile.relay))
+        await self._conn.send_many(self._power_frames(on))
         if self.profile.relay:  # plug relay needs a sync-time follow-up to actuate
             ts = now_ts()
             await self._conn.send(build.plug_sync_time(ts, *_local_tz(ts)), expect_ack=False)
-        self._state.is_on = on
+        self._apply_power(on)
+        self._mark_authoritative()
         self._notify()
 
-    async def turn_on(self) -> None:
-        await self.set_power(True)
+    async def turn_on(
+        self,
+        *,
+        brightness: int | None = None,
+        rgb: tuple[int, int, int] | None = None,
+        kelvin: int | None = None,
+        power: bool = True,
+    ) -> None:
+        """Power on and apply brightness/colour as ONE batched operation: one
+        lock acquisition, one connection, each frame ack-verified in order
+        (power first so the rest lands on a lit fixture). ``power=False`` skips
+        the power frames (already on)."""
+        frames: list[bytes] = []
+        if power:
+            self._require(Capability.POWER)
+            frames += self._power_frames(True)
+        if brightness is not None:
+            self._require(Capability.BRIGHTNESS)
+            brightness = max(1, min(100, brightness))
+            frames.append(build.brightness(brightness))
+        if rgb is not None:
+            self._require(Capability.RGB)
+            frames.append(build.color_rgb(*rgb, self.profile.color_scheme, self.profile.segments))
+        elif kelvin is not None:
+            self._require(Capability.COLOR_TEMP)
+            frames.append(build.color_temp(kelvin, self.profile.color_scheme, self.profile.segments))
+        if not frames:
+            return
+        await self._conn.send_many(frames)
+        if power:
+            self._apply_power(True)
+        if brightness is not None:
+            self._state.brightness = brightness
+        if rgb is not None:
+            self._state.rgb_color, self._state.color_temp_kelvin = tuple(rgb), None  # type: ignore[assignment]
+            self._state.scene_code = None
+        elif kelvin is not None:
+            self._state.color_temp_kelvin, self._state.rgb_color = kelvin, None
+            self._state.scene_code = None
+        self._mark_authoritative()
+        self._notify()
 
     async def turn_off(self) -> None:
         await self.set_power(False)
 
     async def set_brightness(self, pct: int) -> None:
         self._require(Capability.BRIGHTNESS)
+        pct = max(1, min(100, pct))  # 0 is not "off" on these devices; never send it
         await self._conn.send(build.brightness(pct))
-        self._state.brightness = max(1, min(100, pct))
+        self._state.brightness = pct
         self._notify()
 
     # -- colour -------------------------------------------------------------
@@ -226,12 +303,33 @@ class Device:
         self._require(Capability.SEGMENTS)
         r, g, b = rgb
         await self._conn.send(build.segment_rgb(_mask(indices), r, g, b, self.profile.color_scheme))
+        self._update_segments(indices, rgb=(r, g, b))
         self._notify()
 
     async def set_segment_brightness(self, indices: list[int], pct: int) -> None:
         self._require(Capability.SEGMENTS)
+        pct = max(0, min(100, pct))
         await self._conn.send(build.segment_brightness(_mask(indices), pct, self.profile.color_scheme))
+        self._update_segments(indices, brightness=pct)
         self._notify()
+
+    def _update_segments(
+        self,
+        indices: list[int] | tuple[int, ...],
+        *,
+        rgb: tuple[int, int, int] | None = None,
+        brightness: int | None = None,
+    ) -> None:
+        """Optimistically fold a segment write into state.segments."""
+        by_index = {seg.index: seg for seg in self._state.segments}
+        for i in indices:
+            cur = by_index.get(i, Segment(index=i))
+            by_index[i] = Segment(
+                index=i,
+                rgb=rgb if rgb is not None else cur.rgb,
+                brightness=brightness if brightness is not None else cur.brightness,
+            )
+        self._state.segments = [by_index[k] for k in sorted(by_index)]
 
     async def set_segment_color_temp(self, indices: list[int], kelvin: int) -> None:
         """Colour temperature on selected segments (0x15 family only — the CCT frame
@@ -258,15 +356,28 @@ class Device:
     async def set_zone_power(self, name: str, on: bool) -> None:
         z = self._zone(name)
         if self.profile.bar_switch:
+            # One frame carries BOTH bars, so the other bar's current state must be
+            # known - never assume it (assuming "on" turned the other bar ON).
             zp = self._state.zone_power
-            target = {0: zp.get(0, True), 1: zp.get(1, True)}
+            if len(zp) < 2:
+                await self._read_bar_switch()
+                zp = self._state.zone_power
+            target = {0: zp.get(0, False), 1: zp.get(1, False)}
             target[z.power_index] = on
-            await self._conn.send(build.bar_switch(bool(target[0]), bool(target[1])))
-            zp.update(target)
+            await self._conn.send(build.bar_switch(target[0], target[1]))
+            self._state.zone_power = dict(target)
         else:
             await self._conn.send(build.zone_power(z.power_index, on))
             self._state.zone_power[z.power_index] = on
+        if self.profile.zones and len(self._state.zone_power) == len(self.profile.zones):
+            self._state.is_on = any(self._state.zone_power.values())
+        self._mark_authoritative()
         self._notify()
+
+    async def _read_bar_switch(self) -> None:
+        bars = parse.parse_bar_switch(await self._read_reply(build.bar_switch_query(), 0x36) or b"")
+        if bars is not None:
+            self._state.zone_power = {0: bars[0], 1: bars[1]}
 
     async def set_zone_rgb(self, name: str, rgb: tuple[int, int, int]) -> None:
         z = self._zone(name)
@@ -274,6 +385,7 @@ class Device:
             raise GoveeBleNotSupported(f"{self._sku}: zone {name!r} has no segments")
         r, g, b = rgb
         await self._conn.send(build.segment_rgb(_mask(z.segments), r, g, b, self.profile.color_scheme))
+        self._update_segments(z.segments, rgb=(r, g, b))
         self._notify()
 
     async def set_zone_color_temp(self, name: str, kelvin: int) -> None:
@@ -295,7 +407,8 @@ class Device:
         self._require(Capability.SCENES)
         await self._conn.send(build.scene_activate(code))
         self._state.scene_code = code
-        self._state.is_on = True
+        self._apply_power(True)
+        self._mark_authoritative()
         self._state.rgb_color = None
         self._state.color_temp_kelvin = None
         self._notify()
@@ -330,9 +443,8 @@ class Device:
         if scene is None:
             raise GoveeBleNotSupported(f"{self._sku}: unknown scene {name!r}")
         frames = self._scene_upload_frames(scene)
-        if frames is not None:
-            for chunk in frames:
-                await self._conn.send(chunk, expect_ack=False)
+        if frames:
+            await self._conn.send_unacked(frames)
         await self.set_scene(scene.code)
 
     # -- misc settings ------------------------------------------------------
@@ -389,6 +501,7 @@ class Device:
         if power is not None:
             self._state.is_on = bool(power)
             self._state.optimistic = False
+            self._mark_authoritative()
 
     async def _read_device_info(self) -> None:
         """Populate the static device-info fields from the aa 07 replies. Selector-aware:
@@ -489,13 +602,9 @@ class Device:
         ac = [f for f in frames if f and f[0] == 0xAC]
         return reassemble.parse_status(ac), ac, frames
 
-    @staticmethod
-    def _status_empty(st: reassemble.StatusReply) -> bool:
-        return st.is_on is None and not st.segments and not st.zone_power
-
     async def _read_status(self) -> None:
         st, ac, frames = await self._query_status()
-        if self._status_empty(st):
+        if st.is_on is None:
             # The device answered (or didn't) but no usable TLVs came back — most often a
             # dropped/truncated 0xAC burst (a BLE notification lost mid-sequence, so the
             # reassembled buffer ends mid-TLV or is empty). Retry once with a fresh query —
@@ -508,7 +617,7 @@ class Device:
                 self.address, self._sku, len(ac), len(frames), _chunk_indices(ac),
             )
             st, ac, frames = await self._query_status()
-        if self._status_empty(st):
+        if st.is_on is None:
             _LOGGER.warning(
                 "%s (%s): status read returned no usable data after retry "
                 "(%d 0xAC of %d frames, chunks %s); state left stale",
@@ -517,11 +626,15 @@ class Device:
         if st.is_on is not None:
             self._state.is_on = st.is_on
         if st.brightness is not None:
-            self._state.brightness = st.brightness if st.brightness <= 100 else round(st.brightness / 255 * 100)
+            self._state.brightness = self._brightness_pct(st.brightness)
         if st.zone_power:
             self._state.zone_power = st.zone_power
         if st.segments:
-            self._state.segments = st.segments
+            # A burst whose tail was lost carries only a prefix of the segments;
+            # merge so the rest keep their last known values.
+            merged = {seg.index: seg for seg in self._state.segments}
+            merged.update({seg.index: seg for seg in st.segments})
+            self._state.segments = [merged[k] for k in sorted(merged)]
         # Device-info (serial / wifi_mac / fw / hw) comes from the 0x07 TLV in the 0xAC
         # stream — the ONLY source for BLE-only devices (H60A6); aa 07 returns zeros there.
         if st.serial_number is not None:
@@ -536,22 +649,32 @@ class Device:
             reply = await self._read_reply(build.mode_query(), 0x05)
             if reply is not None:
                 self._state.scene_code = parse.parse_active_scene(reply)
+                kelvin = parse.parse_kelvin(reply)
+                if kelvin:
+                    self._state.color_temp_kelvin, self._state.rgb_color = kelvin, None
         self._state.optimistic = False
+        self._mark_authoritative()
 
     async def _read_polled(self) -> None:
-        if self._state.is_on is False:
-            return
+        # Always read power: a device turned on externally (app, remote, wall
+        # switch) must be noticed even when we last saw it off.
         power = parse.parse_power(await self._read_reply(build.power_query(), 0x01) or b"")
         if power is not None:
             self._state.is_on = bool(power)
         raw = parse.parse_brightness(await self._read_reply(build.brightness_query(), 0x04) or b"")
         if raw is not None:
-            self._state.brightness = raw if raw <= 100 else round(raw / 255 * 100)
+            self._state.brightness = self._brightness_pct(raw)
+        if self.profile.bar_switch:
+            await self._read_bar_switch()
         if Capability.SCENES in self.capabilities:
             reply = await self._read_reply(build.mode_query(), 0x05)
             if reply is not None:
                 self._state.scene_code = parse.parse_active_scene(reply)
+                kelvin = parse.parse_kelvin(reply)
+                if kelvin:
+                    self._state.color_temp_kelvin, self._state.rgb_color = kelvin, None
         self._state.optimistic = False
+        self._mark_authoritative()
 
     async def _read_reply(self, frame: bytes, command_type: int) -> bytes | None:
         frames = await self._conn.query(frame, opcode=0xAA, terminal=command_type, timeout=2.0)

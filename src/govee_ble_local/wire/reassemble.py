@@ -47,25 +47,59 @@ class StatusReply:
     hardware_version: str | None = None
 
 
-def reassemble(frames: list[bytes]) -> bytes:
-    """Join a 0xAC burst: first chunk's data @ offset 7, the rest @ offset 2.
-
-    The burst is keyed by the chunk index at byte 1 (``ac 00, ac 01, … ac FF``).
-    Devices double-deliver each notification (duplicate GATT callbacks), so chunks
-    are first collapsed to one per index (first wins) and ordered by index — the
-    join is offset-by-*position*, so an un-deduped duplicate would splice in at the
-    wrong offset and drift the TLV walk. 0xFF (terminator) sorts last naturally."""
+def _ordered_chunks(frames: list[bytes]) -> tuple[list[bytes], bool]:
+    """Dedupe chunks by index (first wins), order them, and keep only the
+    CONTIGUOUS prefix 0x00, 0x01, ... (plus the 0xFF terminator when nothing is
+    missing). Returns (chunks, complete). The join is offset-by-position, so a
+    chunk after a gap would splice in at the wrong offset and the TLV walk would
+    decode garbage as real state - everything from the first gap on is dropped."""
     unique: dict[int, bytes] = {}
     for fr in frames:
         if len(fr) < 19:
             _LOGGER.debug("status burst: skipping short chunk (%d bytes)", len(fr))
             continue
         unique.setdefault(fr[1], fr)
-    ordered = [unique[k] for k in sorted(unique)]
+    ordered: list[bytes] = []
+    index = 0
+    while index in unique and index != 0xFF:
+        ordered.append(unique[index])
+        index += 1
+    complete = 0xFF in unique and len(ordered) == len(unique) - 1
+    if complete:
+        ordered.append(unique[0xFF])
+    elif unique:
+        _LOGGER.debug(
+            "status burst incomplete: chunks %s, using contiguous prefix of %d",
+            sorted(unique), len(ordered),
+        )
+    return ordered, complete
+
+
+def reassemble(frames: list[bytes]) -> bytes:
+    """Join a 0xAC burst: first chunk's data @ offset 7, the rest @ offset 2.
+
+    The burst is keyed by the chunk index at byte 1 (``ac 00, ac 01, … ac FF``).
+    Duplicates collapse to one per index; only the contiguous prefix is joined
+    (see :func:`_ordered_chunks`)."""
+    ordered, _complete = _ordered_chunks(frames)
     buf = bytearray()
     for i, fr in enumerate(ordered):
         buf += fr[7:19] if i == 0 else fr[2:19]
     return bytes(buf)
+
+
+def _complete_tlvs(buf: bytes) -> bytes:
+    """Truncate a (possibly cut-short) TLV stream at the last whole TLV and
+    terminate it, so the spec reader can type everything that did arrive."""
+    pos = 0
+    while pos + 2 <= len(buf):
+        typ, length = buf[pos], buf[pos + 1]
+        if typ == 0:
+            break
+        if pos + 2 + length > len(buf):
+            break
+        pos += 2 + length
+    return buf[:pos] + b"\x00\x00"
 
 
 def parse_status(frames: list[bytes]) -> StatusReply:
@@ -86,9 +120,14 @@ def parse_status(frames: list[bytes]) -> StatusReply:
     buf = reassemble(frames)
     try:
         reply = _F.StatusReply(_KaitaiStream(_BytesIO(buf)))
-    except Exception as exc:  # noqa: BLE001 - malformed/truncated burst -> empty state
-        _LOGGER.debug("status reply did not parse (%d bytes): %r", len(buf), exc)
-        return st
+    except Exception:  # noqa: BLE001 - truncated burst (lost tail chunk / terminator)
+        trimmed = _complete_tlvs(buf)
+        try:
+            reply = _F.StatusReply(_KaitaiStream(_BytesIO(trimmed)))
+        except Exception as exc:  # noqa: BLE001 - malformed -> empty state
+            _LOGGER.debug("status reply did not parse (%d bytes): %r", len(buf), exc)
+            return st
+        _LOGGER.debug("status reply truncated; decoded %d of %d bytes", len(trimmed) - 2, len(buf))
 
     segs: dict[int, Segment] = {}
     for tlv in reply.tlvs:

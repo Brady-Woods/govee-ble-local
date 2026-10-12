@@ -16,15 +16,39 @@ from govee_ble_local.models import Capability
 from govee_ble_local.scenes import Scene
 
 
-def _dev(sku: str) -> Device:
+def _dev(sku: str, *, replies: list[bytes] | None = None) -> Device:
     d = make_device(BLEDevice("AA:BB:CC:DD:EE:20", sku, details={}), sku)
     assert d is not None
-    d._conn.send = AsyncMock()  # type: ignore[attr-defined]
+    sent: list[bytes] = []
+
+    async def send(frame: bytes, **_k: object) -> None:
+        sent.append(frame)
+
+    async def send_many(frames: list[bytes]) -> None:
+        sent.extend(frames)
+
+    async def query(frame: bytes, **_k: object) -> list[bytes]:
+        sent.append(frame)
+        return list(replies or [])
+
+    d._conn.send = AsyncMock(side_effect=send)  # type: ignore[method-assign]
+    d._conn.send_many = AsyncMock(side_effect=send_many)  # type: ignore[method-assign]
+    d._conn.send_unacked = AsyncMock(side_effect=send_many)  # type: ignore[method-assign]
+    d._conn.query = AsyncMock(side_effect=query)  # type: ignore[method-assign]
+    d._sent = sent  # type: ignore[attr-defined]
     return d
 
 
 def _sent(d: Device) -> list[bytes]:
-    return [c.args[0] for c in d._conn.send.call_args_list]  # type: ignore[attr-defined]
+    return list(d._sent)  # type: ignore[attr-defined]
+
+
+def _reply(*b: int) -> bytes:
+    body = bytes(b) + bytes(19 - len(b))
+    x = 0
+    for v in body:
+        x ^= v
+    return body + bytes([x])
 
 
 def test_all_profiles_construct() -> None:
@@ -36,11 +60,65 @@ def test_all_profiles_construct() -> None:
     assert make_device(BLEDevice("AA:BB:CC:DD:EE:20", "H9999", details={}), "H9999") is None
 
 
-def test_power_state_and_caps() -> None:
+def test_power_global_switch_for_plain_lights() -> None:
+    d = _dev("H6006")
+    asyncio.run(d.set_power(True))
+    assert [f[:3].hex() for f in _sent(d)] == ["330101"]
+    assert d.state.is_on is True
+
+
+def test_power_zoned_fixture_switches_all_zones_in_one_batch() -> None:
     d = _dev("H60A6")
     asyncio.run(d.set_power(True))
-    assert _sent(d)[0][:2].hex() == "3301" and _sent(d)[0][2] == 0x01
+    assert [f[:4].hex() for f in _sent(d)] == ["33300001", "33300101"]
+    d._conn.send_many.assert_awaited_once()  # type: ignore[attr-defined]
+    assert d.state.is_on is True and d.state.zone_power == {0: True, 1: True}
+
+
+def test_power_bar_fixture_is_a_single_frame() -> None:
+    d = _dev("H6047")
+    asyncio.run(d.set_power(False))
+    assert [f[:4].hex() for f in _sent(d)] == ["33360000"]
+    assert d.state.zone_power == {0: False, 1: False} and d.state.is_on is False
+
+
+def test_turn_on_batches_power_brightness_colour() -> None:
+    d = _dev("H6008")
+    asyncio.run(d.turn_on(brightness=0, rgb=(1, 2, 3)))
+    assert [f[:2].hex() for f in _sent(d)] == ["3301", "3304", "3305"]
+    assert _sent(d)[1][2] == 1  # brightness never sent as 0
+    d._conn.send_many.assert_awaited_once()  # type: ignore[attr-defined]
+    assert d.state.brightness == 1 and d.state.rgb_color == (1, 2, 3)
+
+
+def test_set_brightness_clamps_to_one() -> None:
+    d = _dev("H6008")
+    asyncio.run(d.set_brightness(0))
+    assert _sent(d)[0][2] == 1
+
+
+def test_advert_onoff_ignored_right_after_command() -> None:
+    d = _dev("H6008")
+    adv = type("Adv", (), {"manufacturer_data": {0x8843: bytes([0xEC, 0, 0, 0, 0])}})()
+    asyncio.run(d.set_power(True))
+    assert d.ingest_advertisement(adv) is False and d.state.is_on is True
+    d._advert_ignore_until = 0
+    assert d.ingest_advertisement(adv) is True and d.state.is_on is False
+
+
+def test_polled_device_reads_power_even_when_off() -> None:
+    d = _dev("H6008", replies=[_reply(0xAA, 0x01, 0x01)])
+    d.state.is_on = False
+    asyncio.run(d._read_polled())
     assert d.state.is_on is True
+
+
+def test_segment_write_updates_state() -> None:
+    d = _dev("H60A6")
+    asyncio.run(d.set_segment_rgb([2, 3], (9, 8, 7)))
+    asyncio.run(d.set_segment_brightness([3], 40))
+    segs = {s.index: s for s in d.state.segments}
+    assert segs[2].rgb == (9, 8, 7) and segs[3].rgb == (9, 8, 7) and segs[3].brightness == 40
 
 
 def test_capability_gating() -> None:
@@ -75,8 +153,18 @@ def test_zone_bar_vs_direct() -> None:
     asyncio.run(h60a6.set_zone_power("background", False))
     assert _sent(h60a6)[0][:2].hex() == "3330"
     h6047 = _dev("H6047")            # combined 33 36
+    h6047.state.zone_power = {0: True, 1: True}
     asyncio.run(h6047.set_zone_power("left", False))
-    assert _sent(h6047)[0][:2].hex() == "3336"
+    assert _sent(h6047)[0][:4].hex() == "33360001"   # right bar kept ON
+
+
+def test_bar_switch_reads_unknown_state_instead_of_assuming() -> None:
+    # Unknown state used to default to ON: turning one bar off turned the other on.
+    d = _dev("H6047", replies=[_reply(0xAA, 0x36, 0x01, 0x00)])  # left on, right off
+    asyncio.run(d.set_zone_power("left", False))
+    frames = _sent(d)
+    assert frames[0][:2].hex() == "aa36"                 # read first
+    assert frames[1][:4].hex() == "33360000"             # right stays OFF
 
 
 def test_zone_and_segment_color_temp() -> None:

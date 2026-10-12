@@ -159,6 +159,9 @@ def scene_upload_a3(value: bytes, comm_byte: int) -> list[bytes]:
     """0xA3 scene/DIY upload (MultipleControllerCommV1): frames of
     [0x01(marker), packet_count, comm_byte, value…], seq 0,1,…, last=0xFF (data-bearing)."""
     pieces = -(-(3 + len(value)) // 17)  # ceil over [marker, count, comm] + value
+    if pieces > 0xFF:
+        # The count is one byte and seq 0xFF is the end marker.
+        raise ValueError(f"scene payload too large for 0xA3 upload ({pieces} packets)")
     stream = bytes([0x01, pieces & 0xFF, comm_byte & 0xFF]) + value
     out: list[bytes] = []
     for i in range(pieces):

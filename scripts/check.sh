@@ -19,7 +19,7 @@ cd "$(dirname "$0")/.."
 
 PYTHON="${PYTHON:-python3}"
 VENV="${VENV:-.venv-check}"
-COV_MIN="${COV_MIN:-90}"
+COV_MIN="${COV_MIN:-85}"
 
 if [ ! -x "$VENV/bin/python" ]; then
   echo ">> creating venv: $VENV"

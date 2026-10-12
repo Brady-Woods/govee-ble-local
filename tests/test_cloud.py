@@ -39,3 +39,60 @@ def test_parse_no_settings_falls_back_to_device_id() -> None:
     )
     assert dev.ble_mac == "5C:E7:53:A6:26:90"
     assert dev.secret is None
+
+
+async def test_authed_post_relogs_in_once_on_401() -> None:
+    from govee_ble_local.cloud.account import GoveeCloudAccount
+
+    acct = GoveeCloudAccount("a@b.c", "pw", token="stale")
+    calls: list[tuple[str, bool]] = []
+    responses = [
+        (401, {}),                                   # stale token
+        (200, {"data": {"token": "fresh"}}),         # login
+        (200, {"devices": [{"sku": "H5083", "device": "AA:BB:CC:DD:EE:FF:00:11"}]}),
+    ]
+
+    async def fake_post(url: str, body: dict, *, auth: bool):  # type: ignore[no-untyped-def]
+        calls.append((url, auth))
+        return responses.pop(0)
+
+    acct._post = fake_post  # type: ignore[method-assign]
+    devices = await acct.get_devices()
+    assert acct.token == "fresh"
+    assert [d.sku for d in devices] == ["H5083"]
+    assert len(calls) == 3
+
+
+async def test_login_failure_does_not_echo_body() -> None:
+    import pytest
+
+    from govee_ble_local.cloud.account import GoveeCloudAccount, GoveeCloudError
+
+    acct = GoveeCloudAccount("a@b.c", "pw")
+
+    async def fake_post(url: str, body: dict, *, auth: bool):  # type: ignore[no-untyped-def]
+        return 400, {"message": "secret-ish detail"}
+
+    acct._post = fake_post  # type: ignore[method-assign]
+    with pytest.raises(GoveeCloudError) as exc:
+        await acct.login()
+    assert "secret-ish" not in str(exc.value)
+
+
+async def test_post_wraps_transport_errors() -> None:
+    import aiohttp
+    import pytest
+
+    from govee_ble_local.cloud.account import GoveeCloudAccount, GoveeCloudError
+
+    class _Session:
+        def post(self, *_a, **_k):  # type: ignore[no-untyped-def]
+            raise aiohttp.ClientConnectionError("down")
+
+        async def close(self) -> None:
+            pass
+
+    acct = GoveeCloudAccount("a@b.c", "pw", session=_Session())  # type: ignore[arg-type]
+    with pytest.raises(GoveeCloudError):
+        await acct.login()
+    await acct.close()

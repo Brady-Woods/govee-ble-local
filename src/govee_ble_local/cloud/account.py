@@ -45,6 +45,9 @@ EFFECT_STRS_PATH = "/bff-app/v2/devices/scenes/effect-strs"
 # Govee rejects logins with an out-of-date appVersion ("app version too low").
 APP_VERSION = "7.5.20"
 
+# Every request is bounded; the undocumented API occasionally hangs.
+REQUEST_TIMEOUT = 20.0
+
 
 @dataclass(frozen=True)
 class CloudDevice:
@@ -106,31 +109,49 @@ class GoveeCloudAccount:
 
     async def _ensure_session(self) -> "aiohttp.ClientSession":
         if self._session is None:
-            self._session = aiohttp.ClientSession()
+            self._session = aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(total=REQUEST_TIMEOUT)
+            )
         return self._session
+
+    async def _post(self, url: str, body: dict[str, Any], *, auth: bool) -> tuple[int, Any]:
+        session = await self._ensure_session()
+        try:
+            async with session.post(
+                url, json=body, headers=self._headers(auth=auth),
+                timeout=aiohttp.ClientTimeout(total=REQUEST_TIMEOUT),
+            ) as resp:
+                return resp.status, await resp.json(content_type=None)
+        except (aiohttp.ClientError, TimeoutError, ValueError) as err:
+            raise GoveeCloudError(f"request to {url} failed: {err}") from err
+
+    async def _authed_post(self, path: str, body: dict[str, Any]) -> Any:
+        """POST with the bearer token; on 401 log in again once (token expiry)."""
+        if self._token is None:
+            await self.login()
+        status, data = await self._post(BASE_URL + path, body, auth=True)
+        if status == 401:
+            await self.login()
+            status, data = await self._post(BASE_URL + path, body, auth=True)
+        if status != 200:
+            raise GoveeCloudError(f"{path} failed (HTTP {status})")
+        return data
 
     async def login(self) -> None:
         """Authenticate; stores the bearer token (community login host)."""
-        session = await self._ensure_session()
         body = {"email": self._email, "password": self._password, "client": self._client_id}
-        async with session.post(LOGIN_URL, json=body, headers=self._headers()) as resp:
-            data = await resp.json(content_type=None)
-        if resp.status != 200:
-            raise GoveeCloudError(f"login failed (HTTP {resp.status}): {data}")
+        status, data = await self._post(LOGIN_URL, body, auth=False)
+        if status != 200 or not isinstance(data, dict):
+            # Don't echo the response body: it can carry account details.
+            raise GoveeCloudError(f"login failed (HTTP {status})")
         token = (data.get("data") or {}).get("token") or (data.get("client") or {}).get("token")
         if not token:
-            raise GoveeCloudError(f"login response had no token: {data}")
+            raise GoveeCloudError("login response had no token")
         self._token = token
 
     async def get_devices(self) -> list[CloudDevice]:
         """Fetch all devices on the account with secrets + protocol metadata."""
-        if self._token is None:
-            await self.login()
-        session = await self._ensure_session()
-        async with session.post(BASE_URL + DEVICE_LIST_PATH, json={}, headers=self._headers(auth=True)) as resp:
-            data = await resp.json(content_type=None)
-        if resp.status != 200:
-            raise GoveeCloudError(f"device list failed (HTTP {resp.status}): {data}")
+        data = await self._authed_post(DEVICE_LIST_PATH, {})
         raw = data.get("devices") or (data.get("data") or {}).get("devices") or []
         return [self._parse(d) for d in raw]
 
@@ -190,14 +211,7 @@ class GoveeCloudAccount:
         (placeholder 0xff header), keyed by scenceParamId. Upload the returned
         base64 blobs via the a3-chunk burst, then activate — this is how the app
         renders 'big'/DIY-backed built-in scenes like Aurora."""
-        if self._token is None:
-            await self.login()
-        session = await self._ensure_session()
-        body = {"scenceParamIds": param_ids}
-        async with session.post(BASE_URL + EFFECT_STRS_PATH, json=body, headers=self._headers(auth=True)) as resp:
-            data = await resp.json(content_type=None)
-        if resp.status != 200:
-            raise GoveeCloudError(f"effect-strs failed (HTTP {resp.status}): {data}")
+        data = await self._authed_post(EFFECT_STRS_PATH, {"scenceParamIds": param_ids})
         strs = data.get("effectStrs") or (data.get("data") or {}).get("effectStrs") or []
         out: dict[int, str] = {}
         for e in strs:
@@ -212,7 +226,8 @@ class GoveeCloudAccount:
             self._session = None
 
     async def __aenter__(self) -> "GoveeCloudAccount":
-        await self.login()
+        if self._token is None:
+            await self.login()
         return self
 
     async def __aexit__(self, *exc: object) -> None:

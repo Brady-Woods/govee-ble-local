@@ -56,6 +56,10 @@ class DeviceProfile:
     # reported group count (ic_segment_read.segment) instead of a static color_readback_segments
     # — for SKUs whose true segmentation isn't knowable from the static device table (H6641).
     color_readback_live_ic: bool = False
+    # Full-scale value of the brightness the device REPORTS (status TLV 0x04 /
+    # aa 04 reply). Every curated SKU reports percent (all live read-backs are
+    # 0..100); a 0..255 device would set 255 here. Writes are always percent.
+    brightness_max: int = 100
 
 
 _LIGHT = frozenset({_C.POWER, _C.BRIGHTNESS, _C.RGB, _C.COLOR_TEMP, _C.SCENES})

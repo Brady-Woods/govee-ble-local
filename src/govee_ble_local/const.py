@@ -44,18 +44,34 @@ LOCAL_NAME_PREFIXES: Final = (
 MANUFACTURER_IDS: Final = (0x8801, 0x8802, 0x8803, 0x8843)
 
 # --- Timeouts (seconds) ----------------------------------------------------
-CONNECT_TIMEOUT: Final = 20.0
 HANDSHAKE_TIMEOUT: Final = 10.0
+# The device answers the e7 02 confirm within ~0.1 s (and retransmits it ~1.1 s
+# later). Waiting for the first copy before sending anything else matters: a
+# query fired while the confirm is still in flight loses the tail of its reply.
+HANDSHAKE_STEP2_TIMEOUT: Final = 1.0
+# Late copies of the handshake frames keep arriving for ~1.2 s after it; frames
+# matching them are dropped instead of being mistaken for replies.
+HANDSHAKE_ECHO_WINDOW: Final = 2.0
 COMMAND_ACK_TIMEOUT: Final = 3.0
 IDLE_DISCONNECT_DELAY: Final = 8.0
 # After a user command (a 0x33 write) keep the connection warm this long so rapid
 # sequential changes are responsive (no reconnect handshake each time). Routine
 # polls/reads use the shorter base delay above, so idle devices still release the
-# adapter's scarce slots quickly. Dial down if slot contention appears.
+# adapter's scarce slots quickly.
 ACTIVE_IDLE_DELAY: Final = 30.0
-CONNECT_MAX_ATTEMPTS: Final = 4
+CONNECT_MAX_ATTEMPTS: Final = 3
+# A fresh link whose session setup (BGC read / handshake / unlock) fails is torn
+# down and re-established this many times in total before giving up.
+SESSION_ATTEMPTS: Final = 2
 # Write-ACK (mirrors the app's ControllerComm/AbsSingleController): a command's
-# reply must match [0x33, commandType] and succeed with byte[2] == 0. The write
-# is retried within a ~6 s budget (the app's write timeout).
-WRITE_ACK_TIMEOUT: Final = 2.0   # per attempt
-WRITE_ATTEMPTS: Final = 3
+# reply must match [0x33, commandType] and succeed with byte[2] == 0. The write is
+# retried on the same link, then once more on a freshly re-established link (a
+# link that stops acking is usually half-dead: bleak still says "connected").
+WRITE_ACK_TIMEOUT: Final = 1.5   # per attempt
+WRITE_ATTEMPTS: Final = 2        # per link
+# Hard ceiling on one public operation (connect + handshake + I/O + retries), so a
+# wedged adapter/proxy can't hold the device lock (and the caller) for minutes.
+OPERATION_TIMEOUT: Final = 45.0
+# A multi-frame read (0xAC status burst) is considered complete once the device has
+# gone quiet this long after its last frame, even if the 0xFF terminator was lost.
+BURST_IDLE_GAP: Final = 0.6

@@ -72,3 +72,39 @@ def test_parse_status_extracts_device_info() -> None:
 def test_empty_and_short() -> None:
     assert r.parse_status([]).segments == []
     assert r.parse_status([b"\x00" * 4]).is_on is None
+
+
+# Real H60A6 burst (live capture). The device very often loses the 0xFF terminator
+# on the first query of a session, and occasionally drops a chunk mid-burst.
+_LIVE = [bytes.fromhex(h) for h in (
+    "ac000a000c0300010100040164050415010a8c5b ac010707065774f453e75c0711105674f453e7f0 "
+    "ac025cdb2d0100290104030000070d115ce753d9 ac03f474560100290104031104001e0f0f120749 "
+    "ac04ff640000800f00231000000080000000808f ac0500000080000000804102020130020000a57e "
+    "ac06110164ffae5464ffae5464ffae5464ffaeee ac0754a5110264ffae5464ffae5464ffae54644c "
+    "ac08ffae54a5110364ffae5464ffae5464ffae23 acff5464ffae54a5050464ffae540000000000a3"
+).split()]
+
+
+def test_live_burst_full() -> None:
+    st = r.parse_status(_LIVE)
+    assert (st.is_on, st.brightness, st.zone_power) == (False, 100, {0: False, 1: False})
+    assert len(st.segments) == 13
+
+
+def test_lost_terminator_still_yields_core_state() -> None:
+    st = r.parse_status(_LIVE[:-1])
+    assert (st.is_on, st.brightness, st.zone_power) == (False, 100, {0: False, 1: False})
+    assert 0 < len(st.segments) < 13  # the prefix that arrived, nothing invented
+
+
+def test_gap_never_splices_later_chunks_in() -> None:
+    gapped = _LIVE[:3] + _LIVE[4:]  # chunk 0x03 lost
+    st = r.parse_status(gapped)
+    assert st.is_on is False and st.brightness == 100
+    assert st.zone_power == {} and st.segments == []  # beyond the gap: dropped, not garbage
+    assert r.reassemble(gapped) == r.reassemble(_LIVE[:3])
+
+
+def test_duplicate_chunks_collapse() -> None:
+    st = r.parse_status(_LIVE[:5] + _LIVE[3:])
+    assert len(st.segments) == 13

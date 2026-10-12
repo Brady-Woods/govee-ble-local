@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "govee-ble-local"
-version = "1.0.3"
+version = "1.1.0"
 description = "Local Bluetooth LE control of Govee devices — no cloud, no LAN API."
 readme = "README.md"
 license = { text = "MIT" }
@@ -52,7 +52,7 @@ Changelog = "https://github.com/Brady-Woods/govee-ble-local/blob/master/CHANGELO
 # Dev/test/docs only — NOT runtime. PyYAML + jsonschema validate spec/devices.yaml in the
 # test suite (the runtime device table is hardcoded Python in devices/profile.py; nothing under
 # src/ imports yaml). See CLAUDE.local.md for the dependency policy.
-test = ["pytest", "pytest-asyncio", "pytest-cov", "jsonschema>=4.0", "PyYAML>=6.0"]
+test = ["pytest", "pytest-asyncio", "pytest-cov", "jsonschema>=4.0", "PyYAML>=6.0", "aiohttp>=3.9"]
 cloud = ["aiohttp>=3.9"]
 typing = ["mypy", "types-PyYAML"]
 docs = ["pdoc"]
@@ -78,10 +78,8 @@ ignore_errors = true
 
 [tool.coverage.run]
 source = ["govee_ble_local"]
-# client.py is the thin bleak I/O wrapper, exercised by the real-device suite
-# in tools/ (device_test.py), not by unit tests - so exclude it from the
-# unit-coverage gate rather than pretend it's unit-covered.
-omit = ["*/client.py"]
+# The Kaitai-generated readers are tested through the wire layer, not line-by-line.
+omit = ["*/_generated/*"]
 
 [tool.coverage.report]
 show_missing = true
