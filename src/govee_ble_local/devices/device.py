@@ -9,11 +9,12 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Callable
-from typing import Any
+from typing import Any, Never
 
 from bleak.backends.device import BLEDevice
 
-from ..exceptions import GoveeBleNotSupported
+from ..const import INFO_READ_TIMEOUT, STATUS_READ_TIMEOUT
+from ..exceptions import GoveeBleError, GoveeBleInvalidValue, GoveeBleNotSupported
 from ..identify import identify, parse_broadcast_onoff
 from ..models import Capability, DeviceState, Encryption, Segment
 from ..scenes import Scene, load_scenes, scene_names_by_code, scene_upload_frames
@@ -38,9 +39,21 @@ def _local_tz(unix_ts: int) -> tuple[int, int]:
     return sign * (off // 3600), sign * ((off % 3600) // 60)
 
 
+_MAX_SEGMENT_INDEX = 16   # the segment mask is a u16
+
+
+def _unsupported_readback(value: Never) -> Never:
+    """Exhaustiveness guard: mypy proves every ``ReadBack`` value is handled; at runtime
+    (a profile mutated past its construction-time validation) raise a library error."""
+    raise GoveeBleError(f"unsupported readback {value!r}")
+
+
 def _mask(indices: list[int] | tuple[int, ...]) -> int:
     m = 0
     for i in indices:
+        if isinstance(i, bool) or not isinstance(i, int) or not 0 <= i < _MAX_SEGMENT_INDEX:
+            raise GoveeBleInvalidValue(
+                f"segment index must be an integer in 0..{_MAX_SEGMENT_INDEX - 1}, got {i!r}")
         m |= 1 << i
     return m
 
@@ -71,7 +84,7 @@ class Device:
         self.profile = profile
         self._ble_device = ble_device
         self._sku = (sku or profile.skus[0]).upper()
-        self._secret = secret
+        self._secret = self._checked_secret(secret)
         self._state = DeviceState(optimistic=True)
         self._device_info_read = False   # device-info (mac/hw/fw/sn) read once, lazily
         self._polled_once = False        # for the one-time INFO "first poll" line
@@ -94,7 +107,8 @@ class Device:
         name = getattr(adv, "local_name", None) or self._ble_device.name
         if mfg:
             a = identify(name, mfg)
-            if a is not None:
+            # pact_type -1 = Govee-named but unparseable pact info: unknown, not "plaintext".
+            if a is not None and a.pact_type != -1:
                 return Encryption.AES_RC4_PSK if a.encrypted else Encryption.NONE
         return self.profile.encryption
 
@@ -157,7 +171,12 @@ class Device:
 
     def _notify(self) -> None:
         for cb in list(self._callbacks):
-            cb(self._state)
+            try:
+                cb(self._state)
+            except Exception:
+                _LOGGER.warning(
+                    "%s (%s): state callback %s raised; continuing",
+                    self.address, self._sku, getattr(cb, "__qualname__", repr(cb)), exc_info=True)
 
     def _require(self, cap: Capability) -> None:
         if cap not in self.profile.capabilities:
@@ -166,8 +185,21 @@ class Device:
     def _unlock_frames(self) -> list[bytes]:
         return [build.secret_check(self._secret)] if self._secret else []
 
+    @staticmethod
+    def _checked_secret(secret: bytes | None) -> bytes | None:
+        if secret is not None and len(secret) != build.SECRET_LEN:
+            raise GoveeBleInvalidValue(
+                f"secret must be exactly {build.SECRET_LEN} bytes, got {len(secret)}")
+        return secret
+
     def set_secret(self, secret: bytes) -> None:
-        self._secret = secret
+        self._secret = self._checked_secret(secret)
+
+    def _check_kelvin(self, kelvin: int) -> None:
+        lo, hi = self.profile.min_kelvin, self.profile.max_kelvin
+        if (lo is not None and kelvin < lo) or (hi is not None and kelvin > hi):
+            raise GoveeBleInvalidValue(
+                f"{self._sku}: kelvin must be within {lo}..{hi}, got {kelvin!r}")
 
     def update_ble_device(self, ble_device: BLEDevice) -> None:
         self._ble_device = ble_device
@@ -246,6 +278,8 @@ class Device:
         lock acquisition, one connection, each frame ack-verified in order
         (power first so the rest lands on a lit fixture). ``power=False`` skips
         the power frames (already on)."""
+        if rgb is not None and kelvin is not None:
+            raise GoveeBleInvalidValue("turn_on: pass either rgb or kelvin, not both")
         frames: list[bytes] = []
         if power:
             self._require(Capability.POWER)
@@ -259,6 +293,7 @@ class Device:
             frames.append(build.color_rgb(*rgb, self.profile.color_scheme, self.profile.segments))
         elif kelvin is not None:
             self._require(Capability.COLOR_TEMP)
+            self._check_kelvin(kelvin)
             frames.append(build.color_temp(kelvin, self.profile.color_scheme, self.profile.segments))
         if not frames:
             return
@@ -284,6 +319,7 @@ class Device:
         pct = max(1, min(100, pct))  # 0 is not "off" on these devices; never send it
         await self._conn.send(build.brightness(pct))
         self._state.brightness = pct
+        self._mark_authoritative()
         self._notify()
 
     # -- colour -------------------------------------------------------------
@@ -294,14 +330,17 @@ class Device:
         self._state.rgb_color = (r, g, b)
         self._state.color_temp_kelvin = None
         self._state.scene_code = None
+        self._mark_authoritative()
         self._notify()
 
     async def set_color_temp(self, kelvin: int) -> None:
         self._require(Capability.COLOR_TEMP)
+        self._check_kelvin(kelvin)
         await self._conn.send(build.color_temp(kelvin, self.profile.color_scheme, self.profile.segments))
         self._state.color_temp_kelvin = kelvin
         self._state.rgb_color = None
         self._state.scene_code = None
+        self._mark_authoritative()
         self._notify()
 
     async def set_segment_rgb(self, indices: list[int], rgb: tuple[int, int, int]) -> None:
@@ -309,6 +348,7 @@ class Device:
         r, g, b = rgb
         await self._conn.send(build.segment_rgb(_mask(indices), r, g, b, self.profile.color_scheme))
         self._update_segments(indices, rgb=(r, g, b))
+        self._mark_authoritative()
         self._notify()
 
     async def set_segment_brightness(self, indices: list[int], pct: int) -> None:
@@ -320,6 +360,7 @@ class Device:
             build.segment_brightness, _mask(indices), pct, self.profile.color_scheme)
         await self._conn.send(frame)
         self._update_segments(indices, brightness=pct)
+        self._mark_authoritative()
         self._notify()
 
     def _build_or_unsupported(self, builder: Callable[..., bytes], *args: Any) -> bytes:
@@ -327,6 +368,8 @@ class Device:
         request) into GoveeBleNotSupported."""
         try:
             return builder(*args)
+        except GoveeBleInvalidValue:
+            raise   # bad caller input, not an unsupported scheme
         except ValueError as exc:
             raise GoveeBleNotSupported(f"{self._sku}: {exc}") from exc
 
@@ -356,9 +399,11 @@ class Device:
         carries the segment mask). Raises GoveeBleNotSupported for non-maskable schemes."""
         self._require(Capability.SEGMENTS)
         self._require(Capability.COLOR_TEMP)
+        self._check_kelvin(kelvin)
         frame = self._build_or_unsupported(
             build.segment_color_temp, _mask(indices), kelvin, self.profile.color_scheme)
         await self._conn.send(frame)
+        self._mark_authoritative()
         self._notify()
 
     # -- zones --------------------------------------------------------------
@@ -380,6 +425,11 @@ class Device:
             if len(zp) < 2:
                 await self._read_bar_switch()
                 zp = self._state.zone_power
+            other = 1 - z.power_index
+            if other not in zp:
+                raise GoveeBleError(
+                    f"{self._sku}: state of the other bar is unknown (read-back failed); "
+                    "not changing it blindly")
             target = {0: zp.get(0, False), 1: zp.get(1, False)}
             target[z.power_index] = on
             await self._conn.send(build.bar_switch(target[0], target[1]))
@@ -393,29 +443,35 @@ class Device:
         self._notify()
 
     async def _read_bar_switch(self) -> None:
-        bars = parse.parse_bar_switch(await self._read_reply(build.bar_switch_query(), 0x36) or b"")
+        bars = parse.parse_bar_switch(await self._read_reply(build.bar_switch_query(), build.CMD_BAR_SWITCH) or b"")
         if bars is not None:
             self._state.zone_power = {0: bars[0], 1: bars[1]}
 
     async def set_zone_rgb(self, name: str, rgb: tuple[int, int, int]) -> None:
+        self._require(Capability.SEGMENTS)
+        self._require(Capability.RGB)
         z = self._zone(name)
         if not z.segments:
             raise GoveeBleNotSupported(f"{self._sku}: zone {name!r} has no segments")
         r, g, b = rgb
         await self._conn.send(build.segment_rgb(_mask(z.segments), r, g, b, self.profile.color_scheme))
         self._update_segments(z.segments, rgb=(r, g, b))
+        self._mark_authoritative()
         self._notify()
 
     async def set_zone_color_temp(self, name: str, kelvin: int) -> None:
         """Colour temperature for one zone (its segment mask). Physically supported on the
         0x15 family (H60A6/H6047), whose CCT frame carries a segment mask."""
+        self._require(Capability.SEGMENTS)
         self._require(Capability.COLOR_TEMP)
+        self._check_kelvin(kelvin)
         z = self._zone(name)
         if not z.segments:
             raise GoveeBleNotSupported(f"{self._sku}: zone {name!r} has no segments")
         frame = self._build_or_unsupported(
             build.segment_color_temp, _mask(z.segments), kelvin, self.profile.color_scheme)
         await self._conn.send(frame)
+        self._mark_authoritative()
         self._notify()
 
     # -- scenes -------------------------------------------------------------
@@ -465,13 +521,17 @@ class Device:
             await self._read_polled()
         elif self.profile.readback == "plug":
             await self._read_plug()
+        elif self.profile.readback == "none":
+            pass
+        else:
+            _unsupported_readback(self.profile.readback)
         # Segment / single-colour read-back layered on top (spec Change 7).
         if self.profile.color_readback == "mechanism_b":
             await self._read_mechanism_b()
         elif self.profile.color_readback == "mechanism_a_direct":
             await self._read_mechanism_a_direct()
         if self.profile.gradual:
-            g = parse.parse_gradual(await self._read_reply(build.gradual_query(), 0xA3) or b"")
+            g = parse.parse_gradual(await self._read_reply(build.gradual_query(), build.CMD_GRADUAL_WIFI_BLE) or b"")
             if g is not None:
                 self._state.gradual = g
         # Device-info (mac/hw/fw/serial) — static-ish, read once on the first good poll.
@@ -508,7 +568,7 @@ class Device:
     async def _read_plug(self) -> None:
         """Poll a plug's relay state (aa 01 -> raw relay bitmask; any bit set = on),
         so state.is_on reflects the device rather than the last command sent."""
-        power = parse.parse_power(await self._read_reply(build.power_query(), 0x01) or b"")
+        power = parse.parse_power(await self._read_reply(build.power_query(), build.CMD_SWITCH) or b"")
         if power is not None:
             self._state.is_on = bool(power)
             self._state.optimistic = False
@@ -521,21 +581,23 @@ class Device:
         is only a serial fallback. Best-effort + once; unanswered selectors leave fields
         None. ble_mac stays None unless a reply carries a MAC distinct from the connectable
         address (none confirmed yet — the connectable address is otherwise the BLE MAC)."""
-        self._device_info_read = True   # don't retry every poll even if it yields nothing
         basic = parse.parse_device_info(
-            await self._read_reply(build.device_info_query(0x10), 0x07) or b"")
+            await self._read_reply(build.device_info_query(build.INFO_BASIC), build.CMD_DEVICE_INFO) or b"")
         if basic is not None:
             self._merge_device_info(
                 serial=basic.serial, firmware=basic.sw_version, hardware=basic.hw_version)
         wifi = parse.parse_device_info(
-            await self._read_reply(build.device_info_query(0x11), 0x07) or b"")
+            await self._read_reply(build.device_info_query(build.INFO_WIFI), build.CMD_DEVICE_INFO) or b"")
         if wifi is not None:
             self._merge_device_info(wifi_mac=wifi.wifi_mac)   # never wifi sw/hw (see docstring)
         if self._state.serial_number is None:   # SN read only if basic didn't carry it
             sn = parse.parse_device_info(
-                await self._read_reply(build.device_info_query(0x02), 0x07) or b"")
+                await self._read_reply(build.device_info_query(build.INFO_SN), build.CMD_DEVICE_INFO) or b"")
             if sn is not None:
                 self._merge_device_info(serial=sn.serial)
+        # Only after the reads completed without raising: an unanswered selector still counts as
+        # attempted (no retry every poll), but a link drop mid-read retries on the next poll.
+        self._device_info_read = True
 
     def _merge_device_info(
         self,
@@ -567,7 +629,7 @@ class Device:
         batch_count = build.ceil_div(seg_count, per_batch)
         batches: list[tuple[int, list[tuple[int | None, int, int, int]]]] = []
         for seq in range(1, batch_count + 1):
-            reply = await self._read_reply(build.bulb_group_query(seq, v2=True), 0xA5)
+            reply = await self._read_reply(build.bulb_group_query(seq, v2=True), build.CMD_BULB_COLOR_V2)
             parsed = parse.parse_bulb_group_batch(reply) if reply else None
             if parsed is not None:
                 batches.append(parsed)
@@ -587,7 +649,7 @@ class Device:
         client-side group-count-divisor assumption."""
         group_size = self.profile.color_readback_per_batch or 4
         if self.profile.color_readback_live_ic:
-            ic_reply = await self._read_reply(build.ic_count_query(), 0x40)
+            ic_reply = await self._read_reply(build.ic_count_query(), build.CMD_IC_NUM)
             ic = parse.parse_ic_count(ic_reply) if ic_reply else None
             if ic is None:
                 _LOGGER.debug(
@@ -602,7 +664,7 @@ class Device:
 
         groups: list[tuple[int, list[tuple[int, int, int, int]]]] = []
         for g in range(1, group_count + 1):
-            reply = await self._read_reply(build.bulb_group_query(g, v2=True), 0xA5)
+            reply = await self._read_reply(build.bulb_group_query(g, v2=True), build.CMD_BULB_COLOR_V2)
             expected = max(0, min(group_size, total - (g - 1) * group_size))
             parsed = parse.parse_direct_color_group(reply, expected) if reply else None
             if parsed is None:
@@ -613,8 +675,8 @@ class Device:
             self._state.segments = segs
 
     async def _query_status(self) -> tuple[reassemble.StatusReply, list[bytes], list[bytes]]:
-        frames = await self._conn.query(build.status_query(full=True), timeout=5.0)
-        ac = [f for f in frames if f and f[0] == 0xAC]
+        frames = await self._conn.query(build.status_query(full=True), timeout=STATUS_READ_TIMEOUT)
+        ac = [f for f in frames if f and f[0] == build.PRO_MULTI_AC]
         return reassemble.parse_status(ac), ac, frames
 
     async def _read_status(self) -> None:
@@ -654,7 +716,7 @@ class Device:
             serial=st.serial_number, wifi_mac=st.wifi_mac,
             firmware=st.firmware_version, hardware=st.hardware_version)
         if Capability.SCENES in self.capabilities:
-            reply = await self._read_reply(build.mode_query(), 0x05)
+            reply = await self._read_reply(build.mode_query(), build.CMD_MODE)
             if reply is not None:
                 self._apply_mode_reply(reply)
         self._state.optimistic = False
@@ -663,23 +725,23 @@ class Device:
     async def _read_polled(self) -> None:
         # Always read power: a device turned on externally (app, remote, wall
         # switch) must be noticed even when we last saw it off.
-        power = parse.parse_power(await self._read_reply(build.power_query(), 0x01) or b"")
+        power = parse.parse_power(await self._read_reply(build.power_query(), build.CMD_SWITCH) or b"")
         if power is not None:
             self._state.is_on = bool(power)
-        raw = parse.parse_brightness(await self._read_reply(build.brightness_query(), 0x04) or b"")
+        raw = parse.parse_brightness(await self._read_reply(build.brightness_query(), build.CMD_BRIGHTNESS) or b"")
         if raw is not None:
             self._state.brightness = self._brightness_pct(raw)
         if self.profile.bar_switch:
             await self._read_bar_switch()
         if Capability.SCENES in self.capabilities or self.profile.color_scheme == "h6006":
-            reply = await self._read_reply(build.mode_query(), 0x05)
+            reply = await self._read_reply(build.mode_query(), build.CMD_MODE)
             if reply is not None:
                 self._apply_mode_reply(reply)
         self._state.optimistic = False
         self._mark_authoritative()
 
     async def _read_reply(self, frame: bytes, command_type: int) -> bytes | None:
-        frames = await self._conn.query(frame, opcode=0xAA, terminal=command_type, timeout=2.0)
+        frames = await self._conn.query(frame, opcode=build.PRO_READ, terminal=command_type, timeout=INFO_READ_TIMEOUT)
         return parse.find_reply(frames, command_type)
 
     async def read_secret(self) -> bytes | None:
@@ -689,7 +751,7 @@ class Device:
         being supplied, so call this BEFORE set_secret() (while `_secret` is None the
         post-handshake unlock step sends nothing, avoiding the secret chicken-and-egg).
         Restores the v2 auto-read; the frame builder is build.secret_read()."""
-        reply = await self._read_reply(build.secret_read(), 0xB1)
+        reply = await self._read_reply(build.secret_read(), build.CMD_SECRET_READ)
         return parse.parse_secret(reply) if reply else None
 
 

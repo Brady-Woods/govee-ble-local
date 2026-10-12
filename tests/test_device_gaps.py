@@ -16,7 +16,7 @@ import pytest
 from fake_ble import ble_device
 
 from govee_ble_local.devices.device import Device, make_device
-from govee_ble_local.exceptions import GoveeBleInvalidValue, GoveeBleNotSupported
+from govee_ble_local.exceptions import GoveeBleError, GoveeBleInvalidValue, GoveeBleNotSupported
 from govee_ble_local.models import Capability, Encryption
 
 
@@ -99,13 +99,12 @@ def test_encryption_constructor_uses_advertisement() -> None:
     assert d._resolve_encryption(adv) is Encryption.AES_RC4_PSK
 
 
-def test_encryption_unparseable_pact_resolves_none_for_h60a6() -> None:
-    # CURRENT BEHAVIOR (BUG-2): a Govee-looking name with unparseable manufacturer data gives a
-    # pact of -1 and identify() reports encrypted=False, so an AES-profile H60A6 is resolved to
-    # NONE (plaintext) instead of keeping its profile default of AES_RC4_PSK.
+def test_encryption_unparseable_pact_keeps_profile_encryption_for_h60a6() -> None:
+    # WAS (BUG-2): pact -1 (unparseable) made identify() report encrypted=False, resolving an
+    # AES-profile H60A6 to NONE. FIXED (T6.1): pact -1 is "unknown", so the profile default wins.
     d = _dev("H60A6")
     adv = _adv("Govee_H60A6_ABCD", {0x1234: b"\x00\x00\x00\x00"})
-    assert d._resolve_encryption(adv) is Encryption.NONE
+    assert d._resolve_encryption(adv) is Encryption.AES_RC4_PSK
     assert d.profile.encryption is Encryption.AES_RC4_PSK
 
 
@@ -232,21 +231,19 @@ def test_update_status_logs_debug_state_after_first_poll(caplog: pytest.LogCaptu
 
 
 # ── characterization of known-buggy / questionable behavior ─────────────────
-def test_bar_switch_zone_power_with_failed_read_turns_other_bar_off() -> None:
-    # CURRENT BEHAVIOR (BUG-3): H6047 set_zone_power when the 0x36 read returns None (no reply)
-    # treats the unknown other bar as OFF, so the combined 33 36 frame switches it off.
+def test_bar_switch_zone_power_with_failed_read_refuses_to_guess_other_bar() -> None:
+    # WAS (BUG-3): with no reply to the 0x36 read the unknown other bar was sent OFF.
+    # FIXED (T6.1): raises GoveeBleError before sending anything.
     d = _dev("H6047")  # no reply to the 0x36 query
-    asyncio.run(d.set_zone_power("left", True))
+    with pytest.raises(GoveeBleError, match="unknown"):
+        asyncio.run(d.set_zone_power("left", True))
     assert _queried(d)[0][1] == 0x36
-    assert _sent(d)[0][:4].hex() == "33360100"        # left ON, right (unknown) sent OFF
-    assert d.state.zone_power == {0: True, 1: False}
-    assert d.state.is_on is True
+    assert _sent(d) == [] and d.state.zone_power == {}
 
 
-def test_raising_callback_makes_set_power_raise_after_frame_sent() -> None:
-    # CURRENT BEHAVIOR (DES-2): _notify() does not isolate callbacks, so a raising state callback
-    # propagates out of set_power even though the frame was already sent and state already
-    # updated; callbacks registered after the raising one are skipped.
+def test_raising_callback_does_not_break_set_power_or_later_callbacks() -> None:
+    # WAS (DES-2): a raising callback propagated out of set_power and skipped later callbacks.
+    # FIXED (T6.1): each callback is isolated (logged at WARNING); later ones still run.
     d = _dev("H6008")
     later: list[object] = []
 
@@ -255,17 +252,16 @@ def test_raising_callback_makes_set_power_raise_after_frame_sent() -> None:
 
     d.register_callback(boom)
     d.register_callback(later.append)
-    with pytest.raises(RuntimeError, match="callback failed"):
-        asyncio.run(d.set_power(True))
+    asyncio.run(d.set_power(True))
     assert len(_sent(d)) == 1 and d.state.is_on is True
-    assert later == []
+    assert len(later) == 1
 
 
 def test_invalid_inputs_are_not_validated_consistently() -> None:
-    # CURRENT BEHAVIOR (DES-1): out-of-range RGB escapes as a raw ValueError from bytes(),
-    # nothing is sent and state is untouched.
+    # WAS (DES-1): out-of-range RGB escaped as a raw ValueError. FIXED (T5.2/T6.1): it is a
+    # GoveeBleInvalidValue (still a ValueError); nothing is sent and state is untouched.
     d = _dev("H6008")
-    with pytest.raises(ValueError) as ei:
+    with pytest.raises(GoveeBleInvalidValue) as ei:
         asyncio.run(d.set_rgb((300, 0, 0)))
     assert not isinstance(ei.value, GoveeBleNotSupported)
     assert _sent(d) == [] and d.state.rgb_color is None
@@ -285,9 +281,10 @@ def test_invalid_inputs_are_not_validated_consistently() -> None:
     assert _sent(t) == []
 
 
-def test_device_info_flag_set_before_reads_and_not_retried() -> None:
-    # CURRENT BEHAVIOR (BUG-5): _device_info_read is set True at the top of _read_device_info,
-    # before any read, so a failed read is never retried on later polls.
+def test_device_info_flag_unset_when_read_raises_and_retried() -> None:
+    # WAS (BUG-5): _device_info_read was set True before any read, so a failed read was never
+    # retried. FIXED (T6.1): it is set only after the reads complete without raising, so a
+    # raising read leaves it False and the next poll retries.
     d = _dev("H6008")
 
     async def query(frame: bytes, **_k: object) -> list[bytes]:
@@ -299,10 +296,11 @@ def test_device_info_flag_set_before_reads_and_not_retried() -> None:
     assert d._device_info_read is False
     with pytest.raises(TimeoutError):
         asyncio.run(d.update())
-    assert d._device_info_read is True
+    assert d._device_info_read is False
     d._conn.query.reset_mock()  # type: ignore[attr-defined]
-    asyncio.run(d.update())  # second poll never re-attempts the 0x07 reads
-    assert all(c.args[0][1] != 0x07 for c in d._conn.query.call_args_list)  # type: ignore[attr-defined]
+    with pytest.raises(TimeoutError):
+        asyncio.run(d.update())  # next poll re-attempts the 0x07 reads
+    assert any(c.args[0][1] == 0x07 for c in d._conn.query.call_args_list)  # type: ignore[attr-defined]
 
 
 def test_update_propagates_read_failure_and_skips_notify() -> None:
