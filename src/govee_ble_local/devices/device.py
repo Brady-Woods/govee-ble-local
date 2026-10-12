@@ -6,7 +6,6 @@ kept :class:`~..transport.connection.GoveeConnection`.
 """
 from __future__ import annotations
 
-import base64
 import logging
 import time
 from collections.abc import Callable
@@ -17,8 +16,8 @@ from bleak.backends.device import BLEDevice
 from ..exceptions import GoveeBleNotSupported
 from ..identify import identify, parse_broadcast_onoff
 from ..models import Capability, DeviceState, Encryption, Segment
-from ..scenes import Scene, load_scenes, scene_names_by_code, scene_upload_params
-from ..transport.connection import GoveeConnection, now_ts
+from ..scenes import Scene, load_scenes, scene_names_by_code, scene_upload_frames
+from ..transport.connection import GoveeConnection
 from ..wire import build, parse, reassemble
 from .profile import DeviceProfile, profile_for
 
@@ -67,6 +66,7 @@ class Device:
         sku: str | None = None,
         secret: bytes | None = None,
         frame_log: str | None = None,
+        idle_disconnect: float | None = None,
     ) -> None:
         self.profile = profile
         self._ble_device = ble_device
@@ -78,11 +78,15 @@ class Device:
         self._callbacks: list[StateCallback] = []
         self._advert_ignore_until = 0.0   # monotonic; see ADVERT_SUPPRESS_SECONDS
         enc = self._resolve_encryption(advertisement_data)
+        conn_kw: dict[str, Any] = {}
+        if idle_disconnect is not None:
+            conn_kw["idle_disconnect"] = idle_disconnect
         self._conn = GoveeConnection(
             ble_device,
             encryption=enc,
             unlock_frames=self._unlock_frames if profile.requires_secret else None,
             frame_log=frame_log,
+            **conn_kw,
         )
 
     def _resolve_encryption(self, adv: Any | None) -> Encryption:
@@ -187,6 +191,11 @@ class Device:
         self._notify()
         return True
 
+    async def connect(self) -> None:
+        """Establish the BLE session now (connect, handshake, unlock) instead of lazily on
+        the first command. Idempotent; the connection's idle timer still applies afterwards."""
+        await self._conn.connect()
+
     async def stop(self) -> None:
         """Disconnect and refuse further I/O (the owner is being torn down)."""
         await self._conn.close()
@@ -219,7 +228,7 @@ class Device:
         self._require(Capability.POWER)
         await self._conn.send_many(self._power_frames(on))
         if self.profile.relay:  # plug relay needs a sync-time follow-up to actuate
-            ts = now_ts()
+            ts = int(time.time())
             await self._conn.send(build.plug_sync_time(ts, *_local_tz(ts)), expect_ack=False)
         self._apply_power(on)
         self._mark_authoritative()
@@ -307,13 +316,19 @@ class Device:
         schemes without per-segment brightness (e.g. H61A8)."""
         self._require(Capability.SEGMENTS)
         pct = max(0, min(100, pct))
-        try:
-            frame = build.segment_brightness(_mask(indices), pct, self.profile.color_scheme)
-        except ValueError as exc:
-            raise GoveeBleNotSupported(f"{self._sku}: {exc}") from exc
+        frame = self._build_or_unsupported(
+            build.segment_brightness, _mask(indices), pct, self.profile.color_scheme)
         await self._conn.send(frame)
         self._update_segments(indices, brightness=pct)
         self._notify()
+
+    def _build_or_unsupported(self, builder: Callable[..., bytes], *args: Any) -> bytes:
+        """Run a frame builder, translating its ValueError (scheme can't express the
+        request) into GoveeBleNotSupported."""
+        try:
+            return builder(*args)
+        except ValueError as exc:
+            raise GoveeBleNotSupported(f"{self._sku}: {exc}") from exc
 
     def _update_segments(
         self,
@@ -324,24 +339,25 @@ class Device:
     ) -> None:
         """Optimistically fold a segment write into state.segments."""
         by_index = {seg.index: seg for seg in self._state.segments}
+        updated: list[Segment] = []
         for i in indices:
             cur = by_index.get(i, Segment(index=i))
-            by_index[i] = Segment(
+            seg = Segment(
                 index=i,
                 rgb=rgb if rgb is not None else cur.rgb,
                 brightness=brightness if brightness is not None else cur.brightness,
             )
-        self._state.segments = [by_index[k] for k in sorted(by_index)]
+            by_index[i] = seg   # a repeated index folds onto the previous write
+            updated.append(seg)
+        self._state.segments = parse.merge_segments(self._state.segments, updated)
 
     async def set_segment_color_temp(self, indices: list[int], kelvin: int) -> None:
         """Colour temperature on selected segments (0x15 family only — the CCT frame
         carries the segment mask). Raises GoveeBleNotSupported for non-maskable schemes."""
         self._require(Capability.SEGMENTS)
         self._require(Capability.COLOR_TEMP)
-        try:
-            frame = build.segment_color_temp(_mask(indices), kelvin, self.profile.color_scheme)
-        except ValueError as exc:
-            raise GoveeBleNotSupported(f"{self._sku}: {exc}") from exc
+        frame = self._build_or_unsupported(
+            build.segment_color_temp, _mask(indices), kelvin, self.profile.color_scheme)
         await self._conn.send(frame)
         self._notify()
 
@@ -397,10 +413,8 @@ class Device:
         z = self._zone(name)
         if not z.segments:
             raise GoveeBleNotSupported(f"{self._sku}: zone {name!r} has no segments")
-        try:
-            frame = build.segment_color_temp(_mask(z.segments), kelvin, self.profile.color_scheme)
-        except ValueError as exc:
-            raise GoveeBleNotSupported(f"{self._sku}: {exc}") from exc
+        frame = self._build_or_unsupported(
+            build.segment_color_temp, _mask(z.segments), kelvin, self.profile.color_scheme)
         await self._conn.send(frame)
         self._notify()
 
@@ -415,29 +429,13 @@ class Device:
         self._state.color_temp_kelvin = None
         self._notify()
 
-    def _scene_upload_frames(self, scene: Scene) -> list[bytes] | None:
-        param = scene.param
-        if not param:
-            return None
-        st = scene.scene_type
-        dialect = self.profile.scene_dialect
-        if dialect == "B_h60a6" and st == 5:
-            value = base64.b64decode(param)[1:]
-            if len(value) < 2:
-                return None
-            is_diy = (value[0] | (value[1] << 8)) + 2 == len(value)
-            return (build.scene_upload_a3(value, build.COMM_H60A6) if is_diy
-                    else build.scene_upload_a4_mtu(value, build.COMM_H60A6))
-        if dialect == "B_h6052" and st == 5:
-            raw = base64.b64decode(param)
-            if raw and raw[0] == 0x13:
-                return build.scene_upload_a3(raw[1:], build.COMM_H6052_GRAFFITI)
-            return None
-        sel = scene_upload_params(st, self.profile.scene_versions)
-        if sel is None:
-            return None
-        comm_byte, strip = sel
-        return build.scene_upload_a3(base64.b64decode(param)[strip:], comm_byte)
+    def scene_upload_frames(self, scene: Scene) -> list[bytes] | None:
+        """The a3/a4 frames that upload ``scene`` to this device (per its profile's scene
+        dialect and supported scene versions), or None when it is activate-only. Pure: no I/O."""
+        return scene_upload_frames(scene, self.profile.scene_dialect, self.profile.scene_versions)
+
+    # Kept: tools/fetch_scenes.py and tests call the old private name.
+    _scene_upload_frames = scene_upload_frames
 
     async def set_scene_by_name(self, name: str) -> None:
         self._require(Capability.SCENES)
@@ -527,21 +525,35 @@ class Device:
         basic = parse.parse_device_info(
             await self._read_reply(build.device_info_query(0x10), 0x07) or b"")
         if basic is not None:
-            if basic.serial is not None:
-                self._state.serial_number = basic.serial
-            if basic.sw_version is not None:
-                self._state.firmware_version = basic.sw_version
-            if basic.hw_version is not None:
-                self._state.hardware_version = basic.hw_version
+            self._merge_device_info(
+                serial=basic.serial, firmware=basic.sw_version, hardware=basic.hw_version)
         wifi = parse.parse_device_info(
             await self._read_reply(build.device_info_query(0x11), 0x07) or b"")
-        if wifi is not None and wifi.wifi_mac is not None:
-            self._state.wifi_mac = wifi.wifi_mac
+        if wifi is not None:
+            self._merge_device_info(wifi_mac=wifi.wifi_mac)   # never wifi sw/hw (see docstring)
         if self._state.serial_number is None:   # SN read only if basic didn't carry it
             sn = parse.parse_device_info(
                 await self._read_reply(build.device_info_query(0x02), 0x07) or b"")
-            if sn is not None and sn.serial is not None:
-                self._state.serial_number = sn.serial
+            if sn is not None:
+                self._merge_device_info(serial=sn.serial)
+
+    def _merge_device_info(
+        self,
+        *,
+        serial: str | None = None,
+        wifi_mac: str | None = None,
+        firmware: str | None = None,
+        hardware: str | None = None,
+    ) -> None:
+        """Copy each non-None device-info field onto state; None leaves the field as is."""
+        if serial is not None:
+            self._state.serial_number = serial
+        if wifi_mac is not None:
+            self._state.wifi_mac = wifi_mac
+        if firmware is not None:
+            self._state.firmware_version = firmware
+        if hardware is not None:
+            self._state.hardware_version = hardware
 
     async def _read_mechanism_b(self) -> None:
         """H61A8's per-segment colour via BulbGroupColorV2 (AA A5 <seq>, V2): request each
@@ -552,7 +564,7 @@ class Device:
         the two only happen to share the wire opcode (0xA5), not the reply layout."""
         per_batch = self.profile.color_readback_per_batch or 3
         seg_count = self.profile.color_readback_segments or self.profile.segments
-        batch_count = -(-seg_count // per_batch)  # ceil
+        batch_count = build.ceil_div(seg_count, per_batch)
         batches: list[tuple[int, list[tuple[int | None, int, int, int]]]] = []
         for seq in range(1, batch_count + 1):
             reply = await self._read_reply(build.bulb_group_query(seq, v2=True), 0xA5)
@@ -586,22 +598,19 @@ class Device:
             total, group_count = ic.ic_count, ic.segment_count
         else:
             total = self.profile.color_readback_segments or self.profile.segments
-            group_count = -(-total // group_size)  # ceil
+            group_count = build.ceil_div(total, group_size)
 
-        segs: dict[int, Segment] = {}
+        groups: list[tuple[int, list[tuple[int, int, int, int]]]] = []
         for g in range(1, group_count + 1):
             reply = await self._read_reply(build.bulb_group_query(g, v2=True), 0xA5)
             expected = max(0, min(group_size, total - (g - 1) * group_size))
             parsed = parse.parse_direct_color_group(reply, expected) if reply else None
             if parsed is None:
                 continue
-            group_index, records = parsed
-            base = (group_index - 1) * group_size
-            for k, (brightness, r, gg, b) in enumerate(records):
-                idx = base + k
-                segs[idx] = Segment(index=idx, rgb=(r, gg, b), brightness=brightness)
+            groups.append(parsed)
+        segs = parse.direct_groups_to_segments(groups, group_size)
         if segs:
-            self._state.segments = [segs[k] for k in sorted(segs)]
+            self._state.segments = segs
 
     async def _query_status(self) -> tuple[reassemble.StatusReply, list[bytes], list[bytes]]:
         frames = await self._conn.query(build.status_query(full=True), timeout=5.0)
@@ -638,19 +647,12 @@ class Device:
         if st.segments:
             # A burst whose tail was lost carries only a prefix of the segments;
             # merge so the rest keep their last known values.
-            merged = {seg.index: seg for seg in self._state.segments}
-            merged.update({seg.index: seg for seg in st.segments})
-            self._state.segments = [merged[k] for k in sorted(merged)]
+            self._state.segments = parse.merge_segments(self._state.segments, st.segments)
         # Device-info (serial / wifi_mac / fw / hw) comes from the 0x07 TLV in the 0xAC
         # stream — the ONLY source for BLE-only devices (H60A6); aa 07 returns zeros there.
-        if st.serial_number is not None:
-            self._state.serial_number = st.serial_number
-        if st.wifi_mac is not None:
-            self._state.wifi_mac = st.wifi_mac
-        if st.firmware_version is not None:
-            self._state.firmware_version = st.firmware_version
-        if st.hardware_version is not None:
-            self._state.hardware_version = st.hardware_version
+        self._merge_device_info(
+            serial=st.serial_number, wifi_mac=st.wifi_mac,
+            firmware=st.firmware_version, hardware=st.hardware_version)
         if Capability.SCENES in self.capabilities:
             reply = await self._read_reply(build.mode_query(), 0x05)
             if reply is not None:
@@ -678,10 +680,7 @@ class Device:
 
     async def _read_reply(self, frame: bytes, command_type: int) -> bytes | None:
         frames = await self._conn.query(frame, opcode=0xAA, terminal=command_type, timeout=2.0)
-        for reply in frames:
-            if len(reply) >= 2 and reply[0] == 0xAA and reply[1] == command_type:
-                return reply
-        return None
+        return parse.find_reply(frames, command_type)
 
     async def read_secret(self) -> bytes | None:
         """Read the 8-byte account-lock secret off the device (aa b1), or None.
@@ -701,9 +700,13 @@ def make_device(
     *,
     secret: bytes | None = None,
     frame_log: str | None = None,
+    idle_disconnect: float | None = None,
 ) -> Device | None:
     """Build a capability-driven Device for `sku`, or None if unsupported."""
     p = profile_for(sku)
     if p is None:
         return None
-    return Device(p, ble_device, advertisement_data, sku=sku, secret=secret, frame_log=frame_log)
+    return Device(
+        p, ble_device, advertisement_data, sku=sku, secret=secret, frame_log=frame_log,
+        idle_disconnect=idle_disconnect,
+    )

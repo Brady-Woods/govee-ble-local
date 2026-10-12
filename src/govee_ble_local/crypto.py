@@ -11,6 +11,8 @@ from __future__ import annotations
 
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
+from .const import FRAME_LEN
+
 
 def aes_ecb_block(key16: bytes, block16: bytes, *, encrypt: bool) -> bytes:
     """AES/ECB/NoPadding on a single 16-byte block (Safe.a / Safe.c)."""
@@ -67,4 +69,4 @@ def checksum(body: bytes) -> int:
 
 def checksum_ok(frame20: bytes) -> bool:
     """True if a plaintext 20-byte frame's trailing XOR checksum is valid."""
-    return len(frame20) == 20 and checksum(frame20[:19]) == frame20[19]
+    return len(frame20) == FRAME_LEN and checksum(frame20[:-1]) == frame20[-1]

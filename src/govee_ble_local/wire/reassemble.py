@@ -128,7 +128,7 @@ def parse_status(frames: list[bytes]) -> StatusReply:
             return st
         _LOGGER.debug("status reply truncated; decoded %d of %d bytes", len(trimmed) - 2, len(buf))
 
-    segs: dict[int, Segment] = {}
+    segs: list[Segment] = []
     for tlv in reply.tlvs:
         typ = int(tlv.type)
         if typ == 0:                       # trailing zero-pad sentinel
@@ -143,10 +143,10 @@ def parse_status(frames: list[bytes]) -> StatusReply:
         elif typ == TYPE_COLOR_GROUP:
             base = (int(v.group_index) - 1) * _RECORDS_PER_GROUP
             for k, rec in enumerate(v.records):
-                segs[base + k] = Segment(
+                segs.append(Segment(
                     index=base + k, rgb=(int(rec.r), int(rec.g), int(rec.b)),
                     brightness=int(rec.brightness),
-                )
+                ))
         elif typ == TYPE_DEVICE_INFO:
             info = parse.device_info_from(int(v.selector), v.info)
             if info is not None:
@@ -158,5 +158,5 @@ def parse_status(frames: list[bytes]) -> StatusReply:
                     st.firmware_version = info.sw_version
                 if info.hw_version is not None and st.hardware_version is None:
                     st.hardware_version = info.hw_version
-    st.segments = [segs[k] for k in sorted(segs)]
+    st.segments = parse.merge_segments(segs)
     return st

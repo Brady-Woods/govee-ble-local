@@ -9,9 +9,14 @@ from __future__ import annotations
 
 from typing import Literal
 
+from ..const import FRAME_LEN
 from ..crypto import checksum
 
-FRAME_LEN = 20
+
+def ceil_div(a: int, b: int) -> int:
+    """Ceiling integer division (``ceil(a / b)`` for positive ``b``)."""
+    return -(-a // b)
+
 
 # proType (enum pro_type)
 PRO_WRITE = 0x33
@@ -158,7 +163,7 @@ def scene_activate(code: int) -> bytes:
 def scene_upload_a3(value: bytes, comm_byte: int) -> list[bytes]:
     """0xA3 scene/DIY upload (MultipleControllerCommV1): frames of
     [0x01(marker), packet_count, comm_byte, value…], seq 0,1,…, last=0xFF (data-bearing)."""
-    pieces = -(-(3 + len(value)) // 17)  # ceil over [marker, count, comm] + value
+    pieces = ceil_div(3 + len(value), 17)  # ceil over [marker, count, comm] + value
     if pieces > 0xFF:
         # The count is one byte and seq 0xFF is the end marker.
         raise ValueError(f"scene payload too large for 0xA3 upload ({pieces} packets)")
