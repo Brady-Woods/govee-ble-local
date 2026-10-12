@@ -10,6 +10,7 @@ connect from the advertisement, so ``encryption`` here is only the fallback defa
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Literal, get_args
 
 from ..models import Capability, Encryption, Zone
 from ..wire.build import ColorScheme
@@ -17,8 +18,10 @@ from ..wire.build import ColorScheme
 # scene dialects: "A" = library parseSceneV1 (comType from scene_versions);
 # "B_h60a6" = H60A6 DIY (0x58; 0xA4-MTU graffiti / 0xA3 DIY by length gate);
 # "B_h6052" = H6052 type-5 professional graffiti (commByte 9).
-SceneDialect = str
-ReadBack = str  # "status" (0xAC burst) | "polled" (aa 01/04/05) | "none"
+SceneDialect = Literal["A", "B_h60a6", "B_h6052"]
+# "status" (0xAC burst) | "polled" (aa 01/04/05) | "plug" (aa 01 relay bitmask) | "none"
+ReadBack = Literal["status", "polled", "plug", "none"]
+ColorReadBack = Literal["", "mechanism_b", "mechanism_a_direct"]
 
 _C = Capability
 
@@ -49,7 +52,7 @@ class DeviceProfile:
     # "mechanism_a_direct" (H6047/H6641 Controller4ColorInfoByGroup, 0xAA 0xA5 per-group direct
     # request, group size 4 — a DIFFERENT controller from mechanism_b that happens to share the
     # 0xA5 wire opcode). 0x0d bulbs read colour/CCT from the polled 0x05 mode report instead.
-    color_readback: str = ""
+    color_readback: ColorReadBack = ""
     color_readback_per_batch: int = 3   # group size per reply (mechanism_b V2=3, V1=4; mechanism_a_direct=4)
     # Static read-back piece count, when it differs from the WRITE/addressable `segments` count
     # (both per-SKU facts from devices.yaml — e.g. H6047: write=10 getGoodsType4ColorSegment,
@@ -64,6 +67,20 @@ class DeviceProfile:
     # aa 04 reply). Every curated SKU reports percent (all live read-backs are
     # 0..100); a 0..255 device would set 255 here. Writes are always percent.
     brightness_max: int = 100
+
+    def __post_init__(self) -> None:
+        # Fail at import of the table, not silently at poll time, on a typo.
+        for name, allowed in (
+            ("color_scheme", ColorScheme),
+            ("scene_dialect", SceneDialect),
+            ("readback", ReadBack),
+            ("color_readback", ColorReadBack),
+        ):
+            value = getattr(self, name)
+            if value not in get_args(allowed):
+                raise ValueError(
+                    f"DeviceProfile{self.skus}: {name}={value!r} not in {get_args(allowed)}"
+                )
 
 
 _LIGHT = frozenset({_C.POWER, _C.BRIGHTNESS, _C.RGB, _C.COLOR_TEMP, _C.SCENES})

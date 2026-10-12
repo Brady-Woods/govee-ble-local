@@ -6,19 +6,22 @@ Assistant BLE-library conventions.
 """
 from __future__ import annotations
 
+from importlib.metadata import PackageNotFoundError, version as _pkg_version
+
 from .const import LOCAL_NAME_PREFIXES, MANUFACTURER_IDS
-from .devices.device import Device
-from .devices.profile import DeviceProfile
+from .devices.device import Device, StateCallback
+from .devices.profile import DeviceProfile, profile_for
 from .exceptions import (
     GoveeBleAuthError,
     GoveeBleConnectionError,
     GoveeBleError,
     GoveeBleHandshakeError,
+    GoveeBleInvalidValue,
     GoveeBleNotSupported,
     GoveeBleTimeout,
 )
 from .identify import GoveeAdvertisement
-from .models import Capability, DeviceState, Segment, Zone
+from .models import Capability, DeviceState, Encryption, Segment, Zone
 from .registry import (
     create_device,
     device_profile_for,
@@ -26,29 +29,41 @@ from .registry import (
     supported_skus,
 )
 from .scanner import DiscoveredDevice, discover, match, supported
+from .scenes import Scene
+
+try:
+    __version__ = _pkg_version("govee-ble-local")
+except PackageNotFoundError:  # pragma: no cover - uninstalled source tree
+    __version__ = "0+unknown"
 
 __all__ = [
+    "LOCAL_NAME_PREFIXES",
+    "MANUFACTURER_IDS",
     "Capability",
     "Device",
     "DeviceProfile",
     "DeviceState",
     "DiscoveredDevice",
+    "Encryption",
     "GoveeAdvertisement",
     "GoveeBleAuthError",
     "GoveeBleConnectionError",
     "GoveeBleError",
     "GoveeBleHandshakeError",
+    "GoveeBleInvalidValue",
     "GoveeBleNotSupported",
     "GoveeBleTimeout",
-    "LOCAL_NAME_PREFIXES",
-    "MANUFACTURER_IDS",
+    "Scene",
     "Segment",
+    "StateCallback",
     "Zone",
+    "__version__",
     "create_device",
     "device_profile_for",
     "discover",
     "is_supported_sku",
     "match",
+    "profile_for",
     "supported",
     "supported_skus",
 ]
