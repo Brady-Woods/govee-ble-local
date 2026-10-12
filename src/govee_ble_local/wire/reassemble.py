@@ -38,7 +38,7 @@ TYPE_COLOR_GROUP = 0xA5
 class StatusReply:
     """Device state decoded from a reassembled 0xAC status reply."""
     is_on: bool | None = None
-    brightness: int | None = None            # raw 0-255 (percent mapping is UI-layer)
+    brightness: int | None = None            # raw reported value: 0..100 on curated SKUs (brightness_max)
     zone_power: dict[int, bool] = field(default_factory=dict)
     segments: list[Segment] = field(default_factory=list)
     # Device-info from the 0x07 TLV (BLE-only devices report it ONLY here — was the MAC-anchor).

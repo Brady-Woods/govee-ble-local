@@ -5,9 +5,11 @@ the spec-generated ``GoveeBleFrame`` reader — the spec is the single source of
 wire layout. Multi-packet ``0xAC``/``0xA1``/``0xA3``/``0xA4`` streams are reassembled
 and walked in :mod:`.reassemble` (cross-frame de-chunking isn't expressible in Kaitai).
 
-Values are returned **as the device sends them** (spec-aligned): brightness is the
-raw 0-255 byte (percent mapping is a UI concern), and power is the raw byte so plugs
-can read it as a relay bitmask while lights treat non-zero as on.
+Values are returned **as the device sends them** (no rescaling): brightness is the raw
+reported byte, which every curated SKU sends as a 0..100 percent (a device reporting
+0..255 would set ``DeviceProfile.brightness_max`` accordingly; scaling is the Device
+layer's job), and power is the raw byte so plugs can read it as a relay bitmask while
+lights treat non-zero as on.
 """
 from __future__ import annotations
 
@@ -69,7 +71,8 @@ def parse_power(frame: bytes) -> int | None:
 
 
 def parse_brightness(frame: bytes) -> int | None:
-    """AA 04 reply. Raw 0-255 (no codec rescale; percent mapping is UI-layer)."""
+    """AA 04 reply. The raw reported byte, not rescaled: 0..100 percent on every curated SKU
+    (see ``DeviceProfile.brightness_max``; the Device layer does any normalisation)."""
     b = _read_reply(frame, _Command.brightness)
     return None if b is None else int(b.brightness)
 
@@ -126,9 +129,12 @@ def parse_kelvin(frame: bytes) -> int | None:
 
 
 def parse_mode_color_0d(frame: bytes) -> tuple[int, int, int] | None:
-    """AA 05 0D reply (H6052, mechanism C): a single (r, g, b) colour fanned across
-    the device's zones, or None. Spec Change 7 / mode_color_0d_report. (Default-strategy
-    families reuse 0x0D as [gradual_flag, kelvin]; only H6052 reads it as RGB.)"""
+    """AA 05 0D reply read as a bare (r, g, b) triple, or None.
+
+    SUPERSEDED: the "mechanism C" reading (0x0D carries only RGB, H6052 only) was wrong. On
+    the 0x0d-scheme bulbs the body is ``[r, g, b, kelvin u2be]``, so this drops the kelvin
+    and reports white instead of the colour temperature. Use :func:`parse_mode_0d`; this is
+    kept only for the spec's ``mode_color_0d_report`` view of the frame."""
     m = _mode_read(frame)
     if m is None or int(m.selector_or_sub_mode) != 0x0D:
         return None
@@ -239,7 +245,7 @@ def direct_groups_to_segments(
 # mirrors that: the CALLER supplies `expected_records`, computed from its own already-known
 # total. Hand-decoded (bypassing the generated bulb_group_color_read_v2 type, which is
 # H61A8-specific and would misdecode this format) — the same "shared opcode, per-SKU body"
-# precedent as parse_mode_color_0d.
+# precedent as the 0x0d mode read (parse_mode_0d).
 def parse_direct_color_group(
     frame: bytes, expected_records: int
 ) -> tuple[int, list[tuple[int, int, int, int]]] | None:
@@ -342,7 +348,7 @@ def parse_device_info(frame: bytes) -> DeviceInfo | None:
 @dataclass(frozen=True)
 class Notify:
     sub_type: int
-    level: int | None = None                      # 0x20 brightness push (raw 0-255)
+    level: int | None = None                      # 0x20 brightness push (raw reported value)
     wifi_connected: bool | None = None            # 0x11 (status byte == 0)
     zone_flags: tuple[int, int, int] | None = None  # 0x30 flag bytes (family-interpreted)
 

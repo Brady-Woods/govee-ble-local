@@ -49,10 +49,7 @@ SUB_COLOR_0B = 0x0B        # color_rgbic_0b (H61A8)
 OP15_SET_COLOR = 0x01
 OP15_SET_BRIGHTNESS = 0x02
 
-# Device-info (0x07) selectors. Other raw opcodes device.py matches already have names:
-# CMD_SWITCH 0x01, CMD_BRIGHTNESS 0x04, CMD_MODE 0x05, CMD_DEVICE_INFO 0x07, CMD_BAR_SWITCH
-# 0x36, CMD_GRADUAL_WIFI_BLE 0xA3, CMD_BULB_COLOR_V2 0xA5, CMD_IC_NUM 0x40, CMD_SECRET_READ
-# 0xB1, PRO_READ 0xAA, PRO_MULTI_AC 0xAC (device.py can adopt them as-is).
+# Device-info (0x07) selectors.
 INFO_BASIC, INFO_WIFI, INFO_SN = 0x10, 0x11, 0x02
 
 # power payload values
@@ -216,7 +213,7 @@ def scene_upload_a3(value: bytes, comm_byte: int) -> list[bytes]:
 
 def scene_upload_a4_mtu(value: bytes, comm_byte: int, *, mtu: int = 20) -> list[bytes]:
     """0xA4-MTU multi-packet upload (makeSendBytesMtu). START [A4 00 00 01 cntLo cntHi comm
-    value×(mtu-8)]; MIDDLE [A4 seqLo seqHi value×(mtu-4)] (1-based); END [A4 FF FF value]
+    value x (mtu-8)]; MIDDLE [A4 seqLo seqHi value x (mtu-4)] (1-based); END [A4 FF FF value]
     (data-bearing). Exact-length frames (BCC appended, not zero-padded)."""
     def f(body: bytes) -> bytes:
         return body + bytes([checksum(body)])

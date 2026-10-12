@@ -1,19 +1,22 @@
 """Describe + classify a single frame against the Kaitai spec.
 
-One shared implementation used by BOTH the runtime logging (transport/connection.py
-maps the severity to a log level) and the offline analyzer (tools/analyze_frame_log.py
-buckets the severities into a report). It answers two questions about a plaintext frame:
+One shared implementation used by BOTH the runtime logging (``transport/connection.py``
+uses only the label, ``describe_frame(...)[0]``, to name frames in debug logs) and the
+offline analyzer (:mod:`govee_ble_local.debug`, the ``govee-ble-analyze`` CLI, which buckets
+the issues into a coverage report). It answers two questions about a plaintext frame:
 
   * a human LABEL (e.g. ``write/mode/color_rgbic_15``, ``ack/mode``, ``read/mode/sub=0x15``,
     ``status-chunk``, ``multi-chunk/0xa4``), and
   * a list of ISSUES ``[(severity, reason)]`` where severity is one of:
       ``hard``     — a valid frame whose STRUCTURE the spec doesn't represent (real gap:
                      unknown proType/command/sub-mode/notify-sub, a parse failure, or a
-                     device write-ACK rejection). Runtime logs these at WARNING/ERROR.
+                     device write-ACK rejection).
       ``soft``     — a known opcode whose BODY is opaque (raw bytes): the spec models the
-                     frame but not this payload. Runtime logs at DEBUG.
+                     frame but not this payload.
       ``artifact`` — invalid checksum / wrong length: not a real plaintext frame
                      (ciphertext or corruption), not a spec gap.
+
+Severities are consumed by the analyzer only; the runtime does not map them to log levels.
 
 ``0xAC`` status replies are multi-frame bursts and can't be judged one frame at a time —
 use :func:`analyze_status_bursts` for those.
@@ -44,8 +47,6 @@ KNOWN_STATUS_REPLY_TLVS: frozenset[int] = frozenset(
 )
 
 
-
-
 def _opaque(x: object) -> bool:
     """True if the Kaitai reader left this body as raw bytes (no modelled layout)."""
     return isinstance(x, (bytes, bytearray))
@@ -58,11 +59,15 @@ def describe_frame(plain: bytes, direction: str = "?") -> tuple[str, list[tuple[
         # fragment). Handled in analyze_status_bursts; don't try to parse it here.
         return ("status-chunk", [])
     if plain and plain[0] in (0xA1, 0xA3, 0xA4) and len(plain) != 20:
-        return (f"multi-chunk/0x{plain[0]:02x}", [])   # variable-length upload chunk (e.g. 0xA4 END, 19 B)
+        # variable-length upload chunk (e.g. 0xA4 END, 19 B)
+        return (f"multi-chunk/0x{plain[0]:02x}", [])
     if len(plain) != 20:
         return (f"len={len(plain)}", [("artifact", f"not 20 bytes (len {len(plain)})")])
     if not checksum_ok(plain):
-        return ("bad_checksum", [("artifact", "invalid BCC — likely undecrypted ciphertext / corrupt")])
+        return (
+            "bad_checksum",
+            [("artifact", "invalid BCC — likely undecrypted ciphertext / corrupt")],
+        )
     try:
         f = _F.from_bytes(plain)
     except Exception as exc:  # noqa: BLE001
@@ -95,7 +100,10 @@ def describe_frame(plain: bytes, direction: str = "?") -> tuple[str, list[tuple[
         if cmd == _CMD.mode:
             st = getattr(params, "sub_type", None)
             if st is not None and not isinstance(st, _SUB):
-                return (f"write/mode/sub=0x{plain[2]:02x}", [("hard", f"unknown mode sub_type 0x{plain[2]:02x}")])
+                return (
+                    f"write/mode/sub=0x{plain[2]:02x}",
+                    [("hard", f"unknown mode sub_type 0x{plain[2]:02x}")],
+                )
             if isinstance(st, _SUB):
                 label += f"/{st.name}"
                 if _opaque(getattr(params, "params", None)):
