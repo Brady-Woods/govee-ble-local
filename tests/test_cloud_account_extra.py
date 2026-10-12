@@ -179,45 +179,107 @@ async def test_login_error_paths() -> None:
     assert d.token == "alt"
 
 
-async def test_malformed_json_bodies_leak_attribute_error() -> None:
-    # CURRENT BEHAVIOR (SEC-5): a 200 response whose JSON is not an object
-    # escapes as AttributeError/TypeError instead of GoveeCloudError.
+_BAD_SHAPES: list[tuple[str, Any, Any]] = [
+    # (method, body, arg)
+    ("get_devices", ["list"], None),
+    ("get_devices", None, None),
+    ("get_devices", "str", None),
+    ("get_devices", {"devices": ["not-a-dict"]}, None),
+    ("get_devices", {"devices": "nope"}, None),
+    ("get_devices", {"data": "nope"}, None),
+    ("get_devices", {"data": {"devices": {"a": 1}}}, None),
+    ("get_scene_effect_strs", None, [1]),
+    ("get_scene_effect_strs", ["x"], [1]),
+    ("get_scene_effect_strs", {"effectStrs": [None]}, [1]),
+    ("get_scene_effect_strs", {"effectStrs": "nope"}, [1]),
+    ("get_scene_effect_strs", {"data": 5}, [1]),
+    ("get_scene_effect_strs", {"effectStrs": [{"scenceParamId": "abc", "effectStr": "x"}]}, [1]),
+    ("get_scene_effect_strs", {"effectStrs": [{"scenceParamId": [1], "effectStr": "x"}]}, [1]),
+    ("get_scene_effect_strs", {"effectStrs": [{"scenceParamId": 1, "effectStr": ["x"]}]}, [1]),
+]
+
+
+@pytest.mark.parametrize(("method", "body", "arg"), _BAD_SHAPES)
+async def test_malformed_json_bodies_raise_cloud_error(method: str, body: Any, arg: Any) -> None:
+    # WAS (SEC-5): AttributeError/TypeError/ValueError escaped.
+    # FIXED: every wrong-shaped 200 body raises GoveeCloudError, never echoing the body.
     a = _acct(token="t")
-    _stub_post(a, [(200, ["list"])])
-    with pytest.raises(AttributeError):
-        await a.get_devices()
+    _stub_post(a, [(200, body)])
+    with pytest.raises(GoveeCloudError) as ei:
+        await (getattr(a, method)() if arg is None else getattr(a, method)(arg))
+    for leak in ("not-a-dict", "nope", "abc"):
+        assert leak not in str(ei.value)
 
-    b = _acct(token="t")
-    _stub_post(b, [(200, None)])
-    with pytest.raises(AttributeError):
-        await b.get_scene_effect_strs([1])
 
-    c = _acct(token="t")
-    _stub_post(c, [(200, {"devices": ["not-a-dict"]})])
-    with pytest.raises(AttributeError):
-        await c.get_devices()
+async def test_login_wrong_nested_shape_raises_cloud_error() -> None:
+    for body in ({"data": "str"}, {"data": ["x"]}, {"client": 5}):
+        a = _acct()
+        _stub_post(a, [(200, body)])
+        with pytest.raises(GoveeCloudError):
+            await a.login()
 
-    d = _acct(token="t")
-    _stub_post(d, [(200, {"effectStrs": [None]})])
-    with pytest.raises(AttributeError):
-        await d.get_scene_effect_strs([1])
 
-    e = _acct(token="t")
-    _stub_post(e, [(200, {"effectStrs": [{"scenceParamId": "abc", "effectStr": "x"}]})])
-    with pytest.raises(ValueError):
-        await e.get_scene_effect_strs([1])
+async def test_post_non_json_body_raises_cloud_error_without_leak() -> None:
+    import json
 
-    f = _acct(token="t")
-    _stub_post(f, [(200, {"effectStrs": [{"scenceParamId": [1], "effectStr": "x"}]})])
-    with pytest.raises(TypeError):
-        await f.get_scene_effect_strs([1])
+    exc = json.JSONDecodeError("Expecting value: SECRET-BODY", "SECRET-BODY", 0)
+    bad = _acct(session=_PostSession(_Resp(200, exc=exc)))  # type: ignore[arg-type]
+    with pytest.raises(GoveeCloudError) as ei:
+        await bad._post("http://x", {}, auth=False)
+    assert "SECRET-BODY" not in str(ei.value)
+
+
+def test_parse_malformed_secret_raises() -> None:
+    import base64
+    import json
+
+    # WAS: bad base64 silently became None / wrong-length bytes passed through.
+    for bad in ("!!!notbase64", base64.b64encode(b"short").decode(), base64.b64encode(b"x" * 9).decode()):
+        with pytest.raises(GoveeCloudError, match="device secret for H6008 is malformed") as ei:
+            GoveeCloudAccount._parse({"sku": "h6008", "device": "AA", "secretCode": bad})
+        assert bad not in str(ei.value)
+    settings = json.dumps({"address": "98:17:3C:B1:A2:D1", "secretCode": "AAAA"})
+    with pytest.raises(GoveeCloudError, match="98:17:3C:B1:A2:D1"):
+        GoveeCloudAccount._parse({"device": "AA", "deviceExt": {"deviceSettings": settings}})
+    ok = GoveeCloudAccount._parse({"sku": "H1", "device": "AA", "secretCode": "YVUhCQtzXFQ="})
+    assert ok.secret == bytes.fromhex("615521090b735c54")
+    assert GoveeCloudAccount._parse({"sku": "H1", "device": "AA"}).secret is None
+
+
+def test_parse_non_dict_settings_json_is_ignored() -> None:
+    dev = GoveeCloudAccount._parse({"sku": "H1", "device": "AA", "deviceExt": {"deviceSettings": "[1]"}})
+    assert dev.secret is None
+
+
+async def test_aenter_login_failure_closes_owned_session() -> None:
+    a = _acct()
+    sess = _FakeSession()
+    a._session = sess  # type: ignore[assignment]
+    _stub_post(a, [(403, {})])
+    with pytest.raises(GoveeCloudError):
+        async with a:
+            pytest.fail("should not enter")
+    assert sess.closed is True and a._session is None
+
+    inj = _FakeSession()
+    b = _acct(session=inj)  # type: ignore[arg-type]
+    _stub_post(b, [(403, {})])
+    with pytest.raises(GoveeCloudError):
+        await b.__aenter__()
+    assert inj.closed is False
+
+
+async def test_app_version_keyword_used_in_headers() -> None:
+    a = _acct(app_version="9.9.9")
+    h = a._headers()
+    assert h["appVersion"] == "9.9.9" and "GoveeHome/9.9.9" in h["User-Agent"]
+    assert _acct()._headers()["appVersion"] == acc.APP_VERSION
 
 
 def test_parse_edge_branches() -> None:
     dev = GoveeCloudAccount._parse({
         "sku": "h6008", "device": "AA", "pactType": "x", "pact_code": "5",
         "deviceExt": {"deviceSettings": "{not json", "deviceName": "Ext"},
-        "secret_code": "!!!notbase64",
     })
     assert dev.sku == "H6008" and dev.name == "Ext"
     assert dev.pact_type is None and dev.pact_code == 5
