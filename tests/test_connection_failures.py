@@ -5,7 +5,6 @@ with a `# CURRENT BEHAVIOR (bug BUG-n): ...` comment. No wall-clock assertions."
 from __future__ import annotations
 
 import pytest
-from bleak.backends.device import BLEDevice
 from bleak.exc import BleakError
 
 from govee_ble_local.const import SESSION_ATTEMPTS
@@ -19,7 +18,7 @@ from govee_ble_local.models import Encryption
 from govee_ble_local.transport import connection as conn_mod
 from govee_ble_local.transport.connection import GoveeConnection
 
-from fake_ble import FakeGovee, frame
+from fake_ble import FakeGovee, ble_device, frame
 
 ADDR = "AA:BB:CC:DD:EE:FF"
 
@@ -35,7 +34,7 @@ def fast(monkeypatch: pytest.MonkeyPatch) -> None:
 def _make(monkeypatch, fake: FakeGovee, **kw) -> GoveeConnection:
     monkeypatch.setattr(conn_mod, "establish_connection", fake.establish)
     enc = kw.pop("encryption", Encryption.AES_RC4_PSK if fake.encrypted else Encryption.NONE)
-    c = GoveeConnection(BLEDevice(ADDR, "GVH60A6X", details={}), encryption=enc, **kw)
+    c = GoveeConnection(ble_device(ADDR, "GVH60A6X"), encryption=enc, **kw)
     c._idle_disconnect = 0
     return c
 

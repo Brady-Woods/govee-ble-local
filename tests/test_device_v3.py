@@ -7,7 +7,7 @@ import base64
 from unittest.mock import AsyncMock
 
 import pytest
-from bleak.backends.device import BLEDevice
+from fake_ble import ble_device
 
 from govee_ble_local.devices.device import Device, make_device
 from govee_ble_local.devices.profile import PROFILES, profile_for
@@ -17,7 +17,7 @@ from govee_ble_local.scenes import Scene
 
 
 def _dev(sku: str, *, replies: list[bytes] | None = None) -> Device:
-    d = make_device(BLEDevice("AA:BB:CC:DD:EE:20", sku, details={}), sku)
+    d = make_device(ble_device("AA:BB:CC:DD:EE:20", sku), sku)
     assert d is not None
     sent: list[bytes] = []
 
@@ -54,10 +54,10 @@ def _reply(*b: int) -> bytes:
 def test_all_profiles_construct() -> None:
     for p in PROFILES:
         for sku in p.skus:
-            d = make_device(BLEDevice("AA:BB:CC:DD:EE:20", sku, details={}), sku)
+            d = make_device(ble_device("AA:BB:CC:DD:EE:20", sku), sku)
             assert d is not None and d.sku == sku.upper()
             assert d.capabilities == p.capabilities
-    assert make_device(BLEDevice("AA:BB:CC:DD:EE:20", "H9999", details={}), "H9999") is None
+    assert make_device(ble_device("AA:BB:CC:DD:EE:20", "H9999"), "H9999") is None
 
 
 def test_power_global_switch_for_plain_lights() -> None:

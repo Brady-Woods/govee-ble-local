@@ -16,13 +16,24 @@ link mid-operation, etc.
 from __future__ import annotations
 
 import asyncio
+import inspect
 from collections.abc import Callable
 from typing import Any
+
+from bleak.backends.device import BLEDevice
 
 from govee_ble_local.const import PSK
 from govee_ble_local.crypto import checksum, decrypt, encrypt
 
 SESSION_KEY = bytes(range(16))
+
+
+def ble_device(address: str, name: str | None) -> BLEDevice:
+    """Build a BLEDevice across bleak versions (<1.0 requires ``rssi``; >=1.0 dropped it)."""
+    kwargs: dict[str, Any] = {"details": {}}
+    if "rssi" in inspect.signature(BLEDevice.__init__).parameters:
+        kwargs["rssi"] = 0
+    return BLEDevice(address, name, **kwargs)
 
 
 def frame(*b: int) -> bytes:

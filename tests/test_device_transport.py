@@ -2,13 +2,12 @@
 from __future__ import annotations
 
 import pytest
-from bleak.backends.device import BLEDevice
 
 from govee_ble_local import create_device
 from govee_ble_local.exceptions import GoveeBleAuthError
 from govee_ble_local.transport import connection as conn_mod
 
-from fake_ble import FakeGovee, frame
+from fake_ble import FakeGovee, ble_device, frame
 from test_connection import H60A6_BURST, IDLE_GAP, spy_rx_waits
 
 
@@ -21,7 +20,7 @@ def fast(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def _device(monkeypatch: pytest.MonkeyPatch, fake: FakeGovee, sku: str, **kw: object):
     monkeypatch.setattr(conn_mod, "establish_connection", fake.establish)
-    dev = create_device(BLEDevice("AA:BB:CC:DD:EE:01", f"GV{sku}", details={}), sku, **kw)  # type: ignore[arg-type]
+    dev = create_device(ble_device("AA:BB:CC:DD:EE:01", f"GV{sku}"), sku, **kw)  # type: ignore[arg-type]
     dev._conn._idle_disconnect = 0
     return dev
 

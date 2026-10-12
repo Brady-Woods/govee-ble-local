@@ -13,7 +13,7 @@ from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
-from bleak.backends.device import BLEDevice
+from fake_ble import ble_device
 
 from govee_ble_local.devices.device import Device, make_device
 from govee_ble_local.exceptions import GoveeBleNotSupported
@@ -33,7 +33,7 @@ def _frame(*payload: int) -> bytes:
 def _dev(sku: str, replies: dict[int, list[bytes]] | None = None, **profile_overrides: Any) -> Device:
     """Device with a mocked connection. ``replies`` maps frame[1] (command byte) -> reply frames
     returned from query(); unmapped commands get no reply."""
-    d = make_device(BLEDevice("AA:BB:CC:DD:EE:30", sku, details={}), sku)
+    d = make_device(ble_device("AA:BB:CC:DD:EE:30", sku), sku)
     assert d is not None
     if profile_overrides:
         d.profile = dataclasses.replace(d.profile, **profile_overrides)
@@ -95,7 +95,7 @@ def test_encryption_falls_back_to_profile_without_usable_advert() -> None:
 
 def test_encryption_constructor_uses_advertisement() -> None:
     adv = _adv("Govee_H6008_ABCD", {0x8841: bytes([0xEC, 0x00, 0x01, 0x02])})
-    d = Device(_dev("H6008").profile, BLEDevice("AA:BB:CC:DD:EE:31", "x", details={}), adv)
+    d = Device(_dev("H6008").profile, ble_device("AA:BB:CC:DD:EE:31", "x"), adv)
     assert d._resolve_encryption(adv) is Encryption.AES_RC4_PSK
 
 

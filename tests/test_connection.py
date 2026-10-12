@@ -6,7 +6,6 @@ from __future__ import annotations
 import asyncio
 
 import pytest
-from bleak.backends.device import BLEDevice
 from bleak.exc import BleakError
 
 from govee_ble_local.exceptions import (
@@ -19,7 +18,7 @@ from govee_ble_local.models import Encryption
 from govee_ble_local.transport import connection as conn_mod
 from govee_ble_local.transport.connection import GoveeConnection
 
-from fake_ble import FakeGovee, frame
+from fake_ble import FakeGovee, ble_device, frame
 
 ADDR = "AA:BB:CC:DD:EE:FF"
 
@@ -60,7 +59,7 @@ def spy_rx_waits(monkeypatch: pytest.MonkeyPatch, c: GoveeConnection) -> list[fl
 def _make(monkeypatch: pytest.MonkeyPatch, fake: FakeGovee, **kw: object) -> GoveeConnection:
     monkeypatch.setattr(conn_mod, "establish_connection", fake.establish)
     enc = Encryption.AES_RC4_PSK if fake.encrypted else Encryption.NONE
-    c = GoveeConnection(BLEDevice(ADDR, "GVH60A6X", details={}), encryption=enc, **kw)  # type: ignore[arg-type]
+    c = GoveeConnection(ble_device(ADDR, "GVH60A6X"), encryption=enc, **kw)  # type: ignore[arg-type]
     c._idle_disconnect = 0
     return c
 
@@ -224,7 +223,7 @@ async def test_establish_uses_fresh_ble_device(monkeypatch, fast) -> None:
     fake = FakeGovee(encrypted=False)
     c = _make(monkeypatch, fake)
     await c.connect()
-    newer = BLEDevice(ADDR, "via-proxy", details={})
+    newer = ble_device(ADDR, "via-proxy")
     c.update_ble_device(newer)
     assert fake.connect_kwargs["ble_device_callback"]() is newer
 

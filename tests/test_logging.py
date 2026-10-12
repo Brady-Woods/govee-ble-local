@@ -11,7 +11,7 @@ import logging
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from bleak.backends.device import BLEDevice
+from fake_ble import ble_device
 
 from govee_ble_local import debug
 from govee_ble_local.exceptions import GoveeBleError
@@ -33,7 +33,7 @@ def _bcc(*body: int) -> bytes:
 
 
 def _conn() -> GoveeConnection:
-    c = GoveeConnection(BLEDevice("AA:BB:CC:DD:EE:FF", "GVH60A6X", details={}),
+    c = GoveeConnection(ble_device("AA:BB:CC:DD:EE:FF", "GVH60A6X"),
                         encryption=Encryption.NONE)
     client = MagicMock()
     client.is_connected = True
