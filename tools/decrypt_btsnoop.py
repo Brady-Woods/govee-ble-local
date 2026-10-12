@@ -18,7 +18,9 @@ only -- never keys/secrets.
 """
 from __future__ import annotations
 
+import argparse
 import collections
+import os
 import struct
 import sys
 from pathlib import Path
@@ -34,8 +36,12 @@ _WRITE_OPS = {0x52, 0x12}          # Write Command / Write Request  (host -> dev
 _NOTIFY_OPS = {0x1B, 0x1D}         # Handle Value Notification / Indication (device -> host)
 
 
+MAX_RECORD = 1 << 20  # 1 MiB: far above any real HCI record; guards against corrupt headers
+
+
 def _records(path: str):
     with open(path, "rb") as f:
+        size = os.fstat(f.fileno()).st_size
         hdr = f.read(16)
         if hdr[:8] != b"btsnoop\x00":
             raise SystemExit(f"{path}: not a btsnoop file")
@@ -44,6 +50,12 @@ def _records(path: str):
             if len(rh) < 24:
                 return
             _orig, incl, flags, _drops, _ts = struct.unpack(">IIIIq", rh)
+            remaining = size - f.tell()
+            if incl > MAX_RECORD or incl > remaining:
+                raise SystemExit(
+                    f"{path}: corrupt btsnoop record (included length {incl} exceeds "
+                    f"{'1 MiB limit' if incl > MAX_RECORD else f'remaining {remaining} bytes'})"
+                )
             data = f.read(incl)
             if len(data) < incl:
                 return
@@ -167,27 +179,25 @@ def main(path: str, dump_types: set[int], show_all: bool, limit: int, starts_onl
     print()
 
 
+def _hex_set(text: str) -> set[int]:
+    try:
+        return {int(x, 16) for x in text.split(",")}
+    except ValueError as err:
+        raise argparse.ArgumentTypeError(f"--dump wants comma-separated hex opcodes: {err}") from err
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("paths", nargs="+", metavar="capture.log", help="btsnoop capture file(s)")
+    ap.add_argument("--dump", type=_hex_set, default={0xA1, 0xA3, 0xA4}, metavar="a1,a3,a4",
+                    help="comma-separated hex opcodes to dump (default a1,a3,a4)")
+    ap.add_argument("--limit", type=int, default=200, help="max frames to dump per capture (default 200)")
+    ap.add_argument("--all", action="store_true", help="dump every decoded frame")
+    ap.add_argument("--starts", action="store_true", help="only multi-packet START frames")
+    return ap.parse_intermixed_args(argv)
+
+
 if __name__ == "__main__":
-    argv = sys.argv[1:]
-    show_all = "--all" in argv
-    starts_only = "--starts" in argv
-    argv = [a for a in argv if a not in ("--all", "--starts")]
-    dump_types = {0xA1, 0xA3, 0xA4}
-    limit = 200
-    paths = []
-    i = 0
-    while i < len(argv):
-        a = argv[i]
-        if a == "--dump":
-            i += 1
-            dump_types = {int(x, 16) for x in argv[i].split(",")}
-        elif a == "--limit":
-            i += 1
-            limit = int(argv[i])
-        else:
-            paths.append(a)
-        i += 1
-    if not paths:
-        raise SystemExit(__doc__)
-    for p in paths:
-        main(p, dump_types, show_all, limit, starts_only)
+    _a = parse_args()
+    for p in _a.paths:
+        main(p, _a.dump, _a.all, _a.limit, _a.starts)

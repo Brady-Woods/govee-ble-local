@@ -94,3 +94,50 @@ def test_main_from_frames_log_without_output(tmp_path: Path, capsys: pytest.Capt
     src.write_text(LOG_TEXT)
     debug.main(["--from-frames-log", str(src)])
     assert "wrote" not in capsys.readouterr().out
+
+
+def test_missing_file_exits_2_with_message(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    missing = tmp_path / "nope.jsonl"
+    assert debug.main([str(missing)]) == 2
+    err = capsys.readouterr().err
+    assert "cannot read" in err and "nope.jsonl" in err
+
+
+def test_missing_frames_log_exits_2(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    assert debug.main(["--from-frames-log", str(tmp_path / "nope.log")]) == 2
+    assert "cannot read" in capsys.readouterr().err
+
+
+def test_malformed_lines_skipped_reported_and_analysis_continues(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    p = tmp_path / "cap.jsonl"
+    p.write_text(
+        json.dumps({"dir": "tx", "plain": PLAIN}) + "\n"
+        "{not json\n"                                   # line 2: bad JSON
+        "[1, 2]\n"                                      # line 3: non-dict record
+        + json.dumps({"dir": "rx", "plain": "zz11"}) + "\n"   # line 4: invalid hex
+        + json.dumps({"dir": "rx", "plain": 5}) + "\n"        # line 5: wrong type
+        + json.dumps({"dir": "tx", "plain": PLAIN}) + "\n"
+    )
+    rc = debug.main([str(p)])
+    cap = capsys.readouterr()
+    assert rc in (0, 1)
+    assert f"{p}:2: invalid JSON" in cap.err
+    assert f"{p}:3: record is list" in cap.err
+    assert f"{p}:4: invalid hex" in cap.err
+    assert f"{p}:5: 'plain' is int" in cap.err
+    assert "2 plaintext frames" in cap.out
+    assert "4 malformed input line(s) skipped" in cap.out
+
+
+def test_load_jsonl_checked_counts(tmp_path: Path) -> None:
+    p = tmp_path / "c.jsonl"
+    p.write_text("oops\n" + json.dumps({"dir": "tx", "plain": PLAIN}) + "\n")
+    recs, skipped = debug._load_jsonl_checked([str(p)])
+    assert len(recs) == 1 and skipped == 1
+
+
+def test_analyze_default_reports_no_malformed_line(capsys: pytest.CaptureFixture[str]) -> None:
+    debug.analyze([{"dir": "tx", "plain": PLAIN}])
+    assert "malformed input line" not in capsys.readouterr().out

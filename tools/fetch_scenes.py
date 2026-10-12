@@ -13,14 +13,50 @@ the library and no runtime cloud call is needed.
 """
 from __future__ import annotations
 
+import argparse
 import json
+import os
 import pathlib
+import re
 import sys
+import urllib.parse
 import urllib.request
 
 LIBRARY_URL = "https://app2.govee.com/appsku/v1/light-effect-libraries"
-APP_VERSION = "7.5.20"
+# Self-contained on purpose (the cloud module carries its own copy). Override with
+# --app-version or $GOVEE_APP_VERSION if Govee starts rejecting this value.
+DEFAULT_APP_VERSION = "7.5.20"
 OUT_DIR = pathlib.Path(__file__).resolve().parent.parent / "src" / "govee_ble_local" / "scenes"
+_SKU_RE = re.compile(r"[A-Za-z0-9]{3,8}")
+
+
+def validate_sku(sku: str) -> str:
+    """Return the upper-cased SKU, or raise ValueError if it is not 3-8 alphanumerics."""
+    if not _SKU_RE.fullmatch(sku):
+        raise ValueError(f"invalid SKU {sku!r}: expected 3-8 alphanumeric characters")
+    return sku.upper()
+
+
+def catalog_path(sku: str, out_dir: pathlib.Path | None = None) -> pathlib.Path:
+    """Output path for a SKU's catalog; guaranteed to resolve inside ``out_dir``."""
+    base = (out_dir or OUT_DIR).resolve()
+    path = (base / f"{validate_sku(sku)}.json").resolve()
+    if path.parent != base:
+        raise ValueError(f"refusing to write outside {base}: {path}")
+    return path
+
+
+def validate_entry(name: object, entry: dict[str, object]) -> None:
+    """Check one fetched scene against what ``scenes.load_scenes`` requires; raises ValueError."""
+    if not isinstance(name, str) or not name:
+        raise ValueError(f"scene name {name!r} is not a non-empty string")
+    if not isinstance(entry.get("code"), int) or isinstance(entry.get("code"), bool):
+        raise ValueError(f"{name}: missing/non-integer 'code'")
+    for key, typ in (("param", str), ("category", str), ("param_id", int),
+                     ("scene_type", int), ("cmd_version", int)):
+        v = entry.get(key)
+        if v is not None and not isinstance(v, typ):
+            raise ValueError(f"{name}: '{key}' must be {typ.__name__} or null, got {type(v).__name__}")
 
 
 def _is_placeholder(param_b64: str | None) -> bool:
@@ -44,8 +80,9 @@ def _is_placeholder(param_b64: str | None) -> bool:
     return len(raw) >= 4 and raw[3] == 0xFF
 
 
-def fetch(sku: str) -> dict[str, dict[str, object]]:
-    req = urllib.request.Request(f"{LIBRARY_URL}?sku={sku}", headers={"AppVersion": APP_VERSION})
+def fetch(sku: str, app_version: str = DEFAULT_APP_VERSION) -> dict[str, dict[str, object]]:
+    url = f"{LIBRARY_URL}?sku={urllib.parse.quote(validate_sku(sku), safe='')}"
+    req = urllib.request.Request(url, headers={"AppVersion": app_version})
     with urllib.request.urlopen(req, timeout=20) as resp:  # noqa: S310
         payload = json.load(resp)
     scenes: dict[str, dict[str, object]] = {}
@@ -78,6 +115,7 @@ def fetch(sku: str) -> dict[str, dict[str, object]]:
             if _is_placeholder(param):
                 # real blob must come from the authenticated effect-strs endpoint
                 entry["placeholder"] = True
+            validate_entry(scene.get("sceneName"), entry)
             scenes[scene["sceneName"]] = entry
     return scenes
 
@@ -100,7 +138,7 @@ def resolve_placeholders(email: str, password: str, skus: list[str]) -> None:
         try:
             await acct.login()
             for sku in skus:
-                path = OUT_DIR / f"{sku.upper()}.json"
+                path = catalog_path(sku)
                 if not path.exists():
                     continue
                 data = json.loads(path.read_text())
@@ -177,7 +215,7 @@ def scene_capable_skus() -> list[str]:
 def audit() -> None:
     """Report per-SKU scene-upload READINESS (read-only, no cloud). For each
     scene-capable SKU, run every bundled scene through the device's real
-    ``_scene_upload_frames`` routing and bucket it:
+    ``Device.scene_upload_frames`` routing and bucket it:
       upload      = a dialect burst is produced (0xA3 / 0xA4-MTU)
       activate    = correctly bare-activated (no param, or static sceneType 0)
       BLOCKED     = has a real effect blob + non-static sceneType but NO upload path
@@ -201,7 +239,7 @@ def audit() -> None:
             if scene.placeholder:
                 placeholder += 1
             try:
-                frames = dev._scene_upload_frames(scene)  # type: ignore[attr-defined]
+                frames = dev.scene_upload_frames(scene)
             except Exception:  # noqa: BLE001
                 frames = None
             if frames:
@@ -216,41 +254,64 @@ def audit() -> None:
         print(f"{sku:7s} {len(cat):5d} {u:>16s} {activate:8d} {blocked:7d} {placeholder:6d}  {vers}")
 
 
-def main(skus: list[str]) -> None:
+def main(skus: list[str], app_version: str = DEFAULT_APP_VERSION) -> int:
+    """Fetch + merge each SKU's catalog. Returns the number of SKUs that failed."""
     OUT_DIR.mkdir(parents=True, exist_ok=True)
+    failures = 0
     for sku in skus:
-        path = OUT_DIR / f"{sku.upper()}.json"
         try:
-            fresh = fetch(sku)
+            path = catalog_path(sku)
+            fresh = fetch(sku, app_version)
+            existing = json.loads(path.read_text()) if path.exists() else {}
+            if not isinstance(existing, dict):
+                raise ValueError(f"existing {path.name} is not a JSON object")
         except Exception as err:  # noqa: BLE001
-            print(f"{sku}: FETCH FAILED: {err}")
+            print(f"{sku}: FETCH FAILED: {err}", file=sys.stderr)
+            failures += 1
             continue
-        existing = json.loads(path.read_text()) if path.exists() else {}
         scenes = _merge(existing, fresh)
         path.write_text(json.dumps(scenes, indent=1, sort_keys=True))
         kept = sum(1 for n in scenes if n in existing and _valid_resolved(existing[n]))
         placeholders = sorted(n for n, v in scenes.items() if v.get("placeholder"))
         note = f"; {len(placeholders)} placeholders (run --resolve)" if placeholders else ""
         print(
-            f"{sku}: {len(scenes)} scenes -> scenes/{sku.upper()}.json "
+            f"{sku}: {len(scenes)} scenes -> scenes/{path.name} "
             f"[{kept} preserved]{note}"
         )
         if placeholders:
             print(f"    unresolved placeholders: {', '.join(placeholders)}")
+    if failures:
+        print(f"{failures}/{len(skus)} SKU fetch(es) failed", file=sys.stderr)
+    return failures
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("skus", nargs="*", metavar="SKU", help="SKUs to fetch (default: all scene-capable)")
+    mode = ap.add_mutually_exclusive_group()
+    mode.add_argument("--audit", action="store_true", help="per-SKU upload readiness; no cloud call")
+    mode.add_argument("--resolve", action="store_true",
+                      help="bake real blobs for placeholder scenes (needs GOVEE_EMAIL/GOVEE_PASSWORD)")
+    ap.add_argument("--app-version", default=os.environ.get("GOVEE_APP_VERSION", DEFAULT_APP_VERSION),
+                    help=f"AppVersion header (env GOVEE_APP_VERSION; default {DEFAULT_APP_VERSION})")
+    args = ap.parse_args(argv)
+    try:
+        args.skus = [validate_sku(x) for x in args.skus]
+    except ValueError as err:
+        ap.error(str(err))
+    return args
 
 
 if __name__ == "__main__":
-    import os
-
-    args = [a for a in sys.argv[1:] if not a.startswith("--")]
-    skus = args or scene_capable_skus()
-    if "--audit" in sys.argv:
+    _a = parse_args()
+    _skus = _a.skus or scene_capable_skus()
+    if _a.audit:
         audit()
-    elif "--resolve" in sys.argv:
-        email = os.environ.get("GOVEE_EMAIL", "")
-        password = os.environ.get("GOVEE_PASSWORD", "")
-        if not email or not password:
+    elif _a.resolve:
+        _email = os.environ.get("GOVEE_EMAIL", "")
+        _password = os.environ.get("GOVEE_PASSWORD", "")
+        if not _email or not _password:
             sys.exit("--resolve needs GOVEE_EMAIL and GOVEE_PASSWORD env vars")
-        resolve_placeholders(email, password, skus)
+        resolve_placeholders(_email, _password, _skus)
     else:
-        main(skus)
+        sys.exit(1 if main(_skus, _a.app_version) else 0)

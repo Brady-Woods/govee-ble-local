@@ -11,13 +11,19 @@ Works on encrypted Govee links because the ATT header + PDU lengths are plaintex
 """
 from __future__ import annotations
 
+import argparse
 import collections
+import os
 import struct
 import sys
 
 
+MAX_RECORD = 1 << 20  # 1 MiB: far above any real HCI record; guards against corrupt headers
+
+
 def _records(path: str):
     with open(path, "rb") as f:
+        size = os.fstat(f.fileno()).st_size
         hdr = f.read(16)
         if hdr[:8] != b"btsnoop\x00":
             raise SystemExit(f"{path}: not a btsnoop file")
@@ -27,6 +33,12 @@ def _records(path: str):
             if len(rh) < 24:
                 return
             _orig, incl, _flags, _drops, _ts = struct.unpack(">IIIIq", rh)
+            remaining = size - f.tell()
+            if incl > MAX_RECORD or incl > remaining:
+                raise SystemExit(
+                    f"{path}: corrupt btsnoop record (included length {incl} exceeds "
+                    f"{'1 MiB limit' if incl > MAX_RECORD else f'remaining {remaining} bytes'})"
+                )
             data = f.read(incl)
             if len(data) < incl:
                 return
@@ -106,10 +118,15 @@ def main(path: str, dump_protype: bool = False) -> None:
     print()
 
 
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("paths", nargs="+", metavar="capture.log", help="btsnoop capture file(s)")
+    ap.add_argument("--protype", action="store_true",
+                    help="add a first-byte histogram of 20-byte writes")
+    return ap.parse_intermixed_args(argv)
+
+
 if __name__ == "__main__":
-    args = [a for a in sys.argv[1:] if a != "--protype"]
-    dump = "--protype" in sys.argv
-    if not args:
-        raise SystemExit(__doc__)
-    for p in args:
-        main(p, dump_protype=dump)
+    _a = parse_args()
+    for p in _a.paths:
+        main(p, dump_protype=_a.protype)
