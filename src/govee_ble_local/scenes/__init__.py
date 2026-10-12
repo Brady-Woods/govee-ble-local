@@ -7,11 +7,14 @@ BLE activation code; `param` is the base64 effect blob for the a3-chunk upload
 from __future__ import annotations
 
 import base64
+import functools
 import json
+import re
 from dataclasses import dataclass
-from functools import lru_cache
 from importlib import resources
+from types import MappingProxyType
 
+from ..exceptions import GoveeBleError, GoveeBleInvalidValue
 from ..wire import build
 
 # Path-B scene-library upload table (from the decompiled `ScenesOp.parseSceneV1`,
@@ -58,26 +61,45 @@ class Scene:
     big_effect: bool = False       # bigEffectStr==1: fetch-required when param is empty
 
 
-@lru_cache(maxsize=None)
-def load_scenes(sku: str) -> dict[str, Scene]:
-    """Return {scene_name: Scene} for a SKU, or {} if no catalog is bundled."""
+_SKU_RE = re.compile(r"[A-Za-z0-9]{3,8}")
+
+
+@functools.cache
+def _catalog(sku: str) -> MappingProxyType[str, Scene]:
+    """Parse + cache one (already validated, upper-case) SKU's catalog, read-only."""
     try:
-        raw = (resources.files(__package__) / f"{sku.upper()}.json").read_text()
+        raw = (resources.files(__package__) / f"{sku}.json").read_text(encoding="utf-8")
     except (FileNotFoundError, ModuleNotFoundError):
-        return {}
-    data = json.loads(raw)
-    return {
-        name: Scene(
-            name, int(v["code"]), v.get("param"), v.get("category"),
-            v.get("param_id"), bool(v.get("placeholder", False)),
-            scene_type=v.get("scene_type"), cmd_version=v.get("cmd_version"),
-            big_effect=bool(v.get("big_effect", False)),
-        )
-        for name, v in data.items()
-    }
+        return MappingProxyType({})
+    try:
+        data = json.loads(raw)
+        if not isinstance(data, dict):
+            raise TypeError(f"top-level value is {type(data).__name__}, expected object")
+        scenes = {
+            name: Scene(
+                name, int(v["code"]), v.get("param"), v.get("category"),
+                v.get("param_id"), bool(v.get("placeholder", False)),
+                scene_type=v.get("scene_type"), cmd_version=v.get("cmd_version"),
+                big_effect=bool(v.get("big_effect", False)),
+            )
+            for name, v in data.items()
+        }
+    except (ValueError, TypeError, KeyError, AttributeError) as err:
+        raise GoveeBleError(f"scene catalog for {sku} is malformed: {err!r}") from err
+    return MappingProxyType(scenes)
 
 
-@lru_cache(maxsize=None)
+def load_scenes(sku: str) -> dict[str, Scene]:
+    """Return {scene_name: Scene} for a SKU, or {} if no catalog is bundled.
+
+    Returns a fresh dict each call (Scene is frozen), so callers can't corrupt the cache.
+    Raises GoveeBleInvalidValue for a malformed SKU, GoveeBleError for a corrupt catalog."""
+    key = sku.strip() if isinstance(sku, str) else ""
+    if not _SKU_RE.fullmatch(key):
+        raise GoveeBleInvalidValue(f"invalid SKU {sku!r}: expected 3-8 alphanumeric characters")
+    return dict(_catalog(key.upper()))
+
+
 def scene_names_by_code(sku: str) -> dict[int, str]:
     """Reverse index {code: name} for a SKU's catalog (first name wins)."""
     out: dict[int, str] = {}
