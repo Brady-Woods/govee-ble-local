@@ -23,6 +23,8 @@ pip install "git+https://github.com/Brady-Woods/govee-ble-local.git"
 # or, from a clone (editable):
 git clone https://github.com/Brady-Woods/govee-ble-local.git
 cd govee-ble-local && pip install -e .
+# optional Govee cloud-account helpers (pulls in aiohttp):
+pip install 'govee-ble-local[cloud]'
 ```
 
 Requires Python 3.11+. Runtime dependencies are deliberately minimal and Home-Assistant-friendly:
@@ -86,6 +88,17 @@ scene dialects on the non-H60A6 SKUs are source-modelled and not yet hardware-ve
 The full API reference is generated from the docstrings with [`pdoc`](https://pdoc.dev)
 (`pip install '.[docs]' && bash tools/gen_docs.sh` → `docs/api/`); `govee_ble_local.__all__` is the
 public contract.
+
+## Security notes
+
+The Govee BLE protocol itself has well-known limits that this library cannot fix:
+
+- Its encryption uses a public pre-shared key, AES-ECB for the handshake and an RC4 stream for
+  traffic, and integrity is only an XOR checksum. Anyone within radio range can drive an
+  encrypted device.
+- Captures made with `GOVEE_FRAME_LOG` contain wire frames from which the session key can be
+  derived. Treat them as sensitive and do not post them publicly. Frame-log files are created
+  with owner-only permissions.
 
 ## Diagnostics & session capture
 

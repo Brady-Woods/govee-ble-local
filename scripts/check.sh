@@ -7,13 +7,13 @@
 #     scripts/check.sh
 #
 # Gates:
-#   1. mypy --strict on the whole package (incl. the bleak I/O wrapper)
-#   2. pytest with a coverage floor on the pure-logic modules
-#      (client.py is excluded via [tool.coverage] - it's covered by the
-#      real-device suite in tools/, not unit tests)
+#   1. mypy --strict on src/govee_ble_local (generated readers are exempt via
+#      [[tool.mypy.overrides]])
+#   2. pytest with a coverage floor over the package (only the Kaitai-generated
+#      _generated/ readers are omitted, via [tool.coverage.run])
 #
 # Env overrides: PYTHON (default python3), VENV (default .venv-check),
-#                COV_MIN (default 90).
+#                COV_MIN (default 85).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
