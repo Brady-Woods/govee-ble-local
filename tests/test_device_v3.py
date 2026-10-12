@@ -195,6 +195,16 @@ def test_zone_and_segment_color_temp() -> None:
         asyncio.run(_dev("H6006").set_segment_color_temp([0], 3000))
 
 
+
+def test_segment_brightness_unsupported_scheme_is_not_supported() -> None:
+    # H61A8 declares SEGMENTS but its colour scheme has no per-segment brightness:
+    # that is GoveeBleNotSupported (like segment CCT), never a bare ValueError.
+    d = _dev("H61A8")
+    with pytest.raises(GoveeBleNotSupported):
+        asyncio.run(d.set_segment_brightness([0], 50))
+    assert _sent(d) == []
+    asyncio.run(_dev("H60A6").set_segment_brightness([0], 50))  # supported scheme still works
+
 def test_gradual_setting() -> None:
     d = _dev("H61A8")                       # only curated SKU with the 0xA3 gradual flag
     asyncio.run(d.set_gradual(True))

@@ -18,6 +18,8 @@ with a 5 s stall (H60A6) and ~40 % failures to 1.5–4.5 s with no failures.
 
 ### Fixed
 - **Secret leaked through `wire=` in frame captures.** Only the `plain=` field of the `33 b2` / `aa b1` secret frames was masked; on a plaintext link `wire=` is the same bytes, and on an encrypted link it is decryptable from the captured handshake plus the public PSK. Both fields (and the bad-checksum debug line) are now masked.
+- `set_segment_brightness` raised a bare `ValueError` on colour schemes without per-segment
+  brightness (H61A8); it now raises `GoveeBleNotSupported`, like `set_segment_color_temp`.
 - **Handshake raced the device.** The device delivers its `e7 01` reply twice and re-sends the
   `e7 02` echo ~1 s later. The duplicate step-1 reply was consumed as the step-2 "ack", so the
   first query fired while the confirm was still in flight; ~90 % of H60A6 sessions then lost the

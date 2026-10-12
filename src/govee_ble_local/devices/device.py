@@ -305,9 +305,15 @@ class Device:
         self._notify()
 
     async def set_segment_brightness(self, indices: list[int], pct: int) -> None:
+        """Brightness on selected segments. Raises GoveeBleNotSupported for colour
+        schemes without per-segment brightness (e.g. H61A8)."""
         self._require(Capability.SEGMENTS)
         pct = max(0, min(100, pct))
-        await self._conn.send(build.segment_brightness(_mask(indices), pct, self.profile.color_scheme))
+        try:
+            frame = build.segment_brightness(_mask(indices), pct, self.profile.color_scheme)
+        except ValueError as exc:
+            raise GoveeBleNotSupported(f"{self._sku}: {exc}") from exc
+        await self._conn.send(frame)
         self._update_segments(indices, brightness=pct)
         self._notify()
 
