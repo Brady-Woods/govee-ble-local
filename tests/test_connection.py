@@ -267,3 +267,23 @@ async def test_secret_is_masked_in_frame_capture(monkeypatch, fast, caplog) -> N
     await c.connect()
     assert fake.received[0][2:10] == secret  # the device still gets the real key
     assert secret.hex() not in caplog.text
+
+
+@pytest.mark.parametrize("encrypted", [False, True])
+async def test_secret_is_masked_in_wire_capture(monkeypatch, fast, caplog, encrypted) -> None:
+    """On a plaintext link the wire bytes ARE the secret frame, and on an encrypted
+    link they are decryptable from the captured handshake - mask wire= too."""
+    import logging
+
+    caplog.set_level(logging.DEBUG, logger="govee_ble_local.frames")
+    fake = FakeGovee(encrypted=encrypted)
+    secret = bytes([0x61, 0x55, 0x21, 0x09, 0x0B, 0x73, 0x5C, 0x54])
+    unlock = frame(0x33, 0xB2, *secret)
+    c = _make(monkeypatch, fake, unlock_frames=lambda: [unlock])
+    await c.connect()
+    secret_lines = [r.getMessage() for r in caplog.records if " plain=33b2" in r.getMessage()]
+    assert secret_lines, "the unlock frame must still be captured (masked)"
+    for line in secret_lines:
+        wire_hex = line.split(" wire=")[1].split(" ")[0]
+        assert wire_hex[4:] == "ff" * 18  # 2-byte header kept, payload blanked
+    assert secret.hex() not in caplog.text

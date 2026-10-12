@@ -90,6 +90,11 @@ def _carries_secret(plain: bytes) -> bool:
     )
 
 
+def _mask_secret(frame: bytes) -> bytes:
+    """Blank the payload of a secret-carrying frame (keeps its 2-byte header)."""
+    return frame[:2] + b"\xff" * (len(frame) - 2)
+
+
 class _LinkLost(Exception):
     """Internal: the link dropped while waiting on a reply (queue sentinel)."""
 
@@ -168,9 +173,12 @@ class GoveeConnection:
         """Route one frame to the persistent JSONL sink (if configured) AND the
         frame-tier logger (if enabled) - one choke point, one shape. Account-lock
         secret payloads (33 b2 write / aa b1 read reply) are masked: captures end
-        up in logs and diagnostics downloads."""
+        up in logs and diagnostics downloads. The wire bytes are masked too - on a
+        plaintext link they ARE the secret, and on an encrypted link the session
+        key is derivable from the captured handshake plus the library's public PSK."""
         if plain is not None and _carries_secret(plain):
             plain = plain[:2] + b"\xff" * 17 + plain[19:]
+            wire = _mask_secret(wire)
         if self._framelog is not None:
             self._framelog.record(direction, wire=wire, plain=plain, enc=enc)
         if _FRAMES.isEnabledFor(logging.DEBUG):
@@ -216,7 +224,8 @@ class GoveeConnection:
         plain = self._decrypt_rx(raw)
         self._capture("rx", wire=raw, plain=plain, enc=self._encryption.value)
         if not checksum_ok(plain):
-            _LOGGER.debug("%s: dropped frame with bad checksum: %s", self.address, plain.hex())
+            shown = _mask_secret(plain) if _carries_secret(plain) else plain
+            _LOGGER.debug("%s: dropped frame with bad checksum: %s", self.address, shown.hex())
             return
         if plain[0] not in _KNOWN_RX_PRO_TYPES:
             _LOGGER.warning(
