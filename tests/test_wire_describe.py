@@ -7,11 +7,11 @@ used by both runtime logging and the offline analyzer.
 """
 from __future__ import annotations
 
-import pytest
+from conftest import require_optional
 
-pytest.importorskip("kaitaistruct", reason="Kaitai runtime not installed")
+require_optional("kaitaistruct", reason="Kaitai runtime not installed")
 
-from govee_ble_local.wire.describe import (
+from govee_ble_local.wire.describe import (  # noqa: E402
     analyze_status_bursts,
     describe_frame,
 )

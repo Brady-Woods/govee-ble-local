@@ -9,13 +9,13 @@ from __future__ import annotations
 import pathlib
 import sys
 
-import pytest
+from conftest import require_optional
 
-pytest.importorskip("kaitaistruct", reason="Kaitai runtime not installed")
-pytest.importorskip("govee_ble_local._generated.govee_ble_frame", reason="run tools/gen_kaitai.sh")
+require_optional("kaitaistruct", reason="Kaitai runtime not installed")
+require_optional("govee_ble_local._generated.govee_ble_frame", reason="run tools/gen_kaitai.sh")
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "tools"))
-import analyze_frame_log as afl
+import analyze_frame_log as afl  # noqa: E402
 
 
 def _frame(*body: int) -> bytes:

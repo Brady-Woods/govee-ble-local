@@ -2,11 +2,11 @@
 via the shipped Kaitai reader."""
 from __future__ import annotations
 
-import pytest
+from conftest import require_optional
 
-pytest.importorskip("kaitaistruct", reason="Kaitai runtime not installed")
+require_optional("kaitaistruct", reason="Kaitai runtime not installed")
 
-from govee_ble_local.wire import parse
+from govee_ble_local.wire import parse  # noqa: E402
 
 
 def f(*payload: int) -> bytes:

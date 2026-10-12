@@ -5,10 +5,12 @@ from typing import Any
 
 import pytest
 
-pytest.importorskip("aiohttp")
+from conftest import require_optional
 
-from govee_ble_local.cloud import account as acc
-from govee_ble_local.cloud.account import GoveeCloudAccount, GoveeCloudError
+require_optional("aiohttp")
+
+from govee_ble_local.cloud import account as acc  # noqa: E402
+from govee_ble_local.cloud.account import GoveeCloudAccount, GoveeCloudError  # noqa: E402
 
 
 def _acct(**kw: Any) -> GoveeCloudAccount:

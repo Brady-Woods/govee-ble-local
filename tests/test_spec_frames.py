@@ -7,14 +7,14 @@ live H60A6 suite builds on.
 """
 from __future__ import annotations
 
-import pytest
+from conftest import require_optional
 
-pytest.importorskip("kaitaistruct", reason="Kaitai runtime not installed")
+require_optional("kaitaistruct", reason="Kaitai runtime not installed")
 
-import spec_frames as sf
+import spec_frames as sf  # noqa: E402
 
 # Skip cleanly if the generated reader hasn't been produced (needs tools/gen_kaitai.sh).
-gb = pytest.importorskip(
+gb = require_optional(
     "govee_ble_local._generated.govee_ble_frame",
     reason="run tools/gen_kaitai.sh to generate the Kaitai reader",
 )
