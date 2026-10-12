@@ -11,7 +11,7 @@ Flow (matches the official app and the community govee2mqtt project):
 SecretKeyController uses). This is an undocumented API and Govee enforces a
 current `appVersion` header — we send the version of the APK this was built
 against. It can break if Govee changes the backend; the offline paths
-(GoveeDevice.read_secret / btsnoop) don't depend on it.
+(Device.read_secret / btsnoop) don't depend on it.
 """
 from __future__ import annotations
 
@@ -104,7 +104,7 @@ class GoveeCloudAccount:
         password: str,
         *,
         token: str | None = None,
-        session: "aiohttp.ClientSession | None" = None,
+        session: aiohttp.ClientSession | None = None,
         app_version: str = APP_VERSION,
     ) -> None:
         """`app_version` is the Govee Home appVersion sent in request headers
@@ -140,7 +140,7 @@ class GoveeCloudAccount:
             h["Authorization"] = f"Bearer {self._token}"
         return h
 
-    async def _ensure_session(self) -> "aiohttp.ClientSession":
+    async def _ensure_session(self) -> aiohttp.ClientSession:
         if self._session is None:
             self._session = aiohttp.ClientSession(
                 timeout=aiohttp.ClientTimeout(total=REQUEST_TIMEOUT)
@@ -244,7 +244,11 @@ class GoveeCloudAccount:
                 if len(secret) != SECRET_LEN:
                     raise ValueError("wrong length")
             except ValueError as err:  # binascii.Error is a ValueError
-                who = str(d.get("sku") or "").upper() or (ble_mac if isinstance(ble_mac, str) else "") or "unknown device"
+                who = (
+                    str(d.get("sku") or "").upper()
+                    or (ble_mac if isinstance(ble_mac, str) else "")
+                    or "unknown device"
+                )
                 raise GoveeCloudError(f"device secret for {who} is malformed") from err
 
         ext_name = ext.get("deviceName") if isinstance(ext, dict) else None
@@ -287,7 +291,7 @@ class GoveeCloudAccount:
             await self._session.close()
             self._session = None
 
-    async def __aenter__(self) -> "GoveeCloudAccount":
+    async def __aenter__(self) -> GoveeCloudAccount:
         try:
             if self._token is None:
                 await self.login()

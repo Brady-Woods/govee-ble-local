@@ -43,6 +43,8 @@ def sku_from_local_name(name: str) -> str | None:
     """
     if not name:
         return None
+    # Underscore-delimited prefixes; keep in sync with const.LOCAL_NAME_PREFIXES (which
+    # identify() gates on), where "GBK_" is also listed.
     if any(name.startswith(p) for p in ("ihoment_", "Govee_", "Minger_", "GBK_")):
         parts = name.split("_")
         if len(parts) == 3 and parts[1]:

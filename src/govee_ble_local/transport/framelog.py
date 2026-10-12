@@ -49,7 +49,7 @@ def _write_batch(path: str, lines: list[str]) -> None:
         fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
         with os.fdopen(fd, "a", encoding="ascii") as fh:
             fh.write("".join(lines))
-    except Exception as err:  # logging must never break I/O or kill the writer
+    except Exception as err:  # noqa: BLE001 - logging must never break I/O or kill the writer
         if path not in _failed_paths:
             _failed_paths.add(path)
             _LOGGER.warning("frame-log write failed (%s): %s", path, err)
@@ -137,7 +137,7 @@ class FrameLog:
         return True
 
     @classmethod
-    def resolve(cls, explicit: str | None, address: str) -> "FrameLog | None":
+    def resolve(cls, explicit: str | None, address: str) -> FrameLog | None:
         """Return a FrameLog if `explicit` or $GOVEE_FRAME_LOG is set, else None."""
         path = explicit or os.environ.get(ENV_VAR)
         return cls(path, address) if path else None

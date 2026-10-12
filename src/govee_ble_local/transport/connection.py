@@ -19,6 +19,12 @@ Reliability rules this module enforces (each one learned from live failures):
   client never clobbers the current one.
 * The idle-disconnect timer can never fire after newer activity (generation
   counter), and its task is held so it can't be garbage-collected mid-flight.
+* Teardown is detached and bounded: ``client.disconnect()`` runs as its own task
+  (not cancelled with the caller) and is awaited for at most ``DISCONNECT_TIMEOUT``,
+  so a wedged proxy can't hold the device lock. Its errors are logged, never raised.
+* Errors are normalised: bleak/asyncio/timeout failures surface as typed
+  :class:`GoveeBleError` subclasses (auth and not-supported errors are permanent and
+  never retried).
 * Junk notifications (late handshake retransmits, frames failing the XOR
   checksum) are dropped at the source, so they can't be mistaken for replies.
 """
@@ -40,7 +46,7 @@ from ..const import (
     BGC_INFO_CHAR_UUID,
     BGC_VERSION_VALUES,
     BURST_IDLE_GAP,
-    COMMAND_ACK_TIMEOUT,
+    COMMAND_ACK_TIMEOUT as COMMAND_ACK_TIMEOUT,  # re-export: tests patch it here
     CONNECT_MAX_ATTEMPTS,
     FRAME_LEN,
     HANDSHAKE_ECHO_WINDOW,
@@ -300,10 +306,13 @@ class GoveeConnection:
     # -- lifecycle ----------------------------------------------------------
 
     async def connect(self) -> None:
-        """Connect (if needed) and set up the session."""
+        """Connect (if needed) and run the handshake/unlock, under the operation deadline.
+
+        Raises only :class:`GoveeBleError` subclasses."""
         await self._run(self._ensure_connected_locked, extend_warm=False)
 
     async def disconnect(self) -> None:
+        """Drop the session and link now (bounded by ``DISCONNECT_TIMEOUT``)."""
         async with self._lock:
             self._cancel_idle_timer()
             await self._disconnect_locked()
@@ -331,7 +340,8 @@ class GoveeConnection:
                     "%s: session attempt %d/%d failed: %s",
                     self.address, attempt, SESSION_ATTEMPTS, err,
                 )
-        assert last_err is not None
+        if last_err is None:  # pragma: no cover - SESSION_ATTEMPTS >= 1
+            raise AssertionError("unreachable: no session attempt ran")
         raise last_err
 
     async def _connect_locked(self) -> None:

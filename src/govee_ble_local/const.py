@@ -1,7 +1,7 @@
 """Constants shared across the library.
 
 Values are ported from the decompiled Govee Home app (v7.5.20). See
-PROTOCOL.md for the full protocol write-up.
+spec/docs/GOVEE_BLE_GATT_PROTOCOL.md for the full protocol write-up.
 """
 from __future__ import annotations
 
