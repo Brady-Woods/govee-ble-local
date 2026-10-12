@@ -70,7 +70,6 @@ class Device:
     ) -> None:
         self.profile = profile
         self._ble_device = ble_device
-        self._advertisement = advertisement_data
         self._sku = (sku or profile.skus[0]).upper()
         self._secret = secret
         self._state = DeviceState(optimistic=True)
@@ -176,7 +175,6 @@ class Device:
         Reads on/off from the Govee manufacturer data (identify.parse_broadcast_onoff);
         returns True if `state.is_on` changed (so a caller can notify selectively).
         Restores the v2 device-level ingest so consumers don't parse adverts inline."""
-        self._advertisement = advertisement_data
         mfg = getattr(advertisement_data, "manufacturer_data", None)
         if not mfg:
             return False

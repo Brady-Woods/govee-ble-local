@@ -20,6 +20,7 @@ from kaitaistruct import KaitaiStream as _KaitaiStream
 
 from ..models import Segment
 from .._generated.govee_ble_frame import GoveeBleFrame as _GBF  # type: ignore[attr-defined]
+from . import parse
 
 _LOGGER = logging.getLogger(__name__)
 _F: Any = _GBF   # generated reader (untyped -> Any so attribute chains don't need stubs)
@@ -114,8 +115,6 @@ def parse_status(frames: list[bytes]) -> StatusReply:
     Segment global index = ``(group_index-1) * 4 + k`` (oneGroupColorSize stride; the per-group
     record COUNT comes from the TLV len). Device-info: first non-None wins (basic 0x10 precedes
     wifi 0x11), giving wifi_mac / hw / sw / serial for BLE-only devices (H60A6) from the spec."""
-    from . import parse   # local import: parse is a peer; keep the module import graph acyclic
-
     st = StatusReply()
     buf = reassemble(frames)
     try:

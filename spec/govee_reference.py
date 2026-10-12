@@ -21,7 +21,6 @@ Only the crypto needs a third-party AES (pip install pycryptodome); everything e
 runtime (pip install kaitaistruct). RC4 is implemented here (Safe.f/g); AES-ECB is delegated.
 """
 from __future__ import annotations
-import functools
 from io import BytesIO
 
 # ─────────────────────────── (3) XOR checksum (BCC) — §4.1 ───────────────────────────

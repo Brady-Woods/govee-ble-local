@@ -57,7 +57,6 @@ from ..exceptions import (
     GoveeBleAuthError,
     GoveeBleConnectionError,
     GoveeBleError,
-    GoveeBleHandshakeError,
     GoveeBleNotSupported,
     GoveeBleTimeout,
 )

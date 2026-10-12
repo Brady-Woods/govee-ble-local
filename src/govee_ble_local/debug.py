@@ -16,7 +16,6 @@ import argparse
 import collections
 import json
 import re
-import sys
 
 from .wire.describe import analyze_status_bursts, describe_frame
 
