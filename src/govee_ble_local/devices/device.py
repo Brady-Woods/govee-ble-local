@@ -88,6 +88,11 @@ class Device:
         self._state = DeviceState(optimistic=True)
         self._device_info_read = False   # device-info (mac/hw/fw/sn) read once, lazily
         self._polled_once = False        # for the one-time INFO "first poll" line
+        # Mutation sequence (BUG-4): bumped by every state-mutating setter when it applies its
+        # optimistic state. update() snapshots it before each read and discards the reply if it
+        # moved, so a stale read never overwrites a newer setter. Not a lock: setters never wait.
+        self._mutation_seq = 0
+        self._discarded_reads = 0        # cumulative count of discarded stale reads
         self._callbacks: list[StateCallback] = []
         self._advert_ignore_until = 0.0   # monotonic; see ADVERT_SUPPRESS_SECONDS
         enc = self._resolve_encryption(advertisement_data)
@@ -235,6 +240,22 @@ class Device:
     def _mark_authoritative(self) -> None:
         self._advert_ignore_until = time.monotonic() + ADVERT_SUPPRESS_SECONDS
 
+    def _mutated(self) -> None:
+        """Record that a setter changed (or is applying) device state; see ``_mutation_seq``."""
+        self._mutation_seq += 1
+
+    def _stale(self, seq: int, what: str) -> bool:
+        """True (and logged) if a setter applied state since ``seq`` was captured, i.e. the
+        read that was in flight is older than the state and must not be applied."""
+        if seq == self._mutation_seq:
+            return False
+        self._discarded_reads += 1
+        _LOGGER.debug(
+            "%s (%s): discarding stale %s read (state changed by a setter while it was in flight)",
+            self.address, self._sku, what,
+        )
+        return True
+
     def _brightness_pct(self, raw: int) -> int:
         full = self.profile.brightness_max
         return raw if full == 100 else round(raw * 100 / full)
@@ -258,10 +279,16 @@ class Device:
 
     async def set_power(self, on: bool) -> None:
         self._require(Capability.POWER)
-        await self._conn.send_many(self._power_frames(on))
-        if self.profile.relay:  # plug relay needs a sync-time follow-up to actuate
+        if self.profile.relay:
+            # Plug relay needs a sync-time follow-up to actuate. Power (acked) and sync-time
+            # (unacked) go out under ONE connection-lock acquisition so a poll can't interleave.
             ts = int(time.time())
-            await self._conn.send(build.plug_sync_time(ts, *_local_tz(ts)), expect_ack=False)
+            items = [(f, True) for f in self._power_frames(on)]
+            items.append((build.plug_sync_time(ts, *_local_tz(ts)), False))
+            await self._conn.send_mixed(items)
+        else:
+            await self._conn.send_many(self._power_frames(on))
+        self._mutated()
         self._apply_power(on)
         self._mark_authoritative()
         self._notify()
@@ -298,6 +325,7 @@ class Device:
         if not frames:
             return
         await self._conn.send_many(frames)
+        self._mutated()
         if power:
             self._apply_power(True)
         if brightness is not None:
@@ -318,6 +346,7 @@ class Device:
         self._require(Capability.BRIGHTNESS)
         pct = max(1, min(100, pct))  # 0 is not "off" on these devices; never send it
         await self._conn.send(build.brightness(pct))
+        self._mutated()
         self._state.brightness = pct
         self._mark_authoritative()
         self._notify()
@@ -327,6 +356,7 @@ class Device:
         self._require(Capability.RGB)
         r, g, b = rgb
         await self._conn.send(build.color_rgb(r, g, b, self.profile.color_scheme, self.profile.segments))
+        self._mutated()
         self._state.rgb_color = (r, g, b)
         self._state.color_temp_kelvin = None
         self._state.scene_code = None
@@ -337,6 +367,7 @@ class Device:
         self._require(Capability.COLOR_TEMP)
         self._check_kelvin(kelvin)
         await self._conn.send(build.color_temp(kelvin, self.profile.color_scheme, self.profile.segments))
+        self._mutated()
         self._state.color_temp_kelvin = kelvin
         self._state.rgb_color = None
         self._state.scene_code = None
@@ -347,6 +378,7 @@ class Device:
         self._require(Capability.SEGMENTS)
         r, g, b = rgb
         await self._conn.send(build.segment_rgb(_mask(indices), r, g, b, self.profile.color_scheme))
+        self._mutated()
         self._update_segments(indices, rgb=(r, g, b))
         self._mark_authoritative()
         self._notify()
@@ -359,6 +391,7 @@ class Device:
         frame = self._build_or_unsupported(
             build.segment_brightness, _mask(indices), pct, self.profile.color_scheme)
         await self._conn.send(frame)
+        self._mutated()
         self._update_segments(indices, brightness=pct)
         self._mark_authoritative()
         self._notify()
@@ -403,6 +436,7 @@ class Device:
         frame = self._build_or_unsupported(
             build.segment_color_temp, _mask(indices), kelvin, self.profile.color_scheme)
         await self._conn.send(frame)
+        self._mutated()   # device colour changed (no optimistic field): invalidate in-flight reads
         self._mark_authoritative()
         self._notify()
 
@@ -433,9 +467,11 @@ class Device:
             target = {0: zp.get(0, False), 1: zp.get(1, False)}
             target[z.power_index] = on
             await self._conn.send(build.bar_switch(target[0], target[1]))
+            self._mutated()
             self._state.zone_power = dict(target)
         else:
             await self._conn.send(build.zone_power(z.power_index, on))
+            self._mutated()
             self._state.zone_power[z.power_index] = on
         if self.profile.zones and len(self._state.zone_power) == len(self.profile.zones):
             self._state.is_on = any(self._state.zone_power.values())
@@ -443,8 +479,9 @@ class Device:
         self._notify()
 
     async def _read_bar_switch(self) -> None:
+        seq = self._mutation_seq
         bars = parse.parse_bar_switch(await self._read_reply(build.bar_switch_query(), build.CMD_BAR_SWITCH) or b"")
-        if bars is not None:
+        if bars is not None and not self._stale(seq, "bar-switch"):
             self._state.zone_power = {0: bars[0], 1: bars[1]}
 
     async def set_zone_rgb(self, name: str, rgb: tuple[int, int, int]) -> None:
@@ -455,6 +492,7 @@ class Device:
             raise GoveeBleNotSupported(f"{self._sku}: zone {name!r} has no segments")
         r, g, b = rgb
         await self._conn.send(build.segment_rgb(_mask(z.segments), r, g, b, self.profile.color_scheme))
+        self._mutated()
         self._update_segments(z.segments, rgb=(r, g, b))
         self._mark_authoritative()
         self._notify()
@@ -471,6 +509,7 @@ class Device:
         frame = self._build_or_unsupported(
             build.segment_color_temp, _mask(z.segments), kelvin, self.profile.color_scheme)
         await self._conn.send(frame)
+        self._mutated()   # device colour changed (no optimistic field): invalidate in-flight reads
         self._mark_authoritative()
         self._notify()
 
@@ -478,6 +517,7 @@ class Device:
     async def set_scene(self, code: int) -> None:
         self._require(Capability.SCENES)
         await self._conn.send(build.scene_activate(code))
+        self._mutated()
         self._state.scene_code = code
         self._apply_power(True)
         self._mark_authoritative()
@@ -510,11 +550,22 @@ class Device:
         if not self.profile.gradual:
             raise GoveeBleNotSupported(f"{self._sku}: gradual (BLE/wifi fade) not supported")
         await self._conn.send(build.gradual(on))
+        self._mutated()
         self._state.gradual = on
         self._notify()
 
     # -- read-back ----------------------------------------------------------
     async def update(self) -> DeviceState:
+        """Poll the device and fold the replies into state; returns the current state.
+
+        Reads are not serialized against setters (the connection lock is per-operation), so a
+        setter can complete while a read is in flight. Each read therefore snapshots
+        ``_mutation_seq`` before it is issued and is DISCARDED (DEBUG log; no state merge, no
+        ``_mark_authoritative``) if a setter applied state since. A discarded read means "state
+        is newer than this poll": ``update()`` still returns the current (setter-applied) state
+        and notifies, but does not consume the one-time "first poll" step (``_polled_once``);
+        callers simply poll again later. Static device-info is exempt (never raced by setters)."""
+        discarded_before = self._discarded_reads
         if self.profile.readback == "status":
             await self._read_status()
         elif self.profile.readback == "polled":
@@ -531,13 +582,16 @@ class Device:
         elif self.profile.color_readback == "mechanism_a_direct":
             await self._read_mechanism_a_direct()
         if self.profile.gradual:
+            seq = self._mutation_seq
             g = parse.parse_gradual(await self._read_reply(build.gradual_query(), build.CMD_GRADUAL_WIFI_BLE) or b"")
-            if g is not None:
+            if g is not None and not self._stale(seq, "gradual"):
                 self._state.gradual = g
         # Device-info (mac/hw/fw/serial) — static-ish, read once on the first good poll.
         if not self._device_info_read and self.profile.readback != "none":
             await self._read_device_info()
-        if not self._polled_once and self.profile.readback != "none":
+        if self._discarded_reads != discarded_before:
+            _LOGGER.debug("%s (%s): poll partially discarded (state newer than poll)", self.address, self._sku)
+        elif not self._polled_once and self.profile.readback != "none":
             _LOGGER.info("%s (%s) first poll: %s", self.address, self._sku, self._state_summary())
             self._polled_once = True
         elif _LOGGER.isEnabledFor(logging.DEBUG):
@@ -568,8 +622,9 @@ class Device:
     async def _read_plug(self) -> None:
         """Poll a plug's relay state (aa 01 -> raw relay bitmask; any bit set = on),
         so state.is_on reflects the device rather than the last command sent."""
+        seq = self._mutation_seq
         power = parse.parse_power(await self._read_reply(build.power_query(), build.CMD_SWITCH) or b"")
-        if power is not None:
+        if power is not None and not self._stale(seq, "plug power"):
             self._state.is_on = bool(power)
             self._state.optimistic = False
             self._mark_authoritative()
@@ -628,13 +683,14 @@ class Device:
         seg_count = self.profile.color_readback_segments or self.profile.segments
         batch_count = build.ceil_div(seg_count, per_batch)
         batches: list[tuple[int, list[tuple[int | None, int, int, int]]]] = []
+        mseq = self._mutation_seq
         for seq in range(1, batch_count + 1):
             reply = await self._read_reply(build.bulb_group_query(seq, v2=True), build.CMD_BULB_COLOR_V2)
             parsed = parse.parse_bulb_group_batch(reply) if reply else None
             if parsed is not None:
                 batches.append(parsed)
         segs = parse.bulb_groups_to_segments(batches, per_batch)
-        if segs:
+        if segs and not self._stale(mseq, "segment colour"):
             self._state.segments = segs
 
     async def _read_mechanism_a_direct(self) -> None:
@@ -648,6 +704,7 @@ class Device:
         reports its OWN group count directly (`ic_segment_read.segment`), sidestepping any
         client-side group-count-divisor assumption."""
         group_size = self.profile.color_readback_per_batch or 4
+        mseq = self._mutation_seq
         if self.profile.color_readback_live_ic:
             ic_reply = await self._read_reply(build.ic_count_query(), build.CMD_IC_NUM)
             ic = parse.parse_ic_count(ic_reply) if ic_reply else None
@@ -671,7 +728,7 @@ class Device:
                 continue
             groups.append(parsed)
         segs = parse.direct_groups_to_segments(groups, group_size)
-        if segs:
+        if segs and not self._stale(mseq, "segment colour"):
             self._state.segments = segs
 
     async def _query_status(self) -> tuple[reassemble.StatusReply, list[bytes], list[bytes]]:
@@ -680,6 +737,7 @@ class Device:
         return reassemble.parse_status(ac), ac, frames
 
     async def _read_status(self) -> None:
+        seq = self._mutation_seq
         st, ac, frames = await self._query_status()
         if st.is_on is None:
             # The device answered (or didn't) but no usable TLVs came back — most often a
@@ -700,45 +758,59 @@ class Device:
                 "(%d 0xAC of %d frames, chunks %s); state left stale",
                 self.address, self._sku, len(ac), len(frames), _chunk_indices(ac),
             )
-        if st.is_on is not None:
-            self._state.is_on = st.is_on
-        if st.brightness is not None:
-            self._state.brightness = self._brightness_pct(st.brightness)
-        if st.zone_power:
-            self._state.zone_power = st.zone_power
-        if st.segments:
-            # A burst whose tail was lost carries only a prefix of the segments;
-            # merge so the rest keep their last known values.
-            self._state.segments = parse.merge_segments(self._state.segments, st.segments)
-        # Device-info (serial / wifi_mac / fw / hw) comes from the 0x07 TLV in the 0xAC
-        # stream — the ONLY source for BLE-only devices (H60A6); aa 07 returns zeros there.
-        self._merge_device_info(
-            serial=st.serial_number, wifi_mac=st.wifi_mac,
-            firmware=st.firmware_version, hardware=st.hardware_version)
+        applied = False
+        if not self._stale(seq, "status"):
+            applied = True
+            if st.is_on is not None:
+                self._state.is_on = st.is_on
+            if st.brightness is not None:
+                self._state.brightness = self._brightness_pct(st.brightness)
+            if st.zone_power:
+                self._state.zone_power = st.zone_power
+            if st.segments:
+                # A burst whose tail was lost carries only a prefix of the segments;
+                # merge so the rest keep their last known values.
+                self._state.segments = parse.merge_segments(self._state.segments, st.segments)
+            # Device-info (serial / wifi_mac / fw / hw) comes from the 0x07 TLV in the 0xAC
+            # stream — the ONLY source for BLE-only devices (H60A6); aa 07 returns zeros there.
+            self._merge_device_info(
+                serial=st.serial_number, wifi_mac=st.wifi_mac,
+                firmware=st.firmware_version, hardware=st.hardware_version)
         if Capability.SCENES in self.capabilities:
+            seq = self._mutation_seq
             reply = await self._read_reply(build.mode_query(), build.CMD_MODE)
-            if reply is not None:
+            if reply is not None and not self._stale(seq, "mode"):
+                applied = True
                 self._apply_mode_reply(reply)
-        self._state.optimistic = False
-        self._mark_authoritative()
+        if applied:
+            self._state.optimistic = False
+            self._mark_authoritative()
 
     async def _read_polled(self) -> None:
         # Always read power: a device turned on externally (app, remote, wall
         # switch) must be noticed even when we last saw it off.
+        applied = False
+        seq = self._mutation_seq
         power = parse.parse_power(await self._read_reply(build.power_query(), build.CMD_SWITCH) or b"")
-        if power is not None:
+        if power is not None and not self._stale(seq, "power"):
+            applied = True
             self._state.is_on = bool(power)
+        seq = self._mutation_seq
         raw = parse.parse_brightness(await self._read_reply(build.brightness_query(), build.CMD_BRIGHTNESS) or b"")
-        if raw is not None:
+        if raw is not None and not self._stale(seq, "brightness"):
+            applied = True
             self._state.brightness = self._brightness_pct(raw)
         if self.profile.bar_switch:
             await self._read_bar_switch()
         if Capability.SCENES in self.capabilities or self.profile.color_scheme == "h6006":
+            seq = self._mutation_seq
             reply = await self._read_reply(build.mode_query(), build.CMD_MODE)
-            if reply is not None:
+            if reply is not None and not self._stale(seq, "mode"):
+                applied = True
                 self._apply_mode_reply(reply)
-        self._state.optimistic = False
-        self._mark_authoritative()
+        if applied:
+            self._state.optimistic = False
+            self._mark_authoritative()
 
     async def _read_reply(self, frame: bytes, command_type: int) -> bytes | None:
         frames = await self._conn.query(frame, opcode=build.PRO_READ, terminal=command_type, timeout=INFO_READ_TIMEOUT)
