@@ -67,12 +67,14 @@ def test_power_global_switch_for_plain_lights() -> None:
     assert d.state.is_on is True
 
 
-def test_power_zoned_fixture_switches_all_zones_in_one_batch() -> None:
+def test_power_h60a6_is_one_global_frame_driving_both_zones() -> None:
+    # Live-verified: H60A6's 33 01 switches the whole fixture (both zones).
     d = _dev("H60A6")
     asyncio.run(d.set_power(True))
-    assert [f[:4].hex() for f in _sent(d)] == ["33300001", "33300101"]
-    d._conn.send_many.assert_awaited_once()  # type: ignore[attr-defined]
+    assert [f[:3].hex() for f in _sent(d)] == ["330101"]
     assert d.state.is_on is True and d.state.zone_power == {0: True, 1: True}
+    asyncio.run(d.set_power(False))
+    assert d.state.zone_power == {0: False, 1: False}
 
 
 def test_power_bar_fixture_is_a_single_frame() -> None:

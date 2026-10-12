@@ -58,7 +58,9 @@ with a 5 s stall (H60A6) and ~40 % failures to 1.5–4.5 s with no failures.
 ### Added
 - `Device.turn_on(brightness=, rgb=, kelvin=, power=)` / `turn_off()` and
   `GoveeConnection.send_many()`: multi-attribute changes go out as one batched, ack-verified
-  operation on one connection. Whole-fixture power on zoned fixtures: H6047 is one `33 36` frame.
+  operation on one connection. Whole-fixture power is always one frame: H60A6 uses the global
+  `33 01` switch (live-verified to drive both zones: off clears them, on lights both even when
+  each was off; previously one `33 30` frame per zone), H6047 the combined `33 36` bar frame.
 - `GoveeBleAuthError` is raised when a device rejects its secret key.
 - `Device.encryption` (the negotiated channel mode); colour temperature read back from the mode
   report; segment writes update `state.segments`.

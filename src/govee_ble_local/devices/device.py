@@ -202,12 +202,13 @@ class Device:
 
     # -- power / brightness -------------------------------------------------
     def _power_frames(self, on: bool) -> list[bytes]:
-        """Frames for whole-device power. Zoned fixtures switch their zones
-        (the proven path: H6047 both bars in ONE 33 36 frame, H60A6 one 33 30
-        frame per zone); everything else uses the global 33 01 switch."""
+        """Frames for whole-device power: always a single frame where the device
+        allows it - the global 33 01 switch (which on H60A6 also drives both
+        zones), or H6047's combined 33 36 bar frame. Only a zoned fixture without
+        a zone-driving master switch falls back to one 33 30 frame per zone."""
         if self.profile.bar_switch:
             return [build.bar_switch(on, on)]
-        if self.profile.zones:
+        if self.profile.zones and not self.profile.global_power:
             return [build.zone_power(z.power_index, on) for z in self.profile.zones]
         return [build.switch(on, relay=self.profile.relay)]
 

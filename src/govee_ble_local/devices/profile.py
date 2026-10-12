@@ -38,6 +38,10 @@ class DeviceProfile:
     requires_secret: bool = False
     relay: bool = False
     bar_switch: bool = False          # H6047: both bars in one 33 36 frame
+    # Zoned fixture whose global 33 01 switch drives every zone (live-verified on H60A6
+    # 2026-10-12: off clears both zones; on lights both even if each zone was off), so
+    # whole-fixture power is ONE frame instead of one per zone.
+    global_power: bool = False
     gradual: bool = False             # supports the 0xA3 gradual/fade-on-handoff flag (W/R)
     readback: ReadBack = "none"
     # Segment-colour read-back mechanism layered on top of `readback` (spec Change 7):
@@ -76,7 +80,7 @@ PROFILES: tuple[DeviceProfile, ...] = (
         zones=(Zone("main", power_index=0, segments=(12,)),
                Zone("background", power_index=1, segments=tuple(range(12)))),
         scene_versions=frozenset({0, 1, 2, 3, 5}), scene_dialect="B_h60a6",
-        min_kelvin=2700, max_kelvin=6500, readback="status",
+        min_kelvin=2700, max_kelvin=6500, readback="status", global_power=True,
     ),
     # H6047 — bar light: plaintext, two bars (combined 33 36), 10 segments, dialect-A scenes.
     # SOURCE-CONFIRMED (was wrongly modeled as mechanism-A, then as H61A8's mechanism_b — both

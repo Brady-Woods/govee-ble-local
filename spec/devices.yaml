@@ -410,6 +410,7 @@ families:
     submodes: { color: "0x15", color_alt: "0x0d", scene: "0x04", music: "0x13", diy: "0x0a" }
     opcodes:
       - { name: zone_power, cmd: "0x30", payload: "[zoneIndex, state]", readable: true, note: "H60A6 dual-zone; notify state in bit 1 of each byte. zone 0 = MAIN PANEL = segment-mask index 12; zone 1 = BACKGROUND RGBIC ring = segment indices 0-11. HARDWARE-VERIFIED (segment-map probe: driving idx12 vs 0-11 to opposite colours, the device read-back holds idx12 distinct). The 0x15 colour/CCT seg_mask thus addresses the panel via bit 12, the ring via 0x0FFF, whole device via 0x1FFF." }
+      - { name: global_switch, cmd: "0x01", payload: "[state]", readable: true, note: "MASTER switch over both zones. HARDWARE-VERIFIED (H60A6, 2026-10-12, via HA probe): 33 01 00 clears both zone flags; 33 01 01 lights BOTH zones even when each was switched off individually; zone-on, colour (0x05 0x15) and brightness (0x04) writes each also wake the fixture. Status TLV 0x01 reports it. Back-to-back (unpaced) writes are all acked but no faster than sequential." }
       - { name: per_segment_color_read, cmd: "0xa5", readable: true, payload: "mechanism (A): reply groups [groupIndex, 4x{brightness,R,G,B}]; group count = ceil(getColorPieceSize/4); H60A6 pieceCount=13 (goodsType 303); records are 4-byte incl brightness (NOT [segIndex,R,G,B]). See IC/segment note." }
       - { name: on_off_memory, cmd: "0x41", payload: "[2, mode]" }
       - { name: child_switch, cmd: "0x36", payload: "[!on, second]" }
@@ -423,7 +424,7 @@ families:
     encryption: secret_key_pairing
     notify:
       - { sub_type: "0x11", meaning: "wifi connect result (byte0==0 connected)" }
-      - { sub_type: "0x30", meaning: "per-zone on/off (bit 1 of main/zone0/zone1 bytes)" }
+      - { sub_type: "0x30", meaning: "per-zone on/off (bit 1 of main/zone0/zone1 bytes); observed live: ee 30 01 01 pushed after a zone change while connected" }
       - { sub_type: "0x20", meaning: "brightness" }
     confidence: high
     sources: ["pact_h60a0/ble/Mode.java", "pact_h60a0/adjust/h60a6/VM4LightH60A6.java:336,1203-1205,1392", "pact_h60a0/pact/Support.java"]
