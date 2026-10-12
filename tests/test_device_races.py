@@ -1,5 +1,5 @@
 """Device concurrency: stale update() reads must not overwrite a setter (BUG-4) and the relay
-power write is one atomic connection operation (BUG-9/D-13).
+relay power write applies state before a best-effort sync-time (BUG-9/D-13).
 
 Deterministic: interleavings are driven with asyncio.Event gates on a fake ``_conn`` (no sleeps,
 no timing assertions). A gated read is "in flight" (issued, reply not yet applied) while the
@@ -16,6 +16,7 @@ import pytest
 from fake_ble import ble_device
 
 from govee_ble_local.devices.device import Device, make_device
+from govee_ble_local.exceptions import GoveeBleConnectionError
 from test_device_v3 import _STATUS_BURST, _reply
 
 
@@ -32,7 +33,6 @@ def _dev(sku: str, replies: dict[int, list[bytes]] | None = None, gates: Sequenc
     assert d is not None
     table = replies or {}
     d._sent = []  # type: ignore[attr-defined]
-    d._mixed = []  # type: ignore[attr-defined]
 
     async def query(frame: bytes, **_k: Any) -> list[bytes]:
         for g in gates:
@@ -48,14 +48,9 @@ def _dev(sku: str, replies: dict[int, list[bytes]] | None = None, gates: Sequenc
     async def send_many(frames: list[bytes]) -> None:
         d._sent.extend(frames)  # type: ignore[attr-defined]
 
-    async def send_mixed(items: Sequence[tuple[bytes, bool]]) -> list[bytes | None]:
-        d._mixed.append(list(items))  # type: ignore[attr-defined]
-        return [None] * len(items)
-
     d._conn.query = query  # type: ignore[method-assign,assignment]
     d._conn.send = send  # type: ignore[method-assign,assignment]
     d._conn.send_many = send_many  # type: ignore[method-assign,assignment]
-    d._conn.send_mixed = send_mixed  # type: ignore[method-assign,assignment]
     return d
 
 
@@ -175,32 +170,57 @@ async def test_setter_not_blocked_by_in_flight_poll() -> None:
     await task
 
 
-# -- BUG-9/D-13: relay power atomicity ---------------------------------------------------------
-async def test_relay_set_power_is_one_send_mixed_in_order() -> None:
+# -- BUG-9/D-13: relay power: acked power, state applied, then best-effort sync-time ----------
+async def test_relay_set_power_sends_power_then_sync_time_in_order() -> None:
+    # WAS (T7.1): one send_mixed([(power, acked), (sync, unacked)]), all-or-nothing.
+    # FIXED: send_many(power) -> apply state -> send(sync-time, expect_ack=False); same bytes/order.
     d = _dev("H5080")
     await d.set_power(True)
-    assert d._sent == []                                         # nothing outside send_mixed
-    assert len(d._mixed) == 1
-    items = d._mixed[0]
-    assert [a for _, a in items] == [True, False]               # power acked, sync-time unacked
-    assert items[0][0][:3].hex() == "330111"
-    assert items[1][0][:2].hex() == "33b5"
+    assert len(d._sent) == 2                                     # type: ignore[attr-defined]
+    assert d._sent[0][:3].hex() == "330111"                      # type: ignore[attr-defined]
+    assert d._sent[1][:2].hex() == "33b5"                        # type: ignore[attr-defined]
     assert d.state.is_on is True
 
 
-async def test_relay_set_power_failure_propagates_without_applying() -> None:
+async def test_relay_sync_time_failure_does_not_raise_or_undo_state(caplog) -> None:
+    # WAS: a sync-time failure raised from set_power and left state un-applied (D-13).
+    # FIXED: power write succeeded -> state applied; sync-time failure is only a WARNING.
     d = _dev("H5080")
+    notified: list[Any] = []
+    d.register_callback(lambda s: notified.append(s))
 
-    async def boom(items: Sequence[tuple[bytes, bool]]) -> list[bytes | None]:
-        raise RuntimeError("link down")
+    async def boom(frame: bytes, **_k: Any) -> None:
+        raise GoveeBleConnectionError("link down")
 
-    d._conn.send_mixed = boom  # type: ignore[method-assign,assignment]
-    with pytest.raises(RuntimeError):
+    d._conn.send = boom  # type: ignore[method-assign,assignment]
+    caplog.set_level(logging.WARNING, logger="govee_ble_local")
+    await d.set_power(True)                                      # must not raise
+    assert d.state.is_on is True
+    assert len(d._sent) == 1 and d._sent[0][:3].hex() == "330111"  # type: ignore[attr-defined]
+    assert notified
+    assert any(r.levelno == logging.WARNING and "link down" in r.getMessage() for r in caplog.records)
+
+
+async def test_relay_power_frame_failure_propagates_without_applying() -> None:
+    # A failed power write still raises, state stays unapplied, and no sync-time is attempted.
+    d = _dev("H5080")
+    sync_calls: list[bytes] = []
+
+    async def boom(frames: list[bytes]) -> None:
+        raise GoveeBleConnectionError("link down")
+
+    async def send(frame: bytes, **_k: Any) -> None:
+        sync_calls.append(frame)
+
+    d._conn.send_many = boom  # type: ignore[method-assign,assignment]
+    d._conn.send = send  # type: ignore[method-assign,assignment]
+    with pytest.raises(GoveeBleConnectionError):
         await d.set_power(True)
     assert d.state.is_on is None
+    assert sync_calls == []
 
 
-async def test_non_relay_set_power_still_uses_send_many() -> None:
+async def test_non_relay_set_power_sends_no_sync_time() -> None:
     d = _dev("H6006")
     await d.set_power(True)
-    assert d._mixed == [] and len(d._sent) == 1
+    assert len(d._sent) == 1                                     # type: ignore[attr-defined]

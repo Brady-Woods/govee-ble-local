@@ -27,11 +27,6 @@ def _dev(sku: str, *, replies: list[bytes] | None = None) -> Device:
     async def send_many(frames: list[bytes]) -> None:
         sent.extend(frames)
 
-    async def send_mixed(items: list[tuple[bytes, bool]]) -> list[bytes | None]:
-        sent.extend(f for f, _ in items)
-        d._mixed = list(items)  # type: ignore[attr-defined]
-        return [None] * len(items)
-
     async def query(frame: bytes, **_k: object) -> list[bytes]:
         sent.append(frame)
         return list(replies or [])
@@ -39,7 +34,6 @@ def _dev(sku: str, *, replies: list[bytes] | None = None) -> Device:
     d._conn.send = AsyncMock(side_effect=send)  # type: ignore[method-assign]
     d._conn.send_many = AsyncMock(side_effect=send_many)  # type: ignore[method-assign]
     d._conn.send_unacked = AsyncMock(side_effect=send_many)  # type: ignore[method-assign]
-    d._conn.send_mixed = AsyncMock(side_effect=send_mixed)  # type: ignore[method-assign]
     d._conn.query = AsyncMock(side_effect=query)  # type: ignore[method-assign]
     d._sent = sent  # type: ignore[attr-defined]
     return d
@@ -154,9 +148,11 @@ def test_plug_relay_and_sync_time() -> None:
     s = _sent(d)
     assert s[0][:2].hex() == "3301" and s[0][2] == 0x11        # relay ON
     assert s[1][:2].hex() == "33b5"                            # sync-time follow-up
-    # WAS: power via send_many + sync-time via a separate send(expect_ack=False).
-    # FIXED (BUG-9/D-13): both go out in ONE send_mixed (power acked, sync-time unacked).
-    assert [a for _, a in d._mixed] == [True, False]           # type: ignore[attr-defined]
+    # WAS (T7.1): power + sync-time in one all-or-nothing send_mixed (D-13: a sync-time failure
+    # raised and left state un-applied). FIXED: power via send_many, state applied, then
+    # sync-time via send(expect_ack=False) best-effort; frame order unchanged.
+    d._conn.send.assert_awaited_once()                         # type: ignore[attr-defined]
+    assert d._conn.send.await_args.kwargs == {"expect_ack": False}  # type: ignore[attr-defined]
 
 
 def test_zone_bar_vs_direct() -> None:

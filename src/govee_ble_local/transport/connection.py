@@ -27,7 +27,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable
 from typing import TypeVar
 
 from bleak.backends.characteristic import BleakGATTCharacteristic
@@ -599,40 +599,6 @@ class GoveeConnection:
                 await self._write_locked(frame)
 
         await self._run(op, extend_warm=True)
-
-    async def send_mixed(self, items: Sequence[tuple[bytes, bool]]) -> list[bytes | None]:
-        """Send ``(frame, expect_ack)`` items in order under ONE lock acquisition
-        and one connection, so a sequence mixing acked writes with unacked stream
-        frames (e.g. a scene upload plus its activation) can't be interleaved with
-        a poll.
-
-        Same policy as :meth:`send_many` for acked items: each is a write (proType
-        0x33; anything else raises GoveeBleInvalidValue before any I/O), is
-        ack-verified, and on a link failure is retried once on a fresh link
-        (earlier items are NOT resent). Unacked items are sent once, paced by
-        UNACKED_SEND_GAP like :meth:`send_unacked`. Returns, per item in order,
-        the ack frame (acked) or None (unacked)."""
-        for frame, expect_ack in items:
-            if expect_ack and frame[:1] != bytes([PRO_WRITE]):
-                raise GoveeBleInvalidValue(
-                    f"{self.address}: expect_ack needs a write frame (proType "
-                    f"0x{PRO_WRITE:02X}); use query() for reads"
-                )
-
-        async def op() -> list[bytes | None]:
-            results: list[bytes | None] = []
-            for frame, expect_ack in items:
-                if expect_ack:
-                    results.append(await self._write_locked(frame))
-                    continue
-                await self._ensure_connected_locked()
-                self._drain()
-                await self._send_frame(frame)
-                await asyncio.sleep(UNACKED_SEND_GAP)
-                results.append(None)
-            return results
-
-        return await self._run(op, extend_warm=True)
 
     async def _write_locked(self, frame_plaintext: bytes) -> bytes:
         """Ack-verified write with one reconnect-and-retry. Only failures AFTER the

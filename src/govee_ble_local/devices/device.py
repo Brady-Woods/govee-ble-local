@@ -279,19 +279,22 @@ class Device:
 
     async def set_power(self, on: bool) -> None:
         self._require(Capability.POWER)
-        if self.profile.relay:
-            # Plug relay needs a sync-time follow-up to actuate. Power (acked) and sync-time
-            # (unacked) go out under ONE connection-lock acquisition so a poll can't interleave.
-            ts = int(time.time())
-            items = [(f, True) for f in self._power_frames(on)]
-            items.append((build.plug_sync_time(ts, *_local_tz(ts)), False))
-            await self._conn.send_mixed(items)
-        else:
-            await self._conn.send_many(self._power_frames(on))
+        await self._conn.send_many(self._power_frames(on))
         self._mutated()
         self._apply_power(on)
         self._mark_authoritative()
         self._notify()
+        if self.profile.relay:
+            # Plug relay needs a sync-time follow-up to actuate. The power write already
+            # succeeded and state is applied, so a failure here must neither raise nor undo it.
+            ts = int(time.time())
+            try:
+                await self._conn.send(build.plug_sync_time(ts, *_local_tz(ts)), expect_ack=False)
+            except GoveeBleError as err:
+                _LOGGER.warning(
+                    "%s (%s): relay power written but sync-time follow-up failed: %s",
+                    self.address, self._sku, err or type(err).__name__,
+                )
 
     async def turn_on(
         self,

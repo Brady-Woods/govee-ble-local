@@ -1,5 +1,5 @@
 """Reliability fixes for transport/connection.py (T6.2): BUG-1/6/7/8/10, DES-4/9,
-the shared capture mask, send_mixed, and the link-lifecycle audit. No wall-clock
+the shared capture mask, and the link-lifecycle audit. No wall-clock
 assertions; waits are event/ordering based."""
 from __future__ import annotations
 
@@ -304,70 +304,6 @@ async def test_capture_and_mask_secret_share_one_helper(monkeypatch, caplog) -> 
     c._capture("tx", wire=plain, plain=plain, enc="none")
     masked = conn_mod._mask_secret(plain).hex()
     assert f"plain={masked} wire={masked}" in caplog.text
-
-
-# -- send_mixed --------------------------------------------------------------
-
-async def test_send_mixed_acked_and_unacked(monkeypatch) -> None:
-    fake = FakeGovee()
-    c = _make(monkeypatch, fake)
-    items = [
-        (frame(0x33, 0x01, 1), True),
-        (frame(0xA3, 0x00, 9), False),
-        (frame(0x33, 0x04, 50), True),
-    ]
-    res = await c.send_mixed(items)
-    assert len(fake.clients) == 1
-    assert fake.received == [f for f, _ in items]
-    assert res[0] is not None and res[0][:3] == bytes([0x33, 0x01, 0])
-    assert res[1] is None
-    assert res[2] is not None and res[2][:3] == bytes([0x33, 0x04, 0])
-
-
-async def test_send_mixed_empty_and_validation(monkeypatch) -> None:
-    fake = FakeGovee()
-    c = _make(monkeypatch, fake)
-    assert await c.send_mixed([]) == []
-    with pytest.raises(GoveeBleInvalidValue):
-        await c.send_mixed([(frame(0x33, 0x01, 1), True), (frame(0xAA, 0x07), True)])
-    assert fake.received == []  # validated up front: nothing sent
-
-
-async def test_send_mixed_mid_sequence_link_loss_retries_only_failed_write(monkeypatch) -> None:
-    fake = FakeGovee()
-    a, u, b = frame(0x33, 0x01, 1), frame(0xA3, 0x00, 9), frame(0x33, 0x04, 50)
-    seen = {"dropped": False}
-
-    def on_write(client, plain: bytes) -> None:
-        if plain == b and not seen["dropped"]:
-            seen["dropped"] = True
-            client.drop()
-            return
-        if plain[0] == 0x33:
-            client.push(fake._wire(frame(0x33, plain[1], 0), SESSION_KEY), 0.005)
-
-    fake.on_write = on_write
-    c = _make(monkeypatch, fake)
-    res = await c.send_mixed([(a, True), (u, False), (b, True)])
-    assert len(fake.clients) == 2
-    assert fake.received.count(a) == 1 and fake.received.count(u) == 1
-    assert fake.received.count(b) == 2
-    assert res[1] is None and res[2] is not None
-
-
-async def test_send_mixed_uses_one_lock_acquisition(monkeypatch) -> None:
-    fake = FakeGovee()
-    c = _make(monkeypatch, fake)
-    calls = {"n": 0}
-    real = c._run
-
-    async def spy(op, *, extend_warm):
-        calls["n"] += 1
-        return await real(op, extend_warm=extend_warm)
-
-    monkeypatch.setattr(c, "_run", spy)
-    await c.send_mixed([(frame(0x33, 0x01, 1), True), (frame(0xA3, 1), False)])
-    assert calls["n"] == 1
 
 
 def test_now_ts_removed() -> None:
