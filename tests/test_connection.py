@@ -4,7 +4,6 @@ lost terminators, late disconnect callbacks)."""
 from __future__ import annotations
 
 import asyncio
-import time
 
 import pytest
 from bleak.backends.device import BLEDevice
@@ -41,6 +40,23 @@ def fast(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(conn_mod, "BURST_IDLE_GAP", 0.1)
 
 
+# query()'s idle_gap default is bound at import time, so the `fast` fixture does not change it.
+IDLE_GAP = GoveeConnection.query.__kwdefaults__["idle_gap"]
+
+
+def spy_rx_waits(monkeypatch: pytest.MonkeyPatch, c: GoveeConnection) -> list[float]:
+    """Record the wait budget handed to every ``_next_rx`` call (deterministic, no wall clock)."""
+    waits: list[float] = []
+    real = c._next_rx
+
+    async def spy(timeout: float) -> bytes:
+        waits.append(timeout)
+        return await real(timeout)
+
+    monkeypatch.setattr(c, "_next_rx", spy)
+    return waits
+
+
 def _make(monkeypatch: pytest.MonkeyPatch, fake: FakeGovee, **kw: object) -> GoveeConnection:
     monkeypatch.setattr(conn_mod, "establish_connection", fake.establish)
     enc = Encryption.AES_RC4_PSK if fake.encrypted else Encryption.NONE
@@ -66,10 +82,11 @@ async def test_query_lost_terminator_returns_on_idle_gap(monkeypatch, fast) -> N
     fake.status_burst = H60A6_BURST
     fake.drop_terminal = True
     c = _make(monkeypatch, fake)
-    t0 = time.monotonic()
+    waits = spy_rx_waits(monkeypatch, c)
     frames = await c.query(frame(0xAC, 0x03), timeout=5.0)
     assert len(frames) == 9
-    assert time.monotonic() - t0 < 1.0  # idle gap, not the 5 s timeout
+    # The final (timed-out) wait was bounded by the idle gap, not the 5 s query timeout.
+    assert waits and waits[-1] <= IDLE_GAP
 
 
 async def test_write_ack_success_and_warm_window(monkeypatch, fast) -> None:
@@ -131,7 +148,7 @@ async def test_dead_device_fails_cleanly(monkeypatch, fast) -> None:
 
 
 async def test_disconnect_wakes_waiter_immediately(monkeypatch, fast) -> None:
-    monkeypatch.setattr(conn_mod, "WRITE_ACK_TIMEOUT", 5.0)
+    monkeypatch.setattr(conn_mod, "WRITE_ACK_TIMEOUT", 60.0)  # far beyond the outer bound below
     fake = FakeGovee(encrypted=False)
     c = _make(monkeypatch, fake)
     await c.connect()
@@ -145,10 +162,9 @@ async def test_disconnect_wakes_waiter_immediately(monkeypatch, fast) -> None:
             client.push(frame(0x33, plain[1], 0x00), 0.005)
 
     fake.on_write = drop_first_link
-    t0 = time.monotonic()
-    ack = await c.send(frame(0x33, 0x01, 0x01))
+    # Only a wake-up by the drop can finish inside the 30 s bound; the ack timeout is 60 s.
+    ack = await asyncio.wait_for(c.send(frame(0x33, 0x01, 0x01)), 30.0)
     assert ack is not None
-    assert time.monotonic() - t0 < 1.0  # woken by the drop, not a 5 s ack timeout
     assert len(fake.clients) == 2
 
 
@@ -238,7 +254,10 @@ async def test_idle_timer_never_fires_after_newer_activity(monkeypatch, fast) ->
     await c.query(frame(0xAA, 0x01, 0x01), opcode=0xAA, terminal=0x01)  # ...but activity wins the lock
     await asyncio.sleep(0)
     assert c.is_connected
-    await asyncio.sleep(0.1)  # the rescheduled timer then disconnects normally
+    for _ in range(500):  # the rescheduled timer then disconnects normally (bounded ~5 s poll)
+        if not c.is_connected:
+            break
+        await asyncio.sleep(0.01)
     assert not c.is_connected
 
 

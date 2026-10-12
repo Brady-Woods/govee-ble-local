@@ -71,9 +71,13 @@ def test_frames_logger_emits_when_enabled(caplog: pytest.LogCaptureFixture) -> N
     assert recs and "plain=" in recs[0].getMessage() and "write/switch" in recs[0].getMessage()
 
 
-def test_frames_logger_silent_when_off(caplog: pytest.LogCaptureFixture) -> None:
+def test_frames_logger_silent_when_off(
+    caplog: pytest.LogCaptureFixture, request: pytest.FixtureRequest
+) -> None:
     c = _conn()
-    logging.getLogger(_FRAMES_LOGGER).setLevel(logging.INFO)   # below-DEBUG => guarded off
+    frames_logger = logging.getLogger(_FRAMES_LOGGER)
+    request.addfinalizer(lambda lvl=frames_logger.level: frames_logger.setLevel(lvl))  # no leak
+    frames_logger.setLevel(logging.INFO)   # below-DEBUG => guarded off
     with caplog.at_level(logging.INFO, logger=_FRAMES_LOGGER):
         c._capture("tx", wire=_bcc(0x33, 0x01, 0x01), plain=_bcc(0x33, 0x01, 0x01), enc="none")
     assert not [r for r in caplog.records if r.name == _FRAMES_LOGGER]

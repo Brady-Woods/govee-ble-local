@@ -1,8 +1,6 @@
 """Device driven end-to-end over the fake peripheral (real transport, real wire layer)."""
 from __future__ import annotations
 
-import time
-
 import pytest
 from bleak.backends.device import BLEDevice
 
@@ -11,7 +9,7 @@ from govee_ble_local.exceptions import GoveeBleAuthError
 from govee_ble_local.transport import connection as conn_mod
 
 from fake_ble import FakeGovee, frame
-from test_connection import H60A6_BURST
+from test_connection import H60A6_BURST, IDLE_GAP, spy_rx_waits
 
 
 @pytest.fixture(autouse=True)
@@ -34,9 +32,22 @@ async def test_h60a6_poll_lost_terminator_is_fast_and_complete_enough(monkeypatc
     fake.drop_terminal = True
     fake.read_replies[0x05] = frame(0xAA, 0x05, 0x15, 0x01, 0x0A, 0x8C)  # CCT 2700 K
     dev = _device(monkeypatch, fake, "H60A6")
-    t0 = time.monotonic()
+    waits = spy_rx_waits(monkeypatch, dev._conn)
+    status_waits: list[float] = []  # waits made inside the 0xAC status query only
+    real_query = dev._conn.query
+
+    async def spy_query(*a: object, **k: object):
+        start = len(waits)
+        try:
+            return await real_query(*a, **k)
+        finally:
+            if not status_waits:
+                status_waits.extend(waits[start:])
+
+    monkeypatch.setattr(dev._conn, "query", spy_query)
     st = await dev.update()
-    assert time.monotonic() - t0 < 2.0
+    # The status burst ended on the idle gap (last wait bounded by it), not the 5 s query timeout.
+    assert status_waits and status_waits[-1] <= IDLE_GAP
     assert st.is_on is False and st.brightness == 100 and st.zone_power == {0: False, 1: False}
     assert st.color_temp_kelvin == 2700
     assert st.firmware_version == "1.00.41"
