@@ -11,6 +11,7 @@ from govee_ble_local.const import SESSION_ATTEMPTS
 from govee_ble_local.exceptions import (
     GoveeBleAuthError,
     GoveeBleConnectionError,
+    GoveeBleInvalidValue,
     GoveeBleNotSupported,
     GoveeBleTimeout,
 )
@@ -126,16 +127,18 @@ async def test_unlock_frame_without_ack_continues(monkeypatch) -> None:
     assert frame(0x33, 0xB2, 0x01) in fake.received
 
 
-async def test_unlock_rejected_raises_auth_error_and_is_retried(monkeypatch) -> None:
+async def test_unlock_rejected_raises_auth_error_not_retried(monkeypatch) -> None:
     fake = FakeGovee()
     fake.ack_status = 1
     c = _make(monkeypatch, fake, unlock_frames=lambda: [frame(0x33, 0xB2, 0x01)])
     with pytest.raises(GoveeBleAuthError):
         await c.connect()
-    # CURRENT BEHAVIOR: a wrong secret key (auth error) is retried like a transient
-    # failure - a whole extra connect+handshake per SESSION_ATTEMPTS.
-    assert len(fake.clients) == SESSION_ATTEMPTS
-    assert fake.received.count(frame(0x33, 0xB2, 0x01)) == SESSION_ATTEMPTS
+    # WAS (DES-4): a wrong secret key (auth error) was retried like a transient
+    # failure - a whole extra connect+handshake per SESSION_ATTEMPTS (2 clients, 2 unlocks).
+    # FIXED: an auth error is not transient; one connect, one unlock, link torn down.
+    assert len(fake.clients) == 1
+    assert fake.received.count(frame(0x33, 0xB2, 0x01)) == 1
+    assert fake.clients[0].is_connected is False
 
 
 # -- _run mapping ------------------------------------------------------------
@@ -198,48 +201,59 @@ async def test_send_expect_ack_false_returns_none(monkeypatch) -> None:
     assert frame(0x33, 0x01, 0x01) in fake.received
 
 
-async def test_send_non_write_returns_next_notification(monkeypatch) -> None:
+async def test_send_non_write_with_expect_ack_rejected(monkeypatch) -> None:
+    # WAS (BUG-10): send(non-write) with expect_ack=True returned whatever frame
+    # arrived next (an unrelated push could be mistaken for the reply).
+    # FIXED: only writes (proType 0x33) have an ack to wait for -> InvalidValue,
+    # raised before any connect or I/O.
     fake = FakeGovee()
-    reply = frame(0xAA, 0x07, 0x01, 0x02)
-    fake.read_replies[0x07] = reply
+    fake.read_replies[0x07] = frame(0xAA, 0x07, 0x01, 0x02)
     c = _make(monkeypatch, fake)
-    assert await c.send(frame(0xAA, 0x07)) == reply
+    with pytest.raises(GoveeBleInvalidValue):
+        await c.send(frame(0xAA, 0x07))
+    assert fake.clients == [] and fake.received == []
 
 
-async def test_send_non_write_without_reply_returns_none(monkeypatch) -> None:
+async def test_send_non_write_unacked_sends_once(monkeypatch) -> None:
+    # WAS: test_send_non_write_without_reply_returns_none (expect_ack default True).
+    # FIXED: a non-write is sent with expect_ack=False and returns None.
     fake = FakeGovee()
     c = _make(monkeypatch, fake)
-    await c.connect()
-    fake.on_write = lambda _client, _plain: None  # swallow everything
-    assert await c.send(frame(0xAA, 0x07)) is None
+    assert await c.send(frame(0xAA, 0x07), expect_ack=False) is None
+    assert fake.received == [frame(0xAA, 0x07)]
 
 
 # -- known-bug characterization ----------------------------------------------
 
-async def test_ack_then_disconnect_same_tick_resends_write(monkeypatch) -> None:
+async def test_ack_then_disconnect_same_tick_does_not_resend_write(monkeypatch) -> None:
     fake = FakeGovee()
     fake.ack_then_drop_links = 1
     c = _make(monkeypatch, fake)
     ack = await c.send(frame(0x33, 0x01, 0x01))
     assert ack is not None and ack[:3] == bytes([0x33, 0x01, 0x00])
-    # CURRENT BEHAVIOR (bug BUG-1): the device acked, but the
-    # disconnect callback nulled the session key before the waiter ran, so the
-    # ack was "decrypted" without a key (garbage, no match); the following
-    # link-lost sentinel then made _write_locked reconnect and RESEND an
-    # already-applied write. A correct implementation would accept the ack.
-    assert len(fake.clients) == 2
-    assert fake.received.count(frame(0x33, 0x01, 0x01)) == 2
+    # WAS (BUG-1): the device acked, but the disconnect callback nulled the
+    # session key before the waiter ran, so the ack was "decrypted" without a key
+    # (garbage, no match); the following link-lost sentinel then made
+    # _write_locked reconnect and RESEND an already-applied write
+    # (2 clients, write received twice).
+    # FIXED: notifications are decrypted on arrival, so the ack survives the
+    # disconnect: the write is accepted and NOT resent.
+    assert len(fake.clients) == 1
+    assert fake.received.count(frame(0x33, 0x01, 0x01)) == 1
 
 
-async def test_next_rx_zero_timeout_ignores_queued_frame(monkeypatch) -> None:
+async def test_next_rx_zero_timeout_returns_queued_frame(monkeypatch) -> None:
     fake = FakeGovee()
     c = _make(monkeypatch, fake)
     c._rx.put_nowait(b"\x00" * 20)
-    # CURRENT BEHAVIOR (bug BUG-7): wait_for(timeout=0) raises
-    # TimeoutError even though a frame is already queued (3.11 and 3.14).
+    # WAS (BUG-7): wait_for(timeout=0) raised TimeoutError even though a frame was
+    # already queued (3.11 and 3.14), leaving it unconsumed.
+    # FIXED: a queued frame is returned regardless of the budget; only an EMPTY
+    # queue with no budget times out.
+    assert await c._next_rx(0) == b"\x00" * 20
+    assert c._rx.qsize() == 0
     with pytest.raises(TimeoutError):
         await c._next_rx(0)
-    assert c._rx.qsize() == 1  # the frame was not consumed
 
 
 async def test_next_rx_negative_timeout_clamped(monkeypatch) -> None:

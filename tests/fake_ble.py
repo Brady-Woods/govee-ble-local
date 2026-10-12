@@ -67,6 +67,11 @@ class FakeClient:
         return bytearray(self.device.bgc or b"")
 
     async def disconnect(self) -> None:
+        if self.device.disconnect_hangs:
+            self.device.disconnect_started += 1
+            await asyncio.sleep(3600)  # wedged proxy: never completes
+        if self.device.disconnect_error is not None:
+            raise self.device.disconnect_error
         if self.is_connected:
             self.is_connected = False
             self.device.disconnects += 1
@@ -133,6 +138,9 @@ class FakeGovee:
         self.drop_on_e7 = False           # drop the link when e7 01 arrives
         self.app_write_error: BaseException | None = None  # raised on post-handshake writes
         self.no_ack_cmds: set[int] = set()  # 0x33 commands that are never acked
+        self.disconnect_hangs = False     # client.disconnect() never returns
+        self.disconnect_started = 0       # how many hanging disconnects were entered
+        self.disconnect_error: BaseException | None = None  # raised by client.disconnect()
         self.ack_then_drop_links = 0      # first N links: ack the first 0x33 write and
                                           # disconnect in the SAME loop tick
 

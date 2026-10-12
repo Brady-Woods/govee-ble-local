@@ -8,6 +8,7 @@ import asyncio
 import pytest
 from bleak.exc import BleakError
 
+from govee_ble_local.crypto import checksum_ok
 from govee_ble_local.exceptions import (
     GoveeBleAuthError,
     GoveeBleConnectionError,
@@ -303,5 +304,10 @@ async def test_secret_is_masked_in_wire_capture(monkeypatch, fast, caplog, encry
     assert secret_lines, "the unlock frame must still be captured (masked)"
     for line in secret_lines:
         wire_hex = line.split(" wire=")[1].split(" ")[0]
-        assert wire_hex[4:] == "ff" * 18  # 2-byte header kept, payload blanked
+        # 2-byte header kept, payload blanked, checksum RECOMPUTED over the masked
+        # bytes (WAS: wire_hex[4:] == "ff"*18, i.e. an all-ff tail; FIXED: the last
+        # byte is the XOR of the masked frame, not a leak of the secret's XOR).
+        assert wire_hex[4:-2] == "ff" * 17
+        masked = bytes.fromhex(wire_hex)
+        assert checksum_ok(masked)
     assert secret.hex() not in caplog.text

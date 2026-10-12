@@ -2,8 +2,10 @@
 
 Owns the bleak connection, runs the e7 handshake to negotiate the session
 key, then encrypts every outgoing frame and decrypts every notification with
-it. Raw ciphertext is queued from the notify callback and decrypted at the
-point of use (PSK during the handshake, session key afterwards).
+it. Handshake-phase notifications are queued raw (the handshake parser needs
+the ciphertext); every later notification is decrypted in the notify callback
+and queued as PLAINTEXT, so a disconnect (which discards the session key) can
+never turn an already-received reply into garbage.
 
 Reliability rules this module enforces (each one learned from live failures):
 
@@ -25,7 +27,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from typing import TypeVar
 
 from bleak.backends.characteristic import BleakGATTCharacteristic
@@ -36,6 +38,7 @@ from bleak_retry_connector import BleakClientWithServiceCache, establish_connect
 from ..const import (
     ACTIVE_IDLE_DELAY,
     BGC_INFO_CHAR_UUID,
+    BGC_VERSION_VALUES,
     BURST_IDLE_GAP,
     COMMAND_ACK_TIMEOUT,
     CONNECT_MAX_ATTEMPTS,
@@ -47,23 +50,35 @@ from ..const import (
     NOTIFY_CHAR_UUID,
     OPERATION_TIMEOUT,
     PSK,
+    QUERY_DEFAULT_TIMEOUT,
     SESSION_ATTEMPTS,
+    UNACKED_SEND_GAP,
     WRITE_ACK_TIMEOUT,
     WRITE_ATTEMPTS,
     WRITE_CHAR_UUID,
 )
-from ..crypto import checksum_ok, decrypt, encrypt
+from ..crypto import checksum, checksum_ok, decrypt, encrypt
 from ..exceptions import (
     GoveeBleAuthError,
     GoveeBleConnectionError,
     GoveeBleError,
+    GoveeBleInvalidValue,
     GoveeBleNotSupported,
     GoveeBleTimeout,
 )
 from ..models import Encryption
-from ..wire.build import PRO_WRITE
+from ..wire.build import (
+    CMD_SECRET_READ,
+    CMD_SECRET_WRITE,
+    PRO_MULTI_A3,
+    PRO_MULTI_A4,
+    PRO_MULTI_AC,
+    PRO_READ,
+    PRO_WRITE,
+)
 from ..wire.describe import describe_frame
 from . import handshake
+from .handshake import HANDSHAKE_OPCODE
 from .framelog import FrameLog
 
 _LOGGER = logging.getLogger(__name__)
@@ -74,9 +89,16 @@ _LOGGER = logging.getLogger(__name__)
 _FRAMES = logging.getLogger("govee_ble_local.frames")
 
 # proTypes a device legitimately sends us; anything else is surfaced as a warning.
-_KNOWN_RX_PRO_TYPES = frozenset({0x33, 0xAA, 0xAC, 0xEE, 0xA1, 0xA3, 0xA4, 0xE7})
+_PRO_NOTIFY_EE = 0xEE  # device push notifications (wire.parse "notifications (0xEE)")
+_PRO_MULTI_A1 = 0xA1   # multi-packet stream family (wire.parse reassembly)
+_KNOWN_RX_PRO_TYPES = frozenset({
+    PRO_WRITE, PRO_READ, PRO_MULTI_AC, _PRO_NOTIFY_EE, _PRO_MULTI_A1,
+    PRO_MULTI_A3, PRO_MULTI_A4, HANDSHAKE_OPCODE,
+})
 # Unsolicited pushes accumulate between operations; never let them grow unbounded.
 _RX_QUEUE_MAX = 64
+# Upper bound on client.disconnect(): a wedged proxy must not hold the device lock forever.
+DISCONNECT_TIMEOUT = 5.0
 
 NotifyCallback = Callable[[bytes], None]
 _T = TypeVar("_T")
@@ -84,14 +106,21 @@ _T = TypeVar("_T")
 
 def _carries_secret(plain: bytes) -> bool:
     return len(plain) >= 2 and (
-        (plain[0] == PRO_WRITE and plain[1] == 0xB2)  # secret check write
-        or (plain[0] == 0xAA and plain[1] == 0xB1)    # secret read reply
+        (plain[0] == PRO_WRITE and plain[1] == CMD_SECRET_WRITE)  # secret check write
+        or (plain[0] == PRO_READ and plain[1] == CMD_SECRET_READ)  # secret read reply
     )
 
 
 def _mask_secret(frame: bytes) -> bytes:
-    """Blank the payload of a secret-carrying frame (keeps its 2-byte header)."""
-    return frame[:2] + b"\xff" * (len(frame) - 2)
+    """Blank the payload of a secret-carrying frame, keeping its 2-byte header.
+
+    The single masking helper (used for plain, wire and log output). A full-length
+    frame keeps a VALID trailing checksum - recomputed over the masked bytes, so it
+    never leaks the XOR of the secret; any other length is just header + blanks."""
+    if len(frame) != FRAME_LEN:
+        return frame[:2] + b"\xff" * (len(frame) - 2)
+    body = frame[:2] + b"\xff" * (FRAME_LEN - 3)
+    return body + bytes([checksum(body)])
 
 
 class _LinkLost(Exception):
@@ -176,7 +205,7 @@ class GoveeConnection:
         plaintext link they ARE the secret, and on an encrypted link the session
         key is derivable from the captured handshake plus the library's public PSK."""
         if plain is not None and _carries_secret(plain):
-            plain = plain[:2] + b"\xff" * 17 + plain[19:]
+            plain = _mask_secret(plain)
             wire = _mask_secret(wire)
         if self._framelog is not None:
             self._framelog.record(direction, wire=wire, plain=plain, enc=enc)
@@ -195,13 +224,25 @@ class GoveeConnection:
     # -- notify pump --------------------------------------------------------
 
     def _decrypt_rx(self, raw: bytes) -> bytes:
+        """Notify-callback-time decrypt (session key, post-handshake only)."""
         if self._encryption is Encryption.AES_RC4_PSK and self._session_key is not None:
             return decrypt(raw, self._session_key)
         return raw
 
     def _enqueue(self, item: bytes | None) -> None:
+        """Queue a frame (or the None link-lost sentinel). When full, the oldest
+        FRAME is dropped - never the sentinel, which is what wakes a waiter."""
         if item is not None and self._rx.qsize() >= _RX_QUEUE_MAX:
-            self._rx.get_nowait()  # drop the oldest unsolicited frame
+            kept: list[bytes | None] = []
+            dropped = False
+            while not self._rx.empty():
+                queued = self._rx.get_nowait()
+                if not dropped and queued is not None:
+                    dropped = True  # drop the oldest unsolicited frame
+                    continue
+                kept.append(queued)
+            for queued in kept:
+                self._rx.put_nowait(queued)
         self._rx.put_nowait(item)
 
     def _handle_notify(self, _char: BleakGATTCharacteristic, data: bytearray) -> None:
@@ -231,7 +272,7 @@ class GoveeConnection:
                 "%s: RX unrecognised frame %s (%s)",
                 self.address, describe_frame(plain, "rx")[0], plain.hex(),
             )
-        self._enqueue(raw)
+        self._enqueue(plain)  # plaintext: survives a disconnect nulling the session key
         if self._on_notify is not None:
             try:
                 self._on_notify(plain)
@@ -243,8 +284,15 @@ class GoveeConnection:
             self._rx.get_nowait()
 
     async def _next_rx(self, timeout: float) -> bytes:
-        """Next queued raw frame; raises TimeoutError, or _LinkLost on disconnect."""
-        item = await asyncio.wait_for(self._rx.get(), timeout=max(timeout, 0.0))
+        """Next queued frame (raw during the handshake, plaintext afterwards);
+        raises TimeoutError, or _LinkLost on disconnect. An already-queued frame
+        is returned even with no budget left (wait_for(timeout=0) would not)."""
+        try:
+            item = self._rx.get_nowait()
+        except asyncio.QueueEmpty:
+            if timeout <= 0:
+                raise TimeoutError from None
+            item = await asyncio.wait_for(self._rx.get(), timeout=timeout)
         if item is None:
             raise _LinkLost
         return item
@@ -275,8 +323,8 @@ class GoveeConnection:
             try:
                 await self._connect_locked()
                 return
-            except GoveeBleNotSupported:
-                raise
+            except (GoveeBleNotSupported, GoveeBleAuthError):
+                raise  # permanent: a retry can only repeat the same refusal
             except GoveeBleError as err:
                 last_err = err
                 _LOGGER.debug(
@@ -332,7 +380,7 @@ class GoveeConnection:
             except BleakError as err:
                 _LOGGER.debug("%s: BGC read failed: %s", self.address, err)
                 return None  # transient: try again next connect
-            version = data[1] if len(data) >= 2 and data[0] in (1, 2) else 0
+            version = data[1] if len(data) >= 2 and data[0] in BGC_VERSION_VALUES else 0
         self._bgc_version, self._bgc_checked = version, True
         return version
 
@@ -370,6 +418,10 @@ class GoveeConnection:
             for frame in self._unlock_frames():
                 try:
                     await self._send_write_verified(frame)
+                except _LinkLost as err:
+                    raise GoveeBleConnectionError(
+                        f"{self.address}: link lost during unlock"
+                    ) from err
                 except _WriteRejected as err:
                     raise GoveeBleAuthError(
                         f"{self.address}: device rejected the secret key - it is wrong "
@@ -426,11 +478,32 @@ class GoveeConnection:
         self._session_key = None
         self._ready = False
         client, self._client = self._client, None
-        if client is not None:
-            try:
-                await client.disconnect()
-            except (BleakError, TimeoutError, EOFError) as err:
-                _LOGGER.debug("%s: disconnect error: %s", self.address, err)
+        if client is None:
+            return
+        # Run the teardown as its own task: bounded by DISCONNECT_TIMEOUT so a wedged
+        # proxy can't hold the device lock forever, yet NOT cancelled if our caller is
+        # cancelled (the client is already forgotten, so nothing else would close it).
+        task = asyncio.get_running_loop().create_task(client.disconnect())
+        self._background.add(task)
+        task.add_done_callback(self._disconnect_done)
+        _done, pending = await asyncio.wait({task}, timeout=DISCONNECT_TIMEOUT)
+        if pending:
+            _LOGGER.debug(
+                "%s: disconnect did not finish within %.0fs; abandoning it",
+                self.address, DISCONNECT_TIMEOUT,
+            )
+            task.cancel()
+
+    def _disconnect_done(self, task: asyncio.Task[None]) -> None:
+        self._background.discard(task)
+        if task.cancelled():
+            return
+        err = task.exception()  # always retrieved: never an "unretrieved exception"
+        if err is not None:
+            _LOGGER.debug(
+                "%s: disconnect error: %r", self.address, err,
+                exc_info=(type(err), err, err.__traceback__),
+            )
 
     # -- I/O ----------------------------------------------------------------
 
@@ -494,23 +567,24 @@ class GoveeConnection:
         success and raises GoveeBleError on an explicit rejection. If the link
         stops acking (or the write itself fails) it is torn down and the write
         is retried once on a fresh link, so a half-dead cached connection costs
-        one reconnect instead of a failed command. Reads/unacked frames are
-        sent once."""
+        one reconnect instead of a failed command. ``expect_ack=False`` sends the
+        frame once and returns None. Only writes have an ack to wait for: a
+        non-write frame with ``expect_ack=True`` raises GoveeBleInvalidValue
+        (use :meth:`query` to read replies)."""
         is_write = frame_plaintext[:1] == bytes([PRO_WRITE])
+        if expect_ack and not is_write:
+            raise GoveeBleInvalidValue(
+                f"{self.address}: expect_ack needs a write frame (proType 0x{PRO_WRITE:02X}); "
+                "use query() for reads"
+            )
 
         async def op() -> bytes | None:
-            if expect_ack and is_write:
+            if expect_ack:
                 return await self._write_locked(frame_plaintext)
             await self._ensure_connected_locked()
             self._drain()
             await self._send_frame(frame_plaintext)
-            if not expect_ack:
-                return None
-            # Non-write with expect_ack: best-effort "next notification" reply.
-            try:
-                return self._decrypt_rx(await self._next_rx(COMMAND_ACK_TIMEOUT))
-            except TimeoutError:
-                return None
+            return None
 
         return await self._run(op, extend_warm=is_write)
 
@@ -525,6 +599,40 @@ class GoveeConnection:
                 await self._write_locked(frame)
 
         await self._run(op, extend_warm=True)
+
+    async def send_mixed(self, items: Sequence[tuple[bytes, bool]]) -> list[bytes | None]:
+        """Send ``(frame, expect_ack)`` items in order under ONE lock acquisition
+        and one connection, so a sequence mixing acked writes with unacked stream
+        frames (e.g. a scene upload plus its activation) can't be interleaved with
+        a poll.
+
+        Same policy as :meth:`send_many` for acked items: each is a write (proType
+        0x33; anything else raises GoveeBleInvalidValue before any I/O), is
+        ack-verified, and on a link failure is retried once on a fresh link
+        (earlier items are NOT resent). Unacked items are sent once, paced by
+        UNACKED_SEND_GAP like :meth:`send_unacked`. Returns, per item in order,
+        the ack frame (acked) or None (unacked)."""
+        for frame, expect_ack in items:
+            if expect_ack and frame[:1] != bytes([PRO_WRITE]):
+                raise GoveeBleInvalidValue(
+                    f"{self.address}: expect_ack needs a write frame (proType "
+                    f"0x{PRO_WRITE:02X}); use query() for reads"
+                )
+
+        async def op() -> list[bytes | None]:
+            results: list[bytes | None] = []
+            for frame, expect_ack in items:
+                if expect_ack:
+                    results.append(await self._write_locked(frame))
+                    continue
+                await self._ensure_connected_locked()
+                self._drain()
+                await self._send_frame(frame)
+                await asyncio.sleep(UNACKED_SEND_GAP)
+                results.append(None)
+            return results
+
+        return await self._run(op, extend_warm=True)
 
     async def _write_locked(self, frame_plaintext: bytes) -> bytes:
         """Ack-verified write with one reconnect-and-retry. Only failures AFTER the
@@ -543,7 +651,9 @@ class GoveeConnection:
         await self._ensure_connected_locked()
         return await self._send_write_verified(frame_plaintext)
 
-    async def send_unacked(self, frames: list[bytes], *, gap: float = 0.03) -> None:
+    async def send_unacked(
+        self, frames: list[bytes], *, gap: float = UNACKED_SEND_GAP
+    ) -> None:
         """Stream multi-packet frames (scene uploads) that the device does not
         ack individually, paced so a proxy's write queue can't drop them."""
 
@@ -593,15 +703,14 @@ class GoveeConnection:
                 raw = await self._next_rx(deadline - loop.time())
             except TimeoutError:
                 return None
-            dec = self._decrypt_rx(raw)
-            if len(dec) >= 2 and dec[0] == opcode and dec[1] == command:
-                return dec
+            if len(raw) >= 2 and raw[0] == opcode and raw[1] == command:
+                return raw
 
     async def query(
         self,
         frame_plaintext: bytes,
         *,
-        timeout: float = 3.0,
+        timeout: float = QUERY_DEFAULT_TIMEOUT,
         opcode: int = 0xAC,
         terminal: int = 0xFF,
         idle_gap: float | None = BURST_IDLE_GAP,
@@ -628,10 +737,9 @@ class GoveeConnection:
                 if remaining <= 0:
                     break
                 try:
-                    raw = await self._next_rx(remaining)
+                    dec = await self._next_rx(remaining)
                 except TimeoutError:
                     break
-                dec = self._decrypt_rx(raw)
                 frames.append(dec)
                 if len(dec) >= 2 and dec[0] == opcode:
                     seen_opcode = True
@@ -674,8 +782,3 @@ class GoveeConnection:
                 return  # an operation ran since the timer fired
             self._idle_timer = None
             await self._disconnect_locked()
-
-
-def now_ts() -> int:
-    """Current unix timestamp (for sync_time frames)."""
-    return int(time.time())
