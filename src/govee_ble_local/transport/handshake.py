@@ -31,9 +31,9 @@ def _build_plain(step: int, payload: bytes | None) -> bytes:
         body[2 : 2 + len(payload)] = payload
         n = len(payload)
     # Controller4Aes.a fills the gap up to index 19 with random bytes.
-    fill = os.urandom(19 - (2 + n))
-    body[2 + n : 19] = fill
-    body[19] = checksum(bytes(body[:19]))
+    fill = os.urandom(FRAME_LEN - 1 - (2 + n))
+    body[2 + n : FRAME_LEN - 1] = fill
+    body[FRAME_LEN - 1] = checksum(bytes(body[: FRAME_LEN - 1]))
     return bytes(body)
 
 

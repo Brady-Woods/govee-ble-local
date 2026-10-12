@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 import time
 import uuid
 from dataclasses import dataclass
@@ -28,6 +29,8 @@ except ModuleNotFoundError as err:  # pragma: no cover
     raise ImportError("cloud provisioning needs aiohttp: pip install 'govee-ble-local[cloud]'") from err
 
 from ..exceptions import GoveeBleError
+
+_LOG = logging.getLogger(__name__)
 
 BASE_URL = "https://app2.govee.com"
 # Login: the app's own /bff-app/v2/account/login is @EncryptDecrypt (RSA-2048 +
@@ -154,7 +157,15 @@ class GoveeCloudAccount:
                 url, json=body, headers=self._headers(auth=auth),
                 timeout=aiohttp.ClientTimeout(total=REQUEST_TIMEOUT),
             ) as resp:
-                return resp.status, await resp.json(content_type=None)
+                status = resp.status
+                if status != 200:
+                    # Check the status first: a 401/5xx body is often HTML, and callers
+                    # (re-login on 401, "HTTP n" errors) need the status, not a JSON error.
+                    try:
+                        return status, await resp.json(content_type=None)
+                    except ValueError:
+                        return status, None
+                return status, await resp.json(content_type=None)
         except (aiohttp.ClientError, TimeoutError) as err:
             raise GoveeCloudError(f"request to {url} failed: {err}") from err
         except ValueError as err:
@@ -183,7 +194,7 @@ class GoveeCloudAccount:
         token = _dict_field(data, "data", "login response").get("token") or _dict_field(
             data, "client", "login response"
         ).get("token")
-        if not token:
+        if not (isinstance(token, str) and token):
             raise GoveeCloudError("login response had no token")
         self._token = token
 
@@ -213,8 +224,8 @@ class GoveeCloudAccount:
 
         # The BLE secret and the real BLE MAC live inside deviceExt.deviceSettings,
         # which is itself a JSON string (not top-level). e.g.
-        #   deviceSettings = '{"address":"98:17:3C:B1:A2:D1","secretCode":"..base64..",
-        #                      "bleName":"ihoment_H5083_A2D1","wifiMac":"98:17:3C:B1:A2:D0",...}'
+        #   deviceSettings = '{"address":"AA:BB:CC:DD:EE:FF","secretCode":"..base64..",
+        #                      "bleName":"ihoment_H5083_EEFF","wifiMac":"AA:BB:CC:DD:EE:FE",...}'
         # (the top-level `device` id embeds the Wi-Fi MAC, one off the BLE MAC.)
         ext = d.get("deviceExt")
         settings: dict[str, Any] = {}
@@ -243,13 +254,14 @@ class GoveeCloudAccount:
                 secret = base64.b64decode(secret_b64, validate=True)
                 if len(secret) != SECRET_LEN:
                     raise ValueError("wrong length")
-            except ValueError as err:  # binascii.Error is a ValueError
+            except ValueError:  # binascii.Error is a ValueError
                 who = (
                     str(d.get("sku") or "").upper()
                     or (ble_mac if isinstance(ble_mac, str) else "")
                     or "unknown device"
                 )
-                raise GoveeCloudError(f"device secret for {who} is malformed") from err
+                _LOG.warning("device secret for %s is malformed; ignoring it", who)
+                secret = None
 
         ext_name = ext.get("deviceName") if isinstance(ext, dict) else None
         return CloudDevice(
@@ -281,9 +293,16 @@ class GoveeCloudAccount:
                 if not isinstance(s, str) or isinstance(pid, (bool, list, dict)):
                     raise GoveeCloudError("effect-strs response had a malformed entry")
                 try:
-                    out[int(pid)] = s
+                    scene_id = int(pid)
                 except (TypeError, ValueError) as err:
                     raise GoveeCloudError("effect-strs response had a malformed scene id") from err
+                try:
+                    base64.b64decode(s, validate=True)
+                except ValueError as err:  # binascii.Error
+                    raise GoveeCloudError(
+                        f"effect-strs response had a malformed effect for scene {scene_id}"
+                    ) from err
+                out[scene_id] = s
         return out
 
     async def close(self) -> None:

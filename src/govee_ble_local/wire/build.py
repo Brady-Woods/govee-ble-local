@@ -92,7 +92,7 @@ def frame(pro_type: int, *payload: int) -> bytes:
     buf = bytearray(FRAME_LEN)
     buf[0] = pro_type
     buf[1 : 1 + len(payload)] = bytes(payload)
-    buf[19] = checksum(bytes(buf[:19]))
+    buf[FRAME_LEN - 1] = checksum(bytes(buf[: FRAME_LEN - 1]))
     return bytes(buf)
 
 
@@ -201,7 +201,7 @@ def scene_upload_a3(value: bytes, comm_byte: int) -> list[bytes]:
     pieces = ceil_div(SCENE_A3_HEADER_LEN + len(value), SCENE_A3_PIECE_LEN)  # ceil over header + value
     if pieces > 0xFF:
         # The count is one byte and seq 0xFF is the end marker.
-        raise ValueError(f"scene payload too large for 0xA3 upload ({pieces} packets)")
+        raise GoveeBleInvalidValue(f"scene payload too large for 0xA3 upload ({pieces} packets)")
     stream = bytes([0x01, pieces & 0xFF, comm_byte & 0xFF]) + value
     out: list[bytes] = []
     for i in range(pieces):

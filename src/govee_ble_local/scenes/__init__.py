@@ -7,6 +7,7 @@ BLE activation code; `param` is the base64 effect blob for the a3-chunk upload
 from __future__ import annotations
 
 import base64
+import binascii
 import functools
 import json
 import re
@@ -75,6 +76,10 @@ def _catalog(sku: str) -> MappingProxyType[str, Scene]:
         data = json.loads(raw)
         if not isinstance(data, dict):
             raise TypeError(f"top-level value is {type(data).__name__}, expected object")
+        for v in data.values():
+            param = v.get("param")
+            if param:  # validate now so a corrupt bundled blob fails at load, not at upload
+                base64.b64decode(param, validate=True)
         scenes = {
             name: Scene(
                 name, int(v["code"]), v.get("param"), v.get("category"),
@@ -85,6 +90,7 @@ def _catalog(sku: str) -> MappingProxyType[str, Scene]:
             for name, v in data.items()
         }
     except (ValueError, TypeError, KeyError, AttributeError) as err:
+        # binascii.Error (bad base64) is a ValueError; its repr never quotes the blob.
         raise GoveeBleError(f"scene catalog for {sku} is malformed: {err!r}") from err
     return MappingProxyType(scenes)
 
@@ -108,6 +114,17 @@ def scene_names_by_code(sku: str) -> dict[int, str]:
     return out
 
 
+def _decode_param(scene: Scene) -> bytes:
+    """Strictly base64-decode ``scene.param``; GoveeBleInvalidValue (naming the scene, never
+    the payload) on bad data."""
+    try:
+        return base64.b64decode(scene.param or "", validate=True)
+    except (binascii.Error, ValueError, TypeError) as err:
+        raise GoveeBleInvalidValue(
+            f"scene {scene.name!r} (code {scene.code}) has a malformed effect parameter"
+        ) from err
+
+
 def scene_upload_frames(
     scene: Scene, scene_dialect: str | None, scene_versions: frozenset[int]
 ) -> list[bytes] | None:
@@ -116,19 +133,31 @@ def scene_upload_frames(
     Pure: takes the scene plus the profile's ``scene_dialect`` / ``scene_versions``. DIY
     (sceneType 5) is dialect-specific; every other type goes through the library table
     (:func:`scene_upload_params`)."""
-    param = scene.param
-    if not param:
+    if not scene.param:
         return None
+    try:
+        return _plan_upload(scene, scene_dialect, scene_versions)
+    except GoveeBleInvalidValue as err:
+        if "malformed effect parameter" in str(err):
+            raise
+        raise GoveeBleInvalidValue(
+            f"scene {scene.name!r} (code {scene.code}) cannot be uploaded: {err}"
+        ) from err
+
+
+def _plan_upload(
+    scene: Scene, scene_dialect: str | None, scene_versions: frozenset[int]
+) -> list[bytes] | None:
     st = scene.scene_type
     if scene_dialect == "B_h60a6" and st == 5:
-        value = base64.b64decode(param)[1:]
+        value = _decode_param(scene)[1:]
         if len(value) < 2:
             return None
         is_diy = (value[0] | (value[1] << 8)) + 2 == len(value)
         return (build.scene_upload_a3(value, build.COMM_H60A6) if is_diy
                 else build.scene_upload_a4_mtu(value, build.COMM_H60A6))
     if scene_dialect == "B_h6052" and st == 5:
-        raw = base64.b64decode(param)
+        raw = _decode_param(scene)
         if raw and raw[0] == 0x13:
             return build.scene_upload_a3(raw[1:], build.COMM_H6052_GRAFFITI)
         return None
@@ -136,4 +165,4 @@ def scene_upload_frames(
     if sel is None:
         return None
     comm_byte, strip = sel
-    return build.scene_upload_a3(base64.b64decode(param)[strip:], comm_byte)
+    return build.scene_upload_a3(_decode_param(scene)[strip:], comm_byte)

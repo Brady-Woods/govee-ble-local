@@ -37,12 +37,12 @@ async def test_get_scene_effect_strs_top_level_and_nested() -> None:
             {"scenceParamId": 3, "effectStr": ""},     # dropped: empty
             {"scenceParamId": None, "effectStr": "x"}, # dropped: no id
         ]}),
-        (200, {"data": {"effectStrs": [{"scenceParamId": 9, "effectStr": "Z"}]}}),
+        (200, {"data": {"effectStrs": [{"scenceParamId": 9, "effectStr": "AAAA"}]}}),  # WAS "Z"
         (200, {}),
     ])
     assert await a.get_scene_effect_strs([1, 2, 3]) == {1: "AAA=", 2: "BBB="}
     assert calls[0] == (acc.BASE_URL + acc.EFFECT_STRS_PATH, {"scenceParamIds": [1, 2, 3]})
-    assert await a.get_scene_effect_strs([9]) == {9: "Z"}
+    assert await a.get_scene_effect_strs([9]) == {9: "AAAA"}
     assert await a.get_scene_effect_strs([]) == {}
 
 
@@ -231,18 +231,25 @@ async def test_post_non_json_body_raises_cloud_error_without_leak() -> None:
     assert "SECRET-BODY" not in str(ei.value)
 
 
-def test_parse_malformed_secret_raises() -> None:
+def test_parse_malformed_secret_yields_none_and_warns(caplog: pytest.LogCaptureFixture) -> None:
     import base64
     import json
+    import logging
 
-    # WAS: bad base64 silently became None / wrong-length bytes passed through.
+    # WAS (SEC-4/SEC-5): bad base64 / wrong-length secret raised GoveeCloudError, which made
+    # get_devices() fail for the whole account.
+    # FIXED (N-7): the device is returned with secret=None and one WARNING naming the SKU/MAC.
     for bad in ("!!!notbase64", base64.b64encode(b"short").decode(), base64.b64encode(b"x" * 9).decode()):
-        with pytest.raises(GoveeCloudError, match="device secret for H6008 is malformed") as ei:
-            GoveeCloudAccount._parse({"sku": "h6008", "device": "AA", "secretCode": bad})
-        assert bad not in str(ei.value)
-    settings = json.dumps({"address": "98:17:3C:B1:A2:D1", "secretCode": "AAAA"})
-    with pytest.raises(GoveeCloudError, match="98:17:3C:B1:A2:D1"):
-        GoveeCloudAccount._parse({"device": "AA", "deviceExt": {"deviceSettings": settings}})
+        caplog.clear()
+        with caplog.at_level(logging.WARNING):
+            dev = GoveeCloudAccount._parse({"sku": "h6008", "device": "AA", "secretCode": bad})
+        assert dev.secret is None and dev.sku == "H6008"
+        assert len(caplog.records) == 1 and "H6008" in caplog.text and bad not in caplog.text
+    settings = json.dumps({"address": "AA:BB:CC:DD:EE:FF", "secretCode": "AAAA"})
+    caplog.clear()
+    with caplog.at_level(logging.WARNING):
+        dev = GoveeCloudAccount._parse({"device": "AA", "deviceExt": {"deviceSettings": settings}})
+    assert dev.secret is None and "AA:BB:CC:DD:EE:FF" in caplog.text
     ok = GoveeCloudAccount._parse({"sku": "H1", "device": "AA", "secretCode": "YVUhCQtzXFQ="})
     assert ok.secret == bytes.fromhex("615521090b735c54")
     assert GoveeCloudAccount._parse({"sku": "H1", "device": "AA"}).secret is None
