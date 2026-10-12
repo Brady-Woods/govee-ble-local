@@ -12,10 +12,15 @@ from __future__ import annotations
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
 from .const import FRAME_LEN
+from .exceptions import GoveeBleInvalidValue
 
 
 def aes_ecb_block(key16: bytes, block16: bytes, *, encrypt: bool) -> bytes:
     """AES/ECB/NoPadding on a single 16-byte block (Safe.a / Safe.c)."""
+    if len(key16) != 16:
+        raise GoveeBleInvalidValue(f"AES key must be exactly 16 bytes, got {len(key16)}")
+    if len(block16) != 16:
+        raise GoveeBleInvalidValue(f"AES block must be exactly 16 bytes, got {len(block16)}")
     cipher = Cipher(algorithms.AES(key16), modes.ECB())
     op = cipher.encryptor() if encrypt else cipher.decryptor()
     return op.update(block16) + op.finalize()
@@ -23,6 +28,8 @@ def aes_ecb_block(key16: bytes, block16: bytes, *, encrypt: bool) -> bytes:
 
 def _rc4(key: bytes, data: bytes) -> bytes:
     """Standard RC4, hand-rolled to match Safe.f (KSA) + Safe.g (PRGA)."""
+    if not key:
+        raise GoveeBleInvalidValue("RC4 key must not be empty")
     s = list(range(256))
     j = 0
     for i in range(256):

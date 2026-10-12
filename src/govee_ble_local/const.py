@@ -75,3 +75,20 @@ OPERATION_TIMEOUT: Final = 45.0
 # A multi-frame read (0xAC status burst) is considered complete once the device has
 # gone quiet this long after its last frame, even if the 0xFF terminator was lost.
 BURST_IDLE_GAP: Final = 0.6
+
+# --- Named magic numbers (adopted by device/connection in later tasks) ------
+# Device.update(): 0xAC status-burst read overall timeout (device.py query(..., timeout=5.0)).
+STATUS_READ_TIMEOUT: Final = 5.0
+# Device single-reply read (_read_reply -> query(..., timeout=2.0)).
+INFO_READ_TIMEOUT: Final = 2.0
+# Connection.query() default overall timeout (connection.py `timeout: float = 3.0`).
+QUERY_DEFAULT_TIMEOUT: Final = 3.0
+# Connection.send_unacked() default inter-frame gap (connection.py `gap: float = 0.03`).
+UNACKED_SEND_GAP: Final = 0.03
+# BGC info characteristic: first byte values accepted as an encryptVersion
+# (connection.py `data[0] in (1, 2)`).
+BGC_VERSION_VALUES: Final = (1, 2)
+# 0xA3 scene upload framing: each frame carries 17 stream bytes after the seq byte,
+# and the stream starts with a 3-byte header [marker, packet_count, comm_byte].
+SCENE_A3_PIECE_LEN: Final = 17
+SCENE_A3_HEADER_LEN: Final = 3

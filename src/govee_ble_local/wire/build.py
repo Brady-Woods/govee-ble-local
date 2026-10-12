@@ -9,8 +9,9 @@ from __future__ import annotations
 
 from typing import Literal
 
-from ..const import FRAME_LEN
+from ..const import FRAME_LEN, SCENE_A3_HEADER_LEN, SCENE_A3_PIECE_LEN
 from ..crypto import checksum
+from ..exceptions import GoveeBleInvalidValue
 
 
 def ceil_div(a: int, b: int) -> int:
@@ -48,6 +49,12 @@ SUB_COLOR_0B = 0x0B        # color_rgbic_0b (H61A8)
 OP15_SET_COLOR = 0x01
 OP15_SET_BRIGHTNESS = 0x02
 
+# Device-info (0x07) selectors. Other raw opcodes device.py matches already have names:
+# CMD_SWITCH 0x01, CMD_BRIGHTNESS 0x04, CMD_MODE 0x05, CMD_DEVICE_INFO 0x07, CMD_BAR_SWITCH
+# 0x36, CMD_GRADUAL_WIFI_BLE 0xA3, CMD_BULB_COLOR_V2 0xA5, CMD_IC_NUM 0x40, CMD_SECRET_READ
+# 0xB1, PRO_READ 0xAA, PRO_MULTI_AC 0xAC (device.py can adopt them as-is).
+INFO_BASIC, INFO_WIFI, INFO_SN = 0x10, 0x11, 0x02
+
 # power payload values
 POWER_ON, POWER_OFF = 0x01, 0x00
 RELAY_ON, RELAY_OFF = 0x11, 0x10   # plug family
@@ -59,10 +66,32 @@ COMM_H6052_GRAFFITI = 0x09
 ColorScheme = Literal["h60a6", "h6006", "h61a8"]
 
 
+def _check_range(name: str, value: int, lo: int, hi: int) -> int:
+    """Return ``value`` if it is an int in [lo, hi]; else raise GoveeBleInvalidValue."""
+    if isinstance(value, bool) or not isinstance(value, int) or not lo <= value <= hi:
+        raise GoveeBleInvalidValue(f"{name} must be an integer in {lo}..{hi}, got {value!r}")
+    return value
+
+
+def _check_rgb(r: int, g: int, b: int) -> None:
+    _check_range("red", r, 0, 255)
+    _check_range("green", g, 0, 255)
+    _check_range("blue", b, 0, 255)
+
+
+def _check_kelvin(kelvin: int) -> int:
+    return _check_range("kelvin", kelvin, 0, 0xFFFF)
+
+
+def _check_mask(mask: int) -> int:
+    return _check_range("segment mask", mask, 0, 0xFFFF)
+
+
 def frame(pro_type: int, *payload: int) -> bytes:
     """A 20-byte frame: [pro_type, *payload, zero-pad, XOR-checksum@19]."""
     if len(payload) > FRAME_LEN - 2:
-        raise ValueError(f"payload too long: {len(payload)}")
+        raise ValueError(
+            f"payload too long: {len(payload)} bytes (max {FRAME_LEN - 2} so the frame fits in {FRAME_LEN})")
     buf = bytearray(FRAME_LEN)
     buf[0] = pro_type
     buf[1 : 1 + len(payload)] = bytes(payload)
@@ -94,6 +123,7 @@ def brightness(pct: int) -> bytes:
 # ── colour ───────────────────────────────────────────────────────────────────
 def color_rgb(r: int, g: int, b: int, scheme: ColorScheme, segments: int = 13) -> bytes:
     """Solid RGB, per-family SubModeColor.getWriteBytes (whole-device = all-segments mask)."""
+    _check_rgb(r, g, b)
     lo, hi = _mask_le(all_segments_mask(segments))
     if scheme == "h6006":
         return frame(PRO_WRITE, CMD_MODE, SUB_COLOR_0D, r, g, b, 0, 0, 0, 0, 0)
@@ -107,6 +137,7 @@ def color_temp(kelvin: int, scheme: ColorScheme, segments: int = 13) -> bytes:
     this is just segment_color_temp with the all-segments mask."""
     if scheme == "h61a8":
         raise ValueError("h61a8 has no colour-temperature capability")
+    _check_kelvin(kelvin)
     if scheme == "h6006":
         khi, klo = (kelvin >> 8) & 0xFF, kelvin & 0xFF
         return frame(PRO_WRITE, CMD_MODE, SUB_COLOR_0D, 0xFF, 0xFF, 0xFF, khi, klo, 0, 0, 0)
@@ -115,6 +146,8 @@ def color_temp(kelvin: int, scheme: ColorScheme, segments: int = 13) -> bytes:
 
 def segment_rgb(mask: int, r: int, g: int, b: int, scheme: ColorScheme) -> bytes:
     """Per-segment RGB (mask selects segments); same layout as color_rgb."""
+    _check_rgb(r, g, b)
+    _check_mask(mask)
     lo, hi = _mask_le(mask)
     if scheme == "h61a8":
         return frame(PRO_WRITE, CMD_MODE, SUB_COLOR_0B, r, g, b, lo, hi)
@@ -129,6 +162,8 @@ def segment_color_temp(mask: int, kelvin: int, scheme: ColorScheme) -> bytes:
         raise ValueError("h61a8 has no colour-temperature capability")
     if scheme == "h6006":
         raise ValueError("h6006 colour-temperature is whole-device only (no segment mask)")
+    _check_kelvin(kelvin)
+    _check_mask(mask)
     khi, klo = (kelvin >> 8) & 0xFF, kelvin & 0xFF
     lo, hi = _mask_le(mask)
     return frame(PRO_WRITE, CMD_MODE, SUB_COLOR_15, OP15_SET_COLOR,
@@ -139,6 +174,7 @@ def segment_brightness(mask: int, pct: int, scheme: ColorScheme) -> bytes:
     """Per-segment brightness (0x15 op 0x02); only the 0x15 family supports it."""
     if scheme == "h61a8":
         raise ValueError("h61a8 has no per-segment brightness")
+    _check_mask(mask)
     lo, hi = _mask_le(mask)
     return frame(PRO_WRITE, CMD_MODE, SUB_COLOR_15, OP15_SET_BRIGHTNESS, max(0, min(100, pct)), lo, hi)
 
@@ -146,7 +182,8 @@ def segment_brightness(mask: int, pct: int, scheme: ColorScheme) -> bytes:
 # ── zones / bars ─────────────────────────────────────────────────────────────
 def zone_power(zone: int, on: bool) -> bytes:
     """33 30 <zoneIndex> <state> (H60A6 per-zone)."""
-    return frame(PRO_WRITE, CMD_ZONE, zone & 0xFF, 1 if on else 0)
+    _check_range("zone", zone, 0, 0xFF)
+    return frame(PRO_WRITE, CMD_ZONE, zone, 1 if on else 0)
 
 
 def bar_switch(left: bool, right: bool) -> bytes:
@@ -157,20 +194,21 @@ def bar_switch(left: bool, right: bool) -> bytes:
 # ── scenes ───────────────────────────────────────────────────────────────────
 def scene_activate(code: int) -> bytes:
     """33 05 04 <code u2le>."""
+    _check_range("scene code", code, 0, 0xFFFF)
     return frame(PRO_WRITE, CMD_MODE, SUB_SCENE, code & 0xFF, (code >> 8) & 0xFF)
 
 
 def scene_upload_a3(value: bytes, comm_byte: int) -> list[bytes]:
     """0xA3 scene/DIY upload (MultipleControllerCommV1): frames of
     [0x01(marker), packet_count, comm_byte, value…], seq 0,1,…, last=0xFF (data-bearing)."""
-    pieces = ceil_div(3 + len(value), 17)  # ceil over [marker, count, comm] + value
+    pieces = ceil_div(SCENE_A3_HEADER_LEN + len(value), SCENE_A3_PIECE_LEN)  # ceil over header + value
     if pieces > 0xFF:
         # The count is one byte and seq 0xFF is the end marker.
         raise ValueError(f"scene payload too large for 0xA3 upload ({pieces} packets)")
     stream = bytes([0x01, pieces & 0xFF, comm_byte & 0xFF]) + value
     out: list[bytes] = []
     for i in range(pieces):
-        piece = stream[i * 17 : (i + 1) * 17]
+        piece = stream[i * SCENE_A3_PIECE_LEN : (i + 1) * SCENE_A3_PIECE_LEN]
         seq = 0xFF if i == pieces - 1 else i
         out.append(frame(PRO_MULTI_A3, seq, *piece))
     return out
@@ -211,9 +249,14 @@ def plug_sync_time(unix_ts: int, tz_hour: int, tz_min: int) -> bytes:
                  0x01, tz_hour & 0xFF, tz_min & 0xFF)
 
 
+SECRET_LEN = 8
+
+
 def secret_check(secret: bytes) -> bytes:
     """33 B2 <8-byte account-lock secret>."""
-    return frame(PRO_WRITE, CMD_SECRET_WRITE, *secret[:8])
+    if len(secret) != SECRET_LEN:
+        raise GoveeBleInvalidValue(f"secret must be exactly {SECRET_LEN} bytes, got {len(secret)}")
+    return frame(PRO_WRITE, CMD_SECRET_WRITE, *secret)
 
 
 # ── read requests (0xAA / 0xAC) ──────────────────────────────────────────────

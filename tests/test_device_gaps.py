@@ -16,7 +16,7 @@ import pytest
 from fake_ble import ble_device
 
 from govee_ble_local.devices.device import Device, make_device
-from govee_ble_local.exceptions import GoveeBleNotSupported
+from govee_ble_local.exceptions import GoveeBleInvalidValue, GoveeBleNotSupported
 from govee_ble_local.models import Capability, Encryption
 
 
@@ -276,11 +276,13 @@ def test_invalid_inputs_are_not_validated_consistently() -> None:
     with pytest.raises(GoveeBleNotSupported):
         asyncio.run(h61.set_segment_brightness([0], 50))
 
-    # CURRENT BEHAVIOR (DES-1): kelvin beyond u16 is not rejected; the high byte silently wraps
-    # (70000 -> 0x1170 on the wire) and the unwrapped value is stored in state.
+    # FIXED (DES-1, T5.2): kelvin beyond u16 used to wrap silently (70000 -> 0x1170 on the
+    # wire, unwrapped value stored in state). It is now rejected at the builder with
+    # GoveeBleInvalidValue (a ValueError); nothing is sent.
     t = _dev("H6008")
-    asyncio.run(t.set_color_temp(70000))
-    assert _sent(t)[0][6:8] == bytes([0x11, 0x70]) and t.state.color_temp_kelvin == 70000
+    with pytest.raises(GoveeBleInvalidValue):
+        asyncio.run(t.set_color_temp(70000))
+    assert _sent(t) == []
 
 
 def test_device_info_flag_set_before_reads_and_not_retried() -> None:
@@ -315,13 +317,10 @@ def test_update_propagates_read_failure_and_skips_notify() -> None:
     assert d.state.optimistic is True and seen == [] and d._polled_once is False
 
 
-def test_update_unknown_readback_value_silently_does_nothing() -> None:
-    # CURRENT BEHAVIOR (DES-7): an unrecognised ``readback`` value is neither an error nor a
-    # warning; update() skips the state read, then still reads device info and notifies.
-    d = _dev("H6008", readback="bogus")
-    seen: list[object] = []
-    d.register_callback(seen.append)
-    st = asyncio.run(d.update())
-    assert st.is_on is None and st.optimistic is True
-    assert {f[1] for f in _queried(d)} == {0x07}  # only the device-info reads happened
-    assert len(seen) == 1
+def test_update_unknown_readback_value_is_rejected_at_profile_construction() -> None:
+    # WAS (DES-7): an unrecognised ``readback`` value was neither an error nor a warning;
+    # update() skipped the state read, then still read device info and notified.
+    # FIXED (T5.1): the profile now validates ``readback`` on construction, so a bogus value
+    # raises ValueError before any Device exists.
+    with pytest.raises(ValueError):
+        _dev("H6008", readback="bogus")
