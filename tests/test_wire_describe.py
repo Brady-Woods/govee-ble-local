@@ -7,9 +7,9 @@ used by both runtime logging and the offline analyzer.
 """
 from __future__ import annotations
 
-import pytest
+from conftest import require_optional
 
-pytest.importorskip("kaitaistruct", reason="Kaitai runtime not installed")
+require_optional("kaitaistruct", reason="Kaitai runtime not installed")
 
 from govee_ble_local.wire.describe import (  # noqa: E402
     analyze_status_bursts,
@@ -81,7 +81,7 @@ def test_bad_checksum_is_artifact_not_hard() -> None:
 
 # ── soft coverage note: known command, payload not modelled ──────────────────
 def test_known_but_unmodelled_payload_is_soft() -> None:
-    label, issues = describe_frame(_frame(0x33, 0x30, 0x01, 0x00))  # zone write, opaque payload
+    _label, issues = describe_frame(_frame(0x33, 0x30, 0x01, 0x00))  # zone write, opaque payload
     assert not [r for sev, r in issues if sev == "hard"]
     assert any(sev == "soft" for sev, _ in issues)
 
@@ -156,7 +156,9 @@ def test_status_burst_unknown_tlv_flagged() -> None:
 
 
 def test_status_burst_missing_terminator_is_malformed() -> None:
-    a = bytearray(20); a[0], a[1] = 0xAC, 0x00
-    b = bytearray(20); b[0], b[1] = 0xAC, 0x00
+    a = bytearray(20)
+    a[0], a[1] = 0xAC, 0x00
+    b = bytearray(20)
+    b[0], b[1] = 0xAC, 0x00
     _types, gaps, malformed = analyze_status_bursts([bytes(a), bytes(b)])
     assert malformed >= 1 and not gaps

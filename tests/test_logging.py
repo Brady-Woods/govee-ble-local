@@ -6,12 +6,11 @@ is silent when off; and the frames-log -> JSONL converter round-trips into the a
 """
 from __future__ import annotations
 
-import asyncio
 import logging
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from bleak.backends.device import BLEDevice
+from fake_ble import ble_device
 
 from govee_ble_local import debug
 from govee_ble_local.exceptions import GoveeBleError
@@ -33,7 +32,7 @@ def _bcc(*body: int) -> bytes:
 
 
 def _conn() -> GoveeConnection:
-    c = GoveeConnection(BLEDevice("AA:BB:CC:DD:EE:FF", "GVH60A6X", details={}),
+    c = GoveeConnection(ble_device("AA:BB:CC:DD:EE:FF", "GVH60A6X"),
                         encryption=Encryption.NONE)
     client = MagicMock()
     client.is_connected = True
@@ -43,16 +42,14 @@ def _conn() -> GoveeConnection:
     return c
 
 
-def test_rejected_write_logs_error(caplog: pytest.LogCaptureFixture) -> None:
-    async def run() -> None:
-        c = _conn()
+async def test_rejected_write_logs_error(caplog: pytest.LogCaptureFixture) -> None:
+    c = _conn()
 
-        async def fake_write(_wire: bytes) -> None:
-            c._rx.put_nowait(_bcc(0x33, 0x01, 0x02))       # byte2 != 0 -> rejection
-        c._raw_write = AsyncMock(side_effect=fake_write)
-        with caplog.at_level(logging.ERROR, logger=_CONN_LOGGER), pytest.raises(GoveeBleError):
-            await c.send(_bcc(0x33, 0x01, 0x01))
-    asyncio.run(run())
+    async def fake_write(_wire: bytes) -> None:
+        c._rx.put_nowait(_bcc(0x33, 0x01, 0x02))       # byte2 != 0 -> rejection
+    c._raw_write = AsyncMock(side_effect=fake_write)
+    with caplog.at_level(logging.ERROR, logger=_CONN_LOGGER), pytest.raises(GoveeBleError):
+        await c.send(_bcc(0x33, 0x01, 0x01))
     assert any("rejected" in r.message for r in caplog.records if r.levelno == logging.ERROR)
 
 
@@ -71,9 +68,13 @@ def test_frames_logger_emits_when_enabled(caplog: pytest.LogCaptureFixture) -> N
     assert recs and "plain=" in recs[0].getMessage() and "write/switch" in recs[0].getMessage()
 
 
-def test_frames_logger_silent_when_off(caplog: pytest.LogCaptureFixture) -> None:
+def test_frames_logger_silent_when_off(
+    caplog: pytest.LogCaptureFixture, request: pytest.FixtureRequest
+) -> None:
     c = _conn()
-    logging.getLogger(_FRAMES_LOGGER).setLevel(logging.INFO)   # below-DEBUG => guarded off
+    frames_logger = logging.getLogger(_FRAMES_LOGGER)
+    request.addfinalizer(lambda lvl=frames_logger.level: frames_logger.setLevel(lvl))  # no leak
+    frames_logger.setLevel(logging.INFO)   # below-DEBUG => guarded off
     with caplog.at_level(logging.INFO, logger=_FRAMES_LOGGER):
         c._capture("tx", wire=_bcc(0x33, 0x01, 0x01), plain=_bcc(0x33, 0x01, 0x01), enc="none")
     assert not [r for r in caplog.records if r.name == _FRAMES_LOGGER]

@@ -1,21 +1,28 @@
 [build-system]
-requires = ["setuptools>=64", "wheel"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "govee-ble-local"
-version = "1.0.3"
+version = "1.2.0"
 description = "Local Bluetooth LE control of Govee devices — no cloud, no LAN API."
-readme = "README.md"
-license = { text = "MIT" }
+readme = { file = "README.md", content-type = "text/markdown" }
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [{ name = "Brady Woods" }]
 requires-python = ">=3.11"
 keywords = ["govee", "bluetooth", "ble", "home-assistant", "led", "light"]
 classifiers = [
     "Development Status :: 5 - Production/Stable",
-    "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Home Automation",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Framework :: AsyncIO",
+    "Typing :: Typed",
 ]
 dependencies = [
     "bleak>=0.21",
@@ -28,6 +35,10 @@ dependencies = [
     # package inside a running HA instance pulled cryptography 49.0.0,
     # conflicting with HA's 48.0.1 requirement). Revisit this ceiling
     # alongside HA core's own cryptography pin as it moves.
+    # Security note: pip-audit reports advisories PYSEC-2026-3552/3553/3554 (PKCS#7 decrypt
+    # oracle, cert-chain DoS, wildcard SAN constraint bypass) fixed only in cryptography 49/50.
+    # This library uses only AES-ECB/ARC4, not PKCS#7/X.509, so they are not exploitable here;
+    # the ceiling exists for Home Assistant's pin. Revisit when HA moves.
     "cryptography>=41.0.0,<49",
     # Runtime wire parser: the spec/*.ksy-generated readers under govee_ble_local/_generated
     # subclass KaitaiStruct + use KaitaiStream, so this is required at runtime. It is the ONE
@@ -35,7 +46,7 @@ dependencies = [
     # *compiler* (ksc, JS) stays a dev tool (tools/gen_kaitai.sh); the readers are committed.
     # See CLAUDE.local.md for the dependency policy (bleak / bleak-retry-connector / cryptography
     # are HA defaults; new runtime deps need justification; never require a version ahead of HA).
-    "kaitaistruct>=0.10",
+    "kaitaistruct>=0.11",
 ]
 
 [project.scripts]
@@ -47,21 +58,52 @@ govee-ble-analyze = "govee_ble_local.debug:main"
 Homepage = "https://github.com/Brady-Woods/govee-ble-local"
 Repository = "https://github.com/Brady-Woods/govee-ble-local"
 Changelog = "https://github.com/Brady-Woods/govee-ble-local/blob/master/CHANGELOG.md"
+Issues = "https://github.com/Brady-Woods/govee-ble-local/issues"
 
 [project.optional-dependencies]
 # Dev/test/docs only — NOT runtime. PyYAML + jsonschema validate spec/devices.yaml in the
 # test suite (the runtime device table is hardcoded Python in devices/profile.py; nothing under
 # src/ imports yaml). See CLAUDE.local.md for the dependency policy.
-test = ["pytest", "pytest-asyncio", "pytest-cov", "jsonschema>=4.0", "PyYAML>=6.0"]
+test = [
+    "pytest", "pytest-asyncio", "pytest-cov", "jsonschema>=4.0", "PyYAML>=6.0", "aiohttp>=3.9",
+    # Independent AES reference for tests/test_spec_reference_crosscheck.py. Test-only: never a
+    # runtime dependency (the library itself uses `cryptography`).
+    "pycryptodome",
+]
 cloud = ["aiohttp>=3.9"]
 typing = ["mypy", "types-PyYAML"]
+# Static analysis / supply-chain gates run by scripts/check.sh and CI.
+lint = ["ruff", "bandit", "pip-audit"]
 docs = ["pdoc"]
+# Informational dead-code / complexity report (scripts/audit.sh); not a gate.
+audit = ["vulture", "radon"]
+# Everything a contributor needs for the full audit/validation workflow.
+dev = ["govee-ble-local[test,cloud,typing,lint,audit]", "uv"]
 
 [tool.pytest.ini_options]
-# async fixtures/tests (e.g. tests/test_h60a6_live.py) run without per-test markers
+# async fixtures/tests run without per-test markers
 asyncio_mode = "auto"
 # only collect the test suite; tools/*_test.py are CLIs, not pytest modules
 testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 110
+extend-exclude = ["src/govee_ble_local/_generated"]
+
+[tool.ruff.lint]
+select = ["E", "F", "B", "UP", "S", "ASYNC", "RUF", "SIM", "BLE"]
+ignore = [
+    # Public API methods deliberately take a `timeout` parameter (it is the documented contract).
+    "ASYNC109",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101", "S105", "S106"]
+# Developer-only CLIs/probes: fixed https URLs, best-effort cleanup, compact one-line probes.
+"tools/*" = ["S101", "S310", "S110", "BLE001", "E702"]
+# The Govee BLE protocol mandates AES-ECB; this is not a free choice.
+"src/govee_ble_local/crypto.py" = ["S305"]
 
 [tool.mypy]
 python_version = "3.11"
@@ -76,12 +118,15 @@ ignore_missing_imports = true
 module = ["govee_ble_local._generated.*"]
 ignore_errors = true
 
+[tool.vulture]
+exclude = ["src/govee_ble_local/_generated"]
+min_confidence = 80
+paths = ["src"]
+
 [tool.coverage.run]
 source = ["govee_ble_local"]
-# client.py is the thin bleak I/O wrapper, exercised by the real-device suite
-# in tools/ (device_test.py), not by unit tests - so exclude it from the
-# unit-coverage gate rather than pretend it's unit-covered.
-omit = ["*/client.py"]
+# The Kaitai-generated readers are tested through the wire layer, not line-by-line.
+omit = ["*/_generated/*"]
 
 [tool.coverage.report]
 show_missing = true

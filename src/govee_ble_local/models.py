@@ -2,10 +2,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 
 
-class Capability(str, Enum):
+class Capability(StrEnum):
     """A feature a device supports. Drives Home Assistant entity creation."""
 
     POWER = "power"
@@ -16,7 +16,7 @@ class Capability(str, Enum):
     SCENES = "scenes"
 
 
-class Encryption(str, Enum):
+class Encryption(StrEnum):
     """How a device secures its command channel.
 
     Per the app (BleUtil advertisement `encrypt` flag + BgcInfo `encryptVersion`)

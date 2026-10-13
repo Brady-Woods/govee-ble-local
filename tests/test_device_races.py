@@ -1,0 +1,229 @@
+"""Device concurrency: stale update() reads must not overwrite a setter (BUG-4) and the relay
+relay power write applies state before a best-effort sync-time (BUG-9/D-13).
+
+Deterministic: interleavings are driven with asyncio.Event gates on a fake ``_conn`` (no sleeps,
+no timing assertions). A gated read is "in flight" (issued, reply not yet applied) while the
+setter runs to completion, then the read is released.
+"""
+from __future__ import annotations
+
+import asyncio
+import logging
+from collections.abc import Callable, Sequence
+from typing import Any
+
+import pytest
+from fake_ble import ble_device
+
+from govee_ble_local.devices.device import Device, make_device
+from govee_ble_local.exceptions import GoveeBleConnectionError
+from test_device_v3 import _STATUS_BURST, _reply
+
+
+class Gate:
+    """One gated query: signals ``entered`` when issued, replies only after ``release``."""
+
+    def __init__(self, match: Callable[[bytes], bool], reply: list[bytes]) -> None:
+        self.match, self.reply = match, reply
+        self.entered, self.release = asyncio.Event(), asyncio.Event()
+
+
+def _dev(sku: str, replies: dict[int, list[bytes]] | None = None, gates: Sequence[Gate] = ()) -> Device:
+    d = make_device(ble_device("AA:BB:CC:DD:EE:70", sku), sku)
+    assert d is not None
+    table = replies or {}
+    d._sent = []  # type: ignore[attr-defined]
+
+    async def query(frame: bytes, **_k: Any) -> list[bytes]:
+        for g in gates:
+            if g.match(frame):
+                g.entered.set()
+                await g.release.wait()
+                return list(g.reply)
+        return list(table.get(frame[1], []))
+
+    async def send(frame: bytes, **_k: Any) -> None:
+        d._sent.append(frame)  # type: ignore[attr-defined]
+
+    async def send_many(frames: list[bytes]) -> None:
+        d._sent.extend(frames)  # type: ignore[attr-defined]
+
+    d._conn.query = query  # type: ignore[method-assign,assignment]
+    d._conn.send = send  # type: ignore[method-assign,assignment]
+    d._conn.send_many = send_many  # type: ignore[method-assign,assignment]
+    return d
+
+
+def _cmd(byte: int) -> Callable[[bytes], bool]:
+    return lambda f: f[0] == 0xAA and f[1] == byte
+
+
+async def _poll_during(d: Device, gate: Gate, setter: Any) -> None:
+    """Start update(), wait until `gate` is in flight, run `setter` to completion, release."""
+    task = asyncio.create_task(d.update())
+    await gate.entered.wait()
+    await setter()
+    gate.release.set()
+    await task
+
+
+# -- BUG-4: stale reads discarded -------------------------------------------------------------
+async def test_polled_power_read_does_not_overwrite_set_power() -> None:
+    g = Gate(_cmd(0x01), [_reply(0xAA, 0x01, 0x00)])           # device still reports OFF
+    d = _dev("H6006", gates=[g])
+    await _poll_during(d, g, lambda: d.set_power(True))
+    assert d.state.is_on is True
+
+
+async def test_polled_brightness_read_does_not_overwrite_set_brightness() -> None:
+    g = Gate(_cmd(0x04), [_reply(0xAA, 0x04, 0x0A)])
+    d = _dev("H6006", {0x01: [_reply(0xAA, 0x01, 0x01)]}, gates=[g])
+    await _poll_during(d, g, lambda: d.set_brightness(77))
+    assert d.state.brightness == 77
+
+
+async def test_status_read_does_not_overwrite_set_power_and_skips_authoritative() -> None:
+    g = Gate(lambda f: f[0] == 0xAC, list(_STATUS_BURST))      # burst says is_on=True, 80%
+    d = _dev("H60A6", gates=[g])
+    await _poll_during(d, g, lambda: d.set_power(False))
+    assert d.state.is_on is False
+    assert d.state.brightness is None                          # whole stale burst dropped
+    assert d.state.optimistic is True                          # not marked as read-confirmed
+    assert d._polled_once is False
+
+
+async def test_mode_read_does_not_overwrite_set_rgb() -> None:
+    # a stale mode reply (applied after the status/power reads) must not clobber the setter's colour.
+    g = Gate(_cmd(0x05), [_reply(0xAA, 0x05, 0x0D, 255, 128, 64, 0, 0)])
+    d = _dev("H6006", {0x01: [_reply(0xAA, 0x01, 0x01)]}, gates=[g])
+    await _poll_during(d, g, lambda: d.set_rgb((1, 2, 3)))
+    assert d.state.rgb_color == (1, 2, 3)
+
+
+async def test_plug_read_does_not_overwrite_set_power() -> None:
+    g = Gate(_cmd(0x01), [_reply(0xAA, 0x01, 0x00)])
+    d = _dev("H5080", gates=[g])
+    await _poll_during(d, g, lambda: d.set_power(True))
+    assert d.state.is_on is True
+    assert d.state.optimistic is True
+
+
+async def test_gradual_read_does_not_overwrite_set_gradual() -> None:
+    g = Gate(_cmd(0xA3), [_reply(0xAA, 0xA3, 0x00)])
+    d = _dev("H61A8", {0x01: [_reply(0xAA, 0x01, 0x01)]}, gates=[g])
+    await _poll_during(d, g, lambda: d.set_gradual(True))
+    assert d.state.gradual is True
+
+
+async def test_bar_switch_read_does_not_overwrite_set_zone_power() -> None:
+    # H6047: poll reads bar switch (0x36); a zone toggle completes while it is in flight.
+    g = Gate(_cmd(0x36), [_reply(0xAA, 0x36, 0x01, 0x01)])     # stale: both bars on
+    d = _dev("H6047", gates=[g])
+    d.state.zone_power = {0: True, 1: True}
+    await _poll_during(d, g, lambda: d.set_zone_power("left", False))
+    assert d.state.zone_power == {0: False, 1: True}
+
+
+async def test_mechanism_b_segments_not_overwritten_by_stale_poll() -> None:
+    g = Gate(
+        lambda f: f[0] == 0xAA and f[1] == 0xA5,
+        [_reply(0xAA, 0xA5, 1, 50, 7, 0, 0, 50, 7, 0, 0, 50, 7, 0, 0)],
+    )
+    d = _dev("H61A8", {0x01: [_reply(0xAA, 0x01, 0x01)]}, gates=[g])
+    await _poll_during(d, g, lambda: d.set_segment_rgb([0], (9, 9, 9)))
+    assert d.state.segments[0].rgb == (9, 9, 9)
+
+
+# -- discard semantics -------------------------------------------------------------------------
+async def test_discarded_poll_logs_debug_returns_current_state_and_defers_first_poll(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    g = Gate(_cmd(0x01), [_reply(0xAA, 0x01, 0x00)])
+    d = _dev("H6006", gates=[g])
+    caplog.set_level(logging.DEBUG, logger="govee_ble_local")
+    task = asyncio.create_task(d.update())
+    await g.entered.wait()
+    await d.set_power(True)
+    g.release.set()
+    st = await task
+    assert st is d.state and st.is_on is True
+    assert d._polled_once is False                              # "first poll" not yet consumed
+    assert any("discard" in r.getMessage().lower() and r.levelno == logging.DEBUG for r in caplog.records)
+    # a later clean poll proceeds normally
+    d._conn.query = _dev("H6006", {0x01: [_reply(0xAA, 0x01, 0x00)]})._conn.query  # type: ignore[method-assign]
+    await d.update()
+    assert d.state.is_on is False and d._polled_once is True
+
+
+async def test_read_not_discarded_without_concurrent_setter() -> None:
+    d = _dev("H6006", {0x01: [_reply(0xAA, 0x01, 0x01)], 0x04: [_reply(0xAA, 0x04, 0x32)]})
+    await d.update()
+    assert d.state.is_on is True and d.state.brightness == 50 and d._polled_once is True
+
+
+async def test_setter_not_blocked_by_in_flight_poll() -> None:
+    # No device-wide lock: the setter completes while the poll is still waiting on its reply.
+    g = Gate(_cmd(0x01), [_reply(0xAA, 0x01, 0x00)])
+    d = _dev("H6006", gates=[g])
+    task = asyncio.create_task(d.update())
+    await g.entered.wait()
+    await asyncio.wait_for(d.set_brightness(33), timeout=5)    # would hang if serialized
+    assert not task.done() and d.state.brightness == 33
+    g.release.set()
+    await task
+
+
+# -- BUG-9/D-13: relay power: acked power, state applied, then best-effort sync-time ----------
+async def test_relay_set_power_sends_power_then_sync_time_in_order() -> None:
+    # WAS (T7.1): one send_mixed([(power, acked), (sync, unacked)]), all-or-nothing.
+    # FIXED: send_many(power) -> apply state -> send(sync-time, expect_ack=False); same bytes/order.
+    d = _dev("H5080")
+    await d.set_power(True)
+    assert len(d._sent) == 2                                     # type: ignore[attr-defined]
+    assert d._sent[0][:3].hex() == "330111"                      # type: ignore[attr-defined]
+    assert d._sent[1][:2].hex() == "33b5"                        # type: ignore[attr-defined]
+    assert d.state.is_on is True
+
+
+async def test_relay_sync_time_failure_does_not_raise_or_undo_state(caplog) -> None:
+    # WAS: a sync-time failure raised from set_power and left state un-applied (D-13).
+    # FIXED: power write succeeded -> state applied; sync-time failure is only a WARNING.
+    d = _dev("H5080")
+    notified: list[Any] = []
+    d.register_callback(lambda s: notified.append(s))
+
+    async def boom(frame: bytes, **_k: Any) -> None:
+        raise GoveeBleConnectionError("link down")
+
+    d._conn.send = boom  # type: ignore[method-assign,assignment]
+    caplog.set_level(logging.WARNING, logger="govee_ble_local")
+    await d.set_power(True)                                      # must not raise
+    assert d.state.is_on is True
+    assert len(d._sent) == 1 and d._sent[0][:3].hex() == "330111"  # type: ignore[attr-defined]
+    assert notified
+    assert any(r.levelno == logging.WARNING and "link down" in r.getMessage() for r in caplog.records)
+
+
+async def test_relay_power_frame_failure_propagates_without_applying() -> None:
+    # A failed power write still raises, state stays unapplied, and no sync-time is attempted.
+    d = _dev("H5080")
+    sync_calls: list[bytes] = []
+
+    async def boom(frames: list[bytes]) -> None:
+        raise GoveeBleConnectionError("link down")
+
+    async def send(frame: bytes, **_k: Any) -> None:
+        sync_calls.append(frame)
+
+    d._conn.send_many = boom  # type: ignore[method-assign,assignment]
+    d._conn.send = send  # type: ignore[method-assign,assignment]
+    with pytest.raises(GoveeBleConnectionError):
+        await d.set_power(True)
+    assert d.state.is_on is None
+    assert sync_calls == []
+
+
+async def test_non_relay_set_power_sends_no_sync_time() -> None:
+    d = _dev("H6006")
+    await d.set_power(True)
+    assert len(d._sent) == 1                                     # type: ignore[attr-defined]

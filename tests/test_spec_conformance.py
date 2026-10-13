@@ -10,10 +10,10 @@ from __future__ import annotations
 import json
 import pathlib
 
-import pytest
+from conftest import require_optional
 
-pytest.importorskip("kaitaistruct", reason="Kaitai runtime not installed")
-_adv = pytest.importorskip(
+require_optional("kaitaistruct", reason="Kaitai runtime not installed")
+_adv = require_optional(
     "govee_ble_local._generated.govee_advertisement",
     reason="run tools/gen_kaitai.sh to generate the adv reader",
 )
@@ -30,7 +30,7 @@ def _load_yaml(path: pathlib.Path):  # type: ignore[no-untyped-def]
 
 
 def test_devices_yaml_validates_against_schema() -> None:
-    jsonschema = pytest.importorskip("jsonschema")
+    jsonschema = require_optional("jsonschema")
     doc = _load_yaml(_SPEC / "devices.yaml")
     schema = json.loads((_SPEC / "devices.schema.json").read_text())
     jsonschema.validate(instance=doc, schema=schema)  # raises on violation

@@ -22,6 +22,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import base64
+import contextlib
 import os
 import sys
 from pathlib import Path
@@ -79,7 +80,7 @@ async def refresh(dev, want=None, attempts: int = 5):  # type: ignore[no-untyped
     for _ in range(attempts):
         try:
             await dev.update()
-        except Exception as err:  # noqa: BLE001
+        except Exception as err:
             print(f"      (update error: {err})")
         if want is None or want(dev.state):
             return dev.state
@@ -100,15 +101,23 @@ async def read_kelvin(dev) -> int | None:  # type: ignore[no-untyped-def]
     )
     for fr in frames:
         if len(fr) == 20 and fr[0] == 0xAA and fr[1] == 0x05:
+            raw_kelvin = (fr[4] << 8) | fr[5]
             if GBF is not None:
+                # Reply path: GoveeBleFrame.body (ReadCommand) .body (ModeRead) with
+                # .selector_or_sub_mode and .rest (CctReadReply for sub-mode 0x15).
+                # No blanket except: an attribute-path mistake must fail loudly.
                 try:
-                    m = GBF.from_bytes(fr).body.params
-                    if (m.sub_type != GBF.SubMode.color_rgbic_15
-                            or m.params.op_type != GBF.Op15.set_color):
-                        continue
-                except Exception:
-                    pass
-            return (fr[4] << 8) | fr[5]
+                    parsed = GBF.from_bytes(fr)
+                except Exception as err:
+                    print(f"  (kaitai could not parse {fr.hex()}: {err}; skipping)")
+                    continue
+                mode = parsed.body.body
+                if mode.selector_or_sub_mode != 0x15:
+                    continue
+                if mode.rest.kelvin != raw_kelvin:
+                    raise AssertionError(
+                        f"kelvin mismatch: kaitai {mode.rest.kelvin} != raw {raw_kelvin}")
+            return raw_kelvin
     return None
 
 
@@ -131,13 +140,11 @@ class Runner:
             except GoveeBleError as err:
                 if attempt == 1:
                     print(f"  (recovering from {type(err).__name__}; reconnecting…)")
-                    try:
-                        await self.dev._conn.connect()
-                    except Exception:  # noqa: BLE001
-                        pass
+                    with contextlib.suppress(Exception):
+                        await self.dev.connect()
                     continue
                 ok, note = False, f"EXC {type(err).__name__}: {err}"
-            except Exception as err:  # noqa: BLE001
+            except Exception as err:
                 ok, note = False, f"EXC {type(err).__name__}: {err}"
                 break
         self.results.append((name, ok, note))
@@ -267,11 +274,11 @@ async def main() -> int:
     from govee_ble_local.registry import create_device
     from govee_ble_local.scenes import load_scenes
 
-    dev = create_device(dev_ble, "H60A6", advertisement_data=adv)
-    dev._conn._idle_disconnect = 0  # keep the ONE connection alive for the whole run
+    # idle_disconnect=0 keeps the ONE connection alive for the whole run
+    dev = create_device(dev_ble, "H60A6", advertisement_data=adv, idle_disconnect=0)
     print(f"Connecting to H60A6 {dev.address} …")
-    await dev._conn.connect()
-    print(f"Connected. encryption={dev._conn._encryption.value}"
+    await dev.connect()
+    print(f"Connected. encryption={dev.encryption.value}"
           + (f"  capture -> {args.capture}" if args.capture else ""))
 
     catalog = load_scenes("H60A6")
@@ -298,7 +305,7 @@ async def main() -> int:
         if static:
             await r.group(f"scene static/activate-only ({static})", lambda: r.scene(static, "static"))
     finally:
-        await dev._conn.disconnect()
+        await dev.stop()
 
     print("\n" + "=" * 60 + "\nSUMMARY")
     for name, ok, note in r.results:

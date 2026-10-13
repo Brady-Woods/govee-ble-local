@@ -7,7 +7,7 @@ import base64
 from unittest.mock import AsyncMock
 
 import pytest
-from bleak.backends.device import BLEDevice
+from fake_ble import ble_device
 
 from govee_ble_local.devices.device import Device, make_device
 from govee_ble_local.devices.profile import PROFILES, profile_for
@@ -16,31 +16,111 @@ from govee_ble_local.models import Capability
 from govee_ble_local.scenes import Scene
 
 
-def _dev(sku: str) -> Device:
-    d = make_device(BLEDevice("AA:BB:CC:DD:EE:20", sku, details={}), sku)
+def _dev(sku: str, *, replies: list[bytes] | None = None) -> Device:
+    d = make_device(ble_device("AA:BB:CC:DD:EE:20", sku), sku)
     assert d is not None
-    d._conn.send = AsyncMock()  # type: ignore[attr-defined]
+    sent: list[bytes] = []
+
+    async def send(frame: bytes, **_k: object) -> None:
+        sent.append(frame)
+
+    async def send_many(frames: list[bytes]) -> None:
+        sent.extend(frames)
+
+    async def query(frame: bytes, **_k: object) -> list[bytes]:
+        sent.append(frame)
+        return list(replies or [])
+
+    d._conn.send = AsyncMock(side_effect=send)  # type: ignore[method-assign]
+    d._conn.send_many = AsyncMock(side_effect=send_many)  # type: ignore[method-assign]
+    d._conn.send_unacked = AsyncMock(side_effect=send_many)  # type: ignore[method-assign]
+    d._conn.query = AsyncMock(side_effect=query)  # type: ignore[method-assign]
+    d._sent = sent  # type: ignore[attr-defined]
     return d
 
 
 def _sent(d: Device) -> list[bytes]:
-    return [c.args[0] for c in d._conn.send.call_args_list]  # type: ignore[attr-defined]
+    return list(d._sent)  # type: ignore[attr-defined]
+
+
+def _reply(*b: int) -> bytes:
+    body = bytes(b) + bytes(19 - len(b))
+    x = 0
+    for v in body:
+        x ^= v
+    return body + bytes([x])
 
 
 def test_all_profiles_construct() -> None:
     for p in PROFILES:
         for sku in p.skus:
-            d = make_device(BLEDevice("AA:BB:CC:DD:EE:20", sku, details={}), sku)
+            d = make_device(ble_device("AA:BB:CC:DD:EE:20", sku), sku)
             assert d is not None and d.sku == sku.upper()
             assert d.capabilities == p.capabilities
-    assert make_device(BLEDevice("AA:BB:CC:DD:EE:20", "H9999", details={}), "H9999") is None
+    assert make_device(ble_device("AA:BB:CC:DD:EE:20", "H9999"), "H9999") is None
 
 
-def test_power_state_and_caps() -> None:
+def test_power_global_switch_for_plain_lights() -> None:
+    d = _dev("H6006")
+    asyncio.run(d.set_power(True))
+    assert [f[:3].hex() for f in _sent(d)] == ["330101"]
+    assert d.state.is_on is True
+
+
+def test_power_h60a6_is_one_global_frame_driving_both_zones() -> None:
+    # Live-verified: H60A6's 33 01 switches the whole fixture (both zones).
     d = _dev("H60A6")
     asyncio.run(d.set_power(True))
-    assert _sent(d)[0][:2].hex() == "3301" and _sent(d)[0][2] == 0x01
+    assert [f[:3].hex() for f in _sent(d)] == ["330101"]
+    assert d.state.is_on is True and d.state.zone_power == {0: True, 1: True}
+    asyncio.run(d.set_power(False))
+    assert d.state.zone_power == {0: False, 1: False}
+
+
+def test_power_bar_fixture_is_a_single_frame() -> None:
+    d = _dev("H6047")
+    asyncio.run(d.set_power(False))
+    assert [f[:4].hex() for f in _sent(d)] == ["33360000"]
+    assert d.state.zone_power == {0: False, 1: False} and d.state.is_on is False
+
+
+def test_turn_on_batches_power_brightness_colour() -> None:
+    d = _dev("H6008")
+    asyncio.run(d.turn_on(brightness=0, rgb=(1, 2, 3)))
+    assert [f[:2].hex() for f in _sent(d)] == ["3301", "3304", "3305"]
+    assert _sent(d)[1][2] == 1  # brightness never sent as 0
+    d._conn.send_many.assert_awaited_once()  # type: ignore[attr-defined]
+    assert d.state.brightness == 1 and d.state.rgb_color == (1, 2, 3)
+
+
+def test_set_brightness_clamps_to_one() -> None:
+    d = _dev("H6008")
+    asyncio.run(d.set_brightness(0))
+    assert _sent(d)[0][2] == 1
+
+
+def test_advert_onoff_ignored_right_after_command() -> None:
+    d = _dev("H6008")
+    adv = type("Adv", (), {"manufacturer_data": {0x8843: bytes([0xEC, 0, 0, 0, 0])}})()
+    asyncio.run(d.set_power(True))
+    assert d.ingest_advertisement(adv) is False and d.state.is_on is True
+    d._advert_ignore_until = 0
+    assert d.ingest_advertisement(adv) is True and d.state.is_on is False
+
+
+def test_polled_device_reads_power_even_when_off() -> None:
+    d = _dev("H6008", replies=[_reply(0xAA, 0x01, 0x01)])
+    d.state.is_on = False
+    asyncio.run(d._read_polled())
     assert d.state.is_on is True
+
+
+def test_segment_write_updates_state() -> None:
+    d = _dev("H60A6")
+    asyncio.run(d.set_segment_rgb([2, 3], (9, 8, 7)))
+    asyncio.run(d.set_segment_brightness([3], 40))
+    segs = {s.index: s for s in d.state.segments}
+    assert segs[2].rgb == (9, 8, 7) and segs[3].rgb == (9, 8, 7) and segs[3].brightness == 40
 
 
 def test_capability_gating() -> None:
@@ -68,6 +148,11 @@ def test_plug_relay_and_sync_time() -> None:
     s = _sent(d)
     assert s[0][:2].hex() == "3301" and s[0][2] == 0x11        # relay ON
     assert s[1][:2].hex() == "33b5"                            # sync-time follow-up
+    # WAS (T7.1): power + sync-time in one all-or-nothing send_mixed (D-13: a sync-time failure
+    # raised and left state un-applied). FIXED: power via send_many, state applied, then
+    # sync-time via send(expect_ack=False) best-effort; frame order unchanged.
+    d._conn.send.assert_awaited_once()                         # type: ignore[attr-defined]
+    assert d._conn.send.await_args.kwargs == {"expect_ack": False}  # type: ignore[attr-defined]
 
 
 def test_zone_bar_vs_direct() -> None:
@@ -75,8 +160,18 @@ def test_zone_bar_vs_direct() -> None:
     asyncio.run(h60a6.set_zone_power("background", False))
     assert _sent(h60a6)[0][:2].hex() == "3330"
     h6047 = _dev("H6047")            # combined 33 36
+    h6047.state.zone_power = {0: True, 1: True}
     asyncio.run(h6047.set_zone_power("left", False))
-    assert _sent(h6047)[0][:2].hex() == "3336"
+    assert _sent(h6047)[0][:4].hex() == "33360001"   # right bar kept ON
+
+
+def test_bar_switch_reads_unknown_state_instead_of_assuming() -> None:
+    # Unknown state used to default to ON: turning one bar off turned the other on.
+    d = _dev("H6047", replies=[_reply(0xAA, 0x36, 0x01, 0x00)])  # left on, right off
+    asyncio.run(d.set_zone_power("left", False))
+    frames = _sent(d)
+    assert frames[0][:2].hex() == "aa36"                 # read first
+    assert frames[1][:4].hex() == "33360000"             # right stays OFF
 
 
 def test_zone_and_segment_color_temp() -> None:
@@ -105,6 +200,16 @@ def test_zone_and_segment_color_temp() -> None:
         asyncio.run(_dev("H6006").set_segment_color_temp([0], 3000))
 
 
+
+def test_segment_brightness_unsupported_scheme_is_not_supported() -> None:
+    # H61A8 declares SEGMENTS but its colour scheme has no per-segment brightness:
+    # that is GoveeBleNotSupported (like segment CCT), never a bare ValueError.
+    d = _dev("H61A8")
+    with pytest.raises(GoveeBleNotSupported):
+        asyncio.run(d.set_segment_brightness([0], 50))
+    assert _sent(d) == []
+    asyncio.run(_dev("H60A6").set_segment_brightness([0], 50))  # supported scheme still works
+
 def test_gradual_setting() -> None:
     d = _dev("H61A8")                       # only curated SKU with the 0xA3 gradual flag
     asyncio.run(d.set_gradual(True))
@@ -115,7 +220,7 @@ def test_gradual_setting() -> None:
 
 def test_scene_dialect_routing() -> None:
     def upload(sku: str, scene: Scene) -> list[bytes] | None:
-        return _dev(sku)._scene_upload_frames(scene)
+        return _dev(sku).scene_upload_frames(scene)
 
     def param(*head: int) -> str:
         return base64.b64encode(bytes(list(head) + [0] * 30)).decode()
@@ -228,12 +333,14 @@ def _status_query_mock(bursts: list[list[bytes]]) -> AsyncMock:
     return mock
 
 
-def test_mechanism_c_reads_single_rgb() -> None:
-    # H6052: 0x05 sub-mode 0x0D report body [R,G,B] -> state.rgb_color
+def test_mode_0d_report_reads_colour_or_cct() -> None:
+    # 0x0d bulbs (H6006/H6008/H6052): aa 05 0d [r g b kelvin-u2be]. White + kelvin = CCT mode
+    # (live capture: aa 05 0d ff ff ff 0a 8c = 2700 K); anything else is an RGB colour.
     d = _dev("H6052")
-    d._conn.query = AsyncMock(return_value=[_frame(0xAA, 0x05, 0x0D, 255, 128, 64)])  # type: ignore[attr-defined]
-    asyncio.run(d._read_mechanism_c())
-    assert d.state.rgb_color == (255, 128, 64)
+    d._apply_mode_reply(_frame(0xAA, 0x05, 0x0D, 0xFF, 0xFF, 0xFF, 0x0A, 0x8C))
+    assert d.state.color_temp_kelvin == 2700 and d.state.rgb_color is None
+    d._apply_mode_reply(_frame(0xAA, 0x05, 0x0D, 255, 128, 64, 0, 0))
+    assert d.state.rgb_color == (255, 128, 64) and d.state.color_temp_kelvin is None
 
 
 def test_mechanism_b_assembles_positional_segments() -> None:

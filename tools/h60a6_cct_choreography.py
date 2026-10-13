@@ -66,8 +66,8 @@ async def main() -> int:
     if ble is None:
         print("no H60A6 found (scan) — set --address / GOVEE_H60A6_ADDRESS")
         return 1
-    dev = create_device(ble, "H60A6", frame_log=args.capture)
-    dev._conn._idle_disconnect = 0     # keep the one session alive for the whole run
+    # idle_disconnect=0: keep the one session alive for the whole run
+    dev = create_device(ble, "H60A6", frame_log=args.capture, idle_disconnect=0)
     print(f"device {dev.address}  segments={dev.profile.segments}  kelvin {MIN_K}..{MAX_K}\n")
 
     step = 0

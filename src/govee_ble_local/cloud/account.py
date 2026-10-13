@@ -11,12 +11,13 @@ Flow (matches the official app and the community govee2mqtt project):
 SecretKeyController uses). This is an undocumented API and Govee enforces a
 current `appVersion` header — we send the version of the APK this was built
 against. It can break if Govee changes the backend; the offline paths
-(GoveeDevice.read_secret / btsnoop) don't depend on it.
+(Device.read_secret / btsnoop) don't depend on it.
 """
 from __future__ import annotations
 
 import base64
 import json
+import logging
 import time
 import uuid
 from dataclasses import dataclass
@@ -28,6 +29,8 @@ except ModuleNotFoundError as err:  # pragma: no cover
     raise ImportError("cloud provisioning needs aiohttp: pip install 'govee-ble-local[cloud]'") from err
 
 from ..exceptions import GoveeBleError
+
+_LOG = logging.getLogger(__name__)
 
 BASE_URL = "https://app2.govee.com"
 # Login: the app's own /bff-app/v2/account/login is @EncryptDecrypt (RSA-2048 +
@@ -44,6 +47,9 @@ EFFECT_STRS_PATH = "/bff-app/v2/devices/scenes/effect-strs"
 # Version of the Govee Home APK this library was reverse-engineered against.
 # Govee rejects logins with an out-of-date appVersion ("app version too low").
 APP_VERSION = "7.5.20"
+
+# Every request is bounded; the undocumented API occasionally hangs.
+REQUEST_TIMEOUT = 20.0
 
 
 @dataclass(frozen=True)
@@ -64,6 +70,34 @@ class GoveeCloudError(GoveeBleError):
     """A cloud-account API call failed."""
 
 
+SECRET_LEN = 8  # BLE secret length in bytes
+
+
+def _dict_field(data: Any, key: str, what: str) -> dict[str, Any]:
+    """`data[key]` as a dict ({} if absent/null); GoveeCloudError on wrong shape.
+    `data` itself must be a dict. Never echoes the response content."""
+    if not isinstance(data, dict):
+        raise GoveeCloudError(f"{what} response was not a JSON object")
+    v = data.get(key)
+    if v is None:
+        return {}
+    if not isinstance(v, dict):
+        raise GoveeCloudError(f"{what} response had a malformed {key!r}")
+    return v
+
+
+def _list_field(data: Any, key: str, what: str) -> list[Any]:
+    """`data[key]` as a list ([] if absent/null); GoveeCloudError on wrong shape."""
+    if not isinstance(data, dict):
+        raise GoveeCloudError(f"{what} response was not a JSON object")
+    v = data.get(key)
+    if v is None:
+        return []
+    if not isinstance(v, list):
+        raise GoveeCloudError(f"{what} response had a malformed {key!r}")
+    return v
+
+
 class GoveeCloudAccount:
     """Authenticated Govee account session for provisioning."""
 
@@ -73,8 +107,13 @@ class GoveeCloudAccount:
         password: str,
         *,
         token: str | None = None,
-        session: "aiohttp.ClientSession | None" = None,
+        session: aiohttp.ClientSession | None = None,
+        app_version: str = APP_VERSION,
     ) -> None:
+        """`app_version` is the Govee Home appVersion sent in request headers
+        (default: the APK version this library was built against). Override it
+        if Govee starts rejecting the default as too old."""
+        self._app_version = app_version
         self._email = email
         self._password = password
         self._client_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, email))
@@ -92,47 +131,85 @@ class GoveeCloudAccount:
 
     def _headers(self, *, auth: bool = False) -> dict[str, str]:
         h = {
-            "appVersion": APP_VERSION,
+            "appVersion": self._app_version,
             "clientId": self._client_id,
             "clientType": "1",
             "iotVersion": "0",
             "timestamp": str(int(time.time() * 1000)),
-            "User-Agent": f"GoveeHome/{APP_VERSION} (com.govee.home; Android)",
+            "User-Agent": f"GoveeHome/{self._app_version} (com.govee.home; Android)",
             "Content-Type": "application/json",
         }
         if auth and self._token:
             h["Authorization"] = f"Bearer {self._token}"
         return h
 
-    async def _ensure_session(self) -> "aiohttp.ClientSession":
+    async def _ensure_session(self) -> aiohttp.ClientSession:
         if self._session is None:
-            self._session = aiohttp.ClientSession()
+            self._session = aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(total=REQUEST_TIMEOUT)
+            )
         return self._session
+
+    async def _post(self, url: str, body: dict[str, Any], *, auth: bool) -> tuple[int, Any]:
+        session = await self._ensure_session()
+        try:
+            async with session.post(
+                url, json=body, headers=self._headers(auth=auth),
+                timeout=aiohttp.ClientTimeout(total=REQUEST_TIMEOUT),
+            ) as resp:
+                status = resp.status
+                if status != 200:
+                    # Check the status first: a 401/5xx body is often HTML, and callers
+                    # (re-login on 401, "HTTP n" errors) need the status, not a JSON error.
+                    try:
+                        return status, await resp.json(content_type=None)
+                    except ValueError:
+                        return status, None
+                return status, await resp.json(content_type=None)
+        except (aiohttp.ClientError, TimeoutError) as err:
+            raise GoveeCloudError(f"request to {url} failed: {err}") from err
+        except ValueError as err:
+            # Invalid JSON: the decoder message can quote the body, so omit it.
+            raise GoveeCloudError(f"request to {url} failed: response was not valid JSON") from err
+
+    async def _authed_post(self, path: str, body: dict[str, Any]) -> Any:
+        """POST with the bearer token; on 401 log in again once (token expiry)."""
+        if self._token is None:
+            await self.login()
+        status, data = await self._post(BASE_URL + path, body, auth=True)
+        if status == 401:
+            await self.login()
+            status, data = await self._post(BASE_URL + path, body, auth=True)
+        if status != 200:
+            raise GoveeCloudError(f"{path} failed (HTTP {status})")
+        return data
 
     async def login(self) -> None:
         """Authenticate; stores the bearer token (community login host)."""
-        session = await self._ensure_session()
         body = {"email": self._email, "password": self._password, "client": self._client_id}
-        async with session.post(LOGIN_URL, json=body, headers=self._headers()) as resp:
-            data = await resp.json(content_type=None)
-        if resp.status != 200:
-            raise GoveeCloudError(f"login failed (HTTP {resp.status}): {data}")
-        token = (data.get("data") or {}).get("token") or (data.get("client") or {}).get("token")
-        if not token:
-            raise GoveeCloudError(f"login response had no token: {data}")
+        status, data = await self._post(LOGIN_URL, body, auth=False)
+        if status != 200 or not isinstance(data, dict):
+            # Don't echo the response body: it can carry account details.
+            raise GoveeCloudError(f"login failed (HTTP {status})")
+        token = _dict_field(data, "data", "login response").get("token") or _dict_field(
+            data, "client", "login response"
+        ).get("token")
+        if not (isinstance(token, str) and token):
+            raise GoveeCloudError("login response had no token")
         self._token = token
 
     async def get_devices(self) -> list[CloudDevice]:
         """Fetch all devices on the account with secrets + protocol metadata."""
-        if self._token is None:
-            await self.login()
-        session = await self._ensure_session()
-        async with session.post(BASE_URL + DEVICE_LIST_PATH, json={}, headers=self._headers(auth=True)) as resp:
-            data = await resp.json(content_type=None)
-        if resp.status != 200:
-            raise GoveeCloudError(f"device list failed (HTTP {resp.status}): {data}")
-        raw = data.get("devices") or (data.get("data") or {}).get("devices") or []
-        return [self._parse(d) for d in raw]
+        data = await self._authed_post(DEVICE_LIST_PATH, {})
+        raw = _list_field(data, "devices", "device list") or _list_field(
+            _dict_field(data, "data", "device list"), "devices", "device list"
+        )
+        parsed: list[CloudDevice] = []
+        for d in raw:
+            if not isinstance(d, dict):
+                raise GoveeCloudError("device list had a malformed entry")
+            parsed.append(self._parse(d))
+        return parsed
 
     @staticmethod
     def _parse(d: dict[str, Any]) -> CloudDevice:
@@ -147,8 +224,8 @@ class GoveeCloudAccount:
 
         # The BLE secret and the real BLE MAC live inside deviceExt.deviceSettings,
         # which is itself a JSON string (not top-level). e.g.
-        #   deviceSettings = '{"address":"98:17:3C:B1:A2:D1","secretCode":"..base64..",
-        #                      "bleName":"ihoment_H5083_A2D1","wifiMac":"98:17:3C:B1:A2:D0",...}'
+        #   deviceSettings = '{"address":"AA:BB:CC:DD:EE:FF","secretCode":"..base64..",
+        #                      "bleName":"ihoment_H5083_EEFF","wifiMac":"AA:BB:CC:DD:EE:FE",...}'
         # (the top-level `device` id embeds the Wi-Fi MAC, one off the BLE MAC.)
         ext = d.get("deviceExt")
         settings: dict[str, Any] = {}
@@ -159,19 +236,32 @@ class GoveeCloudAccount:
                     settings = json.loads(raw_settings)
                 except (ValueError, TypeError):
                     settings = {}
+                if not isinstance(settings, dict):
+                    settings = {}
 
         secret_b64 = d.get("secretCode") or d.get("secret_code") or settings.get("secretCode")
-        secret: bytes | None = None
-        if isinstance(secret_b64, str) and secret_b64:
-            try:
-                secret = base64.b64decode(secret_b64)
-            except (ValueError, TypeError):
-                secret = None
-
         ble_mac = settings.get("address")
         if not (isinstance(ble_mac, str) and ble_mac):
             parts = str(d.get("device", "")).split(":")
             ble_mac = ":".join(parts[-6:]) if len(parts) >= 6 else None
+
+        secret: bytes | None = None
+        if secret_b64:
+            # Never pass a malformed/odd-length secret on; never echo its value.
+            try:
+                if not isinstance(secret_b64, str):
+                    raise ValueError("not a string")
+                secret = base64.b64decode(secret_b64, validate=True)
+                if len(secret) != SECRET_LEN:
+                    raise ValueError("wrong length")
+            except ValueError:  # binascii.Error is a ValueError
+                who = (
+                    str(d.get("sku") or "").upper()
+                    or (ble_mac if isinstance(ble_mac, str) else "")
+                    or "unknown device"
+                )
+                _LOG.warning("device secret for %s is malformed; ignoring it", who)
+                secret = None
 
         ext_name = ext.get("deviceName") if isinstance(ext, dict) else None
         return CloudDevice(
@@ -190,20 +280,29 @@ class GoveeCloudAccount:
         (placeholder 0xff header), keyed by scenceParamId. Upload the returned
         base64 blobs via the a3-chunk burst, then activate — this is how the app
         renders 'big'/DIY-backed built-in scenes like Aurora."""
-        if self._token is None:
-            await self.login()
-        session = await self._ensure_session()
-        body = {"scenceParamIds": param_ids}
-        async with session.post(BASE_URL + EFFECT_STRS_PATH, json=body, headers=self._headers(auth=True)) as resp:
-            data = await resp.json(content_type=None)
-        if resp.status != 200:
-            raise GoveeCloudError(f"effect-strs failed (HTTP {resp.status}): {data}")
-        strs = data.get("effectStrs") or (data.get("data") or {}).get("effectStrs") or []
+        data = await self._authed_post(EFFECT_STRS_PATH, {"scenceParamIds": param_ids})
+        strs = _list_field(data, "effectStrs", "effect-strs") or _list_field(
+            _dict_field(data, "data", "effect-strs"), "effectStrs", "effect-strs"
+        )
         out: dict[int, str] = {}
         for e in strs:
+            if not isinstance(e, dict):
+                raise GoveeCloudError("effect-strs response had a malformed entry")
             pid, s = e.get("scenceParamId"), e.get("effectStr")
             if pid is not None and s:
-                out[int(pid)] = s
+                if not isinstance(s, str) or isinstance(pid, (bool, list, dict)):
+                    raise GoveeCloudError("effect-strs response had a malformed entry")
+                try:
+                    scene_id = int(pid)
+                except (TypeError, ValueError) as err:
+                    raise GoveeCloudError("effect-strs response had a malformed scene id") from err
+                try:
+                    base64.b64decode(s, validate=True)
+                except ValueError as err:  # binascii.Error
+                    raise GoveeCloudError(
+                        f"effect-strs response had a malformed effect for scene {scene_id}"
+                    ) from err
+                out[scene_id] = s
         return out
 
     async def close(self) -> None:
@@ -211,8 +310,13 @@ class GoveeCloudAccount:
             await self._session.close()
             self._session = None
 
-    async def __aenter__(self) -> "GoveeCloudAccount":
-        await self.login()
+    async def __aenter__(self) -> GoveeCloudAccount:
+        try:
+            if self._token is None:
+                await self.login()
+        except BaseException:
+            await self.close()  # don't leak an owned session on a failed login
+            raise
         return self
 
     async def __aexit__(self, *exc: object) -> None:

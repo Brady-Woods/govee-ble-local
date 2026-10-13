@@ -65,8 +65,7 @@ async def main() -> int:
     if ble is None:
         print("no H60A6 found — set --address / GOVEE_H60A6_ADDRESS")
         return 1
-    dev = create_device(ble, "H60A6", frame_log=args.capture)
-    dev._conn._idle_disconnect = 0
+    dev = create_device(ble, "H60A6", frame_log=args.capture, idle_disconnect=0)
     n = dev.profile.segments
     ring = list(range(n - 1))     # hypothesis: 0..11 = ring
     top = n - 1                   # hypothesis: 12 = main panel

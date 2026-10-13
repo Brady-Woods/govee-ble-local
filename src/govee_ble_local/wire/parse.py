@@ -5,13 +5,16 @@ the spec-generated ``GoveeBleFrame`` reader — the spec is the single source of
 wire layout. Multi-packet ``0xAC``/``0xA1``/``0xA3``/``0xA4`` streams are reassembled
 and walked in :mod:`.reassemble` (cross-frame de-chunking isn't expressible in Kaitai).
 
-Values are returned **as the device sends them** (spec-aligned): brightness is the
-raw 0-255 byte (percent mapping is a UI concern), and power is the raw byte so plugs
-can read it as a relay bitmask while lights treat non-zero as on.
+Values are returned **as the device sends them** (no rescaling): brightness is the raw
+reported byte, which every curated SKU sends as a 0..100 percent (a device reporting
+0..255 would set ``DeviceProfile.brightness_max`` accordingly; scaling is the Device
+layer's job), and power is the raw byte so plugs can read it as a relay bitmask while
+lights treat non-zero as on.
 """
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
 
@@ -53,6 +56,14 @@ def _read_reply(frame: bytes, command: Any) -> Any:
 
 
 # ── single-command read replies ──────────────────────────────────────────────
+def find_reply(frames: list[bytes], command_type: int) -> bytes | None:
+    """First ``0xAA`` frame in ``frames`` whose command byte is ``command_type``, else None."""
+    for reply in frames:
+        if len(reply) >= 2 and reply[0] == 0xAA and reply[1] == command_type:
+            return reply
+    return None
+
+
 def parse_power(frame: bytes) -> int | None:
     """AA 01 reply. Raw byte: lights use non-zero = on; plugs read it as a relay bitmask."""
     b = _read_reply(frame, _Command.switch)
@@ -60,7 +71,8 @@ def parse_power(frame: bytes) -> int | None:
 
 
 def parse_brightness(frame: bytes) -> int | None:
-    """AA 04 reply. Raw 0-255 (no codec rescale; percent mapping is UI-layer)."""
+    """AA 04 reply. The raw reported byte, not rescaled: 0..100 percent on every curated SKU
+    (see ``DeviceProfile.brightness_max``; the Device layer does any normalisation)."""
     b = _read_reply(frame, _Command.brightness)
     return None if b is None else int(b.brightness)
 
@@ -93,15 +105,8 @@ def parse_gradual(frame: bytes) -> bool | None:
 
 # ── mode (0x05) read replies ─────────────────────────────────────────────────
 def _mode_read(frame: bytes) -> Any:
-    f = _parse(frame)
-    if f is None or f.pro_type != _ProType.read:
-        return None
-    try:
-        if f.body.command != _Command.mode:
-            return None
-    except Exception:  # noqa: BLE001
-        return None
-    return f.body.body
+    """Typed body of an ``AA 05`` mode read reply, else None."""
+    return _read_reply(frame, _Command.mode)
 
 
 def parse_active_scene(frame: bytes) -> int | None:
@@ -124,14 +129,31 @@ def parse_kelvin(frame: bytes) -> int | None:
 
 
 def parse_mode_color_0d(frame: bytes) -> tuple[int, int, int] | None:
-    """AA 05 0D reply (H6052, mechanism C): a single (r, g, b) colour fanned across
-    the device's zones, or None. Spec Change 7 / mode_color_0d_report. (Default-strategy
-    families reuse 0x0D as [gradual_flag, kelvin]; only H6052 reads it as RGB.)"""
+    """AA 05 0D reply read as a bare (r, g, b) triple, or None.
+
+    SUPERSEDED: the "mechanism C" reading (0x0D carries only RGB, H6052 only) was wrong. On
+    the 0x0d-scheme bulbs the body is ``[r, g, b, kelvin u2be]``, so this drops the kelvin
+    and reports white instead of the colour temperature. Use :func:`parse_mode_0d`; this is
+    kept only for the spec's ``mode_color_0d_report`` view of the frame."""
     m = _mode_read(frame)
     if m is None or int(m.selector_or_sub_mode) != 0x0D:
         return None
     rb = m.rest
     return (int(rb.r), int(rb.g), int(rb.b))
+
+
+def parse_mode_0d(frame: bytes) -> tuple[tuple[int, int, int] | None, int | None] | None:
+    """AA 05 0D reply on the 0x0d-scheme bulbs (H6006/H6008/H6052): ``[r, g, b,
+    kelvin u2be]`` - the same layout as the 0x0d write. White (ff ff ff) with a
+    non-zero kelvin is colour-temperature mode -> ``(None, kelvin)``; otherwise
+    ``((r, g, b), None)``. Live captures: ``aa 05 0d ff ff ff 0a 8c`` = 2700 K."""
+    if len(frame) < 8 or frame[0] != 0xAA or frame[1] != 0x05 or frame[2] != 0x0D:
+        return None
+    rgb = (frame[3], frame[4], frame[5])
+    kelvin = (frame[6] << 8) | frame[7]
+    if rgb == (0xFF, 0xFF, 0xFF) and kelvin:
+        return None, kelvin
+    return rgb, None
 
 
 # ── mechanism-B per-group colour read-back (H61A8; 0xAA 0xA2 V1 / 0xA5 V2) ──────
@@ -158,18 +180,56 @@ def parse_bulb_group_batch(
     return None
 
 
+def group_base_index(group_index: int, group_size: int) -> int | None:
+    """First segment index of a 1-based group: ``(group_index - 1) * group_size``.
+
+    Returns None (and logs at DEBUG) for ``group_index < 1`` - device data is untrusted and
+    a 0/garbage index would otherwise yield negative segment indices."""
+    if group_index < 1:
+        _LOGGER.debug("skipping colour group with invalid index %d", group_index)
+        return None
+    return (group_index - 1) * group_size
+
+
 def bulb_groups_to_segments(
     batches: list[tuple[int, list[tuple[int | None, int, int, int]]]], per_batch: int
 ) -> list[Segment]:
     """Assemble mechanism-B batches into positional segments:
     ``index = (batch_seq - 1) * per_batch + i`` (per_batch is a client constant:
     V1 = 4, V2 = 3 — not frame-encoded)."""
-    segs: dict[int, Segment] = {}
+    segs: list[Segment] = []
     for batch_seq, groups in batches:
+        base = group_base_index(batch_seq, per_batch)
+        if base is None:
+            continue
         for i, (brightness, r, g, b) in enumerate(groups):
-            idx = (batch_seq - 1) * per_batch + i
-            segs[idx] = Segment(index=idx, rgb=(r, g, b), brightness=brightness or 0)
-    return [segs[k] for k in sorted(segs)]
+            segs.append(Segment(index=base + i, rgb=(r, g, b), brightness=brightness))
+    return merge_segments(segs)
+
+
+def merge_segments(*groups: Iterable[Segment]) -> list[Segment]:
+    """Merge segment records by ``index`` (later groups/records win) -> list sorted by index.
+    Used both to assemble read-back batches and to fold a partial burst over known state."""
+    merged: dict[int, Segment] = {}
+    for group in groups:
+        for seg in group:
+            merged[seg.index] = seg
+    return [merged[k] for k in sorted(merged)]
+
+
+def direct_groups_to_segments(
+    groups: Iterable[tuple[int, list[tuple[int, int, int, int]]]], group_size: int
+) -> list[Segment]:
+    """Assemble mechanism-A-direct group replies (:func:`parse_direct_color_group` results)
+    into positional segments: ``index = (group_index - 1) * group_size + k``."""
+    segs: list[Segment] = []
+    for group_index, records in groups:
+        base = group_base_index(group_index, group_size)
+        if base is None:
+            continue
+        for k, (brightness, r, g, b) in enumerate(records):
+            segs.append(Segment(index=base + k, rgb=(r, g, b), brightness=brightness))
+    return merge_segments(segs)
 
 
 # ── mechanism A-direct: per-group colour via Controller4ColorInfoByGroup ────────
@@ -185,7 +245,7 @@ def bulb_groups_to_segments(
 # mirrors that: the CALLER supplies `expected_records`, computed from its own already-known
 # total. Hand-decoded (bypassing the generated bulb_group_color_read_v2 type, which is
 # H61A8-specific and would misdecode this format) — the same "shared opcode, per-SKU body"
-# precedent as parse_mode_color_0d.
+# precedent as the 0x0d mode read (parse_mode_0d).
 def parse_direct_color_group(
     frame: bytes, expected_records: int
 ) -> tuple[int, list[tuple[int, int, int, int]]] | None:
@@ -288,7 +348,7 @@ def parse_device_info(frame: bytes) -> DeviceInfo | None:
 @dataclass(frozen=True)
 class Notify:
     sub_type: int
-    level: int | None = None                      # 0x20 brightness push (raw 0-255)
+    level: int | None = None                      # 0x20 brightness push (raw reported value)
     wifi_connected: bool | None = None            # 0x11 (status byte == 0)
     zone_flags: tuple[int, int, int] | None = None  # 0x30 flag bytes (family-interpreted)
 

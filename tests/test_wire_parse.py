@@ -2,9 +2,9 @@
 via the shipped Kaitai reader."""
 from __future__ import annotations
 
-import pytest
+from conftest import require_optional
 
-pytest.importorskip("kaitaistruct", reason="Kaitai runtime not installed")
+require_optional("kaitaistruct", reason="Kaitai runtime not installed")
 
 from govee_ble_local.wire import parse  # noqa: E402
 
@@ -97,7 +97,7 @@ def test_mechanism_b_v1_has_no_brightness() -> None:
     b = parse.parse_bulb_group_batch(f(0xAA, 0xA2, 1, 255, 0, 0, 0, 255, 0, 0, 0, 255, 9, 9, 9))
     assert b == (1, [(None, 255, 0, 0), (None, 0, 255, 0), (None, 0, 0, 255), (None, 9, 9, 9)])
     segs = parse.bulb_groups_to_segments([b], per_batch=4)
-    assert len(segs) == 4 and segs[0].rgb == (255, 0, 0) and segs[0].brightness == 0
+    assert len(segs) == 4 and segs[0].rgb == (255, 0, 0) and segs[0].brightness is None
 
 
 def test_mechanism_c_mode_0d_rgb() -> None:

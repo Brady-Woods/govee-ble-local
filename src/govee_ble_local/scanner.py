@@ -11,6 +11,7 @@ from dataclasses import dataclass
 
 from bleak import BleakScanner
 from bleak.backends.device import BLEDevice
+from bleak.backends.scanner import AdvertisementData
 
 from .identify import GoveeAdvertisement, identify
 from .registry import is_supported_sku
@@ -45,9 +46,12 @@ def supported(name: str | None, manufacturer_data: dict[int, bytes]) -> bool:
     return adv is not None and is_supported_sku(adv.sku)
 
 
-def match(ble_device: BLEDevice, advertisement_data: object) -> DiscoveredDevice | None:
+def match(ble_device: BLEDevice, advertisement_data: AdvertisementData) -> DiscoveredDevice | None:
     """Identify one advertisement into a DiscoveredDevice, or None if it isn't
-    a recognizable Govee device."""
+    a recognizable Govee device.
+
+    Attributes are read defensively (``getattr``) so a partial advertisement
+    object is tolerated."""
     name = getattr(advertisement_data, "local_name", None) or ble_device.name
     mfg = getattr(advertisement_data, "manufacturer_data", None) or {}
     adv = identify(name, mfg)

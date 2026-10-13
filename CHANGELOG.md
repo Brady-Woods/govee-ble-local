@@ -8,7 +8,151 @@ model, from which the shipped readers are generated).
 
 ## [Unreleased]
 
-_Nothing yet._
+## [1.2.0] — 2026-10-12
+
+First release published to PyPI. `1.1.0` was bumped on a development branch but never tagged or
+released, so its changes ship here too (see the `1.1.0` entry below).
+
+Hardening release candidate: input validation, connection/lifecycle reliability, secret handling
+and packaging. Behaviour changes that can affect callers are listed under **Behaviour changes**.
+
+### Added
+- `GoveeBleInvalidValue` (a `ValueError` subclass, also a `GoveeBleError`): raised for bad setter
+  input: colour channels, kelvin outside the device's `min_kelvin`/`max_kelvin`, segment/zone
+  indices and masks, scene payloads, secret length. Builders and AES/RC4 key lengths are validated too.
+- `Device.connect()`, an `idle_disconnect` argument on `Device`/`create_device`, and
+  `Device.scene_upload_frames(scene)` (the planned upload frames, or `None`).
+- `__version__` and more public exports: `Encryption`, `Scene`, `StateCallback`, `profile_for`,
+  `GoveeBleInvalidValue`.
+- `app_version` argument on the cloud account (overrides the `appVersion` request header).
+- `govee-ble-analyze --from-frames-log` input is validated (malformed lines are skipped, reported
+  and counted).
+- Dev tooling: `dev` and `audit` extras, `scripts/audit.sh`, a `[tool.vulture]` config, an
+  independent AES reference test (`pycryptodome`, test-only), ruff/mypy-strict/bandit/pip-audit
+  gates in `scripts/check.sh` and CI, and a tag-triggered PyPI trusted-publishing workflow.
+
+### Changed
+- `kaitaistruct>=0.11` (was unpinned below); SPDX `license = "MIT"` metadata; classifiers, `Issues`
+  URL and a markdown `readme` content type for PyPI.
+- The sdist no longer bundles `tests/`; it carries only `src/`, `pyproject.toml`, `README.md`,
+  `LICENSE` and `CHANGELOG.md`.
+- Profile fields are `Literal`-typed and validated at construction.
+- Segment merge / scene planning moved into `wire/` and `scenes/`; `Device` uses public
+  `scene_upload_frames`; the private scene alias was removed.
+- CI: SHA-pinned actions with minimal permissions, Python 3.11-3.13 matrix, lowest-dependency job;
+  optional test dependencies fail instead of skipping when `CI` is set.
+
+### Fixed
+- A disconnect racing an in-flight acknowledgement no longer leaves the write waiting or raises a
+  non-library error; a link lost while the write lock is held raises a typed error.
+- A slow poll can no longer overwrite state set by a newer setter (mutation-sequence guard).
+- Relay power: power frames are acknowledged and the resulting state is applied; time sync is
+  best-effort.
+- Bar-switch devices (H6047): the read-modify-write of the two-bar frame is serialized; the other
+  bar's state is read before use.
+- Lifecycle leaks: client/link no longer leaked on handshake, device-info and disconnect error
+  paths; detached disconnects are bounded in time.
+- Plaintext receive queue (no decrypt with a stale session key); a queued frame arriving at the
+  deadline is not lost; the end-of-burst sentinel is never dropped.
+- Device-info link errors no longer fail `update()`; device info is retried.
+- Encryption fallback when the advertised mode is wrong; secret length is checked.
+- State callbacks no longer break the notify pump or each other (exceptions are logged).
+- Colour groups with an invalid index are skipped instead of producing negative segment indices;
+  V1 segment brightness stays `None`.
+- Cloud client: response shapes are validated (status checked before JSON parsing, token type
+  check); the owned session is closed when login fails; one malformed device secret no longer
+  fails the whole account.
+- Scene catalogs: SKUs are validated, malformed catalogs and bad base64 raise library errors, and
+  catalog writes by `tools/fetch_scenes.py` are atomic.
+- Hardware tools: SKU/path validation, argparse, btsnoop length caps, restore-in-`finally`;
+  `tools/decrypt_btsnoop.py`/`btsnoop_mtu_scan.py` mask the account secret.
+
+### Security
+- Frame-log files are created `0600`, written with `O_NOFOLLOW`, refused if not a regular file,
+  bounded (oldest records dropped when full) and flushed at interpreter exit; a dead writer is
+  revived. Docs now state that captures are sensitive (the session key is derivable from them).
+- Cloud responses are shape-validated; malformed device secrets are never echoed.
+- Secret masking in captures shares one implementation and recomputes the frame checksum.
+- CI runs `bandit` (Medium+) and `pip-audit`; the three accepted `cryptography` advisories are
+  documented (AES-ECB/ARC4 only; PKCS#7/X.509 unused).
+
+### Behaviour changes (may affect callers)
+- Bar-switch devices: `set_zone_power` raises when the other bar's state is unknown and cannot be
+  read, instead of assuming it is on.
+- `GoveeBleAuthError` is no longer retried.
+- `send(expect_ack=True)` rejects non-write frames.
+- Setters raise `GoveeBleInvalidValue` (still a `ValueError`) for invalid input, including kelvin
+  outside the profile's `min_kelvin`/`max_kelvin`. (Brightness percent is still clamped to 1..100.)
+- `Capability` and `Encryption` are `StrEnum`: `str(member)` now returns the value
+  (e.g. `"power"`), not `"Capability.POWER"`.
+- `load_scenes` returns copies (mutating the result does not affect the cache) and raises library
+  errors for malformed catalogs.
+- Cloud `get_devices` returns `secret=None` and logs a warning for a malformed secret rather than
+  failing.
+
+## [1.1.0] — 2026-10-12
+
+Reliability overhaul driven by five days of live frame captures (11 devices, 2 ESPHome proxies +
+a local adapter) and validated live on the same hardware: steady-state polls went from ~7.7 s
+with a 5 s stall (H60A6) and ~40 % failures to 1.5–4.5 s with no failures.
+
+### Fixed
+- **Secret leaked through `wire=` in frame captures.** Only the `plain=` field of the `33 b2` / `aa b1` secret frames was masked; on a plaintext link `wire=` is the same bytes, and on an encrypted link it is decryptable from the captured handshake plus the public PSK. Both fields (and the bad-checksum debug line) are now masked.
+- `set_segment_brightness` raised a bare `ValueError` on colour schemes without per-segment
+  brightness (H61A8); it now raises `GoveeBleNotSupported`, like `set_segment_color_temp`.
+- **Handshake raced the device.** The device delivers its `e7 01` reply twice and re-sends the
+  `e7 02` echo ~1 s later. The duplicate step-1 reply was consumed as the step-2 "ack", so the
+  first query fired while the confirm was still in flight; ~90 % of H60A6 sessions then lost the
+  `0xFF` terminator of their first status burst (5 s stall + retry on every poll). Replies are
+  now matched by content, the real confirm is awaited, and late retransmits are dropped.
+- Frames failing the XOR checksum are dropped at the notify pump (they were the source of the
+  intermittent "unknown proType 0x67/0x7f/0xa5" warnings: handshake echoes decrypted with the
+  session key that happened to pass the checksum).
+- A link that stops acknowledging writes (half-dead while bleak still reports "connected") is
+  torn down and the write retried once on a fresh link, instead of failing the command.
+- A disconnect wakes pending waits immediately; a late disconnect callback from a superseded
+  client no longer clears the current one.
+- The idle-disconnect timer can no longer fire after newer activity (it used to disconnect
+  right after a command and force a reconnect); its task is now held so it can't be GC'd.
+- `establish_connection` gets `ble_device_callback`, so retries use the freshest proxy path.
+- Every public operation has a hard deadline (`OPERATION_TIMEOUT`) and raises only
+  `GoveeBleError` subclasses (bleak/asyncio errors no longer leak out of `send`/`query`).
+- 0xAC reassembly joins only the contiguous chunk prefix (a gap used to splice later chunks at
+  the wrong offset and decode garbage as real state) and decodes a truncated burst up to its last
+  whole TLV, so a lost tail yields partial-but-true state without a retry; queries end on a short
+  idle gap instead of the full timeout when a terminator is lost.
+- 0x0d bulbs (H6006/H6008/H6052): the mode report is `[r, g, b, kelvin u2be]`; white + kelvin is
+  colour-temperature mode. H6052's "mechanism C" decoded it as RGB-only (reporting white instead
+  of 2700 K, live capture `aa 05 0d ff ff ff 0a 8c`) and issued a duplicate mode query; all three
+  bulbs now read colour/CCT back from the report they already send.
+- Polled devices always re-read power (previously skipped once a device was off, so a light
+  turned on externally was never noticed).
+- H6047: changing one bar no longer assumes the other bar is ON when its state is unknown (it
+  turned the other bar on); the bar state is read back (`aa 36`) and polled.
+- Advertised on/off is ignored for 15 s after a command/read (stale broadcasts flipped state).
+- Brightness is never sent as 0; the reported-brightness scale is an explicit profile field
+  (`brightness_max`) instead of a `>100 means 0-255` guess.
+- Scene uploads are paced instead of blasted (dropped frames over proxies).
+- Account-lock secrets are masked in frame captures (logs/diagnostics).
+- `FrameLog` file writes moved off the event loop.
+- Cloud client: request timeouts, the documented-but-missing re-login on 401, no response bodies
+  in error messages, no forced login when a token is supplied.
+
+### Added
+- `Device.turn_on(brightness=, rgb=, kelvin=, power=)` / `turn_off()` and
+  `GoveeConnection.send_many()`: multi-attribute changes go out as one batched, ack-verified
+  operation on one connection. Whole-fixture power is always one frame: H60A6 uses the global
+  `33 01` switch (live-verified to drive both zones: off clears them, on lights both even when
+  each was off; previously one `33 30` frame per zone), H6047 the combined `33 36` bar frame.
+- `GoveeBleAuthError` is raised when a device rejects its secret key.
+- `Device.encryption` (the negotiated channel mode); colour temperature read back from the mode
+  report; segment writes update `state.segments`.
+- `tools/power_semantics_probe.py`: hardware experiment for global vs. zone power.
+- Fake-peripheral test harness (`tests/fake_ble.py`) reproducing the captured failure modes;
+  release workflow publishing to PyPI via trusted publishing.
+
+### Removed
+- Dead code: `ble/frame.py`, duplicate `checksum_ok`, unused `CONNECT_TIMEOUT`.
 
 ## [1.0.3] — 2026-07-12
 

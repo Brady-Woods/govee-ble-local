@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import pytest
 
-pytest.importorskip("kaitaistruct", reason="Kaitai runtime not installed")
-_gb = pytest.importorskip("govee_ble_local._generated.govee_ble_frame")
+from conftest import require_optional
+
+require_optional("kaitaistruct", reason="Kaitai runtime not installed")
+_gb = require_optional("govee_ble_local._generated.govee_ble_frame")
 F = _gb.GoveeBleFrame
 
 from govee_ble_local.wire import build as b  # noqa: E402

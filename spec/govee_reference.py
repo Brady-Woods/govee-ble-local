@@ -6,7 +6,7 @@ This is the executable half of the spec. `govee_ble.ksy` owns the *byte structur
 three things a single-buffer grammar structurally cannot do, each grounded in the decompiled app:
 
     (1) DECRYPT      V1 = AES-128-ECB(16-byte blocks) + RC4(remainder)   [com/govee/encryp/ble/Safe.java]
-    (2) REASSEMBLE   multi-frame transfers (0xAC status; 0xA1/0xA3 similar)   [GOVEE_BLE_GATT_PROTOCOL.md 4.5/4.3]
+    (2) REASSEMBLE   multi-frame transfers (0xAC status; 0xA1/0xA3 alike) [GOVEE_BLE_GATT_PROTOCOL.md 4.5/4.3]
     (3) XOR checksum (BCC) compute/verify                                [4.1]
 
 ...plus thin `dispatch` helpers that feed the parametric .ksy types the one discriminator they need
@@ -21,7 +21,6 @@ Only the crypto needs a third-party AES (pip install pycryptodome); everything e
 runtime (pip install kaitaistruct). RC4 is implemented here (Safe.f/g); AES-ECB is delegated.
 """
 from __future__ import annotations
-import functools
 from io import BytesIO
 
 # ─────────────────────────── (3) XOR checksum (BCC) — §4.1 ───────────────────────────
@@ -81,7 +80,7 @@ def crypt_v1(buf: bytes, key: bytes, *, encrypt: bool) -> bytes:
 # ─────────────────────── (2) reassembly: 0xAC status burst -> TLV buffer — §4.5 ───────────────────────
 # first frame (tag 0x00): [AC, 00, totalLo, totalHi, lastLen, cmd, sub, <12 data @7..18>, CK]
 # next  frames (tag 01..): [AC, tag, <17 data @2..18>, CK]
-# terminator  (tag 0xFF): signals completion. Reassembled buffer = concat(data regions)[:total] (the TLV stream).
+# terminator  (tag 0xFF): signals completion. Reassembled = concat(data regions)[:total] (the TLV stream).
 
 def reassemble_ac(frames: list[bytes]) -> bytes:
     f0 = frames[0]
@@ -143,11 +142,12 @@ def build_op15_color(r: int, g: int, b: int, seg_mask: int, *, variant: int, kel
     body += bytes([seg_mask & 0xFF, (seg_mask >> 8) & 0xFF])
     return append_bcc(bytes([0x33]) + body)
 
-# ─────────────────────────── device profiles (devices.yaml -> {sku: client_profile}) ───────────────────────────
+# ─────────────────────── device profiles (devices.yaml -> {sku: client_profile}) ───────────────────────
 
 def load_profiles(devices_yaml_path: str) -> dict[str, dict]:
     import yaml
-    reg = yaml.safe_load(open(devices_yaml_path))
+    with open(devices_yaml_path) as fh:
+        reg = yaml.safe_load(fh)
     out: dict[str, dict] = {}
     for fam in reg.get("families", []):
         prof = fam.get("client_profile")

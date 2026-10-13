@@ -43,6 +43,8 @@ def sku_from_local_name(name: str) -> str | None:
     """
     if not name:
         return None
+    # Underscore-delimited prefixes; keep in sync with const.LOCAL_NAME_PREFIXES (which
+    # identify() gates on), where "GBK_" is also listed.
     if any(name.startswith(p) for p in ("ihoment_", "Govee_", "Minger_", "GBK_")):
         parts = name.split("_")
         if len(parts) == 3 and parts[1]:
@@ -51,7 +53,6 @@ def sku_from_local_name(name: str) -> str | None:
     # Legacy no-underscore forms: GVH60A6..., GVR..., GV...
     for p in ("GVH", "GVR", "GV"):
         if name.startswith(p):
-            rest = name[len(p) - 1 :] if p == "GVH" else name[len(p) :]
             # GVH -> keep the 'H'; take the SKU as the first 5 chars (H + 4).
             token = ("H" + name[len(p):]) if p == "GVH" else name[len(p):]
             return token[:5].upper() if token else None
