@@ -8,6 +8,11 @@ model, from which the shipped readers are generated).
 
 ## [Unreleased]
 
+## [1.2.0] — 2026-10-12
+
+First release published to PyPI. `1.1.0` was bumped on a development branch but never tagged or
+released, so its changes ship here too (see the `1.1.0` entry below).
+
 Hardening release candidate: input validation, connection/lifecycle reliability, secret handling
 and packaging. Behaviour changes that can affect callers are listed under **Behaviour changes**.
 

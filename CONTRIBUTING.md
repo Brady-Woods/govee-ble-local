@@ -82,12 +82,21 @@ breaking public API, MINOR = additive, PATCH = fixes).
 
 ### Per release
 
+**A version bump and a release are one action, not two.** `origin/master`'s `pyproject.toml` version must
+always have a matching tag **and** a published (non-prerelease) GitHub Release with the built artifacts
+attached; a bumped-but-untagged version on `master` is an incomplete release. Prerelease tags (`vX.Y.ZrcN`)
+are only for handing someone a testable build of an unmerged branch.
+
 1. Bump `version` in `pyproject.toml`; rename `## [Unreleased]` in `CHANGELOG.md` to
    `## [X.Y.Z] - YYYY-MM-DD` (and add a fresh empty `[Unreleased]`).
 2. Merge to `master` (the tagged commit must be on `master`).
 3. `git tag vX.Y.Z && git push origin vX.Y.Z`
-4. Watch the **Release** workflow; when the `publish` job waits, approve the `pypi` environment.
-5. Verify in a clean venv: `pip install govee-ble-local==X.Y.Z` and
+4. Watch the **Release** workflow; if the `pypi` environment has required reviewers, approve it.
+5. Create the GitHub Release from the same artifacts the workflow built (so they match what went to
+   PyPI): `gh run download <run-id> -n dist -D dist/` then
+   `gh release create vX.Y.Z --notes-file <the CHANGELOG section> dist/*.whl dist/*.tar.gz`
+   (non-prerelease).
+6. Verify in a clean venv: `pip install govee-ble-local==X.Y.Z` and
    `python -c "import govee_ble_local as g; print(g.__version__)"`.
 
 ### What the workflow enforces
