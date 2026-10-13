@@ -111,8 +111,6 @@ are only for handing someone a testable build of an unmerged branch.
 There is no TestPyPI dry run wired into the workflow. To check packaging locally without
 publishing, build from a clean checkout and run `twine check dist/*`.
 
-Note: `README.md` currently says the package is "Not on PyPI yet". Update the Install section after
-the first successful publish.
 
 ## Diagnostics
 

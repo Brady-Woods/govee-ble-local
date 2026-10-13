@@ -16,15 +16,13 @@ Home Assistant integration, but has no Home Assistant dependency and can be used
 
 ## Install
 
-Not on PyPI yet — install from source:
-
 ```bash
-pip install "git+https://github.com/Brady-Woods/govee-ble-local.git"
-# or, from a clone (editable):
-git clone https://github.com/Brady-Woods/govee-ble-local.git
-cd govee-ble-local && pip install -e .
+pip install govee-ble-local
 # optional Govee cloud-account helpers (pulls in aiohttp):
 pip install 'govee-ble-local[cloud]'
+# or, from a clone (editable, for development):
+git clone https://github.com/Brady-Woods/govee-ble-local.git
+cd govee-ble-local && pip install -e '.[dev]'
 ```
 
 Requires Python 3.11+. Runtime dependencies are deliberately minimal and Home-Assistant-friendly:
