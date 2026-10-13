@@ -11,6 +11,12 @@ model, from which the shipped readers are generated).
 ## [1.2.1] — 2026-10-13
 
 ### Fixed
+- Installs alongside current Home Assistant again ([#8](https://github.com/Brady-Woods/govee-ble-local/issues/8)): the `cryptography<49` ceiling conflicted
+  with HA 2026.10's `cryptography==50.0.1`, so the integration failed to load. The requirement is
+  now `cryptography>=41.0.0` with no upper bound: HA installs integration requirements under its
+  own `package_constraints.txt`, so inside HA the version always follows HA's pin, and a ceiling
+  could only break again when HA moves. The `pip-audit` ignores for PYSEC-2026-3552/3553/3554 are
+  gone with it (fixed in the `cryptography` versions now resolved).
 - BLE name -> SKU extraction now matches the app (`BaseBleProcessor.parse`). The bare `GV` form
   returned the wrong SKU (`GV61881A2B` -> `61881`, `GV6188_1A2B` -> `6188_`; the app reads
   `"H" + name[2:6]` -> `H6188`), so `discover()`/`match()` could never match such a device.
