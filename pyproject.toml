@@ -39,7 +39,7 @@ dependencies = [
     # oracle, cert-chain DoS, wildcard SAN constraint bypass) fixed only in cryptography 49/50.
     # This library uses only AES-ECB/ARC4, not PKCS#7/X.509, so they are not exploitable here;
     # the ceiling exists for Home Assistant's pin. Revisit when HA moves.
-    "cryptography>=41.0.0,<49",
+    "cryptography>=41.0.0,<51",
     # Runtime wire parser: the spec/*.ksy-generated readers under govee_ble_local/_generated
     # subclass KaitaiStruct + use KaitaiStream, so this is required at runtime. It is the ONE
     # accepted non-HA-default dependency — pure-Python, stdlib-only, zero-dep, MIT. The Kaitai
