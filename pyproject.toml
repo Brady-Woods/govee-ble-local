@@ -40,7 +40,7 @@ dependencies = [
     # subclass KaitaiStruct + use KaitaiStream, so this is required at runtime. It is the ONE
     # accepted non-HA-default dependency — pure-Python, stdlib-only, zero-dep, MIT. The Kaitai
     # *compiler* (ksc, JS) stays a dev tool (tools/gen_kaitai.sh); the readers are committed.
-    # See CLAUDE.local.md for the dependency policy (bleak / bleak-retry-connector / cryptography
+    # See CLAUDE.md for the dependency policy (bleak / bleak-retry-connector / cryptography
     # are HA defaults; new runtime deps need justification; never require a version ahead of HA).
     "kaitaistruct>=0.11",
 ]
@@ -59,7 +59,7 @@ Issues = "https://github.com/Brady-Woods/govee-ble-local/issues"
 [project.optional-dependencies]
 # Dev/test/docs only — NOT runtime. PyYAML + jsonschema validate spec/devices.yaml in the
 # test suite (the runtime device table is hardcoded Python in devices/profile.py; nothing under
-# src/ imports yaml). See CLAUDE.local.md for the dependency policy.
+# src/ imports yaml). See CLAUDE.md for the dependency policy.
 test = [
     "pytest", "pytest-asyncio", "pytest-cov", "jsonschema>=4.0", "PyYAML>=6.0", "aiohttp>=3.9",
     # Independent AES reference for tests/test_spec_reference_crosscheck.py. Test-only: never a
