@@ -54,15 +54,7 @@ echo ">> pip-audit"
 if [ "${CI:-}" != "true" ] && ! "$PYTHON" -c "import socket; socket.create_connection(('pypi.org', 443), timeout=5).close()" 2>/dev/null; then
   echo "   SKIPPED: offline (pip-audit needs network; CI=true makes this mandatory)"
 else
-  # PYSEC-2026-3552/3553/3554 (cryptography PKCS#7 decrypt oracle, cert-chain DoS, wildcard
-  # SAN constraint bypass) are fixed only in cryptography 49/50. This library uses only
-  # AES-ECB/ARC4, never PKCS#7/X.509, so they are not exploitable here, and the <49 ceiling
-  # in pyproject.toml tracks Home Assistant's pin. Remove these ignores when HA moves.
-  pip-audit \
-    --ignore-vuln PYSEC-2026-3552 \
-    --ignore-vuln PYSEC-2026-3553 \
-    --ignore-vuln PYSEC-2026-3554 \
-    .
+  pip-audit .
 fi
 
 echo ">> pytest (coverage gate: >= ${COV_MIN}% of pure-logic modules)"

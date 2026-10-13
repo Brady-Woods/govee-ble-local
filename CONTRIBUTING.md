@@ -13,6 +13,8 @@ lean on dependencies.
   `kaitaistruct` (see `pyproject.toml`). The first three ship with Home Assistant; `kaitaistruct` is
   the one accepted exception (pure-Python, stdlib-only). **Don't add a runtime dependency without
   justification, favour the standard library, and never require a version newer than HA ships.**
+  Don't put upper bounds on HA-shipped dependencies either: HA installs requirements under its own
+  `package_constraints.txt`, so a ceiling only causes conflicts when HA moves (issue #8).
 - **Typing:** the package ships `py.typed`; keep `mypy --strict` clean.
 
 ## Dev setup & quality gates
@@ -32,8 +34,8 @@ workflow run; it builds its own venv, `.venv-check`, override with `VENV=`). It 
 1. `ruff check src tools tests spec` (rules in `[tool.ruff.lint]`)
 2. `mypy src/govee_ble_local` (`--strict`; generated readers exempt)
 3. `bandit -r src tools` failing on Medium+ severity
-4. `pip-audit` with three justified ignores (PYSEC-2026-3552/3553/3554: `cryptography` PKCS#7/X.509
-   issues this library does not use); skipped offline unless `CI=true`
+4. `pip-audit` over the package's resolved runtime dependencies (no ignores); skipped offline unless
+   `CI=true`
 5. `pytest` with a coverage floor of 85% (`COV_MIN`) over the package (generated readers omitted)
 
 With `CI=true`, missing optional test dependencies fail the run instead of skipping tests.
