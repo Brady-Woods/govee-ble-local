@@ -16,7 +16,10 @@ from __future__ import annotations
 import logging
 from collections.abc import Iterable
 from dataclasses import dataclass
+from io import BytesIO
 from typing import Any
+
+from kaitaistruct import KaitaiStream
 
 from ..models import Segment
 from .._generated.govee_ble_frame import GoveeBleFrame as _GBF  # type: ignore[attr-defined]
@@ -154,6 +157,27 @@ def parse_mode_0d(frame: bytes) -> tuple[tuple[int, int, int] | None, int | None
     if rgb == (0xFF, 0xFF, 0xFF) and kelvin:
         return None, kelvin
     return rgb, None
+
+
+# mode_color_0d_typed `kind` for the rgblight strategy (devices.yaml mode_0d_kind: rgb_kelvin_tint).
+_MODE_0D_KIND_RGB_KELVIN_TINT = 2
+
+
+def parse_mode_0d_rgblight(frame: bytes) -> tuple[tuple[int, int, int] | None, int | None] | None:
+    """AA 05 0D reply on the rgblight H6188, decoded by the spec's ``mode_color_0d_typed(kind=2)``:
+    ``[r, g, b, kelvin u2be, tint r, g, b]`` (ModeParseStrategyConfig.a). ANY non-zero kelvin is
+    colour-temperature mode -> ``(None, kelvin)`` (the app then shows the tint, not r/g/b);
+    kelvin 0 -> ``((r, g, b), None)``. Same return shape as :func:`parse_mode_0d`."""
+    if len(frame) < 3 or frame[0] != 0xAA or frame[1] != 0x05 or frame[2] != 0x0D:
+        return None
+    try:
+        body = _F.ModeColor0dTyped(_MODE_0D_KIND_RGB_KELVIN_TINT, KaitaiStream(BytesIO(bytes(frame[3:]))))
+    except Exception as exc:  # noqa: BLE001 - truncated body -> not a usable report
+        _LOGGER.debug("0x0d report did not parse as kind 2: %s (%r)", bytes(frame).hex(), exc)
+        return None
+    if body.is_cct:
+        return None, int(body.report_kelvin)
+    return (int(body.r), int(body.g), int(body.b)), None
 
 
 # ── mechanism-B per-group colour read-back (H61A8; 0xAA 0xA2 V1 / 0xA5 V2) ──────

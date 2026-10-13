@@ -535,6 +535,10 @@ class GoveeBleFrame(KaitaiStruct):
 
 
     class ColorCct0d(KaitaiStruct):
+        """0x0D colour write. RGB form = [R,G,B, 0...] (Bytes.f). CCT form = [ff,ff,ff, kelvin u2be, tint] where the
+        tint is Constant.getTemColorByKelvin(kelvin) (exact 100 K table hit, else zeros); H6188 sends it
+        (Config.GM -> Bytes.A, library color_scheme "h6188"); the "h6006" bulb builder leaves it zero.
+        """
         def __init__(self, _io, _parent=None, _root=None):
             super(GoveeBleFrame.ColorCct0d, self).__init__(_io)
             self._parent = _parent
@@ -1721,6 +1725,8 @@ class GoveeBleFrame(KaitaiStruct):
           * DEFAULT SubMode4Color strategy (most other families) => [gradual_flag, kelvin u16-be], NOT RGB
             (iParseStrategy: q(vb0==1); s(getSignedShort(vb1,vb2))). For those devices reinterpret r as the
             gradual flag and g,b as the big-endian kelvin.
+          * rgblight strategy (H6188; ModeParseStrategyConfig.a) => [R, G, B, kelvin u16-be, tintR, tintG, tintB];
+            kelvin != 0 => colour-temperature mode. Use mode_color_0d_typed(kind=2) for the full body.
         Modelled as the H6052 RGB form (the curated device). Trailing frame bytes are zero padding (unparsed).
         """
         def __init__(self, _io, _parent=None, _root=None):
@@ -1741,8 +1747,13 @@ class GoveeBleFrame(KaitaiStruct):
 
     class ModeColor0dTyped(KaitaiStruct):
         """0x0D colour mode-report body, parametric on the device's parse strategy (devices.yaml `mode_0d_kind`):
-          kind 0 = default SubMode4Color strategy -> [gradual_flag, kelvin u16-be]
-          kind 1 = H6052 custom strategy          -> [R, G, B]
+          kind 0 = default SubMode4Color strategy -> [gradual_flag, kelvin u16-be]           (mode_0d_kind: cct)
+          kind 1 = H6052 custom strategy          -> [R, G, B]                                (mode_0d_kind: rgb)
+          kind 2 = rgblight strategy (H6188)      -> [R, G, B, kelvin u16-be, tintR, tintG, tintB]
+                                                                                   (mode_0d_kind: rgb_kelvin_tint)
+        Kind 2 is ModeParseStrategyConfig.a (rgblight, installed by VM4Light.v5 for H6188): kelvin =
+        getSignedShort(vb[3], vb[4]); ANY non-zero kelvin means colour-temperature mode and the app shows the
+        tint (vb[5..7]) rather than R/G/B; kelvin 0 means RGB mode. The body mirrors the color_cct_0d write.
         """
         def __init__(self, kind, _io, _parent=None, _root=None):
             super(GoveeBleFrame.ModeColor0dTyped, self).__init__(_io)
@@ -1760,17 +1771,33 @@ class GoveeBleFrame(KaitaiStruct):
                 pass
                 self.kelvin = self._io.read_u2be()
 
-            if self.kind == 1:
+            if  ((self.kind == 1) or (self.kind == 2)) :
                 pass
                 self.r = self._io.read_u1()
 
-            if self.kind == 1:
+            if  ((self.kind == 1) or (self.kind == 2)) :
                 pass
                 self.g = self._io.read_u1()
 
-            if self.kind == 1:
+            if  ((self.kind == 1) or (self.kind == 2)) :
                 pass
                 self.b = self._io.read_u1()
+
+            if self.kind == 2:
+                pass
+                self.report_kelvin = self._io.read_u2be()
+
+            if self.kind == 2:
+                pass
+                self.tint_r = self._io.read_u1()
+
+            if self.kind == 2:
+                pass
+                self.tint_g = self._io.read_u1()
+
+            if self.kind == 2:
+                pass
+                self.tint_b = self._io.read_u1()
 
 
 
@@ -1782,15 +1809,36 @@ class GoveeBleFrame(KaitaiStruct):
             if self.kind == 0:
                 pass
 
-            if self.kind == 1:
+            if  ((self.kind == 1) or (self.kind == 2)) :
                 pass
 
-            if self.kind == 1:
+            if  ((self.kind == 1) or (self.kind == 2)) :
                 pass
 
-            if self.kind == 1:
+            if  ((self.kind == 1) or (self.kind == 2)) :
                 pass
 
+            if self.kind == 2:
+                pass
+
+            if self.kind == 2:
+                pass
+
+            if self.kind == 2:
+                pass
+
+            if self.kind == 2:
+                pass
+
+
+        @property
+        def is_cct(self):
+            """kind 2 only: colour-temperature mode (report_kelvin != 0, ModeParseStrategyConfig.a)."""
+            if hasattr(self, '_m_is_cct'):
+                return self._m_is_cct
+
+            self._m_is_cct =  ((self.kind == 2) and (self.report_kelvin != 0)) 
+            return getattr(self, '_m_is_cct', None)
 
 
     class ModePayload(KaitaiStruct):

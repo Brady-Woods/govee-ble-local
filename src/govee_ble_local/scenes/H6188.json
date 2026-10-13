@@ -1,0 +1,47 @@
+{
+ "Aurora": {
+  "category": "Built-in",
+  "code": 24,
+  "param": null
+ },
+ "Bright": {
+  "category": "Built-in",
+  "code": 23,
+  "param": null
+ },
+ "Candlelight": {
+  "category": "Built-in",
+  "code": 9,
+  "param": null
+ },
+ "Dating": {
+  "category": "Built-in",
+  "code": 5,
+  "param": null
+ },
+ "Energetic": {
+  "category": "Built-in",
+  "code": 16,
+  "param": null
+ },
+ "Gradient": {
+  "category": "Built-in",
+  "code": 17,
+  "param": null
+ },
+ "Movie": {
+  "category": "Built-in",
+  "code": 4,
+  "param": null
+ },
+ "Reading": {
+  "category": "Built-in",
+  "code": 13,
+  "param": null
+ },
+ "Romantic": {
+  "category": "Built-in",
+  "code": 7,
+  "param": null
+ }
+}
