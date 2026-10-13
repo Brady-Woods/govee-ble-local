@@ -19,28 +19,51 @@ def _cid(header: int, hi: int = 0x88) -> int:
 @pytest.mark.parametrize(
     ("name", "expected"),
     [
+        # brand markers: split on "_", exactly 3 parts, SKU = middle (BaseBleProcessor.c/d)
         ("ihoment_H5083_A2D1", "H5083"),
         ("Govee_h61a8_631F", "H61A8"),
         ("Minger_H6008_0001", "H6008"),
         ("GBK_H1234_ABCD", "H1234"),
+        ("Govee_H6052_3477", "H6052"),    # live name (bazzite scan)
+        ("Govee_H6047_177E", "H6047"),    # live name (bazzite scan)
         ("ihoment_H5083", None),          # wrong segment count
         ("ihoment__A2D1", None),          # empty SKU segment
         ("Govee_H61A8_AB_CD", None),      # too many segments
+        ("xGovee_H6188_1A2B", "H6188"),   # markers match anywhere (String.contains)
+        ("xGBK_H1234_ABCD", None),        # ...but GBK_ is a prefix
+        # GVH/GVR without "_": >= 11 chars, SKU = name[2:7] (BaseBleProcessor.f)
+        ("GVH60A67457", "H60A6"),         # live H60A6 name (bazzite scan)
+        ("GVH60087A93", "H6008"),         # live H6008 name (bazzite scan)
         ("GVH60A6XXXX", "H60A6"),
-        ("GVh60a6xxxx", "H60A6"),         # prefix 'GV' + lower h -> falls to GV branch
-        ("GVR1234567", "12345"),
-        ("GVH", "H"),
+        ("GVH6008abc", None),             # 10 chars: too short for f()
+        ("GVH", None),
+        ("GVR1234567", None),             # 10 chars
+        ("GVR61841234", "R6184"),         # the app keeps the 'R' (substring(2, 7))
+        # GVH/GVR with "_": SKU = name[2:index('_')] (BaseBleProcessor.e)
+        ("GVH6188_1A2B", "H6188"),
+        ("GVR6184_XXXX", "R6184"),
+        # GV: >= 10 chars, SKU = "H" + name[2:6] (BaseBleProcessor.g)
+        ("GV61881A2B", "H6188"),          # was '61881' before the fix
+        ("GV6188_1A2B", "H6188"),         # was '6188_' before the fix
+        ("GV5122ABCD", "H5122"),          # devices.yaml name_parsing example
+        ("GVh60a6xxxx", "HH60A"),         # 'GVH' is case-sensitive -> GV branch
+        ("GV6188ABC", None),              # 9 chars: too short for g()
         ("GV", None),
-        ("GVH6008abc", "H6008"),
         ("", None),
         ("SomethingElse", None),
     ],
 )
 def test_sku_from_local_name(name: str, expected: str | None) -> None:
-    if name == "GVh60a6xxxx":
-        # lower-case 'h' is not the 'GVH' prefix, so the generic GV slice is used.
-        expected = "H60A6"
     assert sku_from_local_name(name) == expected
+
+
+def test_identify_follows_name_parsing() -> None:
+    adv = identify("GV61881A2B", {})
+    assert adv is not None and adv.sku == "H6188"
+    adv = identify("xx Govee_H6188_1A2B", {})
+    assert adv is not None and adv.sku == "H6188"
+    assert identify("GV6188ABC", {}) is None
+    assert identify(None, {}) is None
 
 
 def test_parse_manufacturer_data_encrypted_and_plain() -> None:
