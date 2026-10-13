@@ -8,6 +8,18 @@ model, from which the shipped readers are generated).
 
 ## [Unreleased]
 
+## [1.2.1] — 2026-10-13
+
+### Fixed
+- BLE name -> SKU extraction now matches the app (`BaseBleProcessor.parse`). The bare `GV` form
+  returned the wrong SKU (`GV61881A2B` -> `61881`, `GV6188_1A2B` -> `6188_`; the app reads
+  `"H" + name[2:6]` -> `H6188`), so `discover()`/`match()` could never match such a device.
+  Also aligned with the app: `GVR` keeps its `R` (`GVR6184_XXXX` -> `R6184`); `GVH`/`GVR` names
+  without `_` need >= 11 characters and `GV` names >= 10 (shorter names are no longer guessed);
+  `ihoment_`/`Govee_`/`Minger_` are matched anywhere in the name, not only as a prefix.
+  Verified against live advertisements (H60A6 and H6008 in the `GVH…` form; H5083, H6047, H6052
+  in the brand form): same SKUs as 1.2.0, and no non-Govee device newly matched.
+
 ## [1.2.0] — 2026-10-12
 
 First release published to PyPI. `1.1.0` was bumped on a development branch but never tagged or

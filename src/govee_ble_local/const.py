@@ -29,6 +29,9 @@ FRAME_LEN: Final = 20  # every Govee BLE frame is exactly 20 bytes
 # --- Advertisement identification ------------------------------------------
 # A BLE device is a candidate Govee device if its advertised local name starts
 # with one of these prefixes (com.govee.base2home.main.choose.BaseBleProcessor).
+# The app actually matches ihoment_/Govee_/Minger_ ANYWHERE in the name; identify()
+# follows it exactly (identify.sku_from_local_name). This tuple is the prefix
+# form for passive matchers (e.g. a Home Assistant manifest).
 LOCAL_NAME_PREFIXES: Final = (
     "ihoment_",
     "Govee_",

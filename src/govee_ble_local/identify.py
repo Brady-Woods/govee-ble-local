@@ -6,7 +6,8 @@ crucially the **encrypt flag** that decides whether the device uses the
 encrypted command channel).
 
 Ported exactly from the app:
-- Local-name prefixes gate Govee devices; modern names are ``<prefix>_<SKU>_<id>``.
+- The local name gates Govee devices and carries the SKU (:func:`sku_from_local_name`,
+  BaseBleProcessor.parse); modern names are ``<brand>_<SKU>_<id>``.
 - Manufacturer data: the company-id low byte is a header whose bit ``0x40`` is
   the encrypt flag and low nibble is the broadcast version; the company-id high
   byte + first data byte are the Govee marker ``{0x88, 0xEC}``; then
@@ -16,7 +17,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .const import LOCAL_NAME_PREFIXES
 
 # BleUtil.f41010h — the 2-byte Govee marker (company-id high byte, first data byte).
 _MARKER = (0x88, 0xEC)
@@ -35,27 +35,37 @@ class GoveeAdvertisement:
     pact_code: int          # protocol code (from mfg data)
 
 
-def sku_from_local_name(name: str) -> str | None:
-    """Extract the SKU from a Govee local name.
+# BaseBleProcessor.parse: these brand markers are matched ANYWHERE in the name (String.contains);
+# GBK_/GVH/GVR/GV are prefixes (startsWith), tested in that order after the markers.
+_BRAND_MARKERS = ("ihoment_", "Govee_", "Minger_")
 
-    Modern: ``ihoment_H5083_A2D1`` / ``Govee_H61A8_631F`` -> middle segment.
-    Legacy: ``GVH60A6XXXX`` -> the ``H....`` slice after ``GV``.
+
+def sku_from_local_name(name: str) -> str | None:
+    """Extract the SKU from a Govee local name — a port of ``BaseBleProcessor.parse``.
+
+    - name contains ``ihoment_`` / ``Govee_`` / ``Minger_``, or starts with ``GBK_``: split on
+      ``_``; exactly 3 parts, SKU = the middle one (``ihoment_H5083_A2D1`` -> ``H5083``). (c(), d())
+    - ``GVH`` / ``GVR`` with an ``_``: SKU = ``name[2:index('_')]`` (``GVH6188_1A2B`` -> ``H6188``);
+      without one: needs >= 11 chars, SKU = ``name[2:7]`` (``GVH60A67457`` -> ``H60A6``). (e(), f())
+    - otherwise ``GV``: needs >= 10 chars, SKU = ``"H" + name[2:6]`` (``GV61881A2B`` -> ``H6188``).
+      (g())
+
+    The SKU is upper-cased (the registry is case-insensitive); an empty SKU yields None.
     """
     if not name:
         return None
-    # Underscore-delimited prefixes; keep in sync with const.LOCAL_NAME_PREFIXES (which
-    # identify() gates on), where "GBK_" is also listed.
-    if any(name.startswith(p) for p in ("ihoment_", "Govee_", "Minger_", "GBK_")):
+    if any(m in name for m in _BRAND_MARKERS) or name.startswith("GBK_"):
         parts = name.split("_")
         if len(parts) == 3 and parts[1]:
             return parts[1].upper()
         return None
-    # Legacy no-underscore forms: GVH60A6..., GVR..., GV...
-    for p in ("GVH", "GVR", "GV"):
-        if name.startswith(p):
-            # GVH -> keep the 'H'; take the SKU as the first 5 chars (H + 4).
-            token = ("H" + name[len(p):]) if p == "GVH" else name[len(p):]
-            return token[:5].upper() if token else None
+    if name.startswith(("GVH", "GVR")):
+        idx = name.find("_")
+        if idx == -1:
+            return name[2:7].upper() if len(name) >= 11 else None
+        return name[2:idx].upper() or None
+    if name.startswith("GV"):
+        return ("H" + name[2:6]).upper() if len(name) >= 10 else None
     return None
 
 
@@ -101,7 +111,7 @@ def parse_broadcast_onoff(mfg: dict[int, bytes]) -> bool | None:
 
 def identify(name: str | None, mfg: dict[int, bytes]) -> GoveeAdvertisement | None:
     """Identify a Govee device from its advertised name + manufacturer data."""
-    if not name or not any(name.startswith(p) for p in LOCAL_NAME_PREFIXES):
+    if not name:
         return None
     sku = sku_from_local_name(name)
     if sku is None:
