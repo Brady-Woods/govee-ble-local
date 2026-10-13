@@ -25,6 +25,8 @@ model, from which the shipped readers are generated).
 - Bundled `scenes/H6188.json`: the fixed `Scenes4H6188` list (activate-only, `33 05 04 <code>`).
   `tools/fetch_scenes.py` skips app-defined catalogs (`APP_DEFINED_SCENE_SKUS`) so a fetch can't
   overwrite them with the cloud library.
+- `tools/h6188_field_test.py`: guided hardware test for an H6188 owner (scan, every capability
+  with read-back and a visual check, restore, JSON report + frame capture to send back).
 
 ### Spec
 - `govee_ble.ksy`: `mode_color_0d_typed` kind 2 (rgblight `[R,G,B, kelvin u2be, tint RGB]` with an

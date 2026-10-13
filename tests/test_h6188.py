@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import importlib.util
+import sys
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock
@@ -297,3 +298,45 @@ def test_fetch_scenes_never_overwrites_app_defined_catalog(capsys: Any) -> None:
     fs.fetch = boom
     assert fs.main(["H6188"]) == 0
     assert "skipped" in capsys.readouterr().out
+
+
+# ── tools/h6188_field_test.py (offline: mocked discovery + device) ───────────
+def test_field_test_runs_end_to_end_and_restores(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    path = Path(__file__).resolve().parent.parent / "tools" / "h6188_field_test.py"
+    spec = importlib.util.spec_from_file_location("_tool_h6188_field_test", path)
+    assert spec and spec.loader
+    ft = importlib.util.module_from_spec(spec)
+    monkeypatch.setitem(sys.modules, spec.name, ft)   # @dataclass needs its module registered
+    spec.loader.exec_module(ft)
+
+    # initial: on, brightness raw 136 (50 %), RGB (1, 2, 3)
+    d = _dev({0x01: [_frame(0xAA, 0x01, 0x01)], 0x04: [_frame(0xAA, 0x04, 136)],
+              0x05: [_frame(0xAA, 0x05, 0x0D, 1, 2, 3)]})
+    d.connect = AsyncMock()  # type: ignore[method-assign]
+    d.stop = AsyncMock()  # type: ignore[method-assign]
+    ble = ble_device("AA:BB:CC:DD:EE:88", "ihoment_H6188_1A2B")
+
+    class _Adv:
+        def __init__(self) -> None:
+            self.local_name = "ihoment_H6188_1A2B"
+            self.manufacturer_data: dict[int, bytes] = {}
+            self.rssi = -60
+
+    async def fake_discover(_address: object) -> tuple[Any, Any, list[dict[str, Any]]]:
+        return ble, _Adv(), [{"name": "ihoment_H6188_1A2B", "identified_sku": "H6188"}]
+
+    monkeypatch.setattr(ft, "discover", fake_discover)
+    monkeypatch.setattr("govee_ble_local.create_device", lambda *_a, **_k: d)
+    report_path, frames_path = tmp_path / "r.json", tmp_path / "f.jsonl"
+    args = ft.parse_args(["--no-prompt", "--settle", "0"])
+    assert asyncio.run(ft.run(args, report_path, frames_path)) == 0
+
+    import json
+    rep = json.loads(report_path.read_text())
+    assert rep["result"] == "completed" and rep["restore"] == "ok"
+    assert rep["initial_state"]["brightness"] == 50 and rep["initial_state"]["rgb_color"] == [1, 2, 3]
+    names = [r["step"] for r in rep["steps"]]
+    assert len(names) == 2 + 3 + 3 + 3 + 1 + 9 and names[0] == "power_off"
+    assert all(r["sent"] == "ok" and r["observed"] is None for r in rep["steps"])
+    # the steps really hit the wire, and the restore re-applied brightness then colour
+    assert _sent(d)[-2][:3].hex() == "330488" and _sent(d)[-1][:6].hex() == "33050d010203"
