@@ -12,8 +12,10 @@
 #      [[tool.mypy.overrides]])
 #   3. bandit over src + tools, failing on Medium+ severity (-ll); the generated
 #      readers are excluded; accepted findings carry inline `# nosec` + reason
-#   4. pip-audit of the installed environment (needs network: skipped with a
-#      message when offline, unless CI=true, where it is mandatory)
+#   4. pip-audit of the package's resolved runtime dependencies, i.e. what users install
+#      (needs network: skipped with a message when offline, unless CI=true, where it is
+#      mandatory). It deliberately does not scan the CI venv's own tooling (pip, setuptools,
+#      pytest, ...), whose advisories are unrelated to what this package ships.
 #   5. pytest with a coverage floor over the package (only the Kaitai-generated
 #      _generated/ readers are omitted, via [tool.coverage.run])
 #
@@ -56,10 +58,11 @@ else
   # SAN constraint bypass) are fixed only in cryptography 49/50. This library uses only
   # AES-ECB/ARC4, never PKCS#7/X.509, so they are not exploitable here, and the <49 ceiling
   # in pyproject.toml tracks Home Assistant's pin. Remove these ignores when HA moves.
-  pip-audit --skip-editable \
+  pip-audit \
     --ignore-vuln PYSEC-2026-3552 \
     --ignore-vuln PYSEC-2026-3553 \
-    --ignore-vuln PYSEC-2026-3554
+    --ignore-vuln PYSEC-2026-3554 \
+    .
 fi
 
 echo ">> pytest (coverage gate: >= ${COV_MIN}% of pure-logic modules)"
