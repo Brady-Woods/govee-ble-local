@@ -78,6 +78,11 @@ class DeviceState:
     gradual: bool | None = None              # 0xA3 gradual/fade-on-handoff flag (gradual-capable SKUs)
     # Per-zone power, keyed by the zone's power_index (e.g. H60A6 0=main, 1=background).
     zone_power: dict[int, bool] = field(default_factory=dict)
+    # Per-zone colour temperature in Kelvin, keyed like ``zone_power``; a zone is absent when it is
+    # not (known to be) in colour-temperature mode. Only devices that report it (H6047, whose
+    # ``aa 05 15`` reply carries one kelvin per bar) fill it. ``color_temp_kelvin`` is the
+    # whole-device value and is set only while every zone agrees.
+    zone_color_temp_kelvin: dict[int, int] = field(default_factory=dict)
     optimistic: bool = False                 # True if not read back from the device
     # Device-info (static-ish), populated where the device supports read-back.
     wifi_mac: str | None = None
