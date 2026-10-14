@@ -67,6 +67,10 @@ class DeviceProfile:
     # aa 04 reply). Every curated SKU reports percent (all live read-backs are
     # 0..100); a 0..255 device would set 255 here. Writes are always percent.
     brightness_max: int = 100
+    # Raw (min, max) brightness range for devices whose 33 04 / aa 04 byte is NOT a percent
+    # (BrightnessConfig.Config version 0 = (20, 254), e.g. H6188). Writes map 1..100 onto it
+    # and reads map back (devices/brightness.py, NumberUtil); overrides brightness_max.
+    brightness_range: tuple[int, int] | None = None
 
     def __post_init__(self) -> None:
         # Fail at import of the table, not silently at poll time, on a typo.
@@ -81,6 +85,10 @@ class DeviceProfile:
                 raise ValueError(
                     f"DeviceProfile{self.skus}: {name}={value!r} not in {get_args(allowed)}"
                 )
+        if self.brightness_range is not None:
+            lo, hi = self.brightness_range
+            if not 0 <= lo < hi <= 0xFF:
+                raise ValueError(f"DeviceProfile{self.skus}: brightness_range={self.brightness_range!r}")
 
 
 _LIGHT = frozenset({_C.POWER, _C.BRIGHTNESS, _C.RGB, _C.COLOR_TEMP, _C.SCENES})
@@ -160,6 +168,24 @@ PROFILES: tuple[DeviceProfile, ...] = (
         encryption=Encryption.NONE, segments=16, min_kelvin=2000, max_kelvin=9000,
         scene_versions=frozenset({0, 1, 2, 3, 10}), readback="polled",
         color_readback="mechanism_a_direct", color_readback_per_batch=4, color_readback_live_ic=True,
+    ),
+    # H6188 — legacy RGB strip (rgblight split, goodsType 0, SKU-string matched). Modeled from
+    # source; not hardware-verified (no H6188 hardware). Source (Govee Home 7.7.02):
+    #  - colour: 0x0d sub-mode (H6188BleProtocol.sub_mode_color=13); RGB = Bytes.f, CCT =
+    #    Config.GM -> Bytes.A(kelvin, RGB_WHITE) = [0d, ff ff ff, kelvin u2be, tint] ("h6188").
+    #  - single colour piece (ColorPieceConfig.n -> 1): no segments.
+    #  - kelvin: KelvinConfig P1 -> version 0 = [2000, 9000].
+    #  - brightness: BrightnessConfig "H6188" -> version 0 = raw [20, 254] (not percent).
+    #  - read-back: ControllerStrategyConfig.H0 polls aa 04 / aa 01 / aa 05; the 0x0d report is
+    #    ModeParseStrategyConfig.a ([r,g,b, kelvin u2be, tint]; kelvin != 0 => CCT).
+    #  - scenes: the fixed Scenes4H6188 list, activated 33 05 04 <code> (DelegateSceneV1.P);
+    #    nothing is uploaded, so scene_versions is empty.
+    #  - no account-lock (ConnectDialog has no 0xB1/0xB2 step); cipher is runtime (BGC 2b12),
+    #    plaintext by default.
+    DeviceProfile(
+        skus=("H6188",), capabilities=_LIGHT, color_scheme="h6188",
+        encryption=Encryption.NONE, min_kelvin=2000, max_kelvin=9000,
+        readback="polled", brightness_range=(20, 254),
     ),
     # Plug family — power-only, AES + account-lock, relay encoding.
     # `plug` read-back polls the relay state (aa 01 -> raw relay bitmask; any bit set = on),

@@ -12,6 +12,7 @@ from typing import Literal
 from ..const import FRAME_LEN, SCENE_A3_HEADER_LEN, SCENE_A3_PIECE_LEN
 from ..crypto import checksum
 from ..exceptions import GoveeBleInvalidValue
+from .cct import tint_for_kelvin
 
 
 def ceil_div(a: int, b: int) -> int:
@@ -60,7 +61,10 @@ RELAY_ON, RELAY_OFF = 0x11, 0x10   # plug family
 COMM_H60A6 = 0x58
 COMM_H6052_GRAFFITI = 0x09
 
-ColorScheme = Literal["h60a6", "h6006", "h61a8"]
+# "h60a6" = 0x15 RGBIC (segment mask); "h6006" = 0x0d bulbs (no tint in the CCT frame);
+# "h61a8" = 0x0b RGBIC (no CCT); "h6188" = 0x0d rgblight strip: same RGB frame as h6006,
+# CCT frame carries the app's Kelvin->RGB tint (Config.GM -> Bytes.A).
+ColorScheme = Literal["h60a6", "h6006", "h61a8", "h6188"]
 
 
 def _check_range(name: str, value: int, lo: int, hi: int) -> int:
@@ -117,12 +121,18 @@ def brightness(pct: int) -> bytes:
     return frame(PRO_WRITE, CMD_BRIGHTNESS, max(0, min(100, pct)))
 
 
+def brightness_raw(level: int) -> bytes:
+    """33 04 <raw level 0-255>, for devices whose brightness byte is not a percent
+    (ControllerBrightness(i) writes the byte verbatim; e.g. H6188's 20..254 range)."""
+    return frame(PRO_WRITE, CMD_BRIGHTNESS, _check_range("brightness level", level, 0, 0xFF))
+
+
 # ── colour ───────────────────────────────────────────────────────────────────
 def color_rgb(r: int, g: int, b: int, scheme: ColorScheme, segments: int = 13) -> bytes:
     """Solid RGB, per-family SubModeColor.getWriteBytes (whole-device = all-segments mask)."""
     _check_rgb(r, g, b)
     lo, hi = _mask_le(all_segments_mask(segments))
-    if scheme == "h6006":
+    if scheme in ("h6006", "h6188"):
         return frame(PRO_WRITE, CMD_MODE, SUB_COLOR_0D, r, g, b, 0, 0, 0, 0, 0)
     if scheme == "h61a8":
         return frame(PRO_WRITE, CMD_MODE, SUB_COLOR_0B, r, g, b, lo, hi)
@@ -138,6 +148,11 @@ def color_temp(kelvin: int, scheme: ColorScheme, segments: int = 13) -> bytes:
     if scheme == "h6006":
         khi, klo = (kelvin >> 8) & 0xFF, kelvin & 0xFF
         return frame(PRO_WRITE, CMD_MODE, SUB_COLOR_0D, 0xFF, 0xFF, 0xFF, khi, klo, 0, 0, 0)
+    if scheme == "h6188":
+        # Config.GM -> Bytes.A(kelvin, RGB_WHITE): [0d, ff ff ff, kelvin u2be, tint r g b].
+        khi, klo = (kelvin >> 8) & 0xFF, kelvin & 0xFF
+        return frame(PRO_WRITE, CMD_MODE, SUB_COLOR_0D, 0xFF, 0xFF, 0xFF, khi, klo,
+                     *tint_for_kelvin(kelvin))
     return segment_color_temp(all_segments_mask(segments), kelvin, scheme)
 
 
@@ -157,8 +172,8 @@ def segment_color_temp(mask: int, kelvin: int, scheme: ColorScheme) -> bytes:
     h61a8 has no CCT at all — so masked CCT is 0x15-only."""
     if scheme == "h61a8":
         raise ValueError("h61a8 has no colour-temperature capability")
-    if scheme == "h6006":
-        raise ValueError("h6006 colour-temperature is whole-device only (no segment mask)")
+    if scheme in ("h6006", "h6188"):
+        raise ValueError(f"{scheme} colour-temperature is whole-device only (no segment mask)")
     _check_kelvin(kelvin)
     _check_mask(mask)
     khi, klo = (kelvin >> 8) & 0xFF, kelvin & 0xFF

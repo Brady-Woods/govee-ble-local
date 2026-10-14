@@ -228,16 +228,23 @@ def _merge(existing: dict[str, dict], fresh: dict[str, dict]) -> dict[str, dict]
     return merged
 
 
+# SKUs whose scene list is compiled into the app, not served by the scene library: their
+# bundled catalog is hand-derived from the APK and must not be overwritten by a fetch.
+# H6188: rgblight Scenes4H6188 (fixed codes, activate-only; DelegateSceneV1 makes no cloud call).
+APP_DEFINED_SCENE_SKUS = frozenset({"H6188"})
+
+
 def scene_capable_skus() -> list[str]:
     """All supported SKUs whose device declares Capability.SCENES (so new
-    families are covered automatically as they're added to the registry)."""
+    families are covered automatically as they're added to the registry), except the
+    APP_DEFINED_SCENE_SKUS whose catalogs are not from the scene library."""
     from govee_ble_local.models import Capability
     from govee_ble_local.registry import device_profile_for, supported_skus
 
     out: list[str] = []
     for sku in supported_skus():
         p = device_profile_for(sku)
-        if p is not None and Capability.SCENES in p.capabilities:
+        if p is not None and Capability.SCENES in p.capabilities and sku not in APP_DEFINED_SCENE_SKUS:
             out.append(sku)
     return out
 
@@ -291,6 +298,9 @@ def main(skus: list[str], app_version: str = DEFAULT_APP_VERSION) -> int:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     failures = 0
     for sku in skus:
+        if sku in APP_DEFINED_SCENE_SKUS:
+            print(f"{sku}: skipped (scene list is compiled into the app, not the scene library)")
+            continue
         try:
             path = catalog_path(sku)
             fresh = fetch(sku, app_version)

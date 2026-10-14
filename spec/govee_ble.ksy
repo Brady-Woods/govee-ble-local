@@ -302,6 +302,8 @@ types:
         * DEFAULT SubMode4Color strategy (most other families) => [gradual_flag, kelvin u16-be], NOT RGB
           (iParseStrategy: q(vb0==1); s(getSignedShort(vb1,vb2))). For those devices reinterpret r as the
           gradual flag and g,b as the big-endian kelvin.
+        * rgblight strategy (H6188; ModeParseStrategyConfig.a) => [R, G, B, kelvin u16-be, tintR, tintG, tintB];
+          kelvin != 0 => colour-temperature mode. Use mode_color_0d_typed(kind=2) for the full body.
       Modelled as the H6052 RGB form (the curated device). Trailing frame bytes are zero padding (unparsed).
     seq:
       - { id: r, type: u1, doc: "H6052: red. Default-strategy devices: gradual_flag (byte==1)." }
@@ -601,6 +603,10 @@ types:
       - { id: seg_mask, type: u2le, doc: bit i = segment i selected; all-ones = whole device }
 
   color_cct_0d:  # 0x0d (bulbs/lamps) — RGB + kelvin + mapped-RGB tint
+    doc: |
+      0x0D colour write. RGB form = [R,G,B, 0...] (Bytes.f). CCT form = [ff,ff,ff, kelvin u2be, tint] where the
+      tint is Constant.getTemColorByKelvin(kelvin) (exact 100 K table hit, else zeros); H6188 sends it
+      (Config.GM -> Bytes.A, library color_scheme "h6188"); the "h6006" bulb builder leaves it zero.
     seq:
       - { id: r, type: u1 }
       - { id: g, type: u1 }
@@ -1224,13 +1230,26 @@ types:
   mode_color_0d_typed:   # 0x0D colour-report body — typed counterpart of mode_color_0d_report
     doc: |
       0x0D colour mode-report body, parametric on the device's parse strategy (devices.yaml `mode_0d_kind`):
-        kind 0 = default SubMode4Color strategy -> [gradual_flag, kelvin u16-be]
-        kind 1 = H6052 custom strategy          -> [R, G, B]
+        kind 0 = default SubMode4Color strategy -> [gradual_flag, kelvin u16-be]           (mode_0d_kind: cct)
+        kind 1 = H6052 custom strategy          -> [R, G, B]                                (mode_0d_kind: rgb)
+        kind 2 = rgblight strategy (H6188)      -> [R, G, B, kelvin u16-be, tintR, tintG, tintB]
+                                                                                 (mode_0d_kind: rgb_kelvin_tint)
+      Kind 2 is ModeParseStrategyConfig.a (rgblight, installed by VM4Light.v5 for H6188): kelvin =
+      getSignedShort(vb[3], vb[4]); ANY non-zero kelvin means colour-temperature mode and the app shows the
+      tint (vb[5..7]) rather than R/G/B; kelvin 0 means RGB mode. The body mirrors the color_cct_0d write.
     params:
       - { id: kind, type: u1 }
     seq:
       - { id: gradual_flag, type: u1, if: 'kind == 0' }
       - { id: kelvin, type: u2be, if: 'kind == 0' }
-      - { id: r, type: u1, if: 'kind == 1' }
-      - { id: g, type: u1, if: 'kind == 1' }
-      - { id: b, type: u1, if: 'kind == 1' }
+      - { id: r, type: u1, if: 'kind == 1 or kind == 2' }
+      - { id: g, type: u1, if: 'kind == 1 or kind == 2' }
+      - { id: b, type: u1, if: 'kind == 1 or kind == 2' }
+      - { id: report_kelvin, type: u2be, if: 'kind == 2', doc: "kind 2 kelvin (big-endian); 0 = RGB mode" }
+      - { id: tint_r, type: u1, if: 'kind == 2', doc: "kind 2: Kelvin->RGB tint the app displays in CCT mode" }
+      - { id: tint_g, type: u1, if: 'kind == 2' }
+      - { id: tint_b, type: u1, if: 'kind == 2' }
+    instances:
+      is_cct:
+        value: 'kind == 2 and report_kelvin != 0'
+        doc: "kind 2 only: colour-temperature mode (report_kelvin != 0, ModeParseStrategyConfig.a)"

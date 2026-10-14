@@ -22,6 +22,7 @@ from ..models import Capability, DeviceState, Encryption, Segment, Zone
 from ..scenes import Scene, load_scenes, scene_names_by_code, scene_upload_frames
 from ..transport.connection import GoveeConnection
 from ..wire import build, parse, reassemble
+from .brightness import percent_to_raw, raw_to_percent
 from .profile import DeviceProfile, profile_for
 
 _LOGGER = logging.getLogger(__name__)
@@ -281,10 +282,19 @@ class Device:
         return True
 
     def _brightness_pct(self, raw: int) -> int:
+        if self.profile.brightness_range is not None:
+            return raw_to_percent(raw, *self.profile.brightness_range)
         full = self.profile.brightness_max
         return raw if full == 100 else round(raw * 100 / full)
 
     # -- power / brightness -------------------------------------------------
+    def _brightness_frame(self, pct: int) -> bytes:
+        """33 04 for a 1..100 percent: verbatim on percent devices, mapped onto the raw
+        range (NumberUtil.calculateProgress) on devices with ``brightness_range``."""
+        if self.profile.brightness_range is not None:
+            return build.brightness_raw(percent_to_raw(pct, *self.profile.brightness_range))
+        return build.brightness(pct)
+
     def _power_frames(self, on: bool) -> list[bytes]:
         """Frames for whole-device power: always a single frame where the device
         allows it - the global 33 01 switch (which on H60A6 also drives both
@@ -345,7 +355,7 @@ class Device:
         if brightness is not None:
             self._require(Capability.BRIGHTNESS)
             brightness = max(1, min(100, brightness))
-            frames.append(build.brightness(brightness))
+            frames.append(self._brightness_frame(brightness))
         if rgb is not None:
             self._require(Capability.RGB)
             frames.append(build.color_rgb(*rgb, self.profile.color_scheme, self.profile.segments))
@@ -380,7 +390,7 @@ class Device:
         Raises GoveeBleNotSupported without BRIGHTNESS."""
         self._require(Capability.BRIGHTNESS)
         pct = max(1, min(100, pct))  # 0 is not "off" on these devices; never send it
-        await self._conn.send(build.brightness(pct))
+        await self._conn.send(self._brightness_frame(pct))
         self._mutated()
         self._state.brightness = pct
         self._mark_authoritative()
@@ -694,7 +704,8 @@ class Device:
         if kelvin:
             self._state.color_temp_kelvin, self._state.rgb_color = kelvin, None
             return
-        mode_0d = parse.parse_mode_0d(reply)
+        mode_0d = (parse.parse_mode_0d_rgblight(reply) if self.profile.color_scheme == "h6188"
+                   else parse.parse_mode_0d(reply))
         if mode_0d is not None:
             rgb, kelvin = mode_0d
             self._state.rgb_color, self._state.color_temp_kelvin = rgb, kelvin
@@ -883,7 +894,7 @@ class Device:
             self._state.brightness = self._brightness_pct(raw)
         if self.profile.bar_switch:
             await self._read_bar_switch()
-        if Capability.SCENES in self.capabilities or self.profile.color_scheme == "h6006":
+        if Capability.SCENES in self.capabilities or self.profile.color_scheme in ("h6006", "h6188"):
             seq = self._mutation_seq
             reply = await self._read_reply(build.mode_query(), build.CMD_MODE)
             if reply is not None and not self._stale(seq, "mode"):

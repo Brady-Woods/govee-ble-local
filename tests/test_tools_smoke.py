@@ -17,7 +17,7 @@ TOOLS = Path(__file__).resolve().parent.parent / "tools"
 ARGPARSE_TOOLS = [
     "fetch_scenes.py", "decrypt_btsnoop.py", "btsnoop_mtu_scan.py", "power_semantics_probe.py",
     "analyze_frame_log.py", "h60a6_live_check.py", "h60a6_cct_choreography.py",
-    "h60a6_segment_map_probe.py",
+    "h60a6_segment_map_probe.py", "h6188_field_test.py",
 ]
 
 

@@ -8,6 +8,33 @@ model, from which the shipped readers are generated).
 
 ## [Unreleased]
 
+### Added
+- **H6188** (legacy RGB strip, `rgblight` split): power, brightness, RGB, colour temperature
+  (2000-9000 K), the app's nine built-in scenes, and polled read-back. Modeled from the decompiled
+  Govee Home 7.7.02 app; not hardware-verified. Its siblings H6085/H6086/H6089 are Wi-Fi-only
+  (soft-AP pairing, no BLE path in the app) and stay unsupported.
+- Colour scheme `"h6188"`: same 0x0d RGB frame as `"h6006"`, but the CCT frame carries the app's
+  Kelvin->RGB tint bytes (`Config.GM` -> `Bytes.A`); new `wire/cct.py` holds the tint table,
+  generated from `Constant`'s colour->Kelvin map.
+- `DeviceProfile.brightness_range`: raw (min, max) brightness for devices whose brightness byte is
+  not a percent (H6188 = 20..254, `BrightnessConfig` version 0). Writes map 1..100 with
+  `NumberUtil.calculateProgress`, reads with `calculatePercent` (Java `float` math, exact round trip).
+  New builder `build.brightness_raw`.
+- `parse.parse_mode_0d_rgblight`: the H6188 `aa 05 0d` report, decoded through the generated
+  `ModeColor0dTyped(kind=2)` reader; any non-zero Kelvin means colour-temperature mode.
+- Bundled `scenes/H6188.json`: the fixed `Scenes4H6188` list (activate-only, `33 05 04 <code>`).
+  `tools/fetch_scenes.py` skips app-defined catalogs (`APP_DEFINED_SCENE_SKUS`) so a fetch can't
+  overwrite them with the cloud library.
+- `tools/h6188_field_test.py`: guided hardware test for an H6188 owner (scan, every capability
+  with read-back and a visual check, restore, JSON report + frame capture to send back).
+
+### Spec
+- `govee_ble.ksy`: `mode_color_0d_typed` kind 2 (rgblight `[R,G,B, kelvin u2be, tint RGB]` with an
+  `is_cct` instance); `color_cct_0d` / `mode_color_0d_report` docs cover the H6188 forms. Readers
+  regenerated (kaitai-struct-compiler 0.11.0; the diff is only these additions).
+- `devices.yaml`: new `h6188` family with citations; note on the Wi-Fi-only H6085/H6086/H6089.
+  `devices.schema.json`: `mode_0d_kind` gains `rgb_kelvin_tint`.
+
 ## [1.2.1] — 2026-10-13
 
 ### Fixed
