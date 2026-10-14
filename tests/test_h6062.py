@@ -1,6 +1,6 @@
 """H6062 (Glide wall light, striplight split, goodsType 41): the h60a6 0x15 layout with the tint,
 the `aa 41` section-count read, masks that follow the device-reported segment count, the
-`aa a5` read-back walk of ceil(sectionNum / 4) groups, and no scenes (no catalog is bundled yet).
+`aa a5` read-back walk of ceil(sectionNum / 4) groups, and the cloud-library scenes.
 
 All expectations are derived from the decompiled Govee Home 7.7.02 app (see the H6062 entry in
 spec/devices.yaml for citations); none are hardware-verified. Golden frames are written out as hex
@@ -20,7 +20,8 @@ from fake_ble import ble_device
 from govee_ble_local import Capability, Encryption
 from govee_ble_local.devices.device import Device, make_device
 from govee_ble_local.devices.profile import profile_for
-from govee_ble_local.exceptions import GoveeBleError, GoveeBleInvalidValue, GoveeBleNotSupported
+from govee_ble_local.exceptions import GoveeBleError, GoveeBleInvalidValue
+from govee_ble_local.scenes import load_scenes
 from govee_ble_local.wire import build as b
 from govee_ble_local.wire import parse
 
@@ -98,11 +99,12 @@ def test_profile() -> None:
     p = profile_for("h6062")
     assert p is not None
     assert p.capabilities == {Capability.POWER, Capability.BRIGHTNESS, Capability.RGB,
-                              Capability.COLOR_TEMP, Capability.SEGMENTS}   # no SCENES: no catalog
+                              Capability.COLOR_TEMP, Capability.SEGMENTS, Capability.SCENES}
     assert p.color_scheme == "h60a6" and p.zones == () and not p.global_power
     assert (p.min_kelvin, p.max_kelvin) == (2000, 9000)        # KelvinConfig version 0
     assert p.brightness_range is None and p.brightness_max == 100   # percent, 1..100
     assert p.encryption is Encryption.NONE and not p.requires_secret
+    assert p.scene_versions == frozenset({0, 1, 2, 3}) and p.scene_dialect == "A"
     assert p.readback == "polled" and p.section_count_read
     assert p.color_readback == "mechanism_a_direct" and p.color_readback_per_batch == 4
     assert p.color_readback_segments is None and not p.color_readback_live_ic
@@ -297,12 +299,33 @@ def test_update_without_an_answer_skips_the_walk_but_keeps_the_poll() -> None:
     assert st.is_on is True and st.brightness == 50 and st.segments == []
 
 
-def test_no_scenes_offered() -> None:
+def test_scene_activation_frame_needs_no_segment_count() -> None:
     t = _with_count(19)
-    assert t.dev.scene_names == []
-    with pytest.raises(GoveeBleNotSupported):
-        asyncio.run(t.dev.set_scene(0x0B20))
-    assert t.sent == []
+    asyncio.run(t.dev.set_scene(0x0B20))
+    assert t.sent == [_hex("330504200b")]
+    assert t.queried == []
+
+
+def test_bundled_scene_catalog() -> None:
+    cat = load_scenes("H6062")
+    assert len(cat) == 70
+    assert all(isinstance(s.code, int) for s in cat.values())
+
+
+def test_scene_upload_frames_follow_dialect_a() -> None:
+    t = _with_count(19)
+    cat = load_scenes("H6062")
+    uploaded = 0
+    for scene in cat.values():
+        frames = t.dev.scene_upload_frames(scene)
+        if frames:
+            uploaded += 1
+            assert all(len(f) == 20 and f[0] in (0xA3, 0xA4) for f in frames)
+    assert uploaded > 0
+    name = next(n for n, s in sorted(cat.items()) if s.param is None)   # device-built-in: bare code
+    asyncio.run(t.dev.set_scene_by_name(name))
+    assert t.sent == [b.scene_activate(cat[name].code)] and t.dev.state.scene_code == cat[name].code
+    assert t.queried == []
 
 
 # ── field-test plan (offline, real Device on the mocked connection) ──────────
