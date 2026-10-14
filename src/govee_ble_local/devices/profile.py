@@ -224,13 +224,14 @@ PROFILES: tuple[DeviceProfile, ...] = (
     #    Wi-Fi versions/MAC, timers, wake-up, sleep, `aa 01`, `aa 04`, `aa 41`, `aa 05`. The
     #    colour report of `aa 05` uses the default SubMode4Color parse ([gradual, kelvin s16be]).
     #    Per-segment colour: `aa a5 <group 1..ceil(n/4)>` (Controller4ColorInfoByGroup).
-    #  - scenes: cloud library, ScenesConfigBean(0, 0, supportScenesOpSet(41) = {0,1,2,3}) ->
-    #    parseSceneV1 (dialect A, as H6047); activate 33 05 04 <code u2le>.
+    #  - scenes: NOT offered yet (no SCENES capability, no catalog bundled). Source: cloud library,
+    #    ScenesConfigBean(0, 0, supportScenesOpSet(41) = {0,1,2,3}) -> parseSceneV1 (dialect A, as
+    #    H6047; scene_versions {0,1,2,3}); activate 33 05 04 <code u2le>.
     #  - no account lock (plain ConnectDialog, no 0xB1/0xB2 step); cipher resolved at runtime.
     DeviceProfile(
-        skus=("H6062",), capabilities=_LIGHT | {_C.SEGMENTS}, color_scheme="h60a6",
+        skus=("H6062",), capabilities=(_LIGHT - {_C.SCENES}) | {_C.SEGMENTS}, color_scheme="h60a6",
         encryption=Encryption.NONE, segments=33, min_kelvin=2000, max_kelvin=9000,
-        scene_versions=frozenset({0, 1, 2, 3}), readback="polled",
+        readback="polled",
         color_readback="mechanism_a_direct", color_readback_per_batch=4,
         section_count_read=True,
     ),

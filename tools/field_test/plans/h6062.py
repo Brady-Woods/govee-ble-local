@@ -19,7 +19,7 @@ def _seg(st: dict[str, Any], index: int) -> Any:
 
 
 def build_steps(ctx: PlanContext) -> list[Step]:
-    dev, codes = ctx.dev, ctx.scene_codes
+    dev = ctx.dev
     n = dev.segment_count   # the aa 41 sectionNum, read by the runner's first update()
     first, mid, last = 0, n // 2, n - 1
     s: list[Step] = [
@@ -61,11 +61,6 @@ def build_steps(ctx: PlanContext) -> list[Step]:
                       f"Is the {label} segment (index {idx}) clearly DIMMER than the others?"))
     s.append(Step("segment_middle_color_temp_2700", lambda: dev.set_segment_color_temp([mid], 2700),
                   None, f"Is the middle segment (index {mid}) WARM white, the others unchanged?"))
-    for name in sorted(dev.scene_names)[:1]:
-        code = codes.get(name)
-        s.append(Step(f"scene_{name}", lambda name=name: dev.set_scene_by_name(name),
-                      lambda st, code=code: st["scene_code"] == code,
-                      f"Scene '{name}': is an effect/scene running (not a plain colour)?"))
     return s
 
 
@@ -74,7 +69,7 @@ PLAN = register_plan(SkuPlan(
     title="H6062 Glide wall light",
     build_steps=build_steps,
     intro="H6062: segment count (aa 41), power, brightness, whole-device RGB and colour "
-          "temperature, per-segment colour / brightness / colour temperature, one scene.",
-    snapshot_keys=("is_on", "brightness", "rgb_color", "color_temp_kelvin", "scene_code", "segments",
+          "temperature, per-segment colour / brightness / colour temperature (no scenes yet).",
+    snapshot_keys=("is_on", "brightness", "rgb_color", "color_temp_kelvin", "segments",
                    "firmware_version", "hardware_version", "serial_number", "wifi_mac"),
 ))

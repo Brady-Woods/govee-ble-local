@@ -990,7 +990,8 @@ class Device:
         if self.profile.section_count_read:
             # The app's connect order: aa 01, aa 04, aa 41, aa 05 (ControllerStrategyConfig.O).
             await self._read_section_count()
-        if Capability.SCENES in self.capabilities or self.profile.color_scheme in ("h6006", "h6188"):
+        if (Capability.SCENES in self.capabilities or Capability.COLOR_TEMP in self.capabilities
+                or self.profile.color_scheme in ("h6006", "h6188")):
             seq = self._mutation_seq
             reply = await self._read_reply(build.mode_query(), build.CMD_MODE)
             if reply is not None and not self._stale(seq, "mode"):

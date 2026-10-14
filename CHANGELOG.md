@@ -83,8 +83,9 @@ model, from which the shipped readers are generated).
   `None` reverts to the profile value. H6062 sets it from its `aa 41` read; H6061 will set it too.
 - **H6062** (Glide wall light, `striplight` split, goodsType 41; #15): power, brightness (percent),
   RGB, colour temperature (2000-9000 K, with the app's tint), per-segment colour / brightness /
-  colour temperature, polled read-back with per-segment colour, and the cloud-library scenes
-  (dialect A, versions {0,1,2,3}; bundled `scenes/H6062.json`). Frames are the `h60a6` 0x15 layout.
+  colour temperature, and polled read-back with per-segment colour. Frames are the `h60a6` 0x15
+  layout. No scenes yet (no `SCENES` capability, no bundled catalog); the app uses the cloud
+  library with dialect A, versions {0,1,2,3} (recorded in `devices.yaml`).
   Modeled from the decompiled Govee Home 7.7.02 app; not hardware-verified.
   - The device reports its own segment count with `aa 41` (`[IC s16be, sectionNum u8]`,
     `ControllerIcSegmentNum`, a mandatory step of the app's connect sequence:
