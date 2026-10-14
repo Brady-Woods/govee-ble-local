@@ -51,12 +51,6 @@ class DeviceProfile:
     # 2026-10-12: off clears both zones; on lights both even if each zone was off), so
     # whole-fixture power is ONE frame instead of one per zone.
     global_power: bool = False
-    # Whole-device colour temperature is sent as ONE 0x15 CCT frame PER ZONE (in `zones` order)
-    # instead of a single all-segments frame, when the device's advertised pact is
-    # (pact_type, pact_code >= min_code). H60A6: pact_h60a0 Support.supportPartTem (pact type 1,
-    # code >= 3) -> VM4LightH60A6.configColorStripController -> ControllerBuild.j sends the main
-    # panel (mask bit 12) and then the ring (bits 0..11), each with its tint. None = single frame.
-    cct_per_zone_min_pact: tuple[int, int] | None = None
     gradual: bool = False             # supports the 0xA3 gradual/fade-on-handoff flag (W/R)
     readback: ReadBack = "none"
     # Segment-colour read-back mechanism layered on top of `readback` (spec Change 7):
@@ -104,8 +98,6 @@ class DeviceProfile:
                 raise ValueError(
                     f"DeviceProfile{self.skus}: {name}={value!r} not in {get_args(allowed)}"
                 )
-        if self.cct_per_zone_min_pact is not None and not self.zones:
-            raise ValueError(f"DeviceProfile{self.skus}: cct_per_zone_min_pact needs zones")
         if self.brightness_range is not None:
             lo, hi = self.brightness_range
             if not 0 <= lo < hi <= 0xFF:
@@ -127,12 +119,10 @@ PROFILES: tuple[DeviceProfile, ...] = (
                Zone("background", power_index=1, segments=tuple(range(12)))),
         scene_versions=frozenset({0, 1, 2, 3, 5}), scene_dialect="B_h60a6",
         min_kelvin=2700, max_kelvin=6500, readback="status", global_power=True,
-        # CCT: `15 01 ff ff ff <K> <tint> <mask>` (Bytes.r type 1); whole-device = main panel
-        # frame then ring frame when pact >= (1, 3) (ControllerBuild.j, Support.supportPartTem).
-        # An RGB pick (whole device, zone or segment) equal to a tint colour in [2700, 6500] K is ONE
-        # such frame with the PICKED colour as the tint and the pick's own mask (Config.Yt, 7.7.02),
-        # never the per-zone two-frame form.
-        cct_per_zone_min_pact=(1, 3),
+        # CCT: `15 01 ff ff ff <K> <tint> <mask>` (Bytes.r type 1), ONE frame: whole device = mask
+        # 0x1FFF (DelegateColorV2.G0 -> Config.Yt, KelvinConfig.b -> Bytes.C, 7.7.02), per zone =
+        # that zone's mask. An RGB pick (whole device, zone or segment) equal to a tint colour in
+        # [2700, 6500] K is the same frame with the PICKED colour as the tint and the pick's own mask.
     ),
     # H6047 — bar light: plaintext, two bars (33 36 per bar, 33 01 whole device), 10 segments,
     # dialect-A scenes. Modeled from Govee Home 7.7.02; not yet live-verified (no hardware).

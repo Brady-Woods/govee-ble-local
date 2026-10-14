@@ -5,9 +5,12 @@ Golden frames are derived from the decompiled Govee Home 7.7.02 app, never from 
 * 0x15 white-slot form ``15 01 ff ff ff <K u2be> <tint> <mask u2le>``: ``Bytes.r(colour, K, mask,
   type=1)`` (H6047 ``SubModeColor.makeSubModeColor4Kelvin`` / ``Config.Yt``, H6641 ``Config.x[247]``
   -> ``Config.Yt``, H60A6 ``ControllerBuild.d``).
-* H60A6 whole-device CCT is two frames, main panel (mask bit 12) then ring (bits 0..11):
-  ``VM4LightH60A6.configColorStripController`` -> ``ControllerBuild.j``, gated on
-  ``Support.supportPartTem`` (pact type 1, code >= 3).
+* H60A6 whole-device CCT is ONE frame with all 13 mask bits (``ff 1f``): colour tab
+  ``DelegateColorV2.G0`` -> ``ColorViewModel.U`` -> ``ColorModeControllerConfig.c`` -> ``Config.Yt``
+  -> ``Bytes.r(tint, K, posSet, 1)``; illumination tab ``KelvinConfig.b`` ->
+  ``ColorModeControllerConfig.h`` -> ``Config.N[0]`` -> ``Bytes.C(K, 13, 1)``. Per zone it is main
+  ``00 10`` / ring ``ff 0f``. The two-frame main-then-ring form is only the colour-stripe apply path
+  (``VM4LightH60A6.configColorStripController`` -> ``ControllerBuild.j``), not a Kelvin slider.
 * 0x0d both-slot form ``0d <tint> <K u2be> <tint>``: ``Config.bu`` -> ``Bytes.p`` (H6008, H6006,
   H6052). Distinct from H6188's ``0d ff ff ff <K> <tint>`` (``Bytes.A``), covered in test_h6188.py.
 * Kelvin: clamped to the device range (``KelvinConfig.calibrationKelvin``) and whole 100 K steps.
@@ -18,7 +21,6 @@ Tints used (``Constant.getTemColorByKelvin``): 2000 K ff8d0b, 2200 K ff9829, 270
 from __future__ import annotations
 
 import asyncio
-import dataclasses
 from typing import Any
 from unittest.mock import AsyncMock
 
@@ -27,7 +29,6 @@ from conftest import require_optional
 from fake_ble import ble_device
 
 from govee_ble_local.devices.device import Device, make_device
-from govee_ble_local.devices.profile import profile_for
 from govee_ble_local.exceptions import GoveeBleInvalidValue
 from govee_ble_local.wire import build as b
 from govee_ble_local.wire import parse
@@ -117,29 +118,22 @@ def test_h6047_zone_and_segment_cct_carry_tint() -> None:
     ]
 
 
-# ── H60A6: two frames (main panel, ring), gated on the advertised pact ───────
+# ── H60A6: one all-segments frame, whatever the advertised pact ──────────────
 _MAIN_4000 = "33051501ffffff0fa0ffd5a10010"
 _RING_4000 = "33051501ffffff0fa0ffd5a1ff0f"
 _ALL_4000 = "33051501ffffff0fa0ffd5a1ff1f"
 
 
-@pytest.mark.parametrize("adv", [None, _adv("H60A6", 1, 3), _adv("H60A6", 1, 9)])
-def test_h60a6_whole_device_cct_is_main_panel_then_ring(adv: Any) -> None:
-    d = _dev("H60A6", adv)
-    asyncio.run(d.set_color_temp(4000))
-    assert [_hex14(f) for f in _sent(d)] == [_MAIN_4000, _RING_4000]
-    d._conn.send_many.assert_awaited_once()  # type: ignore[attr-defined]  # one ack-ordered batch
-    assert d.state.color_temp_kelvin == 4000 and d.state.rgb_color is None
-
-
-@pytest.mark.parametrize("adv", [_adv("H60A6", 1, 2), _adv("H60A6", 1, 0), _adv("H60A6", 2, 9)])
-def test_h60a6_below_the_pact_gate_sends_one_all_segments_frame(adv: Any) -> None:
-    # Below supportPartTem the app takes ColorModeControllerConfig.w (not modelled): the single
-    # all-segments frame, now with its tint.
+@pytest.mark.parametrize("adv", [None, _adv("H60A6", 1, 3), _adv("H60A6", 1, 9),
+                                 _adv("H60A6", 1, 2), _adv("H60A6", 1, 0), _adv("H60A6", 2, 9)])
+def test_h60a6_whole_device_cct_is_one_all_segments_frame(adv: Any) -> None:
+    # DelegateColorV2.G0 / KelvinConfig.b: one 15 01 frame, mask bits 0-12 (ff 1f), whatever the
+    # pact (below code 2 the app sends the 0x0d form, not modelled; unknown pact keeps the 0x15 form).
     d = _dev("H60A6", adv)
     asyncio.run(d.set_color_temp(4000))
     assert [_hex14(f) for f in _sent(d)] == [_ALL_4000]
     d._conn.send.assert_awaited_once()  # type: ignore[attr-defined]
+    assert d.state.color_temp_kelvin == 4000 and d.state.rgb_color is None
 
 
 def test_h60a6_pact_is_learned_from_the_advertisement() -> None:
@@ -147,8 +141,6 @@ def test_h60a6_pact_is_learned_from_the_advertisement() -> None:
     assert d.pact is None
     d.ingest_advertisement(_adv("H60A6", 1, 2))
     assert d.pact == (1, 2)
-    asyncio.run(d.set_color_temp(4000))
-    assert [_hex14(f) for f in _sent(d)] == [_ALL_4000]
     d.ingest_advertisement(_adv("H60A6", 1, 5))
     assert d.pact == (1, 5)
 
@@ -166,22 +158,13 @@ def test_h60a6_zone_cct_is_one_frame_with_tint() -> None:
     assert [_hex14(f) for f in _sent(d)] == [_MAIN_4000, _RING_4000]
 
 
-def test_h60a6_turn_on_with_kelvin_batches_the_two_cct_frames() -> None:
+def test_h60a6_turn_on_with_kelvin_batches_one_cct_frame() -> None:
     d = _dev("H60A6")
     asyncio.run(d.turn_on(brightness=40, kelvin=4000))
-    assert [f[:3].hex() for f in _sent(d)] == ["330101", "330428", "330515", "330515"]
-    assert [_hex14(f) for f in _sent(d)[2:]] == [_MAIN_4000, _RING_4000]
+    assert [f[:3].hex() for f in _sent(d)] == ["330101", "330428", "330515"]
+    assert _hex14(_sent(d)[2]) == _ALL_4000
     d._conn.send_many.assert_awaited_once()  # type: ignore[attr-defined]
-
-
-def test_profile_cct_gate_fields() -> None:
-    assert profile_for("H60A6").cct_per_zone_min_pact == (1, 3)  # type: ignore[union-attr]
-    for sku in ("H6047", "H6641", "H6008", "H6006", "H6052", "H6188", "H61A8"):
-        assert profile_for(sku).cct_per_zone_min_pact is None, sku  # type: ignore[union-attr]
-    p = profile_for("H6047")
-    assert p is not None
-    with pytest.raises(ValueError, match="cct_per_zone_min_pact"):
-        dataclasses.replace(p, zones=(), cct_per_zone_min_pact=(1, 3))
+    assert d.state.color_temp_kelvin == 4000
 
 
 # ── 0x0d both-slot form ──────────────────────────────────────────────────────

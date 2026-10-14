@@ -185,12 +185,11 @@ def test_segment_color_temp_default_tint_is_the_first_tint_and_the_tint_is_overr
 
 
 def test_slider_paths_are_unchanged() -> None:
-    # set_color_temp keeps the first tint per Kelvin (= the slider), the H60A6 per-zone frames and
-    # the h6188 white-slot form
+    # set_color_temp keeps the first tint per Kelvin (= the slider), the H60A6 one all-segments frame
+    # and the h6188 white-slot form
     d = _dev("H60A6")
     asyncio.run(d.set_color_temp(3000))
-    assert [f.hex() for f in _sent(d)] == [_cct15(3000, (0xFF, 0xB9, 0x69), 0x00, 0x10).hex(),
-                                          _cct15(3000, (0xFF, 0xB9, 0x69), 0xFF, 0x0F).hex()]
+    assert [f.hex() for f in _sent(d)] == [_cct15(3000, (0xFF, 0xB9, 0x69), 0xFF, 0x1F).hex()]
     d = _dev("H6188")
     asyncio.run(d.set_color_temp(4000))
     assert _sent(d) == [_frame(0x33, 0x05, 0x0D, 0xFF, 0xFF, 0xFF, 0x0F, 0xA0, 0xFF, 0xD5, 0xA1)]

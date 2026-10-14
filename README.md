@@ -89,8 +89,8 @@ Colour temperature matches the Govee app's frames: like the app, an out-of-range
 the device range, not rejected (`set_color_temp(1500)` on a 2700-6500 K device sends 2700 K), and the
 result is rounded to a whole 100 K step (`set_color_temp(2750)` sends and reports 2800 K). `state`
 holds the Kelvin actually sent. Only a non-integer raises `GoveeBleInvalidValue`. Every CCT frame
-carries the app's Kelvin tint. The H60A6 sends whole-device CCT as two frames (main panel, then ring)
-when its advertised pact code is 3 or higher (`Device.pact`).
+carries the app's Kelvin tint, and whole-device CCT is one frame (on the H60A6 the all-segments mask,
+as the app's Kelvin sliders send it).
 
 Like the app, a picked RGB colour that is exactly one of its Kelvin tint colours (178 of them, two per
 100 K step) and whose Kelvin is inside the SKU's range is sent as a colour-temperature frame instead of

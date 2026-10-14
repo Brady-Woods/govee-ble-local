@@ -130,7 +130,8 @@ class Device:
 
     def _learn_pact(self, adv: AdvertisementData | None) -> None:
         """Remember the advertised ``(pact_type, pact_code)``; the app reads the same pair
-        (``BleUtil.parseBleBroadcastPact``) into the device model and gates some frames on it."""
+        (``BleUtil.parseBleBroadcastPact``) into the device model. Exposed as :attr:`pact`; no frame
+        the library sends depends on it yet."""
         mfg = getattr(adv, "manufacturer_data", None)
         if not mfg:
             return
@@ -277,24 +278,6 @@ class Device:
         (:func:`build.normalize_kelvin`). Out-of-range input is clamped, not rejected; only a
         non-int raises GoveeBleInvalidValue."""
         return build.normalize_kelvin(kelvin, self.profile.min_kelvin, self.profile.max_kelvin)
-
-    def _color_temp_frames(self, kelvin: int) -> list[bytes]:
-        """Frames for whole-device colour temperature (``kelvin`` already normalised).
-
-        One frame, except on a profile with ``cct_per_zone_min_pact`` (H60A6): when the
-        advertised pact is at or above it - or not known yet - one frame per zone in profile
-        order (main panel, then ring), as ``ControllerBuild.j`` does. Below the pact gate the
-        app uses a different multi-packet colour path that is not modelled, so the single
-        all-segments frame is sent."""
-        profile = self.profile
-        n = self.segment_count
-        gate = profile.cct_per_zone_min_pact
-        if gate is not None and (
-                self._pact is None or (self._pact[0] == gate[0] and self._pact[1] >= gate[1])):
-            return [
-                build.segment_color_temp(_mask(z.segments, n), kelvin, profile.color_scheme, n)
-                for z in profile.zones if z.segments]
-        return [build.color_temp(kelvin, profile.color_scheme, n)]
 
     def _kelvin_range(self) -> tuple[int, int] | None:
         lo, hi = self.profile.min_kelvin, self.profile.max_kelvin
@@ -460,7 +443,8 @@ class Device:
         elif kelvin is not None:
             self._require(Capability.COLOR_TEMP)
             kelvin = self._check_kelvin(kelvin)
-            frames += self._color_temp_frames(kelvin)
+            frames.append(build.color_temp(
+                kelvin, self.profile.color_scheme, self.segment_count))
         if not frames:
             return
         await self._conn.send_many(frames)
@@ -522,11 +506,8 @@ class Device:
         self._require(Capability.COLOR_TEMP)
         kelvin = self._check_kelvin(kelvin)
         await self._ensure_segment_count()
-        frames = self._color_temp_frames(kelvin)
-        if len(frames) == 1:
-            await self._conn.send(frames[0])
-        else:
-            await self._conn.send_many(frames)
+        await self._conn.send(
+            build.color_temp(kelvin, self.profile.color_scheme, self.segment_count))
         self._mutated()
         self._state.color_temp_kelvin = kelvin
         self._state.rgb_color = None
