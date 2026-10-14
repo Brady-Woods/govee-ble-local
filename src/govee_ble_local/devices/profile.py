@@ -170,11 +170,13 @@ PROFILES: tuple[DeviceProfile, ...] = (
     #    (the 20..254 scaling is the legacy h6001 path; H6004 is not in h6001/sku/Sku).
     #  - read-back: polled aa 01 / aa 04 / aa 05; the 0x0d report is [r,g,b, kelvin u2be, tint RGB];
     #    no per-segment read (Support.getColorPieceSize = 0).
-    #  - scenes: cloud scene library; Support.is2NewScenesMode -> ScenesOp.parseScene(.., {1}) so
-    #    type-1 RGB scenes upload with comm byte 0x01.
+    #  - scenes: Support.is2NewScenesMode -> ScenesOp.parseScene(.., {1}), hence scene_versions={1}.
+    #    The app's scenes come from Govee's cloud library, which is not decompiled here, so no
+    #    catalog is bundled and SCENES is not offered (set_scene / scene_names unavailable); the
+    #    polled 0x05 report still reads an active scene code back.
     #  - no account-lock; plaintext by default (cipher is resolved from the advertisement).
     DeviceProfile(
-        skus=("H6004",), capabilities=_LIGHT, color_scheme="h6006",
+        skus=("H6004",), capabilities=_LIGHT - {_C.SCENES}, color_scheme="h6006",
         encryption=Encryption.NONE, min_kelvin=2700, max_kelvin=6500,
         scene_versions=frozenset({1}), readback="polled",
     ),

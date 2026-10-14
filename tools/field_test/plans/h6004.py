@@ -14,13 +14,9 @@ from __future__ import annotations
 
 from ..plan import PlanContext, SkuPlan, Step, register_plan
 
-# One activate-only scene (type 0) and two uploaded ones (type 1, version-{1} upload), if the
-# bundled catalog has them; the whole 63-scene list is too long for a manual run.
-_SCENES = ("Reading", "Rainbow", "Fire")
-
 
 def build_steps(ctx: PlanContext) -> list[Step]:
-    dev, codes = ctx.dev, ctx.scene_codes
+    dev = ctx.dev
     s: list[Step] = [
         Step("power_off", lambda: dev.set_power(False), lambda st: st["is_on"] is False,
              "Is the bulb OFF?"),
@@ -42,12 +38,6 @@ def build_steps(ctx: PlanContext) -> list[Step]:
         s.append(Step(f"color_temp_{k}", lambda k=k: dev.set_color_temp(k),
                       lambda st, shown=shown: st["color_temp_kelvin"] == shown, q,
                       note="both-slot 0x0d frame: tint, kelvin, tint"))
-    names = [n for n in _SCENES if n in dev.scene_names] or list(dev.scene_names)[:1]
-    for name in names:
-        code = codes.get(name)
-        s.append(Step(f"scene_{name}", lambda name=name: dev.set_scene_by_name(name),
-                      lambda st, code=code: st["scene_code"] == code,
-                      f"Scene '{name}': is an effect/scene running (not a plain colour)?"))
     return s
 
 
@@ -55,7 +45,8 @@ PLAN = register_plan(SkuPlan(
     sku="H6004",
     title="H6004 BLE bulb",
     build_steps=build_steps,
-    intro="H6004 (BLE revision): power, brightness, RGB, colour temperature (2700-6500 K) and a few "
-          "scenes, each with a read-back. If the scan finds no H6004, it is probably the Wi-Fi-only "
-          "revision (not controllable over BLE): send the report and stop.",
+    intro="H6004 (BLE revision): power, brightness, RGB and colour temperature (2700-6500 K), each "
+          "with a read-back. Scenes are not tested (no bundled H6004 scene catalog). If the scan "
+          "finds no H6004, it is probably the Wi-Fi-only revision (not controllable over BLE): "
+          "send the report and stop.",
 ))
