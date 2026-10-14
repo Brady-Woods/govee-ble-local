@@ -78,9 +78,11 @@ def test_power_h60a6_is_one_global_frame_driving_both_zones() -> None:
 
 
 def test_power_bar_fixture_is_a_single_frame() -> None:
+    # H6047's main switch is the global 33 01 (NewDetailVm.switchTrigger -> ControllerSwitch);
+    # 33 36 is only the per-bar buttons.
     d = _dev("H6047")
     asyncio.run(d.set_power(False))
-    assert [f[:4].hex() for f in _sent(d)] == ["33360000"]
+    assert [f[:3].hex() for f in _sent(d)] == ["330100"]
     assert d.state.zone_power == {0: False, 1: False} and d.state.is_on is False
 
 
@@ -376,22 +378,24 @@ def test_plug_reads_relay_state() -> None:
 
 
 def test_h6047_mechanism_a_direct_readback() -> None:
-    # H6047 (goodsType 119) does NOT answer the 0xAC status burst — Support.isGoodsTypeH6047:177
+    # H6047 (goodsType 119) does NOT answer the 0xAC status burst — Support.isGoodsTypeH6047:186
     # routes it to Compose4InfoBleIot instead: per-group DIRECT `aa a5 <group>` reads via
     # Controller4ColorInfoByGroup (group size 4, source-confirmed — NOT H61A8's unrelated
-    # mechanism_b/BulbGroupColorV2, group size 3). Read-back piece count = getColorPieceSize = 12
-    # (not the write count 10), via color_readback_segments (static, no live IC read needed for
-    # this SKU); group size 4 -> ceil(12/4) = 3 full groups.
+    # mechanism_b/BulbGroupColorV2, group size 3). The old detail screen walks
+    # Support.getBulbStringMaxNum(119) = 10 pieces (NewDetailVm.n5), NOT getColorPieceSize = 12
+    # (newdetail screens only): ceil(10/4) = 3 groups, the last trimmed to 2 records.
     p = profile_for("H6047")
     assert p.readback == "polled" and p.color_readback == "mechanism_a_direct"
-    assert p.color_readback_segments == 12 and p.color_readback_per_batch == 4
+    assert p.color_readback_segments is None and p.color_readback_per_batch == 4
 
     d = _dev("H6047")
+    asked: list[int] = []
 
     def _group(frame: bytes, **_kw: object) -> list[bytes]:
         g = frame[2]                         # AA A5 <group>
+        asked.append(g)
         recs: list[int] = []
-        for i in range(4):
+        for i in range(4):                   # the device may pad the last group with a 4th record
             seg = (g - 1) * 4 + i
             recs += [50 + seg, seg, 0, 0]    # brightness encodes segment index, R=index
         return [_frame(0xAA, 0xA5, g, *recs)]
@@ -399,7 +403,8 @@ def test_h6047_mechanism_a_direct_readback() -> None:
     d._conn.query = AsyncMock(side_effect=_group)  # type: ignore[attr-defined]
     asyncio.run(d._read_mechanism_a_direct())
     segs = d.state.segments
-    assert [s.index for s in segs] == list(range(12))   # 12 read-back positions, not 10 write
+    assert asked == [1, 2, 3]
+    assert [s.index for s in segs] == list(range(10))   # the 10 writable segments: no phantom 10, 11
 
 
 def test_device_info_populates_state_once() -> None:

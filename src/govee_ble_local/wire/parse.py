@@ -131,6 +131,20 @@ def parse_kelvin(frame: bytes) -> int | None:
     return int(m.rest.kelvin)
 
 
+def parse_bar_kelvin(frame: bytes) -> tuple[int, int] | None:
+    """H6047 ``AA 05 15`` reply: ``(left kelvin, right kelvin)``, 0 = that bar is not in
+    colour-temperature mode, or None if this is not a 0x15 mode reply.
+
+    The H6047 layout is ``[gradual][kelvin left u2be][kelvin right u2be]``
+    (``SubModeColor.parse``; ``Info4Detail`` ``subMode4Color`` parse strategy). The app shows a
+    whole-device kelvin only when both bars match; that rule lives in the Device layer."""
+    m = _mode_read(frame)
+    if m is None or int(m.selector_or_sub_mode) != 0x15:
+        return None
+    right = getattr(m.rest, "kelvin_right", None)
+    return int(m.rest.kelvin), int(right or 0)
+
+
 def parse_mode_color_0d(frame: bytes) -> tuple[int, int, int] | None:
     """AA 05 0D reply read as a bare (r, g, b) triple, or None.
 
