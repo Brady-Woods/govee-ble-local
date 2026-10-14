@@ -8,8 +8,10 @@ tester what the strip is doing, restores the original state, and writes:
     h6188-report-<time>.json   steps, read-backs, answers, advertisement, environment
     h6188-frames-<time>.jsonl  raw BLE frame capture (both directions)
 
-Send BOTH files back privately (they contain the device's Bluetooth address and raw frames;
-don't post them publicly).
+Both files are safe to attach to a GitHub issue: the Bluetooth address is masked to its
+vendor prefix (e.g. 5C:E7:53:xx:xx:xx), and the serial number / Wi-Fi MAC are removed from the
+state snapshots and from the device-info reply frames. Advertised names are kept as-is (their
+exact form is one of the things this test is for).
 
     pip install govee_ble_local-<version>-py3-none-any.whl
     python h6188_field_test.py                 # scan, pick the H6188, interactive
@@ -27,7 +29,9 @@ import asyncio
 import contextlib
 import dataclasses
 import json
+import os
 import platform
+import re
 import sys
 import time
 from collections.abc import Awaitable, Callable
@@ -43,10 +47,53 @@ SKU = "H6188"
 SCAN_SECONDS = 15.0
 
 
+_MAC_RE = re.compile(r"^([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}$")
+_REDACTED = "<redacted>"
+
+
+def mask_address(address: str | None) -> str | None:
+    """Keep only the vendor prefix (OUI) of a MAC; a macOS CoreBluetooth UUID keeps 8 chars."""
+    if not address:
+        return address
+    if _MAC_RE.match(address):
+        sep = address[2]
+        return address[:8].upper() + f"{sep}xx" * 3
+    return address[:8] + "-…"
+
+
 def _snapshot(state: Any) -> dict[str, Any]:
     keys = ("is_on", "brightness", "rgb_color", "color_temp_kelvin", "scene_code",
             "firmware_version", "hardware_version", "serial_number", "wifi_mac")
-    return {k: getattr(state, k, None) for k in keys}
+    snap = {k: getattr(state, k, None) for k in keys}
+    for k in ("serial_number", "wifi_mac"):   # identifying: never written to the report
+        if snap[k] is not None:
+            snap[k] = _REDACTED
+    return snap
+
+
+def redact_frames(path: Path, address: str) -> int:
+    """Rewrite the frame capture with the address masked and device-info (aa 07) reply payloads
+    zeroed (they can carry the serial number and MACs). Returns the number of records."""
+    if not path.exists():
+        return 0
+    masked = mask_address(address)
+    out: list[str] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        try:
+            rec = json.loads(line)
+        except ValueError:
+            continue
+        rec["addr"] = masked
+        plain = rec.get("plain") or ""
+        if rec.get("dir") == "rx" and plain.lower().startswith("aa07"):
+            rec["plain"] = plain[:6] + "0" * (len(plain) - 6)   # keep header (aa 07 selector)
+            rec["wire"] = None
+            rec["redacted"] = "device-info payload"
+        out.append(json.dumps(rec))
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text("\n".join(out) + ("\n" if out else ""), encoding="utf-8")
+    os.replace(tmp, path)
+    return len(out)
 
 
 async def _ask(question: str, enabled: bool, free_text: bool = False) -> str | None:
@@ -77,7 +124,7 @@ async def discover(address: str | None) -> tuple[Any, Any, list[dict[str, Any]]]
         if "6188" not in name and ident is None and dev.address != address:
             return
         heard[dev.address] = {
-            "address": dev.address, "name": name, "rssi": adv.rssi,
+            "address": mask_address(dev.address), "name": name, "rssi": adv.rssi,
             "identified_sku": ident.sku if ident else None,
             "encrypted_flag": ident.encrypted if ident else None,
             "manufacturer_data": {str(k): v.hex() for k, v in adv.manufacturer_data.items()},
@@ -166,7 +213,7 @@ async def run(args: argparse.Namespace, report_path: Path, frames_path: Path) ->
     print(f"\nUsing {name!r} at {ble.address}")
     dev = create_device(ble, SKU, adv, idle_disconnect=0, frame_log=str(frames_path))
     codes = {n: sc.code for n, sc in load_scenes(SKU).items()}
-    report["device"] = {"address": ble.address, "name": name}
+    report["device"] = {"address": mask_address(ble.address), "name": name}
     restore: dict[str, Any] | None = None
     try:
         await dev.connect()
@@ -208,10 +255,12 @@ async def run(args: argparse.Namespace, report_path: Path, frames_path: Path) ->
         with contextlib.suppress(Exception):
             report["final_state"] = _snapshot(await dev.update())
         await dev.stop()
+        report["frames_redacted"] = redact_frames(frames_path, ble.address)
         report["finished"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
         save()
     _summary(report)
-    print(f"\nPlease send back BOTH files (privately):\n  {report_path}\n  {frames_path}")
+    print("\nPlease attach BOTH files to the GitHub issue (addresses, serial and Wi-Fi MAC are"
+          f" masked):\n  {report_path}\n  {frames_path}")
     return 0 if report.get("result") == "completed" else 1
 
 

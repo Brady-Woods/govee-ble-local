@@ -340,3 +340,37 @@ def test_field_test_runs_end_to_end_and_restores(tmp_path: Path, monkeypatch: py
     assert all(r["sent"] == "ok" and r["observed"] is None for r in rep["steps"])
     # the steps really hit the wire, and the restore re-applied brightness then colour
     assert _sent(d)[-2][:3].hex() == "330488" and _sent(d)[-1][:6].hex() == "33050d010203"
+    # nothing identifying is written: the address is masked to its vendor prefix
+    text = report_path.read_text()
+    assert "AA:BB:CC:DD:EE:88" not in text and rep["device"]["address"] == "AA:BB:CC:xx:xx:xx"
+
+
+def test_field_test_redacts_frame_capture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    path = Path(__file__).resolve().parent.parent / "tools" / "h6188_field_test.py"
+    spec = importlib.util.spec_from_file_location("_tool_h6188_field_test_redact", path)
+    assert spec and spec.loader
+    ft = importlib.util.module_from_spec(spec)
+    monkeypatch.setitem(sys.modules, spec.name, ft)
+    spec.loader.exec_module(ft)
+
+    import json
+    frames = tmp_path / "f.jsonl"
+    info = "aa0710" + "5ce753f47457" + "1122334455" + "00" * 4   # device-info reply: MAC + serial
+    rows = [
+        {"ts": 1, "addr": "5C:E7:53:F4:74:57", "dir": "tx", "plain": "aa0710" + "00" * 17,
+         "wire": "aa0710" + "00" * 17, "enc": "none"},
+        {"ts": 2, "addr": "5C:E7:53:F4:74:57", "dir": "rx", "plain": info, "wire": info, "enc": "none"},
+        {"ts": 3, "addr": "5C:E7:53:F4:74:57", "dir": "rx", "plain": "aa04fe" + "00" * 17,
+         "wire": "aa04fe" + "00" * 17, "enc": "none"},
+    ]
+    frames.write_text("\n".join(json.dumps(r) for r in rows) + "\n")
+    assert ft.redact_frames(frames, "5C:E7:53:F4:74:57") == 3
+    out = [json.loads(line) for line in frames.read_text().splitlines()]
+    assert {r["addr"] for r in out} == {"5C:E7:53:xx:xx:xx"}
+    assert out[1]["plain"] == "aa0710" + "0" * (len(info) - 6) and out[1]["wire"] is None
+    assert out[0]["plain"] == rows[0]["plain"] and out[2]["plain"] == rows[2]["plain"]  # untouched
+    raw = frames.read_text().lower()
+    assert "5ce753f47457" not in raw and "f4:74:57" not in raw and "1122334455" not in raw
+    assert ft.redact_frames(tmp_path / "missing.jsonl", "x") == 0
+    assert ft.mask_address("5c-e7-53-f4-74-57") == "5C-E7-53-xx-xx-xx"
+    assert ft.mask_address("A1B2C3D4-1111-2222-3333-444455556666") == "A1B2C3D4-…"
