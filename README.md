@@ -84,6 +84,11 @@ Curated SKUs: **H60A6**, **H6047**, **H61A8**, **H6006/H6008**, **H6052**, **H66
 plug family (**H5080/H5082/H5083/H5085/H5089/H5160/H5161**). Segment-colour read-back and some
 scene dialects on the non-H60A6 SKUs are source-modelled and not yet hardware-verified.
 
+Colour temperature matches the Govee app's frames: the Kelvin is clamped to the device range and
+rounded to a whole 100 K step (`set_color_temp(2750)` sends and reports 2800 K), and every CCT frame
+carries the app's Kelvin tint. The H60A6 sends whole-device CCT as two frames (main panel, then ring)
+when its advertised pact code is 3 or higher (`Device.pact`).
+
 The full API reference is generated from the docstrings with [`pdoc`](https://pdoc.dev)
 (`pip install '.[docs]' && bash tools/gen_docs.sh` → `docs/api/`); `govee_ble_local.__all__` is the
 public contract.

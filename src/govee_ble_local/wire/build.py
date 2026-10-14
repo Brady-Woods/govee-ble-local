@@ -61,9 +61,13 @@ RELAY_ON, RELAY_OFF = 0x11, 0x10   # plug family
 COMM_H60A6 = 0x58
 COMM_H6052_GRAFFITI = 0x09
 
-# "h60a6" = 0x15 RGBIC (segment mask); "h6006" = 0x0d bulbs (no tint in the CCT frame);
-# "h61a8" = 0x0b RGBIC (no CCT); "h6188" = 0x0d rgblight strip: same RGB frame as h6006,
-# CCT frame carries the app's Kelvin->RGB tint (Config.GM -> Bytes.A).
+# "h60a6" = 0x15 RGBIC (segment mask); CCT is the white-slot form `15 01 ff ff ff <K> <tint> <mask>`
+# (Bytes.r type 1) with the app's Kelvin->RGB tint.
+# "h6006" = 0x0d bulbs (H6006/H6008/H6052); CCT is the both-slot form `0d <tint> <K> <tint>`
+# (Config.bu -> Bytes.p).
+# "h61a8" = 0x0b RGBIC (no CCT).
+# "h6188" = 0x0d rgblight strip: same RGB frame as h6006, but the CCT is the white-slot form
+# `0d ff ff ff <K> <tint>` (Config.GM -> Bytes.A); this one is NOT the h6006 form.
 ColorScheme = Literal["h60a6", "h6006", "h61a8", "h6188"]
 
 
@@ -82,6 +86,27 @@ def _check_rgb(r: int, g: int, b: int) -> None:
 
 def _check_kelvin(kelvin: int) -> int:
     return _check_range("kelvin", kelvin, 0, 0xFFFF)
+
+
+KELVIN_STEP = 100   # the app only ever sends whole 100 K steps (Constant colour->Kelvin table)
+
+
+def normalize_kelvin(kelvin: int, lo: int | None = None, hi: int | None = None) -> int:
+    """The Kelvin value the app would put on the wire for ``kelvin``.
+
+    The app clamps to the device's Kelvin range (``KelvinConfig.calibrationKelvin``) and its
+    slider only produces 100 K steps; the UI turns that Kelvin into a tint
+    (``Constant.getTemColorByKelvin``) and the builders recover Kelvin from the tint
+    (``Constant.getColorTemKelvin``), so a Kelvin that is not on the 100 K table is never sent.
+    This clamps to ``lo``..``hi`` (when given) and rounds to the nearest 100 K (halves up),
+    then clamps again so the rounding can never leave a range whose edges are not 100 K multiples."""
+    _check_kelvin(kelvin)
+    out = (kelvin + KELVIN_STEP // 2) // KELVIN_STEP * KELVIN_STEP
+    if lo is not None:
+        out = max(out, lo)
+    if hi is not None:
+        out = min(out, hi)
+    return out
 
 
 def _check_mask(mask: int) -> int:
@@ -140,14 +165,20 @@ def color_rgb(r: int, g: int, b: int, scheme: ColorScheme, segments: int = 13) -
 
 
 def color_temp(kelvin: int, scheme: ColorScheme, segments: int = 13) -> bytes:
-    """Whole-device colour temperature (WHITE slot + raw u2be Kelvin). On the 0x15 family
-    this is just segment_color_temp with the all-segments mask."""
+    """Whole-device colour temperature, always with the app's Kelvin->RGB tint
+    (``wire.cct.tint_for_kelvin``): ``h6006`` = ``0d <tint> <K> <tint>``, ``h6188`` =
+    ``0d ff ff ff <K> <tint>``, ``h60a6`` = ``15 01 ff ff ff <K> <tint> <mask>`` (this is just
+    segment_color_temp with the all-segments mask). The builder sends ``kelvin`` as given; the
+    ``Device`` layer applies :func:`normalize_kelvin` first."""
     if scheme == "h61a8":
         raise ValueError("h61a8 has no colour-temperature capability")
     _check_kelvin(kelvin)
     if scheme == "h6006":
+        # Config.bu -> Bytes.p(tint, K): [0d, tint r g b, kelvin u2be, tint r g b] - the tint
+        # sits in BOTH colour slots (H6008/H6006/H6052; also H6004 via the same builder).
         khi, klo = (kelvin >> 8) & 0xFF, kelvin & 0xFF
-        return frame(PRO_WRITE, CMD_MODE, SUB_COLOR_0D, 0xFF, 0xFF, 0xFF, khi, klo, 0, 0, 0)
+        tint = tint_for_kelvin(kelvin)
+        return frame(PRO_WRITE, CMD_MODE, SUB_COLOR_0D, *tint, khi, klo, *tint)
     if scheme == "h6188":
         # Config.GM -> Bytes.A(kelvin, RGB_WHITE): [0d, ff ff ff, kelvin u2be, tint r g b].
         khi, klo = (kelvin >> 8) & 0xFF, kelvin & 0xFF
@@ -167,8 +198,9 @@ def segment_rgb(mask: int, r: int, g: int, b: int, scheme: ColorScheme) -> bytes
 
 
 def segment_color_temp(mask: int, kelvin: int, scheme: ColorScheme) -> bytes:
-    """Colour temperature on selected segments (mask). Only the 0x15 family embeds a
-    segment mask in the CCT frame — h6006's 0x0d has no mask (whole-device only) and
+    """Colour temperature on selected segments (mask), ``15 01 ff ff ff <K u2be> <tint> <mask>``
+    (``Bytes.r`` type 1; the tint is ``Constant.getTemColorByKelvin``). Only the 0x15 family
+    embeds a segment mask in the CCT frame — h6006's 0x0d has no mask (whole-device only) and
     h61a8 has no CCT at all — so masked CCT is 0x15-only."""
     if scheme == "h61a8":
         raise ValueError("h61a8 has no colour-temperature capability")
@@ -179,7 +211,7 @@ def segment_color_temp(mask: int, kelvin: int, scheme: ColorScheme) -> bytes:
     khi, klo = (kelvin >> 8) & 0xFF, kelvin & 0xFF
     lo, hi = _mask_le(mask)
     return frame(PRO_WRITE, CMD_MODE, SUB_COLOR_15, OP15_SET_COLOR,
-                 0xFF, 0xFF, 0xFF, khi, klo, 0, 0, 0, lo, hi)
+                 0xFF, 0xFF, 0xFF, khi, klo, *tint_for_kelvin(kelvin), lo, hi)
 
 
 def segment_brightness(mask: int, pct: int, scheme: ColorScheme) -> bytes:

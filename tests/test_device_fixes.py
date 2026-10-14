@@ -119,10 +119,10 @@ def test_kelvin_range_bounds_inclusive_and_undefined_range_allows() -> None:
     d = _dev("H60A6")
     run(d.set_color_temp(2700))
     run(d.set_color_temp(6500))
-    assert len(_sent(d)) == 2
+    assert len(_sent(d)) == 4          # H60A6 whole-device CCT = main panel + ring frames
     t = _dev("H60A6", min_kelvin=None, max_kelvin=None)
     run(t.set_color_temp(1000))
-    assert len(_sent(t)) == 1
+    assert len(_sent(t)) == 2
 
 
 def test_zone_rgb_and_color_temp_require_capabilities() -> None:

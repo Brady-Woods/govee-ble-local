@@ -45,6 +45,12 @@ class DeviceProfile:
     # 2026-10-12: off clears both zones; on lights both even if each zone was off), so
     # whole-fixture power is ONE frame instead of one per zone.
     global_power: bool = False
+    # Whole-device colour temperature is sent as ONE 0x15 CCT frame PER ZONE (in `zones` order)
+    # instead of a single all-segments frame, when the device's advertised pact is
+    # (pact_type, pact_code >= min_code). H60A6: pact_h60a0 Support.supportPartTem (pact type 1,
+    # code >= 3) -> VM4LightH60A6.configColorStripController -> ControllerBuild.j sends the main
+    # panel (mask bit 12) and then the ring (bits 0..11), each with its tint. None = single frame.
+    cct_per_zone_min_pact: tuple[int, int] | None = None
     gradual: bool = False             # supports the 0xA3 gradual/fade-on-handoff flag (W/R)
     readback: ReadBack = "none"
     # Segment-colour read-back mechanism layered on top of `readback` (spec Change 7):
@@ -85,6 +91,8 @@ class DeviceProfile:
                 raise ValueError(
                     f"DeviceProfile{self.skus}: {name}={value!r} not in {get_args(allowed)}"
                 )
+        if self.cct_per_zone_min_pact is not None and not self.zones:
+            raise ValueError(f"DeviceProfile{self.skus}: cct_per_zone_min_pact needs zones")
         if self.brightness_range is not None:
             lo, hi = self.brightness_range
             if not 0 <= lo < hi <= 0xFF:
@@ -106,6 +114,9 @@ PROFILES: tuple[DeviceProfile, ...] = (
                Zone("background", power_index=1, segments=tuple(range(12)))),
         scene_versions=frozenset({0, 1, 2, 3, 5}), scene_dialect="B_h60a6",
         min_kelvin=2700, max_kelvin=6500, readback="status", global_power=True,
+        # CCT: `15 01 ff ff ff <K> <tint> <mask>` (Bytes.r type 1); whole-device = main panel
+        # frame then ring frame when pact >= (1, 3) (ControllerBuild.j, Support.supportPartTem).
+        cct_per_zone_min_pact=(1, 3),
     ),
     # H6047 — bar light: plaintext, two bars (combined 33 36), 10 segments, dialect-A scenes.
     # Source-confirmed: H6047 (goodsType 119) does not dispatch the 0xAC status burst (that is

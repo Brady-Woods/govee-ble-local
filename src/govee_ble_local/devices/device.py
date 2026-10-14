@@ -102,6 +102,9 @@ class Device:
         self._discarded_reads = 0        # cumulative count of discarded stale reads
         self._callbacks: list[StateCallback] = []
         self._advert_ignore_until = 0.0   # monotonic; see ADVERT_SUPPRESS_SECONDS
+        # (pact_type, pact_code) from the Govee advertisement, or None until one is heard.
+        self._pact: tuple[int, int] | None = None
+        self._learn_pact(advertisement_data)
         enc = self._resolve_encryption(advertisement_data)
         conn_kw: dict[str, Any] = {}
         if idle_disconnect is not None:
@@ -113,6 +116,22 @@ class Device:
             frame_log=frame_log,
             **conn_kw,
         )
+
+    def _learn_pact(self, adv: AdvertisementData | None) -> None:
+        """Remember the advertised ``(pact_type, pact_code)``; the app reads the same pair
+        (``BleUtil.parseBleBroadcastPact``) into the device model and gates some frames on it."""
+        mfg = getattr(adv, "manufacturer_data", None)
+        if not mfg:
+            return
+        a = identify(getattr(adv, "local_name", None) or self._ble_device.name, mfg)
+        if a is not None and a.pact_type != -1:
+            self._pact = (a.pact_type, a.pact_code)
+
+    @property
+    def pact(self) -> tuple[int, int] | None:
+        """The advertised ``(pact_type, pact_code)``, or None if no advertisement carrying it
+        has been seen (e.g. a device built without advertisement data)."""
+        return self._pact
 
     def _resolve_encryption(self, adv: AdvertisementData | None) -> Encryption:
         mfg = getattr(adv, "manufacturer_data", None)
@@ -224,11 +243,31 @@ class Device:
         Raises GoveeBleInvalidValue if it is not exactly ``build.SECRET_LEN`` bytes."""
         self._secret = self._checked_secret(secret)
 
-    def _check_kelvin(self, kelvin: int) -> None:
+    def _check_kelvin(self, kelvin: int) -> int:
+        """Validate ``kelvin`` against the profile range and return what goes on the wire: the
+        app's value, i.e. rounded to the nearest 100 K (:func:`build.normalize_kelvin`)."""
         lo, hi = self.profile.min_kelvin, self.profile.max_kelvin
         if (lo is not None and kelvin < lo) or (hi is not None and kelvin > hi):
             raise GoveeBleInvalidValue(
                 f"{self._sku}: kelvin must be within {lo}..{hi}, got {kelvin!r}")
+        return build.normalize_kelvin(kelvin, lo, hi)
+
+    def _color_temp_frames(self, kelvin: int) -> list[bytes]:
+        """Frames for whole-device colour temperature (``kelvin`` already normalised).
+
+        One frame, except on a profile with ``cct_per_zone_min_pact`` (H60A6): when the
+        advertised pact is at or above it - or not known yet - one frame per zone in profile
+        order (main panel, then ring), as ``ControllerBuild.j`` does. Below the pact gate the
+        app uses a different multi-packet colour path that is not modelled, so the single
+        all-segments frame is sent."""
+        profile = self.profile
+        gate = profile.cct_per_zone_min_pact
+        if gate is not None and (
+                self._pact is None or (self._pact[0] == gate[0] and self._pact[1] >= gate[1])):
+            return [
+                build.segment_color_temp(_mask(z.segments), kelvin, profile.color_scheme)
+                for z in profile.zones if z.segments]
+        return [build.color_temp(kelvin, profile.color_scheme, profile.segments)]
 
     def update_ble_device(self, ble_device: BLEDevice) -> None:
         """Swap in a fresh BLEDevice (e.g. a new scanner path) for later connects."""
@@ -244,6 +283,7 @@ class Device:
         mfg = getattr(advertisement_data, "manufacturer_data", None)
         if not mfg:
             return False
+        self._learn_pact(advertisement_data)
         on = parse_broadcast_onoff(mfg)
         if on is None or on == self._state.is_on:
             return False
@@ -361,8 +401,8 @@ class Device:
             frames.append(build.color_rgb(*rgb, self.profile.color_scheme, self.profile.segments))
         elif kelvin is not None:
             self._require(Capability.COLOR_TEMP)
-            self._check_kelvin(kelvin)
-            frames.append(build.color_temp(kelvin, self.profile.color_scheme, self.profile.segments))
+            kelvin = self._check_kelvin(kelvin)
+            frames += self._color_temp_frames(kelvin)
         if not frames:
             return
         await self._conn.send_many(frames)
@@ -415,10 +455,15 @@ class Device:
         """Set the whole-device colour temperature (clears rgb and active scene).
 
         Raises GoveeBleNotSupported without COLOR_TEMP; GoveeBleInvalidValue if outside the
-        profile's kelvin range."""
+        profile's kelvin range. The Kelvin sent (and kept in ``state``) is rounded to the nearest
+        100 K, the only values the app sends; the frame carries the app's tint for it."""
         self._require(Capability.COLOR_TEMP)
-        self._check_kelvin(kelvin)
-        await self._conn.send(build.color_temp(kelvin, self.profile.color_scheme, self.profile.segments))
+        kelvin = self._check_kelvin(kelvin)
+        frames = self._color_temp_frames(kelvin)
+        if len(frames) == 1:
+            await self._conn.send(frames[0])
+        else:
+            await self._conn.send_many(frames)
         self._mutated()
         self._state.color_temp_kelvin = kelvin
         self._state.rgb_color = None
@@ -487,7 +532,7 @@ class Device:
         carries the segment mask). Raises GoveeBleNotSupported for non-maskable schemes."""
         self._require(Capability.SEGMENTS)
         self._require(Capability.COLOR_TEMP)
-        self._check_kelvin(kelvin)
+        kelvin = self._check_kelvin(kelvin)
         frame = self._build_or_unsupported(
             build.segment_color_temp, _mask(indices), kelvin, self.profile.color_scheme)
         await self._conn.send(frame)
@@ -582,7 +627,7 @@ class Device:
         0x15 family (H60A6/H6047), whose CCT frame carries a segment mask."""
         self._require(Capability.SEGMENTS)
         self._require(Capability.COLOR_TEMP)
-        self._check_kelvin(kelvin)
+        kelvin = self._check_kelvin(kelvin)
         z = self._zone(name)
         if not z.segments:
             raise GoveeBleNotSupported(f"{self._sku}: zone {name!r} has no segments")
