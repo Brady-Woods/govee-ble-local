@@ -81,6 +81,27 @@ model, from which the shipped readers are generated).
   overrides the profile's static `segments` for whole-device masks, segment indices and the
   `aa a5` read-back walk (a profile's explicit `color_readback_segments` still wins for the walk).
   `None` reverts to the profile value. Nothing sets it yet; H6062 and H6061 will.
+- **H6061** (Glide Hexa light panels, `cubelight` split, goodsType 51), phase 1 = whole-device control
+  only ([#16](https://github.com/Brady-Woods/govee-ble-local/issues/16), tracked in #17): power,
+  percent brightness, RGB, colour temperature (2000-9000 K) and polled read-back. Modeled from the
+  decompiled Govee Home 7.7.02 app; not hardware-verified. No SEGMENTS or SCENES capability yet, and
+  no secret (the app writes 0xB2 only while pairing). New colour scheme `"h6061"`:
+  - RGB is `ceil(n/4)` frames `33 05 15 04 <group from 1> R G B x<=4`, the last carrying the
+    remaining panels (`Bytes.m`, `BleUtils.w0`; `ColorModeControllerConfig.k` -> `w` -> `l`); with
+    the default 23 panels that is 6 frames, the last with 3 colours. New `build.color_rgb_frames`;
+    `Device.set_rgb` / `turn_on(rgb=)` send the frames with `send_many`.
+  - CCT is `33 05 15 01 <tint RGB> <kelvin u2be> <24-bit mask>`, the first n mask bits set, LSB first
+    (`ff ff 7f` for 23 panels; `Config.Zt` -> `Bytes.u`, `ColorPieceConfig.k`). The tint sits in the
+    colour slot, not the `ff ff ff` white-slot form of H60A6 / H6047 / H6641.
+  - Panel count n defaults to 23, the app's value when no layout is stored (`ColorPieceConfig.f`,
+    `Support.getBulbStringMaxNum`). `Device.set_segment_count(n)` sets it for a known layout
+    (1-23; more is refused because the app sends no colour for a longer set).
+  - Read-back polls `aa 01` / `aa 04` / `aa 05`: the colour comes back as mode `0x0d`
+    `[R, G, B, kelvin u2be]` (kelvin > 0 = CCT) although writes use `0x15`
+    (`CubeNewInfo4Detail`), then `aa a5 <group>` for groups 1..`ceil(n/4)` fills `state.segments`
+    (`CubeVM4Light.l5`).
+  - `tools/field_test/plans/h6061.py`: power, brightness, RGB (6 group frames) and CCT at
+    2000 / 4000 / 6500 / 9000 K.
 
 ### Spec
 - `govee_ble.ksy`: `mode_color_0d_typed` kind 2 (rgblight `[R,G,B, kelvin u2be, tint RGB]` with an
@@ -88,6 +109,8 @@ model, from which the shipped readers are generated).
   regenerated (kaitai-struct-compiler 0.11.0; the diff is only these additions).
 - `devices.yaml`: new `h6188` family with citations; note on the Wi-Fi-only H6085/H6086/H6089.
   `devices.schema.json`: `mode_0d_kind` gains `rgb_kelvin_tint`.
+- `devices.yaml`: new `h6061` family (Glide Hexa, phase 1) with citations: the group RGB frame, the
+  tint-in-colour-slot CCT frame with its 24-bit mask, the `0x0d` colour report and the `aa a5` reads.
 
 ## [1.2.1] — 2026-10-13
 

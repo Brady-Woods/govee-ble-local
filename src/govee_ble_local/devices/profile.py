@@ -198,6 +198,39 @@ PROFILES: tuple[DeviceProfile, ...] = (
         encryption=Encryption.NONE, min_kelvin=2000, max_kelvin=9000,
         readback="polled", brightness_range=(20, 254),
     ),
+    # H6061 — Glide Hexa light panels, phase 1: whole-device control only. Modeled from source; not
+    # hardware-verified (no H6061 hardware). Source (Govee Home 7.7.02, split pact_h6061 =
+    # com.govee.cubelight, goodsType 51, pact (1,1) / (1,2) / (1,3) in Support.addSupportPact):
+    #  - panel count n: the size of the layout the user drew in the app (CubeColorModeV2.Y, from
+    #    CubeDataSource), else the app's no-layout value 23 (ColorPieceConfig.f(51),
+    #    Support.getBulbStringMaxNum(51)). The device never reports a count (no aa 40 / aa 41 read).
+    #    `segments=23` is that default; Device.set_segment_count overrides it for a known layout.
+    #  - RGB: ColorModeControllerConfig.k -> w -> l (Config.A[51] = 1 = group mode, not in Config.D)
+    #    -> Bytes.m: ceil(n/4) frames `33 05 15 04 <group from 1> RGB x<=4` (23 panels: 6 frames,
+    #    the last with 3 colours); colour set built by CubeColorModeV2.canClickColor.
+    #  - CCT: Config.x[51] = 5 -> Config.J[5] = Config.Zt -> Bytes.u: `33 05 15 01 <tint RGB>
+    #    <kelvin u2be> <mask>`, mask = BleUtils.X over ColorPieceConfig.k = 24 positions, first n
+    #    set, LSB first (23 panels: `ff ff 7f`). Taken when the colour is a Kelvin tint and
+    #    Config.I[51][4] (CCT) holds; tint = Constant.getTemColorByKelvin, Kelvin recovered by
+    #    Constant.getColorTemKelvin (CubeColorModeV2.canClickColorTem).
+    #  - kelvin: KelvinConfig has no 51 entry -> version 0 = [2000, 9000]. Brightness: percent 1..100
+    #    (Support.getBrightnessRange {1, 100, 0}); power `33 01`.
+    #  - read-back: CubeNewDetailsConfig.makeControllerStrategy polls aa 04 / aa 01 / aa 05; the 0x0d
+    #    colour report is [R, G, B, kelvin u2be] (CubeNewInfo4Detail ctor parse strategy; kelvin > 0
+    #    means CCT) even though writes use 0x15 - the 0x15 sub-mode is not parsed
+    #    (CubeNewInfo4Detail.U). After aa 05, CubeVM4Light.l5 reads `aa a5 <group>` for groups
+    #    1..ceil(n/4), Controller4ColorInfoByGroup = the library's mechanism_a_direct, group size 4.
+    #  - no account-lock on control connects: 0xB2 is only sent by the pairing flows
+    #    (ConnectDialog extends AbsConnectDialog4Secret, PairAcV1); cipher is runtime, plaintext
+    #    by default.
+    #  - phase 1 has no SEGMENTS (per-panel colour needs the user's layout) and no SCENES (cube
+    #    scene activation and upload are not modelled yet).
+    DeviceProfile(
+        skus=("H6061",), capabilities=frozenset({_C.POWER, _C.BRIGHTNESS, _C.RGB, _C.COLOR_TEMP}),
+        color_scheme="h6061", encryption=Encryption.NONE, segments=23,
+        min_kelvin=2000, max_kelvin=9000, readback="polled",
+        color_readback="mechanism_a_direct", color_readback_per_batch=4,
+    ),
     # Plug family — power-only, AES + account-lock, relay encoding.
     # `plug` read-back polls the relay state (aa 01 -> raw relay bitmask; any bit set = on),
     # so state.is_on reflects the device, not just the last command. Not yet live-verified

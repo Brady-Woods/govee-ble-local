@@ -586,6 +586,32 @@ families:
     confidence: medium   # source-derived from the 7.7.02 app; not hardware-verified
     sources: ["pact_rgblight: rgblight/h6188/H6188Config.java:92-94", "rgblight/h6188/H6188BleProtocol.java", "rgblight/Support.java:76,132-135", "rgblight/add/SkuBleProcessor.java:49-57", "rgblight/add/ConnectDialog.java:50-61", "rgblight/ControllerStrategyConfig.java:961-1043,1396 (H0 read set)", "rgblight/VM4Light.java:893-939 (configColorController), 1024-1047 (configKelvinController), 575-602 (v5 parse strategy)", "rgblight/mode/ModeParseStrategyConfig.java:34-46 (strategy a)", "rgblight/mode/scene/Scenes4H6188.java:11-15", "rgblight/mode/scene/DelegateSceneV1.java:555", "base2light/pact/newdetail/config/fuc/color/Config.java:13459 (bu), 9972 (GM), 277-292 (H)", "base2light/pact/newdetail/config/fuc/color/Bytes.java:54-73 (A), 291-299 (f), 431-450 (p)", "base2light/pact/newdetail/config/fuc/KelvinConfig.java:405-416,1287-1312 (P1)", "base2light/pact/newdetail/config/fuc/BrightnessConfig.java:251-258,356 (F2=0)", "base2light/pact/newdetail/config/fuc/ColorPieceConfig.java:697", "base2home/util/NumberUtil.java:28-49", "base2home/Constant.java:454 (colour->Kelvin table), 1113-1131 (getTemColorByKelvin)"]
 
+  - id: h6061
+    category: panel
+    # Glide Hexa. Phase 1 = whole-device control only (what the app sends with no per-panel selection).
+    # The cubelight package also serves H6063/H6066/H6067/H6069/H606A (other goodsTypes, other panel counts
+    # and Support gates): not modelled here.
+    client_profile: { has_brightness: true, color_scheme: h6061, mode_0d_kind: rgb_kelvin_tint, wire_cipher: runtime }   # 0x0d report = [R,G,B,kelvin u2be] (no tint bytes; the zero padding reads as tint 0)
+    models: [H6061]
+    goods_types: [51]   # Support.addSupportPact: pact (1,1), (1,2), (1,3)
+    delivery: feature_split
+    connectivity: [ble, wifi]
+    protocol: { single_packet: true, mode_command: "0x05" }   # whole-device RGB = several single frames (one per group of 4 panels); scenes / DIY (phase 2) not modelled
+    submodes: { color: "0x15", color_alt: "0x0d", scene: "0x04" }   # color_alt 0x0d = the colour READ-back report (writes use 0x15); music / DIY: phase 2, not verified here
+    opcodes:
+      - { name: color_group_write, cmd: "0x05", payload: "[0x15, 0x04, group (from 1), R, G, B x<=4]: whole-device RGB = ceil(n/4) frames, the last carrying the remaining panels (n=23: 6 frames, last has 3 colours)", note: "ColorModeControllerConfig.k -> w -> l (colour-brightness-group mode Config.A[51]=1, not in Config.D) -> Bytes.m(group, colours) / BleUtils.w0(colours, 4)" }
+      - { name: color_temp_write, cmd: "0x05", payload: "[0x15, 0x01, tintR, tintG, tintB, kelvin u2be, mask LSB first (24 bits: first n set; n=23 -> ff ff 7f)]", note: "Config.x[51]=5 -> Config.J[5]=Config.Zt -> Bytes.u(Constant.getColorTemKelvin(tint), positions, tint); taken when every panel gets one Kelvin-tint colour and Config.I[51][4] (CCT) is true; mask = BleUtils.X over ColorPieceConfig.k (24 positions). NOT the ff ff ff white-slot form of h60ax/h6047/h61d3." }
+      - { name: mode_read_color, cmd: "0x05", readable: true, payload: "AA 05 0D [R, G, B, kelvin u2be (getSignedShort)]; kelvin > 0 => colour-temperature mode (the app then shows the tint). The app reads colour back as 0x0d although it writes 0x15; mode 0x15 is not parsed (CubeNewInfo4Detail.U handles 13 / 4 / 10 / 19 only)." }
+      - { name: per_segment_color_read, cmd: "0xa5", readable: true, payload: "per-group direct read `aa a5 <group>` for groups 1..ceil(n/4) after every aa 05 (CubeVM4Light.l5); reply [group, 4 x {brightness, R, G, B}] (Controller4ColorInfoByGroup) = mechanism A-direct" }
+      - { name: brightness, cmd: "0x04", readable: true, payload: "[percent 1..100] (Support.getBrightnessRange {1, 100, 0})" }
+    # n = size of the user's layout (CubeColorModeV2.Y <- CubeDataSource) else 23 (ColorPieceConfig.f(51), Support.getBulbStringMaxNum(51)); the device never reports it (no aa 40 / aa 41 read).
+    # A colour set longer than 23 produces no command (ColorPieceConfig.Config.s0); a single colour with n > 1 is expanded to 23.
+    specs: { segments: "panel count n: the user's layout size, else 23 (no-layout default); the device does not report it", kelvin_range: [2000, 9000], brightness_range: [1, 100], brightness_scaling: "raw percent", scene_versions: [] }
+    encryption: none   # no 0xB1/0xB2 on control connects (0xB2 only while pairing: ConnectDialog extends AbsConnectDialog4Secret, PairAcV1); wire cipher resolved at runtime
+    notify: []
+    confidence: medium   # source-derived from the 7.7.02 app; not hardware-verified
+    sources: ["pact_h6061: cubelight/pact/Support.java:97-115 (addSupportPact), 176-178 (getBrightnessRange), 180-198 (getBulbStringMaxNum)", "cubelight/newdetails/CubeNewDetailsConfig.java:287 + CubeNewDetailsConfig$makeControllerStrategy$1.java:148-218 (aa 04 / aa 01 / aa 05 reads)", "cubelight/newdetails/CubeNewInfo4Detail.java:140-154 (0x0d parse strategy), 447-482 (parseMode), 488-535 (parseModeValidBytes)", "cubelight/newdetails/CubeVM4Light.java:386-422 (l5: aa a5 group reads)", "cubelight/newdetails/color/CubeColorModeV2.java:98-130, 154-169, 312-336, 415-436 (colour set, canClickColorTem)", "cubelight/add/ConnectDialog.java:14, cubelight/add/PairAcV1.java (pairing-only secret)", "base2light/pact/newdetail/config/fuc/color/ColorModeControllerConfig.java:730-870 (k), 871-935 (l), 1114-1142 (w)", "base2light/pact/newdetail/config/fuc/color/Config.java:5527 (J[5]), 13124 (Zt), 13321 (az: x[51]=5), 15460 (oO: I[51]), 15816 (qX: A[51]=1)", "base2light/pact/newdetail/config/fuc/color/Bytes.java:393-402 (m), 541-556 (u)", "base2kt/utils/BleUtils.java:406-438 (X), 1077-1097 (r), 1271-1283 (w0)", "base2light/pact/newdetail/config/fuc/ColorPieceConfig.java:274-278 (f: 51 -> 23), 354-452 (j), 454-469 (k), 745-756 (o), 1926-1967 (s0)", "base2light/pact/newdetail/config/fuc/KelvinConfig.java:193-200, 376-408 (default [2000, 9000])", "base2home/Constant.java:585-598 (getColorTemKelvin), 987-1005 (getTemColorByKelvin)"]
+
   # H6085 / H6086 / H6089 share the rgblight H6188-era code but are Wi-Fi-only bulbs: SubMaker.needBle()=false,
   # soft-AP pairing (SSID "Govee_bulb_<sku>", 192.168.1.1:7200, H60858689Config), IoT-only commands (CmdOldColor/
   # CmdOldColorTem), and no BLE controller strategy (ControllerStrategyConfig.o2). Not controllable over BLE.

@@ -298,6 +298,11 @@ class Device:
                 for z in profile.zones if z.segments]
         return [build.color_temp(kelvin, profile.color_scheme, n)]
 
+    def _color_rgb_frames(self, rgb: tuple[int, int, int]) -> list[bytes]:
+        """Frames for whole-device RGB: one, except on a profile whose colour scheme writes the
+        panels in groups (``h6061``: ``ceil(n/4)`` frames over :attr:`segment_count` panels)."""
+        return build.color_rgb_frames(*rgb, self.profile.color_scheme, self.segment_count)
+
     def update_ble_device(self, ble_device: BLEDevice) -> None:
         """Swap in a fresh BLEDevice (e.g. a new scanner path) for later connects."""
         self._ble_device = ble_device
@@ -427,7 +432,7 @@ class Device:
             frames.append(self._brightness_frame(brightness))
         if rgb is not None:
             self._require(Capability.RGB)
-            frames.append(build.color_rgb(*rgb, self.profile.color_scheme, self.segment_count))
+            frames += self._color_rgb_frames(rgb)
         elif kelvin is not None:
             self._require(Capability.COLOR_TEMP)
             kelvin = self._check_kelvin(kelvin)
@@ -472,7 +477,11 @@ class Device:
         Raises GoveeBleNotSupported without RGB; GoveeBleInvalidValue for out-of-range channels."""
         self._require(Capability.RGB)
         r, g, b = rgb
-        await self._conn.send(build.color_rgb(r, g, b, self.profile.color_scheme, self.segment_count))
+        frames = self._color_rgb_frames((r, g, b))
+        if len(frames) == 1:
+            await self._conn.send(frames[0])
+        else:
+            await self._conn.send_many(frames)
         self._mutated()
         self._state.rgb_color = (r, g, b)
         self._state.color_temp_kelvin = None
@@ -974,7 +983,8 @@ class Device:
             self._state.brightness = self._brightness_pct(raw)
         if self.profile.bar_switch:
             await self._read_bar_switch()
-        if Capability.SCENES in self.capabilities or self.profile.color_scheme in ("h6006", "h6188"):
+        if (Capability.SCENES in self.capabilities
+                or self.profile.color_scheme in ("h6006", "h6188", "h6061")):
             seq = self._mutation_seq
             reply = await self._read_reply(build.mode_query(), build.CMD_MODE)
             if reply is not None and not self._stale(seq, "mode"):
