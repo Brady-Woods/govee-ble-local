@@ -97,14 +97,25 @@ KELVIN_STEP = 100   # the app only ever sends whole 100 K steps (Constant colour
 def normalize_kelvin(kelvin: int, lo: int | None = None, hi: int | None = None) -> int:
     """The Kelvin value the app would put on the wire for ``kelvin``.
 
-    The app clamps to the device's Kelvin range (``KelvinConfig.calibrationKelvin``) and its
-    slider only produces 100 K steps; the UI turns that Kelvin into a tint
-    (``Constant.getTemColorByKelvin``) and the builders recover Kelvin from the tint
-    (``Constant.getColorTemKelvin``), so a Kelvin that is not on the 100 K table is never sent.
-    This clamps to ``lo``..``hi`` (when given) and rounds to the nearest 100 K (halves up),
-    then clamps again so the rounding can never leave a range whose edges are not 100 K multiples."""
-    _check_kelvin(kelvin)
-    out = (kelvin + KELVIN_STEP // 2) // KELVIN_STEP * KELVIN_STEP
+    Order of operations, as in the app: clamp to the device's range, then land on the 100 K grid.
+    The app clamps any integer to the per-SKU range and never rejects it
+    (``KelvinConfig.Companion.a`` = ``calibrationKelvin``, ``Constant.checkKelvinRange``); its
+    slider only produces 100 K steps, and ``Constant.getTemColorByKelvin`` accepts only values of
+    the colour->Kelvin table, which is on a 100 K grid (an off-grid value is a failed lookup there,
+    never sent). This library rounds an off-grid value to the nearest 100 K (halves up) instead,
+    then clamps again so the rounding can never leave a range whose edges are not 100 K multiples.
+
+    ``lo``/``hi`` omitted (a profile with no known range) means no clamp on that side; the result
+    must still fit the wire's u16 Kelvin field. Raises GoveeBleInvalidValue only for a non-int
+    (including ``bool``) or, once clamped, a value outside the u16 field; an out-of-range int is clamped."""
+    if isinstance(kelvin, bool) or not isinstance(kelvin, int):
+        raise GoveeBleInvalidValue(f"kelvin must be an integer, got {kelvin!r}")
+    out = kelvin
+    if lo is not None:
+        out = max(out, lo)
+    if hi is not None:
+        out = min(out, hi)
+    out = (_check_kelvin(out) + KELVIN_STEP // 2) // KELVIN_STEP * KELVIN_STEP
     if lo is not None:
         out = max(out, lo)
     if hi is not None:
