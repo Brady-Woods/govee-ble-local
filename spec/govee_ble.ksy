@@ -86,7 +86,7 @@ enums:
     0x34: swap_light
     0x36: compose_light_switch
     0x40: ic_num
-    0x41: on_off_memory
+    0x41: on_off_memory    # ALSO H6062 (striplight) `aa 41` section-count read: reply [IC s16be, sectionNum u8] (ControllerIcSegmentNum); hand-decoded in wire/parse.py parse_section_count, not modelled as a reply type here
     0x44: calibration
     0x46: check_ic
     0xa2: bulb_string_color_read
@@ -241,7 +241,8 @@ types:
       (0x15 color / 0x04 scene / 0x13 music / 0x0d h60a6-color). Disambiguate by value: 0x01 => request;
       a known sub-mode => reply.
       - 0x15 CCT reply => cct_read_reply: [op=01][kHi][kLo], kelvin big-endian @ frame bytes 4-5; DROPS
-        the FF FF FF white point the 0x33 write carries.
+        the FF FF FF white point the 0x33 write carries. H6047 appends a second kelvin (right bar,
+        bytes 6-7) and its byte 0 is the gradual flag: [gradual][kelvin left u2be][kelvin right u2be].
       - 0x0d (and 0x15 on the LEGACY Mode/SubModeColorV1 stack): parse reads ONLY op/gradual (bArr[0]==1)
         — no kelvin/RGB decode; 0x0d is effectively write-only. Kelvin is decoded only by the compose
         stack's 0x15 path (cct_read_reply). So no distinct 0x0d reply body is modelled.
@@ -265,10 +266,16 @@ types:
       Mode 0x15 CCT read reply. kelvin = u2be at frame bytes 4-5 (e.g. 0x0A8C=2700, 0x1964=6500); NO
       FF FF FF white point (unlike the write, which is [op, FF FF FF, kHi, kLo, ...]).
       Source: SubModeColorV2.parse / ComposeChange2ColorMode.result.
+      H6047 (two bars) reads [gradual][kelvin left u2be][kelvin right u2be]: byte 0 is the gradual flag
+      (== 1), the first kelvin is the LEFT bar (segments 0-4) and the second the RIGHT bar (segments
+      5-9); 0 = that bar is not in colour-temperature mode. The app shows one whole-device kelvin only
+      when both bars match. Source: h6047/ble/SubModeColor.parse, h6047/detail/Info4Detail
+      (subMode4Color IParseStrategy: q(bArr[0]==1), D0/E0(getSignedShort)), NewDetailVm.A5.
     seq:
-      - { id: op, type: u1, doc: "0x01 = CCT / white-point mode" }
-      - { id: kelvin, type: u2be, doc: "colour temperature in Kelvin (big-endian, hi-first)" }
-      - { id: trailing, size-eos: true, doc: "remaining frame bytes after kelvin (padding; unused for CCT read-back)" }
+      - { id: op, type: u1, doc: "0x01 = CCT / white-point mode; on H6047 this byte is the gradual flag (== 1)" }
+      - { id: kelvin, type: u2be, doc: "colour temperature in Kelvin (big-endian, hi-first); H6047: the LEFT bar" }
+      - { id: kelvin_right, type: u2be, if: 'not _io.eof', doc: "H6047 only: the RIGHT bar's kelvin (0 = not CCT); other devices: zero padding" }
+      - { id: trailing, size-eos: true, doc: "remaining frame bytes after the kelvins (padding; unused for CCT read-back)" }
 
   music_read_reply:
     doc: >-
@@ -375,10 +382,17 @@ types:
     seq:
       - { id: brightness, type: u1 }
   bar_switch_read:
-    doc: "AA 36 reply (h6047 ComposeLightController): [left,right] on/off (bArr[0]==1 / bArr[1]==1). The 33 36 write uses the same [left,right]."
+    doc: >-
+      AA 36 reply (h6047 ComposeLightController / ComposeLightHeartController, the app's heartbeat):
+      [left, right, movie/feast switch] on/off (bArr[0]==1 / bArr[1]==1 / bArr[2]==1). The 33 36 write uses
+      the same [left, right] (Controller4ExtBytes [54, left, right], NewDetailVm.D5). The app treats the
+      device as ON when left OR right is on (NewDetailVm heart parse, Info4Detail.g). The third byte (the
+      movie/feast mode switch, EventFeastHeart) is not needed for control. The left/right order can be swapped
+      during setup (h6047/add/LightPosAc), so the names are logical, not physical.
     seq:
       - { id: left, type: u1 }
       - { id: right, type: u1 }
+      - { id: movie_feast, type: u1, if: 'not _io.eof', doc: "movie/feast switch (== 1 on); read-only here" }
   secret_read_reply:
     doc: "AA B1 reply (SecretKeyController.parseValidBytes): selector (0x01 = valid) then the 8-byte account-lock secret. The 33 B2 write sends the raw 8 bytes (no selector). This is the account-lock, NOT the wire cipher."
     seq:

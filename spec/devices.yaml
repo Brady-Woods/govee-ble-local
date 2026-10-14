@@ -9,7 +9,8 @@
 # (sku/goodsType/pactType/pactCode) is cloud-provided but also derivable offline from the BLE advert
 # (Govee_<SKU>_<suffix> -> goodsType via a compiled table). The only capability read live from the device is
 # the IC/segment count via BLE opcode 0x40 (ControllerOnlyReadIcSegmentNum); IC-driven families (h61d3) use it,
-# static families (h60ax/h6047) use hard-coded getColorPieceSize. So a local client can be fully cloud-free.
+# static families (h60ax, h6047) use hard-coded per-goodsType counts (getColorPieceSize on the newdetail screens,
+# getBulbStringMaxNum on the old h6047 detail screen). So a local client can be fully cloud-free.
 
 spec_version: "1.0.0"
 source_app: "com.govee.home 7.5.12 (1088)"
@@ -106,7 +107,8 @@ timing:
 #  See docs/GOVEE_BLE_GATT_PROTOCOL.md §9.2 for the byte-level codec.)
 # (manuf-data flags & 0x40; BleUtil.java:839) OR the on-device BGC-info characteristic (BgcInfoReader: byte0
 # encryptVersion 1=V1 / 2=V2). There is NO SKU->cipher table in the app. So a secret_key_pairing device may
-# still run PLAINTEXT on the wire (H6047/H61A8/H6641 observed plaintext); a data-driven client must read the
+# still run PLAINTEXT on the wire (H61A8/H6641 observed plaintext; H6047 is modelled plaintext, not yet confirmed
+# on an H6047 link); a data-driven client must read the
 # advert/BGC at connect to select the cipher, and treat this field only as "has account-lock". Account-lock is
 # present on all curated SKUs EXCEPT the legacy bulbs H6006/H6008.
 secret:
@@ -323,10 +325,12 @@ command_catalog:
   #       ONLY: H6038/H6039/H6048 (gt 288/277/298, per-SKU type-sets e.g. VM4H6038:240 [41,30,36,a5]) and h61d3
   #       gt 263. NOT the H6047 or H6641 SKUs (see A-direct). Reassembled 0xA5 TLV = ONE group [group_index(1-based),
   #       record x count]; COUNT = (len-1)/record_size (== caller oneGroupColorSize, usually 4). ksy: status_tlv 0xA5
-  #       -> color_group_status. Group count = ceil(N/count); N = getColorPieceSize (H6047-family read-back 12 != write 10).
+  #       -> color_group_status. Group count = ceil(N/count); N = getColorPieceSize (newdetail screens: 24/22/12).
   #   (A-direct) SAME parser/record, NO 0xAC burst: per-group DIRECT reads `0xAA 0xA5 <group>` issued individually via
   #       Compose4InfoBleIot (Controller4ColorInfoByGroup; proType 0xAA per AbsControllerNoEvent4Single.getProType:153,
-  #       cmd 0xA5). Used by **H6047 (gt 119)** — old detail/NewDetailVm (Support.isGoodsTypeH6047:177), and
+  #       cmd 0xA5). Used by **H6047 (gt 119)** — old detail/NewDetailVm (Support.isGoodsTypeH6047:186), which walks
+  #       N = Support.getBulbStringMaxNum(119) = 10 pieces (NewDetailVm.n5: 3 groups, SubMode4Color trims the last to 2
+  #       records), NOT getColorPieceSize = 12 (only the newdetail screens 277/288/298 call it) — and
   #       **H6641 (gt 247)** — adjustNew/VM4Light, gated by H61D3Support.f0(247)=false @b0:875 so it takes the
   #       connectBleSuc path, which first reads 0x40 IC-count (C5:197 -> group count = ceil(IC/5)) then P5:288 issues
   #       the per-group reads. ** These SKUs return ZERO to the 0xAC status request `ac 03 03 41 30 a5` (that is
@@ -437,35 +441,52 @@ families:
     goods_types: [119, 196, 197, 277, 288, 298]
     delivery: feature_split
     connectivity: [ble, wifi]
-    protocol: { single_packet: true, multi_dialects: ["0xA1", "0xA3", "0xAC"], mode_command: "0x05" }   # CAVEAT: 0xAC STATUS-read is goodsType-specific within this family — the newdetail SKUs H6038/H6039/H6048 (288/277/298) dispatch it; the H6047 SKU (119, old detail/NewDetailVm -> Compose4InfoBleIot, Support.isGoodsTypeH6047:177) does NOT (per-seg colour via direct `aa a5`, see per_segment_color_read).
+    protocol: { single_packet: true, multi_dialects: ["0xA1", "0xA3", "0xAC"], mode_command: "0x05" }   # CAVEAT: 0xAC STATUS-read is goodsType-specific within this family — the newdetail SKUs H6038/H6039/H6048 (288/277/298) dispatch it; the H6047 SKU (119, old detail/NewDetailVm -> Compose4InfoBleIot, Support.isGoodsTypeH6047:186) does NOT (per-seg colour via direct `aa a5`, see per_segment_color_read).
     submodes: { color: "0x15", scene: "0x04", music: "0x13", diy: "0x0a", video: "0x00" }
     opcodes:
-      - { name: compose_light_switch, cmd: "0x36", readable: true, payload: "H6047 [left,right]; others [position(0|1), state]; read AA 36" }
-      - { name: swap_light, cmd: "0x34", payload: "[] (empty)" }
+      - { name: compose_light_switch, cmd: "0x36", readable: true, payload: "H6047 [left,right]; others [position(0|1), state]; read AA 36 = [left, right, movie/feast switch]", note: "H6047 (119): 33 36 <left> <right> is the PER-BAR button frame only (NewDetailVm.D5, Controller4ExtBytes [54,left,right]). The main switch sends the global 33 01 <on> (NewDetailVm.switchTrigger -> ControllerSwitch). The app shows the device on when left OR right is on (aa 36 heartbeat, ComposeLightHeartController). The third reply byte is the movie/feast switch (EventFeastHeart), not needed for control. H6043 (196) sends [54, index, state] per bar instead." }
+      - { name: swap_light, cmd: "0x34", payload: "[] (empty)", note: "Not modelled (SwapLightController). The left/right bar order can be swapped during setup (h6047/add/LightPosAc), so the library's zone names are logical, not physical." }
+      - { name: sound_pickup_read, cmd: "0xac", readable: true, payload: "AA AC reply [pickSoundType] (1 = headphone, else device)", note: "Not modelled. H6047 (119) only: a single connect-time read (NewDetailVm$connectBleSuc$1, Controller4ExtBytes [0xAC] -> Info4Detail.A0), NOT the 0xAC status pro type / burst." }
       - { name: color_temp_write, cmd: "0x05", payload: "[0x15, 0x01, ff ff ff, kelvin u2be, tintR, tintG, tintB, seg_mask u2le]", note: "H6047 (119): SubModeColor.makeSubModeColor4Kelvin / H6047ColorControllerConfig -> Config.Yt -> Bytes.r type 1; tint = Constant.getTemColorByKelvin(K) (whole 100 K steps, clamped to the SKU range)." }
+      - { name: color_read, cmd: "0x05", readable: true, payload: "AA 05 15 reply [gradual][kelvin left u2be][kelvin right u2be]", note: "H6047 (119): SubModeColor.parse / Info4Detail subMode4Color parse strategy. byte 0 == 1 is the gradual flag; each bar has its own kelvin (0 = not CCT; left = segments 0-4, right = 5-9). The app shows one whole-device kelvin only when both match (NewDetailVm.A5 fills the bars' tints from them)." }
+      - { name: gradual, cmd: "0xa3", readable: true, payload: "[on]", note: "Read on every connect (ControllerGradual4BleWifi in NewDetailVm.parseIotMsg4Online) and written 33 a3 <on> by the colour screen (ColorViewModel.i0 -> ColorModeControllerConfig.p -> Config.G[119] = version 0 -> Bytes.w). NewDetailVm.configGradualController itself is the null default; the unified config supplies the frame." }
       - { name: light_direction, cmd: "0x30", readable: true, note: "live (H6048OnOffNotifyParse, Info4Detail)" }
       - { name: camera_position, cmd: "0x31", note: "CONSTANT-ONLY — BleProtocol=49; no controller/parser wired in split; not confirmed live" }
       - { name: check_install_camera, cmd: "0x32", note: "CONSTANT-ONLY — BleProtocol=50; no usage in split; not confirmed live" }
       - { name: calibration, cmd: "0x44", payload: "[on/off]" }
       - { name: white_balance, cmd: "0xa9", note: "read/parse confirmed (Info4Detail.parseWhiteBalance); no dedicated write controller found in split" }
-      - { name: per_segment_color_read, cmd: "0xa5", readable: true, payload: "PARSER Controller4ColorInfoByGroup: [groupIndex, count x {brightness,R,G,B}] 4-byte records, count=getColorPieceSize (=12), 4/group. TRANSPORT is goodsType-specific: H6038/H6039/H6048 (288/277/298) aggregate 0xA5 into the 0xAC status burst (mechanism A); the H6047 SKU (119) reads per-group DIRECT `aa a5 <group>` via Compose4InfoBleIot (mechanism A-direct, proType 0xAA) and does NOT answer `ac 03 03 41 30 a5`." }
-    # kelvin is per-SKU (KelvinConfig / Support.getColorTemRange): H6047/H6043/H6042 (119/196/197)=[2200,6500],
-    # H6039(277)/H6038(288)=[2700,6500], H6048(298)=[2000,9000]. kelvin_range below = H6047 (curated), NOT a family envelope.
-    # segments: TWO distinct counts. WRITE/addressable = getGoodsType4ColorSegment; READ-BACK pieces = getColorPieceSize. They differ (H6047: read 12 != write 10) — the 0xA5 read walk MUST use the read-back count.
-    specs: { segments: "write/addressable per SKU (getGoodsType4ColorSegment): H6047/H6043/H6042=10, H6039=12, H6038=24, H6048=22 (else-branch=10; NO SKU returns 5 - a prior '5' was unsourced). Read-back pieces (getColorPieceSize): default 12, H6038=24, H6048=22 -> H6047/H6043/H6042 read 12 groups-of-4 but only 10 writable", kelvin_range: [2200, 6500], scene_versions: [0, 1, 2, 3] }
+      - { name: per_segment_color_read, cmd: "0xa5", readable: true, payload: "PARSER Controller4ColorInfoByGroup: [groupIndex, count x {brightness,R,G,B}] 4-byte records, 4/group; count = piece count (newdetail screens: getColorPieceSize 24/22/12; old H6047 detail screen: getBulbStringMaxNum). TRANSPORT is goodsType-specific: H6038/H6039/H6048 (288/277/298) aggregate 0xA5 into the 0xAC status burst (mechanism A); the H6047 SKU (119) reads per-group DIRECT `aa a5 <group>` via Compose4InfoBleIot (mechanism A-direct, proType 0xAA) and does NOT answer `ac 03 03 41 30 a5`." }
+    # kelvin is per-SKU (Support.getColorTemRange, 7.7.02): H6047 (119) = [2200,6500]; H6043/H6042 (196/197) = [2000,9000]
+    # (getColorTemRangeV1); H6039(277)/H6038(288)=[2700,6500], H6048(298)=[2000,9000]. kelvin_range below = H6047 (curated),
+    # NOT a family envelope.
+    # segments: the count depends on WHICH SCREEN reads it. WRITE/addressable = getGoodsType4ColorSegment. READ-BACK on the
+    # old detail screen (goodsType 119/196/197 -> NewDetailAc) = getBulbStringMaxNum, groups of 4 (NewDetailVm.n5);
+    # the newdetail screens (277/288/298) use getColorPieceSize instead. For H6047 both are 10 (3 groups, the last trimmed to
+    # 2 records by SubMode4Color): there are NO phantom read-back segments 10 and 11.
+    specs: { segments: "write/addressable per SKU (getGoodsType4ColorSegment): H6047/H6043/H6042=10, H6039=12, H6038=24, H6048=22 (else-branch=10; this method never returns 5). Read-back pieces on the old detail screen (getBulbStringMaxNum): H6047/H6043 (119/196)=10, H6042 (197)=5; newdetail screens (getColorPieceSize): H6039=12, H6038=24, H6048=22. H6047 therefore reads back the same 10 pieces it writes (getColorPieceSize=12 is not used for it)", kelvin_range: [2200, 6500], scene_versions: [0, 1, 2, 3] }
     encryption: secret_key_pairing
     notify:
       - { sub_type: "0x11", meaning: "wifi connect result" }
       - { sub_type: "0x30", meaning: "H6048 on/off (byte2 left, byte3 right)" }
       - { sub_type: "0x40", meaning: "device status / IC sum" }
     confidence: high
-    sources: ["h6047/ble/Mode.java", "h6047/ble/controller/ComposeLightController.java", "h6047/ble/BleProtocol.java", "h6047/pact/Support.java"]
+    sources: ["h6047/ble/Mode.java", "h6047/ble/controller/ComposeLightController.java", "h6047/ble/BleProtocol.java", "h6047/pact/Support.java", "Govee Home 7.7.02 (re-audited, issue #13): h6047/pact/Model.t (119/196/197 -> detail/NewDetailAc), h6047/pact/Support.java:98-133,186 (getBulbStringMaxNum, getColorPieceSize, getColorTemRange, isGoodsTypeH6047), h6047/detail/NewDetailVm.java (switchTrigger ~1340 -> ControllerSwitch 33 01; D5 ~670 -> [54,left,right]; n5 ~343 read-back walk; A5 ~620 per-bar kelvin; parseIotMsg4Online ~1272 gradual read), h6047/detail/NewDetailVm$connectBleSuc$1 (reads 0x36 and, for 119, 0xAC), h6047/detail/Info4Detail.java:174-186 (aa 05 15 parse strategy), h6047/ble/SubModeColor.java (parse, makeSubModeColor4Kelvin), h6047/ble/controller/ComposeLightHeartController.java, base2light kt/general_controller/ControllerSwitch.java + ControllerGradual4BleWifi.java, base2light pact/newdetail/config/fuc/color/Config.java (G[119] = gradual version 0) + Bytes.java:559-566 (v/w)"]
 
   - id: bulblightv3
     category: bulb
     client_profile: { has_brightness: false, color_scheme: h6006, mode_0d_kind: cct, wire_cipher: runtime }   # no seg read; 0x0d colour+CCT
     models: [H6001, H6002, H6003, H6004, H6005, H6006, H6008, H6009, H600A, H600B, H600C, H600D, H6010, H6011, H6013, H601A, H601B, H601C, H601D, H601E, H601F, H8015, H801A, H801C, H801D, H1401, H14A1, H14C0, H14C1, H14C2, H1501]
     goods_types: [0, 9, 10, 20, 31, 64, 111, 311, 328, 342, 348]   # 328 = H6008 (proven). H6006 = LEGACY bulb handled by the bulblight-v1 pkg (SKU-STRING matched: BulbLightApplication:97, SettingAc:327 — NOT bulblightv3); goodsType = old-bulb 20 cluster (shared H6001/H6005; there is NO dedicated H6006<->goodsType binding anywhere in the app). 0/9/10 = legacy broadcast codes.
+    # H6004 has TWO hardware revisions, split by goodsType (the SKU -> goodsType binding comes from Govee's cloud
+    # product list, not the APK):
+    #   goodsType 10 = Wi-Fi/IoT-only. Package bulblightstringv1/bulblightv1: pact/Support registers goodsTypes {9, 10}
+    #     (H6003 = 9, H6004 = 10), pact/IotSkuItemV2.needBle() = false, pairing is soft-AP (Support.k "Govee_bulb_" SSID,
+    #     192.168.1.1:7200), control is IoT/MQTT only. NOT controllable over BLE; the library does not drive it.
+    #   goodsType 64 = BLE + Wi-Fi (this family): bulblightv3/pact/Support registers pacts (1,1)/(2,1) for 64 and
+    #     bulblightstringv1/bulblight/Support.d gates H6004 beside H6006/H6008/H6009 on goodsType 64. Same 0x0d both-slot
+    #     colour path as H6008 (Config.x[64] -> Config.rv = 2 -> Config.bu); KelvinConfig map 64 -> V2 = [2700, 6500].
+    #   H6003 appears only as goodsType 9 (IoT-only), so it is not BLE-controllable either. The library's H6004 profile
+    #   targets the goodsType-64 revision; a BLE scan is the check (Govee_H6004_* / ihoment_H6004_* with Govee mfg data).
     delivery: feature_split
     connectivity: [ble, wifi, iot]
     protocol: { single_packet: true, multi_dialects: ["0xA3"], mode_command: "0x05" }   # write=0x33 / read=0xAA single; scene/DIY upload=0xA3 (makeSendBytesV1). 0xA1 NOT used as a write dialect in bulblightv3/h6001.
@@ -480,7 +501,7 @@ families:
       - { sub_type: "0x11", meaning: "wifi connect (v3)" }
       - { sub_type: "0x20", meaning: "brightness push (v2)" }
     confidence: high
-    sources: ["bulblightv3/ble/SubModeColor.java", "bulblightv3/pact/Support.java", "h6001/sku/Sku.java", "bulblightv1/iot/Cmd.java (IoT-only v1: H6003/H6004)"]
+    sources: ["bulblightv3/ble/SubModeColor.java", "bulblightv3/pact/Support.java", "h6001/sku/Sku.java", "bulblightstringv1/bulblightv1/pact/Support.java (goodsTypes 9/10 = IoT-only H6003/H6004)", "bulblightstringv1/bulblightv1/pact/IotSkuItemV2.java (goodsType 10, needBle() false)", "bulblightstringv1/bulblight/Support.java:d (H6004 beside H6006/H6008/H6009 on goodsType 64)", "bulblightv3/pact/Support.java (getColorTemRange, getBrightnessRange, getColorPieceSize, is2NewScenesMode)", "base2light/pact/newdetail/config/fuc/color/Config.java (x[64] -> rv = 2)", "base2light/pact/newdetail/config/fuc/KelvinConfig.java (map 64 -> V2)"]
 
   - id: h61d3
     category: rgbic_strip
@@ -510,6 +531,34 @@ families:
       - { sub_type: "0xed", meaning: "video-recognition state" }
     confidence: high
     sources: ["h61d3/ble/Mode.java", "h61d3/ble/BleProtocol.java", "h61d3/ble/controller/*", "h61d3/pact/H61D3Support.java"]
+
+  # H6062 Glide wall light (pact_h6062 / package striplight). The package is shared with H610A (goodsType 80)
+  # and H610B (114), which have their own connect flows (ControllerStrategyConfig.b0 / q0) and are NOT modelled.
+  - id: striplight
+    category: panel
+    client_profile: { has_brightness: true, color_scheme: h60a6, wire_cipher: runtime }
+    models: [H6062]
+    goods_types: [41]
+    delivery: feature_split
+    connectivity: [ble, wifi]
+    protocol: { single_packet: true, multi_dialects: ["0xA3"], mode_command: "0x05" }
+    submodes: { color: "0x15", scene: "0x04", music: "0x13", diy: "0x0a" }
+    pact: { scene_versions: [0, 1, 2, 3], note: "accepted pacts (1,1) (1,2) (2,1) (2,2) (3,1) (4,1) (Support.addSupportPact); one detail screen (AcNewDetail) and one colour builder for every pact, so no pact takes a pre-0x15 path. checkIfSupportBleV3ByH6062 picks the fast-connect broadcast format and supportHighColor4H6062TL adds a same-model group option; neither changes control." }
+    opcodes:
+      - { name: section_count_read, cmd: "0x41", readable: true, payload: "aa 41 -> reply [IC count s16be, sectionNum u8] (ControllerIcSegmentNum, BleProtocol.SINGLE_IC_SEGMENT_NUM = 65; read request is `aa 41` + zeros, BleUtils.p). Opcode 0x41 is on_off_memory elsewhere (shared enum) and `aa 40` is the different IC read of h61d3. MANDATORY connect step: ControllerStrategyConfig.O adds it with isTempTryComm=false, so a timeout fails the whole info read (AbsComposeControllerWithOpResult.onOvertime -> result2Fail). sectionNum is stored as the device's segment count (ControllerStrategyConfig.X -> Info4BleIot.T; VM4Light$connectBleSuc$1 -> Info4BleIotDevice.P0, read back with J()): it is the colour-UI piece count, the mask width and the `aa a5` group count. The IC count is not used for control. Connect read order (O): soft/hard version, Wi-Fi versions + MAC, timers, wake-up, sleep, aa 01, aa 04, aa 41, aa 05." }
+      - { name: color_write, cmd: "0x05", payload: "[0x15, 0x01, R, G, B, 0, 0, 0, 0, 0, mask]: ColorControllerConfig.d -> Config.u().get(0) -> Bytes.h; one frame per distinct colour with that colour's mask, whole-device = one frame with all sectionNum bits set" }
+      - { name: color_temp_write, cmd: "0x05", payload: "[0x15, 0x01, ff ff ff, kelvin u2be, tintR, tintG, tintB, mask]", note: "ColorControllerConfig.b (cmd4ColorWcMaker) / Config.Yt -> Bytes.r type 1; tint = Constant.getTemColorByKelvin(K) (KelvinConfig.c recovers K from a tint within [2000, 9000]); K is a whole 100 K step" }
+      - { name: segment_brightness_write, cmd: "0x05", payload: "[0x15, 0x02, pct, mask]", note: "ColorControllerConfig.m -> Bytes.G" }
+      - { name: segment_mask, cmd: "0x05", payload: "exactly sectionNum bits, bit i = segment i. sectionNum <= 16: 2 bytes little-endian (BleUtils.makeSelectedTwoBytes); above: ceil(n/8) bytes, LSB first, byte j bit i = segment 8j+i (BleUtils.X; color/Bytes.G/b/d/C pick it by `length > 16`); Bytes.C encodes at most 7 bytes. Upper bounds by pact (Support.getBulbStringMaxNum): 19 for (1,x)/(2,x), 28 for (3,1), 33 for (4,1) -> at most 5 bytes" }
+      - { name: per_segment_color_read, cmd: "0xa5", readable: true, payload: "per-group DIRECT read `aa a5 <group 1..ceil(sectionNum/4)>` -> [group, 4 x {brightness,R,G,B}] (VM4Light.l5 makeReadColorPieceInfoControllers, bulbStringMaxNum = Info4BleIot.p() / J(), group size 4; OpInfo4Detail.parseMode via Controller4ColorInfoByGroup). mechanism A-direct, no 0xAC burst" }
+      - { name: mode_read_color, cmd: "0x05", readable: true, payload: "AA 05 15 [gradual (1 = on), kelvin s16be]: default SubMode4Color parse (OpInfo4Detail.parseModeValidBytes); 0x0b / 0x02 / 0x0d take the same parse; this SKU does not override the colour parse" }
+      - { name: scene_activate, cmd: "0x05", payload: "[0x04, code u2le]; cloud scene library, ScenesConfigBean(0, 0, Support.supportScenesOpSet(41) = {0,1,2,3}) -> parseSceneV1 (dialect A)" }
+    specs: { segments: "device-reported (aa 41 sectionNum); upper bound by pact 19 / 28 / 33", kelvin_range: [2000, 9000], brightness_range: [1, 100], brightness_scaling: "raw percent (Support.getBrightnessRange = {1, 100, 0}; no BrightnessConfig entry)", scene_versions: [0, 1, 2, 3] }   # kelvin: KelvinConfig has no goodsType-41 entry -> version 0 [2000, 9000]; 7.7.02 ships no LightCapabilityProvider implementation, so every capability lookup uses the legacy tables.
+    encryption: none   # no 0xB1/0xB2 account-lock (pact V1 uses the plain ConnectDialog; "device lock" is a cloud toggle); wire cipher resolved at runtime from the advert / BGC like every SKU
+    notify:
+      - { sub_type: "0x11", meaning: "wifi connect result" }
+    confidence: medium   # source-derived from the 7.7.02 app; not hardware-verified
+    sources: ["pact_h6062: striplight/newdetail/ControllerIcSegmentNum.java", "striplight/newdetail/ControllerStrategyConfig.java:154-164 (X), 468-540 (O, goodsType 41 connect reads)", "striplight/newdetail/VM4Light$connectBleSuc$1.java:56 (P0)", "striplight/newdetail/VM4Light.java:363-400 (l5, aa a5 walk)", "striplight/newdetail/OpInfo4Detail.java:380-405", "striplight/newdetail/ColorControllerConfig.java", "striplight/newdetail/NewDetailRegister.java:195-215", "striplight/ble/BleProtocol.java:10", "striplight/pact/Support.java:47-49,135-152,426-431", "base2light/ble/controller/AbsComposeControllerWithOpResult.java:287 (onOvertime)", "base2light/kt/ble/AbsController.java (getNextCommBytes -> BleUtils.p)", "base2light/pact/newdetail/config/fuc/color/Config.java (Yt), color/Bytes.java (h, r, G, b, d, C)", "base2light/pact/newdetail/config/fuc/KelvinConfig.java", "base2kt/utils/BleUtils.java (makeSelectedTwoBytes, X)", "base2home/Constant.java (getTemColorByKelvin)"]
 
   # ─────────────────────────── Smart plug (base.apk) ───────────────────────────
   - id: h5080

@@ -571,7 +571,7 @@ segment index = `(group_index − 1) × count + k`. All of these are modelled in
 > RGBIC families that otherwise look identical — only specific goodsTypes (`h6038` family: the `newdetail`
 > VMs at goodsTypes **277/288/298**, e.g. `VM4H6038.java:240` `[41,30,36,a5]`; `h61d3` family: goodsType
 > **263** only, gated by `H61D3Support.f0`). The curated **H6047** (goodsType 119) and **H6641** (goodsType
-> 247) do **not** — they route to `Compose4InfoBleIot` (`Support.isGoodsTypeH6047:177`;
+> 247) do **not** — they route to `Compose4InfoBleIot` (`Support.isGoodsTypeH6047:186` in 7.7.02;
 > `adjustNew/VM4Light.b0:875` → `connectBleSuc`) and read each colour group with a **direct per-group request
 > `AA A5 <group>`** (`Controller4ColorInfoByGroup`, proType `0xAA` via `AbsControllerNoEvent4Single.getProType:153`).
 > The records are identical; only the transport differs (no burst, no `0xAC`). Sending H60A6's
@@ -1360,6 +1360,13 @@ read). Parsed by `OpInfo4Detail.parseModeValidBytes` → `SubMode4Color` (`isCol
 than tracking it optimistically on write. (`base2light/pact/newdetail/OpInfo4Detail.java:744-813`,
 `sub/SubMode4Color.java:55-59`.)
 
+**H6047 (two bars) reads one kelvin per bar.** Its `aa 05 15` reply is
+`[gradual][kelvin left u2be][kelvin right u2be]` (byte 0 == 1 is the gradual flag; 0 = that bar is not
+in CCT mode; left = segments 0-4, right = 5-9), per `h6047/ble/SubModeColor.parse` and the
+`Info4Detail` parse strategy; the app shows a whole-device kelvin only when both bars match. Its
+whole-device power is the global `33 01 <on>` (`NewDetailVm.switchTrigger`); `33 36 <left> <right>` is
+only the per-bar buttons, and `aa 36` replies `[left, right, movie/feast switch]` (device on = either bar on).
+
 > These layouts were verified against the decompiled `SubMode*`/controller classes and reconcile the
 > full command surface of the `govee_ble_local` client (closing review items §B/§C). The scene
 > upload dialects (§4.4) and CCT tint table (§15.3) close the two blocking items (R2, V1); the
@@ -1575,7 +1582,7 @@ How the app maps a device to its protocol/capabilities (decompiled-verified):
   (`ControllerOnlyReadIcSegmentNum` → `{IC count u16, segment}`; `ControllerIcNum` → IC-group list; refresh `0x42`).
   IC-driven families (h61d3/H6641) compute segment count from it (`H61D3Support.e()` → `ceil(IC/d)`, `d`∈{3,4,5}
   by goodsType — **H6641/247 → `d`=5**, `H61D3Support.e()` sets `r0=5` before the 247 branch);
-  static families (H60A6, H6047) ignore it and use the hard-coded `getColorPieceSize`.
+  static families ignore it and use hard-coded per-goodsType counts (H60A6 and the H6047-family newdetail screens: `getColorPieceSize`; the old H6047 detail screen, goodsTypes 119/196/197: `Support.getBulbStringMaxNum`, which is 10 for H6047).
 
 **Implication for a local (no-cloud) client:** derive `goodsType` from the advertisement, then key a compiled
 per-`goodsType` table (exactly as the app does) for mechanism + record layout + static counts; read `0x40` live

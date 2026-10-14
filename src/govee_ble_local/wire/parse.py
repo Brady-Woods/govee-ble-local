@@ -131,6 +131,20 @@ def parse_kelvin(frame: bytes) -> int | None:
     return int(m.rest.kelvin)
 
 
+def parse_bar_kelvin(frame: bytes) -> tuple[int, int] | None:
+    """H6047 ``AA 05 15`` reply: ``(left kelvin, right kelvin)``, 0 = that bar is not in
+    colour-temperature mode, or None if this is not a 0x15 mode reply.
+
+    The H6047 layout is ``[gradual][kelvin left u2be][kelvin right u2be]``
+    (``SubModeColor.parse``; ``Info4Detail`` ``subMode4Color`` parse strategy). The app shows a
+    whole-device kelvin only when both bars match; that rule lives in the Device layer."""
+    m = _mode_read(frame)
+    if m is None or int(m.selector_or_sub_mode) != 0x15:
+        return None
+    right = getattr(m.rest, "kelvin_right", None)
+    return int(m.rest.kelvin), int(right or 0)
+
+
 def parse_mode_color_0d(frame: bytes) -> tuple[int, int, int] | None:
     """AA 05 0D reply read as a bare (r, g, b) triple, or None.
 
@@ -310,6 +324,28 @@ def parse_ic_count(frame: bytes) -> IcCount | None:
     if b is None:
         return None
     return IcCount(ic_count=int(b.ic_count), segment_count=int(b.segment))
+
+
+@dataclass(frozen=True)
+class SectionCount:
+    """AA 41 reply on the H6062 (``striplight`` ``ControllerIcSegmentNum``): the device's IC
+    (lamp-bead) count and its ``sectionNum``. Only ``section_num`` drives control: the app
+    stores it as the device's segment count (``ControllerStrategyConfig.X`` ->
+    ``Info4BleIot.T``; ``VM4Light$connectBleSuc$1`` -> ``Info4BleIotDevice.P0``)."""
+    ic_count: int
+    section_num: int
+
+
+def parse_section_count(frame: bytes) -> SectionCount | None:
+    """AA 41 reply: ``[IC s16be, sectionNum u8]``, i.e. frame bytes 2..4 (``BleUtil.getSignedShort``
+    of the first two, then the third; ``ControllerIcSegmentNum.makeController4Read``).
+
+    Hand-decoded, not via the generated reader: opcode 0x41 is ``on_off_memory`` in the shared
+    command enum and only means this on the ``striplight`` split (the same "shared opcode,
+    per-SKU body" case as :func:`parse_mode_0d`)."""
+    if len(frame) < 5 or frame[0] != 0xAA or frame[1] != 0x41:
+        return None
+    return SectionCount(ic_count=(frame[2] << 8) | frame[3], section_num=frame[4])
 
 
 # ── device info (AA 07 10/11/02) ─────────────────────────────────────────────
