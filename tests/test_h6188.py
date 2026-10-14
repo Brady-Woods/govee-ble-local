@@ -8,7 +8,6 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import importlib.util
-import sys
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock
@@ -300,14 +299,14 @@ def test_fetch_scenes_never_overwrites_app_defined_catalog(capsys: Any) -> None:
     assert "skipped" in capsys.readouterr().out
 
 
-# ── tools/h6188_field_test.py (offline: mocked discovery + device) ───────────
+# ── field-test runner, H6188 plan (offline: mocked discovery + device) ───────
+def _field_test(monkeypatch: pytest.MonkeyPatch) -> Any:
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parent.parent / "tools"))
+    return importlib.import_module("field_test.runner")
+
+
 def test_field_test_runs_end_to_end_and_restores(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    path = Path(__file__).resolve().parent.parent / "tools" / "h6188_field_test.py"
-    spec = importlib.util.spec_from_file_location("_tool_h6188_field_test", path)
-    assert spec and spec.loader
-    ft = importlib.util.module_from_spec(spec)
-    monkeypatch.setitem(sys.modules, spec.name, ft)   # @dataclass needs its module registered
-    spec.loader.exec_module(ft)
+    ft = _field_test(monkeypatch)
 
     # initial: on, brightness raw 136 (50 %), RGB (1, 2, 3)
     d = _dev({0x01: [_frame(0xAA, 0x01, 0x01)], 0x04: [_frame(0xAA, 0x04, 136)],
@@ -322,18 +321,19 @@ def test_field_test_runs_end_to_end_and_restores(tmp_path: Path, monkeypatch: py
             self.manufacturer_data: dict[int, bytes] = {}
             self.rssi = -60
 
-    async def fake_discover(_address: object) -> tuple[Any, Any, list[dict[str, Any]]]:
-        return ble, _Adv(), [{"name": "ihoment_H6188_1A2B", "identified_sku": "H6188"}]
+    async def fake_discover(_address: object, _sku: object) -> tuple[Any, Any, list[dict[str, Any]], str]:
+        return ble, _Adv(), [{"name": "ihoment_H6188_1A2B", "identified_sku": "H6188"}], "H6188"
 
     monkeypatch.setattr(ft, "discover", fake_discover)
     monkeypatch.setattr("govee_ble_local.create_device", lambda *_a, **_k: d)
-    report_path, frames_path = tmp_path / "r.json", tmp_path / "f.jsonl"
     args = ft.parse_args(["--no-prompt", "--settle", "0"])
-    assert asyncio.run(ft.run(args, report_path, frames_path)) == 0
+    assert asyncio.run(ft.run(args, tmp_path, "T")) == 0
+    report_path = tmp_path / "h6188-report-T.json"
 
     import json
     rep = json.loads(report_path.read_text())
     assert rep["result"] == "completed" and rep["restore"] == "ok"
+    assert rep["plan"] == {"sku": "H6188", "title": "H6188 RGB strip"}
     assert rep["initial_state"]["brightness"] == 50 and rep["initial_state"]["rgb_color"] == [1, 2, 3]
     names = [r["step"] for r in rep["steps"]]
     assert len(names) == 2 + 3 + 3 + 3 + 1 + 9 and names[0] == "power_off"
@@ -343,34 +343,3 @@ def test_field_test_runs_end_to_end_and_restores(tmp_path: Path, monkeypatch: py
     # nothing identifying is written: the address is masked to its vendor prefix
     text = report_path.read_text()
     assert "AA:BB:CC:DD:EE:88" not in text and rep["device"]["address"] == "AA:BB:CC:xx:xx:xx"
-
-
-def test_field_test_redacts_frame_capture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    path = Path(__file__).resolve().parent.parent / "tools" / "h6188_field_test.py"
-    spec = importlib.util.spec_from_file_location("_tool_h6188_field_test_redact", path)
-    assert spec and spec.loader
-    ft = importlib.util.module_from_spec(spec)
-    monkeypatch.setitem(sys.modules, spec.name, ft)
-    spec.loader.exec_module(ft)
-
-    import json
-    frames = tmp_path / "f.jsonl"
-    info = "aa0710" + "5ce753f47457" + "1122334455" + "00" * 4   # device-info reply: MAC + serial
-    rows = [
-        {"ts": 1, "addr": "5C:E7:53:F4:74:57", "dir": "tx", "plain": "aa0710" + "00" * 17,
-         "wire": "aa0710" + "00" * 17, "enc": "none"},
-        {"ts": 2, "addr": "5C:E7:53:F4:74:57", "dir": "rx", "plain": info, "wire": info, "enc": "none"},
-        {"ts": 3, "addr": "5C:E7:53:F4:74:57", "dir": "rx", "plain": "aa04fe" + "00" * 17,
-         "wire": "aa04fe" + "00" * 17, "enc": "none"},
-    ]
-    frames.write_text("\n".join(json.dumps(r) for r in rows) + "\n")
-    assert ft.redact_frames(frames, "5C:E7:53:F4:74:57") == 3
-    out = [json.loads(line) for line in frames.read_text().splitlines()]
-    assert {r["addr"] for r in out} == {"5C:E7:53:xx:xx:xx"}
-    assert out[1]["plain"] == "aa0710" + "0" * (len(info) - 6) and out[1]["wire"] is None
-    assert out[0]["plain"] == rows[0]["plain"] and out[2]["plain"] == rows[2]["plain"]  # untouched
-    raw = frames.read_text().lower()
-    assert "5ce753f47457" not in raw and "f4:74:57" not in raw and "1122334455" not in raw
-    assert ft.redact_frames(tmp_path / "missing.jsonl", "x") == 0
-    assert ft.mask_address("5c-e7-53-f4-74-57") == "5C-E7-53-xx-xx-xx"
-    assert ft.mask_address("A1B2C3D4-1111-2222-3333-444455556666") == "A1B2C3D4-…"

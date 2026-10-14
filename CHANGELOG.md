@@ -25,8 +25,12 @@ model, from which the shipped readers are generated).
 - Bundled `scenes/H6188.json`: the fixed `Scenes4H6188` list (activate-only, `33 05 04 <code>`).
   `tools/fetch_scenes.py` skips app-defined catalogs (`APP_DEFINED_SCENE_SKUS`) so a fetch can't
   overwrite them with the cloud library.
-- `tools/h6188_field_test.py`: guided hardware test for an H6188 owner (scan, every capability
-  with read-back and a visual check, restore, JSON report + frame capture to send back).
+- `tools/field_test/`: guided hardware test for someone who owns the device (scan, every capability
+  with read-back and a visual check, restore, JSON report + frame capture to send back). One
+  runner with a test plan per SKU: the SKU is detected from the scanned device (or `--sku`), and each
+  device adds `plans/<sku>.py` calling `register_plan(SkuPlan(...))` without touching the runner.
+  Ships with the H6188 plan. Bluetooth addresses, serials and Wi-Fi MACs stay masked in both
+  output files (see #17).
 
 ### Spec
 - `govee_ble.ksy`: `mode_color_0d_typed` kind 2 (rgblight `[R,G,B, kelvin u2be, tint RGB]` with an
