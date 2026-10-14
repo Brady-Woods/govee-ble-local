@@ -37,6 +37,17 @@ model, from which the shipped readers are generated).
   (`(pact_type, pact_code)` from the advertisement, or `None`) and `build.normalize_kelvin`.
 - `tools/field_test/plans/h6188.py` drops the 2750 K "no tint" diagnostic step: 2750 K is now rounded to
   2800 K like the app, so the step no longer tests anything.
+- Segment masks are no longer capped at 16 bits. `build.mask_width(segments)` follows the app's
+  encoder (`BleUtils.makeSelectedTwoBytes` / `BleUtils.X`, picked by the `length > 16` branch in
+  `color/Bytes`): up to 16 segments a 2-byte little-endian mask (unchanged), above that
+  ceil(n/8) bytes, LSB first (byte j bit i = segment 8j+i). More than 7 bytes (56 segments, the
+  most `Bytes.C` encodes) raises `GoveeBleInvalidValue`. `all_segments_mask` is now exact instead
+  of silently clamping to 16 segments, and raises above 56. `segment_rgb`, `segment_color_temp` and
+  `segment_brightness` take an optional `segments` count that sets the mask width; omitted, they
+  keep the two-byte mask. `color_rgb` / `color_temp` use the width for their `segments` argument.
+  The 0x0b (`h61a8`) frame keeps its fixed two-byte mask. No shipped device changes.
+- Segment indices on a device with more than 16 segments run 0..n-1; up to 16 segments the
+  0..15 range is unchanged.
 
 ### Spec
 - `devices.yaml`: `color_temp_write` opcode for `h60ax`, `h6047`, `h61d3`, `bulblightv3` and
@@ -66,6 +77,10 @@ model, from which the shipped readers are generated).
   device adds `plans/<sku>.py` calling `register_plan(SkuPlan(...))` without touching the runner.
   Ships with the H6188 plan. Bluetooth addresses, serials and Wi-Fi MACs stay masked in both
   output files (see #17).
+- `Device.segment_count` and `Device.set_segment_count()`: a segment count learned at runtime
+  overrides the profile's static `segments` for whole-device masks, segment indices and the
+  `aa a5` read-back walk (a profile's explicit `color_readback_segments` still wins for the walk).
+  `None` reverts to the profile value. Nothing sets it yet; H6062 and H6061 will.
 
 ### Spec
 - `govee_ble.ksy`: `mode_color_0d_typed` kind 2 (rgblight `[R,G,B, kelvin u2be, tint RGB]` with an

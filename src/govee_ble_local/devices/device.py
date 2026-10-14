@@ -42,7 +42,6 @@ def _local_tz(unix_ts: int) -> tuple[int, int]:
     return sign * (off // 3600), sign * ((off % 3600) // 60)
 
 
-_MAX_SEGMENT_INDEX = 16   # the segment mask is a u16
 
 
 def _unsupported_readback(value: Never) -> Never:
@@ -51,12 +50,23 @@ def _unsupported_readback(value: Never) -> Never:
     raise GoveeBleError(f"unsupported readback {value!r}")
 
 
-def _mask(indices: list[int] | tuple[int, ...]) -> int:
+def _check_segment_count(count: int) -> None:
+    if isinstance(count, bool) or not isinstance(count, int) or not 1 <= count <= build.MAX_MASK_SEGMENTS:
+        raise GoveeBleInvalidValue(
+            f"segment count must be an integer in 1..{build.MAX_MASK_SEGMENTS}, got {count!r}")
+
+
+def _mask(indices: list[int] | tuple[int, ...], segments: int = 0) -> int:
+    """Segment-index list -> mask bits. ``segments`` is the device's segment count: up to 16
+    the whole 2-byte mask is addressable (so a 10-segment device still accepts 0..15, as it
+    always has); above 16 the app's mask is exactly ``segments`` bits, so indices must be
+    below it."""
+    limit = max(build.LEGACY_MASK_SEGMENTS, segments)
     m = 0
     for i in indices:
-        if isinstance(i, bool) or not isinstance(i, int) or not 0 <= i < _MAX_SEGMENT_INDEX:
+        if isinstance(i, bool) or not isinstance(i, int) or not 0 <= i < limit:
             raise GoveeBleInvalidValue(
-                f"segment index must be an integer in 0..{_MAX_SEGMENT_INDEX - 1}, got {i!r}")
+                f"segment index must be an integer in 0..{limit - 1}, got {i!r}")
         m |= 1 << i
     return m
 
@@ -89,6 +99,7 @@ class Device:
         self._sku = (sku or profile.skus[0]).upper()
         self._secret = self._checked_secret(secret)
         self._state = DeviceState(optimistic=True)
+        self._segment_count: int | None = None   # runtime-reported; overrides profile.segments
         self._device_info_read = False   # device-info (mac/hw/fw/sn) read once, lazily
         self._polled_once = False        # for the one-time INFO "first poll" line
         # Mutation sequence (BUG-4): bumped by every state-mutating setter when it applies its
@@ -168,6 +179,23 @@ class Device:
     def zones(self) -> tuple[Zone, ...]:
         """The profile's independently-switchable zones (empty for unzoned devices)."""
         return self.profile.zones
+
+    @property
+    def segment_count(self) -> int:
+        """Segments this device addresses: the count it reported at runtime
+        (:meth:`set_segment_count`) if any, else the profile's static ``segments``. Sets the
+        whole-device mask and its byte width (2 bytes up to 16 segments, ceil(n/8) above)."""
+        return self._segment_count if self._segment_count is not None else self.profile.segments
+
+    def set_segment_count(self, count: int | None) -> None:
+        """Override the profile's segment count with one the device reported (e.g. a
+        runtime read of its segment/section count); ``None`` reverts to the profile value.
+
+        Raises GoveeBleInvalidValue unless ``count`` is 1..56 (the widest mask, 7 bytes, the
+        app encodes). Does not touch the connection or any state."""
+        if count is not None:
+            _check_segment_count(count)
+        self._segment_count = count
 
     @property
     def min_kelvin(self) -> int | None:
@@ -261,13 +289,14 @@ class Device:
         app uses a different multi-packet colour path that is not modelled, so the single
         all-segments frame is sent."""
         profile = self.profile
+        n = self.segment_count
         gate = profile.cct_per_zone_min_pact
         if gate is not None and (
                 self._pact is None or (self._pact[0] == gate[0] and self._pact[1] >= gate[1])):
             return [
-                build.segment_color_temp(_mask(z.segments), kelvin, profile.color_scheme)
+                build.segment_color_temp(_mask(z.segments, n), kelvin, profile.color_scheme, n)
                 for z in profile.zones if z.segments]
-        return [build.color_temp(kelvin, profile.color_scheme, profile.segments)]
+        return [build.color_temp(kelvin, profile.color_scheme, n)]
 
     def update_ble_device(self, ble_device: BLEDevice) -> None:
         """Swap in a fresh BLEDevice (e.g. a new scanner path) for later connects."""
@@ -398,7 +427,7 @@ class Device:
             frames.append(self._brightness_frame(brightness))
         if rgb is not None:
             self._require(Capability.RGB)
-            frames.append(build.color_rgb(*rgb, self.profile.color_scheme, self.profile.segments))
+            frames.append(build.color_rgb(*rgb, self.profile.color_scheme, self.segment_count))
         elif kelvin is not None:
             self._require(Capability.COLOR_TEMP)
             kelvin = self._check_kelvin(kelvin)
@@ -443,7 +472,7 @@ class Device:
         Raises GoveeBleNotSupported without RGB; GoveeBleInvalidValue for out-of-range channels."""
         self._require(Capability.RGB)
         r, g, b = rgb
-        await self._conn.send(build.color_rgb(r, g, b, self.profile.color_scheme, self.profile.segments))
+        await self._conn.send(build.color_rgb(r, g, b, self.profile.color_scheme, self.segment_count))
         self._mutated()
         self._state.rgb_color = (r, g, b)
         self._state.color_temp_kelvin = None
@@ -472,12 +501,14 @@ class Device:
         self._notify()
 
     async def set_segment_rgb(self, indices: list[int], rgb: tuple[int, int, int]) -> None:
-        """Set the colour of selected segments (indices 0..15).
+        """Set the colour of selected segments (indices 0..15, or up to the device's
+        :attr:`segment_count` when that is above 16).
 
         Raises GoveeBleNotSupported without SEGMENTS; GoveeBleInvalidValue for a bad index."""
         self._require(Capability.SEGMENTS)
         r, g, b = rgb
-        await self._conn.send(build.segment_rgb(_mask(indices), r, g, b, self.profile.color_scheme))
+        n = self.segment_count
+        await self._conn.send(build.segment_rgb(_mask(indices, n), r, g, b, self.profile.color_scheme, n))
         self._mutated()
         self._update_segments(indices, rgb=(r, g, b))
         self._mark_authoritative()
@@ -488,8 +519,9 @@ class Device:
         schemes without per-segment brightness (e.g. H61A8)."""
         self._require(Capability.SEGMENTS)
         pct = max(0, min(100, pct))
+        n = self.segment_count
         frame = self._build_or_unsupported(
-            build.segment_brightness, _mask(indices), pct, self.profile.color_scheme)
+            build.segment_brightness, _mask(indices, n), pct, self.profile.color_scheme, n)
         await self._conn.send(frame)
         self._mutated()
         self._update_segments(indices, brightness=pct)
@@ -533,8 +565,9 @@ class Device:
         self._require(Capability.SEGMENTS)
         self._require(Capability.COLOR_TEMP)
         kelvin = self._check_kelvin(kelvin)
+        n = self.segment_count
         frame = self._build_or_unsupported(
-            build.segment_color_temp, _mask(indices), kelvin, self.profile.color_scheme)
+            build.segment_color_temp, _mask(indices, n), kelvin, self.profile.color_scheme, n)
         await self._conn.send(frame)
         self._mutated()   # device colour changed (no optimistic field): invalidate in-flight reads
         self._mark_authoritative()
@@ -616,7 +649,8 @@ class Device:
         if not z.segments:
             raise GoveeBleNotSupported(f"{self._sku}: zone {name!r} has no segments")
         r, g, b = rgb
-        await self._conn.send(build.segment_rgb(_mask(z.segments), r, g, b, self.profile.color_scheme))
+        n = self.segment_count
+        await self._conn.send(build.segment_rgb(_mask(z.segments, n), r, g, b, self.profile.color_scheme, n))
         self._mutated()
         self._update_segments(z.segments, rgb=(r, g, b))
         self._mark_authoritative()
@@ -631,8 +665,9 @@ class Device:
         z = self._zone(name)
         if not z.segments:
             raise GoveeBleNotSupported(f"{self._sku}: zone {name!r} has no segments")
+        n = self.segment_count
         frame = self._build_or_unsupported(
-            build.segment_color_temp, _mask(z.segments), kelvin, self.profile.color_scheme)
+            build.segment_color_temp, _mask(z.segments, n), kelvin, self.profile.color_scheme, n)
         await self._conn.send(frame)
         self._mutated()   # device colour changed (no optimistic field): invalidate in-flight reads
         self._mark_authoritative()
@@ -816,7 +851,7 @@ class Device:
         (Controller4ColorInfoByGroup, a different group size) via `_read_mechanism_a_direct`;
         the two only happen to share the wire opcode (0xA5), not the reply layout."""
         per_batch = self.profile.color_readback_per_batch or 3
-        seg_count = self.profile.color_readback_segments or self.profile.segments
+        seg_count = self.profile.color_readback_segments or self.segment_count
         batch_count = build.ceil_div(seg_count, per_batch)
         batches: list[tuple[int, list[tuple[int | None, int, int, int]]]] = []
         mseq = self._mutation_seq
@@ -852,7 +887,7 @@ class Device:
                 return
             total, group_count = ic.ic_count, ic.segment_count
         else:
-            total = self.profile.color_readback_segments or self.profile.segments
+            total = self.profile.color_readback_segments or self.segment_count
             group_count = build.ceil_div(total, group_size)
 
         groups: list[tuple[int, list[tuple[int, int, int, int]]]] = []
