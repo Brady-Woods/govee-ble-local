@@ -64,13 +64,15 @@ model, from which the shipped readers are generated).
 ### Added
 - **H6004** (BLE bulb, `bulblightv3` split, goodsType 64; #14): a profile-only addition that behaves
   like its H6008 sibling: power, percent brightness, RGB, colour temperature (2700-6500 K, the app's
-  both-slot 0x0d frame with the Kelvin tint, 100 K steps) and polled read-back. No scenes yet
-  (`scene_versions={1}` is recorded, but the app's scene library is cloud data and no catalog is
-  bundled). Plaintext, no account lock. Modeled from the decompiled
+  both-slot 0x0d frame with the Kelvin tint, 100 K steps), the cloud scene library (63 scenes,
+  type-1 RGB upload; `scene_versions={0, 1}` per `ScenesDelegateRegister` / `Support4BulbLightV3.g`)
+  and polled read-back. Not implemented yet: DIY, the phone-microphone music mode and the timers
+  (4 timers, wake-up, sleep). Plaintext, no account lock. Modeled from the decompiled
   Govee Home 7.7.02 app (`Config.x[64]` -> `Config.bu` -> `Bytes.p`, `KelvinConfig` map 64 -> V2,
   `bulblightv3/pact/Support`); not hardware-verified. H6004 has a second, Wi-Fi-only hardware
   revision (goodsType 10) with no BLE path; the library can only drive the goodsType-64 one.
-  `tools/field_test/plans/h6004.py` adds its field-test plan.
+  `tools/field_test/plans/h6004.py` adds its field-test plan, and `scenes/H6004.json` is the bundled
+  catalog (`tools/fetch_scenes.py`).
 - **H6188** (legacy RGB strip, `rgblight` split): power, brightness, RGB, colour temperature
   (2000-9000 K), the app's nine built-in scenes, and polled read-back. Modeled from the decompiled
   Govee Home 7.7.02 app; not hardware-verified. Its siblings H6085/H6086/H6089 are Wi-Fi-only

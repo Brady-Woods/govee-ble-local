@@ -170,15 +170,16 @@ PROFILES: tuple[DeviceProfile, ...] = (
     #    (the 20..254 scaling is the legacy h6001 path; H6004 is not in h6001/sku/Sku).
     #  - read-back: polled aa 01 / aa 04 / aa 05; the 0x0d report is [r,g,b, kelvin u2be, tint RGB];
     #    no per-segment read (Support.getColorPieceSize = 0).
-    #  - scenes: Support.is2NewScenesMode -> ScenesOp.parseScene(.., {1}), hence scene_versions={1}.
-    #    The app's scenes come from Govee's cloud library, which is not decompiled here, so no
-    #    catalog is bundled and SCENES is not offered (set_scene / scene_names unavailable); the
-    #    polled 0x05 report still reads an active scene code back.
+    #  - scenes: the cloud scene library (light-effect-libraries, the app's EffectAc), applied with
+    #    the version array {0, 1} that ScenesDelegateRegister gives goodsType 64
+    #    (Support4BulbLightV3.g; bulblightv3 Support.supportScenesOp(64) is the same), i.e. dialect A,
+    #    ScenesOp.parseSceneV1: type-1 RGB scenes upload with comm byte 0x01, type 0 activate only
+    #    (the IoT/group path, Support.is2NewScenesMode, uses {1}: the same upload set).
     #  - no account-lock; plaintext by default (cipher is resolved from the advertisement).
     DeviceProfile(
-        skus=("H6004",), capabilities=_LIGHT - {_C.SCENES}, color_scheme="h6006",
+        skus=("H6004",), capabilities=_LIGHT, color_scheme="h6006",
         encryption=Encryption.NONE, min_kelvin=2700, max_kelvin=6500,
-        scene_versions=frozenset({1}), readback="polled",
+        scene_versions=frozenset({0, 1}), readback="polled",
     ),
     # H6052 — table lamp: plaintext, 0x0d scheme; type-5 scenes via dialect B_h6052 (commByte 9).
     # Colour read-back comes from the polled 0x05 report like every 0x0d bulb: [R,G,B,kelvin u2be]

@@ -1,5 +1,6 @@
 """H6004 (BLE revision, goodsType 64, ``bulblightv3`` split): a profile-only addition. It reuses the
-0x0d both-slot CCT frame of H6008 (``h6006`` scheme), percent brightness and polled read-back.
+0x0d both-slot CCT frame of H6008 (``h6006`` scheme), percent brightness, polled read-back and the
+type-1 RGB scene upload.
 
 Golden frames are derived from the decompiled Govee Home 7.7.02 app (see the H6004 comment in
 profile.py and the ``bulblightv3`` family in spec/devices.yaml), never from the library:
@@ -8,8 +9,9 @@ profile.py and the ``bulblightv3`` family in spec/devices.yaml), never from the 
   CCT = ``Bytes.p`` = ``0d <tint> <K u2be> <tint>``, tint = ``Constant.getTemColorByKelvin``.
 * kelvin ``KelvinConfig`` map 64 -> ``V2`` = [2700, 6500] (``bulblightv3/pact/Support.getColorTemRange``).
 * brightness ``Support.getBrightnessRange`` = {1, 100, 0}: a plain percent byte.
-* scene versions ``Support.is2NewScenesMode`` -> ``ScenesOp.parseScene(.., {1})`` (profile ``scene_versions``;
-  no scene catalog is bundled for H6004).
+* scenes: cloud library applied with version array {0, 1} (``ScenesDelegateRegister`` ->
+  ``Support4BulbLightV3.g(64)``; the IoT path ``Support.is2NewScenesMode`` uses {1}): type-1 RGB uploads
+  with comm byte 0x01 (``ScenesOp.parseSceneV1``), type 0 activates only.
 
 Tints: 2700 K ffae54, 2800 K ffb25b, 4000 K ffd5a1, 6500 K fff9fb. Not hardware-verified.
 """
@@ -30,6 +32,7 @@ from govee_ble_local.devices.device import Device, make_device
 from govee_ble_local.devices.profile import profile_for, supported_skus
 from govee_ble_local.exceptions import GoveeBleNotSupported
 from govee_ble_local.identify import identify, sku_from_local_name
+from govee_ble_local.scenes import load_scenes
 from govee_ble_local.wire import build as b
 
 TOOLS = Path(__file__).resolve().parent.parent / "tools"
@@ -85,14 +88,13 @@ def _unacked(d: Device) -> list[bytes]:
 def test_profile() -> None:
     p = profile_for("h6004")
     assert p is not None
-    # no SCENES: the app's scene library is cloud data and no H6004 catalog is bundled
     assert p.capabilities == {Capability.POWER, Capability.BRIGHTNESS, Capability.RGB,
-                              Capability.COLOR_TEMP}
+                              Capability.COLOR_TEMP, Capability.SCENES}
     assert p.color_scheme == "h6006" and p.segments == 0 and p.zones == ()
     assert (p.min_kelvin, p.max_kelvin) == (2700, 6500)         # KelvinConfig map 64 -> V2
     assert p.brightness_range is None and p.brightness_max == 100   # percent, no raw scaling
     assert p.encryption is Encryption.NONE and not p.requires_secret
-    assert p.readback == "polled" and p.scene_versions == frozenset({1})
+    assert p.readback == "polled" and p.scene_versions == frozenset({0, 1})
     assert p.scene_dialect == "A" and p.color_readback == ""
     assert "H6004" in supported_skus()
 
@@ -100,8 +102,9 @@ def test_profile() -> None:
 def test_same_wire_behaviour_as_the_h6008_sibling() -> None:
     h6004, h6008 = profile_for("H6004"), profile_for("H6008")
     assert h6004 is not None and h6008 is not None
-    assert h6004 == dataclasses.replace(h6008, skus=("H6004",), capabilities=h6004.capabilities)
-    assert h6004.capabilities | {Capability.SCENES} == h6008.capabilities
+    # scenes: the control screen's version array {0, 1} (Support4BulbLightV3.g) vs H6008's {1};
+    # both upload the same scene types (parseSceneV1 has no version-0 branch)
+    assert h6004 == dataclasses.replace(h6008, skus=("H6004",), scene_versions=frozenset({0, 1}))
 
 
 @pytest.mark.parametrize("sku", ["H6003", "H6085"])
@@ -219,6 +222,32 @@ def test_update_reads_scene() -> None:
     assert _poll(_frame(0xAA, 0x05, 0x04, 0x97, 0x04)).state.scene_code == 1175
 
 
+# ── scenes (cloud library, version array {0, 1}) ──────────────────────────────────────
+def test_scene_catalog_shipped_and_types_fit_version_1() -> None:
+    cat = load_scenes("H6004")
+    assert len(cat) == 63
+    # only static (0) and rgb (1) scenes: every uploadable one is covered by the version array
+    assert {s.scene_type for s in cat.values()} == {0, 1}
+
+
+def test_type_1_scene_uploads_with_comm_byte_1_then_activates() -> None:
+    d = _dev()
+    asyncio.run(d.set_scene_by_name("Rainbow"))
+    up = _unacked(d)
+    # a3, seq 0, [01 marker, packet count, comm byte 01 (type-1 RGB, parseSceneV1 version 1)]
+    assert up and up[0][:5].hex() == "a300010201"
+    assert [f[:5].hex() for f in _sent(d)] == ["3305049704"]
+    assert d.state.scene_code == 1175
+
+
+def test_static_scene_is_activate_only() -> None:
+    d = _dev()
+    asyncio.run(d.set_scene_by_name("Reading"))
+    assert _unacked(d) == []
+    assert [f[:5].hex() for f in _sent(d)] == ["3305040d00"]
+    assert d.state.scene_code == 13
+
+
 # ── field-test plan ──────────────────────────────────────────────────────────
 def _plans(monkeypatch: pytest.MonkeyPatch) -> Any:
     monkeypatch.syspath_prepend(str(TOOLS))
@@ -229,11 +258,13 @@ def test_field_test_plan_steps(monkeypatch: pytest.MonkeyPatch) -> None:
     ft = _plans(monkeypatch)
     plan = ft.PLANS["H6004"]
     d = _dev()
-    steps = plan.build_steps(ft.PlanContext(d, "H6004", {}))
+    codes = {n: s.code for n, s in load_scenes("H6004").items()}
+    steps = plan.build_steps(ft.PlanContext(d, "H6004", codes))
     assert [s.name for s in steps] == [
         "power_off", "power_on", "brightness_100", "brightness_1", "brightness_50",
         "rgb_red", "rgb_green", "rgb_blue",
         "color_temp_2700", "color_temp_4000", "color_temp_6500", "color_temp_2750",
+        "scene_Reading", "scene_Rainbow", "scene_Fire",
     ]
 
     # drive every action, then check the expectation against the state the library now reports
