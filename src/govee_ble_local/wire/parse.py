@@ -312,6 +312,28 @@ def parse_ic_count(frame: bytes) -> IcCount | None:
     return IcCount(ic_count=int(b.ic_count), segment_count=int(b.segment))
 
 
+@dataclass(frozen=True)
+class SectionCount:
+    """AA 41 reply on the H6062 (``striplight`` ``ControllerIcSegmentNum``): the device's IC
+    (lamp-bead) count and its ``sectionNum``. Only ``section_num`` drives control: the app
+    stores it as the device's segment count (``ControllerStrategyConfig.X`` ->
+    ``Info4BleIot.T``; ``VM4Light$connectBleSuc$1`` -> ``Info4BleIotDevice.P0``)."""
+    ic_count: int
+    section_num: int
+
+
+def parse_section_count(frame: bytes) -> SectionCount | None:
+    """AA 41 reply: ``[IC s16be, sectionNum u8]``, i.e. frame bytes 2..4 (``BleUtil.getSignedShort``
+    of the first two, then the third; ``ControllerIcSegmentNum.makeController4Read``).
+
+    Hand-decoded, not via the generated reader: opcode 0x41 is ``on_off_memory`` in the shared
+    command enum and only means this on the ``striplight`` split (the same "shared opcode,
+    per-SKU body" case as :func:`parse_mode_0d`)."""
+    if len(frame) < 5 or frame[0] != 0xAA or frame[1] != 0x41:
+        return None
+    return SectionCount(ic_count=(frame[2] << 8) | frame[3], section_num=frame[4])
+
+
 # ── device info (AA 07 10/11/02) ─────────────────────────────────────────────
 def _version(v: Any) -> str | None:
     """Govee 3-byte version -> "X.YY.ZZ", or None for the 0.00.00 zero sentinel (a

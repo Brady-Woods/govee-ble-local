@@ -511,6 +511,34 @@ families:
     confidence: high
     sources: ["h61d3/ble/Mode.java", "h61d3/ble/BleProtocol.java", "h61d3/ble/controller/*", "h61d3/pact/H61D3Support.java"]
 
+  # H6062 Glide wall light (pact_h6062 / package striplight). The package is shared with H610A (goodsType 80)
+  # and H610B (114), which have their own connect flows (ControllerStrategyConfig.b0 / q0) and are NOT modelled.
+  - id: striplight
+    category: panel
+    client_profile: { has_brightness: true, color_scheme: h60a6, wire_cipher: runtime }
+    models: [H6062]
+    goods_types: [41]
+    delivery: feature_split
+    connectivity: [ble, wifi]
+    protocol: { single_packet: true, multi_dialects: ["0xA3"], mode_command: "0x05" }
+    submodes: { color: "0x15", scene: "0x04", music: "0x13", diy: "0x0a" }
+    pact: { scene_versions: [0, 1, 2, 3], note: "accepted pacts (1,1) (1,2) (2,1) (2,2) (3,1) (4,1) (Support.addSupportPact); one detail screen (AcNewDetail) and one colour builder for every pact, so no pact takes a pre-0x15 path. checkIfSupportBleV3ByH6062 picks the fast-connect broadcast format and supportHighColor4H6062TL adds a same-model group option; neither changes control." }
+    opcodes:
+      - { name: section_count_read, cmd: "0x41", readable: true, payload: "aa 41 -> reply [IC count s16be, sectionNum u8] (ControllerIcSegmentNum, BleProtocol.SINGLE_IC_SEGMENT_NUM = 65; read request is `aa 41` + zeros, BleUtils.p). Opcode 0x41 is on_off_memory elsewhere (shared enum) and `aa 40` is the different IC read of h61d3. MANDATORY connect step: ControllerStrategyConfig.O adds it with isTempTryComm=false, so a timeout fails the whole info read (AbsComposeControllerWithOpResult.onOvertime -> result2Fail). sectionNum is stored as the device's segment count (ControllerStrategyConfig.X -> Info4BleIot.T; VM4Light$connectBleSuc$1 -> Info4BleIotDevice.P0, read back with J()): it is the colour-UI piece count, the mask width and the `aa a5` group count. The IC count is not used for control. Connect read order (O): soft/hard version, Wi-Fi versions + MAC, timers, wake-up, sleep, aa 01, aa 04, aa 41, aa 05." }
+      - { name: color_write, cmd: "0x05", payload: "[0x15, 0x01, R, G, B, 0, 0, 0, 0, 0, mask]: ColorControllerConfig.d -> Config.u().get(0) -> Bytes.h; one frame per distinct colour with that colour's mask, whole-device = one frame with all sectionNum bits set" }
+      - { name: color_temp_write, cmd: "0x05", payload: "[0x15, 0x01, ff ff ff, kelvin u2be, tintR, tintG, tintB, mask]", note: "ColorControllerConfig.b (cmd4ColorWcMaker) / Config.Yt -> Bytes.r type 1; tint = Constant.getTemColorByKelvin(K) (KelvinConfig.c recovers K from a tint within [2000, 9000]); K is a whole 100 K step" }
+      - { name: segment_brightness_write, cmd: "0x05", payload: "[0x15, 0x02, pct, mask]", note: "ColorControllerConfig.m -> Bytes.G" }
+      - { name: segment_mask, cmd: "0x05", payload: "exactly sectionNum bits, bit i = segment i. sectionNum <= 16: 2 bytes little-endian (BleUtils.makeSelectedTwoBytes); above: ceil(n/8) bytes, LSB first, byte j bit i = segment 8j+i (BleUtils.X; color/Bytes.G/b/d/C pick it by `length > 16`); Bytes.C encodes at most 7 bytes. Upper bounds by pact (Support.getBulbStringMaxNum): 19 for (1,x)/(2,x), 28 for (3,1), 33 for (4,1) -> at most 5 bytes" }
+      - { name: per_segment_color_read, cmd: "0xa5", readable: true, payload: "per-group DIRECT read `aa a5 <group 1..ceil(sectionNum/4)>` -> [group, 4 x {brightness,R,G,B}] (VM4Light.l5 makeReadColorPieceInfoControllers, bulbStringMaxNum = Info4BleIot.p() / J(), group size 4; OpInfo4Detail.parseMode via Controller4ColorInfoByGroup). mechanism A-direct, no 0xAC burst" }
+      - { name: mode_read_color, cmd: "0x05", readable: true, payload: "AA 05 15 [gradual (1 = on), kelvin s16be]: default SubMode4Color parse (OpInfo4Detail.parseModeValidBytes); 0x0b / 0x02 / 0x0d take the same parse; this SKU does not override the colour parse" }
+      - { name: scene_activate, cmd: "0x05", payload: "[0x04, code u2le]; cloud scene library, ScenesConfigBean(0, 0, Support.supportScenesOpSet(41) = {0,1,2,3}) -> parseSceneV1 (dialect A)" }
+    specs: { segments: "device-reported (aa 41 sectionNum); upper bound by pact 19 / 28 / 33", kelvin_range: [2000, 9000], brightness_range: [1, 100], brightness_scaling: "raw percent (Support.getBrightnessRange = {1, 100, 0}; no BrightnessConfig entry)", scene_versions: [0, 1, 2, 3] }   # kelvin: KelvinConfig has no goodsType-41 entry -> version 0 [2000, 9000]; 7.7.02 ships no LightCapabilityProvider implementation, so every capability lookup uses the legacy tables.
+    encryption: none   # no 0xB1/0xB2 account-lock (pact V1 uses the plain ConnectDialog; "device lock" is a cloud toggle); wire cipher resolved at runtime from the advert / BGC like every SKU
+    notify:
+      - { sub_type: "0x11", meaning: "wifi connect result" }
+    confidence: medium   # source-derived from the 7.7.02 app; not hardware-verified
+    sources: ["pact_h6062: striplight/newdetail/ControllerIcSegmentNum.java", "striplight/newdetail/ControllerStrategyConfig.java:154-164 (X), 468-540 (O, goodsType 41 connect reads)", "striplight/newdetail/VM4Light$connectBleSuc$1.java:56 (P0)", "striplight/newdetail/VM4Light.java:363-400 (l5, aa a5 walk)", "striplight/newdetail/OpInfo4Detail.java:380-405", "striplight/newdetail/ColorControllerConfig.java", "striplight/newdetail/NewDetailRegister.java:195-215", "striplight/ble/BleProtocol.java:10", "striplight/pact/Support.java:47-49,135-152,426-431", "base2light/ble/controller/AbsComposeControllerWithOpResult.java:287 (onOvertime)", "base2light/kt/ble/AbsController.java (getNextCommBytes -> BleUtils.p)", "base2light/pact/newdetail/config/fuc/color/Config.java (Yt), color/Bytes.java (h, r, G, b, d, C)", "base2light/pact/newdetail/config/fuc/KelvinConfig.java", "base2kt/utils/BleUtils.java (makeSelectedTwoBytes, X)", "base2home/Constant.java (getTemColorByKelvin)"]
+
   # ─────────────────────────── Smart plug (base.apk) ───────────────────────────
   - id: h5080
     category: plug

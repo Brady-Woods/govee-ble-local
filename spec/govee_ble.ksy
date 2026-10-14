@@ -86,7 +86,7 @@ enums:
     0x34: swap_light
     0x36: compose_light_switch
     0x40: ic_num
-    0x41: on_off_memory
+    0x41: on_off_memory    # ALSO H6062 (striplight) `aa 41` section-count read: reply [IC s16be, sectionNum u8] (ControllerIcSegmentNum); hand-decoded in wire/parse.py parse_section_count, not modelled as a reply type here
     0x44: calibration
     0x46: check_ic
     0xa2: bulb_string_color_read
