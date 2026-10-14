@@ -40,7 +40,9 @@ class DeviceProfile:
     max_kelvin: int | None = None
     requires_secret: bool = False
     relay: bool = False
-    bar_switch: bool = False          # H6047: both bars in one 33 36 frame
+    # H6047: both bars in one 33 36 frame (per-bar buttons; whole-device power is 33 01), read via
+    # aa 36, and the aa 05 15 reply carries one kelvin per bar.
+    bar_switch: bool = False
     # Zoned fixture whose global 33 01 switch drives every zone (live-verified on H60A6
     # 2026-10-12: off clears both zones; on lights both even if each zone was off), so
     # whole-fixture power is ONE frame instead of one per zone.
@@ -61,8 +63,9 @@ class DeviceProfile:
     color_readback: ColorReadBack = ""
     color_readback_per_batch: int = 3   # group size per reply (mechanism_b V2=3, V1=4; mechanism_a_direct=4)
     # Static read-back piece count, when it differs from the WRITE/addressable `segments` count
-    # (both per-SKU facts from devices.yaml — e.g. H6047: write=10 getGoodsType4ColorSegment,
-    # read=12 getColorPieceSize). None -> falls back to `segments`. Ignored when
+    # (a per-SKU fact from devices.yaml; the newdetail screens read getColorPieceSize pieces, while
+    # H6047's old detail screen reads getBulbStringMaxNum = the 10 write segments, so it leaves this
+    # None). None -> falls back to `segments`. Ignored when
     # `color_readback_live_ic` is True (the live 0x40 read supplies the count instead).
     color_readback_segments: int | None = None
     # mechanism_a_direct only: read the live 0x40 IC count first and use the device's OWN
@@ -118,14 +121,24 @@ PROFILES: tuple[DeviceProfile, ...] = (
         # frame then ring frame when pact >= (1, 3) (ControllerBuild.j, Support.supportPartTem).
         cct_per_zone_min_pact=(1, 3),
     ),
-    # H6047 — bar light: plaintext, two bars (combined 33 36), 10 segments, dialect-A scenes.
-    # Source-confirmed: H6047 (goodsType 119) does not dispatch the 0xAC status burst (that is
-    # gated to the h6038-family newdetail SKUs); `ac 03 03 41 30 a5` returns zero frames for it
-    # (confirmed live). Per-segment colour is read with direct per-group requests
-    # (mechanism_a_direct: `aa a5 <group>`, Controller4ColorInfoByGroup), group size 4
-    # (devices.yaml). Read-back piece count is getColorPieceSize = 12, distinct from the
-    # write/addressable count of 10. `polled` covers power/brightness/scene. Not yet
-    # live-verified against hardware.
+    # H6047 — bar light: plaintext, two bars (33 36 per bar, 33 01 whole device), 10 segments,
+    # dialect-A scenes. Modeled from Govee Home 7.7.02; not yet live-verified (no hardware).
+    #  - goodsType 119 uses the OLD detail screen (h6047/pact/Model.t -> detail/NewDetailAc), which
+    #    does not dispatch the 0xAC status burst (that is the h6038-family newdetail SKUs);
+    #    `ac 03 03 41 30 a5` returns zero frames for it (observed on hardware, CHANGELOG 1.0.1).
+    #  - per-segment colour: direct per-group requests (mechanism_a_direct: `aa a5 <group>`,
+    #    Controller4ColorInfoByGroup), group size 4. NewDetailVm.n5 walks
+    #    Support.getBulbStringMaxNum(119) = 10 pieces = 3 groups and SubMode4Color trims the last
+    #    group to 2 records, so read-back is the same 10 segments as the write
+    #    (getColorPieceSize = 12 is only used by the newdetail screens 277/288/298): no
+    #    `color_readback_segments`, no phantom segments 10 and 11.
+    #  - power: the main switch sends 33 01 <on> (NewDetailVm.switchTrigger -> ControllerSwitch);
+    #    33 36 <left> <right> only for the per-bar buttons (NewDetailVm.D5). The app shows the device
+    #    on when either bar is on (aa 36 heartbeat).
+    #  - CCT: `15 01 ff ff ff <K> <tint> <mask>`; aa 05 15 reads back [gradual][kelvin left u2be]
+    #    [kelvin right u2be] (SubModeColor.parse), so each bar has its own kelvin.
+    #  - gradual: read on connect (ControllerGradual4BleWifi) and written 33 a3 <on> by the colour
+    #    screen (ColorModeControllerConfig.p -> Config.G[119] = version 0 -> Bytes.w).
     DeviceProfile(
         skus=("H6047",), capabilities=_LIGHT | {_C.SEGMENTS},
         color_scheme="h60a6", encryption=Encryption.NONE, segments=10,
@@ -133,7 +146,7 @@ PROFILES: tuple[DeviceProfile, ...] = (
                Zone("right", power_index=1, segments=tuple(range(5, 10)))),
         scene_versions=frozenset({0, 1, 2, 3}), bar_switch=True,
         min_kelvin=2200, max_kelvin=6500, readback="polled",
-        color_readback="mechanism_a_direct", color_readback_per_batch=4, color_readback_segments=12,
+        color_readback="mechanism_a_direct", color_readback_per_batch=4, gradual=True,
     ),
     # H61A8 — rope: plaintext, 0x0b scheme, 15 segments, no CCT, dialect-A scenes.
     # Mechanism-B per-segment colour read-back (spec Change 7): 0xAA 0xA5 (V2, adds

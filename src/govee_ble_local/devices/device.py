@@ -367,17 +367,20 @@ class Device:
     def _power_frames(self, on: bool) -> list[bytes]:
         """Frames for whole-device power: always a single frame where the device
         allows it - the global 33 01 switch (which on H60A6 also drives both
-        zones), or H6047's combined 33 36 bar frame. Only a zoned fixture without
-        a zone-driving master switch falls back to one 33 30 frame per zone."""
-        if self.profile.bar_switch:
-            return [build.bar_switch(on, on)]
-        if self.profile.zones and not self.profile.global_power:
+        zones; H6047's main switch sends it too - ``33 36`` is only its per-bar
+        buttons, see :meth:`set_zone_power`). Only a zoned fixture without a
+        zone-driving master switch falls back to one 33 30 frame per zone."""
+        if self.profile.zones and not self.profile.global_power and not self.profile.bar_switch:
             return [build.zone_power(z.power_index, on) for z in self.profile.zones]
         return [build.switch(on, relay=self.profile.relay)]
 
     def _apply_power(self, on: bool) -> None:
         self._state.is_on = on
-        if self.profile.zones:
+        if self.profile.bar_switch and on:
+            # 33 01 on: the app does not say which bars light (it learns that from the next aa 36
+            # heartbeat), so don't guess; the next zone write re-reads them rather than assuming.
+            self._state.zone_power = {}
+        elif self.profile.zones:
             self._state.zone_power = {z.power_index: on for z in self.profile.zones}
 
     async def set_power(self, on: bool) -> None:
@@ -443,9 +446,11 @@ class Device:
         if rgb is not None:
             self._state.rgb_color, self._state.color_temp_kelvin = (rgb[0], rgb[1], rgb[2]), None
             self._state.scene_code = None
+            self._apply_zone_kelvin({0: None, 1: None})
         elif kelvin is not None:
             self._state.color_temp_kelvin, self._state.rgb_color = kelvin, None
             self._state.scene_code = None
+            self._apply_zone_kelvin({0: kelvin, 1: kelvin})
         self._mark_authoritative()
         self._notify()
 
@@ -477,6 +482,7 @@ class Device:
         self._state.rgb_color = (r, g, b)
         self._state.color_temp_kelvin = None
         self._state.scene_code = None
+        self._apply_zone_kelvin({0: None, 1: None})
         self._mark_authoritative()
         self._notify()
 
@@ -497,6 +503,7 @@ class Device:
         self._state.color_temp_kelvin = kelvin
         self._state.rgb_color = None
         self._state.scene_code = None
+        self._apply_zone_kelvin({0: kelvin, 1: kelvin})
         self._mark_authoritative()
         self._notify()
 
@@ -580,6 +587,14 @@ class Device:
                 return z
         raise GoveeBleNotSupported(f"{self._sku}: unknown zone {name!r}")
 
+    def zone_color_temp_kelvin(self, name: str) -> int | None:
+        """Last known colour temperature (Kelvin) of zone ``name``, or None when the zone is not
+        known to be in colour-temperature mode or the device doesn't report it per zone (only
+        H6047 does: one kelvin per bar from ``aa 05 15``).
+
+        Raises GoveeBleNotSupported for an unknown zone."""
+        return self._state.zone_color_temp_kelvin.get(self._zone(name).power_index)
+
     def zone_is_on(self, name: str) -> bool | None:
         """Last known power state of zone ``name``, or None if unknown.
 
@@ -636,6 +651,8 @@ class Device:
         if self._stale(seq, "bar-switch"):
             return True
         self._state.zone_power = {0: bars[0], 1: bars[1]}
+        # The app shows the device as on when either bar is on (NewDetailVm heart parse).
+        self._state.is_on = bars[0] or bars[1]
         return False
 
     async def set_zone_rgb(self, name: str, rgb: tuple[int, int, int]) -> None:
@@ -653,6 +670,7 @@ class Device:
         await self._conn.send(build.segment_rgb(_mask(z.segments, n), r, g, b, self.profile.color_scheme, n))
         self._mutated()
         self._update_segments(z.segments, rgb=(r, g, b))
+        self._apply_zone_kelvin({z.power_index: None})
         self._mark_authoritative()
         self._notify()
 
@@ -669,7 +687,8 @@ class Device:
         frame = self._build_or_unsupported(
             build.segment_color_temp, _mask(z.segments, n), kelvin, self.profile.color_scheme, n)
         await self._conn.send(frame)
-        self._mutated()   # device colour changed (no optimistic field): invalidate in-flight reads
+        self._mutated()   # device colour changed: invalidate in-flight reads
+        self._apply_zone_kelvin({z.power_index: kelvin})
         self._mark_authoritative()
         self._notify()
 
@@ -686,6 +705,7 @@ class Device:
         self._mark_authoritative()
         self._state.rgb_color = None
         self._state.color_temp_kelvin = None
+        self._apply_zone_kelvin({0: None, 1: None})
         self._notify()
 
     def scene_upload_frames(self, scene: Scene) -> list[bytes] | None:
@@ -709,7 +729,7 @@ class Device:
     # -- misc settings ------------------------------------------------------
     async def set_gradual(self, on: bool) -> None:
         """Toggle the gradual/fade-on-BLE↔wifi-handoff flag (0xA3). Only SKUs whose profile
-        sets ``gradual`` (e.g. H61A8) support it; others raise GoveeBleNotSupported."""
+        sets ``gradual`` (H61A8, H6047) support it; others raise GoveeBleNotSupported."""
         if not self.profile.gradual:
             raise GoveeBleNotSupported(f"{self._sku}: gradual (BLE/wifi fade) not supported")
         await self._conn.send(build.gradual(on))
@@ -776,10 +796,33 @@ class Device:
             f"segs={len(s.segments)} zones={s.zone_power} scene={s.scene_code}"
         )
 
+    def _apply_zone_kelvin(self, kelvin_by_index: dict[int, int | None]) -> None:
+        """Fold a per-bar kelvin change into state (bar-switch devices only; others are a no-op).
+
+        ``None`` or 0 means that bar is not in colour-temperature mode. Like the app
+        (``Info4Detail`` subMode4Color parse), the whole-device ``color_temp_kelvin`` is set only
+        while both bars carry the same kelvin, and unknown otherwise."""
+        if not self.profile.bar_switch:
+            return
+        zk = dict(self._state.zone_color_temp_kelvin)
+        for index, k in kelvin_by_index.items():
+            if k:
+                zk[index] = k
+            else:
+                zk.pop(index, None)
+        self._state.zone_color_temp_kelvin = zk
+        left = zk.get(0)
+        self._state.color_temp_kelvin = left if left is not None and left == zk.get(1) else None
+
     def _apply_mode_reply(self, reply: bytes) -> None:
         """Fold an aa 05 mode report into state: active scene, or the colour /
         colour temperature of the solid-colour sub-mode."""
         self._state.scene_code = parse.parse_active_scene(reply)
+        bars = parse.parse_bar_kelvin(reply) if self.profile.bar_switch else None
+        if bars is not None:
+            # H6047 aa 05 15: [gradual][kelvin left u2be][kelvin right u2be]
+            self._apply_zone_kelvin({0: bars[0], 1: bars[1]})
+            return
         kelvin = parse.parse_kelvin(reply)
         if kelvin:
             self._state.color_temp_kelvin, self._state.rgb_color = kelvin, None
@@ -870,7 +913,7 @@ class Device:
         (BulbGroupColorV2); they only share the wire opcode. Group size is a fixed client
         constant (`color_readback_per_batch`, source-confirmed 4 for both curated SKUs). The
         total piece count — and hence the group count — comes from either a static per-SKU
-        value (`color_readback_segments`/`segments`, e.g. H6047's getColorPieceSize=12) or,
+        value (`color_readback_segments`/`segments`; H6047 uses its 10 `segments`) or,
         when `color_readback_live_ic` is set (H6641), a live `0x40` IC-count read: the device
         reports its OWN group count directly (`ic_segment_read.segment`), sidestepping any
         client-side group-count-divisor assumption."""

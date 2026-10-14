@@ -330,7 +330,7 @@ def test_direct_readback_walks_the_runtime_count() -> None:
     base = _dev("H6047")
     d = _dev("H6047", color_readback_segments=None)
     d.set_segment_count(23)
-    assert base.profile.color_readback_segments == 12 and d.segment_count == 23
+    assert base.profile.color_readback_segments is None and d.segment_count == 23
     asked: list[int] = []
 
     def _group(frame: bytes, **_kw: object) -> list[bytes]:

@@ -30,6 +30,18 @@ model, from which the shipped readers are generated).
 - `parse.parse_mode_0d` (the 0x0d bulb/lamp read-back) now treats any non-zero Kelvin as CCT, as the
   app's parsers do (`ModeParseStrategyConfig`, `SubModeColor.parse`), instead of requiring `ff ff ff`
   in the colour slot; the app's own CCT write puts the tint there, so the old rule read it back as RGB.
+- **H6047 reported two phantom segments, 10 and 11** (#13). Its goodsType 119 uses the old detail screen
+  (`h6047/pact/Model.t` -> `NewDetailAc`), whose read-back walks `Support.getBulbStringMaxNum(119)` = 10
+  pieces in groups of 4 (`NewDetailVm.n5`: `aa a5 01..03`, `SubMode4Color` trims the last group to 2
+  records). The profile used `getColorPieceSize` = 12, which only the newdetail screens (277/288/298)
+  call, so the last group kept 4 records. `color_readback_segments` is dropped: read-back is the same 10
+  segments as the write.
+- **H6047 whole-device power is `33 01 <on>`**, as the app's main switch sends it
+  (`NewDetailVm.switchTrigger` -> `ControllerSwitch`). The library sent `33 36 <on> <on>`, which the app
+  only uses for the per-bar buttons; `set_zone_power` still sends `33 36`. Powering on leaves the per-bar
+  state unknown until the next `aa 36` read (the app does not say which bars `33 01` lights), so the
+  next zone change re-reads the bars instead of assuming; powering off marks both bars off. `aa 36`
+  read-back now sets `is_on` to "either bar on", as the app's heartbeat does.
 
 ### Changed
 - `DeviceProfile.cct_per_zone_min_pact: tuple[int, int] | None` (H60A6 = `(1, 3)`): whole-device CCT is
@@ -48,6 +60,18 @@ model, from which the shipped readers are generated).
   The 0x0b (`h61a8`) frame keeps its fixed two-byte mask. No shipped device changes.
 - Segment indices on a device with more than 16 segments run 0..n-1; up to 16 segments the
   0..15 range is unchanged.
+- **H6047 gradual** (#13): `gradual=True` in the profile. `update()` reads `aa a3` and
+  `set_gradual()` writes `33 a3 <on>`; the app reads it on every connect (`ControllerGradual4BleWifi`) and
+  its colour screen writes it (`ColorModeControllerConfig.p` -> `Config.G[119]` -> `Bytes.w`).
+- **H6047 reports a kelvin per bar** (#13). `aa 05 15` is `[gradual][kelvin left u2be][kelvin right u2be]`
+  (`SubModeColor.parse`, `Info4Detail` parse strategy); new `parse.parse_bar_kelvin`,
+  `DeviceState.zone_color_temp_kelvin` (keyed by zone `power_index`, like `zone_power`) and
+  `Device.zone_color_temp_kelvin(name)`. `DeviceState.color_temp_kelvin` is the whole-device value and is
+  set only while both bars agree, as in the app; a colour-mode reply clears both. Writes
+  (`set_color_temp`, `set_zone_color_temp`, `set_rgb`, `set_zone_rgb`, `set_scene`) keep these in step
+  until the next read.
+- `tools/field_test/plans/h6047.py`: the H6047 field-test plan (whole and per-bar power, brightness,
+  RGB, whole and per-bar CCT, gradual, 10-segment read-back; restores the bars, colours and gradual flag).
 
 ### Spec
 - `devices.yaml`: `color_temp_write` opcode for `h60ax`, `h6047`, `h61d3`, `bulblightv3` and
@@ -88,6 +112,16 @@ model, from which the shipped readers are generated).
   regenerated (kaitai-struct-compiler 0.11.0; the diff is only these additions).
 - `devices.yaml`: new `h6188` family with citations; note on the Wi-Fi-only H6085/H6086/H6089.
   `devices.schema.json`: `mode_0d_kind` gains `rgb_kelvin_tint`.
+- `devices.yaml` `h6047` family re-audited against 7.7.02 (#13): kelvin per SKU (H6043/H6042 =
+  2000-9000 K, only H6047 is 2200-6500 K); read-back count depends on the screen (old detail screen
+  `getBulbStringMaxNum`: H6047 = 10, H6042 = 5; newdetail screens `getColorPieceSize`), so the
+  "read 12 != write 10" claim is gone and `getGoodsType4ColorSegment` is the only one that never returns
+  5; whole-device power `33 01` vs per-bar `33 36`; `aa 36` third byte (movie/feast); `aa 05 15` and
+  `a3` documented; swap light `0x34` and the connect-time `aa ac` sound-pickup read documented, not
+  modelled; left/right order is logical (`LightPosAc`); "observed plaintext" no longer claimed for H6047;
+  line citations updated (`Support.isGoodsTypeH6047` is at :186). `govee_ble.ksy`: `cct_read_reply` gains
+  `kelvin_right` and the gradual-flag meaning of byte 0, `bar_switch_read` gains `movie_feast`. Readers
+  regenerated (the diff is only these two additions).
 
 ## [1.2.1] — 2026-10-13
 
