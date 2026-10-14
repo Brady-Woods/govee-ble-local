@@ -272,13 +272,14 @@ def test_invalid_inputs_are_not_validated_consistently() -> None:
     with pytest.raises(GoveeBleNotSupported):
         asyncio.run(h61.set_segment_brightness([0], 50))
 
-    # FIXED (DES-1, T5.2): kelvin beyond u16 used to wrap silently (70000 -> 0x1170 on the
-    # wire, unwrapped value stored in state). It is now rejected at the builder with
-    # GoveeBleInvalidValue (a ValueError); nothing is sent.
+    # kelvin beyond u16 once wrapped silently (70000 -> 0x1170 on the wire, unwrapped value in
+    # state). Like the app (KelvinConfig.calibrationKelvin) it is now clamped to the profile
+    # range, so what is sent and stored is the in-range value; a non-int is still rejected.
     t = _dev("H6008")
+    asyncio.run(t.set_color_temp(70000))
+    assert _sent(t)[0][6:8].hex() == "1964" and t.state.color_temp_kelvin == 6500
     with pytest.raises(GoveeBleInvalidValue):
-        asyncio.run(t.set_color_temp(70000))
-    assert _sent(t) == []
+        asyncio.run(t.set_color_temp(70000.0))  # type: ignore[arg-type]
 
 
 def test_device_info_flag_unset_when_read_raises_and_retried() -> None:

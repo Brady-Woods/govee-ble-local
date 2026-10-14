@@ -237,13 +237,27 @@ def test_normalize_kelvin_rounds_to_nearest_100(raw: int, expected: int) -> None
 def test_normalize_kelvin_clamps_to_the_range() -> None:
     assert b.normalize_kelvin(1960, 2000, 9000) == 2000
     assert b.normalize_kelvin(9040, 2000, 9000) == 9000
-    # rounding can never leave a range whose edges are not 100 K multiples
-    assert b.normalize_kelvin(2240, 2250, 6500) == 2250
-    assert b.normalize_kelvin(6560, 2250, 6540) == 6540
-    with pytest.raises(GoveeBleInvalidValue):
-        b.normalize_kelvin(-1)
-    with pytest.raises(GoveeBleInvalidValue):
-        b.normalize_kelvin(0x10000)
+    # clamp first (as the app), then round; rounding can never leave a range whose edges are not
+    # 100 K multiples
+    assert b.normalize_kelvin(2240, 2250, 6500) == 2300
+    assert b.normalize_kelvin(6560, 2250, 6540) == 6500
+    assert b.normalize_kelvin(2260, 2230, 6540) == 2300
+    assert b.normalize_kelvin(2201, 2230, 6540) == 2230
+    # any int is clamped, never rejected, once a range is known (the app's calibrationKelvin)
+    assert b.normalize_kelvin(-5, 2000, 9000) == 2000
+    assert b.normalize_kelvin(10**9, 2000, 9000) == 9000
+    assert b.normalize_kelvin(0x10000, 2700, 6500) == 6500
+
+
+def test_normalize_kelvin_raises_only_for_invalid_input() -> None:
+    # no range known: nothing to clamp to, so it must at least fit the u16 wire field
+    for bad in (-1, 0x10000):
+        with pytest.raises(GoveeBleInvalidValue):
+            b.normalize_kelvin(bad)
+    assert b.normalize_kelvin(0xFFFF) == 65500 and b.normalize_kelvin(0) == 0
+    for not_int in (2700.0, "2700", None, True):
+        with pytest.raises(GoveeBleInvalidValue):
+            b.normalize_kelvin(not_int, 2000, 9000)  # type: ignore[arg-type]
 
 
 def test_device_rounds_the_kelvin_it_sends_and_keeps_in_state() -> None:
@@ -253,9 +267,13 @@ def test_device_rounds_the_kelvin_it_sends_and_keeps_in_state() -> None:
     assert d.state.color_temp_kelvin == 2800
     asyncio.run(d.turn_on(kelvin=6499))
     assert _sent(d)[-1][6:8].hex() == "1964" and d.state.color_temp_kelvin == 6500
-    # still rejected, not silently clamped, when outside the range (the existing contract)
+    # outside the range it is clamped, like the app (KelvinConfig.calibrationKelvin), not rejected
+    asyncio.run(d.set_color_temp(2600))
+    assert _sent(d)[-1][6:8].hex() == "0a8c" and d.state.color_temp_kelvin == 2700
+    asyncio.run(d.set_color_temp(100000))
+    assert _sent(d)[-1][6:8].hex() == "1964" and d.state.color_temp_kelvin == 6500
     with pytest.raises(GoveeBleInvalidValue):
-        asyncio.run(d.set_color_temp(2600))
+        asyncio.run(d.set_color_temp(2700.5))  # type: ignore[arg-type]
 
 
 def test_device_rounds_zone_and_segment_cct() -> None:

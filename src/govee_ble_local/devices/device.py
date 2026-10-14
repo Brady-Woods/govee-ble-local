@@ -272,13 +272,11 @@ class Device:
         self._secret = self._checked_secret(secret)
 
     def _check_kelvin(self, kelvin: int) -> int:
-        """Validate ``kelvin`` against the profile range and return what goes on the wire: the
-        app's value, i.e. rounded to the nearest 100 K (:func:`build.normalize_kelvin`)."""
-        lo, hi = self.profile.min_kelvin, self.profile.max_kelvin
-        if (lo is not None and kelvin < lo) or (hi is not None and kelvin > hi):
-            raise GoveeBleInvalidValue(
-                f"{self._sku}: kelvin must be within {lo}..{hi}, got {kelvin!r}")
-        return build.normalize_kelvin(kelvin, lo, hi)
+        """The Kelvin that goes on the wire (and into ``state``) for ``kelvin``: clamped to the
+        profile range, then rounded to the 100 K grid, as the app does
+        (:func:`build.normalize_kelvin`). Out-of-range input is clamped, not rejected; only a
+        non-int raises GoveeBleInvalidValue."""
+        return build.normalize_kelvin(kelvin, self.profile.min_kelvin, self.profile.max_kelvin)
 
     def _color_temp_frames(self, kelvin: int) -> list[bytes]:
         """Frames for whole-device colour temperature (``kelvin`` already normalised).
@@ -417,7 +415,8 @@ class Device:
         """Power on and apply brightness/colour as ONE batched operation: one
         lock acquisition, one connection, each frame ack-verified in order
         (power first so the rest lands on a lit fixture). ``power=False`` skips
-        the power frames (already on)."""
+        the power frames (already on). ``kelvin`` is clamped and rounded as in
+        :meth:`set_color_temp`."""
         if rgb is not None and kelvin is not None:
             raise GoveeBleInvalidValue("turn_on: pass either rgb or kelvin, not both")
         frames: list[bytes] = []
@@ -489,9 +488,10 @@ class Device:
     async def set_color_temp(self, kelvin: int) -> None:
         """Set the whole-device colour temperature (clears rgb and active scene).
 
-        Raises GoveeBleNotSupported without COLOR_TEMP; GoveeBleInvalidValue if outside the
-        profile's kelvin range. The Kelvin sent (and kept in ``state``) is rounded to the nearest
-        100 K, the only values the app sends; the frame carries the app's tint for it."""
+        Raises GoveeBleNotSupported without COLOR_TEMP and GoveeBleInvalidValue for a non-int.
+        Like the app, an out-of-range value is clamped to the profile's kelvin range (not
+        rejected) and then rounded to the nearest 100 K, the only values the app sends; the
+        Kelvin actually sent is what ``state`` keeps, and the frame carries the app's tint."""
         self._require(Capability.COLOR_TEMP)
         kelvin = self._check_kelvin(kelvin)
         frames = self._color_temp_frames(kelvin)
@@ -568,7 +568,8 @@ class Device:
 
     async def set_segment_color_temp(self, indices: list[int], kelvin: int) -> None:
         """Colour temperature on selected segments (0x15 family only — the CCT frame
-        carries the segment mask). Raises GoveeBleNotSupported for non-maskable schemes."""
+        carries the segment mask). Raises GoveeBleNotSupported for non-maskable schemes.
+        ``kelvin`` is clamped and rounded as in :meth:`set_color_temp`."""
         self._require(Capability.SEGMENTS)
         self._require(Capability.COLOR_TEMP)
         kelvin = self._check_kelvin(kelvin)
@@ -676,7 +677,8 @@ class Device:
 
     async def set_zone_color_temp(self, name: str, kelvin: int) -> None:
         """Colour temperature for one zone (its segment mask). Physically supported on the
-        0x15 family (H60A6/H6047), whose CCT frame carries a segment mask."""
+        0x15 family (H60A6/H6047), whose CCT frame carries a segment mask. ``kelvin`` is clamped
+        and rounded as in :meth:`set_color_temp`."""
         self._require(Capability.SEGMENTS)
         self._require(Capability.COLOR_TEMP)
         kelvin = self._check_kelvin(kelvin)

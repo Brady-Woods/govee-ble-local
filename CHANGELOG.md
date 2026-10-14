@@ -26,7 +26,7 @@ model, from which the shipped readers are generated).
   - Kelvin is clamped to the device range and rounded to the nearest 100 K before sending
     (`KelvinConfig.calibrationKelvin`; the app's slider only produces 100 K steps, and its builders
     recover K from the tint table). `set_color_temp(2750)` therefore sends 2800 K and reports 2800 K in
-    `state`. Out-of-range input is still rejected with `GoveeBleInvalidValue`.
+    `state`.
 - `parse.parse_mode_0d` (the 0x0d bulb/lamp read-back) now treats any non-zero Kelvin as CCT, as the
   app's parsers do (`ModeParseStrategyConfig`, `SubModeColor.parse`), instead of requiring `ff ff ff`
   in the colour slot; the app's own CCT write puts the tint there, so the old rule read it back as RGB.
@@ -44,6 +44,13 @@ model, from which the shipped readers are generated).
   read-back now sets `is_on` to "either bar on", as the app's heartbeat does.
 
 ### Changed
+- **Out-of-range Kelvin is clamped to the device's range instead of raising `GoveeBleInvalidValue`**
+  (`set_color_temp`, `set_segment_color_temp`, `set_zone_color_temp`, `turn_on(kelvin=)`), matching the
+  app: `KelvinConfig.Companion.a` (`calibrationKelvin`) and `Constant.checkKelvinRange` clamp any int to the
+  per-SKU range and never reject it. Order is clamp, then round to 100 K, then clamp again;
+  `state.color_temp_kelvin` stores the value actually sent. Only a non-int (or, for a profile with no
+  known range, a value that does not fit the wire's u16) still raises. `build.normalize_kelvin` now
+  raises only for those cases instead of for any value outside 0..65535.
 - `DeviceProfile.cct_per_zone_min_pact: tuple[int, int] | None` (H60A6 = `(1, 3)`): whole-device CCT is
   one frame per zone when the advertised pact is at or above it. New `Device.pact` property
   (`(pact_type, pact_code)` from the advertisement, or `None`) and `build.normalize_kelvin`.
