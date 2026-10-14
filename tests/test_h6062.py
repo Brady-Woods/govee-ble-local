@@ -188,12 +188,15 @@ def test_brightness_is_percent_and_power_is_global() -> None:
 
 def test_kelvin_range_and_100k_rounding() -> None:
     t = _with_count(19)
-    for bad in (1999, 9001, 1500):
-        with pytest.raises(GoveeBleInvalidValue):
-            asyncio.run(t.dev.set_color_temp(bad))
+    # out of range is clamped like the app (KelvinConfig.calibrationKelvin), not rejected
+    for out_of_range in (1999, 1500):
+        asyncio.run(t.dev.set_color_temp(out_of_range))
+        assert t.dev.state.color_temp_kelvin == 2000
+    asyncio.run(t.dev.set_color_temp(9001))
+    assert t.dev.state.color_temp_kelvin == 9000
     asyncio.run(t.dev.set_color_temp(2049))     # the app only sends the 100 K steps of its table
     asyncio.run(t.dev.set_color_temp(2050))
-    assert [f[7:9].hex() for f in t.sent] == ["07d0", "0834"]
+    assert [f[7:9].hex() for f in t.sent[-2:]] == ["07d0", "0834"]
     assert t.dev.state.color_temp_kelvin == 2100
 
 
