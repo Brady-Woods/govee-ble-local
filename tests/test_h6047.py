@@ -21,7 +21,7 @@ from fake_ble import ble_device
 from govee_ble_local import Capability, Encryption
 from govee_ble_local.devices.device import Device, make_device
 from govee_ble_local.devices.profile import profile_for
-from govee_ble_local.exceptions import GoveeBleError, GoveeBleInvalidValue, GoveeBleNotSupported
+from govee_ble_local.exceptions import GoveeBleError, GoveeBleNotSupported
 from govee_ble_local.wire import build as b
 from govee_ble_local.wire import parse
 
@@ -213,11 +213,12 @@ def test_cct_frames_carry_the_tint_per_bar(kelvin: int, k_hex: str, tint_hex: st
 
 
 def test_cct_range_is_2200_to_6500() -> None:
-    d = _dev()
-    for bad in (2100, 6600):
-        with pytest.raises(GoveeBleInvalidValue):
-            asyncio.run(d.set_color_temp(bad))
-    assert _sent(d) == []
+    # out of range is clamped to the edge like the app (KelvinConfig.calibrationKelvin), not rejected
+    for bad, edge in ((2100, 2200), (6600, 6500)):
+        d, ref = _dev(), _dev()
+        asyncio.run(d.set_color_temp(bad))
+        asyncio.run(ref.set_color_temp(edge))
+        assert _sent(d) == _sent(ref) != [] and d.state.color_temp_kelvin == edge
 
 
 # ── gradual ──────────────────────────────────────────────────────────────────
