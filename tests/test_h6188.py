@@ -226,12 +226,12 @@ def test_turn_on_batches_raw_brightness_and_cct() -> None:
     assert d.state.color_temp_kelvin == 6500 and d.state.brightness == 100
 
 
-def test_set_color_temp_range_enforced() -> None:
-    d = _dev()
-    with pytest.raises(GoveeBleInvalidValue):
-        asyncio.run(d.set_color_temp(1500))
+def test_set_color_temp_range_clamped() -> None:
+    d = _dev()                       # 2000..9000, clamped like the app (KelvinConfig.calibrationKelvin)
+    asyncio.run(d.set_color_temp(1500))
+    assert _sent(d)[0][6:8].hex() == "07d0" and d.state.color_temp_kelvin == 2000
     asyncio.run(d.set_color_temp(9000))
-    assert _sent(d)[0][3:11].hex() == "ffffff2328d9e1ff"
+    assert _sent(d)[1][3:11].hex() == "ffffff2328d9e1ff"
 
 
 def test_segments_not_supported() -> None:
