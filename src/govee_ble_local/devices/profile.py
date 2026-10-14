@@ -213,6 +213,11 @@ PROFILES: tuple[DeviceProfile, ...] = (
     #    set, LSB first (23 panels: `ff ff 7f`). Taken when the colour is a Kelvin tint and
     #    Config.I[51][4] (CCT) holds; tint = Constant.getTemColorByKelvin, Kelvin recovered by
     #    Constant.getColorTemKelvin (CubeColorModeV2.canClickColorTem).
+    #  - an RGB pick is sent as that CCT frame when every panel gets one colour that is exactly one of
+    #    the 178 Kelvin tint colours (Constant.k2 = ColorUtils.e, two per 100 K step) within the
+    #    Kelvin range: ColorModeControllerConfig.k skips group mode when ColorUtils.q(colours) &&
+    #    KelvinConfig.i(colour) && Config.I[51][4]. The wire carries the picked colour as the tint
+    #    and Constant.getColorTemKelvin(colour) (build.rgb_as_kelvin, wire.cct.kelvin_for_tint).
     #  - kelvin: KelvinConfig has no 51 entry -> version 0 = [2000, 9000]. Brightness: percent 1..100
     #    (Support.getBrightnessRange {1, 100, 0}); power `33 01`.
     #  - read-back: CubeNewDetailsConfig.makeControllerStrategy polls aa 04 / aa 01 / aa 05; the 0x0d

@@ -12,7 +12,7 @@ from typing import Literal
 from ..const import FRAME_LEN, SCENE_A3_HEADER_LEN, SCENE_A3_PIECE_LEN
 from ..crypto import checksum
 from ..exceptions import GoveeBleInvalidValue
-from .cct import tint_for_kelvin
+from .cct import kelvin_for_tint, tint_for_kelvin
 
 
 def ceil_div(a: int, b: int) -> int:
@@ -204,6 +204,7 @@ H6061_MAX_PANELS = 23
 H6061_GROUP_SIZE = 4          # Bytes.m / BleUtils.w0(colors, 4): four colours per group frame
 H6061_MASK_BYTES = 3          # ColorPieceConfig.k: piece count 23 rounds up to a 24-bit position set
 OP15_SET_GROUP_COLOR = 0x04   # Bytes.m: [0x15, 0x04, group, RGB x<=4]
+H6061_KELVIN_RANGE = (2000, 9000)   # KelvinConfig: no entry for 51 -> version 0
 
 
 def _h6061_panels(panels: int) -> int:
@@ -229,24 +230,49 @@ def _h6061_group_frames(r: int, g: int, b: int, panels: int) -> list[bytes]:
     ]
 
 
-def _h6061_color_temp(kelvin: int, panels: int) -> bytes:
+def _h6061_color_temp(kelvin: int, panels: int, tint: tuple[int, int, int] | None = None) -> bytes:
     """Whole-device CCT: ``33 05 15 01 <tint RGB> <kelvin u2be> <24-bit mask>``, the first ``panels``
     mask bits set, LSB first (23 panels: ``ff ff 7f``). ``Config.x[51]`` = 5 -> ``Config.J[5]`` =
     ``Config.Zt`` -> ``Bytes.u(kelvin, positions, tint)``; the mask is ``BleUtils.X`` over the
-    ``ColorPieceConfig.k`` = 24-position set. The tint sits in the colour slot (not ``ff ff ff``)."""
+    ``ColorPieceConfig.k`` = 24-position set. The tint sits in the colour slot (not ``ff ff ff``).
+    ``tint`` defaults to the app's tint for ``kelvin`` (the slider path); an RGB pick that is itself a
+    tint colour passes that exact colour (``Zt`` writes the picked colour, whichever of the Kelvin
+    step's two colours it is)."""
     n = _h6061_panels(panels)
     khi, klo = (kelvin >> 8) & 0xFF, kelvin & 0xFF
     mask = all_segments_mask(n).to_bytes(H6061_MASK_BYTES, "little")
     return frame(PRO_WRITE, CMD_MODE, SUB_COLOR_15, OP15_SET_COLOR,
-                 *tint_for_kelvin(kelvin), khi, klo, *mask)
+                 *(tint if tint is not None else tint_for_kelvin(kelvin)), khi, klo, *mask)
+
+
+def rgb_as_kelvin(r: int, g: int, b: int, scheme: ColorScheme,
+                  kelvin_range: tuple[int, int] | None = None) -> int | None:
+    """The Kelvin the app sends for an RGB pick, or None when it sends RGB.
+
+    ``h6061`` only: ``ColorModeControllerConfig.k`` writes a whole-device colour set as a CCT frame
+    (``Config.Zt`` -> ``Bytes.u``) when every panel has the same colour, that colour is one of the
+    Kelvin tint colours within the device's Kelvin range and ``Config.I[51][4]`` (CCT) holds
+    (``ColorUtils.q``, ``KelvinConfig.i``); otherwise it takes the group-colour path. ``kelvin_range``
+    defaults to the SKU's [2000, 9000]. Other schemes: None (not modelled)."""
+    if scheme != "h6061":
+        return None
+    kelvin = kelvin_for_tint((r, g, b))
+    lo, hi = kelvin_range or H6061_KELVIN_RANGE
+    return kelvin if kelvin is not None and lo <= kelvin <= hi else None
 
 
 # ── colour ───────────────────────────────────────────────────────────────────
-def color_rgb_frames(r: int, g: int, b: int, scheme: ColorScheme, segments: int = 13) -> list[bytes]:
+def color_rgb_frames(r: int, g: int, b: int, scheme: ColorScheme, segments: int = 13,
+                     kelvin_range: tuple[int, int] | None = None) -> list[bytes]:
     """Whole-device RGB as the frames the app sends: one for every scheme except ``h6061``, whose
-    panels are written in groups of four (see :func:`color_rgb`, which is the single-frame form)."""
+    panels are written in groups of four (see :func:`color_rgb`, which is the single-frame form).
+    On ``h6061`` an RGB that is a Kelvin tint colour within ``kelvin_range`` is sent as the CCT frame
+    instead, exactly as the app does (see :func:`rgb_as_kelvin`)."""
     if scheme == "h6061":
         _check_rgb(r, g, b)
+        kelvin = rgb_as_kelvin(r, g, b, scheme, kelvin_range)
+        if kelvin is not None:
+            return [_h6061_color_temp(kelvin, segments, (r, g, b))]
         return _h6061_group_frames(r, g, b, segments)
     return [color_rgb(r, g, b, scheme, segments)]
 

@@ -100,6 +100,10 @@ model, from which the shipped readers are generated).
   - CCT is `33 05 15 01 <tint RGB> <kelvin u2be> <24-bit mask>`, the first n mask bits set, LSB first
     (`ff ff 7f` for 23 panels; `Config.Zt` -> `Bytes.u`, `ColorPieceConfig.k`). The tint sits in the
     colour slot, not the `ff ff ff` white-slot form of H60A6 / H6047 / H6641.
+  - An RGB pick that is exactly one of the app's 178 Kelvin tint colours (two per 100 K step, within
+    2000-9000 K) is sent as the CCT frame, with the picked colour as the tint, as the app does
+    (`ColorModeControllerConfig.k`: `ColorUtils.q` + `KelvinConfig.i`, then `Config.Zt`); the state
+    then reports that Kelvin. New `wire.cct.kelvin_for_tint` and `build.rgb_as_kelvin`.
   - Panel count n defaults to 23, the app's value when no layout is stored (`ColorPieceConfig.f`,
     `Support.getBulbStringMaxNum`). `Device.set_segment_count(n)` sets it for a known layout
     (1-23; more is refused because the app sends no colour for a longer set).

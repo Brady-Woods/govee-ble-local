@@ -296,10 +296,26 @@ class Device:
                 for z in profile.zones if z.segments]
         return [build.color_temp(kelvin, profile.color_scheme, n)]
 
+    def _kelvin_range(self) -> tuple[int, int] | None:
+        lo, hi = self.profile.min_kelvin, self.profile.max_kelvin
+        return (lo, hi) if lo is not None and hi is not None else None
+
     def _color_rgb_frames(self, rgb: tuple[int, int, int]) -> list[bytes]:
         """Frames for whole-device RGB: one, except on a profile whose colour scheme writes the
-        panels in groups (``h6061``: ``ceil(n/4)`` frames over :attr:`segment_count` panels)."""
-        return build.color_rgb_frames(*rgb, self.profile.color_scheme, self.segment_count)
+        panels in groups (``h6061``: ``ceil(n/4)`` frames over :attr:`segment_count` panels, or the
+        single CCT frame when the app would send this colour as a colour temperature)."""
+        return build.color_rgb_frames(
+            *rgb, self.profile.color_scheme, self.segment_count, self._kelvin_range())
+
+    def _apply_rgb_state(self, rgb: tuple[int, int, int]) -> None:
+        """Optimistic state for a whole-device RGB write: the colour, or - when the app sends it as
+        a colour temperature (``build.rgb_as_kelvin``) - that Kelvin, which is what the device reports."""
+        kelvin = build.rgb_as_kelvin(*rgb, self.profile.color_scheme, self._kelvin_range())
+        if kelvin is None:
+            self._state.rgb_color, self._state.color_temp_kelvin = rgb, None
+        else:
+            self._state.rgb_color, self._state.color_temp_kelvin = None, kelvin
+        self._state.scene_code = None
 
     def update_ble_device(self, ble_device: BLEDevice) -> None:
         """Swap in a fresh BLEDevice (e.g. a new scanner path) for later connects."""
@@ -445,8 +461,7 @@ class Device:
         if brightness is not None:
             self._state.brightness = brightness
         if rgb is not None:
-            self._state.rgb_color, self._state.color_temp_kelvin = (rgb[0], rgb[1], rgb[2]), None
-            self._state.scene_code = None
+            self._apply_rgb_state(rgb)
         elif kelvin is not None:
             self._state.color_temp_kelvin, self._state.rgb_color = kelvin, None
             self._state.scene_code = None
@@ -482,9 +497,7 @@ class Device:
         else:
             await self._conn.send_many(frames)
         self._mutated()
-        self._state.rgb_color = (r, g, b)
-        self._state.color_temp_kelvin = None
-        self._state.scene_code = None
+        self._apply_rgb_state((r, g, b))
         self._mark_authoritative()
         self._notify()
 

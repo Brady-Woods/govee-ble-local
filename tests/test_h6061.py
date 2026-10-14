@@ -409,3 +409,80 @@ def test_field_test_runs_end_to_end_and_restores(tmp_path: Path, monkeypatch: py
     assert [f[:5].hex() for f in sent[-6:]] == [f"33051504{g:02x}" for g in range(1, 7)]
     assert "AA:BB:CC:DD:EE:61" not in report_path.read_text()
     assert rep["device"]["address"] == "AA:BB:CC:xx:xx:xx"
+
+
+# ── RGB picks that are Kelvin tint colours are sent as CCT, like the app ─────
+# ColorModeControllerConfig.k: all panels one colour + KelvinConfig.i(colour, info) (the colour is in
+# the Constant.k2 / ColorUtils.e table within [2000, 9000]) + Config.I[51][4] -> Config.Zt -> Bytes.u
+# with the PICKED colour as the tint and Constant.getColorTemKelvin(colour) as the Kelvin.
+def test_tint_table_has_the_apps_178_colours_two_per_kelvin_step() -> None:
+    from govee_ble_local.wire.cct import _KELVIN_BY_TINT, kelvin_for_tint
+
+    assert len(_KELVIN_BY_TINT) == 178
+    per_kelvin: dict[int, list[int]] = {}
+    for colour, kelvin in _KELVIN_BY_TINT.items():
+        per_kelvin.setdefault(kelvin, []).append(colour)
+    assert sorted(per_kelvin) == list(range(1000, 10001, 100))
+    assert sorted(len(v) for v in per_kelvin.values()).count(2) == 87     # 4 steps have one colour
+    for kelvin, colours in per_kelvin.items():
+        first = tint_for_kelvin(kelvin)                                     # the slider path's tint
+        assert first == ((colours[0] >> 16) & 255, (colours[0] >> 8) & 255, colours[0] & 255)
+        assert kelvin_for_tint(first) == kelvin
+    assert kelvin_for_tint((255, 255, 255)) is None and kelvin_for_tint((0, 0, 0)) is None
+
+
+def test_rgb_pick_equal_to_a_tint_colour_is_sent_as_cct_golden() -> None:
+    # 0xFFAE54 = the first colour of 2700 K; 0xFFA957 = its second colour (also 2700 K, in the table)
+    first = b.color_rgb_frames(0xFF, 0xAE, 0x54, "h6061", 23)
+    assert [f.hex() for f in first] == ["33051501ffae540a8cffff7f00000000000000de"]
+    assert first == [b.color_temp(2700, "h6061", 23)]
+    alt = b.color_rgb_frames(0xFF, 0xA9, 0x57, "h6061", 23)
+    assert len(alt) == 1 and alt[0][:12].hex() == "33051501ffa9570a8cffff7f"     # picked colour kept
+    assert alt[0] != first[0] and checksum_ok(alt[0])
+
+
+def test_kelvin_range_is_2000_to_9000_inclusive() -> None:
+    assert len(b.color_rgb_frames(0xFF, 0x87, 0x00, "h6061", 23)) == 6    # 1900 K: below the range
+    assert b.color_rgb_frames(0xFF, 0x8D, 0x0B, "h6061", 23)[0][7:9].hex() == "07d0"      # 2000 K
+    assert b.color_rgb_frames(0xD9, 0xE1, 0xFF, "h6061", 23)[0][7:9].hex() == "2328"      # 9000 K
+    assert len(b.color_rgb_frames(0xD8, 0xE0, 0xFF, "h6061", 23)) == 6    # 9100 K: above the range
+    assert len(b.color_rgb_frames(0xFF, 0x38, 0x00, "h6061", 23)) == 6    # 1000 K (second colour)
+    # an explicit (narrower) range is honoured
+    assert len(b.color_rgb_frames(0xFF, 0xAE, 0x54, "h6061", 23, (3000, 9000))) == 6
+    assert b.rgb_as_kelvin(0xFF, 0xAE, 0x54, "h6061", (2000, 2700)) == 2700
+
+
+def test_near_misses_and_other_colours_stay_rgb() -> None:
+    for rgb in ((0xFF, 0xAE, 0x55), (0xFE, 0xAE, 0x54), (255, 255, 255), (255, 0, 0), (0, 0, 0)):
+        frames = b.color_rgb_frames(*rgb, "h6061", 23)
+        assert len(frames) == 6 and frames[0][:5].hex() == "3305150401", rgb
+
+
+def test_tint_pick_uses_the_panel_count_mask() -> None:
+    d = _dev()
+    d.set_segment_count(10)
+    asyncio.run(d.set_rgb((0xFF, 0xAE, 0x54)))
+    assert len(_sent(d)) == 1 and _sent(d)[0][9:12].hex() == "ff0300"
+    assert _sent(d)[0][:9].hex() == "33051501ffae540a8c"
+
+
+def test_set_rgb_tint_pick_reports_kelvin_state() -> None:
+    d = _dev()
+    asyncio.run(d.set_rgb((0xFF, 0xAE, 0x54)))
+    d._conn.send.assert_awaited_once()          # type: ignore[attr-defined]  # one frame, not send_many
+    assert d.state.color_temp_kelvin == 2700 and d.state.rgb_color is None
+    asyncio.run(d.set_rgb((1, 2, 3)))
+    assert d.state.rgb_color == (1, 2, 3) and d.state.color_temp_kelvin is None
+
+
+def test_turn_on_with_a_tint_rgb_sends_the_cct_frame() -> None:
+    d = _dev()
+    asyncio.run(d.turn_on(rgb=(0xD9, 0xE1, 0xFF)))
+    assert [f[:3].hex() for f in _sent(d)] == ["330101", "330515"]
+    assert _sent(d)[1][:9].hex() == "33051501d9e1ff232" + "8"
+    assert d.state.color_temp_kelvin == 9000 and d.state.rgb_color is None
+
+
+def test_other_schemes_do_not_reinterpret_rgb_picks() -> None:
+    assert b.rgb_as_kelvin(0xFF, 0xAE, 0x54, "h60a6") is None
+    assert b.color_rgb_frames(0xFF, 0xAE, 0x54, "h6006", 13) == [b.color_rgb(0xFF, 0xAE, 0x54, "h6006", 13)]
