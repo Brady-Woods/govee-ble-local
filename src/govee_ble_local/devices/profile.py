@@ -134,7 +134,9 @@ PROFILES: tuple[DeviceProfile, ...] = (
     #    `color_readback_segments`, no phantom segments 10 and 11.
     #  - power: the main switch sends 33 01 <on> (NewDetailVm.switchTrigger -> ControllerSwitch);
     #    33 36 <left> <right> only for the per-bar buttons (NewDetailVm.D5). The app shows the device
-    #    on when either bar is on (aa 36 heartbeat).
+    #    on when either bar is on (aa 36 heartbeat). The aa 01 poll stays: the app's connect read
+    #    (Compose4InfoBleIot) includes ControllerSwitch (aa 01), brightness (aa 04), gradual (aa a3)
+    #    and mode (aa 05), and a timeout there fails the whole connect, so the device answers it.
     #  - CCT: `15 01 ff ff ff <K> <tint> <mask>`; aa 05 15 reads back [gradual][kelvin left u2be]
     #    [kelvin right u2be] (SubModeColor.parse), so each bar has its own kelvin.
     #  - gradual: read on connect (ControllerGradual4BleWifi) and written 33 a3 <on> by the colour

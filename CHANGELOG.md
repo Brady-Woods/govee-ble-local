@@ -42,6 +42,9 @@ model, from which the shipped readers are generated).
   state unknown until the next `aa 36` read (the app does not say which bars `33 01` lights), so the
   next zone change re-reads the bars instead of assuming; powering off marks both bars off. `aa 36`
   read-back now sets `is_on` to "either bar on", as the app's heartbeat does.
+  The `aa 01` poll stays: the app's connect read (`Compose4InfoBleIot`) includes `ControllerSwitch`, and a
+  timeout there fails its whole connect, so an H6047 answers it (a miss would cost one 2 s read timeout and
+  is non-fatal; `aa 36` still supplies power).
 
 ### Changed
 - **Out-of-range Kelvin is clamped to the device's range instead of raising `GoveeBleInvalidValue`**

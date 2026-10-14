@@ -296,6 +296,17 @@ def test_update_on_when_either_bar_is_on() -> None:
         assert d.state.zone_power == {0: bool(bars[0]), 1: bool(bars[1])}
 
 
+def test_update_survives_an_unanswered_aa_01() -> None:
+    # The app's connect read includes aa 01, so a real H6047 answers it; if one ever did not, the
+    # empty reply is non-fatal (INFO_READ_TIMEOUT, then None) and the aa 36 heartbeat still gives power.
+    replies = _polled(_frame(0xAA, 0x05, 0x15, 0x01, 0, 0, 0, 0), _frame(0xAA, 0x36, 0x00, 0x01, 0x00))
+    del replies[0x01]
+    d = _dev(replies)
+    asyncio.run(d.update())
+    assert d.state.is_on is True and d.state.zone_power == {0: False, 1: True}
+    assert d.state.brightness == 50 and len(d.state.segments) == 10
+
+
 def test_update_exposes_a_kelvin_per_bar() -> None:
     d = _dev(_polled(_frame(0xAA, 0x05, 0x15, 0x01, 0x0A, 0x8C, 0x0F, 0xA0)))
     asyncio.run(d.update())
