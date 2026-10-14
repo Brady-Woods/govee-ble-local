@@ -101,6 +101,12 @@ def build_steps(ctx: PlanContext) -> list[Step]:
     s.append(Step("color_temp_whole_4000", lambda: dev.set_color_temp(4000),
                   lambda st: _kelvin(st, 4000, 4000) and st["color_temp_kelvin"] == 4000,
                   "Are both bars the same NEUTRAL white?"))
+    s.append(Step("rgb_pick_equal_to_4000k_tint", lambda: dev.set_rgb((255, 213, 161)),
+                  lambda st: (st["color_temp_kelvin"] == 4000 and st["rgb_color"] is None
+                              and _kelvin(st, 4000, 4000)),
+                  "Are both bars the same NEUTRAL white as at 4000 K (not a peach or orange colour)?",
+                  note="RGB pick 0xFFD5A1 = the 4000 K tint colour: "
+                       "the app sends CCT, 33 05 15 01 ff ff ff 0f a0 ff d5 a1 ff 03, not RGB (Config.Yt)"))
     s.append(Step("gradual_on", lambda: dev.set_gradual(True), lambda st: st["gradual"] is True,
                   "Did the light carry on normally (no flicker, no colour change)?",
                   note="33 a3 01; read-back aa a3 (no visible effect expected)"))

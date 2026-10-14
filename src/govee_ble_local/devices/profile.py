@@ -36,6 +36,10 @@ class DeviceProfile:
     zones: tuple[Zone, ...] = ()
     scene_versions: frozenset[int] = field(default_factory=frozenset)
     scene_dialect: SceneDialect = "A"
+    # The SKU's Kelvin range (KelvinConfig, Govee Home 7.7.02), inclusive. Besides clamping CCT writes it
+    # decides which RGB picks are sent as CCT: a picked colour that equals one of the app's Kelvin tint
+    # colours (wire.cct, Constant.k2) is a CCT frame only when its Kelvin lies in [min_kelvin, max_kelvin]
+    # (KelvinConfig.i), on every scheme with a CCT mode (build.rgb_as_kelvin; Config.Yt / bu / Zt).
     min_kelvin: int | None = None
     max_kelvin: int | None = None
     requires_secret: bool = False
@@ -125,6 +129,9 @@ PROFILES: tuple[DeviceProfile, ...] = (
         min_kelvin=2700, max_kelvin=6500, readback="status", global_power=True,
         # CCT: `15 01 ff ff ff <K> <tint> <mask>` (Bytes.r type 1); whole-device = main panel
         # frame then ring frame when pact >= (1, 3) (ControllerBuild.j, Support.supportPartTem).
+        # An RGB pick (whole device, zone or segment) equal to a tint colour in [2700, 6500] K is ONE
+        # such frame with the PICKED colour as the tint and the pick's own mask (Config.Yt, 7.7.02),
+        # never the per-zone two-frame form.
         cct_per_zone_min_pact=(1, 3),
     ),
     # H6047 — bar light: plaintext, two bars (33 36 per bar, 33 01 whole device), 10 segments,
@@ -143,6 +150,9 @@ PROFILES: tuple[DeviceProfile, ...] = (
     #    on when either bar is on (aa 36 heartbeat). The aa 01 poll stays: the app's connect read
     #    (Compose4InfoBleIot) includes ControllerSwitch (aa 01), brightness (aa 04), gradual (aa a3)
     #    and mode (aa 05), and a timeout there fails the whole connect, so the device answers it.
+    #  - an RGB pick equal to a Kelvin tint colour within [2200, 6500] K is that CCT frame with the picked
+    #    colour as the tint (NewDetailVm.configColorController -> H6047ColorControllerConfig.a -> Config.Yt,
+    #    7.7.02); the state then reports that Kelvin for both bars (or the one bar for a bar pick).
     #  - CCT: `15 01 ff ff ff <K> <tint> <mask>`; aa 05 15 reads back [gradual][kelvin left u2be]
     #    [kelvin right u2be] (SubModeColor.parse), so each bar has its own kelvin.
     #  - gradual: read on connect (ControllerGradual4BleWifi) and written 33 a3 <on> by the colour
@@ -186,6 +196,8 @@ PROFILES: tuple[DeviceProfile, ...] = (
     #  - colour: 0x0d sub-mode; colour instruction version Config.x[64] -> Config.rv = 2 -> Config.bu:
     #    RGB = Bytes.f, CCT = Bytes.p = [0d, tint RGB, kelvin u2be, tint RGB] ("h6006" both-slot
     #    form, the same builder as H6008; the white-slot "h6188" form is not used here).
+    #  - an RGB pick equal to a Kelvin tint colour within [2700, 6500] K is sent as CCT, `0d <picked RGB>
+    #    <K> <first tint of K>` (Config.bu = KelvinConfig.i(c) ? Bytes.p : Bytes.f, 7.7.02); otherwise RGB.
     #  - kelvin: KelvinConfig map 64 -> Config.V2 = [2700, 6500] (bulblightv3 Support.getColorTemRange).
     #  - brightness: Support.getBrightnessRange = {1, 100, 0}: percent on the wire, no raw scaling
     #    (the 20..254 scaling is the legacy h6001 path; H6004 is not in h6001/sku/Sku).
@@ -228,6 +240,9 @@ PROFILES: tuple[DeviceProfile, ...] = (
     # source; not hardware-verified (no H6188 hardware). Source (Govee Home 7.7.02):
     #  - colour: 0x0d sub-mode (H6188BleProtocol.sub_mode_color=13); RGB = Bytes.f, CCT =
     #    Config.GM -> Bytes.A(kelvin, RGB_WHITE) = [0d, ff ff ff, kelvin u2be, tint] ("h6188").
+    #  - an RGB pick equal to a Kelvin tint colour within [2000, 9000] K is sent as CCT with the "h6006"
+    #    form `0d <picked RGB> <K> <first tint of K>`, NOT the white-slot Bytes.A form (Config.bu =
+    #    KelvinConfig.i(c) ? Bytes.p : Bytes.f, 7.7.02); the slider keeps Bytes.A.
     #  - single colour piece (ColorPieceConfig.n -> 1): no segments.
     #  - kelvin: KelvinConfig P1 -> version 0 = [2000, 9000].
     #  - brightness: BrightnessConfig "H6188" -> version 0 = raw [20, 254] (not percent).

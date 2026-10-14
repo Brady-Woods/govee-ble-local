@@ -369,7 +369,8 @@ def test_field_test_plan_is_registered_and_its_steps(monkeypatch: pytest.MonkeyP
     assert [s.name for s in steps] == [
         "power_off", "power_on", "rgb_red", "rgb_green", "rgb_blue",
         "brightness_100", "brightness_1", "brightness_50",
-        "color_temp_2000", "color_temp_4000", "color_temp_6500", "color_temp_9000"]
+        "color_temp_2000", "color_temp_4000", "color_temp_6500", "color_temp_9000",
+        "rgb_pick_equal_to_4000k_tint"]
     assert all(s.question and s.expect is not None for s in steps)
 
 
@@ -401,7 +402,7 @@ def test_field_test_runs_end_to_end_and_restores(tmp_path: Path, monkeypatch: py
     assert rep["result"] == "completed" and rep["restore"] == "ok"
     assert rep["plan"] == {"sku": "H6061", "title": "H6061 Glide Hexa panels"}
     assert rep["initial_state"]["brightness"] == 50 and rep["initial_state"]["rgb_color"] == [1, 2, 3]
-    assert len(rep["steps"]) == 12 and rep["steps"][0]["step"] == "power_off"
+    assert len(rep["steps"]) == 13 and rep["steps"][0]["step"] == "power_off"
     assert all(r["sent"] == "ok" and r["observed"] is None for r in rep["steps"])
     # the restore re-applied brightness, then the colour as the six group frames
     sent = _sent(d)
@@ -483,6 +484,10 @@ def test_turn_on_with_a_tint_rgb_sends_the_cct_frame() -> None:
     assert d.state.color_temp_kelvin == 9000 and d.state.rgb_color is None
 
 
-def test_other_schemes_do_not_reinterpret_rgb_picks() -> None:
+def test_h6061_default_range_is_its_own_and_other_schemes_need_a_range() -> None:
+    # the other schemes take the SKU's range from the profile (tests/test_rgb_pick_as_cct.py); only
+    # h6061 has a built-in default, and it is unchanged: [2000, 9000]
+    assert b.H6061_KELVIN_RANGE == (2000, 9000)
+    assert b.rgb_as_kelvin(0xFF, 0xAE, 0x54, "h6061") == 2700
     assert b.rgb_as_kelvin(0xFF, 0xAE, 0x54, "h60a6") is None
     assert b.color_rgb_frames(0xFF, 0xAE, 0x54, "h6006", 13) == [b.color_rgb(0xFF, 0xAE, 0x54, "h6006", 13)]

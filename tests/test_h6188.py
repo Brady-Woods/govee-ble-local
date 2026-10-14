@@ -337,7 +337,7 @@ def test_field_test_runs_end_to_end_and_restores(tmp_path: Path, monkeypatch: py
     assert rep["plan"] == {"sku": "H6188", "title": "H6188 RGB strip"}
     assert rep["initial_state"]["brightness"] == 50 and rep["initial_state"]["rgb_color"] == [1, 2, 3]
     names = [r["step"] for r in rep["steps"]]
-    assert len(names) == 2 + 3 + 3 + 3 + 9 and names[0] == "power_off"
+    assert len(names) == 2 + 3 + 3 + 3 + 1 + 9 and names[0] == "power_off"
     assert all(r["sent"] == "ok" and r["observed"] is None for r in rep["steps"])
     # the steps really hit the wire, and the restore re-applied brightness then colour
     assert _sent(d)[-2][:3].hex() == "330488" and _sent(d)[-1][:6].hex() == "33050d010203"

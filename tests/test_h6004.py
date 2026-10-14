@@ -264,6 +264,7 @@ def test_field_test_plan_steps(monkeypatch: pytest.MonkeyPatch) -> None:
         "power_off", "power_on", "brightness_100", "brightness_1", "brightness_50",
         "rgb_red", "rgb_green", "rgb_blue",
         "color_temp_2700", "color_temp_4000", "color_temp_6500", "color_temp_2750",
+        "rgb_pick_equal_to_4000k_tint",
         "scene_Reading", "scene_Rainbow", "scene_Fire",
     ]
 

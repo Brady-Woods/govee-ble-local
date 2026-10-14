@@ -92,6 +92,14 @@ holds the Kelvin actually sent. Only a non-integer raises `GoveeBleInvalidValue`
 carries the app's Kelvin tint. The H60A6 sends whole-device CCT as two frames (main panel, then ring)
 when its advertised pact code is 3 or higher (`Device.pact`).
 
+Like the app, a picked RGB colour that is exactly one of its Kelvin tint colours (178 of them, two per
+100 K step) and whose Kelvin is inside the SKU's range is sent as a colour-temperature frame instead of
+an RGB frame, and `state` then reports `color_temp_kelvin` with `rgb_color` unset: `set_rgb`, `turn_on(rgb=)`,
+`set_zone_rgb` and `set_segment_rgb` on the 0x15 devices (H60A6, H6641, H6062, H6047, with the same mask the
+RGB frame would use), the 0x0d bulbs and strip (H6004, H6006, H6008, H6052, H6188) and H6061. Colours outside the
+range or one channel off the table stay RGB. Not modelled: colour-set / mixed-colour picks and the real-time
+drag frames (RGB only), and H61A8's picks.
+
 The H6047 follows the app's frames too: whole-device power is `33 01` (`33 36` is only the per-bar
 buttons, `set_zone_power`), read-back covers its 10 segments, `Device.zone_color_temp_kelvin(name)`
 gives each bar's Kelvin, and `set_gradual` toggles the fade flag.
