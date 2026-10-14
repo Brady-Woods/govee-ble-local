@@ -28,7 +28,7 @@ from fake_ble import ble_device
 from govee_ble_local import Capability, Encryption
 from govee_ble_local.devices.device import Device, make_device
 from govee_ble_local.devices.profile import profile_for, supported_skus
-from govee_ble_local.exceptions import GoveeBleInvalidValue, GoveeBleNotSupported
+from govee_ble_local.exceptions import GoveeBleNotSupported
 from govee_ble_local.identify import identify, sku_from_local_name
 from govee_ble_local.wire import build as b
 
@@ -160,12 +160,15 @@ def test_set_color_temp_sends_the_app_frame_and_rounds_to_100k() -> None:
     assert d.state.color_temp_kelvin == 2800
 
 
-@pytest.mark.parametrize("kelvin", [2000, 2699, 6501, 9000])
-def test_set_color_temp_range_enforced(kelvin: int) -> None:
+@pytest.mark.parametrize(("kelvin", "edge"), [(2000, 2700), (2699, 2700), (6501, 6500), (9000, 6500)])
+def test_set_color_temp_clamped_to_the_range(kelvin: int, edge: int) -> None:
+    # like the app (KelvinConfig.calibrationKelvin): out of range is clamped, not rejected, and the
+    # frame is exactly the one for the range edge
     d = _dev()
-    with pytest.raises(GoveeBleInvalidValue):
-        asyncio.run(d.set_color_temp(kelvin))
-    assert _sent(d) == []
+    asyncio.run(d.set_color_temp(kelvin))
+    ref = _dev()
+    asyncio.run(ref.set_color_temp(edge))
+    assert _sent(d) == _sent(ref) != [] and d.state.color_temp_kelvin == edge
 
 
 def test_set_brightness_writes_percent_and_reports_it() -> None:
