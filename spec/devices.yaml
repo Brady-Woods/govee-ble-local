@@ -466,6 +466,16 @@ families:
     client_profile: { has_brightness: false, color_scheme: h6006, mode_0d_kind: cct, wire_cipher: runtime }   # no seg read; 0x0d colour+CCT
     models: [H6001, H6002, H6003, H6004, H6005, H6006, H6008, H6009, H600A, H600B, H600C, H600D, H6010, H6011, H6013, H601A, H601B, H601C, H601D, H601E, H601F, H8015, H801A, H801C, H801D, H1401, H14A1, H14C0, H14C1, H14C2, H1501]
     goods_types: [0, 9, 10, 20, 31, 64, 111, 311, 328, 342, 348]   # 328 = H6008 (proven). H6006 = LEGACY bulb handled by the bulblight-v1 pkg (SKU-STRING matched: BulbLightApplication:97, SettingAc:327 — NOT bulblightv3); goodsType = old-bulb 20 cluster (shared H6001/H6005; there is NO dedicated H6006<->goodsType binding anywhere in the app). 0/9/10 = legacy broadcast codes.
+    # H6004 has TWO hardware revisions, split by goodsType (the SKU -> goodsType binding comes from Govee's cloud
+    # product list, not the APK):
+    #   goodsType 10 = Wi-Fi/IoT-only. Package bulblightstringv1/bulblightv1: pact/Support registers goodsTypes {9, 10}
+    #     (H6003 = 9, H6004 = 10), pact/IotSkuItemV2.needBle() = false, pairing is soft-AP (Support.k "Govee_bulb_" SSID,
+    #     192.168.1.1:7200), control is IoT/MQTT only. NOT controllable over BLE; the library does not drive it.
+    #   goodsType 64 = BLE + Wi-Fi (this family): bulblightv3/pact/Support registers pacts (1,1)/(2,1) for 64 and
+    #     bulblightstringv1/bulblight/Support.d gates H6004 beside H6006/H6008/H6009 on goodsType 64. Same 0x0d both-slot
+    #     colour path as H6008 (Config.x[64] -> Config.rv = 2 -> Config.bu); KelvinConfig map 64 -> V2 = [2700, 6500].
+    #   H6003 appears only as goodsType 9 (IoT-only), so it is not BLE-controllable either. The library's H6004 profile
+    #   targets the goodsType-64 revision; a BLE scan is the check (Govee_H6004_* / ihoment_H6004_* with Govee mfg data).
     delivery: feature_split
     connectivity: [ble, wifi, iot]
     protocol: { single_packet: true, multi_dialects: ["0xA3"], mode_command: "0x05" }   # write=0x33 / read=0xAA single; scene/DIY upload=0xA3 (makeSendBytesV1). 0xA1 NOT used as a write dialect in bulblightv3/h6001.
@@ -480,7 +490,7 @@ families:
       - { sub_type: "0x11", meaning: "wifi connect (v3)" }
       - { sub_type: "0x20", meaning: "brightness push (v2)" }
     confidence: high
-    sources: ["bulblightv3/ble/SubModeColor.java", "bulblightv3/pact/Support.java", "h6001/sku/Sku.java", "bulblightv1/iot/Cmd.java (IoT-only v1: H6003/H6004)"]
+    sources: ["bulblightv3/ble/SubModeColor.java", "bulblightv3/pact/Support.java", "h6001/sku/Sku.java", "bulblightstringv1/bulblightv1/pact/Support.java (goodsTypes 9/10 = IoT-only H6003/H6004)", "bulblightstringv1/bulblightv1/pact/IotSkuItemV2.java (goodsType 10, needBle() false)", "bulblightstringv1/bulblight/Support.java:d (H6004 beside H6006/H6008/H6009 on goodsType 64)", "bulblightv3/pact/Support.java (getColorTemRange, getBrightnessRange, getColorPieceSize, is2NewScenesMode)", "base2light/pact/newdetail/config/fuc/color/Config.java (x[64] -> rv = 2)", "base2light/pact/newdetail/config/fuc/KelvinConfig.java (map 64 -> V2)"]
 
   - id: h61d3
     category: rgbic_strip

@@ -158,6 +158,26 @@ PROFILES: tuple[DeviceProfile, ...] = (
         encryption=Encryption.NONE, min_kelvin=2700, max_kelvin=6500,
         scene_versions=frozenset({1}), readback="polled",
     ),
+    # H6004 — BLE revision of the bulb (bulblightv3 split, goodsType 64). The other revision
+    # (goodsType 10, bulblightv1) is Wi-Fi/IoT-only (IotSkuItemV2.needBle() = false) and has no
+    # BLE path. Modeled from source; not hardware-verified (no H6004 hardware). Source (Govee
+    # Home 7.7.02):
+    #  - colour: 0x0d sub-mode; colour instruction version Config.x[64] -> Config.rv = 2 -> Config.bu:
+    #    RGB = Bytes.f, CCT = Bytes.p = [0d, tint RGB, kelvin u2be, tint RGB] ("h6006" both-slot
+    #    form, the same builder as H6008; the white-slot "h6188" form is not used here).
+    #  - kelvin: KelvinConfig map 64 -> Config.V2 = [2700, 6500] (bulblightv3 Support.getColorTemRange).
+    #  - brightness: Support.getBrightnessRange = {1, 100, 0}: percent on the wire, no raw scaling
+    #    (the 20..254 scaling is the legacy h6001 path; H6004 is not in h6001/sku/Sku).
+    #  - read-back: polled aa 01 / aa 04 / aa 05; the 0x0d report is [r,g,b, kelvin u2be, tint RGB];
+    #    no per-segment read (Support.getColorPieceSize = 0).
+    #  - scenes: cloud scene library; Support.is2NewScenesMode -> ScenesOp.parseScene(.., {1}) so
+    #    type-1 RGB scenes upload with comm byte 0x01.
+    #  - no account-lock; plaintext by default (cipher is resolved from the advertisement).
+    DeviceProfile(
+        skus=("H6004",), capabilities=_LIGHT, color_scheme="h6006",
+        encryption=Encryption.NONE, min_kelvin=2700, max_kelvin=6500,
+        scene_versions=frozenset({1}), readback="polled",
+    ),
     # H6052 — table lamp: plaintext, 0x0d scheme; type-5 scenes via dialect B_h6052 (commByte 9).
     # Colour read-back comes from the polled 0x05 report like every 0x0d bulb: [R,G,B,kelvin u2be]
     # (live: `aa 05 0d ff ff ff 0a 8c` = CCT 2700 K).

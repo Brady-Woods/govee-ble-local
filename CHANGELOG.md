@@ -55,6 +55,15 @@ model, from which the shipped readers are generated).
   documents both CCT forms.
 
 ### Added
+- **H6004** (BLE bulb, `bulblightv3` split, goodsType 64; #14): a profile-only addition that behaves
+  like its H6008 sibling: power, percent brightness, RGB, colour temperature (2700-6500 K, the app's
+  both-slot 0x0d frame with the Kelvin tint, 100 K steps), the cloud scene library (63 scenes,
+  type-1 RGB upload) and polled read-back. Plaintext, no account lock. Modeled from the decompiled
+  Govee Home 7.7.02 app (`Config.x[64]` -> `Config.bu` -> `Bytes.p`, `KelvinConfig` map 64 -> V2,
+  `bulblightv3/pact/Support`); not hardware-verified. H6004 has a second, Wi-Fi-only hardware
+  revision (goodsType 10) with no BLE path; the library can only drive the goodsType-64 one.
+  `tools/field_test/plans/h6004.py` adds its field-test plan, and `scenes/H6004.json` is the bundled
+  catalog (`tools/fetch_scenes.py`).
 - **H6188** (legacy RGB strip, `rgblight` split): power, brightness, RGB, colour temperature
   (2000-9000 K), the app's nine built-in scenes, and polled read-back. Modeled from the decompiled
   Govee Home 7.7.02 app; not hardware-verified. Its siblings H6085/H6086/H6089 are Wi-Fi-only
@@ -88,6 +97,9 @@ model, from which the shipped readers are generated).
   regenerated (kaitai-struct-compiler 0.11.0; the diff is only these additions).
 - `devices.yaml`: new `h6188` family with citations; note on the Wi-Fi-only H6085/H6086/H6089.
   `devices.schema.json`: `mode_0d_kind` gains `rgb_kelvin_tint`.
+- `devices.yaml`: the `bulblightv3` family now records H6004's two hardware revisions: goodsType 10
+  (`bulblightstringv1/bulblightv1`, Wi-Fi/IoT-only, `IotSkuItemV2.needBle()` false) versus goodsType
+  64 (BLE + Wi-Fi), with the citations; H6003 is goodsType 9 (IoT-only).
 
 ## [1.2.1] — 2026-10-13
 
