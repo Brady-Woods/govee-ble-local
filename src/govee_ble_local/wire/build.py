@@ -412,6 +412,18 @@ def ic_count_query() -> bytes:
     return frame(PRO_READ, CMD_IC_NUM)
 
 
+CMD_SECTION_COUNT = 0x41   # striplight SINGLE_IC_SEGMENT_NUM (H6062); on_off_memory on other SKUs
+
+
+def section_count_query() -> bytes:
+    """aa 41: read the H6062's ``[IC count s16be, sectionNum u8]`` (``striplight``
+    ``ControllerIcSegmentNum``, ``BleProtocol.SINGLE_IC_SEGMENT_NUM`` = 65). ``sectionNum`` is
+    the segment count the app uses for every mask and the ``aa a5`` group walk. Not the
+    ``aa 40`` read of :func:`ic_count_query` (``SINGLE_IC_NUM_AND_PIECE_NUM`` = 64), whose reply
+    carries a precomputed group count instead."""
+    return frame(PRO_READ, CMD_SECTION_COUNT)
+
+
 def status_query(full: bool = False) -> bytes:
     """0xAC status request: [AC, 03, N, cmd…]. full = dual-zone (adds 0xA5)."""
     if full:

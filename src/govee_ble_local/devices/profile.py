@@ -72,6 +72,12 @@ class DeviceProfile:
     # reported group count (ic_segment_read.segment) instead of a static color_readback_segments
     # — for SKUs whose true segmentation isn't knowable from the static device table (H6641).
     color_readback_live_ic: bool = False
+    # The device reports its own segment count with `aa 41` -> [IC s16be, sectionNum u8]
+    # (striplight ControllerIcSegmentNum; H6062). The app reads it on every connect (a mandatory
+    # step: a timeout fails the whole info read) and uses sectionNum for every mask, every
+    # segment index and the `aa a5` group walk, so Device reads it before the first write that
+    # needs it and on each poll, and `segments` is only the profile's upper bound.
+    section_count_read: bool = False
     # Full-scale value of the brightness the device REPORTS (status TLV 0x04 /
     # aa 04 reply). Every curated SKU reports percent (all live read-backs are
     # 0..100); a 0..255 device would set 255 here. Writes are always percent.
@@ -235,6 +241,39 @@ PROFILES: tuple[DeviceProfile, ...] = (
         skus=("H6188",), capabilities=_LIGHT, color_scheme="h6188",
         encryption=Encryption.NONE, min_kelvin=2000, max_kelvin=9000,
         readback="polled", brightness_range=(20, 254),
+    ),
+    # H6062 — Glide wall light (striplight split, goodsType 41; pacts (1,1) (1,2) (2,1) (2,2) (3,1)
+    # (4,1), Support.addSupportPact). Modeled from source; not hardware-verified (no H6062
+    # hardware). Source (Govee Home 7.7.02):
+    #  - frames: the 0x15 layout of "h60a6" (ColorControllerConfig.d -> Config.u().get(0) = Yt ->
+    #    Bytes.h for colour, Bytes.r for CCT with the tint, Bytes.G for per-segment brightness);
+    #    one detail screen (AcNewDetail) for every pact, so no pact takes a pre-0x15 path.
+    #  - segments: the device's own count, `aa 41` -> [IC s16be, sectionNum u8]
+    #    (ControllerIcSegmentNum, ControllerStrategyConfig.O; the app stores sectionNum with
+    #    Info4BleIotDevice.P0 and ColorControllerConfig.c reads it back via J()). It is the mask
+    #    width, the segment index bound and the `aa a5` group count (ceil(n/4)). `segments=33` is
+    #    only the upper bound (Support.getBulbStringMaxNum: 19 for pacts (1,x)/(2,x), 28 for
+    #    (3,1), 33 for (4,1)) used until the device has answered.
+    #  - kelvin: [2000, 9000] (KelvinConfig version 0; no override for goodsType 41, and 7.7.02
+    #    ships no LightCapabilityProvider implementation).
+    #  - brightness: percent 1..100 (Support.getBrightnessRange; no BrightnessConfig entry).
+    #  - power: 33 01 (ControllerSwitch), no zones.
+    #  - read-back: polled; no 0xAC burst. Connect reads (ControllerStrategyConfig.O): versions,
+    #    Wi-Fi versions/MAC, timers, wake-up, sleep, `aa 01`, `aa 04`, `aa 41`, `aa 05`. The
+    #    colour report of `aa 05` uses the default SubMode4Color parse ([gradual, kelvin s16be]).
+    #    Per-segment colour: `aa a5 <group 1..ceil(n/4)>` (Controller4ColorInfoByGroup).
+    #  - scenes: cloud library, no striplight code of its own for goodsType 41 (NewDetailRegister
+    #    register.13: ScenesConfigBean(0, 0, Support.supportScenesOpSet(41) = {0,1,2,3}), no view-model
+    #    override, so the base SceneViewMode applies): SceneViewMode.Companion.getSceneComposeController
+    #    -> ScenesOp.parseSceneV1 (dialect A, as H6047) for the upload, activate 33 05 04 <code u2le>
+    #    (SubModeScenes.getWriteBytes). None of it depends on the segment count.
+    #  - no account lock (plain ConnectDialog, no 0xB1/0xB2 step); cipher resolved at runtime.
+    DeviceProfile(
+        skus=("H6062",), capabilities=_LIGHT | {_C.SEGMENTS}, color_scheme="h60a6",
+        encryption=Encryption.NONE, segments=33, min_kelvin=2000, max_kelvin=9000,
+        scene_versions=frozenset({0, 1, 2, 3}), readback="polled",
+        color_readback="mechanism_a_direct", color_readback_per_batch=4,
+        section_count_read=True,
     ),
     # Plug family — power-only, AES + account-lock, relay encoding.
     # `plug` read-back polls the relay state (aa 01 -> raw relay bitmask; any bit set = on),

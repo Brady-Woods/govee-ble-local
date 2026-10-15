@@ -45,7 +45,26 @@ model, from which the shipped readers are generated).
 - `Device.segment_count` and `Device.set_segment_count()`: a segment count learned at runtime
   overrides the profile's static `segments` for whole-device masks, segment indices and the
   `aa a5` read-back walk (a profile's explicit `color_readback_segments` still wins for the walk).
-  `None` reverts to the profile value. Nothing sets it yet; H6062 and H6061 will.
+  `None` reverts to the profile value. H6062 sets it from its `aa 41` read; H6061 will set it too.
+- **H6062** (Glide wall light, `striplight` split, goodsType 41; #15): power, brightness (percent),
+  RGB, colour temperature (2000-9000 K, with the app's tint), per-segment colour / brightness /
+  colour temperature, polled read-back with per-segment colour, and the cloud-library scenes
+  (dialect A, versions {0,1,2,3}; bundled `scenes/H6062.json`, fetched with `tools/fetch_scenes.py`;
+  `ScenesOp.parseSceneV1`, activate `33 05 04 <code u2le>`, independent of the segment count). Frames
+  are the `h60a6` 0x15 layout.
+  Modeled from the decompiled Govee Home 7.7.02 app; not hardware-verified.
+  - The device reports its own segment count with `aa 41` (`[IC s16be, sectionNum u8]`,
+    `ControllerIcSegmentNum`, a mandatory step of the app's connect sequence:
+    `AbsComposeControllerWithOpResult.onOvertime` fails the whole info read on a timeout). The
+    library reads it on every poll (between `aa 04` and `aa 05`, the app's order) and before the
+    first write that carries a segment mask, and uses `sectionNum` as the segment count: the mask
+    width (2 bytes up to 16 segments, 3 for 17-24, ... 5 for 33), the segment index bound and the
+    `aa a5` group walk of ceil(n/4) groups. If the device does not answer, no colour frame is sent
+    (the app cannot control the device without the count), rather than guessing a mask.
+  - New `DeviceProfile.section_count_read`, `build.section_count_query`, `parse.parse_section_count`.
+    `profile.segments` (33) is only the upper bound (`Support.getBulbStringMaxNum`: 19 for pacts
+    (1,x)/(2,x), 28 for (3,1), 33 for (4,1)).
+  - `tools/field_test/plans/h6062.py` field-test plan.
 
 ### Changed
 - **Out-of-range Kelvin is clamped to the device's range instead of raising `GoveeBleInvalidValue`**
@@ -131,6 +150,10 @@ model, from which the shipped readers are generated).
   regenerated (kaitai-struct-compiler 0.11.0; the diff is only these additions).
 - `devices.yaml`: new `h6188` family with citations; note on the Wi-Fi-only H6085/H6086/H6089.
   `devices.schema.json`: `mode_0d_kind` gains `rgb_kelvin_tint`.
+- `devices.yaml`: new `striplight` family (H6062, goodsType 41; the shared package's H610A/H610B have
+  their own flows and are not modelled). `govee_ble.ksy`: comment that opcode `0x41` is
+  `on_off_memory` in the shared enum but the H6062's `aa 41` section-count read on the striplight
+  split (hand-decoded in `parse.parse_section_count`; generated readers unchanged).
 - `devices.yaml`: the `bulblightv3` family now records H6004's two hardware revisions: goodsType 10
   (`bulblightstringv1/bulblightv1`, Wi-Fi/IoT-only, `IotSkuItemV2.needBle()` false) versus goodsType
   64 (BLE + Wi-Fi), with the citations; H6003 is goodsType 9 (IoT-only).

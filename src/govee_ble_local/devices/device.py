@@ -419,6 +419,8 @@ class Device:
         :meth:`set_color_temp`."""
         if rgb is not None and kelvin is not None:
             raise GoveeBleInvalidValue("turn_on: pass either rgb or kelvin, not both")
+        if rgb is not None or kelvin is not None:
+            await self._ensure_segment_count()
         frames: list[bytes] = []
         if power:
             self._require(Capability.POWER)
@@ -475,6 +477,7 @@ class Device:
 
         Raises GoveeBleNotSupported without RGB; GoveeBleInvalidValue for out-of-range channels."""
         self._require(Capability.RGB)
+        await self._ensure_segment_count()
         r, g, b = rgb
         await self._conn.send(build.color_rgb(r, g, b, self.profile.color_scheme, self.segment_count))
         self._mutated()
@@ -494,6 +497,7 @@ class Device:
         Kelvin actually sent is what ``state`` keeps, and the frame carries the app's tint."""
         self._require(Capability.COLOR_TEMP)
         kelvin = self._check_kelvin(kelvin)
+        await self._ensure_segment_count()
         frames = self._color_temp_frames(kelvin)
         if len(frames) == 1:
             await self._conn.send(frames[0])
@@ -513,6 +517,7 @@ class Device:
 
         Raises GoveeBleNotSupported without SEGMENTS; GoveeBleInvalidValue for a bad index."""
         self._require(Capability.SEGMENTS)
+        await self._ensure_segment_count()
         r, g, b = rgb
         n = self.segment_count
         await self._conn.send(build.segment_rgb(_mask(indices, n), r, g, b, self.profile.color_scheme, n))
@@ -526,6 +531,7 @@ class Device:
         schemes without per-segment brightness (e.g. H61A8)."""
         self._require(Capability.SEGMENTS)
         pct = max(0, min(100, pct))
+        await self._ensure_segment_count()
         n = self.segment_count
         frame = self._build_or_unsupported(
             build.segment_brightness, _mask(indices, n), pct, self.profile.color_scheme, n)
@@ -573,6 +579,7 @@ class Device:
         self._require(Capability.SEGMENTS)
         self._require(Capability.COLOR_TEMP)
         kelvin = self._check_kelvin(kelvin)
+        await self._ensure_segment_count()
         n = self.segment_count
         frame = self._build_or_unsupported(
             build.segment_color_temp, _mask(indices, n), kelvin, self.profile.color_scheme, n)
@@ -667,6 +674,7 @@ class Device:
         if not z.segments:
             raise GoveeBleNotSupported(f"{self._sku}: zone {name!r} has no segments")
         r, g, b = rgb
+        await self._ensure_segment_count()
         n = self.segment_count
         await self._conn.send(build.segment_rgb(_mask(z.segments, n), r, g, b, self.profile.color_scheme, n))
         self._mutated()
@@ -685,6 +693,7 @@ class Device:
         z = self._zone(name)
         if not z.segments:
             raise GoveeBleNotSupported(f"{self._sku}: zone {name!r} has no segments")
+        await self._ensure_segment_count()
         n = self.segment_count
         frame = self._build_or_unsupported(
             build.segment_color_temp, _mask(z.segments, n), kelvin, self.profile.color_scheme, n)
@@ -765,7 +774,11 @@ class Device:
         if self.profile.color_readback == "mechanism_b":
             await self._read_mechanism_b()
         elif self.profile.color_readback == "mechanism_a_direct":
-            await self._read_mechanism_a_direct()
+            if self.profile.section_count_read and self._segment_count is None:
+                _LOGGER.debug("%s (%s): segment count unknown; skipping segment colour read-back",
+                              self.address, self._sku)
+            else:
+                await self._read_mechanism_a_direct()
         if self.profile.gradual:
             seq = self._mutation_seq
             reply = await self._read_reply(build.gradual_query(), build.CMD_GRADUAL_WIFI_BLE)
@@ -1019,7 +1032,11 @@ class Device:
             self._state.brightness = self._brightness_pct(raw)
         if self.profile.bar_switch:
             await self._read_bar_switch()
-        if Capability.SCENES in self.capabilities or self.profile.color_scheme in ("h6006", "h6188"):
+        if self.profile.section_count_read:
+            # The app's connect order: aa 01, aa 04, aa 41, aa 05 (ControllerStrategyConfig.O).
+            await self._read_section_count()
+        if (Capability.SCENES in self.capabilities or Capability.COLOR_TEMP in self.capabilities
+                or self.profile.color_scheme in ("h6006", "h6188")):
             seq = self._mutation_seq
             reply = await self._read_reply(build.mode_query(), build.CMD_MODE)
             if reply is not None and not self._stale(seq, "mode"):
@@ -1028,6 +1045,32 @@ class Device:
         if applied:
             self._state.optimistic = False
             self._mark_authoritative()
+
+    async def _read_section_count(self) -> bool:
+        """Read the segment count the device reports (``aa 41`` -> ``sectionNum``) and adopt it
+        as :attr:`segment_count`, as the app does on every connect. Returns False (state left as
+        it was) when the device does not answer or reports a count the masks cannot carry."""
+        reply = await self._read_reply(build.section_count_query(), build.CMD_SECTION_COUNT)
+        sc = parse.parse_section_count(reply) if reply else None
+        if sc is None or not 1 <= sc.section_num <= build.MAX_MASK_SEGMENTS:
+            _LOGGER.debug("%s (%s): aa 41 section-count read gave no usable count (%s)",
+                          self.address, self._sku, None if sc is None else sc.section_num)
+            return False
+        self._segment_count = sc.section_num
+        return True
+
+    async def _ensure_segment_count(self) -> None:
+        """Make sure the device's own segment count is known before a write that carries a segment
+        mask. The app always reads it on connect and cannot control the device without it
+        (``AbsComposeControllerWithOpResult.onOvertime`` fails the connect read), so a profile with
+        ``section_count_read`` does the same lazily here and sends nothing if the device does not
+        answer, rather than guessing a mask. A no-op on every other profile and once the count is
+        known."""
+        if (self.profile.section_count_read and self._segment_count is None
+                and not await self._read_section_count()):
+            raise GoveeBleError(
+                f"{self._sku}: the device did not report its segment count (aa 41); "
+                "not sending a colour frame with a guessed segment mask")
 
     async def _read_reply(self, frame: bytes, command_type: int) -> bytes | None:
         frames = await self._conn.query(
