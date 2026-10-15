@@ -101,17 +101,27 @@ def test_build_or_unsupported_propagates_invalid_value() -> None:
         d._build_or_unsupported(unsupported)
 
 
-@pytest.mark.parametrize("kelvin", [100, 2699, 6501, 9000])
-def test_kelvin_outside_profile_range_rejected(kelvin: int) -> None:
-    d = _dev("H60A6")  # 2700..6500, zones + segments
-    for make in (
-        lambda: d.set_color_temp(kelvin),
-        lambda: d.set_segment_color_temp([0], kelvin),
-        lambda: d.set_zone_color_temp("background", kelvin),
-        lambda: d.turn_on(kelvin=kelvin),
+@pytest.mark.parametrize(("kelvin", "sent"), [(100, 2700), (2699, 2700), (6501, 6500), (9000, 6500)])
+def test_kelvin_outside_profile_range_is_clamped(kelvin: int, sent: int) -> None:
+    # 2700..6500, zones + segments; the app clamps (KelvinConfig.calibrationKelvin) and never rejects
+    for whole_device, make in (
+        (True, lambda d: d.set_color_temp(kelvin)),
+        (False, lambda d: d.set_segment_color_temp([0], kelvin)),
+        (False, lambda d: d.set_zone_color_temp("background", kelvin)),
+        (True, lambda d: d.turn_on(kelvin=kelvin)),
     ):
-        with pytest.raises(GoveeBleInvalidValue):
-            run(make())
+        d = _dev("H60A6")
+        run(make(d))
+        if whole_device:  # the segment/zone setters do not touch the whole-device state
+            assert d.state.color_temp_kelvin == sent
+        cct = [f for f in _sent(d) if f[1:3] == b"\x05\x15"]
+        assert cct and all(f[7:9] == sent.to_bytes(2, "big") for f in cct)
+
+
+def test_non_int_kelvin_still_rejected() -> None:
+    d = _dev("H60A6")
+    with pytest.raises(GoveeBleInvalidValue):
+        run(d.set_color_temp(4000.5))  # type: ignore[arg-type]
     assert _sent(d) == [] and d.state.color_temp_kelvin is None
 
 
@@ -119,10 +129,10 @@ def test_kelvin_range_bounds_inclusive_and_undefined_range_allows() -> None:
     d = _dev("H60A6")
     run(d.set_color_temp(2700))
     run(d.set_color_temp(6500))
-    assert len(_sent(d)) == 2
+    assert len(_sent(d)) == 4          # H60A6 whole-device CCT = main panel + ring frames
     t = _dev("H60A6", min_kelvin=None, max_kelvin=None)
     run(t.set_color_temp(1000))
-    assert len(_sent(t)) == 1
+    assert len(_sent(t)) == 2
 
 
 def test_zone_rgb_and_color_temp_require_capabilities() -> None:

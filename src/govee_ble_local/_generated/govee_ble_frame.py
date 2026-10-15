@@ -535,9 +535,11 @@ class GoveeBleFrame(KaitaiStruct):
 
 
     class ColorCct0d(KaitaiStruct):
-        """0x0D colour write. RGB form = [R,G,B, 0...] (Bytes.f). CCT form = [ff,ff,ff, kelvin u2be, tint] where the
-        tint is Constant.getTemColorByKelvin(kelvin) (exact 100 K table hit, else zeros); H6188 sends it
-        (Config.GM -> Bytes.A, library color_scheme "h6188"); the "h6006" bulb builder leaves it zero.
+        """0x0D colour write. RGB form = [R,G,B, 0...] (Bytes.f). Two CCT forms, both carrying tint =
+        Constant.getTemColorByKelvin(kelvin) (exact 100 K table hit, else zeros):
+          white-slot [ff,ff,ff, kelvin u2be, tint]  H6188 (Config.GM -> Bytes.A; library color_scheme "h6188");
+          both-slot  [tint, kelvin u2be, tint]      H6008/H6006/H6052 (Config.bu -> Bytes.p; library "h6006").
+        The app only sends whole 100 K steps, clamped to the device range (KelvinConfig.calibrationKelvin).
         """
         def __init__(self, _io, _parent=None, _root=None):
             super(GoveeBleFrame.ColorCct0d, self).__init__(_io)

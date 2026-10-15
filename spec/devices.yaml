@@ -411,6 +411,7 @@ families:
     opcodes:
       - { name: zone_power, cmd: "0x30", payload: "[zoneIndex, state]", readable: true, note: "H60A6 dual-zone; notify state in bit 1 of each byte. zone 0 = MAIN PANEL = segment-mask index 12; zone 1 = BACKGROUND RGBIC ring = segment indices 0-11. HARDWARE-VERIFIED (segment-map probe: driving idx12 vs 0-11 to opposite colours, the device read-back holds idx12 distinct). The 0x15 colour/CCT seg_mask thus addresses the panel via bit 12, the ring via 0x0FFF, whole device via 0x1FFF." }
       - { name: global_switch, cmd: "0x01", payload: "[state]", readable: true, note: "MASTER switch over both zones. HARDWARE-VERIFIED (H60A6, 2026-10-12, via HA probe): 33 01 00 clears both zone flags; 33 01 01 lights BOTH zones even when each was switched off individually; zone-on, colour (0x05 0x15) and brightness (0x04) writes each also wake the fixture. Status TLV 0x01 reports it. Back-to-back (unpaced) writes are all acked but no faster than sequential." }
+      - { name: color_temp_write, cmd: "0x05", payload: "[0x15, 0x01, ff ff ff, kelvin u2be, tintR, tintG, tintB, seg_mask u2le]", note: "Bytes.r(tint, K, mask, type=1) (type 1 = white in bytes 2-4); tint = Constant.getTemColorByKelvin(K), K a whole 100 K step clamped to the device range (KelvinConfig.calibrationKelvin; the UI picks the tint then Config recovers K via getColorTemKelvin). Whole-device CCT on H60A6 is TWO frames, main panel (mask bit 12) then ring (bits 0-11), each with its tint: VM4LightH60A6.configColorStripController -> ControllerBuild.j, gated on Support.supportPartTem (pactType 1, pactCode >= 3). Below pact 3 the app takes ColorModeControllerConfig.w (multi-packet colour path, not modelled; the library sends one all-segments frame). Library: profile cct_per_zone_min_pact=(1, 3); unknown pact is treated as >= 3." }
       - { name: per_segment_color_read, cmd: "0xa5", readable: true, payload: "mechanism (A): reply groups [groupIndex, 4x{brightness,R,G,B}]; group count = ceil(getColorPieceSize/4); H60A6 pieceCount=13 (goodsType 303); records are 4-byte incl brightness (NOT [segIndex,R,G,B]). See IC/segment note." }
       - { name: on_off_memory, cmd: "0x41", payload: "[2, mode]" }
       - { name: child_switch, cmd: "0x36", payload: "[!on, second]" }
@@ -441,6 +442,7 @@ families:
     opcodes:
       - { name: compose_light_switch, cmd: "0x36", readable: true, payload: "H6047 [left,right]; others [position(0|1), state]; read AA 36" }
       - { name: swap_light, cmd: "0x34", payload: "[] (empty)" }
+      - { name: color_temp_write, cmd: "0x05", payload: "[0x15, 0x01, ff ff ff, kelvin u2be, tintR, tintG, tintB, seg_mask u2le]", note: "H6047 (119): SubModeColor.makeSubModeColor4Kelvin / H6047ColorControllerConfig -> Config.Yt -> Bytes.r type 1; tint = Constant.getTemColorByKelvin(K) (whole 100 K steps, clamped to the SKU range)." }
       - { name: light_direction, cmd: "0x30", readable: true, note: "live (H6048OnOffNotifyParse, Info4Detail)" }
       - { name: camera_position, cmd: "0x31", note: "CONSTANT-ONLY — BleProtocol=49; no controller/parser wired in split; not confirmed live" }
       - { name: check_install_camera, cmd: "0x32", note: "CONSTANT-ONLY — BleProtocol=50; no usage in split; not confirmed live" }
@@ -471,6 +473,7 @@ families:
     submodes: { color: "0x0d", color_alt: "0x02", scene: "0x04", music: "0x05", diy: "0x0a" }
     opcodes:
       - { name: color_temp_type, cmd: "0x26", payload: "[1|2] display type (H601EF)" }
+      - { name: color_temp_write, cmd: "0x05", payload: "[0x0d, tintR, tintG, tintB, kelvin u2be, tintR, tintG, tintB]", note: "BOTH-SLOT form: bulblightv3/pact/Model.t -> bulblightstringv1/bulblight VM4Light.configColorController -> Config.J[2] = Config.bu -> Bytes.p(tint, K); the tint (Constant.getTemColorByKelvin) fills both colour slots, NOT ff ff ff (that is the H6188 form, Config.GM -> Bytes.A). H6008 (328); H6006 sits in the same goodsType-64 version gates (bulblight/Support.d, BulbLightApplication, SettingAc). Read-back: aa 05 0d [r g b kelvin u2be tint rgb], kelvin != 0 => CCT (bulblightstringv1 ModeParseStrategyConfig.a, tablelampv1 SubModeColor.parse)." }
     specs: { kelvin_range: [2700, 6500], scene_versions: [0], brightness_range: [1, 100], brightness_scaling: "legacy non-H6005: 1-100 -> 20-254; H6005/H6001-new: raw percent" }   # H6006 (legacy, gt~20) may report [2000,9000]; H6008(328)=[2700,6500]. No per-segment read (getColorPieceSize=0).
     encryption: none
     notify:
@@ -490,6 +493,7 @@ families:
     submodes: { color: "0x15", scene: "0x04", music: "0x13", diy: "0x0a" }
     opcodes:
       - { name: read_ic_count, cmd: "0x40", readable: true }
+      - { name: color_temp_write, cmd: "0x05", payload: "[0x15, 0x01, ff ff ff, kelvin u2be, tintR, tintG, tintB, seg_mask u2le]", note: "H6641 (247): h61d3 adjustNew/VM4Light + adjust/newdetail/VM4LightH61d3 use the default configColorStripController -> ColorModeControllerConfig.k -> colour instruction version Config.x[247]=0 -> Config.Yt -> Bytes.r; Config.P[247]=1 (white type); tint = Constant.getTemColorByKelvin(K)." }
       - { name: check_ic, cmd: "0x46", payload: "H6640 uses 0x43" }
       - { name: read_ic_point, cmd: "0x24", readable: true }
       - { name: per_segment_color_read, cmd: "0xa5", readable: true, payload: "H6641/247: per-group DIRECT read (proType 0xAA) `aa a5 <group>` via Compose4InfoBleIot; PARSER Controller4ColorInfoByGroup -> [groupIndex, count x {brightness,R,G,B}] 4-byte records; group count = ceil(IC/5) from the prior 0x40 IC read (adjustNew/VM4Light.C5:197 -> P5:288-321). NOT a 0xAC status burst — `ac 03 03 41 30 a5` returns zero for 247. mechanism A-direct." }
@@ -873,6 +877,7 @@ families:
     submodes: { color: "0x0d", scene: "0x04", music: "0x0f", music_alt: "0x13", diy: "0x0a" }
     opcodes:
       - { name: light_indicator, cmd: "0x16", payload: "[enable, sH,sM,eH,eM] or [enable,FF,FF,FF,FF]", note: "NewLightIndicatorController" }
+      - { name: color_temp_write, cmd: "0x05", payload: "[0x0d, tintR, tintG, tintB, kelvin u2be, tintR, tintG, tintB]", note: "BOTH-SLOT form (H6052, goodsType 22): tablelampv1/pact/Model.t -> H6052NewDetailActivity / H6052NewDetailVM default colour controllers -> Config.bu -> Bytes.p(tint, K). See bulblightv3.color_temp_write." }
     # Scene encoding (validated against the scene catalog): sceneType0 (null param) -> activate-only 33 05 04 <code>;
     # sceneType3 (graffiti) -> dialect A (ScenesOp.parseSceneV1 -> MultiNewScenesControllerV3, comType 7, decoded param w/ first 2 bytes stripped);
     # sceneType5 (DIY-in-scenes) -> tablelampv1-specific: H6052ScenesViewMode -> Diy.parseScenes4Diy -> MultipleDiyInScenesController

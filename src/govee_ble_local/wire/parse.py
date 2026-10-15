@@ -147,16 +147,20 @@ def parse_mode_color_0d(frame: bytes) -> tuple[int, int, int] | None:
 
 def parse_mode_0d(frame: bytes) -> tuple[tuple[int, int, int] | None, int | None] | None:
     """AA 05 0D reply on the 0x0d-scheme bulbs (H6006/H6008/H6052): ``[r, g, b,
-    kelvin u2be]`` - the same layout as the 0x0d write. White (ff ff ff) with a
-    non-zero kelvin is colour-temperature mode -> ``(None, kelvin)``; otherwise
-    ``((r, g, b), None)``. Live captures: ``aa 05 0d ff ff ff 0a 8c`` = 2700 K."""
+    kelvin u2be, tint r, g, b]`` - the same layout as the 0x0d write. ANY non-zero kelvin is
+    colour-temperature mode -> ``(None, kelvin)``; kelvin 0 -> ``((r, g, b), None)``.
+
+    This is the app's own rule: ``bulblightstringv1`` ``ModeParseStrategyConfig`` and
+    tablelampv1 ``SubModeColor.parse`` take kelvin from bytes 3..4 and show the tint when it is
+    non-zero. It must not require white (ff ff ff) in the colour slot: the app's CCT write
+    (``Config.bu`` -> ``Bytes.p``) puts the tint there. Live capture, written by the earlier
+    white-slot form: ``aa 05 0d ff ff ff 0a 8c`` = 2700 K."""
     if len(frame) < 8 or frame[0] != 0xAA or frame[1] != 0x05 or frame[2] != 0x0D:
         return None
-    rgb = (frame[3], frame[4], frame[5])
     kelvin = (frame[6] << 8) | frame[7]
-    if rgb == (0xFF, 0xFF, 0xFF) and kelvin:
+    if kelvin:
         return None, kelvin
-    return rgb, None
+    return (frame[3], frame[4], frame[5]), None
 
 
 # mode_color_0d_typed `kind` for the rgblight strategy (devices.yaml mode_0d_kind: rgb_kelvin_tint).

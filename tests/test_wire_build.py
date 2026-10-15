@@ -49,7 +49,8 @@ def test_color_rgb_schemes() -> None:
 
 def test_color_temp() -> None:
     m = _p(b.color_temp(4000, "h6006", 13)).body.params
-    assert (m.params.r, m.params.g, m.params.b) == (0xFF, 0xFF, 0xFF) and m.params.kelvin == 4000
+    # both-slot form: tint in the colour slot (Config.bu -> Bytes.p), not white
+    assert (m.params.r, m.params.g, m.params.b) == (0xFF, 0xD5, 0xA1) and m.params.kelvin == 4000
     m = _p(b.color_temp(2700, "h60a6", 13)).body.params
     assert m.sub_type == F.SubMode.color_rgbic_15 and m.params.op_type == F.Op15.set_color
     with pytest.raises(ValueError):
@@ -62,6 +63,7 @@ def test_segment_color_temp_carries_mask() -> None:
     assert f[:4].hex() == "33051501"                 # mode / 0x15 / set-color
     assert (f[4], f[5], f[6]) == (0xFF, 0xFF, 0xFF)  # WHITE slot
     assert (f[7], f[8]) == (0x0B, 0xB8)              # kelvin 3000, u2be
+    assert (f[9], f[10], f[11]) == (0xFF, 0xB9, 0x69)  # tint for 3000 K (Constant.getTemColorByKelvin)
     assert (f[12], f[13]) == (0x07, 0x00)            # seg mask {0,1,2}, little-endian
     # whole-device color_temp is just the all-segments mask on the same builder
     assert b.color_temp(3000, "h60a6", 13) == b.segment_color_temp((1 << 13) - 1, 3000, "h60a6")

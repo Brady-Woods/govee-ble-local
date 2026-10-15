@@ -122,10 +122,11 @@ def test_color_temp_carries_tint() -> None:
     f = b.color_temp(2700, "h6188")
     assert f[:11].hex() == "33050d" + "ffffff" + "0a8c" + "ffae54"
     assert f[11:19] == bytes(8)
-    # off-table Kelvin: the app sends no tint
+    # off-table Kelvin: the builder leaves the tint zero (the Device layer rounds to 100 K first)
     assert b.color_temp(2750, "h6188")[8:11] == b"\x00\x00\x00"
-    # h6006 keeps its zero tail
-    assert b.color_temp(2700, "h6006")[8:11] == b"\x00\x00\x00"
+    # the h6006 both-slot form is a different layout and stays distinct from h6188's
+    assert b.color_temp(2700, "h6006")[:11].hex() == "33050d" + "ffae54" + "0a8c" + "ffae54"
+    assert b.color_temp(2700, "h6006") != b.color_temp(2700, "h6188")
 
 
 def test_color_temp_round_trips_kaitai() -> None:
@@ -173,7 +174,7 @@ def test_brightness_round_trip_every_percent() -> None:
 def test_parse_mode_0d_rgblight_kelvin_marks_cct() -> None:
     cct = _frame(0xAA, 0x05, 0x0D, 0x10, 0x20, 0x30, 0x0A, 0x8C, 0xFF, 0xAE, 0x54)
     assert parse.parse_mode_0d_rgblight(cct) == (None, 2700)          # any kelvin != 0 => CCT
-    assert parse.parse_mode_0d(cct) == ((0x10, 0x20, 0x30), None)    # bulb rule needs white
+    assert parse.parse_mode_0d(cct) == (None, 2700)                   # the bulbs use the same rule
     rgb = _frame(0xAA, 0x05, 0x0D, 0x10, 0x20, 0x30)
     assert parse.parse_mode_0d_rgblight(rgb) == ((0x10, 0x20, 0x30), None)
 
@@ -225,12 +226,12 @@ def test_turn_on_batches_raw_brightness_and_cct() -> None:
     assert d.state.color_temp_kelvin == 6500 and d.state.brightness == 100
 
 
-def test_set_color_temp_range_enforced() -> None:
-    d = _dev()
-    with pytest.raises(GoveeBleInvalidValue):
-        asyncio.run(d.set_color_temp(1500))
+def test_set_color_temp_range_clamped() -> None:
+    d = _dev()                       # 2000..9000, clamped like the app (KelvinConfig.calibrationKelvin)
+    asyncio.run(d.set_color_temp(1500))
+    assert _sent(d)[0][6:8].hex() == "07d0" and d.state.color_temp_kelvin == 2000
     asyncio.run(d.set_color_temp(9000))
-    assert _sent(d)[0][3:11].hex() == "ffffff2328d9e1ff"
+    assert _sent(d)[1][3:11].hex() == "ffffff2328d9e1ff"
 
 
 def test_segments_not_supported() -> None:
@@ -336,7 +337,7 @@ def test_field_test_runs_end_to_end_and_restores(tmp_path: Path, monkeypatch: py
     assert rep["plan"] == {"sku": "H6188", "title": "H6188 RGB strip"}
     assert rep["initial_state"]["brightness"] == 50 and rep["initial_state"]["rgb_color"] == [1, 2, 3]
     names = [r["step"] for r in rep["steps"]]
-    assert len(names) == 2 + 3 + 3 + 3 + 1 + 9 and names[0] == "power_off"
+    assert len(names) == 2 + 3 + 3 + 3 + 9 and names[0] == "power_off"
     assert all(r["sent"] == "ok" and r["observed"] is None for r in rep["steps"])
     # the steps really hit the wire, and the restore re-applied brightness then colour
     assert _sent(d)[-2][:3].hex() == "330488" and _sent(d)[-1][:6].hex() == "33050d010203"
