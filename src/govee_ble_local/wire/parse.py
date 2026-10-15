@@ -358,16 +358,27 @@ def _version(v: Any) -> str | None:
     return f"{major}.{minor:02d}.{patch:02d}"
 
 
+_VERSION_TRIM = "".join(map(chr, range(0x21)))   # BleUtils.K trims every char <= 0x20
+
+
+def _ascii_version(text: str) -> str | None:
+    """ASCII version string (already cut at the first NUL by the reader), trimmed of control and
+    space characters at both ends as the app does (BleUtils.K); None when nothing is left."""
+    return text.strip(_VERSION_TRIM) or None
+
+
 def _mac_or_none(raw: bytes) -> str | None:
     return ":".join(f"{b:02X}" for b in raw) if any(raw) else None
 
 
 def _uid_serial(uid: bytes) -> str | None:
-    """8-byte UID -> MAC-style colon hex (reversed), leading 00: pairs stripped."""
+    """8-byte UID -> MAC-style colon hex (reversed) = the device id, as SnController renders it:
+    an all-zero UID is invalid (NumberUtil.isInvalidUuid -> None) and one leading ``00:00:`` is
+    dropped (SnController.parseValidBytes)."""
+    if not any(uid):
+        return None
     s = ":".join(f"{x:02X}" for x in reversed(uid))
-    while s.startswith("00:"):
-        s = s[3:]
-    return s or None
+    return s.removeprefix("00:00:") or None
 
 
 @dataclass(frozen=True)
@@ -397,15 +408,23 @@ def device_info_from(sel: int, info: Any) -> DeviceInfo | None:
         )
     if sel == 0x02:
         return DeviceInfo(serial=_uid_serial(bytes(info.uid)))
+    if sel == 0x03:
+        return DeviceInfo(hw_version=_ascii_version(info.version))
     return None   # 0x06 etc. — logged & ignored by the device
 
 
 def parse_device_info(frame: bytes) -> DeviceInfo | None:
-    """AA 07 reply: basic (0x10), wifi (0x11), or SN (0x02) device info."""
+    """AA 07 reply: basic (0x10), wifi (0x11), SN (0x02) or hard-version (0x03) device info."""
     b = _read_reply(frame, _Command.device_info)
     if b is None:
         return None
     return device_info_from(int(b.selector), b.info)
+
+
+def parse_soft_version(frame: bytes) -> str | None:
+    """AA 06 reply: the ASCII firmware (soft) version, e.g. ``1.00.41`` (None when empty)."""
+    b = _read_reply(frame, _Command.soft_version)
+    return None if b is None else _ascii_version(b.version)
 
 
 # ── notifications (0xEE) ─────────────────────────────────────────────────────

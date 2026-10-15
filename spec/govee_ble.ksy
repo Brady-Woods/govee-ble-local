@@ -222,6 +222,7 @@ types:
             'command::switch': switch_read_reply
             'command::brightness': brightness_read_reply
             'command::device_info': device_info_read
+            'command::soft_version': soft_version_read
             'command::compose_light_switch': bar_switch_read
             'command::secret_read': secret_read_reply
             'command::plug_spec': plug_spec_read
@@ -406,8 +407,10 @@ types:
       - { id: rest, size-eos: true }
   device_info_read:
     doc: |
-      AA 07 reply (BasicInfoController / BasicWifiInfoController / SnController). selector @ body[0] picks the
-      body. 3-byte version fields render as X.YY.ZZ (major . %02d . %02d).
+      AA 07 reply (BasicInfoController / BasicWifiInfoController / SnController / HardVersionController).
+      selector @ body[0] picks the body. 3-byte version fields render as X.YY.ZZ (major . %02d . %02d).
+      The app's own connect-time reads are AA 06 (soft version), AA 07 03 (hard version) and AA 07 02
+      (SN = device id); AA 07 10 / 11 are the binary basic / Wi-Fi forms.
     seq:
       - { id: selector, type: u1 }
       - id: info
@@ -418,6 +421,7 @@ types:
             0x10: device_info_basic
             0x11: device_info_wifi
             0x02: device_info_sn
+            0x03: device_info_hard_version
   device_info_basic:      # AA 07 10
     seq:
       - { id: uid, size: 8, doc: "8-byte device UID (atomic id; app renders MAC-style byte-REVERSED via toAddressBytes(hFirst=false), leading 00:00 stripped)" }
@@ -435,6 +439,12 @@ types:
     seq:
       - { id: uid, size: 8, doc: "8-byte device UID (atomic id)" }
       - { id: pad, size-eos: true, doc: "zero padding to the 20-byte frame" }
+  device_info_hard_version:   # AA 07 03 (HardVersionController.parseValidBytes: validBytes[0]==3, rest = ASCII)
+    seq:
+      - { id: version, type: strz, encoding: UTF-8, size-eos: true, doc: "ASCII hardware version (e.g. 1.04.03), NUL-terminated inside the zero padding; BleUtil.getStrData" }
+  soft_version_read:      # AA 06 (SoftVersionController.parseValidBytes: validBytes = the whole body, ASCII)
+    seq:
+      - { id: version, type: strz, encoding: UTF-8, size-eos: true, doc: "ASCII firmware version (e.g. 1.00.41), NUL-terminated inside the zero padding; BleUtil.getStrData" }
   version3:
     doc: "3-byte firmware version rendered X.YY.ZZ (major . %02d . %02d); BasicInfoController.u:73."
     seq:

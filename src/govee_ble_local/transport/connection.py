@@ -57,6 +57,7 @@ from ..const import (
     OPERATION_TIMEOUT,
     PSK,
     QUERY_DEFAULT_TIMEOUT,
+    SERVICE_UUID,
     SESSION_ATTEMPTS,
     UNACKED_SEND_GAP,
     WRITE_ACK_TIMEOUT,
@@ -361,6 +362,11 @@ class GoveeConnection:
                     # best currently-reachable scanner/proxy, not the one that
                     # was best when the attempt started.
                     ble_device_callback=lambda: self._ble_device,
+                    # Resolve only the Govee service. On macOS, CoreBluetooth refuses descriptor
+                    # discovery on a characteristic of another service that some firmwares expose
+                    # (H60A6: "UUID is not allowed for this operation"), which fails the whole
+                    # connect; BlueZ ignores the filter.
+                    services=[SERVICE_UUID],
                 )
                 self._drain()
                 await self._client.start_notify(NOTIFY_CHAR_UUID, self._handle_notify)

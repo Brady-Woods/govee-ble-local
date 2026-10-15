@@ -88,9 +88,15 @@ class DeviceState:
     wifi_mac: str | None = None
     hardware_version: str | None = None
     firmware_version: str | None = None
-    serial_number: str | None = None
+    serial_number: str | None = None         # the device id (aa 07 02), same value as `device_id`
     # A device-reported BLE MAC, IFF a device-info reply carries one distinct from the
     # connectable address (relevant only for rotating/random advertised addresses). No
     # curated SKU is confirmed to report this yet — stays None; the connectable address
     # is otherwise the Bluetooth MAC.
     ble_mac: str | None = None
+
+    @property
+    def device_id(self) -> str | None:
+        """The device id the Govee app calls ``device`` (e.g. ``2D:DB:5C:E7:53:F4:74:56``), read
+        with ``aa 07 02``. An alias of ``serial_number``."""
+        return self.serial_number

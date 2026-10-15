@@ -8,6 +8,38 @@ model, from which the shipped readers are generated).
 
 ## [Unreleased]
 
+### Added
+- `DeviceState.device_id`: the id the Govee app calls `device` (e.g. `2D:DB:5C:E7:53:F4:74:56`), read
+  with `aa 07 02`. An alias of `serial_number`, which holds the same value.
+- `build.soft_version_query` (`aa 06`), `build.INFO_HARD` (`aa 07 03`) and `parse.parse_soft_version`.
+
+### Changed
+- Device info now uses the reads the app makes on connect: `aa 06` for the firmware version, `aa 07 03`
+  for the hardware version and `aa 07 02` for the device id (`SoftVersionController`,
+  `HardVersionController`, `SnController`). The binary `aa 07 10` basic read is only a fallback for a
+  device that left a version unknown. Live-verified (2026-10-15, app 7.7.02 source): H60A6, H6047,
+  H61A8, H6052, H6006, H6008 and H5083 all answer the three app reads; before, only the H60A6 reported
+  a firmware version at all, because the others ignore `aa 07 10`.
+
+### Fixed
+- macOS: the connect failed on the H60A6 and H6008 (`Failed to discover descriptors for characteristic
+  13 ... UUID not allowed`) because CoreBluetooth rejects descriptor discovery on a characteristic
+  of the Generic Attribute service. The connection now resolves only the Govee service
+  (`services=[SERVICE_UUID]`; BlueZ ignores the filter). Live-verified on four H60A6s and two H6008s
+  from a Mac.
+- The device id of an H60A6 was reported as `"00"`: its `aa 07 10` UID is all zeros, which the parser
+  rendered as a value and so skipped the `aa 07 02` fallback. An all-zero UID is now no id
+  (`NumberUtil.isInvalidUuid`) and a single leading `00:00:` is dropped (`SnController`).
+- `create_device` ignored `DiscoveredDevice.advertisement` (the parsed `GoveeAdvertisement` that
+  `discover()` returns): only bleak's raw advertisement set the encryption mode, so the natural
+  `discover()` -> `create_device(..., d.advertisement)` flow fell back to the SKU profile. For an H6008
+  (profile: plaintext; real firmware: encrypted, pact 1/1) every read was then sent in plaintext and
+  went unanswered. Both advertisement types are accepted now. Live-verified on two H6008s.
+
+### Spec
+- `govee_ble.ksy`: `soft_version_read` (`aa 06`, ASCII) and `device_info_hard_version` (`aa 07 03`,
+  ASCII). Readers regenerated (the diff is only these additions).
+
 ## [1.3.0] — 2026-10-15
 
 ### Added
