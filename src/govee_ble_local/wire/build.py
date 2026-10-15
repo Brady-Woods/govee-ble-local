@@ -120,8 +120,27 @@ def normalize_kelvin(kelvin: int, lo: int | None = None, hi: int | None = None) 
     return out
 
 
-def _check_mask(mask: int) -> int:
-    return _check_range("segment mask", mask, 0, 0xFFFF)
+# Segment-mask width, from the app's encoder. Up to 16 segments the mask is always two bytes
+# (BleUtils.makeSelectedTwoBytes); above that it is ceil(n/8) bytes, LSB first
+# (BleUtils.X, the `length > 16` branch in color/Bytes.G/b/d/C). Bytes.C caps the width at 7
+# bytes (it truncates a longer mask and logs an analytics event); we refuse instead.
+LEGACY_MASK_SEGMENTS = 16
+MAX_MASK_BYTES = 7
+MAX_MASK_SEGMENTS = MAX_MASK_BYTES * 8
+
+
+def mask_width(segments: int) -> int:
+    """Bytes of segment mask the app writes for a device with ``segments`` segments:
+    2 for 0..16 (makeSelectedTwoBytes), else ceil(n/8) (BleUtils.X). Raises
+    GoveeBleInvalidValue above 56 segments (7 bytes, the most Bytes.C will encode)."""
+    _check_range("segment count", segments, 0, MAX_MASK_SEGMENTS)
+    if segments <= LEGACY_MASK_SEGMENTS:
+        return 2
+    return ceil_div(segments, 8)
+
+
+def _check_mask(mask: int, bits: int = LEGACY_MASK_SEGMENTS) -> int:
+    return _check_range("segment mask", mask, 0, (1 << bits) - 1)
 
 
 def frame(pro_type: int, *payload: int) -> bytes:
@@ -137,12 +156,24 @@ def frame(pro_type: int, *payload: int) -> bytes:
 
 
 def _mask_le(mask: int) -> tuple[int, int]:
+    """Two-byte little-endian mask (the fixed 0x0b layout, and every <=16-segment 0x15 mask)."""
     return mask & 0xFF, (mask >> 8) & 0xFF
 
 
+def _mask_bytes(mask: int, segments: int | None = None) -> bytes:
+    """Segment mask as the app encodes it, LSB first: :func:`mask_width` bytes for a device
+    with ``segments`` segments (the width depends on the device's segment count, not on
+    which segments are selected). ``segments=None`` is the legacy two-byte mask."""
+    width = mask_width(LEGACY_MASK_SEGMENTS if segments is None else segments)
+    _check_range("segment mask", mask, 0, (1 << (8 * width)) - 1)
+    return mask.to_bytes(width, "little")
+
+
 def all_segments_mask(segments: int) -> int:
-    """Whole-device mask = every segment bit set (BleUtil select-all-positions)."""
-    return (1 << max(0, min(16, segments))) - 1
+    """Whole-device mask = the first ``segments`` bits set (BleUtil select-all-positions).
+    Raises GoveeBleInvalidValue above :data:`MAX_MASK_SEGMENTS` (56)."""
+    _check_range("segment count", segments, 0, MAX_MASK_SEGMENTS)
+    return (1 << segments) - 1
 
 
 # ── power / brightness ───────────────────────────────────────────────────────
@@ -167,12 +198,13 @@ def brightness_raw(level: int) -> bytes:
 def color_rgb(r: int, g: int, b: int, scheme: ColorScheme, segments: int = 13) -> bytes:
     """Solid RGB, per-family SubModeColor.getWriteBytes (whole-device = all-segments mask)."""
     _check_rgb(r, g, b)
-    lo, hi = _mask_le(all_segments_mask(segments))
     if scheme in ("h6006", "h6188"):
         return frame(PRO_WRITE, CMD_MODE, SUB_COLOR_0D, r, g, b, 0, 0, 0, 0, 0)
     if scheme == "h61a8":
+        lo, hi = _mask_le(_check_mask(all_segments_mask(segments), LEGACY_MASK_SEGMENTS))
         return frame(PRO_WRITE, CMD_MODE, SUB_COLOR_0B, r, g, b, lo, hi)
-    return frame(PRO_WRITE, CMD_MODE, SUB_COLOR_15, OP15_SET_COLOR, r, g, b, 0, 0, 0, 0, 0, lo, hi)
+    return frame(PRO_WRITE, CMD_MODE, SUB_COLOR_15, OP15_SET_COLOR, r, g, b, 0, 0, 0, 0, 0,
+                 *_mask_bytes(all_segments_mask(segments), segments))
 
 
 def color_temp(kelvin: int, scheme: ColorScheme, segments: int = 13) -> bytes:
@@ -195,22 +227,28 @@ def color_temp(kelvin: int, scheme: ColorScheme, segments: int = 13) -> bytes:
         khi, klo = (kelvin >> 8) & 0xFF, kelvin & 0xFF
         return frame(PRO_WRITE, CMD_MODE, SUB_COLOR_0D, 0xFF, 0xFF, 0xFF, khi, klo,
                      *tint_for_kelvin(kelvin))
-    return segment_color_temp(all_segments_mask(segments), kelvin, scheme)
+    return segment_color_temp(all_segments_mask(segments), kelvin, scheme, segments)
 
 
-def segment_rgb(mask: int, r: int, g: int, b: int, scheme: ColorScheme) -> bytes:
-    """Per-segment RGB (mask selects segments); same layout as color_rgb."""
+def segment_rgb(mask: int, r: int, g: int, b: int, scheme: ColorScheme,
+                segments: int | None = None) -> bytes:
+    """Per-segment RGB (mask selects segments); same layout as color_rgb. ``segments`` is the
+    device's segment count, which sets the 0x15 mask width (see :func:`mask_width`); omitted,
+    the mask is the legacy two bytes."""
     _check_rgb(r, g, b)
-    _check_mask(mask)
-    lo, hi = _mask_le(mask)
     if scheme == "h61a8":
+        lo, hi = _mask_le(_check_mask(mask, LEGACY_MASK_SEGMENTS))
         return frame(PRO_WRITE, CMD_MODE, SUB_COLOR_0B, r, g, b, lo, hi)
-    return frame(PRO_WRITE, CMD_MODE, SUB_COLOR_15, OP15_SET_COLOR, r, g, b, 0, 0, 0, 0, 0, lo, hi)
+    return frame(PRO_WRITE, CMD_MODE, SUB_COLOR_15, OP15_SET_COLOR, r, g, b, 0, 0, 0, 0, 0,
+                 *_mask_bytes(mask, segments))
 
 
-def segment_color_temp(mask: int, kelvin: int, scheme: ColorScheme) -> bytes:
+def segment_color_temp(mask: int, kelvin: int, scheme: ColorScheme,
+                       segments: int | None = None) -> bytes:
     """Colour temperature on selected segments (mask), ``15 01 ff ff ff <K u2be> <tint> <mask>``
-    (``Bytes.r`` type 1; the tint is ``Constant.getTemColorByKelvin``). Only the 0x15 family
+    (``Bytes.r`` type 1; the tint is ``Constant.getTemColorByKelvin``). ``segments`` is the
+    device's segment count, which sets the mask width (see :func:`mask_width`); omitted, the
+    mask is the legacy two bytes. Only the 0x15 family
     embeds a segment mask in the CCT frame — h6006's 0x0d has no mask (whole-device only) and
     h61a8 has no CCT at all — so masked CCT is 0x15-only."""
     if scheme == "h61a8":
@@ -218,20 +256,19 @@ def segment_color_temp(mask: int, kelvin: int, scheme: ColorScheme) -> bytes:
     if scheme in ("h6006", "h6188"):
         raise ValueError(f"{scheme} colour-temperature is whole-device only (no segment mask)")
     _check_kelvin(kelvin)
-    _check_mask(mask)
+    mask_bytes = _mask_bytes(mask, segments)
     khi, klo = (kelvin >> 8) & 0xFF, kelvin & 0xFF
-    lo, hi = _mask_le(mask)
     return frame(PRO_WRITE, CMD_MODE, SUB_COLOR_15, OP15_SET_COLOR,
-                 0xFF, 0xFF, 0xFF, khi, klo, *tint_for_kelvin(kelvin), lo, hi)
+                 0xFF, 0xFF, 0xFF, khi, klo, *tint_for_kelvin(kelvin), *mask_bytes)
 
 
-def segment_brightness(mask: int, pct: int, scheme: ColorScheme) -> bytes:
+def segment_brightness(mask: int, pct: int, scheme: ColorScheme,
+                       segments: int | None = None) -> bytes:
     """Per-segment brightness (0x15 op 0x02); only the 0x15 family supports it."""
     if scheme == "h61a8":
         raise ValueError("h61a8 has no per-segment brightness")
-    _check_mask(mask)
-    lo, hi = _mask_le(mask)
-    return frame(PRO_WRITE, CMD_MODE, SUB_COLOR_15, OP15_SET_BRIGHTNESS, max(0, min(100, pct)), lo, hi)
+    return frame(PRO_WRITE, CMD_MODE, SUB_COLOR_15, OP15_SET_BRIGHTNESS, max(0, min(100, pct)),
+                 *_mask_bytes(mask, segments))
 
 
 # ── zones / bars ─────────────────────────────────────────────────────────────
