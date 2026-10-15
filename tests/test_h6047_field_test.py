@@ -125,7 +125,8 @@ def test_plan_runs_end_to_end_and_restores(tmp_path: Path, monkeypatch: pytest.M
     names = [r["step"] for r in rep["steps"]]
     assert names[:3] == ["segment_readback_count", "power_on", "zone_left_off"]
     assert {"zone_right_off", "power_off", "brightness_1", "rgb_blue", "rgb_left_red_right_blue",
-            "color_temp_2200", "color_temp_left_2700_right_6500", "gradual_on", "gradual_off"} <= set(names)
+            "color_temp_2200", "color_temp_left_2700_right_6500", "rgb_pick_equal_to_4000k_tint",
+            "gradual_on", "gradual_off"} <= set(names)
     # the steps really hit the wire: whole-device power is 33 01, the per-bar buttons 33 36, gradual 33 a3
     frames = {f[:2].hex() for f in _sent(d)}
     assert {"3301", "3336", "33a3", "3304", "3305"} <= frames

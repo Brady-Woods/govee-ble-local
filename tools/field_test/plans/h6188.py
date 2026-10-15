@@ -29,6 +29,11 @@ def build_steps(ctx: PlanContext) -> list[Step]:
                  (9000, "Is it VERY COOL (blue-ish) white?")):
         s.append(Step(f"color_temp_{k}", lambda k=k: dev.set_color_temp(k),
                       lambda st, k=k: st["color_temp_kelvin"] == k, q))
+    s.append(Step("rgb_pick_equal_to_4000k_tint", lambda: dev.set_rgb((255, 213, 161)),
+                  lambda st: st["color_temp_kelvin"] == 4000 and st["rgb_color"] is None,
+                  "Is it the same NEUTRAL white as at 4000 K (not a peach or orange colour)?",
+                  note="RGB pick 0xFFD5A1 = the 4000 K tint colour: "
+                       "the app sends CCT, 33 05 0d ff d5 a1 0f a0 ff d5 a1, not RGB (Config.bu)"))
     for name in dev.scene_names:
         code = codes.get(name)
         s.append(Step(f"scene_{name}", lambda name=name: dev.set_scene_by_name(name),

@@ -48,6 +48,11 @@ def build_steps(ctx: PlanContext) -> list[Step]:
                  (6500, "Is it COOL white?"), (9000, "Is it VERY COOL (blue-ish) white?")):
         s.append(Step(f"color_temp_{k}", lambda k=k: dev.set_color_temp(k),
                       lambda st, k=k: st["color_temp_kelvin"] == k, q))
+    s.append(Step("rgb_pick_equal_to_4000k_tint", lambda: dev.set_rgb((255, 213, 161)),
+                  lambda st: st["color_temp_kelvin"] == 4000 and st["rgb_color"] is None,
+                  "Is every segment the same NEUTRAL white as at 4000 K (not a peach or orange colour)?",
+                  note="RGB pick 0xFFD5A1 = the 4000 K tint colour: "
+                       "the app sends CCT, 33 05 15 01 ff ff ff 0f a0 ff d5 a1 <mask>, not RGB (Config.Yt)"))
     s.append(Step("segments_reset_blue", lambda: dev.set_rgb((0, 0, 255)), None,
                   "Is every segment BLUE (baseline for the per-segment steps)?"))
     for label, idx in (("first", first), ("middle", mid), ("last", last)):

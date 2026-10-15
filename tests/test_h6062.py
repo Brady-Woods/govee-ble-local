@@ -357,8 +357,8 @@ def test_field_test_plan_runs_end_to_end(tmp_path: Path, monkeypatch: pytest.Mon
     assert rep["result"] == "completed" and rep["plan"]["sku"] == "H6062"
     names = [r["step"] for r in rep["steps"]]
     assert names[:3] == ["segment_count", "power_off", "power_on"]
-    assert {"color_temp_2000", "color_temp_9000", "segment_first_red", "segment_middle_red",
-            "segment_last_red", "segment_last_brightness_20"} <= set(names)
+    assert {"color_temp_2000", "color_temp_9000", "rgb_pick_equal_to_4000k_tint", "segment_first_red",
+            "segment_middle_red", "segment_last_red", "segment_last_brightness_20"} <= set(names)
     assert all(r["sent"] == "ok" for r in rep["steps"])
     # the read-back of the very first step holds exactly the 19 segments the device reported
     assert rep["steps"][0]["readback_matches"] is True

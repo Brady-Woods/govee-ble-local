@@ -104,6 +104,25 @@ model, from which the shipped readers are generated).
   RGB, whole and per-bar CCT, gradual, 10-segment read-back; restores the bars, colours and gradual flag).
 
 ### Fixed
+- **An RGB pick equal to a Kelvin tint colour is sent as CCT on every device, like the app.** The
+  H6061-only rule now covers every colour scheme with a CCT mode. When the picked colour's full ARGB int
+  is exactly one of the 178 colours of the app's Kelvin tint table (`Constant.k2` = `ColorUtils.e`, two
+  per 100 K step) and its Kelvin is inside the SKU's inclusive range (`KelvinConfig.i` / `.c`), 7.7.02
+  writes a CCT frame instead of the RGB one, and the library did not, so such a pick lit the device with
+  a slightly different colour than the app (and `state` reported RGB instead of the Kelvin the device
+  reads back). 0x15 family (H60A6 2700-6500 K, H6641 and H6062 2000-9000 K, H6047 2200-6500 K):
+  `ColorModeControllerConfig.c` -> `Config.Yt` = `KelvinConfig.i(c) ? Bytes.r(c, KelvinConfig.c(c), ...)
+  : Bytes.h(c, ...)`, i.e. `33 05 15 01 ff ff ff <K> <picked RGB> <mask>`: one frame (never the H60A6
+  two-frame per-zone form), the picked colour as the tint (not the first tint of the Kelvin), the mask the
+  RGB frame would use, for `set_rgb`, `turn_on(rgb=)`, `set_zone_rgb` and `set_segment_rgb`
+  (H6047 reaches it via `NewDetailVm.configColorController` -> `H6047ColorControllerConfig.a` -> `Yt`).
+  0x0d family (H6188 2000-9000 K, H6008/H6004 2700-6500 K, H6052/H6006 2000-9000 K): `Config.bu` =
+  `KelvinConfig.i(c) ? Bytes.p(c, KelvinConfig.c(c)) : Bytes.f(c)`, i.e. `33 05 0d <picked RGB> <K>
+  <first tint of K>` for both the `h6006` and `h6188` schemes (not the white-slot `Bytes.A` form, which
+  stays the H6188 slider). Afterwards `color_temp_kelvin` is the Kelvin and `rgb_color` is `None` (both
+  bars on H6047). One mechanism for all schemes: `build.rgb_as_kelvin` takes the range from the profile;
+  `segment_color_temp` takes an optional `tint`; `set_color_temp` is unchanged. Not modelled: colour-set /
+  mixed-colour picks and the real-time drag frames (`a5 02 83`, RGB only); H61A8 is not determined.
 - **CCT frames now send the Kelvin tint the Govee app sends** (#19), which the library left as zeros
   everywhere except H6188. Following the app's own colour-control path for each SKU:
   - **H6047, H6641, H60A6** (0x15 white-slot form `15 01 ff ff ff <K> <tint> <mask>`, `Bytes.r` type 1;

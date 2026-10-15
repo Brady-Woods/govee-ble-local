@@ -301,22 +301,25 @@ class Device:
         return (lo, hi) if lo is not None and hi is not None else None
 
     def _color_rgb_frames(self, rgb: tuple[int, int, int]) -> list[bytes]:
-        """Frames for whole-device RGB: one, except on a profile whose colour scheme writes the
-        panels in groups (``h6061``: ``ceil(n/4)`` frames over :attr:`segment_count` panels, or the
-        single CCT frame when the app would send this colour as a colour temperature)."""
+        """Frames for a whole-device RGB pick: one, except on a profile whose colour scheme writes the
+        panels in groups (``h6061``: ``ceil(n/4)`` frames over :attr:`segment_count` panels). On every
+        scheme with a colour-temperature mode, a colour that is exactly one of the app's Kelvin tint
+        colours within the SKU's range is the single CCT frame instead, as the app sends it
+        (:func:`build.rgb_as_kelvin`)."""
         return build.color_rgb_frames(
             *rgb, self.profile.color_scheme, self.segment_count, self._kelvin_range())
 
     def _apply_rgb_state(self, rgb: tuple[int, int, int]) -> None:
         """Optimistic state for a whole-device RGB write: the colour, or - when the app sends it as
-        a colour temperature (``build.rgb_as_kelvin``) - that Kelvin, which is what the device reports."""
+        a colour temperature (``build.rgb_as_kelvin``) - that Kelvin, which is what the device reports
+        (and what the app syncs to its Kelvin slider; both bars of a bar-switch device)."""
         kelvin = build.rgb_as_kelvin(*rgb, self.profile.color_scheme, self._kelvin_range())
         if kelvin is None:
             self._state.rgb_color, self._state.color_temp_kelvin = rgb, None
         else:
             self._state.rgb_color, self._state.color_temp_kelvin = None, kelvin
         self._state.scene_code = None
-        self._apply_zone_kelvin({0: None, 1: None})
+        self._apply_zone_kelvin({0: kelvin, 1: kelvin})
 
     def update_ble_device(self, ble_device: BLEDevice) -> None:
         """Swap in a fresh BLEDevice (e.g. a new scanner path) for later connects."""
@@ -541,7 +544,8 @@ class Device:
         await self._ensure_segment_count()
         r, g, b = rgb
         n = self.segment_count
-        await self._conn.send(build.segment_rgb(_mask(indices, n), r, g, b, self.profile.color_scheme, n))
+        await self._conn.send(build.segment_rgb(
+            _mask(indices, n), r, g, b, self.profile.color_scheme, n, self._kelvin_range()))
         self._mutated()
         self._update_segments(indices, rgb=(r, g, b))
         self._mark_authoritative()
@@ -697,10 +701,14 @@ class Device:
         r, g, b = rgb
         await self._ensure_segment_count()
         n = self.segment_count
-        await self._conn.send(build.segment_rgb(_mask(z.segments, n), r, g, b, self.profile.color_scheme, n))
+        await self._conn.send(build.segment_rgb(
+            _mask(z.segments, n), r, g, b, self.profile.color_scheme, n, self._kelvin_range()))
         self._mutated()
         self._update_segments(z.segments, rgb=(r, g, b))
-        self._apply_zone_kelvin({z.power_index: None})
+        # A pick equal to a tint colour went out as the zone's CCT frame (build.rgb_as_kelvin): the
+        # bar then reports that Kelvin, like set_zone_color_temp.
+        self._apply_zone_kelvin({z.power_index: build.rgb_as_kelvin(
+            r, g, b, self.profile.color_scheme, self._kelvin_range())})
         self._mark_authoritative()
         self._notify()
 
