@@ -74,9 +74,8 @@ model, from which the shipped readers are generated).
   `state.color_temp_kelvin` stores the value actually sent. Only a non-int (or, for a profile with no
   known range, a value that does not fit the wire's u16) still raises. `build.normalize_kelvin` now
   raises only for those cases instead of for any value outside 0..65535.
-- `DeviceProfile.cct_per_zone_min_pact: tuple[int, int] | None` (H60A6 = `(1, 3)`): whole-device CCT is
-  one frame per zone when the advertised pact is at or above it. New `Device.pact` property
-  (`(pact_type, pact_code)` from the advertisement, or `None`) and `build.normalize_kelvin`.
+- New `Device.pact` property (`(pact_type, pact_code)` from the advertisement, or `None`) and
+  `build.normalize_kelvin`.
 - `tools/field_test/plans/h6188.py` drops the 2750 K "no tint" diagnostic step: 2750 K is now rounded to
   2800 K like the app, so the step no longer tests anything.
 - Segment masks are no longer capped at 16 bits. `build.mask_width(segments)` follows the app's
@@ -104,6 +103,21 @@ model, from which the shipped readers are generated).
   RGB, whole and per-bar CCT, gradual, 10-segment read-back; restores the bars, colours and gradual flag).
 
 ### Fixed
+- **H60A6 whole-device colour temperature is one frame, like the app's Kelvin sliders.** The library sent
+  two frames (main panel, mask `00 10`, then ring, mask `ff 0f`) whenever the advertised pact was
+  (1, >= 3) or unknown, copied from `ControllerBuild.j`, which is only the colour-stripe/snapshot apply
+  path (`VM4LightH60A6.configColorStripController`). A 7.7.02 trace of a plain whole-device Kelvin set
+  shows one frame: the colour tab (All mode) is `DelegateColorV2.G0` (posSet = 13 trues,
+  `ColorModeUtil.e`) -> `ColorViewModel.U` -> `ColorModeControllerConfig.c` -> `Config.Yt` ->
+  `Bytes.r(tint, K, posSet, 1)`, and the illumination tab is `KelvinConfig.b` ->
+  `ColorModeControllerConfig.h` -> `Config.N[0]` -> `Bytes.C(K, 13, 1)`. At 4000 K both give
+  `33 05 15 01 ff ff ff 0f a0 ff d5 a1 ff 1f`. `set_color_temp` and `turn_on(kelvin=)` now send that one
+  all-segments frame; `set_zone_color_temp` keeps its per-zone frames. `DeviceProfile.cct_per_zone_min_pact`
+  (added unreleased) is removed with the two-frame gate. The app's pact gates are not modelled beyond this:
+  below pact code 2 it sends the 0x0d form (`Config.kw`, `Bytes.p`), which the library does not, and it
+  sends the 0x15 frame for an unknown pact like the library does.
+  Live-checked on an H60A6 (pact 1/3): the single frame is acked and the read-back of the main panel
+  and all 12 ring segments equals the tint table at 4000 K (`ff d5 a1`) and 2700 K (`ff ae 54`).
 - **An RGB pick equal to a Kelvin tint colour is sent as CCT on every device, like the app.** The
   H6061-only rule now covers every colour scheme with a CCT mode. When the picked colour's full ARGB int
   is exactly one of the 178 colours of the app's Kelvin tint table (`Constant.k2` = `ColorUtils.e`, two
@@ -112,9 +126,8 @@ model, from which the shipped readers are generated).
   a slightly different colour than the app (and `state` reported RGB instead of the Kelvin the device
   reads back). 0x15 family (H60A6 2700-6500 K, H6641 and H6062 2000-9000 K, H6047 2200-6500 K):
   `ColorModeControllerConfig.c` -> `Config.Yt` = `KelvinConfig.i(c) ? Bytes.r(c, KelvinConfig.c(c), ...)
-  : Bytes.h(c, ...)`, i.e. `33 05 15 01 ff ff ff <K> <picked RGB> <mask>`: one frame (never the H60A6
-  two-frame per-zone form), the picked colour as the tint (not the first tint of the Kelvin), the mask the
-  RGB frame would use, for `set_rgb`, `turn_on(rgb=)`, `set_zone_rgb` and `set_segment_rgb`
+  : Bytes.h(c, ...)`, i.e. `33 05 15 01 ff ff ff <K> <picked RGB> <mask>`: one frame, the picked colour as
+  the tint (not the first tint of the Kelvin), the mask the RGB frame would use, for `set_rgb`, `turn_on(rgb=)`, `set_zone_rgb` and `set_segment_rgb`
   (H6047 reaches it via `NewDetailVm.configColorController` -> `H6047ColorControllerConfig.a` -> `Yt`).
   0x0d family (H6188 2000-9000 K, H6008/H6004 2700-6500 K, H6052/H6006 2000-9000 K): `Config.bu` =
   `KelvinConfig.i(c) ? Bytes.p(c, KelvinConfig.c(c)) : Bytes.f(c)`, i.e. `33 05 0d <picked RGB> <K>
@@ -128,13 +141,8 @@ model, from which the shipped readers are generated).
   - **H6047, H6641, H60A6** (0x15 white-slot form `15 01 ff ff ff <K> <tint> <mask>`, `Bytes.r` type 1;
     `ControllerBuild.d`, `Config.Yt`): `color_temp`, `segment_color_temp`, `set_zone_color_temp`
     always fill the tint.
-  - **H60A6 whole-device CCT is two frames**, main panel (mask bit 12) then ring (bits 0-11), each with
-    its tint (`VM4LightH60A6.configColorStripController` -> `ControllerBuild.j`), as the app sends it
-    when `Support.supportPartTem` holds (pact type 1, pact code >= 3). The pact comes from the
-    advertisement; an unknown pact is treated as >= 3 and a known lower one sends the single
-    all-segments frame (the app's pact < 3 multi-packet path is not modelled). Live-checked on an
-    H60A6 (pact 1/3): whole-device, per-zone and rounded CCT all acked, and the read-back colours
-    equal the tint table.
+  - **H60A6 whole-device CCT is one all-segments frame** (see the separate H60A6 entry above); per-zone
+    CCT is one frame per zone (main panel mask bit 12, ring bits 0-11).
   - **H6008, H6006, H6052**: new 0x0d both-slot form `0d <tint> <K u2be> <tint>` (`Config.bu` ->
     `Bytes.p`), replacing `0d ff ff ff <K> 00 00 00`. H6188's `0d ff ff ff <K> <tint>` form is unchanged.
   - Kelvin is clamped to the device range and rounded to the nearest 100 K before sending

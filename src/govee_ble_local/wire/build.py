@@ -285,8 +285,8 @@ def _rgb_pick_color_temp(r: int, g: int, b: int, kelvin: int, scheme: ColorSchem
     step has two colours):
 
     * ``h60a6`` (``Config.Yt`` -> ``Bytes.r``): ``15 01 ff ff ff <K> <picked RGB> <mask>``, one frame
-      with the mask the RGB frame would have used (never the two-frame per-zone form of
-      :func:`color_temp`, which is the slider path);
+      with the mask the RGB frame would have used (the slider path, :func:`color_temp`, is the same
+      frame over the all-segments mask with the Kelvin's first tint);
     * ``h6006`` / ``h6188`` (``Config.bu`` -> ``Bytes.p``): ``0d <picked RGB> <K> <first tint of K>``,
       whole device (no mask), the same frame for both schemes (the white-slot form of the h6188
       slider is not used here);

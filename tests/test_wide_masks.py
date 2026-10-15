@@ -12,7 +12,6 @@ from unittest.mock import AsyncMock
 
 import pytest
 from test_device_gaps import _dev, _sent
-from test_cct_tint import _adv
 from test_device_v3 import _frame
 
 from govee_ble_local.crypto import checksum_ok
@@ -221,20 +220,13 @@ def test_set_rgb_uses_the_runtime_count() -> None:
     assert _sent(d)[0][12:15] == bytes([0xFF, 0xFF, 0x7F])
 
 
-def _below_gate(sku: str = "H60A6") -> Any:
-    d = _dev(sku)
-    d.ingest_advertisement(_adv(sku, 1, 2))   # pact below supportPartTem (1, 3)
-    return d
-
-
 def test_set_color_temp_and_turn_on_use_the_runtime_count() -> None:
-    # Below the H60A6 pact gate the whole-device CCT is the single all-segments frame, whose mask
-    # follows the runtime count (at or above the gate it is one frame per zone, see below).
-    d = _below_gate()
+    # Whole-device CCT is the single all-segments frame, whose mask follows the runtime count.
+    d = _dev("H60A6")
     d.set_segment_count(24)
     run(d.set_color_temp(4000))
     assert _sent(d)[0][12:15] == bytes([0xFF, 0xFF, 0xFF])
-    d2 = _below_gate()
+    d2 = _dev("H60A6")
     d2.set_segment_count(17)
     run(d2.turn_on(rgb=(1, 2, 3), power=False))
     run(d2.turn_on(kelvin=4000, power=False))
@@ -263,8 +255,8 @@ def test_wide_0x15_cct_frame_carries_the_tint_and_the_wide_mask(segments: int) -
 
 
 def test_device_wide_cct_frames_carry_tint_and_runtime_width() -> None:
-    # Below the pact gate: one all-segments frame, 3-byte mask for a 24-segment device.
-    d = _below_gate()
+    # Whole device: one all-segments frame, 3-byte mask for a 24-segment device.
+    d = _dev("H60A6")
     d.set_segment_count(24)
     run(d.set_color_temp(4000))
     assert _sent(d)[0][:15].hex() == "33051501ffffff0fa0ffd5a1ffffff"
@@ -273,8 +265,9 @@ def test_device_wide_cct_frames_carry_tint_and_runtime_width() -> None:
     d2.set_segment_count(24)
     run(d2.set_segment_color_temp([17], 4000))
     assert _sent(d2)[0][:15].hex() == "33051501ffffff0fa0ffd5a1000002"
-    # At or above the gate the zone frames keep the tint and use the wide width too.
-    run(d2.set_color_temp(4000))
+    # The per-zone frames keep the tint and use the wide width too.
+    run(d2.set_zone_color_temp("main", 4000))
+    run(d2.set_zone_color_temp("background", 4000))
     zone_frames = _sent(d2)[1:]
     assert [f[:15].hex() for f in zone_frames] == [
         "33051501ffffff0fa0ffd5a1001000", "33051501ffffff0fa0ffd5a1ff0f00"]
