@@ -81,7 +81,7 @@ advertisement, build a capability-driven `Device`, then drive it.
   device-info (`serial_number`, `wifi_mac`, `hardware_version`, `firmware_version`, `ble_mac`).
 - **`Capability`** — `POWER`, `BRIGHTNESS`, `RGB`, `COLOR_TEMP`, `SEGMENTS`, `SCENES`.
 
-Curated SKUs: **H60A6**, **H6047**, **H61A8**, **H6006/H6008**, **H6052**, **H6641**, **H6188**, and the
+Curated SKUs: **H60A6**, **H6047**, **H61A8**, **H6004** (the BLE revision; the Wi-Fi-only one can't be controlled over BLE), **H6006/H6008**, **H6052**, **H6641**, **H6188**, and the
 plug family (**H5080/H5082/H5083/H5085/H5089/H5160/H5161**). Segment-colour read-back and some
 scene dialects on the non-H60A6 SKUs are source-modelled and not yet hardware-verified.
 
