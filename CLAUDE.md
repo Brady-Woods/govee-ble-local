@@ -65,3 +65,13 @@ behaviour must match the app's for that SKU: frames, read sequences and value ra
 
 If matching the app looks impossible or harmful, stop and ask the user. Don't diverge on your
 own judgement.
+
+## Name the app version on source references
+
+1. **Every `Class.method:line` reference in docs, comments and spec names the Govee Home version
+   it was checked against**, e.g. `ControllerBuild.j @ 7.7.02`. A reference with no version
+   predates 7.7.02 (the older spec material was taken from 7.5.12). Don't spend time refreshing
+   old references, just label them honestly.
+2. **When we obtain a new decompile or dump of the app, re-check the existing references against
+   it** for changes (frames, ranges, scene dialects, connect sequences), and update the version
+   tag on each one you verified.
