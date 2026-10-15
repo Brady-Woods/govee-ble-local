@@ -306,7 +306,7 @@ class GoveeBleFrame(KaitaiStruct):
 
 
     class BarSwitchRead(KaitaiStruct):
-        """AA 36 reply (h6047 ComposeLightController): [left,right] on/off (bArr[0]==1 / bArr[1]==1). The 33 36 write uses the same [left,right]."""
+        """AA 36 reply (h6047 ComposeLightController / ComposeLightHeartController, the app's heartbeat): [left, right, movie/feast switch] on/off (bArr[0]==1 / bArr[1]==1 / bArr[2]==1). The 33 36 write uses the same [left, right] (Controller4ExtBytes [54, left, right], NewDetailVm.D5). The app treats the device as ON when left OR right is on (NewDetailVm heart parse, Info4Detail.g). The third byte (the movie/feast mode switch, EventFeastHeart) is not needed for control. The left/right order can be swapped during setup (h6047/add/LightPosAc), so the names are logical, not physical."""
         def __init__(self, _io, _parent=None, _root=None):
             super(GoveeBleFrame.BarSwitchRead, self).__init__(_io)
             self._parent = _parent
@@ -316,10 +316,17 @@ class GoveeBleFrame(KaitaiStruct):
         def _read(self):
             self.left = self._io.read_u1()
             self.right = self._io.read_u1()
+            if (not (self._io.is_eof())):
+                pass
+                self.movie_feast = self._io.read_u1()
+
 
 
         def _fetch_instances(self):
             pass
+            if (not (self._io.is_eof())):
+                pass
+
 
 
     class BrightnessEffect(KaitaiStruct):
@@ -471,7 +478,7 @@ class GoveeBleFrame(KaitaiStruct):
 
 
     class CctReadReply(KaitaiStruct):
-        """Mode 0x15 CCT read reply. kelvin = u2be at frame bytes 4-5 (e.g. 0x0A8C=2700, 0x1964=6500); NO FF FF FF white point (unlike the write, which is [op, FF FF FF, kHi, kLo, ...]). Source: SubModeColorV2.parse / ComposeChange2ColorMode.result."""
+        """Mode 0x15 CCT read reply. kelvin = u2be at frame bytes 4-5 (e.g. 0x0A8C=2700, 0x1964=6500); NO FF FF FF white point (unlike the write, which is [op, FF FF FF, kHi, kLo, ...]). Source: SubModeColorV2.parse / ComposeChange2ColorMode.result. H6047 (two bars) reads [gradual][kelvin left u2be][kelvin right u2be]: byte 0 is the gradual flag (== 1), the first kelvin is the LEFT bar (segments 0-4) and the second the RIGHT bar (segments 5-9); 0 = that bar is not in colour-temperature mode. The app shows one whole-device kelvin only when both bars match. Source: h6047/ble/SubModeColor.parse, h6047/detail/Info4Detail (subMode4Color IParseStrategy: q(bArr[0]==1), D0/E0(getSignedShort)), NewDetailVm.A5."""
         def __init__(self, _io, _parent=None, _root=None):
             super(GoveeBleFrame.CctReadReply, self).__init__(_io)
             self._parent = _parent
@@ -481,11 +488,18 @@ class GoveeBleFrame(KaitaiStruct):
         def _read(self):
             self.op = self._io.read_u1()
             self.kelvin = self._io.read_u2be()
+            if (not (self._io.is_eof())):
+                pass
+                self.kelvin_right = self._io.read_u2be()
+
             self.trailing = self._io.read_bytes_full()
 
 
         def _fetch_instances(self):
             pass
+            if (not (self._io.is_eof())):
+                pass
+
 
 
     class Color15(KaitaiStruct):
@@ -535,9 +549,11 @@ class GoveeBleFrame(KaitaiStruct):
 
 
     class ColorCct0d(KaitaiStruct):
-        """0x0D colour write. RGB form = [R,G,B, 0...] (Bytes.f). CCT form = [ff,ff,ff, kelvin u2be, tint] where the
-        tint is Constant.getTemColorByKelvin(kelvin) (exact 100 K table hit, else zeros); H6188 sends it
-        (Config.GM -> Bytes.A, library color_scheme "h6188"); the "h6006" bulb builder leaves it zero.
+        """0x0D colour write. RGB form = [R,G,B, 0...] (Bytes.f). Two CCT forms, both carrying tint =
+        Constant.getTemColorByKelvin(kelvin) (exact 100 K table hit, else zeros):
+          white-slot [ff,ff,ff, kelvin u2be, tint]  H6188 (Config.GM -> Bytes.A; library color_scheme "h6188");
+          both-slot  [tint, kelvin u2be, tint]      H6008/H6006/H6052 (Config.bu -> Bytes.p; library "h6006").
+        The app only sends whole 100 K steps, clamped to the device range (KelvinConfig.calibrationKelvin).
         """
         def __init__(self, _io, _parent=None, _root=None):
             super(GoveeBleFrame.ColorCct0d, self).__init__(_io)
@@ -1933,7 +1949,8 @@ class GoveeBleFrame(KaitaiStruct):
         (0x15 color / 0x04 scene / 0x13 music / 0x0d h60a6-color). Disambiguate by value: 0x01 => request;
         a known sub-mode => reply.
         - 0x15 CCT reply => cct_read_reply: [op=01][kHi][kLo], kelvin big-endian @ frame bytes 4-5; DROPS
-          the FF FF FF white point the 0x33 write carries.
+          the FF FF FF white point the 0x33 write carries. H6047 appends a second kelvin (right bar,
+          bytes 6-7) and its byte 0 is the gradual flag: [gradual][kelvin left u2be][kelvin right u2be].
         - 0x0d (and 0x15 on the LEGACY Mode/SubModeColorV1 stack): parse reads ONLY op/gradual (bArr[0]==1)
           — no kelvin/RGB decode; 0x0d is effectively write-only. Kelvin is decoded only by the compose
           stack's 0x15 path (cct_read_reply). So no distinct 0x0d reply body is modelled.

@@ -57,6 +57,7 @@ async def test_h60a6_turn_on_batch(monkeypatch) -> None:
     fake = FakeGovee()
     dev = _device(monkeypatch, fake, "H60A6")
     await dev.turn_on(brightness=40, kelvin=4000)
+    # power, brightness, one all-segments CCT frame
     assert [f[:2].hex() for f in fake.received] == ["3301", "3304", "3305"]
     assert len(fake.clients) == 1
     assert dev.state.is_on and dev.state.zone_power == {0: True, 1: True}

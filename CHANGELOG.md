@@ -9,6 +9,51 @@ model, from which the shipped readers are generated).
 ## [Unreleased]
 
 ### Added
+- `DeviceState.device_id`: the id the Govee app calls `device` (e.g. `2D:DB:5C:E7:53:F4:74:56`), read
+  with `aa 07 02`. An alias of `serial_number`, which holds the same value.
+- `build.soft_version_query` (`aa 06`), `build.INFO_HARD` (`aa 07 03`) and `parse.parse_soft_version`.
+
+### Changed
+- Device info now uses the reads the app makes on connect: `aa 06` for the firmware version, `aa 07 03`
+  for the hardware version and `aa 07 02` for the device id (`SoftVersionController`,
+  `HardVersionController`, `SnController`). The binary `aa 07 10` basic read is only a fallback for a
+  device that left a version unknown. Live-verified (2026-10-15, app 7.7.02 source): H60A6, H6047,
+  H61A8, H6052, H6006, H6008 and H5083 all answer the three app reads; before, only the H60A6 reported
+  a firmware version at all, because the others ignore `aa 07 10`.
+
+### Fixed
+- macOS: the connect failed on the H60A6 and H6008 (`Failed to discover descriptors for characteristic
+  13 ... UUID not allowed`) because CoreBluetooth rejects descriptor discovery on a characteristic
+  of the Generic Attribute service. The connection now resolves only the Govee service
+  (`services=[SERVICE_UUID]`; BlueZ ignores the filter). Live-verified on four H60A6s and two H6008s
+  from a Mac.
+- The device id of an H60A6 was reported as `"00"`: its `aa 07 10` UID is all zeros, which the parser
+  rendered as a value and so skipped the `aa 07 02` fallback. An all-zero UID is now no id
+  (`NumberUtil.isInvalidUuid`) and a single leading `00:00:` is dropped (`SnController`).
+- `create_device` ignored `DiscoveredDevice.advertisement` (the parsed `GoveeAdvertisement` that
+  `discover()` returns): only bleak's raw advertisement set the encryption mode, so the natural
+  `discover()` -> `create_device(..., d.advertisement)` flow fell back to the SKU profile. For an H6008
+  (profile: plaintext; real firmware: encrypted, pact 1/1) every read was then sent in plaintext and
+  went unanswered. Both advertisement types are accepted now. Live-verified on two H6008s.
+
+### Spec
+- `govee_ble.ksy`: `soft_version_read` (`aa 06`, ASCII) and `device_info_hard_version` (`aa 07 03`,
+  ASCII). Readers regenerated (the diff is only these additions).
+
+## [1.3.0] — 2026-10-15
+
+### Added
+- **H6004** (BLE bulb, `bulblightv3` split, goodsType 64; #14): a profile-only addition that behaves
+  like its H6008 sibling: power, percent brightness, RGB, colour temperature (2700-6500 K, the app's
+  both-slot 0x0d frame with the Kelvin tint, 100 K steps), the cloud scene library (63 scenes,
+  type-1 RGB upload; `scene_versions={0, 1}` per `ScenesDelegateRegister` / `Support4BulbLightV3.g`)
+  and polled read-back. Not implemented yet: DIY, the phone-microphone music mode and the timers
+  (4 timers, wake-up, sleep). Plaintext, no account lock. Modeled from the decompiled
+  Govee Home 7.7.02 app (`Config.x[64]` -> `Config.bu` -> `Bytes.p`, `KelvinConfig` map 64 -> V2,
+  `bulblightv3/pact/Support`); not hardware-verified. H6004 has a second, Wi-Fi-only hardware
+  revision (goodsType 10) with no BLE path; the library can only drive the goodsType-64 one.
+  `tools/field_test/plans/h6004.py` adds its field-test plan, and `scenes/H6004.json` is the bundled
+  catalog (`tools/fetch_scenes.py`).
 - **H6188** (legacy RGB strip, `rgblight` split): power, brightness, RGB, colour temperature
   (2000-9000 K), the app's nine built-in scenes, and polled read-back. Modeled from the decompiled
   Govee Home 7.7.02 app; not hardware-verified. Its siblings H6085/H6086/H6089 are Wi-Fi-only
@@ -25,43 +70,191 @@ model, from which the shipped readers are generated).
 - Bundled `scenes/H6188.json`: the fixed `Scenes4H6188` list (activate-only, `33 05 04 <code>`).
   `tools/fetch_scenes.py` skips app-defined catalogs (`APP_DEFINED_SCENE_SKUS`) so a fetch can't
   overwrite them with the cloud library.
-- `tools/h6188_field_test.py`: guided hardware test for an H6188 owner (scan, every capability
-  with read-back and a visual check, restore, JSON report + frame capture to send back).
-- `DeviceState.device_id`: the id the Govee app calls `device` (e.g. `2D:DB:5C:E7:53:F4:74:56`), read
-  with `aa 07 02`. An alias of `serial_number`, which holds the same value.
-- `build.soft_version_query` (`aa 06`), `build.INFO_HARD` (`aa 07 03`) and `parse.parse_soft_version`.
+- `tools/field_test/`: guided hardware test for someone who owns the device (scan, every capability
+  with read-back and a visual check, restore, JSON report + frame capture to send back). One
+  runner with a test plan per SKU: the SKU is detected from the scanned device (or `--sku`), and each
+  device adds `plans/<sku>.py` calling `register_plan(SkuPlan(...))` without touching the runner.
+  Ships with the H6188 plan. Bluetooth addresses, serials and Wi-Fi MACs stay masked in both
+  output files (see #17).
+- `Device.segment_count` and `Device.set_segment_count()`: a segment count learned at runtime
+  overrides the profile's static `segments` for whole-device masks, segment indices and the
+  `aa a5` read-back walk (a profile's explicit `color_readback_segments` still wins for the walk).
+  `None` reverts to the profile value. H6062 sets it from its `aa 41` read; for H6061 the caller sets it from a known layout.
+- **H6062** (Glide wall light, `striplight` split, goodsType 41; #15): power, brightness (percent),
+  RGB, colour temperature (2000-9000 K, with the app's tint), per-segment colour / brightness /
+  colour temperature, polled read-back with per-segment colour, and the cloud-library scenes
+  (dialect A, versions {0,1,2,3}; bundled `scenes/H6062.json`, fetched with `tools/fetch_scenes.py`;
+  `ScenesOp.parseSceneV1`, activate `33 05 04 <code u2le>`, independent of the segment count). Frames
+  are the `h60a6` 0x15 layout.
+  Modeled from the decompiled Govee Home 7.7.02 app; not hardware-verified.
+  - The device reports its own segment count with `aa 41` (`[IC s16be, sectionNum u8]`,
+    `ControllerIcSegmentNum`, a mandatory step of the app's connect sequence:
+    `AbsComposeControllerWithOpResult.onOvertime` fails the whole info read on a timeout). The
+    library reads it on every poll (between `aa 04` and `aa 05`, the app's order) and before the
+    first write that carries a segment mask, and uses `sectionNum` as the segment count: the mask
+    width (2 bytes up to 16 segments, 3 for 17-24, ... 5 for 33), the segment index bound and the
+    `aa a5` group walk of ceil(n/4) groups. If the device does not answer, no colour frame is sent
+    (the app cannot control the device without the count), rather than guessing a mask.
+  - New `DeviceProfile.section_count_read`, `build.section_count_query`, `parse.parse_section_count`.
+    `profile.segments` (33) is only the upper bound (`Support.getBulbStringMaxNum`: 19 for pacts
+    (1,x)/(2,x), 28 for (3,1), 33 for (4,1)).
+  - `tools/field_test/plans/h6062.py` field-test plan.
 
 ### Changed
-- Device info now uses the reads the app makes on connect: `aa 06` for the firmware version, `aa 07 03`
-  for the hardware version and `aa 07 02` for the device id (`SoftVersionController`,
-  `HardVersionController`, `SnController`). The binary `aa 07 10` basic read is only a fallback for a
-  device that left a version unknown. Live-verified (2026-10-15, app 7.7.02 source): H60A6, H6047,
-  H61A8, H6052, H6006 and H5083 all answer the three app reads; before, only the H60A6 reported a
-  firmware version at all, because the others ignore `aa 07 10`.
+- **Out-of-range Kelvin is clamped to the device's range instead of raising `GoveeBleInvalidValue`**
+  (`set_color_temp`, `set_segment_color_temp`, `set_zone_color_temp`, `turn_on(kelvin=)`), matching the
+  app: `KelvinConfig.Companion.a` (`calibrationKelvin`) and `Constant.checkKelvinRange` clamp any int to the
+  per-SKU range and never reject it. Order is clamp, then round to 100 K, then clamp again;
+  `state.color_temp_kelvin` stores the value actually sent. Only a non-int (or, for a profile with no
+  known range, a value that does not fit the wire's u16) still raises. `build.normalize_kelvin` now
+  raises only for those cases instead of for any value outside 0..65535.
+- New `Device.pact` property (`(pact_type, pact_code)` from the advertisement, or `None`) and
+  `build.normalize_kelvin`.
+- `tools/field_test/plans/h6188.py` drops the 2750 K "no tint" diagnostic step: 2750 K is now rounded to
+  2800 K like the app, so the step no longer tests anything.
+- Segment masks are no longer capped at 16 bits. `build.mask_width(segments)` follows the app's
+  encoder (`BleUtils.makeSelectedTwoBytes` / `BleUtils.X`, picked by the `length > 16` branch in
+  `color/Bytes`): up to 16 segments a 2-byte little-endian mask (unchanged), above that
+  ceil(n/8) bytes, LSB first (byte j bit i = segment 8j+i). More than 7 bytes (56 segments, the
+  most `Bytes.C` encodes) raises `GoveeBleInvalidValue`. `all_segments_mask` is now exact instead
+  of silently clamping to 16 segments, and raises above 56. `segment_rgb`, `segment_color_temp` and
+  `segment_brightness` take an optional `segments` count that sets the mask width; omitted, they
+  keep the two-byte mask. `color_rgb` / `color_temp` use the width for their `segments` argument.
+  The 0x0b (`h61a8`) frame keeps its fixed two-byte mask. No shipped device changes.
+- Segment indices on a device with more than 16 segments run 0..n-1; up to 16 segments the
+  0..15 range is unchanged.
+- **H6047 gradual** (#13): `gradual=True` in the profile. `update()` reads `aa a3` and
+  `set_gradual()` writes `33 a3 <on>`; the app reads it on every connect (`ControllerGradual4BleWifi`) and
+  its colour screen writes it (`ColorModeControllerConfig.p` -> `Config.G[119]` -> `Bytes.w`).
+- **H6047 reports a kelvin per bar** (#13). `aa 05 15` is `[gradual][kelvin left u2be][kelvin right u2be]`
+  (`SubModeColor.parse`, `Info4Detail` parse strategy); new `parse.parse_bar_kelvin`,
+  `DeviceState.zone_color_temp_kelvin` (keyed by zone `power_index`, like `zone_power`) and
+  `Device.zone_color_temp_kelvin(name)`. `DeviceState.color_temp_kelvin` is the whole-device value and is
+  set only while both bars agree, as in the app; a colour-mode reply clears both. Writes
+  (`set_color_temp`, `set_zone_color_temp`, `set_rgb`, `set_zone_rgb`, `set_scene`) keep these in step
+  until the next read.
+- `tools/field_test/plans/h6047.py`: the H6047 field-test plan (whole and per-bar power, brightness,
+  RGB, whole and per-bar CCT, gradual, 10-segment read-back; restores the bars, colours and gradual flag).
 
 ### Fixed
-- macOS: the connect failed on the H60A6 and H6008 (`Failed to discover descriptors for characteristic
-  13 ... UUID not allowed`) because CoreBluetooth rejects descriptor discovery on a characteristic
-  outside the Govee service. The connection now resolves only that service (`services=[SERVICE_UUID]`;
-  BlueZ ignores the filter). Live-verified on four H60A6s and an H6008 from a Mac.
-- The device id of an H60A6 was reported as `"00"`: its `aa 07 10` UID is all zeros, which the parser
-  rendered as a value and so skipped the `aa 07 02` fallback. An all-zero UID is now no id
-  (`NumberUtil.isInvalidUuid`) and a single leading `00:00:` is dropped (`SnController`).
-
-- `create_device` ignored `DiscoveredDevice.advertisement` (the parsed `GoveeAdvertisement` that
-  `discover()` returns): only bleak's raw advertisement set the encryption mode, so the natural
-  `discover()` -> `create_device(..., d.advertisement)` flow fell back to the SKU profile. For an H6008
-  (profile: plaintext; real firmware: encrypted, pact 1/1) every read was then sent in plaintext and
-  went unanswered. Both advertisement types are accepted now. Live-verified on two H6008s.
+- **H60A6 whole-device colour temperature is one frame, like the app's Kelvin sliders.** The library sent
+  two frames (main panel, mask `00 10`, then ring, mask `ff 0f`) whenever the advertised pact was
+  (1, >= 3) or unknown, copied from `ControllerBuild.j`, which is only the colour-stripe/snapshot apply
+  path (`VM4LightH60A6.configColorStripController`). A 7.7.02 trace of a plain whole-device Kelvin set
+  shows one frame: the colour tab (All mode) is `DelegateColorV2.G0` (posSet = 13 trues,
+  `ColorModeUtil.e`) -> `ColorViewModel.U` -> `ColorModeControllerConfig.c` -> `Config.Yt` ->
+  `Bytes.r(tint, K, posSet, 1)`, and the illumination tab is `KelvinConfig.b` ->
+  `ColorModeControllerConfig.h` -> `Config.N[0]` -> `Bytes.C(K, 13, 1)`. At 4000 K both give
+  `33 05 15 01 ff ff ff 0f a0 ff d5 a1 ff 1f`. `set_color_temp` and `turn_on(kelvin=)` now send that one
+  all-segments frame; `set_zone_color_temp` keeps its per-zone frames. `DeviceProfile.cct_per_zone_min_pact`
+  (added unreleased) is removed with the two-frame gate. The app's pact gates are not modelled beyond this:
+  below pact code 2 it sends the 0x0d form (`Config.kw`, `Bytes.p`), which the library does not, and it
+  sends the 0x15 frame for an unknown pact like the library does.
+  Live-checked on an H60A6 (pact 1/3): the single frame is acked and the read-back of the main panel
+  and all 12 ring segments equals the tint table at 4000 K (`ff d5 a1`) and 2700 K (`ff ae 54`).
+- **An RGB pick equal to a Kelvin tint colour is sent as CCT on every device, like the app.** The
+  H6061-only rule now covers every colour scheme with a CCT mode. When the picked colour's full ARGB int
+  is exactly one of the 178 colours of the app's Kelvin tint table (`Constant.k2` = `ColorUtils.e`, two
+  per 100 K step) and its Kelvin is inside the SKU's inclusive range (`KelvinConfig.i` / `.c`), 7.7.02
+  writes a CCT frame instead of the RGB one, and the library did not, so such a pick lit the device with
+  a slightly different colour than the app (and `state` reported RGB instead of the Kelvin the device
+  reads back). 0x15 family (H60A6 2700-6500 K, H6641 and H6062 2000-9000 K, H6047 2200-6500 K):
+  `ColorModeControllerConfig.c` -> `Config.Yt` = `KelvinConfig.i(c) ? Bytes.r(c, KelvinConfig.c(c), ...)
+  : Bytes.h(c, ...)`, i.e. `33 05 15 01 ff ff ff <K> <picked RGB> <mask>`: one frame, the picked colour as
+  the tint (not the first tint of the Kelvin), the mask the RGB frame would use, for `set_rgb`, `turn_on(rgb=)`, `set_zone_rgb` and `set_segment_rgb`
+  (H6047 reaches it via `NewDetailVm.configColorController` -> `H6047ColorControllerConfig.a` -> `Yt`).
+  0x0d family (H6188 2000-9000 K, H6008/H6004 2700-6500 K, H6052/H6006 2000-9000 K): `Config.bu` =
+  `KelvinConfig.i(c) ? Bytes.p(c, KelvinConfig.c(c)) : Bytes.f(c)`, i.e. `33 05 0d <picked RGB> <K>
+  <first tint of K>` for both the `h6006` and `h6188` schemes (not the white-slot `Bytes.A` form, which
+  stays the H6188 slider). Afterwards `color_temp_kelvin` is the Kelvin and `rgb_color` is `None` (both
+  bars on H6047). One mechanism for all schemes: `build.rgb_as_kelvin` takes the range from the profile;
+  `segment_color_temp` takes an optional `tint`; `set_color_temp` is unchanged. Not modelled: colour-set /
+  mixed-colour picks and the real-time drag frames (`a5 02 83`, RGB only); H61A8 is not determined.
+- **CCT frames now send the Kelvin tint the Govee app sends** (#19), which the library left as zeros
+  everywhere except H6188. Following the app's own colour-control path for each SKU:
+  - **H6047, H6641, H60A6** (0x15 white-slot form `15 01 ff ff ff <K> <tint> <mask>`, `Bytes.r` type 1;
+    `ControllerBuild.d`, `Config.Yt`): `color_temp`, `segment_color_temp`, `set_zone_color_temp`
+    always fill the tint.
+  - **H60A6 whole-device CCT is one all-segments frame** (see the separate H60A6 entry above); per-zone
+    CCT is one frame per zone (main panel mask bit 12, ring bits 0-11).
+  - **H6008, H6006, H6052**: new 0x0d both-slot form `0d <tint> <K u2be> <tint>` (`Config.bu` ->
+    `Bytes.p`), replacing `0d ff ff ff <K> 00 00 00`. H6188's `0d ff ff ff <K> <tint>` form is unchanged.
+  - Kelvin is clamped to the device range and rounded to the nearest 100 K before sending
+    (`KelvinConfig.calibrationKelvin`; the app's slider only produces 100 K steps, and its builders
+    recover K from the tint table). `set_color_temp(2750)` therefore sends 2800 K and reports 2800 K in
+    `state`.
+- `parse.parse_mode_0d` (the 0x0d bulb/lamp read-back) now treats any non-zero Kelvin as CCT, as the
+  app's parsers do (`ModeParseStrategyConfig`, `SubModeColor.parse`), instead of requiring `ff ff ff`
+  in the colour slot; the app's own CCT write puts the tint there, so the old rule read it back as RGB.
+- **H6047 reported two phantom segments, 10 and 11** (#13). Its goodsType 119 uses the old detail screen
+  (`h6047/pact/Model.t` -> `NewDetailAc`), whose read-back walks `Support.getBulbStringMaxNum(119)` = 10
+  pieces in groups of 4 (`NewDetailVm.n5`: `aa a5 01..03`, `SubMode4Color` trims the last group to 2
+  records). The profile used `getColorPieceSize` = 12, which only the newdetail screens (277/288/298)
+  call, so the last group kept 4 records. `color_readback_segments` is dropped: read-back is the same 10
+  segments as the write.
+- **H6047 whole-device power is `33 01 <on>`**, as the app's main switch sends it
+  (`NewDetailVm.switchTrigger` -> `ControllerSwitch`). The library sent `33 36 <on> <on>`, which the app
+  only uses for the per-bar buttons; `set_zone_power` still sends `33 36`. Powering on leaves the per-bar
+  state unknown until the next `aa 36` read (the app does not say which bars `33 01` lights), so the
+  next zone change re-reads the bars instead of assuming; powering off marks both bars off. `aa 36`
+  read-back now sets `is_on` to "either bar on", as the app's heartbeat does.
+  The `aa 01` poll stays: the app's connect read (`Compose4InfoBleIot`) includes `ControllerSwitch`, and a
+  timeout there fails its whole connect, so an H6047 answers it (a miss would cost one 2 s read timeout and
+  is non-fatal; `aa 36` still supplies power).
+- **H6061** (Glide Hexa light panels, `cubelight` split, goodsType 51), phase 1 = whole-device control
+  only ([#16](https://github.com/Brady-Woods/govee-ble-local/issues/16), tracked in #17): power,
+  percent brightness, RGB, colour temperature (2000-9000 K) and polled read-back. Modeled from the
+  decompiled Govee Home 7.7.02 app; not hardware-verified. No SEGMENTS or SCENES capability yet, and
+  no secret (the app writes 0xB2 only while pairing). New colour scheme `"h6061"`:
+  - RGB is `ceil(n/4)` frames `33 05 15 04 <group from 1> R G B x<=4`, the last carrying the
+    remaining panels (`Bytes.m`, `BleUtils.w0`; `ColorModeControllerConfig.k` -> `w` -> `l`); with
+    the default 23 panels that is 6 frames, the last with 3 colours. New `build.color_rgb_frames`;
+    `Device.set_rgb` / `turn_on(rgb=)` send the frames with `send_many`.
+  - CCT is `33 05 15 01 <tint RGB> <kelvin u2be> <24-bit mask>`, the first n mask bits set, LSB first
+    (`ff ff 7f` for 23 panels; `Config.Zt` -> `Bytes.u`, `ColorPieceConfig.k`). The tint sits in the
+    colour slot, not the `ff ff ff` white-slot form of H60A6 / H6047 / H6641.
+  - An RGB pick that is exactly one of the app's 178 Kelvin tint colours (two per 100 K step, within
+    2000-9000 K) is sent as the CCT frame, with the picked colour as the tint, as the app does
+    (`ColorModeControllerConfig.k`: `ColorUtils.q` + `KelvinConfig.i`, then `Config.Zt`); the state
+    then reports that Kelvin. New `wire.cct.kelvin_for_tint` and `build.rgb_as_kelvin`.
+  - Panel count n defaults to 23, the app's value when no layout is stored (`ColorPieceConfig.f`,
+    `Support.getBulbStringMaxNum`). `Device.set_segment_count(n)` sets it for a known layout
+    (1-23; more is refused because the app sends no colour for a longer set).
+  - Read-back polls `aa 01` / `aa 04` / `aa 05`: the colour comes back as mode `0x0d`
+    `[R, G, B, kelvin u2be]` (kelvin > 0 = CCT) although writes use `0x15`
+    (`CubeNewInfo4Detail`), then `aa a5 <group>` for groups 1..`ceil(n/4)` fills `state.segments`
+    (`CubeVM4Light.l5`).
+  - `tools/field_test/plans/h6061.py`: power, brightness, RGB (6 group frames) and CCT at
+    2000 / 4000 / 6500 / 9000 K.
 
 ### Spec
-- `govee_ble.ksy`: `soft_version_read` (`aa 06`, ASCII) and `device_info_hard_version` (`aa 07 03`,
-  ASCII). Readers regenerated (the diff is only these additions).
+- `devices.yaml`: `color_temp_write` opcode for `h60ax`, `h6047`, `h61d3`, `bulblightv3` and
+  `tablelampv1`, with the decompiled sources. `govee_ble.ksy` (+ generated docstring): `color_cct_0d`
+  documents both CCT forms.
 - `govee_ble.ksy`: `mode_color_0d_typed` kind 2 (rgblight `[R,G,B, kelvin u2be, tint RGB]` with an
   `is_cct` instance); `color_cct_0d` / `mode_color_0d_report` docs cover the H6188 forms. Readers
   regenerated (kaitai-struct-compiler 0.11.0; the diff is only these additions).
 - `devices.yaml`: new `h6188` family with citations; note on the Wi-Fi-only H6085/H6086/H6089.
   `devices.schema.json`: `mode_0d_kind` gains `rgb_kelvin_tint`.
+- `devices.yaml`: new `striplight` family (H6062, goodsType 41; the shared package's H610A/H610B have
+  their own flows and are not modelled). `govee_ble.ksy`: comment that opcode `0x41` is
+  `on_off_memory` in the shared enum but the H6062's `aa 41` section-count read on the striplight
+  split (hand-decoded in `parse.parse_section_count`; generated readers unchanged).
+- `devices.yaml`: the `bulblightv3` family now records H6004's two hardware revisions: goodsType 10
+  (`bulblightstringv1/bulblightv1`, Wi-Fi/IoT-only, `IotSkuItemV2.needBle()` false) versus goodsType
+  64 (BLE + Wi-Fi), with the citations; H6003 is goodsType 9 (IoT-only).
+- `devices.yaml` `h6047` family re-audited against 7.7.02 (#13): kelvin per SKU (H6043/H6042 =
+  2000-9000 K, only H6047 is 2200-6500 K); read-back count depends on the screen (old detail screen
+  `getBulbStringMaxNum`: H6047 = 10, H6042 = 5; newdetail screens `getColorPieceSize`), so the
+  "read 12 != write 10" claim is gone and `getGoodsType4ColorSegment` is the only one that never returns
+  5; whole-device power `33 01` vs per-bar `33 36`; `aa 36` third byte (movie/feast); `aa 05 15` and
+  `a3` documented; swap light `0x34` and the connect-time `aa ac` sound-pickup read documented, not
+  modelled; left/right order is logical (`LightPosAc`); "observed plaintext" no longer claimed for H6047;
+  line citations updated (`Support.isGoodsTypeH6047` is at :186). `govee_ble.ksy`: `cct_read_reply` gains
+  `kelvin_right` and the gradual-flag meaning of byte 0, `bar_switch_read` gains `movie_feast`. Readers
+  regenerated (the diff is only these two additions).
+- `devices.yaml`: new `h6061` family (Glide Hexa, phase 1) with citations: the group RGB frame, the
+  tint-in-colour-slot CCT frame with its 24-bit mask, the `0x0d` colour report and the `aa a5` reads.
 
 ## [1.2.1] — 2026-10-13
 

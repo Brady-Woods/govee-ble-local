@@ -178,3 +178,9 @@ def test_parsed_advertisement_selects_the_encryption_mode(
 
 def test_no_advertisement_uses_the_profile_default() -> None:
     assert create_device(ble_device("AA:BB:CC:DD:EE:33", "GVH6008"), "H6008").encryption is Encryption.NONE
+
+
+def test_parsed_advertisement_also_records_the_pact() -> None:
+    adv = GoveeAdvertisement(sku="H6008", name="GVH60082691", encrypted=True,
+                             broadcast_version=3, pact_type=1, pact_code=1)
+    assert create_device(ble_device("AA:BB:CC:DD:EE:34", adv.name), "H6008", adv).pact == (1, 1)

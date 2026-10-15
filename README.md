@@ -78,14 +78,34 @@ advertisement, build a capability-driven `Device`, then drive it.
   `capabilities`, `zones`, `min_kelvin` / `max_kelvin`, `scene_names`, `state`,
   `register_callback`. Methods for unsupported capabilities raise `GoveeBleNotSupported`.
 - **`DeviceState`** — parsed state: `is_on`, `brightness` (0–100), `rgb_color`,
-  `color_temp_kelvin`, `segments` (`list[Segment]`), `zone_power`, `scene_code`, plus
-  device-info (`device_id` / `serial_number`, `wifi_mac`, `hardware_version`, `firmware_version`, `ble_mac`),
-  read with the Govee app's own frames (`aa 06`, `aa 07 03`, `aa 07 02`).
+  `color_temp_kelvin`, `segments` (`list[Segment]`), `zone_power`, `zone_color_temp_kelvin` (H6047
+  reads one Kelvin per bar), `gradual`, `scene_code`, plus
+  device-info (`device_id` / `serial_number`, `wifi_mac`, `hardware_version`, `firmware_version`,
+  `ble_mac`), read with the Govee app's own frames (`aa 06`, `aa 07 03`, `aa 07 02`).
 - **`Capability`** — `POWER`, `BRIGHTNESS`, `RGB`, `COLOR_TEMP`, `SEGMENTS`, `SCENES`.
 
-Curated SKUs: **H60A6**, **H6047**, **H61A8**, **H6006/H6008**, **H6052**, **H6641**, **H6188**, and the
+Curated SKUs: **H60A6**, **H6047**, **H61A8**, **H6004** (the BLE revision; the Wi-Fi-only one can't be controlled over BLE), **H6006/H6008**, **H6052**, **H6641**, **H6188**, **H6062**, **H6061** (Glide Hexa: whole-device power, brightness, colour and colour temperature), and the
 plug family (**H5080/H5082/H5083/H5085/H5089/H5160/H5161**). Segment-colour read-back and some
 scene dialects on the non-H60A6 SKUs are source-modelled and not yet hardware-verified.
+
+Colour temperature matches the Govee app's frames: like the app, an out-of-range Kelvin is clamped to
+the device range, not rejected (`set_color_temp(1500)` on a 2700-6500 K device sends 2700 K), and the
+result is rounded to a whole 100 K step (`set_color_temp(2750)` sends and reports 2800 K). `state`
+holds the Kelvin actually sent. Only a non-integer raises `GoveeBleInvalidValue`. Every CCT frame
+carries the app's Kelvin tint, and whole-device CCT is one frame (on the H60A6 the all-segments mask,
+as the app's Kelvin sliders send it).
+
+Like the app, a picked RGB colour that is exactly one of its Kelvin tint colours (178 of them, two per
+100 K step) and whose Kelvin is inside the SKU's range is sent as a colour-temperature frame instead of
+an RGB frame, and `state` then reports `color_temp_kelvin` with `rgb_color` unset: `set_rgb`, `turn_on(rgb=)`,
+`set_zone_rgb` and `set_segment_rgb` on the 0x15 devices (H60A6, H6641, H6062, H6047, with the same mask the
+RGB frame would use), the 0x0d bulbs and strip (H6004, H6006, H6008, H6052, H6188) and H6061. Colours outside the
+range or one channel off the table stay RGB. Not modelled: colour-set / mixed-colour picks and the real-time
+drag frames (RGB only), and H61A8's picks.
+
+The H6047 follows the app's frames too: whole-device power is `33 01` (`33 36` is only the per-bar
+buttons, `set_zone_power`), read-back covers its 10 segments, `Device.zone_color_temp_kelvin(name)`
+gives each bar's Kelvin, and `set_gradual` toggles the fade flag.
 
 The full API reference is generated from the docstrings with [`pdoc`](https://pdoc.dev)
 (`pip install '.[docs]' && bash tools/gen_docs.sh` → `docs/api/`); `govee_ble_local.__all__` is the

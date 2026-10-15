@@ -131,6 +131,20 @@ def parse_kelvin(frame: bytes) -> int | None:
     return int(m.rest.kelvin)
 
 
+def parse_bar_kelvin(frame: bytes) -> tuple[int, int] | None:
+    """H6047 ``AA 05 15`` reply: ``(left kelvin, right kelvin)``, 0 = that bar is not in
+    colour-temperature mode, or None if this is not a 0x15 mode reply.
+
+    The H6047 layout is ``[gradual][kelvin left u2be][kelvin right u2be]``
+    (``SubModeColor.parse``; ``Info4Detail`` ``subMode4Color`` parse strategy). The app shows a
+    whole-device kelvin only when both bars match; that rule lives in the Device layer."""
+    m = _mode_read(frame)
+    if m is None or int(m.selector_or_sub_mode) != 0x15:
+        return None
+    right = getattr(m.rest, "kelvin_right", None)
+    return int(m.rest.kelvin), int(right or 0)
+
+
 def parse_mode_color_0d(frame: bytes) -> tuple[int, int, int] | None:
     """AA 05 0D reply read as a bare (r, g, b) triple, or None.
 
@@ -147,16 +161,20 @@ def parse_mode_color_0d(frame: bytes) -> tuple[int, int, int] | None:
 
 def parse_mode_0d(frame: bytes) -> tuple[tuple[int, int, int] | None, int | None] | None:
     """AA 05 0D reply on the 0x0d-scheme bulbs (H6006/H6008/H6052): ``[r, g, b,
-    kelvin u2be]`` - the same layout as the 0x0d write. White (ff ff ff) with a
-    non-zero kelvin is colour-temperature mode -> ``(None, kelvin)``; otherwise
-    ``((r, g, b), None)``. Live captures: ``aa 05 0d ff ff ff 0a 8c`` = 2700 K."""
+    kelvin u2be, tint r, g, b]`` - the same layout as the 0x0d write. ANY non-zero kelvin is
+    colour-temperature mode -> ``(None, kelvin)``; kelvin 0 -> ``((r, g, b), None)``.
+
+    This is the app's own rule: ``bulblightstringv1`` ``ModeParseStrategyConfig`` and
+    tablelampv1 ``SubModeColor.parse`` take kelvin from bytes 3..4 and show the tint when it is
+    non-zero. It must not require white (ff ff ff) in the colour slot: the app's CCT write
+    (``Config.bu`` -> ``Bytes.p``) puts the tint there. Live capture, written by the earlier
+    white-slot form: ``aa 05 0d ff ff ff 0a 8c`` = 2700 K."""
     if len(frame) < 8 or frame[0] != 0xAA or frame[1] != 0x05 or frame[2] != 0x0D:
         return None
-    rgb = (frame[3], frame[4], frame[5])
     kelvin = (frame[6] << 8) | frame[7]
-    if rgb == (0xFF, 0xFF, 0xFF) and kelvin:
+    if kelvin:
         return None, kelvin
-    return rgb, None
+    return (frame[3], frame[4], frame[5]), None
 
 
 # mode_color_0d_typed `kind` for the rgblight strategy (devices.yaml mode_0d_kind: rgb_kelvin_tint).
@@ -306,6 +324,28 @@ def parse_ic_count(frame: bytes) -> IcCount | None:
     if b is None:
         return None
     return IcCount(ic_count=int(b.ic_count), segment_count=int(b.segment))
+
+
+@dataclass(frozen=True)
+class SectionCount:
+    """AA 41 reply on the H6062 (``striplight`` ``ControllerIcSegmentNum``): the device's IC
+    (lamp-bead) count and its ``sectionNum``. Only ``section_num`` drives control: the app
+    stores it as the device's segment count (``ControllerStrategyConfig.X`` ->
+    ``Info4BleIot.T``; ``VM4Light$connectBleSuc$1`` -> ``Info4BleIotDevice.P0``)."""
+    ic_count: int
+    section_num: int
+
+
+def parse_section_count(frame: bytes) -> SectionCount | None:
+    """AA 41 reply: ``[IC s16be, sectionNum u8]``, i.e. frame bytes 2..4 (``BleUtil.getSignedShort``
+    of the first two, then the third; ``ControllerIcSegmentNum.makeController4Read``).
+
+    Hand-decoded, not via the generated reader: opcode 0x41 is ``on_off_memory`` in the shared
+    command enum and only means this on the ``striplight`` split (the same "shared opcode,
+    per-SKU body" case as :func:`parse_mode_0d`)."""
+    if len(frame) < 5 or frame[0] != 0xAA or frame[1] != 0x41:
+        return None
+    return SectionCount(ic_count=(frame[2] << 8) | frame[3], section_num=frame[4])
 
 
 # ── device info (AA 07 10/11/02) ─────────────────────────────────────────────

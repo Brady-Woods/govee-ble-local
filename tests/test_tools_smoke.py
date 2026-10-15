@@ -17,7 +17,7 @@ TOOLS = Path(__file__).resolve().parent.parent / "tools"
 ARGPARSE_TOOLS = [
     "fetch_scenes.py", "decrypt_btsnoop.py", "btsnoop_mtu_scan.py", "power_semantics_probe.py",
     "analyze_frame_log.py", "h60a6_live_check.py", "h60a6_cct_choreography.py",
-    "h60a6_segment_map_probe.py", "h6188_field_test.py",
+    "h60a6_segment_map_probe.py",
 ]
 
 
@@ -29,7 +29,7 @@ def _load(name: str) -> ModuleType:
     return mod
 
 
-@pytest.mark.parametrize("path", sorted(TOOLS.glob("*.py")), ids=lambda p: p.name)
+@pytest.mark.parametrize("path", sorted(TOOLS.rglob("*.py")), ids=lambda p: str(p.relative_to(TOOLS)))
 def test_tool_compiles(path: Path, tmp_path: Path) -> None:
     py_compile.compile(str(path), cfile=str(tmp_path / "x.pyc"), doraise=True)
 
@@ -46,8 +46,8 @@ def test_tool_help_exits_zero(name: str) -> None:
 def test_no_real_macs_in_tools() -> None:
     mac = re.compile(r"\b[0-9A-Fa-f]{2}(?::[0-9A-Fa-f]{2}){5}\b")
     placeholder = {"AA:BB:CC:DD:EE:FF", "00:00:00:00:00"}
-    for path in TOOLS.iterdir():
-        if path.is_file():
+    for path in TOOLS.rglob("*"):
+        if path.is_file() and "__pycache__" not in path.parts:
             for m in mac.findall(path.read_text(errors="ignore")):
                 assert m.upper() in placeholder, f"{path.name}: {m}"
 

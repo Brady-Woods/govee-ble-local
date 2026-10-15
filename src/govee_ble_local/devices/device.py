@@ -42,7 +42,6 @@ def _local_tz(unix_ts: int) -> tuple[int, int]:
     return sign * (off // 3600), sign * ((off % 3600) // 60)
 
 
-_MAX_SEGMENT_INDEX = 16   # the segment mask is a u16
 
 
 def _unsupported_readback(value: Never) -> Never:
@@ -51,12 +50,23 @@ def _unsupported_readback(value: Never) -> Never:
     raise GoveeBleError(f"unsupported readback {value!r}")
 
 
-def _mask(indices: list[int] | tuple[int, ...]) -> int:
+def _check_segment_count(count: int) -> None:
+    if isinstance(count, bool) or not isinstance(count, int) or not 1 <= count <= build.MAX_MASK_SEGMENTS:
+        raise GoveeBleInvalidValue(
+            f"segment count must be an integer in 1..{build.MAX_MASK_SEGMENTS}, got {count!r}")
+
+
+def _mask(indices: list[int] | tuple[int, ...], segments: int = 0) -> int:
+    """Segment-index list -> mask bits. ``segments`` is the device's segment count: up to 16
+    the whole 2-byte mask is addressable (so a 10-segment device still accepts 0..15, as it
+    always has); above 16 the app's mask is exactly ``segments`` bits, so indices must be
+    below it."""
+    limit = max(build.LEGACY_MASK_SEGMENTS, segments)
     m = 0
     for i in indices:
-        if isinstance(i, bool) or not isinstance(i, int) or not 0 <= i < _MAX_SEGMENT_INDEX:
+        if isinstance(i, bool) or not isinstance(i, int) or not 0 <= i < limit:
             raise GoveeBleInvalidValue(
-                f"segment index must be an integer in 0..{_MAX_SEGMENT_INDEX - 1}, got {i!r}")
+                f"segment index must be an integer in 0..{limit - 1}, got {i!r}")
         m |= 1 << i
     return m
 
@@ -89,6 +99,7 @@ class Device:
         self._sku = (sku or profile.skus[0]).upper()
         self._secret = self._checked_secret(secret)
         self._state = DeviceState(optimistic=True)
+        self._segment_count: int | None = None   # runtime-reported; overrides profile.segments
         self._device_info_read = False   # device-info (mac/hw/fw/sn) read once, lazily
         self._polled_once = False        # for the one-time INFO "first poll" line
         # Mutation sequence (BUG-4): bumped by every state-mutating setter when it applies its
@@ -102,6 +113,9 @@ class Device:
         self._discarded_reads = 0        # cumulative count of discarded stale reads
         self._callbacks: list[StateCallback] = []
         self._advert_ignore_until = 0.0   # monotonic; see ADVERT_SUPPRESS_SECONDS
+        # (pact_type, pact_code) from the Govee advertisement, or None until one is heard.
+        self._pact: tuple[int, int] | None = None
+        self._learn_pact(advertisement_data)
         enc = self._resolve_encryption(advertisement_data)
         conn_kw: dict[str, Any] = {}
         if idle_disconnect is not None:
@@ -113,6 +127,26 @@ class Device:
             frame_log=frame_log,
             **conn_kw,
         )
+
+    def _learn_pact(self, adv: AdvertisementData | GoveeAdvertisement | None) -> None:
+        """Remember the advertised ``(pact_type, pact_code)``; the app reads the same pair
+        (``BleUtil.parseBleBroadcastPact``) into the device model. Exposed as :attr:`pact`; no frame
+        the library sends depends on it yet."""
+        if isinstance(adv, GoveeAdvertisement):
+            a: GoveeAdvertisement | None = adv
+        else:
+            mfg = getattr(adv, "manufacturer_data", None)
+            if not mfg:
+                return
+            a = identify(getattr(adv, "local_name", None) or self._ble_device.name, mfg)
+        if a is not None and a.pact_type != -1:
+            self._pact = (a.pact_type, a.pact_code)
+
+    @property
+    def pact(self) -> tuple[int, int] | None:
+        """The advertised ``(pact_type, pact_code)``, or None if no advertisement carrying it
+        has been seen (e.g. a device built without advertisement data)."""
+        return self._pact
 
     def _resolve_encryption(self, adv: AdvertisementData | GoveeAdvertisement | None) -> Encryption:
         """The command-channel mode the advertisement announces (its encrypt flag), else the
@@ -156,6 +190,23 @@ class Device:
     def zones(self) -> tuple[Zone, ...]:
         """The profile's independently-switchable zones (empty for unzoned devices)."""
         return self.profile.zones
+
+    @property
+    def segment_count(self) -> int:
+        """Segments this device addresses: the count it reported at runtime
+        (:meth:`set_segment_count`) if any, else the profile's static ``segments``. Sets the
+        whole-device mask and its byte width (2 bytes up to 16 segments, ceil(n/8) above)."""
+        return self._segment_count if self._segment_count is not None else self.profile.segments
+
+    def set_segment_count(self, count: int | None) -> None:
+        """Override the profile's segment count with one the device reported (e.g. a
+        runtime read of its segment/section count); ``None`` reverts to the profile value.
+
+        Raises GoveeBleInvalidValue unless ``count`` is 1..56 (the widest mask, 7 bytes, the
+        app encodes). Does not touch the connection or any state."""
+        if count is not None:
+            _check_segment_count(count)
+        self._segment_count = count
 
     @property
     def min_kelvin(self) -> int | None:
@@ -231,11 +282,37 @@ class Device:
         Raises GoveeBleInvalidValue if it is not exactly ``build.SECRET_LEN`` bytes."""
         self._secret = self._checked_secret(secret)
 
-    def _check_kelvin(self, kelvin: int) -> None:
+    def _check_kelvin(self, kelvin: int) -> int:
+        """The Kelvin that goes on the wire (and into ``state``) for ``kelvin``: clamped to the
+        profile range, then rounded to the 100 K grid, as the app does
+        (:func:`build.normalize_kelvin`). Out-of-range input is clamped, not rejected; only a
+        non-int raises GoveeBleInvalidValue."""
+        return build.normalize_kelvin(kelvin, self.profile.min_kelvin, self.profile.max_kelvin)
+
+    def _kelvin_range(self) -> tuple[int, int] | None:
         lo, hi = self.profile.min_kelvin, self.profile.max_kelvin
-        if (lo is not None and kelvin < lo) or (hi is not None and kelvin > hi):
-            raise GoveeBleInvalidValue(
-                f"{self._sku}: kelvin must be within {lo}..{hi}, got {kelvin!r}")
+        return (lo, hi) if lo is not None and hi is not None else None
+
+    def _color_rgb_frames(self, rgb: tuple[int, int, int]) -> list[bytes]:
+        """Frames for a whole-device RGB pick: one, except on a profile whose colour scheme writes the
+        panels in groups (``h6061``: ``ceil(n/4)`` frames over :attr:`segment_count` panels). On every
+        scheme with a colour-temperature mode, a colour that is exactly one of the app's Kelvin tint
+        colours within the SKU's range is the single CCT frame instead, as the app sends it
+        (:func:`build.rgb_as_kelvin`)."""
+        return build.color_rgb_frames(
+            *rgb, self.profile.color_scheme, self.segment_count, self._kelvin_range())
+
+    def _apply_rgb_state(self, rgb: tuple[int, int, int]) -> None:
+        """Optimistic state for a whole-device RGB write: the colour, or - when the app sends it as
+        a colour temperature (``build.rgb_as_kelvin``) - that Kelvin, which is what the device reports
+        (and what the app syncs to its Kelvin slider; both bars of a bar-switch device)."""
+        kelvin = build.rgb_as_kelvin(*rgb, self.profile.color_scheme, self._kelvin_range())
+        if kelvin is None:
+            self._state.rgb_color, self._state.color_temp_kelvin = rgb, None
+        else:
+            self._state.rgb_color, self._state.color_temp_kelvin = None, kelvin
+        self._state.scene_code = None
+        self._apply_zone_kelvin({0: kelvin, 1: kelvin})
 
     def update_ble_device(self, ble_device: BLEDevice) -> None:
         """Swap in a fresh BLEDevice (e.g. a new scanner path) for later connects."""
@@ -251,6 +328,7 @@ class Device:
         mfg = getattr(advertisement_data, "manufacturer_data", None)
         if not mfg:
             return False
+        self._learn_pact(advertisement_data)
         on = parse_broadcast_onoff(mfg)
         if on is None or on == self._state.is_on:
             return False
@@ -305,17 +383,20 @@ class Device:
     def _power_frames(self, on: bool) -> list[bytes]:
         """Frames for whole-device power: always a single frame where the device
         allows it - the global 33 01 switch (which on H60A6 also drives both
-        zones), or H6047's combined 33 36 bar frame. Only a zoned fixture without
-        a zone-driving master switch falls back to one 33 30 frame per zone."""
-        if self.profile.bar_switch:
-            return [build.bar_switch(on, on)]
-        if self.profile.zones and not self.profile.global_power:
+        zones; H6047's main switch sends it too - ``33 36`` is only its per-bar
+        buttons, see :meth:`set_zone_power`). Only a zoned fixture without a
+        zone-driving master switch falls back to one 33 30 frame per zone."""
+        if self.profile.zones and not self.profile.global_power and not self.profile.bar_switch:
             return [build.zone_power(z.power_index, on) for z in self.profile.zones]
         return [build.switch(on, relay=self.profile.relay)]
 
     def _apply_power(self, on: bool) -> None:
         self._state.is_on = on
-        if self.profile.zones:
+        if self.profile.bar_switch and on:
+            # 33 01 on: the app does not say which bars light (it learns that from the next aa 36
+            # heartbeat), so don't guess; the next zone write re-reads them rather than assuming.
+            self._state.zone_power = {}
+        elif self.profile.zones:
             self._state.zone_power = {z.power_index: on for z in self.profile.zones}
 
     async def set_power(self, on: bool) -> None:
@@ -352,9 +433,12 @@ class Device:
         """Power on and apply brightness/colour as ONE batched operation: one
         lock acquisition, one connection, each frame ack-verified in order
         (power first so the rest lands on a lit fixture). ``power=False`` skips
-        the power frames (already on)."""
+        the power frames (already on). ``kelvin`` is clamped and rounded as in
+        :meth:`set_color_temp`."""
         if rgb is not None and kelvin is not None:
             raise GoveeBleInvalidValue("turn_on: pass either rgb or kelvin, not both")
+        if rgb is not None or kelvin is not None:
+            await self._ensure_segment_count()
         frames: list[bytes] = []
         if power:
             self._require(Capability.POWER)
@@ -365,11 +449,12 @@ class Device:
             frames.append(self._brightness_frame(brightness))
         if rgb is not None:
             self._require(Capability.RGB)
-            frames.append(build.color_rgb(*rgb, self.profile.color_scheme, self.profile.segments))
+            frames += self._color_rgb_frames(rgb)
         elif kelvin is not None:
             self._require(Capability.COLOR_TEMP)
-            self._check_kelvin(kelvin)
-            frames.append(build.color_temp(kelvin, self.profile.color_scheme, self.profile.segments))
+            kelvin = self._check_kelvin(kelvin)
+            frames.append(build.color_temp(
+                kelvin, self.profile.color_scheme, self.segment_count))
         if not frames:
             return
         await self._conn.send_many(frames)
@@ -379,11 +464,11 @@ class Device:
         if brightness is not None:
             self._state.brightness = brightness
         if rgb is not None:
-            self._state.rgb_color, self._state.color_temp_kelvin = (rgb[0], rgb[1], rgb[2]), None
-            self._state.scene_code = None
+            self._apply_rgb_state(rgb)
         elif kelvin is not None:
             self._state.color_temp_kelvin, self._state.rgb_color = kelvin, None
             self._state.scene_code = None
+            self._apply_zone_kelvin({0: kelvin, 1: kelvin})
         self._mark_authoritative()
         self._notify()
 
@@ -409,37 +494,49 @@ class Device:
 
         Raises GoveeBleNotSupported without RGB; GoveeBleInvalidValue for out-of-range channels."""
         self._require(Capability.RGB)
+        await self._ensure_segment_count()
         r, g, b = rgb
-        await self._conn.send(build.color_rgb(r, g, b, self.profile.color_scheme, self.profile.segments))
+        frames = self._color_rgb_frames((r, g, b))
+        if len(frames) == 1:
+            await self._conn.send(frames[0])
+        else:
+            await self._conn.send_many(frames)
         self._mutated()
-        self._state.rgb_color = (r, g, b)
-        self._state.color_temp_kelvin = None
-        self._state.scene_code = None
+        self._apply_rgb_state((r, g, b))
         self._mark_authoritative()
         self._notify()
 
     async def set_color_temp(self, kelvin: int) -> None:
         """Set the whole-device colour temperature (clears rgb and active scene).
 
-        Raises GoveeBleNotSupported without COLOR_TEMP; GoveeBleInvalidValue if outside the
-        profile's kelvin range."""
+        Raises GoveeBleNotSupported without COLOR_TEMP and GoveeBleInvalidValue for a non-int.
+        Like the app, an out-of-range value is clamped to the profile's kelvin range (not
+        rejected) and then rounded to the nearest 100 K, the only values the app sends; the
+        Kelvin actually sent is what ``state`` keeps, and the frame carries the app's tint."""
         self._require(Capability.COLOR_TEMP)
-        self._check_kelvin(kelvin)
-        await self._conn.send(build.color_temp(kelvin, self.profile.color_scheme, self.profile.segments))
+        kelvin = self._check_kelvin(kelvin)
+        await self._ensure_segment_count()
+        await self._conn.send(
+            build.color_temp(kelvin, self.profile.color_scheme, self.segment_count))
         self._mutated()
         self._state.color_temp_kelvin = kelvin
         self._state.rgb_color = None
         self._state.scene_code = None
+        self._apply_zone_kelvin({0: kelvin, 1: kelvin})
         self._mark_authoritative()
         self._notify()
 
     async def set_segment_rgb(self, indices: list[int], rgb: tuple[int, int, int]) -> None:
-        """Set the colour of selected segments (indices 0..15).
+        """Set the colour of selected segments (indices 0..15, or up to the device's
+        :attr:`segment_count` when that is above 16).
 
         Raises GoveeBleNotSupported without SEGMENTS; GoveeBleInvalidValue for a bad index."""
         self._require(Capability.SEGMENTS)
+        await self._ensure_segment_count()
         r, g, b = rgb
-        await self._conn.send(build.segment_rgb(_mask(indices), r, g, b, self.profile.color_scheme))
+        n = self.segment_count
+        await self._conn.send(build.segment_rgb(
+            _mask(indices, n), r, g, b, self.profile.color_scheme, n, self._kelvin_range()))
         self._mutated()
         self._update_segments(indices, rgb=(r, g, b))
         self._mark_authoritative()
@@ -450,8 +547,10 @@ class Device:
         schemes without per-segment brightness (e.g. H61A8)."""
         self._require(Capability.SEGMENTS)
         pct = max(0, min(100, pct))
+        await self._ensure_segment_count()
+        n = self.segment_count
         frame = self._build_or_unsupported(
-            build.segment_brightness, _mask(indices), pct, self.profile.color_scheme)
+            build.segment_brightness, _mask(indices, n), pct, self.profile.color_scheme, n)
         await self._conn.send(frame)
         self._mutated()
         self._update_segments(indices, brightness=pct)
@@ -491,12 +590,15 @@ class Device:
 
     async def set_segment_color_temp(self, indices: list[int], kelvin: int) -> None:
         """Colour temperature on selected segments (0x15 family only — the CCT frame
-        carries the segment mask). Raises GoveeBleNotSupported for non-maskable schemes."""
+        carries the segment mask). Raises GoveeBleNotSupported for non-maskable schemes.
+        ``kelvin`` is clamped and rounded as in :meth:`set_color_temp`."""
         self._require(Capability.SEGMENTS)
         self._require(Capability.COLOR_TEMP)
-        self._check_kelvin(kelvin)
+        kelvin = self._check_kelvin(kelvin)
+        await self._ensure_segment_count()
+        n = self.segment_count
         frame = self._build_or_unsupported(
-            build.segment_color_temp, _mask(indices), kelvin, self.profile.color_scheme)
+            build.segment_color_temp, _mask(indices, n), kelvin, self.profile.color_scheme, n)
         await self._conn.send(frame)
         self._mutated()   # device colour changed (no optimistic field): invalidate in-flight reads
         self._mark_authoritative()
@@ -508,6 +610,14 @@ class Device:
             if z.name == name:
                 return z
         raise GoveeBleNotSupported(f"{self._sku}: unknown zone {name!r}")
+
+    def zone_color_temp_kelvin(self, name: str) -> int | None:
+        """Last known colour temperature (Kelvin) of zone ``name``, or None when the zone is not
+        known to be in colour-temperature mode or the device doesn't report it per zone (only
+        H6047 does: one kelvin per bar from ``aa 05 15``).
+
+        Raises GoveeBleNotSupported for an unknown zone."""
+        return self._state.zone_color_temp_kelvin.get(self._zone(name).power_index)
 
     def zone_is_on(self, name: str) -> bool | None:
         """Last known power state of zone ``name``, or None if unknown.
@@ -565,6 +675,8 @@ class Device:
         if self._stale(seq, "bar-switch"):
             return True
         self._state.zone_power = {0: bars[0], 1: bars[1]}
+        # The app shows the device as on when either bar is on (NewDetailVm heart parse).
+        self._state.is_on = bars[0] or bars[1]
         return False
 
     async def set_zone_rgb(self, name: str, rgb: tuple[int, int, int]) -> None:
@@ -578,25 +690,36 @@ class Device:
         if not z.segments:
             raise GoveeBleNotSupported(f"{self._sku}: zone {name!r} has no segments")
         r, g, b = rgb
-        await self._conn.send(build.segment_rgb(_mask(z.segments), r, g, b, self.profile.color_scheme))
+        await self._ensure_segment_count()
+        n = self.segment_count
+        await self._conn.send(build.segment_rgb(
+            _mask(z.segments, n), r, g, b, self.profile.color_scheme, n, self._kelvin_range()))
         self._mutated()
         self._update_segments(z.segments, rgb=(r, g, b))
+        # A pick equal to a tint colour went out as the zone's CCT frame (build.rgb_as_kelvin): the
+        # bar then reports that Kelvin, like set_zone_color_temp.
+        self._apply_zone_kelvin({z.power_index: build.rgb_as_kelvin(
+            r, g, b, self.profile.color_scheme, self._kelvin_range())})
         self._mark_authoritative()
         self._notify()
 
     async def set_zone_color_temp(self, name: str, kelvin: int) -> None:
         """Colour temperature for one zone (its segment mask). Physically supported on the
-        0x15 family (H60A6/H6047), whose CCT frame carries a segment mask."""
+        0x15 family (H60A6/H6047), whose CCT frame carries a segment mask. ``kelvin`` is clamped
+        and rounded as in :meth:`set_color_temp`."""
         self._require(Capability.SEGMENTS)
         self._require(Capability.COLOR_TEMP)
-        self._check_kelvin(kelvin)
+        kelvin = self._check_kelvin(kelvin)
         z = self._zone(name)
         if not z.segments:
             raise GoveeBleNotSupported(f"{self._sku}: zone {name!r} has no segments")
+        await self._ensure_segment_count()
+        n = self.segment_count
         frame = self._build_or_unsupported(
-            build.segment_color_temp, _mask(z.segments), kelvin, self.profile.color_scheme)
+            build.segment_color_temp, _mask(z.segments, n), kelvin, self.profile.color_scheme, n)
         await self._conn.send(frame)
-        self._mutated()   # device colour changed (no optimistic field): invalidate in-flight reads
+        self._mutated()   # device colour changed: invalidate in-flight reads
+        self._apply_zone_kelvin({z.power_index: kelvin})
         self._mark_authoritative()
         self._notify()
 
@@ -613,6 +736,7 @@ class Device:
         self._mark_authoritative()
         self._state.rgb_color = None
         self._state.color_temp_kelvin = None
+        self._apply_zone_kelvin({0: None, 1: None})
         self._notify()
 
     def scene_upload_frames(self, scene: Scene) -> list[bytes] | None:
@@ -636,7 +760,7 @@ class Device:
     # -- misc settings ------------------------------------------------------
     async def set_gradual(self, on: bool) -> None:
         """Toggle the gradual/fade-on-BLE↔wifi-handoff flag (0xA3). Only SKUs whose profile
-        sets ``gradual`` (e.g. H61A8) support it; others raise GoveeBleNotSupported."""
+        sets ``gradual`` (H61A8, H6047) support it; others raise GoveeBleNotSupported."""
         if not self.profile.gradual:
             raise GoveeBleNotSupported(f"{self._sku}: gradual (BLE/wifi fade) not supported")
         await self._conn.send(build.gradual(on))
@@ -670,7 +794,11 @@ class Device:
         if self.profile.color_readback == "mechanism_b":
             await self._read_mechanism_b()
         elif self.profile.color_readback == "mechanism_a_direct":
-            await self._read_mechanism_a_direct()
+            if self.profile.section_count_read and self._segment_count is None:
+                _LOGGER.debug("%s (%s): segment count unknown; skipping segment colour read-back",
+                              self.address, self._sku)
+            else:
+                await self._read_mechanism_a_direct()
         if self.profile.gradual:
             seq = self._mutation_seq
             reply = await self._read_reply(build.gradual_query(), build.CMD_GRADUAL_WIFI_BLE)
@@ -703,10 +831,33 @@ class Device:
             f"segs={len(s.segments)} zones={s.zone_power} scene={s.scene_code}"
         )
 
+    def _apply_zone_kelvin(self, kelvin_by_index: dict[int, int | None]) -> None:
+        """Fold a per-bar kelvin change into state (bar-switch devices only; others are a no-op).
+
+        ``None`` or 0 means that bar is not in colour-temperature mode. Like the app
+        (``Info4Detail`` subMode4Color parse), the whole-device ``color_temp_kelvin`` is set only
+        while both bars carry the same kelvin, and unknown otherwise."""
+        if not self.profile.bar_switch:
+            return
+        zk = dict(self._state.zone_color_temp_kelvin)
+        for index, k in kelvin_by_index.items():
+            if k:
+                zk[index] = k
+            else:
+                zk.pop(index, None)
+        self._state.zone_color_temp_kelvin = zk
+        left = zk.get(0)
+        self._state.color_temp_kelvin = left if left is not None and left == zk.get(1) else None
+
     def _apply_mode_reply(self, reply: bytes) -> None:
         """Fold an aa 05 mode report into state: active scene, or the colour /
         colour temperature of the solid-colour sub-mode."""
         self._state.scene_code = parse.parse_active_scene(reply)
+        bars = parse.parse_bar_kelvin(reply) if self.profile.bar_switch else None
+        if bars is not None:
+            # H6047 aa 05 15: [gradual][kelvin left u2be][kelvin right u2be]
+            self._apply_zone_kelvin({0: bars[0], 1: bars[1]})
+            return
         kelvin = parse.parse_kelvin(reply)
         if kelvin:
             self._state.color_temp_kelvin, self._state.rgb_color = kelvin, None
@@ -788,7 +939,7 @@ class Device:
         (Controller4ColorInfoByGroup, a different group size) via `_read_mechanism_a_direct`;
         the two only happen to share the wire opcode (0xA5), not the reply layout."""
         per_batch = self.profile.color_readback_per_batch or 3
-        seg_count = self.profile.color_readback_segments or self.profile.segments
+        seg_count = self.profile.color_readback_segments or self.segment_count
         batch_count = build.ceil_div(seg_count, per_batch)
         batches: list[tuple[int, list[tuple[int | None, int, int, int]]]] = []
         mseq = self._mutation_seq
@@ -807,7 +958,7 @@ class Device:
         (BulbGroupColorV2); they only share the wire opcode. Group size is a fixed client
         constant (`color_readback_per_batch`, source-confirmed 4 for both curated SKUs). The
         total piece count — and hence the group count — comes from either a static per-SKU
-        value (`color_readback_segments`/`segments`, e.g. H6047's getColorPieceSize=12) or,
+        value (`color_readback_segments`/`segments`; H6047 uses its 10 `segments`) or,
         when `color_readback_live_ic` is set (H6641), a live `0x40` IC-count read: the device
         reports its OWN group count directly (`ic_segment_read.segment`), sidestepping any
         client-side group-count-divisor assumption."""
@@ -824,7 +975,7 @@ class Device:
                 return
             total, group_count = ic.ic_count, ic.segment_count
         else:
-            total = self.profile.color_readback_segments or self.profile.segments
+            total = self.profile.color_readback_segments or self.segment_count
             group_count = build.ceil_div(total, group_size)
 
         groups: list[tuple[int, list[tuple[int, int, int, int]]]] = []
@@ -911,7 +1062,11 @@ class Device:
             self._state.brightness = self._brightness_pct(raw)
         if self.profile.bar_switch:
             await self._read_bar_switch()
-        if Capability.SCENES in self.capabilities or self.profile.color_scheme in ("h6006", "h6188"):
+        if self.profile.section_count_read:
+            # The app's connect order: aa 01, aa 04, aa 41, aa 05 (ControllerStrategyConfig.O).
+            await self._read_section_count()
+        if (Capability.SCENES in self.capabilities or Capability.COLOR_TEMP in self.capabilities
+                or self.profile.color_scheme in ("h6006", "h6188", "h6061")):
             seq = self._mutation_seq
             reply = await self._read_reply(build.mode_query(), build.CMD_MODE)
             if reply is not None and not self._stale(seq, "mode"):
@@ -920,6 +1075,32 @@ class Device:
         if applied:
             self._state.optimistic = False
             self._mark_authoritative()
+
+    async def _read_section_count(self) -> bool:
+        """Read the segment count the device reports (``aa 41`` -> ``sectionNum``) and adopt it
+        as :attr:`segment_count`, as the app does on every connect. Returns False (state left as
+        it was) when the device does not answer or reports a count the masks cannot carry."""
+        reply = await self._read_reply(build.section_count_query(), build.CMD_SECTION_COUNT)
+        sc = parse.parse_section_count(reply) if reply else None
+        if sc is None or not 1 <= sc.section_num <= build.MAX_MASK_SEGMENTS:
+            _LOGGER.debug("%s (%s): aa 41 section-count read gave no usable count (%s)",
+                          self.address, self._sku, None if sc is None else sc.section_num)
+            return False
+        self._segment_count = sc.section_num
+        return True
+
+    async def _ensure_segment_count(self) -> None:
+        """Make sure the device's own segment count is known before a write that carries a segment
+        mask. The app always reads it on connect and cannot control the device without it
+        (``AbsComposeControllerWithOpResult.onOvertime`` fails the connect read), so a profile with
+        ``section_count_read`` does the same lazily here and sends nothing if the device does not
+        answer, rather than guessing a mask. A no-op on every other profile and once the count is
+        known."""
+        if (self.profile.section_count_read and self._segment_count is None
+                and not await self._read_section_count()):
+            raise GoveeBleError(
+                f"{self._sku}: the device did not report its segment count (aa 41); "
+                "not sending a colour frame with a guessed segment mask")
 
     async def _read_reply(self, frame: bytes, command_type: int) -> bytes | None:
         frames = await self._conn.query(
