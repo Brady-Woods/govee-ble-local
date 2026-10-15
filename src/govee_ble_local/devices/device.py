@@ -296,6 +296,28 @@ class Device:
                 for z in profile.zones if z.segments]
         return [build.color_temp(kelvin, profile.color_scheme, n)]
 
+    def _kelvin_range(self) -> tuple[int, int] | None:
+        lo, hi = self.profile.min_kelvin, self.profile.max_kelvin
+        return (lo, hi) if lo is not None and hi is not None else None
+
+    def _color_rgb_frames(self, rgb: tuple[int, int, int]) -> list[bytes]:
+        """Frames for whole-device RGB: one, except on a profile whose colour scheme writes the
+        panels in groups (``h6061``: ``ceil(n/4)`` frames over :attr:`segment_count` panels, or the
+        single CCT frame when the app would send this colour as a colour temperature)."""
+        return build.color_rgb_frames(
+            *rgb, self.profile.color_scheme, self.segment_count, self._kelvin_range())
+
+    def _apply_rgb_state(self, rgb: tuple[int, int, int]) -> None:
+        """Optimistic state for a whole-device RGB write: the colour, or - when the app sends it as
+        a colour temperature (``build.rgb_as_kelvin``) - that Kelvin, which is what the device reports."""
+        kelvin = build.rgb_as_kelvin(*rgb, self.profile.color_scheme, self._kelvin_range())
+        if kelvin is None:
+            self._state.rgb_color, self._state.color_temp_kelvin = rgb, None
+        else:
+            self._state.rgb_color, self._state.color_temp_kelvin = None, kelvin
+        self._state.scene_code = None
+        self._apply_zone_kelvin({0: None, 1: None})
+
     def update_ble_device(self, ble_device: BLEDevice) -> None:
         """Swap in a fresh BLEDevice (e.g. a new scanner path) for later connects."""
         self._ble_device = ble_device
@@ -431,7 +453,7 @@ class Device:
             frames.append(self._brightness_frame(brightness))
         if rgb is not None:
             self._require(Capability.RGB)
-            frames.append(build.color_rgb(*rgb, self.profile.color_scheme, self.segment_count))
+            frames += self._color_rgb_frames(rgb)
         elif kelvin is not None:
             self._require(Capability.COLOR_TEMP)
             kelvin = self._check_kelvin(kelvin)
@@ -445,9 +467,7 @@ class Device:
         if brightness is not None:
             self._state.brightness = brightness
         if rgb is not None:
-            self._state.rgb_color, self._state.color_temp_kelvin = (rgb[0], rgb[1], rgb[2]), None
-            self._state.scene_code = None
-            self._apply_zone_kelvin({0: None, 1: None})
+            self._apply_rgb_state(rgb)
         elif kelvin is not None:
             self._state.color_temp_kelvin, self._state.rgb_color = kelvin, None
             self._state.scene_code = None
@@ -479,12 +499,13 @@ class Device:
         self._require(Capability.RGB)
         await self._ensure_segment_count()
         r, g, b = rgb
-        await self._conn.send(build.color_rgb(r, g, b, self.profile.color_scheme, self.segment_count))
+        frames = self._color_rgb_frames((r, g, b))
+        if len(frames) == 1:
+            await self._conn.send(frames[0])
+        else:
+            await self._conn.send_many(frames)
         self._mutated()
-        self._state.rgb_color = (r, g, b)
-        self._state.color_temp_kelvin = None
-        self._state.scene_code = None
-        self._apply_zone_kelvin({0: None, 1: None})
+        self._apply_rgb_state((r, g, b))
         self._mark_authoritative()
         self._notify()
 
@@ -1036,7 +1057,7 @@ class Device:
             # The app's connect order: aa 01, aa 04, aa 41, aa 05 (ControllerStrategyConfig.O).
             await self._read_section_count()
         if (Capability.SCENES in self.capabilities or Capability.COLOR_TEMP in self.capabilities
-                or self.profile.color_scheme in ("h6006", "h6188")):
+                or self.profile.color_scheme in ("h6006", "h6188", "h6061")):
             seq = self._mutation_seq
             reply = await self._read_reply(build.mode_query(), build.CMD_MODE)
             if reply is not None and not self._stale(seq, "mode"):

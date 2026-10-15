@@ -12,7 +12,7 @@ from typing import Literal
 from ..const import FRAME_LEN, SCENE_A3_HEADER_LEN, SCENE_A3_PIECE_LEN
 from ..crypto import checksum
 from ..exceptions import GoveeBleInvalidValue
-from .cct import tint_for_kelvin
+from .cct import kelvin_for_tint, tint_for_kelvin
 
 
 def ceil_div(a: int, b: int) -> int:
@@ -68,7 +68,10 @@ COMM_H6052_GRAFFITI = 0x09
 # "h61a8" = 0x0b RGBIC (no CCT).
 # "h6188" = 0x0d rgblight strip: same RGB frame as h6006, but the CCT is the white-slot form
 # `0d ff ff ff <K> <tint>` (Config.GM -> Bytes.A); this one is NOT the h6006 form.
-ColorScheme = Literal["h60a6", "h6006", "h61a8", "h6188"]
+# "h6061" = Glide Hexa panels, 0x15 family with its own whole-device writes: RGB is ceil(n/4)
+# group frames `15 04 <group> RGB x<=4` (Bytes.m), CCT is `15 01 <tint> <K> <24-bit mask>`
+# (Bytes.u). See the "Glide Hexa" section below.
+ColorScheme = Literal["h60a6", "h6006", "h61a8", "h6188", "h6061"]
 
 
 def _check_range(name: str, value: int, lo: int, hi: int) -> int:
@@ -194,10 +197,92 @@ def brightness_raw(level: int) -> bytes:
     return frame(PRO_WRITE, CMD_BRIGHTNESS, _check_range("brightness level", level, 0, 0xFF))
 
 
+# ── Glide Hexa (H6061) whole-device writes ───────────────────────────────────
+# Source (Govee Home 7.7.02, split pact_h6061 + base.apk): the panel count n is the size of the
+# user's layout, else ColorPieceConfig.Companion.f(51) = Support.getBulbStringMaxNum(51) = 23.
+H6061_MAX_PANELS = 23
+H6061_GROUP_SIZE = 4          # Bytes.m / BleUtils.w0(colors, 4): four colours per group frame
+H6061_MASK_BYTES = 3          # ColorPieceConfig.k: piece count 23 rounds up to a 24-bit position set
+OP15_SET_GROUP_COLOR = 0x04   # Bytes.m: [0x15, 0x04, group, RGB x<=4]
+H6061_KELVIN_RANGE = (2000, 9000)   # KelvinConfig: no entry for 51 -> version 0
+
+
+def _h6061_panels(panels: int) -> int:
+    """The panel count the app writes for ``panels`` panels: 1..23.
+
+    More than 23 is refused: ``ColorPieceConfig.Config.s0`` returns nothing for a colour set longer
+    than ``ColorPieceConfig.j`` (23), so the app sends no colour at all. A single colour set with
+    ``j`` > 1 is expanded to ``j`` colours in ``s0``, so a one-panel layout is written as 23 panels."""
+    _check_range("panel count", panels, 1, H6061_MAX_PANELS)
+    return H6061_MAX_PANELS if panels == 1 else panels
+
+
+def _h6061_group_frames(r: int, g: int, b: int, panels: int) -> list[bytes]:
+    """Whole-device RGB: ``33 05 15 04 <group from 1> R G B x<=4``, one frame per group of four
+    panels, the last carrying only the remaining panels (23 panels: 6 frames, the last with 3
+    colours). ``ColorModeControllerConfig.k`` -> ``w`` -> ``l`` (colour-brightness-group mode 1,
+    ``Config.A[51]``) -> ``Bytes.m``."""
+    n = _h6061_panels(panels)
+    return [
+        frame(PRO_WRITE, CMD_MODE, SUB_COLOR_15, OP15_SET_GROUP_COLOR, group,
+              *(r, g, b) * min(H6061_GROUP_SIZE, n - (group - 1) * H6061_GROUP_SIZE))
+        for group in range(1, ceil_div(n, H6061_GROUP_SIZE) + 1)
+    ]
+
+
+def _h6061_color_temp(kelvin: int, panels: int, tint: tuple[int, int, int] | None = None) -> bytes:
+    """Whole-device CCT: ``33 05 15 01 <tint RGB> <kelvin u2be> <24-bit mask>``, the first ``panels``
+    mask bits set, LSB first (23 panels: ``ff ff 7f``). ``Config.x[51]`` = 5 -> ``Config.J[5]`` =
+    ``Config.Zt`` -> ``Bytes.u(kelvin, positions, tint)``; the mask is ``BleUtils.X`` over the
+    ``ColorPieceConfig.k`` = 24-position set. The tint sits in the colour slot (not ``ff ff ff``).
+    ``tint`` defaults to the app's tint for ``kelvin`` (the slider path); an RGB pick that is itself a
+    tint colour passes that exact colour (``Zt`` writes the picked colour, whichever of the Kelvin
+    step's two colours it is)."""
+    n = _h6061_panels(panels)
+    khi, klo = (kelvin >> 8) & 0xFF, kelvin & 0xFF
+    mask = all_segments_mask(n).to_bytes(H6061_MASK_BYTES, "little")
+    return frame(PRO_WRITE, CMD_MODE, SUB_COLOR_15, OP15_SET_COLOR,
+                 *(tint if tint is not None else tint_for_kelvin(kelvin)), khi, klo, *mask)
+
+
+def rgb_as_kelvin(r: int, g: int, b: int, scheme: ColorScheme,
+                  kelvin_range: tuple[int, int] | None = None) -> int | None:
+    """The Kelvin the app sends for an RGB pick, or None when it sends RGB.
+
+    ``h6061`` only: ``ColorModeControllerConfig.k`` writes a whole-device colour set as a CCT frame
+    (``Config.Zt`` -> ``Bytes.u``) when every panel has the same colour, that colour is one of the
+    Kelvin tint colours within the device's Kelvin range and ``Config.I[51][4]`` (CCT) holds
+    (``ColorUtils.q``, ``KelvinConfig.i``); otherwise it takes the group-colour path. ``kelvin_range``
+    defaults to the SKU's [2000, 9000]. Other schemes: None (not modelled)."""
+    if scheme != "h6061":
+        return None
+    kelvin = kelvin_for_tint((r, g, b))
+    lo, hi = kelvin_range or H6061_KELVIN_RANGE
+    return kelvin if kelvin is not None and lo <= kelvin <= hi else None
+
+
 # ── colour ───────────────────────────────────────────────────────────────────
+def color_rgb_frames(r: int, g: int, b: int, scheme: ColorScheme, segments: int = 13,
+                     kelvin_range: tuple[int, int] | None = None) -> list[bytes]:
+    """Whole-device RGB as the frames the app sends: one for every scheme except ``h6061``, whose
+    panels are written in groups of four (see :func:`color_rgb`, which is the single-frame form).
+    On ``h6061`` an RGB that is a Kelvin tint colour within ``kelvin_range`` is sent as the CCT frame
+    instead, exactly as the app does (see :func:`rgb_as_kelvin`)."""
+    if scheme == "h6061":
+        _check_rgb(r, g, b)
+        kelvin = rgb_as_kelvin(r, g, b, scheme, kelvin_range)
+        if kelvin is not None:
+            return [_h6061_color_temp(kelvin, segments, (r, g, b))]
+        return _h6061_group_frames(r, g, b, segments)
+    return [color_rgb(r, g, b, scheme, segments)]
+
+
 def color_rgb(r: int, g: int, b: int, scheme: ColorScheme, segments: int = 13) -> bytes:
-    """Solid RGB, per-family SubModeColor.getWriteBytes (whole-device = all-segments mask)."""
+    """Solid RGB, per-family SubModeColor.getWriteBytes (whole-device = all-segments mask).
+    ``h6061`` has no single-frame form (it needs :func:`color_rgb_frames`)."""
     _check_rgb(r, g, b)
+    if scheme == "h6061":
+        raise ValueError("h6061 whole-device RGB is several frames; use color_rgb_frames")
     if scheme in ("h6006", "h6188"):
         return frame(PRO_WRITE, CMD_MODE, SUB_COLOR_0D, r, g, b, 0, 0, 0, 0, 0)
     if scheme == "h61a8":
@@ -211,11 +296,14 @@ def color_temp(kelvin: int, scheme: ColorScheme, segments: int = 13) -> bytes:
     """Whole-device colour temperature, always with the app's Kelvin->RGB tint
     (``wire.cct.tint_for_kelvin``): ``h6006`` = ``0d <tint> <K> <tint>``, ``h6188`` =
     ``0d ff ff ff <K> <tint>``, ``h60a6`` = ``15 01 ff ff ff <K> <tint> <mask>`` (this is just
-    segment_color_temp with the all-segments mask). The builder sends ``kelvin`` as given; the
-    ``Device`` layer applies :func:`normalize_kelvin` first."""
+    segment_color_temp with the all-segments mask), ``h6061`` = ``15 01 <tint> <K> <24-bit mask>``
+    over ``segments`` panels. The builder sends ``kelvin`` as given; the ``Device`` layer applies
+    :func:`normalize_kelvin` first."""
     if scheme == "h61a8":
         raise ValueError("h61a8 has no colour-temperature capability")
     _check_kelvin(kelvin)
+    if scheme == "h6061":
+        return _h6061_color_temp(kelvin, segments)
     if scheme == "h6006":
         # Config.bu -> Bytes.p(tint, K): [0d, tint r g b, kelvin u2be, tint r g b] - the tint
         # sits in BOTH colour slots (H6008/H6006/H6052; also H6004 via the same builder).
@@ -236,6 +324,8 @@ def segment_rgb(mask: int, r: int, g: int, b: int, scheme: ColorScheme,
     device's segment count, which sets the 0x15 mask width (see :func:`mask_width`); omitted,
     the mask is the legacy two bytes."""
     _check_rgb(r, g, b)
+    if scheme == "h6061":
+        raise ValueError("h6061 is whole-device only (per-panel colour is not modelled)")
     if scheme == "h61a8":
         lo, hi = _mask_le(_check_mask(mask, LEGACY_MASK_SEGMENTS))
         return frame(PRO_WRITE, CMD_MODE, SUB_COLOR_0B, r, g, b, lo, hi)
@@ -255,6 +345,8 @@ def segment_color_temp(mask: int, kelvin: int, scheme: ColorScheme,
         raise ValueError("h61a8 has no colour-temperature capability")
     if scheme in ("h6006", "h6188"):
         raise ValueError(f"{scheme} colour-temperature is whole-device only (no segment mask)")
+    if scheme == "h6061":
+        raise ValueError("h6061 is whole-device only (per-panel colour temperature is not modelled)")
     _check_kelvin(kelvin)
     mask_bytes = _mask_bytes(mask, segments)
     khi, klo = (kelvin >> 8) & 0xFF, kelvin & 0xFF
@@ -267,6 +359,8 @@ def segment_brightness(mask: int, pct: int, scheme: ColorScheme,
     """Per-segment brightness (0x15 op 0x02); only the 0x15 family supports it."""
     if scheme == "h61a8":
         raise ValueError("h61a8 has no per-segment brightness")
+    if scheme == "h6061":
+        raise ValueError("h6061 is whole-device only (per-panel brightness is not modelled)")
     return frame(PRO_WRITE, CMD_MODE, SUB_COLOR_15, OP15_SET_BRIGHTNESS, max(0, min(100, pct)),
                  *_mask_bytes(mask, segments))
 

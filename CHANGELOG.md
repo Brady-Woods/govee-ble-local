@@ -45,7 +45,7 @@ model, from which the shipped readers are generated).
 - `Device.segment_count` and `Device.set_segment_count()`: a segment count learned at runtime
   overrides the profile's static `segments` for whole-device masks, segment indices and the
   `aa a5` read-back walk (a profile's explicit `color_readback_segments` still wins for the walk).
-  `None` reverts to the profile value. H6062 sets it from its `aa 41` read; H6061 will set it too.
+  `None` reverts to the profile value. H6062 sets it from its `aa 41` read; for H6061 the caller sets it from a known layout.
 - **H6062** (Glide wall light, `striplight` split, goodsType 41; #15): power, brightness (percent),
   RGB, colour temperature (2000-9000 K, with the app's tint), per-segment colour / brightness /
   colour temperature, polled read-back with per-segment colour, and the cloud-library scenes
@@ -140,6 +140,31 @@ model, from which the shipped readers are generated).
   The `aa 01` poll stays: the app's connect read (`Compose4InfoBleIot`) includes `ControllerSwitch`, and a
   timeout there fails its whole connect, so an H6047 answers it (a miss would cost one 2 s read timeout and
   is non-fatal; `aa 36` still supplies power).
+- **H6061** (Glide Hexa light panels, `cubelight` split, goodsType 51), phase 1 = whole-device control
+  only ([#16](https://github.com/Brady-Woods/govee-ble-local/issues/16), tracked in #17): power,
+  percent brightness, RGB, colour temperature (2000-9000 K) and polled read-back. Modeled from the
+  decompiled Govee Home 7.7.02 app; not hardware-verified. No SEGMENTS or SCENES capability yet, and
+  no secret (the app writes 0xB2 only while pairing). New colour scheme `"h6061"`:
+  - RGB is `ceil(n/4)` frames `33 05 15 04 <group from 1> R G B x<=4`, the last carrying the
+    remaining panels (`Bytes.m`, `BleUtils.w0`; `ColorModeControllerConfig.k` -> `w` -> `l`); with
+    the default 23 panels that is 6 frames, the last with 3 colours. New `build.color_rgb_frames`;
+    `Device.set_rgb` / `turn_on(rgb=)` send the frames with `send_many`.
+  - CCT is `33 05 15 01 <tint RGB> <kelvin u2be> <24-bit mask>`, the first n mask bits set, LSB first
+    (`ff ff 7f` for 23 panels; `Config.Zt` -> `Bytes.u`, `ColorPieceConfig.k`). The tint sits in the
+    colour slot, not the `ff ff ff` white-slot form of H60A6 / H6047 / H6641.
+  - An RGB pick that is exactly one of the app's 178 Kelvin tint colours (two per 100 K step, within
+    2000-9000 K) is sent as the CCT frame, with the picked colour as the tint, as the app does
+    (`ColorModeControllerConfig.k`: `ColorUtils.q` + `KelvinConfig.i`, then `Config.Zt`); the state
+    then reports that Kelvin. New `wire.cct.kelvin_for_tint` and `build.rgb_as_kelvin`.
+  - Panel count n defaults to 23, the app's value when no layout is stored (`ColorPieceConfig.f`,
+    `Support.getBulbStringMaxNum`). `Device.set_segment_count(n)` sets it for a known layout
+    (1-23; more is refused because the app sends no colour for a longer set).
+  - Read-back polls `aa 01` / `aa 04` / `aa 05`: the colour comes back as mode `0x0d`
+    `[R, G, B, kelvin u2be]` (kelvin > 0 = CCT) although writes use `0x15`
+    (`CubeNewInfo4Detail`), then `aa a5 <group>` for groups 1..`ceil(n/4)` fills `state.segments`
+    (`CubeVM4Light.l5`).
+  - `tools/field_test/plans/h6061.py`: power, brightness, RGB (6 group frames) and CCT at
+    2000 / 4000 / 6500 / 9000 K.
 
 ### Spec
 - `devices.yaml`: `color_temp_write` opcode for `h60ax`, `h6047`, `h61d3`, `bulblightv3` and
@@ -167,6 +192,8 @@ model, from which the shipped readers are generated).
   line citations updated (`Support.isGoodsTypeH6047` is at :186). `govee_ble.ksy`: `cct_read_reply` gains
   `kelvin_right` and the gradual-flag meaning of byte 0, `bar_switch_read` gains `movie_feast`. Readers
   regenerated (the diff is only these two additions).
+- `devices.yaml`: new `h6061` family (Glide Hexa, phase 1) with citations: the group RGB frame, the
+  tint-in-colour-slot CCT frame with its 24-bit mask, the `0x0d` colour report and the `aa a5` reads.
 
 ## [1.2.1] — 2026-10-13
 
