@@ -76,7 +76,8 @@ advertisement, build a capability-driven `Device`, then drive it.
   `capabilities`, `zones`, `min_kelvin` / `max_kelvin`, `scene_names`, `state`,
   `register_callback`. Methods for unsupported capabilities raise `GoveeBleNotSupported`.
 - **`DeviceState`** — parsed state: `is_on`, `brightness` (0–100), `rgb_color`,
-  `color_temp_kelvin`, `segments` (`list[Segment]`), `zone_power`, `scene_code`, plus
+  `color_temp_kelvin`, `segments` (`list[Segment]`), `zone_power`, `zone_color_temp_kelvin` (H6047
+  reads one Kelvin per bar), `gradual`, `scene_code`, plus
   device-info (`serial_number`, `wifi_mac`, `hardware_version`, `firmware_version`, `ble_mac`).
 - **`Capability`** — `POWER`, `BRIGHTNESS`, `RGB`, `COLOR_TEMP`, `SEGMENTS`, `SCENES`.
 
@@ -90,6 +91,10 @@ result is rounded to a whole 100 K step (`set_color_temp(2750)` sends and report
 holds the Kelvin actually sent. Only a non-integer raises `GoveeBleInvalidValue`. Every CCT frame
 carries the app's Kelvin tint. The H60A6 sends whole-device CCT as two frames (main panel, then ring)
 when its advertised pact code is 3 or higher (`Device.pact`).
+
+The H6047 follows the app's frames too: whole-device power is `33 01` (`33 36` is only the per-bar
+buttons, `set_zone_power`), read-back covers its 10 segments, `Device.zone_color_temp_kelvin(name)`
+gives each bar's Kelvin, and `set_gradual` toggles the fade flag.
 
 The full API reference is generated from the docstrings with [`pdoc`](https://pdoc.dev)
 (`pip install '.[docs]' && bash tools/gen_docs.sh` → `docs/api/`); `govee_ble_local.__all__` is the
