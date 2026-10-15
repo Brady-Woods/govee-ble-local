@@ -41,7 +41,7 @@ async def main():
     devices = await discover(timeout=8.0)
     found = next(d for d in devices if d.sku == "H60A6")
 
-    dev = create_device(found.ble_device, found.sku)
+    dev = create_device(found.ble_device, found.sku, found.advertisement)
 
     await dev.turn_on()
     await dev.set_brightness(60)             # percent
@@ -65,7 +65,9 @@ advertisement, build a capability-driven `Device`, then drive it.
   (`.ble_device`, `.advertisement`, `.sku`, `.rssi`, `.supported`). `supported(name, mfg)` and
   `match(ble_device, adv)` are the passive-matcher hooks for a HA-style scanner.
 - **`create_device(ble_device, sku, advertisement_data=None, *, secret=None, frame_log=None)`**
-  — construct a `Device` for the SKU (raises `GoveeBleNotSupported` if uncurated).
+  — construct a `Device` for the SKU (raises `GoveeBleNotSupported` if uncurated). Pass the
+  advertisement (`DiscoveredDevice.advertisement` or bleak's own): its encrypt flag selects the
+  command channel, which some firmwares set differently from the SKU's default (H6008).
   `is_supported_sku(sku)` / `supported_skus()` / `device_profile_for(sku)` query the table.
 - **`Device`** — one capability-gated class (behaviour comes from its `DeviceProfile`, not
   subclasses). Commands are ACK-confirmed on the wire:
@@ -77,7 +79,8 @@ advertisement, build a capability-driven `Device`, then drive it.
   `register_callback`. Methods for unsupported capabilities raise `GoveeBleNotSupported`.
 - **`DeviceState`** — parsed state: `is_on`, `brightness` (0–100), `rgb_color`,
   `color_temp_kelvin`, `segments` (`list[Segment]`), `zone_power`, `scene_code`, plus
-  device-info (`serial_number`, `wifi_mac`, `hardware_version`, `firmware_version`, `ble_mac`).
+  device-info (`device_id` / `serial_number`, `wifi_mac`, `hardware_version`, `firmware_version`, `ble_mac`),
+  read with the Govee app's own frames (`aa 06`, `aa 07 03`, `aa 07 02`).
 - **`Capability`** — `POWER`, `BRIGHTNESS`, `RGB`, `COLOR_TEMP`, `SEGMENTS`, `SCENES`.
 
 Curated SKUs: **H60A6**, **H6047**, **H61A8**, **H6006/H6008**, **H6052**, **H6641**, **H6188**, and the

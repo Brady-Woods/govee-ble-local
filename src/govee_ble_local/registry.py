@@ -7,6 +7,7 @@ from bleak.backends.scanner import AdvertisementData
 from .devices.device import Device, make_device
 from .devices.profile import DeviceProfile, profile_for, supported_skus
 from .exceptions import GoveeBleNotSupported
+from .identify import GoveeAdvertisement
 
 __all__ = [
     "Device",
@@ -30,13 +31,17 @@ def is_supported_sku(sku: str) -> bool:
 def create_device(
     ble_device: BLEDevice,
     sku: str,
-    advertisement_data: AdvertisementData | None = None,
+    advertisement_data: AdvertisementData | GoveeAdvertisement | None = None,
     *,
     secret: bytes | None = None,
     frame_log: str | None = None,
     idle_disconnect: float | None = None,
 ) -> Device:
     """Construct a capability-driven Device for `sku`.
+
+    Pass the device's advertisement (bleak's, or ``DiscoveredDevice.advertisement``): its encrypt
+    flag picks the command channel. Without one the SKU's profile default is used, which is wrong
+    for a device whose firmware encrypts although the profile says plaintext (e.g. the H6008).
 
     Pass ``frame_log=<path>`` to persist a JSONL session capture for this device (the
     frame-tier logger ``govee_ble_local.frames`` is the other, filesystem-free, capture

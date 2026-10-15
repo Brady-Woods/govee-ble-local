@@ -31,6 +31,7 @@ PRO_MULTI_AC = 0xAC
 CMD_SWITCH = 0x01
 CMD_BRIGHTNESS = 0x04
 CMD_MODE = 0x05
+CMD_SOFT_VERSION = 0x06
 CMD_DEVICE_INFO = 0x07
 CMD_ZONE = 0x30            # light_direction_or_zone
 CMD_BAR_SWITCH = 0x36      # compose_light_switch
@@ -50,8 +51,9 @@ SUB_COLOR_0B = 0x0B        # color_rgbic_0b (H61A8)
 OP15_SET_COLOR = 0x01
 OP15_SET_BRIGHTNESS = 0x02
 
-# Device-info (0x07) selectors.
-INFO_BASIC, INFO_WIFI, INFO_SN = 0x10, 0x11, 0x02
+# Device-info (0x07) selectors. SN (device id) and HARD (hardware version) are the reads the
+# app makes (SnController.p, HardVersionController.p); BASIC / WIFI are the binary forms.
+INFO_BASIC, INFO_WIFI, INFO_SN, INFO_HARD = 0x10, 0x11, 0x02, 0x03
 
 # power payload values
 POWER_ON, POWER_OFF = 0x01, 0x00
@@ -317,8 +319,13 @@ def bulb_group_query(batch_seq: int, *, v2: bool = True) -> bytes:
 
 
 def device_info_query(selector: int) -> bytes:
-    """aa 07 <selector> (0x10 basic, 0x11 wifi, 0x02 sn)."""
+    """aa 07 <selector> (0x02 sn / device id, 0x03 hard version, 0x10 basic, 0x11 wifi)."""
     return frame(PRO_READ, CMD_DEVICE_INFO, selector & 0xFF)
+
+
+def soft_version_query() -> bytes:
+    """aa 06: read the firmware (soft) version (SoftVersionController; the reply is ASCII)."""
+    return frame(PRO_READ, CMD_SOFT_VERSION)
 
 
 CMD_IC_NUM = 0x40   # ic_num (ic_segment_read reply): live IC/segment capability read

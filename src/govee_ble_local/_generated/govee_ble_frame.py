@@ -849,9 +849,26 @@ class GoveeBleFrame(KaitaiStruct):
             self.hw_version._fetch_instances()
 
 
+    class DeviceInfoHardVersion(KaitaiStruct):
+        def __init__(self, _io, _parent=None, _root=None):
+            super(GoveeBleFrame.DeviceInfoHardVersion, self).__init__(_io)
+            self._parent = _parent
+            self._root = _root
+            self._read()
+
+        def _read(self):
+            self.version = (KaitaiStream.bytes_terminate(self._io.read_bytes_full(), 0, False)).decode(u"UTF-8")
+
+
+        def _fetch_instances(self):
+            pass
+
+
     class DeviceInfoRead(KaitaiStruct):
-        """AA 07 reply (BasicInfoController / BasicWifiInfoController / SnController). selector @ body[0] picks the
-        body. 3-byte version fields render as X.YY.ZZ (major . %02d . %02d).
+        """AA 07 reply (BasicInfoController / BasicWifiInfoController / SnController / HardVersionController).
+        selector @ body[0] picks the body. 3-byte version fields render as X.YY.ZZ (major . %02d . %02d).
+        The app's own connect-time reads are AA 06 (soft version), AA 07 03 (hard version) and AA 07 02
+        (SN = device id); AA 07 10 / 11 are the binary basic / Wi-Fi forms.
         """
         def __init__(self, _io, _parent=None, _root=None):
             super(GoveeBleFrame.DeviceInfoRead, self).__init__(_io)
@@ -877,6 +894,11 @@ class GoveeBleFrame(KaitaiStruct):
                 self._raw_info = self._io.read_bytes_full()
                 _io__raw_info = KaitaiStream(BytesIO(self._raw_info))
                 self.info = GoveeBleFrame.DeviceInfoSn(_io__raw_info, self, self._root)
+            elif _on == 3:
+                pass
+                self._raw_info = self._io.read_bytes_full()
+                _io__raw_info = KaitaiStream(BytesIO(self._raw_info))
+                self.info = GoveeBleFrame.DeviceInfoHardVersion(_io__raw_info, self, self._root)
             else:
                 pass
                 self.info = self._io.read_bytes_full()
@@ -892,6 +914,9 @@ class GoveeBleFrame(KaitaiStruct):
                 pass
                 self.info._fetch_instances()
             elif _on == 2:
+                pass
+                self.info._fetch_instances()
+            elif _on == 3:
                 pass
                 self.info._fetch_instances()
             else:
@@ -2448,6 +2473,11 @@ class GoveeBleFrame(KaitaiStruct):
                 self._raw_body = self._io.read_bytes_full()
                 _io__raw_body = KaitaiStream(BytesIO(self._raw_body))
                 self.body = GoveeBleFrame.SecretReadReply(_io__raw_body, self, self._root)
+            elif _on == GoveeBleFrame.Command.soft_version:
+                pass
+                self._raw_body = self._io.read_bytes_full()
+                _io__raw_body = KaitaiStream(BytesIO(self._raw_body))
+                self.body = GoveeBleFrame.SoftVersionRead(_io__raw_body, self, self._root)
             elif _on == GoveeBleFrame.Command.switch:
                 pass
                 self._raw_body = self._io.read_bytes_full()
@@ -2489,6 +2519,9 @@ class GoveeBleFrame(KaitaiStruct):
                 pass
                 self.body._fetch_instances()
             elif _on == GoveeBleFrame.Command.secret_read:
+                pass
+                self.body._fetch_instances()
+            elif _on == GoveeBleFrame.Command.soft_version:
                 pass
                 self.body._fetch_instances()
             elif _on == GoveeBleFrame.Command.switch:
@@ -2788,6 +2821,21 @@ class GoveeBleFrame(KaitaiStruct):
                 self.params._fetch_instances()
             else:
                 pass
+
+
+    class SoftVersionRead(KaitaiStruct):
+        def __init__(self, _io, _parent=None, _root=None):
+            super(GoveeBleFrame.SoftVersionRead, self).__init__(_io)
+            self._parent = _parent
+            self._root = _root
+            self._read()
+
+        def _read(self):
+            self.version = (KaitaiStream.bytes_terminate(self._io.read_bytes_full(), 0, False)).decode(u"UTF-8")
+
+
+        def _fetch_instances(self):
+            pass
 
 
     class StatusBrightness(KaitaiStruct):

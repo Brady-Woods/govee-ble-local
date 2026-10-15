@@ -17,7 +17,7 @@ from bleak.backends.scanner import AdvertisementData
 
 from ..const import INFO_READ_TIMEOUT, STATUS_READ_TIMEOUT
 from ..exceptions import GoveeBleError, GoveeBleInvalidValue, GoveeBleNotSupported
-from ..identify import identify, parse_broadcast_onoff
+from ..identify import GoveeAdvertisement, identify, parse_broadcast_onoff
 from ..models import Capability, DeviceState, Encryption, Segment, Zone
 from ..scenes import Scene, load_scenes, scene_names_by_code, scene_upload_frames
 from ..transport.connection import GoveeConnection
@@ -77,7 +77,7 @@ class Device:
         self,
         profile: DeviceProfile,
         ble_device: BLEDevice,
-        advertisement_data: AdvertisementData | None = None,
+        advertisement_data: AdvertisementData | GoveeAdvertisement | None = None,
         *,
         sku: str | None = None,
         secret: bytes | None = None,
@@ -114,7 +114,14 @@ class Device:
             **conn_kw,
         )
 
-    def _resolve_encryption(self, adv: AdvertisementData | None) -> Encryption:
+    def _resolve_encryption(self, adv: AdvertisementData | GoveeAdvertisement | None) -> Encryption:
+        """The command-channel mode the advertisement announces (its encrypt flag), else the
+        profile default. Takes bleak's raw advertisement or the already-parsed one that
+        ``discover()`` hands back as ``DiscoveredDevice.advertisement``."""
+        if isinstance(adv, GoveeAdvertisement):
+            if adv.pact_type != -1:
+                return Encryption.AES_RC4_PSK if adv.encrypted else Encryption.NONE
+            return self.profile.encryption
         mfg = getattr(adv, "manufacturer_data", None)
         name = getattr(adv, "local_name", None) or self._ble_device.name
         if mfg:
@@ -721,29 +728,39 @@ class Device:
             self._mark_authoritative()
 
     async def _read_device_info(self) -> None:
-        """Populate the static device-info fields from the aa 07 replies. Selector-aware:
-        device fw/hw + serial come from BASIC (0x10); wifi_mac from WIFI (0x11) — whose
-        sw/hw are the *wifi-module* versions and must NOT clobber the device's; SN (0x02)
-        is only a serial fallback. Best-effort + once; unanswered selectors leave fields
-        None. ble_mac stays None unless a reply carries a MAC distinct from the connectable
-        address (none confirmed yet — the connectable address is otherwise the BLE MAC)."""
-        basic = parse.parse_device_info(
-            await self._read_reply(build.device_info_query(build.INFO_BASIC), build.CMD_DEVICE_INFO) or b"")
-        if basic is not None:
-            self._merge_device_info(
-                serial=basic.serial, firmware=basic.sw_version, hardware=basic.hw_version)
-        wifi = parse.parse_device_info(
-            await self._read_reply(build.device_info_query(build.INFO_WIFI), build.CMD_DEVICE_INFO) or b"")
+        """Populate the static device-info fields with the reads the Govee app makes on connect:
+        ``aa 06`` firmware, ``aa 07 03`` hardware version and ``aa 07 02`` device id (SN)
+        (SoftVersionController, HardVersionController, SnController; live-confirmed on H60A6, H6047,
+        H61A8, H6052, H6006 and H5083). ``aa 07 11`` adds the Wi-Fi MAC — its sw/hw are the
+        *wifi-module* versions and must NOT clobber the device's. The binary ``aa 07 10`` basic read
+        is only a fallback for a device that left a version unknown. Best-effort + once; unanswered
+        reads leave fields None. ble_mac stays None unless a reply carries a MAC distinct from the
+        connectable address (none confirmed yet — that address is otherwise the BLE MAC)."""
+        firmware = parse.parse_soft_version(
+            await self._read_reply(build.soft_version_query(), build.CMD_SOFT_VERSION) or b"")
+        self._merge_device_info(firmware=firmware)
+        for selector in (build.INFO_HARD, build.INFO_SN):
+            info = await self._read_info(selector)
+            if info is not None:
+                self._merge_device_info(serial=info.serial, hardware=info.hw_version)
+        wifi = await self._read_info(build.INFO_WIFI)
         if wifi is not None:
             self._merge_device_info(wifi_mac=wifi.wifi_mac)   # never wifi sw/hw (see docstring)
-        if self._state.serial_number is None:   # SN read only if basic didn't carry it
-            sn = parse.parse_device_info(
-                await self._read_reply(build.device_info_query(build.INFO_SN), build.CMD_DEVICE_INFO) or b"")
-            if sn is not None:
-                self._merge_device_info(serial=sn.serial)
+        if self._state.firmware_version is None or self._state.hardware_version is None:
+            basic = await self._read_info(build.INFO_BASIC)
+            if basic is not None:
+                self._merge_device_info(
+                    firmware=basic.sw_version if self._state.firmware_version is None else None,
+                    hardware=basic.hw_version if self._state.hardware_version is None else None,
+                    serial=basic.serial if self._state.serial_number is None else None)
         # Only after the reads completed without raising: an unanswered selector still counts as
         # attempted (no retry every poll), but a link drop mid-read retries on the next poll.
         self._device_info_read = True
+
+    async def _read_info(self, selector: int) -> parse.DeviceInfo | None:
+        """One ``aa 07 <selector>`` device-info read, parsed (None when unanswered)."""
+        reply = await self._read_reply(build.device_info_query(selector), build.CMD_DEVICE_INFO)
+        return parse.parse_device_info(reply or b"")
 
     def _merge_device_info(
         self,
@@ -923,7 +940,7 @@ class Device:
 def make_device(
     ble_device: BLEDevice,
     sku: str,
-    advertisement_data: AdvertisementData | None = None,
+    advertisement_data: AdvertisementData | GoveeAdvertisement | None = None,
     *,
     secret: bytes | None = None,
     frame_log: str | None = None,
