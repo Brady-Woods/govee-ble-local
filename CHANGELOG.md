@@ -8,6 +8,8 @@ model, from which the shipped readers are generated).
 
 ## [Unreleased]
 
+## [1.3.0] — 2026-10-15
+
 ### Added
 - **H6004** (BLE bulb, `bulblightv3` split, goodsType 64; #14): a profile-only addition that behaves
   like its H6008 sibling: power, percent brightness, RGB, colour temperature (2700-6500 K, the app's
