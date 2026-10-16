@@ -113,12 +113,13 @@ model, from which the shipped readers are generated).
   Before, 0x0d took any non-zero Kelvin (read unsigned) as colour temperature. A 0x15 Kelvin of 0 or below
   still clears the Kelvin, as before; the app keeps its last one. Live-checked for a 0x15 report (2700 K)
   on the bench H60A6; the 0x0d branch is source-modelled.
-- `tools/gen_kaitai.sh` can generate Kaitai 0.11 read-write (serializer) classes: `--read-write` writes
-  them to `build/kaitai_rw/` (`--out DIR` to change). It uses the JVM `kaitai-struct-compiler` 0.11.x when
-  one is on PATH (`brew install kaitai-struct-compiler`), which read-write generation requires, because the
-  npm build's `compile()` API has no read-write switch; read-only builds still fall back to the pure-JS
-  compiler. Both produce byte-identical readers, so the committed `_generated/` files are unchanged.
-  `--check` fails when the committed readers differ from a fresh build. Development tooling only.
+- `tools/gen_kaitai.sh` generates Kaitai 0.11 read-write (serializer) classes, and they are what
+  `_generated/` commits (see above). Its default build and `--check` (which fails when the committed
+  classes differ from a fresh build) need the JVM `kaitai-struct-compiler` 0.11.x on PATH
+  (`brew install kaitai-struct-compiler`; `KSC=` overrides), because the npm build's `compile()` API has no
+  read-write switch. `--read-only --out DIR` still writes auto-reading readers to a scratch directory and
+  is the one mode that can fall back to the pure-JS compiler; it refuses `_generated/` as its output.
+  Development tooling only.
 - Device info is read with `aa 06` (firmware version), `aa 07 03` (hardware version) and `aa 07 02`
   (device id), and nothing else: the `aa 07 11` Wi-Fi read and the `aa 07 10` basic fallback are no longer
   sent. No firmware image has a handler for those two (most drop the request, which cost a timeout on every
