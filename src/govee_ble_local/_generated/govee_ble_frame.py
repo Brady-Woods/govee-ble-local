@@ -1950,6 +1950,15 @@ class GoveeBleFrame(KaitaiStruct):
             return getattr(self, '_m_is_cct', None)
 
         @property
+        def is_cct_positive(self):
+            """kind 2 only: CCT by the signed > 0 rule of OpInfo4Detail.parseModeValidBytes and of the rgb_kelvin_0d decoders (cube CubeNewInfo4Detail.U; h60a1 Info4Detail.Q:416-427 for H60A1/H60A4/H60A6), which read only [R,G,B,kelvin] and never the tint bytes. A kelvin <= 0 is RGB from r/g/b."""
+            if hasattr(self, '_m_is_cct_positive'):
+                return self._m_is_cct_positive
+
+            self._m_is_cct_positive =  ((self.kind == 2) and (self.report_kelvin_signed > 0)) 
+            return getattr(self, '_m_is_cct_positive', None)
+
+        @property
         def kelvin_signed(self):
             """kind 0 kelvin as the app reads it (getSignedShort sign-extends: 0x8000-0xFFFF reads as -32768..-1)."""
             if hasattr(self, '_m_kelvin_signed'):
@@ -2334,7 +2343,10 @@ class GoveeBleFrame(KaitaiStruct):
         """0xEE 30 switch/zone push — FAMILY-DEPENDENT. H60A6 (VM4LightH60A6.U5): data[0]=detail (ignored),
         main switch = bit0 of data[1], zone0 = bit0 of data[2], zone1 = bit0 of data[3]. Generic (DefParser.M):
         a single flags byte @ data[1] carries up to 4 sub-switches in bits 1-4 (DefParser.O = one switch in bit 1).
-        Interpret per device (flags_a = that generic flags byte).
+        Interpret per device (flags_a = that generic flags byte). ParseUtils.getBit2Boolean numbers bits from 1, so
+        "bit 1" is the LSB (0x01). As live power (devices.yaml client_profile.power_live: push_30): bit 0 of flags_a
+        (frame[3]) on H60A1/H60A4/H60A6, H6039, H6078 and H601E/H601F; bit 0 of flags_c (frame[5]) on H60A0; per
+        bar flags_b == 1 / flags_c == 1 on H6038/H6048.
         """
         def __init__(self, _io, _parent=None, _root=None):
             super(GoveeBleFrame.NotifySwitchZone, self).__init__(_io)
@@ -3064,7 +3076,7 @@ class GoveeBleFrame(KaitaiStruct):
 
 
     class StatusSwitch(KaitaiStruct):
-        """0x01 on/off state (1=on)."""
+        """0xAC status TLV 0x01: power. The status parser decodes on as state != 0 (Compose4BaseInfoSingleRead.u: bArr2[0] != 0, base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4BaseInfoSingleRead.java:286-288): use is_on. Screens that take connect-time power from here and send no aa 01 read are devices.yaml client_profile.power_read: ac_status (H60A4/H60A6, H6039/H6038/H6048, H703A/H703B)."""
         def __init__(self, _io, _parent=None, _root=None):
             super(GoveeBleFrame.StatusSwitch, self).__init__(_io)
             self._parent = _parent
@@ -3077,6 +3089,15 @@ class GoveeBleFrame(KaitaiStruct):
 
         def _fetch_instances(self):
             pass
+
+        @property
+        def is_on(self):
+            """Power as Compose4BaseInfoSingleRead.u decodes TLV 0x01 (!= 0). Differs from the aa 01 control-screen rule (switch_read_reply.light_is_on, == 1) only for a byte >= 2."""
+            if hasattr(self, '_m_is_on'):
+                return self._m_is_on
+
+            self._m_is_on = self.state != 0
+            return getattr(self, '_m_is_on', None)
 
 
     class StatusTlv(KaitaiStruct):
@@ -3205,7 +3226,7 @@ class GoveeBleFrame(KaitaiStruct):
 
 
     class SwitchReadReply(KaitaiStruct):
-        """AA 01 reply (SwitchController.parseValidBytes): state @ body[0]. LIGHTS: 0=off else on (validBytes[0] != 0, SwitchController.java:30). The modern control-screen VM decodes this SAME byte as on == (body[0] == 1) (ControllerSwitch.Companion.c, base-classes11/com/govee/base2light/kt/general_controller/ControllerSwitch.java:32) — agrees for 0/1, differs only for a byte >= 2. PLUGS (h5080 SwitchControllerV2): this SAME 0x01 reply is a RELAY BITMASK (bit i = relay i on), not boolean — interpret per device."""
+        """AA 01 reply: state @ body[0]. LIGHTS: every curated control screen that reads it decodes on as body[0] == 1 (ControllerSwitch.Companion.c, base-classes11/com/govee/base2light/kt/general_controller/ControllerSwitch.java:32), at connect and in the aa 01 heartbeat (ShareVM.N3 frame[2] == 1, ShareVM.java:1008): use light_is_on. The legacy SwitchController.parseValidBytes reads it as != 0 (SwitchController.java:30), but no curated control screen reaches it (only scene / IoT command paths such as BleSwitchCmdBuilderV1); the two agree for 0/1 and differ only for a byte >= 2. Which message carries a family's power (this reply, or the 0xAC status TLV 0x01) is devices.yaml client_profile.power_read. PLUGS (h5080 SwitchControllerV2): this SAME 0x01 reply is a RELAY BITMASK (bit i = relay i on), not boolean — interpret per device."""
         def __init__(self, _io, _parent=None, _root=None):
             super(GoveeBleFrame.SwitchReadReply, self).__init__(_io)
             self._parent = _parent
@@ -3218,6 +3239,15 @@ class GoveeBleFrame(KaitaiStruct):
 
         def _fetch_instances(self):
             pass
+
+        @property
+        def light_is_on(self):
+            """Lights: power as the curated control screens decode it (ControllerSwitch, == 1). Not for plugs, whose state is a relay mask."""
+            if hasattr(self, '_m_light_is_on'):
+                return self._m_light_is_on
+
+            self._m_light_is_on = self.state == 1
+            return getattr(self, '_m_light_is_on', None)
 
 
     class SyncTimePayload(KaitaiStruct):

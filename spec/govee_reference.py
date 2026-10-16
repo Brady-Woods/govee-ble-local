@@ -27,8 +27,9 @@ runtime (pip install kaitaistruct). RC4 is implemented here (Safe.f/g); AES-ECB 
 from __future__ import annotations
 
 import importlib
+from collections.abc import Sequence
 from io import BytesIO
-from typing import Any
+from typing import Any, Final
 
 
 # ─────────────────────────── (3) XOR checksum (BCC) — §4.1 ───────────────────────────
@@ -42,11 +43,23 @@ def bcc(frame: bytes | bytearray) -> int:
     return x
 
 
+FRAME_LEN: Final = 20             # every frame is 20 bytes: 19 of proType/cmd/payload + the BCC
+FRAME_BODY_MAX: Final = FRAME_LEN - 1
+
+
 def append_bcc(payload: bytes) -> bytes:
-    """[proType, cmd, payload...] (<=19 bytes) -> a zero-padded 20-byte frame with the checksum at byte 19."""
-    b = bytearray(20)
+    """[proType, cmd, payload...] (<=19 bytes) -> a zero-padded 20-byte frame with the checksum at byte 19.
+
+    ValueError for a longer payload: the app cannot send one either (BleUtils.p :1030-1041 copies the
+    ext bytes into a 20-byte array at offset 2, so more than 18 throw and exactly 18 lose their last
+    byte to the BCC; AbsController.q :47-60 truncates ext bytes to 17 before that). Without this check
+    a 20-byte payload had byte 19 overwritten by the BCC and a longer one returned a >20-byte frame."""
+    if len(payload) > FRAME_BODY_MAX:
+        raise ValueError(
+            f"payload too long: {len(payload)} bytes (max {FRAME_BODY_MAX} so the frame fits in {FRAME_LEN})")
+    b = bytearray(FRAME_LEN)
     b[: len(payload)] = payload
-    b[19] = bcc(b)
+    b[FRAME_BODY_MAX] = bcc(b)
     return bytes(b)
 
 
@@ -208,16 +221,78 @@ def parse_color_group(group_bytes: bytes, *, has_brightness: bool, record_count:
     return _gbf().ColorGroupRead(record_count, 1 if has_brightness else 0, _stream(group_bytes))
 
 
+# ───────────────────────── op15 segment masks (BleUtils.X / makeSelectedTwoBytes) ─────────────────────────
+# Every 0x15 colour/brightness builder picks its mask by `posSet.length > 16 ? BleUtils.X(posSet, true)
+# : makeSelectedTwoBytes(posSet, true)` (color/Bytes.java h :323, r :498, G :178, b :229, d :278, l :387,
+# n :417, u :553; SubModeColorV1.getWriteBytes :672 keys it on its segment count). posSet has one entry
+# per device segment, so the width follows the segment count, not the selection.
+OP15_LEGACY_MASK_SEGMENTS: Final = 16   # makeSelectedTwoBytes: always 2 bytes, 00 00 if empty or > 16
+OP15_MAX_MASK_BYTES: Final = 7          # Bytes.h/r keep coerceAtMost(len, 17 - 10); Bytes.C truncates > 7
+OP15_MAX_MASK_SEGMENTS: Final = OP15_MAX_MASK_BYTES * 8
+
+
+def bleutils_x(pos_set: Sequence[bool]) -> bytes:
+    """BleUtils.X(posSet, true) (base-classes10/com/govee/base2kt/utils/BleUtils.java:406-438):
+    ceil(n/8) bytes, no cap; byte j holds positions 8j..8j+7 with position 8j+k at bit k (each 8-entry
+    chunk is written as a '1'/'0' string, reversed because the flag is true, then parsed base 2)."""
+    out = bytearray((len(pos_set) + 7) // 8)
+    for i, on in enumerate(pos_set):
+        if on:
+            out[i // 8] |= 1 << (i % 8)
+    return bytes(out)
+
+
+def make_selected_two_bytes(pos_set: Sequence[bool]) -> bytes:
+    """BleUtils.Y(posSet, true, false) = makeSelectedTwoBytes (BleUtils.java:444-494; BleUtil.java:412-443):
+    exactly two bytes in the X bit order, and 00 00 for an empty or a more-than-16-entry posSet."""
+    if not pos_set or len(pos_set) > OP15_LEGACY_MASK_SEGMENTS:
+        return bytes(2)
+    return bleutils_x([*pos_set, *([False] * (OP15_LEGACY_MASK_SEGMENTS - len(pos_set)))])
+
+
+def op15_mask(pos_set: Sequence[bool]) -> bytes:
+    """The mask the 0x15 builders write for posSet: 2 bytes up to 16 entries, else ceil(n/8) (uncapped;
+    each builder applies its own cap)."""
+    if len(pos_set) > OP15_LEGACY_MASK_SEGMENTS:
+        return bleutils_x(pos_set)
+    return make_selected_two_bytes(pos_set)
+
+
+def op15_mask_width(segments: int) -> int:
+    """Mask bytes for a device with ``segments`` segments: 2 for 0..16, else ceil(n/8). ValueError above
+    56 (7 bytes, the most Bytes.h/r/C put on the wire); the library's wire.build.mask_width."""
+    if isinstance(segments, bool) or not 0 <= segments <= OP15_MAX_MASK_SEGMENTS:
+        raise ValueError(f"segment count must be an integer in 0..{OP15_MAX_MASK_SEGMENTS}, got {segments!r}")
+    return 2 if segments <= OP15_LEGACY_MASK_SEGMENTS else (segments + 7) // 8
+
+
+def op15_mask_from_int(seg_mask: int, segments: int) -> bytes:
+    """``seg_mask`` (bit i = segment i) as the op15_mask_width(segments)-byte LSB-first mask; ValueError
+    if it does not fit that width (the library's wire.build._mask_bytes)."""
+    width = op15_mask_width(segments)
+    if not 0 <= seg_mask < 1 << (8 * width):
+        raise ValueError(f"segment mask {seg_mask:#x} does not fit {width} bytes ({segments} segments)")
+    return seg_mask.to_bytes(width, "little")
+
+
 def build_op15_color(r: int, g: int, b: int, seg_mask: int, *, variant: int, kelvin: int = 0,
-                     tint: tuple[int, int, int] = (0, 0, 0)) -> bytes:
+                     tint: tuple[int, int, int] = (0, 0, 0), segments: int | None = None) -> bytes:
     """Build a 0x33 05 15 01 colour-write frame using the parametric op15_color_typed layout.
-    variant: 1 basic, 12 H60A1/H60A6 RGB, 11 CCT (from client_profile.color_scheme + the op)."""
+    variant: 1 basic, 12 H60A1/H60A6 RGB, 11 CCT (from client_profile.color_scheme + the op).
+
+    ``segments`` is the device's segment count, which sets the mask width (op15_mask_width): None, the
+    default, keeps the legacy two-byte mask (seg_mask & 0xFFFF) exactly as before; 0..16 is also two
+    bytes; 17..56 is ceil(n/8) bytes, LSB first (BleUtils.X). ValueError above 56 segments or for a
+    seg_mask wider than its width."""
     body = bytearray([0x05, 0x15, 0x01, r, g, b])
     if variant == 12:
         body += bytes(5)
     elif variant == 11:
         body += bytes([(kelvin >> 8) & 0xFF, kelvin & 0xFF, *tint])
-    body += bytes([seg_mask & 0xFF, (seg_mask >> 8) & 0xFF])
+    if segments is None:
+        body += bytes([seg_mask & 0xFF, (seg_mask >> 8) & 0xFF])
+    else:
+        body += op15_mask_from_int(seg_mask, segments)
     return append_bcc(bytes([0x33]) + body)
 
 
@@ -258,6 +333,26 @@ def _selftest(*, strict: bool = False) -> int:
                  0xA5, 0x0D, 0x01, 100, 255, 0, 0, 80, 0, 255, 0, 60, 0, 0, 255])
     check("0xAC reassemble(chunk(x)) == x", reassemble_ac(chunk_ac(tlv)) == tlv)
     check("0xAC single-packet reassemble(chunk(x)) == x", reassemble_ac(chunk_ac(tlv[:6])) == tlv[:6])
+    try:
+        append_bcc(bytes(20))
+        check("append_bcc refuses a 20-byte payload", False)
+    except ValueError:
+        check("append_bcc refuses a 20-byte payload", True)
+
+    print("op15 masks:")
+    check("BleUtils.X: 33 positions -> ff ff ff ff 01", bleutils_x([True] * 33).hex() == "ffffffff01")
+    check("BleUtils.X: bit k of byte j = position 8j+k",
+          bleutils_x([True] + [False] * 7 + [True]) == b"\x01\x01")
+    check("makeSelectedTwoBytes: 3 -> 07 00, 17 -> 00 00",
+          make_selected_two_bytes([True] * 3) == b"\x07\x00"
+          and make_selected_two_bytes([True] * 17) == bytes(2))
+    check("op15_mask_width 16/17/33/48/49/56 -> 2/3/5/6/7/7",
+          [op15_mask_width(n) for n in (16, 17, 33, 48, 49, 56)] == [2, 3, 5, 6, 7, 7])
+    check("build_op15_color default mask unchanged (2 bytes)",
+          build_op15_color(1, 2, 3, 0x1FFF, variant=12).hex() == "330515010102030000000000ff1f0000000000c2")
+    check("build_op15_color H6062 33 segments -> 5-byte mask",
+          build_op15_color(0xFF, 0, 0, (1 << 33) - 1, variant=12, segments=33).hex()
+          == "33051501ff00000000000000ffffffff010000dc")
 
     try:
         _gbf()

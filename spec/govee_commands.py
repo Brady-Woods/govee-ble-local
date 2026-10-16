@@ -6,7 +6,7 @@ and verified by adversarial re-trace. Companion to govee_reference.py, which own
 multi-packet scene/DIY upload (send them in order). Tiers and gaps: docs/OPCODE_COVERAGE.md.
 
 Assembled from the opcode trace, then maintained in place (ruff- and mypy --strict-clean): edit this file
-directly, keeping the 757 _SELF_CHECKS green.
+directly, keeping the 760 _SELF_CHECKS green.
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ import struct
 from collections.abc import Callable, Sequence
 from typing import TypeVar, cast
 
-from govee_reference import append_bcc, bcc
+from govee_reference import OP15_MAX_MASK_BYTES, append_bcc, bcc, op15_mask
 
 _T = TypeVar("_T")
 _K = TypeVar("_K")
@@ -520,18 +520,70 @@ def build_op15_color_v5(
     )
 
 
+_OP15_N_MAX_MASK_BYTES = 17 - 11  # Bytes.n: the mask starts at extBytes[11] of 17 and is not coerced
+
+
 def build_op15_gradient_color(colors: Sequence[Sequence[int]], pos_set: Sequence[bool]) -> bytes:
     """33 05 15 05 <3 x RGB> <segment mask LE> gradient colour, GradientColor version 0.
     base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:404-420 (Bytes.n) via
     GradientColorControllerConfig.java:117-121 (n, e[0]) and :284-359 (k, ControllerMode.Companion.e).
+    The mask is 2 bytes up to 16 positions, else ceil(n/8) (BleUtils.X). Bytes.n copies it uncoerced into
+    a 17-byte array at offset 11 (:417-418), so more than 6 bytes (> 48 positions) throws
+    ArrayIndexOutOfBounds in the app: one frame, no second frame and no cap. ValueError here likewise.
+    (GradientColorControllerConfig.k takes Bytes.r instead when every colour is the same Kelvin tint, :334;
+    see build_op15_color_temp_bytes_r, whose 7-byte mask reaches 56 positions.)
     """
     rgb = [c & 0xFF for col in colors for c in col]
     if len(rgb) != 9:
         raise ValueError("expected exactly 3 colors (9 RGB bytes)")
-    p = list(pos_set)
-    n = 2 if len(p) <= 16 else (len(p) + 7) // 8
-    mask = sum(1 << i for i, on in enumerate(p) if on)
-    return append_bcc(bytes([0x33, 0x05, 0x15, 0x05, *rgb, *[(mask >> (8 * k)) & 0xFF for k in range(n)]]))
+    mask = op15_mask(pos_set)
+    if len(mask) > _OP15_N_MAX_MASK_BYTES:
+        raise ValueError(
+            f"{len(pos_set)} positions need a {len(mask)}-byte mask; Bytes.n fits at most"
+            f" {_OP15_N_MAX_MASK_BYTES} (48 positions)"
+        )
+    return append_bcc(bytes([0x33, 0x05, 0x15, 0x05, *rgb]) + mask)
+
+
+def build_op15_color_bytes_h(r: int, g: int, b: int, pos_set: Sequence[bool]) -> bytes:
+    """33 05 15 01 [R,G,B][00 x5][mask] RGB on the positions set in pos_set (Bytes.h
+    base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:315-326: a 17-byte
+    ext array, RGB at 2..4, mask at 10 = 2 bytes up to 16 positions, else BleUtils.X ceil(n/8),
+    coerceAtMost(len, 17 - 10) = at most 7 bytes, so positions 56+ are silently dropped). Reached from
+    Config.Yt (Config.java:12960-12968) when the colour is not a Kelvin tint, ColorControllerConfig
+    (split_rgbiclight .../mode/color/ColorControllerConfig.java:87), h61d3 SubModeColor.java:130 and
+    h60ax ControllerBuild.java:44-52. Equals library wire.build.color_rgb / segment_rgb ("h60a6").
+    """
+    mask = op15_mask(pos_set)[:OP15_MAX_MASK_BYTES]
+    return append_bcc(bytes([0x33, 0x05, 0x15, 0x01, r & 0xFF, g & 0xFF, b & 0xFF, 0, 0, 0, 0, 0]) + mask)
+
+
+def build_op15_color_temp_bytes_r(
+    tint: Sequence[int], kelvin: int, pos_set: Sequence[bool], kind: int = 1
+) -> bytes:
+    """33 05 15 01 [slot RGB][kelvin u16be][tint RGB][mask] colour temperature on pos_set (Bytes.r
+    base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:474-501; the app's
+    tint is the picked colour or Constant.getTemColorByKelvin(K)). kind (Bytes.r's i5, :480-486):
+    0 -> slot 00 00 00; 3 -> slot 00 00 00 when every position is set, else slot = tint with kelvin and
+    tint zeroed (:492, :495); any other value (1, the usual one, or ColorUtils.R()) -> slot ff ff ff.
+    Mask as Bytes.h (at ext byte 10, at most 7 bytes). Callers: Config.Yt (Config.java:12967),
+    GradientColorControllerConfig.k (:334, kind 1), h60ax ControllerBuild.java:55-63 (kind 1).
+    kind 1 equals library wire.build.segment_color_temp / color_temp ("h60a6").
+    """
+    partial = not all(pos_set)  # Bytes.x(): true when any position is unset (false for an empty set)
+    t = [c & 0xFF for c in tint]
+    if len(t) != 3:
+        raise ValueError("tint must be 3 bytes (R, G, B)")
+    if kind == 0:
+        slot = [0, 0, 0]
+    elif kind == 3:
+        slot = t if partial else [0, 0, 0]
+    else:
+        slot = [0xFF, 0xFF, 0xFF]
+    k = 0 if kind == 3 and partial else kelvin
+    tail = [0, 0, 0] if kind == 3 and partial else t
+    mask = op15_mask(pos_set)[:OP15_MAX_MASK_BYTES]
+    return append_bcc(bytes([0x33, 0x05, 0x15, 0x01, *slot, (k >> 8) & 0xFF, k & 0xFF, *tail]) + mask)
 
 
 def build_op15_kelvin_05(kelvin: int) -> bytes:
@@ -6665,6 +6717,15 @@ def read_switch() -> bytes:
 # ── self-checks: each builder's bytes vs the app layout it was traced from ──
 # Evaluated at import; govee_reference._selftest reports the roll-up. Kept byte-exact so a
 # regression in any builder fails the repo gate.
+def _raises(exc: type[BaseException], fn: Callable[[], object]) -> bool:
+    """True if ``fn()`` raises ``exc`` (a self-check helper for builders that must refuse an input)."""
+    try:
+        fn()
+    except exc:
+        return True
+    return False
+
+
 def _check(name: str, fn: Callable[[], object]) -> tuple[str, bool]:
     """Evaluate one builder self-check; a builder that raises counts as a failed check,
     never a crashed import.
@@ -7369,6 +7430,43 @@ _SELF_CHECKS: list[tuple[str, bool]] = [
             == bytes([0xFF, 0xFF, 0x0F, 0x00])
             and build_op15_gradient_color([(1, 2, 3), (4, 5, 6), (7, 8, 9)], [True])[19]
             == (0x33 ^ 0x05 ^ 0x15 ^ 0x05 ^ 1 ^ 2 ^ 3 ^ 4 ^ 5 ^ 6 ^ 7 ^ 8 ^ 9 ^ 0x01)
+        ),
+    ),
+    _check(
+        "build_op15_gradient_color_wide",
+        lambda: bool(
+            build_op15_gradient_color([(1, 2, 3), (4, 5, 6), (7, 8, 9)], [True] * 33).hex()
+            == "33051505010203040506070809ffffffff010026"
+            and build_op15_gradient_color([(1, 2, 3), (4, 5, 6), (7, 8, 9)], [True] * 48).hex()
+            == "33051505010203040506070809ffffffffffff27"
+            and _raises(ValueError, lambda: build_op15_gradient_color([(0, 0, 0)] * 3, [True] * 49))
+        ),
+    ),
+    _check(
+        "build_op15_color_bytes_h",
+        lambda: bool(
+            build_op15_color_bytes_h(1, 2, 3, [True] * 13).hex() == "330515010102030000000000ff1f0000000000c2"
+            and build_op15_color_bytes_h(0xFF, 0, 0, [True] * 33).hex()  # H6062 (4,1): 33 segments
+            == "33051501ff00000000000000ffffffff010000dc"
+            and build_op15_color_bytes_h(0, 0, 0xFF, [True] + [False] * 31 + [True]).hex()
+            == "330515010000ff000000000001000000010000dd"
+            and build_op15_color_bytes_h(0x10, 0x20, 0x30, [True] * 57)
+            == build_op15_color_bytes_h(0x10, 0x20, 0x30, [True] * 56)  # coerceAtMost: 7 mask bytes
+        ),
+    ),
+    _check(
+        "build_op15_color_temp_bytes_r",
+        lambda: bool(
+            build_op15_color_temp_bytes_r((255, 213, 161), 4000, [True] * 33).hex()
+            == "33051501ffffff0fa0ffd5a1ffffffff010000f8"
+            and build_op15_color_temp_bytes_r((255, 174, 84), 2700, [True] * 16).hex()
+            == "33051501ffffff0a8cffae54ffff00000000005e"
+            and build_op15_color_temp_bytes_r((255, 174, 84), 2700, [True] * 3, 0).hex()
+            == "330515010000000a8cffae5407000000000000a6"
+            and build_op15_color_temp_bytes_r((255, 174, 84), 2700, [True] * 3, 3)
+            == build_op15_color_temp_bytes_r((255, 174, 84), 2700, [True] * 3, 0)
+            and build_op15_color_temp_bytes_r((255, 174, 84), 2700, [True, False, True], 3).hex()
+            == "33051501ffae5400000000000500000000000022"
         ),
     ),
     _check(

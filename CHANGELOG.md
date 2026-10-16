@@ -327,6 +327,27 @@ model, from which the shipped readers are generated).
   zeroes every data byte.
 
 ### Spec
+- Per-family power and H60A6's 0x0D report, traced in the 7.7.02 decompile with an adversarial check per
+  family:
+  - Every curated control screen that reads the aa 01 reply decodes it `== 1` (`ControllerSwitch`); the
+    legacy `SwitchController` `!= 0` is reached only from scene / IoT command paths. The two rules are now
+    instances: `switch_read_reply.light_is_on` (`== 1`) and `status_switch.is_on` (0xAC TLV 0x01, `!= 0`).
+    `devices.yaml` `client_profile` gains `power_read` (`aa01` or `ac_status`), `power_live`
+    (`heartbeat_aa01`, `heartbeat_aa36`, `push_30`) and a `by_goods_type` override map
+    (`devices.schema.json`), filled for the 9 curated families. H60A4/H60A6 and H6039/H6038/H6048 send no
+    aa 01 read and take connect-time power from the 0xAC status TLV 0x01. h60ax is recorded per goodsType,
+    with its six untraced goodsTypes left out.
+  - H60A1/H60A4/H60A6 decode the 0x0D report as `rgb_kelvin_0d` on every pact (h60a1 `Info4Detail.Q`:
+    `[R,G,B,kelvin s16be]`, CCT only for a signed kelvin > 0, tint never read); new
+    `mode_color_0d_typed.is_cct_positive`. 0x15 stays H60A6's main colour report on pacts (1,2)/(1,3).
+- op15 segment masks in the reference and catalogue (the ksy `mask_width` param waits for a change made
+  together with the library): `bleutils_x`, `make_selected_two_bytes`, `op15_mask` and `op15_mask_width`
+  mirror `BleUtils.X` / `makeSelectedTwoBytes` (`ceil(n/8)` bytes above 16 segments, LSB first);
+  `build_op15_color(segments=...)` writes the wide mask (the default keeps the 2-byte form); new
+  `build_op15_color_bytes_h` / `build_op15_color_temp_bytes_r` mirror `Bytes.h` / `Bytes.r` (7-byte cap, as
+  the app has); `build_op15_gradient_color` raises above 48 segments, where the app's `Bytes.n` throws,
+  instead of silently returning the 48-segment frame; `append_bcc` raises on a payload over 19 bytes. All
+  match the library's `wire.build` byte for byte over 3-56 segments. 760 builder self-checks.
 - Spec-client audit fixes, each verified against the 7.7.02 decompile before applying:
   - Signed 16-bit fields: the app reads the 0x0D mode-report kelvin (kinds 0 and 2) and the `aa 40` IC
     count with `BleUtil.getSignedShort`. `govee_ble.ksy` keeps the raw `u2be` fields for existing readers
