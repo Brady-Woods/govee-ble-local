@@ -23,7 +23,6 @@ from kaitaistruct import KaitaiStream
 
 from ..const import FRAME_LEN
 from ..models import Segment
-from .._generated.govee_ble_frame import GoveeBleFrame as _GBF  # type: ignore[attr-defined]
 from .build import (
     CMD_MODE,
     CMD_SECTION_COUNT,
@@ -37,13 +36,13 @@ from .build import (
     SUB_COLOR_15,
     SUB_SCENE,
     ColorScheme,
+    _F,
 )
 
 _LOGGER = logging.getLogger(__name__)
 
-# The generated reader is untyped; treat it as Any so attribute chains don't need stubs. This is
-# the wire layer's one import of it: :mod:`.reassemble` and :mod:`.describe` reuse these names.
-_F: Any = _GBF
+# The generated reader (imported once, in :mod:`.build`) is untyped, so attribute chains are Any and
+# need no stubs. :mod:`.reassemble` and :mod:`.describe` reuse these names.
 _ProType = _F.ProType
 _Command = _F.Command
 _SubMode = _F.SubMode
@@ -200,7 +199,8 @@ _MODE_0D_KIND_RGB = 1
 _MODE_0D_KIND_RGB_KELVIN_TINT = 2
 # The aa 05 colour sub-modes OpInfo4Detail.parseModeValidBytes hands to the SKU's SubMode4Color parse
 # strategy (``b6 == 21 || b6 == 11 || b6 == 2 || b6 == 13``); it sends every other sub-mode elsewhere.
-SUBMODE4COLOR_SUB_MODES: Final = frozenset({SUB_COLOR_15, SUB_COLOR_0B, 0x02, SUB_COLOR_0D})
+SUBMODE4COLOR_SUB_MODES: Final = frozenset(
+    {SUB_COLOR_15, SUB_COLOR_0B, int(_SubMode.color_legacy), SUB_COLOR_0D})
 # BleUtil.getSignedShort: a big-endian Kelvin of 0x8000 or more reads as negative.
 _SIGNED_SHORT_MIN: Final = 0x8000
 

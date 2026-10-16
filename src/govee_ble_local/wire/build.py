@@ -13,12 +13,18 @@ frame in the app for that family) and GoveeBleInvalidValue for bad caller input.
 """
 from __future__ import annotations
 
-from typing import Final, Literal, Never
+from typing import Any, Final, Literal, Never
 
+from .._generated.govee_ble_frame import GoveeBleFrame as _GBF  # type: ignore[attr-defined]
 from ..const import FRAME_LEN, SCENE_A3_HEADER_LEN, SCENE_A3_PIECE_LEN
 from ..crypto import checksum
 from ..exceptions import GoveeBleInvalidValue, GoveeBleNotSupported
 from .cct import kelvin_for_tint, tint_for_kelvin
+
+# The spec-generated reader (spec/govee_ble.ksy). It is untyped, so it is Any here. This is the wire
+# layer's one import of it: the protocol constants below are its enums, and :mod:`.parse`,
+# :mod:`.reassemble` and :mod:`.describe` reuse this name to read frames with it.
+_F: Any = _GBF
 
 
 def ceil_div(a: int, b: int) -> int:
@@ -26,47 +32,49 @@ def ceil_div(a: int, b: int) -> int:
     return -(-a // b)
 
 
+# Protocol constants, taken from the generated reader's enums so the spec is their one source
+# (int() keeps them plain ints, as the frame bytes and the ``==`` checks against raw bytes need).
 # proType (enum pro_type)
-PRO_WRITE: Final = 0x33
-PRO_READ: Final = 0xAA
-PRO_MULTI_A1: Final = 0xA1     # multi_write: MultiPackageManager stream (received, not built here)
-PRO_MULTI_A3: Final = 0xA3
-PRO_MULTI_A4: Final = 0xA4
-PRO_MULTI_AC: Final = 0xAC
-PRO_NOTIFY: Final = 0xEE       # notify: device push notifications (wire.parse.parse_notify)
+PRO_WRITE: Final = int(_F.ProType.write)                 # 0x33
+PRO_READ: Final = int(_F.ProType.read)                   # 0xAA
+PRO_MULTI_A1: Final = int(_F.ProType.multi_write)        # 0xA1: MultiPackageManager stream (RX only)
+PRO_MULTI_A3: Final = int(_F.ProType.multi_write_v1)     # 0xA3
+PRO_MULTI_A4: Final = int(_F.ProType.multi_write_v2)     # 0xA4
+PRO_MULTI_AC: Final = int(_F.ProType.multi_reply_read)   # 0xAC
+PRO_NOTIFY: Final = int(_F.ProType.notify)               # 0xEE: device pushes (parse.parse_notify)
 
 # command (enum command)
-CMD_SWITCH: Final = 0x01
-CMD_BRIGHTNESS: Final = 0x04
-CMD_MODE: Final = 0x05
-CMD_SOFT_VERSION: Final = 0x06
-CMD_DEVICE_INFO: Final = 0x07
-CMD_ZONE: Final = 0x30            # light_direction_or_zone
-CMD_BAR_SWITCH: Final = 0x36      # compose_light_switch
-CMD_GRADUAL_WIFI_BLE: Final = 0xA3   # gradual/fade on BLE<->wifi handoff (W/R flag)
-CMD_SECRET_READ: Final = 0xB1
-CMD_SECRET_WRITE: Final = 0xB2
-CMD_PLUG_SPEC: Final = 0xB3
-CMD_PLUG_SYNC_TIME: Final = 0xB5
+CMD_SWITCH: Final = int(_F.Command.switch)                       # 0x01
+CMD_BRIGHTNESS: Final = int(_F.Command.brightness)               # 0x04
+CMD_MODE: Final = int(_F.Command.mode)                           # 0x05
+CMD_SOFT_VERSION: Final = int(_F.Command.soft_version)           # 0x06
+CMD_DEVICE_INFO: Final = int(_F.Command.device_info)             # 0x07
+CMD_ZONE: Final = int(_F.Command.light_direction_or_zone)        # 0x30
+CMD_BAR_SWITCH: Final = int(_F.Command.compose_light_switch)     # 0x36
+CMD_GRADUAL_WIFI_BLE: Final = int(_F.Command.gradual_wifi_ble)   # 0xA3: gradual/fade on BLE<->wifi handoff
+CMD_SECRET_READ: Final = int(_F.Command.secret_read)             # 0xB1
+CMD_SECRET_WRITE: Final = int(_F.Command.secret_write)           # 0xB2
+CMD_PLUG_SPEC: Final = int(_F.Command.plug_spec)                 # 0xB3
+CMD_PLUG_SYNC_TIME: Final = int(_F.Command.plug_sync_time)       # 0xB5
 
 # mode (0x05) sub-mode (enum sub_mode)
-SUB_SCENE: Final = 0x04
-SUB_COLOR_15: Final = 0x15        # color_rgbic_15 (H60A6/H6047/H6641)
-SUB_COLOR_0D: Final = 0x0D        # color_cct_0d   (H6006/H6008/H6052 bulbs)
-SUB_COLOR_0B: Final = 0x0B        # color_rgbic_0b (H61A8)
+SUB_SCENE: Final = int(_F.SubMode.scene)                 # 0x04
+SUB_COLOR_15: Final = int(_F.SubMode.color_rgbic_15)     # 0x15 (H60A6/H6047/H6641)
+SUB_COLOR_0D: Final = int(_F.SubMode.color_cct_0d)       # 0x0D (H6006/H6008/H6052 bulbs)
+SUB_COLOR_0B: Final = int(_F.SubMode.color_rgbic_0b)     # 0x0B (H61A8)
 
 # op15 (enum op15) — sub-op after 0x15
-OP15_SET_COLOR: Final = 0x01
-OP15_SET_BRIGHTNESS: Final = 0x02
+OP15_SET_COLOR: Final = int(_F.Op15.set_color)            # 0x01
+OP15_SET_BRIGHTNESS: Final = int(_F.Op15.set_brightness)  # 0x02
 
-# Device-info (0x07) selectors. SN (device id) and HARD (hardware version) are the reads the
-# app makes (SnController.p, HardVersionController.p); BASIC / WIFI are the binary forms.
+# Device-info (0x07) selectors (no ksy enum yet). SN (device id) and HARD (hardware version) are the
+# reads the app makes (SnController.p, HardVersionController.p); BASIC / WIFI are the binary forms.
 INFO_BASIC: Final = 0x10
 INFO_WIFI: Final = 0x11
 INFO_SN: Final = 0x02
 INFO_HARD: Final = 0x03
 
-# power payload values
+# power payload values (no ksy enum yet)
 POWER_ON: Final = 0x01
 POWER_OFF: Final = 0x00
 RELAY_ON: Final = 0x11    # plug family
@@ -235,7 +243,7 @@ def brightness_raw(level: int) -> bytes:
 H6061_MAX_PANELS: Final = 23
 H6061_GROUP_SIZE: Final = 4          # Bytes.m / BleUtils.w0(colors, 4): four colours per group frame
 H6061_MASK_BYTES: Final = 3          # ColorPieceConfig.k: piece count 23 rounds up to a 24-bit position set
-OP15_SET_GROUP_COLOR: Final = 0x04   # Bytes.m: [0x15, 0x04, group, RGB x<=4]
+OP15_SET_GROUP_COLOR: Final = int(_F.Op15.set_color_group)   # 0x04; Bytes.m: [0x15, 0x04, group, RGB x<=4]
 H6061_KELVIN_RANGE: Final = (2000, 9000)   # KelvinConfig: no entry for 51 -> version 0
 
 # Segment count a whole-device builder assumes when the caller passes none (``Device`` always passes
@@ -630,8 +638,8 @@ def plug_spec_query() -> bytes:
     return frame(PRO_READ, CMD_PLUG_SPEC)
 
 
-CMD_BULB_COLOR_V1: Final = 0xA2   # bulb_string_color_read (mechanism-B V1: colour only)
-CMD_BULB_COLOR_V2: Final = 0xA5   # local_color_read       (mechanism-B V2: + brightness)
+CMD_BULB_COLOR_V1: Final = int(_F.Command.bulb_string_color_read)   # 0xA2 (mechanism-B V1: colour only)
+CMD_BULB_COLOR_V2: Final = int(_F.Command.local_color_read)         # 0xA5 (mechanism-B V2: + brightness)
 
 
 def bulb_group_query(batch_seq: int, *, v2: bool = True) -> bytes:
@@ -653,7 +661,7 @@ def soft_version_query() -> bytes:
     return frame(PRO_READ, CMD_SOFT_VERSION)
 
 
-CMD_IC_NUM: Final = 0x40   # ic_num (ic_segment_read reply): live IC/segment capability read
+CMD_IC_NUM: Final = int(_F.Command.ic_num)   # 0x40 (ic_segment_read reply): live IC/segment capability read
 
 
 def ic_count_query() -> bytes:
@@ -664,7 +672,9 @@ def ic_count_query() -> bytes:
     return frame(PRO_READ, CMD_IC_NUM)
 
 
-CMD_SECTION_COUNT: Final = 0x41   # striplight SINGLE_IC_SEGMENT_NUM (H6062); on_off_memory on other SKUs
+# 0x41: striplight SINGLE_IC_SEGMENT_NUM (H6062); the shared enum names it on_off_memory, its meaning on
+# the other SKUs.
+CMD_SECTION_COUNT: Final = int(_F.Command.on_off_memory)
 
 
 def section_count_query() -> bytes:

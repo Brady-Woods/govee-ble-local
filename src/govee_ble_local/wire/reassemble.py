@@ -25,8 +25,8 @@ from typing import Any, Literal
 from ..const import FRAME_LEN
 from ..models import Segment
 from . import parse
-from .build import INFO_BASIC, INFO_WIFI
-from .parse import _F, _parse_type
+from .build import INFO_BASIC, INFO_WIFI, _F
+from .parse import _parse_type
 
 _LOGGER = logging.getLogger(__name__)
 _RECORDS_PER_GROUP = 4   # oneGroupColorSize: index stride, not the (len-derived) record count

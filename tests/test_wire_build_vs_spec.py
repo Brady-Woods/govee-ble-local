@@ -362,3 +362,40 @@ def test_spec_gap_op15_colour_mask_above_16_segments(segments: int) -> None:
         assert lib[:12] == spec[:12], name
         assert lib[12:12 + width] == ((1 << segments) - 1).to_bytes(width, "little"), name
         assert not any(lib[12 + width:19]), name
+
+
+# ── protocol constants come from the generated enums ─────────────────────────
+_ENUM_CONSTANTS: dict[str, tuple[int, str]] = {
+    "PRO_WRITE": (0x33, "ProType.write"), "PRO_READ": (0xAA, "ProType.read"),
+    "PRO_MULTI_A1": (0xA1, "ProType.multi_write"), "PRO_MULTI_A3": (0xA3, "ProType.multi_write_v1"),
+    "PRO_MULTI_A4": (0xA4, "ProType.multi_write_v2"), "PRO_MULTI_AC": (0xAC, "ProType.multi_reply_read"),
+    "PRO_NOTIFY": (0xEE, "ProType.notify"),
+    "CMD_SWITCH": (0x01, "Command.switch"), "CMD_BRIGHTNESS": (0x04, "Command.brightness"),
+    "CMD_MODE": (0x05, "Command.mode"), "CMD_SOFT_VERSION": (0x06, "Command.soft_version"),
+    "CMD_DEVICE_INFO": (0x07, "Command.device_info"), "CMD_ZONE": (0x30, "Command.light_direction_or_zone"),
+    "CMD_BAR_SWITCH": (0x36, "Command.compose_light_switch"),
+    "CMD_GRADUAL_WIFI_BLE": (0xA3, "Command.gradual_wifi_ble"),
+    "CMD_SECRET_READ": (0xB1, "Command.secret_read"), "CMD_SECRET_WRITE": (0xB2, "Command.secret_write"),
+    "CMD_PLUG_SPEC": (0xB3, "Command.plug_spec"), "CMD_PLUG_SYNC_TIME": (0xB5, "Command.plug_sync_time"),
+    "CMD_BULB_COLOR_V1": (0xA2, "Command.bulb_string_color_read"),
+    "CMD_BULB_COLOR_V2": (0xA5, "Command.local_color_read"), "CMD_IC_NUM": (0x40, "Command.ic_num"),
+    "CMD_SECTION_COUNT": (0x41, "Command.on_off_memory"),
+    "SUB_SCENE": (0x04, "SubMode.scene"), "SUB_COLOR_15": (0x15, "SubMode.color_rgbic_15"),
+    "SUB_COLOR_0D": (0x0D, "SubMode.color_cct_0d"), "SUB_COLOR_0B": (0x0B, "SubMode.color_rgbic_0b"),
+    "OP15_SET_COLOR": (0x01, "Op15.set_color"), "OP15_SET_BRIGHTNESS": (0x02, "Op15.set_brightness"),
+    "OP15_SET_GROUP_COLOR": (0x04, "Op15.set_color_group"),
+}
+
+
+@pytest.mark.parametrize("name", sorted(_ENUM_CONSTANTS))
+def test_protocol_constant_is_the_spec_enum(name: str) -> None:
+    value, enum_path = _ENUM_CONSTANTS[name]
+    enum_name, member = enum_path.split(".")
+    got = getattr(b, name)
+    assert type(got) is int and got == value == int(getattr(getattr(b._F, enum_name), member))
+
+
+def test_handshake_constants_are_the_spec_enums() -> None:
+    assert handshake.HANDSHAKE_OPCODE == 0xE7 == int(b._F.ProType.handshake)
+    assert handshake._STEP_SESSION_KEY == 0x01 == int(b._F.HandshakeOp.v1_request_session_key)
+    assert handshake._STEP_CONFIRM == 0x02 == int(b._F.HandshakeOp.v1_confirm)

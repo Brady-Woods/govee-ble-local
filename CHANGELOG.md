@@ -350,6 +350,11 @@ model, from which the shipped readers are generated).
   handshake. Two ratchets keep the open differences visible instead of skipped: the `aa 01 01` / `aa 04 01`
   selector byte (the catalogue sends `aa 01` / `aa 04`; waiting on a decision) and the 0x15 colour mask
   above 16 segments (the spec still hard-codes two bytes). No frame changed.
+- The protocol constants in `wire.build` (`PRO_*`, `CMD_*`, `SUB_*`, `OP15_*`) and `transport.handshake`
+  (`HANDSHAKE_OPCODE` and the e7 steps) are now taken from the generated reader's enums instead of being
+  copied by hand; the names and values are unchanged (pinned by the test above). The device-info selectors
+  (`INFO_*`) and power values (`POWER_*`, `RELAY_*`) stay literals: the ksy has no enum for them yet.
+  `wire.build` is now the wire layer's one import of the generated reader.
 - Re-verified several spec facts against the 7.7.02 decompile (adversarially) and the account device-list,
   and corrected them: `switch_read_reply` keeps the legacy `SwitchController` `!= 0` semantics as primary and
   now notes the modern control-screen VM path (`ControllerSwitch.Companion.c` / `ShareVM.N3`) that decodes

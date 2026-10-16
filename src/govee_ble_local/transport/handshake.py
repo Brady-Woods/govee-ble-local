@@ -19,11 +19,12 @@ from typing import Final
 from ..const import FRAME_LEN, PSK
 from ..crypto import checksum, decrypt, encrypt
 from ..exceptions import GoveeBleInvalidValue
+from ..wire.build import _F
 
-HANDSHAKE_OPCODE = 0xE7
+HANDSHAKE_OPCODE: Final = int(_F.ProType.handshake)   # 0xE7
 
-_STEP_SESSION_KEY: Final = 0x01    # e7 01: request / reply carrying the session key
-_STEP_CONFIRM: Final = 0x02        # e7 02: confirm / ack
+_STEP_SESSION_KEY: Final = int(_F.HandshakeOp.v1_request_session_key)   # e7 01: request / reply with the key
+_STEP_CONFIRM: Final = int(_F.HandshakeOp.v1_confirm)                   # e7 02: confirm / ack
 _KEY_SLICE: Final = slice(2, 18)   # the 16-byte session key in an e7 01 reply (Controller4Aes.g)
 _MAX_PAYLOAD: Final = FRAME_LEN - 3  # opcode, step and checksum take the other three bytes
 

@@ -30,7 +30,8 @@ from typing import Any, Literal
 from ..const import FRAME_LEN
 from ..crypto import checksum_ok
 from . import reassemble as _reassemble
-from .parse import _Command, _F, _NotifySub, _ProType, _SubMode
+from .build import _F
+from .parse import _Command, _NotifySub, _ProType, _SubMode
 
 # A frame's direction (the capture's "dir"). Only "rx" changes the reading: an RX 0x33 frame
 # is the device's write-ACK echo, not a write command.
