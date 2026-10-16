@@ -24,8 +24,8 @@ python3 -m venv .venv && source .venv/bin/activate
 python -m pip install -e '.[dev]'   # pytest stack, cloud, mypy, ruff, bandit, pip-audit,
                                     # vulture, radon, pycryptodome (test-only AES reference), uv
 python -m pytest -q                 # offline test suite
-bash tools/gen_kaitai.sh            # regenerate readers after editing spec/*.ksy (--check verifies them;
-                                    # --read-write builds serializer classes into build/kaitai_rw/)
+bash tools/gen_kaitai.sh            # regenerate the read-write classes after editing spec/*.ksy (needs the
+                                    # JVM kaitai-struct-compiler 0.11; --check verifies the committed ones)
 bash tools/gen_docs.sh              # build the pdoc API reference (needs .[docs])
 ```
 
@@ -44,7 +44,9 @@ With `CI=true`, missing optional test dependencies fail the run instead of skipp
 `bash scripts/audit.sh` is an informational, never-failing report (vulture dead code, radon
 complexity/maintainability, ruff statistics). It is not part of the gate.
 
-If you change `spec/*.ksy`, regenerate the `_generated/` readers and commit them.
+If you change `spec/*.ksy`, regenerate the `_generated/` read-write classes and commit them. The library
+both reads and writes every frame with them, so `wire/build.py` changes only when the app sends a
+different frame, not when a layout moves.
 
 ### Hardware tools
 

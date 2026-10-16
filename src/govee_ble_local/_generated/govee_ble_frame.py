@@ -2,14 +2,14 @@
 # type: ignore
 
 import kaitaistruct
-from kaitaistruct import KaitaiStruct, KaitaiStream, BytesIO
+from kaitaistruct import ReadWriteKaitaiStruct, KaitaiStream, BytesIO
 from enum import IntEnum
 
 
 if getattr(kaitaistruct, 'API_VERSION', (0, 9)) < (0, 11):
     raise Exception("Incompatible Kaitai Struct Python API: 0.11 or later is required, but you have %s" % (kaitaistruct.__version__))
 
-class GoveeBleFrame(KaitaiStruct):
+class GoveeBleFrame(ReadWriteKaitaiStruct):
     """One Govee BLE application frame. Every frame written to / notified on the vendor
     control characteristic (00010203-0405-0607-0809-0a0b0c0d2b11 write / ...2b10 notify)
     is 20 bytes for single-frame commands; the 0xA4 MTU MIDDLE/END packets and the small terminator are shorter:
@@ -159,11 +159,10 @@ class GoveeBleFrame(KaitaiStruct):
         music_dreamcolor = 17
         music = 19
         color_rgbic_15 = 21
-    def __init__(self, _io, _parent=None, _root=None):
+    def __init__(self, _io=None, _parent=None, _root=None):
         super(GoveeBleFrame, self).__init__(_io)
         self._parent = _parent
         self._root = _root or self
-        self._read()
 
     def _read(self):
         self.pro_type = KaitaiStream.resolve_enum(GoveeBleFrame.ProType, self._io.read_u1())
@@ -173,50 +172,60 @@ class GoveeBleFrame(KaitaiStruct):
             self._raw_body = self._io.read_bytes(self._io.size() - 2)
             _io__raw_body = KaitaiStream(BytesIO(self._raw_body))
             self.body = GoveeBleFrame.Handshake(_io__raw_body, self, self._root)
+            self.body._read()
         elif _on == GoveeBleFrame.ProType.multi_read:
             pass
             self._raw_body = self._io.read_bytes(self._io.size() - 2)
             _io__raw_body = KaitaiStream(BytesIO(self._raw_body))
             self.body = GoveeBleFrame.MultiA1(_io__raw_body, self, self._root)
+            self.body._read()
         elif _on == GoveeBleFrame.ProType.multi_reply_read:
             pass
             self._raw_body = self._io.read_bytes(self._io.size() - 2)
             _io__raw_body = KaitaiStream(BytesIO(self._raw_body))
             self.body = GoveeBleFrame.MultiAc(_io__raw_body, self, self._root)
+            self.body._read()
         elif _on == GoveeBleFrame.ProType.multi_write:
             pass
             self._raw_body = self._io.read_bytes(self._io.size() - 2)
             _io__raw_body = KaitaiStream(BytesIO(self._raw_body))
             self.body = GoveeBleFrame.MultiA1(_io__raw_body, self, self._root)
+            self.body._read()
         elif _on == GoveeBleFrame.ProType.multi_write_v1:
             pass
             self._raw_body = self._io.read_bytes(self._io.size() - 2)
             _io__raw_body = KaitaiStream(BytesIO(self._raw_body))
             self.body = GoveeBleFrame.MultiA3(_io__raw_body, self, self._root)
+            self.body._read()
         elif _on == GoveeBleFrame.ProType.multi_write_v2:
             pass
             self._raw_body = self._io.read_bytes(self._io.size() - 2)
             _io__raw_body = KaitaiStream(BytesIO(self._raw_body))
             self.body = GoveeBleFrame.MultiA4(_io__raw_body, self, self._root)
+            self.body._read()
         elif _on == GoveeBleFrame.ProType.notify:
             pass
             self._raw_body = self._io.read_bytes(self._io.size() - 2)
             _io__raw_body = KaitaiStream(BytesIO(self._raw_body))
             self.body = GoveeBleFrame.NotifyFrame(_io__raw_body, self, self._root)
+            self.body._read()
         elif _on == GoveeBleFrame.ProType.read:
             pass
             self._raw_body = self._io.read_bytes(self._io.size() - 2)
             _io__raw_body = KaitaiStream(BytesIO(self._raw_body))
             self.body = GoveeBleFrame.ReadCommand(_io__raw_body, self, self._root)
+            self.body._read()
         elif _on == GoveeBleFrame.ProType.write:
             pass
             self._raw_body = self._io.read_bytes(self._io.size() - 2)
             _io__raw_body = KaitaiStream(BytesIO(self._raw_body))
             self.body = GoveeBleFrame.SingleCommand(_io__raw_body, self, self._root)
+            self.body._read()
         else:
             pass
             self.body = self._io.read_bytes(self._io.size() - 2)
         self.checksum = self._io.read_u1()
+        self._dirty = False
 
 
     def _fetch_instances(self):
@@ -252,30 +261,233 @@ class GoveeBleFrame(KaitaiStruct):
         else:
             pass
 
-    class A3Start(KaitaiStruct):
-        def __init__(self, _io, _parent=None, _root=None):
+
+    def _write__seq(self, io=None):
+        super(GoveeBleFrame, self)._write__seq(io)
+        self._io.write_u1(int(self.pro_type))
+        _on = self.pro_type
+        if _on == GoveeBleFrame.ProType.handshake:
+            pass
+            _io__raw_body = KaitaiStream(BytesIO(bytearray(self._io.size() - 2)))
+            self._io.add_child_stream(_io__raw_body)
+            _pos2 = self._io.pos()
+            self._io.seek(self._io.pos() + (self._io.size() - 2))
+            def handler(parent, _io__raw_body=_io__raw_body):
+                self._raw_body = _io__raw_body.to_byte_array()
+                if len(self._raw_body) != self._io.size() - 2:
+                    raise kaitaistruct.ConsistencyError(u"raw(body)", self._io.size() - 2, len(self._raw_body))
+                parent.write_bytes(self._raw_body)
+            _io__raw_body.write_back_handler = KaitaiStream.WriteBackHandler(_pos2, handler)
+            self.body._write__seq(_io__raw_body)
+        elif _on == GoveeBleFrame.ProType.multi_read:
+            pass
+            _io__raw_body = KaitaiStream(BytesIO(bytearray(self._io.size() - 2)))
+            self._io.add_child_stream(_io__raw_body)
+            _pos2 = self._io.pos()
+            self._io.seek(self._io.pos() + (self._io.size() - 2))
+            def handler(parent, _io__raw_body=_io__raw_body):
+                self._raw_body = _io__raw_body.to_byte_array()
+                if len(self._raw_body) != self._io.size() - 2:
+                    raise kaitaistruct.ConsistencyError(u"raw(body)", self._io.size() - 2, len(self._raw_body))
+                parent.write_bytes(self._raw_body)
+            _io__raw_body.write_back_handler = KaitaiStream.WriteBackHandler(_pos2, handler)
+            self.body._write__seq(_io__raw_body)
+        elif _on == GoveeBleFrame.ProType.multi_reply_read:
+            pass
+            _io__raw_body = KaitaiStream(BytesIO(bytearray(self._io.size() - 2)))
+            self._io.add_child_stream(_io__raw_body)
+            _pos2 = self._io.pos()
+            self._io.seek(self._io.pos() + (self._io.size() - 2))
+            def handler(parent, _io__raw_body=_io__raw_body):
+                self._raw_body = _io__raw_body.to_byte_array()
+                if len(self._raw_body) != self._io.size() - 2:
+                    raise kaitaistruct.ConsistencyError(u"raw(body)", self._io.size() - 2, len(self._raw_body))
+                parent.write_bytes(self._raw_body)
+            _io__raw_body.write_back_handler = KaitaiStream.WriteBackHandler(_pos2, handler)
+            self.body._write__seq(_io__raw_body)
+        elif _on == GoveeBleFrame.ProType.multi_write:
+            pass
+            _io__raw_body = KaitaiStream(BytesIO(bytearray(self._io.size() - 2)))
+            self._io.add_child_stream(_io__raw_body)
+            _pos2 = self._io.pos()
+            self._io.seek(self._io.pos() + (self._io.size() - 2))
+            def handler(parent, _io__raw_body=_io__raw_body):
+                self._raw_body = _io__raw_body.to_byte_array()
+                if len(self._raw_body) != self._io.size() - 2:
+                    raise kaitaistruct.ConsistencyError(u"raw(body)", self._io.size() - 2, len(self._raw_body))
+                parent.write_bytes(self._raw_body)
+            _io__raw_body.write_back_handler = KaitaiStream.WriteBackHandler(_pos2, handler)
+            self.body._write__seq(_io__raw_body)
+        elif _on == GoveeBleFrame.ProType.multi_write_v1:
+            pass
+            _io__raw_body = KaitaiStream(BytesIO(bytearray(self._io.size() - 2)))
+            self._io.add_child_stream(_io__raw_body)
+            _pos2 = self._io.pos()
+            self._io.seek(self._io.pos() + (self._io.size() - 2))
+            def handler(parent, _io__raw_body=_io__raw_body):
+                self._raw_body = _io__raw_body.to_byte_array()
+                if len(self._raw_body) != self._io.size() - 2:
+                    raise kaitaistruct.ConsistencyError(u"raw(body)", self._io.size() - 2, len(self._raw_body))
+                parent.write_bytes(self._raw_body)
+            _io__raw_body.write_back_handler = KaitaiStream.WriteBackHandler(_pos2, handler)
+            self.body._write__seq(_io__raw_body)
+        elif _on == GoveeBleFrame.ProType.multi_write_v2:
+            pass
+            _io__raw_body = KaitaiStream(BytesIO(bytearray(self._io.size() - 2)))
+            self._io.add_child_stream(_io__raw_body)
+            _pos2 = self._io.pos()
+            self._io.seek(self._io.pos() + (self._io.size() - 2))
+            def handler(parent, _io__raw_body=_io__raw_body):
+                self._raw_body = _io__raw_body.to_byte_array()
+                if len(self._raw_body) != self._io.size() - 2:
+                    raise kaitaistruct.ConsistencyError(u"raw(body)", self._io.size() - 2, len(self._raw_body))
+                parent.write_bytes(self._raw_body)
+            _io__raw_body.write_back_handler = KaitaiStream.WriteBackHandler(_pos2, handler)
+            self.body._write__seq(_io__raw_body)
+        elif _on == GoveeBleFrame.ProType.notify:
+            pass
+            _io__raw_body = KaitaiStream(BytesIO(bytearray(self._io.size() - 2)))
+            self._io.add_child_stream(_io__raw_body)
+            _pos2 = self._io.pos()
+            self._io.seek(self._io.pos() + (self._io.size() - 2))
+            def handler(parent, _io__raw_body=_io__raw_body):
+                self._raw_body = _io__raw_body.to_byte_array()
+                if len(self._raw_body) != self._io.size() - 2:
+                    raise kaitaistruct.ConsistencyError(u"raw(body)", self._io.size() - 2, len(self._raw_body))
+                parent.write_bytes(self._raw_body)
+            _io__raw_body.write_back_handler = KaitaiStream.WriteBackHandler(_pos2, handler)
+            self.body._write__seq(_io__raw_body)
+        elif _on == GoveeBleFrame.ProType.read:
+            pass
+            _io__raw_body = KaitaiStream(BytesIO(bytearray(self._io.size() - 2)))
+            self._io.add_child_stream(_io__raw_body)
+            _pos2 = self._io.pos()
+            self._io.seek(self._io.pos() + (self._io.size() - 2))
+            def handler(parent, _io__raw_body=_io__raw_body):
+                self._raw_body = _io__raw_body.to_byte_array()
+                if len(self._raw_body) != self._io.size() - 2:
+                    raise kaitaistruct.ConsistencyError(u"raw(body)", self._io.size() - 2, len(self._raw_body))
+                parent.write_bytes(self._raw_body)
+            _io__raw_body.write_back_handler = KaitaiStream.WriteBackHandler(_pos2, handler)
+            self.body._write__seq(_io__raw_body)
+        elif _on == GoveeBleFrame.ProType.write:
+            pass
+            _io__raw_body = KaitaiStream(BytesIO(bytearray(self._io.size() - 2)))
+            self._io.add_child_stream(_io__raw_body)
+            _pos2 = self._io.pos()
+            self._io.seek(self._io.pos() + (self._io.size() - 2))
+            def handler(parent, _io__raw_body=_io__raw_body):
+                self._raw_body = _io__raw_body.to_byte_array()
+                if len(self._raw_body) != self._io.size() - 2:
+                    raise kaitaistruct.ConsistencyError(u"raw(body)", self._io.size() - 2, len(self._raw_body))
+                parent.write_bytes(self._raw_body)
+            _io__raw_body.write_back_handler = KaitaiStream.WriteBackHandler(_pos2, handler)
+            self.body._write__seq(_io__raw_body)
+        else:
+            pass
+            if len(self.body) != self._io.size() - 2:
+                raise kaitaistruct.ConsistencyError(u"body", self._io.size() - 2, len(self.body))
+            self._io.write_bytes(self.body)
+        self._io.write_u1(self.checksum)
+
+
+    def _check(self):
+        _on = self.pro_type
+        if _on == GoveeBleFrame.ProType.handshake:
+            pass
+            if self.body._root != self._root:
+                raise kaitaistruct.ConsistencyError(u"body", self._root, self.body._root)
+            if self.body._parent != self:
+                raise kaitaistruct.ConsistencyError(u"body", self, self.body._parent)
+        elif _on == GoveeBleFrame.ProType.multi_read:
+            pass
+            if self.body._root != self._root:
+                raise kaitaistruct.ConsistencyError(u"body", self._root, self.body._root)
+            if self.body._parent != self:
+                raise kaitaistruct.ConsistencyError(u"body", self, self.body._parent)
+        elif _on == GoveeBleFrame.ProType.multi_reply_read:
+            pass
+            if self.body._root != self._root:
+                raise kaitaistruct.ConsistencyError(u"body", self._root, self.body._root)
+            if self.body._parent != self:
+                raise kaitaistruct.ConsistencyError(u"body", self, self.body._parent)
+        elif _on == GoveeBleFrame.ProType.multi_write:
+            pass
+            if self.body._root != self._root:
+                raise kaitaistruct.ConsistencyError(u"body", self._root, self.body._root)
+            if self.body._parent != self:
+                raise kaitaistruct.ConsistencyError(u"body", self, self.body._parent)
+        elif _on == GoveeBleFrame.ProType.multi_write_v1:
+            pass
+            if self.body._root != self._root:
+                raise kaitaistruct.ConsistencyError(u"body", self._root, self.body._root)
+            if self.body._parent != self:
+                raise kaitaistruct.ConsistencyError(u"body", self, self.body._parent)
+        elif _on == GoveeBleFrame.ProType.multi_write_v2:
+            pass
+            if self.body._root != self._root:
+                raise kaitaistruct.ConsistencyError(u"body", self._root, self.body._root)
+            if self.body._parent != self:
+                raise kaitaistruct.ConsistencyError(u"body", self, self.body._parent)
+        elif _on == GoveeBleFrame.ProType.notify:
+            pass
+            if self.body._root != self._root:
+                raise kaitaistruct.ConsistencyError(u"body", self._root, self.body._root)
+            if self.body._parent != self:
+                raise kaitaistruct.ConsistencyError(u"body", self, self.body._parent)
+        elif _on == GoveeBleFrame.ProType.read:
+            pass
+            if self.body._root != self._root:
+                raise kaitaistruct.ConsistencyError(u"body", self._root, self.body._root)
+            if self.body._parent != self:
+                raise kaitaistruct.ConsistencyError(u"body", self, self.body._parent)
+        elif _on == GoveeBleFrame.ProType.write:
+            pass
+            if self.body._root != self._root:
+                raise kaitaistruct.ConsistencyError(u"body", self._root, self.body._root)
+            if self.body._parent != self:
+                raise kaitaistruct.ConsistencyError(u"body", self, self.body._parent)
+        else:
+            pass
+        self._dirty = False
+
+    class A3Start(ReadWriteKaitaiStruct):
+        def __init__(self, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.A3Start, self).__init__(_io)
             self._parent = _parent
             self._root = _root
-            self._read()
 
         def _read(self):
             self.marker = self._io.read_u1()
             self.packet_count = self._io.read_u1()
             self.comm_byte = self._io.read_u1()
             self.inline_value = self._io.read_bytes(14)
+            self._dirty = False
 
 
         def _fetch_instances(self):
             pass
 
 
-    class A4StartHead(KaitaiStruct):
-        def __init__(self, _io, _parent=None, _root=None):
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.A3Start, self)._write__seq(io)
+            self._io.write_u1(self.marker)
+            self._io.write_u1(self.packet_count)
+            self._io.write_u1(self.comm_byte)
+            self._io.write_bytes(self.inline_value)
+
+
+        def _check(self):
+            if len(self.inline_value) != 14:
+                raise kaitaistruct.ConsistencyError(u"inline_value", 14, len(self.inline_value))
+            self._dirty = False
+
+
+    class A4StartHead(ReadWriteKaitaiStruct):
+        def __init__(self, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.A4StartHead, self).__init__(_io)
             self._parent = _parent
             self._root = _root
-            self._read()
 
         def _read(self):
             self.marker = self._io.read_bytes(1)
@@ -283,38 +495,65 @@ class GoveeBleFrame(KaitaiStruct):
                 raise kaitaistruct.ValidationNotEqualError(b"\x01", self.marker, self._io, u"/types/a4_start_head/seq/0")
             self.packet_count = self._io.read_u2le()
             self.comm_byte = self._io.read_u1()
+            self._dirty = False
 
 
         def _fetch_instances(self):
             pass
 
 
-    class AreaMove(KaitaiStruct):
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.A4StartHead, self)._write__seq(io)
+            self._io.write_bytes(self.marker)
+            self._io.write_u2le(self.packet_count)
+            self._io.write_u1(self.comm_byte)
+
+
+        def _check(self):
+            if len(self.marker) != 1:
+                raise kaitaistruct.ConsistencyError(u"marker", 1, len(self.marker))
+            if not self.marker == b"\x01":
+                raise kaitaistruct.ValidationNotEqualError(b"\x01", self.marker, None, u"/types/a4_start_head/seq/0")
+            self._dirty = False
+
+
+    class AreaMove(ReadWriteKaitaiStruct):
         """ParamsV2.AreaMoveEffect.c() :233: move_flags (canMove<<4 | order) + 3 movement params (f49663c/d/e)."""
-        def __init__(self, _io, _parent=None, _root=None):
+        def __init__(self, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.AreaMove, self).__init__(_io)
             self._parent = _parent
             self._root = _root
-            self._read()
 
         def _read(self):
             self.move_flags = self._io.read_u1()
             self.p_c = self._io.read_u1()
             self.p_d = self._io.read_u1()
             self.p_e = self._io.read_u1()
+            self._dirty = False
 
 
         def _fetch_instances(self):
             pass
 
 
-    class BarSwitchRead(KaitaiStruct):
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.AreaMove, self)._write__seq(io)
+            self._io.write_u1(self.move_flags)
+            self._io.write_u1(self.p_c)
+            self._io.write_u1(self.p_d)
+            self._io.write_u1(self.p_e)
+
+
+        def _check(self):
+            self._dirty = False
+
+
+    class BarSwitchRead(ReadWriteKaitaiStruct):
         """AA 36 reply (h6047 ComposeLightController / ComposeLightHeartController, the app's heartbeat): [left, right, movie/feast switch] on/off (bArr[0]==1 / bArr[1]==1 / bArr[2]==1). The 33 36 write uses the same [left, right] (Controller4ExtBytes [54, left, right], NewDetailVm.D5). The app treats the device as ON when left OR right is on (NewDetailVm heart parse, Info4Detail.g). The third byte (the movie/feast mode switch, EventFeastHeart) is not needed for control. The left/right order can be swapped during setup (h6047/add/LightPosAc), so the names are logical, not physical."""
-        def __init__(self, _io, _parent=None, _root=None):
+        def __init__(self, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.BarSwitchRead, self).__init__(_io)
             self._parent = _parent
             self._root = _root
-            self._read()
 
         def _read(self):
             self.left = self._io.read_u1()
@@ -323,6 +562,7 @@ class GoveeBleFrame(KaitaiStruct):
                 pass
                 self.movie_feast = self._io.read_u1()
 
+            self._dirty = False
 
 
         def _fetch_instances(self):
@@ -332,30 +572,53 @@ class GoveeBleFrame(KaitaiStruct):
 
 
 
-    class BarSwitchWrite(KaitaiStruct):
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.BarSwitchRead, self)._write__seq(io)
+            self._io.write_u1(self.left)
+            self._io.write_u1(self.right)
+            if (not (self._io.is_eof())):
+                pass
+                self._io.write_u1(self.movie_feast)
+
+
+
+        def _check(self):
+            self._dirty = False
+
+
+    class BarSwitchWrite(ReadWriteKaitaiStruct):
         """33 36 bar on/off write (H6047 two-bar lights): body = [left, right] (Controller4ExtBytes [0x36, left, right], NewDetailVm.D5; confirmed byte-exact vs the app). Same [left, right] the AA 36 reply echoes (bar_switch_read); the reply's 3rd byte (movie/feast switch) is read-only, not part of the write. left/right are logical positions (swappable at setup, h6047/add/LightPosAc), not fixed bars."""
-        def __init__(self, _io, _parent=None, _root=None):
+        def __init__(self, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.BarSwitchWrite, self).__init__(_io)
             self._parent = _parent
             self._root = _root
-            self._read()
 
         def _read(self):
             self.left = self._io.read_u1()
             self.right = self._io.read_u1()
+            self._dirty = False
 
 
         def _fetch_instances(self):
             pass
 
 
-    class BrightnessEffect(KaitaiStruct):
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.BarSwitchWrite, self)._write__seq(io)
+            self._io.write_u1(self.left)
+            self._io.write_u1(self.right)
+
+
+        def _check(self):
+            self._dirty = False
+
+
+    class BrightnessEffect(ReadWriteKaitaiStruct):
         """ParamsV2.BrightnessEffect (parser :269): 6 unsigned bytes f49670a..f49675f (level/index params; the app stores each as its own field but does not attach further semantics)."""
-        def __init__(self, _io, _parent=None, _root=None):
+        def __init__(self, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.BrightnessEffect, self).__init__(_io)
             self._parent = _parent
             self._root = _root
-            self._read()
 
         def _read(self):
             self.f_a = self._io.read_u1()
@@ -364,62 +627,99 @@ class GoveeBleFrame(KaitaiStruct):
             self.f_d = self._io.read_u1()
             self.f_e = self._io.read_u1()
             self.f_f = self._io.read_u1()
+            self._dirty = False
 
 
         def _fetch_instances(self):
             pass
 
 
-    class BrightnessPayload(KaitaiStruct):
-        def __init__(self, _io, _parent=None, _root=None):
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.BrightnessEffect, self)._write__seq(io)
+            self._io.write_u1(self.f_a)
+            self._io.write_u1(self.f_b)
+            self._io.write_u1(self.f_c)
+            self._io.write_u1(self.f_d)
+            self._io.write_u1(self.f_e)
+            self._io.write_u1(self.f_f)
+
+
+        def _check(self):
+            self._dirty = False
+
+
+    class BrightnessPayload(ReadWriteKaitaiStruct):
+        def __init__(self, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.BrightnessPayload, self).__init__(_io)
             self._parent = _parent
             self._root = _root
-            self._read()
 
         def _read(self):
             self.level = self._io.read_u1()
+            self._dirty = False
 
 
         def _fetch_instances(self):
             pass
 
 
-    class BrightnessReadReply(KaitaiStruct):
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.BrightnessPayload, self)._write__seq(io)
+            self._io.write_u1(self.level)
+
+
+        def _check(self):
+            self._dirty = False
+
+
+    class BrightnessReadReply(ReadWriteKaitaiStruct):
         """AA 04 reply (BrightnessController.parseValidBytes): raw brightness 0-255. NO 0-255<->0-100 rescale in the BLE codec (percent mapping is UI-layer)."""
-        def __init__(self, _io, _parent=None, _root=None):
+        def __init__(self, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.BrightnessReadReply, self).__init__(_io)
             self._parent = _parent
             self._root = _root
-            self._read()
 
         def _read(self):
             self.brightness = self._io.read_u1()
+            self._dirty = False
 
 
         def _fetch_instances(self):
             pass
 
 
-    class BulbGroupColorRead(KaitaiStruct):
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.BrightnessReadReply, self)._write__seq(io)
+            self._io.write_u1(self.brightness)
+
+
+        def _check(self):
+            self._dirty = False
+
+
+    class BulbGroupColorRead(ReadWriteKaitaiStruct):
         """Mechanism-B V1 batch frame (BulbGroupColor.parseBytes). Reply = [AA][A2][body]; this type = body
         (validBytes after the 2-byte header). 4 colour groups per frame, 3 bytes each [R,G,B], POSITIONAL
         (segment = (batch_seq-1)*4 + i; no per-group index/brightness byte — that is the V1↔V2 difference).
         Source: BulbGroupColor.java:15-29 (loop is hardcoded 4), BulbStringColorController.java:32-44 (cmd 0xA2),
         consumer BleOpV1.java:318-345 (batch accumulate).
         """
-        def __init__(self, _io, _parent=None, _root=None):
+        def __init__(self, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.BulbGroupColorRead, self).__init__(_io)
             self._parent = _parent
             self._root = _root
-            self._read()
 
         def _read(self):
             self.batch_seq = self._io.read_u1()
             self.groups = []
             for i in range(4):
-                self.groups.append(GoveeBleFrame.BulbRgbGroup(self._io, self, self._root))
+                _t_groups = GoveeBleFrame.BulbRgbGroup(self._io, self, self._root)
+                try:
+                    _t_groups._read()
+                finally:
+                    self.groups.append(_t_groups)
 
+            self._dirty = False
 
 
         def _fetch_instances(self):
@@ -430,7 +730,29 @@ class GoveeBleFrame(KaitaiStruct):
 
 
 
-    class BulbGroupColorReadV2(KaitaiStruct):
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.BulbGroupColorRead, self)._write__seq(io)
+            self._io.write_u1(self.batch_seq)
+            for i in range(len(self.groups)):
+                pass
+                self.groups[i]._write__seq(self._io)
+
+
+
+        def _check(self):
+            if len(self.groups) != 4:
+                raise kaitaistruct.ConsistencyError(u"groups", 4, len(self.groups))
+            for i in range(len(self.groups)):
+                pass
+                if self.groups[i]._root != self._root:
+                    raise kaitaistruct.ConsistencyError(u"groups", self._root, self.groups[i]._root)
+                if self.groups[i]._parent != self:
+                    raise kaitaistruct.ConsistencyError(u"groups", self, self.groups[i]._parent)
+
+            self._dirty = False
+
+
+    class BulbGroupColorReadV2(ReadWriteKaitaiStruct):
         """Mechanism-B V2 batch frame (BulbGroupColorV2.parseBytes). Reply = [AA][A5][body]; this type = body.
         Each group = 4 bytes [brightness, R, G, B] — the leading byte is BRIGHTNESS, confirmed at the consumer:
         BulbGroupColorV2.f109039c -> SubModeColorV2.f109110e = colors.brightnessSet (SubModeColorV2.f:70).
@@ -440,18 +762,22 @@ class GoveeBleFrame(KaitaiStruct):
         BulbStringColorControllerV3, also exists.) Source: BulbGroupColorV2.java:18-39,
         BulbStringColorControllerV2.java:41-53, consumer BleOpV1.java:349-377.
         """
-        def __init__(self, _io, _parent=None, _root=None):
+        def __init__(self, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.BulbGroupColorReadV2, self).__init__(_io)
             self._parent = _parent
             self._root = _root
-            self._read()
 
         def _read(self):
             self.batch_seq = self._io.read_u1()
             self.groups = []
             for i in range(3):
-                self.groups.append(GoveeBleFrame.BulbRgbGroupV2(self._io, self, self._root))
+                _t_groups = GoveeBleFrame.BulbRgbGroupV2(self._io, self, self._root)
+                try:
+                    _t_groups._read()
+                finally:
+                    self.groups.append(_t_groups)
 
+            self._dirty = False
 
 
         def _fetch_instances(self):
@@ -462,48 +788,92 @@ class GoveeBleFrame(KaitaiStruct):
 
 
 
-    class BulbRgbGroup(KaitaiStruct):
-        def __init__(self, _io, _parent=None, _root=None):
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.BulbGroupColorReadV2, self)._write__seq(io)
+            self._io.write_u1(self.batch_seq)
+            for i in range(len(self.groups)):
+                pass
+                self.groups[i]._write__seq(self._io)
+
+
+
+        def _check(self):
+            if len(self.groups) != 3:
+                raise kaitaistruct.ConsistencyError(u"groups", 3, len(self.groups))
+            for i in range(len(self.groups)):
+                pass
+                if self.groups[i]._root != self._root:
+                    raise kaitaistruct.ConsistencyError(u"groups", self._root, self.groups[i]._root)
+                if self.groups[i]._parent != self:
+                    raise kaitaistruct.ConsistencyError(u"groups", self, self.groups[i]._parent)
+
+            self._dirty = False
+
+
+    class BulbRgbGroup(ReadWriteKaitaiStruct):
+        def __init__(self, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.BulbRgbGroup, self).__init__(_io)
             self._parent = _parent
             self._root = _root
-            self._read()
 
         def _read(self):
             self.r = self._io.read_u1()
             self.g = self._io.read_u1()
             self.b = self._io.read_u1()
+            self._dirty = False
 
 
         def _fetch_instances(self):
             pass
 
 
-    class BulbRgbGroupV2(KaitaiStruct):
-        def __init__(self, _io, _parent=None, _root=None):
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.BulbRgbGroup, self)._write__seq(io)
+            self._io.write_u1(self.r)
+            self._io.write_u1(self.g)
+            self._io.write_u1(self.b)
+
+
+        def _check(self):
+            self._dirty = False
+
+
+    class BulbRgbGroupV2(ReadWriteKaitaiStruct):
+        def __init__(self, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.BulbRgbGroupV2, self).__init__(_io)
             self._parent = _parent
             self._root = _root
-            self._read()
 
         def _read(self):
             self.brightness = self._io.read_u1()
             self.r = self._io.read_u1()
             self.g = self._io.read_u1()
             self.b = self._io.read_u1()
+            self._dirty = False
 
 
         def _fetch_instances(self):
             pass
 
 
-    class CctReadReply(KaitaiStruct):
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.BulbRgbGroupV2, self)._write__seq(io)
+            self._io.write_u1(self.brightness)
+            self._io.write_u1(self.r)
+            self._io.write_u1(self.g)
+            self._io.write_u1(self.b)
+
+
+        def _check(self):
+            self._dirty = False
+
+
+    class CctReadReply(ReadWriteKaitaiStruct):
         """Mode 0x15 CCT read reply. kelvin = u2be at frame bytes 4-5 (e.g. 0x0A8C=2700, 0x1964=6500); NO FF FF FF white point (unlike the write, which is [op, FF FF FF, kHi, kLo, ...]). Source: SubModeColorV2.parse / ComposeChange2ColorMode.result. H6047 (two bars) reads [gradual][kelvin left u2be][kelvin right u2be]: byte 0 is the gradual flag (== 1), the first kelvin is the LEFT bar (segments 0-4) and the second the RIGHT bar (segments 5-9); 0 = that bar is not in colour-temperature mode. The app shows one whole-device kelvin only when both bars match. Source: h6047/ble/SubModeColor.parse, h6047/detail/Info4Detail (subMode4Color IParseStrategy: q(bArr[0]==1), D0/E0(getSignedShort)), NewDetailVm.A5."""
-        def __init__(self, _io, _parent=None, _root=None):
+        def __init__(self, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.CctReadReply, self).__init__(_io)
             self._parent = _parent
             self._root = _root
-            self._read()
 
         def _read(self):
             self.op = self._io.read_u1()
@@ -513,6 +883,7 @@ class GoveeBleFrame(KaitaiStruct):
                 self.kelvin_right = self._io.read_u2be()
 
             self.trailing = self._io.read_bytes_full()
+            self._dirty = False
 
 
         def _fetch_instances(self):
@@ -522,7 +893,24 @@ class GoveeBleFrame(KaitaiStruct):
 
 
 
-    class Color0bKelvin(KaitaiStruct):
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.CctReadReply, self)._write__seq(io)
+            self._io.write_u1(self.op)
+            self._io.write_u2be(self.kelvin)
+            if (not (self._io.is_eof())):
+                pass
+                self._io.write_u2be(self.kelvin_right)
+
+            self._io.write_bytes(self.trailing)
+            if not self._io.is_eof():
+                raise kaitaistruct.ConsistencyError(u"trailing", 0, self._io.size() - self._io.pos())
+
+
+        def _check(self):
+            self._dirty = False
+
+
+    class Color0bKelvin(ReadWriteKaitaiStruct):
         """0x0b colour write body after the header 33 05 0b, ColorInstructionVersion COLOR_MODE_0X0B_KEVIN(6)
         (ColorInstructionVersion.java:19; Bytes.c
         base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:239-267 via Config.eu
@@ -537,11 +925,10 @@ class GoveeBleFrame(KaitaiStruct):
         Bytes.java:248-250). So kelvin != 0 does not mean CCT here. Like color_rgbic_0b_wide, the same 8-byte
         ext can instead travel as an 0xA3 type-0x6e multi-packet payload (ColorModeControllerConfig.j :689-712).
         """
-        def __init__(self, _io, _parent=None, _root=None):
+        def __init__(self, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.Color0bKelvin, self).__init__(_io)
             self._parent = _parent
             self._root = _root
-            self._read()
 
         def _read(self):
             self.r = self._io.read_u1()
@@ -551,18 +938,33 @@ class GoveeBleFrame(KaitaiStruct):
             self.seg_mask = self._io.read_u2le()
             if not self.seg_mask <= 32767:
                 raise kaitaistruct.ValidationGreaterThanError(32767, self.seg_mask, self._io, u"/types/color_0b_kelvin/seq/4")
+            self._dirty = False
 
 
         def _fetch_instances(self):
             pass
 
 
-    class Color15(KaitaiStruct):
-        def __init__(self, _io, _parent=None, _root=None):
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.Color0bKelvin, self)._write__seq(io)
+            self._io.write_u1(self.r)
+            self._io.write_u1(self.g)
+            self._io.write_u1(self.b)
+            self._io.write_u2be(self.kelvin)
+            self._io.write_u2le(self.seg_mask)
+
+
+        def _check(self):
+            if not self.seg_mask <= 32767:
+                raise kaitaistruct.ValidationGreaterThanError(32767, self.seg_mask, None, u"/types/color_0b_kelvin/seq/4")
+            self._dirty = False
+
+
+    class Color15(ReadWriteKaitaiStruct):
+        def __init__(self, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.Color15, self).__init__(_io)
             self._parent = _parent
             self._root = _root
-            self._read()
 
         def _read(self):
             self.op_type = KaitaiStream.resolve_enum(GoveeBleFrame.Op15, self._io.read_u1())
@@ -572,19 +974,23 @@ class GoveeBleFrame(KaitaiStruct):
                 self._raw_data = self._io.read_bytes_full()
                 _io__raw_data = KaitaiStream(BytesIO(self._raw_data))
                 self.data = GoveeBleFrame.Op15Brightness(_io__raw_data, self, self._root)
+                self.data._read()
             elif _on == GoveeBleFrame.Op15.set_color:
                 pass
                 self._raw_data = self._io.read_bytes_full()
                 _io__raw_data = KaitaiStream(BytesIO(self._raw_data))
                 self.data = GoveeBleFrame.Op15Color(_io__raw_data, self, self._root)
+                self.data._read()
             elif _on == GoveeBleFrame.Op15.set_color_temp:
                 pass
                 self._raw_data = self._io.read_bytes_full()
                 _io__raw_data = KaitaiStream(BytesIO(self._raw_data))
                 self.data = GoveeBleFrame.Op15ColorTemp(_io__raw_data, self, self._root)
+                self.data._read()
             else:
                 pass
                 self.data = self._io.read_bytes_full()
+            self._dirty = False
 
 
         def _fetch_instances(self):
@@ -603,18 +1009,92 @@ class GoveeBleFrame(KaitaiStruct):
                 pass
 
 
-    class ColorCct0d(KaitaiStruct):
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.Color15, self)._write__seq(io)
+            self._io.write_u1(int(self.op_type))
+            _on = self.op_type
+            if _on == GoveeBleFrame.Op15.set_brightness:
+                pass
+                _io__raw_data = KaitaiStream(BytesIO(bytearray(self._io.size() - self._io.pos())))
+                self._io.add_child_stream(_io__raw_data)
+                _pos2 = self._io.pos()
+                self._io.seek(self._io.pos() + (self._io.size() - self._io.pos()))
+                def handler(parent, _io__raw_data=_io__raw_data):
+                    self._raw_data = _io__raw_data.to_byte_array()
+                    parent.write_bytes(self._raw_data)
+                    if not parent.is_eof():
+                        raise kaitaistruct.ConsistencyError(u"raw(data)", 0, parent.size() - parent.pos())
+                _io__raw_data.write_back_handler = KaitaiStream.WriteBackHandler(_pos2, handler)
+                self.data._write__seq(_io__raw_data)
+            elif _on == GoveeBleFrame.Op15.set_color:
+                pass
+                _io__raw_data = KaitaiStream(BytesIO(bytearray(self._io.size() - self._io.pos())))
+                self._io.add_child_stream(_io__raw_data)
+                _pos2 = self._io.pos()
+                self._io.seek(self._io.pos() + (self._io.size() - self._io.pos()))
+                def handler(parent, _io__raw_data=_io__raw_data):
+                    self._raw_data = _io__raw_data.to_byte_array()
+                    parent.write_bytes(self._raw_data)
+                    if not parent.is_eof():
+                        raise kaitaistruct.ConsistencyError(u"raw(data)", 0, parent.size() - parent.pos())
+                _io__raw_data.write_back_handler = KaitaiStream.WriteBackHandler(_pos2, handler)
+                self.data._write__seq(_io__raw_data)
+            elif _on == GoveeBleFrame.Op15.set_color_temp:
+                pass
+                _io__raw_data = KaitaiStream(BytesIO(bytearray(self._io.size() - self._io.pos())))
+                self._io.add_child_stream(_io__raw_data)
+                _pos2 = self._io.pos()
+                self._io.seek(self._io.pos() + (self._io.size() - self._io.pos()))
+                def handler(parent, _io__raw_data=_io__raw_data):
+                    self._raw_data = _io__raw_data.to_byte_array()
+                    parent.write_bytes(self._raw_data)
+                    if not parent.is_eof():
+                        raise kaitaistruct.ConsistencyError(u"raw(data)", 0, parent.size() - parent.pos())
+                _io__raw_data.write_back_handler = KaitaiStream.WriteBackHandler(_pos2, handler)
+                self.data._write__seq(_io__raw_data)
+            else:
+                pass
+                self._io.write_bytes(self.data)
+                if not self._io.is_eof():
+                    raise kaitaistruct.ConsistencyError(u"data", 0, self._io.size() - self._io.pos())
+
+
+        def _check(self):
+            _on = self.op_type
+            if _on == GoveeBleFrame.Op15.set_brightness:
+                pass
+                if self.data._root != self._root:
+                    raise kaitaistruct.ConsistencyError(u"data", self._root, self.data._root)
+                if self.data._parent != self:
+                    raise kaitaistruct.ConsistencyError(u"data", self, self.data._parent)
+            elif _on == GoveeBleFrame.Op15.set_color:
+                pass
+                if self.data._root != self._root:
+                    raise kaitaistruct.ConsistencyError(u"data", self._root, self.data._root)
+                if self.data._parent != self:
+                    raise kaitaistruct.ConsistencyError(u"data", self, self.data._parent)
+            elif _on == GoveeBleFrame.Op15.set_color_temp:
+                pass
+                if self.data._root != self._root:
+                    raise kaitaistruct.ConsistencyError(u"data", self._root, self.data._root)
+                if self.data._parent != self:
+                    raise kaitaistruct.ConsistencyError(u"data", self, self.data._parent)
+            else:
+                pass
+            self._dirty = False
+
+
+    class ColorCct0d(ReadWriteKaitaiStruct):
         """0x0D colour write. RGB form = [R,G,B, 0...] (Bytes.f). Two CCT forms, both carrying tint =
         Constant.getTemColorByKelvin(kelvin) (exact 100 K table hit, else zeros):
           white-slot [ff,ff,ff, kelvin u2be, tint]  H6188 (Config.GM -> Bytes.A; library color_scheme "h6188");
           both-slot  [tint, kelvin u2be, tint]      H6008/H6006/H6052 (Config.bu -> Bytes.p; library "h6006").
         The app only sends whole 100 K steps, clamped to the device range (KelvinConfig.calibrationKelvin).
         """
-        def __init__(self, _io, _parent=None, _root=None):
+        def __init__(self, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.ColorCct0d, self).__init__(_io)
             self._parent = _parent
             self._root = _root
-            self._read()
 
         def _read(self):
             self.r = self._io.read_u1()
@@ -624,13 +1104,29 @@ class GoveeBleFrame(KaitaiStruct):
             self.tint_r = self._io.read_u1()
             self.tint_g = self._io.read_u1()
             self.tint_b = self._io.read_u1()
+            self._dirty = False
 
 
         def _fetch_instances(self):
             pass
 
 
-    class ColorGroupRead(KaitaiStruct):
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.ColorCct0d, self)._write__seq(io)
+            self._io.write_u1(self.r)
+            self._io.write_u1(self.g)
+            self._io.write_u1(self.b)
+            self._io.write_u2be(self.kelvin)
+            self._io.write_u1(self.tint_r)
+            self._io.write_u1(self.tint_g)
+            self._io.write_u1(self.tint_b)
+
+
+        def _check(self):
+            self._dirty = False
+
+
+    class ColorGroupRead(ReadWriteKaitaiStruct):
         """One 0xA5 group of the per-segment colour reply: group_index then record_count records. PARAMETRIC —
         the caller passes the two bits that are NOT in the byte stream, and the type switches internally:
           * record_count  = records in this group (= oneGroupColorSize, usually 4; last group = N - count*(g-1)).
@@ -640,13 +1136,12 @@ class GoveeBleFrame(KaitaiStruct):
             (tvlightv2, rgblight, bulblightstringv1, h7022, h6160). [record_size can't be auto-detected from the
             TLV len: len 13 == 4*3+1 == 3*4+1, so 3B and 4B are ambiguous — hence the explicit param.]
         """
-        def __init__(self, record_count, has_brightness, _io, _parent=None, _root=None):
+        def __init__(self, record_count, has_brightness, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.ColorGroupRead, self).__init__(_io)
             self._parent = _parent
             self._root = _root
             self.record_count = record_count
             self.has_brightness = has_brightness
-            self._read()
 
         def _read(self):
             self.group_index = self._io.read_u1()
@@ -655,11 +1150,20 @@ class GoveeBleFrame(KaitaiStruct):
                 _on = self.has_brightness
                 if _on == 0:
                     pass
-                    self.records.append(GoveeBleFrame.ColorGroupRecordRgb(self._io, self, self._root))
+                    _t_records = GoveeBleFrame.ColorGroupRecordRgb(self._io, self, self._root)
+                    try:
+                        _t_records._read()
+                    finally:
+                        self.records.append(_t_records)
                 elif _on == 1:
                     pass
-                    self.records.append(GoveeBleFrame.ColorGroupRecord(self._io, self, self._root))
+                    _t_records = GoveeBleFrame.ColorGroupRecord(self._io, self, self._root)
+                    try:
+                        _t_records._read()
+                    finally:
+                        self.records.append(_t_records)
 
+            self._dirty = False
 
 
         def _fetch_instances(self):
@@ -676,77 +1180,160 @@ class GoveeBleFrame(KaitaiStruct):
 
 
 
-    class ColorGroupRec(KaitaiStruct):
-        def __init__(self, _io, _parent=None, _root=None):
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.ColorGroupRead, self)._write__seq(io)
+            self._io.write_u1(self.group_index)
+            for i in range(len(self.records)):
+                pass
+                _on = self.has_brightness
+                if _on == 0:
+                    pass
+                    self.records[i]._write__seq(self._io)
+                elif _on == 1:
+                    pass
+                    self.records[i]._write__seq(self._io)
+
+
+
+        def _check(self):
+            if len(self.records) != self.record_count:
+                raise kaitaistruct.ConsistencyError(u"records", self.record_count, len(self.records))
+            for i in range(len(self.records)):
+                pass
+                _on = self.has_brightness
+                if _on == 0:
+                    pass
+                    if self.records[i]._root != self._root:
+                        raise kaitaistruct.ConsistencyError(u"records", self._root, self.records[i]._root)
+                    if self.records[i]._parent != self:
+                        raise kaitaistruct.ConsistencyError(u"records", self, self.records[i]._parent)
+                elif _on == 1:
+                    pass
+                    if self.records[i]._root != self._root:
+                        raise kaitaistruct.ConsistencyError(u"records", self._root, self.records[i]._root)
+                    if self.records[i]._parent != self:
+                        raise kaitaistruct.ConsistencyError(u"records", self, self.records[i]._parent)
+
+            self._dirty = False
+
+
+    class ColorGroupRec(ReadWriteKaitaiStruct):
+        def __init__(self, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.ColorGroupRec, self).__init__(_io)
             self._parent = _parent
             self._root = _root
-            self._read()
 
         def _read(self):
             self.brightness = self._io.read_u1()
             self.r = self._io.read_u1()
             self.g = self._io.read_u1()
             self.b = self._io.read_u1()
+            self._dirty = False
 
 
         def _fetch_instances(self):
             pass
 
 
-    class ColorGroupRecRgb(KaitaiStruct):
-        def __init__(self, _io, _parent=None, _root=None):
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.ColorGroupRec, self)._write__seq(io)
+            self._io.write_u1(self.brightness)
+            self._io.write_u1(self.r)
+            self._io.write_u1(self.g)
+            self._io.write_u1(self.b)
+
+
+        def _check(self):
+            self._dirty = False
+
+
+    class ColorGroupRecRgb(ReadWriteKaitaiStruct):
+        def __init__(self, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.ColorGroupRecRgb, self).__init__(_io)
             self._parent = _parent
             self._root = _root
-            self._read()
 
         def _read(self):
             self.r = self._io.read_u1()
             self.g = self._io.read_u1()
             self.b = self._io.read_u1()
+            self._dirty = False
 
 
         def _fetch_instances(self):
             pass
 
 
-    class ColorGroupRecord(KaitaiStruct):
-        def __init__(self, _io, _parent=None, _root=None):
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.ColorGroupRecRgb, self)._write__seq(io)
+            self._io.write_u1(self.r)
+            self._io.write_u1(self.g)
+            self._io.write_u1(self.b)
+
+
+        def _check(self):
+            self._dirty = False
+
+
+    class ColorGroupRecord(ReadWriteKaitaiStruct):
+        def __init__(self, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.ColorGroupRecord, self).__init__(_io)
             self._parent = _parent
             self._root = _root
-            self._read()
 
         def _read(self):
             self.brightness = self._io.read_u1()
             self.r = self._io.read_u1()
             self.g = self._io.read_u1()
             self.b = self._io.read_u1()
+            self._dirty = False
 
 
         def _fetch_instances(self):
             pass
 
 
-    class ColorGroupRecordRgb(KaitaiStruct):
-        def __init__(self, _io, _parent=None, _root=None):
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.ColorGroupRecord, self)._write__seq(io)
+            self._io.write_u1(self.brightness)
+            self._io.write_u1(self.r)
+            self._io.write_u1(self.g)
+            self._io.write_u1(self.b)
+
+
+        def _check(self):
+            self._dirty = False
+
+
+    class ColorGroupRecordRgb(ReadWriteKaitaiStruct):
+        def __init__(self, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.ColorGroupRecordRgb, self).__init__(_io)
             self._parent = _parent
             self._root = _root
-            self._read()
 
         def _read(self):
             self.r = self._io.read_u1()
             self.g = self._io.read_u1()
             self.b = self._io.read_u1()
+            self._dirty = False
 
 
         def _fetch_instances(self):
             pass
 
 
-    class ColorGroupStatus(KaitaiStruct):
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.ColorGroupRecordRgb, self)._write__seq(io)
+            self._io.write_u1(self.r)
+            self._io.write_u1(self.g)
+            self._io.write_u1(self.b)
+
+
+        def _check(self):
+            self._dirty = False
+
+
+    class ColorGroupStatus(ReadWriteKaitaiStruct):
         """0xAC TLV 0xA5 — ONE colour group (Controller4ColorInfoByGroup). group_index @ value[0] is 1-based
         (VM read loop iterates group 1..maxGroup; request byte = group number). Records fill the rest of the
         TLV: COUNT = (len-1)/record_size (the walker's own count is a caller-supplied per-SKU constant
@@ -760,20 +1347,24 @@ class GoveeBleFrame(KaitaiStruct):
         NOTE the reply's group_index byte is read but DISCARDED in the 4-byte callback path — the client tracks
         the group by its per-group READ REQUEST, not this byte.
         """
-        def __init__(self, _io, _parent=None, _root=None):
+        def __init__(self, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.ColorGroupStatus, self).__init__(_io)
             self._parent = _parent
             self._root = _root
-            self._read()
 
         def _read(self):
             self.group_index = self._io.read_u1()
             self.records = []
             i = 0
             while not self._io.is_eof():
-                self.records.append(GoveeBleFrame.ColorGroupRec(self._io, self, self._root))
+                _t_records = GoveeBleFrame.ColorGroupRec(self._io, self, self._root)
+                try:
+                    _t_records._read()
+                finally:
+                    self.records.append(_t_records)
                 i += 1
 
+            self._dirty = False
 
 
         def _fetch_instances(self):
@@ -784,12 +1375,35 @@ class GoveeBleFrame(KaitaiStruct):
 
 
 
-    class ColorLegacy(KaitaiStruct):
-        def __init__(self, _io, _parent=None, _root=None):
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.ColorGroupStatus, self)._write__seq(io)
+            self._io.write_u1(self.group_index)
+            for i in range(len(self.records)):
+                pass
+                if self._io.is_eof():
+                    raise kaitaistruct.ConsistencyError(u"records", 0, self._io.size() - self._io.pos())
+                self.records[i]._write__seq(self._io)
+
+            if not self._io.is_eof():
+                raise kaitaistruct.ConsistencyError(u"records", 0, self._io.size() - self._io.pos())
+
+
+        def _check(self):
+            for i in range(len(self.records)):
+                pass
+                if self.records[i]._root != self._root:
+                    raise kaitaistruct.ConsistencyError(u"records", self._root, self.records[i]._root)
+                if self.records[i]._parent != self:
+                    raise kaitaistruct.ConsistencyError(u"records", self, self.records[i]._parent)
+
+            self._dirty = False
+
+
+    class ColorLegacy(ReadWriteKaitaiStruct):
+        def __init__(self, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.ColorLegacy, self).__init__(_io)
             self._parent = _parent
             self._root = _root
-            self._read()
 
         def _read(self):
             self.r = self._io.read_u1()
@@ -799,31 +1413,59 @@ class GoveeBleFrame(KaitaiStruct):
             self.r2 = self._io.read_u1()
             self.g2 = self._io.read_u1()
             self.b2 = self._io.read_u1()
+            self._dirty = False
 
 
         def _fetch_instances(self):
             pass
 
 
-    class ColorRgbic0b(KaitaiStruct):
-        def __init__(self, _io, _parent=None, _root=None):
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.ColorLegacy, self)._write__seq(io)
+            self._io.write_u1(self.r)
+            self._io.write_u1(self.g)
+            self._io.write_u1(self.b)
+            self._io.write_u1(self.white_flag)
+            self._io.write_u1(self.r2)
+            self._io.write_u1(self.g2)
+            self._io.write_u1(self.b2)
+
+
+        def _check(self):
+            self._dirty = False
+
+
+    class ColorRgbic0b(ReadWriteKaitaiStruct):
+        def __init__(self, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.ColorRgbic0b, self).__init__(_io)
             self._parent = _parent
             self._root = _root
-            self._read()
 
         def _read(self):
             self.r = self._io.read_u1()
             self.g = self._io.read_u1()
             self.b = self._io.read_u1()
             self.seg_mask = self._io.read_u2le()
+            self._dirty = False
 
 
         def _fetch_instances(self):
             pass
 
 
-    class ColorRgbic0bWide(KaitaiStruct):
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.ColorRgbic0b, self)._write__seq(io)
+            self._io.write_u1(self.r)
+            self._io.write_u1(self.g)
+            self._io.write_u1(self.b)
+            self._io.write_u2le(self.seg_mask)
+
+
+        def _check(self):
+            self._dirty = False
+
+
+    class ColorRgbic0bWide(ReadWriteKaitaiStruct):
         """0x0b RGBIC colour write body after the header 33 05 0b, ColorInstructionVersion COLOR_MODE_0X0B(3)
         (base-classes12/com/govee/common2light/capability/color/ColorInstructionVersion.java:16; Bytes.d
         base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:270-281 via Config.cu
@@ -839,31 +1481,44 @@ class GoveeBleFrame(KaitaiStruct):
         payload of an 0xA3 multi-packet of type 0x6e (MultiController.java:48-61) followed by 33 05 15, so this
         body can also follow the 0x0b byte inside that A3 payload rather than a 33 05 0b header.
         """
-        def __init__(self, mask_width, _io, _parent=None, _root=None):
+        def __init__(self, mask_width, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.ColorRgbic0bWide, self).__init__(_io)
             self._parent = _parent
             self._root = _root
             self.mask_width = mask_width
-            self._read()
 
         def _read(self):
             self.r = self._io.read_u1()
             self.g = self._io.read_u1()
             self.b = self._io.read_u1()
             self.seg_mask = self._io.read_bytes(self.mask_width)
+            self._dirty = False
 
 
         def _fetch_instances(self):
             pass
 
 
-    class ColorStripGroup(KaitaiStruct):
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.ColorRgbic0bWide, self)._write__seq(io)
+            self._io.write_u1(self.r)
+            self._io.write_u1(self.g)
+            self._io.write_u1(self.b)
+            self._io.write_bytes(self.seg_mask)
+
+
+        def _check(self):
+            if len(self.seg_mask) != self.mask_width:
+                raise kaitaistruct.ConsistencyError(u"seg_mask", self.mask_width, len(self.seg_mask))
+            self._dirty = False
+
+
+    class ColorStripGroup(ReadWriteKaitaiStruct):
         """tag 0x00 = colour group [0, count, R, G, B, idx×count]; tag 0x01 = brightness group [1, count, brightness, idx×count]. idx = 1-byte segment indices."""
-        def __init__(self, _io, _parent=None, _root=None):
+        def __init__(self, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.ColorStripGroup, self).__init__(_io)
             self._parent = _parent
             self._root = _root
-            self._read()
 
         def _read(self):
             self.tag = self._io.read_u1()
@@ -888,6 +1543,7 @@ class GoveeBleFrame(KaitaiStruct):
             for i in range(self.pixel_count):
                 self.indices.append(self._io.read_u1())
 
+            self._dirty = False
 
 
         def _fetch_instances(self):
@@ -909,20 +1565,71 @@ class GoveeBleFrame(KaitaiStruct):
 
 
 
-    class ColorStripWrite(KaitaiStruct):
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.ColorStripGroup, self)._write__seq(io)
+            self._io.write_u1(self.tag)
+            self._io.write_u1(self.pixel_count)
+            if self.tag == 0:
+                pass
+                self._io.write_u1(self.r)
+
+            if self.tag == 0:
+                pass
+                self._io.write_u1(self.g)
+
+            if self.tag == 0:
+                pass
+                self._io.write_u1(self.b)
+
+            if self.tag == 1:
+                pass
+                self._io.write_u1(self.brightness)
+
+            for i in range(len(self.indices)):
+                pass
+                self._io.write_u1(self.indices[i])
+
+
+
+        def _check(self):
+            if self.tag == 0:
+                pass
+
+            if self.tag == 0:
+                pass
+
+            if self.tag == 0:
+                pass
+
+            if self.tag == 1:
+                pass
+
+            if len(self.indices) != self.pixel_count:
+                raise kaitaistruct.ConsistencyError(u"indices", self.pixel_count, len(self.indices))
+            for i in range(len(self.indices)):
+                pass
+
+            self._dirty = False
+
+
+    class ColorStripWrite(ReadWriteKaitaiStruct):
         """[group_count][group × group_count]; group_count = (#distinct colours) + (#distinct brightness values, if a brightnessSet was set)."""
-        def __init__(self, _io, _parent=None, _root=None):
+        def __init__(self, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.ColorStripWrite, self).__init__(_io)
             self._parent = _parent
             self._root = _root
-            self._read()
 
         def _read(self):
             self.group_count = self._io.read_u1()
             self.groups = []
             for i in range(self.group_count):
-                self.groups.append(GoveeBleFrame.ColorStripGroup(self._io, self, self._root))
+                _t_groups = GoveeBleFrame.ColorStripGroup(self._io, self, self._root)
+                try:
+                    _t_groups._read()
+                finally:
+                    self.groups.append(_t_groups)
 
+            self._dirty = False
 
 
         def _fetch_instances(self):
@@ -933,19 +1640,43 @@ class GoveeBleFrame(KaitaiStruct):
 
 
 
-    class DeviceInfoBasic(KaitaiStruct):
-        def __init__(self, _io, _parent=None, _root=None):
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.ColorStripWrite, self)._write__seq(io)
+            self._io.write_u1(self.group_count)
+            for i in range(len(self.groups)):
+                pass
+                self.groups[i]._write__seq(self._io)
+
+
+
+        def _check(self):
+            if len(self.groups) != self.group_count:
+                raise kaitaistruct.ConsistencyError(u"groups", self.group_count, len(self.groups))
+            for i in range(len(self.groups)):
+                pass
+                if self.groups[i]._root != self._root:
+                    raise kaitaistruct.ConsistencyError(u"groups", self._root, self.groups[i]._root)
+                if self.groups[i]._parent != self:
+                    raise kaitaistruct.ConsistencyError(u"groups", self, self.groups[i]._parent)
+
+            self._dirty = False
+
+
+    class DeviceInfoBasic(ReadWriteKaitaiStruct):
+        def __init__(self, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.DeviceInfoBasic, self).__init__(_io)
             self._parent = _parent
             self._root = _root
-            self._read()
 
         def _read(self):
             self.uid = self._io.read_bytes(8)
             self.sw_version = GoveeBleFrame.Version3(self._io, self, self._root)
+            self.sw_version._read()
             self.hw_version = GoveeBleFrame.Version3(self._io, self, self._root)
+            self.hw_version._read()
             self.dsp_version = self._io.read_u2le()
             self.pad = self._io.read_bytes_full()
+            self._dirty = False
 
 
         def _fetch_instances(self):
@@ -954,32 +1685,67 @@ class GoveeBleFrame(KaitaiStruct):
             self.hw_version._fetch_instances()
 
 
-    class DeviceInfoHardVersion(KaitaiStruct):
-        def __init__(self, _io, _parent=None, _root=None):
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.DeviceInfoBasic, self)._write__seq(io)
+            self._io.write_bytes(self.uid)
+            self.sw_version._write__seq(self._io)
+            self.hw_version._write__seq(self._io)
+            self._io.write_u2le(self.dsp_version)
+            self._io.write_bytes(self.pad)
+            if not self._io.is_eof():
+                raise kaitaistruct.ConsistencyError(u"pad", 0, self._io.size() - self._io.pos())
+
+
+        def _check(self):
+            if len(self.uid) != 8:
+                raise kaitaistruct.ConsistencyError(u"uid", 8, len(self.uid))
+            if self.sw_version._root != self._root:
+                raise kaitaistruct.ConsistencyError(u"sw_version", self._root, self.sw_version._root)
+            if self.sw_version._parent != self:
+                raise kaitaistruct.ConsistencyError(u"sw_version", self, self.sw_version._parent)
+            if self.hw_version._root != self._root:
+                raise kaitaistruct.ConsistencyError(u"hw_version", self._root, self.hw_version._root)
+            if self.hw_version._parent != self:
+                raise kaitaistruct.ConsistencyError(u"hw_version", self, self.hw_version._parent)
+            self._dirty = False
+
+
+    class DeviceInfoHardVersion(ReadWriteKaitaiStruct):
+        def __init__(self, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.DeviceInfoHardVersion, self).__init__(_io)
             self._parent = _parent
             self._root = _root
-            self._read()
 
         def _read(self):
             self.version = (KaitaiStream.bytes_terminate(self._io.read_bytes_full(), 0, False)).decode(u"UTF-8")
+            self._dirty = False
 
 
         def _fetch_instances(self):
             pass
 
 
-    class DeviceInfoRead(KaitaiStruct):
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.DeviceInfoHardVersion, self)._write__seq(io)
+            self._io.write_bytes_limit((self.version).encode(u"UTF-8"), self._io.size() - self._io.pos(), 0, 0)
+            if not self._io.is_eof():
+                raise kaitaistruct.ConsistencyError(u"version", 0, self._io.size() - self._io.pos())
+
+
+        def _check(self):
+            self._dirty = False
+
+
+    class DeviceInfoRead(ReadWriteKaitaiStruct):
         """AA 07 reply (BasicInfoController / BasicWifiInfoController / SnController / HardVersionController).
         selector @ body[0] picks the body. 3-byte version fields render as X.YY.ZZ (major . %02d . %02d).
         The app's own connect-time reads are AA 06 (soft version), AA 07 03 (hard version) and AA 07 02
         (SN = device id); AA 07 10 / 11 are the binary basic / Wi-Fi forms.
         """
-        def __init__(self, _io, _parent=None, _root=None):
+        def __init__(self, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.DeviceInfoRead, self).__init__(_io)
             self._parent = _parent
             self._root = _root
-            self._read()
 
         def _read(self):
             self.selector = self._io.read_u1()
@@ -989,24 +1755,29 @@ class GoveeBleFrame(KaitaiStruct):
                 self._raw_info = self._io.read_bytes_full()
                 _io__raw_info = KaitaiStream(BytesIO(self._raw_info))
                 self.info = GoveeBleFrame.DeviceInfoBasic(_io__raw_info, self, self._root)
+                self.info._read()
             elif _on == 17:
                 pass
                 self._raw_info = self._io.read_bytes_full()
                 _io__raw_info = KaitaiStream(BytesIO(self._raw_info))
                 self.info = GoveeBleFrame.DeviceInfoWifi(_io__raw_info, self, self._root)
+                self.info._read()
             elif _on == 2:
                 pass
                 self._raw_info = self._io.read_bytes_full()
                 _io__raw_info = KaitaiStream(BytesIO(self._raw_info))
                 self.info = GoveeBleFrame.DeviceInfoSn(_io__raw_info, self, self._root)
+                self.info._read()
             elif _on == 3:
                 pass
                 self._raw_info = self._io.read_bytes_full()
                 _io__raw_info = KaitaiStream(BytesIO(self._raw_info))
                 self.info = GoveeBleFrame.DeviceInfoHardVersion(_io__raw_info, self, self._root)
+                self.info._read()
             else:
                 pass
                 self.info = self._io.read_bytes_full()
+            self._dirty = False
 
 
         def _fetch_instances(self):
@@ -1028,34 +1799,144 @@ class GoveeBleFrame(KaitaiStruct):
                 pass
 
 
-    class DeviceInfoSn(KaitaiStruct):
-        def __init__(self, _io, _parent=None, _root=None):
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.DeviceInfoRead, self)._write__seq(io)
+            self._io.write_u1(self.selector)
+            _on = self.selector
+            if _on == 16:
+                pass
+                _io__raw_info = KaitaiStream(BytesIO(bytearray(self._io.size() - self._io.pos())))
+                self._io.add_child_stream(_io__raw_info)
+                _pos2 = self._io.pos()
+                self._io.seek(self._io.pos() + (self._io.size() - self._io.pos()))
+                def handler(parent, _io__raw_info=_io__raw_info):
+                    self._raw_info = _io__raw_info.to_byte_array()
+                    parent.write_bytes(self._raw_info)
+                    if not parent.is_eof():
+                        raise kaitaistruct.ConsistencyError(u"raw(info)", 0, parent.size() - parent.pos())
+                _io__raw_info.write_back_handler = KaitaiStream.WriteBackHandler(_pos2, handler)
+                self.info._write__seq(_io__raw_info)
+            elif _on == 17:
+                pass
+                _io__raw_info = KaitaiStream(BytesIO(bytearray(self._io.size() - self._io.pos())))
+                self._io.add_child_stream(_io__raw_info)
+                _pos2 = self._io.pos()
+                self._io.seek(self._io.pos() + (self._io.size() - self._io.pos()))
+                def handler(parent, _io__raw_info=_io__raw_info):
+                    self._raw_info = _io__raw_info.to_byte_array()
+                    parent.write_bytes(self._raw_info)
+                    if not parent.is_eof():
+                        raise kaitaistruct.ConsistencyError(u"raw(info)", 0, parent.size() - parent.pos())
+                _io__raw_info.write_back_handler = KaitaiStream.WriteBackHandler(_pos2, handler)
+                self.info._write__seq(_io__raw_info)
+            elif _on == 2:
+                pass
+                _io__raw_info = KaitaiStream(BytesIO(bytearray(self._io.size() - self._io.pos())))
+                self._io.add_child_stream(_io__raw_info)
+                _pos2 = self._io.pos()
+                self._io.seek(self._io.pos() + (self._io.size() - self._io.pos()))
+                def handler(parent, _io__raw_info=_io__raw_info):
+                    self._raw_info = _io__raw_info.to_byte_array()
+                    parent.write_bytes(self._raw_info)
+                    if not parent.is_eof():
+                        raise kaitaistruct.ConsistencyError(u"raw(info)", 0, parent.size() - parent.pos())
+                _io__raw_info.write_back_handler = KaitaiStream.WriteBackHandler(_pos2, handler)
+                self.info._write__seq(_io__raw_info)
+            elif _on == 3:
+                pass
+                _io__raw_info = KaitaiStream(BytesIO(bytearray(self._io.size() - self._io.pos())))
+                self._io.add_child_stream(_io__raw_info)
+                _pos2 = self._io.pos()
+                self._io.seek(self._io.pos() + (self._io.size() - self._io.pos()))
+                def handler(parent, _io__raw_info=_io__raw_info):
+                    self._raw_info = _io__raw_info.to_byte_array()
+                    parent.write_bytes(self._raw_info)
+                    if not parent.is_eof():
+                        raise kaitaistruct.ConsistencyError(u"raw(info)", 0, parent.size() - parent.pos())
+                _io__raw_info.write_back_handler = KaitaiStream.WriteBackHandler(_pos2, handler)
+                self.info._write__seq(_io__raw_info)
+            else:
+                pass
+                self._io.write_bytes(self.info)
+                if not self._io.is_eof():
+                    raise kaitaistruct.ConsistencyError(u"info", 0, self._io.size() - self._io.pos())
+
+
+        def _check(self):
+            _on = self.selector
+            if _on == 16:
+                pass
+                if self.info._root != self._root:
+                    raise kaitaistruct.ConsistencyError(u"info", self._root, self.info._root)
+                if self.info._parent != self:
+                    raise kaitaistruct.ConsistencyError(u"info", self, self.info._parent)
+            elif _on == 17:
+                pass
+                if self.info._root != self._root:
+                    raise kaitaistruct.ConsistencyError(u"info", self._root, self.info._root)
+                if self.info._parent != self:
+                    raise kaitaistruct.ConsistencyError(u"info", self, self.info._parent)
+            elif _on == 2:
+                pass
+                if self.info._root != self._root:
+                    raise kaitaistruct.ConsistencyError(u"info", self._root, self.info._root)
+                if self.info._parent != self:
+                    raise kaitaistruct.ConsistencyError(u"info", self, self.info._parent)
+            elif _on == 3:
+                pass
+                if self.info._root != self._root:
+                    raise kaitaistruct.ConsistencyError(u"info", self._root, self.info._root)
+                if self.info._parent != self:
+                    raise kaitaistruct.ConsistencyError(u"info", self, self.info._parent)
+            else:
+                pass
+            self._dirty = False
+
+
+    class DeviceInfoSn(ReadWriteKaitaiStruct):
+        def __init__(self, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.DeviceInfoSn, self).__init__(_io)
             self._parent = _parent
             self._root = _root
-            self._read()
 
         def _read(self):
             self.uid = self._io.read_bytes(8)
             self.pad = self._io.read_bytes_full()
+            self._dirty = False
 
 
         def _fetch_instances(self):
             pass
 
 
-    class DeviceInfoWifi(KaitaiStruct):
-        def __init__(self, _io, _parent=None, _root=None):
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.DeviceInfoSn, self)._write__seq(io)
+            self._io.write_bytes(self.uid)
+            self._io.write_bytes(self.pad)
+            if not self._io.is_eof():
+                raise kaitaistruct.ConsistencyError(u"pad", 0, self._io.size() - self._io.pos())
+
+
+        def _check(self):
+            if len(self.uid) != 8:
+                raise kaitaistruct.ConsistencyError(u"uid", 8, len(self.uid))
+            self._dirty = False
+
+
+    class DeviceInfoWifi(ReadWriteKaitaiStruct):
+        def __init__(self, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.DeviceInfoWifi, self).__init__(_io)
             self._parent = _parent
             self._root = _root
-            self._read()
 
         def _read(self):
             self.wifi_mac = self._io.read_bytes(6)
             self.wifi_sw_version = GoveeBleFrame.Version3(self._io, self, self._root)
+            self.wifi_sw_version._read()
             self.wifi_hw_version = GoveeBleFrame.Version3(self._io, self, self._root)
+            self.wifi_hw_version._read()
             self.pad = self._io.read_bytes_full()
+            self._dirty = False
 
 
         def _fetch_instances(self):
@@ -1064,12 +1945,35 @@ class GoveeBleFrame(KaitaiStruct):
             self.wifi_hw_version._fetch_instances()
 
 
-    class DiyKuosan(KaitaiStruct):
-        def __init__(self, _io, _parent=None, _root=None):
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.DeviceInfoWifi, self)._write__seq(io)
+            self._io.write_bytes(self.wifi_mac)
+            self.wifi_sw_version._write__seq(self._io)
+            self.wifi_hw_version._write__seq(self._io)
+            self._io.write_bytes(self.pad)
+            if not self._io.is_eof():
+                raise kaitaistruct.ConsistencyError(u"pad", 0, self._io.size() - self._io.pos())
+
+
+        def _check(self):
+            if len(self.wifi_mac) != 6:
+                raise kaitaistruct.ConsistencyError(u"wifi_mac", 6, len(self.wifi_mac))
+            if self.wifi_sw_version._root != self._root:
+                raise kaitaistruct.ConsistencyError(u"wifi_sw_version", self._root, self.wifi_sw_version._root)
+            if self.wifi_sw_version._parent != self:
+                raise kaitaistruct.ConsistencyError(u"wifi_sw_version", self, self.wifi_sw_version._parent)
+            if self.wifi_hw_version._root != self._root:
+                raise kaitaistruct.ConsistencyError(u"wifi_hw_version", self._root, self.wifi_hw_version._root)
+            if self.wifi_hw_version._parent != self:
+                raise kaitaistruct.ConsistencyError(u"wifi_hw_version", self, self.wifi_hw_version._parent)
+            self._dirty = False
+
+
+    class DiyKuosan(ReadWriteKaitaiStruct):
+        def __init__(self, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.DiyKuosan, self).__init__(_io)
             self._parent = _parent
             self._root = _root
-            self._read()
 
         def _read(self):
             self.i = self._io.read_u1()
@@ -1083,8 +1987,13 @@ class GoveeBleFrame(KaitaiStruct):
             self.color_count = self._io.read_u1()
             self.colors = []
             for i in range(self.color_count):
-                self.colors.append(GoveeBleFrame.ScRgb(self._io, self, self._root))
+                _t_colors = GoveeBleFrame.ScRgb(self._io, self, self._root)
+                try:
+                    _t_colors._read()
+                finally:
+                    self.colors.append(_t_colors)
 
+            self._dirty = False
 
 
         def _fetch_instances(self):
@@ -1095,18 +2004,49 @@ class GoveeBleFrame(KaitaiStruct):
 
 
 
-    class DiyLayer(KaitaiStruct):
-        def __init__(self, _io, _parent=None, _root=None):
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.DiyKuosan, self)._write__seq(io)
+            self._io.write_u1(self.i)
+            self._io.write_u1(self.t)
+            self._io.write_u1(self.s)
+            self._io.write_u1(self.direction)
+            self._io.write_u1(self.l0)
+            self._io.write_u1(self.l1)
+            self._io.write_u1(self.q)
+            self._io.write_u1(self.r)
+            self._io.write_u1(self.color_count)
+            for i in range(len(self.colors)):
+                pass
+                self.colors[i]._write__seq(self._io)
+
+
+
+        def _check(self):
+            if len(self.colors) != self.color_count:
+                raise kaitaistruct.ConsistencyError(u"colors", self.color_count, len(self.colors))
+            for i in range(len(self.colors)):
+                pass
+                if self.colors[i]._root != self._root:
+                    raise kaitaistruct.ConsistencyError(u"colors", self._root, self.colors[i]._root)
+                if self.colors[i]._parent != self:
+                    raise kaitaistruct.ConsistencyError(u"colors", self, self.colors[i]._parent)
+
+            self._dirty = False
+
+
+    class DiyLayer(ReadWriteKaitaiStruct):
+        def __init__(self, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.DiyLayer, self).__init__(_io)
             self._parent = _parent
             self._root = _root
-            self._read()
 
         def _read(self):
             self.layer_len = self._io.read_u2le()
             self._raw_effect = self._io.read_bytes(self.layer_len)
             _io__raw_effect = KaitaiStream(BytesIO(self._raw_effect))
             self.effect = GoveeBleFrame.DiySubEffect(_io__raw_effect, self, self._root)
+            self.effect._read()
+            self._dirty = False
 
 
         def _fetch_instances(self):
@@ -1114,13 +2054,36 @@ class GoveeBleFrame(KaitaiStruct):
             self.effect._fetch_instances()
 
 
-    class DiyLine(KaitaiStruct):
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.DiyLayer, self)._write__seq(io)
+            self._io.write_u2le(self.layer_len)
+            _io__raw_effect = KaitaiStream(BytesIO(bytearray(self.layer_len)))
+            self._io.add_child_stream(_io__raw_effect)
+            _pos2 = self._io.pos()
+            self._io.seek(self._io.pos() + (self.layer_len))
+            def handler(parent, _io__raw_effect=_io__raw_effect):
+                self._raw_effect = _io__raw_effect.to_byte_array()
+                if len(self._raw_effect) != self.layer_len:
+                    raise kaitaistruct.ConsistencyError(u"raw(effect)", self.layer_len, len(self._raw_effect))
+                parent.write_bytes(self._raw_effect)
+            _io__raw_effect.write_back_handler = KaitaiStream.WriteBackHandler(_pos2, handler)
+            self.effect._write__seq(_io__raw_effect)
+
+
+        def _check(self):
+            if self.effect._root != self._root:
+                raise kaitaistruct.ConsistencyError(u"effect", self._root, self.effect._root)
+            if self.effect._parent != self:
+                raise kaitaistruct.ConsistencyError(u"effect", self, self.effect._parent)
+            self._dirty = False
+
+
+    class DiyLine(ReadWriteKaitaiStruct):
         """LiuDong4Line (id 2, flow/line): [i, direction, on] + count-prefixed byte list + [l0,l1,r,t,s] + RGB palette."""
-        def __init__(self, _io, _parent=None, _root=None):
+        def __init__(self, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.DiyLine, self).__init__(_io)
             self._parent = _parent
             self._root = _root
-            self._read()
 
         def _read(self):
             self.speed = self._io.read_u1()
@@ -1139,8 +2102,13 @@ class GoveeBleFrame(KaitaiStruct):
             self.color_count = self._io.read_u1()
             self.colors = []
             for i in range(self.color_count):
-                self.colors.append(GoveeBleFrame.ScRgb(self._io, self, self._root))
+                _t_colors = GoveeBleFrame.ScRgb(self._io, self, self._root)
+                try:
+                    _t_colors._read()
+                finally:
+                    self.colors.append(_t_colors)
 
+            self._dirty = False
 
 
         def _fetch_instances(self):
@@ -1154,12 +2122,51 @@ class GoveeBleFrame(KaitaiStruct):
 
 
 
-    class DiyLiudongArea(KaitaiStruct):
-        def __init__(self, _io, _parent=None, _root=None):
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.DiyLine, self)._write__seq(io)
+            self._io.write_u1(self.speed)
+            self._io.write_u1(self.direction)
+            self._io.write_u1(self.on_flag)
+            self._io.write_u1(self.seg_count)
+            for i in range(len(self.seg)):
+                pass
+                self._io.write_u1(self.seg[i])
+
+            self._io.write_u1(self.l0)
+            self._io.write_u1(self.l1)
+            self._io.write_u1(self.r)
+            self._io.write_u1(self.t)
+            self._io.write_u1(self.s)
+            self._io.write_u1(self.color_count)
+            for i in range(len(self.colors)):
+                pass
+                self.colors[i]._write__seq(self._io)
+
+
+
+        def _check(self):
+            if len(self.seg) != self.seg_count:
+                raise kaitaistruct.ConsistencyError(u"seg", self.seg_count, len(self.seg))
+            for i in range(len(self.seg)):
+                pass
+
+            if len(self.colors) != self.color_count:
+                raise kaitaistruct.ConsistencyError(u"colors", self.color_count, len(self.colors))
+            for i in range(len(self.colors)):
+                pass
+                if self.colors[i]._root != self._root:
+                    raise kaitaistruct.ConsistencyError(u"colors", self._root, self.colors[i]._root)
+                if self.colors[i]._parent != self:
+                    raise kaitaistruct.ConsistencyError(u"colors", self, self.colors[i]._parent)
+
+            self._dirty = False
+
+
+    class DiyLiudongArea(ReadWriteKaitaiStruct):
+        def __init__(self, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.DiyLiudongArea, self).__init__(_io)
             self._parent = _parent
             self._root = _root
-            self._read()
 
         def _read(self):
             self.i = self._io.read_u1()
@@ -1179,8 +2186,13 @@ class GoveeBleFrame(KaitaiStruct):
             self.color_count = self._io.read_u1()
             self.colors = []
             for i in range(self.color_count):
-                self.colors.append(GoveeBleFrame.ScRgb(self._io, self, self._root))
+                _t_colors = GoveeBleFrame.ScRgb(self._io, self, self._root)
+                try:
+                    _t_colors._read()
+                finally:
+                    self.colors.append(_t_colors)
 
+            self._dirty = False
 
 
         def _fetch_instances(self):
@@ -1191,12 +2203,47 @@ class GoveeBleFrame(KaitaiStruct):
 
 
 
-    class DiyPalette2(KaitaiStruct):
-        def __init__(self, _io, _parent=None, _root=None):
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.DiyLiudongArea, self)._write__seq(io)
+            self._io.write_u1(self.i)
+            self._io.write_u1(self.t0)
+            self._io.write_u1(self.t1)
+            self._io.write_u1(self.x)
+            self._io.write_u1(self.w)
+            self._io.write_u1(self.h)
+            self._io.write_u1(self.r0)
+            self._io.write_u1(self.r1)
+            self._io.write_u1(self.q0)
+            self._io.write_u1(self.q1)
+            self._io.write_u1(self.m0)
+            self._io.write_u1(self.m1)
+            self._io.write_u1(self.u)
+            self._io.write_u1(self.v)
+            self._io.write_u1(self.color_count)
+            for i in range(len(self.colors)):
+                pass
+                self.colors[i]._write__seq(self._io)
+
+
+
+        def _check(self):
+            if len(self.colors) != self.color_count:
+                raise kaitaistruct.ConsistencyError(u"colors", self.color_count, len(self.colors))
+            for i in range(len(self.colors)):
+                pass
+                if self.colors[i]._root != self._root:
+                    raise kaitaistruct.ConsistencyError(u"colors", self._root, self.colors[i]._root)
+                if self.colors[i]._parent != self:
+                    raise kaitaistruct.ConsistencyError(u"colors", self, self.colors[i]._parent)
+
+            self._dirty = False
+
+
+    class DiyPalette2(ReadWriteKaitaiStruct):
+        def __init__(self, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.DiyPalette2, self).__init__(_io)
             self._parent = _parent
             self._root = _root
-            self._read()
 
         def _read(self):
             self.i = self._io.read_u1()
@@ -1204,8 +2251,13 @@ class GoveeBleFrame(KaitaiStruct):
             self.color_count = self._io.read_u1()
             self.colors = []
             for i in range(self.color_count):
-                self.colors.append(GoveeBleFrame.ScRgb(self._io, self, self._root))
+                _t_colors = GoveeBleFrame.ScRgb(self._io, self, self._root)
+                try:
+                    _t_colors._read()
+                finally:
+                    self.colors.append(_t_colors)
 
+            self._dirty = False
 
 
         def _fetch_instances(self):
@@ -1216,7 +2268,31 @@ class GoveeBleFrame(KaitaiStruct):
 
 
 
-    class DiySubEffect(KaitaiStruct):
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.DiyPalette2, self)._write__seq(io)
+            self._io.write_u1(self.i)
+            self._io.write_u1(self.m)
+            self._io.write_u1(self.color_count)
+            for i in range(len(self.colors)):
+                pass
+                self.colors[i]._write__seq(self._io)
+
+
+
+        def _check(self):
+            if len(self.colors) != self.color_count:
+                raise kaitaistruct.ConsistencyError(u"colors", self.color_count, len(self.colors))
+            for i in range(len(self.colors)):
+                pass
+                if self.colors[i]._root != self._root:
+                    raise kaitaistruct.ConsistencyError(u"colors", self._root, self.colors[i]._root)
+                if self.colors[i]._parent != self:
+                    raise kaitaistruct.ConsistencyError(u"colors", self, self.colors[i]._parent)
+
+            self._dirty = False
+
+
+    class DiySubEffect(ReadWriteKaitaiStruct):
         """H60A6 DIY layer body = sub_effect_id + effect params (Layer.b, .../h60a6/diy/protocol/*). Map
         (pinyin = decompiled class name, English = translation): 1 LiuDong4Area (flow, zone) ·
         2 LiuDong4Line (flow, line) · 3 KuoSan (diffuse) · 4 XuanZhuan (rotate) · 5 SuiJiHuXi (random breathing) ·
@@ -1225,11 +2301,10 @@ class GoveeBleFrame(KaitaiStruct):
         `[fixed params][color_count:u1][color_count × RGB]`; the arg to diy_palette is that fixed-param
         size. Verified: consumes every DIY layer body in the catalog exactly (ids 1,2,5,7 present).
         """
-        def __init__(self, _io, _parent=None, _root=None):
+        def __init__(self, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.DiySubEffect, self).__init__(_io)
             self._parent = _parent
             self._root = _root
-            self._read()
 
         def _read(self):
             self.sub_effect_id = self._io.read_u1()
@@ -1237,33 +2312,44 @@ class GoveeBleFrame(KaitaiStruct):
             if _on == 1:
                 pass
                 self.effect = GoveeBleFrame.DiyLiudongArea(self._io, self, self._root)
+                self.effect._read()
             elif _on == 10:
                 pass
                 self.effect = GoveeBleFrame.DiyPalette2(self._io, self, self._root)
+                self.effect._read()
             elif _on == 2:
                 pass
                 self.effect = GoveeBleFrame.DiyLine(self._io, self, self._root)
+                self.effect._read()
             elif _on == 3:
                 pass
                 self.effect = GoveeBleFrame.DiyKuosan(self._io, self, self._root)
+                self.effect._read()
             elif _on == 4:
                 pass
                 self.effect = GoveeBleFrame.DiyXuanzhuan(self._io, self, self._root)
+                self.effect._read()
             elif _on == 5:
                 pass
                 self.effect = GoveeBleFrame.DiySuijihuxi(self._io, self, self._root)
+                self.effect._read()
             elif _on == 6:
                 pass
                 self.effect = GoveeBleFrame.DiySuijiliuxing(self._io, self, self._root)
+                self.effect._read()
             elif _on == 7:
                 pass
                 self.effect = GoveeBleFrame.DiySuijijianbian(self._io, self, self._root)
+                self.effect._read()
             elif _on == 8:
                 pass
                 self.effect = GoveeBleFrame.DiyPalette2(self._io, self, self._root)
+                self.effect._read()
             elif _on == 9:
                 pass
                 self.effect = GoveeBleFrame.DiyPalette2(self._io, self, self._root)
+                self.effect._read()
+            self._dirty = False
 
 
         def _fetch_instances(self):
@@ -1301,12 +2387,112 @@ class GoveeBleFrame(KaitaiStruct):
                 self.effect._fetch_instances()
 
 
-    class DiySuijihuxi(KaitaiStruct):
-        def __init__(self, _io, _parent=None, _root=None):
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.DiySubEffect, self)._write__seq(io)
+            self._io.write_u1(self.sub_effect_id)
+            _on = self.sub_effect_id
+            if _on == 1:
+                pass
+                self.effect._write__seq(self._io)
+            elif _on == 10:
+                pass
+                self.effect._write__seq(self._io)
+            elif _on == 2:
+                pass
+                self.effect._write__seq(self._io)
+            elif _on == 3:
+                pass
+                self.effect._write__seq(self._io)
+            elif _on == 4:
+                pass
+                self.effect._write__seq(self._io)
+            elif _on == 5:
+                pass
+                self.effect._write__seq(self._io)
+            elif _on == 6:
+                pass
+                self.effect._write__seq(self._io)
+            elif _on == 7:
+                pass
+                self.effect._write__seq(self._io)
+            elif _on == 8:
+                pass
+                self.effect._write__seq(self._io)
+            elif _on == 9:
+                pass
+                self.effect._write__seq(self._io)
+
+
+        def _check(self):
+            _on = self.sub_effect_id
+            if _on == 1:
+                pass
+                if self.effect._root != self._root:
+                    raise kaitaistruct.ConsistencyError(u"effect", self._root, self.effect._root)
+                if self.effect._parent != self:
+                    raise kaitaistruct.ConsistencyError(u"effect", self, self.effect._parent)
+            elif _on == 10:
+                pass
+                if self.effect._root != self._root:
+                    raise kaitaistruct.ConsistencyError(u"effect", self._root, self.effect._root)
+                if self.effect._parent != self:
+                    raise kaitaistruct.ConsistencyError(u"effect", self, self.effect._parent)
+            elif _on == 2:
+                pass
+                if self.effect._root != self._root:
+                    raise kaitaistruct.ConsistencyError(u"effect", self._root, self.effect._root)
+                if self.effect._parent != self:
+                    raise kaitaistruct.ConsistencyError(u"effect", self, self.effect._parent)
+            elif _on == 3:
+                pass
+                if self.effect._root != self._root:
+                    raise kaitaistruct.ConsistencyError(u"effect", self._root, self.effect._root)
+                if self.effect._parent != self:
+                    raise kaitaistruct.ConsistencyError(u"effect", self, self.effect._parent)
+            elif _on == 4:
+                pass
+                if self.effect._root != self._root:
+                    raise kaitaistruct.ConsistencyError(u"effect", self._root, self.effect._root)
+                if self.effect._parent != self:
+                    raise kaitaistruct.ConsistencyError(u"effect", self, self.effect._parent)
+            elif _on == 5:
+                pass
+                if self.effect._root != self._root:
+                    raise kaitaistruct.ConsistencyError(u"effect", self._root, self.effect._root)
+                if self.effect._parent != self:
+                    raise kaitaistruct.ConsistencyError(u"effect", self, self.effect._parent)
+            elif _on == 6:
+                pass
+                if self.effect._root != self._root:
+                    raise kaitaistruct.ConsistencyError(u"effect", self._root, self.effect._root)
+                if self.effect._parent != self:
+                    raise kaitaistruct.ConsistencyError(u"effect", self, self.effect._parent)
+            elif _on == 7:
+                pass
+                if self.effect._root != self._root:
+                    raise kaitaistruct.ConsistencyError(u"effect", self._root, self.effect._root)
+                if self.effect._parent != self:
+                    raise kaitaistruct.ConsistencyError(u"effect", self, self.effect._parent)
+            elif _on == 8:
+                pass
+                if self.effect._root != self._root:
+                    raise kaitaistruct.ConsistencyError(u"effect", self._root, self.effect._root)
+                if self.effect._parent != self:
+                    raise kaitaistruct.ConsistencyError(u"effect", self, self.effect._parent)
+            elif _on == 9:
+                pass
+                if self.effect._root != self._root:
+                    raise kaitaistruct.ConsistencyError(u"effect", self._root, self.effect._root)
+                if self.effect._parent != self:
+                    raise kaitaistruct.ConsistencyError(u"effect", self, self.effect._parent)
+            self._dirty = False
+
+
+    class DiySuijihuxi(ReadWriteKaitaiStruct):
+        def __init__(self, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.DiySuijihuxi, self).__init__(_io)
             self._parent = _parent
             self._root = _root
-            self._read()
 
         def _read(self):
             self.i = self._io.read_u1()
@@ -1315,8 +2501,13 @@ class GoveeBleFrame(KaitaiStruct):
             self.color_count = self._io.read_u1()
             self.colors = []
             for i in range(self.color_count):
-                self.colors.append(GoveeBleFrame.ScRgb(self._io, self, self._root))
+                _t_colors = GoveeBleFrame.ScRgb(self._io, self, self._root)
+                try:
+                    _t_colors._read()
+                finally:
+                    self.colors.append(_t_colors)
 
+            self._dirty = False
 
 
         def _fetch_instances(self):
@@ -1327,12 +2518,36 @@ class GoveeBleFrame(KaitaiStruct):
 
 
 
-    class DiySuijijianbian(KaitaiStruct):
-        def __init__(self, _io, _parent=None, _root=None):
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.DiySuijihuxi, self)._write__seq(io)
+            self._io.write_u1(self.i)
+            self._io.write_u1(self.o)
+            self._io.write_u1(self.n)
+            self._io.write_u1(self.color_count)
+            for i in range(len(self.colors)):
+                pass
+                self.colors[i]._write__seq(self._io)
+
+
+
+        def _check(self):
+            if len(self.colors) != self.color_count:
+                raise kaitaistruct.ConsistencyError(u"colors", self.color_count, len(self.colors))
+            for i in range(len(self.colors)):
+                pass
+                if self.colors[i]._root != self._root:
+                    raise kaitaistruct.ConsistencyError(u"colors", self._root, self.colors[i]._root)
+                if self.colors[i]._parent != self:
+                    raise kaitaistruct.ConsistencyError(u"colors", self, self.colors[i]._parent)
+
+            self._dirty = False
+
+
+    class DiySuijijianbian(ReadWriteKaitaiStruct):
+        def __init__(self, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.DiySuijijianbian, self).__init__(_io)
             self._parent = _parent
             self._root = _root
-            self._read()
 
         def _read(self):
             self.i = self._io.read_u1()
@@ -1341,8 +2556,13 @@ class GoveeBleFrame(KaitaiStruct):
             self.color_count = self._io.read_u1()
             self.colors = []
             for i in range(self.color_count):
-                self.colors.append(GoveeBleFrame.ScRgb(self._io, self, self._root))
+                _t_colors = GoveeBleFrame.ScRgb(self._io, self, self._root)
+                try:
+                    _t_colors._read()
+                finally:
+                    self.colors.append(_t_colors)
 
+            self._dirty = False
 
 
         def _fetch_instances(self):
@@ -1353,12 +2573,36 @@ class GoveeBleFrame(KaitaiStruct):
 
 
 
-    class DiySuijiliuxing(KaitaiStruct):
-        def __init__(self, _io, _parent=None, _root=None):
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.DiySuijijianbian, self)._write__seq(io)
+            self._io.write_u1(self.i)
+            self._io.write_u1(self.l0)
+            self._io.write_u1(self.l1)
+            self._io.write_u1(self.color_count)
+            for i in range(len(self.colors)):
+                pass
+                self.colors[i]._write__seq(self._io)
+
+
+
+        def _check(self):
+            if len(self.colors) != self.color_count:
+                raise kaitaistruct.ConsistencyError(u"colors", self.color_count, len(self.colors))
+            for i in range(len(self.colors)):
+                pass
+                if self.colors[i]._root != self._root:
+                    raise kaitaistruct.ConsistencyError(u"colors", self._root, self.colors[i]._root)
+                if self.colors[i]._parent != self:
+                    raise kaitaistruct.ConsistencyError(u"colors", self, self.colors[i]._parent)
+
+            self._dirty = False
+
+
+    class DiySuijiliuxing(ReadWriteKaitaiStruct):
+        def __init__(self, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.DiySuijiliuxing, self).__init__(_io)
             self._parent = _parent
             self._root = _root
-            self._read()
 
         def _read(self):
             self.i = self._io.read_u1()
@@ -1370,8 +2614,13 @@ class GoveeBleFrame(KaitaiStruct):
             self.color_count = self._io.read_u1()
             self.colors = []
             for i in range(self.color_count):
-                self.colors.append(GoveeBleFrame.ScRgb(self._io, self, self._root))
+                _t_colors = GoveeBleFrame.ScRgb(self._io, self, self._root)
+                try:
+                    _t_colors._read()
+                finally:
+                    self.colors.append(_t_colors)
 
+            self._dirty = False
 
 
         def _fetch_instances(self):
@@ -1382,13 +2631,40 @@ class GoveeBleFrame(KaitaiStruct):
 
 
 
-    class DiyValue(KaitaiStruct):
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.DiySuijiliuxing, self)._write__seq(io)
+            self._io.write_u1(self.i)
+            self._io.write_u1(self.direction)
+            self._io.write_u1(self.r)
+            self._io.write_u1(self.s)
+            self._io.write_u1(self.q)
+            self._io.write_u1(self.p)
+            self._io.write_u1(self.color_count)
+            for i in range(len(self.colors)):
+                pass
+                self.colors[i]._write__seq(self._io)
+
+
+
+        def _check(self):
+            if len(self.colors) != self.color_count:
+                raise kaitaistruct.ConsistencyError(u"colors", self.color_count, len(self.colors))
+            for i in range(len(self.colors)):
+                pass
+                if self.colors[i]._root != self._root:
+                    raise kaitaistruct.ConsistencyError(u"colors", self._root, self.colors[i]._root)
+                if self.colors[i]._parent != self:
+                    raise kaitaistruct.ConsistencyError(u"colors", self, self.colors[i]._parent)
+
+            self._dirty = False
+
+
+    class DiyValue(ReadWriteKaitaiStruct):
         """H60A6 DIY effect: total-length prefix + background palette + per-layer sub-effect bodies."""
-        def __init__(self, _io, _parent=None, _root=None):
+        def __init__(self, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.DiyValue, self).__init__(_io)
             self._parent = _parent
             self._root = _root
-            self._read()
 
         def _read(self):
             self.total_len = self._io.read_u2le()
@@ -1396,13 +2672,22 @@ class GoveeBleFrame(KaitaiStruct):
             self.bg_color_size = self._io.read_u1()
             self.bg_colors = []
             for i in range(self.bg_color_size):
-                self.bg_colors.append(GoveeBleFrame.ScRgb(self._io, self, self._root))
+                _t_bg_colors = GoveeBleFrame.ScRgb(self._io, self, self._root)
+                try:
+                    _t_bg_colors._read()
+                finally:
+                    self.bg_colors.append(_t_bg_colors)
 
             self.bg_brightness = self._io.read_u1()
             self.layers = []
             for i in range(self.layer_size):
-                self.layers.append(GoveeBleFrame.DiyLayer(self._io, self, self._root))
+                _t_layers = GoveeBleFrame.DiyLayer(self._io, self, self._root)
+                try:
+                    _t_layers._read()
+                finally:
+                    self.layers.append(_t_layers)
 
+            self._dirty = False
 
 
         def _fetch_instances(self):
@@ -1417,12 +2702,49 @@ class GoveeBleFrame(KaitaiStruct):
 
 
 
-    class DiyXuanzhuan(KaitaiStruct):
-        def __init__(self, _io, _parent=None, _root=None):
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.DiyValue, self)._write__seq(io)
+            self._io.write_u2le(self.total_len)
+            self._io.write_u1(self.layer_size)
+            self._io.write_u1(self.bg_color_size)
+            for i in range(len(self.bg_colors)):
+                pass
+                self.bg_colors[i]._write__seq(self._io)
+
+            self._io.write_u1(self.bg_brightness)
+            for i in range(len(self.layers)):
+                pass
+                self.layers[i]._write__seq(self._io)
+
+
+
+        def _check(self):
+            if len(self.bg_colors) != self.bg_color_size:
+                raise kaitaistruct.ConsistencyError(u"bg_colors", self.bg_color_size, len(self.bg_colors))
+            for i in range(len(self.bg_colors)):
+                pass
+                if self.bg_colors[i]._root != self._root:
+                    raise kaitaistruct.ConsistencyError(u"bg_colors", self._root, self.bg_colors[i]._root)
+                if self.bg_colors[i]._parent != self:
+                    raise kaitaistruct.ConsistencyError(u"bg_colors", self, self.bg_colors[i]._parent)
+
+            if len(self.layers) != self.layer_size:
+                raise kaitaistruct.ConsistencyError(u"layers", self.layer_size, len(self.layers))
+            for i in range(len(self.layers)):
+                pass
+                if self.layers[i]._root != self._root:
+                    raise kaitaistruct.ConsistencyError(u"layers", self._root, self.layers[i]._root)
+                if self.layers[i]._parent != self:
+                    raise kaitaistruct.ConsistencyError(u"layers", self, self.layers[i]._parent)
+
+            self._dirty = False
+
+
+    class DiyXuanzhuan(ReadWriteKaitaiStruct):
+        def __init__(self, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.DiyXuanzhuan, self).__init__(_io)
             self._parent = _parent
             self._root = _root
-            self._read()
 
         def _read(self):
             self.i = self._io.read_u1()
@@ -1432,8 +2754,13 @@ class GoveeBleFrame(KaitaiStruct):
             self.color_count = self._io.read_u1()
             self.colors = []
             for i in range(self.color_count):
-                self.colors.append(GoveeBleFrame.ScRgb(self._io, self, self._root))
+                _t_colors = GoveeBleFrame.ScRgb(self._io, self, self._root)
+                try:
+                    _t_colors._read()
+                finally:
+                    self.colors.append(_t_colors)
 
+            self._dirty = False
 
 
         def _fetch_instances(self):
@@ -1444,44 +2771,87 @@ class GoveeBleFrame(KaitaiStruct):
 
 
 
-    class GradualRead(KaitaiStruct):
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.DiyXuanzhuan, self)._write__seq(io)
+            self._io.write_u1(self.i)
+            self._io.write_u1(self.direction)
+            self._io.write_u2le(self.angle)
+            self._io.write_u1(self.p)
+            self._io.write_u1(self.color_count)
+            for i in range(len(self.colors)):
+                pass
+                self.colors[i]._write__seq(self._io)
+
+
+
+        def _check(self):
+            if len(self.colors) != self.color_count:
+                raise kaitaistruct.ConsistencyError(u"colors", self.color_count, len(self.colors))
+            for i in range(len(self.colors)):
+                pass
+                if self.colors[i]._root != self._root:
+                    raise kaitaistruct.ConsistencyError(u"colors", self._root, self.colors[i]._root)
+                if self.colors[i]._parent != self:
+                    raise kaitaistruct.ConsistencyError(u"colors", self, self.colors[i]._parent)
+
+            self._dirty = False
+
+
+    class GradualRead(ReadWriteKaitaiStruct):
         """AA A3 reply (ControllerGradual4BleWifi.h:100-101): gradual mode on iff byte0 == 1 (validBytes length 17; only byte0 is read)."""
-        def __init__(self, _io, _parent=None, _root=None):
+        def __init__(self, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.GradualRead, self).__init__(_io)
             self._parent = _parent
             self._root = _root
-            self._read()
 
         def _read(self):
             self.state = self._io.read_u1()
+            self._dirty = False
 
 
         def _fetch_instances(self):
             pass
 
 
-    class GradualWrite(KaitaiStruct):
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.GradualRead, self)._write__seq(io)
+            self._io.write_u1(self.state)
+
+
+        def _check(self):
+            self._dirty = False
+
+
+    class GradualWrite(ReadWriteKaitaiStruct):
         """Gradual (fade between colours) on/off write: body = [state]. Two command bytes, chosen by the device's GradualVersion (Config M table: 0 -> 0xA3, 1 -> 0x14, Config.java:5602-5613): 0xA3 = Bytes.w (base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:564-566) and 0x14 = Bytes.v (Bytes.java:559-560), each [cmd, on ? 1 : 0] wrapped by Controller4ExtBytes.d (split_rgbiclight/com/govee/rgbiclight/mode/color/ColorControllerConfig.java:507-510). The same [on ? 1 : 0] comes from ControllerGradual (cmd 0x14, base-classes11/com/govee/base2light/kt/general_controller/ControllerGradual.java:60,71-72), pact_h60a0 compose GradualController (cmd 0xA3, split_h60ax/com/govee/pact_h60a0/ble/controller/compose/GradualController.java:24,42-43), the legacy GradualController (cmd 0x14, split_rgbiclight/com/govee/dreamcolorlightv1/ble/GradualController.java:13-16,22-24,31-33), and the night-mode page (33 14 01 / 33 14 00, NightModeViewModel.java:86-114, where it means enter/leave night mode). The AA A3 reply is gradual_read."""
-        def __init__(self, _io, _parent=None, _root=None):
+        def __init__(self, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.GradualWrite, self).__init__(_io)
             self._parent = _parent
             self._root = _root
-            self._read()
 
         def _read(self):
             self.state = self._io.read_u1()
+            self._dirty = False
 
 
         def _fetch_instances(self):
             pass
 
 
-    class GraffitiColorGroup(KaitaiStruct):
-        def __init__(self, _io, _parent=None, _root=None):
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.GradualWrite, self)._write__seq(io)
+            self._io.write_u1(self.state)
+
+
+        def _check(self):
+            self._dirty = False
+
+
+    class GraffitiColorGroup(ReadWriteKaitaiStruct):
+        def __init__(self, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.GraffitiColorGroup, self).__init__(_io)
             self._parent = _parent
             self._root = _root
-            self._read()
 
         def _read(self):
             self.pixel_count = self._io.read_u2le()
@@ -1492,6 +2862,7 @@ class GoveeBleFrame(KaitaiStruct):
             for i in range(self.pixel_count):
                 self.pixel_indices.append(self._io.read_u1())
 
+            self._dirty = False
 
 
         def _fetch_instances(self):
@@ -1501,18 +2872,40 @@ class GoveeBleFrame(KaitaiStruct):
 
 
 
-    class GraffitiLayer(KaitaiStruct):
-        def __init__(self, _io, _parent=None, _root=None):
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.GraffitiColorGroup, self)._write__seq(io)
+            self._io.write_u2le(self.pixel_count)
+            self._io.write_u1(self.r)
+            self._io.write_u1(self.g)
+            self._io.write_u1(self.b)
+            for i in range(len(self.pixel_indices)):
+                pass
+                self._io.write_u1(self.pixel_indices[i])
+
+
+
+        def _check(self):
+            if len(self.pixel_indices) != self.pixel_count:
+                raise kaitaistruct.ConsistencyError(u"pixel_indices", self.pixel_count, len(self.pixel_indices))
+            for i in range(len(self.pixel_indices)):
+                pass
+
+            self._dirty = False
+
+
+    class GraffitiLayer(ReadWriteKaitaiStruct):
+        def __init__(self, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.GraffitiLayer, self).__init__(_io)
             self._parent = _parent
             self._root = _root
-            self._read()
 
         def _read(self):
             self.rec_len = self._io.read_u2le()
             self._raw_body = self._io.read_bytes(self.rec_len)
             _io__raw_body = KaitaiStream(BytesIO(self._raw_body))
             self.body = GoveeBleFrame.GraffitiLayerBody(_io__raw_body, self, self._root)
+            self.body._read()
+            self._dirty = False
 
 
         def _fetch_instances(self):
@@ -1520,12 +2913,35 @@ class GoveeBleFrame(KaitaiStruct):
             self.body._fetch_instances()
 
 
-    class GraffitiLayerBody(KaitaiStruct):
-        def __init__(self, _io, _parent=None, _root=None):
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.GraffitiLayer, self)._write__seq(io)
+            self._io.write_u2le(self.rec_len)
+            _io__raw_body = KaitaiStream(BytesIO(bytearray(self.rec_len)))
+            self._io.add_child_stream(_io__raw_body)
+            _pos2 = self._io.pos()
+            self._io.seek(self._io.pos() + (self.rec_len))
+            def handler(parent, _io__raw_body=_io__raw_body):
+                self._raw_body = _io__raw_body.to_byte_array()
+                if len(self._raw_body) != self.rec_len:
+                    raise kaitaistruct.ConsistencyError(u"raw(body)", self.rec_len, len(self._raw_body))
+                parent.write_bytes(self._raw_body)
+            _io__raw_body.write_back_handler = KaitaiStream.WriteBackHandler(_pos2, handler)
+            self.body._write__seq(_io__raw_body)
+
+
+        def _check(self):
+            if self.body._root != self._root:
+                raise kaitaistruct.ConsistencyError(u"body", self._root, self.body._root)
+            if self.body._parent != self:
+                raise kaitaistruct.ConsistencyError(u"body", self, self.body._parent)
+            self._dirty = False
+
+
+    class GraffitiLayerBody(ReadWriteKaitaiStruct):
+        def __init__(self, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.GraffitiLayerBody, self).__init__(_io)
             self._parent = _parent
             self._root = _root
-            self._read()
 
         def _read(self):
             self.graffiti_type = self._io.read_u1()
@@ -1533,7 +2949,11 @@ class GoveeBleFrame(KaitaiStruct):
             self.color_count = self._io.read_u2le()
             self.groups = []
             for i in range(self.color_count):
-                self.groups.append(GoveeBleFrame.GraffitiColorGroup(self._io, self, self._root))
+                _t_groups = GoveeBleFrame.GraffitiColorGroup(self._io, self, self._root)
+                try:
+                    _t_groups._read()
+                finally:
+                    self.groups.append(_t_groups)
 
             self.action = self._io.read_u1()
             self.speed = self._io.read_u1()
@@ -1543,6 +2963,7 @@ class GoveeBleFrame(KaitaiStruct):
             self.reserved = self._io.read_bytes(4)
             if not self.reserved == b"\x00\x00\x00\x00":
                 raise kaitaistruct.ValidationNotEqualError(b"\x00\x00\x00\x00", self.reserved, self._io, u"/types/graffiti_layer_body/seq/9")
+            self._dirty = False
 
 
         def _fetch_instances(self):
@@ -1553,16 +2974,49 @@ class GoveeBleFrame(KaitaiStruct):
 
 
 
-    class GraffitiV2Value(KaitaiStruct):
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.GraffitiLayerBody, self)._write__seq(io)
+            self._io.write_u1(self.graffiti_type)
+            self._io.write_u2le(self.inner_len)
+            self._io.write_u2le(self.color_count)
+            for i in range(len(self.groups)):
+                pass
+                self.groups[i]._write__seq(self._io)
+
+            self._io.write_u1(self.action)
+            self._io.write_u1(self.speed)
+            self._io.write_u1(self.bg_brightness)
+            self._io.write_u1(self.priority)
+            self._io.write_u2le(self.duration)
+            self._io.write_bytes(self.reserved)
+
+
+        def _check(self):
+            if len(self.groups) != self.color_count:
+                raise kaitaistruct.ConsistencyError(u"groups", self.color_count, len(self.groups))
+            for i in range(len(self.groups)):
+                pass
+                if self.groups[i]._root != self._root:
+                    raise kaitaistruct.ConsistencyError(u"groups", self._root, self.groups[i]._root)
+                if self.groups[i]._parent != self:
+                    raise kaitaistruct.ConsistencyError(u"groups", self, self.groups[i]._parent)
+
+            if len(self.reserved) != 4:
+                raise kaitaistruct.ConsistencyError(u"reserved", 4, len(self.reserved))
+            if not self.reserved == b"\x00\x00\x00\x00":
+                raise kaitaistruct.ValidationNotEqualError(b"\x00\x00\x00\x00", self.reserved, None, u"/types/graffiti_layer_body/seq/9")
+            self._dirty = False
+
+
+    class GraffitiV2Value(ReadWriteKaitaiStruct):
         """General RGBIC DIY-graffiti value (DiyGraffitiV2.g; shared by RgbIcGraffitiShare0x08 and
         DIYGraffitiParser). Distinct from the dialect-A library rgbic format (rgbic_scene_value).
         commByte is device-specific (H61A8 = 0x03). Header + flat colour-index group list.
         """
-        def __init__(self, _io, _parent=None, _root=None):
+        def __init__(self, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.GraffitiV2Value, self).__init__(_io)
             self._parent = _parent
             self._root = _root
-            self._read()
 
         def _read(self):
             self.sub_effect = self._io.read_u1()
@@ -1574,8 +3028,13 @@ class GoveeBleFrame(KaitaiStruct):
             self.group_count = self._io.read_u1()
             self.groups = []
             for i in range(self.group_count):
-                self.groups.append(GoveeBleFrame.Gv2ColorGroup(self._io, self, self._root))
+                _t_groups = GoveeBleFrame.Gv2ColorGroup(self._io, self, self._root)
+                try:
+                    _t_groups._read()
+                finally:
+                    self.groups.append(_t_groups)
 
+            self._dirty = False
 
 
         def _fetch_instances(self):
@@ -1586,13 +3045,40 @@ class GoveeBleFrame(KaitaiStruct):
 
 
 
-    class GraffitiV3Value(KaitaiStruct):
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.GraffitiV2Value, self)._write__seq(io)
+            self._io.write_u1(self.sub_effect)
+            self._io.write_u1(self.speed)
+            self._io.write_u1(self.brightness)
+            self._io.write_u1(self.base_r)
+            self._io.write_u1(self.base_g)
+            self._io.write_u1(self.base_b)
+            self._io.write_u1(self.group_count)
+            for i in range(len(self.groups)):
+                pass
+                self.groups[i]._write__seq(self._io)
+
+
+
+        def _check(self):
+            if len(self.groups) != self.group_count:
+                raise kaitaistruct.ConsistencyError(u"groups", self.group_count, len(self.groups))
+            for i in range(len(self.groups)):
+                pass
+                if self.groups[i]._root != self._root:
+                    raise kaitaistruct.ConsistencyError(u"groups", self._root, self.groups[i]._root)
+                if self.groups[i]._parent != self:
+                    raise kaitaistruct.ConsistencyError(u"groups", self, self.groups[i]._parent)
+
+            self._dirty = False
+
+
+    class GraffitiV3Value(ReadWriteKaitaiStruct):
         """H6052 graffiti-v3 effect: brightness + base colour + per-layer colour-index pixel map."""
-        def __init__(self, _io, _parent=None, _root=None):
+        def __init__(self, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.GraffitiV3Value, self).__init__(_io)
             self._parent = _parent
             self._root = _root
-            self._read()
 
         def _read(self):
             self.brightness = self._io.read_u1()
@@ -1602,8 +3088,13 @@ class GoveeBleFrame(KaitaiStruct):
             self.layer_count = self._io.read_u1()
             self.layers = []
             for i in range(self.layer_count):
-                self.layers.append(GoveeBleFrame.Gv3Layer(self._io, self, self._root))
+                _t_layers = GoveeBleFrame.Gv3Layer(self._io, self, self._root)
+                try:
+                    _t_layers._read()
+                finally:
+                    self.layers.append(_t_layers)
 
+            self._dirty = False
 
 
         def _fetch_instances(self):
@@ -1614,13 +3105,38 @@ class GoveeBleFrame(KaitaiStruct):
 
 
 
-    class GraffitiValue(KaitaiStruct):
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.GraffitiV3Value, self)._write__seq(io)
+            self._io.write_u1(self.brightness)
+            self._io.write_u1(self.base_r)
+            self._io.write_u1(self.base_g)
+            self._io.write_u1(self.base_b)
+            self._io.write_u1(self.layer_count)
+            for i in range(len(self.layers)):
+                pass
+                self.layers[i]._write__seq(self._io)
+
+
+
+        def _check(self):
+            if len(self.layers) != self.layer_count:
+                raise kaitaistruct.ConsistencyError(u"layers", self.layer_count, len(self.layers))
+            for i in range(len(self.layers)):
+                pass
+                if self.layers[i]._root != self._root:
+                    raise kaitaistruct.ConsistencyError(u"layers", self._root, self.layers[i]._root)
+                if self.layers[i]._parent != self:
+                    raise kaitaistruct.ConsistencyError(u"layers", self, self.layers[i]._parent)
+
+            self._dirty = False
+
+
+    class GraffitiValue(ReadWriteKaitaiStruct):
         """H60A6 graffiti effect: background colour + per-layer colour-index pixel map."""
-        def __init__(self, _io, _parent=None, _root=None):
+        def __init__(self, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.GraffitiValue, self).__init__(_io)
             self._parent = _parent
             self._root = _root
-            self._read()
 
         def _read(self):
             self.marker = self._io.read_bytes(1)
@@ -1634,8 +3150,13 @@ class GoveeBleFrame(KaitaiStruct):
             self.layer_count = self._io.read_u1()
             self.layers = []
             for i in range(self.layer_count):
-                self.layers.append(GoveeBleFrame.GraffitiLayer(self._io, self, self._root))
+                _t_layers = GoveeBleFrame.GraffitiLayer(self._io, self, self._root)
+                try:
+                    _t_layers._read()
+                finally:
+                    self.layers.append(_t_layers)
 
+            self._dirty = False
 
 
         def _fetch_instances(self):
@@ -1646,12 +3167,43 @@ class GoveeBleFrame(KaitaiStruct):
 
 
 
-    class Gv2ColorGroup(KaitaiStruct):
-        def __init__(self, _io, _parent=None, _root=None):
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.GraffitiValue, self)._write__seq(io)
+            self._io.write_bytes(self.marker)
+            self._io.write_u1(self.bg_r)
+            self._io.write_u1(self.bg_g)
+            self._io.write_u1(self.bg_b)
+            self._io.write_u1(self.brightness)
+            self._io.write_u1(self.show_type)
+            self._io.write_u1(self.layer_count)
+            for i in range(len(self.layers)):
+                pass
+                self.layers[i]._write__seq(self._io)
+
+
+
+        def _check(self):
+            if len(self.marker) != 1:
+                raise kaitaistruct.ConsistencyError(u"marker", 1, len(self.marker))
+            if not self.marker == b"\x20":
+                raise kaitaistruct.ValidationNotEqualError(b"\x20", self.marker, None, u"/types/graffiti_value/seq/0")
+            if len(self.layers) != self.layer_count:
+                raise kaitaistruct.ConsistencyError(u"layers", self.layer_count, len(self.layers))
+            for i in range(len(self.layers)):
+                pass
+                if self.layers[i]._root != self._root:
+                    raise kaitaistruct.ConsistencyError(u"layers", self._root, self.layers[i]._root)
+                if self.layers[i]._parent != self:
+                    raise kaitaistruct.ConsistencyError(u"layers", self, self.layers[i]._parent)
+
+            self._dirty = False
+
+
+    class Gv2ColorGroup(ReadWriteKaitaiStruct):
+        def __init__(self, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.Gv2ColorGroup, self).__init__(_io)
             self._parent = _parent
             self._root = _root
-            self._read()
 
         def _read(self):
             self.pixel_count = self._io.read_u1()
@@ -1662,6 +3214,7 @@ class GoveeBleFrame(KaitaiStruct):
             for i in range(self.pixel_count):
                 self.pixel_indices.append(self._io.read_u1())
 
+            self._dirty = False
 
 
         def _fetch_instances(self):
@@ -1671,12 +3224,32 @@ class GoveeBleFrame(KaitaiStruct):
 
 
 
-    class Gv3ColorGroup(KaitaiStruct):
-        def __init__(self, _io, _parent=None, _root=None):
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.Gv2ColorGroup, self)._write__seq(io)
+            self._io.write_u1(self.pixel_count)
+            self._io.write_u1(self.r)
+            self._io.write_u1(self.g)
+            self._io.write_u1(self.b)
+            for i in range(len(self.pixel_indices)):
+                pass
+                self._io.write_u1(self.pixel_indices[i])
+
+
+
+        def _check(self):
+            if len(self.pixel_indices) != self.pixel_count:
+                raise kaitaistruct.ConsistencyError(u"pixel_indices", self.pixel_count, len(self.pixel_indices))
+            for i in range(len(self.pixel_indices)):
+                pass
+
+            self._dirty = False
+
+
+    class Gv3ColorGroup(ReadWriteKaitaiStruct):
+        def __init__(self, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.Gv3ColorGroup, self).__init__(_io)
             self._parent = _parent
             self._root = _root
-            self._read()
 
         def _read(self):
             self.pixel_count = self._io.read_u1()
@@ -1687,6 +3260,7 @@ class GoveeBleFrame(KaitaiStruct):
             for i in range(self.pixel_count):
                 self.pixel_indices.append(self._io.read_u1())
 
+            self._dirty = False
 
 
         def _fetch_instances(self):
@@ -1696,18 +3270,40 @@ class GoveeBleFrame(KaitaiStruct):
 
 
 
-    class Gv3Layer(KaitaiStruct):
-        def __init__(self, _io, _parent=None, _root=None):
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.Gv3ColorGroup, self)._write__seq(io)
+            self._io.write_u1(self.pixel_count)
+            self._io.write_u1(self.r)
+            self._io.write_u1(self.g)
+            self._io.write_u1(self.b)
+            for i in range(len(self.pixel_indices)):
+                pass
+                self._io.write_u1(self.pixel_indices[i])
+
+
+
+        def _check(self):
+            if len(self.pixel_indices) != self.pixel_count:
+                raise kaitaistruct.ConsistencyError(u"pixel_indices", self.pixel_count, len(self.pixel_indices))
+            for i in range(len(self.pixel_indices)):
+                pass
+
+            self._dirty = False
+
+
+    class Gv3Layer(ReadWriteKaitaiStruct):
+        def __init__(self, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.Gv3Layer, self).__init__(_io)
             self._parent = _parent
             self._root = _root
-            self._read()
 
         def _read(self):
             self.body_len = self._io.read_u2le()
             self._raw_body = self._io.read_bytes(self.body_len)
             _io__raw_body = KaitaiStream(BytesIO(self._raw_body))
             self.body = GoveeBleFrame.Gv3LayerBody(_io__raw_body, self, self._root)
+            self.body._read()
+            self._dirty = False
 
 
         def _fetch_instances(self):
@@ -1715,12 +3311,35 @@ class GoveeBleFrame(KaitaiStruct):
             self.body._fetch_instances()
 
 
-    class Gv3LayerBody(KaitaiStruct):
-        def __init__(self, _io, _parent=None, _root=None):
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.Gv3Layer, self)._write__seq(io)
+            self._io.write_u2le(self.body_len)
+            _io__raw_body = KaitaiStream(BytesIO(bytearray(self.body_len)))
+            self._io.add_child_stream(_io__raw_body)
+            _pos2 = self._io.pos()
+            self._io.seek(self._io.pos() + (self.body_len))
+            def handler(parent, _io__raw_body=_io__raw_body):
+                self._raw_body = _io__raw_body.to_byte_array()
+                if len(self._raw_body) != self.body_len:
+                    raise kaitaistruct.ConsistencyError(u"raw(body)", self.body_len, len(self._raw_body))
+                parent.write_bytes(self._raw_body)
+            _io__raw_body.write_back_handler = KaitaiStream.WriteBackHandler(_pos2, handler)
+            self.body._write__seq(_io__raw_body)
+
+
+        def _check(self):
+            if self.body._root != self._root:
+                raise kaitaistruct.ConsistencyError(u"body", self._root, self.body._root)
+            if self.body._parent != self:
+                raise kaitaistruct.ConsistencyError(u"body", self, self.body._parent)
+            self._dirty = False
+
+
+    class Gv3LayerBody(ReadWriteKaitaiStruct):
+        def __init__(self, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.Gv3LayerBody, self).__init__(_io)
             self._parent = _parent
             self._root = _root
-            self._read()
 
         def _read(self):
             self.speed = self._io.read_u1()
@@ -1729,8 +3348,13 @@ class GoveeBleFrame(KaitaiStruct):
             self.color_count = self._io.read_u1()
             self.groups = []
             for i in range(self.color_count):
-                self.groups.append(GoveeBleFrame.Gv3ColorGroup(self._io, self, self._root))
+                _t_groups = GoveeBleFrame.Gv3ColorGroup(self._io, self, self._root)
+                try:
+                    _t_groups._read()
+                finally:
+                    self.groups.append(_t_groups)
 
+            self._dirty = False
 
 
         def _fetch_instances(self):
@@ -1741,16 +3365,42 @@ class GoveeBleFrame(KaitaiStruct):
 
 
 
-    class H60a6SceneValue(KaitaiStruct):
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.Gv3LayerBody, self)._write__seq(io)
+            self._io.write_u1(self.speed)
+            self._io.write_u1(self.action)
+            self._io.write_u1(self.priority)
+            self._io.write_u1(self.color_count)
+            for i in range(len(self.groups)):
+                pass
+                self.groups[i]._write__seq(self._io)
+
+
+
+        def _check(self):
+            if len(self.groups) != self.color_count:
+                raise kaitaistruct.ConsistencyError(u"groups", self.color_count, len(self.groups))
+            for i in range(len(self.groups)):
+                pass
+                if self.groups[i]._root != self._root:
+                    raise kaitaistruct.ConsistencyError(u"groups", self._root, self.groups[i]._root)
+                if self.groups[i]._parent != self:
+                    raise kaitaistruct.ConsistencyError(u"groups", self, self.groups[i]._parent)
+
+            self._dirty = False
+
+
+    class H60a6SceneValue(ReadWriteKaitaiStruct):
         """H60A6 type-5 value = decode(scenceParam)[1:]. Disambiguated by the DIY length gate
         (Pro4H60A6Diy.c runs first): if u16le@0 + 2 == total size ⇒ DIY (diy_value, proType 0xA3);
         else ⇒ graffiti (graffiti_value, proType 0xA4-MTU). commByte 0x58 in both cases.
         """
-        def __init__(self, _io, _parent=None, _root=None):
+        def __init__(self, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.H60a6SceneValue, self).__init__(_io)
             self._parent = _parent
             self._root = _root
-            self._read()
+            self._should_write_declared_len = False
+            self.declared_len__enabled = True
 
         def _read(self):
             _on = self.is_diy
@@ -1759,14 +3409,17 @@ class GoveeBleFrame(KaitaiStruct):
                 self._raw_body = self._io.read_bytes_full()
                 _io__raw_body = KaitaiStream(BytesIO(self._raw_body))
                 self.body = GoveeBleFrame.GraffitiValue(_io__raw_body, self, self._root)
+                self.body._read()
             elif _on == True:
                 pass
                 self._raw_body = self._io.read_bytes_full()
                 _io__raw_body = KaitaiStream(BytesIO(self._raw_body))
                 self.body = GoveeBleFrame.DiyValue(_io__raw_body, self, self._root)
+                self.body._read()
             else:
                 pass
                 self.body = self._io.read_bytes_full()
+            self._dirty = False
 
 
         def _fetch_instances(self):
@@ -1785,16 +3438,85 @@ class GoveeBleFrame(KaitaiStruct):
                 pass
 
 
+
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.H60a6SceneValue, self)._write__seq(io)
+            self._should_write_declared_len = self.declared_len__enabled
+            _on = self.is_diy
+            if _on == False:
+                pass
+                if self.body._root != self._root:
+                    raise kaitaistruct.ConsistencyError(u"body", self._root, self.body._root)
+                if self.body._parent != self:
+                    raise kaitaistruct.ConsistencyError(u"body", self, self.body._parent)
+                _io__raw_body = KaitaiStream(BytesIO(bytearray(self._io.size() - self._io.pos())))
+                self._io.add_child_stream(_io__raw_body)
+                _pos2 = self._io.pos()
+                self._io.seek(self._io.pos() + (self._io.size() - self._io.pos()))
+                def handler(parent, _io__raw_body=_io__raw_body):
+                    self._raw_body = _io__raw_body.to_byte_array()
+                    parent.write_bytes(self._raw_body)
+                    if not parent.is_eof():
+                        raise kaitaistruct.ConsistencyError(u"raw(body)", 0, parent.size() - parent.pos())
+                _io__raw_body.write_back_handler = KaitaiStream.WriteBackHandler(_pos2, handler)
+                self.body._write__seq(_io__raw_body)
+            elif _on == True:
+                pass
+                if self.body._root != self._root:
+                    raise kaitaistruct.ConsistencyError(u"body", self._root, self.body._root)
+                if self.body._parent != self:
+                    raise kaitaistruct.ConsistencyError(u"body", self, self.body._parent)
+                _io__raw_body = KaitaiStream(BytesIO(bytearray(self._io.size() - self._io.pos())))
+                self._io.add_child_stream(_io__raw_body)
+                _pos2 = self._io.pos()
+                self._io.seek(self._io.pos() + (self._io.size() - self._io.pos()))
+                def handler(parent, _io__raw_body=_io__raw_body):
+                    self._raw_body = _io__raw_body.to_byte_array()
+                    parent.write_bytes(self._raw_body)
+                    if not parent.is_eof():
+                        raise kaitaistruct.ConsistencyError(u"raw(body)", 0, parent.size() - parent.pos())
+                _io__raw_body.write_back_handler = KaitaiStream.WriteBackHandler(_pos2, handler)
+                self.body._write__seq(_io__raw_body)
+            else:
+                pass
+                self._io.write_bytes(self.body)
+                if not self._io.is_eof():
+                    raise kaitaistruct.ConsistencyError(u"body", 0, self._io.size() - self._io.pos())
+
+
+        def _check(self):
+            if self.declared_len__enabled:
+                pass
+
+            self._dirty = False
+
         @property
         def declared_len(self):
+            if self._should_write_declared_len:
+                self._write_declared_len()
             if hasattr(self, '_m_declared_len'):
                 return self._m_declared_len
+
+            if not self.declared_len__enabled:
+                return None
 
             _pos = self._io.pos()
             self._io.seek(0)
             self._m_declared_len = self._io.read_u2le()
             self._io.seek(_pos)
             return getattr(self, '_m_declared_len', None)
+
+        @declared_len.setter
+        def declared_len(self, v):
+            self._dirty = True
+            self._m_declared_len = v
+
+        def _write_declared_len(self):
+            self._should_write_declared_len = False
+            _pos = self._io.pos()
+            self._io.seek(0)
+            self._io.write_u2le(self._m_declared_len)
+            self._io.seek(_pos)
 
         @property
         def is_diy(self):
@@ -1804,42 +3526,66 @@ class GoveeBleFrame(KaitaiStruct):
             self._m_is_diy = self.declared_len + 2 == self._io.size()
             return getattr(self, '_m_is_diy', None)
 
+        def _invalidate_is_diy(self):
+            del self._m_is_diy
 
-    class Handshake(KaitaiStruct):
-        def __init__(self, _io, _parent=None, _root=None):
+    class Handshake(ReadWriteKaitaiStruct):
+        def __init__(self, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.Handshake, self).__init__(_io)
             self._parent = _parent
             self._root = _root
-            self._read()
 
         def _read(self):
             self.op = KaitaiStream.resolve_enum(GoveeBleFrame.HandshakeOp, self._io.read_u1())
             self.data = self._io.read_bytes_full()
+            self._dirty = False
 
 
         def _fetch_instances(self):
             pass
 
 
-    class IcSegmentRead(KaitaiStruct):
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.Handshake, self)._write__seq(io)
+            self._io.write_u1(int(self.op))
+            self._io.write_bytes(self.data)
+            if not self._io.is_eof():
+                raise kaitaistruct.ConsistencyError(u"data", 0, self._io.size() - self._io.pos())
+
+
+        def _check(self):
+            self._dirty = False
+
+
+    class IcSegmentRead(ReadWriteKaitaiStruct):
         """AA 40 reply (ControllerOnlyReadIcSegmentNum, base2light/kt/general_controller). The ONLY live-BLE
         capability read: reports the addressable IC (lamp-bead) count and the segment count, so a client can
         discover segmentation at runtime instead of relying on the per-SKU device table. FIXED layout (not
         parameterized). Source: ControllerOnlyReadIcSegmentNum.c():getSignedShort(it2[0],it2[1]) + it2[2].
         """
-        def __init__(self, _io, _parent=None, _root=None):
+        def __init__(self, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.IcSegmentRead, self).__init__(_io)
             self._parent = _parent
             self._root = _root
-            self._read()
 
         def _read(self):
             self.ic_count = self._io.read_u2be()
             self.segment = self._io.read_u1()
+            self._dirty = False
 
 
         def _fetch_instances(self):
             pass
+
+
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.IcSegmentRead, self)._write__seq(io)
+            self._io.write_u2be(self.ic_count)
+            self._io.write_u1(self.segment)
+
+
+        def _check(self):
+            self._dirty = False
 
         @property
         def ic_count_signed(self):
@@ -1850,47 +3596,68 @@ class GoveeBleFrame(KaitaiStruct):
             self._m_ic_count_signed = (self.ic_count - 65536 if self.ic_count >= 32768 else self.ic_count)
             return getattr(self, '_m_ic_count_signed', None)
 
+        def _invalidate_ic_count_signed(self):
+            del self._m_ic_count_signed
 
-    class InAreaMove(KaitaiStruct):
+    class InAreaMove(ReadWriteKaitaiStruct):
         """ParamsV2.InAreaMoveEffect.c() :524: move_flags (canMove<<4 | order) + 2 movement params (f49695c/d)."""
-        def __init__(self, _io, _parent=None, _root=None):
+        def __init__(self, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.InAreaMove, self).__init__(_io)
             self._parent = _parent
             self._root = _root
-            self._read()
 
         def _read(self):
             self.move_flags = self._io.read_u1()
             self.p_c = self._io.read_u1()
             self.p_d = self._io.read_u1()
+            self._dirty = False
 
 
         def _fetch_instances(self):
             pass
 
 
-    class LightDirectionWrite(KaitaiStruct):
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.InAreaMove, self)._write__seq(io)
+            self._io.write_u1(self.move_flags)
+            self._io.write_u1(self.p_c)
+            self._io.write_u1(self.p_d)
+
+
+        def _check(self):
+            self._dirty = False
+
+
+    class LightDirectionWrite(ReadWriteKaitaiStruct):
         """33 30 single-byte write: body = [value]. Command 0x30 is family-dependent. H6038 installation/calibration direction: CalibrationController.Companion.c(b) = Controller4ExtBytes.d([48, b]) (split_h6047/com/govee/h6047/newdetail/h6038/controller/CalibrationController.java:42-45), b = the index of the selected direction image (6 choices, H6038CalibrationAc.java:185-208,280-287; the send button is enabled only after a pick), sent from VM4H6038.N5 (VM4H6038.java:809-815, called at H6038CalibrationAc.java:316) or the add-device flow (H6038CalibrationAc.java:292-298). The compose DirectionController.b(b) builds the same [b] (base-classes10/com/govee/base2light/ble/controller/compose/DirectionController.java:34-36,60-61; DefWriteComposeController4Single.java:137-149 adds 33 44 02 00 in g), but nothing in this decomp calls it. On H6057 the same [value] is the MAIN-LIGHT SWITCH, not a direction: ControllerSingle.c(command_light_switch = 48, [on ? 1 : 0]) (split_hollowlamp/com/govee/h6057/origin/newDetail/H6057DetailVM.java:950-956; h6057/origin/ble/BleProtocol.java:7). On H71xx ReportChartController writes [1] (base-classes12/com/govee/base_h71xx/sku_base/ble/controller/ReportChartController.java:24-31)."""
-        def __init__(self, _io, _parent=None, _root=None):
+        def __init__(self, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.LightDirectionWrite, self).__init__(_io)
             self._parent = _parent
             self._root = _root
-            self._read()
 
         def _read(self):
             self.value = self._io.read_u1()
+            self._dirty = False
 
 
         def _fetch_instances(self):
             pass
 
 
-    class MicColorFrame(KaitaiStruct):
-        def __init__(self, _io, _parent=None, _root=None):
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.LightDirectionWrite, self)._write__seq(io)
+            self._io.write_u1(self.value)
+
+
+        def _check(self):
+            self._dirty = False
+
+
+    class MicColorFrame(ReadWriteKaitaiStruct):
+        def __init__(self, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.MicColorFrame, self).__init__(_io)
             self._parent = _parent
             self._root = _root
-            self._read()
 
         def _read(self):
             self.pro_type = self._io.read_bytes(1)
@@ -1899,13 +3666,32 @@ class GoveeBleFrame(KaitaiStruct):
             self.command = self._io.read_u1()
             self.data = self._io.read_bytes(self._io.size() - 3)
             self.checksum = self._io.read_u1()
+            self._dirty = False
 
 
         def _fetch_instances(self):
             pass
 
 
-    class ModeColor0dReport(KaitaiStruct):
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.MicColorFrame, self)._write__seq(io)
+            self._io.write_bytes(self.pro_type)
+            self._io.write_u1(self.command)
+            if len(self.data) != self._io.size() - 3:
+                raise kaitaistruct.ConsistencyError(u"data", self._io.size() - 3, len(self.data))
+            self._io.write_bytes(self.data)
+            self._io.write_u1(self.checksum)
+
+
+        def _check(self):
+            if len(self.pro_type) != 1:
+                raise kaitaistruct.ConsistencyError(u"pro_type", 1, len(self.pro_type))
+            if not self.pro_type == b"\xA5":
+                raise kaitaistruct.ValidationNotEqualError(b"\xA5", self.pro_type, None, u"/types/mic_color_frame/seq/0")
+            self._dirty = False
+
+
+    class ModeColor0dReport(ReadWriteKaitaiStruct):
         """Mode 0x05 sub-mode 0x0D colour read-back. Frame = [proType][05][0D][body…]; this type = the body
         (bytes after the 0x0D sub-mode byte). Body interpretation is DEVICE-SPECIFIC — chosen by the
         IParseStrategy each device's *InfoDetail installs on its SubMode4Color:
@@ -1923,23 +3709,34 @@ class GoveeBleFrame(KaitaiStruct):
         Modelled as the [R, G, B] form, the first three bytes of kinds 1 and 2. Trailing frame bytes are zero
         padding (unparsed).
         """
-        def __init__(self, _io, _parent=None, _root=None):
+        def __init__(self, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.ModeColor0dReport, self).__init__(_io)
             self._parent = _parent
             self._root = _root
-            self._read()
 
         def _read(self):
             self.r = self._io.read_u1()
             self.g = self._io.read_u1()
             self.b = self._io.read_u1()
+            self._dirty = False
 
 
         def _fetch_instances(self):
             pass
 
 
-    class ModeColor0dTyped(KaitaiStruct):
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.ModeColor0dReport, self)._write__seq(io)
+            self._io.write_u1(self.r)
+            self._io.write_u1(self.g)
+            self._io.write_u1(self.b)
+
+
+        def _check(self):
+            self._dirty = False
+
+
+    class ModeColor0dTyped(ReadWriteKaitaiStruct):
         """0x0D colour mode-report body, parametric on the device's parse strategy (devices.yaml `mode_0d_kind`):
           kind 0 = default SubMode4Color strategy  -> [gradual_flag, kelvin u16-be]          (mode_0d_kind: cct)
           kind 1 = H6052 custom strategy           -> [R, G, B]                               (mode_0d_kind: rgb)
@@ -1965,12 +3762,11 @@ class GoveeBleFrame(KaitaiStruct):
         never read. (tablelampv1 ble.SubModeColor.parse, which does read a kelvin at vb[3..4], serves the IoT /
         group op dialogs, not the control screen.)
         """
-        def __init__(self, kind, _io, _parent=None, _root=None):
+        def __init__(self, kind, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.ModeColor0dTyped, self).__init__(_io)
             self._parent = _parent
             self._root = _root
             self.kind = kind
-            self._read()
 
         def _read(self):
             if self.kind == 0:
@@ -2009,6 +3805,7 @@ class GoveeBleFrame(KaitaiStruct):
                 pass
                 self.tint_b = self._io.read_u1()
 
+            self._dirty = False
 
 
         def _fetch_instances(self):
@@ -2041,6 +3838,77 @@ class GoveeBleFrame(KaitaiStruct):
                 pass
 
 
+
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.ModeColor0dTyped, self)._write__seq(io)
+            if self.kind == 0:
+                pass
+                self._io.write_u1(self.gradual_flag)
+
+            if self.kind == 0:
+                pass
+                self._io.write_u2be(self.kelvin)
+
+            if  ((self.kind == 1) or (self.kind == 2)) :
+                pass
+                self._io.write_u1(self.r)
+
+            if  ((self.kind == 1) or (self.kind == 2)) :
+                pass
+                self._io.write_u1(self.g)
+
+            if  ((self.kind == 1) or (self.kind == 2)) :
+                pass
+                self._io.write_u1(self.b)
+
+            if self.kind == 2:
+                pass
+                self._io.write_u2be(self.report_kelvin)
+
+            if self.kind == 2:
+                pass
+                self._io.write_u1(self.tint_r)
+
+            if self.kind == 2:
+                pass
+                self._io.write_u1(self.tint_g)
+
+            if self.kind == 2:
+                pass
+                self._io.write_u1(self.tint_b)
+
+
+
+        def _check(self):
+            if self.kind == 0:
+                pass
+
+            if self.kind == 0:
+                pass
+
+            if  ((self.kind == 1) or (self.kind == 2)) :
+                pass
+
+            if  ((self.kind == 1) or (self.kind == 2)) :
+                pass
+
+            if  ((self.kind == 1) or (self.kind == 2)) :
+                pass
+
+            if self.kind == 2:
+                pass
+
+            if self.kind == 2:
+                pass
+
+            if self.kind == 2:
+                pass
+
+            if self.kind == 2:
+                pass
+
+            self._dirty = False
+
         @property
         def is_cct(self):
             """kind 2 only: the strategy shows the tint (report_kelvin != 0, ModeParseStrategyConfig.a); OpInfo4Detail.parseModeValidBytes takes CCT only for report_kelvin_signed > 0."""
@@ -2050,6 +3918,8 @@ class GoveeBleFrame(KaitaiStruct):
             self._m_is_cct =  ((self.kind == 2) and (self.report_kelvin != 0)) 
             return getattr(self, '_m_is_cct', None)
 
+        def _invalidate_is_cct(self):
+            del self._m_is_cct
         @property
         def is_cct_positive(self):
             """kind 2 only: CCT by the signed > 0 rule of OpInfo4Detail.parseModeValidBytes and of the rgb_kelvin_0d decoders (cube CubeNewInfo4Detail.U; h60a1 Info4Detail.Q:416-427 for H60A1/H60A4/H60A6), which read only [R,G,B,kelvin] and never the tint bytes. A kelvin <= 0 is RGB from r/g/b."""
@@ -2059,6 +3929,8 @@ class GoveeBleFrame(KaitaiStruct):
             self._m_is_cct_positive =  ((self.kind == 2) and (self.report_kelvin_signed > 0)) 
             return getattr(self, '_m_is_cct_positive', None)
 
+        def _invalidate_is_cct_positive(self):
+            del self._m_is_cct_positive
         @property
         def kelvin_signed(self):
             """kind 0 kelvin as the app reads it (getSignedShort sign-extends: 0x8000-0xFFFF reads as -32768..-1)."""
@@ -2071,6 +3943,8 @@ class GoveeBleFrame(KaitaiStruct):
 
             return getattr(self, '_m_kelvin_signed', None)
 
+        def _invalidate_kelvin_signed(self):
+            del self._m_kelvin_signed
         @property
         def report_kelvin_signed(self):
             """kind 2 kelvin as the app reads it (getSignedShort sign-extends: 0x8000-0xFFFF reads as -32768..-1)."""
@@ -2083,13 +3957,14 @@ class GoveeBleFrame(KaitaiStruct):
 
             return getattr(self, '_m_report_kelvin_signed', None)
 
+        def _invalidate_report_kelvin_signed(self):
+            del self._m_report_kelvin_signed
 
-    class ModePayload(KaitaiStruct):
-        def __init__(self, _io, _parent=None, _root=None):
+    class ModePayload(ReadWriteKaitaiStruct):
+        def __init__(self, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.ModePayload, self).__init__(_io)
             self._parent = _parent
             self._root = _root
-            self._read()
 
         def _read(self):
             self.sub_type = KaitaiStream.resolve_enum(GoveeBleFrame.SubMode, self._io.read_u1())
@@ -2099,29 +3974,35 @@ class GoveeBleFrame(KaitaiStruct):
                 self._raw_params = self._io.read_bytes_full()
                 _io__raw_params = KaitaiStream(BytesIO(self._raw_params))
                 self.params = GoveeBleFrame.ColorCct0d(_io__raw_params, self, self._root)
+                self.params._read()
             elif _on == GoveeBleFrame.SubMode.color_legacy:
                 pass
                 self._raw_params = self._io.read_bytes_full()
                 _io__raw_params = KaitaiStream(BytesIO(self._raw_params))
                 self.params = GoveeBleFrame.ColorLegacy(_io__raw_params, self, self._root)
+                self.params._read()
             elif _on == GoveeBleFrame.SubMode.color_rgbic_0b:
                 pass
                 self._raw_params = self._io.read_bytes_full()
                 _io__raw_params = KaitaiStream(BytesIO(self._raw_params))
                 self.params = GoveeBleFrame.ColorRgbic0b(_io__raw_params, self, self._root)
+                self.params._read()
             elif _on == GoveeBleFrame.SubMode.color_rgbic_15:
                 pass
                 self._raw_params = self._io.read_bytes_full()
                 _io__raw_params = KaitaiStream(BytesIO(self._raw_params))
                 self.params = GoveeBleFrame.Color15(_io__raw_params, self, self._root)
+                self.params._read()
             elif _on == GoveeBleFrame.SubMode.scene:
                 pass
                 self._raw_params = self._io.read_bytes_full()
                 _io__raw_params = KaitaiStream(BytesIO(self._raw_params))
                 self.params = GoveeBleFrame.ScenePayload(_io__raw_params, self, self._root)
+                self.params._read()
             else:
                 pass
                 self.params = self._io.read_bytes_full()
+            self._dirty = False
 
 
         def _fetch_instances(self):
@@ -2146,7 +4027,120 @@ class GoveeBleFrame(KaitaiStruct):
                 pass
 
 
-    class ModeRead(KaitaiStruct):
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.ModePayload, self)._write__seq(io)
+            self._io.write_u1(int(self.sub_type))
+            _on = self.sub_type
+            if _on == GoveeBleFrame.SubMode.color_cct_0d:
+                pass
+                _io__raw_params = KaitaiStream(BytesIO(bytearray(self._io.size() - self._io.pos())))
+                self._io.add_child_stream(_io__raw_params)
+                _pos2 = self._io.pos()
+                self._io.seek(self._io.pos() + (self._io.size() - self._io.pos()))
+                def handler(parent, _io__raw_params=_io__raw_params):
+                    self._raw_params = _io__raw_params.to_byte_array()
+                    parent.write_bytes(self._raw_params)
+                    if not parent.is_eof():
+                        raise kaitaistruct.ConsistencyError(u"raw(params)", 0, parent.size() - parent.pos())
+                _io__raw_params.write_back_handler = KaitaiStream.WriteBackHandler(_pos2, handler)
+                self.params._write__seq(_io__raw_params)
+            elif _on == GoveeBleFrame.SubMode.color_legacy:
+                pass
+                _io__raw_params = KaitaiStream(BytesIO(bytearray(self._io.size() - self._io.pos())))
+                self._io.add_child_stream(_io__raw_params)
+                _pos2 = self._io.pos()
+                self._io.seek(self._io.pos() + (self._io.size() - self._io.pos()))
+                def handler(parent, _io__raw_params=_io__raw_params):
+                    self._raw_params = _io__raw_params.to_byte_array()
+                    parent.write_bytes(self._raw_params)
+                    if not parent.is_eof():
+                        raise kaitaistruct.ConsistencyError(u"raw(params)", 0, parent.size() - parent.pos())
+                _io__raw_params.write_back_handler = KaitaiStream.WriteBackHandler(_pos2, handler)
+                self.params._write__seq(_io__raw_params)
+            elif _on == GoveeBleFrame.SubMode.color_rgbic_0b:
+                pass
+                _io__raw_params = KaitaiStream(BytesIO(bytearray(self._io.size() - self._io.pos())))
+                self._io.add_child_stream(_io__raw_params)
+                _pos2 = self._io.pos()
+                self._io.seek(self._io.pos() + (self._io.size() - self._io.pos()))
+                def handler(parent, _io__raw_params=_io__raw_params):
+                    self._raw_params = _io__raw_params.to_byte_array()
+                    parent.write_bytes(self._raw_params)
+                    if not parent.is_eof():
+                        raise kaitaistruct.ConsistencyError(u"raw(params)", 0, parent.size() - parent.pos())
+                _io__raw_params.write_back_handler = KaitaiStream.WriteBackHandler(_pos2, handler)
+                self.params._write__seq(_io__raw_params)
+            elif _on == GoveeBleFrame.SubMode.color_rgbic_15:
+                pass
+                _io__raw_params = KaitaiStream(BytesIO(bytearray(self._io.size() - self._io.pos())))
+                self._io.add_child_stream(_io__raw_params)
+                _pos2 = self._io.pos()
+                self._io.seek(self._io.pos() + (self._io.size() - self._io.pos()))
+                def handler(parent, _io__raw_params=_io__raw_params):
+                    self._raw_params = _io__raw_params.to_byte_array()
+                    parent.write_bytes(self._raw_params)
+                    if not parent.is_eof():
+                        raise kaitaistruct.ConsistencyError(u"raw(params)", 0, parent.size() - parent.pos())
+                _io__raw_params.write_back_handler = KaitaiStream.WriteBackHandler(_pos2, handler)
+                self.params._write__seq(_io__raw_params)
+            elif _on == GoveeBleFrame.SubMode.scene:
+                pass
+                _io__raw_params = KaitaiStream(BytesIO(bytearray(self._io.size() - self._io.pos())))
+                self._io.add_child_stream(_io__raw_params)
+                _pos2 = self._io.pos()
+                self._io.seek(self._io.pos() + (self._io.size() - self._io.pos()))
+                def handler(parent, _io__raw_params=_io__raw_params):
+                    self._raw_params = _io__raw_params.to_byte_array()
+                    parent.write_bytes(self._raw_params)
+                    if not parent.is_eof():
+                        raise kaitaistruct.ConsistencyError(u"raw(params)", 0, parent.size() - parent.pos())
+                _io__raw_params.write_back_handler = KaitaiStream.WriteBackHandler(_pos2, handler)
+                self.params._write__seq(_io__raw_params)
+            else:
+                pass
+                self._io.write_bytes(self.params)
+                if not self._io.is_eof():
+                    raise kaitaistruct.ConsistencyError(u"params", 0, self._io.size() - self._io.pos())
+
+
+        def _check(self):
+            _on = self.sub_type
+            if _on == GoveeBleFrame.SubMode.color_cct_0d:
+                pass
+                if self.params._root != self._root:
+                    raise kaitaistruct.ConsistencyError(u"params", self._root, self.params._root)
+                if self.params._parent != self:
+                    raise kaitaistruct.ConsistencyError(u"params", self, self.params._parent)
+            elif _on == GoveeBleFrame.SubMode.color_legacy:
+                pass
+                if self.params._root != self._root:
+                    raise kaitaistruct.ConsistencyError(u"params", self._root, self.params._root)
+                if self.params._parent != self:
+                    raise kaitaistruct.ConsistencyError(u"params", self, self.params._parent)
+            elif _on == GoveeBleFrame.SubMode.color_rgbic_0b:
+                pass
+                if self.params._root != self._root:
+                    raise kaitaistruct.ConsistencyError(u"params", self._root, self.params._root)
+                if self.params._parent != self:
+                    raise kaitaistruct.ConsistencyError(u"params", self, self.params._parent)
+            elif _on == GoveeBleFrame.SubMode.color_rgbic_15:
+                pass
+                if self.params._root != self._root:
+                    raise kaitaistruct.ConsistencyError(u"params", self._root, self.params._root)
+                if self.params._parent != self:
+                    raise kaitaistruct.ConsistencyError(u"params", self, self.params._parent)
+            elif _on == GoveeBleFrame.SubMode.scene:
+                pass
+                if self.params._root != self._root:
+                    raise kaitaistruct.ConsistencyError(u"params", self._root, self.params._root)
+                if self.params._parent != self:
+                    raise kaitaistruct.ConsistencyError(u"params", self, self.params._parent)
+            else:
+                pass
+            self._dirty = False
+
+
+    class ModeRead(ReadWriteKaitaiStruct):
         """Mode (0x05) read. Byte 0 is EITHER a request selector (0x01) OR a reply sub-mode byte
         (0x15 color / 0x04 scene / 0x13 music / 0x0d bulb/lamp color). Disambiguate by value: 0x01 => request;
         a known sub-mode => reply.
@@ -2159,11 +4153,10 @@ class GoveeBleFrame(KaitaiStruct):
           0x15, as op/gradual alone, bArr[0]==1.)
         - 0x13 music => music_read_reply (FAMILY-DEPENDENT; see that type).
         """
-        def __init__(self, _io, _parent=None, _root=None):
+        def __init__(self, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.ModeRead, self).__init__(_io)
             self._parent = _parent
             self._root = _root
-            self._read()
 
         def _read(self):
             self.selector_or_sub_mode = self._io.read_u1()
@@ -2173,19 +4166,23 @@ class GoveeBleFrame(KaitaiStruct):
                 self._raw_rest = self._io.read_bytes_full()
                 _io__raw_rest = KaitaiStream(BytesIO(self._raw_rest))
                 self.rest = GoveeBleFrame.ModeColor0dReport(_io__raw_rest, self, self._root)
+                self.rest._read()
             elif _on == 19:
                 pass
                 self._raw_rest = self._io.read_bytes_full()
                 _io__raw_rest = KaitaiStream(BytesIO(self._raw_rest))
                 self.rest = GoveeBleFrame.MusicReadReply(_io__raw_rest, self, self._root)
+                self.rest._read()
             elif _on == 21:
                 pass
                 self._raw_rest = self._io.read_bytes_full()
                 _io__raw_rest = KaitaiStream(BytesIO(self._raw_rest))
                 self.rest = GoveeBleFrame.CctReadReply(_io__raw_rest, self, self._root)
+                self.rest._read()
             else:
                 pass
                 self.rest = self._io.read_bytes_full()
+            self._dirty = False
 
 
         def _fetch_instances(self):
@@ -2204,47 +4201,146 @@ class GoveeBleFrame(KaitaiStruct):
                 pass
 
 
-    class ModeStatus(KaitaiStruct):
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.ModeRead, self)._write__seq(io)
+            self._io.write_u1(self.selector_or_sub_mode)
+            _on = self.selector_or_sub_mode
+            if _on == 13:
+                pass
+                _io__raw_rest = KaitaiStream(BytesIO(bytearray(self._io.size() - self._io.pos())))
+                self._io.add_child_stream(_io__raw_rest)
+                _pos2 = self._io.pos()
+                self._io.seek(self._io.pos() + (self._io.size() - self._io.pos()))
+                def handler(parent, _io__raw_rest=_io__raw_rest):
+                    self._raw_rest = _io__raw_rest.to_byte_array()
+                    parent.write_bytes(self._raw_rest)
+                    if not parent.is_eof():
+                        raise kaitaistruct.ConsistencyError(u"raw(rest)", 0, parent.size() - parent.pos())
+                _io__raw_rest.write_back_handler = KaitaiStream.WriteBackHandler(_pos2, handler)
+                self.rest._write__seq(_io__raw_rest)
+            elif _on == 19:
+                pass
+                _io__raw_rest = KaitaiStream(BytesIO(bytearray(self._io.size() - self._io.pos())))
+                self._io.add_child_stream(_io__raw_rest)
+                _pos2 = self._io.pos()
+                self._io.seek(self._io.pos() + (self._io.size() - self._io.pos()))
+                def handler(parent, _io__raw_rest=_io__raw_rest):
+                    self._raw_rest = _io__raw_rest.to_byte_array()
+                    parent.write_bytes(self._raw_rest)
+                    if not parent.is_eof():
+                        raise kaitaistruct.ConsistencyError(u"raw(rest)", 0, parent.size() - parent.pos())
+                _io__raw_rest.write_back_handler = KaitaiStream.WriteBackHandler(_pos2, handler)
+                self.rest._write__seq(_io__raw_rest)
+            elif _on == 21:
+                pass
+                _io__raw_rest = KaitaiStream(BytesIO(bytearray(self._io.size() - self._io.pos())))
+                self._io.add_child_stream(_io__raw_rest)
+                _pos2 = self._io.pos()
+                self._io.seek(self._io.pos() + (self._io.size() - self._io.pos()))
+                def handler(parent, _io__raw_rest=_io__raw_rest):
+                    self._raw_rest = _io__raw_rest.to_byte_array()
+                    parent.write_bytes(self._raw_rest)
+                    if not parent.is_eof():
+                        raise kaitaistruct.ConsistencyError(u"raw(rest)", 0, parent.size() - parent.pos())
+                _io__raw_rest.write_back_handler = KaitaiStream.WriteBackHandler(_pos2, handler)
+                self.rest._write__seq(_io__raw_rest)
+            else:
+                pass
+                self._io.write_bytes(self.rest)
+                if not self._io.is_eof():
+                    raise kaitaistruct.ConsistencyError(u"rest", 0, self._io.size() - self._io.pos())
+
+
+        def _check(self):
+            _on = self.selector_or_sub_mode
+            if _on == 13:
+                pass
+                if self.rest._root != self._root:
+                    raise kaitaistruct.ConsistencyError(u"rest", self._root, self.rest._root)
+                if self.rest._parent != self:
+                    raise kaitaistruct.ConsistencyError(u"rest", self, self.rest._parent)
+            elif _on == 19:
+                pass
+                if self.rest._root != self._root:
+                    raise kaitaistruct.ConsistencyError(u"rest", self._root, self.rest._root)
+                if self.rest._parent != self:
+                    raise kaitaistruct.ConsistencyError(u"rest", self, self.rest._parent)
+            elif _on == 21:
+                pass
+                if self.rest._root != self._root:
+                    raise kaitaistruct.ConsistencyError(u"rest", self._root, self.rest._root)
+                if self.rest._parent != self:
+                    raise kaitaistruct.ConsistencyError(u"rest", self, self.rest._parent)
+            else:
+                pass
+            self._dirty = False
+
+
+    class ModeStatus(ReadWriteKaitaiStruct):
         """0xAC TLV 0x05 — device's active mode: [sub_mode, params]. Same [sub_mode, params] shape as the 0x05 mode frame body (SubMode dispatch, u():349 -> .g() lambda). sub_mode seen = the active mode: colour (0x15/0x0D), CCT, scene (0x04), music (0x13), diy (0x0a). params layout is per sub_mode / device (see mode_read / color_* types); left size-eos here."""
-        def __init__(self, _io, _parent=None, _root=None):
+        def __init__(self, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.ModeStatus, self).__init__(_io)
             self._parent = _parent
             self._root = _root
-            self._read()
 
         def _read(self):
             self.sub_mode = KaitaiStream.resolve_enum(GoveeBleFrame.SubMode, self._io.read_u1())
             self.params = self._io.read_bytes_full()
+            self._dirty = False
 
 
         def _fetch_instances(self):
             pass
 
 
-    class MultiA1(KaitaiStruct):
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.ModeStatus, self)._write__seq(io)
+            self._io.write_u1(int(self.sub_mode))
+            self._io.write_bytes(self.params)
+            if not self._io.is_eof():
+                raise kaitaistruct.ConsistencyError(u"params", 0, self._io.size() - self._io.pos())
+
+
+        def _check(self):
+            self._dirty = False
+
+
+    class MultiA1(ReadWriteKaitaiStruct):
         """comType@1, position@2, 16 data bytes@3..18. position 0x00 = start (data[0] = packet count), 0xFF = end."""
-        def __init__(self, _io, _parent=None, _root=None):
+        def __init__(self, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.MultiA1, self).__init__(_io)
             self._parent = _parent
             self._root = _root
-            self._read()
 
         def _read(self):
             self.com_type = self._io.read_u1()
             self.position = self._io.read_u1()
             self.data = self._io.read_bytes(16)
+            self._dirty = False
 
 
         def _fetch_instances(self):
             pass
 
 
-    class MultiA3(KaitaiStruct):
-        def __init__(self, _io, _parent=None, _root=None):
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.MultiA1, self)._write__seq(io)
+            self._io.write_u1(self.com_type)
+            self._io.write_u1(self.position)
+            self._io.write_bytes(self.data)
+
+
+        def _check(self):
+            if len(self.data) != 16:
+                raise kaitaistruct.ConsistencyError(u"data", 16, len(self.data))
+            self._dirty = False
+
+
+    class MultiA3(ReadWriteKaitaiStruct):
+        def __init__(self, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.MultiA3, self).__init__(_io)
             self._parent = _parent
             self._root = _root
-            self._read()
 
         def _read(self):
             self.seq_no = self._io.read_u1()
@@ -2254,9 +4350,11 @@ class GoveeBleFrame(KaitaiStruct):
                 self._raw_frame = self._io.read_bytes_full()
                 _io__raw_frame = KaitaiStream(BytesIO(self._raw_frame))
                 self.frame = GoveeBleFrame.A3Start(_io__raw_frame, self, self._root)
+                self.frame._read()
             else:
                 pass
                 self.frame = self._io.read_bytes_full()
+            self._dirty = False
 
 
         def _fetch_instances(self):
@@ -2269,7 +4367,44 @@ class GoveeBleFrame(KaitaiStruct):
                 pass
 
 
-    class MultiA4(KaitaiStruct):
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.MultiA3, self)._write__seq(io)
+            self._io.write_u1(self.seq_no)
+            _on = self.seq_no
+            if _on == 0:
+                pass
+                _io__raw_frame = KaitaiStream(BytesIO(bytearray(self._io.size() - self._io.pos())))
+                self._io.add_child_stream(_io__raw_frame)
+                _pos2 = self._io.pos()
+                self._io.seek(self._io.pos() + (self._io.size() - self._io.pos()))
+                def handler(parent, _io__raw_frame=_io__raw_frame):
+                    self._raw_frame = _io__raw_frame.to_byte_array()
+                    parent.write_bytes(self._raw_frame)
+                    if not parent.is_eof():
+                        raise kaitaistruct.ConsistencyError(u"raw(frame)", 0, parent.size() - parent.pos())
+                _io__raw_frame.write_back_handler = KaitaiStream.WriteBackHandler(_pos2, handler)
+                self.frame._write__seq(_io__raw_frame)
+            else:
+                pass
+                self._io.write_bytes(self.frame)
+                if not self._io.is_eof():
+                    raise kaitaistruct.ConsistencyError(u"frame", 0, self._io.size() - self._io.pos())
+
+
+        def _check(self):
+            _on = self.seq_no
+            if _on == 0:
+                pass
+                if self.frame._root != self._root:
+                    raise kaitaistruct.ConsistencyError(u"frame", self._root, self.frame._root)
+                if self.frame._parent != self:
+                    raise kaitaistruct.ConsistencyError(u"frame", self, self.frame._parent)
+            else:
+                pass
+            self._dirty = False
+
+
+    class MultiA4(ReadWriteKaitaiStruct):
         """0xA4 MTU frame (MultipleControllerCommV1.makeSendBytesMtu :409). ONE BLE write; a scene value spans
         several frames. seq_marker (bytes 1-2, u16 LE) discriminates the form:
           0x0000 = START · 0xFFFF = END · else = MIDDLE (packet index, 1-based).
@@ -2281,19 +4416,20 @@ class GoveeBleFrame(KaitaiStruct):
         (ascending seq) ++ END.value, then parse with the scene-upload VALUE types.
         Verified against makeSendBytesMtu: Aurora (187 B, MTU 20) => 12 frames = START(12) + 10*MIDDLE(16) + END(15).
         """
-        def __init__(self, _io, _parent=None, _root=None):
+        def __init__(self, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.MultiA4, self).__init__(_io)
             self._parent = _parent
             self._root = _root
-            self._read()
 
         def _read(self):
             self.seq_marker = self._io.read_u2le()
             if self.seq_marker == 0:
                 pass
                 self.start = GoveeBleFrame.A4StartHead(self._io, self, self._root)
+                self.start._read()
 
             self.value = self._io.read_bytes_full()
+            self._dirty = False
 
 
         def _fetch_instances(self):
@@ -2304,7 +4440,30 @@ class GoveeBleFrame(KaitaiStruct):
 
 
 
-    class MultiAc(KaitaiStruct):
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.MultiA4, self)._write__seq(io)
+            self._io.write_u2le(self.seq_marker)
+            if self.seq_marker == 0:
+                pass
+                self.start._write__seq(self._io)
+
+            self._io.write_bytes(self.value)
+            if not self._io.is_eof():
+                raise kaitaistruct.ConsistencyError(u"value", 0, self._io.size() - self._io.pos())
+
+
+        def _check(self):
+            if self.seq_marker == 0:
+                pass
+                if self.start._root != self._root:
+                    raise kaitaistruct.ConsistencyError(u"start", self._root, self.start._root)
+                if self.start._parent != self:
+                    raise kaitaistruct.ConsistencyError(u"start", self, self.start._parent)
+
+            self._dirty = False
+
+
+    class MultiAc(ReadWriteKaitaiStruct):
         """Request: [0xAC, command, N, cmd_1 .. cmd_N] (N = count of requested sub-commands),
         e.g. AC 03 02 41 30 (H60A6 single-zone) / AC 03 03 41 30 A5 (dual-zone).
         Reply: a burst of 0xAC frames, tag @ byte1 (AbsController4BleSingleSendMultiBack.g/.i/.h):
@@ -2315,11 +4474,10 @@ class GoveeBleFrame(KaitaiStruct):
         @ offset 2. pkts == 1: lastLen (<= 12) bytes @ offset 7, no more chunks. Reassembled buffer is a
         TLV stream (type,len,value). Modelled here as the request form.
         """
-        def __init__(self, _io, _parent=None, _root=None):
+        def __init__(self, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.MultiAc, self).__init__(_io)
             self._parent = _parent
             self._root = _root
-            self._read()
 
         def _read(self):
             self.command = self._io.read_u1()
@@ -2329,6 +4487,7 @@ class GoveeBleFrame(KaitaiStruct):
                 self.requested_types.append(self._io.read_u1())
 
             self.pad = self._io.read_bytes_full()
+            self._dirty = False
 
 
         def _fetch_instances(self):
@@ -2338,13 +4497,34 @@ class GoveeBleFrame(KaitaiStruct):
 
 
 
-    class MusicReadReply(KaitaiStruct):
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.MultiAc, self)._write__seq(io)
+            self._io.write_u1(self.command)
+            self._io.write_u1(self.count)
+            for i in range(len(self.requested_types)):
+                pass
+                self._io.write_u1(self.requested_types[i])
+
+            self._io.write_bytes(self.pad)
+            if not self._io.is_eof():
+                raise kaitaistruct.ConsistencyError(u"pad", 0, self._io.size() - self._io.pos())
+
+
+        def _check(self):
+            if len(self.requested_types) != self.count:
+                raise kaitaistruct.ConsistencyError(u"requested_types", self.count, len(self.requested_types))
+            for i in range(len(self.requested_types)):
+                pass
+
+            self._dirty = False
+
+
+    class MusicReadReply(ReadWriteKaitaiStruct):
         """Mode 0x13 music read reply. FAMILY-DEPENDENT layout: H60A6 (SubModeMusicV1.parse:112-131) = [music_code][value][auto_color_flag(==0)][spec_color_flag(==0)][R][G][B], truncating to 2 bytes for new-music codes; base2light SubModeNewMusic.parse reads only [music_code][value]. (Sub-mode 0x16 SubModeAbsMusic = [u16 count LE][value]; not 0x13.) Discriminator is a FLAG, not length (frames are zero-padded to 20 bytes, so length is unusable): SubModeMusicV1.parse (dreamcolorlightv1 :112-131) reads bArr[0..3] unconditionally, then reads RGB bArr[4..6] IFF bArr[3] != 0. So spec_color_flag gates the RGB triplet. For base2light devices bArr[2..3] are the zero padding => dynamic=0, spec_color_flag=0, no RGB (a correct superset — this is the H60A6 parser applied universally)."""
-        def __init__(self, _io, _parent=None, _root=None):
+        def __init__(self, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.MusicReadReply, self).__init__(_io)
             self._parent = _parent
             self._root = _root
-            self._read()
 
         def _read(self):
             self.music_code = self._io.read_u1()
@@ -2363,6 +4543,7 @@ class GoveeBleFrame(KaitaiStruct):
                 pass
                 self.color_b = self._io.read_u1()
 
+            self._dirty = False
 
 
         def _fetch_instances(self):
@@ -2378,12 +4559,44 @@ class GoveeBleFrame(KaitaiStruct):
 
 
 
-    class NotifyFrame(KaitaiStruct):
-        def __init__(self, _io, _parent=None, _root=None):
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.MusicReadReply, self)._write__seq(io)
+            self._io.write_u1(self.music_code)
+            self._io.write_u1(self.value)
+            self._io.write_u1(self.dynamic)
+            self._io.write_u1(self.spec_color_flag)
+            if self.spec_color_flag != 0:
+                pass
+                self._io.write_u1(self.color_r)
+
+            if self.spec_color_flag != 0:
+                pass
+                self._io.write_u1(self.color_g)
+
+            if self.spec_color_flag != 0:
+                pass
+                self._io.write_u1(self.color_b)
+
+
+
+        def _check(self):
+            if self.spec_color_flag != 0:
+                pass
+
+            if self.spec_color_flag != 0:
+                pass
+
+            if self.spec_color_flag != 0:
+                pass
+
+            self._dirty = False
+
+
+    class NotifyFrame(ReadWriteKaitaiStruct):
+        def __init__(self, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.NotifyFrame, self).__init__(_io)
             self._parent = _parent
             self._root = _root
-            self._read()
 
         def _read(self):
             self.sub_type = KaitaiStream.resolve_enum(GoveeBleFrame.NotifySub, self._io.read_u1())
@@ -2393,19 +4606,23 @@ class GoveeBleFrame(KaitaiStruct):
                 self._raw_data = self._io.read_bytes_full()
                 _io__raw_data = KaitaiStream(BytesIO(self._raw_data))
                 self.data = GoveeBleFrame.NotifyLevel(_io__raw_data, self, self._root)
+                self.data._read()
             elif _on == GoveeBleFrame.NotifySub.device_info_or_zone:
                 pass
                 self._raw_data = self._io.read_bytes_full()
                 _io__raw_data = KaitaiStream(BytesIO(self._raw_data))
                 self.data = GoveeBleFrame.NotifySwitchZone(_io__raw_data, self, self._root)
+                self.data._read()
             elif _on == GoveeBleFrame.NotifySub.wifi_connect:
                 pass
                 self._raw_data = self._io.read_bytes_full()
                 _io__raw_data = KaitaiStream(BytesIO(self._raw_data))
                 self.data = GoveeBleFrame.NotifyWifi(_io__raw_data, self, self._root)
+                self.data._read()
             else:
                 pass
                 self.data = self._io.read_bytes_full()
+            self._dirty = False
 
 
         def _fetch_instances(self):
@@ -2424,23 +4641,107 @@ class GoveeBleFrame(KaitaiStruct):
                 pass
 
 
-    class NotifyLevel(KaitaiStruct):
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.NotifyFrame, self)._write__seq(io)
+            self._io.write_u1(int(self.sub_type))
+            _on = self.sub_type
+            if _on == GoveeBleFrame.NotifySub.brightness:
+                pass
+                _io__raw_data = KaitaiStream(BytesIO(bytearray(self._io.size() - self._io.pos())))
+                self._io.add_child_stream(_io__raw_data)
+                _pos2 = self._io.pos()
+                self._io.seek(self._io.pos() + (self._io.size() - self._io.pos()))
+                def handler(parent, _io__raw_data=_io__raw_data):
+                    self._raw_data = _io__raw_data.to_byte_array()
+                    parent.write_bytes(self._raw_data)
+                    if not parent.is_eof():
+                        raise kaitaistruct.ConsistencyError(u"raw(data)", 0, parent.size() - parent.pos())
+                _io__raw_data.write_back_handler = KaitaiStream.WriteBackHandler(_pos2, handler)
+                self.data._write__seq(_io__raw_data)
+            elif _on == GoveeBleFrame.NotifySub.device_info_or_zone:
+                pass
+                _io__raw_data = KaitaiStream(BytesIO(bytearray(self._io.size() - self._io.pos())))
+                self._io.add_child_stream(_io__raw_data)
+                _pos2 = self._io.pos()
+                self._io.seek(self._io.pos() + (self._io.size() - self._io.pos()))
+                def handler(parent, _io__raw_data=_io__raw_data):
+                    self._raw_data = _io__raw_data.to_byte_array()
+                    parent.write_bytes(self._raw_data)
+                    if not parent.is_eof():
+                        raise kaitaistruct.ConsistencyError(u"raw(data)", 0, parent.size() - parent.pos())
+                _io__raw_data.write_back_handler = KaitaiStream.WriteBackHandler(_pos2, handler)
+                self.data._write__seq(_io__raw_data)
+            elif _on == GoveeBleFrame.NotifySub.wifi_connect:
+                pass
+                _io__raw_data = KaitaiStream(BytesIO(bytearray(self._io.size() - self._io.pos())))
+                self._io.add_child_stream(_io__raw_data)
+                _pos2 = self._io.pos()
+                self._io.seek(self._io.pos() + (self._io.size() - self._io.pos()))
+                def handler(parent, _io__raw_data=_io__raw_data):
+                    self._raw_data = _io__raw_data.to_byte_array()
+                    parent.write_bytes(self._raw_data)
+                    if not parent.is_eof():
+                        raise kaitaistruct.ConsistencyError(u"raw(data)", 0, parent.size() - parent.pos())
+                _io__raw_data.write_back_handler = KaitaiStream.WriteBackHandler(_pos2, handler)
+                self.data._write__seq(_io__raw_data)
+            else:
+                pass
+                self._io.write_bytes(self.data)
+                if not self._io.is_eof():
+                    raise kaitaistruct.ConsistencyError(u"data", 0, self._io.size() - self._io.pos())
+
+
+        def _check(self):
+            _on = self.sub_type
+            if _on == GoveeBleFrame.NotifySub.brightness:
+                pass
+                if self.data._root != self._root:
+                    raise kaitaistruct.ConsistencyError(u"data", self._root, self.data._root)
+                if self.data._parent != self:
+                    raise kaitaistruct.ConsistencyError(u"data", self, self.data._parent)
+            elif _on == GoveeBleFrame.NotifySub.device_info_or_zone:
+                pass
+                if self.data._root != self._root:
+                    raise kaitaistruct.ConsistencyError(u"data", self._root, self.data._root)
+                if self.data._parent != self:
+                    raise kaitaistruct.ConsistencyError(u"data", self, self.data._parent)
+            elif _on == GoveeBleFrame.NotifySub.wifi_connect:
+                pass
+                if self.data._root != self._root:
+                    raise kaitaistruct.ConsistencyError(u"data", self._root, self.data._root)
+                if self.data._parent != self:
+                    raise kaitaistruct.ConsistencyError(u"data", self, self.data._parent)
+            else:
+                pass
+            self._dirty = False
+
+
+    class NotifyLevel(ReadWriteKaitaiStruct):
         """0xEE 20 brightness push (DefParser.p): level 0-255 @ data[0] (unsigned)."""
-        def __init__(self, _io, _parent=None, _root=None):
+        def __init__(self, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.NotifyLevel, self).__init__(_io)
             self._parent = _parent
             self._root = _root
-            self._read()
 
         def _read(self):
             self.level = self._io.read_u1()
+            self._dirty = False
 
 
         def _fetch_instances(self):
             pass
 
 
-    class NotifySwitchZone(KaitaiStruct):
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.NotifyLevel, self)._write__seq(io)
+            self._io.write_u1(self.level)
+
+
+        def _check(self):
+            self._dirty = False
+
+
+    class NotifySwitchZone(ReadWriteKaitaiStruct):
         """0xEE 30 switch/zone push — FAMILY-DEPENDENT. H60A6 (VM4LightH60A6.U5): data[0]=detail (ignored),
         main switch = bit0 of data[1], zone0 = bit0 of data[2], zone1 = bit0 of data[3]. Generic (DefParser.M):
         a single flags byte @ data[1] carries up to 4 sub-switches in bits 1-4 (DefParser.O = one switch in bit 1).
@@ -2449,11 +4750,10 @@ class GoveeBleFrame(KaitaiStruct):
         (frame[3]) on H60A1/H60A4/H60A6, H6039, H6078 and H601E/H601F; bit 0 of flags_c (frame[5]) on H60A0; per
         bar flags_b == 1 / flags_c == 1 on H6038/H6048.
         """
-        def __init__(self, _io, _parent=None, _root=None):
+        def __init__(self, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.NotifySwitchZone, self).__init__(_io)
             self._parent = _parent
             self._root = _root
-            self._read()
 
         def _read(self):
             self.detail = self._io.read_u1()
@@ -2461,45 +4761,80 @@ class GoveeBleFrame(KaitaiStruct):
             self.flags_b = self._io.read_u1()
             self.flags_c = self._io.read_u1()
             self.rest = self._io.read_bytes_full()
+            self._dirty = False
 
 
         def _fetch_instances(self):
             pass
 
 
-    class NotifyWifi(KaitaiStruct):
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.NotifySwitchZone, self)._write__seq(io)
+            self._io.write_u1(self.detail)
+            self._io.write_u1(self.flags_a)
+            self._io.write_u1(self.flags_b)
+            self._io.write_u1(self.flags_c)
+            self._io.write_bytes(self.rest)
+            if not self._io.is_eof():
+                raise kaitaistruct.ConsistencyError(u"rest", 0, self._io.size() - self._io.pos())
+
+
+        def _check(self):
+            self._dirty = False
+
+
+    class NotifyWifi(ReadWriteKaitaiStruct):
         """0xEE 11 wifi-connect push (DefParser.Q): status @ data[0]; 0 = connected."""
-        def __init__(self, _io, _parent=None, _root=None):
+        def __init__(self, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.NotifyWifi, self).__init__(_io)
             self._parent = _parent
             self._root = _root
-            self._read()
 
         def _read(self):
             self.status = self._io.read_u1()
+            self._dirty = False
 
 
         def _fetch_instances(self):
             pass
 
 
-    class Op15Brightness(KaitaiStruct):
-        def __init__(self, _io, _parent=None, _root=None):
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.NotifyWifi, self)._write__seq(io)
+            self._io.write_u1(self.status)
+
+
+        def _check(self):
+            self._dirty = False
+
+
+    class Op15Brightness(ReadWriteKaitaiStruct):
+        def __init__(self, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.Op15Brightness, self).__init__(_io)
             self._parent = _parent
             self._root = _root
-            self._read()
 
         def _read(self):
             self.pct = self._io.read_u1()
             self.seg_mask = self._io.read_u2le()
+            self._dirty = False
 
 
         def _fetch_instances(self):
             pass
 
 
-    class Op15BrightnessWide(KaitaiStruct):
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.Op15Brightness, self)._write__seq(io)
+            self._io.write_u1(self.pct)
+            self._io.write_u2le(self.seg_mask)
+
+
+        def _check(self):
+            self._dirty = False
+
+
+    class Op15BrightnessWide(ReadWriteKaitaiStruct):
         """Per-segment brightness write body after the header 33 05 15 02 (Bytes.G
         base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:172-181), reached via
         Config.JR (Config.java:10567-10570; Config.L[0] :5591-5595, L = map16 :5601, read by Config.D() :223-225)
@@ -2519,23 +4854,35 @@ class GoveeBleFrame(KaitaiStruct):
         reaches the fixed-u2le op15_brightness and cannot pass mask_width; with mask_width 2 this is
         byte-identical to op15_brightness, which stays as is.
         """
-        def __init__(self, mask_width, _io, _parent=None, _root=None):
+        def __init__(self, mask_width, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.Op15BrightnessWide, self).__init__(_io)
             self._parent = _parent
             self._root = _root
             self.mask_width = mask_width
-            self._read()
 
         def _read(self):
             self.pct = self._io.read_u1()
             self.seg_mask = self._io.read_bytes(self.mask_width)
+            self._dirty = False
 
 
         def _fetch_instances(self):
             pass
 
 
-    class Op15Color(KaitaiStruct):
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.Op15BrightnessWide, self)._write__seq(io)
+            self._io.write_u1(self.pct)
+            self._io.write_bytes(self.seg_mask)
+
+
+        def _check(self):
+            if len(self.seg_mask) != self.mask_width:
+                raise kaitaistruct.ConsistencyError(u"seg_mask", self.mask_width, len(self.seg_mask))
+            self._dirty = False
+
+
+    class Op15Color(ReadWriteKaitaiStruct):
         """SubModeColorV1.getWriteBytes op 0x01 — a client-built WRITE. Three forms share op byte 0x01 with
         NO in-frame discriminator; the form is chosen by device family + colour mode (the opType arg i2),
         and frames are zero-padded to 20 bytes (BleUtils.o :1006-1016), so length cannot recover it either:
@@ -2547,24 +4894,38 @@ class GoveeBleFrame(KaitaiStruct):
         decoder of an isolated padded frame cannot. seg_mask (makeSelectedTwoBytes, <=16-seg legacy stack)
         is the last meaningful 2 bytes before zero padding.
         """
-        def __init__(self, _io, _parent=None, _root=None):
+        def __init__(self, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.Op15Color, self).__init__(_io)
             self._parent = _parent
             self._root = _root
-            self._read()
 
         def _read(self):
             self.r = self._io.read_u1()
             self.g = self._io.read_u1()
             self.b = self._io.read_u1()
             self.trailer = self._io.read_bytes_full()
+            self._dirty = False
 
 
         def _fetch_instances(self):
             pass
 
 
-    class Op15ColorGroupWrite(KaitaiStruct):
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.Op15Color, self)._write__seq(io)
+            self._io.write_u1(self.r)
+            self._io.write_u1(self.g)
+            self._io.write_u1(self.b)
+            self._io.write_bytes(self.trailer)
+            if not self._io.is_eof():
+                raise kaitaistruct.ConsistencyError(u"trailer", 0, self._io.size() - self._io.pos())
+
+
+        def _check(self):
+            self._dirty = False
+
+
+    class Op15ColorGroupWrite(ReadWriteKaitaiStruct):
         """Group colour write body after "33 05 15 04". The app writes [0x15, 0x04, group, RGB x n] with
         n = min(4, colours given) and NOTHING after the colours (the ext array is sized 3 + 3n exactly):
           Bytes.m   base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:393-402
@@ -2593,12 +4954,11 @@ class GoveeBleFrame(KaitaiStruct):
           h6062 striplight SubModeColor.makeSubModeColor (SubModeColor.java:73-100, 124-150): f = i + 1 ->
             always 1-based.
         """
-        def __init__(self, color_count, _io, _parent=None, _root=None):
+        def __init__(self, color_count, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.Op15ColorGroupWrite, self).__init__(_io)
             self._parent = _parent
             self._root = _root
             self.color_count = color_count
-            self._read()
 
         def _read(self):
             self.group = self._io.read_u1()
@@ -2607,8 +4967,13 @@ class GoveeBleFrame(KaitaiStruct):
                 raise kaitaistruct.ValidationExprError(self.group, self._io, u"/types/op15_color_group_write/seq/0")
             self.colors = []
             for i in range(self.color_count):
-                self.colors.append(GoveeBleFrame.ScRgb(self._io, self, self._root))
+                _t_colors = GoveeBleFrame.ScRgb(self._io, self, self._root)
+                try:
+                    _t_colors._read()
+                finally:
+                    self.colors.append(_t_colors)
 
+            self._dirty = False
 
 
         def _fetch_instances(self):
@@ -2619,22 +4984,56 @@ class GoveeBleFrame(KaitaiStruct):
 
 
 
-    class Op15ColorTemp(KaitaiStruct):
-        def __init__(self, _io, _parent=None, _root=None):
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.Op15ColorGroupWrite, self)._write__seq(io)
+            self._io.write_u1(self.group)
+            for i in range(len(self.colors)):
+                pass
+                self.colors[i]._write__seq(self._io)
+
+
+
+        def _check(self):
+            _ = self.group
+            if not  ((self.color_count >= 1) and (self.color_count <= 4)) :
+                raise kaitaistruct.ValidationExprError(self.group, None, u"/types/op15_color_group_write/seq/0")
+            if len(self.colors) != self.color_count:
+                raise kaitaistruct.ConsistencyError(u"colors", self.color_count, len(self.colors))
+            for i in range(len(self.colors)):
+                pass
+                if self.colors[i]._root != self._root:
+                    raise kaitaistruct.ConsistencyError(u"colors", self._root, self.colors[i]._root)
+                if self.colors[i]._parent != self:
+                    raise kaitaistruct.ConsistencyError(u"colors", self, self.colors[i]._parent)
+
+            self._dirty = False
+
+
+    class Op15ColorTemp(ReadWriteKaitaiStruct):
+        def __init__(self, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.Op15ColorTemp, self).__init__(_io)
             self._parent = _parent
             self._root = _root
-            self._read()
 
         def _read(self):
             self.kelvin_le = self._io.read_u2le()
+            self._dirty = False
 
 
         def _fetch_instances(self):
             pass
 
 
-    class Op15ColorTyped(KaitaiStruct):
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.Op15ColorTemp, self)._write__seq(io)
+            self._io.write_u2le(self.kelvin_le)
+
+
+        def _check(self):
+            self._dirty = False
+
+
+    class Op15ColorTyped(ReadWriteKaitaiStruct):
         """op 0x01 colour write, parametric on the opType the client is issuing (SubModeColorV1.getWriteBytes):
           variant 1  = basic            -> [r,g,b, seg_mask]
           variant 12 = H60A1/H60A6 RGB  -> [r,g,b, 00 00 00 00 00, seg_mask]
@@ -2642,12 +5041,11 @@ class GoveeBleFrame(KaitaiStruct):
         (The frame-path `op15_color` is size-eos because a captured frame carries no opType; use THIS when you
         are building/decoding a known write. Devices.yaml `color_scheme` + the write op pick the variant.)
         """
-        def __init__(self, variant, _io, _parent=None, _root=None):
+        def __init__(self, variant, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.Op15ColorTyped, self).__init__(_io)
             self._parent = _parent
             self._root = _root
             self.variant = variant
-            self._read()
 
         def _read(self):
             self.r = self._io.read_u1()
@@ -2674,6 +5072,7 @@ class GoveeBleFrame(KaitaiStruct):
                 self.tint_b = self._io.read_u1()
 
             self.seg_mask = self._io.read_u2le()
+            self._dirty = False
 
 
         def _fetch_instances(self):
@@ -2695,7 +5094,56 @@ class GoveeBleFrame(KaitaiStruct):
 
 
 
-    class Op15ColorWrite(KaitaiStruct):
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.Op15ColorTyped, self)._write__seq(io)
+            self._io.write_u1(self.r)
+            self._io.write_u1(self.g)
+            self._io.write_u1(self.b)
+            if self.variant == 12:
+                pass
+                self._io.write_bytes(self.zeros)
+
+            if self.variant == 11:
+                pass
+                self._io.write_u2be(self.kelvin)
+
+            if self.variant == 11:
+                pass
+                self._io.write_u1(self.tint_r)
+
+            if self.variant == 11:
+                pass
+                self._io.write_u1(self.tint_g)
+
+            if self.variant == 11:
+                pass
+                self._io.write_u1(self.tint_b)
+
+            self._io.write_u2le(self.seg_mask)
+
+
+        def _check(self):
+            if self.variant == 12:
+                pass
+                if len(self.zeros) != 5:
+                    raise kaitaistruct.ConsistencyError(u"zeros", 5, len(self.zeros))
+
+            if self.variant == 11:
+                pass
+
+            if self.variant == 11:
+                pass
+
+            if self.variant == 11:
+                pass
+
+            if self.variant == 11:
+                pass
+
+            self._dirty = False
+
+
+    class Op15ColorWrite(ReadWriteKaitaiStruct):
         """Colour write body after "33 05 15 01", parametric on the form (variant) and the segment-mask width.
         The forms share op byte 0x01 with no in-frame discriminator (chosen by device family + colour mode):
           variant 1  basic            [r,g,b][seg_mask]
@@ -2738,13 +5186,12 @@ class GoveeBleFrame(KaitaiStruct):
                      into a 17-byte array, so 11+ bytes throws ArrayIndexOutOfBounds (no frame).
         The frame-path op15_color (size-eos) and op15_color_typed (2-byte mask; variants 1/12/11) stay as is.
         """
-        def __init__(self, variant, mask_width, _io, _parent=None, _root=None):
+        def __init__(self, variant, mask_width, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.Op15ColorWrite, self).__init__(_io)
             self._parent = _parent
             self._root = _root
             self.variant = variant
             self.mask_width = mask_width
-            self._read()
 
         def _read(self):
             self.r = self._io.read_u1()
@@ -2776,6 +5223,7 @@ class GoveeBleFrame(KaitaiStruct):
             _ = self.seg_mask
             if not  ((len(_) >= 2) and (len(_) <= self.mask_cap) and ( ((self.variant == 1) or (self.variant == 5) or (self.variant == 11) or (self.variant == 12)) )) :
                 raise kaitaistruct.ValidationExprError(self.seg_mask, self._io, u"/types/op15_color_write/seq/8")
+            self._dirty = False
 
 
         def _fetch_instances(self):
@@ -2796,6 +5244,62 @@ class GoveeBleFrame(KaitaiStruct):
                 pass
 
 
+
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.Op15ColorWrite, self)._write__seq(io)
+            self._io.write_u1(self.r)
+            self._io.write_u1(self.g)
+            self._io.write_u1(self.b)
+            if self.variant == 12:
+                pass
+                self._io.write_bytes(self.reserved)
+
+            if  ((self.variant == 11) or (self.variant == 5)) :
+                pass
+                self._io.write_u2be(self.kelvin)
+
+            if self.variant == 11:
+                pass
+                self._io.write_u1(self.tint_r)
+
+            if self.variant == 11:
+                pass
+                self._io.write_u1(self.tint_g)
+
+            if self.variant == 11:
+                pass
+                self._io.write_u1(self.tint_b)
+
+            self._io.write_bytes(self.seg_mask)
+
+
+        def _check(self):
+            if self.variant == 12:
+                pass
+                if len(self.reserved) != 5:
+                    raise kaitaistruct.ConsistencyError(u"reserved", 5, len(self.reserved))
+                if not self.reserved == b"\x00\x00\x00\x00\x00":
+                    raise kaitaistruct.ValidationNotEqualError(b"\x00\x00\x00\x00\x00", self.reserved, None, u"/types/op15_color_write/seq/3")
+
+            if  ((self.variant == 11) or (self.variant == 5)) :
+                pass
+
+            if self.variant == 11:
+                pass
+
+            if self.variant == 11:
+                pass
+
+            if self.variant == 11:
+                pass
+
+            if len(self.seg_mask) != self.mask_width:
+                raise kaitaistruct.ConsistencyError(u"seg_mask", self.mask_width, len(self.seg_mask))
+            _ = self.seg_mask
+            if not  ((len(_) >= 2) and (len(_) <= self.mask_cap) and ( ((self.variant == 1) or (self.variant == 5) or (self.variant == 11) or (self.variant == 12)) )) :
+                raise kaitaistruct.ValidationExprError(self.seg_mask, None, u"/types/op15_color_write/seq/8")
+            self._dirty = False
+
         @property
         def is_cct(self):
             """kelvin != 0 (the ksy's is_cct convention): Bytes.u vs Bytes.l's 00 00, and Bytes.r kinds 0/1/3-full vs the kind-3 partial and h6047/h6062 RGB writes, which carry kelvin 0."""
@@ -2805,6 +5309,8 @@ class GoveeBleFrame(KaitaiStruct):
             self._m_is_cct =  (( ((self.variant == 11) or (self.variant == 5)) ) and (self.kelvin != 0)) 
             return getattr(self, '_m_is_cct', None)
 
+        def _invalidate_is_cct(self):
+            del self._m_is_cct
         @property
         def mask_cap(self):
             """most mask bytes the app puts on the wire for this variant: 17 - ext bytes before the mask (5 / 7 / 10)."""
@@ -2814,49 +5320,74 @@ class GoveeBleFrame(KaitaiStruct):
             self._m_mask_cap = (12 if self.variant == 1 else (10 if self.variant == 5 else 7))
             return getattr(self, '_m_mask_cap', None)
 
+        def _invalidate_mask_cap(self):
+            del self._m_mask_cap
 
-    class PlugSpecRead(KaitaiStruct):
+    class PlugSpecRead(ReadWriteKaitaiStruct):
         """AA B3 reply (h5080 SpecController:19): single spec byte @ body[0]. TRACED all uses: stored as model.L (EventSpec.h, PairAcV1.onEventSpec:347) and forwarded as the IoT spec identifier / adjust-screen string (Model.getSpec) — it is never bit-decoded. Plug OUTLET COUNT is NOT this byte: it is Support.getPlugNum(goodsType) = 50/307->2, 90->3, else 1."""
-        def __init__(self, _io, _parent=None, _root=None):
+        def __init__(self, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.PlugSpecRead, self).__init__(_io)
             self._parent = _parent
             self._root = _root
-            self._read()
 
         def _read(self):
             self.spec = self._io.read_u1()
             self.rest = self._io.read_bytes_full()
+            self._dirty = False
 
 
         def _fetch_instances(self):
             pass
 
 
-    class PlugSyncTimePayload(KaitaiStruct):
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.PlugSpecRead, self)._write__seq(io)
+            self._io.write_u1(self.spec)
+            self._io.write_bytes(self.rest)
+            if not self._io.is_eof():
+                raise kaitaistruct.ConsistencyError(u"rest", 0, self._io.size() - self._io.pos())
+
+
+        def _check(self):
+            self._dirty = False
+
+
+    class PlugSyncTimePayload(ReadWriteKaitaiStruct):
         """Plug family, command 0xB5."""
-        def __init__(self, _io, _parent=None, _root=None):
+        def __init__(self, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.PlugSyncTimePayload, self).__init__(_io)
             self._parent = _parent
             self._root = _root
-            self._read()
 
         def _read(self):
             self.unix_seconds = self._io.read_u4be()
             self.marker = self._io.read_u1()
             self.tz_hour = self._io.read_s1()
             self.tz_min = self._io.read_s1()
+            self._dirty = False
 
 
         def _fetch_instances(self):
             pass
 
 
-    class ReadCommand(KaitaiStruct):
-        def __init__(self, _io, _parent=None, _root=None):
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.PlugSyncTimePayload, self)._write__seq(io)
+            self._io.write_u4be(self.unix_seconds)
+            self._io.write_u1(self.marker)
+            self._io.write_s1(self.tz_hour)
+            self._io.write_s1(self.tz_min)
+
+
+        def _check(self):
+            self._dirty = False
+
+
+    class ReadCommand(ReadWriteKaitaiStruct):
+        def __init__(self, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.ReadCommand, self).__init__(_io)
             self._parent = _parent
             self._root = _root
-            self._read()
 
         def _read(self):
             self.command = KaitaiStream.resolve_enum(GoveeBleFrame.Command, self._io.read_u1())
@@ -2866,64 +5397,77 @@ class GoveeBleFrame(KaitaiStruct):
                 self._raw_body = self._io.read_bytes_full()
                 _io__raw_body = KaitaiStream(BytesIO(self._raw_body))
                 self.body = GoveeBleFrame.BrightnessReadReply(_io__raw_body, self, self._root)
+                self.body._read()
             elif _on == GoveeBleFrame.Command.bulb_string_color_read:
                 pass
                 self._raw_body = self._io.read_bytes_full()
                 _io__raw_body = KaitaiStream(BytesIO(self._raw_body))
                 self.body = GoveeBleFrame.BulbGroupColorRead(_io__raw_body, self, self._root)
+                self.body._read()
             elif _on == GoveeBleFrame.Command.compose_light_switch:
                 pass
                 self._raw_body = self._io.read_bytes_full()
                 _io__raw_body = KaitaiStream(BytesIO(self._raw_body))
                 self.body = GoveeBleFrame.BarSwitchRead(_io__raw_body, self, self._root)
+                self.body._read()
             elif _on == GoveeBleFrame.Command.device_info:
                 pass
                 self._raw_body = self._io.read_bytes_full()
                 _io__raw_body = KaitaiStream(BytesIO(self._raw_body))
                 self.body = GoveeBleFrame.DeviceInfoRead(_io__raw_body, self, self._root)
+                self.body._read()
             elif _on == GoveeBleFrame.Command.gradual_wifi_ble:
                 pass
                 self._raw_body = self._io.read_bytes_full()
                 _io__raw_body = KaitaiStream(BytesIO(self._raw_body))
                 self.body = GoveeBleFrame.GradualRead(_io__raw_body, self, self._root)
+                self.body._read()
             elif _on == GoveeBleFrame.Command.ic_num:
                 pass
                 self._raw_body = self._io.read_bytes_full()
                 _io__raw_body = KaitaiStream(BytesIO(self._raw_body))
                 self.body = GoveeBleFrame.IcSegmentRead(_io__raw_body, self, self._root)
+                self.body._read()
             elif _on == GoveeBleFrame.Command.local_color_read:
                 pass
                 self._raw_body = self._io.read_bytes_full()
                 _io__raw_body = KaitaiStream(BytesIO(self._raw_body))
                 self.body = GoveeBleFrame.BulbGroupColorReadV2(_io__raw_body, self, self._root)
+                self.body._read()
             elif _on == GoveeBleFrame.Command.mode:
                 pass
                 self._raw_body = self._io.read_bytes_full()
                 _io__raw_body = KaitaiStream(BytesIO(self._raw_body))
                 self.body = GoveeBleFrame.ModeRead(_io__raw_body, self, self._root)
+                self.body._read()
             elif _on == GoveeBleFrame.Command.plug_spec:
                 pass
                 self._raw_body = self._io.read_bytes_full()
                 _io__raw_body = KaitaiStream(BytesIO(self._raw_body))
                 self.body = GoveeBleFrame.PlugSpecRead(_io__raw_body, self, self._root)
+                self.body._read()
             elif _on == GoveeBleFrame.Command.secret_read:
                 pass
                 self._raw_body = self._io.read_bytes_full()
                 _io__raw_body = KaitaiStream(BytesIO(self._raw_body))
                 self.body = GoveeBleFrame.SecretReadReply(_io__raw_body, self, self._root)
+                self.body._read()
             elif _on == GoveeBleFrame.Command.soft_version:
                 pass
                 self._raw_body = self._io.read_bytes_full()
                 _io__raw_body = KaitaiStream(BytesIO(self._raw_body))
                 self.body = GoveeBleFrame.SoftVersionRead(_io__raw_body, self, self._root)
+                self.body._read()
             elif _on == GoveeBleFrame.Command.switch:
                 pass
                 self._raw_body = self._io.read_bytes_full()
                 _io__raw_body = KaitaiStream(BytesIO(self._raw_body))
                 self.body = GoveeBleFrame.SwitchReadReply(_io__raw_body, self, self._root)
+                self.body._read()
             else:
                 pass
                 self.body = self._io.read_bytes_full()
+            self._dirty = False
 
 
         def _fetch_instances(self):
@@ -2969,7 +5513,253 @@ class GoveeBleFrame(KaitaiStruct):
                 pass
 
 
-    class ReadRequest(KaitaiStruct):
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.ReadCommand, self)._write__seq(io)
+            self._io.write_u1(int(self.command))
+            _on = self.command
+            if _on == GoveeBleFrame.Command.brightness:
+                pass
+                _io__raw_body = KaitaiStream(BytesIO(bytearray(self._io.size() - self._io.pos())))
+                self._io.add_child_stream(_io__raw_body)
+                _pos2 = self._io.pos()
+                self._io.seek(self._io.pos() + (self._io.size() - self._io.pos()))
+                def handler(parent, _io__raw_body=_io__raw_body):
+                    self._raw_body = _io__raw_body.to_byte_array()
+                    parent.write_bytes(self._raw_body)
+                    if not parent.is_eof():
+                        raise kaitaistruct.ConsistencyError(u"raw(body)", 0, parent.size() - parent.pos())
+                _io__raw_body.write_back_handler = KaitaiStream.WriteBackHandler(_pos2, handler)
+                self.body._write__seq(_io__raw_body)
+            elif _on == GoveeBleFrame.Command.bulb_string_color_read:
+                pass
+                _io__raw_body = KaitaiStream(BytesIO(bytearray(self._io.size() - self._io.pos())))
+                self._io.add_child_stream(_io__raw_body)
+                _pos2 = self._io.pos()
+                self._io.seek(self._io.pos() + (self._io.size() - self._io.pos()))
+                def handler(parent, _io__raw_body=_io__raw_body):
+                    self._raw_body = _io__raw_body.to_byte_array()
+                    parent.write_bytes(self._raw_body)
+                    if not parent.is_eof():
+                        raise kaitaistruct.ConsistencyError(u"raw(body)", 0, parent.size() - parent.pos())
+                _io__raw_body.write_back_handler = KaitaiStream.WriteBackHandler(_pos2, handler)
+                self.body._write__seq(_io__raw_body)
+            elif _on == GoveeBleFrame.Command.compose_light_switch:
+                pass
+                _io__raw_body = KaitaiStream(BytesIO(bytearray(self._io.size() - self._io.pos())))
+                self._io.add_child_stream(_io__raw_body)
+                _pos2 = self._io.pos()
+                self._io.seek(self._io.pos() + (self._io.size() - self._io.pos()))
+                def handler(parent, _io__raw_body=_io__raw_body):
+                    self._raw_body = _io__raw_body.to_byte_array()
+                    parent.write_bytes(self._raw_body)
+                    if not parent.is_eof():
+                        raise kaitaistruct.ConsistencyError(u"raw(body)", 0, parent.size() - parent.pos())
+                _io__raw_body.write_back_handler = KaitaiStream.WriteBackHandler(_pos2, handler)
+                self.body._write__seq(_io__raw_body)
+            elif _on == GoveeBleFrame.Command.device_info:
+                pass
+                _io__raw_body = KaitaiStream(BytesIO(bytearray(self._io.size() - self._io.pos())))
+                self._io.add_child_stream(_io__raw_body)
+                _pos2 = self._io.pos()
+                self._io.seek(self._io.pos() + (self._io.size() - self._io.pos()))
+                def handler(parent, _io__raw_body=_io__raw_body):
+                    self._raw_body = _io__raw_body.to_byte_array()
+                    parent.write_bytes(self._raw_body)
+                    if not parent.is_eof():
+                        raise kaitaistruct.ConsistencyError(u"raw(body)", 0, parent.size() - parent.pos())
+                _io__raw_body.write_back_handler = KaitaiStream.WriteBackHandler(_pos2, handler)
+                self.body._write__seq(_io__raw_body)
+            elif _on == GoveeBleFrame.Command.gradual_wifi_ble:
+                pass
+                _io__raw_body = KaitaiStream(BytesIO(bytearray(self._io.size() - self._io.pos())))
+                self._io.add_child_stream(_io__raw_body)
+                _pos2 = self._io.pos()
+                self._io.seek(self._io.pos() + (self._io.size() - self._io.pos()))
+                def handler(parent, _io__raw_body=_io__raw_body):
+                    self._raw_body = _io__raw_body.to_byte_array()
+                    parent.write_bytes(self._raw_body)
+                    if not parent.is_eof():
+                        raise kaitaistruct.ConsistencyError(u"raw(body)", 0, parent.size() - parent.pos())
+                _io__raw_body.write_back_handler = KaitaiStream.WriteBackHandler(_pos2, handler)
+                self.body._write__seq(_io__raw_body)
+            elif _on == GoveeBleFrame.Command.ic_num:
+                pass
+                _io__raw_body = KaitaiStream(BytesIO(bytearray(self._io.size() - self._io.pos())))
+                self._io.add_child_stream(_io__raw_body)
+                _pos2 = self._io.pos()
+                self._io.seek(self._io.pos() + (self._io.size() - self._io.pos()))
+                def handler(parent, _io__raw_body=_io__raw_body):
+                    self._raw_body = _io__raw_body.to_byte_array()
+                    parent.write_bytes(self._raw_body)
+                    if not parent.is_eof():
+                        raise kaitaistruct.ConsistencyError(u"raw(body)", 0, parent.size() - parent.pos())
+                _io__raw_body.write_back_handler = KaitaiStream.WriteBackHandler(_pos2, handler)
+                self.body._write__seq(_io__raw_body)
+            elif _on == GoveeBleFrame.Command.local_color_read:
+                pass
+                _io__raw_body = KaitaiStream(BytesIO(bytearray(self._io.size() - self._io.pos())))
+                self._io.add_child_stream(_io__raw_body)
+                _pos2 = self._io.pos()
+                self._io.seek(self._io.pos() + (self._io.size() - self._io.pos()))
+                def handler(parent, _io__raw_body=_io__raw_body):
+                    self._raw_body = _io__raw_body.to_byte_array()
+                    parent.write_bytes(self._raw_body)
+                    if not parent.is_eof():
+                        raise kaitaistruct.ConsistencyError(u"raw(body)", 0, parent.size() - parent.pos())
+                _io__raw_body.write_back_handler = KaitaiStream.WriteBackHandler(_pos2, handler)
+                self.body._write__seq(_io__raw_body)
+            elif _on == GoveeBleFrame.Command.mode:
+                pass
+                _io__raw_body = KaitaiStream(BytesIO(bytearray(self._io.size() - self._io.pos())))
+                self._io.add_child_stream(_io__raw_body)
+                _pos2 = self._io.pos()
+                self._io.seek(self._io.pos() + (self._io.size() - self._io.pos()))
+                def handler(parent, _io__raw_body=_io__raw_body):
+                    self._raw_body = _io__raw_body.to_byte_array()
+                    parent.write_bytes(self._raw_body)
+                    if not parent.is_eof():
+                        raise kaitaistruct.ConsistencyError(u"raw(body)", 0, parent.size() - parent.pos())
+                _io__raw_body.write_back_handler = KaitaiStream.WriteBackHandler(_pos2, handler)
+                self.body._write__seq(_io__raw_body)
+            elif _on == GoveeBleFrame.Command.plug_spec:
+                pass
+                _io__raw_body = KaitaiStream(BytesIO(bytearray(self._io.size() - self._io.pos())))
+                self._io.add_child_stream(_io__raw_body)
+                _pos2 = self._io.pos()
+                self._io.seek(self._io.pos() + (self._io.size() - self._io.pos()))
+                def handler(parent, _io__raw_body=_io__raw_body):
+                    self._raw_body = _io__raw_body.to_byte_array()
+                    parent.write_bytes(self._raw_body)
+                    if not parent.is_eof():
+                        raise kaitaistruct.ConsistencyError(u"raw(body)", 0, parent.size() - parent.pos())
+                _io__raw_body.write_back_handler = KaitaiStream.WriteBackHandler(_pos2, handler)
+                self.body._write__seq(_io__raw_body)
+            elif _on == GoveeBleFrame.Command.secret_read:
+                pass
+                _io__raw_body = KaitaiStream(BytesIO(bytearray(self._io.size() - self._io.pos())))
+                self._io.add_child_stream(_io__raw_body)
+                _pos2 = self._io.pos()
+                self._io.seek(self._io.pos() + (self._io.size() - self._io.pos()))
+                def handler(parent, _io__raw_body=_io__raw_body):
+                    self._raw_body = _io__raw_body.to_byte_array()
+                    parent.write_bytes(self._raw_body)
+                    if not parent.is_eof():
+                        raise kaitaistruct.ConsistencyError(u"raw(body)", 0, parent.size() - parent.pos())
+                _io__raw_body.write_back_handler = KaitaiStream.WriteBackHandler(_pos2, handler)
+                self.body._write__seq(_io__raw_body)
+            elif _on == GoveeBleFrame.Command.soft_version:
+                pass
+                _io__raw_body = KaitaiStream(BytesIO(bytearray(self._io.size() - self._io.pos())))
+                self._io.add_child_stream(_io__raw_body)
+                _pos2 = self._io.pos()
+                self._io.seek(self._io.pos() + (self._io.size() - self._io.pos()))
+                def handler(parent, _io__raw_body=_io__raw_body):
+                    self._raw_body = _io__raw_body.to_byte_array()
+                    parent.write_bytes(self._raw_body)
+                    if not parent.is_eof():
+                        raise kaitaistruct.ConsistencyError(u"raw(body)", 0, parent.size() - parent.pos())
+                _io__raw_body.write_back_handler = KaitaiStream.WriteBackHandler(_pos2, handler)
+                self.body._write__seq(_io__raw_body)
+            elif _on == GoveeBleFrame.Command.switch:
+                pass
+                _io__raw_body = KaitaiStream(BytesIO(bytearray(self._io.size() - self._io.pos())))
+                self._io.add_child_stream(_io__raw_body)
+                _pos2 = self._io.pos()
+                self._io.seek(self._io.pos() + (self._io.size() - self._io.pos()))
+                def handler(parent, _io__raw_body=_io__raw_body):
+                    self._raw_body = _io__raw_body.to_byte_array()
+                    parent.write_bytes(self._raw_body)
+                    if not parent.is_eof():
+                        raise kaitaistruct.ConsistencyError(u"raw(body)", 0, parent.size() - parent.pos())
+                _io__raw_body.write_back_handler = KaitaiStream.WriteBackHandler(_pos2, handler)
+                self.body._write__seq(_io__raw_body)
+            else:
+                pass
+                self._io.write_bytes(self.body)
+                if not self._io.is_eof():
+                    raise kaitaistruct.ConsistencyError(u"body", 0, self._io.size() - self._io.pos())
+
+
+        def _check(self):
+            _on = self.command
+            if _on == GoveeBleFrame.Command.brightness:
+                pass
+                if self.body._root != self._root:
+                    raise kaitaistruct.ConsistencyError(u"body", self._root, self.body._root)
+                if self.body._parent != self:
+                    raise kaitaistruct.ConsistencyError(u"body", self, self.body._parent)
+            elif _on == GoveeBleFrame.Command.bulb_string_color_read:
+                pass
+                if self.body._root != self._root:
+                    raise kaitaistruct.ConsistencyError(u"body", self._root, self.body._root)
+                if self.body._parent != self:
+                    raise kaitaistruct.ConsistencyError(u"body", self, self.body._parent)
+            elif _on == GoveeBleFrame.Command.compose_light_switch:
+                pass
+                if self.body._root != self._root:
+                    raise kaitaistruct.ConsistencyError(u"body", self._root, self.body._root)
+                if self.body._parent != self:
+                    raise kaitaistruct.ConsistencyError(u"body", self, self.body._parent)
+            elif _on == GoveeBleFrame.Command.device_info:
+                pass
+                if self.body._root != self._root:
+                    raise kaitaistruct.ConsistencyError(u"body", self._root, self.body._root)
+                if self.body._parent != self:
+                    raise kaitaistruct.ConsistencyError(u"body", self, self.body._parent)
+            elif _on == GoveeBleFrame.Command.gradual_wifi_ble:
+                pass
+                if self.body._root != self._root:
+                    raise kaitaistruct.ConsistencyError(u"body", self._root, self.body._root)
+                if self.body._parent != self:
+                    raise kaitaistruct.ConsistencyError(u"body", self, self.body._parent)
+            elif _on == GoveeBleFrame.Command.ic_num:
+                pass
+                if self.body._root != self._root:
+                    raise kaitaistruct.ConsistencyError(u"body", self._root, self.body._root)
+                if self.body._parent != self:
+                    raise kaitaistruct.ConsistencyError(u"body", self, self.body._parent)
+            elif _on == GoveeBleFrame.Command.local_color_read:
+                pass
+                if self.body._root != self._root:
+                    raise kaitaistruct.ConsistencyError(u"body", self._root, self.body._root)
+                if self.body._parent != self:
+                    raise kaitaistruct.ConsistencyError(u"body", self, self.body._parent)
+            elif _on == GoveeBleFrame.Command.mode:
+                pass
+                if self.body._root != self._root:
+                    raise kaitaistruct.ConsistencyError(u"body", self._root, self.body._root)
+                if self.body._parent != self:
+                    raise kaitaistruct.ConsistencyError(u"body", self, self.body._parent)
+            elif _on == GoveeBleFrame.Command.plug_spec:
+                pass
+                if self.body._root != self._root:
+                    raise kaitaistruct.ConsistencyError(u"body", self._root, self.body._root)
+                if self.body._parent != self:
+                    raise kaitaistruct.ConsistencyError(u"body", self, self.body._parent)
+            elif _on == GoveeBleFrame.Command.secret_read:
+                pass
+                if self.body._root != self._root:
+                    raise kaitaistruct.ConsistencyError(u"body", self._root, self.body._root)
+                if self.body._parent != self:
+                    raise kaitaistruct.ConsistencyError(u"body", self, self.body._parent)
+            elif _on == GoveeBleFrame.Command.soft_version:
+                pass
+                if self.body._root != self._root:
+                    raise kaitaistruct.ConsistencyError(u"body", self._root, self.body._root)
+                if self.body._parent != self:
+                    raise kaitaistruct.ConsistencyError(u"body", self, self.body._parent)
+            elif _on == GoveeBleFrame.Command.switch:
+                pass
+                if self.body._root != self._root:
+                    raise kaitaistruct.ConsistencyError(u"body", self._root, self.body._root)
+                if self.body._parent != self:
+                    raise kaitaistruct.ConsistencyError(u"body", self, self.body._parent)
+            else:
+                pass
+            self._dirty = False
+
+
+    class ReadRequest(ReadWriteKaitaiStruct):
         """0xAA read REQUEST body = the bytes after the 0xAA header: [command][selector...]. The library keeps the
         0xAA byte, the zero padding through byte 18 and the XOR BCC at byte 19 in code. Every app read frame is
         BleUtils.Companion.p(0xAA, getCommandType(), ext): byte 1 = command, ext copied from byte 2 only when
@@ -3023,11 +5813,10 @@ class GoveeBleFrame(KaitaiStruct):
         trailing 00 bytes there are padding. command uses enum command: every command above is in it; a command
         byte missing from the enum still round-trips in Python (resolve_enum keeps the int) but reads as null in Java.
         """
-        def __init__(self, _io, _parent=None, _root=None):
+        def __init__(self, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.ReadRequest, self).__init__(_io)
             self._parent = _parent
             self._root = _root
-            self._read()
 
         def _read(self):
             self.command = KaitaiStream.resolve_enum(GoveeBleFrame.Command, self._io.read_u1())
@@ -3035,13 +5824,29 @@ class GoveeBleFrame(KaitaiStruct):
             _ = self.selector
             if not len(_) <= 17:
                 raise kaitaistruct.ValidationExprError(self.selector, self._io, u"/types/read_request/seq/1")
+            self._dirty = False
 
 
         def _fetch_instances(self):
             pass
 
 
-    class RgbSceneValue(KaitaiStruct):
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.ReadRequest, self)._write__seq(io)
+            self._io.write_u1(int(self.command))
+            self._io.write_bytes(self.selector)
+            if not self._io.is_eof():
+                raise kaitaistruct.ConsistencyError(u"selector", 0, self._io.size() - self._io.pos())
+
+
+        def _check(self):
+            _ = self.selector
+            if not len(_) <= 17:
+                raise kaitaistruct.ValidationExprError(self.selector, None, u"/types/read_request/seq/1")
+            self._dirty = False
+
+
+    class RgbSceneValue(ReadWriteKaitaiStruct):
         """dialect-A rgb library scene (ScenesRgb.isValidProtocolBytes) = decoded scenceParam verbatim.
         CONFIG-TABLE-DRIVEN: byte0 indexes a hardcoded config e(byte0) = [_, mode, color_count]
         (ScenesRgb.e — NOT present in the value bytes) which selects the body shape:
@@ -3050,33 +5855,46 @@ class GoveeBleFrame(KaitaiStruct):
         Because mode/color_count come from the external table, the body is NOT self-describing from bytes
         alone; modelled as byte0 + opaque remainder. See GOVEE_BLE_GATT_PROTOCOL.md §4.4.
         """
-        def __init__(self, _io, _parent=None, _root=None):
+        def __init__(self, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.RgbSceneValue, self).__init__(_io)
             self._parent = _parent
             self._root = _root
-            self._read()
 
         def _read(self):
             self.config_tag = self._io.read_u1()
             self.rest = self._io.read_bytes_full()
+            self._dirty = False
 
 
         def _fetch_instances(self):
             pass
 
 
-    class RgbicEffect(KaitaiStruct):
-        def __init__(self, _io, _parent=None, _root=None):
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.RgbSceneValue, self)._write__seq(io)
+            self._io.write_u1(self.config_tag)
+            self._io.write_bytes(self.rest)
+            if not self._io.is_eof():
+                raise kaitaistruct.ConsistencyError(u"rest", 0, self._io.size() - self._io.pos())
+
+
+        def _check(self):
+            self._dirty = False
+
+
+    class RgbicEffect(ReadWriteKaitaiStruct):
+        def __init__(self, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.RgbicEffect, self).__init__(_io)
             self._parent = _parent
             self._root = _root
-            self._read()
 
         def _read(self):
             self.sub_len = self._io.read_u1()
             self._raw_record = self._io.read_bytes(self.sub_len)
             _io__raw_record = KaitaiStream(BytesIO(self._raw_record))
             self.record = GoveeBleFrame.RgbicEffectRecord(_io__raw_record, self, self._root)
+            self.record._read()
+            self._dirty = False
 
 
         def _fetch_instances(self):
@@ -3084,7 +5902,31 @@ class GoveeBleFrame(KaitaiStruct):
             self.record._fetch_instances()
 
 
-    class RgbicEffectRecord(KaitaiStruct):
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.RgbicEffect, self)._write__seq(io)
+            self._io.write_u1(self.sub_len)
+            _io__raw_record = KaitaiStream(BytesIO(bytearray(self.sub_len)))
+            self._io.add_child_stream(_io__raw_record)
+            _pos2 = self._io.pos()
+            self._io.seek(self._io.pos() + (self.sub_len))
+            def handler(parent, _io__raw_record=_io__raw_record):
+                self._raw_record = _io__raw_record.to_byte_array()
+                if len(self._raw_record) != self.sub_len:
+                    raise kaitaistruct.ConsistencyError(u"raw(record)", self.sub_len, len(self._raw_record))
+                parent.write_bytes(self._raw_record)
+            _io__raw_record.write_back_handler = KaitaiStream.WriteBackHandler(_pos2, handler)
+            self.record._write__seq(_io__raw_record)
+
+
+        def _check(self):
+            if self.record._root != self._root:
+                raise kaitaistruct.ConsistencyError(u"record", self._root, self.record._root)
+            if self.record._parent != self:
+                raise kaitaistruct.ConsistencyError(u"record", self, self.record._parent)
+            self._dirty = False
+
+
+    class RgbicEffectRecord(ReadWriteKaitaiStruct):
         """One rgbic effect record — FULLY interpreted (source of truth = ParamsV2.RgbICEffect parser :967 /
         serializer k() :706; ScenesRgbIC.f :3337 is only a length-validator, which is why an earlier draft
         mislabeled these bytes). Layout: style byte (packed nibbles) · mode + mode-dependent 2-byte value ·
@@ -3093,11 +5935,10 @@ class GoveeBleFrame(KaitaiStruct):
         Verified: parses all 327 dialect-A rgbic catalog scenes (H6047/H61A8/H6641) with exact consumption;
         colours decode correctly (e.g. H6047 "Action" → red then blue).
         """
-        def __init__(self, _io, _parent=None, _root=None):
+        def __init__(self, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.RgbicEffectRecord, self).__init__(_io)
             self._parent = _parent
             self._root = _root
-            self._read()
 
         def _read(self):
             self.style = self._io.read_u1()
@@ -3107,7 +5948,11 @@ class GoveeBleFrame(KaitaiStruct):
             self.bright_count = self._io.read_u1()
             self.brightness_effects = []
             for i in range(self.bright_count):
-                self.brightness_effects.append(GoveeBleFrame.BrightnessEffect(self._io, self, self._root))
+                _t_brightness_effects = GoveeBleFrame.BrightnessEffect(self._io, self, self._root)
+                try:
+                    _t_brightness_effects._read()
+                finally:
+                    self.brightness_effects.append(_t_brightness_effects)
 
             self.color_ic = self._io.read_u1()
             self.speed = self._io.read_u1()
@@ -3115,10 +5960,17 @@ class GoveeBleFrame(KaitaiStruct):
             self.color_count = self._io.read_u1()
             self.colors = []
             for i in range(self.color_count):
-                self.colors.append(GoveeBleFrame.ScRgb(self._io, self, self._root))
+                _t_colors = GoveeBleFrame.ScRgb(self._io, self, self._root)
+                try:
+                    _t_colors._read()
+                finally:
+                    self.colors.append(_t_colors)
 
             self.in_area_move = GoveeBleFrame.InAreaMove(self._io, self, self._root)
+            self.in_area_move._read()
             self.area_move = GoveeBleFrame.AreaMove(self._io, self, self._root)
+            self.area_move._read()
+            self._dirty = False
 
 
         def _fetch_instances(self):
@@ -3135,23 +5987,80 @@ class GoveeBleFrame(KaitaiStruct):
             self.area_move._fetch_instances()
 
 
-    class RgbicSceneValue(KaitaiStruct):
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.RgbicEffectRecord, self)._write__seq(io)
+            self._io.write_u1(self.style)
+            self._io.write_u1(self.mode)
+            self._io.write_u2le(self.mode_val)
+            self._io.write_u1(self.bright_algo)
+            self._io.write_u1(self.bright_count)
+            for i in range(len(self.brightness_effects)):
+                pass
+                self.brightness_effects[i]._write__seq(self._io)
+
+            self._io.write_u1(self.color_ic)
+            self._io.write_u1(self.speed)
+            self._io.write_u1(self.duration)
+            self._io.write_u1(self.color_count)
+            for i in range(len(self.colors)):
+                pass
+                self.colors[i]._write__seq(self._io)
+
+            self.in_area_move._write__seq(self._io)
+            self.area_move._write__seq(self._io)
+
+
+        def _check(self):
+            if len(self.brightness_effects) != self.bright_count:
+                raise kaitaistruct.ConsistencyError(u"brightness_effects", self.bright_count, len(self.brightness_effects))
+            for i in range(len(self.brightness_effects)):
+                pass
+                if self.brightness_effects[i]._root != self._root:
+                    raise kaitaistruct.ConsistencyError(u"brightness_effects", self._root, self.brightness_effects[i]._root)
+                if self.brightness_effects[i]._parent != self:
+                    raise kaitaistruct.ConsistencyError(u"brightness_effects", self, self.brightness_effects[i]._parent)
+
+            if len(self.colors) != self.color_count:
+                raise kaitaistruct.ConsistencyError(u"colors", self.color_count, len(self.colors))
+            for i in range(len(self.colors)):
+                pass
+                if self.colors[i]._root != self._root:
+                    raise kaitaistruct.ConsistencyError(u"colors", self._root, self.colors[i]._root)
+                if self.colors[i]._parent != self:
+                    raise kaitaistruct.ConsistencyError(u"colors", self, self.colors[i]._parent)
+
+            if self.in_area_move._root != self._root:
+                raise kaitaistruct.ConsistencyError(u"in_area_move", self._root, self.in_area_move._root)
+            if self.in_area_move._parent != self:
+                raise kaitaistruct.ConsistencyError(u"in_area_move", self, self.in_area_move._parent)
+            if self.area_move._root != self._root:
+                raise kaitaistruct.ConsistencyError(u"area_move", self._root, self.area_move._root)
+            if self.area_move._parent != self:
+                raise kaitaistruct.ConsistencyError(u"area_move", self, self.area_move._parent)
+            self._dirty = False
+
+
+    class RgbicSceneValue(ReadWriteKaitaiStruct):
         """dialect-A rgbic library scene (ScenesRgbIC.isValidProtocolBytes) = decoded scenceParam VERBATIM.
         effect_count, then that many length-prefixed effect records (fully structured — see
         rgbic_effect_record). Verified: parses all 57 H6047 + 135 H61A8 catalog scenes with exact consumption.
         """
-        def __init__(self, _io, _parent=None, _root=None):
+        def __init__(self, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.RgbicSceneValue, self).__init__(_io)
             self._parent = _parent
             self._root = _root
-            self._read()
 
         def _read(self):
             self.effect_count = self._io.read_u1()
             self.effects = []
             for i in range(self.effect_count):
-                self.effects.append(GoveeBleFrame.RgbicEffect(self._io, self, self._root))
+                _t_effects = GoveeBleFrame.RgbicEffect(self._io, self, self._root)
+                try:
+                    _t_effects._read()
+                finally:
+                    self.effects.append(_t_effects)
 
+            self._dirty = False
 
 
         def _fetch_instances(self):
@@ -3162,44 +6071,85 @@ class GoveeBleFrame(KaitaiStruct):
 
 
 
-    class ScRgb(KaitaiStruct):
-        def __init__(self, _io, _parent=None, _root=None):
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.RgbicSceneValue, self)._write__seq(io)
+            self._io.write_u1(self.effect_count)
+            for i in range(len(self.effects)):
+                pass
+                self.effects[i]._write__seq(self._io)
+
+
+
+        def _check(self):
+            if len(self.effects) != self.effect_count:
+                raise kaitaistruct.ConsistencyError(u"effects", self.effect_count, len(self.effects))
+            for i in range(len(self.effects)):
+                pass
+                if self.effects[i]._root != self._root:
+                    raise kaitaistruct.ConsistencyError(u"effects", self._root, self.effects[i]._root)
+                if self.effects[i]._parent != self:
+                    raise kaitaistruct.ConsistencyError(u"effects", self, self.effects[i]._parent)
+
+            self._dirty = False
+
+
+    class ScRgb(ReadWriteKaitaiStruct):
+        def __init__(self, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.ScRgb, self).__init__(_io)
             self._parent = _parent
             self._root = _root
-            self._read()
 
         def _read(self):
             self.r = self._io.read_u1()
             self.g = self._io.read_u1()
             self.b = self._io.read_u1()
+            self._dirty = False
 
 
         def _fetch_instances(self):
             pass
 
 
-    class ScenePayload(KaitaiStruct):
-        def __init__(self, _io, _parent=None, _root=None):
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.ScRgb, self)._write__seq(io)
+            self._io.write_u1(self.r)
+            self._io.write_u1(self.g)
+            self._io.write_u1(self.b)
+
+
+        def _check(self):
+            self._dirty = False
+
+
+    class ScenePayload(ReadWriteKaitaiStruct):
+        def __init__(self, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.ScenePayload, self).__init__(_io)
             self._parent = _parent
             self._root = _root
-            self._read()
 
         def _read(self):
             self.effect = self._io.read_u2le()
+            self._dirty = False
 
 
         def _fetch_instances(self):
             pass
 
 
-    class ScenesGraffitiGroup(KaitaiStruct):
-        def __init__(self, _io, _parent=None, _root=None):
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.ScenePayload, self)._write__seq(io)
+            self._io.write_u2le(self.effect)
+
+
+        def _check(self):
+            self._dirty = False
+
+
+    class ScenesGraffitiGroup(ReadWriteKaitaiStruct):
+        def __init__(self, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.ScenesGraffitiGroup, self).__init__(_io)
             self._parent = _parent
             self._root = _root
-            self._read()
 
         def _read(self):
             self.color_count = self._io.read_u1()
@@ -3210,6 +6160,7 @@ class GoveeBleFrame(KaitaiStruct):
             for i in range(self.color_count):
                 self.pixel_indices.append(self._io.read_u1())
 
+            self._dirty = False
 
 
         def _fetch_instances(self):
@@ -3219,17 +6170,37 @@ class GoveeBleFrame(KaitaiStruct):
 
 
 
-    class ScenesGraffitiValue(KaitaiStruct):
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.ScenesGraffitiGroup, self)._write__seq(io)
+            self._io.write_u1(self.color_count)
+            self._io.write_u1(self.r)
+            self._io.write_u1(self.g)
+            self._io.write_u1(self.b)
+            for i in range(len(self.pixel_indices)):
+                pass
+                self._io.write_u1(self.pixel_indices[i])
+
+
+
+        def _check(self):
+            if len(self.pixel_indices) != self.color_count:
+                raise kaitaistruct.ConsistencyError(u"pixel_indices", self.color_count, len(self.pixel_indices))
+            for i in range(len(self.pixel_indices)):
+                pass
+
+            self._dirty = False
+
+
+    class ScenesGraffitiValue(ReadWriteKaitaiStruct):
         """dialect-A graffiti library scene. Wire value = decode(scenceParam)[2:] (strips the 0x01 header +
         effect_hi byte; ScenesOp.n():483). Structure = ParamsV1.a() / DiyProtocolParser.parserParamsV1:1345 —
         effect_lo, speed, brightness, background RGB, seg_count, then seg_count colour groups. Verified:
         parses all 25 H6052 sceneType-3 catalog scenes with exact consumption.
         """
-        def __init__(self, _io, _parent=None, _root=None):
+        def __init__(self, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.ScenesGraffitiValue, self).__init__(_io)
             self._parent = _parent
             self._root = _root
-            self._read()
 
         def _read(self):
             self.effect_lo = self._io.read_u1()
@@ -3241,8 +6212,13 @@ class GoveeBleFrame(KaitaiStruct):
             self.seg_count = self._io.read_u1()
             self.groups = []
             for i in range(self.seg_count):
-                self.groups.append(GoveeBleFrame.ScenesGraffitiGroup(self._io, self, self._root))
+                _t_groups = GoveeBleFrame.ScenesGraffitiGroup(self._io, self, self._root)
+                try:
+                    _t_groups._read()
+                finally:
+                    self.groups.append(_t_groups)
 
+            self._dirty = False
 
 
         def _fetch_instances(self):
@@ -3253,46 +6229,99 @@ class GoveeBleFrame(KaitaiStruct):
 
 
 
-    class SecretKeyWrite(KaitaiStruct):
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.ScenesGraffitiValue, self)._write__seq(io)
+            self._io.write_u1(self.effect_lo)
+            self._io.write_u1(self.speed)
+            self._io.write_u1(self.brightness)
+            self._io.write_u1(self.bg_r)
+            self._io.write_u1(self.bg_g)
+            self._io.write_u1(self.bg_b)
+            self._io.write_u1(self.seg_count)
+            for i in range(len(self.groups)):
+                pass
+                self.groups[i]._write__seq(self._io)
+
+
+
+        def _check(self):
+            if len(self.groups) != self.seg_count:
+                raise kaitaistruct.ConsistencyError(u"groups", self.seg_count, len(self.groups))
+            for i in range(len(self.groups)):
+                pass
+                if self.groups[i]._root != self._root:
+                    raise kaitaistruct.ConsistencyError(u"groups", self._root, self.groups[i]._root)
+                if self.groups[i]._parent != self:
+                    raise kaitaistruct.ConsistencyError(u"groups", self, self.groups[i]._parent)
+
+            self._dirty = False
+
+
+    class SecretKeyWrite(ReadWriteKaitaiStruct):
         """33 B2 account-lock secret write: body = the 8-byte secret, NO selector byte. Every builder writes Encode.decryByBase64(secretCode) as the whole ext array: SecretKeyController.q (base-classes10/com/govee/base2light/ble/controller/SecretKeyController.java:22-26,71-78; command SINGLE_CHECK_SECRET_KEY = -78, BleProtocolConstants.java:110), h5086 SecretController.d (split_plugnew/com/govee/h5086/ble/controller/SecretController.java:66-75,86-88), h61d3 SecretController.d (split_h61d3/com/govee/h61d3/ble/controller/SecretController.java:67-76,87-89) and Controller4Secret.a (base-classes12/com/govee/base2light/vm4sku2op/Controller4Secret.java:28-46; Controller.x = -78). The secretCode is the base64 of the 8 bytes the AA B1 reply carried after its 0x01 selector (SecretKeyController.java:57-62; h5086 SecretController.java:41-44), so it decodes to 8 bytes. The write path does not check the length. The AA B1 reply is secret_read_reply."""
-        def __init__(self, _io, _parent=None, _root=None):
+        def __init__(self, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.SecretKeyWrite, self).__init__(_io)
             self._parent = _parent
             self._root = _root
-            self._read()
 
         def _read(self):
             self.secret = self._io.read_bytes(8)
+            self._dirty = False
 
 
         def _fetch_instances(self):
             pass
 
 
-    class SecretReadReply(KaitaiStruct):
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.SecretKeyWrite, self)._write__seq(io)
+            self._io.write_bytes(self.secret)
+
+
+        def _check(self):
+            if len(self.secret) != 8:
+                raise kaitaistruct.ConsistencyError(u"secret", 8, len(self.secret))
+            self._dirty = False
+
+
+    class SecretReadReply(ReadWriteKaitaiStruct):
         """AA B1 reply (SecretKeyController.parseValidBytes): selector (0x01 = valid) then the 8-byte account-lock secret. The 33 B2 write sends the raw 8 bytes (no selector). This is the account-lock, NOT the wire cipher."""
-        def __init__(self, _io, _parent=None, _root=None):
+        def __init__(self, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.SecretReadReply, self).__init__(_io)
             self._parent = _parent
             self._root = _root
-            self._read()
 
         def _read(self):
             self.selector = self._io.read_u1()
             self.secret = self._io.read_bytes(8)
             self.pad = self._io.read_bytes_full()
+            self._dirty = False
 
 
         def _fetch_instances(self):
             pass
 
 
-    class SingleCommand(KaitaiStruct):
-        def __init__(self, _io, _parent=None, _root=None):
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.SecretReadReply, self)._write__seq(io)
+            self._io.write_u1(self.selector)
+            self._io.write_bytes(self.secret)
+            self._io.write_bytes(self.pad)
+            if not self._io.is_eof():
+                raise kaitaistruct.ConsistencyError(u"pad", 0, self._io.size() - self._io.pos())
+
+
+        def _check(self):
+            if len(self.secret) != 8:
+                raise kaitaistruct.ConsistencyError(u"secret", 8, len(self.secret))
+            self._dirty = False
+
+
+    class SingleCommand(ReadWriteKaitaiStruct):
+        def __init__(self, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.SingleCommand, self).__init__(_io)
             self._parent = _parent
             self._root = _root
-            self._read()
 
         def _read(self):
             self.command = KaitaiStream.resolve_enum(GoveeBleFrame.Command, self._io.read_u1())
@@ -3302,29 +6331,35 @@ class GoveeBleFrame(KaitaiStruct):
                 self._raw_params = self._io.read_bytes_full()
                 _io__raw_params = KaitaiStream(BytesIO(self._raw_params))
                 self.params = GoveeBleFrame.BrightnessPayload(_io__raw_params, self, self._root)
+                self.params._read()
             elif _on == GoveeBleFrame.Command.mode:
                 pass
                 self._raw_params = self._io.read_bytes_full()
                 _io__raw_params = KaitaiStream(BytesIO(self._raw_params))
                 self.params = GoveeBleFrame.ModePayload(_io__raw_params, self, self._root)
+                self.params._read()
             elif _on == GoveeBleFrame.Command.plug_sync_time:
                 pass
                 self._raw_params = self._io.read_bytes_full()
                 _io__raw_params = KaitaiStream(BytesIO(self._raw_params))
                 self.params = GoveeBleFrame.PlugSyncTimePayload(_io__raw_params, self, self._root)
+                self.params._read()
             elif _on == GoveeBleFrame.Command.switch:
                 pass
                 self._raw_params = self._io.read_bytes_full()
                 _io__raw_params = KaitaiStream(BytesIO(self._raw_params))
                 self.params = GoveeBleFrame.SwitchPayload(_io__raw_params, self, self._root)
+                self.params._read()
             elif _on == GoveeBleFrame.Command.sync_time:
                 pass
                 self._raw_params = self._io.read_bytes_full()
                 _io__raw_params = KaitaiStream(BytesIO(self._raw_params))
                 self.params = GoveeBleFrame.SyncTimePayload(_io__raw_params, self, self._root)
+                self.params._read()
             else:
                 pass
                 self.params = self._io.read_bytes_full()
+            self._dirty = False
 
 
         def _fetch_instances(self):
@@ -3349,37 +6384,170 @@ class GoveeBleFrame(KaitaiStruct):
                 pass
 
 
-    class SoftVersionRead(KaitaiStruct):
-        def __init__(self, _io, _parent=None, _root=None):
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.SingleCommand, self)._write__seq(io)
+            self._io.write_u1(int(self.command))
+            _on = self.command
+            if _on == GoveeBleFrame.Command.brightness:
+                pass
+                _io__raw_params = KaitaiStream(BytesIO(bytearray(self._io.size() - self._io.pos())))
+                self._io.add_child_stream(_io__raw_params)
+                _pos2 = self._io.pos()
+                self._io.seek(self._io.pos() + (self._io.size() - self._io.pos()))
+                def handler(parent, _io__raw_params=_io__raw_params):
+                    self._raw_params = _io__raw_params.to_byte_array()
+                    parent.write_bytes(self._raw_params)
+                    if not parent.is_eof():
+                        raise kaitaistruct.ConsistencyError(u"raw(params)", 0, parent.size() - parent.pos())
+                _io__raw_params.write_back_handler = KaitaiStream.WriteBackHandler(_pos2, handler)
+                self.params._write__seq(_io__raw_params)
+            elif _on == GoveeBleFrame.Command.mode:
+                pass
+                _io__raw_params = KaitaiStream(BytesIO(bytearray(self._io.size() - self._io.pos())))
+                self._io.add_child_stream(_io__raw_params)
+                _pos2 = self._io.pos()
+                self._io.seek(self._io.pos() + (self._io.size() - self._io.pos()))
+                def handler(parent, _io__raw_params=_io__raw_params):
+                    self._raw_params = _io__raw_params.to_byte_array()
+                    parent.write_bytes(self._raw_params)
+                    if not parent.is_eof():
+                        raise kaitaistruct.ConsistencyError(u"raw(params)", 0, parent.size() - parent.pos())
+                _io__raw_params.write_back_handler = KaitaiStream.WriteBackHandler(_pos2, handler)
+                self.params._write__seq(_io__raw_params)
+            elif _on == GoveeBleFrame.Command.plug_sync_time:
+                pass
+                _io__raw_params = KaitaiStream(BytesIO(bytearray(self._io.size() - self._io.pos())))
+                self._io.add_child_stream(_io__raw_params)
+                _pos2 = self._io.pos()
+                self._io.seek(self._io.pos() + (self._io.size() - self._io.pos()))
+                def handler(parent, _io__raw_params=_io__raw_params):
+                    self._raw_params = _io__raw_params.to_byte_array()
+                    parent.write_bytes(self._raw_params)
+                    if not parent.is_eof():
+                        raise kaitaistruct.ConsistencyError(u"raw(params)", 0, parent.size() - parent.pos())
+                _io__raw_params.write_back_handler = KaitaiStream.WriteBackHandler(_pos2, handler)
+                self.params._write__seq(_io__raw_params)
+            elif _on == GoveeBleFrame.Command.switch:
+                pass
+                _io__raw_params = KaitaiStream(BytesIO(bytearray(self._io.size() - self._io.pos())))
+                self._io.add_child_stream(_io__raw_params)
+                _pos2 = self._io.pos()
+                self._io.seek(self._io.pos() + (self._io.size() - self._io.pos()))
+                def handler(parent, _io__raw_params=_io__raw_params):
+                    self._raw_params = _io__raw_params.to_byte_array()
+                    parent.write_bytes(self._raw_params)
+                    if not parent.is_eof():
+                        raise kaitaistruct.ConsistencyError(u"raw(params)", 0, parent.size() - parent.pos())
+                _io__raw_params.write_back_handler = KaitaiStream.WriteBackHandler(_pos2, handler)
+                self.params._write__seq(_io__raw_params)
+            elif _on == GoveeBleFrame.Command.sync_time:
+                pass
+                _io__raw_params = KaitaiStream(BytesIO(bytearray(self._io.size() - self._io.pos())))
+                self._io.add_child_stream(_io__raw_params)
+                _pos2 = self._io.pos()
+                self._io.seek(self._io.pos() + (self._io.size() - self._io.pos()))
+                def handler(parent, _io__raw_params=_io__raw_params):
+                    self._raw_params = _io__raw_params.to_byte_array()
+                    parent.write_bytes(self._raw_params)
+                    if not parent.is_eof():
+                        raise kaitaistruct.ConsistencyError(u"raw(params)", 0, parent.size() - parent.pos())
+                _io__raw_params.write_back_handler = KaitaiStream.WriteBackHandler(_pos2, handler)
+                self.params._write__seq(_io__raw_params)
+            else:
+                pass
+                self._io.write_bytes(self.params)
+                if not self._io.is_eof():
+                    raise kaitaistruct.ConsistencyError(u"params", 0, self._io.size() - self._io.pos())
+
+
+        def _check(self):
+            _on = self.command
+            if _on == GoveeBleFrame.Command.brightness:
+                pass
+                if self.params._root != self._root:
+                    raise kaitaistruct.ConsistencyError(u"params", self._root, self.params._root)
+                if self.params._parent != self:
+                    raise kaitaistruct.ConsistencyError(u"params", self, self.params._parent)
+            elif _on == GoveeBleFrame.Command.mode:
+                pass
+                if self.params._root != self._root:
+                    raise kaitaistruct.ConsistencyError(u"params", self._root, self.params._root)
+                if self.params._parent != self:
+                    raise kaitaistruct.ConsistencyError(u"params", self, self.params._parent)
+            elif _on == GoveeBleFrame.Command.plug_sync_time:
+                pass
+                if self.params._root != self._root:
+                    raise kaitaistruct.ConsistencyError(u"params", self._root, self.params._root)
+                if self.params._parent != self:
+                    raise kaitaistruct.ConsistencyError(u"params", self, self.params._parent)
+            elif _on == GoveeBleFrame.Command.switch:
+                pass
+                if self.params._root != self._root:
+                    raise kaitaistruct.ConsistencyError(u"params", self._root, self.params._root)
+                if self.params._parent != self:
+                    raise kaitaistruct.ConsistencyError(u"params", self, self.params._parent)
+            elif _on == GoveeBleFrame.Command.sync_time:
+                pass
+                if self.params._root != self._root:
+                    raise kaitaistruct.ConsistencyError(u"params", self._root, self.params._root)
+                if self.params._parent != self:
+                    raise kaitaistruct.ConsistencyError(u"params", self, self.params._parent)
+            else:
+                pass
+            self._dirty = False
+
+
+    class SoftVersionRead(ReadWriteKaitaiStruct):
+        def __init__(self, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.SoftVersionRead, self).__init__(_io)
             self._parent = _parent
             self._root = _root
-            self._read()
 
         def _read(self):
             self.version = (KaitaiStream.bytes_terminate(self._io.read_bytes_full(), 0, False)).decode(u"UTF-8")
+            self._dirty = False
 
 
         def _fetch_instances(self):
             pass
 
 
-    class StatusBrightness(KaitaiStruct):
-        def __init__(self, _io, _parent=None, _root=None):
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.SoftVersionRead, self)._write__seq(io)
+            self._io.write_bytes_limit((self.version).encode(u"UTF-8"), self._io.size() - self._io.pos(), 0, 0)
+            if not self._io.is_eof():
+                raise kaitaistruct.ConsistencyError(u"version", 0, self._io.size() - self._io.pos())
+
+
+        def _check(self):
+            self._dirty = False
+
+
+    class StatusBrightness(ReadWriteKaitaiStruct):
+        def __init__(self, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.StatusBrightness, self).__init__(_io)
             self._parent = _parent
             self._root = _root
-            self._read()
 
         def _read(self):
             self.brightness = self._io.read_u1()
+            self._dirty = False
 
 
         def _fetch_instances(self):
             pass
 
 
-    class StatusDeviceInfo(KaitaiStruct):
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.StatusBrightness, self)._write__seq(io)
+            self._io.write_u1(self.brightness)
+
+
+        def _check(self):
+            self._dirty = False
+
+
+    class StatusDeviceInfo(ReadWriteKaitaiStruct):
         """0xAC status TLV 0x07 as the app's status parser reads it (Compose4BaseInfoSingleRead.w:370-437, Govee
         Home 7.7.02): ONLY selector 0x10 (basic) and 0x11 (Wi-Fi) are decoded. Every other selector, including
         0x02 (SN) and 0x03 (hard version), which the single-frame aa 07 reply does handle, is logged and ignored
@@ -3387,11 +6555,10 @@ class GoveeBleFrame(KaitaiStruct):
         device_info_read for existing readers, since switching it changes which 0x07 blocks such a reader
         fails to parse.
         """
-        def __init__(self, _io, _parent=None, _root=None):
+        def __init__(self, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.StatusDeviceInfo, self).__init__(_io)
             self._parent = _parent
             self._root = _root
-            self._read()
 
         def _read(self):
             self.selector = self._io.read_u1()
@@ -3401,14 +6568,17 @@ class GoveeBleFrame(KaitaiStruct):
                 self._raw_info = self._io.read_bytes_full()
                 _io__raw_info = KaitaiStream(BytesIO(self._raw_info))
                 self.info = GoveeBleFrame.DeviceInfoBasic(_io__raw_info, self, self._root)
+                self.info._read()
             elif _on == 17:
                 pass
                 self._raw_info = self._io.read_bytes_full()
                 _io__raw_info = KaitaiStream(BytesIO(self._raw_info))
                 self.info = GoveeBleFrame.DeviceInfoWifi(_io__raw_info, self, self._root)
+                self.info._read()
             else:
                 pass
                 self.info = self._io.read_bytes_full()
+            self._dirty = False
 
 
         def _fetch_instances(self):
@@ -3424,7 +6594,63 @@ class GoveeBleFrame(KaitaiStruct):
                 pass
 
 
-    class StatusReply(KaitaiStruct):
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.StatusDeviceInfo, self)._write__seq(io)
+            self._io.write_u1(self.selector)
+            _on = self.selector
+            if _on == 16:
+                pass
+                _io__raw_info = KaitaiStream(BytesIO(bytearray(self._io.size() - self._io.pos())))
+                self._io.add_child_stream(_io__raw_info)
+                _pos2 = self._io.pos()
+                self._io.seek(self._io.pos() + (self._io.size() - self._io.pos()))
+                def handler(parent, _io__raw_info=_io__raw_info):
+                    self._raw_info = _io__raw_info.to_byte_array()
+                    parent.write_bytes(self._raw_info)
+                    if not parent.is_eof():
+                        raise kaitaistruct.ConsistencyError(u"raw(info)", 0, parent.size() - parent.pos())
+                _io__raw_info.write_back_handler = KaitaiStream.WriteBackHandler(_pos2, handler)
+                self.info._write__seq(_io__raw_info)
+            elif _on == 17:
+                pass
+                _io__raw_info = KaitaiStream(BytesIO(bytearray(self._io.size() - self._io.pos())))
+                self._io.add_child_stream(_io__raw_info)
+                _pos2 = self._io.pos()
+                self._io.seek(self._io.pos() + (self._io.size() - self._io.pos()))
+                def handler(parent, _io__raw_info=_io__raw_info):
+                    self._raw_info = _io__raw_info.to_byte_array()
+                    parent.write_bytes(self._raw_info)
+                    if not parent.is_eof():
+                        raise kaitaistruct.ConsistencyError(u"raw(info)", 0, parent.size() - parent.pos())
+                _io__raw_info.write_back_handler = KaitaiStream.WriteBackHandler(_pos2, handler)
+                self.info._write__seq(_io__raw_info)
+            else:
+                pass
+                self._io.write_bytes(self.info)
+                if not self._io.is_eof():
+                    raise kaitaistruct.ConsistencyError(u"info", 0, self._io.size() - self._io.pos())
+
+
+        def _check(self):
+            _on = self.selector
+            if _on == 16:
+                pass
+                if self.info._root != self._root:
+                    raise kaitaistruct.ConsistencyError(u"info", self._root, self.info._root)
+                if self.info._parent != self:
+                    raise kaitaistruct.ConsistencyError(u"info", self, self.info._parent)
+            elif _on == 17:
+                pass
+                if self.info._root != self._root:
+                    raise kaitaistruct.ConsistencyError(u"info", self._root, self.info._root)
+                if self.info._parent != self:
+                    raise kaitaistruct.ConsistencyError(u"info", self, self.info._parent)
+            else:
+                pass
+            self._dirty = False
+
+
+    class StatusReply(ReadWriteKaitaiStruct):
         """Reassembled 0xAC status reply = a sequence of [type, len, value] TLVs. The buffer is de-chunked from
         the 0xAC frames. Trimmed to the first chunk's lastLen as the app does (see multi_ac) it ends exactly
         at the last TLV; a client that joins the whole zero-padded last chunk instead gets TRAILING ZERO
@@ -3433,21 +6659,25 @@ class GoveeBleFrame(KaitaiStruct):
         type-0 sentinel or EOF — repeat: eos would instead throw on the padding (a lone trailing 0 byte has
         no room for its len). The trailing type-0 element, if present, is the padding sentinel (no len/value).
         """
-        def __init__(self, _io, _parent=None, _root=None):
+        def __init__(self, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.StatusReply, self).__init__(_io)
             self._parent = _parent
             self._root = _root
-            self._read()
 
         def _read(self):
             self.tlvs = []
             i = 0
             while True:
-                _ = GoveeBleFrame.StatusTlv(self._io, self, self._root)
-                self.tlvs.append(_)
+                _t_tlvs = GoveeBleFrame.StatusTlv(self._io, self, self._root)
+                try:
+                    _t_tlvs._read()
+                finally:
+                    _ = _t_tlvs
+                    self.tlvs.append(_)
                 if  ((_.type == 0) or (self._io.is_eof())) :
                     break
                 i += 1
+            self._dirty = False
 
 
         def _fetch_instances(self):
@@ -3458,37 +6688,80 @@ class GoveeBleFrame(KaitaiStruct):
 
 
 
-    class StatusSegInfo(KaitaiStruct):
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.StatusReply, self)._write__seq(io)
+            for i in range(len(self.tlvs)):
+                pass
+                self.tlvs[i]._write__seq(self._io)
+                _ = self.tlvs[i]
+                if  ((_.type == 0) or (self._io.is_eof()))  != (i == len(self.tlvs) - 1):
+                    raise kaitaistruct.ConsistencyError(u"tlvs", i == len(self.tlvs) - 1,  ((_.type == 0) or (self._io.is_eof())) )
+
+
+
+        def _check(self):
+            if len(self.tlvs) == 0:
+                raise kaitaistruct.ConsistencyError(u"tlvs", 0, len(self.tlvs))
+            for i in range(len(self.tlvs)):
+                pass
+                if self.tlvs[i]._root != self._root:
+                    raise kaitaistruct.ConsistencyError(u"tlvs", self._root, self.tlvs[i]._root)
+                if self.tlvs[i]._parent != self:
+                    raise kaitaistruct.ConsistencyError(u"tlvs", self, self.tlvs[i]._parent)
+
+            self._dirty = False
+
+
+    class StatusSegInfo(ReadWriteKaitaiStruct):
         """0x41 seg/IC info (VM4LightH60A6.o:99 reads byte1)."""
-        def __init__(self, _io, _parent=None, _root=None):
+        def __init__(self, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.StatusSegInfo, self).__init__(_io)
             self._parent = _parent
             self._root = _root
-            self._read()
 
         def _read(self):
             self.b0 = self._io.read_u1()
             self.ic_or_seg = self._io.read_u1()
+            self._dirty = False
 
 
         def _fetch_instances(self):
             pass
 
 
-    class StatusSwitch(KaitaiStruct):
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.StatusSegInfo, self)._write__seq(io)
+            self._io.write_u1(self.b0)
+            self._io.write_u1(self.ic_or_seg)
+
+
+        def _check(self):
+            self._dirty = False
+
+
+    class StatusSwitch(ReadWriteKaitaiStruct):
         """0xAC status TLV 0x01: power. The status parser decodes on as state != 0 (Compose4BaseInfoSingleRead.u: bArr2[0] != 0, base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4BaseInfoSingleRead.java:286-288): use is_on. Screens that take connect-time power from here and send no aa 01 read are devices.yaml client_profile.power_read: ac_status (H60A4/H60A6, H6039/H6038/H6048, H703A/H703B)."""
-        def __init__(self, _io, _parent=None, _root=None):
+        def __init__(self, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.StatusSwitch, self).__init__(_io)
             self._parent = _parent
             self._root = _root
-            self._read()
 
         def _read(self):
             self.state = self._io.read_u1()
+            self._dirty = False
 
 
         def _fetch_instances(self):
             pass
+
+
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.StatusSwitch, self)._write__seq(io)
+            self._io.write_u1(self.state)
+
+
+        def _check(self):
+            self._dirty = False
 
         @property
         def is_on(self):
@@ -3499,13 +6772,14 @@ class GoveeBleFrame(KaitaiStruct):
             self._m_is_on = self.state != 0
             return getattr(self, '_m_is_on', None)
 
+        def _invalidate_is_on(self):
+            del self._m_is_on
 
-    class StatusTlv(KaitaiStruct):
-        def __init__(self, _io, _parent=None, _root=None):
+    class StatusTlv(ReadWriteKaitaiStruct):
+        def __init__(self, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.StatusTlv, self).__init__(_io)
             self._parent = _parent
             self._root = _root
-            self._read()
 
         def _read(self):
             self.type = self._io.read_u1()
@@ -3523,40 +6797,48 @@ class GoveeBleFrame(KaitaiStruct):
                     self._raw_value = self._io.read_bytes(self.len)
                     _io__raw_value = KaitaiStream(BytesIO(self._raw_value))
                     self.value = GoveeBleFrame.StatusSwitch(_io__raw_value, self, self._root)
+                    self.value._read()
                 elif _on == 165:
                     pass
                     self._raw_value = self._io.read_bytes(self.len)
                     _io__raw_value = KaitaiStream(BytesIO(self._raw_value))
                     self.value = GoveeBleFrame.ColorGroupStatus(_io__raw_value, self, self._root)
+                    self.value._read()
                 elif _on == 4:
                     pass
                     self._raw_value = self._io.read_bytes(self.len)
                     _io__raw_value = KaitaiStream(BytesIO(self._raw_value))
                     self.value = GoveeBleFrame.StatusBrightness(_io__raw_value, self, self._root)
+                    self.value._read()
                 elif _on == 48:
                     pass
                     self._raw_value = self._io.read_bytes(self.len)
                     _io__raw_value = KaitaiStream(BytesIO(self._raw_value))
                     self.value = GoveeBleFrame.StatusZone(_io__raw_value, self, self._root)
+                    self.value._read()
                 elif _on == 5:
                     pass
                     self._raw_value = self._io.read_bytes(self.len)
                     _io__raw_value = KaitaiStream(BytesIO(self._raw_value))
                     self.value = GoveeBleFrame.ModeStatus(_io__raw_value, self, self._root)
+                    self.value._read()
                 elif _on == 65:
                     pass
                     self._raw_value = self._io.read_bytes(self.len)
                     _io__raw_value = KaitaiStream(BytesIO(self._raw_value))
                     self.value = GoveeBleFrame.StatusSegInfo(_io__raw_value, self, self._root)
+                    self.value._read()
                 elif _on == 7:
                     pass
                     self._raw_value = self._io.read_bytes(self.len)
                     _io__raw_value = KaitaiStream(BytesIO(self._raw_value))
                     self.value = GoveeBleFrame.DeviceInfoRead(_io__raw_value, self, self._root)
+                    self.value._read()
                 else:
                     pass
                     self.value = self._io.read_bytes(self.len)
 
+            self._dirty = False
 
 
         def _fetch_instances(self):
@@ -3593,52 +6875,246 @@ class GoveeBleFrame(KaitaiStruct):
 
 
 
-    class StatusZone(KaitaiStruct):
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.StatusTlv, self)._write__seq(io)
+            self._io.write_u1(self.type)
+            if self.type != 0:
+                pass
+                self._io.write_u1(self.len)
+
+            if self.type != 0:
+                pass
+                _on = self.type
+                if _on == 1:
+                    pass
+                    _io__raw_value = KaitaiStream(BytesIO(bytearray(self.len)))
+                    self._io.add_child_stream(_io__raw_value)
+                    _pos2 = self._io.pos()
+                    self._io.seek(self._io.pos() + (self.len))
+                    def handler(parent, _io__raw_value=_io__raw_value):
+                        self._raw_value = _io__raw_value.to_byte_array()
+                        if len(self._raw_value) != self.len:
+                            raise kaitaistruct.ConsistencyError(u"raw(value)", self.len, len(self._raw_value))
+                        parent.write_bytes(self._raw_value)
+                    _io__raw_value.write_back_handler = KaitaiStream.WriteBackHandler(_pos2, handler)
+                    self.value._write__seq(_io__raw_value)
+                elif _on == 165:
+                    pass
+                    _io__raw_value = KaitaiStream(BytesIO(bytearray(self.len)))
+                    self._io.add_child_stream(_io__raw_value)
+                    _pos2 = self._io.pos()
+                    self._io.seek(self._io.pos() + (self.len))
+                    def handler(parent, _io__raw_value=_io__raw_value):
+                        self._raw_value = _io__raw_value.to_byte_array()
+                        if len(self._raw_value) != self.len:
+                            raise kaitaistruct.ConsistencyError(u"raw(value)", self.len, len(self._raw_value))
+                        parent.write_bytes(self._raw_value)
+                    _io__raw_value.write_back_handler = KaitaiStream.WriteBackHandler(_pos2, handler)
+                    self.value._write__seq(_io__raw_value)
+                elif _on == 4:
+                    pass
+                    _io__raw_value = KaitaiStream(BytesIO(bytearray(self.len)))
+                    self._io.add_child_stream(_io__raw_value)
+                    _pos2 = self._io.pos()
+                    self._io.seek(self._io.pos() + (self.len))
+                    def handler(parent, _io__raw_value=_io__raw_value):
+                        self._raw_value = _io__raw_value.to_byte_array()
+                        if len(self._raw_value) != self.len:
+                            raise kaitaistruct.ConsistencyError(u"raw(value)", self.len, len(self._raw_value))
+                        parent.write_bytes(self._raw_value)
+                    _io__raw_value.write_back_handler = KaitaiStream.WriteBackHandler(_pos2, handler)
+                    self.value._write__seq(_io__raw_value)
+                elif _on == 48:
+                    pass
+                    _io__raw_value = KaitaiStream(BytesIO(bytearray(self.len)))
+                    self._io.add_child_stream(_io__raw_value)
+                    _pos2 = self._io.pos()
+                    self._io.seek(self._io.pos() + (self.len))
+                    def handler(parent, _io__raw_value=_io__raw_value):
+                        self._raw_value = _io__raw_value.to_byte_array()
+                        if len(self._raw_value) != self.len:
+                            raise kaitaistruct.ConsistencyError(u"raw(value)", self.len, len(self._raw_value))
+                        parent.write_bytes(self._raw_value)
+                    _io__raw_value.write_back_handler = KaitaiStream.WriteBackHandler(_pos2, handler)
+                    self.value._write__seq(_io__raw_value)
+                elif _on == 5:
+                    pass
+                    _io__raw_value = KaitaiStream(BytesIO(bytearray(self.len)))
+                    self._io.add_child_stream(_io__raw_value)
+                    _pos2 = self._io.pos()
+                    self._io.seek(self._io.pos() + (self.len))
+                    def handler(parent, _io__raw_value=_io__raw_value):
+                        self._raw_value = _io__raw_value.to_byte_array()
+                        if len(self._raw_value) != self.len:
+                            raise kaitaistruct.ConsistencyError(u"raw(value)", self.len, len(self._raw_value))
+                        parent.write_bytes(self._raw_value)
+                    _io__raw_value.write_back_handler = KaitaiStream.WriteBackHandler(_pos2, handler)
+                    self.value._write__seq(_io__raw_value)
+                elif _on == 65:
+                    pass
+                    _io__raw_value = KaitaiStream(BytesIO(bytearray(self.len)))
+                    self._io.add_child_stream(_io__raw_value)
+                    _pos2 = self._io.pos()
+                    self._io.seek(self._io.pos() + (self.len))
+                    def handler(parent, _io__raw_value=_io__raw_value):
+                        self._raw_value = _io__raw_value.to_byte_array()
+                        if len(self._raw_value) != self.len:
+                            raise kaitaistruct.ConsistencyError(u"raw(value)", self.len, len(self._raw_value))
+                        parent.write_bytes(self._raw_value)
+                    _io__raw_value.write_back_handler = KaitaiStream.WriteBackHandler(_pos2, handler)
+                    self.value._write__seq(_io__raw_value)
+                elif _on == 7:
+                    pass
+                    _io__raw_value = KaitaiStream(BytesIO(bytearray(self.len)))
+                    self._io.add_child_stream(_io__raw_value)
+                    _pos2 = self._io.pos()
+                    self._io.seek(self._io.pos() + (self.len))
+                    def handler(parent, _io__raw_value=_io__raw_value):
+                        self._raw_value = _io__raw_value.to_byte_array()
+                        if len(self._raw_value) != self.len:
+                            raise kaitaistruct.ConsistencyError(u"raw(value)", self.len, len(self._raw_value))
+                        parent.write_bytes(self._raw_value)
+                    _io__raw_value.write_back_handler = KaitaiStream.WriteBackHandler(_pos2, handler)
+                    self.value._write__seq(_io__raw_value)
+                else:
+                    pass
+                    self._io.write_bytes(self.value)
+
+
+
+        def _check(self):
+            if self.type != 0:
+                pass
+                if not self.len <= 127:
+                    raise kaitaistruct.ValidationGreaterThanError(127, self.len, None, u"/types/status_tlv/seq/1")
+
+            if self.type != 0:
+                pass
+                _on = self.type
+                if _on == 1:
+                    pass
+                    if self.value._root != self._root:
+                        raise kaitaistruct.ConsistencyError(u"value", self._root, self.value._root)
+                    if self.value._parent != self:
+                        raise kaitaistruct.ConsistencyError(u"value", self, self.value._parent)
+                elif _on == 165:
+                    pass
+                    if self.value._root != self._root:
+                        raise kaitaistruct.ConsistencyError(u"value", self._root, self.value._root)
+                    if self.value._parent != self:
+                        raise kaitaistruct.ConsistencyError(u"value", self, self.value._parent)
+                elif _on == 4:
+                    pass
+                    if self.value._root != self._root:
+                        raise kaitaistruct.ConsistencyError(u"value", self._root, self.value._root)
+                    if self.value._parent != self:
+                        raise kaitaistruct.ConsistencyError(u"value", self, self.value._parent)
+                elif _on == 48:
+                    pass
+                    if self.value._root != self._root:
+                        raise kaitaistruct.ConsistencyError(u"value", self._root, self.value._root)
+                    if self.value._parent != self:
+                        raise kaitaistruct.ConsistencyError(u"value", self, self.value._parent)
+                elif _on == 5:
+                    pass
+                    if self.value._root != self._root:
+                        raise kaitaistruct.ConsistencyError(u"value", self._root, self.value._root)
+                    if self.value._parent != self:
+                        raise kaitaistruct.ConsistencyError(u"value", self, self.value._parent)
+                elif _on == 65:
+                    pass
+                    if self.value._root != self._root:
+                        raise kaitaistruct.ConsistencyError(u"value", self._root, self.value._root)
+                    if self.value._parent != self:
+                        raise kaitaistruct.ConsistencyError(u"value", self, self.value._parent)
+                elif _on == 7:
+                    pass
+                    if self.value._root != self._root:
+                        raise kaitaistruct.ConsistencyError(u"value", self._root, self.value._root)
+                    if self.value._parent != self:
+                        raise kaitaistruct.ConsistencyError(u"value", self, self.value._parent)
+                else:
+                    pass
+                    if len(self.value) != self.len:
+                        raise kaitaistruct.ConsistencyError(u"value", self.len, len(self.value))
+
+            self._dirty = False
+
+
+    class StatusZone(ReadWriteKaitaiStruct):
         """0x30 in the 0xAC reply: zone0 = bit0 of byte0, zone1 = bit0 of byte1 (VM4LightH60A6.o:103)."""
-        def __init__(self, _io, _parent=None, _root=None):
+        def __init__(self, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.StatusZone, self).__init__(_io)
             self._parent = _parent
             self._root = _root
-            self._read()
 
         def _read(self):
             self.zone_a = self._io.read_u1()
             self.zone_b = self._io.read_u1()
+            self._dirty = False
 
 
         def _fetch_instances(self):
             pass
 
 
-    class SwitchPayload(KaitaiStruct):
-        def __init__(self, _io, _parent=None, _root=None):
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.StatusZone, self)._write__seq(io)
+            self._io.write_u1(self.zone_a)
+            self._io.write_u1(self.zone_b)
+
+
+        def _check(self):
+            self._dirty = False
+
+
+    class SwitchPayload(ReadWriteKaitaiStruct):
+        def __init__(self, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.SwitchPayload, self).__init__(_io)
             self._parent = _parent
             self._root = _root
-            self._read()
 
         def _read(self):
             self.state = self._io.read_u1()
+            self._dirty = False
 
 
         def _fetch_instances(self):
             pass
 
 
-    class SwitchReadReply(KaitaiStruct):
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.SwitchPayload, self)._write__seq(io)
+            self._io.write_u1(self.state)
+
+
+        def _check(self):
+            self._dirty = False
+
+
+    class SwitchReadReply(ReadWriteKaitaiStruct):
         """AA 01 reply: state @ body[0]. LIGHTS: every curated control screen that reads it decodes on as body[0] == 1 (ControllerSwitch.Companion.c, base-classes11/com/govee/base2light/kt/general_controller/ControllerSwitch.java:32), at connect and in the aa 01 heartbeat (ShareVM.N3 frame[2] == 1, ShareVM.java:1008): use light_is_on. The legacy SwitchController.parseValidBytes reads it as != 0 (SwitchController.java:30). No curated or profiled control screen reaches it, but older detail screens for legacy goodsTypes do (e.g. the dreamcolorlightv1 adjust/v1-v2 connect reads, BleOpV1.java:735, BleOpV2.java:123, BleOpV3.java:709), as do scene / IoT command paths (BleSwitchCmdBuilderV1); the two agree for 0/1 and differ only for a byte >= 2. Which message carries a family's power (this reply, or the 0xAC status TLV 0x01) is devices.yaml client_profile.power_read. PLUGS (h5080 SwitchControllerV2): this SAME 0x01 reply is a RELAY BITMASK (bit i = relay i on), not boolean — interpret per device."""
-        def __init__(self, _io, _parent=None, _root=None):
+        def __init__(self, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.SwitchReadReply, self).__init__(_io)
             self._parent = _parent
             self._root = _root
-            self._read()
 
         def _read(self):
             self.state = self._io.read_u1()
+            self._dirty = False
 
 
         def _fetch_instances(self):
             pass
+
+
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.SwitchReadReply, self)._write__seq(io)
+            self._io.write_u1(self.state)
+
+
+        def _check(self):
+            self._dirty = False
 
         @property
         def light_is_on(self):
@@ -3649,14 +7125,15 @@ class GoveeBleFrame(KaitaiStruct):
             self._m_light_is_on = self.state == 1
             return getattr(self, '_m_light_is_on', None)
 
+        def _invalidate_light_is_on(self):
+            del self._m_light_is_on
 
-    class SyncTimePayload(KaitaiStruct):
+    class SyncTimePayload(ReadWriteKaitaiStruct):
         """Lights, command 0x09."""
-        def __init__(self, _io, _parent=None, _root=None):
+        def __init__(self, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.SyncTimePayload, self).__init__(_io)
             self._parent = _parent
             self._root = _root
-            self._read()
 
         def _read(self):
             self.hour = self._io.read_u1()
@@ -3666,37 +7143,63 @@ class GoveeBleFrame(KaitaiStruct):
             self.marker = self._io.read_u1()
             self.tz_hour = self._io.read_s1()
             self.tz_min = self._io.read_s1()
+            self._dirty = False
 
 
         def _fetch_instances(self):
             pass
 
 
-    class Version3(KaitaiStruct):
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.SyncTimePayload, self)._write__seq(io)
+            self._io.write_u1(self.hour)
+            self._io.write_u1(self.minute)
+            self._io.write_u1(self.second)
+            self._io.write_u1(self.week)
+            self._io.write_u1(self.marker)
+            self._io.write_s1(self.tz_hour)
+            self._io.write_s1(self.tz_min)
+
+
+        def _check(self):
+            self._dirty = False
+
+
+    class Version3(ReadWriteKaitaiStruct):
         """3-byte firmware version rendered X.YY.ZZ (major . %02d . %02d); BasicInfoController.u:73."""
-        def __init__(self, _io, _parent=None, _root=None):
+        def __init__(self, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.Version3, self).__init__(_io)
             self._parent = _parent
             self._root = _root
-            self._read()
 
         def _read(self):
             self.major = self._io.read_u1()
             self.minor = self._io.read_u1()
             self.patch = self._io.read_u1()
+            self._dirty = False
 
 
         def _fetch_instances(self):
             pass
 
 
-    class WorryFreeAtNightWrite(KaitaiStruct):
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.Version3, self)._write__seq(io)
+            self._io.write_u1(self.major)
+            self._io.write_u1(self.minor)
+            self._io.write_u1(self.patch)
+
+
+        def _check(self):
+            self._dirty = False
+
+
+    class WorryFreeAtNightWrite(ReadWriteKaitaiStruct):
         """33 36 H6057 worry-free-at-night write: body = WorryFreeAtNightBean.o() = [state, open hour, open minute, close hour, close minute, sensitivity, brightness] (base-classes10/com/govee/base2light/ble/controller/WorryFreeAtNightBean.java:90-92; getters g/d/e/b/c/f/a return fields a/b/c/d/e/f/g, :34-59), sent as ControllerSingle.Companion.c(54, bytes) (split_hollowlamp/com/govee/h6057/origin/newDetail/H6057SettingActivity.java:846-850; legacy split_hollowlamp/com/govee/h6057/origin/ble/WorryFreeAtNightController.java:76-78,87-93). A 7-byte body under 33 36 is this, not a bar switch. Catalogue: build_worry_free_at_night."""
-        def __init__(self, _io, _parent=None, _root=None):
+        def __init__(self, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.WorryFreeAtNightWrite, self).__init__(_io)
             self._parent = _parent
             self._root = _root
-            self._read()
 
         def _read(self):
             self.state = self._io.read_u1()
@@ -3706,27 +7209,53 @@ class GoveeBleFrame(KaitaiStruct):
             self.close_min = self._io.read_u1()
             self.sensitivity = self._io.read_u1()
             self.brightness = self._io.read_u1()
+            self._dirty = False
 
 
         def _fetch_instances(self):
             pass
 
 
-    class ZonePowerWrite(KaitaiStruct):
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.WorryFreeAtNightWrite, self)._write__seq(io)
+            self._io.write_u1(self.state)
+            self._io.write_u1(self.open_hour)
+            self._io.write_u1(self.open_min)
+            self._io.write_u1(self.close_hour)
+            self._io.write_u1(self.close_min)
+            self._io.write_u1(self.sensitivity)
+            self._io.write_u1(self.brightness)
+
+
+        def _check(self):
+            self._dirty = False
+
+
+    class ZonePowerWrite(ReadWriteKaitaiStruct):
         """33 30 per-zone on/off write (pact_h60a0 family): body = [zone, state]. Built as Controller4ExtBytes.Companion.f(48, [zone, state]) (base-classes11/com/govee/base2light/kt/general_controller/Controller4ExtBytes.java:121-124). H60A6 VM4LightH60A6.y5 (split_h60ax/com/govee/pact_h60a0/adjust/h60a6/VM4LightH60A6.java:1373-1376) writes [!isFirst ? 1 : 0, on], called with isFirst=false (zone 1, DelegateHeaderH60A6.java:442) and isFirst=true (zone 0, DelegateHeaderH60A6.java:470); H1270 VM4LightH1270.F5 (h1270/VM4LightH1270.java:672-675) and H1250 VM4LightH1250.n5 (h1250/VM4LightH1250.java:911-914) are identical; H12D0 VM4LightH12D0.B5 (h12d0/VM4LightH12D0.java:618-622) takes the caller's array [2|1|0, on] (DelegateHeaderH12D0.java:580,608,636), so H12D0 has three zones. The snapshot path writes one frame per zone, [0, zone0_on] then [1, zone1_on] (VM4LightH60A6.java:1215-1216; H12D0 adds [2, zone2_on], VM4LightH12D0.java:905-907). The zone states come back in the 0xAC status TLV 0x30 (status_zone) and the EE 30 push (notify_switch_zone). The frame for [1, 0] is byte-identical to light_direction_write value=1 (33 30 01 00 .. 02): pick by device family."""
-        def __init__(self, _io, _parent=None, _root=None):
+        def __init__(self, _io=None, _parent=None, _root=None):
             super(GoveeBleFrame.ZonePowerWrite, self).__init__(_io)
             self._parent = _parent
             self._root = _root
-            self._read()
 
         def _read(self):
             self.zone = self._io.read_u1()
             self.state = self._io.read_u1()
+            self._dirty = False
 
 
         def _fetch_instances(self):
             pass
+
+
+        def _write__seq(self, io=None):
+            super(GoveeBleFrame.ZonePowerWrite, self)._write__seq(io)
+            self._io.write_u1(self.zone)
+            self._io.write_u1(self.state)
+
+
+        def _check(self):
+            self._dirty = False
 
 
 

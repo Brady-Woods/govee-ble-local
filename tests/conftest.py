@@ -40,3 +40,10 @@ def require_optional(modname: str, *, reason: str | None = None):  # type: ignor
                 pytrace=False,
             )
         raise
+
+
+def read_struct(obj):  # type: ignore[no-untyped-def]
+    """Read a generated Kaitai object and return it. The committed classes are read-write
+    (``ReadWriteKaitaiStruct``): ``from_bytes`` / ``Cls(..., stream)`` only bind the stream."""
+    obj._read()
+    return obj

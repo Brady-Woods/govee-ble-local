@@ -2,22 +2,23 @@
 #
 # Compile spec/*.ksy with the Kaitai Struct compiler (ksc 0.11.x).
 #
-#   bash tools/gen_kaitai.sh                       # read-only readers -> src/govee_ble_local/_generated/
-#   bash tools/gen_kaitai.sh --check               # fail if the committed readers differ from a fresh build
-#   bash tools/gen_kaitai.sh --read-write          # read-write (serializer) classes -> build/kaitai_rw/
-#   bash tools/gen_kaitai.sh --read-write --out D  # ... into directory D instead
+#   bash tools/gen_kaitai.sh                       # read-write classes -> src/govee_ble_local/_generated/
+#   bash tools/gen_kaitai.sh --check               # fail if the committed classes differ from a fresh build
+#   bash tools/gen_kaitai.sh --out D               # ... into directory D instead
+#   bash tools/gen_kaitai.sh --read-only --out D   # read-only readers (auto-read) into D, for scratch use
 #
-# The read-only readers are committed (so environments without a compiler can still run the
-# tests) and are what the library imports. --read-write writes Kaitai 0.11 read-write classes
-# (ReadWriteKaitaiStruct: _read() is explicit, _write() serializes). They are NOT written into
-# _generated/ by default: switching the library to them changes the reader API (no auto-read),
-# so that has to happen together with the parse-site changes in src/.
+# The committed classes are Kaitai 0.11 READ-WRITE classes (ReadWriteKaitaiStruct): the library
+# both parses frames with them (from_bytes() / Cls(..., stream), then an explicit _read()) and
+# writes every frame with them (wire/build.py: _check(), then _write()). They are committed, so
+# environments without a compiler can still run the tests. --read-write is the default and kept as
+# an alias.
 #
 # Compilers. ksc is published in two builds that produce the same Python:
 #   - the JVM CLI (`kaitai-struct-compiler`, e.g. `brew install kaitai-struct-compiler`, which
-#     brings its own OpenJDK). Preferred, and the only one that exposes --read-write.
+#     brings its own OpenJDK). The only one that exposes --read-write, so it is required for the
+#     committed classes and for --check.
 #   - the pure-JS build on npm, driven by tools/kaitai_gen.js. Its compile() API has no
-#     read-write switch, so it is used only as a read-only fallback when no JVM ksc is found.
+#     read-write switch, so it is used only for --read-only builds when no JVM ksc is found.
 # Both builds give byte-identical read-only output on ksc 0.11 (checked 2026-10-16).
 # Override the JVM compiler with KSC=/path/to/kaitai-struct-compiler.
 #
@@ -37,11 +38,12 @@ GEN_FILES=(govee_ble_frame.py govee_advertisement.py)
 COMMITTED=src/govee_ble_local/_generated
 KSC_SERIES="0.11"   # the committed readers and the kaitaistruct>=0.11 runtime floor
 
-mode=readonly
+mode=readwrite
 out=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --read-write|-w) mode=readwrite ;;
+    --read-only) mode=readonly ;;
     --check) mode=check ;;
     --out) [ $# -ge 2 ] || { echo "error: --out needs a directory" >&2; exit 2; }; out="$2"; shift ;;
     -h|--help) sed -n '2,8p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
@@ -109,9 +111,22 @@ compile_with_js() {
 
 KSC_BIN=$(find_jvm_ksc || true)
 
+need_jvm_ksc() {
+  if [ -z "$KSC_BIN" ]; then
+    echo "error: the committed classes are read-write, which needs the JVM kaitai-struct-compiler" >&2
+    echo "       $KSC_SERIES.x (the npm build's compile() API can't generate read-write code). Install" >&2
+    echo "       it, e.g. 'brew install kaitai-struct-compiler', or point KSC= at one." >&2
+    exit 1
+  fi
+}
+
 case "$mode" in
   readonly)
-    dest=${out:-$COMMITTED}
+    if [ -z "$out" ] || [ "$out" = "$COMMITTED" ]; then
+      echo "error: --read-only needs --out to a scratch directory; the committed classes are read-write" >&2
+      exit 2
+    fi
+    dest=$out
     if [ -n "$KSC_BIN" ]; then
       echo ">> compiling read-only readers with $KSC_BIN ($("$KSC_BIN" --version | head -1))"
       compile_with_jvm "$dest"
@@ -119,32 +134,24 @@ case "$mode" in
       echo ">> no JVM ksc $KSC_SERIES.x found; using the pure-JS compiler (read-only)"
       compile_with_js "$dest"
     fi
-    # Keep the generated dir an importable package.
-    if [ "$dest" = "$COMMITTED" ] && [ ! -f "$dest/__init__.py" ]; then
-      echo '"""Kaitai-generated readers (regenerate via tools/gen_kaitai.sh)."""' > "$dest/__init__.py"
-    fi
-    echo ">> done: $dest/"
+    echo ">> done: $dest/ (read-only: from_bytes() reads)"
     ;;
   readwrite)
-    if [ -z "$KSC_BIN" ]; then
-      echo "error: --read-write needs the JVM kaitai-struct-compiler $KSC_SERIES.x (the npm build's" >&2
-      echo "       compile() API can't generate read-write code). Install it, e.g." >&2
-      echo "       'brew install kaitai-struct-compiler', or point KSC= at one." >&2
-      exit 1
-    fi
-    dest=${out:-build/kaitai_rw}
-    if [ "$dest" = "$COMMITTED" ]; then
-      echo "warning: writing read-write classes over the committed readers. The library's parse" >&2
-      echo "         sites call from_bytes() and expect auto-read; adapt them in the same change." >&2
-    fi
+    need_jvm_ksc
+    dest=${out:-$COMMITTED}
     echo ">> compiling read-write classes with $KSC_BIN ($("$KSC_BIN" --version | head -1))"
     compile_with_jvm "$dest" --read-write
+    # Keep the generated dir an importable package.
+    if [ "$dest" = "$COMMITTED" ] && [ ! -f "$dest/__init__.py" ]; then
+      echo '"""Kaitai-generated read-write classes (regenerate via tools/gen_kaitai.sh)."""' > "$dest/__init__.py"
+    fi
     echo ">> done: $dest/ (needs kaitaistruct>=0.11; call _read() after from_bytes())"
     ;;
   check)
+    need_jvm_ksc
     tmp=$(mktemp -d "${TMPDIR:-/tmp}/gen_kaitai_check.XXXXXX")
     trap 'rm -rf "$tmp"' EXIT
-    if [ -n "$KSC_BIN" ]; then compile_with_jvm "$tmp" >/dev/null; else compile_with_js "$tmp" >/dev/null; fi
+    compile_with_jvm "$tmp" --read-write >/dev/null
     drift=0
     for f in "${GEN_FILES[@]}"; do
       if ! cmp -s "$tmp/$f" "$COMMITTED/$f"; then
@@ -153,9 +160,9 @@ case "$mode" in
       fi
     done
     if [ "$drift" -ne 0 ]; then
-      echo "Run 'bash tools/gen_kaitai.sh' and commit the readers with the .ksy change." >&2
+      echo "Run 'bash tools/gen_kaitai.sh' and commit the classes with the .ksy change." >&2
       exit 1
     fi
-    echo ">> committed readers match spec/*.ksy"
+    echo ">> committed read-write classes match spec/*.ksy"
     ;;
 esac

@@ -15,7 +15,7 @@ from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
-from conftest import require_optional
+from conftest import require_optional, read_struct
 from fake_ble import ble_device
 
 from govee_ble_local import Capability, Encryption
@@ -256,10 +256,11 @@ def test_parse_bar_kelvin() -> None:
 def test_ksy_reads_gradual_two_kelvins_and_the_feast_byte() -> None:
     require_optional("kaitaistruct", reason="Kaitai runtime not installed")
     gb = require_optional("govee_ble_local._generated.govee_ble_frame")
-    mode = gb.GoveeBleFrame.from_bytes(_frame(0xAA, 0x05, 0x15, 0x01, 0x0A, 0x8C, 0x0F, 0xA0)).body.body
+    report = _frame(0xAA, 0x05, 0x15, 0x01, 0x0A, 0x8C, 0x0F, 0xA0)
+    mode = read_struct(gb.GoveeBleFrame.from_bytes(report)).body.body
     rest = mode.rest
     assert (rest.op, rest.kelvin, rest.kelvin_right) == (1, 2700, 4000)    # [gradual][kL][kR]
-    bars = gb.GoveeBleFrame.from_bytes(_frame(0xAA, 0x36, 0x01, 0x00, 0x01)).body.body
+    bars = read_struct(gb.GoveeBleFrame.from_bytes(_frame(0xAA, 0x36, 0x01, 0x00, 0x01))).body.body
     assert (bars.left, bars.right, bars.movie_feast) == (1, 0, 1)
 
 

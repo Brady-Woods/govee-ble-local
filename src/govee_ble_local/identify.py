@@ -109,6 +109,7 @@ def _govee_entries(mfg: dict[int, bytes]) -> Iterator[Any]:
         if not 0 <= company_id <= 0xFFFF or len(value) < _PACT_VALUE_LEN:
             continue
         entry = _MFG(KaitaiStream(BytesIO(company_id.to_bytes(2, "little") + bytes(value))))
+        entry._read()   # a read-write class reads only when asked
         if entry.is_govee:
             yield entry
 

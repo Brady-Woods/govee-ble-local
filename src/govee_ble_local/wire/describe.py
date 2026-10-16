@@ -31,7 +31,7 @@ from typing import Any, Literal
 from ..const import FRAME_LEN
 from ..crypto import checksum_ok
 from . import reassemble as _reassemble
-from .build import _F
+from .build import _F, _load
 from .parse import _Command, _NotifySub, _ProType, _SubMode
 
 # A frame's direction (the capture's "dir"). Only "rx" changes the reading: an RX 0x33 frame
@@ -80,7 +80,7 @@ def describe_frame(plain: bytes, direction: str = "?") -> tuple[str, list[Issue]
             [("artifact", "invalid BCC — likely undecrypted ciphertext / corrupt")],
         )
     try:
-        f = _F.from_bytes(plain)
+        f = _load(_F.from_bytes(plain))
     except Exception as exc:  # noqa: BLE001 - any reader failure on a valid frame is a spec gap
         return ("parse_error", [("hard", f"kaitai parse failed: {exc!r}")])
 
@@ -122,7 +122,7 @@ def _describe_status(plain: bytes, direction: str) -> tuple[str, list[Issue]]:
     if direction != "tx":
         return ("status-chunk", [])
     try:
-        req = _F.from_bytes(plain).body
+        req = _load(_F.from_bytes(plain)).body
     except Exception as exc:  # noqa: BLE001 - a request the spec can't read is a gap
         return ("parse_error", [("hard", f"kaitai parse failed on the 0xAC request: {exc!r}")])
     return (f"status-request/{len(req.requested_types)}", [])

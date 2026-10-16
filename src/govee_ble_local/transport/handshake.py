@@ -20,9 +20,9 @@ from typing import Any, Final
 from kaitaistruct import KaitaiStream
 
 from ..const import FRAME_LEN, PSK
-from ..crypto import checksum, decrypt, encrypt
+from ..crypto import decrypt, encrypt
 from ..exceptions import GoveeBleInvalidValue
-from ..wire.build import _F
+from ..wire.build import _F, _frame_of, _load, _node
 
 HANDSHAKE_OPCODE: Final = int(_F.ProType.handshake)   # 0xE7
 
@@ -33,25 +33,18 @@ _MAX_PAYLOAD: Final = FRAME_LEN - 3  # opcode, step and checksum take the other 
 
 
 def _build_plain(step: int, payload: bytes | None = None) -> bytes:
-    """Plaintext handshake frame: [E7, step, <payload>, <random fill>, bcc].
+    """Plaintext handshake frame: [E7, step, <payload>, <random fill>, bcc], the spec's ``handshake``
+    body (``op``, ``data``) written by the generated classes.
 
     Controller4Aes.e / .f (the only callers in the app) pass no payload; ``payload`` is kept
     for tests and raises GoveeBleInvalidValue if it doesn't fit in front of the checksum."""
     if payload is not None and len(payload) > _MAX_PAYLOAD:
         raise GoveeBleInvalidValue(
             f"handshake payload must be at most {_MAX_PAYLOAD} bytes, got {len(payload)}")
-    body = bytearray(FRAME_LEN)
-    body[0] = HANDSHAKE_OPCODE
-    body[1] = step
-    n = 0
-    if payload:
-        body[2 : 2 + len(payload)] = payload
-        n = len(payload)
-    # Controller4Aes.a fills the gap up to index 19 with random bytes.
-    fill = os.urandom(FRAME_LEN - 1 - (2 + n))
-    body[2 + n : FRAME_LEN - 1] = fill
-    body[FRAME_LEN - 1] = checksum(bytes(body[: FRAME_LEN - 1]))
-    return bytes(body)
+    head = payload or b""
+    # Controller4Aes.a fills the rest of the data field, up to the checksum, with random bytes.
+    data = head + os.urandom(_MAX_PAYLOAD - len(head))
+    return _frame_of(_F.ProType.handshake, lambda f: _node(_F.Handshake, f, op=step, data=data))
 
 
 def build_step1(psk: bytes = PSK) -> bytes:
@@ -71,7 +64,7 @@ def _handshake_body(pt: bytes) -> Any:
     (Controller4Aes.g / .h read only the op and the key bytes)."""
     if len(pt) < 2 or pt[0] != HANDSHAKE_OPCODE:
         return None
-    return _F.Handshake(KaitaiStream(BytesIO(pt[1:])))
+    return _load(_F.Handshake(KaitaiStream(BytesIO(pt[1:]))))
 
 
 def parse_session_key(reply_ciphertext: bytes, psk: bytes = PSK) -> bytes | None:

@@ -42,6 +42,7 @@ from .build import (
     SUB_SCENE,
     ColorScheme,
     _F,
+    _load,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -60,7 +61,7 @@ GroupRecord = tuple[int | None, int, int, int]
 def _parse_type(cls: Any, data: bytes, *params: Any) -> Any:
     """Read ``data`` as the generated type ``cls`` (``params`` = its ksy params, if any).
     Raises whatever the generated reader raises on malformed input."""
-    return cls(*params, KaitaiStream(BytesIO(bytes(data))))
+    return _load(cls(*params, KaitaiStream(BytesIO(bytes(data)))))
 
 
 def _parse(frame: bytes) -> Any:
@@ -68,7 +69,7 @@ def _parse(frame: bytes) -> Any:
     if len(frame) < 2:
         return None
     try:
-        return _F.from_bytes(bytes(frame))
+        return _load(_F.from_bytes(bytes(frame)))
     except Exception as exc:  # noqa: BLE001 - unknown enum / truncated frame -> not for us
         # A matched reply that won't parse is worth a breadcrumb (unknown enum / truncated).
         _LOGGER.debug("frame did not parse against the spec: %s (%r)", bytes(frame).hex(), exc)

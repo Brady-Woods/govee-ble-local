@@ -36,12 +36,12 @@ dependencies = [
     # algorithms.AES / modes.ECB; RC4 is hand-rolled in crypto.py), so new majors are low-risk.
     # The floor is exercised by CI's lowest-direct-dependency job.
     "cryptography>=41.0.0",
-    # Runtime wire parser: the spec/*.ksy-generated readers under govee_ble_local/_generated
-    # subclass KaitaiStruct + use KaitaiStream, so this is required at runtime. It is the ONE
-    # accepted non-HA-default dependency — pure-Python, stdlib-only, zero-dep, MIT. The Kaitai
-    # *compiler* (ksc: the JVM CLI, or the pure-JS build for read-only output) stays a dev tool
-    # (tools/gen_kaitai.sh); the readers are committed. 0.11 is also the first runtime with the
-    # read-write (serialization) API that `gen_kaitai.sh --read-write` targets.
+    # Runtime wire codec: the spec/*.ksy-generated read-write classes under
+    # govee_ble_local/_generated (ReadWriteKaitaiStruct + KaitaiStream) parse and build every frame,
+    # so this is required at runtime. It is the ONE accepted non-HA-default dependency —
+    # pure-Python, stdlib-only, zero-dep, MIT. The Kaitai *compiler* (the JVM ksc CLI) stays a dev
+    # tool (tools/gen_kaitai.sh); the classes are committed. 0.11 is the first runtime with the
+    # read-write (serialization) API, so it is also the floor.
     # See CLAUDE.md for the dependency policy (bleak / bleak-retry-connector / cryptography
     # are HA defaults; new runtime deps need justification; never require a version ahead of HA).
     "kaitaistruct>=0.11",

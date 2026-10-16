@@ -13,7 +13,7 @@ from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
-from conftest import require_optional
+from conftest import require_optional, read_struct
 from fake_ble import ble_device
 
 from govee_ble_local import Capability, Encryption
@@ -132,7 +132,7 @@ def test_color_temp_carries_tint() -> None:
 def test_color_temp_round_trips_kaitai() -> None:
     require_optional("kaitaistruct", reason="Kaitai runtime not installed")
     gb = require_optional("govee_ble_local._generated.govee_ble_frame")
-    m = gb.GoveeBleFrame.from_bytes(b.color_temp(4000, "h6188")).body.params
+    m = read_struct(gb.GoveeBleFrame.from_bytes(b.color_temp(4000, "h6188"))).body.params
     assert m.sub_type == gb.GoveeBleFrame.SubMode.color_cct_0d
     assert (m.params.r, m.params.g, m.params.b, m.params.kelvin) == (0xFF, 0xFF, 0xFF, 4000)
     assert (m.params.tint_r, m.params.tint_g, m.params.tint_b) == (0xFF, 0xD5, 0xA1)
@@ -194,7 +194,7 @@ def test_ksy_mode_color_0d_typed_kind2() -> None:
     from kaitaistruct import KaitaiStream
 
     def typed(kind: int, body: bytes) -> Any:
-        return gb.GoveeBleFrame.ModeColor0dTyped(kind, KaitaiStream(BytesIO(body)))
+        return read_struct(gb.GoveeBleFrame.ModeColor0dTyped(kind, KaitaiStream(BytesIO(body))))
 
     t = typed(2, bytes([1, 2, 3, 0x0F, 0xA0, 0xFF, 0xD5, 0xA1]) + bytes(9))
     assert (t.r, t.g, t.b, t.report_kelvin) == (1, 2, 3, 4000)

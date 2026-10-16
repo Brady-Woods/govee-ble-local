@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import base64
 
-from conftest import require_optional
+from conftest import require_optional, read_struct
 
 require_optional("kaitaistruct", reason="Kaitai runtime not installed")
 
@@ -33,7 +33,7 @@ def _checksum_ok(frame: bytes) -> bool:
 def _parse(frame: bytes) -> GoveeBleFrame:
     assert len(frame) == 20
     assert _checksum_ok(frame)
-    return GoveeBleFrame.from_bytes(frame)
+    return read_struct(GoveeBleFrame.from_bytes(frame))
 
 
 def test_power():

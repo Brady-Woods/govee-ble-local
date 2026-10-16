@@ -25,7 +25,7 @@ from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
-from conftest import require_optional
+from conftest import require_optional, read_struct
 from fake_ble import ble_device
 
 from govee_ble_local.devices.device import Device, make_device
@@ -210,7 +210,7 @@ def test_h6188_form_is_unchanged_by_the_both_slot_form() -> None:
 def test_both_slot_form_round_trips_kaitai() -> None:
     require_optional("kaitaistruct", reason="Kaitai runtime not installed")
     gb = require_optional("govee_ble_local._generated.govee_ble_frame")
-    m = gb.GoveeBleFrame.from_bytes(b.color_temp(4000, "h6006")).body.params
+    m = read_struct(gb.GoveeBleFrame.from_bytes(b.color_temp(4000, "h6006"))).body.params
     assert m.sub_type == gb.GoveeBleFrame.SubMode.color_cct_0d
     assert (m.params.r, m.params.g, m.params.b, m.params.kelvin) == (0xFF, 0xD5, 0xA1, 4000)
     assert (m.params.tint_r, m.params.tint_g, m.params.tint_b) == (0xFF, 0xD5, 0xA1)

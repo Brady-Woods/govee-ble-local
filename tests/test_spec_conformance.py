@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import pathlib
 
-from conftest import require_optional
+from conftest import require_optional, read_struct
 
 require_optional("kaitaistruct", reason="Kaitai runtime not installed")
 _adv = require_optional(
@@ -47,7 +47,7 @@ def test_advertisement_reader_parses_govee() -> None:
     # Synthetic Govee manufacturer AD: len, 0xFF, flags(encrypted+v1=0x41),
     # 88 EC (company u2le -> 0xEC88), pact_type u2be=0x01F6, pact_code=0x22, rest.
     rec = bytes([0x0A, 0xFF, 0x41, 0x88, 0xEC, 0x01, 0xF6, 0x22, 0x01, 0x02, 0x03, 0x00])
-    m = GoveeAdvertisement.from_bytes(rec).structures[0].data
+    m = read_struct(GoveeAdvertisement.from_bytes(rec)).structures[0].data
     assert m.is_govee is True and m.company_id == 0xEC88
     assert m.encrypted is True and m.protocol_version == 1
     assert m.pact_type == 0x01F6 and m.pact_code == 0x22

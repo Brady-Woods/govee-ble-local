@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 
-from conftest import require_optional
+from conftest import require_optional, read_struct
 
 require_optional("kaitaistruct", reason="Kaitai runtime not installed")
 _gb = require_optional("govee_ble_local._generated.govee_ble_frame")
@@ -22,7 +22,7 @@ def _p(frame: bytes) -> Any:   # a Kaitai-generated GoveeBleFrame (untyped)
     for c in frame[:19]:
         x ^= c
     assert frame[19] == x, "BCC"
-    return F.from_bytes(frame)
+    return read_struct(F.from_bytes(frame))
 
 
 def test_switch() -> None:
@@ -122,7 +122,7 @@ def test_ic_count_query() -> None:
 
 # ── scene uploads: reassemble back to the input value ────────────────────────
 def _reassemble_a4(frames: list[bytes]) -> bytes:
-    parsed = [F.from_bytes(f) for f in frames]
+    parsed = [read_struct(F.from_bytes(f)) for f in frames]
     start = [p for p in parsed if p.body.seq_marker == 0]
     end = [p for p in parsed if p.body.seq_marker == 0xFFFF]
     mids = sorted((p for p in parsed if p.body.seq_marker not in (0, 0xFFFF)),
@@ -159,7 +159,7 @@ def test_scene_upload_a4_roundtrips() -> None:
     value = bytes([0x20, 0x00]) + bytes(range(256))[:185]  # 187 B graffiti-shaped
     frames = b.scene_upload_a4_mtu(value, b.COMM_H60A6)
     assert len(frames) == 12
-    start = F.from_bytes(frames[0])
+    start = read_struct(F.from_bytes(frames[0]))
     assert start.pro_type == F.ProType.multi_write_v2
     assert start.body.start.comm_byte == b.COMM_H60A6
     assert start.body.start.packet_count == 12

@@ -203,6 +203,9 @@ def test_read_kelvin_skips_other_submodes_and_does_not_swallow_attribute_errors(
     class Broken:
         body = object()  # no .body -> must raise, not be swallowed
 
+        def _read(self) -> None:   # the generated classes are read-write: read on demand
+            pass
+
     monkeypatch.setattr(GoveeBleFrame, "from_bytes", classmethod(lambda cls, b: Broken()))
     with pytest.raises(AttributeError):
         asyncio.run(lc.read_kelvin(_FakeDev([_mode_frame(0x15, 2700)])))

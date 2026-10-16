@@ -28,7 +28,7 @@ from kaitaistruct import KaitaiStream
 from ..const import FRAME_LEN
 from ..models import Segment
 from . import parse
-from .build import INFO_BASIC, INFO_WIFI, _F
+from .build import INFO_BASIC, INFO_WIFI, _F, _load
 from .parse import _parse_type
 
 _LOGGER = logging.getLogger(__name__)
@@ -267,7 +267,7 @@ def walk_status_tlvs(
         if typ == 0:   # type 0 = trailing zero pad (status_reply's sentinel)
             break
         try:
-            tlv: Any = _F.StatusTlv(stream)
+            tlv: Any = _load(_F.StatusTlv(stream))
         except Exception:  # noqa: BLE001 - truncated, or a typed body the spec can't read (short, bad UTF-8)
             tlv = None
         if tlv is not None:

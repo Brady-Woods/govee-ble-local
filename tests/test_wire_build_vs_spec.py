@@ -389,3 +389,18 @@ def test_handshake_constants_are_the_spec_enums() -> None:
     assert handshake.HANDSHAKE_OPCODE == 0xE7 == int(b._F.ProType.handshake)
     assert handshake._STEP_SESSION_KEY == 0x01 == int(b._F.HandshakeOp.v1_request_session_key)
     assert handshake._STEP_CONFIRM == 0x02 == int(b._F.HandshakeOp.v1_confirm)
+
+
+# ── the builders write with the generated read-write classes ─────────────────
+def test_builders_write_with_the_spec_classes() -> None:
+    # A frame is a GoveeBleFrame tree serialized by Kaitai: reading one back gives the same tree, and a
+    # value the spec type can't carry (s1 time-zone hour) is refused as bad input, not masked.
+    from conftest import read_struct
+
+    from govee_ble_local.exceptions import GoveeBleInvalidValue
+
+    f = read_struct(b._F.from_bytes(b.plug_sync_time(1_760_000_000, -5, -30)))
+    p = f.body.params
+    assert (p.unix_seconds, p.marker, p.tz_hour, p.tz_min) == (1_760_000_000, 1, -5, -30)
+    with pytest.raises(GoveeBleInvalidValue, match=r"doesn.t fit the spec"):
+        b.plug_sync_time(0, 200, 0)

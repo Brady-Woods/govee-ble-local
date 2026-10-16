@@ -132,6 +132,7 @@ async def read_kelvin(dev: Device) -> int | None:
                 # No blanket except: an attribute-path mistake must fail loudly.
                 try:
                     parsed = gbf.from_bytes(fr)
+                    parsed._read()   # read-write class: reads only when asked
                 except Exception as err:
                     print(f"  (kaitai could not parse {fr.hex()}: {err}; skipping)")
                     continue
