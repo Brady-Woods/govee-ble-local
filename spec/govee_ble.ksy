@@ -399,9 +399,13 @@ types:
 
   # ── 0xAA READ replies (body[0] = validBytes[0] = frame offset 2). Verified vs each controller's parseValidBytes. ──
   switch_read_reply:
-    doc: "AA 01 reply (SwitchController.parseValidBytes): state @ body[0]. LIGHTS: 0=off else on (validBytes[0] != 0, SwitchController.java:30). The modern control-screen VM decodes this SAME byte as on == (body[0] == 1) (ControllerSwitch.Companion.c, base-classes11/com/govee/base2light/kt/general_controller/ControllerSwitch.java:32) — agrees for 0/1, differs only for a byte >= 2. PLUGS (h5080 SwitchControllerV2): this SAME 0x01 reply is a RELAY BITMASK (bit i = relay i on), not boolean — interpret per device."
+    doc: "AA 01 reply: state @ body[0]. LIGHTS: every curated control screen that reads it decodes on as body[0] == 1 (ControllerSwitch.Companion.c, base-classes11/com/govee/base2light/kt/general_controller/ControllerSwitch.java:32), at connect and in the aa 01 heartbeat (ShareVM.N3 frame[2] == 1, ShareVM.java:1008): use light_is_on. The legacy SwitchController.parseValidBytes reads it as != 0 (SwitchController.java:30), but no curated control screen reaches it (only scene / IoT command paths such as BleSwitchCmdBuilderV1); the two agree for 0/1 and differ only for a byte >= 2. Which message carries a family's power (this reply, or the 0xAC status TLV 0x01) is devices.yaml client_profile.power_read. PLUGS (h5080 SwitchControllerV2): this SAME 0x01 reply is a RELAY BITMASK (bit i = relay i on), not boolean — interpret per device."
     seq:
       - { id: state, type: u1 }
+    instances:
+      light_is_on:
+        value: 'state == 1'
+        doc: "Lights: power as the curated control screens decode it (ControllerSwitch, == 1). Not for plugs, whose state is a relay mask."
   brightness_read_reply:
     doc: "AA 04 reply (BrightnessController.parseValidBytes): raw brightness 0-255. NO 0-255<->0-100 rescale in the BLE codec (percent mapping is UI-layer)."
     seq:
@@ -547,7 +551,13 @@ types:
           cases:
             0x10: device_info_basic
             0x11: device_info_wifi
-  status_switch:     { doc: "0x01 on/off state (1=on)", seq: [ { id: state, type: u1 } ] }
+  status_switch:
+    doc: "0xAC status TLV 0x01: power. The status parser decodes on as state != 0 (Compose4BaseInfoSingleRead.u: bArr2[0] != 0, base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4BaseInfoSingleRead.java:286-288): use is_on. Screens that take connect-time power from here and send no aa 01 read are devices.yaml client_profile.power_read: ac_status (H60A4/H60A6, H6039/H6038/H6048, H703A/H703B)."
+    seq: [ { id: state, type: u1 } ]
+    instances:
+      is_on:
+        value: 'state != 0'
+        doc: "Power as Compose4BaseInfoSingleRead.u decodes TLV 0x01 (!= 0). Differs from the aa 01 control-screen rule (switch_read_reply.light_is_on, == 1) only for a byte >= 2."
   status_brightness: { seq: [ { id: brightness, type: u1 } ] }
   status_zone:       { doc: "0x30 in the 0xAC reply: zone0 = bit0 of byte0, zone1 = bit0 of byte1 (VM4LightH60A6.o:103)", seq: [ { id: zone_a, type: u1 }, { id: zone_b, type: u1 } ] }
   status_seg_info:   { doc: "0x41 seg/IC info (VM4LightH60A6.o:99 reads byte1)", seq: [ { id: b0, type: u1 }, { id: ic_or_seg, type: u1 } ] }
@@ -767,7 +777,10 @@ types:
       0xEE 30 switch/zone push — FAMILY-DEPENDENT. H60A6 (VM4LightH60A6.U5): data[0]=detail (ignored),
       main switch = bit0 of data[1], zone0 = bit0 of data[2], zone1 = bit0 of data[3]. Generic (DefParser.M):
       a single flags byte @ data[1] carries up to 4 sub-switches in bits 1-4 (DefParser.O = one switch in bit 1).
-      Interpret per device (flags_a = that generic flags byte).
+      Interpret per device (flags_a = that generic flags byte). ParseUtils.getBit2Boolean numbers bits from 1, so
+      "bit 1" is the LSB (0x01). As live power (devices.yaml client_profile.power_live: push_30): bit 0 of flags_a
+      (frame[3]) on H60A1/H60A4/H60A6, H6039, H6078 and H601E/H601F; bit 0 of flags_c (frame[5]) on H60A0; per
+      bar flags_b == 1 / flags_c == 1 on H6038/H6048.
     seq:
       - { id: detail, type: u1 }
       - { id: flags_a, type: u1 }
@@ -1379,3 +1392,6 @@ types:
         value: 'report_kelvin >= 0x8000 ? report_kelvin - 0x10000 : report_kelvin'
         if: 'kind == 2'
         doc: "kind 2 kelvin as the app reads it (getSignedShort sign-extends: 0x8000-0xFFFF reads as -32768..-1)"
+      is_cct_positive:
+        value: 'kind == 2 and report_kelvin_signed > 0'
+        doc: "kind 2 only: CCT by the signed > 0 rule of OpInfo4Detail.parseModeValidBytes and of the rgb_kelvin_0d decoders (cube CubeNewInfo4Detail.U; h60a1 Info4Detail.Q:416-427 for H60A1/H60A4/H60A6), which read only [R,G,B,kelvin] and never the tint bytes. A kelvin <= 0 is RGB from r/g/b."

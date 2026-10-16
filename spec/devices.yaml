@@ -406,7 +406,15 @@ families:
   # ─────────────────────────── Feature splits (deeply analysed) ───────────────────────────
   - id: h60ax
     category: rgbic_strip
-    client_profile: { has_brightness: true, color_scheme: h60a6, wire_cipher: runtime }   # 4-byte seg colour (verified); op15 colour
+    client_profile:   # 4-byte seg colour (verified); op15 colour
+      has_brightness: true
+      color_scheme: h60a6
+      wire_cipher: runtime
+      by_goods_type:   # traced per goodsType (Govee Home 7.7.02); 324/346/356/370/373/390 (H60C1, H12xx, H80Ax) not traced
+        "188": { power_read: aa01, power_live: [push_30] }   # H60A0: aa 01 == 1; live ee 30 bit 0 of frame[5]; its 0x0D decoder (Info4DetailH60A0) not traced
+        "235": { power_read: aa01, power_live: [push_30], mode_0d_kind: rgb_kelvin_0d }   # H60A1: aa 01 == 1 (ControllerSwitch); 0x0D via h60a1 Info4Detail.Q
+        "302": { power_read: ac_status, power_live: [push_30], mode_0d_kind: rgb_kelvin_0d }   # H60A4: no aa 01 read, 0xAC TLV 0x01 != 0
+        "303": { power_read: ac_status, power_live: [push_30], mode_0d_kind: rgb_kelvin_0d }   # H60A6: no aa 01 read (VM4LightH60A6.W4), 0xAC TLV 0x01 != 0; 0x0D = [R,G,B,kelvin s16be] on every pact (h60a1 Info4Detail.Q:416-427), but 0x15 is the main colour report on (1,2)/(1,3)
     models: [H60A0, H60A1, H60A4, H60A6, H60C1, H1270, H1232, H1250, H1252, H12D0, H80A1, H80A4]
     goods_types: [188, 235, 302, 303, 324, 346, 356, 370, 373, 390]
     delivery: feature_split
@@ -437,7 +445,16 @@ families:
 
   - id: h6047
     category: light_bar
-    client_profile: { has_brightness: true, color_scheme: h60a6, wire_cipher: runtime }
+    client_profile:
+      has_brightness: true
+      color_scheme: h60a6
+      power_read: aa01              # old detail screen (H6047 119, H6043 196, H6042 197; NewDetailVm): aa 01 == 1 at connect
+      power_live: [heartbeat_aa36]  # then the aa 36 heartbeat, per bar == 1 (NewDetailVm.A3)
+      by_goods_type:                # newdetail screens: no aa 01 read, power from the 0xAC TLV 0x01 (!= 0), live ee 30
+        "277": { power_read: ac_status, power_live: [push_30] }   # H6039: ee 30 bit 0 of frame[3]
+        "288": { power_read: ac_status, power_live: [push_30] }   # H6038: ee 30 per bar frame[4] / frame[5] == 1
+        "298": { power_read: ac_status, power_live: [push_30] }   # H6048: ee 30 per bar frame[4] / frame[5] == 1
+      wire_cipher: runtime
     models: [H6047, H6043, H6042, H6039, H6038, H6048, H8048]
     goods_types: [119, 196, 197, 277, 288, 298]
     delivery: feature_split
@@ -475,7 +492,7 @@ families:
 
   - id: bulblightv3
     category: bulb
-    client_profile: { has_brightness: false, color_scheme: h6006, mode_0d_kind: rgb_kelvin_tint, wire_cipher: runtime }   # no seg read; 0x0d report = [R,G,B,kelvin u2be,tint] (bulblight ModeParseStrategyConfig.a; mode_color_0d_typed kind 2). Not the old-H6001 branch (SKU H6001, goodsType 0, Support4OldH6001): [R,G,B][CCT flag][tint]
+    client_profile: { has_brightness: false, color_scheme: h6006, mode_0d_kind: rgb_kelvin_tint, power_read: aa01, power_live: [heartbeat_aa01], by_goods_type: { "311": { power_live: [push_30] } }, wire_cipher: runtime }   # no seg read; 0x0d report = [R,G,B,kelvin u2be,tint] (bulblight ModeParseStrategyConfig.a; mode_color_0d_typed kind 2). Not the old-H6001 branch (SKU H6001, goodsType 0, Support4OldH6001): [R,G,B][CCT flag][tint]
     models: [H6001, H6002, H6003, H6004, H6005, H6006, H6008, H6009, H600A, H600B, H600C, H600D, H6010, H6011, H6013, H601A, H601B, H601C, H601D, H601E, H601F, H8015, H801A, H801C, H801D, H1401, H14A1, H14C0, H14C1, H14C2, H1501]
     goods_types: [0, 9, 10, 20, 31, 64, 111, 311, 328, 342, 348]   # Per the account device-list, H6006 AND H6008 are both goodsType 64 (bulblight Support.d SKU-group on gt 64: H6004/H6006/H6008/H6009/H600A/H6010, verHard>=1.07.02). Earlier annotations were wrong: 328 = H8015 (H8015Item.f()=328, supportPact4H8015), NOT H6008; 20 = H6001 legacy "old bulb" (OldBulbUtil.parseOldBulbLight: sku=="H6001" -> gt 20 -> bulblightv2 AdjustAc), NOT H6006. 0/9/10 = legacy broadcast codes.
     # H6004 has TWO hardware revisions, split by goodsType (the SKU -> goodsType binding comes from Govee's cloud
@@ -506,7 +523,7 @@ families:
 
   - id: h61d3
     category: rgbic_strip
-    client_profile: { has_brightness: true, color_scheme: h60a6, wire_cipher: runtime }   # H6641 4-byte seg colour (verified count=4)
+    client_profile: { has_brightness: true, color_scheme: h60a6, power_read: aa01, power_live: [heartbeat_aa01, push_30], by_goods_type: { "263": { power_read: ac_status } }, wire_cipher: runtime }   # H6641 4-byte seg colour (verified count=4). Power: H703A/H703B (263) read the 0xAC TLV 0x01 at connect, then the aa 01 heartbeat (== 1) corrects it
     models: [H61B0, H61B3, H61B6, H61B8, H61B9, H61D2, H61D3, H61D4, H61D5, H61D6, H61E5, H61E6, H61F2, H61F5, H61F6, H1A42, H1A43, H1A44, H1A45, H1AB1, H1AB2, H1AB3, H1B6A, H6640, H6641, H703A, H703B]
     goods_types: [202, 239, 242, 246, 247, 261, 263, 264, 299, 367, 375, 384, 387, 388, 389, 400]
     delivery: feature_split
@@ -537,7 +554,7 @@ families:
   # and H610B (114), which have their own connect flows (ControllerStrategyConfig.b0 / q0) and are NOT modelled.
   - id: striplight
     category: panel
-    client_profile: { has_brightness: true, color_scheme: h60a6, wire_cipher: runtime }
+    client_profile: { has_brightness: true, color_scheme: h60a6, power_read: aa01, power_live: [heartbeat_aa01], wire_cipher: runtime }
     models: [H6062]
     goods_types: [41]
     delivery: feature_split
@@ -617,7 +634,7 @@ families:
   - id: h6188
     category: rgb_strip
     # SKU-string matched (goodsType 0 => no advert pact parse); colour 0x0d + Kelvin + tint; raw 20-254 brightness.
-    client_profile: { has_brightness: false, color_scheme: h6188, mode_0d_kind: rgb_kelvin_tint, wire_cipher: runtime }
+    client_profile: { has_brightness: false, color_scheme: h6188, mode_0d_kind: rgb_kelvin_tint, power_read: aa01, power_live: [heartbeat_aa01], wire_cipher: runtime }
     models: [H6188]
     goods_types: [0]   # Constant4L5 default (H6188 not in its switch); rgblight SkuBleProcessor requires goodsType==0
     delivery: feature_split
@@ -641,7 +658,7 @@ families:
     # Glide Hexa. Phase 1 = whole-device control only (what the app sends with no per-panel selection).
     # The cubelight package also serves H6063/H6066/H6067/H6069/H606A (other goodsTypes, other panel counts
     # and Support gates): not modelled here.
-    client_profile: { has_brightness: true, color_scheme: h6061, mode_0d_kind: rgb_kelvin_0d, wire_cipher: runtime }   # 0x0d report = [R,G,B,kelvin s16be], 5-byte body, no tint bytes; signed kelvin > 0 => CCT and the colour is DERIVED from kelvin (CubeNewInfo4Detail.U)
+    client_profile: { has_brightness: true, color_scheme: h6061, mode_0d_kind: rgb_kelvin_0d, power_read: aa01, power_live: [heartbeat_aa01], wire_cipher: runtime }   # 0x0d report = [R,G,B,kelvin s16be], 5-byte body, no tint bytes; signed kelvin > 0 => CCT and the colour is DERIVED from kelvin (CubeNewInfo4Detail.U)
     models: [H6061]
     goods_types: [51]   # Support.addSupportPact: pact (1,1), (1,2), (1,3)
     delivery: feature_split
@@ -841,7 +858,7 @@ families:
   # ─────────────────────────── Generic light abstractions & families (base.apk) ───────────────────────────
   - id: dreamcolorlightv1
     category: rgbic_strip
-    client_profile: { has_brightness: true, color_scheme: h61a8, wire_cipher: runtime }   # Mechanism-B: 0xA5 V2 = 4-byte [bri,RGB]; 0xA2 V1 = 3-byte (firmware-versioned)
+    client_profile: { has_brightness: true, color_scheme: h61a8, power_read: aa01, power_live: [heartbeat_aa01], wire_cipher: runtime }   # Mechanism-B: 0xA5 V2 = 4-byte [bri,RGB]; 0xA2 V1 = 3-byte (firmware-versioned)
     models: [H6102, H611B, H611Z, H6123, H612A, H612B, H612C, H612D, H612E, H612F, H6168, H617A, H619A, H61A0, H61A8, H61A9, H61E0, H61E1, H70A1, H70A2, H70A3]
     goods_types: [17, 18, 19, 70, 73, 204, 207]   # 19 = H61A8 (account device-list; SupportMultiColorConfig.i: gt 19 <-> "H61A8"). 204 = H61A9 (isGoodsTypeH61A9). 207 = a DreamColorV1 RGBIC SKU, cloud-named, NOT H61A8. Family's full registered set is larger (f0 BLE-IoT + Q0 legacy BLE, dreamcolorlightv1 Support.java:164,188); only modeled goodsTypes listed here.
     delivery: base_apk
@@ -945,7 +962,7 @@ families:
   # ─────────────────────────── Lamps / car / misc lights (base.apk) ───────────────────────────
   - id: tablelampv1
     category: lamp
-    client_profile: { has_brightness: false, color_scheme: h6006, mode_0d_kind: rgb, wire_cipher: runtime }   # H6052 0x0D report = [R,G,B] only, the kelvin bytes are not read (H6052NewDetailVM -> H6052InfoDetail.G constructor strategy; 7.5.12 and 7.7.02)
+    client_profile: { has_brightness: false, color_scheme: h6006, mode_0d_kind: rgb, power_read: aa01, power_live: [heartbeat_aa01], by_goods_type: { "128": { power_live: [push_30] } }, wire_cipher: runtime }   # H6052 0x0D report = [R,G,B] only, the kelvin bytes are not read (H6052NewDetailVM -> H6052InfoDetail.G constructor strategy; 7.5.12 and 7.7.02)
     models: [H6052, H6078]
     goods_types: [22, 128]
     delivery: base_apk
