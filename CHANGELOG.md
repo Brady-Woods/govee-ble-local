@@ -321,6 +321,19 @@ model, from which the shipped readers are generated).
   zeroes every data byte.
 
 ### Spec
+- Re-verified several spec facts against the 7.7.02 decompile (adversarially) and the account device-list,
+  and corrected them: `switch_read_reply` keeps the legacy `SwitchController` `!= 0` semantics as primary and
+  now notes the modern control-screen VM path (`ControllerSwitch.Companion.c` / `ShareVM.N3`) that decodes
+  `== 1` (they differ only for a byte ≥ 2); `MtuConfig` is described as a per-SKU **cache of the negotiated
+  ATT MTU** (default 23, usable size = MTU − 3 floored at 20), written by `saveMtuData` from `onMtuChanged`
+  on a successful exchange — not an app value unrelated to negotiation. Updated `govee_ble.ksy`, the GATT doc
+  and `SCENE_UPLOAD_ENCODING.md`; reader regenerated (one docstring).
+- `spec/devices.yaml` goodsType annotations corrected from the account device-list: H6006 and H6008 are both
+  goodsType 64 (was `H6006 = 20` / `328 = H6008`; 328 is H8015, 20 is the H6001 legacy old-bulb), and H61A8
+  is goodsType 19 (was `207 = H61A8`; 207's SKU is cloud-only and is not H61A8). H6006's colour-temp write
+  uses the 0x0D native path like H6008, not 0x02. goodsType 19 added to the `dreamcolorlightv1` set.
+- `spec/govee_commands.py`: made ruff-clean under the repo config (style only; the builders and the 757
+  self-checks are unchanged).
 - `spec/govee_commands.py` (new): the full command-builder catalogue — 463 functions, one per
   (opcode, variant) the Govee app emits across 99 opcodes, each traced to the decompiled app with a
   `file:line` citation and a byte-exact self-check. `govee_reference._selftest` runs all 757 checks.
