@@ -15,8 +15,8 @@ Two ratchets keep this honest instead of skipping:
 * ``KNOWN_DIVERGENCES``: frames the library sends today that differ from the catalogue, each waiting on a
   decision (SPEC_CLIENT_AUDIT_ba9e6bd.md section 2). The test asserts they still differ in exactly the
   recorded way, so a fix must also remove the entry.
-* ``test_spec_gap_*``: library frames the spec has no builder for yet. The test asserts the gap is still
-  there, so when the spec adds the builder the ratchet has to be replaced with a real binding.
+* ``test_spec_gap_*``: library frames the spec has no builder for yet (none at the moment). Such a test
+  asserts the gap is still there, so when the spec adds the builder it has to become a real binding.
 
 The e7 handshake has no catalogue builder either; it is bound to the reference's framing and cipher.
 """
@@ -26,7 +26,6 @@ import pathlib
 import random
 import sys
 from collections.abc import Callable, Iterator
-from typing import Any
 
 import pytest
 from conftest import require_optional
@@ -345,30 +344,33 @@ def test_known_divergence_still_open(name: str) -> None:
     assert got[:2] == want[:2] and got[2] == 0x01 and want[2] == 0x00 and got[3:19] == want[3:19], why
 
 
-def _wide(segments: int) -> dict[str, Any]:
-    mask = (1 << segments) - 1
-    return {
-        "color_rgb": (b.color_rgb(1, 2, 3, "h60a6", segments), R.build_op15_color(1, 2, 3, mask, variant=12)),
-        "color_temp": (b.color_temp(3000, "h60a6", segments),
-                       R.build_op15_color(255, 255, 255, mask, variant=11, kelvin=3000,
-                                          tint=tint_for_kelvin(3000))),
-    }
+def _pos_set(mask: int, segments: int) -> list[bool]:
+    """The app's position set for ``mask`` on a ``segments``-segment device."""
+    return [bool(mask >> i & 1) for i in range(segments)]
 
 
-@pytest.mark.parametrize("segments", [17, 24, 33, 56])
-def test_spec_gap_op15_colour_mask_above_16_segments(segments: int) -> None:
-    """SPEC_GAPS #7: above 16 segments the app's 0x15 colour mask is ceil(n/8) bytes (BleUtils.X, the
-    ``length > 16`` branch of Bytes.r / Bytes.h), as the library writes; the spec's
-    ``build_op15_color`` (and the ksy ``op15_color_typed``) still hard-code a 2-byte mask, and the catalogue
-    has no Bytes.h / Bytes.r builder. When the spec gains one, bind it above and drop this ratchet."""
-    width = _width(segments)
-    for name, (lib, spec) in _wide(segments).items():
-        assert lib != spec, f"{name}: the spec now writes a wide 0x15 mask; bind it and remove this gap"
-        # [33 05 15 01][colour x3][00 x5, or kelvin u2be + tint x3][mask]: everything before the mask
-        # agrees, and the library's mask is the full-width LSB-first one.
-        assert lib[:12] == spec[:12], name
-        assert lib[12:12 + width] == ((1 << segments) - 1).to_bytes(width, "little"), name
-        assert not any(lib[12 + width:19]), name
+def test_op15_colour_every_mask_width() -> None:
+    """0x15 colour and CCT at every segment count up to 56, against the catalogue's Bytes.h / Bytes.r
+    builders (the app's 17-byte ext array, BleUtils.X above 16 positions) and the reference's
+    ``build_op15_color(segments=)``. Above 16 segments the mask is ceil(n/8) bytes; this was the spec gap
+    the audit found (#7), closed in faa2cb7."""
+    r = _rng(13)
+    for segments in range(1, b.MAX_MASK_SEGMENTS + 1):
+        whole = [True] * segments
+        for _ in range(4):
+            rgb, kelvin = _not_tint(r), r.randrange(27, 66) * 100
+            mask = _mask(r, segments)
+            tint = tint_for_kelvin(kelvin)
+            assert b.color_rgb(*rgb, "h60a6", segments) == C.build_op15_color_bytes_h(*rgb, whole) == \
+                R.build_op15_color(*rgb, (1 << segments) - 1, variant=12, segments=segments)
+            assert b.segment_rgb(mask, *rgb, "h60a6", segments) == \
+                C.build_op15_color_bytes_h(*rgb, _pos_set(mask, segments))
+            ref_cct = R.build_op15_color(255, 255, 255, (1 << segments) - 1, variant=11, kelvin=kelvin,
+                                         tint=tint, segments=segments)
+            assert b.color_temp(kelvin, "h60a6", segments) == \
+                C.build_op15_color_temp_bytes_r(tint, kelvin, whole) == ref_cct
+            assert b.segment_color_temp(mask, kelvin, "h60a6", segments) == \
+                C.build_op15_color_temp_bytes_r(tint, kelvin, _pos_set(mask, segments))
 
 
 # ── protocol constants come from the generated enums ─────────────────────────

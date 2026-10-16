@@ -431,9 +431,10 @@ model, from which the shipped readers are generated).
   or reference codec (`spec/govee_reference.py`) over seeded-random inputs: power, brightness, every colour
   scheme (the tint-pick-as-CCT path over all 178 tint colours), segments up to the 7-byte mask, zones,
   bars, every scene code, 0xA3 and 0xA4 uploads, plug and secret writes, every read request and the `e7`
-  handshake. Two ratchets keep the open differences visible instead of skipped: the `aa 01 01` / `aa 04 01`
-  selector byte (the catalogue sends `aa 01` / `aa 04`; waiting on a decision) and the 0x15 colour mask
-  above 16 segments (the spec still hard-codes two bytes). No frame changed.
+  handshake. The 0x15 colour and CCT frames are bound at every segment count up to 56 to the catalogue's
+  `Bytes.h` / `Bytes.r` builders (the wide mask, added to the spec in faa2cb7). One ratchet keeps the open
+  difference visible instead of skipped: the `aa 01 01` / `aa 04 01` selector byte (the catalogue sends
+  `aa 01` / `aa 04`; waiting on a decision). No frame changed.
 - The protocol constants in `wire.build` (`PRO_*`, `CMD_*`, `SUB_*`, `OP15_*`) and `transport.handshake`
   (`HANDSHAKE_OPCODE` and the e7 steps) are now taken from the generated reader's enums instead of being
   copied by hand; the names and values are unchanged (pinned by the test above). The device-info selectors
