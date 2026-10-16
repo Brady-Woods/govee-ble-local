@@ -39,7 +39,9 @@ dependencies = [
     # Runtime wire parser: the spec/*.ksy-generated readers under govee_ble_local/_generated
     # subclass KaitaiStruct + use KaitaiStream, so this is required at runtime. It is the ONE
     # accepted non-HA-default dependency — pure-Python, stdlib-only, zero-dep, MIT. The Kaitai
-    # *compiler* (ksc, JS) stays a dev tool (tools/gen_kaitai.sh); the readers are committed.
+    # *compiler* (ksc: the JVM CLI, or the pure-JS build for read-only output) stays a dev tool
+    # (tools/gen_kaitai.sh); the readers are committed. 0.11 is also the first runtime with the
+    # read-write (serialization) API that `gen_kaitai.sh --read-write` targets.
     # See CLAUDE.md for the dependency policy (bleak / bleak-retry-connector / cryptography
     # are HA defaults; new runtime deps need justification; never require a version ahead of HA).
     "kaitaistruct>=0.11",

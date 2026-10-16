@@ -1,6 +1,7 @@
 #!/usr/bin/env node
-// Compile the spec/*.ksy Kaitai definitions to Python readers.
-// Uses the pure-JS kaitai-struct-compiler (no JVM). Run via tools/gen_kaitai.sh,
+// Compile the spec/*.ksy Kaitai definitions to read-only Python readers with the pure-JS
+// kaitai-struct-compiler (the fallback when no JVM ksc is installed; the JS compile() API has no
+// read-write switch, so --read-write always uses the JVM CLI). Run via tools/gen_kaitai.sh,
 // which puts the userland Node on PATH and points NODE_PATH at the scratch
 // node_modules created during setup.
 "use strict";
@@ -13,7 +14,9 @@ const yaml = require("js-yaml");
 
 const REPO = path.resolve(__dirname, "..");
 const SPEC_DIR = path.join(REPO, "spec");
-const OUT_DIR = path.join(REPO, "src", "govee_ble_local", "_generated");
+const DEFAULT_OUT = path.join(REPO, "src", "govee_ble_local", "_generated");
+// Optional output directory (gen_kaitai.sh passes one for --check and --out).
+const OUT_DIR = process.argv[2] ? path.resolve(process.argv[2]) : DEFAULT_OUT;
 
 const KSY_FILES = ["govee_ble.ksy", "govee_adv.ksy"];
 
@@ -38,9 +41,9 @@ async function main() {
     }
   }
 
-  // Make the generated dir an importable package.
+  // Make the committed generated dir an importable package.
   const initPath = path.join(OUT_DIR, "__init__.py");
-  if (!fs.existsSync(initPath)) {
+  if (OUT_DIR === DEFAULT_OUT && !fs.existsSync(initPath)) {
     fs.writeFileSync(initPath, '"""Kaitai-generated readers (regenerate via tools/gen_kaitai.sh)."""\n');
     console.log(`wrote ${path.relative(REPO, initPath)}`);
   }

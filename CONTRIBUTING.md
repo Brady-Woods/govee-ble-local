@@ -24,7 +24,8 @@ python3 -m venv .venv && source .venv/bin/activate
 python -m pip install -e '.[dev]'   # pytest stack, cloud, mypy, ruff, bandit, pip-audit,
                                     # vulture, radon, pycryptodome (test-only AES reference), uv
 python -m pytest -q                 # offline test suite
-bash tools/gen_kaitai.sh            # regenerate readers after editing spec/*.ksy
+bash tools/gen_kaitai.sh            # regenerate readers after editing spec/*.ksy (--check verifies them;
+                                    # --read-write builds serializer classes into build/kaitai_rw/)
 bash tools/gen_docs.sh              # build the pdoc API reference (needs .[docs])
 ```
 

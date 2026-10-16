@@ -55,6 +55,12 @@ model, from which the shipped readers are generated).
   `transport.framelog.Direction` type.
 
 ### Changed
+- `tools/gen_kaitai.sh` can generate Kaitai 0.11 read-write (serializer) classes: `--read-write` writes
+  them to `build/kaitai_rw/` (`--out DIR` to change). It uses the JVM `kaitai-struct-compiler` 0.11.x when
+  one is on PATH (`brew install kaitai-struct-compiler`), which read-write generation requires, because the
+  npm build's `compile()` API has no read-write switch; read-only builds still fall back to the pure-JS
+  compiler. Both produce byte-identical readers, so the committed `_generated/` files are unchanged.
+  `--check` fails when the committed readers differ from a fresh build. Development tooling only.
 - Device info now uses the reads the app makes on connect: `aa 06` for the firmware version, `aa 07 03`
   for the hardware version and `aa 07 02` for the device id (`SoftVersionController`,
   `HardVersionController`, `SnController`). The binary `aa 07 10` basic read is only a fallback for a
