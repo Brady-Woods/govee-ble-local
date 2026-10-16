@@ -110,7 +110,8 @@ model, from which the shipped readers are generated).
   live (2026-10-15) by the H60A6, H6047, H61A8, H6052, H6006, H6008 and H5083. The app sends `aa 06` /
   `aa 07 03` on the lights' control screens except the H60A6's (whose versions come from the 0xAC status
   TLV), not on the H5080 / H5083 / H5085's, and `aa 07 02` only while pairing; there they are kept as
-  firmware-confirmed reads the app does not use. Before these reads, only the H60A6 reported a
+  firmware-sourced extensions the app does not use (CLAUDE.md rule 6), marked as such in the code with the
+  firmware handlers they rely on. Before these reads, only the H60A6 reported a
   firmware version, because the others ignore `aa 07 10`. `wifi_mac` now comes only from the H60A6's
   status TLV (the `aa 07 11` read never returned one).
 - **The "device rejected write" log line moved from ERROR to DEBUG**, and the write raises the public

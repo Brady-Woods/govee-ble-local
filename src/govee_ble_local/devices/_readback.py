@@ -191,8 +191,8 @@ async def read_device_info(dev: ReadTarget, read_reply: ReadReply) -> bool:
     them: ``aa 06`` and ``aa 07 03`` are control-screen reads (``ControllerSoftVersion`` /
     ``ControllerHardVersion``) on the lights except the H60A6, whose versions come from the 0xAC 0x07 TLV;
     the H60A6 and gt 43 plug screens send neither, and ``aa 07 02`` (``SnController``) the app sends only
-    while pairing. Those reads are kept anyway, as firmware-confirmed (the plugs have no other BLE source
-    for them); the app does not use them there.
+    while pairing. Those reads are kept anyway as firmware-sourced extensions (CLAUDE.md rule 6; the plugs
+    have no other BLE source for them); the app does not use them there.
 
     Not sent: ``aa 07 10`` (basic) and ``aa 07 11`` (Wi-Fi). No firmware image has a handler for either
     (most drop the request, which cost a timeout per poll; H60A1 / H60A6 echo it back as zeros) and the app
@@ -201,9 +201,17 @@ async def read_device_info(dev: ReadTarget, read_reply: ReadReply) -> bool:
     ble_mac stays None unless a reply carries a MAC distinct from the connectable address (none confirmed
     yet: that address is otherwise the BLE MAC)."""
     state = dev.state
+    # aa 06 / aa 07 03: the app's control-screen reads on the lights except the H60A6; FIRMWARE-SOURCED
+    # (CLAUDE.md rule 6) on the H60A6 and the gt 43 plugs, whose screens don't send them: Realtek
+    # ble_msg_get_version and ble_msg_get_dev_info selector 03 (get_hw_version), e.g. H60A6 sw 1.00.41
+    # @0x9b04a4ac / @0x9b04a5bc, H5083 sw 1.00.30 @0x9b0318dc / @0x9b031984.
     soft = await read_reply(build.soft_version_query(), build.CMD_SOFT_VERSION)
     answered = soft is not None
     _fold.merge_device_info(state, firmware=parse.parse_soft_version(soft or b""))
+    # aa 07 02, FIRMWARE-SOURCED on every SKU (the app sends it only while pairing, SnController):
+    # ble_msg_get_dev_info selector 02 (get_sn) on the Realtek images (e.g. H6006 @0x9b03c87c, H60A6
+    # @0x9b04a528, H5083 @0x9b031924) and the H6047's aa 07 handler (@0x01005370); answered live by all
+    # seven bench SKUs.
     for selector in (build.INFO_HARD, build.INFO_SN):
         got, info = await read_info_reply(dev, read_reply, selector)
         answered |= got
