@@ -15,14 +15,23 @@ Ported exactly from the app:
 """
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass
+from io import BytesIO
+from typing import Any
 
+from kaitaistruct import KaitaiStream
+
+from ._generated.govee_advertisement import GoveeAdvertisement as _GA  # type: ignore[attr-defined]
 from .const import BRAND_MARKERS, GBK_PREFIX, GV_LONG_PREFIXES, GV_PREFIX
 
-
-# BleUtil.f41010h — the 2-byte Govee marker (company-id high byte, first data byte).
-_MARKER = (0x88, 0xEC)
-_ENCRYPT_BIT = 0x40  # BleUtil: z5 = (headerByte & 0x40) != 0
+# The spec-generated advertisement reader (spec/govee_adv.ksy), untyped. Its ``manufacturer_data`` is
+# the AD structure's payload ``[flags][company id u2le][pact_type u2be][pact_code][rest]``, where the
+# Govee marker 0x88 0xEC is the company id (``is_govee``); bleak splits that payload into the
+# company id it hands over (``flags`` | the marker's first byte << 8) and the value after it.
+_MFG: Any = _GA.ManufacturerData
+# Value bytes the type needs after the company id: the marker's second byte, pact_type (2), pact_code.
+_PACT_VALUE_LEN = 4
 # pact_type / pact_code of a Govee-named advertisement whose manufacturer data has no parseable
 # pact info (see GoveeAdvertisement.pact).
 _NO_PACT = -1
@@ -91,6 +100,19 @@ def sku_from_local_name(name: str) -> str | None:
     return None
 
 
+def _govee_entries(mfg: dict[int, bytes]) -> Iterator[Any]:
+    """Each Govee entry of bleak's ``manufacturer_data``, read by the spec's ``manufacturer_data`` type
+    over the payload bleak split: ``company_id`` (2 bytes, little-endian) then the value. Entries
+    without the Govee marker (``is_govee``), too short for the pact fields, or with a company id that
+    can't be two bytes are skipped."""
+    for company_id, value in mfg.items():
+        if not 0 <= company_id <= 0xFFFF or len(value) < _PACT_VALUE_LEN:
+            continue
+        entry = _MFG(KaitaiStream(BytesIO(company_id.to_bytes(2, "little") + bytes(value))))
+        if entry.is_govee:
+            yield entry
+
+
 def parse_manufacturer_data(mfg: dict[int, bytes]) -> tuple[bool, int, int, int] | None:
     """Parse Govee manufacturer data into its broadcast header fields.
 
@@ -99,22 +121,15 @@ def parse_manufacturer_data(mfg: dict[int, bytes]) -> tuple[bool, int, int, int]
 
     `mfg` is bleak's AdvertisementData.manufacturer_data: {company_id: value}.
     The app parses the raw AD structure `[FF][hdr][markerHi][data...]`; from
-    bleak's split form, company_id low byte == hdr and high byte == markerHi.
+    bleak's split form, company_id low byte == hdr and high byte == markerHi. Read by the spec's
+    ``manufacturer_data`` type (:func:`_govee_entries`); a broadcast version of 0 is not a pact
+    broadcast (BleUtil.parseBleBroadcastPact).
     """
-    for company_id, value in mfg.items():
-        header = company_id & 0xFF
-        marker_hi = (company_id >> 8) & 0xFF
-        if len(value) < 4:
-            continue
-        if marker_hi != _MARKER[0] or value[0] != _MARKER[1]:
-            continue
-        version = header & 0x0F
+    for entry in _govee_entries(mfg):
+        version = int(entry.protocol_version)
         if version == 0:
             continue
-        encrypted = (header & _ENCRYPT_BIT) != 0
-        pact_type = (value[1] << 8) | value[2]  # getUnsignedInt(hi, lo)
-        pact_code = value[3]
-        return encrypted, version, pact_type, pact_code
+        return bool(entry.encrypted), version, int(entry.pact_type), int(entry.pact_code)
     return None
 
 
@@ -132,14 +147,13 @@ def parse_broadcast_onoff(mfg: dict[int, bytes], *, on_mask: int | None = None) 
     ``on_mask`` decodes the byte as a bitmask instead: ON when any of its bits is set. The plugs'
     device-list models do that (h5080 ``Model.A``, ``Model4Plug2.A``; see
     ``DeviceProfile.advert_on_mask``)."""
-    for company_id, value in mfg.items():
-        header = company_id & 0xFF
-        marker_hi = (company_id >> 8) & 0xFF
-        if marker_hi != _MARKER[0] or len(value) < 5 or value[0] != _MARKER[1]:
+    for entry in _govee_entries(mfg):
+        rest = bytes(entry.rest)   # the per-SKU state after pact_code; the switch byte is its first
+        if not rest:
             continue
-        if not 2 <= header <= 0x7F:   # BleUtil.parseBleBroadOnOff: (signed) scanRecord[i6 + 2] >= 2
+        if not 2 <= int(entry.flags) <= 0x7F:   # BleUtil.parseBleBroadOnOff: (signed) scanRecord[i6 + 2] >= 2
             continue
-        return value[4] == 1 if on_mask is None else bool(value[4] & on_mask)
+        return rest[0] == 1 if on_mask is None else bool(rest[0] & on_mask)
     return None
 
 

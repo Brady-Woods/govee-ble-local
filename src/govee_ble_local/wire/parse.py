@@ -1,9 +1,14 @@
 """Runtime parsing of inbound frames via the shipped Kaitai reader.
 
-Single-frame ``0xAA`` read replies and ``0xEE`` notifications are decoded through
-the spec-generated ``GoveeBleFrame`` reader — the spec is the single source of the
-wire layout. Multi-packet ``0xAC``/``0xA1``/``0xA3``/``0xA4`` streams are reassembled
-and walked in :mod:`.reassemble` (cross-frame de-chunking isn't expressible in Kaitai).
+Single-frame ``0xAA`` read replies and ``0xEE`` notifications are decoded through the
+spec-generated ``GoveeBleFrame`` reader: a whole frame through the frame type, or, where the
+right type depends on context the frame doesn't carry (the SKU's parse strategy, the caller's
+record count), by handing the body to the parametric type the spec defines for it
+(``mode_color_0d_typed``, ``color_group_read``). Two replies are still hand-decoded, each
+because the spec has no type for it yet: the ``aa 05 04`` scene code (``mode_read`` has no
+0x04 case) and the H6062 ``aa 41`` section count (0x41 is ``on_off_memory`` in the shared
+command enum). Multi-packet ``0xAC``/``0xA1``/``0xA3``/``0xA4`` streams are reassembled and walked
+in :mod:`.reassemble` (cross-frame de-chunking isn't expressible in Kaitai).
 
 Values are returned **as the device sends them** (no rescaling): brightness is the raw
 reported byte, which every curated SKU sends as a 0..100 percent (a device reporting
@@ -171,6 +176,23 @@ def parse_bar_kelvin(frame: bytes) -> tuple[int, int] | None:
     return int(m.rest.kelvin), int(right or 0)
 
 
+def _mode_0d_kind2(frame: bytes) -> tuple[tuple[int, int, int] | None, int | None] | None:
+    """An ``AA 05 0D`` reply read by the spec's ``mode_color_0d_typed(kind=2)`` over the body between
+    the sub-mode byte and the BCC: ``[r, g, b, kelvin u2be, tint r, g, b]``. ANY non-zero kelvin
+    (``is_cct``) -> ``(None, kelvin)``; kelvin 0 -> ``((r, g, b), None)``. None when this is not a 0x0d
+    mode reply or its body is too short for the type (a reply is a 20-byte frame)."""
+    if len(frame) < 3 or frame[0] != PRO_READ or frame[1] != CMD_MODE or frame[2] != SUB_COLOR_0D:
+        return None
+    try:
+        body = _parse_type(_F.ModeColor0dTyped, frame[3:FRAME_LEN - 1], _MODE_0D_KIND_RGB_KELVIN_TINT)
+    except Exception as exc:  # noqa: BLE001 - truncated body -> not a usable report
+        _LOGGER.debug("0x0d report did not parse as kind 2: %s (%r)", bytes(frame).hex(), exc)
+        return None
+    if body.is_cct:
+        return None, int(body.report_kelvin)
+    return (int(body.r), int(body.g), int(body.b)), None
+
+
 def parse_mode_0d(frame: bytes) -> tuple[tuple[int, int, int] | None, int | None] | None:
     """AA 05 0D reply read as ``[r, g, b, kelvin u2be, tint r, g, b]`` - the same layout as the 0x0d
     write. ANY non-zero kelvin is colour-temperature mode -> ``(None, kelvin)``; kelvin 0 ->
@@ -183,15 +205,11 @@ def parse_mode_0d(frame: bytes) -> tuple[tuple[int, int, int] | None, int | None
     white (ff ff ff) in the colour slot: the app's CCT write (``Config.bu`` -> ``Bytes.p``) puts the
     tint there.
 
-    Hand-decoded, not through the generated kind-2 reader: this also accepts an 8..10-byte frame,
-    which kind 2 (8 body bytes) can't read, so delegating would not give the same result on every
-    frame it accepts. ``tests/test_wire_parse.py`` pins the two to agree on random 20-byte frames."""
-    if len(frame) < 8 or frame[0] != PRO_READ or frame[1] != CMD_MODE or frame[2] != SUB_COLOR_0D:
-        return None
-    kelvin = (frame[6] << 8) | frame[7]
-    if kelvin:
-        return None, kelvin
-    return (frame[3], frame[4], frame[5]), None
+    Read by the spec's ``mode_color_0d_typed`` kind 2, the same decode as
+    :func:`parse_mode_0d_rgblight`, so the body must hold its 8 bytes (a reply is a 20-byte frame).
+    Which kind the default strategy should use is open in the spec (``devices.yaml`` gives H60A6 no
+    ``mode_0d_kind``; kind 0 is ``[gradual][kelvin]``)."""
+    return _mode_0d_kind2(frame)
 
 
 # mode_color_0d_typed `kind`s (devices.yaml mode_0d_kind): 1 = rgb (H6052), 2 = rgb_kelvin_tint.
@@ -229,7 +247,7 @@ def parse_mode_rgb_kelvin_tint(frame: bytes) -> tuple[tuple[int, int, int] | Non
     if frame[2] not in SUBMODE4COLOR_SUB_MODES:
         return None
     try:
-        body = _parse_type(_F.ModeColor0dTyped, frame[3:], _MODE_0D_KIND_RGB_KELVIN_TINT)
+        body = _parse_type(_F.ModeColor0dTyped, frame[3:FRAME_LEN - 1], _MODE_0D_KIND_RGB_KELVIN_TINT)
     except Exception as exc:  # noqa: BLE001 - truncated body -> not a usable report
         _LOGGER.debug("colour report did not parse as kind 2: %s (%r)", bytes(frame).hex(), exc)
         return None
@@ -255,7 +273,7 @@ def parse_mode_0d_rgb(frame: bytes) -> tuple[int, int, int] | None:
     if len(frame) < 3 or frame[0] != PRO_READ or frame[1] != CMD_MODE or frame[2] != SUB_COLOR_0D:
         return None
     try:
-        body = _parse_type(_F.ModeColor0dTyped, frame[3:], _MODE_0D_KIND_RGB)
+        body = _parse_type(_F.ModeColor0dTyped, frame[3:FRAME_LEN - 1], _MODE_0D_KIND_RGB)
     except Exception as exc:  # noqa: BLE001 - truncated body -> not a usable report
         _LOGGER.debug("0x0d report did not parse as kind 1: %s (%r)", bytes(frame).hex(), exc)
         return None
@@ -268,16 +286,7 @@ def parse_mode_0d_rgblight(frame: bytes) -> tuple[tuple[int, int, int] | None, i
     ``((r, g, b), None)``. Same return shape as :func:`parse_mode_0d`, and its 0x0d decoder on scheme
     ``"h6188"`` under the default ``"rgb_kelvin"`` mode parse (:func:`parse_mode_0d_for`). H6188 itself
     decodes its report as the app does, with :func:`parse_mode_rgb_kelvin_tint`."""
-    if len(frame) < 3 or frame[0] != PRO_READ or frame[1] != CMD_MODE or frame[2] != SUB_COLOR_0D:
-        return None
-    try:
-        body = _parse_type(_F.ModeColor0dTyped, frame[3:], _MODE_0D_KIND_RGB_KELVIN_TINT)
-    except Exception as exc:  # noqa: BLE001 - truncated body -> not a usable report
-        _LOGGER.debug("0x0d report did not parse as kind 2: %s (%r)", bytes(frame).hex(), exc)
-        return None
-    if body.is_cct:
-        return None, int(body.report_kelvin)
-    return (int(body.r), int(body.g), int(body.b)), None
+    return _mode_0d_kind2(frame)
 
 
 def parse_mode_0d_for(
@@ -377,27 +386,36 @@ def direct_groups_to_segments(
 # length-derived; the real app already knows the total count in advance (getColorPieceSize, or
 # a live 0x40 IC read) and simply reads the fixed group size except a shorter final group. This
 # mirrors that: the CALLER supplies `expected_records`, computed from its own already-known
-# total. Hand-decoded (bypassing the generated bulb_group_color_read_v2 type, which is
-# H61A8-specific and would misdecode this format) — the same "shared opcode, per-SKU body"
-# precedent as the 0x0d mode read (parse_mode_0d).
+# total. The frame path's generated type for an aa a5 reply is H61A8's bulb_group_color_read_v2,
+# which would misdecode this format, so the group is read by the spec's parametric
+# color_group_read instead, with the record count the caller passes (the same "shared opcode,
+# per-SKU body" case as the 0x0d mode read, parse_mode_0d).
+_RECORD_LEN = 4   # color_group_record: [brightness, r, g, b]
+
+
 def parse_direct_color_group(
     frame: bytes, expected_records: int
 ) -> tuple[int, list[tuple[int, int, int, int]]] | None:
     """One ``AA A5 <group>`` direct reply: ``(group_index, records)`` where each record is
     ``(brightness, r, g, b)``. Returns at most ``expected_records`` (and at most what actually
-    fits in the frame), never more — the caller determines how many are real for this group."""
+    fits in the frame), never more — the caller determines how many are real for this group.
+
+    Read by the spec's ``color_group_read(record_count, has_brightness=1)`` over the bytes after
+    ``[proType, command]`` and before the BCC byte."""
     f = _parse(frame)
     if f is None or f.pro_type != _ProType.read:
         return None
     if getattr(f.body, "command", None) != _Command.local_color_read:
         return None
-    group_index = frame[2]
-    body = bytes(frame)[3:FRAME_LEN - 1]   # after [proType, command, group_index]; before the BCC byte
-    n = max(0, min(expected_records, len(body) // 4))
-    records = [
-        (body[i * 4], body[i * 4 + 1], body[i * 4 + 2], body[i * 4 + 3]) for i in range(n)
-    ]
-    return (group_index, records)
+    group = bytes(frame)[2:FRAME_LEN - 1]   # [group_index, records...]
+    n = max(0, min(expected_records, (len(group) - 1) // _RECORD_LEN))
+    try:
+        body = _parse_type(_F.ColorGroupRead, group, n, 1)
+    except Exception as exc:  # noqa: BLE001 - no group byte at all: not a usable reply
+        _LOGGER.debug("aa a5 reply did not parse as a colour group: %s (%r)", bytes(frame).hex(), exc)
+        return None
+    return int(body.group_index), [
+        (int(rec.brightness), int(rec.r), int(rec.g), int(rec.b)) for rec in body.records]
 
 
 @dataclass(frozen=True)

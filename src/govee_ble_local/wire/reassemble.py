@@ -20,7 +20,10 @@ from __future__ import annotations
 import logging
 from collections.abc import Iterable
 from dataclasses import dataclass, field
+from io import BytesIO
 from typing import Any, Literal
+
+from kaitaistruct import KaitaiStream
 
 from ..const import FRAME_LEN
 from ..models import Segment
@@ -29,7 +32,8 @@ from .build import INFO_BASIC, INFO_WIFI, _F
 from .parse import _parse_type
 
 _LOGGER = logging.getLogger(__name__)
-_RECORDS_PER_GROUP = 4   # oneGroupColorSize: index stride, not the (len-derived) record count
+_RECORDS_PER_GROUP = 4   # oneGroupColorSize (Support.getOneGroupColorSize): the index stride
+_RECORD_LEN = 4          # color_group_record: [brightness, r, g, b] (Controller4ColorInfoByGroup.q)
 
 # Chunk layout (AbsController4BleSingleSendMultiBack: k() = 7, a() = 12, i() copies 17 from offset 2).
 _FIRST_DATA_OFFSET = 7
@@ -198,7 +202,7 @@ def walk_status_tlvs(
     ``tlvs`` are the parsed ``status_tlv`` objects in stream order, without the type-0 padding
     sentinel. The whole buffer is read as one ``status_reply`` first. If that fails, the TLVs are
     walked one at a time the way the app's walker steps (Compose4BaseInfoSingleRead.u:
-    ``i += 2 + len``), each still typed by the generated ``status_tlv`` reader, and the walk stops at
+    ``i += 2 + len``), each read by the generated ``status_tlv`` off one shared stream, and the walk stops at
     the first TLV that runs past the buffer (a lost tail chunk, or in a complete burst a len past
     the reply's end, where u()'s ``System.arraycopy`` throws) or whose typed body doesn't parse.
     The TLVs before it are returned, and ``cut`` says where and why the walk stopped (None when it
@@ -213,8 +217,9 @@ def walk_status_tlvs(
 
     Known differences that remain: for 0xA5 the app reads its per-SKU record count
     (VM4LightH60A6$afterConnectedSingleReadDeviceInfo$1.o -> i3 ->
-    Controller4ColorInfoByGroup.Companion.q), so it ignores extra records and throws on missing
-    ones, while the reader takes the count from len and rejects a len that isn't 1 + 4k; the
+    Controller4ColorInfoByGroup.Companion.q), and :func:`parse_status` does too, but this walk's
+    ``color_group_status`` takes the count from len and so rejects a len that isn't 1 + 4k, which the
+    app reads when the value holds at least its count; the
     sleep / wake-up / timer TLVs (0x11 / 0x12 / 0x23), which the spec leaves raw, go to per-SKU
     TimerConfig / ControllerNewTimer parsers the library doesn't model; a type-0 byte ends the walk
     here (the spec's ``status_reply`` padding sentinel), while u() reads it as an ordinary TLV
@@ -230,32 +235,73 @@ def walk_status_tlvs(
         if all(int(tlv.len) < SIGNED_LEN_MIN for tlv in whole):
             return whole, None
         # A len the app reads as negative: walk one TLV at a time, which stops there.
+    # The generated status_tlv reads each TLV off one shared stream, so the walk steps exactly where
+    # the spec's own TLV boundaries are. When the reader can't take one, the raw type / len bytes
+    # say why, in the app's order: no len byte, a negative len, a value past the buffer, a body.
     tlvs: list[Any] = []
-    pos = 0
-    while pos < len(buf) and buf[pos] != 0:   # type 0 = trailing zero pad (status_reply's sentinel)
+    stream = KaitaiStream(BytesIO(buf))
+    while not stream.is_eof():
+        pos = stream.pos()
         typ = buf[pos]
-        if pos + 2 > len(buf):
+        if typ == 0:   # type 0 = trailing zero pad (status_reply's sentinel)
+            break
+        try:
+            tlv: Any = _F.StatusTlv(stream)
+        except Exception:  # noqa: BLE001 - truncated, or a typed body the spec can't read (short, bad UTF-8)
+            tlv = None
+        if tlv is not None:
+            length: int | None = int(tlv.len)
+        else:
+            length = buf[pos + 1] if pos + 2 <= len(buf) else None
+        if length is None:
             return tlvs, TlvCut("truncated", typ, pos)
-        length = buf[pos + 1]
         if length >= SIGNED_LEN_MIN:
             return tlvs, TlvCut("unparsed", typ, pos, length)
+        if tlv is not None:
+            tlvs.append(tlv)
+            continue
         end = pos + 2 + length
         if end > len(buf):
             return tlvs, TlvCut("truncated", typ, pos, length)
-        try:
-            tlvs.append(_parse_type(_F.StatusTlv, buf[pos:end]))
-        except Exception:  # noqa: BLE001 - a typed body the spec can't read (short, bad UTF-8, ...)
-            if not _app_skips(typ, buf[pos + 2:end]):
-                return tlvs, TlvCut("unparsed", typ, pos, length)
-            _LOGGER.debug("status reply: 0x07 block with selector 0x%02x (len %d) did not parse; "
-                          "skipped, as the app's w() skips it", buf[pos + 2], length)
-            if skipped is not None:
-                skipped.append(TlvCut("unparsed", typ, pos, length))
-        pos = end
+        if not _app_skips(typ, buf[pos + 2:end]):
+            return tlvs, TlvCut("unparsed", typ, pos, length)
+        _LOGGER.debug("status reply: 0x07 block with selector 0x%02x (len %d) did not parse; "
+                      "skipped, as the app's w() skips it", buf[pos + 2], length)
+        if skipped is not None:
+            skipped.append(TlvCut("unparsed", typ, pos, length))
+        stream.seek(end)
     return tlvs, None
 
 
-def parse_status(frames: list[bytes]) -> StatusReply:
+def group_record_count(group_index: int, value_len: int, pieces: int | None) -> int:
+    """Records to read from one 0xA5 colour-group TLV of ``value_len`` bytes.
+
+    With the device's colour-piece count, the app's rule
+    (``VM4LightH60A6$afterConnectedSingleReadDeviceInfo$1.o``): ``oneGroupColorSize`` (4) records,
+    except the last of the ``ceil(pieces / 4)`` groups, which holds the remainder;
+    ``Controller4ColorInfoByGroup.Companion.q`` then reads exactly that many, ignoring any extra and
+    throwing on a short value. ``pieces`` None (no device context, e.g. the analyzer) keeps the TLV's
+    own len, as the spec's ``color_group_status`` reads it: ``(len - 1) / 4``."""
+    if pieces is None:
+        return max(0, (value_len - 1) // _RECORD_LEN)
+    groups = -(-pieces // _RECORDS_PER_GROUP)
+    if group_index != groups:
+        return _RECORDS_PER_GROUP
+    return pieces - (groups - 1) * _RECORDS_PER_GROUP
+
+
+def _color_group(tlv: Any, pieces: int | None) -> tuple[int, list[parse.GroupRecord]]:
+    """One 0xA5 TLV read by the spec's ``color_group_read(record_count, has_brightness=1)`` over its
+    raw value, with :func:`group_record_count` records. Raises what the reader raises on a value too
+    short for that count."""
+    raw = bytes(tlv._raw_value)   # the TLV's value bytes, as the generated status_tlv keeps them
+    count = group_record_count(int(tlv.value.group_index), len(raw), pieces)
+    group = _parse_type(_F.ColorGroupRead, raw, count, 1)
+    return int(group.group_index), [
+        (int(rec.brightness), int(rec.r), int(rec.g), int(rec.b)) for rec in group.records]
+
+
+def parse_status(frames: list[bytes], *, pieces: int | None = None) -> StatusReply:
     """Reassemble a 0xAC burst and decode it via the generated ``status_reply`` reader.
 
     Only the cross-frame de-chunk (:func:`reassemble`) is hand-done — Kaitai can't join
@@ -264,8 +310,12 @@ def parse_status(frames: list[bytes]) -> StatusReply:
     value — switch / brightness / zone / seg-info / colour groups / ``0x07`` device-info
     (== ``device_info_read``). No client-side TLV or value hand-parsing.
 
-    Segment global index = ``(group_index-1) * 4 + k`` (oneGroupColorSize stride; the per-group
-    record COUNT comes from the TLV len). Device-info: first non-None wins (basic 0x10 precedes
+    Segment global index = ``(group_index-1) * 4 + k`` (oneGroupColorSize stride). Each colour group
+    is read by the spec's ``color_group_read`` with the app's record count for ``pieces``, the
+    device's colour-piece count (:func:`group_record_count`; the H60A6's 13,
+    ``pact_h60a0.pact.Support.getColorPieceSize``), so extra records are ignored and a group short of
+    its count fails the read, as in the app. ``pieces`` None takes the count from the TLV len.
+    Device-info: first non-None wins (basic 0x10 precedes
     wifi 0x11), giving wifi_mac / hw / sw / serial for BLE-only devices (H60A6) from the spec.
     The 0x11 block's versions are the Wi-Fi module's, so they never fill the device's own, and
     other selectors are skipped, as the app's status walker does (Compose4BaseInfoSingleRead.w),
@@ -308,8 +358,13 @@ def parse_status(frames: list[bytes]) -> StatusReply:
             # ParseUtils.getBit2Boolean(b, 1) = (b >> 0) & 1); the other bits are not zone power.
             st.zone_power = {0: bool(int(v.zone_a) & 0x01), 1: bool(int(v.zone_b) & 0x01)}
         elif typ == TYPE_COLOR_GROUP:
-            groups.append((int(v.group_index), [
-                (int(rec.brightness), int(rec.r), int(rec.g), int(rec.b)) for rec in v.records]))
+            try:
+                groups.append(_color_group(tlv, pieces))
+            except Exception:  # noqa: BLE001 - Controller4ColorInfoByGroup.q throws: the read fails
+                _LOGGER.debug("status reply: colour group %d is short of its %d records (len %d): the "
+                              "app's read fails here; no state used", int(v.group_index),
+                              group_record_count(int(v.group_index), int(tlv.len), pieces), int(tlv.len))
+                return StatusReply()
         elif typ == TYPE_DEVICE_INFO:
             sel = int(v.selector)
             # Compose4BaseInfoSingleRead.w reads only the basic (0x10) and Wi-Fi (0x11) blocks

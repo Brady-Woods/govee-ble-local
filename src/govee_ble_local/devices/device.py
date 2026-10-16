@@ -1069,7 +1069,7 @@ class Device:
             await self._send_pending_unlock()   # a secret set on the live session goes first
             frames = await self._conn.query(build.status_query(full=True), timeout=STATUS_READ_TIMEOUT)
         ac = [f for f in frames if f and f[0] == build.PRO_MULTI_AC]
-        return reassemble.parse_status(ac), ac, frames
+        return reassemble.parse_status(ac, pieces=self.segment_count), ac, frames
 
     async def _read_status(self) -> bool:
         # `applied` (returned): a live field came back (state no longer optimistic). `power_read`:

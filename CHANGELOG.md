@@ -53,6 +53,9 @@ model, from which the shipped readers are generated).
   `wire.build.PRO_NOTIFY` (0xEE), `wire.build.PRO_MULTI_A1` (0xA1), `wire.reassemble.MIN_CHUNK_LEN`,
   `SIGNED_LEN_MIN`, `TYPE_MODE`, `TYPE_SLEEP`, `TYPE_WAKEUP` and `TYPE_TIMERS`, and the
   `transport.framelog.Direction` type.
+- `wire.reassemble.parse_status(frames, *, pieces=None)`: the device's colour-piece count, which sets how
+  many records each 0xA5 colour group holds (see Fixed); and `wire.reassemble.group_record_count`, the app's
+  rule for that count. `pieces` omitted keeps 1.3.0's reading (the count comes from each TLV's length).
 
 ### Changed
 - `tools/gen_kaitai.sh` can generate Kaitai 0.11 read-write (serializer) classes: `--read-write` writes
@@ -170,6 +173,13 @@ model, from which the shipped readers are generated).
   for byte.
 
 ### Fixed
+- H60A6 status read: each 0xA5 colour group of the 0xAC reply is now read with the app's record count for
+  the device's 13 colour pieces: 4 per group and 1 in the last
+  (`VM4LightH60A6$afterConnectedSingleReadDeviceInfo$1.o`; `pact_h60a0` `Support.getColorPieceSize` /
+  `getOneGroupColorSize`), read by `Controller4ColorInfoByGroup.Companion.q`. Extra records in the last group
+  no longer add segments 13-15, and a group short of its count fails the read, as it does in the app (no
+  state is used from that burst). Before, the count came from each TLV's length. Source-modelled; the bench
+  bursts carry the app's counts, so they decode as before.
 - macOS: the connect failed on the H60A6 and H6008 (`Failed to discover descriptors for characteristic
   13 ... UUID not allowed`) because CoreBluetooth rejects descriptor discovery on a characteristic
   of the Generic Attribute service. The connection now resolves only the Govee service
@@ -355,6 +365,16 @@ model, from which the shipped readers are generated).
   copied by hand; the names and values are unchanged (pinned by the test above). The device-info selectors
   (`INFO_*`) and power values (`POWER_*`, `RELAY_*`) stay literals: the ksy has no enum for them yet.
   `wire.build` is now the wire layer's one import of the generated reader.
+- More decoders read through the generated readers instead of slicing bytes: `parse_direct_color_group` and
+  the 0xAC colour groups (`color_group_read`); `parse_mode_0d` (`mode_color_0d_typed` kind 2, now the same
+  decode as `parse_mode_0d_rgblight`; it no longer takes the 8-10-byte frames the transport never delivers);
+  the `e7` handshake replies (`handshake`); `identify.parse_manufacturer_data` and `parse_broadcast_onoff`
+  (`govee_adv` `manufacturer_data`; a company id outside 16 bits, which bleak never reports, is skipped); and
+  the fallback 0xAC TLV walk (`status_tlv`, read off one shared stream). `tests/test_spec_reader_moves.py`
+  pins each to the byte-level decode it replaced; offline they were identical on 1.8M advertisement, 450k
+  handshake, 450k colour-group and 200k TLV-walk cases. The `wire.parse` module docstring now names the two
+  replies still hand-decoded (the `aa 05 04` scene code and the `aa 41` section count) and why. No frame
+  changed.
 - Re-verified several spec facts against the 7.7.02 decompile (adversarially) and the account device-list,
   and corrected them: `switch_read_reply` keeps the legacy `SwitchController` `!= 0` semantics as primary and
   now notes the modern control-screen VM path (`ControllerSwitch.Companion.c` / `ShareVM.N3`) that decodes

@@ -172,16 +172,19 @@ def test_unparseable_replies_are_none_not_raise(caplog: pytest.LogCaptureFixture
 
 
 def test_mode_0d_parsers_agree_on_random_20_byte_frames() -> None:
-    # parse_mode_0d (bulbs, hand-decoded) and parse_mode_0d_rgblight (H6188, the spec's kind 2)
-    # read the same [r, g, b, kelvin u2be, tint] layout (ModeParseStrategyConfig.a in the bulblight
-    # and rgblight splits): keep them in step on 2000 seeded random 20-byte frames.
+    # parse_mode_0d (bulbs) and parse_mode_0d_rgblight (H6188) both read the spec's kind 2
+    # [r, g, b, kelvin u2be, tint] layout (ModeParseStrategyConfig.a in the bulblight and rgblight
+    # splits). Pin both to the byte-level decode the hand decoder used before it moved onto the
+    # generated reader, on 2000 seeded random 20-byte frames.
     rng = random.Random(0x0D)  # noqa: S311 - deterministic test vectors
     for _ in range(2000):
         body = [rng.randrange(256) for _ in range(16)]
         if rng.random() < 0.3:
             body[3] = body[4] = 0                                   # kelvin 0 -> RGB mode
         frame = f(0xAA, 0x05, 0x0D, *body)
-        assert parse.parse_mode_0d(frame) == parse.parse_mode_0d_rgblight(frame)
+        kelvin = (frame[6] << 8) | frame[7]
+        expect = (None, kelvin) if kelvin else ((frame[3], frame[4], frame[5]), None)
+        assert parse.parse_mode_0d(frame) == parse.parse_mode_0d_rgblight(frame) == expect
 
 
 def test_group_helpers_share_one_assembly() -> None:

@@ -14,7 +14,10 @@ after the handshake is encrypted with that session key.
 from __future__ import annotations
 
 import os
-from typing import Final
+from io import BytesIO
+from typing import Any, Final
+
+from kaitaistruct import KaitaiStream
 
 from ..const import FRAME_LEN, PSK
 from ..crypto import checksum, decrypt, encrypt
@@ -25,7 +28,7 @@ HANDSHAKE_OPCODE: Final = int(_F.ProType.handshake)   # 0xE7
 
 _STEP_SESSION_KEY: Final = int(_F.HandshakeOp.v1_request_session_key)   # e7 01: request / reply with the key
 _STEP_CONFIRM: Final = int(_F.HandshakeOp.v1_confirm)                   # e7 02: confirm / ack
-_KEY_SLICE: Final = slice(2, 18)   # the 16-byte session key in an e7 01 reply (Controller4Aes.g)
+_KEY_LEN: Final = 16   # the session key: e7 01 reply bytes 2..17, i.e. handshake.data[:16] (Controller4Aes.g)
 _MAX_PAYLOAD: Final = FRAME_LEN - 3  # opcode, step and checksum take the other three bytes
 
 
@@ -61,16 +64,27 @@ def build_step2(psk: bytes = PSK) -> bytes:
     return encrypt(_build_plain(_STEP_CONFIRM), psk)
 
 
+def _handshake_body(pt: bytes) -> Any:
+    """The spec's ``handshake`` body (``op``, ``data``) of a decrypted ``e7`` frame, or None when ``pt``
+    is not one. Read with the generated type directly, over everything after the proType byte: the
+    frame reader would also drop the BCC byte and checks nothing the app checks here
+    (Controller4Aes.g / .h read only the op and the key bytes)."""
+    if len(pt) < 2 or pt[0] != HANDSHAKE_OPCODE:
+        return None
+    return _F.Handshake(KaitaiStream(BytesIO(pt[1:])))
+
+
 def parse_session_key(reply_ciphertext: bytes, psk: bytes = PSK) -> bytes | None:
     """Decrypt an ``e7 01`` reply and extract the 16-byte session key
-    (Controller4Aes.g). Returns None if it isn't a valid step-1 reply."""
-    pt = decrypt(reply_ciphertext, psk)
-    if len(pt) >= _KEY_SLICE.stop and pt[0] == HANDSHAKE_OPCODE and pt[1] == _STEP_SESSION_KEY:
-        return pt[_KEY_SLICE]
-    return None
+    (Controller4Aes.g): the first 16 bytes of the spec's ``handshake.data``. Returns None if it isn't
+    a valid step-1 reply."""
+    body = _handshake_body(decrypt(reply_ciphertext, psk))
+    if body is None or body.op != _STEP_SESSION_KEY or len(body.data) < _KEY_LEN:
+        return None
+    return bytes(body.data[:_KEY_LEN])
 
 
 def is_step2_ack(reply_ciphertext: bytes, psk: bytes = PSK) -> bool:
     """True if the ciphertext decrypts to a valid ``e7 02`` ack (Controller4Aes.h)."""
-    pt = decrypt(reply_ciphertext, psk)
-    return len(pt) >= 2 and pt[0] == HANDSHAKE_OPCODE and pt[1] == _STEP_CONFIRM
+    body = _handshake_body(decrypt(reply_ciphertext, psk))
+    return body is not None and body.op == _STEP_CONFIRM

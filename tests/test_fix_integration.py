@@ -259,8 +259,8 @@ def test_mode_0d_for_picks_the_scheme_decoder() -> None:
     cct = frame(0xAA, 0x05, 0x0D, 0xFF, 0xD5, 0xA1, 0x0F, 0xA0, 1, 2, 3)
     assert parse.parse_mode_0d_for(cct, "h6188") == parse.parse_mode_0d_rgblight(cct) == (None, 4000)
     assert parse.parse_mode_0d_for(cct, "h6006") == parse.parse_mode_0d(cct) == (None, 4000)
-    short = cct[:8]                               # only the hand decoder takes the 8-byte form
-    assert parse.parse_mode_0d_for(short, "h6006") == (None, 4000)
+    short = cct[:8]   # both read the spec's kind 2, which needs the 8-byte body (a reply is 20 bytes)
+    assert parse.parse_mode_0d_for(short, "h6006") is None
     assert parse.parse_mode_0d_for(short, "h6188") is None
 
 
