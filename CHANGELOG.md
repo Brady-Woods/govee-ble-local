@@ -409,6 +409,9 @@ model, from which the shipped readers are generated).
   zeroes every data byte.
 
 ### Spec
+- `spec/govee_reference.py`: `parse_frame`, `parse_status` and `parse_color_group` (and so `_selftest`) work
+  with both reader builds. A read-write build (`tools/gen_kaitai.sh --read-write`) reads only on `_read()`, so
+  those objects are read once; the read-only classes read on construction and are left alone.
 - Standalone write-body types in `govee_ble.ksy`, so a client can serialize every library write with the Kaitai
   0.11 read-write classes (the header, zero padding and BCC stay in code). None is wired into a `switch-on`, so
   what the readers return is unchanged. Each layout and cap was traced in the 7.7.02 decompile and checked by

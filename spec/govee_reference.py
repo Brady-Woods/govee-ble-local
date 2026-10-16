@@ -204,21 +204,32 @@ def _stream(buf: bytes) -> Any:
     return KaitaiStream(BytesIO(buf))
 
 
+def _ready(obj: Any) -> Any:
+    """``obj`` parsed, whichever reader build produced it. A read-only build (``ksc -t python``) reads
+    in ``__init__``; a read-write build (``tools/gen_kaitai.sh --read-write``, kaitaistruct 0.11
+    ``ReadWriteKaitaiStruct``) reads only on ``_read()``, and a second ``_read()`` on a read-only object
+    would fail, so read exactly when the object is a read-write one."""
+    from kaitaistruct import ReadWriteKaitaiStruct
+    if isinstance(obj, ReadWriteKaitaiStruct):
+        obj._read()
+    return obj
+
+
 def parse_frame(frame20: bytes) -> Any:
     """Verify BCC, then parse one plaintext, single 20-byte frame (proType-switched)."""
     if not verify_bcc(frame20):
         raise ValueError("bad BCC")
-    return _gbf().from_bytes(frame20)
+    return _ready(_gbf().from_bytes(frame20))
 
 
 def parse_status(tlv_buffer: bytes) -> Any:
     """A reassembled 0xAC buffer -> StatusReply (terminates on the 0x00 padding sentinel or EOF)."""
-    return _gbf().StatusReply(_stream(tlv_buffer))
+    return _ready(_gbf().StatusReply(_stream(tlv_buffer)))
 
 
 def parse_color_group(group_bytes: bytes, *, has_brightness: bool, record_count: int) -> Any:
     """One 0xA5 colour group; `has_brightness` (from client_profile) selects 4-byte vs 3-byte records."""
-    return _gbf().ColorGroupRead(record_count, 1 if has_brightness else 0, _stream(group_bytes))
+    return _ready(_gbf().ColorGroupRead(record_count, 1 if has_brightness else 0, _stream(group_bytes)))
 
 
 # ───────────────────────── op15 segment masks (BleUtils.X / makeSelectedTwoBytes) ─────────────────────────
