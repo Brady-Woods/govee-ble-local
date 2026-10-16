@@ -46,14 +46,15 @@ stop and ask the user. Don't add one on your own judgement.
 ## Match the Govee app (never break this)
 
 The library re-implements what the official Govee Home app sends to each device. Its wire
-behaviour must match the app's for that SKU: frames, read sequences and value ranges.
+behaviour must match the app's for that SKU: frames, read sequences and value ranges. On top of
+that it supports what the firmware or hardware is shown to do beyond the app (rule 6).
 
 1. **Send exactly what the app sends.** That means the same byte layout, frame count, order and
    values, even when hardware is known to accept something else. Example: the H60A6 works with a
    zero colour-temperature tint, but the app sends the tint, so the library sends it too (#19).
 2. **Scope features to what the app does.** Don't send frames the app never sends, such as an
    all-bits mask where the app uses group frames, or values it can't produce, such as a kelvin
-   off its 100 K tint table.
+   off its 100 K tint table. The only exception is a firmware-confirmed extension (rule 6).
 3. **When the library and the app disagree, the library is wrong.** Fix it to match, even if
    the current behaviour works on hardware. Verify on hardware where possible.
 4. **Trace the path the app actually runs for that goodsType**: model, then detail screen,
@@ -62,6 +63,14 @@ behaviour must match the app's for that SKU: frames, read sequences and value ra
    truth).
 5. **If the app has more than one path** (for example the control screen vs automations or
    group control), match the control-screen path and document the other.
+6. **The app is the standard, but support what the firmware adds.** When the decompiled firmware
+   or the hardware shows functionality the app doesn't use, support it in the spec and in the
+   library. Rules 1-5 still win wherever the app covers the same thing: an extension adds what
+   the app lacks and never changes a frame the app sends. Cite the firmware handler (image and
+   function) or the hardware observation, and mark it as firmware-sourced in the spec and the
+   code. Example: the app sends the `aa 07 02` device-id read only while pairing
+   (`SnController`), but the firmware answers it, so the library reads it with the other
+   device-info reads.
 
 If matching the app looks impossible or harmful, stop and ask the user. Don't diverge on your
 own judgement.
