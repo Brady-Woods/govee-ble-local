@@ -327,10 +327,29 @@ model, from which the shipped readers are generated).
   zeroes every data byte.
 
 ### Spec
+- Standalone write-body types in `govee_ble.ksy`, so a client can serialize every library write with the Kaitai
+  0.11 read-write classes (the header, zero padding and BCC stay in code). None is wired into a `switch-on`, so
+  what the readers return is unchanged. Each layout and cap was traced in the 7.7.02 decompile and checked by
+  an adversarial reviewer, and each round-trips the catalogue builders' frames through both the read-only and
+  the read-write classes:
+  - single-command bodies: `zone_power_write` (`33 30 [zone, state]`, 3 zones on H12D0),
+    `light_direction_write` (`33 30 [value]`: H6038 direction, H6057 main-light switch), `gradual_write`
+    (`[state]` under `33 a3` or `33 14`), `secret_key_write` (`33 b2`, 8 bytes, no selector) and
+    `worry_free_at_night_write` (H6057's 7-byte `33 36` body). 0x30 and 0x36 are shared by several families,
+    and `zone_power_write [1, 0]` is byte-identical to `light_direction_write [1]`, so the family decides.
+  - op15: `op15_color_group_write` (`[group][RGB x 1..4]`, 1-based groups) and one `op15_color_write(variant,
+    mask_width)` covering basic (variant 1), H60A1/H60A6 RGB (12), CCT (11) and colour-instruction version 5,
+    with the mask width checked against each form's app cap (12 / 7 / 7 / 10 bytes: 17 minus the ext bytes
+    before the mask).
+  - wide masks: `op15_brightness_wide` (cap 14), `color_rgbic_0b_wide` (cap 13), and `color_0b_kelvin` (the
+    fixed 7-byte colour-version-6 0x0b form, which the existing 0x0b case can't tell apart).
+  - `read_request`: a writable `0xAA` request, `[command][selector]`, with every selector the app's
+    controllers define. `aa 01` / `aa 04` are bare, as the app sends them.
 - Per-family power and H60A6's 0x0D report, traced in the 7.7.02 decompile with an adversarial check per
   family:
-  - Every curated control screen that reads the aa 01 reply decodes it `== 1` (`ControllerSwitch`); the
-    legacy `SwitchController` `!= 0` is reached only from scene / IoT command paths. The two rules are now
+  - Every curated control screen that reads the aa 01 reply decodes it `== 1` (`ControllerSwitch`). No
+    curated or profiled control screen reaches the legacy `SwitchController` `!= 0`, though older detail
+    screens for legacy goodsTypes (e.g. dreamcolorlightv1 `adjust/v1`-`v2`) and scene / IoT command paths do. The two rules are now
     instances: `switch_read_reply.light_is_on` (`== 1`) and `status_switch.is_on` (0xAC TLV 0x01, `!= 0`).
     `devices.yaml` `client_profile` gains `power_read` (`aa01` or `ac_status`), `power_live`
     (`heartbeat_aa01`, `heartbeat_aa36`, `push_30`) and a `by_goods_type` override map
