@@ -17,9 +17,9 @@ Run (self-test / round-trip harness):
     kaitai-struct-compiler -t python govee_ble.ksy      # -> govee_ble_frame.py (put on sys.path)
     python govee_reference.py [--strict]
 
-Without a fresh `ksc` build on sys.path the parser checks use the reader committed in the library
-(`../src/govee_ble_local/_generated`); they are skipped (exit 0) only when neither can be imported, and
-`--strict` turns that skip into a failure.
+Without a fresh `ksc` build on sys.path the parser checks use the library's generated classes
+(`../src/govee_ble_local/_generated`: run `tools/gen_kaitai.sh`, or `pip install -e .`). They are skipped
+(exit 0) only when neither can be imported, and `--strict` turns that skip into a failure.
 
 Only the crypto needs a third-party AES (pip install pycryptodome); everything else is stdlib + the Kaitai
 runtime (pip install kaitaistruct). RC4 is implemented here (Safe.f/g); AES-ECB is delegated.
@@ -29,7 +29,7 @@ from __future__ import annotations
 import importlib
 from collections.abc import Sequence
 from io import BytesIO
-from typing import Any, Final
+from typing import Any, Final, cast
 
 
 # ─────────────────────────── (3) XOR checksum (BCC) — §4.1 ───────────────────────────
@@ -183,13 +183,14 @@ def chunk_ac(tlv: bytes, cmd: int = 0x03, sub: int = 0x00) -> list[bytes]:
 
 _READER_MODULES = (
     "govee_ble_frame",                              # a fresh `ksc -t python govee_ble.ksy` on sys.path
-    "govee_ble_local._generated.govee_ble_frame",   # the reader committed in the library (../src)
+    "govee_ble_local._generated.govee_ble_frame",   # the library's generated classes (tools/gen_kaitai.sh)
 )
 
 
 def _gbf() -> Any:
     """The generated GoveeBleFrame class (untyped, so Any). A fresh ksc build on sys.path wins, so the
-    self-test checks the .ksy being edited; otherwise the library's committed reader is used."""
+    self-test checks the .ksy being edited; otherwise the library's generated classes are used
+    (src/govee_ble_local/_generated: run tools/gen_kaitai.sh, or pip install -e .)."""
     errors: list[str] = []
     for name in _READER_MODULES:
         try:
@@ -211,7 +212,7 @@ def _ready(obj: Any) -> Any:
     would fail, so read exactly when the object is a read-write one."""
     from kaitaistruct import ReadWriteKaitaiStruct
     if isinstance(obj, ReadWriteKaitaiStruct):
-        obj._read()
+        cast(Any, obj)._read()
     return obj
 
 
@@ -368,7 +369,8 @@ def _selftest(*, strict: bool = False) -> int:
     try:
         _gbf()
     except ImportError as e:
-        print(f"  ⚠️  {e}. Skipping parser tests.")
+        print(f"  ⚠️  {e}. Skipping parser tests (generate the classes with tools/gen_kaitai.sh, or "
+              "pip install -e .).")
         if strict:
             print("  ❌ --strict: parser tests skipped")
             return 1
@@ -415,8 +417,9 @@ if __name__ == "__main__":
     import pathlib
     import sys
 
-    # From a checkout, fall back to the library's committed reader (a fresh ksc build on PYTHONPATH,
-    # or an installed govee_ble_local, still comes first / works as before).
+    # From a checkout, fall back to the library's generated classes (src/govee_ble_local/_generated: run
+    # tools/gen_kaitai.sh, or pip install -e .). A fresh ksc build on PYTHONPATH, or an installed
+    # govee_ble_local, still comes first / works as before.
     sys.path.append(str(pathlib.Path(__file__).resolve().parent.parent / "src"))
     _ap = argparse.ArgumentParser(description="Reference-codec self-test.")
     _ap.add_argument("--strict", action="store_true", help="fail (exit 1) if the parser tests are skipped")

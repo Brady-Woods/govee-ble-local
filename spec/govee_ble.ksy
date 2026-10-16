@@ -61,7 +61,7 @@ enums:
     0xa4: multi_write_v2   # MTU-sized variant (makeSendBytesMtu; commByte@byte6). RARE: only cmd 88 + effect byte in {0x5E,0x5D,0x20}; no curated device uses it (see multi_a4).
     0xac: multi_reply_read # single-request / multi-reply status read
     0xe7: handshake        # AES/GCM session handshake
-    0xa5: mic              # mic / music live-colour push. NOT a 20-byte XOR frame: it is a SHORT frame with an ADDITIVE checksum (see mic_color_frame), so it is NOT a case of `frame` above. AbsMicController.getProType = (byte)-91 = 0xA5 (base2light/ble/mic/controller/AbsMicController.java:55). Device-confirmed: the length-exempt byte[0]==0xA5 path in the RTL8720 dispatchers (FIRMWARE_VALIDATION.md). Distinct from command 0xA5 local_color_read (sent under proType 0xAA).
+    0xa5: mic              # mic / music live-colour push. NOT a 20-byte XOR frame: it is a SHORT frame with an ADDITIVE checksum (see mic_color_frame), so it is NOT a case of `frame` above. AbsMicController.getProType = (byte)-91 = 0xA5 (base2light/ble/mic/controller/AbsMicController.java:55). Device-confirmed on H60A1/H60A6 (length-exempt byte[0]==0xA5 dispatcher path, FIRMWARE_VALIDATION.md) and on H6006/H6008. On the bulbs, the BLE event handler catches byte[0]==0xA5 && byte[1]==0x02 before any length or BCC check (H6006 _system_ble_event_handler 0x9b03df50; H6008 0x9b03d8a2) and calls ble_msg_group_test (H6006 0x9b03cf34, H6008 0x9b03cc64). That switches on byte 2. 0x83 (MicSetRgbController) passes bytes 3..5 = R,G,B to the colour-apply callback (H6006 0x9b0264b8 -> 0x9b023804; H6008 0x9b029638 -> 0x9b0277ac). 0x90 (MicColorCmdController) queues an internal message. Anything else is ignored. The additive checksum is not checked and no reply is sent. Distinct from command 0xA5 local_color_read (sent under proType 0xAA).
 
   command:
     # Shared catalog (BleProtocolConstants). Devices extend this set.
@@ -76,11 +76,22 @@ enums:
     0x12: wakeup
     0x0e: current_limit
     0x0f: light_num
-    0x14: gradual
-    0x20: wifi_hard_version
+    0x14: gradual                 # 33 14 = gradual write (gradual_write). ALSO BleProtocolConstants.SINGLE_WIFI_MAC (20): AA 14 = Wi-Fi MAC read on Wi-Fi SKUs (WifiMacController f = 20 / kt ControllerWifiMacAddress; H6047 PairAcV1:257, gt-64 bulbs ControllerStrategyConfig.h0:648-654); reply [mac6, forward order], no reply type here (see read_request)
+    0x20: wifi_hard_version       # AA 20 (WifiHardVersionController f = 32 / kt ControllerWifiHardVersion): reply ASCII from frame byte 2. H6006/H6008/H60A1/H60A6 firmware return the same string as AA 07 03; H6047 handler 0x01005140 (see read_request)
+    # NOT in this enum (a read_request / read_command with these bytes keeps the int in Python and reads null in Java):
+    #   0x00 heart_beat: BleProtocolConstants.SINGLE_HEART_BEAT (0). AA 00 is the newdetail ShareVM heartbeat when I3() is
+    #        false (H60A1/H60A6; ConnectHeartbeat.c(2)). Firmware-sourced, H60A1/H60A6: an explicit no-op case, the frame is
+    #        echoed with the XOR re-stamped (status byte written only for 0x33 frames: H60A6 0x9b026c6a, H60A1 0x9b026140).
+    #   0x21 wifi_soft_version: BleProtocolConstants.SINGLE_WIFI_SOFT_VERSION (33). AA 21 (WifiSoftVersionController f = 33 /
+    #        kt ControllerWifiSoftVersion), sent on H6047 (PairAcV1:257, Compose4InfoBleIot) and the gt-64 bulbs
+    #        (ControllerStrategyConfig.h0:634-647). Reply ASCII from frame byte 2; H6006/H6008 and H60A1/H60A6
+    #        (ble_msg_get_wifi_swversion) return the same string as AA 06; H6047 handler 0x0100510e.
+    #   0xef pact: BleProtocolConstants.SINGLE_PACT. AA EF reply [pact_type u2be][pact_code u1]; H6006 answers 00 01 01
+    #        (0x9b03cc00), as do H60A1/H60A6 (0x9b045558 / 0x9b04a980); H5083 answers 00 02 02 (0x9b031b80); H6008
+    #        does not answer. Not sent on the gt-64 control screen (see read_request).
     0x23: new_timer
-    0x24: read_ic_point
-    0x25: preset_color            # BleProtocolConstants.SINGLE_PRE_SET_COLOR (37). Firmware-confirmed: H6008/H60A1/H60A6 dispatch on it (FIRMWARE_VALIDATION.md §2).
+    0x24: read_ic_point           # ALSO value_set_light_start (36): SetLightStartController 33 24 [max(index,1), u16be time], sent from the connect/bind steps. Firmware-sourced: on H6008 ('pair_effect_thread', FUN_9b029d70) and H60A1/H60A6 (govee_device_start_tmp_mode(0x24)) this is the pairing light effect, not an IC read
+    0x25: preset_color            # BleProtocolConstants.SINGLE_PRE_SET_COLOR (37) = value_set_light_end. Firmware-sourced: on H6008 ('msg_set_dev_lamp_stop', FUN_9b029de8) and H60A1/H60A6 (33 25 01 -> MSG_STOP_PAIR_MODE) it stops the 0x24 light effect, not a preset colour (FIRMWARE_VALIDATION.md §2)
     0x26: take_photo_or_colortemp_type
     0x30: light_direction_or_zone
     0x31: camera_position
@@ -90,7 +101,7 @@ enums:
     0x40: ic_num
     0x41: on_off_memory    # ALSO H6062 (striplight) `aa 41` section-count read: reply [IC s16be, sectionNum u8] (ControllerIcSegmentNum); hand-decoded in wire/parse.py parse_section_count, not modelled as a reply type here
     0x44: calibration
-    0x46: check_ic
+    0x46: check_ic                # ALSO SINGLE_RESET_DEVICE_NET (70). CAUTION, firmware-sourced: on H60A1/H60A6, 33 46 is a factory reset + reboot (Govee_GatewayConfig_Reset, HAL_Matter_Reset, 'Device rebooting ...'; H60A6 D60A6:454-468, H60A1 D60A1:389-400). Never send it to them as an IC check
     0xa2: bulb_string_color_read
     0xa3: gradual_wifi_ble
     0xa5: local_color_read
@@ -113,7 +124,7 @@ enums:
     0x35: without_interrupt
     0x37: prompt_tone
     0x39: check_direction
-    0x42: write_check_ic
+    0x42: write_check_ic          # Firmware-sourced, H60A6 (0x9b0269fe): calibration mode (33 42 01 / 02 xx / FF / 00, app CalibrationAcH60A6; no head check)
     0x43: check_ic_amount
     0x50: movie_feast_set_device
     0x54: movie_feast_on_off
@@ -530,9 +541,47 @@ types:
                  07 DSP (DspVersionInDeviceInfoController.java:20-21), 0A / 0B MCU sw / hw
                  (McuSoftVersionControllerV1.java:32-33, McuHardVersionControllerV1.java:32-33),
                  10 basic info (BasicInfoController.java:34-35), 11 basic Wi-Fi info (BasicWifiInfoController.java:42-43).
-                 These are the selectors the app's controllers define. Which ones a live path still
-                 sends, and which ones a given firmware answers, is not recorded here; 07 10 / 07 11 in
-                 particular have no confirmed live sender or firmware handler.
+                 These are the selectors the app's controllers define. Live senders: 02 and 03 (H6047
+                 PairAcV1:257; the H60Ax add flow, ConnectWithSecretDialog.m0:312-313; the h5080 / H5083 add flow,
+                 PairAcV1.t2, split_plugnew/com/govee/h5080/add/PairAcV1.java:652; 03 is also kt
+                 ControllerHardVersion in the default Compose4InfoBleIot strategy); 03 / 04 from split_h61d3
+                 PairToDeviceInfoReadController (SoftHardController). 07 / 0A / 0B come only from the generic
+                 connect step (ReadControllerFactory.a / .b, picked in StepReadInfo:211). BasicInfoController
+                 (07 10) and BasicWifiInfoController (07 11) are never constructed in decomp-7.7.02 (no caller
+                 outside their own files); H5086 sends 07 10 / 07 11 through its own DeviceBasicInfoController /
+                 WifiInfoController (split_plugnew h5086 PairToDeviceInfoReadController:240,245).
+                 Firmware-sourced, what each image answers (AA 07 data starts at frame byte 3):
+                   H6047 BLE 1.00.12 (handler 0x01005370): 02, 03, 04 and 06. 00, 01, 05, 07, 0A, 0B, 10, 11
+                     and above get NO reply (sel-2 > 4 returns, 0x01005396).
+                   H5083 SW1.00.30 (ble_msg_get_dev_info @0x9b031b08): only 02, 03 and 06. Every other selector
+                     is forwarded to the SKU dispatcher and dropped with no reply (0x9b032cc4 -> 0x9b01e2ac).
+                   H6006 / H6008 (ble_msg_get_dev_info 0x9b03cb88 / 0x9b03c92c): 02, 03 and 06. H6008 also
+                     answers 0A / 0B with no data, so the reply echoes the request. Every other selector,
+                     including 04, 07, 10 and 11, gets no reply: the handler returns -1, the frame is forwarded,
+                     and the dispatcher drops it (H6006 0x9b01f1f2, H6008 0x9b024560).
+                   H60A1 / H60A6 (_handle_write_msg -> ble_msg_get_dev_info, H60A1.bin@0x9b0454bc,
+                     H60A6.bin@0x9b04a8e4): 02 -> 8-byte id at frame bytes 3..10, byte-reversed from the
+                     device's uuid string; 03 -> ASCII; 06; 0A / 0B -> no data (the request is echoed). 04, 07,
+                     10 and 11 have no handler: they are forwarded to the SKU dispatcher, which echoes the
+                     request unchanged.
+                 06 is the 6-byte BLE MAC at frame bytes 3..8 (byte order per image: see device_info_read); no
+                 app controller sends 07 06.
+                 So 07 10 / 07 11 have no handler on any verified image: dropped with no reply on H6006 / H6008 /
+                 H5083 / H6047, echoed all-zero on H60A1 / H60A6.
+        14       Wi-Fi MAC. EMPTY: legacy WifiMacController (f = 20, WifiMacController.java:10), kt
+                 ControllerWifiMacAddress (k = 20, ControllerWifiMacAddress.java:29). Sent on H6047 (PairAcV1:257,
+                 Compose4InfoBleIot), the gt-64 bulbs (bulblight ControllerStrategyConfig.h0:648-654) and the
+                 H60Ax add flow. Reply: 6 bytes at frame bytes 2..7 (validBytes[0..5]), forward order
+                 (WifiMacController.parseValidBytes). Firmware H60A1/H60A6: ble_msg_get_wifi_mac_address
+                 (H60A1.bin@0x9b04533c, H60A6.bin@0x9b04a764). Same byte as enum 'gradual' (33 14 is the gradual
+                 write; overloaded by device family).
+        20 / 21  Wi-Fi hw / sw version. EMPTY: legacy WifiHardVersionController / WifiSoftVersionController
+                 (f = 32 / 33); kt ControllerWifiHardVersion / ControllerWifiSoftVersion (the latter k = 33). Sent on H6047 as
+                 above, on the gt-64 bulbs (h0:634-647), in the default Compose4InfoBleIot strategy and in the
+                 H60Ax add flow. Reply: ASCII from frame byte 2. On H6006/H6008/H60A1/H60A6, 20 is the same string
+                 as 07 03 and 21 the same as 06. H6047 firmware (20 -> 0x01005140, 21 -> 0x0100510e, 14 ->
+                 0x010050dc) answers 17 bytes, or later, unsolicited, from 0x0100b4fc if the Wi-Fi module has not
+                 reported yet.
         36       H6047 bar switch. EMPTY: ComposeLightHeartController extends HeartController, no p()
                  (split_h6047/com/govee/h6047/ble/controller/ComposeLightHeartController.java:8-11);
                  OnOffController4H6048.a -> ext byte[0] (split_h6047/com/govee/h6047/newdetail/control/OnOffController4H6048.java:22-23,40).
@@ -551,11 +600,16 @@ types:
         a2 gg    colour group, colour only, gg 1-based: Controller4ColorInfoByGroup.Companion.j (Controller4ColorInfoByGroup.java:123-124).
         b1       secret. EMPTY: legacy SecretKeyController(byte) read, no p() (SecretKeyController.java:13-20).
         b3       plug spec. EMPTY: h5080 SpecController, no p() (split_plugnew/com/govee/h5080/ble/controller/SpecController.java:6-13).
+        ef       pact read. EMPTY: PactController (AbsBlePact.o, BlePactChecker); not sent on the gt-64 control screen.
+                 Reply [pact_type u2be][pact_code u1]: H6006 answers 00 01 01 (0x9b03cc00), as do H60A1 / H60A6
+                 (0x9b045558 / 0x9b04a980); H5083 answers 00 02 02 (0x9b031b80); H6008 does not answer
+                 (firmware-sourced).
       Writing: give the stream exactly 1 + len(selector) bytes. selector is size-eos, so the writer raises
       ConsistencyError when the stream does not end right after it. Reading: a body sliced from a captured
       20-byte frame (frame[1:19]) keeps the zero padding inside selector. Every selector above is non-zero, so
-      trailing 00 bytes there are padding. command uses enum command: every command above is in it; a command
-      byte missing from the enum still round-trips in Python (resolve_enum keeps the int) but reads as null in Java.
+      trailing 00 bytes there are padding. command uses enum command: every command above is in it except 21 and
+      ef (see the note under enum command); a command byte missing from the enum still round-trips in Python
+      (resolve_enum keeps the int) but reads as null in Java.
     seq:
       - id: command
         type: u1
@@ -597,7 +651,9 @@ types:
           read selector (request) or device-state echo (REPLY). body[0] == the controller's validBytes[0]
           (frame offset 2). Reply bodies are now typed for switch / brightness / device_info / bar / secret /
           plug_spec (below); mode 0x05 => mode_read. These model the REPLY; a read REQUEST carries only the
-          selector (e.g. AA 07 10, AA 05 01) and is built by the client, not parsed inbound.
+          selector (e.g. AA 07 10, AA 05 01) and is built by the client, not parsed inbound. The AA 14 (Wi-Fi MAC,
+          6 bytes forward), AA 20 / AA 21 (ASCII version) and AA EF ([pact_type u2be][pact_code u1]) replies have
+          no case here, so their body stays raw (layouts under read_request).
 
   mode_read:
     doc: |
@@ -746,7 +802,7 @@ types:
 
   # ── 0xAA READ replies (body[0] = validBytes[0] = frame offset 2). Verified vs each controller's parseValidBytes. ──
   switch_read_reply:
-    doc: "AA 01 reply: state @ body[0]. LIGHTS: every curated control screen that reads it decodes on as body[0] == 1 (ControllerSwitch.Companion.c, base-classes11/com/govee/base2light/kt/general_controller/ControllerSwitch.java:32), at connect and in the aa 01 heartbeat (ShareVM.N3 frame[2] == 1, ShareVM.java:1008): use light_is_on. The legacy SwitchController.parseValidBytes reads it as != 0 (SwitchController.java:30). No curated or profiled control screen reaches it, but older detail screens for legacy goodsTypes do (e.g. the dreamcolorlightv1 adjust/v1-v2 connect reads, BleOpV1.java:735, BleOpV2.java:123, BleOpV3.java:709), as do scene / IoT command paths (BleSwitchCmdBuilderV1); the two agree for 0/1 and differ only for a byte >= 2. Which message carries a family's power (this reply, or the 0xAC status TLV 0x01) is devices.yaml client_profile.power_read. PLUGS (h5080 SwitchControllerV2): this SAME 0x01 reply is a RELAY BITMASK (bit i = relay i on), not boolean — interpret per device."
+    doc: "AA 01 reply: state @ body[0]. LIGHTS: every curated control screen that reads it decodes on as body[0] == 1 (ControllerSwitch.Companion.c, base-classes11/com/govee/base2light/kt/general_controller/ControllerSwitch.java:32), at connect and in the aa 01 heartbeat (ShareVM.N3 frame[2] == 1, ShareVM.java:1008): use light_is_on. The legacy SwitchController.parseValidBytes reads it as != 0 (SwitchController.java:30). No curated or profiled control screen reaches it, but older detail screens for legacy goodsTypes do (e.g. the dreamcolorlightv1 adjust/v1-v2 connect reads, BleOpV1.java:735, BleOpV2.java:123, BleOpV3.java:709), as do scene / IoT command paths (BleSwitchCmdBuilderV1); the two agree for 0/1 and differ only for a byte >= 2. Which message carries a family's power (this reply, or the 0xAC status TLV 0x01) is devices.yaml client_profile.power_read. PLUGS: this SAME 0x01 reply is a RELAY BITMASK (bit i = relay i on), not boolean — interpret per device (h5080 SwitchControllerV2.parseValidBytes splits 8 bits, split_plugnew/com/govee/h5080/ble/controller/SwitchControllerV2.java:29-44; the goodsType-43 H5083 screen decodes (bArr[0] & 1) != 0, H5083NewDetailRepository.loadParser, :162-167). Firmware-sourced for H5083 (single outlet): the byte is the outlet-0 state 0x00/0x01 (H5083.bin FUN_9b021668 = ldrb [0x10009440+8]; in code it is written only by 0x9b021640, idx 0, with 0/1). Bit 0 is outlet 0 and the upper bits are 0. The reply is NOT the write's [mask<<4 | on] form."
     seq:
       - { id: state, type: u1 }
     instances:
@@ -785,7 +841,25 @@ types:
       AA 07 reply (BasicInfoController / BasicWifiInfoController / SnController / HardVersionController).
       selector @ body[0] picks the body. 3-byte version fields render as X.YY.ZZ (major . %02d . %02d).
       The app's own connect-time reads are AA 06 (soft version), AA 07 03 (hard version) and AA 07 02
-      (SN = device id); AA 07 10 / 11 are the binary basic / Wi-Fi forms.
+      (SN = device id), plus AA 21 / AA 20 / AA 14 for Wi-Fi. (h5080 / H5083: the app sends AA 06, 07 03 and
+      07 02 only in the add flow, PairAcV1.t2, split_plugnew/com/govee/h5080/add/PairAcV1.java:652, not from
+      the control screen.) AA 07 10 / 11 are the binary basic / Wi-Fi forms that BasicInfoController /
+      BasicWifiInfoController expect. Neither controller has a caller in 7.7.02, and no verified firmware has
+      a handler for them: H6006 / H6008 / H5083 / H6047 send no reply, and H60A1 / H60A6 echo the request
+      unchanged, so the body reads as all zeros. On H60A6 the 0x10 / 0x11 bodies arrive only as 0xAC status
+      TLV-7 records (status_device_info).
+      Selectors with no case below (info stays raw):
+        0x04  ASCII soft version, the same layout as 0x03 (app SoftHardController.Companion.f /
+              SoftVersionInDeviceInfoController.parseValidBytes). H6047 firmware answers "1.00.12" (0x010053ca).
+        0x06  FIRMWARE-SOURCED, no app sender: the 6-byte BLE MAC / device address, then the rest of the frame.
+              Byte order per image: byte-reversed (LSB first) against the device's XX:XX:.. string on H6006 /
+              H6008 (0x9b03c988 / 0x9b03c7ec) and H60A1 / H60A6 (H60A1.bin@0x9b0452b0, H60A6.bin@0x9b04a6d8;
+              reverse decoder 0x9b04dfdc / 0x9b053f9c); in the device's printed-string order on H5083
+              (ble_msg_get_ble_macaddress @0x9b0319cc); on H6047 the BLE stack's address bytes as its nvds
+              getter returns them, likely LSB-first (0x01005370 -> 0x010053ce / 0x0101693c), the same bytes as
+              uid 0..5 of the 07 02 reply.
+      On H5083, H60A1 / H60A6 and H6006 / H6008 the bytes after the data are the request's bytes (zero in
+      an app-built frame), not firmware padding: the reply is built in the request buffer.
     seq:
       - { id: selector, type: u1 }
       - id: info
@@ -812,7 +886,7 @@ types:
       - { id: pad, size-eos: true, doc: "zero padding to the 20-byte frame" }
   device_info_sn:         # AA 07 02
     seq:
-      - { id: uid, size: 8, doc: "8-byte device UID (atomic id)" }
+      - { id: uid, size: 8, doc: "8-byte device UID (atomic id). Firmware sends the device's id byte-reversed. H6006 / H6008 (0x9b03c87c / 0x9b03c740) decode the device's colon-separated uuid string into (strlen+1)/3 bytes and store them in reverse order; H60A1 / H60A6 write the id at frame bytes 3..10, byte-reversed from the uuid string (reverse decoder 0x9b04dfdc / 0x9b053f9c). H6047 (0x010053da) sends its stored id byte-reversed. That stored id is [rand lo, rand hi, BLE addr reversed], created on the first AA 07 02 / AA B1 if absent (0x010029c4), so uid bytes 0..5 = the AA 07 06 address bytes and 6..7 = rand hi, rand lo" }
       - { id: pad, size-eos: true, doc: "zero padding to the 20-byte frame" }
   device_info_hard_version:   # AA 07 03 (HardVersionController.parseValidBytes: validBytes[0]==3, rest = ASCII)
     seq:
@@ -830,7 +904,7 @@ types:
   # ── 0xAC status REPLY: parse the REASSEMBLED buffer (client de-chunks first) as a TLV stream ──
   #  Walker = Compose4BaseInfoSingleRead.u(): [type, len, value(len)], advance i += 2+len. No fixed header —
   #  offset 0 is the first type. Known types: 0x01 switch, 0x04 brightness, 0x05 mode block, 0x07 device-info,
-  #  0x11 sleep, 0x12 wakeup, 0x23 timers, 0x30 zone on/off (2 bits), 0x41 seg/IC info, 0xA5 colour group.
+  #  0x11 sleep, 0x12 wakeup, 0x23 timers, 0x30 zone on/off (2 bits), 0x41 power-on memory (H60A6), 0xA5 colour group.
   #  For 0xA5 feed value to color_group_read (record_count from the per-SKU count, see devices.yaml).
   status_reply:
     doc: |
@@ -907,7 +981,7 @@ types:
         doc: "Power as Compose4BaseInfoSingleRead.u decodes TLV 0x01 (!= 0). Differs from the aa 01 control-screen rule (switch_read_reply.light_is_on, == 1) only for a byte >= 2."
   status_brightness: { seq: [ { id: brightness, type: u1 } ] }
   status_zone:       { doc: "0x30 in the 0xAC reply: zone0 = bit0 of byte0, zone1 = bit0 of byte1 (VM4LightH60A6.o:103)", seq: [ { id: zone_a, type: u1 }, { id: zone_b, type: u1 } ] }
-  status_seg_info:   { doc: "0x41 seg/IC info (VM4LightH60A6.o:99 reads byte1)", seq: [ { id: b0, type: u1 }, { id: ic_or_seg, type: u1 } ] }
+  status_seg_info:   { doc: "0x41 in the 0xAC reply. On H60A6 this is the power-on memory record [02][value]; field ic_or_seg (name kept for existing readers) holds the value. Firmware ble_check_basic_info (H60A6.bin 0x9b04c0bc-0x9b04c0ce) fills it as [0x41][02][02][FUN_9b02bfe4 = UserConfig+4, logged 'start mode'], the field that 33 41 02 <v> writes (app Controller4OnOffMemory). VM4LightH60A6$afterConnectedSingleReadDeviceInfo$1.o:99-100 stores byte1 via Info4Detail.Y, which SettingAcH60a6.W3 (syncOnOffMemoryResult) also sets", seq: [ { id: b0, type: u1 }, { id: ic_or_seg, type: u1 } ] }
   mode_status:
     doc: "0xAC TLV 0x05 — device's active mode: [sub_mode, params]. Same [sub_mode, params] shape as the 0x05 mode frame body (SubMode dispatch, u():349 -> .g() lambda). sub_mode seen = the active mode: colour (0x15/0x0D), CCT, scene (0x04), music (0x13), diy (0x0a). params layout is per sub_mode / device (see mode_read / color_* types); left size-eos here."
     seq:
@@ -967,7 +1041,7 @@ types:
     seq:
       - id: state
         type: u1
-        doc: Lights 0x01/0x00. Plugs (SwitchControllerV2) use a relay mask 0x10|on, 0x20, 0x40, 0xF0.
+        doc: "Lights 0x01/0x00. Plugs (SwitchControllerV2.q) use [relay mask << 4 | on bits]: relay0 0x11/0x10, relay1 0x22/0x20, relay2 0x44/0x40, all 0xFF/0xF0. Firmware-sourced for H5083 (MSG_SET_TURN, H5083.bin@0x9b01f6b4): the outlet switches to (b & 1) only when bit 4 is set. So 0x11/0x10 (app H5083NewDetailViewModel.x0) and 0xFF/0xF0 work, while 0x22/0x20, 0x44/0x40 and the light form 0x01/0x00 are ignored (still acked 33 01 00 once paired; 33 01 is dropped before the 33 B2 pairing)."
 
   brightness_payload:
     seq:
@@ -1253,7 +1327,8 @@ types:
   # `checksum` documents. AbsMicController.a builds [0xA5, cmd, data…] then appends sum8
   # (base2light/ble/mic/controller/AbsMicController.java:23-52). Parse a raw 0xA5 frame with this type.
   # Example (MicSetRgbController, cmd 0x02, sub 0x83): A5 02 83 R G B <sum8> — 7 bytes. The device side
-  # is the length-exempt byte[0]==0xA5 path in the RTL8720 dispatchers (see FIRMWARE_VALIDATION.md).
+  # is the length-exempt byte[0]==0xA5 path in the H60A1/H60A6 dispatchers (group_ctrl_rec_ble_pkg); H6006/H6008
+  # catch A5 02 earlier, in the BLE event handler (see pro_type 0xa5 above and FIRMWARE_VALIDATION.md §3).
   mic_color_frame:
     seq:
       - { id: pro_type, contents: [0xa5] }
@@ -1708,9 +1783,9 @@ types:
       the strategy's tint test (!= 0), not that one.
       Device side, static firmware analysis (not hardware-verified): the H6006 and H6008 firmware build
       the 0x0D reply as [0D][R][G][B][kelvin hi][kelvin lo] with every later byte zero, so the tint fields
-      always arrive as 0 (H6006: firmware-h6006/decompiled/H6006_ble_dispatcher.c case 0xd at line 618,
-      bytes at lines 629-633; H6008: firmware-h6008-wifi/decompiled/H6008_ble_dispatcher.c case 0xd at line
-      383, bytes at lines 388-392). The kelvin is pre-zeroed there, so 0 most likely means RGB mode.
+      always arrive as 0 (H6006: firmware-h6006/decompiled/H6006_ble_dispatcher.c case 0xd at line 634,
+      bytes at lines 645-649; H6008: firmware-h6008-wifi/decompiled/H6008_ble_dispatcher.c case 0xd at line
+      396, bytes at lines 401-405). The kelvin is pre-zeroed there, so 0 most likely means RGB mode.
       Kind 1 is H6052 (tablelampv1, goodsType 22): Model.u -> H6052NewDetailActivity -> H6052NewDetailVM ->
       H6052InfoDetail.G, whose constructor installs a strategy reading only vb[0..2]; the kelvin bytes are
       never read. (tablelampv1 ble.SubModeColor.parse, which does read a kelvin at vb[3..4], serves the IoT /

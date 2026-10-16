@@ -2,7 +2,7 @@
 
 `spec/govee_commands.py` provides **463 builders** across **99 opcodes**, one function per (opcode, variant) the Govee Home app emits. Every builder is traced to the decompiled app (controller cited in its docstring) and carries a byte-exact self-check run by the reference self-test. This file is the index: opcode → builders, the device families each serves, the verification tier, and whether the binary grammar (`govee_ble.ksy`) also models that opcode's layout.
 
-**Verification tiers.** `firmware-confirmed` — the opcode is handled by at least one of the six decompiled device firmwares (H6047 Telink; H6006/H6008/H5083/H60A1/H60A6 Realtek), so both ends agree; see `FIRMWARE_VALIDATION.md`. `source-modeled` — traced from the app only (the authority for what to send), not seen in a firmware image. A few opcodes also have `bench` hardware confirmation, noted inline.
+**Verification tiers.** `firmware-confirmed` — the opcode is handled by at least one of the six decompiled device firmwares (H6047 BlueX/RivieraWaves ARM Thumb-2; H6006/H6008/H5083/H60A1/H60A6 Realtek), so both ends agree; see `FIRMWARE_VALIDATION.md`. `source-modeled` — traced from the app only (the authority for what to send), not seen in a firmware image. A few opcodes also have `bench` hardware confirmation, noted inline.
 
 ## Opcodes with builders
 

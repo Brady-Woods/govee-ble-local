@@ -518,6 +518,33 @@ model, from which the shipped readers are generated).
   zeroes every data byte.
 
 ### Spec
+- Firmware-doc corrections. Every claim the spec makes about the six decompiled firmwares (H6047, H6006,
+  H6008, H5083, H60A1, H60A6) was re-checked against the images by disassembly, and each correction had an
+  adversarial check. Text and comments only: the ksy structure with docs removed, and its enums, are
+  identical to before, so the generated readers and the wire behaviour don't change.
+  - Corrected across `FIRMWARE_VALIDATION.md`, `GOVEE_BLE_GATT_PROTOCOL.md`, the ksy comments,
+    `OPCODE_COVERAGE.md` and the catalogue docstrings:
+    - H6047 is a BlueX/RivieraWaves ARM Thumb-2 SoC, not Telink.
+    - Every Realtek image drops a bad-BCC frame in its shared write layer. The OTA heads `B0`–`B5`/`BF` skip
+      that check on H60A1/H60A6 and are dropped on H6008.
+    - A shared info layer answers `AA 06/07/14/20/21` (`EF` too, except on H6008) before the per-SKU
+      dispatcher.
+    - `AA 07` answers `02/03/06` only. H6008 and H60A1/H60A6 also take `0A/0B` with no data. `10/11` have no
+      handler and get no reply, or an echo on H60A1/H60A6.
+    - Byte 2 of an `AA 01/04/05` read is never read by the firmware. The reply bytes after the data are the
+      request's bytes.
+    - The bulbs accept `A1` only as `A1 11` (Wi-Fi).
+    - `0x17` is a `33 FF` sub-type, not an opcode.
+    - Head `0x66` is a test stub on the Realtek images.
+    - The per-image opcode lists are corrected.
+  - Cautions, marked firmware-sourced: `33 46` factory-resets and reboots H60A1/H60A6 whatever the payload
+    (on the ksy `check_ic` enum and `build_check_ic` / `build_check_ic_step`). `33 FF`, `66 01/02` and
+    `AA FF 08` are test-only.
+  - `FIRMWARE_VALIDATION.md` §7 lists the firmware-sourced reads the app never sends, such as `AA 07 06`
+    (BLE MAC), H60A6 `AA 30` / `AA 41` and `AA EF`, with the images and handler addresses for each.
+  - `devices.yaml` h5080: the opcode set is labelled as the app's. The `0xA1` multi is the H5089
+    night-light DIY write, not multi-outlet. A firmware note says H5083 SW1.00.30 dispatches no
+    `0x16/0x1F/0xB4`.
 - `spec/govee_reference.py`: `parse_frame`, `parse_status` and `parse_color_group` (and so `_selftest`) work
   with both reader builds. A read-write build (`tools/gen_kaitai.sh --read-write`) reads only on `_read()`, so
   those objects are read once; the read-only classes read on construction and are left alone.
@@ -648,8 +675,9 @@ model, from which the shipped readers are generated).
 - `spec/govee_reference.py`: `reassemble_ac` / `chunk_ac` follow the app (packet count, lastLen, a last
   packet tagged 0xFF or its position, 0xFF refused mid-burst) and reproduce both real H60A6 bursts byte for
   byte (`tests/test_spec_reference_crosscheck.py`); `chunk_ac`'s `sub` defaults to 0x00 (was 0x02), the
-  H60A6 status read's `d()`. The self-test falls back to the library's committed
-  reader, so a run from a checkout executes every parser check, and `--strict` fails if they are skipped.
+  H60A6 status read's `d()`. The self-test falls back to the library's generated classes (after
+  `tools/gen_kaitai.sh` or `pip install -e .`), so a run from a checkout executes every parser check, and
+  `--strict` fails if they are skipped.
 - `govee_adv.ksy`: `parseBleBroadOnOff` reads `data[6]` (`scanRecord[i6+8]`, the first byte after
   pact_code; `BleUtil.java:749`), not `data[3]`.
 - 0xA3 upload (`govee_ble.ksy` `a3_start.packet_count`, GATT §4.4, SCENE_UPLOAD_ENCODING.md G7): a value that
