@@ -522,6 +522,41 @@ class GoveeBleFrame(KaitaiStruct):
 
 
 
+    class Color0bKelvin(KaitaiStruct):
+        """0x0b colour write body after the header 33 05 0b, ColorInstructionVersion COLOR_MODE_0X0B_KEVIN(6)
+        (ColorInstructionVersion.java:19; Bytes.c
+        base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:239-267 via Config.eu
+        Config.java:13930-13934, Config.J[6] :5552-5556). NOT the color_rgbic_0b / color_rgbic_0b_wide shape:
+        an 8-byte ext array [0x0b, R, G, B, kelvin hi, kelvin lo, m0, m1], no mask helper and no width choice.
+        m0 bit k = position k (0-7, :251-258), m1 bit k = position 8+k (8-14 only, :259-265): position 15+ is
+        never written, so bit 15 of seg_mask is always 0, and a posSet shorter than 15 entries throws
+        ArrayIndexOutOfBounds in the app. kelvin = KelvinConfig.c(colour, info) (base-classes11/com/govee/
+        base2light/pact/newdetail/config/fuc/KelvinConfig.java:119-122) = Constant.getColorTemKelvin(colour,
+        min, max) (base-classes9/com/govee/base2home/Constant.java:591-594): the colour's Kelvin when it is a
+        tint, else the low end of the device kelvinRange (not 0), big-endian (BleUtil.getSignedBytesFor2(k, true),
+        Bytes.java:248-250). So kelvin != 0 does not mean CCT here. Like color_rgbic_0b_wide, the same 8-byte
+        ext can instead travel as an 0xA3 type-0x6e multi-packet payload (ColorModeControllerConfig.j :689-712).
+        """
+        def __init__(self, _io, _parent=None, _root=None):
+            super(GoveeBleFrame.Color0bKelvin, self).__init__(_io)
+            self._parent = _parent
+            self._root = _root
+            self._read()
+
+        def _read(self):
+            self.r = self._io.read_u1()
+            self.g = self._io.read_u1()
+            self.b = self._io.read_u1()
+            self.kelvin = self._io.read_u2be()
+            self.seg_mask = self._io.read_u2le()
+            if not self.seg_mask <= 32767:
+                raise kaitaistruct.ValidationGreaterThanError(32767, self.seg_mask, self._io, u"/types/color_0b_kelvin/seq/4")
+
+
+        def _fetch_instances(self):
+            pass
+
+
     class Color15(KaitaiStruct):
         def __init__(self, _io, _parent=None, _root=None):
             super(GoveeBleFrame.Color15, self).__init__(_io)
@@ -782,6 +817,40 @@ class GoveeBleFrame(KaitaiStruct):
             self.g = self._io.read_u1()
             self.b = self._io.read_u1()
             self.seg_mask = self._io.read_u2le()
+
+
+        def _fetch_instances(self):
+            pass
+
+
+    class ColorRgbic0bWide(KaitaiStruct):
+        """0x0b RGBIC colour write body after the header 33 05 0b, ColorInstructionVersion COLOR_MODE_0X0B(3)
+        (base-classes12/com/govee/common2light/capability/color/ColorInstructionVersion.java:16; Bytes.d
+        base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:270-281 via Config.cu
+        Config.java:13616-13620, Config.J[3] :5542-5546, J = map14 :5582, read by Config.u() :731-733 from
+        ColorModeControllerConfig :265-279). The app builds a 17-byte ext array [0x0b (BleProtocol
+        music_code_yuedong = 11), R, G, B, mask...] (ControllerMode cmd 0x05; AbsController.q truncates ext to
+        17). Mask (Bytes.java:278): makeSelectedTwoBytes (always 2 bytes) when posSet has <= 16 entries, else
+        BleUtils.X (ceil(n/8) bytes), copied at ext[4] with coerceAtMost(len, 13) (Bytes.java:279; 13 = 17 - 4),
+        so positions 104+ are silently dropped. mask_width is therefore 2 for <= 16 pieces, else
+        min(ceil(pieces/8), 13); never 0 or 1. With mask_width 2 this is byte-identical to color_rgbic_0b
+        (u2le), which stays as is. NOT the colour-version-6 kelvin form (color_0b_kelvin below). Transport
+        note: ColorModeControllerConfig.j :689-712 sends the same 17-byte ext ([0x0b, body, zero pad]) as the
+        payload of an 0xA3 multi-packet of type 0x6e (MultiController.java:48-61) followed by 33 05 15, so this
+        body can also follow the 0x0b byte inside that A3 payload rather than a 33 05 0b header.
+        """
+        def __init__(self, mask_width, _io, _parent=None, _root=None):
+            super(GoveeBleFrame.ColorRgbic0bWide, self).__init__(_io)
+            self._parent = _parent
+            self._root = _root
+            self.mask_width = mask_width
+            self._read()
+
+        def _read(self):
+            self.r = self._io.read_u1()
+            self.g = self._io.read_u1()
+            self.b = self._io.read_u1()
+            self.seg_mask = self._io.read_bytes(self.mask_width)
 
 
         def _fetch_instances(self):
@@ -1391,6 +1460,22 @@ class GoveeBleFrame(KaitaiStruct):
             pass
 
 
+    class GradualWrite(KaitaiStruct):
+        """Gradual (fade between colours) on/off write: body = [state]. Two command bytes, chosen by the device's GradualVersion (Config M table: 0 -> 0xA3, 1 -> 0x14, Config.java:5602-5613): 0xA3 = Bytes.w (base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:564-566) and 0x14 = Bytes.v (Bytes.java:559-560), each [cmd, on ? 1 : 0] wrapped by Controller4ExtBytes.d (split_rgbiclight/com/govee/rgbiclight/mode/color/ColorControllerConfig.java:507-510). The same [on ? 1 : 0] comes from ControllerGradual (cmd 0x14, base-classes11/com/govee/base2light/kt/general_controller/ControllerGradual.java:60,71-72), pact_h60a0 compose GradualController (cmd 0xA3, split_h60ax/com/govee/pact_h60a0/ble/controller/compose/GradualController.java:24,42-43), the legacy GradualController (cmd 0x14, split_rgbiclight/com/govee/dreamcolorlightv1/ble/GradualController.java:13-16,22-24,31-33), and the night-mode page (33 14 01 / 33 14 00, NightModeViewModel.java:86-114, where it means enter/leave night mode). The AA A3 reply is gradual_read."""
+        def __init__(self, _io, _parent=None, _root=None):
+            super(GoveeBleFrame.GradualWrite, self).__init__(_io)
+            self._parent = _parent
+            self._root = _root
+            self._read()
+
+        def _read(self):
+            self.state = self._io.read_u1()
+
+
+        def _fetch_instances(self):
+            pass
+
+
     class GraffitiColorGroup(KaitaiStruct):
         def __init__(self, _io, _parent=None, _root=None):
             super(GoveeBleFrame.GraffitiColorGroup, self).__init__(_io)
@@ -1778,6 +1863,22 @@ class GoveeBleFrame(KaitaiStruct):
             self.move_flags = self._io.read_u1()
             self.p_c = self._io.read_u1()
             self.p_d = self._io.read_u1()
+
+
+        def _fetch_instances(self):
+            pass
+
+
+    class LightDirectionWrite(KaitaiStruct):
+        """33 30 single-byte write: body = [value]. Command 0x30 is family-dependent. H6038 installation/calibration direction: CalibrationController.Companion.c(b) = Controller4ExtBytes.d([48, b]) (split_h6047/com/govee/h6047/newdetail/h6038/controller/CalibrationController.java:42-45), b = the index of the selected direction image (6 choices, H6038CalibrationAc.java:185-208,280-287; the send button is enabled only after a pick), sent from VM4H6038.N5 (VM4H6038.java:809-815, called at H6038CalibrationAc.java:316) or the add-device flow (H6038CalibrationAc.java:292-298). The compose DirectionController.b(b) builds the same [b] (base-classes10/com/govee/base2light/ble/controller/compose/DirectionController.java:34-36,60-61; DefWriteComposeController4Single.java:137-149 adds 33 44 02 00 in g), but nothing in this decomp calls it. On H6057 the same [value] is the MAIN-LIGHT SWITCH, not a direction: ControllerSingle.c(command_light_switch = 48, [on ? 1 : 0]) (split_hollowlamp/com/govee/h6057/origin/newDetail/H6057DetailVM.java:950-956; h6057/origin/ble/BleProtocol.java:7). On H71xx ReportChartController writes [1] (base-classes12/com/govee/base_h71xx/sku_base/ble/controller/ReportChartController.java:24-31)."""
+        def __init__(self, _io, _parent=None, _root=None):
+            super(GoveeBleFrame.LightDirectionWrite, self).__init__(_io)
+            self._parent = _parent
+            self._root = _root
+            self._read()
+
+        def _read(self):
+            self.value = self._io.read_u1()
 
 
         def _fetch_instances(self):
@@ -2398,6 +2499,42 @@ class GoveeBleFrame(KaitaiStruct):
             pass
 
 
+    class Op15BrightnessWide(KaitaiStruct):
+        """Per-segment brightness write body after the header 33 05 15 02 (Bytes.G
+        base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:172-181), reached via
+        Config.JR (Config.java:10567-10570; Config.L[0] :5591-5595, L = map16 :5601, read by Config.D() :223-225)
+        for RelativeBrightnessVersion RELATIVE_BRIGHTNESS_0X15(0)
+        (base-classes12/com/govee/common2light/capability/color/RelativeBrightnessVersion.java:14) from
+        ColorModeControllerConfig.t :1069-1097, and directly from ColorModeControllerConfig.z :1184-1195 (one
+        frame per distinct brightness; posSet length = piece count, BleUtils.r :1077-1097). The app builds a
+        17-byte ext array [0x15, 0x02, pct, mask...] (ControllerMode cmd 0x05; AbsController.q :47-60 truncates
+        ext to 17; BleUtils.p :1030-1041 frames it). Mask (Bytes.java:178): makeSelectedTwoBytes (BleUtils.Y,
+        always 2 bytes) when posSet has <= 16 entries, else BleUtils.X (ceil(n/8) bytes), copied at ext[3]
+        with coerceAtMost(len, 14) (Bytes.java:179; 14 = 17 - 3), so positions 112+ are silently dropped.
+        mask_width is therefore 2 for <= 16 pieces, else min(ceil(pieces/8), 14); never 0 or 1. pct is written
+        raw ((byte) i, Bytes.java:177, no clamp). Same body as legacy split_h6047/com/govee/h6047/ble/
+        SubModeColor.java:173-182 (Math.min(len, 14) at :181) and SubModeColorV1 opType 0
+        split_h60ax/com/govee/pact_h60a0/ble/v1/SubModeColorV1.java:672-683 (no cap there; the legacy writers
+        key the width on their segment count, not the posSet length). Standalone because color_15's switch
+        reaches the fixed-u2le op15_brightness and cannot pass mask_width; with mask_width 2 this is
+        byte-identical to op15_brightness, which stays as is.
+        """
+        def __init__(self, mask_width, _io, _parent=None, _root=None):
+            super(GoveeBleFrame.Op15BrightnessWide, self).__init__(_io)
+            self._parent = _parent
+            self._root = _root
+            self.mask_width = mask_width
+            self._read()
+
+        def _read(self):
+            self.pct = self._io.read_u1()
+            self.seg_mask = self._io.read_bytes(self.mask_width)
+
+
+        def _fetch_instances(self):
+            pass
+
+
     class Op15Color(KaitaiStruct):
         """SubModeColorV1.getWriteBytes op 0x01 — a client-built WRITE. Three forms share op byte 0x01 with
         NO in-frame discriminator; the form is chosen by device family + colour mode (the opType arg i2),
@@ -2425,6 +2562,61 @@ class GoveeBleFrame(KaitaiStruct):
 
         def _fetch_instances(self):
             pass
+
+
+    class Op15ColorGroupWrite(KaitaiStruct):
+        """Group colour write body after "33 05 15 04". The app writes [0x15, 0x04, group, RGB x n] with
+        n = min(4, colours given) and NOTHING after the colours (the ext array is sized 3 + 3n exactly):
+          Bytes.m   base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:393-402
+          SubModeColorV1 opType 7   split_h60ax/com/govee/pact_h60a0/ble/v1/SubModeColorV1.java:711-719
+          colours: BleUtils.w0(colorSet, 4) base-classes10/com/govee/base2kt/utils/BleUtils.java:1271-1283
+            (coerceAtMost(4, len) colours, 3 bytes each, R,G,B from ColorUtils.n).
+          h6062 striplight SubModeColor.getWriteBytes split_h6062/com/govee/striplight/ble/SubModeColor.java:
+            340-359 writes the same body (up to 4 colours, then the 17-byte array's zeros).
+        Op 0x04 is NOT only this body: Bytes.D (Bytes.java:133-139) writes [0x15, 0x04, kelvin u2be] for
+        colour-instruction version 9 (COLOR_MODE_0X15_0X04). The client picks this type from the write it is
+        issuing, never from the op byte.
+        A whole-device write is ceil(N/4) such frames, each colour set chunked by 4; the LAST chunk carries
+        N % 4 colours (4 when N % 4 == 0), so color_count is 1..4 and is not in the stream (a black colour
+        00 00 00 cannot be told from the zero padding): the client passes it.
+        group = start + chunk index (0-based chunk index):
+          new-detail path ColorModeControllerConfig.l (base-classes11/.../fuc/color/ColorModeControllerConfig.java:
+            871-897, group = i + i8 at :895), start = LightColorCapabilityCenter.M0 = colorBrightnessGroupMode
+            raw value (base-classes10/com/govee/base2light/capability/color/LightColorCapabilityCenter.java:
+            866-873); ColorBrightnessGroupMode GROUP_INDEX_FROM_0(0) / GROUP_INDEX_FROM_1(1)
+            (base-classes12/com/govee/common2light/capability/color/ColorBrightnessGroupMode.java:13-14).
+            The hard-coded fallback (Config.N -> Config.A, base-classes11/.../fuc/color/Config.java:412-423,
+            map built at :3118-3314) returns 1 for every one of its 39 goodsTypes, so groups are 1-based
+            unless a cloud capability spec says GROUP_INDEX_FROM_0.
+          H60A0/H60A1 SubModeColorV1.Companion.e/f (:176-197, :250-274): l(i7 + 1, ...) -> always 1-based
+            (H60A0: 13 colours -> groups 1..4 with 4,4,4,1 colours).
+          h6062 striplight SubModeColor.makeSubModeColor (SubModeColor.java:73-100, 124-150): f = i + 1 ->
+            always 1-based.
+        """
+        def __init__(self, color_count, _io, _parent=None, _root=None):
+            super(GoveeBleFrame.Op15ColorGroupWrite, self).__init__(_io)
+            self._parent = _parent
+            self._root = _root
+            self.color_count = color_count
+            self._read()
+
+        def _read(self):
+            self.group = self._io.read_u1()
+            _ = self.group
+            if not  ((self.color_count >= 1) and (self.color_count <= 4)) :
+                raise kaitaistruct.ValidationExprError(self.group, self._io, u"/types/op15_color_group_write/seq/0")
+            self.colors = []
+            for i in range(self.color_count):
+                self.colors.append(GoveeBleFrame.ScRgb(self._io, self, self._root))
+
+
+
+        def _fetch_instances(self):
+            pass
+            for i in range(len(self.colors)):
+                pass
+                self.colors[i]._fetch_instances()
+
 
 
     class Op15ColorTemp(KaitaiStruct):
@@ -2501,6 +2693,126 @@ class GoveeBleFrame(KaitaiStruct):
             if self.variant == 11:
                 pass
 
+
+
+    class Op15ColorWrite(KaitaiStruct):
+        """Colour write body after "33 05 15 01", parametric on the form (variant) and the segment-mask width.
+        The forms share op byte 0x01 with no in-frame discriminator (chosen by device family + colour mode):
+          variant 1  basic            [r,g,b][seg_mask]
+                     SubModeColorV1 opType 1, split_h60ax/com/govee/pact_h60a0/ble/v1/SubModeColorV1.java:684-694
+          variant 12 H60A1/H60A6 RGB  [r,g,b][00 x5][seg_mask]
+                     Bytes.h base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:315-326;
+                     SubModeColorV1 opType 12 :734-744
+          variant 11 CCT              [slot r,g,b][kelvin u2be][tint r,g,b][seg_mask]
+                     Bytes.r Bytes.java:474-501, slot by kind i5 (:480-486): kind 0 -> 00 00 00 (ColorUtils.F());
+                     kind 3 -> 00 00 00 when every position is set, else slot = tint with kelvin 0 and tint
+                     00 00 00 (:492, :495; an RGB write); any other kind (1, the usual one) -> ff ff ff (R()).
+                     SubModeColorV1 opType 11 :720-733 (slot = ColorUtils.R() = ff ff ff, tint = tempRgb).
+                     The family writers use the same layout with the user colour in the slot and kelvin / tint
+                     left 0 for RGB (byte-identical to variant 12 then): h6047 SubModeColor.getWriteBytes
+                     split_h6047/com/govee/h6047/ble/SubModeColor.java:184-200; h6062 striplight
+                     SubModeColor.getWriteBytes split_h6062/com/govee/striplight/ble/SubModeColor.java:376-405,
+                     SubModeColorV2.j :570-587, SubModeColorV3.OpColor.makeBytes/e :63-85, 136-141.
+          variant 5  colour-instruction version 5 (COLOR_MODE_0X15_NO_TEMP_RGB, Config.J[5] = Config.Zt,
+                     Config.java:5527-5531, 13124-13131), e.g. H6061 (goodsType 51):
+                     RGB    Bytes.l Bytes.java:379-390 -> [r,g,b][00 00][seg_mask]
+                     Kelvin Bytes.u Bytes.java:541-556 -> [tint r,g,b][kelvin u2be][seg_mask]
+                       (kelvin = Constant.getColorTemKelvin(tint)); RGB is the kelvin == 0 case.
+        seg_mask: LSB-first, position 8j+k at bit k of byte j (BleUtils.X, base-classes10/com/govee/base2kt/
+        utils/BleUtils.java:406-438). Width: 2 bytes (makeSelectedTwoBytes, BleUtils.java:444-494 /
+        base-classes10/com/govee/base2light/ble/BleUtil.java:412-443; 00 00 if the set is empty) when the set
+        has <= 16 positions, else ceil(n/8) (BleUtils.X). Bytes.* key it on posSet.length > 16; SubModeColorV1
+        on its segment count > 16 (:672); h6047 on its segment count > 16 (:199). The h6062 writers size it
+        otherwise (SubModeColorV2.j: BleUtil.makeBytes4SelectPosByOneBit ceil(n/8), BleUtil.java:383-398, with
+        no 2-byte floor, fed 24 positions by NumUtil.makeSelectByByteNum(list, 3) at :151); a 1-byte mask is
+        sent as mask_width 2 with a 00 high byte, which gives the same zero-padded frame.
+        Cap = 17 - (ext bytes before the mask, sub-mode and op included):
+          variant 1  mask at ext[5]  -> 12 bytes (96 positions). No coerceAtMost: the ext goes uncut to
+                     BleUtils.p via the h60ax ModeController (compose/AbsController.java:24-26, not the kt
+                     AbsController.q); a 13th byte lands on frame[19] and is overwritten by the BCC, 14+ throws.
+          variant 12 mask at ext[10] -> 7 bytes (56 positions): Bytes.h coerceAtMost(len, 17 - 10) :324 drops
+                     the rest silently; SubModeColorV1 opType 12 has no coerce (8th byte -> BCC, 9+ throws).
+          variant 11 mask at ext[10] -> 7 bytes: Bytes.r coerceAtMost(len, 17 - 10) :499; h6047 min(len, 7)
+                     :200; h6062 SubModeColor indexes a 17-byte array (ArrayIndexOutOfBounds past 56 positions).
+          variant 5  mask at ext[7]  -> 10 bytes (80 positions): Bytes.l :388 / Bytes.u :554 copy uncoerced
+                     into a 17-byte array, so 11+ bytes throws ArrayIndexOutOfBounds (no frame).
+        The frame-path op15_color (size-eos) and op15_color_typed (2-byte mask; variants 1/12/11) stay as is.
+        """
+        def __init__(self, variant, mask_width, _io, _parent=None, _root=None):
+            super(GoveeBleFrame.Op15ColorWrite, self).__init__(_io)
+            self._parent = _parent
+            self._root = _root
+            self.variant = variant
+            self.mask_width = mask_width
+            self._read()
+
+        def _read(self):
+            self.r = self._io.read_u1()
+            self.g = self._io.read_u1()
+            self.b = self._io.read_u1()
+            if self.variant == 12:
+                pass
+                self.reserved = self._io.read_bytes(5)
+                if not self.reserved == b"\x00\x00\x00\x00\x00":
+                    raise kaitaistruct.ValidationNotEqualError(b"\x00\x00\x00\x00\x00", self.reserved, self._io, u"/types/op15_color_write/seq/3")
+
+            if  ((self.variant == 11) or (self.variant == 5)) :
+                pass
+                self.kelvin = self._io.read_u2be()
+
+            if self.variant == 11:
+                pass
+                self.tint_r = self._io.read_u1()
+
+            if self.variant == 11:
+                pass
+                self.tint_g = self._io.read_u1()
+
+            if self.variant == 11:
+                pass
+                self.tint_b = self._io.read_u1()
+
+            self.seg_mask = self._io.read_bytes(self.mask_width)
+            _ = self.seg_mask
+            if not  ((len(_) >= 2) and (len(_) <= self.mask_cap) and ( ((self.variant == 1) or (self.variant == 5) or (self.variant == 11) or (self.variant == 12)) )) :
+                raise kaitaistruct.ValidationExprError(self.seg_mask, self._io, u"/types/op15_color_write/seq/8")
+
+
+        def _fetch_instances(self):
+            pass
+            if self.variant == 12:
+                pass
+
+            if  ((self.variant == 11) or (self.variant == 5)) :
+                pass
+
+            if self.variant == 11:
+                pass
+
+            if self.variant == 11:
+                pass
+
+            if self.variant == 11:
+                pass
+
+
+        @property
+        def is_cct(self):
+            """kelvin != 0 (the ksy's is_cct convention): Bytes.u vs Bytes.l's 00 00, and Bytes.r kinds 0/1/3-full vs the kind-3 partial and h6047/h6062 RGB writes, which carry kelvin 0."""
+            if hasattr(self, '_m_is_cct'):
+                return self._m_is_cct
+
+            self._m_is_cct =  (( ((self.variant == 11) or (self.variant == 5)) ) and (self.kelvin != 0)) 
+            return getattr(self, '_m_is_cct', None)
+
+        @property
+        def mask_cap(self):
+            """most mask bytes the app puts on the wire for this variant: 17 - ext bytes before the mask (5 / 7 / 10)."""
+            if hasattr(self, '_m_mask_cap'):
+                return self._m_mask_cap
+
+            self._m_mask_cap = (12 if self.variant == 1 else (10 if self.variant == 5 else 7))
+            return getattr(self, '_m_mask_cap', None)
 
 
     class PlugSpecRead(KaitaiStruct):
@@ -2655,6 +2967,78 @@ class GoveeBleFrame(KaitaiStruct):
                 self.body._fetch_instances()
             else:
                 pass
+
+
+    class ReadRequest(KaitaiStruct):
+        """0xAA read REQUEST body = the bytes after the 0xAA header: [command][selector...]. The library keeps the
+        0xAA byte, the zero padding through byte 18 and the XOR BCC at byte 19 in code. Every app read frame is
+        BleUtils.Companion.p(0xAA, getCommandType(), ext): byte 1 = command, ext copied from byte 2 only when
+        non-null and non-empty, the rest zero, BCC at 19 (base-classes10/com/govee/base2kt/utils/BleUtils.java:1030-1041;
+        generate20Bytes :1376-1378). Legacy controllers pass AbsSingleController.p()
+        (base-classes10/com/govee/base2light/ble/controller/AbsSingleController.java:17-20, default null :54-56;
+        read path AbsController.java:77 getValue -> f()); kt controllers pass their ctor ext
+        (base-classes11/com/govee/base2light/kt/ble/AbsController.java:42-45), truncated to 17 bytes (q() :47-60).
+        Selectors as the app sends them (body hex; legacy = base-classes10/com/govee/base2light/ble/controller/,
+        kt = base-classes11/com/govee/base2light/kt/general_controller/):
+          01       switch. EMPTY: legacy SwitchController() has no p() (SwitchController.java:9-11);
+                   kt ControllerSwitch.Companion.b -> ext null (ControllerSwitch.java:38-47,69-71).
+          04       brightness. EMPTY: legacy BrightnessController() (BrightnessController.java:10-12, no p());
+                   kt ControllerBrightness.Companion.b -> ext null (ControllerBrightness.java:40-48,69-71).
+          05 01    mode: legacy AbsModeController.p() = {1} (AbsModeController.java:34-37); kt ControllerMode.Companion.b
+                   -> synthetic ctor mask 2 -> default ext {1} (ControllerMode.java:45-47,107-109);
+                   ModeControllerNoEvent read (ModeControllerNoEvent.java:37-38). Only bare aa 05: the H60A0
+                   compose ModeController.Companion.a, ext null
+                   (split_h60ax/com/govee/pact_h60a0/ble/controller/compose/ModeController.java:26-28,38-44).
+          06       soft version. EMPTY: legacy SoftVersionController() (SoftVersionController.java:9-11, no p());
+                   kt ControllerSoftVersion() -> ext byte[0] (ControllerSoftVersion.java:16-18,27-29).
+          07 ss    device info, ss: 02 SN (SnController.java:37-38), 03 hard version (HardVersionController.java:28-29;
+                   kt ControllerHardVersion.java:28 default {3}), 04 soft version (SoftVersionInDeviceInfoController.java:18-19),
+                   07 DSP (DspVersionInDeviceInfoController.java:20-21), 0A / 0B MCU sw / hw
+                   (McuSoftVersionControllerV1.java:32-33, McuHardVersionControllerV1.java:32-33),
+                   10 basic info (BasicInfoController.java:34-35), 11 basic Wi-Fi info (BasicWifiInfoController.java:42-43).
+                   These are the selectors the app's controllers define. Which ones a live path still
+                   sends, and which ones a given firmware answers, is not recorded here; 07 10 / 07 11 in
+                   particular have no confirmed live sender or firmware handler.
+          36       H6047 bar switch. EMPTY: ComposeLightHeartController extends HeartController, no p()
+                   (split_h6047/com/govee/h6047/ble/controller/ComposeLightHeartController.java:8-11);
+                   OnOffController4H6048.a -> ext byte[0] (split_h6047/com/govee/h6047/newdetail/control/OnOffController4H6048.java:22-23,40).
+          40       IC / segment count. EMPTY: kt ControllerIcNum read ctor (false, null) (ControllerIcNum.java:79,165-175);
+                   kt ControllerOnlyReadIcSegmentNum() ext null (ControllerOnlyReadIcSegmentNum.java:52-58);
+                   legacy IcNumController (IcNumController.java:8, AbsOnlyReadSingleController, no p()).
+          41       EMPTY: kt power-on memory ControllerOnOffMemory.Companion.c -> ext null (ControllerOnOffMemory.java:49-51,119-121)
+                   and the H6062 section-count read (split_h6062/com/govee/striplight/newdetail/ControllerIcSegmentNum.java:40-41,61-67);
+                   the device decides which reply a bare aa 41 gets.
+          41 02    legacy power-on memory OnOffMemoryController(type != -1, false): p() = {2} (OnOffMemoryController.java:18-22,63-66).
+          a3       gradual. EMPTY: kt ControllerGradual4BleWifi.Companion.b -> (ext null, read) (ControllerGradual4BleWifi.java:47-48,104-114);
+                   legacy GradualChangeBleWifiController(), no p() (GradualChangeBleWifiController.java:7-8,22-23).
+          a5 gg    colour group with brightness, gg = 1-based group number (callers loop 1..maxGroup, e.g.
+                   split_rgbiclight/com/govee/rgbiclight/VM4Light.java:937-958): kt Controller4ColorInfoByGroup.Companion.g / m
+                   -> ext {(byte) group} (Controller4ColorInfoByGroup.java:112-113,134-136,197-199,210-211).
+          a2 gg    colour group, colour only, gg 1-based: Controller4ColorInfoByGroup.Companion.j (Controller4ColorInfoByGroup.java:123-124).
+          b1       secret. EMPTY: legacy SecretKeyController(byte) read, no p() (SecretKeyController.java:13-20).
+          b3       plug spec. EMPTY: h5080 SpecController, no p() (split_plugnew/com/govee/h5080/ble/controller/SpecController.java:6-13).
+        Writing: give the stream exactly 1 + len(selector) bytes. selector is size-eos, so the writer raises
+        ConsistencyError when the stream does not end right after it. Reading: a body sliced from a captured
+        20-byte frame (frame[1:19]) keeps the zero padding inside selector. Every selector above is non-zero, so
+        trailing 00 bytes there are padding. command uses enum command: every command above is in it; a command
+        byte missing from the enum still round-trips in Python (resolve_enum keeps the int) but reads as null in Java.
+        """
+        def __init__(self, _io, _parent=None, _root=None):
+            super(GoveeBleFrame.ReadRequest, self).__init__(_io)
+            self._parent = _parent
+            self._root = _root
+            self._read()
+
+        def _read(self):
+            self.command = KaitaiStream.resolve_enum(GoveeBleFrame.Command, self._io.read_u1())
+            self.selector = self._io.read_bytes_full()
+            _ = self.selector
+            if not len(_) <= 17:
+                raise kaitaistruct.ValidationExprError(self.selector, self._io, u"/types/read_request/seq/1")
+
+
+        def _fetch_instances(self):
+            pass
 
 
     class RgbSceneValue(KaitaiStruct):
@@ -2867,6 +3251,22 @@ class GoveeBleFrame(KaitaiStruct):
                 pass
                 self.groups[i]._fetch_instances()
 
+
+
+    class SecretKeyWrite(KaitaiStruct):
+        """33 B2 account-lock secret write: body = the 8-byte secret, NO selector byte. Every builder writes Encode.decryByBase64(secretCode) as the whole ext array: SecretKeyController.q (base-classes10/com/govee/base2light/ble/controller/SecretKeyController.java:22-26,71-78; command SINGLE_CHECK_SECRET_KEY = -78, BleProtocolConstants.java:110), h5086 SecretController.d (split_plugnew/com/govee/h5086/ble/controller/SecretController.java:66-75,86-88), h61d3 SecretController.d (split_h61d3/com/govee/h61d3/ble/controller/SecretController.java:67-76,87-89) and Controller4Secret.a (base-classes12/com/govee/base2light/vm4sku2op/Controller4Secret.java:28-46; Controller.x = -78). The secretCode is the base64 of the 8 bytes the AA B1 reply carried after its 0x01 selector (SecretKeyController.java:57-62; h5086 SecretController.java:41-44), so it decodes to 8 bytes. The write path does not check the length. The AA B1 reply is secret_read_reply."""
+        def __init__(self, _io, _parent=None, _root=None):
+            super(GoveeBleFrame.SecretKeyWrite, self).__init__(_io)
+            self._parent = _parent
+            self._root = _root
+            self._read()
+
+        def _read(self):
+            self.secret = self._io.read_bytes(8)
+
+
+        def _fetch_instances(self):
+            pass
 
 
     class SecretReadReply(KaitaiStruct):
@@ -3226,7 +3626,7 @@ class GoveeBleFrame(KaitaiStruct):
 
 
     class SwitchReadReply(KaitaiStruct):
-        """AA 01 reply: state @ body[0]. LIGHTS: every curated control screen that reads it decodes on as body[0] == 1 (ControllerSwitch.Companion.c, base-classes11/com/govee/base2light/kt/general_controller/ControllerSwitch.java:32), at connect and in the aa 01 heartbeat (ShareVM.N3 frame[2] == 1, ShareVM.java:1008): use light_is_on. The legacy SwitchController.parseValidBytes reads it as != 0 (SwitchController.java:30), but no curated control screen reaches it (only scene / IoT command paths such as BleSwitchCmdBuilderV1); the two agree for 0/1 and differ only for a byte >= 2. Which message carries a family's power (this reply, or the 0xAC status TLV 0x01) is devices.yaml client_profile.power_read. PLUGS (h5080 SwitchControllerV2): this SAME 0x01 reply is a RELAY BITMASK (bit i = relay i on), not boolean — interpret per device."""
+        """AA 01 reply: state @ body[0]. LIGHTS: every curated control screen that reads it decodes on as body[0] == 1 (ControllerSwitch.Companion.c, base-classes11/com/govee/base2light/kt/general_controller/ControllerSwitch.java:32), at connect and in the aa 01 heartbeat (ShareVM.N3 frame[2] == 1, ShareVM.java:1008): use light_is_on. The legacy SwitchController.parseValidBytes reads it as != 0 (SwitchController.java:30). No curated or profiled control screen reaches it, but older detail screens for legacy goodsTypes do (e.g. the dreamcolorlightv1 adjust/v1-v2 connect reads, BleOpV1.java:735, BleOpV2.java:123, BleOpV3.java:709), as do scene / IoT command paths (BleSwitchCmdBuilderV1); the two agree for 0/1 and differ only for a byte >= 2. Which message carries a family's power (this reply, or the 0xAC status TLV 0x01) is devices.yaml client_profile.power_read. PLUGS (h5080 SwitchControllerV2): this SAME 0x01 reply is a RELAY BITMASK (bit i = relay i on), not boolean — interpret per device."""
         def __init__(self, _io, _parent=None, _root=None):
             super(GoveeBleFrame.SwitchReadReply, self).__init__(_io)
             self._parent = _parent
@@ -3284,6 +3684,45 @@ class GoveeBleFrame(KaitaiStruct):
             self.major = self._io.read_u1()
             self.minor = self._io.read_u1()
             self.patch = self._io.read_u1()
+
+
+        def _fetch_instances(self):
+            pass
+
+
+    class WorryFreeAtNightWrite(KaitaiStruct):
+        """33 36 H6057 worry-free-at-night write: body = WorryFreeAtNightBean.o() = [state, open hour, open minute, close hour, close minute, sensitivity, brightness] (base-classes10/com/govee/base2light/ble/controller/WorryFreeAtNightBean.java:90-92; getters g/d/e/b/c/f/a return fields a/b/c/d/e/f/g, :34-59), sent as ControllerSingle.Companion.c(54, bytes) (split_hollowlamp/com/govee/h6057/origin/newDetail/H6057SettingActivity.java:846-850; legacy split_hollowlamp/com/govee/h6057/origin/ble/WorryFreeAtNightController.java:76-78,87-93). A 7-byte body under 33 36 is this, not a bar switch. Catalogue: build_worry_free_at_night."""
+        def __init__(self, _io, _parent=None, _root=None):
+            super(GoveeBleFrame.WorryFreeAtNightWrite, self).__init__(_io)
+            self._parent = _parent
+            self._root = _root
+            self._read()
+
+        def _read(self):
+            self.state = self._io.read_u1()
+            self.open_hour = self._io.read_u1()
+            self.open_min = self._io.read_u1()
+            self.close_hour = self._io.read_u1()
+            self.close_min = self._io.read_u1()
+            self.sensitivity = self._io.read_u1()
+            self.brightness = self._io.read_u1()
+
+
+        def _fetch_instances(self):
+            pass
+
+
+    class ZonePowerWrite(KaitaiStruct):
+        """33 30 per-zone on/off write (pact_h60a0 family): body = [zone, state]. Built as Controller4ExtBytes.Companion.f(48, [zone, state]) (base-classes11/com/govee/base2light/kt/general_controller/Controller4ExtBytes.java:121-124). H60A6 VM4LightH60A6.y5 (split_h60ax/com/govee/pact_h60a0/adjust/h60a6/VM4LightH60A6.java:1373-1376) writes [!isFirst ? 1 : 0, on], called with isFirst=false (zone 1, DelegateHeaderH60A6.java:442) and isFirst=true (zone 0, DelegateHeaderH60A6.java:470); H1270 VM4LightH1270.F5 (h1270/VM4LightH1270.java:672-675) and H1250 VM4LightH1250.n5 (h1250/VM4LightH1250.java:911-914) are identical; H12D0 VM4LightH12D0.B5 (h12d0/VM4LightH12D0.java:618-622) takes the caller's array [2|1|0, on] (DelegateHeaderH12D0.java:580,608,636), so H12D0 has three zones. The snapshot path writes one frame per zone, [0, zone0_on] then [1, zone1_on] (VM4LightH60A6.java:1215-1216; H12D0 adds [2, zone2_on], VM4LightH12D0.java:905-907). The zone states come back in the 0xAC status TLV 0x30 (status_zone) and the EE 30 push (notify_switch_zone). The frame for [1, 0] is byte-identical to light_direction_write value=1 (33 30 01 00 .. 02): pick by device family."""
+        def __init__(self, _io, _parent=None, _root=None):
+            super(GoveeBleFrame.ZonePowerWrite, self).__init__(_io)
+            self._parent = _parent
+            self._root = _root
+            self._read()
+
+        def _read(self):
+            self.zone = self._io.read_u1()
+            self.state = self._io.read_u1()
 
 
         def _fetch_instances(self):
