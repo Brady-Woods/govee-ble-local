@@ -369,9 +369,11 @@ re-encoded forms diverge (e.g. value byte 2), the re-encoded form is authoritati
 >   take it.
 > - **Even when `0xA4` is chosen the frame is still 20 bytes unless a larger MTU was *cached*.** Chunk
 >   size = `MtuConfig.getAvailableMtuSize = max(getMtu(sku) − 3, 20)`, and `getMtu` defaults to `23 ⇒ 20`
->   (`MtuConfig.java:18,48,62-65`). `MtuConfig` is an app-internal per-SKU store written only by
->   `saveMtuData(…)`; it is **not** the GATT-negotiated ATT MTU. A negotiated 247/512 MTU does not by
->   itself widen these writes.
+>   (`MtuConfig.java:18,48,62-65`). `MtuConfig` is a per-SKU **cache of the negotiated ATT MTU**:
+>   `saveMtuData(…)` stores the `onMtuChanged` result only on a successful exchange (status 0), so a failed
+>   or absent exchange leaves `getMtu` at its `23` default ⇒ usable size 20. The `512` passed to `requestMtu`
+>   is only the *requested* size and is never stored, so requesting a large MTU does not by itself widen these
+>   writes — the negotiated result must land in the cache first.
 >
 > **Second route to `0xA4` (correction to an earlier draft).** Beyond the `makeWriteController` gate
 > above, **`H60A6GraffitiParse.makeBleController` calls `Compose4DefWrite4Multi.d((byte)88, toBytes(), mtu)`
@@ -736,6 +738,11 @@ ON : 33 01 01 .. CK
 OFF: 33 01 00 .. CK
 Read: AA 01 00 .. CK   → response payload[0] = on/off
 ```
+
+`payload[0]` decode differs by path: the legacy controllers use `!= 0`
+(`SwitchController`/`SwitchControllerV2.java:30`), while the modern control-screen VMs use `== 1` —
+`ControllerSwitch.Companion.c` on the read reply (`ControllerSwitch.java:32`) and `ShareVM.N3` on the
+heartbeat frame's byte 2 (`ShareVM.java:1008`). They agree for `0`/`1` and differ only for a byte ≥ 2.
 
 ### Brightness — `BrightnessController` (`BrightnessController.java`)
 ```

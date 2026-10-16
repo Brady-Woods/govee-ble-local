@@ -267,9 +267,10 @@ Everything else stays `0xA3`: dialect-A scene controllers (`AbsMultipleControlle
 `:138`) and H6052 type-5 (`SceneControllerNoEventV2`).
 
 **Frame *size* depends on MTU, not type:** `MtuConfig.getAvailableMtuSize = max(getMtu(sku)−3, 20)`,
-default `23⇒20` (`MtuConfig.java:18,64`) — an app-internal store, **not** the negotiated ATT MTU (so a
-247/512 ATT MTU alone does not widen frames). H60A6 registers MTU support 512 (`NewDetailConfig:751`),
-applied only if `saveMtuData` cached it.
+default `23⇒20` (`MtuConfig.java:18,64`) — a per-SKU **cache** of the negotiated ATT MTU, written by
+`saveMtuData` from `onMtuChanged` only on a successful exchange (stale/absent ⇒ usable size 20). So a
+*requested* 247/512 MTU widens frames only once the negotiated result is cached. H60A6 registers MTU
+support 512 (`NewDetailConfig:751`), applied only if `saveMtuData` cached it.
 
 > **Reconciling the btsnoop (only `0xA3`, 20-byte):** the captured H60A6 uploads were DIY-type (`0xA3`)
 > or other devices — **not** a graffiti-scene apply. A graffiti scene (Aurora) uploads as `0xA4`.

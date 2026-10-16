@@ -395,7 +395,7 @@ types:
 
   # ── 0xAA READ replies (body[0] = validBytes[0] = frame offset 2). Verified vs each controller's parseValidBytes. ──
   switch_read_reply:
-    doc: "AA 01 reply (SwitchController.parseValidBytes): state @ body[0]. LIGHTS: 0=off else on. PLUGS (h5080 SwitchControllerV2): this SAME 0x01 reply is a RELAY BITMASK (bit i = relay i on), not boolean — interpret per device."
+    doc: "AA 01 reply (SwitchController.parseValidBytes): state @ body[0]. LIGHTS: 0=off else on (validBytes[0] != 0, SwitchController.java:30). The modern control-screen VM decodes this SAME byte as on == (body[0] == 1) (ControllerSwitch.Companion.c, base-classes11/com/govee/base2light/kt/general_controller/ControllerSwitch.java:32) — agrees for 0/1, differs only for a byte >= 2. PLUGS (h5080 SwitchControllerV2): this SAME 0x01 reply is a RELAY BITMASK (bit i = relay i on), not boolean — interpret per device."
     seq:
       - { id: state, type: u1 }
   brightness_read_reply:
@@ -805,8 +805,9 @@ types:
   # AND NewDiyEditConfig.isUseMtuCommand(effectByte) is true (effectByte in {0x5E,0x5D,0x20}). None of the
   # curated devices (H60A6/H61A8/H6047/H6641/H6008/H6052/H6006) reach it on their normal BLE routes —
   # they all emit 0xA3. Frame size = MtuConfig.getAvailableMtuSize = max(getMtu(sku)-3, 20), default 20
-  # (an app-internal per-SKU store, NOT the GATT-negotiated ATT MTU), so packets are 20 bytes unless a
-  # larger MTU was cached via saveMtuData. This models the START packet at MTU=20 (a 20-byte frame):
+  # (a per-SKU CACHE of the negotiated ATT MTU, default 23: saveMtuData stores the onMtuChanged result only
+  # on a successful exchange, so a failed/absent exchange leaves getMtu at 23 => usable size 20), so packets
+  # are 20 bytes unless a larger MTU was negotiated and cached. This models the START packet at MTU=20 (20-byte):
   # [A4][00][00][01][02][00][commByte@6][value@7..][BCC]. The terminator is a SEPARATE short packet
   # [A4 FF FF <BCC>] (not data-bearing) — unlike the 0xA3 form whose 0xFF terminator carries the last
   # chunk. Middle/large-MTU packets use a 2-byte-seq layout not modelled here. See GOVEE_BLE_GATT_PROTOCOL.md 4.4.

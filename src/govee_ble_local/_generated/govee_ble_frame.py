@@ -3125,7 +3125,7 @@ class GoveeBleFrame(KaitaiStruct):
 
 
     class SwitchReadReply(KaitaiStruct):
-        """AA 01 reply (SwitchController.parseValidBytes): state @ body[0]. LIGHTS: 0=off else on. PLUGS (h5080 SwitchControllerV2): this SAME 0x01 reply is a RELAY BITMASK (bit i = relay i on), not boolean — interpret per device."""
+        """AA 01 reply (SwitchController.parseValidBytes): state @ body[0]. LIGHTS: 0=off else on (validBytes[0] != 0, SwitchController.java:30). The modern control-screen VM decodes this SAME byte as on == (body[0] == 1) (ControllerSwitch.Companion.c, base-classes11/com/govee/base2light/kt/general_controller/ControllerSwitch.java:32) — agrees for 0/1, differs only for a byte >= 2. PLUGS (h5080 SwitchControllerV2): this SAME 0x01 reply is a RELAY BITMASK (bit i = relay i on), not boolean — interpret per device."""
         def __init__(self, _io, _parent=None, _root=None):
             super(GoveeBleFrame.SwitchReadReply, self).__init__(_io)
             self._parent = _parent
