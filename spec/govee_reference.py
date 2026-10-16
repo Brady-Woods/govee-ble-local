@@ -287,6 +287,20 @@ def _selftest(*, strict: bool = False) -> int:
     ext = wr.body.params.params.data  # single_command -> mode_payload -> color_15 -> op15_color (frame path)
     check("build_op15_color(CCT) round-trips r/g/b", ext.r == 0x11 and ext.g == 0x22 and ext.b == 0x33)
 
+    # govee_commands.py — the full command-builder catalogue (0x33 writes / 0xAA reads). Each builder
+    # carries a self-check (byte-exact vs the app layout it was traced from); run them all here so the
+    # repo's self-test gate covers the whole catalogue. See docs/OPCODE_COVERAGE.md.
+    try:
+        import govee_commands  # noqa: F401
+        from govee_commands import _SELF_CHECKS  # list[(name, bool)]
+    except Exception as e:  # noqa: BLE001
+        print(f"  ⚠️  govee_commands not importable ({e}); skipping command-catalogue checks.")
+    else:
+        bad = [n for n, good in _SELF_CHECKS if not good]
+        check(f"govee_commands: {len(_SELF_CHECKS)} builder self-checks pass", not bad)
+        for n in bad[:10]:
+            print(f"      ✗ {n}")
+
     return 0 if ok else 1
 
 

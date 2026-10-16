@@ -321,6 +321,29 @@ model, from which the shipped readers are generated).
   zeroes every data byte.
 
 ### Spec
+- `spec/govee_commands.py` (new): the full command-builder catalogue — 463 functions, one per
+  (opcode, variant) the Govee app emits across 99 opcodes, each traced to the decompiled app with a
+  `file:line` citation and a byte-exact self-check. `govee_reference._selftest` runs all 757 checks.
+  Companion to `govee_reference.py` (which keeps the framing primitives). Device-side cross-validated
+  against six firmware images; see `docs/FIRMWARE_VALIDATION.md`.
+- `spec/docs/OPCODE_COVERAGE.md` (new): opcode → builders index, with each opcode's verification tier
+  (firmware-confirmed vs source-modeled), whether `govee_ble.ksy` models it, the constant-only opcodes,
+  and the known gaps.
+- `spec/docs/DEVICE_CATALOGUE.md` (new): the app's full goodsType universe (390 values) vs the 79 the
+  spec models across 51 families, with the unmodeled lighting/plug families and the out-of-scope set,
+  from a source-grounded, adversarially-verified cross-check of the app's `GoodsType`/`Pact` registry.
+- `spec/docs/FIRMWARE_VALIDATION.md` (new): the device-firmware cross-validation of the frame model,
+  checksum and opcode inventory (six images: H6047 Telink + five RTL8720 Realtek), with the resolved
+  discrepancies (handshake is `0xE7`; `0xA5` is the app's mic framing; `0x66` is device-only).
+- `govee_ble.ksy`: `command` enum `0x25 preset_color` and `0xab dynamic_api_support` (were in the MD /
+  registry, missing from the enum); `pro_type 0xa5` + `mic_color_frame` (mic/music live-colour push — a
+  short, additive-checksum frame, deliberately NOT a `frame` case); standalone `bar_switch_write`
+  (`33 36` body `[left,right]`, not wired into `single_command` so a 0x36 frame's `params` stays raw);
+  `a3_start.comm_byte` doc gains V5=10 (compose) / V6=12 (H610B, shared with V7). Reader regenerated.
+- `spec/devices.yaml` / `devices.schema.json`: `mode_0d_kind` gains `rgb_kelvin_0d` (cube h6061 0x0d =
+  `[R,G,B,kelvin s16be]`, no tint); the `rgb_kelvin_tint` and h6188 `mode_read_color` notes corrected to
+  signed Kelvin (`getSignedShort`); the h60a6 `0xA3` END documented as empty for a short value
+  (`makeSendBytesV2`). `GOVEE_BLE_GATT_PROTOCOL.md` §17.3 ABNF `com-type` gains `%x04` (V4), `%x0A` (V5).
 - `govee_ble.ksy`: `soft_version_read` (`aa 06`, ASCII) and `device_info_hard_version` (`aa 07 03`,
   ASCII). Readers regenerated: these additions plus docstrings only (parsing unchanged).
 - 0xAC status reply (GATT §4.5, the §14 validation table and the §17.3 ABNF; `govee_ble.ksy` `multi_ac` /

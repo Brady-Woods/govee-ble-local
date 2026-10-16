@@ -1500,7 +1500,7 @@ a1-end       = %xA1 com-type %xFF 16OCTET
 a3-start     = %xA3 %x00 %x01 count com-type 14OCTET
 a3-data      = %xA3 index 17OCTET
 a3-end       = %xA3 %xFF 17OCTET
-com-type     = %x01 / %x02 / %x07 / %x0C       ; sceneType 1 / 2 / 3 / 6
+com-type     = %x01 / %x02 / %x04 / %x07 / %x0A / %x0C ; V1 / V2 / V4 / V3 / V5(compose) / V6(H610B)
 
 ; ── single-request / multi-reply read (0xAC) ──
 ac-request   = %xAC command len-prefix 1*OCTET ; e.g. AC 03 02 41 30

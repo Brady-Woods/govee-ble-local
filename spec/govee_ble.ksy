@@ -61,6 +61,7 @@ enums:
     0xa4: multi_write_v2   # MTU-sized variant (makeSendBytesMtu; commByte@byte6). RARE: only cmd 88 + effect byte in {0x5E,0x5D,0x20}; no curated device uses it (see multi_a4).
     0xac: multi_reply_read # single-request / multi-reply status read
     0xe7: handshake        # AES/GCM session handshake
+    0xa5: mic              # mic / music live-colour push. NOT a 20-byte XOR frame: it is a SHORT frame with an ADDITIVE checksum (see mic_color_frame), so it is NOT a case of `frame` above. AbsMicController.getProType = (byte)-91 = 0xA5 (base2light/ble/mic/controller/AbsMicController.java:55). Device-confirmed: the length-exempt byte[0]==0xA5 path in the RTL8720 dispatchers (FIRMWARE_VALIDATION.md). Distinct from command 0xA5 local_color_read (sent under proType 0xAA).
 
   command:
     # Shared catalog (BleProtocolConstants). Devices extend this set.
@@ -79,6 +80,7 @@ enums:
     0x20: wifi_hard_version
     0x23: new_timer
     0x24: read_ic_point
+    0x25: preset_color            # BleProtocolConstants.SINGLE_PRE_SET_COLOR (37). Firmware-confirmed: H6008/H60A1/H60A6 dispatch on it (FIRMWARE_VALIDATION.md §2).
     0x26: take_photo_or_colortemp_type
     0x30: light_direction_or_zone
     0x31: camera_position
@@ -94,6 +96,7 @@ enums:
     0xa5: local_color_read
     0xa9: white_balance
     0xaa: check_light
+    0xab: dynamic_api_support    # BleProtocolConstants.SINGLE_DYNAMIC_API_SUPPORT / MULTI_READ_AB (-85). Firmware-confirmed: H6006/H6008/H60A1/H60A6 all dispatch on it (FIRMWARE_VALIDATION.md §2). NOTE: distinct from pro_type 0xab (bbq_status, byte 0).
     0xb1: secret_read
     0xb2: secret_write
     0xb5: plug_sync_time
@@ -202,6 +205,19 @@ types:
             'command::sync_time': sync_time_payload
             'command::plug_sync_time': plug_sync_time_payload
         doc: Unmatched commands parse as a raw byte array (payload up to 17 bytes).
+
+  # 33 36 bar-write body, modeled as a STANDALONE type (not a single_command case on purpose: existing
+  # clients read a 0x36 frame's `params` as raw bytes, so the frame-switch default must stay raw for 0x36).
+  # Parse a 0x36 write body explicitly with this type when you want the fields.
+  bar_switch_write:
+    doc: >-
+      33 36 bar on/off write (H6047 two-bar lights): body = [left, right] (Controller4ExtBytes
+      [0x36, left, right], NewDetailVm.D5; confirmed byte-exact vs the app). Same [left, right] the AA 36
+      reply echoes (bar_switch_read); the reply's 3rd byte (movie/feast switch) is read-only, not part of
+      the write. left/right are logical positions (swappable at setup, h6047/add/LightPosAc), not fixed bars.
+    seq:
+      - { id: left, type: u1, doc: "1 = left bar on, 0 = off" }
+      - { id: right, type: u1, doc: "1 = right bar on, 0 = off" }
 
   # ── proType 0xAA (read) — DISTINCT from write; NOT the 0x33 payload types ──
   # A read REQUEST is [command][selector]; a read REPLY is [command][device-state echo]. The byte after
@@ -781,7 +797,7 @@ types:
           count, accepts the 0xFF END only when (frames after START, END included) + 1 == count, and copies
           17 bytes from END bytes 2..18. So count 2 with an empty END is accepted, and the count includes
           START and END.
-      - { id: comm_byte, type: u1, doc: "commByte @ byte4: legacy scene version constant (V1=1 V2=2 V3=7 V6=12) OR a device DIY/graffiti protocol code (H60A6 = 0x58). NOT value[0]|0x08. NOTE: the graffiti scene builder can instead emit proType 0xA4 (multi_a4), where commByte moves to byte6. See GOVEE_BLE_GATT_PROTOCOL.md 4.4" }
+      - { id: comm_byte, type: u1, doc: "commByte @ byte4: legacy scene version constant (V1=1 V2=2 V4=4 V3=7 V5=10 compose V6=12 H610B; comType 12 is shared by V6/V7) OR a device DIY/graffiti protocol code (H60A6 = 0x58). NOT value[0]|0x08. NOTE: the graffiti scene builder can instead emit proType 0xA4 (multi_a4), where commByte moves to byte6. See GOVEE_BLE_GATT_PROTOCOL.md 4.4" }
       - { id: inline_value, size: 14, doc: "first (15 - commBytes.length) value bytes; 14 for a 1-byte commByte. Value = controller.getValue() (DIY/graffiti = re-encoded toBytes(), not the raw cloud blob). Opaque here — reassemble across frames then parse with the scene-upload VALUE types below (diy_value / graffiti_v3_value / rgbic_scene_value / rgb_scene_value / graffiti_v2_value per commByte)" }
 
   # ── proType 0xA4 : MTU-sized MultipleControllerCommV1 dialect (makeSendBytesMtu, :409) ──
@@ -845,6 +861,20 @@ types:
         doc: |
           V1 (AES): random-padded, then AES-ECB(16)+RC4(4) with the fixed PSK.
           V2 (GCM): package-counter + AES-GCM. See GOVEE_BLE_GATT_PROTOCOL.md §9.
+
+  # ── proType 0xA5 : mic / music live-colour push (NOT a 20-byte frame) ───
+  # DELIBERATELY NOT a case of `frame`: this frame is SHORT (no zero-pad to 20) and its trailer is an
+  # 8-bit ADDITIVE checksum (sum of all preceding bytes & 0xFF), not the XOR-over-0..18 that `frame`'s
+  # `checksum` documents. AbsMicController.a builds [0xA5, cmd, data…] then appends sum8
+  # (base2light/ble/mic/controller/AbsMicController.java:23-52). Parse a raw 0xA5 frame with this type.
+  # Example (MicSetRgbController, cmd 0x02, sub 0x83): A5 02 83 R G B <sum8> — 7 bytes. The device side
+  # is the length-exempt byte[0]==0xA5 path in the RTL8720 dispatchers (see FIRMWARE_VALIDATION.md).
+  mic_color_frame:
+    seq:
+      - { id: pro_type, contents: [0xa5] }
+      - { id: command, type: u1, doc: "mic sub-command (e.g. 0x02 set-rgb, with sub 0x83; 0x90 colour-cmd)" }
+      - { id: data, size: _io.size - 3, doc: "command-specific body (e.g. [0x83, R, G, B] for set-rgb)" }
+      - { id: checksum, type: u1, doc: "8-bit ADDITIVE checksum: sum(all preceding bytes) & 0xFF (AbsMicController.a; NOT the frame XOR)" }
 
   # ══════════════════════════════════════════════════════════════════════════
   # Scene-upload VALUE layer — parse a REASSEMBLED (de-chunked) upload value.

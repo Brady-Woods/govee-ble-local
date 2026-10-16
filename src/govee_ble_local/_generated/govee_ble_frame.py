@@ -51,6 +51,7 @@ class GoveeBleFrame(KaitaiStruct):
         wifi_hard_version = 32
         new_timer = 35
         read_ic_point = 36
+        preset_color = 37
         take_photo_or_colortemp_type = 38
         preview_effect = 39
         delete_scene = 40
@@ -92,6 +93,7 @@ class GoveeBleFrame(KaitaiStruct):
         local_color_read = 165
         white_balance = 169
         check_light = 170
+        dynamic_api_support = 171
         plug_delay = 176
         secret_read = 177
         secret_write = 178
@@ -136,6 +138,7 @@ class GoveeBleFrame(KaitaiStruct):
         multi_read = 162
         multi_write_v1 = 163
         multi_write_v2 = 164
+        mic = 165
         read = 170
         bbq_status = 171
         multi_reply_read = 172
@@ -327,6 +330,23 @@ class GoveeBleFrame(KaitaiStruct):
             if (not (self._io.is_eof())):
                 pass
 
+
+
+    class BarSwitchWrite(KaitaiStruct):
+        """33 36 bar on/off write (H6047 two-bar lights): body = [left, right] (Controller4ExtBytes [0x36, left, right], NewDetailVm.D5; confirmed byte-exact vs the app). Same [left, right] the AA 36 reply echoes (bar_switch_read); the reply's 3rd byte (movie/feast switch) is read-only, not part of the write. left/right are logical positions (swappable at setup, h6047/add/LightPosAc), not fixed bars."""
+        def __init__(self, _io, _parent=None, _root=None):
+            super(GoveeBleFrame.BarSwitchWrite, self).__init__(_io)
+            self._parent = _parent
+            self._root = _root
+            self._read()
+
+        def _read(self):
+            self.left = self._io.read_u1()
+            self.right = self._io.read_u1()
+
+
+        def _fetch_instances(self):
+            pass
 
 
     class BrightnessEffect(KaitaiStruct):
@@ -1749,6 +1769,26 @@ class GoveeBleFrame(KaitaiStruct):
             self.move_flags = self._io.read_u1()
             self.p_c = self._io.read_u1()
             self.p_d = self._io.read_u1()
+
+
+        def _fetch_instances(self):
+            pass
+
+
+    class MicColorFrame(KaitaiStruct):
+        def __init__(self, _io, _parent=None, _root=None):
+            super(GoveeBleFrame.MicColorFrame, self).__init__(_io)
+            self._parent = _parent
+            self._root = _root
+            self._read()
+
+        def _read(self):
+            self.pro_type = self._io.read_bytes(1)
+            if not self.pro_type == b"\xA5":
+                raise kaitaistruct.ValidationNotEqualError(b"\xA5", self.pro_type, self._io, u"/types/mic_color_frame/seq/0")
+            self.command = self._io.read_u1()
+            self.data = self._io.read_bytes(self._io.size() - 3)
+            self.checksum = self._io.read_u1()
 
 
         def _fetch_instances(self):

@@ -157,10 +157,10 @@ scenes:
       commByte@byte6). The live default likely depends on MTU negotiation. NEEDS an official-app
       btsnoop of an H60A6 scene upload to settle. See dialects.diy_graffiti.builders.
     builder: "MultipleControllerCommV1.makeSendBytesV2/V1 (0xA3 form) or makeSendBytesMtu (0xA4 MTU form)"
-    frame_0xa3: "START: A3 00 01 <packetCount> <commBytes...> <inline value>; MIDDLE: A3 <seq> <17 value>; END: A3 FF <final <=17 value> (data-bearing)"
+    frame_0xa3: "START: A3 00 01 <packetCount> <commBytes...> <inline value>; MIDDLE: A3 <seq> <17 value>; END: A3 FF [<final <=17 value>]. END carries data ONLY when len(value) > 15 - len(commBytes); for a short value (<= 15 - len(commBytes)) the whole value fits in START, packetCount is 2, and END is EMPTY (MultipleControllerCommV1.makeSendBytesV2)"
     packet_count: "total frame count (start + middles + 0xFF end)"
     inline_value_bytes: "15 - len(commBytes)  (0xA3 form)"
-    terminator: "seq 0xFF, carries the last data chunk (NOT an empty frame)"
+    terminator: "seq 0xFF; data-bearing for a long value, but EMPTY when the value fit entirely in START (short-value case, packetCount 2)"
     dialects:
       legacy_scene:
         comm_byte: "scene-version constant: V1=0x01, V2=0x02, V3=0x07, V6=0x0C (MULTI_V*_NEW_SCENES), chosen by sceneType via ScenesOp.parseSceneV1"
@@ -626,7 +626,7 @@ families:
     submodes: { color: "0x0d", scene: "0x04", music: "0x03", diy: "0x0a" }
     opcodes:
       - { name: color_write, cmd: "0x05", payload: "RGB: [0x0d, R, G, B, 0...] (Bytes.f); CCT: [0x0d, ff, ff, ff, kelvin u2be, tintR, tintG, tintB] (Config.GM -> Bytes.A(kelvin, ColorTemperatureType RGB_WHITE)); tint = first colour of Constant's colour->Kelvin table whose Kelvin equals the request exactly (getTemColorByKelvin), else zeros", note: "RGB PICK (7.7.02): a picked colour that is exactly one of the Kelvin tint colours (Constant.k2, 178 colours) whose Kelvin lies in kelvin_range (inclusive) is sent instead of the RGB frame as [0x0d, PICKED R, G, B, kelvin u2be, first tint of that Kelvin] (the picked colour may be the second colour of its step; this form is used by BOTH the h6006 and h6188 schemes): Config.bu = KelvinConfig.i(c) ? Bytes.p(c, KelvinConfig.c(c)) : Bytes.f(c). Library: build.rgb_as_kelvin / color_rgb_frames. (h6188 slider CCT stays the white-slot Bytes.A form)." }
-      - { name: mode_read_color, cmd: "0x05", readable: true, payload: "AA 05 0D [R, G, B, kelvin u2be (getSignedShort), tintR, tintG, tintB]; kelvin != 0 => colour-temperature mode (colour shown = tint), else RGB (ModeParseStrategyConfig.a)" }
+      - { name: mode_read_color, cmd: "0x05", readable: true, payload: "AA 05 0D [R, G, B, kelvin s2be (getSignedShort bArr[3],bArr[4]; signed, big-endian), tintR, tintG, tintB]; parsed by ModeParseStrategyConfig.a.a() (the H6188 default — VM4Light.v5 else branch): signed kelvin != 0 => shown colour = tint (bytes 5-7), else RGB (bytes 0-2); sub-modes 0x15/0x0b/0x02 take the same layout" }
       - { name: scene_activate, cmd: "0x05", payload: "[0x04, code u1] — fixed list Scenes4H6188.g {4 Movie, 5 Dating, 13 Reading, 23 Bright, 24 Aurora, 9 Candlelight, 16 Energetic, 7 Romantic, 17 Gradient}; read-back AA 05 04 [code lo, code hi] (SubMode4Scene default parse)" }
       - { name: brightness, cmd: "0x04", readable: true, payload: "[raw 20..254]; percent p -> (int)(20 + (p-1)*2.37f) (NumberUtil.calculateProgress), raw -> ceil((raw-20)/2.37f)+1 (calculatePercent)" }
     specs: { segments: 0, kelvin_range: [2000, 9000], brightness_range: [20, 254], brightness_scaling: "1-100 -> 20-254 (BrightnessConfig version 0)", scene_versions: [] }
@@ -640,7 +640,7 @@ families:
     # Glide Hexa. Phase 1 = whole-device control only (what the app sends with no per-panel selection).
     # The cubelight package also serves H6063/H6066/H6067/H6069/H606A (other goodsTypes, other panel counts
     # and Support gates): not modelled here.
-    client_profile: { has_brightness: true, color_scheme: h6061, mode_0d_kind: rgb_kelvin_tint, wire_cipher: runtime }   # 0x0d report = [R,G,B,kelvin u2be] (no tint bytes; the zero padding reads as tint 0)
+    client_profile: { has_brightness: true, color_scheme: h6061, mode_0d_kind: rgb_kelvin_0d, wire_cipher: runtime }   # 0x0d report = [R,G,B,kelvin s16be], 5-byte body, no tint bytes; signed kelvin > 0 => CCT and the colour is DERIVED from kelvin (CubeNewInfo4Detail.U)
     models: [H6061]
     goods_types: [51]   # Support.addSupportPact: pact (1,1), (1,2), (1,3)
     delivery: feature_split
