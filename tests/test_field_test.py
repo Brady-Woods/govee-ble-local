@@ -54,6 +54,7 @@ def test_masks_address_serial_and_wifi_mac(masking: ModuleType, tmp_path: Path) 
     assert {r["addr"] for r in out} == {"5C:E7:53:xx:xx:xx"}
     assert out[1]["plain"] == "aa0710" + "0" * (len(info) - 6) and out[1]["wire"] is None
     assert out[0]["plain"] == rows[0]["plain"] and out[2]["plain"] == rows[2]["plain"]  # untouched
+    assert all(r["wire"] is None for r in out)   # wire bytes (ciphertext, handshake) are never kept
     raw = frames.read_text().lower()
     assert "5ce753f47457" not in raw and "f4:74:57" not in raw and "1122334455" not in raw
     assert masking.redact_frames(tmp_path / "missing.jsonl", "x") == 0
@@ -63,10 +64,12 @@ def test_masks_address_serial_and_wifi_mac(masking: ModuleType, tmp_path: Path) 
 
 
 def test_snapshot_redacts_identifiers_even_if_a_plan_asks_for_them(masking: ModuleType) -> None:
-    st = SimpleNamespace(is_on=True, serial_number="SER123", wifi_mac="AA:BB:CC:DD:EE:FF", extra=7)
-    snap = masking.snapshot(st, ("is_on", "serial_number", "wifi_mac", "extra", "missing"))
+    st = SimpleNamespace(is_on=True, serial_number="SER123", wifi_mac="AA:BB:CC:DD:EE:FF", extra=7,
+                         device_id="SER123", ble_mac="AA:BB:CC:DD:EE:00")
+    keys = ("is_on", "serial_number", "wifi_mac", "extra", "missing", "device_id", "ble_mac")
+    snap = masking.snapshot(st, keys)
     assert snap == {"is_on": True, "serial_number": "<redacted>", "wifi_mac": "<redacted>",
-                    "extra": 7, "missing": None}
+                    "extra": 7, "missing": None, "device_id": "<redacted>", "ble_mac": "<redacted>"}
 
 
 # --- registry + discovery of plans ------------------------------------------------------------
@@ -105,6 +108,8 @@ def test_match_plan_sku(runner: Any) -> None:
     assert m("whatever", "h6188", ["H6188"]) == "H6188"          # library-identified SKU wins
     assert m("GV61881A2B", None, ["H6188"]) == "H6188"           # bare-GV name, parsed like the app
     assert m("Weird 6188 name", None, ["H6188"]) == "H6188"      # digits-in-name fallback
+    assert m("ihoment_H6006_6188", "H6006", ["H6188"]) is None   # an H6006 whose MAC ends in 61:88
+    assert m("Govee_H6008_6047", None, ["H6047"]) is None        # the parsed SKU decides, not the digits
     assert m("ihoment_H6047_1A2B", None, ["H6188"]) is None
     assert m("", None, ["H6188"]) is None
 

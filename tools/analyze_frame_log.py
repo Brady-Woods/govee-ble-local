@@ -12,9 +12,10 @@ from __future__ import annotations
 import pathlib
 import sys
 
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "src"))
+_SRC = pathlib.Path(__file__).resolve().parent.parent / "src"
+sys.path.insert(0, str(_SRC))
 
-from govee_ble_local.debug import main
+from govee_ble_local.debug import main  # noqa: E402 - needs the sys.path entry above
 
 if __name__ == "__main__":
     raise SystemExit(main())

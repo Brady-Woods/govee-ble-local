@@ -302,6 +302,23 @@ model, from which the shipped readers are generated).
   keeping only each burst's 7-byte first-chunk header so `govee-ble-analyze` still spots a lost chunk. It is
   redacted only after `framelog.flush()` (at once if that fails, never left raw), and the report and capture
   go through a fresh temp file and an atomic rename, never a planted symlink.
+- `tools/decrypt_btsnoop.py` decodes the exact-length 0xA3 / 0xA4 / 0xA6 multi-packet frames the app sends
+  (MTU-sized and short; `MultipleControllerCommV1.makeSendBytesMtu0xA6`) instead of dropping them, and
+  dumps 0xA6 by default (`--dump a1,a3,a4,a6`; `--starts` includes 0xA6). It takes a session key only from
+  an `e7 01` reply after the host's `e7 01` on the same connection and keeps keys per connection; it and
+  `btsnoop_mtu_scan.py` refuse captures that are not H4 (datalink 1002) instead of reporting nothing.
+- `tools/fetch_scenes.py`: `--audit` honours the SKUs given, shows their real scene versions and puts every
+  scene in one bucket; a re-fetch replaces stale upload metadata and picks up changed public blobs (keeping
+  a `--resolve`d blob only over the 0xFF stub); a corrupt catalog or failed write fails that SKU instead of
+  the run. `tools/power_semantics_probe.py` restores the H6047 with its own `33 36` bar frame and prints
+  `RESTORE FAILED` when a restore isn't acked or the starting state was never read; `h60a6_live_check.py`
+  matches segment colours by index and `--capture` uses `frame_log=`.
+- `tools/field_test`: the report and frame capture meant for a public GitHub issue no longer leak the
+  Bluetooth address. Error text (most transport errors start with the address) is scrubbed of the address in
+  any case and form, the Wi-Fi MAC derived from it, every other MAC-shaped token (BlueZ's `dev_XX_XX_...` path
+  included) and the MAC digits of Govee names (`ihoment_H6188_xxxx`), and the whole report is scrubbed again
+  as it is saved. The capture keeps the first 0xAC chunk's header, so a lost chunk is still detectable, and
+  zeroes every data byte.
 
 ### Spec
 - `govee_ble.ksy`: `soft_version_read` (`aa 06`, ASCII) and `device_info_hard_version` (`aa 07 03`,
