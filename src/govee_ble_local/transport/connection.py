@@ -82,6 +82,7 @@ from ..wire.build import (
     CMD_SECRET_READ,
     CMD_SECRET_WRITE,
     PRO_MULTI_A1,
+    PRO_MULTI_A2,
     PRO_MULTI_A3,
     PRO_MULTI_A4,
     PRO_MULTI_AC,
@@ -90,6 +91,7 @@ from ..wire.build import (
     PRO_WRITE,
 )
 from ..wire.describe import describe_frame
+from ..wire.reassemble import burst_chunks
 from . import handshake
 from .framelog import Direction, FrameLog
 
@@ -102,7 +104,7 @@ _FRAMES = logging.getLogger("govee_ble_local.frames")
 
 # proTypes a device legitimately sends us; anything else is surfaced as a warning.
 _KNOWN_RX_PRO_TYPES: Final = frozenset({
-    PRO_WRITE, PRO_READ, PRO_MULTI_AC, PRO_NOTIFY, PRO_MULTI_A1,
+    PRO_WRITE, PRO_READ, PRO_MULTI_AC, PRO_NOTIFY, PRO_MULTI_A1, PRO_MULTI_A2,
     PRO_MULTI_A3, PRO_MULTI_A4, handshake.HANDSHAKE_OPCODE,
 })
 # Unsolicited pushes accumulate between operations; never let them grow unbounded.
@@ -808,7 +810,10 @@ class GoveeConnection:
         """Send a query trigger and collect the resulting NOTIFY burst.
 
         Returns the decrypted frames received until a terminal frame (an
-        ``opcode`` frame whose byte 1 == ``terminal``) arrives, the device goes
+        ``opcode`` frame whose byte 1 == ``terminal``) arrives, the 0xAC burst is
+        complete (``opcode`` 0xAC: :func:`..wire.reassemble.burst_chunks`, the app's
+        rule, so a one-packet reply or a burst whose last packet carries its position
+        instead of 0xFF ends there too), the device goes
         quiet for ``idle_gap`` after its last ``opcode`` frame (a lost terminator
         must not cost the whole timeout), or ``timeout`` elapses. Frames already
         queued when the budget runs out are still collected. ``idle_gap`` is armed
@@ -823,6 +828,7 @@ class GoveeConnection:
             loop = asyncio.get_running_loop()
             deadline = loop.time() + timeout
             frames: list[bytes] = []
+            burst: list[bytes] = []   # the 0xAC chunks so far, when collecting a status burst
             seen_opcode = False
             while True:
                 remaining = deadline - loop.time()
@@ -839,6 +845,10 @@ class GoveeConnection:
                     seen_opcode = True
                     if dec[1] == terminal:
                         break
+                    if opcode == PRO_MULTI_AC:
+                        burst.append(dec)
+                        if burst_chunks(burst)[1]:
+                            break
             return frames
 
         return await self._run(op, extend_warm=False)

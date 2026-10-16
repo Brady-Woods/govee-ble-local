@@ -102,7 +102,8 @@ def burst_chunks(frames: Iterable[bytes]) -> tuple[list[bytes], bool, int]:
 
     Completeness is the app's rule (AbsController4BleSingleSendMultiBack.isSameController / .onResult):
     the first chunk declares the packet count, and the last packet (index 0xFF, or index count-1,
-    which the app accepts too) is taken only once packets 0..count-2 are all in. So a burst that lost
+    which the app accepts too; the first of them to arrive once the others are in, see
+    :func:`_last_chunk`) is taken only once packets 0..count-2 are all in. So a burst that lost
     the chunks just before 0xFF, or a lone 0xFF chunk, is incomplete. A one-packet reply (count 1) is
     complete by itself (``g()`` hands it straight to ``l()``, no 0xFF chunk). A lastLen too long for
     its packet makes the app reject the whole burst before it copies a byte (``g()`` returns -1 and
@@ -113,11 +114,13 @@ def burst_chunks(frames: Iterable[bytes]) -> tuple[list[bytes], bool, int]:
     arrives early is ignored and the read then times out; here a burst whose chunks all arrived, in
     any order, is complete."""
     unique: dict[int, bytes] = {}
+    arrival: dict[int, int] = {}   # chunk index -> arrival position of its kept (first) copy
     conflicts = 0
-    for fr in frames:
+    for position, fr in enumerate(frames):
         if len(fr) < MIN_CHUNK_LEN:
             _LOGGER.debug("status burst: skipping short chunk (%d bytes)", len(fr))
             continue
+        arrival.setdefault(fr[1], position)
         kept = unique.setdefault(fr[1], fr)
         if kept is not fr and kept != fr:
             conflicts += 1
@@ -142,7 +145,7 @@ def burst_chunks(frames: Iterable[bytes]) -> tuple[list[bytes], bool, int]:
     while index < stop and index in unique and index != _LAST_INDEX:
         ordered.append(unique[index])
         index += 1
-    last = unique.get(_LAST_INDEX, unique.get(total - 1)) if total >= 2 else None
+    last = _last_chunk(unique, arrival, total, len(ordered)) if total >= 2 else None
     complete = last is not None and len(ordered) == total - 1
     if complete and last is not None:
         ordered.append(last)
@@ -152,6 +155,21 @@ def burst_chunks(frames: Iterable[bytes]) -> tuple[list[bytes], bool, int]:
             sorted(unique), total, len(ordered),
         )
     return ordered, complete, conflicts
+
+
+def _last_chunk(unique: dict[int, bytes], arrival: dict[int, int], total: int, prefix: int) -> bytes | None:
+    """The chunk taken as the last packet of a ``total``-packet burst whose first ``prefix`` packets are
+    in hand: as the app takes it, the first to arrive of index 0xFF and index ``total - 1``
+    (AbsController4BleSingleSendMultiBack.isSameController accepts either once ``backPos`` is
+    ``total - 1``, and the first one ends the read), among those that arrived after the prefix was
+    complete; a candidate that came earlier the app had refused ("END_PKG_ORDER"). When none came
+    after it, the earliest candidate is taken anyway: the same out-of-order leniency as the prefix."""
+    candidates = [i for i in {_LAST_INDEX, total - 1} if i in unique]
+    if not candidates:
+        return None
+    done = max((arrival[i] for i in range(prefix)), default=-1)
+    late = [i for i in candidates if arrival[i] > done]
+    return unique[min(late or candidates, key=arrival.__getitem__)]
 
 
 def _join(chunks: list[bytes], complete: bool) -> bytes:

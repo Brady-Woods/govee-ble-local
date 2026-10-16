@@ -294,8 +294,9 @@ def test_named_constants_in_use() -> None:
 
 
 def test_known_rx_types_unchanged() -> None:
+    # 0xA2 (multi_read, device -> app in the ksy) joined the set: it is no longer logged as unknown.
     assert frozenset(
-        {0x33, 0xAA, 0xAC, 0xEE, 0xA1, 0xA3, 0xA4, 0xE7}
+        {0x33, 0xAA, 0xAC, 0xEE, 0xA1, 0xA2, 0xA3, 0xA4, 0xE7}
     ) == conn_mod._KNOWN_RX_PRO_TYPES
 
 
@@ -401,7 +402,8 @@ async def test_stale_frames_are_drained_before_unacked_sends(monkeypatch) -> Non
 
 async def test_query_collects_frames_queued_when_budget_runs_out(monkeypatch) -> None:
     fake = FakeGovee(encrypted=False)
-    burst = [frame(0xAC, 0x00, 1), frame(0xAC, 0x01, 2), frame(0xAC, 0xFF, 3)]
+    # A three-packet burst: the first chunk declares 3 packets (u16le) and a 1-byte last packet.
+    burst = [frame(0xAC, 0x00, 0x03, 0x00, 0x01), frame(0xAC, 0x01, 2), frame(0xAC, 0xFF, 3)]
 
     def deliver_whole_burst_now(client, plain: bytes) -> None:
         if plain[0] == 0xAC:

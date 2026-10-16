@@ -19,7 +19,8 @@ the issues into a coverage report). It answers two questions about a plaintext f
 Severities are consumed by the analyzer only; the runtime does not map them to log levels.
 
 ``0xAC`` status replies are multi-frame bursts and can't be judged one frame at a time —
-use :func:`analyze_status_bursts` for those.
+use :func:`analyze_status_bursts` for those. Each chunk's framing (length, BCC) is still checked
+here, and the TX status request is read with the reader.
 """
 from __future__ import annotations
 
@@ -40,6 +41,10 @@ Direction = Literal["rx", "tx", "?"]
 Severity = Literal["hard", "soft", "artifact"]
 Issue = tuple[Severity, str]
 
+# 0xAC first-chunk header [ac, 00, packets u16le, lastLen, cmd, sub] and later-chunk header [ac, index]
+# (AbsController4BleSingleSendMultiBack.g / .i): the bytes the capture masking keeps.
+_AC_FIRST_HEADER = 7
+_AC_CHUNK_HEADER = 2
 # Variable-length multi-packet upload chunks (0xA1 / 0xA3 / 0xA4; e.g. the 19-byte 0xA4 END).
 _UPLOAD_CHUNK_TYPES = (_ProType.multi_write, _ProType.multi_write_v1, _ProType.multi_write_v2)
 
@@ -64,9 +69,7 @@ def describe_frame(plain: bytes, direction: str = "?") -> tuple[str, list[Issue]
 
     ``direction`` is a :data:`Direction`; only ``"rx"`` changes the reading."""
     if plain and plain[0] == _ProType.multi_reply_read:
-        # 0xAC status request/reply — a reply chunk is NOT parseable alone (it's a burst
-        # fragment). Handled in analyze_status_bursts; don't try to parse it here.
-        return ("status-chunk", [])
+        return _describe_status(plain, direction)
     if plain and plain[0] in _UPLOAD_CHUNK_TYPES and len(plain) != FRAME_LEN:
         return (f"multi-chunk/0x{plain[0]:02x}", [])
     if len(plain) != FRAME_LEN:
@@ -93,6 +96,36 @@ def describe_frame(plain: bytes, direction: str = "?") -> tuple[str, list[Issue]
     if pt == _ProType.notify:
         return _describe_notify(plain, f.body)
     return (pt.name, [])                    # multi_* / handshake: structural only.
+
+
+def chunk_redacted(chunk: bytes) -> bool:
+    """True for a 0xAC reply chunk whose data and BCC were zeroed by the field-test capture masking
+    (``tools/field_test/masking.py``: the first chunk keeps its 7-byte header, the others
+    ``ac <index>``). Such a chunk fails the checksum but is not corrupt; :func:`_header_redacted` is
+    the stricter first-chunk test for a capture masked before the header was kept."""
+    keep = _AC_FIRST_HEADER if len(chunk) > 1 and chunk[1] == 0x00 else _AC_CHUNK_HEADER
+    return len(chunk) == FRAME_LEN and not any(chunk[keep:])
+
+
+def _describe_status(plain: bytes, direction: str) -> tuple[str, list[Issue]]:
+    """0xAC: framing checked as for any frame (length, BCC: the runtime drops a chunk that fails
+    them). A TX frame is the status request, which the spec models (``multi_ac``) and is read with
+    the reader; an RX chunk is a burst fragment, not parseable alone
+    (:func:`status_burst_report` judges the bursts). A redacted chunk (:func:`chunk_redacted`) is
+    labelled as a chunk without an issue."""
+    if len(plain) != FRAME_LEN:
+        return (f"len={len(plain)}", [("artifact", f"not {FRAME_LEN} bytes (len {len(plain)})")])
+    if direction != "tx" and chunk_redacted(plain) and not checksum_ok(plain):
+        return ("status-chunk", [])
+    if not checksum_ok(plain):
+        return ("bad_checksum", [("artifact", "invalid BCC — the runtime drops this 0xAC chunk")])
+    if direction != "tx":
+        return ("status-chunk", [])
+    try:
+        req = _F.from_bytes(plain).body
+    except Exception as exc:  # noqa: BLE001 - a request the spec can't read is a gap
+        return ("parse_error", [("hard", f"kaitai parse failed on the 0xAC request: {exc!r}")])
+    return (f"status-request/{len(req.requested_types)}", [])
 
 
 def _describe_ack(plain: bytes, body: Any) -> tuple[str, list[Issue]]:
@@ -271,8 +304,12 @@ def status_burst_report(rx_ac: list[bytes]) -> StatusBurstReport:
     A burst from a redacted field-test capture (first chunk zeroed past ``ac 00``,
     :func:`_header_redacted`) has no packet count and no payload: it is counted in
     :attr:`StatusBurstReport.redacted`, judged by its chunk indices (:func:`_redacted_framing`)
-    and never walked."""
+    and never walked. A chunk that fails the checksum is left out, as the runtime drops it
+    (:func:`describe_frame` reports it as an artifact)."""
     report = StatusBurstReport()
+    # The runtime drops a chunk that fails the checksum before reassembly (connection._handle_notify),
+    # so the bursts are judged without them; a redacted chunk's zeroed BCC is not a failure.
+    rx_ac = [fr for fr in rx_ac if checksum_ok(fr) or chunk_redacted(fr)]
     for burst in _split_bursts(rx_ac):
         redacted = _header_redacted(burst[0])   # burst[0] is always its index-0x00 chunk
         if redacted:

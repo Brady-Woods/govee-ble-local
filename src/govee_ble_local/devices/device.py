@@ -36,7 +36,7 @@ from ..scenes import scene_upload_frames as _scene_upload_frames
 from ..transport.connection import GoveeConnection
 from ..wire import build, parse, reassemble
 from . import _fold, _readback
-from .brightness import percent_to_raw
+from .brightness import percent_to_device
 from .profile import DeviceProfile, profile_for
 
 _LOGGER = logging.getLogger(__name__)
@@ -110,12 +110,14 @@ def _check_segment_count(count: int) -> None:
             f"segment count must be an integer in 1..{build.MAX_MASK_SEGMENTS}, got {count!r}")
 
 
-def _mask(indices: Sequence[int], segments: int = 0) -> int:
-    """Segment indices -> mask bits. ``segments`` is the device's segment count: up to 16
-    the whole 2-byte mask is addressable (so a 10-segment device still accepts 0..15, as it
-    always has); above 16 the app's mask is exactly ``segments`` bits, so indices must be
-    below it."""
-    limit = max(build.LEGACY_MASK_SEGMENTS, segments)
+def _mask(indices: Sequence[int], segments: int) -> int:
+    """Segment indices -> mask bits. ``segments`` is the device's segment count, and indices must be
+    below it: the app's position set has exactly that many positions (the piece count), and its mask
+    encoders can't set a bit past it (``BleUtils.Y`` copies the set into the 2-byte mask's low bits;
+    above 16 ``BleUtils.X`` writes exactly ``segments`` bits). A count of 0 (a custom profile given
+    SEGMENTS without segments; the profile table refuses that) keeps the 2-byte mask's 16 positions,
+    so the colour scheme's own refusal (GoveeBleNotSupported) still comes first."""
+    limit = segments or build.LEGACY_MASK_SEGMENTS
     m = 0
     for i in indices:
         if isinstance(i, bool) or not isinstance(i, int) or not 0 <= i < limit:
@@ -530,9 +532,9 @@ class Device:
     # -- power / brightness -------------------------------------------------
     def _brightness_frame(self, pct: int) -> bytes:
         """33 04 for a 1..100 percent: verbatim on percent devices, mapped onto the raw
-        range (NumberUtil.calculateProgress) on devices with ``brightness_range``."""
+        range on devices with ``brightness_range`` (:func:`.brightness.percent_to_device`)."""
         if self.profile.brightness_range is not None:
-            return build.brightness_raw(percent_to_raw(pct, *self.profile.brightness_range))
+            return build.brightness_raw(percent_to_device(pct, *self.profile.brightness_range))
         return build.brightness(pct)
 
     def _power_frames(self, on: bool) -> list[bytes]:
@@ -670,8 +672,7 @@ class Device:
         await self._commit(frame, lambda: _fold.apply_kelvin(self.profile, self._state, sent))
 
     async def set_segment_rgb(self, indices: Sequence[int], rgb: tuple[int, int, int]) -> None:
-        """Set the colour of selected segments (indices 0..15, or up to the device's
-        :attr:`segment_count` when that is above 16).
+        """Set the colour of selected segments (indices 0 .. :attr:`segment_count` - 1).
 
         Raises GoveeBleNotSupported without SEGMENTS; GoveeBleInvalidValue for a bad index or
         unless ``rgb`` is an (r, g, b) triple of ints in 0..255; GoveeBleError if a device that

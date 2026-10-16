@@ -325,9 +325,14 @@ def test_segment_writes_use_runtime_width_and_bounds() -> None:
 
 
 def test_segment_index_limits() -> None:
-    # Up to 16 segments the whole 2-byte mask stays addressable (a 10-segment H6047 takes 15).
-    assert _mask([0, 15]) == 0x8001 and _mask([15], 10) == 0x8000 and _mask([15], 16) == 0x8000
-    for n in (0, 10, 16):
+    # Indices stop at the segment count, as the app's position set does (BleUtils.Y / X): a 10-segment
+    # H6047 takes 0..9 and a 13-segment H60A6 0..12, not the 2-byte mask's 0..15.
+    assert _mask([0, 9], 10) == 0x0201 and _mask([12], 13) == 0x1000 and _mask([15], 16) == 0x8000
+    with pytest.raises(GoveeBleInvalidValue, match=r"0\.\.9"):
+        _mask([10], 10)
+    with pytest.raises(GoveeBleInvalidValue, match=r"0\.\.12"):
+        _mask([13], 13)
+    for n in (0, 16):   # 0: a custom profile with no count keeps the 2-byte mask's 16 positions
         with pytest.raises(GoveeBleInvalidValue, match=r"0\.\.15"):
             _mask([16], n)
     assert _mask([16], 17) == 1 << 16 and _mask([55], 56) == 1 << 55

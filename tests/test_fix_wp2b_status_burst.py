@@ -332,6 +332,7 @@ def test_analyzer_lost_chunk_before_terminator_is_malformed() -> None:
 def test_analyzer_conflicting_duplicate_is_malformed() -> None:
     other = bytearray(_BURST[3])
     other[5] ^= 0xFF
+    other[19] ^= 0xFF   # keep the BCC valid: a chunk failing it is dropped before reassembly
     report = status_burst_report([*_BURST[:4], bytes(other), *_BURST[4:]])
     assert (report.conflicting, report.malformed, dict(report.tlv_types)) == (1, 1, {})
 

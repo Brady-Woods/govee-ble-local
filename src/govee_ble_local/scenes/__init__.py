@@ -17,10 +17,12 @@ from dataclasses import dataclass
 from enum import IntEnum
 from importlib import resources
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING, Any, Final
 
 from ..exceptions import GoveeBleError, GoveeBleInvalidValue
 from ..wire import build
+from ..wire.build import _F
+from ..wire.parse import _parse_type
 
 if TYPE_CHECKING:
     from ..devices.profile import SceneDialect
@@ -45,6 +47,9 @@ class _SceneType(IntEnum):
 # First byte of a compose (sceneType 6) blob that gets the V5 upload
 # (ShareDiy.isValidComposeBytes: bytes[0] == 10).
 _COMPOSE_V5_MARKER: Final = 0x0A
+# First decoded byte of an H60A6 type-5 blob that takes the new-DIY path (BaseSceneViewMode.r3:
+# ``bArrDecryByBase64[0] != 80`` -> not applied as a DIY); the value after it is the upload.
+_H60A6_DIY_MARKER: Final = 0x50
 
 # Path-B scene-library upload table (from the decompiled `ScenesOp.parseSceneV1`,
 # confirmed by the Q4 source handoff):
@@ -236,17 +241,42 @@ def scene_upload_frames(
         ) from err
 
 
+def _reads_as(cls: Any, value: bytes) -> Any:
+    """``value`` read by the generated scene-value type ``cls``, or None when the spec can't read it."""
+    try:
+        return _parse_type(cls, value)
+    except Exception:  # noqa: BLE001 - a value the spec type can't read is not that kind of effect
+        return None
+
+
+def _h60a6_upload(raw: bytes) -> list[bytes] | None:
+    """The upload of an H60A6 type-5 (DIY / graffiti) blob, as the app's new-DIY path chooses it, or
+    None -> activate-only.
+
+    ``BaseSceneViewMode.r3``: the decoded blob must start with 0x50, then the H60A6's parsers are tried
+    in order (``H60A6DiyConfig``: ``H60A6DiyParse``, then ``H60A6GraffitiParse``) and the first that
+    reads it sends it; when none does, r3 fails and the scene is only activated. Each parser is the
+    spec's value type for it: a DIY is a ``diy_value`` whose length prefix covers the rest
+    (``Pro4H60A6Diy``; 0xA3, commByte 0x58), a graffiti a ``graffiti_value`` (marker 0x20; 0xA4-MTU,
+    commByte 0x58). The value is sent as the catalogue holds it; the app re-serialises what it parsed
+    (``IDiyParse.toBytes``), which is not modelled."""
+    if len(raw) < 2 or raw[0] != _H60A6_DIY_MARKER:
+        return None
+    value = raw[1:]
+    diy = _reads_as(_F.DiyValue, value)
+    if diy is not None and int(diy.total_len) + 2 == len(value):
+        return build.scene_upload_a3(value, build.COMM_H60A6)
+    if _reads_as(_F.GraffitiValue, value) is not None:
+        return build.scene_upload_a4_mtu(value, build.COMM_H60A6)
+    return None
+
+
 def _plan_upload(
     scene: Scene, scene_dialect: SceneDialect | None, scene_versions: frozenset[int]
 ) -> list[bytes] | None:
     st = scene.scene_type
     if scene_dialect == "B_h60a6" and st == _SceneType.DIY:
-        value = _decode_param(scene)[1:]
-        if len(value) < 2:
-            return None
-        is_diy = (value[0] | (value[1] << 8)) + 2 == len(value)
-        return (build.scene_upload_a3(value, build.COMM_H60A6) if is_diy
-                else build.scene_upload_a4_mtu(value, build.COMM_H60A6))
+        return _h60a6_upload(_decode_param(scene))
     if scene_dialect == "B_h6052" and st == _SceneType.DIY:
         raw = _decode_param(scene)
         if raw and raw[0] == 0x13:

@@ -407,13 +407,10 @@ def parse_direct_color_group(
         return None
     if getattr(f.body, "command", None) != _Command.local_color_read:
         return None
-    group = bytes(frame)[2:FRAME_LEN - 1]   # [group_index, records...]
+    # [group_index, records...]; never empty: the frame reader above needs more than the group byte.
+    group = bytes(frame)[2:FRAME_LEN - 1]
     n = max(0, min(expected_records, (len(group) - 1) // _RECORD_LEN))
-    try:
-        body = _parse_type(_F.ColorGroupRead, group, n, 1)
-    except Exception as exc:  # noqa: BLE001 - no group byte at all: not a usable reply
-        _LOGGER.debug("aa a5 reply did not parse as a colour group: %s (%r)", bytes(frame).hex(), exc)
-        return None
+    body = _parse_type(_F.ColorGroupRead, group, n, 1)
     return int(body.group_index), [
         (int(rec.brightness), int(rec.r), int(rec.g), int(rec.b)) for rec in body.records]
 
@@ -442,7 +439,8 @@ def parse_ic_count(frame: bytes) -> IcCount | None:
 @dataclass(frozen=True)
 class SectionCount:
     """AA 41 reply on the H6062 (``striplight`` ``ControllerIcSegmentNum``): the device's IC
-    (lamp-bead) count and its ``sectionNum``. Only ``section_num`` drives control: the app
+    (lamp-bead) count, read signed as the app reads it (negative for a reply of 0x8000 or more), and
+    its ``sectionNum``. Only ``section_num`` drives control: the app
     stores it as the device's segment count (``ControllerStrategyConfig.X`` ->
     ``Info4BleIot.T``; ``VM4Light$connectBleSuc$1`` -> ``Info4BleIotDevice.P0``)."""
     ic_count: int
@@ -458,7 +456,7 @@ def parse_section_count(frame: bytes) -> SectionCount | None:
     per-SKU body" case as :func:`parse_mode_0d`)."""
     if len(frame) < 5 or frame[0] != PRO_READ or frame[1] != CMD_SECTION_COUNT:
         return None
-    return SectionCount(ic_count=(frame[2] << 8) | frame[3], section_num=frame[4])
+    return SectionCount(ic_count=int.from_bytes(frame[2:4], "big", signed=True), section_num=frame[4])
 
 
 # ── device info (AA 07 10/11/02) ─────────────────────────────────────────────

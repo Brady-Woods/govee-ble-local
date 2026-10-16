@@ -72,10 +72,10 @@ def test_device_info_answered_reads_count_as_attempted() -> None:
 
 # ── DES-1 ───────────────────────────────────────────────────────────────────
 def test_mask_validates_indices() -> None:
-    assert _mask([0, 15]) == 0x8001
+    assert _mask([0, 15], 16) == 0x8001
     for bad in (-1, 16, 99):
         with pytest.raises(GoveeBleInvalidValue):
-            _mask([bad])
+            _mask([bad], 16)
 
 
 def test_invalid_segment_index_sends_nothing() -> None:

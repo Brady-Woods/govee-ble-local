@@ -38,6 +38,7 @@ def ceil_div(a: int, b: int) -> int:
 PRO_WRITE: Final = int(_F.ProType.write)                 # 0x33
 PRO_READ: Final = int(_F.ProType.read)                   # 0xAA
 PRO_MULTI_A1: Final = int(_F.ProType.multi_write)        # 0xA1: MultiPackageManager stream (RX only)
+PRO_MULTI_A2: Final = int(_F.ProType.multi_read)         # 0xA2: multi_read, device -> app (RX only)
 PRO_MULTI_A3: Final = int(_F.ProType.multi_write_v1)     # 0xA3
 PRO_MULTI_A4: Final = int(_F.ProType.multi_write_v2)     # 0xA4
 PRO_MULTI_AC: Final = int(_F.ProType.multi_reply_read)   # 0xAC

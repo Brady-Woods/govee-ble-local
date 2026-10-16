@@ -48,9 +48,14 @@ def _make(monkeypatch, fake: FakeGovee, **kw) -> GoveeConnection:
 
 # -- connect / session setup -------------------------------------------------
 
+# A format-2 BGC value as the app parses it (BaseBgcInfo.Companion.a reads bytes 1..5): format 2,
+# encryptVersion 2 (AES-GCM), then the V2 flag, u16 and byte fields. ``[2, 2]`` alone the app can't read.
+_BGC_V2 = bytes([2, 2, 0, 0, 0, 0])
+
+
 async def test_bgc_v2_refused_not_retried(monkeypatch) -> None:
     fake = FakeGovee()
-    fake.bgc = bytes([2, 2])
+    fake.bgc = _BGC_V2
     c = _make(monkeypatch, fake)
     with pytest.raises(GoveeBleNotSupported):
         await c.connect()
@@ -61,7 +66,7 @@ async def test_bgc_v2_refused_not_retried(monkeypatch) -> None:
 
 async def test_bgc_v2_known_refuses_later_calls_without_a_link(monkeypatch) -> None:
     fake = FakeGovee()
-    fake.bgc = bytes([2, 2])
+    fake.bgc = _BGC_V2
     c = _make(monkeypatch, fake)
     with pytest.raises(GoveeBleNotSupported):
         await c.connect()

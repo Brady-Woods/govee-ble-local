@@ -27,6 +27,15 @@ def percent_to_raw(pct: int, lo: int, hi: int) -> int:
     return int(_f32(lo + _f32((pct - 1) * _step(lo, hi))))
 
 
+def percent_to_device(pct: int, lo: int, hi: int) -> int:
+    """The brightness byte the app writes for ``pct`` on a device whose raw range is ``[lo, hi]``
+    (``BrightnessConfig.Companion.h`` -> ``c``): ``pct`` clamped to 1..100, written as it is when the
+    range is the percent range [1, 100] (version 1), else :func:`percent_to_raw`."""
+    if lo == 1 and hi == 100:
+        return max(1, min(100, pct))
+    return percent_to_raw(pct, lo, hi)
+
+
 def raw_to_percent(raw: int, lo: int, hi: int) -> int:
     """``NumberUtil.calculatePercent(max, min, progress)``:
     ``(int) (Math.ceil((progress - min) / (((max - min) + 3) / 100.0f)) + 1.0)``, clamped

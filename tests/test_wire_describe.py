@@ -11,6 +11,7 @@ from conftest import require_optional
 
 require_optional("kaitaistruct", reason="Kaitai runtime not installed")
 
+from govee_ble_local.crypto import checksum  # noqa: E402
 from govee_ble_local.wire.describe import (  # noqa: E402
     analyze_status_bursts,
     describe_frame,
@@ -152,6 +153,8 @@ def test_status_burst_unknown_tlv_flagged() -> None:
     a[7], a[8], a[9] = 0x99, 0x01, 0x00     # unknown TLV type 0x99
     b = bytearray(20)
     b[0], b[1] = 0xAC, 0xFF
+    for c in (a, b):   # valid BCCs: a chunk failing it is dropped before reassembly
+        c[19] = checksum(bytes(c[:19]))
     _types, gaps, malformed = analyze_status_bursts([bytes(a), bytes(b)])
     assert any("0x99" in g for g in gaps) and malformed == 0
 

@@ -56,6 +56,8 @@ model, from which the shipped readers are generated).
 - `wire.reassemble.parse_status(frames, *, pieces=None)`: the device's colour-piece count, which sets how
   many records each 0xA5 colour group holds (see Fixed); and `wire.reassemble.group_record_count`, the app's
   rule for that count. `pieces` omitted keeps 1.3.0's reading (the count comes from each TLV's length).
+- `wire.build.PRO_MULTI_A2` (0xA2, `multi_read`), `wire.describe.chunk_redacted` and
+  `devices.brightness.percent_to_device` (see Fixed).
 
 ### Changed
 - `tools/gen_kaitai.sh` can generate Kaitai 0.11 read-write (serializer) classes: `--read-write` writes
@@ -173,6 +175,34 @@ model, from which the shipped readers are generated).
   for byte.
 
 ### Fixed
+- Segment setters refuse an index at or past the device's segment count (H60A6 13, H6047 10, H61A8 15),
+  with `GoveeBleInvalidValue` as for any bad index. The app's position set has exactly that many positions
+  and its mask encoders can't set a bit past it (`BleUtils.Y` / `BleUtils.X`); the library took any index up
+  to 15 on a device of 16 segments or fewer, so `set_segment_brightness([13, 14, 15], ...)` on an H60A6 sent
+  the mask `e0 00`, which the app never sends. Frames for valid indices are unchanged. (H6641 still uses its
+  static 16 until its count is read live.)
+- A custom `DeviceProfile` with `brightness_range=(1, 100)` writes the percent as it is
+  (`BrightnessConfig.Companion.c`); it wrote one more for 51..100. No table profile uses that range.
+- `wire.parse.parse_section_count` reads the H6062's IC count signed (`BleUtil.getSignedShort`), as its
+  docstring said. Only diagnostics read it.
+- 0xAC status burst: the last packet is the first of tag 0xFF and tag `packets - 1` to arrive once the
+  others are in, as the app takes it (`AbsController4BleSingleSendMultiBack.isSameController`). The library
+  always preferred 0xFF, so a corrupted burst carrying both spliced the wrong chunk in (a phantom segment).
+  The H60A6 sends only 0xFF, so its bursts decode as before.
+- `GoveeConnection.query` ends a 0xAC burst as soon as it is complete by the app's rule
+  (`wire.reassemble.burst_chunks`): a one-packet reply, or a last packet tagged with its position, no longer
+  waits for the 0.6 s idle gap. The same frames come back.
+- RX frames of proType 0xA2 (`multi_read`, device to app in the spec) are no longer logged at WARNING as
+  unknown.
+- `govee-ble-analyze`: each 0xAC chunk's length and BCC are checked like any frame's (an artifact, and the
+  chunk is left out of burst reassembly, as the runtime drops it; a chunk zeroed by the capture masking is
+  not), and the TX status request is read with the spec reader (label `status-request/<N>`).
+- H60A6 scene upload plan (type 5): as the app's new-DIY path (`BaseSceneViewMode.r3`, parser order
+  `H60A6DiyConfig`), the decoded blob must start with 0x50, it goes out as a DIY (0xA3) only when the spec's
+  `diy_value` reads it with its length prefix covering the rest, else as a graffiti (0xA4) when
+  `graffiti_value` reads it, else the scene is only activated. Before, a blob of any first byte was uploaded,
+  by the length check alone. All 748 bundled scenes plan the same frames as before. The app re-serialises
+  what it parsed (`IDiyParse.toBytes`); that is not modelled.
 - H60A6 status read: each 0xA5 colour group of the 0xAC reply is now read with the app's record count for
   the device's 13 colour pieces: 4 per group and 1 in the last
   (`VM4LightH60A6$afterConnectedSingleReadDeviceInfo$1.o`; `pact_h60a0` `Support.getColorPieceSize` /

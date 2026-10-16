@@ -1,0 +1,183 @@
+"""Regression tests for the library bugs the spec-client audit found (SPEC_CLIENT_AUDIT_ba9e6bd.md,
+section 2, items #5, #6, #14, #15, #17, #19). None of them changes a frame a curated SKU sends for
+valid input; each test names the item and the app path it follows."""
+from __future__ import annotations
+
+import asyncio
+import dataclasses
+from typing import Any
+from unittest.mock import AsyncMock
+
+import pytest
+
+from fake_ble import FakeGovee, ble_device, frame
+from govee_ble_local.crypto import checksum
+from govee_ble_local.devices.brightness import percent_to_device, percent_to_raw
+from govee_ble_local.devices.device import Device
+from govee_ble_local.devices.profile import profile_for
+from govee_ble_local.exceptions import GoveeBleInvalidValue
+from govee_ble_local.models import Encryption
+from govee_ble_local.transport import connection as conn_mod
+from govee_ble_local.transport.connection import GoveeConnection
+from govee_ble_local.wire import parse, reassemble
+from govee_ble_local.wire.describe import describe_frame, status_burst_report
+
+
+def _dev(sku: str, **profile_overrides: Any) -> Device:
+    profile = profile_for(sku)
+    assert profile is not None
+    if profile_overrides:
+        profile = dataclasses.replace(profile, **profile_overrides)
+    d = Device(profile, ble_device("AA:BB:CC:DD:EE:5C", sku), sku=sku)
+    sent: list[bytes] = []
+
+    async def send(fr: bytes, **_k: object) -> None:
+        sent.append(fr)
+
+    async def send_many(frames: list[bytes]) -> None:
+        sent.extend(frames)
+
+    d._conn.send = AsyncMock(side_effect=send)  # type: ignore[method-assign]
+    d._conn.send_many = AsyncMock(side_effect=send_many)  # type: ignore[method-assign]
+    d._conn.send_unacked = AsyncMock(side_effect=send_many)  # type: ignore[method-assign]
+    d._conn.query = AsyncMock(return_value=[])  # type: ignore[method-assign]
+    d._sent = sent  # type: ignore[attr-defined]
+    return d
+
+
+def _sent(d: Device) -> list[bytes]:
+    return list(d._sent)  # type: ignore[attr-defined]
+
+
+def _chunk(body: bytes) -> bytes:
+    buf = bytearray(20)
+    buf[: len(body)] = body
+    buf[19] = checksum(bytes(buf[:19]))
+    return bytes(buf)
+
+
+# ── #5: segment indices stop at the segment count (BleUtils.Y / X) ───────────────────────────
+@pytest.mark.parametrize(("sku", "count"), [("H60A6", 13), ("H6047", 10), ("H61A8", 15)])
+def test_segment_index_past_the_segment_count_sends_nothing(sku: str, count: int) -> None:
+    d = _dev(sku)
+    for bad in (count, 15):
+        with pytest.raises(GoveeBleInvalidValue, match=rf"0\.\.{count - 1}"):
+            asyncio.run(d.set_segment_rgb([bad], (1, 2, 3)))
+    assert _sent(d) == []
+    asyncio.run(d.set_segment_rgb([count - 1], (1, 2, 3)))   # the last real segment still works
+    assert len(_sent(d)) == 1
+
+
+def test_h60a6_mask_never_sets_bits_13_to_15() -> None:
+    d = _dev("H60A6")
+    with pytest.raises(GoveeBleInvalidValue):
+        asyncio.run(d.set_segment_brightness([13, 14, 15], 50))   # WAS: sent mask e0 00
+    assert _sent(d) == []
+
+
+# ── #6: a [1, 100] brightness range is written as the percent (BrightnessConfig.Companion.c) ──
+def test_percent_range_is_the_identity() -> None:
+    assert [percent_to_device(p, 1, 100) for p in (1, 50, 51, 99, 100)] == [1, 50, 51, 99, 100]
+    assert percent_to_device(0, 1, 100) == 1 and percent_to_device(250, 1, 100) == 100
+    # Any other range is NumberUtil.calculateProgress, as before.
+    for p in range(1, 101):
+        assert percent_to_device(p, 20, 254) == percent_to_raw(p, 20, 254)
+    # WAS: calculateProgress over [1, 100] wrote one more for 51..100.
+    assert percent_to_raw(100, 1, 100) == 101 and percent_to_raw(51, 1, 100) == 52
+
+
+def test_set_brightness_on_a_percent_range_profile_sends_the_percent() -> None:
+    d = _dev("H6008", brightness_range=(1, 100))
+    asyncio.run(d.set_brightness(75))
+    assert [f[:3] for f in _sent(d) if f[1] == 0x04] == [bytes([0x33, 0x04, 75])]
+
+
+# ── #14: the H6062 aa 41 IC count is signed (BleUtil.getSignedShort) ──────────────────────────
+def test_section_count_ic_is_signed() -> None:
+    assert parse.parse_section_count(frame(0xAA, 0x41, 0x01, 0x2C, 33)) == parse.SectionCount(300, 33)
+    assert parse.parse_section_count(frame(0xAA, 0x41, 0xFF, 0xFE, 33)) == parse.SectionCount(-2, 33)
+
+
+# ── #15: the last 0xAC packet is the first of 0xFF / pkts-1 to arrive after the others ────────
+def _burst(n_chunks: int, last_tag: int) -> list[bytes]:
+    first = _chunk(bytes([0xAC, 0x00, n_chunks, 0x00, 4, 0x03, 0x00]) + bytes([0x01, 0x01, 0x01]) + bytes(9))
+    middle = [_chunk(bytes([0xAC, i]) + bytes(17)) for i in range(1, n_chunks - 1)]
+    return [first, *middle, _chunk(bytes([0xAC, last_tag, 0x04, 0x01, 0x50, 0x00]))]
+
+
+def test_last_packet_tagged_with_its_position_wins_when_it_arrives_first() -> None:
+    burst = _burst(3, 0x02)
+    stray_ff = _chunk(bytes([0xAC, 0xFF, 0x04, 0x01, 0x10, 0x00]))
+    chunks, complete, _ = reassemble.burst_chunks([*burst, stray_ff])
+    assert complete and chunks[-1] == burst[-1]   # WAS: the later 0xFF chunk was always taken
+    # A 0xFF that came before the prefix was in is refused by the app (END_PKG_ORDER): the pkts-1
+    # chunk that arrives after it is the last packet.
+    chunks, complete, _ = reassemble.burst_chunks([burst[0], stray_ff, *burst[1:]])
+    assert complete and chunks[-1] == burst[-1]
+    # Only a 0xFF: taken as before.
+    ff_burst = _burst(3, 0xFF)
+    assert reassemble.burst_chunks(ff_burst)[0][-1] == ff_burst[-1]
+
+
+# ── #17: query() ends a 0xAC burst once it is complete, not only on tag 0xFF ──────────────────
+@pytest.mark.parametrize("burst", [
+    [_chunk(bytes([0xAC, 0x00, 0x01, 0x00, 3, 0x03, 0x00, 0x01, 0x01, 0x01]))],   # one-packet reply
+    _burst(3, 0x02),                                                              # last tagged pkts-1
+])
+async def test_query_returns_when_the_burst_is_complete(monkeypatch: pytest.MonkeyPatch,
+                                                        burst: list[bytes]) -> None:
+    fake = FakeGovee(encrypted=False)
+    trailing = frame(0xEE, 0x20, 0x50)   # a later push stays queued: the read ended at completeness
+
+    def deliver(client: Any, plain: bytes) -> None:
+        if plain[0] == 0xAC:
+            for f in [*burst, trailing]:
+                client._notify(None, bytearray(f))
+
+    fake.on_write = deliver
+    monkeypatch.setattr(conn_mod, "establish_connection", fake.establish)
+    c = GoveeConnection(ble_device("AA:BB:CC:DD:EE:5D", "GVH60A6X"), encryption=Encryption.NONE)
+    c._idle_disconnect = 0
+    await c.connect()
+    # A long idle gap and timeout: only completeness can end this read with the push still queued.
+    got = await c.query(frame(0xAC, 0x03), timeout=30, idle_gap=30)
+    assert got == burst and c._rx.qsize() == 1
+    assert reassemble.parse_status(got).is_on is True
+
+
+# ── #19: the analyzer checks 0xAC framing as the runtime does ─────────────────────────────────
+def test_analyzer_flags_a_bad_bcc_chunk_and_leaves_it_out() -> None:
+    burst = _burst(3, 0xFF)
+    bad = bytearray(burst[1])
+    bad[19] ^= 0x01
+    assert describe_frame(bytes(bad), "rx")[0] == "bad_checksum"
+    assert describe_frame(burst[1], "rx") == ("status-chunk", [])
+    # Dropped before reassembly, as connection._handle_notify drops it: the burst lost a chunk.
+    report = status_burst_report([burst[0], bytes(bad), burst[2]])
+    assert report.incomplete == 1 and not report.tlv_types
+
+
+def test_analyzer_reads_the_status_request() -> None:
+    req = frame(0xAC, 0x03, 0x03, 0x41, 0x30, 0xA5)
+    assert describe_frame(req, "tx") == ("status-request/3", [])
+    assert describe_frame(req[:-1] + bytes([req[-1] ^ 1]), "tx")[0] == "bad_checksum"
+    # A request declaring more types than the frame holds: a spec gap, not a clean request.
+    label, issues = describe_frame(frame(0xAC, 0x03, 0x20, 0x41), "tx")
+    assert label == "parse_error" and issues[0][0] == "hard"
+    # A short 0xAC record is an artifact, as for any frame.
+    short = describe_frame(bytes([0xAC, 0x00, 0x01]), "rx")
+    assert short == ("len=3", [("artifact", "not 20 bytes (len 3)")])
+
+
+def test_analyzer_keeps_redacted_chunks() -> None:
+    # The field-test masking zeroes every data byte and the BCC; such a chunk is not corrupt.
+    first = bytes([0xAC, 0x00, 0x03, 0x00, 0x04, 0x03, 0x00]) + bytes(13)
+    later = [bytes([0xAC, 0x01]) + bytes(18), bytes([0xAC, 0xFF]) + bytes(18)]
+    assert describe_frame(later[0], "rx") == ("status-chunk", [])
+    # Kept for reassembly (not dropped as bad-BCC chunks): the burst's framing is whole.
+    report = status_burst_report([first, *later])
+    assert (report.incomplete, report.conflicting, report.malformed) == (0, 0, 0)
+    # A capture masked before the header was kept: counted as redacted, as before.
+    old_first = bytes([0xAC, 0x00]) + bytes(18)
+    report = status_burst_report([old_first, *later])
+    assert report.redacted == 1 and report.malformed == 0
