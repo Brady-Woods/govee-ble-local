@@ -14,9 +14,18 @@ const yaml = require("js-yaml");
 
 const REPO = path.resolve(__dirname, "..");
 const SPEC_DIR = path.join(REPO, "spec");
-const DEFAULT_OUT = path.join(REPO, "src", "govee_ble_local", "_generated");
-// Optional output directory (gen_kaitai.sh passes one for --check and --out).
-const OUT_DIR = process.argv[2] ? path.resolve(process.argv[2]) : DEFAULT_OUT;
+const LIBRARY_DIR = path.join(REPO, "src", "govee_ble_local", "_generated");
+// Output directory, required (gen_kaitai.sh always passes one: --read-only requires --out). The
+// library's own classes are read-write, which this compiler can't build, so their directory is refused.
+if (!process.argv[2]) {
+  console.error("usage: kaitai_gen.js <outdir>   (read-only readers; run via tools/gen_kaitai.sh --read-only --out DIR)");
+  process.exit(2);
+}
+const OUT_DIR = path.resolve(process.argv[2]);
+if (OUT_DIR === LIBRARY_DIR) {
+  console.error("error: the library's classes are read-write; write read-only readers to a scratch directory");
+  process.exit(2);
+}
 
 const KSY_FILES = ["govee_ble.ksy", "govee_adv.ksy"];
 
@@ -39,13 +48,6 @@ async function main() {
       fs.writeFileSync(dest, contents);
       console.log(`wrote ${path.relative(REPO, dest)} (${contents.length} bytes)`);
     }
-  }
-
-  // Make the committed generated dir an importable package.
-  const initPath = path.join(OUT_DIR, "__init__.py");
-  if (OUT_DIR === DEFAULT_OUT && !fs.existsSync(initPath)) {
-    fs.writeFileSync(initPath, '"""Kaitai-generated readers (regenerate via tools/gen_kaitai.sh)."""\n');
-    console.log(`wrote ${path.relative(REPO, initPath)}`);
   }
 }
 

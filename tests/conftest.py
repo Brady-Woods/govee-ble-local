@@ -1,4 +1,4 @@
-"""Make ``govee_ble_local`` (src layout) — including the shipped Kaitai readers
+"""Make ``govee_ble_local`` (src layout) — including the generated Kaitai classes
 under ``govee_ble_local._generated`` — and the spec builders (``tests/spec_frames``)
 importable whether or not the package is installed editable."""
 from __future__ import annotations
@@ -14,18 +14,40 @@ for _p in (str(_SRC), str(_HERE)):
         sys.path.insert(0, _p)
 
 _GENERATED = _SRC / "govee_ble_local" / "_generated"
+_GENERATED_OUTPUTS = ("govee_ble_frame.py", "govee_advertisement.py")   # not __init__.py: written once
+
+
+def generated_classes_problem(root: pathlib.Path) -> str | None:
+    """Why ``root``'s generated Kaitai classes can't be tested against, or None when they can.
+
+    They are a build product (gitignored), so they can be missing, and an ignored ``_generated/``
+    survives a ``git switch`` or ``git pull`` that changes the spec: then they are older than
+    ``spec/*.ksy`` or the generator. Git gives every file a checkout rewrites a fresh mtime, so an input
+    newer than the oldest output means the classes were built from something else (a touch or a stash
+    round trip only costs a needless regeneration)."""
+    generated = root / "src" / "govee_ble_local" / "_generated"
+    missing = [n for n in _GENERATED_OUTPUTS if not (generated / n).is_file()]
+    if missing:
+        return (f"src/govee_ble_local/_generated/ is missing {', '.join(missing)}: run "
+                "`bash tools/gen_kaitai.sh` (needs the JVM kaitai-struct-compiler 0.11) or "
+                "`pip install -e .`, which generates them")
+    inputs = [*(root / "spec").glob("*.ksy"), root / "tools" / "gen_kaitai.sh"]
+    oldest_output = min((generated / n).stat().st_mtime for n in _GENERATED_OUTPUTS)
+    stale = sorted(p.name for p in inputs if p.is_file() and p.stat().st_mtime > oldest_output)
+    if stale:
+        return (f"src/govee_ble_local/_generated/ is older than {', '.join(stale)} (edited, or changed by a "
+                "checkout or pull since it was generated): run `bash tools/gen_kaitai.sh`")
+    return None
 
 
 def pytest_sessionstart(session):  # type: ignore[no-untyped-def]
-    """The Kaitai classes are a build product (gitignored): stop with a clear message, not an import
-    error in every test, when they haven't been generated."""
-    missing = [n for n in ("govee_ble_frame.py", "govee_advertisement.py") if not (_GENERATED / n).is_file()]
-    if missing:
+    """Stop with a clear message, not an import error in every test or results from another branch's
+    classes, when the generated Kaitai classes are missing or stale."""
+    problem = generated_classes_problem(_HERE.parent)
+    if problem:
         import pytest
 
-        pytest.exit(f"src/govee_ble_local/_generated/ is missing {', '.join(missing)}: run "
-                    "`bash tools/gen_kaitai.sh` (needs the JVM kaitai-struct-compiler 0.11) or "
-                    "`pip install -e .`, which generates them", returncode=4)
+        pytest.exit(problem, returncode=4)
 
 
 # -- optional-dependency gate ---------------------------------------------------------------

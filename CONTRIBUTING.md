@@ -25,7 +25,9 @@ python -m pip install -e '.[dev]'   # pytest stack, cloud, mypy, ruff, bandit, p
                                     # vulture, radon, pycryptodome (test-only AES reference), uv;
                                     # also generates the Kaitai classes (needs the JVM ksc, below)
 python -m pytest -q                 # offline test suite
-bash tools/gen_kaitai.sh            # regenerate the read-write classes after editing spec/*.ksy
+bash tools/gen_kaitai.sh            # regenerate the read-write classes after editing spec/*.ksy,
+                                    # or after a checkout or pull that changes it (pytest stops
+                                    # and says so when the classes are older than the spec)
 bash tools/gen_docs.sh              # build the pdoc API reference (needs .[docs])
 ```
 
@@ -35,13 +37,20 @@ The Kaitai read-write classes in `src/govee_ble_local/_generated/` are a **build
 sdist, a wheel or an editable install, so `pip install -e .`, `pip install .` and `python -m build` need
 the JVM `kaitai-struct-compiler` 0.11 (`brew install kaitai-struct-compiler`; on Debian/Ubuntu
 `bash scripts/install_ksc.sh`). The sdist and wheel ship the generated classes, so installing a
-released wheel or sdist needs no compiler. Without the classes the test suite stops at once and says to
-run the generator.
+released wheel or sdist needs no compiler. A git or VCS URL (`pip install "govee-ble-local @
+git+https://...@ref"`) or a GitHub "Source code" archive is a repository build too, and needs bash and the
+JVM compiler; Home Assistant has neither. To test an unreleased build in Home Assistant, pin the wheel
+attached to a prerelease GitHub Release (`govee-ble-local @
+https://github.com/Brady-Woods/govee-ble-local/releases/download/vX.Y.ZrcN/govee_ble_local-X.Y.ZrcN-py3-none-any.whl`),
+never a git ref. The integration's `pip install --dry-run` dependency check doesn't catch a git ref,
+because preparing metadata skips the generation step. Without the classes, or with classes older than
+`spec/*.ksy` or `tools/gen_kaitai.sh`, the test suite stops at once and says to run the generator.
 
-**`bash scripts/check.sh` must pass before you push** (it is exactly what CI and the release
-workflow run; it builds its own venv, `.venv-check`, override with `VENV=`). It needs the JVM
-`kaitai-struct-compiler` 0.11 (`brew install kaitai-struct-compiler`; on Debian/Ubuntu,
-`bash scripts/install_ksc.sh`, which is what CI uses). It enforces, fail-fast:
+**`bash scripts/check.sh` must pass before you push** (it is the code gate CI and the release
+workflow run, and they also run the artifact smoke test below; it builds its own venv, `.venv-check`,
+override with `VENV=`). It needs the JVM `kaitai-struct-compiler` 0.11 (`brew install
+kaitai-struct-compiler`; on Debian/Ubuntu, `bash scripts/install_ksc.sh`, which is what CI uses). It
+enforces, fail-fast:
 
 1. `tools/gen_kaitai.sh` generates the read-write classes in `_generated/` from `spec/*.ksy`.
 2. `ruff check src tools tests spec _build_backend` (rules in `[tool.ruff.lint]`)
@@ -54,22 +63,27 @@ workflow run; it builds its own venv, `.venv-check`, override with `VENV=`). It 
 With `CI=true`, missing optional test dependencies fail the run instead of skipping tests.
 
 CI and the release workflow also run `bash scripts/smoke_artifacts.sh` (release: `--no-build`, after its
-Build step): it installs the wheel, and a wheel built from the sdist, into fresh venvs and imports the
-package, so a wheel without the generated classes can't be published.
+Build step): it checks that the sdist ships the generated classes and no `spec/` or `tools/`, then installs
+the wheel, and a wheel built from the sdist, into fresh venvs and imports the package, so a wheel without
+the generated classes can't be published. To run it locally, point it at Python 3.11 or later
+(`PYTHON=python3.13 bash scripts/smoke_artifacts.sh`); it builds in a throwaway venv and needs network.
 
 `bash scripts/audit.sh` is an informational, never-failing report (vulture dead code, radon
 complexity/maintainability, ruff statistics). It is not part of the gate.
 
-If you change `spec/*.ksy`, regenerate the `_generated/` read-write classes and commit them. The library
-both reads and writes every frame with them, so `wire/build.py` changes only when the app sends a
-different frame, not when a layout moves.
+If you change `spec/*.ksy`, re-run `bash tools/gen_kaitai.sh` (or `scripts/check.sh`) before testing. An
+editable install generates the classes only once, at install time, and they are a build product that is
+never committed. The library both reads and writes every frame with them, so `wire/build.py` changes only
+when the app sends a different frame, not when a layout moves.
 
 ### Hardware tools
 
 `tools/` holds live-device probes and capture analysers. They are developer utilities, not part of
 the package or the test suite, and need a Linux/BlueZ host and a real device. Run them from the
 repo root, e.g. `python3 tools/h60a6_live_check.py --address AA:BB:CC:DD:EE:FF`; see
-[`tools/README.md`](tools/README.md) for each tool, its arguments and the BLE host gotchas.
+[`tools/README.md`](tools/README.md) for each tool, its arguments and the BLE host gotchas. From a
+checkout, run `bash tools/gen_kaitai.sh` (or `pip install -e .`) first: the tools put `../src` first on
+`sys.path`, and its `_generated/` classes are generated, not committed.
 
 ## Branching & commits
 
@@ -123,16 +137,21 @@ are only for handing someone a testable build of an unmerged branch.
 ### What the workflow enforces
 
 - The tagged commit is an ancestor of `origin/master`.
-- The pinned JVM `kaitai-struct-compiler` 0.11 is installed (`scripts/install_ksc.sh`), and the
-  readers the wheel ships are generated from `spec/*.ksy` by the gate below.
+- The pinned JVM `kaitai-struct-compiler` 0.11 is installed (`scripts/install_ksc.sh`). The
+  `check.sh` gate generates the classes, and the Build step generates them again: the in-tree backend
+  reruns `tools/gen_kaitai.sh` for the sdist, and the wheel is built from that sdist.
 - The full `scripts/check.sh` gate passes (with `CI=true`, so pip-audit and optional test
   dependencies are mandatory).
 - The tag equals `v` + the `pyproject.toml` version.
-- Only then does it build the sdist and wheel (`python -m build`) and upload them as an artifact;
-  the separate `publish` job (environment `pypi`, `id-token: write`) uploads them to PyPI.
+- Only then does it build the sdist and wheel (`python -m build`).
+- `scripts/smoke_artifacts.sh --no-build`: the sdist must ship the generated classes and no `spec/` or
+  `tools/`, and the wheel, and a wheel pip builds from the sdist, are installed into fresh venvs and must
+  import and round-trip a frame. Only then is `dist/` uploaded as an artifact; the separate `publish` job
+  (environment `pypi`, `id-token: write`) uploads it to PyPI.
 
 There is no TestPyPI dry run wired into the workflow. To check packaging locally without
-publishing, build from a clean checkout and run `twine check dist/*`.
+publishing, run `PYTHON=python3.13 bash scripts/smoke_artifacts.sh` (builds into `dist/`; needs the JVM
+compiler and network) and `twine check dist/*`.
 
 
 ## Diagnostics

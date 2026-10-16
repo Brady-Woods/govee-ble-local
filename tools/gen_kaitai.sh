@@ -109,7 +109,9 @@ need_jvm_ksc() {
   if [ -z "$KSC_BIN" ]; then
     echo "error: the library's classes are read-write, which needs the JVM kaitai-struct-compiler" >&2
     echo "       $KSC_SERIES.x (the npm build's compile() API can't generate read-write code). Install" >&2
-    echo "       it, e.g. 'brew install kaitai-struct-compiler', or point KSC= at one." >&2
+    echo "       it ('brew install kaitai-struct-compiler', or on Debian/Ubuntu 'bash scripts/install_ksc.sh')," >&2
+    echo "       or point KSC= at one. To just use the library, install the released package from PyPI," >&2
+    echo "       which ships the classes." >&2
     exit 1
   fi
 }
@@ -133,6 +135,9 @@ case "$mode" in
   readwrite)
     need_jvm_ksc
     dest=${out:-$LIBRARY_DIR}
+    # The library dir is untracked, so git can't show a leftover module in it, and the sdist and wheel
+    # would ship one: start it empty, so it holds exactly the compiler's output plus __init__.py.
+    [ "$dest" != "$LIBRARY_DIR" ] || rm -rf "$LIBRARY_DIR"
     echo ">> compiling read-write classes with $KSC_BIN ($("$KSC_BIN" --version | head -1))"
     compile_with_jvm "$dest" --read-write
     # Keep the generated dir an importable package.

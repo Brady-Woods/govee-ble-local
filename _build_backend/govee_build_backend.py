@@ -3,8 +3,9 @@
 The read-write classes under ``src/govee_ble_local/_generated/`` are a build product of
 ``spec/*.ksy``, not committed source. Every build that starts from the repository (``pip install .``,
 ``pip install -e .``, ``python -m build``) therefore runs ``tools/gen_kaitai.sh`` before handing over to
-``setuptools.build_meta``, which needs the JVM ``kaitai-struct-compiler`` 0.11 (``brew install
-kaitai-struct-compiler``, or ``scripts/install_ksc.sh`` on Debian/Ubuntu).
+``setuptools.build_meta``, which needs bash and the JVM ``kaitai-struct-compiler`` 0.11 (``brew install
+kaitai-struct-compiler``, or ``scripts/install_ksc.sh`` on Debian/Ubuntu). A failed generation ends the
+build with one message saying so, rather than a ``CalledProcessError`` traceback.
 
 An sdist ships the classes it was built with but not ``spec/`` or ``tools/`` (MANIFEST.in prunes
 them), so a wheel built from an sdist (``pip install`` of the sdist, or ``python -m build``'s own
@@ -14,7 +15,7 @@ with a message saying how to get them. Every hook otherwise is setuptools' own.
 from __future__ import annotations
 
 import importlib
-import subprocess  # nosec B404 - runs the repository's own generator script, no shell
+import subprocess  # nosec B404  # runs the repository's own generator script, no shell
 from pathlib import Path
 from typing import Any
 
@@ -30,7 +31,17 @@ def _ensure_generated() -> None:
     else check that the sdist being built from shipped them."""
     if _GENERATOR.is_file() and _SPEC.is_dir():
         argv = ["bash", str(_GENERATOR)]   # the repository's own generator, fixed argv, no shell
-        subprocess.run(argv, cwd=_ROOT, check=True)  # noqa: S603  # nosec B603 B607
+        try:
+            subprocess.run(argv, cwd=_ROOT, check=True)  # noqa: S603  # nosec B603
+        except (OSError, subprocess.CalledProcessError) as exc:
+            # SystemExit, as setuptools does for build errors: pip and uv show the generator's own error
+            # above, and this as the last line, without a traceback.
+            raise SystemExit(
+                f"govee-ble-local: generating the Kaitai classes with tools/gen_kaitai.sh failed ({exc}). A "
+                "build from the repository (a clone, a git URL or a source archive) needs bash and the JVM "
+                "kaitai-struct-compiler 0.11 (brew install kaitai-struct-compiler, or bash "
+                "scripts/install_ksc.sh on Debian/Ubuntu; see CONTRIBUTING.md). To just use the library, "
+                "install the released package from PyPI, which ships the classes.") from None
         return
     missing = [name for name in _GENERATED_FILES if not (_GENERATED / name).is_file()]
     if missing:

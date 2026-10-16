@@ -20,12 +20,14 @@ Home Assistant integration, but has no Home Assistant dependency and can be used
 pip install govee-ble-local
 # optional Govee cloud-account helpers (pulls in aiohttp):
 pip install 'govee-ble-local[cloud]'
-# or, from a clone (editable, for development):
+# or, from a clone (editable, for development; needs the JVM kaitai-struct-compiler 0.11:
+#   brew install kaitai-struct-compiler, or bash scripts/install_ksc.sh on Debian/Ubuntu;
+#   see CONTRIBUTING.md):
 git clone https://github.com/Brady-Woods/govee-ble-local.git
 cd govee-ble-local && pip install -e '.[dev]'
 ```
 
-Requires Python 3.11+. Runtime dependencies are deliberately minimal and Home-Assistant-friendly:
+Requires Python 3.11+. Installing from PyPI needs no compiler: the wheel ships the generated Kaitai classes. Runtime dependencies are deliberately minimal and Home-Assistant-friendly:
 `bleak`, `bleak-retry-connector`, `cryptography` (all shipped with HA), plus `kaitaistruct` (a
 pure-Python, stdlib-only wire-parser runtime). Dev extras: `.[dev]` (everything a contributor needs), or individually `.[test]`, `.[typing]`,
 `.[lint]`, `.[audit]`, `.[docs]`.

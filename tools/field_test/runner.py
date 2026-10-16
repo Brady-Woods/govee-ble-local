@@ -42,7 +42,9 @@ if TYPE_CHECKING:
     from govee_ble_local import Device
 
 _REPO_SRC = Path(__file__).resolve().parent.parent.parent / "src"
-if (_REPO_SRC / "govee_ble_local").is_dir():   # run from a checkout; else use the installed wheel
+# Run from a checkout whose Kaitai classes are generated (a build product, not committed); an ungenerated
+# checkout, or none, uses the installed wheel.
+if (_REPO_SRC / "govee_ble_local" / "_generated" / "govee_ble_frame.py").is_file():
     sys.path.insert(0, str(_REPO_SRC))
 
 TOOL_VERSION = 2

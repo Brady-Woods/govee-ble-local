@@ -31,7 +31,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 _REPO = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(_REPO / "src"))  # govee_ble_local + ._generated (shipped reader)
+sys.path.insert(0, str(_REPO / "src"))  # govee_ble_local + ._generated (run tools/gen_kaitai.sh first)
 
 if TYPE_CHECKING:
     from bleak.backends.device import BLEDevice

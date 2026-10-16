@@ -2,7 +2,7 @@
 #
 # Release quality gate for govee-ble-local.
 #
-# Runs the exact checks CI runs. Run it before tagging a release:
+# Runs CI's code gate (CI and release also run scripts/smoke_artifacts.sh). Run it before tagging a release:
 #
 #     scripts/check.sh
 #
