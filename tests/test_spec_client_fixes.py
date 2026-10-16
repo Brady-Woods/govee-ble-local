@@ -5,10 +5,12 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import pathlib
 from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
+from conftest import require_optional
 
 from fake_ble import FakeGovee, ble_device, frame
 from govee_ble_local.crypto import checksum
@@ -19,7 +21,7 @@ from govee_ble_local.exceptions import GoveeBleInvalidValue
 from govee_ble_local.models import Encryption
 from govee_ble_local.transport import connection as conn_mod
 from govee_ble_local.transport.connection import GoveeConnection
-from govee_ble_local.wire import parse, reassemble
+from govee_ble_local.wire import build, parse, reassemble
 from govee_ble_local.wire.build import color_temp
 from govee_ble_local.wire.describe import describe_frame, status_burst_report
 
@@ -228,3 +230,121 @@ def test_relay_power_is_validated_and_defaults_to_1_3_0s_frame() -> None:
     assert p is not None and p.relay_power == "outlet0"
     with pytest.raises(GoveeBleInvalidValue, match="relay_power"):
         dataclasses.replace(p, relay_power="bogus")  # type: ignore[arg-type]
+
+
+# ── #2 / G16 / G27: aa 01 / aa 04 as the app sends and reads them ─────────────────────────────
+def test_power_and_brightness_reads_carry_no_selector() -> None:
+    assert [f[:3].hex() for f in (build.power_query(), build.brightness_query())] == ["aa0100", "aa0400"]
+
+
+def test_light_power_is_on_only_for_one() -> None:
+    assert parse.parse_light_power(frame(0xAA, 0x01, 0x01)) is True
+    assert parse.parse_light_power(frame(0xAA, 0x01, 0x00)) is False
+    assert parse.parse_light_power(frame(0xAA, 0x01, 0x02)) is False   # WAS on (any non-zero byte)
+    assert parse.parse_light_power(frame(0xAA, 0x04, 0x01)) is None    # not an aa 01 reply
+    assert parse.parse_power(frame(0xAA, 0x01, 0x11)) == 0x11           # plugs keep the raw relay byte
+
+
+def test_polled_light_reads_power_with_the_light_rule() -> None:
+    d = _dev("H6008")
+
+    async def query(fr: bytes, **_k: object) -> list[bytes]:
+        return [frame(0xAA, 0x01, 0x02)] if fr[1] == 0x01 else []
+
+    d._conn.query = AsyncMock(side_effect=query)  # type: ignore[method-assign]
+    asyncio.run(d._read_polled())
+    assert d.state.is_on is False
+
+
+# ── F1 (faa2cb7 review): light vs plug power decode ──────────────────────────────────────────
+def test_parse_light_power_values_and_non_replies() -> None:
+    assert [parse.parse_light_power(frame(0xAA, 0x01, b)) for b in (0x00, 0x01, 0x02, 0xFF)] == \
+        [False, True, False, False]
+    assert parse.parse_light_power(frame(0x33, 0x01, 0x01)) is None    # a write, not a reply
+    assert parse.parse_light_power(frame(0xAA, 0x04, 0x01)) is None    # brightness reply
+    assert parse.parse_light_power(b"\xaa\x01") is None                 # truncated
+
+
+def _scripted(sku: str, replies: dict[int, bytes]) -> Device:
+    """``_dev`` whose aa reads get ``replies[command]`` (one frame) and anything else nothing."""
+    d = _dev(sku)
+
+    async def query(fr: bytes, **_k: object) -> list[bytes]:
+        r = replies.get(fr[1]) if fr[0] == 0xAA else None
+        return [r] if r is not None else []
+
+    d._conn.query = AsyncMock(side_effect=query)  # type: ignore[method-assign]
+    return d
+
+
+@pytest.mark.parametrize("sku", ["H6047", "H61A8", "H6006", "H6008", "H6052", "H6641"])
+@pytest.mark.parametrize(("byte", "on"), [(0x00, False), (0x01, True), (0x02, False), (0xFF, False)])
+def test_polled_lights_are_on_only_for_one(sku: str, byte: int, on: bool) -> None:
+    # Every curated polled light screen decodes aa 01 with ControllerSwitch.Companion.c (== 1).
+    # Source-modelled for 0x02 / 0xFF: the firmware only ever stores 0 or 1.
+    d = _scripted(sku, {0x01: frame(0xAA, 0x01, byte)})
+    asyncio.run(d._read_polled())
+    assert d.state.is_on is on
+
+
+def test_h6047_bars_still_override_the_aa01_decode() -> None:
+    d = _scripted("H6047", {0x01: frame(0xAA, 0x01, 0x02), 0x36: frame(0xAA, 0x36, 0x01, 0x00)})
+    asyncio.run(d._read_polled())
+    assert d.state.is_on is True and d.state.zone_power == {0: True, 1: False}
+
+
+@pytest.mark.parametrize(("sku", "byte", "on"), [
+    ("H5082", 0x02, True), ("H5080", 0x02, False), ("H5160", 0x08, False), ("H5160", 0x04, True),
+])
+def test_plugs_keep_the_relay_mask(sku: str, byte: int, on: bool) -> None:
+    d = _scripted(sku, {0x01: frame(0xAA, 0x01, byte)})
+    asyncio.run(d._read_plug())
+    assert d.state.is_on is on
+
+
+def test_h60a6_status_power_is_any_non_zero_byte() -> None:
+    # Compose4BaseInfoSingleRead.u decodes TLV 0x01 as != 0 (status_switch.is_on), unlike aa 01.
+    st = reassemble.parse_status([_chunk(bytes([0xAC, 0x00, 0x01, 0x00, 3, 0x03, 0x00, 0x01, 0x01, 0x02]))])
+    assert st.is_on is True
+
+
+# ── F2 (faa2cb7 review): each SKU reads power where devices.yaml says the app does ───────────
+_GOODS_TYPE = {"H60A6": 303, "H6047": 119, "H6641": 247, "H6052": 22, "H61A8": 19, "H6006": 64, "H6008": 64}
+
+
+def _power_read(goods_type: int) -> str | None:
+    yaml = require_optional("yaml", reason="PyYAML reads spec/devices.yaml")
+    path = pathlib.Path(__file__).resolve().parent.parent / "spec" / "devices.yaml"
+    for fam in yaml.safe_load(path.read_text())["families"]:
+        if goods_type in (fam.get("goods_types") or []):
+            cp = fam.get("client_profile") or {}
+            override = (cp.get("by_goods_type") or {}).get(str(goods_type)) or {}
+            return override.get("power_read", cp.get("power_read"))
+    return None
+
+
+@pytest.mark.parametrize("sku", sorted(_GOODS_TYPE))
+def test_power_source_matches_the_spec(sku: str) -> None:
+    power_read = _power_read(_GOODS_TYPE[sku])
+    assert power_read in ("aa01", "ac_status"), sku
+    profile = profile_for(sku)
+    assert profile is not None
+    assert (power_read == "ac_status") == (profile.readback == "status"), sku
+
+
+def test_h60a6_state_poll_is_the_status_burst_only() -> None:
+    # power_read ac_status: no aa 01 / 04 / 05 in the state read, just ac 03 03 41 30 a5 (one retry at most).
+    d = _dev("H60A6")
+    asyncio.run(d._read_status())
+    sent = [c.args[0] for c in d._conn.query.call_args_list]   # type: ignore[attr-defined]
+    assert 1 <= len(sent) <= 2 and all(f[:6].hex() == "ac03034130a5" for f in sent)
+
+
+# ── F5 (faa2cb7 review): the widest mask ─────────────────────────────────────────────────────
+def test_mask_boundary_56_builds_57_raises() -> None:
+    assert len(build.color_rgb(1, 2, 3, "h60a6", 56)) == 20      # 7-byte mask, 19-byte body: at the cap
+    assert len(build.segment_brightness((1 << 56) - 1, 50, "h60a6", 56)) == 20
+    with pytest.raises(GoveeBleInvalidValue):
+        build.color_rgb(1, 2, 3, "h60a6", 57)
+    with pytest.raises(GoveeBleInvalidValue):
+        build.segment_brightness(1, 50, "h60a6", 57)

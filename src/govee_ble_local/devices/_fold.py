@@ -189,7 +189,9 @@ def apply_status(
 def mode_reply_frame(mode: bytes) -> bytes:
     """The ``aa 05`` reply frame carrying a 0xAC 0x05 TLV value ``[sub_mode, params]``, so the burst's mode
     goes through the same decoders as a mode read (pact_h60a0 h60a1.Info4Detail.Q reads both; a value
-    longer than a frame's body is cut, which no decoder reads that far)."""
+    longer than a frame's body is cut, which no decoder reads that far). A value shorter than its sub-mode
+    needs is zero-padded here, where Info4Detail.Q throws and the app's whole connect read fails; real
+    bursts carry the full value."""
     return build.frame(build.PRO_READ, build.CMD_MODE, *mode[: FRAME_LEN - 3])
 
 

@@ -371,7 +371,9 @@ def parse_status(frames: list[bytes], *, pieces: int | None = None) -> StatusRep
         typ = int(tlv.type)
         v = tlv.value
         if typ == TYPE_SWITCH:
-            st.is_on = bool(v.state)
+            # status_switch.is_on: != 0, as the app's status walker reads it (Compose4BaseInfoSingleRead.u),
+            # unlike a light's aa 01 reply (== 1).
+            st.is_on = bool(v.is_on)
         elif typ == TYPE_BRIGHTNESS:
             st.brightness = int(v.brightness)
         elif typ == TYPE_MODE:

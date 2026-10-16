@@ -10,13 +10,8 @@ says the app sends fails here.
 Inputs stay in each builder's valid range: the library raises on out-of-range input where the catalogue
 masks with ``& 0xFF``, and that difference is deliberate (the library validates; the catalogue doesn't).
 
-Two ratchets keep this honest instead of skipping:
-
-* ``KNOWN_DIVERGENCES``: frames the library sends today that differ from the catalogue, each waiting on a
-  decision (SPEC_CLIENT_AUDIT_ba9e6bd.md section 2). The test asserts they still differ in exactly the
-  recorded way, so a fix must also remove the entry.
-* ``test_spec_gap_*``: library frames the spec has no builder for yet (none at the moment). Such a test
-  asserts the gap is still there, so when the spec adds the builder it has to become a real binding.
+No known divergence is left: when a library frame must differ from the catalogue pending a decision, it
+goes in a ratchet that asserts the difference (so the fix has to remove it) rather than being skipped.
 
 The e7 handshake has no catalogue builder either; it is bound to the reference's framing and cipher.
 """
@@ -282,6 +277,10 @@ def test_plug_and_secret_writes() -> None:
 
 # ── read requests ────────────────────────────────────────────────────────────
 _READS: list[tuple[str, Callable[[], bytes], Callable[[], bytes]]] = [
+    # No selector byte, as SwitchController / ControllerSwitch and BrightnessController send them (the
+    # library sent aa 01 01 / aa 04 01 until the user chose to match the app; no firmware reads byte 2).
+    ("power_query", b.power_query, C.read_switch),
+    ("brightness_query", b.brightness_query, C.read_brightness),
     ("mode_query", b.mode_query, C.read_mode),
     ("bar_switch_query", b.bar_switch_query, C.read_bar_switch),
     ("gradual_query", b.gradual_query, C.read_gradual),
@@ -325,25 +324,7 @@ def test_handshake_frames(monkeypatch: pytest.MonkeyPatch, build: Callable[..., 
         assert build() == R.crypt_v1(plain, PSK, encrypt=True)
 
 
-# ── known divergences and spec gaps (ratchets) ───────────────────────────────
-# name -> (library frame, catalogue frame, the decision it waits on)
-KNOWN_DIVERGENCES: dict[str, tuple[Callable[[], bytes], Callable[[], bytes], str]] = {
-    "power_query": (b.power_query, C.read_switch,
-                    "#2/G16: library sends aa 01 01; SwitchController / ControllerSwitch send aa 01"),
-    "brightness_query": (b.brightness_query, C.read_brightness,
-                         "#2/G16: library sends aa 04 01; BrightnessController sends aa 04"),
-}
-
-
-@pytest.mark.parametrize("name", sorted(KNOWN_DIVERGENCES))
-def test_known_divergence_still_open(name: str) -> None:
-    lib, spec, why = KNOWN_DIVERGENCES[name]
-    got, want = lib(), spec()
-    assert got != want, f"{name} now matches the catalogue: remove it from KNOWN_DIVERGENCES ({why})"
-    # The only difference is the trailing selector byte 0x01 (and the BCC it changes).
-    assert got[:2] == want[:2] and got[2] == 0x01 and want[2] == 0x00 and got[3:19] == want[3:19], why
-
-
+# ── wide masks ───────────────────────────────────────────────────────────────
 def _pos_set(mask: int, segments: int) -> list[bool]:
     """The app's position set for ``mask`` on a ``segments``-segment device."""
     return [bool(mask >> i & 1) for i in range(segments)]

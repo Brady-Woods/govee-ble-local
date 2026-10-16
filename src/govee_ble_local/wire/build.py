@@ -619,13 +619,16 @@ def secret_check(secret: bytes) -> bytes:
 
 # ── read requests (0xAA / 0xAC) ──────────────────────────────────────────────
 def power_query() -> bytes:
-    """aa 01 01: read the power / relay state (reply: parse_power)."""
-    return frame(PRO_READ, CMD_SWITCH, 0x01)
+    """aa 01: read the power / relay state (reply: parse_light_power on lights, parse_power's relay byte on
+    plugs). No selector byte, as the app sends it (ControllerSwitch.Companion.b, ControllerSwitch.java:38-47;
+    SwitchController / HeartGMessage on the plugs); no firmware image reads byte 2 of the request."""
+    return frame(PRO_READ, CMD_SWITCH)
 
 
 def brightness_query() -> bytes:
-    """aa 04 01: read the brightness (reply: parse_brightness)."""
-    return frame(PRO_READ, CMD_BRIGHTNESS, 0x01)
+    """aa 04: read the brightness (reply: parse_brightness). No selector byte, as the app sends it
+    (ControllerBrightness.Companion.b, ControllerBrightness.java:40-48)."""
+    return frame(PRO_READ, CMD_BRIGHTNESS)
 
 
 def mode_query() -> bytes:

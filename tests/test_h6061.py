@@ -391,7 +391,8 @@ def test_a_negative_signed_kelvin_in_the_0x0d_report_is_an_rgb_colour() -> None:
 def test_update_queries_power_brightness_mode_then_every_group() -> None:
     d = _poll(_frame(0xAA, 0x05, 0x0D, 1, 2, 3, 0, 0))
     q = [f[:3].hex() for f in _queried(d) if f[1] in (0x01, 0x04, 0x05, 0xA5)]
-    assert q == ["aa0101", "aa0401", "aa0501"] + [f"aaa5{g:02x}" for g in range(1, 7)]
+    # aa 01 / aa 04 without a selector byte, as the app sends them
+    assert q == ["aa0100", "aa0400", "aa0501"] + [f"aaa5{g:02x}" for g in range(1, 7)]
 
 
 def test_update_reads_panel_colours_from_the_group_replies() -> None:

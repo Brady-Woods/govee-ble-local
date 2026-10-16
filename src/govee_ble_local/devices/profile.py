@@ -304,7 +304,11 @@ PROFILES: Final[tuple[DeviceProfile, ...]] = (
         min_kelvin=2700, max_kelvin=6500, readback="status", global_power=True,
         # The poll is the app's connect read, the 0xAC status burst alone
         # (VM4LightH60A6$afterConnectedSingleReadDeviceInfo$1); its 0x05 TLV is the mode, decoded by
-        # pact_h60a0 h60a1.Info4Detail.Q (VM4LightH60A6.C1; the .n lambda hands it the TLV value).
+        # pact_h60a0 h60a1.Info4Detail.Q (VM4LightH60A6.C1; the .n lambda hands it the TLV value), and its
+        # 0x01 TLV the power (devices.yaml power_read: ac_status; no aa 01 read). Timing differences, all
+        # frames the app also sends: the burst is re-read on every poll, where the app reads it once per
+        # connect and then keeps the link with an aa 00 heartbeat (not sent here) and its ee 30 pushes
+        # (ignored here).
         mode_color_parse="kelvin_15_rgb_kelvin_0d",
         # CCT: `15 01 ff ff ff <K> <tint> <mask>` (Bytes.r type 1), ONE frame: whole device = mask
         # 0x1FFF (DelegateColorV2.G0 -> Config.Yt, KelvinConfig.b -> Bytes.C, 7.7.02), per zone =
@@ -349,9 +353,10 @@ PROFILES: Final[tuple[DeviceProfile, ...]] = (
     # H61A8 — rope: plaintext, 0x0b scheme, 15 segments, no CCT, dialect-A scenes.
     # Mechanism-B per-segment colour read-back (spec Change 7): 0xAA 0xA5 (V2, adds
     # brightness) / 0xA2 (V1) per-batch frames, segment = (batch_seq-1)*per_batch+i.
-    # 15 segments / 3-per-batch = 5 batches. Modeled from source; not yet live-verified
-    # (no H61A8 hardware). `polled` covers power/brightness/scene.
-    # The aa 05 mode report (goodsType 207, dreamcolorlightv1; Govee Home 7.5.12): ModeController.u
+    # 15 segments / 3-per-batch = 5 batches. Modeled from source; read back live from the bench
+    # H61A8 (2026-10-16: segments 0..14). `polled` covers power/brightness/scene.
+    # The aa 05 mode report (goodsType 19 per the account device-list, one of dreamcolorlightv1
+    # Support.f0's goodsTypes, Support.java:164; Govee Home 7.5.12): ModeController.u
     # builds dreamcolorlightv1 Mode, whose Mode.parseSubMode sends 0x15 to SubModeColorV2.parse
     # ([gradual][kelvin s16be]) and every sub-mode but 0x04 (scene), 0x0a (DIY), 0x15 and music
     # (0x11, 0x13, 0x16) - 0x0b and 0x0d included - to SubModeColor.parse, which reads only byte 0.

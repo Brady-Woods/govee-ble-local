@@ -63,8 +63,20 @@ model, from which the shipped readers are generated).
   (`33 01 FF / F0`) and `plug_total_switch` (`33 02 01 / 00`), with `RELAY_ALL_ON` / `RELAY_ALL_OFF` and
   `CMD_TOTAL_SWITCH`; the `ModeColorParse` value `"kelvin_15_rgb_kelvin_0d"`; and
   `wire.reassemble.StatusReply.mode`, the 0xAC reply's 0x05 TLV (see Changed).
+- `wire.parse.parse_light_power`: an `aa 01` reply as a light reads it, on only for a byte of 1 (the spec's
+  `switch_read_reply.light_is_on`); `parse_power` keeps the raw byte for the plugs' relay mask.
 
 ### Changed
+- **`aa 01` and `aa 04` are sent without the `01` selector byte**, as the app sends them
+  (`ControllerSwitch.Companion.b`, `ControllerBrightness.Companion.b`, the plugs' `SwitchController` /
+  `HeartGMessage`): `aa 01 00…` / `aa 04 00…`. No firmware image analysed reads byte 2 of these requests
+  (it is overwritten with the state), so devices answer the same. **A light's `aa 01` reply now means on only
+  for a byte of 1** (`ControllerSwitch.Companion.c`; the spec's `light_is_on`), as every curated control
+  screen reads it; it was any non-zero byte. Firmware and the app only ever store 0 or 1, so no state reads
+  differently in practice (the byte-2-or-more case is source-modelled). Plugs keep their relay-mask rule, and
+  the H60A6's power still comes from its status burst, where any non-zero byte is on (`status_switch.is_on`,
+  `Compose4BaseInfoSingleRead.u`). Live-checked on H6006, H6008, H6047 (on) and
+  H6052, H61A8 (off).
 - **Plug power is each goodsType's main switch** (Govee Home 7.7.02): the H5082 (goodsType 50) and the
   H5160 / H5161 (90) send `33 01 FF / F0`, which switches every outlet (`UiV2` / `UiV4.onOffChange` ->
   `SwitchControllerV2(on, 15)`), and the H5089 (307) sends `33 02 01 / 00` (`Ui4H5089.onOffChange` ->
@@ -82,7 +94,8 @@ model, from which the shipped readers are generated).
   decoded as the H60A6's `Info4Detail.Q` does (`pact_h60a0` `h60a1.Info4Detail`): 0x15 `[gradual][kelvin
   s16be]`, 0x0d `[r, g, b][kelvin s16be]` with colour temperature only for a Kelvin above 0, else the RGB.
   Before, 0x0d took any non-zero Kelvin (read unsigned) as colour temperature. A 0x15 Kelvin of 0 or below
-  still clears the Kelvin, as before; the app keeps its last one.
+  still clears the Kelvin, as before; the app keeps its last one. Live-checked for a 0x15 report (2700 K)
+  on the bench H60A6; the 0x0d branch is source-modelled.
 - `tools/gen_kaitai.sh` can generate Kaitai 0.11 read-write (serializer) classes: `--read-write` writes
   them to `build/kaitai_rw/` (`--out DIR` to change). It uses the JVM `kaitai-struct-compiler` 0.11.x when
   one is on PATH (`brew install kaitai-struct-compiler`), which read-write generation requires, because the
@@ -437,9 +450,9 @@ model, from which the shipped readers are generated).
   scheme (the tint-pick-as-CCT path over all 178 tint colours), segments up to the 7-byte mask, zones,
   bars, every scene code, 0xA3 and 0xA4 uploads, plug and secret writes, every read request and the `e7`
   handshake. The 0x15 colour and CCT frames are bound at every segment count up to 56 to the catalogue's
-  `Bytes.h` / `Bytes.r` builders (the wide mask, added to the spec in faa2cb7). One ratchet keeps the open
-  difference visible instead of skipped: the `aa 01 01` / `aa 04 01` selector byte (the catalogue sends
-  `aa 01` / `aa 04`; waiting on a decision). No frame changed.
+  `Bytes.h` / `Bytes.r` builders (the wide mask, added to the spec in faa2cb7). Every builder now equals its
+  catalogue counterpart; a frame that has to differ pending a decision goes in a ratchet that asserts the
+  difference instead of being skipped (the `aa 01` / `aa 04` selector was the last; see Changed).
 - The protocol constants in `wire.build` (`PRO_*`, `CMD_*`, `SUB_*`, `OP15_*`) and `transport.handshake`
   (`HANDSHAKE_OPCODE` and the e7 steps) are now taken from the generated reader's enums instead of being
   copied by hand; the names and values are unchanged (pinned by the test above). The device-info selectors

@@ -281,7 +281,7 @@ def test_update_reads_aa41_then_walks_ceil_n_over_4_groups(section: int, groups:
     st = asyncio.run(t.dev.update())
     q = t.queried
     # the app's order (ControllerStrategyConfig.O): aa 01, aa 04, aa 41, aa 05; then the colour walk
-    assert [f[:3].hex() for f in q[:4]] == ["aa0101", "aa0401", "aa4100", "aa0501"]
+    assert [f[:3].hex() for f in q[:4]] == ["aa0100", "aa0400", "aa4100", "aa0501"]   # no aa 01/04 selector
     walk = [f for f in q if f[1] == 0xA5]
     assert [f[2] for f in walk] == list(range(1, groups + 1))
     assert t.dev.segment_count == section

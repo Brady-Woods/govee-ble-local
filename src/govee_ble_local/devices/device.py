@@ -1104,16 +1104,17 @@ class Device:
     async def _read_polled(self) -> bool:
         """The polled read-back (aa 01 / aa 04 / aa 36 / aa 41 / aa 05); returns whether a live field
         came back (see :meth:`_read_status`)."""
-        def apply_power(power: int) -> None:
-            self._state.is_on = bool(power)
+        def apply_power(on: bool) -> None:
+            self._state.is_on = on
 
         def apply_brightness(raw: int) -> None:
             self._state.brightness = self._brightness_pct(raw)
 
         # Always read power: a device turned on externally (app, remote, wall
         # switch) must be noticed even when we last saw it off.
+        # A light is on only for a byte of 1, as the app's control screens read it (parse_light_power).
         power_read = await self._read_command(
-            "power", build.power_query(), build.CMD_SWITCH, parse.parse_power, apply_power) == "applied"
+            "power", build.power_query(), build.CMD_SWITCH, parse.parse_light_power, apply_power) == "applied"
         applied = power_read   # see _read_status / _finish_read
         if await self._read_command("brightness", build.brightness_query(), build.CMD_BRIGHTNESS,
                                     parse.parse_brightness, apply_brightness) == "applied":
