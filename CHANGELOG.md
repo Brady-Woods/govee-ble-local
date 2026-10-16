@@ -342,6 +342,14 @@ model, from which the shipped readers are generated).
   - `govee_commands.build_brightness_from_percent` computes in float32 like the app's `100.0f` (446
     off-by-one results change, none in the app's real raw ranges). Reader regenerated (additive: the three
     instances, `StatusDeviceInfo`, and the `len` check).
+- `tests/test_wire_build_vs_spec.py` (new): every TX builder in `wire.build` and `transport.handshake` is
+  compared byte for byte with its counterpart in the spec's app-traced catalogue (`spec/govee_commands.py`)
+  or reference codec (`spec/govee_reference.py`) over seeded-random inputs: power, brightness, every colour
+  scheme (the tint-pick-as-CCT path over all 178 tint colours), segments up to the 7-byte mask, zones,
+  bars, every scene code, 0xA3 and 0xA4 uploads, plug and secret writes, every read request and the `e7`
+  handshake. Two ratchets keep the open differences visible instead of skipped: the `aa 01 01` / `aa 04 01`
+  selector byte (the catalogue sends `aa 01` / `aa 04`; waiting on a decision) and the 0x15 colour mask
+  above 16 segments (the spec still hard-codes two bytes). No frame changed.
 - Re-verified several spec facts against the 7.7.02 decompile (adversarially) and the account device-list,
   and corrected them: `switch_read_reply` keeps the legacy `SwitchController` `!= 0` semantics as primary and
   now notes the modern control-screen VM path (`ControllerSwitch.Companion.c` / `ShareVM.N3`) that decodes
