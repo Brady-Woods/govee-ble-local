@@ -86,7 +86,9 @@ def _cct0d(kelvin: int, picked: tuple[int, int, int]) -> bytes:
 APP_RANGES = {
     "H60A6": (2700, 6500), "H6641": (2000, 9000), "H6062": (2000, 9000), "H6047": (2200, 6500),
     "H6188": (2000, 9000), "H6008": (2700, 6500), "H6004": (2700, 6500), "H6052": (2000, 9000),
-    "H6006": (2000, 9000), "H6061": (2000, 9000),
+    # H6006 and H6008 are goodsType 64 -> KelvinConfig.Config version 2 = [2700, 6500] (KelvinConfig.java:407,
+    # :544-546). WAS (2000, 9000) for H6006 (SPEC_CLIENT_AUDIT #3, VERIFICATION G30).
+    "H6006": (2700, 6500), "H6061": (2000, 9000),
 }
 
 
@@ -258,7 +260,7 @@ def test_range_boundaries_exactly_at_and_just_outside(sku: str, segments: int | 
 
 def test_2000k_colour_is_rgb_below_a_2700k_minimum_and_cct_at_a_2000k_minimum() -> None:
     # 0xFF8D0B is the first colour of 2000 K
-    for sku in ("H60A6", "H6008", "H6004", "H6047"):                       # minimum 2700 / 2200
+    for sku in ("H60A6", "H6008", "H6006", "H6004", "H6047"):              # minimum 2700 / 2200
         d = _dev(sku)
         asyncio.run(d.set_rgb((0xFF, 0x8D, 0x0B)))
         p = profile_for(sku)
@@ -267,7 +269,7 @@ def test_2000k_colour_is_rgb_below_a_2700k_minimum_and_cct_at_a_2000k_minimum() 
     d = _dev("H6008")
     asyncio.run(d.set_rgb((0xFF, 0x8D, 0x0B)))
     assert _sent(d)[0].hex() == "33050dff8d0b0000000000000000000000000042"
-    for sku in ("H6641", "H6052", "H6188", "H6006", "H6062"):              # minimum 2000
+    for sku in ("H6641", "H6052", "H6188", "H6062"):                       # minimum 2000
         d = _dev(sku, 15 if sku == "H6062" else None)
         asyncio.run(d.set_rgb((0xFF, 0x8D, 0x0B)))
         assert d.state.color_temp_kelvin == 2000, sku

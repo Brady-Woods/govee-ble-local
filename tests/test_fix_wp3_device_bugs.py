@@ -13,7 +13,7 @@ from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
-from fake_ble import ble_device
+from fake_ble import ble_device, status_burst
 from fake_ble import frame as _frame
 
 from govee_ble_local.devices import _readback
@@ -432,8 +432,13 @@ def test_kelvin_zero_report_clears_the_colour_temperature(sku: str) -> None:
     assert d.state.color_temp_kelvin is None
 
 
+def _mode_burst(*mode: int) -> list[bytes]:
+    """An H60A6 0xAC status reply whose only TLV is the 0x05 mode [sub_mode, params]."""
+    return status_burst(bytes([0x05, len(mode), *mode]))
+
+
 def test_h60a6_kelvin_zero_status_mode_report_clears_the_colour_temperature() -> None:
-    d = _dev("H60A6", {0x05: [_frame(0xAA, 0x05, 0x15, 0x01, 0x00, 0x00)]})
+    d = _dev("H60A6", {0x03: _mode_burst(0x15, 0x01, 0x00, 0x00)})
     run(d.set_color_temp(4000))
     run(d._read_status())
     assert d.state.color_temp_kelvin is None
@@ -441,7 +446,10 @@ def test_h60a6_kelvin_zero_status_mode_report_clears_the_colour_temperature() ->
 
 @pytest.mark.parametrize("sku", ["H60A6", "H6047", "H6006", "H6188", "H6641"])
 def test_scene_report_clears_the_colours(sku: str) -> None:
-    d = _dev(sku, {0x05: [_frame(0xAA, 0x05, 0x04, 0x10, 0x00)]})
+    # The H60A6 reads its mode from the status burst's 0x05 TLV; the others from aa 05.
+    replies = ({0x03: _mode_burst(0x04, 0x10, 0x00)} if sku == "H60A6"
+               else {0x05: [_frame(0xAA, 0x05, 0x04, 0x10, 0x00)]})
+    d = _dev(sku, replies)
     run(d.set_color_temp(4000))
     run(d._read_status() if d.profile.readback == "status" else d._read_polled())
     assert d.state.scene_code == 16
@@ -477,9 +485,11 @@ def test_0d_report_is_ignored_where_the_app_does_not_parse_it(sku: str) -> None:
 
 def test_h60a6_0d_report_keeps_the_rgb_kelvin_layout() -> None:
     # h60a1 Info4Detail.Q (used by VM4LightH60A6): 0x0d = [r, g, b, kelvin s16be]
-    d = _dev("H60A6", {0x05: [_frame(0xAA, 0x05, 0x0D, 0x10, 0x20, 0x30, 0x00, 0x00)]})
+    d = _dev("H60A6", {0x03: _mode_burst(0x0D, 0x10, 0x20, 0x30, 0x00, 0x00)})
     run(d._read_status())
     assert d.state.rgb_color == (0x10, 0x20, 0x30) and d.state.color_temp_kelvin is None
+    # The burst is the whole poll: no aa 05 read follows it (the app's connect read).
+    assert _queried(d) and all(q[0] == 0xAC for q in _queried(d))
 
 
 def test_mode_color_parse_is_validated() -> None:

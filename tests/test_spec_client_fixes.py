@@ -20,6 +20,7 @@ from govee_ble_local.models import Encryption
 from govee_ble_local.transport import connection as conn_mod
 from govee_ble_local.transport.connection import GoveeConnection
 from govee_ble_local.wire import parse, reassemble
+from govee_ble_local.wire.build import color_temp
 from govee_ble_local.wire.describe import describe_frame, status_burst_report
 
 
@@ -181,3 +182,49 @@ def test_analyzer_keeps_redacted_chunks() -> None:
     old_first = bytes([0xAC, 0x00]) + bytes(18)
     report = status_burst_report([old_first, *later])
     assert report.redacted == 1 and report.malformed == 0
+
+
+# ── #3 / G30: H6006 is goodsType 64, KelvinConfig version 2 = [2700, 6500] ────────────────────
+def test_h6006_kelvin_is_the_apps_range() -> None:
+    d = _dev("H6006")
+    assert (d.min_kelvin, d.max_kelvin) == (2700, 6500)
+    for asked, sent in ((2000, 2700), (9000, 6500), (4000, 4000)):   # clamped to the range, as the app does
+        asyncio.run(d.set_color_temp(asked))
+        assert _sent(d)[-1] == color_temp(sent, "h6006"), (asked, sent)
+        assert d.state.color_temp_kelvin == sent
+    # A tint colour outside the range is a plain RGB pick, as on H6008 (KelvinConfig.i).
+    asyncio.run(d.set_rgb((0xFF, 0x8D, 0x0B)))   # 2000 K's first tint
+    assert _sent(d)[-1].hex() == "33050dff8d0b0000000000000000000000000042"
+
+
+# ── #1 / G3: each plug's main switch is its goodsType's frame ─────────────────────────────────
+@pytest.mark.parametrize(("sku", "on_frame", "off_frame"), [
+    ("H5080", "330111", "330110"), ("H5083", "330111", "330110"), ("H5085", "330111", "330110"),  # gt 43
+    ("H5082", "3301ff", "3301f0"),                                                                # gt 50
+    ("H5160", "3301ff", "3301f0"), ("H5161", "3301ff", "3301f0"),                                 # gt 90
+    ("H5089", "330201", "330200"),                                                                # gt 307
+])
+def test_plug_power_frame_per_goods_type(sku: str, on_frame: str, off_frame: str) -> None:
+    for on, want in ((True, on_frame), (False, off_frame)):
+        d = _dev(sku)
+        asyncio.run(d.set_power(on))
+        sent = _sent(d)
+        assert sent[0][:3].hex() == want, (sku, on)
+        assert d.state.is_on is on
+        # The 33 b5 time sync still follows every plug write (batch 10 will make it per goodsType).
+        assert [f[:2].hex() for f in sent[1:]] == ["33b5"]
+
+
+def test_h5082_and_h5089_have_their_own_profiles() -> None:
+    h5082, h5089 = profile_for("H5082"), profile_for("H5089")
+    assert h5082 is not None and h5089 is not None
+    assert (h5082.skus, h5082.relay_power) == (("H5082",), "all_outlets")
+    assert (h5089.skus, h5089.relay_power) == (("H5089",), "total_switch")
+    assert h5082.relay_on_mask == h5089.relay_on_mask == 0xFF and h5089.requires_secret
+
+
+def test_relay_power_is_validated_and_defaults_to_1_3_0s_frame() -> None:
+    p = profile_for("H5083")
+    assert p is not None and p.relay_power == "outlet0"
+    with pytest.raises(GoveeBleInvalidValue, match="relay_power"):
+        dataclasses.replace(p, relay_power="bogus")  # type: ignore[arg-type]

@@ -71,6 +71,9 @@ class StatusReply:
     wifi_mac: str | None = None
     firmware_version: str | None = None
     hardware_version: str | None = None
+    # The 0x05 TLV's value, [sub_mode, params]: the device's mode, the same body an aa 05 reply carries
+    # (pact_h60a0 h60a1.Info4Detail.Q reads it; the last 0x05 TLV wins, as each overwrites there).
+    mode: bytes | None = None
 
 
 @dataclass(frozen=True)
@@ -371,6 +374,8 @@ def parse_status(frames: list[bytes], *, pieces: int | None = None) -> StatusRep
             st.is_on = bool(v.state)
         elif typ == TYPE_BRIGHTNESS:
             st.brightness = int(v.brightness)
+        elif typ == TYPE_MODE:
+            st.mode = bytes(tlv._raw_value)   # mode_status: [sub_mode, params]
         elif typ == TYPE_ZONE:
             # bit0 of each byte (VM4LightH60A6$afterConnectedSingleReadDeviceInfo$1.o:
             # ParseUtils.getBit2Boolean(b, 1) = (b >> 0) & 1); the other bits are not zone power.

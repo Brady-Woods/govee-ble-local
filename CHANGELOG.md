@@ -58,8 +58,31 @@ model, from which the shipped readers are generated).
   rule for that count. `pieces` omitted keeps 1.3.0's reading (the count comes from each TLV's length).
 - `wire.build.PRO_MULTI_A2` (0xA2, `multi_read`), `wire.describe.chunk_redacted` and
   `devices.brightness.percent_to_device` (see Fixed).
+- `DeviceProfile.relay_power` (keyword-only, typed `devices.profile.RelayPower`: `"outlet0"`, the default and
+  1.3.0's `33 01 11 / 10`, `"all_outlets"` or `"total_switch"`) and the builders `wire.build.plug_all_outlets`
+  (`33 01 FF / F0`) and `plug_total_switch` (`33 02 01 / 00`), with `RELAY_ALL_ON` / `RELAY_ALL_OFF` and
+  `CMD_TOTAL_SWITCH`; the `ModeColorParse` value `"kelvin_15_rgb_kelvin_0d"`; and
+  `wire.reassemble.StatusReply.mode`, the 0xAC reply's 0x05 TLV (see Changed).
 
 ### Changed
+- **Plug power is each goodsType's main switch** (Govee Home 7.7.02): the H5082 (goodsType 50) and the
+  H5160 / H5161 (90) send `33 01 FF / F0`, which switches every outlet (`UiV2` / `UiV4.onOffChange` ->
+  `SwitchControllerV2(on, 15)`), and the H5089 (307) sends `33 02 01 / 00` (`Ui4H5089.onOffChange` ->
+  `Controller4TotalSwitch`). They all sent `33 01 11 / 10`, which switches outlet 0 only, so `set_power(False)`
+  left the other outlets on and the next poll reported the plug on again. The H5080 / H5083 / H5085 (43) keep
+  `33 01 11 / 10`. `set_power(True)` on a partly-on plug turns every outlet on. The `33 b5` time sync still
+  follows. The H5082 and H5089 now have a profile each, so their `DeviceProfile.skus` is `("H5082",)` /
+  `("H5089",)`. Not modelled: after ON the H5089 app re-applies its cached night-light mode. Source-modelled:
+  no multi-outlet plug was in Bluetooth range (the H5083's frame is unchanged).
+- **H6006 colour temperature is 2700-6500 K** (was 2000-9000): the H6006 is goodsType 64, which the app maps
+  to `KelvinConfig` version 2 = [2700, 6500], as for the H6008. `set_color_temp` clamps to it, and an RGB pick
+  equal to a tint colour outside it is sent as RGB, as the app does. Home Assistant's slider narrows to match.
+- **The H60A6 poll is the 0xAC status burst alone**, the app's connect read: the mode comes from the burst's
+  0x05 TLV and the `aa 05 01` read that followed is no longer sent (one frame fewer per poll). The mode is
+  decoded as the H60A6's `Info4Detail.Q` does (`pact_h60a0` `h60a1.Info4Detail`): 0x15 `[gradual][kelvin
+  s16be]`, 0x0d `[r, g, b][kelvin s16be]` with colour temperature only for a Kelvin above 0, else the RGB.
+  Before, 0x0d took any non-zero Kelvin (read unsigned) as colour temperature. A 0x15 Kelvin of 0 or below
+  still clears the Kelvin, as before; the app keeps its last one.
 - `tools/gen_kaitai.sh` can generate Kaitai 0.11 read-write (serializer) classes: `--read-write` writes
   them to `build/kaitai_rw/` (`--out DIR` to change). It uses the JVM `kaitai-struct-compiler` 0.11.x when
   one is on PATH (`brew install kaitai-struct-compiler`), which read-write generation requires, because the

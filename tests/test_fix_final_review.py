@@ -106,11 +106,18 @@ def test_scene_report_still_wins_on_the_strategy_a_skus() -> None:
     assert (st.scene_code, st.rgb_color, st.color_temp_kelvin) == (9, None, None)
 
 
-def test_default_mode_parse_is_unchanged_for_h60a6() -> None:
-    # H60A6 keeps the default "rgb_kelvin": a 0x15 report is the cct_read_reply Kelvin.
-    assert profile_for("H60A6").mode_color_parse == "rgb_kelvin"  # type: ignore[union-attr]
+def test_h60a6_mode_parse_is_its_info4detail() -> None:
+    # pact_h60a0 h60a1.Info4Detail.Q: 0x15 = [gradual][kelvin s16be], 0x0d = [r, g, b][kelvin s16be]
+    # (CCT for a Kelvin > 0, else that RGB), nothing else. WAS the default "rgb_kelvin", whose 0x0d
+    # decode took any non-zero Kelvin as CCT and read it unsigned.
+    assert profile_for("H60A6").mode_color_parse == "kelvin_15_rgb_kelvin_0d"  # type: ignore[union-attr]
     st = _fold_reply("H60A6", _REPORT_15, rgb_color=(9, 9, 9))
     assert (st.rgb_color, st.color_temp_kelvin) == (None, 2700)
+    st = _fold_reply("H60A6", _NEGATIVE_K, color_temp_kelvin=3000)
+    assert (st.rgb_color, st.color_temp_kelvin) == ((1, 2, 3), None)
+    for other in (_REPORT_0B, _REPORT_02, _MUSIC):   # "not support!": the colour is left as it was
+        st = _fold_reply("H60A6", other, rgb_color=(9, 9, 9))
+        assert (st.rgb_color, st.color_temp_kelvin) == ((9, 9, 9), None)
 
 
 # ── WP1b-008 made compatible: a scan failure is also the error 1.3.0 raised ──────────────────

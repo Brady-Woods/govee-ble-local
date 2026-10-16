@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
+from ..const import FRAME_LEN
 from ..models import DeviceState, Segment
 from ..wire import build, parse, reassemble
 from .brightness import raw_to_percent
@@ -172,12 +173,24 @@ def apply_status(
         # merge so the rest keep their last known values.
         state.segments = parse.merge_segments(state.segments, st.segments)
         applied = True
+    if st.mode is not None:
+        # The 0x05 TLV is the mode, as the app reads it on connect (no separate aa 05 read): the same
+        # [sub_mode, params] body an aa 05 reply carries, decoded by the same per-SKU parse.
+        apply_mode_reply(profile, state, mode_reply_frame(st.mode))
+        applied = True
     # Device-info (serial / wifi_mac / fw / hw) comes from the 0x07 TLV in the 0xAC
     # stream — the ONLY source for BLE-only devices (H60A6); aa 07 returns zeros there.
     merge_device_info(
         state, serial=st.serial_number, wifi_mac=st.wifi_mac,
         firmware=st.firmware_version, hardware=st.hardware_version)
     return applied, power_read
+
+
+def mode_reply_frame(mode: bytes) -> bytes:
+    """The ``aa 05`` reply frame carrying a 0xAC 0x05 TLV value ``[sub_mode, params]``, so the burst's mode
+    goes through the same decoders as a mode read (pact_h60a0 h60a1.Info4Detail.Q reads both; a value
+    longer than a frame's body is cut, which no decoder reads that far)."""
+    return build.frame(build.PRO_READ, build.CMD_MODE, *mode[: FRAME_LEN - 3])
 
 
 def _submode4color_kelvin(reply: bytes) -> int | None:
@@ -239,6 +252,21 @@ def apply_mode_reply(profile: DeviceProfile, state: DeviceState, reply: bytes) -
         rgb = parse.parse_mode_0d_rgb(reply)
         if rgb is not None:
             state.rgb_color, state.color_temp_kelvin = rgb, None
+        return
+    if profile.mode_color_parse == "kelvin_15_rgb_kelvin_0d":
+        # H60A6: pact_h60a0 h60a1.Info4Detail.Q (:399-430) reads 0x15 with SubMode4Color's default
+        # [gradual][kelvin s16be] and 0x0d as [r, g, b][kelvin s16be] (CCT for a Kelvin > 0, else that
+        # RGB); 0x04 is the scene (above) and every other sub-mode is "not support!". A 0x15 Kelvin of 0
+        # or below clears the Kelvin here (apply_kelvin_report); the app keeps its last one.
+        sub = reply[2] if len(reply) >= 3 and reply[:2] == b"\xaa\x05" else None
+        if sub == build.SUB_COLOR_15:
+            kelvin = _submode4color_kelvin(reply)
+            if kelvin is not None:
+                apply_kelvin_report(state, kelvin)
+        elif sub == build.SUB_COLOR_0D:
+            decoded = _cube_mode_0d(reply)
+            if decoded is not None:
+                state.rgb_color, state.color_temp_kelvin = decoded
         return
     if profile.mode_color_parse == "rgb_kelvin_0d":
         # H6061: CubeNewInfo4Detail.U decodes 0x0d alone among the colour sub-modes; 0x15 (which

@@ -44,6 +44,20 @@ def frame(*b: int) -> bytes:
     return body + bytes([checksum(body)])
 
 
+def status_burst(tlvs: bytes) -> list[bytes]:
+    """A 0xAC status reply carrying the TLV stream ``tlvs``, chunked as the device sends it
+    (AbsController4BleSingleSendMultiBack: first chunk [ac 00 <packets u16le> <lastLen> 03 00] + 12 data
+    bytes, later chunks 17, the last tagged 0xFF; one packet when it all fits in the first)."""
+    if len(tlvs) <= 12:
+        return [frame(0xAC, 0x00, 0x01, 0x00, len(tlvs), 0x03, 0x00, *tlvs)]
+    rest = tlvs[12:]
+    chunks = [rest[i:i + 17] for i in range(0, len(rest), 17)]
+    total = 1 + len(chunks)
+    out = [frame(0xAC, 0x00, total & 0xFF, total >> 8, len(chunks[-1]), 0x03, 0x00, *tlvs[:12])]
+    out += [frame(0xAC, 0xFF if i == len(chunks) else i, *c) for i, c in enumerate(chunks, start=1)]
+    return out
+
+
 class FakeClient:
     """One BLE link. Created per establish_connection call."""
 

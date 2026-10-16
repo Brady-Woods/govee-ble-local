@@ -103,6 +103,13 @@ def test_switch_relay_is_outlet_zero(on: bool) -> None:
     assert b.switch(on, relay=True) == C.build_plug_relay(0, on)
 
 
+@pytest.mark.parametrize("on", [True, False])
+def test_plug_main_switch_frames(on: bool) -> None:
+    # gt 50 / 90: SwitchControllerV2(on, 15), every outlet; gt 307: Controller4TotalSwitch.
+    assert b.plug_all_outlets(on) == C.build_plug_relay(15, on)
+    assert b.plug_total_switch(on) == C.build_plug_total_switch(on)
+
+
 def test_brightness_percent_and_raw() -> None:
     for pct in range(101):
         assert b.brightness(pct) == C.build_brightness(pct)

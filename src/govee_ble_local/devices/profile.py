@@ -39,8 +39,20 @@ ColorReadBack = Literal["", "mechanism_b", "mechanism_a_direct"]
 # "kelvin"          = 0x15 / 0x0b / 0x02 / 0x0d all -> SubMode4Color [gradual][kelvin s16be] (H6062);
 # "kelvin_15"       = 0x15 only; any other colour sub-mode is not parsed (H6641, H6047, H61A8);
 # "rgb_kelvin_0d"   = 0x0d only -> [r, g, b, kelvin s16be], kelvin > 0 = CCT; 0x15 and every other
-#                     colour sub-mode is not parsed (H6061: CubeNewInfo4Detail.U).
-ModeColorParse = Literal["rgb_kelvin", "rgb_kelvin_tint", "rgb_0d", "kelvin", "kelvin_15", "rgb_kelvin_0d"]
+#                     colour sub-mode is not parsed (H6061: CubeNewInfo4Detail.U);
+# "kelvin_15_rgb_kelvin_0d" = 0x15 -> SubMode4Color [gradual][kelvin s16be], 0x0d -> [r, g, b, kelvin
+#                     s16be] (kelvin > 0 = CCT, else that RGB); any other colour sub-mode is not parsed
+#                     (H60A6: pact_h60a0 h60a1.Info4Detail.Q).
+ModeColorParse = Literal["rgb_kelvin", "rgb_kelvin_tint", "rgb_0d", "kelvin", "kelvin_15", "rgb_kelvin_0d",
+                         "kelvin_15_rgb_kelvin_0d"]
+
+# How a plug's whole-device power is written (its main switch on the app's detail screen):
+# "outlet0"     = 33 01 11 / 10, the relay-0 encoding (goodsType 43: H5080 / H5083 / H5085, one outlet;
+#                 and 1.3.0's frame for every plug);
+# "all_outlets" = 33 01 FF / F0, every outlet (goodsType 50 H5082, 90 H5160 / H5161;
+#                 SwitchControllerV2(on, 15));
+# "total_switch"= 33 02 01 / 00 (goodsType 307 H5089; Controller4TotalSwitch).
+RelayPower = Literal["outlet0", "all_outlets", "total_switch"]
 
 _C = Capability
 
@@ -114,7 +126,7 @@ class DeviceProfile:
     """Account-locked: with a secret set (``Device.set_secret``), every session sends the ``33 b2``
     unlock right after the handshake."""
     relay: bool = False
-    """Plug power: ``33 01`` carries the relay encoding (0x11/0x10), followed by a best-effort
+    """Plug power: the goodsType's main-switch frame (:attr:`relay_power`), followed by a best-effort
     sync-time frame."""
     bar_switch: bool = False
     """H6047: both bars in one 33 36 frame (per-bar buttons; whole-device power is 33 01), read via
@@ -183,6 +195,9 @@ class DeviceProfile:
 
     The app's detail screen decides it per goodsType: bit 0 on the single-outlet screens, the
     outlets' bits OR-ed together on the multi-outlet ones (see the plug profiles). 0xFF = any bit."""
+    relay_power: RelayPower = field(default="outlet0", kw_only=True)
+    """Plug power frame (see :data:`RelayPower`); only read when :attr:`relay` is set. The default keeps
+    1.3.0's ``33 01 11 / 10``."""
     advert_on_mask: int | None = field(default=None, kw_only=True)
     """Plug advertisement on/off: the bits of the advertised switch byte that make the device "on";
     None (every light) = the byte equals 1 (``AbsBaseBleModel.A``).
@@ -220,6 +235,7 @@ class DeviceProfile:
             ("readback", ReadBack),
             ("color_readback", ColorReadBack),
             ("mode_color_parse", ModeColorParse),
+            ("relay_power", RelayPower),
         ):
             value = getattr(self, name)
             if value not in get_args(allowed):
@@ -286,6 +302,10 @@ PROFILES: Final[tuple[DeviceProfile, ...]] = (
                Zone("background", power_index=1, segments=tuple(range(12)))),
         scene_versions=frozenset({0, 1, 2, 3, 5}), scene_dialect="B_h60a6",
         min_kelvin=2700, max_kelvin=6500, readback="status", global_power=True,
+        # The poll is the app's connect read, the 0xAC status burst alone
+        # (VM4LightH60A6$afterConnectedSingleReadDeviceInfo$1); its 0x05 TLV is the mode, decoded by
+        # pact_h60a0 h60a1.Info4Detail.Q (VM4LightH60A6.C1; the .n lambda hands it the TLV value).
+        mode_color_parse="kelvin_15_rgb_kelvin_0d",
         # CCT: `15 01 ff ff ff <K> <tint> <mask>` (Bytes.r type 1), ONE frame: whole device = mask
         # 0x1FFF (DelegateColorV2.G0 -> Config.Yt, KelvinConfig.b -> Bytes.C, 7.7.02), per zone =
         # that zone's mask. An RGB pick (whole device, zone or segment) equal to a tint colour in
@@ -351,9 +371,11 @@ PROFILES: Final[tuple[DeviceProfile, ...]] = (
     # alike as [r, g, b][kelvin s16be][tint] and takes CCT only for a Kelvin > 0 (mode_color_parse
     # "rgb_kelvin_tint"). Static firmware analysis (not hardware-verified): both bulbs' firmware sends
     # the tint bytes as 0 and the Kelvin pre-zeroed, so a Kelvin of 0 is RGB mode.
+    # Kelvin range: both bulbs are goodsType 64 (the account device-list), which KelvinConfig.Config maps to
+    # version 2 (KelvinConfig.java:544-546, Config.V2:1389-1390) = [2700, 6500] (:407).
     DeviceProfile(
         skus=("H6006",), capabilities=_LIGHT, color_scheme="h6006",
-        encryption=Encryption.NONE, min_kelvin=2000, max_kelvin=9000,
+        encryption=Encryption.NONE, min_kelvin=2700, max_kelvin=6500,
         scene_versions=frozenset({1}), readback="polled", mode_color_parse="rgb_kelvin_tint",
     ),
     DeviceProfile(
@@ -547,15 +569,28 @@ PROFILES: Final[tuple[DeviceProfile, ...]] = (
         capabilities=frozenset({_C.POWER}), encryption=Encryption.AES_RC4_PSK,
         requires_secret=True, relay=True, readback="plug", relay_on_mask=0x01, advert_on_mask=0x01,
     ),
+    # Whole-device power is each goodsType's main switch (Govee Home 7.7.02; source-modelled, not yet
+    # verified on these plugs): gt 50 (H5082) and 90 (H5160 / H5161) send 33 01 FF / F0, every outlet
+    # (h5080 UiV2.onOffChange:887-890, UiV4.onOffChange:765-768 -> SwitchControllerV2(!open, 15));
+    # gt 307 (H5089) sends 33 02 01 / 00 (Ui4H5089.onOffChange:929-946 -> Controller4TotalSwitch). Not
+    # modelled: after ON the H5089 app re-applies its cached night-light mode (BleOp4H5089).
     DeviceProfile(
-        skus=("H5082", "H5089"),
+        skus=("H5082",),
         capabilities=frozenset({_C.POWER}), encryption=Encryption.AES_RC4_PSK,
         requires_secret=True, relay=True, readback="plug", relay_on_mask=0xFF, advert_on_mask=0x03,
+        relay_power="all_outlets",
+    ),
+    DeviceProfile(
+        skus=("H5089",),
+        capabilities=frozenset({_C.POWER}), encryption=Encryption.AES_RC4_PSK,
+        requires_secret=True, relay=True, readback="plug", relay_on_mask=0xFF, advert_on_mask=0x03,
+        relay_power="total_switch",
     ),
     DeviceProfile(
         skus=("H5160", "H5161"),
         capabilities=frozenset({_C.POWER}), encryption=Encryption.AES_RC4_PSK,
         requires_secret=True, relay=True, readback="plug", relay_on_mask=0x07, advert_on_mask=0xFF,
+        relay_power="all_outlets",
     ),
 )
 

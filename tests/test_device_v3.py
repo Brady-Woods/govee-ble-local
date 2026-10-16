@@ -7,7 +7,7 @@ import base64
 from unittest.mock import AsyncMock
 
 import pytest
-from fake_ble import ble_device
+from fake_ble import ble_device, status_burst
 
 from govee_ble_local.devices.device import Device, make_device
 from govee_ble_local.devices.profile import PROFILES, profile_for
@@ -598,12 +598,12 @@ def test_read_status_seeded_device_does_not_rearm_advert_suppression_on_empty_re
 
 
 def test_read_status_mode_only_reply_does_not_suppress_adverts() -> None:
-    # Only the aa 05 mode read answered: the state is read back (not optimistic), but no on/off
-    # came back, so the advertised on/off is not suppressed.
+    # Only the burst's 0x05 mode TLV came back: the state is read back (not optimistic), but no
+    # on/off came back, so the advertised on/off is not suppressed.
     d = _dev("H60A6")
 
     async def query(frame: bytes, **_k: object) -> list[bytes]:
-        return [_reply(0xAA, 0x05, 0x04, 0x01, 0x00)] if frame[:2] == b"\xaa\x05" else []
+        return status_burst(bytes([0x05, 0x03, 0x04, 0x01, 0x00])) if frame[0] == 0xAC else []
 
     d._conn.query = AsyncMock(side_effect=query)  # type: ignore[method-assign]
     asyncio.run(d._read_status())

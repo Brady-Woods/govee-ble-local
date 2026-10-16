@@ -78,8 +78,12 @@ INFO_HARD: Final = 0x03
 # power payload values (no ksy enum yet)
 POWER_ON: Final = 0x01
 POWER_OFF: Final = 0x00
-RELAY_ON: Final = 0x11    # plug family
+RELAY_ON: Final = 0x11    # plug family, outlet 0 (SwitchControllerV2.q, outlet 0)
 RELAY_OFF: Final = 0x10
+RELAY_ALL_ON: Final = 0xFF    # every outlet (SwitchControllerV2.q, outlet 15: 0xF0 | 0x0F)
+RELAY_ALL_OFF: Final = 0xF0
+# 33 02: H5089's total switch (Controller4TotalSwitch.getCommandType); no ksy enum entry yet.
+CMD_TOTAL_SWITCH: Final = 0x02
 
 # H60A6 dialect-B DIY/graffiti protocol code; H6052 type-5 professional graffiti.
 COMM_H60A6: Final = 0x58
@@ -222,9 +226,24 @@ def all_segments_mask(segments: int) -> int:
 
 # ── power / brightness ───────────────────────────────────────────────────────
 def switch(on: bool, *, relay: bool = False) -> bytes:
-    """33 01 <state>. relay=True for the plug family (0x11/0x10)."""
+    """33 01 <state>. relay=True: the outlet-0 relay encoding 0x11/0x10, goodsType 43's main switch
+    (H5080 / H5083 / H5085); the multi-outlet plugs use :func:`plug_all_outlets` /
+    :func:`plug_total_switch`."""
     val = (RELAY_ON if on else RELAY_OFF) if relay else (POWER_ON if on else POWER_OFF)
     return frame(PRO_WRITE, CMD_SWITCH, val)
+
+
+def plug_all_outlets(on: bool) -> bytes:
+    """33 01 FF / F0: every outlet of a multi-outlet plug on / off, the main switch of goodsType 50
+    (H5082, UiV2.onOffChange) and 90 (H5160 / H5161, UiV4.onOffChange): ``SwitchControllerV2(on, 15)``,
+    whose ``q()`` writes ``0xF0 | (0x0F if on else 0)`` (h5080 SwitchControllerV2.java:53-71)."""
+    return frame(PRO_WRITE, CMD_SWITCH, RELAY_ALL_ON if on else RELAY_ALL_OFF)
+
+
+def plug_total_switch(on: bool) -> bytes:
+    """33 02 01 / 00: H5089's main switch (goodsType 307, Ui4H5089.onOffChange:929-946):
+    ``Controller4TotalSwitch(on)``, command 0x02, one 1/0 byte (Controller4TotalSwitch.q)."""
+    return frame(PRO_WRITE, CMD_TOTAL_SWITCH, POWER_ON if on else POWER_OFF)
 
 
 def brightness(pct: int) -> bytes:

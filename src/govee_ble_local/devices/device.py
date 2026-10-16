@@ -545,7 +545,20 @@ class Device:
         zone-driving master switch falls back to one 33 30 frame per zone."""
         if self.profile.zones and not self.profile.global_power and not self.profile.bar_switch:
             return [build.zone_power(z.power_index, on) for z in self.profile.zones]
-        return [build.switch(on, relay=self.profile.relay)]
+        if self.profile.relay:
+            return [self._relay_power_frame(on)]
+        return [build.switch(on)]
+
+    def _relay_power_frame(self, on: bool) -> bytes:
+        """A plug's main-switch frame for its goodsType (:data:`.profile.RelayPower`)."""
+        kind = self.profile.relay_power
+        if kind == "outlet0":
+            return build.switch(on, relay=True)
+        if kind == "all_outlets":
+            return build.plug_all_outlets(on)
+        if kind == "total_switch":
+            return build.plug_total_switch(on)
+        _unhandled(kind, "relay_power")
 
     def _apply_power(self, on: bool) -> None:
         """Optimistic state for whole-device power and the zones it drives (:func:`._fold.apply_power`)."""
@@ -1083,9 +1096,9 @@ class Device:
             nonlocal applied, power_read
             applied, power_read = _fold.apply_status(self.profile, self._state, st)
 
+        # The burst is the whole poll, as the app's connect read is: its 0x05 TLV carries the mode
+        # (_fold.apply_status), so no aa 05 read follows it.
         await self._read_fresh("status", lambda: _readback.status_burst(self, self._query_status), apply)
-        if Capability.SCENES in self.capabilities and await self._read_mode() == "applied":
-            applied = True
         self._finish_read(applied, power_read)
         return applied
 
