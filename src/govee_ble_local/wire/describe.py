@@ -86,7 +86,7 @@ def describe_frame(plain: bytes, direction: str = "?") -> tuple[str, list[Issue]
 
     pt = f.pro_type
     if not isinstance(pt, _ProType):
-        return (f"proType=0x{plain[0]:02x}", [("hard", f"unknown proType 0x{plain[0]:02x}")])
+        return (f"proType=0x{int(pt):02x}", [("hard", f"unknown proType 0x{int(pt):02x}")])
     if direction == "rx" and pt == _ProType.write:
         return _describe_ack(plain, f.body)
     if pt == _ProType.write:
@@ -132,18 +132,18 @@ def _describe_ack(plain: bytes, body: Any) -> tuple[str, list[Issue]]:
     """RX 0x33: the device's write-ACK echo ``[0x33, command, result, zeros]``; byte2 = result
     (0 = success). The ksy models only the write COMMAND — command vs ack is direction-keyed
     (both are 0x33), so a lone frame can't tell them apart; parse it as an ack here."""
-    cmd: Any = getattr(body, "command", None)
-    name = cmd.name if isinstance(cmd, _Command) else f"0x{plain[1]:02x}"
-    if plain[2] != 0:
+    cmd: Any = body.command   # the reader keeps an unknown command as its raw int
+    name = cmd.name if isinstance(cmd, _Command) else f"0x{int(cmd):02x}"
+    if plain[2] != 0:   # the result byte: no spec field until the RX write_ack type
         return (f"ack/{name}", [("hard", f"device REJECTED {name} write (result 0x{plain[2]:02x})")])
     return (f"ack/{name}", [])
 
 
 def _describe_write(plain: bytes, body: Any) -> tuple[str, list[Issue]]:
     """0x33 write command: label by command (and mode sub-mode); opaque payloads are soft."""
-    cmd: Any = getattr(body, "command", None)
+    cmd: Any = body.command   # the reader keeps an unknown command as its raw int
     if not isinstance(cmd, _Command):
-        return (f"write/cmd=0x{plain[1]:02x}", [("hard", f"unknown command 0x{plain[1]:02x} (write)")])
+        return (f"write/cmd=0x{int(cmd):02x}", [("hard", f"unknown command 0x{int(cmd):02x} (write)")])
     label = f"write/{cmd.name}"
     issues: list[Issue] = []
     params: Any = getattr(body, "params", None)
@@ -155,8 +155,8 @@ def _describe_write(plain: bytes, body: Any) -> tuple[str, list[Issue]]:
                 issues.append(("soft", f"write mode/{st.name} payload not modelled"))
         elif st is not None:
             return (
-                f"write/mode/sub=0x{plain[2]:02x}",
-                [("hard", f"unknown mode sub_type 0x{plain[2]:02x}")],
+                f"write/mode/sub=0x{int(st):02x}",
+                [("hard", f"unknown mode sub_type 0x{int(st):02x}")],
             )
     elif _opaque(params):
         issues.append(("soft", f"write {cmd.name} payload not modelled"))
@@ -165,9 +165,9 @@ def _describe_write(plain: bytes, body: Any) -> tuple[str, list[Issue]]:
 
 def _describe_read(plain: bytes, body: Any) -> tuple[str, list[Issue]]:
     """0xAA read request / reply: label by command (and mode selector); opaque replies are soft."""
-    cmd: Any = getattr(body, "command", None)
+    cmd: Any = body.command   # the reader keeps an unknown command as its raw int
     if not isinstance(cmd, _Command):
-        return (f"read/cmd=0x{plain[1]:02x}", [("hard", f"unknown command 0x{plain[1]:02x} (read)")])
+        return (f"read/cmd=0x{int(cmd):02x}", [("hard", f"unknown command 0x{int(cmd):02x} (read)")])
     label = f"read/{cmd.name}"
     issues: list[Issue] = []
     rb: Any = getattr(body, "body", None)
@@ -185,9 +185,9 @@ def _describe_read(plain: bytes, body: Any) -> tuple[str, list[Issue]]:
 
 def _describe_notify(plain: bytes, body: Any) -> tuple[str, list[Issue]]:
     """0xEE device push: label by sub-type; an opaque payload is soft."""
-    st: Any = getattr(body, "sub_type", None)
+    st: Any = body.sub_type   # the reader keeps an unknown sub-type as its raw int
     if not isinstance(st, _NotifySub):
-        return (f"notify/sub=0x{plain[1]:02x}", [("hard", f"unknown notify sub_type 0x{plain[1]:02x}")])
+        return (f"notify/sub=0x{int(st):02x}", [("hard", f"unknown notify sub_type 0x{int(st):02x}")])
     issues: list[Issue] = []
     if _opaque(getattr(body, "data", None)):
         issues.append(("soft", f"notify {st.name} payload not modelled"))
@@ -335,7 +335,7 @@ def status_burst_report(rx_ac: list[bytes]) -> StatusBurstReport:
         unread = [*skipped, cut] if cut is not None and cut.reason == "unparsed" else skipped
         for bad in unread:
             report.tlv_types[bad.type] += 1
-            if bad.length is not None and bad.length >= _reassemble.SIGNED_LEN_MIN:
+            if bad.negative_len:
                 report.gaps.append(
                     f"0xAC reply TLV type 0x{bad.type:02x} has len 0x{bad.length:02x}: the app reads a "
                     "len of 0x80 or more as negative and fails the read")

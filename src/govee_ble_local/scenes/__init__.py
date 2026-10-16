@@ -263,9 +263,14 @@ def _h60a6_upload(raw: bytes) -> list[bytes] | None:
     if len(raw) < 2 or raw[0] != _H60A6_DIY_MARKER:
         return None
     value = raw[1:]
-    diy = _reads_as(_F.DiyValue, value)
-    if diy is not None and int(diy.total_len) + 2 == len(value):
-        return build.scene_upload_a3(value, build.COMM_H60A6)
+    # The spec's h60a6_scene_value picks DIY by its length check (is_diy) and graffiti otherwise. The app
+    # tries the graffiti parser too when the DIY one fails, so a value the spec's choice can't read gets
+    # that second try here (a spec gap: try-in-order isn't expressible in the type).
+    scene = _reads_as(_F.H60a6SceneValue, value)
+    if scene is not None:
+        if scene.is_diy:
+            return build.scene_upload_a3(value, build.COMM_H60A6)
+        return build.scene_upload_a4_mtu(value, build.COMM_H60A6)
     if _reads_as(_F.GraffitiValue, value) is not None:
         return build.scene_upload_a4_mtu(value, build.COMM_H60A6)
     return None

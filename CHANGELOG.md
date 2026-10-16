@@ -87,6 +87,58 @@ model, from which the shipped readers are generated).
   `tools/gen_kaitai.sh` (an ignored `_generated/` survives a `git switch` or `git pull`). A repository build
   that can't run the generator now ends with one message naming bash, the JVM compiler and the PyPI release,
   instead of a `CalledProcessError` traceback.
+- **The `aa 05` mode decoders read the spec's `mode_read`, and the app's sign and CCT tests come from the
+  spec.** `wire.parse.mode_reply` (an `aa 05` reply) and `wire.parse.mode_value` (the 0xAC 0x05 TLV) return
+  the same `mode_read`, and the per-sub-mode decoders (`scene_of`, `kelvin_of`, `bar_kelvin_of`,
+  `gradual_kelvin_of`, `cct_0d_of`, `rgb_kelvin_tint_of`, `rgb_0d_of`, `rgb_kelvin_0d_of`, `sub_mode`; all
+  new) read it. The `parse_*` frame functions are unchanged wrappers. So the burst's mode no longer goes
+  through an `aa 05` frame built by hand (`devices._fold.mode_reply_frame` is gone, and no library module
+  calls the raw `wire.build.frame` helper now). The colour decoders no longer check the frame header or
+  slice it by hand. The Kelvin sign tests use `mode_color_0d_typed`'s `kelvin_signed`,
+  `report_kelvin_signed`, `is_cct` and `is_cct_positive` instead of `int.from_bytes(..., signed=True)` and
+  `>= 0x8000`, for H6062, the bulbs and H6188, H6061 and H60A6. No decode changes: an equivalence run over
+  7,360 20-byte replies through every decoder, 104,895 reply folds and 90,045 TLV folds (every profile, TLV
+  values 0-20 bytes long) matched the previous code. Only frames shorter than 20 bytes, which the
+  connection drops before decoding, decode differently. Bench 2026-10-16 (Mac, read-only): H6006, H6008,
+  H6047, H6052, H60A6 and H61A8 polled cleanly with the new decoders. Today's bench captures (447 replies:
+  55 `aa 05`, and 10 bursts whose 0x05 TLVs are 4 bytes long) decode the same through the old and the new
+  code.
+- **More library sites read the spec's own fields instead of raw bytes** (an independent inventory of
+  sites that ignored an existing spec field or instance).
+  - `wire.parse.find_reply` matches a reply on the frame reader's `pro_type` and `command`. A reply
+    whose body doesn't parse, such as an `aa 06` whose text isn't UTF-8, is still found.
+  - `parse_direct_color_group` reads the reader's raw body, and `parse_section_count` matches its
+    header via the reader (`on_off_memory`). Its body stays hand-decoded until the spec has a type.
+  - `parse_active_scene` reads the code with `scene_payload`; `mode_read` has no 0x04 case yet.
+  - The new `parse_device_info_selector` reads the `aa 07` selector for `_readback`.
+  - `wire.build`: the 0x0b colour writer uses `mode_payload`'s own `color_rgbic_0b` type (a u2le mask).
+    `status_query` names the requested types with the `command` enum.
+  - The 0xAC TLV walk takes its cut reasons from `status_tlv`: `len`'s `valid` (max 0x7f) and how far
+    the reader got. It drops its dead negative-length re-check after a whole `status_reply` parse.
+    `TlvCut` gains `negative_len`, and the analyzer uses it. A skipped 0x07 block, and the device info
+    `parse_status` folds, are read with `status_device_info`. A colour group with no piece count uses
+    `color_group_status.records`.
+  - The analyzer labels unknown values from the reader's fields.
+  - The handshake reply is read by the frame reader.
+  - The H60A6 scene upload picks DIY or graffiti with the spec's `h60a6_scene_value.is_diy`, and keeps
+    the app's graffiti fallback for a DIY that doesn't parse (spec item 26).
+  - The device's mode read hands the reader's `mode_read` straight to the fold.
+  - A 0x15 colour write's mask cap is the spec's `op15_color_write.mask_cap`, which the writer already
+    enforces: 7 bytes for variants 12 and 11, 10 for variant 5. No limit changes. The library builds
+    variants 12 and 11 at that same 7-byte cap, and H6061's variant 5 with a fixed 3-byte mask.
+    `MAX_MASK_BYTES` (56 segments) stays for the masks the spec has no cap for yet: op15 brightness and
+    the device's segment count.
+  No decode or frame changes, apart from the IC count under Fixed. An equivalence run over every
+  20-byte case matched the previous code:
+  - 2,435 frames through these readers and the analyzer;
+  - the 0x0b and status-query writers;
+  - 4,014 TLV walks and 5,000 status parses;
+  - 1,800 handshake replies;
+  - 3,088 H60A6 scene choices, including the 84 bundled scenes.
+  Today's bench captures (810 frames, 40 bursts, 193 encrypted replies) also decode the same. Bench
+  2026-10-16 (Mac, read-only): H6006, H6008, H6047, H6052, H60A6 and H61A8 polled cleanly with these
+  changes, including the encrypted H60A6 and H6008 handshakes and the `aa 06` / `aa 07` reads. H6641,
+  which uses the live IC count, was out of range.
 - **Every frame the library sends is written by the spec's generated Kaitai classes, and every frame it
   reads is parsed by the same classes.** `govee_ble_local/_generated/` now holds Kaitai 0.11 read-write
   classes (`ReadWriteKaitaiStruct`), generated by `tools/gen_kaitai.sh`, whose default build is now
@@ -263,6 +315,12 @@ model, from which the shipped readers are generated).
   tooling only.
 
 ### Fixed
+- **`wire.parse.parse_ic_count` reads the IC count signed, as the app does.** It uses the spec's
+  `ic_segment_read.ic_count_signed`, after `ControllerOnlyReadIcSegmentNum` (`BleUtil.getSignedShort`).
+  An `aa 40` count of 0x8000 or more is now negative, as in the app. Before, it was returned unsigned,
+  and only `_readback.live_ic_pieces` sign-extended it. Live-IC colour read-back (H6641) is unchanged,
+  because `live_ic_pieces` already read it signed. Source-modelled: no bench device reports such a
+  count.
 - `govee-ble-analyze` knows the 0xAC status TLVs 0x36 (bar switch; the H6038 / H6048 status read requests
   it, `VM4H6038`) and 0x40 (IC count; H6671 / H6672, `VM4LightH667172`), so their bursts are no longer reported
   as spec gaps with exit code 1. New constants `wire.reassemble.TYPE_BAR_SWITCH` and `TYPE_IC_NUM`.

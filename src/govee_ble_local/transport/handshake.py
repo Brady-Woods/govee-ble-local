@@ -14,10 +14,8 @@ after the handshake is encrypted with that session key.
 from __future__ import annotations
 
 import os
-from io import BytesIO
 from typing import Any, Final
 
-from kaitaistruct import KaitaiStream
 
 from ..const import FRAME_LEN, PSK
 from ..crypto import decrypt, encrypt
@@ -58,13 +56,14 @@ def build_step2(psk: bytes = PSK) -> bytes:
 
 
 def _handshake_body(pt: bytes) -> Any:
-    """The spec's ``handshake`` body (``op``, ``data``) of a decrypted ``e7`` frame, or None when ``pt``
-    is not one. Read with the generated type directly, over everything after the proType byte: the
-    frame reader would also drop the BCC byte and checks nothing the app checks here
-    (Controller4Aes.g / .h read only the op and the key bytes)."""
-    if len(pt) < 2 or pt[0] != HANDSHAKE_OPCODE:
+    """The spec's ``handshake`` body (``op``, ``data``) of a decrypted ``e7`` frame, read by the frame
+    reader, or None when ``pt`` is not one. Its ``data`` is bytes 2..18 (the reader leaves the BCC byte
+    out, and checks it no more than the app does: Controller4Aes.g / .h read only the op and the key)."""
+    try:
+        f = _load(_F.from_bytes(bytes(pt)))
+    except Exception:  # noqa: BLE001 - a mis-keyed decrypt is noise: not an e7 frame
         return None
-    return _load(_F.Handshake(KaitaiStream(BytesIO(pt[1:]))))
+    return f.body if f.pro_type == _F.ProType.handshake else None
 
 
 def parse_session_key(reply_ciphertext: bytes, psk: bytes = PSK) -> bytes | None:

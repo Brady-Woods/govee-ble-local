@@ -624,7 +624,7 @@ def test_live_ic_without_a_clamp_uses_the_reported_count() -> None:
                             color_readback_ic_per_piece=5)
     d = Device(profile, ble_device("AA:BB:CC:DD:EE:3C", "HX"))
     assert _readback.live_ic_pieces(d, 23) == 5          # ceil(23 / 5), no clamp
-    assert _readback.live_ic_pieces(d, 0xFFFF) == 0      # a negative count is no pieces
+    assert _readback.live_ic_pieces(d, -1) == 0          # a negative count (aa 40 ff ff) is no pieces
     assert _readback.live_ic_pieces(d, 0x1000) is None   # the app never stores this one
     h6641 = make_device(ble_device("AA:BB:CC:DD:EE:3D", "H6641"), "H6641")
     assert h6641 is not None

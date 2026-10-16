@@ -18,24 +18,22 @@ lights are on only for a byte of 1 (:func:`parse_light_power`).
 """
 from __future__ import annotations
 
+import contextlib
 import logging
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from io import BytesIO
-from typing import Any, Final
+from typing import Any, Final, TypeVar
 
 from kaitaistruct import KaitaiStream
 
 from ..const import FRAME_LEN
 from ..models import Segment
 from .build import (
-    CMD_MODE,
-    CMD_SECTION_COUNT,
     INFO_BASIC,
     INFO_HARD,
     INFO_SN,
     INFO_WIFI,
-    PRO_READ,
     SUB_COLOR_0B,
     SUB_COLOR_0D,
     SUB_COLOR_15,
@@ -86,10 +84,23 @@ def _read_reply(frame: bytes, command: Any) -> Any:
 
 
 # ── single-command read replies ──────────────────────────────────────────────
+def _frame_head(frame: bytes) -> tuple[Any, Any]:
+    """The frame reader's ``pro_type`` and its body's ``command`` (``read_command`` / ``single_command``)
+    for ``frame``, each None when the frame is too short for it. Read even when the body after them
+    doesn't parse (e.g. an ``aa 06`` whose text isn't UTF-8): the reader sets each field as it goes."""
+    f = _F(KaitaiStream(BytesIO(bytes(frame))))
+    with contextlib.suppress(Exception):   # a body the spec can't read still has its header
+        f._read()
+    return getattr(f, "pro_type", None), getattr(getattr(f, "body", None), "command", None)
+
+
 def find_reply(frames: list[bytes], command_type: int) -> bytes | None:
-    """First ``0xAA`` frame in ``frames`` whose command byte is ``command_type``, else None."""
+    """First ``0xAA`` frame in ``frames`` whose command is ``command_type`` (the frame reader's
+    ``pro_type`` and ``read_command.command``), else None. A reply whose body doesn't parse is still
+    that reply (its decoder then returns None)."""
     for reply in frames:
-        if len(reply) >= 2 and reply[0] == PRO_READ and reply[1] == command_type:
+        pro_type, command = _frame_head(reply)
+        if pro_type == _ProType.read and command is not None and command == command_type:
             return reply
     return None
 
@@ -148,28 +159,168 @@ def parse_gradual(frame: bytes) -> bool | None:
 
 
 # ── mode (0x05) read replies ─────────────────────────────────────────────────
-def _mode_read(frame: bytes) -> Any:
-    """Typed body of an ``AA 05`` mode read reply, else None."""
+# Every mode decoder reads the spec's ``mode_read`` ([selector_or_sub_mode][rest]): an aa 05 reply's,
+# from the frame reader (:func:`mode_reply`), or a 0xAC TLV 0x05 value's (:func:`mode_value`), which
+# carries the same [sub_mode, params] body. Where the params' layout depends on the SKU's parse
+# strategy, which the frame doesn't carry, they are read again with the spec's parametric
+# ``mode_color_0d_typed(kind)``, whose instances give the app's sign and CCT tests.
+_MODE_BODY_LEN: Final = FRAME_LEN - 3   # an aa 05 reply's mode_read: frame bytes 2..18
+
+# mode_color_0d_typed `kind`s: 0 = SubMode4Color's default [gradual][kelvin s16be]; 1 = rgb (H6052)
+# and 2 = rgb_kelvin_tint (devices.yaml mode_0d_kind).
+_KIND_GRADUAL_KELVIN = 0
+_MODE_0D_KIND_RGB = 1
+_MODE_0D_KIND_RGB_KELVIN_TINT = 2
+# The aa 05 colour sub-modes OpInfo4Detail.parseModeValidBytes hands to the SKU's SubMode4Color parse
+# strategy (``b6 == 21 || b6 == 11 || b6 == 2 || b6 == 13``); it sends every other sub-mode elsewhere.
+SUBMODE4COLOR_SUB_MODES: Final = frozenset(
+    {SUB_COLOR_15, SUB_COLOR_0B, int(_SubMode.color_legacy), SUB_COLOR_0D})
+
+_T = TypeVar("_T")
+Rgb = tuple[int, int, int]
+ColorReport = tuple[Rgb | None, int | None]   # (rgb, None) or (None, kelvin)
+
+
+def mode_reply(frame: bytes) -> Any:
+    """The spec's ``mode_read`` of an ``AA 05`` reply (frame bytes 2..18), else None."""
     return _read_reply(frame, _Command.mode)
+
+
+def mode_value(value: bytes) -> Any:
+    """The spec's ``mode_read`` of a 0xAC TLV 0x05 value ``[sub_mode, params]``: the body an ``aa 05``
+    reply carries, which pact_h60a0 ``h60a1.Info4Detail.Q`` reads from both, so both go through the same
+    decoders. Read as a reply's 17-byte body is: a longer value is cut, which no decoder reads that far,
+    and a shorter one zero padded, where ``Info4Detail.Q`` throws and the app's whole connect read
+    fails; real bursts carry the full value."""
+    return _parse_type(_F.ModeRead, bytes(value[:_MODE_BODY_LEN]).ljust(_MODE_BODY_LEN, b"\0"))
+
+
+def sub_mode(m: Any) -> int:
+    """A ``mode_read``'s sub-mode byte (0x01 in a request is the read selector)."""
+    return int(m.selector_or_sub_mode)
+
+
+def _mode_params(m: Any) -> bytes:
+    """A ``mode_read``'s bytes after the sub-mode byte. The generated reader keeps a typed sub-mode's
+    as ``_raw_rest`` (Kaitai's raw field of a typed substream) and an untyped one's as ``rest``."""
+    raw = getattr(m, "_raw_rest", None)
+    return bytes(m.rest if raw is None else raw)
+
+
+def _color_body(m: Any, kind: int) -> Any:
+    """``mode_color_0d_typed(kind)`` over a ``mode_read``'s params, or None when they are too short for
+    that kind (a reply carries 16 bytes)."""
+    params = _mode_params(m)
+    try:
+        return _parse_type(_F.ModeColor0dTyped, params, kind)
+    except Exception as exc:  # noqa: BLE001 - truncated body -> not a usable report
+        _LOGGER.debug("mode params did not parse as kind %d: %s (%r)", kind, params.hex(), exc)
+        return None
+
+
+def _rgb(body: Any) -> Rgb:
+    return int(body.r), int(body.g), int(body.b)
+
+
+def _of_reply(frame: bytes, decode: Callable[[Any], _T | None]) -> _T | None:
+    """``decode`` of an ``AA 05`` reply's ``mode_read``, or None when ``frame`` is not one."""
+    m = mode_reply(frame)
+    return None if m is None else decode(m)
+
+
+def scene_of(m: Any) -> int | None:
+    """:func:`parse_active_scene` of a ``mode_read``. The spec's ``mode_read`` has no 0x04 case yet, so
+    its params are read with ``scene_payload`` (the ``33 05 04`` write body: the same ``[effect u2le]``)."""
+    if sub_mode(m) != SUB_SCENE:
+        return None
+    try:
+        return int(_parse_type(_F.ScenePayload, _mode_params(m)).effect)
+    except Exception:  # noqa: BLE001 - shorter than the scene code
+        return None
+
+
+def kelvin_of(m: Any) -> int | None:
+    """:func:`parse_kelvin` of a ``mode_read`` (``cct_read_reply.kelvin``)."""
+    if sub_mode(m) != SUB_COLOR_15:
+        return None
+    return int(m.rest.kelvin)
+
+
+def bar_kelvin_of(m: Any) -> tuple[int, int] | None:
+    """:func:`parse_bar_kelvin` of a ``mode_read`` (``cct_read_reply.kelvin`` / ``kelvin_right``)."""
+    if sub_mode(m) != SUB_COLOR_15:
+        return None
+    right = getattr(m.rest, "kelvin_right", None)
+    return int(m.rest.kelvin), int(right or 0)
+
+
+def gradual_kelvin_of(m: Any) -> int | None:
+    """The Kelvin of a colour report read with SubMode4Color's default parse, ``[gradual][kelvin
+    s16be]``: ``BleUtil.getSignedShort`` of the two bytes after the gradual byte (the spec's
+    ``mode_color_0d_typed`` kind 0, ``kelvin_signed``). The caller picks the sub-modes this applies to;
+    None when the params are too short."""
+    body = _color_body(m, _KIND_GRADUAL_KELVIN)
+    return None if body is None else int(body.kelvin_signed)
+
+
+def cct_0d_of(m: Any) -> ColorReport | None:
+    """:func:`parse_mode_0d` of a ``mode_read``: kind 2, ANY non-zero Kelvin (``is_cct``) is CCT."""
+    if sub_mode(m) != SUB_COLOR_0D:
+        return None
+    body = _color_body(m, _MODE_0D_KIND_RGB_KELVIN_TINT)
+    if body is None:
+        return None
+    if body.is_cct:
+        return None, int(body.report_kelvin)
+    return _rgb(body), None
+
+
+def rgb_kelvin_tint_of(m: Any) -> ColorReport | None:
+    """:func:`parse_mode_rgb_kelvin_tint` of a ``mode_read``."""
+    if sub_mode(m) not in SUBMODE4COLOR_SUB_MODES:
+        return None
+    body = _color_body(m, _MODE_0D_KIND_RGB_KELVIN_TINT)
+    if body is None:
+        return None
+    if body.is_cct_positive:   # parseModeValidBytes: CCT only for a Kelvin > 0
+        return None, int(body.report_kelvin_signed)
+    if body.is_cct:            # a negative Kelvin: the strategy still shows the tint, as a colour
+        return (int(body.tint_r), int(body.tint_g), int(body.tint_b)), None
+    return _rgb(body), None
+
+
+def rgb_0d_of(m: Any) -> Rgb | None:
+    """:func:`parse_mode_0d_rgb` of a ``mode_read`` (kind 1)."""
+    if sub_mode(m) != SUB_COLOR_0D:
+        return None
+    body = _color_body(m, _MODE_0D_KIND_RGB)
+    return None if body is None else _rgb(body)
+
+
+def rgb_kelvin_0d_of(m: Any) -> ColorReport | None:
+    """A 0x0d report read as ``[r, g, b][kelvin s16be]``, the ``rgb_kelvin_0d`` decoders (H6061
+    ``CubeNewInfo4Detail.U``, H60A6 pact_h60a0 ``h60a1.Info4Detail.Q:416-427``, both
+    ``BleUtil.getSignedShort``): ``(None, kelvin)`` for a Kelvin > 0 (the spec's ``is_cct_positive``),
+    else ``((r, g, b), None)``; None if this is not a 0x0d report. The same bytes as :func:`cct_0d_of`;
+    only the CCT test differs (signed > 0, not non-zero)."""
+    if sub_mode(m) != SUB_COLOR_0D:
+        return None
+    body = _color_body(m, _MODE_0D_KIND_RGB_KELVIN_TINT)
+    if body is None:
+        return None
+    if body.is_cct_positive:
+        return None, int(body.report_kelvin_signed)
+    return _rgb(body), None
 
 
 def parse_active_scene(frame: bytes) -> int | None:
     """AA 05 04 reply: active scene code (u2le), or None if not in scene sub-mode."""
-    m = _mode_read(frame)
-    if m is None or int(m.selector_or_sub_mode) != SUB_SCENE:
-        return None
-    rest = bytes(m.rest)
-    if len(rest) < 2:
-        return None
-    return rest[0] | (rest[1] << 8)
+    return _of_reply(frame, scene_of)
 
 
 def parse_kelvin(frame: bytes) -> int | None:
     """AA 05 15 01 reply: colour temperature in Kelvin (u2be), or None."""
-    m = _mode_read(frame)
-    if m is None or int(m.selector_or_sub_mode) != SUB_COLOR_15:
-        return None
-    return int(m.rest.kelvin)
+    return _of_reply(frame, kelvin_of)
 
 
 def parse_bar_kelvin(frame: bytes) -> tuple[int, int] | None:
@@ -179,31 +330,10 @@ def parse_bar_kelvin(frame: bytes) -> tuple[int, int] | None:
     The H6047 layout is ``[gradual][kelvin left u2be][kelvin right u2be]``
     (``SubModeColor.parse``; ``Info4Detail`` ``subMode4Color`` parse strategy). The app shows a
     whole-device kelvin only when both bars match; that rule lives in the Device layer."""
-    m = _mode_read(frame)
-    if m is None or int(m.selector_or_sub_mode) != SUB_COLOR_15:
-        return None
-    right = getattr(m.rest, "kelvin_right", None)
-    return int(m.rest.kelvin), int(right or 0)
+    return _of_reply(frame, bar_kelvin_of)
 
 
-def _mode_0d_kind2(frame: bytes) -> tuple[tuple[int, int, int] | None, int | None] | None:
-    """An ``AA 05 0D`` reply read by the spec's ``mode_color_0d_typed(kind=2)`` over the body between
-    the sub-mode byte and the BCC: ``[r, g, b, kelvin u2be, tint r, g, b]``. ANY non-zero kelvin
-    (``is_cct``) -> ``(None, kelvin)``; kelvin 0 -> ``((r, g, b), None)``. None when this is not a 0x0d
-    mode reply or its body is too short for the type (a reply is a 20-byte frame)."""
-    if len(frame) < 3 or frame[0] != PRO_READ or frame[1] != CMD_MODE or frame[2] != SUB_COLOR_0D:
-        return None
-    try:
-        body = _parse_type(_F.ModeColor0dTyped, frame[3:FRAME_LEN - 1], _MODE_0D_KIND_RGB_KELVIN_TINT)
-    except Exception as exc:  # noqa: BLE001 - truncated body -> not a usable report
-        _LOGGER.debug("0x0d report did not parse as kind 2: %s (%r)", bytes(frame).hex(), exc)
-        return None
-    if body.is_cct:
-        return None, int(body.report_kelvin)
-    return (int(body.r), int(body.g), int(body.b)), None
-
-
-def parse_mode_0d(frame: bytes) -> tuple[tuple[int, int, int] | None, int | None] | None:
+def parse_mode_0d(frame: bytes) -> ColorReport | None:
     """AA 05 0D reply read as ``[r, g, b, kelvin u2be, tint r, g, b]`` - the same layout as the 0x0d
     write. ANY non-zero kelvin is colour-temperature mode -> ``(None, kelvin)``; kelvin 0 ->
     ``((r, g, b), None)``.
@@ -219,21 +349,10 @@ def parse_mode_0d(frame: bytes) -> tuple[tuple[int, int, int] | None, int | None
     :func:`parse_mode_0d_rgblight`, so the body must hold its 8 bytes (a reply is a 20-byte frame).
     Which kind the default strategy should use is open in the spec (``devices.yaml`` gives H60A6 no
     ``mode_0d_kind``; kind 0 is ``[gradual][kelvin]``)."""
-    return _mode_0d_kind2(frame)
+    return _of_reply(frame, cct_0d_of)
 
 
-# mode_color_0d_typed `kind`s (devices.yaml mode_0d_kind): 1 = rgb (H6052), 2 = rgb_kelvin_tint.
-_MODE_0D_KIND_RGB = 1
-_MODE_0D_KIND_RGB_KELVIN_TINT = 2
-# The aa 05 colour sub-modes OpInfo4Detail.parseModeValidBytes hands to the SKU's SubMode4Color parse
-# strategy (``b6 == 21 || b6 == 11 || b6 == 2 || b6 == 13``); it sends every other sub-mode elsewhere.
-SUBMODE4COLOR_SUB_MODES: Final = frozenset(
-    {SUB_COLOR_15, SUB_COLOR_0B, int(_SubMode.color_legacy), SUB_COLOR_0D})
-# BleUtil.getSignedShort: a big-endian Kelvin of 0x8000 or more reads as negative.
-_SIGNED_SHORT_MIN: Final = 0x8000
-
-
-def parse_mode_rgb_kelvin_tint(frame: bytes) -> tuple[tuple[int, int, int] | None, int | None] | None:
+def parse_mode_rgb_kelvin_tint(frame: bytes) -> ColorReport | None:
     """AA 05 colour report on the ``ModeParseStrategyConfig.a`` SKUs (the 0x0d bulbs H6006 / H6008 /
     H6004 and the rgblight H6188), decoded as the app does: ``((r, g, b) | None, kelvin | None)``,
     or None when this is not such a report.
@@ -249,27 +368,14 @@ def parse_mode_rgb_kelvin_tint(frame: bytes) -> tuple[tuple[int, int, int] | Non
     non-zero, else ``vb[0..2]``. parseModeValidBytes then takes colour-temperature mode only for a
     kelvin > 0. So: kelvin > 0 -> ``(None, kelvin)``; kelvin 0 -> ``((r, g, b), None)``; a negative
     kelvin (0x8000 or more, which the bulbs' firmware never stores) -> ``((tint r, g, b), None)``.
+    The spec's ``is_cct_positive``, ``report_kelvin_signed`` and ``is_cct`` make those three tests.
 
     Read through the generated kind-2 reader, so the body must hold its 8 bytes (a reply is a
     20-byte frame)."""
-    if len(frame) < 3 or frame[0] != PRO_READ or frame[1] != CMD_MODE:
-        return None
-    if frame[2] not in SUBMODE4COLOR_SUB_MODES:
-        return None
-    try:
-        body = _parse_type(_F.ModeColor0dTyped, frame[3:FRAME_LEN - 1], _MODE_0D_KIND_RGB_KELVIN_TINT)
-    except Exception as exc:  # noqa: BLE001 - truncated body -> not a usable report
-        _LOGGER.debug("colour report did not parse as kind 2: %s (%r)", bytes(frame).hex(), exc)
-        return None
-    kelvin = int(body.report_kelvin)
-    if kelvin >= _SIGNED_SHORT_MIN:
-        return (int(body.tint_r), int(body.tint_g), int(body.tint_b)), None
-    if kelvin:
-        return None, kelvin
-    return (int(body.r), int(body.g), int(body.b)), None
+    return _of_reply(frame, rgb_kelvin_tint_of)
 
 
-def parse_mode_0d_rgb(frame: bytes) -> tuple[int, int, int] | None:
+def parse_mode_0d_rgb(frame: bytes) -> Rgb | None:
     """AA 05 0D reply on H6052: its ``(r, g, b)``, or None when this is not a 0x0d report.
 
     App path (tablelampv1, goodsType 22): ``Model.u`` -> ``H6052NewDetailActivity`` ->
@@ -280,34 +386,25 @@ def parse_mode_0d_rgb(frame: bytes) -> tuple[int, int, int] | None:
     Kelvin only when the app's own last write left one in its in-memory SubMode4Color; that is not
     a decode of the report and is not modelled.) Every other colour sub-mode, 0x15 included, is
     "not support" there."""
-    if len(frame) < 3 or frame[0] != PRO_READ or frame[1] != CMD_MODE or frame[2] != SUB_COLOR_0D:
-        return None
-    try:
-        body = _parse_type(_F.ModeColor0dTyped, frame[3:FRAME_LEN - 1], _MODE_0D_KIND_RGB)
-    except Exception as exc:  # noqa: BLE001 - truncated body -> not a usable report
-        _LOGGER.debug("0x0d report did not parse as kind 1: %s (%r)", bytes(frame).hex(), exc)
-        return None
-    return int(body.r), int(body.g), int(body.b)
+    return _of_reply(frame, rgb_0d_of)
 
 
-def parse_mode_0d_rgblight(frame: bytes) -> tuple[tuple[int, int, int] | None, int | None] | None:
+def parse_mode_0d_rgblight(frame: bytes) -> ColorReport | None:
     """AA 05 0D reply decoded by the spec's ``mode_color_0d_typed(kind=2)``: ``[r, g, b, kelvin u2be,
     tint r, g, b]``. ANY non-zero kelvin (``is_cct``) -> ``(None, kelvin)``; kelvin 0 ->
     ``((r, g, b), None)``. Same return shape as :func:`parse_mode_0d`, and its 0x0d decoder on scheme
     ``"h6188"`` under the default ``"rgb_kelvin"`` mode parse (:func:`parse_mode_0d_for`). H6188 itself
     decodes its report as the app does, with :func:`parse_mode_rgb_kelvin_tint`."""
-    return _mode_0d_kind2(frame)
+    return _of_reply(frame, cct_0d_of)
 
 
-def parse_mode_0d_for(
-    frame: bytes, scheme: ColorScheme,
-) -> tuple[tuple[int, int, int] | None, int | None] | None:
+def parse_mode_0d_for(frame: bytes, scheme: ColorScheme) -> ColorReport | None:
     """The AA 05 0D colour report under the default ``"rgb_kelvin"`` mode parse
     (``DeviceProfile.mode_color_parse``): :func:`parse_mode_0d_rgblight` on ``"h6188"``,
     :func:`parse_mode_0d` on every other scheme. The one place that picks that 0x0d decoder by colour
-    scheme (the Device layer calls this). The SKUs whose app strategy is known choose their own mode
-    parse instead (H6006 / H6008 / H6004 / H6188 :func:`parse_mode_rgb_kelvin_tint`, H6052
-    :func:`parse_mode_0d_rgb`)."""
+    scheme. Both decode the same today (:func:`cct_0d_of`, which the Device layer folds). The SKUs
+    whose app strategy is known choose their own mode parse instead (H6006 / H6008 / H6004 / H6188
+    :func:`parse_mode_rgb_kelvin_tint`, H6052 :func:`parse_mode_0d_rgb`)."""
     return parse_mode_0d_rgblight(frame) if scheme == "h6188" else parse_mode_0d(frame)
 
 
@@ -417,8 +514,9 @@ def parse_direct_color_group(
         return None
     if getattr(f.body, "command", None) != _Command.local_color_read:
         return None
-    # [group_index, records...]; never empty: the frame reader above needs more than the group byte.
-    group = bytes(frame)[2:FRAME_LEN - 1]
+    # [group_index, records...]: the reply's body as the frame reader holds it (read_command's raw
+    # field); never empty, since that reader needs more than the group byte.
+    group = bytes(f.body._raw_body)
     n = max(0, min(expected_records, (len(group) - 1) // _RECORD_LEN))
     body = _parse_type(_F.ColorGroupRead, group, n, 1)
     return int(body.group_index), [
@@ -428,7 +526,8 @@ def parse_direct_color_group(
 @dataclass(frozen=True)
 class IcCount:
     """AA 40 reply (ic_segment_read / ControllerOnlyReadIcSegmentNum): the device's live IC
-    (lamp-bead) count, and the reply's third byte as received.
+    (lamp-bead) count, read signed as the app reads it (``BleUtil.getSignedShort``, the spec's
+    ``ic_count_signed``: negative for a reply of 0x8000 or more), and the reply's third byte as received.
 
     ``segment_count`` is that third byte, kept for compatibility: the app does not use it for H6641
     (h61d3 ``ReadIcController`` reads bytes 0..1 only). The piece and group counts are derived
@@ -443,7 +542,7 @@ def parse_ic_count(frame: bytes) -> IcCount | None:
     b = _read_reply(frame, _Command.ic_num)
     if b is None:
         return None
-    return IcCount(ic_count=int(b.ic_count), segment_count=int(b.segment))
+    return IcCount(ic_count=int(b.ic_count_signed), segment_count=int(b.segment))
 
 
 @dataclass(frozen=True)
@@ -461,12 +560,13 @@ def parse_section_count(frame: bytes) -> SectionCount | None:
     """AA 41 reply: ``[IC s16be, sectionNum u8]``, i.e. frame bytes 2..4 (``BleUtil.getSignedShort``
     of the first two, then the third; ``ControllerIcSegmentNum.makeController4Read``).
 
-    Hand-decoded, not via the generated reader: opcode 0x41 is ``on_off_memory`` in the shared
-    command enum and only means this on the ``striplight`` split (the same "shared opcode,
-    per-SKU body" case as :func:`parse_mode_0d`)."""
-    if len(frame) < 5 or frame[0] != PRO_READ or frame[1] != CMD_SECTION_COUNT:
+    The frame reader matches the reply (``aa`` + ``on_off_memory``, the shared enum's name for 0x41),
+    but its body is hand-decoded: 0x41 means this only on the ``striplight`` split, so the spec has no
+    reply type for it yet (the same "shared opcode, per-SKU body" case as :func:`parse_mode_0d`)."""
+    body = _read_reply(frame, _Command.on_off_memory)
+    if body is None or len(body) < 3:
         return None
-    return SectionCount(ic_count=int.from_bytes(frame[2:4], "big", signed=True), section_num=frame[4])
+    return SectionCount(ic_count=int.from_bytes(body[0:2], "big", signed=True), section_num=body[2])
 
 
 # ── device info (AA 07 10/11/02) ─────────────────────────────────────────────
@@ -536,6 +636,12 @@ def device_info_from(sel: int, info: Any) -> DeviceInfo | None:
     if sel == INFO_HARD:
         return DeviceInfo(hw_version=_ascii_version(info.version))
     return None   # 0x06 etc. — logged & ignored by the device
+
+
+def parse_device_info_selector(frame: bytes) -> int | None:
+    """The selector byte of an ``AA 07`` reply (``device_info_read.selector``), else None."""
+    b = _read_reply(frame, _Command.device_info)
+    return None if b is None else int(b.selector)
 
 
 def parse_device_info(frame: bytes) -> DeviceInfo | None:

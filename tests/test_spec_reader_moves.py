@@ -29,26 +29,27 @@ _Walk = tuple[list[tuple[int, int, bytes]], tuple[Any, ...] | None, list[tuple[A
 
 def _byte_walk(buf: bytes) -> _Walk:
     """The fallback walk as it was before the move: type / len from the raw bytes, each TLV parsed
-    alone from its slice. Returns (type, len, value bytes) per TLV, the cut and the skipped list."""
+    alone from its slice. Returns (type, len, value bytes) per TLV, the cut and the skipped list (each
+    cut as TlvCut's fields, negative_len True for a len the app reads as negative)."""
     out: list[tuple[int, int, bytes]] = []
     skipped: list[tuple[Any, ...]] = []
     pos = 0
     while pos < len(buf) and buf[pos] != 0:
         typ = buf[pos]
         if pos + 2 > len(buf):
-            return out, ("truncated", typ, pos, None), skipped
+            return out, ("truncated", typ, pos, None, False), skipped
         length = buf[pos + 1]
         if length >= SIGNED_LEN_MIN:
-            return out, ("unparsed", typ, pos, length), skipped
+            return out, ("unparsed", typ, pos, length, True), skipped
         end = pos + 2 + length
         if end > len(buf):
-            return out, ("truncated", typ, pos, length), skipped
+            return out, ("truncated", typ, pos, length, False), skipped
         try:
             parse._parse_type(parse._F.StatusTlv, buf[pos:end])
         except Exception:  # noqa: BLE001
             if not (typ == 0x07 and length >= 1 and buf[pos + 2] not in (0x10, 0x11)):
-                return out, ("unparsed", typ, pos, length), skipped
-            skipped.append(("unparsed", typ, pos, length))
+                return out, ("unparsed", typ, pos, length, False), skipped
+            skipped.append(("unparsed", typ, pos, length, False))
         else:
             out.append((typ, length, bytes(buf[pos + 2:end])))
         pos = end
@@ -171,9 +172,11 @@ def test_handshake_parse_matches_the_byte_slice() -> None:
         pt[0] = 0xE7 if r.random() < 0.9 else r.randrange(256)
         pt[1] = r.choice([0x01, 0x02, 0x11, r.randrange(256)])
         ct = crypto.encrypt(bytes(pt), PSK)
-        key = bytes(pt[2:18]) if len(pt) >= 18 and pt[0] == 0xE7 and pt[1] == 0x01 else None
+        # The frame reader's handshake.data is bytes 2..len-2 (it leaves the BCC byte out), so a key
+        # needs 19 bytes; the connection only delivers 20-byte frames.
+        key = bytes(pt[2:18]) if len(pt) >= 19 and pt[0] == 0xE7 and pt[1] == 0x01 else None
         assert handshake.parse_session_key(ct) == key
-        assert handshake.is_step2_ack(ct) == (pt[0] == 0xE7 and pt[1] == 0x02)
+        assert handshake.is_step2_ack(ct) == (len(pt) >= 3 and pt[0] == 0xE7 and pt[1] == 0x02)
 
 
 # ── advertisements: the spec's manufacturer_data type vs the byte logic ──────────────────────

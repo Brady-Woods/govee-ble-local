@@ -57,11 +57,6 @@ _ReadResult = Literal["applied", "stale", "none"]
 _MODE_REPORT_CAPS: Final = frozenset({Capability.SCENES, Capability.COLOR_TEMP, Capability.RGB})
 
 
-def _reply(reply: bytes) -> bytes:
-    """The parser for a read whose whole reply is folded in (the aa 05 mode report)."""
-    return reply
-
-
 def _local_tz(unix_ts: int) -> tuple[int, int]:
     off = time.localtime(unix_ts).tm_gmtoff or 0
     sign = -1 if off < 0 else 1
@@ -1131,8 +1126,8 @@ class Device:
 
     async def _read_mode(self) -> _ReadResult:
         """Read the aa 05 mode report into state (:meth:`_apply_mode_reply`)."""
-        return await self._read_command("mode", build.mode_query(), build.CMD_MODE, _reply,
-                                        self._apply_mode_reply)
+        return await self._read_command("mode", build.mode_query(), build.CMD_MODE, parse.mode_reply,
+                                        lambda m: _fold.apply_mode(self.profile, self._state, m))
 
     async def _read_section_count(self) -> bool:
         """Read the segment count the device reports (``aa 41`` -> ``sectionNum``) and adopt it

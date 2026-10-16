@@ -23,12 +23,12 @@ from dataclasses import dataclass, field
 from io import BytesIO
 from typing import Any, Literal
 
-from kaitaistruct import KaitaiStream
+from kaitaistruct import KaitaiStream, ValidationGreaterThanError
 
 from ..const import FRAME_LEN
 from ..models import Segment
 from . import parse
-from .build import INFO_BASIC, INFO_WIFI, _F, _load
+from .build import INFO_WIFI, _F
 from .parse import _parse_type
 
 _LOGGER = logging.getLogger(__name__)
@@ -44,7 +44,8 @@ _DATA_END = FRAME_LEN - 1   # 19: the BCC byte follows the data
 _LAST_INDEX = 0xFF          # index byte of the last packet (isSameController: bytes[1] == -1)
 MIN_CHUNK_LEN = _DATA_END   # a shorter record can't hold a whole chunk: skipped
 # Compose4BaseInfoSingleRead.u reads a TLV's len byte signed (`int i10 = it2[i7]` from a byte[]):
-# from this value up it is negative, `new byte[i10]` throws and the app's whole read fails.
+# from this value up it is negative, `new byte[i10]` throws and the app's whole read fails. The spec's
+# status_tlv rejects it (`len` valid max 0x7f), which is what the walk goes by; kept for callers.
 SIGNED_LEN_MIN = 0x80
 
 TYPE_SWITCH = 0x01
@@ -83,11 +84,12 @@ class TlvCut:
     """A TLV :func:`walk_status_tlvs` could not take: where and why it stopped before the end of the
     buffer, or (in its ``skipped`` list) a TLV it stepped past."""
     # "truncated": the TLV runs past the buffer. "unparsed": the app's walker throws on it - its typed
-    # body didn't parse, or its len byte is SIGNED_LEN_MIN or more (read as negative).
+    # body didn't parse, or its len byte is SIGNED_LEN_MIN or more (read as negative: negative_len).
     reason: Literal["truncated", "unparsed"]
     type: int                                  # the TLV type byte at the cut
     offset: int                                # its offset in the reassembled buffer
     length: int | None = None                  # its declared len (None when the len byte is missing)
+    negative_len: bool = False                 # the spec's status_tlv `len` valid (max 0x7f) rejected it
 
 
 def _header(first: bytes) -> tuple[int, int]:
@@ -209,12 +211,26 @@ def reassemble(frames: list[bytes]) -> bytes:
     return _joined(frames)[0]
 
 
+def _status_device_info(value: bytes) -> Any:
+    """A 0x07 TLV value read by the spec's ``status_device_info`` (the app's status parser: only the
+    basic 0x10 and Wi-Fi 0x11 selectors have a body; every other selector's stays raw bytes), or None
+    when even its selector can't be read (an empty value)."""
+    try:
+        return _parse_type(_F.StatusDeviceInfo, value)
+    except Exception:  # noqa: BLE001 - empty value / a 0x10 / 0x11 body too short
+        return None
+
+
 def _app_skips(typ: int, value: bytes) -> bool:
     """True for a TLV the app's walker steps past without reading its body: a 0x07 block whose
-    selector (value byte 0) is neither basic (0x10) nor Wi-Fi (0x11). Compose4BaseInfoSingleRead.w
-    reads ``bArr[0]``, logs any other selector ("parse07Info() 其他信息") and returns, so ``u()``
-    walks on. An empty 0x07 value has no selector: ``bArr[0]`` throws there, so it is not skipped."""
-    return typ == TYPE_DEVICE_INFO and len(value) >= 1 and value[0] not in (INFO_BASIC, INFO_WIFI)
+    selector is neither basic (0x10) nor Wi-Fi (0x11), which ``status_device_info`` leaves as raw bytes.
+    Compose4BaseInfoSingleRead.w reads ``bArr[0]``, logs any other selector ("parse07Info() 其他信息") and
+    returns, so ``u()`` walks on. An empty 0x07 value has no selector: ``bArr[0]`` throws there, so it is
+    not skipped."""
+    if typ != TYPE_DEVICE_INFO:
+        return False
+    info = _status_device_info(value)
+    return info is not None and isinstance(info.info, (bytes, bytearray))
 
 
 def walk_status_tlvs(
@@ -235,8 +251,9 @@ def walk_status_tlvs(
     ``bArr[0]`` for 0x01 / 0x04; ``w`` copies 16 / 12 bytes after a 0x10 / 0x11 selector; the VM
     lambda reads two 0x30 / 0x41 bytes). The exception is a 0x07 block with another selector, which
     w() returns from without reading (:func:`_app_skips`): the walk steps past it and, when
-    ``skipped`` is given, records it there. A len byte of :data:`SIGNED_LEN_MIN` or more also stops
-    the walk ("unparsed"): u() reads it signed, and the negative length throws.
+    ``skipped`` is given, records it there. A len byte the spec's ``status_tlv`` rejects (``valid``
+    max 0x7f; :data:`SIGNED_LEN_MIN` or more) also stops the walk ("unparsed", ``negative_len``): u()
+    reads it signed, and the negative length throws.
 
     Known differences that remain: for 0xA5 the app reads its per-SKU record count
     (VM4LightH60A6$afterConnectedSingleReadDeviceInfo$1.o -> i3 ->
@@ -253,46 +270,40 @@ def walk_status_tlvs(
         reply = _parse_type(_F.StatusReply, buf)
     except Exception:  # noqa: BLE001 - a TLV the stream read can't take: walk them one at a time
         reply = None
-    if reply is not None:
-        whole = [tlv for tlv in reply.tlvs if int(tlv.type) != 0]
-        if all(int(tlv.len) < SIGNED_LEN_MIN for tlv in whole):
-            return whole, None
-        # A len the app reads as negative: walk one TLV at a time, which stops there.
+    if reply is not None:   # every len passed status_tlv's valid (max 0x7f), so the app reads them all
+        return [tlv for tlv in reply.tlvs if int(tlv.type) != 0], None
     # The generated status_tlv reads each TLV off one shared stream, so the walk steps exactly where
-    # the spec's own TLV boundaries are. When the reader can't take one, the raw type / len bytes
-    # say why, in the app's order: no len byte, a negative len, a value past the buffer, a body.
+    # the spec's own TLV boundaries are. When the reader can't take one, how far it got says why, in
+    # the app's order: no len byte (``len`` unset), a negative len (``len``'s valid), a value past the
+    # buffer (``len`` set, no raw value), a body that doesn't parse (the raw value is there).
     tlvs: list[Any] = []
     stream = KaitaiStream(BytesIO(buf))
     while not stream.is_eof():
         pos = stream.pos()
-        typ = buf[pos]
-        if typ == 0:   # type 0 = trailing zero pad (status_reply's sentinel)
-            break
+        tlv: Any = _F.StatusTlv(stream)
         try:
-            tlv: Any = _load(_F.StatusTlv(stream))
+            tlv._read()
+        except ValidationGreaterThanError:
+            return tlvs, TlvCut("unparsed", int(tlv.type), pos, int(tlv.len), negative_len=True)
         except Exception:  # noqa: BLE001 - truncated, or a typed body the spec can't read (short, bad UTF-8)
-            tlv = None
-        if tlv is not None:
-            length: int | None = int(tlv.len)
-        else:
-            length = buf[pos + 1] if pos + 2 <= len(buf) else None
-        if length is None:
-            return tlvs, TlvCut("truncated", typ, pos)
-        if length >= SIGNED_LEN_MIN:
-            return tlvs, TlvCut("unparsed", typ, pos, length)
-        if tlv is not None:
-            tlvs.append(tlv)
+            typ = int(tlv.type)
+            length = getattr(tlv, "len", None)
+            raw = getattr(tlv, "_raw_value", None)
+            if length is None:
+                return tlvs, TlvCut("truncated", typ, pos)
+            if raw is None:
+                return tlvs, TlvCut("truncated", typ, pos, int(length))
+            if not _app_skips(typ, bytes(raw)):
+                return tlvs, TlvCut("unparsed", typ, pos, int(length))
+            _LOGGER.debug("status reply: 0x07 block with selector 0x%02x (len %d) did not parse; "
+                          "skipped, as the app's w() skips it", raw[0], length)
+            if skipped is not None:
+                skipped.append(TlvCut("unparsed", typ, pos, int(length)))
+            stream.seek(pos + 2 + int(length))
             continue
-        end = pos + 2 + length
-        if end > len(buf):
-            return tlvs, TlvCut("truncated", typ, pos, length)
-        if not _app_skips(typ, buf[pos + 2:end]):
-            return tlvs, TlvCut("unparsed", typ, pos, length)
-        _LOGGER.debug("status reply: 0x07 block with selector 0x%02x (len %d) did not parse; "
-                      "skipped, as the app's w() skips it", buf[pos + 2], length)
-        if skipped is not None:
-            skipped.append(TlvCut("unparsed", typ, pos, length))
-        stream.seek(end)
+        if int(tlv.type) == 0:   # type 0 = trailing zero pad (status_reply's sentinel)
+            break
+        tlvs.append(tlv)
     return tlvs, None
 
 
@@ -318,7 +329,9 @@ def _color_group(tlv: Any, pieces: int | None) -> tuple[int, list[parse.GroupRec
     raw value, with :func:`group_record_count` records. Raises what the reader raises on a value too
     short for that count."""
     raw = bytes(tlv._raw_value)   # the TLV's value bytes, as the generated status_tlv keeps them
-    count = group_record_count(int(tlv.value.group_index), len(raw), pieces)
+    # Without the device's piece count, the spec's own color_group_status records (repeat eos).
+    count = (len(tlv.value.records) if pieces is None
+             else group_record_count(int(tlv.value.group_index), len(raw), pieces))
     group = _parse_type(_F.ColorGroupRead, raw, count, 1)
     return int(group.group_index), [
         (int(rec.brightness), int(rec.r), int(rec.g), int(rec.b)) for rec in group.records]
@@ -393,10 +406,13 @@ def parse_status(frames: list[bytes], *, pieces: int | None = None) -> StatusRep
                               group_record_count(int(v.group_index), int(tlv.len), pieces), int(tlv.len))
                 return StatusReply()
         elif typ == TYPE_DEVICE_INFO:
-            sel = int(v.selector)
-            # Compose4BaseInfoSingleRead.w reads only the basic (0x10) and Wi-Fi (0x11) blocks
-            # here; it logs any other selector and skips it.
-            info = parse.device_info_from(sel, v.info) if sel in (INFO_BASIC, INFO_WIFI) else None
+            # Compose4BaseInfoSingleRead.w reads only the basic (0x10) and Wi-Fi (0x11) blocks here; it
+            # logs any other selector and skips it: the spec's status_device_info types only those two.
+            sdi = _status_device_info(bytes(tlv._raw_value))
+            if sdi is None or isinstance(sdi.info, (bytes, bytearray)):
+                continue
+            sel = int(sdi.selector)
+            info = parse.device_info_from(sel, sdi.info)
             if info is not None:
                 if info.serial is not None and st.serial_number is None:
                     st.serial_number = info.serial

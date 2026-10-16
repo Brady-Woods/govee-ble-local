@@ -289,7 +289,11 @@ def normalize_kelvin(kelvin: int, lo: int | None = None, hi: int | None = None) 
 # Segment-mask width, from the app's encoder. Up to 16 segments the mask is always two bytes
 # (BleUtils.makeSelectedTwoBytes); above that it is ceil(n/8) bytes, LSB first
 # (BleUtils.X, the `length > 16` branch in color/Bytes.G/b/d/C). Bytes.C caps the width at 7
-# bytes (it truncates a longer mask and logs an analytics event); we refuse instead.
+# bytes (it truncates a longer mask and logs an analytics event); we refuse instead. A 0x15 colour
+# write's cap is the spec's op15_color_write.mask_cap, which its writer enforces (seg_mask valid: 7 for
+# variants 12 / 11, which is this cap, 10 for variant 5, 12 for variant 1). MAX_MASK_BYTES is the
+# library's own limit for the masks the spec gives no cap yet (op15 brightness, the device's segment
+# count); every colour builder stays within it (H6061's variant-5 mask is a fixed 3 bytes).
 LEGACY_MASK_SEGMENTS: Final = 16
 MAX_MASK_BYTES: Final = 7
 MAX_MASK_SEGMENTS: Final = MAX_MASK_BYTES * 8
@@ -386,10 +390,11 @@ def _cct0d_frame(rgb: tuple[int, int, int], kelvin: int = 0,
 
 
 def _rgbic0b_frame(rgb: tuple[int, int, int], mask: int) -> bytes:
-    """``33 05 0b [r, g, b][seg_mask]`` (``color_rgbic_0b_wide``, the two-byte mask of up to 16 segments)."""
-    seg_mask = _check_mask(mask, LEGACY_MASK_SEGMENTS).to_bytes(2, "little")
+    """``33 05 0b [r, g, b][seg_mask u2le]`` (``color_rgbic_0b``, ``mode_payload``'s own 0x0b case: the
+    two-byte mask of up to 16 segments)."""
+    seg_mask = _check_mask(mask, LEGACY_MASK_SEGMENTS)
     return _mode_frame(_F.SubMode.color_rgbic_0b, lambda mp: _node(
-        _F.ColorRgbic0bWide, mp, len(seg_mask), r=rgb[0], g=rgb[1], b=rgb[2], seg_mask=seg_mask))
+        _F.ColorRgbic0b, mp, r=rgb[0], g=rgb[1], b=rgb[2], seg_mask=seg_mask))
 
 
 # op15_color_write variants (the colour form the app's writer picks; not in the frame).
@@ -885,7 +890,9 @@ def status_query(*, full: bool = False) -> bytes:
 
     Device always sends ``full=True``; the single-zone ``ac 03 02 41 30`` (``full=False``) is spec
     surface for tools and tests."""
-    types = [0x41, 0x30, 0xA5] if full else [0x41, 0x30]
+    # The requested TLV types are command ids (0x41 seg info, 0x30 zones, 0xA5 colour groups).
+    zone_types = [_F.Command.on_off_memory, _F.Command.light_direction_or_zone]
+    types = [int(t) for t in ([*zone_types, _F.Command.local_color_read] if full else zone_types)]
     return _frame_of(_F.ProType.multi_reply_read, lambda f: _node(
         _F.MultiAc, f, command=0x03, count=len(types), requested_types=types,
         pad=bytes(_BODY_LEN - 2 - len(types))))

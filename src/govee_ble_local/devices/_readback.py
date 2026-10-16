@@ -159,10 +159,11 @@ async def walk_mechanism_a_direct(dev: ReadTarget, read_reply: ReadReply) -> lis
     return parse.direct_groups_to_segments(groups, group_size) or None
 
 
-def live_ic_pieces(dev: ReadTarget, raw_ic: int) -> int | None:
-    """Colour pieces for a live ``aa 40`` IC count, as the app derives them for H6641 (goodsType
-    247; h61d3, Govee Home 7.5.12 names): ``ReadIcController.Companion.d`` reads bytes 0..1 as a signed
-    short (``BleUtil.getSignedShort``) and clamps it to ``H61D3Support.q(247)`` = 41..70
+def live_ic_pieces(dev: ReadTarget, ic: int) -> int | None:
+    """Colour pieces for a live ``aa 40`` IC count (``ic``: read signed, :func:`parse.parse_ic_count`), as
+    the app derives them for H6641 (goodsType 247; h61d3, Govee Home 7.5.12 names):
+    ``ReadIcController.Companion.d`` reads bytes 0..1 as a signed short (``BleUtil.getSignedShort``, the
+    spec's ``ic_count_signed``) and clamps it to ``H61D3Support.q(247)`` = 41..70
     (``color_readback_ic_range``); ``H61D3Support.e(247, ic)`` = ceil(ic / 5) pieces
     (``color_readback_ic_per_piece``), the ``bulbStringMaxNum`` of ``VM4Light.P5``. The reply's
     third byte is never used.
@@ -171,7 +172,6 @@ def live_ic_pieces(dev: ReadTarget, raw_ic: int) -> int | None:
     byte-swap branch, which indexes past the 2-byte array it was given, so the app's read
     callback never stores the count (``VM4Light.D5`` does not run) - the same as a failed read."""
     ic_range = dev.profile.color_readback_ic_range
-    ic = raw_ic - 0x10000 if raw_ic >= 0x8000 else raw_ic
     if ic >= 0x1000:
         return None
     # Every table profile has its clamp (profile._incoherent); a custom profile without one uses the
@@ -228,9 +228,9 @@ async def read_info_reply(
     reply = await read_reply(build.device_info_query(selector), build.CMD_DEVICE_INFO)
     if reply is None:
         return False, None
-    if len(reply) < 3 or reply[2] != selector:
+    got = parse.parse_device_info_selector(reply)
+    if got != selector:
         _LOGGER.debug("%s (%s): ignoring aa 07 reply for selector %s to the 0x%02x read: %s",
-                      dev.address, dev.sku, f"0x{reply[2]:02x}" if len(reply) >= 3 else None,
-                      selector, reply.hex())
+                      dev.address, dev.sku, None if got is None else f"0x{got:02x}", selector, reply.hex())
         return True, None
     return True, parse.parse_device_info(reply)
