@@ -233,6 +233,13 @@ model, from which the shipped readers are generated).
   event-loop time). Log records keep the `govee_ble_local.devices.device` logger. Live-verified on encrypted
   H60A6, H6008 and H5083 sessions (2026-10-15, macOS): every session frame matches the per-frame cipher byte
   for byte.
+- CI and the release workflow generate the Kaitai read-write classes from `spec/*.ksy` in every job
+  that tests or builds. `scripts/install_ksc.sh` installs the pinned JVM `kaitai-struct-compiler` 0.11
+  (the upstream `.deb`, checked against its published SHA-256, and refused unless it matches
+  `tools/gen_kaitai.sh`'s pin), and `scripts/check.sh` now runs `tools/gen_kaitai.sh` before every other
+  gate, so a local run needs that compiler too (`brew install kaitai-struct-compiler`). With `CI=true`,
+  while the classes are still committed, it fails when a fresh build differs from them (a modified or a
+  missing file). Development tooling only.
 
 ### Fixed
 - `govee-ble-analyze` knows the 0xAC status TLVs 0x36 (bar switch; the H6038 / H6048 status read requests

@@ -30,14 +30,18 @@ bash tools/gen_docs.sh              # build the pdoc API reference (needs .[docs
 ```
 
 **`bash scripts/check.sh` must pass before you push** (it is exactly what CI and the release
-workflow run; it builds its own venv, `.venv-check`, override with `VENV=`). It enforces, fail-fast:
+workflow run; it builds its own venv, `.venv-check`, override with `VENV=`). It needs the JVM
+`kaitai-struct-compiler` 0.11 (`brew install kaitai-struct-compiler`; on Debian/Ubuntu,
+`bash scripts/install_ksc.sh`, which is what CI uses). It enforces, fail-fast:
 
-1. `ruff check src tools tests spec` (rules in `[tool.ruff.lint]`)
-2. `mypy src/govee_ble_local` (`--strict`; generated readers exempt)
-3. `bandit -r src tools` failing on Medium+ severity
-4. `pip-audit` over the package's resolved runtime dependencies (no ignores); skipped offline unless
+1. `tools/gen_kaitai.sh` regenerates the read-write classes in `_generated/` from `spec/*.ksy`. With
+   `CI=true`, a fresh build that differs from the committed classes (modified or missing) fails.
+2. `ruff check src tools tests spec` (rules in `[tool.ruff.lint]`)
+3. `mypy src/govee_ble_local` (`--strict`; generated readers exempt)
+4. `bandit -r src tools` failing on Medium+ severity
+5. `pip-audit` over the package's resolved runtime dependencies (no ignores); skipped offline unless
    `CI=true`
-5. `pytest` with a coverage floor of 85% (`COV_MIN`) over the package (generated readers omitted)
+6. `pytest` with a coverage floor of 85% (`COV_MIN`) over the package (generated readers omitted)
 
 With `CI=true`, missing optional test dependencies fail the run instead of skipping tests.
 
@@ -107,6 +111,8 @@ are only for handing someone a testable build of an unmerged branch.
 ### What the workflow enforces
 
 - The tagged commit is an ancestor of `origin/master`.
+- The pinned JVM `kaitai-struct-compiler` 0.11 is installed (`scripts/install_ksc.sh`), and the
+  readers the wheel ships are generated from `spec/*.ksy` by the gate below.
 - The full `scripts/check.sh` gate passes (with `CI=true`, so pip-audit and optional test
   dependencies are mandatory).
 - The tag equals `v` + the `pyproject.toml` version.
