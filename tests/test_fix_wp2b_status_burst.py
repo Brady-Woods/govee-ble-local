@@ -300,7 +300,8 @@ def test_status_device_info_reads_only_the_basic_and_wifi_blocks() -> None:
 
 # ── analyzer: same completeness rule and walk as the runtime ────────────────────
 def test_analyzer_known_tlv_set_unchanged() -> None:
-    assert frozenset({0x00, 0x01, 0x04, 0x05, 0x07, 0x11, 0x12, 0x23, 0x30, 0x41, 0xA5}) == (
+    # 0x36 (H6038 / H6048) and 0x40 (H6671 / H6672) joined: the app's status reads request them.
+    assert frozenset({0x00, 0x01, 0x04, 0x05, 0x07, 0x11, 0x12, 0x23, 0x30, 0x36, 0x40, 0x41, 0xA5}) == (
         KNOWN_STATUS_REPLY_TLVS)
 
 

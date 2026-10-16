@@ -54,8 +54,8 @@ KNOWN_STATUS_REPLY_TLVS: frozenset[int] = frozenset({
     0x00,                                    # trailing zero-pad sentinel
     _reassemble.TYPE_SWITCH, _reassemble.TYPE_BRIGHTNESS, _reassemble.TYPE_MODE,
     _reassemble.TYPE_DEVICE_INFO, _reassemble.TYPE_SLEEP, _reassemble.TYPE_WAKEUP,
-    _reassemble.TYPE_TIMERS, _reassemble.TYPE_ZONE, _reassemble.TYPE_SEG_INFO,
-    _reassemble.TYPE_COLOR_GROUP,
+    _reassemble.TYPE_TIMERS, _reassemble.TYPE_ZONE, _reassemble.TYPE_BAR_SWITCH,
+    _reassemble.TYPE_IC_NUM, _reassemble.TYPE_SEG_INFO, _reassemble.TYPE_COLOR_GROUP,
 })
 
 

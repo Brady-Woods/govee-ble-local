@@ -235,6 +235,9 @@ model, from which the shipped readers are generated).
   for byte.
 
 ### Fixed
+- `govee-ble-analyze` knows the 0xAC status TLVs 0x36 (bar switch; the H6038 / H6048 status read requests
+  it, `VM4H6038`) and 0x40 (IC count; H6671 / H6672, `VM4LightH667172`), so their bursts are no longer reported
+  as spec gaps with exit code 1. New constants `wire.reassemble.TYPE_BAR_SWITCH` and `TYPE_IC_NUM`.
 - Segment setters refuse an index at or past the device's segment count (H60A6 13, H6047 10, H61A8 15),
   with `GoveeBleInvalidValue` as for any bad index. The app's position set has exactly that many positions
   and its mask encoders can't set a bit past it (`BleUtils.Y` / `BleUtils.X`); the library took any index up

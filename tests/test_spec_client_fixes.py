@@ -348,3 +348,11 @@ def test_mask_boundary_56_builds_57_raises() -> None:
         build.color_rgb(1, 2, 3, "h60a6", 57)
     with pytest.raises(GoveeBleInvalidValue):
         build.segment_brightness(1, 50, "h60a6", 57)
+
+
+def test_analyzer_knows_the_bar_switch_and_ic_count_tlvs() -> None:
+    # 0x36 (H6038 / H6048: VM4H6038 requests [41, 30, 36, A5]) and 0x40 (H6671 / H6672) are TLVs the app's
+    # status reads carry; govee-ble-analyze reported them as spec gaps and exited 1.
+    tlvs = bytes([0x01, 0x01, 0x01, 0x36, 0x02, 0x01, 0x00, 0x40, 0x03, 0x00, 0x30, 0x06])
+    report = status_burst_report([_chunk(bytes([0xAC, 0x00, 0x01, 0x00, len(tlvs), 0x03, 0x00]) + tlvs)])
+    assert report.gaps == [] and {0x36, 0x40} <= set(report.tlv_types)

@@ -55,6 +55,8 @@ TYPE_SLEEP = 0x11
 TYPE_WAKEUP = 0x12
 TYPE_TIMERS = 0x23
 TYPE_ZONE = 0x30
+TYPE_BAR_SWITCH = 0x36   # H6038 / H6048 request it (VM4H6038:525: [41, 30, 36, A5]); not decoded here
+TYPE_IC_NUM = 0x40       # H6671 / H6672 request it (VM4LightH667172$afterConnectedSingleReadDeviceInfo$1:160)
 TYPE_SEG_INFO = 0x41
 TYPE_COLOR_GROUP = 0xA5
 
