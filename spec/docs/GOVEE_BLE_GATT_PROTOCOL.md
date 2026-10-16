@@ -309,14 +309,22 @@ The `0xA3` frame shape:
 ```
 START:  A3 | 00(seq) | 01 | packetCount | commBytes… | inline value | CK@19
 MIDDLE: A3 | seq(1,2,…)   | 17 value bytes            | CK@19
-END:    A3 | FF(seq)      | final ≤17 value bytes      | CK@19   (data-bearing)
+END:    A3 | FF(seq)      | final ≤17 value bytes      | CK@19   (data-bearing for a long value)
 ```
 - byte 1 = seq (`0x00` start, `1,2,…` middles, `0xFF` end); byte 2 = literal `0x01`;
   byte 3 = **packetCount** = total frame count (start + middles + end).
 - `commBytes` occupies byte 4… (length *L*); the **value begins at byte `4+L`**; START carries
   `15 − L` inline value bytes. For the usual `L = 1`: commByte@4, value@5, 14 inline.
-- The `0xFF` END frame **carries the final data chunk** (it is *not* an empty terminator), except
-  when the payload happens to end exactly on a frame boundary.
+- The `0xFF` END frame is always sent (`makeSendBytesV2` appends its separate END `bArr2`). It is
+  **data-bearing only when the value is longer than START's `15 − L` inline bytes**: then it carries
+  the final chunk (up to 17 bytes; a value that ends exactly on a frame boundary puts a full 17 there,
+  never an extra empty frame), and packetCount = 1 + the frames after START. A **short value** (at
+  most `15 − L` bytes) rides whole in START; the END is then empty and packetCount is **2**.
+- Device side, **static firmware analysis (not hardware-verified)**: the H6006 firmware's `0xA3`
+  reassembler (`FUN_9b020d2c`, `firmware-h6006/decompiled/H6006_a3_reassembler.c`) stores START byte 3
+  as the packet count, accepts the `0xFF` END only when (frames after START, END included) + 1 ==
+  count, and copies 17 bytes from END bytes 2..18. So count 2 with an empty END is accepted, and the
+  count includes START and END.
 
 > **Correction (earlier drafts were wrong on two points, proven against H60A6 hardware):**
 > (1) byte 4 is a **commByte** that is *not always* a scene-version constant — for the DIY/graffiti
@@ -387,11 +395,11 @@ them apart** (`0x00` / `0x01` / `0x02`):
 | Builder | byte 2 | START header | START inline value | `0xFF` terminator | Chosen when / used by |
 |---|:--:|---|---|---|---|
 | `makeSendBytesV0` (`:743`) | `00` | `[A3, 00, 00, packs+2, commByte, 0×14]` | **none** — all value in MIDDLE/END | **empty** (bytes 2–18 = 0, *not* data-bearing) | `controller.p() == 0` — rare; **not** the scene/DIY path (`p()` = 1 there) |
-| `makeSendBytesV1`/`V2` (`:781`/`:785`) | `01` | `[A3, 00, 01, packetCount, commBytes…]` | `15 − L` bytes at byte `4+L` | **data-bearing** (final chunk) | the common path — **generic scenes + DIY-graffiti** (H61A8, H6047, H6052, bulbs) |
+| `makeSendBytesV1`/`V2` (`:781`/`:785`) | `01` | `[A3, 00, 01, packetCount, commBytes…]` | `15 − L` bytes at byte `4+L` | **data-bearing** (final chunk) when the value exceeds the `15 − L` inline bytes; **empty** (packetCount 2) for a short value | the common path — **generic scenes + DIY-graffiti** (H61A8, H6047, H6052, bulbs) |
 | `makeSendBytesV3` / `K` (`:851`/`:111`) | `02` | `[A3, 00, 02, pktCount, commByte, ctrlNum, ctrlIdx, verify×8 @7]` | **4 bytes** @ byte 15 (after the verify block) | **data-bearing** | multi-controller scenes — `sceneV1.isNeedMulMulPackage()==true` (`BaseSceneViewMode:820`); returns `List<List<byte[]>>`, one START…`FF` group per controller |
 
 - **V1 = V2 with a 1-byte `commBytes`** — `makeSendBytesV1` delegates to `makeSendBytesV2` (`:781-783`); V2 exists so `commBytes` can be longer (e.g. `{commandType, p()}` = 2 bytes, `:919`). The frame-shape diagram above is this (V1/V2) form.
-- **V0's `0xFF` terminator is the only empty one**; V1/V2 and V3 all carry the last value chunk in the `0xFF` frame.
+- **V0's `0xFF` terminator is always empty**; V1/V2 carry the last value chunk in the `0xFF` frame except for a short value that fits in START (then the END is empty and packetCount is 2), and V3 carries it there too.
 - **V3 inserts an 8-byte `verify` block** (6-byte LE timestamp + 2 random, `BleUtils.getSignedBytesFor6`) at bytes 7–14, leaving only 4 value bytes in its START; the H60A6/H61A8 captures are the **V1/V2** form (byte 2 = `01`), not V3.
 
 **Worked H61A8 example — the value layer (`DiyGraffitiV2.g()`), byte-exact.** The H60A6 example above
@@ -545,10 +553,34 @@ matches the live-implementation captures exactly.
 `FIRST_DATA_OFFSET=7`):
 
 ```
-first chunk (tag 0x00): [0xAC, 0x00, totalLo, totalHi, lastLen, cmd, sub, <12 data bytes @7..18>, CK]
+first chunk (tag 0x00):  [0xAC, 0x00, pktsLo, pktsHi, lastLen, cmd, sub, <12 data bytes @7..18>, CK]
 next  chunks (tag 0x01…): [0xAC, tag,  <17 data bytes @2..18>, CK]
-terminator (tag 0xFF):   delivers the concatenated buffer to the parser
+last  chunk (tag 0xFF):  [0xAC, 0xFF, <lastLen data bytes @2..>, zero pad, CK]
 ```
+
+- **`pkts`** (bytes 2-3, u16 **LE**, `BleUtils.H(…, false)`) = `allBackPkgs`: the **total packet count**,
+  including the first chunk and the `0xFF` chunk. **`lastLen`** (byte 4) = `endPkgLen`: the number of valid
+  data bytes in the last chunk (0..17) (`AbsController4BleSingleSendMultiBack.g()` `:133-177`).
+- The **`0xFF` chunk is the last data packet**, not an empty terminator: `h()` copies `lastLen` bytes
+  from its offset 2 and then delivers the buffer (`:203-217`). Middle chunks contribute 17 bytes from
+  offset 2 (`i()` `:219-227`).
+- Chunks are matched **by position**: a middle chunk's tag must equal its position (1 … `pkts`−2), and
+  tag `0xFF` is accepted only at position `pkts`−1 (`isSameController()` `:230-253`, `onResult()`
+  `:313-332`). The app also accepts the last chunk tagged with its **position** (`pkts`−1) instead of
+  `0xFF`: `isSameController()` falls through to `K(tag) == backPos` (`:248`), and `onResult()` runs
+  `h()` at position `pkts`−1 whatever the tag (`:326-331`). The H60A6 sends `0xFF` (both real
+  captures); a reassembler should accept either. The first chunk is matched on `[0xAC, 0x00, …, cmd@5, sub@6]` with `sub` = the reader's
+  `d()` (`f()` `:128-131`): 0 for the H60A6 status read, whose `Compose4BaseInfoSingleRead` builds
+  `new ControllerSingleRead(…)` and leaves that field at its default (`Compose4BaseInfoSingleRead:256`,
+  `ControllerSingleRead.d()`).
+- **Single-packet reply** (`pkts` = 1): no further chunks; the data is `lastLen` (≤ 12) bytes from
+  offset 7 of the first chunk (`g()`).
+
+So the reassembled buffer is exactly `12 + 17 × (pkts − 2) + lastLen` bytes (`lastLen` alone when
+`pkts` = 1). Example, the real H60A6 burst `ac 00 0a 00 0c 03 00 …` … `ac ff …`: 10 packets, `lastLen` 12
+→ 12 + 17 × 8 + 12 = 160 bytes, which is exactly its TLV stream (the last 12 bytes, in the `0xFF` chunk,
+finish colour group 4). `govee_reference.reassemble_ac`/`chunk_ac` implement this; the cross-check test
+round-trips both real captures byte for byte.
 
 The reassembled buffer is a **header-less TLV stream** — `[type, len, value]`, `i += 2 + len` —
 parsed by `Compose4BaseInfoSingleRead.u()` (`:292`). `u()` itself handles `type 1` = on/off,
@@ -579,11 +611,13 @@ segment index = `(group_index − 1) × count + k`. All of these are modelled in
 > H6641 additionally reads IC count first (`0x40`, `VM4Light.C5:197`); group count = `ceil(IC / 5)`. In
 > `devices.yaml` this is the `per_segment_color_read` opcode (`0xa5`) on the `h6047`/`h61d3` families.
 
-> **Trailing padding:** the reassembled buffer is zero-padded to the last frame's 20-byte boundary, so it
-> usually ends in `0x00` bytes. `u()` stops once fewer than 2 bytes remain; no real TLV type is `0x00`.
-> A consumer must therefore terminate on a `0x00` type byte (or EOF), **not** parse to end-of-buffer — the
-> `.ksy` models this as `status_reply` `repeat-until: '_.type == 0 or _io.eof'` (parsing to EOS would throw
-> on a lone trailing zero, which has no room for its length byte).
+> **Trailing padding:** trimmed to `lastLen` as the app does (and as the shipped library's
+> `wire/reassemble.py` and `govee_reference.reassemble_ac` do), the buffer ends exactly at the last TLV. A
+> reassembler that doesn't trim, joining the whole 17-byte data region of the last chunk, gets the chunk's
+> zero padding on the end, so its buffer ends in `0x00` bytes. `u()` stops once fewer than 2 bytes remain; no real TLV type is `0x00`. A consumer must therefore
+> terminate on a `0x00` type byte (or EOF), **not** parse to end-of-buffer — the `.ksy` models this as
+> `status_reply` `repeat-until: '_.type == 0 or _io.eof'`, which handles both buffers (parsing to EOS would
+> throw on a lone trailing zero, which has no room for its length byte).
 
 ---
 
@@ -1166,7 +1200,7 @@ sections above have been corrected/expanded accordingly.
 | 4 | Plug sync-time `0xB5` | **Code correct; doc gap** → added §5.6/§6/§12.6 | Plug family uses `0xB5` with `[4-byte BE epoch, 0x01, tzHour, tzMin]`. The trailing `f9` seen live is a signed tz-hour byte (UTC−7), not a constant. Sent on connect / before timer writes. |
 | 5 | Device-info selectors `0x10`/`0x11` | **Code correct; doc gap** → added §5.2 | Under read `0x07`: `0x02`/`0x10` = UID/serial (reversed), `0x11` = Wi-Fi MAC (forward) + versions `X.YY.ZZ`. |
 | 6 | PSK literal | **Code plausibly correct; unverifiable from Java** → noted §9.1 | `LibTools.c()` = `AESUtils.decode(app_communication, app_session)` — a runtime-decoded resource, not a static literal. Live value `MakingLifeSmarte` is consistent but not statically provable. |
-| 7 | `0xAC` status burst | **Code correct; now fully confirmed** → §4.5 + §15 | 20-byte request `[0xAC, cmd, ext…, CK]`; ext = length-prefixed cmd list. H60A6 split confirms `AC 03 02 41 30` / `AC 03 03 41 30 A5` byte-for-byte. Reply chunks tag@byte1 (12 data@off7 first, 17 data@off2 rest, `0xFF` terminator) → TLV stream. |
+| 7 | `0xAC` status burst | **Code correct; now fully confirmed** → §4.5 + §15 | 20-byte request `[0xAC, cmd, ext…, CK]`; ext = length-prefixed cmd list. H60A6 split confirms `AC 03 02 41 30` / `AC 03 03 41 30 A5` byte-for-byte. Reply chunks tag@byte1 (12 data@off7 first, 17 data@off2 middle, `lastLen` data@off2 in the data-bearing `0xFF` last chunk; first chunk bytes 2-3 = packet count) → TLV stream. |
 | 8 | `0x30` zone / `0x36` bar-switch | **BOTH confirmed** (were: `0x30` "not found") → §5.6 + §15 | `0x36` (`value_compose_light_switch`) real & readable (`AA 36`) — H6047 split. `0x30` zone-power **also confirmed**: `[0x33,0x30,zone,state]`, readable (bit 1 of each notify byte) — it was missing from base.apk only because **H60A6 ships as a separate feature split** (`split_pact_h60ax.apk`). Correction to the earlier "no `h6047`/`h60a6` package" note: those packages exist, delivered as on-demand modules. |
 | 9 | GCM handshake opcode `e7 1a` | **Confirmed** → added §9.3 | V2 (GCM) keeps header `0xE7` with sub-opcodes `0x19` (request), `0x1A` (confirm/data), `0x11` (single-packet variant) — vs V1's `0x01`/`0x02`. |
 
@@ -1471,6 +1505,14 @@ com-type     = %x01 / %x02 / %x07 / %x0C       ; sceneType 1 / 2 / 3 / 6
 ; ── single-request / multi-reply read (0xAC) ──
 ac-request   = %xAC command len-prefix 1*OCTET ; e.g. AC 03 02 41 30
 len-prefix   = OCTET                           ; count of requested sub-commands
+ac-first     = %xAC %x00 pkt-count last-len command sub 12OCTET
+                                               ; pkt-count = 1: only the first last-len octets are data
+ac-data      = %xAC index 17OCTET              ; index = packet position 1 .. pkt-count - 2
+ac-last      = %xAC last-index 17OCTET         ; data-bearing: first last-len octets, then zero pad
+last-index   = %xFF / OCTET                    ; 0xFF (sent), or the position pkt-count - 1 (also accepted)
+pkt-count    = 2OCTET                          ; u16 LE: total packets incl. ac-first and ac-last
+last-len     = OCTET                           ; valid data octets in the last packet (0..17)
+sub          = OCTET                           ; = the reader's d() (0 for the H60A6 status read)
 
 ; ── handshake (0xE7) ──
 hs-frame     = %xE7 hs-op *OCTET

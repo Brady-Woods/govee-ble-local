@@ -239,14 +239,15 @@ types:
   mode_read:
     doc: |
       Mode (0x05) read. Byte 0 is EITHER a request selector (0x01) OR a reply sub-mode byte
-      (0x15 color / 0x04 scene / 0x13 music / 0x0d h60a6-color). Disambiguate by value: 0x01 => request;
+      (0x15 color / 0x04 scene / 0x13 music / 0x0d bulb/lamp color). Disambiguate by value: 0x01 => request;
       a known sub-mode => reply.
       - 0x15 CCT reply => cct_read_reply: [op=01][kHi][kLo], kelvin big-endian @ frame bytes 4-5; DROPS
         the FF FF FF white point the 0x33 write carries. H6047 appends a second kelvin (right bar,
         bytes 6-7) and its byte 0 is the gradual flag: [gradual][kelvin left u2be][kelvin right u2be].
-      - 0x0d (and 0x15 on the LEGACY Mode/SubModeColorV1 stack): parse reads ONLY op/gradual (bArr[0]==1)
-        — no kelvin/RGB decode; 0x0d is effectively write-only. Kelvin is decoded only by the compose
-        stack's 0x15 path (cct_read_reply). So no distinct 0x0d reply body is modelled.
+      - 0x0d => mode_color_0d_report: a DEVICE-SPECIFIC body, typed by mode_color_0d_typed(kind): kind 1
+        H6052 [R,G,B]; kind 2 the 0x0d bulbs H6006/H6008 and the rgblight H6188 [R,G,B, kelvin, tint];
+        kind 0 the default [gradual, kelvin]. (Only the LEGACY Mode/SubModeColorV1 stack reads 0x0d, and
+        0x15, as op/gradual alone, bArr[0]==1.)
       - 0x13 music => music_read_reply (FAMILY-DEPENDENT; see that type).
     seq:
       - id: selector_or_sub_mode
@@ -305,14 +306,17 @@ types:
       IParseStrategy each device's *InfoDetail installs on its SubMode4Color:
         * H6052 (tablelampv1, CUSTOM strategy) => [R, G, B]: a SINGLE colour (ColorUtils.G(vb0,vb1,vb2))
           fanned across the device's zones (getColorSize: H6052=2). This resolves the old "0x0d is write-only"
-          note — H6052 DOES read colour back, as these 3 bytes. Source: H6052InfoDetail.parseModeValidBytes
-          :323-346 (validBytes[0]==0x0D -> colour strategy on validBytes[1:]) + :141-147.
+          note — H6052 DOES read colour back, as these 3 bytes, and only these: its Kelvin bytes are never
+          read. Source: H6052InfoDetail.parseModeValidBytes :323-346 (validBytes[0]==0x0D -> colour strategy
+          on validBytes[1:]) + :141-147; Govee Home 7.7.02 the same (H6052InfoDetail.G and its constructor).
         * DEFAULT SubMode4Color strategy (most other families) => [gradual_flag, kelvin u16-be], NOT RGB
           (iParseStrategy: q(vb0==1); s(getSignedShort(vb1,vb2))). For those devices reinterpret r as the
           gradual flag and g,b as the big-endian kelvin.
-        * rgblight strategy (H6188; ModeParseStrategyConfig.a) => [R, G, B, kelvin u16-be, tintR, tintG, tintB];
-          kelvin != 0 => colour-temperature mode. Use mode_color_0d_typed(kind=2) for the full body.
-      Modelled as the H6052 RGB form (the curated device). Trailing frame bytes are zero padding (unparsed).
+        * the 0x0d bulbs H6006 / H6008 (bulblight ModeParseStrategyConfig.a) and the rgblight H6188
+          (rgblight ModeParseStrategyConfig.a) => [R, G, B, kelvin u16-be, tintR, tintG, tintB]; a kelvin > 0
+          (read signed) => colour-temperature mode. Use mode_color_0d_typed(kind=2) for the full body.
+      Modelled as the [R, G, B] form, the first three bytes of kinds 1 and 2. Trailing frame bytes are zero
+      padding (unparsed).
     seq:
       - { id: r, type: u1, doc: "H6052: red. Default-strategy devices: gradual_flag (byte==1)." }
       - { id: g, type: u1, doc: "H6052: green. Default-strategy devices: kelvin hi." }
@@ -460,8 +464,9 @@ types:
   status_reply:
     doc: |
       Reassembled 0xAC status reply = a sequence of [type, len, value] TLVs. The buffer is de-chunked from
-      the 0xAC frames, which are zero-padded to the 20-byte frame boundary, so the buffer usually has
-      TRAILING ZERO PADDING. Terminate on that: no real TLV type is 0x00, and the walker
+      the 0xAC frames. Trimmed to the first chunk's lastLen as the app does (see multi_ac) it ends exactly
+      at the last TLV; a client that joins the whole zero-padded last chunk instead gets TRAILING ZERO
+      PADDING. Terminate on either: no real TLV type is 0x00, and the walker
       (Compose4BaseInfoSingleRead.u:299-326) also stops once fewer than 2 bytes remain. So parse until a
       type-0 sentinel or EOF — repeat: eos would instead throw on the padding (a lone trailing 0 byte has
       no room for its len). The trailing type-0 element, if present, is the padding sentinel (no len/value).
@@ -763,7 +768,19 @@ types:
   a3_start:
     seq:
       - { id: marker, type: u1, doc: "byte2 discriminator: 0x01 here (makeSendBytesV1/V2). 0x00=V0, 0x02=V3 have different layouts — see comment above." }
-      - { id: packet_count, type: u1, doc: "total frame count (start + middles + 0xFF end, data-bearing)" }
+      - id: packet_count
+        type: u1
+        doc: |
+          Total frame count, START and the 0xFF END included. The END carries data only when the value is
+          longer than START's inline 15 - len(commBytes) bytes: then it holds the final chunk (up to 17
+          bytes, a full 17 included) and the count is 1 + the frames after START. Otherwise the whole
+          value rides in START, packet_count is 2 and the END is empty (MultipleControllerCommV1.makeSendBytesV2
+          always appends its separate END frame bArr2 and starts the count at 2).
+          Device side, static firmware analysis (not hardware-verified): the H6006 firmware's a3 reassembler
+          (FUN_9b020d2c, firmware-h6006/decompiled/H6006_a3_reassembler.c) stores START byte 3 as the packet
+          count, accepts the 0xFF END only when (frames after START, END included) + 1 == count, and copies
+          17 bytes from END bytes 2..18. So count 2 with an empty END is accepted, and the count includes
+          START and END.
       - { id: comm_byte, type: u1, doc: "commByte @ byte4: legacy scene version constant (V1=1 V2=2 V3=7 V6=12) OR a device DIY/graffiti protocol code (H60A6 = 0x58). NOT value[0]|0x08. NOTE: the graffiti scene builder can instead emit proType 0xA4 (multi_a4), where commByte moves to byte6. See GOVEE_BLE_GATT_PROTOCOL.md 4.4" }
       - { id: inline_value, size: 14, doc: "first (15 - commBytes.length) value bytes; 14 for a 1-byte commByte. Value = controller.getValue() (DIY/graffiti = re-encoded toBytes(), not the raw cloud blob). Opaque here — reassemble across frames then parse with the scene-upload VALUE types below (diy_value / graffiti_v3_value / rgbic_scene_value / rgb_scene_value / graffiti_v2_value per commByte)" }
 
@@ -804,8 +821,12 @@ types:
     doc: |
       Request: [0xAC, command, N, cmd_1 .. cmd_N] (N = count of requested sub-commands),
       e.g. AC 03 02 41 30 (H60A6 single-zone) / AC 03 03 41 30 A5 (dual-zone).
-      Reply: a burst of 0xAC frames, tag @ byte1; first chunk 12 data bytes @ offset 7,
-      subsequent 17 data bytes @ offset 2, terminator tag 0xFF. Reassembled buffer is a
+      Reply: a burst of 0xAC frames, tag @ byte1 (AbsController4BleSingleSendMultiBack.g/.i/.h):
+      first chunk [AC, 00, pkts u2le, lastLen, cmd, sub, 12 data bytes @ offset 7], where pkts =
+      total packet count incl. the first and the last chunk and lastLen = valid bytes in the last
+      chunk; middle chunks (tag = position) 17 data bytes @ offset 2; the last chunk (tag 0xFF, or
+      its position pkts-1, which isSameController/onResult also accept) is data-bearing: lastLen bytes
+      @ offset 2. pkts == 1: lastLen (<= 12) bytes @ offset 7, no more chunks. Reassembled buffer is a
       TLV stream (type,len,value). Modelled here as the request form.
     seq:
       - { id: command, type: u1 }
@@ -1256,13 +1277,29 @@ types:
   mode_color_0d_typed:   # 0x0D colour-report body — typed counterpart of mode_color_0d_report
     doc: |
       0x0D colour mode-report body, parametric on the device's parse strategy (devices.yaml `mode_0d_kind`):
-        kind 0 = default SubMode4Color strategy -> [gradual_flag, kelvin u16-be]           (mode_0d_kind: cct)
-        kind 1 = H6052 custom strategy          -> [R, G, B]                                (mode_0d_kind: rgb)
-        kind 2 = rgblight strategy (H6188)      -> [R, G, B, kelvin u16-be, tintR, tintG, tintB]
-                                                                                 (mode_0d_kind: rgb_kelvin_tint)
-      Kind 2 is ModeParseStrategyConfig.a (rgblight, installed by VM4Light.v5 for H6188): kelvin =
-      getSignedShort(vb[3], vb[4]); ANY non-zero kelvin means colour-temperature mode and the app shows the
-      tint (vb[5..7]) rather than R/G/B; kelvin 0 means RGB mode. The body mirrors the color_cct_0d write.
+        kind 0 = default SubMode4Color strategy  -> [gradual_flag, kelvin u16-be]          (mode_0d_kind: cct)
+        kind 1 = H6052 custom strategy           -> [R, G, B]                               (mode_0d_kind: rgb)
+        kind 2 = rgblight (H6188) and 0x0d bulb  -> [R, G, B, kelvin u16-be, tintR, tintG, tintB]
+                 (H6006 / H6008) strategy                                        (mode_0d_kind: rgb_kelvin_tint)
+      Kind 2 is ModeParseStrategyConfig.a, the same rule in two splits: rgblight (installed by VM4Light.v5
+      for H6188) and bulblight (the non-H6001 branch). kelvin = getSignedShort(vb[3], vb[4]); a non-zero
+      kelvin makes the strategy show the tint (vb[5..7]) rather than R/G/B, and kelvin 0 the R/G/B. The body
+      mirrors the color_cct_0d write.
+      The bulbs' path (Govee Home 7.7.02): bulblightv3 / bulblightv1 pact Model -> bulblight AcNewDetail ->
+      VM4Light ($connectBleSuc$1 -> m5 -> j5 installs ModeParseStrategyConfig.a) ->
+      OpInfo4Detail.parseModeValidBytes, which hands sub-modes 0x15 / 0x0b / 0x02 / 0x0d to that strategy and
+      takes colour-temperature mode only for a kelvin > 0; H6188 the same (VM4Light$connectBleSuc$1 -> A5 ->
+      v5). So a kelvin of 0x8000 or more, negative there, shows the tint as an RGB colour, not CCT; is_cct is
+      the strategy's tint test (!= 0), not that one.
+      Device side, static firmware analysis (not hardware-verified): the H6006 and H6008 firmware build
+      the 0x0D reply as [0D][R][G][B][kelvin hi][kelvin lo] with every later byte zero, so the tint fields
+      always arrive as 0 (H6006: firmware-h6006/decompiled/H6006_ble_dispatcher.c case 0xd at line 618,
+      bytes at lines 629-633; H6008: firmware-h6008-wifi/decompiled/H6008_ble_dispatcher.c case 0xd at line
+      383, bytes at lines 388-392). The kelvin is pre-zeroed there, so 0 most likely means RGB mode.
+      Kind 1 is H6052 (tablelampv1, goodsType 22): Model.u -> H6052NewDetailActivity -> H6052NewDetailVM ->
+      H6052InfoDetail.G, whose constructor installs a strategy reading only vb[0..2]; the kelvin bytes are
+      never read. (tablelampv1 ble.SubModeColor.parse, which does read a kelvin at vb[3..4], serves the IoT /
+      group op dialogs, not the control screen.)
     params:
       - { id: kind, type: u1 }
     seq:
@@ -1278,4 +1315,4 @@ types:
     instances:
       is_cct:
         value: 'kind == 2 and report_kelvin != 0'
-        doc: "kind 2 only: colour-temperature mode (report_kelvin != 0, ModeParseStrategyConfig.a)"
+        doc: "kind 2 only: the strategy shows the tint (report_kelvin != 0, ModeParseStrategyConfig.a); OpInfo4Detail.parseModeValidBytes takes CCT only for a signed kelvin > 0"

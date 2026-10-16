@@ -56,7 +56,8 @@ types:
           DEVICE STATE — externally-keyed, NO universal layout (do not type as one struct).
           The identity parser (BleUtil.parseBleBroadcastPact:829) stops at pact_code; it never reads `rest`.
           Everything past pact_code is per-SKU state consumed by SKU-specific parsers at SKU-specific offsets:
-            parseBleBroadOnOff      -> data[3] (scanRecord[i6+5])
+            parseBleBroadOnOff      -> data[6] (scanRecord[i6+8]) = rest[0] (bleak value[4]); BleUtil.java:749
+                                       also returns data[7] (scanRecord[i6+9]) = rest[1]
             parseBleBroadDaySyncInfo-> data[7] (scanRecord[i6+9])
             battery/charge parsers  -> data[7] (scanRecord[i6+9])
             parseBleBroadcastPact4MultiTh -> data[6..8] (scanRecord[i6+8..10])

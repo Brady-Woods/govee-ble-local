@@ -474,7 +474,7 @@ families:
 
   - id: bulblightv3
     category: bulb
-    client_profile: { has_brightness: false, color_scheme: h6006, mode_0d_kind: cct, wire_cipher: runtime }   # no seg read; 0x0d colour+CCT
+    client_profile: { has_brightness: false, color_scheme: h6006, mode_0d_kind: rgb_kelvin_tint, wire_cipher: runtime }   # no seg read; 0x0d report = [R,G,B,kelvin u2be,tint] (bulblight ModeParseStrategyConfig.a; mode_color_0d_typed kind 2). Not the old-H6001 branch (SKU H6001, goodsType 0, Support4OldH6001): [R,G,B][CCT flag][tint]
     models: [H6001, H6002, H6003, H6004, H6005, H6006, H6008, H6009, H600A, H600B, H600C, H600D, H6010, H6011, H6013, H601A, H601B, H601C, H601D, H601E, H601F, H8015, H801A, H801C, H801D, H1401, H14A1, H14C0, H14C1, H14C2, H1501]
     goods_types: [0, 9, 10, 20, 31, 64, 111, 311, 328, 342, 348]   # 328 = H6008 (proven). H6006 = LEGACY bulb handled by the bulblight-v1 pkg (SKU-STRING matched: BulbLightApplication:97, SettingAc:327 — NOT bulblightv3); goodsType = old-bulb 20 cluster (shared H6001/H6005; there is NO dedicated H6006<->goodsType binding anywhere in the app). 0/9/10 = legacy broadcast codes.
     # H6004 has TWO hardware revisions, split by goodsType (the SKU -> goodsType binding comes from Govee's cloud
@@ -494,7 +494,7 @@ families:
     submodes: { color: "0x0d", color_alt: "0x02", scene: "0x04", music: "0x05", diy: "0x0a" }
     opcodes:
       - { name: color_temp_type, cmd: "0x26", payload: "[1|2] display type (H601EF)" }
-      - { name: color_temp_write, cmd: "0x05", payload: "[0x0d, tintR, tintG, tintB, kelvin u2be, tintR, tintG, tintB]", note: "BOTH-SLOT form: bulblightv3/pact/Model.t -> bulblightstringv1/bulblight VM4Light.configColorController -> Config.J[2] = Config.bu -> Bytes.p(tint, K); the tint (Constant.getTemColorByKelvin) fills both colour slots, NOT ff ff ff (that is the H6188 form, Config.GM -> Bytes.A). H6008 (328); H6006 sits in the same goodsType-64 version gates (bulblight/Support.d, BulbLightApplication, SettingAc). Read-back: aa 05 0d [r g b kelvin u2be tint rgb], kelvin != 0 => CCT (bulblightstringv1 ModeParseStrategyConfig.a, tablelampv1 SubModeColor.parse). RGB PICK (7.7.02): a picked colour that is exactly one of the Kelvin tint colours (Constant.k2, 178 colours) whose Kelvin lies in kelvin_range (inclusive) is sent instead of the RGB frame as [0x0d, PICKED R, G, B, kelvin u2be, first tint of that Kelvin] (the picked colour may be the second colour of its step; this form is used by BOTH the h6006 and h6188 schemes): Config.bu = KelvinConfig.i(c) ? Bytes.p(c, KelvinConfig.c(c)) : Bytes.f(c). Library: build.rgb_as_kelvin / color_rgb_frames." }
+      - { name: color_temp_write, cmd: "0x05", payload: "[0x0d, tintR, tintG, tintB, kelvin u2be, tintR, tintG, tintB]", note: "BOTH-SLOT form: bulblightv3/pact/Model.t -> bulblightstringv1/bulblight VM4Light.configColorController -> Config.J[2] = Config.bu -> Bytes.p(tint, K); the tint (Constant.getTemColorByKelvin) fills both colour slots, NOT ff ff ff (that is the H6188 form, Config.GM -> Bytes.A). H6008 (328); H6006 sits in the same goodsType-64 version gates (bulblight/Support.d, BulbLightApplication, SettingAc). Read-back: aa 05 0d [r g b kelvin u2be tint rgb], kelvin > 0 (read signed) => CCT, and 0x15 / 0x0b / 0x02 are read the same way (mode_0d_kind rgb_kelvin_tint: bulblight AcNewDetail -> VM4Light -> ModeParseStrategyConfig.a -> OpInfo4Detail.parseModeValidBytes, Govee Home 7.7.02; the H6006/H6008 firmware sends the tint bytes as 0, static firmware analysis). RGB PICK (7.7.02): a picked colour that is exactly one of the Kelvin tint colours (Constant.k2, 178 colours) whose Kelvin lies in kelvin_range (inclusive) is sent instead of the RGB frame as [0x0d, PICKED R, G, B, kelvin u2be, first tint of that Kelvin] (the picked colour may be the second colour of its step; this form is used by BOTH the h6006 and h6188 schemes): Config.bu = KelvinConfig.i(c) ? Bytes.p(c, KelvinConfig.c(c)) : Bytes.f(c). Library: build.rgb_as_kelvin / color_rgb_frames." }
     specs: { kelvin_range: [2700, 6500], scene_versions: [0], brightness_range: [1, 100], brightness_scaling: "legacy non-H6005: 1-100 -> 20-254; H6005/H6001-new: raw percent" }   # H6006 (legacy, gt~20) may report [2000,9000]; H6008(328)=[2700,6500]. No per-segment read (getColorPieceSize=0).
     encryption: none
     notify:
@@ -570,7 +570,7 @@ families:
     protocol: { single_packet: true, multi_dialects: ["0xA1"] }   # NO mode_command: a plug has no 0x05 mode. Verified opcode set is {0x01,0x12,0x13,0x15,0x16,0x1f,0xB0,0xB3,0xB4,0xB5,0xAB}+secret. multi 0xA1 = multi-outlet (BleMultiComm).
     # Not a light: no color/scene/music sub-modes. Relay + timers only.
     opcodes:
-      - { name: relay_switch, cmd: "0x01", readable: true, payload: "1 byte [baseMask|onBit]: relay0 0x11/0x10, relay1 0x22/0x20, relay2 0x44/0x40, all 0xFF/0xF0; read parses per-relay bits" }
+      - { name: relay_switch, cmd: "0x01", readable: true, payload: "1 byte [baseMask|onBit]: relay0 0x11/0x10, relay1 0x22/0x20, relay2 0x44/0x40, all 0xFF/0xF0; read parses per-relay bits", note: "Read-back on-rule (aa 01 reply byte 0, split into 8 per-relay bits by SwitchControllerV2.parseValidBytes) is per goodsType, decided by the detail screen (Govee Home 7.5.12): 43 (H5080/H5083/H5085, one outlet) = bit 0 only (FrameV1 -> UiV1/UiV3 -> BleOpV1/BleOpV3.onEventSwitchV2 take .get(0); H5083NewDetailRepository.loadParser reads bArr[0] & 1); 50 (H5082) / 307 (H5089), two outlets = any of the 8 bits (BleOpV2.onEventSwitchV2 / BleOp4H5089.onEventSwitchV2 -> EventSwitchV2.i() ORs them all); 90 (H5160/H5161) = bits 0..2 (BleOpV4.Z ORs the first Support.getPlugNum(90) = 3). Library: three plug profiles, DeviceProfile.relay_on_mask 0x01 / 0xFF / 0x07." }
       - { name: heartbeat, cmd: "0x01", readable: true, note: "HeartControllerV2 parses per-relay state" }
       - { name: sync_time, cmd: "0xb5", payload: "[4-byte BE unix seconds, 0x01, tzHour(signed), tzMin(signed)]" }
       - { name: spec, cmd: "0xb3", readable: true, note: "read device spec — a single OPAQUE byte @ validBytes[0] (SpecController:19 stores bArr[0], surfaced to the UI as a display string via Model.getSpec; NOT bit-decoded anywhere in source). Actionable plug state is the 0x01 relay mask above." }
@@ -944,7 +944,7 @@ families:
   # ─────────────────────────── Lamps / car / misc lights (base.apk) ───────────────────────────
   - id: tablelampv1
     category: lamp
-    client_profile: { has_brightness: false, color_scheme: h6006, mode_0d_kind: rgb, wire_cipher: runtime }   # H6052 0x0D report = [R,G,B] (verified H6052InfoDetail)
+    client_profile: { has_brightness: false, color_scheme: h6006, mode_0d_kind: rgb, wire_cipher: runtime }   # H6052 0x0D report = [R,G,B] only, the kelvin bytes are not read (H6052NewDetailVM -> H6052InfoDetail.G constructor strategy; 7.5.12 and 7.7.02)
     models: [H6052, H6078]
     goods_types: [22, 128]
     delivery: base_apk

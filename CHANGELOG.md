@@ -38,7 +38,36 @@ model, from which the shipped readers are generated).
 
 ### Spec
 - `govee_ble.ksy`: `soft_version_read` (`aa 06`, ASCII) and `device_info_hard_version` (`aa 07 03`,
-  ASCII). Readers regenerated (the diff is only these additions).
+  ASCII). Readers regenerated: these additions plus docstrings only (parsing unchanged).
+- 0xAC status reply (GATT §4.5, the §14 validation table and the §17.3 ABNF; `govee_ble.ksy` `multi_ac` /
+  `status_reply` docs), per `AbsController4BleSingleSendMultiBack`: bytes 2-3 of the first chunk are the
+  total packet count (u16 LE) and byte 4 the last chunk's data length; the 0xFF chunk is the last data
+  packet, not an empty terminator, and the app also accepts it tagged with its position (pkts - 1).
+  Single-packet replies are documented, and the padding note says the shipped reassembler trims to lastLen,
+  like the app.
+- `spec/govee_reference.py`: `reassemble_ac` / `chunk_ac` follow the app (packet count, lastLen, a last
+  packet tagged 0xFF or its position, 0xFF refused mid-burst) and reproduce both real H60A6 bursts byte for
+  byte (`tests/test_spec_reference_crosscheck.py`); `chunk_ac`'s `sub` defaults to 0x00 (was 0x02), the
+  H60A6 status read's `d()`. The self-test falls back to the library's committed
+  reader, so a run from a checkout executes every parser check, and `--strict` fails if they are skipped.
+- `govee_adv.ksy`: `parseBleBroadOnOff` reads `data[6]` (`scanRecord[i6+8]`, the first byte after
+  pact_code; `BleUtil.java:749`), not `data[3]`.
+- 0xA3 upload (`govee_ble.ksy` `a3_start.packet_count`, GATT §4.4, SCENE_UPLOAD_ENCODING.md G7): a value that
+  fits START's 15 - len(commBytes) inline bytes gives packet count 2 and an empty 0xFF END
+  (`MultipleControllerCommV1.makeSendBytesV2`); a longer value's END carries the final chunk, a full 17 bytes
+  when it ends on a frame boundary. The H6006 firmware's a3 reassembler (`FUN_9b020d2c`) accepts both (static
+  firmware analysis). Live-verified on an H6006 (2026-10-15, macOS), which acked a short upload (packet count
+  2, empty END) and then reported the scene active.
+- SCENE_UPLOAD_ENCODING.md §0: commByte is the controller comType (V1=1, V2=2, V3=7, V5=10 compose,
+  V6=12 H610B), and compose is uploaded only when the decoded blob starts with 0x0a (`ScenesOp.o`).
+- `mode_color_0d_typed` kind 2 (`rgb_kelvin_tint`) covers the 0x0d bulbs H6006/H6008 as well as H6188
+  (bulblight `ModeParseStrategyConfig.a`, traced through `VM4Light` to `OpInfo4Detail.parseModeValidBytes`,
+  which takes CCT only for a signed Kelvin > 0); kind 1 stays H6052, whose control screen reads only
+  `[R,G,B]` (`H6052InfoDetail.G`). The H6006/H6008 firmware sends the tint as 0 and pre-zeroes the Kelvin
+  (static firmware analysis). `mode_read`, `mode_color_0d_report` and `is_cct` docs match; `devices.yaml`
+  bulblightv3 `mode_0d_kind` is `rgb_kelvin_tint` (was `cct`), and the schema and USING_THE_KSY.md follow.
+- `devices.yaml` h5080 `relay_switch`: the read-back on-rule per goodsType (43 = bit 0; 50/307 = any of the
+  8 bits; 90 = bits 0..2), matching the three plug profiles' `relay_on_mask` 0x01 / 0xFF / 0x07.
 
 ## [1.3.0] — 2026-10-15
 

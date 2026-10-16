@@ -184,7 +184,8 @@ a value, you never hand-parse:
 - **`op15_color_typed(variant)`** — `1` basic / `12` H60A1-RGB / `11` CCT (from `color_scheme` + the write op).
   (The frame-path `op15_color` stays `size-eos` for parsing an *unknown* captured write, where opType is lost.)
 - **`mode_color_0d_typed(kind)`** — `0` default `[flag, kelvin_be]` / `1` H6052 `[R,G,B]` / `2` rgblight
-  H6188 `[R,G,B, kelvin_be, tint RGB]` with `is_cct` = kelvin≠0 (from `mode_0d_kind`: `cct`/`rgb`/`rgb_kelvin_tint`).
+  H6188 and the 0x0d bulbs H6006/H6008 `[R,G,B, kelvin_be, tint RGB]` with `is_cct` = kelvin≠0 (from
+  `mode_0d_kind`: `cct`/`rgb`/`rgb_kelvin_tint`).
 - **`color_group_read(record_count, has_brightness)`** — 4-byte vs 3-byte records (from `has_brightness`).
 - **Scene-value top-level type** — pick `graffiti_value`/`diy_value`/`rgbic_scene_value`/… by
   `commByte`/`sceneType` (in the *frame*, not the value buffer); once picked, internals are fully switched

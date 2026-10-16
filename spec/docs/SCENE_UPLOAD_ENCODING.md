@@ -16,7 +16,7 @@ Conflating them is the main trap. Both use the 20-byte `0xA3` `makeSendBytesV1/V
 | Trigger | user edits+saves a DIY/graffiti effect | user picks a built-in/library scene (e.g. **Aurora**) |
 | Entry | `OpDiyCommDialog4BleV2` / `IDiyParse.makeBleController` | `BaseSceneViewMode` → `ScenesOp.parseSceneV1` |
 | Controller | `MultiDiyGraffitiController` (or device parser) | `SceneControllerNoEventV1` wrapping `MultiNewScenesController*` |
-| **commByte@4** | device **protocol code** (`getProtocolCode`): H61A8=`0x03`, H60A6=`0x58`(88) | **scene-version comType**: V1=`1`, V2=`2`, V3=`7`, V6=`12` |
+| **commByte@4** | device **protocol code** (`getProtocolCode`): H61A8=`0x03`, H60A6=`0x58`(88) | **controller comType** (`MultiNewScenesController*.getCommandType`): V1=`1`, V2=`2`, V3=`7`, V5=`10` (compose), V6=`12` (H610B). Compose (sceneType 6, scene-version 6) is uploaded only when the decoded blob starts with `0x0a` (`ScenesOp.o`: `ShareDiy.isValidComposeBytes` → `MultiNewScenesControllerV5`) |
 | **value** | **RE-ENCODED** model — `toBytes()` / `DiyGraffitiV2.g()` | base64-decoded `scenceParam` **~verbatim** (graffiti/V3 strip leading 2 bytes) |
 | §1 capture | **this is what the H61A8 capture shows** | not captured; Aurora would be this |
 
@@ -298,9 +298,15 @@ overrides fields per-SKU. `bigEffectStr==1` = payload not inlined (fetch-require
 
 ## G7 — chunking + packetCount (confirmed)
 From `makeSendBytesV2` (`:785-849`): `packetCount` (byte 3) = **total frames incl. START and the
-data-bearing `0xFF` terminator**; START inline value = **`15 − len(commBytes)`**; MIDDLE/END = **17
-value bytes**; the `0xFF` frame **carries the final chunk** (`arraycopy → bArr2[2..]` `:828`; sole `0xFF`
-frame appended `:847`) — not a separate empty frame. Matches the H61A8 capture.
+`0xFF` END**; START inline value = **`15 − len(commBytes)`**; MIDDLE/END = **17 value bytes**. The
+separate `0xFF` END frame `bArr2` is always appended (`:847`), and the count starts at 2:
+- **Long value** (more than `15 − len(commBytes)` bytes): the END **carries the final chunk**
+  (`arraycopy → bArr2[2..]` `:828`), up to 17 bytes — a full 17 when the value ends on a frame
+  boundary, never an extra empty frame — and packetCount = 1 + the frames after START. Matches the
+  H61A8 capture.
+- **Short value** (at most `15 − len(commBytes)` bytes): the whole value rides in START, packetCount
+  is **2**, and the END is **empty** (bytes 2..18 zero). The library builds the same
+  (`wire.build.scene_upload_a3`); source-modeled, not live-verified.
 
 ---
 

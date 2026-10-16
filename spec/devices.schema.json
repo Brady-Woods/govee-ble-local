@@ -240,7 +240,7 @@
           "properties": {
             "has_brightness": { "type": "boolean", "description": "Per-segment colour read-back record size: true = 4-byte [brightness,R,G,B] (color_group_read has_brightness=1), false = 3-byte [R,G,B]. From supportPartBrightness." },
             "color_scheme": { "type": "string", "description": "Colour-write byte-layout family driving op15/0x0d variant selection (e.g. 'h60a6', 'h6006', 'h61a8')." },
-            "mode_0d_kind": { "type": "string", "enum": ["rgb", "cct", "rgb_kelvin_tint"], "description": "0x0D colour mode-report body (mode_color_0d_typed kind): 'rgb' = H6052 custom [R,G,B]; 'cct' = default strategy [gradual_flag, kelvin]; 'rgb_kelvin_tint' = rgblight strategy (H6188, ModeParseStrategyConfig.a) [R,G,B, kelvin u2be, tintR,G,B] with kelvin != 0 => CCT." },
+            "mode_0d_kind": { "type": "string", "enum": ["rgb", "cct", "rgb_kelvin_tint"], "description": "0x0D colour mode-report body (mode_color_0d_typed kind): 'rgb' = H6052 custom [R,G,B]; 'cct' = default strategy [gradual_flag, kelvin]; 'rgb_kelvin_tint' = ModeParseStrategyConfig.a (rgblight H6188; bulblight H6006/H6008) [R,G,B, kelvin u2be, tintR,G,B] with kelvin != 0 => CCT." },
             "wire_cipher": { "type": "string", "enum": ["runtime"], "description": "Always 'runtime': the plaintext/V1/V2 cipher is resolved per-connection from the advert encrypted-bit / BGC-info, never from a static per-SKU value." }
           }
         },
