@@ -22,6 +22,10 @@ model, from which the shipped readers are generated).
   a firmware version at all, because the others ignore `aa 07 10`.
 
 ### Fixed
+- H60A6: clear a cached whole-device Kelvin value when the mode reply returns zero
+  after an external LAN RGB change (`aa 05 15 01 00 00`, live firmware 1.00.41).
+  The reply carries no RGB triple, so aggregate RGB remains unknown; per-segment
+  reads are preserved. Other models' zero-Kelvin behavior is unchanged.
 - macOS: the connect failed on the H60A6 and H6008 (`Failed to discover descriptors for characteristic
   13 ... UUID not allowed`) because CoreBluetooth rejects descriptor discovery on a characteristic
   of the Generic Attribute service. The connection now resolves only the Govee service

@@ -859,8 +859,11 @@ class Device:
             self._apply_zone_kelvin({0: bars[0], 1: bars[1]})
             return
         kelvin = parse.parse_kelvin(reply)
-        if kelvin:
-            self._state.color_temp_kelvin, self._state.rgb_color = kelvin, None
+        if kelvin is not None and (kelvin > 0 or self._sku == "H60A6"):
+            # H60A6 returns AA 05 15 01 00 00 after external LAN RGB writes
+            # (live 1.00.41). Zero clears a previous whole-device Kelvin value;
+            # the reply has no RGB triple, and per-segment reads are separate.
+            self._state.color_temp_kelvin, self._state.rgb_color = kelvin or None, None
             return
         mode_0d = (parse.parse_mode_0d_rgblight(reply) if self.profile.color_scheme == "h6188"
                    else parse.parse_mode_0d(reply))
