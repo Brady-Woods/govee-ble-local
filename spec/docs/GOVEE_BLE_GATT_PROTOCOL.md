@@ -1692,7 +1692,7 @@ only for the IC-driven families. The cloud is needed only for account niceties (
 ## 19. Advertisement / manufacturer-data structure
 
 Passive (connectionless) identity + state, parsed from the 62-byte scan record
-(`base2home/pact/BleUtil.java:829` `parseBleBroadcastPact`). Walk AD structures `[len][type][data]`;
+(`base-classes9/com/govee/base2home/pact/BleUtil.java:779-803` `parseBleBroadcastPact`). Walk AD structures `[len][type][data]`;
 in the **manufacturer AD (type `0xFF`, len ≥ 6)**:
 
 ```

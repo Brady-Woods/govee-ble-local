@@ -518,6 +518,63 @@ model, from which the shipped readers are generated).
   zeroes every data byte.
 
 ### Spec
+- Spec gap batch: the decodes the library still hand-codes, now in the spec so it can follow later. Each item
+  was traced in the 7.7.02 decompile (firmware-sourced ones are marked with image and handler) and checked by
+  an adversarial reviewer. Additive: no new enum is applied to a field, no `switch-on` gains a case, and no
+  existing field, enum member or expression changes, except the two cases below. The additivity harness
+  (1,975,202 cases against the 994ea64 readers) differs only in the 300 `mode_color_0d_typed(kind=3)` cases.
+  Kind 3 used to read nothing and no caller passes it. The two intended `trailing` fields are excluded from the
+  comparison. Both branches' suites pass with this spec (2037 each, the same as before).
+  - New enums, applied to no field: `plug_command`, `light_power` / `relay_write` (the `33 01` value rules),
+    `device_info_selector`, `status_tlv_type`, `rx_pro_type`, `encrypt_version`, `mode_0d_kind`,
+    `op15_color_variant`, `mode_read_selector`, `multi_ac_command`, `multi_comm_byte` and `a3_start_marker`.
+    Member names avoid the YAML 1.1 booleans (`light_on` / `light_off`).
+  - New standalone types, wired into no dispatch:
+    - `total_switch_write` (H5089 `33 02`).
+    - `rx_frame`, a device-sent frame typed by proType that never raises on construction, with
+      `multi_ac_reply_chunk` (the 0xAC chunk header, last_len checked as the app does) and `write_ack`.
+    - `section_count_read` (`aa 41`, signed), `status_reply_safe` (an empty TLV buffer gives no entries) and
+      `pact_read_reply` (`aa ef`).
+    - `wifi_mac_read` (`aa 14`), `handshake_key_reply_data` (the E7 01 session key) and `bgc_info`.
+    - `device_info_ble_mac` (`aa 07 06`) and `aging_flag_read` (`aa ff 08`), both firmware-sourced; the
+      second is marked test-only.
+    - The scene-param wrappers `scenes_graffiti_param`, `compose_scene_param`, `h60a6_scene_param` and
+      `h6052_graffiti_param`.
+    - In `govee_adv.ksy`: `scan_record` / `scan_ad_structure` (the app's scan-record AD walk) and
+      `manufacturer_data_lenient`.
+  - New instances on existing types:
+    - `mode_read.scene_code`, and `cct_read_reply.kelvin_signed` / `kelvin_right_signed`.
+    - `status_zone.zone_a_on` / `zone_b_on`, `bar_switch_read.left_on` / `right_on` and `gradual_read.is_on`.
+    - `secret_read_reply.is_valid`, `sync_time_payload` / `plug_sync_time_payload.marker_is_valid` and
+      `notify_wifi.is_connected`.
+    - The uid / Wi-Fi-MAC validity tests on `device_info_basic` / `device_info_sn` / `device_info_wifi`.
+    - `version3.text` with `is_zero` and the signed parts.
+    - `manufacturer_data.is_govee_pact` / `has_switch_state` / `switch_byte`.
+  - The two exceptions:
+    - `mode_color_0d_report` and `bulb_group_color_read_v2` gain a `trailing` size-eos field. It holds the
+      bytes after the decoded part and sits inside the body substream, so it never takes the BCC.
+    - `mode_color_0d_typed` reads kind 3 as `[r, g, b][kelvin s16be]` from 5 bytes (h60a1 `Info4Detail`,
+      cube `CubeNewInfo4Detail`).
+  - User decisions applied:
+    - `bgc_info` is lenient like today's library rule: it never raises, and `effective_encrypt_version`
+      follows the library where the app throws (item 19).
+    - `version3.text` matches the app's signed `x()` rendering, e.g. `81 05 F6` -> `-127.05.0-10` (item 21).
+  - `devices.yaml` h5080 `client_profile.by_goods_type`, traced per goodsType: `relay_power`
+    (`outlet0` / `all_outlets` / `total_switch`), `relay_on_mask` and `advert_on_mask` for 43, 50, 90 and 307.
+    These come with the matching `devices.schema.json` properties.
+  - Doc and citation fixes:
+    - `device_info_read` / `read_request`: the H5086 `aa 07 10/11` senders are live, there are more
+      `07 07` senders, and `device_info_selector` lists the `07 08` selector.
+    - Corrected decode docs for `status_seg_info`, `bar_switch_write`, `op15_color_write` and the H60A6
+      scene-upload rule.
+    - Advert and GATT-doc line citations.
+  - Catalogue: the `read_mode_bare` / `read_mode` docstrings, and their `OPCODE_COVERAGE.md` entries, cite
+    the real senders (H6057 sends `aa 05 01`). The secret-key builder raises unless the secret is 0 or 8
+    bytes.
+  - Skipped:
+    - 25-ext (per-goodsType 0x15 colour-strategy data in `devices.yaml`): the 0x15 signedness is recorded
+      per SKU in `cct_read_reply.kelvin_signed`'s doc. A `by_goods_type` field needs each goodsType's detail
+      screen traced first.
 - Firmware-doc corrections. Every claim the spec makes about the six decompiled firmwares (H6047, H6006,
   H6008, H5083, H60A1, H60A6) was re-checked against the images by disassembly, and each correction had an
   adversarial check. Text and comments only: the ksy structure with docs removed, and its enums, are

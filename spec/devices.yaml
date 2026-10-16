@@ -64,7 +64,7 @@ advertisement:
     - { offset: "+3..+4", field: "company_id", meaning: "0x88 0xEC (Govee)" }
     - { offset: "+5..+6", field: "pact_type", meaning: "u16 big-endian" }
     - { offset: "+7", field: "pact_code", meaning: "u8" }
-  source: "base2home/pact/BleUtil.java:829 parseBleBroadcastPact"
+  source: "base-classes9/com/govee/base2home/pact/BleUtil.java:779-803 parseBleBroadcastPact"
 
 # ─────────────── Timing & reliability (ms unless noted) ───────────────
 timing:
@@ -321,14 +321,14 @@ command_catalog:
   # [brightness,R,G,B] record via generateReadController->q():174) but TWO different TRANSPORTS, plus B/C:
   #   (A) 0xAC STATUS BURST carrying a 0xA5 TLV (aggregated read via Compose4BaseInfoSingleRead ->
   #       ControllerSingleRead; request = [0xAC][0x03][count][types...], proType 0xAC per
-  #       AbsController4BleSingleSendMultiBack.getProType:191). Used by: H60A6 (VM4LightH60A6$afterConnected...:158,
+  #       AbsController4BleSingleSendMultiBack.getProType:163-165). Used by: H60A6 (VM4LightH60A6$afterConnected...:158,
   #       requests [0x41,0x30]+conditional 0xA5); and — within the h6047/h61d3 families — the NEWDETAIL siblings
-  #       ONLY: H6038/H6039/H6048 (gt 288/277/298, per-SKU type-sets e.g. VM4H6038:240 [41,30,36,a5]) and h61d3
+  #       ONLY: H6038/H6039/H6048 (gt 288/277/298, per-SKU type-sets e.g. VM4H6038:525 [41,30,36,a5]) and h61d3
   #       gt 263. NOT the H6047 or H6641 SKUs (see A-direct). Reassembled 0xA5 TLV = ONE group [group_index(1-based),
   #       record x count]; COUNT = (len-1)/record_size (== caller oneGroupColorSize, usually 4). ksy: status_tlv 0xA5
   #       -> color_group_status. Group count = ceil(N/count); N = getColorPieceSize (newdetail screens: 24/22/12).
   #   (A-direct) SAME parser/record, NO 0xAC burst: per-group DIRECT reads `0xAA 0xA5 <group>` issued individually via
-  #       Compose4InfoBleIot (Controller4ColorInfoByGroup; proType 0xAA per AbsControllerNoEvent4Single.getProType:153,
+  #       Compose4InfoBleIot (Controller4ColorInfoByGroup; proType 0xAA per AbsControllerNoEvent4Single.getProType:140-145,
   #       cmd 0xA5). Used by **H6047 (gt 119)** — old detail/NewDetailVm (Support.isGoodsTypeH6047:186), which walks
   #       N = Support.getBulbStringMaxNum(119) = 10 pieces (NewDetailVm.n5: 3 groups, SubMode4Color trims the last to 2
   #       records), NOT getColorPieceSize = 12 (only the newdetail screens 277/288/298 call it) — and
@@ -581,6 +581,12 @@ families:
   # ─────────────────────────── Smart plug (base.apk) ───────────────────────────
   - id: h5080
     category: plug
+    client_profile:   # plug power, traced per goodsType on Govee Home 7.7.02 (split_plugnew/com/govee/h5080/, paths below relative to it). Masks are integers, written in hex
+      by_goods_type:
+        "43": { models: [H5080, H5083, H5085], relay_power: outlet0, relay_on_mask: 0x01, advert_on_mask: 0x01 }   # pact/Model.t :195-196 -> Model.D0 :74-99 -> adjust/newdetail/H5083NewDetailActivity (pact/Support.isGoodsTypeH508035 :137-139; Support.getDefHeaderRes :114-115 names H5083/H5085, else H5080). Power 33 01 11 / 10 (H5083NewDetailViewModel.x0 :247-251; h5086 ControllerProtocol.f = 0x10). Read on = (bArr[0] & 1) != 0 (H5083NewDetailRepository.loadParser :162-167). Advert on = (byte & 1) == 1 (pact/Model.z :254-266)
+        "50": { models: [H5082], relay_power: all_outlets, relay_on_mask: 0xFF, advert_on_mask: 0x03 }   # pact/Model4Plug2 (Support.n = {50, 307} :32) -> adjust/AdjustAc.D2 :98-108 -> FrameV2 / UiV2 (SKU H5082: add/PairAcV1.i2 :425-426 shows the 5082 pairing picture for goodsType 50, getDefHeaderRes :117-118 the 5082 pictures; 307 is H5089). Power SwitchControllerV2(on, 15) = 33 01 FF / F0 (UiV2.onOffChange :887-894; SwitchControllerV2.q :53-71). Read on = any of the 8 bits (BleOpV2.onEventSwitchV2 :353-363 -> EventSwitchV2.i :48-59 ORs SwitchControllerV2.parseValidBytes :29-45). Advert on = bit 0 or bit 1 (pact/Model4Plug2.z :269-291)
+        "90": { models: [H5160, H5161], relay_power: all_outlets, relay_on_mask: 0x07, advert_on_mask: 0xFF }   # pact/Model.t -> AdjustAc.D2 -> FrameV4 / UiV4 (getDefHeaderRes :120-121 names H5161, else H5160). Power 33 01 FF / F0 (UiV4.onOffChange :765-772). Read on = bits 0..2: BleOpV4.r0 :464-481 ORs the first E = Support.getPlugNum(90) = 3 bits (BleOpV4 :64; Support.getPlugNum :126-131). Advert on = any bit, (byte & 255) > 0 (pact/Model.z :257-259)
+        "307": { models: [H5089], relay_power: total_switch, relay_on_mask: 0xFF, advert_on_mask: 0x03 }   # pact/Model4Plug2 -> AdjustAc.D2 -> Frame4H5089 / Ui4H5089 (pact/V4BleIotSkuItem.f = 307 -> add/Ac4H5089Networking, sku H5089). Power 33 02 01 / 00 (Ui4H5089.onOffChange :929-952, Controller4TotalSwitch). Read on = any of the 8 bits (BleOp4H5089.onEventSwitchV2 :462, EventSwitchV2.i). Advert on = bit 0 or bit 1 (pact/Model4Plug2.z)
     models: [H5080, H5082, H5083, H5085, H5089, H5160, H5161]
     goods_types: [43, 50, 90, 307]   # 43 = 1-outlet (H5080/H5083/H5085); 50/307 = 2-outlet; 90 = 3-outlet
     delivery: base_apk
@@ -588,7 +594,7 @@ families:
     protocol: { single_packet: true, multi_dialects: ["0xA1"] }   # NO mode_command: a plug has no 0x05 mode. App opcode set is {0x01,0x12,0x13,0x15,0x16,0x1f,0xB0,0xB3,0xB4,0xB5,0xAB}+secret. multi 0xA1 = the multi-packet DIY write (H5089 night light: H5089OpManager.L, DiyMultipleControl over BleMultiComm; BleConstants.MULTIPLE_WRITE = 0xA1), not multi-outlet. Firmware-sourced (H5083 SW1.00.30): the dispatcher takes AA 01 12 13 B0 B1 B3 and 33 01 13 15 B0 B2 B5 FF only (no 0x16/0x1F/0xB4; 0xB4 is an internal msg id); 0xAB is a proType frame (AB 02 pact report / AB 01 gid); its A1 frames are DIY multi (byte[1] 02 on the END frame) and A1 11 Wi-Fi config.
     # Not a light: no color/scene/music sub-modes. Relay + timers only.
     opcodes:
-      - { name: relay_switch, cmd: "0x01", readable: true, payload: "1 byte [baseMask|onBit]: relay0 0x11/0x10, relay1 0x22/0x20, relay2 0x44/0x40, all 0xFF/0xF0; read parses per-relay bits", note: "Read-back on-rule (aa 01 reply byte 0, split into 8 per-relay bits by SwitchControllerV2.parseValidBytes) is per goodsType, decided by the detail screen (Govee Home 7.5.12): 43 (H5080/H5083/H5085, one outlet) = bit 0 only (FrameV1 -> UiV1/UiV3 -> BleOpV1/BleOpV3.onEventSwitchV2 take .get(0); H5083NewDetailRepository.loadParser reads bArr[0] & 1); 50 (H5082) / 307 (H5089), two outlets = any of the 8 bits (BleOpV2.onEventSwitchV2 / BleOp4H5089.onEventSwitchV2 -> EventSwitchV2.i() ORs them all); 90 (H5160/H5161) = bits 0..2 (BleOpV4.Z ORs the first Support.getPlugNum(90) = 3). Library: three plug profiles, DeviceProfile.relay_on_mask 0x01 / 0xFF / 0x07." }
+      - { name: relay_switch, cmd: "0x01", readable: true, payload: "1 byte [baseMask|onBit]: relay0 0x11/0x10, relay1 0x22/0x20, relay2 0x44/0x40, all 0xFF/0xF0; read parses per-relay bits", note: "Read-back on-rule (aa 01 reply byte 0, split into 8 per-relay bits by SwitchControllerV2.parseValidBytes) is per goodsType, decided by the detail screen (Govee Home 7.5.12): 43 (H5080/H5083/H5085, one outlet) = bit 0 only (FrameV1 -> UiV1/UiV3 -> BleOpV1/BleOpV3.onEventSwitchV2 take .get(0); H5083NewDetailRepository.loadParser reads bArr[0] & 1); 50 (H5082) / 307 (H5089), two outlets = any of the 8 bits (BleOpV2.onEventSwitchV2 / BleOp4H5089.onEventSwitchV2 -> EventSwitchV2.i() ORs them all); 90 (H5160/H5161) = bits 0..2 (BleOpV4.Z ORs the first Support.getPlugNum(90) = 3; in 7.7.02 that is BleOpV4.r0, BleOpV4.java:464-481). Machine-readable per goodsType, re-traced on 7.7.02: client_profile.by_goods_type relay_on_mask, with advert_on_mask and relay_power." }
       - { name: heartbeat, cmd: "0x01", readable: true, note: "HeartControllerV2 parses per-relay state" }
       - { name: sync_time, cmd: "0xb5", payload: "[4-byte BE unix seconds, 0x01, tzHour(signed), tzMin(signed)]" }
       - { name: spec, cmd: "0xb3", readable: true, note: "read device spec — a single OPAQUE byte @ validBytes[0] (SpecController:19 stores bArr[0], surfaced to the UI as a display string via Model.getSpec; NOT bit-decoded anywhere in source). Actionable plug state is the 0x01 relay mask above." }

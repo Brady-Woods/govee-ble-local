@@ -900,9 +900,17 @@ def read_delay_close() -> bytes:
 
 
 def read_mode_bare() -> bytes:
-    """0xAA 05 mode read with no selector, H6057 newdetail connect read (ControllerMode.Companion.b,
-    base-classes11/com/govee/base2light/kt/general_controller/ControllerMode.java:45-47; caller
-    split_hollowlamp/com/govee/h6057/origin/newDetail/controller/Compose4InfoBleIotH6057$iControllerStrategy$1.java:165-172).
+    """0xAA 05 mode read with no selector: the pact_h60a0 adjust-v1 connect read. The compose
+    ModeController.Companion.a passes ext null
+    (split_h60ax/com/govee/pact_h60a0/ble/controller/compose/ModeController.java:26-28), and the compose
+    AbsController.getNextCommBytes frames it as BleUtils.Companion.p(0xAA, 5, null)
+    (split_h60ax/com/govee/pact_h60a0/ble/controller/compose/AbsController.java:23-26;
+    base-classes10/com/govee/base2kt/utils/BleUtils.java:1030-1041): no selector byte. Caller
+    ComposeReadAllInfoV1 (split_h60ax/com/govee/pact_h60a0/adjust/v1/ComposeReadAllInfoV1.java:148), from
+    BleOpV1.V (split_h60ax/com/govee/pact_h60a0/adjust/v1/BleOpV1.java:47-51).
+    NOT the H6057 newdetail connect read: kt ControllerMode.Companion.b passes the synthetic-ctor mask 2, so
+    its ext defaults to {1} (base-classes11/com/govee/base2light/kt/general_controller/ControllerMode.java:
+    45-47, 107-109), and Compose4InfoBleIotH6057$iControllerStrategy$1.java:165 sends AA 05 01 (read_mode).
     """
     return read_request(0x05)
 
@@ -5924,9 +5932,15 @@ def build_secret_write(secret: bytes) -> bytes:
     base-classes10/com/govee/base2light/ble/controller/BleProtocolConstants.java:110;
     split_plugnew/com/govee/h5086/ble/controller/SecretController.java:66-75,86-88;
     base-classes12/com/govee/base2light/vm4sku2op/Controller4Secret.java:28-46.
+    The secret is the 8 bytes an AA B1 reply carried after its 0x01 selector, base64-encoded off-wire
+    (SecretKeyController.parseValidBytes :57-62), so it decodes to 8 bytes. The one other length the app
+    writes is 0: SecretKeyController stores "" for an empty secretCode (:24) and Base64.decode("") is empty,
+    while an invalid one decodes to null (Encode.decryByBase64,
+    base-classes10/com/govee/base2home/util/Encode.java:29-40); either way BleUtils.p writes no ext bytes
+    (33 B2 00..). Any other length raises ValueError.
     """
-    if len(secret) > 17:
-        raise ValueError("secret longer than 17 bytes")
+    if len(secret) not in (0, 8):
+        raise ValueError("secret must be 8 bytes (or empty: the app's no-secret frame)")
     return append_bcc(bytes([0x33, 0xB2]) + bytes(secret))
 
 
@@ -6670,6 +6684,13 @@ def read_ic_segment() -> bytes:
 
 
 def read_mode() -> bytes:
+    """0xAA 05 01 mode read (selector 0x01 = ksy enum mode_read_selector::request): legacy
+    AbsModeController.p {1} (base-classes10/com/govee/base2light/ble/controller/AbsModeController.java:34-37);
+    kt ControllerMode.Companion.b / .c default ext {1}
+    (base-classes11/com/govee/base2light/kt/general_controller/ControllerMode.java:45-58,107-109), e.g. the
+    H6057 newdetail connect read
+    (split_hollowlamp/com/govee/h6057/origin/newDetail/controller/Compose4InfoBleIotH6057$iControllerStrategy$1.java:165).
+    """
     return read_request(0x05, 0x01)  # selector 0x01 = request
 
 
@@ -12063,6 +12084,9 @@ _SELF_CHECKS: list[tuple[str, bool]] = [
             build_secret_write(bytes(range(1, 9)))
             == bytes([0x33, 0xB2]) + bytes(range(1, 9)) + bytes(9) + bytes([0x33 ^ 0xB2 ^ 0x08])
             and build_secret_write(b"") == bytes([0x33, 0xB2]) + bytes(17) + bytes([0x81])
+            and _raises(ValueError, lambda: build_secret_write(bytes(7)))
+            and _raises(ValueError, lambda: build_secret_write(bytes(9)))
+            and _raises(ValueError, lambda: build_secret_write(bytes(17)))
         ),
     ),
     _check("read_secret", lambda: bool(read_secret() == bytes([0xAA, 0xB1]) + bytes(17) + bytes([0x1B]))),
