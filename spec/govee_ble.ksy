@@ -385,8 +385,12 @@ types:
       discover segmentation at runtime instead of relying on the per-SKU device table. FIXED layout (not
       parameterized). Source: ControllerOnlyReadIcSegmentNum.c():getSignedShort(it2[0],it2[1]) + it2[2].
     seq:
-      - { id: ic_count, type: u2be, doc: "IC / lamp-bead count (getSignedShort = big-endian, hi@byte0)" }
+      - { id: ic_count, type: u2be, doc: "IC / lamp-bead count, the RAW 16 bits (big-endian, hi@byte0). The app reads it SIGNED (BleUtil.getSignedShort, ControllerOnlyReadIcSegmentNum:32): use ic_count_signed" }
       - { id: segment, type: u1, doc: "segment (group) count = it2[2]" }
+    instances:
+      ic_count_signed:
+        value: 'ic_count >= 0x8000 ? ic_count - 0x10000 : ic_count'
+        doc: "The IC count as the app reads it: getSignedShort sign-extends, so 0x8000-0xFFFF reads as -32768..-1. ic_count stays the raw u2be for existing readers."
 
   gradual_read:      # command 0xA3 — gradual (fade-between-colours) on/off
     doc: "AA A3 reply (ControllerGradual4BleWifi.h:100-101): gradual mode on iff byte0 == 1 (validBytes length 17; only byte0 is read)."
@@ -494,7 +498,7 @@ types:
   status_tlv:
     seq:
       - { id: type, type: u1 }
-      - { id: len, type: u1, if: 'type != 0' }        # type 0 = trailing zero padding: no len/value follow
+      - { id: len, type: u1, valid: { max: 0x7f }, if: 'type != 0' }   # type 0 = trailing zero padding: no len/value follow. The app reads len SIGNED (Compose4BaseInfoSingleRead.u:270) and new byte[len] throws for 0x80+ (:283)
       - id: value
         size: len
         if: 'type != 0'
@@ -504,7 +508,7 @@ types:
             0x01: status_switch
             0x04: status_brightness
             0x05: mode_status
-            0x07: device_info_read      # same [selector, info] block as the aa 07 reply (Compose4BaseInfoSingleRead.w)
+            0x07: device_info_read      # decoded like the aa 07 reply; the app's status parser reads ONLY 0x10/0x11 here (see status_device_info). Kept for existing readers
             0x30: status_zone
             0x41: status_seg_info
             0xa5: color_group_status     # one colour group; curated devices are all 4-byte (see type doc)
@@ -514,15 +518,35 @@ types:
           EVERYTHING else (0x30, 0x41, 0xA5, ...) is passed to the caller's fallback lambda with the FULL
           [type,len,value] re-prepended. All value types below are modelled (the value is a bounded
           size:len substream, so record counts come from len — no external count needed):
-            * 0x07 device-info == device_info_read. u.w():424-485 parses ONLY selector 0x10 (basic:
-              [uid8 (byte-REVERSED), sw3, hw3, dsp u16le]) and 0x11 (wifi: [mac6 (FORWARD), sw3, hw3]); other selectors are
-              logged and ignored here. Same layout as the single-frame aa 07 reply -> RETIRES the old
-              MAC-anchor heuristic.
+            * 0x07 device-info. w() (Compose4BaseInfoSingleRead.w:370-437, Govee Home 7.7.02) parses ONLY
+              selector 0x10 (basic: [uid8 (byte-REVERSED), sw3, hw3, dsp u16le]) and 0x11 (wifi: [mac6
+              (FORWARD), sw3, hw3]); every other selector, including 0x02 (SN) and 0x03 (hard version), is
+              logged and IGNORED with no body read (w:376-382). status_device_info models exactly that. The
+              value is still typed device_info_read (the single-frame aa 07 layout), which also decodes
+              0x02/0x03, so a client should ignore those here. Same 0x10/0x11 layout as the aa 07 reply ->
+              RETIRES the old MAC-anchor heuristic.
             * 0x05 mode == [sub_mode, params] (delegated to the caller's .g() lambda; same shape as the
               0x05 mode frame body / SubMode dispatch).
             * 0xA5 colour group -> color_group_status. Record COUNT = (len-1)/record_size (from the TLV
               len); record_size is the only externally-keyed bit (3B vs 4B), fixed per SKU.
           Unmatched types stay raw.
+  status_device_info:
+    doc: |
+      0xAC status TLV 0x07 as the app's status parser reads it (Compose4BaseInfoSingleRead.w:370-437, Govee
+      Home 7.7.02): ONLY selector 0x10 (basic) and 0x11 (Wi-Fi) are decoded. Every other selector, including
+      0x02 (SN) and 0x03 (hard version), which the single-frame aa 07 reply does handle, is logged and ignored
+      with no body read (w:376-382), so it stays raw here. Standalone: status_tlv's 0x07 case keeps
+      device_info_read for existing readers, since switching it changes which 0x07 blocks such a reader
+      fails to parse.
+    seq:
+      - { id: selector, type: u1 }
+      - id: info
+        size-eos: true
+        type:
+          switch-on: selector
+          cases:
+            0x10: device_info_basic
+            0x11: device_info_wifi
   status_switch:     { doc: "0x01 on/off state (1=on)", seq: [ { id: state, type: u1 } ] }
   status_brightness: { seq: [ { id: brightness, type: u1 } ] }
   status_zone:       { doc: "0x30 in the 0xAC reply: zone0 = bit0 of byte0, zone1 = bit0 of byte1 (VM4LightH60A6.o:103)", seq: [ { id: zone_a, type: u1 }, { id: zone_b, type: u1 } ] }
@@ -1335,15 +1359,23 @@ types:
       - { id: kind, type: u1 }
     seq:
       - { id: gradual_flag, type: u1, if: 'kind == 0' }
-      - { id: kelvin, type: u2be, if: 'kind == 0' }
+      - { id: kelvin, type: u2be, if: 'kind == 0', doc: "kind 0 kelvin, the RAW 16 bits (big-endian). The app reads it SIGNED (BleUtil.getSignedShort(vb1,vb2), SubMode4Color:47): use kelvin_signed" }
       - { id: r, type: u1, if: 'kind == 1 or kind == 2' }
       - { id: g, type: u1, if: 'kind == 1 or kind == 2' }
       - { id: b, type: u1, if: 'kind == 1 or kind == 2' }
-      - { id: report_kelvin, type: u2be, if: 'kind == 2', doc: "kind 2 kelvin (big-endian); 0 = RGB mode" }
+      - { id: report_kelvin, type: u2be, if: 'kind == 2', doc: "kind 2 kelvin, the RAW 16 bits (big-endian); 0 = RGB mode. The app reads it SIGNED (BleUtil.getSignedShort(vb3,vb4), ModeParseStrategyConfig.a): use report_kelvin_signed" }
       - { id: tint_r, type: u1, if: 'kind == 2', doc: "kind 2: Kelvin->RGB tint the app displays in CCT mode" }
       - { id: tint_g, type: u1, if: 'kind == 2' }
       - { id: tint_b, type: u1, if: 'kind == 2' }
     instances:
       is_cct:
         value: 'kind == 2 and report_kelvin != 0'
-        doc: "kind 2 only: the strategy shows the tint (report_kelvin != 0, ModeParseStrategyConfig.a); OpInfo4Detail.parseModeValidBytes takes CCT only for a signed kelvin > 0"
+        doc: "kind 2 only: the strategy shows the tint (report_kelvin != 0, ModeParseStrategyConfig.a); OpInfo4Detail.parseModeValidBytes takes CCT only for report_kelvin_signed > 0"
+      kelvin_signed:
+        value: 'kelvin >= 0x8000 ? kelvin - 0x10000 : kelvin'
+        if: 'kind == 0'
+        doc: "kind 0 kelvin as the app reads it (getSignedShort sign-extends: 0x8000-0xFFFF reads as -32768..-1)"
+      report_kelvin_signed:
+        value: 'report_kelvin >= 0x8000 ? report_kelvin - 0x10000 : report_kelvin'
+        if: 'kind == 2'
+        doc: "kind 2 kelvin as the app reads it (getSignedShort sign-extends: 0x8000-0xFFFF reads as -32768..-1)"

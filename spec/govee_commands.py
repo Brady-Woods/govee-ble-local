@@ -5,11 +5,13 @@ and verified by adversarial re-trace. Companion to govee_reference.py, which own
 (BCC, cipher, reassembly, parse dispatch). A builder returns a 20-byte frame, or a list of frames for a
 multi-packet scene/DIY upload (send them in order). Tiers and gaps: docs/OPCODE_COVERAGE.md.
 
-GENERATED-ASSEMBLED from the opcode trace. Regenerate from the trace rather than editing by hand.
+Assembled from the opcode trace, then maintained in place (ruff- and mypy --strict-clean): edit this file
+directly, keeping the 757 _SELF_CHECKS green.
 """
 
 from __future__ import annotations
 
+import struct
 from collections.abc import Callable, Sequence
 from typing import TypeVar, cast
 
@@ -18,6 +20,11 @@ from govee_reference import append_bcc, bcc
 _T = TypeVar("_T")
 _K = TypeVar("_K")
 _V = TypeVar("_V")
+
+
+def _f32(x: float) -> float:
+    """Round to IEEE-754 single precision (a Java ``float``), as NumberUtil's ``100.0f`` forces."""
+    return float(struct.unpack("<f", struct.pack("<f", x))[0])
 
 
 def read_request(command: int, *selector: int) -> bytes:
@@ -138,9 +145,14 @@ def build_brightness_from_percent(pct: int, lo: int = 20, hi: int = 254) -> byte
     base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:88-93,153-155;
     NumberUtil.calculateProgress base-classes10/com/govee/base2home/util/NumberUtil.java:47-49; caller
     GroupApplyVM base-classes13/com/govee/eco/basegroup/viewmodel/GroupApplyVM.java:2146-2147).
+    The mapping is computed in float32, as the app's ``100.0f`` literal forces (see :func:`_f32`).
     """
     p = min(max(pct, 1), 100)
-    level = p if (lo == 1 and hi == 100) else int(lo + (p - 1) * ((hi - lo + 3) / 100.0))
+    if lo == 1 and hi == 100:
+        level = p
+    else:
+        step = _f32(_f32((hi - lo) + 3) / _f32(100.0))  # ((max - min) + 3) / 100.0f
+        level = int(_f32(lo + _f32((p - 1) * step)))
     return append_bcc(bytes([0x33, 0x04, level & 0xFF]))
 
 

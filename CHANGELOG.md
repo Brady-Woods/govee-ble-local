@@ -321,6 +321,21 @@ model, from which the shipped readers are generated).
   zeroes every data byte.
 
 ### Spec
+- Spec-client audit fixes, each verified against the 7.7.02 decompile before applying:
+  - Signed 16-bit fields: the app reads the 0x0D mode-report kelvin (kinds 0 and 2) and the `aa 40` IC
+    count with `BleUtil.getSignedShort`. `govee_ble.ksy` keeps the raw `u2be` fields for existing readers
+    and adds `kelvin_signed`, `report_kelvin_signed` and `ic_count_signed` instances with the app's
+    reading; the `devices.schema.json` `mode_0d_kind` text no longer contradicts itself (`> 0` vs `!= 0`).
+  - 0xAC status TLVs: `status_tlv.len` gets `valid: {max: 0x7f}` (the app reads it signed and fails from
+    0x80), and a standalone `status_device_info` type records that the status parser decodes only selectors
+    0x10 / 0x11 of a 0x07 block and ignores the rest (the 0x07 case still decodes as `device_info_read`
+    for existing readers).
+  - `devices.yaml` / GATT doc: BGC-info byte 0 is the record format and byte 1 the encryptVersion (the
+    prose had them swapped); `GVR6184_XXXX` parses to `R6184`, not `H6184`; and the name-length gates
+    (≥ 11 for GVH/GVR without `_`, ≥ 10 for the bare `GV` fallback) are documented.
+  - `govee_commands.build_brightness_from_percent` computes in float32 like the app's `100.0f` (446
+    off-by-one results change, none in the app's real raw ranges). Reader regenerated (additive: the three
+    instances, `StatusDeviceInfo`, and the `len` check).
 - Re-verified several spec facts against the 7.7.02 decompile (adversarially) and the account device-list,
   and corrected them: `switch_read_reply` keeps the legacy `SwitchController` `!= 0` semantics as primary and
   now notes the modern control-screen VM path (`ControllerSwitch.Companion.c` / `ShareVM.N3`) that decodes

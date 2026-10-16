@@ -1552,8 +1552,8 @@ derives `skuCode` by prefix:
 |--------|------|-------------------|
 | `ihoment_` / `Govee_` / `Minger_` | `split('_')` = `[brand, skuCode, tail]` | `ihoment_H6159_1A2B` → `H6159` |
 | `GBK_` | `split('_')` = `[GBK, skuCode, tail]` | `GBK_H5083_1234` → `H5083` |
-| `GVH` / `GVR` | `substring(2)`; skuCode up to `_` or 5 chars | `GVH6159_XXXX` → `H6159` |
-| `GV` (fallback) | `skuCode = "H" + substring(2,6)` | `GV5122ABCD` → `H5122` |
+| `GVH` / `GVR` | `substring(2)` up to `_`; with no `_`, `substring(2,7)` and the name must be ≥ 11 chars. The 3rd char is **kept**, so `GVR…` gives `R…` (not rewritten to `H`) | `GVH6159_XXXX` → `H6159`; `GVR6184_XXXX` → `R6184` |
+| `GV` (fallback) | `skuCode = "H" + substring(2,6)`; the name must be ≥ 10 chars | `GV5122ABCD` → `H5122` |
 
 ### 18.3 SKU → goodsType → (pactType, pactCode) → dialect
 

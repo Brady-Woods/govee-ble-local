@@ -44,9 +44,9 @@ name_parsing:
     - { prefix: "Govee_",   rule: "same as ihoment_", example: "Govee_H613839_XYZ -> H613839", source: "BaseBleProcessor.java:98" }
     - { prefix: "Minger_",  rule: "same as ihoment_", example: "Minger_H6104_.. -> H6104", source: "BaseBleProcessor.java:98" }
     - { prefix: "GBK_",     rule: "split('_') = [GBK, skuCode, tail]", example: "GBK_H5083_1234 -> H5083", source: "BaseBleProcessor.java:145" }
-    - { prefix: "GVH",      rule: "substring(2); skuCode up to '_' or 5 chars", example: "GVH6159_XXXX -> H6159", source: "BaseBleProcessor.java:181" }
-    - { prefix: "GVR",      rule: "same as GVH", example: "GVR6184_XXXX -> H6184", source: "BaseBleProcessor.java:181" }
-    - { prefix: "GV",       rule: "skuCode = 'H' + substring(2,6)", example: "GV5122ABCD -> H5122", source: "BaseBleProcessor.java:233" }
+    - { prefix: "GVH",      rule: "substring(2) up to '_'; with no '_', substring(2,7) and the name must be >= 11 chars (else no SKU)", example: "GVH6159_XXXX -> H6159", source: "BaseBleProcessor.java:166,186,189" }
+    - { prefix: "GVR",      rule: "same as GVH; the substring KEEPS the 3rd char, so the 'R' stays (it is not rewritten to 'H')", example: "GVR6184_XXXX -> R6184", source: "BaseBleProcessor.java:166,189" }
+    - { prefix: "GV",       rule: "skuCode = 'H' + substring(2,6); the name must be >= 10 chars (else no SKU)", example: "GV5122ABCD -> H5122", source: "BaseBleProcessor.java:211,214" }
 
 advertisement:
   record_length: 62
@@ -105,8 +105,9 @@ timing:
 # ("V1" = hybrid: AES-128-ECB/NoPadding on full 16-byte blocks + RC4 on the trailing len%16 remainder, same
 #  key; a 20-byte frame = 1 AES block + 4 RC4 bytes. Source: com/govee/encryp/ble/Safe.java d()/b()/f()/g().
 #  See docs/GOVEE_BLE_GATT_PROTOCOL.md §9.2 for the byte-level codec.)
-# (manuf-data flags & 0x40; BleUtil.java:839) OR the on-device BGC-info characteristic (BgcInfoReader: byte0
-# encryptVersion 1=V1 / 2=V2). There is NO SKU->cipher table in the app. So a secret_key_pairing device may
+# (manuf-data flags & 0x40; BleUtil.java:839) OR the on-device BGC-info characteristic (BgcInfoReader.d:
+# byte0 = record format 1/2, which picks the layout; byte1 = encryptVersion 1=V1 / 2=V2; BaseBgcInfo:33).
+# There is NO SKU->cipher table in the app. So a secret_key_pairing device may
 # still run PLAINTEXT on the wire (H61A8/H6641 observed plaintext; H6047 is modelled plaintext, not yet confirmed
 # on an H6047 link); a data-driven client must read the
 # advert/BGC at connect to select the cipher, and treat this field only as "has account-lock". Account-lock is

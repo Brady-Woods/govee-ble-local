@@ -1756,6 +1756,15 @@ class GoveeBleFrame(KaitaiStruct):
         def _fetch_instances(self):
             pass
 
+        @property
+        def ic_count_signed(self):
+            """The IC count as the app reads it: getSignedShort sign-extends, so 0x8000-0xFFFF reads as -32768..-1. ic_count stays the raw u2be for existing readers."""
+            if hasattr(self, '_m_ic_count_signed'):
+                return self._m_ic_count_signed
+
+            self._m_ic_count_signed = (self.ic_count - 65536 if self.ic_count >= 32768 else self.ic_count)
+            return getattr(self, '_m_ic_count_signed', None)
+
 
     class InAreaMove(KaitaiStruct):
         """ParamsV2.InAreaMoveEffect.c() :524: move_flags (canMove<<4 | order) + 2 movement params (f49695c/d)."""
@@ -1933,12 +1942,36 @@ class GoveeBleFrame(KaitaiStruct):
 
         @property
         def is_cct(self):
-            """kind 2 only: the strategy shows the tint (report_kelvin != 0, ModeParseStrategyConfig.a); OpInfo4Detail.parseModeValidBytes takes CCT only for a signed kelvin > 0."""
+            """kind 2 only: the strategy shows the tint (report_kelvin != 0, ModeParseStrategyConfig.a); OpInfo4Detail.parseModeValidBytes takes CCT only for report_kelvin_signed > 0."""
             if hasattr(self, '_m_is_cct'):
                 return self._m_is_cct
 
             self._m_is_cct =  ((self.kind == 2) and (self.report_kelvin != 0)) 
             return getattr(self, '_m_is_cct', None)
+
+        @property
+        def kelvin_signed(self):
+            """kind 0 kelvin as the app reads it (getSignedShort sign-extends: 0x8000-0xFFFF reads as -32768..-1)."""
+            if hasattr(self, '_m_kelvin_signed'):
+                return self._m_kelvin_signed
+
+            if self.kind == 0:
+                pass
+                self._m_kelvin_signed = (self.kelvin - 65536 if self.kelvin >= 32768 else self.kelvin)
+
+            return getattr(self, '_m_kelvin_signed', None)
+
+        @property
+        def report_kelvin_signed(self):
+            """kind 2 kelvin as the app reads it (getSignedShort sign-extends: 0x8000-0xFFFF reads as -32768..-1)."""
+            if hasattr(self, '_m_report_kelvin_signed'):
+                return self._m_report_kelvin_signed
+
+            if self.kind == 2:
+                pass
+                self._m_report_kelvin_signed = (self.report_kelvin - 65536 if self.report_kelvin >= 32768 else self.report_kelvin)
+
+            return getattr(self, '_m_report_kelvin_signed', None)
 
 
     class ModePayload(KaitaiStruct):
@@ -2934,6 +2967,51 @@ class GoveeBleFrame(KaitaiStruct):
             pass
 
 
+    class StatusDeviceInfo(KaitaiStruct):
+        """0xAC status TLV 0x07 as the app's status parser reads it (Compose4BaseInfoSingleRead.w:370-437, Govee
+        Home 7.7.02): ONLY selector 0x10 (basic) and 0x11 (Wi-Fi) are decoded. Every other selector, including
+        0x02 (SN) and 0x03 (hard version), which the single-frame aa 07 reply does handle, is logged and ignored
+        with no body read (w:376-382), so it stays raw here. Standalone: status_tlv's 0x07 case keeps
+        device_info_read for existing readers, since switching it changes which 0x07 blocks such a reader
+        fails to parse.
+        """
+        def __init__(self, _io, _parent=None, _root=None):
+            super(GoveeBleFrame.StatusDeviceInfo, self).__init__(_io)
+            self._parent = _parent
+            self._root = _root
+            self._read()
+
+        def _read(self):
+            self.selector = self._io.read_u1()
+            _on = self.selector
+            if _on == 16:
+                pass
+                self._raw_info = self._io.read_bytes_full()
+                _io__raw_info = KaitaiStream(BytesIO(self._raw_info))
+                self.info = GoveeBleFrame.DeviceInfoBasic(_io__raw_info, self, self._root)
+            elif _on == 17:
+                pass
+                self._raw_info = self._io.read_bytes_full()
+                _io__raw_info = KaitaiStream(BytesIO(self._raw_info))
+                self.info = GoveeBleFrame.DeviceInfoWifi(_io__raw_info, self, self._root)
+            else:
+                pass
+                self.info = self._io.read_bytes_full()
+
+
+        def _fetch_instances(self):
+            pass
+            _on = self.selector
+            if _on == 16:
+                pass
+                self.info._fetch_instances()
+            elif _on == 17:
+                pass
+                self.info._fetch_instances()
+            else:
+                pass
+
+
     class StatusReply(KaitaiStruct):
         """Reassembled 0xAC status reply = a sequence of [type, len, value] TLVs. The buffer is de-chunked from
         the 0xAC frames. Trimmed to the first chunk's lastLen as the app does (see multi_ac) it ends exactly
@@ -3013,6 +3091,8 @@ class GoveeBleFrame(KaitaiStruct):
             if self.type != 0:
                 pass
                 self.len = self._io.read_u1()
+                if not self.len <= 127:
+                    raise kaitaistruct.ValidationGreaterThanError(127, self.len, self._io, u"/types/status_tlv/seq/1")
 
             if self.type != 0:
                 pass
