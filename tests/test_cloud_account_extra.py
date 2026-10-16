@@ -1,6 +1,7 @@
 """Extra coverage for govee_ble_local.cloud.account (aiohttp mocked, no network)."""
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import pytest
@@ -35,7 +36,7 @@ async def test_get_scene_effect_strs_top_level_and_nested() -> None:
             {"scenceParamId": 1, "effectStr": "AAA="},
             {"scenceParamId": "2", "effectStr": "BBB="},
             {"scenceParamId": 3, "effectStr": ""},     # dropped: empty
-            {"scenceParamId": None, "effectStr": "x"}, # dropped: no id
+            {"scenceParamId": None, "effectStr": "x"},  # dropped: no id
         ]}),
         (200, {"data": {"effectStrs": [{"scenceParamId": 9, "effectStr": "AAAA"}]}}),  # WAS "Z"
         (200, {}),
@@ -293,3 +294,78 @@ def test_parse_edge_branches() -> None:
     assert dev.sku == "H6008" and dev.name == "Ext"
     assert dev.pact_type is None and dev.pact_code == 5
     assert dev.ble_mac is None
+
+
+# ── moved from test_final_hardening_scenes_cloud.py (T11.2 cloud hardening, N-5/N-7/N-8) ──
+_BAD_B64 = "!!not*base64!!"
+
+
+@pytest.mark.parametrize("token", [123, ["t"], {"a": 1}, True])
+async def test_login_non_string_token_rejected(token: Any) -> None:
+    # WAS: any truthy token (int/list/dict) was stored and sent as "Bearer ...".
+    a = _acct()
+    _stub_post(a, [(200, {"data": {"token": token}})])
+    with pytest.raises(GoveeCloudError, match="no token"):
+        await a.login()
+    assert a.token is None
+
+
+async def test_effect_strs_bad_base64_rejected() -> None:
+    a = _acct(token="t")
+    _stub_post(a, [(200, {"effectStrs": [{"scenceParamId": 5, "effectStr": _BAD_B64}]})])
+    with pytest.raises(GoveeCloudError, match="5") as ei:
+        await a.get_scene_effect_strs([5])
+    assert _BAD_B64 not in str(ei.value)
+
+
+class _Sess:
+    def __init__(self, *resps: _Resp) -> None:
+        self.resps = list(resps)
+
+    def post(self, url: str, **kw: Any) -> _Resp:
+        return self.resps.pop(0)
+
+
+async def test_post_checks_status_before_json_5xx() -> None:
+    # WAS: 'response was not valid JSON' for a 502 HTML page; status never reported.
+    sess = _Sess(_Resp(502, exc=ValueError("<html>SECRET</html>")))
+    a = _acct(token="t", session=sess)  # type: ignore[arg-type]
+    with pytest.raises(GoveeCloudError, match="HTTP 502") as ei:
+        await a._authed_post("/p", {})
+    assert "SECRET" not in str(ei.value) and "JSON" not in str(ei.value)
+
+
+async def test_post_401_html_body_still_relogs_in() -> None:
+    # WAS: the non-JSON 401 body raised before the one-time re-login path.
+    sess = _Sess(
+        _Resp(401, exc=ValueError("<html>")),
+        _Resp(200, {"data": {"token": "new"}}),   # login
+        _Resp(200, {"ok": 1}),
+    )
+    a = _acct(token="old", session=sess)  # type: ignore[arg-type]
+    assert await a._authed_post("/p", {}) == {"ok": 1}
+    assert a.token == "new"
+
+
+async def test_post_200_non_json_still_errors() -> None:
+    a = _acct(token="t", session=_Sess(_Resp(200, exc=ValueError("SECRET"))))  # type: ignore[arg-type]
+    with pytest.raises(GoveeCloudError, match="not valid JSON") as ei:
+        await a._post("http://x", {}, auth=True)
+    assert "SECRET" not in str(ei.value)
+
+
+async def test_get_devices_bad_secret_yields_none_and_one_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # WAS (N-7): one bad secretCode made get_devices() raise for the whole account.
+    good = {"sku": "H6008", "device": "AA", "secretCode": "YVUhCQtzXFQ="}
+    bad = {"sku": "H5083", "device": "BB", "secretCode": "!!notbase64"}
+    a = _acct(token="t")
+    _stub_post(a, [(200, {"devices": [good, bad]})])
+    with caplog.at_level(logging.WARNING, logger="govee_ble_local"):
+        devs = await a.get_devices()
+    assert [d.sku for d in devs] == ["H6008", "H5083"]
+    assert devs[0].secret == bytes.fromhex("615521090b735c54") and devs[1].secret is None
+    warns = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warns) == 1
+    assert "H5083" in warns[0].getMessage() and "notbase64" not in warns[0].getMessage()

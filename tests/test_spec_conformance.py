@@ -26,13 +26,13 @@ _SPEC = pathlib.Path(__file__).resolve().parent.parent / "spec"
 
 def _load_yaml(path: pathlib.Path):  # type: ignore[no-untyped-def]
     import yaml
-    return yaml.safe_load(path.read_text())
+    return yaml.safe_load(path.read_text(encoding="utf-8"))
 
 
 def test_devices_yaml_validates_against_schema() -> None:
     jsonschema = require_optional("jsonschema")
     doc = _load_yaml(_SPEC / "devices.yaml")
-    schema = json.loads((_SPEC / "devices.schema.json").read_text())
+    schema = json.loads((_SPEC / "devices.schema.json").read_text(encoding="utf-8"))
     jsonschema.validate(instance=doc, schema=schema)  # raises on violation
 
 

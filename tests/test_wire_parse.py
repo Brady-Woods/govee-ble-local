@@ -2,6 +2,10 @@
 via the shipped Kaitai reader."""
 from __future__ import annotations
 
+import logging
+import random
+
+import pytest
 from conftest import require_optional
 
 require_optional("kaitaistruct", reason="Kaitai runtime not installed")
@@ -81,12 +85,13 @@ def test_notify() -> None:
     assert parse.parse_notify(f(0x33, 0x01, 0x01)) is None  # not a notify
 
 
-# ── mechanism-B per-group colour (H61A8) + mechanism-C 0x0D colour (H6052) ─────
+# ── mechanism-B per-group colour (H61A8) ─────────────────────────────────────
 def test_mechanism_b_v2_batch_and_assembly() -> None:
     # AA A5 <batch_seq> then 3 groups of [brightness, r, g, b]
     b1 = parse.parse_bulb_group_batch(f(0xAA, 0xA5, 1, 50, 255, 0, 0, 60, 0, 255, 0, 70, 0, 0, 255))
     assert b1 == (1, [(50, 255, 0, 0), (60, 0, 255, 0), (70, 0, 0, 255)])
     b2 = parse.parse_bulb_group_batch(f(0xAA, 0xA5, 2, 80, 255, 255, 0, 90, 0, 255, 255, 100, 255, 0, 255))
+    assert b1 is not None and b2 is not None
     segs = parse.bulb_groups_to_segments([b1, b2], per_batch=3)
     assert [s.index for s in segs] == [0, 1, 2, 3, 4, 5]        # positional across batches
     assert segs[3].rgb == (255, 255, 0) and segs[3].brightness == 80
@@ -96,14 +101,9 @@ def test_mechanism_b_v1_has_no_brightness() -> None:
     # AA A2 (V1): 4 groups of [r, g, b], no brightness byte
     b = parse.parse_bulb_group_batch(f(0xAA, 0xA2, 1, 255, 0, 0, 0, 255, 0, 0, 0, 255, 9, 9, 9))
     assert b == (1, [(None, 255, 0, 0), (None, 0, 255, 0), (None, 0, 0, 255), (None, 9, 9, 9)])
+    assert b is not None
     segs = parse.bulb_groups_to_segments([b], per_batch=4)
     assert len(segs) == 4 and segs[0].rgb == (255, 0, 0) and segs[0].brightness is None
-
-
-def test_mechanism_c_mode_0d_rgb() -> None:
-    assert parse.parse_mode_color_0d(f(0xAA, 0x05, 0x0D, 255, 128, 64)) == (255, 128, 64)
-    assert parse.parse_mode_color_0d(f(0xAA, 0x05, 0x15, 0x01, 0x0A, 0x8C)) is None  # cct, not 0x0D
-    assert parse.parse_mode_color_0d(f(0x33, 0x05, 0x0D, 1, 2, 3)) is None            # write
 
 
 # ── mechanism A-direct: Controller4ColorInfoByGroup (H6047/H6641, group size 4) ─
@@ -142,3 +142,50 @@ def test_gradual() -> None:
     assert parse.parse_gradual(f(0xAA, 0xA3, 0x01)) is True
     assert parse.parse_gradual(f(0xAA, 0xA3, 0x00)) is False
     assert parse.parse_gradual(f(0xAA, 0x04, 0x01)) is None   # wrong command
+
+
+def test_gradual_on_only_when_byte_is_one() -> None:
+    # ControllerGradual4BleWifi.h: bArr[0] == 1; any other value is off in the app.
+    assert parse.parse_gradual(f(0xAA, 0xA3, 0x02)) is False
+    assert parse.parse_gradual(f(0xAA, 0xA3, 0xFF)) is False
+
+
+def test_bar_switch_on_only_when_byte_is_one() -> None:
+    # h6047 ComposeLightController.parseValidBytes: bArr[0] == 1 / bArr[1] == 1.
+    assert parse.parse_bar_switch(f(0xAA, 0x36, 0x02, 0x01)) == (False, True)
+    assert parse.parse_bar_switch(f(0xAA, 0x36, 0x01, 0x80)) == (True, False)
+
+
+def test_unparseable_replies_are_none_not_raise(caplog: pytest.LogCaptureFixture) -> None:
+    # Checksum-valid 20-byte frames the generated reader rejects (non-UTF-8 version strings, from
+    # a fuzz run) pass connection's length/checksum gates; they must come back None, not raise.
+    soft = bytes.fromhex("aa0622dc2ff03141c9d17bc2f4a2e03b226bbd25")
+    hard = bytes.fromhex("aa0703e15fe93b4e38aa06084eb50d7d7e799e02")
+    with caplog.at_level(logging.DEBUG, logger="govee_ble_local.wire.parse"):
+        assert parse.parse_soft_version(soft) is None
+        assert parse.parse_device_info(hard) is None
+    assert sum("did not parse against the spec" in rec.message for rec in caplog.records) == 2
+    assert parse.parse_soft_version(f(0xAA, 0x06, 0xDC, 0x2F)) is None
+    assert parse.parse_device_info(f(0xAA, 0x07, 0x03, 0xE1, 0x5F)) is None
+    assert parse.parse_notify(f(0xEE, 0x99, 0x01)) is None    # unknown notify sub-type
+    assert parse.parse_power(b"\xaa\x01") is None             # truncated
+
+
+def test_mode_0d_parsers_agree_on_random_20_byte_frames() -> None:
+    # parse_mode_0d (bulbs, hand-decoded) and parse_mode_0d_rgblight (H6188, the spec's kind 2)
+    # read the same [r, g, b, kelvin u2be, tint] layout (ModeParseStrategyConfig.a in the bulblight
+    # and rgblight splits): keep them in step on 2000 seeded random 20-byte frames.
+    rng = random.Random(0x0D)  # noqa: S311 - deterministic test vectors
+    for _ in range(2000):
+        body = [rng.randrange(256) for _ in range(16)]
+        if rng.random() < 0.3:
+            body[3] = body[4] = 0                                   # kelvin 0 -> RGB mode
+        frame = f(0xAA, 0x05, 0x0D, *body)
+        assert parse.parse_mode_0d(frame) == parse.parse_mode_0d_rgblight(frame)
+
+
+def test_group_helpers_share_one_assembly() -> None:
+    recs = ((5, 1, 2, 3), (6, 4, 5, 6))                             # any sequence of records
+    direct = parse.direct_groups_to_segments([(2, recs)], 4)
+    bulb = parse.bulb_groups_to_segments([(2, list(recs))], 4)
+    assert direct == bulb and [s.index for s in direct] == [4, 5]

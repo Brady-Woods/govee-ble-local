@@ -62,13 +62,17 @@ The library follows Home-Assistant BLE-library conventions: identify a device fr
 advertisement, build a capability-driven `Device`, then drive it.
 
 - **`discover(timeout=10.0, *, supported_only=True)`** — active-scan → `list[DiscoveredDevice]`
-  (`.ble_device`, `.advertisement`, `.sku`, `.rssi`, `.supported`). `supported(name, mfg)` and
-  `match(ble_device, adv)` are the passive-matcher hooks for a HA-style scanner.
-- **`create_device(ble_device, sku, advertisement_data=None, *, secret=None, frame_log=None)`**
-  — construct a `Device` for the SKU (raises `GoveeBleNotSupported` if uncurated). Pass the
-  advertisement (`DiscoveredDevice.advertisement` or bleak's own): its encrypt flag selects the
-  command channel, which some firmwares set differently from the SKU's default (H6008).
-  `is_supported_sku(sku)` / `supported_skus()` / `device_profile_for(sku)` query the table.
+  (`.ble_device`, `.advertisement`, `.sku`, `.rssi`, `.supported`); raises
+  `GoveeBleConnectionError` when the scan itself fails (no adapter, adapter off, no BlueZ/D-Bus);
+  that error is also the `BleakError` / `OSError` / `EOFError` 1.3.0 raised, so either handler matches.
+  `supported(name, mfg)` and `match(ble_device, adv)` are the passive-matcher hooks for a
+  HA-style scanner.
+- **`create_device(ble_device, sku, advertisement_data=None, *, secret=None, frame_log=None,
+  idle_disconnect=None)`** — construct a `Device` for the SKU (raises `GoveeBleNotSupported` if
+  uncurated). Pass the advertisement (`DiscoveredDevice.advertisement` or bleak's own): its
+  encrypt flag selects the command channel, which some firmwares set differently from the SKU's
+  default (H6008). `is_supported_sku(sku)` / `supported_skus()` / `profile_for(sku)` query the
+  table (`device_profile_for(sku)` is a deprecated alias of `profile_for`, removed in 2.0).
 - **`Device`** — one capability-gated class (behaviour comes from its `DeviceProfile`, not
   subclasses). Commands are ACK-confirmed on the wire:
   `turn_on` / `turn_off` / `set_power`, `set_brightness`, `set_rgb`, `set_color_temp`,
@@ -102,6 +106,11 @@ an RGB frame, and `state` then reports `color_temp_kelvin` with `rgb_color` unse
 RGB frame would use), the 0x0d bulbs and strip (H6004, H6006, H6008, H6052, H6188) and H6061. Colours outside the
 range or one channel off the table stay RGB. Not modelled: colour-set / mixed-colour picks and the real-time
 drag frames (RGB only), and H61A8's picks.
+
+Read-back decodes the `aa 05` mode report the way the app's control screen does for each SKU. The
+H6052's screen reads its colour report as RGB only, so after a poll an H6052 in colour-temperature
+mode reports the report's colour as `rgb_color` (for a CCT the app or this library set, the Kelvin's
+tint) and no `color_temp_kelvin`.
 
 The H6047 follows the app's frames too: whole-device power is `33 01` (`33 36` is only the per-bar
 buttons, `set_zone_power`), read-back covers its 10 segments, `Device.zone_color_temp_kelvin(name)`

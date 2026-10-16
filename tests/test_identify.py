@@ -29,6 +29,12 @@ def _cid(header: int, hi: int = 0x88) -> int:
         ("ihoment_H5083", None),          # wrong segment count
         ("ihoment__A2D1", None),          # empty SKU segment
         ("Govee_H61A8_AB_CD", None),      # too many segments
+        # Java String.split("_") drops trailing empty strings (leading ones stay): the app splits
+        # "ihoment_H6008_" into 2 parts and "Govee_H6008_ABCD_" into 3
+        ("ihoment_H6008_", None),
+        ("Govee_H6008_ABCD_", "H6008"),
+        ("Govee_H6008_ABCD__", "H6008"),
+        ("_Govee_H6008", "GOVEE"),        # the leading empty part is kept: 3 parts, middle "Govee"
         ("xGovee_H6188_1A2B", "H6188"),   # markers match anywhere (String.contains)
         ("xGBK_H1234_ABCD", None),        # ...but GBK_ is a prefix
         # GVH/GVR without "_": >= 11 chars, SKU = name[2:7] (BaseBleProcessor.f)
@@ -97,6 +103,32 @@ def test_parse_broadcast_onoff() -> None:
     assert parse_broadcast_onoff({_cid(0x41): bytes([0x00, 0, 1, 2, 1])}) is None
 
 
+@pytest.mark.parametrize("header", [0x00, 0x01, 0x80, 0x81, 0xC1, 0xFF])
+def test_parse_broadcast_onoff_needs_a_signed_header_of_at_least_2(header: int) -> None:
+    # BleUtil.parseBleBroadOnOff reads the on/off byte only when the header (scanRecord[i6 + 2], a
+    # signed Java byte) is >= 2; AbsBaseBleModel.A otherwise leaves the switch state alone.
+    assert parse_broadcast_onoff({_cid(header): bytes([0xEC, 0, 1, 2, 1])}) is None
+
+
+@pytest.mark.parametrize("header", [0x02, 0x03, 0x41, 0x43, 0x7F])
+def test_parse_broadcast_onoff_reads_headers_2_to_7f(header: int) -> None:
+    assert parse_broadcast_onoff({_cid(header): bytes([0xEC, 0, 1, 2, 1])}) is True
+
+
+def test_parse_broadcast_onoff_skips_a_v1_entry_then_reads_the_next() -> None:
+    mfg = {_cid(0x01): bytes([0xEC, 0, 1, 2, 0]), _cid(0x02): bytes([0xEC, 0, 1, 2, 1])}
+    assert parse_broadcast_onoff(mfg) is True
+
+
+def test_manufacturer_ids_cover_the_encrypted_v1_v2_headers() -> None:
+    # BleUtil.parseBleBroadcastPact accepts every version >= 1 with or without the 0x40 encrypt flag.
+    from govee_ble_local import MANUFACTURER_IDS
+
+    assert {0x8841, 0x8842} <= set(MANUFACTURER_IDS)
+    for cid in MANUFACTURER_IDS:
+        assert parse_manufacturer_data({cid: bytes([0xEC, 0, 1, 2])}) is not None
+
+
 def test_identify_encrypted_device() -> None:
     adv = identify("ihoment_H5083_A2D1", {_cid(0x41): bytes([0xEC, 0, 2, 2, 1])})
     assert adv == GoveeAdvertisement("H5083", "ihoment_H5083_A2D1", True, 1, 2, 2)
@@ -110,8 +142,8 @@ def test_identify_rejects_non_govee_and_unparseable_sku() -> None:
 
 
 def test_identify_unparseable_pact_is_plaintext_unknown() -> None:
-    # CURRENT BEHAVIOR (BUG-2): a Govee-named advert without parseable pact data
-    # is reported as unencrypted with pact_type/pact_code = -1.
+    # A Govee-named advert without parseable pact data is reported with pact_type/pact_code = -1
+    # and encrypted=False; the typed view says that is unknown, not "plaintext".
     adv = identify("Govee_H61A8_631F", {})
     assert adv is not None
     assert adv.sku == "H61A8"
@@ -119,5 +151,9 @@ def test_identify_unparseable_pact_is_plaintext_unknown() -> None:
     assert adv.pact_type == -1
     assert adv.pact_code == -1
     assert adv.broadcast_version == 0
+    assert adv.pact is None and adv.encryption_known is False
     short = identify("Govee_H61A8_631F", {_cid(0x41): bytes([0xEC, 1])})
     assert short is not None and short.encrypted is False and short.pact_type == -1
+    assert short.pact is None
+    parsed = identify("ihoment_H5083_A2D1", {_cid(0x41): bytes([0xEC, 0, 2, 2, 1])})
+    assert parsed is not None and parsed.pact == (2, 2) and parsed.encryption_known is True

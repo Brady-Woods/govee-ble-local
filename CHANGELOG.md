@@ -12,6 +12,47 @@ model, from which the shipped readers are generated).
 - `DeviceState.device_id`: the id the Govee app calls `device` (e.g. `2D:DB:5C:E7:53:F4:74:56`), read
   with `aa 07 02`. An alias of `serial_number`, which holds the same value.
 - `build.soft_version_query` (`aa 06`), `build.INFO_HARD` (`aa 07 03`) and `parse.parse_soft_version`.
+- New exceptions, defined in `govee_ble_local.exceptions` and exported in `govee_ble_local.__all__`:
+  `GoveeBleCommandRejected` (the device acknowledged a write with a non-zero status),
+  `GoveeBleHandshakeTimeout` and `GoveeBleHandshakeConnectionError` (both a `GoveeBleHandshakeError`, and
+  also a `GoveeBleTimeout` / `GoveeBleConnectionError`), and `GoveeBleUnknownName` (an unknown zone or
+  scene name; both a `GoveeBleInvalidValue` and a `GoveeBleNotSupported`).
+- `GoveeCloudAuthError` (a `GoveeCloudError`): the Govee account rejected the email/password (HTTP 401/403,
+  or a 401/403 `status` in the body), or rejected a saved token when there are no credentials to log in
+  again, so an integration can tell bad credentials from connectivity problems. Both cloud errors now live in
+  `govee_ble_local.exceptions` and are exported from `govee_ble_local` (catchable without the `cloud` extra)
+  and from `govee_ble_local.cloud`; `govee_ble_local.cloud.account.GoveeCloudError` still imports.
+- `Device.snapshot()`: a copy of the device state that later changes don't touch, to keep or compare;
+  `Device.state` stays the live object.
+- `GoveeAdvertisement.pact` (`(pact_type, pact_code)`, or None when the advertisement carried no pact info)
+  and `GoveeAdvertisement.encryption_known`, so callers no longer test the `-1` sentinel; and
+  `identify.from_advertisement()`, which identifies a bleak advertisement (or an already-parsed one) the
+  way `Device` and `scanner.match` do.
+- `scenes.async_load_scenes(sku)`: `load_scenes` without blocking the event loop (the first lookup per SKU
+  reads the bundled JSON in a worker thread; later ones are cached).
+- `transport.framelog.flush(timeout)`: waits, up to `timeout`, until the frame-capture writer has written
+  every queued record, and returns whether it drained. It blocks, so call it off the event loop.
+- `DeviceProfile` fields, keyword-only and defaulted: `relay_on_mask` and `advert_on_mask` (which bits of a
+  plug's relay reply and of its advertised switch byte mean "on"; their defaults, 0xFF and None, keep
+  1.3.0's rules of any relay bit and an advert byte of 1, so custom profiles behave as before),
+  `color_readback_ic_range` and `color_readback_ic_per_piece` (the live IC count's clamp and divisor), and
+  `mode_color_parse` (how the `aa 05` colour sub-modes are decoded, typed `devices.profile.ModeColorParse`:
+  `"rgb_kelvin"`, the default, `"rgb_kelvin_tint"`, `"rgb_0d"`, `"kelvin"`, `"kelvin_15"` or
+  `"rgb_kelvin_0d"`). `identify.parse_broadcast_onoff` gains a keyword-only `on_mask`; the default keeps the
+  lights' `== 1` rule.
+- Helpers: `wire.parse.parse_mode_rgb_kelvin_tint`, `parse_mode_0d_rgb`, `parse_mode_0d_for(frame, scheme)`
+  and `SUBMODE4COLOR_SUB_MODES`, and the `wire.parse.GroupRecord` type; `wire.reassemble.burst_chunks`,
+  `walk_status_tlvs` and `TlvCut` (the 0xAC completeness rule and TLV walk, shared by the runtime and
+  `govee-ble-analyze`); `wire.describe.status_burst_report` / `StatusBurstReport`, with `truncated` and
+  `redacted` counts, and the `wire.describe.Direction`, `Severity` and `Issue` types; and
+  `crypto.FrameCipher`, the frame cipher bound to one session key with its key setup done once (exactly
+  the bytes of `crypto.encrypt` / `crypto.decrypt`).
+- Constants: `const.ADVERT_SUPPRESS_SECONDS` (15 s; moved from `devices.device`, still importable there),
+  `const.DISCONNECT_TIMEOUT`, `const.QUERY_TERMINAL`, the parts `LOCAL_NAME_PREFIXES` is built from
+  (`const.BRAND_MARKERS`, `GBK_PREFIX`, `GV_LONG_PREFIXES`, `GV_PREFIX`; the tuple is unchanged),
+  `wire.build.PRO_NOTIFY` (0xEE), `wire.build.PRO_MULTI_A1` (0xA1), `wire.reassemble.MIN_CHUNK_LEN`,
+  `SIGNED_LEN_MIN`, `TYPE_MODE`, `TYPE_SLEEP`, `TYPE_WAKEUP` and `TYPE_TIMERS`, and the
+  `transport.framelog.Direction` type.
 
 ### Changed
 - Device info now uses the reads the app makes on connect: `aa 06` for the firmware version, `aa 07 03`
@@ -20,21 +61,247 @@ model, from which the shipped readers are generated).
   device that left a version unknown. Live-verified (2026-10-15, app 7.7.02 source): H60A6, H6047,
   H61A8, H6052, H6006, H6008 and H5083 all answer the three app reads; before, only the H60A6 reported
   a firmware version at all, because the others ignore `aa 07 10`.
+- **The "device rejected write" log line moved from ERROR to DEBUG**, and the write raises the public
+  `GoveeBleCommandRejected` instead of a private class, so the caller decides what to log. An integration
+  that relied on the ERROR line, for example an always-on WARNING capture for diagnostics, must log
+  `GoveeBleCommandRejected` (and `GoveeBleAuthError`, a rejected secret) itself, to a logger its capture
+  covers (`docs/DIAGNOSTICS.md`). Until `hass-govee-ble-local` does, rejections are missing from its
+  downloadable diagnostics.
+- An RX frame with an unknown proType is logged at WARNING once per proType for the device's lifetime
+  (until the integration reloads); repeats go to DEBUG and cost nothing when DEBUG is off, so a device that
+  keeps pushing one can't flood the log.
+- Handshake failures raise `GoveeBleHandshakeTimeout` / `GoveeBleHandshakeConnectionError`, which subclass
+  the `GoveeBleTimeout` / `GoveeBleConnectionError` raised before, so `except GoveeBleHandshakeError` now
+  fires. That includes a failed `e7` write (BleakError "Not connected", `BrokenPipeError`, `EOFError`, or
+  bleak's characteristic-not-found error from a stale GATT cache), which 1.3.0 raised as
+  `GoveeBleConnectionError("connect to <address> failed: ...")` (a `BrokenPipeError` escaped unwrapped); its
+  message now reads `<address>: handshake write failed: ...`.
+- A connection raises only `GoveeBleError` subclasses: an unexpected backend error while connecting or during
+  an operation (e.g. a `RuntimeError` from `start_notify`), and a `BrokenPipeError` / `ConnectionResetError`
+  from the BLE stack, become `GoveeBleConnectionError`, chained to the original, and the link is closed.
+  Once a device is known to use AES-GCM (BGC v2), later calls raise `GoveeBleNotSupported` without opening
+  a link each time. `GoveeConnection.send_many()` rejects a non-write frame with `GoveeBleInvalidValue`
+  before any I/O. Not hardware-verified.
+- Connection error messages changed; anyone matching on the text needs the new forms. `connect to <address>
+  failed: ...` is now `<address>: connect failed: ...`, and `<address>: connect/handshake timed out` is now
+  `<address>: connect timed out`. A write timeout raised by the BLE stack reads `<address>: BLE I/O timed out
+  (...)`. An unexpected backend error reads `<address>: unexpected transport error: <repr>` during an
+  operation and `<address>: connect failed: <repr>` while connecting.
+- `discover()` raises `GoveeBleConnectionError` when the scan itself fails (no adapter, adapter powered
+  off, BlueZ / D-Bus unavailable). That error is also the `BleakError`, `OSError` or `EOFError` 1.3.0 let
+  through, so existing `except BleakError` handlers keep matching. A device reporting 0 dBm now sorts as
+  the strongest, not with the no-RSSI ones.
+- Typed argument errors: a request a colour scheme can't express (per-segment colour on a whole-device
+  scheme, CCT on H61A8) raises `GoveeBleNotSupported` from the builders instead of a bare `ValueError`
+  (not a `ValueError`, so `except ValueError` around a direct builder call no longer catches it), and
+  `Device` re-raises it with the SKU on every path. Bad input (a non-integer brightness, an 0xA4 `mtu`
+  outside 20..512 or an upload over its 16-bit packet count; at the `Device`, a malformed RGB, a non-int
+  brightness, a `str` or other non-bytes secret) raises `GoveeBleInvalidValue` before any I/O, and
+  `turn_on` now checks every argument before the segment-count read. `Device(secret=...)`,
+  `create_device(secret=...)` and `set_secret()` take `bytes`, `bytearray` or `memoryview` and store
+  `bytes`. An unknown zone or scene name raises `GoveeBleUnknownName`, still a `GoveeBleNotSupported`, so
+  existing handlers keep matching.
+- `device_profile_for` is deprecated in favour of `profile_for` (the same lookup): it emits a
+  `DeprecationWarning` and is removed in 2.0. `hass-govee-ble-local`'s config flow still calls it.
+- `DeviceProfile` validates its fields at construction and raises `GoveeBleInvalidValue` (a `ValueError`)
+  for empty or non-string SKUs, `brightness_max < 1`, a `brightness_range` whose 100 % overflows a byte,
+  `color_readback_per_batch < 1` and a malformed mask, IC range or IC divisor. A list of SKUs is still
+  accepted, and so is a custom profile pairing a capability with a colour scheme that can't express it, as
+  in 1.3.0; its setter now raises `GoveeBleNotSupported`. The built-in table is checked at import for those
+  pairings, a `mechanism_a_direct` group size other than 4, `color_readback_live_ic` without
+  `color_readback_ic_range` and a duplicate SKU. The new fields come after every 1.3.0 field, so the
+  positional signature and `dataclasses.fields()` order are unchanged.
+- `DeviceProfile.brightness_max` is deprecated (documented only, no warning); use `brightness_range`.
+- **H6052 colour read-back is RGB only.** After a poll, a lamp in colour-temperature mode reports the report's
+  colour as `rgb_color` (for a CCT the app or this library set, the Kelvin's tint) and no `color_temp_kelvin`,
+  as the app's control screen reads it: a `0x0d` report is `[r, g, b]`, its Kelvin bytes never read, and
+  `0x15` and the other colour sub-modes are ignored (`H6052NewDetailVM` -> `H6052InfoDetail.G`). `aa 05 0d ff
+  ff ff 0a 8c` now gives RGB (255, 255, 255) instead of 2700 K. Modeled from the decompiled app. Live-verified
+  on an H6052 (2026-10-15, macOS): after a 2700 K write the lamp reports `aa 05 0d ff ae 54 0a 8c ff ae 54`,
+  which now reads as RGB (255, 174, 84) with no Kelvin; what the app displays for that report is
+  source-modeled.
+- 0xAC status read-back: a reply that would fail the app's read gives no state, as the app shows none
+  (`Compose4BaseInfoSingleRead.u` throws, `AbsComposeControllerWithOpResult.onOvertime` fails the read, and
+  the `VM4LightH60A6` success callback that applies state never runs). That covers a TLV the spec can't read,
+  a TLV length byte of 0x80 or more (the app reads it signed) and a complete burst whose last TLV runs past
+  the reply. `Device` retries once, then leaves state stale. A burst cut short by lost chunks still decodes up
+  to its last whole TLV. Each poll that gets such a reply logs the existing `status read returned no usable
+  data after retry` WARNING. Modeled from the decompiled app; not hardware-verified.
+- `DeviceState.optimistic` on status-readback devices (H60A6) goes False only once a live field (power,
+  brightness, zones, segments or the mode report) comes back. 1.3.0 cleared it after any 0xAC poll that
+  wasn't discarded, even an empty or failed one; a poll that returned nothing, or only device info, now
+  leaves it True. The one-time INFO `first poll` line also waits for the first poll that read something
+  back.
+- `MANUFACTURER_IDS` also lists 0x8841 and 0x8842, the encrypted v1/v2 broadcast headers the app accepts
+  (`BleUtil.parseBleBroadcastPact`), so a Home Assistant manifest built from it matches those devices too.
+  Modeled from the decompiled app; not hardware-verified.
+- Signatures: `wire.build.status_query` takes `full` keyword-only; `handshake.build_step1` / `build_step2`
+  drop their unused `payload` (the app never sends one); `Device.set_segment_*` accept any sequence of
+  indices; whole-device colour builders called without a segment count use the scheme's default (23 panels
+  for H6061, 15 for H61A8, not H60A6's 13). Removed: the superseded,
+  unused `wire.parse.parse_mode_color_0d` (it dropped a 0x0d report's Kelvin), the unused
+  `const.COMMAND_ACK_TIMEOUT`, and the internal `GoveeConnection(on_notify=...)` hook with its type alias
+  `transport.connection.NotifyCallback`. `Device`'s frames are unchanged (it always passes its count); a
+  direct builder call that omits `segments` now gets the scheme's default mask. Modeled from the decompiled
+  app; not hardware-verified.
+- Cloud account: a token-only `GoveeCloudAccount` (no email/password) whose token expires raises
+  `GoveeCloudAuthError` instead of sending a login with empty credentials. Requests no longer follow HTTP
+  redirects, so the password is never re-sent to a redirect target; a 3xx is reported as `login failed
+  (HTTP 3xx)` / `<path> failed (HTTP 3xx)`. `CloudDevice.ble_mac` is documented as best effort.
+- `govee-ble-analyze`: `-o` creates the converted JSONL with mode 0600 and never writes through a symlink
+  (a failed write is `cannot write`, exit 2); `--help` keeps the module docs and documents exit codes
+  0/1/2; `--from-frames-log` records carry the device address (`addr`). The "malformed 0xAC bursts
+  skipped" count (and `analyze_status_bursts`' third element) counts only bursts that were not walked; the
+  report now also counts complete bursts walked up to a TLV overrun (the runtime uses no state from them)
+  and bursts from a redacted capture.
+- Docs: README lists `profile_for` (`device_profile_for` as its deprecated alias), `create_device`'s
+  `idle_disconnect` and `discover()`'s error. `docs/DIAGNOSTICS.md`'s log-level table matches the code
+  (nothing at ERROR, every warning site listed, timeouts as `GoveeBleTimeout`) and its redaction note says
+  what is masked (the account secret) and what is not.
+- Encrypted sessions do the cipher key setup once per session (`crypto.FrameCipher`; identical bytes, less
+  event-loop time). Log records keep the `govee_ble_local.devices.device` logger. Live-verified on encrypted
+  H60A6, H6008 and H5083 sessions (2026-10-15, macOS): every session frame matches the per-frame cipher byte
+  for byte.
 
 ### Fixed
 - macOS: the connect failed on the H60A6 and H6008 (`Failed to discover descriptors for characteristic
   13 ... UUID not allowed`) because CoreBluetooth rejects descriptor discovery on a characteristic
   of the Generic Attribute service. The connection now resolves only the Govee service
-  (`services=[SERVICE_UUID]`; BlueZ ignores the filter). Live-verified on four H60A6s and two H6008s
-  from a Mac.
+  (`services=[SERVICE_UUID]`; bleak's BlueZ and WinRT backends apply the same filter). Live-verified on
+  four H60A6s and two H6008s from a Mac.
 - The device id of an H60A6 was reported as `"00"`: its `aa 07 10` UID is all zeros, which the parser
   rendered as a value and so skipped the `aa 07 02` fallback. An all-zero UID is now no id
-  (`NumberUtil.isInvalidUuid`) and a single leading `00:00:` is dropped (`SnController`).
+  (`NumberUtil.isInvalidUuid`) and a single leading `00:00:` is dropped (`SnController`). Live-verified on
+  four H60A6s.
 - `create_device` ignored `DiscoveredDevice.advertisement` (the parsed `GoveeAdvertisement` that
   `discover()` returns): only bleak's raw advertisement set the encryption mode, so the natural
   `discover()` -> `create_device(..., d.advertisement)` flow fell back to the SKU profile. For an H6008
   (profile: plaintext; real firmware: encrypted, pact 1/1) every read was then sent in plaintext and
   went unanswered. Both advertisement types are accepted now. Live-verified on two H6008s.
+- Transport: `BrokenPipeError`, `ConnectionResetError`, `EOFError` and a write's `TimeoutError` get the same
+  reconnect-and-retry as `BleakError`; a write timeout is no longer reported as "operation exceeded 45s";
+  `query()` keeps the frames already received when its budget runs out (a complete burst came back truncated
+  under event-loop lag); a single-reply read waits its full 2 s (a stray late reply cut it to the 0.6 s burst
+  gap); and messages name the type of a message-less error. Not hardware-verified.
+- The BGC-info characteristic is found the way the app does (`BgcInfoReader.a`): the first service with UUID
+  1910, then its 2b12 characteristic. A firmware that also exposes 2b12 under the OTA service 1912 (on
+  backends that don't filter services), or two 1910 services that each carry 2b12, made bleak's
+  collection-wide lookup raise and every connect fail. Modeled from the decompiled app; not
+  hardware-verified.
+- A secret set with `set_secret()` on a live session is sent (`33 b2`) before the first frame of any setter,
+  scene upload or read-back on it, as the app's pairing flow does (`AbsPairAc4SecretV1.onEventSecretKey`).
+  In 1.3.0 a secret set on an open session was sent only at the next session setup, so the commands on that
+  link went out without it. It is not lost if that write is cancelled or fails while the session stays up; a
+  finished write (acked, rejected or unacked) is not resent. An unchanged secret, or one set on a profile
+  without `requires_secret`, queues no `33 b2`. Modeled from the decompiled app; not hardware-verified.
+- Scene uploads: a short value (14 bytes or fewer, including 15 bundled H6004/H6006/H6008 scenes such as H6006
+  "Asleep") is sent as a START frame (packet count 2) plus a separate empty END frame
+  (`MultipleControllerCommV1.makeSendBytesV2`), not one 0xFF frame with no START. A compose scene (sceneType
+  6) is uploaded only when its blob starts with 0x0a (`ScenesOp.o`); others, H60B0-style 0x51 blobs included,
+  are activate-only (no current profile reaches this). Modeled from the decompiled app. Live-verified on an
+  H6006 (2026-10-15, macOS): "Asleep" went out as `a3 00 01 02 01 83 01 ff e1 96 ...` then `a3 ff 00 ...`, the
+  device acked the upload and the activation, and the next read reported scene 1134. The compose gate is not
+  hardware-verified (no profile reaches it).
+- Colour frames the app never sends are refused: per-segment colour and brightness on the 0x0d bulb schemes
+  (`h6006`, `h6188`) raise instead of building a 0x15 RGBIC frame, an unknown colour scheme is refused
+  instead of getting H60A6's frames, and an explicit H6061 panel count of 0 is rejected even for a Kelvin
+  tint (it became 23 panels). Modeled from the decompiled app; not hardware-verified.
+- 0xAC status burst framing follows `AbsController4BleSingleSendMultiBack`: a burst is complete only when
+  every packet its first chunk declares has arrived, so a burst that lost the chunks before the 0xFF chunk
+  no longer splices it in at the wrong offset and a lone 0xFF chunk isn't read as the first; a one-packet
+  reply is complete by itself and is trimmed to its declared length, the last packet adds only its declared
+  byte count, and an impossible last-packet length is rejected. Modeled from the decompiled app; not
+  hardware-verified.
+- Read-back values as the app reads them: 0xAC zone power is bit 0 of each zone byte
+  (`ParseUtils.getBit2Boolean`); a 0x07 block whose selector isn't basic (0x10) or Wi-Fi (0x11) is stepped
+  past even when its body doesn't parse, and the Wi-Fi block's versions no longer become the device's
+  (`Compose4BaseInfoSingleRead.w`); gradual (`aa a3`) and H6047 bar power (`aa 36`) are on only for a byte of
+  1 (`ControllerGradual4BleWifi.h`, `ComposeLightController.parseValidBytes`); device-reported brightness is
+  clamped to 0..100. Modeled from the decompiled app. H6047 bar power is live-verified (2026-10-15, macOS:
+  left bar off, then on, read back per bar); the other rules are not hardware-verified.
+- H6006 / H6008 / H6004 / H6188 mode report decoded as the app does (`ModeParseStrategyConfig.a` via
+  `OpInfo4Detail.parseModeValidBytes`): sub-modes 0x15, 0x0b, 0x02 and 0x0d all read `[r, g, b][kelvin
+  s16be][tint]`; a Kelvin > 0 is CCT, 0 is the RGB, and a negative one shows the tint as RGB. `aa 05 15 01 0a
+  8c` now gives RGB (1, 10, 140) instead of 2700 K, and a 0x0b / 0x02 report updates the colour. Modeled from
+  the decompiled app. Live-verified on an H6006 and an encrypted H6008 (2026-10-15, macOS): their 0x0d reports
+  arrive as `[r, g, b][kelvin][00 00 00]` and decode to 2700 K after a CCT write and to RGB (16, 32, 48) after
+  a colour write. 0x15 / 0x0b / 0x02 reports and the H6004 / H6188 are not hardware-verified.
+- H6061: an `aa 05 15` report no longer clears the known RGB colour or stores a nonsense Kelvin (e.g. 511 or
+  65454), since `CubeNewInfo4Detail.U` decodes only the 0x0d report; and that report's Kelvin is a signed
+  short (`BleUtil.getSignedShort`), so 0x8000 or more reads as RGB, not a 32768 K colour temperature.
+  Modeled from the decompiled app; not hardware-verified.
+- Other mode reports: on H61A8 an `aa 05 0d` report no longer sets an RGB colour or a Kelvin (its
+  `Mode.parseSubMode` reads a Kelvin only from 0x15, `SubModeColorV2.parse`); H6062 reads 0x0b / 0x02 / 0x0d
+  with the `SubMode4Color` parse (`OpInfo4Detail.parseModeValidBytes`); H6641 and H6047 ignore 0x0d
+  (`Info4Detail.parseModeValidBytes`). A scene report clears stale colour state and a colour-temperature
+  report of 0 clears the Kelvin. Modeled from the decompiled app. A colour-temperature report of 0 clearing
+  the Kelvin is live-verified on an H60A6 (2026-10-15: 4000 K, then red, then `aa 05 15 01 00 00` read back no
+  Kelvin); the rest is not hardware-verified.
+- Plugs follow the app per goodsType. The plug profile is split by goodsType into H5080/H5083/H5085,
+  H5082/H5089 and H5160/H5161, so `profile_for` returns three different plug profiles. Relay read-back: bit
+  0 on H5080/H5083/H5085, any bit on H5082/H5089, bits 0-2 on H5160/H5161 (`BleOpV1.onEventSwitchV2`,
+  `EventSwitchV2.i`, `BleOpV4.Z`; 1.3.0: any set bit meant on). Advertised on/off: bit
+  0 on H5080/H5083/H5085 and any bit on H5160/H5161 (h5080 `Model.A`), bit 0 or 1 on H5082/H5089
+  (`Model4Plug2.A`); before, only a byte of exactly 1 meant on, so 0x11 read as off. Modeled from the
+  decompiled app; not hardware-verified.
+- Advertisements: on/off is read only from broadcast headers 2 and above (`BleUtil.parseBleBroadOnOff`), so
+  v0/v1 adverts no longer flip power, and `identify.parse_broadcast_onoff()` returns None for a header byte
+  (the company-id low byte) below 2 or above 0x7F (negative as the app's signed byte); the advertised on/off
+  is ignored for 15 s only after an on/off read or a command, not after an empty, failed, brightness-only or
+  mode-only read; an advertised power change keeps zone and bar power consistent, so a later H6047 bar write
+  no longer lights an untouched bar; and a local name ending in `_` gives the app's SKU
+  (`BaseBleProcessor.parse`). Modeled from the decompiled app; not hardware-verified.
+- Per-segment colour read-back: H6641 derives its piece and group count from the IC count as the app does
+  (clamp 41..70, ceil(IC / 5) pieces, at most 4 reads; `ReadIcController`, `H61D3Support.e`), so it shows no
+  phantom segments and never walks 255 groups; replies are placed by the group requested, and H61A8 batches
+  outside the walk are dropped. An `aa 40` IC count of 0x1000 or more (read signed) skips the segment walk, as
+  the app never stores it (`ReadIcController.Companion.a`). A custom profile with `color_readback_live_ic` and
+  no `color_readback_ic_range` uses the IC count unclamped. Modeled from the decompiled app; the H6641 change
+  is not hardware-verified. The H61A8 15-segment read-back still assembles on hardware (2026-10-15, macOS).
+- Device-info reads are tried again on the next poll when the device answered none of them and that poll's
+  state read got nothing either. 1.3.0 marked them done after one unanswered attempt, so a device first
+  polled while silent (wrong cipher, out of range) never reported its versions. A late Wi-Fi info reply can
+  no longer overwrite the firmware or hardware version. Modeled from the decompiled app; not
+  hardware-verified.
+- State: segment colour, segment brightness and zone colour writes clear the active scene, matching bar
+  Kelvins clear a stale RGB colour, concurrent whole-device power or scene writes and H6047 per-bar writes
+  no longer undo each other, and `set_zone_power` on H60A6 replaces `state.zone_power` instead of editing
+  the dict in place. Not hardware-verified.
+- A scene's upload and its activation are one unit, as the app sends them in one composed controller:
+  neither a poll nor a concurrent scene write can land between them. `set_scene_by_name` loads the bundled
+  catalog off the event loop, `update()` warms it, a catalog that exists but can't be read raises
+  `GoveeBleError` instead of `OSError` / `UnicodeDecodeError`, and `active_scene` is None on a device
+  without `SCENES`. Modeled from the decompiled app; not hardware-verified.
+- Frame capture: creating one (`frame_log=` / `GOVEE_FRAME_LOG`, built on the event loop) no longer touches
+  the filesystem. The directory check runs on the writer thread and disables only that capture, with one
+  warning (other captures on the same path keep writing). It warns once when it appends to a group- or
+  world-accessible file (POSIX; the mode is kept), reports a write failure again after the path recovered
+  and a full queue on each new overflow, and registers its exit-time flush at the first capture, not import.
+- Cloud: `CloudDevice`'s repr leaves out the BLE `secret`, so logging the device list can't leak the
+  account-lock key. A JSON null `sku` / `device` / `deviceName` no longer becomes "None", huge or
+  non-integral `pactType` / `pactCode` / `goodsType` are ignored rather than raising `OverflowError` or
+  being truncated, and a non-integral `scenceParamId` or a body nested too deeply for the JSON decoder
+  raises `GoveeCloudError` instead of `OverflowError` / `RecursionError`.
+- `govee-ble-analyze` reassembles 0xAC bursts per device, so overlapping bursts from several devices no
+  longer produce phantom "TLV type not modelled" issues and exit code 1. A double-delivered burst isn't
+  malformed, a burst missing interior or final chunks is, a poll that lost its 0xFF chunk is no longer
+  folded into the next poll with the same first chunk, and a TLV that won't parse is reported as a gap.
+- `govee-ble-analyze` no longer reports every burst of a redacted field-test capture as "malformed
+  (dropped/merged frames)" (older captures, whose first-chunk header was zeroed, are judged by chunk index).
+  `analyze()` skips and counts invalid records instead of raising `ValueError`, a deeply nested JSONL line
+  or a 1-byte `ac` record no longer crashes the CLI, `--from-frames-log` keeps the logger name out of the
+  address, and an unrecognised `dir` reads as `?`.
+- Field test, report: error messages (failed sends, read-backs, restores, aborted runs) no longer contain the
+  device's Bluetooth address, Wi-Fi MAC or the MAC digits of its advertised name. Every error string, and the
+  report as saved, goes through one scrubber that masks the address in any form (BlueZ D-Bus paths included),
+  any other MAC-shaped text and Govee-shaped names (`ihoment_H6188_xxxx`). Snapshots always redact the device
+  id and BLE MAC too. A device identified as one SKU (`ihoment_H6006_6188` is an H6006) no longer matches
+  another SKU's plan through the digits in its name, and Ctrl-C at a prompt no longer hangs the tool.
+- Field test, capture: the frame capture keeps no wire bytes (the ciphertext and the `e7` handshake, from
+  which the session key can be derived) and zeroes the `ac` status payloads like the device-info replies,
+  keeping only each burst's 7-byte first-chunk header so `govee-ble-analyze` still spots a lost chunk. It is
+  redacted only after `framelog.flush()` (at once if that fails, never left raw), and the report and capture
+  go through a fresh temp file and an atomic rename, never a planted symlink.
 
 ### Spec
 - `govee_ble.ksy`: `soft_version_read` (`aa 06`, ASCII) and `device_info_hard_version` (`aa 07 03`,

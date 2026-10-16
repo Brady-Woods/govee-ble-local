@@ -2,9 +2,12 @@
 
 Kaitai generates readers only, so these builders encode the same layouts by hand
 (the ``.ksy`` doc says "the write side is symmetric"). They are intentionally
-**independent of** ``govee_ble_local.ble.controllers`` so the spec can be tested
-on its own terms: build here → parse with the Kaitai-generated reader
+**independent of** the library's own encoder, ``govee_ble_local.wire.build``, so the spec can be
+tested on its own terms: build here → parse with the Kaitai-generated reader
 (``govee_ble_local._generated``) → assert the fields, then (live suite) send to a real device.
+``tests/test_fix_wp2a_builders.py`` checks the library's builders against these byte for byte, and
+the multi-packet uploads are line-for-line ports of the app's ``MultipleControllerCommV1`` writers
+(:func:`make_send_bytes_v2`, :func:`make_send_bytes_mtu`), not copies of the library's slicing.
 
 Every builder returns a 20-byte frame with the trailing XOR checksum
 (``checksum = XOR of bytes 0..18``, per §4.1 / ``govee_ble.ksy`` meta doc).
@@ -146,15 +149,119 @@ def status_query(full: bool = False) -> bytes:
     return frame(PRO_MULTI_REPLY_READ, 0x03, 0x02, 0x41, 0x30)
 
 
+# ── multi-packet writers: ports of MultipleControllerCommV1 ──────────────────
+def _bcc(buf: bytes | bytearray, n: int) -> int:
+    """``BleUtils.getBCC(packet, n)``: XOR of ``packet[0..n-1]``."""
+    x = 0
+    for b in buf[:n]:
+        x ^= b
+    return x
+
+
+def make_send_bytes_v2(pro_type: int, comm_bytes: bytes, value: bytes) -> list[bytes]:
+    """Line-for-line port of ``MultipleControllerCommV1.makeSendBytesV2`` (base2light
+    ``ble/comm/MultipleControllerCommV1.java:785-849``), the 0xA3 writer behind ``makeSendBytesV1``
+    (``commBytes`` = one byte). START ``[pro, 00, 01, count, commBytes…, value…]`` holds
+    ``15 - len(commBytes)`` value bytes; a value that fits there leaves ``count`` at 2 and the END
+    ``[pro, ff, 00…]`` empty; otherwise 17-byte MIDDLE frames ``[pro, seq, …]`` follow and the final
+    chunk rides in END, ``count`` = 1 + chunks. The END frame is always appended."""
+    length = len(value)
+    n_comm = len(comm_bytes)
+    start = bytearray(FRAME_LEN)
+    start[0] = pro_type
+    start[1] = 0
+    start[2] = 1
+    start[4 : 4 + n_comm] = comm_bytes
+    i9 = n_comm + 4
+    end = bytearray(FRAME_LEN)
+    end[0] = pro_type
+    end[1] = 0xFF
+    i10 = 15 - n_comm
+    middles: list[bytes] = []
+    i7 = 2
+    if length <= i10:
+        start[i9 : i9 + length] = value
+    else:
+        i11 = length - i10
+        i12 = i11 % 17
+        i13 = (i11 // 17) + (1 if i12 > 0 else 0)
+        if i12 == 0:
+            i12 = 17
+        start[i9 : i9 + i10] = value[:i10]
+        for i15 in range(1, i13 + 1):
+            last = i15 == i13
+            i16 = i12 if last else 17
+            chunk = bytearray(17)
+            chunk[:i16] = value[i10 : i10 + i16]
+            i10 += i16
+            if last:
+                end[2:19] = chunk
+            else:
+                mid = bytearray(FRAME_LEN)
+                mid[0] = pro_type
+                mid[1] = i15 & 0xFF
+                mid[2:19] = chunk
+                mid[19] = _bcc(mid, 19)
+                middles.append(bytes(mid))
+        i7 = i13 + 1
+    start[3] = i7 & 0xFF
+    start[19] = _bcc(start, 19)
+    end[19] = _bcc(end, 19)
+    return [bytes(start), *middles, bytes(end)]
+
+
+def make_send_bytes_mtu(pro_type: int, command_type: int, value: bytes, mtu: int) -> list[bytes]:
+    """Line-for-line port of ``MultipleControllerCommV1.makeSendBytesMtu`` (``:409-545``), the 0xA4
+    writer: exact-length frames, BCC last. A value of at most ``mtu - 8`` bytes is START
+    ``[pro, 00 00, 01, 02 00, cmd, value…]`` plus the empty END ``[pro, ff ff]``; a longer one is
+    ``mtu``-byte START / MIDDLE frames (u16le count / seq, ``ByteUtils.getLowHighBytes``) and an END
+    ``[pro, ff ff, rest]``."""
+    length = len(value)
+    i6, i7 = mtu - 8, mtu - 4
+    if length <= i6:
+        start = bytearray(length + 8)
+        start[0:7] = bytes([pro_type, 0, 0, 1, 2, 0, command_type])
+        start[7 : 7 + length] = value
+        start[length + 7] = _bcc(start, length + 7)
+        end = bytearray([pro_type, 0xFF, 0xFF, 0])
+        end[3] = _bcc(end, 3)
+        return [bytes(start), bytes(end)]
+    i11 = length - i6
+    i12 = i11 % i7
+    i13 = (i11 // i7) + 1 + (0 if i12 == 0 else 1)
+    out: list[bytes] = []
+    for i14 in range(i13):
+        if i14 == 0:
+            buf = bytearray(mtu)
+            buf[0:7] = bytes([pro_type, 0, 0, 1, i13 & 0xFF, (i13 >> 8) & 0xFF, command_type])
+            buf[7 : 7 + i6] = value[:i6]
+        elif i14 == i13 - 1:
+            i16 = mtu if i12 == 0 else i12 + 4
+            buf = bytearray(i16)
+            buf[0:3] = bytes([pro_type, 0xFF, 0xFF])
+            off = i6 + (i14 - 1) * i7
+            buf[3 : i16 - 1] = value[off : off + i16 - 4]
+        else:
+            buf = bytearray(mtu)
+            buf[0:3] = bytes([pro_type, i14 & 0xFF, (i14 >> 8) & 0xFF])
+            off = (i14 - 1) * i7 + i6
+            buf[3 : 3 + i7] = value[off : off + i7]
+        buf[-1] = _bcc(buf, len(buf) - 1)
+        out.append(bytes(buf))
+    return out
+
+
 # ── 0xA3 scene/DIY upload (a3_start dialect) ─────────────────────────────────
 def scene_upload(param_b64: str, comm_byte: int = COMM_H60A6) -> list[bytes]:
     """Scene/DIY upload per the corrected ``a3_start`` (proType 0xA3, non-MTU form).
 
-    Byte-stream chunked into 0xA3 frames (seq 0,1,…; last = 0xFF, **data-bearing**):
+    The app's ``makeSendBytesV1`` framing (:func:`make_send_bytes_v2`, seq 0,1,…; last = 0xFF):
         [0x01(marker), packet_count, comm_byte, <value…>]
     - ``comm_byte`` (frame byte 4) is the H60A6 DIY/graffiti device protocol code
       (0x58 = 88), NOT a legacy comType and NOT ``value[0] | 0x08``.
     - ``value`` here is the raw cloud blob after its consumed ``0x50`` header.
+    - the 0xFF END frame carries the final chunk of a value longer than 14 bytes; a shorter value
+      rides whole in START and the END is empty (packet_count 2).
 
     KNOWN GAPS (unresolved without an official-app btsnoop):
     - the app uploads a **re-encoded** ``toBytes()`` (H60A6GraffitiParse), not the raw
@@ -163,12 +270,4 @@ def scene_upload(param_b64: str, comm_byte: int = COMM_H60A6) -> list[bytes]:
       commByte@byte6), not this 0xA3 form.
     """
     value = base64.b64decode(param_b64)[1:]  # 0x50 header is consumed into the comm_byte slot
-    stream = bytes([0x01, 0x00, comm_byte]) + value
-    pieces = -(-len(stream) // 17)                      # ceil; packet_count fits in 1 byte
-    stream = bytes([0x01, pieces & 0xFF, comm_byte]) + value
-    frames: list[bytes] = []
-    for i in range(pieces):
-        piece = stream[i * 17 : (i + 1) * 17]
-        seq = 0xFF if i == pieces - 1 else i            # last frame is data-bearing
-        frames.append(frame(PRO_MULTI_WRITE_V1, seq, *piece))
-    return frames
+    return make_send_bytes_v2(PRO_MULTI_WRITE_V1, bytes([comm_byte]), value)

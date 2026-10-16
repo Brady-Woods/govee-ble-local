@@ -29,7 +29,7 @@ def test_parse_real_h60a6_burst() -> None:
     assert len(st.segments) == 13                 # four 0xA5 groups: 4+4+4+1
     assert [s.index for s in st.segments] == list(range(13))
     names = {(255, 0, 0): "R", (0, 255, 0): "G", (0, 0, 255): "B"}
-    assert "".join(names.get(s.rgb, "?") for s in st.segments) == "RGBRGBRGBRGBR"
+    assert "".join(names.get(s.rgb, "?") if s.rgb else "?" for s in st.segments) == "RGBRGBRGBRGBR"
     assert st.segments[0].brightness == 50 and st.segments[1].brightness == 100
 
 
@@ -51,11 +51,18 @@ def test_out_of_order_chunks_reassemble_by_index() -> None:
 
 
 def test_parse_status_stops_on_padding() -> None:
-    # the generated status_reply reader terminates on the trailing zero pad (repeat-until
-    # type==0) — a burst padded to the frame boundary parses cleanly to just the real TLVs.
+    # The last chunk contributes only its lastLen bytes (AbsController4BleSingleSendMultiBack.h), so
+    # the real burst ends exactly on its last TLV. A zero-padded buffer (lastLen counting the pad)
+    # still parses cleanly: the generated status_reply reader stops on the type-0 sentinel.
     frames = [bytes.fromhex(h) for h in _BURST]
-    st = r.parse_status(frames)
+    buf = r.reassemble(frames)
+    assert buf.endswith(bytes.fromhex("a5050464ff0000"))     # the last colour group, no pad
+    padded = bytearray(frames[0])
+    padded[4] = 17                                           # lastLen 17: 5 zero bytes of pad joined
+    assert r.reassemble([bytes(padded), *frames[1:]]) == buf + bytes(5)
+    st = r.parse_status([bytes(padded), *frames[1:]])
     assert st.is_on is True and st.brightness == 0x50   # no throw, no phantom TLVs from the pad
+    assert len(st.segments) == 13
 
 
 def test_parse_status_extracts_device_info() -> None:

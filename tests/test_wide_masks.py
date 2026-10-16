@@ -7,15 +7,17 @@ bytes, LSB first, above that. Bytes.C caps the width at 7 bytes; we reject more.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
-from test_device_gaps import _dev, _sent
-from test_device_v3 import _frame
+from fake_ble import ble_device
+from fake_ble import frame as _frame
 
 from govee_ble_local.crypto import checksum_ok
-from govee_ble_local.devices.device import _mask
+from govee_ble_local.devices.device import Device, _mask
+from govee_ble_local.devices.profile import profile_for
 from govee_ble_local.exceptions import GoveeBleInvalidValue, GoveeBleNotSupported
 from govee_ble_local.wire import build as b
 from govee_ble_local.wire.cct import tint_for_kelvin
@@ -28,6 +30,39 @@ BOUNDARIES = [16, 17, 23, 24, 56]
 
 def run(coro: Any) -> Any:
     return asyncio.run(coro)
+
+
+def _dev(sku: str, **profile_overrides: Any) -> Device:
+    """Device with every connection method mocked: writes are recorded, reads get no reply (a
+    test scripts ``query`` itself), so nothing reaches a real connection. ``profile_overrides``
+    build it on a changed copy of the SKU's profile (a profile is read-only after construction)."""
+    profile = profile_for(sku)
+    assert profile is not None
+    if profile_overrides:
+        profile = dataclasses.replace(profile, **profile_overrides)
+    return _mocked(Device(profile, ble_device("AA:BB:CC:DD:EE:17", sku), sku=sku))
+
+
+def _mocked(d: Device) -> Device:
+    """Replace ``d``'s connection I/O with recorders (see :func:`_dev`)."""
+    sent: list[bytes] = []
+
+    async def send(frame: bytes, **_k: object) -> None:
+        sent.append(frame)
+
+    async def send_many(frames: list[bytes]) -> None:
+        sent.extend(frames)
+
+    d._conn.send = AsyncMock(side_effect=send)  # type: ignore[method-assign]
+    d._conn.send_many = AsyncMock(side_effect=send_many)  # type: ignore[method-assign]
+    d._conn.send_unacked = AsyncMock(side_effect=send_many)  # type: ignore[method-assign]
+    d._conn.query = AsyncMock(return_value=[])  # type: ignore[method-assign]
+    d._sent = sent  # type: ignore[attr-defined]
+    return d
+
+
+def _sent(d: Device) -> list[bytes]:
+    return list(d._sent)  # type: ignore[attr-defined]
 
 
 def _all_ones(n: int) -> bytes:
@@ -311,10 +346,13 @@ def test_zone_writes_use_runtime_width() -> None:
 
 
 def test_unsupported_scheme_still_raises_not_supported_with_a_count() -> None:
+    # A custom profile pairing SEGMENTS with the mask-less 0x0d scheme is accepted (as 1.3.0); the
+    # builder refuses the frame, with the SKU named (the profile table refuses the pairing itself).
     d = _dev("H60A6", color_scheme="h6006")
     d.set_segment_count(23)
-    with pytest.raises(GoveeBleNotSupported):
+    with pytest.raises(GoveeBleNotSupported, match=r"^H60A6: "):
         run(d.set_segment_color_temp([1], 4000))
+    assert d._sent == []  # type: ignore[attr-defined]
 
 
 def test_direct_readback_walks_the_runtime_count() -> None:
@@ -340,4 +378,3 @@ def test_direct_readback_walks_the_runtime_count() -> None:
     run(d._read_mechanism_a_direct())
     assert asked == [1, 2, 3, 4, 5, 6]
     assert [s.index for s in d.state.segments] == list(range(23))
-

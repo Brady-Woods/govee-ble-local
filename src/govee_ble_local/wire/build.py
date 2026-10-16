@@ -2,16 +2,22 @@
 
 Kaitai generates readers only, so these encode the layouts by hand; every builder is
 round-trip-proven against the generated reader (see tests/test_wire_build.py: build ->
-parse -> assert). Byte layouts are the hardware-verified ones from the spec. Scene
-uploads take the raw ``value`` bytes (the device layer base64-decodes + strips the param).
+parse -> assert). Byte layouts follow the spec and the decompiled app (each builder cites its
+source). Not all of them are hardware-verified: the device profiles note which SKUs are, and the
+short-value 0xA3 upload (:func:`scene_upload_a3`) is source-modeled from
+``MultipleControllerCommV1.makeSendBytesV2``, not live-verified. Scene uploads take the raw
+``value`` bytes (the device layer base64-decodes + strips the param).
+
+A builder raises GoveeBleNotSupported when the colour scheme cannot express the request (no such
+frame in the app for that family) and GoveeBleInvalidValue for bad caller input.
 """
 from __future__ import annotations
 
-from typing import Final, Literal
+from typing import Final, Literal, Never
 
 from ..const import FRAME_LEN, SCENE_A3_HEADER_LEN, SCENE_A3_PIECE_LEN
 from ..crypto import checksum
-from ..exceptions import GoveeBleInvalidValue
+from ..exceptions import GoveeBleInvalidValue, GoveeBleNotSupported
 from .cct import kelvin_for_tint, tint_for_kelvin
 
 
@@ -21,47 +27,54 @@ def ceil_div(a: int, b: int) -> int:
 
 
 # proType (enum pro_type)
-PRO_WRITE = 0x33
-PRO_READ = 0xAA
-PRO_MULTI_A3 = 0xA3
-PRO_MULTI_A4 = 0xA4
-PRO_MULTI_AC = 0xAC
+PRO_WRITE: Final = 0x33
+PRO_READ: Final = 0xAA
+PRO_MULTI_A1: Final = 0xA1     # multi_write: MultiPackageManager stream (received, not built here)
+PRO_MULTI_A3: Final = 0xA3
+PRO_MULTI_A4: Final = 0xA4
+PRO_MULTI_AC: Final = 0xAC
+PRO_NOTIFY: Final = 0xEE       # notify: device push notifications (wire.parse.parse_notify)
 
 # command (enum command)
-CMD_SWITCH = 0x01
-CMD_BRIGHTNESS = 0x04
-CMD_MODE = 0x05
-CMD_SOFT_VERSION = 0x06
-CMD_DEVICE_INFO = 0x07
-CMD_ZONE = 0x30            # light_direction_or_zone
-CMD_BAR_SWITCH = 0x36      # compose_light_switch
-CMD_GRADUAL_WIFI_BLE = 0xA3   # gradual/fade on BLE<->wifi handoff (W/R flag)
-CMD_SECRET_READ = 0xB1
-CMD_SECRET_WRITE = 0xB2
-CMD_PLUG_SPEC = 0xB3
-CMD_PLUG_SYNC_TIME = 0xB5
+CMD_SWITCH: Final = 0x01
+CMD_BRIGHTNESS: Final = 0x04
+CMD_MODE: Final = 0x05
+CMD_SOFT_VERSION: Final = 0x06
+CMD_DEVICE_INFO: Final = 0x07
+CMD_ZONE: Final = 0x30            # light_direction_or_zone
+CMD_BAR_SWITCH: Final = 0x36      # compose_light_switch
+CMD_GRADUAL_WIFI_BLE: Final = 0xA3   # gradual/fade on BLE<->wifi handoff (W/R flag)
+CMD_SECRET_READ: Final = 0xB1
+CMD_SECRET_WRITE: Final = 0xB2
+CMD_PLUG_SPEC: Final = 0xB3
+CMD_PLUG_SYNC_TIME: Final = 0xB5
 
 # mode (0x05) sub-mode (enum sub_mode)
-SUB_SCENE = 0x04
-SUB_COLOR_15 = 0x15        # color_rgbic_15 (H60A6/H6047/H6641)
-SUB_COLOR_0D = 0x0D        # color_cct_0d   (H6006/H6008/H6052 bulbs)
-SUB_COLOR_0B = 0x0B        # color_rgbic_0b (H61A8)
+SUB_SCENE: Final = 0x04
+SUB_COLOR_15: Final = 0x15        # color_rgbic_15 (H60A6/H6047/H6641)
+SUB_COLOR_0D: Final = 0x0D        # color_cct_0d   (H6006/H6008/H6052 bulbs)
+SUB_COLOR_0B: Final = 0x0B        # color_rgbic_0b (H61A8)
 
 # op15 (enum op15) — sub-op after 0x15
-OP15_SET_COLOR = 0x01
-OP15_SET_BRIGHTNESS = 0x02
+OP15_SET_COLOR: Final = 0x01
+OP15_SET_BRIGHTNESS: Final = 0x02
 
 # Device-info (0x07) selectors. SN (device id) and HARD (hardware version) are the reads the
 # app makes (SnController.p, HardVersionController.p); BASIC / WIFI are the binary forms.
-INFO_BASIC, INFO_WIFI, INFO_SN, INFO_HARD = 0x10, 0x11, 0x02, 0x03
+INFO_BASIC: Final = 0x10
+INFO_WIFI: Final = 0x11
+INFO_SN: Final = 0x02
+INFO_HARD: Final = 0x03
 
 # power payload values
-POWER_ON, POWER_OFF = 0x01, 0x00
-RELAY_ON, RELAY_OFF = 0x11, 0x10   # plug family
+POWER_ON: Final = 0x01
+POWER_OFF: Final = 0x00
+RELAY_ON: Final = 0x11    # plug family
+RELAY_OFF: Final = 0x10
 
 # H60A6 dialect-B DIY/graffiti protocol code; H6052 type-5 professional graffiti.
-COMM_H60A6 = 0x58
-COMM_H6052_GRAFFITI = 0x09
+COMM_H60A6: Final = 0x58
+COMM_H6052_GRAFFITI: Final = 0x09
 
 # "h60a6" = 0x15 RGBIC (segment mask); CCT is the white-slot form `15 01 ff ff ff <K> <tint> <mask>`
 # (Bytes.r type 1) with the app's Kelvin->RGB tint.
@@ -79,11 +92,25 @@ COMM_H6052_GRAFFITI = 0x09
 ColorScheme = Literal["h60a6", "h6006", "h61a8", "h6188", "h6061"]
 
 
+def _unsupported_scheme(scheme: Never) -> Never:
+    """Exhaustiveness guard: mypy proves every builder handles each ``ColorScheme``; at runtime (a
+    string outside the Literal) refuse rather than send another family's frame."""
+    raise GoveeBleNotSupported(f"unknown colour scheme {scheme!r}")
+
+
 def _check_range(name: str, value: int, lo: int, hi: int) -> int:
     """Return ``value`` if it is an int in [lo, hi]; else raise GoveeBleInvalidValue."""
     if isinstance(value, bool) or not isinstance(value, int) or not lo <= value <= hi:
         raise GoveeBleInvalidValue(f"{name} must be an integer in {lo}..{hi}, got {value!r}")
     return value
+
+
+def _clamp_pct(pct: int) -> int:
+    """``pct`` clamped to 0..100; GoveeBleInvalidValue for a non-int (``bool`` included), the same
+    type check as :func:`_check_range` (a float would otherwise fail inside ``bytes()``)."""
+    if isinstance(pct, bool) or not isinstance(pct, int):
+        raise GoveeBleInvalidValue(f"brightness must be an integer, got {pct!r}")
+    return max(0, min(100, pct))
 
 
 def _check_rgb(r: int, g: int, b: int) -> None:
@@ -96,7 +123,7 @@ def _check_kelvin(kelvin: int) -> int:
     return _check_range("kelvin", kelvin, 0, 0xFFFF)
 
 
-KELVIN_STEP = 100   # the app only ever sends whole 100 K steps (Constant colour->Kelvin table)
+KELVIN_STEP: Final = 100   # the app only ever sends whole 100 K steps (Constant colour->Kelvin table)
 
 
 def normalize_kelvin(kelvin: int, lo: int | None = None, hi: int | None = None) -> int:
@@ -132,9 +159,9 @@ def normalize_kelvin(kelvin: int, lo: int | None = None, hi: int | None = None) 
 # (BleUtils.makeSelectedTwoBytes); above that it is ceil(n/8) bytes, LSB first
 # (BleUtils.X, the `length > 16` branch in color/Bytes.G/b/d/C). Bytes.C caps the width at 7
 # bytes (it truncates a longer mask and logs an analytics event); we refuse instead.
-LEGACY_MASK_SEGMENTS = 16
-MAX_MASK_BYTES = 7
-MAX_MASK_SEGMENTS = MAX_MASK_BYTES * 8
+LEGACY_MASK_SEGMENTS: Final = 16
+MAX_MASK_BYTES: Final = 7
+MAX_MASK_SEGMENTS: Final = MAX_MASK_BYTES * 8
 
 
 def mask_width(segments: int) -> int:
@@ -192,8 +219,8 @@ def switch(on: bool, *, relay: bool = False) -> bytes:
 
 
 def brightness(pct: int) -> bytes:
-    """33 04 <level 0-100>."""
-    return frame(PRO_WRITE, CMD_BRIGHTNESS, max(0, min(100, pct)))
+    """33 04 <level 0-100> (clamped). Raises GoveeBleInvalidValue for a non-int."""
+    return frame(PRO_WRITE, CMD_BRIGHTNESS, _clamp_pct(pct))
 
 
 def brightness_raw(level: int) -> bytes:
@@ -205,11 +232,21 @@ def brightness_raw(level: int) -> bytes:
 # ── Glide Hexa (H6061) whole-device writes ───────────────────────────────────
 # Source (Govee Home 7.7.02, split pact_h6061 + base.apk): the panel count n is the size of the
 # user's layout, else ColorPieceConfig.Companion.f(51) = Support.getBulbStringMaxNum(51) = 23.
-H6061_MAX_PANELS = 23
-H6061_GROUP_SIZE = 4          # Bytes.m / BleUtils.w0(colors, 4): four colours per group frame
-H6061_MASK_BYTES = 3          # ColorPieceConfig.k: piece count 23 rounds up to a 24-bit position set
-OP15_SET_GROUP_COLOR = 0x04   # Bytes.m: [0x15, 0x04, group, RGB x<=4]
-H6061_KELVIN_RANGE = (2000, 9000)   # KelvinConfig: no entry for 51 -> version 0
+H6061_MAX_PANELS: Final = 23
+H6061_GROUP_SIZE: Final = 4          # Bytes.m / BleUtils.w0(colors, 4): four colours per group frame
+H6061_MASK_BYTES: Final = 3          # ColorPieceConfig.k: piece count 23 rounds up to a 24-bit position set
+OP15_SET_GROUP_COLOR: Final = 0x04   # Bytes.m: [0x15, 0x04, group, RGB x<=4]
+H6061_KELVIN_RANGE: Final = (2000, 9000)   # KelvinConfig: no entry for 51 -> version 0
+
+# Segment count a whole-device builder assumes when the caller passes none (``Device`` always passes
+# the profile's count). ``h6061`` takes the app's own fallback above, the 23-panel layout; ``h60a6`` and
+# ``h61a8`` take their namesake SKU's count (H60A6 13 segments, H61A8 15). The 0x0d schemes carry no mask.
+_DEFAULT_SEGMENTS: Final[dict[ColorScheme, int]] = {"h60a6": 13, "h61a8": 15, "h6061": H6061_MAX_PANELS}
+
+
+def _segments_or_default(scheme: ColorScheme, segments: int | None) -> int:
+    """``segments``, or the scheme's default count when it is None (an explicit 0 stays 0)."""
+    return segments if segments is not None else _DEFAULT_SEGMENTS.get(scheme, 0)
 
 
 def _h6061_panels(panels: int) -> int:
@@ -244,16 +281,15 @@ def _h6061_color_temp(kelvin: int, panels: int, tint: tuple[int, int, int] | Non
     tint colour passes that exact colour (``Zt`` writes the picked colour, whichever of the Kelvin
     step's two colours it is)."""
     n = _h6061_panels(panels)
-    khi, klo = (kelvin >> 8) & 0xFF, kelvin & 0xFF
     mask = all_segments_mask(n).to_bytes(H6061_MASK_BYTES, "little")
     return frame(PRO_WRITE, CMD_MODE, SUB_COLOR_15, OP15_SET_COLOR,
-                 *(tint if tint is not None else tint_for_kelvin(kelvin)), khi, klo, *mask)
+                 *(tint if tint is not None else tint_for_kelvin(kelvin)), *kelvin.to_bytes(2, "big"), *mask)
 
 
 # Schemes whose colour screen turns an RGB pick that is exactly a Kelvin tint colour into a CCT write
 # (every scheme with CCT; h61a8 has none). Config.Yt (0x15 family, h60a6) / Config.bu (0x0d family,
 # h6006 and h6188) / ColorModeControllerConfig.k + Config.Zt (h6061), all keyed on KelvinConfig.i.
-_RGB_PICK_AS_KELVIN_SCHEMES: Final = frozenset({"h60a6", "h6006", "h6188", "h6061"})
+_RGB_PICK_AS_KELVIN_SCHEMES: Final[frozenset[ColorScheme]] = frozenset({"h60a6", "h6006", "h6188", "h6061"})
 
 
 def rgb_as_kelvin(r: int, g: int, b: int, scheme: ColorScheme,
@@ -281,87 +317,113 @@ def rgb_as_kelvin(r: int, g: int, b: int, scheme: ColorScheme,
 
 
 def _rgb_pick_color_temp(r: int, g: int, b: int, kelvin: int, scheme: ColorScheme,
-                         mask: int, segments: int | None) -> bytes:
+                         segments: int | None, mask: int | None = None) -> bytes:
     """The CCT frame the app writes for an RGB pick that :func:`rgb_as_kelvin` turned into
     ``kelvin``; the PICKED colour is the tint, not the table's first colour for ``kelvin`` (a Kelvin
-    step has two colours):
+    step has two colours). ``mask`` None is the whole device:
 
     * ``h60a6`` (``Config.Yt`` -> ``Bytes.r``): ``15 01 ff ff ff <K> <picked RGB> <mask>``, one frame
-      with the mask the RGB frame would have used (the slider path, :func:`color_temp`, is the same
-      frame over the all-segments mask with the Kelvin's first tint);
+      with the mask the RGB frame would have used, all ``segments`` when ``mask`` is None (the slider
+      path, :func:`color_temp`, is the same frame over the all-segments mask with the Kelvin's first
+      tint);
     * ``h6006`` / ``h6188`` (``Config.bu`` -> ``Bytes.p``): ``0d <picked RGB> <K> <first tint of K>``,
       whole device (no mask), the same frame for both schemes (the white-slot form of the h6188
       slider is not used here);
     * ``h6061`` (``Config.Zt`` -> ``Bytes.u``): ``15 01 <picked RGB> <K> <24-bit mask>`` over the
-      ``segments`` panels (``mask`` unused)."""
-    if scheme == "h6061":
-        return _h6061_color_temp(kelvin, segments or H6061_MAX_PANELS, (r, g, b))
-    if scheme in ("h6006", "h6188"):
-        khi, klo = (kelvin >> 8) & 0xFF, kelvin & 0xFF
-        return frame(PRO_WRITE, CMD_MODE, SUB_COLOR_0D, r, g, b, khi, klo, *tint_for_kelvin(kelvin))
-    return segment_color_temp(mask, kelvin, scheme, segments, tint=(r, g, b))
+      ``segments`` panels (whole device only)."""
+    match scheme:
+        case "h60a6":
+            if mask is None:
+                segments = _segments_or_default(scheme, segments)
+                mask = all_segments_mask(segments)
+            return segment_color_temp(mask, kelvin, scheme, segments, tint=(r, g, b))
+        case "h6006" | "h6188":
+            return frame(PRO_WRITE, CMD_MODE, SUB_COLOR_0D, r, g, b, *kelvin.to_bytes(2, "big"),
+                         *tint_for_kelvin(kelvin))
+        case "h6061":
+            return _h6061_color_temp(kelvin, _segments_or_default(scheme, segments), (r, g, b))
+        case "h61a8":   # rgb_as_kelvin never picks a Kelvin here
+            raise GoveeBleNotSupported("h61a8 has no colour-temperature capability")
+        case _:
+            _unsupported_scheme(scheme)
 
 
 # ── colour ───────────────────────────────────────────────────────────────────
-def color_rgb_frames(r: int, g: int, b: int, scheme: ColorScheme, segments: int = 13,
+def color_rgb_frames(r: int, g: int, b: int, scheme: ColorScheme, segments: int | None = None,
                      kelvin_range: tuple[int, int] | None = None) -> list[bytes]:
     """Whole-device RGB pick as the frames the app sends: one for every scheme except ``h6061``, whose
     panels are written in groups of four (see :func:`color_rgb`, which is the plain single-frame form).
     An RGB that is a Kelvin tint colour within ``kelvin_range`` (the SKU's range) is sent as one CCT
     frame instead, exactly as the app does, on every scheme with a colour-temperature mode (see
     :func:`rgb_as_kelvin` and :func:`_rgb_pick_color_temp`); ``kelvin_range`` None sends plain RGB
-    (``h6061`` defaults to its own range)."""
+    (``h6061`` defaults to its own range). ``segments`` None is the scheme's default count
+    (:data:`_DEFAULT_SEGMENTS`; 23 panels on ``h6061``, the app's fallback)."""
     _check_rgb(r, g, b)
+    n = _segments_or_default(scheme, segments)
     kelvin = rgb_as_kelvin(r, g, b, scheme, kelvin_range)
     if kelvin is not None:
-        mask = 0 if scheme in ("h6006", "h6188", "h6061") else all_segments_mask(segments)
-        return [_rgb_pick_color_temp(r, g, b, kelvin, scheme, mask, segments)]
+        return [_rgb_pick_color_temp(r, g, b, kelvin, scheme, n)]
     if scheme == "h6061":
-        return _h6061_group_frames(r, g, b, segments)
-    return [color_rgb(r, g, b, scheme, segments)]
+        return _h6061_group_frames(r, g, b, n)
+    return [color_rgb(r, g, b, scheme, n)]
 
 
-def color_rgb(r: int, g: int, b: int, scheme: ColorScheme, segments: int = 13) -> bytes:
-    """Solid RGB, per-family SubModeColor.getWriteBytes (whole-device = all-segments mask).
-    ``h6061`` has no single-frame form (it needs :func:`color_rgb_frames`)."""
+def color_rgb(r: int, g: int, b: int, scheme: ColorScheme, segments: int | None = None) -> bytes:
+    """Solid RGB, per-family SubModeColor.getWriteBytes (whole-device = all-segments mask;
+    ``segments`` None is the scheme's default count, :data:`_DEFAULT_SEGMENTS`). ``h6061`` has no
+    single-frame form (it needs :func:`color_rgb_frames`): GoveeBleNotSupported."""
     _check_rgb(r, g, b)
-    if scheme == "h6061":
-        raise ValueError("h6061 whole-device RGB is several frames; use color_rgb_frames")
-    if scheme in ("h6006", "h6188"):
-        return frame(PRO_WRITE, CMD_MODE, SUB_COLOR_0D, r, g, b, 0, 0, 0, 0, 0)
-    if scheme == "h61a8":
-        lo, hi = _mask_le(_check_mask(all_segments_mask(segments), LEGACY_MASK_SEGMENTS))
-        return frame(PRO_WRITE, CMD_MODE, SUB_COLOR_0B, r, g, b, lo, hi)
-    return frame(PRO_WRITE, CMD_MODE, SUB_COLOR_15, OP15_SET_COLOR, r, g, b, 0, 0, 0, 0, 0,
-                 *_mask_bytes(all_segments_mask(segments), segments))
+    match scheme:
+        case "h60a6":
+            n = _segments_or_default(scheme, segments)
+            return frame(PRO_WRITE, CMD_MODE, SUB_COLOR_15, OP15_SET_COLOR, r, g, b, 0, 0, 0, 0, 0,
+                         *_mask_bytes(all_segments_mask(n), n))
+        case "h6006" | "h6188":
+            return frame(PRO_WRITE, CMD_MODE, SUB_COLOR_0D, r, g, b, 0, 0, 0, 0, 0)
+        case "h61a8":
+            mask = all_segments_mask(_segments_or_default(scheme, segments))
+            return frame(PRO_WRITE, CMD_MODE, SUB_COLOR_0B, r, g, b,
+                         *_mask_le(_check_mask(mask, LEGACY_MASK_SEGMENTS)))
+        case "h6061":
+            raise GoveeBleNotSupported("h6061 whole-device RGB is several frames; use color_rgb_frames")
+        case _:
+            _unsupported_scheme(scheme)
 
 
-def color_temp(kelvin: int, scheme: ColorScheme, segments: int = 13) -> bytes:
+def color_temp(kelvin: int, scheme: ColorScheme, segments: int | None = None) -> bytes:
     """Whole-device colour temperature, always with the app's Kelvin->RGB tint
     (``wire.cct.tint_for_kelvin``): ``h6006`` = ``0d <tint> <K> <tint>``, ``h6188`` =
     ``0d ff ff ff <K> <tint>``, ``h60a6`` = ``15 01 ff ff ff <K> <tint> <mask>`` (this is just
     segment_color_temp with the all-segments mask), ``h6061`` = ``15 01 <tint> <K> <24-bit mask>``
-    over ``segments`` panels. The builder sends ``kelvin`` as given; the ``Device`` layer applies
-    :func:`normalize_kelvin` first."""
+    over ``segments`` panels (``segments`` None is the scheme's default count,
+    :data:`_DEFAULT_SEGMENTS`). ``h61a8`` has no colour temperature: GoveeBleNotSupported. The
+    builder sends ``kelvin`` as given; the ``Device`` layer applies :func:`normalize_kelvin` first."""
     if scheme == "h61a8":
-        raise ValueError("h61a8 has no colour-temperature capability")
+        raise GoveeBleNotSupported("h61a8 has no colour-temperature capability")
     _check_kelvin(kelvin)
-    if scheme == "h6061":
-        return _h6061_color_temp(kelvin, segments)
-    if scheme == "h6006":
-        # Config.bu -> Bytes.p(tint, K): [0d, tint r g b, kelvin u2be, tint r g b] - the tint
-        # sits in BOTH colour slots (H6008/H6006/H6052; also H6004 via the same builder).
-        khi, klo = (kelvin >> 8) & 0xFF, kelvin & 0xFF
-        tint = tint_for_kelvin(kelvin)
-        return frame(PRO_WRITE, CMD_MODE, SUB_COLOR_0D, *tint, khi, klo, *tint)
-    if scheme == "h6188":
-        # Config.GM -> Bytes.A(kelvin, RGB_WHITE): [0d, ff ff ff, kelvin u2be, tint r g b].
-        khi, klo = (kelvin >> 8) & 0xFF, kelvin & 0xFF
-        return frame(PRO_WRITE, CMD_MODE, SUB_COLOR_0D, 0xFF, 0xFF, 0xFF, khi, klo,
-                     *tint_for_kelvin(kelvin))
-    return segment_color_temp(all_segments_mask(segments), kelvin, scheme, segments)
+    match scheme:
+        case "h60a6":
+            n = _segments_or_default(scheme, segments)
+            return segment_color_temp(all_segments_mask(n), kelvin, scheme, n)
+        case "h6006":
+            # Config.bu -> Bytes.p(tint, K): [0d, tint r g b, kelvin u2be, tint r g b] - the tint
+            # sits in BOTH colour slots (H6008/H6006/H6052; also H6004 via the same builder).
+            tint = tint_for_kelvin(kelvin)
+            return frame(PRO_WRITE, CMD_MODE, SUB_COLOR_0D, *tint, *kelvin.to_bytes(2, "big"), *tint)
+        case "h6188":
+            # Config.GM -> Bytes.A(kelvin, RGB_WHITE): [0d, ff ff ff, kelvin u2be, tint r g b].
+            return frame(PRO_WRITE, CMD_MODE, SUB_COLOR_0D, 0xFF, 0xFF, 0xFF, *kelvin.to_bytes(2, "big"),
+                         *tint_for_kelvin(kelvin))
+        case "h6061":
+            return _h6061_color_temp(kelvin, _segments_or_default(scheme, segments))
+        case _:
+            _unsupported_scheme(scheme)
 
 
+# The 0x0d family (h6006 / h6188) has no per-segment frame in the app: its colour writer, colour
+# instruction version 2 = Config.K[2] (Config.at in the current decompile, cited as Config.bu
+# above), takes the position set as an unused argument, and its builders Bytes.f / Bytes.p /
+# Bytes.A carry no mask. The segment builders below refuse it.
 def segment_rgb(mask: int, r: int, g: int, b: int, scheme: ColorScheme,
                 segments: int | None = None,
                 kelvin_range: tuple[int, int] | None = None) -> bytes:
@@ -370,19 +432,24 @@ def segment_rgb(mask: int, r: int, g: int, b: int, scheme: ColorScheme,
     the mask is the legacy two bytes. On ``h60a6`` a colour that is a Kelvin tint colour within
     ``kelvin_range`` (the SKU's range) is sent as the CCT frame ``15 01 ff ff ff <K> <picked RGB>
     <mask>`` instead (``Config.Yt``, same mask), see :func:`rgb_as_kelvin`; ``kelvin_range`` None
-    sends plain RGB."""
+    sends plain RGB. GoveeBleNotSupported on the whole-device-only schemes (0x0d, ``h6061``)."""
     _check_rgb(r, g, b)
-    if scheme == "h6061":
-        raise ValueError("h6061 is whole-device only (per-panel colour is not modelled)")
-    if scheme == "h61a8":
-        lo, hi = _mask_le(_check_mask(mask, LEGACY_MASK_SEGMENTS))
-        return frame(PRO_WRITE, CMD_MODE, SUB_COLOR_0B, r, g, b, lo, hi)
-    if scheme == "h60a6":
-        kelvin = rgb_as_kelvin(r, g, b, scheme, kelvin_range)
-        if kelvin is not None:
-            return _rgb_pick_color_temp(r, g, b, kelvin, scheme, mask, segments)
-    return frame(PRO_WRITE, CMD_MODE, SUB_COLOR_15, OP15_SET_COLOR, r, g, b, 0, 0, 0, 0, 0,
-                 *_mask_bytes(mask, segments))
+    match scheme:
+        case "h60a6":
+            kelvin = rgb_as_kelvin(r, g, b, scheme, kelvin_range)
+            if kelvin is not None:
+                return _rgb_pick_color_temp(r, g, b, kelvin, scheme, segments, mask)
+            return frame(PRO_WRITE, CMD_MODE, SUB_COLOR_15, OP15_SET_COLOR, r, g, b, 0, 0, 0, 0, 0,
+                         *_mask_bytes(mask, segments))
+        case "h61a8":
+            return frame(PRO_WRITE, CMD_MODE, SUB_COLOR_0B, r, g, b,
+                         *_mask_le(_check_mask(mask, LEGACY_MASK_SEGMENTS)))
+        case "h6006" | "h6188":
+            raise GoveeBleNotSupported(f"{scheme} colour is whole-device only (no segment mask)")
+        case "h6061":
+            raise GoveeBleNotSupported("h6061 is whole-device only (per-panel colour is not modelled)")
+        case _:
+            _unsupported_scheme(scheme)
 
 
 def segment_color_temp(mask: int, kelvin: int, scheme: ColorScheme,
@@ -392,33 +459,45 @@ def segment_color_temp(mask: int, kelvin: int, scheme: ColorScheme,
     (``Bytes.r`` type 1; the tint is ``Constant.getTemColorByKelvin``). ``segments`` is the
     device's segment count, which sets the mask width (see :func:`mask_width`); omitted, the
     mask is the legacy two bytes. Only the 0x15 family
-    embeds a segment mask in the CCT frame — h6006's 0x0d has no mask (whole-device only) and
-    h61a8 has no CCT at all — so masked CCT is 0x15-only. ``tint`` defaults to the app's tint for
-    ``kelvin`` (the slider path); an RGB pick that is itself a tint colour passes that exact colour
-    (``Config.Yt`` writes the picked colour, whichever of the Kelvin step's two colours it is)."""
-    if scheme == "h61a8":
-        raise ValueError("h61a8 has no colour-temperature capability")
-    if scheme in ("h6006", "h6188"):
-        raise ValueError(f"{scheme} colour-temperature is whole-device only (no segment mask)")
-    if scheme == "h6061":
-        raise ValueError("h6061 is whole-device only (per-panel colour temperature is not modelled)")
-    _check_kelvin(kelvin)
-    mask_bytes = _mask_bytes(mask, segments)
-    khi, klo = (kelvin >> 8) & 0xFF, kelvin & 0xFF
-    return frame(PRO_WRITE, CMD_MODE, SUB_COLOR_15, OP15_SET_COLOR,
-                 0xFF, 0xFF, 0xFF, khi, klo, *(tint if tint is not None else tint_for_kelvin(kelvin)),
-                 *mask_bytes)
+    embeds a segment mask in the CCT frame — the 0x0d frame has no mask (whole-device only) and
+    h61a8 has no CCT at all — so masked CCT is 0x15-only (GoveeBleNotSupported elsewhere). ``tint``
+    defaults to the app's tint for ``kelvin`` (the slider path); an RGB pick that is itself a tint
+    colour passes that exact colour (``Config.Yt`` writes the picked colour, whichever of the Kelvin
+    step's two colours it is)."""
+    match scheme:
+        case "h60a6":
+            _check_kelvin(kelvin)
+            mask_bytes = _mask_bytes(mask, segments)
+            return frame(PRO_WRITE, CMD_MODE, SUB_COLOR_15, OP15_SET_COLOR,
+                         0xFF, 0xFF, 0xFF, *kelvin.to_bytes(2, "big"),
+                         *(tint if tint is not None else tint_for_kelvin(kelvin)), *mask_bytes)
+        case "h61a8":
+            raise GoveeBleNotSupported("h61a8 has no colour-temperature capability")
+        case "h6006" | "h6188":
+            raise GoveeBleNotSupported(f"{scheme} colour-temperature is whole-device only (no segment mask)")
+        case "h6061":
+            raise GoveeBleNotSupported(
+                "h6061 is whole-device only (per-panel colour temperature is not modelled)")
+        case _:
+            _unsupported_scheme(scheme)
 
 
 def segment_brightness(mask: int, pct: int, scheme: ColorScheme,
                        segments: int | None = None) -> bytes:
-    """Per-segment brightness (0x15 op 0x02); only the 0x15 family supports it."""
-    if scheme == "h61a8":
-        raise ValueError("h61a8 has no per-segment brightness")
-    if scheme == "h6061":
-        raise ValueError("h6061 is whole-device only (per-panel brightness is not modelled)")
-    return frame(PRO_WRITE, CMD_MODE, SUB_COLOR_15, OP15_SET_BRIGHTNESS, max(0, min(100, pct)),
-                 *_mask_bytes(mask, segments))
+    """Per-segment brightness ``15 02 <pct> <mask>`` (``Bytes.G``; ``pct`` clamped to 0..100); only
+    the 0x15 family has it (GoveeBleNotSupported elsewhere)."""
+    match scheme:
+        case "h60a6":
+            return frame(PRO_WRITE, CMD_MODE, SUB_COLOR_15, OP15_SET_BRIGHTNESS, _clamp_pct(pct),
+                         *_mask_bytes(mask, segments))
+        case "h61a8":
+            raise GoveeBleNotSupported("h61a8 has no per-segment brightness")
+        case "h6006" | "h6188":
+            raise GoveeBleNotSupported(f"{scheme} has no per-segment brightness (0x0d is whole-device only)")
+        case "h6061":
+            raise GoveeBleNotSupported("h6061 is whole-device only (per-panel brightness is not modelled)")
+        case _:
+            _unsupported_scheme(scheme)
 
 
 # ── zones / bars ─────────────────────────────────────────────────────────────
@@ -437,17 +516,23 @@ def bar_switch(left: bool, right: bool) -> bytes:
 def scene_activate(code: int) -> bytes:
     """33 05 04 <code u2le>."""
     _check_range("scene code", code, 0, 0xFFFF)
-    return frame(PRO_WRITE, CMD_MODE, SUB_SCENE, code & 0xFF, (code >> 8) & 0xFF)
+    return frame(PRO_WRITE, CMD_MODE, SUB_SCENE, *code.to_bytes(2, "little"))
 
 
 def scene_upload_a3(value: bytes, comm_byte: int) -> list[bytes]:
-    """0xA3 scene/DIY upload (MultipleControllerCommV1): frames of
-    [0x01(marker), packet_count, comm_byte, value…], seq 0,1,…, last=0xFF (data-bearing)."""
-    pieces = ceil_div(SCENE_A3_HEADER_LEN + len(value), SCENE_A3_PIECE_LEN)  # ceil over header + value
+    """0xA3 scene/DIY upload, ``MultipleControllerCommV1.makeSendBytesV2`` with a one-byte
+    ``commBytes`` (``makeSendBytesV1``): the stream ``[0x01 marker, packet_count, comm_byte, value…]``
+    cut into 17-byte pieces, one per frame, seq 0, 1, …, the last 0xFF. START (seq 0) and END (0xFF)
+    are always two frames: a value of 14 bytes or fewer rides whole in START, followed by an empty END
+    (packet_count 2); a longer value's final chunk rides in END. ``packet_count`` counts every frame."""
+    # makeSendBytesV2 always appends the separate END bArr2 and starts packetCount at 2, so even a
+    # value that fits in START is two frames. That short-value START + empty END form is
+    # source-modeled; not live-verified until checked on the H6006/H6008 bench.
+    pieces = max(2, ceil_div(SCENE_A3_HEADER_LEN + len(value), SCENE_A3_PIECE_LEN))
     if pieces > 0xFF:
         # The count is one byte and seq 0xFF is the end marker.
         raise GoveeBleInvalidValue(f"scene payload too large for 0xA3 upload ({pieces} packets)")
-    stream = bytes([0x01, pieces & 0xFF, comm_byte & 0xFF]) + value
+    stream = bytes([0x01, pieces, comm_byte & 0xFF]) + value
     out: list[bytes] = []
     for i in range(pieces):
         piece = stream[i * SCENE_A3_PIECE_LEN : (i + 1) * SCENE_A3_PIECE_LEN]
@@ -456,29 +541,33 @@ def scene_upload_a3(value: bytes, comm_byte: int) -> list[bytes]:
     return out
 
 
-def scene_upload_a4_mtu(value: bytes, comm_byte: int, *, mtu: int = 20) -> list[bytes]:
-    """0xA4-MTU multi-packet upload (makeSendBytesMtu). START [A4 00 00 01 cntLo cntHi comm
-    value x (mtu-8)]; MIDDLE [A4 seqLo seqHi value x (mtu-4)] (1-based); END [A4 FF FF value]
-    (data-bearing). Exact-length frames (BCC appended, not zero-padded)."""
-    def f(body: bytes) -> bytes:
-        return body + bytes([checksum(body)])
+# makeSendBytesMtu's mtuSize is @IntRange(from = 20, to = PlaybackStateCompat.X = 512).
+_A4_MTU_MIN: Final = 20
+_A4_MTU_MAX: Final = 512
 
+
+def scene_upload_a4_mtu(value: bytes, comm_byte: int, *, mtu: int = 20) -> list[bytes]:
+    """0xA4-MTU multi-packet upload (``MultipleControllerCommV1.makeSendBytesMtu``). START [A4 00 00 01
+    cntLo cntHi comm value x (mtu-8)]; MIDDLE [A4 seqLo seqHi value x (mtu-4)] (1-based); END [A4 FF FF
+    value] carries the final chunk, or nothing when the whole value fits in START. ``cnt`` counts every
+    frame. Exact-length frames (BCC appended, not zero-padded). GoveeBleInvalidValue for an ``mtu``
+    outside the app's 20..512 or a value too long for the u16 count (seq 0xFFFF is the END marker)."""
+    _check_range("mtu", mtu, _A4_MTU_MIN, _A4_MTU_MAX)
     start_cap, mid_cap = mtu - 8, mtu - 4
     head, rest = value[:start_cap], value[start_cap:]
-    chunks = [rest[i : i + mid_cap] for i in range(0, len(rest), mid_cap)]
-    total = 1 + (len(chunks) if chunks else 1)
-    out = [f(bytes([PRO_MULTI_A4, 0x00, 0x00, 0x01, total & 0xFF, (total >> 8) & 0xFF,
-                    comm_byte & 0xFF]) + head)]
-    if not chunks:
-        out.append(f(bytes([PRO_MULTI_A4, 0xFF, 0xFF])))
-        return out
-    last = len(chunks) - 1
-    for idx, chunk in enumerate(chunks):
-        if idx == last:
-            out.append(f(bytes([PRO_MULTI_A4, 0xFF, 0xFF]) + chunk))
-        else:
-            seq = idx + 1
-            out.append(f(bytes([PRO_MULTI_A4, seq & 0xFF, (seq >> 8) & 0xFF]) + chunk))
+    total = 1 + max(1, ceil_div(len(rest), mid_cap))
+    if total > 0xFFFF:
+        raise GoveeBleInvalidValue(f"scene payload too large for 0xA4 upload ({total} packets)")
+
+    def _with_bcc(body: bytes) -> bytes:
+        return body + bytes([checksum(body)])
+
+    chunks = [rest[i : i + mid_cap] for i in range(0, len(rest), mid_cap)] or [b""]
+    out = [_with_bcc(bytes([PRO_MULTI_A4, 0x00, 0x00, 0x01, *total.to_bytes(2, "little"), comm_byte & 0xFF])
+                     + head)]
+    for seq, chunk in enumerate(chunks, start=1):
+        marker = b"\xff\xff" if seq == len(chunks) else seq.to_bytes(2, "little")
+        out.append(_with_bcc(bytes([PRO_MULTI_A4]) + marker + chunk))
     return out
 
 
@@ -486,12 +575,11 @@ def scene_upload_a4_mtu(value: bytes, comm_byte: int, *, mtu: int = 20) -> list[
 def plug_sync_time(unix_ts: int, tz_hour: int, tz_min: int) -> bytes:
     """33 B5 <u4be epoch> 01 <s1 tz_hour> <s1 tz_min>."""
     ts = unix_ts & 0xFFFFFFFF
-    return frame(PRO_WRITE, CMD_PLUG_SYNC_TIME,
-                 (ts >> 24) & 0xFF, (ts >> 16) & 0xFF, (ts >> 8) & 0xFF, ts & 0xFF,
+    return frame(PRO_WRITE, CMD_PLUG_SYNC_TIME, *ts.to_bytes(4, "big"),
                  0x01, tz_hour & 0xFF, tz_min & 0xFF)
 
 
-SECRET_LEN = 8
+SECRET_LEN: Final = 8
 
 
 def secret_check(secret: bytes) -> bytes:
@@ -503,18 +591,22 @@ def secret_check(secret: bytes) -> bytes:
 
 # ── read requests (0xAA / 0xAC) ──────────────────────────────────────────────
 def power_query() -> bytes:
+    """aa 01 01: read the power / relay state (reply: parse_power)."""
     return frame(PRO_READ, CMD_SWITCH, 0x01)
 
 
 def brightness_query() -> bytes:
+    """aa 04 01: read the brightness (reply: parse_brightness)."""
     return frame(PRO_READ, CMD_BRIGHTNESS, 0x01)
 
 
 def mode_query() -> bytes:
+    """aa 05 01: read the mode report (reply: parse_active_scene / parse_kelvin / parse_mode_0d)."""
     return frame(PRO_READ, CMD_MODE, 0x01)
 
 
 def bar_switch_query() -> bytes:
+    """aa 36: read H6047's two bars' power (reply: parse_bar_switch)."""
     return frame(PRO_READ, CMD_BAR_SWITCH)
 
 
@@ -529,20 +621,25 @@ def gradual_query() -> bytes:
 
 
 def secret_read() -> bytes:
+    """aa b1: read the 8-byte account-lock secret (reply: parse_secret)."""
     return frame(PRO_READ, CMD_SECRET_READ)
 
 
 def plug_spec_query() -> bytes:
+    """aa b3: read the plug's spec byte (reply: parse_plug_spec). Spec surface: Device does not send it."""
     return frame(PRO_READ, CMD_PLUG_SPEC)
 
 
-CMD_BULB_COLOR_V1 = 0xA2   # bulb_string_color_read (mechanism-B V1: colour only)
-CMD_BULB_COLOR_V2 = 0xA5   # local_color_read       (mechanism-B V2: + brightness)
+CMD_BULB_COLOR_V1: Final = 0xA2   # bulb_string_color_read (mechanism-B V1: colour only)
+CMD_BULB_COLOR_V2: Final = 0xA5   # local_color_read       (mechanism-B V2: + brightness)
 
 
 def bulb_group_query(batch_seq: int, *, v2: bool = True) -> bytes:
     """Mechanism-B per-group colour read request: ``AA <A5|A2> <batch_seq>`` (1-based
-    batch number, AbsSingleController.p). V2 (0xA5) carries per-segment brightness."""
+    batch number, AbsSingleController.p). V2 (0xA5) carries per-segment brightness.
+
+    Device always sends V2; ``v2=False`` (the V1 ``aa a2`` read, BulbStringColorController) is
+    spec surface for tools and tests."""
     return frame(PRO_READ, CMD_BULB_COLOR_V2 if v2 else CMD_BULB_COLOR_V1, batch_seq & 0xFF)
 
 
@@ -556,31 +653,34 @@ def soft_version_query() -> bytes:
     return frame(PRO_READ, CMD_SOFT_VERSION)
 
 
-CMD_IC_NUM = 0x40   # ic_num (ic_segment_read reply): live IC/segment capability read
+CMD_IC_NUM: Final = 0x40   # ic_num (ic_segment_read reply): live IC/segment capability read
 
 
 def ic_count_query() -> bytes:
-    """aa 40: read the live IC (lamp-bead) count + device-computed group/segment count
-    (ControllerOnlyReadIcSegmentNum). The ONLY live-BLE capability read — lets a client
-    discover true segmentation (e.g. H6641's mechanism A-direct group count) instead of
-    relying on the static per-SKU table."""
+    """aa 40: read the live IC (lamp-bead) count (ControllerOnlyReadIcSegmentNum; reply:
+    parse_ic_count). The app does not use the reply's third byte for H6641: the piece and group
+    counts are derived client-side from the IC count, as the app does
+    (devices/_readback.live_ic_pieces: ceil(clamp(IC, 41, 70) / 5) pieces, ceil(pieces / 4) groups)."""
     return frame(PRO_READ, CMD_IC_NUM)
 
 
-CMD_SECTION_COUNT = 0x41   # striplight SINGLE_IC_SEGMENT_NUM (H6062); on_off_memory on other SKUs
+CMD_SECTION_COUNT: Final = 0x41   # striplight SINGLE_IC_SEGMENT_NUM (H6062); on_off_memory on other SKUs
 
 
 def section_count_query() -> bytes:
     """aa 41: read the H6062's ``[IC count s16be, sectionNum u8]`` (``striplight``
     ``ControllerIcSegmentNum``, ``BleProtocol.SINGLE_IC_SEGMENT_NUM`` = 65). ``sectionNum`` is
     the segment count the app uses for every mask and the ``aa a5`` group walk. Not the
-    ``aa 40`` read of :func:`ic_count_query` (``SINGLE_IC_NUM_AND_PIECE_NUM`` = 64), whose reply
-    carries a precomputed group count instead."""
+    ``aa 40`` read of :func:`ic_count_query` (``SINGLE_IC_NUM_AND_PIECE_NUM`` = 64), from whose IC
+    count the app derives the pieces client-side instead."""
     return frame(PRO_READ, CMD_SECTION_COUNT)
 
 
-def status_query(full: bool = False) -> bytes:
-    """0xAC status request: [AC, 03, N, cmd…]. full = dual-zone (adds 0xA5)."""
+def status_query(*, full: bool = False) -> bytes:
+    """0xAC status request: [AC, 03, N, cmd…]. full = dual-zone (adds 0xA5).
+
+    Device always sends ``full=True``; the single-zone ``ac 03 02 41 30`` (``full=False``) is spec
+    surface for tools and tests."""
     if full:
         return frame(PRO_MULTI_AC, 0x03, 0x03, 0x41, 0x30, 0xA5)
     return frame(PRO_MULTI_AC, 0x03, 0x02, 0x41, 0x30)

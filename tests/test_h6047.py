@@ -126,9 +126,11 @@ def test_whole_device_off_marks_both_bars_off_on_leaves_them_unknown() -> None:
     d = _dev()
     asyncio.run(d.set_power(False))
     assert d.state.is_on is False and d.state.zone_power == {0: False, 1: False}
+    assert d.zone_is_on("left") is False and d.zone_is_on("right") is False
     asyncio.run(d.set_power(True))
     # the app learns which bars lit from the next aa 36 heartbeat; so does the library
     assert d.state.is_on is True and d.state.zone_power == {}
+    assert d.zone_is_on("left") is None and d.zone_is_on("right") is None   # unknown, not off
 
 
 def test_zone_power_after_whole_device_on_rereads_the_bars() -> None:
@@ -155,6 +157,9 @@ def test_zone_power_is_the_combined_33_36_frame() -> None:
         _pad("33360001"), _pad("33360000"), _pad("33360100")]
     assert _sent(d)[0].hex() == "33360001" + "00" * 15 + "04"     # BCC = 33 ^ 36 ^ 00 ^ 01
     assert d.state.zone_power == {0: True, 1: False} and d.state.is_on is True
+    assert d.zone_is_on("left") is True and d.zone_is_on("right") is False
+    with pytest.raises(GoveeBleNotSupported):
+        d.zone_is_on("middle")
 
 
 def test_zone_power_unknown_other_bar_is_read_first() -> None:
@@ -367,6 +372,9 @@ def test_other_zoned_devices_do_not_gain_zone_kelvin() -> None:
     assert d is not None
     d._conn.send = AsyncMock()  # type: ignore[method-assign]
     d._conn.send_many = AsyncMock()  # type: ignore[method-assign]
+    d._conn.query = AsyncMock(side_effect=AssertionError("unexpected read"))  # type: ignore[method-assign]
+    d._conn.send_unacked = AsyncMock(  # type: ignore[method-assign]
+        side_effect=AssertionError("unexpected upload"))
     asyncio.run(d.set_zone_color_temp("background", 4000))
     asyncio.run(d.set_color_temp(4000))
     assert d.state.zone_color_temp_kelvin == {}

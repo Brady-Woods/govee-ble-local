@@ -1,8 +1,8 @@
 """govee-ble-local: local Bluetooth LE control of Govee devices.
 
-Spec-first (v3): device behaviour is driven by a data ``DeviceProfile`` and the
+Spec-first: device behaviour is driven by a data ``DeviceProfile`` and the
 Kaitai-generated wire layer, not per-SKU subclasses. Public API mirrors Home
-Assistant BLE-library conventions.
+Assistant BLE-library conventions; ``__all__`` is the semver-stable contract.
 """
 from __future__ import annotations
 
@@ -13,12 +13,18 @@ from .devices.device import Device, StateCallback
 from .devices.profile import DeviceProfile, profile_for
 from .exceptions import (
     GoveeBleAuthError,
+    GoveeBleCommandRejected,
     GoveeBleConnectionError,
     GoveeBleError,
+    GoveeBleHandshakeConnectionError,
     GoveeBleHandshakeError,
+    GoveeBleHandshakeTimeout,
     GoveeBleInvalidValue,
     GoveeBleNotSupported,
     GoveeBleTimeout,
+    GoveeBleUnknownName,
+    GoveeCloudAuthError,
+    GoveeCloudError,
 )
 from .identify import GoveeAdvertisement
 from .models import Capability, DeviceState, Encryption, Segment, Zone
@@ -47,12 +53,18 @@ __all__ = [
     "Encryption",
     "GoveeAdvertisement",
     "GoveeBleAuthError",
+    "GoveeBleCommandRejected",
     "GoveeBleConnectionError",
     "GoveeBleError",
+    "GoveeBleHandshakeConnectionError",
     "GoveeBleHandshakeError",
+    "GoveeBleHandshakeTimeout",
     "GoveeBleInvalidValue",
     "GoveeBleNotSupported",
     "GoveeBleTimeout",
+    "GoveeBleUnknownName",
+    "GoveeCloudAuthError",
+    "GoveeCloudError",
     "Scene",
     "Segment",
     "StateCallback",

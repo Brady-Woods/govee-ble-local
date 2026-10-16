@@ -2,72 +2,72 @@
 from __future__ import annotations
 
 import asyncio
-import copy
 import logging
 from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
 from fake_ble import ble_device
-from test_device_gaps import _adv, _dev, _queried, _sent
+from test_device_gaps import _dev, _frame, _queried, _sent, _unchecked_dev
 
 from govee_ble_local.devices.device import Device, _mask
-from govee_ble_local.exceptions import GoveeBleError, GoveeBleInvalidValue, GoveeBleNotSupported
-from govee_ble_local.models import Capability, Encryption
+from govee_ble_local.exceptions import (
+    GoveeBleError,
+    GoveeBleInvalidValue,
+    GoveeBleNotSupported,
+    GoveeBleTimeout,
+)
+from govee_ble_local.models import Capability
 
 
 def run(coro: Any) -> Any:
     return asyncio.run(coro)
 
 
-# ── BUG-3 ───────────────────────────────────────────────────────────────────
-def test_bar_zone_power_unknown_other_bar_raises_before_sending() -> None:
-    d = _dev("H6047")  # no reply to the 0x36 read-back
-    with pytest.raises(GoveeBleError, match="unknown"):
-        run(d.set_zone_power("left", True))
-    assert _sent(d) == [] and d.state.zone_power == {}
-
-
-# ── BUG-2 ───────────────────────────────────────────────────────────────────
-def test_unparseable_pact_falls_back_to_profile_encryption() -> None:
-    d = _dev("H60A6")
-    adv = _adv("Govee_H60A6_ABCD", {0x1234: b"\x00\x00\x00\x00"})
-    assert d._resolve_encryption(adv) is d.profile.encryption is Encryption.AES_RC4_PSK
-
-
-def test_parsed_plain_advert_still_decides() -> None:
-    d = _dev("H60A6")
-    adv = _adv("Govee_H60A6_ABCD", {0x8801: bytes([0xEC, 0x00, 0x01, 0x02])})
-    assert d._resolve_encryption(adv) is Encryption.NONE
+# BUG-2 / BUG-3 are covered once, in test_device_gaps.py (advertisement encryption,
+# bar-switch read-back refusing to guess the other bar).
 
 
 # ── BUG-5 ───────────────────────────────────────────────────────────────────
-def test_device_info_flag_stays_false_when_read_raises_and_retries() -> None:
-    d = _dev("H6008")
+def test_device_info_flag_stays_false_when_read_times_out_and_retries() -> None:
+    # The transport turns every timeout into GoveeBleTimeout (never a bare TimeoutError):
+    # update() swallows it, the state read stays good, and the next poll retries.
+    d = _dev("H6008", {0x01: [_frame(0xAA, 0x01, 0x01)]})
     calls: list[int] = []
+    inner = d._conn.query
 
-    async def query(frame: bytes, **_k: object) -> list[bytes]:
+    async def query(frame: bytes, **k: object) -> list[bytes]:
         if frame[1] == 0x07:
             calls.append(1)
-            raise TimeoutError("link dropped")
-        return []
+            raise GoveeBleTimeout("device-info read timed out")
+        return list(await inner(frame, **k))
 
     d._conn.query = AsyncMock(side_effect=query)  # type: ignore[method-assign]
-    with pytest.raises(TimeoutError):
-        run(d.update())
-    assert d._device_info_read is False
-    with pytest.raises(TimeoutError):
-        run(d.update())
-    assert len(calls) == 2
+    st = run(d.update())
+    assert st.is_on is True and d._device_info_read is False
+    run(d.update())
+    assert len(calls) == 2                # retried next poll
 
 
-def test_device_info_empty_reads_count_as_attempted() -> None:
+def test_device_info_silent_device_is_read_again_next_poll() -> None:
+    # A poll on which the device answered none of the device-info reads (wrong cipher, lost
+    # notifications, busy) does not use up the one-shot: the next poll reads them again.
     d = _dev("H6008")
     run(d.update())
-    assert d._device_info_read is True
+    assert d._device_info_read is False
     n = len(_queried(d))
     run(d.update())
-    assert all(q[1] != 0x07 for q in _queried(d)[n:])
+    assert any(q[1] == 0x06 for q in _queried(d)[n:])
+
+
+def test_device_info_answered_reads_count_as_attempted() -> None:
+    # Once the device answers one of them, unanswered selectors are not retried every poll.
+    d = _dev("H6008", {0x06: [_frame(0xAA, 0x06, *b"1.00.01")]})
+    run(d.update())
+    assert d._device_info_read is True and d.state.firmware_version == "1.00.01"
+    n = len(_queried(d))
+    run(d.update())
+    assert all(q[1] not in (0x06, 0x07) for q in _queried(d)[n:])
 
 
 # ── DES-1 ───────────────────────────────────────────────────────────────────
@@ -95,10 +95,19 @@ def test_build_or_unsupported_propagates_invalid_value() -> None:
         d._build_or_unsupported(bad)
 
     def unsupported(*_a: object) -> bytes:
-        raise ValueError("scheme")
+        raise GoveeBleNotSupported("scheme")
 
-    with pytest.raises(GoveeBleNotSupported):
+    with pytest.raises(GoveeBleNotSupported, match=r"^H60A6: scheme$"):
         d._build_or_unsupported(unsupported)
+
+    # A builder's own programming error (frame()'s payload check) is not "not supported": it
+    # propagates as the ValueError it is instead of being relabelled.
+    def misuse(*_a: object) -> bytes:
+        raise ValueError("payload too long")
+
+    with pytest.raises(ValueError, match="payload too long") as err:
+        d._build_or_unsupported(misuse)
+    assert not isinstance(err.value, GoveeBleNotSupported)
 
 
 @pytest.mark.parametrize(("kelvin", "sent"), [(100, 2700), (2699, 2700), (6501, 6500), (9000, 6500)])
@@ -172,9 +181,7 @@ def test_raising_callback_isolated_and_logged(caplog: pytest.LogCaptureFixture) 
 
 # ── DES-7 ───────────────────────────────────────────────────────────────────
 def test_update_unsupported_readback_raises() -> None:
-    d = _dev("H6008")
-    d.profile = copy.copy(d.profile)  # profiles are shared; never mutate the registry's
-    object.__setattr__(d.profile, "readback", "bogus")  # bypass construction validation
+    d = _unchecked_dev("H6008", readback="bogus")  # bypass construction validation
     with pytest.raises(GoveeBleError, match="unsupported readback 'bogus'"):
         run(d.update())
 

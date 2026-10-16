@@ -95,7 +95,7 @@ def test_device_id_zero_uid_is_invalid_and_one_zero_header_is_dropped() -> None:
 
 
 @pytest.mark.parametrize("sku", sorted(set(CAPTURES) - {"H60A6"}))
-def test_update_reads_the_app_frames_and_skips_the_binary_basic_read(sku: str) -> None:
+def test_device_info_read_uses_the_app_frames_and_skips_the_binary_basic_read(sku: str) -> None:
     soft, hard, sn, firmware, hardware, device_id = CAPTURES[sku]
     by_request = {(0x06, 0): soft, (0x07, 0x03): hard, (0x07, 0x02): sn}
 

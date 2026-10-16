@@ -7,7 +7,7 @@ the issues into a coverage report). It answers two questions about a plaintext f
 
   * a human LABEL (e.g. ``write/mode/color_rgbic_15``, ``ack/mode``, ``read/mode/sub=0x15``,
     ``status-chunk``, ``multi-chunk/0xa4``), and
-  * a list of ISSUES ``[(severity, reason)]`` where severity is one of:
+  * a list of ISSUES ``[(severity, reason)]`` where severity (:data:`Severity`) is one of:
       ``hard``     — a valid frame whose STRUCTURE the spec doesn't represent (real gap:
                      unknown proType/command/sub-mode/notify-sub, a parse failure, or a
                      device write-ACK rejection).
@@ -24,27 +24,33 @@ use :func:`analyze_status_bursts` for those.
 from __future__ import annotations
 
 import collections
-from io import BytesIO as _BytesIO
-from typing import Any
+from dataclasses import dataclass, field
+from typing import Any, Literal
 
-from kaitaistruct import KaitaiStream as _KaitaiStream
-
-from .._generated.govee_ble_frame import GoveeBleFrame as _GBF  # type: ignore[attr-defined]
+from ..const import FRAME_LEN
 from ..crypto import checksum_ok
 from . import reassemble as _reassemble
+from .parse import _Command, _F, _NotifySub, _ProType, _SubMode
 
-# The generated reader is untyped; treat it as Any so attribute chains don't need stubs.
-_F: Any = _GBF
-_PT = _F.ProType
-_CMD = _F.Command
-_SUB = _F.SubMode
-_NSUB = _F.NotifySub
+# A frame's direction (the capture's "dir"). Only "rx" changes the reading: an RX 0x33 frame
+# is the device's write-ACK echo, not a write command.
+Direction = Literal["rx", "tx", "?"]
+# Issue severity; see the module docstring.
+Severity = Literal["hard", "soft", "artifact"]
+Issue = tuple[Severity, str]
+
+# Variable-length multi-packet upload chunks (0xA1 / 0xA3 / 0xA4; e.g. the 19-byte 0xA4 END).
+_UPLOAD_CHUNK_TYPES = (_ProType.multi_write, _ProType.multi_write_v1, _ProType.multi_write_v2)
 
 # TLV types the reassembled 0xAC status reply is known to carry
 # (Compose4BaseInfoSingleRead.u): switch/brightness/mode/device-info/... + zone/seg/colour.
-KNOWN_STATUS_REPLY_TLVS: frozenset[int] = frozenset(
-    {0x00, 0x01, 0x04, 0x05, 0x07, 0x11, 0x12, 0x23, 0x30, 0x41, 0xA5}
-)
+KNOWN_STATUS_REPLY_TLVS: frozenset[int] = frozenset({
+    0x00,                                    # trailing zero-pad sentinel
+    _reassemble.TYPE_SWITCH, _reassemble.TYPE_BRIGHTNESS, _reassemble.TYPE_MODE,
+    _reassemble.TYPE_DEVICE_INFO, _reassemble.TYPE_SLEEP, _reassemble.TYPE_WAKEUP,
+    _reassemble.TYPE_TIMERS, _reassemble.TYPE_ZONE, _reassemble.TYPE_SEG_INFO,
+    _reassemble.TYPE_COLOR_GROUP,
+})
 
 
 def _opaque(x: object) -> bool:
@@ -52,17 +58,18 @@ def _opaque(x: object) -> bool:
     return isinstance(x, (bytes, bytearray))
 
 
-def describe_frame(plain: bytes, direction: str = "?") -> tuple[str, list[tuple[str, str]]]:
-    """Return ``(label, issues)`` for one plaintext frame. See the module docstring."""
-    if plain and plain[0] == 0xAC:
+def describe_frame(plain: bytes, direction: str = "?") -> tuple[str, list[Issue]]:
+    """Return ``(label, issues)`` for one plaintext frame. See the module docstring.
+
+    ``direction`` is a :data:`Direction`; only ``"rx"`` changes the reading."""
+    if plain and plain[0] == _ProType.multi_reply_read:
         # 0xAC status request/reply — a reply chunk is NOT parseable alone (it's a burst
         # fragment). Handled in analyze_status_bursts; don't try to parse it here.
         return ("status-chunk", [])
-    if plain and plain[0] in (0xA1, 0xA3, 0xA4) and len(plain) != 20:
-        # variable-length upload chunk (e.g. 0xA4 END, 19 B)
+    if plain and plain[0] in _UPLOAD_CHUNK_TYPES and len(plain) != FRAME_LEN:
         return (f"multi-chunk/0x{plain[0]:02x}", [])
-    if len(plain) != 20:
-        return (f"len={len(plain)}", [("artifact", f"not 20 bytes (len {len(plain)})")])
+    if len(plain) != FRAME_LEN:
+        return (f"len={len(plain)}", [("artifact", f"not {FRAME_LEN} bytes (len {len(plain)})")])
     if not checksum_ok(plain):
         return (
             "bad_checksum",
@@ -70,141 +77,246 @@ def describe_frame(plain: bytes, direction: str = "?") -> tuple[str, list[tuple[
         )
     try:
         f = _F.from_bytes(plain)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001 - any reader failure on a valid frame is a spec gap
         return ("parse_error", [("hard", f"kaitai parse failed: {exc!r}")])
 
     pt = f.pro_type
-    if not isinstance(pt, _PT):
+    if not isinstance(pt, _ProType):
         return (f"proType=0x{plain[0]:02x}", [("hard", f"unknown proType 0x{plain[0]:02x}")])
+    if direction == "rx" and pt == _ProType.write:
+        return _describe_ack(plain, f.body)
+    if pt == _ProType.write:
+        return _describe_write(plain, f.body)
+    if pt == _ProType.read:
+        return _describe_read(plain, f.body)
+    if pt == _ProType.notify:
+        return _describe_notify(plain, f.body)
+    return (pt.name, [])                    # multi_* / handshake: structural only.
 
-    issues: list[tuple[str, str]] = []
-    body = f.body
-    label = pt.name
 
-    if direction == "rx" and pt == _PT.write:
-        # Device write-ACK echo: [0x33, command, result, zeros]; byte2 = result (0 = success).
-        # The ksy models only the write COMMAND — command vs ack is direction-keyed (both are
-        # 0x33), so a lone frame can't tell them apart; parse it as an ack here (byte2 = result).
-        cmd = getattr(body, "command", None)
-        name = cmd.name if isinstance(cmd, _CMD) else f"0x{plain[1]:02x}"
-        if plain[2] != 0:
-            return (f"ack/{name}", [("hard", f"device REJECTED {name} write (result 0x{plain[2]:02x})")])
-        return (f"ack/{name}", [])
+def _describe_ack(plain: bytes, body: Any) -> tuple[str, list[Issue]]:
+    """RX 0x33: the device's write-ACK echo ``[0x33, command, result, zeros]``; byte2 = result
+    (0 = success). The ksy models only the write COMMAND — command vs ack is direction-keyed
+    (both are 0x33), so a lone frame can't tell them apart; parse it as an ack here."""
+    cmd: Any = getattr(body, "command", None)
+    name = cmd.name if isinstance(cmd, _Command) else f"0x{plain[1]:02x}"
+    if plain[2] != 0:
+        return (f"ack/{name}", [("hard", f"device REJECTED {name} write (result 0x{plain[2]:02x})")])
+    return (f"ack/{name}", [])
 
-    if pt == _PT.write:
-        cmd = getattr(body, "command", None)
-        if not isinstance(cmd, _CMD):
-            return (f"write/cmd=0x{plain[1]:02x}", [("hard", f"unknown command 0x{plain[1]:02x} (write)")])
-        label = f"write/{cmd.name}"
-        params = getattr(body, "params", None)
-        if cmd == _CMD.mode:
-            st = getattr(params, "sub_type", None)
-            if st is not None and not isinstance(st, _SUB):
-                return (
-                    f"write/mode/sub=0x{plain[2]:02x}",
-                    [("hard", f"unknown mode sub_type 0x{plain[2]:02x}")],
-                )
-            if isinstance(st, _SUB):
-                label += f"/{st.name}"
-                if _opaque(getattr(params, "params", None)):
-                    issues.append(("soft", f"write mode/{st.name} payload not modelled"))
-        elif _opaque(params):
-            issues.append(("soft", f"write {cmd.name} payload not modelled"))
 
-    elif pt == _PT.read:
-        cmd = getattr(body, "command", None)
-        if not isinstance(cmd, _CMD):
-            return (f"read/cmd=0x{plain[1]:02x}", [("hard", f"unknown command 0x{plain[1]:02x} (read)")])
-        label = f"read/{cmd.name}"
-        rb = getattr(body, "body", None)
-        if cmd == _CMD.mode:                       # mode_read: 0x15/0x13 typed; others opaque
-            sel = getattr(rb, "selector_or_sub_mode", None)
-            if sel is not None:
-                label += f"/sub=0x{sel:02x}"
-            # 0x01 = request selector (no reply body); 0x04 = scene code (read in wire.parse)
-            if _opaque(getattr(rb, "rest", None)) and sel not in (0x01, 0x04):
-                issues.append(("soft", f"mode read sub 0x{sel:02x} reply not modelled"))
-        elif _opaque(rb):                          # e.g. 0xa2 BulbGroupColor (mechanism B)
-            issues.append(("soft", f"read {cmd.name} reply not modelled (opaque)"))
-
-    elif pt == _PT.notify:
-        st = getattr(body, "sub_type", None)
-        if not isinstance(st, _NSUB):
-            return (f"notify/sub=0x{plain[1]:02x}", [("hard", f"unknown notify sub_type 0x{plain[1]:02x}")])
-        label = f"notify/{st.name}"
-        if _opaque(getattr(body, "data", None)):
-            issues.append(("soft", f"notify {st.name} payload not modelled"))
-    # multi_* / handshake: structural only.
+def _describe_write(plain: bytes, body: Any) -> tuple[str, list[Issue]]:
+    """0x33 write command: label by command (and mode sub-mode); opaque payloads are soft."""
+    cmd: Any = getattr(body, "command", None)
+    if not isinstance(cmd, _Command):
+        return (f"write/cmd=0x{plain[1]:02x}", [("hard", f"unknown command 0x{plain[1]:02x} (write)")])
+    label = f"write/{cmd.name}"
+    issues: list[Issue] = []
+    params: Any = getattr(body, "params", None)
+    if cmd == _Command.mode:
+        st: Any = getattr(params, "sub_type", None)
+        if isinstance(st, _SubMode):
+            label += f"/{st.name}"
+            if _opaque(getattr(params, "params", None)):
+                issues.append(("soft", f"write mode/{st.name} payload not modelled"))
+        elif st is not None:
+            return (
+                f"write/mode/sub=0x{plain[2]:02x}",
+                [("hard", f"unknown mode sub_type 0x{plain[2]:02x}")],
+            )
+    elif _opaque(params):
+        issues.append(("soft", f"write {cmd.name} payload not modelled"))
     return (label, issues)
+
+
+def _describe_read(plain: bytes, body: Any) -> tuple[str, list[Issue]]:
+    """0xAA read request / reply: label by command (and mode selector); opaque replies are soft."""
+    cmd: Any = getattr(body, "command", None)
+    if not isinstance(cmd, _Command):
+        return (f"read/cmd=0x{plain[1]:02x}", [("hard", f"unknown command 0x{plain[1]:02x} (read)")])
+    label = f"read/{cmd.name}"
+    issues: list[Issue] = []
+    rb: Any = getattr(body, "body", None)
+    if cmd == _Command.mode:                       # mode_read: 0x15/0x13 typed; others opaque
+        sel = getattr(rb, "selector_or_sub_mode", None)
+        if sel is not None:
+            label += f"/sub=0x{sel:02x}"
+        # 0x01 = request selector (no reply body); 0x04 = scene code (read in wire.parse)
+        if _opaque(getattr(rb, "rest", None)) and sel not in (0x01, 0x04):
+            issues.append(("soft", f"mode read sub 0x{sel:02x} reply not modelled"))
+    elif _opaque(rb):                              # e.g. 0xa2 BulbGroupColor (mechanism B)
+        issues.append(("soft", f"read {cmd.name} reply not modelled (opaque)"))
+    return (label, issues)
+
+
+def _describe_notify(plain: bytes, body: Any) -> tuple[str, list[Issue]]:
+    """0xEE device push: label by sub-type; an opaque payload is soft."""
+    st: Any = getattr(body, "sub_type", None)
+    if not isinstance(st, _NotifySub):
+        return (f"notify/sub=0x{plain[1]:02x}", [("hard", f"unknown notify sub_type 0x{plain[1]:02x}")])
+    issues: list[Issue] = []
+    if _opaque(getattr(body, "data", None)):
+        issues.append(("soft", f"notify {st.name} payload not modelled"))
+    return (f"notify/{st.name}", issues)
+
+
+@dataclass
+class StatusBurstReport:
+    """What :func:`status_burst_report` found in a capture's RX ``0xAC`` chunks."""
+    tlv_types: collections.Counter[int] = field(default_factory=collections.Counter)
+    gaps: list[str] = field(default_factory=list)
+    incomplete: int = 0    # not walked: a chunk / the last packet the first chunk declares is missing
+    conflicting: int = 0   # not walked: a chunk index arrived twice with different bytes
+    truncated: int = 0     # walked up to the cut: a complete burst whose TLV stream overruns it
+    #                        (the runtime, like the app, uses NO state from such a burst)
+    redacted: int = 0      # never walked, framing judged by index only: payload zeroed by the masking
+
+    @property
+    def malformed(self) -> int:
+        """Bursts that were NOT walked (dropped / merged chunks): ``incomplete + conflicting``.
+        ``truncated`` bursts were walked (their TLV types are counted), so they are not in it, and
+        neither is a ``redacted`` burst whose chunk indices are all there."""
+        return self.incomplete + self.conflicting
+
+
+def _split_bursts(rx_ac: list[bytes]) -> list[list[bytes]]:
+    """Group a capture's 0xAC chunks into bursts: a chunk with index 0x00 opens one, the 0xFF
+    chunk closes it. A byte-identical repeat of the first chunk is the device's double delivery
+    (``ac00 ac00 ac01 ac01 ...``) only while the open burst holds nothing but copies of it; once a
+    later chunk has arrived, an 0x00 chunk opens a new burst. Two polls of an unchanged light share
+    their first chunk byte for byte, so a poll that lost its terminator is not folded into the
+    next. A record too short to be a chunk is skipped, as the runtime reassembler skips it
+    (:func:`.reassemble.burst_chunks`).
+
+    Residual case: a first chunk double-delivered AFTER interior chunks (``00 01 02 00 03 .. FF``)
+    opens a new burst here, so one read counts as two incomplete bursts, although the runtime (one
+    query) and the app (isSameController ignores the repeated index 0) decode it. Without the TX
+    request boundaries in this list, a late repeat can't be told from the next poll's first chunk."""
+    bursts: list[list[bytes]] = []
+    cur: list[bytes] = []
+    for fr in rx_ac:
+        if len(fr) < _reassemble.MIN_CHUNK_LEN:
+            continue
+        idx = fr[1]
+        if idx == 0x00:                 # start of a burst
+            if cur and all(c == fr for c in cur):   # double-delivered first chunk
+                cur.append(fr)
+                continue
+            if cur:                     # previous burst never terminated: judged on its own
+                bursts.append(cur)
+            cur = [fr]
+        elif idx == 0xFF:               # terminator closes the burst
+            if cur:
+                cur.append(fr)
+                bursts.append(cur)
+                cur = []
+            # stray terminator with no open burst (or its double delivery) -> ignore
+        elif cur:                       # interior chunk of an open burst
+            cur.append(fr)
+    if cur:                             # trailing chunks with no terminator
+        bursts.append(cur)
+    return bursts
+
+
+def _header_redacted(first: bytes) -> bool:
+    """True for a first chunk whose bytes after ``ac 00`` are all zero, as the field-test capture
+    masking wrote every RX 0xAC chunk before it kept the first chunk's header
+    (``tools/field_test/masking.py``: ``redact_frames`` kept only ``ac <index>``; it now keeps the
+    7-byte header, so such a capture is judged by the packet count again). A device never sends one:
+    a packet count of 0 never completes in the app (AbsController4BleSingleSendMultiBack.isSameController
+    takes the 0xFF chunk only at index count-1), and the chunk's BCC would be 0xAC, not 0. A real first
+    chunk with a corrupt count but any other byte set is not matched, so it is still judged by the app's
+    rule (incomplete)."""
+    return not any(first[2:])
+
+
+def _redacted_framing(burst: list[bytes]) -> tuple[bool, int]:
+    """``(complete, conflicts)`` for a burst whose header was redacted (:func:`_header_redacted`),
+    by chunk index alone: indices 0x00..k with no gap, then 0xFF, and no other index. Offline
+    analysis only (the runtime never sees a redacted capture): without it every status burst in a
+    field-test report would read as dropped. An interior gap or a lost terminator still shows; a
+    lost chunk just before 0xFF can't, since only the redacted packet count would reveal it."""
+    unique: dict[int, bytes] = {}
+    conflicts = 0
+    for fr in burst:
+        if unique.setdefault(fr[1], fr) != fr:
+            conflicts += 1
+    run = 0
+    while run in unique and run != 0xFF:
+        run += 1
+    return 0xFF in unique and len(unique) == run + 1, conflicts
+
+
+def status_burst_report(rx_ac: list[bytes]) -> StatusBurstReport:
+    """Group RX ``0xAC`` reply chunks into bursts and walk each complete reassembled TLV stream.
+
+    A status burst is the index sequence ``ac 00, ac 01, … ac FF`` (byte1 = chunk index;
+    0xFF = terminator). Grouping keys on that index — a new ``index==0x00`` starts a fresh
+    burst, ``0xFF`` closes it — so a dropped terminator (which would otherwise concatenate
+    two reads and drift the walk into phantom TLVs) does not merge two reads. The exceptions
+    (see :func:`_split_bursts`): a read that lost everything after its first chunk (the next read's
+    identical first chunk can't be told from a double delivery), and a first chunk repeated after
+    interior chunks, which splits one read into two incomplete bursts. Each burst is then judged
+    by the runtime's own rule (:func:`.reassemble.burst_chunks`: the first chunk's packet count,
+    chunks de-duplicated) and decoded by the runtime's own walker
+    (:func:`.reassemble.walk_status_tlvs`). Stricter than the runtime, which decodes the
+    contiguous prefix of any burst: only complete bursts without conflicting duplicate chunks
+    are walked. In those, a TLV type outside :data:`KNOWN_STATUS_REPLY_TLVS`, or a whole TLV its
+    spec type can't read (including a 0x07 block the walk steps past, as the app does), is a real
+    spec gap; so is a TLV whose len byte the app reads as negative (0x80 or more). A complete burst
+    whose TLV stream overruns it is walked up to the cut and counted in
+    :attr:`StatusBurstReport.truncated`: the runtime uses no state from it.
+
+    A burst from a redacted field-test capture (first chunk zeroed past ``ac 00``,
+    :func:`_header_redacted`) has no packet count and no payload: it is counted in
+    :attr:`StatusBurstReport.redacted`, judged by its chunk indices (:func:`_redacted_framing`)
+    and never walked."""
+    report = StatusBurstReport()
+    for burst in _split_bursts(rx_ac):
+        redacted = _header_redacted(burst[0])   # burst[0] is always its index-0x00 chunk
+        if redacted:
+            report.redacted += 1
+            complete, conflicts = _redacted_framing(burst)
+        else:
+            _chunks, complete, conflicts = _reassemble.burst_chunks(burst)
+        if conflicts:
+            report.conflicting += 1
+            continue
+        if not complete:
+            report.incomplete += 1
+            continue
+        if redacted:                            # payload zeroed: no TLVs to walk
+            continue
+        skipped: list[_reassemble.TlvCut] = []
+        tlvs, cut = _reassemble.walk_status_tlvs(_reassemble.reassemble(burst), skipped=skipped)
+        for tlv in tlvs:
+            t = int(tlv.type)
+            report.tlv_types[t] += 1
+            if t not in KNOWN_STATUS_REPLY_TLVS:  # unknown type -> value falls to raw bytes
+                report.gaps.append(f"0xAC reply TLV type 0x{t:02x} not modelled")
+        unread = [*skipped, cut] if cut is not None and cut.reason == "unparsed" else skipped
+        for bad in unread:
+            report.tlv_types[bad.type] += 1
+            if bad.length is not None and bad.length >= _reassemble.SIGNED_LEN_MIN:
+                report.gaps.append(
+                    f"0xAC reply TLV type 0x{bad.type:02x} has len 0x{bad.length:02x}: the app reads a "
+                    "len of 0x80 or more as negative and fails the read")
+            else:
+                report.gaps.append(
+                    f"0xAC reply TLV type 0x{bad.type:02x} (len {bad.length}) did not parse against the spec")
+        if cut is not None and cut.reason == "truncated":
+            report.truncated += 1
+    return report
 
 
 def analyze_status_bursts(
     rx_ac: list[bytes],
 ) -> tuple[collections.Counter[int], list[str], int]:
-    """Group RX ``0xAC`` reply chunks into bursts and walk each reassembled TLV stream.
+    """:func:`status_burst_report` as ``(tlv_type_counts, gaps, malformed_burst_count)``.
 
-    A status burst is the index sequence ``ac 00, ac 01, … ac FF`` (byte1 = chunk index;
-    0xFF = terminator). Grouping keys on that index — a new ``index==0x00`` starts a fresh
-    burst, ``0xFF`` closes it — so a dropped terminator (which would otherwise concatenate
-    two reads and drift the walk into phantom TLVs) is caught as *malformed* instead of
-    mis-reported. Chunks are de-duplicated (the device double-delivers each notification).
-    Only complete bursts are walked; a TLV type outside :data:`KNOWN_STATUS_REPLY_TLVS`
-    is then a real spec gap.
-
-    Returns ``(tlv_type_counts, gaps, malformed_burst_count)``.
-    """
-    def _dedup(chunks: list[bytes]) -> list[bytes] | None:
-        """One chunk per index (first wins); a conflicting duplicate index => None (malformed)."""
-        seen: dict[int, bytes] = {}
-        order: list[bytes] = []
-        for fr in chunks:
-            i = fr[1]
-            if i in seen:
-                if seen[i] != fr:
-                    return None
-                continue
-            seen[i] = fr
-            order.append(fr)
-        return order
-
-    complete: list[list[bytes]] = []
-    malformed = 0
-    cur: list[bytes] = []
-    for fr in rx_ac:
-        idx = fr[1] if len(fr) >= 2 else -1
-        if idx == 0x00:                 # start of a burst
-            if cur:                     # previous burst never terminated -> merged/truncated
-                malformed += 1
-            cur = [fr]
-        elif idx == 0xFF:               # terminator closes the burst
-            if cur:
-                cur.append(fr)
-                deduped = _dedup(cur)
-                if deduped is None:
-                    malformed += 1
-                else:
-                    complete.append(deduped)
-                cur = []
-            # stray terminator with no open burst -> ignore
-        elif cur:                       # interior chunk of an open burst
-            cur.append(fr)
-    if cur:                             # trailing chunks with no terminator
-        malformed += 1
-
-    types: collections.Counter[int] = collections.Counter()
-    gaps: list[str] = []
-    for b in complete:
-        buf = _reassemble.reassemble(b)
-        try:
-            reply = _F.StatusReply(_KaitaiStream(_BytesIO(buf)))
-        except Exception:  # noqa: BLE001 - a "complete" burst that still won't parse = malformed
-            malformed += 1
-            continue
-        for tlv in reply.tlvs:
-            t = int(tlv.type)
-            if t == 0:                     # trailing zero-pad sentinel
-                continue
-            types[t] += 1
-            if t not in KNOWN_STATUS_REPLY_TLVS:  # unknown type -> value falls to raw bytes
-                gaps.append(f"0xAC reply TLV type 0x{t:02x} not modelled")
-    return types, gaps, malformed
+    ``malformed_burst_count`` is :attr:`StatusBurstReport.malformed`: the bursts that were not
+    walked (missing chunks, conflicting duplicates). A complete burst whose TLV stream overruns
+    it is walked up to the cut and counted only in :attr:`StatusBurstReport.truncated`; a redacted
+    burst whose chunk indices are all there only in :attr:`StatusBurstReport.redacted`."""
+    report = status_burst_report(rx_ac)
+    return report.tlv_types, report.gaps, report.malformed

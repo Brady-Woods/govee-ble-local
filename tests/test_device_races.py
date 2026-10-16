@@ -150,7 +150,8 @@ async def test_discarded_poll_logs_debug_returns_current_state_and_defers_first_
     assert d._polled_once is False                              # "first poll" not yet consumed
     assert any("discard" in r.getMessage().lower() and r.levelno == logging.DEBUG for r in caplog.records)
     # a later clean poll proceeds normally
-    d._conn.query = _dev("H6006", {0x01: [_reply(0xAA, 0x01, 0x00)]})._conn.query  # type: ignore[method-assign]
+    clean = _dev("H6006", {0x01: [_reply(0xAA, 0x01, 0x00)]})
+    d._conn.query = clean._conn.query  # type: ignore[method-assign]
     await d.update()
     assert d.state.is_on is False and d._polled_once is True
 

@@ -17,27 +17,47 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from .const import BRAND_MARKERS, GBK_PREFIX, GV_LONG_PREFIXES, GV_PREFIX
+
 
 # BleUtil.f41010h — the 2-byte Govee marker (company-id high byte, first data byte).
 _MARKER = (0x88, 0xEC)
 _ENCRYPT_BIT = 0x40  # BleUtil: z5 = (headerByte & 0x40) != 0
+# pact_type / pact_code of a Govee-named advertisement whose manufacturer data has no parseable
+# pact info (see GoveeAdvertisement.pact).
+_NO_PACT = -1
 
 
 @dataclass(frozen=True)
 class GoveeAdvertisement:
-    """What the app extracts from a Govee advertisement."""
+    """What the app extracts from a Govee advertisement.
+
+    A Govee-named advertisement without parseable pact info (no or foreign manufacturer data) is
+    still identified, with ``pact_type`` and ``pact_code`` set to the sentinel -1 and
+    ``broadcast_version`` 0; ``encrypted`` is then False only as a guess, not a reading. Use
+    :attr:`pact` and :attr:`encryption_known` rather than testing the sentinel.
+    """
 
     sku: str                # e.g. "H5083" (from the local name)
     name: str               # full local name
-    encrypted: bool         # uses the encrypted command channel (handshake+session key)
-    broadcast_version: int  # header low nibble
-    pact_type: int          # protocol type (from mfg data)
-    pact_code: int          # protocol code (from mfg data)
+    encrypted: bool         # uses the encrypted command channel; meaningful only if encryption_known
+    broadcast_version: int  # header low nibble (0 when the pact is unknown)
+    pact_type: int          # protocol type (from mfg data); -1 when unknown, see `pact`
+    pact_code: int          # protocol code (from mfg data); -1 when unknown, see `pact`
 
+    @property
+    def pact(self) -> tuple[int, int] | None:
+        """``(pact_type, pact_code)`` as the app reads them (``BleUtil.parseBleBroadcastPact``), or None
+        when the advertisement carried no parseable pact info."""
+        if self.pact_type == _NO_PACT:
+            return None
+        return self.pact_type, self.pact_code
 
-# BaseBleProcessor.parse: these brand markers are matched ANYWHERE in the name (String.contains);
-# GBK_/GVH/GVR/GV are prefixes (startsWith), tested in that order after the markers.
-_BRAND_MARKERS = ("ihoment_", "Govee_", "Minger_")
+    @property
+    def encryption_known(self) -> bool:
+        """True when :attr:`encrypted` was read from the broadcast header; False when it is only the
+        plaintext guess made for an advertisement without parseable pact info."""
+        return self.pact is not None
 
 
 def sku_from_local_name(name: str) -> str | None:
@@ -54,24 +74,28 @@ def sku_from_local_name(name: str) -> str | None:
     """
     if not name:
         return None
-    if any(m in name for m in _BRAND_MARKERS) or name.startswith("GBK_"):
+    if any(m in name for m in BRAND_MARKERS) or name.startswith(GBK_PREFIX):
         parts = name.split("_")
+        while parts and not parts[-1]:
+            parts.pop()   # Java String.split("_") drops trailing empty strings (leading ones stay)
         if len(parts) == 3 and parts[1]:
             return parts[1].upper()
         return None
-    if name.startswith(("GVH", "GVR")):
+    if name.startswith(GV_LONG_PREFIXES):
         idx = name.find("_")
         if idx == -1:
             return name[2:7].upper() if len(name) >= 11 else None
         return name[2:idx].upper() or None
-    if name.startswith("GV"):
+    if name.startswith(GV_PREFIX):
         return ("H" + name[2:6]).upper() if len(name) >= 10 else None
     return None
 
 
 def parse_manufacturer_data(mfg: dict[int, bytes]) -> tuple[bool, int, int, int] | None:
-    """Parse Govee manufacturer data -> (encrypted, broadcast_version, pact_type,
-    pact_code), or None if it isn't a recognized Govee broadcast.
+    """Parse Govee manufacturer data into its broadcast header fields.
+
+    Returns ``(encrypted, broadcast_version, pact_type, pact_code)``, or None if it isn't a
+    recognized Govee broadcast.
 
     `mfg` is bleak's AdvertisementData.manufacturer_data: {company_id: value}.
     The app parses the raw AD structure `[FF][hdr][markerHi][data...]`; from
@@ -94,18 +118,28 @@ def parse_manufacturer_data(mfg: dict[int, bytes]) -> tuple[bool, int, int, int]
     return None
 
 
-def parse_broadcast_onoff(mfg: dict[int, bytes]) -> bool | None:
+def parse_broadcast_onoff(mfg: dict[int, bytes], *, on_mask: int | None = None) -> bool | None:
     """The device's on/off state from its advertisement — PASSIVE, no connection.
 
     Port of BleUtil.parseBleBroadOnOff + AbsBaseBleModel.A: the byte right after
     pactType(2)+pactCode(1) in the Govee mfg data (scanRecord i+8; bleak value
-    index 4) == 1 means ON. Returns True/False, or None if the advertisement
-    doesn't carry it (not a Govee broadcast / too short)."""
+    index 4) == 1 means ON. Only a broadcast whose header byte (the company-id low
+    byte, scanRecord i+2), read as a signed Java byte, is >= 2 carries it: a v0/v1
+    header (or one with bit 7 set) is skipped, and the app logs that the broadcast has
+    no switch state. Returns True/False, or None if the advertisement doesn't carry it
+    (not a Govee broadcast / header below 2 / too short).
+
+    ``on_mask`` decodes the byte as a bitmask instead: ON when any of its bits is set. The plugs'
+    device-list models do that (h5080 ``Model.A``, ``Model4Plug2.A``; see
+    ``DeviceProfile.advert_on_mask``)."""
     for company_id, value in mfg.items():
+        header = company_id & 0xFF
         marker_hi = (company_id >> 8) & 0xFF
         if marker_hi != _MARKER[0] or len(value) < 5 or value[0] != _MARKER[1]:
             continue
-        return value[4] == 1
+        if not 2 <= header <= 0x7F:   # BleUtil.parseBleBroadOnOff: (signed) scanRecord[i6 + 2] >= 2
+            continue
+        return value[4] == 1 if on_mask is None else bool(value[4] & on_mask)
     return None
 
 
@@ -118,8 +152,25 @@ def identify(name: str | None, mfg: dict[int, bytes]) -> GoveeAdvertisement | No
         return None
     parsed = parse_manufacturer_data(mfg)
     if parsed is None:
-        # Name looks Govee but no parseable pact info — treat as plaintext,
-        # unknown pact (the app would fall through to legacy parsers).
-        return GoveeAdvertisement(sku, name, encrypted=False, broadcast_version=0, pact_type=-1, pact_code=-1)
+        # Name looks Govee but no parseable pact info: unknown pact, plaintext as a guess (the app
+        # would fall through to legacy parsers). GoveeAdvertisement.pact is None for it.
+        return GoveeAdvertisement(sku, name, encrypted=False, broadcast_version=0,
+                                  pact_type=_NO_PACT, pact_code=_NO_PACT)
     encrypted, version, pact_type, pact_code = parsed
     return GoveeAdvertisement(sku, name, encrypted, version, pact_type, pact_code)
+
+
+def from_advertisement(adv: object, fallback_name: str | None = None) -> GoveeAdvertisement | None:
+    """Identify one advertisement: bleak's ``AdvertisementData``, or anything else carrying
+    ``local_name`` / ``manufacturer_data`` (read defensively with ``getattr``, so a partial object or
+    Home Assistant's service info is tolerated). An already-parsed :class:`GoveeAdvertisement` is
+    returned as is.
+
+    The name is the advertised local name, else ``fallback_name`` (the ``BLEDevice`` name). Without
+    manufacturer data the device is identified by name alone, with an unknown pact
+    (:attr:`GoveeAdvertisement.pact` None). None when it is not a Govee device."""
+    if isinstance(adv, GoveeAdvertisement):
+        return adv
+    name = getattr(adv, "local_name", None) or fallback_name
+    mfg = getattr(adv, "manufacturer_data", None) or {}
+    return identify(name, mfg)

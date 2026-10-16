@@ -17,15 +17,18 @@ from __future__ import annotations
 
 import asyncio
 import inspect
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from typing import Any
 
 from bleak.backends.device import BLEDevice
+from bleak.exc import BleakError
 
-from govee_ble_local.const import PSK
+from govee_ble_local.const import BGC_INFO_CHAR_UUID, PSK, SERVICE_UUID
 from govee_ble_local.crypto import checksum, decrypt, encrypt
 
 SESSION_KEY = bytes(range(16))
+# The OTA V1 service: it also carries a 2b12 characteristic (spec/docs/GOVEE_BLE_GATT_PROTOCOL.md).
+OTA_SERVICE_UUID = "00010203-0405-0607-0809-0a0b0c0d1912"
 
 
 def ble_device(address: str, name: str | None) -> BLEDevice:
@@ -49,19 +52,32 @@ class FakeClient:
         self.is_connected = True
         self._disconnected_callback = disconnected_callback
         self._notify: Callable[[Any, bytearray], None] | None = None
-        self.services = _Services(device.bgc)
+        self._services = _Services(
+            device.bgc, duplicate=device.duplicate_bgc_char, uuids=device.gatt_services,
+        )
         self.writes: list[bytes] = []
         self.dead = False  # half-open: writes "succeed" but nothing comes back
 
-    async def start_notify(self, _uuid: str, cb: Callable[[Any, bytearray], None]) -> None:
-        if self.device.fail_start_notify:
-            from bleak.exc import BleakError
+    @property
+    def services(self) -> _Services:
+        if self.device.services_error is not None:
+            raise self.device.services_error  # bleak: "Service Discovery has not been performed yet"
+        return self._services
 
+    @services.setter
+    def services(self, value: _Services) -> None:
+        self._services = value
+
+    async def start_notify(self, _uuid: str, cb: Callable[[Any, bytearray], None]) -> None:
+        if self.device.start_notify_error is not None:
+            raise self.device.start_notify_error
+        if self.device.fail_start_notify:
             raise BleakError("notify failed")
         self._notify = cb
 
-    async def read_gatt_char(self, _char: Any) -> bytearray:
+    async def read_gatt_char(self, char: Any) -> bytearray:
         self.device.bgc_reads += 1
+        self.device.bgc_read_chars.append(char)
         if self.device.bgc_read_error is not None:
             raise self.device.bgc_read_error
         return bytearray(self.device.bgc or b"")
@@ -102,12 +118,61 @@ class FakeClient:
         self.device.handle_write(self, bytes(data))
 
 
-class _Services:
-    def __init__(self, bgc: bytes | None) -> None:
-        self._bgc = bgc
+class _Char:
+    """A resolved characteristic: its UUID and the service it sits under."""
 
-    def get_characteristic(self, _uuid: str) -> object | None:
-        return object() if self._bgc is not None else None
+    def __init__(self, uuid: str, service: _Service) -> None:
+        self.uuid = uuid
+        self.service = service
+
+
+class _Service:
+    """One resolved GATT service. The Govee control service (1910) and the OTA service (1912)
+    carry the BGC-info char 2b12 when the device has one; any other service carries nothing."""
+
+    def __init__(self, bgc: bytes | None, *, uuid: str = SERVICE_UUID) -> None:
+        self.uuid = uuid
+        self._bgc = bgc
+        has_bgc = bgc is not None and uuid in (SERVICE_UUID, OTA_SERVICE_UUID)
+        self.bgc_char = _Char(BGC_INFO_CHAR_UUID, self) if has_bgc else None
+
+    def get_characteristic(self, uuid: str) -> _Char | None:
+        # bleak's BleakGATTService.get_characteristic: the first match in THIS service, never raises.
+        return self.bgc_char if uuid == BGC_INFO_CHAR_UUID else None
+
+
+class _Services:
+    """bleak's BleakGATTServiceCollection, reduced to what the library can touch."""
+
+    def __init__(
+        self, bgc: bytes | None, *, duplicate: bool = False, uuids: list[str] | None = None,
+    ) -> None:
+        self._bgc = bgc
+        # `duplicate`: 2b12 also under the OTA service 1912 (as on some firmwares). `uuids`: the
+        # resolved services in discovery order; None is just 1910 (+ 1912 when `duplicate`).
+        self._duplicate = duplicate
+        if uuids is None:
+            uuids = [SERVICE_UUID, OTA_SERVICE_UUID] if duplicate else [SERVICE_UUID]
+        self.all = [_Service(bgc, uuid=u) for u in uuids]
+
+    def __iter__(self) -> Iterator[_Service]:
+        return iter(self.all)
+
+    def get_service(self, uuid: str) -> _Service | None:
+        # Like bleak: matched by UUID across the collection, raising when two services share it.
+        found = [s for s in self.all if s.uuid == uuid]
+        if len(found) > 1:
+            raise BleakError("Multiple Services with this UUID, refer to your desired service by "
+                             "the `handle` attribute instead.")
+        return found[0] if found else None
+
+    def get_characteristic(self, uuid: str) -> _Char | None:
+        # Like bleak: across every service, raising when the UUID exists under two of them.
+        found = [c for s in self.all if (c := s.get_characteristic(uuid)) is not None]
+        if len(found) > 1:
+            raise BleakError("Multiple Characteristics with this UUID, refer to your desired "
+                             "characteristic by the `handle` attribute instead.")
+        return found[0] if found else None
 
 
 class FakeGovee:
@@ -141,12 +206,19 @@ class FakeGovee:
         self.disconnect_hangs = False     # client.disconnect() never returns
         self.disconnect_started = 0       # how many hanging disconnects were entered
         self.disconnect_error: BaseException | None = None  # raised by client.disconnect()
-        self.ack_then_drop_links = 0      # first N links: ack the first 0x33 write and
-                                          # disconnect in the SAME loop tick
+        # First N links: ack the first 0x33 write and disconnect in the SAME loop tick.
+        self.ack_then_drop_links = 0
+        self.start_notify_error: BaseException | None = None  # raised by start_notify()
+        self.duplicate_bgc_char = False   # 2b12 under two services (collection lookup raises)
+        # Resolved service UUIDs in discovery order (None: the default layout, see _Services).
+        self.gatt_services: list[str] | None = None
+        self.services_error: BaseException | None = None  # raised by client.services
+        self.bgc_read_chars: list[Any] = []  # the characteristic object of each BGC read
 
     # -- establish_connection stand-in ---------------------------------------
     async def establish(self, _cls: Any, _device: Any, _name: str, **kwargs: Any) -> FakeClient:
         self.connect_kwargs = kwargs
+        self.connect_device = _device  # the BLEDevice this attempt connected with
         self.establish_calls += 1
         if self.establish_error is not None:
             raise self.establish_error

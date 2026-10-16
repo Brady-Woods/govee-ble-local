@@ -2,6 +2,8 @@
 (build -> parse -> assert), proving the write side conforms to spec/govee_ble.ksy."""
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from conftest import require_optional
@@ -10,10 +12,11 @@ require_optional("kaitaistruct", reason="Kaitai runtime not installed")
 _gb = require_optional("govee_ble_local._generated.govee_ble_frame")
 F = _gb.GoveeBleFrame
 
+from govee_ble_local.exceptions import GoveeBleNotSupported  # noqa: E402
 from govee_ble_local.wire import build as b  # noqa: E402
 
 
-def _p(frame: bytes) -> object:
+def _p(frame: bytes) -> Any:   # a Kaitai-generated GoveeBleFrame (untyped)
     assert len(frame) == 20
     x = 0
     for c in frame[:19]:
@@ -53,7 +56,7 @@ def test_color_temp() -> None:
     assert (m.params.r, m.params.g, m.params.b) == (0xFF, 0xD5, 0xA1) and m.params.kelvin == 4000
     m = _p(b.color_temp(2700, "h60a6", 13)).body.params
     assert m.sub_type == F.SubMode.color_rgbic_15 and m.params.op_type == F.Op15.set_color
-    with pytest.raises(ValueError):
+    with pytest.raises(GoveeBleNotSupported):
         b.color_temp(4000, "h61a8", 15)
 
 
@@ -68,9 +71,9 @@ def test_segment_color_temp_carries_mask() -> None:
     # whole-device color_temp is just the all-segments mask on the same builder
     assert b.color_temp(3000, "h60a6", 13) == b.segment_color_temp((1 << 13) - 1, 3000, "h60a6")
     # non-0x15 schemes can't mask CCT
-    with pytest.raises(ValueError):
+    with pytest.raises(GoveeBleNotSupported):
         b.segment_color_temp(0x1, 3000, "h6006")
-    with pytest.raises(ValueError):
+    with pytest.raises(GoveeBleNotSupported):
         b.segment_color_temp(0x1, 3000, "h61a8")
 
 
@@ -78,7 +81,7 @@ def test_segment_and_zone_and_bar() -> None:
     m = _p(b.segment_brightness(0x0004, 75, "h60a6")).body.params
     assert m.params.op_type == F.Op15.set_brightness
     assert m.params.data.pct == 75 and m.params.data.seg_mask == 0x0004
-    with pytest.raises(ValueError):
+    with pytest.raises(GoveeBleNotSupported):
         b.segment_brightness(0x1, 50, "h61a8")
     z = _p(b.zone_power(1, True))
     assert z.body.command == F.Command.light_direction_or_zone
@@ -107,7 +110,7 @@ def test_scene_activate_and_plug_and_secret() -> None:
 def test_queries() -> None:
     assert _p(b.power_query()).pro_type == F.ProType.read
     assert _p(b.mode_query()).pro_type == F.ProType.read
-    sq = _p(b.status_query(True))
+    sq = _p(b.status_query(full=True))
     assert sq.pro_type == F.ProType.multi_reply_read
     assert list(sq.body.requested_types) == [0x41, 0x30, 0xA5]
 
@@ -136,7 +139,20 @@ def test_scene_upload_a3_start_fields() -> None:
     assert start.body.frame.marker == 0x01
     assert start.body.frame.comm_byte == b.COMM_H60A6
     assert start.body.frame.packet_count == len(frames)
-    assert frames[-1][1] == 0xFF  # data-bearing terminator
+    assert frames[-1][1] == 0xFF  # data-bearing terminator (the value is longer than START's 14 bytes)
+
+
+def test_scene_upload_a3_short_value_parses_as_start_then_end() -> None:
+    # makeSendBytesV2: a value that fits in START still gets the separate (empty) 0xFF END.
+    frames = b.scene_upload_a3(bytes(range(1, 11)), 1)
+    assert len(frames) == 2
+    start = _p(frames[0])
+    assert start.pro_type == F.ProType.multi_write_v1 and start.body.seq_no == 0x00
+    assert start.body.frame.marker == 0x01 and start.body.frame.packet_count == 2
+    assert start.body.frame.comm_byte == 1
+    end = _p(frames[1])
+    assert end.pro_type == F.ProType.multi_write_v1 and end.body.seq_no == 0xFF
+    assert not any(frames[1][2:19])
 
 
 def test_scene_upload_a4_roundtrips() -> None:

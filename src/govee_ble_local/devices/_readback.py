@@ -1,0 +1,233 @@
+"""Read-back walks: the multi-read sequences behind :meth:`~.device.Device.update`.
+
+Each walk issues its reads through the one-read primitive it is given (``read_reply``, i.e.
+``Device._read_reply``: one ``aa`` read under the device's read gate, its reply or None) and returns
+what it read. Nothing here touches the connection, the locks or the stale-read protocol: ``Device``
+applies a walk's result through ``Device._read_fresh``, so a walk that raced a setter is discarded
+whole. A walk can therefore be driven by a scripted ``read_reply``. The frames, their order and the
+decoding are the ones the Device methods used before they moved here.
+"""
+from __future__ import annotations
+
+import logging
+from collections.abc import Awaitable, Callable
+from typing import Protocol
+
+from ..models import DeviceState, Segment
+from ..wire import build, parse, reassemble
+from . import _fold
+from .profile import DeviceProfile
+
+# The records keep the device module's logger, as before these walks moved out of it (logging
+# configuration and the diagnostics docs name ``govee_ble_local.devices.device``).
+_LOGGER = logging.getLogger(__name__.rpartition(".")[0] + ".device")
+
+ReadReply = Callable[[bytes, int], Awaitable[bytes | None]]
+"""One ``aa`` read: the ``command_type`` reply to ``frame``, or None (``Device._read_reply``)."""
+
+QueryStatus = Callable[[], Awaitable[tuple[reassemble.StatusReply, list[bytes], list[bytes]]]]
+"""One 0xAC status-burst query: ``(parsed, 0xAC frames, all frames)`` (``Device._query_status``)."""
+
+
+class ReadTarget(Protocol):
+    """The device a walk reads for (a :class:`~.device.Device`): its public identity (for the log
+    lines), profile, segment count and live state."""
+
+    @property
+    def address(self) -> str: ...
+
+    @property
+    def sku(self) -> str: ...
+
+    @property
+    def profile(self) -> DeviceProfile: ...
+
+    @property
+    def segment_count(self) -> int: ...
+
+    @property
+    def state(self) -> DeviceState: ...
+
+
+def chunk_indices(ac_frames: list[bytes]) -> str:
+    """Format the chunk-index byte (frame[1]) of each received 0xAC frame, for diagnosing a
+    dropped/truncated status burst (e.g. ``0x00,0x01,0x02,0x04,0xff`` — index 3 missing)."""
+    if not ac_frames:
+        return "<none>"
+    idx = sorted({f[1] for f in ac_frames if len(f) >= 2})
+    return ",".join(f"0x{i:02x}" for i in idx)
+
+
+async def status_burst(dev: ReadTarget, query_status: QueryStatus) -> reassemble.StatusReply:
+    """One 0xAC status-burst read, retried once when no usable TLVs came back."""
+    st, ac, frames = await query_status()
+    if st.is_on is None:
+        # The device answered (or didn't) but no usable TLVs came back — most often a
+        # dropped/truncated 0xAC burst (a BLE notification lost mid-sequence, so the
+        # reassembled buffer ends mid-TLV or is empty). Retry once with a fresh query —
+        # a new burst is independent, so this self-heals most single-poll losses — before
+        # leaving state stale. This is also the signal for "mechanism-A doesn't work here"
+        # for a device that reliably returns nothing (e.g. H6047).
+        _LOGGER.debug(
+            "%s (%s): status read empty on first attempt (%d 0xAC of %d frames, "
+            "chunks %s); retrying once",
+            dev.address, dev.sku, len(ac), len(frames), chunk_indices(ac),
+        )
+        st, ac, frames = await query_status()
+    if st.is_on is None:
+        _LOGGER.warning(
+            "%s (%s): status read returned no usable data after retry "
+            "(%d 0xAC of %d frames, chunks %s); state left stale",
+            dev.address, dev.sku, len(ac), len(frames), chunk_indices(ac),
+        )
+    return st
+
+
+async def walk_mechanism_b(dev: ReadTarget, read_reply: ReadReply) -> list[Segment] | None:
+    """H61A8's per-segment colour via BulbGroupColorV2 (AA A5 <seq>, V2): request each
+    batch and assemble positional segments, or None if no batch came back. per_batch/batch-count
+    are client constants (not frame-encoded, the controller's own fixed group size),
+    source-modeled and not yet live-verified. NOT shared with H6047/H6641 — they use a different
+    controller (Controller4ColorInfoByGroup, a different group size) via
+    :func:`walk_mechanism_a_direct`; the two only happen to share the wire opcode (0xA5), not the
+    reply layout."""
+    profile = dev.profile
+    per_batch = profile.color_readback_per_batch   # >= 1, checked by DeviceProfile
+    seg_count = profile.color_readback_segments or dev.segment_count
+    batch_count = build.ceil_div(seg_count, per_batch)
+    batches: list[tuple[int, list[tuple[int | None, int, int, int]]]] = []
+    for seq in range(1, batch_count + 1):
+        reply = await read_reply(build.bulb_group_query(seq, v2=True), build.CMD_BULB_COLOR_V2)
+        parsed = parse.parse_bulb_group_batch(reply) if reply else None
+        # The app places a batch by its own group byte into a fixed bulbStringMaxNum array
+        # (dreamcolorlightv1 BleOpV3.onEventBulbStringColorV2), so a group outside the walk
+        # can't land anywhere; dropping it keeps untrusted data from adding segments.
+        if parsed is not None and 1 <= parsed[0] <= batch_count:
+            batches.append(parsed)
+    return parse.bulb_groups_to_segments(batches, per_batch) or None
+
+
+async def walk_mechanism_a_direct(dev: ReadTarget, read_reply: ReadReply) -> list[Segment] | None:
+    """H6047/H6641 per-segment colour via Controller4ColorInfoByGroup's direct per-group
+    requests (AA A5 <group>), or None when the walk was skipped or no group came back. A different
+    controller from H61A8's mechanism_b (BulbGroupColorV2); they only share the wire opcode. Group
+    size is a fixed client constant (`color_readback_per_batch`, source-confirmed 4 for both
+    curated SKUs). The total piece count — and hence the group count, ceil(pieces / group size) —
+    comes from either a static per-SKU value (`color_readback_segments`/`segments`; H6047 uses its
+    10 `segments`) or, when `color_readback_live_ic` is set (H6641), a live `0x40` IC-count read
+    derived the way the app does (:func:`live_ic_pieces`). When that read fails the app still walks
+    the groups from the IC count it stored earlier; the library has none, so it skips the walk.
+
+    Each reply is placed by the group that was asked for: Controller4ColorInfoByGroup's read
+    callback drops the reply's own group byte (``Controller4ColorInfoByGroup.Companion.h``/``i``
+    pass only the colours on; ``VM4Light.Q5`` places them by its loop index)."""
+    profile = dev.profile
+    group_size = profile.color_readback_per_batch   # 4 on every table profile (profile._incoherent)
+    if profile.color_readback_live_ic:
+        ic_reply = await read_reply(build.ic_count_query(), build.CMD_IC_NUM)
+        ic = parse.parse_ic_count(ic_reply) if ic_reply else None
+        if ic is None:
+            _LOGGER.debug(
+                "%s (%s): live IC-count read failed; skipping segment colour read-back",
+                dev.address, dev.sku,
+            )
+            return None
+        pieces = live_ic_pieces(dev, ic.ic_count)
+        if pieces is None:
+            _LOGGER.debug(
+                "%s (%s): implausible live IC count 0x%04x; skipping segment colour read-back",
+                dev.address, dev.sku, ic.ic_count,
+            )
+            return None
+        total = pieces
+    else:
+        total = profile.color_readback_segments or dev.segment_count
+    group_count = build.ceil_div(total, group_size)
+
+    groups: list[tuple[int, list[tuple[int, int, int, int]]]] = []
+    for g in range(1, group_count + 1):
+        reply = await read_reply(build.bulb_group_query(g, v2=True), build.CMD_BULB_COLOR_V2)
+        expected = max(0, min(group_size, total - (g - 1) * group_size))
+        parsed = parse.parse_direct_color_group(reply, expected) if reply else None
+        if parsed is None:
+            continue
+        if parsed[0] != g:
+            _LOGGER.debug("%s (%s): aa a5 reply carries group %d for the group %d read; "
+                          "placing it by the request, as the app does",
+                          dev.address, dev.sku, parsed[0], g)
+        groups.append((g, parsed[1]))
+    return parse.direct_groups_to_segments(groups, group_size) or None
+
+
+def live_ic_pieces(dev: ReadTarget, raw_ic: int) -> int | None:
+    """Colour pieces for a live ``aa 40`` IC count, as the app derives them for H6641 (goodsType
+    247; h61d3, Govee Home 7.5.12 names): ``ReadIcController.Companion.d`` reads bytes 0..1 as a signed
+    short (``BleUtil.getSignedShort``) and clamps it to ``H61D3Support.q(247)`` = 41..70
+    (``color_readback_ic_range``); ``H61D3Support.e(247, ic)`` = ceil(ic / 5) pieces
+    (``color_readback_ic_per_piece``), the ``bulbStringMaxNum`` of ``VM4Light.P5``. The reply's
+    third byte is never used.
+
+    None for a count of 0x1000 or more: ``ReadIcController.Companion.a`` then takes its
+    byte-swap branch, which indexes past the 2-byte array it was given, so the app's read
+    callback never stores the count (``VM4Light.D5`` does not run) - the same as a failed read."""
+    ic_range = dev.profile.color_readback_ic_range
+    ic = raw_ic - 0x10000 if raw_ic >= 0x8000 else raw_ic
+    if ic >= 0x1000:
+        return None
+    # Every table profile has its clamp (profile._incoherent); a custom profile without one uses the
+    # reported count as it is, never below 0.
+    clamped = max(0, ic) if ic_range is None else max(ic_range[0], min(ic_range[1], ic))
+    return build.ceil_div(clamped, dev.profile.color_readback_ic_per_piece)
+
+
+async def read_device_info(dev: ReadTarget, read_reply: ReadReply) -> bool:
+    """Populate the static device-info fields of ``dev.state`` with the reads the Govee app makes on
+    connect; returns whether the device answered any of them.
+
+    ``aa 06`` firmware, ``aa 07 03`` hardware version and ``aa 07 02`` device id (SN)
+    (SoftVersionController, HardVersionController, SnController; live-confirmed on H60A6, H6047,
+    H61A8, H6052, H6006 and H5083). ``aa 07 11`` adds the Wi-Fi MAC — its sw/hw are the
+    *wifi-module* versions and must NOT clobber the device's. The binary ``aa 07 10`` basic read
+    is only a fallback for a device that left a version unknown. Unanswered reads leave fields
+    None. ble_mac stays None unless a reply carries a MAC distinct from the connectable address
+    (none confirmed yet — that address is otherwise the BLE MAC)."""
+    state = dev.state
+    soft = await read_reply(build.soft_version_query(), build.CMD_SOFT_VERSION)
+    answered = soft is not None
+    _fold.merge_device_info(state, firmware=parse.parse_soft_version(soft or b""))
+    for selector in (build.INFO_HARD, build.INFO_SN):
+        got, info = await read_info_reply(dev, read_reply, selector)
+        answered |= got
+        if info is not None:
+            _fold.merge_device_info(state, serial=info.serial, hardware=info.hw_version)
+    got, wifi = await read_info_reply(dev, read_reply, build.INFO_WIFI)
+    answered |= got
+    if wifi is not None:
+        _fold.merge_device_info(state, wifi_mac=wifi.wifi_mac)   # never wifi sw/hw (see docstring)
+    if state.firmware_version is None or state.hardware_version is None:
+        got, basic = await read_info_reply(dev, read_reply, build.INFO_BASIC)
+        answered |= got
+        if basic is not None:
+            _fold.merge_device_info(
+                state,
+                firmware=basic.sw_version if state.firmware_version is None else None,
+                hardware=basic.hw_version if state.hardware_version is None else None,
+                serial=basic.serial if state.serial_number is None else None)
+    return answered
+
+
+async def read_info_reply(
+    dev: ReadTarget, read_reply: ReadReply, selector: int
+) -> tuple[bool, parse.DeviceInfo | None]:
+    """One ``aa 07 <selector>`` read: ``(answered, parsed)``. A reply whose selector byte is not
+    the one asked for (e.g. a late ``aa 07 11`` Wi-Fi reply landing in the next read) is ignored,
+    so the Wi-Fi module's versions never reach the device's firmware/hardware fields."""
+    reply = await read_reply(build.device_info_query(selector), build.CMD_DEVICE_INFO)
+    if reply is None:
+        return False, None
+    if len(reply) < 3 or reply[2] != selector:
+        _LOGGER.debug("%s (%s): ignoring aa 07 reply for selector %s to the 0x%02x read: %s",
+                      dev.address, dev.sku, f"0x{reply[2]:02x}" if len(reply) >= 3 else None,
+                      selector, reply.hex())
+        return True, None
+    return True, parse.parse_device_info(reply)

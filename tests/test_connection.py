@@ -4,6 +4,10 @@ lost terminators, late disconnect callbacks)."""
 from __future__ import annotations
 
 import asyncio
+import inspect
+import json
+import time
+from pathlib import Path
 
 import pytest
 from bleak.exc import BleakError
@@ -11,12 +15,13 @@ from bleak.exc import BleakError
 from govee_ble_local.crypto import checksum_ok
 from govee_ble_local.exceptions import (
     GoveeBleAuthError,
+    GoveeBleCommandRejected,
     GoveeBleConnectionError,
-    GoveeBleError,
     GoveeBleTimeout,
 )
 from govee_ble_local.models import Encryption
 from govee_ble_local.transport import connection as conn_mod
+from govee_ble_local.transport import framelog
 from govee_ble_local.transport.connection import GoveeConnection
 
 from fake_ble import FakeGovee, ble_device, frame
@@ -42,11 +47,11 @@ H60A6_BURST = [bytes.fromhex(h) for h in [
 def fast(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(conn_mod, "WRITE_ACK_TIMEOUT", 0.1)
     monkeypatch.setattr(conn_mod, "HANDSHAKE_STEP2_TIMEOUT", 0.1)
-    monkeypatch.setattr(conn_mod, "BURST_IDLE_GAP", 0.1)
 
 
-# query()'s idle_gap default is bound at import time, so the `fast` fixture does not change it.
-IDLE_GAP = GoveeConnection.query.__kwdefaults__["idle_gap"]
+# query()'s idle_gap default (BURST_IDLE_GAP) is bound when the method is defined, so patching
+# the module constant would change nothing; tests that need another gap pass idle_gap= instead.
+IDLE_GAP = inspect.signature(GoveeConnection.query).parameters["idle_gap"].default
 
 
 def spy_rx_waits(monkeypatch: pytest.MonkeyPatch, c: GoveeConnection) -> list[float]:
@@ -114,9 +119,20 @@ async def test_write_rejected_is_not_retried(monkeypatch, fast) -> None:
     fake = FakeGovee()
     fake.ack_status = 2
     c = _make(monkeypatch, fake)
-    with pytest.raises(GoveeBleError, match="rejected"):
+    # WAS: the private transport.connection._WriteRejected reached callers.
+    with pytest.raises(GoveeBleCommandRejected, match="rejected"):
         await c.send(frame(0x33, 0x01, 0x01))
     assert len(fake.clients) == 1
+    assert conn_mod._WriteRejected is GoveeBleCommandRejected  # old private name kept as an alias
+
+
+async def test_send_many_rejection_is_typed(monkeypatch, fast) -> None:
+    fake = FakeGovee()
+    fake.ack_status = 3
+    c = _make(monkeypatch, fake)
+    with pytest.raises(GoveeBleCommandRejected, match="status 0x03"):
+        await c.send_many([frame(0x33, 0x01, 0x01), frame(0x33, 0x04, 50)])
+    assert len(fake.received) == 1  # stops at the first refused write
 
 
 async def test_half_dead_link_reconnects_and_retries(monkeypatch, fast) -> None:
@@ -181,7 +197,7 @@ async def test_late_disconnect_callback_from_old_client_is_ignored(monkeypatch, 
     await c.disconnect()
     await c.connect()
     assert c.is_connected
-    c._on_disconnect(old)  # stale callback arriving late
+    c._on_disconnect(old)  # type: ignore[arg-type]  # stale callback arriving late
     assert c.is_connected and c._client is fake.clients[1]
 
 
@@ -212,7 +228,7 @@ async def test_bad_checksum_frames_are_dropped(monkeypatch, fast) -> None:
 
     fake.on_write = junk_then_ack
     c = _make(monkeypatch, fake)
-    with pytest.raises(GoveeBleError, match="rejected"):
+    with pytest.raises(GoveeBleCommandRejected, match="rejected"):
         await c.send(frame(0x33, 0x01, 0x01))
 
 
@@ -232,6 +248,10 @@ async def test_establish_uses_fresh_ble_device(monkeypatch, fast) -> None:
     newer = ble_device(ADDR, "via-proxy")
     c.update_ble_device(newer)
     assert fake.connect_kwargs["ble_device_callback"]() is newer
+    # What actually carries it: the next session attempt connects with the fresher device.
+    await c.disconnect()
+    await c.connect()
+    assert fake.connect_device is newer
 
 
 async def test_operation_timeout(monkeypatch, fast) -> None:
@@ -316,3 +336,37 @@ async def test_secret_is_masked_in_wire_capture(monkeypatch, fast, caplog, encry
         masked = bytes.fromhex(wire_hex)
         assert checksum_ok(masked)
     assert secret.hex() not in caplog.text
+
+
+def _wait_framelog_flushed(timeout: float = 5.0) -> None:
+    """Block until the frame-log writer thread has written every queued record."""
+    deadline = time.monotonic() + timeout
+    while framelog._QUEUE.unfinished_tasks and time.monotonic() < deadline:
+        time.sleep(0.005)
+    assert framelog._QUEUE.unfinished_tasks == 0
+
+
+@pytest.mark.parametrize("encrypted", [False, True])
+async def test_secret_is_masked_in_jsonl_frame_log(
+    monkeypatch, fast, tmp_path: Path, encrypted: bool
+) -> None:
+    """The persistent capture (frame_log= / $GOVEE_FRAME_LOG) gets attached to bug reports:
+    the 33 b2 secret must be masked in BOTH its plain and wire fields, as in the frames logger."""
+    path = tmp_path / "cap.jsonl"
+    fake = FakeGovee(encrypted=encrypted)
+    secret = bytes([0x61, 0x55, 0x21, 0x09, 0x0B, 0x73, 0x5C, 0x54])
+    c = _make(monkeypatch, fake, unlock_frames=lambda: [frame(0x33, 0xB2, *secret)],
+              frame_log=str(path))
+    await c.connect()
+    assert fake.received[0][2:10] == secret  # the device still gets the real key
+    _wait_framelog_flushed()
+    text = path.read_text()
+    records = [json.loads(line) for line in text.splitlines()]
+    secret_records = [r for r in records if (r["plain"] or "").startswith("33b2")]
+    assert [r["dir"] for r in secret_records] == ["tx", "rx"]  # the unlock write and its ack
+    for rec in secret_records:
+        # wire masked too: on a plaintext link it IS the secret; on an encrypted one it is
+        # decryptable from the captured handshake. 2-byte header kept, checksum recomputed.
+        for field in ("plain", "wire"):
+            assert rec[field][4:-2] == "ff" * 17 and checksum_ok(bytes.fromhex(rec[field]))
+    assert secret.hex() not in text

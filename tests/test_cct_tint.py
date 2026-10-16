@@ -67,6 +67,11 @@ def _dev(sku: str, adv: Any = None) -> Device:
 
     d._conn.send = AsyncMock(side_effect=send)  # type: ignore[method-assign]
     d._conn.send_many = AsyncMock(side_effect=send_many)  # type: ignore[method-assign]
+    # Any read or upload these write paths did not script fails loudly instead of reaching the
+    # real connection (and the host's Bluetooth stack).
+    d._conn.query = AsyncMock(side_effect=AssertionError("unexpected read"))  # type: ignore[method-assign]
+    d._conn.send_unacked = AsyncMock(  # type: ignore[method-assign]
+        side_effect=AssertionError("unexpected upload"))
     d._sent = sent  # type: ignore[attr-defined]
     return d
 
@@ -191,13 +196,15 @@ def test_h6006_and_h6052_wide_range_ends() -> None:
     asyncio.run(d.set_color_temp(2000))
     asyncio.run(d.set_color_temp(9000))
     assert [f[:11].hex() for f in _sent(d)] == ["33050d" "ff8d0b" "07d0" "ff8d0b",
-                                                 "33050d" "d9e1ff" "2328" "d9e1ff"]
+                                                "33050d" "d9e1ff" "2328" "d9e1ff"]
 
 
 def test_h6188_form_is_unchanged_by_the_both_slot_form() -> None:
     f = b.color_temp(4000, "h6188")
     assert f[:11].hex() == "33050d" "ffffff" "0fa0" "ffd5a1"
-    assert f[:11] != b.color_temp(4000, "h6006")[:12]
+    h6006 = b.color_temp(4000, "h6006")
+    assert h6006[:11].hex() == "33050d" "ffd5a1" "0fa0" "ffd5a1"
+    assert f[:11] != h6006[:11]
 
 
 def test_both_slot_form_round_trips_kaitai() -> None:
@@ -268,8 +275,8 @@ def test_device_rounds_zone_and_segment_cct() -> None:
 
 # ── read-back of the new write ───────────────────────────────────────────────
 def test_both_slot_report_reads_back_as_cct() -> None:
-    # The device holds what the app wrote: aa 05 0d <tint> <K> <tint>. The app treats any non-zero
-    # kelvin as CCT (bulblightstringv1 ModeParseStrategyConfig, tablelampv1 SubModeColor.parse).
+    # The device holds what the app wrote: aa 05 0d <tint> <K> <tint>. The app treats a kelvin > 0
+    # as CCT (bulblight ModeParseStrategyConfig.a -> OpInfo4Detail.parseModeValidBytes).
     d = _dev("H6008")
     d._apply_mode_reply(_frame(0xAA, 0x05, 0x0D, 0xFF, 0xAE, 0x54, 0x0A, 0x8C, 0xFF, 0xAE, 0x54))
     assert d.state.color_temp_kelvin == 2700 and d.state.rgb_color is None

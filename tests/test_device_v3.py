@@ -167,6 +167,23 @@ def test_zone_bar_vs_direct() -> None:
     assert _sent(h6047)[0][:4].hex() == "33360001"   # right bar kept ON
 
 
+def test_direct_zone_power_updates_zone_and_derived_power() -> None:
+    # H60A6 33 30 <zone> <on>: the zone's own state, and whole-device power derived once every zone
+    # is known (on while any zone is lit); unchanged while the other zone is unknown.
+    d = _dev("H60A6")
+    asyncio.run(d.set_zone_power("background", False))
+    assert _sent(d)[0][:4].hex() == "33300100"
+    assert d.state.zone_power == {1: False} and d.state.is_on is None
+    assert d.zone_is_on("background") is False and d.zone_is_on("main") is None
+    asyncio.run(d.set_zone_power("main", True))
+    assert _sent(d)[1][:4].hex() == "33300001"
+    assert d.state.is_on is True and d.zone_is_on("main") is True
+    asyncio.run(d.set_zone_power("main", False))
+    assert d.state.zone_power == {0: False, 1: False} and d.state.is_on is False
+    with pytest.raises(GoveeBleNotSupported):
+        d.zone_is_on("left")
+
+
 def test_bar_switch_reads_unknown_state_instead_of_assuming() -> None:
     # Unknown state used to default to ON: turning one bar off turned the other on.
     d = _dev("H6047", replies=[_reply(0xAA, 0x36, 0x01, 0x00)])  # left on, right off
@@ -202,7 +219,6 @@ def test_zone_and_segment_color_temp() -> None:
         asyncio.run(_dev("H6006").set_segment_color_temp([0], 3000))
 
 
-
 def test_segment_brightness_unsupported_scheme_is_not_supported() -> None:
     # H61A8 declares SEGMENTS but its colour scheme has no per-segment brightness:
     # that is GoveeBleNotSupported (like segment CCT), never a bare ValueError.
@@ -211,6 +227,7 @@ def test_segment_brightness_unsupported_scheme_is_not_supported() -> None:
         asyncio.run(d.set_segment_brightness([0], 50))
     assert _sent(d) == []
     asyncio.run(_dev("H60A6").set_segment_brightness([0], 50))  # supported scheme still works
+
 
 def test_gradual_setting() -> None:
     d = _dev("H61A8")                       # only curated SKU with the 0xA3 gradual flag
@@ -246,35 +263,70 @@ def test_scene_dialect_routing() -> None:
     assert f and all(fr[0] == 0xA3 for fr in f)
 
 
-def test_h6641_mechanism_a_direct_readback_via_live_ic() -> None:
-    # H6641 (goodsType 247): H61D3Support.f0(247)=false, so it never dispatches the 0xAC status
-    # burst — per-segment colour is Controller4ColorInfoByGroup's DIRECT `aa a5 <group>` path
-    # (group size 4, source-confirmed), sized from a LIVE 0x40 IC-count read rather than the
-    # static write-mask width. The device reports BOTH the raw IC count (10) and its own
-    # precomputed group count (3 = ceil(10/4)) directly — no client-side divisor guess.
-    p = profile_for("H6641")
-    assert p.readback == "polled" and p.color_readback == "mechanism_a_direct"
-    assert p.color_readback_live_ic is True and p.color_readback_per_batch == 4
-
-    d = _dev("H6641")
-    IC_COUNT = 10  # -> groups of 4,4,2 (a genuinely SHORTER final group)
-
+def _h6641_ic_query(ic: int, third: int, asked: list[int]) -> AsyncMock:
+    """aa 40 -> [IC u2be][third byte]; aa a5 <g> -> four [brightness, r, g, b] records (the frame
+    is always full; the caller decides how many are real). Records the requested groups."""
     def _q(frame: bytes, **_kw: object) -> list[bytes]:
         if frame[1] == 0x40:                    # ic_count_query
-            return [_frame(0xAA, 0x40, 0x00, IC_COUNT, 3)]  # ic_count=10 (u2be), segment=3
+            return [_frame(0xAA, 0x40, ic >> 8, ic & 0xFF, third)]
         g = frame[2]                             # AA A5 <group>
-        n = min(4, IC_COUNT - (g - 1) * 4)
+        asked.append(g)
         recs: list[int] = []
-        for i in range(n):
+        for i in range(4):
             seg = (g - 1) * 4 + i
             recs += [50 + seg, seg, 0, 0]
         return [_frame(0xAA, 0xA5, g, *recs)]
+    return AsyncMock(side_effect=_q)
 
-    d._conn.query = AsyncMock(side_effect=_q)  # type: ignore[attr-defined]
+
+@pytest.mark.parametrize(
+    ("ic", "pieces"),
+    [
+        (50, 10),        # ceil(50 / 5) = 10 pieces -> groups of 4, 4, 2
+        (30, 9),         # below the range: clamped to 41 -> 9 pieces in 3 groups
+        (41, 9), (70, 14), (69, 14),
+        (200, 14),       # above the range: clamped to 70 -> 14 pieces in 4 groups
+        (0x9000, 9),     # a signed short below 0 (BleUtil.getSignedShort) clamps to 41
+    ],
+)
+def test_h6641_mechanism_a_direct_readback_via_live_ic(ic: int, pieces: int) -> None:
+    # H6641 (goodsType 247): H61D3Support.f0(247)=false, so it never dispatches the 0xAC status
+    # burst — per-segment colour is Controller4ColorInfoByGroup's DIRECT `aa a5 <group>` path
+    # (group size 4, source-confirmed), sized from a LIVE 0x40 IC-count read the way the app does
+    # it: ReadIcController.Companion.d clamps the IC to H61D3Support.q(247) = 41..70, and
+    # VM4Light.P5 walks ceil(N / 4) groups for N = H61D3Support.e(247, IC) = ceil(IC / 5) pieces.
+    # The reply's third byte (7 here, inconsistent on purpose) is never used.
+    p = profile_for("H6641")
+    assert p is not None
+    assert p.readback == "polled" and p.color_readback == "mechanism_a_direct"
+    assert p.color_readback_live_ic is True and p.color_readback_per_batch == 4
+    assert p.color_readback_ic_range == (41, 70) and p.color_readback_ic_per_piece == 5
+
+    d = _dev("H6641")
+    asked: list[int] = []
+    d._conn.query = _h6641_ic_query(ic, 7, asked)  # type: ignore[method-assign]
     asyncio.run(d._read_mechanism_a_direct())
+    assert asked == list(range(1, -(-pieces // 4) + 1))           # exactly the app's aa a5 reads
     segs = d.state.segments
-    assert [s.index for s in segs] == list(range(IC_COUNT))   # all 10, incl. the short last group
-    assert segs[9].rgb == (9, 0, 0) and segs[9].brightness == 59
+    assert [s.index for s in segs] == list(range(pieces))          # no phantom padding segments
+    last = pieces - 1
+    assert segs[last].rgb == (last, 0, 0) and segs[last].brightness == 50 + last
+
+
+def test_h6641_group_reply_is_placed_by_the_requested_group() -> None:
+    # Controller4ColorInfoByGroup.Companion.h/i drop the reply's own group byte; VM4Light.Q5 places
+    # the records by the group it asked for. A reply naming another group can't inject segments.
+    d = _dev("H6641")
+
+    def _q(frame: bytes, **_kw: object) -> list[bytes]:
+        if frame[1] == 0x40:
+            return [_frame(0xAA, 0x40, 0x00, 41, 0xFF)]           # 9 pieces, 3 groups
+        return [_frame(0xAA, 0xA5, 0xFF, *([7, 1, 2, 3] * 4))]   # every reply claims group 255
+
+    d._conn.query = AsyncMock(side_effect=_q)  # type: ignore[method-assign]
+    asyncio.run(d._read_mechanism_a_direct())
+    assert [s.index for s in d.state.segments] == list(range(9))
+    assert d._conn.query.await_count == 4                          # aa 40 + 3 aa a5, not 255
 
 
 def test_h6641_segment_control_wired() -> None:
@@ -336,13 +388,18 @@ def _status_query_mock(bursts: list[list[bytes]]) -> AsyncMock:
 
 
 def test_mode_0d_report_reads_colour_or_cct() -> None:
-    # 0x0d bulbs (H6006/H6008/H6052): aa 05 0d [r g b kelvin-u2be]. White + kelvin = CCT mode
-    # (live capture: aa 05 0d ff ff ff 0a 8c = 2700 K); anything else is an RGB colour.
-    d = _dev("H6052")
+    # 0x0d bulbs (H6006/H6008): aa 05 0d [r g b kelvin-s16be tint]; a Kelvin > 0 = CCT mode
+    # (live capture: aa 05 0d ff ff ff 0a 8c = 2700 K); a Kelvin of 0 is that RGB colour.
+    d = _dev("H6008")
     d._apply_mode_reply(_frame(0xAA, 0x05, 0x0D, 0xFF, 0xFF, 0xFF, 0x0A, 0x8C))
     assert d.state.color_temp_kelvin == 2700 and d.state.rgb_color is None
     d._apply_mode_reply(_frame(0xAA, 0x05, 0x0D, 255, 128, 64, 0, 0))
     assert d.state.rgb_color == (255, 128, 64) and d.state.color_temp_kelvin is None
+    # H6052's control screen (H6052InfoDetail.G) reads [r g b] only: the same live frame is RGB
+    # white with no Kelvin.
+    lamp = _dev("H6052")
+    lamp._apply_mode_reply(_frame(0xAA, 0x05, 0x0D, 0xFF, 0xFF, 0xFF, 0x0A, 0x8C))
+    assert lamp.state.rgb_color == (255, 255, 255) and lamp.state.color_temp_kelvin is None
 
 
 def test_mechanism_b_assembles_positional_segments() -> None:
@@ -445,12 +502,15 @@ def test_ingest_advertisement_onoff() -> None:
 
     class _Adv:
         def __init__(self, on: int) -> None:
-            self.manufacturer_data = {0x8801: bytes([0xEC, 0, 0, 0, on])}
+            # header 0x02: BleUtil.parseBleBroadOnOff reads on/off only for a header >= 2
+            self.manufacturer_data = {0x8802: bytes([0xEC, 0, 0, 0, on])}
 
     assert d.ingest_advertisement(_Adv(1)) is True and d.state.is_on is True
     assert d.ingest_advertisement(_Adv(1)) is False          # unchanged -> no event
     assert d.ingest_advertisement(_Adv(0)) is True and d.state.is_on is False
     assert d.ingest_advertisement(object()) is False          # no manufacturer_data
+    v1 = type("Adv", (), {"manufacturer_data": {0x8801: bytes([0xEC, 0, 0, 0, 1])}})()
+    assert d.ingest_advertisement(v1) is False and d.state.is_on is False  # v1 header: no on/off
 
 
 def test_readback_status_maps_to_state() -> None:
@@ -511,6 +571,52 @@ def test_read_status_warns_and_preserves_state_after_two_empty_reads(
     assert len(warnings) == 1 and "state left stale" in warnings[0].message
     assert "<none>" in warnings[0].message  # chunk-index diagnostic: nothing received
     assert d.state.is_on is True  # unchanged — not erased by the empty reply
+
+
+def test_read_status_with_no_usable_data_is_not_a_read_back() -> None:
+    # Two empty 0xAC bursts and an unanswered aa 05 read nothing: state stays optimistic, the
+    # advertised on/off (the only other on/off source) is not suppressed, and the one-time
+    # "first poll" step is not consumed.
+    d = _dev("H60A6")
+    d._conn.query = _status_query_mock([[], []])  # type: ignore[method-assign]
+    asyncio.run(d.update())
+    assert d._conn.query.status_calls == 2  # type: ignore[attr-defined]
+    assert d.state.optimistic is True and d.state.is_on is None
+    assert d._advert_ignore_until == 0.0
+    assert d._polled_once is False
+
+
+def test_read_status_seeded_device_does_not_rearm_advert_suppression_on_empty_read() -> None:
+    d = _dev("H60A6")
+    d._conn.query = _status_query_mock([_STATUS_BURST])  # type: ignore[method-assign]
+    asyncio.run(d._read_status())
+    assert d.state.optimistic is False and d._advert_ignore_until > 0
+    d._advert_ignore_until = 0.0
+    d._conn.query = _status_query_mock([[], []])  # type: ignore[method-assign]
+    asyncio.run(d._read_status())
+    assert d._advert_ignore_until == 0.0                     # nothing read: adverts still honoured
+
+
+def test_read_status_mode_only_reply_does_not_suppress_adverts() -> None:
+    # Only the aa 05 mode read answered: the state is read back (not optimistic), but no on/off
+    # came back, so the advertised on/off is not suppressed.
+    d = _dev("H60A6")
+
+    async def query(frame: bytes, **_k: object) -> list[bytes]:
+        return [_reply(0xAA, 0x05, 0x04, 0x01, 0x00)] if frame[:2] == b"\xaa\x05" else []
+
+    d._conn.query = AsyncMock(side_effect=query)  # type: ignore[method-assign]
+    asyncio.run(d._read_status())
+    assert d.state.optimistic is False and d.state.scene_code == 1
+    assert d._advert_ignore_until == 0.0
+
+
+def test_chunk_indices_lists_each_received_chunk_once() -> None:
+    from govee_ble_local.devices._readback import chunk_indices   # the status-burst walk's helper
+
+    assert chunk_indices([b"\xac\x00", b"\xac\xff", b"\xac\x00"]) == "0x00,0xff"
+    assert chunk_indices([b"\xac"]) == ""                   # too short to carry an index
+    assert chunk_indices([]) == "<none>"
 
 
 def test_read_status_no_retry_when_first_attempt_succeeds() -> None:

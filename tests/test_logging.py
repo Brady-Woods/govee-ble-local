@@ -1,8 +1,10 @@
 """Logging scheme + frame-tier capture + the debug converter.
 
-Covers: a device rejection logs at ERROR; an unrecognised RX frame logs at WARNING (closing
-the silent-drop gap); the govee_ble_local.frames logger emits every frame when enabled and
-is silent when off; and the frames-log -> JSONL converter round-trips into the analyzer.
+Covers: a device rejection raises GoveeBleCommandRejected and logs only at DEBUG (the caller
+decides what to log); an unrecognised RX frame logs at WARNING once per proType (closing the
+silent-drop gap) and its repeats at DEBUG; the govee_ble_local.frames logger emits every frame
+when enabled and is silent when off; and the frames-log -> JSONL converter round-trips into the
+analyzer.
 """
 from __future__ import annotations
 
@@ -13,9 +15,11 @@ import pytest
 from fake_ble import ble_device
 
 from govee_ble_local import debug
-from govee_ble_local.exceptions import GoveeBleError
+from govee_ble_local.exceptions import GoveeBleCommandRejected, GoveeBleError
 from govee_ble_local.models import Encryption
+from govee_ble_local.transport import connection as conn_mod
 from govee_ble_local.transport.connection import GoveeConnection
+from govee_ble_local.wire.describe import Issue
 
 _FRAMES_LOGGER = "govee_ble_local.frames"
 _CONN_LOGGER = "govee_ble_local.transport.connection"
@@ -42,15 +46,23 @@ def _conn() -> GoveeConnection:
     return c
 
 
-async def test_rejected_write_logs_error(caplog: pytest.LogCaptureFixture) -> None:
+async def test_rejected_write_raises_typed_error_and_logs_debug_only(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     c = _conn()
 
     async def fake_write(_wire: bytes) -> None:
         c._rx.put_nowait(_bcc(0x33, 0x01, 0x02))       # byte2 != 0 -> rejection
     c._raw_write = AsyncMock(side_effect=fake_write)
-    with caplog.at_level(logging.ERROR, logger=_CONN_LOGGER), pytest.raises(GoveeBleError):
+    with (
+        caplog.at_level(logging.DEBUG, logger=_CONN_LOGGER),
+        pytest.raises(GoveeBleCommandRejected, match="status 0x02"),
+    ):
         await c.send(_bcc(0x33, 0x01, 0x01))
-    assert any("rejected" in r.message for r in caplog.records if r.levelno == logging.ERROR)
+    # WAS: also logged at ERROR, so Home Assistant showed the failure twice (library + caller).
+    assert not [r for r in caplog.records if r.levelno >= logging.ERROR]
+    assert any("rejected" in r.message for r in caplog.records if r.levelno == logging.DEBUG)
+    assert issubclass(GoveeBleCommandRejected, GoveeBleError)  # old `except GoveeBleError` still works
 
 
 def test_unrecognised_rx_frame_warns(caplog: pytest.LogCaptureFixture) -> None:
@@ -58,6 +70,42 @@ def test_unrecognised_rx_frame_warns(caplog: pytest.LogCaptureFixture) -> None:
     with caplog.at_level(logging.WARNING, logger=_CONN_LOGGER):
         c._handle_notify(None, bytearray(_bcc(0x99, 0x01)))  # 0x99 not a known proType
     assert any(r.levelno == logging.WARNING and "RX" in r.message for r in caplog.records)
+
+
+def test_unrecognised_rx_frame_repeats_log_at_debug(caplog: pytest.LogCaptureFixture) -> None:
+    c = _conn()
+    with caplog.at_level(logging.DEBUG, logger=_CONN_LOGGER):
+        for _ in range(5):
+            c._handle_notify(None, bytearray(_bcc(0x99, 0x01)))
+        c._handle_notify(None, bytearray(_bcc(0x98, 0x01)))  # another unknown proType warns too
+    rx = [r for r in caplog.records if "RX unrecognised" in r.message]
+    # WAS: one WARNING per frame, unbounded (device-controlled input could flood the HA log).
+    assert [r.levelno for r in rx] == [logging.WARNING] + [logging.DEBUG] * 4 + [logging.WARNING]
+    assert c._rx.qsize() == 6  # still delivered, only the log level changes
+
+
+def test_unrecognised_rx_frame_repeats_cost_nothing_with_debug_off(
+    caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    c = _conn()
+    labels: list[bytes] = []
+
+    def counting_describe(frame: bytes, direction: str = "?") -> tuple[str, list[Issue]]:
+        labels.append(frame)
+        return real_describe(frame, direction)
+
+    real_describe = conn_mod.describe_frame
+    monkeypatch.setattr(conn_mod, "describe_frame", counting_describe)
+    with (
+        caplog.at_level(logging.INFO, logger=_CONN_LOGGER),
+        caplog.at_level(logging.INFO, logger=_FRAMES_LOGGER),  # no frame-tier labels either
+    ):
+        for _ in range(5):
+            c._handle_notify(None, bytearray(_bcc(0x99, 0x01)))
+    # WAS: every repeat built the label (and hex) for a DEBUG line nobody would see, inside the
+    # notify callback on the event loop - the device-controlled flood the WARNING cap is for.
+    assert len(labels) == 1  # the one WARNING
+    assert c._rx.qsize() == 5
 
 
 def test_frames_logger_emits_when_enabled(caplog: pytest.LogCaptureFixture) -> None:

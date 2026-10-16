@@ -97,6 +97,7 @@ class DeviceState:
 
     @property
     def device_id(self) -> str | None:
-        """The device id the Govee app calls ``device`` (e.g. ``2D:DB:5C:E7:53:F4:74:56``), read
-        with ``aa 07 02``. An alias of ``serial_number``."""
+        """The device id the Govee app calls ``device``; an alias of ``serial_number``.
+
+        E.g. ``2D:DB:5C:E7:53:F4:74:56``, read with ``aa 07 02``."""
         return self.serial_number

@@ -42,11 +42,12 @@ def test_direct_groups_skip_group_zero(caplog: pytest.LogCaptureFixture) -> None
     assert any("invalid index 0" in r.message for r in caplog.records)
 
 
-def test_status_reply_skips_group_zero(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_status_reply_skips_group_zero() -> None:
     def tlv(idx: int, rgb: tuple[int, int, int]) -> bytes:
         return bytes([0xA5, 5, idx, 100, *rgb])
 
-    buf = tlv(0, (9, 9, 9)) + tlv(2, (1, 2, 3)) + b"\x00\x00"
-    monkeypatch.setattr(reassemble, "reassemble", lambda frames: buf)
-    st = reassemble.parse_status([])
+    data = tlv(0, (9, 9, 9)) + tlv(2, (1, 2, 3))   # 14 bytes: two packets, the last carries 2
+    first = _frame(0xAC, 0x00, 2, 0, len(data) - 12, 0x03, 0x00, *data[:12])
+    last = _frame(0xAC, 0xFF, *data[12:])
+    st = reassemble.parse_status([first, last])
     assert [(s.index, s.rgb) for s in st.segments] == [(4, (1, 2, 3))]

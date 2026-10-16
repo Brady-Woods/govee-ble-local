@@ -24,7 +24,7 @@ Reliability rules this module enforces (each one learned from live failures):
   so a wedged proxy can't hold the device lock. Its errors are logged, never raised.
 * Errors are normalised: bleak/asyncio/timeout failures surface as typed
   :class:`GoveeBleError` subclasses (auth and not-supported errors are permanent and
-  never retried).
+  never retried; a write the device refuses is :class:`GoveeBleCommandRejected`).
 * Junk notifications (late handshake retransmits, frames failing the XOR
   checksum) are dropped at the source, so they can't be mistaken for replies.
 """
@@ -34,7 +34,7 @@ import asyncio
 import logging
 import time
 from collections.abc import Awaitable, Callable
-from typing import TypeVar
+from typing import Final, Literal, TypeVar, overload
 
 from bleak.backends.characteristic import BleakGATTCharacteristic
 from bleak.backends.device import BLEDevice
@@ -46,8 +46,8 @@ from ..const import (
     BGC_INFO_CHAR_UUID,
     BGC_VERSION_VALUES,
     BURST_IDLE_GAP,
-    COMMAND_ACK_TIMEOUT as COMMAND_ACK_TIMEOUT,  # re-export: tests patch it here
     CONNECT_MAX_ATTEMPTS,
+    DISCONNECT_TIMEOUT,
     FRAME_LEN,
     HANDSHAKE_ECHO_WINDOW,
     HANDSHAKE_STEP2_TIMEOUT,
@@ -57,6 +57,7 @@ from ..const import (
     OPERATION_TIMEOUT,
     PSK,
     QUERY_DEFAULT_TIMEOUT,
+    QUERY_TERMINAL,
     SERVICE_UUID,
     SESSION_ATTEMPTS,
     UNACKED_SEND_GAP,
@@ -64,11 +65,14 @@ from ..const import (
     WRITE_ATTEMPTS,
     WRITE_CHAR_UUID,
 )
-from ..crypto import checksum, checksum_ok, decrypt, encrypt
+from ..crypto import FrameCipher, checksum, checksum_ok
 from ..exceptions import (
     GoveeBleAuthError,
+    GoveeBleCommandRejected,
     GoveeBleConnectionError,
     GoveeBleError,
+    GoveeBleHandshakeConnectionError,
+    GoveeBleHandshakeTimeout,
     GoveeBleInvalidValue,
     GoveeBleNotSupported,
     GoveeBleTimeout,
@@ -77,16 +81,17 @@ from ..models import Encryption
 from ..wire.build import (
     CMD_SECRET_READ,
     CMD_SECRET_WRITE,
+    PRO_MULTI_A1,
     PRO_MULTI_A3,
     PRO_MULTI_A4,
     PRO_MULTI_AC,
+    PRO_NOTIFY,
     PRO_READ,
     PRO_WRITE,
 )
 from ..wire.describe import describe_frame
 from . import handshake
-from .handshake import HANDSHAKE_OPCODE
-from .framelog import FrameLog
+from .framelog import Direction, FrameLog
 
 _LOGGER = logging.getLogger(__name__)
 # Dedicated frame-tier logger: the full-session firehose (every TX/RX frame). Off
@@ -96,23 +101,29 @@ _LOGGER = logging.getLogger(__name__)
 _FRAMES = logging.getLogger("govee_ble_local.frames")
 
 # proTypes a device legitimately sends us; anything else is surfaced as a warning.
-_PRO_NOTIFY_EE = 0xEE  # device push notifications (wire.parse "notifications (0xEE)")
-_PRO_MULTI_A1 = 0xA1   # multi-packet stream family (wire.parse reassembly)
-_KNOWN_RX_PRO_TYPES = frozenset({
-    PRO_WRITE, PRO_READ, PRO_MULTI_AC, _PRO_NOTIFY_EE, _PRO_MULTI_A1,
-    PRO_MULTI_A3, PRO_MULTI_A4, HANDSHAKE_OPCODE,
+_KNOWN_RX_PRO_TYPES: Final = frozenset({
+    PRO_WRITE, PRO_READ, PRO_MULTI_AC, PRO_NOTIFY, PRO_MULTI_A1,
+    PRO_MULTI_A3, PRO_MULTI_A4, handshake.HANDSHAKE_OPCODE,
 })
 # Unsolicited pushes accumulate between operations; never let them grow unbounded.
-_RX_QUEUE_MAX = 64
-# Upper bound on client.disconnect(): a wedged proxy must not hold the device lock forever.
-DISCONNECT_TIMEOUT = 5.0
+_RX_QUEUE_MAX: Final = 64
+# DISCONNECT_TIMEOUT and QUERY_TERMINAL live in ..const with the other transport constants; they
+# are imported into this module's namespace, which is where tests patch / read them.
 
-# query(): byte 1 of the final frame of a 0xAC burst (the app's "last packet" marker).
-# const.py has no name for it, so it is defined here.
-QUERY_TERMINAL = 0xFF
+# What the BLE stack raises when the link fails under us, mapped to GoveeBleConnectionError
+# (and retried where a retry applies) at every site that touches the transport: bleak's own
+# errors, EOFError (dbus-fast losing the bus) and ConnectionError (BrokenPipeError /
+# ConnectionResetError when the D-Bus socket drops on a disconnect; bleak-retry-connector counts
+# BrokenPipeError as transient too). The builtin TimeoutError is NOT one of them: each site maps
+# it to GoveeBleTimeout itself.
+_TRANSPORT_ERRORS: Final = (BleakError, EOFError, ConnectionError)
 
-NotifyCallback = Callable[[bytes], None]
 _T = TypeVar("_T")
+
+
+def _err_text(err: BaseException) -> str:
+    """An exception's message, or its class name when it has none (e.g. a bare EOFError())."""
+    return str(err) or type(err).__name__
 
 
 def _carries_secret(plain: bytes) -> bool:
@@ -138,8 +149,9 @@ class _LinkLost(Exception):
     """Internal: the link dropped while waiting on a reply (queue sentinel)."""
 
 
-class _WriteRejected(GoveeBleError):
-    """The device explicitly refused a write (ack status byte != 0)."""
+# The device explicitly refused a write (ack status byte != 0). The historical private name
+# stays as an alias of the public class, so existing `except _WriteRejected` code keeps working.
+_WriteRejected = GoveeBleCommandRejected
 
 
 class GoveeConnection:
@@ -155,14 +167,12 @@ class GoveeConnection:
         ble_device: BLEDevice,
         *,
         encryption: Encryption = Encryption.AES_RC4_PSK,
-        on_notify: NotifyCallback | None = None,
         unlock_frames: Callable[[], list[bytes]] | None = None,
         idle_disconnect: float = IDLE_DISCONNECT_DELAY,
         frame_log: str | None = None,
     ) -> None:
         self._ble_device = ble_device
         self._encryption = encryption
-        self._on_notify = on_notify
         # Optional bidirectional frame capture (frame_log arg or $GOVEE_FRAME_LOG).
         self._framelog = FrameLog.resolve(frame_log, ble_device.address)
         # Frames to send immediately after every handshake, before any user
@@ -172,6 +182,9 @@ class GoveeConnection:
         self._idle_disconnect = idle_disconnect
         self._client: BleakClientWithServiceCache | None = None
         self._session_key: bytes | None = None
+        # The session key's cipher, its key setup done once per session (crypto.FrameCipher); set
+        # and cleared with _session_key.
+        self._session_cipher: FrameCipher | None = None
         self._ready = False  # connected AND session set up
         self._closed = False
         self._bgc_version: int | None = None  # cached after the first successful read
@@ -179,6 +192,9 @@ class GoveeConnection:
         # Wire bytes of this session's handshake frames + when to stop filtering them.
         self._handshake_echoes: set[bytes] = set()
         self._echo_filter_until = 0.0
+        # Unknown RX proTypes already warned about: repeats go to DEBUG (no log flood). Kept for
+        # this object's life (the device's), not reset on reconnect.
+        self._warned_pro_types: set[int] = set()
         # None is the "link lost" sentinel pushed by the disconnect callback.
         self._rx: asyncio.Queue[bytes | None] = asyncio.Queue()
         self._lock = asyncio.Lock()
@@ -201,14 +217,14 @@ class GoveeConnection:
         return self._encryption
 
     def update_ble_device(self, ble_device: BLEDevice) -> None:
-        """Adopt a fresher BLEDevice (e.g. from the latest advertisement). Used for
-        the next connection attempt - and for retries within one attempt, via
-        establish_connection's ble_device_callback."""
+        """Adopt a fresher BLEDevice (e.g. from the latest advertisement). Used from
+        the next session attempt on: every attempt re-reads it (an attempt already
+        inside establish_connection keeps the device it started with)."""
         self._ble_device = ble_device
 
     # -- capture ------------------------------------------------------------
 
-    def _capture(self, direction: str, *, wire: bytes, plain: bytes | None, enc: str) -> None:
+    def _capture(self, direction: Direction, *, wire: bytes, plain: bytes | None, enc: str) -> None:
         """Route one frame to the persistent JSONL sink (if configured) AND the
         frame-tier logger (if enabled) - one choke point, one shape. Account-lock
         secret payloads (33 b2 write / aa b1 read reply) are masked: captures end
@@ -236,8 +252,8 @@ class GoveeConnection:
 
     def _decrypt_rx(self, raw: bytes) -> bytes:
         """Notify-callback-time decrypt (session key, post-handshake only)."""
-        if self._encryption is Encryption.AES_RC4_PSK and self._session_key is not None:
-            return decrypt(raw, self._session_key)
+        if self._encryption is Encryption.AES_RC4_PSK and self._session_cipher is not None:
+            return self._session_cipher.decrypt(raw)
         return raw
 
     def _enqueue(self, item: bytes | None) -> None:
@@ -256,7 +272,8 @@ class GoveeConnection:
                 self._rx.put_nowait(queued)
         self._rx.put_nowait(item)
 
-    def _handle_notify(self, _char: BleakGATTCharacteristic, data: bytearray) -> None:
+    def _handle_notify(self, _char: BleakGATTCharacteristic | None, data: bytearray) -> None:
+        # `_char` is unused (there is one notify characteristic), so None is accepted too.
         raw = bytes(data)
         if len(raw) != FRAME_LEN:
             _LOGGER.debug("%s: ignoring %d-byte notification", self.address, len(raw))
@@ -279,16 +296,20 @@ class GoveeConnection:
             _LOGGER.debug("%s: dropped frame with bad checksum: %s", self.address, shown.hex())
             return
         if plain[0] not in _KNOWN_RX_PRO_TYPES:
-            _LOGGER.warning(
-                "%s: RX unrecognised frame %s (%s)",
-                self.address, describe_frame(plain, "rx")[0], plain.hex(),
-            )
+            # Device-controlled input: warn once per proType, then DEBUG, so firmware that
+            # keeps pushing an unmodelled frame can't flood the log.
+            if plain[0] not in self._warned_pro_types:
+                self._warned_pro_types.add(plain[0])
+                _LOGGER.warning(
+                    "%s: RX unrecognised frame %s (%s); further proType 0x%02X frames at DEBUG",
+                    self.address, describe_frame(plain, "rx")[0], plain.hex(), plain[0],
+                )
+            elif _LOGGER.isEnabledFor(logging.DEBUG):  # don't build the label per repeat when off
+                _LOGGER.debug(
+                    "%s: RX unrecognised frame %s (%s)",
+                    self.address, describe_frame(plain, "rx")[0], plain.hex(),
+                )
         self._enqueue(plain)  # plaintext: survives a disconnect nulling the session key
-        if self._on_notify is not None:
-            try:
-                self._on_notify(plain)
-            except Exception:  # pragma: no cover - callback must never break the pump
-                _LOGGER.exception("%s: on_notify callback failed", self.address)
 
     def _drain(self) -> None:
         while not self._rx.empty():
@@ -332,6 +353,11 @@ class GoveeConnection:
             raise GoveeBleConnectionError(f"{self.address}: connection closed")
         if self.is_connected:
             return
+        if self._bgc_checked and self._encryption is Encryption.AES_GCM:
+            # Settled (the BGC result is cached): don't open a link just to refuse again.
+            raise GoveeBleNotSupported(
+                f"{self.address}: AES-GCM (V2) handshake not yet implemented"
+            )
         last_err: GoveeBleError | None = None
         for attempt in range(1, SESSION_ATTEMPTS + 1):
             try:
@@ -358,28 +384,39 @@ class GoveeConnection:
                     self._ble_device.address,
                     disconnected_callback=self._on_disconnect,
                     max_attempts=CONNECT_MAX_ATTEMPTS,
-                    # Re-resolve the device on every retry so a retry uses the
-                    # best currently-reachable scanner/proxy, not the one that
-                    # was best when the attempt started.
+                    # A fresher BLEDevice reaches the next session attempt through
+                    # self._ble_device (each attempt re-reads it). This callback is only
+                    # offered to bleak-retry-connector: 4.x accepts it but never calls
+                    # it (it builds the client once, before its retry loop).
                     ble_device_callback=lambda: self._ble_device,
                     # Resolve only the Govee service. On macOS, CoreBluetooth refuses descriptor
                     # discovery on a characteristic of another service that some firmwares expose
                     # (H60A6: "UUID is not allowed for this operation"), which fails the whole
-                    # connect; BlueZ ignores the filter.
+                    # connect. bleak's BlueZ and WinRT backends apply the same filter to
+                    # client.services; the BGC lookup below is scoped to this service anyway.
                     services=[SERVICE_UUID],
                 )
                 self._drain()
                 await self._client.start_notify(NOTIFY_CHAR_UUID, self._handle_notify)
             await self._prepare_session()
-        except (BleakError, TimeoutError, EOFError) as err:
-            # A failed / half-open connect must not leave a stale client behind:
-            # the next attempt would reuse it and hit "Service Discovery has not
-            # been performed yet". Tear it down so every retry starts clean.
+        # A failed / half-open connect must not leave a stale client behind: the next
+        # attempt would reuse it and hit "Service Discovery has not been performed yet".
+        # Every branch tears it down so each retry starts clean.
+        except TimeoutError as err:
             await self._disconnect_locked()
-            if isinstance(err, TimeoutError):
-                raise GoveeBleTimeout(f"{self.address}: connect/handshake timed out") from err
-            raise GoveeBleConnectionError(f"connect to {self.address} failed: {err}") from err
-        except BaseException:
+            raise GoveeBleTimeout(f"{self.address}: connect timed out") from err
+        except _TRANSPORT_ERRORS as err:
+            await self._disconnect_locked()
+            raise GoveeBleConnectionError(f"{self.address}: connect failed: {_err_text(err)}") from err
+        except GoveeBleError:
+            await self._disconnect_locked()
+            raise
+        except Exception as err:
+            # Any other backend error (e.g. a RuntimeError from start_notify) is still a
+            # failed connect: callers only ever see GoveeBleError subclasses.
+            await self._disconnect_locked()
+            raise GoveeBleConnectionError(f"{self.address}: connect failed: {err!r}") from err
+        except BaseException:  # cancellation (e.g. the operation deadline): close, re-raise
             await self._disconnect_locked()
             raise
 
@@ -391,7 +428,18 @@ class GoveeConnection:
         if self._bgc_checked:
             return self._bgc_version
         client = self._require_client()
-        char = client.services.get_characteristic(BGC_INFO_CHAR_UUID)
+        # Port of BgcInfoReader.a (BgcInfoReader.java:58-72): walk gatt.getServices() and take
+        # the FIRST service whose UUID is Constants.d (...1910), then its Constants.b (...2b12)
+        # characteristic. bleak's UUID lookups don't match that: get_service() raises when two
+        # services share 1910, and the collection-wide get_characteristic() raises because 2b12
+        # also sits under the OTA service 1912. Iterating the collection never raises, and
+        # BleakGATTService.get_characteristic returns the first match.
+        try:
+            service = next((s for s in client.services if s.uuid == SERVICE_UUID), None)
+            char = service.get_characteristic(BGC_INFO_CHAR_UUID) if service is not None else None
+        except BleakError as err:  # client.services: "Service Discovery has not been performed yet"
+            _LOGGER.debug("%s: BGC lookup failed: %s", self.address, err)
+            return None  # not cached: the advertised mode stands, retried next connect
         if char is None:
             version = None
         else:
@@ -407,8 +455,7 @@ class GoveeConnection:
     async def _prepare_session(self) -> None:
         """Refine the encryption mode (BGC read), run the handshake if needed,
         send post-handshake unlock frames, and mark the session ready."""
-        self._session_key = None
-        self._ready = False
+        self._reset_session()
         self._drain()
         self._require_client()
         # BGC is authoritative for the version (1=RC4, 2=GCM); 0/absent keeps the
@@ -425,10 +472,21 @@ class GoveeConnection:
         try:
             if self._encryption is Encryption.AES_RC4_PSK:
                 await self._handshake()
-        except _LinkLost as err:
-            raise GoveeBleConnectionError(f"{self.address}: link lost during handshake") from err
+        except (_LinkLost, GoveeBleConnectionError) as err:  # dropped mid-wait / between writes
+            raise GoveeBleHandshakeConnectionError(
+                f"{self.address}: link lost during handshake"
+            ) from err
+        except _TRANSPORT_ERRORS as err:
+            # An e7 write itself failed: how BlueZ and proxies usually report a dropped link
+            # (BleakError "Not connected", BrokenPipeError, EOFError). Mapped like a drop
+            # mid-wait, and the session loop retries it the same way. The message stays neutral:
+            # the same clause also takes errors that are not a link loss (bleak's
+            # BleakCharacteristicNotFoundError for a stale service cache).
+            raise GoveeBleHandshakeConnectionError(
+                f"{self.address}: handshake write failed: {_err_text(err)}"
+            ) from err
         except TimeoutError as err:
-            raise GoveeBleTimeout(f"{self.address}: handshake timed out") from err
+            raise GoveeBleHandshakeTimeout(f"{self.address}: handshake timed out") from err
         self._ready = True
         self._drain()
         _LOGGER.debug("%s: session ready (%s)", self.address, self._encryption.value)
@@ -442,7 +500,7 @@ class GoveeConnection:
                     raise GoveeBleConnectionError(
                         f"{self.address}: link lost during unlock"
                     ) from err
-                except _WriteRejected as err:
+                except GoveeBleCommandRejected as err:
                     raise GoveeBleAuthError(
                         f"{self.address}: device rejected the secret key - it is wrong "
                         "or the device was re-paired"
@@ -481,22 +539,28 @@ class GoveeConnection:
         except TimeoutError:
             _LOGGER.debug("%s: no e7 02 confirm (continuing)", self.address)
         self._session_key = key
+        self._session_cipher = FrameCipher(key)
         self._handshake_echoes = echoes
         self._echo_filter_until = time.monotonic() + HANDSHAKE_ECHO_WINDOW
+
+    def _reset_session(self) -> None:
+        """Forget the negotiated session: no key (nor its cipher), not ready (the one place they
+        are cleared)."""
+        self._session_key = None
+        self._session_cipher = None
+        self._ready = False
 
     def _on_disconnect(self, client: BleakClientWithServiceCache) -> None:
         if client is not self._client:
             return  # a superseded client finishing its teardown late
         _LOGGER.debug("%s: disconnected", self.address)
-        self._session_key = None
-        self._ready = False
+        self._reset_session()
         # Drop the stale client so the next operation re-establishes from scratch.
         self._client = None
         self._enqueue(None)  # wake any waiter now instead of at its timeout
 
     async def _disconnect_locked(self) -> None:
-        self._session_key = None
-        self._ready = False
+        self._reset_session()
         client, self._client = self._client, None
         if client is None:
             return
@@ -520,10 +584,7 @@ class GoveeConnection:
             return
         err = task.exception()  # always retrieved: never an "unretrieved exception"
         if err is not None:
-            _LOGGER.debug(
-                "%s: disconnect error: %r", self.address, err,
-                exc_info=(type(err), err, err.__traceback__),
-            )
+            _LOGGER.debug("%s: disconnect error: %r", self.address, err, exc_info=err)
 
     # -- I/O ----------------------------------------------------------------
 
@@ -539,11 +600,11 @@ class GoveeConnection:
     def _encrypt(self, frame_plaintext: bytes) -> bytes:
         """Pure transform: plaintext frame -> wire bytes (no logging/capture)."""
         if self._encryption is Encryption.AES_RC4_PSK:
-            if self._session_key is None:
+            if self._session_cipher is None:
                 raise GoveeBleConnectionError(
                     f"{self.address}: session key lost (disconnected mid-send)"
                 )
-            wire = encrypt(frame_plaintext, self._session_key)
+            wire = self._session_cipher.encrypt(frame_plaintext)
         else:
             wire = frame_plaintext
         return wire
@@ -561,8 +622,9 @@ class GoveeConnection:
             self._cancel_idle_timer()
             if extend_warm:
                 self._active_until = asyncio.get_running_loop().time() + ACTIVE_IDLE_DELAY
+            deadline = asyncio.timeout(OPERATION_TIMEOUT)
             try:
-                async with asyncio.timeout(OPERATION_TIMEOUT):
+                async with deadline:
                     return await op()
             except GoveeBleError:
                 raise
@@ -570,35 +632,51 @@ class GoveeConnection:
                 raise GoveeBleConnectionError(f"{self.address}: link lost mid-operation") from err
             except TimeoutError as err:
                 await self._disconnect_locked()
-                raise GoveeBleTimeout(
-                    f"{self.address}: operation exceeded {OPERATION_TIMEOUT:.0f}s"
-                ) from err
-            except (BleakError, EOFError) as err:
+                if deadline.expired():
+                    raise GoveeBleTimeout(
+                        f"{self.address}: operation exceeded {OPERATION_TIMEOUT:.0f}s"
+                    ) from err
+                # Raised by the BLE stack itself (e.g. a write), not by the deadline.
+                raise GoveeBleTimeout(f"{self.address}: BLE I/O timed out ({_err_text(err)})") from err
+            except _TRANSPORT_ERRORS as err:
                 await self._disconnect_locked()
-                raise GoveeBleConnectionError(f"{self.address}: {err}") from err
+                raise GoveeBleConnectionError(f"{self.address}: {_err_text(err)}") from err
+            except Exception as err:
+                # Contract: callers only ever see GoveeBleError subclasses. The link state is
+                # unknown after an unexpected backend error, so it is torn down as well.
+                await self._disconnect_locked()
+                raise GoveeBleConnectionError(
+                    f"{self.address}: unexpected transport error: {err!r}"
+                ) from err
             finally:
                 self._schedule_idle_timer()
+
+    @overload
+    async def send(self, frame_plaintext: bytes, *, expect_ack: Literal[True] = ...) -> bytes: ...
+
+    @overload
+    async def send(self, frame_plaintext: bytes, *, expect_ack: Literal[False]) -> None: ...
+
+    @overload
+    async def send(self, frame_plaintext: bytes, *, expect_ack: bool) -> bytes | None: ...
 
     async def send(self, frame_plaintext: bytes, *, expect_ack: bool = True) -> bytes | None:
         """Connect+handshake if needed, then send one 20-byte plaintext frame.
 
         A write (proType 0x33) with expect_ack MIRRORS the app's comm layer: it
         waits for a reply matching [0x33, commandType], treats byte[2]==0 as
-        success and raises GoveeBleError on an explicit rejection. If the link
-        stops acking (or the write itself fails) it is torn down and the write
-        is retried once on a fresh link, so a half-dead cached connection costs
-        one reconnect instead of a failed command. ``expect_ack=False`` sends the
-        frame once and returns None. Only writes have an ack to wait for: a
+        success and raises :class:`GoveeBleCommandRejected` on an explicit
+        rejection. If the link stops acking (or the write itself fails) it is torn
+        down and the write is retried once on a fresh link, so a half-dead cached
+        connection costs one reconnect instead of a failed command. ``expect_ack=False``
+        sends the frame once and returns None. Only writes have an ack to wait for: a
         non-write frame with ``expect_ack=True`` raises GoveeBleInvalidValue
         (use :meth:`query` to read replies). A frame shorter than 2 bytes (no commandType)
         raises GoveeBleInvalidValue before any I/O."""
         self._check_frame(frame_plaintext)
-        is_write = frame_plaintext[:1] == bytes([PRO_WRITE])
-        if expect_ack and not is_write:
-            raise GoveeBleInvalidValue(
-                f"{self.address}: expect_ack needs a write frame (proType 0x{PRO_WRITE:02X}); "
-                "use query() for reads"
-            )
+        is_write = frame_plaintext[0] == PRO_WRITE
+        if expect_ack:
+            self._check_write_frame(frame_plaintext)
 
         async def op() -> bytes | None:
             if expect_ack:
@@ -617,13 +695,23 @@ class GoveeConnection:
                 f"got {len(frame)}"
             )
 
+    def _check_write_frame(self, frame: bytes) -> None:
+        """Validate a frame for an ack-verified send: 2+ bytes AND a write (proType 0x33)."""
+        self._check_frame(frame)
+        if frame[0] != PRO_WRITE:
+            raise GoveeBleInvalidValue(
+                f"{self.address}: only a write frame (proType 0x{PRO_WRITE:02X}) has an ack to "
+                f"wait for; got proType 0x{frame[0]:02X} (use query() for reads)"
+            )
+
     async def send_many(self, frames: list[bytes]) -> None:
         """Send several write frames back to back under ONE lock acquisition and
         one connection (each still individually ack-verified), so a multi-part
         change (e.g. power + brightness + colour) can't be interleaved with a
-        poll and never pays more than one connect."""
+        poll and never pays more than one connect. Every frame must be a write
+        (proType 0x33); anything else raises GoveeBleInvalidValue before any I/O."""
         for frame in frames:
-            self._check_frame(frame)
+            self._check_write_frame(frame)
 
         async def op() -> None:
             for frame in frames:
@@ -639,10 +727,13 @@ class GoveeConnection:
         await self._ensure_connected_locked()
         try:
             return await self._send_write_verified(frame_plaintext)
-        except (_LinkLost, BleakError, GoveeBleTimeout, GoveeBleConnectionError) as err:
+        except (
+            _LinkLost, *_TRANSPORT_ERRORS, TimeoutError, GoveeBleTimeout, GoveeBleConnectionError,
+        ) as err:
+            # (The operation deadline arrives here as CancelledError, never TimeoutError.)
             _LOGGER.debug(
                 "%s: write 0x%02X failed on this link (%s); reconnecting to retry",
-                self.address, frame_plaintext[1], err or type(err).__name__,
+                self.address, frame_plaintext[1], _err_text(err),
             )
             await self._disconnect_locked()
         await self._ensure_connected_locked()
@@ -673,11 +764,13 @@ class GoveeConnection:
             ack = await self._await_reply(PRO_WRITE, command_type, WRITE_ACK_TIMEOUT)
             if ack is not None:
                 if len(ack) >= 3 and ack[2] != 0:
-                    _LOGGER.error(
+                    # DEBUG only: the typed exception carries the same text and the caller
+                    # decides whether to log it (the unlock path re-raises it as an auth error).
+                    _LOGGER.debug(
                         "%s: device rejected write 0x%02X (status 0x%02X)",
                         self.address, command_type, ack[2],
                     )
-                    raise _WriteRejected(
+                    raise GoveeBleCommandRejected(
                         f"{self.address}: device rejected write 0x{command_type:02X} "
                         f"(status 0x{ack[2]:02X})"
                     )
@@ -717,7 +810,11 @@ class GoveeConnection:
         Returns the decrypted frames received until a terminal frame (an
         ``opcode`` frame whose byte 1 == ``terminal``) arrives, the device goes
         quiet for ``idle_gap`` after its last ``opcode`` frame (a lost terminator
-        must not cost the whole timeout), or ``timeout`` elapses."""
+        must not cost the whole timeout), or ``timeout`` elapses. Frames already
+        queued when the budget runs out are still collected. ``idle_gap`` is armed
+        by ANY ``opcode`` frame, so a single-reply read (terminal = the expected
+        command) should pass ``idle_gap=None``: there a stray ``opcode`` frame (a late
+        reply to an earlier read) must not cut the wait short."""
 
         async def op() -> list[bytes]:
             await self._ensure_connected_locked()
@@ -731,9 +828,9 @@ class GoveeConnection:
                 remaining = deadline - loop.time()
                 if seen_opcode and idle_gap is not None:
                     remaining = min(remaining, idle_gap)
-                if remaining <= 0:
-                    break
                 try:
+                    # With no budget left this only drains what is already queued (no
+                    # yield), so the loop stays bounded; a queued terminator is kept.
                     dec = await self._next_rx(remaining)
                 except TimeoutError:
                     break

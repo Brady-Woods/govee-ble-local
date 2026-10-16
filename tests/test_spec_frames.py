@@ -7,6 +7,8 @@ live H60A6 suite builds on.
 """
 from __future__ import annotations
 
+import base64
+
 from conftest import require_optional
 
 require_optional("kaitaistruct", reason="Kaitai runtime not installed")
@@ -140,5 +142,21 @@ def test_scene_upload_a3_start_carries_comm_byte():
     assert a.marker == 0x01
     assert a.comm_byte == sf.COMM_H60A6            # 0x58 device code at frame byte 4
     assert a.packet_count == len(frames)
-    # terminator is the last, data-bearing frame (seq 0xFF), not a separate empty frame
+    # this value is longer than START's 14 bytes, so the last frame (seq 0xFF) carries its final chunk
     assert frames[-1][1] == 0xFF
+    value = base64.b64decode(param)[1:]
+    stream = b"".join(f[2:19] for f in frames)
+    assert stream[3 : 3 + len(value)] == value and len(stream) - 3 - len(value) < 17
+
+
+def test_scene_upload_a3_short_value_is_start_plus_empty_end():
+    # makeSendBytesV2: a value that fits in START (<= 14 bytes with a one-byte commBytes) is still
+    # two frames, packet_count 2, followed by an empty 0xFF END.
+    frames = sf.make_send_bytes_v2(sf.PRO_MULTI_WRITE_V1, bytes([sf.MULTI_V1]), bytes(range(1, 15)))
+    assert len(frames) == 2
+    start = _parse(frames[0])
+    assert start.body.seq_no == 0x00
+    assert start.body.frame.marker == 0x01 and start.body.frame.packet_count == 2
+    assert start.body.frame.comm_byte == sf.MULTI_V1
+    assert frames[0][5:19] == bytes(range(1, 15))
+    assert _checksum_ok(frames[1]) and frames[1][:2] == b"\xa3\xff" and not any(frames[1][2:19])

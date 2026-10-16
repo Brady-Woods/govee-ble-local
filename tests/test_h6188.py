@@ -139,7 +139,7 @@ def test_color_temp_round_trips_kaitai() -> None:
 
 
 def test_segment_color_temp_rejected() -> None:
-    with pytest.raises(ValueError, match="h6188"):
+    with pytest.raises(GoveeBleNotSupported, match="h6188"):
         b.segment_color_temp(1, 3000, "h6188")
 
 
@@ -174,7 +174,8 @@ def test_brightness_round_trip_every_percent() -> None:
 def test_parse_mode_0d_rgblight_kelvin_marks_cct() -> None:
     cct = _frame(0xAA, 0x05, 0x0D, 0x10, 0x20, 0x30, 0x0A, 0x8C, 0xFF, 0xAE, 0x54)
     assert parse.parse_mode_0d_rgblight(cct) == (None, 2700)          # any kelvin != 0 => CCT
-    assert parse.parse_mode_0d(cct) == (None, 2700)                   # the bulbs use the same rule
+    assert parse.parse_mode_0d(cct) == (None, 2700)                   # the default 0x0d decoder agrees
+    assert parse.parse_mode_rgb_kelvin_tint(cct) == (None, 2700)      # H6188's own (the app's) decode
     rgb = _frame(0xAA, 0x05, 0x0D, 0x10, 0x20, 0x30)
     assert parse.parse_mode_0d_rgblight(rgb) == ((0x10, 0x20, 0x30), None)
 

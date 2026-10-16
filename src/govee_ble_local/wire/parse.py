@@ -14,23 +14,49 @@ lights treat non-zero as on.
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from io import BytesIO
-from typing import Any
+from typing import Any, Final
 
 from kaitaistruct import KaitaiStream
 
+from ..const import FRAME_LEN
 from ..models import Segment
 from .._generated.govee_ble_frame import GoveeBleFrame as _GBF  # type: ignore[attr-defined]
+from .build import (
+    CMD_MODE,
+    CMD_SECTION_COUNT,
+    INFO_BASIC,
+    INFO_HARD,
+    INFO_SN,
+    INFO_WIFI,
+    PRO_READ,
+    SUB_COLOR_0B,
+    SUB_COLOR_0D,
+    SUB_COLOR_15,
+    SUB_SCENE,
+    ColorScheme,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
-# The generated reader is untyped; treat it as Any so attribute chains don't need stubs.
+# The generated reader is untyped; treat it as Any so attribute chains don't need stubs. This is
+# the wire layer's one import of it: :mod:`.reassemble` and :mod:`.describe` reuse these names.
 _F: Any = _GBF
 _ProType = _F.ProType
 _Command = _F.Command
+_SubMode = _F.SubMode
 _NotifySub = _F.NotifySub
+
+# One colour-group record as the group parsers return it: (brightness | None, r, g, b).
+GroupRecord = tuple[int | None, int, int, int]
+
+
+def _parse_type(cls: Any, data: bytes, *params: Any) -> Any:
+    """Read ``data`` as the generated type ``cls`` (``params`` = its ksy params, if any).
+    Raises whatever the generated reader raises on malformed input."""
+    return cls(*params, KaitaiStream(BytesIO(bytes(data))))
 
 
 def _parse(frame: bytes) -> Any:
@@ -48,12 +74,8 @@ def _parse(frame: bytes) -> Any:
 def _read_reply(frame: bytes, command: Any) -> Any:
     """Return the typed body of a ``0xAA`` read reply matching ``command``, else None."""
     f = _parse(frame)
-    if f is None or f.pro_type != _ProType.read:
-        return None
-    try:
-        if f.body.command != command:
-            return None
-    except Exception:  # noqa: BLE001
+    # A read frame always parses to ReadCommand, which sets ``command`` (raw int when unknown).
+    if f is None or f.pro_type != _ProType.read or f.body.command != command:
         return None
     return f.body.body
 
@@ -62,7 +84,7 @@ def _read_reply(frame: bytes, command: Any) -> Any:
 def find_reply(frames: list[bytes], command_type: int) -> bytes | None:
     """First ``0xAA`` frame in ``frames`` whose command byte is ``command_type``, else None."""
     for reply in frames:
-        if len(reply) >= 2 and reply[0] == 0xAA and reply[1] == command_type:
+        if len(reply) >= 2 and reply[0] == PRO_READ and reply[1] == command_type:
             return reply
     return None
 
@@ -81,9 +103,11 @@ def parse_brightness(frame: bytes) -> int | None:
 
 
 def parse_bar_switch(frame: bytes) -> tuple[bool, bool] | None:
-    """AA 36 reply: (left, right) bar power."""
+    """AA 36 reply: (left, right) bar power. A bar is on only when its byte is 1, as the app reads
+    it (h6047 ``ComposeLightController.parseValidBytes`` / ``ComposeLightHeartController``:
+    ``bArr[0] == 1``, ``bArr[1] == 1``)."""
     b = _read_reply(frame, _Command.compose_light_switch)
-    return None if b is None else (bool(b.left), bool(b.right))
+    return None if b is None else (int(b.left) == 1, int(b.right) == 1)
 
 
 def parse_secret(frame: bytes) -> bytes | None:
@@ -95,15 +119,18 @@ def parse_secret(frame: bytes) -> bytes | None:
 
 
 def parse_plug_spec(frame: bytes) -> int | None:
-    """AA B3 reply: single spec-identifier byte (not the outlet count)."""
+    """AA B3 reply: single spec-identifier byte (not the outlet count).
+
+    Spec surface for tools and tests: Device does not read it."""
     b = _read_reply(frame, _Command.plug_spec)
     return None if b is None else int(b.spec)
 
 
 def parse_gradual(frame: bytes) -> bool | None:
-    """AA A3 reply (gradual_read): gradual/fade-on-handoff enabled iff byte0 == 1."""
+    """AA A3 reply (gradual_read): gradual/fade-on-handoff enabled iff byte0 == 1
+    (``ControllerGradual4BleWifi.h``: ``bArr[0] == 1``; any other value is off)."""
     b = _read_reply(frame, _Command.gradual_wifi_ble)
-    return None if b is None else bool(b.state)
+    return None if b is None else int(b.state) == 1
 
 
 # ── mode (0x05) read replies ─────────────────────────────────────────────────
@@ -115,7 +142,7 @@ def _mode_read(frame: bytes) -> Any:
 def parse_active_scene(frame: bytes) -> int | None:
     """AA 05 04 reply: active scene code (u2le), or None if not in scene sub-mode."""
     m = _mode_read(frame)
-    if m is None or int(m.selector_or_sub_mode) != 0x04:
+    if m is None or int(m.selector_or_sub_mode) != SUB_SCENE:
         return None
     rest = bytes(m.rest)
     if len(rest) < 2:
@@ -126,7 +153,7 @@ def parse_active_scene(frame: bytes) -> int | None:
 def parse_kelvin(frame: bytes) -> int | None:
     """AA 05 15 01 reply: colour temperature in Kelvin (u2be), or None."""
     m = _mode_read(frame)
-    if m is None or int(m.selector_or_sub_mode) != 0x15:
+    if m is None or int(m.selector_or_sub_mode) != SUB_COLOR_15:
         return None
     return int(m.rest.kelvin)
 
@@ -139,37 +166,28 @@ def parse_bar_kelvin(frame: bytes) -> tuple[int, int] | None:
     (``SubModeColor.parse``; ``Info4Detail`` ``subMode4Color`` parse strategy). The app shows a
     whole-device kelvin only when both bars match; that rule lives in the Device layer."""
     m = _mode_read(frame)
-    if m is None or int(m.selector_or_sub_mode) != 0x15:
+    if m is None or int(m.selector_or_sub_mode) != SUB_COLOR_15:
         return None
     right = getattr(m.rest, "kelvin_right", None)
     return int(m.rest.kelvin), int(right or 0)
 
 
-def parse_mode_color_0d(frame: bytes) -> tuple[int, int, int] | None:
-    """AA 05 0D reply read as a bare (r, g, b) triple, or None.
-
-    SUPERSEDED: the "mechanism C" reading (0x0D carries only RGB, H6052 only) was wrong. On
-    the 0x0d-scheme bulbs the body is ``[r, g, b, kelvin u2be]``, so this drops the kelvin
-    and reports white instead of the colour temperature. Use :func:`parse_mode_0d`; this is
-    kept only for the spec's ``mode_color_0d_report`` view of the frame."""
-    m = _mode_read(frame)
-    if m is None or int(m.selector_or_sub_mode) != 0x0D:
-        return None
-    rb = m.rest
-    return (int(rb.r), int(rb.g), int(rb.b))
-
-
 def parse_mode_0d(frame: bytes) -> tuple[tuple[int, int, int] | None, int | None] | None:
-    """AA 05 0D reply on the 0x0d-scheme bulbs (H6006/H6008/H6052): ``[r, g, b,
-    kelvin u2be, tint r, g, b]`` - the same layout as the 0x0d write. ANY non-zero kelvin is
-    colour-temperature mode -> ``(None, kelvin)``; kelvin 0 -> ``((r, g, b), None)``.
+    """AA 05 0D reply read as ``[r, g, b, kelvin u2be, tint r, g, b]`` - the same layout as the 0x0d
+    write. ANY non-zero kelvin is colour-temperature mode -> ``(None, kelvin)``; kelvin 0 ->
+    ``((r, g, b), None)``.
 
-    This is the app's own rule: ``bulblightstringv1`` ``ModeParseStrategyConfig`` and
-    tablelampv1 ``SubModeColor.parse`` take kelvin from bytes 3..4 and show the tint when it is
-    non-zero. It must not require white (ff ff ff) in the colour slot: the app's CCT write
-    (``Config.bu`` -> ``Bytes.p``) puts the tint there. Live capture, written by the earlier
-    white-slot form: ``aa 05 0d ff ff ff 0a 8c`` = 2700 K."""
-    if len(frame) < 8 or frame[0] != 0xAA or frame[1] != 0x05 or frame[2] != 0x0D:
+    This is the 0x0d decoder of the default ``"rgb_kelvin"`` mode parse
+    (``DeviceProfile.mode_color_parse``), which no 0x0d-scheme SKU in the profile table uses: the
+    bulbs (H6006/H6008/H6004) and H6188 decode their report as the app does with
+    :func:`parse_mode_rgb_kelvin_tint`, and H6052 with :func:`parse_mode_0d_rgb`. It does not require
+    white (ff ff ff) in the colour slot: the app's CCT write (``Config.bu`` -> ``Bytes.p``) puts the
+    tint there.
+
+    Hand-decoded, not through the generated kind-2 reader: this also accepts an 8..10-byte frame,
+    which kind 2 (8 body bytes) can't read, so delegating would not give the same result on every
+    frame it accepts. ``tests/test_wire_parse.py`` pins the two to agree on random 20-byte frames."""
+    if len(frame) < 8 or frame[0] != PRO_READ or frame[1] != CMD_MODE or frame[2] != SUB_COLOR_0D:
         return None
     kelvin = (frame[6] << 8) | frame[7]
     if kelvin:
@@ -177,19 +195,83 @@ def parse_mode_0d(frame: bytes) -> tuple[tuple[int, int, int] | None, int | None
     return (frame[3], frame[4], frame[5]), None
 
 
-# mode_color_0d_typed `kind` for the rgblight strategy (devices.yaml mode_0d_kind: rgb_kelvin_tint).
+# mode_color_0d_typed `kind`s (devices.yaml mode_0d_kind): 1 = rgb (H6052), 2 = rgb_kelvin_tint.
+_MODE_0D_KIND_RGB = 1
 _MODE_0D_KIND_RGB_KELVIN_TINT = 2
+# The aa 05 colour sub-modes OpInfo4Detail.parseModeValidBytes hands to the SKU's SubMode4Color parse
+# strategy (``b6 == 21 || b6 == 11 || b6 == 2 || b6 == 13``); it sends every other sub-mode elsewhere.
+SUBMODE4COLOR_SUB_MODES: Final = frozenset({SUB_COLOR_15, SUB_COLOR_0B, 0x02, SUB_COLOR_0D})
+# BleUtil.getSignedShort: a big-endian Kelvin of 0x8000 or more reads as negative.
+_SIGNED_SHORT_MIN: Final = 0x8000
+
+
+def parse_mode_rgb_kelvin_tint(frame: bytes) -> tuple[tuple[int, int, int] | None, int | None] | None:
+    """AA 05 colour report on the ``ModeParseStrategyConfig.a`` SKUs (the 0x0d bulbs H6006 / H6008 /
+    H6004 and the rgblight H6188), decoded as the app does: ``((r, g, b) | None, kelvin | None)``,
+    or None when this is not such a report.
+
+    App path (Govee Home 7.7.02): bulblight ``AcNewDetail`` -> ``VM4Light`` (``$connectBleSuc$1.l``
+    -> ``m5`` -> ``j5`` installs ``ModeParseStrategyConfig.a``, the non-H6001 branch) and rgblight
+    ``VM4Light`` (``$connectBleSuc$1.l`` -> ``A5`` -> ``v5`` installs ``ModeParseStrategyConfig.a.a()``
+    for H6188), both then handing the reply to ``OpInfo4Detail.parseModeValidBytes`` (``$default`` ->
+    ``OpInfo4Detail.x``). That sends sub-modes 0x15, 0x0b, 0x02 and 0x0d alike
+    (:data:`SUBMODE4COLOR_SUB_MODES`) to the strategy, which reads the body after the sub-mode byte
+    as ``[r, g, b][kelvin s16be][tint r, g, b]`` (the spec's ``mode_color_0d_typed`` kind 2):
+    ``s(getSignedShort(vb[3], vb[4]))``, and the colour is the tint ``vb[5..7]`` when that kelvin is
+    non-zero, else ``vb[0..2]``. parseModeValidBytes then takes colour-temperature mode only for a
+    kelvin > 0. So: kelvin > 0 -> ``(None, kelvin)``; kelvin 0 -> ``((r, g, b), None)``; a negative
+    kelvin (0x8000 or more, which the bulbs' firmware never stores) -> ``((tint r, g, b), None)``.
+
+    Read through the generated kind-2 reader, so the body must hold its 8 bytes (a reply is a
+    20-byte frame)."""
+    if len(frame) < 3 or frame[0] != PRO_READ or frame[1] != CMD_MODE:
+        return None
+    if frame[2] not in SUBMODE4COLOR_SUB_MODES:
+        return None
+    try:
+        body = _parse_type(_F.ModeColor0dTyped, frame[3:], _MODE_0D_KIND_RGB_KELVIN_TINT)
+    except Exception as exc:  # noqa: BLE001 - truncated body -> not a usable report
+        _LOGGER.debug("colour report did not parse as kind 2: %s (%r)", bytes(frame).hex(), exc)
+        return None
+    kelvin = int(body.report_kelvin)
+    if kelvin >= _SIGNED_SHORT_MIN:
+        return (int(body.tint_r), int(body.tint_g), int(body.tint_b)), None
+    if kelvin:
+        return None, kelvin
+    return (int(body.r), int(body.g), int(body.b)), None
+
+
+def parse_mode_0d_rgb(frame: bytes) -> tuple[int, int, int] | None:
+    """AA 05 0D reply on H6052: its ``(r, g, b)``, or None when this is not a 0x0d report.
+
+    App path (tablelampv1, goodsType 22): ``Model.u`` -> ``H6052NewDetailActivity`` ->
+    ``H6052NewDetailVM`` (``$connectBleSuc$1`` and the heartbeat both call ``H6052InfoDetail.G``).
+    G decodes a colour only for sub-mode 0x0d, with the strategy the H6052InfoDetail constructor
+    installs: ``ColorUtils.G(vb[0], vb[1], vb[2])`` and nothing more (the spec's
+    ``mode_color_0d_typed`` kind 1). The Kelvin bytes that follow are never read. (G then shows a
+    Kelvin only when the app's own last write left one in its in-memory SubMode4Color; that is not
+    a decode of the report and is not modelled.) Every other colour sub-mode, 0x15 included, is
+    "not support" there."""
+    if len(frame) < 3 or frame[0] != PRO_READ or frame[1] != CMD_MODE or frame[2] != SUB_COLOR_0D:
+        return None
+    try:
+        body = _parse_type(_F.ModeColor0dTyped, frame[3:], _MODE_0D_KIND_RGB)
+    except Exception as exc:  # noqa: BLE001 - truncated body -> not a usable report
+        _LOGGER.debug("0x0d report did not parse as kind 1: %s (%r)", bytes(frame).hex(), exc)
+        return None
+    return int(body.r), int(body.g), int(body.b)
 
 
 def parse_mode_0d_rgblight(frame: bytes) -> tuple[tuple[int, int, int] | None, int | None] | None:
-    """AA 05 0D reply on the rgblight H6188, decoded by the spec's ``mode_color_0d_typed(kind=2)``:
-    ``[r, g, b, kelvin u2be, tint r, g, b]`` (ModeParseStrategyConfig.a). ANY non-zero kelvin is
-    colour-temperature mode -> ``(None, kelvin)`` (the app then shows the tint, not r/g/b);
-    kelvin 0 -> ``((r, g, b), None)``. Same return shape as :func:`parse_mode_0d`."""
-    if len(frame) < 3 or frame[0] != 0xAA or frame[1] != 0x05 or frame[2] != 0x0D:
+    """AA 05 0D reply decoded by the spec's ``mode_color_0d_typed(kind=2)``: ``[r, g, b, kelvin u2be,
+    tint r, g, b]``. ANY non-zero kelvin (``is_cct``) -> ``(None, kelvin)``; kelvin 0 ->
+    ``((r, g, b), None)``. Same return shape as :func:`parse_mode_0d`, and its 0x0d decoder on scheme
+    ``"h6188"`` under the default ``"rgb_kelvin"`` mode parse (:func:`parse_mode_0d_for`). H6188 itself
+    decodes its report as the app does, with :func:`parse_mode_rgb_kelvin_tint`."""
+    if len(frame) < 3 or frame[0] != PRO_READ or frame[1] != CMD_MODE or frame[2] != SUB_COLOR_0D:
         return None
     try:
-        body = _F.ModeColor0dTyped(_MODE_0D_KIND_RGB_KELVIN_TINT, KaitaiStream(BytesIO(bytes(frame[3:]))))
+        body = _parse_type(_F.ModeColor0dTyped, frame[3:], _MODE_0D_KIND_RGB_KELVIN_TINT)
     except Exception as exc:  # noqa: BLE001 - truncated body -> not a usable report
         _LOGGER.debug("0x0d report did not parse as kind 2: %s (%r)", bytes(frame).hex(), exc)
         return None
@@ -198,10 +280,20 @@ def parse_mode_0d_rgblight(frame: bytes) -> tuple[tuple[int, int, int] | None, i
     return (int(body.r), int(body.g), int(body.b)), None
 
 
+def parse_mode_0d_for(
+    frame: bytes, scheme: ColorScheme,
+) -> tuple[tuple[int, int, int] | None, int | None] | None:
+    """The AA 05 0D colour report under the default ``"rgb_kelvin"`` mode parse
+    (``DeviceProfile.mode_color_parse``): :func:`parse_mode_0d_rgblight` on ``"h6188"``,
+    :func:`parse_mode_0d` on every other scheme. The one place that picks that 0x0d decoder by colour
+    scheme (the Device layer calls this). The SKUs whose app strategy is known choose their own mode
+    parse instead (H6006 / H6008 / H6004 / H6188 :func:`parse_mode_rgb_kelvin_tint`, H6052
+    :func:`parse_mode_0d_rgb`)."""
+    return parse_mode_0d_rgblight(frame) if scheme == "h6188" else parse_mode_0d(frame)
+
+
 # ── mechanism-B per-group colour read-back (H61A8; 0xAA 0xA2 V1 / 0xA5 V2) ──────
-def parse_bulb_group_batch(
-    frame: bytes,
-) -> tuple[int, list[tuple[int | None, int, int, int]]] | None:
+def parse_bulb_group_batch(frame: bytes) -> tuple[int, list[GroupRecord]] | None:
     """One mechanism-B batch reply (spec Change 7). Returns ``(batch_seq, groups)`` where
     each group is ``(brightness|None, r, g, b)`` — brightness is None for the V1 (0xA2)
     colour-only form. The segment index is POSITIONAL (assembled by the caller via
@@ -233,20 +325,27 @@ def group_base_index(group_index: int, group_size: int) -> int | None:
     return (group_index - 1) * group_size
 
 
+def _groups_to_segments(
+    groups: Iterable[tuple[int, Sequence[GroupRecord]]], group_size: int
+) -> list[Segment]:
+    """Positional segments from 1-based groups: ``index = (group - 1) * group_size + k``."""
+    segs: list[Segment] = []
+    for group, records in groups:
+        base = group_base_index(group, group_size)
+        if base is None:
+            continue
+        for k, (brightness, r, g, b) in enumerate(records):
+            segs.append(Segment(index=base + k, rgb=(r, g, b), brightness=brightness))
+    return merge_segments(segs)
+
+
 def bulb_groups_to_segments(
-    batches: list[tuple[int, list[tuple[int | None, int, int, int]]]], per_batch: int
+    batches: Iterable[tuple[int, Sequence[GroupRecord]]], per_batch: int
 ) -> list[Segment]:
     """Assemble mechanism-B batches into positional segments:
     ``index = (batch_seq - 1) * per_batch + i`` (per_batch is a client constant:
     V1 = 4, V2 = 3 — not frame-encoded)."""
-    segs: list[Segment] = []
-    for batch_seq, groups in batches:
-        base = group_base_index(batch_seq, per_batch)
-        if base is None:
-            continue
-        for i, (brightness, r, g, b) in enumerate(groups):
-            segs.append(Segment(index=base + i, rgb=(r, g, b), brightness=brightness))
-    return merge_segments(segs)
+    return _groups_to_segments(batches, per_batch)
 
 
 def merge_segments(*groups: Iterable[Segment]) -> list[Segment]:
@@ -260,18 +359,11 @@ def merge_segments(*groups: Iterable[Segment]) -> list[Segment]:
 
 
 def direct_groups_to_segments(
-    groups: Iterable[tuple[int, list[tuple[int, int, int, int]]]], group_size: int
+    groups: Iterable[tuple[int, Sequence[GroupRecord]]], group_size: int
 ) -> list[Segment]:
     """Assemble mechanism-A-direct group replies (:func:`parse_direct_color_group` results)
     into positional segments: ``index = (group_index - 1) * group_size + k``."""
-    segs: list[Segment] = []
-    for group_index, records in groups:
-        base = group_base_index(group_index, group_size)
-        if base is None:
-            continue
-        for k, (brightness, r, g, b) in enumerate(records):
-            segs.append(Segment(index=base + k, rgb=(r, g, b), brightness=brightness))
-    return merge_segments(segs)
+    return _groups_to_segments(groups, group_size)
 
 
 # ── mechanism A-direct: per-group colour via Controller4ColorInfoByGroup ────────
@@ -300,7 +392,7 @@ def parse_direct_color_group(
     if getattr(f.body, "command", None) != _Command.local_color_read:
         return None
     group_index = frame[2]
-    body = bytes(frame)[3:19]   # after [proType, command, group_index]; before the BCC byte
+    body = bytes(frame)[3:FRAME_LEN - 1]   # after [proType, command, group_index]; before the BCC byte
     n = max(0, min(expected_records, len(body) // 4))
     records = [
         (body[i * 4], body[i * 4 + 1], body[i * 4 + 2], body[i * 4 + 3]) for i in range(n)
@@ -310,16 +402,19 @@ def parse_direct_color_group(
 
 @dataclass(frozen=True)
 class IcCount:
-    """AA 40 reply (ic_segment_read / ControllerOnlyReadIcSegmentNum): the device's OWN
-    live IC (lamp-bead) count and its precomputed group/segment count — lets a client
-    discover the true segmentation instead of relying on a static per-SKU table, and without
-    needing to re-derive the group-count divisor client-side."""
+    """AA 40 reply (ic_segment_read / ControllerOnlyReadIcSegmentNum): the device's live IC
+    (lamp-bead) count, and the reply's third byte as received.
+
+    ``segment_count`` is that third byte, kept for compatibility: the app does not use it for H6641
+    (h61d3 ``ReadIcController`` reads bytes 0..1 only). The piece and group counts are derived
+    client-side from the IC count, as the app does (:func:`..devices._readback.live_ic_pieces`:
+    ``ceil(clamp(IC, 41, 70) / 5)`` pieces, ``ceil(pieces / 4)`` groups; ``H61D3Support.e``)."""
     ic_count: int
     segment_count: int
 
 
 def parse_ic_count(frame: bytes) -> IcCount | None:
-    """AA 40 reply: live IC count + device-reported group/segment count."""
+    """AA 40 reply: the live IC count and the reply's third byte (see :class:`IcCount`)."""
     b = _read_reply(frame, _Command.ic_num)
     if b is None:
         return None
@@ -343,7 +438,7 @@ def parse_section_count(frame: bytes) -> SectionCount | None:
     Hand-decoded, not via the generated reader: opcode 0x41 is ``on_off_memory`` in the shared
     command enum and only means this on the ``striplight`` split (the same "shared opcode,
     per-SKU body" case as :func:`parse_mode_0d`)."""
-    if len(frame) < 5 or frame[0] != 0xAA or frame[1] != 0x41:
+    if len(frame) < 5 or frame[0] != PRO_READ or frame[1] != CMD_SECTION_COUNT:
         return None
     return SectionCount(ic_count=(frame[2] << 8) | frame[3], section_num=frame[4])
 
@@ -383,6 +478,10 @@ def _uid_serial(uid: bytes) -> str | None:
 
 @dataclass(frozen=True)
 class DeviceInfo:
+    """Device info from one ``aa 07`` reply or one ``0x07`` TLV of the 0xAC status reply (same
+    ``device_info_read`` layout). Only the fields its selector carries are set: basic 0x10
+    (serial, sw / hw, dsp), Wi-Fi 0x11 (Wi-Fi MAC and the Wi-Fi MODULE's sw / hw), SN 0x02
+    (serial), hard version 0x03 (hw)."""
     serial: str | None = None
     wifi_mac: str | None = None
     sw_version: str | None = None
@@ -393,22 +492,22 @@ class DeviceInfo:
 def device_info_from(sel: int, info: Any) -> DeviceInfo | None:
     """Shared selector -> DeviceInfo mapping for a parsed device_info_read body (used by the
     single-frame aa 07 reply AND the 0xAC status 0x07 TLV — identical layout)."""
-    if sel == 0x10:
+    if sel == INFO_BASIC:
         return DeviceInfo(
             serial=_uid_serial(bytes(info.uid)),
             sw_version=_version(info.sw_version),
             hw_version=_version(info.hw_version),
             dsp_version=int(info.dsp_version),
         )
-    if sel == 0x11:
+    if sel == INFO_WIFI:
         return DeviceInfo(
             wifi_mac=_mac_or_none(bytes(info.wifi_mac)),
             sw_version=_version(info.wifi_sw_version),
             hw_version=_version(info.wifi_hw_version),
         )
-    if sel == 0x02:
+    if sel == INFO_SN:
         return DeviceInfo(serial=_uid_serial(bytes(info.uid)))
-    if sel == 0x03:
+    if sel == INFO_HARD:
         return DeviceInfo(hw_version=_ascii_version(info.version))
     return None   # 0x06 etc. — logged & ignored by the device
 
@@ -430,6 +529,8 @@ def parse_soft_version(frame: bytes) -> str | None:
 # ── notifications (0xEE) ─────────────────────────────────────────────────────
 @dataclass(frozen=True)
 class Notify:
+    """One decoded ``0xEE`` device push (:func:`parse_notify`). ``sub_type`` is the push sub-type
+    byte; only the field that sub-type carries is set."""
     sub_type: int
     level: int | None = None                      # 0x20 brightness push (raw reported value)
     wifi_connected: bool | None = None            # 0x11 (status byte == 0)
@@ -438,16 +539,19 @@ class Notify:
 
 def parse_notify(frame: bytes) -> Notify | None:
     """0xEE push. Types the three sub-payloads the curated SKUs emit (0x20/0x11/0x30);
-    other (cross-category) sub-types return None."""
+    other (cross-category) sub-types return None.
+
+    Spec surface for tools and tests: Device does not consume 0xEE pushes (it polls), so nothing
+    in the library calls this yet."""
     f = _parse(frame)
     if f is None or f.pro_type != _ProType.notify:
         return None
     sub = f.body.sub_type
     d = f.body.data
     if sub == _NotifySub.brightness:
-        return Notify(sub_type=0x20, level=int(d.level))
+        return Notify(sub_type=int(sub), level=int(d.level))
     if sub == _NotifySub.wifi_connect:
-        return Notify(sub_type=0x11, wifi_connected=(int(d.status) == 0))
+        return Notify(sub_type=int(sub), wifi_connected=(int(d.status) == 0))
     if sub == _NotifySub.device_info_or_zone:
-        return Notify(sub_type=0x30, zone_flags=(int(d.flags_a), int(d.flags_b), int(d.flags_c)))
+        return Notify(sub_type=int(sub), zone_flags=(int(d.flags_a), int(d.flags_b), int(d.flags_c)))
     return None

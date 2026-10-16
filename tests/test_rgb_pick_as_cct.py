@@ -59,6 +59,11 @@ def _dev(sku: str, segments: int | None = None) -> Device:
 
     d._conn.send = AsyncMock(side_effect=send)  # type: ignore[method-assign]
     d._conn.send_many = AsyncMock(side_effect=send_many)  # type: ignore[method-assign]
+    # Any read or upload these write paths did not script fails loudly instead of reaching the
+    # real connection (and the host's Bluetooth stack).
+    d._conn.query = AsyncMock(side_effect=AssertionError("unexpected read"))  # type: ignore[method-assign]
+    d._conn.send_unacked = AsyncMock(  # type: ignore[method-assign]
+        side_effect=AssertionError("unexpected upload"))
     d._sent = sent  # type: ignore[attr-defined]
     return d
 
@@ -132,7 +137,9 @@ def test_set_rgb_tint_pick_sends_one_cct_frame(sku: str, segments: int | None, c
     d = _dev(sku, segments)
     asyncio.run(d.set_rgb(_rgb(colour)))
     assert [f.hex() for f in _sent(d)] == [expected]
-    d._conn.send.assert_awaited_once()          # type: ignore[attr-defined]  # one frame, not send_many
+    # One write of one frame (set_rgb always hands its frames to send_many, which acks each).
+    d._conn.send_many.assert_awaited_once()     # type: ignore[attr-defined]
+    assert len(d._conn.send_many.await_args.args[0]) == 1  # type: ignore[attr-defined]
 
 
 @pytest.mark.parametrize(("sku", "segments", "colour", "expected"), GOLDEN_WHOLE)
@@ -157,7 +164,7 @@ def test_h6047_bar_pick_uses_the_bar_mask() -> None:
     asyncio.run(d.set_zone_rgb("left", (0xFF, 0xC9, 0x87)))
     asyncio.run(d.set_zone_rgb("right", (0xFF, 0xC9, 0x87)))
     assert [f.hex() for f in _sent(d)] == [_cct15(3500, (0xFF, 0xC9, 0x87), 0x1F, 0x00).hex(),
-                                          _cct15(3500, (0xFF, 0xC9, 0x87), 0xE0, 0x03).hex()]
+                                           _cct15(3500, (0xFF, 0xC9, 0x87), 0xE0, 0x03).hex()]
     assert _sent(d)[0][12:14].hex() == "1f00"
 
 
@@ -166,7 +173,7 @@ def test_h60a6_zone_picks_are_one_cct_frame_with_the_zone_mask() -> None:
     asyncio.run(d.set_zone_rgb("main", (0xFF, 0xB9, 0x69)))
     asyncio.run(d.set_zone_rgb("background", (0xFF, 0xB4, 0x6B)))
     assert [f.hex() for f in _sent(d)] == [_cct15(3000, (0xFF, 0xB9, 0x69), 0x00, 0x10).hex(),
-                                          _cct15(3000, (0xFF, 0xB4, 0x6B), 0xFF, 0x0F).hex()]
+                                           _cct15(3000, (0xFF, 0xB4, 0x6B), 0xFF, 0x0F).hex()]
 
 
 def test_segment_picks_are_one_cct_frame_with_the_segment_mask() -> None:
