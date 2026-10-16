@@ -7,28 +7,50 @@
 #     scripts/check.sh
 #
 # Gates (in order, fail-fast):
-#   1. ruff check over src tools tests spec (rules in [tool.ruff.lint])
-#   2. mypy --strict on src/govee_ble_local (generated readers are exempt via
+#   1. generate the Kaitai read-write classes in src/govee_ble_local/_generated from spec/*.ksy
+#      (tools/gen_kaitai.sh), so every later gate runs against the spec as it is. It needs the
+#      pinned JVM kaitai-struct-compiler (gen_kaitai.sh KSC_SERIES): `brew install
+#      kaitai-struct-compiler`, or scripts/install_ksc.sh on Debian/Ubuntu (what CI runs). With
+#      CI=true, while the classes are still tracked in git, a fresh build that differs from the
+#      committed one (a modified or a missing file) fails.
+#   2. ruff check over src tools tests spec (rules in [tool.ruff.lint])
+#   3. mypy --strict on src/govee_ble_local (generated readers are exempt via
 #      [[tool.mypy.overrides]])
-#   3. bandit over src + tools, failing on Medium+ severity (-ll); the generated
+#   4. bandit over src + tools, failing on Medium+ severity (-ll); the generated
 #      readers are excluded; accepted findings carry inline `# nosec` + reason
-#   4. pip-audit of the package's resolved runtime dependencies, i.e. what users install
+#   5. pip-audit of the package's resolved runtime dependencies, i.e. what users install
 #      (needs network: skipped with a message when offline, unless CI=true, where it is
 #      mandatory). It deliberately does not scan the CI venv's own tooling (pip, setuptools,
 #      pytest, ...), whose advisories are unrelated to what this package ships.
-#   5. pytest with a coverage floor over the package (only the Kaitai-generated
+#   6. pytest with a coverage floor over the package (only the Kaitai-generated
 #      _generated/ readers are omitted, via [tool.coverage.run])
 #
 # Env overrides: PYTHON  (default python3)
 #                VENV    (default .venv-check)
 #                COV_MIN (default 85)
-#                CI      (set to "true" to make the pip-audit network check mandatory)
+#                CI      (set to "true" to make the pip-audit network check mandatory and to
+#                         fail on generated classes that differ from the committed ones)
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 PYTHON="${PYTHON:-python3}"
 VENV="${VENV:-.venv-check}"
 COV_MIN="${COV_MIN:-85}"
+
+echo ">> generate the Kaitai read-write classes from spec/*.ksy"
+# gen_kaitai.sh itself requires the pinned JVM compiler for this build (no JS fallback).
+bash tools/gen_kaitai.sh
+# While the classes are tracked, the fresh build must match the commit: porcelain status lists
+# modified and untracked (never-committed) files alike, and nothing once _generated/ is gitignored.
+if [ "${CI:-}" = "true" ]; then
+  gen_changes=$(git status --porcelain --untracked-files=all -- src/govee_ble_local/_generated)
+  if [ -n "$gen_changes" ]; then
+    printf '%s\n' "$gen_changes" >&2
+    echo "   FAILED: the committed classes differ from a fresh build of spec/*.ksy (modified or" \
+      "missing); run tools/gen_kaitai.sh and commit them with the .ksy change" >&2
+    exit 1
+  fi
+fi
 
 if [ ! -x "$VENV/bin/python" ]; then
   echo ">> creating venv: $VENV"
