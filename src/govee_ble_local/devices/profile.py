@@ -358,8 +358,11 @@ PROFILES: Final[tuple[DeviceProfile, ...]] = (
     # The aa 05 mode report (goodsType 19 per the account device-list, one of dreamcolorlightv1
     # Support.f0's goodsTypes, Support.java:164; Govee Home 7.5.12): ModeController.u
     # builds dreamcolorlightv1 Mode, whose Mode.parseSubMode sends 0x15 to SubModeColorV2.parse
-    # ([gradual][kelvin s16be]) and every sub-mode but 0x04 (scene), 0x0a (DIY), 0x15 and music
-    # (0x11, 0x13, 0x16) - 0x0b and 0x0d included - to SubModeColor.parse, which reads only byte 0.
+    # ([gradual][kelvin u16be]: BleUtil.getSignedInt(.., true) masks each byte, so it never reads
+    # negative; Govee Home 7.7.02 SubModeColorV2.java:564-567, base2light BleUtil.java:285-294; the
+    # critic's finding, pending the spec owner's re-trace) and every sub-mode but 0x04 (scene), 0x0a
+    # (DIY), 0x15 and music (0x11, 0x13, 0x16) - 0x0b and 0x0d included - to SubModeColor.parse, which
+    # reads only byte 0.
     # So only 0x15 yields a Kelvin and no report yields an RGB colour (mode_color_parse "kelvin_15").
     DeviceProfile(
         skus=("H61A8",),

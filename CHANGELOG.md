@@ -319,8 +319,8 @@ model, from which the shipped readers are generated).
   `ic_segment_read.ic_count_signed`, after `ControllerOnlyReadIcSegmentNum` (`BleUtil.getSignedShort`).
   An `aa 40` count of 0x8000 or more is now negative, as in the app. Before, it was returned unsigned,
   and only `_readback.live_ic_pieces` sign-extended it. Live-IC colour read-back (H6641) is unchanged,
-  because `live_ic_pieces` already read it signed. Source-modelled: no bench device reports such a
-  count.
+  because `live_ic_pieces` already read it signed. App-matching and source-modelled: not
+  hardware-verified for counts of 0x8000 or more, which no bench device reports.
 - `govee-ble-analyze` knows the 0xAC status TLVs 0x36 (bar switch; the H6038 / H6048 status read requests
   it, `VM4H6038`) and 0x40 (IC count; H6671 / H6672, `VM4LightH667172`), so their bursts are no longer reported
   as spec gaps with exit code 1. New constants `wire.reassemble.TYPE_BAR_SWITCH` and `TYPE_IC_NUM`.
@@ -426,7 +426,9 @@ model, from which the shipped readers are generated).
   short (`BleUtil.getSignedShort`), so 0x8000 or more reads as RGB, not a 32768 K colour temperature.
   Modeled from the decompiled app; not hardware-verified.
 - Other mode reports: on H61A8 an `aa 05 0d` report no longer sets an RGB colour or a Kelvin (its
-  `Mode.parseSubMode` reads a Kelvin only from 0x15, `SubModeColorV2.parse`); H6062 reads 0x0b / 0x02 / 0x0d
+  `Mode.parseSubMode` reads a Kelvin only from 0x15, `SubModeColorV2.parse`, unsigned: its
+  `BleUtil.getSignedInt(.., true)` masks each byte, the spec-client critic's 7.7.02 finding, pending the
+  spec owner's re-trace); H6062 reads 0x0b / 0x02 / 0x0d
   with the `SubMode4Color` parse (`OpInfo4Detail.parseModeValidBytes`); H6641 and H6047 ignore 0x0d
   (`Info4Detail.parseModeValidBytes`). A scene report clears stale colour state and a colour-temperature
   report of 0 clears the Kelvin. Modeled from the decompiled app. A colour-temperature report of 0 clearing

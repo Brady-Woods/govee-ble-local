@@ -240,7 +240,14 @@ def scene_of(m: Any) -> int | None:
 
 
 def kelvin_of(m: Any) -> int | None:
-    """:func:`parse_kelvin` of a ``mode_read`` (``cct_read_reply.kelvin``)."""
+    """:func:`parse_kelvin` of a ``mode_read``: ``cct_read_reply.kelvin``, read UNSIGNED. That is the H61A8's
+    reading in Govee Home 7.7.02, as the spec-client critic found: dreamcolorlightv1
+    ``SubModeColorV2.parse`` (split_rgbiclight, SubModeColorV2.java:564-567) takes
+    ``BleUtil.getSignedInt(new byte[]{b1, b2}, true)``, which, despite its name, masks each byte
+    (``& 255``; base2light BleUtil.java:285-294), so two bytes never read negative. Pending the spec
+    owner's re-trace (gap item 16); revisit if it finds otherwise. The SKUs whose app reads the 0x15
+    Kelvin signed decode it elsewhere: H60A6 and H6062 through :func:`gradual_kelvin_of`; H6047's two
+    bar Kelvins (:func:`bar_kelvin_of`) still read unsigned until the spec has signed bar instances."""
     if sub_mode(m) != SUB_COLOR_15:
         return None
     return int(m.rest.kelvin)

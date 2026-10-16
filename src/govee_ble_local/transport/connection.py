@@ -129,6 +129,10 @@ def _err_text(err: BaseException) -> str:
 
 
 def _carries_secret(plain: bytes) -> bool:
+    """True for a frame that carries the account-lock secret: a ``33 b2`` check write or an ``aa b1`` read
+    reply. Matched on the two header bytes on purpose, not through the spec's frame reader: masking must
+    fail closed, so a secret frame whose body doesn't parse (short, malformed, a capture fragment) is
+    still masked before it reaches a log or a frame capture."""
     return len(plain) >= 2 and (
         (plain[0] == PRO_WRITE and plain[1] == CMD_SECRET_WRITE)  # secret check write
         or (plain[0] == PRO_READ and plain[1] == CMD_SECRET_READ)  # secret read reply
@@ -795,6 +799,9 @@ class GoveeConnection:
                 raw = await self._next_rx(deadline - loop.time())
             except TimeoutError:
                 return None
+            # Matched on the two header bytes, like every RX filter here: the transport routes frames
+            # before anything decodes them, and a reply whose body doesn't parse must still end its wait
+            # (the caller's decoder then reports it), as wire.parse.find_reply does with the reader.
             if len(raw) >= 2 and raw[0] == opcode and raw[1] == command:
                 return raw
 
