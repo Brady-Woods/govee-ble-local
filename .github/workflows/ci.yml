@@ -27,6 +27,8 @@ jobs:
         env:
           CI: "true"  # makes pip-audit (no offline skip) and the pinned Kaitai compiler mandatory
         run: bash scripts/check.sh
+      - name: Smoke-test the sdist and wheel (they must ship the generated Kaitai classes)
+        run: bash scripts/smoke_artifacts.sh
 
   lowest-deps:
     name: Tests with lowest direct dependency versions (py3.11)

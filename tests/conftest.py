@@ -13,6 +13,20 @@ for _p in (str(_SRC), str(_HERE)):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
+_GENERATED = _SRC / "govee_ble_local" / "_generated"
+
+
+def pytest_sessionstart(session):  # type: ignore[no-untyped-def]
+    """The Kaitai classes are a build product (gitignored): stop with a clear message, not an import
+    error in every test, when they haven't been generated."""
+    missing = [n for n in ("govee_ble_frame.py", "govee_advertisement.py") if not (_GENERATED / n).is_file()]
+    if missing:
+        import pytest
+
+        pytest.exit(f"src/govee_ble_local/_generated/ is missing {', '.join(missing)}: run "
+                    "`bash tools/gen_kaitai.sh` (needs the JVM kaitai-struct-compiler 0.11) or "
+                    "`pip install -e .`, which generates them", returncode=4)
+
 
 # -- optional-dependency gate ---------------------------------------------------------------
 import os  # noqa: E402
@@ -43,7 +57,7 @@ def require_optional(modname: str, *, reason: str | None = None):  # type: ignor
 
 
 def read_struct(obj):  # type: ignore[no-untyped-def]
-    """Read a generated Kaitai object and return it. The committed classes are read-write
+    """Read a generated Kaitai object and return it. The generated classes are read-write
     (``ReadWriteKaitaiStruct``): ``from_bytes`` / ``Cls(..., stream)`` only bind the stream."""
     obj._read()
     return obj

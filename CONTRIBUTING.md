@@ -22,28 +22,40 @@ lean on dependencies.
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
 python -m pip install -e '.[dev]'   # pytest stack, cloud, mypy, ruff, bandit, pip-audit,
-                                    # vulture, radon, pycryptodome (test-only AES reference), uv
+                                    # vulture, radon, pycryptodome (test-only AES reference), uv;
+                                    # also generates the Kaitai classes (needs the JVM ksc, below)
 python -m pytest -q                 # offline test suite
-bash tools/gen_kaitai.sh            # regenerate the read-write classes after editing spec/*.ksy (needs the
-                                    # JVM kaitai-struct-compiler 0.11; --check verifies the committed ones)
+bash tools/gen_kaitai.sh            # regenerate the read-write classes after editing spec/*.ksy
 bash tools/gen_docs.sh              # build the pdoc API reference (needs .[docs])
 ```
+
+The Kaitai read-write classes in `src/govee_ble_local/_generated/` are a **build product** of
+`spec/*.ksy`, gitignored and never committed. Every build generates them: the in-tree PEP 517 backend
+(`_build_backend/`, `[build-system] backend-path`) runs `tools/gen_kaitai.sh` before setuptools builds an
+sdist, a wheel or an editable install, so `pip install -e .`, `pip install .` and `python -m build` need
+the JVM `kaitai-struct-compiler` 0.11 (`brew install kaitai-struct-compiler`; on Debian/Ubuntu
+`bash scripts/install_ksc.sh`). The sdist and wheel ship the generated classes, so installing a
+released wheel or sdist needs no compiler. Without the classes the test suite stops at once and says to
+run the generator.
 
 **`bash scripts/check.sh` must pass before you push** (it is exactly what CI and the release
 workflow run; it builds its own venv, `.venv-check`, override with `VENV=`). It needs the JVM
 `kaitai-struct-compiler` 0.11 (`brew install kaitai-struct-compiler`; on Debian/Ubuntu,
 `bash scripts/install_ksc.sh`, which is what CI uses). It enforces, fail-fast:
 
-1. `tools/gen_kaitai.sh` regenerates the read-write classes in `_generated/` from `spec/*.ksy`. With
-   `CI=true`, a fresh build that differs from the committed classes (modified or missing) fails.
-2. `ruff check src tools tests spec` (rules in `[tool.ruff.lint]`)
-3. `mypy src/govee_ble_local` (`--strict`; generated readers exempt)
-4. `bandit -r src tools` failing on Medium+ severity
+1. `tools/gen_kaitai.sh` generates the read-write classes in `_generated/` from `spec/*.ksy`.
+2. `ruff check src tools tests spec _build_backend` (rules in `[tool.ruff.lint]`)
+3. `mypy src/govee_ble_local _build_backend` (`--strict`; generated classes exempt)
+4. `bandit -r src tools _build_backend` failing on Medium+ severity
 5. `pip-audit` over the package's resolved runtime dependencies (no ignores); skipped offline unless
    `CI=true`
 6. `pytest` with a coverage floor of 85% (`COV_MIN`) over the package (generated readers omitted)
 
 With `CI=true`, missing optional test dependencies fail the run instead of skipping tests.
+
+CI and the release workflow also run `bash scripts/smoke_artifacts.sh` (release: `--no-build`, after its
+Build step): it installs the wheel, and a wheel built from the sdist, into fresh venvs and imports the
+package, so a wheel without the generated classes can't be published.
 
 `bash scripts/audit.sh` is an informational, never-failing report (vulture dead code, radon
 complexity/maintainability, ruff statistics). It is not part of the gate.

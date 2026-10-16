@@ -1,6 +1,9 @@
 [build-system]
 requires = ["setuptools>=77"]
-build-backend = "setuptools.build_meta"
+# setuptools, wrapped so every build first generates the Kaitai classes from spec/*.ksy (they are a
+# build product, not committed); see _build_backend/govee_build_backend.py.
+build-backend = "govee_build_backend"
+backend-path = ["_build_backend"]
 
 [project]
 name = "govee-ble-local"
@@ -39,9 +42,10 @@ dependencies = [
     # Runtime wire codec: the spec/*.ksy-generated read-write classes under
     # govee_ble_local/_generated (ReadWriteKaitaiStruct + KaitaiStream) parse and build every frame,
     # so this is required at runtime. It is the ONE accepted non-HA-default dependency —
-    # pure-Python, stdlib-only, zero-dep, MIT. The Kaitai *compiler* (the JVM ksc CLI) stays a dev
-    # tool (tools/gen_kaitai.sh); the classes are committed. 0.11 is the first runtime with the
-    # read-write (serialization) API, so it is also the floor.
+    # pure-Python, stdlib-only, zero-dep, MIT. The Kaitai *compiler* (the JVM ksc CLI) is a build
+    # tool only: every build generates the classes (tools/gen_kaitai.sh via the in-tree backend) and
+    # the sdist and wheel ship them; nothing generated is committed. 0.11 is the first runtime with
+    # the read-write (serialization) API, so it is also the floor.
     # See CLAUDE.md for the dependency policy (bleak / bleak-retry-connector / cryptography
     # are HA defaults; new runtime deps need justification; never require a version ahead of HA).
     "kaitaistruct>=0.11",
