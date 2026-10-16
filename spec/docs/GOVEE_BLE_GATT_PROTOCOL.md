@@ -169,9 +169,12 @@ Details:
 - **MTU**: default 20/23 bytes. `BleController.J(mtu)` calls `requestMtu`. The encryption layer
   tracks the negotiated MTU (`EncryptionManager.f115473c`, default 20) and splits ciphertext
   accordingly. BLE 5 / 2M PHY support is probed (`BleController.P()`).
-- **Heartbeat / keep-alive**: `AbsHeartRunnable` periodically issues a heart command
-  (`SINGLE_HEART = 0x01`) so the device does not auto-disconnect. Auto-disconnect status
-  `19` triggers `EventAutoDisconnect`.
+- **Heartbeat / keep-alive**: `AbsHeartRunnable` periodically issues a heart command so the device does
+  not auto-disconnect. The byte depends on the screen. Legacy controllers use `SINGLE_HEART = 0x01`
+  (`AA 01`). Newdetail `ShareVM` screens pick it with `ConnectHeartbeat.c(K3())`; when `I3()` is false
+  (H60A1 `VM4Light.I3:513-515`, `VM4LightH60A6.I3:684-686`) that is `0x00` (`SINGLE_HEART_BEAT`), so
+  `BleComm.l:76-80` sends `Controller4HeartCommon(0)` = `AA 00`. Auto-disconnect status `19` triggers
+  `EventAutoDisconnect`.
 - **Reconnect**: `ReconnectInfo` retries within the 15 s window; skips reconnect while the app
   is backgrounded unless flagged.
 
@@ -221,10 +224,29 @@ the byte after the command is a per-command **selector/index**, not the write fi
 (`AbsSingleController.f()` → `generate20Bytes(0xAA, cmd, p())`, `p()` default empty). Source-confirmed
 selectors: **mode `AA 05 01`** (`AbsModeController.p()={1}` — the `0x01` is a **selector, not a
 sub-mode**); **device-info `AA 07 <sel>`** (`0x02` serial, `0x03` hw, `0x04` sw, `0x10` basic, `0x11`
-wifi — a controller per selector). ⚠️ **Source vs hardware:** `SwitchController`/`BrightnessController`
-don't override `p()`, so the `base2light` source emits `AA 01 00` / `AA 04 00` (empty), **not** the
-`AA 01 01` / `AA 04 01` some captures show — the trailing `0x01` for switch/brightness is unverified in
-source (firmware may ignore the byte, or a non-`base2light` path builds it).
+wifi — a controller per selector). Firmware support for these selectors varies by SKU (firmware-sourced;
+per-selector detail in [§5.2](#52-device--wi-fi-info)). H6006/H6008 (shared `ble_msg_get_dev_info`,
+H6006.bin `0x9b03cb88`, H6008.bin `0x9b03c92c`) answer only `02`/`03`/`06`, plus `0A`/`0B` with no data on
+H6008; `04`, `10` and `11` are forwarded and dropped with no reply. H60A1/H60A6 answer only `02`, `03`,
+`06` (BLE MAC) and `0A`/`0B` (no data, echo); `04`, `10` and `11` get the request echoed back unchanged
+(`H60A1.bin@0x9b0454bc`, `H60A6.bin@0x9b04a8e4`). H5083 (`ble_msg_get_dev_info` `0x9b031b08`) answers
+only `02`/`03`/`06`, and H6047 (`0x01005370`) only `02`/`03`/`04`/`06`.
+⚠️ **Source vs hardware:** `SwitchController`/`BrightnessController` don't override `p()`, so the
+`base2light` source emits `AA 01 00` / `AA 04 00` (empty), **not** the `AA 01 01` / `AA 04 01` some
+captures show — the trailing `0x01` for switch/brightness is not in the app source (a non-`base2light`
+path may build it). Every firmware image checked ignores that byte, so both request forms get the same
+reply (firmware-sourced):
+- **H6047** (BLE 1.00.12): the AA 01 query path (`0x01004fb0-0x01004fd4`) and AA 04 query path
+  (`0x010054f6-0x0100550c`) never read the payload, so `AA 01 00`/`AA 01 01` and `AA 04 00`/`AA 04 01`
+  get identical replies.
+- **H5083** (SW1.00.30): the firmware overwrites byte 2 of `AA 01` with the outlet state without reading
+  it (`H5083.bin@0x9b01f038-f03c`). H5083 has no `AA 04` handler at all.
+- **H6006/H6008**: the reply handler overwrites byte 2 with the state without reading it (H6006
+  `0x9b01f1c4`, `0x9b01f24c`; H6008 `0x9b0245f6`, `0x9b024622`).
+- **H60A1/H60A6**: the AA 01 and AA 04 branches write byte 2 from the state getter without reading it
+  (H60A1 `FUN_9b02a584` / `FUN_9b02ace0`; H60A6 `FUN_9b02b430` / `FUN_9b02bbdc`).
+
+Images not listed here were not checked.
 
 A read *reply* is `AA <cmd> <device-state…>`, parsed **per-(sub-mode, controller)** by `parseValidBytes`
 (2-byte header stripped, 17 bytes routed by sub-mode) — **not** a single form, and it differs from the
@@ -588,9 +610,14 @@ The reassembled buffer is a **header-less TLV stream** — `[type, len, value]`,
 parsed by `Compose4BaseInfoSingleRead.u()` (`:292`). `u()` itself handles `type 1` = on/off,
 `type 4` = brightness, `type 5` = **mode** block (`[sub_mode, params]`, delegated to the mode lambda),
 `type 7` = **device info** (`w()`: `sub 0x10` = `[uid(8), sw(3), hw(3), dsp(u16 LE)]`; `sub 0x11` =
-`[Wi-Fi MAC(6, forward), sw(3), hw(3)]` — same layout as the `aa 07` reply; note the UID in `sub 0x10`
+`[Wi-Fi MAC(6, forward), sw(3), hw(3)]`. This is the layout `BasicInfoController` / `BasicWifiInfoController`
+expect for `aa 07 10` / `aa 07 11`, but neither controller has a live caller, and H60A1/H60A6 firmware has
+no single-frame `07 10`/`07 11` handler (the request is echoed; firmware-sourced). On H60A6 these records
+exist only here, built by `ble_check_basic_info` (`H60A6.bin@0x9b04bdd8`). Note the UID in `sub 0x10`
 is byte-**reversed** while the Wi-Fi MAC in `sub 0x11` is **forward**, per §5.2), plus
-`0x11`/`0x12` sleep/wakeup and `0x23` timers. **Every other type** (`0x30` zone, `0x41` seg/IC,
+`0x11`/`0x12` sleep/wakeup and `0x23` timers. **Every other type** (`0x30` zone; `0x41` power-on
+memory on H60A6: value `[02][mode]`, firmware `FUN_9b02bfe4` = UserConfig+4, logged "start mode",
+written by app `Controller4OnOffMemory` `33 41 02 v`;
 **`0xA5` colour group**, …) is passed to a caller fallback lambda with the full `[type,len,value]`
 re-prepended. `0xA5` = **one colour group** `[group_index (1-based), record × count]`, record =
 **4-byte `[brightness, R, G, B]`** on part-brightness SKUs (all curated: H60A6/H6047/H6641) or 3-byte
@@ -633,8 +660,8 @@ shared opcodes:
 
 | Command | Byte | Direction | Meaning |
 |---------|------|-----------|---------|
-| `SINGLE_HEART` | `0x01` | W | heartbeat / keep-alive (also `SINGLE_MAIN_SWITCH`) |
-| power (`SINGLE_SWITCH`) | `0x01` | W/R | on/off (payload `01`/`00`) |
+| `SINGLE_HEART` | `0x01` | W | heartbeat / keep-alive (also `SINGLE_MAIN_SWITCH`). Newdetail `ShareVM` screens choose the byte with `ConnectHeartbeat.c(K3())`. With `I3()` false (H60A1, H60A6) it is `0x00` = `SINGLE_HEART_BEAT`, so they send `AA 00`. Firmware-sourced: the firmware answers that with an explicit no-op echo (H60A6 tbh[0] → `0x9b026b20`, H60A1 → `0x9b02607e`) |
+| power (`SINGLE_SWITCH`) | `0x01` | W/R | on/off. Lights: payload `01`/`00`. Plugs: `(relay mask << 4) + on bits` (`SwitchControllerV2.q`); H5083 sends `0x11` on / `0x10` off (`H5083NewDetailViewModel.x0`). Firmware-sourced for H5083 (`H5083.bin@0x9b01f6b4`): only the outlet-0 mask bit (bit 4) is honoured. `01`/`00` is acked but changes nothing, and `33 01` is served only after the `33 B2` pairing. The `AA 01` reply is `00`/`01`. |
 | `SINGLE_BRIGHTNESS` | `0x04` | W/R | brightness |
 | `SINGLE_MODE` | `0x05` | W/R | mode + sub-mode (color/scene/music/DIY) |
 | `SINGLE_SOFT_VERSION` | `0x06` | R | firmware version string |
@@ -651,32 +678,54 @@ shared opcodes:
 
 | Command | Byte | Meaning |
 |---------|------|---------|
-| `SINGLE_WIFI_MAC` | `0x14` | Wi-Fi MAC |
-| `SINGLE_WIFI_HARD_VERSION` | `0x20` | Wi-Fi module HW version |
-| `SINGLE_WIFI_SOFT_VERSION` | `0x21` | Wi-Fi module SW version |
+| `SINGLE_WIFI_MAC` | `0x14` | Wi-Fi MAC. Reply `AA 14 <mac6 forward> …echo… BCC`. The app sends it on the H6006/H6008 control screen (bulblight `ControllerStrategyConfig.h0:648-654`). Firmware: H6006 `ble_msg_get_wifi_mac_address` `0x9b03ca0c`, H6008 `0x9b03c844` |
+| `SINGLE_WIFI_HARD_VERSION` | `0x20` | Wi-Fi module HW version, ASCII from byte 2. The app sends it on the same control screen (`ControllerStrategyConfig.h0:634-647`). On H6006/H6008 it is the same string as `AA 07 03` (same getter; firmware H6006 `ble_msg_get_wifi_hwversion` `0x9b03ca90`, H6008 `0x9b03c89c`) |
+| `SINGLE_WIFI_SOFT_VERSION` | `0x21` | Wi-Fi module SW version, ASCII from byte 2. The app sends it on the same control screen (`ControllerStrategyConfig.h0:634-647`). On H6006/H6008 it is the same string as `AA 06` (firmware H6006 `ble_msg_get_wifi_swversion` `0x9b03cb0c`, H6008 `0x9b03c8e4`) |
 | `SINGLE_WIFI_DSP_VERSION` | `0x22` | DSP version |
-| `SINGLE_GET_DEVICE_INFO` | `0x41` | device info (WiFi devices) |
-| device-info sub-values | `UUID=0x02, HARD=0x03, SOFT=0x04, DSP=0x07` | sub-selectors within `0x07`/`0x41` |
+| `SINGLE_GET_DEVICE_INFO` | `0x41` | device info (WiFi devices). The same value is `SINGLE_ON_OFF_MEMORY`. On H60A6 firmware `0x41` is power-on memory: `33 41 02 <v>` writes it, and `AA 41` returns `[02][v]` (UserConfig+4; handler `H60A6.bin@0x9b0270a4`). The app writes it but reads it only from the `AC 03` TLV `0x41` ([§4.5](#45-single-request--multi-reply-status-read-0xac)), so the single-frame `AA 41` read is firmware-sourced |
+| device-info sub-values | `UUID=0x02, HARD=0x03, SOFT=0x04, DSP=0x07` | sub-selectors within `0x07`/`0x41`. H60A1/H60A6 firmware answers `07` sub `02`/`03`/`06`/`0A`/`0B` only |
 
-**Info-read sub-selectors under read command `0x07`** (frames `AA 07 <selector>`), verified in the
-`base2light` controllers:
+**Info-read sub-selectors under read command `0x07`** (frames `AA 07 <selector>`). The Controller and
+Response-layout columns are the app (the `base2light` controllers unless noted). The Firmware column is
+**firmware-sourced**, from the images in [§4.2](#42-single-command-packet-0x33--0xaa); a firmware reply
+puts the `AA 07 xx` data at byte 3, right after the selector.
 
-| Selector | Controller | Response layout |
-|----------|-----------|-----------------|
-| `0x02` | `SnController.java:42` | serial/UID: 8 bytes, **reversed** (`toAddressBytes(hFirst=false)`) |
-| `0x10` (16) | `BasicInfoController.java:39` | 8-byte UID (reversed) + two 3-byte firmware versions formatted `X.YY.ZZ` |
-| `0x11` (17) | `BasicWifiInfoController.java:46` | 6-byte **Wi-Fi MAC forward/high-first** (`parseWifiMac(...,true)`) + two 3-byte versions `X.YY.ZZ` |
+| Selector | Controller | Response layout | Firmware (firmware-sourced) |
+|----------|-----------|-----------------|-----------------------------|
+| `0x02` | `SnController.java:42` | serial/UID: 8 bytes, **reversed** (`toAddressBytes(hFirst=false)`) | H6047 sends its stored id byte-reversed (`0x010053da`). The stored id is `[rand lo][rand hi][BLE addr reversed]`, created on the first AA 07 02 or AA b1 if absent (`0x010029c4`), so the reply is `[addr0..addr5][rand hi][rand lo]`. H6006/H6008: the device's colon-separated uuid string decoded into (strlen+1)/3 bytes and stored in reverse order (H6006 `0x9b03c87c`/`0x9b03c30e`; H6008 `0x9b03c740`/`0x9b0430e4`) |
+| `0x03` | `HardVersionController.java:28-29` / `ControllerHardVersion` | ASCII hw version after the selector (from byte 3) | H6047: `"3.02.01"` (`0x010053a2`). H5083: `"1.02.00"` (`ble_msg_get_hw_version` `0x9b031984`) |
+| `0x04` | `SoftHardController.Companion.e` (live: split_h61d3 `PairViewModel:187` → `PairToDeviceInfoReadController`); `SoftVersionInDeviceInfoController` (no caller) | ASCII sw version after the selector | H6047 answers `"1.00.12"` (`0x010053ca`); the H6047 app path reads AA 06 instead. Not answered by H5083, H6006/H6008 (no reply) or H60A1/H60A6 (echo) |
+| `0x06` | — (no app controller) | — | 6-byte BLE MAC at reply bytes 3..8 (payload `[06]` + 6 bytes). Byte-reversed relative to the device's MAC string on H6006 (`0x9b03c988`), H6008 (`0x9b03c7ec`), H60A1 (`ble_msg_get_ble_macaddress` `0x9b0452b0`) and H60A6 (`0x9b04a6d8`). In the device's printed-string order on H5083 (`ble_msg_get_ble_macaddress` `0x9b0319cc`). H6047 BLE 1.00.12: handler `0x01005370` → `0x010053ce` |
+| `0x0A`/`0x0B` | `McuSoftVersionControllerV1` / `McuHardVersionControllerV1` | not traced here | H6008 and H60A1/H60A6: the handler writes no data, so the reply echoes the request. H6006, H5083, H6047: no reply |
+| `0x10` (16) | `BasicInfoController.java:39` | 8-byte UID (reversed) + two 3-byte firmware versions formatted `X.YY.ZZ` | Not answered by H6006/H6008, H5083 or H6047 (no reply). H60A1/H60A6 echo the request unchanged |
+| `0x11` (17) | `BasicWifiInfoController.java:46` | 6-byte **Wi-Fi MAC forward/high-first** (`parseWifiMac(...,true)`) + two 3-byte versions `X.YY.ZZ` | Not answered by H6006/H6008, H5083 or H6047 (no reply). H60A1/H60A6 echo the request unchanged |
 
 Note the endianness asymmetry: the UID/serial (`0x02`,`0x10`) is byte-reversed, but the Wi-Fi MAC
 (`0x11`) is forward.
+
+`BasicInfoController` and `BasicWifiInfoController` have no live caller in 7.7.02 (H5086 uses its own
+`DeviceBasicInfoController` / `WifiInfoController`). H60A1/H60A6 echo `AA 07 10` / `AA 07 11` unchanged,
+so they read back as all zero. On H60A6 the same layouts arrive as AC 03 TLV-7 records.
+
+**Firmware notes** (firmware-sourced; the per-SKU selector summary is in [§4.2](#42-single-command-packet-0x33--0xaa)):
+- **H5083** (SW1.00.30, `ble_msg_get_dev_info` `0x9b031b08`) answers only `02`/`03`/`06`. The firmware
+  writes no NUL or padding: bytes after the data are the request's bytes (zero for app-formed requests).
+  Every other selector (`04`, `07`, `0A`, `0B`, `10`, `11`) is forwarded to the dispatcher and dropped
+  with no reply.
+- **H6047** (BLE 1.00.12) does not answer `0x10`/`0x11`, nor `00`, `01`, `05`, `07` (DSP), `0a`/`0b`
+  (MCU) or anything above: `sel−2 > 4` returns without a reply (`0x01005396`).
+
+`0x14`/`0x20`/`0x21` are app-sent reads, not firmware-only. Besides the H6006/H6008 control screen
+(`ControllerStrategyConfig.h0:634-654`), the app sends them during H5083 setup (h5080 `PairAcV1.t2:652`)
+and H6047 setup (split_h6047 `PairAcV1:257`; detail connect via `Compose4InfoBleIot`).
 
 ### 5.3 IC / addressable-LED (RGBIC families)
 
 | Command | Byte | Meaning |
 |---------|------|---------|
 | `SINGLE_IC_SEGMENT_NUM` / `IC_NUM` | `0x40` | segment/IC count |
-| `SINGLE_WRITE_CHECK_IC` | `0x42` | refresh IC |
-| `SINGLE_CHECK_IC` / `CHECK_LAST_IC` | `0x46` | detect IC chip |
+| `SINGLE_WRITE_CHECK_IC` | `0x42` | refresh IC. On H60A6 firmware, `0x42` is the calibration mode instead (app `CalibrationAcH60A6`: `33 42 01` / `02 xx` / `FF` / `00`; firmware log `Get calibra msg %d`, `H60A6.bin@0x9b0269fe`) |
+| `SINGLE_CHECK_IC` / `CHECK_LAST_IC` | `0x46` | detect IC chip. ⚠️ **Not on H60A1/H60A6:** there `33 46` is a factory reset and reboot (app `SINGLE_RESET_DEVICE_NET` = 70; firmware-sourced: a `33 46` ack, then `Govee_GatewayConfig_Reset`, `HAL_Matter_Reset` and `Device rebooting ...`; H60A6 `0x9b03fa3c` / `0x9b0446c4`, H60A1 `0x9b03a6a8` / `0x9b03f408`). Do not send it to those SKUs as an IC check |
 | `SINGLE_WRITE_CHECK_IC_AMOUNT` | `0x43` | IC count check |
 
 ### 5.4 Multi-packet mode payloads (sub-command types carried inside `0xA1`/`0xA3` frames)
@@ -697,7 +746,7 @@ Note the endianness asymmetry: the UID/serial (`0x02`,`0x10`) is byte-reversed, 
 | `SINGLE_CHECK_SECRET_KEY` | `0xB2` (−78) | pairing secret check |
 | `SINGLE_READ_SECRET_KEY` | `0xB1` (−79) | read pairing secret |
 | `SINGLE_OTA_PREPARE` | `0xEE` (−18) | enter OTA mode |
-| `SINGLE_PACT` | `0xEF` (−17) | protocol/pact negotiation |
+| `SINGLE_PACT` | `0xEF` (−17) | Pact read: reply bytes 2-3 = pactType (u16be), byte 4 = pactCode (`PactController.parseValidBytes`). Sent only by the old pact-check flows (`AbsBlePact.o`) and skubusiness `BlePactChecker`, not on the H6006/H6008 control screen. Firmware-sourced: H6006 `ble_msg_get_adv_pro_type` (0x9b03cc00) returns a hard-coded `00 01 01` (pact 1/1), as do H60A1/H60A6 (`0x9b045558` / `0x9b04a980`); H5083 returns `00 02 02` (`0x9b031b80`). H6008 has no handler and sends no reply |
 | `SINGLE_DYNAMIC_API_SUPPORT` | `0xAB` (−85) | query dynamic-API capability |
 
 > **Note.** The `commandType` namespace is reused per feature; the same numeric value means
@@ -904,7 +953,9 @@ post-handshake traffic is the **key**: the handshake uses a *fixed pre-shared ke
 (`LibTools.java:84`) returns `AESUtils.decode(R.string.app_communication, R.string.app_session)` —
 an AES-decoded, obfuscated string resource resolved at runtime. A live implementation reports the
 decoded value as ASCII **`MakingLifeSmarte`** (16 bytes); this is consistent with a 16-byte AES key
-but cannot be confirmed from static Java alone (it lives behind the resource decode).
+but cannot be confirmed from static Java alone (it lives behind the resource decode). The device side
+confirms it statically (firmware-sourced): the H5083 image (SW1.00.30) holds the literal at
+`0x9b813c66` and loads it as the AES key at connect (`0x9b032f18` → `0x9b0330dc`).
 
 ```
 1. App → device:  encrypt_AES(  [0xE7, 0x01, <random pad…>, CK]  )   // request session key
@@ -1206,7 +1257,7 @@ sections above have been corrected/expanded accordingly.
 | 3 | `scene_chunks` `0xA3` framing | **Superseded by hardware — re-fixed §4.4** | Two `0xA3` dialects exist. My first fix documented only the *legacy* one (comType@byte4 = version constant 1/2/7/12) and said "no `\|0x08`". H60A6 hardware proved it uses **dialect B** (DIY/graffiti): byte4 = device protocol code **`0x58`** (const 88, `≈0x50\|0x08` by coincidence), value = **re-encoded** graffiti `toBytes()` (not the raw blob), `0xFF` terminator data-bearing. §4.4 now documents both dialects; the legacy generic-scene framing is rejected by H60A6. **Still open:** the graffiti path has two builders — `0xA3` (commByte@byte4, hardware-tested) and `0xA4`-MTU (commByte@byte6, decompiled `makeSendBytesMtu`); the live default needs an official-app btsnoop (see §4.4 ⚠️). |
 | 4 | Plug sync-time `0xB5` | **Code correct; doc gap** → added §5.6/§6/§12.6 | Plug family uses `0xB5` with `[4-byte BE epoch, 0x01, tzHour, tzMin]`. The trailing `f9` seen live is a signed tz-hour byte (UTC−7), not a constant. Sent on connect / before timer writes. |
 | 5 | Device-info selectors `0x10`/`0x11` | **Code correct; doc gap** → added §5.2 | Under read `0x07`: `0x02`/`0x10` = UID/serial (reversed), `0x11` = Wi-Fi MAC (forward) + versions `X.YY.ZZ`. |
-| 6 | PSK literal | **Code plausibly correct; unverifiable from Java** → noted §9.1 | `LibTools.c()` = `AESUtils.decode(app_communication, app_session)` — a runtime-decoded resource, not a static literal. Live value `MakingLifeSmarte` is consistent but not statically provable. |
+| 6 | PSK literal | **Code plausibly correct; unverifiable from Java** → noted §9.1 | `LibTools.c()` = `AESUtils.decode(app_communication, app_session)` — a runtime-decoded resource, not a static literal. Live value `MakingLifeSmarte` is consistent but not statically provable from the Java; the H5083 firmware holds it as a literal (§9.1). |
 | 7 | `0xAC` status burst | **Code correct; now fully confirmed** → §4.5 + §15 | 20-byte request `[0xAC, cmd, ext…, CK]`; ext = length-prefixed cmd list. H60A6 split confirms `AC 03 02 41 30` / `AC 03 03 41 30 A5` byte-for-byte. Reply chunks tag@byte1 (12 data@off7 first, 17 data@off2 middle, `lastLen` data@off2 in the data-bearing `0xFF` last chunk; first chunk bytes 2-3 = packet count) → TLV stream. |
 | 8 | `0x30` zone / `0x36` bar-switch | **BOTH confirmed** (were: `0x30` "not found") → §5.6 + §15 | `0x36` (`value_compose_light_switch`) real & readable (`AA 36`) — H6047 split. `0x30` zone-power **also confirmed**: `[0x33,0x30,zone,state]`, readable (bit 1 of each notify byte) — it was missing from base.apk only because **H60A6 ships as a separate feature split** (`split_pact_h60ax.apk`). Correction to the earlier "no `h6047`/`h60a6` package" note: those packages exist, delivered as on-demand modules. |
 | 9 | GCM handshake opcode `e7 1a` | **Confirmed** → added §9.3 | V2 (GCM) keeps header `0xE7` with sub-opcodes `0x19` (request), `0x1A` (confirm/data), `0x11` (single-packet variant) — vs V1's `0x01`/`0x02`. |
@@ -1391,7 +1442,7 @@ Read frames are `AA <cmd> <p()>`, where `p()` is the read payload (default = non
 |-------|-------|------|
 | power | `AA 01 00` | `SwitchController` doesn't override `p()` → `00`. A trailing `01` is a tolerated don't-care. |
 | brightness | `AA 04 00` | as above (`BrightnessController`) |
-| **mode** | `AA 05 01` | `AbsModeController.p()` returns `[1]` — the `01` **is** required here. |
+| **mode** | `AA 05 01` | `AbsModeController.p()` returns `[1]`, so the app always sends the `01` (send it). The H6006/H6008 firmware does not read it: the reply handler overwrites byte 2 with the current mode before building the reply (firmware-sourced; H6006 0x9b01f284, H6008 0x9b024634). H60A1/H60A6 (the AA 05 branch writes byte 2 from the mode getter: H60A1 `FUN_9b02afb4`; H60A6 `FUN_9b025dc8` via `FUN_9b02beec`) and H6047 (query path 0x01005860) do not read it either; H5083 has no `AA 05` handler. |
 
 **Mode read-back carries live kelvin.** The `AA 05 01` reply is a mode/sub-mode report; under colour
 sub-mode `0x15` its layout is `aa 05 15 01 <kelvin u16 big-endian> …` — i.e. **kelvin at reply bytes
@@ -1568,7 +1619,7 @@ The registry records `goods_types` per family so a client can map advertisement 
   `0` = none, `1` = AES (§9.1), `2` = AES-GCM (§9.3) → gates `isEncryptionSupported`.
 - **`isFastConnectSupported`** decides the notification-enable path ([§3](#3-connection-lifecycle));
   cached in `ShortMemoryMgr`.
-- **`SINGLE_PACT` (`0xEF`)** negotiates the protocol/pact at the application layer.
+- **`SINGLE_PACT` (`0xEF`)** is a read-only report of the device's pact (type/code). It is not a negotiation: H6006/H60A1/H60A6 return a constant `00 01 01`, H5083 `00 02 02`, and H6008 does not answer (firmware-sourced; [§5.5](#55-secrets--encryption--ota)).
 
 ### 18.5 Pairing & the per-device secret (`secretCode`)
 
@@ -1697,8 +1748,10 @@ onCharacteristicChanged(resp) ─▶ match echoed [proType,cmd] & value[2]==0 �
    └── timeout: RunnableOvertime ─▶ Event4ResponseOverTime ─▶ retry; if fail-count>10 ─▶ disconnect ─┘
 ```
 
-Heartbeat: `AbsHeartRunnable` polls periodically (per-device) with `SINGLE_HEART 0x01` to keep the
-link alive; GATT status `19` → `EventAutoDisconnect`.
+Heartbeat: `AbsHeartRunnable` polls periodically (per-device) to keep the link alive. The byte depends
+on the screen: `SINGLE_HEART 0x01` on legacy controllers, while newdetail `ShareVM` screens use
+`ConnectHeartbeat.c(K3())`, which is `AA 00` on H60A1/H60A6 ([§3](#3-connection-lifecycle), [§5.1](#51-core-control)).
+GATT status `19` → `EventAutoDisconnect`.
 
 ## 21. Expanded command catalog
 
@@ -1721,7 +1774,7 @@ commands (full detail in the registry):
 | `dreamcolorlightv1` (H61A8) | limit `0x0E`, light-num `0x0F`, gradual `0x14`/`0xA3`, IC `0x40/0x42/0x46`, bulb-colour read `0xA2` |
 | `bulblightv3` (H6008/H6006) | colour+CCT sub-mode `0x0D`, colour-temp-type `0x26` (H601EF); legacy `0x02` |
 | `tablelampv1` (H6052) | light-indicator `0x16` |
-| `h5080` (H5083 plug) | relay switch `0x01` (mask), sync-time `0xB5`, timer `0xB4` / V2 `0x13`, delay `0xB0`, spec `0xB3`, timer-count `0x12`, timer-delete `0x15`, not-disturb `0x16`, child-lock/indicator `0x1F`, OTA `0xAB` — **no `0x05` mode** (plug) |
+| `h5080` (H5083 plug) | relay switch `0x01` (mask), sync-time `0xB5`, timer `0xB4` / V2 `0x13`, delay `0xB0`, spec `0xB3`, timer-count `0x12`, timer-delete `0x15`, not-disturb `0x16`, child-lock/indicator `0x1F`, OTA pact report = proType `0xAB` frame `AB 02 <pactType lo> <pactType hi> <pactCode>` (`H5083NewDetailViewModel.java:214`; not an AA/33 opcode) — **no `0x05` mode** (plug). Firmware-sourced: H5083 SW1.00.30/HW1.02.00 dispatches AA `01 12 13 B0 B1 B3` and 33 `01 13 15 B0 B2 B5 FF`, and handles `AB 02` in its shared write layer (`0x9b032c7e`). `0x16`/`0x1F`/`0xB4` are absent there, consistent with the app's gates: `0x16`/`0x1F` need `Support.supportLockAndLightIndicator` (H5083, sw ≥ 1.00.03, hw ≥ 4.01.00), and `0xB4` needs `Support.isOldH5080` (sku H5080, sw ≤ 1.00.08), so it is never sent to an H5083. |
 | `h512x` (H5121/H5129 motion, H5130 pressure) | sensitivity `0x01` / interval `0x02` (H5121/H5129), light-sensor `0x03` (H5129); pressure `0x02–0x06` (H5130). Buttons **H5122/H5125/H5126 have no settings command set** (`goToSettingPage()=false`) — triggers arrive via cloud push |
 
 ---

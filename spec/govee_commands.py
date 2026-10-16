@@ -1846,7 +1846,9 @@ def build_night_mode_page_open_h601e() -> list[bytes]:
 
 
 def read_wifi_mac_or_gradual() -> bytes:
-    """AA 14, no selector: Wi-Fi MAC read on goodsType 21; reply frame[2..7] = MAC in display order.
+    """AA 14, no selector: Wi-Fi MAC read on goodsType 21 and the gt-64 bulbs (split_bulblightstringv1
+    bulblight ControllerStrategyConfig.h0:648-654); reply frame[2..7] = MAC in display order (firmware:
+    H6006 ble_msg_get_wifi_mac_address 0x9b03ca0c, H6008 0x9b03c844, forward decoder).
     base-classes11/com/govee/base2light/kt/general_controller/ControllerWifiMacAddress.java:27-30,36-38;
     split_rgbiclight/com/govee/rgbiclight/ControllerStrategyConfig.java:1328-1334 (V1), :587-589 (g2).
     """
@@ -3134,7 +3136,7 @@ def build_head_calibration_finish() -> list[bytes]:
 def build_head_calibration_step(right: bool) -> bytes:
     """0x33 42 02 <dir> - step the head index: right arrow ivYou [2,1] (+1), left arrow ivZuo [2,2] (-1)
     (CalibrationAcH60A6.i2 :161-174, m2 :207, n2 :212, s2 :258 / VM4LightH60A6.F5 :664-672;
-    VM4LightH1270.N5 :702-705; VM4LightH12D0.I5 :635-638; H60A6_ble_dispatcher.c:470-484).
+    VM4LightH1270.N5 :702-705; VM4LightH12D0.I5 :635-638; H60A6_ble_dispatcher.c:526-540).
     """
     return append_bcc(bytes([0x33, 0x42, 0x02, 0x01 if right else 0x02]))
 
@@ -3283,6 +3285,9 @@ def build_check_ic_step(step: int, cmd: int = 0x46) -> bytes:
     LightStripLenCaliConfig.c goodsTypes
     (base-classes10/com/govee/base2light/caliStripLen/CaliLastIcController.java:40-52,61-76,103-106;
     base-classes10/com/govee/base2light/caliStripLen/LightStripLenCaliConfig.java:37-45,47-59,268-271).
+    CAUTION, firmware-sourced: with cmd 0x46 this frame factory-resets H60A1/H60A6 (their dispatcher runs
+    the gateway-config and Matter reset, then reboots, on any 33 46 frame whatever the payload;
+    H60A6_ble_dispatcher.c:454-468, H60A1_ble_dispatcher.c:389-400). Never send it to them.
     """
     return append_bcc(bytes([0x33, cmd & 0xFF, step & 0xFF]))
 
@@ -6179,6 +6184,9 @@ def build_check_ic(check_type: int, ic_pos: int = 0, channel: int = -1, cmd: int
     base-classes10/com/govee/base2light/caliStripLen/CaliLastIcController.java:68-106,118-120 with cmd from
     LightStripLenCaliConfig.c
     base-classes10/com/govee/base2light/caliStripLen/LightStripLenCaliConfig.java:47-59).
+    CAUTION, firmware-sourced: with cmd 0x46 this frame factory-resets H60A1/H60A6 (their dispatcher runs
+    the gateway-config and Matter reset, then reboots, on any 33 46 frame whatever the payload;
+    H60A6_ble_dispatcher.c:454-468, H60A1_ble_dispatcher.c:389-400). Never send it to them.
     """
     mid = [channel & 0xFF] if channel >= 0 else []
     return append_bcc(bytes([0x33, cmd & 0xFF, check_type & 0xFF, *mid, (ic_pos >> 8) & 0xFF, ic_pos & 0xFF]))
