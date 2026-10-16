@@ -89,12 +89,17 @@ model, from which the shipped readers are generated).
   npm build's `compile()` API has no read-write switch; read-only builds still fall back to the pure-JS
   compiler. Both produce byte-identical readers, so the committed `_generated/` files are unchanged.
   `--check` fails when the committed readers differ from a fresh build. Development tooling only.
-- Device info now uses the reads the app makes on connect: `aa 06` for the firmware version, `aa 07 03`
-  for the hardware version and `aa 07 02` for the device id (`SoftVersionController`,
-  `HardVersionController`, `SnController`). The binary `aa 07 10` basic read is only a fallback for a
-  device that left a version unknown. Live-verified (2026-10-15, app 7.7.02 source): H60A6, H6047,
-  H61A8, H6052, H6006, H6008 and H5083 all answer the three app reads; before, only the H60A6 reported
-  a firmware version at all, because the others ignore `aa 07 10`.
+- Device info is read with `aa 06` (firmware version), `aa 07 03` (hardware version) and `aa 07 02`
+  (device id), and nothing else: the `aa 07 11` Wi-Fi read and the `aa 07 10` basic fallback are no longer
+  sent. No firmware image has a handler for those two (most drop the request, which cost a timeout on every
+  poll; the H60A1 / H60A6 echo it back as zeros) and the app never sends them. The three that remain are
+  handled by every firmware image analysed (H6006, H6008, H6047, H60A1, H60A6, H5083) and were answered
+  live (2026-10-15) by the H60A6, H6047, H61A8, H6052, H6006, H6008 and H5083. The app sends `aa 06` /
+  `aa 07 03` on the lights' control screens except the H60A6's (whose versions come from the 0xAC status
+  TLV), not on the H5080 / H5083 / H5085's, and `aa 07 02` only while pairing; there they are kept as
+  firmware-confirmed reads the app does not use. Before these reads, only the H60A6 reported a
+  firmware version, because the others ignore `aa 07 10`. `wifi_mac` now comes only from the H60A6's
+  status TLV (the `aa 07 11` read never returned one).
 - **The "device rejected write" log line moved from ERROR to DEBUG**, and the write raises the public
   `GoveeBleCommandRejected` instead of a private class, so the caller decides what to log. An integration
   that relied on the ERROR line, for example an always-on WARNING capture for diagnostics, must log

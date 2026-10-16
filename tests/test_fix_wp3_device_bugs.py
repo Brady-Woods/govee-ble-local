@@ -527,13 +527,13 @@ def test_plug_profiles_are_split_by_goods_type() -> None:
 
 
 # ── WP3-050: a device-info reply for another selector is ignored ──────────────────────────
-def test_late_wifi_reply_never_becomes_the_device_versions() -> None:
+def test_stray_wifi_reply_never_becomes_the_device_versions() -> None:
+    # A stray aa 07 11 reply landing in the aa 07 03 / 02 reads (the library no longer sends 07 11):
+    # its selector is not the one asked for, so neither its MAC nor the Wi-Fi module's versions are used.
     wifi = _frame(0xAA, 0x07, 0x11, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 4, 5, 6, 7, 8, 9)
-    # aa 06 and aa 07 03 unanswered (versions unknown), so the basic (0x10) read runs; the Wi-Fi
-    # reply arrives late and lands in it.
-    d = _dev("H6008", {0x07: lambda f: [wifi] if f[2] in (0x11, 0x10) else []})
+    d = _dev("H6008", {0x07: lambda f: [wifi]})
     run(d._read_device_info())
-    assert d.state.wifi_mac == "AA:BB:CC:DD:EE:FF"            # from its own read
+    assert d.state.wifi_mac is None
     assert d.state.firmware_version is None and d.state.hardware_version is None
     assert d._device_info_read is True                       # the device did answer
 

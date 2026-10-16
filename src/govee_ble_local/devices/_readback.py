@@ -181,16 +181,25 @@ def live_ic_pieces(dev: ReadTarget, raw_ic: int) -> int | None:
 
 
 async def read_device_info(dev: ReadTarget, read_reply: ReadReply) -> bool:
-    """Populate the static device-info fields of ``dev.state`` with the reads the Govee app makes on
-    connect; returns whether the device answered any of them.
+    """Populate the static device-info fields of ``dev.state``; returns whether the device answered any of
+    the reads.
 
-    ``aa 06`` firmware, ``aa 07 03`` hardware version and ``aa 07 02`` device id (SN)
-    (SoftVersionController, HardVersionController, SnController; live-confirmed on H60A6, H6047,
-    H61A8, H6052, H6006 and H5083). ``aa 07 11`` adds the Wi-Fi MAC — its sw/hw are the
-    *wifi-module* versions and must NOT clobber the device's. The binary ``aa 07 10`` basic read
-    is only a fallback for a device that left a version unknown. Unanswered reads leave fields
-    None. ble_mac stays None unless a reply carries a MAC distinct from the connectable address
-    (none confirmed yet — that address is otherwise the BLE MAC)."""
+    ``aa 06`` firmware, ``aa 07 03`` hardware version and ``aa 07 02`` device id (SN), read in that order.
+    Each is handled by the firmware of every image analysed (H6006, H6008, H6047, H60A1, H60A6, H5083:
+    ``ble_msg_get_version`` / ``ble_msg_get_dev_info`` 02 and 03 on the Realtek images, the H6047 command
+    table) and answered live by H60A6, H6047, H61A8, H6052, H6006, H6008 and H5083. Where the app sends
+    them: ``aa 06`` and ``aa 07 03`` are control-screen reads (``ControllerSoftVersion`` /
+    ``ControllerHardVersion``) on the lights except the H60A6, whose versions come from the 0xAC 0x07 TLV;
+    the H60A6 and gt 43 plug screens send neither, and ``aa 07 02`` (``SnController``) the app sends only
+    while pairing. Those reads are kept anyway, as firmware-confirmed (the plugs have no other BLE source
+    for them); the app does not use them there.
+
+    Not sent: ``aa 07 10`` (basic) and ``aa 07 11`` (Wi-Fi). No firmware image has a handler for either
+    (most drop the request, which cost a timeout per poll; H60A1 / H60A6 echo it back as zeros) and the app
+    never sends them (``BasicInfoController`` / ``BasicWifiInfoController`` have no caller); their record
+    layouts exist only as the 0x10 / 0x11 records of the 0xAC 0x07 TLV. Unanswered reads leave fields None.
+    ble_mac stays None unless a reply carries a MAC distinct from the connectable address (none confirmed
+    yet: that address is otherwise the BLE MAC)."""
     state = dev.state
     soft = await read_reply(build.soft_version_query(), build.CMD_SOFT_VERSION)
     answered = soft is not None
@@ -200,19 +209,6 @@ async def read_device_info(dev: ReadTarget, read_reply: ReadReply) -> bool:
         answered |= got
         if info is not None:
             _fold.merge_device_info(state, serial=info.serial, hardware=info.hw_version)
-    got, wifi = await read_info_reply(dev, read_reply, build.INFO_WIFI)
-    answered |= got
-    if wifi is not None:
-        _fold.merge_device_info(state, wifi_mac=wifi.wifi_mac)   # never wifi sw/hw (see docstring)
-    if state.firmware_version is None or state.hardware_version is None:
-        got, basic = await read_info_reply(dev, read_reply, build.INFO_BASIC)
-        answered |= got
-        if basic is not None:
-            _fold.merge_device_info(
-                state,
-                firmware=basic.sw_version if state.firmware_version is None else None,
-                hardware=basic.hw_version if state.hardware_version is None else None,
-                serial=basic.serial if state.serial_number is None else None)
     return answered
 
 
@@ -220,8 +216,7 @@ async def read_info_reply(
     dev: ReadTarget, read_reply: ReadReply, selector: int
 ) -> tuple[bool, parse.DeviceInfo | None]:
     """One ``aa 07 <selector>`` read: ``(answered, parsed)``. A reply whose selector byte is not
-    the one asked for (e.g. a late ``aa 07 11`` Wi-Fi reply landing in the next read) is ignored,
-    so the Wi-Fi module's versions never reach the device's firmware/hardware fields."""
+    the one asked for (e.g. a late reply to the previous read landing in this one) is ignored."""
     reply = await read_reply(build.device_info_query(selector), build.CMD_DEVICE_INFO)
     if reply is None:
         return False, None

@@ -465,7 +465,7 @@ def test_h6047_mechanism_a_direct_readback() -> None:
 
 
 def test_device_info_populates_state_once() -> None:
-    # Item 3: update() reads aa 07 basic/wifi/sn once and fills the static fields
+    # Item 3: update() reads the device info once and fills the static fields
     d = _dev("H60A6")
 
     def _info(frame: bytes, **_kw: object) -> list[bytes]:
@@ -481,8 +481,10 @@ def test_device_info_populates_state_once() -> None:
     d._conn.query = AsyncMock(side_effect=_info)  # type: ignore[attr-defined]
     asyncio.run(d._read_device_info())
     assert d.state.serial_number == "56:74:F4:53:E7:5C"
-    assert d.state.wifi_mac == "AA:BB:CC:DD:EE:FF"
-    assert d.state.firmware_version == "1.02.03" and d.state.hardware_version == "1.00.05"
+    # aa 07 10 / 11 are not sent (no firmware handler, no app sender): no Wi-Fi MAC or basic versions.
+    assert d.state.wifi_mac is None
+    assert d.state.firmware_version is None and d.state.hardware_version is None
+    assert {call.args[0][1:3].hex() for call in d._conn.query.call_args_list} == {"0600", "0703", "0702"}
     assert d.state.ble_mac is None            # no reply carries a distinct BLE MAC
     assert d._device_info_read is True        # gated to once
 

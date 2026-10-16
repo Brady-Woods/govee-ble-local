@@ -297,8 +297,7 @@ def test_read_device_info_reports_a_silent_device() -> None:
 
     assert run(_readback.read_device_info(target, read_reply)) is False
     assert asked == [build.soft_version_query(), build.device_info_query(build.INFO_HARD),
-                     build.device_info_query(build.INFO_SN), build.device_info_query(build.INFO_WIFI),
-                     build.device_info_query(build.INFO_BASIC)]
+                     build.device_info_query(build.INFO_SN)]
     assert target.state == DeviceState()                              # nothing invented
 
 

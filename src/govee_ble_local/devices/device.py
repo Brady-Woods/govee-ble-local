@@ -1035,8 +1035,7 @@ class Device:
         return applied
 
     async def _read_device_info(self, *, state_read: bool = False) -> None:
-        """Populate the static device-info fields with the reads the Govee app makes on connect
-        (``aa 06``, ``aa 07 03 / 02 / 11``, then ``aa 07 10`` as a fallback;
+        """Populate the static device-info fields (``aa 06``, ``aa 07 03``, ``aa 07 02``;
         :func:`._readback.read_device_info`). Best-effort, and done once the device has answered;
         unanswered reads leave fields None. ``state_read``: the same poll's state read brought a
         live field back."""
