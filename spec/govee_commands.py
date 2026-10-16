@@ -10,9 +10,14 @@ GENERATED-ASSEMBLED from the opcode trace. Regenerate from the trace rather than
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
+from typing import TypeVar, cast
 
 from govee_reference import append_bcc, bcc
+
+_T = TypeVar("_T")
+_K = TypeVar("_K")
+_V = TypeVar("_V")
 
 
 def read_request(command: int, *selector: int) -> bytes:
@@ -47,7 +52,7 @@ def build_h5086_chart_time_range(start_unix: int, end_unix: int) -> bytes:
     )
 
 
-def build_music_old_0x01(code, sensitivity, rgb=(0xFF, 0x00, 0x00)):
+def build_music_old_0x01(code: int, sensitivity: int, rgb: Sequence[int] = (0xFF, 0x00, 0x00)) -> bytes:
     """0x33 05 01 [code, sensitivity, (R,G,B only when code is 1 or 2)] old-music write
     (SubModeMusic.g/getWriteBytes, split_rgblight/com/govee/h6104/ble/SubModeMusic.java:42-45,51-63,87-88;
     report parser split_rgblight/com/govee/h6104/ble/Mode.java:8-12 -> SubModeMusic.parse :75-80).
@@ -73,7 +78,7 @@ def build_plug_relay(outlet: int, on: bool) -> bytes:
     return append_bcc(bytes([0x33, 0x01, v]))
 
 
-def build_plug_relay_with_secret(outlet: int, on: bool, secret: bytes) -> list:
+def build_plug_relay_with_secret(outlet: int, on: bool, secret: bytes) -> list[bytes]:
     """[0x33 B2 secret, 0x33 01 mask]: h5080 plug switch preceded by the 8-byte secret frame (h5080 Model.l
     :150 with outlet 15; WidgetBleIotOpSubV2.sendCmd :104-107).
     """
@@ -116,7 +121,7 @@ def build_plug_total_switch(on: bool) -> bytes:
     return append_bcc(bytes([0x33, 0x02, 0x01 if on else 0x00]))
 
 
-def build_music_flag_sens_03(sensitivity: int, rgb=None) -> bytes:
+def build_music_flag_sens_03(sensitivity: int, rgb: Sequence[int] | None = None) -> bytes:
     """0x33 05 03 [colour_flag (0 auto / 1 rgb), sensitivity, (R,G,B) only when flag=1] old RGB music
     (SubModeMusic.a/getWriteBytes, split_rgblight/com/govee/h6160/ble/SubModeMusic.java:18-20,54-60,89-91;
     report parser split_rgblight/com/govee/h6160/ble/Mode.java:15-19 -> SubModeMusic.parse :76-83).
@@ -182,7 +187,9 @@ def build_color_0b_white_tab(tint_r: int, tint_g: int, tint_b: int, pieces: int)
     return append_bcc(bytes([0x33, 0x05, 0x0B, tint_r, tint_g, tint_b, mask & 0xFF, (mask >> 8) & 0xFF]))
 
 
-def build_color_cct_0d(r: int, g: int, b: int, kelvin: int = 0, tint: tuple = (0, 0, 0)) -> bytes:
+def build_color_cct_0d(
+    r: int, g: int, b: int, kelvin: int = 0, tint: tuple[int, int, int] = (0, 0, 0)
+) -> bytes:
     """33 05 0D [R,G,B][kelvin u16be][tint RGB]: RGB = Bytes.f, colour-tab CCT = Bytes.p, white-light-tab CCT
     = Bytes.A
     (base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:291-299,431-450,54-73
@@ -329,7 +336,9 @@ def build_music_code_only(code: int) -> bytes:
     return append_bcc(bytes([0x33, 0x05, 0x13, code & 0xFF]))
 
 
-def build_music_color(code: int, sensitivity: int, rgb=None, *, sub_mode: int) -> bytes:
+def build_music_color(
+    code: int, sensitivity: int, rgb: Sequence[int] | None = None, *, sub_mode: int
+) -> bytes:
     """33 05 <sub_mode> <code> <sens> <flag> [R G B] music with colour, no dynamic byte; rgb=None -> flag 0.
     split_bulblightstringv1/com/govee/bulblightstringv1/ble/SubModeMusic.java:56 (0x0E);
     split_hollowlamp/com/govee/tablelampv1/newAdjust/h6052/H6052MusicMode.java:69 (0x0F);
@@ -354,7 +363,7 @@ def build_music_dyn_before_sens(code: int, sensitivity: int, *sub_effects: int) 
 
 
 def build_music_dyn_color(
-    code: int, sensitivity: int, dyn_byte: int, rgb=None, *, sub_mode: int = 0x13
+    code: int, sensitivity: int, dyn_byte: int, rgb: Sequence[int] | None = None, *, sub_mode: int = 0x13
 ) -> bytes:
     """33 05 <sub_mode> <code> <sens> <dyn_byte> <flag> [R G B] music with dynamic byte; rgb=None -> flag 0,
     no RGB. split_rgbiclight/com/govee/rgbiclight/mode/music/MusicMode.java:82 (MusicMode.d);
@@ -368,7 +377,9 @@ def build_music_dyn_color(
     return append_bcc(bytes(b & 0xFF for b in body))
 
 
-def build_music_h6047(sensitivity: int, code: int, sub0: int = 0, sub1: int = 0, *, headphone=None) -> bytes:
+def build_music_h6047(
+    sensitivity: int, code: int, sub0: int = 0, sub1: int = 0, *, headphone: bool | None = None
+) -> bytes:
     """33 05 13 <sens> <code> <x> <y> [pickup] H6047 music (sensitivity first); code 75: x=sub0,y=sub1 else
     x=0,y=sub0; headphone only for goodsType 119. split_h6047/com/govee/h6047/detail/mode/MusicMode.java:92
     (MusicMode.d).
@@ -380,7 +391,9 @@ def build_music_h6047(sensitivity: int, code: int, sub0: int = 0, sub1: int = 0,
     return append_bcc(bytes(b & 0xFF for b in body))
 
 
-def build_music_h6127_newdetail(code, sensitivity, rgb=(0xFF, 0x00, 0x00)):
+def build_music_h6127_newdetail(
+    code: int, sensitivity: int, rgb: Sequence[int] = (0xFF, 0x00, 0x00)
+) -> bytes:
     """0x33 05 01 [code, sensitivity, (R,G,B unless code is 0 or 3)] old-music write, H6127 newdetail.
     OldMusicMode.a0 / P (split_rgbiclight/com/govee/h6127/newdetail/OldMusicMode.java:131-134,207-211);
     colour = ColorUtils.n (base-classes10/com/govee/base2kt/utils/ColorUtils.java:314-316)."""
@@ -391,7 +404,7 @@ def build_music_h6127_newdetail(code, sensitivity, rgb=(0xFF, 0x00, 0x00)):
 
 
 def build_music_h6148(
-    code: int, sensitivity: int, dyn: int, color_flag: int, rgb=(0xFF, 0x00, 0x00)
+    code: int, sensitivity: int, dyn: int, color_flag: int, rgb: tuple[int, int, int] = (0xFF, 0x00, 0x00)
 ) -> bytes:
     """33 05 0F <code clamped 0..1> <dyn> <sens> <color_flag> <R> <G> <B> H6148 music; RGB is always sent (app
     default red). split_rgblight/com/govee/homelightv1/newdetail/mode/H6148OldMusicMode.java:244-249
@@ -405,7 +418,7 @@ def build_music_h6148(
     )
 
 
-def build_music_h61a8(code: int, sensitivity: int, sub_effects=()) -> bytes:
+def build_music_h61a8(code: int, sensitivity: int, sub_effects: Sequence[int] = ()) -> bytes:
     """33 05 13 - H61A8 (gt 207) music apply for codes 5/4/6 (energy/spectrum/scroll) and 3 (rhythm); colours
     are Android ARGB ints. split_rgbiclight/com/govee/rgbiclight/mode/music/MusicMode.java:82-135
     (MusicMode.d); sub-mode split_rgbiclight/com/govee/rgbiclight/Protocols.java:57-71.
@@ -436,7 +449,7 @@ def build_op15_brightness(pct: int, seg_mask: int, *, mask_bytes: int = 2) -> by
     return append_bcc(bytes([0x33, 0x05, 0x15, 0x02, pct & 0xFF]) + seg_mask.to_bytes(mask_bytes, "little"))
 
 
-def build_op15_brightness_group(group: int, levels) -> bytes:
+def build_op15_brightness_group(group: int, levels: Sequence[int]) -> bytes:
     """33 05 15 03 <group> <up to 14 levels> per-group brightness.
     base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:202 (Bytes.I);
     split_h60ax/com/govee/pact_h60a0/ble/v1/SubModeColorV1.java:702 (opType 6).
@@ -446,14 +459,14 @@ def build_op15_brightness_group(group: int, levels) -> bytes:
     )
 
 
-def build_op15_brightness_set(levels) -> bytes:
+def build_op15_brightness_set(levels: Sequence[int]) -> bytes:
     """33 05 15 03 <up to 15 levels> brightness set, no group index.
     base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:153 (Bytes.F).
     """
     return append_bcc(bytes([0x33, 0x05, 0x15, 0x03, *[lvl & 0xFF for lvl in list(levels)[:15]]]))
 
 
-def build_op15_color_group(group: int, colors) -> bytes:
+def build_op15_color_group(group: int, colors: Sequence[Sequence[int]]) -> bytes:
     """33 05 15 04 <group> <up to 4 x RGB> per-group colours.
     base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:393 (Bytes.m);
     split_h60ax/com/govee/pact_h60a0/ble/v1/SubModeColorV1.java:711 (opType 7).
@@ -495,7 +508,7 @@ def build_op15_color_v5(
     )
 
 
-def build_op15_gradient_color(colors, pos_set) -> bytes:
+def build_op15_gradient_color(colors: Sequence[Sequence[int]], pos_set: Sequence[bool]) -> bytes:
     """33 05 15 05 <3 x RGB> <segment mask LE> gradient colour, GradientColor version 0.
     base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:404-420 (Bytes.n) via
     GradientColorControllerConfig.java:117-121 (n, e[0]) and :284-359 (k, ControllerMode.Companion.e).
@@ -517,7 +530,7 @@ def build_op15_kelvin_05(kelvin: int) -> bytes:
     return append_bcc(bytes([0x33, 0x05, 0x15, 0x05, (kelvin >> 8) & 0xFF, kelvin & 0xFF]))
 
 
-def build_op15_relative_brightness(value: int, pos_set=(True, True)) -> bytes:
+def build_op15_relative_brightness(value: int, pos_set: Sequence[bool] = (True, True)) -> bytes:
     """33 05 15 05 <side> <value u8> relative brightness, RelativeBrightnessVersion 1 (goodsType 80 only).
     base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:184-199 (Bytes.H) via
     Config.java:10727-10730 (Config.KR, L[1]) and ColorModeControllerConfig.java:1069-1097 (Companion.t).
@@ -611,7 +624,9 @@ def build_video_h6104(a_flag: bool, b: int) -> bytes:
     return append_bcc(bytes([0x33, 0x05, 0x00, 0x00, 0 if a_flag else 1, b & 0xFF]))
 
 
-def build_diy_old_07(diy_code: int, effect: int, sub_effect: int, speed: int, colors=()) -> bytes:
+def build_diy_old_07(
+    diy_code: int, effect: int, sub_effect: int, speed: int, colors: Sequence[Sequence[int]] = ()
+) -> bytes:
     """0x33 05 07 [diyCode, effect, subEffect, speed, <=4 x RGB] old DIY (SubModeOldDiy ctor/getWriteBytes,
     split_rgbiclight/com/govee/h6127/ble/SubModeOldDiy.java:16-51,63-65;
     split_rgbiclight/com/govee/h6129/ble/SubModeOldDiy.java:19-43,53-59).
@@ -625,7 +640,7 @@ def build_diy_old_07(diy_code: int, effect: int, sub_effect: int, speed: int, co
     return append_bcc(bytes([0x33, 0x05] + [b & 0xFF for b in body]))
 
 
-def read_device_other_info():
+def read_device_other_info() -> bytes:
     """AA 07 08 OTHER_INFO read, reply [0x08][brightness][flags: bit1 main/first switch, bit2 second switch].
     split_h60ax/com/govee/pact_h60a0/ble/controller/compose/ControllerOtherInfo.java:24-26,29-31,39-41;
     parsers split_h60ax/com/govee/pact_h60a0/adjust/v1/ComposeReadAllInfoV1.java:76-85,
@@ -749,7 +764,7 @@ def build_sync_time_v0(
     )
 
 
-def read_daysync_device_info():
+def read_daysync_device_info() -> bytes:
     """0xAC 0x09 multi-reply read: storage figures and all on-device schemes.
     ControllerSingleRead.makeSingleRead(9)
     (base-classes11/com/govee/base2light/kt/general_controller/ControllerSingleRead.java:44-72) in
@@ -759,7 +774,15 @@ def read_daysync_device_info():
     return append_bcc(bytes([0xAC, 0x09]))
 
 
-def build_auto_time(group, on, open_hour, open_min, close_hour, close_min, repeat):
+def build_auto_time(
+    group: int,
+    on: bool,
+    open_hour: int,
+    open_min: int,
+    close_hour: int,
+    close_min: int,
+    repeat: int,
+) -> bytes:
     """0x33 0A legacy auto on/off timer [on, openH, openM, closeH, closeM, group, repeat]
     (AutoTimeController.q:62-64; kt ControllerTimer:52-55; ControllerNewTimer.Companion.c:46-49 via
     Controller4ExtBytes.d).
@@ -781,14 +804,14 @@ def build_auto_time(group, on, open_hour, open_min, close_hour, close_min, repea
     )
 
 
-def read_auto_time(group):
+def read_auto_time(group: int) -> bytes:
     """0xAA 0A [group] auto-timer read (AutoTimeController.p:50-52; kt ControllerTimer(byte,int):42-46); apps
     read groups 0 and 1.
     """
     return read_request(0x0A, group)
 
 
-def build_delay_close(on, minutes):
+def build_delay_close(on: bool, minutes: int) -> bytes:
     """0x33 0B countdown auto-off [on, hours, minutes] from total minutes (DelayCloseController.q:46-50; kt
     ControllerDelayClose(z,z2,i):74-76; TimeUtils.getHM:45-48).
     """
@@ -805,7 +828,7 @@ def build_game_h6057(game_code: int) -> bytes:
     return append_bcc(bytes([0x33, 0x05, 0x0B, game_code & 0xFF]))
 
 
-def read_delay_close():
+def read_delay_close() -> bytes:
     """0xAA 0B, no selector (DelayCloseController():11-13 p()==null; kt
     ControllerDelayClose.Companion.b:51-53).
     """
@@ -914,7 +937,7 @@ def build_multi_wifi_a1(
     return frames
 
 
-def build_sleep(enable, start_bri, close_time, cur_time):
+def build_sleep(enable: int, start_bri: int, close_time: int, cur_time: int) -> bytes:
     """0x33 11 V0 sleep [enable, startBri, closeTime, curTime] (SleepController.q:56-58; kt
     ControllerSleep(int,int,int,int):121-123 = TimerConfig sleep version 0).
     """
@@ -924,8 +947,16 @@ def build_sleep(enable, start_bri, close_time, cur_time):
 
 
 def build_sleep_color(
-    enable, start_bri, close_time, cur_time, default_light, rgb, kelvin=0, *, kelvin_be=True
-):
+    enable: int,
+    start_bri: int,
+    close_time: int,
+    cur_time: int,
+    default_light: int,
+    rgb: int,
+    kelvin: int = 0,
+    *,
+    kelvin_be: bool = True,
+) -> bytes:
     """0x33 11 colour sleep: V0 + [defaultLight, R, G, B, kelvin u16 BE (TimerConfig v1) or LE (v3)] (kt
     ControllerSleep.Companion.g:96-107; TimerConfig.e:148,152).
     """
@@ -953,7 +984,15 @@ def build_sleep_color(
     )
 
 
-def build_sleep_effect(enable, start_bri, close_time, cur_time, open_effect, effect_type, effect_code):
+def build_sleep_effect(
+    enable: int,
+    start_bri: int,
+    close_time: int,
+    cur_time: int,
+    open_effect: bool,
+    effect_type: int,
+    effect_code: int,
+) -> bytes:
     """0x33 11 TimerConfig sleep v6: V0 + [openLampEffect, lampEffectType, effectCode u16 LE] (kt
     ControllerSleep.Companion.b:51-56).
     """
@@ -976,17 +1015,17 @@ def build_sleep_effect(enable, start_bri, close_time, cur_time, open_effect, eff
 
 
 def build_sleep_effect_lc_music(
-    enable,
-    start_bri,
-    close_time,
-    cur_time,
-    open_effect,
-    effect_type,
-    effect_code,
-    open_voice,
-    voice_volume,
-    voice_code,
-):
+    enable: int,
+    start_bri: int,
+    close_time: int,
+    cur_time: int,
+    open_effect: bool,
+    effect_type: int,
+    effect_code: int,
+    open_voice: bool,
+    voice_volume: int,
+    voice_code: int,
+) -> bytes:
     """0x33 11 TimerConfig sleep v8: V0 + [openLampEffect, lampEffectType, effectCode u16 LE, openVoice,
     voiceVolume, voiceCode u8] (kt ControllerSleep.Companion.f:88-93).
     """
@@ -1012,20 +1051,20 @@ def build_sleep_effect_lc_music(
 
 
 def build_sleep_fanlight(
-    enable,
-    light_open,
-    start_bri,
-    close_time,
-    cur_time,
-    default_light,
-    rgb,
-    kelvin,
-    fan_open,
-    fan_exe_open,
-    fan_close_time,
-    fan_close_cur_time,
-    fan_gear,
-):
+    enable: int,
+    light_open: int,
+    start_bri: int,
+    close_time: int,
+    cur_time: int,
+    default_light: int,
+    rgb: int,
+    kelvin: int,
+    fan_open: int,
+    fan_exe_open: int,
+    fan_close_time: int,
+    fan_close_cur_time: int,
+    fan_gear: int,
+) -> bytes:
     """0x33 11 TimerConfig sleep v7 (goodsType 359/368): [enable, lightOpen, startBri, closeTime, curTime,
     defaultLight, R, G, B, kelvin u16 BE, fanOpen, fanExeOpen, fanCloseTime, fanCloseCurTime, fanGear] (kt
     ControllerSleep.Companion.c:59-67).
@@ -1057,8 +1096,17 @@ def build_sleep_fanlight(
 
 
 def build_sleep_h6093(
-    enable, start_bri, close_time, cur_time, open_voice, voice_code, voice_volume, default_light, rgb, laser
-):
+    enable: int,
+    start_bri: int,
+    close_time: int,
+    cur_time: int,
+    open_voice: bool,
+    voice_code: int,
+    voice_volume: int,
+    default_light: int,
+    rgb: int,
+    laser: bool,
+) -> bytes:
     """0x33 11 TimerConfig sleep v4: V0 + [openVoice, voiceCode u8, voiceVolume, defaultLight, R, G, B,
     laserSwitch] (kt ControllerSleep.Companion.d:70-75).
     """
@@ -1084,7 +1132,9 @@ def build_sleep_h6093(
     )
 
 
-def build_sleep_h60a0(enable, start_bri, close_time, cur_time, default_light, rgb):
+def build_sleep_h60a0(
+    enable: int, start_bri: int, close_time: int, cur_time: int, default_light: int, rgb: int
+) -> bytes:
     """0x33 11 H60A0-family colour sleep, no kelvin bytes: V0 + [defaultLight, R, G, B]
     (SleepWithColorController.Companion.b:41-45).
     """
@@ -1107,18 +1157,18 @@ def build_sleep_h60a0(enable, start_bri, close_time, cur_time, default_light, rg
 
 
 def build_sleep_h6630(
-    enable,
-    start_bri,
-    close_time,
-    cur_time,
-    open_effect,
-    effect_type,
-    effect_code,
-    open_voice,
-    voice_volume,
-    voice_code,
-    version,
-):
+    enable: int,
+    start_bri: int,
+    close_time: int,
+    cur_time: int,
+    open_effect: bool,
+    effect_type: int,
+    effect_code: int,
+    open_voice: bool,
+    voice_volume: int,
+    voice_code: int,
+    version: int,
+) -> bytes:
     """0x33 11 TimerConfig sleep v5: V0 + [openLampEffect, lampEffectType, effectCode u16 LE, openVoice,
     voiceVolume, voiceCode u32 LE, version] (kt ControllerSleep.Companion.e:78-85).
     """
@@ -1145,8 +1195,16 @@ def build_sleep_h6630(
 
 
 def build_sleep_v1(
-    enable, start_bri, close_time, cur_time, open_voice, voice_code, voice_volume, default_light, rgb
-):
+    enable: int,
+    start_bri: int,
+    close_time: int,
+    cur_time: int,
+    open_voice: bool,
+    voice_code: int,
+    voice_volume: int,
+    default_light: int,
+    rgb: int,
+) -> bytes:
     """0x33 11 V1 sleep: V0 + [openVoice, voiceCode u8, voiceVolume, defaultLight, R, G, B]
     (SleepControllerV1.q:43-51).
     """
@@ -1172,8 +1230,17 @@ def build_sleep_v1(
 
 
 def build_sleep_v2(
-    enable, start_bri, close_time, cur_time, default_light, rgb, kelvin, open_voice, voice_volume, voice_code
-):
+    enable: int,
+    start_bri: int,
+    close_time: int,
+    cur_time: int,
+    default_light: int,
+    rgb: int,
+    kelvin: int,
+    open_voice: bool,
+    voice_volume: int,
+    voice_code: int,
+) -> bytes:
     """0x33 11 V2 sleep: V0 + [defaultLight, R, G, B, kelvin u16 BE, openVoice, voiceVolume, voiceCode u16 LE]
     (SleepControllerV2.q:80-93; ControllerOnlineSleep.Companion.b:53-62).
     """
@@ -1201,14 +1268,14 @@ def build_sleep_v2(
     )
 
 
-def read_sleep():
+def read_sleep() -> bytes:
     """0xAA 11, no selector (SleepController():13-15; kt ControllerSleep():117-119;
     SleepWithColorController.Companion.a:35-37; ControllerOnlineSleep.Companion.a:45-49).
     """
     return read_request(0x11)
 
 
-def build_wakeup(enable, end_bri, hour, minute, repeat, wake_time):
+def build_wakeup(enable: int, end_bri: int, hour: int, minute: int, repeat: int, wake_time: int) -> bytes:
     """0x33 12 V0 wake-up [enable, endBri, hour, minute, repeat, wakeTime] (WakeUpController.q:70-72; kt
     ControllerWakeUp(int..):123-126 via Companion.h:113-115 = TimerConfig wake-up version 0).
     """
@@ -1229,8 +1296,18 @@ def build_wakeup(enable, end_bri, hour, minute, repeat, wake_time):
 
 
 def build_wakeup_color(
-    enable, end_bri, hour, minute, repeat, wake_time, default_light, rgb, kelvin=0, *, kelvin_be=True
-):
+    enable: int,
+    end_bri: int,
+    hour: int,
+    minute: int,
+    repeat: int,
+    wake_time: int,
+    default_light: int,
+    rgb: int,
+    kelvin: int = 0,
+    *,
+    kelvin_be: bool = True,
+) -> bytes:
     """0x33 12 colour wake-up: V0 + [defaultLight, R, G, B, kelvin u16 BE (TimerConfig v1) or LE (v3)] (kt
     ControllerWakeUp.Companion.a:44-57; TimerConfig.k:250,254).
     """
@@ -1261,8 +1338,16 @@ def build_wakeup_color(
 
 
 def build_wakeup_effect(
-    enable, end_bri, hour, minute, repeat, wake_time, open_effect, effect_type, effect_code
-):
+    enable: int,
+    end_bri: int,
+    hour: int,
+    minute: int,
+    repeat: int,
+    wake_time: int,
+    open_effect: bool,
+    effect_type: int,
+    effect_code: int,
+) -> bytes:
     """0x33 12 TimerConfig wake-up v6: V0 + [openLampEffect, lampEffectType, effectCode u16 LE] (kt
     ControllerWakeUp.Companion.c:68-73).
     """
@@ -1287,19 +1372,19 @@ def build_wakeup_effect(
 
 
 def build_wakeup_effect_lc_music(
-    enable,
-    end_bri,
-    hour,
-    minute,
-    repeat,
-    wake_time,
-    open_effect,
-    effect_type,
-    effect_code,
-    open_voice,
-    voice_volume,
-    voice_code,
-):
+    enable: int,
+    end_bri: int,
+    hour: int,
+    minute: int,
+    repeat: int,
+    wake_time: int,
+    open_effect: bool,
+    effect_type: int,
+    effect_code: int,
+    open_voice: bool,
+    voice_volume: int,
+    voice_code: int,
+) -> bytes:
     """0x33 12 TimerConfig wake-up v9: V0 + [openLampEffect, lampEffectType, effectCode u16 LE, openVoice,
     voiceVolume, voiceCode u8] (kt ControllerWakeUp.Companion.b:60-65).
     """
@@ -1327,20 +1412,20 @@ def build_wakeup_effect_lc_music(
 
 
 def build_wakeup_fanlight(
-    enable,
-    light_open,
-    end_bri,
-    hour,
-    minute,
-    repeat,
-    wake_time,
-    default_light,
-    rgb,
-    kelvin,
-    fan_open,
-    fan_exe_open,
-    fan_gear,
-):
+    enable: int,
+    light_open: int,
+    end_bri: int,
+    hour: int,
+    minute: int,
+    repeat: int,
+    wake_time: int,
+    default_light: int,
+    rgb: int,
+    kelvin: int,
+    fan_open: int,
+    fan_exe_open: int,
+    fan_gear: int,
+) -> bytes:
     """0x33 12 TimerConfig wake-up v7 (goodsType 359/368): [enable, lightOpen, endBri, hour, minute, repeat,
     wakeTime, defaultLight, R, G, B, kelvin u16 BE, fanOpen, fanExeOpen, fanGear] (kt
     ControllerWakeUp.Companion.d:76-84).
@@ -1372,19 +1457,19 @@ def build_wakeup_fanlight(
 
 
 def build_wakeup_h6093(
-    enable,
-    end_bri,
-    hour,
-    minute,
-    repeat,
-    wake_time,
-    open_voice,
-    voice_code,
-    voice_volume,
-    default_light,
-    rgb,
-    laser,
-):
+    enable: int,
+    end_bri: int,
+    hour: int,
+    minute: int,
+    repeat: int,
+    wake_time: int,
+    open_voice: bool,
+    voice_code: int,
+    voice_volume: int,
+    default_light: int,
+    rgb: int,
+    laser: bool,
+) -> bytes:
     """0x33 12 TimerConfig wake-up v4/v8: V0 + [openVoice, voiceCode u8, voiceVolume, defaultLight, R, G, B,
     laserSwitch] (kt ControllerWakeUp.Companion.e:87-94).
     """
@@ -1412,7 +1497,16 @@ def build_wakeup_h6093(
     )
 
 
-def build_wakeup_h60a0(enable, end_bri, hour, minute, repeat, wake_time, default_light, rgb):
+def build_wakeup_h60a0(
+    enable: int,
+    end_bri: int,
+    hour: int,
+    minute: int,
+    repeat: int,
+    wake_time: int,
+    default_light: int,
+    rgb: int,
+) -> bytes:
     """0x33 12 H60A0-family colour wake-up, no kelvin bytes: V0 + [defaultLight, R, G, B]
     (WakeUpWithColorController.Companion.b:41-45).
     """
@@ -1437,20 +1531,20 @@ def build_wakeup_h60a0(enable, end_bri, hour, minute, repeat, wake_time, default
 
 
 def build_wakeup_h6630(
-    enable,
-    end_bri,
-    hour,
-    minute,
-    repeat,
-    wake_time,
-    open_effect,
-    effect_type,
-    effect_code,
-    open_voice,
-    voice_volume,
-    voice_code,
-    version,
-):
+    enable: int,
+    end_bri: int,
+    hour: int,
+    minute: int,
+    repeat: int,
+    wake_time: int,
+    open_effect: bool,
+    effect_type: int,
+    effect_code: int,
+    open_voice: bool,
+    voice_volume: int,
+    voice_code: int,
+    version: int,
+) -> bytes:
     """0x33 12 TimerConfig wake-up v5: V0 + [openLampEffect, lampEffectType, effectCode u16 LE, openVoice,
     voiceVolume, voiceCode u32 LE, version] (kt ControllerWakeUp.Companion.f:97-104).
     """
@@ -1479,8 +1573,18 @@ def build_wakeup_h6630(
 
 
 def build_wakeup_v1(
-    enable, end_bri, hour, minute, repeat, wake_time, open_voice, voice_code, voice_volume, default_light, rgb
-):
+    enable: int,
+    end_bri: int,
+    hour: int,
+    minute: int,
+    repeat: int,
+    wake_time: int,
+    open_voice: bool,
+    voice_code: int,
+    voice_volume: int,
+    default_light: int,
+    rgb: int,
+) -> bytes:
     """0x33 12 V1 wake-up: V0 + [openVoice, voiceCode u8, voiceVolume, defaultLight, R, G, B]
     (WakeUpControllerV1.q:50-58).
     """
@@ -1508,19 +1612,19 @@ def build_wakeup_v1(
 
 
 def build_wakeup_v2(
-    enable,
-    end_bri,
-    hour,
-    minute,
-    repeat,
-    wake_time,
-    default_light,
-    rgb,
-    kelvin,
-    open_voice,
-    voice_volume,
-    voice_code,
-):
+    enable: int,
+    end_bri: int,
+    hour: int,
+    minute: int,
+    repeat: int,
+    wake_time: int,
+    default_light: int,
+    rgb: int,
+    kelvin: int,
+    open_voice: bool,
+    voice_volume: int,
+    voice_code: int,
+) -> bytes:
     """0x33 12 V2 wake-up: V0 + [defaultLight, R, G, B, kelvin u16 BE, openVoice, voiceVolume, voiceCode u16
     LE] (WakeUpControllerV2.q:84-97; ControllerOnlineWakeUp.Companion.b:46-55).
     """
@@ -1550,14 +1654,14 @@ def build_wakeup_v2(
     )
 
 
-def read_plug_timer_count(index):
+def read_plug_timer_count(index: int) -> bytes:
     """0xAA 12 [index] H5080-family plug timer-count read; reply [index, count] (h5080
     NewTimerCountController.p:23-25, getCommandType:19-21 = BleConstants.SINGLE_NEW_TIMER_COUNT).
     """
     return read_request(0x12, index)
 
 
-def read_wakeup():
+def read_wakeup() -> bytes:
     """0xAA 12, no selector (WakeUpController():15-17; kt ControllerWakeUp():119-121;
     WakeUpWithColorController.Companion.a:35-37; ControllerOnlineWakeUp.Companion.a:39-41).
     """
@@ -1572,7 +1676,7 @@ def build_direction_h6104(direction: int) -> bytes:
     return append_bcc(bytes([0x33, 0x13, direction & 0xFF]))
 
 
-def build_night_mode(brightness: int, rgb=None) -> bytes:
+def build_night_mode(brightness: int, rgb: tuple[int, int, int] | None = None) -> bytes:
     """0x33 13 night mode [bri, 0] default colour or [bri, 1, R, G, B] (NightModeViewModel.P,
     base-classes10/com/govee/base2light/ac/nightmode/NightModeViewModel.java:190-215; caller
     base-classes10/com/govee/base2light/ac/nightmode/NightModeAc.java:327).
@@ -1992,7 +2096,7 @@ def read_wifi_hard_version() -> bytes:
     return read_request(0x20)
 
 
-def build_h5127_sync_triggers(entries, extra: int = 0) -> list:
+def build_h5127_sync_triggers(entries: Sequence[tuple[int, int]], extra: int = 0) -> list[bytes]:
     """0x33 21 H5127 trigger-sync burst: header, data frames of up to 5 (kind 1-4, value u16be) entries, end;
     the app sends it only base64-wrapped in an IoT ptReal cmd
     (base-classes12/com/govee/base2light/synctriggers/h5127/ControllerSyncTriggers.java:24;
@@ -2037,7 +2141,7 @@ def read_wifi_dsp_version() -> bytes:
     return read_request(0x22)
 
 
-def build_new_timer(group, enable, turn_on, hour, minute, repeat):
+def build_new_timer(group: int, enable: bool, turn_on: bool, hour: int, minute: int, repeat: int) -> bytes:
     """0x33 23 [group, enableAndType (bit7 enable, bit0 1=turn on), hour, minute, repeat]
     (NewTimerV1Controller.q:118-122; kt ControllerNewTimer:93-97; H60A0 TimerController.Companion.c:38-41).
     """
@@ -2056,7 +2160,7 @@ def build_new_timer(group, enable, turn_on, hour, minute, repeat):
     )
 
 
-def read_new_timer(group=0xFF):
+def read_new_timer(group: int = 0xFF) -> bytes:
     """0xAA 23 [group]; 0xFF reads all 4 slots (NewTimerV1Controller.p:83-85; kt
     ControllerNewTimer.Companion.a:35-37; H60A0 TimerController.Companion.a:26-28).
     """
@@ -2068,7 +2172,7 @@ def build_h682x_unbind() -> bytes:
     return append_bcc(bytes([0x33, 0x24, 0x01]))
 
 
-def build_ic_points_h61d3(points: list) -> list:
+def build_ic_points_h61d3(points: Sequence[tuple[int, int]]) -> list[bytes]:
     """0xA3 V1 multi write, comm 0x24: IC point list [count u16be][(x u16be, y u16be)...] for recognition
     setup (split_h61d3/com/govee/h61d3/adjust/newdetail/VM4LightH61d3.java:1290-1303;
     split_h61d3/com/govee/h61d3/ble/controller/MultiController.java:15-21;
@@ -2211,7 +2315,7 @@ def build_h6057_preview_effect(
     )
 
 
-def build_power_warning(enabled, watts) -> bytes:
+def build_power_warning(enabled: bool | None, watts: int | None) -> bytes:
     """33 27 - H5086 alarm-power set [open 1/0/FF(None), watts u2be | FFFF].
     split_plugnew/com/govee/h5086/ble/controller/PowerWarningController.java:49-58 (Companion.d).
     """
@@ -2298,7 +2402,7 @@ def build_h5089_sleep(
     )
 
 
-def build_power_warning_v2(kind: int, enabled: bool, watts) -> bytes:
+def build_power_warning_v2(kind: int, enabled: bool, watts: int | None) -> bytes:
     """33 28: H5086 power threshold V2 [kind 1=alarm/2=cut-off, open, watts u16be | FFFF].
     split_plugnew/com/govee/h5086/ble/controller/PowerWarningControllerV2.java:24-33,44 (Companion.a/b,
     getCommandType).
@@ -2355,7 +2459,7 @@ def build_h5089_wakeup(
     )
 
 
-def build_sort_preset_scenes(scene_codes: list) -> bytes:
+def build_sort_preset_scenes(scene_codes: Sequence[int]) -> bytes:
     """33 29: H6057 reorder stored scene presets [N, code u16le x N], N<=8 (orphaned in 7.7.02).
     split_hollowlamp/com/govee/h6057/origin/ble/SortPreSetSceneController.java:21-27 (getCommandType/q);
     split_hollowlamp/com/govee/h6057/view/preset/PresetEditActivity.java:492-513 (PresetEditActivity.O1).
@@ -2382,7 +2486,7 @@ def build_h6057_light_switch(on: bool) -> bytes:
     return append_bcc(bytes([0x33, 0x30, 0x01 if on else 0x00]))
 
 
-def build_light_direction(direction):
+def build_light_direction(direction: int) -> bytes:
     """33 30 [direction]: H6038 installation/calibration direction index.
     split_h6047/com/govee/h6047/newdetail/h6038/controller/CalibrationController.java:42-45
     (CalibrationController.Companion.c, Controller4ExtBytes.d write); callers
@@ -2392,7 +2496,7 @@ def build_light_direction(direction):
     return append_bcc(bytes([0x33, 0x30, direction & 0xFF]))
 
 
-def build_light_direction_exit_calibration(value: int) -> list:
+def build_light_direction_exit_calibration(value: int) -> list[bytes]:
     """[33 30 value, 33 44 02 00] - set direction then exit calibration (DefWriteComposeController4Single.g
     base-classes10/com/govee/base2light/ble/controller/compose/DefWriteComposeController4Single.java:137-143;
     compose/CalibrationController.java:30-31,58-59).
@@ -2400,7 +2504,7 @@ def build_light_direction_exit_calibration(value: int) -> list:
     return [append_bcc(bytes([0x33, 0x30, value & 0xFF])), append_bcc(bytes([0x33, 0x44, 0x02, 0x00]))]
 
 
-def build_light_switch_h6057(on):
+def build_light_switch_h6057(on: bool) -> bytes:
     """33 30 [1|0]: H6057 main-light switch.
     split_hollowlamp/com/govee/h6057/origin/newDetail/H6057DetailVM.java:950-962 (h5:
     ControllerSingle.Companion.c(command_light_switch = 48, [!cur ? 1 : 0])).
@@ -2419,7 +2523,7 @@ def build_op30_byte(value: int) -> bytes:
     return append_bcc(bytes([0x33, 0x30, value & 0xFF]))
 
 
-def build_zone_power(zone, on):
+def build_zone_power(zone: int, on: bool) -> bytes:
     """33 30 [zone, state]: h60ax per-zone power.
     split_h60ax/com/govee/pact_h60a0/adjust/h60a6/VM4LightH60A6.java:1373-1376 (y5;
     DelegateHeaderH60A6.java:442,470);
@@ -2431,7 +2535,7 @@ def build_zone_power(zone, on):
     return append_bcc(bytes([0x33, 0x30, zone & 0xFF, 0x01 if on else 0x00]))
 
 
-def read_light_direction():
+def read_light_direction() -> bytes:
     """AA 30, no selector. Defined but never sent in 7.7.02:
     split_h6047/com/govee/h6047/newdetail/h6038/controller/CalibrationController.java:34-40 (Companion.b,
     no caller);
@@ -2463,7 +2567,7 @@ def build_cube_shape_layout(
     """
     import math
 
-    value = bytearray([len(shapes) & 0xFF])
+    value: bytes | bytearray = bytearray([len(shapes) & 0xFF])
     for shape_type, x, y, angle in shapes:
         value += bytes([shape_type & 0xFF])
         for v in (math.ceil(x), math.ceil(y), angle):
@@ -2502,7 +2606,7 @@ def build_cube_shape_layout_h606a(
     import math
 
     conv = (lambda f: math.floor(f + 0.5)) if use_round else math.ceil
-    value = bytearray((angle & 0xFFFF).to_bytes(2, "little") + bytes([len(points) & 0xFF]))
+    value: bytes | bytearray = bytearray((angle & 0xFFFF).to_bytes(2, "little") + bytes([len(points) & 0xFF]))
     for x, y in points:
         value += (conv(x) & 0xFFFF).to_bytes(2, "little") + (conv(y) & 0xFFFF).to_bytes(2, "little")
     value = bytes(value)
@@ -2534,7 +2638,9 @@ def build_fanlight_fan_gear(gear: int) -> bytes:
     return append_bcc(bytes([0x33, 0x31, 0x01, gear & 0xFF]))
 
 
-def build_fanlight_fan_param(gear: int, order: int, shake=None, mode=None) -> list:
+def build_fanlight_fan_param(
+    gear: int, order: int, shake: int | None = None, mode: int | None = None
+) -> list[bytes]:
     """0x33 31 sub-op frames in app order: [01 gear], [02 order], then [04 shake] (goodsType 368) and [03 01
     00 mode] (goodsType 368 and versionSoft >= '1.00.11') (eco FanParamActionParser.y
     base-classes13/com/govee/eco/executeAction/parser/FanParamActionParser.java:170-179, gate :46-49).
@@ -2576,7 +2682,7 @@ def build_h6067_shape_layout(
     """
     import math
 
-    value = bytearray([len(shapes) & 0xFF])
+    value: bytes | bytearray = bytearray([len(shapes) & 0xFF])
     for shape_type, x, y, angle, _state in shapes:
         value += bytes([shape_type & 0xFF])
         for v in (math.ceil(x), math.ceil(y), angle):
@@ -2804,7 +2910,7 @@ def read_check_direction() -> bytes:
     return read_request(0x39)
 
 
-def build_splicing_config(p1: int, p2: int, macs: list, cmd: int = 0x40) -> bytes:
+def build_splicing_config(p1: int, p2: int, macs: Sequence[str], cmd: int = 0x40) -> bytes:
     """0x33 40 01 [p1, layout, MAC byte-reversed x N] (ControllerChangeSplicing.d:94-108; layout =
     Companion.a(p2, p1):71-81; truncated to 17 bytes by kt AbsController.q:47-60).
     """
@@ -2820,7 +2926,7 @@ def build_splicing_config(p1: int, p2: int, macs: list, cmd: int = 0x40) -> byte
     return append_bcc(bytes([0x33, cmd & 0xFF]) + body[:17])
 
 
-def build_splicing_mode(rgb=None, cmd: int = 0x40) -> bytes:
+def build_splicing_mode(rgb: tuple[int, int, int] | None = None, cmd: int = 0x40) -> bytes:
     """0x33 40 02: enter splicing mode [02, 01, R, G, B] or exit [02, 00] (SplicingController.q:61-69)."""
     if rgb is None:
         return append_bcc(bytes([0x33, cmd & 0xFF, 0x02, 0x00]))
@@ -2842,7 +2948,7 @@ def build_splicing_sub_device_mac(b: int, mac: str, cmd: int = 0x40) -> bytes:
     )
 
 
-def read_status_with_ic(types=(0x40, 0x41, 0xA5)) -> bytes:
+def read_status_with_ic(types: Sequence[int] = (0x40, 0x41, 0xA5)) -> bytes:
     """0xAC 03 [len, *types] status request carrying TLV 0x40 = IC count (Compose4BaseInfoSingleRead:166-179;
     VM4LightH667172$afterConnectedSingleReadDeviceInfo$1:160 for H6671/72; VM4Light.D5:720-725 gives (0x40,
     0xA5) for goodsType 351/352).
@@ -2851,7 +2957,13 @@ def read_status_with_ic(types=(0x40, 0x41, 0xA5)) -> bytes:
     return append_bcc(bytes([0xAC, 0x03, len(t), *t]))
 
 
-def build_music_effect_a3_v2(music_code, colors, params=(), pad=0, head=()):
+def build_music_effect_a3_v2(
+    music_code: int,
+    colors: Sequence[tuple[int, int, int]],
+    params: Sequence[int] = (),
+    pad: int = 0,
+    head: Sequence[int] = (),
+) -> list[bytes]:
     """Music-effect value [head u8...][n][n x (R,G,B)][params u8...][pad zero bytes] framed as 0xA3 V2 comm
     [0x41, music_code] (base-classes10/com/govee/base2light/ble/music/RgbicMusicFenLi.java:84-99 and
     sibling AbsNewMusicEffect.toBytes;
@@ -2861,8 +2973,8 @@ def build_music_effect_a3_v2(music_code, colors, params=(), pad=0, head=()):
     base-classes10/com/govee/base2light/ble/comm/MultipleControllerCommV1.java:719-783,845-851). colors =
     [(r, g, b), ...].
     """
-    value = bytearray(h & 0xFF for h in head)
-    value.append(len(colors) & 0xFF)
+    value: bytes | bytearray = bytearray(h & 0xFF for h in head)
+    cast(bytearray, value).append(len(colors) & 0xFF)
     for r, g, b in colors:
         value += bytes([r & 0xFF, g & 0xFF, b & 0xFF])
     value += bytes(p & 0xFF for p in params)
@@ -2923,7 +3035,7 @@ def read_on_off_memory_or_section_count() -> bytes:
     return read_request(0x41)
 
 
-def build_head_calibration(op: int, step=None) -> bytes:
+def build_head_calibration(op: int, step: int | None = None) -> bytes:
     """0x33 42 [op, (step)] head calibration (CalibrationAcH60A6:258,306 via Controller4ExtBytes.f(66, ..);
     VM4LightH60A6.b5:805-817): 01 enter, 00 exit, 02 + step (1 = +1, 2 = -1 per H60A6 firmware), FF commit
     (app sends FF then 00).
@@ -2947,7 +3059,7 @@ def build_head_calibration_exit() -> bytes:
     return append_bcc(bytes([0x33, 0x42, 0x00]))
 
 
-def build_head_calibration_finish() -> list:
+def build_head_calibration_finish() -> list[bytes]:
     """[33 42 FF, 33 42 00] - Done: commit the current head index, then exit (CalibrationAcH60A6.f2 :107-111;
     VM4LightH60A6.b5 :805-811; VM4LightH1270.f5 :918-919; VM4LightH12D0.f5 :863-864; CalibrationAcH1270
     :333-334; CalibrationAcH12D0 :108-109).
@@ -3055,7 +3167,7 @@ def build_cube_calibration(start: int, shape_type: int) -> bytes:
     return append_bcc(bytes([0x33, 0x44, start & 0xFF, shape_type & 0xFF]))
 
 
-def build_h6065_calibration(indices: list, head: int = 15) -> bytes:
+def build_h6065_calibration(indices: Sequence[int], head: int = 15) -> bytes:
     """0x33 44 [head, idx...] (h6067 CalibrationControllerH6065.q:24-37; callers pass head 15)."""
     return append_bcc(bytes([0x33, 0x44, head & 0xFF, *[i & 0xFF for i in indices]]))
 
@@ -3127,7 +3239,7 @@ def build_splicing_change_package(flag: bool, cmd: int = 0x46) -> bytes:
     return append_bcc(bytes([0x33, cmd & 0xFF, 0x01 if flag else 0x00]))
 
 
-def build_strip_len_cali_crop(ics: list, extend: bool, cmd: int = 0x46) -> bytes:
+def build_strip_len_cali_crop(ics: Sequence[int], extend: bool, cmd: int = 0x46) -> bytes:
     """0x33 46|5A [6 if extend else 5, n, ic u2be x n] (CaliLastIcController.d:85-95;
     LightStripLenCaliConfig.d:62-84 / e:87-90).
     """
@@ -3137,7 +3249,7 @@ def build_strip_len_cali_crop(ics: list, extend: bool, cmd: int = 0x46) -> bytes
     return append_bcc(bytes([0x33, cmd & 0xFF]) + body[:17])
 
 
-def build_part_scenes_47(seg_id: int, seg_indexes=()) -> bytes:
+def build_part_scenes_47(seg_id: int, seg_indexes: Sequence[int] = ()) -> bytes:
     """0x33 05 47 [segId u16 LE, flags[5]] part scenes (SubModePartScenes.getWriteBytes,
     base-classes11/com/govee/base2light/pact/newdetail/content/scene/SubModePartScenes.java:34-42,53-55;
     flags byte[5] from PartScenesViewModel
@@ -3333,7 +3445,7 @@ def read_movie_feast_on_off() -> bytes:
     return read_request(0x54)
 
 
-def build_carousel_frames(voice_switch: int, effects: list) -> list:
+def build_carousel_frames(voice_switch: int, effects: Sequence[bytes]) -> list[bytes]:
     """0xA3 V1 multi write, comm 0x60, value [voiceSwitch][count][decoded effect records]: START [A3 00 01 n
     60 value[0:14]], MIDDLE [A3 i 17B], END [A3 FF rest]
     (base-classes11/com/govee/base2light/pact/newdetail/content/carousel/CarouselViewModel.java:585-608;
@@ -3406,7 +3518,7 @@ def build_combination_effect_frames(value: bytes, mtu: int = 20) -> list[bytes]:
     base-classes10/com/govee/base2light/ble/comm/MultipleControllerCommV1.java:366-493).
     """
 
-    def x(b):
+    def x(b: bytes | bytearray) -> int:
         r = 0
         for v in b:
             r ^= v
@@ -3433,7 +3545,9 @@ def build_combination_effect_frames(value: bytes, mtu: int = 20) -> list[bytes]:
     return frames
 
 
-def build_diy_in_scenes_multi_a3(protocol, effect_bytes, mode_frame=None):
+def build_diy_in_scenes_multi_a3(
+    protocol: int, effect_bytes: bytes, mode_frame: bytes | None = None
+) -> list[bytes]:
     """0xA3 V1 multi write with comm = DIY protocol code (protocol not 91/92), then the optional mode frame;
     the 0x62 (98) instance is reachable only through the unregistered DiyAdvancedCombParse
     (base-classes10/com/govee/base2light/ble/controller/DiyControllerNoEventV7.java:18-34;
@@ -3465,7 +3579,15 @@ def build_diy_in_scenes_multi_a3(protocol, effect_bytes, mode_frame=None):
     return frames + ([bytes(mode_frame)] if mode_frame is not None else [])
 
 
-def build_daysync_node(node_id, time_code, t1, t2, brightness, transition_mode, action):
+def build_daysync_node(
+    node_id: int,
+    time_code: int,
+    t1: int,
+    t2: int,
+    brightness: int,
+    transition_mode: int,
+    action: Sequence[int],
+) -> bytes:
     """One daysync node record (payload piece, not a frame): [param_len
     u4le][node_id][time_code][t1][t2][brightness][tm+1][tm+1][action...]. DaySyncUtils.y
     (base-classes11/com/govee/base2light/pact/newdetail/content/daySync/DaySyncUtils.java:1426-1451), z
@@ -3486,8 +3608,14 @@ def build_daysync_node(node_id, time_code, t1, t2, brightness, transition_mode, 
 
 
 def build_daysync_scheme_incremental(
-    scheme_short_id, repeat_frequency, add_nodes, delete_ids, mtu, device_kb, verify8
-):
+    scheme_short_id: int,
+    repeat_frequency: int,
+    add_nodes: Sequence[bytes],
+    delete_ids: Sequence[int],
+    mtu: int,
+    device_kb: int,
+    verify8: bytes | bytearray | Sequence[int] | Sequence[bytes],
+) -> list[list[bytes]]:
     """0xA6 MTU transfer, cmd 0x63, incremental scheme update (op type 2): value = [id][repeat][2][n_add] +
     add/change node records + [n_delete][delete ids], the delete block being the LAST node element given to
     the packetiser. DaySyncUtils.i/h
@@ -3497,7 +3625,7 @@ def build_daysync_scheme_incremental(
     Returns big packages (lists of frames).
     """
 
-    def _x(b):
+    def _x(b: bytes | bytearray) -> int:
         x = 0
         for v in b:
             x ^= v
@@ -3512,7 +3640,7 @@ def build_daysync_scheme_incremental(
     )
     nodes = [*nodes, del_block]
 
-    def j(data):
+    def j(data: bytes) -> list[bytes | bytearray]:
         s = bytearray(len(data) + 18)
         s[0] = 0xA6
         s[3] = 0x01
@@ -3521,7 +3649,7 @@ def build_daysync_scheme_incremental(
         e = bytes([0xA6, 0xFF, 0xFF])
         return [s, e + bytes([_x(e)])]
 
-    def k(data, cap0, capn, maxpk):
+    def k(data: bytes, cap0: int, capn: int, maxpk: int) -> list[bytes | bytearray]:
         if len(data) <= cap0:
             return j(data)
         s = bytearray(mtu)
@@ -3529,7 +3657,8 @@ def build_daysync_scheme_incremental(
         s[3] = 0x01
         s[16] = 0x63
         s[17 : 17 + cap0] = data[:cap0]
-        out, pos, i = [s], cap0, 1
+        out: list[bytes | bytearray] = [s]
+        pos, i = cap0, 1
         while i < maxpk:
             if i == maxpk - 1 or pos + capn >= len(data):
                 e = bytes([0xA6, 0xFF, 0xFF]) + bytes(data[pos:])
@@ -3563,11 +3692,11 @@ def build_daysync_scheme_incremental(
             if idx == len(nodes) - 1:
                 big.append(k(bytes(acc), cap0, capn, maxpk))
     if isinstance(verify8, (bytes, bytearray)) or all(isinstance(v, int) for v in verify8):
-        verify = [bytes(verify8)[:8]] * len(big)
+        verify = [bytes(verify8)[:8]] * len(big)  # type: ignore[arg-type]  # guard above restricts verify8 here to a flat byte sequence
     else:
         verify = [bytes(v)[:8] for v in verify8]
     for n, pk in enumerate(big):
-        s = pk[0]
+        s = cast(bytearray, pk[0])
         s[4] = len(big)
         s[5] = n + 1
         s[6:14] = verify[n]
@@ -3577,7 +3706,9 @@ def build_daysync_scheme_incremental(
     return [[bytes(f) for f in pk] for pk in big]
 
 
-def build_daysync_space_check(scheme_id, deleted, added):
+def build_daysync_space_check(
+    scheme_id: int, deleted: Sequence[tuple[int, int]], added: Sequence[tuple[int, int]]
+) -> list[bytes]:
     """0xA3 multi commByte 0x64 [scheme][n_del][(node, len u32le)*][n_add][(node, len u32le)*]
     (DaySyncUtils.C/F/y/J,
     base-classes11/com/govee/base2light/pact/newdetail/content/daySync/DaySyncUtils.java:154-172,188-209,1426-1451;
@@ -3619,7 +3750,7 @@ def build_multi_a3_v1(comm: int, value: bytes) -> list[bytes]:
     return [append_bcc(bytes(head)), *mids, append_bcc(bytes([163, 255]) + tail)]
 
 
-def build_daysync_weather_group(scheme_id, weather_nodes):
+def build_daysync_weather_group(scheme_id: int, weather_nodes: Sequence[tuple[int, int, int]]) -> list[bytes]:
     """0xA3 multi commByte 0x65 [scheme][count][(time_code, h, m)*], count omitted when empty
     (DaySyncUtils.E/o/z,
     base-classes11/com/govee/base2light/pact/newdetail/content/daySync/DaySyncUtils.java:174-186,1112-1135,1453-1473;
@@ -3686,14 +3817,14 @@ def build_h5901_sync_triggers(sno: int, t177: bool, t178: bool, t179: bool, t180
     )
 
 
-def read_music_lib_player_state():
+def read_music_lib_player_state() -> bytes:
     """AA 71, no selector: music-lib player-state read (no decompiled caller).
     base-classes11/com/govee/base2light/kt/general_controller/online/ControllerOnlineMusicPlayerState.java:25-42.
     """
     return read_request(0x71)
 
 
-def build_music_lib_volume(volume):
+def build_music_lib_volume(volume: int) -> bytes:
     """33 79 [volume]: music-lib volume write (no decompiled caller).
     base-classes11/com/govee/base2light/kt/general_controller/online/ControllerOnlineVolume.java:53-59,62-65,83-90
     (Companion.b).
@@ -3701,7 +3832,7 @@ def build_music_lib_volume(volume):
     return append_bcc(bytes([0x33, 0x79, volume & 0xFF]))
 
 
-def read_music_lib_volume():
+def read_music_lib_volume() -> bytes:
     """AA 79, no selector: music-lib volume read (no decompiled caller).
     base-classes11/com/govee/base2light/kt/general_controller/online/ControllerOnlineVolume.java:45-51,67-75,83-90
     (Companion.a).
@@ -3735,7 +3866,15 @@ def build_carousel_apply_mode(carousel_id: int, voice_id: int = 0, voice_type: i
     )
 
 
-def build_display_remind_effect(category, slot, on, voice_type, voice_code, effect_type, effect_code):
+def build_display_remind_effect(
+    category: int,
+    slot: int,
+    on: bool,
+    voice_type: int,
+    voice_code: int,
+    effect_type: int,
+    effect_code: int,
+) -> bytes:
     """0x33 83 op 1 display remind per-slot voice/effect, codes u32 LE
     (EditDisplayRemindController.Companion.a,
     base-classes11/com/govee/base2light/pact/newdetail/content/display/EditDisplayRemindController.java:42-64;
@@ -3750,8 +3889,16 @@ def build_display_remind_effect(category, slot, on, voice_type, voice_code, effe
 
 
 def build_display_remind_global(
-    close_all, start_hour, start_minute, end_hour, end_minute, repeat, nba_on, nfl_on, env_on
-):
+    close_all: bool,
+    start_hour: int,
+    start_minute: int,
+    end_hour: int,
+    end_minute: int,
+    repeat: int,
+    nba_on: bool,
+    nfl_on: bool,
+    env_on: bool,
+) -> bytes:
     """0x33 83 op 0 display remind global settings (EditDisplayRemindController.Companion.b,
     base-classes11/com/govee/base2light/pact/newdetail/content/display/EditDisplayRemindController.java:66-91,97-99).
     """
@@ -3775,7 +3922,7 @@ def build_display_remind_global(
     )
 
 
-def build_mic_set_rgb(r, g, b):
+def build_mic_set_rgb(r: int, g: int, b: int) -> bytes:
     """0xA5 mic colour frame [A5 02 83 R G B sum8]: 7 bytes, unpadded, additive checksum (not a 20-byte XOR
     frame). AbsMicController.g
     (base-classes10/com/govee/base2light/ble/mic/controller/AbsMicController.java:31-52) +
@@ -3786,7 +3933,7 @@ def build_mic_set_rgb(r, g, b):
     return body + bytes([sum(body) & 0xFF])
 
 
-def read_display_remind():
+def read_display_remind() -> bytes:
     """0xAC 83 multi-reply display-remind read (SetDisplayRemindActivity.T1 makeSingleRead(-125),
     base-classes11/com/govee/base2light/pact/newdetail/content/display/activity/SetDisplayRemindActivity.java:827-831;
     proType 0xAC
@@ -3795,7 +3942,9 @@ def read_display_remind():
     return append_bcc(bytes([0xAC, 0x83]))
 
 
-def build_alarm_clock_apply_effect(effect_frames, alarm_frame, prefix_frames=()):
+def build_alarm_clock_apply_effect(
+    effect_frames: Sequence[bytes], alarm_frame: bytes, prefix_frames: Sequence[bytes] = ()
+) -> list[bytes]:
     """Alarm add/edit with effect_type 1 (scene) / 2 (DIY) on the paths where the 33 84 alarm frame takes the
     place of the 33 05 mode frame: BaseSceneViewMode.k3 list/MTU/V3 branches
     (base-classes11/com/govee/base2light/pact/newdetail/ content/scene/BaseSceneViewMode.java:915-984), k3
@@ -3809,7 +3958,7 @@ def build_alarm_clock_apply_effect(effect_frames, alarm_frame, prefix_frames=())
     return [bytes(f) for f in prefix_frames] + [bytes(f) for f in effect_frames] + [bytes(alarm_frame)]
 
 
-def build_alarm_clock_delete(alarm_id):
+def build_alarm_clock_delete(alarm_id: int) -> bytes:
     """33 84 op 2: delete display alarm.
     base-classes11/com/govee/base2light/pact/newdetail/content/display/EditAlarmClockController.java:77-82
     (EditAlarmClockController.Companion.b); caller
@@ -3819,22 +3968,22 @@ def build_alarm_clock_delete(alarm_id):
 
 
 def build_alarm_clock_edit(
-    op,
-    alarm_id,
-    on,
-    later_remind,
-    effect_on,
-    voice_on,
-    hour,
-    minute,
-    repeat,
-    brightness,
-    effect_type,
-    effect_code,
-    voice_volume,
-    voice_code,
-    voice_type,
-):
+    op: int,
+    alarm_id: int,
+    on: bool,
+    later_remind: bool,
+    effect_on: bool,
+    voice_on: bool,
+    hour: int,
+    minute: int,
+    repeat: int,
+    brightness: int,
+    effect_type: int,
+    effect_code: int,
+    voice_volume: int,
+    voice_code: int,
+    voice_type: int,
+) -> bytes:
     """33 84 op 0 add / op 1 edit display alarm.
     base-classes11/com/govee/base2light/pact/newdetail/content/display/EditAlarmClockController.java:35-74,113-115
     (EditAlarmClockController.Companion.a); caller
@@ -3870,22 +4019,22 @@ def build_alarm_clock_edit(
 
 
 def build_alarm_clock_edit_days(
-    op,
-    alarm_id,
-    on,
-    later_remind,
-    effect_on,
-    voice_on,
-    hour,
-    minute,
-    days,
-    brightness,
-    effect_type,
-    effect_code,
-    voice_volume,
-    voice_code,
-    voice_type,
-):
+    op: int,
+    alarm_id: int,
+    on: bool,
+    later_remind: bool,
+    effect_on: bool,
+    voice_on: bool,
+    hour: int,
+    minute: int,
+    days: Sequence[int],
+    brightness: int,
+    effect_type: int,
+    effect_code: int,
+    voice_volume: int,
+    voice_code: int,
+    voice_type: int,
+) -> bytes:
     """0x33 0x84 op 0/1 alarm add/edit with the repeat byte built from days = 7 bools Mon..Sun. Repeat =
     NumUtil.getRepeat (base-classes12/com/govee/base2light/util/NumUtil.java:30-44) as called by
     EditDisplayAlarmClockActivity.h3
@@ -3925,7 +4074,9 @@ def build_alarm_clock_edit_days(
     )
 
 
-def build_alarm_clock_switch(alarm_id, on, later_remind, effect_on, voice_on):
+def build_alarm_clock_switch(
+    alarm_id: int, on: bool, later_remind: bool, effect_on: bool, voice_on: bool
+) -> bytes:
     """33 84 op 3: toggle display alarm, flags as op 0/1.
     base-classes11/com/govee/base2light/pact/newdetail/content/display/EditAlarmClockController.java:85-102
     (EditAlarmClockController.Companion.c); caller
@@ -3940,7 +4091,7 @@ def build_alarm_clock_switch(alarm_id, on, later_remind, effect_on, voice_on):
     return append_bcc(bytes([0x33, 0x84, 0x03, alarm_id & 0xFF, flags]))
 
 
-def read_alarm_clock_list():
+def read_alarm_clock_list() -> bytes:
     """AC 84 single request, multi-frame reply (all display alarms).
     base-classes11/com/govee/base2light/pact/newdetail/content/display/activity/DisplayAlarmClockListActivity.java:375-392
     (H1 -> ControllerSingleRead.makeSingleRead$default(-124), sendWriteCmd :390); parser f2 :575-629.
@@ -3948,7 +4099,7 @@ def read_alarm_clock_list():
     return append_bcc(bytes([0xAC, 0x84]))
 
 
-def build_alarm_clock_ring_action(remind_later):
+def build_alarm_clock_ring_action(remind_later: bool) -> bytes:
     """0x33 85 [0 close | 1 remind later] answer a ringing alarm (CloseAlarmClockController.Companion.a,
     base-classes11/com/govee/base2light/pact/newdetail/content/display/CloseAlarmClockController.java:26-41;
     DelegateDisplay.s0/t0
@@ -4015,7 +4166,7 @@ def read_color_group(group: int) -> bytes:
     return read_request(0xA5, group)
 
 
-def build_abs_music_blob(blob: bytes, music_id: int) -> list:
+def build_abs_music_blob(blob: bytes, music_id: int) -> list[bytes]:
     """0xA3 V1 multi-packet, comm 0x42 + decoded cloud music blob, then 33 05 16 [music_id u16le] FF
     (MusicComposeController).
     base-classes10/com/govee/base2light/ble/controller/MultiControllerNoEvent.java:16-22 (<init>:
@@ -4047,7 +4198,7 @@ def build_abs_music_blob(blob: bytes, music_id: int) -> list:
     ]
 
 
-def build_breath_train_multi_a3(data: bytes) -> list:
+def build_breath_train_multi_a3(data: bytes) -> list[bytes]:
     """0xA3 multi-packet upload with op 0x70 (breath training): header A3 00 01 N 70 + data[0:14], A3 i + 17
     bytes, A3 FF + rest.
     base-classes11/com/govee/base2light/kt/general_controller/MultiController.java:36-39,54-61
@@ -4080,7 +4231,11 @@ def build_breath_train_multi_a3(data: bytes) -> list:
     return [append_bcc(bytes(head)), *mids, append_bcc(bytes(term))]
 
 
-def build_color_strip_apply(colors, brightness=None, color_instruction_version=None):
+def build_color_strip_apply(
+    colors: Sequence[int],
+    brightness: Sequence[int] | None = None,
+    color_instruction_version: int | None = None,
+) -> list[bytes]:
     """Control-screen colour-strip apply (ColorModeControllerConfig.w -> m): build_color_strip_multi frames,
     then 33 05 [0x0C if colorInstructionVersion (Q0) == 10 else 0x15]
     (base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/ColorModeControllerConfig.java:937-951
@@ -4090,21 +4245,22 @@ def build_color_strip_apply(colors, brightness=None, color_instruction_version=N
     return [*build_color_strip_multi(colors, brightness), append_bcc(bytes([51, 5, mode]))]
 
 
-def _java_hashmap_order(keys, hashcode):
+def _java_hashmap_order(keys: Sequence[_T], hashcode: Callable[[_T], int]) -> list[_T]:
     """Key-set iteration order of a java.util.HashMap (OpenJDK 8 / Android API 24+) filled by put() of
     distinct keys in the order given: capacity 16, load factor 0.75, a bin reaching 9 nodes forces resize()
     while capacity < 64. Treeified bins (capacity >= 64) are not modelled.
     """
 
-    def spread(k):
+    def spread(k: _T) -> int:
         h = hashcode(k) & 0xFFFFFFFF
         return h ^ (h >> 16)
 
+    table: list[list[_T]] | None
     table, cap, size, threshold = None, 0, 0, 0
 
-    def resize(old, old_cap):
+    def resize(old: list[list[_T]] | None, old_cap: int) -> tuple[list[list[_T]], int, int]:
         new_cap = 16 if old_cap == 0 else old_cap * 2
-        new = [[] for _ in range(new_cap)]
+        new: list[list[_T]] = [[] for _ in range(new_cap)]
         for b in old or []:
             for k in b:
                 new[spread(k) & (new_cap - 1)].append(k)
@@ -4128,8 +4284,9 @@ def _java_hashmap_order(keys, hashcode):
     return [k for b in (table or []) for k in b]
 
 
-def _group(values, labels):
+def _group(values: Sequence[_K], labels: Sequence[_V]) -> tuple[list[_K], dict[_K, list[_V]]]:
     """{value: [label...]} in first-seen order, like the app's HashMap<value, ArrayList> fill loop."""
+    members: dict[_K, list[_V]]
     order, members = [], {}
     for v, lab in zip(values, labels, strict=False):
         if v not in members:
@@ -4139,7 +4296,11 @@ def _group(values, labels):
     return order, members
 
 
-def build_color_strip_multi(colors, brightness=None, pos_list=None):
+def build_color_strip_multi(
+    colors: Sequence[int],
+    brightness: Sequence[int] | None = None,
+    pos_list: Sequence[int] | None = None,
+) -> list[bytes]:
     """0xA3 V1 comm 0x40 per-segment colour strip: value [groupCount] + colour groups [0][n][R][G][B][idx x n]
     + brightness groups [1][n][bri][idx x n], each set in java.util.HashMap key order
     (base-classes10/com/govee/base2light/ble/controller/AbsMultipleControllerV14ColorStrip.java:23-93,197-205;
@@ -4150,6 +4311,7 @@ def build_color_strip_multi(colors, brightness=None, pos_list=None):
     labels = [pos_list[i] if pos_list is not None and len(pos_list) > i else i for i in range(len(colors))]
     c_first, c_members = _group(colors, labels)
     c_keys = _java_hashmap_order(c_first, lambda k: k)
+    b_members: dict[int, list[int]]
     b_keys, b_members = [], {}
     if brightness is not None:
         b_first, b_members = _group(list(brightness), list(range(len(brightness))))
@@ -4164,7 +4326,12 @@ def build_color_strip_multi(colors, brightness=None, pos_list=None):
     return build_multi_a3_v1(0x40, bytes(x & 0xFF for x in v))
 
 
-def build_color_tem_strip_apply(colors, kelvin_of, brightness=None, color_instruction_version=None):
+def build_color_tem_strip_apply(
+    colors: Sequence[int],
+    kelvin_of: dict[int, int] | None,
+    brightness: Sequence[int] | None = None,
+    color_instruction_version: int | None = None,
+) -> list[bytes]:
     """Control-screen colour-temperature strip apply (ColorModeControllerConfig.w -> n):
     build_color_tem_strip_multi frames, then 33 05 [0x0C if colorInstructionVersion (Q0) == 10 else 0x15]
     (base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/ColorModeControllerConfig.java:954-966
@@ -4174,7 +4341,12 @@ def build_color_tem_strip_apply(colors, kelvin_of, brightness=None, color_instru
     return [*build_color_tem_strip_multi(colors, kelvin_of, brightness), append_bcc(bytes([51, 5, mode]))]
 
 
-def build_color_tem_strip_multi(colors, kelvin_of, brightness=None, pos_list=None):
+def build_color_tem_strip_multi(
+    colors: Sequence[int],
+    kelvin_of: dict[int, int] | None,
+    brightness: Sequence[int] | None = None,
+    pos_list: Sequence[int] | None = None,
+) -> list[bytes]:
     """0xA3 V1 comm 0x40 colour+kelvin strip: [groupCount] + colour groups [0][n][R][G][B][idx] + brightness
     groups [1][n][bri][idx] + kelvin groups [2][n][K u16be][R][G][B of the colour][idx]; kelvin_of maps
     each colour the app classes as colour temperature (KelvinConfig.i) to KelvinConfig.c
@@ -4191,6 +4363,7 @@ def build_color_tem_strip_multi(colors, kelvin_of, brightness=None, pos_list=Non
     t_first, t_members = _group([c for c, _ in tem_vals], [lab for _, lab in tem_vals])
     c_keys = _java_hashmap_order(c_first, lambda k: k)
     t_keys = _java_hashmap_order(t_first, lambda k: k)
+    b_members: dict[int, list[int]]
     b_keys, b_members = [], {}
     if brightness is not None:
         b_first, b_members = _group(list(brightness), list(range(len(brightness))))
@@ -4209,7 +4382,12 @@ def build_color_tem_strip_multi(colors, kelvin_of, brightness=None, pos_list=Non
     return build_multi_a3_v1(0x40, bytes(x & 0xFF for x in v))
 
 
-def build_gradient_color_strip_apply(colors, segments, kelvin_of=None, brightness=None):
+def build_gradient_color_strip_apply(
+    colors: Sequence[int],
+    segments: int,
+    kelvin_of: dict[int, int] | None = None,
+    brightness: Sequence[int] | None = None,
+) -> list[bytes]:
     """Control-screen gradient strip apply for `segments` (Info4BleIotDevice.J) segments: J colours are
     tripled, otherwise copied into a zeroed 3J array; a 3J brightness list keeps the first of each triple;
     then build_gradient_color_tem_strip_multi frames and 33 05 15
@@ -4228,19 +4406,24 @@ def build_gradient_color_strip_apply(colors, segments, kelvin_of=None, brightnes
     ]
 
 
-def _java_int(v):
+def _java_int(v: int) -> int:
     v &= 0xFFFFFFFF
     return v - (1 << 32) if v & 0x80000000 else v
 
 
-def _java_string_hash(s):
+def _java_string_hash(s: str) -> int:
     h = 0
     for ch in s:
         h = (31 * h + ord(ch)) & 0xFFFFFFFF
     return h
 
 
-def build_gradient_color_tem_strip_multi(colors, kelvin_of=None, brightness=None, pos_list=None):
+def build_gradient_color_tem_strip_multi(
+    colors: Sequence[int],
+    kelvin_of: dict[int, int] | None = None,
+    brightness: Sequence[int] | None = None,
+    pos_list: Sequence[int] | None = None,
+) -> list[bytes]:
     """0xA3 V1 comm 0x40 gradient strip: colours chunked by 3 per segment; [groupCount] + gradient groups
     [3][n][RGB x chunk][idx] (HashMap<String> order) + brightness groups [1][n][bri][idx] + kelvin groups
     [2][n][K u16be][Color.red/green/blue(K)][idx]; kelvin_of maps a colour to
@@ -4264,6 +4447,7 @@ def build_gradient_color_tem_strip_multi(colors, kelvin_of=None, brightness=None
     t_first, t_members = _group([k for k, _ in t_vals], [lab for _, lab in t_vals])
     g_keys = _java_hashmap_order(g_first, _java_string_hash)
     t_keys = _java_hashmap_order(t_first, lambda k: k)
+    b_members: dict[int, list[int]]
     b_keys, b_members = [], {}
     if brightness is not None:
         b_first, b_members = _group(list(brightness), list(range(len(brightness))))
@@ -4284,7 +4468,7 @@ def build_gradient_color_tem_strip_multi(colors, kelvin_of=None, brightness=None
     return build_multi_a3_v1(0x40, bytes(x & 0xFF for x in v))
 
 
-def build_h60ax_new_music_multi(music_code: int, effect: bytes) -> list:
+def build_h60ax_new_music_multi(music_code: int, effect: bytes) -> list[bytes]:
     """0xA3 V2 multi-packet, comm [0x41, music_code] + effect bytes, then 33 05 13 05 64 (h60ax
     NewMusicMultipleController, legacy UiV1/CommOpV1 path).
     split_h60ax/com/govee/pact_h60a0/ble/controller/compose/NewMusicMultipleController.java:19-30
@@ -4315,7 +4499,7 @@ def build_h60ax_new_music_multi(music_code: int, effect: bytes) -> list:
     ]
 
 
-def build_h61d3_light_recognition_fixed() -> list:
+def build_h61d3_light_recognition_fixed() -> list[bytes]:
     """Constant-only, unreachable in 7.7.02: the only 0xA3 V1 comm 0x5D value the app builds, H61D3Support.w0
     = Companion.a(100, -1, 300, 2, 2, 1, true, [#FF0000, #FFFF00, #00FF00, #0000FF, #00FFFF, #8B00FF]);
     never sent because ImageRecognitionActivity.e1 is only called with 1.
@@ -4332,7 +4516,7 @@ def build_h61d3_light_recognition_fixed() -> list:
     ]
 
 
-def build_hollowlamp_local_colors(entries):
+def build_hollowlamp_local_colors(entries: Sequence[tuple[int, int, int, int]]) -> list[bytes]:
     """0xA3 V1 comm 0xA5 hollowlamp (H6059) preset colours: value [n] + n x [R][G][B][kelvin u16be]; entries =
     [(r, g, b, kelvin)] with RGB = LocalColor.getShowColor() and kelvin = LocalColor.getKelvin() (0 unless
     a colour-temperature colour)
@@ -4345,7 +4529,12 @@ def build_hollowlamp_local_colors(entries):
     return build_multi_a3_v1(0xA5, bytes(v))
 
 
-def build_hollowlamp_multi_music_v1(effect, colors, sensitivity=None, rhythm_flag=0):
+def build_hollowlamp_multi_music_v1(
+    effect: int,
+    colors: Sequence[tuple[int, int, int]],
+    sensitivity: int | None = None,
+    rhythm_flag: int = 0,
+) -> list[bytes]:
     """Legacy hollowlamp MultiMusicController 0xA3 V1 comm 0x41: value [effect][n][n x (R,G,B)] + (n-1) zero
     bytes (array n+1+3n), no frames when n == 0; with a SubModeMusicV3 (UiV5.v) the write result then sends
     33 05 13 [effect][flag][sens] 00
@@ -4356,7 +4545,7 @@ def build_hollowlamp_multi_music_v1(effect, colors, sensitivity=None, rhythm_fla
     n = len(colors)
     if n == 0:
         return []
-    value = bytearray([effect & 0xFF, n & 0xFF])
+    value: bytes | bytearray = bytearray([effect & 0xFF, n & 0xFF])
     for r, g, b in colors:
         value += bytes([r & 0xFF, g & 0xFF, b & 0xFF])
     value += bytes(max(0, (4 * n + 1) - len(value)))
@@ -4386,7 +4575,7 @@ def build_hollowlamp_multi_music_v1(effect, colors, sensitivity=None, rhythm_fla
     return frames
 
 
-def build_multi_a3_v1_group(comm, value, pro_type=0xA3):
+def build_multi_a3_v1_group(comm: int | Sequence[int], value: bytes, pro_type: int = 0xA3) -> list[bytes]:
     """0xA3 multi-packet write on the BLE GROUP path: MultipleControllerCommV1Group.k
     (base-classes10/com/govee/base2light/ble/comm/MultipleControllerCommV1Group.java:86-147; V1 p()!=0 via
     j :82-84, V2 comm=[cmd, p()] via l :149-155) reuses one 17-byte buffer (:117), so the END frame tail
@@ -4427,7 +4616,13 @@ def build_multi_a3_v1_group(comm, value, pro_type=0xA3):
     return [append_bcc(bytes(head)), *mids, append_bcc(bytes(end))]
 
 
-def build_music_h1771(code, colors, sub_effects, sensitivity, preview=False):
+def build_music_h1771(
+    code: int,
+    colors: Sequence[tuple[int, int, int]],
+    sub_effects: Sequence[int],
+    sensitivity: int,
+    preview: bool = False,
+) -> list[bytes]:
     """H1771 (goodsType 395) music: apply = A3 V2 [0x41, code] value [n][n x RGB][sub_effects] (code 4: [n][n
     x RGB][sub_effects[0]]) then 33 05 13 code sens; preview = 33 05 13 code sens only
     (split_hollowlamp/com/govee/hollowlamp/newdetails/h1771/H1771MusicMode.java:82-112 d;
@@ -4437,11 +4632,11 @@ def build_music_h1771(code, colors, sub_effects, sensitivity, preview=False):
     mode = append_bcc(bytes([0x33, 0x05, 0x13, code & 0xFF, sensitivity & 0xFF]))
     if preview:
         return [mode]
-    value = bytearray([len(colors) & 0xFF])
+    value: bytes | bytearray = bytearray([len(colors) & 0xFF])
     for r, g, b in colors:
         value += bytes([r & 0xFF, g & 0xFF, b & 0xFF])
     if code == 4:
-        value.append(sub_effects[0] & 0xFF)
+        cast(bytearray, value).append(sub_effects[0] & 0xFF)
     else:
         value += bytes(s & 0xFF for s in sub_effects)
     value = bytes(value)
@@ -4465,7 +4660,13 @@ def build_music_h1771(code, colors, sub_effects, sensitivity, preview=False):
     return [append_bcc(bytes(head)), *mids, append_bcc(bytes([163, 255]) + tail), mode]
 
 
-def build_music_h6057(code, colors, sub_effects, sensitivity, preview=False):
+def build_music_h6057(
+    code: int,
+    colors: Sequence[tuple[int, int, int]],
+    sub_effects: Sequence[int],
+    sensitivity: int,
+    preview: bool = False,
+) -> list[bytes]:
     """H6057 (goodsType 104) music: apply = A3 V2 [0x41, code] value [n][n x RGB][sub_effects] then 33 05 13
     code sens; preview = 33 05 13 code sens only
     (split_hollowlamp/com/govee/h6057/origin/newDetail/H6057MusicMode.java:76-107 d;
@@ -4475,7 +4676,7 @@ def build_music_h6057(code, colors, sub_effects, sensitivity, preview=False):
     mode = append_bcc(bytes([0x33, 0x05, 0x13, code & 0xFF, sensitivity & 0xFF]))
     if preview:
         return [mode]
-    value = bytearray([len(colors) & 0xFF])
+    value: bytes | bytearray = bytearray([len(colors) & 0xFF])
     for r, g, b in colors:
         value += bytes([r & 0xFF, g & 0xFF, b & 0xFF])
     value += bytes(s & 0xFF for s in sub_effects)
@@ -4500,7 +4701,13 @@ def build_music_h6057(code, colors, sub_effects, sensitivity, preview=False):
     return [append_bcc(bytes(head)), *mids, append_bcc(bytes([163, 255]) + tail), mode]
 
 
-def build_music_h6059(code, colors, sub_effects, sensitivity, preview=False):
+def build_music_h6059(
+    code: int,
+    colors: Sequence[tuple[int, int, int]],
+    sub_effects: Sequence[int],
+    sensitivity: int,
+    preview: bool = False,
+) -> list[bytes]:
     """H6059 (goodsType 84) music: apply = A3 V2 [0x41, code] value [n][n x RGB][sub_effects] then 33 05 13
     code [sub_effects[0] if any] sens; preview (sensitivity change) = 33 05 13 code sub_effects... sens
     only (split_hollowlamp/com/govee/hollowlamp/newdetails/H6059MusicMode.java:67-89 d;
@@ -4511,7 +4718,7 @@ def build_music_h6059(code, colors, sub_effects, sensitivity, preview=False):
     if preview:
         ext = bytes([0x13, code & 0xFF] + [s & 0xFF for s in sub_effects] + [sensitivity & 0xFF])
         return [append_bcc(bytes([0x33, 0x05]) + ext[:17])]
-    value = bytearray([len(colors) & 0xFF])
+    value: bytes | bytearray = bytearray([len(colors) & 0xFF])
     for r, g, b in colors:
         value += bytes([r & 0xFF, g & 0xFF, b & 0xFF])
     value += bytes(s & 0xFF for s in sub_effects)
@@ -4538,7 +4745,7 @@ def build_music_h6059(code, colors, sub_effects, sensitivity, preview=False):
     return [*frames, append_bcc(bytes([51, 5, *mode]))]
 
 
-def build_music_mode_compose_v2(music_code: int, sensitivity: int, effect: bytes) -> list:
+def build_music_mode_compose_v2(music_code: int, sensitivity: int, effect: bytes) -> list[bytes]:
     """0xA3 V2 multi-packet, comm [0x41, music_code] + effect bytes, then 33 05 13 [music_code] [sensitivity]
     (MusicModeComposeController).
     base-classes11/com/govee/base2light/pact/newdetail/ble/controller/MusicModeComposeController.java:21-28
@@ -4575,7 +4782,7 @@ def build_music_mode_compose_v2(music_code: int, sensitivity: int, effect: bytes
     ]
 
 
-def build_music_multi_a3_v2(music_code, value):
+def build_music_multi_a3_v2(music_code: int, value: bytes) -> list[bytes]:
     """0xA3 V2 music-effect upload, comm [0x41, music_code]: START [A3 00 01 count 41 code value[0:13]],
     MIDDLE i [A3 i 17B], END [A3 FF <=17B]
     (base-classes10/com/govee/base2light/ble/controller/MultipleController4Music.java:14-18,39-45,56-57;
@@ -4603,7 +4810,7 @@ def build_music_multi_a3_v2(music_code, value):
     return [append_bcc(bytes(head)), *mids, append_bcc(bytes([163, 255]) + tail)]
 
 
-def build_music_v2_then_mode(music_code, value, mode_payload):
+def build_music_v2_then_mode(music_code: int, value: bytes, mode_payload: bytes) -> list[bytes]:
     """Control-screen music apply: the 0xA3 V2 [0x41, music_code] frames, then 33 05 [mode_payload] once the
     upload succeeds
     (base-classes11/com/govee/base2light/pact/newdetail/ble/controller/MusicModeComposeController.java:21-28;
@@ -4633,8 +4840,14 @@ def build_music_v2_then_mode(music_code, value, mode_payload):
 
 
 def build_set_ai_action(
-    preview: bool, field_a: int, field_b: int, light_type: int, colors: list, speed: int, loop_time: int
-) -> list:
+    preview: bool,
+    field_a: int,
+    field_b: int,
+    light_type: int,
+    colors: Sequence[int],
+    speed: int,
+    loop_time: int,
+) -> list[bytes]:
     """0xA3 V1 multi-packet, comm 0x58: AI-effect parameters [preview][len u16le = 3n+9][a u16le][b
     u16le][light_type u16le][n][n x RGB][speed][loop_time].
     base-classes10/com/govee/base2light/ai4edit/controller/SetAiActionController.java:21-52 (c), :54-59 (d:
@@ -4662,6 +4875,7 @@ def build_set_ai_action(
         value += bytes([(c >> 16) & 0xFF, (c >> 8) & 0xFF, c & 0xFF])
     value += bytes([speed & 0xFF, loop_time & 0xFF])
     head = bytearray([0xA3, 0x00, 0x01, 0x00, 0x58])
+    tail: bytes | bytearray
     mids, tail = [], b""
     if len(value) <= 14:
         head += value
@@ -4682,12 +4896,12 @@ def build_set_ai_action_v2(
     field_a: int,
     field_b: int,
     light_type: int,
-    colors: list,
+    colors: Sequence[int],
     speed: int,
     loop_time: int,
     direction: int,
     gradient: int,
-) -> list:
+) -> list[bytes]:
     """0xA3 V1 multi-packet, comm 0x58, V2 value: V1 layout with len u16le = 3n+11 and [direction
     code][gradient] appended.
     base-classes10/com/govee/base2light/ai4edit/controller/SetAiActionControllerV2.java:15-31 (c);
@@ -4715,6 +4929,7 @@ def build_set_ai_action_v2(
         value += bytes([(c >> 16) & 0xFF, (c >> 8) & 0xFF, c & 0xFF])
     value += bytes([speed & 0xFF, loop_time & 0xFF, direction & 0xFF, gradient & 0xFF])
     head = bytearray([0xA3, 0x00, 0x01, 0x00, 0x58])
+    tail: bytes | bytearray
     mids, tail = [], b""
     if len(value) <= 14:
         head += value
@@ -4730,7 +4945,12 @@ def build_set_ai_action_v2(
     return [append_bcc(bytes(head)), *mids, append_bcc(bytes([0xA3, 0xFF]) + tail)]
 
 
-def build_shape_layout_h6067(shapes, goods_type, ext=None, states=None):
+def build_shape_layout_h6067(
+    shapes: Sequence[tuple[int, int, int, int]],
+    goods_type: int,
+    ext: tuple[int, int] | None = None,
+    states: Sequence[int] | None = None,
+) -> list[bytes]:
     """0xA3 V1 comm 0x31 Glide Tri/Glide Y shape layout: value [n] + n x [type][x s16le][y s16le][angle
     s16le], + ext [powerNumber][powerEdgeNumber] of the last ext shape, + (goodsType 121 only) [00 00] + n
     x [state]; shapes = [(type, x, y, angle)] with x, y = ceil
@@ -4746,7 +4966,7 @@ def build_shape_layout_h6067(shapes, goods_type, ext=None, states=None):
     return build_multi_a3_v1(0x31, bytes(v))
 
 
-def build_shape_layout_h606a(positions, angle_offset=0):
+def build_shape_layout_h606a(positions: Sequence[tuple[int, int, int]], angle_offset: int = 0) -> list[bytes]:
     """0xA3 V1 comm 0x31 H606A/H6063/H6069 shape layout: value [positions[0].angle + angle_offset s16le][n] +
     n x [x s16le][y s16le]; positions = [(x, y, angle)] already rounded by the ctor used
     (split_h6061/com/govee/cubelight/ble/MultiDeviceControllerH606A.java:20-47 ceil, :49-76 Math.round,
@@ -4781,7 +5001,7 @@ def read_ai_edit_info(reset: bool, game_id: int, feature_id: int) -> bytes:
     )
 
 
-def read_hollowlamp_local_colors(page=1):
+def read_hollowlamp_local_colors(page: int = 1) -> bytes:
     """AA A5 [page] hollowlamp (H6059) preset-colour page read, 1-based, default 1; request bytes equal
     read_color_group(page), reply differs
     (split_hollowlamp/com/govee/hollowlamp/ble/LocalColorReadControllerV1.java:26-48,65-71;
@@ -4790,7 +5010,7 @@ def read_hollowlamp_local_colors(page=1):
     return read_request(0xA5, page)
 
 
-def build_mtu_a4_frames(comm_byte, value, mtu=20):
+def build_mtu_a4_frames(comm_byte: int, value: bytes, mtu: int = 20) -> list[bytes]:
     """0xA4 MTU frames [A4 seq u16le ...][XOR of preceding bytes], variable length, commByte at START byte 6
     (MultipleControllerCommV1.makeSendBytesMtu
     base-classes10/com/govee/base2light/ble/comm/MultipleControllerCommV1.java:366-493, via
@@ -4798,7 +5018,7 @@ def build_mtu_a4_frames(comm_byte, value, mtu=20):
     base-classes11/com/govee/base2light/kt/ble/Compose4DefWrite4Multi.java:231-247).
     """
 
-    def _x(b):
+    def _x(b: bytes | bytearray) -> int:
         x = 0
         for v in b:
             x ^= v
@@ -4869,7 +5089,7 @@ def build_mic_color_cmd_over56(payload: bytes) -> bytes:
     return append_bcc(bytes([0xA3, 0x00, 0x01, total & 0xFF, 0x6E]) + bytes(payload[:14]))
 
 
-def read_barelightv1_group_colors(part_brightness: bool, pieces: int) -> list:
+def read_barelightv1_group_colors(part_brightness: bool, pieces: int) -> list[bytes]:
     """barelightv1 (H6145/H6146/H6147/H6171) on rgbiclight VM4Light: AA A5 g, 3 per group, when pactType >= 10
     and pactCode >= 1 (runs as goodsType 17, pieces 15) or, as goodsType 13, hard >= 1.00.01 and soft >=
     1.06.00; else AA A2 g, 4 per group (split_rgbiclight/com/govee/barelightv1/pact/Model.java:54-71;
@@ -4885,7 +5105,7 @@ def read_barelightv1_group_colors(part_brightness: bool, pieces: int) -> list:
     return [read_request(cmd, g) for g in range(1, groups + 1)]
 
 
-def read_h6119_group_colors(pieces: int) -> list:
+def read_h6119_group_colors(pieces: int) -> list[bytes]:
     """H6119 (goodsType 0, or 44 when OldCarBkUtil.isBkCar) on rgbiclight VM4Light: AA A5 g, 3 [bri,R,G,B] per
     group, g = 1..ceil(pieces/3); the connect read t5 is skipped below hard 1.00.03 / soft 1.06.00
     (Support.j) but the heartbeat path J3 -> Compose4Off2On -> G5 -> O5 -> N5 has no firmware gate
@@ -4899,7 +5119,7 @@ def read_h6119_group_colors(pieces: int) -> list:
     return [read_request(0xA5, g) for g in range(1, groups + 1)]
 
 
-def read_h612526_group_colors(part_brightness: bool, pieces: int = 15) -> list:
+def read_h612526_group_colors(part_brightness: bool, pieces: int = 15) -> list[bytes]:
     """H6125/H6126 on soft >= 1.03.01 (opened as goodsType 17 on rgbiclight VM4Light): AA A5 g, 3 per group,
     when pactType >= 10 and pactCode >= 1 or hard >= 1.00.03 and soft >= 1.06.00, else AA A2 g, 4 per
     group; pieces 15 unless the connect IC list fills info4BleIot.q()
@@ -4915,7 +5135,7 @@ def read_h612526_group_colors(part_brightness: bool, pieces: int = 15) -> list:
     return [read_request(cmd, g) for g in range(1, groups + 1)]
 
 
-def read_hollowlamp_local_color_count():
+def read_hollowlamp_local_color_count() -> bytes:
     """AA A5 with no selector, H6059 control-screen connect read; reply [position][groupNum] -> preset-colour
     page count
     (split_hollowlamp/com/govee/hollowlamp/newdetails/H6059NewDetailVM$connectBleSuc$1$5$1.java:158-170,297-306;
@@ -4924,7 +5144,7 @@ def read_hollowlamp_local_color_count():
     return read_request(0xA5)
 
 
-def read_rgbic_group_colors(part_brightness: bool, group_size: int, pieces: int) -> list:
+def read_rgbic_group_colors(part_brightness: bool, group_size: int, pieces: int) -> list[bytes]:
     """rgbiclight VM4Light.N5 group colour batch: AA A5 g if Support.D (part brightness) else AA A2 g, g =
     1..ceil(pieces/group_size); sent from connect t5, heartbeat switch change G5 -> O5, k5, W5 and IoT
     (split_rgbiclight/com/govee/rgbiclight/VM4Light.java:882-970,650-668,275-287,351-356,732-760;
@@ -4952,14 +5172,21 @@ def build_exit_remote_pair() -> bytes:
     return append_bcc(bytes([0x33, 0xA6]))
 
 
-def build_mtu_a6_package(chunk, mtu, max_frames, verify8, pkg_count=1, pkg_index=1):
+def build_mtu_a6_package(
+    chunk: bytes,
+    mtu: int,
+    max_frames: int,
+    verify8: Sequence[int],
+    pkg_count: int = 1,
+    pkg_index: int = 1,
+) -> list[bytes]:
     """One 0xA6 / cmd 0x63 DaySync MTU big package as a list of variable-length frames, each ending in the XOR
     of its preceding bytes (DaySyncUtils.j/k/H
     base-classes11/com/govee/base2light/pact/newdetail/content/daySync/DaySyncUtils.java:926-949, 951-1018,
     264-297; sent as ControllerMTUMulti(frames, 0x63, (byte)-90) by DaySyncUtils.w :1393-1407).
     """
 
-    def _x(b):
+    def _x(b: bytes | bytearray) -> int:
         x = 0
         for v in b:
             x ^= v
@@ -5206,7 +5433,7 @@ def build_video_brightness(value: int) -> bytes:
     return append_bcc(bytes([0x33, 0xA9, 0x02, 0x01, value & 0xFF]))
 
 
-def build_video_color_cali(c0: int, c1: int, c2: int, c3=None) -> bytes:
+def build_video_color_cali(c0: int, c1: int, c2: int, c3: int | None = None) -> bytes:
     """0x33 A9 05 [3|4] [c0..c2(,c3)] - colour calibration (ColorCaliController.a/b
     base-classes12/com/govee/base2light/videomode/newdetail/controller/ColorCaliController.java:30-37;
     ColorCaliVmInterface.java:34).
@@ -5385,7 +5612,7 @@ def build_check_light_install() -> bytes:
     return append_bcc(bytes([0x33, 0xAA]))
 
 
-def build_ota_pact_report(pact_type, pact_code):
+def build_ota_pact_report(pact_type: int, pact_code: int) -> bytes:
     """AB 02 [pactType u16le][pactCode]: OTA-pact report write on proType 0xAB, 20 bytes, XOR@19
     (ReportOtaPactController.<init>/getCommandType/getProType/q
     base-classes10/com/govee/base2light/ble/ota/auto/ReportOtaPactController.java:21-25,37-44,65-68;
@@ -5749,7 +5976,7 @@ def build_pair_process_complete() -> bytes:
     return append_bcc(bytes([0x3A, 0xBA, 0x02]))
 
 
-def read_low_blue_light(scale: bool = True) -> bytes:
+def read_low_blue_light(scale: int = True) -> bytes:
     """0xAA BA [scale?1:0] low-blue-light read (ControllerLowBlueLight.p / u,
     base-classes11/com/govee/base2light/lowBlueLightControl/ControllerLowBlueLight.java:50-56,66-69,91-97;
     caller split_rgbiclight/com/govee/dreamcolorlightv1/adjust/v2/UiV3.java:326).
@@ -5757,7 +5984,7 @@ def read_low_blue_light(scale: bool = True) -> bytes:
     return read_request(0xBA, 0x01 if scale else 0x00)
 
 
-def build_recognition_start(value):
+def build_recognition_start(value: int) -> bytes:
     """33 ED 00 [value u16le]: start the video-recording light effect (app sends 280).
     split_h61d3/com/govee/h61d3/ble/controller/VideoRecognitionController.java:29-33,36-42 (Companion.b,
     BleUtils.D(i,false) LE; cmd BleProtocol.m = -19); caller
@@ -5766,7 +5993,7 @@ def build_recognition_start(value):
     return append_bcc(bytes([0x33, 0xED, 0x00, value & 0xFF, (value >> 8) & 0xFF]))
 
 
-def build_recognition_stop():
+def build_recognition_stop() -> bytes:
     """33 ED 01: close the recognition light effect.
     split_h61d3/com/govee/h61d3/ble/controller/VideoRecognitionController.java:24-27,36-42 (Companion.a);
     callers split_h61d3/com/govee/h61d3/adjust/recognition/VideoActivity.java:425 (P0), :593;
@@ -5807,7 +6034,7 @@ def read_pact() -> bytes:
     return read_request(0xEF)
 
 
-def build_daysync_after_bind():
+def build_daysync_after_bind() -> bytes:
     """33 05 F0 FF sent after bind on daysync devices
     (base-classes10/com/govee/base2light/connect/constant/DaySyncAfterConnectConfig.java:23-33;
     base-classes11/com/govee/base2light/kt/general_controller/Controller4ExtBytes.java:120-124).
@@ -5815,7 +6042,9 @@ def build_daysync_after_bind():
     return append_bcc(bytes([0x33, 0x05, 0xF0, 0xFF]))
 
 
-def build_daysync_mode(op, scheme_id=0, repeat_frequency=0, enable_type=None):
+def build_daysync_mode(
+    op: int, scheme_id: int = 0, repeat_frequency: int = 0, enable_type: int | None = None
+) -> bytes:
     """0x33 05 F0 daysync mode op 0-4 (DaySyncUtils.G,
     base-classes11/com/govee/base2light/pact/newdetail/content/daySync/DaySyncUtils.java:214-262 ->
     ControllerMode.Companion.e
@@ -5891,7 +6120,9 @@ def build_check_ic(check_type: int, ic_pos: int = 0, channel: int = -1, cmd: int
     return append_bcc(bytes([0x33, cmd & 0xFF, check_type & 0xFF, *mid, (ic_pos >> 8) & 0xFF, ic_pos & 0xFF]))
 
 
-def build_combination_effect_value(segment_count: int, groups: list) -> bytes:
+def build_combination_effect_value(
+    segment_count: int, groups: Sequence[tuple[Sequence[int], bytes]]
+) -> bytes:
     """DIY combination-effect 0x62 value (DiyCombEffect.r): [00][distinctEffects][segLen] + per effect
     [LSB-first mask][0A][00 00][u16le len][effect[1:]]
     (base-classes10/com/govee/base2light/ac/diyNew/views/combination/DiyCombEffect.java:537-584
@@ -5920,7 +6151,13 @@ def build_combination_effect_value(segment_count: int, groups: list) -> bytes:
     return bytes(out)
 
 
-def build_daysync_scheme_upload(value, nodes, mtu, device_kb, verify8):
+def build_daysync_scheme_upload(
+    value: bytes,
+    nodes: Sequence[bytes],
+    mtu: int,
+    device_kb: int,
+    verify8: bytes | bytearray | Sequence[bytes],
+) -> list[list[bytes]]:
     """DaySync scheme upload, cmd 0x63 over 0xA6 MTU multi-packet frames; returns a list of big packages (each
     a list of frames), [] when nodes is empty or a node does not fit.
     base-classes11/com/govee/base2light/pact/newdetail/content/daySync/DaySyncUtils.java:1393-1407
@@ -5931,13 +6168,13 @@ def build_daysync_scheme_upload(value, nodes, mtu, device_kb, verify8):
     if not nodes:
         return []
 
-    def _x(b):
+    def _x(b: bytes | bytearray) -> int:
         x = 0
         for v in b:
             x ^= v
         return x
 
-    def j(data):
+    def j(data: bytes) -> list[bytes | bytearray]:
         s = bytearray(len(data) + 18)
         s[0] = 0xA6
         s[3] = 0x01
@@ -5946,7 +6183,7 @@ def build_daysync_scheme_upload(value, nodes, mtu, device_kb, verify8):
         e = bytes([0xA6, 0xFF, 0xFF])
         return [s, e + bytes([_x(e)])]
 
-    def k(data, cap0, capn, maxpk):
+    def k(data: bytes, cap0: int, capn: int, maxpk: int) -> list[bytes | bytearray]:
         if len(data) <= cap0:
             return j(data)
         s = bytearray(mtu)
@@ -5954,7 +6191,8 @@ def build_daysync_scheme_upload(value, nodes, mtu, device_kb, verify8):
         s[3] = 0x01
         s[16] = 0x63
         s[17 : 17 + cap0] = data[:cap0]
-        out, pos, i = [s], cap0, 1
+        out: list[bytes | bytearray] = [s]
+        pos, i = cap0, 1
         while i < maxpk:
             if i == maxpk - 1 or pos + capn >= len(data):
                 e = bytes([0xA6, 0xFF, 0xFF]) + bytes(data[pos:])
@@ -5991,10 +6229,10 @@ def build_daysync_scheme_upload(value, nodes, mtu, device_kb, verify8):
                 big.append(k(bytes(acc), cap0, capn, maxpk))
     per_pkg = not isinstance(verify8, (bytes, bytearray))
     for n, pk in enumerate(big):
-        s = pk[0]
+        s = cast(bytearray, pk[0])
         s[4] = len(big) & 0xFF
         s[5] = (n + 1) & 0xFF
-        s[6:14] = bytes(verify8[n] if per_pkg else verify8)[:8]
+        s[6:14] = bytes(verify8[n] if per_pkg else verify8)[:8]  # type: ignore[arg-type]  # per_pkg selects verify8[n] (bytes); verify8 is a flat byte sequence otherwise
         s[14] = len(pk) & 0xFF
         s[15] = (len(pk) >> 8) & 0xFF
         s[-1] = _x(s[:-1])
@@ -6023,7 +6261,9 @@ def build_low_blue_light(on: bool, level: int, *, scale: bool = True, b2: int = 
     )
 
 
-def build_music_code_sens(code: int, sensitivity: int, sub_effect0=None, *, sub_mode: int = 0x13) -> bytes:
+def build_music_code_sens(
+    code: int, sensitivity: int, sub_effect0: int | None = None, *, sub_mode: int = 0x13
+) -> bytes:
     """33 05 <sub_mode> <code> <sens> [sub_effect0] short music form (sub_mode 0x13 new-music default;
     0x11/0x0C/0x0E/0x0F/0x01 per family). Mode wrapper:
     base-classes11/com/govee/base2light/kt/general_controller/ControllerMode.java:62-64,102-104
@@ -6150,7 +6390,7 @@ def build_scene_cube(effect: int, direction: int, speed: int, point: bytes = b""
     )
 
 
-def build_scene_h61d3(effect: int, direction: int = 0, speeds=None) -> bytes:
+def build_scene_h61d3(effect: int, direction: int = 0, speeds: Sequence[int] | None = None) -> bytes:
     """0x33 05 04 — H61D3 (goodsType 202) speed-type-1 scene: [effect u2le][dir pair 2B][N][speeds x N] (no
     count byte when speeds is None). split_h61d3/com/govee/h61d3/adjust/scene/SubModeScenes.java:101-113
     (getWriteBytes); split_h61d3/com/govee/h61d3/adjust/newdetail/scene/SceneViewModelH61d3.java:217-223

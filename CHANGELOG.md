@@ -332,8 +332,9 @@ model, from which the shipped readers are generated).
   goodsType 64 (was `H6006 = 20` / `328 = H6008`; 328 is H8015, 20 is the H6001 legacy old-bulb), and H61A8
   is goodsType 19 (was `207 = H61A8`; 207's SKU is cloud-only and is not H61A8). H6006's colour-temp write
   uses the 0x0D native path like H6008, not 0x02. goodsType 19 added to the `dreamcolorlightv1` set.
-- `spec/govee_commands.py`: made ruff-clean under the repo config (style only; the builders and the 757
-  self-checks are unchanged).
+- `spec/govee_commands.py`: made ruff-clean and `mypy --strict`-clean under the repo config (style and
+  typing only — annotations don't execute under `from __future__ import annotations`; the builders and the
+  757 self-checks are unchanged).
 - `spec/govee_commands.py` (new): the full command-builder catalogue — 463 functions, one per
   (opcode, variant) the Govee app emits across 99 opcodes, each traced to the decompiled app with a
   `file:line` citation and a byte-exact self-check. `govee_reference._selftest` runs all 757 checks.
