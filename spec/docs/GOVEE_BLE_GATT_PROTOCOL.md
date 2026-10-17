@@ -632,7 +632,7 @@ screens read the value with other helpers in other layouts; see `color_group_sta
 the last of `ceil(pieces / 4)` groups: `color_group_status_counted(piece_count, group_size, has_brightness)`.
 The H6038 family passes a fixed 4: `color_group_read(4, 1)`. Global
 segment index = `(group_index − 1) × count + k`. All of these are modelled in `govee_ble.ksy`
-(`status_tlv` → `status_switch`/`status_brightness`/`mode_status`/`device_info_read`/`status_zone`/
+(`status_tlv` → `status_switch`/`status_brightness`/`mode_read`/`status_device_info`/`status_zone`/
 `status_seg_info`/`color_group_status`); only the `0x05` `params` sub-layout stays device-specific.
 
 > **Not every SKU answers `0xAC` — some read `0xA5` colour groups *directly*.** The record layout above

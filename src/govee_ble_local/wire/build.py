@@ -797,8 +797,8 @@ def secret_check(secret: bytes) -> bytes:
     """33 B2 <8-byte account-lock secret>."""
     if len(secret) != SECRET_LEN:
         raise GoveeBleInvalidValue(f"secret must be exactly {SECRET_LEN} bytes, got {len(secret)}")
-    body = _node(_F.SecretKeyWrite, None, secret=bytes(secret))
-    return _write_frame(_F.Command.secret_write, lambda sc: _body(body, _PARAMS_LEN))
+    return _write_frame(_F.Command.secret_write,
+                        lambda sc: _node(_F.SecretKeyWrite, sc, secret=bytes(secret)))
 
 
 # ── read requests (0xAA / 0xAC) ──────────────────────────────────────────────
@@ -827,8 +827,8 @@ def bar_switch_query() -> bytes:
 
 def gradual(on: bool) -> bytes:
     """33 A3 <0/1>: gradual/fade on the BLE<->wifi control handoff (GRADUAL_CHANGE_WIFI_BLE)."""
-    body = _node(_F.GradualWrite, None, state=POWER_ON if on else POWER_OFF)   # light_power
-    return _write_frame(_F.Command.gradual_wifi_ble, lambda sc: _body(body, _PARAMS_LEN))
+    return _write_frame(_F.Command.gradual_wifi_ble, lambda sc: _node(   # state: light_power
+        _F.GradualWrite, sc, state=POWER_ON if on else POWER_OFF))
 
 
 def gradual_query() -> bytes:

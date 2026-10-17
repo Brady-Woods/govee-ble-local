@@ -84,6 +84,15 @@ model, from which the shipped readers are generated).
   (default 20, today's frames).
 
 ### Changed
+- On the spec's section-E lockstep readers (2667e85): `build.secret_check` and `build.gradual` write the
+  spec's `SecretKeyWrite` / `GradualWrite` in place, now that `single_command.params` types 33 B2 / A3 (same
+  bytes); the 0xAC TLV walk reads 0x07 as the spec's `status_device_info` (`app_decodes` for the 0x10 / 0x11
+  selectors the app's `w()` decodes) instead of stepping past the others itself. A 0x05 mode TLV that the
+  spec's `mode_read` can't read (it types the value exactly; the app's per-sub-mode minimums aren't typed yet)
+  is handed on raw, as before. Byte- and state-identical (equivalence run against 8c89c31, every bench
+  capture identical). `govee-ble-analyze` no longer reports such 0x07 blocks, or 0xA5 groups whose len isn't
+  1 + 4k, as spec gaps, now reports a 0x05 value `mode_read` can't read, and counts a TLV the walk hands on
+  once in its TLV types (it counted a handed-on 0xA5 twice).
 - The test coverage floor in `scripts/check.sh` is now 95% of statements and branches (`--cov-branch`;
   was 85% of lines), the same gate hass-govee-ble-local applies to the integration. Coverage today is
   98% with branches. Development tooling only.
@@ -676,6 +685,16 @@ model, from which the shipped readers are generated).
 - `devices.yaml` dreamcolorlightv1: a comment records that `color_scheme: h61a8` (the 0x0b write) describes
   only colour version 3 (17 / 18 below their firmware gates, old H6163 / H6117, part brightness off). The 13
   goodsTypes 71 to 262 send the h60a6 0x15 frames. `color_scheme` is per family, so the value stays.
+- LOCKSTEP (merge together with the library edits in spec/docs/LOCKSTEP_FRAME_AUDIT_E.md): the section-E forms
+  that change what existing readers return.
+  - `single_command.params` types 33 B2 / A3 / 14.
+  - `mode_read.selector_or_sub_mode` takes `enum: sub_mode`.
+  - `status_tlv` 0x07 reads `status_device_info`.
+  - `status_tlv` 0x05 reads `mode_read` over the exact value, so `cct_read_reply.kelvin_right` is read at
+    `_io.size >= 5`.
+  - `color_group_status.records` is `(len - 1) / 4` plus `trailing`.
+  - Without the library edits, 35 tests fail on each library branch (32 from the B2 / A3 builders, 3 from the
+    0x07 walk). With them, both branches pass.
 - `devices.yaml` now catalogues the light families and goodsTypes that Govee Home 7.7.02 routes but the file
   did not model: 148 more light goodsTypes (113 -> 261 non-zero) and 205 more SKUs.
   - How it was traced and checked:

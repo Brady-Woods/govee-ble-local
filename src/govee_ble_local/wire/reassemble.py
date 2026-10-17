@@ -225,28 +225,6 @@ def reassemble(frames: list[bytes]) -> bytes:
     return _joined(frames)[0]
 
 
-def _status_device_info(value: bytes) -> Any:
-    """A 0x07 TLV value read by the spec's ``status_device_info`` (the app's status parser: only the
-    basic 0x10 and Wi-Fi 0x11 selectors have a body; every other selector's stays raw bytes), or None
-    when even its selector can't be read (an empty value)."""
-    try:
-        return _parse_type(_F.StatusDeviceInfo, value)
-    except Exception:  # noqa: BLE001 - empty value / a 0x10 / 0x11 body too short
-        return None
-
-
-def _app_skips(typ: int, value: bytes) -> bool:
-    """True for a TLV the app's walker steps past without reading its body: a 0x07 block whose
-    selector is neither basic (0x10) nor Wi-Fi (0x11), which ``status_device_info`` leaves as raw bytes.
-    Compose4BaseInfoSingleRead.w reads ``bArr[0]``, logs any other selector ("parse07Info() 其他信息") and
-    returns, so ``u()`` walks on. An empty 0x07 value has no selector: ``bArr[0]`` throws there, so it is
-    not skipped."""
-    if typ != TYPE_DEVICE_INFO:
-        return False
-    info = _status_device_info(value)
-    return info is not None and isinstance(info.info, (bytes, bytearray))
-
-
 def walk_status_tlvs(
     buf: bytes, *, skipped: list[TlvCut] | None = None,
 ) -> tuple[list[Any], TlvCut | None]:
@@ -267,11 +245,14 @@ def walk_status_tlvs(
       after a 0x10 / 0x11 selector; the VM lambda reads two 0x30 / 0x41 bytes).
     - ``"truncated"``: a value runs past the buffer (u()'s ``System.arraycopy`` throws).
 
-    Two kinds of TLV whose body the spec's type can't read are not cuts, and go to ``skipped`` when it
-    is given: a 0x07 block with a selector other than 0x10 / 0x11, which ``w()`` returns from without
-    reading (:func:`_app_skips`; the walk steps past it), and a 0xA5 colour group whose len isn't
-    1 + 4k, which the spec's ``color_group_status`` rejects but the app reads with its own record
-    count (:func:`parse_status` decides; the TLV is handed on).
+    A 0x07 block reads as the spec's ``status_device_info``, which types only the basic 0x10 and Wi-Fi
+    0x11 selectors the app's ``w()`` decodes and leaves any other raw (``app_decodes``), so it is handed
+    on like any TLV. A 0xA5 colour group whose typed value the spec can't read is not a cut either: the
+    app reads it with its own record count (:func:`parse_status` decides), so it is handed on and, when
+    ``skipped`` is given, recorded there.
+
+    A 0x05 mode TLV whose value ``mode_read`` can't read is handed on raw too, as long as it holds a
+    sub-mode byte (see the walk): the app's per-sub-mode minimums aren't typed yet.
 
     Known differences that remain, waiting for spec types: a type-0 byte ends the walk here (the spec's
     ``status_tlv`` reads no len or value for it, the ``status_reply`` padding sentinel), while u() reads
@@ -302,18 +283,21 @@ def walk_status_tlvs(
             raw = getattr(tlv, "_raw_value", None)
             if length is None or raw is None:
                 return tlvs, TlvCut("truncated", typ, pos, None if length is None else int(length))
-            if typ == TYPE_COLOR_GROUP:
-                _LOGGER.debug("status reply: colour group TLV of len %d is not 1 + 4k; read with the app's "
-                              "record count", length)
-            elif _app_skips(typ, bytes(raw)):
-                _LOGGER.debug("status reply: 0x07 block with selector 0x%02x (len %d) did not parse; "
-                              "skipped, as the app's w() skips it", raw[0], length)
-            else:
+            if typ == TYPE_MODE and len(raw) > 0:
+                # status_tlv reads 0x05 as mode_read over the exact value, which is stricter than the app for
+                # some short bodies (e.g. 13 31 00, which Info4Detail.Q accepts) and looser for others: the
+                # app's per-sub-mode minimums (h60a1 Info4Detail.Q:380-433) are not typed yet. Until they
+                # are, a non-empty value is handed on as before; parse_status keeps it raw.
+                _LOGGER.debug("status reply: mode TLV %s did not read as mode_read; kept raw",
+                              bytes(raw).hex())
+            elif typ != TYPE_COLOR_GROUP:
                 return tlvs, TlvCut("unparsed", typ, pos, int(length))
+            else:
+                _LOGGER.debug("status reply: colour group TLV of len %d did not read as color_group_status; "
+                              "read with the app's record count", length)
             if skipped is not None:
                 skipped.append(TlvCut("unparsed", typ, pos, int(length)))
-            if typ == TYPE_COLOR_GROUP:
-                tlvs.append(tlv)
+            tlvs.append(tlv)
             pos += 2 + int(length)
             continue
         tlvs.append(tlv)
@@ -393,7 +377,7 @@ def parse_status(frames: list[bytes], *, pieces: int | None = None) -> StatusRep
     a basic 0x10 block sets the serial when its UID is valid and always sets the versions (None when
     zero); a Wi-Fi 0x11 block always sets the Wi-Fi MAC (None when zero). The 0x11 block's versions are
     the Wi-Fi module's, so they never fill the device's own, and other selectors are skipped, as w()
-    does, whether or not the spec can read their body (:func:`walk_status_tlvs`).
+    does (``status_device_info.app_decodes``).
 
     A TLV the app's walker throws on (a typed body that doesn't parse, a len byte of 0x80 or more,
     or a len past the reply's end) fails the app's whole read, so it gives NO
@@ -450,12 +434,11 @@ def parse_status(frames: list[bytes], *, pieces: int | None = None) -> StatusRep
             st.zone_power = {0: bool(v.zone_a_on), 1: bool(v.zone_b_on)}   # status_zone: bit 0
         elif typ == TYPE_DEVICE_INFO:
             # Compose4BaseInfoSingleRead.w reads only the basic (0x10) and Wi-Fi (0x11) blocks here; it
-            # logs any other selector and skips it: the spec's status_device_info types only those two.
-            sdi = _status_device_info(bytes(tlv._raw_value))
-            if sdi is None or isinstance(sdi.info, (bytes, bytearray)):
+            # logs any other selector and skips it (status_device_info.app_decodes).
+            if not v.app_decodes:
                 continue
-            sel = int(sdi.selector)
-            info = parse.device_info_from(sel, sdi.info)
+            sel = int(v.selector)
+            info = parse.device_info_from(sel, v.info)
             if info is None:
                 continue
             if sel == _F.DeviceInfoSelector.wifi:

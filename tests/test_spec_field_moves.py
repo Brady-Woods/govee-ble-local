@@ -67,13 +67,13 @@ def test_a_negative_tlv_len_is_the_specs_validation_failure() -> None:
 
 
 def test_a_0x07_block_the_app_skips_is_the_one_status_device_info_leaves_raw() -> None:
-    """A 0x07 block that doesn't parse (selector 0x03, text not UTF-8) is stepped past, as the app's w()
-    does for a selector status_device_info leaves raw; a 0x10 block with a short body stops the walk."""
+    """status_tlv 0x07 is status_device_info: a selector the app's w() doesn't decode (0x03, text not
+    UTF-8) reads raw (app_decodes False) and the walk goes on; a 0x10 block with a short body stops it."""
     skip = bytes([0x07, 0x02, 0x03, 0xFF, 0x01, 0x01, 0x01])
     skipped: list[reassemble.TlvCut] = []
     tlvs, cut = reassemble.walk_status_tlvs(skip, skipped=skipped)
-    assert cut is None and [int(t.type) for t in tlvs] == [0x01]
-    assert [(s.reason, s.type, s.offset, s.length) for s in skipped] == [("unparsed", 0x07, 0, 2)]
+    assert cut is None and [int(t.type) for t in tlvs] == [0x07, 0x01] and skipped == []
+    assert tlvs[0].value.app_decodes is False and bytes(tlvs[0].value.info) == b"\xff"
     stop = bytes([0x07, 0x02, 0x10, 0x00])
     _tlvs, cut = reassemble.walk_status_tlvs(stop)
     assert cut is not None and cut.reason == "unparsed"

@@ -31,7 +31,8 @@ def _byte_walk(buf: bytes) -> _Walk:
     """The app's walker, Compose4BaseInfoSingleRead.u (:247-345), over the raw bytes: type / len from
     the bytes, each TLV's body judged by the spec's status_tlv parsed alone from its slice. Two library
     rules on top, until the spec types them: type 0 ends the walk (the padding sentinel), and a 0xA5
-    whose body the spec rejects is handed on for the app's record count. Returns (type, len, value
+    whose body the spec rejects is handed on for the app's record count, as is a non-empty 0x05 value
+    mode_read can't read (the app's per-sub-mode minimums aren't typed yet). Returns (type, len, value
     bytes) per TLV, the cut and the skipped list (each cut as TlvCut's fields, negative_len True for a
     len the app reads as negative)."""
     out: list[tuple[int, int, bytes]] = []
@@ -50,7 +51,7 @@ def _byte_walk(buf: bytes) -> _Walk:
         try:
             parse._parse_type(parse._F.StatusTlv, buf[pos:end])
         except Exception:  # noqa: BLE001
-            if typ == 0xA5:
+            if typ == 0xA5 or (typ == 0x05 and length > 0):
                 skipped.append(("unparsed", typ, pos, length, False))
                 out.append((typ, length, bytes(buf[pos + 2:end])))
             elif typ == 0x07 and length >= 1 and buf[pos + 2] not in (0x10, 0x11):

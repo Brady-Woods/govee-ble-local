@@ -104,7 +104,7 @@ def test_scene_activate_and_plug_and_secret() -> None:
     assert p.command == F.Command.plug_sync_time
     assert p.params.unix_seconds == 0x6A49901A and p.params.tz_hour == -7  # signed
     sec = _p(b.secret_check(bytes(range(1, 9)))).body
-    assert sec.command == F.Command.secret_write and bytes(sec.params)[:8] == bytes(range(1, 9))
+    assert sec.command == F.Command.secret_write and sec.params.secret == bytes(range(1, 9))
 
 
 def test_queries() -> None:

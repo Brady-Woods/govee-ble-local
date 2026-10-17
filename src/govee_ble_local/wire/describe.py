@@ -298,8 +298,8 @@ def status_burst_report(rx_ac: list[bytes]) -> StatusBurstReport:
     taken in order) and decoded by the runtime's own walker
     (:func:`.reassemble.walk_status_tlvs`). Like the runtime, only complete bursts are walked; a
     burst with conflicting duplicate chunks is not walked either. In those, a TLV type outside
-    :data:`KNOWN_STATUS_REPLY_TLVS`, or a whole TLV its spec type can't read (including a 0x07 block
-    the walk steps past and a 0xA5 group read with the app's record count), is a real spec gap; so is
+    :data:`KNOWN_STATUS_REPLY_TLVS`, or a whole TLV its spec type can't read (including a 0xA5 group
+    the walk hands on for the app's record count), is a real spec gap; so is
     a TLV whose len byte the app reads as negative (0x80 or more). A walk that stops at the buffer's
     tail (``"tail"``) is a clean end, as in the app. A complete burst whose TLV stream overruns it is
     walked up to the cut and counted in :attr:`StatusBurstReport.truncated`: the runtime uses no state
@@ -337,8 +337,9 @@ def status_burst_report(rx_ac: list[bytes]) -> StatusBurstReport:
             if t not in KNOWN_STATUS_REPLY_TLVS:  # unknown type -> value falls to raw bytes
                 report.gaps.append(f"0xAC reply TLV type 0x{t:02x} not modelled")
         unread = [*skipped, cut] if cut is not None and cut.reason == "unparsed" else skipped
+        if cut is not None and cut.reason == "unparsed":
+            report.tlv_types[cut.type] += 1     # a skipped TLV was handed on, so it is counted above
         for bad in unread:
-            report.tlv_types[bad.type] += 1
             if bad.negative_len:
                 report.gaps.append(
                     f"0xAC reply TLV type 0x{bad.type:02x} has len 0x{bad.length:02x}: the app reads a "

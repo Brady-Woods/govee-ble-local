@@ -436,7 +436,7 @@ enums:
       doc: "brightness, value[0] unsigned (u:293-295; status_brightness)"
     0x05:
       id: mode
-      doc: "[sub_mode, params] to the screen's .g() lambda (u:300-308; mode_status)"
+      doc: "[sub_mode, params] to the screen's .g() lambda (u:300-308; status_tlv reads it as mode_read)"
     0x07:
       id: device_info
       doc: "device-info record, w() reads selectors 0x10 / 0x11 only (u:309-310; status_device_info, device_info_selector)"
@@ -708,23 +708,26 @@ types:
             'command::brightness': brightness_payload
             'command::sync_time': sync_time_payload
             'command::plug_sync_time': plug_sync_time_payload
+            'command::secret_write': secret_key_write
+            'command::gradual_wifi_ble': gradual_write
+            'command::gradual': gradual_write
         doc: |
+          secret_write (0xB2), gradual_wifi_ble (0xA3) and gradual (0x14) have one write layout each in the app
+          (see single_command_typed for the trace). A body shorter than its type (fewer than 8 bytes after B2,
+          none after A3 / 14) raises; the app's frames are 20 bytes. A device's 33 B2 / 33 A3 / 33 14 ACK read
+          through `frame` reads as these types too (secret = [result, 0 ...], state = result); read an RX 0x33
+          frame with rx_frame (write_ack).
           Unmatched commands parse as a raw byte array (payload up to 17 bytes). The 0x33 write bodies the spec
           models without a case here, so their params stay raw bytes in this reader:
-            0xB2 secret_write             secret_key_write. One layout in the app; typed in single_command_typed.
-            0xA3 gradual_wifi_ble         gradual_write. One layout in the app; typed in single_command_typed.
-            0x14 gradual                  gradual_write (also the night-mode page's 33 14 01 / 00). One layout
-                                          in the app; typed in single_command_typed.
             0x30 light_direction_or_zone  zone_power_write (pact_h60a0 zones) or light_direction_write (H6038
                                           direction, H6057 main light, H71xx chart request): by device family.
             0x36 compose_light_switch     bar_switch_write (H6047 [left, right]; [index, state] on H6043 and
                                           others) or worry_free_at_night_write (H6057, 7 bytes): by family.
             0x02 (not a `command` member) total_switch_write (H5089; enum plug_command).
-          A client writing one of these builds the named type and puts its bytes in params. For 0xB2 / 0xA3 /
-          0x14 it can instead use single_command_typed, which carries the typed child (see that type).
+          A client writing one of these builds the named type and puts its bytes in params.
 
-  # 0x33 write body with the one-layout write commands typed, STANDALONE (not reached from `frame`: the same
-  # cases in single_command would change what existing readers get for 33 B2 / 33 A3 / 33 14 frames).
+  # 0x33 write body with the one-layout write commands typed, STANDALONE. single_command now has the same
+  # cases, so the two read the same bytes the same way; kept so clients that adopted it keep working.
   single_command_typed:
     doc: |
       Typed counterpart of single_command for a 0x33 WRITE the client is building, or knows it sent: feed
@@ -852,7 +855,7 @@ types:
     seq:
       - { id: value, type: u1, doc: "H6038: direction index 0-5; H6057: 1 = main light on, 0 = off; H71xx: 1 (chart report request)" }
 
-  # 33 A3 / 33 14 gradual write body, STANDALONE. Same body under both command bytes.
+  # 33 A3 / 33 14 gradual write body: single_command's case for both command bytes. Same body under both.
   gradual_write:
     doc: >-
       Gradual (fade between colours) on/off write: body = [state]. Two command bytes, chosen by the device's
@@ -886,7 +889,7 @@ types:
     seq:
       - { id: state, type: u1, doc: "1 = on (light_power::light_on), 0 = off (light_off); id 'on' avoided: YAML-boolean" }
 
-  # 33 B2 account-lock secret write body, STANDALONE.
+  # 33 B2 account-lock secret write body: single_command's case for 0xB2.
   secret_key_write:
     doc: >-
       33 B2 account-lock secret write: body = the 8-byte secret, NO selector byte. Every builder writes
@@ -1483,23 +1486,42 @@ types:
       selector). is_submode4color = the sub-modes OpInfo4Detail.x hands to the SubMode4Color parse strategy
       (0x15 / 0x0b / 0x02 / 0x0d). The raw params (the bytes after byte 0, whatever `rest` was typed as) are
       read with the standalone mode_read_params(mode).
+      Also the 0xAC status TLV 0x05 value (status_tlv's 0x05 case): Compose4BaseInfoSingleRead.u hands the
+      screen's mode lambda exactly len bytes (base-classes11/com/govee/base2light/pact/newdetail/ble/controller/
+      Compose4BaseInfoSingleRead.java:283-284, 300-308), [sub_mode, params] with no padding, and the H60A6
+      lambda reads it with the same parser as its aa 05 reply (VM4LightH60A6$afterConnectedSingleReadDeviceInfo$1.n
+      -> Info4Detail.Q(bArr, true), split_h60ax/com/govee/pact_h60a0/adjust/h60a6/VM4LightH60A6$afterConnectedSingleReadDeviceInfo$1.java:82-83;
+      split_h60ax/com/govee/pact_h60a0/adjust/h60a1/Info4Detail.java:380-432). Over such an exact-length
+      body this reader raises for an empty value, a 0x15 body under 3 bytes, a 0x0d body under 3, and a
+      0x13 body under 4 (7 with a colour flag); every other sub-mode's rest stays raw. Q throws for an
+      empty value and a 0x15 body under 3 as this reader does; it also throws for a 0x04 body under 2
+      (SubMode4Scene), a 0x0a body under 2 (SubMode4Diy.parseModeValidBytes,
+      base-classes11/com/govee/base2light/pact/newdetail/sub/SubMode4Diy.java:37-40) and a 0x0d body under
+      5 (Q:416-418), which read here, and its 0x13 strategy
+      (SubMode4MusicV2, base-classes11/com/govee/base2light/pact/newdetail/sub/SubMode4MusicV2.java:49-73)
+      reads a state-dependent length.
     seq:
       - id: selector_or_sub_mode
         type: u1
-        doc: "0x01 = read-request selector; else a reply sub-mode byte"
+        enum: sub_mode
+        doc: >-
+          0x01 = read-request selector (mode_read_selector::request); else a reply sub-mode byte, read as enum
+          sub_mode. A byte that is not a sub_mode member (0x01, 0xa1 = the second scene byte OpInfo4Detail.x
+          takes, base-classes11/com/govee/base2light/pact/newdetail/OpInfo4Detail.java:786) keeps its int in
+          Python and reads null in Java, as pro_type does in `frame`
       - id: rest
         size-eos: true
         type:
           switch-on: selector_or_sub_mode
           cases:
-            0x15: cct_read_reply
-            0x13: music_read_reply
-            0x0d: mode_color_0d_report
+            'sub_mode::color_rgbic_15': cct_read_reply
+            'sub_mode::music': music_read_reply
+            'sub_mode::color_cct_0d': mode_color_0d_report
         doc: "0x15 => cct_read_reply; 0x13 => music_read_reply; 0x0d => mode_color_0d_report (DEVICE-SPECIFIC body, see that type); 0x01 = request."
     instances:
       scene_code:
         value: 'rest.as<bytes>[0] | (rest.as<bytes>[1] << 8)'
-        if: 'selector_or_sub_mode == 0x04 and rest.as<bytes>.size >= 2'
+        if: 'selector_or_sub_mode == sub_mode::scene and rest.as<bytes>.size >= 2'
         doc: >-
           Scene reply (sub-mode 0x04): the active scene code, u2le of body bytes 1-2 (frame bytes 3-4). The
           app reads it as BleUtils.M(vb[1], vb[0]) = vb[1] << 8 | vb[0] in SubMode4Scene's default strategy
@@ -1517,15 +1539,10 @@ types:
           writer serialises a sub-mode-0x04 mode_read.
       sub_mode:
         value: selector_or_sub_mode
-        enum: sub_mode
         doc: >-
-          selector_or_sub_mode read as enum sub_mode, for comparing a reply's sub-mode with sub_mode members
-          (sub_mode::color_rgbic_15 ...) rather than ints. A byte that is not a sub_mode member keeps its int
-          in Python and reads null in Java, as pro_type does in `frame`: the request selector 0x01
-          (mode_read_selector::request), and 0xa1, the second scene byte OpInfo4Detail.x takes
-          (`b == 4 || b == -95`, base-classes11/com/govee/base2light/pact/newdetail/OpInfo4Detail.java:786). A value
-          instance over the raw field, so selector_or_sub_mode, the `rest` switch and every existing reader stay
-          as they are, and nothing is written.
+          selector_or_sub_mode, which now carries enum sub_mode itself; kept so readers written against the
+          instance keep working. A byte that is not a sub_mode member keeps its int in Python and reads null in
+          Java (see selector_or_sub_mode).
       is_submode4color:
         value: >-
           sub_mode == sub_mode::color_rgbic_15 or sub_mode == sub_mode::color_rgbic_0b or
@@ -1604,7 +1621,7 @@ types:
     seq:
       - { id: op, type: u1, doc: "0x01 = CCT / white-point mode; on H6047 this byte is the gradual flag (== 1)" }
       - { id: kelvin, type: u2be, doc: "colour temperature in Kelvin (big-endian, hi-first); H6047: the LEFT bar" }
-      - { id: kelvin_right, type: u2be, if: 'not _io.eof', doc: "H6047 only: the RIGHT bar's kelvin (0 = not CCT); other devices: zero padding" }
+      - { id: kelvin_right, type: u2be, if: '_io.size >= 5', doc: "H6047 only: the RIGHT bar's kelvin (0 = not CCT); other devices: zero padding. Read only when the body holds it (5 bytes or more), so the 4-byte body of a 5-byte 0xAC TLV 0x05 value [15][gradual][kelvin u2be][x] reads, as SubMode4Color's 3-byte parse does; an aa 05 reply's body is always 16 bytes" }
       - { id: trailing, size-eos: true, doc: "remaining frame bytes after the kelvins (padding; unused for CCT read-back)" }
     instances:
       kelvin_signed:
@@ -1632,11 +1649,11 @@ types:
           split_h61d3 installs no IParseStrategy of its own, so the default strategy above reads it.
       kelvin_right_signed:
         value: 'kelvin_right >= 0x8000 ? kelvin_right - 0x10000 : kelvin_right'
-        if: '_io.size > 3'
+        if: '_io.size >= 5'
         doc: >-
           H6047 right-bar kelvin read SIGNED (BleUtil.getSignedShort(vb[3], vb[4]),
           split_h6047/com/govee/h6047/detail/Info4Detail.java:180). Null when kelvin_right was not read (a body
-          of 3 bytes); the guard is the body size because `not _io.eof` is already false after `trailing`.
+          of 3 or 4 bytes); the guard is kelvin_right's own.
       is_cct_positive:
         value: 'kelvin_signed > 0'
         doc: >-
@@ -2170,8 +2187,8 @@ types:
           cases:
             0x01: status_switch
             0x04: status_brightness
-            0x05: mode_status
-            0x07: device_info_read      # decoded like the aa 07 reply; the app's status parser reads ONLY 0x10/0x11 here (see status_device_info). Kept for existing readers
+            0x05: mode_read             # [sub_mode, params] with mode_read's sub-mode dispatch, over the exact TLV value
+            0x07: status_device_info    # the app's status parser reads ONLY 0x10/0x11 (Compose4BaseInfoSingleRead.w)
             0x30: status_zone
             0x41: status_seg_info
             0xa5: color_group_status     # one colour group; curated devices are all 4-byte (see type doc)
@@ -2185,12 +2202,12 @@ types:
             * 0x07 device-info. w() (Compose4BaseInfoSingleRead.w:370-437, Govee Home 7.7.02) parses ONLY
               selector 0x10 (basic: [uid8 (byte-REVERSED), sw3, hw3, dsp u16le]) and 0x11 (wifi: [mac6
               (FORWARD), sw3, hw3]); every other selector, including 0x02 (SN) and 0x03 (hard version), is
-              logged and IGNORED with no body read (w:376-382). status_device_info models exactly that. The
-              value is still typed device_info_read (the single-frame aa 07 layout), which also decodes
-              0x02/0x03, so a client should ignore those here. Same 0x10/0x11 layout as the aa 07 reply ->
-              RETIRES the old MAC-anchor heuristic.
-            * 0x05 mode == [sub_mode, params] (delegated to the caller's .g() lambda; same shape as the
-              0x05 mode frame body / SubMode dispatch).
+              logged and IGNORED with no body read (w:376-382). The value is status_device_info, which
+              models exactly that: any other selector's body stays raw and always parses, and a 0x10 / 0x11
+              body too short for its record raises, as w()'s arraycopy throws. Same 0x10/0x11 layout as the
+              aa 07 reply (device_info_read) -> RETIRES the old MAC-anchor heuristic.
+            * 0x05 mode == [sub_mode, params], handed to the screen's .g() lambda (u:300-308) with exactly len
+              bytes, the body an aa 05 reply carries: read as mode_read (see its doc for the sub-mode cases).
             * 0xA5 colour group -> color_group_status, which takes the record COUNT from len,
               (len-1)/4. That is the rule of the screens that count from len; other screens pass their own
               count to Controller4ColorInfoByGroup.q, which then reads exactly that many records (see
@@ -2214,9 +2231,7 @@ types:
       0xAC status TLV 0x07 as the app's status parser reads it (Compose4BaseInfoSingleRead.w:370-437, Govee
       Home 7.7.02): ONLY selector 0x10 (basic) and 0x11 (Wi-Fi) are decoded. Every other selector, including
       0x02 (SN) and 0x03 (hard version), which the single-frame aa 07 reply does handle, is logged and ignored
-      with no body read (w:376-382), so it stays raw here. Standalone: status_tlv's 0x07 case keeps
-      device_info_read for existing readers, since switching it changes which 0x07 blocks such a reader
-      fails to parse.
+      with no body read (w:376-382), so it stays raw here. This is status_tlv's 0x07 case.
     seq:
       - { id: selector, type: u1 }
       - id: info
@@ -2255,7 +2270,7 @@ types:
         doc: "H60A6 zone 1 power: getBit2Boolean(bArr2[1], 1) = bit 0 (VM4LightH60A6$afterConnectedSingleReadDeviceInfo$1.java:104). Scoped to VM4LightH60A6"
   status_seg_info:   { doc: "0x41 in the 0xAC reply = status_tlv_type::on_off_memory, the power-off memory (power-on mode) record [02][value], NOT segment / IC info: the type name and field ic_or_seg are kept for existing readers, and ic_or_seg holds the value. The app reads byte 1 on every family that requests 0x41: H60A6 (VM4LightH60A6$afterConnectedSingleReadDeviceInfo$1.o:99-100), H6671 / H6672 (VM4LightH667172$afterConnectedSingleReadDeviceInfo$1.o:108-115) and H6038 / H6048 (VM4H6038.f5:564-571). Firmware ble_check_basic_info (H60A6.bin 0x9b04c0bc-0x9b04c0ce) fills it as [0x41][02][02][FUN_9b02bfe4 = UserConfig+4, logged 'start mode'], the field that 33 41 02 <v> writes (app Controller4OnOffMemory). VM4LightH60A6$afterConnectedSingleReadDeviceInfo$1.o:99-100 stores byte1 via Info4Detail.Y, which SettingAcH60a6.W3 (syncOnOffMemoryResult) also sets", seq: [ { id: b0, type: u1 }, { id: ic_or_seg, type: u1 } ] }
   mode_status:
-    doc: "0xAC TLV 0x05 — device's active mode: [sub_mode, params]. Same [sub_mode, params] shape as the 0x05 mode frame body (SubMode dispatch, u():349 -> .g() lambda). sub_mode seen = the active mode: colour (0x15/0x0D), CCT, scene (0x04), music (0x13), diy (0x0a). params layout is per sub_mode / device (see mode_read / color_* types); left size-eos here."
+    doc: "0xAC TLV 0x05 — device's active mode: [sub_mode, params]. Same [sub_mode, params] shape as the 0x05 mode frame body (SubMode dispatch, u():349 -> .g() lambda). sub_mode seen = the active mode: colour (0x15/0x0D), CCT, scene (0x04), music (0x13), diy (0x0a). params layout is per sub_mode / device (see mode_read / color_* types); left size-eos here. Not status_tlv's 0x05 case: that reads the value as mode_read, which carries the sub-mode dispatch; this type is kept for existing readers."
     seq:
       - { id: sub_mode, type: u1, enum: sub_mode }
       - { id: params, size-eos: true }
@@ -2271,8 +2286,7 @@ types:
         * from len, (len - 1) / 4: H60B1ViewModel (split_floorlamp/com/govee/h60b1/detail/H60B1ViewModel.java:159-160),
           VM4LightH60C1 (split_h60ax/com/govee/pact_h60a0/adjust/h60c1/VM4LightH60C1$afterConnectedSingleReadDeviceInfo$1.java:112-113),
           H6850DetailVM (split_h6840/com/govee/h6609/h6850/H6850DetailVM$afterConnectedSingleReadDeviceInfo$1.java:87-88).
-          This type reads that rule for a len of 1 + 4k; for any other len it raises, where q() reads
-          (len - 1) / 4 records and ignores the rest.
+          This type reads that rule: (len - 1) / 4 records, and the 1-3 bytes q() ignores in trailing.
         * a fixed count for every group, 4: VM4H6038 (split_h6047/com/govee/h6047/newdetail/h6038/VM4H6038.java:574),
           VM4H6048 (split_h6047/com/govee/h6047/newdetail/h6048/VM4H6048.java:392), the h6047 newdetail VM4Light
           (split_h6047/com/govee/h6047/newdetail/vm/VM4Light.java:304), the rgbiclight VM4Light
@@ -2300,7 +2314,8 @@ types:
       pick the record count (color_group_status_counted).
     seq:
       - { id: group_index, type: u1, doc: "1-based group number (K(value[0]))" }
-      - { id: records, type: color_group_rec, repeat: eos, doc: "count = (len-1)/4; 4-byte [brightness,R,G,B]" }
+      - { id: records, type: color_group_rec, repeat: expr, repeat-expr: '(_io.size - 1) / 4', doc: "count = (len-1)/4, rounded down, as the len-counting screens pass it to q() (H60B1ViewModel.java:159-160); 4-byte [brightness,R,G,B]" }
+      - { id: trailing, size-eos: true, doc: "the 1-3 bytes after the last whole record when len is not 1 + 4k, which q() never reads" }
   color_group_rec:       # 4-byte record (part-brightness SKUs; all curated)
     seq:
       - { id: brightness, type: u1 }

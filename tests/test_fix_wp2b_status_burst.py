@@ -219,13 +219,15 @@ def test_info_block_without_selector_or_too_short_still_fails_the_read() -> None
                                         0x04, 0x01, 0x40]))) == r.StatusReply()
 
 
-def test_walk_records_the_info_blocks_it_steps_past() -> None:
+def test_walk_hands_on_the_info_blocks_the_app_does_not_decode() -> None:
+    # status_tlv 0x07 reads status_device_info, which leaves an SN (0x02) block raw (app_decodes False), as
+    # the app's w() skips it. WAS: the walk stepped past it and recorded it in `skipped`.
     buf = bytes([0x01, 0x01, 0x01, 0x07, 0x03, 0x02, 0xAA, 0xBB, 0x04, 0x01, 0x40])
     skipped: list[r.TlvCut] = []
     tlvs, cut = r.walk_status_tlvs(buf, skipped=skipped)
-    assert [int(t.type) for t in tlvs] == [0x01, 0x04] and cut is None
-    assert skipped == [r.TlvCut("unparsed", 0x07, 3, 3)]
-    assert [int(t.type) for t in r.walk_status_tlvs(buf)[0]] == [0x01, 0x04]   # the list is optional
+    assert [int(t.type) for t in tlvs] == [0x01, 0x07, 0x04] and cut is None and skipped == []
+    assert tlvs[1].value.app_decodes is False
+    assert r.parse_status(_chunk(buf)).brightness == 0x40
 
 
 def test_a_burst_cut_by_lost_chunks_gives_no_state() -> None:
@@ -365,13 +367,12 @@ def test_analyzer_overrunning_stream_counts_as_truncated() -> None:
     assert analyze_status_bursts(frames) == (report.tlv_types, [], 0)
 
 
-def test_analyzer_flags_a_stepped_past_info_block_and_walks_on() -> None:
-    # The walk steps past an SN block the spec can't read, as the app does; the analyzer still
-    # reports it as a spec gap and counts the TLVs after it.
+def test_analyzer_reads_an_info_block_the_app_skips_without_a_gap() -> None:
+    # status_device_info reads the SN block raw, as the app skips it: no spec gap any more (WAS: "did not
+    # parse against the spec"), and the TLVs after it are counted.
     frames = _chunk(bytes([0x01, 0x01, 0x01, 0x07, 0x03, 0x02, 0xAA, 0xBB, 0x04, 0x01, 0x40]))
     types, gaps, malformed = analyze_status_bursts(frames)
-    assert malformed == 0 and dict(types) == {0x01: 1, 0x07: 1, 0x04: 1}
-    assert gaps == ["0xAC reply TLV type 0x07 (len 3) did not parse against the spec"]
+    assert malformed == 0 and dict(types) == {0x01: 1, 0x07: 1, 0x04: 1} and gaps == []
 
 
 def test_analyzer_lost_terminator_is_not_folded_into_the_next_poll() -> None:
