@@ -518,6 +518,16 @@ model, from which the shipped readers are generated).
   zeroes every data byte.
 
 ### Spec
+- LOCKSTEP (merge together with the library edits in spec/docs/LOCKSTEP_FRAME_AUDIT_E.md): the section-E forms
+  that change what existing readers return.
+  - `single_command.params` types 33 B2 / A3 / 14.
+  - `mode_read.selector_or_sub_mode` takes `enum: sub_mode`.
+  - `status_tlv` 0x07 reads `status_device_info`.
+  - `status_tlv` 0x05 reads `mode_read` over the exact value, so `cct_read_reply.kelvin_right` is read at
+    `_io.size >= 5`.
+  - `color_group_status.records` is `(len - 1) / 4` plus `trailing`.
+  - Without the library edits, 35 tests fail on each library branch (32 from the B2 / A3 builders, 3 from the
+    0x07 walk). With them, both branches pass.
 - `devices.yaml` now catalogues the light families and goodsTypes that Govee Home 7.7.02 routes but the file
   did not model: 148 more light goodsTypes (113 -> 261 non-zero) and 205 more SKUs.
   - How it was traced and checked:
