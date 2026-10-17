@@ -27,7 +27,7 @@ from govee_ble_local.devices import _fold, _readback
 from govee_ble_local.devices import device as device_mod
 from govee_ble_local.devices.device import Device, make_device
 from govee_ble_local.devices.profile import DeviceProfile, profile_for
-from govee_ble_local.exceptions import GoveeBleError, GoveeBleInvalidValue, GoveeBleTimeout
+from govee_ble_local.exceptions import GoveeBleConnectionError, GoveeBleError, GoveeBleInvalidValue
 from govee_ble_local.models import DeviceState, Segment
 from govee_ble_local.wire import build, reassemble
 
@@ -129,24 +129,24 @@ def test_unregister_removes_only_its_callback_and_a_second_call_is_a_no_op() -> 
 
 # ── WP3-024: the relay follow-up warning names an error that has no message ──────────────────
 @pytest.mark.parametrize(("error", "tail"), [
-    (GoveeBleTimeout(), "failed: GoveeBleTimeout"),
-    (GoveeBleTimeout("no ack"), "failed: no ack"),
+    (GoveeBleConnectionError(), "failed: GoveeBleConnectionError"),
+    (GoveeBleConnectionError("link down"), "failed: link down"),
 ])
 def test_relay_follow_up_failure_logs_a_readable_reason(
     caplog: pytest.LogCaptureFixture, error: GoveeBleError, tail: str
 ) -> None:
-    d = _dev("H5080")
+    d = _dev("H5082")   # gt 50: the post-power re-read ends with the 33 b5 time sync (power_resync)
 
-    async def send(frame: bytes, *, expect_ack: bool = True, **_k: object) -> None:
-        if not expect_ack:                     # the sync-time follow-up
+    async def send(frame: bytes, **_k: object) -> None:
+        if frame[1] == build.CMD_PLUG_SYNC_TIME:
             raise error
         d._sent.append(frame)  # type: ignore[attr-defined]
 
     d._conn.send = AsyncMock(side_effect=send)  # type: ignore[method-assign]
     with caplog.at_level(logging.WARNING, logger=_DEVICE_LOGGER):
         run(d.set_power(True))
-    assert d.state.is_on is True and d._sent == [build.switch(True, relay=True)]  # type: ignore[attr-defined]
-    lines = [r.getMessage() for r in caplog.records if "sync-time follow-up failed" in r.getMessage()]
+    assert d.state.is_on is True and d._sent == [build.plug_all_outlets(True)]  # type: ignore[attr-defined]
+    lines = [r.getMessage() for r in caplog.records if "post-power re-read failed" in r.getMessage()]
     assert len(lines) == 1 and lines[0].endswith(tail)
 
 

@@ -12,7 +12,7 @@ from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
-from fake_ble import ble_device
+from fake_ble import ble_device, unacked_via
 from fake_ble import frame as _frame
 
 from govee_ble_local.crypto import checksum_ok
@@ -55,7 +55,7 @@ def _mocked(d: Device) -> Device:
 
     d._conn.send = AsyncMock(side_effect=send)  # type: ignore[method-assign]
     d._conn.send_many = AsyncMock(side_effect=send_many)  # type: ignore[method-assign]
-    d._conn.send_unacked = AsyncMock(side_effect=send_many)  # type: ignore[method-assign]
+    d._conn.send_unacked = AsyncMock(side_effect=unacked_via(send_many))  # type: ignore[method-assign]
     d._conn.query = AsyncMock(return_value=[])  # type: ignore[method-assign]
     d._sent = sent  # type: ignore[attr-defined]
     return d

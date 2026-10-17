@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import base64
 
+import pytest
 import spec_frames as sf
 from fake_ble import ble_device
 
@@ -85,3 +86,19 @@ def test_device_methods_delegate() -> None:
     sc, _value = _catalog_value("Christmas")
     expect = scene_upload_frames(sc, d.profile.scene_dialect, d.profile.scene_versions)
     assert expect and d.scene_upload_frames(sc) == expect == d.scene_upload_frames(sc)
+
+
+@pytest.mark.parametrize("mtu", [20, 64, 244, 509])
+def test_h60a6_graffiti_frames_take_the_links_mtu(mtu: int) -> None:
+    # H60A6GraffitiParse.makeBleController:240 -> Compose4DefWrite4Multi.d(88, bytes,
+    # MtuConfig.getAvailableMtuSize(sku)): the 0xA4 frames are sized to the link (ATT MTU - 3).
+    afternoon, graffiti = _catalog_value("Afternoon")
+    assert scene_upload_frames(afternoon, "B_h60a6", frozenset(), mtu=mtu) == sf.make_send_bytes_mtu(
+        0xA4, build.COMM_H60A6, graffiti, mtu)
+    d = make_device(ble_device("AA:BB:CC:DD:EE:60", "H60A6"), "H60A6")
+    assert d is not None and d.scene_upload_frames(afternoon, mtu=mtu) == scene_upload_frames(
+        afternoon, "B_h60a6", frozenset({0, 1, 2, 3, 5}), mtu=mtu)
+    # The 0xA3 DIY path (H60A6DiyParse:487, Compose4DefWrite4Multi.j) has fixed 20-byte frames.
+    christmas, _diy = _catalog_value("Christmas")
+    assert scene_upload_frames(christmas, "B_h60a6", frozenset(), mtu=mtu) == scene_upload_frames(
+        christmas, "B_h60a6", frozenset())

@@ -228,8 +228,9 @@ def test_segment_brightness_every_mask_width() -> None:
     for segments in range(1, b.MAX_MASK_SEGMENTS + 1):
         for _ in range(10):
             mask, pct = _mask(r, segments), r.randrange(101)
+            # The reference takes the raw byte; the library clamps to the app's slider range, 1..100.
             assert b.segment_brightness(mask, pct, "h60a6", segments) == \
-                C.build_op15_brightness(pct, mask, mask_bytes=_width(segments))
+                C.build_op15_brightness(max(1, pct), mask, mask_bytes=_width(segments))
 
 
 # ── zones / bars / scenes / misc writes ──────────────────────────────────────

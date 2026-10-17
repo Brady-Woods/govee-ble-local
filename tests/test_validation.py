@@ -82,7 +82,8 @@ def test_non_int_rejected() -> None:
 def test_brightness_still_clamps() -> None:
     assert b.brightness(-5)[2] == 0 and b.brightness(500)[2] == 100
     assert b.segment_brightness(1, 500, "h60a6")[4] == 100
-    assert b.segment_brightness(1, -5, "h60a6")[4] == 0
+    # The segment slider's floor is 1 (ViewColorMode.t0: setProgressRange({1, 100})); 0 is never sent.
+    assert b.segment_brightness(1, -5, "h60a6")[4] == 1 and b.segment_brightness(1, 0, "h60a6")[4] == 1
 
 
 def test_all_segments_mask_rejects_what_no_mask_can_hold() -> None:

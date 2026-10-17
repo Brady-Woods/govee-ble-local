@@ -675,11 +675,12 @@ def segment_color_temp(mask: int, kelvin: int, scheme: ColorScheme,
 
 def segment_brightness(mask: int, pct: int, scheme: ColorScheme,
                        segments: int | None = None) -> bytes:
-    """Per-segment brightness ``15 02 <pct> <mask>`` (``Bytes.G``; ``pct`` clamped to 0..100); only
-    the 0x15 family has it (GoveeBleNotSupported elsewhere)."""
+    """Per-segment brightness ``15 02 <pct> <mask>`` (``Bytes.G``; ``pct`` clamped to 1..100, the app's
+    segment slider range, ``ViewColorMode.t0:232-235``); only the 0x15 family has it
+    (GoveeBleNotSupported elsewhere)."""
     match scheme:
         case "h60a6":
-            level, seg_mask = _clamp_pct(pct), _mask_bytes(mask, segments)
+            level, seg_mask = max(1, _clamp_pct(pct)), _mask_bytes(mask, segments)
             return _op15_frame(_F.Op15.set_brightness, lambda c15: _node(
                 _F.Op15BrightnessWide, c15, len(seg_mask), pct=level, seg_mask=seg_mask))
         case "h61a8":
@@ -895,10 +896,10 @@ def section_count_query() -> bytes:
 
 
 def status_query(*, full: bool = False) -> bytes:
-    """0xAC status request: [AC, 03, N, cmd…]. full = dual-zone (adds 0xA5).
+    """0xAC status request: [AC, 03, N, cmd…]: 0x41 and 0x30, and with ``full`` the 0xA5 colour groups.
 
-    Device always sends ``full=True``; the single-zone ``ac 03 02 41 30`` (``full=False``) is spec
-    surface for tools and tests."""
+    Device sends ``full`` unless the advertised pact rules the colour groups out
+    (``DeviceProfile.status_color_groups_pact``; H60A6 pact (1, 1): ``ac 03 02 41 30``)."""
     # The requested TLV types (enum status_tlv_type): 0x41 seg info, 0x30 zones, 0xA5 colour groups.
     zone_types = [_F.StatusTlvType.on_off_memory, _F.StatusTlvType.zone_or_direction]
     types = [int(t) for t in ([*zone_types, _F.StatusTlvType.color_group] if full else zone_types)]

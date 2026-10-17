@@ -200,24 +200,31 @@ async def read_device_info(dev: ReadTarget, read_reply: ReadReply) -> bool:
     layouts exist only as the 0x10 / 0x11 records of the 0xAC 0x07 TLV. Unanswered reads leave fields None.
     ble_mac stays None unless a reply carries a MAC distinct from the connectable address (none confirmed
     yet: that address is otherwise the BLE MAC)."""
-    state = dev.state
-    # aa 06 / aa 07 03: the app's control-screen reads on the lights except the H60A6; FIRMWARE-SOURCED
-    # (CLAUDE.md rule 6) on the H60A6 and the gt 43 plugs, whose screens don't send them: Realtek
-    # ble_msg_get_version and ble_msg_get_dev_info selector 03 (get_hw_version), e.g. H60A6 sw 1.00.41
-    # @0x9b04a4ac / @0x9b04a5bc, H5083 sw 1.00.30 @0x9b0318dc / @0x9b031984.
-    soft = await read_reply(build.soft_version_query(), build.CMD_SOFT_VERSION)
-    answered = soft is not None
-    _fold.merge_device_info(state, firmware=parse.parse_soft_version(soft or b""))
+    # aa 06 / aa 07 03: the app's control-screen reads on the lights except the H60A6 (and on the gt 50 /
+    # 90 plugs); FIRMWARE-SOURCED (CLAUDE.md rule 6) on the H60A6 and the gt 43 plugs, whose screens don't
+    # send them: Realtek ble_msg_get_version and ble_msg_get_dev_info selector 03 (get_hw_version), e.g.
+    # H60A6 sw 1.00.41 @0x9b04a4ac / @0x9b04a5bc, H5083 sw 1.00.30 @0x9b0318dc / @0x9b031984.
+    answered = await read_versions(dev, read_reply)
     # aa 07 02, FIRMWARE-SOURCED on every SKU (the app sends it only while pairing, SnController):
     # ble_msg_get_dev_info selector 02 (get_sn) on the Realtek images (e.g. H6006 @0x9b03c87c, H60A6
     # @0x9b04a528, H5083 @0x9b031924) and the H6047's aa 07 handler (@0x01005370); answered live by all
     # seven bench SKUs.
-    for selector in (build.INFO_HARD, build.INFO_SN):
-        got, info = await read_info_reply(dev, read_reply, selector)
-        answered |= got
-        if info is not None:
-            _fold.merge_device_info(state, serial=info.serial, hardware=info.hw_version)
-    return answered
+    got, info = await read_info_reply(dev, read_reply, build.INFO_SN)
+    if info is not None:
+        _fold.merge_device_info(dev.state, serial=info.serial, hardware=info.hw_version)
+    return answered or got
+
+
+async def read_versions(dev: ReadTarget, read_reply: ReadReply) -> bool:
+    """``aa 06`` (firmware) then ``aa 07 03`` (hardware version), folded into ``dev.state``; returns
+    whether the device answered either. The first two reads of :func:`read_device_info`, and the gt 50 /
+    90 plugs' re-read after a power write (``Device._resync_after_power``)."""
+    soft = await read_reply(build.soft_version_query(), build.CMD_SOFT_VERSION)
+    _fold.merge_device_info(dev.state, firmware=parse.parse_soft_version(soft or b""))
+    got, info = await read_info_reply(dev, read_reply, build.INFO_HARD)
+    if info is not None:
+        _fold.merge_device_info(dev.state, serial=info.serial, hardware=info.hw_version)
+    return soft is not None or got
 
 
 async def read_info_reply(

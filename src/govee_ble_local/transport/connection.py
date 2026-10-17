@@ -103,6 +103,9 @@ _FRAMES = logging.getLogger("govee_ble_local.frames")
 _KNOWN_RX_PRO_TYPES: Final = frozenset(int(t) for t in _F.RxProType)
 # Unsolicited pushes accumulate between operations; never let them grow unbounded.
 _RX_QUEUE_MAX: Final = 64
+# write_payload_size bounds: the app's MtuConfig default (ATT MTU 23 - 3) and its requested MTU 512 - 3.
+_MIN_WRITE_PAYLOAD: Final = 20
+_MAX_WRITE_PAYLOAD: Final = 509
 # DISCONNECT_TIMEOUT and QUERY_TERMINAL live in ..const with the other transport constants; they
 # are imported into this module's namespace, which is where tests patch / read them.
 
@@ -170,6 +173,7 @@ class GoveeConnection:
         unlock_frames: Callable[[], list[bytes]] | None = None,
         idle_disconnect: float = IDLE_DISCONNECT_DELAY,
         frame_log: str | None = None,
+        session_frames: Callable[[], list[bytes]] | None = None,
     ) -> None:
         self._ble_device = ble_device
         self._encryption = encryption
@@ -179,6 +183,10 @@ class GoveeConnection:
         # command - e.g. the plug family's `33 b2` secret-key check. A provider
         # (not a static list) so a device can supply/refresh it lazily.
         self._unlock_frames = unlock_frames
+        # Writes the app sends once per connection after the unlock, whose rejection or missing ack
+        # changes nothing - e.g. the plugs' `33 b5` time sync. A provider, called per session, so a
+        # frame can carry the time it is sent.
+        self._session_frames = session_frames
         self._idle_disconnect = idle_disconnect
         self._client: BleakClientWithServiceCache | None = None
         self._session_key: bytes | None = None
@@ -215,6 +223,27 @@ class GoveeConnection:
     def encryption(self) -> Encryption:
         """The command-channel mode actually in use (refined by the BGC read)."""
         return self._encryption
+
+    @property
+    def write_payload_size(self) -> int:
+        """The most bytes this link takes in one write without response: the app's ``mtuSize``
+        (``MtuConfig.getAvailableMtuSize`` = the ATT MTU - 3, at least 20; ``MtuConfig.java:48-71``).
+        It is the write characteristic's ``max_write_without_response_size`` (bleak: the ATT MTU - 3 on
+        BlueZ >= 5.62, ``maximumWriteValueLength`` on CoreBluetooth), clamped to 20..509 (the app asks
+        for an MTU of 512, ``VM4LightH60A6.T3:736-738``). 20, the app's default, when not connected or
+        when the backend can't say. No I/O."""
+        client = self._client
+        if client is None or not client.is_connected:
+            return _MIN_WRITE_PAYLOAD
+        try:
+            service = next((s for s in client.services if s.uuid == SERVICE_UUID), None)
+            char = service.get_characteristic(WRITE_CHAR_UUID) if service is not None else None
+            size = None if char is None else char.max_write_without_response_size
+        except (BleakError, AttributeError):
+            return _MIN_WRITE_PAYLOAD
+        if isinstance(size, bool) or not isinstance(size, int):
+            return _MIN_WRITE_PAYLOAD
+        return max(_MIN_WRITE_PAYLOAD, min(size, _MAX_WRITE_PAYLOAD))
 
     def update_ble_device(self, ble_device: BLEDevice) -> None:
         """Adopt a fresher BLEDevice (e.g. from the latest advertisement). Used from
@@ -454,7 +483,7 @@ class GoveeConnection:
 
     async def _prepare_session(self) -> None:
         """Refine the encryption mode (BGC read), run the handshake if needed,
-        send post-handshake unlock frames, and mark the session ready."""
+        send post-handshake unlock frames, then the session frames, and mark the session ready."""
         self._reset_session()
         self._drain()
         self._require_client()
@@ -507,6 +536,16 @@ class GoveeConnection:
                     ) from err
                 except GoveeBleTimeout:
                     _LOGGER.debug("%s: no ack for unlock frame (continuing)", self.address)
+        if self._session_frames is not None:
+            for frame in self._session_frames():
+                try:
+                    await self._send_write_verified(frame)
+                except _LinkLost as err:
+                    raise GoveeBleConnectionError(
+                        f"{self.address}: link lost during session setup"
+                    ) from err
+                except (GoveeBleCommandRejected, GoveeBleTimeout) as err:
+                    _LOGGER.debug("%s: session frame not acked (continuing): %s", self.address, err)
 
     async def _handshake(self) -> None:
         """e7 01 -> session key; e7 02 -> confirm. Matches replies by content
@@ -740,15 +779,18 @@ class GoveeConnection:
         return await self._send_write_verified(frame_plaintext)
 
     async def send_unacked(
-        self, frames: list[bytes], *, gap: float = UNACKED_SEND_GAP
+        self, frames: list[bytes] | Callable[[int], list[bytes]], *, gap: float = UNACKED_SEND_GAP
     ) -> None:
         """Stream multi-packet frames (scene uploads) that the device does not
-        ack individually, paced so a proxy's write queue can't drop them."""
+        ack individually, paced so a proxy's write queue can't drop them.
+
+        ``frames`` may be a function of the link's :attr:`write_payload_size`, called once the link
+        is up (after a reconnect too), so frames sized to the MTU fit the link they go out on."""
 
         async def op() -> None:
             await self._ensure_connected_locked()
             self._drain()
-            for frame in frames:
+            for frame in frames(self.write_payload_size) if callable(frames) else frames:
                 await self._send_frame(frame)
                 await asyncio.sleep(gap)
 

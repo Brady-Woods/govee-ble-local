@@ -120,3 +120,19 @@ async def test_scene_upload_end_to_end(
     gaps = [b - a for a, b in itertools.pairwise(stamps)]
     assert all(g >= UNACKED_SEND_GAP * 0.5 for g in gaps), gaps
     assert dev.active_scene == name and dev.state.scene_code == scene.code and dev.state.is_on
+
+
+async def test_graffiti_upload_uses_the_links_mtu(monkeypatch: pytest.MonkeyPatch) -> None:
+    # On a link with an ATT MTU of 247 the 0xA4 frames are 244 bytes long, encrypted whole
+    # (EncryptionManager.c -> AESEncryptionStrategy), then the acked 33 05 04 activation.
+    fake = FakeGovee()
+    fake.write_size = 244
+    dev = _make(monkeypatch, fake)
+    name = _scene_names(dev, 0xA4)[0]
+    scene = load_scenes("H60A6")[name]
+    value = base64.b64decode(scene.param or "")[1:]
+    expected = sf.make_send_bytes_mtu(0xA4, build.COMM_H60A6, value, 244)
+    assert expected != sf.make_send_bytes_mtu(0xA4, build.COMM_H60A6, value, 20)
+    await dev.set_scene_by_name(name)
+    assert fake.received == [*expected, build.scene_activate(scene.code)]
+    assert dev.state.scene_code == scene.code

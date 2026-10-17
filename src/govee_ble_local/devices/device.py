@@ -194,14 +194,16 @@ class Device:
             ble_device,
             encryption=enc,
             unlock_frames=self._unlock_frames if profile.requires_secret else None,
+            session_frames=self._session_frames if profile.relay else None,
             frame_log=frame_log,
             idle_disconnect=IDLE_DISCONNECT_DELAY if idle_disconnect is None else idle_disconnect,
         )
 
     def _learn_pact(self, adv: GoveeAdvertisement | None) -> None:
         """Remember the advertised ``(pact_type, pact_code)``; the app reads the same pair
-        (``BleUtil.parseBleBroadcastPact``) into the device model. Exposed as :attr:`pact`; no frame
-        the library sends depends on it yet. An advertisement without pact info changes nothing."""
+        (``BleUtil.parseBleBroadcastPact``) into the device model. Exposed as :attr:`pact`; it decides
+        whether the 0xAC status read asks for colour groups (:meth:`_wants_color_groups`). An
+        advertisement without pact info changes nothing."""
         if adv is not None and adv.pact is not None:
             self._pact = adv.pact
 
@@ -342,6 +344,22 @@ class Device:
 
     def _unlock_frames(self) -> list[bytes]:
         return [build.secret_check(self._secret)] if self._secret else []
+
+    @staticmethod
+    def _sync_time_frame() -> bytes:
+        """The plugs' ``33 b5`` time sync for now (``SyncTimeController``: [u4be epoch, 1, tzH, tzM])."""
+        ts = int(time.time())
+        return build.plug_sync_time(ts, *_local_tz(ts))
+
+    def _session_frames(self) -> list[bytes]:
+        """A plug's once-per-connection writes after the unlock: the ``33 b5`` time sync, which every
+        plug screen sends in its connect read and waits to be acked (``SyncTimeController`` is an
+        ``AbsOnlyWriteSingleController``, ``super(true)``). gt 43: ``H5083NewDetailRepository.
+        necessaryMessages:323-339``, first; gt 50 / 90: ``BleOpV2.o0:141-171`` / ``BleOpV4.l0:124-147``,
+        after ``aa 06`` and ``aa 07 03`` (which the library reads once per Device instead,
+        ``_readback.read_device_info``); gt 307: ``BleOp4H5089.V:145-163``, first. A rejection or a
+        missing ack is only logged (``GoveeConnection._prepare_session``)."""
+        return [self._sync_time_frame()]
 
     @staticmethod
     def _checked_secret(secret: bytes | None) -> bytes | None:
@@ -562,22 +580,33 @@ class Device:
     async def set_power(self, on: bool) -> None:
         """Switch the device on or off.
 
-        Raises GoveeBleNotSupported without POWER; connection errors propagate. Relay (plug)
-        devices get a best-effort sync-time follow-up whose failure is only logged."""
+        Raises GoveeBleNotSupported without POWER; connection errors propagate. A plug with
+        :attr:`.DeviceProfile.power_resync` then re-reads as its app does (:meth:`_resync_after_power`);
+        a failure there is only logged."""
         self._require(Capability.POWER)
         async with self._zone_power_lock():
             await self._commit(self._power_frames(on), lambda: self._apply_power(on))
-        if self.profile.relay:
-            # Plug relay needs a sync-time follow-up to actuate. The power write already
-            # succeeded and state is applied, so a failure here must neither raise nor undo it.
-            ts = int(time.time())
-            try:
-                await self._conn.send(build.plug_sync_time(ts, *_local_tz(ts)), expect_ack=False)
-            except GoveeBleError as err:
-                _LOGGER.warning(
-                    "%s (%s): relay power written but sync-time follow-up failed: %s",
-                    self.address, self._sku, str(err) or type(err).__name__,
-                )
+        await self._resync_after_power()
+
+    async def _resync_after_power(self) -> None:
+        """gt 50 / 90 (:attr:`.DeviceProfile.power_resync`): after every acked power write the app
+        re-runs its connect read list (``BleOpV2.onEventSwitchV2:380-382`` / ``BleOpV4.onEventSwitchV2:
+        299-301`` -> ``G()`` = ``BleOpV2.o0:141-171`` / ``BleOpV4.l0:124-147``): ``aa 06``, ``aa 07 03``,
+        ``33 b5``, then per-outlet timer and delay reads, which the library does not model. The power
+        write already succeeded and its state is applied, so a failure here neither raises nor undoes
+        it. Other profiles send nothing."""
+        if not self.profile.power_resync:
+            return
+        try:
+            await _readback.read_versions(self, self._read_reply)
+            await self._conn.send(self._sync_time_frame())
+        except (GoveeBleCommandRejected, GoveeBleTimeout) as err:
+            _LOGGER.debug("%s (%s): post-power re-read not answered: %s", self.address, self._sku, err)
+        except GoveeBleError as err:
+            _LOGGER.warning(
+                "%s (%s): power written but the post-power re-read failed: %s",
+                self.address, self._sku, str(err) or type(err).__name__,
+            )
 
     async def turn_on(
         self,
@@ -634,6 +663,8 @@ class Device:
 
         async with self._zone_power_lock():
             await self._commit(frames, apply)
+        if power:
+            await self._resync_after_power()
 
     async def turn_off(self) -> None:
         """Power off; equivalent to ``set_power(False)``."""
@@ -701,15 +732,16 @@ class Device:
         await self._commit(frame, apply)
 
     async def set_segment_brightness(self, indices: Sequence[int], pct: int) -> None:
-        """Set brightness in percent (clamped to 0..100) on selected segments (indices as in
-        :meth:`set_segment_rgb`).
+        """Set brightness in percent (clamped to 1..100; 0 is never sent) on selected segments (indices
+        as in :meth:`set_segment_rgb`). The app's segment slider runs 1..100 (``ViewColorMode.t0:232-235``
+        / ``DelegateColorV2Part.t0:459-462``: ``setProgressRange({1, 100})``).
 
         Raises GoveeBleNotSupported without SEGMENTS or for colour schemes without per-segment
         brightness (e.g. H61A8); GoveeBleInvalidValue for a non-int ``pct`` or a bad index;
         GoveeBleError if a device that reports its own segment count (H6062) does not answer
         that read."""
         self._require(Capability.SEGMENTS)
-        level = max(0, min(100, _check_int(pct, "brightness")))
+        level = _check_pct(pct)
         await self._ensure_segment_count()
         n = self.segment_count
         frame = self._build_or_unsupported(
@@ -898,10 +930,12 @@ class Device:
         await self._commit(build.scene_activate(code),
                            lambda: _fold.apply_scene(self.profile, self._state, code))
 
-    def scene_upload_frames(self, scene: Scene) -> list[bytes] | None:
+    def scene_upload_frames(self, scene: Scene, *, mtu: int = 20) -> list[bytes] | None:
         """The a3/a4 frames that upload ``scene`` to this device (per its profile's scene
-        dialect and supported scene versions), or None when it is activate-only. Pure: no I/O."""
-        return _scene_upload_frames(scene, self.profile.scene_dialect, self.profile.scene_versions)
+        dialect and supported scene versions), or None when it is activate-only. ``mtu`` is the
+        link's write size (``GoveeConnection.write_payload_size``), which only the H60A6's 0xA4
+        graffiti upload uses. Pure: no I/O."""
+        return _scene_upload_frames(scene, self.profile.scene_dialect, self.profile.scene_versions, mtu=mtu)
 
     async def set_scene_by_name(self, name: str) -> None:
         """Upload (if the scene needs it) and activate a bundled scene by name.
@@ -919,11 +953,16 @@ class Device:
         scene = (await async_load_scenes(self._sku)).get(name)
         if scene is None:
             raise GoveeBleUnknownName(f"{self._sku}: unknown scene {name!r}")
-        frames = self.scene_upload_frames(scene)
+        frames = self.scene_upload_frames(scene)   # planned before any I/O: a bad scene sends nothing
+
+        def sized(size: int) -> list[bytes]:
+            # Re-planned for the link it goes out on: the 0xA4 graffiti frames take its MTU.
+            return self.scene_upload_frames(scene, mtu=size) or []
+
         async with self._scene_lock, self._zone_power_lock(), self._read_gate:
             await self._send_pending_unlock()   # before the upload, not between it and the activation
             if frames:
-                await self._conn.send_unacked(frames)
+                await self._conn.send_unacked(sized)
             await self._activate_scene(scene.code)
 
     # -- misc settings ------------------------------------------------------
@@ -1072,10 +1111,20 @@ class Device:
                                lambda: _readback.walk_mechanism_a_direct(self, self._read_reply),
                                self._apply_segments)
 
+    def _wants_color_groups(self) -> bool:
+        """Whether the 0xAC status read asks for the 0xA5 colour groups (``status_color_groups_pact``):
+        always without a gate or before a pact has been advertised, else only for that pact type with
+        at least that pact code (H60A6: ``VM4LightH60A6.J5``)."""
+        gate = self.profile.status_color_groups_pact
+        if gate is None or self._pact is None:
+            return True
+        return self._pact[0] == gate[0] and self._pact[1] >= gate[1]
+
     async def _query_status(self) -> tuple[reassemble.StatusReply, list[bytes], list[bytes]]:
         async with self._read_gate:   # never between a scene's upload and its activation
             await self._send_pending_unlock()   # a secret set on the live session goes first
-            frames = await self._conn.query(build.status_query(full=True), timeout=STATUS_READ_TIMEOUT)
+            frames = await self._conn.query(
+                build.status_query(full=self._wants_color_groups()), timeout=STATUS_READ_TIMEOUT)
         ac = [f for f in frames if f and f[0] == build.PRO_MULTI_AC]
         return reassemble.parse_status(ac, pieces=self.segment_count), ac, frames
 

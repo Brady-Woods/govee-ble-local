@@ -7,12 +7,14 @@ import base64
 from unittest.mock import AsyncMock
 
 import pytest
-from fake_ble import ble_device, status_burst
+from fake_ble import ble_device, status_burst, unacked_via
 
 from govee_ble_local.devices.device import Device, make_device
 from govee_ble_local.devices.profile import PROFILES, profile_for
 from govee_ble_local.exceptions import GoveeBleNotSupported
+from govee_ble_local.identify import GoveeAdvertisement
 from govee_ble_local.models import Capability
+from govee_ble_local.wire import build
 from govee_ble_local.scenes import Scene
 
 
@@ -33,7 +35,7 @@ def _dev(sku: str, *, replies: list[bytes] | None = None) -> Device:
 
     d._conn.send = AsyncMock(side_effect=send)  # type: ignore[method-assign]
     d._conn.send_many = AsyncMock(side_effect=send_many)  # type: ignore[method-assign]
-    d._conn.send_unacked = AsyncMock(side_effect=send_many)  # type: ignore[method-assign]
+    d._conn.send_unacked = AsyncMock(side_effect=unacked_via(send_many))  # type: ignore[method-assign]
     d._conn.query = AsyncMock(side_effect=query)  # type: ignore[method-assign]
     d._sent = sent  # type: ignore[attr-defined]
     return d
@@ -144,17 +146,26 @@ def test_rgb_scheme_per_device() -> None:
         assert _sent(d)[0].hex().startswith(prefix), sku
 
 
-def test_plug_relay_and_sync_time() -> None:
+def test_plug_relay_power_frame_alone() -> None:
     d = _dev("H5080")
     asyncio.run(d.set_power(True))
     s = _sent(d)
-    assert s[0][:2].hex() == "3301" and s[0][2] == 0x11        # relay ON
-    assert s[1][:2].hex() == "33b5"                            # sync-time follow-up
-    # WAS (T7.1): power + sync-time in one all-or-nothing send_mixed (D-13: a sync-time failure
-    # raised and left state un-applied). FIXED: power via send_many, state applied, then
-    # sync-time via send(expect_ack=False) best-effort; frame order unchanged.
-    d._conn.send.assert_awaited_once()                         # type: ignore[attr-defined]
-    assert d._conn.send.await_args.kwargs == {"expect_ack": False}  # type: ignore[attr-defined]
+    assert len(s) == 1 and s[0][:2].hex() == "3301" and s[0][2] == 0x11   # relay ON
+    # WAS: a best-effort, unacked 33 b5 followed every plug power write. It is now sent once per
+    # connection, after the unlock (Device._session_frames), as every plug screen's connect read does.
+    d._conn.send.assert_not_awaited()                          # type: ignore[attr-defined]
+    assert d._conn._session_frames is not None                 # type: ignore[attr-defined]
+
+
+@pytest.mark.parametrize(("pct", "sent"), [(0, 1), (-3, 1), (1, 1), (100, 100), (101, 100)])
+def test_segment_brightness_is_clamped_to_the_sliders_1_to_100(pct: int, sent: int) -> None:
+    # ViewColorMode.t0:232-235 / DelegateColorV2Part.t0:459-462: setProgressRange({1, 100}); before,
+    # the library sent 0 for 0 or below.
+    d = _dev("H60A6")
+    asyncio.run(d.set_segment_brightness([12], pct))
+    frame = _sent(d)[-1]
+    assert frame[:4].hex() == "33051502" and frame[4] == sent
+    assert {s.index: s.brightness for s in d.state.segments} == {12: sent}
 
 
 def test_zone_bar_vs_direct() -> None:
@@ -537,6 +548,50 @@ def test_read_status_populates_device_info() -> None:
     assert d.state.hardware_version == "1.04.03"
     assert d.state.firmware_version == "1.00.41"
     assert d.state.serial_number == "2D:DB:5C:E7:53:F4:74:56"
+
+
+def _status_frames(d: Device) -> list[bytes]:
+    """Every 0xAC request a status read sends (no reply, so the read retries once)."""
+    asked: list[bytes] = []
+
+    async def query(frame: bytes, **_kw: object) -> list[bytes]:
+        asked.append(frame)
+        return []
+
+    d._conn.query = query  # type: ignore[method-assign,assignment]
+    asyncio.run(d._read_status())
+    return [f for f in asked if f[0] == 0xAC]
+
+
+@pytest.mark.parametrize(("pact", "full"), [
+    (None, True), ((1, 1), False), ((1, 0), False), ((2, 9), False), ((1, 2), True), ((1, 3), True),
+    ((1, 9), True),
+])
+def test_h60a6_asks_for_colour_groups_only_on_the_apps_pacts(
+    pact: tuple[int, int] | None, full: bool,
+) -> None:
+    # VM4LightH60A6$afterConnectedSingleReadDeviceInfo$1:158-161: [0x41, 0x30] + 0xA5 if J5(), which is
+    # goodsType 303 with pact type 1 and code >= 2 (Support.supportPartColor4H60A6:434-436). An unknown
+    # pact keeps the colour groups (the library may not have heard an advertisement yet).
+    d = _dev("H60A6")
+    d._pact = pact
+    frames = _status_frames(d)
+    assert len(frames) == 2 and frames == [build.status_query(full=full)] * 2   # the retry asks the same
+    assert frames[0][:6].hex() == ("ac0303" "4130a5" if full else "ac0302" "413000")
+
+
+def test_a_pact_heard_later_changes_the_next_status_request() -> None:
+    d = _dev("H60A6")
+    assert _status_frames(d)[0] == build.status_query(full=True)
+    d._learn_pact(GoveeAdvertisement(sku="H60A6", name="GVH60A6ABCD", encrypted=True,
+                                     broadcast_version=3, pact_type=1, pact_code=1))
+    assert d.pact == (1, 1) and _status_frames(d)[0] == build.status_query(full=False)
+
+
+def test_only_the_h60a6_gates_its_colour_groups_on_the_pact() -> None:
+    gated = {sku for p in PROFILES if p.status_color_groups_pact is not None for sku in p.skus}
+    h60a6 = profile_for("H60A6")
+    assert gated == {"H60A6"} and h60a6 is not None and h60a6.status_color_groups_pact == (1, 2)
 
 
 def test_read_status_retries_once_then_recovers(caplog: pytest.LogCaptureFixture) -> None:

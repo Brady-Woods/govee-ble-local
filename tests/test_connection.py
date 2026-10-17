@@ -219,6 +219,67 @@ async def test_secret_rejection_raises_auth_error(monkeypatch, fast) -> None:
         await c.connect()
 
 
+# -- session frames: once per connection, after the unlock; a refusal changes nothing ----------
+_UNLOCK = frame(0x33, 0xB2, *range(8))
+_SYNC = frame(0x33, 0xB5, 0x6A, 0x49, 0x90, 0x1A, 0x01, 0xF9, 0x00)
+
+
+def _session(monkeypatch, fake: FakeGovee) -> tuple[GoveeConnection, list[int]]:
+    calls: list[int] = []
+
+    def frames() -> list[bytes]:
+        calls.append(1)
+        return [_SYNC]
+
+    return _make(monkeypatch, fake, unlock_frames=lambda: [_UNLOCK], session_frames=frames), calls
+
+
+async def test_session_frames_follow_the_unlock_once_per_connection(monkeypatch, fast) -> None:
+    fake = FakeGovee(encrypted=False)
+    c, calls = _session(monkeypatch, fake)
+    await c.send(frame(0x33, 0x01, 0x11))
+    await c.send(frame(0x33, 0x01, 0x10))
+    assert [f[:2].hex() for f in fake.received] == ["33b2", "33b5", "3301", "3301"]
+    await c.disconnect()
+    await c.connect()                       # a new session sends both again, the provider asked anew
+    assert [f[:2].hex() for f in fake.received[4:]] == ["33b2", "33b5"]
+    assert len(calls) == 2
+
+
+@pytest.mark.parametrize("refusal", ["rejected", "unacked"])
+async def test_a_refused_session_frame_leaves_the_session_ready(monkeypatch, fast, refusal) -> None:
+    fake = FakeGovee(encrypted=False)
+    if refusal == "unacked":
+        fake.no_ack_cmds = {0xB5}
+    else:
+        def reject_sync(client, plain) -> None:
+            client.push(frame(0x33, plain[1], 0x01 if plain[1] == 0xB5 else 0x00), 0.005)
+
+        fake.on_write = reject_sync
+    c, _calls = _session(monkeypatch, fake)
+    await c.connect()                       # no GoveeBleAuthError: only the 33 b2 is the secret check
+    assert c.is_connected
+    await c.send(frame(0x33, 0x01, 0x11))
+    assert fake.received[-1][:2].hex() == "3301"
+
+
+async def test_link_lost_during_a_session_frame_retries_the_session(monkeypatch, fast) -> None:
+    fake = FakeGovee(encrypted=False)
+
+    def drop_first_sync(client, plain) -> None:
+        if plain[1] == 0xB5 and fake.clients.index(client) == 0:
+            client.drop()
+            return
+        client.push(frame(0x33, plain[1], 0x00), 0.005)
+
+    fake.on_write = drop_first_sync
+    c, calls = _session(monkeypatch, fake)
+    await c.connect()
+    assert c.is_connected and len(fake.clients) == 2
+    assert [f[:2].hex() for f in fake.received] == ["33b2", "33b5", "33b2", "33b5"]
+    assert len(calls) == 2
+
+
 async def test_bad_checksum_frames_are_dropped(monkeypatch, fast) -> None:
     fake = FakeGovee(encrypted=False)
 
@@ -370,3 +431,43 @@ async def test_secret_is_masked_in_jsonl_frame_log(
         for field in ("plain", "wire"):
             assert rec[field][4:-2] == "ff" * 17 and checksum_ok(bytes.fromhex(rec[field]))
     assert secret.hex() not in text
+
+
+# -- write_payload_size: the app's mtuSize (ATT MTU - 3), from the write characteristic ---------------
+@pytest.mark.parametrize(("size", "want"), [
+    (None, 20), (20, 20), (64, 64), (244, 244), (509, 509), (514, 509), (5, 20), (True, 20), ("x", 20),
+])
+async def test_write_payload_size_is_the_write_chars_size_clamped(monkeypatch, fast, size, want) -> None:
+    fake = FakeGovee(encrypted=False)
+    fake.write_size = size
+    c = _make(monkeypatch, fake)
+    assert c.write_payload_size == 20                      # not connected: the app's default
+    await c.connect()
+    assert c.write_payload_size == want
+
+
+async def test_write_payload_size_is_20_when_the_backend_cannot_say(monkeypatch, fast) -> None:
+    fake = FakeGovee(encrypted=False)
+    fake.write_size = 244
+    c = _make(monkeypatch, fake)
+    await c.connect()
+    fake.services_error = BleakError("Service Discovery has not been performed yet")
+    assert c.write_payload_size == 20
+
+
+async def test_send_unacked_sizes_frames_for_the_link_they_go_out_on(monkeypatch, fast) -> None:
+    fake = FakeGovee(encrypted=False)
+    fake.write_size = 244
+    c = _make(monkeypatch, fake)
+    sizes: list[int] = []
+
+    def plan(size: int) -> list[bytes]:
+        sizes.append(size)
+        return [frame(0xA3, 0x00, size & 0xFF)]
+
+    await c.send_unacked(plan, gap=0)                      # connects first, then plans
+    await c.disconnect()
+    fake.write_size = 64                                   # the next link negotiated less
+    await c.send_unacked(plan, gap=0)
+    assert sizes == [244, 64]
+    assert [f[2] for f in fake.received] == [244, 64]

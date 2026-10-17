@@ -13,7 +13,7 @@ from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
-from fake_ble import ble_device
+from fake_ble import ble_device, frames_of
 from fake_ble import frame as _frame
 
 from govee_ble_local import LOCAL_NAME_PREFIXES, MANUFACTURER_IDS, scanner
@@ -52,8 +52,8 @@ def _mocked(d: Device, replies: Replies | None = None) -> Device:
     async def send_many(frames: list[bytes]) -> None:
         d._log.extend(("tx", f) for f in frames)  # type: ignore[attr-defined]
 
-    async def send_unacked(frames: list[bytes], **_k: object) -> None:
-        d._log.extend(("up", f) for f in frames)  # type: ignore[attr-defined]
+    async def send_unacked(frames: Any, **_k: object) -> None:
+        d._log.extend(("up", f) for f in frames_of(frames))  # type: ignore[attr-defined]
 
     async def query(frame: bytes, **_k: object) -> list[bytes]:
         d._log.append(("rx?", frame))  # type: ignore[attr-defined]

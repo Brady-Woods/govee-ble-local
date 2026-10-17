@@ -13,7 +13,7 @@ from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
-from fake_ble import ble_device, status_burst
+from fake_ble import ble_device, frames_of, status_burst
 from fake_ble import frame as _frame
 
 from govee_ble_local.devices import _readback
@@ -57,8 +57,8 @@ def _dev(sku: str, replies: Replies | None = None, **profile_overrides: Any) -> 
     async def send_many(frames: list[bytes]) -> None:
         sent.extend(frames)
 
-    async def send_unacked(frames: list[bytes], **_k: object) -> None:
-        unacked.extend(frames)
+    async def send_unacked(frames: Any, **_k: object) -> None:
+        unacked.extend(frames_of(frames))
 
     async def query(frame: bytes, **_k: object) -> list[bytes]:
         queried.append(frame)
@@ -114,8 +114,7 @@ def test_relay_sync_time_payload(monkeypatch: pytest.MonkeyPatch, off: int, tz: 
     monkeypatch.setattr(device_mod.time, "time", lambda: 0x6A49901A)
     monkeypatch.setattr(device_mod.time, "localtime", lambda _ts=None: _Tm(off))
     d = _dev("H5080")
-    run(d.set_power(True))
-    assert _sent(d)[1] == build.plug_sync_time(0x6A49901A, *tz)
+    assert d._session_frames() == [build.plug_sync_time(0x6A49901A, *tz)]
 
 
 # ── WP3-017: register_callback's unsubscribe ──────────────────────────────────────────────
@@ -642,10 +641,10 @@ def test_secret_set_on_a_live_session_is_sent_first(monkeypatch: pytest.MonkeyPa
     secret = bytes(range(1, 9))
     d.set_secret(secret)
     run(d.set_power(True))
-    assert [f[:2].hex() for f in _sent(d)] == ["33b2", "3301", "33b5"]
+    assert [f[:2].hex() for f in _sent(d)] == ["33b2", "3301"]
     assert _sent(d)[0] == build.secret_check(secret)
     run(d.set_power(False))
-    assert [f[:2].hex() for f in _sent(d)[3:]] == ["3301", "33b5"]       # sent once
+    assert [f[:2].hex() for f in _sent(d)[2:]] == ["3301"]               # sent once
 
 
 def test_secret_set_without_a_session_is_left_to_session_setup(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -672,7 +671,7 @@ def test_connect_after_set_secret_sends_the_unlock_once(monkeypatch: pytest.Monk
     run(d.connect())
     assert _sent(d) == []                                            # not a second 33 b2
     run(d.set_power(True))
-    assert [f[:2].hex() for f in _sent(d)] == ["3301", "33b5"]
+    assert [f[:2].hex() for f in _sent(d)] == ["3301"]
 
 
 def test_same_secret_again_sends_nothing_extra(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -221,17 +221,19 @@ def _decode_param(scene: Scene) -> bytes:
 
 
 def scene_upload_frames(
-    scene: Scene, scene_dialect: SceneDialect | None, scene_versions: frozenset[int]
+    scene: Scene, scene_dialect: SceneDialect | None, scene_versions: frozenset[int], *, mtu: int = 20
 ) -> list[bytes] | None:
     """Plan the a3/a4 upload frames that stage ``scene`` on a device, or None -> activate-only.
 
     Pure: takes the scene plus the profile's ``scene_dialect`` / ``scene_versions``. DIY
     (sceneType 5) is dialect-specific; every other type goes through the library table
-    (:func:`scene_upload_params`)."""
+    (:func:`scene_upload_params`). ``mtu`` is the link's write size (ATT MTU - 3,
+    ``GoveeConnection.write_payload_size``); only the 0xA4-MTU graffiti upload (H60A6) uses it, as
+    the app does (``H60A6GraffitiParse.makeBleController:240``: ``MtuConfig.getAvailableMtuSize``)."""
     if not scene.param:
         return None
     try:
-        return _plan_upload(scene, scene_dialect, scene_versions)
+        return _plan_upload(scene, scene_dialect, scene_versions, mtu)
     except _MalformedSceneParam:
         raise
     except GoveeBleInvalidValue as err:
@@ -248,7 +250,7 @@ def _reads_as(cls: Any, value: bytes) -> Any:
         return None
 
 
-def _h60a6_upload(raw: bytes) -> list[bytes] | None:
+def _h60a6_upload(raw: bytes, mtu: int) -> list[bytes] | None:
     """The upload of an H60A6 type-5 (DIY / graffiti) blob, as the app's new-DIY path chooses it, or
     None -> activate-only.
 
@@ -257,8 +259,9 @@ def _h60a6_upload(raw: bytes) -> list[bytes] | None:
     reads it sends it; when none does, r3 fails and the scene is only activated. Each parser is the
     spec's value type for it: a DIY is a ``diy_value`` whose length prefix covers the rest
     (``Pro4H60A6Diy``; 0xA3, commByte 0x58), a graffiti a ``graffiti_value`` (marker 0x20; 0xA4-MTU,
-    commByte 0x58). The value is sent as the catalogue holds it; the app re-serialises what it parsed
-    (``IDiyParse.toBytes``), which is not modelled."""
+    commByte 0x58, frames of up to ``mtu`` bytes: ``Compose4DefWrite4Multi.d:233-246``). The value is
+    sent as the catalogue holds it; the app re-serialises what it parsed (``IDiyParse.toBytes``), which
+    is not modelled."""
     param = _reads_as(_F.H60a6SceneParam, raw)   # lead 0x50, then the value
     value = b"" if param is None else bytes(param.value)
     if not value:
@@ -270,18 +273,18 @@ def _h60a6_upload(raw: bytes) -> list[bytes] | None:
     if scene is not None:
         if scene.is_diy:
             return build.scene_upload_a3(value, build.COMM_H60A6)
-        return build.scene_upload_a4_mtu(value, build.COMM_H60A6)
+        return build.scene_upload_a4_mtu(value, build.COMM_H60A6, mtu=mtu)
     if _reads_as(_F.GraffitiValue, value) is not None:
-        return build.scene_upload_a4_mtu(value, build.COMM_H60A6)
+        return build.scene_upload_a4_mtu(value, build.COMM_H60A6, mtu=mtu)
     return None
 
 
 def _plan_upload(
-    scene: Scene, scene_dialect: SceneDialect | None, scene_versions: frozenset[int]
+    scene: Scene, scene_dialect: SceneDialect | None, scene_versions: frozenset[int], mtu: int
 ) -> list[bytes] | None:
     st = scene.scene_type
     if scene_dialect == "B_h60a6" and st == _SceneType.DIY:
-        return _h60a6_upload(_decode_param(scene))
+        return _h60a6_upload(_decode_param(scene), mtu)
     if scene_dialect == "B_h6052" and st == _SceneType.DIY:
         graffiti = _reads_as(_F.H6052GraffitiParam, _decode_param(scene))   # lead 0x13, then the value
         if graffiti is not None:

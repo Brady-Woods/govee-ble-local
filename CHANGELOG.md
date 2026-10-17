@@ -72,6 +72,13 @@ model, from which the shipped readers are generated).
   detail `Info4Detail` ctor strategy :173-185). Writes set it too. Modeled from the decompiled app.
 - `wire.parse.parse_light_power`: an `aa 01` reply as a light reads it, on only for a byte of 1 (the spec's
   `switch_read_reply.light_is_on`); `parse_power` keeps the raw byte for the plugs' relay mask.
+- `GoveeConnection(session_frames=...)`: writes sent once per connection after the unlock, whose refusal
+  or missing ack is only logged; `GoveeConnection.write_payload_size`, the link's write size (ATT MTU - 3,
+  20..509, 20 when the backend can't say); `send_unacked` also takes a function of that size.
+- `DeviceProfile` fields, keyword-only and defaulted: `power_resync` (gt 50 / 90 plugs, see Fixed) and
+  `status_color_groups_pact` (the pact the 0xAC status read needs before it asks for the 0xA5 colour
+  groups). `scenes.scene_upload_frames` and `Device.scene_upload_frames` take a keyword-only `mtu`
+  (default 20, today's frames).
 
 ### Changed
 - **The generated Kaitai classes are a build product, not committed source.** `src/govee_ble_local/_generated/`
@@ -367,6 +374,34 @@ model, from which the shipped readers are generated).
   tooling only.
 
 ### Fixed
+- **The plugs send the `33 b5` time sync as their app does.** Every plug screen sends it in its connect
+  read and waits for its ack (`SyncTimeController`, an `AbsOnlyWriteSingleController`): gt 43
+  `H5083NewDetailRepository.necessaryMessages:323-339`, gt 50 / 90 `BleOpV2.o0:141-171` /
+  `BleOpV4.l0:124-147`, gt 307 `BleOp4H5089.V:145-163`. The library now sends it once per connection,
+  acked, right after the `33 b2` unlock (`Device._session_frames`); a refusal or no ack is only logged.
+  Before, it went out unacked after every power write and never on connect. After each acked power
+  write, gt 50 (H5082) and gt 90 (H5160 / H5161) re-run their connect read list
+  (`BleOpV2.onEventSwitchV2:380-382` / `BleOpV4.onEventSwitchV2:299-301` -> `G()`), so those plugs
+  (`power_resync`) re-read `aa 06` and `aa 07 03` and re-send `33 b5`; their per-outlet timer and delay
+  reads are not modelled. gt 43 and gt 307 send nothing after a power write. Differences kept: on gt 50
+  / 90 the library reads `aa 06` / `aa 07 03` once per device rather than before `33 b5` on every
+  connect. Source-modelled; not live-verified (whether each plug acks `33 b5` needs the bench).
+- **Per-segment brightness is 1..100, the app's slider range** (`ViewColorMode.t0:232-235`,
+  `DelegateColorV2Part.t0:459-462`: `setProgressRange({1, 100})`). `Device.set_segment_brightness` and
+  `build.segment_brightness` clamp 0 and below to 1 (before: 0 was sent), as `set_brightness` already did
+  for the whole device. Affects the 0x15-scheme segment devices (H60A6, H6047, H6641, H6062).
+- **The H60A6 status read asks for the 0xA5 colour groups only on the pacts the app does**: its
+  request is `[0x41, 0x30]` plus 0xA5 if `J5()`
+  (`VM4LightH60A6$afterConnectedSingleReadDeviceInfo$1.invokeSuspend:158-161`; `VM4LightH60A6.J5:691-697`
+  -> `Support.supportPartColor4H60A6:434-436`: goodsType 303, pact type 1, pact code >= 2). An H60A6
+  advertising pact (1, 1) now gets `ac 03 02 41 30`; (1, >= 2) and a device whose pact hasn't been heard
+  yet keep `ac 03 03 41 30 a5`. A reply without 0xA5 leaves the segments as they were.
+- **The H60A6 graffiti (0xA4) upload is sized to the link's MTU**, as the app sizes it
+  (`H60A6GraffitiParse.makeBleController:240` -> `Compose4DefWrite4Multi.d:233-246` with
+  `MtuConfig.getAvailableMtuSize` = ATT MTU - 3, at least 20). The frames are planned once the link is up
+  (`send_unacked` with a function of `write_payload_size`), so a reconnect re-sizes them. A link that
+  reports no larger size (a BLE proxy, BlueZ before 5.62) keeps today's 20-byte frames. The 0xA3 DIY
+  upload is unchanged.
 - **Kelvin, version text and section count are read as the app reads them** (the spec owner's gap
   batch). All of these are app-matching and source-modelled: they change only values the bench devices
   don't report.

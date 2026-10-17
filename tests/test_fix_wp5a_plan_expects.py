@@ -16,7 +16,7 @@ from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
-from fake_ble import ble_device
+from fake_ble import ble_device, unacked_via
 
 from govee_ble_local.devices.device import Device, make_device
 
@@ -84,7 +84,7 @@ def _device(sku: str, model: _H6062Segments | None = None) -> Device:
 
     d._conn.send = AsyncMock(side_effect=send)  # type: ignore[method-assign]
     d._conn.send_many = AsyncMock(side_effect=send_many)  # type: ignore[method-assign]
-    d._conn.send_unacked = AsyncMock(side_effect=send_many)  # type: ignore[method-assign]
+    d._conn.send_unacked = AsyncMock(side_effect=unacked_via(send_many))  # type: ignore[method-assign]
     d._conn.query = AsyncMock(side_effect=query)  # type: ignore[method-assign]
     d.connect = AsyncMock()  # type: ignore[method-assign]
     d.stop = AsyncMock()  # type: ignore[method-assign]

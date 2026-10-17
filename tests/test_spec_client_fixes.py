@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock
 import pytest
 from conftest import require_optional
 
-from fake_ble import FakeGovee, ble_device, frame
+from fake_ble import FakeGovee, ble_device, frame, unacked_via
 from govee_ble_local.crypto import checksum
 from govee_ble_local.devices.brightness import percent_to_device, percent_to_raw
 from govee_ble_local.devices.device import Device
@@ -42,7 +42,7 @@ def _dev(sku: str, **profile_overrides: Any) -> Device:
 
     d._conn.send = AsyncMock(side_effect=send)  # type: ignore[method-assign]
     d._conn.send_many = AsyncMock(side_effect=send_many)  # type: ignore[method-assign]
-    d._conn.send_unacked = AsyncMock(side_effect=send_many)  # type: ignore[method-assign]
+    d._conn.send_unacked = AsyncMock(side_effect=unacked_via(send_many))  # type: ignore[method-assign]
     d._conn.query = AsyncMock(return_value=[])  # type: ignore[method-assign]
     d._sent = sent  # type: ignore[attr-defined]
     return d
@@ -213,8 +213,10 @@ def test_plug_power_frame_per_goods_type(sku: str, on_frame: str, off_frame: str
         sent = _sent(d)
         assert sent[0][:3].hex() == want, (sku, on)
         assert d.state.is_on is on
-        # The 33 b5 time sync still follows every plug write (batch 10 will make it per goodsType).
-        assert [f[:2].hex() for f in sent[1:]] == ["33b5"]
+        # The 33 b5 time sync is sent once per connection; only gt 50 / 90 re-send it after a power write
+        # (power_resync, after re-reading aa 06 and aa 07 03).
+        resync = sku in ("H5082", "H5160", "H5161")
+        assert [f[:2].hex() for f in sent[1:]] == (["33b5"] if resync else [])
 
 
 def test_h5082_and_h5089_have_their_own_profiles() -> None:

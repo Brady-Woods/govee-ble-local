@@ -16,7 +16,9 @@ import pytest
 from fake_ble import ble_device
 
 from govee_ble_local.devices.device import Device, make_device
-from govee_ble_local.exceptions import GoveeBleConnectionError
+from govee_ble_local.devices.profile import PROFILES
+from govee_ble_local.exceptions import GoveeBleCommandRejected, GoveeBleConnectionError, GoveeBleTimeout
+from govee_ble_local.wire import build
 from test_device_v3 import _STATUS_BURST, _reply
 
 
@@ -174,22 +176,66 @@ async def test_setter_not_blocked_by_in_flight_poll() -> None:
     await task
 
 
-# -- BUG-9/D-13: relay power: acked power, state applied, then best-effort sync-time ----------
-async def test_relay_set_power_sends_power_then_sync_time_in_order() -> None:
-    # WAS (T7.1): one send_mixed([(power, acked), (sync, unacked)]), all-or-nothing.
-    # FIXED: send_many(power) -> apply state -> send(sync-time, expect_ack=False); same bytes/order.
-    d = _dev("H5080")
+# -- relay power: the power frame alone; gt 50 / 90 then re-read and re-sync, as the app does -------
+@pytest.mark.parametrize("sku", ["H5080", "H5083", "H5085", "H5089"])
+async def test_relay_set_power_sends_only_the_power_frame(sku: str) -> None:
+    # WAS: every plug's set_power sent an unacked 33 b5 after the power frame. The app sends it once per
+    # connection (Device._session_frames); gt 43 (H5083NewDetailViewModel.y0) and gt 307
+    # (BleOp4H5089.onEvent4TotalSwitch -> Y()) send nothing after a power write.
+    d = _dev(sku)
     await d.set_power(True)
-    assert len(d._sent) == 2                                     # type: ignore[attr-defined]
-    assert d._sent[0][:3].hex() == "330111"                      # type: ignore[attr-defined]
-    assert d._sent[1][:2].hex() == "33b5"                        # type: ignore[attr-defined]
+    assert len(d._sent) == 1 and d._sent[0][0] == 0x33           # type: ignore[attr-defined]
+    assert d._sent[0][1] in (0x01, 0x02)                         # type: ignore[attr-defined]
     assert d.state.is_on is True
 
 
-async def test_relay_sync_time_failure_does_not_raise_or_undo_state(caplog) -> None:
-    # WAS: a sync-time failure raised from set_power and left state un-applied (D-13).
-    # FIXED: power write succeeded -> state applied; sync-time failure is only a WARNING.
-    d = _dev("H5080")
+def _record_queries(d: Device) -> list[bytes]:
+    reads: list[bytes] = []
+    inner = d._conn.query
+
+    async def query(frame: bytes, **k: Any) -> list[bytes]:
+        reads.append(frame)
+        return await inner(frame, **k)
+
+    d._conn.query = query  # type: ignore[method-assign,assignment]
+    return reads
+
+
+def test_only_plugs_send_the_session_time_sync() -> None:
+    for profile in PROFILES:
+        for sku in profile.skus:
+            d = make_device(ble_device("AA:BB:CC:DD:EE:71", sku), sku)
+            assert d is not None
+            provider = d._conn._session_frames
+            assert (provider is not None) == profile.relay, sku
+            if provider is not None:
+                assert [f[:2].hex() for f in provider()] == ["33b5"]
+            assert profile.power_resync == (sku in ("H5082", "H5160", "H5161")), sku
+
+
+@pytest.mark.parametrize("sku", ["H5082", "H5160", "H5161"])
+async def test_gt_50_90_power_write_rereads_versions_then_syncs_time(sku: str) -> None:
+    # BleOpV2 / BleOpV4.onEventSwitchV2 -> G(): aa 06, aa 07 03, then 33 b5 (acked), after each power write.
+    d = _dev(sku)
+    reads = _record_queries(d)
+    await d.set_power(False)
+    assert [f[:2].hex() for f in d._sent] == ["3301", "33b5"]   # type: ignore[attr-defined]
+    assert reads == [build.soft_version_query(), build.device_info_query(build.INFO_HARD)]
+    await d.turn_on(brightness=None)
+    assert [f[:2].hex() for f in d._sent[2:]] == ["3301", "33b5"]   # type: ignore[attr-defined]
+    assert len(reads) == 4
+
+
+async def test_gt_50_90_reread_follows_only_a_power_write() -> None:
+    d = _dev("H5082")
+    reads = _record_queries(d)
+    await d.turn_on(power=False)                                 # nothing to send
+    assert reads == [] and d._sent == []                         # type: ignore[attr-defined]
+
+
+async def test_gt_50_90_reread_failure_does_not_raise_or_undo_state(caplog) -> None:
+    # The power write succeeded, so its state is applied; a lost link in the re-read is only a WARNING.
+    d = _dev("H5082")
     notified: list[Any] = []
     d.register_callback(lambda s: notified.append(s))
 
@@ -200,9 +246,24 @@ async def test_relay_sync_time_failure_does_not_raise_or_undo_state(caplog) -> N
     caplog.set_level(logging.WARNING, logger="govee_ble_local")
     await d.set_power(True)                                      # must not raise
     assert d.state.is_on is True
-    assert len(d._sent) == 1 and d._sent[0][:3].hex() == "330111"  # type: ignore[attr-defined]
+    assert len(d._sent) == 1 and d._sent[0][:3].hex() == "3301ff"  # type: ignore[attr-defined]
     assert notified
     assert any(r.levelno == logging.WARNING and "link down" in r.getMessage() for r in caplog.records)
+
+
+@pytest.mark.parametrize("error", [GoveeBleTimeout("no ack"), GoveeBleCommandRejected("status 1")])
+async def test_gt_50_90_unanswered_sync_time_is_only_debug(caplog, error: Exception) -> None:
+    d = _dev("H5160")
+
+    async def refuse(frame: bytes, **_k: Any) -> None:
+        raise error
+
+    d._conn.send = refuse  # type: ignore[method-assign,assignment]
+    caplog.set_level(logging.DEBUG, logger="govee_ble_local")
+    await d.set_power(True)
+    assert d.state.is_on is True
+    assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+    assert any("post-power re-read not answered" in r.getMessage() for r in caplog.records)
 
 
 async def test_relay_power_frame_failure_propagates_without_applying() -> None:

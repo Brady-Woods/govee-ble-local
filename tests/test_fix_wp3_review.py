@@ -15,7 +15,7 @@ from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
-from fake_ble import ble_device
+from fake_ble import ble_device, frames_of
 from fake_ble import frame as _frame
 
 from govee_ble_local.devices.device import Device
@@ -55,8 +55,8 @@ def _dev(sku: str, replies: Replies | None = None, **changes: Any) -> tuple[Devi
     async def send_many(frames: list[bytes]) -> None:
         log.extend(("send", f) for f in frames)
 
-    async def send_unacked(frames: list[bytes], **_k: object) -> None:
-        log.extend(("upload", f) for f in frames)
+    async def send_unacked(frames: Any, **_k: object) -> None:
+        log.extend(("upload", f) for f in frames_of(frames))
 
     async def query(frame: bytes, **_k: object) -> list[bytes]:
         log.append(("query", frame))

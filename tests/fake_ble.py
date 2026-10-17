@@ -17,13 +17,13 @@ from __future__ import annotations
 
 import asyncio
 import inspect
-from collections.abc import Callable, Iterator
+from collections.abc import Awaitable, Callable, Iterator
 from typing import Any
 
 from bleak.backends.device import BLEDevice
 from bleak.exc import BleakError
 
-from govee_ble_local.const import BGC_INFO_CHAR_UUID, PSK, SERVICE_UUID
+from govee_ble_local.const import BGC_INFO_CHAR_UUID, PSK, SERVICE_UUID, WRITE_CHAR_UUID
 from govee_ble_local.crypto import checksum, decrypt, encrypt
 
 SESSION_KEY = bytes(range(16))
@@ -68,6 +68,7 @@ class FakeClient:
         self._notify: Callable[[Any, bytearray], None] | None = None
         self._services = _Services(
             device.bgc, duplicate=device.duplicate_bgc_char, uuids=device.gatt_services,
+            write_size=device.write_size,
         )
         self.writes: list[bytes] = []
         self.dead = False  # half-open: writes "succeed" but nothing comes back
@@ -140,18 +141,31 @@ class _Char:
         self.service = service
 
 
+class _WriteChar(_Char):
+    """The control service's write characteristic, with bleak's ``max_write_without_response_size``."""
+
+    def __init__(self, service: _Service, size: object) -> None:
+        super().__init__(WRITE_CHAR_UUID, service)
+        self.max_write_without_response_size = size
+
+
 class _Service:
     """One resolved GATT service. The Govee control service (1910) and the OTA service (1912)
     carry the BGC-info char 2b12 when the device has one; any other service carries nothing."""
 
-    def __init__(self, bgc: bytes | None, *, uuid: str = SERVICE_UUID) -> None:
+    def __init__(self, bgc: bytes | None, *, uuid: str = SERVICE_UUID, write_size: object = None) -> None:
         self.uuid = uuid
         self._bgc = bgc
         has_bgc = bgc is not None and uuid in (SERVICE_UUID, OTA_SERVICE_UUID)
         self.bgc_char = _Char(BGC_INFO_CHAR_UUID, self) if has_bgc else None
+        # The write char only when a test gives it a size (None: the default layout, no write char).
+        has_write = write_size is not None and uuid == SERVICE_UUID
+        self.write_char = _WriteChar(self, write_size) if has_write else None
 
     def get_characteristic(self, uuid: str) -> _Char | None:
         # bleak's BleakGATTService.get_characteristic: the first match in THIS service, never raises.
+        if uuid == WRITE_CHAR_UUID:
+            return self.write_char
         return self.bgc_char if uuid == BGC_INFO_CHAR_UUID else None
 
 
@@ -160,6 +174,7 @@ class _Services:
 
     def __init__(
         self, bgc: bytes | None, *, duplicate: bool = False, uuids: list[str] | None = None,
+        write_size: object = None,
     ) -> None:
         self._bgc = bgc
         # `duplicate`: 2b12 also under the OTA service 1912 (as on some firmwares). `uuids`: the
@@ -167,7 +182,7 @@ class _Services:
         self._duplicate = duplicate
         if uuids is None:
             uuids = [SERVICE_UUID, OTA_SERVICE_UUID] if duplicate else [SERVICE_UUID]
-        self.all = [_Service(bgc, uuid=u) for u in uuids]
+        self.all = [_Service(bgc, uuid=u, write_size=write_size) for u in uuids]
 
     def __iter__(self) -> Iterator[_Service]:
         return iter(self.all)
@@ -228,6 +243,8 @@ class FakeGovee:
         self.gatt_services: list[str] | None = None
         self.services_error: BaseException | None = None  # raised by client.services
         self.bgc_read_chars: list[Any] = []  # the characteristic object of each BGC read
+        # The write characteristic's max_write_without_response_size (None: no write char resolved).
+        self.write_size: object = None
 
     # -- establish_connection stand-in ---------------------------------------
     async def establish(self, _cls: Any, _device: Any, _name: str, **kwargs: Any) -> FakeClient:
@@ -297,3 +314,17 @@ class FakeGovee:
         elif plain[0] == 0xAA:
             reply = self.read_replies.get(plain[1], frame(0xAA, plain[1], 0x01))
             client.push(self._wire(reply, key), 0.005)
+
+
+def frames_of(frames: list[bytes] | Callable[[int], list[bytes]]) -> list[bytes]:
+    """What a ``send_unacked`` fake was given: a frame list, or (scene uploads) a function of the link's
+    write size, resolved with the default 20 as an unknown MTU is."""
+    return list(frames(20)) if callable(frames) else list(frames)
+
+
+def unacked_via(record: Callable[[list[bytes]], Awaitable[None]]) -> Callable[..., Awaitable[None]]:
+    """A ``send_unacked`` fake that hands the resolved frames to ``record`` (e.g. a ``send_many`` fake)."""
+    async def send_unacked(frames: Any, **_k: object) -> None:
+        await record(frames_of(frames))
+
+    return send_unacked

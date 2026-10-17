@@ -128,8 +128,8 @@ class DeviceProfile:
     """Account-locked: with a secret set (``Device.set_secret``), every session sends the ``33 b2``
     unlock right after the handshake."""
     relay: bool = False
-    """Plug power: the goodsType's main-switch frame (:attr:`relay_power`), followed by a best-effort
-    sync-time frame."""
+    """Plug power: the goodsType's main-switch frame (:attr:`relay_power`); every session sends the
+    ``33 b5`` time sync after the unlock (and :attr:`power_resync` re-sends it after a power write)."""
     bar_switch: bool = False
     """H6047: both bars in one 33 36 frame (per-bar buttons; whole-device power is 33 01), read via
     aa 36, and the aa 05 15 reply carries one kelvin per bar."""
@@ -213,6 +213,15 @@ class DeviceProfile:
     """IC count per colour piece (see :attr:`color_readback_live_ic`)."""
     mode_color_parse: ModeColorParse = field(default="rgb_kelvin", kw_only=True)
     """Decoding of the aa 05 colour sub-modes; see :data:`ModeColorParse`."""
+    status_color_groups_pact: tuple[int, int] | None = field(default=None, kw_only=True)
+    """``readback="status"``: the 0xAC status read asks for the 0xA5 colour groups only while the
+    advertised pact is this ``(pact_type, min_pact_code)``: the same pact type and a pact code at least
+    that. None = always. A device whose pact has not been heard keeps asking for them (the app always
+    knows the pact; the library may not)."""
+    power_resync: bool = field(default=False, kw_only=True)
+    """Plug (gt 50 / 90): after every acked power write, re-read ``aa 06`` and ``aa 07 03`` and re-send
+    the ``33 b5`` time sync, as the app re-runs its connect read list then (``BleOpV2`` /
+    ``BleOpV4.onEventSwitchV2`` -> ``G()``). Best effort: a failure is only logged."""
 
     def __post_init__(self) -> None:
         """Validate each field: GoveeBleInvalidValue (a ValueError) on a value no Device can use.
@@ -256,6 +265,11 @@ class DeviceProfile:
             # bool is an int: a mask given as True would otherwise be accepted as bit 0.
             if isinstance(mask, bool) or not isinstance(mask, int) or not 1 <= mask <= 0xFF:
                 raise GoveeBleInvalidValue(f"{where}: {name}={mask!r}")
+        gate = self.status_color_groups_pact
+        if gate is not None and not (
+                isinstance(gate, tuple) and len(gate) == 2
+                and all(isinstance(v, int) and not isinstance(v, bool) and 0 <= v <= 0xFF for v in gate)):
+            raise GoveeBleInvalidValue(f"{where}: status_color_groups_pact={gate!r}")
         if self.color_readback_per_batch < 1:   # a group size of 0 would never finish a read-back
             raise GoveeBleInvalidValue(
                 f"{where}: color_readback_per_batch={self.color_readback_per_batch!r}")
@@ -312,6 +326,11 @@ PROFILES: Final[tuple[DeviceProfile, ...]] = (
         # connect and then keeps the link with an aa 00 heartbeat (not sent here) and its ee 30 pushes
         # (ignored here).
         mode_color_parse="kelvin_15_rgb_kelvin_0d",
+        # The burst asks for the 0xA5 colour groups only on pact (1, >= 2): the request is [0x41, 0x30],
+        # plus 0xA5 if J5() (VM4LightH60A6$afterConnectedSingleReadDeviceInfo$1.invokeSuspend:158-161;
+        # VM4LightH60A6.J5:691-697 -> Support.supportPartColor4H60A6:434-436, goodsType 303 and pact type
+        # 1, code >= 2). A pact (1, 1) H60A6 is a whole-colour device on that screen.
+        status_color_groups_pact=(1, 2),
         # CCT: `15 01 ff ff ff <K> <tint> <mask>` (Bytes.r type 1), ONE frame: whole device = mask
         # 0x1FFF (DelegateColorV2.G0 -> Config.Yt, KelvinConfig.b -> Bytes.C, 7.7.02), per zone =
         # that zone's mask. An RGB pick (whole device, zone or segment) equal to a tint colour in
@@ -587,11 +606,15 @@ PROFILES: Final[tuple[DeviceProfile, ...]] = (
     # (h5080 UiV2.onOffChange:887-890, UiV4.onOffChange:765-768 -> SwitchControllerV2(!open, 15));
     # gt 307 (H5089) sends 33 02 01 / 00 (Ui4H5089.onOffChange:929-946 -> Controller4TotalSwitch). Not
     # modelled: after ON the H5089 app re-applies its cached night-light mode (BleOp4H5089).
+    # Every plug sends the 33 b5 time sync once per connection (Device._session_frames). After each acked
+    # power write gt 50 and 90 re-run their connect read list (BleOpV2.onEventSwitchV2:380-382,
+    # BleOpV4.onEventSwitchV2:299-301 -> G()): power_resync. gt 43 (H5083NewDetailViewModel.y0:144-150)
+    # and gt 307 (BleOp4H5089.onEvent4TotalSwitch:267-310 -> Y():173-185, no 33 b5) send nothing more.
     DeviceProfile(
         skus=("H5082",),
         capabilities=frozenset({_C.POWER}), encryption=Encryption.AES_RC4_PSK,
         requires_secret=True, relay=True, readback="plug", relay_on_mask=0xFF, advert_on_mask=0x03,
-        relay_power="all_outlets",
+        relay_power="all_outlets", power_resync=True,
     ),
     DeviceProfile(
         skus=("H5089",),
@@ -603,7 +626,7 @@ PROFILES: Final[tuple[DeviceProfile, ...]] = (
         skus=("H5160", "H5161"),
         capabilities=frozenset({_C.POWER}), encryption=Encryption.AES_RC4_PSK,
         requires_secret=True, relay=True, readback="plug", relay_on_mask=0x07, advert_on_mask=0xFF,
-        relay_power="all_outlets",
+        relay_power="all_outlets", power_resync=True,
     ),
 )
 
