@@ -70,24 +70,25 @@ def _dev(sku: str, replies: Replies | None = None, **changes: Any) -> tuple[Devi
     return d, log
 
 
-# ── WP3-048: H61A8's aa 05 colour sub-modes follow dreamcolorlightv1 Mode.parseSubMode ─────────
-def test_h61a8_mode_parse_is_kelvin_15_unsigned() -> None:
-    # 0x15 only, read unsigned (SubModeColorV2.parse: BleUtil.getSignedInt masks each byte).
-    assert _profile("H61A8").mode_color_parse == "kelvin_15_unsigned"
+# ── H61A8's aa 05 colour sub-modes: base OpInfo4Detail (goodsType 19 -> rgbiclight AcNewDetail) ────
+def test_h61a8_mode_parse_is_kelvin() -> None:
+    # 0x15 / 0x0b / 0x02 / 0x0d -> SubMode4Color [gradual][kelvin s16be], Kelvin taken when > 0
+    # (base OpInfo4Detail.parseModeValidBytes:766-778; the H6062 parse). WAS kelvin_15_unsigned: the
+    # dreamcolorlightv1 legacy screen, which goodsType 19 never opens.
+    assert _profile("H61A8").mode_color_parse == "kelvin"
 
 
 @pytest.mark.parametrize("sub_mode", [0x0D, 0x0B])
-def test_h61a8_colour_report_other_than_0x15_changes_no_colour(sub_mode: int) -> None:
-    # SubModeColor.parse reads only byte 0: no RGB, no Kelvin. WAS: 0x0d was decoded with the bulbs'
-    # [r, g, b, kelvin] layout, giving color_temp_kelvin=4000 on a device without colour temperature.
+def test_h61a8_colour_report_other_than_0x15_reads_as_gradual_kelvin(sub_mode: int) -> None:
+    # The app reads 0x0d / 0x0b like 0x15: [gradual 0x10][kelvin 0x2030 = 8240], > 0 -> that Kelvin.
     d, _ = _dev("H61A8", {0x05: [_frame(0xAA, 0x05, sub_mode, 0x10, 0x20, 0x30, 0x0F, 0xA0)]})
     d._state.rgb_color = (9, 9, 9)
     run(d._read_polled())
-    assert d.state.rgb_color == (9, 9, 9) and d.state.color_temp_kelvin is None
+    assert d.state.color_temp_kelvin == 0x2030 and d.state.rgb_color is None
 
 
 def test_h61a8_0x15_report_still_carries_its_kelvin() -> None:
-    # SubModeColorV2.parse: [gradual][kelvin s16be]; getColorTemKelvin returns it when > 0.
+    # SubMode4Color default parse: [gradual][kelvin s16be]; taken when > 0.
     d, _ = _dev("H61A8", {0x05: [_frame(0xAA, 0x05, 0x15, 0x01, 0x0F, 0xA0)]})
     run(d._read_polled())
     assert d.state.color_temp_kelvin == 4000 and d.state.rgb_color is None

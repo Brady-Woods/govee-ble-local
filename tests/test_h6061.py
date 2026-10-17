@@ -350,7 +350,8 @@ def test_profile_decodes_only_the_0x0d_colour_report() -> None:
     _frame(0xAA, 0x05, 0x0B, 0x00, 0x0A, 0x8C),                    # another colour sub-mode
 ], ids=["15-04-rgb", "15-01-cct", "15-kelvin", "0b"])
 @pytest.mark.parametrize("before", [
-    DeviceState(rgb_color=(1, 2, 3)), DeviceState(color_temp_kelvin=2700), DeviceState(),
+    DeviceState(rgb_color=(1, 2, 3)), DeviceState(color_temp_kelvin=2700, last_color_temp_kelvin=2700),
+    DeviceState(),
 ], ids=["rgb", "kelvin", "unknown"])
 def test_a_non_0x0d_colour_report_leaves_the_colour_unchanged(
         report: bytes, before: DeviceState) -> None:

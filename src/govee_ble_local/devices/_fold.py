@@ -52,6 +52,13 @@ def apply_zone_power(profile: DeviceProfile, state: DeviceState, zone_power: dic
         state.is_on = any(zone_power.values())
 
 
+def _remember_kelvin(state: DeviceState) -> None:
+    """Keep ``last_color_temp_kelvin`` as the app keeps its Kelvin: it follows ``color_temp_kelvin``
+    whenever that is a colour temperature (> 0), and nothing that clears the mode clears it."""
+    if state.color_temp_kelvin is not None and state.color_temp_kelvin > 0:
+        state.last_color_temp_kelvin = state.color_temp_kelvin
+
+
 def apply_rgb(profile: DeviceProfile, state: DeviceState, rgb: tuple[int, int, int]) -> None:
     """A whole-device RGB write: the colour, or - when the app sends it as a colour temperature
     (``build.rgb_as_kelvin``) - that Kelvin, which is what the device reports (and what the app
@@ -63,6 +70,7 @@ def apply_rgb(profile: DeviceProfile, state: DeviceState, rgb: tuple[int, int, i
         state.rgb_color, state.color_temp_kelvin = None, kelvin
     state.scene_code = None
     apply_zone_kelvin(profile, state, {0: kelvin, 1: kelvin})
+    _remember_kelvin(state)
 
 
 def apply_kelvin(profile: DeviceProfile, state: DeviceState, kelvin: int) -> None:
@@ -71,6 +79,7 @@ def apply_kelvin(profile: DeviceProfile, state: DeviceState, kelvin: int) -> Non
     state.color_temp_kelvin, state.rgb_color = kelvin, None
     state.scene_code = None
     apply_zone_kelvin(profile, state, {0: kelvin, 1: kelvin})
+    _remember_kelvin(state)
 
 
 def apply_scene(profile: DeviceProfile, state: DeviceState, code: int) -> None:
@@ -129,6 +138,7 @@ def apply_zone_kelvin(
     state.color_temp_kelvin = whole
     if whole is not None:
         state.rgb_color = None
+    _remember_kelvin(state)   # the app takes the bars' Kelvin only when they match
 
 
 # -- read-backs -------------------------------------------------------------
@@ -196,6 +206,12 @@ def apply_mode_reply(profile: DeviceProfile, state: DeviceState, reply: bytes) -
 
 
 def apply_mode(profile: DeviceProfile, state: DeviceState, m: Any) -> None:
+    """:func:`_apply_mode`, then :func:`_remember_kelvin`: a report's Kelvin (> 0) is remembered."""
+    _apply_mode(profile, state, m)
+    _remember_kelvin(state)
+
+
+def _apply_mode(profile: DeviceProfile, state: DeviceState, m: Any) -> None:
     """Fold a device's mode into state: active scene, or the colour / colour temperature of the
     solid-colour sub-mode. ``m`` is the spec's ``mode_read``, of an aa 05 reply
     (:func:`parse.mode_reply`) or of the 0xAC 0x05 TLV (:func:`parse.mode_value`).
@@ -217,8 +233,8 @@ def apply_mode(profile: DeviceProfile, state: DeviceState, m: Any) -> None:
         return
     sub = parse.sub_mode(m)
     if profile.mode_color_parse == "kelvin":
-        # H6062: OpInfo4Detail.parseModeValidBytes sends 0x15/0x0b/0x02/0x0d alike to the
-        # SubMode4Color parse and shows the Kelvin only when it is > 0.
+        # H6062 (striplight OpInfo4Detail) and H61A8 (base OpInfo4Detail.parseModeValidBytes:766-778): the
+        # 0x15/0x0b/0x02/0x0d reports go alike to the SubMode4Color parse, Kelvin taken only when > 0.
         kelvin = parse.gradual_kelvin_of(m) if sub in parse.SUBMODE4COLOR_SUB_MODES else None
         if kelvin is not None:
             apply_kelvin_report(state, kelvin)
@@ -241,7 +257,8 @@ def apply_mode(profile: DeviceProfile, state: DeviceState, m: Any) -> None:
         # H60A6: pact_h60a0 h60a1.Info4Detail.Q (:399-430) reads 0x15 with SubMode4Color's default
         # [gradual][kelvin s16be] and 0x0d as [r, g, b][kelvin s16be] (CCT for a Kelvin > 0, else that
         # RGB); 0x04 is the scene (above) and every other sub-mode is "not support!". A 0x15 Kelvin of 0
-        # or below clears the Kelvin here (apply_kelvin_report); the app keeps its last one.
+        # or below clears color_temp_kelvin (apply_kelvin_report); last_color_temp_kelvin keeps the last
+        # one, as the app does.
         if sub == build.SUB_COLOR_15:
             kelvin = parse.gradual_kelvin_of(m)
             if kelvin is not None:
@@ -258,14 +275,14 @@ def apply_mode(profile: DeviceProfile, state: DeviceState, m: Any) -> None:
         if cube is not None:
             state.rgb_color, state.color_temp_kelvin = cube
         return
-    # 0x15 alone: H6641 reads its Kelvin signed (a plain SubMode4Color), H61A8 unsigned (SubModeColorV2.parse,
-    # BleUtil.getSignedInt masks each byte); the default rgb_kelvin parse keeps the raw u2be.
+    # 0x15 alone: H6641 reads its Kelvin signed (a plain SubMode4Color); the default rgb_kelvin parse keeps
+    # the raw u2be.
     signed = profile.mode_color_parse == "kelvin_15"
     kelvin = parse.kelvin_signed_of(m) if signed else parse.kelvin_of(m)
     if kelvin is not None:
         apply_kelvin_report(state, kelvin)
         return
-    if profile.mode_color_parse in ("kelvin_15", "kelvin_15_unsigned"):
+    if profile.mode_color_parse == "kelvin_15":
         return   # the app parses no other colour sub-mode for this SKU (0x0d "is not support")
     # The default "rgb_kelvin" parse: parse_mode_0d_for's 0x0d decoder, kind 2 on every colour scheme.
     mode_0d = parse.cct_0d_of(m)

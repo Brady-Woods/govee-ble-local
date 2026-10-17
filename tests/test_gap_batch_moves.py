@@ -7,13 +7,14 @@ from __future__ import annotations
 
 import base64
 import pathlib
+from typing import Any
 
 import pytest
 from conftest import require_optional
 
 from govee_ble_local import identify, scenes
 from govee_ble_local.devices import _fold
-from govee_ble_local.devices.profile import profile_for
+from govee_ble_local.devices.profile import PROFILES, profile_for
 from govee_ble_local.models import DeviceState
 from govee_ble_local.wire import build, parse, reassemble
 
@@ -54,6 +55,59 @@ def test_every_plug_profile_matches_its_goods_type_in_devices_yaml() -> None:
         assert got == (entry["relay_power"], entry["relay_on_mask"], entry["advert_on_mask"]), (gt, model)
 
 
+# ── devices.yaml: each colour profile's mode_color_parse is the strategy the spec resolves for it ──
+# The goodsType each SKU-keyed profile is written for: its account record's, as profile.py's comments
+# trace it (0 = no cloud goodsType, routed by SKU). Every colour profile must be listed here.
+_PROFILE_GOODS_TYPE = {
+    "H60A6": 303, "H6047": 119, "H61A8": 19, "H6006": 64, "H6008": 64, "H6004": 64, "H6052": 22,
+    "H6641": 247, "H6188": 0, "H6062": 41, "H6061": 51,
+}
+# The spec reuses a library name only where the traced map is exactly that strategy. Its other names the
+# library implements under one of its own: kelvin_pair_15 (the H6047 old detail screen, one Kelvin per bar)
+# is "kelvin_15" on a bar_switch profile, which reads the pair (parse.bar_kelvin_of).
+_LIBRARY_NAME = {"kelvin_pair_15": "kelvin_15"}
+
+
+def _resolve_mode_color_parse(families: list[dict[str, Any]], sku: str, g0: int) -> str:
+    """devices.schema.json client_profile.mode_color_parse: the family by the record's goodsType (by SKU
+    only at 0, no fallback between the two), then assigned_goods_type, then by_goods_type.<gt>,
+    by_model.<SKU>, the family default; pact and firmware branches last."""
+    if g0:
+        fams = [f for f in families if g0 in (f.get("goods_types") or [])]
+    else:
+        fams = [f for f in families if sku in (f.get("models") or [])
+                and (not f.get("goods_types") or 0 in f["goods_types"])]
+    assert len(fams) == 1, (sku, g0, [f["id"] for f in fams])
+    fam = fams[0]
+    # A device_list item's condition is on the record's pact or firmware, which a profile does not carry,
+    # so none may apply to a profiled SKU.
+    assigned = [a for a in fam.get("assigned_goods_type") or []
+                if a["context"] == "device_list" and sku in a["models"] and g0 in a["from_goods_type"]]
+    assert not assigned, (sku, assigned)
+    cp = fam.get("client_profile") or {}
+    by_gt = (cp.get("by_goods_type") or {}).get(str(g0)) or {}
+    by_model = (cp.get("by_model") or {}).get(sku) or {}
+    entry = next(e for e in (by_gt, by_model, cp) if "mode_color_parse" in e)
+    # A profile is pact- and firmware-agnostic: no branch may apply.
+    for e in (by_gt, by_model, entry):
+        assert "mode_color_by_pact" not in e and "mode_color_by_firmware" not in e, (sku, e)
+    return str(entry["mode_color_parse"])
+
+
+def test_every_colour_profile_matches_the_mode_color_parse_devices_yaml_resolves() -> None:
+    yaml = require_optional("yaml", reason="PyYAML reads spec/devices.yaml")
+    families = yaml.safe_load((_ROOT / "spec" / "devices.yaml").read_text())["families"]
+    colour = {sku for p in PROFILES if p.mode_color_parse != "rgb_kelvin" or not p.relay for sku in p.skus}
+    assert colour == set(_PROFILE_GOODS_TYPE)
+    for sku, g0 in _PROFILE_GOODS_TYPE.items():
+        profile = profile_for(sku)
+        assert profile is not None, sku
+        spec_name = _resolve_mode_color_parse(families, sku, g0)
+        assert profile.mode_color_parse == _LIBRARY_NAME.get(spec_name, spec_name), (sku, g0, spec_name)
+        if spec_name == "kelvin_pair_15":
+            assert profile.bar_switch, sku
+
+
 # ── signed Kelvins: per SKU, as the app reads them ───────────────────────────────────────────
 def _fold_mode(sku: str, *mode: int, **start: object) -> DeviceState:
     profile = profile_for(sku)
@@ -63,12 +117,14 @@ def _fold_mode(sku: str, *mode: int, **start: object) -> DeviceState:
     return state
 
 
-def test_h6641_reads_its_0x15_kelvin_signed_and_h61a8_unsigned() -> None:
-    # H6641: a plain SubMode4Color (getSignedShort): 0x8000 reads negative, so not colour temperature.
-    assert _fold_mode("H6641", 0x15, 0x01, 0x80, 0x00, color_temp_kelvin=2700).color_temp_kelvin is None
-    assert _fold_mode("H6641", 0x15, 0x01, 0x0A, 0x8C).color_temp_kelvin == 2700
-    # H61A8: SubModeColorV2.parse (getSignedInt masks each byte): the raw u2be.
-    assert _fold_mode("H61A8", 0x15, 0x01, 0x80, 0x00).color_temp_kelvin == 0x8000
+@pytest.mark.parametrize("sku", ["H6641", "H61A8"])
+def test_the_0x15_kelvin_reads_signed(sku: str) -> None:
+    # H6641 (a plain SubMode4Color) and H61A8 (base OpInfo4Detail): getSignedShort, so 0x8000 reads
+    # negative: not colour temperature, while the last Kelvin is kept, as the app keeps it.
+    st = _fold_mode(sku, 0x15, 0x01, 0x80, 0x00, color_temp_kelvin=2700, last_color_temp_kelvin=2700)
+    assert (st.color_temp_kelvin, st.last_color_temp_kelvin) == (None, 2700)
+    st = _fold_mode(sku, 0x15, 0x01, 0x0A, 0x8C)
+    assert (st.color_temp_kelvin, st.last_color_temp_kelvin) == (2700, 2700)
 
 
 def test_h6047_bar_kelvins_read_signed_and_a_negative_one_is_no_cct() -> None:

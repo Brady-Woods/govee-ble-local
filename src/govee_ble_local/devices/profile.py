@@ -36,18 +36,17 @@ ColorReadBack = Literal["", "mechanism_b", "mechanism_a_direct"]
 #                     wire.parse.parse_mode_rgb_kelvin_tint);
 # "rgb_0d"          = 0x0d only -> [r, g, b], its Kelvin bytes never read; 0x15 and every other colour
 #                     sub-mode is not parsed (H6052: H6052InfoDetail.G; wire.parse.parse_mode_0d_rgb);
-# "kelvin"          = 0x15 / 0x0b / 0x02 / 0x0d all -> SubMode4Color [gradual][kelvin s16be] (H6062);
+# "kelvin"          = 0x15 / 0x0b / 0x02 / 0x0d all -> SubMode4Color [gradual][kelvin s16be], CCT only for
+#                     a Kelvin > 0 (H6062: striplight OpInfo4Detail; H61A8: base OpInfo4Detail);
 # "kelvin_15"       = 0x15 only, its Kelvin read signed (SubMode4Color, BleUtil.getSignedShort); any other
 #                     colour sub-mode is not parsed (H6641, H6047);
-# "kelvin_15_unsigned" = the same, but the Kelvin read unsigned (H61A8: dreamcolorlightv1
-#                     SubModeColorV2.parse, BleUtil.getSignedInt masks each byte);
 # "rgb_kelvin_0d"   = 0x0d only -> [r, g, b, kelvin s16be], kelvin > 0 = CCT; 0x15 and every other
 #                     colour sub-mode is not parsed (H6061: CubeNewInfo4Detail.U);
 # "kelvin_15_rgb_kelvin_0d" = 0x15 -> SubMode4Color [gradual][kelvin s16be], 0x0d -> [r, g, b, kelvin
 #                     s16be] (kelvin > 0 = CCT, else that RGB); any other colour sub-mode is not parsed
 #                     (H60A6: pact_h60a0 h60a1.Info4Detail.Q).
-ModeColorParse = Literal["rgb_kelvin", "rgb_kelvin_tint", "rgb_0d", "kelvin", "kelvin_15",
-                         "kelvin_15_unsigned", "rgb_kelvin_0d", "kelvin_15_rgb_kelvin_0d"]
+ModeColorParse = Literal["rgb_kelvin", "rgb_kelvin_tint", "rgb_0d", "kelvin", "kelvin_15", "rgb_kelvin_0d",
+                         "kelvin_15_rgb_kelvin_0d"]
 
 # How a plug's whole-device power is written (its main switch on the app's detail screen):
 # "outlet0"     = 33 01 11 / 10, the relay-0 encoding (goodsType 43: H5080 / H5083 / H5085, one outlet;
@@ -358,23 +357,23 @@ PROFILES: Final[tuple[DeviceProfile, ...]] = (
     # brightness) / 0xA2 (V1) per-batch frames, segment = (batch_seq-1)*per_batch+i.
     # 15 segments / 3-per-batch = 5 batches. Modeled from source; read back live from the bench
     # H61A8 (2026-10-16: segments 0..14). `polled` covers power/brightness/scene.
-    # The aa 05 mode report (goodsType 19 per the account device-list, one of dreamcolorlightv1
-    # Support.f0's goodsTypes, Support.java:164; Govee Home 7.5.12): ModeController.u
-    # builds dreamcolorlightv1 Mode, whose Mode.parseSubMode sends 0x15 to SubModeColorV2.parse
-    # ([gradual][kelvin u16be]: BleUtil.getSignedInt(.., true) masks each byte, so it never reads
-    # negative; Govee Home 7.7.02 SubModeColorV2.java:564-567, base2light BleUtil.java:285-294; the
-    # critic's finding, pending the spec owner's re-trace) and every sub-mode but 0x04 (scene), 0x0a
-    # (DIY), 0x15 and music (0x11, 0x13, 0x16) - 0x0b and 0x0d included - to SubModeColor.parse, which
-    # reads only byte 0.
-    # So only 0x15 yields a Kelvin, read unsigned, and no report yields an RGB colour (mode_color_parse
-    # "kelvin_15_unsigned"; the spec's cct_read_reply doc traces it).
+    # The aa 05 mode report (Govee Home 7.7.02): goodsType 19 is one of dreamcolorlightv1 Support.f0's
+    # goodsTypes (Support.java:164), which SubLib4BleIot.keys() serves (the legacy SubLib keys only
+    # Support.Q0 = {17, 18, 70, 73}). Its transform builds Model4BleIot, whose t() (:41-46) opens
+    # /rgbic/newdetail = com.govee.rgbiclight.AcNewDetail (pact_rgbiclight__ModuleRouter__Registered:96).
+    # That screen decodes with base OpInfo4Detail.parseModeValidBytes (:766-778): sub-modes 0x15 / 0x0b /
+    # 0x02 / 0x0d go to SubMode4Color, whose default parse (SubMode4Color.java:44-48) reads
+    # [gradual][kelvin s16be] (BleUtil.getSignedShort), and the Kelvin is taken only when > 0. rgbiclight's
+    # ModeParseStrategyConfig installs only music and scene strategies. So mode_color_parse "kelvin", as
+    # H6062 (fd4f794's devices.yaml). The dreamcolorlightv1 Mode.parseSubMode / SubModeColorV2 path is
+    # the legacy AdjustAc screen, which goodsType 19 never opens.
     DeviceProfile(
         skus=("H61A8",),
         capabilities=frozenset({_C.POWER, _C.BRIGHTNESS, _C.RGB, _C.SEGMENTS, _C.SCENES}),
         color_scheme="h61a8", encryption=Encryption.NONE, segments=15,
         scene_versions=frozenset({0, 1, 2, 3}), readback="polled",
         color_readback="mechanism_b", color_readback_per_batch=3, gradual=True,
-        mode_color_parse="kelvin_15_unsigned",
+        mode_color_parse="kelvin",
     ),
     # H6006 / H6008 — legacy bulbs: plaintext, 0x0d scheme, type-1 rgb scene upload (version {1}).
     # The aa 05 mode report (Govee Home 7.7.02): bulblightv3 / bulblightv1 pact Model -> bulblight

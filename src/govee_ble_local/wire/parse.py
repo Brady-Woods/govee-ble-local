@@ -268,13 +268,10 @@ def scene_of(m: Any) -> int | None:
 
 
 def kelvin_of(m: Any) -> int | None:
-    """:func:`parse_kelvin` of a ``mode_read``: ``cct_read_reply.kelvin``, read UNSIGNED. That is the H61A8's
-    reading in Govee Home 7.7.02 (the spec's ``cct_read_reply`` doc, which traces it): dreamcolorlightv1
-    ``SubModeColorV2.parse`` (split_rgbiclight, SubModeColorV2.java:564-568) takes
-    ``BleUtil.getSignedInt(new byte[]{b1, b2}, true)``, which, despite its name, masks each byte
-    (``& 255``; base2light BleUtil.java:285-302), so two bytes never read negative. The SKUs whose app
-    reads the 0x15 Kelvin signed use :func:`kelvin_signed_of` (H6641), :func:`gradual_kelvin_of` (H60A6,
-    H6062) or :func:`bar_kelvin_of` (H6047)."""
+    """:func:`parse_kelvin` of a ``mode_read``: ``cct_read_reply.kelvin``, the raw u2be. The default
+    ``rgb_kelvin`` parse, which no curated SKU uses: every curated app reads the 0x15 Kelvin signed, through
+    :func:`kelvin_signed_of` (H6641), :func:`gradual_kelvin_of` (H60A6, H6062, H61A8) or
+    :func:`bar_kelvin_of` (H6047)."""
     if sub_mode(m) != SUB_COLOR_15:
         return None
     return int(m.rest.kelvin)

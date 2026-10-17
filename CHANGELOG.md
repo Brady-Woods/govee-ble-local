@@ -63,6 +63,13 @@ model, from which the shipped readers are generated).
   (`33 01 FF / F0`) and `plug_total_switch` (`33 02 01 / 00`), with `RELAY_ALL_ON` / `RELAY_ALL_OFF` and
   `CMD_TOTAL_SWITCH`; the `ModeColorParse` value `"kelvin_15_rgb_kelvin_0d"`; and
   `wire.reassemble.StatusReply.mode`, the 0xAC reply's 0x05 TLV (see Changed).
+- `DeviceState.last_color_temp_kelvin`: the colour temperature the device last reported or was set to
+  (> 0), kept while it is in another mode, as the app keeps its Kelvin. `color_temp_kelvin` still means
+  "in colour-temperature mode" and is cleared as before, so Home Assistant's colour mode is unchanged. A
+  report with a Kelvin of 0 or below (H60A6, H6062, H6641, H61A8) keeps it, as `SubMode4Color` takes a
+  Kelvin only when it is > 0 (`OpInfo4Detail.parseModeValidBytes:766-778`; pact_h60a0 h60a1
+  `Info4Detail.Q:399-406`); on H6047 it follows the bars only while both report the same Kelvin (h6047
+  detail `Info4Detail` ctor strategy :173-185). Writes set it too. Modeled from the decompiled app.
 - `wire.parse.parse_light_power`: an `aa 01` reply as a light reads it, on only for a byte of 1 (the spec's
   `switch_read_reply.light_is_on`); `parse_power` keeps the raw byte for the plugs' relay mask.
 
@@ -137,7 +144,11 @@ model, from which the shipped readers are generated).
     - the analyzer's mode-reply exemption uses `mode_read_selector.request` and `mode_read.scene_code`.
     These are byte- and state-identical (equivalence run against f182c20, and the bench captures).
   - `devices.yaml`'s h5080 `by_goods_type` now pins the plug profiles' `relay_power`, `relay_on_mask`
-    and `advert_on_mask` (a drift test, keyed by its `models`).
+    and `advert_on_mask` (a drift test, keyed by its `models`). A second drift test checks every colour
+    profile's `mode_color_parse` against the strategy `devices.yaml` resolves for its goodsType (the family
+    by the record's goodsType, by SKU only at 0; then `assigned_goods_type`; then `by_goods_type`,
+    `by_model`, the family default, pact and firmware branches). The spec's `kelvin_pair_15` (H6047) is the
+    library's `"kelvin_15"` on a bar-switch profile.
   - Still left for a lockstep spec change: the `mode_read` 0x04 switch case, the `command` enum's 0x02
     member, `pro_type` 0xA6, the root scan-record walk and the guard on `status_reply` itself.
   An equivalence run against the previous code found no other difference: the writers, every bundled scene's
@@ -364,8 +375,14 @@ model, from which the shipped readers are generated).
   - H6047's two bar Kelvins are read signed (`cct_read_reply.kelvin_signed` / `kelvin_right_signed`;
     h6047 `Info4Detail` D0/E0 `getSignedShort`). A negative bar Kelvin is treated as "not in colour
     temperature", like 0.
-  - H61A8 keeps the unsigned reading (`SubModeColorV2.parse`: `BleUtil.getSignedInt` masks each byte),
-    through a new `mode_color_parse` value, `"kelvin_15_unsigned"`.
+  - H61A8's colour reports are read as its screen reads them, with `mode_color_parse` `"kelvin"` (as
+    H6062 and fd4f794's `devices.yaml`). goodsType 19 opens the rgbiclight `AcNewDetail`
+    (dreamcolorlightv1 `SubLib4BleIot` -> `Model4BleIot.t:41-46`), whose base
+    `OpInfo4Detail.parseModeValidBytes:766-778` sends 0x15, 0x0b, 0x02 and 0x0d alike to `SubMode4Color`:
+    `[gradual][kelvin s16be]`, colour temperature only for a Kelvin > 0. Before, only 0x15 gave a Kelvin, read
+    unsigned (dreamcolorlightv1 `SubModeColorV2.parse`), which is the legacy AdjustAc screen goodsType 19
+    never opens. Modeled from the decompiled app; not hardware-verified (the bench H61A8 rejects the
+    library's colour write, so it sent no colour report).
   - Device-info version text is the spec's `version3.text`, each byte read signed
     (`Compose4BaseInfoSingleRead.v:363-368`, as chosen), so a byte of 0x80 or more renders negative.
   - The `aa 41` section count's `sectionNum` is a signed byte (`section_count_read`). The device already
@@ -484,10 +501,8 @@ model, from which the shipped readers are generated).
   65454), since `CubeNewInfo4Detail.U` decodes only the 0x0d report; and that report's Kelvin is a signed
   short (`BleUtil.getSignedShort`), so 0x8000 or more reads as RGB, not a 32768 K colour temperature.
   Modeled from the decompiled app; not hardware-verified.
-- Other mode reports: on H61A8 an `aa 05 0d` report no longer sets an RGB colour or a Kelvin (its
-  `Mode.parseSubMode` reads a Kelvin only from 0x15, `SubModeColorV2.parse`, unsigned: its
-  `BleUtil.getSignedInt(.., true)` masks each byte, the spec-client critic's 7.7.02 finding, pending the
-  spec owner's re-trace); H6062 reads 0x0b / 0x02 / 0x0d
+- Other mode reports: on H61A8 an `aa 05 0d` report no longer sets an RGB colour (it is a
+  `SubMode4Color` `[gradual][kelvin s16be]` report, see the H61A8 entry above); H6062 reads 0x0b / 0x02 / 0x0d
   with the `SubMode4Color` parse (`OpInfo4Detail.parseModeValidBytes`); H6641 and H6047 ignore 0x0d
   (`Info4Detail.parseModeValidBytes`). A scene report clears stale colour state and a colour-temperature
   report of 0 clears the Kelvin. Modeled from the decompiled app. A colour-temperature report of 0 clearing
