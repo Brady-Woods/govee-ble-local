@@ -67,6 +67,9 @@ model, from which the shipped readers are generated).
   `switch_read_reply.light_is_on`); `parse_power` keeps the raw byte for the plugs' relay mask.
 
 ### Changed
+- The test coverage floor in `scripts/check.sh` is now 95% of statements and branches (`--cov-branch`;
+  was 85% of lines), the same gate hass-govee-ble-local applies to the integration. Coverage today is
+  98% with branches. Development tooling only.
 - **The generated Kaitai classes are a build product, not committed source.** `src/govee_ble_local/_generated/`
   is gitignored. An in-tree PEP 517 backend (`_build_backend/govee_build_backend.py`, `[build-system]
   backend-path`) wraps setuptools and runs `tools/gen_kaitai.sh` before every sdist, wheel and editable

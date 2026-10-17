@@ -21,19 +21,20 @@
 #      (needs network: skipped with a message when offline, unless CI=true, where it is
 #      mandatory). It deliberately does not scan the CI venv's own tooling (pip, setuptools,
 #      pytest, ...), whose advisories are unrelated to what this package ships.
-#   6. pytest with a coverage floor over the package (only the Kaitai-generated
-#      _generated/ readers are omitted, via [tool.coverage.run])
+#   6. pytest with a coverage floor over the package, statements and branches (the same
+#      gate as hass-govee-ble-local's scripts/check.sh: 95%, --cov-branch). Only the
+#      Kaitai-generated _generated/ classes are omitted, via [tool.coverage.run]
 #
 # Env overrides: PYTHON  (default python3)
 #                VENV    (default .venv-check)
-#                COV_MIN (default 85)
+#                COV_MIN (default 95, matching hass-govee-ble-local)
 #                CI      (set to "true" to make the pip-audit network check mandatory)
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 PYTHON="${PYTHON:-python3}"
 VENV="${VENV:-.venv-check}"
-COV_MIN="${COV_MIN:-85}"
+COV_MIN="${COV_MIN:-95}"
 
 echo ">> generate the Kaitai read-write classes from spec/*.ksy"
 # gen_kaitai.sh itself requires the pinned JVM compiler for this build (no JS fallback).
@@ -66,8 +67,8 @@ else
   pip-audit .
 fi
 
-echo ">> pytest (coverage gate: >= ${COV_MIN}% of pure-logic modules)"
-pytest --cov=govee_ble_local --cov-report=term-missing --cov-fail-under="${COV_MIN}"
+echo ">> pytest (coverage gate: >= ${COV_MIN}% statements+branches)"
+pytest --cov=govee_ble_local --cov-branch --cov-report=term-missing --cov-fail-under="${COV_MIN}"
 
 echo ""
 echo "ALL QUALITY GATES PASSED (govee-ble-local)"
