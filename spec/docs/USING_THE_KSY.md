@@ -152,6 +152,11 @@ The grammar is parse-oriented but the write side is symmetric — build the same
 describes and append the BCC. For the multi-packet colour **write** and scene uploads, the grammar even
 models the value layout (`color_strip_write`, the scene-value types) so you can serialize from the spec.
 
+A single read request has its own sized types: `read_request_frame(selector_len)` is the whole
+`[AA][command][selector…][00…][BCC]` frame the app builds (`BleUtils.p(0xAA, cmd, ext)`), and
+`read_request_sized(selector_len)` its 18-byte body. Pass the real selector bytes only: the zeroed body
+stream supplies the fill, and `checksum` is the BCC above.
+
 ---
 
 ## 6. What the ksy resolves for you, and the few things it can't
@@ -187,12 +192,22 @@ a value, you never hand-parse:
   H6188 and the 0x0d bulbs H6006/H6008 `[R,G,B, kelvin_be, tint RGB]` with `is_cct` = kelvin≠0 (from
   `mode_0d_kind`: `cct`/`rgb`/`rgb_kelvin_tint`).
 - **`color_group_read(record_count, has_brightness)`** — 4-byte vs 3-byte records (from `has_brightness`).
+- **`color_group_direct_frame(record_count)`** — a whole `aa a5 <group>` direct reply frame
+  (Controller4ColorInfoByGroup: H6047 / H6641 / H6062 / H6061, H60A6 outside its 0xAC burst; `aa a2`
+  for colour-only families, so check `command`). The frame path's 0xA5 case is H61A8's batch, so read
+  this reply from the frame bytes with the group size.
+- **`color_group_status_counted(piece_count, group_size, has_brightness)`** — an 0xAC TLV `0xA5` value read
+  with the H60A6 screen's per-group record count (`record_count`: `group_size`, the remainder in the last of
+  `ceil(piece_count / group_size)` groups), from `devices.yaml` `segments` and a group size of 4.
 - **Scene-value top-level type** — pick `graffiti_value`/`diy_value`/`rgbic_scene_value`/… by
   `commByte`/`sceneType` (in the *frame*, not the value buffer); once picked, internals are fully switched
   (`diy_sub_effect`, the h60a6 splitter).
 
 So the client's only "decision" is reading a `client_profile` field and passing it in — the branch runs inside
 the ksy. `govee_reference.py` shows this wiring (`parse_color_group`, `build_op15_color`, `load_profiles`).
+`load_profiles` keys each family's `client_profile` the way the app routes a device-list record: by its
+cloud `goodsType` when that is non-zero, by its SKU only at `goodsType` 0 (`profile_for(profiles, sku,
+goods_type)` does the lookup). A SKU-only map is wrong for the SKUs several families list, e.g. H6102.
 
 ---
 

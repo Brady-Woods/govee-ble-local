@@ -670,6 +670,128 @@ model, from which the shipped readers are generated).
   zeroes every data byte.
 
 ### Spec
+- `devices.yaml` striplight `color_temp_write` cites the BLE builder the colour-tab Kelvin slider runs
+  (`ColorViewModel.U` -> `ColorModeControllerConfig.c` -> `Config.Yt` -> `Bytes.r`). It used to cite
+  `ColorControllerConfig.b`, which builds the IoT command. The frame bytes are unchanged.
+- `devices.yaml` dreamcolorlightv1: a comment records that `color_scheme: h61a8` (the 0x0b write) describes
+  only colour version 3 (17 / 18 below their firmware gates, old H6163 / H6117, part brightness off). The 13
+  goodsTypes 71 to 262 send the h60a6 0x15 frames. `color_scheme` is per family, so the value stays.
+- `devices.yaml` now catalogues the light families and goodsTypes that Govee Home 7.7.02 routes but the file
+  did not model: 148 more light goodsTypes (113 -> 261 non-zero) and 205 more SKUs.
+  - How it was traced and checked:
+    - Each family was traced in the complete 7.7.02 decompile from its routing (PFD module, SubLib keys,
+      `Model.t`) through the control screen's connect reads, mode parser and colour builders, with every claim
+      cited `path:line`.
+    - Each trace was then re-traced independently from both ends before it went in. Corrections from that pass
+      are applied, and every Java citation resolves (4244 citations).
+  - 40 new families:
+    - pact_rgbiclight: `chassislightv1` (11 / 162) and `h7090` (44 / 127).
+    - pact_bulblightstringv1: `bulblightstringv2` (35 / 148 / 49 / 91).
+    - pact_hollowlamp: `straightfloorlamp` (30 / 69 / 312 / 377).
+    - pact_h6061: `h6069` (284). The cubelight screen sends it whole-device 0x0d frames, so it is its own
+      entry.
+    - pact_floorlamp: `h6071` (57 / 67), `h60b1` (300), `h60b0` (301).
+    - pact_h6079: `h6079` (156 / 209 / 376), `h6020` (210), `h6022` (249), `h1741` (365).
+    - pact_h6840: `h6840` (278 / 325 / 381 / 382) and `h6609` (173 / 181 / 260 / 362 / 374 / 378 / 392 / 398).
+    - pact_h70b1: `h70b3` (229 / 230 / 231 / 255 / 256), `h6800` (272), `h70b6` (329 / 341), `h70dx`
+      (267 / 268 / 269).
+    - pact_h6099: `pact_h6099` (191 / 203 / 253 / 273 / 327 / 336).
+    - pact_outdoorlight: `h7040` (36), `h7080` (45 / 55 / 56), `h7056` (304), `h7086` (293).
+    - pact_h7050: `h7050`, `h7057`, `h1630`, `h7045` and `h7020`, all 42 of its goodsTypes.
+    - pact_h7075: `h7075`, `h7078`, `h3751`, `h7072`, `h7076`, `h707a`, `h3700`, all 9 of its goodsTypes.
+    - pact_fanlight: `fanlight` (359 / 368), including the fan opcodes (0x31).
+    - pact_h6092: `h6092` (13 projector goodsTypes).
+    - pact_h6630: `h6630` (285 / 286). Its control screen is IoT-only.
+    - `h3a5x` (386) and `h682021` (280) are `untraced`, as h604a is: their feature splits are not in the
+      capture.
+  - Further goodsTypes and SKUs on existing families:
+    - `striplight`: H610A (80) and H610B (114) run the same screen and parser as H6062.
+    - `h6061`: 96 / 97 / 121 / 163 / 228. Panel counts and CCT mask widths differ per goodsType.
+    - `dreamcolorlightv1`: the 13 further SubLib4BleIot keys, 71 to 262, all `kelvin`. AdjustAcV3 is never
+      launched in 7.7.02.
+    - `bulblightv3`: the R-prefixed SKUs (R1501, R14A1, R14C2, R1401, R14C0, R14C1). They route by goodsType
+      to the same screen.
+    - `h61d3` 263: the 0xAC status read and its TLV 0xA5 record.
+  - New strategies:
+    - `rgb_kelvin_15`: H6071 / H6075 read the rgb_kelvin_0d body on sub-mode 0x15.
+    - `kelvin_14_15` and `gradual_14`: straightfloorlamp's colour sub-mode is 0x14.
+    - `bri_rgb_pair_15`, with the new decode `bri_rgb_pair`: H7061's two [brightness][r, g, b] head records.
+  - `devices.schema.json` accepts the new strategy and decode names, sub-mode "0x14", and `power_live`
+    `heartbeat_aa33`, the aa 33 left / right heartbeat of H610A.
+  - `encryption: secret_key_pairing` is set only where the control screen presents 0xB2 on connect: h6071,
+    fanlight from firmware 1.00.20 / 1.00.11, and h6630's square path. A secret used only by pairing, group or
+    room control is `none`, as for h6061 and striplight.
+- Frame-audit section E: the spec forms the library still builds or decodes by hand. Each was traced in the
+  Govee Home 7.7.02 decompile and checked by an adversarial reviewer. Additive only: 9 standalone types wired
+  into no dispatch, and value instances on existing types. No `pos` instances, so a written type is never
+  re-written from them. No enum is applied, no `switch-on` case is added, and no existing field or expression
+  changes. The harness (2,006,142 cases) shows 0 differences, and both branches' suites pass (2053 each).
+  - Requests:
+    - `read_request_sized(selector_len)` and `read_request_frame` write `aa <cmd> <selector...>` with the zero
+      fill the app's frames carry.
+  - Segment masks:
+    - `segment_mask(segment_count, mask_cap)` gives the app's width rule (2 bytes up to 16 segments, else
+      ceil(n/8), capped per body) and the per-segment bits, LSB first.
+    - `op15_brightness_wide.mask_cap` (14) and `color_rgbic_0b_wide.mask_cap` (13).
+  - Writes:
+    - `single_command_typed` types every 0x33 write body, including `33 B2` secret, `33 A3` and `33 14`
+      gradual. `single_command` itself is unchanged; the in-place cases are in the lockstep branch.
+  - Mode reports:
+    - `mode_read.sub_mode` is the `sub_mode` enum view of the byte. `mode_read.is_submode4color` covers
+      0x15 / 0x0b / 0x02 / 0x0d, as `OpInfo4Detail.x` hands them to SubMode4Color.
+    - `mode_read_params` exposes the raw params.
+    - `cct_read_reply.is_cct_positive` and `mode_color_0d_typed.is_cct_kelvin_positive` give the default
+      SubMode4Color rule, signed kelvin > 0.
+  - Status bursts:
+    - `color_group_status_counted(piece_count, group_size, has_brightness)` counts a 0xA5 group's records
+      from its group_index, as the app does.
+    - `status_tlv.total_len` and `status_device_info.app_decodes` (selectors 0x10 / 0x11).
+  - The `aa a5 <group>` direct reply:
+    - `color_group_direct_frame(record_count)` reads it, keeping the padding so it round-trips.
+  - Plugs:
+    - `switch_read_reply.relay0_is_on` .. `relay7_is_on`.
+    - `any_relay_is_on`, `any_relay_0_1_is_on` and `any_relay_0_2_is_on`: the per-goodsType read and
+      heartbeat rules.
+  - IC count:
+    - `ic_segment_read.ic_count_byte_order_suspect` (signed count >= 0x1000) and `ic_count_checked`.
+  - Library-scene upload validators, so a failed check can make a scene activate-only as the app does:
+    - `scenes_graffiti_check` mirrors ShareDiy.isValidGraffitiBytes exactly: size >= 9, the 0x01 lead and
+      the group-header walk.
+    - `rgb_scene_value.is_valid` mirrors ScenesRgb.isValidProtocolBytes.
+  - Held back as lockstep (they change what existing readers return): the single_command params cases,
+    status_tlv 0x07 -> status_device_info and 0x05 -> mode_read, and the sub_mode enum applied to
+    mode_read's field. They are measured on a separate branch for the library owner.
+- `devices.yaml`: non-colour data and citations that the complete Govee Home 7.7.02 decompile contradicts
+  are corrected. Every item was re-read in the code, and every Java citation in the file now resolves
+  (`file:line` within the file).
+  - `delivery`: 42 families move from `base_apk` to `feature_split`. 7.7.02 ships them in on-demand
+    pact_* splits (pact_rgblight, pact_rgbiclight, pact_bulblightstringv1, pact_hollowlamp, pact_plugnew,
+    pact_h705a, pact_h70b1, pact_tvlightv4, pact_h6099, pact_h604a), mapped by goodsType or SKU in
+    `base2home/pfd/Config.b()`. Each line names its module and Config line. h1162 stays `base_apk`: no
+    module claims its goodsTypes. The schema enum is unchanged; its description now says where the mapping
+    lives.
+  - h7004 `red_blue` is cmd 0x0d with payload `[red, blue]`, not 0x01. The plant screen writes
+    `33 0d <red> 01` and reads `aa 0d` at connect. The 1/2/3 codes of the legacy SubModeRedBlue classes
+    are never written. h7017 gains the same opcode.
+  - h6185: the `mic` opcode entry is removed. Mic is mode sub-mode 0x05 (`33 05 05 01`), and 7.7.02 has
+    no rhythm-point controller.
+  - tvlightv1: the sub-modes were right, but only the legacy `Mode` (0x0a / 0x0d) was cited. Scene 0x04
+    and music 0x0e are what the goodsType-12 control screen writes, now cited. `segment_limit` (0x0e,
+    `ControllerLimit`) gains its payload and read.
+  - h61d3: the connect switch is `VM4Light.d0` on `H61D3Support.l0` (goodsType 263), not `f0`, which is
+    goodsType 299. The per-group read is pieces = ceil(IC / 5), groups = ceil(pieces / 4)
+    (`VM4Light.w5` / `x5`), not "group count = ceil(IC / 5)". The library already reads 4 records per
+    group.
+  - bulblightv3: `checkSupportH6005Fuc` does pick H6001's colour sub-mode (0x0d when it holds, else
+    0x02, on the h6001 automation and effect paths). It never applies to H6006 / H6008.
+  - `secret` and the scene-dispatch sources: line numbers and field names updated to 7.7.02
+    (`UrlConstants` p / y / f386y0, `Constant` e / f, `DefInfo` :106, `AbsPairAc4SecretV1` T1 /
+    onEventSecretKey, `SecretKeyConfig` in base2home/scenes, `Diy.parseScenes4Diy` :95, `DiyGraffitiV3.a`
+    :128). The matching §18.5 text in `GOVEE_BLE_GATT_PROTOCOL.md` is corrected too.
+- `govee_reference.load_profiles` follows the app's family routing: cloud goodsType when non-zero, SKU only
+  at goodsType 0. It used to map each SKU to the last family that listed it (H6102 -> dreamcolorlightv2).
+  It now returns `{goodsType | goodsType-0 SKU: client_profile}`, rejects a key two families claim, and
+  `profile_for(profiles, sku, goods_type)` does the lookup. The self-test checks the H6102 and H6001 routes.
 - `devices.yaml` now records every light goodsType's colour-report strategy: how its Govee Home 7.7.02 control
   screen decodes the colour sub-modes 0x15 / 0x0d / 0x0b / 0x02 of a mode report it gets over BLE (the aa 05
   reply, or the 0xAC TLV 0x05).

@@ -192,7 +192,7 @@ field, not the commByte**. Version-10 is also the branch that can escalate to `0
 > - **H60A6 DIY** (`Pro4H60A6Diy.d:171`): `[totalLen(u16LE), layerSize, bgColorSize, {R,G,B}×bgColorSize, bgBrightness]` + per-layer `[layerLen(u16LE), subEffectId, sub-effect body]`. The **sub-effect body is a discriminated union on `subEffectId`** (`Layer.b`, `.../h60a6/diy/protocol/*`): `1 LiuDong4Area (flow/zone), 2 LiuDong4Line (flow/line), 3 KuoSan (diffuse), 4 XuanZhuan (rotate), 5 SuiJiHuXi (random breathing), 6 SuiJiLiuXing (random meteor), 7 SuiJiJianBian (random gradient), 8 Fade, 9 HuXi (breathing), 10 ShanShuo (blink/twinkle)` — pinyin = decompiled class name, English = translation. All but LiuDong4Line = `[fixed params (N bytes: 14/8/5/3/6/3/2/2/2 per id)][colorCount(u1)][colorCount × RGB]`; LiuDong4Line = `[i,dir,on][segCount(u1)][segCount B][l0,l1,r,t,s][colorCount(u1)][colorCount × RGB]`.
 > - **H6052** (`DiyGraffitiV3.a:154`): `[brightness, R,G,B, layerCount]` + per-layer `[(layerSize-2)(u16LE), speed, action, priority, nColors, {count,R,G,B, idx×count}×nColors]`.
 > - **dialect-A rgbic** (parser `ParamsV2.RgbICEffect:967`; `ScenesRgbIC.f:3337` is only a length-validator): `[effectCount(u1)]` + per-effect `[subLen(u1), record]`, record = `[style(nibbles), mode, mode_val(2), bright_algo, bright_count(u1), BrightnessEffect(6-B)×bright_count, colorIc, speed, duration, color_count(u1), RGB×color_count, InAreaMove(3-B), AreaMove(4-B)]`. The **RGB palette is `color_count × 3-B`** (the actual colours); the 6-B records are per-`ParamsV2` BrightnessEffects, not colours.
-> - **dialect-A graffiti** (`ParamsV1` / `DiyProtocolParser.parserParamsV1:1345`; H6052 sceneType-3, wire value = `decode(param)[2:]`, strip drops `[0x01, effect_hi]` per `ScenesOp.n():483`): `[effect_lo, speed, brightness, bgR,G,B, segCount(u1)]` + per-group `[colorCount(u1), R,G,B, index×colorCount]`.
+> - **dialect-A graffiti** (`ParamsV1` / `DiyProtocolParser.parserParamsV1`, Govee Home 7.7.02 `DiyProtocolParser.java:1391-1433`; H6052 sceneType-3, wire value = `decode(param)[2:]`, strip drops `[0x01, effect_hi]` per `ScenesOp.n` `:422-425`): `[effect_lo, speed, brightness, bgR,G,B, segCount(u1)]` + per-group `[colorCount(u1), R,G,B, index×colorCount]`.
 >
 > These layouts are also modelled as **parseable Kaitai types** in `govee_ble.ksy` (scene-upload VALUE
 > section): `graffiti_value`, `diy_value` (with a `diy_sub_effect` discriminated union over 10 sub-effects),
@@ -338,7 +338,8 @@ So the app **uploads iff the param parses**, and the `33 05 04 <sceneCode>` acti
 **both** cases. `parseSceneV1` returns null iff: no `(versionArray, sceneType)` branch matches, param
 empty, base64 fails, or the per-type validator fails — and the validators gate on **`byte[0]`** /
 length / sceneType (`ShareDiy.isValidComposeBytes → bytes[0]==10`; `isValidGraffitiBytes → byte[0]==1 &&
-len≥9`; etc.), **never on byte 3**.
+len≥9` and a walk of the group headers from byte 9; etc.; each is modelled exactly in `govee_ble.ksy`, see
+the scene-upload VALUE layer), **never on byte 3**.
 
 1. **Apply path & upload:** yes it can upload (`SceneControllerNoEventV1`, `0xA3`), and it is a **different
    path** from §2's DIY-editor capture (different controller; **Path B / dialect A** — value is the
