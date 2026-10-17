@@ -35,10 +35,12 @@ def test_scene_upload_frames_bad_base64_is_ble_error(dialect: SceneDialect | Non
 
 
 def test_scene_upload_frames_oversized_payload_is_ble_error() -> None:
-    # WAS: bare ValueError('scene payload too large ...') from build.scene_upload_a3.
-    big = base64.b64encode(bytes(20 * 300)).decode()
+    # WAS: bare ValueError('scene payload too large ...') from build.scene_upload_a3. A type-1 blob the
+    # app would upload can't get that large (at most 181 packets), so this is a type-2 rgbic blob of 30
+    # 255-byte effects that ScenesRgbIC.isValidProtocolBytes accepts: 452 packets.
+    big = base64.b64encode(bytes([30]) + (b"\xff" + bytes(255)) * 30).decode()
     with pytest.raises(GoveeBleInvalidValue, match="77") as ei:
-        scene_upload_frames(_scene(big), None, frozenset({1}))
+        scene_upload_frames(_scene(big, 2), None, frozenset({2}))
     assert big[:20] not in str(ei.value)
 
 

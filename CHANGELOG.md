@@ -410,6 +410,15 @@ model, from which the shipped readers are generated).
   tooling only.
 
 ### Fixed
+- **Library scenes upload only what the app's validators accept** (the spec's section-E types). A type-1 RGB
+  scene uploads only when `ScenesRgb.isValidProtocolBytes` accepts its blob (`ScenesOp.l:377-392`; the spec's
+  `rgb_scene_value.is_valid`), a type-2 RGBIC one only when `ScenesRgbIC.isValidProtocolBytes` does
+  (`ScenesOp.m:394-409`; `rgbic_scene_value`, which reads exactly that), and a type-3 graffiti one only when
+  `ShareDiy.isValidGraffitiBytes` does (`ScenesOp.n:411-429`; `scenes_graffiti_check.is_valid`: size >= 9,
+  lead 0x01, the group-header walk). Any other blob is only activated, as in the app; before, types 1 and 2
+  went out unchecked and type 3 checked only the lead byte. Every bundled scene plans as before (631
+  uploads, 25 activate-only, every profile); only a cloud or custom blob the app would not upload changes.
+  Source-modelled; not hardware-verified.
 - **0xAC status bursts are assembled as the app assembles them** (`AbsController4BleSingleSendMultiBack`
   as `ControllerSingleRead` runs it: `isSameController:202-225`, `onResult:273-308`). The first chunk must
   carry the request's command 3 and sub 0 (`f():100-103`); then each index is taken only in order, and the

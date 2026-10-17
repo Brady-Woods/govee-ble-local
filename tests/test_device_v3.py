@@ -255,11 +255,16 @@ def test_scene_dialect_routing() -> None:
     def param(*head: int) -> str:
         return base64.b64encode(bytes(list(head) + [0] * 30)).decode()
 
-    # H6006 bulb: type-1 rgb -> comByte 1 @ a3 byte4
-    f = upload("H6006", Scene("x", 1, param(0x83), scene_type=1))
+    def exact(*blob: int) -> str:
+        return base64.b64encode(bytes(blob)).decode()
+
+    # H6006 bulb: type-1 rgb -> comByte 1 @ a3 byte4 (83 00 00: mode 0, no effects, no colours, which
+    # ScenesRgb.isValidProtocolBytes accepts; a zero-padded blob it rejects is only activated)
+    f = upload("H6006", Scene("x", 1, exact(0x83, 0, 0), scene_type=1))
     assert f and f[0][0] == 0xA3 and f[0][4] == 0x01
-    # H6047 rgbic: type-2 -> comByte 2
-    f = upload("H6047", Scene("x", 1, param(0x54, 0, 0, 2), scene_type=2))
+    assert upload("H6006", Scene("x", 1, param(0x83), scene_type=1)) is None
+    # H6047 rgbic: type-2 -> comByte 2 (00: no effects, which ScenesRgbIC.isValidProtocolBytes accepts)
+    f = upload("H6047", Scene("x", 1, exact(0x00), scene_type=2))
     assert f and f[0][4] == 0x02
     # H6052 type-5 (byte0 0x13) -> comByte 9 ; type-3 -> activate-only
     f = upload("H6052", Scene("x", 1, param(0x13, 1, 2, 3), scene_type=5))

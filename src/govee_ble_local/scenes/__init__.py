@@ -303,9 +303,22 @@ def _plan_upload(
         compose = _reads_as(_F.ComposeSceneParam, raw)
         return None if compose is None else build.scene_upload_a3(bytes(compose.value), comm_byte)
     if st == _SceneType.GRAFFITI:
-        # ScenesOp.n sends bytes [2:] only when ShareDiy.isValidGraffitiBytes accepts the blob: its lead
-        # byte 0x01 is scenes_graffiti_param's marker. Its other checks (size >= 9, a walk of the group
-        # headers) have no spec type yet, so they are not made here.
+        # ScenesOp.n (:411-429) sends bytes [2:] only when ShareDiy.isValidGraffitiBytes (:96-115) accepts
+        # the blob: the spec's scenes_graffiti_check.is_valid (size >= 9, lead 0x01, the group-header walk).
+        # The value sent is scenes_graffiti_param's.
+        check = _reads_as(_F.ScenesGraffitiCheck, raw)
         graffiti = _reads_as(_F.ScenesGraffitiParam, raw)
-        return None if graffiti is None else build.scene_upload_a3(bytes(graffiti.value), comm_byte)
+        if check is None or not check.is_valid or graffiti is None:
+            return None
+        return build.scene_upload_a3(bytes(graffiti.value), comm_byte)
+    if st == _SceneType.RGB:
+        # ScenesOp.l (:377-392): only a blob ScenesRgb.isValidProtocolBytes (:1676-1701) accepts, the spec's
+        # rgb_scene_value.is_valid; any other is only activated.
+        rgb = _reads_as(_F.RgbSceneValue, raw)
+        if rgb is None or not rgb.is_valid:
+            return None
+    elif st == _SceneType.RGBIC and _reads_as(_F.RgbicSceneValue, raw) is None:
+        # ScenesOp.m (:394-409): ScenesRgbIC.isValidProtocolBytes (:2783-2807), which rgbic_scene_value reads
+        # exactly (a blob it can't read is only activated).
+        return None
     return build.scene_upload_a3(raw[strip:], comm_byte)

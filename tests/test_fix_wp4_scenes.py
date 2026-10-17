@@ -54,7 +54,7 @@ def test_build_error_mentioning_the_phrase_is_still_wrapped(monkeypatch: pytest.
 
     monkeypatch.setattr(scenes.build, "scene_upload_a3", boom)
     with pytest.raises(GoveeBleInvalidValue, match=r"\(code 7\) cannot be uploaded"):
-        scene_upload_frames(Scene("x", 7, _b64(1, 2), scene_type=1), "A", frozenset({1}))
+        scene_upload_frames(Scene("x", 7, _b64(0x83, 0, 0), scene_type=1), "A", frozenset({1}))
 
 
 def test_bad_base64_is_not_double_wrapped() -> None:
