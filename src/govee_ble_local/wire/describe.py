@@ -32,7 +32,7 @@ from ..const import FRAME_LEN
 from ..crypto import checksum_ok
 from . import reassemble as _reassemble
 from .build import _F, _load
-from .parse import _Command, _NotifySub, _ProType, _SubMode
+from .parse import _Command, _NotifySub, _ProType, _SubMode, parse_write_ack, rx_frame
 
 # A frame's direction (the capture's "dir"). Only "rx" changes the reading: an RX 0x33 frame
 # is the device's write-ACK echo, not a write command.
@@ -41,22 +41,12 @@ Direction = Literal["rx", "tx", "?"]
 Severity = Literal["hard", "soft", "artifact"]
 Issue = tuple[Severity, str]
 
-# 0xAC first-chunk header [ac, 00, packets u16le, lastLen, cmd, sub] and later-chunk header [ac, index]
-# (AbsController4BleSingleSendMultiBack.g / .i): the bytes the capture masking keeps.
-_AC_FIRST_HEADER = 7
-_AC_CHUNK_HEADER = 2
 # Variable-length multi-packet upload chunks (0xA1 / 0xA3 / 0xA4; e.g. the 19-byte 0xA4 END).
 _UPLOAD_CHUNK_TYPES = (_ProType.multi_write, _ProType.multi_write_v1, _ProType.multi_write_v2)
 
-# TLV types the reassembled 0xAC status reply is known to carry
-# (Compose4BaseInfoSingleRead.u): switch/brightness/mode/device-info/... + zone/seg/colour.
-KNOWN_STATUS_REPLY_TLVS: frozenset[int] = frozenset({
-    0x00,                                    # trailing zero-pad sentinel
-    _reassemble.TYPE_SWITCH, _reassemble.TYPE_BRIGHTNESS, _reassemble.TYPE_MODE,
-    _reassemble.TYPE_DEVICE_INFO, _reassemble.TYPE_SLEEP, _reassemble.TYPE_WAKEUP,
-    _reassemble.TYPE_TIMERS, _reassemble.TYPE_ZONE, _reassemble.TYPE_BAR_SWITCH,
-    _reassemble.TYPE_IC_NUM, _reassemble.TYPE_SEG_INFO, _reassemble.TYPE_COLOR_GROUP,
-})
+# TLV types the reassembled 0xAC status reply is known to carry: the spec's status_tlv_type enum
+# (Compose4BaseInfoSingleRead.u and the per-SKU status reads), the 0x00 padding sentinel included.
+KNOWN_STATUS_REPLY_TLVS: frozenset[int] = frozenset(int(t) for t in _F.StatusTlvType)
 
 
 def _opaque(x: object) -> bool:
@@ -68,10 +58,11 @@ def describe_frame(plain: bytes, direction: str = "?") -> tuple[str, list[Issue]
     """Return ``(label, issues)`` for one plaintext frame. See the module docstring.
 
     ``direction`` is a :data:`Direction`; only ``"rx"`` changes the reading."""
-    if plain and plain[0] == _ProType.multi_reply_read:
+    rx = rx_frame(plain)   # its pro_type routes the frame before the body is read
+    if rx is not None and rx.pro_type == _ProType.multi_reply_read:
         return _describe_status(plain, direction)
-    if plain and plain[0] in _UPLOAD_CHUNK_TYPES and len(plain) != FRAME_LEN:
-        return (f"multi-chunk/0x{plain[0]:02x}", [])
+    if rx is not None and rx.pro_type in _UPLOAD_CHUNK_TYPES and len(plain) != FRAME_LEN:
+        return (f"multi-chunk/0x{int(rx.pro_type):02x}", [])
     if len(plain) != FRAME_LEN:
         return (f"len={len(plain)}", [("artifact", f"not {FRAME_LEN} bytes (len {len(plain)})")])
     if not checksum_ok(plain):
@@ -103,8 +94,14 @@ def chunk_redacted(chunk: bytes) -> bool:
     (``tools/field_test/masking.py``: the first chunk keeps its 7-byte header, the others
     ``ac <index>``). Such a chunk fails the checksum but is not corrupt; :func:`_header_redacted` is
     the stricter first-chunk test for a capture masked before the header was kept."""
-    keep = _AC_FIRST_HEADER if len(chunk) > 1 and chunk[1] == 0x00 else _AC_CHUNK_HEADER
-    return len(chunk) == FRAME_LEN and not any(chunk[keep:])
+    if len(chunk) != FRAME_LEN:
+        return False
+    rx = rx_frame(chunk)
+    try:
+        body = rx.body   # multi_ac_reply_chunk: the header the masking keeps, then its data
+    except Exception:  # noqa: BLE001 - a first chunk whose last_len doesn't fit: not a masked one
+        return False
+    return rx.pro_type == _ProType.multi_reply_read and not any(bytes(body.data)) and rx.checksum == 0
 
 
 def _describe_status(plain: bytes, direction: str) -> tuple[str, list[Issue]]:
@@ -129,13 +126,16 @@ def _describe_status(plain: bytes, direction: str) -> tuple[str, list[Issue]]:
 
 
 def _describe_ack(plain: bytes, body: Any) -> tuple[str, list[Issue]]:
-    """RX 0x33: the device's write-ACK echo ``[0x33, command, result, zeros]``; byte2 = result
-    (0 = success). The ksy models only the write COMMAND — command vs ack is direction-keyed
-    (both are 0x33), so a lone frame can't tell them apart; parse it as an ack here."""
+    """RX 0x33: the device's write-ACK echo ``[0x33, command, result, zeros]``, the spec's ``write_ack``
+    (``rx_frame``'s 0x33 body; result 0 = success). Command vs ack is direction-keyed (both are 0x33), so
+    the RX direction reads it as an ack. H6047 also answers 33-framed reads (``33 07 ss``, ``33 14`` /
+    ``20`` / ``21``) with read bodies under a 0x33 header; those are ``read_command``s, not acks, and the
+    app never sends them."""
     cmd: Any = body.command   # the reader keeps an unknown command as its raw int
     name = cmd.name if isinstance(cmd, _Command) else f"0x{int(cmd):02x}"
-    if plain[2] != 0:   # the result byte: no spec field until the RX write_ack type
-        return (f"ack/{name}", [("hard", f"device REJECTED {name} write (result 0x{plain[2]:02x})")])
+    result = parse_write_ack(plain)   # write_ack.result (0 = ok)
+    if result:
+        return (f"ack/{name}", [("hard", f"device REJECTED {name} write (result 0x{result:02x})")])
     return (f"ack/{name}", [])
 
 
@@ -231,7 +231,8 @@ def _split_bursts(rx_ac: list[bytes]) -> list[list[bytes]]:
     for fr in rx_ac:
         if len(fr) < _reassemble.MIN_CHUNK_LEN:
             continue
-        idx = fr[1]
+        chunk = _reassemble.read_ac_chunk(fr)
+        idx = 0 if chunk is None else int(chunk.index)   # only a first chunk can fail its valid
         if idx == 0x00:                 # start of a burst
             if cur and all(c == fr for c in cur):   # double-delivered first chunk
                 cur.append(fr)

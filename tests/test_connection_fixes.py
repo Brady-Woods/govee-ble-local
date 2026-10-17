@@ -293,10 +293,11 @@ def test_named_constants_in_use() -> None:
     assert (GoveeConnection.send_unacked.__kwdefaults__ or {})["gap"] == const.UNACKED_SEND_GAP
 
 
-def test_known_rx_types_unchanged() -> None:
-    # 0xA2 (multi_read, device -> app in the ksy) joined the set: it is no longer logged as unknown.
+def test_known_rx_types_are_the_specs_rx_pro_type() -> None:
+    # The spec's rx_pro_type enum (what a device sends): 0x3A write_read, 0xA6 MTU multiple write and 0xAB
+    # (the light-side 0xAB read reply) joined the old hand-kept set; they are no longer logged as unknown.
     assert frozenset(
-        {0x33, 0xAA, 0xAC, 0xEE, 0xA1, 0xA2, 0xA3, 0xA4, 0xE7}
+        {0x33, 0x3A, 0xAA, 0xAC, 0xEE, 0xA1, 0xA2, 0xA3, 0xA4, 0xA6, 0xAB, 0xE7}
     ) == conn_mod._KNOWN_RX_PRO_TYPES
 
 

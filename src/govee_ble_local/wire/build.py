@@ -186,26 +186,30 @@ SUB_COLOR_0B: Final = int(_F.SubMode.color_rgbic_0b)     # 0x0B (H61A8)
 OP15_SET_COLOR: Final = int(_F.Op15.set_color)            # 0x01
 OP15_SET_BRIGHTNESS: Final = int(_F.Op15.set_brightness)  # 0x02
 
-# Device-info (0x07) selectors (no ksy enum yet). SN (device id) and HARD (hardware version) are the
-# reads the app makes (SnController.p, HardVersionController.p); BASIC / WIFI are the binary forms.
-INFO_BASIC: Final = 0x10
-INFO_WIFI: Final = 0x11
-INFO_SN: Final = 0x02
-INFO_HARD: Final = 0x03
+# Device-info (0x07) selectors (enum device_info_selector). SN (device id) and HARD (hardware version)
+# are the reads the app makes (SnController.p, HardVersionController.p); BASIC / WIFI are the binary forms.
+INFO_BASIC: Final = int(_F.DeviceInfoSelector.basic)          # 0x10
+INFO_WIFI: Final = int(_F.DeviceInfoSelector.wifi)            # 0x11
+INFO_SN: Final = int(_F.DeviceInfoSelector.sn)                # 0x02
+INFO_HARD: Final = int(_F.DeviceInfoSelector.hard_version)    # 0x03
 
-# power payload values (no ksy enum yet)
-POWER_ON: Final = 0x01
-POWER_OFF: Final = 0x00
-RELAY_ON: Final = 0x11    # plug family, outlet 0 (SwitchControllerV2.q, outlet 0)
-RELAY_OFF: Final = 0x10
-RELAY_ALL_ON: Final = 0xFF    # every outlet (SwitchControllerV2.q, outlet 15: 0xF0 | 0x0F)
-RELAY_ALL_OFF: Final = 0xF0
-# 33 02: H5089's total switch (Controller4TotalSwitch.getCommandType); no ksy enum entry yet.
-CMD_TOTAL_SWITCH: Final = 0x02
+# power payload values (enums light_power and relay_write)
+POWER_ON: Final = int(_F.LightPower.light_on)        # 0x01
+POWER_OFF: Final = int(_F.LightPower.light_off)      # 0x00
+# Relays: outlet 0 0x11 / 0x10, every outlet 0xFF / 0xF0 (SwitchControllerV2.q, outlet 0 and 15: 0xF0 | 0x0F).
+RELAY_ON: Final = int(_F.RelayWrite.relay0_on)
+RELAY_OFF: Final = int(_F.RelayWrite.relay0_off)
+RELAY_ALL_ON: Final = int(_F.RelayWrite.all_on)
+RELAY_ALL_OFF: Final = int(_F.RelayWrite.all_off)
+# 33 02: H5089's total switch (Controller4TotalSwitch.getCommandType; enum plug_command). The shared
+# command enum has no 0x02 member yet (gap item 6, a lockstep change with the spec owner).
+CMD_TOTAL_SWITCH: Final = int(_F.PlugCommand.total_switch)
 
-# H60A6 dialect-B DIY/graffiti protocol code; H6052 type-5 professional graffiti.
-COMM_H60A6: Final = 0x58
-COMM_H6052_GRAFFITI: Final = 0x09
+# Upload comm bytes (enum multi_comm_byte, named after the app's MULTI_* constants): the H60A6 dialect-B
+# DIY / graffiti upload sends 0x58, which the app's table names cube_in_diy; the H6052 type-5
+# professional graffiti sends v1_graffiti_multi_layer (0x09).
+COMM_H60A6: Final = int(_F.MultiCommByte.cube_in_diy)
+COMM_H6052_GRAFFITI: Final = int(_F.MultiCommByte.v1_graffiti_multi_layer)
 
 # "h60a6" = 0x15 RGBIC (segment mask); CCT is the white-slot form `15 01 ff ff ff <K> <tint> <mask>`
 # (Bytes.r type 1) with the app's Kelvin->RGB tint.
@@ -360,10 +364,10 @@ def plug_all_outlets(on: bool) -> bytes:
 
 def plug_total_switch(on: bool) -> bytes:
     """33 02 01 / 00: H5089's main switch (goodsType 307, Ui4H5089.onOffChange:929-946):
-    ``Controller4TotalSwitch(on)``, command 0x02, one 1/0 byte (Controller4TotalSwitch.q). The spec has no
-    0x02 command or body type yet, so its one params byte is written raw."""
-    state = POWER_ON if on else POWER_OFF
-    return _write_frame(CMD_TOTAL_SWITCH, lambda sc: bytes([state]).ljust(_PARAMS_LEN, b"\0"))
+    ``Controller4TotalSwitch(on)``, command 0x02 (``plug_command``), one 1/0 byte (Controller4TotalSwitch.q),
+    the spec's ``total_switch_write``."""
+    body = _node(_F.TotalSwitchWrite, None, state=POWER_ON if on else POWER_OFF)
+    return _write_frame(CMD_TOTAL_SWITCH, lambda sc: _body(body, _PARAMS_LEN))
 
 
 def brightness(pct: int) -> bytes:
@@ -397,10 +401,13 @@ def _rgbic0b_frame(rgb: tuple[int, int, int], mask: int) -> bytes:
         _F.ColorRgbic0b, mp, r=rgb[0], g=rgb[1], b=rgb[2], seg_mask=seg_mask))
 
 
-# op15_color_write variants (the colour form the app's writer picks; not in the frame).
-_OP15_RGB: Final = 12    # [r, g, b][00 x5][mask]                 Bytes.h (H60A6 family RGB)
-_OP15_CCT: Final = 11    # [slot r, g, b][kelvin][tint][mask]     Bytes.r (H60A6 family CCT)
-_OP15_V5: Final = 5      # [r, g, b][kelvin][mask]                Bytes.l / Bytes.u (colour version 5, H6061)
+# op15_color_write variants (enum op15_color_variant): the colour form the app's writer picks.
+#   12 [r, g, b][00 x5][mask]               Bytes.h (H60A6 family RGB)
+#   11 [slot r, g, b][kelvin][tint][mask]   Bytes.r (H60A6 family CCT)
+#    5 [r, g, b][kelvin][mask]              Bytes.l / Bytes.u (colour version 5, H6061)
+_OP15_RGB: Final = int(_F.Op15ColorVariant.h60a1_h60a6_rgb)
+_OP15_CCT: Final = int(_F.Op15ColorVariant.cct)
+_OP15_V5: Final = int(_F.Op15ColorVariant.color_instruction_v5)
 
 
 def _op15_color_frame(variant: int, rgb: tuple[int, int, int], seg_mask: bytes, kelvin: int = 0,
@@ -725,7 +732,8 @@ def scene_upload_a3(value: bytes, comm_byte: int) -> list[bytes]:
         def body(f: Any) -> Any:
             m = _node(_F.MultiA3, f, seq_no=0xFF if i == pieces - 1 else i)
             if i == 0:
-                m.frame = _node(_F.A3Start, m, marker=0x01, packet_count=pieces, comm_byte=comm_byte & 0xFF,
+                m.frame = _node(_F.A3Start, m, marker=int(_F.A3StartMarker.v1_v2), packet_count=pieces,
+                                comm_byte=comm_byte & 0xFF,
                                 inline_value=value[:inline].ljust(inline, b"\0"))
             else:
                 start = inline + (i - 1) * SCENE_A3_PIECE_LEN
@@ -807,7 +815,7 @@ def brightness_query() -> bytes:
 
 def mode_query() -> bytes:
     """aa 05 01: read the mode report (reply: parse_active_scene / parse_kelvin / parse_mode_0d)."""
-    return _request(_F.Command.mode, 0x01)
+    return _request(_F.Command.mode, int(_F.ModeReadSelector.request))
 
 
 def bar_switch_query() -> bytes:
@@ -894,5 +902,5 @@ def status_query(*, full: bool = False) -> bytes:
     zone_types = [_F.Command.on_off_memory, _F.Command.light_direction_or_zone]
     types = [int(t) for t in ([*zone_types, _F.Command.local_color_read] if full else zone_types)]
     return _frame_of(_F.ProType.multi_reply_read, lambda f: _node(
-        _F.MultiAc, f, command=0x03, count=len(types), requested_types=types,
+        _F.MultiAc, f, command=int(_F.MultiAcCommand.single_read), count=len(types), requested_types=types,
         pad=bytes(_BODY_LEN - 2 - len(types))))

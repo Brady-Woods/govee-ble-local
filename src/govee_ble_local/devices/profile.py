@@ -37,14 +37,17 @@ ColorReadBack = Literal["", "mechanism_b", "mechanism_a_direct"]
 # "rgb_0d"          = 0x0d only -> [r, g, b], its Kelvin bytes never read; 0x15 and every other colour
 #                     sub-mode is not parsed (H6052: H6052InfoDetail.G; wire.parse.parse_mode_0d_rgb);
 # "kelvin"          = 0x15 / 0x0b / 0x02 / 0x0d all -> SubMode4Color [gradual][kelvin s16be] (H6062);
-# "kelvin_15"       = 0x15 only; any other colour sub-mode is not parsed (H6641, H6047, H61A8);
+# "kelvin_15"       = 0x15 only, its Kelvin read signed (SubMode4Color, BleUtil.getSignedShort); any other
+#                     colour sub-mode is not parsed (H6641, H6047);
+# "kelvin_15_unsigned" = the same, but the Kelvin read unsigned (H61A8: dreamcolorlightv1
+#                     SubModeColorV2.parse, BleUtil.getSignedInt masks each byte);
 # "rgb_kelvin_0d"   = 0x0d only -> [r, g, b, kelvin s16be], kelvin > 0 = CCT; 0x15 and every other
 #                     colour sub-mode is not parsed (H6061: CubeNewInfo4Detail.U);
 # "kelvin_15_rgb_kelvin_0d" = 0x15 -> SubMode4Color [gradual][kelvin s16be], 0x0d -> [r, g, b, kelvin
 #                     s16be] (kelvin > 0 = CCT, else that RGB); any other colour sub-mode is not parsed
 #                     (H60A6: pact_h60a0 h60a1.Info4Detail.Q).
-ModeColorParse = Literal["rgb_kelvin", "rgb_kelvin_tint", "rgb_0d", "kelvin", "kelvin_15", "rgb_kelvin_0d",
-                         "kelvin_15_rgb_kelvin_0d"]
+ModeColorParse = Literal["rgb_kelvin", "rgb_kelvin_tint", "rgb_0d", "kelvin", "kelvin_15",
+                         "kelvin_15_unsigned", "rgb_kelvin_0d", "kelvin_15_rgb_kelvin_0d"]
 
 # How a plug's whole-device power is written (its main switch on the app's detail screen):
 # "outlet0"     = 33 01 11 / 10, the relay-0 encoding (goodsType 43: H5080 / H5083 / H5085, one outlet;
@@ -363,14 +366,15 @@ PROFILES: Final[tuple[DeviceProfile, ...]] = (
     # critic's finding, pending the spec owner's re-trace) and every sub-mode but 0x04 (scene), 0x0a
     # (DIY), 0x15 and music (0x11, 0x13, 0x16) - 0x0b and 0x0d included - to SubModeColor.parse, which
     # reads only byte 0.
-    # So only 0x15 yields a Kelvin and no report yields an RGB colour (mode_color_parse "kelvin_15").
+    # So only 0x15 yields a Kelvin, read unsigned, and no report yields an RGB colour (mode_color_parse
+    # "kelvin_15_unsigned"; the spec's cct_read_reply doc traces it).
     DeviceProfile(
         skus=("H61A8",),
         capabilities=frozenset({_C.POWER, _C.BRIGHTNESS, _C.RGB, _C.SEGMENTS, _C.SCENES}),
         color_scheme="h61a8", encryption=Encryption.NONE, segments=15,
         scene_versions=frozenset({0, 1, 2, 3}), readback="polled",
         color_readback="mechanism_b", color_readback_per_batch=3, gradual=True,
-        mode_color_parse="kelvin_15",
+        mode_color_parse="kelvin_15_unsigned",
     ),
     # H6006 / H6008 — legacy bulbs: plaintext, 0x0d scheme, type-1 rgb scene upload (version {1}).
     # The aa 05 mode report (Govee Home 7.7.02): bulblightv3 / bulblightv1 pact Model -> bulblight
@@ -443,7 +447,9 @@ PROFILES: Final[tuple[DeviceProfile, ...]] = (
     # pieces. 7.7.02 is the same (H61D3Support.s / t, VM4Light.w5). The reply's third byte is
     # never used.
     # The mode parse (adjustNew/Info4Detail.parseModeValidBytes) knows only 0x15, 0x04, 0x0a and
-    # music: a 0x0d report is not decoded (mode_color_parse "kelvin_15").
+    # music: a 0x0d report is not decoded, and 0x15 goes to a plain SubMode4Color, which reads the Kelvin
+    # signed (getSignedShort; split_h61d3 installs no IParseStrategy; adjustNew/Info4Detail.java:117, per
+    # the spec's cct_read_reply trace) (mode_color_parse "kelvin_15").
     # `polled` covers power/brightness/scene; not yet live-verified against hardware.
     DeviceProfile(
         skus=("H6641",), capabilities=_LIGHT | {_C.SEGMENTS}, color_scheme="h60a6",

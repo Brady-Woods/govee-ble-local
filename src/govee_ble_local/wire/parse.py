@@ -37,7 +37,6 @@ from .build import (
     SUB_COLOR_0B,
     SUB_COLOR_0D,
     SUB_COLOR_15,
-    SUB_SCENE,
     ColorScheme,
     _F,
     _load,
@@ -72,6 +71,38 @@ def _parse(frame: bytes) -> Any:
         # A matched reply that won't parse is worth a breadcrumb (unknown enum / truncated).
         _LOGGER.debug("frame did not parse against the spec: %s (%r)", bytes(frame).hex(), exc)
         return None
+
+
+def rx_frame(frame: bytes) -> Any:
+    """``frame`` read by the spec's ``rx_frame`` (a device-sent frame: ``pro_type``, a lazy ``body`` by
+    proType and the ``checksum``), or None when it is empty. Read-only: its positional instances are
+    written back by ``_write``, so it is never written. Reading ``.body`` raises where the spec rejects
+    the body (e.g. an 0xAC first chunk whose last_len doesn't fit)."""
+    if not frame:
+        return None
+    return _load(_F.RxFrame(KaitaiStream(BytesIO(bytes(frame)))))
+
+
+def parse_write_ack(frame: bytes) -> int | None:
+    """The result byte of a device's ``33`` write ack (``rx_frame`` -> ``write_ack.result``; 0 = success,
+    ``write_ack.ok``; AbsSingleController.t: value[2] == 0), else None. That is byte 2 for the app's
+    default ``p()`` = 0; H6062 ControllerPos (``33 a6 01``) and H6048 CalibrationController4H6048 (``33 44``)
+    set ``p()`` = 1, which moves it to byte 3: the library sends neither."""
+    try:
+        f = rx_frame(frame)
+        if f is None or f.pro_type != _ProType.write:
+            return None
+        return int(f.body.result)
+    except Exception:  # noqa: BLE001 - too short for an ack
+        return None
+
+
+def bgc_encrypt_version(data: bytes) -> int:
+    """The encrypt version a BGC-info characteristic value carries: the spec's lenient ``bgc_info``
+    ``effective_encrypt_version`` (BgcInfoReader.a / .d: format 1 or 2 -> byte 1, else 0; enum
+    ``encrypt_version``: 0 not reported, 1 AES-RC4-PSK, 2 AES-GCM). A short format-2 value is read
+    leniently, as the user chose, a documented difference from BaseBgcInfo.Companion.a:33."""
+    return int(_parse_type(_F.BgcInfo, data).effective_encrypt_version)
 
 
 def _read_reply(frame: bytes, command: Any) -> Any:
@@ -132,13 +163,13 @@ def parse_bar_switch(frame: bytes) -> tuple[bool, bool] | None:
     it (h6047 ``ComposeLightController.parseValidBytes`` / ``ComposeLightHeartController``:
     ``bArr[0] == 1``, ``bArr[1] == 1``)."""
     b = _read_reply(frame, _Command.compose_light_switch)
-    return None if b is None else (int(b.left) == 1, int(b.right) == 1)
+    return None if b is None else (bool(b.left_on), bool(b.right_on))   # bar_switch_read: == 1
 
 
 def parse_secret(frame: bytes) -> bytes | None:
-    """AA B1 reply: 8-byte account-lock secret (selector 0x01)."""
+    """AA B1 reply: 8-byte account-lock secret (``secret_read_reply.is_valid``: selector 0x01)."""
     b = _read_reply(frame, _Command.secret_read)
-    if b is None or int(b.selector) != 0x01:
+    if b is None or not b.is_valid:
         return None
     return bytes(b.secret)
 
@@ -155,7 +186,7 @@ def parse_gradual(frame: bytes) -> bool | None:
     """AA A3 reply (gradual_read): gradual/fade-on-handoff enabled iff byte0 == 1
     (``ControllerGradual4BleWifi.h``: ``bArr[0] == 1``; any other value is off)."""
     b = _read_reply(frame, _Command.gradual_wifi_ble)
-    return None if b is None else int(b.state) == 1
+    return None if b is None else bool(b.is_on)   # gradual_read.is_on: state == 1
 
 
 # ── mode (0x05) read replies ─────────────────────────────────────────────────
@@ -166,11 +197,12 @@ def parse_gradual(frame: bytes) -> bool | None:
 # ``mode_color_0d_typed(kind)``, whose instances give the app's sign and CCT tests.
 _MODE_BODY_LEN: Final = FRAME_LEN - 3   # an aa 05 reply's mode_read: frame bytes 2..18
 
-# mode_color_0d_typed `kind`s: 0 = SubMode4Color's default [gradual][kelvin s16be]; 1 = rgb (H6052)
-# and 2 = rgb_kelvin_tint (devices.yaml mode_0d_kind).
-_KIND_GRADUAL_KELVIN = 0
-_MODE_0D_KIND_RGB = 1
-_MODE_0D_KIND_RGB_KELVIN_TINT = 2
+# mode_color_0d_typed `kind`s (enum mode_0d_kind, devices.yaml mode_0d_kind): 0 = SubMode4Color's default
+# [gradual][kelvin s16be]; 1 = rgb (H6052); 2 = rgb_kelvin_tint; 3 = rgb_kelvin_0d ([r, g, b][kelvin s16be]).
+_KIND_GRADUAL_KELVIN = int(_F.Mode0dKind.cct)
+_MODE_0D_KIND_RGB = int(_F.Mode0dKind.rgb)
+_MODE_0D_KIND_RGB_KELVIN_TINT = int(_F.Mode0dKind.rgb_kelvin_tint)
+_MODE_0D_KIND_RGB_KELVIN_0D = int(_F.Mode0dKind.rgb_kelvin_0d)
 # The aa 05 colour sub-modes OpInfo4Detail.parseModeValidBytes hands to the SKU's SubMode4Color parse
 # strategy (``b6 == 21 || b6 == 11 || b6 == 2 || b6 == 13``); it sends every other sub-mode elsewhere.
 SUBMODE4COLOR_SUB_MODES: Final = frozenset(
@@ -229,36 +261,44 @@ def _of_reply(frame: bytes, decode: Callable[[Any], _T | None]) -> _T | None:
 
 
 def scene_of(m: Any) -> int | None:
-    """:func:`parse_active_scene` of a ``mode_read``. The spec's ``mode_read`` has no 0x04 case yet, so
-    its params are read with ``scene_payload`` (the ``33 05 04`` write body: the same ``[effect u2le]``)."""
-    if sub_mode(m) != SUB_SCENE:
-        return None
-    try:
-        return int(_parse_type(_F.ScenePayload, _mode_params(m)).effect)
-    except Exception:  # noqa: BLE001 - shorter than the scene code
-        return None
+    """:func:`parse_active_scene` of a ``mode_read``: its ``scene_code`` (u2le after sub-mode 0x04), None
+    for another sub-mode. A value instance: read it, never ``_write`` the object."""
+    code = m.scene_code
+    return None if code is None else int(code)
 
 
 def kelvin_of(m: Any) -> int | None:
     """:func:`parse_kelvin` of a ``mode_read``: ``cct_read_reply.kelvin``, read UNSIGNED. That is the H61A8's
-    reading in Govee Home 7.7.02, as the spec-client critic found: dreamcolorlightv1
-    ``SubModeColorV2.parse`` (split_rgbiclight, SubModeColorV2.java:564-567) takes
+    reading in Govee Home 7.7.02 (the spec's ``cct_read_reply`` doc, which traces it): dreamcolorlightv1
+    ``SubModeColorV2.parse`` (split_rgbiclight, SubModeColorV2.java:564-568) takes
     ``BleUtil.getSignedInt(new byte[]{b1, b2}, true)``, which, despite its name, masks each byte
-    (``& 255``; base2light BleUtil.java:285-294), so two bytes never read negative. Pending the spec
-    owner's re-trace (gap item 16); revisit if it finds otherwise. The SKUs whose app reads the 0x15
-    Kelvin signed decode it elsewhere: H60A6 and H6062 through :func:`gradual_kelvin_of`; H6047's two
-    bar Kelvins (:func:`bar_kelvin_of`) still read unsigned until the spec has signed bar instances."""
+    (``& 255``; base2light BleUtil.java:285-302), so two bytes never read negative. The SKUs whose app
+    reads the 0x15 Kelvin signed use :func:`kelvin_signed_of` (H6641), :func:`gradual_kelvin_of` (H60A6,
+    H6062) or :func:`bar_kelvin_of` (H6047)."""
     if sub_mode(m) != SUB_COLOR_15:
         return None
     return int(m.rest.kelvin)
 
 
-def bar_kelvin_of(m: Any) -> tuple[int, int] | None:
-    """:func:`parse_bar_kelvin` of a ``mode_read`` (``cct_read_reply.kelvin`` / ``kelvin_right``)."""
+def kelvin_signed_of(m: Any) -> int | None:
+    """A ``0x15`` report's Kelvin read SIGNED (``cct_read_reply.kelvin_signed``), as SubMode4Color's default
+    strategy reads it (``BleUtil.getSignedShort``): 0x8000 or more reads negative. H6641: both h61d3 detail
+    parsers hand 0x15 to a plain SubMode4Color (split_h61d3 adjustNew/Info4Detail.java:117), per the
+    spec's trace. None for another sub-mode."""
     if sub_mode(m) != SUB_COLOR_15:
         return None
-    right = getattr(m.rest, "kelvin_right", None)
-    return int(m.rest.kelvin), int(right or 0)
+    return int(m.rest.kelvin_signed)
+
+
+def bar_kelvin_of(m: Any) -> tuple[int, int] | None:
+    """:func:`parse_bar_kelvin` of a ``mode_read``: ``cct_read_reply.kelvin_signed`` /
+    ``kelvin_right_signed``, read signed as the H6047 app does (h6047 ``Info4Detail`` subMode4Color
+    strategy: ``D0`` / ``E0`` of ``BleUtil.getSignedShort``, split_h6047 detail/Info4Detail.java:179-180);
+    a missing right bar is 0."""
+    if sub_mode(m) != SUB_COLOR_15:
+        return None
+    right = m.rest.kelvin_right_signed
+    return int(m.rest.kelvin_signed), int(right or 0)
 
 
 def gradual_kelvin_of(m: Any) -> int | None:
@@ -305,14 +345,14 @@ def rgb_0d_of(m: Any) -> Rgb | None:
 
 
 def rgb_kelvin_0d_of(m: Any) -> ColorReport | None:
-    """A 0x0d report read as ``[r, g, b][kelvin s16be]``, the ``rgb_kelvin_0d`` decoders (H6061
-    ``CubeNewInfo4Detail.U``, H60A6 pact_h60a0 ``h60a1.Info4Detail.Q:416-427``, both
-    ``BleUtil.getSignedShort``): ``(None, kelvin)`` for a Kelvin > 0 (the spec's ``is_cct_positive``),
-    else ``((r, g, b), None)``; None if this is not a 0x0d report. The same bytes as :func:`cct_0d_of`;
+    """A 0x0d report read as ``[r, g, b][kelvin s16be]`` (``mode_color_0d_typed`` kind 3, ``rgb_kelvin_0d``),
+    the decoders of H6061 ``CubeNewInfo4Detail.U`` and H60A6 pact_h60a0 ``h60a1.Info4Detail.Q:416-427``, both
+    ``BleUtil.getSignedShort``: ``(None, kelvin)`` for a Kelvin > 0 (the spec's ``is_cct_positive``), else
+    ``((r, g, b), None)``; None if this is not a 0x0d report. The first five bytes of :func:`cct_0d_of`'s;
     only the CCT test differs (signed > 0, not non-zero)."""
     if sub_mode(m) != SUB_COLOR_0D:
         return None
-    body = _color_body(m, _MODE_0D_KIND_RGB_KELVIN_TINT)
+    body = _color_body(m, _MODE_0D_KIND_RGB_KELVIN_0D)
     if body is None:
         return None
     if body.is_cct_positive:
@@ -564,26 +604,30 @@ class SectionCount:
 
 
 def parse_section_count(frame: bytes) -> SectionCount | None:
-    """AA 41 reply: ``[IC s16be, sectionNum u8]``, i.e. frame bytes 2..4 (``BleUtil.getSignedShort``
-    of the first two, then the third; ``ControllerIcSegmentNum.makeController4Read``).
+    """AA 41 reply: ``[IC s16be, sectionNum s8]``, frame bytes 2..4, read by the spec's standalone
+    ``section_count_read`` (``ControllerIcSegmentNum.makeController4Read``: ``BleUtil.getSignedShort`` of
+    the first two, then the third as a Java byte, so 0x80 or more reads negative).
 
-    The frame reader matches the reply (``aa`` + ``on_off_memory``, the shared enum's name for 0x41),
-    but its body is hand-decoded: 0x41 means this only on the ``striplight`` split, so the spec has no
-    reply type for it yet (the same "shared opcode, per-SKU body" case as :func:`parse_mode_0d`)."""
+    The frame reader matches the reply (``aa`` + ``on_off_memory``, the shared enum's name for 0x41) and
+    its body is read with that standalone type: 0x41 means this only on the ``striplight`` split, so
+    ``read_command`` has no case for it (the same "shared opcode, per-SKU body" case as
+    :func:`parse_mode_0d`)."""
     body = _read_reply(frame, _Command.on_off_memory)
-    if body is None or len(body) < 3:
+    if body is None:
         return None
-    return SectionCount(ic_count=int.from_bytes(body[0:2], "big", signed=True), section_num=body[2])
+    try:
+        sc = _parse_type(_F.SectionCountRead, body)
+    except Exception:  # noqa: BLE001 - shorter than the three bytes
+        return None
+    return SectionCount(ic_count=int(sc.ic_count), section_num=int(sc.section_num))
 
 
 # ── device info (AA 07 10/11/02) ─────────────────────────────────────────────
 def _version(v: Any) -> str | None:
-    """Govee 3-byte version -> "X.YY.ZZ", or None for the 0.00.00 zero sentinel (a
-    device that doesn't populate this field — e.g. H60A6's aa 07 wifi reply)."""
-    major, minor, patch = int(v.major), int(v.minor), int(v.patch)
-    if major == 0 and minor == 0 and patch == 0:
-        return None
-    return f"{major}.{minor:02d}.{patch:02d}"
+    """Govee 3-byte version as the spec renders it (``version3.text``: "X.YY.ZZ" with each byte read
+    signed, as Compose4BaseInfoSingleRead.v:363-368 renders it), or None for the 0.00.00 zero sentinel
+    (``is_zero``: a device that doesn't populate this field, e.g. H60A6's aa 07 wifi reply)."""
+    return None if v.is_zero else str(v.text)
 
 
 _VERSION_TRIM = "".join(map(chr, range(0x21)))   # BleUtils.K trims every char <= 0x20
@@ -595,18 +639,20 @@ def _ascii_version(text: str) -> str | None:
     return text.strip(_VERSION_TRIM) or None
 
 
-def _mac_or_none(raw: bytes) -> str | None:
-    return ":".join(f"{b:02X}" for b in raw) if any(raw) else None
+def _wifi_mac(info: Any) -> str | None:
+    """A ``device_info_wifi``'s MAC as colon hex, or None when it is all zeros (``wifi_mac_is_invalid``)."""
+    return None if info.wifi_mac_is_invalid else ":".join(f"{b:02X}" for b in bytes(info.wifi_mac))
 
 
-def _uid_serial(uid: bytes) -> str | None:
-    """8-byte UID -> MAC-style colon hex (reversed) = the device id, as SnController renders it:
-    an all-zero UID is invalid (NumberUtil.isInvalidUuid -> None) and one leading ``00:00:`` is
-    dropped (SnController.parseValidBytes)."""
-    if not any(uid):
+def _uid_serial(info: Any) -> str | None:
+    """A ``device_info_basic`` / ``device_info_sn`` 8-byte UID -> MAC-style colon hex (reversed) = the
+    device id, as SnController renders it: an all-zero UID is invalid (``uid_is_invalid``;
+    NumberUtil.isInvalidUuid -> None) and one leading ``00:00:`` is dropped (``uid_has_leading_pair``,
+    SnController.parseValidBytes)."""
+    if info.uid_is_invalid:
         return None
-    s = ":".join(f"{x:02X}" for x in reversed(uid))
-    return s.removeprefix("00:00:") or None
+    parts = [f"{x:02X}" for x in reversed(bytes(info.uid))]
+    return ":".join(parts[2:] if info.uid_has_leading_pair else parts)
 
 
 @dataclass(frozen=True)
@@ -627,19 +673,19 @@ def device_info_from(sel: int, info: Any) -> DeviceInfo | None:
     single-frame aa 07 reply AND the 0xAC status 0x07 TLV — identical layout)."""
     if sel == INFO_BASIC:
         return DeviceInfo(
-            serial=_uid_serial(bytes(info.uid)),
+            serial=_uid_serial(info),
             sw_version=_version(info.sw_version),
             hw_version=_version(info.hw_version),
             dsp_version=int(info.dsp_version),
         )
     if sel == INFO_WIFI:
         return DeviceInfo(
-            wifi_mac=_mac_or_none(bytes(info.wifi_mac)),
+            wifi_mac=_wifi_mac(info),
             sw_version=_version(info.wifi_sw_version),
             hw_version=_version(info.wifi_hw_version),
         )
     if sel == INFO_SN:
-        return DeviceInfo(serial=_uid_serial(bytes(info.uid)))
+        return DeviceInfo(serial=_uid_serial(info))
     if sel == INFO_HARD:
         return DeviceInfo(hw_version=_ascii_version(info.version))
     return None   # 0x06 etc. — logged & ignored by the device
@@ -690,7 +736,7 @@ def parse_notify(frame: bytes) -> Notify | None:
     if sub == _NotifySub.brightness:
         return Notify(sub_type=int(sub), level=int(d.level))
     if sub == _NotifySub.wifi_connect:
-        return Notify(sub_type=int(sub), wifi_connected=(int(d.status) == 0))
+        return Notify(sub_type=int(sub), wifi_connected=bool(d.is_connected))   # notify_wifi: status == 0
     if sub == _NotifySub.device_info_or_zone:
         return Notify(sub_type=int(sub), zone_flags=(int(d.flags_a), int(d.flags_b), int(d.flags_c)))
     return None

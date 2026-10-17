@@ -21,12 +21,12 @@ from ..const import FRAME_LEN, PSK
 from ..crypto import decrypt, encrypt
 from ..exceptions import GoveeBleInvalidValue
 from ..wire.build import _F, _frame_of, _load, _node
+from ..wire.parse import _parse_type
 
 HANDSHAKE_OPCODE: Final = int(_F.ProType.handshake)   # 0xE7
 
 _STEP_SESSION_KEY: Final = int(_F.HandshakeOp.v1_request_session_key)   # e7 01: request / reply with the key
 _STEP_CONFIRM: Final = int(_F.HandshakeOp.v1_confirm)                   # e7 02: confirm / ack
-_KEY_LEN: Final = 16   # the session key: e7 01 reply bytes 2..17, i.e. handshake.data[:16] (Controller4Aes.g)
 _MAX_PAYLOAD: Final = FRAME_LEN - 3  # opcode, step and checksum take the other three bytes
 
 
@@ -68,12 +68,15 @@ def _handshake_body(pt: bytes) -> Any:
 
 def parse_session_key(reply_ciphertext: bytes, psk: bytes = PSK) -> bytes | None:
     """Decrypt an ``e7 01`` reply and extract the 16-byte session key
-    (Controller4Aes.g): the first 16 bytes of the spec's ``handshake.data``. Returns None if it isn't
-    a valid step-1 reply."""
+    (Controller4Aes.g): ``handshake.data`` read by the spec's ``handshake_key_reply_data``, whose
+    ``session_key`` is its first 16 bytes. Returns None if it isn't a valid step-1 reply."""
     body = _handshake_body(decrypt(reply_ciphertext, psk))
-    if body is None or body.op != _STEP_SESSION_KEY or len(body.data) < _KEY_LEN:
+    if body is None or body.op != _STEP_SESSION_KEY:
         return None
-    return bytes(body.data[:_KEY_LEN])
+    try:
+        return bytes(_parse_type(_F.HandshakeKeyReplyData, bytes(body.data)).session_key)
+    except Exception:  # noqa: BLE001 - data shorter than the key
+        return None
 
 
 def is_step2_ack(reply_ciphertext: bytes, psk: bytes = PSK) -> bool:

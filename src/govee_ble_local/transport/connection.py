@@ -44,7 +44,6 @@ from bleak_retry_connector import BleakClientWithServiceCache, establish_connect
 from ..const import (
     ACTIVE_IDLE_DELAY,
     BGC_INFO_CHAR_UUID,
-    BGC_VERSION_VALUES,
     BURST_IDLE_GAP,
     CONNECT_MAX_ATTEMPTS,
     DISCONNECT_TIMEOUT,
@@ -81,16 +80,13 @@ from ..models import Encryption
 from ..wire.build import (
     CMD_SECRET_READ,
     CMD_SECRET_WRITE,
-    PRO_MULTI_A1,
-    PRO_MULTI_A2,
-    PRO_MULTI_A3,
-    PRO_MULTI_A4,
     PRO_MULTI_AC,
-    PRO_NOTIFY,
     PRO_READ,
     PRO_WRITE,
+    _F,
 )
 from ..wire.describe import describe_frame
+from ..wire.parse import bgc_encrypt_version, parse_write_ack
 from ..wire.reassemble import burst_chunks
 from . import handshake
 from .framelog import Direction, FrameLog
@@ -102,11 +98,9 @@ _LOGGER = logging.getLogger(__name__)
 # a Bluetooth proxy.
 _FRAMES = logging.getLogger("govee_ble_local.frames")
 
-# proTypes a device legitimately sends us; anything else is surfaced as a warning.
-_KNOWN_RX_PRO_TYPES: Final = frozenset({
-    PRO_WRITE, PRO_READ, PRO_MULTI_AC, PRO_NOTIFY, PRO_MULTI_A1, PRO_MULTI_A2,
-    PRO_MULTI_A3, PRO_MULTI_A4, handshake.HANDSHAKE_OPCODE,
-})
+# proTypes a device legitimately sends us (the spec's rx_pro_type enum); anything else is surfaced as a
+# warning, and queued all the same.
+_KNOWN_RX_PRO_TYPES: Final = frozenset(int(t) for t in _F.RxProType)
 # Unsolicited pushes accumulate between operations; never let them grow unbounded.
 _RX_QUEUE_MAX: Final = 64
 # DISCONNECT_TIMEOUT and QUERY_TERMINAL live in ..const with the other transport constants; they
@@ -454,7 +448,7 @@ class GoveeConnection:
             except BleakError as err:
                 _LOGGER.debug("%s: BGC read failed: %s", self.address, err)
                 return None  # transient: try again next connect
-            version = data[1] if len(data) >= 2 and data[0] in BGC_VERSION_VALUES else 0
+            version = bgc_encrypt_version(data)   # the spec's bgc_info (BgcInfoReader.a / .d)
         self._bgc_version, self._bgc_checked = version, True
         return version
 
@@ -467,9 +461,9 @@ class GoveeConnection:
         # BGC is authoritative for the version (1=RC4, 2=GCM); 0/absent keeps the
         # advertisement-derived mode (isEncryptionSupported = adv OR bgc).
         bgc_version = await self._read_bgc_encrypt_version()
-        if bgc_version == 2:
+        if bgc_version == int(_F.EncryptVersion.aes_gcm):
             self._encryption = Encryption.AES_GCM
-        elif bgc_version == 1:
+        elif bgc_version == int(_F.EncryptVersion.aes_rc4_psk):
             self._encryption = Encryption.AES_RC4_PSK
         if self._encryption is Encryption.AES_GCM:
             raise GoveeBleNotSupported(
@@ -768,17 +762,18 @@ class GoveeConnection:
             self._drain()
             await self._send_frame(frame_plaintext)
             ack = await self._await_reply(PRO_WRITE, command_type, WRITE_ACK_TIMEOUT)
+            status = None if ack is None else parse_write_ack(ack)   # write_ack.result
             if ack is not None:
-                if len(ack) >= 3 and ack[2] != 0:
+                if status not in (None, 0):
                     # DEBUG only: the typed exception carries the same text and the caller
                     # decides whether to log it (the unlock path re-raises it as an auth error).
                     _LOGGER.debug(
                         "%s: device rejected write 0x%02X (status 0x%02X)",
-                        self.address, command_type, ack[2],
+                        self.address, command_type, status,
                     )
                     raise GoveeBleCommandRejected(
                         f"{self.address}: device rejected write 0x{command_type:02X} "
-                        f"(status 0x{ack[2]:02X})"
+                        f"(status 0x{status:02X})"
                     )
                 return ack
             _LOGGER.debug(

@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 from io import BytesIO
 from typing import Any, Literal
 
-from kaitaistruct import KaitaiStream, ValidationGreaterThanError
+from kaitaistruct import KaitaiStream, ValidationExprError, ValidationGreaterThanError
 
 from ..const import FRAME_LEN
 from ..models import Segment
@@ -35,31 +35,28 @@ _LOGGER = logging.getLogger(__name__)
 _RECORDS_PER_GROUP = 4   # oneGroupColorSize (Support.getOneGroupColorSize): the index stride
 _RECORD_LEN = 4          # color_group_record: [brightness, r, g, b] (Controller4ColorInfoByGroup.q)
 
-# Chunk layout (AbsController4BleSingleSendMultiBack: k() = 7, a() = 12, i() copies 17 from offset 2).
-_FIRST_DATA_OFFSET = 7
-_FIRST_DATA_LEN = 12
-_DATA_OFFSET = 2
-_DATA_LEN = 17
-_DATA_END = FRAME_LEN - 1   # 19: the BCC byte follows the data
-_LAST_INDEX = 0xFF          # index byte of the last packet (isSameController: bytes[1] == -1)
-MIN_CHUNK_LEN = _DATA_END   # a shorter record can't hold a whole chunk: skipped
+# Chunk layout: the spec's multi_ac_reply_chunk (AbsController4BleSingleSendMultiBack: the first chunk's
+# header and 12 data bytes, every other chunk's index and 17 data bytes; the BCC follows).
+_LAST_INDEX = 0xFF          # index byte of the last packet (multi_ac_reply_chunk.is_end_tag)
+MIN_CHUNK_LEN = FRAME_LEN - 1   # 19: a shorter record can't hold a whole chunk (it needs no BCC): skipped
 # Compose4BaseInfoSingleRead.u reads a TLV's len byte signed (`int i10 = it2[i7]` from a byte[]):
 # from this value up it is negative, `new byte[i10]` throws and the app's whole read fails. The spec's
 # status_tlv rejects it (`len` valid max 0x7f), which is what the walk goes by; kept for callers.
 SIGNED_LEN_MIN = 0x80
 
-TYPE_SWITCH = 0x01
-TYPE_BRIGHTNESS = 0x04
-TYPE_MODE = 0x05
-TYPE_DEVICE_INFO = 0x07
-TYPE_SLEEP = 0x11
-TYPE_WAKEUP = 0x12
-TYPE_TIMERS = 0x23
-TYPE_ZONE = 0x30
-TYPE_BAR_SWITCH = 0x36   # H6038 / H6048 request it (VM4H6038:525: [41, 30, 36, A5]); not decoded here
-TYPE_IC_NUM = 0x40       # H6671 / H6672 request it (VM4LightH667172$afterConnectedSingleReadDeviceInfo$1:160)
-TYPE_SEG_INFO = 0x41
-TYPE_COLOR_GROUP = 0xA5
+# TLV types (enum status_tlv_type).
+TYPE_SWITCH = int(_F.StatusTlvType.switch)              # 0x01
+TYPE_BRIGHTNESS = int(_F.StatusTlvType.brightness)      # 0x04
+TYPE_MODE = int(_F.StatusTlvType.mode)                  # 0x05
+TYPE_DEVICE_INFO = int(_F.StatusTlvType.device_info)    # 0x07
+TYPE_SLEEP = int(_F.StatusTlvType.sleep)                # 0x11
+TYPE_WAKEUP = int(_F.StatusTlvType.wakeup)              # 0x12
+TYPE_TIMERS = int(_F.StatusTlvType.timers)              # 0x23
+TYPE_ZONE = int(_F.StatusTlvType.zone_or_direction)     # 0x30
+TYPE_BAR_SWITCH = int(_F.StatusTlvType.bar_switch)      # 0x36: H6038 / H6048 request it; not decoded here
+TYPE_IC_NUM = int(_F.StatusTlvType.ic_num)              # 0x40: H6671 / H6672 request it
+TYPE_SEG_INFO = int(_F.StatusTlvType.on_off_memory)     # 0x41: the seg / IC info TLV
+TYPE_COLOR_GROUP = int(_F.StatusTlvType.color_group)    # 0xA5
 
 
 @dataclass
@@ -92,10 +89,17 @@ class TlvCut:
     negative_len: bool = False                 # the spec's status_tlv `len` valid (max 0x7f) rejected it
 
 
-def _header(first: bytes) -> tuple[int, int]:
-    """``(packet count, lastLen)`` from the first chunk: allBackPkgs = u16le at bytes 2..3
-    (``BleUtils.H(.., false)``) and endPkgLen at byte 4 (AbsController4BleSingleSendMultiBack.g)."""
-    return first[2] | (first[3] << 8), first[4]
+def read_ac_chunk(frame: bytes) -> Any:
+    """A 0xAC reply chunk read by the spec's ``multi_ac_reply_chunk`` (``rx_frame``'s 0xAC body: the first
+    chunk's index 0, ``packets`` u16le (``BleUtils.H(.., false)``), ``last_len``, command, sub and 12 data
+    bytes; every other chunk's index and 17), read off the bytes after the proType, so a record without
+    its BCC still reads. None for a first chunk whose ``last_len`` doesn't fit its packet, the spec's
+    ``valid`` (AbsController4BleSingleSendMultiBack.g returns -1 and the app rejects the whole burst).
+    The caller has checked the record is at least :data:`MIN_CHUNK_LEN` bytes."""
+    try:
+        return _parse_type(_F.MultiAcReplyChunk, frame[1:])
+    except ValidationExprError:   # the first chunk's last_len valid, its only check
+        return None
 
 
 def burst_chunks(frames: Iterable[bytes]) -> tuple[list[bytes], bool, int]:
@@ -127,22 +131,25 @@ def burst_chunks(frames: Iterable[bytes]) -> tuple[list[bytes], bool, int]:
         if len(fr) < MIN_CHUNK_LEN:
             _LOGGER.debug("status burst: skipping short chunk (%d bytes)", len(fr))
             continue
-        arrival.setdefault(fr[1], position)
-        kept = unique.setdefault(fr[1], fr)
+        chunk = read_ac_chunk(fr)
+        index = 0 if chunk is None else int(chunk.index)   # only a first chunk can fail its valid
+        arrival.setdefault(index, position)
+        kept = unique.setdefault(index, fr)
         if kept is not fr and kept != fr:
             conflicts += 1
             _LOGGER.debug("status burst: chunk 0x%02x arrived again with different bytes; "
-                          "keeping the first copy", fr[1])
+                          "keeping the first copy", index)
     first = unique.get(0)
     if first is None:
         if unique:
             _LOGGER.debug("status burst incomplete: chunks %s, no first chunk", sorted(unique))
         return [], False, conflicts
-    total, last_len = _header(first)
-    if last_len > (_FIRST_DATA_LEN if total == 1 else _DATA_LEN):
-        _LOGGER.debug("status burst rejected: lastLen %d does not fit its packet (%d declared)",
-                      last_len, total)
+    head = read_ac_chunk(first)
+    if head is None:
+        _LOGGER.debug("status burst rejected: the first chunk's lastLen does not fit its packet: %s",
+                      first.hex())
         return [], False, conflicts
+    total = int(head.packets)
     if total == 1:
         return [first], True, conflicts
     # Packets 0..total-2 come before the last one; a corrupt count (0) can't bound the prefix.
@@ -184,15 +191,14 @@ def _join(chunks: list[bytes], complete: bool) -> bytes:
     last packet's lastLen bytes (``.h()``); an incomplete one with its last whole chunk."""
     if not chunks:
         return b""
-    first = chunks[0]
-    total, last_len = _header(first)
-    if total == 1:   # one-packet reply (always complete): lastLen bytes at offset 7 (g(), allBackPkgs 1)
-        return bytes(first[_FIRST_DATA_OFFSET:_FIRST_DATA_OFFSET + last_len])
-    buf = bytearray(first[_FIRST_DATA_OFFSET:_DATA_END])
+    head = read_ac_chunk(chunks[0])   # burst_chunks only hands over a first chunk that reads
+    if int(head.packets) == 1:   # one-packet reply (always complete): lastLen bytes (first_data_len)
+        return bytes(head.data)[: int(head.first_data_len)]
+    buf = bytearray(head.data)
     for fr in chunks[1:-1] if complete else chunks[1:]:
-        buf += fr[_DATA_OFFSET:_DATA_END]
+        buf += bytes(read_ac_chunk(fr).data)
     if complete:
-        buf += chunks[-1][_DATA_OFFSET:_DATA_OFFSET + last_len]
+        buf += bytes(read_ac_chunk(chunks[-1]).data)[: int(head.last_len)]
     return bytes(buf)
 
 
@@ -396,7 +402,7 @@ def parse_status(frames: list[bytes], *, pieces: int | None = None) -> StatusRep
         elif typ == TYPE_ZONE:
             # bit0 of each byte (VM4LightH60A6$afterConnectedSingleReadDeviceInfo$1.o:
             # ParseUtils.getBit2Boolean(b, 1) = (b >> 0) & 1); the other bits are not zone power.
-            st.zone_power = {0: bool(int(v.zone_a) & 0x01), 1: bool(int(v.zone_b) & 0x01)}
+            st.zone_power = {0: bool(v.zone_a_on), 1: bool(v.zone_b_on)}   # status_zone: bit 0
         elif typ == TYPE_COLOR_GROUP:
             try:
                 groups.append(_color_group(tlv, pieces))

@@ -29,9 +29,9 @@ from .const import BRAND_MARKERS, GBK_PREFIX, GV_LONG_PREFIXES, GV_PREFIX
 # the AD structure's payload ``[flags][company id u2le][pact_type u2be][pact_code][rest]``, where the
 # Govee marker 0x88 0xEC is the company id (``is_govee``); bleak splits that payload into the
 # company id it hands over (``flags`` | the marker's first byte << 8) and the value after it.
-_MFG: Any = _GA.ManufacturerData
-# Value bytes the type needs after the company id: the marker's second byte, pact_type (2), pact_code.
-_PACT_VALUE_LEN = 4
+# ``manufacturer_data_lenient`` wraps it for a payload of any length: its ``data`` is read only when the
+# pact fields fit (6 bytes), so a short entry is skipped without a parse failure.
+_MFG: Any = _GA.ManufacturerDataLenient
 # pact_type / pact_code of a Govee-named advertisement whose manufacturer data has no parseable
 # pact info (see GoveeAdvertisement.pact).
 _NO_PACT = -1
@@ -101,16 +101,17 @@ def sku_from_local_name(name: str) -> str | None:
 
 
 def _govee_entries(mfg: dict[int, bytes]) -> Iterator[Any]:
-    """Each Govee entry of bleak's ``manufacturer_data``, read by the spec's ``manufacturer_data`` type
+    """Each Govee entry of bleak's ``manufacturer_data``, read by the spec's ``manufacturer_data_lenient``
     over the payload bleak split: ``company_id`` (2 bytes, little-endian) then the value. Entries
-    without the Govee marker (``is_govee``), too short for the pact fields, or with a company id that
-    can't be two bytes are skipped."""
+    without the Govee marker (``is_govee``), too short for the pact fields (no ``data``), or with a
+    company id that can't be two bytes are skipped. Read-only: never ``_write`` one (its ``data`` is a
+    positional instance)."""
     for company_id, value in mfg.items():
-        if not 0 <= company_id <= 0xFFFF or len(value) < _PACT_VALUE_LEN:
+        if not 0 <= company_id <= 0xFFFF:
             continue
         entry = _MFG(KaitaiStream(BytesIO(company_id.to_bytes(2, "little") + bytes(value))))
         entry._read()   # a read-write class reads only when asked
-        if entry.is_govee:
+        if entry.is_govee and entry.data is not None:
             yield entry
 
 
@@ -127,10 +128,10 @@ def parse_manufacturer_data(mfg: dict[int, bytes]) -> tuple[bool, int, int, int]
     broadcast (BleUtil.parseBleBroadcastPact).
     """
     for entry in _govee_entries(mfg):
-        version = int(entry.protocol_version)
-        if version == 0:
+        if not entry.has_pact:   # manufacturer_data.is_govee_pact: protocol_version >= 1
             continue
-        return bool(entry.encrypted), version, int(entry.pact_type), int(entry.pact_code)
+        d = entry.data
+        return bool(d.encrypted), int(d.protocol_version), int(d.pact_type), int(d.pact_code)
     return None
 
 
@@ -149,12 +150,12 @@ def parse_broadcast_onoff(mfg: dict[int, bytes], *, on_mask: int | None = None) 
     device-list models do that (h5080 ``Model.A``, ``Model4Plug2.A``; see
     ``DeviceProfile.advert_on_mask``)."""
     for entry in _govee_entries(mfg):
-        rest = bytes(entry.rest)   # the per-SKU state after pact_code; the switch byte is its first
-        if not rest:
+        # manufacturer_data.has_switch_state: a header byte >= 2 read signed (BleUtil.parseBleBroadOnOff:
+        # (signed) scanRecord[i6 + 2] >= 2) and a byte after pact_code, its switch_byte.
+        if not entry.has_switch_state:
             continue
-        if not 2 <= int(entry.flags) <= 0x7F:   # BleUtil.parseBleBroadOnOff: (signed) scanRecord[i6 + 2] >= 2
-            continue
-        return rest[0] == 1 if on_mask is None else bool(rest[0] & on_mask)
+        switch = int(entry.data.switch_byte)
+        return switch == 1 if on_mask is None else bool(switch & on_mask)
     return None
 
 

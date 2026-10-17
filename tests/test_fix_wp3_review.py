@@ -71,8 +71,9 @@ def _dev(sku: str, replies: Replies | None = None, **changes: Any) -> tuple[Devi
 
 
 # ── WP3-048: H61A8's aa 05 colour sub-modes follow dreamcolorlightv1 Mode.parseSubMode ─────────
-def test_h61a8_mode_parse_is_kelvin_15() -> None:
-    assert _profile("H61A8").mode_color_parse == "kelvin_15"
+def test_h61a8_mode_parse_is_kelvin_15_unsigned() -> None:
+    # 0x15 only, read unsigned (SubModeColorV2.parse: BleUtil.getSignedInt masks each byte).
+    assert _profile("H61A8").mode_color_parse == "kelvin_15_unsigned"
 
 
 @pytest.mark.parametrize("sub_mode", [0x0D, 0x0B])

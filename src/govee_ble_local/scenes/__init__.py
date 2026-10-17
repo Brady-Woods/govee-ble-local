@@ -44,12 +44,10 @@ class _SceneType(IntEnum):
     COMPOSE = 6
 
 
-# First byte of a compose (sceneType 6) blob that gets the V5 upload
-# (ShareDiy.isValidComposeBytes: bytes[0] == 10).
-_COMPOSE_V5_MARKER: Final = 0x0A
-# First decoded byte of an H60A6 type-5 blob that takes the new-DIY path (BaseSceneViewMode.r3:
-# ``bArrDecryByBase64[0] != 80`` -> not applied as a DIY); the value after it is the upload.
-_H60A6_DIY_MARKER: Final = 0x50
+# A decoded scene blob's lead byte picks its upload; the spec's *_param types carry it as a ``contents``
+# marker, and their ``value`` is the upload: compose_scene_param 0x0a (ShareDiy.isValidComposeBytes),
+# h60a6_scene_param 0x50 (BaseSceneViewMode.r3), h6052_graffiti_param 0x13, scenes_graffiti_param 0x01
+# (ShareDiy.isValidGraffitiBytes) plus the effect's high byte.
 
 # Path-B scene-library upload table (from the decompiled `ScenesOp.parseSceneV1`,
 # confirmed by the Q4 source handoff):
@@ -60,12 +58,13 @@ _H60A6_DIY_MARKER: Final = 0x50
 # handled by `scene_upload_frames` (dialect-specific), not this table. sceneType 6
 # (compose) also depends on the blob's first byte (ScenesOp.o), checked in `_plan_upload`.
 _LIBRARY_SCENE: Final[Mapping[int, tuple[int, int, int]]] = MappingProxyType({
-    _SceneType.RGB: (1, 1, 0),        # MultiNewScenesControllerV1, comType 1, strip 0
-    _SceneType.RGBIC: (2, 2, 0),      # MultiNewScenesControllerV2, comType 2, strip 0
-    _SceneType.GRAFFITI: (3, 7, 2),   # MultiNewScenesControllerV3, comType 7, strip 2
-    # compose -> MultiNewScenesControllerV5, comType 10 (0x0a), strip 1; gated on
+    # comTypes are the spec's multi_comm_byte (the app's MULTI_* constants).
+    _SceneType.RGB: (1, int(_F.MultiCommByte.v1_new_scenes), 0),        # MultiNewScenesControllerV1, strip 0
+    _SceneType.RGBIC: (2, int(_F.MultiCommByte.v2_new_scenes), 0),      # MultiNewScenesControllerV2, strip 0
+    _SceneType.GRAFFITI: (3, int(_F.MultiCommByte.v3_new_scenes), 2),   # MultiNewScenesControllerV3, strip 2
+    # compose -> MultiNewScenesControllerV5, comType 0x0a (MULTI_V4_NEW_SCENES), strip 1; gated on
     # scene-version 6 (parseSceneV1: `versionArray.contains(6) && sceneType == 6`).
-    _SceneType.COMPOSE: (6, 10, 1),
+    _SceneType.COMPOSE: (6, int(_F.MultiCommByte.v4_new_scenes), 1),
 })
 
 
@@ -260,9 +259,10 @@ def _h60a6_upload(raw: bytes) -> list[bytes] | None:
     (``Pro4H60A6Diy``; 0xA3, commByte 0x58), a graffiti a ``graffiti_value`` (marker 0x20; 0xA4-MTU,
     commByte 0x58). The value is sent as the catalogue holds it; the app re-serialises what it parsed
     (``IDiyParse.toBytes``), which is not modelled."""
-    if len(raw) < 2 or raw[0] != _H60A6_DIY_MARKER:
+    param = _reads_as(_F.H60a6SceneParam, raw)   # lead 0x50, then the value
+    value = b"" if param is None else bytes(param.value)
+    if not value:
         return None
-    value = raw[1:]
     # The spec's h60a6_scene_value picks DIY by its length check (is_diy) and graffiti otherwise. The app
     # tries the graffiti parser too when the DIY one fails, so a value the spec's choice can't read gets
     # that second try here (a spec gap: try-in-order isn't expressible in the type).
@@ -283,19 +283,26 @@ def _plan_upload(
     if scene_dialect == "B_h60a6" and st == _SceneType.DIY:
         return _h60a6_upload(_decode_param(scene))
     if scene_dialect == "B_h6052" and st == _SceneType.DIY:
-        raw = _decode_param(scene)
-        if raw and raw[0] == 0x13:
-            return build.scene_upload_a3(raw[1:], build.COMM_H6052_GRAFFITI)
+        graffiti = _reads_as(_F.H6052GraffitiParam, _decode_param(scene))   # lead 0x13, then the value
+        if graffiti is not None:
+            return build.scene_upload_a3(bytes(graffiti.value), build.COMM_H6052_GRAFFITI)
         return None
     sel = scene_upload_params(st, scene_versions)
     if sel is None:
         return None
     comm_byte, strip = sel
     raw = _decode_param(scene)
-    if st == _SceneType.COMPOSE and not (raw and raw[0] == _COMPOSE_V5_MARKER):
-        # ScenesOp.o (parserScenes4Compose): only a blob that ShareDiy.isValidComposeBytes
-        # accepts (first byte 0x0a) gets MultiNewScenesControllerV5 (comType 10). A 0x51
-        # blob goes to MultiNewScenesControllerH60B0 (commByte 90), which is not modelled;
-        # any other first byte gets no controller. Both stay activate-only.
-        return None
+    if st == _SceneType.COMPOSE:
+        # ScenesOp.o (parserScenes4Compose): only a blob that ShareDiy.isValidComposeBytes accepts (lead
+        # 0x0a, compose_scene_param) gets MultiNewScenesControllerV5. A 0x51 blob goes to
+        # MultiNewScenesControllerH60B0 (commByte 90), which is not modelled; any other lead gets no
+        # controller. Both stay activate-only.
+        compose = _reads_as(_F.ComposeSceneParam, raw)
+        return None if compose is None else build.scene_upload_a3(bytes(compose.value), comm_byte)
+    if st == _SceneType.GRAFFITI:
+        # ScenesOp.n sends bytes [2:] only when ShareDiy.isValidGraffitiBytes accepts the blob: its lead
+        # byte 0x01 is scenes_graffiti_param's marker. Its other checks (size >= 9, a walk of the group
+        # headers) have no spec type yet, so they are not made here.
+        graffiti = _reads_as(_F.ScenesGraffitiParam, raw)
+        return None if graffiti is None else build.scene_upload_a3(bytes(graffiti.value), comm_byte)
     return build.scene_upload_a3(raw[strip:], comm_byte)

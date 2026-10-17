@@ -103,6 +103,40 @@ model, from which the shipped readers are generated).
   H6047, H6052, H60A6 and H61A8 polled cleanly with the new decoders. Today's bench captures (447 replies:
   55 `aa 05`, and 10 bursts whose 0x05 TLVs are 4 bytes long) decode the same through the old and the new
   code.
+- **The library reads the spec owner's gap batch (c706502) instead of hand-kept values.**
+  - **Enums:** `wire.build`'s `INFO_*`, `POWER_*`, `RELAY_*`, `CMD_TOTAL_SWITCH`, `COMM_*`, the op15 colour
+    variants, the mode request selector, the 0xAC request command and the 0xA3 start marker now come from
+    `device_info_selector`, `light_power`, `relay_write`, `plug_command`, `multi_comm_byte`,
+    `op15_color_variant`, `mode_read_selector`, `multi_ac_command` and `a3_start_marker`. The
+    `mode_color_0d_typed` kinds come from `mode_0d_kind`, `reassemble.TYPE_*` from `status_tlv_type`, and the
+    connection's received-proType set from `rx_pro_type` (it now also knows 0x3A, 0xA6 and 0xAB, so those no
+    longer log an "unrecognised frame" warning; they were queued all along). The analyzer's
+    `KNOWN_STATUS_REPLY_TLVS` is the `status_tlv_type` enum, which adds 0x16, 0x39 and 0xA3.
+  - **Types:** H5089's `33 02` main switch is written with `total_switch_write`, so no frame body is
+    written raw any more. The `aa 41` section count is read with `section_count_read`. A 0xAC reply chunk is
+    read with `multi_ac_reply_chunk` (`reassemble.read_ac_chunk`, new), whose `last_len` validation is the
+    app's whole-burst reject, so the hand-kept chunk offsets are gone. A write ack is read with `rx_frame`'s
+    `write_ack` (`wire.parse.parse_write_ack`, new), for the connection's rejection check and the analyzer.
+    The BGC-info value is read with `bgc_info` (`wire.parse.bgc_encrypt_version`, new; lenient for a short
+    format-2 value, as chosen), and the handshake key with `handshake_key_reply_data`. The analyzer routes
+    on `rx_frame.pro_type` and judges a masked chunk from the spec chunk's data and checksum. The scene
+    upload reads each blob's lead byte with `h60a6_scene_param`, `h6052_graffiti_param`,
+    `compose_scene_param` and `scenes_graffiti_param`. An advertisement is read with
+    `manufacturer_data_lenient`, so the 4-byte length gate is gone (item 41's additive route).
+  - **Instances:** `mode_read.scene_code`, `bar_switch_read.left_on` / `right_on`, `gradual_read.is_on`,
+    `secret_read_reply.is_valid`, `notify_wifi.is_connected`, `status_zone.zone_a_on` / `zone_b_on`, the
+    device-info `uid_is_invalid` / `uid_has_leading_pair` / `wifi_mac_is_invalid`, `version3.text` /
+    `is_zero`, and `manufacturer_data.is_govee_pact` / `has_switch_state` / `switch_byte`.
+  - The H60A6 and H6061 0x0d report is read as kind 3 (`rgb_kelvin_0d`, `[r, g, b][kelvin]`, the five
+    bytes the app reads) instead of kind 2.
+  - `devices.yaml`'s h5080 `by_goods_type` now pins the plug profiles' `relay_power`, `relay_on_mask`
+    and `advert_on_mask` (a drift test, keyed by its `models`).
+  - Still left for a lockstep spec change: the `mode_read` 0x04 switch case, the `command` enum's 0x02
+    member, `pro_type` 0xA6, the root scan-record walk and the guard on `status_reply` itself.
+  An equivalence run against the previous code found no other difference: the writers, every bundled scene's
+  upload for every profile, 6,000 advertisements, the 0xAC bursts and TLV walks, the handshake replies, and
+  today's bench captures (972 frames, 48 bursts, 230 encrypted replies) all decode the same. The decode
+  changes are under Fixed.
 - **More library sites read the spec's own fields instead of raw bytes** (an independent inventory of
   sites that ignored an existing spec field or instance).
   - `wire.parse.find_reply` matches a reply on the frame reader's `pro_type` and `command`. A reply
@@ -315,6 +349,24 @@ model, from which the shipped readers are generated).
   tooling only.
 
 ### Fixed
+- **Kelvin, version text and section count are read as the app reads them** (the spec owner's gap
+  batch). All of these are app-matching and source-modelled: they change only values the bench devices
+  don't report.
+  - H6641's 0x15 Kelvin is read signed (a plain `SubMode4Color`, `BleUtil.getSignedShort`): 0x8000 or
+    more is no colour temperature.
+  - H6047's two bar Kelvins are read signed (`cct_read_reply.kelvin_signed` / `kelvin_right_signed`;
+    h6047 `Info4Detail` D0/E0 `getSignedShort`). A negative bar Kelvin is treated as "not in colour
+    temperature", like 0.
+  - H61A8 keeps the unsigned reading (`SubModeColorV2.parse`: `BleUtil.getSignedInt` masks each byte),
+    through a new `mode_color_parse` value, `"kelvin_15_unsigned"`.
+  - Device-info version text is the spec's `version3.text`, each byte read signed
+    (`Compose4BaseInfoSingleRead.v:363-368`, as chosen), so a byte of 0x80 or more renders negative.
+  - The `aa 41` section count's `sectionNum` is a signed byte (`section_count_read`). The device already
+    refused a count of 0x80 or more, so its segment count is unchanged.
+  - A graffiti (sceneType 3) library scene is uploaded only when its blob leads with 0x01
+    (`scenes_graffiti_param`; `ScenesOp.n` -> `ShareDiy.isValidGraffitiBytes`); otherwise it is only
+    activated, as in the app. All 25 bundled graffiti scenes pass. The app's other two checks (size >= 9
+    and a walk of the group headers) have no spec type yet and aren't made.
 - **`wire.parse.parse_ic_count` reads the IC count signed, as the app does.** It uses the spec's
   `ic_segment_read.ic_count_signed`, after `ControllerOnlyReadIcSegmentNum` (`BleUtil.getSignedShort`).
   An `aa 40` count of 0x8000 or more is now negative, as in the app. Before, it was returned unsigned,

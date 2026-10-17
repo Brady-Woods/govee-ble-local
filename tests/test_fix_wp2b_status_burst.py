@@ -299,10 +299,11 @@ def test_status_device_info_reads_only_the_basic_and_wifi_blocks() -> None:
 
 
 # ── analyzer: same completeness rule and walk as the runtime ────────────────────
-def test_analyzer_known_tlv_set_unchanged() -> None:
-    # 0x36 (H6038 / H6048) and 0x40 (H6671 / H6672) joined: the app's status reads request them.
-    assert frozenset({0x00, 0x01, 0x04, 0x05, 0x07, 0x11, 0x12, 0x23, 0x30, 0x36, 0x40, 0x41, 0xA5}) == (
-        KNOWN_STATUS_REPLY_TLVS)
+def test_analyzer_known_tlv_set_is_the_specs_status_tlv_type() -> None:
+    # The spec's status_tlv_type enum: 0x16 effect_direction, 0x39 check_direction and 0xA3 gradual joined
+    # the old hand-kept set (0x36 for H6038 / H6048 and 0x40 for H6671 / H6672 were already in).
+    assert frozenset({0x00, 0x01, 0x04, 0x05, 0x07, 0x11, 0x12, 0x16, 0x23, 0x30, 0x36, 0x39, 0x40, 0x41,
+                      0xA3, 0xA5}) == KNOWN_STATUS_REPLY_TLVS
 
 
 def test_analyzer_double_delivery_is_not_malformed() -> None:

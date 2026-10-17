@@ -109,7 +109,8 @@ def apply_zone_kelvin(
 ) -> None:
     """Fold a per-bar kelvin change into state (bar-switch devices only; others are a no-op).
 
-    ``None`` or 0 means that bar is not in colour-temperature mode. Like the app
+    ``None``, 0 or a negative Kelvin (a signed short of 0x8000 or more) means that bar is not in
+    colour-temperature mode. Like the app
     (``Info4Detail`` subMode4Color parse), the whole-device ``color_temp_kelvin`` is set only
     while both bars carry the same kelvin, and unknown otherwise. Once it is known the device is
     in colour-temperature mode, so a stale whole-device ``rgb_color`` is dropped (the two are
@@ -118,7 +119,7 @@ def apply_zone_kelvin(
         return
     zk = dict(state.zone_color_temp_kelvin)
     for index, k in kelvin_by_index.items():
-        if k:
+        if k is not None and k > 0:
             zk[index] = k
         else:
             zk.pop(index, None)
@@ -257,11 +258,14 @@ def apply_mode(profile: DeviceProfile, state: DeviceState, m: Any) -> None:
         if cube is not None:
             state.rgb_color, state.color_temp_kelvin = cube
         return
-    kelvin = parse.kelvin_of(m)
+    # 0x15 alone: H6641 reads its Kelvin signed (a plain SubMode4Color), H61A8 unsigned (SubModeColorV2.parse,
+    # BleUtil.getSignedInt masks each byte); the default rgb_kelvin parse keeps the raw u2be.
+    signed = profile.mode_color_parse == "kelvin_15"
+    kelvin = parse.kelvin_signed_of(m) if signed else parse.kelvin_of(m)
     if kelvin is not None:
         apply_kelvin_report(state, kelvin)
         return
-    if profile.mode_color_parse == "kelvin_15":
+    if profile.mode_color_parse in ("kelvin_15", "kelvin_15_unsigned"):
         return   # the app parses no other colour sub-mode for this SKU (0x0d "is not support")
     # The default "rgb_kelvin" parse: parse_mode_0d_for's 0x0d decoder, kind 2 on every colour scheme.
     mode_0d = parse.cct_0d_of(m)
