@@ -518,6 +518,51 @@ model, from which the shipped readers are generated).
   zeroes every data byte.
 
 ### Spec
+- `devices.yaml` now catalogues the light families and goodsTypes that Govee Home 7.7.02 routes but the file
+  did not model: 148 more light goodsTypes (113 -> 261 non-zero) and 205 more SKUs.
+  - How it was traced and checked:
+    - Each family was traced in the complete 7.7.02 decompile from its routing (PFD module, SubLib keys,
+      `Model.t`) through the control screen's connect reads, mode parser and colour builders, with every claim
+      cited `path:line`.
+    - Each trace was then re-traced independently from both ends before it went in. Corrections from that pass
+      are applied, and every Java citation resolves (4244 citations).
+  - 40 new families:
+    - pact_rgbiclight: `chassislightv1` (11 / 162) and `h7090` (44 / 127).
+    - pact_bulblightstringv1: `bulblightstringv2` (35 / 148 / 49 / 91).
+    - pact_hollowlamp: `straightfloorlamp` (30 / 69 / 312 / 377).
+    - pact_h6061: `h6069` (284). The cubelight screen sends it whole-device 0x0d frames, so it is its own
+      entry.
+    - pact_floorlamp: `h6071` (57 / 67), `h60b1` (300), `h60b0` (301).
+    - pact_h6079: `h6079` (156 / 209 / 376), `h6020` (210), `h6022` (249), `h1741` (365).
+    - pact_h6840: `h6840` (278 / 325 / 381 / 382) and `h6609` (173 / 181 / 260 / 362 / 374 / 378 / 392 / 398).
+    - pact_h70b1: `h70b3` (229 / 230 / 231 / 255 / 256), `h6800` (272), `h70b6` (329 / 341), `h70dx`
+      (267 / 268 / 269).
+    - pact_h6099: `pact_h6099` (191 / 203 / 253 / 273 / 327 / 336).
+    - pact_outdoorlight: `h7040` (36), `h7080` (45 / 55 / 56), `h7056` (304), `h7086` (293).
+    - pact_h7050: `h7050`, `h7057`, `h1630`, `h7045` and `h7020`, all 42 of its goodsTypes.
+    - pact_h7075: `h7075`, `h7078`, `h3751`, `h7072`, `h7076`, `h707a`, `h3700`, all 9 of its goodsTypes.
+    - pact_fanlight: `fanlight` (359 / 368), including the fan opcodes (0x31).
+    - pact_h6092: `h6092` (13 projector goodsTypes).
+    - pact_h6630: `h6630` (285 / 286). Its control screen is IoT-only.
+    - `h3a5x` (386) and `h682021` (280) are `untraced`, as h604a is: their feature splits are not in the
+      capture.
+  - Further goodsTypes and SKUs on existing families:
+    - `striplight`: H610A (80) and H610B (114) run the same screen and parser as H6062.
+    - `h6061`: 96 / 97 / 121 / 163 / 228. Panel counts and CCT mask widths differ per goodsType.
+    - `dreamcolorlightv1`: the 13 further SubLib4BleIot keys, 71 to 262, all `kelvin`. AdjustAcV3 is never
+      launched in 7.7.02.
+    - `bulblightv3`: the R-prefixed SKUs (R1501, R14A1, R14C2, R1401, R14C0, R14C1). They route by goodsType
+      to the same screen.
+    - `h61d3` 263: the 0xAC status read and its TLV 0xA5 record.
+  - New strategies:
+    - `rgb_kelvin_15`: H6071 / H6075 read the rgb_kelvin_0d body on sub-mode 0x15.
+    - `kelvin_14_15` and `gradual_14`: straightfloorlamp's colour sub-mode is 0x14.
+    - `bri_rgb_pair_15`, with the new decode `bri_rgb_pair`: H7061's two [brightness][r, g, b] head records.
+  - `devices.schema.json` accepts the new strategy and decode names, sub-mode "0x14", and `power_live`
+    `heartbeat_aa33`, the aa 33 left / right heartbeat of H610A.
+  - `encryption: secret_key_pairing` is set only where the control screen presents 0xB2 on connect: h6071,
+    fanlight from firmware 1.00.20 / 1.00.11, and h6630's square path. A secret used only by pairing, group or
+    room control is `none`, as for h6061 and striplight.
 - Frame-audit section E: the spec forms the library still builds or decodes by hand. Each was traced in the
   Govee Home 7.7.02 decompile and checked by an adversarial reviewer. Additive only: 9 standalone types wired
   into no dispatch, and value instances on existing types. No `pos` instances, so a written type is never
