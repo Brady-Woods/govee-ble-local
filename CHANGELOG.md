@@ -518,6 +518,12 @@ model, from which the shipped readers are generated).
   zeroes every data byte.
 
 ### Spec
+- `devices.yaml` striplight `color_temp_write` cites the BLE builder the colour-tab Kelvin slider runs
+  (`ColorViewModel.U` -> `ColorModeControllerConfig.c` -> `Config.Yt` -> `Bytes.r`). It used to cite
+  `ColorControllerConfig.b`, which builds the IoT command. The frame bytes are unchanged.
+- `devices.yaml` dreamcolorlightv1: a comment records that `color_scheme: h61a8` (the 0x0b write) describes
+  only colour version 3 (17 / 18 below their firmware gates, old H6163 / H6117, part brightness off). The 13
+  goodsTypes 71 to 262 send the h60a6 0x15 frames. `color_scheme` is per family, so the value stays.
 - `devices.yaml` now catalogues the light families and goodsTypes that Govee Home 7.7.02 routes but the file
   did not model: 148 more light goodsTypes (113 -> 261 non-zero) and 205 more SKUs.
   - How it was traced and checked:
