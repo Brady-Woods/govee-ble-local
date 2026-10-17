@@ -175,8 +175,10 @@ def _describe_read(plain: bytes, body: Any) -> tuple[str, list[Issue]]:
         sel = getattr(rb, "selector_or_sub_mode", None)
         if sel is not None:
             label += f"/sub=0x{sel:02x}"
-        # 0x01 = request selector (no reply body); 0x04 = scene code (read in wire.parse)
-        if _opaque(getattr(rb, "rest", None)) and sel not in (0x01, 0x04):
+        # The request selector (mode_read_selector.request) has no reply body; a scene report's code is
+        # mode_read.scene_code (read in wire.parse).
+        is_request = sel == int(_F.ModeReadSelector.request)
+        if _opaque(getattr(rb, "rest", None)) and not is_request and getattr(rb, "scene_code", None) is None:
             issues.append(("soft", f"mode read sub 0x{sel:02x} reply not modelled"))
     elif _opaque(rb):                              # e.g. 0xa2 BulbGroupColor (mechanism B)
         issues.append(("soft", f"read {cmd.name} reply not modelled (opaque)"))

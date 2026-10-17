@@ -129,6 +129,13 @@ model, from which the shipped readers are generated).
     `is_zero`, and `manufacturer_data.is_govee_pact` / `has_switch_state` / `switch_byte`.
   - The H60A6 and H6061 0x0d report is read as kind 3 (`rgb_kelvin_0d`, `[r, g, b][kelvin]`, the five
     bytes the app reads) instead of kind 2.
+  - Also from the 4017e19 frame audit:
+    - the zone, bar and gradual writers' 1/0 states come from `light_power`;
+    - `status_query` names its TLV types with `status_tlv_type` (it had borrowed the `command` enum);
+    - the TLV walk reads the stream with `status_reply_safe` (the same TLVs; `[]` for an empty buffer)
+      and ends on `status_tlv_type.padding`;
+    - the analyzer's mode-reply exemption uses `mode_read_selector.request` and `mode_read.scene_code`.
+    These are byte- and state-identical (equivalence run against f182c20, and the bench captures).
   - `devices.yaml`'s h5080 `by_goods_type` now pins the plug profiles' `relay_power`, `relay_on_mask`
     and `advert_on_mask` (a drift test, keyed by its `models`).
   - Still left for a lockstep spec change: the `mode_read` 0x04 switch case, the `command` enum's 0x02

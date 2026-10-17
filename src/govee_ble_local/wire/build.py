@@ -696,13 +696,14 @@ def segment_brightness(mask: int, pct: int, scheme: ColorScheme,
 def zone_power(zone: int, on: bool) -> bytes:
     """33 30 <zoneIndex> <state> (H60A6 per-zone)."""
     _check_range("zone", zone, 0, 0xFF)
-    body = _node(_F.ZonePowerWrite, None, zone=zone, state=1 if on else 0)
+    body = _node(_F.ZonePowerWrite, None, zone=zone, state=POWER_ON if on else POWER_OFF)   # light_power
     return _write_frame(_F.Command.light_direction_or_zone, lambda sc: _body(body, _PARAMS_LEN))
 
 
 def bar_switch(left: bool, right: bool) -> bytes:
     """33 36 <left> <right> (H6047 both bars in one frame)."""
-    body = _node(_F.BarSwitchWrite, None, left=1 if left else 0, right=1 if right else 0)
+    body = _node(_F.BarSwitchWrite, None, left=POWER_ON if left else POWER_OFF,   # light_power
+                 right=POWER_ON if right else POWER_OFF)
     return _write_frame(_F.Command.compose_light_switch, lambda sc: _body(body, _PARAMS_LEN))
 
 
@@ -825,7 +826,7 @@ def bar_switch_query() -> bytes:
 
 def gradual(on: bool) -> bytes:
     """33 A3 <0/1>: gradual/fade on the BLE<->wifi control handoff (GRADUAL_CHANGE_WIFI_BLE)."""
-    body = _node(_F.GradualWrite, None, state=1 if on else 0)
+    body = _node(_F.GradualWrite, None, state=POWER_ON if on else POWER_OFF)   # light_power
     return _write_frame(_F.Command.gradual_wifi_ble, lambda sc: _body(body, _PARAMS_LEN))
 
 
@@ -898,9 +899,9 @@ def status_query(*, full: bool = False) -> bytes:
 
     Device always sends ``full=True``; the single-zone ``ac 03 02 41 30`` (``full=False``) is spec
     surface for tools and tests."""
-    # The requested TLV types are command ids (0x41 seg info, 0x30 zones, 0xA5 colour groups).
-    zone_types = [_F.Command.on_off_memory, _F.Command.light_direction_or_zone]
-    types = [int(t) for t in ([*zone_types, _F.Command.local_color_read] if full else zone_types)]
+    # The requested TLV types (enum status_tlv_type): 0x41 seg info, 0x30 zones, 0xA5 colour groups.
+    zone_types = [_F.StatusTlvType.on_off_memory, _F.StatusTlvType.zone_or_direction]
+    types = [int(t) for t in ([*zone_types, _F.StatusTlvType.color_group] if full else zone_types)]
     return _frame_of(_F.ProType.multi_reply_read, lambda f: _node(
         _F.MultiAc, f, command=int(_F.MultiAcCommand.single_read), count=len(types), requested_types=types,
         pad=bytes(_BODY_LEN - 2 - len(types))))

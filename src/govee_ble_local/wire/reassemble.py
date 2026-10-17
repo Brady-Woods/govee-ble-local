@@ -57,6 +57,7 @@ TYPE_BAR_SWITCH = int(_F.StatusTlvType.bar_switch)      # 0x36: H6038 / H6048 re
 TYPE_IC_NUM = int(_F.StatusTlvType.ic_num)              # 0x40: H6671 / H6672 request it
 TYPE_SEG_INFO = int(_F.StatusTlvType.on_off_memory)     # 0x41: the seg / IC info TLV
 TYPE_COLOR_GROUP = int(_F.StatusTlvType.color_group)    # 0xA5
+_TYPE_PADDING = int(_F.StatusTlvType.padding)           # 0x00: the trailing zero-pad sentinel
 
 
 @dataclass
@@ -273,11 +274,13 @@ def walk_status_tlvs(
     would start at the buffer's end (len 0) takes u()'s failure branch (``i + 2 >= length``) but is
     read here. No capture shows any of them."""
     try:
-        reply = _parse_type(_F.StatusReply, buf)
+        # status_reply_safe: the same TLVs as status_reply, ending at the type-0 padding sentinel (its
+        # entry takes the rest as padding), and [] for an empty buffer instead of EndOfStreamError.
+        reply = _parse_type(_F.StatusReplySafe, buf)
     except Exception:  # noqa: BLE001 - a TLV the stream read can't take: walk them one at a time
         reply = None
     if reply is not None:   # every len passed status_tlv's valid (max 0x7f), so the app reads them all
-        return [tlv for tlv in reply.tlvs if int(tlv.type) != 0], None
+        return [e.tlv for e in reply.entries if int(e.tlv.type) != _TYPE_PADDING], None
     # The generated status_tlv reads each TLV off one shared stream, so the walk steps exactly where
     # the spec's own TLV boundaries are. When the reader can't take one, how far it got says why, in
     # the app's order: no len byte (``len`` unset), a negative len (``len``'s valid), a value past the
@@ -307,7 +310,7 @@ def walk_status_tlvs(
                 skipped.append(TlvCut("unparsed", typ, pos, int(length)))
             stream.seek(pos + 2 + int(length))
             continue
-        if int(tlv.type) == 0:   # type 0 = trailing zero pad (status_reply's sentinel)
+        if int(tlv.type) == _TYPE_PADDING:   # the trailing zero-pad sentinel
             break
         tlvs.append(tlv)
     return tlvs, None
