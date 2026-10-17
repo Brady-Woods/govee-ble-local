@@ -58,7 +58,8 @@ enforces, fail-fast:
 4. `bandit -r src tools _build_backend` failing on Medium+ severity
 5. `pip-audit` over the package's resolved runtime dependencies (no ignores); skipped offline unless
    `CI=true`
-6. `pytest` with a coverage floor of 85% (`COV_MIN`) over the package (generated readers omitted)
+6. `pytest` with a coverage floor of 95% (`COV_MIN`) over the package's statements and branches
+   (generated readers omitted), the same gate hass-govee-ble-local applies to the integration
 
 With `CI=true`, missing optional test dependencies fail the run instead of skipping tests.
 
