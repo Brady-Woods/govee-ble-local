@@ -120,30 +120,30 @@ secret:
     (BLE 0xB2) or the device ignores commands.
   size_bytes: 8
   encoding: "base64 when stored/transported; raw 8 bytes on the wire"
-  origin: "device-generated. First obtained by reading BLE 0xB1 during pairing (scanBleInfo.j())."
+  origin: "device-generated. First obtained by reading BLE 0xB1 during pairing (AbsPairAc4SecretV1.T1 sends the read when no secret is known; the multi-bind request carries it as scanBleInfo.j())."
   ble:
-    read:  { opcode: "0xb1", reply: "[0x01] + 8 secret bytes", note: "device -> app; SecretKeyControllerV1.parseValidBytes" }
-    auth_write: { opcode: "0xb2", payload: "8 raw bytes (base64-decoded secretCode)", note: "app -> device after connect to authorize the session" }
-  local_cache: "SecretKeyConfig — persisted HashMap<bleAddress, secretCode> (getSecretKey/saveSecretKey)"
+    read:  { opcode: "0xb1", reply: "[0x01] + 8 secret bytes", note: "device -> app; SecretKeyController.parseValidBytes (SINGLE_READ_SECRET_KEY -79; SecretKeyControllerV1 overrides it with the same parse)" }
+    auth_write: { opcode: "0xb2", payload: "8 raw bytes (base64-decoded secretCode)", note: "app -> device after connect to authorize the session (SINGLE_CHECK_SECRET_KEY -78; SecretKeyController.q base64-decodes the secret)" }
+  local_cache: "SecretKeyConfig (base2home/scenes) — persisted HashMap<bleAddress, secretCode> (getSecretKey/saveSecretKey); the family pair screen saves it, e.g. h6047 PairAcV1"
   cloud_api:
     hosts:
-      app_api: "app.govee.com"        # Constant.java:165 (prod; dev/pda variants exist). Account/app-level calls.
-      device_api: "device.govee.com"  # Constant.java:177 (prod). Device bind/settings/list calls — where secretCode lives.
+      app_api: "app.govee.com"        # Constant.e "http://app.govee.com", base2home/Constant.java:154 (prod; dev a :129 / pda c :141). Account/app-level calls.
+      device_api: "device.govee.com"  # Constant.f "https://device.govee.com", base2home/Constant.java:163 (prod; dev b :135 / pda d :147). Device bind/settings/list calls — where secretCode lives.
       note: "Authenticated (account token). The device/rest/... paths below are served by device.govee.com, NOT the app host."
     upload_on_bind:
       host: "device.govee.com"
       method: POST
-      path: "device/rest/devices/v1/bind"       # UrlConstants.f30910o
-      multi_path: "device/rest/devices/v1/multi-bind"   # UrlConstants.f30929x0
-      note: "secretCode is embedded inside the deviceExt JSON of DeviceBindRequest (BindExt.secretCode = scanBleInfo.j())"
+      path: "device/rest/devices/v1/bind"       # UrlConstants.p, base2home/UrlConstants.java:101 (@POST in IDeviceNet / IKtDeviceNet)
+      multi_path: "device/rest/devices/v1/multi-bind"   # UrlConstants.f386y0 "/device/rest/devices/v1/multi-bind" (leading slash), base2home/UrlConstants.java:138
+      note: "secretCode is embedded inside the deviceExt JSON: a single bind sends DeviceBindRequest.deviceExt (the family's BindExt, e.g. h6047 BindExt.secretCode = AddInfo.secretCode in PairAcV1); a multi-bind sends AddMultipleDeviceReq.BindExtModel.secretCode = scanBleInfo.j()"
     retrieve:
       host: "device.govee.com"
       note: "the account device-list returns each bound device's deviceExt/bleExt JSON containing secretCode; read via bleExt.getSecretCode()"
-      device_settings_path: "device/rest/devices/v1/settings"   # UrlConstants.f30928x
+      device_settings_path: "device/rest/devices/v1/settings"   # UrlConstants.y, base2home/UrlConstants.java:135 (@POST in IKtDeviceNet)
   acquisition_paths:
     - "Original pairing client: read 0xB1 from device (pre-bind), cache locally + upload in bind deviceExt."
     - "Any other client (2nd phone / reinstall / third-party): fetch secretCode from the account device record (bleExt), then write 0xB2 to authorize."
-  sources: ["base2light/ble/controller/SecretKeyControllerV1.java:44", "base2light/pact/AbsPairAc4SecretV1.java:115,427", "base2home/device/net/DeviceBindRequest.java", "base2home/device/net/AddMultipleDeviceReq.java:118", "base2home/UrlConstants.java:134,191", "base2home/Constant.java:165,177", "base2light/kt/comm/DefInfo.java:98", "base2home/config/SecretKeyConfig via *config/SecretKeyConfig.java"]
+  sources: ["base-classes10/com/govee/base2light/ble/controller/SecretKeyController.java:13-35 (read / check ctors), 52-67 (parseValidBytes: [0x01] + 8 bytes -> base64), 72-78 (q: base64-decode for the 0xB2 write)", "base-classes10/com/govee/base2light/ble/controller/SecretKeyControllerV1.java:39-55 (parseValidBytes, same parse)", "base-classes10/com/govee/base2light/ble/controller/BleProtocolConstants.java:110 (SINGLE_CHECK_SECRET_KEY -78 = 0xB2), 152 (SINGLE_READ_SECRET_KEY -79 = 0xB1)", "base-classes11/com/govee/base2light/pact/AbsPairAc4SecretV1.java:108-114 (T1: read when no secret, else check), 392-430 (onEventSecretKey: a read result stores the secret :410-412 and hands it to o2, abstract :286)", "split_h6047/com/govee/h6047/add/PairAcV1.java:99 (bindExt.secretCode), 265-269 (o2 -> SecretKeyConfig.saveSecretKey)", "base-classes9/com/govee/base2home/device/net/DeviceBindRequest.java:19,61-73 (deviceExt JSON)", "base-classes9/com/govee/base2home/device/net/AddMultipleDeviceReq.java:26-38 (BindExtModel), 107-119 (secretCode = scanBleInfo.j() :117)", "base-classes9/com/govee/base2home/UrlConstants.java:101 (p bind), 135 (y settings), 138 (f386y0 multi-bind)", "base-classes9/com/govee/base2home/Constant.java:129-163 (hosts: e app :154, f device :163)", "base-classes11/com/govee/base2light/kt/comm/DefInfo.java:106-110 (bleExt.getSecretCode -> O0)", "base-classes14/com/govee/base2home/scenes/SecretKeyConfig.java:13 (secretKeyMap), 31 (getSecretKey), 41 (saveSecretKey)"]
 
 # ─────────────── Scene upload / activation model ───────────────
 scenes:
@@ -211,8 +211,8 @@ scenes:
         catalog (ScenesM); otherwise it falls back to activate-by-code. DO NOT gate bulb type-1 upload on
         scene_versions {0}; treat version 1 as always available for bulbs.
       tablelamp_h6052_type5_diy: >-
-        H6052 (goodsType 22) type-5 scenes use H6052ScenesViewMode:45 -> Diy.parseScenes4Diy
-        (tablelampv1/adjust/Diy.java:98) -> MultipleDiyInScenesController, NOT parseSceneV1. comm_byte = 3
+        H6052 (goodsType 22) type-5 scenes use H6052ScenesViewMode.k3:47 -> Diy.parseScenes4Diy
+        (tablelampv1/adjust/Diy.java:95-109) -> MultipleDiyInScenesController, NOT parseSceneV1. comm_byte = 3
         (simple DiyGraffiti, value=DiyGraffiti.b()), 4 (DiyProtocol.toBytes), or 9 (professional
         DiyGraffitiV3, value=DiyGraffitiV3.a()). Non-type-5 H6052 scenes DO go through parseSceneV1 with
         version_array {0,1,4,5}: only version 1 / type 1 (RGB) matches. Type-3 graffiti needs version 3,
@@ -248,7 +248,7 @@ scenes:
         version_array: "supportScenesOp: gt 64/111 = {0,1}; gt 311 = {0,1,2,3,5,6}; else = {0}"
         path: "parseScene(sceneM, {1}) or parseEffect(str, code, {1}) -- HARDCODED {1}"
         note: "type-1 RGB uploads regardless of the {0} capability value (the {1} is hardcoded on the apply path)."
-    sources: ["base2light/ble/ScenesOp.java:535-640 (parseEffect/parseScene/parseSceneV1)", "bulblightv3/pact/Support.java:137-147,322-323 (is2NewScenesMode + supportScenesOp)", "tablelampv1/pact/Support.java:130,193 (isH6078 + supportScenesOpSet)", "tablelampv1/adjust/Diy.java:98-112 (parseScenes4Diy)", "tablelampv1/newAdjust/h6052/H6052ScenesViewMode.java:45-47", "base2light/ble/MultipleDiyInScenesController.java:13-25 (comByte 3/4/9)", "base2light/ac/diy/DiyGraffitiV3.java:154-173 (a() re-encode)"]
+    sources: ["base2light/ble/ScenesOp.java:535-640 (parseEffect/parseScene/parseSceneV1)", "bulblightv3/pact/Support.java:137-147,322-323 (is2NewScenesMode + supportScenesOp)", "tablelampv1/pact/Support.java:110-112,172-174 (isH6078 + supportScenesOpSet)", "tablelampv1/newAdjust/h6052/H6052DetailsConfig.java:76 (ScenesConfigBean version_array = supportScenesOpSet)", "tablelampv1/adjust/Diy.java:95-109 (parseScenes4Diy)", "tablelampv1/newAdjust/h6052/H6052ScenesViewMode.java:47-49 (k3: type 5 -> parseScenes4Diy, else parseSceneV1)", "base2light/ble/MultipleDiyInScenesController.java:13-25 (comByte 3/4/9)", "base2light/ac/diy/DiyGraffitiV3.java:128-148 (a() re-encode)"]
 
   placeholder:
     decision: "Per scene, the 0xA3 upload is prepended ONLY IF ScenesOp.parseSceneV1(...) != null; the 33 05 04 activation is always sent. (BaseSceneViewMode.java:757-781)"
@@ -830,7 +830,7 @@ families:
     delivery: feature_split
     connectivity: [ble, wifi, iot]
     protocol: { single_packet: true, multi_dialects: ["0xA3"], mode_command: "0x05" }   # write=0x33 / read=0xAA single; scene/DIY upload=0xA3 (makeSendBytesV1). 0xA1 NOT used as a write dialect in bulblightv3/h6001.
-    # color 0x0d = native path for H6006/H6008 and all goodsType 64 (Config.x[64] -> rv = 2 = COLOR_MODE_0X0D; library build.py color_scheme h6006). color_alt 0x02 = COLOR_MODE_0X02, a DIFFERENT family (ColorInstructionVersion index 4), NOT H6006. (checkSupportH6005Fuc is an H6001-only same-mode/firmware gate, unrelated to colour-opcode selection.)
+    # color 0x0d = native path for H6006/H6008 and all goodsType 64 (Config.x[64] -> rv = 2 = COLOR_MODE_0X0D; library build.py color_scheme h6006). color_alt 0x02 = COLOR_MODE_0X02, a DIFFERENT family (ColorInstructionVersion index 4), NOT H6006. (checkSupportH6005Fuc, OldBulbUtil.java:33-36, is H6001 && versionSoft >= 3.00.00, so it never touches H6006/H6008's 0x0d. For H6001 it does pick the colour sub-mode: h6001/sku/Sku.makeColorBytes writes 33 05 0d when it holds and 33 05 02 when not (split_bulblightstringv1/com/govee/bulblightstringv1/h6001/sku/Sku.java:69-81; makeColorTemBytes the same split, :83-115) on the h6001 automation and effect paths (h6001/scenes/BleColorCmdBuilder.java:32-37, h6001/sku/AbsEffectOp4Ble.java:175-199), and on the device list it runs the record as goodsType 20 instead of 0 (assigned_goods_type below).)
     submodes: { color: "0x0d", color_alt: "0x02", scene: "0x04", music: "0x05", diy: "0x0a" }
     opcodes:
       - { name: color_temp_type, cmd: "0x26", payload: "[1|2] display type (H601EF)" }
@@ -857,14 +857,14 @@ families:
     goods_types: [202, 239, 242, 246, 247, 261, 263, 264, 299, 367, 375, 384, 387, 388, 389, 400, 403, 404]   # 403 = H1AA2, 404 = H1AA5 (pact/H1AA2BleIotSkuItem.java:8, H1AA5BleIotSkuItem.java:8; H61D3Support.Q :277; added by the 7.7.02 colour trace). All 18 are delivered to pact_h61d3 and to no other split (base-classes9/com/govee/base2home/pfd/Config.java:226). 367 = H1A43 and H1A44: the goodsType-367 branches test the SKU H1A44 (H61B3GroupConfig config$3, split_h61d3/com/govee/h61d3/group/h61b3/H61B3GroupConfig.java:52,65 with H61D3Support.U :764-766 and H61D3Support.l = H1A44 :104; LightStripLenCaliConfig.f / j, base-classes10/com/govee/base2light/caliStripLen/LightStripLenCaliConfig.java:104-105,172-173, called with the screen's SKU and goodsType, SelectLightStripLenAc.java:428,434-435); KmpGoodsType.GOODS_TYPE_VALUE_H1A43 = 367 (base-classes2/com/govee/shared/checker/KmpGoodsType.java:145). The 299 branch tells H61B8 from one other SKU (H61B3GroupConfig.java:34,47), which the code does not name
     delivery: feature_split
     connectivity: [ble, wifi]
-    protocol: { single_packet: true, multi_dialects: ["0xA3"], mode_command: "0x05" }   # RESOLVED (was "0xA1/0xAC assumed, not found"): H6641/247 does NOT dispatch a 0xAC status burst — H61D3Support.f0(247)=false routes connect to connectBleSuc (adjustNew/VM4Light.b0:875), NOT the afterConnected 0xAC path (which builds an ac-status read ONLY for gt 263). Flag CONFIRMED for 247. Colour = direct per-group `aa a5` after a 0x40 IC read (see per_segment_color_read).
+    protocol: { single_packet: true, multi_dialects: ["0xA3"], mode_command: "0x05" }   # RESOLVED (was "0xA1/0xAC assumed, not found"): H6641/247 does NOT dispatch a 0xAC status burst. adjustNew VM4Light.d0 (split_h61d3/com/govee/h61d3/adjustNew/VM4Light.java:1065-1076) takes the afterConnected path only when H61D3Support.l0 holds (goodsType 263, split_h61d3/com/govee/h61d3/pact/H61D3Support.java:1340-1342): Y4 :458-464 -> VM4Light$afterConnectedSingleReadDeviceInfo$1 builds Compose4BaseInfoSingleRead over {0x41, 0xa5, 0x40, 0x16} (ControllerSingleRead, proType 0xAC, cmd 3). Every other goodsType, 247 included, runs connectBleSuc (VM4Light$connectBleSuc$1.invokeSuspend). (H61D3Support.f0 is goodsType 299, H61D3Support.java:1223-1225, and is not this switch.) Flag CONFIRMED for 247. Colour = direct per-group `aa a5` after a 0x40 IC read (see per_segment_color_read).
     submodes: { color: "0x15", scene: "0x04", music: "0x13", diy: "0x0a" }
     opcodes:
       - { name: read_ic_count, cmd: "0x40", readable: true }
       - { name: color_temp_write, cmd: "0x05", payload: "[0x15, 0x01, ff ff ff, kelvin u2be, tintR, tintG, tintB, seg_mask u2le]", note: "H6641 (247): h61d3 adjustNew/VM4Light + adjust/newdetail/VM4LightH61d3 use the default configColorStripController -> ColorModeControllerConfig.k -> colour instruction version Config.x[247]=0 -> Config.Yt -> Bytes.r; Config.P[247]=1 (white type); tint = Constant.getTemColorByKelvin(K). RGB PICK (7.7.02): a picked colour that is exactly one of the Kelvin tint colours (Constant.k2 = ColorUtils.e, 178 colours) whose Kelvin lies in kelvin_range (inclusive) is sent instead of color_write as [0x15, 0x01, ff ff ff, kelvin u2be, PICKED R, G, B, mask] (the picked colour is the tint, one frame, the mask the RGB frame would use): ColorModeControllerConfig.c -> Config.Yt = KelvinConfig.i(c) ? Bytes.r(c, KelvinConfig.c(c), posSet, d1) : Bytes.h(c, posSet). Library: build.rgb_as_kelvin / color_rgb_frames / segment_rgb." }
       - { name: check_ic, cmd: "0x46", payload: "H6640 uses 0x43" }
       - { name: read_ic_point, cmd: "0x24", readable: true }
-      - { name: per_segment_color_read, cmd: "0xa5", readable: true, payload: "H6641/247: per-group DIRECT read (proType 0xAA) `aa a5 <group>` via Compose4InfoBleIot; PARSER Controller4ColorInfoByGroup -> [groupIndex, count x {brightness,R,G,B}] 4-byte records; group count = ceil(IC/5) from the prior 0x40 IC read (adjustNew/VM4Light.C5:197 -> P5:288-321). NOT a 0xAC status burst — `ac 03 03 41 30 a5` returns zero for 247. mechanism A-direct." }
+      - { name: per_segment_color_read, cmd: "0xa5", readable: true, payload: "H6641/247: per-group DIRECT read (proType 0xAA) `aa a5 <group>` via Compose4InfoBleIot; PARSER Controller4ColorInfoByGroup -> [groupIndex, count x {brightness,R,G,B}] 4-byte records (q, base-classes11/com/govee/base2light/kt/general_controller/Controller4ColorInfoByGroup.java:160-175; cmd -91 = 0xa5 by default :37-41). Pieces = H61D3Support.e(247, IC) = ceil(IC / 5) (H61D3Support.java:1131-1204) from the prior 0x40 IC read (ReadIcController.b, cmd BleProtocol.r = 64, queued by adjustNew/VM4Light.j5 :542-549); groups = ceil(pieces / H61D3Support.t = 4) (VM4Light.w5 :636-669, one Controller4ColorInfoByGroup read per group, queued from the aa 05 reply callback VM4Light$connectBleSuc$1.l :71-82); each reply goes to VM4Light.x5 :671-687. NOT a 0xAC status burst — `ac 03 03 41 30 a5` returns zero for 247. mechanism A-direct." }
       - { name: take_photo, cmd: "0x26", payload: "a()=[1,100,R,G,B] start / b()=[0] stop" }
       - { name: video_recognition, cmd: "0xed" }
       - { name: secret_write, cmd: "0xb2", note: "read 0xB1; 8-byte base64-decoded secret" }
@@ -907,7 +907,7 @@ families:
     confidence: medium   # source-derived from the 7.7.02 app; not hardware-verified
     sources: ["pact_h6062: striplight/newdetail/ControllerIcSegmentNum.java", "striplight/newdetail/ControllerStrategyConfig.java:154-164 (X), 468-548 (O, goodsType 41 connect reads; aa 05 01 last, 541-547)", "striplight/newdetail/VM4Light$connectBleSuc$1.java:56 (P0)", "striplight/newdetail/VM4Light.java:363-400 (l5, aa a5 walk)", "striplight/newdetail/OpInfo4Detail.java:380-405", "striplight/newdetail/ColorControllerConfig.java", "striplight/newdetail/NewDetailRegister.java:195-215", "striplight/ble/BleProtocol.java:10", "striplight/pact/Support.java:47-49,135-152,426-431", "base2light/ble/controller/AbsComposeControllerWithOpResult.java:287 (onOvertime)", "base2light/kt/ble/AbsController.java (getNextCommBytes -> BleUtils.p)", "base2light/pact/newdetail/config/fuc/color/Config.java (Yt), color/Bytes.java (h, r, G, b, d, C)", "base2light/pact/newdetail/config/fuc/KelvinConfig.java", "base2kt/utils/BleUtils.java (makeSelectedTwoBytes, X)", "base2home/Constant.java (getTemColorByKelvin)"]
 
-  # ─────────────────────────── Smart plug (base.apk) ───────────────────────────
+  # ─────────────────────────── Smart plug (pact_plugnew split) ───────────────────────────
   - id: h5080
     category: plug
     client_profile:   # plug power, traced per goodsType on Govee Home 7.7.02 (split_plugnew/com/govee/h5080/, paths below relative to it). Masks are integers, written in hex
@@ -918,7 +918,7 @@ families:
         "307": { models: [H5089], relay_power: total_switch, relay_on_mask: 0xFF, advert_on_mask: 0x03 }   # pact/Model4Plug2 -> AdjustAc.D2 -> Frame4H5089 / Ui4H5089 (pact/V4BleIotSkuItem.f = 307 -> add/Ac4H5089Networking, sku H5089). Power 33 02 01 / 00 (Ui4H5089.onOffChange :929-952, Controller4TotalSwitch). Read on = any of the 8 bits (BleOp4H5089.onEventSwitchV2 :462, EventSwitchV2.i). Advert on = bit 0 or bit 1 (pact/Model4Plug2.z)
     models: [H5080, H5082, H5083, H5085, H5089, H5160, H5161]
     goods_types: [43, 50, 90, 307]   # 43 = 1-outlet (H5080/H5083/H5085); 50/307 = 2-outlet; 90 = 3-outlet
-    delivery: base_apk
+    delivery: feature_split   # pact_plugnew (base-classes9/com/govee/base2home/pfd/Config.java:243)
     connectivity: [ble, wifi]
     protocol: { single_packet: true, multi_dialects: ["0xA1"] }   # NO mode_command: a plug has no 0x05 mode. App opcode set is {0x01,0x12,0x13,0x15,0x16,0x1f,0xB0,0xB3,0xB4,0xB5,0xAB}+secret. multi 0xA1 = the multi-packet DIY write (H5089 night light: H5089OpManager.L, DiyMultipleControl over BleMultiComm; BleConstants.MULTIPLE_WRITE = 0xA1), not multi-outlet. Firmware-sourced (H5083 SW1.00.30): the dispatcher takes AA 01 12 13 B0 B1 B3 and 33 01 13 15 B0 B2 B5 FF only (no 0x16/0x1F/0xB4; 0xB4 is an internal msg id); 0xAB is a proType frame (AB 02 pact report / AB 01 gid); its A1 frames are DIY multi (byte[1] 02 on the END frame) and A1 11 Wi-Fi config.
     # Not a light: no color/scene/music sub-modes. Relay + timers only.
@@ -942,7 +942,7 @@ families:
     confidence: high
     sources: ["h5080/pact/Support.java:26,56", "h5080/ble/controller/SwitchControllerV2.java:61", "h5080/ble/controller/SyncTimeController.java:24", "h5080/ble/controller/NewTimerController.java:69", "h5080/ble/controller/TurnOnOffDelayController.java:96", "h5080/ble/BleConstants.java"]
 
-  # ─────────────────────────── RGB/RGBIC strips & bulbs (base.apk) ───────────────────────────
+  # ─────────────────────────── RGB/RGBIC strips & bulbs (pact_rgblight / pact_rgbiclight splits) ───────────────────────────
   - id: h6159
     category: rgbic_strip
     client_profile:
@@ -952,7 +952,7 @@ families:
     models: [H6159, H6110, H6109, H614A, H614B, H614E]
     assigned_goods_type:
       - { context: device_list, models: [H6159, H6110, H6109, H614B, H614E], from_goods_type: [0], condition: { min_pact_type: 2, min_pact_code: 1 }, goods_type: 40, rule: OldRgbBkUtil.isOldRgbBk4BleWifi, doc: "h6159/sku/Model.itemClickOp split_rgblight/com/govee/h6159/sku/Model.java:56-127 (:64 the test, :77-79 C0(40)); SKU-keyed (SubLib keys Sku.h, split_rgblight/com/govee/h6159/sku/Sku.java:37); OldRgbBkUtil.b base-classes9/com/govee/base2home/pact/support/OldRgbBkUtil.java:62,87-97: the BLE+Wi-Fi BK list holds H6110/H6159/H6109/H6160/H6182/H614B/H614E, so H614A is never rewritten" }
-    delivery: base_apk
+    delivery: feature_split   # pact_rgblight (base-classes9/com/govee/base2home/pfd/Config.java:254)
     connectivity: [ble, wifi]
     protocol: { single_packet: true, multi_dialects: ["0xA1"] }
     submodes: { color: "0x02", scene: "0x04", music: "0x03", music_alt: "0x0e", diy: "0x0a", color_alt: "0x0d" }
@@ -974,7 +974,7 @@ families:
     assigned_goods_type:
       - { context: device_list, models: [H6160], from_goods_type: [0], condition: { min_pact_type: 2, min_pact_code: 1 }, goods_type: 40, rule: OldRgbBkUtil.isOldRgbBk4BleWifi, doc: "rgblight/add/Model.itemClickOp split_rgblight/com/govee/rgblight/add/Model.java:51-60 (:54-55 C0(40)); SKU-keyed (split_rgblight/com/govee/rgblight/add/SubLib.java:26-28: H6188, H6160, H6182); OldRgbBkUtil.b base-classes9/com/govee/base2home/pact/support/OldRgbBkUtil.java:62,87-97. SkuToGoodsTypeUtil.f, the scene / DIY / timer resolver, has no H6160 branch (base-classes10/com/govee/base2home/util/SkuToGoodsTypeUtil.java:22,34,77-85)" }
       - { context: device_list, models: [H6163, H6117], from_goods_type: [0], condition: { min_hard_version: "1.00.02" }, goods_type: 19, rule: OldDreamColorUtil.checkSupportNewDreamColorFuc4BleWifi, doc: "rgbiclight/h6160/sku/Model.itemClickOp split_rgbiclight/com/govee/rgbiclight/h6160/sku/Model.java:57-70 (:61-64 C0(19) -> /rgbic/newdetail; otherwise :66-67 goodsType 0 -> the rgbiclight/h6160 newdetail AcNewDetail); SKU-keyed (Sku.c, split_rgbiclight/com/govee/rgbiclight/h6160/sku/Sku.java:30); base-classes9/com/govee/base2home/pact/support/OldDreamColorUtil.java:70-71,100-104 (the record's BLE versionHard)" }
-    delivery: base_apk
+    delivery: feature_split   # pact_rgbiclight + pact_rgblight (base-classes9/com/govee/base2home/pfd/Config.java:254,260)
     connectivity: [ble, wifi]
     protocol: { single_packet: true, multi_dialects: ["0xA1"] }
     submodes: { color: "0x02", color_alt: "0x0b", scene: "0x04", music: "0x03", music_alt: "0x01", diy: "0x0a" }
@@ -1044,7 +1044,7 @@ families:
     models: [H6102]
     assigned_goods_type:
       - { context: device_list, models: [H6102], from_goods_type: [0], condition: { min_soft_version: "1.03.01" }, goods_type: 18, rule: OldDreamColorUtil.checkSupportNewDreamColorFuc, doc: "h6102/sku/Model.t split_rgbiclight/com/govee/h6102/sku/Model.java:51-62 (:53-56 below the version: super.t, the legacy h6102 AdjustAc; :58-61 C0(18) -> /rgbic/newdetail), reached after AbsBaseBleModel.itemClickOp's protocol check (base-classes3/com/govee/kt/ui/device/base/AbsBaseBleModel.java:194-206); SKU-keyed (Sku.b, split_rgbiclight/com/govee/h6102/sku/Sku.java:13); base-classes9/com/govee/base2home/pact/support/OldDreamColorUtil.java:66-67,94-98" }
-    delivery: base_apk
+    delivery: feature_split   # pact_rgbiclight (base-classes9/com/govee/base2home/pfd/Config.java:260)
     connectivity: [ble]
     protocol: { single_packet: true, multi_dialects: ["0xA1"] }
     submodes: { color: "0x02", scene: "0x04", music: "0x01", diy: "0x0a" }
@@ -1058,7 +1058,7 @@ families:
     client_profile:
       mode_color_parse: rgb_flagnz_tint_02   # h6104/sku/Model.t split_rgblight/com/govee/h6104/sku/Model.java:48-66 -> h6104 NewDetailAc / NewDetailVm; aa 05 01 Compose4InfoBleIotH6104$iControllerStrategy$1.java:136-142 (and the heartbeat re-reads h6104/newdetail/viewmodel/NewDetailVm.java:349,404) -> Info4Detail.W split_rgblight/com/govee/h6104/newdetail/Info4Detail.java:511-561 (0x02 :526-536, ctor strategy :165-176: flag != 0 -> Kelvin = ColorUtils.h(tint, 2000, 9000)); 0x15/0x0d/0x0b not support. IoT modeValue through W too (X :564-611), then StateV0 colour / Kelvin overwrite it
     models: [H6104]
-    delivery: base_apk
+    delivery: feature_split   # pact_rgblight (base-classes9/com/govee/base2home/pfd/Config.java:254)
     connectivity: [ble, wifi]
     gatt:
       service_uuid: "0000ffe0-0000-1000-8000-00805f9b34fb"
@@ -1079,7 +1079,7 @@ families:
     client_profile:
       mode_color_parse: kelvin_15   # h6105/sku/Model.itemClickOp :36-45 -> /rgbic/newdetailH6105 H6105NewDetailActivity / H6105VM4Light; aa 05 01 ControllerStrategyConfig.p2 :1517-1523 (Support4H6105.a: goodsType 0) -> Info4Detail.w split_rgbiclight/com/govee/rgbiclight/h61050729/Info4Detail.java:374-412 (0x15 :388-393 -> SubMode4Color.java:42-49, kelvin > 0 -> p = K, no colour read); 0x02/0x0d/0x0b not support :409-411
     models: [H6105]
-    delivery: base_apk
+    delivery: feature_split   # pact_rgbiclight (base-classes9/com/govee/base2home/pfd/Config.java:260)
     connectivity: [ble]
     submodes: { color: "0x02", scene: "0x04", music: "0x03", diy: "0x0a" }
     encryption: none
@@ -1095,7 +1095,7 @@ families:
     models: [H6113]
     assigned_goods_type:
       - { context: device_list, models: [H6113], from_goods_type: [0], condition: { min_pact_type: 10, min_pact_code: 1 }, goods_type: 39, rule: OldRgbBkUtil.isOldRgbBk, doc: "rgblight/add/OldBleModel.itemClickOp split_rgblight/com/govee/rgblight/add/OldBleModel.java:52-69 (:63 SkuToGoodsTypeUtil.f, :64 C0 of its result); SKU-keyed (split_rgblight/com/govee/rgblight/add/OldBleSubLib.java:27-31: H6113, H6114, H6181 and the H7308 group); base-classes10/com/govee/base2home/util/SkuToGoodsTypeUtil.java:89-91; OldRgbBkUtil.a (the BLE BK list) base-classes9/com/govee/base2home/pact/support/OldRgbBkUtil.java:44,60,75-85" }
-    delivery: base_apk
+    delivery: feature_split   # pact_rgblight (base-classes9/com/govee/base2home/pfd/Config.java:254)
     connectivity: [ble]
     protocol: { single_packet: true, multi_dialects: ["0xA1"] }
     submodes: { color: "0x02", music: "0x03", diy: "0x0a" }   # no scene sub-mode
@@ -1113,7 +1113,7 @@ families:
     models: [H6114]
     assigned_goods_type:
       - { context: device_list, models: [H6114], from_goods_type: [0], condition: { min_pact_type: 10, min_pact_code: 1 }, goods_type: 39, rule: OldRgbBkUtil.isOldRgbBk, doc: "rgblight/add/OldBleModel.itemClickOp split_rgblight/com/govee/rgblight/add/OldBleModel.java:52-69 (:63 SkuToGoodsTypeUtil.f, :64 C0 of its result); SKU-keyed (split_rgblight/com/govee/rgblight/add/OldBleSubLib.java:27-31: H6113, H6114, H6181 and the H7308 group); base-classes10/com/govee/base2home/util/SkuToGoodsTypeUtil.java:28,80-82; OldRgbBkUtil.a base-classes9/com/govee/base2home/pact/support/OldRgbBkUtil.java:41,60,75-85" }
-    delivery: base_apk
+    delivery: feature_split   # pact_rgblight (base-classes9/com/govee/base2home/pfd/Config.java:254)
     connectivity: [ble]
     protocol: { single_packet: true, multi_dialects: ["0xA1"] }
     submodes: { color: "0x02", scene: "0x04", music: "0x03", diy: "0x0a" }
@@ -1131,7 +1131,7 @@ families:
     models: [H6119]
     assigned_goods_type:
       - { context: device_list, models: [H6119], from_goods_type: [0], condition: { min_pact_type: 10, min_pact_code: 1 }, goods_type: 44, rule: OldCarBkUtil.isBkCar, doc: "h6119/sku/Model.itemClickOp split_rgbiclight/com/govee/h6119/sku/Model.java:38-47 (:42-44 C0(44)); SKU-keyed (Sku.c, split_rgbiclight/com/govee/h6119/sku/Sku.java:9); base-classes9/com/govee/base2home/pact/support/OldCarBkUtil.java:11,24-26; SkuToGoodsTypeUtil.f agrees (base-classes10/com/govee/base2home/util/SkuToGoodsTypeUtil.java:95-97)" }
-    delivery: base_apk
+    delivery: feature_split   # pact_rgbiclight (base-classes9/com/govee/base2home/pfd/Config.java:260)
     connectivity: [ble]
     submodes: { color: "0x02", color_alt: "0x15", scene: "0x04", music: "0x0c", diy: "0x0a" }
     opcodes:
@@ -1150,7 +1150,7 @@ families:
     models: [H6125, H6126]
     assigned_goods_type:
       - { context: device_list, models: [H6125, H6126], from_goods_type: [0], condition: { min_soft_version: "1.03.01" }, goods_type: 17, rule: OldDreamColorUtil.checkSupportNewDreamColorFuc, doc: "h612526/sku/Model.itemClickOp split_rgbiclight/com/govee/h612526/sku/Model.java:56-75 (:58 the test; :64-66 below it the h612526 newdetail AcNewDetail at the record's goodsType; :68-74 C0(17) -> /rgbic/newdetail); SKU-keyed (Sku.d, split_rgbiclight/com/govee/h612526/sku/Sku.java:10); base-classes9/com/govee/base2home/pact/support/OldDreamColorUtil.java:60-61,65,94-98" }
-    delivery: base_apk
+    delivery: feature_split   # pact_rgbiclight (base-classes9/com/govee/base2home/pfd/Config.java:260)
     connectivity: [ble]
     submodes: { color: "0x0b", scene: "0x04", music: "0x0c", diy: "0x0a" }
     opcodes:
@@ -1172,7 +1172,7 @@ families:
     models: [H6107, H6116, H6127, H6161]
     assigned_goods_type:
       - { context: device_list, models: [H6116, H6127, H6161], from_goods_type: [0], condition: { min_soft_version: "1.03.01" }, goods_type: 17, rule: OldDreamColorUtil.checkSupportNewDreamColorFuc, doc: "h6127/sku/Model.g0 split_rgbiclight/com/govee/h6127/sku/Model.java:57-73 (:58 the test, :64-67 C0(17) -> rgbiclight AcNewDetail), called from itemClickOp :82-86; SKU-keyed (Sku.e, split_rgbiclight/com/govee/h6127/sku/Sku.java:14); base-classes9/com/govee/base2home/pact/support/OldDreamColorUtil.java:62-65,94-98: the list holds H6125/H6126/H6127/H6161/H6116, so H6107 is never rewritten" }
-    delivery: base_apk
+    delivery: feature_split   # pact_rgbiclight (base-classes9/com/govee/base2home/pfd/Config.java:260)
     connectivity: [ble]
     submodes: { color: "0x02", scene: "0x04", music: "0x01", music_alt: "0x03", diy: "0x0a", diy_old: "0x07" }
     encryption: none
@@ -1184,7 +1184,7 @@ families:
     client_profile:
       mode_color_parse: kelvin_15   # h6129/sku/Model.itemClickOp split_rgbiclight/com/govee/h6129/sku/Model.java:36-45 -> /rgbic/newdetailH6105 H6105NewDetailActivity / H6105VM4Light; aa 05 01 ControllerStrategyConfig.p2 :1517 (Support4H6129.a needs goodsType 0, split_rgbiclight/com/govee/rgbiclight/Support4H6129.java:20-30; always met: the device list looks a SubLib up by SKU only at goodsType 0 (SubConfig.Companion.b / c, base-classes3/com/govee/kt/ui/device/SubConfig.java:46-62; DevicesOp.r base-classes3/com/govee/kt/ui/device/DevicesOp.java:350-351), so the H6129 key (h6129/sku/SubLib.java:24) never carries another goodsType, and the pairing jump (h6129/add/BleConnectDialog.java:32-37) opens the screen at goodsType 0 (AbsBleConnectDialog.U / c0 base-classes10/com/govee/base2light/ble/AbsBleConnectDialog.java:161-163,186-188 -> BleDeviceNameAcV1.j1 base-classes10/com/govee/base2light/ac/BleDeviceNameAcV1.java:120-123,166)) -> Info4Detail.w split_rgbiclight/com/govee/rgbiclight/h61050729/Info4Detail.java:374-411 (0x15 :388-392); the legacy h6129 AdjustAc is not opened for H6129
     models: [H6129]
-    delivery: base_apk
+    delivery: feature_split   # pact_rgbiclight (base-classes9/com/govee/base2home/pfd/Config.java:260)
     connectivity: [ble]
     submodes: { color: "0x02", scene: "0x04", music: "0x03", diy: "0x0a", diy_old: "0x07" }
     encryption: none
@@ -1201,7 +1201,7 @@ families:
     assigned_goods_type:
       - { context: device_list, models: [H6138, H6139], from_goods_type: [0], condition: { min_pact_type: 10, min_pact_code: 1 }, goods_type: 39, rule: OldRgbBkUtil.isOldRgbBk, doc: "h613839/sku/Model.itemClickOp split_rgblight/com/govee/h613839/sku/Model.java:57-110 (:62 the test, :75-79 C0(39), else the record's goodsType); SKU-keyed (Sku.i, split_rgblight/com/govee/h613839/sku/Sku.java:23); OldRgbBkUtil.a base-classes9/com/govee/base2home/pact/support/OldRgbBkUtil.java:34-35,60,75-85: the BLE BK list holds H6138/H6139, not H613A-F" }
       - { context: bind, models: [H613A, H613B, H613C, H613D, H613E, H613F], goods_type: 39, pact: "65535,255", rule: NewRgb2TLUtil.checkDeviceConfig, doc: "pairing: H613839BleProcessor.onItemClick split_rgblight/com/govee/h613839/sku/H613839BleProcessor.java:25-28 opens split_rgblight/com/govee/h613839/add/BleConnectDialog.java:12 (an AbsBleConnectDialog) for H613A-F only at an advert pact of (65535,255) (Sku.supportSku split_rgblight/com/govee/h613839/sku/Sku.java:116-121 -> NewRgb2TLUtil.isNewRgb2TL :62-72); AbsBleConnectDialog.A base-classes10/com/govee/base2light/ble/AbsBleConnectDialog.java:78-107 (:88 checkDeviceConfig; :95-97 and :103-107) then writes goodsType 39 and pact (65535,255) into the new record, whatever goodsType the scan gave; NewRgb2TLUtil.b / checkDeviceConfig base-classes9/com/govee/base2home/pact/support/NewRgb2TLUtil.java:14-16,36-49. The record then routes by goodsType 39 to the stringlightv2 SubLib (split_rgblight/com/govee/stringlightv2/pact/Support.java:93) and its click handler does not rewrite 39" }
-    delivery: base_apk
+    delivery: feature_split   # pact_rgblight (base-classes9/com/govee/base2home/pfd/Config.java:254)
     connectivity: [ble, wifi]
     submodes: { color: "0x02", color_alt: "0x0d", scene: "0x04", music: "0x03", music_alt: "0x0e", diy: "0x0a" }
     encryption: secret_key_pairing
@@ -1217,7 +1217,7 @@ families:
     models: [H6181]
     assigned_goods_type:
       - { context: device_list, models: [H6181], from_goods_type: [0], condition: { min_pact_type: 10, min_pact_code: 1 }, goods_type: 39, rule: OldRgbBkUtil.isOldRgbBk, doc: "rgblight/add/OldBleModel.itemClickOp split_rgblight/com/govee/rgblight/add/OldBleModel.java:52-69 (:63 SkuToGoodsTypeUtil.f, :64 C0 of its result); SKU-keyed (split_rgblight/com/govee/rgblight/add/OldBleSubLib.java:27-31: H6113, H6114, H6181 and the H7308 group); base-classes10/com/govee/base2home/util/SkuToGoodsTypeUtil.java:31,80-82; OldRgbBkUtil.a base-classes9/com/govee/base2home/pact/support/OldRgbBkUtil.java:40,60,75-85" }
-    delivery: base_apk
+    delivery: feature_split   # pact_rgblight (base-classes9/com/govee/base2home/pfd/Config.java:254)
     connectivity: [ble]
     submodes: { color: "0x02", scene: "0x04", diy: "0x0a", mic: "0xff" }   # mic is a flag stub
     encryption: none
@@ -1233,7 +1233,7 @@ families:
     models: [H6182]
     assigned_goods_type:
       - { context: device_list, models: [H6182], from_goods_type: [0], condition: { min_pact_type: 2, min_pact_code: 1 }, goods_type: 40, rule: OldRgbBkUtil.isOldRgbBk4BleWifi, doc: "rgblight/add/Model.itemClickOp split_rgblight/com/govee/rgblight/add/Model.java:51-60 (:54-55 C0(40)); SKU-keyed (split_rgblight/com/govee/rgblight/add/SubLib.java:26-28); OldRgbBkUtil.b base-classes9/com/govee/base2home/pact/support/OldRgbBkUtil.java:43,62,87-97; SkuToGoodsTypeUtil.f agrees (base-classes10/com/govee/base2home/util/SkuToGoodsTypeUtil.java:34,83-85)" }
-    delivery: base_apk
+    delivery: feature_split   # pact_rgblight (base-classes9/com/govee/base2home/pfd/Config.java:254)
     connectivity: [ble, wifi]
     submodes: { color: "0x02", scene: "0x04", music: "0x03", diy: "0x0a" }
     notify: [{ sub_type: "0x11", meaning: "wifi connect status" }]
@@ -1246,20 +1246,22 @@ families:
     client_profile:
       mode_color_parse: kelvin   # h6185/sku/Model.itemClickOp split_rgbiclight/com/govee/h6185/sku/Model.java:37-42 -> /rgbic/newdetail rgbiclight AcNewDetail / VM4Light; G0 :1107-1108 (Sku.a = H6185) -> i2 :1472 -> VM4Light.t5 :650-656 -> OpInfo4Detail.x :766-778 -> SubMode4Color default; Support.j is true for H6185 (rgbiclight/Support.java:278-283), so t5 queues no aa a5/a2 group read and a kelvin <= 0 report yields no colour. Its own legacy 0x02 [r,g,b][flag][tint] form (h6185/ble/SubModeColor.java:82-86) is read here as [gradual][kelvin]
     models: [H6185]
-    delivery: base_apk
+    delivery: feature_split   # pact_rgbiclight (base-classes9/com/govee/base2home/pfd/Config.java:260)
     connectivity: [ble]
+    # mic is mode sub-mode 0x05 (33 05 05 01: SubModeMic.getWriteBytes = [5, value_sub_mode_mic_set_mode 1]), not a
+    # separate opcode. 7.7.02's h6185 has no rhythm-point controller: value_sub_mode_mic_send_rhythm_point (3) is
+    # declared and never used.
     submodes: { color: "0x02", scene: "0x04", diy: "0x0a", mic: "0x05" }
-    opcodes: [{ name: mic, cmd: "0x05", note: "AbsOnlyWriteSingleController; set_mode=1, rhythm_point=3" }]
     encryption: none
     confidence: high
-    sources: ["h6185/ble/Mode.java", "h6185/ble/BleProtocol.java:6,10-11 (sub_mode_mic 5, set_mode 1, send_rhythm_point 3)", "h6185/ble/SubModeMic.java:11-13,24-25"]
+    sources: ["h6185/ble/Mode.java:7-25 (5 mic, 4 scenes, 10 DIY, else colour)", "h6185/ble/BleProtocol.java:5-8 (sub-modes 2 / 5 / 10 / 4), 10-11 (mic values: send_rhythm_point 3, set_mode 1; no reader in the package)", "h6185/ble/SubModeMic.java:11-13 (write [5, 1]), 24-25 (sub-mode 5)"]
 
   - id: h6101
     category: rgb_strip
     client_profile:
       mode_color_parse: rgb_flag_tint_legacy   # h6101/sku/Model (no itemClickOp / t override) -> AbsBaseBleModel.itemClickOp base-classes3/com/govee/kt/ui/device/base/AbsBaseBleModel.java:194-206 (its pact check e() :158-174 passes: no Protocol is set at goodsType 0, y() :383-390) -> AbsDeviceMode4BleOldLib.t base-classes3/com/govee/kt/AbsDeviceMode4BleOldLib.java:36-52 -> JumpUtil.jump(d0()), Model.d0 split_rgblight/com/govee/h6101/sku/Model.java:28-30 = legacy h6101.adjust.AdjustAc (rgblight/RgbLightRegistry.java:384); h6101/adjust/BleReadManager.java:35-36 ModeController (aa 05 01) -> AbsMode.parse -> h6101 Mode.parseSubMode split_rgblight/com/govee/h6101/ble/Mode.java:7-21 (0x01 music, 0x00 video, every other byte -> SubModeColor.parse :81-85); ColorFragment.a1 :21-24
     models: [H6101]
-    delivery: base_apk
+    delivery: feature_split   # pact_rgblight (base-classes9/com/govee/base2home/pfd/Config.java:254)
     connectivity: [ble]
     gatt:
       service_uuid: "0000ffe0-0000-1000-8000-00805f9b34fb"
@@ -1274,13 +1276,13 @@ families:
     confidence: high
     sources: ["h6101/ble/BleComm.java:8-9", "h6101/ble/Mode.java", "h6101/ble/CalibrationController.java:11-12 (0x08)", "h6101/ble/CalibrationOkController.java:11-12 (0x01)"]
 
-  # ─────────────────────────── Generic light abstractions & families (base.apk) ───────────────────────────
+  # ─────────────────────────── Generic light abstractions & families (pact_rgblight / pact_rgbiclight / pact_bulblightstringv1 splits) ───────────────────────────
   - id: dreamcolorlightv1
     category: rgbic_strip
     client_profile: { has_brightness: true, color_scheme: h61a8, mode_color_parse: kelvin, power_read: aa01, power_live: [heartbeat_aa01], wire_cipher: runtime }   # Mechanism-B: 0xA5 V2 = 4-byte [bri,RGB]; 0xA2 V1 = 3-byte (firmware-versioned). mode_color_parse, all seven goodsTypes and every pact: SubLib keys Support.Q0 {17,18,70,73} and SubLib4BleIot keys Support.f0 (dreamcolorlightv1/pact/Support.java:164,188), looked up by goodsType in SubConfig.c (base-classes3/com/govee/kt/ui/device/SubConfig.java:46-71) -> pact/Model.t (dreamcolorlightv1/pact/Model.java:44-49; 17/18/70/73) and Model4BleIot.t (dreamcolorlightv1/pact/Model4BleIot.java:41-46; 19/204/207) open /rgbic/newdetail rgbiclight AcNewDetail / VM4Light (o5 :1476-1477 -> q5 :1616-1631); a device-list click opens it only when the advertised pact is registered for the goodsType or no advert pact is known yet (AbsBaseBleModel.e / itemClickOp, base-classes3/com/govee/kt/ui/device/base/AbsBaseBleModel.java:158-174,194-205). For the registered pacts (dreamcolorlightv1/pact/Support.java:231-286,353-367) G0 picks S0 (aa 05 :1253) for 17/18 (1,1)/(1,2), e1 (:1424) for 17 (10,1)/(10,2)/(10,3), 18 (10,1)/(10,2) and 70/73 (10,1), r1 (:1602) for 19 (1,1)/(1,2) only (supportV2UIV1 excludes 204 / 207, dreamcolorlightv1/pact/Support.java:1930-1931) and E1 (:1008) for 19 (2,1)/(2,2)/(3,1) and 204/207 (1,1)/(2,1); the off->on re-read (VM4Light.J3 :732-760 -> Compose4Off2On -> G5 :275-277) is parsed on every pact; all -> VM4Light.t5 :650-669 / G5 -> OpInfo4Detail.x :743-785 -> SubMode4Color.java:42-49 (no colour strategy installed); RGB from the aa a5/a2 group reads (N5 :882-970). The legacy dreamcolorlightv1 readers (Mode.parseSubMode -> SubModeColorV2.parse: 0x15 only, Kelvin unsigned through BleUtil.getSignedInt; dreamcolorlightv1/ble/Mode.java:100-103, dreamcolorlightv1/ble/SubModeColorV2.java:564-568) run only in the legacy AdjustAc (new FrameV1 -> v1 UiV1 / UiV3; dreamcolorlightv1/adjust/AdjustAc.java:39, dreamcolorlightv1/adjust/v1/FrameV1.java:25-30) and AdjustAcV3 (new FrameV3 -> UiV4, a subclass of v2 UiV3, whose constructor builds the BleOpV3 ModeController reader; dreamcolorlightv1/adjust/AdjustAcV3.java:39, dreamcolorlightv1/adjust/v2/FrameV3.java:31-36, dreamcolorlightv1/adjust/v2/UiV4.java:28, dreamcolorlightv1/adjust/v2/UiV3.java:584). Nothing builds a plain FrameV2, so v2 UiV1 never runs (dreamcolorlightv1/adjust/v2/FrameV2.java:29-34). AdjustAc is opened only by the H6102 legacy screen's AdjustAc.c3 (split_rgbiclight/com/govee/h6102/adjust/AdjustAc.java:373-383 version check, :395-405 c3, goodsType 18 hard-coded :397; h6102 family) and by two helpers with no caller in the complete decomp, pinned to 17 / 18 (base-classes9/com/govee/base2home/pact/support/OldRgbicBkUtil.java:71-97, base-classes9/com/govee/base2home/pact/support/OldDreamColorUtil.java:171-192). AdjustAcV3 is only the add-flow target of dreamcolorlightv1/add/v3/BleBroadcastProcessorV5.java:17-33, gated by Support.supportPact4RgbicHighEnd (dreamcolorlightv1/pact/Support.java:1526-1581: 123 / 175 / 176 / 178 / 187 / 193). The add flow ends on /rgbic/newdetail (dreamcolorlightv1/add/v2/WifiChooseAc.java:79, dreamcolorlightv1/add/DeviceNameAc.java:67, dreamcolorlightv1/add/v3/DeviceNameV3.java:69). The screen's IoT status goes VM4Light :1577 -> OpInfo4Detail.p -> x (base-classes11/com/govee/base2light/pact/newdetail/OpInfo4Detail.java:519, :709) to the same SubMode4Color. So H61A8 (19) reads every colour sub-mode signed in 7.7.02
     models: [H6102, H611B, H611Z, H6123, H612A, H612B, H612C, H612D, H612E, H612F, H6168, H616C, H617A, H617C, H617E, H617F, H619A, H61A0, H61A8, H61A9, H61E0, H61E1, H70A1, H70A2, H70A3]
     goods_types: [17, 18, 19, 70, 73, 204, 207]   # 19 = H61A8 (account device-list; SupportMultiColorConfig.i: gt 19 <-> "H61A8", base-classes9/com/govee/base2home/color/SupportMultiColorConfig.java:178-186; H61A8SceneConfig.match i == 19, base-classes2/com/govee/shared/config/h61a8/H61A8SceneConfig.java:46-48). 204 = H61A9 (isGoodsTypeH61A9, dreamcolorlightv1/pact/Support.java:1014-1016; KmpGoodsType.GOODS_TYPE_VALUE_H61A9, base-classes2/com/govee/shared/checker/KmpGoodsType.java:199). 207 = H616C (KmpGoodsType.GOODS_TYPE_VALUE_H616C, base-classes2/com/govee/shared/checker/KmpGoodsType.java:196; H616CSceneConfig.match i == 207, base-classes2/com/govee/shared/config/h616c/H616CSceneConfig.java:45-47), NOT H61A8. 70 = H617C / H617E / H617F (their scene configs match i == 70: base-classes2/com/govee/shared/config/h617c/H617CSceneConfig.java:45-47, h617e/H617ESceneConfig.java:46-48, h617f/H617FSceneConfig.java:45-47). No KmpGoodsType constant or KMP scene config names a SKU for 17 / 18 / 73 (KmpGoodsType.java:113,117,327 are generic names). Family's full registered set is larger (f0 BLE-IoT + Q0 legacy BLE, dreamcolorlightv1/pact/Support.java:164,188); only modeled goodsTypes listed here.
-    delivery: base_apk
+    delivery: feature_split   # pact_rgbiclight (base-classes9/com/govee/base2home/pfd/Config.java:257,260)
     connectivity: [ble, wifi]
     protocol: { single_packet: true, multi_dialects: ["0xA1", "0xA3"] }
     submodes: { color: "0x0b", color_alt: "0x15", scene: "0x04", music: "0x11", music_alt: "0x13", diy: "0x0a" }
@@ -1304,7 +1306,7 @@ families:
       mode_color_parse: kelvin   # goodsType 21: AbsBaseBleModel.itemClickOp base-classes3/com/govee/kt/ui/device/base/AbsBaseBleModel.java:194-206 (pact check e() :158-174) -> dreamcolorlightv2/pact/Model.t split_rgbiclight/com/govee/dreamcolorlightv2/pact/Model.java:42-46 -> /rgbic/newdetail rgbiclight AcNewDetail / VM4Light; G0 Support4DreamColorLightV2.f (gt 21, split_rgbiclight/com/govee/rgbiclight/Support4DreamColorLightV2.java:125-127) -> V1 :1335 (aa 05; h2 forwards :610-617) -> VM4Light.t5 -> OpInfo4Detail.x -> SubMode4Color default; RGB from the N5 group reads. dreamcolorlightv2/ble/Mode is write-side only. The device list keys a non-zero goodsType by goodsType and only goodsType 0 by SKU (SubConfig.Companion.b / c, base-classes3/com/govee/kt/ui/device/SubConfig.java:46-62), so this family's Model is reached only at goodsType 21; at goodsType 0 H6116/H6127/H6161, H6125/H6126, H6102 and H6117/H6163 route to their SKU families, and H611A/H6143/H6144/H6145/H6146/H6147/H6171 have no SKU key (DefNoSupportLib, base-classes3/com/govee/kt/ui/device/DefNoSupportLib.java:29-31); H6184, no longer listed in models, is chassislightv1 (goodsType 11/162), not this family
     models: [H6102, H6116, H6117, H611A, H6125, H6126, H6127, H6143, H6144, H6145, H6146, H6147, H6161, H6163, H6171]   # H6184 removed: it is chassislightv1 (chassislightv1/pact/Support.java:24, goodsTypes {11, 162} :29); dreamcolorlightv2/pact/Support.java:599 names it only through that constant, in the part-brightness firmware gate supportSubModeColor4PartBrightness (:514-638)
     goods_types: [21]   # dreamcolorlightv2/pact/SubLib.java:22 keys Support.g = {21} (pact/Support.java:63); added by the 7.7.02 colour trace
-    delivery: base_apk
+    delivery: feature_split   # pact_rgbiclight (base-classes9/com/govee/base2home/pfd/Config.java:257,260)
     connectivity: [ble, wifi]
     protocol: { single_packet: true, multi_dialects: ["0xA1", "0xA3"] }
     submodes: { color: "0x0b", color_alt: "0x15", scene: "0x04", music: "0x11", music_alt: "0x13", diy: "0x0a" }
@@ -1325,7 +1327,7 @@ families:
         H7312: { mode_color_parse: rgb_all }   # as H7310 (h73101217 Sku.d = {H7310, H7312, H7317})
         H7317: { mode_color_parse: rgb_all }   # as H7310
     models: [H6165, H6166, H7308, H7309, H7310, H7311, H7312, H7313, H7315, H7316, H7317, H7318]   # SKU-routed to the rgblight AcNewDetail (added by the 7.7.02 colour trace): OldBleSubLib H7308Config.b (rgblight/add/OldBleSubLib.java:27-30; rgblight/Support.java:88-103), h73101217 Sku.d, h7318 Sku.b, h6165 Sku.d. The Wi-Fi-only H6085/H6086/H6089 (no BLE read, OldIotModel) are not listed
-    delivery: base_apk
+    delivery: feature_split   # pact_rgblight (base-classes9/com/govee/base2home/pfd/Config.java:254)
     connectivity: [ble, wifi]
     protocol: { single_packet: true, multi_dialects: ["0xA1", "0xA3"] }
     # Modern transport-only shell; sub-mode bytes assembled by shared base2light.pact.newdetail layer.
@@ -1341,7 +1343,7 @@ families:
         "332": { models: [H6671, H6672], mode_color_parse: gradual_15 }   # Model4BleIot.t :49-51 (SupportV2.k) -> h667172 AcNewDetailH667172 / VM4LightH667172; 0xAC [0x40, 0x41, 0xA5] (h667172/VM4LightH667172$afterConnectedSingleReadDeviceInfo$1.java:160) -> Info4DetailH667172.K split_rgbiclight/com/govee/rgbiclight/h667172/Info4DetailH667172.java:348 (0x15 :367-368, ctor strategy :114-121 reads the gradual byte only); the aa 05 replies (Compose4Off2On VM4LightH667172.java:329-331, snapshot :412-414) take the same K; 0x0d/0x0b/0x02 not support :389
     models: [H61C2, H61C3, H61C5, H617G, H6671, H6672, H618G]   # added by the 7.7.02 colour trace: 141 = H61C2/H61C3/H61C5 (add/AddDeviceM.java:39; SupportV2.f/g/h, SupportV2.java:47-53), 351 = H617G (base-classes2/com/govee/shared/checker/KmpGoodsType.java:197; mode/diy/Diy4H617G.java:21-31), 352 = H618G (KmpGoodsType.java:198; base-classes2/com/govee/shared/config/h618g/H618GSceneConfig.java:45-47; the add flow names no SKU, add/AddDeviceM.java:30-38), 332 = H6671/H6672 (SupportV2.Companion.a :91-92; KmpGoodsType.java:214)
     goods_types: [141, 332, 351, 352]   # add/SubLib.java:21-27 (SupportV2.Companion.d() = SupportV2.b = {351}, SupportV2.java:35,137-139), add/SubLib4BleIot.java:21-27 (Companion.e() = SupportV2.a = {332, 352, 141}, :32,142-144)
-    delivery: base_apk
+    delivery: feature_split   # pact_rgbiclight (base-classes9/com/govee/base2home/pfd/Config.java:257)
     connectivity: [ble, wifi]
     protocol: { single_packet: true, multi_dialects: ["0xA1", "0xA3"] }
     encryption: none
@@ -1364,7 +1366,7 @@ families:
     goods_types: [2, 39, 68, 78, 143, 1, 40, 108]   # SubLib.keys = Support.I {2, 39, 68, 78, 143}, SubLib4BleIot.keys = Support.J {40, 108, 1} (stringlightv2/pact/SubLib.java:20-25, stringlightv2/pact/SubLib4BleIot.java:20-25, stringlightv2/pact/Support.java:93-94; pacts :161-175; add-device items stringlightv2/pact/bleiot/BleIotSkuItemV1.java:14-15, stringlightv2/pact/bleiot/BleIotSkuItemV2.java:14-15, stringlightv2/pact/bleiot/BleIotSkuItem108.java:14-15); 1 / 40 / 108 added by the 7.7.02 colour trace
     assigned_goods_type:
       - { context: bind, models: [H615A, H615B, H615C, H615D, H615E], goods_type: 40, pact: "65535,255", rule: NewRgb2TLUtil.checkDeviceConfig4BleIot, doc: "pairing: h6159/sku/BleProcessor.onItemClick split_rgblight/com/govee/h6159/sku/BleProcessor.java:24-30 opens split_rgblight/com/govee/h6159/add/ConnectDialog.java:12 (an AbsBleWifiConnectDialog that keeps A()) for H615A-E at an advert pact of (65535,255) (Sku.supportSku split_rgblight/com/govee/h6159/sku/Sku.java:176-181 -> NewRgb2TLUtil.isNewRgb2TL4BleIot :74-84); AbsBleWifiConnectDialog.A base-classes10/com/govee/base2light/ble/AbsBleWifiConnectDialog.java:122-146 (:124 checkDeviceConfig4BleIot, :144-146) then writes goodsType 40 and pact (65535,255) into the new record (NewRgb2TLUtil.a / checkDeviceConfig4BleIot / sku4SchemeConversion4BleIot, base-classes9/com/govee/base2home/pact/support/NewRgb2TLUtil.java:31-34,51-60,140-142). The record routes by goodsType 40 to this family's SubLib4BleIot (stringlightv2/pact/Support.java:94), whose Model4BleIot.e skips the pact check for it (stringlightv2/pact/Model4BleIot.java:47-61)" }
-    delivery: base_apk
+    delivery: feature_split   # pact_rgblight (base-classes9/com/govee/base2home/pfd/Config.java:251,254)
     connectivity: [ble, wifi]
     protocol: { single_packet: true, multi_dialects: ["0xA1"] }
     submodes: { color: "0x0d", color_alt: "0x02", scene: "0x04", music: "0x0e", music_alt: "0x13", diy: "0x0a", mic: "0x05" }
@@ -1381,7 +1383,7 @@ families:
         "5": { models: [H7005], mode_color_parse: none }   # H7005: pact/Model4BleIot.t :30-49 -> legacy adjust.AdjustAcV2 (FrameV2 / UiV1 / BleOpV2); ModeController (bulblightstringv1/adjust/v2/BleOpV2.java:85) -> bulblightstringv1 Mode.parseSubMode bulblightstringv1/ble/Mode.java:7-21 -> SubModeColor.parse bulblightstringv1/ble/SubModeColor.java:71-72 is empty, so no colour body is decoded; colour from the aa a2 group reads (bulblightstringv1/adjust/v2/BleOpV2.java:92-103,183-212)
     models: [H7002, H7005]
     goods_types: [3, 5]   # 5 = H7005 (pact/Support.java:19-26; SubLib4BleIot keys Support.g = {5}); added by the 7.7.02 colour trace
-    delivery: base_apk
+    delivery: feature_split   # pact_bulblightstringv1 (base-classes9/com/govee/base2home/pfd/Config.java:238)
     connectivity: [ble]
     protocol: { single_packet: true, multi_dialects: ["0xA1"] }
     submodes: { color: "0x0b", scene: "0x09", music: "0x0e" }
@@ -1403,7 +1405,7 @@ families:
     goods_types: [13]   # barelightv1/pact/SubLib.java:22 keys Support.g = {13} (pact/Support.java:45); added by the 7.7.02 colour trace
     assigned_goods_type:
       - { context: device_list, models: [H6145, H6146, H6147, H6171], from_goods_type: [13], condition: { min_pact_type: 10, min_pact_code: 1 }, goods_type: 17, rule: OldRgbicBkUtil.isRgbicBk4Ble, doc: "barelightv1/pact/Model.itemClickOp split_rgbiclight/com/govee/barelightv1/pact/Model.java:54-71 (:56 the test, :64-66 C0(17) -> /rgbic/newdetail); keyed by goodsType 13 (split_rgbiclight/com/govee/barelightv1/pact/SubLib.java:22); base-classes9/com/govee/base2home/pact/support/OldRgbicBkUtil.java:18-21,32,59-69; SkuToGoodsTypeUtil.a agrees (base-classes10/com/govee/base2home/util/SkuToGoodsTypeUtil.java:41-43). The pairing flow writes 13 for these SKUs: the add-device scan tags a BK advert 17 (OldRgbicBkUtil.parseOldRgbicBkLight :99-107) and the dreamcolorlightv1 pairing maps it back (goodsTypeCheck :52-57, split_rgbiclight/com/govee/dreamcolorlightv1/add/ConnectDialog.java:188); the barelightv1 pairing keeps the scanned 13 (split_rgbiclight/com/govee/barelightv1/add/ConnectDialog.java:160)" }
-    delivery: base_apk
+    delivery: feature_split   # pact_rgbiclight (base-classes9/com/govee/base2home/pfd/Config.java:257)
     connectivity: [ble]
     protocol: { single_packet: true, multi_dialects: ["0xA1"] }
     submodes: { color: "0x0b", color_alt: "0x15", scene: "0x04", music: "0x0c", diy: "0x0a" }
@@ -1415,7 +1417,7 @@ families:
     confidence: medium
     sources: ["barelightv1/ble/Mode.java:28-52 (no BleNotifyComm)"]
 
-  # ─────────────────────────── Lamps / car / misc lights (base.apk) ───────────────────────────
+  # ─────────────────────────── Lamps / car / misc lights (pact_hollowlamp / pact_rgblight / pact_h604a splits; h1162 in base.apk) ───────────────────────────
   - id: tablelampv1
     category: lamp
     client_profile:   # H6052 0x0D report = [R,G,B] only, the kelvin bytes are not read (H6052NewDetailVM -> H6052InfoDetail.G constructor strategy; 7.5.12 and 7.7.02)
@@ -1430,7 +1432,7 @@ families:
       wire_cipher: runtime
     models: [H6052, H6078]
     goods_types: [22, 128]
-    delivery: base_apk
+    delivery: feature_split   # pact_hollowlamp (base-classes9/com/govee/base2home/pfd/Config.java:241)
     connectivity: [ble, wifi]
     submodes: { color: "0x0d", scene: "0x04", music: "0x0f", music_alt: "0x13", diy: "0x0a" }
     opcodes:
@@ -1457,7 +1459,7 @@ families:
       mode_color_parse: rgb_kelvin_0d   # goodsType 16: pact/Model.t split_rgblight/com/govee/homelightv1/pact/Model.java:41-44 -> homelightv1 newdetail AcNewDetail / VM4Light; aa 05 01 Compose4InfoBleIotNoGradual$iControllerStrategy$1.java:228-235 (off->on re-read, run when the aa 01 heartbeat ShareVM.N3 base-classes11/com/govee/base2light/pact/newdetail/ShareVM.java:1004-1008 or the switch notify parser V4 :166-167 reports the light turned on: VM4Light.J3 :339-340 -> W4 :171-201 (Compose4Off2On :186-198) -> Z4 :257-259) -> Info4Detail.G split_rgblight/com/govee/homelightv1/newdetail/Info4Detail.java:376-408 (0x0d :390-392, ctor strategy :113-125: [r,g,b][kelvin s16be], kelvin > 0 -> colour = getTemColorByKelvin(k)[2], else RGB); 0x15/0x0b/0x02 not support :405-407. The screen's pact check accepts (1,1) only (VM4Light.n4 :728-731 -> pact/Support.supportPactV1 :121-135 over list c = {(1,1)}, :41-43). Pact also registers goodsType 16 at (2,1), the Support.isBk pact (:88-90), from stringlightv2/pact/Support.java:176-178 (run by rgblight/RgbLightRegistry.java:664). homelightv1 SubLib is the only SubLib keyed 16, so a (2,1) H6148 still opens this screen. On the scan path it gets the app-old dialog (ShareVM.X0 is true, base-classes11/com/govee/base2light/pact/newdetail/ShareVM.java:1446-1448; O1 -> n4 :1367-1369), so it reaches this parse only through the scan-timeout direct connect, as for h70b2. The parse is the same on that path
     models: [H6148]
     goods_types: [16]   # homelightv1/pact/Support.java:26,41-43 (SubLib keys Support.e = {16}); added by the 7.7.02 colour trace
-    delivery: base_apk
+    delivery: feature_split   # pact_rgblight (base-classes9/com/govee/base2home/pfd/Config.java:251)
     connectivity: [ble, wifi]
     submodes: { color: "0x0d", scene: "0x04", music: "0x0f", diy: "0x0a" }
     encryption: none
@@ -1475,7 +1477,7 @@ families:
         "395": { models: [H1771], mode_color_parse: kelvin_0d_nocct, mode_color_parse_status: gradual_0d }   # H1771: hollowlamp/pact/Model4BleIot.java:205-206 (t; Support.isH1771, hollowlamp/pact/Support.java:350-352) -> H1771DetailActivity / H1771DetailVM. Status (connect): 0xAC [0x41, 0x36, 0xA3, 0xA5] (ext bytes at H1771DetailVM$afterConnectedSingleReadDeviceInfo$1.java:180, sent through Compose4BaseInfoSingleRead.c at :208) -> TLV 0x05 (base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4BaseInfoSingleRead.java:300-308) -> callback n (H1771DetailVM$afterConnectedSingleReadDeviceInfo$1.java:79-81) -> H1771DetailInfo.Q split_hollowlamp/com/govee/hollowlamp/newdetails/h1771/H1771DetailInfo.java:411 (0x0d :425-427, gradual only). aa 05 after a snapshot apply (Compose4SnapshotReadMode H1771DetailVM.java:341; o5 :391-393; no off->on re-read: J3 :483-495 only stores the switch) -> H1771DetailInfo.P :375 (0x0d :389-391, default strategy, no > 0 handling); IoT status frames take the same P (H1771DetailVM.java:913 -> H1771DetailInfo.L :260 -> N :346-351)
     models: [H6050, H6051, H6055, H6058, H6059, H6073, H1771]   # H1771 = goodsType 395 (pact/bleiot/H1771Maker.java:15-16), added by the 7.7.02 colour trace
     goods_types: [27, 37, 42, 58, 59, 84, 395]
-    delivery: base_apk
+    delivery: feature_split   # pact_hollowlamp (base-classes9/com/govee/base2home/pfd/Config.java:241)
     connectivity: [ble, wifi]
     submodes: { color: "0x0d", scene: "0x04", music: "0x0e", music_alt: "0x0f", diy: "0x0a" }
     opcodes:
@@ -1497,7 +1499,7 @@ families:
     goods_types: [6]   # carlightv1/pact/SubLib.java:20-26 keys Support.e = {6}; added by the 7.7.02 colour trace
     assigned_goods_type:
       - { context: device_list, models: [H6118, H6194], from_goods_type: [6], condition: { min_pact_type: 10, min_pact_code: 1 }, goods_type: 39, rule: OldRgbBkUtil.isOldRgbBk, doc: "carlightv1/pact/Model.itemClickOp split_rgblight/com/govee/carlightv1/pact/Model.java:51-65 (:53 the test, :59-61 setGoodsType(39) on the device-list record, then DefInfo); keyed by goodsType 6 (split_rgblight/com/govee/carlightv1/pact/SubLib.java:22); OldRgbBkUtil.a base-classes9/com/govee/base2home/pact/support/OldRgbBkUtil.java:42,46,60,75-85; SkuToGoodsTypeUtil.a agrees (base-classes10/com/govee/base2home/util/SkuToGoodsTypeUtil.java:37-40). The BK pairing dialogs write 6 (OldRgbBkUtil.parseOldGoodsType :241-244; split_rgblight/com/govee/stringlightv2/add/AbsBleNewBkConnectDialog.java:134-136)" }
-    delivery: base_apk
+    delivery: feature_split   # pact_rgblight (base-classes9/com/govee/base2home/pfd/Config.java:251)
     connectivity: [ble]
     submodes: { color: "0x0d", scene: "0x04", music: "0x0e", music_alt: "0x13", diy: "0x0a" }
     encryption: secret_key_pairing
@@ -1510,7 +1512,7 @@ families:
       mode_color_parse: untraced   # com.govee.h604a.newdetail.H604xNewDetailAc is declared in the base.apk manifest, but no dex of com.govee.home-7.7.02 holds a com/govee/h604a class. The screen lives in the Play Feature Delivery module pact_h604a (base-classes9/com/govee/base2home/pfd/Config.java:242: goodsTypes 95/109/122/133 -> com.govee.h604a.H604aModuleInitImp), which the capture does not include (com.govee.home-7.7.02 has no split_pact_h604a.apk). decomp-7.7.02 holds only shared code that names these SKUs or goodsTypes, such as the KMP scene configs base-classes2/com/govee/shared/config/h604a..h604d, and no H604x control screen. Not traceable
     models: [H604A, H604B, H604C, H604D]
     goods_types: [95, 109, 122, 133]   # H604A 95, H604B 109, H604C 122, H604D 133: base-classes2/com/govee/shared/config/h604a/H604ASceneConfig.java:47-49, h604b/H604BSceneConfig.java:45-47, h604c/H604CSceneConfig.java:47-49, h604d/H604DSceneConfig.java:45-47 (KmpGoodsType GAME_FEAST / _V2 / _V3 / _V4, base-classes2/com/govee/shared/checker/KmpGoodsType.java:60-63); the same four map to module pact_h604a in pfd/Config.java:242. Added by the 7.7.02 colour trace
-    delivery: base_apk
+    delivery: feature_split   # pact_h604a (base-classes9/com/govee/base2home/pfd/Config.java:242)
     connectivity: [ble, wifi]
     submodes: { color: "0x15", scene: "0x04", music: "0x13", diy: "0x0a", video: "0x00" }
     opcodes:
@@ -1531,7 +1533,7 @@ families:
       mode_color_parse: gradual_0d   # goodsType 104 (RemoteControlAc.c0, h6057/origin/pact/Support.java:36): Model.t :101-104 -> H6057DetailActivity / H6057DetailVM; aa 05 01 Compose4InfoBleIotH6057$iControllerStrategy$1.java:165 -> H6057Info4Detail.Q split_hollowlamp/com/govee/h6057/origin/newDetail/H6057Info4Detail.java:414-456 (0x0d :428-429, ctor strategy :127-135 reads the gradual byte only); 0x0b is the game sub-mode (SubMode4Game, :445-451), 0x15/0x02 not support :453-455; on Wi-Fi the colour comes from the aa a5 frame after aa 05 0d (:386-412)
     models: [H6057]
     goods_types: [104]
-    delivery: base_apk
+    delivery: feature_split   # pact_hollowlamp (base-classes9/com/govee/base2home/pfd/Config.java:241)
     connectivity: [ble, wifi]
     submodes: { color: "0x0d", scene: "0x04", music: "0x13", diy: "0x0a", game: "0x0b" }
     opcodes:
@@ -1555,21 +1557,21 @@ families:
       mode_color_parse: none   # music sync boxes (H1162 gt 87, H1163 137, H1167 182, H1168 186; module base-classes2/com/govee/h1162): pact/Model.t :68-107 (H1168: SubLib1168 -> DeviceItem1168 -> Model1168.t, pact/Model1168.java:84) -> h1162 AdjustActivity (gid <= 0; BleOpV1.t base-classes2/com/govee/h1162/ble/BleOpV1.java:170-183 reads versions and the switch, no mode) or the base.apk musicfeast detail screen that Base2homeConfig h1162DetailAc..h1168DetailAc names (base-classes9/com/govee/base2home/config/Base2homeConfig.java:212-226; values in base.apk assets/base2home_config.properties). H1162 MusicFeastDetailAc reads MusicModeController (aa 05, base-classes3/com/govee/home/main/device/moment/musicfeast/controller/MusicModeController.java:28-35) or the feast-protocol MusicModeControllerV2 (feastcontroller/MusicModeControllerV2.java:24-35), read set musicfeast/ble/Ble.java:548-557. H1163 MusicFeastDetailAcV4 and H1167 AcMusicFeastDetailV3 (VModel4MusicFeast1167 extends ViewModel4Feast, h1167/VModel4MusicFeast1167.java:49) go through ViewModel4Feast -> MusicFeastM.g (v2/MusicFeastM.java:327,356) -> v2/ble/ComposeController4AllInfo.java:287-307, the feast command 0x60 sub 0x02 (v2/ble/AbsFeastController.java:16-18), music fields only. H1168 AcMusicFeastDetail4H1168 reads the same feast 0x60 / 0x02 (musicfeast/h1168/controller/Compose4ReadAllInfo.java:222-248); its type-5 [r,g,b] record (v2/ble/Bytes4ColorMode.java:32-35) is a feast field, not an aa 05 colour sub-mode. No screen reads an aa 05 colour sub-mode
     models: [H1162, H1163, H1167, H1168]
     goods_types: [87, 137, 182, 186]   # h1162/Support.java:26-28 (SubLib keys Support.j = {87, 182, 137}, SubLib1168 keys Support.l = {186}); Pact (1,1) each, :33-45; added by the 7.7.02 colour trace
-    delivery: base_apk
+    delivery: base_apk   # goodsTypes 87 / 137 / 182 / 186 are in no module of Config.b(), base-classes9/com/govee/base2home/pfd/Config.java:49-263; the code is base dex (base-classes2/com/govee/h1162)
     connectivity: [ble, wifi]
     # Music/HDMI Sync Box; uses shared light mode set.
     encryption: none
     confidence: low
     sources: ["h1162/ble/*"]
 
-  # ─────────────────────────── Splicing panels & grow lights (H70xx, base.apk) ───────────────────────────
+  # ─────────────────────────── Splicing panels & grow lights (H70xx: pact_h70b1 / pact_h705a / pact_rgblight / pact_bulblightstringv1 splits) ───────────────────────────
   - id: h70b1
     category: splicing_panel
     client_profile:
       mode_color_parse: rgb_kelvin_0d_nocct   # goodsType 134 (split_h70b1/com/govee/h70b1/origin/pact/Support.java:36,47-53: pacts (1,1)/(2,1)): origin/pact/Model.t :63-159 -> com.govee.h70bx.adjust.H70BXDetailAc (C3 :267-268) / VM4H70BXNewDetail (split_h70b1/com/govee/h70bx/viewmodel/VM4H70BXNewDetail.java: aa 05 01 :305-311, the screen's only mode-parse call T5 :361-370) -> com.govee.h70bx.Info4Detail.E split_h70b1/com/govee/h70bx/Info4Detail.java:252-285 (0x0d :266-267, ctor strategy :125-133: [r,g,b] + base2home getSignedShort Kelvin (import :5), stored only); 0x15/0x0b/0x02 not support :282-284; the pact check n4 :1253-1276 accepts 134 at (1,1)/(2,1) (Support.c)
     models: [H70B1]
     goods_types: [134]   # split_h70b1/com/govee/h70b1/origin/pact/Support.java:36 (SubLib keys Support.f = {134, 185, 216}); added by the 7.7.02 colour trace
-    delivery: base_apk
+    delivery: feature_split   # pact_h70b1 (base-classes9/com/govee/base2home/pfd/Config.java:245)
     connectivity: [ble, wifi]
     protocol: { single_packet: true, multi_dialects: ["0xA1"] }
     submodes: { color: "0x0d", scene: "0x04", music: "0x13", diy: "0x0a" }
@@ -1584,7 +1586,7 @@ families:
       mode_color_parse: rgb_kelvin_0d_nocct   # goodsType 185 (split_h70b1/com/govee/h70b2/present/SkuItemClickH70B2.java:34-35; origin/pact/Support.java:54-56, pact (1,1) in Support.d): the same H70BXDetailAc screen and Info4Detail.E (split_h70b1/com/govee/h70bx/Info4Detail.java:252). But its pact check VM4H70BXNewDetail.n4 (split_h70b1/com/govee/h70bx/viewmodel/VM4H70BXNewDetail.java:1253-1276) has no 185 branch (it omits Support.d). So on the normal scan path the app shows the app-old dialog and never connects (base-classes11/com/govee/base2light/kt/comm/AbsViewMode4Op.java:1960-1985, 2218-2222; ShareVM.X0 is true, base-classes11/com/govee/base2light/pact/newdetail/ShareVM.java:1446-1448). Only the scan-timeout direct connect (w0 :2204-2207 -> t0(false) :2136-2146 -> n0) reaches the aa 05 read
     models: [H70B2]
     goods_types: [185]   # split_h70b1/com/govee/h70b1/origin/pact/Support.java:36 (SubLib keys Support.f); h70b2/present/SkuItemClickH70B2.java:34-35; added by the 7.7.02 colour trace
-    delivery: base_apk
+    delivery: feature_split   # pact_h70b1 (base-classes9/com/govee/base2home/pfd/Config.java:245)
     connectivity: [ble, wifi]
     protocol: { single_packet: true, multi_dialects: ["0xA1"] }
     submodes: { color: "0x0d", scene: "0x04", music: "0x13", diy: "0x0a" }
@@ -1598,7 +1600,7 @@ families:
       mode_color_parse: rgb_kelvin_0d_nocct   # H70BC goodsType 216 (split_h70b1/com/govee/h70bc/present/SkuItemClickH70BC.java:34-35; origin/pact/Support.java:57-62) and H70B1 134 / H70B2 185: H70BXDetailAc / VM4H70BXNewDetail -> com.govee.h70bx.Info4Detail.E split_h70b1/com/govee/h70bx/Info4Detail.java:252 (0x0d :266-267, ctor strategy :125-133); n4 accepts 216 at (1,1)/(2,1) (Support.e, h70bx/viewmodel/VM4H70BXNewDetail.java:1267-1273); 185 only after a scan timeout (see h70b2)
     models: [H70B1, H70B2, H70BC]
     goods_types: [216]   # H70BC: split_h70b1/com/govee/h70bc/present/SkuItemClickH70BC.java:34-35 (SubLib keys Support.f = {134, 185, 216}, h70b1/origin/pact/Support.java:36); 134 and 185 are listed under h70b1 / h70b2 so that each goodsType names one family; added by the 7.7.02 colour trace
-    delivery: base_apk
+    delivery: feature_split   # pact_h70b1 (base-classes9/com/govee/base2home/pfd/Config.java:245)
     connectivity: [ble, wifi]
     opcodes:
       - { name: change_splicing, cmd: "0x40" }
@@ -1620,7 +1622,7 @@ families:
         H61C5: { mode_color_parse: kelvin }   # as H61C2
     models: [H705a, H705b, H705D, H705E, H705F, H3401, H61C2, H61C3, H61C5, H7067, H7068, H7069, H706A, H706B, H706C, H705C, H805A, H805B, H805C, H805D, H608A, H808A, H608B, H608C, H608D]   # H705C (125), H805A-D (240), H608A-D / H808A (184) added by the 7.7.02 colour trace (add/AddDeviceM.java:24-74; Support.D :171-174; matterconfig/H808aMatterHelper.java:18-42)
     goods_types: [125, 180, 184, 240, 250, 394]   # pact/SubLib.java:20-22 keys Support.E = {125, 180, 184, 240, 250, 394} (pact/Support.java:117); added by the 7.7.02 colour trace. H61C2/H61C3/H61C5 are rgbiclight goodsType 141
-    delivery: base_apk
+    delivery: feature_split   # pact_h705a (base-classes9/com/govee/base2home/pfd/Config.java:244)
     connectivity: [ble, wifi]
     protocol: { single_packet: true, multi_dialects: ["0xA1", "0xA3"] }
     encryption: none
@@ -1632,32 +1634,33 @@ families:
     client_profile:
       mode_color_parse: none   # plant UI: h7004/sku/Model.java:37-42 -> /rgb/newdetail rgblight AcNewDetail / VM4Light with h7004 DelegateConnectSuccess -> ConnectSuccess4Plant (split_rgblight/com/govee/rgblight/RgbLightDetailRegistrar.java:122-133); the connect read set split_rgblight/com/govee/rgblight/ControllerStrategyConfig.java k1 :1301-1351 (o2 :1414-1416) has no ControllerMode, and the heartbeat Compose4Off2On aa 05 reply is discarded (split_rgblight/com/govee/rgblight/VM4Light.java f5 :441-444, sent by J3 :695-707). Runs at goodsType 0: the device list reaches this Model only by its SKU key (h7004/sku/SubLib.keys = Sku.b {H7004}, split_rgblight/com/govee/h7004/sku/SubLib.java:22-31; SubConfig.Companion.b keys by SKU only for goodsType 0, base-classes3/com/govee/kt/ui/device/SubConfig.java:46-54), and the add flow opens the screen with goodsType 0 too (AbsBleConnectDialog.U passes c0() = 0 to BleDeviceNameAcV1, base-classes10/com/govee/base2light/ble/AbsBleConnectDialog.java:163, 186-188, c0 not overridden by h7004/add/BleConnectDialog -> base-classes10/com/govee/base2light/ac/BleDeviceNameAcV1.java:105,123). At goodsType 0 the only o2 branch that holds is the H7004 / H7017 SKU test (rgblight/ControllerStrategyConfig.java:1383-1416, :1414-1416 -> k1); the default click passes the pact check (no pact is captured for goodsType 0, base-classes3/com/govee/kt/ui/device/base/AbsBaseBleModel.java:386) and opens Model.t
     models: [H7004]
-    delivery: base_apk
+    delivery: feature_split   # pact_rgblight (base-classes9/com/govee/base2home/pfd/Config.java:254)
     connectivity: [ble]
     protocol: { single_packet: true, multi_dialects: [] }
-    opcodes: [{ name: red_blue, cmd: "0x01", note: "SubModeRedBlue 41/61/81 -> 1/2/3 by LED count" }]
+    opcodes: [{ name: red_blue, cmd: "0x0d", payload: "[red u8, blue u8]; the plant screen writes [4 | 6 | 8, 1]", readable: true, note: "Red:blue ratio (BleProtocol.RED_BLUE_PROPORTION 13). The plant screen ConnectSuccess4Plant.J writes 33 0d <red> 01 (red from {4, 6, 8}, {3..8} on H7017) and reads aa 0d at connect, reply [plantRed, plantBlue] (rgblight ControllerStrategyConfig.k1 -> r1). The legacy RedBlueController (no caller in 7.7.02) builds the same cmd 13 with [red, blue]. The SubModeRedBlue41/61/81 codes 1/2/3 are never written: their getWriteBytes return null." }]
     encryption: none
     confidence: high
-    sources: ["h7004/ble/Mode.java:7-15", "h7004/ble/RedBlueController.java"]
+    sources: ["h7004/ble/BleProtocol.java:5-8 (RED_BLUE_PROPORTION 13; red_blue_4_1/6_1/8_1 = 1/2/3)", "h7004/ble/RedBlueController.java:25-26 (cmd 13), 29-35 (read [red, blue] / write [red, blue])", "h7004/ble/Mode.java:7-15 (a: 6:1 / 8:1 / else 4:1 SubModeRedBlue)", "h7004/ble/SubModeRedBlue41.java:11-12,24-25 (write bytes null; code 1)", "split_rgblight/com/govee/rgblight/h7004/ConnectSuccess4Plant.java:213 (H = H7017), 392-399 (J: 33 0d <red> 01), 484 (ratios {4, 6, 8} / {3..8})", "split_rgblight/com/govee/rgblight/ControllerStrategyConfig.java:1345-1351 (k1: aa 0d read), 753-765 (r1: [plantRed, plantBlue])"]
 
   - id: h7017
     category: grow_light
     client_profile:
       mode_color_parse: none   # plant UI, as H7004: h7017/sku/Model.java:37-42 -> rgblight AcNewDetail / VM4Light -> ConnectSuccess4Plant (split_rgblight/com/govee/rgblight/RgbLightDetailRegistrar.java:132); split_rgblight/com/govee/rgblight/ControllerStrategyConfig.java k1 :1301-1351 (o2 :1414-1416; H7017 adds ControllerBrightness :1333-1339) has no ControllerMode; the heartbeat aa 05 reply is discarded (split_rgblight/com/govee/rgblight/VM4Light.java f5 :441-444). goodsType 0: only the SKU key routes here (split_rgblight/com/govee/h7017/sku/SubLib.java:22-31, Sku.b {H7017}), and the add flow opens it with goodsType 0 (h7017/add/ConnectDialog does not override AbsBleConnectDialog.c0, passed by U at base-classes10/com/govee/base2light/ble/AbsBleConnectDialog.java:163, 186-188)
     models: [H7017]
-    delivery: base_apk
+    delivery: feature_split   # pact_rgblight (base-classes9/com/govee/base2home/pfd/Config.java:254)
     connectivity: [ble]
     protocol: { single_packet: true, multi_dialects: [] }
     encryption: none
     confidence: medium
-    sources: ["h7017/ble/* (plant-mode; adjust/RedBlueController)"]
+    opcodes: [{ name: red_blue, cmd: "0x0d", payload: "[red u8, blue u8]; the plant screen writes [3..8, 1]", readable: true, note: "As H7004: the shared plant screen ConnectSuccess4Plant (H = H7017 widens the red count to 3..8)." }]
+    sources: ["h7017/ble/BleProtocol.java:5 (RED_BLUE_PROPORTION 13)", "split_rgblight/com/govee/rgblight/h7004/ConnectSuccess4Plant.java:213,392-399,484", "split_rgblight/com/govee/rgblight/ControllerStrategyConfig.java:1345-1351,753-765"]
 
   - id: h7022
     category: string_light
     client_profile:
       mode_color_parse: kelvin_0b   # h7022/sku/Model.t :43 -> h7022 detail NewDetailAc / NewDetailVm (the add flow lands there too, h7022/sku/H7022ConnectDialog.java:21-23); aa 05 01 h7022/detail/Compose4InfoBle$iControllerStrategy$1.java:178-185 (heartbeat re-parses NewDetailVm.m5 / q5 h7022/detail/NewDetailVm.java:466-468, 521-523) -> Info4Detail.f0 split_bulblightstringv1/com/govee/h7022/detail/Info4Detail.java:689-728 (0x0b :704-716, ctor strategy :169-175, base2light getSignedShort; kelvin > 0 -> 24-bulb tint fill kept over the aa a2 group reads, NewDetailVm.d5 h7022/detail/NewDetailVm.java:296-308); 0x15/0x0d/0x02 not support h7022/detail/Info4Detail.java:725-727
     models: [H7022]
-    delivery: base_apk
+    delivery: feature_split   # pact_bulblightstringv1 (base-classes9/com/govee/base2home/pfd/Config.java:239)
     connectivity: [ble, wifi]
     protocol: { single_packet: true, multi_dialects: ["0xA1"] }
     opcodes:
@@ -1668,7 +1671,7 @@ families:
     confidence: medium
     sources: ["h7022/ble/*", "h7022/ble/ScenesModeController.java:35-36 (0x01)"]
 
-  # ─────────────────────────── TV backlights & HDMI sync (base.apk) ───────────────────────────
+  # ─────────────────────────── TV backlights & HDMI sync (pact_rgblight / pact_tvlightv4 / pact_h6099 splits) ───────────────────────────
   - id: tvlightv1
     category: tv_backlight
     client_profile:
@@ -1679,13 +1682,16 @@ families:
     goods_types: [12]   # rgblight/add/SubLibBle.java:21-27 keys SupportH6179.c = {12} (rgblight/add/BleSkuItemH6179.java:16 returns 12; the KMP scene config base-classes2/com/govee/shared/config/h6179/H6179SceneConfig.java:45-47 matches 12 too); added by the 7.7.02 colour trace
     assigned_goods_type:
       - { context: device_list, models: [H6179], from_goods_type: [12], condition: { min_pact_type: 10, min_pact_code: 1 }, goods_type: 39, rule: OldRgbBkUtil.isOldRgbBk, doc: "rgblight/add/ModelBle.itemClickOp split_rgblight/com/govee/rgblight/add/ModelBle.java:35-50 (:37 the test, :43-45 setGoodsType(39)); keyed by goodsType 12 (split_rgblight/com/govee/rgblight/add/SubLibBle.java:21-27, SupportH6179.c split_rgblight/com/govee/tvlightv1/SupportH6179.java:41); OldRgbBkUtil.a base-classes9/com/govee/base2home/pact/support/OldRgbBkUtil.java:45,60,75-85; SkuToGoodsTypeUtil.a agrees (base-classes10/com/govee/base2home/util/SkuToGoodsTypeUtil.java:37-40). The BK pairing dialogs write 12 (OldRgbBkUtil.parseOldGoodsType :245-246)" }
-    delivery: base_apk
+    delivery: feature_split   # pact_rgblight (base-classes9/com/govee/base2home/pfd/Config.java:251)
     connectivity: [ble, wifi]
+    # submodes: the legacy tvlightv1/ble Mode parses only 0x0a (DIY) and 0x0d (SubModeColor). Scene and music are
+    # what the goodsType-12 control screen (rgblight AcNewDetail) writes: scene 0x04 (DelegateSceneV1.P, local
+    # Scenes4CarLightNight list) and music 0x0e (OldMusicConfig.b, the SupportH6179 branch).
     submodes: { color: "0x0d", scene: "0x04", music: "0x0e", diy: "0x0a" }
-    opcodes: [{ name: segment_limit, cmd: "0x0e" }]
+    opcodes: [{ name: segment_limit, cmd: "0x0e", payload: "[on u8] (write 1 / 0)", readable: true, note: "ControllerLimit (base2light kt general_controller), read in the goodsType-12 connect set (rgblight ControllerStrategyConfig.B1, goodsType 78 or SupportH6179.j); reply byte0 == 1 => on. Only the name is ours: the app calls it Limit." }]
     encryption: none
     confidence: medium
-    sources: ["tvlightv1/ble/Mode.java:7-17 (7.7.02: 0x0a DIY, every other sub-mode SubModeColor)"]
+    sources: ["tvlightv1/ble/Mode.java:7-17 (7.7.02: 0x0a DIY, every other sub-mode SubModeColor)", "tvlightv1/ble/BleProtocol.java:5-6 (sub_mode_color 13, sub_mode_new_diy 10)", "tvlightv1/ble/SubModeColor.java:101-102 (13)", "split_rgblight/com/govee/rgblight/mode/scene/DelegateSceneV1.java:546-555 (P: ControllerMode [4, code])", "split_rgblight/com/govee/rgblight/mode/scene/LocalScenesConfig.java:363-375 (Scenes4CarLightNight for SupportH6179.j)", "split_rgblight/com/govee/rgblight/mode/music/OldMusicConfig.java:44-64 (b: sub-mode 14 for SupportH6179.j, :50-54)", "split_rgblight/com/govee/rgblight/ControllerStrategyConfig.java:874-958 (B1), 921-926 (ControllerLimit read for 78 / 12)", "base-classes11/com/govee/base2light/kt/general_controller/ControllerLimit.java:29-32 (read parse), 59-60 (write [1|0]), 71-72 (cmd 14)"]
 
   - id: pact_tvlightv2
     category: tv_backlight
@@ -1693,7 +1699,7 @@ families:
       mode_color_parse: kelvin_0b_15   # goodsType 24, every pact: pact/deviceitem/Model.t :49 -> newdetail AcNewDetail / VM4Light; aa 05 01 from the default Compose4InfoBleIot strategy (split_tvlightv4/com/govee/pact_tvlightv2/newdetail/VM4Light$connectBleSuc$1.java:120, parse callback l :75-86; heartbeat VM4Light.z5 pact_tvlightv2/newdetail/VM4Light.java:685-687) -> Info4Detail.V split_tvlightv4/com/govee/pact_tvlightv2/newdetail/Info4Detail.java:548-607 (0x0b / 0x15 :562-575 -> base-classes11/com/govee/base2light/pact/newdetail/sub/SubMode4Color.java:42-49, kelvin > 0 -> s = K + 15-bulb tint fill kept over the aa a2 / a5 group reads, VM4Light.p5 / o5 pact_tvlightv2/newdetail/VM4Light.java:513-540); 0x0d/0x02 not support pact_tvlightv2/newdetail/Info4Detail.java:605-607
     models: [H6198, H6199]
     goods_types: [24]   # pact_tvlightv2/pact/deviceitem/SubLib.java:23 keys Support.h = {24} (pact_tvlightv2/pact/Support.java:33; pact_tvlightv2/pact/V1BleIotSkuItem.java:7 returns 24; KMP base-classes2/com/govee/shared/config/h6199/H6199SceneConfig.java:45-47 matches 24); added by the 7.7.02 colour trace
-    delivery: base_apk
+    delivery: feature_split   # pact_tvlightv4 (base-classes9/com/govee/base2home/pfd/Config.java:248)
     connectivity: [ble, wifi]
     submodes: { color: "0x0b", color_alt: "0x15", scene: "0x04", music: "0x0c", music_alt: "0x13", diy: "0x0a", video: "0x00" }
     opcodes:
@@ -1717,7 +1723,7 @@ families:
           mode_color_by_firmware: [ { min_hard_version: "1.00.00", min_soft_version: "1.00.12", mode_color_parse: kelvin_pair_0d_15 } ]   # supportSubModeColor4PartBrightness (pact_tvlightv3/pact/Support.java:371-382, m = 1.00.12 :37): hard >= 1.00.00 && soft >= 1.00.12 -> the new layout pact_tvlightv3/detail/Info4Detail.java:176-183
     models: [H6046, H6053, H6056]
     goods_types: [23, 52, 112]   # pact_tvlightv3/pact/deviceitem/SubLib.java:23 (Support.i = {23}) and pact_tvlightv3/pact/deviceitem/SubLib4BleIot.java:23 (Support.h = {52, 112}; pact/Support.java:48-49); 52 = H6056 (Support.isH6056), 112 = H6046; the KMP scene configs base-classes2/com/govee/shared/config/h6053/H6053SceneConfig.java:45-47, h6056/H6056SceneConfig.java:45-47 and h6046/H6046SceneConfig.java:45-47 match 23 / 52 / 112, and the Matter add interceptor pact_tvlightv3/detail/config/MatterSupport.java:12-13 gates 52 / 112; added by the 7.7.02 colour trace
-    delivery: base_apk
+    delivery: feature_split   # pact_tvlightv4 (base-classes9/com/govee/base2home/pfd/Config.java:248)
     connectivity: [ble, wifi, iot]
     submodes: { color: "0x0d", color_alt: "0x15", scene: "0x04", music: "0x0c", music_alt: "0x13", diy: "0x0a" }
     opcodes:
@@ -1739,7 +1745,7 @@ families:
             "1,1": { mode_color_parse: rgb_kelvin_pair_0d_15, mode_color_by_firmware: [ { min_hard_version: "1.00.00", min_soft_version: "1.00.14", min_wifi_soft_version: "1.00.18", mode_color_parse: kelvin_pair_0d_15 } ] }   # old TL pact_tvlightv4/detail/Info4Detail.java:185-202 (NewDetailVm.r5 pact_tvlightv4/detail/NewDetailVm.java:582-584 skips the group reads) unless supportNewSubModeColorAndNewVideo (pact/Support.java:337-348) && supportNewColorVideo4BleWifi (:327-330) hold (getSubModeColorVersion4BleWifi :177-182). bleSoft / bleHard are refreshed before the first parse (k2, pact_tvlightv4/detail/NewDetailVm$connectBleSuc$1.java:87); the Wi-Fi version is the value cached BEFORE this connect (refreshed later in the success callback l, h1 :53); an empty or unparsable version counts as old
     models: [H6049, H6054]
     goods_types: [25]   # pact_tvlightv4/pact/SubLib.java:22 keys Support.g = {25} (pact/Support.java:61, pacts (1,1)/(2,1)/(3,1) :92-102); added by the 7.7.02 colour trace
-    delivery: base_apk
+    delivery: feature_split   # pact_tvlightv4 (base-classes9/com/govee/base2home/pfd/Config.java:248)
     connectivity: [ble, wifi, iot]
     submodes: { color: "0x0d", color_alt: "0x15", scene: "0x04", music: "0x0c", music_alt: "0x13", diy: "0x0a", video: "0x00" }
     opcodes:
@@ -1761,7 +1767,7 @@ families:
         "172": { models: [H6608], mode_color_parse: kelvin_triple_15_nocct }   # H6608: the same branch pact_h605b/newdetail/Info4Detail.java:179-185; e6 is gated to 82 (pact_h605b/newdetail/viewmodel/NewDetailVm.java:1224) and H6608ColorMode (picked at pact_h605b/newdetail/add/DetailConfig.java:118) never reads the Kelvins, so the colour is the aa a5 group RGB (getColorPieceSize 30, pact/Support.java:159-160; 4 per group, :189-190, so 8 groups)
     models: [H605B, H605C, H605D, H6601, H6602, H6603, H6604, H6608, H8604, H2A40]   # H2A40 = goodsType 360 (pact/H2A40Item.java:7, registered by pact/SubMaker.java:22; the KMP scene config base-classes2/com/govee/shared/config/h2a40/H2A40SceneConfig.java:45-47 matches 360; both tie the SKU by class name only), added by the 7.7.02 colour trace
     goods_types: [82, 120, 138, 142, 172, 192, 243, 360]   # pact/SubLib.java:22 keys Support.r (pact/Support.java:60); H8604 is goodsType 243 (pact_h605b/pact/MatterSupport.java:16-51); added by the 7.7.02 colour trace
-    delivery: base_apk
+    delivery: feature_split   # pact_h6099 (base-classes9/com/govee/base2home/pfd/Config.java:213)
     connectivity: [ble, wifi, iot]
     submodes: { color: "0x15", scene: "0x04", music: "0x13", diy: "0x0a", video: "0x00" }
     opcodes:

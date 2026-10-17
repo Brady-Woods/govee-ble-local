@@ -518,6 +518,37 @@ model, from which the shipped readers are generated).
   zeroes every data byte.
 
 ### Spec
+- `devices.yaml`: non-colour data and citations that the complete Govee Home 7.7.02 decompile contradicts
+  are corrected. Every item was re-read in the code, and every Java citation in the file now resolves
+  (`file:line` within the file).
+  - `delivery`: 42 families move from `base_apk` to `feature_split`. 7.7.02 ships them in on-demand
+    pact_* splits (pact_rgblight, pact_rgbiclight, pact_bulblightstringv1, pact_hollowlamp, pact_plugnew,
+    pact_h705a, pact_h70b1, pact_tvlightv4, pact_h6099, pact_h604a), mapped by goodsType or SKU in
+    `base2home/pfd/Config.b()`. Each line names its module and Config line. h1162 stays `base_apk`: no
+    module claims its goodsTypes. The schema enum is unchanged; its description now says where the mapping
+    lives.
+  - h7004 `red_blue` is cmd 0x0d with payload `[red, blue]`, not 0x01. The plant screen writes
+    `33 0d <red> 01` and reads `aa 0d` at connect. The 1/2/3 codes of the legacy SubModeRedBlue classes
+    are never written. h7017 gains the same opcode.
+  - h6185: the `mic` opcode entry is removed. Mic is mode sub-mode 0x05 (`33 05 05 01`), and 7.7.02 has
+    no rhythm-point controller.
+  - tvlightv1: the sub-modes were right, but only the legacy `Mode` (0x0a / 0x0d) was cited. Scene 0x04
+    and music 0x0e are what the goodsType-12 control screen writes, now cited. `segment_limit` (0x0e,
+    `ControllerLimit`) gains its payload and read.
+  - h61d3: the connect switch is `VM4Light.d0` on `H61D3Support.l0` (goodsType 263), not `f0`, which is
+    goodsType 299. The per-group read is pieces = ceil(IC / 5), groups = ceil(pieces / 4)
+    (`VM4Light.w5` / `x5`), not "group count = ceil(IC / 5)". The library already reads 4 records per
+    group.
+  - bulblightv3: `checkSupportH6005Fuc` does pick H6001's colour sub-mode (0x0d when it holds, else
+    0x02, on the h6001 automation and effect paths). It never applies to H6006 / H6008.
+  - `secret` and the scene-dispatch sources: line numbers and field names updated to 7.7.02
+    (`UrlConstants` p / y / f386y0, `Constant` e / f, `DefInfo` :106, `AbsPairAc4SecretV1` T1 /
+    onEventSecretKey, `SecretKeyConfig` in base2home/scenes, `Diy.parseScenes4Diy` :95, `DiyGraffitiV3.a`
+    :128). The matching §18.5 text in `GOVEE_BLE_GATT_PROTOCOL.md` is corrected too.
+- `govee_reference.load_profiles` follows the app's family routing: cloud goodsType when non-zero, SKU only
+  at goodsType 0. It used to map each SKU to the last family that listed it (H6102 -> dreamcolorlightv2).
+  It now returns `{goodsType | goodsType-0 SKU: client_profile}`, rejects a key two families claim, and
+  `profile_for(profiles, sku, goods_type)` does the lookup. The self-test checks the H6102 and H6001 routes.
 - `devices.yaml` now records every light goodsType's colour-report strategy: how its Govee Home 7.7.02 control
   screen decodes the colour sub-modes 0x15 / 0x0d / 0x0b / 0x02 of a mode report it gets over BLE (the aa 05
   reply, or the 0xAC TLV 0x05).

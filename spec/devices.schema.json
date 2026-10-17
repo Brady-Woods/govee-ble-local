@@ -128,7 +128,7 @@
         "delivery": {
           "type": "string",
           "enum": ["base_apk", "feature_split"],
-          "description": "Whether the family ships in base.apk or as an on-demand pact_* split."
+          "description": "Whether the family ships in base.apk or as an on-demand pact_* split (feature_split). Govee Home 7.7.02 maps goodsTypes and SKUs to their pact_* module in base2home/pfd/Config.b(); every captured split declares on-demand delivery."
         },
         "connectivity": {
           "type": "array",

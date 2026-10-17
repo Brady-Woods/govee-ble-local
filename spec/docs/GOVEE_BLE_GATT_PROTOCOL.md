@@ -1631,32 +1631,34 @@ commands.
 
 **What it is:** 8 bytes, device-generated. Base64-encoded when stored/transported; raw 8 bytes on the
 wire. Exchanged with `SecretKeyController(V1)`:
-- **read `0xB1`** — device → app: reply `[0x01]` + 8 secret bytes (`SecretKeyControllerV1.parseValidBytes`, `:44`).
+- **read `0xB1`** — device → app: reply `[0x01]` + 8 secret bytes (`SecretKeyController.parseValidBytes`, `:52-67`; `SecretKeyControllerV1` overrides it with the same parse, `:39-55`).
 - **auth write `0xB2`** — app → device: the 8 raw bytes, sent right after connect to authorize the session.
 
 **How the app obtains it** — two paths, plus a local cache:
 
 1. **Original pairing client** (`AbsPairAc4SecretV1`): connects, **reads `0xB1`** from the device
-   (`:115` sends a read when no secret is known; `:427` stores the returned `secretCode`), caches it
-   in `SecretKeyConfig` (a persisted `HashMap<bleAddress, secretCode>`), then **binds** the device —
-   uploading the secret to the account.
+   (`T1`, `:108-114`, sends a read when no secret is known and a check otherwise; `onEventSecretKey`,
+   `:392-430`, stores the returned `secretCode` and hands it to the family's `o2`), caches it in
+   `SecretKeyConfig` (`base2home/scenes/SecretKeyConfig.java`, a persisted
+   `HashMap<bleAddress, secretCode>`; e.g. `h6047/add/PairAcV1.java:265-269`), then **binds** the
+   device — uploading the secret to the account.
 2. **Any other client** (second phone, reinstall, or a third-party local client): fetches the secret
    from the **account device record** and then **writes `0xB2`** to authorize.
 
-**Cloud API (account-authenticated).** Two hosts from `Constant.java` (prod; dev/pda variants exist):
-the **app API** `app.govee.com` (`:165`, account-level calls) and the **device API**
-`device.govee.com` (`:177`). The `device/rest/…` paths below are served by **`device.govee.com`**, not
+**Cloud API (account-authenticated).** Two hosts from `base2home/Constant.java` (prod; dev/pda
+variants at `:129-147`): the **app API** `app.govee.com` (`e`, `:154`, account-level calls) and the
+**device API** `device.govee.com` (`f`, `:163`). The `device/rest/…` paths below are served by **`device.govee.com`**, not
 the app host.
 
 | Purpose | Host + Method / path | Where the secret is |
 |---------|----------------------|---------------------|
-| **Upload (bind)** | `device.govee.com` — `POST device/rest/devices/v1/bind` (multi: `…/v1/multi-bind`) | inside the `deviceExt` JSON of `DeviceBindRequest` — `BindExt.secretCode = scanBleInfo.j()` (`AddMultipleDeviceReq.java:118`) |
-| **Retrieve** | `device.govee.com` — account device-list (returns each device's `deviceExt`/`bleExt`) + `device/rest/devices/v1/settings` | `bleExt.getSecretCode()` → surfaced via `DefInfo`/`ExtInfo` (`DefInfo.java:98`) |
+| **Upload (bind)** | `device.govee.com` — `POST device/rest/devices/v1/bind` (multi: `…/v1/multi-bind`) | inside the `deviceExt` JSON: `DeviceBindRequest.deviceExt` (the family's `BindExt`, e.g. `h6047/add/PairAcV1.java:99`), or for a multi-bind `AddMultipleDeviceReq.BindExtModel.secretCode = scanBleInfo.j()` (`AddMultipleDeviceReq.java:117`) |
+| **Retrieve** | `device.govee.com` — account device-list (returns each device's `deviceExt`/`bleExt`) + `device/rest/devices/v1/settings` | `bleExt.getSecretCode()` → surfaced via `DefInfo`/`ExtInfo` (`DefInfo.java:106-110`) |
 
 > **So: is it "the per-device secret you pull from the cloud"?** Yes. For any client that did not do
 > the original BLE pairing, the practical source is the **Govee account API device record
 > (`bleExt.secretCode`)**; the client then writes it back over `0xB2`. Endpoint paths from
-> `UrlConstants.java` (`f30910o` bind, `f30929x0` multi-bind, `f30928x` settings). The exact modern
+> `base2home/UrlConstants.java` (`p` bind `:101`, `f386y0` multi-bind `:138`, `y` settings `:135`; 7.7.02 names). The exact modern
 > device-list path is served by the account device service (`IDeviceNet`); the `secretCode` travels
 > in the per-device `deviceExt`/`bleExt` blob either way. See `devices.yaml → secret` for the
 > machine-readable version.

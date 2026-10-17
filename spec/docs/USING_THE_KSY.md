@@ -193,6 +193,9 @@ a value, you never hand-parse:
 
 So the client's only "decision" is reading a `client_profile` field and passing it in — the branch runs inside
 the ksy. `govee_reference.py` shows this wiring (`parse_color_group`, `build_op15_color`, `load_profiles`).
+`load_profiles` keys each family's `client_profile` the way the app routes a device-list record: by its
+cloud `goodsType` when that is non-zero, by its SKU only at `goodsType` 0 (`profile_for(profiles, sku,
+goods_type)` does the lookup). A SKU-only map is wrong for the SKUs several families list, e.g. H6102.
 
 ---
 

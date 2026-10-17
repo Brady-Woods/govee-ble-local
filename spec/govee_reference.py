@@ -27,6 +27,7 @@ runtime (pip install kaitaistruct). RC4 is implemented here (Safe.f/g); AES-ECB 
 from __future__ import annotations
 
 import importlib
+import pathlib
 from collections.abc import Sequence
 from io import BytesIO
 from typing import Any, Final, cast
@@ -308,21 +309,48 @@ def build_op15_color(r: int, g: int, b: int, seg_mask: int, *, variant: int, kel
     return append_bcc(bytes([0x33]) + body)
 
 
-# ─────────────────────── device profiles (devices.yaml -> {sku: client_profile}) ───────────────────────
+# ────────── device profiles (devices.yaml -> {cloud goodsType | goodsType-0 SKU: client_profile}) ──────────
 
 
-def load_profiles(devices_yaml_path: str) -> dict[str, dict[str, Any]]:
+def load_profiles(devices_yaml_path: str) -> dict[int | str, dict[str, Any]]:
+    """{routing key: family client_profile}, keyed the way the app picks a device-list record's family
+    (devices.yaml, colour-decode header, "device list"; SubConfig.Companion.b / c): by the record's cloud
+    goodsType when it is non-zero, whatever the SKU, and by its SKU only when the goodsType is 0.
+
+    A goodsType (int) keys the family whose goods_types holds it. A SKU (str) keys only a family a
+    goodsType-0 record reaches: one with no goods_types, or one listing 0 (the models of its
+    by_goods_type."0" entry where it has one, else all its models). So a SKU that several families list
+    resolves per goodsType instead of to whichever family was read last (H6102: 18 -> dreamcolorlightv1,
+    21 -> dreamcolorlightv2, 0 -> h6102). Families without a client_profile are not indexed. Two families
+    claiming one key raise ValueError. Look a record up with profile_for(); inside the family,
+    assigned_goods_type and by_goods_type / by_model still pick the branch."""
     import yaml
     with open(devices_yaml_path, encoding="utf-8") as fh:
         reg = yaml.safe_load(fh)
-    out: dict[str, dict[str, Any]] = {}
+    out: dict[int | str, dict[str, Any]] = {}
+    owner: dict[int | str, str] = {}
     for fam in reg.get("families", []):
         prof = fam.get("client_profile")
         if not prof:
             continue
-        for sku in fam.get("models", []) or []:
-            out[sku] = prof
+        goods_types = fam.get("goods_types") or []
+        keys: list[int | str] = [gt for gt in goods_types if gt]
+        if not goods_types or 0 in goods_types:
+            at_zero = (prof.get("by_goods_type") or {}).get("0") or {}
+            keys += at_zero.get("models") or fam.get("models") or []
+        for key in keys:
+            if key in owner:
+                raise ValueError(f"{key!r} routes to both {owner[key]} and {fam['id']}")
+            owner[key] = fam["id"]
+            out[key] = prof
     return out
+
+
+def profile_for(profiles: dict[int | str, dict[str, Any]], sku: str,
+                goods_type: int) -> dict[str, Any] | None:
+    """The family client_profile for one device-list record (its SKU and cloud goodsType), or None where no
+    family takes it (the app shows its unsupported card, DefNoSupportLib)."""
+    return profiles.get(goods_type if goods_type else sku)
 
 
 # ─────────────────────────────────────── self-test / harness ───────────────────────────────────────
@@ -365,6 +393,25 @@ def _selftest(*, strict: bool = False) -> int:
     check("build_op15_color H6062 33 segments -> 5-byte mask",
           build_op15_color(0xFF, 0, 0, (1 << 33) - 1, variant=12, segments=33).hex()
           == "33051501ff00000000000000ffffffff010000dc")
+
+    print("device profiles:")
+    try:
+        import yaml
+    except ImportError:
+        print("  ⚠️  PyYAML not importable; the devices.yaml routing checks did not run.")
+    else:
+        path = pathlib.Path(__file__).with_name("devices.yaml")
+        fams = {f["id"]: f.get("client_profile")
+                for f in yaml.safe_load(path.read_text(encoding="utf-8"))["families"]}
+        profs = load_profiles(str(path))
+        check("H6102 routes by goodsType: 18 -> dreamcolorlightv1, 21 -> dreamcolorlightv2, 0 -> h6102",
+              len({str(fams[i]) for i in ("dreamcolorlightv1", "dreamcolorlightv2", "h6102")}) == 3
+              and profile_for(profs, "H6102", 18) == fams["dreamcolorlightv1"]
+              and profile_for(profs, "H6102", 21) == fams["dreamcolorlightv2"]
+              and profile_for(profs, "H6102", 0) == fams["h6102"])
+        check("a SKU is a key only at goodsType 0 (H6001 -> bulblightv3; H6006 is goodsType-keyed)",
+              profile_for(profs, "H6001", 0) == fams["bulblightv3"] and "H6006" not in profs
+              and profile_for(profs, "H6006", 64) == fams["bulblightv3"])
 
     try:
         _gbf()
