@@ -1242,12 +1242,18 @@ types:
     doc: >-
       Mode 0x15 CCT read reply. kelvin = u2be at frame bytes 4-5 (e.g. 0x0A8C=2700, 0x1964=6500); NO
       FF FF FF white point (unlike the write, which is [op, FF FF FF, kHi, kLo, ...]).
-      Source: SubModeColorV2.parse / ComposeChange2ColorMode.result.
-      H6047 (two bars) reads [gradual][kelvin left u2be][kelvin right u2be]: byte 0 is the gradual flag
+      Source: the newdetail control screens decode it with SubMode4Color, whose default strategy reads
+      [gradual][kelvin s16be] (see kelvin_signed); a family may install its own strategy. Which decode each
+      goodsType's screen uses is recorded in devices.yaml (mode_color_parse / mode_color_decode). The legacy
+      dreamcolorlightv1 screens read it with SubModeColorV2.parse (unsigned); ComposeChange2ColorMode.result.
+      H6047 (two bars) reads [gradual][kelvin left s16be][kelvin right s16be]: byte 0 is the gradual flag
       (== 1), the first kelvin is the LEFT bar (segments 0-4) and the second the RIGHT bar (segments
-      5-9); 0 = that bar is not in colour-temperature mode. The app shows one whole-device kelvin only
-      when both bars match. Source: h6047/ble/SubModeColor.parse, h6047/detail/Info4Detail
-      (subMode4Color IParseStrategy: q(bArr[0]==1), D0/E0(getSignedShort)), NewDetailVm.A5.
+      5-9); 0 = that bar is not in colour-temperature mode. Both kelvins are read SIGNED (use kelvin_signed /
+      kelvin_right_signed; the seq fields stay the raw u2be). The app sets one whole-device kelvin only when
+      both bars match. Source: the control screen's strategy,
+      split_h6047/com/govee/h6047/detail/Info4Detail.java:174-184 (q(bArr[0] == 1), D0/E0 = getSignedShort,
+      s(y()) only when y() == z()), NewDetailVm.A5; devices.yaml h6047 mode_color_parse kelvin_pair_15. The
+      legacy h6047/ble/SubModeColor (h6047/ble/Mode) is not the control screen's decoder.
     seq:
       - { id: op, type: u1, doc: "0x01 = CCT / white-point mode; on H6047 this byte is the gradual flag (== 1)" }
       - { id: kelvin, type: u2be, doc: "colour temperature in Kelvin (big-endian, hi-first); H6047: the LEFT bar" }
@@ -1262,11 +1268,18 @@ types:
           as -32768..-1. kelvin stays the raw u2be for existing readers; pick per SKU. Govee Home 7.7.02:
           H60A1/H60A6 signed (split_h60ax/com/govee/pact_h60a0/adjust/h60a1/Info4Detail.java:399-404 ->
           SubMode4Color, kept only when > 0); H6047 signed (left bar, split_h6047/com/govee/h6047/detail/Info4Detail.java:179);
-          H61A8 UNSIGNED, use kelvin: dreamcolorlightv1 Mode.parseSubMode
-          (split_rgbiclight/com/govee/dreamcolorlightv1/ble/Mode.java:100-103) -> SubModeColorV2.parse
-          (split_rgbiclight/com/govee/dreamcolorlightv1/ble/SubModeColorV2.java:564-568) reads
-          BleUtil.getSignedInt([vb1, vb2], true), which masks each byte & 255 and so returns 0..65535
-          (base-classes10/com/govee/base2light/ble/BleUtil.java:285-302). H6641 signed: both h61d3 detail
+          H61A8 (goodsType 19) signed: dreamcolorlightv1 Model4BleIot.t opens /rgbic/newdetail
+          (split_rgbiclight/com/govee/dreamcolorlightv1/pact/Model4BleIot.java:41-46), the rgbiclight AcNewDetail /
+          VM4Light, and its connect and off->on aa 05 reads (split_rgbiclight/com/govee/rgbiclight/VM4Light.java:650-656,
+          :275-277) and its IoT status (OpInfo4Detail.p, base-classes11/com/govee/base2light/pact/newdetail/OpInfo4Detail.java:519,
+          :709) all reach OpInfo4Detail.x (same file :766-778), which hands 0x15, 0x0b, 0x02 and 0x0d to the
+          default strategy above and keeps the Kelvin only when > 0. The unsigned reader, dreamcolorlightv1
+          Mode.parseSubMode (split_rgbiclight/com/govee/dreamcolorlightv1/ble/Mode.java:100-103) -> SubModeColorV2.parse
+          (split_rgbiclight/com/govee/dreamcolorlightv1/ble/SubModeColorV2.java:564-568: BleUtil.getSignedInt([vb1, vb2],
+          true) masks each byte & 255 and so returns 0..65535, base-classes10/com/govee/base2light/ble/BleUtil.java:285-302),
+          serves only the legacy dreamcolorlightv1 AdjustAc / AdjustAcV3 screens, which Govee Home 7.7.02 never
+          opens for goodsType 19 (AdjustAc is opened only from the H6102 legacy screen, AdjustAc.c3
+          split_rgbiclight/com/govee/h6102/adjust/AdjustAc.java:395-405, intent goodsType 18). H6641 signed: both h61d3 detail
           parsers hand 0x15 to a plain SubMode4Color (split_h61d3/com/govee/h61d3/adjustNew/Info4Detail.java:117,
           :568-569; split_h61d3/com/govee/h61d3/adjust/newdetail/H61d3NewInfo4Detail.java:111, :427-428) and
           split_h61d3 installs no IParseStrategy of its own, so the default strategy above reads it.

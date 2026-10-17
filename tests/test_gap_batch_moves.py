@@ -36,6 +36,8 @@ def _plug_goods_types() -> list[tuple[str, str, dict[str, object]]]:
     rows = []
     for fam in yaml.safe_load((_ROOT / "spec" / "devices.yaml").read_text())["families"]:
         for gt, entry in ((fam.get("client_profile") or {}).get("by_goods_type") or {}).items():
+            if "relay_power" not in entry:   # a colour-strategy entry, not a plug's
+                continue
             for model in entry.get("models") or []:
                 rows.append((str(gt), model, entry))
     return rows
