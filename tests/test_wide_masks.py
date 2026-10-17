@@ -77,7 +77,7 @@ def test_mask_width(segments: int, width: int) -> None:
     assert b.mask_width(segments) == width
 
 
-@pytest.mark.parametrize("bad", [-1, 57, 64, 1000])
+@pytest.mark.parametrize("bad", [-1, 113, 1000])
 def test_mask_width_rejects_out_of_range(bad: int) -> None:
     with pytest.raises(GoveeBleInvalidValue, match="segment count"):
         b.mask_width(bad)
@@ -198,18 +198,22 @@ def test_mask_too_wide_for_the_segment_count_is_rejected() -> None:
         b.segment_rgb(-1, 1, 2, 3, "h60a6", 56)
 
 
-@pytest.mark.parametrize("segments", [57, 64, 100])
-def test_more_than_seven_mask_bytes_rejected_everywhere(segments: int) -> None:
+@pytest.mark.parametrize("segments", [57, 64, 100, 112])
+def test_past_56_segments_each_body_keeps_the_apps_cap(segments: int) -> None:
+    # The 0x15 RGB / CCT frames carry 7 mask bytes (Bytes.h / Bytes.r coerceAtMost 7), per-segment brightness
+    # ceil(n/8) up to 14 (Bytes.G coerceAtMost 14): the app drops the positions past the cap.
+    assert b.mask_width(segments, b.COLOR_MASK_CAP) == 7
+    assert b.mask_width(segments, b.BRIGHTNESS_MASK_CAP) == -(-segments // 8)
+    assert b.mask_positions(segments, b.COLOR_MASK_CAP) == 56
+    assert b.mask_positions(segments, b.BRIGHTNESS_MASK_CAP) == segments
+    assert b.color_rgb(1, 2, 3, "h60a6", segments)[12:19] == bytes([0xFF] * 7)
+    assert b.segment_rgb(1 | 1 << 60, 1, 2, 3, "h60a6", segments)[12:19] == bytes([1, 0, 0, 0, 0, 0, 0])
+    assert b.color_temp(4000, "h60a6", segments)[-8:-1] == bytes([0xFF] * 7)
+    width = -(-segments // 8)
+    frame = b.segment_brightness(1 << (segments - 1), 50, "h60a6", segments)
+    assert frame[5:5 + width] == (1 << (segments - 1)).to_bytes(width, "little")
     with pytest.raises(GoveeBleInvalidValue, match="segment count"):
-        b.color_rgb(1, 2, 3, "h60a6", segments)
-    with pytest.raises(GoveeBleInvalidValue, match="segment count"):
-        b.color_temp(4000, "h60a6", segments)
-    with pytest.raises(GoveeBleInvalidValue, match="segment count"):
-        b.segment_rgb(1, 1, 2, 3, "h60a6", segments)
-    with pytest.raises(GoveeBleInvalidValue, match="segment count"):
-        b.segment_color_temp(1, 4000, "h60a6", segments)
-    with pytest.raises(GoveeBleInvalidValue, match="segment count"):
-        b.segment_brightness(1, 50, "h60a6", segments)
+        b.color_rgb(1, 2, 3, "h60a6", 113)
 
 
 def test_schemes_without_a_0x15_mask_ignore_the_segment_count() -> None:
@@ -240,7 +244,7 @@ def test_runtime_segment_count_overrides_profile_and_reverts() -> None:
     assert d.segment_count == 13
 
 
-@pytest.mark.parametrize("bad", [0, -1, 57, True, 3.0, "23"])
+@pytest.mark.parametrize("bad", [0, -1, 113, True, 3.0, "23"])
 def test_set_segment_count_validates(bad: Any) -> None:
     d = _dev("H60A6")
     with pytest.raises(GoveeBleInvalidValue, match="segment count"):
@@ -383,3 +387,16 @@ def test_direct_readback_walks_the_runtime_count() -> None:
     run(d._read_mechanism_a_direct())
     assert asked == [1, 2, 3, 4, 5, 6]
     assert [s.index for s in d.state.segments] == list(range(23))
+
+
+def test_segment_state_follows_the_positions_the_frame_carries() -> None:
+    # 80 segments: the RGB frame's mask is cut to 7 bytes (positions 0..55), so segment 60 is neither sent
+    # nor folded into state; the brightness frame carries all 10 mask bytes.
+    d = _dev("H60A6")
+    d.set_segment_count(80)
+    run(d.set_segment_rgb([0, 60], (9, 8, 7)))
+    assert _sent(d)[-1][12:19] == bytes([1, 0, 0, 0, 0, 0, 0])
+    assert [s.index for s in d.state.segments if s.rgb == (9, 8, 7)] == [0]
+    run(d.set_segment_brightness([0, 60], 40))
+    assert _sent(d)[-1][5:15] == (1 | 1 << 60).to_bytes(10, "little")
+    assert sorted(s.index for s in d.state.segments if s.brightness == 40) == [0, 60]

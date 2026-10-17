@@ -88,6 +88,9 @@ model, from which the shipped readers are generated).
   (default 20, today's frames).
 
 ### Changed
+- Documented deviation: the connection keeps dropping an RX frame whose XOR checksum fails, although the app
+  never checks it (`ComposeBleComm.K:190-211` drops only a frame that isn't 20 bytes), so a corrupted frame
+  is not decoded as state.
 - More of the library reads and writes through the spec's types (frame audit section F and the section-E
   additive forms):
   - every `aa` read waits for the reply its own request names (`parse.request_command`), not a hand-paired
@@ -410,6 +413,26 @@ model, from which the shipped readers are generated).
   tooling only.
 
 ### Fixed
+- **Segment masks follow the app's caps, up to 112 segments.** Each body carries at most its own mask bytes,
+  and the app's writers drop the positions past them (`coerceAtMost`): the 0x15 RGB and colour-temperature
+  frames 7 bytes (the spec's `op15_color_write.mask_cap` for variants 12 / 11: `Bytes.h:324`, `Bytes.r:499`),
+  per-segment brightness 14 (`op15_brightness_wide.mask_cap`: `Bytes.G:179`). Before, the library refused
+  every write above 56 segments. `build.MAX_MASK_SEGMENTS` is now 112 (`MAX_MASK_BYTES` 14), so a device
+  or section count up to 112 is accepted; a colour write on more than 56 segments reaches the first 56, as
+  in the app, and the segment state folds only the positions a frame carried. New:
+  `build.COLOR_MASK_CAP`, `build.BRIGHTNESS_MASK_CAP`, `build.mask_positions(segments, mask_cap)`, and
+  `build.mask_width(segments, mask_cap=14)`. No curated SKU has more than 16 segments, so their frames
+  are unchanged. Source-modelled.
+- **A successful 0xAC status read applies the app's switch and brightness defaults.** Each read starts from
+  a fresh `DeviceBaseInfoFromDevice` (switch false, brightness 100; `DeviceBaseInfoFromDevice.java:70-79`),
+  and the H60A6 success callback applies it whole (`h60a1.Info4Detail.n0:641-677`: `g(info.j())`, the
+  switch; `i = info.b()`, the brightness). So a successful read whose stream has no 0x01 TLV now reads power
+  off, and no 0x04 TLV brightness 100; before, those stayed as they were. A failed read still applies
+  nothing. Captured bursts always carry both. Source-modelled.
+- **gt 50 / 307 plugs (H5082, H5089) read power from relays 0 and 1**, the app's `aa 01` heartbeat rule
+  (`HeartControllerV2` -> `BleOpV2.onEventHeartV2:216-231` / `BleOp4H5089.onEventHeartV2:331-341`, `open =
+  i(0) | i(1)`; the spec's `switch_read_reply.any_relay_0_1_is_on`), which the library's repeated poll
+  follows: `relay_on_mask` 0x03. Before, any relay bit (0xFF), the connect-read rule. Source-modelled.
 - **Library scenes upload only what the app's validators accept** (the spec's section-E types). A type-1 RGB
   scene uploads only when `ScenesRgb.isValidProtocolBytes` accepts its blob (`ScenesOp.l:377-392`; the spec's
   `rgb_scene_value.is_valid`), a type-2 RGBIC one only when `ScenesRgbIC.isValidProtocolBytes` does

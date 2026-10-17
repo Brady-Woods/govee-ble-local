@@ -659,10 +659,13 @@ def test_read_status_seeded_device_does_not_rearm_advert_suppression_on_empty_re
     assert d._advert_ignore_until == 0.0                     # nothing read: adverts still honoured
 
 
-def test_read_status_mode_only_reply_does_not_suppress_adverts() -> None:
-    # Only the burst's 0x05 mode TLV came back: the state is read back (not optimistic), but no
-    # on/off came back, so the advertised on/off is not suppressed.
+def test_a_status_read_without_switch_or_brightness_applies_the_apps_defaults() -> None:
+    # Only the burst's 0x05 mode TLV came back. The app applies a fresh DeviceBaseInfoFromDevice's switch
+    # (false) and brightness (100) on any successful read (h60a1 Info4Detail.n0:641-677), so the read
+    # reports power off, and like every power read it holds off the lagging advertised on/off. WAS: no
+    # on/off and no brightness, adverts not suppressed.
     d = _dev("H60A6")
+    d.state.brightness = 42
 
     async def query(frame: bytes, **_k: object) -> list[bytes]:
         return status_burst(bytes([0x05, 0x03, 0x04, 0x01, 0x00])) if frame[0] == 0xAC else []
@@ -670,7 +673,8 @@ def test_read_status_mode_only_reply_does_not_suppress_adverts() -> None:
     d._conn.query = AsyncMock(side_effect=query)  # type: ignore[method-assign]
     asyncio.run(d._read_status())
     assert d.state.optimistic is False and d.state.scene_code == 1
-    assert d._advert_ignore_until == 0.0
+    assert (d.state.is_on, d.state.brightness) == (False, 100)
+    assert d._advert_ignore_until > 0.0
 
 
 def test_chunk_indices_lists_each_received_chunk_once() -> None:

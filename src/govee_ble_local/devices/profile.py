@@ -584,8 +584,11 @@ PROFILES: Final[tuple[DeviceProfile, ...]] = (
     #  - goodsType 43 (H5080, H5083, H5085; one outlet): bit 0 only. FrameV1 -> UiV1/UiV3 ->
     #    BleOpV1/BleOpV3.onEventSwitchV2 take `.get(0)`; the H5083 new detail screen
     #    (H5083NewDetailRepository.loadParser) reads `bArr[0] & 1`.
-    #  - goodsType 50 (H5082) / 307 (H5089), two outlets: any of the 8 bits (BleOpV2.onEventSwitchV2 /
-    #    BleOp4H5089.onEventSwitchV2 -> EventSwitchV2.i() ORs them all).
+    #  - goodsType 50 (H5082) / 307 (H5089), two outlets: bit 0 or bit 1, the aa 01 HEARTBEAT rule
+    #    (HeartControllerV2 -> BleOpV2.onEventHeartV2:216-231 / BleOp4H5089.onEventHeartV2:331-341,
+    #    open = i(0) | i(1); switch_read_reply.any_relay_0_1_is_on), which the library's repeated aa 01
+    #    poll follows. The connect read takes any of the 8 bits (BleOpV2 / BleOp4H5089.onEventSwitchV2 ->
+    #    EventSwitchV2.i() ORs them all; devices.yaml relay_on_mask 0xFF).
     #  - goodsType 90 (H5160, H5161): the first getPlugNum(90) = 3 bits (BleOpV4.Z ORs bits 0..2).
     # The advertised switch byte (BleUtil.parseBleBroadOnOff, scanRecord i+8) is decoded by the
     # device-list model, again per goodsType (advert_on_mask; Govee Home 7.5.12):
@@ -613,13 +616,13 @@ PROFILES: Final[tuple[DeviceProfile, ...]] = (
     DeviceProfile(
         skus=("H5082",),
         capabilities=frozenset({_C.POWER}), encryption=Encryption.AES_RC4_PSK,
-        requires_secret=True, relay=True, readback="plug", relay_on_mask=0xFF, advert_on_mask=0x03,
+        requires_secret=True, relay=True, readback="plug", relay_on_mask=0x03, advert_on_mask=0x03,
         relay_power="all_outlets", power_resync=True,
     ),
     DeviceProfile(
         skus=("H5089",),
         capabilities=frozenset({_C.POWER}), encryption=Encryption.AES_RC4_PSK,
-        requires_secret=True, relay=True, readback="plug", relay_on_mask=0xFF, advert_on_mask=0x03,
+        requires_secret=True, relay=True, readback="plug", relay_on_mask=0x03, advert_on_mask=0x03,
         relay_power="total_switch",
     ),
     DeviceProfile(

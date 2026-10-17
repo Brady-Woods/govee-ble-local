@@ -87,9 +87,9 @@ def test_brightness_still_clamps() -> None:
 
 
 def test_all_segments_mask_rejects_what_no_mask_can_hold() -> None:
-    # Formerly clamped to 16 bits; now exact up to 56 segments (7 bytes) and an error above.
+    # Formerly clamped to 16 bits; exact up to 112 segments (the widest body cap, 14 bytes), an error above.
     assert b.all_segments_mask(16) == 0xFFFF and b.all_segments_mask(0) == 0
-    for bad in (-3, 57, 99):
+    for bad in (-3, 113, 200):
         with pytest.raises(GoveeBleInvalidValue, match="segment count"):
             b.all_segments_mask(bad)
 

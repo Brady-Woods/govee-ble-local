@@ -502,7 +502,9 @@ def test_mode_color_parse_is_validated() -> None:
     [
         ("H5080", 0x01, True), ("H5080", 0x10, False), ("H5080", 0x11, True), ("H5080", 0x02, False),
         ("H5083", 0x10, False), ("H5085", 0xF0, False),
-        ("H5082", 0x10, True), ("H5082", 0x02, True), ("H5089", 0x80, True), ("H5089", 0x00, False),
+        # gt 50 / 307: relays 0-1, the aa 01 heartbeat rule (onEventHeartV2). WAS: any bit.
+        ("H5082", 0x10, False), ("H5082", 0x02, True), ("H5089", 0x80, False), ("H5089", 0x01, True),
+        ("H5089", 0x00, False),
         ("H5160", 0x04, True), ("H5160", 0x10, False), ("H5161", 0x08, False), ("H5161", 0x01, True),
     ],
 )
@@ -515,7 +517,7 @@ def test_plug_relay_bits_follow_the_detail_screen(sku: str, byte: int, on: bool)
 def test_plug_profiles_are_split_by_goods_type() -> None:
     masks = {sku: profile_for(sku).relay_on_mask  # type: ignore[union-attr]
              for sku in ("H5080", "H5082", "H5083", "H5085", "H5089", "H5160", "H5161")}
-    assert masks == {"H5080": 0x01, "H5083": 0x01, "H5085": 0x01, "H5082": 0xFF, "H5089": 0xFF,
+    assert masks == {"H5080": 0x01, "H5083": 0x01, "H5085": 0x01, "H5082": 0x03, "H5089": 0x03,
                      "H5160": 0x07, "H5161": 0x07}
     for sku in masks:
         p = profile_for(sku)

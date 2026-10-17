@@ -725,8 +725,10 @@ class Device:
             build.segment_rgb, _mask(indices, n), r, g, b, self.profile.color_scheme, n,
             _fold.kelvin_range(self.profile))
 
+        carried = self._carried(indices, build.COLOR_MASK_CAP)
+
         def apply() -> None:
-            _fold.update_segments(self._state, indices, rgb=pick)
+            _fold.update_segments(self._state, carried, rgb=pick)
             self._state.scene_code = None   # a segment colour write leaves scene mode, as set_rgb does
 
         await self._commit(frame, apply)
@@ -747,11 +749,22 @@ class Device:
         frame = self._build_or_unsupported(
             build.segment_brightness, _mask(indices, n), level, self.profile.color_scheme, n)
 
+        carried = self._carried(indices, build.BRIGHTNESS_MASK_CAP)
+
         def apply() -> None:
-            _fold.update_segments(self._state, indices, brightness=level)
+            _fold.update_segments(self._state, carried, brightness=level)
             self._state.scene_code = None   # the 33 05 15 02 write is a colour-mode write too
 
         await self._commit(frame, apply)
+
+    def _carried(self, indices: Sequence[int], mask_cap: int) -> list[int]:
+        """The ``indices`` a 0x15 frame's segment mask carries: past the body's ``mask_cap`` bytes the app's
+        writers drop the positions (coerceAtMost; :func:`.build.mask_positions`), so the device leaves
+        those segments as they were, and so does the state. Other schemes' masks carry every index."""
+        if self.profile.color_scheme != "h60a6":
+            return list(indices)
+        reach = build.mask_positions(self.segment_count or build.LEGACY_MASK_SEGMENTS, mask_cap)
+        return [i for i in indices if i < reach]
 
     def _build_or_unsupported(self, builder: Callable[_P, _T], *args: _P.args, **kwargs: _P.kwargs) -> _T:
         """Run a frame builder; when the colour scheme can't express the request (the builder's

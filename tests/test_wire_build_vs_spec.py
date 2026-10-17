@@ -332,12 +332,19 @@ def _pos_set(mask: int, segments: int) -> list[bool]:
 
 
 def test_op15_colour_every_mask_width() -> None:
-    """0x15 colour and CCT at every segment count up to 56, against the catalogue's Bytes.h / Bytes.r
-    builders (the app's 17-byte ext array, BleUtils.X above 16 positions) and the reference's
-    ``build_op15_color(segments=)``. Above 16 segments the mask is ceil(n/8) bytes; this was the spec gap
-    the audit found (#7), closed in faa2cb7."""
+    """0x15 colour and CCT at every segment count up to 112, against the catalogue's Bytes.h / Bytes.r
+    builders (the app's 17-byte ext array, BleUtils.X above 16 positions, coerceAtMost 7 mask bytes) and,
+    up to 56, the reference's ``build_op15_color(segments=)``. Above 16 segments the mask is ceil(n/8)
+    bytes, cut to 7; this was the spec gap the audit found (#7), closed in faa2cb7."""
     r = _rng(13)
     for segments in range(1, b.MAX_MASK_SEGMENTS + 1):
+        if segments > 56:
+            mask = _mask(r, segments)
+            rgb = _not_tint(r)
+            assert b.color_rgb(*rgb, "h60a6", segments) == C.build_op15_color_bytes_h(*rgb, [True] * segments)
+            assert b.segment_rgb(mask, *rgb, "h60a6", segments) == \
+                C.build_op15_color_bytes_h(*rgb, _pos_set(mask, segments))
+            continue
         whole = [True] * segments
         for _ in range(4):
             rgb, kelvin = _not_tint(r), r.randrange(27, 66) * 100

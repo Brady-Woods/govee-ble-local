@@ -44,6 +44,12 @@ def _plug_goods_types() -> list[tuple[str, str, dict[str, object]]]:
     return rows
 
 
+# The aa 01 heartbeat rule the library's poll follows where it differs from the connect read devices.yaml's
+# relay_on_mask records: gt 50 / 307 read bits 0..1 (devices.schema.json relay_on_mask's doc;
+# switch_read_reply.any_relay_0_1_is_on).
+_HEARTBEAT_ON_MASK = {"50": 0x03, "307": 0x03}
+
+
 def test_every_plug_profile_matches_its_goods_type_in_devices_yaml() -> None:
     rows = _plug_goods_types()
     plugs = {"H5080", "H5082", "H5083", "H5085", "H5089", "H5160", "H5161"}
@@ -52,7 +58,9 @@ def test_every_plug_profile_matches_its_goods_type_in_devices_yaml() -> None:
         profile = profile_for(model)
         assert profile is not None, model
         got = (profile.relay_power, profile.relay_on_mask, profile.advert_on_mask)
-        assert got == (entry["relay_power"], entry["relay_on_mask"], entry["advert_on_mask"]), (gt, model)
+        on_mask = _HEARTBEAT_ON_MASK.get(gt, entry["relay_on_mask"])
+        want = (entry["relay_power"], on_mask, entry["advert_on_mask"])
+        assert got == want, (gt, model)
 
 
 # ── devices.yaml: each colour profile's mode_color_parse is the strategy the spec resolves for it ──

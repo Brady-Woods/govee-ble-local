@@ -58,6 +58,9 @@ TYPE_IC_NUM = int(_F.StatusTlvType.ic_num)              # 0x40: H6671 / H6672 re
 TYPE_SEG_INFO = int(_F.StatusTlvType.on_off_memory)     # 0x41: the seg / IC info TLV
 TYPE_COLOR_GROUP = int(_F.StatusTlvType.color_group)    # 0xA5
 _TYPE_PADDING = int(_F.StatusTlvType.padding)           # 0x00: the trailing zero-pad sentinel
+# The brightness a successful status read applies when its stream has no 0x04 TLV: DeviceBaseInfoFromDevice's
+# default (base-classes11 .../newdetail/ble/controller/DeviceBaseInfoFromDevice.java:70-79, f = 100).
+_SUCCESS_BRIGHTNESS = 100
 
 
 @dataclass
@@ -455,4 +458,13 @@ def parse_status(frames: list[bytes], *, pieces: int | None = None) -> StatusRep
                 st.firmware_version, st.hardware_version = info.sw_version, info.hw_version
     # Same positional assembly as the direct group replies (oneGroupColorSize stride).
     st.segments = parse.direct_groups_to_segments(groups, _RECORDS_PER_GROUP)
+    # A read that succeeded applies the switch and brightness whether or not the stream carried them: each
+    # read starts from a fresh DeviceBaseInfoFromDevice (switch false, brightness 100; its constructor),
+    # which u() fills from the 0x01 / 0x04 TLVs, and the success callback hands it to h60a1 Info4Detail.n0
+    # (:641-677: g(info.j()) the switch, i = info.b() the brightness;
+    # VM4LightH60A6$afterConnectedSingleReadDeviceInfo$1.l).
+    if st.is_on is None:
+        st.is_on = False
+    if st.brightness is None:
+        st.brightness = _SUCCESS_BRIGHTNESS
     return st

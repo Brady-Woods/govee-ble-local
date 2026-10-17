@@ -224,7 +224,7 @@ def test_h5082_and_h5089_have_their_own_profiles() -> None:
     assert h5082 is not None and h5089 is not None
     assert (h5082.skus, h5082.relay_power) == (("H5082",), "all_outlets")
     assert (h5089.skus, h5089.relay_power) == (("H5089",), "total_switch")
-    assert h5082.relay_on_mask == h5089.relay_on_mask == 0xFF and h5089.requires_secret
+    assert h5082.relay_on_mask == h5089.relay_on_mask == 0x03 and h5089.requires_secret   # the heartbeat rule
 
 
 def test_relay_power_is_validated_and_defaults_to_1_3_0s_frame() -> None:
@@ -343,13 +343,17 @@ def test_h60a6_state_poll_is_the_status_burst_only() -> None:
 
 
 # ── F5 (faa2cb7 review): the widest mask ─────────────────────────────────────────────────────
-def test_mask_boundary_56_builds_57_raises() -> None:
-    assert len(build.color_rgb(1, 2, 3, "h60a6", 56)) == 20      # 7-byte mask, 19-byte body: at the cap
-    assert len(build.segment_brightness((1 << 56) - 1, 50, "h60a6", 56)) == 20
+def test_masks_follow_the_apps_caps_up_to_112_segments() -> None:
+    # The app's writers cut the mask at the body's cap (coerceAtMost): 7 bytes for the 0x15 RGB / CCT frames
+    # (Bytes.h :324, Bytes.r :499), 14 for per-segment brightness (Bytes.G :179). WAS: refused above 56.
+    assert build.color_rgb(1, 2, 3, "h60a6", 57)[12:19] == bytes([0xFF] * 7)   # positions 56+ dropped
+    assert build.color_rgb(1, 2, 3, "h60a6", 57) == build.color_rgb(1, 2, 3, "h60a6", 56)
+    frame = build.segment_brightness((1 << 112) - 1, 50, "h60a6", 112)
+    assert frame[5:19] == bytes([0xFF] * 14)                                   # 14 mask bytes, at the cap
     with pytest.raises(GoveeBleInvalidValue):
-        build.color_rgb(1, 2, 3, "h60a6", 57)
+        build.color_rgb(1, 2, 3, "h60a6", 113)
     with pytest.raises(GoveeBleInvalidValue):
-        build.segment_brightness(1, 50, "h60a6", 57)
+        build.segment_brightness(1, 50, "h60a6", 113)
 
 
 def test_analyzer_knows_the_bar_switch_and_ic_count_tlvs() -> None:

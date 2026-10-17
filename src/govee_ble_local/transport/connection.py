@@ -320,6 +320,9 @@ class GoveeConnection:
             return
         plain = self._decrypt_rx(raw)
         self._capture("rx", wire=raw, plain=plain, enc=self._encryption.value)
+        # A deliberate deviation from the app, which never checks the RX XOR byte: ComposeBleComm.K:190-211
+        # drops only a frame that isn't 20 bytes, and the controllers read the body as it is. The library
+        # drops a frame that fails the checksum instead of decoding a corrupted frame as state.
         if not checksum_ok(plain):
             shown = _mask_secret(plain) if _carries_secret(plain) else plain
             _LOGGER.debug("%s: dropped frame with bad checksum: %s", self.address, shown.hex())

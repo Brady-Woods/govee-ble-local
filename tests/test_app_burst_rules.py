@@ -310,3 +310,12 @@ async def test_an_incomplete_burst_on_a_device_retries_then_stays_stale() -> Non
     d.state.brightness = 42
     await d._read_status()
     assert sum(1 for f in calls if f[0] == 0xAC) == 2 and d.state.brightness == 42
+
+
+def test_a_successful_read_defaults_a_missing_switch_and_brightness() -> None:
+    # A fresh DeviceBaseInfoFromDevice (switch false, brightness 100) is what h60a1 Info4Detail.n0 applies.
+    st = _status(bytes([0x30, 0x02, 0x01, 0x00]))
+    assert (st.is_on, st.brightness, st.zone_power) == (False, 100, {0: True, 1: False})
+    st = _status(bytes([0x01, 0x01, 0x01, 0x04]))          # a clean tail stop is a success too
+    assert (st.is_on, st.brightness) == (True, 100)
+    assert _status(bytes([0x04, 0x05, 0xAA])) == r.StatusReply()   # a failed read applies nothing

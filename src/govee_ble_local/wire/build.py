@@ -291,25 +291,33 @@ def normalize_kelvin(kelvin: int, lo: int | None = None, hi: int | None = None) 
     return out
 
 
-# Segment-mask width, from the app's encoder. Up to 16 segments the mask is always two bytes
-# (BleUtils.makeSelectedTwoBytes); above that it is ceil(n/8) bytes, LSB first
-# (BleUtils.X, the `length > 16` branch in color/Bytes.G/b/d/C). Bytes.C caps the width at 7
-# bytes (it truncates a longer mask and logs an analytics event); we refuse instead. A 0x15 colour
-# write's cap is the spec's op15_color_write.mask_cap, which its writer enforces (seg_mask valid: 7 for
-# variants 12 / 11, which is this cap, 10 for variant 5, 12 for variant 1). MAX_MASK_BYTES is the
-# library's own limit for the masks the spec gives no cap yet (op15 brightness, the device's segment
-# count); every colour builder stays within it (H6061's variant-5 mask is a fixed 3 bytes).
+# Segment masks: the spec's segment_mask(segment_count, mask_cap). Up to 16 segments the mask is two bytes
+# (BleUtils.makeSelectedTwoBytes); above that ceil(n/8) bytes, LSB first (BleUtils.X). Each body carries at
+# most its own mask_cap bytes, and the app's writers drop the positions past it (coerceAtMost): the 0x15
+# RGB and CCT frames 7 bytes (op15_color_write.mask_cap for variants 12 / 11: Bytes.h :324, Bytes.r :499),
+# per-segment brightness 14 (op15_brightness_wide.mask_cap: Bytes.G :179). MAX_MASK_BYTES is the widest of
+# those caps, so MAX_MASK_SEGMENTS is the most segments any body the library writes can address.
 LEGACY_MASK_SEGMENTS: Final = 16
-MAX_MASK_BYTES: Final = 7
+COLOR_MASK_CAP: Final = int(
+    _node(_F.Op15ColorWrite, None, int(_F.Op15ColorVariant.h60a1_h60a6_rgb), 2).mask_cap)
+BRIGHTNESS_MASK_CAP: Final = int(_node(_F.Op15BrightnessWide, None, 2).mask_cap)
+MAX_MASK_BYTES: Final = max(COLOR_MASK_CAP, BRIGHTNESS_MASK_CAP)
 MAX_MASK_SEGMENTS: Final = MAX_MASK_BYTES * 8
 
 
-def mask_width(segments: int) -> int:
-    """Bytes of segment mask the app writes for a device with ``segments`` segments:
-    2 for 0..16 (makeSelectedTwoBytes), else ceil(n/8) (BleUtils.X). Raises
-    GoveeBleInvalidValue above 56 segments (7 bytes, the most Bytes.C will encode)."""
+def mask_width(segments: int, mask_cap: int = MAX_MASK_BYTES) -> int:
+    """Bytes of segment mask the app writes for a device with ``segments`` segments into a body that carries
+    at most ``mask_cap`` bytes: 2 for 0..16 (makeSelectedTwoBytes), else ceil(n/8) (BleUtils.X), cut to
+    ``mask_cap`` (the spec's ``segment_mask.mask_width``). Raises GoveeBleInvalidValue above
+    :data:`MAX_MASK_SEGMENTS` (112)."""
     _check_range("segment count", segments, 0, MAX_MASK_SEGMENTS)
-    return int(_node(_F.SegmentMask, None, segments, MAX_MASK_BYTES).mask_width)   # segment_mask.mask_width
+    return int(_node(_F.SegmentMask, None, segments, mask_cap).mask_width)
+
+
+def mask_positions(segments: int, mask_cap: int) -> int:
+    """How many of a device's ``segments`` positions a body of ``mask_cap`` mask bytes carries: all of them,
+    or the first ``mask_cap * 8`` where the app's writer cuts the mask (``segment_mask.is_truncated``)."""
+    return min(segments, 8 * mask_width(segments, mask_cap))
 
 
 def _check_mask(mask: int, bits: int = LEGACY_MASK_SEGMENTS) -> int:
@@ -328,23 +336,25 @@ def frame(pro_type: int, *payload: int) -> bytes:
     return bytes(buf)
 
 
-def _mask_bytes(mask: int, segments: int | None = None) -> bytes:
-    """Segment mask as the app encodes it, LSB first: :func:`mask_width` bytes for a device
-    with ``segments`` segments (the width depends on the device's segment count, not on
-    which segments are selected). ``segments=None`` is the legacy two-byte mask."""
+def _mask_bytes(mask: int, segments: int | None, mask_cap: int) -> bytes:
+    """Segment mask as the app encodes it, LSB first: :func:`mask_width` bytes for a device with
+    ``segments`` segments in a body of ``mask_cap`` mask bytes (the width depends on the device's segment
+    count, not on which segments are selected). Positions past the cap are dropped, as the app's
+    coerceAtMost writers drop them. ``segments=None`` is the legacy two-byte mask."""
     count = LEGACY_MASK_SEGMENTS if segments is None else segments
-    width = mask_width(count)
-    _check_range("segment mask", mask, 0, (1 << (8 * width)) - 1)
-    # The spec's segment_mask, LSB first, over the posSet length rounded up to the mask's whole bytes (its
-    # doc allows that: the same width and bytes). So any bit in those bytes is accepted, as before; the
-    # app never sets one at or past the piece count, and Device doesn't either.
+    full = mask_width(count, MAX_MASK_BYTES)
+    width = mask_width(count, mask_cap)
+    _check_range("segment mask", mask, 0, (1 << (8 * full)) - 1)
+    # The spec's segment_mask, over the posSet length rounded up to the mask's whole bytes (its doc allows
+    # that: the same width and bytes), so any bit in those bytes is accepted, as before; the app never sets
+    # one at or past the piece count, and Device doesn't either.
     bits = [bool(mask >> i & 1) for i in range(8 * width)]
-    return _serialize(_node(_F.SegmentMask, None, 8 * width, MAX_MASK_BYTES, bits=bits), width)
+    return _serialize(_node(_F.SegmentMask, None, 8 * width, mask_cap, bits=bits), width)
 
 
 def all_segments_mask(segments: int) -> int:
     """Whole-device mask = the first ``segments`` bits set (BleUtil select-all-positions).
-    Raises GoveeBleInvalidValue above :data:`MAX_MASK_SEGMENTS` (56)."""
+    Raises GoveeBleInvalidValue above :data:`MAX_MASK_SEGMENTS` (112)."""
     _check_range("segment count", segments, 0, MAX_MASK_SEGMENTS)
     return (1 << segments) - 1
 
@@ -579,7 +589,8 @@ def color_rgb(r: int, g: int, b: int, scheme: ColorScheme, segments: int | None 
     match scheme:
         case "h60a6":
             n = _segments_or_default(scheme, segments)
-            return _op15_color_frame(_OP15_RGB, (r, g, b), _mask_bytes(all_segments_mask(n), n))
+            mask = _mask_bytes(all_segments_mask(n), n, COLOR_MASK_CAP)
+            return _op15_color_frame(_OP15_RGB, (r, g, b), mask)
         case "h6006" | "h6188":
             return _cct0d_frame((r, g, b))
         case "h61a8":
@@ -638,7 +649,7 @@ def segment_rgb(mask: int, r: int, g: int, b: int, scheme: ColorScheme,
             kelvin = rgb_as_kelvin(r, g, b, scheme, kelvin_range)
             if kelvin is not None:
                 return _rgb_pick_color_temp(r, g, b, kelvin, scheme, segments, mask)
-            return _op15_color_frame(_OP15_RGB, (r, g, b), _mask_bytes(mask, segments))
+            return _op15_color_frame(_OP15_RGB, (r, g, b), _mask_bytes(mask, segments, COLOR_MASK_CAP))
         case "h61a8":
             return _rgbic0b_frame((r, g, b), mask)
         case "h6006" | "h6188":
@@ -664,7 +675,8 @@ def segment_color_temp(mask: int, kelvin: int, scheme: ColorScheme,
     match scheme:
         case "h60a6":
             _check_kelvin(kelvin)
-            return _op15_color_frame(_OP15_CCT, (0xFF, 0xFF, 0xFF), _mask_bytes(mask, segments), kelvin,
+            seg_mask = _mask_bytes(mask, segments, COLOR_MASK_CAP)
+            return _op15_color_frame(_OP15_CCT, (0xFF, 0xFF, 0xFF), seg_mask, kelvin,
                                      tint if tint is not None else tint_for_kelvin(kelvin))
         case "h61a8":
             raise GoveeBleNotSupported("h61a8 has no colour-temperature capability")
@@ -684,7 +696,7 @@ def segment_brightness(mask: int, pct: int, scheme: ColorScheme,
     (GoveeBleNotSupported elsewhere)."""
     match scheme:
         case "h60a6":
-            level, seg_mask = max(1, _clamp_pct(pct)), _mask_bytes(mask, segments)
+            level, seg_mask = max(1, _clamp_pct(pct)), _mask_bytes(mask, segments, BRIGHTNESS_MASK_CAP)
             return _op15_frame(_F.Op15.set_brightness, lambda c15: _node(
                 _F.Op15BrightnessWide, c15, len(seg_mask), pct=level, seg_mask=seg_mask))
         case "h61a8":

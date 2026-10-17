@@ -228,7 +228,7 @@ def test_power_and_brightness_do_not_need_the_count() -> None:
     assert t.queried == []
 
 
-@pytest.mark.parametrize("reply", [[], [_section(0x0038, 0)], [_section(0x0038, 57)],
+@pytest.mark.parametrize("reply", [[], [_section(0x0038, 0)], [_section(0x0038, 113)],
                                    [_frame(0xAA, 0x41)[:3]]])
 def test_unanswered_or_unusable_count_sends_no_colour_frame(reply: list[bytes]) -> None:
     t = _Dev({0x41: reply})
