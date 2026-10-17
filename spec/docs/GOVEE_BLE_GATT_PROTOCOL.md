@@ -544,7 +544,10 @@ So the app **uploads iff the param parses**, and the `33 05 04 <sceneCode>` acti
 in both cases. `parseSceneV1` returns null only when no `(versionArray, sceneType)` branch matches, the
 param is empty, Base64 fails, or the per-type validator fails — and those validators gate on
 **`byte[0]` + length + `sceneType`** (`ShareDiy.isValidComposeBytes` → `bytes[0]==10`;
-`isValidGraffitiBytes` → `byte[0]==1 && len≥9`; `ScenesRgbIC`/`ScenesRgb` anchor on `byte[0]`), **never on
+`isValidGraffitiBytes` → `byte[0]==1 && len≥9` and a walk of the group headers from byte 9;
+`ScenesRgbIC` → a walk of the `byte[0]` length-prefixed effect records, each long enough for `f()`;
+`ScenesRgb` → `byte[0]`'s mode / colour-count bits and an exact length; each is modelled exactly in
+`govee_ble.ksy`, see its scene-upload VALUE layer), **never on
 byte 3**.
 
 > **`byte 3 = 0xFF` is NOT an "activate-only" marker.** A grep for any `[3]`-index gate across
@@ -607,7 +610,7 @@ finish colour group 4). `govee_reference.reassemble_ac`/`chunk_ac` implement thi
 round-trips both real captures byte for byte.
 
 The reassembled buffer is a **header-less TLV stream** — `[type, len, value]`, `i += 2 + len` —
-parsed by `Compose4BaseInfoSingleRead.u()` (`:292`). `u()` itself handles `type 1` = on/off,
+parsed by `Compose4BaseInfoSingleRead.u()` (`:247-345`). `u()` itself handles `type 1` = on/off,
 `type 4` = brightness, `type 5` = **mode** block (`[sub_mode, params]`, delegated to the mode lambda),
 `type 7` = **device info** (`w()`: `sub 0x10` = `[uid(8), sw(3), hw(3), dsp(u16 LE)]`; `sub 0x11` =
 `[Wi-Fi MAC(6, forward), sw(3), hw(3)]`. This is the layout `BasicInfoController` / `BasicWifiInfoController`
@@ -621,7 +624,13 @@ written by app `Controller4OnOffMemory` `33 41 02 v`;
 **`0xA5` colour group**, …) is passed to a caller fallback lambda with the full `[type,len,value]`
 re-prepended. `0xA5` = **one colour group** `[group_index (1-based), record × count]`, record =
 **4-byte `[brightness, R, G, B]`** on part-brightness SKUs (all curated: H60A6/H6047/H6641) or 3-byte
-`[R, G, B]` on colour-only SKUs; **count = `(len − 1) / record_size`** (from the TLV `len`); global
+`[R, G, B]` on colour-only SKUs. `color_group_status` takes **count = `(len − 1) / record_size`** from the
+TLV `len`; in Govee Home 7.7.02 most screens pass `Controller4ColorInfoByGroup.Companion.q` a count of their
+own, and q() reads exactly that many records, ignores what follows and throws on a shorter value (a few
+screens read the value with other helpers in other layouts; see `color_group_status`). H60A6
+(`VM4LightH60A6$afterConnectedSingleReadDeviceInfo$1.o:112-117`) takes 4 per group and the remainder in
+the last of `ceil(pieces / 4)` groups: `color_group_status_counted(piece_count, group_size, has_brightness)`.
+The H6038 family passes a fixed 4: `color_group_read(4, 1)`. Global
 segment index = `(group_index − 1) × count + k`. All of these are modelled in `govee_ble.ksy`
 (`status_tlv` → `status_switch`/`status_brightness`/`mode_status`/`device_info_read`/`status_zone`/
 `status_seg_info`/`color_group_status`); only the `0x05` `params` sub-layout stays device-specific.
@@ -639,6 +648,9 @@ segment index = `(group_index − 1) × count + k`. All of these are modelled in
 > `AC 03 03 41 30 A5` to an H6047/H6641 returns **zero frames** deterministically — it is never dispatched.
 > H6641 additionally reads IC count first (`0x40`, `VM4Light.C5:197`); group count = `ceil(IC / 5)`. In
 > `devices.yaml` this is the `per_segment_color_read` opcode (`0xa5`) on the `h6047`/`h61d3` families.
+> In `govee_ble.ksy`, read such a reply frame with the standalone `color_group_direct_frame(record_count)`
+> (`record_count` = the SKU's group size, 4): the frame path's `read_command` 0xA5 case is H61A8's
+> `bulb_group_color_read_v2` batch, because nothing in the frame names the controller that asked.
 
 > **Trailing padding:** trimmed to `lastLen` as the app does (and as the shipped library's
 > `wire/reassemble.py` and `govee_reference.reassemble_ac` do), the buffer ends exactly at the last TLV. A

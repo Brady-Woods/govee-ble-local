@@ -518,6 +518,46 @@ model, from which the shipped readers are generated).
   zeroes every data byte.
 
 ### Spec
+- Frame-audit section E: the spec forms the library still builds or decodes by hand. Each was traced in the
+  Govee Home 7.7.02 decompile and checked by an adversarial reviewer. Additive only: 9 standalone types wired
+  into no dispatch, and value instances on existing types. No `pos` instances, so a written type is never
+  re-written from them. No enum is applied, no `switch-on` case is added, and no existing field or expression
+  changes. The harness (2,006,142 cases) shows 0 differences, and both branches' suites pass (2053 each).
+  - Requests:
+    - `read_request_sized(selector_len)` and `read_request_frame` write `aa <cmd> <selector...>` with the zero
+      fill the app's frames carry.
+  - Segment masks:
+    - `segment_mask(segment_count, mask_cap)` gives the app's width rule (2 bytes up to 16 segments, else
+      ceil(n/8), capped per body) and the per-segment bits, LSB first.
+    - `op15_brightness_wide.mask_cap` (14) and `color_rgbic_0b_wide.mask_cap` (13).
+  - Writes:
+    - `single_command_typed` types every 0x33 write body, including `33 B2` secret, `33 A3` and `33 14`
+      gradual. `single_command` itself is unchanged; the in-place cases are in the lockstep branch.
+  - Mode reports:
+    - `mode_read.sub_mode` is the `sub_mode` enum view of the byte. `mode_read.is_submode4color` covers
+      0x15 / 0x0b / 0x02 / 0x0d, as `OpInfo4Detail.x` hands them to SubMode4Color.
+    - `mode_read_params` exposes the raw params.
+    - `cct_read_reply.is_cct_positive` and `mode_color_0d_typed.is_cct_kelvin_positive` give the default
+      SubMode4Color rule, signed kelvin > 0.
+  - Status bursts:
+    - `color_group_status_counted(piece_count, group_size, has_brightness)` counts a 0xA5 group's records
+      from its group_index, as the app does.
+    - `status_tlv.total_len` and `status_device_info.app_decodes` (selectors 0x10 / 0x11).
+  - The `aa a5 <group>` direct reply:
+    - `color_group_direct_frame(record_count)` reads it, keeping the padding so it round-trips.
+  - Plugs:
+    - `switch_read_reply.relay0_is_on` .. `relay7_is_on`.
+    - `any_relay_is_on`, `any_relay_0_1_is_on` and `any_relay_0_2_is_on`: the per-goodsType read and
+      heartbeat rules.
+  - IC count:
+    - `ic_segment_read.ic_count_byte_order_suspect` (signed count >= 0x1000) and `ic_count_checked`.
+  - Library-scene upload validators, so a failed check can make a scene activate-only as the app does:
+    - `scenes_graffiti_check` mirrors ShareDiy.isValidGraffitiBytes exactly: size >= 9, the 0x01 lead and
+      the group-header walk.
+    - `rgb_scene_value.is_valid` mirrors ScenesRgb.isValidProtocolBytes.
+  - Held back as lockstep (they change what existing readers return): the single_command params cases,
+    status_tlv 0x07 -> status_device_info and 0x05 -> mode_read, and the sub_mode enum applied to
+    mode_read's field. They are measured on a separate branch for the library owner.
 - `devices.yaml`: non-colour data and citations that the complete Govee Home 7.7.02 decompile contradicts
   are corrected. Every item was re-read in the code, and every Java citation in the file now resolves
   (`file:line` within the file).

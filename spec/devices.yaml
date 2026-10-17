@@ -188,10 +188,10 @@ scenes:
       Pick the FIRST table row where version_array.contains(version) AND sceneType==type. No match => the
       parser returns null => NO upload; the device only gets the scenes.activate frame (activate-only).
     table:  # source base2light/ble/ScenesOp.java parseSceneV1:603-640, helpers l/m/n:439-490; comBytes from MultiNewScenesControllerV1..V10.getCommandType()
-      - { version: 1,  scene_type: 1, kind: rgb,            controller: V1, comm_byte: 0x01, strip: 0, validate: "ScenesRgb.isValidProtocolBytes" }
-      - { version: 2,  scene_type: 2, kind: rgbic,          controller: V2, comm_byte: 0x02, strip: 0, validate: "ScenesRgbIC.isValidProtocolBytes" }
-      - { version: 3,  scene_type: 3, kind: graffiti,       controller: V3, comm_byte: 0x07, strip: 2, validate: "ShareDiy.isValidGraffitiBytes (byte0==1 && len>=9)" }
-      - { version: 6,  scene_type: 6, kind: compose,        controller: "V5 (H60B0 if byte0==0x51)", comm_byte: 0x0a, strip: 1 }
+      - { version: 1,  scene_type: 1, kind: rgb,            controller: V1, comm_byte: 0x01, strip: 0, validate: "ScenesRgb.isValidProtocolBytes (Govee Home 7.7.02 ScenesRgb.java:1676-1701; ksy rgb_scene_value.is_valid, a failed read is false)" }
+      - { version: 2,  scene_type: 2, kind: rgbic,          controller: V2, comm_byte: 0x02, strip: 0, validate: "ScenesRgbIC.isValidProtocolBytes (Govee Home 7.7.02 ScenesRgbIC.java:2783-2807; ksy: rgbic_scene_value reads)" }
+      - { version: 3,  scene_type: 3, kind: graffiti,       controller: V3, comm_byte: 0x07, strip: 2, validate: "ShareDiy.isValidGraffitiBytes (byte0==1 && len>=9 && every group-header index of the byte-8 seg_count walk in range; Govee Home 7.7.02 ShareDiy.java:96-115; ksy scenes_graffiti_check.is_valid)" }
+      - { version: 6,  scene_type: 6, kind: compose,        controller: "V5 (H60B0 if byte0==0x51)", comm_byte: 0x0a, strip: 1, validate: "ShareDiy.isValidComposeBytes (bytes[0]==10; Govee Home 7.7.02 ShareDiy.java:81-83; ksy: compose_scene_param reads)" }
       - { version: 7,  scene_type: 5, kind: diy_h610b,      controller: V6, comm_byte: 0x0c, strip: 1, note: "if speed!=-1, overwrite value[3]=speed" }
       - { version: 8,  scene_type: 5, kind: diy_k,          controller: V7, comm_byte: 0x0c, strip: "1 + prepend subOpType" }
       - { version: 9,  scene_type: 5, kind: h6078_graffiti, controller: V7, comm_byte: 0x0c, strip: "1 + prepend subOpType (3 simple / 9 profession)", validate: "ShareDiy.isValidH6078Graffiti{Simple|Profession}" }
@@ -258,7 +258,10 @@ scenes:
       for any [3]-index gate across ScenesOp / ShareDiy / ScenesRgbIC / ScenesRgb / the scene-content dir
       returns ZERO. The upload-vs-activate outcome is decided purely by whether parseSceneV1 returns
       non-null, and its per-type validators gate on byte[0] + length + sceneType (ShareDiy.isValidComposeBytes
-      -> bytes[0]==10; isValidGraffitiBytes -> byte[0]==1 && len>=9; ScenesRgbIC/ScenesRgb anchor on byte[0]),
+      -> bytes[0]==10; isValidGraffitiBytes -> byte[0]==1 && len>=9 and a walk of the group headers from byte 9;
+      ScenesRgbIC.isValidProtocolBytes -> a walk of the byte[0] length-prefixed effect records, each long enough
+      for f(); ScenesRgb.isValidProtocolBytes -> byte[0]'s mode / colour-count bits and an exact length; each is
+      modelled exactly in govee_ble.ksy, see its scene-upload VALUE layer),
       never byte3. (Earlier note wrongly attributed this to KmpH60A6DiyProtocol.parseBytes — that class is
       NOT on the parseSceneV1 path.) A client using a byte[3]==0xFF -> activate-only heuristic is applying an
       invented rule and will skip a required upload.
@@ -370,14 +373,14 @@ mode_color_decode:
     layout: "[gradual u8 (== 1 means on)][kelvin s16be]; nothing after body byte 2 is read"
     kelvin_signed: true
     cct_rule: "kelvin > 0 => colour temperature at that Kelvin; a colour the screen shows for it is derived from the Kelvin (Constant.getTemColorByKelvin), never read from the report. kelvin <= 0 (0, or a raw 0x8000-0xFFFF) => the report carries no colour: RGB comes from the screen's segment reads, else the colour stays as it was"
-    ksy: "mode_color_0d_typed kind 0: gradual_flag, kelvin_signed; for sub-mode 0x15 cct_read_reply (op = the gradual flag), kelvin_signed"
+    ksy: "mode_color_0d_typed kind 0: gradual_flag, kelvin_signed, CCT = is_cct_kelvin_positive; for sub-mode 0x15 cct_read_reply (op = the gradual flag), kelvin_signed, CCT = is_cct_positive"
     mode_0d_kind: cct
     doc: "SubMode4Color's default IParseStrategy (base-classes11/com/govee/base2light/pact/newdetail/sub/SubMode4Color.java:42-49; base2home BleUtil.getSignedShort, base-classes9/com/govee/base2home/pact/BleUtil.java:333-335) and screen-local copies of it (split_bulblightstringv1/com/govee/h7022/detail/Info4Detail.java:169-175, split_bulblightstringv1/com/govee/bulblightstringv1/detail/Info4Detail.java:153-162, with base2light BleUtil.getSignedShort, base-classes10/com/govee/base2light/ble/BleUtil.java:304-306). The > 0 test is OpInfo4Detail.x (base-classes11/com/govee/base2light/pact/newdetail/OpInfo4Detail.java:771-779) or the screen's own parser. The gradual flag is usually overwritten later by the screen's gradual read (aa a3 / 0x14)."
   gradual_kelvin_s16be_nocct:
     layout: "[gradual u8 (== 1 means on)][kelvin s16be]; nothing after body byte 2 is read"
     kelvin_signed: true
     cct_rule: "none: the screen stores the signed Kelvin (SubMode4Color.b) without any > 0 test, derives no colour and reads no RGB from the report"
-    ksy: "mode_color_0d_typed kind 0 (cct_read_reply for 0x15): gradual_flag / op, kelvin_signed; the screen applies no CCT test"
+    ksy: "mode_color_0d_typed kind 0 (cct_read_reply for 0x15): gradual_flag / op, kelvin_signed; the screen applies no CCT test (ignore is_cct_kelvin_positive / cct_read_reply.is_cct_positive)"
     mode_0d_kind: cct
     doc: "The default SubMode4Color strategy (SubMode4Color.java:42-49) on screens whose mode parser never tests the Kelvin: h6127 newdetail InfoDetail.b0 (split_rgbiclight/com/govee/h6127/newdetail/InfoDetail.java:117-118), h612526 newdetail InfoDetail.b0 (split_rgbiclight/com/govee/h612526/newdetail/InfoDetail.java:129-131), H6058InfoDetail.f0 (split_hollowlamp/com/govee/hollowlamp/newdetails/h6058/H6058InfoDetail.java:271-273), H1771DetailInfo.P (split_hollowlamp/com/govee/hollowlamp/newdetails/h1771/H1771DetailInfo.java:389-391), H3401DetailInfo.D / C (split_h705a/com/govee/h705a/h3401/H3401DetailInfo.java:214-215, 192-193)."
   gradual_only:
@@ -396,19 +399,19 @@ mode_color_decode:
     layout: "[byte 0, stored but never used][kelvin s16be]; nothing after body byte 2 is read"
     kelvin_signed: true
     cct_rule: "never a whole-device CCT. kelvin > 0 => the illumination (white) light's Kelvin (Info4DetailH60A0.v, shown as VM4LightH60A0.illuminationCur), and after each aa a5 group read the last piece (13 of 14) is tinted with it while pieces 0-12 keep the group RGB; kelvin <= 0 => the previous illumination Kelvin is kept (SubMode4Color.b still stores it)"
-    ksy: "sub-mode 0x15: cct_read_reply kelvin_signed, op ignored (it is not the gradual flag here)"
+    ksy: "sub-mode 0x15: cct_read_reply kelvin_signed, op ignored (it is not the gradual flag here); ignore cct_read_reply.is_cct_positive (never a whole-device CCT)"
     doc: "H60A0 ctor strategy (split_h60ax/com/govee/pact_h60a0/adjust/h60a0/Info4DetailH60A0.java:123-130: byte 0 -> Z -> field u, whose getter r() has no caller; s(getSignedShort(bArr[1], bArr[2])), base2home BleUtil), kept as v only when > 0 (:399-406, getter q() :674-675). Piece tint: BLE VM4LightH60A0.d5 (split_h60ax/com/govee/pact_h60a0/adjust/h60a0/VM4LightH60A0.java:203-211), Wi-Fi Info4DetailH60A0.O (:141-148); illuminationCur = [k(), q()] (VM4LightH60A0.java:980-982); 14 pieces (split_h60ax/com/govee/pact_h60a0/pact/Support.java:131-132)."
   gradual_kelvin_pair_s16be:
     layout: "[gradual u8 (== 1 means on)][kelvin left s16be (bar 1; segments 0-4 on 119 / 196)][kelvin right s16be (bar 2; segments 5-9 on 119 / 196)]; nothing after body byte 4 is read"
     kelvin_signed: true
     cct_rule: "whole-device Kelvin = left only when left == right; when the bars differ the previous whole-device Kelvin is kept, and re-applied (every piece tinted) if > 0. Over BLE the aa a5 group reads that follow (NewDetailVm.n5 / o5) replace the pieces with the group RGB, so that fill survives only as the Kelvin value (SubMode4Color.b, Info4Detail.M). Then, per bar (NewDetailVm.A5, goodsType 119/196 only, after the last group): when left > 0 or right > 0, each bar whose Kelvin != 0 is shown as that Kelvin's tint, and a bar whose Kelvin is 0 keeps the group RGB (not CCT). The report never yields an RGB colour"
-    ksy: "cct_read_reply: op = the gradual flag, kelvin_signed (left bar), kelvin_right_signed (right bar)"
+    ksy: "cct_read_reply: op = the gradual flag, kelvin_signed (left bar), kelvin_right_signed (right bar); not is_cct_positive (the whole-device rule is left == right)"
     doc: "h6047 old detail screen: Info4Detail ctor strategy (split_h6047/com/govee/h6047/detail/Info4Detail.java:173-185; getSignedShort :179-180 is base2light BleUtil, base-classes10/com/govee/base2light/ble/BleUtil.java:304-306), post-step Info4Detail.i0 (split_h6047/com/govee/h6047/detail/Info4Detail.java:848-858); group reads NewDetailVm.n5 / o5 (split_h6047/com/govee/h6047/detail/NewDetailVm.java:343-393), per-bar repaint NewDetailVm.A5 :616-652. The legacy h6047/ble/SubModeColor.parse (split_h6047/com/govee/h6047/ble/SubModeColor.java:207-219; write / IoT builders only) reads the same, also signed."
   skip_kelvin_pair_s16be:
     layout: "[byte 0, not read][kelvin A s16be][kelvin B s16be]; nothing after body byte 4 is read"
     kelvin_signed: true
     cct_rule: "SubMode4Color Kelvin = A only when A == B (otherwise it keeps its previous value); when that Kelvin > 0 the whole strip is shown as its tint. After the last aa a5 group read, when A > 0 or B > 0, each half (bulbs 0-5 / 6-11; H6046 0-4 / 5-9) whose Kelvin != 0 is repainted with its tint, the other half keeps the group RGB"
-    ksy: "sub-mode 0x15: cct_read_reply kelvin_signed (A) and kelvin_right_signed (B), op ignored; sub-mode 0x0d: not modelled (mode_color_0d_typed kind 0 reads A only)"
+    ksy: "sub-mode 0x15: cct_read_reply kelvin_signed (A) and kelvin_right_signed (B), op ignored; sub-mode 0x0d: not modelled (mode_color_0d_typed kind 0 reads A only); not is_cct_positive / is_cct_kelvin_positive (the Kelvin is A only when A == B)"
     doc: "pact_tvlightv3 / pact_tvlightv4 detail Info4Detail new-layout strategy (split_tvlightv4/com/govee/pact_tvlightv3/detail/Info4Detail.java:176-183, g0 :862-871, repaint NewDetailVm.w5 split_tvlightv4/com/govee/pact_tvlightv3/detail/NewDetailVm.java:609-653 after the last aa a5 group (m5 :449-450); split_tvlightv4/com/govee/pact_tvlightv4/detail/Info4Detail.java:176-183, g0 :857-866, repaint NewDetailVm.G5 split_tvlightv4/com/govee/pact_tvlightv4/detail/NewDetailVm.java:261-280 after the last group (s5 :621-622))."
   rgb_kelvin_pair_s16be:
     layout: "[r1, g1, b1 u8][kelvin1 s16be][r2, g2, b2 u8][kelvin2 s16be]; nothing after body byte 9 is read"
@@ -630,8 +633,10 @@ command_catalog:
   #       requests [0x41,0x30]+conditional 0xA5); and — within the h6047/h61d3 families — the NEWDETAIL siblings
   #       ONLY: H6038/H6039/H6048 (gt 288/277/298, per-SKU type-sets e.g. VM4H6038:525 [41,30,36,a5]) and h61d3
   #       gt 263. NOT the H6047 or H6641 SKUs (see A-direct). Reassembled 0xA5 TLV = ONE group [group_index(1-based),
-  #       record x count]; COUNT = (len-1)/record_size (== caller oneGroupColorSize, usually 4). ksy: status_tlv 0xA5
-  #       -> color_group_status. Group count = ceil(N/count); N = getColorPieceSize (newdetail screens: 24/22/12).
+  #       record x count]; COUNT = the count the screen passes to q(), which reads exactly that many (H6038
+  #       family: 4; H60A6: 4, the last of ceil(N/4) groups the remainder, ksy color_group_status_counted). ksy:
+  #       status_tlv 0xA5 -> color_group_status, which counts (len-1)/record_size. Group count = ceil(N/count);
+  #       N = getColorPieceSize (newdetail screens: 24/22/12).
   #   (A-direct) SAME parser/record, NO 0xAC burst: per-group DIRECT reads `0xAA 0xA5 <group>` issued individually via
   #       Compose4InfoBleIot (Controller4ColorInfoByGroup; proType 0xAA per AbsControllerNoEvent4Single.getProType:140-145,
   #       cmd 0xA5). Used by **H6047 (gt 119)** — old detail/NewDetailVm (Support.isGoodsTypeH6047:186), which walks
@@ -642,6 +647,7 @@ command_catalog:
   #       the per-group reads. ** These SKUs return ZERO to the 0xAC status request `ac 03 03 41 30 a5` (that is
   #       H60A6's set) — deterministically, because they never dispatch a 0xAC status read. Read colour via per-group
   #       `aa a5 <group>` instead. ** [The 3 B [R,G,B] p():157 record variant is non-curated colour-only SKUs.]
+  #       ksy: read the reply frame with color_group_direct_frame(record_count = the group size, 4).
   #   (B) per-group discrete controllers over 0xAA-notify (BulbGroupColor): H61A8. MULTI-FRAME batches — device
   #       sends maxGroup frames, each [AA][cmd][batch_seq][groups]; segment is POSITIONAL = (batch_seq-1)*perBatch+i.
   #       V1 cmd 0xA2 = 4 groups/frame x 3 B [R,G,B], NO brightness (BulbGroupColor, hardcoded 4). V2 cmd 0xA5 =
@@ -913,9 +919,9 @@ families:
     client_profile:   # plug power, traced per goodsType on Govee Home 7.7.02 (split_plugnew/com/govee/h5080/, paths below relative to it). Masks are integers, written in hex
       by_goods_type:
         "43": { models: [H5080, H5083, H5085], relay_power: outlet0, relay_on_mask: 0x01, advert_on_mask: 0x01 }   # pact/Model.t :195-196 -> Model.D0 :74-99 -> adjust/newdetail/H5083NewDetailActivity (pact/Support.isGoodsTypeH508035 :137-139; Support.getDefHeaderRes :114-115 names H5083/H5085, else H5080). Power 33 01 11 / 10 (H5083NewDetailViewModel.x0 :247-251; h5086 ControllerProtocol.f = 0x10). Read on = (bArr[0] & 1) != 0 (H5083NewDetailRepository.loadParser :162-167). Advert on = (byte & 1) == 1 (pact/Model.z :254-266)
-        "50": { models: [H5082], relay_power: all_outlets, relay_on_mask: 0xFF, advert_on_mask: 0x03 }   # pact/Model4Plug2 (Support.n = {50, 307} :32) -> adjust/AdjustAc.D2 :98-108 -> FrameV2 / UiV2 (SKU H5082: add/PairAcV1.i2 :425-426 shows the 5082 pairing picture for goodsType 50, getDefHeaderRes :117-118 the 5082 pictures; 307 is H5089). Power SwitchControllerV2(on, 15) = 33 01 FF / F0 (UiV2.onOffChange :887-894; SwitchControllerV2.q :53-71). Read on = any of the 8 bits (BleOpV2.onEventSwitchV2 :353-363 -> EventSwitchV2.i :48-59 ORs SwitchControllerV2.parseValidBytes :29-45). Advert on = bit 0 or bit 1 (pact/Model4Plug2.z :269-291)
+        "50": { models: [H5082], relay_power: all_outlets, relay_on_mask: 0xFF, advert_on_mask: 0x03 }   # pact/Model4Plug2 (Support.n = {50, 307} :32) -> adjust/AdjustAc.D2 :98-108 -> FrameV2 / UiV2 (SKU H5082: add/PairAcV1.i2 :425-426 shows the 5082 pairing picture for goodsType 50, getDefHeaderRes :117-118 the 5082 pictures; 307 is H5089). Power SwitchControllerV2(on, 15) = 33 01 FF / F0 (UiV2.onOffChange :887-894; SwitchControllerV2.q :53-71). Read on = any of the 8 bits (BleOpV2.onEventSwitchV2 :353-363 -> EventSwitchV2.i :48-59 ORs SwitchControllerV2.parseValidBytes :29-45), at the connect read; the aa 01 heartbeat reads bit 0 or bit 1 (HeartControllerV2 -> BleOpV2.onEventHeartV2 :216-231, open = i(0) | i(1); switch_read_reply.any_relay_0_1_is_on). Advert on = bit 0 or bit 1 (pact/Model4Plug2.z :269-291)
         "90": { models: [H5160, H5161], relay_power: all_outlets, relay_on_mask: 0x07, advert_on_mask: 0xFF }   # pact/Model.t -> AdjustAc.D2 -> FrameV4 / UiV4 (getDefHeaderRes :120-121 names H5161, else H5160). Power 33 01 FF / F0 (UiV4.onOffChange :765-772). Read on = bits 0..2: BleOpV4.r0 :464-481 ORs the first E = Support.getPlugNum(90) = 3 bits (BleOpV4 :64; Support.getPlugNum :126-131). Advert on = any bit, (byte & 255) > 0 (pact/Model.z :257-259)
-        "307": { models: [H5089], relay_power: total_switch, relay_on_mask: 0xFF, advert_on_mask: 0x03 }   # pact/Model4Plug2 -> AdjustAc.D2 -> Frame4H5089 / Ui4H5089 (pact/V4BleIotSkuItem.f = 307 -> add/Ac4H5089Networking, sku H5089). Power 33 02 01 / 00 (Ui4H5089.onOffChange :929-952, Controller4TotalSwitch). Read on = any of the 8 bits (BleOp4H5089.onEventSwitchV2 :462, EventSwitchV2.i). Advert on = bit 0 or bit 1 (pact/Model4Plug2.z)
+        "307": { models: [H5089], relay_power: total_switch, relay_on_mask: 0xFF, advert_on_mask: 0x03 }   # pact/Model4Plug2 -> AdjustAc.D2 -> Frame4H5089 / Ui4H5089 (pact/V4BleIotSkuItem.f = 307 -> add/Ac4H5089Networking, sku H5089). Power 33 02 01 / 00 (Ui4H5089.onOffChange :929-952, Controller4TotalSwitch). Read on = any of the 8 bits (BleOp4H5089.onEventSwitchV2 :462, EventSwitchV2.i), at the connect read; the aa 01 heartbeat reads bit 0 or bit 1 (BleOp4H5089.onEventHeartV2 :331-341; switch_read_reply.any_relay_0_1_is_on). Advert on = bit 0 or bit 1 (pact/Model4Plug2.z)
     models: [H5080, H5082, H5083, H5085, H5089, H5160, H5161]
     goods_types: [43, 50, 90, 307]   # 43 = 1-outlet (H5080/H5083/H5085); 50/307 = 2-outlet; 90 = 3-outlet
     delivery: feature_split   # pact_plugnew (base-classes9/com/govee/base2home/pfd/Config.java:243)

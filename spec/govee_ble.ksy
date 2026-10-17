@@ -708,7 +708,91 @@ types:
             'command::brightness': brightness_payload
             'command::sync_time': sync_time_payload
             'command::plug_sync_time': plug_sync_time_payload
-        doc: Unmatched commands parse as a raw byte array (payload up to 17 bytes).
+        doc: |
+          Unmatched commands parse as a raw byte array (payload up to 17 bytes). The 0x33 write bodies the spec
+          models without a case here, so their params stay raw bytes in this reader:
+            0xB2 secret_write             secret_key_write. One layout in the app; typed in single_command_typed.
+            0xA3 gradual_wifi_ble         gradual_write. One layout in the app; typed in single_command_typed.
+            0x14 gradual                  gradual_write (also the night-mode page's 33 14 01 / 00). One layout
+                                          in the app; typed in single_command_typed.
+            0x30 light_direction_or_zone  zone_power_write (pact_h60a0 zones) or light_direction_write (H6038
+                                          direction, H6057 main light, H71xx chart request): by device family.
+            0x36 compose_light_switch     bar_switch_write (H6047 [left, right]; [index, state] on H6043 and
+                                          others) or worry_free_at_night_write (H6057, 7 bytes): by family.
+            0x02 (not a `command` member) total_switch_write (H5089; enum plug_command).
+          A client writing one of these builds the named type and puts its bytes in params. For 0xB2 / 0xA3 /
+          0x14 it can instead use single_command_typed, which carries the typed child (see that type).
+
+  # 0x33 write body with the one-layout write commands typed, STANDALONE (not reached from `frame`: the same
+  # cases in single_command would change what existing readers get for 33 B2 / 33 A3 / 33 14 frames).
+  single_command_typed:
+    doc: |
+      Typed counterpart of single_command for a 0x33 WRITE the client is building, or knows it sent: feed
+      frame[1:19]. It has single_command's five cases plus the three write commands whose body has one
+      layout for every sender Govee Home 7.7.02 runs:
+        0xB2 secret_write -> secret_key_write, the 8-byte secret with no selector. SecretKeyController(String)
+          sets command SINGLE_CHECK_SECRET_KEY (-78) and q() returns Encode.decryByBase64(secret) as the whole
+          ext (base-classes10/com/govee/base2light/ble/controller/SecretKeyController.java:22-26,71-78), framed
+          [0x33, command, ext, zeros, XOR] by AbsSingleController.g (same directory, AbsSingleController.java:22-25,
+          getProType :27-30) through BleUtils.generate20Bytes -> Companion.p
+          (base-classes10/com/govee/base2kt/utils/BleUtils.java:1376-1378, 1030-1041). The two-argument
+          constructor keeps -78 for a commandType of -1 (:28-35), and every caller in 7.7.02 passes -1 (e.g.
+          base-classes11/com/govee/base2light/pact/AbsPairAc4SecretV1.java:110-112,204-206). The h5086 / h70b3 /
+          h61d3 SecretController, the h5042 / h5043 and vm4sku2op Controller4Secret write the same 8 bytes (see
+          secret_key_write). The one other 0xB2 builder, the bbq SecretKeyController.i, writes [len][secret]
+          (base-classes12/com/govee/base2newth/bbq/ble/controller/SecretKeyController.java:60-75), but it is
+          never sent: its only callers, bbq AbsPairAc4SecretV1.c2 (base-classes12/com/govee/base2newth/bbq/add/
+          AbsPairAc4SecretV1.java:190-192) and ConnectDialog4Secret (same directory, ConnectDialog4Secret.java:71),
+          are abstract classes (:48, :20) with no subclass in 7.7.02.
+        0xA3 gradual_wifi_ble -> gradual_write, [on ? 1 : 0]. Bytes.w = [-93, z ? 1 : 0]
+          (base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:564-566);
+          GradualChangeBleWifiController, f = z ? 1 : 0, q() = [f], command -93
+          (base-classes10/com/govee/base2light/ble/controller/GradualChangeBleWifiController.java:11-14,22-24,33-35);
+          the compose GradualController [z ? 1 : 0], command -93
+          (split_h60ax/com/govee/pact_h60a0/ble/controller/compose/GradualController.java:23-25,42-44; the same
+          in pact_h6099, pact_h605b and h6609). The per-split Gradual4BleWifiController / GradualController
+          classes write the same single byte (e.g. split_h6079/com/govee/h6079/ble/Gradual4BleWifiController.java:10-13,
+          55-56,64-65; split_tvlightv4/com/govee/pact_tvlightv2/ble/GradualController.java:9-12,18-20,27-29).
+          The kt ControllerGradual4BleWifi is read-only (AA A3).
+        0x14 gradual -> gradual_write, [on ? 1 : 0]: Bytes.v = [20, z ? 1 : 0] (Bytes.java:559-560), kt
+          ControllerGradual (base-classes11/com/govee/base2light/kt/general_controller/ControllerGradual.java:59-61,
+          71-72), the legacy GradualController (e.g. split_rgbiclight/com/govee/dreamcolorlightv1/ble/
+          GradualController.java:13-16,22-24,31-33) and the night-mode page, where 33 14 01 / 33 14 00 mean
+          enter / leave night mode (base-classes10/com/govee/base2light/ac/nightmode/NightModeViewModel.java:93,108).
+          The h5042 / h5043 Controller4DeleteSubDevData writes 33 14 [index]
+          (base-classes2/com/govee/h5043/ble/controller/Controller4DeleteSubDevData.java:22-24,39-41), but
+          nothing in 7.7.02 calls it: the hubs delete a sub-device with 33 11, Controller4DeleteSubDevice
+          (same directory, Controller4DeleteSubDevice.java:22-29,40-42; Vm4GwDetail.java:1069,1639).
+      No case here for 0x30 or 0x36, whose write body depends on the device family (see
+      single_command.params), or for colour op 0x04 (see color_15.data).
+      A body shorter than its type (fewer than 8 bytes after B2, none after A3 / 14) raises; the app's frames
+      are 20 bytes. The device's [command][result] ACK under the same 0x33 header is write_ack (rx_frame),
+      not this type: read as this type, a 33 B2 ACK gives secret = [result, 0 ...] and a 33 A3 / 33 14 ACK
+      state = result. H6047's firmware-sourced 33 14 read reply (see rx_frame) is not a gradual write either.
+      Read-write classes: the Kaitai 0.11 Python frame writer checks only the _parent / _root links of its
+      body, not its class, so an object of this type can stand as a frame's 0x33 body and write 33 B2 /
+      33 A3 / 33 14 with a typed params child. The bytes equal single_command with the body's bytes in its
+      raw params, and `frame` reads them back as single_command with raw params. That is a property of the
+      generated Python classes (checked with ksc 0.11), not of the grammar; elsewhere, serialize this type
+      and copy its bytes.
+    seq:
+      - id: command
+        type: u1
+        enum: command
+      - id: params
+        size-eos: true
+        type:
+          switch-on: command
+          cases:
+            'command::mode': mode_payload
+            'command::switch': switch_payload
+            'command::brightness': brightness_payload
+            'command::sync_time': sync_time_payload
+            'command::plug_sync_time': plug_sync_time_payload
+            'command::secret_write': secret_key_write
+            'command::gradual_wifi_ble': gradual_write
+            'command::gradual': gradual_write
+        doc: "single_command's cases plus secret_write (0xB2), gradual_wifi_ble (0xA3) and gradual (0x14); any other command parses as raw bytes, as in single_command"
 
   # 33 36 bar-write body, modeled as a STANDALONE type (not a single_command case on purpose: existing
   # clients read a 0x36 frame's `params` as raw bytes, so the frame-switch default must stay raw for 0x36).
@@ -926,7 +1010,7 @@ types:
       The frame-path op15_color (size-eos) and op15_color_typed (2-byte mask; variants 1/12/11) stay as is.
     params:
       - { id: variant, type: u1, doc: "enum op15_color_variant: 1 basic / 12 H60A1-H60A6 RGB / 11 CCT / 5 colour-instruction version 5 (NOT SubModeColorV1 opType 5, set by Companion.k :338-346, which has no getWriteBytes branch)" }
-      - { id: mask_width, type: u1, doc: "seg_mask bytes: 2 for <= 16 positions, else ceil(n/8); 2..mask_cap" }
+      - { id: mask_width, type: u1, doc: "seg_mask bytes: 2 for <= 16 positions, else ceil(n/8); 2..mask_cap. Computed by segment_mask(segment_count, mask_cap).mask_width (refuse or truncate when its is_truncated)" }
     seq:
       - { id: r, type: u1, doc: "colour R; variant 11: slot R (ff = ColorUtils.R(), 00 = F(), the colour for a Bytes.r kind-3 partial write or an h6047/h6062 write); variant 5 Kelvin form: tint R" }
       - { id: g, type: u1 }
@@ -939,7 +1023,7 @@ types:
       - id: seg_mask
         size: mask_width
         valid: { expr: '_.length >= 2 and _.length <= mask_cap and (variant == 1 or variant == 5 or variant == 11 or variant == 12)' }
-        doc: "LSB-first segment mask (BleUtils.X order), mask_width bytes: at least 2 (makeSelectedTwoBytes), at most mask_cap; the valid also rejects an unknown variant"
+        doc: "LSB-first segment mask (BleUtils.X order), mask_width bytes: at least 2 (makeSelectedTwoBytes), at most mask_cap; the valid also rejects an unknown variant. As bits: the bytes of segment_mask(segment_count, mask_cap)"
     instances:
       mask_cap:
         value: 'variant == 1 ? 12 : variant == 5 ? 10 : 7'
@@ -959,7 +1043,12 @@ types:
       for RelativeBrightnessVersion RELATIVE_BRIGHTNESS_0X15(0)
       (base-classes12/com/govee/common2light/capability/color/RelativeBrightnessVersion.java:14) from
       ColorModeControllerConfig.t :1069-1097, and directly from ColorModeControllerConfig.z :1184-1195 (one
-      frame per distinct brightness; posSet length = piece count, BleUtils.r :1077-1097). The app builds a
+      frame per distinct brightness, BleUtils.r :1077-1097; posSet length = ColorPieceConfig.d
+      base-classes11/com/govee/base2light/pact/newdetail/config/fuc/ColorPieceConfig.java:262-265 =
+      colorPosSetMaxLen, the piece count rounded up to a multiple of 8: LightColorCapabilityCenter.V0 / H0
+      base-classes10/com/govee/base2light/capability/color/LightColorCapabilityCenter.java:1005-1022, :771-773;
+      legacy ColorPieceConfig.k :454-469; that rounding changes neither the <= 16 test nor ceil(n/8), so
+      the width below holds for the piece count too). The app builds a
       17-byte ext array [0x15, 0x02, pct, mask...] (ControllerMode cmd 0x05; AbsController.q :47-60 truncates
       ext to 17; BleUtils.p :1030-1041 frames it). Mask (Bytes.java:178): makeSelectedTwoBytes (BleUtils.Y,
       always 2 bytes) when posSet has <= 16 entries, else BleUtils.X (ceil(n/8) bytes), copied at ext[3]
@@ -972,10 +1061,21 @@ types:
       reaches the fixed-u2le op15_brightness and cannot pass mask_width; with mask_width 2 this is
       byte-identical to op15_brightness, which stays as is.
     params:
-      - { id: mask_width, type: u1, doc: "2 for <= 16 pieces (makeSelectedTwoBytes), else min(ceil(pieces/8), 14) (BleUtils.X; Bytes.java:179 coerceAtMost 14)" }
+      - { id: mask_width, type: u1, doc: "2 for <= 16 pieces (makeSelectedTwoBytes), else min(ceil(pieces/8), 14) (BleUtils.X; Bytes.java:179 coerceAtMost 14) = segment_mask(pieces, mask_cap).mask_width" }
     seq:
       - { id: pct, type: u1, doc: "0-100, written raw (Bytes.java:177)" }
       - { id: seg_mask, size: mask_width, doc: "LSB-first (BleUtils.X/Y order): position 8j+k at bit k of byte j" }
+    instances:
+      mask_cap:
+        value: 14
+        doc: >-
+          most mask bytes Bytes.G puts on the wire: coerceAtMost(len, 14), 14 = 17 - 3 ext bytes before the mask
+          (base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:179; legacy h6047
+          Math.min(len, 14), split_h6047/com/govee/h6047/ble/SubModeColor.java:181; legacy SubModeColorV1 opType 0,
+          split_h60ax/com/govee/pact_h60a0/ble/v1/SubModeColorV1.java:674-683, appends the mask uncapped; through
+          compose ModeController.b, split_h60ax/com/govee/pact_h60a0/ble/controller/compose/ModeController.java:34,
+          and AbsController.java:24-26 (BleUtils.p, no cut) a 15th byte lands on frame[19] and is overwritten by
+          the BCC). The mask_cap param of segment_mask for this body; the 20-byte frame cannot carry more anyway
 
   color_rgbic_0b_wide:    # sub-mode 0x0b WRITE after 33 05 0b — <R,G,B> <seg_mask, mask_width bytes>
     doc: |
@@ -994,12 +1094,89 @@ types:
       payload of an 0xA3 multi-packet of type 0x6e (MultiController.java:48-61) followed by 33 05 15, so this
       body can also follow the 0x0b byte inside that A3 payload rather than a 33 05 0b header.
     params:
-      - { id: mask_width, type: u1, doc: "2 for <= 16 pieces (makeSelectedTwoBytes), else min(ceil(pieces/8), 13) (BleUtils.X; Bytes.java:279 coerceAtMost 13)" }
+      - { id: mask_width, type: u1, doc: "2 for <= 16 pieces (makeSelectedTwoBytes), else min(ceil(pieces/8), 13) (BleUtils.X; Bytes.java:279 coerceAtMost 13) = segment_mask(pieces, mask_cap).mask_width" }
     seq:
       - { id: r, type: u1 }
       - { id: g, type: u1 }
       - { id: b, type: u1 }
       - { id: seg_mask, size: mask_width, doc: "LSB-first (BleUtils.X/Y order): position 8j+k at bit k of byte j" }
+    instances:
+      mask_cap:
+        value: 13
+        doc: >-
+          most mask bytes Bytes.d puts on the wire: coerceAtMost(len, 13), 13 = 17 - 4 ext bytes before the mask
+          (base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:279). The mask_cap
+          param of segment_mask for this body; the 20-byte frame cannot carry more anyway
+
+  segment_mask:           # STANDALONE: the seg_mask bytes of op15_color_write / op15_brightness_wide / color_rgbic_0b_wide, as bits
+    doc: |
+      The segment mask the app puts in op15_color_write.seg_mask, op15_brightness_wide.seg_mask and
+      color_rgbic_0b_wide.seg_mask, from its position set posSet (boolean[segment_count], position i =
+      segment i). Reached from no switch-on: a client builds it, writes it into mask_width bytes and passes
+      those bytes as the body's seg_mask and mask_width as the body's mask_width param.
+      segment_count is posSet.length: the piece count on the colour paths (ColorPieceConfig.c, e.g. the
+      whole-device set base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/
+      ColorModeControllerConfig.java:556-561, and Bytes.C's boolean[i2]), but colorPosSetMaxLen, the piece
+      count rounded up to a multiple of 8, on the per-segment brightness path ColorModeControllerConfig.z
+      :1184-1195 (ColorPieceConfig.d -> LightColorCapabilityCenter.V0 / H0,
+      base-classes10/com/govee/base2light/capability/color/LightColorCapabilityCenter.java:1005-1022,
+      :771-773). That rounding changes neither the <= 16 test nor ceil(n/8), so either count gives the same
+      mask_width and the same bytes when no position at or above the piece count is set.
+      Encoders (Govee Home 7.7.02):
+        <= 16 positions: makeSelectedTwoBytes = BleUtils.Y(posSet, true, false)
+          (base-classes10/com/govee/base2kt/utils/BleUtils.java:444-494; z3 defaults to false in
+          makeSelectedTwoBytes$default :81-86; legacy BleUtil.makeSelectedTwoBytes,
+          base-classes10/com/govee/base2light/ble/BleUtil.java:412-443): always 2 bytes, posSet zero-padded to
+          16 positions, 00 00 for an empty set.
+        > 16 positions: BleUtils.X(posSet, true) (BleUtils.java:406-438): ceil(n/8) bytes, the last one
+          zero-padded.
+      Both reverse each 8-position chunk's bit string and parse it base 2, so position 8j+k is bit k of byte j:
+      bits[] below, read bit-endian le. The choice is keyed on posSet.length > 16 in Bytes.G / Bytes.d /
+      Bytes.h / Bytes.r / Bytes.l / Bytes.u / Bytes.C
+      (base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:178, :278, :323, :498,
+      :387, :553, :115) and on the segment count > 16 in the legacy writers (SubModeColorV1.getWriteBytes,
+      split_h60ax/com/govee/pact_h60a0/ble/v1/SubModeColorV1.java:672, whose segment is its checkSet length,
+      :461-466; h6047 SubModeColor.getWriteBytes, split_h6047/com/govee/h6047/ble/SubModeColor.java:180,
+      :199), which is the same thing when posSet has one entry per segment.
+      Each body then carries at most mask_cap bytes (op15_color_write.mask_cap 12 / 10 / 7 by variant,
+      op15_brightness_wide.mask_cap 14, color_rgbic_0b_wide.mask_cap 13). mask_width = min(full_width,
+      mask_cap) is what the truncating writers send: Bytes.G coerceAtMost 14 (:179), Bytes.d 13 (:279),
+      Bytes.h 7 (:324), Bytes.r 7 (:499), Bytes.C truncates to 7 and logs kelvinByte0x15_<n> (:115-121), h6047
+      14 / 7 (:181, :200); the dropped bytes hold positions mask_cap*8 and up. is_truncated marks a segment
+      count past the cap: there the variant-5 writers Bytes.l / Bytes.u copy uncoerced (:388, :554) and throw
+      ArrayIndexOutOfBounds (no frame), and SubModeColorV1 opTypes 1 / 12 / 11 append the whole mask, so one
+      byte past the cap lands on the BCC and more throws (op15_color_write's doc). Within the cap the writers
+      cited here give exactly these bytes. Not this rule: Bytes.z (the 0x0b Kelvin-pick write, Config.N[3] =
+      Config.HM, base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:5630-5634,
+      :10146-10148; Bytes.java:609-620) always calls makeSelectedTwoBytes, so above 16 pieces its mask is 00 00
+      (always the u2le color_rgbic_0b, never color_rgbic_0b_wide); and the per-family writers with no 2-byte
+      floor (BleUtil.makeBytes4SelectPosByOneBit, or BleUtils.X alone; op15_color_write's doc) send 1 byte
+      for <= 8 positions, the same zero-padded frame as mask_width 2.
+      Reading: segment_mask(n, cap) over a body's seg_mask bytes gives the posSet. A client that refuses
+      rather than truncates checks is_truncated.
+    params:
+      - { id: segment_count, type: u2, doc: "posSet length (the piece count, or it rounded up to a multiple of 8; same width); NOT in the stream" }
+      - { id: mask_cap, type: u1, doc: "the body's mask_cap: op15_color_write.mask_cap, op15_brightness_wide.mask_cap or color_rgbic_0b_wide.mask_cap" }
+    seq:
+      - id: bits
+        type: b1le
+        repeat: expr
+        repeat-expr: mask_width * 8
+        valid: { expr: 'not _ or _index < segment_count' }
+        doc: >-
+          bits[i] = position i selected (bit i % 8 of byte i / 8, LSB first). Positions segment_count and up are
+          always 0: posSet has segment_count entries, Y zero-pads to 16 and X zero-pads the last byte; the valid
+          rejects a 1 there
+    instances:
+      full_width:
+        value: 'segment_count <= 16 ? 2 : (segment_count + 7) / 8'
+        doc: "the encoder's length: 2 (makeSelectedTwoBytes) for <= 16 positions, else ceil(n/8) (BleUtils.X)"
+      mask_width:
+        value: 'full_width < mask_cap ? full_width : mask_cap'
+        doc: "the bytes the body carries (its mask_width param): full_width, cut to mask_cap as the coerceAtMost writers do"
+      is_truncated:
+        value: 'full_width > mask_cap'
+        doc: "segment_count needs more than mask_cap bytes: the coerceAtMost writers drop positions mask_cap*8 and up, Bytes.l / Bytes.u throw"
 
   color_0b_kelvin:        # sub-mode 0x0b colour-version-6 WRITE after 33 05 0b — fixed 7 bytes
     doc: |
@@ -1132,6 +1309,11 @@ types:
       trailing 00 bytes there are padding. command uses enum command: every command above is in it except 21 and
       ef (see the note under enum command); a command byte missing from the enum still round-trips in Python
       (resolve_enum keeps the int) but reads as null in Java.
+      To write a request without padding the selector by hand, or to hold a TX request at frame level
+      rather than under the reply-typed GoveeBleFrame 0xAA body, use read_request_sized(selector_len) /
+      read_request_frame(selector_len) below: the param sizes the selector and the zeroed body stream
+      supplies the fill. A captured request is still read with read_request itself (size-eos), because
+      the wire does not give selector_len.
     seq:
       - id: command
         type: u1
@@ -1141,6 +1323,92 @@ types:
         size-eos: true
         valid: { expr: '_.length <= 17' }
         doc: "frame bytes 2..18: the read selector, 0..17 bytes (AbsSingleController.p() / kt ext, capped at 17 by kt AbsController.q:49; BleUtils.Companion.p writes the BCC over byte 19). EMPTY for most reads"
+
+  # ── 0xAA read REQUEST, sized: STANDALONE write-side types (wired into no dispatch; read_request stays) ──
+  read_request_sized:
+    doc: |
+      0xAA read REQUEST body with its selector length known: frame bytes 1..18 =
+      [command][selector, selector_len bytes][zero fill, 17 - selector_len bytes]. The fill is NOT a field:
+      written into the frame's zeroed body stream (GoveeBleFrame.body when pro_type is read, or
+      read_request_frame.body), the bytes after the selector stay 0, as the app leaves them.
+      The app frames every single read the same way: BleUtils.Companion.p(0xAA, getCommandType(), ext)
+      allocates a zeroed byte[20], sets bytes 0 and 1, copies ext from byte 2 only when it is non-null and
+      non-empty, and writes the XOR of bytes 0..18 at byte 19
+      (base-classes10/com/govee/base2kt/utils/BleUtils.java:1030-1041; XOR w :1260-1267;
+      generate20Bytes(byte, byte, byte[]) :1376-1378). Legacy controllers pass AbsSingleController.p()
+      (base-classes10/com/govee/base2light/ble/controller/AbsSingleController.java:17-20, default null :54-56),
+      sent on a read by AbsController.getValue -> f() (base-classes10/com/govee/base2light/ble/controller/AbsController.java:76-77).
+      kt controllers pass their ext (getNextCommBytes, base-classes11/com/govee/base2light/kt/ble/AbsController.java:42-45);
+      the ext constructors cut it to 17 bytes (q() :30-40, :47-60; the setter s() :67-69 does not).
+      Module reads (AbsSingleModuleController.f,
+      base-classes10/com/govee/base2light/ble/controller/AbsSingleModuleController.java:15-18) use the
+      3-byte-header variant BleUtils.o(0xAA, module, command, ext) (BleUtils.java:1005-1017). That is this
+      layout with command = the module byte and selector = [command, ext...]: AA 60 01 01 is
+      MovieOpenControllerV2 (u() = 0x60, AbsSingleFeastController.java:22-23; command 1, p() {1},
+      MovieOpenControllerV2.java:22-29).
+      So (command, ext) fix the frame: selector = ext, selector_len = ext.length (0 for a null or empty
+      ext). Which ext each controller passes: read_request's doc. Most reads pass none; 1-byte selectors are
+      the common case (AA 05 01, AA 07 ss, AA A5 gg). 2-byte ones exist on the h5080 plugs: AA B4
+      [h == 1 ? 01 : 00, FF], h = the outlet (NewTimerController.p,
+      split_plugnew/com/govee/h5080/ble/controller/NewTimerController.java:67-69), and AA B0 [outlet, type]
+      (TurnOnOffDelayController.p, split_plugnew/com/govee/h5080/ble/controller/TurnOnOffDelayController.java:90-92).
+      No app frame has more than 17 ext bytes. p() copies the ext unchecked, so 18 bytes lose the last one
+      to the XOR byte and 19 or more throw ArrayIndexOutOfBounds. selector rejects selector_len > 17.
+      Reading: a 00 selector byte and the fill are the same bytes on the wire. For example, the h5080 connect
+      read TurnOnOffDelayController(0, 0) (outlet 0, type 0; split_plugnew/com/govee/h5080/adjust/v1/BleOpV1.java:151)
+      sends AA B0 00 00, the same frame as a bare AA B0. So a captured request does not give selector_len.
+      Read a capture with read_request (size-eos). Use this type to write, or to read when the controller
+      fixes the selector length.
+    params:
+      - id: selector_len
+        type: u1
+        doc: "ext bytes the controller passes, 0..17 (0 for a null or empty ext); NOT in the stream"
+    seq:
+      - id: command
+        type: u1
+        enum: command
+        doc: "frame byte 1 = the controller's getCommandType() (the module byte for AbsSingleModuleController)"
+      - id: selector
+        type: u1
+        repeat: expr
+        repeat-expr: selector_len
+        valid: { expr: 'selector_len <= 17' }
+        doc: >-
+          frame bytes 2 .. 1 + selector_len: the ext bytes, one u1 each (a value outside 0..255 cannot be
+          written). The valid limits selector_len to the 17 ext bytes the frame has room for; it is checked
+          on each element, so it never fails for selector_len 0.
+    instances:
+      fill_len:
+        value: '17 - selector_len'
+        doc: "zero bytes after the selector through frame byte 18 (BleUtils.p leaves them 0)"
+
+  read_request_frame:
+    doc: |
+      A whole 0xAA read REQUEST frame, the app's BleUtils.Companion.p(0xAA, command, ext) output
+      (base-classes10/com/govee/base2kt/utils/BleUtils.java:1030-1041): [AA][body, 18 bytes][XOR]. The body is
+      read_request_sized(selector_len): command, the selector bytes, then the zero fill, which the zeroed
+      18-byte body stream supplies. This type is standalone because GoveeBleFrame's 0xAA dispatch types the
+      body as the REPLY (read_command); it holds a request at frame level. Write it into a zeroed 20-byte
+      stream. checksum is the XOR of bytes 0..18, computed outside the grammar as for GoveeBleFrame.checksum
+      (BleUtils.w, BleUtils.java:1260-1267). The app's request is always 20 bytes (p allocates byte[20]), so
+      the body size is fixed. Reading a captured TX frame needs selector_len (see read_request_sized).
+    params:
+      - id: selector_len
+        type: u1
+        doc: "passed to body (read_request_sized.selector_len), 0..17"
+    seq:
+      - id: pro_type
+        type: u1
+        enum: pro_type
+        valid: { eq: 'pro_type::read' }
+        doc: "byte 0 = 0xAA (AbsSingleController.getProType for a read, AbsSingleController.java:28-30)"
+      - id: body
+        size: 18
+        type: read_request_sized(selector_len)
+        doc: "frame bytes 1..18"
+      - id: checksum
+        type: u1
+        doc: "XOR of bytes 0..18 (computed externally)"
 
   # ── proType 0xAA (read) — DISTINCT from write; NOT the 0x33 payload types ──
   # A read REQUEST is [command][selector]; a read REPLY is [command][device-state echo]. The byte after
@@ -1166,7 +1434,7 @@ types:
             'command::secret_read': secret_read_reply
             'command::plug_spec': plug_spec_read
             'command::bulb_string_color_read': bulb_group_color_read      # 0xA2 mechanism-B V1 (H61A8)
-            'command::local_color_read': bulb_group_color_read_v2         # 0xA5 mechanism-B V2 (H61A8)
+            'command::local_color_read': bulb_group_color_read_v2         # 0xA5 mechanism-B V2 (H61A8); a Controller4ColorInfoByGroup reply: color_group_direct_frame
             'command::ic_num': ic_segment_read                            # 0x40 live IC/segment count (ControllerOnlyReadIcSegmentNum)
             'command::gradual_wifi_ble': gradual_read                     # 0xA3 gradual-on flag (ControllerGradual4BleWifi.h)
         doc: >-
@@ -1192,6 +1460,12 @@ types:
           has no caller in 7.7.02. None of them is a case here: a command byte is shared by several families,
           and a case changes what existing readers return.
 
+          AA A5 <group> from a Controller4ColorInfoByGroup SKU (H6047, H6641, H6062, H6061, and H60A6 outside
+          its 0xAC burst) is [group][4-byte [brightness,R,G,B] records], and AA A2 <group> from a colour-only
+          family is [group][3-byte [R,G,B] records]; the record count is the SKU's group size, not in the
+          frame. Read such a frame with the standalone color_group_direct_frame(record_count). The frame does
+          not say which controller asked, so the 0xA5 / 0xA2 cases stay H61A8's batch types.
+
   mode_read:
     doc: |
       Mode (0x05) read. Byte 0 is EITHER a request selector (0x01) OR a reply sub-mode byte
@@ -1205,6 +1479,10 @@ types:
         kind 0 the default [gradual, kelvin]. (Only the LEGACY Mode/SubModeColorV1 stack reads 0x0d, and
         0x15, as op/gradual alone, bArr[0]==1.)
       - 0x13 music => music_read_reply (FAMILY-DEPENDENT; see that type).
+      sub_mode = selector_or_sub_mode as enum sub_mode (an int for a non-member byte, e.g. the 0x01 request
+      selector). is_submode4color = the sub-modes OpInfo4Detail.x hands to the SubMode4Color parse strategy
+      (0x15 / 0x0b / 0x02 / 0x0d). The raw params (the bytes after byte 0, whatever `rest` was typed as) are
+      read with the standalone mode_read_params(mode).
     seq:
       - id: selector_or_sub_mode
         type: u1
@@ -1237,6 +1515,75 @@ types:
           parameter after the code (:97-102), not modelled. A value instance over `rest`, not a positional one:
           the read-write classes write a positional instance back in _write, which would change how an existing
           writer serialises a sub-mode-0x04 mode_read.
+      sub_mode:
+        value: selector_or_sub_mode
+        enum: sub_mode
+        doc: >-
+          selector_or_sub_mode read as enum sub_mode, for comparing a reply's sub-mode with sub_mode members
+          (sub_mode::color_rgbic_15 ...) rather than ints. A byte that is not a sub_mode member keeps its int
+          in Python and reads null in Java, as pro_type does in `frame`: the request selector 0x01
+          (mode_read_selector::request), and 0xa1, the second scene byte OpInfo4Detail.x takes
+          (`b == 4 || b == -95`, base-classes11/com/govee/base2light/pact/newdetail/OpInfo4Detail.java:786). A value
+          instance over the raw field, so selector_or_sub_mode, the `rest` switch and every existing reader stay
+          as they are, and nothing is written.
+      is_submode4color:
+        value: >-
+          sub_mode == sub_mode::color_rgbic_15 or sub_mode == sub_mode::color_rgbic_0b or
+          sub_mode == sub_mode::color_legacy or sub_mode == sub_mode::color_cct_0d
+        doc: >-
+          True for the sub-modes 0x15, 0x0b, 0x02 and 0x0d, the ones the newdetail mode parser hands to the
+          device's SubMode4Color parse strategy: base2light OpInfo4Detail.x (parseModeValidBytes),
+          `b == 21 || b == 11 || b == 2 || b == 13`
+          (base-classes11/com/govee/base2light/pact/newdetail/OpInfo4Detail.java:766; method from :743), then
+          info4Detail.x().parseModeValidBytes(bArrS) on the bytes after the sub-mode byte (:767), keeping the
+          Kelvin the strategy returns only when > 0 (:771-772). Striplight (H6062) OpInfo4Detail.u has the
+          same set (split_h6062/com/govee/striplight/newdetail/OpInfo4Detail.java:428; method from :411). The
+          params' layout is then the strategy's, which the frame does not carry: read them (mode_read_params)
+          with mode_color_0d_typed(kind) (devices.yaml mode_color_parse / mode_0d_kind). Not every family
+          dispatches this way: h60a1 Info4Detail.Q (H60A1 / H60A6) decodes colour only for 0x15 and 0x0d
+          (split_h60ax/com/govee/pact_h60a0/adjust/h60a1/Info4Detail.java:399, :416), and the cube
+          CubeNewInfo4Detail.U only for 0x0d (split_h6061/com/govee/cubelight/newdetails/CubeNewInfo4Detail.java:503).
+          A parse rule, not the app's colour-tab test: makeModeByDeviceInfo picks the colour tab for
+          {0x14, 0x15, 0x02, 0x0d} (OpInfo4Detail.l, base-classes11/com/govee/base2light/pact/newdetail/OpInfo4Detail.java:281;
+          striplight OpInfo4Detail.k, split_h6062/com/govee/striplight/newdetail/OpInfo4Detail.java:197).
+          False for the request selector 0x01 and every other byte. A value instance, so it is never written.
+
+  mode_read_params:
+    doc: >-
+      The params of a mode_read read from a stream: the bytes after its sub-mode byte (body bytes 1..end;
+      16 bytes for an aa 05 reply's 17-byte body), as raw bytes, whatever type mode_read gave `rest`
+      (cct_read_reply / music_read_reply / mode_color_0d_report for 0x15 / 0x13 / 0x0d, raw otherwise).
+      Construct it with the mode_read as its parameter and any stream (its seq is empty), e.g.
+      ModeReadParams(m, KaitaiStream(BytesIO(b''))), then read `params`. It reads the mode_read's own stream
+      (`mode._io`) from byte 1: a mode_read always has one to itself (read_command.body is size-eos, so the
+      frame reader gives it a substream; a standalone parse gets the caller's stream), and it holds the
+      bytes read, or the bytes written once a mode_read built for writing has been written; one built for
+      writing and not yet written has no stream (Python: AttributeError). This is the public form of
+      Kaitai's private `_raw_rest` (a typed case) / `rest` (an untyped one), for re-reading the params with
+      a parse-strategy type such as mode_color_0d_typed(kind) (see mode_read.is_submode4color). It is a
+      standalone read-only type wired into no dispatch: the read-write classes write a positional instance
+      back in _write, so on mode_read one would change how a mode_read is written; here nothing writes it.
+      The app hands its strategies these bytes or a prefix of them: OpInfo4Detail.x takes
+      BleUtils.Companion.s(validBytes, 1, true) = validBytes[1 .. length-2]
+      (base-classes10/com/govee/base2kt/utils/BleUtils.java:1105-1110), 15 of the 16 params for the 17-byte
+      BleUtils.o0 body (frame bytes 2..18, BleUtils.java:1021-1026), unless called with z = true, which
+      copies validBytes[1:] (base-classes11/com/govee/base2light/pact/newdetail/OpInfo4Detail.java:755-761;
+      parseModeValidBytes$default defaults z to false, :84-89, and the base callers :519, :647, :709, :842
+      pass false; split_fanlight/com/govee/fanlight/adjust/VM4Light.java:751 passes true), and striplight
+      OpInfo4Detail.u always takes the former (split_h6062/com/govee/striplight/newdetail/OpInfo4Detail.java:423).
+      No colour strategy reads that far (the furthest a SubMode4Color IParseStrategy in Govee Home 7.7.02
+      reads is validBytes[9], the tvlight two-bar strategy,
+      split_tvlightv4/com/govee/pact_tvlightv4/detail/Info4Detail.java:174-191), so the last param byte
+      never changes a decode.
+    params:
+      - { id: mode, type: mode_read, doc: "a mode_read read from (or already written to) a stream; its _io holds its body" }
+    instances:
+      params:
+        io: mode._io
+        pos: 1
+        size-eos: true
+        if: mode._io.size >= 1
+        doc: "the mode_read body after byte 0 (selector_or_sub_mode), raw; empty for a 1-byte body"
 
   cct_read_reply:
     doc: >-
@@ -1290,6 +1637,27 @@ types:
           H6047 right-bar kelvin read SIGNED (BleUtil.getSignedShort(vb[3], vb[4]),
           split_h6047/com/govee/h6047/detail/Info4Detail.java:180). Null when kelvin_right was not read (a body
           of 3 bytes); the guard is the body size because `not _io.eof` is already false after `trailing`.
+      is_cct_positive:
+        value: 'kelvin_signed > 0'
+        doc: >-
+          Sub-mode 0x15 colour-temperature mode on the screens whose 0x15 decode is devices.yaml
+          mode_color_decode gradual_kelvin_s16be (mode_color_parse kelvin, kelvin_15, kelvin_15_rgb_kelvin_0d,
+          kelvin_0b_15): kelvin_signed > 0, the test mode_color_0d_typed.is_cct_kelvin_positive makes on the same
+          [gradual][kelvin s16be] bytes. Each takes CCT only for SubMode4Color.g() > 0 (Govee Home 7.7.02):
+          OpInfo4Detail.x (base-classes11/com/govee/base2light/pact/newdetail/OpInfo4Detail.java:766-779), h60a1
+          Info4Detail.Q (split_h60ax/com/govee/pact_h60a0/adjust/h60a1/Info4Detail.java:399-405), h61d3
+          Info4Detail.W for H6641 (split_h61d3/com/govee/h61d3/adjustNew/Info4Detail.java:568-572; also
+          split_h61d3/com/govee/h61d3/adjust/newdetail/H61d3NewInfo4Detail.java:427-430), h705a newDetail
+          Info4Detail.V (split_h705a/com/govee/h705a/newDetail/Info4Detail.java:451-454), the H6105 screen's
+          Info4Detail.w (split_rgbiclight/com/govee/rgbiclight/h61050729/Info4Detail.java:388-391), pact_h605b
+          Info4Detail.h0 (split_h6099/com/govee/pact_h605b/newdetail/Info4Detail.java:777-780), pact_tvlightv2
+          Info4Detail.V (split_tvlightv4/com/govee/pact_tvlightv2/newdetail/Info4Detail.java:562-565). False
+          (kelvin 0, or a raw 0x8000-0xFFFF) is not CCT; those screens assign their own Kelvin only inside the
+          > 0 branch, while SubMode4Color.b still stores the non-positive value. Not the rule of any other 0x15
+          decode: H6047's two bars (gradual_kelvin_pair_s16be), H60A0's illumination Kelvin
+          (skip_kelvin_s16be_illumination), the TV-backlight halves (skip_kelvin_pair_s16be), the H605B zones
+          (gradual_kelvin_triple_s16be), the rgb_kelvin_tint screens (whose 0x15 body is [r, g, b][kelvin]) and
+          the gradual_kelvin_s16be_nocct screens.
 
   music_read_reply:
     doc: >-
@@ -1372,7 +1740,7 @@ types:
     seq:
       - { id: batch_seq, type: u1, doc: "1-based batch number (f109037a; logged 'group', 1..maxGroup=5 for H61A8); client offset = (batch_seq-1)*3" }
       - { id: groups, type: bulb_rgb_group_v2, repeat: expr, repeat-expr: 3, doc: "3 groups = controller default (f109046g); count is client-set, not in the frame." }
-      - { id: trailing, size-eos: true, doc: "bytes after the 3 groups, kept so the reply round-trips. H61A8: zero padding. H6047: the 4th [brightness,R,G,B] record, because its aa a5 group holds Support.getOneGroupColorSize() = 4 records (split_h6047/com/govee/h6047/pact/Support.java:155-157) and Controller4ColorInfoByGroup.Companion.q reads [index] + count x 4 bytes (base-classes11/com/govee/base2light/kt/general_controller/Controller4ColorInfoByGroup.java:160-174); decode such a body with color_group_read(4, 1). The frame body ends before the BCC, so this never holds it" }
+      - { id: trailing, size-eos: true, doc: "bytes after the 3 groups, kept so the reply round-trips. H61A8: zero padding. H6047: the 4th [brightness,R,G,B] record, because its aa a5 group holds Support.getOneGroupColorSize() = 4 records (split_h6047/com/govee/h6047/pact/Support.java:155-157) and Controller4ColorInfoByGroup.Companion.q reads [index] + count x 4 bytes (base-classes11/com/govee/base2light/kt/general_controller/Controller4ColorInfoByGroup.java:160-174); read such a frame with color_group_direct_frame(4) (or this type's body with color_group_read(4, 1)). The frame body ends before the BCC, so this never holds it" }
   bulb_rgb_group_v2:
     seq:
       - { id: brightness, type: u1, doc: "per-segment brightness (BulbGroupColorV2 bArr2[0] -> SubModeColorV2 brightnessSet)" }
@@ -1393,6 +1761,57 @@ types:
       ic_count_signed:
         value: 'ic_count >= 0x8000 ? ic_count - 0x10000 : ic_count'
         doc: "The IC count as the app reads it: getSignedShort sign-extends, so 0x8000-0xFFFF reads as -32768..-1. ic_count stays the raw u2be for existing readers."
+      ic_count_byte_order_suspect:
+        value: 'ic_count_signed >= 0x1000'
+        doc: >-
+          The app's IC-count byte-order check (it logs that the reply's 2-byte IC order is abnormal): true when
+          the signed count is >= BleUtil.getSignedShort(0x10, 0) = 0x1000, i.e. ic_count 0x1000..0x7FFF; a
+          negative count (ic_count 0x8000..0xFFFF) passes. When it fires the checker re-reads the count from
+          bytes 1..2, getSignedShort(bArr[1], bArr[2]) (not a swap of bytes 0..1), but every caller passes a
+          fresh 2-byte array (new byte[]{vb[0], vb[1]}; {vb[3], vb[4]} for ControllerIcNum's second section),
+          so bArr[2] throws ArrayIndexOutOfBoundsException and the reply yields no count: the app rejects it
+          and never swaps (see ic_count_checked). aa 40 checkers: h61d3 ReadIcController.Companion.a
+          (split_h61d3/com/govee/h61d3/ble/controller/ReadIcController.java:49-64, callers c/d :97-110), the
+          read VM4Light.j5 adds for goodsTypes 239, 242, 246, 247, 261, 264, 299, 367, 384, 387-389, 400, 403
+          and 404 (split_h61d3/com/govee/h61d3/adjustNew/VM4Light.java:542-549) and Info4Detail.L uses on IoT
+          for all of them (split_h61d3/com/govee/h61d3/adjustNew/Info4Detail.java:326-332); kt
+          ControllerIcNum.Companion.a (base-classes11/com/govee/base2light/kt/general_controller/ControllerIcNum.java:64-74),
+          through f (:159-162), d (:119-121) and e (:144-149), i.e. the BLE reads b/d and the IoT aa 40 parsers
+          (e.g. split_h6047/com/govee/h6047/newdetail/Info4Detail.java:266-281); legacy IcNumController.u
+          (base-classes10/com/govee/base2light/ble/controller/IcNumController.java:17-24, callers :14, :38);
+          h7020 Controller4IcNumber.Companion.a
+          (split_h7050/com/govee/h7020/newDetail/controller/Controller4IcNumber.java:47-62, callers d/e
+          :103-116). Not checked (they pass ic_count_signed on as is): ControllerIcNum.Companion.c
+          (makeController4ReadOneIc, ControllerIcNum.java:94-107; used by VM4LightH667172.j5,
+          split_rgbiclight/com/govee/rgbiclight/h667172/VM4LightH667172.java:343-348, and H3401DetailVM.Y4,
+          split_h705a/com/govee/h705a/h3401/H3401DetailVM.java:488-497); the dreamcolorlightv1 ReadIcController
+          (parseValidBytes and the IoT parseIc,
+          split_rgbiclight/com/govee/dreamcolorlightv1/ble/ReadIcController.java:10-36); and
+          ControllerOnlyReadIcSegmentNum.Companion.c
+          (base-classes11/com/govee/base2light/kt/general_controller/ControllerOnlyReadIcSegmentNum.java:30-37),
+          which has no caller in 7.7.02. CheckIc4SettingController.Companion.a
+          (split_h7075/com/govee/h7075/ble/controller/CheckIc4SettingController.java:48-58) has the same check
+          but belongs to the 0x43 controller (:102-104), not aa 40. BleUtil.getSignedShort =
+          (short) ((h << 8) | (l & 255)) (base-classes10/com/govee/base2light/ble/BleUtil.java:304-306).
+      ic_count_checked:
+        value: ic_count_signed
+        if: 'not ic_count_byte_order_suspect'
+        doc: >-
+          The IC count as the checking readers (ic_count_byte_order_suspect) return it: ic_count_signed, or
+          null when the check fires, because there the checker throws before it returns a count. h61d3 (the
+          VM4Light.j5 goodsTypes, H6641 = 247 among them): on BLE the exception leaves the read callback
+          (ReadIcController.Companion.b, split_h61d3/com/govee/h61d3/ble/controller/ReadIcController.java:68-95,
+          run synchronously by AbsControllerNoEvent4Single.onResult -> g,
+          base-classes10/com/govee/base2light/ble/controller/AbsControllerNoEvent4Single.java:122-127, :221-227),
+          so VM4Light.k5 never stores the count (split_h61d3/com/govee/h61d3/adjustNew/VM4Light.java:583-589);
+          on IoT Info4Detail.L calls ReadIcController.Companion.d with no local catch and never reaches G0
+          (split_h61d3/com/govee/h61d3/adjustNew/Info4Detail.java:326-332); goodsType 375 reads through
+          ControllerIcNum.Companion.e inside a try/catch that logs a failed IC read (Info4Detail.java:302-324).
+          The per-SKU IntRange clamp ReadIcController.Companion.d applies to this value (:102-110) and stays
+          client logic: H61D3Support.s gives 239 0..36, 242 26..42, 246 0..60, 247 41..70 and null otherwise
+          (split_h61d3/com/govee/h61d3/pact/H61D3Support.java:1547-1561); with null, BLE uses Companion.c (no
+          clamp) and IoT clamps to 0..Integer.MAX_VALUE (Info4Detail.java:328-331). Readers that do not check
+          (listed under ic_count_byte_order_suspect) use ic_count_signed.
 
   gradual_read:      # command 0xA3 — gradual (fade-between-colours) on/off
     doc: "AA A3 reply (ControllerGradual4BleWifi.Companion.h, base-classes11/com/govee/base2light/kt/general_controller/ControllerGradual4BleWifi.java:94-96, called by the read callback Companion.c :31-37): gradual mode on iff byte0 == 1 (validBytes length 17; only byte0 is read): use is_on."
@@ -1405,13 +1824,46 @@ types:
 
   # ── 0xAA READ replies (body[0] = validBytes[0] = frame offset 2). Verified vs each controller's parseValidBytes. ──
   switch_read_reply:
-    doc: "AA 01 reply: state @ body[0]. LIGHTS: every curated control screen that reads it decodes on as body[0] == 1 (ControllerSwitch.Companion.c, base-classes11/com/govee/base2light/kt/general_controller/ControllerSwitch.java:32), at connect and in the aa 01 heartbeat (ShareVM.N3 frame[2] == 1, ShareVM.java:1008): use light_is_on. The legacy SwitchController.parseValidBytes reads it as != 0 (SwitchController.java:30). No curated or profiled control screen reaches it, but older detail screens for legacy goodsTypes do (e.g. the dreamcolorlightv1 adjust/v1-v2 connect reads, BleOpV1.java:735, BleOpV2.java:123, BleOpV3.java:709), as do scene / IoT command paths (BleSwitchCmdBuilderV1); the two agree for 0/1 and differ only for a byte >= 2. Which message carries a family's power (this reply, or the 0xAC status TLV 0x01) is devices.yaml client_profile.power_read. PLUGS: this SAME 0x01 reply is a RELAY BITMASK (bit i = relay i on), not boolean — interpret per device (h5080 SwitchControllerV2.parseValidBytes splits 8 bits, split_plugnew/com/govee/h5080/ble/controller/SwitchControllerV2.java:29-44; the goodsType-43 H5083 screen decodes (bArr[0] & 1) != 0, H5083NewDetailRepository.loadParser, :162-167). Firmware-sourced for H5083 (single outlet): the byte is the outlet-0 state 0x00/0x01 (H5083.bin FUN_9b021668 = ldrb [0x10009440+8]; in code it is written only by 0x9b021640, idx 0, with 0/1). Bit 0 is outlet 0 and the upper bits are 0. The reply is NOT the write's [mask<<4 | on] form."
+    doc: "AA 01 reply: state @ body[0]. LIGHTS: every curated control screen that reads it decodes on as body[0] == 1 (ControllerSwitch.Companion.c, base-classes11/com/govee/base2light/kt/general_controller/ControllerSwitch.java:32), at connect and in the aa 01 heartbeat (ShareVM.N3 frame[2] == 1, ShareVM.java:1008): use light_is_on. The legacy SwitchController.parseValidBytes reads it as != 0 (SwitchController.java:30). No curated or profiled control screen reaches it, but older detail screens for legacy goodsTypes do (e.g. the dreamcolorlightv1 adjust/v1-v2 connect reads, BleOpV1.java:735, BleOpV2.java:123, BleOpV3.java:709), as do scene / IoT command paths (BleSwitchCmdBuilderV1); the two agree for 0/1 and differ only for a byte >= 2. Which message carries a family's power (this reply, or the 0xAC status TLV 0x01) is devices.yaml client_profile.power_read. PLUGS: this SAME 0x01 reply is a RELAY BITMASK (bit i = relay i on), not boolean — interpret per device (h5080 SwitchControllerV2.parseValidBytes splits 8 bits, split_plugnew/com/govee/h5080/ble/controller/SwitchControllerV2.java:29-44; the goodsType-43 H5083 screen decodes (bArr[0] & 1) != 0, H5083NewDetailRepository.loadParser, :162-167). Firmware-sourced for H5083 (single outlet): the byte is the outlet-0 state 0x00/0x01 (H5083.bin FUN_9b021668 = ldrb [0x10009440+8]; in code it is written only by 0x9b021640, idx 0, with 0/1). Bit 0 is outlet 0 and the upper bits are 0. The reply is NOT the write's [mask<<4 | on] form. Plug instances: relay0_is_on .. relay7_is_on (bit i = relay i) and the per-goodsType power rules: relay0_is_on (gt 43) and any_relay_0_2_is_on (gt 90) on every read; for gt 50 / 307, any_relay_is_on at the connect read (SwitchControllerV2) but any_relay_0_1_is_on in the aa 01 heartbeat (HeartControllerV2). devices.yaml client_profile.by_goods_type.<gt>.relay_on_mask is the connect-read rule as a mask (0x01 / 0xFF / 0x07)."
     seq:
       - { id: state, type: u1 }
     instances:
       light_is_on:
         value: 'state == 1'
         doc: "Lights: power as the curated control screens decode it (ControllerSwitch, == 1). Not for plugs, whose state is a relay mask."
+      relay0_is_on:
+        value: '(state & 0x01) != 0'
+        doc: "Plugs: relay 0 on = bit 0 of the reply byte, element 0 of the list SwitchControllerV2.parseValidBytes at the connect read (split_plugnew/com/govee/h5080/ble/controller/SwitchControllerV2.java:29-45) and HeartControllerV2.parseValidBytes in the aa 01 heartbeat (ble/controller/HeartControllerV2.java:17-35), both ((bArr[0] >> i) & 1) != 0. The power rule of the one-outlet goodsType 43 (H5080 / H5083 / H5085). In 7.7.02 goodsType 43 opens H5083NewDetailActivity (pact/Model.t, split_plugnew/com/govee/h5080/pact/Model.java:195-196 -> Model.D0 :74-99), whose repository decodes (bArr[0] & 1) != 0 (H5083NewDetailRepository.loadParser, adjust/newdetail/H5083NewDetailRepository.java:167); the FrameV1 screens (AdjustAc.D2's goodsType-43 branch) also take bit 0, at the connect read (BleOpV1.onEventSwitchV2 .get(0), adjust/v1/BleOpV1.java:350; BleOpV3, adjust/v3/BleOpV3.java:303) and in the heartbeat (onEventHeartV2 i(0), BleOpV1.java:217, BleOpV3.java:210). Also outlet 0 of the multi-outlet plugs (BleOpV2 :369, BleOp4H5089 :463, BleOpV4.r0 :477). Firmware-sourced for H5083: the only bit the firmware sets (see the type doc)."
+      relay1_is_on:
+        value: '(state & 0x02) != 0'
+        doc: "Plugs: relay 1 on = bit 1 of the reply byte, element 1 of the list SwitchControllerV2.parseValidBytes at the connect read (split_plugnew/com/govee/h5080/ble/controller/SwitchControllerV2.java:29-45) and HeartControllerV2.parseValidBytes in the aa 01 heartbeat (ble/controller/HeartControllerV2.java:17-35), both ((bArr[0] >> i) & 1) != 0. Outlet 1 of the two-outlet plugs (connect read: BleOpV2.onEventSwitchV2 listH.get(1), adjust/v2/BleOpV2.java:370; BleOp4H5089.onEventSwitchV2 list.get(1), adjust/h5089/BleOp4H5089.java:464; heartbeat: onEventHeartV2 i(1), BleOpV2.java:217, BleOp4H5089.java:332) and of goodsType 90 (BleOpV4.r0, adjust/v4_h5160/BleOpV4.java:477)."
+      relay2_is_on:
+        value: '(state & 0x04) != 0'
+        doc: "Plugs: relay 2 on = bit 2 of the reply byte, element 2 of the list SwitchControllerV2.parseValidBytes at the connect read (split_plugnew/com/govee/h5080/ble/controller/SwitchControllerV2.java:29-45) and HeartControllerV2.parseValidBytes in the aa 01 heartbeat (ble/controller/HeartControllerV2.java:17-35), both ((bArr[0] >> i) & 1) != 0. Outlet 2 of goodsType 90 (H5160 / H5161; BleOpV4.r0 G.get(i) for i < E = Support.getPlugNum(90) = 3, adjust/v4_h5160/BleOpV4.java:464-481, :64; pact/Support.java:126-131)."
+      relay3_is_on:
+        value: '(state & 0x08) != 0'
+        doc: "Plugs: relay 3 on = bit 3 of the reply byte, element 3 of the list SwitchControllerV2.parseValidBytes at the connect read (split_plugnew/com/govee/h5080/ble/controller/SwitchControllerV2.java:29-45) and HeartControllerV2.parseValidBytes in the aa 01 heartbeat (ble/controller/HeartControllerV2.java:17-35), both ((bArr[0] >> i) & 1) != 0. Parsed by the app but read by no detail screen on its own; it counts only in any_relay_is_on (the goodsType 50 / 307 connect read, EventSwitchV2.i ORs all eight)."
+      relay4_is_on:
+        value: '(state & 0x10) != 0'
+        doc: "Plugs: relay 4 on = bit 4 of the reply byte, element 4 of the list SwitchControllerV2.parseValidBytes at the connect read (split_plugnew/com/govee/h5080/ble/controller/SwitchControllerV2.java:29-45) and HeartControllerV2.parseValidBytes in the aa 01 heartbeat (ble/controller/HeartControllerV2.java:17-35), both ((bArr[0] >> i) & 1) != 0. Parsed by the app but read by no detail screen on its own; it counts only in any_relay_is_on (the goodsType 50 / 307 connect read, EventSwitchV2.i ORs all eight)."
+      relay5_is_on:
+        value: '(state & 0x20) != 0'
+        doc: "Plugs: relay 5 on = bit 5 of the reply byte, element 5 of the list SwitchControllerV2.parseValidBytes at the connect read (split_plugnew/com/govee/h5080/ble/controller/SwitchControllerV2.java:29-45) and HeartControllerV2.parseValidBytes in the aa 01 heartbeat (ble/controller/HeartControllerV2.java:17-35), both ((bArr[0] >> i) & 1) != 0. Parsed by the app but read by no detail screen on its own; it counts only in any_relay_is_on (the goodsType 50 / 307 connect read, EventSwitchV2.i ORs all eight)."
+      relay6_is_on:
+        value: '(state & 0x40) != 0'
+        doc: "Plugs: relay 6 on = bit 6 of the reply byte, element 6 of the list SwitchControllerV2.parseValidBytes at the connect read (split_plugnew/com/govee/h5080/ble/controller/SwitchControllerV2.java:29-45) and HeartControllerV2.parseValidBytes in the aa 01 heartbeat (ble/controller/HeartControllerV2.java:17-35), both ((bArr[0] >> i) & 1) != 0. Parsed by the app but read by no detail screen on its own; it counts only in any_relay_is_on (the goodsType 50 / 307 connect read, EventSwitchV2.i ORs all eight)."
+      relay7_is_on:
+        value: '(state & 0x80) != 0'
+        doc: "Plugs: relay 7 on = bit 7 of the reply byte, element 7 of the list SwitchControllerV2.parseValidBytes at the connect read (split_plugnew/com/govee/h5080/ble/controller/SwitchControllerV2.java:29-45) and HeartControllerV2.parseValidBytes in the aa 01 heartbeat (ble/controller/HeartControllerV2.java:17-35), both ((bArr[0] >> i) & 1) != 0. Parsed by the app but read by no detail screen on its own; it counts only in any_relay_is_on (the goodsType 50 / 307 connect read, EventSwitchV2.i ORs all eight)."
+      any_relay_is_on:
+        value: 'state != 0'
+        doc: "Plugs: on when any of the eight relay bits is set, EventSwitchV2.i() OR-ing the whole SwitchControllerV2.parseValidBytes list (split_plugnew/com/govee/h5080/ble/controller/EventSwitchV2.java:48-59). The CONNECT-READ power rule of the two-outlet goodsTypes 50 (H5082; SwitchControllerV2 read queued by BleOpV2, adjust/v2/BleOpV2.java:156-158 / :519, then onEventSwitchV2 open = i(), :363) and 307 (H5089; queued at adjust/h5089/BleOp4H5089.java:621, onEventSwitchV2 read branch open = i(), :462). Their aa 01 heartbeat uses bits 0..1 instead (any_relay_0_1_is_on). Screen routing: goodsType 43 opens H5083NewDetailActivity (pact/Model.java:195-196); AdjustAc.D2 (adjust/AdjustAc.java:98-109) picks FrameV4 for 90, Frame4H5089 for 307 and FrameV2 otherwise (50)."
+      any_relay_0_1_is_on:
+        value: '(state & 0x03) != 0'
+        doc: "Plugs: on when relay 0 or relay 1 is on. The aa 01 HEARTBEAT power rule of goodsTypes 50 (H5082) and 307 (H5089): the h5080 BleComm's heart controller is HeartControllerV2 (split_plugnew/com/govee/h5080/ble/BleComm.java:14-16; HeartControllerV2.parseValidBytes splits the same 8 bits, ble/controller/HeartControllerV2.java:17-35, posting EventHeartV2), and BleOpV2.onEventHeartV2 sets open = i(0) | i(1) (adjust/v2/BleOpV2.java:216-217, :231), as does BleOp4H5089.onEventHeartV2 (adjust/h5089/BleOp4H5089.java:331-332, :341); both recompute it only when bit 0 or bit 1 differs from the cached outlets (:225 / :335). The heartbeat sends the same aa 01 request as the connect read (HeartController is an AbsOnlyReadSingleController, base-classes10/com/govee/base2light/ble/controller/HeartController.java:4,19-20), and a reply no queued controller claims goes to it (AbsBleComm.parse -> e, base-classes10/com/govee/base2light/ble/comm/AbsBleComm.java:164-167, :255-262). Differs from the connect-read rule any_relay_is_on only when bits 0..1 are clear and a bit 2..7 is set."
+      any_relay_0_2_is_on:
+        value: '(state & 0x07) != 0'
+        doc: "Plugs: on when relay 0, 1 or 2 is on. The power rule of goodsType 90 (H5160 / H5161), at the connect read and in the heartbeat: BleOpV4.r0 ORs list[i] for i < E (split_plugnew/com/govee/h5080/adjust/v4_h5160/BleOpV4.java:464-481), called from onEventSwitchV2 (:298) on the 8-bit list and from onEventHeartV2 (:211-215) on its first m0().size() = 3 bits (UiV4.m = 3, adjust/v4_h5160/UiV4.java:97, :198-201); E = Support.getPlugNum(goodsType) (BleOpV4.java:64) = 3 for 90 (pact/Support.java:126-131). Bits 3..7 do not count."
   brightness_read_reply:
     doc: "AA 04 reply (BrightnessController.parseValidBytes): raw brightness 0-255. NO 0-255<->0-100 rescale in the BLE codec (percent mapping is UI-layer)."
     seq:
@@ -1687,7 +2139,9 @@ types:
   #  Walker = Compose4BaseInfoSingleRead.u(): [type, len, value(len)], advance i += 2+len. No fixed header —
   #  offset 0 is the first type. Known types: 0x01 switch, 0x04 brightness, 0x05 mode block, 0x07 device-info,
   #  0x11 sleep, 0x12 wakeup, 0x23 timers, 0x30 zone on/off (2 bits), 0x41 power-on memory (H60A6), 0xA5 colour group.
-  #  For 0xA5 feed value to color_group_read (record_count from the per-SKU count, see devices.yaml).
+  #  0xA5: status_tlv's case (color_group_status) counts records from len. A screen that passes its own count
+  #  to Controller4ColorInfoByGroup.q reads the value with color_group_status_counted (VM4LightH60A6's
+  #  per-group rule) or color_group_read(n, 1) (a fixed n); see color_group_status.
   status_reply:
     doc: |
       Reassembled 0xAC status reply = a sequence of [type, len, value] TLVs. The buffer is de-chunked from
@@ -1722,11 +2176,12 @@ types:
             0x41: status_seg_info
             0xa5: color_group_status     # one colour group; curated devices are all 4-byte (see type doc)
         doc: |
-          Full walker = Compose4BaseInfoSingleRead.u:292 — a header-less [type, len, value] walk
-          (i += 2 + len). u() itself handles 0x01/0x04/0x05/0x07/0x11(sleep)/0x12(wakeup)/0x23(timers);
-          EVERYTHING else (0x30, 0x41, 0xA5, ...) is passed to the caller's fallback lambda with the FULL
-          [type,len,value] re-prepended. All value types below are modelled (the value is a bounded
-          size:len substream, so record counts come from len — no external count needed):
+          Full walker = Compose4BaseInfoSingleRead.u (base-classes11/com/govee/base2light/pact/newdetail/ble/
+          controller/Compose4BaseInfoSingleRead.java:247-345, Govee Home 7.7.02) — a header-less
+          [type, len, value] walk (i = i5 + i6 = pos + 2 + len, :285; total_len). u() itself handles
+          0x01/0x04/0x05/0x07/0x11(sleep)/0x12(wakeup)/0x23(timers); EVERYTHING else (0x30, 0x41, 0xA5, ...)
+          is passed to the caller's fallback lambda with the FULL [type,len,value] re-prepended (:335-341).
+          The value is a bounded size:len substream. The types below model it as follows:
             * 0x07 device-info. w() (Compose4BaseInfoSingleRead.w:370-437, Govee Home 7.7.02) parses ONLY
               selector 0x10 (basic: [uid8 (byte-REVERSED), sw3, hw3, dsp u16le]) and 0x11 (wifi: [mac6
               (FORWARD), sw3, hw3]); every other selector, including 0x02 (SN) and 0x03 (hard version), is
@@ -1736,9 +2191,24 @@ types:
               RETIRES the old MAC-anchor heuristic.
             * 0x05 mode == [sub_mode, params] (delegated to the caller's .g() lambda; same shape as the
               0x05 mode frame body / SubMode dispatch).
-            * 0xA5 colour group -> color_group_status. Record COUNT = (len-1)/record_size (from the TLV
-              len); record_size is the only externally-keyed bit (3B vs 4B), fixed per SKU.
+            * 0xA5 colour group -> color_group_status, which takes the record COUNT from len,
+              (len-1)/4. That is the rule of the screens that count from len; other screens pass their own
+              count to Controller4ColorInfoByGroup.q, which then reads exactly that many records (see
+              color_group_status; the H60A6 rule is color_group_status_counted).
           Unmatched types stay raw.
+    instances:
+      total_len:
+        value: '2 + len'
+        if: 'type != 0'
+        doc: >-
+          Bytes this TLV takes in the stream, [type][len] plus the value: the step Compose4BaseInfoSingleRead.u
+          takes to the next TLV (i5 = i + 2, i = i5 + i6 with i6 the len byte;
+          base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4BaseInfoSingleRead.java:269-285).
+          It needs only type and len, so it is also set on a TLV whose value did not parse (the shared stream is
+          then already at the TLV's start + total_len). Not on one cut before its len byte: u() stops there
+          (:257-268) and the len field is unset. A len of 0x80 or more fails len's valid; u() reads it signed and
+          throws (:270, :283), so 2 + len there is no step the app takes. Null for the type-0 padding sentinel,
+          which reads no len here.
   status_device_info:
     doc: |
       0xAC status TLV 0x07 as the app's status parser reads it (Compose4BaseInfoSingleRead.w:370-437, Govee
@@ -1756,6 +2226,15 @@ types:
           cases:
             0x10: device_info_basic
             0x11: device_info_wifi
+    instances:
+      app_decodes:
+        value: 'selector == 0x10 or selector == 0x11'
+        doc: >-
+          True for the two selectors the app's status parser reads a body for, basic 0x10 and Wi-Fi 0x11
+          (enum device_info_selector); info is typed exactly then. For any other selector w() logs and
+          returns without reading the body, so u() walks on to the next TLV
+          (Compose4BaseInfoSingleRead.w, base-classes11/com/govee/base2light/pact/newdetail/ble/controller/
+          Compose4BaseInfoSingleRead.java:370-382).
   status_switch:
     doc: "0xAC status TLV 0x01: power. The status parser decodes on as state != 0 (Compose4BaseInfoSingleRead.u: bArr2[0] != 0, base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4BaseInfoSingleRead.java:286-288): use is_on. Screens that take connect-time power from here and send no aa 01 read are devices.yaml client_profile.power_read: ac_status (H60A4/H60A6, H6039/H6038/H6048, H703A/H703B)."
     seq: [ { id: state, type: u1 } ]
@@ -1784,16 +2263,41 @@ types:
     doc: |
       0xAC TLV 0xA5 — ONE colour group (Controller4ColorInfoByGroup). group_index @ value[0] is 1-based
       (VM read loop iterates group 1..maxGroup; request byte = group number). Records fill the rest of the
-      TLV: COUNT = (len-1)/record_size (the walker's own count is a caller-supplied per-SKU constant
-      'oneGroupColorSize', but len == 1 + count*record_size, so len is authoritative and robust for a
-      short last group). record_size is caller/SKU-selected: 4-byte [brightness,R,G,B] via generateReadController
+      TLV: COUNT = (len-1)/record_size, read from len. In Govee Home 7.7.02 most screens' 0xA5 fallback
+      lambdas hand the value to Controller4ColorInfoByGroup.Companion.q with a count of their own; q() reads
+      exactly that many 4-byte records, ignores any bytes after them and throws on a value too short for them
+      (base-classes11/com/govee/base2light/kt/general_controller/Controller4ColorInfoByGroup.java:160-175).
+      The counts they pass, for example:
+        * from len, (len - 1) / 4: H60B1ViewModel (split_floorlamp/com/govee/h60b1/detail/H60B1ViewModel.java:159-160),
+          VM4LightH60C1 (split_h60ax/com/govee/pact_h60a0/adjust/h60c1/VM4LightH60C1$afterConnectedSingleReadDeviceInfo$1.java:112-113),
+          H6850DetailVM (split_h6840/com/govee/h6609/h6850/H6850DetailVM$afterConnectedSingleReadDeviceInfo$1.java:87-88).
+          This type reads that rule for a len of 1 + 4k; for any other len it raises, where q() reads
+          (len - 1) / 4 records and ignores the rest.
+        * a fixed count for every group, 4: VM4H6038 (split_h6047/com/govee/h6047/newdetail/h6038/VM4H6038.java:574),
+          VM4H6048 (split_h6047/com/govee/h6047/newdetail/h6048/VM4H6048.java:392), the h6047 newdetail VM4Light
+          (split_h6047/com/govee/h6047/newdetail/vm/VM4Light.java:304), the rgbiclight VM4Light
+          (split_rgbiclight/com/govee/rgbiclight/VM4Light.java:711), the h60a1 VM4Light (Support.getOneGroupColorSize
+          = 4, split_h60ax/com/govee/pact_h60a0/adjust/h60a1/VM4Light$afterConnectedSingleReadDeviceInfo$1.java:88):
+          color_group_read(4, 1) over the value.
+        * per group from the SKU piece count: VM4LightH60A6 (H60A6), color_group_status_counted; VM4LightH1250
+          has its own variant (see color_group_status_counted).
+      Other screens read the 0xA5 value in another layout, not this type's: Controller4ColorInfoByGroup.Companion.r
+      takes [group][brightness][3 x R,G,B] (Controller4ColorInfoByGroup.java:177-194; e.g. VM4LightH1630,
+      split_h7050/com/govee/h7050/newdetail/h1630/VM4LightH1630$afterConnectedSingleReadDeviceInfo$1.java:104-117),
+      Compose4BaseInfoSingleRead.Companion.d 4-byte records with no group byte (base-classes11/com/govee/base2light/
+      pact/newdetail/ble/controller/Compose4BaseInfoSingleRead.java:182-212; the h7085 VM4Light,
+      split_outdoorlight/com/govee/h7080/adjust/h7085/VM4Light.java:164-169); the h61d3 adjustNew VM4Light reads one
+      record inline when len >= 5 (split_h61d3/com/govee/h61d3/adjustNew/VM4Light$afterConnectedSingleReadDeviceInfo$1.java:114-124).
+      record_size is caller/SKU-selected: 4-byte [brightness,R,G,B] via generateReadController
       -> q():174 when the SKU supports part-brightness; 3-byte [R,G,B] via generateReadController4OnlyColor
       -> p():157 otherwise. ALL CURATED devices are 4-byte: H60A6 (VM4LightH60A6:302), H6047 (VM4H6038:872),
       H6641 (VM4LightH61d3:269, count=4). 3-byte is used by non-curated colour-only families (tvlightv2,
       rgblight, bulblightstringv1, h7022, h6160). Modelled 4-byte here (the curated form); for a 3-byte SKU
       each record is color_group_rec_rgb. Global segment index (client-assembled) = (group_index-1)*count + k.
-      NOTE the reply's group_index byte is read but DISCARDED in the 4-byte callback path — the client tracks
-      the group by its per-group READ REQUEST, not this byte.
+      The group_index byte is used: q() hands BleUtils.L(value[0]) (unsigned) to the screen's callback as
+      the group that places the records (VM4LightH60A6$afterConnectedSingleReadDeviceInfo$1.p:133-139,
+      VM4H6038.g5 -> SubMode4Color.j, VM4H6038.java:604-613), and VM4LightH60A6 also reads it signed to
+      pick the record count (color_group_status_counted).
     seq:
       - { id: group_index, type: u1, doc: "1-based group number (K(value[0]))" }
       - { id: records, type: color_group_rec, repeat: eos, doc: "count = (len-1)/4; 4-byte [brightness,R,G,B]" }
@@ -1808,6 +2312,72 @@ types:
       - { id: r, type: u1 }
       - { id: g, type: u1 }
       - { id: b, type: u1 }
+  color_group_status_counted:
+    doc: |
+      One 0xAC TLV 0xA5 colour group (the TLV value: group byte, then records) read with the record count
+      the H60A6 screen computes, not the count len implies. STANDALONE: status_tlv's 0xA5 case stays
+      color_group_status (count from len); the caller feeds this type the TLV value and passes the two
+      per-SKU numbers the stream does not carry.
+      App (Govee Home 7.7.02): the 0xA5 branch of the status fallback lambda,
+      VM4LightH60A6$afterConnectedSingleReadDeviceInfo$1.o
+      (split_h60ax/com/govee/pact_h60a0/adjust/h60a6/VM4LightH60A6$afterConnectedSingleReadDeviceInfo$1.java:105-121):
+        colorPieceSize    = Support.getColorPieceSize(goodsType, ...)   (:112; 13 on a part-colour H60A6,
+                            split_h60ax/com/govee/pact_h60a0/pact/Support.java:154-159)    -> piece_count
+        oneGroupColorSize = Support.getOneGroupColorSize(goodsType) = 4 (:113; Support.java:183-185) -> group_size
+        b  = value[0] as a signed byte                                    (:114)        -> group_index_signed
+        i2 = colorPieceSize / oneGroupColorSize + (colorPieceSize % oneGroupColorSize != 0 ? 1 : 0)
+                                                                          (:115)        -> group_count
+        i3 = b != i2 ? oneGroupColorSize : colorPieceSize - (i2 - 1) * oneGroupColorSize
+                                                                          (:116)        -> record_count
+        Controller4ColorInfoByGroup.Companion.q(value, i3, ...)           (:117)
+      q() (base-classes11/com/govee/base2light/kt/general_controller/Controller4ColorInfoByGroup.java:160-175)
+      reads exactly i3 4-byte [brightness, R, G, B] records from value[1..] with System.arraycopy: bytes
+      after them are never read (trailing here), and a value too short for them throws, which fails the
+      app's whole status read; this type raises there too. So the last group (group_index == group_count)
+      holds the remainder, every other group group_size records. 3-byte [R, G, B] records (has_brightness
+      = 0) are q()'s sibling p() (:145-158), which no 0xAC status lambda in 7.7.02 calls.
+      group_size 0 has no app form: the app's integer division throws there (:115), and so does
+      group_count here.
+      Scope: this is VM4LightH60A6's rule. Screens that pass q() a fixed count read with
+      color_group_read(n, 1), and those that count from len with color_group_status (see its doc);
+      VM4LightH1250 tests the last group differently and is not modelled here: it ignores an empty value,
+      compares the UNSIGNED group byte with pieces / 4 + 1, reads pieces % 4 records there (none when that is
+      0) and 4 in every other group
+      (split_h60ax/com/govee/pact_h60a0/adjust/h1250/VM4LightH1250$afterConnectedSingleReadDeviceInfo$1.java:107-139).
+    params:
+      - id: piece_count
+        type: u2
+        doc: "the SKU's colour-piece (segment) count, Support.getColorPieceSize: 13 on H60A6 (devices.yaml segments)"
+      - id: group_size
+        type: u1
+        doc: "records per full group, Support.getOneGroupColorSize = 4 for every pact_h60a0 goodsType"
+      - id: has_brightness
+        type: u1
+        doc: "1 = 4-byte [brightness, R, G, B] records (q(), the one the 0xAC status lambdas call); 0 = 3-byte [R, G, B] (p())"
+    seq:
+      - { id: group_index, type: u1, doc: "1-based group number; q() passes it unsigned (BleUtils.L) to the callback that places the records" }
+      - id: records
+        repeat: expr
+        repeat-expr: record_count
+        type:
+          switch-on: has_brightness
+          cases:
+            1: color_group_record          # 4-byte [brightness,R,G,B]
+            0: color_group_record_rgb       # 3-byte [R,G,B]
+      - { id: trailing, size-eos: true, doc: "bytes after the counted records, which q() never reads (kept so the value round-trips)" }
+    instances:
+      group_index_signed:
+        value: 'group_index >= 0x80 ? group_index - 0x100 : group_index'
+        doc: "value[0] as the Java byte the app compares with group_count (VM4LightH60A6$afterConnectedSingleReadDeviceInfo$1.java:114-116); differs from group_index only for 0x80 and above"
+      group_count:
+        value: 'piece_count / group_size + (piece_count % group_size != 0 ? 1 : 0)'
+        doc: "number of groups, ceil(piece_count / group_size) (VM4LightH60A6$afterConnectedSingleReadDeviceInfo$1.java:115)"
+      is_last_group:
+        value: 'group_index_signed == group_count'
+        doc: "the group that holds the remainder (the app's b == i2, VM4LightH60A6$afterConnectedSingleReadDeviceInfo$1.java:116)"
+      record_count:
+        value: 'is_last_group ? piece_count - (group_count - 1) * group_size : group_size'
+        doc: "records q() reads from this group (i3, VM4LightH60A6$afterConnectedSingleReadDeviceInfo$1.java:116): group_size, except the last group's remainder"
 
   # ── 0xAC status REPLY, empty-safe walk: STANDALONE alternative to status_reply (which stays as is) ──
   status_reply_safe:
@@ -1955,6 +2525,17 @@ types:
             'op15::set_color': op15_color
             'op15::set_brightness': op15_brightness
             'op15::set_color_temp': op15_color_temp
+        doc: |
+          Frame-path readers for ops 0x01 / 0x02 / 0x05; every other op stays raw bytes. The write forms these
+          readers cannot key are standalone types:
+            op 0x01 set_color        op15_color_write(variant, mask_width), or op15_color_typed(variant).
+            op 0x02 set_brightness   op15_brightness_wide(mask_width) for a mask wider than 2 bytes.
+            op 0x04 set_color_group  op15_color_group_write(color_count). No case is possible: op 0x04 has a
+                                     second write body, [kelvin u2be] (Bytes.D, colour-instruction version 9;
+                                     base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:133-139,
+                                     vs Bytes.m :393-402), and the group write's colour count is not in the
+                                     stream (the zero padding reads as black). The client passes color_count
+                                     and puts the type's bytes in data.
 
   op15_color:      # op 0x01 — R,G,B then an EXTERNALLY-KEYED trailer (client-built write)
     doc: |
@@ -1965,7 +2546,7 @@ types:
         H60A1/H60A6 RGB  (i2==12, :736) = [r,g,b][00 00 00 00 00][seg_mask u2le]
         H60A1/H60A6 CCT  (i2==11, :725) = [r,g,b][kelvin u2be][tintR][tintG][tintB][seg_mask u2le]
       RGB vs CCT are byte-identical in length and op byte. This trailer is therefore EXTERNALLY-KEYED
-      (like rgb_scene_value.rest / adv manufacturer_data.rest): the encoder knows the form from i2; a
+      (like adv manufacturer_data.rest): the encoder knows the form from i2; a
       decoder of an isolated padded frame cannot. seg_mask (makeSelectedTwoBytes, <=16-seg legacy stack)
       is the last meaningful 2 bytes before zero padding.
     seq:
@@ -2400,6 +2981,13 @@ types:
   #     sceneType 2 rgbic    comType 2 ... rgbic_scene_value    (ScenesRgbIC, strip 0)
   #     sceneType 1 rgb      comType 1 ... rgb_scene_value      (ScenesRgb,   strip 0)
   #     sceneType 3 graffiti comType 7 ... scenes_graffiti_value (ParamsV1,   strip 2)
+  #   The app uploads a dialect-A blob only when ScenesOp's validator for its sceneType accepts the decoded
+  #   scenceParam (ScenesOp.l/m/n/o, base-classes10/com/govee/base2light/ble/ScenesOp.java:377-449); otherwise it
+  #   builds no controller and the scene is only activated. Each validator is modelled exactly:
+  #     sceneType 1  rgb_scene_value.is_valid (a failed read is false too)  ScenesRgb.isValidProtocolBytes
+  #     sceneType 2  a successful rgbic_scene_value read                    ScenesRgbIC.isValidProtocolBytes
+  #     sceneType 3  scenes_graffiti_check.is_valid                         ShareDiy.isValidGraffitiBytes
+  #     sceneType 6  a successful compose_scene_param read                  ShareDiy.isValidComposeBytes
   #
   # Layouts verified byte-exact against the govee-ble-local catalogs:
   #   59 H60A6 graffiti · 14 H60A6 DIY · 6 H6052 gv3 · 57 H6047 rgbic · 135 H61A8 rgbic.
@@ -2673,6 +3261,14 @@ types:
       dialect-A rgbic library scene (ScenesRgbIC.isValidProtocolBytes) = decoded scenceParam VERBATIM.
       effect_count, then that many length-prefixed effect records (fully structured — see
       rgbic_effect_record). Verified: parses all 57 H6047 + 135 H61A8 catalog scenes with exact consumption.
+      Upload gate: a successful read is exactly ScenesRgbIC.isValidProtocolBytes (Govee Home 7.7.02,
+      base-classes10/com/govee/base2light/ble/ScenesRgbIC.java:2783-2807), the check ScenesOp.m
+      (base-classes10/com/govee/base2light/ble/ScenesOp.java:394-409) makes before it sends the blob with
+      MultiNewScenesControllerV2; a failed read is its false, and the scene is then only activated. The app's walk
+      reads byte 0, then per effect the length byte and that many bytes (:2790-2797), and runs f() on them
+      (:2655-2676), which touches the same bytes rgbic_effect_record reads (17 + 6*bright_count + 3*color_count);
+      any out-of-range index throws and is caught as false (:2804-2805). Like this type it ignores bytes after
+      the last effect and after the end of each record.
     seq:
       - { id: effect_count, type: u1 }
       - { id: effects, type: rgbic_effect, repeat: expr, repeat-expr: effect_count }
@@ -2683,7 +3279,8 @@ types:
   rgbic_effect_record:
     doc: |
       One rgbic effect record — FULLY interpreted (source of truth = ParamsV2.RgbICEffect parser :967 /
-      serializer k() :706; ScenesRgbIC.f :3337 is only a length-validator, which is why an earlier draft
+      serializer k() :706; ScenesRgbIC.f, Govee Home 7.7.02 ScenesRgbIC.java:2655-2676, is only a
+      length-validator, which is why an earlier draft
       mislabeled these bytes). Layout: style byte (packed nibbles) · mode + mode-dependent 2-byte value ·
       a brightness block (bright_count × 6-byte BrightnessEffect) · a ColorEffect (colour-IC byte + speed +
       duration + the RGB palette = the ACTUAL colours) · then InAreaMove(3) + AreaMove(4) movement blocks.
@@ -2730,24 +3327,60 @@ types:
   rgb_scene_value:
     doc: |
       dialect-A rgb library scene (ScenesRgb.isValidProtocolBytes) = decoded scenceParam verbatim.
-      CONFIG-TABLE-DRIVEN: byte0 indexes a hardcoded config e(byte0) = [_, mode, color_count]
-      (ScenesRgb.e — NOT present in the value bytes) which selects the body shape:
+      Byte 0 is a bit-packed config that ScenesRgb.e (Govee Home 7.7.02,
+      base-classes10/com/govee/base2light/ble/ScenesRgb.java:1642-1656) splits into [bit 7, bits 6-4, bits 2-0]
+      = [follow_sys_brightness, mode, color_count] (bit 3 is not read); the instances below give them. They
+      select the body shape:
         mode 1: size == 2 + effect_count*(color_count + 5)                     (effect_count @ byte1)
         mode 0: size == effect_count*5 + 3 + color_count*color_num             (color_num @ byte[eff*5+2])
-      Because mode/color_count come from the external table, the body is NOT self-describing from bytes
-      alone; modelled as byte0 + opaque remainder. See GOVEE_BLE_GATT_PROTOCOL.md §4.4.
+      The body itself stays opaque (rest). Upload gate: ScenesOp.l
+      (base-classes10/com/govee/base2light/ble/ScenesOp.java:377-392) sends the blob with
+      MultiNewScenesControllerV1 only when ScenesRgb.isValidProtocolBytes (ScenesRgb.java:1676-1701) is true,
+      and otherwise the scene is only activated: that is is_valid, and a failed read (an empty blob, where the
+      app's bytes[0] throws) is false too. See GOVEE_BLE_GATT_PROTOCOL.md §4.4.
     seq:
       - { id: config_tag, type: u1 }
-      - { id: rest, size-eos: true, doc: 'body per the config table above (mode 0/1); not self-describing from bytes alone' }
+      - { id: rest, size-eos: true, doc: 'the body, opaque here; its shape follows mode / color_count (byte 0) and effect_count (byte 1), above' }
+    instances:
+      follow_sys_brightness:
+        value: '(config_tag >> 7) == 1'
+        doc: 'bit 7 of byte 0, e()[0]: ScenesRgb.d (ScenesRgb.java:1637-1640) is e()[0] == 1, and followSysBrightness (:1658-1664) returns it for the decoded blob. Not part of the upload check'
+      mode:
+        value: '(config_tag >> 4) & 7'
+        doc: 'bits 6-4 of byte 0, e()[1] (binaryString.substring(1, 4), ScenesRgb.java:1655): 1 or 0 picks the body shape; isValidProtocolBytes is false for 2..7 (:1687-1689)'
+      color_count:
+        value: 'config_tag & 7'
+        doc: 'bits 2-0 of byte 0, e()[2] (binaryString.substring(5), ScenesRgb.java:1655; bit 3 is skipped)'
+      effect_count:
+        value: 'rest.length >= 1 ? rest[0] : 0'
+        doc: 'byte 1, unsigned (ScenesRgb.java:1688 / :1690); 0 for a 1-byte blob, where the app''s read throws and is_valid is false'
+      color_num:
+        value: 'rest.length > effect_count * 5 + 1 ? rest[effect_count * 5 + 1] : 0'
+        doc: 'mode 0: the byte at effect_count*5 + 2 (colorNumIndex, ScenesRgb.java:1691-1693); 0 when that index is past the end, where the app''s read throws and is_valid is false'
+      is_valid:
+        value: >-
+          rest.length >= 1
+          and ((mode == 1 and effect_count * (color_count + 5) + 2 == rest.length + 1)
+          or (mode == 0 and rest.length > effect_count * 5 + 1
+          and effect_count * 5 + 3 + color_count * color_num == rest.length + 1))
+        doc: >-
+          ScenesRgb.isValidProtocolBytes (ScenesRgb.java:1676-1701), exactly. mode 1: byte 1 * (color_count + 5)
+          + 2 == the blob size (:1688). mode 0: effect_count * 5 + 3 + color_count * color_num == the blob size
+          (:1690-1698). Any other mode is false (:1688), and so is a blob too short for the bytes the app reads
+          (byte 1, and in mode 0 the color_num byte): the app's read throws and its catch returns false
+          (:1699-1700; the jadx text drops that return, the bytecode returns 0).
 
   # ── dialect-A graffiti library scene (ParamsV1 / DiyProtocolParser.parserParamsV1) — proType 0xA3, comType 7 ──
-  #    H6052 sceneType-3. Wire value = decode(scenceParam)[2:] (drops the [0x01, effect_hi] header; ScenesOp.n():483).
+  #    H6052 sceneType-3. Wire value = decode(scenceParam)[2:] (drops the [0x01, effect_hi] header; ScenesOp.n :422-425).
   scenes_graffiti_value:
     doc: |
       dialect-A graffiti library scene. Wire value = decode(scenceParam)[2:] (strips the 0x01 header +
-      effect_hi byte; ScenesOp.n():483). Structure = ParamsV1.a() / DiyProtocolParser.parserParamsV1:1345 —
+      effect_hi byte; ScenesOp.n, base-classes10/com/govee/base2light/ble/ScenesOp.java:422-425). Structure =
+      ParamsV1.a() / DiyProtocolParser.parserParamsV1 (Govee Home 7.7.02,
+      base-classes10/com/govee/base2light/ac/diy/v2/DiyProtocolParser.java:1391-1433) —
       effect_lo, speed, brightness, background RGB, seg_count, then seg_count colour groups. Verified:
-      parses all 25 H6052 sceneType-3 catalog scenes with exact consumption.
+      parses all 25 H6052 sceneType-3 catalog scenes with exact consumption. Not the upload gate: it needs
+      the last group whole, which the app does not check; the gate is scenes_graffiti_check.
     seq:
       - { id: effect_lo, type: u1 }
       - { id: speed, type: u1 }
@@ -2780,7 +3413,8 @@ types:
       ScenesOp.n (base-classes10/com/govee/base2light/ble/ScenesOp.java:411-429; from parseSceneV1 :549-550 when
       versionArray has 3) checks it with ShareDiy.isValidGraffitiBytes
       (base-classes10/com/govee/base2light/ac/diy/local/ShareDiy.java:96-115: size >= 9, byte 0 == 1, then a walk
-      of the seg_count group headers that is false on an out-of-range read) and sends bytes [2:] (:424) with
+      of the seg_count group headers that is false on an out-of-range read; modelled exactly by
+      scenes_graffiti_check, of which the marker below is only the lead test) and sends bytes [2:] (:424) with
       MultiNewScenesControllerV3, commByte 0x07 (multi_comm_byte v3_new_scenes). Library site:
       scenes._plan_upload, sceneType 3 (strip 2).
     seq:
@@ -2792,7 +3426,54 @@ types:
         doc: 'first byte of the effect-code pair: parserParamsV1 :1405 reads int[]{bytes[1], bytes[2]} = (effect_hi, scenes_graffiti_value.effect_lo); stripped with the lead'
       - id: value
         size-eos: true
-        doc: 'the upload value, bytes [2:] (ScenesOp.n :424): read it as scenes_graffiti_value. That type is stricter than the app: isValidGraffitiBytes checks only the group headers (and size >= 9), so a blob whose last group is short passes there and fails scenes_graffiti_value'
+        doc: 'the upload value, bytes [2:] (ScenesOp.n :424): read it as scenes_graffiti_value. That type is stricter than the app: isValidGraffitiBytes checks only the group headers (and size >= 9), so a blob whose last group is short passes there and fails scenes_graffiti_value. Gate the upload on scenes_graffiti_check.is_valid of the whole blob'
+
+  scenes_graffiti_check:
+    doc: |
+      ShareDiy.isValidGraffitiBytes (Govee Home 7.7.02,
+      base-classes10/com/govee/base2light/ac/diy/local/ShareDiy.java:96-115), exactly: the check ScenesOp.n
+      (base-classes10/com/govee/base2light/ble/ScenesOp.java:411-429, from parseSceneV1 :549-550) makes on a
+      sceneType 3 (graffiti) library scene's decoded scenceParam before it sends bytes [2:] with
+      MultiNewScenesControllerV3; when it is false, n returns null and the scene is only activated. Read the whole
+      decoded blob (lead included: the bytes scenes_graffiti_param reads). The read never fails; is_valid is the
+      app's answer. The app checks size >= 9 and byte 0 == 1 (:99), takes seg_count from byte 8 (:102), then walks
+      the group headers from byte 9, reading each header byte (a group's color_count) and stepping over the header,
+      the RGB and that many pixel bytes, next = at + byte[at] + 4 (:103-107). A read past the end throws and is
+      caught as false (:109-113). Nothing else is checked: the last group's RGB and pixel bytes may be missing, and
+      bytes after the walk are ignored. scenes_graffiti_value (read on bytes [2:]) also needs the last group
+      whole, so it is stricter than this check. Use scenes_graffiti_param for the upload value.
+    seq:
+      - id: blob
+        size-eos: true
+        doc: 'the decoded scenceParam, whole'
+      - id: group_heads
+        type: 'scenes_graffiti_check_step(_index == 0 ? 9 : group_heads[_index - 1].next_at)'
+        repeat: expr
+        repeat-expr: seg_count
+        doc: 'one zero-width step per pass of the app''s loop (ShareDiy.java:104-106), at = the index it reads; reads no bytes'
+    instances:
+      seg_count:
+        value: 'blob.length >= 9 ? blob[8] : 0'
+        doc: 'byte 8, unsigned (ShareDiy.java:102); 0 for a blob shorter than 9, which the app rejects before reading it'
+      is_valid:
+        value: 'blob.length >= 9 and blob[0] == 1 and (seg_count == 0 or group_heads[seg_count - 1].in_range)'
+        doc: >-
+          ShareDiy.isValidGraffitiBytes, exactly: size >= 9, lead 0x01, and every header index the walk reads
+          inside the blob. The indexes rise by at least 4 a step, and a step past the end stops there, so the
+          last one is inside only when all of them are.
+  scenes_graffiti_check_step:
+    doc: 'one pass of the isValidGraffitiBytes walk (ShareDiy.java:105), no bytes read; the blob is _parent.blob'
+    params:
+      - id: at
+        type: u4
+        doc: 'the index of this group''s header byte (its color_count) in the blob'
+    instances:
+      in_range:
+        value: 'at < _parent.blob.length'
+        doc: 'the app''s read of byte[at] does not throw'
+      next_at:
+        value: 'in_range ? at + _parent.blob[at] + 4 : at'
+        doc: 'the next header index, at + color_count + 4 (header + RGB + pixel bytes); stays at `at` once past the end'
 
   compose_scene_param:
     doc: |
@@ -2808,7 +3489,7 @@ types:
     seq:
       - id: marker
         contents: [0x0a]
-        doc: 'lead byte 0x0a (ShareDiy.isValidComposeBytes :82)'
+        doc: 'lead byte 0x0a (ShareDiy.isValidComposeBytes :82), the whole of that check: a blob that reads as this type is one ScenesOp.o sends with MultiNewScenesControllerV5. An empty blob fails here; in the app its bytes[0] throws out of o (nothing in ScenesOp catches it), so no upload controller is built for it either'
       - id: value
         size-eos: true
         doc: 'the upload value, bytes [1:] (opaque here)'
@@ -2901,6 +3582,85 @@ types:
       - { id: g, type: u1 }
       - { id: b, type: u1 }
 
+  color_group_direct_frame:
+    doc: |
+      One whole DIRECT colour-group reply frame, `aa a5 <group> ...` (or `aa a2 <group> ...`), as
+      Controller4ColorInfoByGroup reads it
+      (base-classes11/com/govee/base2light/kt/general_controller/Controller4ColorInfoByGroup.java).
+      STANDALONE, wired into no dispatch: feed it the notified 20-byte frame and the caller's group size.
+      Nothing in the frame names the controller that asked, so the frame path cannot tell this reply from
+      H61A8's mechanism-B batches and read_command keeps its cases: 0xA5 -> bulb_group_color_read_v2
+      ([batch_seq][3 x 4-byte group][trailing]; its first 13 bytes are this reply's [group][3 records] and
+      a 4th record lands in `trailing`), 0xA2 -> bulb_group_color_read ([batch_seq][4 x 3-byte group], the
+      same bytes as a 4-record 0xA2 reply).
+      App read path (7.7.02). Request: Companion.g (:111-120) sends the 1-based group number as the only ext
+      byte, and generateReadController$default fills command -91 = 0xA5 (:37-42). The reply is matched on
+      proType and command alone (AbsControllerNoEvent4Single.isSameController,
+      base-classes10/com/govee/base2light/ble/controller/AbsControllerNoEvent4Single.java:176-179), so its
+      group byte is never checked against the request. Only a 20-byte frame is handled
+      (ComposeBleComm.K, base-classes10/com/govee/base2light/ble/comm/ComposeBleComm.java:198, drops any
+      other length), and AbsControllerNoEvent4Single.onResult (:221-227) copies validBytes = frame bytes
+      2..18 (17 bytes) to Companion.h -> q (:58-66, 160-175): byte 0 = the group, read unsigned
+      (BleUtils.Companion.L = b & 255, base-classes10/com/govee/base2kt/utils/BleUtils.java:272-274), then
+      `i` records of [brightness, R, G, B] from byte 1, every byte unsigned (BleUtil.getUnsignedByte), where
+      `i` is the caller's group size. q has no length check: a count whose records run past validBytes throws
+      (System.arraycopy) and the read fails. Companion.i (:68-75) passes on only the colour and brightness
+      arrays and drops the group byte; the caller places them by the group it requested (e.g.
+      SubMode4Color.j, base-classes11/com/govee/base2light/pact/newdetail/sub/SubMode4Color.java:113-142,
+      which also trims the last group to the piece count). The colour-only generator
+      generateReadController4OnlyColor$default fills command -94 = 0xA2 (:44-49) and reads 3-byte [R, G, B]
+      records the same way (Companion.j / k / p, :122-131, 77-85, 145-158). All 80 generator calls in 7.7.02
+      take the default command byte, so has_brightness follows the command byte.
+      Who sends `aa a5 <group>`, all with 4 records per group: H6047, goodsType 119 old detail
+      NewDetailVm.n5 (split_h6047/com/govee/h6047/detail/NewDetailVm.java:343-380;
+      Support.getOneGroupColorSize() = 4, split_h6047/com/govee/h6047/pact/Support.java:155-157); H6641,
+      h61d3 adjustNew/VM4Light.w5 (split_h61d3/com/govee/h61d3/adjustNew/VM4Light.java:636-669;
+      H61D3Support.t = 4, split_h61d3/com/govee/h61d3/pact/H61D3Support.java:1576-1578); H6062
+      (split_h6062/com/govee/striplight/newdetail/VM4Light.java:393-396, literal 4); H6061
+      (split_h6061/com/govee/cubelight/newdetails/CubeVM4Light.java:409-411, literal 4); and H60A6 outside
+      its 0xAC connect burst, VM4LightH60A6.q5
+      (split_h60ax/com/govee/pact_h60a0/adjust/h60a6/VM4LightH60A6.java:504-530; Support.getOneGroupColorSize
+      = 4, split_h60ax/com/govee/pact_h60a0/pact/Support.java:183-185), called from the IoT status path A5
+      (:162-178) and after a snapshot apply, E5 (:236-253). With 4 records of 4 bytes the group fills
+      validBytes exactly (1 + 4 x 4 = 17). Other families pass 3 records (e.g.
+      split_h6079/com/govee/h6020/newDetial/H6020VM4Light.java:637), and q leaves the bytes after them
+      unread. `aa a2 <group>` comes only from colour-only families (the 8 generateReadController4OnlyColor
+      callers, e.g. split_rgbiclight/com/govee/rgbiclight/VM4Light.java:958,
+      split_tvlightv4/com/govee/pact_tvlightv2/newdetail/VM4Light.java:493), none of the SKUs above: a
+      caller that sent aa a5 checks command == local_color_read.
+      Not this layout: the gradient read generateReadGradientController, also 0xA5 (Companion.m / n / r,
+      :133-143, 95-103, 177-194: [group][byte][3 x R,G,B]; split_h7050/com/govee/h7050/newdetail/h1630/VM4LightH1630.java:271,
+      split_h7075/com/govee/h7075/h707A/H707ABCDetailVM.java:374).
+    params:
+      - id: record_count
+        type: u1
+        doc: "records in the group = the caller's group size (q's / p's `i`, the SKU's oneGroupColorSize: 4 on every aa a5 SKU above). Not in the frame. Records that do not fit in frame bytes 2..n-2 (the app's validBytes) raise, as the app's read fails"
+    seq:
+      - id: pro_type
+        type: u1
+        enum: pro_type
+        valid: pro_type::read
+        doc: "byte 0 = 0xAA (AbsControllerNoEvent4Single.getProType for a read controller, :139-145)"
+      - id: command
+        type: u1
+        enum: command
+        valid:
+          any-of: [command::local_color_read, command::bulb_string_color_read]
+        doc: "byte 1: 0xA5 = generateReadController (4-byte records, q), 0xA2 = generateReadController4OnlyColor (3-byte records, p)"
+      - id: group
+        type: 'color_group_read(record_count, has_brightness ? 1 : 0)'
+        doc: "from frame byte 2 (validBytes[0]): [group_index u1][record_count records]"
+      - id: padding
+        size: _io.size - _io.pos - 1
+        doc: "the bytes after the records up to the checksum, which the app does not read; kept so the frame round-trips. Raises (InvalidArgumentError) when the records reach the last byte, i.e. do not fit in validBytes"
+      - id: checksum
+        type: u1
+        doc: "last byte: XOR of bytes 0..n-2 (not checked here, as in `frame`)"
+    instances:
+      has_brightness:
+        value: command == command::local_color_read
+        doc: "true for 0xA5 (q, [brightness, R, G, B]); false for 0xA2 (p, [R, G, B])"
+
   # ─────────── PARAMETRIC client-invoked types (Tier C: discriminator is NOT in the frame) ───────────
   # A type reached through a frame `switch-on` case cannot receive a parameter, so these are STANDALONE:
   # the client invokes them directly, passing the one bit of context it holds (from devices.yaml). This
@@ -2941,7 +3701,7 @@ types:
       kelvin) and the cube strategy (split_h6061/com/govee/cubelight/newdetails/CubeNewInfo4Detail.java:141-153,
       read for b == 13 by U :503-517, CCT for g() > 0). Kind 2 reads the same first 5 bytes plus 3 tint bytes
       they never read, so it needs an 8-byte body; kind 3 decodes a bare 5-byte value too. Kind 3 has no tint
-      and no is_cct; use is_cct_positive.
+      and no is_cct; use is_cct_positive. Kind 0's CCT test is is_cct_kelvin_positive (signed kelvin > 0).
       Kind 2 is ModeParseStrategyConfig.a, the same rule in two splits: rgblight (installed by VM4Light.v5
       for H6188) and bulblight (the non-H6001 branch). kelvin = getSignedShort(vb[3], vb[4]); a non-zero
       kelvin makes the strategy show the tint (vb[5..7]) rather than R/G/B, and kelvin 0 the R/G/B. The body
@@ -2981,6 +3741,28 @@ types:
         value: 'kelvin >= 0x8000 ? kelvin - 0x10000 : kelvin'
         if: 'kind == 0'
         doc: "kind 0 kelvin as the app reads it (getSignedShort sign-extends: 0x8000-0xFFFF reads as -32768..-1)"
+      is_cct_kelvin_positive:
+        value: 'kind == 0 and kelvin_signed > 0'
+        doc: >-
+          kind 0: colour-temperature mode, by the test the devices.yaml mode_color_decode gradual_kelvin_s16be
+          screens apply: kelvin_signed > 0. False for every other kind (kinds 2 / 3 use is_cct_positive). The
+          default strategy stores getSignedShort(vb[1], vb[2]) as SubMode4Color.b
+          (base-classes11/com/govee/base2light/pact/newdetail/sub/SubMode4Color.java:44-48, run by
+          parseModeValidBytes :239-241), and each screen takes CCT only for g() > 0 (Govee Home 7.7.02):
+          OpInfo4Detail.x for 0x15 / 0x0b / 0x02 / 0x0d where the default strategy is installed
+          (base-classes11/com/govee/base2light/pact/newdetail/OpInfo4Detail.java:766-779); striplight
+          OpInfo4Detail.u, H6062 (split_h6062/com/govee/striplight/newdetail/OpInfo4Detail.java:428-438); h60a1
+          Info4Detail.Q for 0x15 (split_h60ax/com/govee/pact_h60a0/adjust/h60a1/Info4Detail.java:399-405);
+          H6078InfoDetail.I for 0x0d (split_hollowlamp/com/govee/tablelampv1/newAdjust/H6078InfoDetail.java:318-322);
+          H6059InfoDetail.L for 0x0d (split_hollowlamp/com/govee/hollowlamp/newdetails/H6059InfoDetail.java:342-345);
+          H7002 detail Info4Detail.a0 for 0x0b
+          (split_bulblightstringv1/com/govee/bulblightstringv1/detail/Info4Detail.java:567-570, its own copy of
+          the strategy :153-162) and H7022 Info4Detail.f0 for 0x0b
+          (split_bulblightstringv1/com/govee/h7022/detail/Info4Detail.java:704-707, copy :169-175). False
+          (kelvin 0, or a raw 0x8000-0xFFFF) is not CCT and the report carries no colour; those screens assign
+          their own Kelvin only inside the > 0 branch, while SubMode4Color.b still stores the non-positive
+          value. Not the test of the gradual_kelvin_s16be_nocct screens (no CCT test),
+          gradual_only (no Kelvin read) or skip_kelvin_pair_s16be's 0x0d (two Kelvins; kind 0 reads only the first).
       report_kelvin_signed:
         value: 'report_kelvin >= 0x8000 ? report_kelvin - 0x10000 : report_kelvin'
         if: 'kind == 2 or kind == 3'
