@@ -294,15 +294,16 @@ def status_burst_report(rx_ac: list[bytes]) -> StatusBurstReport:
     (see :func:`_split_bursts`): a read that lost everything after its first chunk (the next read's
     identical first chunk can't be told from a double delivery), and a first chunk repeated after
     interior chunks, which splits one read into two incomplete bursts. Each burst is then judged
-    by the runtime's own rule (:func:`.reassemble.burst_chunks`: the first chunk's packet count,
-    chunks de-duplicated) and decoded by the runtime's own walker
-    (:func:`.reassemble.walk_status_tlvs`). Stricter than the runtime, which decodes the
-    contiguous prefix of any burst: only complete bursts without conflicting duplicate chunks
-    are walked. In those, a TLV type outside :data:`KNOWN_STATUS_REPLY_TLVS`, or a whole TLV its
-    spec type can't read (including a 0x07 block the walk steps past, as the app does), is a real
-    spec gap; so is a TLV whose len byte the app reads as negative (0x80 or more). A complete burst
-    whose TLV stream overruns it is walked up to the cut and counted in
-    :attr:`StatusBurstReport.truncated`: the runtime uses no state from it.
+    by the runtime's own rule (:func:`.reassemble.burst_chunks`: the app's state machine, chunks
+    taken in order) and decoded by the runtime's own walker
+    (:func:`.reassemble.walk_status_tlvs`). Like the runtime, only complete bursts are walked; a
+    burst with conflicting duplicate chunks is not walked either. In those, a TLV type outside
+    :data:`KNOWN_STATUS_REPLY_TLVS`, or a whole TLV its spec type can't read (including a 0x07 block
+    the walk steps past and a 0xA5 group read with the app's record count), is a real spec gap; so is
+    a TLV whose len byte the app reads as negative (0x80 or more). A walk that stops at the buffer's
+    tail (``"tail"``) is a clean end, as in the app. A complete burst whose TLV stream overruns it is
+    walked up to the cut and counted in :attr:`StatusBurstReport.truncated`: the runtime uses no state
+    from it.
 
     A burst from a redacted field-test capture (first chunk zeroed past ``ac 00``,
     :func:`_header_redacted`) has no packet count and no payload: it is counted in

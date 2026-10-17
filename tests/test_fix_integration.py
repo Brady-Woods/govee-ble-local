@@ -292,7 +292,7 @@ def test_field_test_runner_uses_the_public_flush(monkeypatch: pytest.MonkeyPatch
 # ── WP2b-024: a len byte the app reads as negative fails the read ────────────────────────────
 @pytest.mark.parametrize("stream", [
     bytes([0x01, 0x01, 0x01, 0x99, 0x80, *range(0x80)]),        # the whole-buffer parse reads it
-    bytes([0x01, 0x01, 0x01, 0x04, 0x01, 0x32, 0x99, 0x90]),    # only the per-TLV walk reaches it
+    bytes([0x01, 0x01, 0x01, 0x04, 0x01, 0x32, 0x99, 0x90, 0x00]),   # the per-TLV walk reaches it
 ], ids=["whole-buffer-parse", "per-tlv-walk"])
 def test_a_tlv_len_of_0x80_or_more_fails_the_read_like_the_app(stream: bytes) -> None:
     frames = _chunk(stream)
@@ -304,6 +304,16 @@ def test_a_tlv_len_of_0x80_or_more_fails_the_read_like_the_app(stream: bytes) ->
     assert report.malformed == 0 and report.gaps == [
         f"0xAC reply TLV type 0x99 has len 0x{cut.length:02x}: the app reads a len of 0x80 or more as "
         "negative and fails the read"]
+
+
+def test_a_negative_len_with_no_value_byte_after_it_is_a_clean_tail() -> None:
+    # u():271-282: when no byte follows the len, the walk stops cleanly whatever the len, before
+    # `new byte[len]` could throw, and the read succeeds with what it walked.
+    frames = _chunk(bytes([0x01, 0x01, 0x01, 0x04, 0x01, 0x32, 0x99, 0x90]))
+    st = r.parse_status(frames)
+    assert (st.is_on, st.brightness) == (True, 0x32)
+    assert r.walk_status_tlvs(r.reassemble(frames))[1] == r.TlvCut("tail", 0x99, 6, 0x90)
+    assert status_burst_report(frames).gaps == []
 
 
 def test_a_len_below_0x80_is_still_read() -> None:

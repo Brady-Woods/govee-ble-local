@@ -44,10 +44,15 @@ def test_doubled_delivery_reassembles_identically() -> None:
     assert st.zone_power == {0: True, 1: True}
 
 
-def test_out_of_order_chunks_reassemble_by_index() -> None:
+def test_out_of_order_chunks_are_not_reassembled() -> None:
+    # WAS: put back in index order. The app takes a chunk only when its index is the next one expected
+    # (AbsController4BleSingleSendMultiBack.isSameController:220), so an early chunk is ignored and,
+    # unless it comes again in order, the read never completes.
     frames = [bytes.fromhex(h) for h in _BURST]
     shuffled = [frames[3], frames[0], frames[-1], frames[1], frames[2], *frames[4:-1]]
-    assert r.reassemble(shuffled) == r.reassemble(frames)
+    assert r.reassemble(shuffled) == b"" and r.parse_status(shuffled) == r.StatusReply()
+    # ...but a chunk that arrives early and again in order is taken the second time.
+    assert r.reassemble([frames[3], *frames]) == r.reassemble(frames)
 
 
 def test_parse_status_stops_on_padding() -> None:
@@ -103,18 +108,17 @@ def test_live_burst_full() -> None:
     assert len(st.segments) == 13
 
 
-def test_lost_terminator_still_yields_core_state() -> None:
-    st = r.parse_status(_LIVE[:-1])
-    assert (st.is_on, st.brightness, st.zone_power) == (False, 100, {0: False, 1: False})
-    assert 0 < len(st.segments) < 13  # the prefix that arrived, nothing invented
+def test_a_lost_terminator_gives_no_state() -> None:
+    # WAS: the prefix's state. The app's read never completes (l() never runs), so nothing is applied.
+    assert r.parse_status(_LIVE[:-1]) == r.StatusReply()
+    assert r.burst_chunks(_LIVE[:-1])[1] is False
 
 
-def test_gap_never_splices_later_chunks_in() -> None:
-    gapped = _LIVE[:3] + _LIVE[4:]  # chunk 0x03 lost
-    st = r.parse_status(gapped)
-    assert st.is_on is False and st.brightness == 100
-    assert st.zone_power == {} and st.segments == []  # beyond the gap: dropped, not garbage
-    assert r.reassemble(gapped) == r.reassemble(_LIVE[:3])
+def test_a_gap_gives_no_state() -> None:
+    gapped = _LIVE[:3] + _LIVE[4:]  # chunk 0x03 lost: the app waits for it, ignoring the rest
+    assert r.parse_status(gapped) == r.StatusReply()
+    assert r.reassemble(gapped) == b""
+    assert r.burst_chunks(gapped)[0] == _LIVE[:3]   # the chunks the app took before the gap
 
 
 def test_duplicate_chunks_collapse() -> None:

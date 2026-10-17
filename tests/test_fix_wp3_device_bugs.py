@@ -544,15 +544,20 @@ def test_mismatched_selector_reply_is_not_parsed() -> None:
     assert d.state.hardware_version == "1.02.00" and d.state.serial_number is None
 
 
-# ── WP3-053: mechanism-B batches outside the walk are dropped ─────────────────────────────
-def test_mechanism_b_drops_batches_outside_the_walk() -> None:
+# ── WP3-053: mechanism-B batches are placed by the batch asked for ──────────────────────────
+@pytest.mark.parametrize("claimed", [200, 0, 1])
+def test_mechanism_b_places_each_reply_by_its_request(claimed: int) -> None:
+    # WAS: placed by the reply's own byte, and a reply claiming batch 200 dropped. goodsType 19's screen
+    # drops that byte (Controller4ColorInfoByGroup.Companion.i) and places by its loop (VM4Light.N5 ->
+    # P5), so a reply claiming batch 200, 0 or a duplicate 1 still lands as the batch asked for.
     def batch(frame: bytes) -> list[bytes]:
-        seq = 200 if frame[2] == 5 else frame[2]                 # the last reply claims batch 200
-        return [_frame(0xAA, 0xA5, seq, *([50, 1, 2, 3] * 3))]
+        seq = claimed if frame[2] == 5 else frame[2]
+        return [_frame(0xAA, 0xA5, seq, *([50, frame[2], 2, 3] * 3))]
 
     d = _dev("H61A8", {0xA5: batch})
     run(d._read_mechanism_b())
-    assert [s.index for s in d.state.segments] == list(range(12))
+    assert [s.index for s in d.state.segments] == list(range(15))
+    assert [s.rgb for s in d.state.segments[12:]] == [(5, 2, 3)] * 3
 
 
 # ── WP3-054 .. WP3-057 / WP3-059: what makes a read-back authoritative ────────────────────

@@ -159,9 +159,12 @@ def test_percent_to_raw_known_values() -> None:
 
 
 def test_raw_to_percent_known_values_and_clamp() -> None:
-    # ceil((raw-20)/2.37f) + 1, clamped to 0..100
+    # ceil((raw-20)/2.37f) + 1 of the byte clamped to [20, 254] (ViewBrightness.b): 1..100. WAS: 0 below 20.
     assert [raw_to_percent(r, 20, 254) for r in (20, 21, 136, 254, 255)] == [1, 2, 50, 100, 100]
-    assert raw_to_percent(0, 20, 254) == 0
+    assert {raw_to_percent(r, 20, 254) for r in range(0, 18)} == {1}
+    assert raw_to_percent(0, 6, 254) == raw_to_percent(0, 40, 254) == 1
+    # The percent range [1, 100] shows the byte itself (setDrawTextIn100 false). WAS: calculatePercent.
+    assert [raw_to_percent(r, 1, 100) for r in (0, 1, 49, 100, 120)] == [0, 1, 49, 100, 100]
 
 
 def test_brightness_round_trip_every_percent() -> None:
@@ -345,3 +348,11 @@ def test_field_test_runs_end_to_end_and_restores(tmp_path: Path, monkeypatch: py
     # nothing identifying is written: the address is masked to its vendor prefix
     text = report_path.read_text()
     assert "AA:BB:CC:DD:EE:88" not in text and rep["device"]["address"] == "AA:BB:CC:xx:xx:xx"
+
+
+@pytest.mark.parametrize(("raw", "pct"), [(0, 1), (17, 1), (20, 1), (136, 50), (0xFF, 100)])
+def test_a_reported_raw_brightness_reads_as_the_screen_shows_it(raw: int, pct: int) -> None:
+    # ViewBrightness.b: calculatePercent of the byte clamped to [20, 254], so never 0 (WAS: 0 below 18).
+    d = _dev({0x04: [_frame(0xAA, 0x04, raw)]})
+    asyncio.run(d._read_polled())
+    assert d.state.brightness == pct

@@ -91,13 +91,11 @@ def test_lost_chunk_before_terminator_is_incomplete_and_never_spliced() -> None:
     dropped = _BURST[:8] + _BURST[9:]
     chunks, complete, conflicts = r.burst_chunks(dropped)
     assert (complete, conflicts) == (False, 0) and chunks == _BURST[:8]
-    assert r.reassemble(dropped) == r.reassemble(_BURST[:8])
     two = _BURST[:7] + _BURST[9:]      # 0x07 and 0x08 both lost
-    assert r.reassemble(two) == r.reassemble(_BURST[:7])
-    full = r.parse_status(_BURST)
-    st = r.parse_status(dropped)
-    assert (st.is_on, st.brightness, st.zone_power) == (True, 0x50, {0: True, 1: True})
-    assert st.segments == full.segments[: len(st.segments)]   # a true prefix, nothing invented
+    # WAS: the prefix was joined and decoded. The app's read never completes (END_PKG_ORDER, then the
+    # timeout), so nothing is joined and no state is used.
+    assert r.reassemble(dropped) == r.reassemble(two) == b""
+    assert r.parse_status(dropped) == r.parse_status(two) == r.StatusReply()
 
 
 def test_lone_terminator_is_not_a_burst() -> None:
@@ -230,11 +228,10 @@ def test_walk_records_the_info_blocks_it_steps_past() -> None:
     assert [int(t.type) for t in r.walk_status_tlvs(buf)[0]] == [0x01, 0x04]   # the list is optional
 
 
-def test_burst_cut_by_lost_chunks_keeps_its_whole_tlvs() -> None:
-    # Lost chunks are the library's own leniency (the app never decodes such a burst): every whole
-    # TLV before the cut is used, switch and brightness included.
-    st = r.parse_status(_BURST[:3])
-    assert (st.is_on, st.brightness) == (True, 0x50)
+def test_a_burst_cut_by_lost_chunks_gives_no_state() -> None:
+    # WAS: the library's own leniency kept every whole TLV before the cut. The app never decodes such a
+    # burst (l() runs only once the last packet is in).
+    assert r.parse_status(_BURST[:3]) == r.StatusReply()
 
 
 def test_unparseable_first_tlv_yields_empty_state_without_raising(
@@ -257,8 +254,11 @@ def test_walk_reports_where_and_why_it_stopped() -> None:
     assert cut == r.TlvCut("unparsed", 0x07, 3, 1)
     tlvs, cut = r.walk_status_tlvs(bytes([0x01, 0x01, 0x01, 0x04, 0x05, 0x10]))
     assert [int(t.type) for t in tlvs] == [0x01] and cut == r.TlvCut("truncated", 0x04, 3, 5)
+    # The buffer ends before a value starts: u() stops cleanly (:257-267, :271-282), keeping the switch.
     tlvs, cut = r.walk_status_tlvs(bytes([0x01, 0x01, 0x01, 0x04]))
-    assert cut == r.TlvCut("truncated", 0x04, 3)
+    assert [int(t.type) for t in tlvs] == [0x01] and cut == r.TlvCut("tail", 0x04, 3)
+    tlvs, cut = r.walk_status_tlvs(bytes([0x01, 0x01, 0x01, 0x30, 0x00]))
+    assert [int(t.type) for t in tlvs] == [0x01] and cut == r.TlvCut("tail", 0x30, 3, 0)
     tlvs, cut = r.walk_status_tlvs(bytes([0x01, 0x01, 0x01, 0x00, 0x00]))
     assert [int(t.type) for t in tlvs] == [0x01] and cut is None   # zero pad: a clean end
     assert r.walk_status_tlvs(b"") == ([], None)

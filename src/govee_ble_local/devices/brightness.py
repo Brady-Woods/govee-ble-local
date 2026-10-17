@@ -37,8 +37,14 @@ def percent_to_device(pct: int, lo: int, hi: int) -> int:
 
 
 def raw_to_percent(raw: int, lo: int, hi: int) -> int:
-    """``NumberUtil.calculatePercent(max, min, progress)``:
-    ``(int) (Math.ceil((progress - min) / (((max - min) + 3) / 100.0f)) + 1.0)``, clamped
-    to 0..100 (the app does not clamp; a reply below ``min`` would go negative)."""
-    pct = int(math.ceil(_f32((raw - lo) / _step(lo, hi))) + 1.0)
-    return max(0, min(100, pct))
+    """The percent the app's control screen shows for a reported byte ``raw`` on a device whose raw range
+    is ``[lo, hi]``. Its header slider (base2light newdetail ``DelegateHeader.i0:230-239`` ->
+    ``ViewBrightness.b:353-365``; ``setDrawTextIn100`` only for a range above 100, :368) shows the byte
+    itself on the percent range [1, 100] (at most 100 here), and otherwise
+    ``NumberUtil.calculatePercent(max, min, progress)`` of the byte clamped to the range:
+    ``(int) (Math.ceil((progress - min) / (((max - min) + 3) / 100.0f)) + 1.0)``, so 1..100
+    (``SameModelCmdOp.E1:1101-1108`` gives the same 1..100 on a raw range)."""
+    if lo == 1 and hi == 100:
+        return max(0, min(100, raw))
+    pct = int(math.ceil(_f32((min(max(raw, lo), hi) - lo) / _step(lo, hi))) + 1.0)
+    return max(1, min(100, pct))

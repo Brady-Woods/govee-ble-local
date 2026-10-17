@@ -75,6 +75,9 @@ model, from which the shipped readers are generated).
 - `GoveeConnection(session_frames=...)`: writes sent once per connection after the unlock, whose refusal
   or missing ack is only logged; `GoveeConnection.write_payload_size`, the link's write size (ATT MTU - 3,
   20..509, 20 when the backend can't say); `send_unacked` also takes a function of that size.
+- `wire.reassemble.BurstAssembler`: the app's 0xAC burst state machine, fed one record at a time
+  (`feed` returns whether the app takes it; `status` is `"waiting"`, `"complete"` or `"failed"`), and the
+  `wire.reassemble.TlvCut` reason `"tail"` (a walk that stops cleanly at the buffer's end).
 - `DeviceProfile` fields, keyword-only and defaulted: `power_resync` (gt 50 / 90 plugs, see Fixed) and
   `status_color_groups_pact` (the pact the 0xAC status read needs before it asks for the 0xA5 colour
   groups). `scenes.scene_upload_frames` and `Device.scene_upload_frames` take a keyword-only `mtu`
@@ -328,9 +331,9 @@ model, from which the shipped readers are generated).
   (`Compose4BaseInfoSingleRead.u` throws, `AbsComposeControllerWithOpResult.onOvertime` fails the read, and
   the `VM4LightH60A6` success callback that applies state never runs). That covers a TLV the spec can't read,
   a TLV length byte of 0x80 or more (the app reads it signed) and a complete burst whose last TLV runs past
-  the reply. `Device` retries once, then leaves state stale. A burst cut short by lost chunks still decodes up
-  to its last whole TLV. Each poll that gets such a reply logs the existing `status read returned no usable
-  data after retry` WARNING. Modeled from the decompiled app; not hardware-verified.
+  the reply. `Device` retries once, then leaves state stale. A burst that lost a chunk or its last packet gives
+  no state either (see the burst-assembly entry). Each poll that gets such a reply logs the existing `status
+  read returned no usable data after retry` WARNING. Modeled from the decompiled app; not hardware-verified.
 - `DeviceState.optimistic` on status-readback devices (H60A6) goes False only once a live field (power,
   brightness, zones, segments or the mode report) comes back. 1.3.0 cleared it after any 0xAC poll that
   wasn't discarded, even an empty or failed one; a poll that returned nothing, or only device info, now
@@ -374,6 +377,41 @@ model, from which the shipped readers are generated).
   tooling only.
 
 ### Fixed
+- **0xAC status bursts are assembled as the app assembles them** (`AbsController4BleSingleSendMultiBack`
+  as `ControllerSingleRead` runs it: `isSameController:202-225`, `onResult:273-308`). The first chunk must
+  carry the request's command 3 and sub 0 (`f():100-103`); then each index is taken only in order, and the
+  last packet only once every packet before it is in. A duplicate, an early or out-of-order chunk, an early
+  0xFF or a first chunk of another command is ignored, as the app ignores it; a lastLen that doesn't fit
+  fails the read at once. Only a complete burst is decoded: one that lost a chunk or its last packet now
+  gives no state (one retry, then the state is left stale), where the library used to decode the prefix
+  that arrived (the app applies nothing: `l()` never runs and the read times out). `query` ends on a
+  complete or failed burst, ignores `terminal` for 0xAC, and only a chunk the app takes arms the idle gap,
+  so a stray early 0xFF or a late chunk of an earlier burst no longer ends the read before the burst
+  arrives. `burst_chunks` keeps its signature. Every captured H60A6 burst (16 reads) decodes as before.
+  Modeled from the decompiled app; the failure paths are not hardware-verified.
+- **The 0xAC TLV walk follows `Compose4BaseInfoSingleRead.u` at its edges.**
+  - The buffer ending before a TLV's value starts (no len byte, or none after it, whatever the len) is a
+    clean stop that keeps what was read (`u():257-267, :271-282`); before, it gave no state.
+  - A 0xA5 colour group whose len isn't 1 + 4k is read with the app's record count, extra bytes ignored
+    (VM `.o:112-116` -> `Controller4ColorInfoByGroup.Companion.q`); before, it stopped the walk.
+  - With the piece count, a group the app can't place fails the read (group 0, or one starting past the
+    last piece: `SubMode4Color.j:113-147` throws), and one starting exactly at the end is skipped; before,
+    group 0 was dropped and a group past the end added phantom segments.
+  - The last 0x07 device-info block wins (`w():370-437`): a basic block sets the serial when its UID is
+    valid and always sets the versions (None when zero); a Wi-Fi block always sets the Wi-Fi MAC. Before,
+    the first block won.
+  - Not changed, waiting for spec types: a type-0 byte still ends the walk (u() reads it as an ordinary
+    TLV), and a short 0x05 mode value is still padded.
+  Captured bursts decode as before. Modeled from the decompiled app; not hardware-verified.
+- **H61A8 segment colours are placed by the batch requested**, as goodsType 19's screen places them
+  (rgbiclight `VM4Light.N5:946-962` -> `Controller4ColorInfoByGroup.Companion.h` / `i`, which drop the
+  reply's group byte, -> `P5` with the loop's group -> `SubMode4Color.j`). Before, the reply's own batch
+  byte placed them and a byte outside the walk dropped the batch (the legacy dreamcolorlightv1 `BleOpV3`
+  screen, which goodsType 19 never opens). Bench replies carry the requested batch, so they read as before.
+- **A raw brightness byte reads as the control screen shows it** (`DelegateHeader.i0:230-239` ->
+  `ViewBrightness.b:353-365`): on a raw range (H6188's 20..254) the byte is clamped to the range before
+  `calculatePercent`, so it reads 1..100 (before: 0 for a byte below 18); on the percent range [1, 100] the
+  byte itself is shown. `SameModelCmdOp.E1` agrees on a raw range. Source-modelled (no H6188 on the bench).
 - **The plugs send the `33 b5` time sync as their app does.** Every plug screen sends it in its connect
   read and waits for its ack (`SyncTimeController`, an `AbsOnlyWriteSingleController`): gt 43
   `H5083NewDetailRepository.necessaryMessages:323-339`, gt 50 / 90 `BleOpV2.o0:141-171` /
@@ -450,7 +488,7 @@ model, from which the shipped readers are generated).
   always preferred 0xFF, so a corrupted burst carrying both spliced the wrong chunk in (a phantom segment).
   The H60A6 sends only 0xFF, so its bursts decode as before.
 - `GoveeConnection.query` ends a 0xAC burst as soon as it is complete by the app's rule
-  (`wire.reassemble.burst_chunks`): a one-packet reply, or a last packet tagged with its position, no longer
+  (`wire.reassemble.BurstAssembler`): a one-packet reply, or a last packet tagged with its position, no longer
   waits for the 0.6 s idle gap. The same frames come back.
 - RX frames of proType 0xA2 (`multi_read`, device to app in the spec) are no longer logged at WARNING as
   unknown.
@@ -559,8 +597,8 @@ model, from which the shipped readers are generated).
   (`BaseBleProcessor.parse`). Modeled from the decompiled app; not hardware-verified.
 - Per-segment colour read-back: H6641 derives its piece and group count from the IC count as the app does
   (clamp 41..70, ceil(IC / 5) pieces, at most 4 reads; `ReadIcController`, `H61D3Support.e`), so it shows no
-  phantom segments and never walks 255 groups; replies are placed by the group requested, and H61A8 batches
-  outside the walk are dropped. An `aa 40` IC count of 0x1000 or more (read signed) skips the segment walk, as
+  phantom segments and never walks 255 groups; replies are placed by the group requested, on H61A8 too (see
+  the mechanism-B entry). An `aa 40` IC count of 0x1000 or more (read signed) skips the segment walk, as
   the app never stores it (`ReadIcController.Companion.a`). A custom profile with `color_readback_live_ic` and
   no `color_readback_ic_range` uses the IC count unclamped. Modeled from the decompiled app; the H6641 change
   is not hardware-verified. The H61A8 15-segment read-back still assembles on hardware (2026-10-15, macOS).

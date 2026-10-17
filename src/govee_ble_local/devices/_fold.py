@@ -220,7 +220,14 @@ def _apply_mode(profile: DeviceProfile, state: DeviceState, m: Any) -> None:
     is authoritative for the Kelvin: 0 means "not in colour-temperature mode" (as on the bar
     path and in the 0x0d report), so it clears ``color_temp_kelvin``. The colour sub-modes are
     decoded per the profile's ``mode_color_parse`` (the SKU's Info4Detail mode parse); one that
-    parse ignores leaves the colour as it was."""
+    parse ignores leaves the colour as it was.
+
+    Sub-mode 0xA1 is not a scene here, matching what the screen shows. Base
+    ``OpInfo4Detail.x:786`` (bulbs, H6188, H61A8) hands an 0xA1 report to ``SubMode4Scene`` like 0x04,
+    but the screen's mode map has no entry for it (``OpInfo4Detail.l:280-321``, "is not config, choose
+    colorMode!" -> ``VM4Light.W3`` returns 9, colour mode): the app shows colour mode with the colour
+    untouched and only keeps the code for its scene list. The library shows the same: no scene, the
+    colour as it was."""
     state.scene_code = parse.scene_of(m)
     if state.scene_code is not None:
         state.rgb_color = state.color_temp_kelvin = None

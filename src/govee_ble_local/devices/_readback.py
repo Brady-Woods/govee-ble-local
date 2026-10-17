@@ -84,13 +84,13 @@ async def status_burst(dev: ReadTarget, query_status: QueryStatus) -> reassemble
 
 
 async def walk_mechanism_b(dev: ReadTarget, read_reply: ReadReply) -> list[Segment] | None:
-    """H61A8's per-segment colour via BulbGroupColorV2 (AA A5 <seq>, V2): request each
-    batch and assemble positional segments, or None if no batch came back. per_batch/batch-count
-    are client constants (not frame-encoded, the controller's own fixed group size),
-    source-modeled and not yet live-verified. NOT shared with H6047/H6641 — they use a different
-    controller (Controller4ColorInfoByGroup, a different group size) via
-    :func:`walk_mechanism_a_direct`; the two only happen to share the wire opcode (0xA5), not the
-    reply layout."""
+    """H61A8's per-segment colour (AA A5 <seq>, the V2 records with brightness): request each batch
+    and assemble positional segments, or None if no batch came back. per_batch / batch-count are
+    client constants (not frame-encoded: the screen's group size, 3 with brightness on the bench H61A8,
+    read back live). Each reply is placed by the batch asked for, as goodsType 19's screen does (see
+    the loop); a batch that didn't answer is left out. Kept apart from :func:`walk_mechanism_a_direct`
+    (H6047 / H6641, group size 4, colour only): the two share the wire opcode (0xA5), not the record
+    layout the library decodes."""
     profile = dev.profile
     per_batch = profile.color_readback_per_batch   # >= 1, checked by DeviceProfile
     seg_count = profile.color_readback_segments or dev.segment_count
@@ -99,11 +99,18 @@ async def walk_mechanism_b(dev: ReadTarget, read_reply: ReadReply) -> list[Segme
     for seq in range(1, batch_count + 1):
         reply = await read_reply(build.bulb_group_query(seq, v2=True), build.CMD_BULB_COLOR_V2)
         parsed = parse.parse_bulb_group_batch(reply) if reply else None
-        # The app places a batch by its own group byte into a fixed bulbStringMaxNum array
-        # (dreamcolorlightv1 BleOpV3.onEventBulbStringColorV2), so a group outside the walk
-        # can't land anywhere; dropping it keeps untrusted data from adding segments.
-        if parsed is not None and 1 <= parsed[0] <= batch_count:
-            batches.append(parsed)
+        if parsed is None:
+            continue
+        # Placed by the batch asked for, as goodsType 19's screen places it (rgbiclight AcNewDetail):
+        # VM4Light.N5:946-962 reads each group with Controller4ColorInfoByGroup, whose callback drops
+        # the reply's own group byte (Companion.h / i, Controller4ColorInfoByGroup.java:58-75), and
+        # P5(.., iD, <loop group>, ..) places it by the loop index (SubMode4Color.j:113-147), the last
+        # group trimmed to the piece count. (The reply's byte placed it on the legacy screen,
+        # dreamcolorlightv1 BleOpV3, which goodsType 19 never opens.)
+        if parsed[0] != seq:
+            _LOGGER.debug("%s (%s): batch %d reply carries group %d; placed as batch %d, as the app does",
+                          dev.address, dev.sku, seq, parsed[0], seq)
+        batches.append((seq, parsed[1][: max(0, seg_count - (seq - 1) * per_batch)]))
     return parse.bulb_groups_to_segments(batches, per_batch) or None
 
 

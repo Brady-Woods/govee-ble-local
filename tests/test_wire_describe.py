@@ -150,6 +150,7 @@ def test_status_burst_unknown_tlv_flagged() -> None:
     a = bytearray(20)
     a[0], a[1] = 0xAC, 0x00
     a[2], a[4] = 2, 0                        # header: 2 packets, last one carries 0 data bytes
+    a[5] = 0x03                              # command 3, sub 0: the status read's (isSameController)
     a[7], a[8], a[9] = 0x99, 0x01, 0x00     # unknown TLV type 0x99
     b = bytearray(20)
     b[0], b[1] = 0xAC, 0xFF

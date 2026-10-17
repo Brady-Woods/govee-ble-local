@@ -30,7 +30,7 @@ def _device(monkeypatch: pytest.MonkeyPatch, fake: FakeGovee, sku: str, **kw: ob
     return dev
 
 
-async def test_h60a6_poll_lost_terminator_is_fast_and_complete_enough(monkeypatch) -> None:
+async def test_h60a6_poll_lost_terminator_is_fast_and_uses_no_state(monkeypatch) -> None:
     fake = FakeGovee()
     fake.status_burst = H60A6_BURST
     fake.drop_terminal = True
@@ -52,10 +52,11 @@ async def test_h60a6_poll_lost_terminator_is_fast_and_complete_enough(monkeypatc
     st = await dev.update()
     # The status burst ended on the idle gap (last wait bounded by it), not the 5 s query timeout.
     assert status_waits and status_waits[-1] <= IDLE_GAP
-    assert st.is_on is False and st.brightness == 100 and st.zone_power == {0: False, 1: False}
-    assert st.color_temp_kelvin == 2700
-    assert st.firmware_version == "1.00.41"
-    assert sum(1 for f in fake.received if f[0] == 0xAC) == 1  # no retry query needed
+    # WAS: the prefix's power, brightness, zones and mode. The app never completes such a read, so it
+    # applies nothing: the library uses no state from it, retries once, then leaves the state stale.
+    assert st.is_on is None and st.brightness is None and st.zone_power == {}
+    assert st.color_temp_kelvin is None
+    assert sum(1 for f in fake.received if f[0] == 0xAC) == 2  # the one retry
 
 
 async def test_h60a6_turn_on_batch(monkeypatch) -> None:

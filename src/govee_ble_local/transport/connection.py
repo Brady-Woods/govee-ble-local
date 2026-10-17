@@ -87,7 +87,7 @@ from ..wire.build import (
 )
 from ..wire.describe import describe_frame
 from ..wire.parse import bgc_encrypt_version, parse_write_ack
-from ..wire.reassemble import burst_chunks
+from ..wire.reassemble import BurstAssembler
 from . import handshake
 from .framelog import Direction, FrameLog
 
@@ -854,16 +854,20 @@ class GoveeConnection:
         """Send a query trigger and collect the resulting NOTIFY burst.
 
         Returns the decrypted frames received until a terminal frame (an
-        ``opcode`` frame whose byte 1 == ``terminal``) arrives, the 0xAC burst is
-        complete (``opcode`` 0xAC: :func:`..wire.reassemble.burst_chunks`, the app's
-        rule, so a one-packet reply or a burst whose last packet carries its position
-        instead of 0xFF ends there too), the device goes
+        ``opcode`` frame whose byte 1 == ``terminal``) arrives, the device goes
         quiet for ``idle_gap`` after its last ``opcode`` frame (a lost terminator
         must not cost the whole timeout), or ``timeout`` elapses. Frames already
         queued when the budget runs out are still collected. ``idle_gap`` is armed
         by ANY ``opcode`` frame, so a single-reply read (terminal = the expected
         command) should pass ``idle_gap=None``: there a stray ``opcode`` frame (a late
-        reply to an earlier read) must not cut the wait short."""
+        reply to an earlier read) must not cut the wait short.
+
+        For ``opcode`` 0xAC the burst is assembled as the app assembles it
+        (:class:`..wire.reassemble.BurstAssembler`) and ``terminal`` is not used: the
+        read ends when the burst is complete (a one-packet reply, or the last packet
+        once every packet before it is in) or failed (a first chunk whose lastLen
+        doesn't fit), and only a chunk the app takes arms ``idle_gap``, so a stray
+        early 0xFF or a late chunk of an earlier burst doesn't end it."""
 
         async def op() -> list[bytes]:
             await self._ensure_connected_locked()
@@ -872,7 +876,7 @@ class GoveeConnection:
             loop = asyncio.get_running_loop()
             deadline = loop.time() + timeout
             frames: list[bytes] = []
-            burst: list[bytes] = []   # the 0xAC chunks so far, when collecting a status burst
+            burst = BurstAssembler() if opcode == PRO_MULTI_AC else None
             seen_opcode = False
             while True:
                 remaining = deadline - loop.time()
@@ -886,12 +890,13 @@ class GoveeConnection:
                     break
                 frames.append(dec)
                 if len(dec) >= 2 and dec[0] == opcode:
-                    seen_opcode = True
-                    if dec[1] == terminal:
-                        break
-                    if opcode == PRO_MULTI_AC:
-                        burst.append(dec)
-                        if burst_chunks(burst)[1]:
+                    if burst is None:
+                        seen_opcode = True
+                        if dec[1] == terminal:
+                            break
+                    else:
+                        seen_opcode |= burst.feed(dec)
+                        if burst.status != "waiting":
                             break
             return frames
 

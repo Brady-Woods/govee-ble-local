@@ -28,28 +28,35 @@ _Walk = tuple[list[tuple[int, int, bytes]], tuple[Any, ...] | None, list[tuple[A
 
 
 def _byte_walk(buf: bytes) -> _Walk:
-    """The fallback walk as it was before the move: type / len from the raw bytes, each TLV parsed
-    alone from its slice. Returns (type, len, value bytes) per TLV, the cut and the skipped list (each
-    cut as TlvCut's fields, negative_len True for a len the app reads as negative)."""
+    """The app's walker, Compose4BaseInfoSingleRead.u (:247-345), over the raw bytes: type / len from
+    the bytes, each TLV's body judged by the spec's status_tlv parsed alone from its slice. Two library
+    rules on top, until the spec types them: type 0 ends the walk (the padding sentinel), and a 0xA5
+    whose body the spec rejects is handed on for the app's record count. Returns (type, len, value
+    bytes) per TLV, the cut and the skipped list (each cut as TlvCut's fields, negative_len True for a
+    len the app reads as negative)."""
     out: list[tuple[int, int, bytes]] = []
     skipped: list[tuple[Any, ...]] = []
-    pos = 0
-    while pos < len(buf) and buf[pos] != 0:
+    pos, n = 0, len(buf)
+    while pos < n and buf[pos] != 0:
         typ = buf[pos]
-        if pos + 2 > len(buf):
-            return out, ("truncated", typ, pos, None, False), skipped
+        if pos + 2 >= n:                                   # u():257-267, :271-282: a clean stop
+            return out, ("tail", typ, pos, buf[pos + 1] if pos + 1 < n else None, False), skipped
         length = buf[pos + 1]
-        if length >= SIGNED_LEN_MIN:
+        if length >= SIGNED_LEN_MIN:                       # new byte[len] throws
             return out, ("unparsed", typ, pos, length, True), skipped
         end = pos + 2 + length
-        if end > len(buf):
+        if end > n:                                        # System.arraycopy throws
             return out, ("truncated", typ, pos, length, False), skipped
         try:
             parse._parse_type(parse._F.StatusTlv, buf[pos:end])
         except Exception:  # noqa: BLE001
-            if not (typ == 0x07 and length >= 1 and buf[pos + 2] not in (0x10, 0x11)):
+            if typ == 0xA5:
+                skipped.append(("unparsed", typ, pos, length, False))
+                out.append((typ, length, bytes(buf[pos + 2:end])))
+            elif typ == 0x07 and length >= 1 and buf[pos + 2] not in (0x10, 0x11):
+                skipped.append(("unparsed", typ, pos, length, False))
+            else:
                 return out, ("unparsed", typ, pos, length, False), skipped
-            skipped.append(("unparsed", typ, pos, length, False))
         else:
             out.append((typ, length, bytes(buf[pos + 2:end])))
         pos = end
@@ -85,10 +92,6 @@ def test_tlv_walk_matches_the_byte_walk() -> None:
         buf = _random_tlv_buffer(r)
         skipped: list[TlvCut] = []
         tlvs, cut = reassemble.walk_status_tlvs(buf, skipped=skipped)
-        if cut is None and not skipped and all(int(t.len) < SIGNED_LEN_MIN for t in tlvs):
-            # Read whole by status_reply (no fallback): check the TLVs the byte walk finds are the same.
-            assert [_tlv_key(t) for t in tlvs] == _byte_walk(buf)[0]
-            continue
         want_tlvs, want_cut, want_skipped = _byte_walk(buf)
         assert [_tlv_key(t) for t in tlvs] == want_tlvs, buf.hex()
         assert (astuple(cut) if cut else None) == want_cut, buf.hex()
