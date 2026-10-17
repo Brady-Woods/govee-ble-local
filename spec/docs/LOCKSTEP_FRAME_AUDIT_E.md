@@ -1,15 +1,15 @@
 # Lockstep: frame-audit section E reader changes
 
-This branch (`spec/frame-audit-E-lockstep`) sits on top of the additive section-E commit (02c198a). It holds the
-section-E forms that change what an EXISTING generated reader returns. Each one must land together with a library
-change, so nothing here is on the main spec branch.
+This branch (`spec/frame-audit-E-lockstep`) sat on top of the additive section-E commit (02c198a). It held the
+section-E forms that changed what an EXISTING generated reader returned. Each one had to land together with a
+library change, so none of it was on the main spec branch.
 
 Every form was traced in the Govee Home 7.7.02 decompile and checked by an adversarial reviewer. Each part's suite
 results were measured on both library branches: fix/review-findings f182c20 and refactor/spec-client 29c28ed,
 2053 tests each, all passing without this branch. The same 35 tests fail on both branches when this branch is
 taken without the library edits below. With those edits, both branches pass again.
 
-Delete this file when the branch is merged.
+This file is kept as the record of that merge (c823fc5).
 
 ## 1. `single_command.params` cases for 33 B2 / 33 A3 / 33 14 (wire-build-61)
 

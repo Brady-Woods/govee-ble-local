@@ -70,7 +70,8 @@ delivered as **type 5** (Q3), never type 3; type-3 library graffiti is simply in
 professional **`DiyGraffitiV3.a()`**. `a()` (`DiyGraffitiV3.java:154-173`) **rebuilds the bytes from the
 parsed object graph** (recomputing per-layer length prefixes) — it is a genuine parse→re-encode, **not** a
 header slice. Layout is in §G2 (`[brightness, R,G,B, layerCount] + per-layer[(len-2)u16LE, speed, action,
-priority, nColors, {count,R,G,B, idx×count}×nColors]`), modelled as `graffiti_v3_value` in the ksy.
+priority, nColors, {count,R,G,B, idx×count}×nColors]`), modelled as `graffiti_v3_value` (`govee_upload`
+kind `h6052_graffiti`).
 **Practical shortcut:** for canonical catalog params, `a()` is byte-identical to `decode(scenceParam)[1:]`
 (strip the single `0x13` header) — so uploading an existing library scene needs no re-implementation of
 `a()`; decode, drop byte 0, chunk with comByte 9. (Re-encode from scratch only when *creating* an effect.)
@@ -194,21 +195,26 @@ field, not the commByte**. Version-10 is also the branch that can escalate to `0
 > - **dialect-A rgbic** (parser `ParamsV2.RgbICEffect:967`; `ScenesRgbIC.f:3337` is only a length-validator): `[effectCount(u1)]` + per-effect `[subLen(u1), record]`, record = `[style(nibbles), mode, mode_val(2), bright_algo, bright_count(u1), BrightnessEffect(6-B)×bright_count, colorIc, speed, duration, color_count(u1), RGB×color_count, InAreaMove(3-B), AreaMove(4-B)]`. The **RGB palette is `color_count × 3-B`** (the actual colours); the 6-B records are per-`ParamsV2` BrightnessEffects, not colours.
 > - **dialect-A graffiti** (`ParamsV1` / `DiyProtocolParser.parserParamsV1`, Govee Home 7.7.02 `DiyProtocolParser.java:1391-1433`; H6052 sceneType-3, wire value = `decode(param)[2:]`, strip drops `[0x01, effect_hi]` per `ScenesOp.n` `:422-425`): `[effect_lo, speed, brightness, bgR,G,B, segCount(u1)]` + per-group `[colorCount(u1), R,G,B, index×colorCount]`.
 >
-> These layouts are also modelled as **parseable Kaitai types** in `govee_ble.ksy` (scene-upload VALUE
-> section): `graffiti_value`, `diy_value` (with a `diy_sub_effect` discriminated union over 10 sub-effects),
-> `graffiti_v3_value`, `graffiti_v2_value`, `rgbic_scene_value` (full `rgbic_effect_record`),
-> `rgb_scene_value`, `scenes_graffiti_value`, plus the `h60a6_scene_value` DIY-vs-graffiti auto-splitter. Feed
-> a **reassembled** (de-chunked) value to the type matching the device/commByte. Compiled with `ksc 0.11` and
-> verified: **all 543 non-activate catalog scenes deep-parse with exact byte consumption**. (Kaitai can't
-> reassemble across the 20-byte frames — strip each frame's header/BCC and concatenate first.)
+> These layouts are also modelled as **parseable Kaitai types** in `govee_upload.ksy`, the root
+> `govee_upload(kind, form)`: kind `h60a6_graffiti` → `graffiti_value`, `h60a6_diy` → `diy_value` (with a
+> `diy_sub_effect` discriminated union over 10 sub-effects), `h6052_graffiti` → `graffiti_v3_value`,
+> `graffiti_v2` / `graffiti_v2_wide` → `graffiti_v2_value` / `graffiti_v2_wide_value`, `rgbic_scene` →
+> `rgbic_scene_value` (full `rgbic_effect_record`; `mode_val` is its `mode_param`, s16be), `rgb_scene` →
+> `rgb_scene_value`, `scenes_graffiti` → `scenes_graffiti_value`. Read a **reassembled** (de-chunked) value
+> with form `wire`, or the base64-decoded `scenceParam` with form `cloud` (the lead byte(s) the app checks
+> are read and stripped as `lead`). The H60A6 DIY-vs-graffiti choice is client code: try `h60a6_diy`, then
+> `h60a6_graffiti`, form `wire`. The layouts were verified byte-exact against the bundled catalogues (the
+> counts are in the `govee_upload` doc); the old `govee_ble.ksy` types deep-parsed all 543 non-activate
+> catalog scenes with exact byte consumption. (Kaitai can't reassemble across the 20-byte frames — strip
+> each frame's header/BCC and concatenate first.)
 
 **Path A (`toBytes()`):** input is a **parsed model, re-serialized** (not the raw blob). For graffiti:
-`DiyGraffitiV2.g()` (`DiyGraffitiV2.java:210-259`):
+`DiyGraffitiV2.g()` (`DiyGraffitiV2.java:195-244`):
 ```
 header: [subEffect][speed][baseBrightness][baseR][baseG][baseB][groupCount]
 per group: [pixelCount][R][G][B][pixelIndex × pixelCount]
 ```
-`h()` (`:261-347`) is the 16-bit-index variant, used when `isBigDataEffect()`. The H61A8 `05 00 XX YY`
+`h()` (`:246-332`) is the 16-bit-index variant, used when `isBigDataEffect()`. The H61A8 `05 00 XX YY`
 "records" are `[pixelCount=5][R=00][G=XX][B=YY]` group headers + 5 indices. Shared:
 `RgbIcGraffitiShare0x08.toBytes()` and `DIYGraffitiParser.toBytes()` also delegate to `DiyGraffitiV2`.
 The raw cloud header (`0x50`) is consumed by the parser and a fresh header is emitted.
@@ -275,8 +281,9 @@ support 512 (`NewDetailConfig:751`), applied only if `saveMtuData` cached it.
 > **Reconciling the btsnoop (only `0xA3`, 20-byte):** the captured H60A6 uploads were DIY-type (`0xA3`)
 > or other devices — **not** a graffiti-scene apply. A graffiti scene (Aurora) uploads as `0xA4`.
 
-**`0xA4` frame layout (`MultipleControllerCommV1.makeSendBytesMtu:409`, code-verified; the `.ksy` `multi_a4`
-now models all three forms and round-trips synthesized Aurora frames) — two branches by `len` vs `mtuSize−8`:**
+**`0xA4` frame layout (`MultipleControllerCommV1.makeSendBytesMtu:409`, code-verified; the frame's
+`a4_packet` (route `multi_write_v2_tx`) reads all three forms at any length and re-writes synthesized Aurora
+frames byte-exactly) — two branches by `len` vs `mtuSize−8`:**
 - **Small (`len ≤ mtu−8`):** START `[A4 00 00 01 02 00 commByte@6 value@7… BCC]` + a **separate 4-byte
   valueless terminator `A4 FF FF BCC`**. The `02 00` is just the frame count = **2** (START + terminator).
 - **Large (`len > mtu−8`):** START `[A4 00 00 01 cntLo cntHi commByte@6 value@7… BCC]` — **`cnt` = TOTAL frame
@@ -338,8 +345,8 @@ So the app **uploads iff the param parses**, and the `33 05 04 <sceneCode>` acti
 **both** cases. `parseSceneV1` returns null iff: no `(versionArray, sceneType)` branch matches, param
 empty, base64 fails, or the per-type validator fails — and the validators gate on **`byte[0]`** /
 length / sceneType (`ShareDiy.isValidComposeBytes → bytes[0]==10`; `isValidGraffitiBytes → byte[0]==1 &&
-len≥9` and a walk of the group headers from byte 9; etc.; each is modelled exactly in `govee_ble.ksy`, see
-the scene-upload VALUE layer), **never on byte 3**.
+len≥9` and a walk of the group headers from byte 9; etc.; each is modelled exactly in `govee_upload.ksy` as
+the form-`cloud` read of its kind), **never on byte 3**.
 
 1. **Apply path & upload:** yes it can upload (`SceneControllerNoEventV1`, `0xA3`), and it is a **different
    path** from §2's DIY-editor capture (different controller; **Path B / dialect A** — value is the

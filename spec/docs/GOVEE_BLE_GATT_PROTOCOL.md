@@ -265,8 +265,9 @@ back; kelvin comes only from the compose `0x15` path). **Music `0x13`** reply is
 H60A6 `SubModeMusicV1.parse` = `[musicCode][value][autoColorFlag][specColorFlag][R][G][B]` (truncates
 early for new-music codes / specified-color); the general `SubModeNewMusic.parse` reads only
 `[musicCode][value]`; `0x16` `SubModeAbsMusic` = `[u16 count LE][value]`. (No `base2light` class uses
-sub-mode `0x11`.) The `.ksy` models `0xAA` via a distinct `read_command` type (`mode_read` →
-`cct_read_reply` / `music_read_reply`), not the `single_command` write payloads.
+sub-mode `0x11`.) The spec reads the `0xAA 05` reply through `read_reply` → `govee_state` → `mode_report`
+(its `color_report` layouts and `music_report`, chosen by the profile's mode decode), not through the
+`write_command` / `mode_write` write payloads.
 
 There is also a 3-argument form `generate20Bytes(proType, cmd, subCmd, payload)`
 (`BleUtils.java:1363`) placing an extra sub-command byte at index 2 and payload from index 3.
@@ -432,7 +433,7 @@ link below was read first-hand from the decompiled Java:
 
 - `dreamcolorlightv1/ble/OpDiyCommDialog4BleV2.o()` (`:32`): `new MultiDiyGraffitiController(g.f(), g.g())`, where `g` is a `DiyGraffitiV2` (`:19`) — so the uploaded value **is** `DiyGraffitiV2.g()`.
 - `base2light/ble/controller/MultiDiyGraffitiController`: `g()` returns that `byte[]` verbatim (`:26-28`); `getCommandType() = (byte) 3` (`:31-33`); `p() = 1` (`:44-45`) → framed by `makeSendBytesV1(0xA3, 3, value)` (the V1/V2 sub-layout).
-- `base2light/ac/diy/DiyGraffitiV2.g()` (`:210-259`): the value serializer.
+- `base2light/ac/diy/DiyGraffitiV2.g()` (`:195-244`): the value serializer.
 
 Captured START frame (real plaintext H61A8 btsnoop):
 ```
@@ -547,7 +548,8 @@ param is empty, Base64 fails, or the per-type validator fails — and those vali
 `isValidGraffitiBytes` → `byte[0]==1 && len≥9` and a walk of the group headers from byte 9;
 `ScenesRgbIC` → a walk of the `byte[0]` length-prefixed effect records, each long enough for `f()`;
 `ScenesRgb` → `byte[0]`'s mode / colour-count bits and an exact length; each is modelled exactly in
-`govee_ble.ksy`, see its scene-upload VALUE layer), **never on
+`govee_upload.ksy` as the form-`cloud` read of kinds `compose`, `scenes_graffiti_gate`, `rgbic_scene` and
+`rgb_scene`), **never on
 byte 3**.
 
 > **`byte 3 = 0xFF` is NOT an "activate-only" marker.** A grep for any `[3]`-index gate across
@@ -624,16 +626,17 @@ written by app `Controller4OnOffMemory` `33 41 02 v`;
 **`0xA5` colour group**, …) is passed to a caller fallback lambda with the full `[type,len,value]`
 re-prepended. `0xA5` = **one colour group** `[group_index (1-based), record × count]`, record =
 **4-byte `[brightness, R, G, B]`** on part-brightness SKUs (all curated: H60A6/H6047/H6641) or 3-byte
-`[R, G, B]` on colour-only SKUs. `color_group_status` takes **count = `(len − 1) / record_size`** from the
+`[R, G, B]` on colour-only SKUs. `color_group` with rule `from_len` takes **count = `(len − 1) / record_size`** from the
 TLV `len`; in Govee Home 7.7.02 most screens pass `Controller4ColorInfoByGroup.Companion.q` a count of their
 own, and q() reads exactly that many records, ignores what follows and throws on a shorter value (a few
-screens read the value with other helpers in other layouts; see `color_group_status`). H60A6
+screens read the value with other helpers in other layouts; see `color_group`). H60A6
 (`VM4LightH60A6$afterConnectedSingleReadDeviceInfo$1.o:112-117`) takes 4 per group and the remainder in
-the last of `ceil(pieces / 4)` groups: `color_group_status_counted(piece_count, group_size, has_brightness)`.
-The H6038 family passes a fixed 4: `color_group_read(4, 1)`. Global
-segment index = `(group_index − 1) × count + k`. All of these are modelled in `govee_ble.ksy`
-(`status_tlv` → `status_switch`/`status_brightness`/`mode_read`/`status_device_info`/`status_zone`/
-`status_seg_info`/`color_group_status`); only the `0x05` `params` sub-layout stays device-specific.
+the last of `ceil(pieces / 4)` groups: profile `group` rule `by_pieces` (`num_per_group` 4, `num_pieces`).
+The H6038 family passes a fixed 4: rule `fixed`, `num_per_group` 4. Global
+segment index = `(group_index − 1) × count + k`. All of these are modelled in `govee_status_stream.ksy`
+(`status_tlv` → `govee_state`: `power_state` / `level` / `mode_report` / `device_info_record` /
+`cmd_30_state` (zone) / `cmd_41_state` (power memory) / `cmd_a5_state` → `color_group`); the `0x05`
+colour layout is the profile's `mode_status` decode.
 
 > **Not every SKU answers `0xAC` — some read `0xA5` colour groups *directly*.** The record layout above
 > (4-byte `[brightness,R,G,B]`) is shared, but the *transport* is not. The `0xAC` status burst is dispatched
@@ -648,17 +651,19 @@ segment index = `(group_index − 1) × count + k`. All of these are modelled in
 > `AC 03 03 41 30 A5` to an H6047/H6641 returns **zero frames** deterministically — it is never dispatched.
 > H6641 additionally reads IC count first (`0x40`, `VM4Light.C5:197`); group count = `ceil(IC / 5)`. In
 > `devices.yaml` this is the `per_segment_color_read` opcode (`0xa5`) on the `h6047`/`h61d3` families.
-> In `govee_ble.ksy`, read such a reply frame with the standalone `color_group_direct_frame(record_count)`
-> (`record_count` = the SKU's group size, 4): the frame path's `read_command` 0xA5 case is H61A8's
-> `bulb_group_color_read_v2` batch, because nothing in the frame names the controller that asked.
+> In the spec such a reply frame reads through `read_reply` → `govee_state` → `cmd_a5_state`: nothing in
+> the frame names the controller that asked, so the profile's `f_a5` picks the layout (`color_group`, read
+> with `group.num_per_group` = the SKU's group size, 4; or H61A8's `bulb_batch_v2` batch).
 
 > **Trailing padding:** trimmed to `lastLen` as the app does (and as the shipped library's
 > `wire/reassemble.py` and `govee_reference.reassemble_ac` do), the buffer ends exactly at the last TLV. A
 > reassembler that doesn't trim, joining the whole 17-byte data region of the last chunk, gets the chunk's
-> zero padding on the end, so its buffer ends in `0x00` bytes. `u()` stops once fewer than 2 bytes remain; no real TLV type is `0x00`. A consumer must therefore
-> terminate on a `0x00` type byte (or EOF), **not** parse to end-of-buffer — the `.ksy` models this as
-> `status_reply` `repeat-until: '_.type == 0 or _io.eof'`, which handles both buffers (parsing to EOS would
-> throw on a lone trailing zero, which has no room for its length byte).
+> zero padding on the end, so its buffer ends in `0x00` bytes. `u()` reads a TLV only while 3 or more bytes
+> remain (it stops when the tag or the length is the last byte, `Compose4BaseInfoSingleRead.java:254-284`)
+> and has no padding sentinel: a type-`0x00` TLV goes to the screen's fallback, which ignores it. The spec
+> walks the same way — `govee_status_stream` reads `status_tlv` while 3 or more bytes remain, tag 0 is an
+> ordinary TLV, and the 0-2 bytes left over are its `tail` — so both buffers read (the untrimmed one as
+> extra type-0 TLVs plus a tail) and re-write exactly.
 
 ---
 
@@ -913,17 +918,18 @@ Common notify sub-types:
 
 | subType | Handler | Meaning |
 |---------|---------|---------|
-| `0x20` (32) | `DefParser.p` → per-SKU VM | **brightness/level** push: `level = value[0]` (`.ksy` `notify_level`) |
-| `0x30` (48) | `DefParser.M/O` + per-SKU VM | **switch / zone** push: H60A6 `main = bit0 value[1]`, `zone0 = value[2]`, `zone1 = value[3]` (`.ksy` `notify_switch_zone`) |
+| `0x20` (32) | `DefParser.p` → per-SKU VM | **brightness/level** push: `level = value[0]` (spec `govee_common::level`) |
+| `0x30` (48) | `DefParser.M/O` + per-SKU VM | **switch / zone** push: H60A6 `main = bit0 value[1]`, `zone0 = value[2]`, `zone1 = value[3]` (spec `notify_30`, rule per profile `f_ee_30`) |
 | `0x40` (64) | `DeviceStatusNotifyParse` (`:9`) | device connect/status block (10 bytes) → `EventDeviceStatus` |
-| `0x11` (17) | `WifiNotifyParse` (per device) | Wi-Fi connect result (`value[0]==0` = connected) (`.ksy` `notify_wifi`) |
+| `0x11` (17) | `WifiNotifyParse` (per device) | Wi-Fi connect result (`value[0]==0` = connected) (spec `wifi_status`) |
 | `0x01–0x07` | `NOTIFY_DETAIL_*` | light-status / battery / energy-saving / music / volume detail |
 | `0xED` (−19) | `NOTIFY_RECOGNITION` | AI / video-recognition status |
 | `0xEE` (−18) | OTA prepare ack | OTA state |
 
 The three the curated lighting SKUs actually push are `0x11` / `0x20` / `0x30` (`ShareVM.x4:2425` + per-SKU
-VM overrides); the `.ksy` `notify_frame` switches on these. Other subtypes are cross-category and modelled
-as annotations on the `notify_sub` enum.
+VM overrides); the spec's `notify` (frame route `notify_rx`) switches on these, and on `0x21` / `0x22` (H6062
+IC change) and `0x40` (H6047 slave states). Other subtypes are cross-category and modelled as annotations on
+the `govee_common::notify_sub` enum.
 
 BBQ thermometers instead push telemetry with `proType = 0xAB` (−85), handled in
 `base2newth/bbq/ble/AbsBleComm.java:54`.
@@ -1412,12 +1418,17 @@ after the `[proType, cmd]` header (colour/mode sub-modes ride inside `33 05 …`
 
 | opType | Meaning | Payload |
 |--------|---------|---------|
-| `0x00` | apply mode | `15 00` |
+| `0x00` | apply mode (opType 3, `OP_TYPE_SET_MODE`) | `15 00` |
 | `0x01` | set colour (basic) | `15 01 R G B <mask0> <mask1>` |
 | `0x01` | set colour (H60A1/H60A6 form) | `15 01 R G B 00 00 00 00 00 <mask0> <mask1>` |
 | `0x01` | set colour-temp (H60A1/H60A6) | `15 01 R G B <kHi> <kLo> <tintR> <tintG> <tintB> <mask0> <mask1>` |
 | `0x02` | set per-segment brightness | `15 02 <pct 0–100> <mask0> <mask1>` |
-| `0x05` | set colour-temp (basic) | `15 05 <kLo> <kHi>` |
+| `0x05` | set colour-temp (opType 2, `OP_TYPE_SET_COLOR_TEMP`; H60A0) | `15 05 <kHi> <kLo>` (`getSignedBytesFor2(k, true)`) |
+| `0x05` | side brightness (`Bytes.H`, relative-brightness version 1, goodsType 80) | `15 05 <side 1/2/3> <value>` |
+| `0x05` | gradient (`Bytes.n`, GradientColor version 0) | `15 05 R1 G1 B1 R2 G2 B2 R3 G3 B3 <mask…>` |
+
+The op byte is not the `OP_TYPE` value: opType 2 writes op `0x05` and opType 3 op `0x00`. The three `0x05`
+layouts share the op byte with no discriminator; the spec picks one with the profile selector `f_15_05`.
 
 ### 16.2 Segment-selection bitmask
 
@@ -1490,8 +1501,9 @@ ad-hoc note:
   → Properties (Read / Write / Write Without Response / Notify) → Descriptors (§2.1).
 - **Framing & grammar (§4–§7, §16)** use **RFC-style packet diagrams** (byte-offset rulers) and the
   **ABNF grammar** (RFC 5234) in §17.3.
-- **Binary layer** is mirrored by a **Kaitai Struct** definition (`../govee_ble.ksy`) — a
-  language-agnostic binary-format spec that generates parsers and HTML docs from one source.
+- **Binary layer** is mirrored by **Kaitai Struct** definitions (`../*.ksy`, entry point
+  `../govee_ble_frame.ksy`) — a language-agnostic binary-format spec that generates readers, writers and
+  HTML docs from one source.
 - **Device catalogue** is mirrored by a **machine-readable registry** (`../devices.yaml`, validated
   by `../devices.schema.json`) intended to be the single source of truth the per-device tables
   (§12, §15) and a client library are generated from.
@@ -1502,17 +1514,26 @@ ad-hoc note:
 |------|--------|---------|---------|
 | `../devices.schema.json` | JSON Schema 2020-12 | Structure/validation for the device registry | `jsonschema` |
 | `../devices.yaml` | YAML | Device registry: `name_parsing`, `advertisement`, `timing`, `command_catalog`, and per-family UUIDs/sub-mode bytes/opcodes/specs/confidence/sources | `yaml` + schema |
-| `../govee_ble.ksy` | Kaitai Struct | Binary layout of the 20-byte frame + `0xA1`/`0xA3`/`0xAC`/`0xE7` variants, mode/colour payloads, and notify sub-types | `kaitai-struct-compiler` |
-| `../govee_adv.ksy` | Kaitai Struct | Advertisement (manufacturer-data) parse: AD walk, company `0xEC88`, encrypted-flag, protocol version, pactType/pactCode | `kaitai-struct-compiler` |
+| `../govee_ble_frame.ksy` | Kaitai Struct | One GATT write / notification value, by `direction` and the device `govee_profile`: every proType route (`0x33`/`0x3A`/`0xAA`/`0xAC`/`0xAB`/`0xEE`/`0xE7`/`0xA5`/`0xA1`-`0xA4`), the mode/colour payloads and the notify sub-types | `kaitai-struct-compiler` |
+| `../govee_state.ksy` | Kaitai Struct | The device-state record shared by the `aa <cmd>` reply and the `0xAC` TLV `<cmd>` | `kaitai-struct-compiler` |
+| `../govee_status_stream.ksy` | Kaitai Struct | The joined `0xAC` status burst (TLV walk) | `kaitai-struct-compiler` |
+| `../govee_upload.ksy` | Kaitai Struct | Joined `0xA1`/`0xA3`/`0xA4` upload values and decoded cloud scene blobs, by kind and form | `kaitai-struct-compiler` |
+| `../govee_manufacturer_data.ksy`, `../govee_scan_record.ksy` | Kaitai Struct | Advertisement: the `0xFF` payload (company `0xEC88`, encrypted flag, protocol version, pactType/pactCode) and the AD walk | `kaitai-struct-compiler` |
+| `../govee_bgc_info.ksy` | Kaitai Struct | The GATT `2b12` value (cipher version) | `kaitai-struct-compiler` |
+| `../govee_profile.ksy`, `../govee_common.ksy` | Kaitai Struct | The per-device context params, and the shared enums and leaf types | `kaitai-struct-compiler` |
 
 Prose companions (in this `docs/` folder unless noted):
 - **`SCENE_UPLOAD_ENCODING.md`** — the scene/DIY upload encoding + dispatch reference (paths,
   `parseSceneV1` table, per-family bypasses, re-serializer field layouts, chunking). Referenced from §4.4.
-- **`USING_THE_KSY.md`** — how to compile and consume the `.ksy` in your own project (any target
-  language): the decrypt → reassemble → parse pipeline, worked examples, and gotchas.
+- **`USING_THE_KSY.md`** — how to compile and consume the `.ksy` files in your own project (any target
+  language): which root takes which bytes, the device profile, the decrypt → parse → join pipeline,
+  building messages, and gotchas.
 - **`../govee_reference.py`** (package root) — executable reference codec: the three things Kaitai can't do
-  (decrypt AES-ECB+RC4 · reassemble `0xAC`/multi-frame · XOR checksum) + dispatch wiring for the parametric
-  `.ksy` types, driven by `../devices.yaml → client_profile`. Doubles as the round-trip test harness.
+  (decrypt AES-ECB+RC4 · reassemble `0xAC`/multi-frame · XOR/sum8 checksum) + dispatch wiring that gives
+  the roots their `direction` and `govee_profile` (the library builds its profiles from
+  `../devices.yaml → client_profile`). Doubles as the round-trip test harness.
+- **`../govee_commands.py`** (package root) — the app-traced command-builder catalogue, indexed by
+  **`OPCODE_COVERAGE.md`**.
 
 Every claim in the machine artifacts cites decompiled Java `file:line`.
 
@@ -1521,9 +1542,10 @@ Every claim in the machine artifacts cites decompiled Java `file:line`.
 # validate the registry against its schema
 python -c "import json,yaml,jsonschema;jsonschema.validate(yaml.safe_load(open('devices.yaml')),json.load(open('devices.schema.json')))"
 
-# generate a parser + docs from the binary spec
-kaitai-struct-compiler -t python govee_ble.ksy      # → govee_ble_frame.py
-kaitai-struct-compiler -t html   govee_ble.ksy      # → govee_ble_frame.html
+# generate readers/writers + docs from the binary spec (all files in one call: they import each other)
+kaitai-struct-compiler -t python -w --outdir out *.ksy   # → out/govee_ble_frame.py, out/govee_common.py, …
+kaitai-struct-compiler -t html --outdir out *.ksy        # → out/govee_ble_frame.html, …
+bash checks/run.sh                                       # the spec gate: ksc python/java/js + lints
 ```
 
 > **Precedence.** Where this Markdown and the machine-readable artifacts disagree, the artifacts are canonical
@@ -1720,10 +1742,15 @@ data offset:  +0        +1  +2        +3  +4        +5  +6      +7
 
 - **Custom layout note:** the `flags` byte *precedes* the `0x88 0xEC` marker — this is not a standard
   leading 2-byte company identifier, so the payload is only meaningful once `0x88 0xEC` is matched.
-- **Sensors** (thermo/hygro, §11) use a **service-data (type `0x03`) prefix** variant of the same walk.
+- **Sensors** (thermo/hygro, §11) use a variant of the same walk (`parseBleBroadcastPact4MultiTh`,
+  `BleUtil.java:805-834`): the `0x88 0xEC` marker sits in a preceding **16-bit service-UUID list AD (type
+  `0x03`, len 3)**, and the `0xFF` AD is `[flags][pactType u16be][pactCode]` with no marker.
 - **Passive state listener:** `EventBleBroadcastListenerTrigger` toggles a broadcast listener that
   reads presence/protocol/state from advertisements without connecting.
-- Machine-readable model: [`govee_adv.ksy`](../govee_adv.ksy).
+- Machine-readable model: [`govee_manufacturer_data.ksy`](../govee_manufacturer_data.ksy) (the `0xFF`
+  payload, lenient on short or foreign payloads; `is_govee`, `encrypted`, `protocol_version`, `has_pact`,
+  `switch_byte`) and [`govee_scan_record.ksy`](../govee_scan_record.ksy) (the AD walk, which reaches the
+  `0xFF` payload and types the `0x03` UUID list and the `0x09` name).
 
 ## 20. Timing & reliability
 

@@ -2,20 +2,21 @@
 """
 Govee BLE — reference codec (the "framing" layer Kaitai cannot express) + dispatch wiring.
 
-This is the executable half of the spec. `govee_ble.ksy` owns the *byte structure*; this module owns the
+This is the executable half of the spec. The `.ksy` files own the *byte structure*; this module owns the
 three things a single-buffer grammar structurally cannot do, each grounded in the decompiled app:
 
     (1) DECRYPT      V1 = AES-128-ECB(16-byte blocks) + RC4(remainder)   [com/govee/encryp/ble/Safe.java]
     (2) REASSEMBLE   multi-frame transfers (0xAC status; 0xA1/0xA3 alike) [GOVEE_BLE_GATT_PROTOCOL.md 4.5/4.3]
-    (3) XOR checksum (BCC) compute/verify                                [4.1]
+    (3) checksum     XOR (BCC) or sum8 compute/verify, per the frame's checksum_kind   [4.1]
 
-...plus thin `dispatch` helpers that feed the parametric .ksy types the one discriminator they need
-(`devices.yaml -> client_profile`). A real client is then: BLE-transport + this module + the generated
-parser + devices.yaml. Nothing else hand-parses bytes.
+...plus thin `dispatch` helpers that give the spec's roots their context: the direction and a
+`govee_profile` (make_profile; the library builds its profiles from `devices.yaml -> client_profile`).
+A real client is then: BLE-transport + this module + the generated parser + devices.yaml. Nothing else
+hand-parses bytes.
 
-Run (self-test / round-trip harness):
-    kaitai-struct-compiler -t python govee_ble.ksy      # -> govee_ble_frame.py (put on sys.path)
-    python govee_reference.py [--strict]
+Run (self-test / round-trip harness), from spec/:
+    kaitai-struct-compiler -t python --outdir OUT *.ksy   # one module per .ksy: govee_ble_frame.py, ...
+    PYTHONPATH=OUT python govee_reference.py [--strict]
 
 Without a fresh `ksc` build on sys.path the parser checks use the library's generated classes
 (`../src/govee_ble_local/_generated`: run `tools/gen_kaitai.sh`, or `pip install -e .`). They are skipped
@@ -33,7 +34,7 @@ from io import BytesIO
 from typing import Any, Final, cast
 
 
-# ─────────────────────────── (3) XOR checksum (BCC) — §4.1 ───────────────────────────
+# ─────────────────────────── (3) checksum (XOR BCC, sum8) — §4.1 ───────────────────────────
 
 
 def bcc(frame: bytes | bytearray) -> int:
@@ -66,6 +67,22 @@ def append_bcc(payload: bytes) -> bytes:
 
 def verify_bcc(frame: bytes) -> bool:
     return len(frame) == 20 and frame[19] == bcc(frame)
+
+
+def checksum_ok(frame: bytes, kind: str) -> bool:
+    """The frame's last byte against the rule its route uses (govee_ble_frame.checksum_kind, by name):
+    "xor" = XOR of every byte before it (the 20-byte BCC, and the MTU-length 0xA4 / 0xA6 packets),
+    "sum8" = their 8-bit sum (0xA5 mic, 0xB0..0xBF), "none" = no checksum byte (0x05 gid info)."""
+    if kind == "none":
+        return True
+    if len(frame) < 2:
+        return False
+    if kind == "sum8":
+        return sum(frame[:-1]) & 0xFF == frame[-1]
+    x = 0
+    for b in frame[:-1]:
+        x ^= b
+    return x == frame[-1]
 
 
 # ─────────────────────── (1) V1 wire cipher (AES-ECB + RC4) — Safe.java ───────────────────────
@@ -181,29 +198,91 @@ def chunk_ac(tlv: bytes, cmd: int = 0x03, sub: int = 0x00) -> list[bytes]:
 
 # ─────────────────────────── dispatch (wire the generated .ksy) ───────────────────────────
 # Import the ksc-generated parser. Kept lazy so the framing helpers above work even before you compile it.
+# ksc writes one module per .ksy file (govee_ble_frame, govee_status_stream, govee_state, govee_profile,
+# govee_common, ...). The six roots: govee_ble_frame(direction, profile) for one GATT value,
+# govee_status_stream(profile) for a joined 0xAC burst, govee_upload(kind, form) for a joined upload value
+# or a cloud blob, govee_manufacturer_data / govee_scan_record for adverts, govee_bgc_info for GATT 2b12.
 
 _READER_MODULES = (
-    "govee_ble_frame",                              # a fresh `ksc -t python govee_ble.ksy` on sys.path
+    "govee_ble_frame",                              # a fresh `ksc -t python *.ksy` on sys.path
     "govee_ble_local._generated.govee_ble_frame",   # the library's generated classes (tools/gen_kaitai.sh)
 )
 
 
-def _gbf() -> Any:
-    """The generated GoveeBleFrame class (untyped, so Any). A fresh ksc build on sys.path wins, so the
-    self-test checks the .ksy being edited; otherwise the library's generated classes are used
+def _frame_module() -> Any:
+    """The generated govee_ble_frame module. A fresh ksc build on sys.path wins, so the self-test checks
+    the .ksy being edited; otherwise the library's generated classes are used
     (src/govee_ble_local/_generated: run tools/gen_kaitai.sh, or pip install -e .)."""
     errors: list[str] = []
     for name in _READER_MODULES:
         try:
-            return importlib.import_module(name).GoveeBleFrame
+            return importlib.import_module(name)
         except ImportError as err:
             errors.append(f"{name}: {err}")
     raise ImportError(f"no generated frame reader importable ({'; '.join(errors)})")
 
 
+def _module(name: str) -> Any:
+    """The generated module ``name`` (e.g. "govee_status_stream") from the same build as the frame
+    reader, so one profile object serves every root."""
+    package = _frame_module().__name__.rpartition(".")[0]
+    return importlib.import_module(f"{package}.{name}" if package else name)
+
+
+def _gbf() -> Any:
+    """The generated GoveeBleFrame class (untyped, so Any)."""
+    return _frame_module().GoveeBleFrame
+
+
 def _stream(buf: bytes) -> Any:
     from kaitaistruct import KaitaiStream
     return KaitaiStream(BytesIO(buf))
+
+
+_FORMS: Final = ("f_01", "f_02", "f_09", "f_12", "f_13", "f_14", "f_30", "f_36", "f_41", "f_a2", "f_a5",
+                 "f_b0", "f_0b", "f_15_01", "f_15_04", "f_15_05", "f_ee_30", "f_ee_40")
+# govee_profile struct -> its params, each with the govee_common enum it takes (None: a plain number)
+_LEAVES: Final[dict[str, dict[str, str | None]]] = {
+    "CommandForms": {f: "Form" + "".join(p.capitalize() for p in f[2:].split("_")) for f in _FORMS},
+    "DeviceCounts": {"num_segments": None, "num_levels": None},
+    "ColorGroupForm": {"rule": "GroupCountRule", "num_per_group": None, "has_brightness": None,
+                       "num_pieces": None},
+    "PowerRule": {"relay_on_mask": None, "relay_heartbeat_on_mask": None},
+    "ModeDecode": {"c02": "ColorDecode", "c0b": "ColorDecode", "c0d": "ColorDecode", "c14": "ColorDecode",
+                   "c15": "ColorDecode", "music": "MusicDecode", "empty_fails": None},
+}
+
+
+def make_profile(**facts: Any) -> Any:
+    """A govee_profile from flat keyword facts. Every fact left out is 0 (unknown / not_decoded / false),
+    so make_profile() is the all-zero analyzer profile (GENERIC): overloaded bodies stay raw bytes.
+
+    Keys: the command_forms selectors f_01 .. f_ee_40; num_segments, num_levels; rule, num_per_group,
+    has_brightness, num_pieces; relay_on_mask, relay_heartbeat_on_mask; and the mode decode c02, c0b,
+    c0d, c14, c15, music, empty_fails (one mode_decode object serves both mode and mode_status). An
+    enum-typed fact may be given by its member name, e.g. make_profile(f_15_01="kelvin_tint").
+    Generated parents check a profile param by identity: build one object per set of device facts and
+    reuse it (the library's wire_profile() does this from devices.yaml)."""
+    profile_cls = _module("govee_profile").GoveeProfile
+    common = _module("govee_common").GoveeCommon
+    unknown = set(facts) - {k for params in _LEAVES.values() for k in params}
+    if unknown:
+        raise TypeError(f"unknown profile facts: {', '.join(sorted(unknown))}")
+    leaves: dict[str, Any] = {}
+    for leaf, params in _LEAVES.items():
+        kw: dict[str, Any] = {}
+        for key, enum_name in params.items():
+            value = facts.get(key, False if key in ("has_brightness", "empty_fails") else 0)
+            if isinstance(value, str):
+                if enum_name is None:
+                    raise TypeError(f"{key} takes a number, not {value!r}")
+                value = getattr(common, enum_name)[value]
+            kw[key] = value
+        leaves[leaf] = getattr(profile_cls, leaf)(**kw, _io=None)
+    mode = leaves["ModeDecode"]
+    return profile_cls(forms=leaves["CommandForms"], counts=leaves["DeviceCounts"],
+                       group=leaves["ColorGroupForm"], power=leaves["PowerRule"], mode=mode,
+                       mode_status=mode, _io=None)
 
 
 def _ready(obj: Any) -> Any:
@@ -217,21 +296,25 @@ def _ready(obj: Any) -> Any:
     return obj
 
 
-def parse_frame(frame20: bytes) -> Any:
-    """Verify BCC, then parse one plaintext, single 20-byte frame (proType-switched)."""
-    if not verify_bcc(frame20):
-        raise ValueError("bad BCC")
-    return _ready(_gbf().from_bytes(frame20))
+def parse_frame(frame: bytes, direction: str = "rx", profile: Any = None) -> Any:
+    """One plaintext frame (a GATT 2b11 write or 2b10 notification value, any length) -> GoveeBleFrame,
+    read with ``direction`` ("tx" client to device, "rx" device to client) and ``profile``
+    (make_profile(); None = the analyzer profile). The body is ``route``-switched (direction + proType);
+    ValueError when the trailer fails the frame's own checksum_kind (checksum_ok)."""
+    common = _module("govee_common").GoveeCommon
+    f = _ready(_gbf()(common.Direction[direction], make_profile() if profile is None else profile,
+                      _stream(frame)))
+    if not checksum_ok(frame, f.checksum_kind.name):
+        raise ValueError("bad checksum")
+    return f
 
 
-def parse_status(tlv_buffer: bytes) -> Any:
-    """A reassembled 0xAC buffer -> StatusReply (terminates on the 0x00 padding sentinel or EOF)."""
-    return _ready(_gbf().StatusReply(_stream(tlv_buffer)))
-
-
-def parse_color_group(group_bytes: bytes, *, has_brightness: bool, record_count: int) -> Any:
-    """One 0xA5 colour group; `has_brightness` (from client_profile) selects 4-byte vs 3-byte records."""
-    return _ready(_gbf().ColorGroupRead(record_count, 1 if has_brightness else 0, _stream(group_bytes)))
+def parse_status(tlv_buffer: bytes, profile: Any = None) -> Any:
+    """A joined 0xAC buffer -> GoveeStatusStream: ``tlvs`` (status_tlv: tag, len_value, value =
+    govee_state) while 3 or more bytes remain, then the 0-2 byte ``tail``, as the app's walk (tag 0 is an
+    ordinary TLV). ``profile`` as for parse_frame."""
+    stream_cls = _module("govee_status_stream").GoveeStatusStream
+    return _ready(stream_cls(make_profile() if profile is None else profile, _stream(tlv_buffer)))
 
 
 # ───────────────────────── op15 segment masks (BleUtils.X / makeSelectedTwoBytes) ─────────────────────────
@@ -290,8 +373,9 @@ def op15_mask_from_int(seg_mask: int, segments: int) -> bytes:
 
 def build_op15_color(r: int, g: int, b: int, seg_mask: int, *, variant: int, kelvin: int = 0,
                      tint: tuple[int, int, int] = (0, 0, 0), segments: int | None = None) -> bytes:
-    """Build a 0x33 05 15 01 colour-write frame using the parametric op15_color_typed layout.
-    variant: 1 basic, 12 H60A1/H60A6 RGB, 11 CCT (from client_profile.color_scheme + the op).
+    """Build a 0x33 05 15 01 colour-write frame: the frame's op15_color, whose form is the profile's
+    f_15_01. variant: 1 basic (form basic), 12 H60A1/H60A6 RGB and 11 CCT (both form kelvin_tint; 12
+    sends kelvin 0 and tint 0), from client_profile.color_scheme + the op.
 
     ``segments`` is the device's segment count, which sets the mask width (op15_mask_width): None, the
     default, keeps the legacy two-byte mask (seg_mask & 0xFFFF) exactly as before; 0..16 is also two
@@ -415,6 +499,8 @@ def _selftest(*, strict: bool = False) -> int:
 
     try:
         _gbf()
+        for sibling in ("govee_common", "govee_profile", "govee_status_stream"):
+            _module(sibling)
     except ImportError as e:
         print(f"  ⚠️  {e}. Skipping parser tests (generate the classes with tools/gen_kaitai.sh, or "
               "pip install -e .).")
@@ -424,23 +510,45 @@ def _selftest(*, strict: bool = False) -> int:
         return 0 if ok else 1
 
     print("parse dispatch:")
-    f = parse_frame(fr)
-    check("read reply AA 04 -> brightness 100", f.body.body.brightness == 100)
-    st = parse_status(tlv)
-    reals = [t for t in st.tlvs if t.type != 0]
-    check("0xAC status: 3 TLVs (switch/brightness/colour-group)", len(reals) == 3)
-    check("0xAC status: colour group 3x4B", reals[2].type == 0xA5 and len(reals[2].value.records) == 3)
-    check("0xAC status tolerates trailing padding",
-          len([t for t in parse_status(tlv + bytes(7)).tlvs if t.type != 0]) == 3)
+    command = _module("govee_common").GoveeCommon.Command
+    f = parse_frame(fr, "rx")  # read_reply -> govee_state -> level
+    check("read reply AA 04 (rx) -> brightness 100", f.body.state.body.level == 100)
+    check("read request AA 04 (tx) -> read_request brightness",
+          parse_frame(fr, "tx").body.command == command.brightness)
+    try:
+        parse_frame(fr[:19] + bytes([fr[19] ^ 1]))
+        check("parse_frame refuses a bad checksum", False)
+    except ValueError:
+        check("parse_frame refuses a bad checksum", True)
+    check("checksum_kind sum8 (A5 mic) and none (05 gid info)",
+          checksum_ok(bytes([0xA5, 0x02, 0x10, 0x01, 0xB8]), "sum8") and checksum_ok(bytes(20), "none"))
 
-    g4 = parse_color_group(bytes([3, 100, 255, 0, 0, 80, 0, 255, 0]), has_brightness=True, record_count=2)
-    check("color_group has_brightness=1 -> 4B", g4.records[0].brightness == 100 and g4.records[1].b == 0)
-    g3 = parse_color_group(bytes([3, 255, 0, 0, 0, 255, 0]), has_brightness=False, record_count=2)
-    check("color_group has_brightness=0 -> 3B", g3.records[0].r == 255 and g3.records[1].g == 255)
+    status_profile = make_profile(f_a5="color_group", rule="from_len", has_brightness=True)
+    st = parse_status(tlv, status_profile)
+    reals = [t for t in st.tlvs if t.tag != 0]
+    check("0xAC status: 3 TLVs (power/brightness/colour-group)", len(reals) == 3)
+    check("0xAC status: colour group 3x4B",  # status_tlv.value = govee_state -> cmd_a5_state -> color_group
+          reals[2].tag == command.color_group and len(reals[2].value.body.body.records) == 3)
+    padded = parse_status(tlv + bytes(7), status_profile)
+    check("0xAC status: trailing zero padding reads as type-0 TLVs and a 1-byte tail",
+          len([t for t in padded.tlvs if t.tag != 0]) == 3 and padded.tail == b"\x00")
 
-    wr = parse_frame(build_op15_color(0x11, 0x22, 0x33, 0x0003, variant=11, kelvin=2700, tint=(100, 50, 16)))
-    ext = wr.body.params.params.data  # single_command -> mode_payload -> color_15 -> op15_color (frame path)
-    check("build_op15_color(CCT) round-trips r/g/b", ext.r == 0x11 and ext.g == 0x22 and ext.b == 0x33)
+    def group_reply(has_brightness: bool, records: Sequence[int]) -> Any:
+        prof = make_profile(f_a5="color_group", rule="fixed", num_per_group=2, has_brightness=has_brightness)
+        return parse_frame(append_bcc(bytes([0xAA, 0xA5, 3, *records])), "rx", prof).body.state.body.body
+
+    g4 = group_reply(True, [100, 255, 0, 0, 80, 0, 255, 0])
+    check("aa a5 reply, has_brightness -> 4B records",
+          g4.group_index == 3 and g4.records[0].brightness == 100 and g4.records[1].b == 0)
+    g3 = group_reply(False, [255, 0, 0, 0, 255, 0])
+    check("aa a5 reply, no brightness -> 3B records", g3.records[0].r == 255 and g3.records[1].g == 255)
+
+    wr = parse_frame(build_op15_color(0x11, 0x22, 0x33, 0x0003, variant=11, kelvin=2700, tint=(100, 50, 16)),
+                     "tx", make_profile(f_15_01="kelvin_tint", num_segments=16))
+    ext = wr.body.params.params.data  # write_command -> mode_write -> color_15_write -> op15_color
+    check("build_op15_color(CCT) round-trips colour, kelvin and tint",
+          (ext.color.r, ext.color.g, ext.color.b, ext.kelvin) == (0x11, 0x22, 0x33, 2700)
+          and (ext.tint.r, ext.tint.g, ext.tint.b) == (100, 50, 16) and ext.is_cct)
 
     # govee_commands.py — the full command-builder catalogue (0x33 writes / 0xAA reads). Each builder
     # carries a self-check (byte-exact vs the app layout it was traced from); run them all here so the

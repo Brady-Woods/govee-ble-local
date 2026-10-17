@@ -6399,8 +6399,11 @@ def build_music_code_sens(
 
 
 def build_op15_color_temp(kelvin: int) -> bytes:
-    """0x33 05 15 05 — basic colour temperature (op15_color_temp): kelvin little-endian."""
-    return append_bcc(bytes([0x33, 0x05, 0x15, 0x05, kelvin & 0xFF, (kelvin >> 8) & 0xFF]))
+    """0x33 05 15 05 [kelvin u16be] colour temperature (the frame's op15_kelvin, form_15_05 kelvin): the
+    same bytes as build_op15_kelvin_05. The app writes the Kelvin high byte first
+    (split_h60ax/com/govee/pact_h60a0/ble/v1/SubModeColorV1.java:695-698, getSignedBytesFor2(k, true)).
+    """
+    return build_op15_kelvin_05(kelvin)
 
 
 def build_op15_color_ver5(r: int, g: int, b: int, seg_mask: int, *, kelvin: int = 0) -> bytes:
@@ -6684,7 +6687,7 @@ def read_ic_segment() -> bytes:
 
 
 def read_mode() -> bytes:
-    """0xAA 05 01 mode read (selector 0x01 = ksy enum mode_read_selector::request): legacy
+    """0xAA 05 01 mode read (selector 0x01 = govee_ble_frame mode_query.selector): legacy
     AbsModeController.p {1} (base-classes10/com/govee/base2light/ble/controller/AbsModeController.java:34-37);
     kt ControllerMode.Companion.b / .c default ext {1}
     (base-classes11/com/govee/base2light/kt/general_controller/ControllerMode.java:45-58,107-109), e.g. the

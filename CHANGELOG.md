@@ -732,6 +732,73 @@ model, from which the shipped readers are generated).
   zeroes every data byte.
 
 ### Spec
+- The spec is restructured into nine Kaitai files that compile in one `ksc` call
+  (`-t python -w --python-package .`). They replace `govee_ble.ksy` and `govee_adv.ksy`, and every documented
+  fact and citation of the old files has moved to a new home.
+  - Shared files:
+    - `govee_common.ksy` (LIBRARY): the shared enums (`command`, `pro_type`, `sub_mode`, the 18 `form_*`
+      selectors, `color_decode`, `music_decode`, `group_count_rule` and others) and the context-free leaves
+      (`rgb`, `level`, `seg_mask`, `echo` and others).
+    - `govee_profile.ksy` (CONTEXT): `govee_profile(forms, counts, group, power, mode, mode_status)`, the device
+      facts a reader needs. Value 0 of every selector is `unknown`, which leaves an overloaded body as raw bytes.
+    - `govee_state.ksy` (SHARED PAYLOAD): `govee_state(command, source, profile)`, one type for an `aa` reply
+      body and a 0xAC TLV value.
+  - Six STANDALONE roots, one per byte source:
+    - `govee_ble_frame(direction, profile)`: one GATT 2b11 write or 2b10 notification, `[pro_type][body]
+      [checksum]`. `route` (direction and proType) picks the body; `checksum_kind` says xor, sum8 or none.
+    - `govee_status_stream(profile)`: one joined 0xAC status burst, read as TLVs and a 0-2 byte tail.
+    - `govee_upload(kind, form)`: a joined A1 / A3 / A4 value or a decoded cloud scenceParam.
+    - `govee_manufacturer_data`: the 0xFF manufacturer AD payload (was `govee_advertisement`).
+    - `govee_scan_record`: a raw advert or scan-response PDU.
+    - `govee_bgc_info`: the GATT 2b12 value.
+  - The rules:
+    - Each message has one type path.
+    - Context is params only: no `_root`, `_parent`, `io` / `pos` instances, `process` or opaque types.
+    - Every message ends with a lossless `rest` or a named data field.
+    - Every enum is applied to a field.
+    - Every form the app reads or a firmware sends reads without raising; the app's rejections are `app_*`
+      instances.
+- `devices.yaml`: every family with a `client_profile` gets a `wire` block, from which the library builds
+  `govee_profile`.
+  - The block holds `forms`, `counts`, `group`, `power`, `mode` and `mode_status`, with `by_model` /
+    `by_goods_type` / `by_pact` / `by_firmware` overrides.
+  - It adds `relay_heartbeat_on_mask`: 0x03 for goodsTypes 50 / 307, 0x01 for 43, 0x07 for 90.
+  - `ksy` and `mode_0d_kind` are removed; the `govee_common` enums hold their facts.
+  - `devices.schema.json` gains the matching `$defs`, with the selector enums taken from `govee_common.ksy`.
+- New `spec/checks/run.sh` (Suite S).
+  - It runs ksc for python and java with `-w`, then javascript, and fails on any compiler output.
+  - Then `checks/lint.py` checks the meta keys, the banned constructs, the six labelled roots and
+    reachability, that every enum is applied, schema and `mode_color_decode` enum equality, and the doc-ref
+    format.
+- `govee_reference.py` uses the new classes.
+  - `parse_frame(frame, direction, profile)` reads any frame length and checks the trailer by `checksum_kind`.
+  - `parse_status` returns `govee_status_stream`.
+  - New `make_profile(**facts)` and `checksum_ok`.
+  - `parse_color_group` is removed.
+  - The docs (`USING_THE_KSY.md`, `OPCODE_COVERAGE.md`, the GATT, firmware and scene-upload notes) name the
+    new files and types.
+- Review fixes to the new files:
+  - `33 05 15 05` has three app layouts, so it gets the selector `f_15_05` (`form_15_05`): `kelvin` [kelvin
+    u16be] (H60A0, SubModeColorV1 opType 2), `side_brightness` [side][value] (Bytes.H, goodsType 80) and
+    `gradient` [3 x RGB][mask] (Bytes.n). The Kelvin was read little-endian; the app writes it high byte
+    first. `govee_commands.build_op15_color_temp` now writes it big-endian too. devices.yaml sets `kelvin`
+    on goodsType 188 and `side_brightness` on 80. The `op15` enum docs give the right opTypes (0x05 is
+    opType 2, 0x00 is opType 3).
+  - A 0x15 01 colour write, and a 0x0b rgb_mask write, stay raw (bytes in `rest`) when the profile has no
+    segment count. Before, any set mask bit raised.
+  - `checksum_kind` builds its enum from an integer, so the generated Java compiles.
+  - `ic_count` (aa 40 / TLV 0x40) reads the second [IC][segment] pair at bytes 3..5 (`ic_count_2`,
+    `segment_2`), with `segment_signed`, `has_second_pair` and `ic_total` (the sum the goodsType-375 and
+    H6609 / H6250 screens use).
+  - `color_group` flags a group the TLV screen cannot place (`app_rejects_group`, `app_read_fails`) under rule
+    `fixed` too, when `num_pieces` is known. devices.yaml gives h6047 goodsTypes 277 / 288 / 298 their piece
+    counts (12 / 24 / 22).
+  - An aa a2 colour-only group (`f_a2: color_group_rgb`) always reads 3-byte records. Straightfloorlamp
+    goodsType 30 sets that form, for its reads below the firmware gate.
+  - Doc fixes: `f_ee_30` unknown still reads the EE 30 bytes; the plug heartbeat masks of goodsTypes 43 / 90
+    are verified; two devices.yaml / schema cross-references name the new types; seven docs that copied
+    decompiled code are prose now. In Java an unknown proType still reads as null (ksc 0.11 cannot put an
+    imported enum on a value instance); the frame doc says so.
 - `devices.yaml` striplight `color_temp_write` cites the BLE builder the colour-tab Kelvin slider runs
   (`ColorViewModel.U` -> `ColorModeControllerConfig.c` -> `Config.Yt` -> `Bytes.r`). It used to cite
   `ColorControllerConfig.b`, which builds the IoT command. The frame bytes are unchanged.

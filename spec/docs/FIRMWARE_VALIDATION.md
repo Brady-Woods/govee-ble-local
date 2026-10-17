@@ -1,6 +1,6 @@
 # Firmware cross-validation of the Govee BLE spec
 
-This document validates the spec (`govee_ble.ksy`, `GOVEE_BLE_GATT_PROTOCOL.md`, `devices.yaml`)
+This document validates the spec (the `.ksy` files, `GOVEE_BLE_GATT_PROTOCOL.md`, `devices.yaml`)
 against **device firmware** — the other end of the wire. The rest of the spec is derived from the
 decompiled **Govee Home Android app** (the phone → device direction). This pass adds an independent
 oracle: the **device-side firmware**, reverse-engineered from the OTA images, which shows what the
@@ -50,7 +50,7 @@ Every image implements the spec's §4.1 frame; the per-image differences are lis
 | `[proType][cmd][payload…][BCC]` | byte[0] = proType, byte[1] = command id, payload from byte[2] — identical across all six. |
 | **BCC = XOR of bytes 0..18 → byte[19]** | Byte-identical loop in every device: e.g. H6008 `LAB_9b0245f8` `b=0; for(p;p!=buf+0x13;) b^=*p; buf[0x13]=b`; H60A6 `FUN_9b053f04(frame,0x13)`; matches `govee_reference.bcc()` and `Controller4Aes.c()` (`b ^= bArr[i]`, i=1..18). |
 | proType `0x33` write / `0xAA` read | Both present in every dispatcher. On H6047 both go into one table and each handler decides (below). |
-| multi-packet `0xA1` / `0xA3` | `0xA3` on H6006/H6008/H60A1/H60A6 (and in H5083's shared layer). `0xA1` on H5083/H60A1/H60A6, and on H6006/H6008 only as the `A1 11 …` Wi-Fi-provisioning multi-package. Both are device-accepted multi frames (spec `multi_a1` / `multi_a3`). Detail below. |
+| multi-packet `0xA1` / `0xA3` | `0xA3` on H6006/H6008/H60A1/H60A6 (and in H5083's shared layer). `0xA1` on H5083/H60A1/H60A6, and on H6006/H6008 only as the `A1 11 …` Wi-Fi-provisioning multi-package. Both are device-accepted multi frames (spec `govee_ble_frame` `mpm_packet` / `a3_packet`). Detail below. |
 | 20-byte reply | Reply built and sent as `0x14` bytes: H6006 `FUN_9b03d3e4(payload,0x14)`, H6008 `FUN_9b03cffc(…,0x14)`, H60A6 `FUN_9b04b8ac(…,0x14)`. |
 
 Per-image detail for the table:
@@ -112,7 +112,7 @@ correct BCC (`BleUtils.o`), so spec/library behaviour is unchanged. A bad-BCC wr
 
 ---
 
-## 2. Opcode inventory — per device, vs the spec `command` enum
+## 2. Opcode inventory — per device, vs the spec `command` enum (`govee_common.ksy`)
 
 Command bytes (byte[1]) each per-SKU dispatcher branches on, from the decompiled handlers. On the RTL
 images these are not all the opcodes the device answers. A shared `_handle_write_msg` layer runs first
@@ -169,7 +169,9 @@ Cross-check against the spec `command` enum:
     `VM4Light.i5` sender of `33 25 01`, `govee_commands.py` `build_set_light_end`, is gated by
     `Support.c` to other goodsTypes). `SINGLE_PRE_SET_COLOR` is the meaning
     for other families (H6057 `PreSetColorController`).
-    **→ in the `command` enum** as `preset_color`; the H6008/H60A1/H60A6 meaning is firmware-sourced.
+    **→ in the `command` enum**, first as `preset_color`; the clean spec names it `light_effect_stop`
+    (its firmware meaning, with `-orig-id` `SINGLE_PRE_SET_COLOR` / `value_set_light_end`) and `0x24`
+    `light_effect_start`. The H6008/H60A1/H60A6 meaning is firmware-sourced.
 - `0x00` on H60A1/H60A6 is an explicit no-op case, not the default branch (tbh entry 0 → H60A1
   `0x9b02607e`, H60A6 `0x9b026b20`). The frame is sent back: AA is echoed, 33 gets status 0. The default
   branch instead logs `msg type error` and sets status 1. The app name is `SINGLE_HEART_BEAT` (0). It
@@ -208,7 +210,8 @@ shared `_handle_write_msg` layer answers them first (above).
 ## 3. Discrepancies investigated — resolved in the spec's favour
 
 The firmware showed three things the spec's `pro_type` enum did not list. Each was re-grounded in
-the APK Java. Two are not app-emitted frames and stay out of the enum (match-the-app); the third, `0xA5`,
+the APK Java. Two are not app-emitted frames and stayed out of the enum then (match-the-app; the clean spec
+names `0x66` as `factory_test`, CAUTION); the third, `0xA5`,
 turned out to be a real app frame family the enum was missing (now added as `mic`, §5):
 
 - **byte[0] == `0xA5` (length-exempt frame) — CORRECTED: this IS an app frame family.** H60A1/H60A6/H6047
@@ -224,9 +227,10 @@ turned out to be a real app frame family the enum was missing (now added as `mic
   (`base-classes10/com/govee/base2light/ble/mic/controller/AbsMicController.java:55-56`; the frame builders at
   `:23` and `:43` also write `bArr[0] = -91`), and it is the base of `MicSetRgbController`, `MicColorCmdController`
   and the newdetail `MicController`. So the firmware's length-exempt `0xA5` path is the device side of the app's
-  mic-colour push. **Spec:** `govee_ble.ksy`'s `pro_type` enum now has `0xA5` as `mic`
-  (`govee_ble.ksy:64`). (This is distinct from *command* `0xA5` `local_color_read`, which is sent under
-  proType `0xAA` as `AA A5 …`; the handshake is `0xE7`, below.)
+  mic-colour push. **Spec:** the `pro_type` enum (`govee_common.ksy`) has `0xA5` as `mic`, and the frame
+  reads it on routes `mic_tx` / `mic_rx` (`mic_command` / `mic_reply`, checksum_kind sum8). (This is
+  distinct from *command* `0xA5` `color_group`, which is sent under proType `0xAA` as `AA A5 …`; the
+  handshake is `0xE7`, below.)
 - **byte[0] == `0x66`: an echo on H6047, a factory-test stub on the RTL images.**
   - H6047: an echo. The dispatcher (`0x010064be-0x010064d8`) exits group control and sends the frame
     (byte 1 + 17 payload bytes, new XOR) back to the writer through the BLE send routine `0x010167a0`.
@@ -246,7 +250,8 @@ turned out to be a real app frame family the enum was missing (now added as `mic
   (`CellGraffitiDrawTools`, `GuideView`). **Caution:** on the RTL images this is a factory-test hook.
   `ble_msg_enter_test` was traced on H60A6 to log `start` and reply only, with no mode change, and it
   returns no device state; the library must still not send it, even under rule 6 (§7.3). Device-side
-  only; left out of `pro_type`.
+  only. It was left out of `pro_type` at first; the clean spec names it `factory_test` (FIRMWARE-SOURCED,
+  CAUTION) with no body type, so a captured `66` frame reads as raw bytes.
 - **Handshake proType.** The spec already says `0xE7` (`GOVEE_BLE_GATT_PROTOCOL.md §9.1`). My firmware
   H6047 note had guessed `0xA5`. The APK is decisive: `Controller4Aes.g()` accepts the reply iff
   `bArrB[0] == -25 && bArrB[1] == 1` — `-25` = **`0xE7`**. **The spec was right all along**; this
@@ -260,12 +265,12 @@ Where a handler body was decompiled (not just the dispatcher), the payload layou
 
 - **`0x05` mode / colour (H6006).** `FUN_9b020cd0`→`FUN_9b0208de` parse the sub-mode payload;
   `FUN_9b023804` applies colour as R/G/B × brightness plus a colour-temperature term with Kelvin base
-  `0x0a8c = 2700`. This matches the spec's `color_cct_0d` "both-slot" form and the 2700 K floor
+  `0x0a8c = 2700`. This matches the spec's `color_0d_write` "both-slot" form and the 2700 K floor
   (`KelvinConfig`) — **confirmed**.
 - **Multi-packet reassembly (`0xA3`, H6006/H60A1/H60A6).** H6006's reassembler is `FUN_9b020d2c`. H60A1
   and H60A6 reassemble inline in the dispatcher (`D60A1:184-337`, `D60A6:739-940`). Both track the
   package index and log `lost some mult package` / `Wrong mult package index` on loss — the same
-  staged reassembly the spec's `multi_a3` / §4.3 model and `reassemble_ac` assume. **Confirmed.**
+  staged reassembly the spec's `a3_packet` / §4.3 model and `reassemble_ac` assume. **Confirmed.**
 - **`aa 05` mode-report reply bodies (H6006, H6008) — firmware, then hardware-confirmed.** Both
   dispatchers build the reply from the current sub-mode (`pcVar[2]`): sub-mode `0x0D` =
   `[0D][R][G][B][kelvin hi][kelvin lo]` with everything after it zero — **no tint bytes** (H6006
@@ -294,16 +299,18 @@ Where a handler body was decompiled (not just the dispatcher), the payload layou
 
 ## 5. Spec changes made in this pass (spec/ only)
 
-- `govee_ble.ksy` `command` enum: added `0x25 preset_color`, `0xab dynamic_api_support`
+- `command` enum (then in `govee_ble.ksy`, now `govee_common.ksy`): added `0x25` (`preset_color`, now
+  `light_effect_stop`), `0xab dynamic_api_support`
   (`BleProtocolConstants.SINGLE_PRE_SET_COLOR` / `SINGLE_DYNAMIC_API_SUPPORT`, firmware-confirmed as
   dispatched; on H6008/H60A1/H60A6 `0x25` stops the `0x24` pairing light effect instead, §2).
 - `govee_reference.py`: extended with `build_*` / `read_*` / `parse_*` helpers for the control
   opcode set (framing layer), each round-tripped through the generated `.ksy` reader in the self-test.
-- `pro_type` enum: `0xA5` (app mic-colour framing, §3) is in the enum as `mic` (`govee_ble.ksy:64`).
+- `pro_type` enum: `0xA5` (app mic-colour framing, §3) is in the enum as `mic` (`govee_common.ksy`).
   Its firmware side is `ble_msg_group_test` on H6006/H6008 (§3) and `group_ctrl_rec_ble_pkg` on
   H60A1/H60A6 (§6). `0x66` is not added: on the RTL images it is a factory-test stub that returns no
   state (§3), the app has no sender, and its purpose beyond that is unknown; if it is ever added it is
-  firmware-sourced (rule 6). The handshake is already `0xE7`. No library (`src/`) change. Device-side
+  firmware-sourced (rule 6); the clean spec later added it that way, as `factory_test` (CAUTION, no body
+  type). The handshake is already `0xE7`. No library (`src/`) change. Device-side
   notes (the incoming-BCC check in the RTL shared layer, which drops bad-BCC frames while the per-SKU
   dispatchers do not re-check; the `0x66` test stub) live in this file; the main MD already documents
   the handshake correctly.

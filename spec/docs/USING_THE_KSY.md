@@ -1,242 +1,381 @@
-# Using `govee_ble.ksy` in your own project
+# Using the Govee BLE `.ksy` spec in your own project
 
-`govee_ble.ksy` (and `govee_adv.ksy`) are [Kaitai Struct](https://kaitai.io) binary grammars for
-the Govee BLE vendor protocol. Compile them once and you get a **parser in your language** (Python, Java,
-JavaScript, C++, Go, C#, Rust, …) — no hand-written byte-shuffling. This guide shows how to wire that
-parser into a project and, just as importantly, **what the grammar does not do for you** (decryption,
-reassembly, checksum) so you don't feed it bytes it can't parse.
+The `spec/*.ksy` files are [Kaitai Struct](https://kaitai.io) grammars for the Govee BLE vendor protocol.
+Compile them once and you get a **reader and writer in your language** (Python, Java, JavaScript, …), with
+no hand-written byte-shuffling. This guide shows which entry point takes which bytes, what context you pass
+in, how to read and build messages, and **what the spec does not do for you** (decryption, joining chunks,
+checksums, profile resolution).
 
-Companions: `GOVEE_BLE_GATT_PROTOCOL.md` (protocol semantics, §-referenced below), `devices.yaml` (per-SKU
-parameters), `SCENE_UPLOAD_ENCODING.md` (scene dispatch). Everything here is grounded in the decompiled app.
+Companions: `GOVEE_BLE_GATT_PROTOCOL.md` (protocol semantics, §-referenced below), `../devices.yaml`
+(per-SKU facts and the `client_profile.wire` block), `SCENE_UPLOAD_ENCODING.md` (scene dispatch). Every
+type cites the decompiled app (`doc-ref`, `path:line`) or the firmware handler it was traced from.
 
 ---
 
-## 1. Compile the grammar
+## 1. The files
 
-Install the compiler (`ksc`) — [releases](https://kaitai.io/#download) or `brew install kaitai-struct-compiler`
-(needs a JRE). This spec is validated with **`ksc` 0.11**. The `.ksy` files live at the **package root**
-(`spec/`, the parent of this `docs/` folder); run these from there (or adjust the paths).
+| File | Top-level type | Role |
+|---|---|---|
+| `govee_ble_frame.ksy` | `govee_ble_frame(direction, profile)` | **Entry point**: one GATT value written to `…2b11` or notified on `…2b10` |
+| `govee_status_stream.ksy` | `govee_status_stream(profile)` | **Entry point**: the joined data of one `0xAC` status burst (the TLV stream) |
+| `govee_upload.ksy` | `govee_upload(kind, form)` | **Entry point**: one joined `0xA1`/`0xA3`/`0xA4` upload value, or one decoded cloud `scenceParam` |
+| `govee_manufacturer_data.ksy` | `govee_manufacturer_data` | **Entry point**: the payload of one manufacturer-specific AD (type `0xFF`) |
+| `govee_scan_record.ksy` | `govee_scan_record` | **Entry point**: a raw advertising / scan-response PDU, or Android's 62-byte scan record |
+| `govee_bgc_info.ksy` | `govee_bgc_info` | **Entry point**: the value of GATT characteristic `…2b12` (cipher version) |
+| `govee_state.ksy` | `govee_state(command, source, profile)` | Shared payload: the body of an `aa <cmd>` reply **and** the value of a `0xAC` TLV with tag `<cmd>` |
+| `govee_profile.ksy` | `govee_profile(forms, counts, group, power, mode, mode_status)` | Context (params only, never read): the per-device facts a frame does not carry |
+| `govee_common.ksy` | `govee_common` | Library: shared enums (`pro_type`, `command`, `sub_mode`, the profile selectors, …) and leaf types (`rgb`, `level`, `seg_mask`, `echo`, …) |
+
+Each message has exactly **one** path from one entry point. Only the six entry points take bytes from
+outside; `govee_state` is reached through the frame's `read_reply` and the stream's `status_tlv`, and is
+not an entry point. A root's doc starts with `STANDALONE (<reason>)`; other labels you will meet in the
+docs are `PROCEDURAL` (a client step, not grammar), `FIRMWARE-SOURCED` (the app never sends or reads
+it), `CAUTION` (destructive commands), `VALIDATOR (read-side)` and `DATA` (a plain byte field that must
+round-trip).
+
+---
+
+## 2. Compile
+
+Install the compiler (`ksc`): [releases](https://kaitai.io/#download) or `brew install
+kaitai-struct-compiler` (needs a JRE). The spec is validated with **ksc 0.11**. The files import each
+other, so compile **all of them in one call**, from `spec/` (the parent of this `docs/` folder):
 
 ```console
-# Python
-kaitai-struct-compiler -t python govee_ble.ksy    # → govee_ble_frame.py
-kaitai-struct-compiler -t python govee_adv.ksy    # → govee_advertisement.py
+# Python, read-write classes as top-level modules (put OUT on sys.path)
+kaitai-struct-compiler -t python -w --outdir OUT *.ksy
 
-# other targets — same grammar, idiomatic classes
-kaitai-struct-compiler -t java   --java-package com.example.govee govee_ble.ksy
-kaitai-struct-compiler -t javascript govee_ble.ksy
-kaitai-struct-compiler -t cpp_stl govee_ble.ksy
+# Python, as a package (`from . import govee_common`): what the library generates into _generated/
+kaitai-struct-compiler -t python -w --python-package . --outdir OUT/mypkg *.ksy
+
+# other targets
+kaitai-struct-compiler -t java -w --java-package com.example.govee --outdir OUT *.ksy
+kaitai-struct-compiler -t javascript --outdir OUT *.ksy   # ksc 0.11 has no -w for JavaScript
+
+# an HTML reference or a Graphviz diagram
+kaitai-struct-compiler -t html --outdir OUT *.ksy
+kaitai-struct-compiler -t graphviz --outdir OUT *.ksy
 ```
 
-Add the tiny Kaitai runtime for your language (`pip install kaitaistruct`, the `io.kaitai:kaitai-struct-runtime`
-Maven artifact, `kaitai-struct` npm package, etc.). The generated `GoveeBleFrame` class is the entry point.
+Add the Kaitai runtime for your language (`pip install 'kaitaistruct>=0.11'`, the
+`io.kaitai:kaitai-struct-runtime` Maven artifact, the `kaitai-struct` npm package). One module per `.ksy`
+comes out: `govee_ble_frame.py` with class `GoveeBleFrame`, `govee_common.py` with `GoveeCommon`, and so on.
+`-w` gives read-write classes (`_read()`, `_check()`, `_write()`); without it, a read-only class reads in
+its constructor.
 
-You can also generate a **HTML reference** or a **Graphviz diagram** of the grammar:
-```console
-kaitai-struct-compiler -t html     govee_ble.ksy   # → govee_ble_frame.html
-kaitai-struct-compiler -t graphviz govee_ble.ksy   # → govee_ble_frame.dot
-```
+The spec gate `checks/run.sh` compiles every file for Python and Java (`-w`) and JavaScript and fails on
+any compiler output, then runs the structural lints (`checks/lint.py`).
 
 ---
 
-## 2. The pipeline — 3 things you must do BEFORE parsing
+## 3. The pipeline: what to do before and after parsing
 
-The grammar models a **single, plaintext, already-reassembled** frame. A raw byte stream off the wire is
-none of those yet. Do these first (the `.ksy` deliberately does **not**, because they need runtime state):
+The grammar models **plaintext** bytes from one byte source. A raw notification is not that yet:
 
 ```
-   raw bytes off 2b10/2b11
+   raw value off 2b10 / 2b11
         │
         ▼
-  (1) DECRYPT      if the link is encrypted (advert bit / BGC-info) — §9
+  (1) DECRYPT      if the link is encrypted (advert bit / 2b12 value) — §9
         │
         ▼
-  (2) REASSEMBLE   multi-frame transfers (0xA1/0xA3/0xA4/0xAC): de-chunk, strip each
-        │          frame's header + XOR byte, concatenate — §4.3, §4.5
+  (2) PARSE        govee_ble_frame(direction, profile): one frame, any length
+        │          (20-byte commands, MTU-length 0xA4 / 0xA6 packets, the 0xA5 mic frame, the 0x05 head)
         ▼
-  (3) then PARSE   feed the (plaintext, reassembled) bytes to the generated reader
+  (3) CHECKSUM     verify the trailer by the frame's checksum_kind (xor / sum8 / none) — §4.1
+        │
+        ▼
+  (4) JOIN         multi-frame transfers: order the 0xAC / 0xAB chunks or the 0xA1 / 0xA3 / 0xA4
+        │          packets, take their data fields, trim the last to len_last — §4.3, §4.5
+        ▼
+  (5) PARSE        the joined bytes: govee_status_stream(profile) or govee_upload(kind, form)
 ```
 
-1. **Decrypt.** If the device negotiated a wire cipher, frames are ciphertext. V1 = AES-128-ECB/NoPadding on
-   each full 16-byte block + **RC4** on the trailing `len % 16` bytes (so a 20-byte frame = 1 AES block + 4
-   RC4 bytes); V2 = AES-GCM. The grammar assumes **plaintext**. Many curated devices run plaintext (resolve
-   the cipher at connect from the advert `encrypted` bit / BGC-info — **not** from a per-SKU table). See §9.
-2. **Reassemble multi-frame transfers.** A single logical value (scene upload, `0xAC` status burst) is split
-   across several 20-byte frames. Parse the *frame* layer to de-chunk, then concatenate the payload bytes into
-   one buffer and parse *that* with the value/status type. The grammar has `multi_a1` / `multi_a3` / `multi_a4`
-   / `multi_ac` for the per-frame envelopes, but it cannot stitch across frames (Kaitai reads one buffer).
-3. **Then parse.** Now the bytes match a grammar type.
+1. **Decrypt.** V1 = AES-128-ECB/NoPadding on each full 16-byte block + **RC4** on the trailing
+   `len % 16` bytes (a 20-byte frame = 1 AES block + 4 RC4 bytes); V2 = AES-GCM. Resolve the cipher at
+   connect from the advert `encrypted` bit and the `govee_bgc_info` value, not from a per-SKU table. §9.
+2. **Checksum.** Kaitai cannot fold over a byte range, so `checksum` is read, not checked.
+   `checksum_kind` says which rule applies: `xor` of every byte before it (the 20-byte BCC, and the
+   0xA4 / 0xA6 packets over their own length), `sum8` (the 0xA5 mic frame, 0xB0..0xBF) or `none` (the
+   0x05 head, which has no checksum byte).
+3. **Join.** A burst or an upload is split across frames, and Kaitai reads one buffer. Read each frame
+   with `govee_ble_frame` (its `status_chunk` / `mpm_packet` / `a3_packet` / `a4_packet` body gives the
+   index, the counts and the data), join the data in order, then read the joined bytes with the stream or
+   upload root.
 
-> **Never infer field ends from remaining length.** Every single frame is zero-padded to 20 bytes
-> (`BleUtils.o` → `new byte[20]`). Trailing structure is bounded by explicit count/length bytes or an
-> in-frame flag, never by "bytes remaining." (This is why the `0xAC` `status_reply` terminates on a `0x00`
-> type sentinel, not EOS.)
+`govee_reference.py` implements the decryption (`crypt_v1`), the checksum (`checksum_ok`) and the 0xAC
+join (`reassemble_ac` / `chunk_ac`).
+
+> **Every message keeps its trailing bytes.** Frames are zero-filled to 20 bytes and replies often
+> carry the request echo or stale buffer bytes. Each message ends with a lossless `rest`
+> (`govee_common::echo`: read strips trailing zeros, write pads them back) or a named data field, so a
+> message never has to be length-inferred and always re-writes byte-exactly.
 
 ---
 
-## 3. Parse a single frame
+## 4. Context: `direction` and the device profile
 
-A single-frame command/reply/notify (proType `0x33`/`0xAA`/`0xEE`) is a plain 20-byte parse:
+The frame does not say which way it travels, and many command bytes mean different things on different
+devices. Both facts come in as **params**:
+
+- **`direction`** (`govee_common::direction`): `tx` (client to device, written to 2b11) or `rx` (device
+  to client, notified on 2b10). `route` = direction + proType picks the body: `aa 04 64` read with `tx`
+  is a read request, with `rx` a brightness reply. A device simulator reads with `tx` and writes with `rx`.
+- **`profile`** (`govee_profile`): one object per set of device facts.
+
+```
+govee_profile(forms, counts, group, power, mode, mode_status)
+  forms   command_forms: one selector per overloaded byte (f_01, f_02, f_09, f_12, f_13, f_14, f_30, f_36,
+          f_41, f_a2, f_a5, f_b0, f_0b, f_15_01, f_15_04, f_15_05, f_ee_30, f_ee_40); each is a govee_common form_* enum
+  counts  device_counts(num_segments, num_levels): the segment-mask width of a colour / brightness write,
+          the level count of a 33 05 15 03 write
+  group   color_group_form(rule, num_per_group, has_brightness, num_pieces): how an aa a5 / aa a2 reply
+          or a TLV 0xA5 value is counted, and 4-byte [brightness, R, G, B] vs 3-byte [R, G, B] records
+  power   power_rule(relay_on_mask, relay_heartbeat_on_mask): the aa 01 rules (0 = a light, state == 1)
+  mode, mode_status   mode_decode(c02, c0b, c0d, c14, c15, music, empty_fails): how the mode report
+          (aa 05 reply / TLV 0x05) decodes each colour sub-mode and the music sub-mode
+```
+
+- **Value 0 of every selector is `unknown`** (`not_decoded` for the decodes): no case matches, the body
+  stays absent and its bytes stay in the message's `rest`. The all-zero profile is the **analyzer
+  profile**: it reads every frame without guessing a device.
+- **Identity.** Generated parents check a profile param by identity, so build **one** object per set of
+  facts and reuse it; build a new one (and new trees) when a runtime fact changes, for example the live
+  `aa 40` piece count.
+- **Filling it.** `devices.yaml` `client_profile.wire` holds the selectors per family, refined
+  `by_model` / `by_goods_type` / `by_pact` / `by_firmware` (the resolution order is the description of
+  `$defs/wire` in `devices.schema.json`); `has_brightness`, `relay_on_mask` and the colour decodes come
+  from the family's existing `client_profile` keys. Profile resolution is client code (PROCEDURAL): the
+  library's `wire_profile()`. For tools and tests, `govee_reference.make_profile(**facts)` takes the
+  leaves as keywords (`make_profile(f_15_01="kelvin_tint", num_segments=15)`); `make_profile()` is the
+  analyzer profile.
+
+The shared `govee_state` takes a third param, `source` (`read_reply` or `status_tlv`), which the frame and
+the stream set for you: it carries the few rules that differ between the two envelopes (power `== 1` vs
+`!= 0`, `mode` vs `mode_status`, the TLV 0x07 records the app decodes).
+
+---
+
+## 5. Parse a frame
 
 ```python
 from io import BytesIO
 from kaitaistruct import KaitaiStream
 from govee_ble_frame import GoveeBleFrame
+from govee_common import GoveeCommon
+import govee_reference as ref
 
-data = bytes.fromhex("aa0464" + "00"*16 + "ca")   # AA 04 = brightness read reply, 0x64 = 100, ca = XOR checksum
-f = GoveeBleFrame.from_bytes(data)
+profile = ref.make_profile()                         # the analyzer profile; cache one per device
+data = bytes.fromhex("aa0464" + "00" * 16 + "ca")    # AA 04 64 ... XOR ca
 
-f.pro_type             # GoveeBleFrame.ProType.read
-f.body.command         # GoveeBleFrame.Command.brightness
-f.body.body.brightness # 100   (brightness_read_reply)
-f.checksum             # 0xca  (verify separately — see §5)
+f = GoveeBleFrame(GoveeCommon.Direction.rx, profile, KaitaiStream(BytesIO(data)))
+f._read()                    # read-write classes read on _read(); a read-only build reads in __init__
+
+f.pro_type                   # ProType.read
+f.route                      # Route.read_rx
+f.checksum_kind              # ChecksumKind.xor: verify f.checksum yourself (ref.checksum_ok)
+f.body.command               # Command.brightness            (read_reply)
+f.body.state.body.level      # 100                           (govee_state -> govee_common::level)
+f.body.state.rest.bytes      # b""                           (the zero fill, kept losslessly)
+
+t = GoveeBleFrame(GoveeCommon.Direction.tx, profile, KaitaiStream(BytesIO(data)))
+t._read()
+t.body.command               # Command.brightness            (read_request: the same bytes as a request)
 ```
 
-The root switches on `pro_type` → `single_command` (`0x33`), `read_command` (`0xAA`), `notify_frame`
-(`0xEE`), the multi envelopes, or `handshake`. `read_command`/`single_command` then switch on the `command`
-byte to a typed reply/payload. Examples of typed read replies (`0xAA`):
+`ref.parse_frame(data, "rx", profile)` does the same and also checks the checksum.
 
-| Frame | Access | Meaning |
-|---|---|---|
-| `AA 01 <s>` | `body.body.state` | power (lights: 0=off; plugs: relay bitmask) |
-| `AA 04 <b>` | `body.body.brightness` | brightness 0–255 (raw; no 0–100 rescale) |
-| `AA 40 <hi><lo><seg>` | `body.body.ic_count` / `.segment` | **live** IC + segment count (capability discovery) |
-| `AA 07 10 …` | `body.body.info.uid` / `.sw_version` | device info (selector 0x10 basic / 0x11 wifi / 0x02 sn) |
-| `AA A2 …` / `AA A5 …` | `body.body.groups[]` | per-group colour read-back (H61A8; see §2 reassembly notes) |
+A parametric root has no `from_bytes`: construct it with its params and a stream. **An unmatched case is
+an absent attribute** (Python), so probe optional parts with `getattr(x, "name", None)`; the bytes are in
+the enclosing message's `rest`. An unknown proType or command keeps its int (Python); Java gives `null` for
+an enum value outside the enum.
+
+Common paths (`f.body` is chosen by `route`):
+
+| Frame | Profile | Path | Fields |
+|---|---|---|---|
+| `33 01 01` tx | `f_01 = light` | `body` write_command → `params` power_write → `body` light_power_write | `state` (enum `light_power`) |
+| `33 04 <level>` tx | any | `body.params` level_write | `level` |
+| `33 05 15 01 …` tx | `f_15_01`, `num_segments` | `body.params` mode_write → `params` color_15_write → `data` op15_color | `color`, `kelvin`, `tint`, `mask.bits`, `is_cct` |
+| `33 xx <status>` rx | any | `body` write_ack | `command`, `result`, `is_ok` |
+| `AA 01 <state>` rx | `power` masks | `body` read_reply → `state` govee_state → `body` power_state | `state`, `is_on`, `is_on_heartbeat`, `relay0_is_on` … |
+| `AA 05 …` rx | `mode` | `body.state.body` mode_report | `sub_mode`, `params`, `is_color_sub_mode` |
+| `AA 07 10 …` rx | any | `body.state.body` device_info_record | `selector`, `info` (basic_info: `uid`, `sw_version`, …) |
+| `AA 40 …` rx | any | `body.state.body` ic_count | `ic_count`, `segment`, `ic_count_checked` |
+| `AA A5 <group> …` rx | `f_a5 = color_group`, `group` | `body.state.body` cmd_a5_state → `body` color_group | `group_index`, `records[]` (`brightness`, `r`, `g`, `b`) |
+| `EE 30 …` rx | `f_ee_30` | `body` notify → `data` notify_30 | `detail`, `flags_a..c`, `is_on`, `zone_a_on`, `zone_b_on` |
+| `E7 01 <key>` rx | any | `body` handshake_reply → `key` session_key | `key` (16 bytes) |
+| `AC 00 …` rx | any | `body` status_chunk | `index`, `num_packets`, `len_last`, `command`, `sub`, `data`, `is_first`, `len_last_fits` |
+| `A3 00 …` tx | any | `body` a3_packet | `index`, `start` (a3_start: `marker`, `num_packets`, `comm_byte`), `chunk` |
+
+Every colour-report layout (`color_report`, picked by the profile's decode) has `is_cct`, plus `kelvin`
+(signed), `color` and `tint` where its bytes carry them; the colour derived from a kelvin value (tint
+tables, clamps) is client policy.
 
 ---
 
-## 4. Reassembled buffers (status burst + scene values)
+## 6. Joined buffers: the status stream and uploads
 
-These types run on the **concatenated** payload, not a single frame. Build the buffer yourself, then:
+**Status burst.** Join the chunks' data in order and trim the last one to `len_last`
+(`ref.reassemble_ac(frames)`), then:
 
 ```python
-# 0xAC status burst → reassemble the frames' data, then:
-status = GoveeBleFrame.StatusReply(KaitaiStream(BytesIO(reassembled)))
-for tlv in status.tlvs:
-    if tlv.type == 0x01:  print("power",      tlv.value.state)
-    elif tlv.type == 0x04: print("brightness", tlv.value.brightness)
-    elif tlv.type == 0xA5:                       # one colour group
-        for rec in tlv.value.records:            # 4-byte [brightness,R,G,B] on curated SKUs
+from govee_status_stream import GoveeStatusStream
+
+status_profile = ref.make_profile(f_a5="color_group", rule="from_len", has_brightness=True)
+buf = bytes([0x01, 0x01, 0x01,  0x04, 0x01, 0x64,
+             0xA5, 0x0D, 0x01, 100, 255, 0, 0, 80, 0, 255, 0, 60, 0, 0, 255])
+s = GoveeStatusStream(status_profile, KaitaiStream(BytesIO(buf)))
+s._read()
+for tlv in s.tlvs:                          # status_tlv: tag (enum command), len_value, value
+    st = tlv.value                          # govee_state(tag, status_tlv, profile)
+    if tlv.tag == GoveeCommon.Command.power:
+        print("power", st.body.is_on)
+    elif tlv.tag == GoveeCommon.Command.brightness:
+        print("brightness", st.body.level)
+    elif tlv.tag == GoveeCommon.Command.color_group:
+        for rec in st.body.body.records:    # cmd_a5_state -> color_group
             print(rec.brightness, rec.r, rec.g, rec.b)
-# tlv.type == 0 is the trailing zero-padding sentinel — stop / ignore it.
+s.tail                                      # the 0-2 bytes the walk stops at
+any(t.app_read_fails for t in s.tlvs)       # where the app's whole status read would fail
 ```
+
+The walk is the app's (`Compose4BaseInfoSingleRead.u`): a TLV is read while 3 or more bytes remain, tag 0
+is an ordinary TLV (no padding sentinel), and the 0-2 bytes left over are `tail`. A buffer that keeps the
+last chunk's zero padding reads as type-0 TLVs plus a tail and still re-writes exactly. A TLV whose value
+the app cannot read still reads here; `status_tlv.app_read_fails` says so.
+
+**Upload values.** The kind is not in the bytes (DIY and graffiti share commByte 0x58), so you pass it,
+with the form: `wire` for a value joined from A1 / A3 / A4 packets, `cloud` for a base64-decoded
+`scenceParam` before upload.
 
 ```python
-# a scene upload value (after de-chunking the 0xA3 frames and stripping the per-(type,version) leading byte)
-val = GoveeBleFrame.H60a6SceneValue(KaitaiStream(BytesIO(scene_value)))   # H60A6 sceneType 5
+from govee_upload import GoveeUpload
+
+u = GoveeUpload(GoveeUpload.UploadKind.rgb_scene, GoveeUpload.UploadForm.cloud,
+                KaitaiStream(BytesIO(bytes.fromhex("830000"))))
+u._read()
+u.value.is_valid            # True: ScenesRgb.isValidProtocolBytes
 ```
 
-Scene-value types (`graffiti_value`, `diy_value`, `graffiti_v3_value`, `rgbic_scene_value`, …) are selected by
-device + commByte per `SCENE_UPLOAD_ENCODING.md`. All 543 catalog scene values parse with exact byte
-consumption once reassembled and correctly stripped.
+Under `cloud`, `lead` is the byte(s) the app checks and strips (a wrong lead fails the read). The upload
+gate is "it reads", except for kinds labelled VALIDATOR, whose answer is `is_valid`; the per-kind gates
+are in the `govee_upload` doc. The H60A6 type-5 choice (DIY first, else graffiti) is client code: read
+the cloud body with form `wire` as `h60a6_diy`, else as `h60a6_graffiti` (see `SCENE_UPLOAD_ENCODING.md`).
 
 ---
 
-## 5. Verify / build the XOR checksum yourself
+## 7. Adverts and the BGC-info characteristic
 
-Kaitai can't fold over a byte range, so `checksum` (byte 19) is captured, not validated. Compute it:
+These roots take no params, so `from_bytes` works (read-write builds then need `_read()`).
 
 ```python
-def bcc(frame20: bytes) -> int:
-    x = 0
-    for b in frame20[:19]:
-        x ^= b
-    return x                       # == frame20[19] for a valid frame
+from govee_manufacturer_data import GoveeManufacturerData
+from govee_scan_record import GoveeScanRecord
+from govee_bgc_info import GoveeBgcInfo
 
-# building a write frame: lay out [proType, cmd, payload…] in a 20-byte zero-filled buffer, then
-# buf[19] = bcc(buf). Multi-byte ints are big-endian (kelvin, ic_count); seg masks are little-endian.
+# bleak splits the 0xFF AD into a company id (its first two bytes, little-endian) and a value: rebuild it
+company_id, value = 0x8843, bytes.fromhex("ec00020201")
+m = GoveeManufacturerData.from_bytes(company_id.to_bytes(2, "little") + value)
+m._read()
+m.is_govee, m.encrypted, m.protocol_version      # True, True, 3
+m.has_pact, m.pact_type, m.pact_code             # True, 2, 2
+m.has_switch_state, m.switch_byte                # True, 1
+
+r = GoveeScanRecord.from_bytes(bytes.fromhex("03190000" "08ff4388ec00020201"))
+r._read()
+[a.ad_type for a in r.ad_structures]             # [AdType.appearance, AdType.manufacturer_specific]
+r.ad_structures[1].data.pact_type                # 2  (the 0xFF case is govee_manufacturer_data)
+
+b = GoveeBgcInfo.from_bytes(bytes.fromhex("020101000202"))
+b._read()
+b.effective_encrypt_version, b.supports_encryption   # 1, True
 ```
 
-The grammar is parse-oriented but the write side is symmetric — build the same layout the matching type
-describes and append the BCC. For the multi-packet colour **write** and scene uploads, the grammar even
-models the value layout (`color_strip_write`, the scene-value types) so you can serialize from the spec.
-
-A single read request has its own sized types: `read_request_frame(selector_len)` is the whole
-`[AA][command][selector…][00…][BCC]` frame the app builds (`BleUtils.p(0xAA, cmd, ext)`), and
-`read_request_sized(selector_len)` its 18-byte body. Pass the real selector bytes only: the zeroed body
-stream supplies the fill, and `checksum` is the BCC above.
+Every field of these three is read only when its bytes are there, so a short or foreign value never
+raises; the bytes not used by a field stay in `device_state` / `data` / `rest`.
 
 ---
 
-## 6. What the ksy resolves for you, and the few things it can't
+## 8. Build a message (read-write classes)
 
-Kaitai's `switch-on` branches on **parsed bytes**. So there are three tiers:
+The write side is the same grammar. The contract (the library implements it once):
 
-**(a) Auto-resolved — the discriminator is a byte in the stream.** No client help needed; the reader picks the
-right sub-type itself. This covers almost everything: `pro_type`, `command`, mode `sub_type`, device-info
-`selector`, `status_tlv.type`, op15 `op_type`, `diy_sub_effect.sub_effect_id`, `color_strip_group.tag`, the
-`music_read_reply` `spec_color_flag` guard, the `h60a6_scene_value` DIY-vs-graffiti length gate, and the
-`status_reply` zero-padding terminator.
-
-**(b) Parametric — the discriminator isn't in the stream, so you pass it as an argument and the ksy switches
-internally.** Kaitai `params:`. The one you'll use:
+1. Construct each node with its params and its links: `Cls(params..., None, parent, root)`. An imported
+   top-level type (`govee_state`) gets `(params..., None, parent, None)`; an imported leaf
+   (`govee_common.Rgb`, `Echo`, `SegMask`) gets no links.
+2. Set every `rest` to `Echo` with `bytes = b""` (it pads the zero fill back), and set `contents`
+   fields yourself (ksc does not).
+3. Call `_check()` on every node, bottom-up (`_check` is shallow).
+4. Write the root into a **zeroed buffer of the message length** (streams are fixed-size).
+5. Compute the checksum by `checksum_kind`, set `checksum`, write again.
 
 ```python
-# color_group_read(record_count, has_brightness) — the type switches the record layout for you
-grp = GoveeBleFrame.ColorGroupRead(4, 1, KaitaiStream(BytesIO(group_bytes)))  # has_brightness=1 → 4-byte
-grp.records[0].brightness, grp.records[0].r  # ...
-# has_brightness=0 → 3-byte [R,G,B] records, chosen inside the ksy. Both from devices.yaml (supportPartBrightness).
+tx = GoveeCommon.Direction.tx
+fr = GoveeBleFrame(tx, profile)
+fr.pro_type = GoveeCommon.ProType.write
+wc = GoveeBleFrame.WriteCommand(profile, None, fr, fr)
+wc.command = GoveeCommon.Command.brightness
+wc.params = GoveeBleFrame.LevelWrite(None, wc, fr)
+wc.params.level = 100
+wc.rest = GoveeCommon.Echo()
+wc.rest.bytes = b""
+fr.body, fr.checksum = wc, 0
+
+def write(root, n):
+    for node in (wc.params, wc.rest, wc, root):
+        node._check()
+    io = KaitaiStream(BytesIO(bytearray(n)))
+    root._write(io)
+    return io.to_byte_array()
+
+fr.checksum = ref.bcc(write(fr, 20))             # XOR of bytes 0..18 (checksum_kind xor)
+write(fr, 20).hex()                              # '3304640000000000000000000000000000000053'
 ```
-(Record size *can't* be auto-detected: TLV `len` 13 == `4·3+1` == `3·4+1`, so 3B and 4B are ambiguous — hence
-the param. All curated SKUs are `has_brightness=1`.)
 
-**(c) Client-picked — reached *through* a frame switch-case, which cannot pass a parameter.** This is a hard
-Kaitai limitation: a type invoked from a `switch-on` `cases:` map gets no args, so its shape can't depend on
-external state. Each now has a **standalone parametric variant** you invoke directly with the one discriminator
-(from `devices.yaml → client_profile`), so the *structure* still lives entirely in the grammar — you only pass
-a value, you never hand-parse:
-- **`op15_color_typed(variant)`** — `1` basic / `12` H60A1-RGB / `11` CCT (from `color_scheme` + the write op).
-  (The frame-path `op15_color` stays `size-eos` for parsing an *unknown* captured write, where opType is lost.)
-- **`mode_color_0d_typed(kind)`** — `0` default `[flag, kelvin_be]` / `1` H6052 `[R,G,B]` / `2` rgblight
-  H6188 and the 0x0d bulbs H6006/H6008 `[R,G,B, kelvin_be, tint RGB]` with `is_cct` = kelvin≠0 (from
-  `mode_0d_kind`: `cct`/`rgb`/`rgb_kelvin_tint`).
-- **`color_group_read(record_count, has_brightness)`** — 4-byte vs 3-byte records (from `has_brightness`).
-- **`color_group_direct_frame(record_count)`** — a whole `aa a5 <group>` direct reply frame
-  (Controller4ColorInfoByGroup: H6047 / H6641 / H6062 / H6061, H60A6 outside its 0xAC burst; `aa a2`
-  for colour-only families, so check `command`). The frame path's 0xA5 case is H61A8's batch, so read
-  this reply from the frame bytes with the group size.
-- **`color_group_status_counted(piece_count, group_size, has_brightness)`** — an 0xAC TLV `0xA5` value read
-  with the H60A6 screen's per-group record count (`record_count`: `group_size`, the remainder in the last of
-  `ceil(piece_count / group_size)` groups), from `devices.yaml` `segments` and a group size of 4.
-- **Scene-value top-level type** — pick `graffiti_value`/`diy_value`/`rgbic_scene_value`/… by
-  `commByte`/`sceneType` (in the *frame*, not the value buffer); once picked, internals are fully switched
-  (`diy_sub_effect`, the h60a6 splitter).
-
-So the client's only "decision" is reading a `client_profile` field and passing it in — the branch runs inside
-the ksy. `govee_reference.py` shows this wiring (`parse_color_group`, `build_op15_color`, `load_profiles`).
-`load_profiles` keys each family's `client_profile` the way the app routes a device-list record: by its
-cloud `goodsType` when that is non-zero, by its SKU only at `goodsType` 0 (`profile_for(profiles, sku,
-goods_type)` does the lookup). A SKU-only map is wrong for the SKUs several families list, e.g. H6102.
+Errors: a bad field raises `ConsistencyError` / `ConsistencyNotCheckedError`, which are not
+`KaitaiStructError`. `_check` does not compare the class in a switch slot with the case the switch would
+pick (a `LightDirectionWrite` under a profile whose `f_30` is `zone_power` reads back as `ZonePowerWrite`),
+so re-read what you built when it matters. Value instances cache: call `_invalidate_<name>()` after you
+change one of their inputs.
 
 ---
 
-## 7. Gotchas checklist
+## 9. What stays in client code (PROCEDURAL)
 
-- [ ] **Decrypt** before parsing if the link is encrypted (V1 AES-ECB+RC4 / V2 GCM). Grammar = plaintext.
-- [ ] **Reassemble** multi-frame transfers (`0xA1/0xA3/0xA4/0xAC`) before parsing the value/status type.
-- [ ] **Zero padding:** frames are padded to 20 bytes; don't length-infer. `status_reply` stops on a `0x00`
-      type byte (or EOF), not end-of-buffer.
-- [ ] **Endianness:** kelvin, `ic_count` = big-endian; DSP version, segment masks = little-endian; the UID in
-      device-info `0x10` is byte-**reversed**, the Wi-Fi MAC in `0x11` is **forward**.
-- [ ] **Brightness read is raw 0–255** — rescale in your UI, not the codec.
-- [ ] **Plug `0x01` is a relay bitmask**, not a boolean.
-- [ ] The **account-lock secret** (secret-key pairing) is orthogonal to the wire cipher — see §9.4.
-- [ ] Don't use bare `on`/`off`/`yes`/`no`/`true`/`false` as new `id:`s — they're YAML booleans (kaitai will
-      mangle the field name). Already avoided in this spec.
+The spec owns the byte layout. It does not:
+
+- negotiate or decrypt the cipher (V1 AES-ECB + RC4, V2 GCM) — §9;
+- compute or check checksums (`checksum_kind` says which rule);
+- order, join or split multi-frame transfers, or trim the last chunk to `len_last`;
+- resolve a device profile from `devices.yaml` (by_model / by_goods_type / by_pact / by_firmware);
+- pick the H60A6 upload parser (DIY, else graffiti) or apply the colour policy (tint tables, clamps);
+- trim version strings (`version_text` keeps the bytes; the app trims), or rebuild bleak's split
+  manufacturer data;
+- talk BLE GATT (connect, MTU, characteristic writes) — §2.
+
+`../govee_reference.py` is that framing layer as runnable code, and the round-trip harness:
+`kaitai-struct-compiler -t python --outdir OUT *.ksy`, then `PYTHONPATH=OUT python govee_reference.py
+--strict` from `spec/`. It also holds `load_profiles` / `profile_for`, which key each family's
+`client_profile` the way the app routes a device-list record: by its cloud `goodsType` when that is
+non-zero, by its SKU only at `goodsType` 0 (a SKU-only map is wrong for the SKUs several families list,
+e.g. H6102). `../govee_commands.py` is the app-traced builder catalogue (`OPCODE_COVERAGE.md`).
 
 ---
 
-## 8. What the grammar is NOT
+## 10. Gotchas checklist
 
-It is the **binary layer only**. It does not: negotiate/decrypt the cipher, reassemble multi-frame transfers,
-compute/verify the BCC, resolve a SKU→capability/segment table (that's `devices.yaml`), or talk BLE GATT
-(connect, MTU, char writes — that's your BLE stack against the UUIDs in §2). Keep those in your app; let the
-grammar own the byte layout. `govee_adv.ksy` is the separate advertisement (manufacturer-data) parser for
-passive identification (company `0xEC88`, `pactType`/`pactCode`, encrypted flag) — see §19.
-
-The three things Kaitai can't do (decrypt / reassemble / BCC) plus the dispatch wiring are implemented as a
-small **reference codec, `govee_reference.py`** — the executable half of this spec. It also *is* the
-round-trip test harness (`python govee_reference.py` after `ksc`); copy it or port it as the framing
-layer of your client. `devices.yaml → client_profile` supplies the per-SKU discriminators (`has_brightness`,
-`color_scheme`, `mode_0d_kind`, `wire_cipher`) it feeds to the parametric types.
+- [ ] **Decrypt** before parsing on an encrypted link. The grammar is plaintext.
+- [ ] Pass the right **direction**: the same `aa` bytes are a request (`tx`) or a reply (`rx`).
+- [ ] **Profile selectors at 0** leave overloaded bodies raw (absent field, bytes in `rest`); that is
+      the analyzer view, not an error.
+- [ ] **Segment counts:** `seg_mask` rejects a set bit at or past `profile.counts.num_segments`; pass
+      the device's posSet length (on the brightness path, the count rounded up to a multiple of 8).
+- [ ] **Join** multi-frame transfers before reading the stream or upload roots.
+- [ ] **Endianness:** multi-byte integers are big-endian unless a field says otherwise; segment masks
+      are bit-packed LSB first; the 0xA4 index and the `0x0a` scene / DIY codes are little-endian; the
+      UID in device-info `0x10` is byte-**reversed**, the Wi-Fi MAC in `0x11` is **forward**.
+- [ ] **Brightness reads are raw** (no 0..100 rescale in the codec).
+- [ ] **Plug `aa 01` is a relay bitmask** (`power_state` with the profile's relay masks), not a boolean.
+- [ ] The **account-lock secret** (`33 B2`) is separate from the wire cipher — §9.4.
+- [ ] New `id`s: snake_case, no YAML 1.1 booleans (`on`, `off`, `yes`, `no`) and no Python keywords.
