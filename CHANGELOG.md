@@ -518,6 +518,49 @@ model, from which the shipped readers are generated).
   zeroes every data byte.
 
 ### Spec
+- `devices.yaml` now records every light goodsType's colour-report strategy: how its Govee Home 7.7.02 control
+  screen decodes the colour sub-modes 0x15 / 0x0d / 0x0b / 0x02 of a mode report it gets over BLE (the aa 05
+  reply, or the 0xAC TLV 0x05).
+  - How it was traced and checked:
+    - Every goodsType and SKU-routed family was traced from its routing through to each colour decoder, with
+      file:line citations.
+    - Each trace was re-traced independently.
+    - Spot-checkers re-traced over 330 samples from scratch across two rounds, and all of them matched.
+    - The second round re-checked everything against the complete 7.7.02 decompile.
+  - New top-level sections:
+    - `mode_color_decode`: 19 body decodes. Each gives the byte layout, the Kelvin signedness, the rule for
+      when the app treats the report as a colour temperature, and the matching ksy type.
+    - `mode_color_parse`: 33 strategies, each a map from sub-mode to decode.
+    - The library's strategy names are reused wherever the app's decode is exactly that strategy.
+  - Per family: `client_profile.mode_color_parse`, with overrides `by_goods_type`, `by_model`,
+    `mode_color_by_pact`, `mode_color_by_firmware` and `mode_color_parse_status`.
+    - Coverage is 49 families and 113 goodsTypes.
+    - h604a stays `untraced`: its feature split is not in the 7.7.02 capture.
+  - `families[].assigned_goods_type` (18 items) records the goodsTypes the app assigns legacy SKUs itself, so
+    a client can resolve their strategy:
+    - BK-firmware rewrites to 39 / 40 / 17 / 44;
+    - new-firmware rewrites to 17 / 18 / 19 / 20;
+    - the two pairing binds, H613A-F to 39 and H615A-E to 40.
+  - The section header records the app's routing rules:
+    - family lookup by cloud goodsType, or by SKU at goodsType 0;
+    - the device-list and scan-time pact checks;
+    - when an entry is split by pact.
+  - `devices.schema.json` gains every new property, strictly typed.
+  - `mode_0d_kind` corrections:
+    - tablelampv1 goodsType 128 (H6078) is `cct`, not the inherited `rgb`.
+    - bulblightv3 goodsType 0 (old-firmware H6001) is `unmodelled`.
+    - bulblightv3 goodsTypes 9 / 10 (IoT-only) and 311 (H601E/F, no 0x0d decode) are `none`.
+  - Families gain the 46 goodsTypes and 43 models the app routes to them, each cited. H6184 leaves
+    dreamcolorlightv2; it is chassislightv1.
+  - Colour-report prose that the 7.7.02 code contradicts is corrected. Examples: s16be where the text said
+    u16 BE / u2be; the right parser classes; source line numbers that ran past the end of their files.
+  - `govee_ble.ksy` (doc text only): H61A8 (goodsType 19) reads the 0x15 Kelvin SIGNED. In 7.7.02 its screen
+    is the rgbiclight `AcNewDetail`, whose `OpInfo4Detail.x` decodes 0x15 / 0x0b / 0x02 / 0x0d alike. The
+    unsigned `SubModeColorV2.parse` serves only the legacy dreamcolorlightv1 screens, which goodsType 19
+    never opens. This corrects the item-16 doc in the gap batch below.
+  - `cct_read_reply`'s doc names the newdetail decoder and says the H6047 bar Kelvins are read signed.
+  - Additivity: the readers are unchanged (harness: 2,006,142 cases, 0 differences). Both branches' suites
+    pass (2037 each).
 - Spec gap batch: the decodes the library still hand-codes, now in the spec so it can follow later. Each item
   was traced in the 7.7.02 decompile (firmware-sourced ones are marked with image and handler) and checked by
   an adversarial reviewer. Additive: no new enum is applied to a field, no `switch-on` gains a case, and no
