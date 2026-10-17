@@ -423,7 +423,9 @@ model, from which the shipped readers are generated).
   (`power_resync`) re-read `aa 06` and `aa 07 03` and re-send `33 b5`; their per-outlet timer and delay
   reads are not modelled. gt 43 and gt 307 send nothing after a power write. Differences kept: on gt 50
   / 90 the library reads `aa 06` / `aa 07 03` once per device rather than before `33 b5` on every
-  connect. Source-modelled; not live-verified (whether each plug acks `33 b5` needs the bench).
+  connect. Live-verified on an H5083 (gt 43, 2026-10-17, macOS): it acks `33 b5` (status 0) about 60 ms
+  after the unlock, a power write is followed by nothing more, and the next session sends `33 b2` then
+  `33 b5` again. gt 50 / 90 / 307 are source-modelled.
 - **Per-segment brightness is 1..100, the app's slider range** (`ViewColorMode.t0:232-235`,
   `DelegateColorV2Part.t0:459-462`: `setProgressRange({1, 100})`). `Device.set_segment_brightness` and
   `build.segment_brightness` clamp 0 and below to 1 (before: 0 was sent), as `set_brightness` already did
