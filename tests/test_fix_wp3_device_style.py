@@ -29,7 +29,7 @@ from govee_ble_local.devices.device import Device, make_device
 from govee_ble_local.devices.profile import DeviceProfile, profile_for
 from govee_ble_local.exceptions import GoveeBleConnectionError, GoveeBleError, GoveeBleInvalidValue
 from govee_ble_local.models import DeviceState, Segment
-from govee_ble_local.wire import build, reassemble
+from govee_ble_local.wire import build, parse, reassemble
 
 _DEVICE_LOGGER = "govee_ble_local.devices.device"
 _ADDR = "AA:BB:CC:DD:EE:3C"
@@ -257,9 +257,9 @@ def test_walk_mechanism_b_asks_each_batch_in_order() -> None:
     target = _target("H61A8")
     asked: list[bytes] = []
 
-    async def read_reply(frame: bytes, command_type: int) -> bytes | None:
+    async def read_reply(frame: bytes) -> bytes | None:
         asked.append(frame)
-        assert command_type == build.CMD_BULB_COLOR_V2
+        assert parse.request_command(frame) == build.CMD_BULB_COLOR_V2   # the reply key: from the request
         seq = frame[2]
         if seq == 2:
             return _frame(0xAA, 0xA5, 2, 50, 1, 2, 3, 60, 4, 5, 6, 70, 7, 8, 9)
@@ -276,7 +276,7 @@ def test_walk_mechanism_a_direct_skips_on_a_failed_ic_read_and_logs_on_the_devic
     target = _target("H6641")
     asked: list[bytes] = []
 
-    async def read_reply(frame: bytes, _command_type: int) -> bytes | None:
+    async def read_reply(frame: bytes) -> bytes | None:
         asked.append(frame)
         return None
 
@@ -291,7 +291,7 @@ def test_read_device_info_reports_a_silent_device() -> None:
     target = _target("H6008")
     asked: list[bytes] = []
 
-    async def read_reply(frame: bytes, _command_type: int) -> bytes | None:
+    async def read_reply(frame: bytes) -> bytes | None:
         asked.append(frame)
         return None
 

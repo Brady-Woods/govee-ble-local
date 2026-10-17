@@ -857,7 +857,7 @@ class Device:
             _fold.apply_bar_switch(self._state, bars)
 
         return await self._read_command(
-            "bar-switch", build.bar_switch_query(), build.CMD_BAR_SWITCH, parse.parse_bar_switch, apply)
+            "bar-switch", build.bar_switch_query(), parse.parse_bar_switch, apply)
 
     async def set_zone_rgb(self, name: str, rgb: tuple[int, int, int]) -> None:
         """Set the colour of one zone (its segment mask).
@@ -1027,7 +1027,7 @@ class Device:
             def apply_gradual(on: bool) -> None:
                 self._state.gradual = on
 
-            await self._read_command("gradual", build.gradual_query(), build.CMD_GRADUAL_WIFI_BLE,
+            await self._read_command("gradual", build.gradual_query(),
                                      parse.parse_gradual, apply_gradual)
         # Device-info (mac/hw/fw/serial) — static-ish, read once the device answers one of them.
         if not self._device_info_read and self.profile.readback != "none":
@@ -1063,7 +1063,7 @@ class Device:
         def apply(power: int) -> None:
             self._state.is_on = bool(power & self.profile.relay_on_mask)
 
-        applied = await self._read_command("plug power", build.power_query(), build.CMD_SWITCH,
+        applied = await self._read_command("plug power", build.power_query(),
                                            parse.parse_power, apply) == "applied"
         self._finish_read(applied, power_read=applied)
         return applied
@@ -1158,9 +1158,9 @@ class Device:
         # switch) must be noticed even when we last saw it off.
         # A light is on only for a byte of 1, as the app's control screens read it (parse_light_power).
         power_read = await self._read_command(
-            "power", build.power_query(), build.CMD_SWITCH, parse.parse_light_power, apply_power) == "applied"
+            "power", build.power_query(), parse.parse_light_power, apply_power) == "applied"
         applied = power_read   # see _read_status / _finish_read
-        if await self._read_command("brightness", build.brightness_query(), build.CMD_BRIGHTNESS,
+        if await self._read_command("brightness", build.brightness_query(),
                                     parse.parse_brightness, apply_brightness) == "applied":
             applied = True
         if self.profile.bar_switch and await self._read_bar_switch() == "applied":
@@ -1175,14 +1175,14 @@ class Device:
 
     async def _read_mode(self) -> _ReadResult:
         """Read the aa 05 mode report into state (:meth:`_apply_mode_reply`)."""
-        return await self._read_command("mode", build.mode_query(), build.CMD_MODE, parse.mode_reply,
+        return await self._read_command("mode", build.mode_query(), parse.mode_reply,
                                         lambda m: _fold.apply_mode(self.profile, self._state, m))
 
     async def _read_section_count(self) -> bool:
         """Read the segment count the device reports (``aa 41`` -> ``sectionNum``) and adopt it
         as :attr:`segment_count`, as the app does on every connect. Returns False (state left as
         it was) when the device does not answer or reports a count the masks cannot carry."""
-        reply = await self._read_reply(build.section_count_query(), build.CMD_SECTION_COUNT)
+        reply = await self._read_reply(build.section_count_query())
         sc = parse.parse_section_count(reply) if reply else None
         if sc is None or not 1 <= sc.section_num <= build.MAX_MASK_SEGMENTS:
             _LOGGER.debug("%s (%s): aa 41 section-count read gave no usable count (%s)",
@@ -1221,21 +1221,23 @@ class Device:
         return "applied"
 
     async def _read_command(
-        self, what: str, frame: bytes, command_type: int,
+        self, what: str, frame: bytes,
         parser: Callable[[bytes], _T | None], apply: Callable[[_T], None],
     ) -> _ReadResult:
-        """:meth:`_read_fresh` of one ``aa`` read: the ``command_type`` reply to ``frame``, decoded by
-        ``parser`` (None: not a usable reply)."""
+        """:meth:`_read_fresh` of one ``aa`` read: the reply to ``frame``, decoded by ``parser`` (None: not
+        a usable reply)."""
         async def read() -> _T | None:
-            reply = await self._read_reply(frame, command_type)
+            reply = await self._read_reply(frame)
             return None if reply is None else parser(reply)
 
         return await self._read_fresh(what, read, apply)
 
-    async def _read_reply(self, frame: bytes, command_type: int) -> bytes | None:
-        """Send one ``aa`` read and return its ``command_type`` reply, or None after
-        ``INFO_READ_TIMEOUT``. A single-reply read: ``idle_gap=None``, so a stray ``aa`` frame (a late
-        reply to an earlier read) can't cut the wait short to the burst idle gap."""
+    async def _read_reply(self, frame: bytes) -> bytes | None:
+        """Send one ``aa`` read and return its reply - the ``aa`` frame with the request's own command
+        (:func:`.parse.request_command`) - or None after ``INFO_READ_TIMEOUT``. A single-reply read:
+        ``idle_gap=None``, so a stray ``aa`` frame (a late reply to an earlier read) can't cut the wait
+        short to the burst idle gap."""
+        command_type = parse.request_command(frame)
         async with self._read_gate:   # never between a scene's upload and its activation
             await self._send_pending_unlock()   # a secret set on the live session goes first
             frames = await self._conn.query(
@@ -1250,7 +1252,7 @@ class Device:
         being supplied, so call this BEFORE set_secret() (while `_secret` is None the
         post-handshake unlock step sends nothing, avoiding the secret chicken-and-egg).
         The frame builder is build.secret_read()."""
-        reply = await self._read_reply(build.secret_read(), build.CMD_SECRET_READ)
+        reply = await self._read_reply(build.secret_read())
         return parse.parse_secret(reply) if reply else None
 
 

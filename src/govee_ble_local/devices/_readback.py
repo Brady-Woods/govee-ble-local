@@ -22,7 +22,7 @@ from .profile import DeviceProfile
 # configuration and the diagnostics docs name ``govee_ble_local.devices.device``).
 _LOGGER = logging.getLogger(__name__.rpartition(".")[0] + ".device")
 
-ReadReply = Callable[[bytes, int], Awaitable[bytes | None]]
+ReadReply = Callable[[bytes], Awaitable[bytes | None]]
 """One ``aa`` read: the ``command_type`` reply to ``frame``, or None (``Device._read_reply``)."""
 
 QueryStatus = Callable[[], Awaitable[tuple[reassemble.StatusReply, list[bytes], list[bytes]]]]
@@ -97,7 +97,7 @@ async def walk_mechanism_b(dev: ReadTarget, read_reply: ReadReply) -> list[Segme
     batch_count = build.ceil_div(seg_count, per_batch)
     batches: list[tuple[int, list[tuple[int | None, int, int, int]]]] = []
     for seq in range(1, batch_count + 1):
-        reply = await read_reply(build.bulb_group_query(seq, v2=True), build.CMD_BULB_COLOR_V2)
+        reply = await read_reply(build.bulb_group_query(seq, v2=True))
         parsed = parse.parse_bulb_group_batch(reply) if reply else None
         if parsed is None:
             continue
@@ -131,7 +131,7 @@ async def walk_mechanism_a_direct(dev: ReadTarget, read_reply: ReadReply) -> lis
     profile = dev.profile
     group_size = profile.color_readback_per_batch   # 4 on every table profile (profile._incoherent)
     if profile.color_readback_live_ic:
-        ic_reply = await read_reply(build.ic_count_query(), build.CMD_IC_NUM)
+        ic_reply = await read_reply(build.ic_count_query())
         ic = parse.parse_ic_count(ic_reply) if ic_reply else None
         if ic is None:
             _LOGGER.debug(
@@ -139,13 +139,13 @@ async def walk_mechanism_a_direct(dev: ReadTarget, read_reply: ReadReply) -> lis
                 dev.address, dev.sku,
             )
             return None
-        pieces = live_ic_pieces(dev, ic.ic_count)
-        if pieces is None:
+        if ic.ic_count_checked is None:
             _LOGGER.debug(
                 "%s (%s): implausible live IC count 0x%04x; skipping segment colour read-back",
                 dev.address, dev.sku, ic.ic_count,
             )
             return None
+        pieces = live_ic_pieces(dev, ic.ic_count_checked)
         total = pieces
     else:
         total = profile.color_readback_segments or dev.segment_count
@@ -153,7 +153,7 @@ async def walk_mechanism_a_direct(dev: ReadTarget, read_reply: ReadReply) -> lis
 
     groups: list[tuple[int, list[tuple[int, int, int, int]]]] = []
     for g in range(1, group_count + 1):
-        reply = await read_reply(build.bulb_group_query(g, v2=True), build.CMD_BULB_COLOR_V2)
+        reply = await read_reply(build.bulb_group_query(g, v2=True))
         expected = max(0, min(group_size, total - (g - 1) * group_size))
         parsed = parse.parse_direct_color_group(reply, expected) if reply else None
         if parsed is None:
@@ -166,8 +166,8 @@ async def walk_mechanism_a_direct(dev: ReadTarget, read_reply: ReadReply) -> lis
     return parse.direct_groups_to_segments(groups, group_size) or None
 
 
-def live_ic_pieces(dev: ReadTarget, ic: int) -> int | None:
-    """Colour pieces for a live ``aa 40`` IC count (``ic``: read signed, :func:`parse.parse_ic_count`), as
+def live_ic_pieces(dev: ReadTarget, ic: int) -> int:
+    """Colour pieces for a live ``aa 40`` IC count (``ic``: :attr:`parse.IcCount.ic_count_checked`), as
     the app derives them for H6641 (goodsType 247; h61d3, Govee Home 7.5.12 names):
     ``ReadIcController.Companion.d`` reads bytes 0..1 as a signed short (``BleUtil.getSignedShort``, the
     spec's ``ic_count_signed``) and clamps it to ``H61D3Support.q(247)`` = 41..70
@@ -175,12 +175,11 @@ def live_ic_pieces(dev: ReadTarget, ic: int) -> int | None:
     (``color_readback_ic_per_piece``), the ``bulbStringMaxNum`` of ``VM4Light.P5``. The reply's
     third byte is never used.
 
-    None for a count of 0x1000 or more: ``ReadIcController.Companion.a`` then takes its
-    byte-swap branch, which indexes past the 2-byte array it was given, so the app's read
-    callback never stores the count (``VM4Light.D5`` does not run) - the same as a failed read."""
+    A count of 0x1000 or more never gets here: ``ReadIcController.Companion.a`` then takes its
+    byte-swap branch, which indexes past the 2-byte array it was given, so the app's read callback
+    never stores the count (``VM4Light.D5`` does not run), the same as a failed read; the spec's
+    ``ic_count_checked`` is None there and the walk skips."""
     ic_range = dev.profile.color_readback_ic_range
-    if ic >= 0x1000:
-        return None
     # Every table profile has its clamp (profile._incoherent); a custom profile without one uses the
     # reported count as it is, never below 0.
     clamped = max(0, ic) if ic_range is None else max(ic_range[0], min(ic_range[1], ic))
@@ -226,7 +225,7 @@ async def read_versions(dev: ReadTarget, read_reply: ReadReply) -> bool:
     """``aa 06`` (firmware) then ``aa 07 03`` (hardware version), folded into ``dev.state``; returns
     whether the device answered either. The first two reads of :func:`read_device_info`, and the gt 50 /
     90 plugs' re-read after a power write (``Device._resync_after_power``)."""
-    soft = await read_reply(build.soft_version_query(), build.CMD_SOFT_VERSION)
+    soft = await read_reply(build.soft_version_query())
     _fold.merge_device_info(dev.state, firmware=parse.parse_soft_version(soft or b""))
     got, info = await read_info_reply(dev, read_reply, build.INFO_HARD)
     if info is not None:
@@ -239,7 +238,7 @@ async def read_info_reply(
 ) -> tuple[bool, parse.DeviceInfo | None]:
     """One ``aa 07 <selector>`` read: ``(answered, parsed)``. A reply whose selector byte is not
     the one asked for (e.g. a late reply to the previous read landing in this one) is ignored."""
-    reply = await read_reply(build.device_info_query(selector), build.CMD_DEVICE_INFO)
+    reply = await read_reply(build.device_info_query(selector))
     if reply is None:
         return False, None
     got = parse.parse_device_info_selector(reply)

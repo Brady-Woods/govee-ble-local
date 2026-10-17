@@ -62,9 +62,8 @@ def _parse_type(cls: Any, data: bytes, *params: Any) -> Any:
 
 
 def _parse(frame: bytes) -> Any:
-    """Parse a 20-byte frame, or return None on any malformed/unknown-enum input."""
-    if len(frame) < 2:
-        return None
+    """Parse a 20-byte frame, or return None on any malformed/unknown-enum input (the reader rejects one
+    shorter than its proType and command)."""
     try:
         return _load(_F.from_bytes(bytes(frame)))
     except Exception as exc:  # noqa: BLE001 - unknown enum / truncated frame -> not for us
@@ -123,6 +122,16 @@ def _frame_head(frame: bytes) -> tuple[Any, Any]:
     with contextlib.suppress(Exception):   # a body the spec can't read still has its header
         f._read()
     return getattr(f, "pro_type", None), getattr(getattr(f, "body", None), "command", None)
+
+
+def request_command(frame: bytes) -> int:
+    """The command of a built ``aa`` read request, read by the frame reader (``read_command.command``):
+    the command its reply carries, which is all the app matches a reply on besides the proType
+    (``AbsControllerNoEvent4Single.isSameController:176-179``). ValueError for a frame that isn't a read."""
+    pro_type, command = _frame_head(frame)
+    if pro_type != _ProType.read or command is None:
+        raise ValueError(f"not an aa read request: {bytes(frame).hex()}")
+    return int(command)
 
 
 def find_reply(frames: list[bytes], command_type: int) -> bytes | None:
@@ -228,15 +237,16 @@ def mode_value(value: bytes) -> Any:
 
 
 def sub_mode(m: Any) -> int:
-    """A ``mode_read``'s sub-mode byte (0x01 in a request is the read selector)."""
-    return int(m.selector_or_sub_mode)
+    """A ``mode_read``'s sub-mode byte (``mode_read.sub_mode``; 0x01 in a request is the read selector)."""
+    return int(m.sub_mode)
 
 
 def _mode_params(m: Any) -> bytes:
-    """A ``mode_read``'s bytes after the sub-mode byte. The generated reader keeps a typed sub-mode's
-    as ``_raw_rest`` (Kaitai's raw field of a typed substream) and an untyped one's as ``rest``."""
-    raw = getattr(m, "_raw_rest", None)
-    return bytes(m.rest if raw is None else raw)
+    """A ``mode_read``'s bytes after the sub-mode byte, whatever ``rest`` was typed as: the spec's
+    ``mode_read_params(mode)``, which reads them off the mode_read's own stream."""
+    view = _F.ModeReadParams(m, KaitaiStream(BytesIO(b"")))
+    view._read()   # an empty seq; `params` is the instance
+    return bytes(view.params)
 
 
 def _color_body(m: Any, kind: int) -> Any:
@@ -321,7 +331,7 @@ def cct_0d_of(m: Any) -> ColorReport | None:
 
 def rgb_kelvin_tint_of(m: Any) -> ColorReport | None:
     """:func:`parse_mode_rgb_kelvin_tint` of a ``mode_read``."""
-    if sub_mode(m) not in SUBMODE4COLOR_SUB_MODES:
+    if not m.is_submode4color:
         return None
     body = _color_body(m, _MODE_0D_KIND_RGB_KELVIN_TINT)
     if body is None:
@@ -551,20 +561,19 @@ def parse_direct_color_group(
     ``(brightness, r, g, b)``. Returns at most ``expected_records`` (and at most what actually
     fits in the frame), never more — the caller determines how many are real for this group.
 
-    Read by the spec's ``color_group_read(record_count, has_brightness=1)`` over the bytes after
-    ``[proType, command]`` and before the BCC byte."""
-    f = _parse(frame)
+    Read by the spec's ``color_group_direct_frame(record_count)`` (``Controller4ColorInfoByGroup.Companion.q``
+    over frame bytes 2..18), with the record count capped at what fits in those bytes, where the app's
+    read would throw."""
+    f = _parse(frame)   # an aa a5 frame the frame reader takes (it types it as H61A8's batch reply)
     if f is None or f.pro_type != _ProType.read:
         return None
     if getattr(f.body, "command", None) != _Command.local_color_read:
         return None
-    # [group_index, records...]: the reply's body as the frame reader holds it (read_command's raw
-    # field); never empty, since that reader needs more than the group byte.
-    group = bytes(f.body._raw_body)
-    n = max(0, min(expected_records, (len(group) - 1) // _RECORD_LEN))
-    body = _parse_type(_F.ColorGroupRead, group, n, 1)
-    return int(body.group_index), [
-        (int(rec.brightness), int(rec.r), int(rec.g), int(rec.b)) for rec in body.records]
+    # Records fit in frame bytes 3..n-2: after the group byte, before the BCC.
+    n = max(0, min(expected_records, (len(frame) - 4) // _RECORD_LEN))
+    direct = _parse_type(_F.ColorGroupDirectFrame, frame, n)
+    return int(direct.group.group_index), [
+        (int(rec.brightness), int(rec.r), int(rec.g), int(rec.b)) for rec in direct.group.records]
 
 
 @dataclass(frozen=True)
@@ -579,6 +588,10 @@ class IcCount:
     ``ceil(clamp(IC, 41, 70) / 5)`` pieces, ``ceil(pieces / 4)`` groups; ``H61D3Support.e``)."""
     ic_count: int
     segment_count: int
+    # ``ic_count`` as the app's checking readers return it (the spec's ``ic_count_checked``): None when
+    # their byte-order check fires (``ic_count_byte_order_suspect``, 0x1000 or more), where the app's read
+    # throws and stores no count.
+    ic_count_checked: int | None = None
 
 
 def parse_ic_count(frame: bytes) -> IcCount | None:
@@ -586,7 +599,9 @@ def parse_ic_count(frame: bytes) -> IcCount | None:
     b = _read_reply(frame, _Command.ic_num)
     if b is None:
         return None
-    return IcCount(ic_count=int(b.ic_count_signed), segment_count=int(b.segment))
+    checked = b.ic_count_checked
+    return IcCount(ic_count=int(b.ic_count_signed), segment_count=int(b.segment),
+                   ic_count_checked=None if checked is None else int(checked))
 
 
 @dataclass(frozen=True)

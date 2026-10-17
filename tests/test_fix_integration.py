@@ -83,7 +83,7 @@ async def test_read_reply_asks_for_no_idle_gap() -> None:
     d = make_device(ble_device(ADDR, "H6008"), "H6008")
     assert d is not None
     d._conn.query = AsyncMock(return_value=[frame(0xAA, 0x05, 0x0D, 1, 2, 3)])  # type: ignore[method-assign]
-    assert await d._read_reply(build.mode_query(), build.CMD_MODE) == frame(0xAA, 0x05, 0x0D, 1, 2, 3)
+    assert await d._read_reply(build.mode_query()) == frame(0xAA, 0x05, 0x0D, 1, 2, 3)
     assert d._conn.query.await_args.kwargs["idle_gap"] is None  # type: ignore[attr-defined]
 
 
@@ -103,7 +103,7 @@ async def test_a_stray_read_reply_does_not_cut_the_wait_short(monkeypatch: pytes
     monkeypatch.setattr(conn_mod, "establish_connection", fake.establish)
     d = make_device(ble_device(ADDR, "H6008"), "H6008", idle_disconnect=0)
     assert d is not None
-    assert await d._read_reply(build.mode_query(), build.CMD_MODE) == reply
+    assert await d._read_reply(build.mode_query()) == reply
     await d._conn.close()
 
 
@@ -409,3 +409,21 @@ def test_redaction_still_zeroes_every_status_data_byte(masking: ModuleType, tmp_
     masking.redact_frames(path, None)
     text = path.read_text()
     assert b"SERIAL".hex() not in text and b"0123".hex() not in text
+
+
+def test_every_read_request_names_the_reply_it_waits_for() -> None:
+    # The reply key is the built request's own read_command.command (AbsControllerNoEvent4Single.
+    # isSameController matches proType and command only), the byte the hand-paired build.CMD_* held.
+    pairs = [
+        (build.bulb_group_query(1, v2=True), build.CMD_BULB_COLOR_V2),
+        (build.ic_count_query(), build.CMD_IC_NUM),
+        (build.soft_version_query(), build.CMD_SOFT_VERSION),
+        (build.device_info_query(build.INFO_SN), build.CMD_DEVICE_INFO),
+        (build.bar_switch_query(), build.CMD_BAR_SWITCH), (build.gradual_query(), build.CMD_GRADUAL_WIFI_BLE),
+        (build.power_query(), build.CMD_SWITCH), (build.brightness_query(), build.CMD_BRIGHTNESS),
+        (build.mode_query(), build.CMD_MODE), (build.section_count_query(), build.CMD_SECTION_COUNT),
+        (build.secret_read(), build.CMD_SECRET_READ),
+    ]
+    assert [parse.request_command(f) for f, _ in pairs] == [k for _, k in pairs]
+    with pytest.raises(ValueError, match="not an aa read request"):
+        parse.request_command(build.switch(True))

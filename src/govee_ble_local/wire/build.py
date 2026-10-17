@@ -139,10 +139,11 @@ def _op15_frame(op: Any, make_data: Callable[[Any], Any]) -> bytes:
 
 
 def _request(command: Any, *selector: int) -> bytes:
-    """``aa <command> <selector...>``: the spec's ``read_request``, in the body the read dispatch types
-    as the reply (``read_command``); the selector field runs to the end of the body, zero-padded."""
+    """``aa <command> <selector...>``: the spec's ``read_request_sized(len(selector))``, the app's
+    ``BleUtils.Companion.p(0xAA, command, ext)``, in the body the read dispatch types as the reply
+    (``read_command``); the zero fill after the selector is the zeroed body stream."""
     return _frame_of(_F.ProType.read, lambda f: _node(
-        _F.ReadRequest, f, command=command, selector=bytes(selector).ljust(_PARAMS_LEN, b"\0")))
+        _F.ReadRequestSized, f, len(selector), command=command, selector=bytes(selector)))
 
 
 def ceil_div(a: int, b: int) -> int:
@@ -308,9 +309,7 @@ def mask_width(segments: int) -> int:
     2 for 0..16 (makeSelectedTwoBytes), else ceil(n/8) (BleUtils.X). Raises
     GoveeBleInvalidValue above 56 segments (7 bytes, the most Bytes.C will encode)."""
     _check_range("segment count", segments, 0, MAX_MASK_SEGMENTS)
-    if segments <= LEGACY_MASK_SEGMENTS:
-        return 2
-    return ceil_div(segments, 8)
+    return int(_node(_F.SegmentMask, None, segments, MAX_MASK_BYTES).mask_width)   # segment_mask.mask_width
 
 
 def _check_mask(mask: int, bits: int = LEGACY_MASK_SEGMENTS) -> int:
@@ -333,9 +332,14 @@ def _mask_bytes(mask: int, segments: int | None = None) -> bytes:
     """Segment mask as the app encodes it, LSB first: :func:`mask_width` bytes for a device
     with ``segments`` segments (the width depends on the device's segment count, not on
     which segments are selected). ``segments=None`` is the legacy two-byte mask."""
-    width = mask_width(LEGACY_MASK_SEGMENTS if segments is None else segments)
+    count = LEGACY_MASK_SEGMENTS if segments is None else segments
+    width = mask_width(count)
     _check_range("segment mask", mask, 0, (1 << (8 * width)) - 1)
-    return mask.to_bytes(width, "little")
+    # The spec's segment_mask, LSB first, over the posSet length rounded up to the mask's whole bytes (its
+    # doc allows that: the same width and bytes). So any bit in those bytes is accepted, as before; the
+    # app never sets one at or past the piece count, and Device doesn't either.
+    bits = [bool(mask >> i & 1) for i in range(8 * width)]
+    return _serialize(_node(_F.SegmentMask, None, 8 * width, MAX_MASK_BYTES, bits=bits), width)
 
 
 def all_segments_mask(segments: int) -> int:

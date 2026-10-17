@@ -242,7 +242,7 @@ def _apply_mode(profile: DeviceProfile, state: DeviceState, m: Any) -> None:
     if profile.mode_color_parse == "kelvin":
         # H6062 (striplight OpInfo4Detail) and H61A8 (base OpInfo4Detail.parseModeValidBytes:766-778): the
         # 0x15/0x0b/0x02/0x0d reports go alike to the SubMode4Color parse, Kelvin taken only when > 0.
-        kelvin = parse.gradual_kelvin_of(m) if sub in parse.SUBMODE4COLOR_SUB_MODES else None
+        kelvin = parse.gradual_kelvin_of(m) if m.is_submode4color else None
         if kelvin is not None:
             apply_kelvin_report(state, kelvin)
         return

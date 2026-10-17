@@ -298,10 +298,10 @@ def walk_status_tlvs(
             if skipped is not None:
                 skipped.append(TlvCut("unparsed", typ, pos, int(length)))
             tlvs.append(tlv)
-            pos += 2 + int(length)
+            pos += int(tlv.total_len)
             continue
         tlvs.append(tlv)
-        pos += 2 + int(tlv.len)
+        pos += int(tlv.total_len)
     return tlvs, None
 
 
@@ -329,8 +329,11 @@ def _color_group(tlv: Any, pieces: int | None) -> tuple[int, list[parse.GroupRec
     ``Controller4ColorInfoByGroup.Companion.q:160-175``). Raises what the reader raises on an empty
     value or one too short for that count, where the app throws."""
     raw = bytes(tlv._raw_value)   # the TLV's value bytes, as the generated status_tlv keeps them
-    group_index = int(_parse_type(_F.ColorGroupRead, raw, 0, 1).group_index)
-    group = _parse_type(_F.ColorGroupRead, raw, group_record_count(group_index, len(raw), pieces), 1)
+    if pieces is not None:   # the H60A6 screen's count: the spec's color_group_status_counted
+        group = _parse_type(_F.ColorGroupStatusCounted, raw, pieces, _RECORDS_PER_GROUP, 1)
+    else:
+        group = _parse_type(_F.ColorGroupRead, raw, group_record_count(0, len(raw), None), 1)
+    group_index = int(group.group_index)
     return group_index, [
         (int(rec.brightness), int(rec.r), int(rec.g), int(rec.b)) for rec in group.records]
 

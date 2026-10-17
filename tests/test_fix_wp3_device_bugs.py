@@ -25,7 +25,7 @@ from govee_ble_local.exceptions import GoveeBleError, GoveeBleInvalidValue, Gove
 from govee_ble_local.models import Capability
 from govee_ble_local.scenes import load_scenes
 from govee_ble_local.transport.connection import GoveeConnection
-from govee_ble_local.wire import build
+from govee_ble_local.wire import build, parse
 
 Replies = dict[int, list[bytes] | Callable[[bytes], list[bytes]]]
 
@@ -629,7 +629,9 @@ def test_live_ic_without_a_clamp_uses_the_reported_count() -> None:
     d = Device(profile, ble_device("AA:BB:CC:DD:EE:3C", "HX"))
     assert _readback.live_ic_pieces(d, 23) == 5          # ceil(23 / 5), no clamp
     assert _readback.live_ic_pieces(d, -1) == 0          # a negative count (aa 40 ff ff) is no pieces
-    assert _readback.live_ic_pieces(d, 0x1000) is None   # the app never stores this one
+    # The app never stores a count of 0x1000 or more: the spec's ic_count_checked is None there.
+    ic = parse.parse_ic_count(_frame(0xAA, 0x40, 0x10, 0x00, 0x05))
+    assert ic is not None and ic.ic_count == 0x1000 and ic.ic_count_checked is None
     h6641 = make_device(ble_device("AA:BB:CC:DD:EE:3D", "H6641"), "H6641")
     assert h6641 is not None
     assert _readback.live_ic_pieces(h6641, 23) == 9      # clamped to 41, ceil(41 / 5)

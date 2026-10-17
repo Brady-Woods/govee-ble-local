@@ -75,6 +75,10 @@ model, from which the shipped readers are generated).
 - `GoveeConnection(session_frames=...)`: writes sent once per connection after the unlock, whose refusal
   or missing ack is only logged; `GoveeConnection.write_payload_size`, the link's write size (ATT MTU - 3,
   20..509, 20 when the backend can't say); `send_unacked` also takes a function of that size.
+- `wire.parse.request_command(frame)`: the command a built `aa` read request asks for (the frame reader's
+  `read_command.command`), which is the command its reply carries; and `wire.parse.IcCount.ic_count_checked`,
+  the IC count as the app's checking readers return it (the spec's `ic_count_checked`: None for a count of
+  0x1000 or more).
 - `wire.reassemble.BurstAssembler`: the app's 0xAC burst state machine, fed one record at a time
   (`feed` returns whether the app takes it; `status` is `"waiting"`, `"complete"` or `"failed"`), and the
   `wire.reassemble.TlvCut` reason `"tail"` (a walk that stops cleanly at the buffer's end).
@@ -84,6 +88,23 @@ model, from which the shipped readers are generated).
   (default 20, today's frames).
 
 ### Changed
+- More of the library reads and writes through the spec's types (frame audit section F and the section-E
+  additive forms):
+  - every `aa` read waits for the reply its own request names (`parse.request_command`), not a hand-paired
+    `build.CMD_*` key (12 sites);
+  - read requests are the spec's `read_request_sized(selector_len)`;
+  - segment masks are written by the spec's `segment_mask` (its width rule, LSB first), within the
+    library's 7-byte cap;
+  - the `mode_read` decoders use its `sub_mode` and `is_submode4color` instances and read the params with
+    `mode_read_params`;
+  - a direct `aa a5 <group>` reply is read by `color_group_direct_frame(record_count)`, and a 0xAC 0xA5
+    group by `color_group_status_counted(pieces, 4, 1)`;
+  - the TLV walk steps by `status_tlv.total_len`;
+  - the live IC-count walk skips on the spec's `ic_count_checked` instead of a hand `>= 0x1000` test.
+  Byte- and state-identical: equivalence run against c823fc5 (writers, readers, the TLV walk, parse_status,
+  the mode decoders and folds, and every bench capture); the only differences are the new
+  `IcCount.ic_count_checked` field and `_readback.live_ic_pieces` called directly with a count the walk
+  never passes it.
 - On the spec's section-E lockstep readers (2667e85): `build.secret_check` and `build.gradual` write the
   spec's `SecretKeyWrite` / `GradualWrite` in place, now that `single_command.params` types 33 B2 / A3 (same
   bytes); the 0xAC TLV walk reads 0x07 as the spec's `status_device_info` (`app_decodes` for the 0x10 / 0x11
