@@ -28,6 +28,10 @@ def test_mask_helper_recomputes_checksum() -> None:
     assert masked[-1] != plain[-1]  # no longer the XOR of the secret
     # short/odd lengths: header kept, rest blanked, no checksum fabricated
     assert redact.mask_secret(b"\x33\xb2\x01\x02") == b"\x33\xb2\xff\xff"
+    # a reader exception: its type only for a secret frame, its whole repr for any other
+    err = ValueError("got b'\\x01'")
+    assert redact.shown_error(plain, err) == "ValueError"
+    assert redact.shown_error(frame(0xAA, 0x01, 0x01), err) == repr(err)
 
 
 _FULL_B1 = frame(0xAA, 0xB1, 0x01, *_SECRET)

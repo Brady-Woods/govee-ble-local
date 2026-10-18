@@ -23,6 +23,7 @@ from govee_ble_local.models import Encryption
 from govee_ble_local.transport import connection as conn_mod
 from govee_ble_local.transport import framelog
 from govee_ble_local.transport.connection import GoveeConnection
+from govee_ble_local.wire import redact
 
 from fake_ble import FakeGovee, ble_device, frame
 
@@ -376,8 +377,8 @@ async def test_secret_is_masked_in_frame_capture(monkeypatch, fast, caplog) -> N
 
 @pytest.mark.parametrize("encrypted", [False, True])
 async def test_secret_is_masked_in_wire_capture(monkeypatch, fast, caplog, encrypted) -> None:
-    """On a plaintext link the wire bytes ARE the secret frame, and on an encrypted
-    link they are decryptable from the captured handshake - mask wire= too."""
+    """On a plaintext link the wire bytes ARE the secret frame: masked like the plaintext. On an
+    encrypted link the ciphertext is blanked whole (its first bytes are AES over the secret's block)."""
     import logging
 
     caplog.set_level(logging.DEBUG, logger="govee_ble_local.frames")
@@ -388,14 +389,9 @@ async def test_secret_is_masked_in_wire_capture(monkeypatch, fast, caplog, encry
     await c.connect()
     secret_lines = [r.getMessage() for r in caplog.records if " plain=33b2" in r.getMessage()]
     assert secret_lines, "the unlock frame must still be captured (masked)"
+    want = b"\xff" * len(unlock) if encrypted else redact.mask_secret(unlock)
     for line in secret_lines:
-        wire_hex = line.split(" wire=")[1].split(" ")[0]
-        # 2-byte header kept, payload blanked, checksum RECOMPUTED over the masked
-        # bytes (WAS: wire_hex[4:] == "ff"*18, i.e. an all-ff tail; FIXED: the last
-        # byte is the XOR of the masked frame, not a leak of the secret's XOR).
-        assert wire_hex[4:-2] == "ff" * 17
-        masked = bytes.fromhex(wire_hex)
-        assert checksum_ok(masked)
+        assert line.split(" wire=")[1].split(" ")[0] == want.hex()
     assert secret.hex() not in caplog.text
 
 
@@ -425,11 +421,13 @@ async def test_secret_is_masked_in_jsonl_frame_log(
     records = [json.loads(line) for line in text.splitlines()]
     secret_records = [r for r in records if (r["plain"] or "").startswith("33b2")]
     assert [r["dir"] for r in secret_records] == ["tx", "rx"]  # the unlock write and its ack
+    # header kept, payload blanked, checksum recomputed
+    masked = redact.mask_secret(frame(0x33, 0xB2, *secret))
     for rec in secret_records:
-        # wire masked too: on a plaintext link it IS the secret; on an encrypted one it is
-        # decryptable from the captured handshake. 2-byte header kept, checksum recomputed.
-        for field in ("plain", "wire"):
-            assert rec[field][4:-2] == "ff" * 17 and checksum_ok(bytes.fromhex(rec[field]))
+        # wire masked too: on a plaintext link it IS the secret (masked like the plaintext); on an
+        # encrypted one it is blanked whole.
+        assert rec["plain"] == masked.hex() and checksum_ok(masked)
+        assert rec["wire"] == (b"\xff" * len(masked) if encrypted else masked).hex()
     assert secret.hex() not in text
 
 

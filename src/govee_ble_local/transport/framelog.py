@@ -6,11 +6,14 @@ environment variable. Every TX/RX frame is appended as one JSON line:
     {"ts", "addr", "dir": "tx"|"rx", "plain": <hex|null>, "wire": <hex>, "enc": <mode>}
 
 - ``plain`` is the 20-byte *application* frame (what to analyse against the Kaitai
-  spec); ``wire`` is the on-air bytes (ciphertext when the link is encrypted).
-- Only frame bytes are logged: no key, session key or PSK is written as such. However,
-  captures include the handshake wire frames, from which the session key is derivable
-  with the (public) PSK, so a capture must be treated as sensitive. Handshake bytes are
-  deliberately not masked (the capture format is unchanged). Files are created owner-only
+  spec); ``wire`` is the on-air bytes (ciphertext when the link is encrypted), except
+  where the connection blanks them (``GoveeConnection._capture``): a secret frame's on
+  an encrypted link, and on an encrypted link a frame with no plaintext (before the
+  session is ready, the e7 handshake included, or after the teardown), which keeps only
+  its length.
+- Only frame bytes are logged: no key, session key or PSK is written as such, and the
+  blanked handshake frames don't give the session key. A capture still holds device ids
+  and must be treated as sensitive. Files are created owner-only
   (0o600); an existing file keeps its mode, with one warning (on POSIX) if it is group- or
   world-accessible.
 - A :class:`FrameLog` is built on the event loop and ``record`` is called from the BLE

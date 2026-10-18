@@ -7,11 +7,14 @@ analysis — including over a Home Assistant **Bluetooth proxy**, which reaches 
 workstation can't.
 
 > ⚠️ **Only the secret is redacted.** The account-lock **secret** (`33 b2` write / `aa b1` read
-> reply) is masked in the frame tier and in the JSONL capture. Everything else is logged verbatim:
-> every line carries the device's **BLE MAC**, and the frame tier and captures include the
-> device-info replies (**serial / device id**, **Wi-Fi MAC**) and the handshake frames (the
-> session key is derivable from those with the library's public PSK). Fine for your own logs;
-> scrub a log before you paste it into a public bug report.
+> reply) is masked in the frame tier and in the JSONL capture. Its plaintext keeps the 2-byte header.
+> Its wire is masked the same way on a plaintext link and blanked whole on an encrypted one. On an
+> encrypted link, a frame with no plaintext keeps only its length: its wire is blanked and the frame
+> tier labels it `withheld`. That covers a frame that arrives before the session is ready (the e7
+> handshake included, so the session key can't be derived from a capture) or after the teardown.
+> Everything else is logged verbatim: every line carries the device's **BLE MAC**, and the frame tier
+> and captures include the device-info replies (**serial / device id**, **Wi-Fi MAC**). Fine for your
+> own logs; scrub a log before you paste it into a public bug report.
 
 ## Log levels
 
@@ -30,7 +33,7 @@ not a child of `govee_ble_local`.
 | **WARNING** | Handled but unexpected — the "why is state stale / what's this device doing" signal: an RX frame with an unknown proType (the first one of each proType for this device, until the integration reloads; repeats go to DEBUG), a status read that came back with no usable data even after its retry, a gt 50 / 90 plug switched but its post-power re-read (`aa 06`, `aa 07 03`, `33 b5`) lost the link, a state callback that raised, frame-capture problems (capture directory missing or not writable; an existing capture file that is group- or world-accessible, warned once per file; a write to the capture file failed; the capture queue overflowed), and (cloud extra) a malformed device secret in the account's device list, which is ignored. |
 | **INFO** | One line per device: its first successful poll that read state back, with a one-line state summary. |
 | **DEBUG** | Per-operation protocol flow: each command sent (decoded, e.g. `TX write/mode/color_rgbic_15`), a missing ACK and the reconnect-and-retry it triggers, a rejected write (with its status byte), session attempts, "session ready" (+ encryption mode), link drops (`disconnected`), dropped junk frames (bad checksum, late handshake retransmits), each poll's resulting state, and status bursts that were truncated or did not parse. |
-| **`govee_ble_local.frames`** (its own logger, at DEBUG) | The full-session firehose: **every** TX/RX frame — direction, decoded label, plaintext hex, on-air (wire) hex, encryption mode. This is the capture surface. Off unless you enable it explicitly; guarded so it costs nothing when off. |
+| **`govee_ble_local.frames`** (its own logger, at DEBUG) | The full-session firehose: **every** TX/RX frame — direction, decoded label, plaintext hex, on-air (wire) hex, encryption mode. A frame with no plaintext is labelled `cipher`, or `withheld` when its wire was blanked (see the redaction note above). This is the capture surface. Off unless you enable it explicitly; guarded so it costs nothing when off. |
 
 `soft` coverage gaps (a known opcode whose payload isn't modelled) are not logged at runtime;
 `govee-ble-analyze` reports them from a capture (see below).

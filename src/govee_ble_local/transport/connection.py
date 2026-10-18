@@ -174,7 +174,6 @@ class GoveeConnection:
         self._bgc_checked = False
         # Wire bytes of this session's handshake frames + when to stop filtering them.
         self._handshake_echoes: set[bytes] = set()
-        self._in_handshake = False   # _handshake() running: _capture keeps the e7 frames' bytes
         self._echo_filter_until = 0.0
         # Unknown RX proTypes already warned about: repeats go to DEBUG (no log flood). Kept for
         # this object's life (the device's), not reset on reconnect.
@@ -242,9 +241,9 @@ class GoveeConnection:
         - a frame with no plaintext (``plain`` None: it arrived before the session
           was ready, or after the teardown cleared it) is masked by its header on a
           plaintext link, and on an encrypted link only its length is kept (its wire
-          blanked), since it can't be checked. The handshake's own frames are the
-          exception: they carry no account secret, so they are kept while
-          :meth:`_handshake` runs."""
+          blanked, logged as ``withheld``), since it can't be checked. That includes
+          the e7 handshake frames: with the public PSK, their bytes would give the
+          session key."""
         withheld = False
         if plain is not None:
             if carries_secret(plain):
@@ -253,7 +252,7 @@ class GoveeConnection:
         elif self._encryption is Encryption.NONE:
             if carries_secret(wire):
                 wire = mask_secret(wire)
-        elif not self._in_handshake:
+        else:
             wire, withheld = b"\xff" * len(wire), True
         if self._framelog is not None:
             self._framelog.record(direction, wire=wire, plain=plain, enc=enc)
@@ -546,14 +545,6 @@ class GoveeConnection:
         """e7 01 -> session key; e7 02 -> confirm. Matches replies by content
         (the device double-delivers its replies and retransmits them ~1 s later),
         and waits for the confirm so nothing else is sent while it's in flight."""
-        self._in_handshake = True
-        try:
-            await self._handshake_steps()
-        finally:
-            self._in_handshake = False
-
-    async def _handshake_steps(self) -> None:
-        """:meth:`_handshake`'s two steps."""
         loop = asyncio.get_running_loop()
         step1 = handshake.build_step1(PSK)
         self._capture("tx", wire=step1, plain=None, enc="e7")

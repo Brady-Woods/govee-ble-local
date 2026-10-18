@@ -786,10 +786,10 @@ model, from which the shipped readers are generated).
   depth for callers that hand `wire.parse` a frame directly (tools, tests, integrators). Neither site fires
   from the shipped runtime: the connection drops a notification that isn't 20 bytes or fails its checksum
   before any parse, and `Device` only hands `request_command` the `aa` reads it builds.
-  - Before, a reply that didn't parse was logged as its full hex, so a malformed `aa b1` secret reply (or a
-    `33 b2` frame too short for a write ack) showed the secret. `parse.request_command`'s error named the
-    frame it was given, so a `33 b2` secret write handed to it carried the secret into the exception
-    message.
+  - Before, a reply that didn't parse was logged as its full hex, so a malformed `aa b1` secret reply
+    showed the secret, and a `33 b2` frame too short for a write ack its first secret byte.
+    `parse.request_command`'s error named the frame it was given, so a `33 b2` secret write handed to it
+    carried the secret into the exception message.
   - Every frame logged or named in `wire/` now goes through `wire.redact.shown_hex`, which masks a
     `33 b2` / `aa b1` frame by its two header bytes, so a frame whose body doesn't parse is masked too. For
     such a frame the reader's exception is shown by its type only (`wire.redact.shown_error`), since a
@@ -798,16 +798,17 @@ model, from which the shipped readers are generated).
   - The masking helpers moved from `transport.connection` to `wire.redact` (`carries_secret`,
     `mask_secret`). The frame capture, the connection's bad-checksum log and `tools/decrypt_btsnoop.py`
     use them from there.
-  - Logging and exception text only: no byte sent, decoded state or return value changes.
+  - Logging, exception and analyzer issue text only: no byte sent and no decoded state changes.
 - The connection's frame capture and frames log fail closed. This was a real leak:
   - A notification that arrives while the session isn't ready used to be recorded in the clear. That
     covers frames between subscribing and the handshake, and frames after the teardown cleared the
-    session. A device sends its `aa b1` secret reply twice, about 30 ms apart, so after `read_secret`
-    followed at once by `stop()` (the config-flow and reauth shape), the second copy was logged and
-    captured unmasked.
+    session. A late or repeated `aa b1` reply landing while `stop()` tears the session down
+    (`read_secret` followed at once by `stop()`, the config-flow and reauth shape) was logged and captured
+    unmasked. That was shown with the test fake, not seen on hardware (not live-verified).
   - Such a frame is now masked by its header on a plaintext link. On an encrypted link, where it can't be
-    checked, only its length is kept: its wire is blanked and the log line says `withheld`. The
-    handshake's own e7 frames, which carry no account secret, are kept while the handshake runs.
+    checked, only its length is kept: its wire is blanked and the log line says `withheld`. That
+    includes the e7 handshake frames: their bytes plus the public PSK give the session key, so a capture
+    no longer lets anyone derive it.
   - A secret frame's ciphertext is blanked whole. Its first two bytes, kept before, are AES over the block
     that holds the secret: a check on a guess.
   - Logging and capture text only: no byte sent, nothing that reaches the RX queue or the handshake, and

@@ -333,13 +333,18 @@ _SECRET = bytes([0xDE, 0xAD, 0xBE, 0xEF, 0xC0, 0xFE, 0xE1, 0x9D])
 @pytest.mark.parametrize("case", ["ready", "bad_checksum", "torn_down"])
 async def test_a_secret_reply_never_reaches_the_capture_or_log(monkeypatch, caplog, encrypted, case) -> None:
     """An rx aa b1 secret reply: masked by its header while the session is ready (a bad checksum too, in
-    the drop log), and after the teardown cleared it (read_secret, then the device's late second copy as
-    stop() resets the session) masked by its header on a plaintext link, kept only as its length on an
-    encrypted one. On an encrypted link a secret frame's wire is blanked whole."""
+    the drop log), and after the teardown cleared it masked by its header on a plaintext link, kept only as
+    its length on an encrypted one. The teardown case is a late or repeated aa b1 reply landing while
+    stop() resets the session, shown with this fake, not seen on hardware. On an encrypted link a secret
+    frame's wire is blanked whole, and the e7 handshake frames are kept only as their length too."""
     caplog.set_level(logging.DEBUG, logger="govee_ble_local")
     c = _make(monkeypatch, FakeGovee(encrypted=encrypted))
-    await c.connect()
     c._framelog = log = _CaptureLog()   # type: ignore[assignment]
+    await c.connect()
+    if encrypted:   # the handshake: every e7 frame withheld (its bytes plus the PSK give the session key)
+        assert log.records and all(w == b"\xff" * len(w) and p is None for w, p in log.records)
+        assert " cipher plain=" not in caplog.text and " withheld plain=" in caplog.text
+    log.records.clear()
     plain = frame(0xAA, 0xB1, 0x01, *_SECRET)
     if case == "bad_checksum":
         plain = plain[:-1] + bytes([plain[-1] ^ 0xFF])
@@ -353,9 +358,15 @@ async def test_a_secret_reply_never_reaches_the_capture_or_log(monkeypatch, capl
     assert (wire, captured) == (masked_wire, None if case == "torn_down" else redact.mask_secret(plain))
     if case == "bad_checksum":
         assert f"bad checksum: {redact.shown_hex(plain)}" in caplog.text
+    if case == "torn_down" and encrypted:
+        assert f" withheld plain= wire={'ff' * FRAME_LEN} " in caplog.text
     shown = caplog.text
     for leaked in (plain[2:], raw if encrypted else b""):
         assert not any(leaked[i:i + 2].hex() in shown for i in range(len(leaked) - 1)), shown
+    if case == "torn_down" and not encrypted:   # a frame that carries no secret is captured as it came
+        other = frame(0xAA, 0x01, 0x01)
+        c._handle_notify(None, bytearray(other))
+        assert log.records[-1] == (other, None)
     await c.disconnect()
 
 
