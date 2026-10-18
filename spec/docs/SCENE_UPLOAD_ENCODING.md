@@ -25,36 +25,31 @@ The §1 H61A8 frame (`a3 00 01 10 03 …`) is **Path A**. A library scene like A
 
 ---
 
-## 0b. Per-device apply path — which parser each curated family uses (⚠️ TWO bypass `parseSceneV1`)
+## 0b. Per-device apply path — which parser each curated goodsType uses (⚠️ TWO dialects bypass `parseSceneV1` for type 5)
 
-`parseSceneV1` (§Q4 table below) is **not** universal. Two curated families take a different entry, and
-if you drive them off `parseSceneV1` + their `supportScenesOp` version array you will get the wrong
-answer. The machine-readable form is `devices.yaml scenes.dispatch.family_apply`.
+`parseSceneV1` (§Q4 table below) is **not** universal: two control screens send sceneType 5 through their own
+DIY dialect. The machine-readable form is each goodsType row in `devices.yaml`
+(`client_profile.by_goods_type.<gt>.scene_dialect`, a key of `scenes.upload.dialects`, and `scene_versions`,
+after the row's `by_pact` / `by_firmware`).
 
-| family (curated SKU) | version array (static, per goodsType) | apply path | result |
+| goodsType (curated SKU) | version array (static, per goodsType) | apply path | result |
 |---|---|---|---|
-| **h60ax** (H60A6) | `{0,1,2,3,5}` | `parseSceneV1`; graffiti/DIY (type 5) via the **DIY dialect** (§G5) | type 1/2/3 → comByte 1/2/7; graffiti/DIY → `0x58`, `0xA3`/`0xA4` |
-| **h6047** (H6047) | `{0,1,2,3}` | `parseSceneV1` | type 1/2/3 → comByte 1/2/7 |
-| **h61d3** (H6641) | `{0,1,2,3,10}` | `parseSceneV1` | type 5 v10 → CommonDiy byte0-dispatch |
-| **dreamcolorlightv1** (H61A8) | `{1,2}` | `parseSceneV1` with versionArray `{1,2}` | type 1/2 → comByte 1/2 |
-| **tablelampv1** (H6052=gt22 / H6078=gt128) | H6052 `{0,1,4,5}` · H6078 `{0,1,5,9}` | **type 5 → `Diy.parseScenes4Diy` (bypass)**; else `parseSceneV1` | see Q2/Q3 |
-| **bulblightv3** (H6006, H6008) | `supportScenesOp` else-branch = **`{0}`** | **`parseScene` / `parseEffect` with a hardcoded versionArray `{1}` (bypass)** | see Q1 |
+| **303** (H60A6) | `{0,1,2,3,5}` | `parseSceneV1`; graffiti/DIY (type 5) via the **DIY dialect** (§G5) | type 1/2/3 → comByte 1/2/7; graffiti/DIY → `0x58`, `0xA3`/`0xA4` |
+| **119** (H6047) | `{0,1,2,3}` | `parseSceneV1` | type 1/2/3 → comByte 1/2/7 |
+| **247** (H6641) | `{0,1,2,3}` (the control screen's `ConfigDetail` set; version 10 is not offered there) | `parseSceneV1` | type 1/2/3 → comByte 1/2/7 |
+| **19** (H61A8) | `{0,1,2,3}` with part brightness (soft ≥ 1.06.00 and hard ≥ 1.00.02), else `{0,1,2}`; none (activate only) below soft 1.04.00 unless the pact code is 2 | `parseSceneV1` | type 1/2(/3) → comByte 1/2(/7) |
+| **22** (H6052) / **128** (H6078) | H6052 `{0,1,4,5}` · H6078 `{0,1,5,9}` | **H6052 type 5 → `Diy.parseScenes4Diy` (dialect)**; else `parseSceneV1` | see Q2/Q3 |
+| **64** (H6004, H6006, H6008) | `{0,1}` (`supportScenesOp(64)`) | `parseSceneV1` | type 1 → comByte 1; see Q1 |
 
-### Q1 — bulbs upload type-1 RGB (they are **not** activate-only); `{0}` is the wrong gate
-`bulblightv3` apply = `Comm.makeSceneCmd4IotComm` → `Support.is2NewScenesMode` (`bulblightv3/pact/Support.java:137-147`):
-1. `ScenesM.p.m` looks the scene up by sku and sceneCode in the local catalog.
-2. Scene found (blob present): `ScenesOp.parseScene` of that scene with versionArray `{1}` → UPLOAD.
-3. No scene (blob absent): `ScenesOp.parseEffect` with the sku, the code and versionArray `{1}` →
-   activate-by-code.
-
-The `versionArray` here is a **hardcoded `{1}`** — `supportScenesOp` (which returns `{0}` for H6006/H6008,
-`:322-323`) is **not read on the apply path**. `parseScene` with `{1}` → (version 1 ∈ versionArray and `sceneType==1`) →
-`parserScenes4Rgb` → **`MultiNewScenesControllerV1` (comByte `0x01`, strip 0, `0xA3` multi-frame)** once the
-blob validates (`ScenesRgb.isValidProtocolBytes`). **⇒ the 55 type-1 RGB library scenes UPLOAD.** The `{0}`
-from `supportScenesOp` is a UI/DIY-editor capability value (fed to `ScenesConfigBean`), not an apply gate.
-**If your `_LIBRARY_SCENE` map blocks the bulbs, this is why:** it keyed on the device's `{0}`; the app
-forces `{1}` for the RGB-library apply. Treat version 1 as always-available for bulbs (upload iff the blob
-is present/valid; else activate-by-code).
+### Q1 — bulbs upload type-1 RGB (they are **not** activate-only)
+The control screen's `ScenesConfigBean` gets `supportScenesOp(64)` = `{0,1}`
+(`split_bulblightstringv1/com/govee/bulblightv3/pact/Support.java:374-379`), so `parseSceneV1` uploads a
+type-1 RGB scene (version 1 → `parserScenes4Rgb` → **`MultiNewScenesControllerV1`, comByte `0x01`, strip 0,
+`0xA3` multi-frame**) once the blob validates (`ScenesRgb.isValidProtocolBytes`); version 0 has no table row.
+**⇒ the type-1 RGB library scenes UPLOAD.** The IoT / group apply path, `Comm.makeSceneCmd4IotComm` →
+`Support.is2NewScenesMode` (`bulblightv3/pact/Support.java:137-147`), passes a hardcoded versionArray `{1}`
+to `ScenesOp.parseScene` (a local scene) or `parseEffect` (by code): the same upload set
+(`devices.yaml scenes.dispatch.iot_apply`).
 
 ### Q2 — H6052 cannot upload type-3 graffiti
 H6052 = goodsType 22 (`isH6078` tests for goodsType 128, `Support.java:130`); `supportScenesOpSet` gives
@@ -81,10 +76,11 @@ Do **not** conflate this comByte-9 Diy-in-scenes framing with H6078's version-9 
 
 ### Implementer checklist (no Java required)
 1. Carry from the scene-library DTO: `sceneType`, `sceneCode`, `scenceParam` (+ `scenceParamId`,
-   `bigEffectStr`). `versionArray` is **not** in the cloud/BLE — hardcode it per family from
-   `devices.yaml scenes.dispatch.family_apply`.
-2. Pick the apply path by family (`family_apply.path`): most → `parseSceneV1` (use `dispatch.table` below,
-   §Q4); **bulbs → force `{1}`, type-1 only**; **H6052 type-5 → Diy path, comByte 9**.
+   `bigEffectStr`). `versionArray` is **not** in the cloud/BLE — take it per goodsType from
+   `devices.yaml client_profile.by_goods_type.<gt>.scene_versions` (else the family `specs.scene_versions`).
+2. Pick the apply path by the row's `scene_dialect`: `legacy_scene` → `parseSceneV1` (use `dispatch.table`
+   below, §Q4); **`diy_graffiti` (H60A6) / `tablelamp_h6052_type5_diy` (H6052) → their dialect for type 5**,
+   `parseSceneV1` for the rest; `none` → activate only.
 3. If a row matches: `value = decode(scenceParam)` then apply the row's `strip`; build the `0xA3`
    (or `0xA4`-MTU for H60A6 graffiti, §G5) multi-frame with that comByte. Else: **activate-only**
    (`33 05 04 <sceneCode LE>`). The `33 05 04` activation is sent in **both** cases.
@@ -109,9 +105,7 @@ activate-only**. comBytes = each controller's `getCommandType()`.
 | 12 | 5 | `parseScenes4H6022Graffiti` (666) | V10 if byte0∈{0x40,0x41}, else V4 | `0x58 / 0x04` | 0 / 1 |
 | 13 | 5 | `parseScenes4H1630Graffiti` (658) | V10 | `0x58` | 1 |
 
-**Bypasses** (do not use `parseSceneV1` for these): **bulbs** — `is2NewScenesMode` (`bulblightv3 Support.java:137-147`)
-calls `parseScene`/`parseEffect` with a hardcoded versionArray `{1}`, ignoring `supportScenesOp`'s `{0}` ⇒
-type-1 RGB uploads (V1/`0x01`). **H6052 type-5** — `H6052ScenesViewMode:45` → `Diy.parseScenes4Diy` →
+**Type-5 dialects** (do not use `parseSceneV1` for these): **H6052 type-5** — `H6052ScenesViewMode:45` → `Diy.parseScenes4Diy` →
 `MultipleDiyInScenesController` (comByte 3 simple / 4 protocol / 9 professional `DiyGraffitiV3.a()`); its
 `{0,1,4,5}` lacks version 3 so type-3 graffiti is not uploadable.
 

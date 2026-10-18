@@ -8,6 +8,42 @@ model, from which the shipped readers are generated).
 
 ## [Unreleased]
 
+### Spec
+- **devices.yaml can now route and describe the 18 supported SKUs on its own** (one-device-list phase 0).
+  Each one's goodsType has a `client_profile.by_goods_type` row with the facts the library's hand table
+  holds: `models`, `pacts` (the accepted pacts, `Support.addSupportPact`; `any` for the SKU-routed H6188),
+  `support` (`hardware_verified`, `app_traced` or `modelled`), `capabilities`, `zones`, `account_lock`,
+  `scene_dialect`, `scene_versions`, `kelvin_range`, `brightness_range`, `status_read` (the 0xAC request),
+  `connect_reads` (the state reads besides aa 01 and aa 05), `connect_writes`, `power_resync`, `ic_pieces`
+  and `mode_reports_kelvin`, with `doc` and `doc-ref`. The rows are 303 (H60A6), 119 (H6047), 19 (H61A8),
+  64 (H6004 / H6006 / H6008), 22 (H6052), 247 (H6641), 0 (H6188), 41 (H6062), 51 (H6061) and the plugs'
+  43 / 50 / 90 / 307. The trace notes in `devices/profile.py` are now the rows' `doc` / `doc-ref` (the
+  library copy goes when phase 1 generates the table). A scratch generator over devices.yaml alone gives
+  15 of the 18 profiles field for field. The other three follow app facts the library doesn't follow yet:
+  H6006 / H6008 `scene_versions` {1} -> {0, 1} (the control screen's set; version 0 uploads nothing, so no
+  frame changes) and H6641 {0, 1, 2, 3, 10} -> {0, 1, 2, 3} (`ConfigDetail`; version 10 is never sent).
+  H6641's gradual flag (its screen reads `aa a3` and writes `33 a3`) stays out of its row until a bench
+  check.
+- **H6004 routes to goodsType 64.** Rows 9 and 10 (H6003, and the H6004's Wi-Fi revision) say
+  `connectivity: [wifi, iot]`, so no BLE client routes there.
+- **goodsType 64's scene versions are {0, 1}**, the control screen's `ScenesConfigBean` set
+  (`Support.supportScenesOp(64)`). The `{1}` of `Support.is2NewScenesMode` is the IoT / group path, now
+  `scenes.dispatch.iot_apply`. `scenes.dispatch.family_apply` (a per-SKU table that repeated the rows and
+  contradicted the control screens) is gone, and H6052's type-5 path moved from `scenes.dispatch.bypasses`
+  to `scenes.upload.dialects.tablelamp_h6052_type5_diy`.
+- **One pact and firmware branch mechanism per row.** `mode_color_by_pact` / `mode_color_by_firmware` (14
+  and 4 sites) and A8's `kelvin_by_firmware` fold into general `by_pact` / `by_firmware` branches on
+  `client_profile` rows (`clientBranch` / `clientFirmware`); the values are unchanged. Every matching
+  firmware item applies, in order, since the app's gates are independent per fact (goodsType 19's scene
+  set, from `newVersion4Ble`, and its Kelvin range). The TV-light pact (1,1) branch's nested firmware gate
+  is now the row's own `by_firmware`, with the same results.
+- **Schema completeness check** (`devices.schema.json` `clientRow.allOf`): a row with `support` must carry
+  its routing and control facts, a row offering scenes its dialect, a plug row `power_resync`, and an
+  IC-count read its `ic_pieces`; `doc-ref` items must be in the `.ksy` citation form. Family `specs` and
+  `pact` lose the values that were one SKU's or that repeated `specs` (`pact.scene_versions` in 9 families).
+- `spec/govee_reference.py`: `ble_rows` (the BLE route for a SKU and advertised pact) and `client_row` (one
+  row's facts for a pact and firmware), with self-test checks.
+
 ## [1.4.0] — 2026-10-18
 
 ### Added
