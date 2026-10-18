@@ -168,12 +168,12 @@ def check_types(types: dict[Path_, Any]) -> None:
                     applied.add(e)
     tops = {p: t for p, t in types.items() if len(p) == 1}
     standalone = {p[0] for p, t in tops.items() if str(t.get("doc", "")).startswith("STANDALONE (")}
-    for r in sorted(ROOTS - standalone):
-        err(f"missing STANDALONE root {r}")
-    for r in sorted(standalone - ROOTS):
-        err(f"{r}: STANDALONE top is not one of the six roots {sorted(ROOTS)}")
-    seen = [p for p, t in tops.items() if str(t.get("doc", "")).startswith(SOURCE_LABELS)]
-    reached = set(seen)
+    for root in sorted(ROOTS - standalone):
+        err(f"missing STANDALONE root {root}")
+    for root in sorted(standalone - ROOTS):
+        err(f"{root}: STANDALONE top is not one of the six roots {sorted(ROOTS)}")
+    seen: list[Path_] = [p for p, t in tops.items() if str(t.get("doc", "")).startswith(SOURCE_LABELS)]
+    reached: set[Path_] = set(seen)
     while seen:
         for q in edges[seen.pop()] - reached:
             reached.add(q)

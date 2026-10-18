@@ -448,6 +448,8 @@ model, from which the shipped readers are generated).
   tooling only.
 
 ### Fixed
+- `spec/checks/lint.py` passes `mypy --strict` and pyright again. The root-label loops no longer reuse the
+  type-path variable, and the reachability walk declares its path types.
 - **Segment masks follow the app's caps, up to 112 segments.** Each body carries at most its own mask bytes,
   and the app's writers drop the positions past them (`coerceAtMost`): the 0x15 RGB and colour-temperature
   frames 7 bytes (the spec's `op15_color_write.mask_cap` for variants 12 / 11: `Bytes.h:324`, `Bytes.r:499`),
