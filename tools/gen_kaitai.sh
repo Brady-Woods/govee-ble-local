@@ -6,6 +6,10 @@
 #   bash tools/gen_kaitai.sh --out D               # ... into directory D instead
 #   bash tools/gen_kaitai.sh --read-only --out D   # read-only readers (auto-read) into D, for scratch use
 #
+# A read-write build also writes the device table, _generated/devices.py, from spec/devices.yaml
+# (tools/gen_devices.py), with $PYTHON (default python3), which needs PyYAML: the in-tree backend passes
+# its build environment's interpreter, where the frontend installed PyYAML (get_requires_for_build_*).
+#
 # The generated classes are Kaitai 0.11 READ-WRITE classes (ReadWriteKaitaiStruct): the library
 # both parses frames with them (from_bytes() / Cls(..., stream), then an explicit _read()) and
 # writes every frame with them (wire/build.py: _check(), then _write()). They are a build product:
@@ -49,7 +53,7 @@ while [ $# -gt 0 ]; do
     --read-write|-w) mode=readwrite ;;
     --read-only) mode=readonly ;;
     --out) [ $# -ge 2 ] || { echo "error: --out needs a directory" >&2; exit 2; }; out="$2"; shift ;;
-    -h|--help) sed -n '2,8p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "error: unknown argument '$1' (see --help)" >&2; exit 2 ;;
   esac
   shift
@@ -151,6 +155,13 @@ case "$mode" in
     if [ "$dest" = "$LIBRARY_DIR" ] && [ ! -f "$dest/__init__.py" ]; then
       echo '"""Kaitai-generated read-write classes (regenerate via tools/gen_kaitai.sh)."""' > "$dest/__init__.py"
     fi
+    py=${PYTHON:-python3}
+    "$py" -c 'import yaml' 2>/dev/null || {
+      echo "error: $py has no PyYAML, which tools/gen_devices.py needs to write the device table from" >&2
+      echo "       spec/devices.yaml ('python -m pip install PyYAML', or point PYTHON= at one that has it)" >&2
+      exit 1
+    }
+    "$py" tools/gen_devices.py --out "$dest"
     echo ">> done: $dest/ (needs kaitaistruct>=0.11; call _read() after from_bytes())"
     ;;
 esac

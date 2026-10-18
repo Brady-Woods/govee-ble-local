@@ -16,10 +16,16 @@ for _p in (str(_SRC), str(_HERE)):
 _GENERATED = _SRC / "govee_ble_local" / "_generated"
 
 
-def generated_outputs(root: pathlib.Path) -> tuple[str, ...]:
-    """The generated modules of ``root``'s spec: one per ``spec/*.ksy`` (not ``__init__.py``: written
-    once)."""
+def kaitai_outputs(root: pathlib.Path) -> tuple[str, ...]:
+    """The Kaitai classes of ``root``'s spec: one module per ``spec/*.ksy``."""
     return tuple(f"{p.stem}.py" for p in sorted((root / "spec").glob("*.ksy")))
+
+
+def generated_outputs(root: pathlib.Path) -> tuple[str, ...]:
+    """The generated modules of ``root``'s spec: the Kaitai classes, and the device table for
+    ``spec/devices.yaml`` (not ``__init__.py``: written once)."""
+    table = ("devices.py",) if (root / "spec" / "devices.yaml").is_file() else ()
+    return (*table, *kaitai_outputs(root))
 
 
 def generated_classes_problem(root: pathlib.Path) -> str | None:
@@ -27,7 +33,8 @@ def generated_classes_problem(root: pathlib.Path) -> str | None:
 
     They are a build product (gitignored), so they can be missing, and an ignored ``_generated/``
     survives a ``git switch`` or ``git pull`` that changes the spec: then they are older than
-    ``spec/*.ksy`` or the generator. Git gives every file a checkout rewrites a fresh mtime, so an input
+    ``spec/*.ksy``, ``spec/devices.yaml`` (or its schema, which the table's projection follows) or a
+    generator. Git gives every file a checkout rewrites a fresh mtime, so an input
     newer than the oldest output means the classes were built from something else (a touch or a stash
     round trip only costs a needless regeneration)."""
     generated = root / "src" / "govee_ble_local" / "_generated"
@@ -37,7 +44,9 @@ def generated_classes_problem(root: pathlib.Path) -> str | None:
         return (f"src/govee_ble_local/_generated/ is missing {', '.join(missing)}: run "
                 "`bash tools/gen_kaitai.sh` (needs the JVM kaitai-struct-compiler 0.11) or "
                 "`pip install -e .`, which generates them")
-    inputs = [*(root / "spec").glob("*.ksy"), root / "tools" / "gen_kaitai.sh"]
+    inputs = [*(root / "spec").glob("*.ksy"), root / "tools" / "gen_kaitai.sh",
+              root / "spec" / "devices.yaml", root / "spec" / "devices.schema.json",
+              root / "tools" / "gen_devices.py"]
     oldest_output = min((generated / n).stat().st_mtime for n in outputs)
     stale = sorted(p.name for p in inputs if p.is_file() and p.stat().st_mtime > oldest_output)
     if stale:

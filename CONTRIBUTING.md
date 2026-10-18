@@ -32,17 +32,21 @@ python -m pip install -e '.[dev]'   # pytest stack, cloud, mypy, ruff, bandit, p
                                     # vulture, radon, pycryptodome (test-only AES reference), uv;
                                     # also generates the Kaitai classes (needs the JVM ksc, below)
 python -m pytest -q                 # offline test suite
-bash tools/gen_kaitai.sh            # regenerate the read-write classes after editing spec/*.ksy,
-                                    # or after a checkout or pull that changes it (pytest stops
-                                    # and says so when the classes are older than the spec)
+bash tools/gen_kaitai.sh            # regenerate the read-write classes and the device table after
+                                    # editing spec/*.ksy or spec/devices.yaml, or after a checkout or
+                                    # pull that changes them (pytest stops and says so when they are
+                                    # older than the spec)
 bash tools/gen_docs.sh              # build the pdoc API reference (needs .[docs])
 ```
 
 The Kaitai read-write classes in `src/govee_ble_local/_generated/` are a **build product** of
-`spec/*.ksy`, gitignored and never committed. Every build generates them: the in-tree PEP 517 backend
-(`_build_backend/`, `[build-system] backend-path`) runs `tools/gen_kaitai.sh` before setuptools builds an
-sdist, a wheel or an editable install, so `pip install -e .`, `pip install .` and `python -m build` need
-the JVM `kaitai-struct-compiler` 0.11 (`brew install kaitai-struct-compiler`; on Debian/Ubuntu
+`spec/*.ksy`, gitignored and never committed, and so is the supported-device table there, `devices.py`,
+which `tools/gen_devices.py` writes from `spec/devices.yaml` (the library's `PROFILES` is built from it;
+there is no hand table to edit: a device is supported when its devices.yaml row has `support`). Every
+build generates them: the in-tree PEP 517 backend (`_build_backend/`, `[build-system] backend-path`) runs
+`tools/gen_kaitai.sh`, which runs `tools/gen_devices.py` too, before setuptools builds an sdist, a wheel or
+an editable install, so `pip install -e .`, `pip install .` and `python -m build` need PyYAML (the backend
+asks the frontend for it) and the JVM `kaitai-struct-compiler` 0.11 (`brew install kaitai-struct-compiler`; on Debian/Ubuntu
 `bash scripts/install_ksc.sh`). The sdist and wheel ship the generated classes, so installing a
 released wheel or sdist needs no compiler. A git or VCS URL (`pip install "govee-ble-local @
 git+https://...@ref"`) or a GitHub "Source code" archive is a repository build too, and needs bash and the
@@ -50,8 +54,9 @@ JVM compiler; Home Assistant has neither. To test an unreleased build in Home As
 attached to a prerelease GitHub Release (`govee-ble-local @
 https://github.com/Brady-Woods/govee-ble-local/releases/download/vX.Y.ZrcN/govee_ble_local-X.Y.ZrcN-py3-none-any.whl`),
 never a git ref. The integration's `pip install --dry-run` dependency check doesn't catch a git ref,
-because preparing metadata skips the generation step. Without the classes, or with classes older than
-`spec/*.ksy` or `tools/gen_kaitai.sh`, the test suite stops at once and says to run the generator.
+because preparing metadata skips the generation step. Without the generated modules, or with modules older
+than `spec/*.ksy`, `spec/devices.yaml`, its schema or a generator, the test suite stops at once and says to
+run the generator.
 
 **`bash scripts/check.sh` must pass before you push** (it is the code gate CI and the release
 workflow run, and they also run the artifact smoke test below; it builds its own venv, `.venv-check`,
@@ -59,7 +64,8 @@ override with `VENV=`). It needs the JVM `kaitai-struct-compiler` 0.11 (`brew in
 kaitai-struct-compiler`; on Debian/Ubuntu, `bash scripts/install_ksc.sh`, which is what CI uses). It
 enforces, fail-fast:
 
-1. `tools/gen_kaitai.sh` generates the read-write classes in `_generated/` from `spec/*.ksy`.
+1. `tools/gen_kaitai.sh` generates the read-write classes in `_generated/` from `spec/*.ksy`, and the
+   device table from `spec/devices.yaml` (with the venv's Python, which has PyYAML).
 2. `spec/checks/run.sh` (Suite S): ksc python + java `-w` and javascript with no output, then
    `spec/checks/lint.py` (see "The spec is the bible" in `CLAUDE.md`)
 3. `ruff check src tools tests spec _build_backend` (rules in `[tool.ruff.lint]`)

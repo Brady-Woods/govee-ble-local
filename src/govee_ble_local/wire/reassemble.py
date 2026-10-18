@@ -72,11 +72,11 @@ def status_profile(pieces: int | None, decode: Any = None) -> Any:
     stay unknown (its lambda reads neither). With the device's colour-piece count the groups follow the
     screen's rule (``by_pieces``: the last of the ``ceil(pieces / 4)`` groups holds the remainder, each
     placed by its group byte); ``pieces`` None (no device context, e.g. the analyzer) counts each group's
-    records from its TLV's len (``from_len``). The 0x05 value is read with ``decode``'s colour decode (the
-    device's ``devices.profile.wire_profile``; None: the H60A6's) and the screen's music layout and
-    empty-value rule (:data:`_STATUS_MODE`)."""
+    records from its TLV's len (``from_len``). The 0x05 value is read with ``decode``'s status colour decode
+    (``mode_status``, the device's ``devices.profile.wire_profile``; None: the H60A6's) and the screen's music
+    layout and empty-value rule (:data:`_STATUS_MODE`)."""
     rule = _C.GroupCountRule.from_len if pieces is None else _C.GroupCountRule.by_pieces
-    mode = (_h60a6_decode() if decode is None else decode).mode
+    mode = (_h60a6_decode() if decode is None else decode).mode_status
     colour = {c: int(getattr(mode, c)) for c in _COLOR_DECODES}
     return _spec.profile(
         f_30=int(_C.Form30.zone_power), f_41=int(_C.Form41.power_memory),

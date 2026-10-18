@@ -9,12 +9,13 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Any, get_args
+from typing import Any
 
 import pytest
 
 from govee_ble_local.devices import _fold
-from govee_ble_local.devices.profile import DeviceProfile, ModeColorParse, profile_for, wire_profile
+from govee_ble_local._generated.devices import MODE_COLOR_PARSE
+from govee_ble_local.devices.profile import DeviceProfile, profile_for, wire_profile
 from govee_ble_local.models import DeviceState
 from govee_ble_local.wire import build, parse, reassemble
 from govee_ble_local.wire.describe import status_burst_report
@@ -54,7 +55,9 @@ _BODIES = [
     (0x15, 0x01, 0xFF, 0xFF),               # [gradual][kelvin -1]
     (0x04, 0x2A, 0x01),                     # scene 0x012A
 ]
-_PROFILES = [_profile(name) for name in get_args(ModeColorParse)] + [_profile("kelvin_15", bar_switch=True)]
+# Every mode_color_parse name: the spec's table, and the library's default.
+_PROFILES = [*(_profile(name) for name in ("rgb_kelvin", *MODE_COLOR_PARSE)),
+             _profile("kelvin_15", bar_switch=True)]
 
 
 @pytest.mark.parametrize("body", _BODIES)

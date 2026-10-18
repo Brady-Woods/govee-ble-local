@@ -13,7 +13,7 @@ from typing import Any
 from ..models import DeviceState, Segment
 from ..wire import build, parse, reassemble
 from .brightness import raw_to_percent
-from .profile import DeviceProfile, wire_profile
+from .profile import DeviceProfile, _version, wire_profile
 
 
 def kelvin_range(profile: DeviceProfile, hardware: str | None = None) -> tuple[int, int] | None:
@@ -32,6 +32,30 @@ def kelvin_range(profile: DeviceProfile, hardware: str | None = None) -> tuple[i
         if hardware >= min_hard:
             return lo, hi
     return lo_, hi_
+
+
+def scene_versions(profile: DeviceProfile, soft: str | None = None,
+                   hard: str | None = None) -> frozenset[int]:
+    """The device's scene versionArray: :attr:`~.profile.DeviceProfile.scene_versions`, replaced by each
+    :attr:`~.profile.DeviceProfile.scene_versions_by_firmware` entry whose gates the ``soft`` / ``hard``
+    versions meet, in order (``govee_reference.client_row``). An unread (None) version meets no gate.
+
+    Before either version is read, the last entry's set applies, the newest firmware's, which is what the
+    library sent before the gates were modelled (H61A8: {0, 1, 2, 3}), so nothing changes until the read."""
+    if soft is None and hard is None and profile.scene_versions_by_firmware:
+        return frozenset(profile.scene_versions_by_firmware[-1][2])
+    out = profile.scene_versions
+    have_soft, have_hard = _version(soft), _version(hard)
+    for min_soft, min_hard, versions in profile.scene_versions_by_firmware:
+        if _meets(have_soft, min_soft) and _meets(have_hard, min_hard):
+            out = frozenset(versions)
+    return out
+
+
+def _meets(version: tuple[int, ...] | None, gate: str) -> bool:
+    """Whether a device version meets a ``min_*`` gate (``""``: no gate; an unread version meets none)."""
+    need = _version(gate)
+    return need is None or (version is not None and version >= need)
 
 
 def brightness_pct(profile: DeviceProfile, raw: int) -> int:

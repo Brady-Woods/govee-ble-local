@@ -157,7 +157,8 @@ the upload values ([`govee_upload.ksy`](spec/govee_upload.ksy)), the advertiseme
 ([`govee_bgc_info.ksy`](spec/govee_bgc_info.ksy)), sharing [`govee_common.ksy`](spec/govee_common.ksy)
 — with the per-device table in [`spec/devices.yaml`](spec/devices.yaml). The Kaitai read-write classes
 under `govee_ble_local/_generated/` are generated from those, and the library parses and builds every
-frame with them (source of truth: the decompiled Govee app).
+frame with them; its supported-device table is generated from `devices.yaml` too (source of truth: the
+decompiled Govee app).
 
 ## Contributing & versioning
 

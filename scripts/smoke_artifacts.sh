@@ -62,6 +62,8 @@ sdist=${sdists[0]}
 listing=$(tar -tzf "$sdist")
 grep -q '^[^/]*/src/govee_ble_local/_generated/govee_ble_frame\.py$' <<<"$listing" \
   || { echo "error: $sdist lacks the generated Kaitai classes" >&2; exit 1; }
+grep -q '^[^/]*/src/govee_ble_local/_generated/devices\.py$' <<<"$listing" \
+  || { echo "error: $sdist lacks the generated device table" >&2; exit 1; }
 if grep -qE '^[^/]+/(spec|tools)/' <<<"$listing"; then
   echo "error: $sdist ships spec/ or tools/, so a wheel built from it regenerates and needs the JVM compiler" >&2
   exit 1
@@ -79,6 +81,7 @@ assert issubclass(GoveeBleFrame, ReadWriteKaitaiStruct), "the wheel ships a read
 assert "site-packages" in govee_ble_local.__file__, govee_ble_local.__file__
 f = _spec.read_frame(build.power_query(), _spec.TX, _spec.PLAIN)   # aa 01: built, then read back
 assert f.body.command == _spec.Common.Command.power, f.body.command
+assert "H60A6" in govee_ble_local.supported_skus(), "the wheel ships no device table"
 print("   imports and a frame round trip OK:", govee_ble_local.__file__)
 '
 

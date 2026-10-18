@@ -40,8 +40,10 @@ jobs:
           python-version: "3.11"
       - name: Install the Kaitai Struct compiler (pinned JVM ksc 0.11)
         run: bash scripts/install_ksc.sh
-      - name: Generate the Kaitai readers from spec/*.ksy
-        run: bash tools/gen_kaitai.sh
+      - name: Generate the Kaitai readers from spec/*.ksy and the device table from spec/devices.yaml
+        run: |
+          python -m pip install --quiet PyYAML
+          bash tools/gen_kaitai.sh
       - name: Install lowest direct dependencies
         run: |
           python -m pip install --quiet --upgrade pip uv

@@ -277,6 +277,12 @@ class Device:
         span = self._kelvin_range()
         return self.profile.max_kelvin if span is None else span[1]
 
+    @property
+    def scene_versions(self) -> frozenset[int]:
+        """The scene versionArray in force: :attr:`DeviceProfile.scene_versions`, or the
+        :attr:`DeviceProfile.scene_versions_by_firmware` set the read soft / hard versions select."""
+        return _fold.scene_versions(self.profile, self._state.firmware_version, self._state.hardware_version)
+
     def _kelvin_range(self) -> tuple[int, int] | None:
         """The Kelvin range for this device's hardware version, as far as it is known."""
         return _fold.kelvin_range(self.profile, self._state.hardware_version)
@@ -959,7 +965,7 @@ class Device:
         dialect and supported scene versions), or None when it is activate-only. ``mtu`` is the
         link's write size (``GoveeConnection.write_payload_size``), which only the H60A6's 0xA4
         graffiti upload uses. Pure: no I/O."""
-        return _scene_upload_frames(scene, self.profile.scene_dialect, self.profile.scene_versions, mtu=mtu)
+        return _scene_upload_frames(scene, self.profile.scene_dialect, self.scene_versions, mtu=mtu)
 
     async def set_scene_by_name(self, name: str) -> None:
         """Upload (if the scene needs it) and activate a bundled scene by name.

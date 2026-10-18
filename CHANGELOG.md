@@ -8,6 +8,53 @@ model, from which the shipped readers are generated).
 
 ## [Unreleased]
 
+### Added
+- `DeviceProfile.mode_color_parse_status` (keyword-only, default None): the 0xAC status read's TLV 0x05
+  decode where it differs from the `aa 05` reply's (devices.yaml `mode_color_parse_status`). `wire_profile`
+  passes it to the spec's `mode_status` param, which the status read now takes (`_spec.profile(mode_status=)`).
+  No current SKU sets it.
+- `DeviceProfile.scene_versions_by_firmware` (keyword-only, default `()`): `(min_soft_version,
+  min_hard_version, versions)` entries that replace `scene_versions` from a firmware version up (a row's
+  `by_firmware`; versions compared field by field), and `Device.scene_versions`, the set in force, which
+  `Device.scene_upload_frames` uses.
+- `tools/gen_devices.py`, and `src/govee_ble_local/_generated/devices.py` as a build product (gitignored,
+  shipped in the sdist and wheel, covered by the conftest staleness guard and the backend's
+  `_GENERATED_FILES`). The generator keeps only what the library reads, by an allow-list checked against
+  `devices.schema.json`, and fails the build on a missing fact or one the library can't serve.
+
+### Changed
+- **The supported-device table is generated from `spec/devices.yaml`** (one-device-list phase 1). The hand
+  table in `devices/profile.py` is gone: `PROFILES` is built from the supported `client_profile` rows,
+  which `tools/gen_devices.py` projects into `_generated/devices.py` at build time and
+  `devices/_resolve.py` resolves. `PROFILES`, `profile_for`, `supported_skus`, `is_supported_sku`,
+  `create_device` and `__all__` keep their meaning, and the 18 SKUs keep every profile field but these,
+  which follow the spec:
+  - H6006 / H6008 `scene_versions` {1} -> {0, 1}, and H6641 {0, 1, 2, 3, 10} -> {0, 1, 2, 3}, the control
+    screens' sets. No frame changes: no library scene needs version 0 or 10.
+  - **H61A8 scenes follow its firmware** (decision D6). `scene_versions` is goodsType 19's base set (empty:
+    activate only) and `scene_versions_by_firmware` holds its `newVersion4Ble` gates, which
+    `Device.scene_versions` applies once the first poll has read the soft and hard versions: {0, 1, 2, 3}
+    on the bench unit (SW 3.03.18 / HW 3.01.10), as 1.x sent, {0, 1, 2} from soft 1.04.00, and activate
+    only below it, also at pact code 2 (whose {0, 1, 2} the pact-unknown profile does not take). Until that
+    read the newest firmware's {0, 1, 2, 3} applies, as 1.x sent, so nothing changes before it.
+  - H6047 `mode_color_parse` is `kelvin_pair_15`, the spec's name for its bars' 0x15 decode, which is
+    unchanged.
+- **Profiles group SKUs with identical facts.** H6004, H6006 and H6008 share one profile, so
+  `profile_for("H6006").skus[0]` and `profile_for("H6008").skus[0]` are now `"H6004"`. Only a `Device`
+  built without `sku=` sees it (`create_device` always passes the SKU). Profile order follows
+  devices.yaml.
+- `DeviceProfile.mode_color_parse` takes any name of the spec's mode_color_parse table (devices.yaml
+  `mode_color_parse`), not a closed `Literal`, and `wire_profile` reads the decode from that table
+  (`_MODE_DECODES` is gone). `ModeColorParse` is now `str`; `"rgb_kelvin"` stays the default for a custom
+  profile.
+- The fallback cipher, used only when no advertisement says, is AES-RC4 on account-locked rows (the plugs)
+  and on the H60A6, as before, and none elsewhere (decision D4). A newly admitted SKU follows its
+  advertisement.
+- Building from the repository also needs PyYAML, which the in-tree backend asks the frontend for
+  (`get_requires_for_build_*`). An sdist ships the generated table, and the runtime dependencies are
+  unchanged: nothing under `src/` imports yaml. `tools/gen_kaitai.sh` writes the table after the Kaitai
+  classes, with `$PYTHON`.
+
 ### Spec
 - **devices.yaml can now route and describe the 18 supported SKUs on its own** (one-device-list phase 0).
   Each one's goodsType has a `client_profile.by_goods_type` row with the facts the library's hand table
@@ -17,13 +64,7 @@ model, from which the shipped readers are generated).
   `connect_reads` (the state reads besides aa 01 and aa 05), `connect_writes`, `power_resync`, `ic_pieces`
   and `mode_reports_kelvin`, with `doc` and `doc-ref`. The rows are 303 (H60A6), 119 (H6047), 19 (H61A8),
   64 (H6004 / H6006 / H6008), 22 (H6052), 247 (H6641), 0 (H6188), 41 (H6062), 51 (H6061) and the plugs'
-  43 / 50 / 90 / 307. The trace notes in `devices/profile.py` are now the rows' `doc` / `doc-ref` (the
-  library copy goes when phase 1 generates the table). A scratch generator over devices.yaml alone gives
-  15 of the 18 profiles field for field. The other three follow app facts the library doesn't follow yet:
-  H6006 / H6008 `scene_versions` {1} -> {0, 1} (the control screen's set; version 0 uploads nothing, so no
-  frame changes) and H6641 {0, 1, 2, 3, 10} -> {0, 1, 2, 3} (`ConfigDetail`; version 10 is never sent).
-  H6641's gradual flag (its screen reads `aa a3` and writes `33 a3`) stays out of its row until a bench
-  check.
+  43 / 50 / 90 / 307. The trace notes in `devices/profile.py` are now the rows' `doc` / `doc-ref`.
 - **H6004 routes to goodsType 64.** Rows 9 and 10 (H6003, and the H6004's Wi-Fi revision) say
   `connectivity: [wifi, iot]`, so no BLE client routes there.
 - **goodsType 64's scene versions are {0, 1}**, the control screen's `ScenesConfigBean` set
