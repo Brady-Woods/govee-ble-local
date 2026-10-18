@@ -99,6 +99,10 @@ def _resolve_mode_color_parse(families: list[dict[str, Any]], sku: str, g0: int)
     # A profile is pact- and firmware-agnostic: no branch may apply.
     for e in (by_gt, by_model, entry):
         assert "mode_color_by_pact" not in e and "mode_color_by_firmware" not in e, (sku, e)
+    # The library reads the 0xAC 0x05 TLV with the same decode as the aa 05 reply (wire_profile serves
+    # both; the status stream's root read takes it): a SKU whose status strategy differs needs its own.
+    status = next((e for e in (by_gt, by_model, cp) if "mode_color_parse_status" in e), None)
+    assert status is None or status["mode_color_parse_status"] == entry["mode_color_parse"], (sku, status)
     return str(entry["mode_color_parse"])
 
 
@@ -150,9 +154,9 @@ def test_the_scene_code_and_kind_3_come_from_the_spec() -> None:
     h60a6 = profile_for("H60A6")
     assert h60a6 is not None
     prof = wire_profile(h60a6)
-    assert parse.scene_of(parse.mode_value(bytes([0x04, 0x2A, 0x01]), prof)) == 0x012A
-    assert parse.scene_of(parse.mode_value(bytes([0x15, 0x2A, 0x01]), prof)) is None
-    report = parse.mode_value(bytes([0x0D, 1, 2, 3, 0x0A, 0x8C]), prof)   # [r, g, b][kelvin]: 5 bytes
+    assert parse.scene_of(parse.mode_reply(_frame(0xAA, 0x05, 0x04, 0x2A, 0x01), prof)) == 0x012A
+    assert parse.scene_of(parse.mode_reply(_frame(0xAA, 0x05, 0x15, 0x01, 0x0A, 0x8C), prof)) is None
+    report = parse.mode_reply(_frame(0xAA, 0x05, 0x0D, 1, 2, 3, 0x0A, 0x8C), prof)   # [r, g, b][kelvin]
     assert parse.mode_color(report) == (None, 2700)
 
 

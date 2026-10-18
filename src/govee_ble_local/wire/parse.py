@@ -184,10 +184,10 @@ def parse_gradual(frame: bytes) -> bool | None:
 
 # ── mode (0x05) reports ──────────────────────────────────────────────────────
 # Every mode decoder reads the spec's ``mode_report(decode)`` ([sub_mode][params]): an aa 05 reply's
-# (:func:`mode_reply`) or a 0xAC TLV 0x05 value's (:func:`mode_value`), which carries the same body. The
-# colour layout of each sub-mode is the device's mode decode (the profile's ``mode``: the SKU's
-# Info4Detail parse, ``devices.profile.wire_profile``); :func:`mode_color` reads the colour off it.
-_MODE_BODY_LEN: Final = FRAME_LEN - 3   # an aa 05 reply's mode report: frame bytes 2..18
+# (:func:`mode_reply`) or a 0xAC TLV 0x05 value's, read in the status stream's root read
+# (:func:`.reassemble.parse_status`), which carries the same body. The colour layout of each sub-mode is
+# the device's mode decode (the profile's ``mode``: the SKU's Info4Detail parse,
+# ``devices.profile.wire_profile``); :func:`mode_color` reads the colour off it.
 _SUB_MUSIC: Final = int(_C.SubMode.music)   # 0x13
 
 Rgb = tuple[int, int, int]
@@ -230,16 +230,6 @@ def _too_short(sub: int, params: bytes) -> bool:
     if sub == _SUB_MUSIC:
         return len(params) < 4 or (params[3] != 0 and len(params) < 7)
     return False
-
-
-def mode_value(value: bytes, prof: Any) -> Any:
-    """The spec's ``mode_report`` of a 0xAC TLV 0x05 value ``[sub_mode, params]`` read under ``prof``: the
-    body an ``aa 05`` reply carries, which pact_h60a0 ``h60a1.Info4Detail.Q`` reads from both, so both go
-    through the same decoders. Read as a reply's 17-byte body is: a longer value is cut, which no decoder
-    reads that far, and a shorter one zero padded, where ``Info4Detail.Q`` throws and the app's whole
-    connect read fails (approval item A2); real bursts carry the full value."""
-    body = bytes(value[:_MODE_BODY_LEN]).ljust(_MODE_BODY_LEN, b"\0")
-    return _spec.read(_S.ModeReport, body, prof.mode)
 
 
 def sub_mode(m: Any) -> int:

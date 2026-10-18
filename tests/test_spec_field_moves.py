@@ -5,6 +5,8 @@ field or instance"). Each test pins the spec-based reading, and where the spec r
 the old byte code (the signed IC count), the app's reading. No hardware."""
 from __future__ import annotations
 
+from kaitaistruct import ValidationGreaterThanError
+
 from govee_ble_local import crypto
 from govee_ble_local.transport import handshake
 from govee_ble_local.wire import _spec, build, describe, parse, reassemble
@@ -58,30 +60,27 @@ def test_the_0x0b_writer_and_the_status_query_use_spec_types() -> None:
 
 
 def test_a_negative_tlv_len_is_the_specs_validation_failure() -> None:
-    """status_tlv's len valid (max 0x7f) stops the walk; the analyzer reports it from negative_len."""
-    buf = bytes([0x01, 0x01, 0x01, 0x04, 0x80, 0x00])
-    tlvs, cut = reassemble.walk_status_tlvs(buf)
-    assert [int(t.tag) for t in tlvs] == [0x01]
-    assert cut is not None
-    assert (cut.reason, cut.type, cut.length, cut.negative_len) == ("unparsed", 0x04, 0x80, True)
-    tlvs, cut = reassemble.walk_status_tlvs(bytes([0x01, 0x05, 0x01]))
-    assert cut is not None and (cut.reason, cut.negative_len) == ("truncated", False)
+    """status_tlv's len valid (max 0x7f) stops the stream's read in the record it fails; the analyzer
+    reports it from that record's len."""
+    stream, err = reassemble.read_status_stream(bytes([0x01, 0x01, 0x01, 0x04, 0x80, 0x00]))
+    assert isinstance(err, ValidationGreaterThanError)
+    assert [int(t.tag) for t in stream.tlvs] == [0x01, 0x04] and int(stream.tlvs[-1].len_value) == 0x80
+    stream, err = reassemble.read_status_stream(bytes([0x01, 0x05, 0x01]))   # a value past the end
+    assert err is not None and not isinstance(err, ValidationGreaterThanError)
+    assert getattr(stream.tlvs[-1], "_raw_value", None) is None
 
 
 def test_a_0x07_block_the_app_skips_is_the_one_status_device_info_leaves_raw() -> None:
     """status_tlv 0x07 is device_info_record on the status path: a selector the app's w() doesn't decode
     (0x03, text not UTF-8) is not read (app_decodes False; its bytes are the state's rest) and the walk
     goes on; a 0x10 block with a short body stops it."""
-    skip = bytes([0x07, 0x02, 0x03, 0xFF, 0x01, 0x01, 0x01])
-    skipped: list[reassemble.TlvCut] = []
-    tlvs, cut = reassemble.walk_status_tlvs(skip, skipped=skipped)
-    assert cut is None and [int(t.tag) for t in tlvs] == [0x07, 0x01] and skipped == []
-    record = tlvs[0].value.body
+    stream, err = reassemble.read_status_stream(bytes([0x07, 0x02, 0x03, 0xFF, 0x01, 0x01, 0x01]))
+    assert err is None and [int(t.tag) for t in stream.tlvs] == [0x07, 0x01]
+    record = stream.tlvs[0].value.body
     assert record.app_decodes is False and getattr(record, "info", None) is None
-    assert bytes(tlvs[0].value.rest.bytes) == b"\xff"
-    stop = bytes([0x07, 0x02, 0x10, 0x00])
-    _tlvs, cut = reassemble.walk_status_tlvs(stop)
-    assert cut is not None and cut.reason == "unparsed"
+    assert bytes(stream.tlvs[0].value.rest.bytes) == b"\xff"
+    stream, err = reassemble.read_status_stream(bytes([0x07, 0x02, 0x10, 0x00]))
+    assert err is not None and int(stream.tlvs[-1].tag) == 0x07
 
 
 def test_the_analyzer_labels_unknown_values_from_the_readers_fields() -> None:

@@ -1141,7 +1141,8 @@ class Device:
             frames = await self._conn.query(
                 build.status_query(full=self._wants_color_groups()), timeout=STATUS_READ_TIMEOUT)
         ac = [f for f in frames if f and f[0] == build.PRO_MULTI_AC]
-        return reassemble.parse_status(ac, pieces=self.segment_count), ac, frames
+        status = reassemble.parse_status(ac, pieces=self.segment_count, decode=wire_profile(self.profile))
+        return status, ac, frames
 
     async def _read_status(self) -> bool:
         # `applied` (returned): a live field came back (state no longer optimistic). `power_read`:

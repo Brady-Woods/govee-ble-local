@@ -186,8 +186,8 @@ def apply_status(
         applied = True
     if st.mode is not None:
         # The 0x05 TLV is the mode, as the app reads it on connect (no separate aa 05 read): the same
-        # [sub_mode, params] body an aa 05 reply carries, decoded by the same per-SKU parse.
-        apply_mode(profile, state, parse.mode_value(st.mode, wire_profile(profile)))
+        # [sub_mode, params] body an aa 05 reply carries, read in the stream with the same per-SKU decode.
+        apply_mode(profile, state, st.mode)
         applied = True
     # Device-info (serial / wifi_mac / fw / hw) comes from the 0x07 TLV in the 0xAC
     # stream — the ONLY source for BLE-only devices (H60A6); aa 07 returns zeros there.
@@ -215,8 +215,9 @@ def apply_mode(profile: DeviceProfile, state: DeviceState, m: Any) -> None:
 def _apply_mode(profile: DeviceProfile, state: DeviceState, m: Any) -> None:
     """Fold a device's mode into state: active scene, or the colour / colour temperature of the
     solid-colour sub-mode. ``m`` is the spec's ``mode_report``, of an aa 05 reply
-    (:func:`parse.mode_reply`) or of the 0xAC 0x05 TLV (:func:`parse.mode_value`), read under the
-    device's mode decode (:func:`.profile.wire_profile`), which picks each colour sub-mode's layout.
+    (:func:`parse.mode_reply`) or of the 0xAC 0x05 TLV (read in the status stream,
+    :func:`.reassemble.parse_status`), read under the device's mode decode
+    (:func:`.profile.wire_profile`), which picks each colour sub-mode's layout.
 
     A scene report clears the colours, as a scene activation does. A colour report folds by what its
     layout carries (:func:`parse.mode_color`): a Kelvin alone is authoritative for the Kelvin

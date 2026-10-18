@@ -221,13 +221,11 @@ def test_info_block_without_selector_or_too_short_still_fails_the_read() -> None
 
 def test_walk_hands_on_the_info_blocks_the_app_does_not_decode() -> None:
     # status_tlv 0x07 reads device_info_record on the status path, which leaves an SN (0x02) block unread
-    # (app_decodes False), as the app's w() skips it. WAS: the walk stepped past it and recorded it in
-    # `skipped`.
+    # (app_decodes False), as the app's w() skips it, and the stream reads on.
     buf = bytes([0x01, 0x01, 0x01, 0x07, 0x03, 0x02, 0xAA, 0xBB, 0x04, 0x01, 0x40])
-    skipped: list[r.TlvCut] = []
-    tlvs, cut = r.walk_status_tlvs(buf, skipped=skipped)
-    assert [int(t.tag) for t in tlvs] == [0x01, 0x07, 0x04] and cut is None and skipped == []
-    assert tlvs[1].value.body.app_decodes is False
+    read, err = r.read_status_stream(buf)
+    assert [int(t.tag) for t in read.tlvs] == [0x01, 0x07, 0x04] and err is None
+    assert read.tlvs[1].value.body.app_decodes is False
     assert r.parse_status(_chunk(buf)).brightness == 0x40
 
 
@@ -248,23 +246,23 @@ def test_unparseable_first_tlv_yields_empty_state_without_raising(
     with caplog.at_level(logging.DEBUG, logger="govee_ble_local.wire.reassemble"):
         assert r.parse_status([bytes(c0), bytes(end)]) == r.StatusReply()
         assert r.parse_status(_chunk(bytes([0x07, 0x01, 0x10, 0x01, 0x01, 0x01]))) == r.StatusReply()
-    assert any("unparsed at TLV 0x07" in rec.message for rec in caplog.records)
+    assert any("stopped at TLV 0x07" in rec.message for rec in caplog.records)
 
 
-def test_walk_reports_where_and_why_it_stopped() -> None:
-    tlvs, cut = r.walk_status_tlvs(bytes([0x01, 0x01, 0x01, 0x07, 0x01, 0x10]))
-    assert [int(t.tag) for t in tlvs] == [0x01]
-    assert cut == r.TlvCut("unparsed", 0x07, 3, 1)
-    tlvs, cut = r.walk_status_tlvs(bytes([0x01, 0x01, 0x01, 0x04, 0x05, 0x10]))
-    assert [int(t.tag) for t in tlvs] == [0x01] and cut == r.TlvCut("truncated", 0x04, 3, 5)
-    # The buffer ends before a value starts: u() stops cleanly (:257-267, :271-282), keeping the switch.
-    tlvs, cut = r.walk_status_tlvs(bytes([0x01, 0x01, 0x01, 0x04]))
-    assert [int(t.tag) for t in tlvs] == [0x01] and cut == r.TlvCut("tail", 0x04, 3)
-    tlvs, cut = r.walk_status_tlvs(bytes([0x01, 0x01, 0x01, 0x30, 0x00]))
-    assert [int(t.tag) for t in tlvs] == [0x01] and cut == r.TlvCut("tail", 0x30, 3, 0)
-    tlvs, cut = r.walk_status_tlvs(bytes([0x01, 0x01, 0x01, 0x00, 0x00]))
-    assert [int(t.tag) for t in tlvs] == [0x01] and cut is None   # zero pad: a clean end
-    assert r.walk_status_tlvs(b"") == ([], None)
+def test_the_stream_read_reports_where_and_why_it_stopped() -> None:
+    # A value its type can't read (a 0x10 block with no record): the read stops in that record.
+    read, err = r.read_status_stream(bytes([0x01, 0x01, 0x01, 0x07, 0x01, 0x10]))
+    assert err is not None and [int(t.tag) for t in read.tlvs] == [0x01, 0x07]
+    # A value past the end: the record holds no value bytes.
+    read, err = r.read_status_stream(bytes([0x01, 0x01, 0x01, 0x04, 0x05, 0x10]))
+    assert err is not None and getattr(read.tlvs[-1], "_raw_value", None) is None
+    # Fewer than three bytes left: u() stops cleanly (:257-267, :271-282), keeping the switch; the
+    # bytes are the stream's tail (a zero pad among them).
+    for tail in (b"\x04", b"\x30\x00", b"\x00\x00"):
+        read, err = r.read_status_stream(bytes([0x01, 0x01, 0x01]) + tail)
+        assert err is None and [int(t.tag) for t in read.tlvs] == [0x01] and bytes(read.tail) == tail
+    read, err = r.read_status_stream(b"")
+    assert err is None and getattr(read, "tlvs", None) is None and bytes(read.tail) == b""
 
 
 # ── values: zone bit and the Wi-Fi block's versions ─────────────────────────────
@@ -471,7 +469,9 @@ def test_analyzer_header_kept_redaction_uses_the_packet_count() -> None:
     # burst is complete, and a lost chunk just before 0xFF is caught.
     kept = [fr[:7] + bytes(13) if fr[1] == 0 else _redact(fr) for fr in _BURST]
     report = status_burst_report(kept)
-    assert (report.redacted, report.malformed, dict(report.tlv_types), report.gaps) == (0, 0, {}, [])
+    # The zeroed payload reads as tag-0 records, as the app's walk takes them (WAS: a type-0 byte ended
+    # the walk, so none were counted).
+    assert (report.redacted, report.malformed, dict(report.tlv_types), report.gaps) == (0, 0, {0: 79}, [])
     assert status_burst_report(kept[:8] + kept[9:]).incomplete == 1
 
 

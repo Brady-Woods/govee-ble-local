@@ -41,18 +41,17 @@ model, from which the shipped readers are generated).
   `"rgb_kelvin_0d"`). `identify.parse_broadcast_onoff` gains a keyword-only `on_mask`; the default keeps the
   lights' `== 1` rule.
 - Helpers: `wire.parse.parse_mode_rgb_kelvin_tint`, `parse_mode_0d_rgb`, `parse_mode_0d_for(frame, scheme)`
-  and `SUBMODE4COLOR_SUB_MODES`, and the `wire.parse.GroupRecord` type; `wire.reassemble.burst_chunks`,
-  `walk_status_tlvs` and `TlvCut` (the 0xAC completeness rule and TLV walk, shared by the runtime and
-  `govee-ble-analyze`); `wire.describe.status_burst_report` / `StatusBurstReport`, with `truncated` and
+  and `SUBMODE4COLOR_SUB_MODES`, and the `wire.parse.GroupRecord` type; `wire.reassemble.burst_chunks`
+  and `read_status_stream` (the 0xAC completeness rule and the status stream's root read, shared by the
+  runtime and `govee-ble-analyze`); `wire.describe.status_burst_report` / `StatusBurstReport`, with `truncated` and
   `redacted` counts, and the `wire.describe.Direction`, `Severity` and `Issue` types; and
   `crypto.FrameCipher`, the frame cipher bound to one session key with its key setup done once (exactly
   the bytes of `crypto.encrypt` / `crypto.decrypt`).
 - Constants: `const.ADVERT_SUPPRESS_SECONDS` (15 s; moved from `devices.device`, still importable there),
   `const.DISCONNECT_TIMEOUT`, `const.QUERY_TERMINAL`, the parts `LOCAL_NAME_PREFIXES` is built from
   (`const.BRAND_MARKERS`, `GBK_PREFIX`, `GV_LONG_PREFIXES`, `GV_PREFIX`; the tuple is unchanged),
-  `wire.build.PRO_NOTIFY` (0xEE), `wire.build.PRO_MULTI_A1` (0xA1), `wire.reassemble.SIGNED_LEN_MIN` and
-  `TYPE_MODE`, and the `transport.framelog.Direction` type.
-- `wire.reassemble.parse_status(frames, *, pieces=None)`: the device's colour-piece count, which sets how
+  `wire.build.PRO_NOTIFY` (0xEE), `wire.build.PRO_MULTI_A1` (0xA1), `wire.reassemble.TYPE_MODE`, and the `transport.framelog.Direction` type.
+- `wire.reassemble.parse_status(frames, *, pieces=None, decode=None)`: the device's colour-piece count, which sets how
   many records each 0xA5 colour group holds (see Fixed); and `wire.reassemble.group_record_count`, the app's
   rule for that count. `pieces` omitted keeps 1.3.0's reading (the count comes from each TLV's length).
 - `wire.build.PRO_MULTI_A2` (0xA2, `multi_read`), `wire.describe.chunk_redacted` and
@@ -79,14 +78,40 @@ model, from which the shipped readers are generated).
   the IC count as the app's checking readers return it (the spec's `ic_count_checked`: None for a count of
   0x1000 or more).
 - `wire.reassemble.BurstAssembler`: the app's 0xAC burst state machine, fed one record at a time
-  (`feed` returns whether the app takes it; `status` is `"waiting"`, `"complete"` or `"failed"`), and the
-  `wire.reassemble.TlvCut` reason `"tail"` (a walk that stops cleanly at the buffer's end).
+  (`feed` returns whether the app takes it; `status` is `"waiting"`, `"complete"` or `"failed"`).
 - `DeviceProfile` fields, keyword-only and defaulted: `power_resync` (gt 50 / 90 plugs, see Fixed) and
   `status_color_groups_pact` (the pact the 0xAC status read needs before it asks for the 0xA5 colour
   groups). `scenes.scene_upload_frames` and `Device.scene_upload_frames` take a keyword-only `mtu`
   (default 20, today's frames).
 
 ### Changed
+- **The 0xAC status burst is read through the spec's `govee_status_stream` root (rule 4 c).**
+  - `parse_status` reads the joined burst in one go through `govee_status_stream`, under the H60A6 status
+    screen's profile: zone bits, power memory and colour groups, 0x40 / 0xA3 unknown, the device's colour
+    decode, and Info4Detail.Q's V2 music layout and empty-value rule. The new `read_status_stream` returns
+    that read and where it stopped.
+  - The read fails where the app's does: a stream that doesn't read, or a value the spec flags
+    (`status_tlv.app_read_fails`). A colour group is still judged by its piece count.
+  - The 0x05 TLV's `mode_report` comes straight from that read, with the device's colour decode
+    (`parse_status(..., decode=wire_profile(profile))`). `StatusReply.mode` carries it and is left out of
+    equality.
+  - Removed (all unreleased): `walk_status_tlvs`, `TlvCut`, `SIGNED_LEN_MIN`, `parse.mode_value` and the
+    library's own empty-value set. The analyzer (`describe.status_burst_report`) reads the same root and
+    reports where the read stopped.
+  - The decode changes are app-aligned and H60A6 only, from Compose4BaseInfoSingleRead.u and h60a1
+    Info4Detail.Q:
+    - a tag-0 record is walked on, not taken as the end;
+    - an empty or short 0x23 timer value fails the read;
+    - a mode value too short for its sub-mode's layout fails the read, where it was zero-padded into
+      made-up values (`15 01 0a` read as 2560 K, below the device minimum);
+    - an empty mode value still fails the read (the music-mode tolerance comes next).
+  - A differential over 52,068 random bursts × piece counts changed the folded H60A6 state in 4,395 cases.
+    Each of them falls in one of those categories, and no burst that read whole both times folds
+    differently.
+  - `test_every_colour_profile_matches_the_mode_color_parse_devices_yaml_resolves` now also fails if a
+    profiled SKU's devices.yaml `mode_color_parse_status` differs from its `mode_color_parse`.
+  - Spec half: eedafe7 (a773057 rebased), which flags TLV 0x40 / 0xA3 only where the screen reads them.
+    `_spec.profile()` passes its new `f_40` / `f_a3` selectors.
 - **The segment-mask caps are read from the spec's `len_cap` (rule 4 b).** `build.BRIGHTNESS_MASK_CAP`
   is read off a built `op15_brightness` node, as `COLOR_MASK_CAP` is off `op15_color`. The per-segment
   brightness frame and the 0x0b RGB frame pass the `len_cap` of the node they build. The library no
@@ -176,7 +201,7 @@ model, from which the shipped readers are generated).
     `seg_mask` over the posSet rounded up to whole bytes. `build.frame()` is gone (tests build raw frames
     with `fake_ble.frame`).
   - `wire.parse` reads a reply's `govee_state` under the profile it needs. The mode decoders collapse to
-    `mode_reply(frame, prof)` / `mode_value(value, prof)` and `mode_color()` (a `KelvinReport`, the bars'
+    `mode_reply(frame, prof)` (the 0xAC 0x05 TLV is read in the status stream) and `mode_color()` (a `KelvinReport`, the bars'
     `BarKelvin` or `(rgb, kelvin)`), which `_fold` folds whatever the SKU's layout; `parse_mode_0d*`,
     `parse_kelvin`, `parse_bar_kelvin`, `parse_active_scene` and the `*_of` decoders are gone. Plug power is
     `parse.parse_relay_on` (`power_state.is_on_heartbeat` with the profile's relay mask).
@@ -209,7 +234,7 @@ model, from which the shipped readers are generated).
     `reassemble.group_record_count` (the spec's `color_group.num_records_wanted`) and the unused
     `TYPE_SLEEP`, `TYPE_WAKEUP`, `TYPE_TIMERS`, `TYPE_BAR_SWITCH` and `TYPE_IC_NUM`; and the private
     re-exports of the generated classes (`build._F`, `_node`, `_load`, `parse._parse_type`, `_parse`; use
-    `wire._spec`). `parse.mode_reply` and `parse.mode_value` now take the profile.
+    `wire._spec`). `parse.mode_reply` now takes the profile.
 - Documented deviation: the connection keeps dropping an RX frame whose XOR checksum fails, although the app
   never checks it (`ComposeBleComm.K:190-211` drops only a frame that isn't 20 bytes), so a corrupted frame
   is not decoded as state.

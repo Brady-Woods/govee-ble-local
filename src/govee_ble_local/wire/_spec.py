@@ -87,6 +87,19 @@ def try_read_frame(data: bytes, direction: int, prof: Any) -> Any:
         return None
 
 
+def read_partial(cls: Any, data: bytes, *params: Any) -> tuple[Any, Exception | None]:
+    """``data`` read as the generated type ``cls`` (``params`` its ksy params), and what stopped the read
+    (None when it read whole). A read that stops part-way leaves set every field it got to, and a
+    repeated field ends with the item it stopped in (the generated readers append it before the error
+    propagates): where a stream stopped, and why, without reading any part of it on its own."""
+    obj = cls(*params, KaitaiStream(BytesIO(bytes(data))))
+    try:
+        obj._read()
+    except Exception as err:  # noqa: BLE001 - returned to the caller, which judges it
+        return obj, err
+    return obj, None
+
+
 def frame_head(data: bytes, direction: int, prof: Any) -> Any:
     """The frame object after a read that may have stopped part-way: every field the reader got to is
     set (``pro_type``, ``body`` and the body's leading fields), the rest are absent. For matching a
@@ -191,7 +204,8 @@ def build_frame(pro_type: Any, prof: Any, make_body: Any, length: int) -> bytes:
 def profile(
     *,
     f_01: int = 0, f_02: int = 0, f_09: int = 0, f_12: int = 0, f_13: int = 0, f_14: int = 0,
-    f_30: int = 0, f_36: int = 0, f_41: int = 0, f_a2: int = 0, f_a5: int = 0, f_b0: int = 0,
+    f_30: int = 0, f_36: int = 0, f_40: int = 0, f_41: int = 0, f_a2: int = 0, f_a3: int = 0,
+    f_a5: int = 0, f_b0: int = 0,
     f_0b: int = 0, f_15_01: int = 0, f_15_04: int = 0, f_15_05: int = 0, f_ee_30: int = 0,
     f_ee_40: int = 0,
     num_segments: int = 0, num_levels: int = 0,
@@ -205,8 +219,8 @@ def profile(
     against by identity. The mode decode serves both the aa 05 reply and the status TLV 0x05 (the
     library decodes both alike)."""
     p = Profile
-    forms = p.CommandForms(f_01, f_02, f_09, f_12, f_13, f_14, f_30, f_36, f_41, f_a2, f_a5, f_b0,
-                           f_0b, f_15_01, f_15_04, f_15_05, f_ee_30, f_ee_40)
+    forms = p.CommandForms(f_01, f_02, f_09, f_12, f_13, f_14, f_30, f_36, f_40, f_41, f_a2, f_a3, f_a5,
+                           f_b0, f_0b, f_15_01, f_15_04, f_15_05, f_ee_30, f_ee_40)
     decode = p.ModeDecode(c02, c0b, c0d, c14, c15, music, empty_fails)
     return p(forms, p.DeviceCounts(num_segments, num_levels),
              p.ColorGroupForm(group_rule, num_per_group, has_brightness, num_pieces),

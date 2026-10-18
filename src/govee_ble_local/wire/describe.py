@@ -31,7 +31,7 @@ import collections
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from kaitaistruct import KaitaiStruct
+from kaitaistruct import KaitaiStruct, ValidationGreaterThanError
 
 from ..const import FRAME_LEN
 from ..crypto import checksum_ok
@@ -321,7 +321,7 @@ def _redacted_framing(burst: list[bytes]) -> tuple[bool, int]:
 
 
 def status_burst_report(rx_ac: list[bytes]) -> StatusBurstReport:
-    """Group RX ``0xAC`` reply chunks into bursts and walk each complete reassembled TLV stream.
+    """Group RX ``0xAC`` reply chunks into bursts and read each complete reassembled TLV stream.
 
     A status burst is the index sequence ``ac 00, ac 01, … ac FF`` (byte1 = chunk index;
     0xFF = terminator). Grouping keys on that index — a new ``index==0x00`` starts a fresh
@@ -331,15 +331,14 @@ def status_burst_report(rx_ac: list[bytes]) -> StatusBurstReport:
     identical first chunk can't be told from a double delivery), and a first chunk repeated after
     interior chunks, which splits one read into two incomplete bursts. Each burst is then judged
     by the runtime's own rule (:func:`.reassemble.burst_chunks`: the app's state machine, chunks
-    taken in order) and decoded by the runtime's own walker
-    (:func:`.reassemble.walk_status_tlvs`). Like the runtime, only complete bursts are walked; a
-    burst with conflicting duplicate chunks is not walked either. In those, a TLV type outside
-    :data:`KNOWN_STATUS_REPLY_TLVS`, or a whole TLV its spec type can't read (including a 0xA5 group
-    the walk hands on for the app's record count), is a real spec gap; so is
-    a TLV whose len byte the app reads as negative (0x80 or more). A walk that stops at the buffer's
-    tail (``"tail"``) is a clean end, as in the app. A complete burst whose TLV stream overruns it is
-    walked up to the cut and counted in :attr:`StatusBurstReport.truncated`: the runtime uses no state
-    from it.
+    taken in order) and read by the runtime's own root read (:func:`.reassemble.read_status_stream`).
+    Like the runtime, only complete bursts are read; a burst with conflicting duplicate chunks is not
+    read either. In those, a TLV type outside :data:`KNOWN_STATUS_REPLY_TLVS`, a TLV its spec type can't
+    read, or one whose value fails the app's read (``status_tlv.app_read_fails``, e.g. an empty value the
+    app reads a byte of) is a real spec gap; so is a TLV whose len byte the app reads as negative (0x80
+    or more). A stream that ends in a 0-2 byte tail ends cleanly, as in the app. A complete burst whose
+    TLV stream overruns it is read up to the record that runs past and counted in
+    :attr:`StatusBurstReport.truncated`: the runtime uses no state from it.
 
     A burst from a redacted field-test capture (first chunk zeroed past ``ac 00``,
     :func:`_header_redacted`) has no packet count and no payload: it is counted in
@@ -365,26 +364,31 @@ def status_burst_report(rx_ac: list[bytes]) -> StatusBurstReport:
             continue
         if redacted:                            # payload zeroed: no TLVs to walk
             continue
-        skipped: list[_reassemble.TlvCut] = []
-        tlvs, cut = _reassemble.walk_status_tlvs(_reassemble.reassemble(burst), skipped=skipped)
+        stream, err = _reassemble.read_status_stream(_reassemble.reassemble(burst))
+        tlvs = list(getattr(stream, "tlvs", None) or [])
+        stop = tlvs.pop() if err is not None and tlvs else None   # the record the read stopped in
         for tlv in tlvs:
             t = int(tlv.tag)
             report.tlv_types[t] += 1
             if t not in KNOWN_STATUS_REPLY_TLVS:  # unknown type -> value falls to raw bytes
                 report.gaps.append(f"0xAC reply TLV type 0x{t:02x} not modelled")
-        unread = [*skipped, cut] if cut is not None and cut.reason == "unparsed" else skipped
-        if cut is not None and cut.reason == "unparsed":
-            report.tlv_types[cut.type] += 1     # a skipped TLV was handed on, so it is counted above
-        for bad in unread:
-            if bad.negative_len:
+            elif tlv.app_read_fails:
                 report.gaps.append(
-                    f"0xAC reply TLV type 0x{bad.type:02x} has len 0x{bad.length:02x}: the app reads a "
-                    "len of 0x80 or more as negative and fails the read")
-            else:
-                report.gaps.append(
-                    f"0xAC reply TLV type 0x{bad.type:02x} (len {bad.length}) did not parse against the spec")
-        if cut is not None and cut.reason == "truncated":
-            report.truncated += 1
+                    f"0xAC reply TLV type 0x{t:02x} (len {int(tlv.len_value)}) fails the app's read")
+        if stop is None:
+            continue
+        t = int(stop.tag)
+        if getattr(stop, "_raw_value", None) is None and not isinstance(err, ValidationGreaterThanError):
+            report.truncated += 1               # its value runs past the stream
+            continue
+        report.tlv_types[t] += 1
+        if isinstance(err, ValidationGreaterThanError):
+            report.gaps.append(
+                f"0xAC reply TLV type 0x{t:02x} has len 0x{int(stop.len_value):02x}: the app reads a "
+                "len of 0x80 or more as negative and fails the read")
+        else:
+            report.gaps.append(
+                f"0xAC reply TLV type 0x{t:02x} (len {int(stop.len_value)}) did not parse against the spec")
     return report
 
 

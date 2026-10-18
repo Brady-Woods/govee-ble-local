@@ -16,6 +16,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 from bleak.exc import BleakCharacteristicNotFoundError
+from kaitaistruct import ValidationGreaterThanError
 from conftest import require_optional
 
 require_optional("kaitaistruct", reason="Kaitai runtime not installed")
@@ -293,19 +294,20 @@ def test_field_test_runner_uses_the_public_flush(monkeypatch: pytest.MonkeyPatch
 
 # ── WP2b-024: a len byte the app reads as negative fails the read ────────────────────────────
 @pytest.mark.parametrize("stream", [
-    bytes([0x01, 0x01, 0x01, 0x99, 0x80, *range(0x80)]),        # the whole-buffer parse reads it
-    bytes([0x01, 0x01, 0x01, 0x04, 0x01, 0x32, 0x99, 0x90, 0x00]),   # the per-TLV walk reaches it
+    bytes([0x01, 0x01, 0x01, 0x99, 0x80, *range(0x80)]),        # a value follows the len
+    bytes([0x01, 0x01, 0x01, 0x04, 0x01, 0x32, 0x99, 0x90, 0x00]),   # one byte follows it
 ], ids=["whole-buffer-parse", "per-tlv-walk"])
 def test_a_tlv_len_of_0x80_or_more_fails_the_read_like_the_app(stream: bytes) -> None:
     frames = _chunk(stream)
     assert r.parse_status(frames) == r.StatusReply()   # WAS: is_on / brightness applied
-    _tlvs, cut = r.walk_status_tlvs(r.reassemble(frames))
-    assert cut is not None and cut.reason == "unparsed" and cut.type == 0x99
-    assert cut.length is not None and cut.length >= r.SIGNED_LEN_MIN
+    read, err = r.read_status_stream(r.reassemble(frames))
+    stop = read.tlvs[-1]                                # the record the read stopped in
+    assert isinstance(err, ValidationGreaterThanError) and int(stop.tag) == 0x99
+    assert int(stop.len_value) >= 0x80
     report = status_burst_report(frames)
     assert report.malformed == 0 and report.gaps == [
-        f"0xAC reply TLV type 0x99 has len 0x{cut.length:02x}: the app reads a len of 0x80 or more as "
-        "negative and fails the read"]
+        f"0xAC reply TLV type 0x99 has len 0x{int(stop.len_value):02x}: the app reads a len of 0x80 or "
+        "more as negative and fails the read"]
 
 
 def test_a_negative_len_with_no_value_byte_after_it_is_a_clean_tail() -> None:
@@ -314,7 +316,9 @@ def test_a_negative_len_with_no_value_byte_after_it_is_a_clean_tail() -> None:
     frames = _chunk(bytes([0x01, 0x01, 0x01, 0x04, 0x01, 0x32, 0x99, 0x90]))
     st = r.parse_status(frames)
     assert (st.is_on, st.brightness) == (True, 0x32)
-    assert r.walk_status_tlvs(r.reassemble(frames))[1] == r.TlvCut("tail", 0x99, 6, 0x90)
+    read, err = r.read_status_stream(r.reassemble(frames))
+    assert err is None and [int(t.tag) for t in read.tlvs] == [0x01, 0x04]
+    assert bytes(read.tail) == bytes([0x99, 0x90])     # under three bytes left: the walk's clean stop
     assert status_burst_report(frames).gaps == []
 
 

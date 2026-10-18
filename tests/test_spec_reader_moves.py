@@ -7,14 +7,12 @@ can receive. Where a move deliberately changes a result, the test says so and wh
 from __future__ import annotations
 
 import random
-from dataclasses import astuple
 from typing import Any
 
 from govee_ble_local import crypto, identify
 from govee_ble_local.const import PSK
 from govee_ble_local.transport import handshake
 from govee_ble_local.wire import _spec, parse, reassemble
-from govee_ble_local.wire.reassemble import SIGNED_LEN_MIN, TlvCut
 
 N = 3000
 
@@ -23,82 +21,10 @@ def _rng(salt: int) -> random.Random:
     return random.Random(0x5EAD ^ salt)  # noqa: S311 - deterministic test vectors
 
 
-# ── 0xAC status TLV walk: shared-stream status_tlv vs the byte walk it replaced ─────────────
-_Walk = tuple[list[tuple[int, int, bytes]], tuple[Any, ...] | None, list[tuple[Any, ...]]]
-
-
-def _byte_walk(buf: bytes) -> _Walk:
-    """The app's walker, Compose4BaseInfoSingleRead.u (:247-345), over the raw bytes: type / len from
-    the bytes, each TLV's body judged by the spec's status_tlv parsed alone from its slice. The library's
-    rules on top (approval items A1-A3): type 0 ends the walk (the padding sentinel), an empty value of a
-    tag that needs one doesn't read, an empty 0xA5 is handed on for parse_status to fail, as is a
-    non-empty 0x05 value mode_report can't read. Returns (type, len, value bytes) per TLV, the cut and
-    the skipped list (each cut as TlvCut's fields, negative_len True for a len the app reads as
-    negative)."""
-    out: list[tuple[int, int, bytes]] = []
-    skipped: list[tuple[Any, ...]] = []
-    pos, n = 0, len(buf)
-    while pos < n and buf[pos] != 0:
-        typ = buf[pos]
-        if pos + 2 >= n:                                   # u():257-267, :271-282: a clean stop
-            return out, ("tail", typ, pos, buf[pos + 1] if pos + 1 < n else None, False), skipped
-        length = buf[pos + 1]
-        if length >= SIGNED_LEN_MIN:                       # new byte[len] throws
-            return out, ("unparsed", typ, pos, length, True), skipped
-        end = pos + 2 + length
-        if end > n:                                        # System.arraycopy throws
-            return out, ("truncated", typ, pos, length, False), skipped
-        try:
-            _spec.read(_spec.StatusStream.StatusTlv, buf[pos:end], reassemble.status_profile(None))
-            if length == 0 and typ in (0x01, 0x04, 0x05, 0x07, 0x30, 0x41, 0xA5):
-                raise ValueError("empty value")
-        except Exception:  # noqa: BLE001
-            if typ == 0xA5 or (typ == 0x05 and length > 0):
-                skipped.append(("unparsed", typ, pos, length, False))
-                out.append((typ, length, bytes(buf[pos + 2:end])))
-            elif typ == 0x07 and length >= 1 and buf[pos + 2] not in (0x10, 0x11):
-                skipped.append(("unparsed", typ, pos, length, False))
-            else:
-                return out, ("unparsed", typ, pos, length, False), skipped
-        else:
-            out.append((typ, length, bytes(buf[pos + 2:end])))
-        pos = end
-    return out, None, skipped
-
-
-def _tlv_key(t: Any) -> tuple[int, int, bytes]:
-    # Every TLV the walk hands on has read its value, so the generated status_tlv keeps its bytes.
-    return int(t.tag), int(t.len_value), bytes(t._raw_value)
-
-
-def _random_tlv_buffer(r: random.Random) -> bytes:
-    parts = []
-    for _ in range(r.randrange(0, 7)):
-        typ = r.choice([0x01, 0x04, 0x05, 0x07, 0x30, 0x41, 0xA5, 0x11, 0x23, r.randrange(1, 256)])
-        n = (r.randrange(0x80, 0x100) if r.random() < 0.05
-             else r.choice([0, 1, 2, 5, 9, 13, 17, r.randrange(40)]))
-        value = bytearray(r.randrange(256) for _ in range(min(n, 50)))
-        if typ == 0x07 and value and r.random() < 0.6:
-            value[0] = r.choice([0x10, 0x11, 0x02, 0x03, 0x06])
-        parts.append(bytes([typ, n]) + value)
-    buf = b"".join(parts)
-    if r.random() < 0.3:
-        buf = buf[: r.randrange(len(buf) + 1)]
-    elif r.random() < 0.3:
-        buf += bytes(r.randrange(6))
-    return buf
-
-
-def test_tlv_walk_matches_the_byte_walk() -> None:
-    r = _rng(1)
-    for _ in range(N):
-        buf = _random_tlv_buffer(r)
-        skipped: list[TlvCut] = []
-        tlvs, cut = reassemble.walk_status_tlvs(buf, skipped=skipped)
-        want_tlvs, want_cut, want_skipped = _byte_walk(buf)
-        assert [_tlv_key(t) for t in tlvs] == want_tlvs, buf.hex()
-        assert (astuple(cut) if cut else None) == want_cut, buf.hex()
-        assert [astuple(s) for s in skipped] == want_skipped, buf.hex()
+# The 0xAC status TLV walk and its byte-walk oracle are gone (rule 4 c): the burst is read in one go through
+# the spec's govee_status_stream root, so the walk's rules are the spec's. What the read gives is pinned by
+# parse_status's outcomes (test_wire_reassemble, test_app_burst_rules, test_fix_wp2b_status_burst) and
+# where it stops by read_status_stream (test_fix_wp2b_status_burst, test_spec_field_moves).
 
 
 # ── 0xAC colour groups: color_group_read with the app's record count ─────────────────────────
