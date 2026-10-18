@@ -963,6 +963,12 @@ model, from which the shipped readers are generated).
   hardware 3.08.01 (KelvinConfig.Config.z2, a plain string compare). The schema takes these four keys per
   goodsType. New opcode `segment_brightness_write` (33 05 15 02, Bytes.G), traced for 19 only. Bench, H61A8
   SW 3.03.18 / HW 3.01.10: both 15 01 forms are acked, and `aa 05` reads 15 01 00 00 after a CCT write.
+- New `govee_state` instance `app_empty_mode_fails` (`FIRMWARE-SOURCED`, `PROCEDURAL`): an empty TLV 0x05 value
+  where the mode decode has `empty_fails` (h60ax goodsTypes 235, 302, 303, 346, 356, 370, 373 and 390). H60A6
+  SW1.00.41 sends it on purpose in mode 0xA0 (music: a 33 05 13 write or an A5 02 83 mic colour push) and in every
+  mode but 04 / 0a / 0d / 13 / 15. The app's whole status read fails on it (Info4Detail.Q); a client reads past
+  it, with the mode unknown, and still fails on every other `app_read_fails`. `app_read_fails` now names it as one
+  of its terms; its results are unchanged. H60A1 SW1.02.20 builds no 0xAC burst, so it never sends the value.
 - New `command_forms` selectors `f_40` (`form_40`: `unknown`, `ic_pair`, `one_count`, `device_count`) and `f_a3`
   (`form_a3`: `unknown`, `gradual`) say how a status screen reads TLV 0x40 / 0xA3 (rule 4 c). `govee_state`
   `app_read_fails` flags those values only where the screen reads them: H60A6, whose screen ignores both, no

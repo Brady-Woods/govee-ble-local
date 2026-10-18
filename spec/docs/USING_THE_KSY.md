@@ -241,12 +241,17 @@ for tlv in s.tlvs:                          # status_tlv: tag (enum command), le
             print(rec.brightness, rec.r, rec.g, rec.b)
 s.tail                                      # the 0-2 bytes the walk stops at
 any(t.app_read_fails for t in s.tlvs)       # where the app's whole status read would fail
+any(t.app_read_fails and not t.value.app_empty_mode_fails
+    for t in s.tlvs)                        # where a client's read fails
 ```
 
 The walk is the app's (`Compose4BaseInfoSingleRead.u`): a TLV is read while 3 or more bytes remain, tag 0
 is an ordinary TLV (no padding sentinel), and the 0-2 bytes left over are `tail`. A buffer that keeps the
 last chunk's zero padding reads as type-0 TLVs plus a tail and still re-writes exactly. A TLV whose value
-the app cannot read still reads here; `status_tlv.app_read_fails` says so.
+the app cannot read still reads here; `status_tlv.app_read_fails` says so. A client reads past one of
+those failures, a `FIRMWARE-SOURCED` extension: the empty TLV 0x05 value H60A6 sends on purpose
+(`govee_state.app_empty_mode_fails`). The mode then stays unknown, and every other `app_read_fails` still
+fails the client's read.
 
 **Upload values.** The kind is not in the bytes (DIY and graffiti share commByte 0x58), so you pass it,
 with the form: `wire` for a value joined from A1 / A3 / A4 packets, `cloud` for a base64-decoded

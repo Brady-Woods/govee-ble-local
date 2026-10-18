@@ -87,9 +87,28 @@ instances:
     doc: TLV tags whose value has a traced app reader; other tags stay in rest
     doc-ref:
       - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4BaseInfoSingleRead.java:286-341
+  app_empty_mode_fails:
+    value: >-
+      source == source::status_tlv and _io.size == 0
+      and command == govee_common::command::mode and decode.empty_fails
+    doc: |
+      FIRMWARE-SOURCED: the empty TLV 0x05 value H60A6 sends on purpose in mode
+      0xA0 (music: a 33 05 13 write or an A5 02 83 mic colour push) and in every
+      other mode but 04, 0a, 0d, 13 and 15. Info4Detail.Q reads a first byte unguarded, so the app's read
+      fails: one term of app_read_fails. PROCEDURAL: the client reads past
+      this one failure, leaving the mode unknown, and fails on every other
+      app_read_fails.
+    doc-ref:
+      - split_h60ax/com/govee/pact_h60a0/adjust/h60a1/Info4Detail.java:380-384
+      - split_h60ax/com/govee/pact_h60a0/adjust/h60a6/VM4LightH60A6$afterConnectedSingleReadDeviceInfo$1.java:82-83
+      - H60A6 FUN_9b025dc8 @0x9b025dd2-0x9b025ddc
+      - H60A6 FUN_9b025dc8 @0x9b025de4-0x9b025e24
+      - H60A6 FUN_9b04bdd8 @0x9b04be74-0x9b04be84
+      - H60A6 FUN_9b03c6b0 @0x9b03c702-0x9b03c762
+      - H60A6 FUN_9b025124 @0x9b02570e
   app_read_fails:
     value: >-
-      source == source::status_tlv and (_io.size == 0 ? (
+      app_empty_mode_fails or (source == source::status_tlv and (_io.size == 0 ? (
       command == govee_common::command::power
       or command == govee_common::command::brightness
       or command == govee_common::command::device_info
@@ -98,7 +117,6 @@ instances:
       and profile.forms.f_a3 == govee_common::form_a3::gradual)
       or (command == govee_common::command::ic_num
       and profile.forms.f_40 != govee_common::form_40::unknown)
-      or (command == govee_common::command::mode and decode.empty_fails)
       or (command == govee_common::command::cmd_30
       and profile.forms.f_30 != govee_common::form_30::unknown)
       or (command == govee_common::command::cmd_36
@@ -120,7 +138,7 @@ instances:
       and body.as<ic_count>.is_short)
       or (command == govee_common::command::color_group
       and profile.forms.f_a5 == govee_common::form_a5::color_group
-      and body.as<cmd_a5_state>.body.as<color_group>.app_read_fails)))
+      and body.as<cmd_a5_state>.body.as<color_group>.app_read_fails))))
     doc: status TLV only; the app's whole status read fails on this value
     doc-ref:
       - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4BaseInfoSingleRead.java:286-341,347-353
