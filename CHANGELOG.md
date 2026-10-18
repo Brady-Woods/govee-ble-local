@@ -799,6 +799,19 @@ model, from which the shipped readers are generated).
     `mask_secret`). The frame capture, the connection's bad-checksum log and `tools/decrypt_btsnoop.py`
     use them from there.
   - Logging and exception text only: no byte sent, decoded state or return value changes.
+- The connection's frame capture and frames log fail closed. This was a real leak:
+  - A notification that arrives while the session isn't ready used to be recorded in the clear. That
+    covers frames between subscribing and the handshake, and frames after the teardown cleared the
+    session. A device sends its `aa b1` secret reply twice, about 30 ms apart, so after `read_secret`
+    followed at once by `stop()` (the config-flow and reauth shape), the second copy was logged and
+    captured unmasked.
+  - Such a frame is now masked by its header on a plaintext link. On an encrypted link, where it can't be
+    checked, only its length is kept: its wire is blanked and the log line says `withheld`. The
+    handshake's own e7 frames, which carry no account secret, are kept while the handshake runs.
+  - A secret frame's ciphertext is blanked whole. Its first two bytes, kept before, are AES over the block
+    that holds the secret: a check on a guess.
+  - Logging and capture text only: no byte sent, nothing that reaches the RX queue or the handshake, and
+    no decoded state, return value or connection behaviour changes.
 
 ### Spec
 - `33 05 15 05` (op15_kelvin, H60A0): the Kelvin is now spelled `u2be` (it already read high byte first; the

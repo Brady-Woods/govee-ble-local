@@ -174,6 +174,7 @@ class GoveeConnection:
         self._bgc_checked = False
         # Wire bytes of this session's handshake frames + when to stop filtering them.
         self._handshake_echoes: set[bytes] = set()
+        self._in_handshake = False   # _handshake() running: _capture keeps the e7 frames' bytes
         self._echo_filter_until = 0.0
         # Unknown RX proTypes already warned about: repeats go to DEBUG (no log flood). Kept for
         # this object's life (the device's), not reset on reconnect.
@@ -232,12 +233,28 @@ class GoveeConnection:
         """Route one frame to the persistent JSONL sink (if configured) AND the
         frame-tier logger (if enabled) - one choke point, one shape. Account-lock
         secret payloads (33 b2 write / aa b1 read reply) are masked: captures end
-        up in logs and diagnostics downloads. The wire bytes are masked too - on a
-        plaintext link they ARE the secret, and on an encrypted link the session
-        key is derivable from the captured handshake plus the library's public PSK."""
-        if plain is not None and carries_secret(plain):
-            plain = mask_secret(plain)
-            wire = mask_secret(wire)
+        up in logs and diagnostics downloads. It fails closed:
+
+        - a secret frame's plaintext is masked by its header (``wire.redact``); its
+          wire is masked the same way on a plaintext link, where it IS the plaintext,
+          and blanked whole on an encrypted link, where its first bytes are AES over
+          the block that holds the secret (a check on a guess);
+        - a frame with no plaintext (``plain`` None: it arrived before the session
+          was ready, or after the teardown cleared it) is masked by its header on a
+          plaintext link, and on an encrypted link only its length is kept (its wire
+          blanked), since it can't be checked. The handshake's own frames are the
+          exception: they carry no account secret, so they are kept while
+          :meth:`_handshake` runs."""
+        withheld = False
+        if plain is not None:
+            if carries_secret(plain):
+                wire = mask_secret(wire) if wire == plain else b"\xff" * len(wire)
+                plain = mask_secret(plain)
+        elif self._encryption is Encryption.NONE:
+            if carries_secret(wire):
+                wire = mask_secret(wire)
+        elif not self._in_handshake:
+            wire, withheld = b"\xff" * len(wire), True
         if self._framelog is not None:
             self._framelog.record(direction, wire=wire, plain=plain, enc=enc)
         if _FRAMES.isEnabledFor(logging.DEBUG):
@@ -249,7 +266,8 @@ class GoveeConnection:
                 )
             else:
                 _FRAMES.debug(
-                    "%s %s cipher plain= wire=%s enc=%s", self.address, direction, wire.hex(), enc
+                    "%s %s %s plain= wire=%s enc=%s", self.address, direction,
+                    "withheld" if withheld else "cipher", wire.hex(), enc,
                 )
 
     # -- notify pump --------------------------------------------------------
@@ -528,6 +546,14 @@ class GoveeConnection:
         """e7 01 -> session key; e7 02 -> confirm. Matches replies by content
         (the device double-delivers its replies and retransmits them ~1 s later),
         and waits for the confirm so nothing else is sent while it's in flight."""
+        self._in_handshake = True
+        try:
+            await self._handshake_steps()
+        finally:
+            self._in_handshake = False
+
+    async def _handshake_steps(self) -> None:
+        """:meth:`_handshake`'s two steps."""
         loop = asyncio.get_running_loop()
         step1 = handshake.build_step1(PSK)
         self._capture("tx", wire=step1, plain=None, enc="e7")

@@ -316,6 +316,49 @@ async def test_capture_and_mask_secret_share_one_helper(monkeypatch, caplog) -> 
     assert f"plain={masked} wire={masked}" in caplog.text
 
 
+class _CaptureLog:
+    """A frame log that keeps the records it is handed."""
+
+    def __init__(self) -> None:
+        self.records: list[tuple[bytes, bytes | None]] = []
+
+    def record(self, _direction: str, *, wire: bytes, plain: bytes | None = None, enc: str = "") -> None:
+        self.records.append((wire, plain))
+
+
+_SECRET = bytes([0xDE, 0xAD, 0xBE, 0xEF, 0xC0, 0xFE, 0xE1, 0x9D])
+
+
+@pytest.mark.parametrize("encrypted", [False, True])
+@pytest.mark.parametrize("case", ["ready", "bad_checksum", "torn_down"])
+async def test_a_secret_reply_never_reaches_the_capture_or_log(monkeypatch, caplog, encrypted, case) -> None:
+    """An rx aa b1 secret reply: masked by its header while the session is ready (a bad checksum too, in
+    the drop log), and after the teardown cleared it (read_secret, then the device's late second copy as
+    stop() resets the session) masked by its header on a plaintext link, kept only as its length on an
+    encrypted one. On an encrypted link a secret frame's wire is blanked whole."""
+    caplog.set_level(logging.DEBUG, logger="govee_ble_local")
+    c = _make(monkeypatch, FakeGovee(encrypted=encrypted))
+    await c.connect()
+    c._framelog = log = _CaptureLog()   # type: ignore[assignment]
+    plain = frame(0xAA, 0xB1, 0x01, *_SECRET)
+    if case == "bad_checksum":
+        plain = plain[:-1] + bytes([plain[-1] ^ 0xFF])
+    raw = encrypt(plain, SESSION_KEY) if encrypted else plain
+    if case == "torn_down":
+        c._reset_session()   # as _disconnect_locked does before client.disconnect()
+    caplog.clear()
+    c._handle_notify(None, bytearray(raw))
+    [(wire, captured)] = log.records
+    masked_wire = b"\xff" * FRAME_LEN if encrypted else redact.mask_secret(plain)
+    assert (wire, captured) == (masked_wire, None if case == "torn_down" else redact.mask_secret(plain))
+    if case == "bad_checksum":
+        assert f"bad checksum: {redact.shown_hex(plain)}" in caplog.text
+    shown = caplog.text
+    for leaked in (plain[2:], raw if encrypted else b""):
+        assert not any(leaked[i:i + 2].hex() in shown for i in range(len(leaked) - 1)), shown
+    await c.disconnect()
+
+
 def test_now_ts_removed() -> None:
     assert not hasattr(conn_mod, "now_ts")
 
