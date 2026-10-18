@@ -202,7 +202,8 @@ async def test_the_library_and_the_plug_close_an_idle_link_on_their_own_timers(p
         assert plug.sim.link and dev._conn.is_connected
         await asyncio.sleep(3.0)        # 12 s after the write: the plug dropped it
         assert not plug.sim.link and plug.sim.log[-1] == "device drops the link"
-        assert loop.time() - written >= 12.0
+        # The virtual clock adds the float timeouts it jumps, so 9.0 + 3.0 can land a hair under 12.0.
+        assert loop.time() - written >= 12.0 - 1e-6
 
 
 async def test_the_advert_identifies_the_plug_and_carries_its_relay(plug: FirmwareGovee) -> None:

@@ -628,6 +628,8 @@ model, from which the shipped readers are generated).
   `rssi` that bleak < 1.0 requires: two tests and `tools/fetch_scenes.py`. They now use the version-aware
   `fake_ble.ble_device` (the tool uses the same check inline), and the test falls back to a `BleakError` with the
   same text. The library itself builds no `BLEDevice`, so it was unaffected.
+- **A flaky timing assertion in the H5083 idle-link test (test-only).** The virtual clock adds the float timeouts
+  it jumps, so 9.0 + 3.0 s can land a hair under 12.0 (CI saw 11.99999999999998). The check now allows 1e-6 s.
 - **The spec conformance tests run again (test-only).** `tests/test_spec_conformance.py` still imported the
   advertisement reader that S1 deleted with `govee_adv.ksy`. Under `CI=true`, which CI sets, that import
   stopped the whole pytest run at collection; locally the module was silently skipped. The devices.yaml
