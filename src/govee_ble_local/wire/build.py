@@ -1,198 +1,144 @@
 """Frame builders — the write side, written by the spec-generated read-write classes.
 
-Every frame is a ``GoveeBleFrame`` tree of the spec's own types (spec/govee_ble.ksy, generated with
-``tools/gen_kaitai.sh``), serialized by Kaitai; the library only picks which type and values the app
-sends. What stays in code is what Kaitai can't express: the XOR checksum (the frame's ``checksum``
-field, "computed externally"), packet counts and chunking of the multi-packet uploads, the app's
-colour and Kelvin choices (tint table, RGB-pick-as-CCT, clamps), and the caller-input checks.
-Where the frame's read dispatch has no case for a write body, or types it as the reply, the spec's
-standalone write type is used (``ZonePowerWrite``, ``Op15ColorWrite``, ``ReadRequest``, ...).
-``tests/test_wire_build_vs_spec.py`` binds every builder byte for byte to the app-traced catalogue,
-and ``tests/test_wire_build.py`` reads each frame back. Byte layouts follow the spec and the
-decompiled app (each builder cites its source). Not all of them are hardware-verified: the device
-profiles note which SKUs are, and the short-value 0xA3 upload (:func:`scene_upload_a3`) is source-modeled from
-``MultipleControllerCommV1.makeSendBytesV2``, not live-verified. Scene uploads take the raw
-``value`` bytes (the device layer base64-decodes + strips the param).
+Every frame is a ``govee_ble_frame(direction tx, profile)`` tree of the spec's own types (spec/*.ksy,
+generated with ``tools/gen_kaitai.sh``), written by Kaitai through :mod:`._spec`; the library only picks
+which type and values the app sends, and the profile (the device facts: command forms, segment count)
+that types them. What stays in code is what Kaitai can't express: the checksum (:func:`._spec.emit`),
+packet counts and chunking of the multi-packet uploads, the app's colour and Kelvin choices (tint table,
+RGB-pick-as-CCT, clamps), and the caller-input checks. ``tests/test_wire_build_vs_spec.py`` binds every
+builder byte for byte to the app-traced catalogue, and ``tests/test_wire_build.py`` reads each frame
+back. Byte layouts follow the spec and the decompiled app (each builder cites its source). Not all of
+them are hardware-verified: the device profiles note which SKUs are, and the short-value 0xA3 upload
+(:func:`scene_upload_a3`) is source-modeled from ``MultipleControllerCommV1.makeSendBytesV2``, not
+live-verified. Scene uploads take the raw ``value`` bytes (the device layer base64-decodes + strips the
+param).
 
 A builder raises GoveeBleNotSupported when the colour scheme cannot express the request (no such
 frame in the app for that family) and GoveeBleInvalidValue for bad caller input.
 """
 from __future__ import annotations
 
-import struct
 from collections.abc import Callable
-from io import BytesIO
 from typing import Any, Final, Literal, Never
 
-from kaitaistruct import KaitaiStream, KaitaiStructError, ReadWriteKaitaiStruct
-
-from .._generated.govee_ble_frame import GoveeBleFrame as _GBF  # type: ignore[attr-defined]
 from ..const import FRAME_LEN, SCENE_A3_HEADER_LEN, SCENE_A3_PIECE_LEN
-from ..crypto import checksum
 from ..exceptions import GoveeBleInvalidValue, GoveeBleNotSupported
+from . import _spec
+from ._spec import Common as _C, Frame as _F
 from .cct import kelvin_for_tint, tint_for_kelvin
 
-# The spec-generated read-write classes (spec/govee_ble.ksy). They are untyped, so Any here. This is
-# the wire layer's one import of them: the protocol constants below are their enums, the builders
-# below write every frame with them, and :mod:`.parse`, :mod:`.reassemble` and :mod:`.describe` read
-# frames with them.
-_F: Any = _GBF
-
-
-def _load(obj: Any) -> Any:
-    """Read a generated object and return it: a read-write class reads only when asked
-    (``from_bytes`` / ``Cls(..., stream)`` just bind the stream). Raises what the reader raises."""
-    obj._read()
-    return obj
+_PLAIN: Final = _spec.PLAIN   # a frame whose layout no device fact changes
 
 
 # ── writing with the generated classes ───────────────────────────────────────
-def _node(cls: Any, parent: Any, *params: Any, **fields: Any) -> Any:
-    """A generated object to write: ``params`` are the type's ksy params, ``fields`` its values. It is
-    linked under ``parent`` (``_check`` verifies the links); a standalone body has no parent."""
-    obj = cls(*params, _io=None, _parent=parent, _root=parent._root if parent is not None else None)
-    if parent is None:
-        obj._root = obj   # a standalone body is its own root, so its children link to it
-    for name, value in fields.items():
-        setattr(obj, name, value)
-    return obj
+def _frame_of(prof: Any, pro_type: Any, make_body: Callable[[Any], Any], length: int = FRAME_LEN) -> bytes:
+    """A TX frame of ``pro_type`` under ``prof`` whose body ``make_body(frame)`` builds (linked to it)."""
+    return _spec.build_frame(pro_type, prof, make_body, length)
 
 
-def _check_tree(obj: Any) -> None:
-    """``_check()`` every generated object under ``obj``, then ``obj`` itself (Kaitai checks one object
-    at a time and refuses to write one that changed since its check)."""
-    for name, value in vars(obj).items():
-        if name in ("_io", "_parent", "_root"):
-            continue
-        children = value if isinstance(value, list) else (value,)
-        for child in children:
-            if isinstance(child, ReadWriteKaitaiStruct):
-                _check_tree(child)
-    obj._check()
-
-
-def _serialize(obj: Any, length: int) -> bytes:
-    """``obj`` written into a zeroed ``length``-byte stream: the bytes past its last field stay zero, the
-    frame padding. A value the spec type can't carry (a ``valid`` it fails, a number too wide for its
-    field) is GoveeBleInvalidValue."""
-    try:
-        _check_tree(obj)
-        io = KaitaiStream(BytesIO(bytearray(length)))
-        obj._write(io)
-        return bytes(io.to_byte_array())
-    except (KaitaiStructError, struct.error) as err:
-        raise GoveeBleInvalidValue(f"value doesn't fit the spec's {type(obj).__name__}: {err}") from err
-
-
-def _body(obj: Any, length: int) -> bytes:
-    """A standalone spec body as the ``length`` raw bytes of the frame field it fills (zero-padded):
-    for a field the frame's read dispatch leaves untyped (e.g. the params of 33 30 / 33 36 / 33 a3)."""
-    return _serialize(obj, length)
-
-
-def _emit(frame_obj: Any, length: int = FRAME_LEN) -> bytes:
-    """A whole frame. Its ``checksum`` field is the one value computed here (the XOR of every byte before
-    it; the ksy can't compute it): written once with 0, then with the XOR."""
-    frame_obj.checksum = 0
-    first = _serialize(frame_obj, length)
-    frame_obj.checksum = checksum(first[:-1])
-    return _serialize(frame_obj, length)
-
-
-_BODY_LEN: Final = FRAME_LEN - 2         # the frame's body: everything between proType and checksum
-_PARAMS_LEN: Final = _BODY_LEN - 1       # a command's params: the body after the command byte
-
-
-def _frame_of(pro_type: Any, make_body: Callable[[Any], Any], length: int = FRAME_LEN) -> bytes:
-    """A ``GoveeBleFrame`` of ``pro_type`` whose body ``make_body(frame)`` builds (linked to it)."""
-    f = _node(_F, None, pro_type=pro_type)
-    f.body = make_body(f)
-    return _emit(f, length)
-
-
-def _write_frame(command: Any, make_params: Callable[[Any], Any]) -> bytes:
-    """``33 <command> <params>``: a ``single_command`` whose params ``make_params(single_command)``
-    builds: a typed body, or the raw bytes of an untyped one."""
+def _write_frame(prof: Any, command: Any, make_params: Callable[[Any], Any] | None) -> bytes:
+    """``33 <command> <params>``: a ``write_command`` whose params ``make_params(write_command)`` builds
+    (None: a command with no params); the zero fill after them is its ``rest``."""
     def body(f: Any) -> Any:
-        sc = _node(_F.SingleCommand, f, command=command)
-        sc.params = make_params(sc)
-        return sc
-    return _frame_of(_F.ProType.write, body)
+        wc = _spec.node(_F.WriteCommand, f, prof, command=command, rest=_spec.echo())
+        if make_params is not None:
+            wc.params = make_params(wc)
+        return wc
+    return _frame_of(prof, _C.ProType.write, body)
 
 
-def _mode_frame(sub_mode: Any, make_params: Callable[[Any], Any]) -> bytes:
-    """``33 05 <sub_mode> <params>`` (``mode_payload``)."""
-    def params(sc: Any) -> Any:
-        mp = _node(_F.ModePayload, sc, sub_type=sub_mode)
-        mp.params = make_params(mp)
-        return mp
-    return _write_frame(_F.Command.mode, params)
+def _params(cls: Any, **fields: Any) -> Callable[[Any], Any]:
+    """``make_params`` for a params type ``cls`` with no ksy params of its own."""
+    return lambda parent: _spec.node(cls, parent, **fields)
 
 
-def _op15_frame(op: Any, make_data: Callable[[Any], Any]) -> bytes:
-    """``33 05 15 <op> <data>`` (``color_15``)."""
-    def params(mp: Any) -> Any:
-        c15 = _node(_F.Color15, mp, op_type=op)
+def _form_params(cls: Any, form: Any, body_cls: Any, **fields: Any) -> Callable[[Any], Any]:
+    """``make_params`` for a form-switched params type ``cls(form)`` (``power_write``, ``cmd_30_write``,
+    ...) whose ``body`` is ``body_cls`` with ``fields``."""
+    def make(parent: Any) -> Any:
+        p = _spec.node(cls, parent, form)
+        p.body = _spec.node(body_cls, p, **fields)
+        return p
+    return make
+
+
+def _mode_frame(prof: Any, sub_mode: Any, make_params: Callable[[Any], Any]) -> bytes:
+    """``33 05 <sub_mode> <params>`` (``mode_write``)."""
+    def params(wc: Any) -> Any:
+        mw = _spec.node(_F.ModeWrite, wc, prof, sub_mode=sub_mode)
+        mw.params = make_params(mw)
+        return mw
+    return _write_frame(prof, _C.Command.mode, params)
+
+
+def _op15_frame(prof: Any, op: Any, make_data: Callable[[Any], Any]) -> bytes:
+    """``33 05 15 <op> <data>`` (``color_15_write``)."""
+    def params(mw: Any) -> Any:
+        c15 = _spec.node(_F.Color15Write, mw, prof, op=op)
         c15.data = make_data(c15)
         return c15
-    return _mode_frame(_F.SubMode.color_rgbic_15, params)
+    return _mode_frame(prof, _C.SubMode.color_rgbic_15, params)
 
 
-def _request(command: Any, *selector: int) -> bytes:
-    """``aa <command> <selector...>``: the spec's ``read_request_sized(len(selector))``, the app's
-    ``BleUtils.Companion.p(0xAA, command, ext)``, in the body the read dispatch types as the reply
-    (``read_command``); the zero fill after the selector is the zeroed body stream."""
-    return _frame_of(_F.ProType.read, lambda f: _node(
-        _F.ReadRequestSized, f, len(selector), command=command, selector=bytes(selector)))
-
+def _request(command: Any, selector_cls: Any = None, **selector: Any) -> bytes:
+    """``aa <command> [selector]``: the spec's ``read_request``, the app's ``BleUtils.Companion.p(0xAA,
+    command, ext)``; the selector is typed for the reads that carry one (``mode_query``,
+    ``device_info_query``, ``group_query``), and the zero fill after it is the request's ``rest``."""
+    def body(f: Any) -> Any:
+        rr = _spec.node(_F.ReadRequest, f, command=command, rest=_spec.echo())
+        if selector_cls is not None:
+            rr.selector = _spec.node(selector_cls, rr, **selector)
+        return rr
+    return _frame_of(_PLAIN, _C.ProType.read, body)
 
 def ceil_div(a: int, b: int) -> int:
     """Ceiling integer division (``ceil(a / b)`` for positive ``b``)."""
     return -(-a // b)
 
 
-# Protocol constants, taken from the generated reader's enums so the spec is their one source
-# (int() keeps them plain ints, as the frame bytes and the ``==`` checks against raw bytes need).
-# proType (enum pro_type)
-PRO_WRITE: Final = int(_F.ProType.write)                 # 0x33
-PRO_READ: Final = int(_F.ProType.read)                   # 0xAA
-PRO_MULTI_A1: Final = int(_F.ProType.multi_write)        # 0xA1: MultiPackageManager stream (RX only)
-PRO_MULTI_A2: Final = int(_F.ProType.multi_read)         # 0xA2: multi_read, device -> app (RX only)
-PRO_MULTI_A3: Final = int(_F.ProType.multi_write_v1)     # 0xA3
-PRO_MULTI_A4: Final = int(_F.ProType.multi_write_v2)     # 0xA4
-PRO_MULTI_AC: Final = int(_F.ProType.multi_reply_read)   # 0xAC
-PRO_NOTIFY: Final = int(_F.ProType.notify)               # 0xEE: device pushes (parse.parse_notify)
+# Protocol constants, taken from the generated classes' enums so the spec is their one source (int()
+# keeps them plain ints, as the frame bytes and the ``==`` checks against raw bytes need).
+# proType (enum govee_common::pro_type)
+PRO_WRITE: Final = int(_C.ProType.write)                 # 0x33
+PRO_READ: Final = int(_C.ProType.read)                   # 0xAA
+PRO_MULTI_A1: Final = int(_C.ProType.multi_write)        # 0xA1: MultiPackageManager stream (RX only)
+PRO_MULTI_A2: Final = int(_C.ProType.multi_read)         # 0xA2: multi_read, device -> app (RX only)
+PRO_MULTI_A3: Final = int(_C.ProType.multi_write_v1)     # 0xA3
+PRO_MULTI_A4: Final = int(_C.ProType.multi_write_v2)     # 0xA4
+PRO_MULTI_AC: Final = int(_C.ProType.status_read)        # 0xAC
+PRO_NOTIFY: Final = int(_C.ProType.notify)               # 0xEE: device pushes (parse.parse_notify)
 
-# command (enum command)
-CMD_SWITCH: Final = int(_F.Command.switch)                       # 0x01
-CMD_BRIGHTNESS: Final = int(_F.Command.brightness)               # 0x04
-CMD_MODE: Final = int(_F.Command.mode)                           # 0x05
-CMD_SOFT_VERSION: Final = int(_F.Command.soft_version)           # 0x06
-CMD_DEVICE_INFO: Final = int(_F.Command.device_info)             # 0x07
-CMD_ZONE: Final = int(_F.Command.light_direction_or_zone)        # 0x30
-CMD_BAR_SWITCH: Final = int(_F.Command.compose_light_switch)     # 0x36
-CMD_GRADUAL_WIFI_BLE: Final = int(_F.Command.gradual_wifi_ble)   # 0xA3: gradual/fade on BLE<->wifi handoff
-CMD_SECRET_READ: Final = int(_F.Command.secret_read)             # 0xB1
-CMD_SECRET_WRITE: Final = int(_F.Command.secret_write)           # 0xB2
-CMD_PLUG_SPEC: Final = int(_F.Command.plug_spec)                 # 0xB3
-CMD_PLUG_SYNC_TIME: Final = int(_F.Command.plug_sync_time)       # 0xB5
+# command (enum govee_common::command)
+CMD_SWITCH: Final = int(_C.Command.power)                        # 0x01
+CMD_TOTAL_SWITCH: Final = int(_C.Command.cmd_02)                 # 0x02: H5089's total switch (form_02)
+CMD_BRIGHTNESS: Final = int(_C.Command.brightness)               # 0x04
+CMD_MODE: Final = int(_C.Command.mode)                           # 0x05
+CMD_SOFT_VERSION: Final = int(_C.Command.soft_version)           # 0x06
+CMD_DEVICE_INFO: Final = int(_C.Command.device_info)             # 0x07
+CMD_ZONE: Final = int(_C.Command.cmd_30)                         # 0x30 (form_30: zone power on H60A6)
+CMD_BAR_SWITCH: Final = int(_C.Command.cmd_36)                   # 0x36 (form_36: H6047's two bars)
+CMD_GRADUAL_WIFI_BLE: Final = int(_C.Command.gradual)            # 0xA3: gradual/fade on BLE<->wifi handoff
+CMD_SECRET_READ: Final = int(_C.Command.secret_read)             # 0xB1
+CMD_SECRET_WRITE: Final = int(_C.Command.secret_write)           # 0xB2
+CMD_PLUG_SPEC: Final = int(_C.Command.plug_spec)                 # 0xB3
+CMD_PLUG_SYNC_TIME: Final = int(_C.Command.plug_sync_time)       # 0xB5
 
-# mode (0x05) sub-mode (enum sub_mode)
-SUB_SCENE: Final = int(_F.SubMode.scene)                 # 0x04
-SUB_COLOR_15: Final = int(_F.SubMode.color_rgbic_15)     # 0x15 (H60A6/H6047/H6641)
-SUB_COLOR_0D: Final = int(_F.SubMode.color_cct_0d)       # 0x0D (H6006/H6008/H6052 bulbs)
-SUB_COLOR_0B: Final = int(_F.SubMode.color_rgbic_0b)     # 0x0B (H61A8)
+# mode (0x05) sub-mode (enum govee_common::sub_mode)
+SUB_SCENE: Final = int(_C.SubMode.scene)                 # 0x04
+SUB_COLOR_15: Final = int(_C.SubMode.color_rgbic_15)     # 0x15 (H60A6/H6047/H6641)
+SUB_COLOR_0D: Final = int(_C.SubMode.color_cct_0d)       # 0x0D (H6006/H6008/H6052 bulbs)
+SUB_COLOR_0B: Final = int(_C.SubMode.color_rgbic_0b)     # 0x0B (H61A8)
 
-# op15 (enum op15) — sub-op after 0x15
-OP15_SET_COLOR: Final = int(_F.Op15.set_color)            # 0x01
-OP15_SET_BRIGHTNESS: Final = int(_F.Op15.set_brightness)  # 0x02
+# op15 (enum govee_common::op15) — sub-op after 0x15
+OP15_SET_COLOR: Final = int(_C.Op15.set_color)            # 0x01
+OP15_SET_BRIGHTNESS: Final = int(_C.Op15.set_brightness)  # 0x02
 
 # Device-info (0x07) selectors (enum device_info_selector). SN (device id) and HARD (hardware version)
 # are the reads the app makes (SnController.p, HardVersionController.p); BASIC / WIFI are the binary forms.
-INFO_BASIC: Final = int(_F.DeviceInfoSelector.basic)          # 0x10
-INFO_WIFI: Final = int(_F.DeviceInfoSelector.wifi)            # 0x11
-INFO_SN: Final = int(_F.DeviceInfoSelector.sn)                # 0x02
-INFO_HARD: Final = int(_F.DeviceInfoSelector.hard_version)    # 0x03
+INFO_BASIC: Final = int(_C.DeviceInfoSelector.basic)          # 0x10
+INFO_WIFI: Final = int(_C.DeviceInfoSelector.wifi)            # 0x11
+INFO_SN: Final = int(_C.DeviceInfoSelector.sn)                # 0x02
+INFO_HARD: Final = int(_C.DeviceInfoSelector.hard_version)    # 0x03
 
 # power payload values (enums light_power and relay_write)
 POWER_ON: Final = int(_F.LightPower.light_on)        # 0x01
@@ -202,15 +148,22 @@ RELAY_ON: Final = int(_F.RelayWrite.relay0_on)
 RELAY_OFF: Final = int(_F.RelayWrite.relay0_off)
 RELAY_ALL_ON: Final = int(_F.RelayWrite.all_on)
 RELAY_ALL_OFF: Final = int(_F.RelayWrite.all_off)
-# 33 02: H5089's total switch (Controller4TotalSwitch.getCommandType; enum plug_command). The shared
-# command enum has no 0x02 member yet (gap item 6, a lockstep change with the spec owner).
-CMD_TOTAL_SWITCH: Final = int(_F.PlugCommand.total_switch)
 
-# Upload comm bytes (enum multi_comm_byte, named after the app's MULTI_* constants): the H60A6 dialect-B
+# Upload comm bytes (enum comm_byte, named after the app's MULTI_* constants): the H60A6 dialect-B
 # DIY / graffiti upload sends 0x58, which the app's table names cube_in_diy; the H6052 type-5
 # professional graffiti sends v1_graffiti_multi_layer (0x09).
-COMM_H60A6: Final = int(_F.MultiCommByte.cube_in_diy)
-COMM_H6052_GRAFFITI: Final = int(_F.MultiCommByte.v1_graffiti_multi_layer)
+COMM_H60A6: Final = int(_F.CommByte.cube_in_diy)
+COMM_H6052_GRAFFITI: Final = int(_F.CommByte.v1_graffiti_multi_layer)
+
+# The command forms the builders write under (govee_profile command_forms): which body a shared command
+# carries is a device fact, not in the frame.
+_FORM_LIGHT: Final = int(_C.Form01.light)              # 33 01 [1 / 0]
+_FORM_RELAYS: Final = int(_C.Form01.relays)            # 33 01 [relay byte]
+_FORM_TOTAL_SWITCH: Final = int(_C.Form02.total_switch)
+_FORM_ZONE_POWER: Final = int(_C.Form30.zone_power)
+_FORM_BAR_PAIR: Final = int(_C.Form36.bar_pair)
+_FORM_0B_RGB_MASK: Final = int(_C.Form0b.rgb_mask)
+
 
 # "h60a6" = 0x15 RGBIC (segment mask); CCT is the white-slot form `15 01 ff ff ff <K> <tint> <mask>`
 # (Bytes.r type 1) with the app's Kelvin->RGB tint.
@@ -290,17 +243,18 @@ def normalize_kelvin(kelvin: int, lo: int | None = None, hi: int | None = None) 
         out = min(out, hi)
     return out
 
-
-# Segment masks: the spec's segment_mask(segment_count, mask_cap). Up to 16 segments the mask is two bytes
+# Segment masks: the spec's seg_mask(num_segments, cap). Up to 16 segments the mask is two bytes
 # (BleUtils.makeSelectedTwoBytes); above that ceil(n/8) bytes, LSB first (BleUtils.X). Each body carries at
-# most its own mask_cap bytes, and the app's writers drop the positions past it (coerceAtMost): the 0x15
-# RGB and CCT frames 7 bytes (op15_color_write.mask_cap for variants 12 / 11: Bytes.h :324, Bytes.r :499),
-# per-segment brightness 14 (op15_brightness_wide.mask_cap: Bytes.G :179). MAX_MASK_BYTES is the widest of
-# those caps, so MAX_MASK_SEGMENTS is the most segments any body the library writes can address.
+# most its own cap, and the app's writers drop the positions past it (coerceAtMost): the 0x15 RGB and CCT
+# frames 7 bytes (op15_color form kelvin_tint's len_cap: Bytes.h :324, Bytes.r :499), per-segment
+# brightness 14 (op15_brightness's mask: Bytes.G :179). MAX_MASK_BYTES is the widest of those caps, so
+# MAX_MASK_SEGMENTS is the most segments any body the library writes can address.
 LEGACY_MASK_SEGMENTS: Final = 16
-COLOR_MASK_CAP: Final = int(
-    _node(_F.Op15ColorWrite, None, int(_F.Op15ColorVariant.h60a1_h60a6_rgb), 2).mask_cap)
-BRIGHTNESS_MASK_CAP: Final = int(_node(_F.Op15BrightnessWide, None, 2).mask_cap)
+_FORM_KELVIN_TINT: Final = int(_C.Form1501.kelvin_tint)   # [slot rgb][kelvin][tint][mask]: H60A6 family
+_FORM_KELVIN: Final = int(_C.Form1501.kelvin)             # [rgb][kelvin][mask]: colour version 5, H6061
+COLOR_MASK_CAP: Final = int(_spec.node(_F.Op15Color, None, _FORM_KELVIN_TINT, 0).len_cap)
+# op15_brightness's cap is a literal of its mask's params: read back off a mask read at full width.
+BRIGHTNESS_MASK_CAP: Final = int(_spec.read(_F.Op15Brightness, bytes(256), 8 * 255).mask.cap)
 MAX_MASK_BYTES: Final = max(COLOR_MASK_CAP, BRIGHTNESS_MASK_CAP)
 MAX_MASK_SEGMENTS: Final = MAX_MASK_BYTES * 8
 
@@ -308,15 +262,15 @@ MAX_MASK_SEGMENTS: Final = MAX_MASK_BYTES * 8
 def mask_width(segments: int, mask_cap: int = MAX_MASK_BYTES) -> int:
     """Bytes of segment mask the app writes for a device with ``segments`` segments into a body that carries
     at most ``mask_cap`` bytes: 2 for 0..16 (makeSelectedTwoBytes), else ceil(n/8) (BleUtils.X), cut to
-    ``mask_cap`` (the spec's ``segment_mask.mask_width``). Raises GoveeBleInvalidValue above
+    ``mask_cap`` (the spec's ``seg_mask.len_mask``). Raises GoveeBleInvalidValue above
     :data:`MAX_MASK_SEGMENTS` (112)."""
     _check_range("segment count", segments, 0, MAX_MASK_SEGMENTS)
-    return int(_node(_F.SegmentMask, None, segments, mask_cap).mask_width)
+    return int(_spec.node(_C.SegMask, None, segments, mask_cap).len_mask)
 
 
 def mask_positions(segments: int, mask_cap: int) -> int:
     """How many of a device's ``segments`` positions a body of ``mask_cap`` mask bytes carries: all of them,
-    or the first ``mask_cap * 8`` where the app's writer cuts the mask (``segment_mask.is_truncated``)."""
+    or the first ``mask_cap * 8`` where the app's writer cuts the mask (``seg_mask.is_truncated``)."""
     return min(segments, 8 * mask_width(segments, mask_cap))
 
 
@@ -324,33 +278,22 @@ def _check_mask(mask: int, bits: int = LEGACY_MASK_SEGMENTS) -> int:
     return _check_range("segment mask", mask, 0, (1 << bits) - 1)
 
 
-def frame(pro_type: int, *payload: int) -> bytes:
-    """A 20-byte frame: [pro_type, *payload, zero-pad, XOR-checksum@19]."""
-    if len(payload) > FRAME_LEN - 2:
-        raise ValueError(
-            f"payload too long: {len(payload)} bytes (max {FRAME_LEN - 2} so the frame fits in {FRAME_LEN})")
-    buf = bytearray(FRAME_LEN)
-    buf[0] = pro_type
-    buf[1 : 1 + len(payload)] = bytes(payload)
-    buf[FRAME_LEN - 1] = checksum(bytes(buf[: FRAME_LEN - 1]))
-    return bytes(buf)
-
-
-def _mask_bytes(mask: int, segments: int | None, mask_cap: int) -> bytes:
-    """Segment mask as the app encodes it, LSB first: :func:`mask_width` bytes for a device with
-    ``segments`` segments in a body of ``mask_cap`` mask bytes (the width depends on the device's segment
-    count, not on which segments are selected). Positions past the cap are dropped, as the app's
-    coerceAtMost writers drop them. ``segments=None`` is the legacy two-byte mask."""
+def _mask_positions(mask: int, segments: int | None, mask_cap: int) -> int:
+    """The posSet length a body of ``mask_cap`` mask bytes is written with for a device with ``segments``
+    segments (``None`` = the legacy two-byte mask), after checking ``mask`` fits the device's full mask:
+    the device's mask width rounded up to whole bytes, cut to the cap (the spec's seg_mask doc allows the
+    rounded length: the same width and bytes). Any bit inside those bytes is written, as before; the app
+    never sets one at or past the piece count, and Device doesn't either. Positions past the cap are
+    dropped (:func:`_mask_bits`), as the app's coerceAtMost writers drop them."""
     count = LEGACY_MASK_SEGMENTS if segments is None else segments
     full = mask_width(count, MAX_MASK_BYTES)
-    width = mask_width(count, mask_cap)
     _check_range("segment mask", mask, 0, (1 << (8 * full)) - 1)
-    # The spec's segment_mask, over the posSet length rounded up to the mask's whole bytes (its doc allows
-    # that: the same width and bytes), so any bit in those bytes is accepted, as before; the app never sets
-    # one at or past the piece count, and Device doesn't either.
-    bits = [bool(mask >> i & 1) for i in range(8 * width)]
-    return _serialize(_node(_F.SegmentMask, None, 8 * width, mask_cap, bits=bits), width)
+    return 8 * mask_width(count, mask_cap)
 
+
+def _mask_bits(mask: int, positions: int) -> int:
+    """``mask`` cut to its first ``positions`` bits."""
+    return mask & ((1 << positions) - 1)
 
 def all_segments_mask(segments: int) -> int:
     """Whole-device mask = the first ``segments`` bits set (BleUtil select-all-positions).
@@ -363,82 +306,91 @@ def all_segments_mask(segments: int) -> int:
 def switch(on: bool, *, relay: bool = False) -> bytes:
     """33 01 <state>. relay=True: the outlet-0 relay encoding 0x11/0x10, goodsType 43's main switch
     (H5080 / H5083 / H5085); the multi-outlet plugs use :func:`plug_all_outlets` /
-    :func:`plug_total_switch`."""
-    val = (RELAY_ON if on else RELAY_OFF) if relay else (POWER_ON if on else POWER_OFF)
-    return _write_frame(_F.Command.switch, lambda sc: _node(_F.SwitchPayload, sc, state=val))
+    :func:`plug_total_switch`. The spec's ``power_write`` under form_01 ``relays`` / ``light``."""
+    if relay:
+        return _power_frame(_FORM_RELAYS, _F.RelayPowerWrite, RELAY_ON if on else RELAY_OFF)
+    return _power_frame(_FORM_LIGHT, _F.LightPowerWrite, POWER_ON if on else POWER_OFF)
+
+
+def _power_frame(form: int, body_cls: Any, state: int) -> bytes:
+    """``33 01 <state>``: ``power_write(form)`` with its ``body_cls`` body."""
+    return _write_frame(_spec.profile(f_01=form), _C.Command.power,
+                        _form_params(_F.PowerWrite, form, body_cls, state=state))
 
 
 def plug_all_outlets(on: bool) -> bytes:
     """33 01 FF / F0: every outlet of a multi-outlet plug on / off, the main switch of goodsType 50
     (H5082, UiV2.onOffChange) and 90 (H5160 / H5161, UiV4.onOffChange): ``SwitchControllerV2(on, 15)``,
     whose ``q()`` writes ``0xF0 | (0x0F if on else 0)`` (h5080 SwitchControllerV2.java:53-71)."""
-    val = RELAY_ALL_ON if on else RELAY_ALL_OFF
-    return _write_frame(_F.Command.switch, lambda sc: _node(_F.SwitchPayload, sc, state=val))
+    return _power_frame(_FORM_RELAYS, _F.RelayPowerWrite, RELAY_ALL_ON if on else RELAY_ALL_OFF)
 
 
 def plug_total_switch(on: bool) -> bytes:
     """33 02 01 / 00: H5089's main switch (goodsType 307, Ui4H5089.onOffChange:929-946):
-    ``Controller4TotalSwitch(on)``, command 0x02 (``plug_command``), one 1/0 byte (Controller4TotalSwitch.q),
-    the spec's ``total_switch_write``."""
-    body = _node(_F.TotalSwitchWrite, None, state=POWER_ON if on else POWER_OFF)
-    return _write_frame(CMD_TOTAL_SWITCH, lambda sc: _body(body, _PARAMS_LEN))
+    ``Controller4TotalSwitch(on)``, command 0x02, one 1/0 byte (Controller4TotalSwitch.q), the spec's
+    ``cmd_02_write`` under form_02 ``total_switch``."""
+    return _write_frame(_spec.profile(f_02=_FORM_TOTAL_SWITCH), _C.Command.cmd_02, _form_params(
+        _F.Cmd02Write, _FORM_TOTAL_SWITCH, _F.TotalSwitchWrite, state=POWER_ON if on else POWER_OFF))
 
 
 def brightness(pct: int) -> bytes:
     """33 04 <level 0-100> (clamped). Raises GoveeBleInvalidValue for a non-int."""
     level = _clamp_pct(pct)
-    return _write_frame(_F.Command.brightness, lambda sc: _node(_F.BrightnessPayload, sc, level=level))
+    return _write_frame(_PLAIN, _C.Command.brightness, _params(_F.LevelWrite, level=level))
 
 
 def brightness_raw(level: int) -> bytes:
     """33 04 <raw level 0-255>, for devices whose brightness byte is not a percent
     (ControllerBrightness(i) writes the byte verbatim; e.g. H6188's 20..254 range)."""
     raw = _check_range("brightness level", level, 0, 0xFF)
-    return _write_frame(_F.Command.brightness, lambda sc: _node(_F.BrightnessPayload, sc, level=raw))
+    return _write_frame(_PLAIN, _C.Command.brightness, _params(_F.LevelWrite, level=raw))
 
 
 # ── colour frames (the spec's write types) ───────────────────────────────────
 def _cct0d_frame(rgb: tuple[int, int, int], kelvin: int = 0,
                  tint: tuple[int, int, int] = (0, 0, 0)) -> bytes:
-    """``33 05 0d [r, g, b][kelvin u2be][tint r, g, b]`` (``color_cct_0d``): RGB with kelvin 0 and no tint
-    (Bytes.f), CCT with the tint (Bytes.p / Bytes.A)."""
-    return _mode_frame(_F.SubMode.color_cct_0d, lambda mp: _node(
-        _F.ColorCct0d, mp, r=rgb[0], g=rgb[1], b=rgb[2], kelvin=kelvin,
-        tint_r=tint[0], tint_g=tint[1], tint_b=tint[2]))
+    """``33 05 0d [r, g, b][kelvin u2be][tint r, g, b]`` (``color_0d_write``): RGB with kelvin 0 and no
+    tint (Bytes.f), CCT with the tint (Bytes.p / Bytes.A)."""
+    return _mode_frame(_PLAIN, _C.SubMode.color_cct_0d, _params(
+        _F.Color0dWrite, color=_spec.rgb(*rgb), kelvin=kelvin, tint=_spec.rgb(*tint)))
+
+
+# The 0x0b frame's posSet: the two-byte mask of up to 16 segments the library writes. Its mask cap is a
+# literal of color_0b_rgb_mask's mask params: read back off a mask read at full width.
+_PROFILE_0B: Final = _spec.profile(f_0b=_FORM_0B_RGB_MASK, num_segments=LEGACY_MASK_SEGMENTS)
+_MASK_CAP_0B: Final = int(_spec.read(_F.Color0bRgbMask, bytes(258), 8 * 255).mask.cap)
 
 
 def _rgbic0b_frame(rgb: tuple[int, int, int], mask: int) -> bytes:
-    """``33 05 0b [r, g, b][seg_mask u2le]`` (``color_rgbic_0b``, ``mode_payload``'s own 0x0b case: the
-    two-byte mask of up to 16 segments)."""
-    seg_mask = _check_mask(mask, LEGACY_MASK_SEGMENTS)
-    return _mode_frame(_F.SubMode.color_rgbic_0b, lambda mp: _node(
-        _F.ColorRgbic0b, mp, r=rgb[0], g=rgb[1], b=rgb[2], seg_mask=seg_mask))
+    """``33 05 0b [r, g, b][seg_mask]`` (``color_0b_write`` form ``rgb_mask``: the two-byte mask of up to
+    16 segments)."""
+    bits = _check_mask(mask, LEGACY_MASK_SEGMENTS)
+
+    def params(mw: Any) -> Any:
+        c = _spec.node(_F.Color0bWrite, mw, _FORM_0B_RGB_MASK, LEGACY_MASK_SEGMENTS)
+        c.body = _spec.node(_F.Color0bRgbMask, c, LEGACY_MASK_SEGMENTS, color=_spec.rgb(*rgb))
+        c.body.mask = _spec.seg_mask(c.body, LEGACY_MASK_SEGMENTS, _MASK_CAP_0B, bits)
+        return c
+    return _mode_frame(_PROFILE_0B, _C.SubMode.color_rgbic_0b, params)
 
 
-# op15_color_write variants (enum op15_color_variant): the colour form the app's writer picks.
-#   12 [r, g, b][00 x5][mask]               Bytes.h (H60A6 family RGB)
-#   11 [slot r, g, b][kelvin][tint][mask]   Bytes.r (H60A6 family CCT)
-#    5 [r, g, b][kelvin][mask]              Bytes.l / Bytes.u (colour version 5, H6061)
-_OP15_RGB: Final = int(_F.Op15ColorVariant.h60a1_h60a6_rgb)
-_OP15_CCT: Final = int(_F.Op15ColorVariant.cct)
-_OP15_V5: Final = int(_F.Op15ColorVariant.color_instruction_v5)
-
-
-def _op15_color_frame(variant: int, rgb: tuple[int, int, int], seg_mask: bytes, kelvin: int = 0,
+# op15_color forms (enum form_15_01): the colour form the app's writer picks. kelvin_tint carries RGB as
+# kelvin 0 and tint 0, byte-identical to SubModeColorV1 opType 12 / Bytes.h [rgb][00 x5][mask].
+#   kelvin_tint [slot r, g, b][kelvin][tint][mask]   Bytes.h / Bytes.r (H60A6 family RGB and CCT)
+#   kelvin      [r, g, b][kelvin][mask]              Bytes.l / Bytes.u (colour version 5, H6061)
+def _op15_color_frame(form: int, rgb: tuple[int, int, int], mask: int, positions: int, kelvin: int = 0,
                       tint: tuple[int, int, int] = (0, 0, 0)) -> bytes:
-    """``33 05 15 01`` with the spec's ``op15_color_write(variant, mask_width)``."""
-    def data(c15: Any) -> Any:
-        w = _node(_F.Op15ColorWrite, c15, variant, len(seg_mask), r=rgb[0], g=rgb[1], b=rgb[2])
-        if variant == _OP15_RGB:
-            w.reserved = bytes(5)   # contents [0] x5: Kaitai 0.11 writes a contents field only as given
-        if variant in (_OP15_CCT, _OP15_V5):
-            w.kelvin = kelvin
-        if variant == _OP15_CCT:
-            w.tint_r, w.tint_g, w.tint_b = tint
-        w.seg_mask = seg_mask
-        return w
-    return _op15_frame(_F.Op15.set_color, data)
+    """``33 05 15 01`` with the spec's ``op15_color(form, num_segments)``, its mask over ``positions``
+    (a whole number of bytes)."""
+    prof = _spec.profile(f_15_01=form, num_segments=positions)
 
+    def data(c15: Any) -> Any:
+        w = _spec.node(_F.Op15Color, c15, form, positions, color=_spec.rgb(*rgb), kelvin=kelvin)
+        if form == _FORM_KELVIN_TINT:
+            w.tint = _spec.rgb(*tint)
+        w.mask = _spec.seg_mask(w, positions, int(w.len_cap), _mask_bits(mask, positions))
+        return w
+    return _op15_frame(prof, _C.Op15.set_color, data)
 
 # ── Glide Hexa (H6061) whole-device writes ───────────────────────────────────
 # Source (Govee Home 7.7.02, split pact_h6061 + base.apk): the panel count n is the size of the
@@ -446,8 +398,11 @@ def _op15_color_frame(variant: int, rgb: tuple[int, int, int], seg_mask: bytes, 
 H6061_MAX_PANELS: Final = 23
 H6061_GROUP_SIZE: Final = 4          # Bytes.m / BleUtils.w0(colors, 4): four colours per group frame
 H6061_MASK_BYTES: Final = 3          # ColorPieceConfig.k: piece count 23 rounds up to a 24-bit position set
-OP15_SET_GROUP_COLOR: Final = int(_F.Op15.set_color_group)   # 0x04; Bytes.m: [0x15, 0x04, group, RGB x<=4]
+OP15_SET_GROUP_COLOR: Final = int(_C.Op15.set_color_group)   # 0x04; Bytes.m: [0x15, 0x04, group, RGB x<=4]
 H6061_KELVIN_RANGE: Final = (2000, 9000)   # KelvinConfig: no entry for 51 -> version 0
+_FORM_RGB_GROUP: Final = int(_C.Form1504.rgb_group)
+# H6061's frames: op 0x04 is the RGB group form, op 0x01 the colour-version-5 form over its 24-bit posSet.
+_PROFILE_H6061_GROUP: Final = _spec.profile(f_15_04=_FORM_RGB_GROUP)
 
 # Segment count a whole-device builder assumes when the caller passes none (``Device`` always passes
 # the profile's count). ``h6061`` takes the app's own fallback above, the 23-panel layout; ``h60a6`` and
@@ -469,7 +424,6 @@ def _h6061_panels(panels: int) -> int:
     _check_range("panel count", panels, 1, H6061_MAX_PANELS)
     return H6061_MAX_PANELS if panels == 1 else panels
 
-
 def _h6061_group_frames(r: int, g: int, b: int, panels: int) -> list[bytes]:
     """Whole-device RGB: ``33 05 15 04 <group from 1> R G B x<=4``, one frame per group of four
     panels, the last carrying only the remaining panels (23 panels: 6 frames, the last with 3
@@ -479,10 +433,14 @@ def _h6061_group_frames(r: int, g: int, b: int, panels: int) -> list[bytes]:
 
     def group_frame(group: int) -> bytes:
         count = min(H6061_GROUP_SIZE, n - (group - 1) * H6061_GROUP_SIZE)
-        g_obj = _node(_F.Op15ColorGroupWrite, None, count, group=group)
-        g_obj.colors = [_node(_F.ScRgb, g_obj, r=r, g=g, b=b) for _ in range(count)]
-        # op 0x04 has no case in the read dispatch (color_15.data is raw there): its spec body's bytes.
-        return _op15_frame(_F.Op15.set_color_group, lambda c15: _body(g_obj, _PARAMS_LEN - 2))
+        # op15_rgb_group carries four colours: the ones past the group's count are black (the zero fill).
+        colors = [_spec.rgb(r, g, b) if k < count else _spec.rgb(0, 0, 0) for k in range(H6061_GROUP_SIZE)]
+
+        def data(c15: Any) -> Any:
+            grp = _spec.node(_F.Op15Group, c15, _FORM_RGB_GROUP)
+            grp.body = _spec.node(_F.Op15RgbGroup, grp, group=group, colors=colors)
+            return grp
+        return _op15_frame(_PROFILE_H6061_GROUP, _C.Op15.set_color_group, data)
 
     return [group_frame(group) for group in range(1, ceil_div(n, H6061_GROUP_SIZE) + 1)]
 
@@ -496,8 +454,8 @@ def _h6061_color_temp(kelvin: int, panels: int, tint: tuple[int, int, int] | Non
     tint colour passes that exact colour (``Zt`` writes the picked colour, whichever of the Kelvin
     step's two colours it is)."""
     n = _h6061_panels(panels)
-    mask = all_segments_mask(n).to_bytes(H6061_MASK_BYTES, "little")
-    return _op15_color_frame(_OP15_V5, tint if tint is not None else tint_for_kelvin(kelvin), mask, kelvin)
+    return _op15_color_frame(_FORM_KELVIN, tint if tint is not None else tint_for_kelvin(kelvin),
+                             all_segments_mask(n), 8 * H6061_MASK_BYTES, kelvin)
 
 
 # Schemes whose colour screen turns an RGB pick that is exactly a Kelvin tint colour into a CCT write
@@ -589,8 +547,9 @@ def color_rgb(r: int, g: int, b: int, scheme: ColorScheme, segments: int | None 
     match scheme:
         case "h60a6":
             n = _segments_or_default(scheme, segments)
-            mask = _mask_bytes(all_segments_mask(n), n, COLOR_MASK_CAP)
-            return _op15_color_frame(_OP15_RGB, (r, g, b), mask)
+            mask = all_segments_mask(n)
+            positions = _mask_positions(mask, n, COLOR_MASK_CAP)
+            return _op15_color_frame(_FORM_KELVIN_TINT, (r, g, b), mask, positions)
         case "h6006" | "h6188":
             return _cct0d_frame((r, g, b))
         case "h61a8":
@@ -649,7 +608,8 @@ def segment_rgb(mask: int, r: int, g: int, b: int, scheme: ColorScheme,
             kelvin = rgb_as_kelvin(r, g, b, scheme, kelvin_range)
             if kelvin is not None:
                 return _rgb_pick_color_temp(r, g, b, kelvin, scheme, segments, mask)
-            return _op15_color_frame(_OP15_RGB, (r, g, b), _mask_bytes(mask, segments, COLOR_MASK_CAP))
+            return _op15_color_frame(_FORM_KELVIN_TINT, (r, g, b), mask,
+                                     _mask_positions(mask, segments, COLOR_MASK_CAP))
         case "h61a8":
             return _rgbic0b_frame((r, g, b), mask)
         case "h6006" | "h6188":
@@ -675,8 +635,8 @@ def segment_color_temp(mask: int, kelvin: int, scheme: ColorScheme,
     match scheme:
         case "h60a6":
             _check_kelvin(kelvin)
-            seg_mask = _mask_bytes(mask, segments, COLOR_MASK_CAP)
-            return _op15_color_frame(_OP15_CCT, (0xFF, 0xFF, 0xFF), seg_mask, kelvin,
+            positions = _mask_positions(mask, segments, COLOR_MASK_CAP)
+            return _op15_color_frame(_FORM_KELVIN_TINT, (0xFF, 0xFF, 0xFF), mask, positions, kelvin,
                                      tint if tint is not None else tint_for_kelvin(kelvin))
         case "h61a8":
             raise GoveeBleNotSupported("h61a8 has no colour-temperature capability")
@@ -696,9 +656,14 @@ def segment_brightness(mask: int, pct: int, scheme: ColorScheme,
     (GoveeBleNotSupported elsewhere)."""
     match scheme:
         case "h60a6":
-            level, seg_mask = max(1, _clamp_pct(pct)), _mask_bytes(mask, segments, BRIGHTNESS_MASK_CAP)
-            return _op15_frame(_F.Op15.set_brightness, lambda c15: _node(
-                _F.Op15BrightnessWide, c15, len(seg_mask), pct=level, seg_mask=seg_mask))
+            level = max(1, _clamp_pct(pct))
+            positions = _mask_positions(mask, segments, BRIGHTNESS_MASK_CAP)
+
+            def data(c15: Any) -> Any:
+                w = _spec.node(_F.Op15Brightness, c15, positions, pct=level)
+                w.mask = _spec.seg_mask(w, positions, BRIGHTNESS_MASK_CAP, _mask_bits(mask, positions))
+                return w
+            return _op15_frame(_spec.profile(num_segments=positions), _C.Op15.set_brightness, data)
         case "h61a8":
             raise GoveeBleNotSupported("h61a8 has no per-segment brightness")
         case "h6006" | "h6188":
@@ -709,26 +674,27 @@ def segment_brightness(mask: int, pct: int, scheme: ColorScheme,
             _unsupported_scheme(scheme)
 
 
+
 # ── zones / bars ─────────────────────────────────────────────────────────────
 def zone_power(zone: int, on: bool) -> bytes:
-    """33 30 <zoneIndex> <state> (H60A6 per-zone)."""
+    """33 30 <zoneIndex> <state> (H60A6 per-zone): ``cmd_30_write`` under form_30 ``zone_power``."""
     _check_range("zone", zone, 0, 0xFF)
-    body = _node(_F.ZonePowerWrite, None, zone=zone, state=POWER_ON if on else POWER_OFF)   # light_power
-    return _write_frame(_F.Command.light_direction_or_zone, lambda sc: _body(body, _PARAMS_LEN))
+    return _write_frame(_spec.profile(f_30=_FORM_ZONE_POWER), _C.Command.cmd_30, _form_params(
+        _F.Cmd30Write, _FORM_ZONE_POWER, _F.ZonePowerWrite, zone=zone, state=POWER_ON if on else POWER_OFF))
 
 
 def bar_switch(left: bool, right: bool) -> bytes:
-    """33 36 <left> <right> (H6047 both bars in one frame)."""
-    body = _node(_F.BarSwitchWrite, None, left=POWER_ON if left else POWER_OFF,   # light_power
-                 right=POWER_ON if right else POWER_OFF)
-    return _write_frame(_F.Command.compose_light_switch, lambda sc: _body(body, _PARAMS_LEN))
+    """33 36 <left> <right> (H6047 both bars in one frame): ``cmd_36_write`` under form_36 ``bar_pair``."""
+    return _write_frame(_spec.profile(f_36=_FORM_BAR_PAIR), _C.Command.cmd_36, _form_params(
+        _F.Cmd36Write, _FORM_BAR_PAIR, _F.BarPairWrite,
+        left=POWER_ON if left else POWER_OFF, right=POWER_ON if right else POWER_OFF))
 
 
 # ── scenes ───────────────────────────────────────────────────────────────────
 def scene_activate(code: int) -> bytes:
-    """33 05 04 <code u2le>."""
+    """33 05 04 <code u2le> (``scene_select``; the music code after it is the zero fill)."""
     _check_range("scene code", code, 0, 0xFFFF)
-    return _mode_frame(_F.SubMode.scene, lambda mp: _node(_F.ScenePayload, mp, effect=code))
+    return _mode_frame(_PLAIN, _C.SubMode.scene, _params(_F.SceneSelect, effect=code, music_code=0))
 
 
 def scene_upload_a3(value: bytes, comm_byte: int) -> list[bytes]:
@@ -736,7 +702,8 @@ def scene_upload_a3(value: bytes, comm_byte: int) -> list[bytes]:
     ``commBytes`` (``makeSendBytesV1``): the stream ``[0x01 marker, packet_count, comm_byte, value…]``
     cut into 17-byte pieces, one per frame, seq 0, 1, …, the last 0xFF. START (seq 0) and END (0xFF)
     are always two frames: a value of 14 bytes or fewer rides whole in START, followed by an empty END
-    (packet_count 2); a longer value's final chunk rides in END. ``packet_count`` counts every frame."""
+    (packet_count 2); a longer value's final chunk rides in END. ``packet_count`` counts every frame.
+    Each frame is the spec's ``a3_packet`` (START: its ``a3_start`` head, marker v1)."""
     # makeSendBytesV2 always appends the separate END bArr2 and starts packetCount at 2, so even a
     # value that fits in START is two frames. That short-value START + empty END form is
     # source-modeled; not live-verified until checked on the H6006/H6008 bench.
@@ -744,20 +711,20 @@ def scene_upload_a3(value: bytes, comm_byte: int) -> list[bytes]:
     if pieces > 0xFF:
         # The count is one byte and seq 0xFF is the end marker.
         raise GoveeBleInvalidValue(f"scene payload too large for 0xA3 upload ({pieces} packets)")
-    inline = SCENE_A3_PIECE_LEN - SCENE_A3_HEADER_LEN   # value bytes in START (a3_start.inline_value)
+    inline = SCENE_A3_PIECE_LEN - SCENE_A3_HEADER_LEN   # value bytes in START
 
     def chunk(i: int) -> bytes:
         def body(f: Any) -> Any:
-            m = _node(_F.MultiA3, f, seq_no=0xFF if i == pieces - 1 else i)
+            p = _spec.node(_F.A3Packet, f, index=0xFF if i == pieces - 1 else i)
             if i == 0:
-                m.frame = _node(_F.A3Start, m, marker=int(_F.A3StartMarker.v1_v2), packet_count=pieces,
-                                comm_byte=comm_byte & 0xFF,
-                                inline_value=value[:inline].ljust(inline, b"\0"))
+                p.start = _spec.node(_F.A3Start, p, marker=_F.A3Marker.v1, num_packets=pieces,
+                                     comm_byte=comm_byte & 0xFF)
+                p.chunk = value[:inline].ljust(inline, b"\0")
             else:
                 start = inline + (i - 1) * SCENE_A3_PIECE_LEN
-                m.frame = value[start:start + SCENE_A3_PIECE_LEN].ljust(SCENE_A3_PIECE_LEN, b"\0")
-            return m
-        return _frame_of(_F.ProType.multi_write_v1, body)
+                p.chunk = value[start:start + SCENE_A3_PIECE_LEN].ljust(SCENE_A3_PIECE_LEN, b"\0")
+            return p
+        return _frame_of(_PLAIN, _C.ProType.multi_write_v1, body)
 
     return [chunk(i) for i in range(pieces)]
 
@@ -771,8 +738,9 @@ def scene_upload_a4_mtu(value: bytes, comm_byte: int, *, mtu: int = 20) -> list[
     """0xA4-MTU multi-packet upload (``MultipleControllerCommV1.makeSendBytesMtu``). START [A4 00 00 01
     cntLo cntHi comm value x (mtu-8)]; MIDDLE [A4 seqLo seqHi value x (mtu-4)] (1-based); END [A4 FF FF
     value] carries the final chunk, or nothing when the whole value fits in START. ``cnt`` counts every
-    frame. Exact-length frames (BCC appended, not zero-padded). GoveeBleInvalidValue for an ``mtu``
-    outside the app's 20..512 or a value too long for the u16 count (seq 0xFFFF is the END marker)."""
+    frame. Exact-length frames (BCC appended, not zero-padded), each the spec's ``a4_packet``.
+    GoveeBleInvalidValue for an ``mtu`` outside the app's 20..512 or a value too long for the u16 count
+    (seq 0xFFFF is the END marker)."""
     _check_range("mtu", mtu, _A4_MTU_MIN, _A4_MTU_MAX)
     start_cap, mid_cap = mtu - 8, mtu - 4
     head, rest = value[:start_cap], value[start_cap:]
@@ -782,39 +750,40 @@ def scene_upload_a4_mtu(value: bytes, comm_byte: int, *, mtu: int = 20) -> list[
 
     chunks = [rest[i : i + mid_cap] for i in range(0, len(rest), mid_cap)] or [b""]
 
-    def packet(seq_marker: int, chunk: bytes) -> bytes:
+    def packet(index: int, chunk: bytes) -> bytes:
         def body(f: Any) -> Any:
-            m = _node(_F.MultiA4, f, seq_marker=seq_marker)
-            if seq_marker == 0:
-                m.start = _node(_F.A4StartHead, m, marker=b"\x01", packet_count=total,
-                                comm_byte=comm_byte & 0xFF)
-            m.value = chunk
-            return m
-        # exact-length frame: proType, seq marker u2le, START's 4-byte head, the chunk, the checksum
-        length = 1 + 2 + (4 if seq_marker == 0 else 0) + len(chunk) + 1
-        return _frame_of(_F.ProType.multi_write_v2, body, length)
+            p = _spec.node(_F.A4Packet, f, index=index, chunk=chunk)
+            if index == 0:   # contents [1]: Kaitai 0.11 writes a contents field only as given
+                p.start = _spec.node(_F.A4Start, p, marker=b"\x01", num_packets=total,
+                                     comm_byte=comm_byte & 0xFF)
+            return p
+        # exact-length frame: proType, index u2le, START's 4-byte head, the chunk, the checksum
+        length = 1 + 2 + (4 if index == 0 else 0) + len(chunk) + 1
+        return _frame_of(_PLAIN, _C.ProType.multi_write_v2, body, length)
 
     return [packet(0, head)] + [packet(0xFFFF if seq == len(chunks) else seq, chunk)
                                 for seq, chunk in enumerate(chunks, start=1)]
 
 
 # ── plug / secret ────────────────────────────────────────────────────────────
+_SYNC_MARKER: Final = 0x01   # epoch_time.marker_is_valid: the app always sends 1
+
+
 def plug_sync_time(unix_ts: int, tz_hour: int, tz_min: int) -> bytes:
-    """33 B5 <u4be epoch> 01 <s1 tz_hour> <s1 tz_min>."""
+    """33 B5 <u4be epoch> 01 <s1 tz_hour> <s1 tz_min> (``epoch_time``)."""
     ts = unix_ts & 0xFFFFFFFF
-    return _write_frame(_F.Command.plug_sync_time, lambda sc: _node(
-        _F.PlugSyncTimePayload, sc, unix_seconds=ts, marker=0x01, tz_hour=tz_hour, tz_min=tz_min))
+    return _write_frame(_PLAIN, _C.Command.plug_sync_time, _params(
+        _F.EpochTime, unix_seconds=ts, marker=_SYNC_MARKER, tz_hour=tz_hour, tz_min=tz_min))
 
 
 SECRET_LEN: Final = 8
 
 
 def secret_check(secret: bytes) -> bytes:
-    """33 B2 <8-byte account-lock secret>."""
+    """33 B2 <8-byte account-lock secret> (``secret_write``)."""
     if len(secret) != SECRET_LEN:
         raise GoveeBleInvalidValue(f"secret must be exactly {SECRET_LEN} bytes, got {len(secret)}")
-    return _write_frame(_F.Command.secret_write,
-                        lambda sc: _node(_F.SecretKeyWrite, sc, secret=bytes(secret)))
+    return _write_frame(_PLAIN, _C.Command.secret_write, _params(_F.SecretWrite, secret=bytes(secret)))
 
 
 # ── read requests (0xAA / 0xAC) ──────────────────────────────────────────────
@@ -822,71 +791,75 @@ def power_query() -> bytes:
     """aa 01: read the power / relay state (reply: parse_light_power on lights, parse_power's relay byte on
     plugs). No selector byte, as the app sends it (ControllerSwitch.Companion.b, ControllerSwitch.java:38-47;
     SwitchController / HeartGMessage on the plugs); no firmware image reads byte 2 of the request."""
-    return _request(_F.Command.switch)
+    return _request(_C.Command.power)
 
 
 def brightness_query() -> bytes:
     """aa 04: read the brightness (reply: parse_brightness). No selector byte, as the app sends it
     (ControllerBrightness.Companion.b, ControllerBrightness.java:40-48)."""
-    return _request(_F.Command.brightness)
+    return _request(_C.Command.brightness)
+
+
+_MODE_READ_SELECTOR: Final = 0x01   # mode_query: 1 = the mode read (AbsModeController.p, default ext {1})
 
 
 def mode_query() -> bytes:
-    """aa 05 01: read the mode report (reply: parse_active_scene / parse_kelvin / parse_mode_0d)."""
-    return _request(_F.Command.mode, int(_F.ModeReadSelector.request))
+    """aa 05 01: read the mode report (reply: the ``mode_report`` :mod:`.parse` decodes)."""
+    return _request(_C.Command.mode, _F.ModeQuery, selector=_MODE_READ_SELECTOR)
 
 
 def bar_switch_query() -> bytes:
     """aa 36: read H6047's two bars' power (reply: parse_bar_switch)."""
-    return _request(_F.Command.compose_light_switch)
+    return _request(_C.Command.cmd_36)
 
 
 def gradual(on: bool) -> bytes:
     """33 A3 <0/1>: gradual/fade on the BLE<->wifi control handoff (GRADUAL_CHANGE_WIFI_BLE)."""
-    return _write_frame(_F.Command.gradual_wifi_ble, lambda sc: _node(   # state: light_power
-        _F.GradualWrite, sc, state=POWER_ON if on else POWER_OFF))
+    return _write_frame(_PLAIN, _C.Command.gradual, _params(   # state: light_power
+        _F.GradualWrite, state=POWER_ON if on else POWER_OFF))
 
 
 def gradual_query() -> bytes:
-    """AA A3: read the gradual flag (reply = gradual_read, state @ byte0)."""
-    return _request(_F.Command.gradual_wifi_ble)
+    """AA A3: read the gradual flag (reply = gradual_state, state @ byte0)."""
+    return _request(_C.Command.gradual)
 
 
 def secret_read() -> bytes:
     """aa b1: read the 8-byte account-lock secret (reply: parse_secret)."""
-    return _request(_F.Command.secret_read)
+    return _request(_C.Command.secret_read)
 
 
 def plug_spec_query() -> bytes:
     """aa b3: read the plug's spec byte (reply: parse_plug_spec). Spec surface: Device does not send it."""
-    return _request(_F.Command.plug_spec)
+    return _request(_C.Command.plug_spec)
 
 
-CMD_BULB_COLOR_V1: Final = int(_F.Command.bulb_string_color_read)   # 0xA2 (mechanism-B V1: colour only)
-CMD_BULB_COLOR_V2: Final = int(_F.Command.local_color_read)         # 0xA5 (mechanism-B V2: + brightness)
+CMD_BULB_COLOR_V1: Final = int(_C.Command.color_group_rgb)   # 0xA2 (mechanism-B V1: colour only)
+CMD_BULB_COLOR_V2: Final = int(_C.Command.color_group)       # 0xA5 (mechanism-B V2: + brightness)
 
 
 def bulb_group_query(batch_seq: int, *, v2: bool = True) -> bytes:
     """Mechanism-B per-group colour read request: ``AA <A5|A2> <batch_seq>`` (1-based
-    batch number, AbsSingleController.p). V2 (0xA5) carries per-segment brightness.
+    batch number, AbsSingleController.p; the spec's ``group_query``). V2 (0xA5) carries per-segment
+    brightness.
 
     Device always sends V2; ``v2=False`` (the V1 ``aa a2`` read, BulbStringColorController) is
     spec surface for tools and tests."""
-    command = _F.Command.local_color_read if v2 else _F.Command.bulb_string_color_read
-    return _request(command, batch_seq & 0xFF)
+    command = _C.Command.color_group if v2 else _C.Command.color_group_rgb
+    return _request(command, _F.GroupQuery, group=batch_seq & 0xFF)
 
 
 def device_info_query(selector: int) -> bytes:
     """aa 07 <selector> (0x02 sn / device id, 0x03 hard version, 0x10 basic, 0x11 wifi)."""
-    return _request(_F.Command.device_info, selector & 0xFF)
+    return _request(_C.Command.device_info, _F.DeviceInfoQuery, selector=selector & 0xFF)
 
 
 def soft_version_query() -> bytes:
     """aa 06: read the firmware (soft) version (SoftVersionController; the reply is ASCII)."""
-    return _request(_F.Command.soft_version)
+    return _request(_C.Command.soft_version)
 
 
-CMD_IC_NUM: Final = int(_F.Command.ic_num)   # 0x40 (ic_segment_read reply): live IC/segment capability read
+CMD_IC_NUM: Final = int(_C.Command.ic_num)   # 0x40 (ic_count reply): live IC/segment capability read
 
 
 def ic_count_query() -> bytes:
@@ -894,12 +867,12 @@ def ic_count_query() -> bytes:
     parse_ic_count). The app does not use the reply's third byte for H6641: the piece and group
     counts are derived client-side from the IC count, as the app does
     (devices/_readback.live_ic_pieces: ceil(clamp(IC, 41, 70) / 5) pieces, ceil(pieces / 4) groups)."""
-    return _request(_F.Command.ic_num)
+    return _request(_C.Command.ic_num)
 
 
-# 0x41: striplight SINGLE_IC_SEGMENT_NUM (H6062); the shared enum names it on_off_memory, its meaning on
-# the other SKUs.
-CMD_SECTION_COUNT: Final = int(_F.Command.on_off_memory)
+# 0x41: striplight SINGLE_IC_SEGMENT_NUM (H6062), the form_41 ``section_count`` reply; power memory on the
+# other SKUs.
+CMD_SECTION_COUNT: Final = int(_C.Command.cmd_41)
 
 
 def section_count_query() -> bytes:
@@ -908,17 +881,21 @@ def section_count_query() -> bytes:
     the segment count the app uses for every mask and the ``aa a5`` group walk. Not the
     ``aa 40`` read of :func:`ic_count_query` (``SINGLE_IC_NUM_AND_PIECE_NUM`` = 64), from whose IC
     count the app derives the pieces client-side instead."""
-    return _request(_F.Command.on_off_memory)
+    return _request(_C.Command.cmd_41)
 
 
 def status_query(*, full: bool = False) -> bytes:
-    """0xAC status request: [AC, 03, N, cmd…]: 0x41 and 0x30, and with ``full`` the 0xA5 colour groups.
+    """0xAC status request: [AC, 03, N, cmd…]: 0x41 and 0x30, and with ``full`` the 0xA5 colour groups
+    (``status_request`` with ``status_read_args``).
 
     Device sends ``full`` unless the advertised pact rules the colour groups out
     (``DeviceProfile.status_color_groups_pact``; H60A6 pact (1, 1): ``ac 03 02 41 30``)."""
-    # The requested TLV types (enum status_tlv_type): 0x41 seg info, 0x30 zones, 0xA5 colour groups.
-    zone_types = [_F.StatusTlvType.on_off_memory, _F.StatusTlvType.zone_or_direction]
-    types = [int(t) for t in ([*zone_types, _F.StatusTlvType.color_group] if full else zone_types)]
-    return _frame_of(_F.ProType.multi_reply_read, lambda f: _node(
-        _F.MultiAc, f, command=int(_F.MultiAcCommand.single_read), count=len(types), requested_types=types,
-        pad=bytes(_BODY_LEN - 2 - len(types))))
+    # The requested TLV types (enum command): 0x41 seg info, 0x30 zones, 0xA5 colour groups.
+    zone_types = [_C.Command.cmd_41, _C.Command.cmd_30]
+    types = [*zone_types, _C.Command.color_group] if full else zone_types
+
+    def body(f: Any) -> Any:
+        req = _spec.node(_F.StatusRequest, f, command=_F.StatusCommand.status_read, rest=_spec.echo())
+        req.args = _spec.node(_F.StatusReadArgs, req, num_types=len(types), types=types)
+        return req
+    return _frame_of(_PLAIN, _C.ProType.status_read, body)

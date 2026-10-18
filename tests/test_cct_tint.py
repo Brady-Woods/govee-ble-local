@@ -25,13 +25,14 @@ from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
-from conftest import require_optional, read_struct
+import spec_read
+from conftest import require_optional
 from fake_ble import ble_device
 
 from govee_ble_local.devices.device import Device, make_device
 from govee_ble_local.exceptions import GoveeBleInvalidValue
+from govee_ble_local.wire import _spec
 from govee_ble_local.wire import build as b
-from govee_ble_local.wire import parse
 from govee_ble_local.wire.cct import tint_for_kelvin
 
 # bleak splits the Govee AD into company id (hdr low byte, marker 0x88 high byte) + value
@@ -209,11 +210,11 @@ def test_h6188_form_is_unchanged_by_the_both_slot_form() -> None:
 
 def test_both_slot_form_round_trips_kaitai() -> None:
     require_optional("kaitaistruct", reason="Kaitai runtime not installed")
-    gb = require_optional("govee_ble_local._generated.govee_ble_frame")
-    m = read_struct(gb.GoveeBleFrame.from_bytes(b.color_temp(4000, "h6006"))).body.params
-    assert m.sub_type == gb.GoveeBleFrame.SubMode.color_cct_0d
-    assert (m.params.r, m.params.g, m.params.b, m.params.kelvin) == (0xFF, 0xD5, 0xA1, 4000)
-    assert (m.params.tint_r, m.params.tint_g, m.params.tint_b) == (0xFF, 0xD5, 0xA1)
+    m = spec_read.tx(b.color_temp(4000, "h6006")).body.params
+    assert m.sub_mode == _spec.Common.SubMode.color_cct_0d
+    c, t = m.params.color, m.params.tint
+    assert (c.r, c.g, c.b, m.params.kelvin) == (0xFF, 0xD5, 0xA1, 4000)
+    assert (t.r, t.g, t.b) == (0xFF, 0xD5, 0xA1)
 
 
 # ── Kelvin: clamp to the device range, whole 100 K steps ─────────────────────
@@ -285,7 +286,8 @@ def test_both_slot_report_reads_back_as_cct() -> None:
 
 
 def test_parse_mode_0d_rule() -> None:
-    assert parse.parse_mode_0d(_frame(0xAA, 0x05, 0x0D, 9, 8, 7, 0x0F, 0xA0)) == (None, 4000)
-    assert parse.parse_mode_0d(_frame(0xAA, 0x05, 0x0D, 9, 8, 7, 0, 0)) == ((9, 8, 7), None)
-    assert parse.parse_mode_0d(_frame(0xAA, 0x05, 0x04, 1)) is None
-    assert parse.parse_mode_0d(b"\xaa\x05\x0d\x01") is None
+    # The default "rgb_kelvin" parse's 0x0d decode: any non-zero Kelvin is CCT.
+    assert spec_read.mode_color(_frame(0xAA, 0x05, 0x0D, 9, 8, 7, 0x0F, 0xA0)) == (None, 4000)
+    assert spec_read.mode_color(_frame(0xAA, 0x05, 0x0D, 9, 8, 7, 0, 0)) == ((9, 8, 7), None)
+    assert spec_read.mode_color(_frame(0xAA, 0x05, 0x04, 1)) is None
+    assert spec_read.mode_color(b"\xaa\x05\x0d\x01") is None

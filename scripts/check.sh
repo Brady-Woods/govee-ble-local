@@ -12,16 +12,18 @@
 #      product (gitignored; every build generates them, see _build_backend/). It needs the pinned
 #      JVM kaitai-struct-compiler (gen_kaitai.sh KSC_SERIES): `brew install kaitai-struct-compiler`,
 #      or scripts/install_ksc.sh on Debian/Ubuntu (what CI runs).
-#   2. ruff check over src tools tests spec _build_backend (rules in [tool.ruff.lint])
-#   3. mypy --strict on src/govee_ble_local and the build backend (generated classes are exempt
+#   2. the spec's structural gate, Suite S (spec/checks/run.sh, owned by the spec side: ksc python /
+#      java / javascript with no warnings, then spec/checks/lint.py)
+#   3. ruff check over src tools tests spec _build_backend (rules in [tool.ruff.lint])
+#   4. mypy --strict on src/govee_ble_local and the build backend (generated classes are exempt
 #      via [[tool.mypy.overrides]])
-#   4. bandit over src + tools + _build_backend, failing on Medium+ severity (-ll); the generated
+#   5. bandit over src + tools + _build_backend, failing on Medium+ severity (-ll); the generated
 #      classes are excluded; accepted findings carry inline `# nosec` + reason
-#   5. pip-audit of the package's resolved runtime dependencies, i.e. what users install
+#   6. pip-audit of the package's resolved runtime dependencies, i.e. what users install
 #      (needs network: skipped with a message when offline, unless CI=true, where it is
 #      mandatory). It deliberately does not scan the CI venv's own tooling (pip, setuptools,
 #      pytest, ...), whose advisories are unrelated to what this package ships.
-#   6. pytest with a coverage floor over the package, statements and branches (the same
+#   7. pytest with a coverage floor over the package, statements and branches (the same
 #      gate as hass-govee-ble-local's scripts/check.sh: 95%, --cov-branch). Only the
 #      Kaitai-generated _generated/ classes are omitted, via [tool.coverage.run]
 #
@@ -50,6 +52,9 @@ source "$VENV/bin/activate"
 echo ">> installing (editable + test + typing + lint extras)"
 python -m pip install --quiet --upgrade pip
 python -m pip install --quiet -e ".[test,typing,lint]"
+
+echo ">> spec lints (Suite S)"
+PYTHON=python bash spec/checks/run.sh
 
 echo ">> ruff check"
 ruff check src tools tests spec _build_backend

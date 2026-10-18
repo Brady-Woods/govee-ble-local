@@ -68,7 +68,7 @@ def test_catalog_with_bad_param_is_malformed(monkeypatch: pytest.MonkeyPatch) ->
 
 
 def test_frame_len_literals_unchanged() -> None:
-    assert len(build.frame(0x33, 1)) == FRAME_LEN
+    assert len(build.switch(True)) == FRAME_LEN
     from govee_ble_local.transport import handshake
 
     assert len(handshake._build_plain(1, b"x" * 16)) == FRAME_LEN

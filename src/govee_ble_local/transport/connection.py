@@ -77,13 +77,13 @@ from ..exceptions import (
     GoveeBleTimeout,
 )
 from ..models import Encryption
+from ..wire._spec import BgcInfo as _BgcInfo, Frame as _Frame
 from ..wire.build import (
     CMD_SECRET_READ,
     CMD_SECRET_WRITE,
     PRO_MULTI_AC,
     PRO_READ,
     PRO_WRITE,
-    _F,
 )
 from ..wire.describe import describe_frame
 from ..wire.parse import bgc_encrypt_version, parse_write_ack
@@ -98,9 +98,9 @@ _LOGGER = logging.getLogger(__name__)
 # a Bluetooth proxy.
 _FRAMES = logging.getLogger("govee_ble_local.frames")
 
-# proTypes a device legitimately sends us (the spec's rx_pro_type enum); anything else is surfaced as a
-# warning, and queued all the same.
-_KNOWN_RX_PRO_TYPES: Final = frozenset(int(t) for t in _F.RxProType)
+# proTypes a device legitimately sends us (the spec's RX routes: enum route, direction bit 0x100);
+# anything else is surfaced as a warning, and queued all the same.
+_KNOWN_RX_PRO_TYPES: Final = frozenset(int(r) & 0xFF for r in _Frame.Route if int(r) & 0x100)
 # Unsolicited pushes accumulate between operations; never let them grow unbounded.
 _RX_QUEUE_MAX: Final = 64
 # write_payload_size bounds: the app's MtuConfig default (ATT MTU 23 - 3) and its requested MTU 512 - 3.
@@ -493,9 +493,9 @@ class GoveeConnection:
         # BGC is authoritative for the version (1=RC4, 2=GCM); 0/absent keeps the
         # advertisement-derived mode (isEncryptionSupported = adv OR bgc).
         bgc_version = await self._read_bgc_encrypt_version()
-        if bgc_version == int(_F.EncryptVersion.aes_gcm):
+        if bgc_version == int(_BgcInfo.EncryptVersion.aes_gcm):
             self._encryption = Encryption.AES_GCM
-        elif bgc_version == int(_F.EncryptVersion.aes_rc4_psk):
+        elif bgc_version == int(_BgcInfo.EncryptVersion.aes_rc4_psk):
             self._encryption = Encryption.AES_RC4_PSK
         if self._encryption is Encryption.AES_GCM:
             raise GoveeBleNotSupported(

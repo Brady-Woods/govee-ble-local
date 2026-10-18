@@ -40,7 +40,7 @@ def _soft(plain: bytes) -> list[str]:
 def test_power_frame_clean() -> None:
     label, issues = describe_frame(_frame(0x33, 0x01, 0x01))
     assert not [r for sev, r in issues if sev == "hard"]
-    assert label == "write/switch"
+    assert label == "write/power"
 
 
 def test_mode_color_frame_clean() -> None:
@@ -88,8 +88,8 @@ def test_known_but_unmodelled_payload_is_soft() -> None:
 
 
 def test_modeled_read_reply_is_clean() -> None:
-    label, issues = describe_frame(_frame(0xAA, 0x01, 0x01))  # switch_read_reply IS modelled
-    assert not issues and label == "read/switch"
+    label, issues = describe_frame(_frame(0xAA, 0x01, 0x01))  # power_state IS modelled
+    assert not issues and label == "read/power"
 
 
 def test_mechanism_b_read_reply_now_modelled() -> None:

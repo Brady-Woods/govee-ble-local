@@ -14,7 +14,7 @@ from conftest import require_optional
 
 from govee_ble_local import identify, scenes
 from govee_ble_local.devices import _fold
-from govee_ble_local.devices.profile import PROFILES, profile_for
+from govee_ble_local.devices.profile import PROFILES, profile_for, wire_profile
 from govee_ble_local.models import DeviceState
 from govee_ble_local.wire import build, parse, reassemble
 
@@ -136,8 +136,10 @@ def test_the_0x15_kelvin_reads_signed(sku: str) -> None:
 
 
 def test_h6047_bar_kelvins_read_signed_and_a_negative_one_is_no_cct() -> None:
-    m = parse.mode_reply(_frame(0xAA, 0x05, 0x15, 0x01, 0x80, 0x00, 0x0A, 0x8C))
-    assert parse.bar_kelvin_of(m) == (-32768, 2700)
+    h6047 = profile_for("H6047")
+    assert h6047 is not None
+    m = parse.mode_reply(_frame(0xAA, 0x05, 0x15, 0x01, 0x80, 0x00, 0x0A, 0x8C), wire_profile(h6047))
+    assert parse.mode_color(m) == parse.BarKelvin(-32768, 2700)
     st = _fold_mode("H6047", 0x15, 0x01, 0x80, 0x00, 0x80, 0x00)
     assert st.zone_color_temp_kelvin == {} and st.color_temp_kelvin is None
     st = _fold_mode("H6047", 0x15, 0x01, 0x0A, 0x8C, 0x0A, 0x8C)
@@ -145,10 +147,13 @@ def test_h6047_bar_kelvins_read_signed_and_a_negative_one_is_no_cct() -> None:
 
 
 def test_the_scene_code_and_kind_3_come_from_the_spec() -> None:
-    assert parse.scene_of(parse.mode_value(bytes([0x04, 0x2A, 0x01]))) == 0x012A
-    assert parse.scene_of(parse.mode_value(bytes([0x15, 0x2A, 0x01]))) is None
-    report = parse.mode_value(bytes([0x0D, 1, 2, 3, 0x0A, 0x8C]))   # [r, g, b][kelvin]: kind 3, 5 bytes
-    assert parse.rgb_kelvin_0d_of(report) == (None, 2700)
+    h60a6 = profile_for("H60A6")
+    assert h60a6 is not None
+    prof = wire_profile(h60a6)
+    assert parse.scene_of(parse.mode_value(bytes([0x04, 0x2A, 0x01]), prof)) == 0x012A
+    assert parse.scene_of(parse.mode_value(bytes([0x15, 0x2A, 0x01]), prof)) is None
+    report = parse.mode_value(bytes([0x0D, 1, 2, 3, 0x0A, 0x8C]), prof)   # [r, g, b][kelvin]: 5 bytes
+    assert parse.mode_color(report) == (None, 2700)
 
 
 # ── device info, section count, flags ────────────────────────────────────────────────────────
@@ -192,7 +197,7 @@ def test_a_first_chunk_whose_last_len_does_not_fit_rejects_the_burst() -> None:
     assert reassemble.burst_chunks([bad]) == ([], False, 0)
     good = _frame(0xAC, 0x00, 0x01, 0x00, 3, 0x03, 0x00, 0x01, 0x01, 0x01)
     chunk = reassemble.read_ac_chunk(good)
-    assert chunk is not None and chunk.is_first and int(chunk.first_data_len) == 3
+    assert chunk is not None and chunk.is_first and int(chunk.len_first_data) == 3
     assert reassemble.reassemble([good]) == bytes([0x01, 0x01, 0x01])
 
 

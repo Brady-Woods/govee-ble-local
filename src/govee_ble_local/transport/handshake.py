@@ -20,19 +20,19 @@ from typing import Any, Final
 from ..const import FRAME_LEN, PSK
 from ..crypto import decrypt, encrypt
 from ..exceptions import GoveeBleInvalidValue
-from ..wire.build import _F, _frame_of, _load, _node
-from ..wire.parse import _parse_type
+from ..wire import _spec
+from ..wire._spec import Common as _C, Frame as _F
 
-HANDSHAKE_OPCODE: Final = int(_F.ProType.handshake)   # 0xE7
+HANDSHAKE_OPCODE: Final = int(_C.ProType.handshake)   # 0xE7
 
-_STEP_SESSION_KEY: Final = int(_F.HandshakeOp.v1_request_session_key)   # e7 01: request / reply with the key
-_STEP_CONFIRM: Final = int(_F.HandshakeOp.v1_confirm)                   # e7 02: confirm / ack
+_STEP_SESSION_KEY: Final = int(_C.HandshakeOp.v1_request_session_key)   # e7 01: request / reply with the key
+_STEP_CONFIRM: Final = int(_C.HandshakeOp.v1_confirm)                   # e7 02: confirm / ack
 _MAX_PAYLOAD: Final = FRAME_LEN - 3  # opcode, step and checksum take the other three bytes
 
 
 def _build_plain(step: int, payload: bytes | None = None) -> bytes:
-    """Plaintext handshake frame: [E7, step, <payload>, <random fill>, bcc], the spec's ``handshake``
-    body (``op``, ``data``) written by the generated classes.
+    """Plaintext handshake frame: [E7, step, <payload>, <random fill>, bcc], the spec's
+    ``handshake_request`` (``op``, ``fill``) written by the generated classes.
 
     Controller4Aes.e / .f (the only callers in the app) pass no payload; ``payload`` is kept
     for tests and raises GoveeBleInvalidValue if it doesn't fit in front of the checksum."""
@@ -42,7 +42,8 @@ def _build_plain(step: int, payload: bytes | None = None) -> bytes:
     head = payload or b""
     # Controller4Aes.a fills the rest of the data field, up to the checksum, with random bytes.
     data = head + os.urandom(_MAX_PAYLOAD - len(head))
-    return _frame_of(_F.ProType.handshake, lambda f: _node(_F.Handshake, f, op=step, data=data))
+    return _spec.build_frame(_C.ProType.handshake, _spec.PLAIN,
+                             lambda f: _spec.node(_F.HandshakeRequest, f, op=step, fill=data), FRAME_LEN)
 
 
 def build_step1(psk: bytes = PSK) -> bytes:
@@ -56,27 +57,22 @@ def build_step2(psk: bytes = PSK) -> bytes:
 
 
 def _handshake_body(pt: bytes) -> Any:
-    """The spec's ``handshake`` body (``op``, ``data``) of a decrypted ``e7`` frame, read by the frame
-    reader, or None when ``pt`` is not one. Its ``data`` is bytes 2..18 (the reader leaves the BCC byte
-    out, and checks it no more than the app does: Controller4Aes.g / .h read only the op and the key)."""
-    try:
-        f = _load(_F.from_bytes(bytes(pt)))
-    except Exception:  # noqa: BLE001 - a mis-keyed decrypt is noise: not an e7 frame
-        return None
-    return f.body if f.pro_type == _F.ProType.handshake else None
+    """The spec's ``handshake_reply`` (``op``, the ``key`` its op carries, ``rest``) of a decrypted ``e7``
+    frame, read by the frame reader, or None when ``pt`` is not one (a mis-keyed decrypt, or a session-key
+    reply too short for its key). The reader leaves the BCC byte out, and checks it no more than the app
+    does: Controller4Aes.g / .h read only the op and the key."""
+    f = _spec.try_read_frame(pt, _spec.RX, _spec.PLAIN)
+    return f.body if f is not None and f.pro_type == _C.ProType.handshake else None
 
 
 def parse_session_key(reply_ciphertext: bytes, psk: bytes = PSK) -> bytes | None:
-    """Decrypt an ``e7 01`` reply and extract the 16-byte session key
-    (Controller4Aes.g): ``handshake.data`` read by the spec's ``handshake_key_reply_data``, whose
-    ``session_key`` is its first 16 bytes. Returns None if it isn't a valid step-1 reply."""
+    """Decrypt an ``e7 01`` reply and extract the 16-byte session key (Controller4Aes.g): the spec's
+    ``handshake_reply.key``, a ``session_key`` (frame bytes 2..17). Returns None if it isn't a valid
+    step-1 reply."""
     body = _handshake_body(decrypt(reply_ciphertext, psk))
     if body is None or body.op != _STEP_SESSION_KEY:
         return None
-    try:
-        return bytes(_parse_type(_F.HandshakeKeyReplyData, bytes(body.data)).session_key)
-    except Exception:  # noqa: BLE001 - data shorter than the key
-        return None
+    return bytes(body.key.key)
 
 
 def is_step2_ack(reply_ciphertext: bytes, psk: bytes = PSK) -> bool:

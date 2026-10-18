@@ -74,10 +74,11 @@ probe='
 import govee_ble_local, govee_ble_local.wire.parse
 from kaitaistruct import ReadWriteKaitaiStruct
 from govee_ble_local._generated.govee_ble_frame import GoveeBleFrame
-from govee_ble_local.wire import build, parse
+from govee_ble_local.wire import _spec, build
 assert issubclass(GoveeBleFrame, ReadWriteKaitaiStruct), "the wheel ships a read-only build"
 assert "site-packages" in govee_ble_local.__file__, govee_ble_local.__file__
-assert parse.parse_light_power(build.power_query()) is False   # aa 01 00: built, then read back
+f = _spec.read_frame(build.power_query(), _spec.TX, _spec.PLAIN)   # aa 01: built, then read back
+assert f.body.command == _spec.Common.Command.power, f.body.command
 print("   imports and a frame round trip OK:", govee_ble_local.__file__)
 '
 

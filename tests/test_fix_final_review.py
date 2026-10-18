@@ -15,7 +15,7 @@ require_optional("kaitaistruct", reason="Kaitai runtime not installed")
 from govee_ble_local import scanner, scenes  # noqa: E402
 from govee_ble_local.devices import _fold  # noqa: E402
 from govee_ble_local.devices.device import Device, make_device  # noqa: E402
-from govee_ble_local.devices.profile import profile_for  # noqa: E402
+from govee_ble_local.devices.profile import profile_for, wire_profile  # noqa: E402
 from govee_ble_local.exceptions import GoveeBleConnectionError, GoveeBleError  # noqa: E402
 from govee_ble_local.models import DeviceState  # noqa: E402
 from govee_ble_local.wire import parse  # noqa: E402
@@ -33,6 +33,14 @@ _MUSIC = frame(0xAA, 0x05, 0x13, 0x01, 0x02)
 _STRATEGY_A_SKUS = ("H6006", "H6008", "H6004", "H6188")
 
 
+def _decode(sku: str, reply: bytes) -> Any:
+    """The colour ``reply`` carries under ``sku``'s mode decode (``parse.mode_color``), or None."""
+    profile = profile_for(sku)
+    assert profile is not None
+    m = parse.mode_reply(reply, wire_profile(profile))
+    return None if m is None else parse.mode_color(m)
+
+
 def _fold_reply(sku: str, reply: bytes, **start: Any) -> DeviceState:
     """State after folding ``reply`` into a DeviceState that starts as ``start``."""
     profile = profile_for(sku)
@@ -47,8 +55,8 @@ def test_h6052_0d_report_is_rgb_and_its_kelvin_bytes_are_not_read() -> None:
     assert profile_for("H6052").mode_color_parse == "rgb_0d"  # type: ignore[union-attr]
     st = _fold_reply("H6052", _LIVE_0D, color_temp_kelvin=2700)
     assert (st.rgb_color, st.color_temp_kelvin) == ((255, 255, 255), None)
-    assert parse.parse_mode_0d_rgb(_LIVE_0D) == (255, 255, 255)
-    assert parse.parse_mode_0d_rgb(frame(0xAA, 0x05, 0x0D, 0xFF, 0x00, 0x00, 0x0F, 0xA0)) == (255, 0, 0)
+    assert _decode("H6052", _LIVE_0D) == ((255, 255, 255), None)
+    assert _decode("H6052", frame(0xAA, 0x05, 0x0D, 0xFF, 0x00, 0x00, 0x0F, 0xA0)) == ((255, 0, 0), None)
 
 
 @pytest.mark.parametrize("reply", [_REPORT_15, _REPORT_0B, _REPORT_02, _MUSIC])
@@ -58,12 +66,12 @@ def test_h6052_other_colour_sub_modes_change_nothing(reply: bytes) -> None:
         st = _fold_reply("H6052", reply, **start)
         before = (start.get("rgb_color"), start.get("color_temp_kelvin"))
         assert (st.rgb_color, st.color_temp_kelvin) == before
-    assert parse.parse_mode_0d_rgb(reply) is None
+    assert _decode("H6052", reply) is None
 
 
 def test_h6052_rgb_parse_rejects_what_is_not_a_0d_report() -> None:
-    assert parse.parse_mode_0d_rgb(b"\xaa\x05\x0d\x01\x02") is None   # body shorter than [r, g, b]
-    assert parse.parse_mode_0d_rgb(frame(0xAA, 0x04, 0x0D, 1, 2, 3)) is None
+    assert _decode("H6052", b"\xaa\x05\x0d\x01\x02") is None   # body shorter than [r, g, b]
+    assert _decode("H6052", frame(0xAA, 0x04, 0x0D, 1, 2, 3)) is None
 
 
 # ── 0x0d bulbs and H6188: ModeParseStrategyConfig.a via OpInfo4Detail.parseModeValidBytes ─────
@@ -90,15 +98,15 @@ def test_strategy_a_reads_every_colour_sub_mode_with_the_0d_layout(sku: str) -> 
 
 
 def test_strategy_a_parse_returns() -> None:
-    assert parse.parse_mode_rgb_kelvin_tint(_REPORT_15) == ((1, 10, 140), None)
-    assert parse.parse_mode_rgb_kelvin_tint(_LIVE_0D) == (None, 2700)
+    assert _decode("H6008", _REPORT_15) == ((1, 10, 140), None)
+    assert _decode("H6008", _LIVE_0D) == (None, 2700)
     top = frame(0xAA, 0x05, 0x0D, 0xFF, 0xAE, 0x54, 0x7F, 0xFF)      # the largest positive short
-    assert parse.parse_mode_rgb_kelvin_tint(top) == (None, 0x7FFF)
-    assert parse.parse_mode_rgb_kelvin_tint(_NEGATIVE_K) == ((7, 8, 9), None)
-    assert parse.parse_mode_rgb_kelvin_tint(_MUSIC) is None
-    assert parse.parse_mode_rgb_kelvin_tint(frame(0xAA, 0x05, 0x04, 0x09, 0x00)) is None   # scene
-    assert parse.parse_mode_rgb_kelvin_tint(_LIVE_0D[:10]) is None   # kind 2 needs its 8 body bytes
-    assert parse.parse_mode_rgb_kelvin_tint(frame(0xAA, 0x04, 0x0D, 1, 2, 3)) is None
+    assert _decode("H6008", top) == (None, 0x7FFF)
+    assert _decode("H6008", _NEGATIVE_K) == ((7, 8, 9), None)
+    assert _decode("H6008", _MUSIC) is None
+    assert _decode("H6008", frame(0xAA, 0x05, 0x04, 0x09, 0x00)) is None   # scene
+    assert _decode("H6008", _LIVE_0D[:10]) is None   # rgb_kelvin_tint needs its 8 body bytes
+    assert _decode("H6008", frame(0xAA, 0x04, 0x0D, 1, 2, 3)) is None
 
 
 def test_scene_report_still_wins_on_the_strategy_a_skus() -> None:

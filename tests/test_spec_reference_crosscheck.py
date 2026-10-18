@@ -135,7 +135,7 @@ def test_reassemble_real_h60a6_burst_agrees(name: str) -> None:
     assert len(buf) == 12 + 17 * 8 + 12 == 160   # packet count 10, lastLen 12 from the 0xFF chunk
     assert _tlv_end(buf) == len(buf)             # exactly the TLV stream, nothing past it
     assert buf[-12:] == frames[-1][2:14]         # ...ending in the 0xFF chunk's lastLen data bytes
-    assert [t.type for t in ref.parse_status(buf).tlvs][-4:] == [0xA5] * 4   # incl. group 4 (segment 12)
+    assert [t.tag for t in ref.parse_status(buf).tlvs][-4:] == [0xA5] * 4   # incl. group 4 (segment 12)
     assert ra.reassemble(frames) == buf          # shipped trims the 0xFF chunk to lastLen too
     assert ref.chunk_ac(buf) == frames           # the inverse reproduces the capture byte for byte
 

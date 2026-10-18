@@ -14,7 +14,12 @@ for _p in (str(_SRC), str(_HERE)):
         sys.path.insert(0, _p)
 
 _GENERATED = _SRC / "govee_ble_local" / "_generated"
-_GENERATED_OUTPUTS = ("govee_ble_frame.py", "govee_advertisement.py")   # not __init__.py: written once
+
+
+def generated_outputs(root: pathlib.Path) -> tuple[str, ...]:
+    """The generated modules of ``root``'s spec: one per ``spec/*.ksy`` (not ``__init__.py``: written
+    once)."""
+    return tuple(f"{p.stem}.py" for p in sorted((root / "spec").glob("*.ksy")))
 
 
 def generated_classes_problem(root: pathlib.Path) -> str | None:
@@ -26,13 +31,14 @@ def generated_classes_problem(root: pathlib.Path) -> str | None:
     newer than the oldest output means the classes were built from something else (a touch or a stash
     round trip only costs a needless regeneration)."""
     generated = root / "src" / "govee_ble_local" / "_generated"
-    missing = [n for n in _GENERATED_OUTPUTS if not (generated / n).is_file()]
+    outputs = generated_outputs(root)
+    missing = [n for n in outputs if not (generated / n).is_file()]
     if missing:
         return (f"src/govee_ble_local/_generated/ is missing {', '.join(missing)}: run "
                 "`bash tools/gen_kaitai.sh` (needs the JVM kaitai-struct-compiler 0.11) or "
                 "`pip install -e .`, which generates them")
     inputs = [*(root / "spec").glob("*.ksy"), root / "tools" / "gen_kaitai.sh"]
-    oldest_output = min((generated / n).stat().st_mtime for n in _GENERATED_OUTPUTS)
+    oldest_output = min((generated / n).stat().st_mtime for n in outputs)
     stale = sorted(p.name for p in inputs if p.is_file() and p.stat().st_mtime > oldest_output)
     if stale:
         return (f"src/govee_ble_local/_generated/ is older than {', '.join(stale)} (edited, or changed by a "

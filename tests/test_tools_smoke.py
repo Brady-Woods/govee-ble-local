@@ -198,14 +198,11 @@ def test_read_kelvin_skips_other_submodes_and_does_not_swallow_attribute_errors(
 ) -> None:
     lc = _load("h60a6_live_check")
     assert asyncio.run(lc.read_kelvin(_FakeDev([_mode_frame(0x04, 2700)]))) is None
-    from govee_ble_local._generated.govee_ble_frame import GoveeBleFrame
+    from govee_ble_local.wire import _spec
 
     class Broken:
-        body = object()  # no .body -> must raise, not be swallowed
+        body = object()  # no .body.state -> must raise, not be swallowed
 
-        def _read(self) -> None:   # the generated classes are read-write: read on demand
-            pass
-
-    monkeypatch.setattr(GoveeBleFrame, "from_bytes", classmethod(lambda cls, b: Broken()))
+    monkeypatch.setattr(_spec, "read_frame", lambda *_a: Broken())
     with pytest.raises(AttributeError):
         asyncio.run(lc.read_kelvin(_FakeDev([_mode_frame(0x15, 2700)])))

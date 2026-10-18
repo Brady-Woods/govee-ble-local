@@ -11,16 +11,19 @@ the issues into a coverage report). It answers two questions about a plaintext f
       ``hard``     — a valid frame whose STRUCTURE the spec doesn't represent (real gap:
                      unknown proType/command/sub-mode/notify-sub, a parse failure, or a
                      device write-ACK rejection).
-      ``soft``     — a known opcode whose BODY is opaque (raw bytes): the spec models the
+      ``soft``     — a known opcode whose BODY is opaque (no case types it): the spec models the
                      frame but not this payload.
       ``artifact`` — invalid checksum / wrong length: not a real plaintext frame
                      (ciphertext or corruption), not a spec gap.
 
 Severities are consumed by the analyzer only; the runtime does not map them to log levels.
 
-``0xAC`` status replies are multi-frame bursts and can't be judged one frame at a time —
-use :func:`analyze_status_bursts` for those. Each chunk's framing (length, BCC) is still checked
-here, and the TX status request is read with the reader.
+A frame is read as the spec's ``govee_ble_frame(direction, profile)`` under :data:`_DESCRIBE`: the
+labels name what the frame carries, not how one SKU reads it, so a form-switched body is typed only in
+the form the library reads it (``33 01`` as a light's, the ``aa`` replies as :mod:`.parse` reads them)
+and is opaque otherwise (``33 30``, ``33 36``, ...). ``0xAC`` status replies are multi-frame
+bursts and can't be judged one frame at a time — use :func:`analyze_status_bursts` for those. Each
+chunk's framing (length, BCC) is still checked here, and the TX status request is read with the reader.
 """
 from __future__ import annotations
 
@@ -28,14 +31,22 @@ import collections
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+from kaitaistruct import KaitaiStruct
+
 from ..const import FRAME_LEN
 from ..crypto import checksum_ok
+from . import _spec
 from . import reassemble as _reassemble
-from .build import _F, _load
-from .parse import _Command, _NotifySub, _ProType, _SubMode, parse_write_ack, rx_frame
+from ._spec import Common as _C, Frame as _F
+from .parse import parse_write_ack
 
-# A frame's direction (the capture's "dir"). Only "rx" changes the reading: an RX 0x33 frame
-# is the device's write-ACK echo, not a write command.
+_ProType = _C.ProType
+_Command = _C.Command
+_SubMode = _C.SubMode
+_NotifySub = _C.NotifySub
+
+# A frame's direction (the capture's "dir"). It picks the route: an RX 0x33 frame is the device's
+# write-ACK echo, not a write command, and an RX 0xAA frame the reply, not the request.
 Direction = Literal["rx", "tx", "?"]
 # Issue severity; see the module docstring.
 Severity = Literal["hard", "soft", "artifact"]
@@ -43,26 +54,48 @@ Issue = tuple[Severity, str]
 
 # Variable-length multi-packet upload chunks (0xA1 / 0xA3 / 0xA4; e.g. the 19-byte 0xA4 END).
 _UPLOAD_CHUNK_TYPES = (_ProType.multi_write, _ProType.multi_write_v1, _ProType.multi_write_v2)
+# The routes the frame types (enum route): a proType with no TX route is device-sent, so a frame of
+# unknown direction is read on its RX route (0xEE pushes, 0xA2 multi-reads); 0xAA of unknown direction
+# is read as the reply, which carries the body.
+_TX_ROUTES = frozenset(int(r) for r in _F.Route if int(r) < 0x100)
 
-# TLV types the reassembled 0xAC status reply is known to carry: the spec's status_tlv_type enum
-# (Compose4BaseInfoSingleRead.u and the per-SKU status reads), the 0x00 padding sentinel included.
-KNOWN_STATUS_REPLY_TLVS: frozenset[int] = frozenset(int(t) for t in _F.StatusTlvType)
+# The forms a frame is described in: a light's 33 01, and the aa replies as wire.parse reads them (the
+# H6047 bars' aa 36, the H6062 aa 41, H61A8's aa a2 / aa a5 batches).
+_DESCRIBE = _spec.profile(
+    f_01=int(_C.Form01.light), f_36=int(_C.Form36.bar_pair), f_41=int(_C.Form41.section_count),
+    f_a2=int(_C.FormA2.bulb_batch_v1), f_a5=int(_C.FormA5.bulb_batch_v2))
+
+# TLV tags the reassembled 0xAC status reply is known to carry: a status_tlv's tag is a command (enum
+# command; Compose4BaseInfoSingleRead.u and the per-SKU status reads), the 0x00 padding sentinel included.
+KNOWN_STATUS_REPLY_TLVS: frozenset[int] = frozenset(int(t) for t in _Command)
 
 
-def _opaque(x: object) -> bool:
-    """True if the Kaitai reader left this body as raw bytes (no modelled layout)."""
-    return isinstance(x, (bytes, bytearray))
+def _modelled(x: object) -> bool:
+    """True if the reader typed this body: present, and (for a form-switched body, ``power_write`` /
+    ``cmd_30_write`` / ...) with a case for its form."""
+    if not isinstance(x, KaitaiStruct):
+        return False
+    return not hasattr(x, "form") or getattr(x, "body", None) is not None
+
+
+def _read_direction(pro_type: int, direction: str) -> int:
+    """The direction ``direction`` reads a frame of ``pro_type`` on (see :data:`_TX_ROUTES`)."""
+    if direction == "rx":
+        return _spec.RX
+    if direction == "tx":
+        return _spec.TX
+    return _spec.TX if pro_type in _TX_ROUTES and pro_type != _ProType.read else _spec.RX
 
 
 def describe_frame(plain: bytes, direction: str = "?") -> tuple[str, list[Issue]]:
     """Return ``(label, issues)`` for one plaintext frame. See the module docstring.
 
-    ``direction`` is a :data:`Direction`; only ``"rx"`` changes the reading."""
-    rx = rx_frame(plain)   # its pro_type routes the frame before the body is read
-    if rx is not None and rx.pro_type == _ProType.multi_reply_read:
+    ``direction`` is a :data:`Direction`; it picks the route (see :data:`_TX_ROUTES`)."""
+    pro_type = plain[0] if plain else None   # the proType routes the frame before the body is read
+    if pro_type == _ProType.status_read:
         return _describe_status(plain, direction)
-    if rx is not None and rx.pro_type in _UPLOAD_CHUNK_TYPES and len(plain) != FRAME_LEN:
-        return (f"multi-chunk/0x{int(rx.pro_type):02x}", [])
+    if pro_type in _UPLOAD_CHUNK_TYPES and len(plain) != FRAME_LEN:
+        return (f"multi-chunk/0x{pro_type:02x}", [])
     if len(plain) != FRAME_LEN:
         return (f"len={len(plain)}", [("artifact", f"not {FRAME_LEN} bytes (len {len(plain)})")])
     if not checksum_ok(plain):
@@ -70,20 +103,21 @@ def describe_frame(plain: bytes, direction: str = "?") -> tuple[str, list[Issue]
             "bad_checksum",
             [("artifact", "invalid BCC — likely undecrypted ciphertext / corrupt")],
         )
+    d = _read_direction(plain[0], direction)
     try:
-        f = _load(_F.from_bytes(plain))
+        f = _spec.read_frame(plain, d, _DESCRIBE)
     except Exception as exc:  # noqa: BLE001 - any reader failure on a valid frame is a spec gap
         return ("parse_error", [("hard", f"kaitai parse failed: {exc!r}")])
 
     pt = f.pro_type
     if not isinstance(pt, _ProType):
         return (f"proType=0x{int(pt):02x}", [("hard", f"unknown proType 0x{int(pt):02x}")])
-    if direction == "rx" and pt == _ProType.write:
+    if d == _spec.RX and pt == _ProType.write:
         return _describe_ack(plain, f.body)
     if pt == _ProType.write:
         return _describe_write(plain, f.body)
     if pt == _ProType.read:
-        return _describe_read(plain, f.body)
+        return _describe_read(plain, f.body, d)
     if pt == _ProType.notify:
         return _describe_notify(plain, f.body)
     return (pt.name, [])                    # multi_* / handshake: structural only.
@@ -94,19 +128,17 @@ def chunk_redacted(chunk: bytes) -> bool:
     (``tools/field_test/masking.py``: the first chunk keeps its 7-byte header, the others
     ``ac <index>``). Such a chunk fails the checksum but is not corrupt; :func:`_header_redacted` is
     the stricter first-chunk test for a capture masked before the header was kept."""
-    if len(chunk) != FRAME_LEN:
+    if len(chunk) != FRAME_LEN or chunk[0] != _ProType.status_read:
         return False
-    rx = rx_frame(chunk)
-    try:
-        body = rx.body   # multi_ac_reply_chunk: the header the masking keeps, then its data
-    except Exception:  # noqa: BLE001 - a first chunk whose last_len doesn't fit: not a masked one
+    body = _reassemble.read_ac_chunk(chunk)   # status_chunk: the header the masking keeps, then its data
+    if body is None:   # a first chunk whose len_last doesn't fit: not a masked one
         return False
-    return rx.pro_type == _ProType.multi_reply_read and not any(bytes(body.data)) and rx.checksum == 0
+    return not any(bytes(body.data)) and chunk[-1] == 0
 
 
 def _describe_status(plain: bytes, direction: str) -> tuple[str, list[Issue]]:
     """0xAC: framing checked as for any frame (length, BCC: the runtime drops a chunk that fails
-    them). A TX frame is the status request, which the spec models (``multi_ac``) and is read with
+    them). A TX frame is the status request, which the spec models (``status_request``) and is read with
     the reader; an RX chunk is a burst fragment, not parseable alone
     (:func:`status_burst_report` judges the bursts). A redacted chunk (:func:`chunk_redacted`) is
     labelled as a chunk without an issue."""
@@ -119,18 +151,19 @@ def _describe_status(plain: bytes, direction: str) -> tuple[str, list[Issue]]:
     if direction != "tx":
         return ("status-chunk", [])
     try:
-        req = _load(_F.from_bytes(plain)).body
+        req = _spec.read_frame(plain, _spec.TX, _spec.PLAIN).body
     except Exception as exc:  # noqa: BLE001 - a request the spec can't read is a gap
         return ("parse_error", [("hard", f"kaitai parse failed on the 0xAC request: {exc!r}")])
-    return (f"status-request/{len(req.requested_types)}", [])
+    args = getattr(req, "args", None)
+    return (f"status-request/{0 if args is None else len(args.types)}", [])
 
 
 def _describe_ack(plain: bytes, body: Any) -> tuple[str, list[Issue]]:
     """RX 0x33: the device's write-ACK echo ``[0x33, command, result, zeros]``, the spec's ``write_ack``
-    (``rx_frame``'s 0x33 body; result 0 = success). Command vs ack is direction-keyed (both are 0x33), so
-    the RX direction reads it as an ack. H6047 also answers 33-framed reads (``33 07 ss``, ``33 14`` /
-    ``20`` / ``21``) with read bodies under a 0x33 header; those are ``read_command``s, not acks, and the
-    app never sends them."""
+    (the write_rx route; result 0 = success). Command vs ack is direction-keyed (both are 0x33), so the
+    RX direction reads it as an ack. H6047 also answers 33-framed reads (``33 07 ss``, ``33 14`` /
+    ``20`` / ``21``) with read bodies under a 0x33 header; those are in the ack's ``rest``, and the app
+    never sends them."""
     cmd: Any = body.command   # the reader keeps an unknown command as its raw int
     name = cmd.name if isinstance(cmd, _Command) else f"0x{int(cmd):02x}"
     result = parse_write_ack(plain)   # write_ack.result (0 = ok)
@@ -148,50 +181,53 @@ def _describe_write(plain: bytes, body: Any) -> tuple[str, list[Issue]]:
     issues: list[Issue] = []
     params: Any = getattr(body, "params", None)
     if cmd == _Command.mode:
-        st: Any = getattr(params, "sub_type", None)
+        st: Any = getattr(params, "sub_mode", None)
         if isinstance(st, _SubMode):
             label += f"/{st.name}"
-            if _opaque(getattr(params, "params", None)):
+            if not _modelled(getattr(params, "params", None)):
                 issues.append(("soft", f"write mode/{st.name} payload not modelled"))
         elif st is not None:
             return (
                 f"write/mode/sub=0x{int(st):02x}",
-                [("hard", f"unknown mode sub_type 0x{int(st):02x}")],
+                [("hard", f"unknown mode sub_mode 0x{int(st):02x}")],
             )
-    elif _opaque(params):
+    elif not _modelled(params):
         issues.append(("soft", f"write {cmd.name} payload not modelled"))
     return (label, issues)
 
 
-def _describe_read(plain: bytes, body: Any) -> tuple[str, list[Issue]]:
-    """0xAA read request / reply: label by command (and mode selector); opaque replies are soft."""
+def _describe_read(plain: bytes, body: Any, direction: int) -> tuple[str, list[Issue]]:
+    """0xAA read request (TX, ``read_request``) / reply (RX, ``read_reply``): label by command (and mode
+    selector or sub-mode); an opaque reply is soft."""
     cmd: Any = body.command   # the reader keeps an unknown command as its raw int
     if not isinstance(cmd, _Command):
         return (f"read/cmd=0x{int(cmd):02x}", [("hard", f"unknown command 0x{int(cmd):02x} (read)")])
     label = f"read/{cmd.name}"
+    if direction == _spec.TX:                      # read_request: the selector is all it carries
+        sel = getattr(getattr(body, "selector", None), "selector", None)
+        if cmd == _Command.mode and sel is not None:
+            label += f"/sub=0x{int(sel):02x}"
+        return (label, [])
     issues: list[Issue] = []
-    rb: Any = getattr(body, "body", None)
-    if cmd == _Command.mode:                       # mode_read: 0x15/0x13 typed; others opaque
-        sel = getattr(rb, "selector_or_sub_mode", None)
-        if sel is not None:
-            label += f"/sub=0x{sel:02x}"
-        # The request selector (mode_read_selector.request) has no reply body; a scene report's code is
-        # mode_read.scene_code (read in wire.parse).
-        is_request = sel == int(_F.ModeReadSelector.request)
-        if _opaque(getattr(rb, "rest", None)) and not is_request and getattr(rb, "scene_code", None) is None:
-            issues.append(("soft", f"mode read sub 0x{sel:02x} reply not modelled"))
-    elif _opaque(rb):                              # e.g. 0xa2 BulbGroupColor (mechanism B)
+    state: Any = getattr(body.state, "body", None)
+    if cmd == _Command.mode:                       # mode_report: [sub_mode][params by the decode]
+        sub = getattr(state, "sub_mode", None)
+        if sub is not None:
+            label += f"/sub=0x{int(sub):02x}"
+            if getattr(state, "params", None) is None:
+                issues.append(("soft", f"mode read sub 0x{int(sub):02x} reply not modelled"))
+    elif not _modelled(state):                     # no case for this command's reply
         issues.append(("soft", f"read {cmd.name} reply not modelled (opaque)"))
     return (label, issues)
 
 
 def _describe_notify(plain: bytes, body: Any) -> tuple[str, list[Issue]]:
     """0xEE device push: label by sub-type; an opaque payload is soft."""
-    st: Any = body.sub_type   # the reader keeps an unknown sub-type as its raw int
+    st: Any = body.sub   # the reader keeps an unknown sub-type as its raw int
     if not isinstance(st, _NotifySub):
         return (f"notify/sub=0x{int(st):02x}", [("hard", f"unknown notify sub_type 0x{int(st):02x}")])
     issues: list[Issue] = []
-    if _opaque(getattr(body, "data", None)):
+    if not _modelled(getattr(body, "data", None)):
         issues.append(("soft", f"notify {st.name} payload not modelled"))
     return (f"notify/{st.name}", issues)
 
@@ -332,7 +368,7 @@ def status_burst_report(rx_ac: list[bytes]) -> StatusBurstReport:
         skipped: list[_reassemble.TlvCut] = []
         tlvs, cut = _reassemble.walk_status_tlvs(_reassemble.reassemble(burst), skipped=skipped)
         for tlv in tlvs:
-            t = int(tlv.type)
+            t = int(tlv.tag)
             report.tlv_types[t] += 1
             if t not in KNOWN_STATUS_REPLY_TLVS:  # unknown type -> value falls to raw bytes
                 report.gaps.append(f"0xAC reply TLV type 0x{t:02x} not modelled")

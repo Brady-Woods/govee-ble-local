@@ -113,7 +113,7 @@ def test_frames_logger_emits_when_enabled(caplog: pytest.LogCaptureFixture) -> N
     with caplog.at_level(logging.DEBUG, logger=_FRAMES_LOGGER):
         c._capture("tx", wire=_bcc(0x33, 0x01, 0x01), plain=_bcc(0x33, 0x01, 0x01), enc="none")
     recs = [r for r in caplog.records if r.name == _FRAMES_LOGGER]
-    assert recs and "plain=" in recs[0].getMessage() and "write/switch" in recs[0].getMessage()
+    assert recs and "plain=" in recs[0].getMessage() and "write/power" in recs[0].getMessage()
 
 
 def test_frames_logger_silent_when_off(

@@ -10,6 +10,8 @@ from conftest import require_optional
 
 require_optional("kaitaistruct", reason="Kaitai runtime not installed")
 
+import spec_read  # noqa: E402
+
 from govee_ble_local.wire import parse  # noqa: E402
 
 
@@ -39,11 +41,15 @@ def test_brightness_raw_no_rescale() -> None:
 
 
 def test_active_scene_and_kelvin() -> None:
-    assert parse.parse_active_scene(f(0xAA, 0x05, 0x04, 0x82, 0x4A)) == 0x4A82  # u2le
-    assert parse.parse_active_scene(f(0xAA, 0x05, 0x15, 0x01, 0x0A, 0x8C)) is None  # cct, not scene
-    assert parse.parse_kelvin(f(0xAA, 0x05, 0x15, 0x01, 0x0A, 0x8C)) == 2700  # u2be
-    assert parse.parse_kelvin(f(0xAA, 0x05, 0x15, 0x01, 0x19, 0x64)) == 6500
-    assert parse.parse_kelvin(f(0xAA, 0x05, 0x04, 0x82, 0x4A)) is None  # scene, not cct
+    def scene(frame: bytes) -> int | None:
+        return parse.scene_of(parse.mode_reply(frame, spec_read.mode_profile()))
+
+    assert scene(f(0xAA, 0x05, 0x04, 0x82, 0x4A)) == 0x4A82  # u2le
+    assert scene(f(0xAA, 0x05, 0x15, 0x01, 0x0A, 0x8C)) is None  # cct, not scene
+    # The default parse's 0x15: [gradual][kelvin u2be]
+    assert spec_read.mode_color(f(0xAA, 0x05, 0x15, 0x01, 0x0A, 0x8C)) == parse.KelvinReport(2700)
+    assert spec_read.mode_color(f(0xAA, 0x05, 0x15, 0x01, 0x19, 0x64)) == parse.KelvinReport(6500)
+    assert spec_read.mode_color(f(0xAA, 0x05, 0x04, 0x82, 0x4A)) is None  # scene, not cct
 
 
 def test_bar_switch() -> None:
@@ -172,10 +178,9 @@ def test_unparseable_replies_are_none_not_raise(caplog: pytest.LogCaptureFixture
 
 
 def test_mode_0d_parsers_agree_on_random_20_byte_frames() -> None:
-    # parse_mode_0d (bulbs) and parse_mode_0d_rgblight (H6188) both read the spec's kind 2
-    # [r, g, b, kelvin u2be, tint] layout (ModeParseStrategyConfig.a in the bulblight and rgblight
-    # splits). Pin both to the byte-level decode the hand decoder used before it moved onto the
-    # generated reader, on 2000 seeded random 20-byte frames.
+    # The default "rgb_kelvin" parse reads 0x0d as the spec's rgb_kelvin_tint [r, g, b, kelvin, tint]
+    # layout, any non-zero Kelvin (unsigned) as CCT. Pin it to the byte-level decode the hand decoder used
+    # before it moved onto the generated reader, on 2000 seeded random 20-byte frames.
     rng = random.Random(0x0D)  # noqa: S311 - deterministic test vectors
     for _ in range(2000):
         body = [rng.randrange(256) for _ in range(16)]
@@ -184,7 +189,7 @@ def test_mode_0d_parsers_agree_on_random_20_byte_frames() -> None:
         frame = f(0xAA, 0x05, 0x0D, *body)
         kelvin = (frame[6] << 8) | frame[7]
         expect = (None, kelvin) if kelvin else ((frame[3], frame[4], frame[5]), None)
-        assert parse.parse_mode_0d(frame) == parse.parse_mode_0d_rgblight(frame) == expect
+        assert spec_read.mode_color(frame) == expect
 
 
 def test_group_helpers_share_one_assembly() -> None:

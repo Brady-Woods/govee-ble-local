@@ -15,7 +15,7 @@ from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
-from conftest import require_optional, read_struct
+from conftest import require_optional
 from fake_ble import ble_device, unacked_via
 
 from govee_ble_local import Capability, Encryption
@@ -245,23 +245,32 @@ def test_gradual_not_supported_where_the_profile_lacks_it() -> None:
 
 # ── read-back parse ──────────────────────────────────────────────────────────
 def test_parse_bar_kelvin() -> None:
+    import spec_read
+
+    def bars(frame: bytes) -> object:
+        return spec_read.mode_color(frame, "kelvin_15", bar_switch=True)
+
     f = _frame(0xAA, 0x05, 0x15, 0x01, 0x0A, 0x8C, 0x0F, 0xA0)
-    assert parse.parse_bar_kelvin(f) == (2700, 4000)
-    assert parse.parse_kelvin(f) == 2700                      # the left kelvin, as before
-    assert parse.parse_bar_kelvin(_frame(0xAA, 0x05, 0x15, 0x00, 0, 0, 0, 0)) == (0, 0)
-    assert parse.parse_bar_kelvin(_frame(0xAA, 0x05, 0x04, 0x09, 0x00)) is None   # scene mode
-    assert parse.parse_bar_kelvin(_frame(0xAA, 0x04, 0x15)) is None               # not a mode reply
+    assert bars(f) == parse.BarKelvin(2700, 4000)
+    assert spec_read.mode_color(f) == parse.KelvinReport(2700)   # the left kelvin, as before
+    assert bars(_frame(0xAA, 0x05, 0x15, 0x00, 0, 0, 0, 0)) == parse.BarKelvin(0, 0)
+    assert bars(_frame(0xAA, 0x05, 0x04, 0x09, 0x00)) is None   # scene mode
+    assert bars(_frame(0xAA, 0x04, 0x15)) is None               # not a mode reply
 
 
 def test_ksy_reads_gradual_two_kelvins_and_the_feast_byte() -> None:
     require_optional("kaitaistruct", reason="Kaitai runtime not installed")
-    gb = require_optional("govee_ble_local._generated.govee_ble_frame")
+    import spec_read
+
+    from govee_ble_local.wire import _spec
+
     report = _frame(0xAA, 0x05, 0x15, 0x01, 0x0A, 0x8C, 0x0F, 0xA0)
-    mode = read_struct(gb.GoveeBleFrame.from_bytes(report)).body.body
-    rest = mode.rest
-    assert (rest.op, rest.kelvin, rest.kelvin_right) == (1, 2700, 4000)    # [gradual][kL][kR]
-    bars = read_struct(gb.GoveeBleFrame.from_bytes(_frame(0xAA, 0x36, 0x01, 0x00, 0x01))).body.body
-    assert (bars.left, bars.right, bars.movie_feast) == (1, 0, 1)
+    pair = int(_spec.Common.ColorDecode.gradual_kelvin_pair_s16be)
+    layout = spec_read.rx(report, c15=pair).body.state.body.params.layout
+    assert (layout.gradual, layout.kelvin, layout.kelvin_b) == (1, 2700, 4000)    # [gradual][kL][kR]
+    bars = spec_read.rx(_frame(0xAA, 0x36, 0x01, 0x00, 0x01), f_36=int(_spec.Common.Form36.bar_pair))
+    bar = bars.body.state.body.body
+    assert (bar.left, bar.right, bar.feast) == (1, 0, 1)
 
 
 # ── read-back through update() ───────────────────────────────────────────────

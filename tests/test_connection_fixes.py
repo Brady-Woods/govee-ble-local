@@ -294,10 +294,15 @@ def test_named_constants_in_use() -> None:
 
 
 def test_known_rx_types_are_the_specs_rx_pro_type() -> None:
-    # The spec's rx_pro_type enum (what a device sends): 0x3A write_read, 0xA6 MTU multiple write and 0xAB
-    # (the light-side 0xAB read reply) joined the old hand-kept set; they are no longer logged as unknown.
+    # The spec's RX routes (what a device sends): the old rx_pro_type set, and the 0x05 / 0x3F / 0x66 /
+    # 0xA5 / 0xB0 / 0xB3 / 0xB4 heads the frame names; none of them is logged as unknown.
+    from govee_ble_local.wire import _spec
+
+    rx_routes = frozenset(int(r) & 0xFF for r in _spec.Frame.Route if int(r) & 0x100)
+    assert rx_routes == conn_mod._KNOWN_RX_PRO_TYPES
     assert frozenset(
-        {0x33, 0x3A, 0xAA, 0xAC, 0xEE, 0xA1, 0xA2, 0xA3, 0xA4, 0xA6, 0xAB, 0xE7}
+        {0x33, 0x3A, 0xAA, 0xAC, 0xEE, 0xA1, 0xA2, 0xA3, 0xA4, 0xA6, 0xAB, 0xE7, 0x05, 0x3F, 0x66, 0xA5, 0xB0,
+         0xB3, 0xB4}
     ) == conn_mod._KNOWN_RX_PRO_TYPES
 
 

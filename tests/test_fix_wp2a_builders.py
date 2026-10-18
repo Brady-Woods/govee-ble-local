@@ -8,6 +8,7 @@ from typing import get_args
 
 import pytest
 import spec_frames as sf
+from fake_ble import frame
 
 from govee_ble_local.exceptions import GoveeBleError, GoveeBleInvalidValue, GoveeBleNotSupported
 from govee_ble_local.wire import build as b
@@ -163,7 +164,7 @@ def test_rgb_pick_as_kelvin_masks_unchanged() -> None:
         0x5, 2700, "h60a6", 13, tint=(0xFF, 0xAE, 0x54))
     for scheme in ("h6006", "h6188"):
         f = b.color_rgb_frames(0xFF, 0xA9, 0x57, scheme, None, (2000, 9000))
-        assert f == [b.frame(0x33, 0x05, 0x0D, 0xFF, 0xA9, 0x57, 0x0A, 0x8C, *tint_for_kelvin(2700))]
+        assert f == [frame(0x33, 0x05, 0x0D, 0xFF, 0xA9, 0x57, 0x0A, 0x8C, *tint_for_kelvin(2700))]
 
 
 def test_status_query_full_is_keyword_only() -> None:

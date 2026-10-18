@@ -142,11 +142,17 @@ flow trace, or the per-frame firehose, and decode a capture with the bundled
 
 ## Protocol
 
-The wire protocol is specified as Kaitai Struct definitions — [`spec/govee_ble.ksy`](spec/govee_ble.ksy)
-(command/reply frames) and [`spec/govee_adv.ksy`](spec/govee_adv.ksy) (advertisements) — with the
-per-device table in [`spec/devices.yaml`](spec/devices.yaml). The Kaitai read-write classes under
-`govee_ble_local/_generated/` are generated from those, and the library parses and builds every frame
-with them (source of truth: the decompiled Govee app).
+The wire protocol is specified as Kaitai Struct definitions in [`spec/`](spec/): one root per message
+class — [`govee_ble_frame.ksy`](spec/govee_ble_frame.ksy) (every command/reply frame, typed by its
+direction and the device's [`govee_profile`](spec/govee_profile.ksy)), the decoded state
+([`govee_state.ksy`](spec/govee_state.ksy), [`govee_status_stream.ksy`](spec/govee_status_stream.ksy)),
+the upload values ([`govee_upload.ksy`](spec/govee_upload.ksy)), the advertisement
+([`govee_manufacturer_data.ksy`](spec/govee_manufacturer_data.ksy),
+[`govee_scan_record.ksy`](spec/govee_scan_record.ksy)) and the BGC-info value
+([`govee_bgc_info.ksy`](spec/govee_bgc_info.ksy)), sharing [`govee_common.ksy`](spec/govee_common.ksy)
+— with the per-device table in [`spec/devices.yaml`](spec/devices.yaml). The Kaitai read-write classes
+under `govee_ble_local/_generated/` are generated from those, and the library parses and builds every
+frame with them (source of truth: the decompiled Govee app).
 
 ## Contributing & versioning
 

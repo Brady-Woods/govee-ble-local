@@ -37,7 +37,7 @@ from ..transport.connection import GoveeConnection
 from ..wire import build, parse, reassemble
 from . import _fold, _readback
 from .brightness import percent_to_device
-from .profile import DeviceProfile, profile_for
+from .profile import DeviceProfile, profile_for, wire_profile
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -1071,13 +1071,15 @@ class Device:
     async def _read_plug(self) -> bool:
         """Poll a plug's relay state (aa 01 -> relay bitmask) so state.is_on reflects the device
         rather than the last command sent. On means one of the profile's ``relay_on_mask`` bits is
-        set: bit 0 on the single-outlet SKUs, as the app's BleOpV1/BleOpV3 detail screens read it.
-        Returns whether the relay state was read back."""
-        def apply(power: int) -> None:
-            self._state.is_on = bool(power & self.profile.relay_on_mask)
+        set (:func:`.parse.parse_relay_on`): bit 0 on the single-outlet SKUs, as the app's
+        BleOpV1/BleOpV3 detail screens read it. Returns whether the relay state was read back."""
+        prof = wire_profile(self.profile)
 
-        applied = await self._read_command("plug power", build.power_query(),
-                                           parse.parse_power, apply) == "applied"
+        def apply(on: bool) -> None:
+            self._state.is_on = on
+
+        applied = await self._read_command(
+            "plug power", build.power_query(), lambda r: parse.parse_relay_on(r, prof), apply) == "applied"
         self._finish_read(applied, power_read=applied)
         return applied
 
@@ -1188,7 +1190,8 @@ class Device:
 
     async def _read_mode(self) -> _ReadResult:
         """Read the aa 05 mode report into state (:meth:`_apply_mode_reply`)."""
-        return await self._read_command("mode", build.mode_query(), parse.mode_reply,
+        prof = wire_profile(self.profile)
+        return await self._read_command("mode", build.mode_query(), lambda r: parse.mode_reply(r, prof),
                                         lambda m: _fold.apply_mode(self.profile, self._state, m))
 
     async def _read_section_count(self) -> bool:

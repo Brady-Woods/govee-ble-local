@@ -23,7 +23,12 @@ _ROOT = Path(__file__).resolve().parent.parent
 _GENERATOR = _ROOT / "tools" / "gen_kaitai.sh"
 _SPEC = _ROOT / "spec"
 _GENERATED = _ROOT / "src" / "govee_ble_local" / "_generated"
-_GENERATED_FILES = ("__init__.py", "govee_ble_frame.py", "govee_advertisement.py")
+# One module per spec/*.ksy, plus the package file gen_kaitai.sh writes (tests/test_build_product.py checks
+# this list against spec/).
+_GENERATED_FILES = (
+    "__init__.py", "govee_bgc_info.py", "govee_ble_frame.py", "govee_common.py", "govee_manufacturer_data.py",
+    "govee_profile.py", "govee_scan_record.py", "govee_state.py", "govee_status_stream.py", "govee_upload.py",
+)
 
 
 def _ensure_generated() -> None:

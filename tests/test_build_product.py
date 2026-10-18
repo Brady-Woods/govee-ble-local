@@ -7,6 +7,7 @@ the generation first, since CI always generates before building and would not no
 stop when the classes are missing or older than the spec."""
 from __future__ import annotations
 
+import importlib
 import importlib.util
 import os
 import pathlib
@@ -15,18 +16,24 @@ from types import ModuleType, SimpleNamespace
 from typing import Any
 
 import pytest
-from conftest import generated_classes_problem
+from conftest import generated_classes_problem, generated_outputs
 from kaitaistruct import ReadWriteKaitaiStruct
 
 _ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 
-def test_generated_classes_are_a_read_write_build() -> None:
-    from govee_ble_local._generated.govee_advertisement import GoveeAdvertisement
-    from govee_ble_local._generated.govee_ble_frame import GoveeBleFrame
+@pytest.mark.parametrize("module", generated_outputs(_ROOT))
+def test_generated_classes_are_a_read_write_build(module: str) -> None:
+    # Each spec root (spec/<root>.ksy -> _generated/<root>.py: class GoveeBleFrame, GoveeState, ...).
+    stem = module.removesuffix(".py")
+    generated = importlib.import_module(f"govee_ble_local._generated.{stem}")
+    root = getattr(generated, "".join(part.title() for part in stem.split("_")))
+    assert issubclass(root, ReadWriteKaitaiStruct)
 
-    assert issubclass(GoveeBleFrame, ReadWriteKaitaiStruct)
-    assert issubclass(GoveeAdvertisement, ReadWriteKaitaiStruct)
+
+def test_backend_lists_every_generated_module() -> None:
+    # The sdist-reuse check names the shipped modules (an sdist has no spec/ to derive them from).
+    assert set(_backend()._GENERATED_FILES) == {"__init__.py", *generated_outputs(_ROOT)}
 
 
 def _backend() -> ModuleType:
@@ -121,11 +128,11 @@ def _checkout(tmp_path: pathlib.Path) -> pathlib.Path:
     (tmp_path / "tools").mkdir()
     generated = tmp_path / "src" / "govee_ble_local" / "_generated"
     generated.mkdir(parents=True)
-    for path in (tmp_path / "spec" / "govee_ble.ksy", tmp_path / "spec" / "govee_adv.ksy",
+    for path in (tmp_path / "spec" / "govee_ble_frame.ksy", tmp_path / "spec" / "govee_common.ksy",
                  tmp_path / "tools" / "gen_kaitai.sh"):
         path.write_text("")
         os.utime(path, (1_000, 1_000))
-    for name in ("govee_ble_frame.py", "govee_advertisement.py"):
+    for name in ("govee_ble_frame.py", "govee_common.py"):
         (generated / name).write_text("")
         os.utime(generated / name, (2_000, 2_000))
     return tmp_path
@@ -138,15 +145,15 @@ def test_conftest_accepts_classes_newer_than_the_spec(tmp_path: pathlib.Path) ->
 def test_conftest_stops_on_classes_older_than_the_spec(tmp_path: pathlib.Path) -> None:
     """An ignored _generated/ survives a git switch or pull that rewrites a .ksy (fresh mtime)."""
     root = _checkout(tmp_path)
-    os.utime(root / "spec" / "govee_ble.ksy", (3_000, 3_000))
+    os.utime(root / "spec" / "govee_ble_frame.ksy", (3_000, 3_000))
     problem = generated_classes_problem(root)
-    assert problem and "older than govee_ble.ksy" in problem and "gen_kaitai.sh" in problem
+    assert problem and "older than govee_ble_frame.ksy" in problem and "gen_kaitai.sh" in problem
     os.utime(root / "tools" / "gen_kaitai.sh", (3_000, 3_000))
-    assert "gen_kaitai.sh, govee_ble.ksy" in (generated_classes_problem(root) or "")
+    assert "gen_kaitai.sh, govee_ble_frame.ksy" in (generated_classes_problem(root) or "")
 
 
 def test_conftest_stops_on_missing_classes(tmp_path: pathlib.Path) -> None:
     root = _checkout(tmp_path)
-    (root / "src" / "govee_ble_local" / "_generated" / "govee_advertisement.py").unlink()
+    (root / "src" / "govee_ble_local" / "_generated" / "govee_common.py").unlink()
     problem = generated_classes_problem(root)
-    assert problem and "missing govee_advertisement.py" in problem
+    assert problem and "missing govee_common.py" in problem

@@ -88,6 +88,41 @@ model, from which the shipped readers are generated).
   (default 20, today's frames).
 
 ### Changed
+- The library moved onto the clean spec (spec/clean-spec a3e3e92: nine `spec/*.ksy` roots, every frame a
+  `govee_ble_frame(direction, profile)`), with no change to the bytes sent or the decoded state:
+  - `wire/_spec.py` is the library's one import of the generated classes and the spec's read-write
+    contract (read a parametric root, link and check every node, write in two passes with the checksum
+    by `checksum_kind`); `_spec.profile()` builds the `govee_profile` (command forms, counts, colour-group
+    rule, power rule, mode decode) of a set of device facts, cached, and
+    `devices.profile.wire_profile()` maps a `DeviceProfile` onto it.
+  - `wire.build` writes `write_command` / `mode_write` / `color_15_write` / `op15_color` /
+    `read_request` / `status_request` / `a3_packet` / `a4_packet` trees; the masks are the spec's
+    `seg_mask` over the posSet rounded up to whole bytes. `build.frame()` is gone (tests build raw frames
+    with `fake_ble.frame`).
+  - `wire.parse` reads a reply's `govee_state` under the profile it needs. The mode decoders collapse to
+    `mode_reply(frame, prof)` / `mode_value(value, prof)` and `mode_color()` (a `KelvinReport`, the bars'
+    `BarKelvin` or `(rgb, kelvin)`), which `_fold` folds whatever the SKU's layout; `parse_mode_0d*`,
+    `parse_kelvin`, `parse_bar_kelvin`, `parse_active_scene` and the `*_of` decoders are gone. Plug power is
+    `parse.parse_relay_on` (`power_state.is_on_heartbeat` with the profile's relay mask).
+  - `wire.reassemble` reads chunks as `status_chunk`, TLVs as `status_tlv(status_profile(pieces))` and the
+    colour groups by the spec's `color_group` rule (`group_record_count` is gone); `identify` reads
+    `govee_manufacturer_data`, the handshake `handshake_request` / `handshake_reply`, scene uploads
+    `govee_upload(kind, form)`.
+  - Kept as library rules until the approval list decides them: the TLV walk's edges (a type-0 byte ends
+    it; an empty switch / brightness / mode / device-info / zone / seg-info / colour-group value doesn't
+    read), the padded TLV 0x05, the default `"rgb_kelvin"` parse's unsigned Kelvin, group 0 dropped with no
+    pieces, the XOR drop, and a short `aa 05` reply dropped where its 0x15 / 0x0d / 0x13 layout doesn't
+    fit.
+  - Verified against cf03c90: 10,557 builder calls byte for byte (errors included) and 179,152 decode
+    results (replies, mode folds per profile, status bursts, adverts, handshake, scene uploads). What
+    differs: `describe` labels use the spec's enum names (`write/power`, `read/cmd_36`, ...) and every
+    command counts as a known status TLV tag; the connection's known RX proTypes are the spec's RX routes
+    (0x05, 0x3F, 0x66, 0xA5, 0xB0, 0xB3 and 0xB4 no longer log as unknown); and
+    `parse.parse_device_info_selector` returns 3 for an `aa 07 03` reply whose text is not UTF-8 (was None;
+    the read still yields nothing).
+  - Build: `tools/gen_kaitai.sh` compiles every `spec/*.ksy` in one call (`--python-package .`), the build
+    backend and the test staleness check list its nine modules, and `scripts/check.sh` runs the spec's own
+    gate, `spec/checks/run.sh`.
 - Documented deviation: the connection keeps dropping an RX frame whose XOR checksum fails, although the app
   never checks it (`ComposeBleComm.K:190-211` drops only a frame that isn't 20 bytes), so a corrupted frame
   is not decoded as state.

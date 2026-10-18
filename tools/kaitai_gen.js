@@ -27,7 +27,19 @@ if (OUT_DIR === LIBRARY_DIR) {
   process.exit(2);
 }
 
-const KSY_FILES = ["govee_ble.ksy", "govee_adv.ksy"];
+// The .ksy files to compile (gen_kaitai.sh passes every spec/*.ksy), and an importer that resolves their
+// `imports:` from spec/. The JS compile() API has no --python-package switch, so these readers import each
+// other absolutely: put the output directory on sys.path to use them.
+const KSY_FILES = process.argv.slice(3);
+if (KSY_FILES.length === 0) {
+  console.error("usage: kaitai_gen.js <outdir> <file.ksy>...");
+  process.exit(2);
+}
+const importer = {
+  importYaml(name, _mode) {
+    return Promise.resolve(yaml.load(fs.readFileSync(path.join(SPEC_DIR, `${name}.ksy`), "utf8")));
+  },
+};
 
 async function main() {
   // kaitai-struct-compiler >= 0.11.0 exports the compiler object directly
@@ -42,7 +54,7 @@ async function main() {
     const ksyPath = path.join(SPEC_DIR, ksyName);
     const parsed = yaml.load(fs.readFileSync(ksyPath, "utf8"));
     // compile(lang, ksy, importer, debug) -> { 'file.py': 'contents', ... }
-    const files = await compiler.compile("python", parsed, null, false);
+    const files = await compiler.compile("python", parsed, importer, false);
     for (const [fname, contents] of Object.entries(files)) {
       const dest = path.join(OUT_DIR, fname);
       fs.writeFileSync(dest, contents);

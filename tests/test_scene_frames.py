@@ -4,6 +4,8 @@ Expected frames come from the app's own writers ported in ``tests/spec_frames`` 
 for 0xA3, ``makeSendBytesMtu`` for 0xA4), not from ``wire.build``, so a framing bug can't hide."""
 from __future__ import annotations
 
+from typing import Any
+
 import base64
 import random
 
@@ -162,8 +164,12 @@ def test_a_graffiti_scene_uploads_only_what_isvalidgraffitibytes_accepts(blob: s
 
 
 def test_the_spec_validators_agree_with_the_apps() -> None:
-    from govee_ble_local.wire.build import _F
-    from govee_ble_local.wire.parse import _parse_type
+    from govee_ble_local.wire import _spec
+
+    kind, cloud = _spec.Upload.UploadKind, _spec.Upload.UploadForm.cloud
+
+    def value(blob: bytes, upload_kind: object) -> object:
+        return _spec.read(_spec.Upload, blob, upload_kind, cloud).value
 
     blobs = [base64.b64decode(s.param) for sku in ("H6004", "H6006", "H6047", "H6052", "H61A8", "H6641")
              for s in load_scenes(sku).values() if s.param]
@@ -177,6 +183,7 @@ def test_the_spec_validators_agree_with_the_apps() -> None:
             blob[8] = rnd.randrange(4)
         blobs.append(bytes(blob))
     for b in blobs:
-        rgb = _parse_type(_F.RgbSceneValue, b) if b else None
+        rgb: Any = value(b, kind.rgb_scene) if b else None
         assert (rgb is not None and bool(rgb.is_valid)) == _rgb_valid(b), b.hex()
-        assert bool(_parse_type(_F.ScenesGraffitiCheck, b).is_valid) == _graffiti_valid(b), b.hex()
+        gate: Any = value(b, kind.scenes_graffiti_gate)
+        assert bool(gate.is_valid) == _graffiti_valid(b), b.hex()

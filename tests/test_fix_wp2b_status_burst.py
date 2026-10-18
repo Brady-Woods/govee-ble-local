@@ -220,13 +220,14 @@ def test_info_block_without_selector_or_too_short_still_fails_the_read() -> None
 
 
 def test_walk_hands_on_the_info_blocks_the_app_does_not_decode() -> None:
-    # status_tlv 0x07 reads status_device_info, which leaves an SN (0x02) block raw (app_decodes False), as
-    # the app's w() skips it. WAS: the walk stepped past it and recorded it in `skipped`.
+    # status_tlv 0x07 reads device_info_record on the status path, which leaves an SN (0x02) block unread
+    # (app_decodes False), as the app's w() skips it. WAS: the walk stepped past it and recorded it in
+    # `skipped`.
     buf = bytes([0x01, 0x01, 0x01, 0x07, 0x03, 0x02, 0xAA, 0xBB, 0x04, 0x01, 0x40])
     skipped: list[r.TlvCut] = []
     tlvs, cut = r.walk_status_tlvs(buf, skipped=skipped)
-    assert [int(t.type) for t in tlvs] == [0x01, 0x07, 0x04] and cut is None and skipped == []
-    assert tlvs[1].value.app_decodes is False
+    assert [int(t.tag) for t in tlvs] == [0x01, 0x07, 0x04] and cut is None and skipped == []
+    assert tlvs[1].value.body.app_decodes is False
     assert r.parse_status(_chunk(buf)).brightness == 0x40
 
 
@@ -252,17 +253,17 @@ def test_unparseable_first_tlv_yields_empty_state_without_raising(
 
 def test_walk_reports_where_and_why_it_stopped() -> None:
     tlvs, cut = r.walk_status_tlvs(bytes([0x01, 0x01, 0x01, 0x07, 0x01, 0x10]))
-    assert [int(t.type) for t in tlvs] == [0x01]
+    assert [int(t.tag) for t in tlvs] == [0x01]
     assert cut == r.TlvCut("unparsed", 0x07, 3, 1)
     tlvs, cut = r.walk_status_tlvs(bytes([0x01, 0x01, 0x01, 0x04, 0x05, 0x10]))
-    assert [int(t.type) for t in tlvs] == [0x01] and cut == r.TlvCut("truncated", 0x04, 3, 5)
+    assert [int(t.tag) for t in tlvs] == [0x01] and cut == r.TlvCut("truncated", 0x04, 3, 5)
     # The buffer ends before a value starts: u() stops cleanly (:257-267, :271-282), keeping the switch.
     tlvs, cut = r.walk_status_tlvs(bytes([0x01, 0x01, 0x01, 0x04]))
-    assert [int(t.type) for t in tlvs] == [0x01] and cut == r.TlvCut("tail", 0x04, 3)
+    assert [int(t.tag) for t in tlvs] == [0x01] and cut == r.TlvCut("tail", 0x04, 3)
     tlvs, cut = r.walk_status_tlvs(bytes([0x01, 0x01, 0x01, 0x30, 0x00]))
-    assert [int(t.type) for t in tlvs] == [0x01] and cut == r.TlvCut("tail", 0x30, 3, 0)
+    assert [int(t.tag) for t in tlvs] == [0x01] and cut == r.TlvCut("tail", 0x30, 3, 0)
     tlvs, cut = r.walk_status_tlvs(bytes([0x01, 0x01, 0x01, 0x00, 0x00]))
-    assert [int(t.type) for t in tlvs] == [0x01] and cut is None   # zero pad: a clean end
+    assert [int(t.tag) for t in tlvs] == [0x01] and cut is None   # zero pad: a clean end
     assert r.walk_status_tlvs(b"") == ([], None)
 
 
@@ -302,10 +303,13 @@ def test_status_device_info_reads_only_the_basic_and_wifi_blocks() -> None:
 
 # ── analyzer: same completeness rule and walk as the runtime ────────────────────
 def test_analyzer_known_tlv_set_is_the_specs_status_tlv_type() -> None:
-    # The spec's status_tlv_type enum: 0x16 effect_direction, 0x39 check_direction and 0xA3 gradual joined
-    # the old hand-kept set (0x36 for H6038 / H6048 and 0x40 for H6671 / H6672 were already in).
+    # A status_tlv's tag is a command (enum command): every tag the spec names is known, the old
+    # status_tlv_type set (0x36 for H6038 / H6048, 0x40 for H6671 / H6672, ...) among them.
+    from govee_ble_local.wire import _spec
+
+    assert frozenset(int(c) for c in _spec.Common.Command) == KNOWN_STATUS_REPLY_TLVS
     assert frozenset({0x00, 0x01, 0x04, 0x05, 0x07, 0x11, 0x12, 0x16, 0x23, 0x30, 0x36, 0x39, 0x40, 0x41,
-                      0xA3, 0xA5}) == KNOWN_STATUS_REPLY_TLVS
+                      0xA3, 0xA5}) <= KNOWN_STATUS_REPLY_TLVS
 
 
 def test_analyzer_double_delivery_is_not_malformed() -> None:

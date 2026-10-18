@@ -13,7 +13,7 @@ from typing import Any
 from govee_ble_local import crypto, identify
 from govee_ble_local.const import PSK
 from govee_ble_local.transport import handshake
-from govee_ble_local.wire import parse, reassemble
+from govee_ble_local.wire import _spec, parse, reassemble
 from govee_ble_local.wire.reassemble import SIGNED_LEN_MIN, TlvCut
 
 N = 3000
@@ -29,12 +29,12 @@ _Walk = tuple[list[tuple[int, int, bytes]], tuple[Any, ...] | None, list[tuple[A
 
 def _byte_walk(buf: bytes) -> _Walk:
     """The app's walker, Compose4BaseInfoSingleRead.u (:247-345), over the raw bytes: type / len from
-    the bytes, each TLV's body judged by the spec's status_tlv parsed alone from its slice. Two library
-    rules on top, until the spec types them: type 0 ends the walk (the padding sentinel), and a 0xA5
-    whose body the spec rejects is handed on for the app's record count, as is a non-empty 0x05 value
-    mode_read can't read (the app's per-sub-mode minimums aren't typed yet). Returns (type, len, value
-    bytes) per TLV, the cut and the skipped list (each cut as TlvCut's fields, negative_len True for a
-    len the app reads as negative)."""
+    the bytes, each TLV's body judged by the spec's status_tlv parsed alone from its slice. The library's
+    rules on top (approval items A1-A3): type 0 ends the walk (the padding sentinel), an empty value of a
+    tag that needs one doesn't read, an empty 0xA5 is handed on for parse_status to fail, as is a
+    non-empty 0x05 value mode_report can't read. Returns (type, len, value bytes) per TLV, the cut and
+    the skipped list (each cut as TlvCut's fields, negative_len True for a len the app reads as
+    negative)."""
     out: list[tuple[int, int, bytes]] = []
     skipped: list[tuple[Any, ...]] = []
     pos, n = 0, len(buf)
@@ -49,7 +49,9 @@ def _byte_walk(buf: bytes) -> _Walk:
         if end > n:                                        # System.arraycopy throws
             return out, ("truncated", typ, pos, length, False), skipped
         try:
-            parse._parse_type(parse._F.StatusTlv, buf[pos:end])
+            _spec.read(_spec.StatusStream.StatusTlv, buf[pos:end], reassemble.status_profile(None))
+            if length == 0 and typ in (0x01, 0x04, 0x05, 0x07, 0x30, 0x41, 0xA5):
+                raise ValueError("empty value")
         except Exception:  # noqa: BLE001
             if typ == 0xA5 or (typ == 0x05 and length > 0):
                 skipped.append(("unparsed", typ, pos, length, False))
@@ -66,7 +68,7 @@ def _byte_walk(buf: bytes) -> _Walk:
 
 def _tlv_key(t: Any) -> tuple[int, int, bytes]:
     raw = getattr(t, "_raw_value", None)
-    return int(t.type), int(t.len), bytes(raw if raw is not None else t.value)
+    return int(t.tag), int(t.len_value), bytes(raw)
 
 
 def _random_tlv_buffer(r: random.Random) -> bytes:
@@ -148,12 +150,21 @@ def test_a_group_short_of_its_count_fails_the_read() -> None:
     assert reassemble.parse_status(_burst(tlvs)).is_on is True   # len-derived: read as before
 
 
+def _records_wanted(group: int, value_len: int, pieces: int | None) -> int:
+    """``color_group.num_records_wanted`` of a 0xA5 TLV value of ``value_len`` bytes under the status
+    profile of ``pieces``."""
+    prof = reassemble.status_profile(pieces)
+    value = bytes([group]) + bytes(value_len - 1)
+    return int(_spec.read(_spec.State.ColorGroup, value, prof.group, _spec.State.Source.status_tlv,
+                          True).num_records_wanted)
+
+
 def test_group_record_count() -> None:
-    assert [reassemble.group_record_count(g, 17, 13) for g in (1, 2, 3, 4, 5)] == [4, 4, 4, 1, 4]
-    assert [reassemble.group_record_count(g, 17, 12) for g in (1, 2, 3)] == [4, 4, 4]
-    assert reassemble.group_record_count(1, 17, None) == 4
-    assert reassemble.group_record_count(1, 21, None) == 5
-    assert reassemble.group_record_count(1, 0, None) == 0
+    assert [_records_wanted(g, 17, 13) for g in (1, 2, 3, 4, 5)] == [4, 4, 4, 1, 4]
+    assert [_records_wanted(g, 17, 12) for g in (1, 2, 3)] == [4, 4, 4]
+    assert _records_wanted(1, 17, None) == 4
+    assert _records_wanted(1, 21, None) == 5
+    assert _records_wanted(1, 1, None) == 0
 
 
 # ── aa a5 direct colour group: color_group_read vs the byte slicing ──────────────────────────

@@ -25,7 +25,6 @@ from govee_ble_local.devices.device import Device, make_device
 from govee_ble_local.devices.profile import DeviceProfile, profile_for
 from govee_ble_local.exceptions import GoveeBleInvalidValue, GoveeBleNotSupported
 from govee_ble_local.wire import build as b
-from govee_ble_local.wire import parse
 from govee_ble_local.wire.cct import _TINT_BY_KELVIN, tint_for_kelvin
 
 
@@ -326,8 +325,10 @@ def test_update_reads_cct_from_the_0x0d_report() -> None:
 
 
 def test_the_0x0d_report_is_the_bulb_layout_not_the_rgblight_one() -> None:
+    import spec_read
+
     cct = _frame(0xAA, 0x05, 0x0D, 0x10, 0x20, 0x30, 0x0A, 0x8C)
-    assert parse.parse_mode_0d(cct) == (None, 2700)
+    assert spec_read.mode_color(cct, "rgb_kelvin_0d") == (None, 2700)
 
 
 # CubeNewInfo4Detail.U (7.7.02 split_h6061) decodes mode bytes 13 (colour), 4, 10 and 19 only and

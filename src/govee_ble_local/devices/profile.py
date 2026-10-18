@@ -12,10 +12,11 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Final, Literal, get_args
+from typing import Any, Final, Literal, get_args
 
 from ..exceptions import GoveeBleInvalidValue
 from ..models import Capability, Encryption, Zone
+from ..wire import _spec
 from ..wire.build import ColorScheme
 from .brightness import percent_to_raw
 
@@ -26,16 +27,16 @@ SceneDialect = Literal["A", "B_h60a6", "B_h6052"]
 # "status" (0xAC burst) | "polled" (aa 01/04/05) | "plug" (aa 01 relay bitmask) | "none"
 ReadBack = Literal["status", "polled", "plug", "none"]
 ColorReadBack = Literal["", "mechanism_b", "mechanism_a_direct"]
-# How the colour sub-modes of an ``aa 05`` mode report are decoded (the SKU's Info4Detail mode parse):
-# "rgb_kelvin"      = 0x15 -> kelvin; 0x0d -> [r, g, b, kelvin u2be, ...], the rgblight form on scheme
-#                     "h6188" (the default: H60A6, and a profile that doesn't choose one;
-#                     wire.parse.parse_mode_0d_for);
+# How the colour sub-modes of an ``aa 05`` mode report are decoded (the SKU's Info4Detail mode parse; the
+# spec's color_decode per sub-mode, :func:`wire_profile`):
+# "rgb_kelvin"      = 0x15 -> [gradual][kelvin u2be]; 0x0d -> [r, g, b, kelvin u2be, tint], any non-zero
+#                     Kelvin = CCT: the library's default for a profile that doesn't choose one, which no
+#                     app screen uses (the Kelvin read unsigned; wire.parse.mode_color unsigned_kelvin);
 # "rgb_kelvin_tint" = 0x15 / 0x0b / 0x02 / 0x0d all -> [r, g, b][kelvin s16be][tint r, g, b]: kelvin > 0
 #                     = CCT, 0 = that RGB, < 0 = the tint as RGB (the 0x0d bulbs H6006 / H6008 / H6004
-#                     and H6188: ModeParseStrategyConfig.a via OpInfo4Detail.parseModeValidBytes;
-#                     wire.parse.parse_mode_rgb_kelvin_tint);
+#                     and H6188: ModeParseStrategyConfig.a via OpInfo4Detail.parseModeValidBytes);
 # "rgb_0d"          = 0x0d only -> [r, g, b], its Kelvin bytes never read; 0x15 and every other colour
-#                     sub-mode is not parsed (H6052: H6052InfoDetail.G; wire.parse.parse_mode_0d_rgb);
+#                     sub-mode is not parsed (H6052: H6052InfoDetail.G);
 # "kelvin"          = 0x15 / 0x0b / 0x02 / 0x0d all -> SubMode4Color [gradual][kelvin s16be], CCT only for
 #                     a Kelvin > 0 (H6062: striplight OpInfo4Detail; H61A8: base OpInfo4Detail);
 # "kelvin_15"       = 0x15 only, its Kelvin read signed (SubMode4Color, BleUtil.getSignedShort); any other
@@ -467,7 +468,7 @@ PROFILES: Final[tuple[DeviceProfile, ...]] = (
     # The mode parse (adjustNew/Info4Detail.parseModeValidBytes) knows only 0x15, 0x04, 0x0a and
     # music: a 0x0d report is not decoded, and 0x15 goes to a plain SubMode4Color, which reads the Kelvin
     # signed (getSignedShort; split_h61d3 installs no IParseStrategy; adjustNew/Info4Detail.java:117, per
-    # the spec's cct_read_reply trace) (mode_color_parse "kelvin_15").
+    # the spec's gradual_kelvin layout) (mode_color_parse "kelvin_15").
     # `polled` covers power/brightness/scene; not yet live-verified against hardware.
     DeviceProfile(
         skus=("H6641",), capabilities=_LIGHT | {_C.SEGMENTS}, color_scheme="h60a6",
@@ -586,7 +587,7 @@ PROFILES: Final[tuple[DeviceProfile, ...]] = (
     #    (H5083NewDetailRepository.loadParser) reads `bArr[0] & 1`.
     #  - goodsType 50 (H5082) / 307 (H5089), two outlets: bit 0 or bit 1, the aa 01 HEARTBEAT rule
     #    (HeartControllerV2 -> BleOpV2.onEventHeartV2:216-231 / BleOp4H5089.onEventHeartV2:331-341,
-    #    open = i(0) | i(1); switch_read_reply.any_relay_0_1_is_on), which the library's repeated aa 01
+    #    open = i(0) | i(1); power_state.is_on_heartbeat with mask 0x03), which the library's repeated aa 01
     #    poll follows. The connect read takes any of the 8 bits (BleOpV2 / BleOp4H5089.onEventSwitchV2 ->
     #    EventSwitchV2.i() ORs them all; devices.yaml relay_on_mask 0xFF).
     #  - goodsType 90 (H5160, H5161): the first getPlugNum(90) = 3 bits (BleOpV4.Z ORs bits 0..2).
@@ -662,3 +663,37 @@ def profile_for(sku: str) -> DeviceProfile | None:
 def supported_skus() -> list[str]:
     """All supported SKUs, sorted."""
     return sorted(_BY_SKU)
+
+
+# The spec's color_decode for each colour sub-mode under each ModeColorParse (govee_profile mode_decode;
+# a sub-mode left out is not decoded). The SubMode4Color sub-modes are the ones
+# OpInfo4Detail.parseModeValidBytes hands to the SKU's strategy: 0x15, 0x0b, 0x02 and 0x0d.
+_CD = _spec.Common.ColorDecode
+_GRADUAL_KELVIN: Final = int(_CD.gradual_kelvin_s16be)
+_SUBMODE4COLOR: Final = ("c15", "c0b", "c02", "c0d")
+_MODE_DECODES: Final[Mapping[str, Mapping[str, int]]] = MappingProxyType({
+    "rgb_kelvin": {"c15": _GRADUAL_KELVIN, "c0d": int(_CD.rgb_kelvin_tint)},
+    "rgb_kelvin_tint": dict.fromkeys(_SUBMODE4COLOR, int(_CD.rgb_kelvin_tint)),
+    "rgb_0d": {"c0d": int(_CD.rgb)},
+    "kelvin": dict.fromkeys(_SUBMODE4COLOR, _GRADUAL_KELVIN),
+    "kelvin_15": {"c15": _GRADUAL_KELVIN},
+    "rgb_kelvin_0d": {"c0d": int(_CD.rgb_kelvin_0d)},
+    "kelvin_15_rgb_kelvin_0d": {"c15": _GRADUAL_KELVIN, "c0d": int(_CD.rgb_kelvin_0d)},
+})
+# H6047's 0x15 report carries a Kelvin per bar ([gradual][kelvin left s16be][kelvin right s16be]; h6047
+# Info4Detail subMode4Color strategy, split_h6047 detail/Info4Detail.java:179-180), whatever the
+# profile's parse of the other sub-modes.
+_BAR_KELVIN: Final = int(_CD.gradual_kelvin_pair_s16be)
+
+
+def wire_profile(profile: DeviceProfile) -> Any:
+    """The spec's ``govee_profile`` for the device facts a reply's decode depends on: the mode decode
+    (:attr:`DeviceProfile.mode_color_parse`, and the bars' 0x15 on a :attr:`DeviceProfile.bar_switch`
+    device) for the aa 05 report and the status TLV 0x05 alike, and the plug's relay mask
+    (:attr:`DeviceProfile.relay_on_mask`, the aa 01 heartbeat rule the library's poll follows:
+    ``power_state.is_on_heartbeat``). Cached per set of facts (``_spec.profile``)."""
+    decode = dict(_MODE_DECODES[profile.mode_color_parse])
+    if profile.bar_switch:
+        decode["c15"] = _BAR_KELVIN
+    return _spec.profile(**decode, relay_on_mask=profile.relay_on_mask,
+                         relay_heartbeat_on_mask=profile.relay_on_mask)

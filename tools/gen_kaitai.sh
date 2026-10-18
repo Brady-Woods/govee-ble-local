@@ -32,7 +32,13 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-KSY_FILES=(govee_ble.ksy govee_adv.ksy)
+# Every spec/*.ksy, compiled in ONE call so the files' imports resolve (`--python-package .` makes them
+# relative imports inside the generated package): the same set spec/checks/run.sh gates.
+shopt -s nullglob
+KSY_FILES=()
+for f in spec/*.ksy; do KSY_FILES+=("$(basename "$f")"); done
+shopt -u nullglob
+[ ${#KSY_FILES[@]} -gt 0 ] || { echo "error: no spec/*.ksy" >&2; exit 1; }
 LIBRARY_DIR=src/govee_ble_local/_generated   # gitignored: a build product
 KSC_SERIES="0.11"   # the generated classes and the kaitaistruct>=0.11 runtime floor
 
@@ -72,7 +78,8 @@ compile_with_jvm() {
   mkdir -p "$dest"
   dest=$(cd "$dest" && pwd)
   log=$(mktemp "${TMPDIR:-/tmp}/gen_kaitai_ksc.XXXXXX")
-  ( cd spec && "$KSC_BIN" -t python "$@" --outdir "$dest" "${KSY_FILES[@]}" ) >"$log" 2>&1 || rc=$?
+  ( cd spec && "$KSC_BIN" -t python --python-package . "$@" --outdir "$dest" "${KSY_FILES[@]}" ) \
+    >"$log" 2>&1 || rc=$?
   if [ "$rc" -ne 0 ] || [ "${VERBOSE:-0}" = 1 ]; then
     cat "$log" >&2
   else
@@ -100,7 +107,7 @@ compile_with_js() {
     [ -f .toolchain/ksc/package.json ] || echo '{"name":"ksc-scratch","private":true}' > .toolchain/ksc/package.json
     ( cd .toolchain/ksc && npm install --no-audit --no-fund --loglevel=error kaitai-struct-compiler@0.11.0 js-yaml )
   fi
-  NODE_PATH="$PWD/.toolchain/ksc/node_modules" node tools/kaitai_gen.js "$1"
+  NODE_PATH="$PWD/.toolchain/ksc/node_modules" node tools/kaitai_gen.js "$1" "${KSY_FILES[@]}"
 }
 
 KSC_BIN=$(find_jvm_ksc || true)

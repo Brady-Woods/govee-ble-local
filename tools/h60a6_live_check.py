@@ -23,12 +23,11 @@ import argparse
 import asyncio
 import base64
 import contextlib
-import importlib
 import os
 import sys
 from collections.abc import Awaitable, Callable, Mapping
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 _REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_REPO / "src"))  # govee_ble_local + ._generated (run tools/gen_kaitai.sh first)
@@ -112,36 +111,34 @@ async def refresh(dev: Device, want: Callable[[DeviceState], bool] | None = None
 
 async def read_kelvin(dev: Device) -> int | None:
     """Kelvin from the mode read-back (aa 05 15 01 <kelvin u2be>), Kaitai-validated."""
+    from govee_ble_local.devices.profile import profile_for, wire_profile
+    from govee_ble_local.wire import _spec
     from govee_ble_local.wire import build as controllers
 
-    # The generated reader class is untyped, so it is held as Any (imported by module name).
-    gbf: Any
-    try:
-        gbf = importlib.import_module("govee_ble_local._generated.govee_ble_frame").GoveeBleFrame
-    except Exception:
-        gbf = None
+    # The H60A6's mode decode: 0x15 is SubMode4Color's [gradual][kelvin s16be] (gradual_kelvin).
+    h60a6 = profile_for("H60A6")
+    assert h60a6 is not None
+    prof = wire_profile(h60a6)
     frames = await dev._conn.query(
         controllers.mode_query(), opcode=0xAA, terminal=0x05, timeout=3.0
     )
     for fr in frames:
         if len(fr) == 20 and fr[0] == 0xAA and fr[1] == 0x05:
             raw_kelvin = (fr[4] << 8) | fr[5]
-            if gbf is not None:
-                # Reply path: GoveeBleFrame.body (ReadCommand) .body (ModeRead) with
-                # .selector_or_sub_mode and .rest (CctReadReply for sub-mode 0x15).
-                # No blanket except: an attribute-path mistake must fail loudly.
-                try:
-                    parsed = gbf.from_bytes(fr)
-                    parsed._read()   # read-write class: reads only when asked
-                except Exception as err:
-                    print(f"  (kaitai could not parse {fr.hex()}: {err}; skipping)")
-                    continue
-                mode = parsed.body.body
-                if mode.selector_or_sub_mode != 0x15:
-                    continue
-                if mode.rest.kelvin != raw_kelvin:
-                    raise AssertionError(
-                        f"kelvin mismatch: kaitai {mode.rest.kelvin} != raw {raw_kelvin}")
+            # Reply path: govee_ble_frame.body (read_reply) .state (govee_state) .body (mode_report)
+            # with .sub_mode and .params (colour_report) .layout (gradual_kelvin for sub-mode 0x15).
+            # No blanket except: an attribute-path mistake must fail loudly.
+            try:
+                parsed = _spec.read_frame(fr, _spec.RX, prof)
+            except Exception as err:
+                print(f"  (kaitai could not parse {fr.hex()}: {err}; skipping)")
+                continue
+            mode = parsed.body.state.body
+            if mode.sub_mode != 0x15:
+                continue
+            kelvin = int(mode.params.layout.kelvin) & 0xFFFF
+            if kelvin != raw_kelvin:
+                raise AssertionError(f"kelvin mismatch: kaitai {kelvin} != raw {raw_kelvin}")
             return raw_kelvin
     return None
 

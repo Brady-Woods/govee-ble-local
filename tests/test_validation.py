@@ -101,12 +101,6 @@ def test_secret_check_requires_8_bytes(n: int) -> None:
     assert b.secret_check(bytes(range(1, 9)))[2:10] == bytes(range(1, 9))
 
 
-def test_frame_too_long_message() -> None:
-    with pytest.raises(ValueError, match="payload too long: 19"):
-        b.frame(0x33, *range(19))
-    assert len(b.frame(0x33, *range(18))) == 20
-
-
 def test_invalid_value_is_value_error() -> None:
     assert issubclass(GoveeBleInvalidValue, ValueError)
 

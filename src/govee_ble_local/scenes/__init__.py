@@ -21,8 +21,8 @@ from typing import TYPE_CHECKING, Any, Final
 
 from ..exceptions import GoveeBleError, GoveeBleInvalidValue
 from ..wire import build
-from ..wire.build import _F
-from ..wire.parse import _parse_type
+from ..wire import _spec
+from ..wire._spec import Frame as _F, Upload as _U
 
 if TYPE_CHECKING:
     from ..devices.profile import SceneDialect
@@ -44,10 +44,14 @@ class _SceneType(IntEnum):
     COMPOSE = 6
 
 
-# A decoded scene blob's lead byte picks its upload; the spec's *_param types carry it as a ``contents``
-# marker, and their ``value`` is the upload: compose_scene_param 0x0a (ShareDiy.isValidComposeBytes),
-# h60a6_scene_param 0x50 (BaseSceneViewMode.r3), h6052_graffiti_param 0x13, scenes_graffiti_param 0x01
-# (ShareDiy.isValidGraffitiBytes) plus the effect's high byte.
+# A decoded scene blob (the spec's govee_upload form ``cloud``) leads with a byte that picks its upload;
+# the lead_* types carry it as a ``contents`` marker, and the ``value`` after it is the upload: compose
+# 0x0a (ShareDiy.isValidComposeBytes), H60A6 DIY / graffiti 0x50 (BaseSceneViewMode.r3), H6052 graffiti
+# 0x13, scenes graffiti 0x01 (ShareDiy.isValidGraffitiBytes) plus the effect's high byte. The value as
+# sent (form ``wire``) is read by its kind's value type.
+_UK = _U.UploadKind
+_CLOUD = int(_U.UploadForm.cloud)
+_WIRE = int(_U.UploadForm.wire)
 
 # Path-B scene-library upload table (from the decompiled `ScenesOp.parseSceneV1`,
 # confirmed by the Q4 source handoff):
@@ -58,13 +62,13 @@ class _SceneType(IntEnum):
 # handled by `scene_upload_frames` (dialect-specific), not this table. sceneType 6
 # (compose) also depends on the blob's first byte (ScenesOp.o), checked in `_plan_upload`.
 _LIBRARY_SCENE: Final[Mapping[int, tuple[int, int, int]]] = MappingProxyType({
-    # comTypes are the spec's multi_comm_byte (the app's MULTI_* constants).
-    _SceneType.RGB: (1, int(_F.MultiCommByte.v1_new_scenes), 0),        # MultiNewScenesControllerV1, strip 0
-    _SceneType.RGBIC: (2, int(_F.MultiCommByte.v2_new_scenes), 0),      # MultiNewScenesControllerV2, strip 0
-    _SceneType.GRAFFITI: (3, int(_F.MultiCommByte.v3_new_scenes), 2),   # MultiNewScenesControllerV3, strip 2
+    # comTypes are the spec's comm_byte (the app's MULTI_* constants).
+    _SceneType.RGB: (1, int(_F.CommByte.v1_new_scenes), 0),        # MultiNewScenesControllerV1, strip 0
+    _SceneType.RGBIC: (2, int(_F.CommByte.v2_new_scenes), 0),      # MultiNewScenesControllerV2, strip 0
+    _SceneType.GRAFFITI: (3, int(_F.CommByte.v3_new_scenes), 2),   # MultiNewScenesControllerV3, strip 2
     # compose -> MultiNewScenesControllerV5, comType 0x0a (MULTI_V4_NEW_SCENES), strip 1; gated on
     # scene-version 6 (parseSceneV1: `versionArray.contains(6) && sceneType == 6`).
-    _SceneType.COMPOSE: (6, int(_F.MultiCommByte.v4_new_scenes), 1),
+    _SceneType.COMPOSE: (6, int(_F.CommByte.v4_new_scenes), 1),
 })
 
 
@@ -242,10 +246,11 @@ def scene_upload_frames(
         ) from err
 
 
-def _reads_as(cls: Any, value: bytes) -> Any:
-    """``value`` read by the generated scene-value type ``cls``, or None when the spec can't read it."""
+def _reads_as(kind: Any, form: int, value: bytes) -> Any:
+    """``value`` read as the spec's ``govee_upload(kind, form)`` (its lead, then its value), or None when
+    the spec can't read it as that kind."""
     try:
-        return _parse_type(cls, value)
+        return _spec.read(_U, value, kind, form)
     except Exception:  # noqa: BLE001 - a value the spec type can't read is not that kind of effect
         return None
 
@@ -257,24 +262,19 @@ def _h60a6_upload(raw: bytes, mtu: int) -> list[bytes] | None:
     ``BaseSceneViewMode.r3``: the decoded blob must start with 0x50, then the H60A6's parsers are tried
     in order (``H60A6DiyConfig``: ``H60A6DiyParse``, then ``H60A6GraffitiParse``) and the first that
     reads it sends it; when none does, r3 fails and the scene is only activated. Each parser is the
-    spec's value type for it: a DIY is a ``diy_value`` whose length prefix covers the rest
-    (``Pro4H60A6Diy``; 0xA3, commByte 0x58), a graffiti a ``graffiti_value`` (marker 0x20; 0xA4-MTU,
-    commByte 0x58, frames of up to ``mtu`` bytes: ``Compose4DefWrite4Multi.d:233-246``). The value is
-    sent as the catalogue holds it; the app re-serialises what it parsed (``IDiyParse.toBytes``), which
-    is not modelled."""
-    param = _reads_as(_F.H60a6SceneParam, raw)   # lead 0x50, then the value
+    spec's value type for it: a DIY is a ``diy_value`` whose length prefix covers the rest (kind
+    ``h60a6_diy``; ``Pro4H60A6Diy``; 0xA3, commByte 0x58), a graffiti a ``graffiti_value`` (kind
+    ``h60a6_graffiti``, marker 0x20; 0xA4-MTU, commByte 0x58, frames of up to ``mtu`` bytes:
+    ``Compose4DefWrite4Multi.d:233-246``). The try-in-order is the library's (Kaitai has no backtracking).
+    The value is sent as the catalogue holds it; the app re-serialises what it parsed
+    (``IDiyParse.toBytes``), which is not modelled."""
+    param = _reads_as(_UK.h60a6_diy, _CLOUD, raw)   # lead 0x50, then the value
     value = b"" if param is None else bytes(param.value)
     if not value:
         return None
-    # The spec's h60a6_scene_value picks DIY by its length check (is_diy) and graffiti otherwise. The app
-    # tries the graffiti parser too when the DIY one fails, so a value the spec's choice can't read gets
-    # that second try here (a spec gap: try-in-order isn't expressible in the type).
-    scene = _reads_as(_F.H60a6SceneValue, value)
-    if scene is not None:
-        if scene.is_diy:
-            return build.scene_upload_a3(value, build.COMM_H60A6)
-        return build.scene_upload_a4_mtu(value, build.COMM_H60A6, mtu=mtu)
-    if _reads_as(_F.GraffitiValue, value) is not None:
+    if _reads_as(_UK.h60a6_diy, _WIRE, value) is not None:
+        return build.scene_upload_a3(value, build.COMM_H60A6)
+    if _reads_as(_UK.h60a6_graffiti, _WIRE, value) is not None:
         return build.scene_upload_a4_mtu(value, build.COMM_H60A6, mtu=mtu)
     return None
 
@@ -286,7 +286,7 @@ def _plan_upload(
     if scene_dialect == "B_h60a6" and st == _SceneType.DIY:
         return _h60a6_upload(_decode_param(scene), mtu)
     if scene_dialect == "B_h6052" and st == _SceneType.DIY:
-        graffiti = _reads_as(_F.H6052GraffitiParam, _decode_param(scene))   # lead 0x13, then the value
+        graffiti = _reads_as(_UK.h6052_graffiti, _CLOUD, _decode_param(scene))   # lead 0x13, then the value
         if graffiti is not None:
             return build.scene_upload_a3(bytes(graffiti.value), build.COMM_H6052_GRAFFITI)
         return None
@@ -297,27 +297,27 @@ def _plan_upload(
     raw = _decode_param(scene)
     if st == _SceneType.COMPOSE:
         # ScenesOp.o (parserScenes4Compose): only a blob that ShareDiy.isValidComposeBytes accepts (lead
-        # 0x0a, compose_scene_param) gets MultiNewScenesControllerV5. A 0x51 blob goes to
+        # 0x0a, lead_compose) gets MultiNewScenesControllerV5. A 0x51 blob goes to
         # MultiNewScenesControllerH60B0 (commByte 90), which is not modelled; any other lead gets no
         # controller. Both stay activate-only.
-        compose = _reads_as(_F.ComposeSceneParam, raw)
+        compose = _reads_as(_UK.compose, _CLOUD, raw)
         return None if compose is None else build.scene_upload_a3(bytes(compose.value), comm_byte)
     if st == _SceneType.GRAFFITI:
         # ScenesOp.n (:411-429) sends bytes [2:] only when ShareDiy.isValidGraffitiBytes (:96-115) accepts
-        # the blob: the spec's scenes_graffiti_check.is_valid (size >= 9, lead 0x01, the group-header walk).
-        # The value sent is scenes_graffiti_param's.
-        check = _reads_as(_F.ScenesGraffitiCheck, raw)
-        graffiti = _reads_as(_F.ScenesGraffitiParam, raw)
-        if check is None or not check.is_valid or graffiti is None:
+        # the blob: the spec's scenes_graffiti_gate.is_valid (size >= 9, lead 0x01, the group-header walk).
+        # The value sent is the one after the scenes_graffiti lead.
+        check = _reads_as(_UK.scenes_graffiti_gate, _CLOUD, raw)
+        graffiti = _reads_as(_UK.scenes_graffiti, _CLOUD, raw)
+        if check is None or not check.value.is_valid or graffiti is None:
             return None
         return build.scene_upload_a3(bytes(graffiti.value), comm_byte)
     if st == _SceneType.RGB:
         # ScenesOp.l (:377-392): only a blob ScenesRgb.isValidProtocolBytes (:1676-1701) accepts, the spec's
         # rgb_scene_value.is_valid; any other is only activated.
-        rgb = _reads_as(_F.RgbSceneValue, raw)
-        if rgb is None or not rgb.is_valid:
+        rgb = _reads_as(_UK.rgb_scene, _CLOUD, raw)
+        if rgb is None or not rgb.value.is_valid:
             return None
-    elif st == _SceneType.RGBIC and _reads_as(_F.RgbicSceneValue, raw) is None:
+    elif st == _SceneType.RGBIC and _reads_as(_UK.rgbic_scene, _CLOUD, raw) is None:
         # ScenesOp.m (:394-409): ScenesRgbIC.isValidProtocolBytes (:2783-2807), which rgbic_scene_value reads
         # exactly (a blob it can't read is only activated).
         return None

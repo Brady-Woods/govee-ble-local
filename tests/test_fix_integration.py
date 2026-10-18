@@ -40,7 +40,7 @@ from govee_ble_local.scanner import match  # noqa: E402
 from govee_ble_local.transport import connection as conn_mod  # noqa: E402
 from govee_ble_local.transport import framelog  # noqa: E402
 from govee_ble_local.transport.connection import GoveeConnection  # noqa: E402
-from govee_ble_local.wire import build, parse  # noqa: E402
+from govee_ble_local.wire import _spec, build, parse  # noqa: E402
 from govee_ble_local.wire import reassemble as r  # noqa: E402
 from govee_ble_local.wire.describe import status_burst_report  # noqa: E402
 
@@ -215,8 +215,8 @@ def test_transport_constants_come_from_const_and_build() -> None:
     assert conn_mod.DISCONNECT_TIMEOUT == const.DISCONNECT_TIMEOUT == 5.0
     assert conn_mod.QUERY_TERMINAL == const.QUERY_TERMINAL == 0xFF
     assert (build.PRO_NOTIFY, build.PRO_MULTI_A1) == (0xEE, 0xA1)
-    assert parse._ProType.notify.value == build.PRO_NOTIFY
-    assert parse._ProType.multi_write.value == build.PRO_MULTI_A1
+    assert _spec.Common.ProType.notify.value == build.PRO_NOTIFY
+    assert _spec.Common.ProType.multi_write.value == build.PRO_MULTI_A1
     assert {build.PRO_NOTIFY, build.PRO_MULTI_A1} <= conn_mod._KNOWN_RX_PRO_TYPES
 
 
@@ -255,13 +255,15 @@ def test_match_falls_back_to_the_ble_device_name() -> None:
 
 
 # ── WP3-060: one scheme-keyed entry point for the 0x0d report ──────────────────────────────
-def test_mode_0d_for_picks_the_scheme_decoder() -> None:
+def test_the_default_mode_parse_reads_one_0d_layout() -> None:
+    # The default "rgb_kelvin" parse reads 0x0d as rgb_kelvin_tint whatever the colour scheme (it was
+    # picked per scheme, and both schemes read the same).
+    import spec_read
+
     cct = frame(0xAA, 0x05, 0x0D, 0xFF, 0xD5, 0xA1, 0x0F, 0xA0, 1, 2, 3)
-    assert parse.parse_mode_0d_for(cct, "h6188") == parse.parse_mode_0d_rgblight(cct) == (None, 4000)
-    assert parse.parse_mode_0d_for(cct, "h6006") == parse.parse_mode_0d(cct) == (None, 4000)
-    short = cct[:8]   # both read the spec's kind 2, which needs the 8-byte body (a reply is 20 bytes)
-    assert parse.parse_mode_0d_for(short, "h6006") is None
-    assert parse.parse_mode_0d_for(short, "h6188") is None
+    assert spec_read.mode_color(cct) == (None, 4000)
+    short = cct[:8]   # rgb_kelvin_tint needs the 8-byte body (a reply is 20 bytes)
+    assert spec_read.mode_color(short) is None
 
 
 # ── WP5a-016: a public frame-log flush ───────────────────────────────────────────────────────
@@ -364,7 +366,7 @@ def test_cli_reads_an_unknown_direction_as_unknown(capsys: pytest.CaptureFixture
     # read as a write command, not as a rejected write-ACK.
     rejected_ack = frame(0x33, 0x01, 0x05)
     assert debug.analyze(_records([rejected_ack], dir="RX")) == 0
-    assert "?  write/switch" in capsys.readouterr().out
+    assert "?  write/power" in capsys.readouterr().out
     assert debug.analyze(_records([rejected_ack])) == 1   # a real rx: the device rejected the write
 
 
