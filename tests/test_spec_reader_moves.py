@@ -67,8 +67,8 @@ def _byte_walk(buf: bytes) -> _Walk:
 
 
 def _tlv_key(t: Any) -> tuple[int, int, bytes]:
-    raw = getattr(t, "_raw_value", None)
-    return int(t.tag), int(t.len_value), bytes(raw)
+    # Every TLV the walk hands on has read its value, so the generated status_tlv keeps its bytes.
+    return int(t.tag), int(t.len_value), bytes(t._raw_value)
 
 
 def _random_tlv_buffer(r: random.Random) -> bytes:
