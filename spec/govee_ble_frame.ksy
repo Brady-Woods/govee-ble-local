@@ -793,10 +793,12 @@ types:
         type: u2
   op15_05:
     doc: |
-      33 05 15 05, per form_15_05 (no in-frame discriminator; H60A6 has no
-      handler).
+      33 05 15 05, per form_15_05 (no in-frame discriminator; the H60A6 and
+      H60A1 firmware have no op-05 handler).
     doc-ref:
-      - firmware-h60a6-wifi/decompiled/H60A6_ble_dispatcher.c:318-340
+      - H60A6 FUN_9b025124 @0x9b025206-0x9b025210
+      - H60A6 FUN_9b025124 @0x9b0255e2-0x9b025612
+      - firmware-h60a1-wifi/decompiled/H60A1_ble_dispatcher.c:732-800
     params:
       - id: form
         type: u1
@@ -812,14 +814,14 @@ types:
             'govee_common::form_15_05::side_brightness': op15_side_brightness
             'govee_common::form_15_05::gradient': op15_gradient(num_segments)
   op15_kelvin:
-    doc: '[kelvin u16be]: the H60A0-family colour-temperature write.'
+    doc: '[kelvin u2be]: the H60A0-family colour-temperature write (high byte first).'
     doc-ref:
       - split_h60ax/com/govee/pact_h60a0/ble/v1/SubModeColorV1.java:44-57,695-698
       - split_h60ax/com/govee/pact_h60a0/adjust/h60a0/ControllerBuildH60A0.java:62-66,93-98
       - base-classes10/com/govee/base2light/ble/BleUtil.java:234-239
     seq:
       - id: kelvin
-        type: u2
+        type: u2be
   op15_side_brightness:
     doc: '[side][value]: per-half relative brightness, goodsType 80 only.'
     doc-ref:

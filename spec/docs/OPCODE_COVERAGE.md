@@ -1,6 +1,6 @@
 # Opcode coverage — what the builder catalogue implements
 
-`spec/govee_commands.py` provides **464 builders** across **99 opcodes**, one function per (opcode, variant) the Govee Home app emits (the index also lists `govee_reference.build_op15_color`). Every builder is traced to the decompiled app (controller cited in its docstring) and carries a byte-exact self-check run by the reference self-test. This file is the index: opcode → builders, the device families each serves, the verification tier, and whether the spec's grammar (`govee_ble_frame.ksy` and `govee_state.ksy`) types that opcode's layout.
+`spec/govee_commands.py` provides **462 builders** across **99 opcodes**, one function per (opcode, variant) the Govee Home app emits (the index also lists `govee_reference.build_op15_color`). Every builder is traced to the decompiled app (controller cited in its docstring) and carries a byte-exact self-check run by the reference self-test. This file is the index: opcode → builders, the device families each serves, the verification tier, and whether the spec's grammar (`govee_ble_frame.ksy` and `govee_state.ksy`) types that opcode's layout.
 
 **Verification tiers.** `firmware-confirmed` — the opcode is handled by at least one of the six decompiled device firmwares (H6047 BlueX/RivieraWaves ARM Thumb-2; H6006/H6008/H5083/H60A1/H60A6 Realtek), so both ends agree; see `FIRMWARE_VALIDATION.md`. `source-modeled` — traced from the app only (the authority for what to send), not seen in a firmware image. A few opcodes also have `bench` hardware confirmation, noted inline.
 
@@ -212,8 +212,6 @@
   - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:393 (Bytes.m); base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/ColorModeControllerConfig.java:879-896 (Companion.l: 4 colours per group, group = base + i)
 - **`build_op15_color_temp_04`** (W): 33 05 15 04 [kelvin u2be] [00 x13] [bcc]
   - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:133-139 (Bytes.D: [21, 4] + BleUtils.D(k, true)); base-classes10/com/govee/base2kt/utils/BleUtils.java:132-142 (D: z=true -> high byte first)
-- **`build_op15_color_temp_05`** (W): 33 05 15 05 [kelvin u2be, high byte first] [00 x13] [bcc]
-  - split_h60ax/com/govee/pact_h60a0/adjust/h60a0/ControllerBuildH60A0.java:93-98 (ControllerBuildH60A0.d: {sub_mode_color=21, 5} + BleUtil.getSignedBytesFor2(kelvin, true)); split_h60ax/com/govee/pact_h60a0/adjust/h60a0/ControllerBuildH60A0.java:51-67 (ControllerBuildH60A0.b: a tint RGB pick with the last position selected sends the same frame with kelvin = ColorUtils.h(rgb, min, max))
 - **`build_op15_color_temp_bytes_r`** (W): 33 05 15 01 [slot R G B: ff ff ff; 00 00 00 for kind 0; kind 3: 00 00 00 when every position is set, else the tint with kelvin and tint zeroed][kelvin u16be][tint R G B][mask as Bytes.h]
   - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:474-501 (Bytes.r; kind = its i5, :480-486); base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:12967 (Config.Yt); GradientColorControllerConfig.k :334 (kind 1)
 - **`build_op15_color_v5`** (W): 33 05 15 01 [R G B][kelvin u16be: 00 00 for an RGB pick (Bytes.l), Constant.getColorTemKelvin(colour) for a tint (Bytes.u)][mask LSB-first, copied whole: 2 byte
@@ -1292,7 +1290,6 @@
 - **`build_low_blue_light`**: 33 BA [SetMethod SCALE=1/OTHER=0][on 0/1][b2 (always 100)][b3 (always 100)][level] + zero pad + XOR at byte 19
 - **`build_music_code_sens`**: 33 05 [sub_mode: 13 | 11 | 0C | 0E | 0F | 01] [code] [sens] [sub_effect0 if given], zero-padded, XOR at byte 19
 - **`build_op15_color`**: 33 05 15 01 then: variant 1 = R G B [mask]; variant 11 = R G B [kelvin u2be] tintR tintG tintB [mask]; variant 12 = R G B 00 00 00 00 00 [mask] (the same bytes 
-- **`build_op15_color_temp`**: 33 05 15 05 [kelvin u2be, high byte first]; the same bytes as build_op15_kelvin_05 (it was little-endian before; the app writes getSignedBytesFor2(k, true))
 - **`build_op15_color_ver5`**: 33 05 15 01 R G B [kelvin u2be] [mask LSB first] then zero padding, BCC at byte 19. The mask starts at frame byte 9. RGB (Bytes.l) sends kelvin 00 00. For a Kel
 - **`build_relative_brightness`**: 33 AE [01][n: 06 SEGMENT6 | 04 SEGMENT4][left][top][right][bottom][strip_left][strip_right] 00.. [XOR]. The 6 value bytes are always sent whatever n is. For SEG
 - **`build_scene`**: 33 05 04 [effect u2le][music_code u2le, 0000 when the white-noise switch is off]

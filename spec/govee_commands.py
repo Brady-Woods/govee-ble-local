@@ -6,7 +6,7 @@ and verified by adversarial re-trace. Companion to govee_reference.py, which own
 multi-packet scene/DIY upload (send them in order). Tiers and gaps: docs/OPCODE_COVERAGE.md.
 
 Assembled from the opcode trace, then maintained in place (ruff- and mypy --strict-clean): edit this file
-directly, keeping the 760 _SELF_CHECKS green.
+directly, keeping the 759 _SELF_CHECKS green.
 """
 
 from __future__ import annotations
@@ -496,13 +496,6 @@ def build_op15_color_temp_04(kelvin: int) -> bytes:
     return append_bcc(bytes([0x33, 0x05, 0x15, 0x04, (kelvin >> 8) & 0xFF, kelvin & 0xFF]))
 
 
-def build_op15_color_temp_05(kelvin: int) -> bytes:
-    """33 05 15 05 <kelvin u2be> colour temperature (H60A0 control screen).
-    split_h60ax/com/govee/pact_h60a0/adjust/h60a0/ControllerBuildH60A0.java:93-98 (ControllerBuildH60A0.d),
-    :51-67 (ControllerBuildH60A0.b); split_h60ax/com/govee/pact_h60a0/ble/v1/SubModeColorV1.java:695-698
-    (getWriteBytes opType 2, automation/effect path).
-    """
-    return append_bcc(bytes([0x33, 0x05, 0x15, 0x05, (kelvin >> 8) & 0xFF, kelvin & 0xFF]))
 
 
 def build_op15_color_v5(
@@ -6398,12 +6391,6 @@ def build_music_code_sens(
     return append_bcc(bytes(b & 0xFF for b in body))
 
 
-def build_op15_color_temp(kelvin: int) -> bytes:
-    """0x33 05 15 05 [kelvin u16be] colour temperature (the frame's op15_kelvin, form_15_05 kelvin): the
-    same bytes as build_op15_kelvin_05. The app writes the Kelvin high byte first
-    (split_h60ax/com/govee/pact_h60a0/ble/v1/SubModeColorV1.java:695-698, getSignedBytesFor2(k, true)).
-    """
-    return build_op15_kelvin_05(kelvin)
 
 
 def build_op15_color_ver5(r: int, g: int, b: int, seg_mask: int, *, kelvin: int = 0) -> bytes:
@@ -7435,14 +7422,6 @@ _SELF_CHECKS: list[tuple[str, bool]] = [
         lambda: bool(build_op15_color_temp_04(6500)[:7] == bytes([0x33, 0x05, 0x15, 0x04, 0x19, 0x64, 0x00])),
     ),
     _check(
-        "build_op15_color_temp_05",
-        lambda: bool(
-            build_op15_color_temp_05(2700)[:7] == bytes([0x33, 0x05, 0x15, 0x05, 0x0A, 0x8C, 0x00])
-            and build_op15_color_temp_05(6500)[4:6] == bytes([0x19, 0x64])
-            and build_op15_color_temp_05(2700)[19] == (0x33 ^ 0x05 ^ 0x15 ^ 0x05 ^ 0x0A ^ 0x8C)
-        ),
-    ),
-    _check(
         "build_op15_color_v5",
         lambda: bool(
             build_op15_color_v5(0xFF, 0x00, 0x00, 0x7FFFFF, mask_bytes=3)[:13]
@@ -7504,7 +7483,8 @@ _SELF_CHECKS: list[tuple[str, bool]] = [
     _check(
         "build_op15_kelvin_05",
         lambda: bool(
-            build_op15_kelvin_05(6500)[:7] == bytes([0x33, 0x05, 0x15, 0x05, 0x19, 0x64, 0x00])
+            build_op15_kelvin_05(2700)[:7] == bytes([0x33, 0x05, 0x15, 0x05, 0x0A, 0x8C, 0x00])
+            and build_op15_kelvin_05(6500)[:7] == bytes([0x33, 0x05, 0x15, 0x05, 0x19, 0x64, 0x00])
             and build_op15_kelvin_05(6500)[19] == (0x33 ^ 0x05 ^ 0x15 ^ 0x05 ^ 0x19 ^ 0x64)
         ),
     ),

@@ -732,6 +732,13 @@ model, from which the shipped readers are generated).
   zeroes every data byte.
 
 ### Spec
+- `33 05 15 05` (op15_kelvin, H60A0): the Kelvin is now spelled `u2be` (it already read high byte first; the
+  generated code is unchanged). The app writes it high byte first (ControllerBuildH60A0.d), and no firmware image
+  handles op 05: on H60A6 it falls to the default branch, which logs 'Unknow msg'. The citations point at that
+  binary path. The catalogue keeps one builder, `build_op15_kelvin_05`. `build_op15_color_temp` and
+  `build_op15_color_temp_05` were byte-identical duplicates and are removed (759 self-checks). A reference check
+  reads `33 05 15 05 0a 8c` back as 2700 K. The last decompiler-style quotes in devices.yaml notes are rewritten in
+  spec terms.
 - The spec is restructured into nine Kaitai files that compile in one `ksc` call
   (`-t python -w --python-package .`). They replace `govee_ble.ksy` and `govee_adv.ksy`, and every documented
   fact and citation of the old files has moved to a new home.

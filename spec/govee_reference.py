@@ -550,6 +550,11 @@ def _selftest(*, strict: bool = False) -> int:
           (ext.color.r, ext.color.g, ext.color.b, ext.kelvin) == (0x11, 0x22, 0x33, 2700)
           and (ext.tint.r, ext.tint.g, ext.tint.b) == (100, 50, 16) and ext.is_cct)
 
+    k05 = append_bcc(bytes([0x33, 0x05, 0x15, 0x05, 0x0A, 0x8C]))
+    kw = parse_frame(k05, "tx", make_profile(f_15_05="kelvin"))
+    check("33 05 15 05 0a 8c (op15_kelvin, H60A0) reads 2700 K, big-endian",
+          kw.body.params.params.data.body.kelvin == 2700)
+
     # govee_commands.py — the full command-builder catalogue (0x33 writes / 0xAA reads). Each builder
     # carries a self-check (byte-exact vs the app layout it was traced from); run them all here so the
     # repo's self-test gate covers the whole catalogue. See docs/OPCODE_COVERAGE.md.
