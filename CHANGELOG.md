@@ -8,6 +8,8 @@ model, from which the shipped readers are generated).
 
 ## [Unreleased]
 
+## [1.4.0] — 2026-10-18
+
 ### Added
 - `DeviceState.device_id`: the id the Govee app calls `device` (e.g. `2D:DB:5C:E7:53:F4:74:56`), read
   with `aa 07 02`. An alias of `serial_number`, which holds the same value.
