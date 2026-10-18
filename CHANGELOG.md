@@ -869,8 +869,12 @@ model, from which the shipped readers are generated).
     cover casts like `(byte)88`, `new byte[]{...}` and Java array literals; decompiler names like `bArr`,
     `param_1`, `z2` and `LAB_...`; and pasted Java and C statements, ternaries and assembly. Firmware
     `FUN_...` symbols stay, because they are the `IMAGE symbol @0xaddr` citation form.
-  - `govee_upload` `random_breath`: the fields `param_1` and `param_2` become `e` and `f`, the app's field
-    names (SuiJiHuXi.e / .f; SuiJiJianBian keeps the same two bytes as e[0] / e[1]). Nothing read them.
+  - The `govee_upload` H60A6 DIY sub-effect fields lose their decompile identifiers (`param_1`, `t0`, `r`,
+    `q` and the like). The new names were traced through H60A6DiyParse and the labels on the DIY screens:
+    `speed` in every sub-effect, plus `laps`, `reverse`, `colorful`, `count`, `bead_count`,
+    `tail_length`, `duration`, and LiuDong4Area's `offset_0` / `offset_1`, which the app sets from the
+    direction. A byte the app gives no meaning gets a neutral `untraced_N` that says so in its doc. Only
+    ids change, and nothing read them.
   - `build_op15_color_ver5` duplicated `build_op15_color_v5` (`33 05 15 01`, colour version 5), and it
     sized the mask from the mask's bit length instead of the position count. It is removed, and its
     whole-frame vectors join v5's self-check.

@@ -436,35 +436,61 @@ types:
     doc-ref:
       - split_h60ax/com/govee/pact_h60a0/adjust/h60a6/diy/protocol/LiuDong4Area.java:1-205
     seq:
-      - id: i
+      - id: speed
         type: u1
-      - id: t0
+        doc: the effect speed (default 100), what H60A6DiyParse reads and writes as the speed
+        doc-ref:
+          - split_h60ax/com/govee/pact_h60a0/adjust/h60a6/diy/H60A6DiyParse.java:381-427, 871-960
+          - base-classes10/com/govee/base2light/ac/diyNew/parse/AbsSub.java:22, 67, 82
+      - id: offset_0
         type: u1
-      - id: t1
+        doc: |
+          signed. Set from the direction (H60A6DiyParse.setDirection) as the pair
+          [offset_0, offset_1]: direction 1 [0, -50], 2 [0, 50], 3 [50, 0], any other [-50, 0]
+          on layer 0, doubled on layer 1. The app names neither axis.
+        doc-ref:
+          - split_h60ax/com/govee/pact_h60a0/adjust/h60a6/diy/H60A6DiyParse.java:727-824
+          - split_h60ax/com/govee/pact_h60a0/adjust/h60c1/Info4DetailH60C1.java:59
+      - id: offset_1
         type: u1
-      - id: x
+        doc: signed; the second byte of that pair
+      - id: untraced_1
         type: u1
-      - id: w
+        doc: meaning untraced
+      - id: untraced_2
         type: u1
-      - id: h
+        doc: meaning untraced
+      - id: direction
         type: u1
-      - id: r0
+        doc: the direction H60A6DiyParse reads and sets for this effect
+        doc-ref:
+          - split_h60ax/com/govee/pact_h60a0/adjust/h60a6/diy/H60A6DiyParse.java:257-291, 727-824
+      - id: untraced_3
         type: u1
-      - id: r1
+        doc: meaning untraced; a direction change resets untraced_3..6 to ff
+        doc-ref:
+          - split_h60ax/com/govee/pact_h60a0/adjust/h60a6/diy/protocol/LiuDong4Area.java:126-147
+      - id: untraced_4
         type: u1
-      - id: q0
+        doc: meaning untraced
+      - id: untraced_5
         type: u1
-      - id: q1
+        doc: meaning untraced
+      - id: untraced_6
         type: u1
-      - id: m0
+        doc: meaning untraced
+      - id: untraced_7
         type: u1
-      - id: m1
+        doc: meaning untraced; default 0
+      - id: untraced_8
         type: u1
-      - id: u
+        doc: meaning untraced; default 100
+      - id: untraced_9
         type: u1
-      - id: v
+        doc: meaning untraced; default 1
+      - id: untraced_10
         type: u1
-        doc: a boolean
+        doc: a boolean; meaning untraced; default 1
       - id: palette
         type: palette
   diy_line:
@@ -486,18 +512,27 @@ types:
         repeat: expr
         repeat-expr: num_segs
         doc: segment indices
-      - id: l0
+      - id: untraced_1
         type: u1
-      - id: l1
+        doc: meaning untraced; default 0
+      - id: untraced_2
         type: u1
-      - id: r
+        doc: meaning untraced; default 100
+      - id: untraced_3
         type: u1
-      - id: t
+        doc: meaning untraced; default 1
+      - id: colorful
         type: u1
-        doc: a boolean
-      - id: s
+        doc: a boolean, the 'Colorful' switch (b2light_scenes_colorful)
+        doc-ref:
+          - split_h60ax/com/govee/pact_h60a0/adjust/h60a6/diy/H60A6DiyParse.java:429-462, 962-1000
+          - split_h60ax/com/govee/pact_h60a0/adjust/h60a6/diy/ui/H60A6BasicDiyEffect.java:440-459
+      - id: reverse
         type: u1
-        doc: a boolean
+        doc: a boolean, the 'Reverse' switch (str_turn_back)
+        doc-ref:
+          - split_h60ax/com/govee/pact_h60a0/adjust/h60a6/diy/H60A6DiyParse.java:429-462, 962-1000
+          - split_h60ax/com/govee/pact_h60a0/adjust/h60a6/diy/ui/H60A6BasicDiyEffect.java:440-459
       - id: palette
         type: palette
   diy_kuosan:
@@ -505,23 +540,40 @@ types:
     doc-ref:
       - split_h60ax/com/govee/pact_h60a0/adjust/h60a6/diy/protocol/KuoSan.java:1-146
     seq:
-      - id: i
+      - id: speed
         type: u1
-      - id: t
+        doc: the effect speed (default 100), what H60A6DiyParse reads and writes as the speed
+        doc-ref:
+          - split_h60ax/com/govee/pact_h60a0/adjust/h60a6/diy/H60A6DiyParse.java:381-427, 871-960
+          - base-classes10/com/govee/base2light/ac/diyNew/parse/AbsSub.java:22, 67, 82
+      - id: untraced_1
         type: u1
-      - id: s
+        doc: meaning untraced; default 1
+      - id: laps
         type: u1
+        doc: |
+          the number of circles: 'Diffusion Circles' (b2light_diy_kuo_san_laps) on
+          the diffuse effect, 'Gathering Circles' (b2light_diy_ju_long_laps) on the gather one
+        doc-ref:
+          - split_h60ax/com/govee/pact_h60a0/adjust/h60a6/diy/H60A6DiyParse.java:293-331, 677-725
+          - split_h60ax/com/govee/pact_h60a0/adjust/h60a6/diy/ui/H60A6BasicDiyEffect.java:284-311
       - id: direction
         type: u1
-      - id: l0
+      - id: untraced_2
         type: u1
-      - id: l1
+        doc: meaning untraced; default 0
+      - id: untraced_3
         type: u1
-      - id: q
+        doc: meaning untraced; default 100
+      - id: untraced_4
         type: u1
-      - id: r
+        doc: meaning untraced; default 1
+      - id: reverse
         type: u1
-        doc: a boolean
+        doc: a boolean, the 'Reverse' switch (str_turn_back)
+        doc-ref:
+          - split_h60ax/com/govee/pact_h60a0/adjust/h60a6/diy/H60A6DiyParse.java:429-462, 962-1000
+          - split_h60ax/com/govee/pact_h60a0/adjust/h60a6/diy/ui/H60A6BasicDiyEffect.java:440-459
       - id: palette
         type: palette
   diy_xuanzhuan:
@@ -529,15 +581,19 @@ types:
     doc-ref:
       - split_h60ax/com/govee/pact_h60a0/adjust/h60a6/diy/protocol/XuanZhuan.java:1-115
     seq:
-      - id: i
+      - id: speed
         type: u1
+        doc: the effect speed (default 100), what H60A6DiyParse reads and writes as the speed
+        doc-ref:
+          - split_h60ax/com/govee/pact_h60a0/adjust/h60a6/diy/H60A6DiyParse.java:381-427, 871-960
+          - base-classes10/com/govee/base2light/ac/diyNew/parse/AbsSub.java:22, 67, 82
       - id: direction
         type: u1
       - id: angle
         type: u2le
-      - id: p
+      - id: untraced_1
         type: u1
-        doc: a boolean
+        doc: a boolean; meaning untraced; default 1
       - id: palette
         type: palette
   random_breath:
@@ -548,14 +604,26 @@ types:
       - split_h60ax/com/govee/pact_h60a0/adjust/h60a6/diy/protocol/SuiJiHuXi.java:39-56
       - split_h60ax/com/govee/pact_h60a0/adjust/h60a6/diy/protocol/SuiJiJianBian.java:40-58
     seq:
-      - id: i
+      - id: speed
         type: u1
-      - id: e
+        doc: the effect speed (default 100), what H60A6DiyParse reads and writes as the speed
+        doc-ref:
+          - split_h60ax/com/govee/pact_h60a0/adjust/h60a6/diy/H60A6DiyParse.java:381-427, 871-960
+          - base-classes10/com/govee/base2light/ac/diyNew/parse/AbsSub.java:22, 67, 82
+      - id: count
         type: u1
-        doc: SuiJiJianBian keeps this byte as e[0]
-      - id: f
+        doc: |
+          sub-effect 5: the 'Lamp bead number' (b2light_diy_led_number).
+          Sub-effect 7: the low end of the 'Color block number' range
+          (b2light_diy_color_block_number, 1..12, default 5).
+        doc-ref:
+          - split_h60ax/com/govee/pact_h60a0/adjust/h60a6/diy/H60A6DiyParse.java:172-189, 293-331, 562-583, 677-725
+          - split_h60ax/com/govee/pact_h60a0/adjust/h60a6/diy/ui/H60A6BasicDiyEffect.java:284-311, 466-477
+      - id: count_max_or_flag
         type: u1
-        doc: a boolean for sub-effect 5; SuiJiJianBian keeps this byte as e[1]
+        doc: |
+          sub-effect 7: the high end of that colour-block range (default 10).
+          Sub-effect 5: a boolean; meaning untraced.
       - id: palette
         type: palette
   diy_suijiliuxing:
@@ -563,19 +631,29 @@ types:
     doc-ref:
       - split_h60ax/com/govee/pact_h60a0/adjust/h60a6/diy/protocol/SuiJiLiuXing.java:1-131
     seq:
-      - id: i
+      - id: speed
         type: u1
+        doc: the effect speed (default 100), what H60A6DiyParse reads and writes as the speed
+        doc-ref:
+          - split_h60ax/com/govee/pact_h60a0/adjust/h60a6/diy/H60A6DiyParse.java:381-427, 871-960
+          - base-classes10/com/govee/base2light/ac/diyNew/parse/AbsSub.java:22, 67, 82
       - id: direction
         type: u1
-      - id: r
+      - id: bead_count
         type: u1
-      - id: s
+        doc: the 'Lamp bead number' (b2light_diy_led_number), 1..30
+        doc-ref:
+          - split_h60ax/com/govee/pact_h60a0/adjust/h60a6/diy/H60A6DiyParse.java:356-379, 842-869
+          - split_h60ax/com/govee/pact_h60a0/adjust/h60a6/diy/ui/H60A6MeteorEffect.java:247-291
+      - id: tail_length
         type: u1
-      - id: q
+        doc: the 'Trailing Length' (b2light_tuo_wei_length), 2..6
+      - id: duration
         type: u1
-      - id: p
+        doc: the 'Duration (s)' (b2light_diy_time_s), 1..30
+      - id: untraced_1
         type: u1
-        doc: a boolean
+        doc: a boolean; meaning untraced; default 1
       - id: palette
         type: palette
   diy_palette2:
@@ -585,10 +663,15 @@ types:
       - split_h60ax/com/govee/pact_h60a0/adjust/h60a6/diy/protocol/HuXi.java:1-83
       - split_h60ax/com/govee/pact_h60a0/adjust/h60a6/diy/protocol/ShanShuo.java:1-83
     seq:
-      - id: i
+      - id: speed
         type: u1
-      - id: m
+        doc: the effect speed (default 100), what H60A6DiyParse reads and writes as the speed
+        doc-ref:
+          - split_h60ax/com/govee/pact_h60a0/adjust/h60a6/diy/H60A6DiyParse.java:381-427, 871-960
+          - base-classes10/com/govee/base2light/ac/diyNew/parse/AbsSub.java:22, 67, 82
+      - id: untraced_1
         type: u1
+        doc: meaning untraced; default 1
       - id: palette
         type: palette
   graffiti_value:
