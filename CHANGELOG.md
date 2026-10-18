@@ -538,9 +538,8 @@ model, from which the shipped readers are generated).
 - **The spec conformance tests run again (test-only).** `tests/test_spec_conformance.py` still imported the
   advertisement reader that S1 deleted with `govee_adv.ksy`. Under `CI=true`, which CI sets, that import
   stopped the whole pytest run at collection; locally the module was silently skipped. The devices.yaml
-  schema and catalogue checks run again. The obsolete reader check is gone: the library's identify path
-  covers the manufacturer-data reader (`test_identify.py`), and the H5083 image's advert covers the
-  scan-record reader (`test_h5083_firmware.py`).
+  schema and catalogue checks run again, and the advert check now reads its synthetic Govee AD through
+  the labelled `govee_scan_record` root (its manufacturer-specific case is `govee_manufacturer_data`).
 - **A 0xAC status chunk is a 20-byte 0xAC frame, as in the app.** `reassemble.reassemble` and `parse_status`
   took any record of 19 bytes or more in 1.3.0, whatever its proType. They, and the new `burst_chunks`,
   `BurstAssembler` and `describe.status_burst_report`, now take only a 20-byte 0xAC frame as a chunk, as
