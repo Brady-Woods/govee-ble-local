@@ -956,6 +956,11 @@ model, from which the shipped readers are generated).
   `untraced_0` / `untraced_1` and `build_splicing_sub_device_mac` `untraced_0`. The daysync upload builders'
   local helpers `j` / `k` become `unsplit_package` / `split_package`. Bytes are unchanged, and nothing in
   `src/` or `tests/` passed these parameters by keyword.
+- `build_diy_create_gif_v1` duplicated `build_diy_create_gif` (`33 86 01`, NOTIFY_DEVICE_CREATE_UPLOAD_GIF):
+  same parameters, same bytes, and the same and only app sender, DiyEdit4DeviceCreateGifActivity.l2. It is
+  removed. Its citations and whole-frame vector join `build_diy_create_gif`, whose two overlapping
+  self-checks become one. The catalogue has 461 builders and 757 self-checks, and `OPCODE_COVERAGE.md`
+  indexes exactly those.
 - `33 05 15 05` (op15_kelvin, H60A0): the Kelvin is now spelled `u2be` (it already read high byte first; the
   generated code is unchanged). The app writes it high byte first (ControllerBuildH60A0.d), and no firmware image
   handles op 05: on H60A6 it falls to the default branch, which logs 'Unknow msg'. The citations point at that

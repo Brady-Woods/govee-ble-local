@@ -6,7 +6,7 @@ and verified by adversarial re-trace. Companion to govee_reference.py, which own
 multi-packet scene/DIY upload (send them in order). Tiers and gaps: docs/OPCODE_COVERAGE.md.
 
 Assembled from the opcode trace, then maintained in place (ruff- and mypy --strict-clean): edit this file
-directly, keeping the 759 _SELF_CHECKS green.
+directly, keeping the 757 _SELF_CHECKS green.
 """
 
 from __future__ import annotations
@@ -4221,35 +4221,19 @@ def build_alarm_clock_ring_action(remind_later: bool) -> bytes:
 
 
 def build_diy_create_gif(diy_code: int, diy_id: int) -> bytes:
-    """0x33 86 [01, diy_code u16 LE, diyId u32 LE] create DIY GIF (DiyEdit4DeviceCreateGifActivity.l2,
-    base-classes10/com/govee/base2light/ac/diyNew/details/DiyEdit4DeviceCreateGifActivity.java:1974-1989;
-    the u16 is the activity's DIY code, the value it stores as the DiyValue's diyCode, :210,294,399,1624).
+    """0x33 86 [01, diy_code u16le, diy_id u32le]: ask the device to create the DIY GIF/icon,
+    NOTIFY_DEVICE_CREATE_UPLOAD_GIF
+    (base-classes10/com/govee/base2light/ble/controller/BleProtocolConstants.java:90). The app's one sender
+    is DiyEdit4DeviceCreateGifActivity.l2
+    base-classes10/com/govee/base2light/ac/diyNew/details/DiyEdit4DeviceCreateGifActivity.java:1974-1989
+    (called at :516,634,669), written through ControllerSingle.Companion.c
+    base-classes11/com/govee/base2light/kt/general_controller/ControllerSingle.java:38-41. diy_code is the
+    activity's DIY code, the value it stores as the DiyValue's diyCode (:210,294,399,1624).
     """
     return append_bcc(
         bytes([0x33, 0x86, 0x01])
         + (diy_code & 0xFFFF).to_bytes(2, "little")
         + (diy_id & 0xFFFFFFFF).to_bytes(4, "little")
-    )
-
-
-def build_diy_create_gif_v1(diy_code: int, diy_id: int) -> bytes:
-    """0x33 86 [01, diy_code u16le, diy_id u32le]: ask the device to create the DIY GIF/icon,
-    NOTIFY_DEVICE_CREATE_UPLOAD_GIF (DiyEdit4DeviceCreateGifActivity.l2
-    base-classes10/com/govee/base2light/ac/diyNew/details/DiyEdit4DeviceCreateGifActivity.java:1974-1989;
-    ControllerSingle.Companion.c
-    base-classes11/com/govee/base2light/kt/general_controller/ControllerSingle.java:38-41).
-    """
-    return append_bcc(
-        bytes(
-            [
-                0x33,
-                0x86,
-                0x01,
-                diy_code & 0xFF,
-                (diy_code >> 8) & 0xFF,
-                *(diy_id & 0xFFFFFFFF).to_bytes(4, "little"),
-            ]
-        )
     )
 
 
@@ -10961,21 +10945,9 @@ _SELF_CHECKS: list[tuple[str, bool]] = [
         lambda: bool(
             build_diy_create_gif(254, 0x11223344)[:10]
             == bytes([0x33, 0x86, 0x01, 0xFE, 0x00, 0x44, 0x33, 0x22, 0x11, 0x00])
-        ),
-    ),
-    _check(
-        "build_diy_create_gif",
-        lambda: bool(
-            build_diy_create_gif(254, 0x11223344)[:10]
-            == bytes([0x33, 0x86, 0x01, 0xFE, 0x00, 0x44, 0x33, 0x22, 0x11, 0x00])
             and build_diy_create_gif(254, 0x11223344)[19]
             == (0x33 ^ 0x86 ^ 0x01 ^ 0xFE ^ 0x44 ^ 0x33 ^ 0x22 ^ 0x11)
-        ),
-    ),
-    _check(
-        "build_diy_create_gif_v1",
-        lambda: bool(
-            build_diy_create_gif_v1(0x1234, 0x01020304)
+            and build_diy_create_gif(0x1234, 0x01020304)
             == bytes.fromhex("338601341204030201" + "00" * 10 + "96")
         ),
     ),
