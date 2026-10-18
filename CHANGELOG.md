@@ -905,6 +905,13 @@ model, from which the shipped readers are generated).
     no decoded state, return value or connection behaviour changes.
 
 ### Spec
+- New `command_forms` selectors `f_40` (`form_40`: `unknown`, `ic_pair`, `one_count`, `device_count`) and `f_a3`
+  (`form_a3`: `unknown`, `gradual`) say how a status screen reads TLV 0x40 / 0xA3 (rule 4 c). `govee_state`
+  `app_read_fails` flags those values only where the screen reads them: H60A6, whose screen ignores both, no
+  longer flags an empty 0xA3 or a short 0x40, and the IC pair reader's under-3-byte and byte-order failures are
+  now flagged (new `ic_count.app_pair_fails`, ControllerIcNum.e). `ic_total` now needs 3 bytes. The values stay
+  typed under every form. `devices.yaml` sets the facts on 23 goodsTypes in 15 families and the goodsType 69
+  pact (2,1) branch; `govee_reference.make_profile` takes the two new keywords.
 - Each `seg_mask` parent that passed a literal cap now names it as a `len_cap` value instance, as `op15_color`
   does (rule 4 b): `op15_brightness` 14 and `color_0b_rgb_mask` 13 (the app cuts a longer mask, Bytes.G / Bytes.d),
   and `op15_gradient` 6 (Bytes.n copies the mask with no cut, so a longer one throws). Instances only; the bytes

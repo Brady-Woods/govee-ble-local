@@ -1515,6 +1515,33 @@ enums:
       doc: H6057 worry-free-at-night, 7 bytes
       doc-ref:
         - base-classes10/com/govee/base2light/ble/controller/WorryFreeAtNightBean.java:90-92
+  form_40:
+    0:
+      id: unknown
+      doc: |
+        not known, or the status screen does not read TLV 0x40; the value
+        still reads, and only app_read_fails depends on the form
+    1:
+      id: ic_pair
+      doc: |
+        the IC pair reader: it throws below 3 bytes or on a count of 0x1000+
+      doc-ref:
+        - base-classes11/com/govee/base2light/kt/general_controller/ControllerIcNum.java:64-74,141-161
+        - split_h61d3/com/govee/h61d3/adjustNew/VM4Light$afterConnectedSingleReadDeviceInfo$1.java:125-126
+    2:
+      id: one_count
+      doc: one 16-bit IC count from bytes 0-1; it throws below 2 bytes
+      doc-ref:
+        - split_rgbiclight/com/govee/rgbiclight/h667172/VM4LightH667172$afterConnectedSingleReadDeviceInfo$1.java:96-97
+        - split_h7050/com/govee/h7050/newdetail/h7045/H7045DetailVM$afterConnectedSingleReadDeviceInfo$1.java:80-81
+    3:
+      id: device_count
+      doc: |
+        the H70B3 one-byte device count: only an empty value throws; the
+        screen skips it at splicing state 1
+      doc-ref:
+        - split_h70b1/com/govee/h70b3/adjust/vm/VM4H70B345.java:887-895
+        - split_h70b1/com/govee/h70b3/adjust/vm/VM4H70B345Splicing.java:487-489
   form_41:
     0:
       id: unknown
@@ -1544,6 +1571,18 @@ enums:
         a colour-only group [group][rgb x n]
       doc-ref:
         - base-classes11/com/govee/base2light/kt/general_controller/Controller4ColorInfoByGroup.java:145-158
+  form_a3:
+    0:
+      id: unknown
+      doc: |
+        not known, or the status screen does not read TLV 0xA3; the value
+        still reads, and only app_read_fails depends on the form
+    1:
+      id: gradual
+      doc: byte 0 read as the gradual flag; an empty value throws
+      doc-ref:
+        - split_h7075/com/govee/h7075/h707A/H707ABCDetailVM$afterConnectedSingleReadDeviceInfo$1.java:141-142
+        - split_hollowlamp/com/govee/straightfloorlamp/adjust/VM4Light$afterConnectedSingleReadDeviceInfo$1.java:118-119
   form_a5:
     0:
       id: unknown

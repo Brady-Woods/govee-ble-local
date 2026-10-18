@@ -642,6 +642,15 @@
           ],
           "description": "govee_profile command_forms.f_36 (govee_common::form_36)."
         },
+        "f_40": {
+          "enum": [
+            "unknown",
+            "ic_pair",
+            "one_count",
+            "device_count"
+          ],
+          "description": "govee_profile command_forms.f_40 (govee_common::form_40)."
+        },
         "f_41": {
           "enum": [
             "unknown",
@@ -657,6 +666,13 @@
             "color_group_rgb"
           ],
           "description": "govee_profile command_forms.f_a2 (govee_common::form_a2)."
+        },
+        "f_a3": {
+          "enum": [
+            "unknown",
+            "gradual"
+          ],
+          "description": "govee_profile command_forms.f_a3 (govee_common::form_a3)."
         },
         "f_a5": {
           "enum": [

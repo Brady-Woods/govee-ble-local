@@ -94,8 +94,10 @@ instances:
       or command == govee_common::command::brightness
       or command == govee_common::command::device_info
       or command == govee_common::command::new_timer
-      or command == govee_common::command::gradual
-      or command == govee_common::command::ic_num
+      or (command == govee_common::command::gradual
+      and profile.forms.f_a3 == govee_common::form_a3::gradual)
+      or (command == govee_common::command::ic_num
+      and profile.forms.f_40 != govee_common::form_40::unknown)
       or (command == govee_common::command::mode and decode.empty_fails)
       or (command == govee_common::command::cmd_30
       and profile.forms.f_30 != govee_common::form_30::unknown)
@@ -111,13 +113,17 @@ instances:
       or (command == govee_common::command::new_timer
       and body.as<timer_slots>.is_short)
       or (command == govee_common::command::ic_num
+      and profile.forms.f_40 == govee_common::form_40::ic_pair
+      and body.as<ic_count>.app_pair_fails)
+      or (command == govee_common::command::ic_num
+      and profile.forms.f_40 == govee_common::form_40::one_count
       and body.as<ic_count>.is_short)
       or (command == govee_common::command::color_group
       and profile.forms.f_a5 == govee_common::form_a5::color_group
       and body.as<cmd_a5_state>.body.as<color_group>.app_read_fails)))
     doc: status TLV only; the app's whole status read fails on this value
     doc-ref:
-      - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4BaseInfoSingleRead.java:286-334,347-353
+      - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4BaseInfoSingleRead.java:286-341,347-353
       - split_h60ax/com/govee/pact_h60a0/adjust/h60a1/Info4Detail.java:380-433
       - split_h60ax/com/govee/pact_h60a0/adjust/h60a6/VM4LightH60A6$afterConnectedSingleReadDeviceInfo$1.java:94-124
 types:
@@ -1339,17 +1345,26 @@ types:
         value: _io.size >= 6 and ic_count_2 != 0
       ic_total:
         value: 'ic_count + (has_second_pair ? ic_count_2 : 0)'
-        if: >-
-          _io.size >= 2 and not ic_count_byte_order_suspect
-          and not (has_second_pair and ic_count_2 >= 0x1000)
+        if: not app_pair_fails
         doc: both pairs' count, as the H61D3 / H6609 / H6250 screens use it
         doc-ref:
           - split_h61d3/com/govee/h61d3/adjustNew/VM4Light.java:550-563
           - split_h61d3/com/govee/h61d3/pact/H61D3Support.java:786-788
           - split_h6840/com/govee/h6609/h6250/NewDetailVm$afterConnectedSingleReadDeviceInfo$1.java:75-87
+      app_pair_fails:
+        value: >-
+          _io.size < 3 or ic_count_byte_order_suspect
+          or (has_second_pair and ic_count_2 >= 0x1000)
+        doc: the IC pair reader (TLV form_40 ic_pair) throws on this value
+        doc-ref:
+          - base-classes11/com/govee/base2light/kt/general_controller/ControllerIcNum.java:64-74,141-161
       is_short:
         value: _io.size < 2
-        doc: no IC count (the app throws)
+        doc: |
+          fewer than 2 bytes: no 16-bit IC count (the one-count readers throw;
+          TLV form_40 one_count)
+        doc-ref:
+          - base-classes11/com/govee/base2light/kt/general_controller/ControllerIcNum.java:98-103
       ic_count_byte_order_suspect:
         value: _io.size >= 2 and ic_count >= 0x1000
         doc: the app's byte-order check fires (it rejects the value, no swap)

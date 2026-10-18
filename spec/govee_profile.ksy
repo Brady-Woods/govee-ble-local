@@ -62,6 +62,12 @@ types:
         type: u1
         enum: govee_common::form_36
         doc: 33 36, aa 36, TLV 0x36 (bar pair vs bar index vs worry-free)
+      - id: f_40
+        type: u1
+        enum: govee_common::form_40
+        doc: |
+          TLV 0x40, the status screen's read (IC pair vs one count vs device
+          count; the value is typed under every form)
       - id: f_41
         type: u1
         enum: govee_common::form_41
@@ -70,6 +76,12 @@ types:
         type: u1
         enum: govee_common::form_a2
         doc: aa a2 (H61A8 batch vs colour-only group)
+      - id: f_a3
+        type: u1
+        enum: govee_common::form_a3
+        doc: |
+          TLV 0xA3, the status screen's gradual-flag read (the value is typed
+          under every form)
       - id: f_a5
         type: u1
         enum: govee_common::form_a5
