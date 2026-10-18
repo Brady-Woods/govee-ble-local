@@ -373,7 +373,7 @@ def parse_status(frames: list[bytes], *, pieces: int | None = None, decode: Any 
         v: Any = getattr(tlv.value, "body", None)
         if typ == TYPE_ZONE:
             v = getattr(v, "body", None)   # the zone_bits
-        if v is None and typ in _READS_A_VALUE:
+        if typ in _READS_A_VALUE and v is None:   # this order leaves v as Any on the fall-through
             # The spec flags every empty value these reads need (app_read_fails); one it doesn't flag fails
             # the read here as well, rather than raising out of the device's poll.
             _LOGGER.debug("status reply: TLV 0x%02x (len %d) has no value to read; no state used", typ,
