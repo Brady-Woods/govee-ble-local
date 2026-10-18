@@ -129,12 +129,13 @@ def crypt_v1(buf: bytes, key: bytes, *, encrypt: bool) -> bytes:
 # AbsController4BleSingleSendMultiBack (base2light/ble/controller), per received 20-byte frame:
 # first frame (tag 0x00): [AC, 00, pktsLo, pktsHi, lastLen, cmd, sub, <12 data @7..18>, CK]      (.f/.g)
 #                         pkts = allBackPkgs = TOTAL packet count incl. this one and the last (u16 LE,
-#                         BleUtils.H(.., false)); lastLen = endPkgLen = valid data bytes in the last packet.
+#                         BleUtils.H with its flag false); lastLen = endPkgLen = valid data bytes in the
+#                         last packet.
 # next  frames (tag = position 1..pkts-2): [AC, tag, <17 data @2..18>, CK]                         (.i)
 # last  frame (tag 0xFF, position pkts-1): [AC, FF, <lastLen data @2..>, zero pad, CK]            (.h)
 # pkts == 1: the first frame is the whole reply and holds lastLen (<= 12) data bytes @7 (.g).
 # isSameController() matches frames by position: a 0xFF tag only at position pkts-1, which also takes
-# its own position as the tag (K(tag) == backPos); onResult() runs .h() at pkts-1 for either tag.
+# its own position as the tag (K of the tag equals backPos); onResult() runs .h() at pkts-1 for either tag.
 # Reassembled = the concatenated data, exactly 12 + 17*(pkts-2) + lastLen bytes (the TLV stream).
 _AC_FIRST_LEN = 12   # AbsController4BleSingleSendMultiBack.a()
 _AC_DATA_LEN = 17    # ... f57173o (middle packets, .i)
@@ -167,8 +168,9 @@ def reassemble_ac(frames: list[bytes]) -> bytes:
             raise ValueError(f"0xAC packet {pos} carries tag {f[1]:#04x}")
         data += f[2 : 2 + _AC_DATA_LEN]
     last = frames[count - 1]
-    # isSameController takes 0xFF here (backPos == allBackPkgs-1, :237-239) or the position itself
-    # (K(tag) == backPos, :248); onResult then runs .h() because backPos == allBackPkgs-1 (:326-331).
+    # isSameController takes 0xFF here (backPos is allBackPkgs-1, :237-239) or the position itself
+    # (K of the tag equals backPos, :248); onResult then runs .h() because backPos is allBackPkgs-1
+    # (:326-331).
     if last[1] not in (_AC_LAST_TAG, count - 1):
         raise ValueError(f"0xAC last packet carries tag {last[1]:#04x}, not 0xFF or {count - 1:#04x}")
     data += last[2 : 2 + last_len]
@@ -318,13 +320,12 @@ def parse_status(tlv_buffer: bytes, profile: Any = None) -> Any:
 
 
 # ───────────────────────── op15 segment masks (BleUtils.X / makeSelectedTwoBytes) ─────────────────────────
-# Every 0x15 colour/brightness builder picks its mask by `posSet.length > 16 ? BleUtils.X(posSet, true)
-# : makeSelectedTwoBytes(posSet, true)` (color/Bytes.java h :323, r :498, G :178, b :229, d :278, l :387,
+# Every 0x15 colour/brightness builder picks its mask the same way: BleUtils.X when posSet has more than
+# 16 entries, else makeSelectedTwoBytes (color/Bytes.java h :323, r :498, G :178, b :229, d :278, l :387,
 # n :417, u :553; SubModeColorV1.getWriteBytes :672 keys it on its segment count). posSet has one entry
 # per device segment, so the width follows the segment count, not the selection.
 OP15_LEGACY_MASK_SEGMENTS: Final = 16   # makeSelectedTwoBytes: always 2 bytes, 00 00 if empty or > 16
 OP15_MAX_MASK_BYTES: Final = 7          # Bytes.h/r keep coerceAtMost(len, 17 - 10); Bytes.C truncates > 7
-OP15_MAX_MASK_SEGMENTS: Final = OP15_MAX_MASK_BYTES * 8
 
 
 def bleutils_x(pos_set: Sequence[bool]) -> bytes:
@@ -352,45 +353,6 @@ def op15_mask(pos_set: Sequence[bool]) -> bytes:
     if len(pos_set) > OP15_LEGACY_MASK_SEGMENTS:
         return bleutils_x(pos_set)
     return make_selected_two_bytes(pos_set)
-
-
-def op15_mask_width(segments: int) -> int:
-    """Mask bytes for a device with ``segments`` segments: 2 for 0..16, else ceil(n/8). ValueError above
-    56 (7 bytes, the most Bytes.h/r/C put on the wire); the library's wire.build.mask_width."""
-    if isinstance(segments, bool) or not 0 <= segments <= OP15_MAX_MASK_SEGMENTS:
-        raise ValueError(f"segment count must be an integer in 0..{OP15_MAX_MASK_SEGMENTS}, got {segments!r}")
-    return 2 if segments <= OP15_LEGACY_MASK_SEGMENTS else (segments + 7) // 8
-
-
-def op15_mask_from_int(seg_mask: int, segments: int) -> bytes:
-    """``seg_mask`` (bit i = segment i) as the op15_mask_width(segments)-byte LSB-first mask; ValueError
-    if it does not fit that width (the library's wire.build._mask_bytes)."""
-    width = op15_mask_width(segments)
-    if not 0 <= seg_mask < 1 << (8 * width):
-        raise ValueError(f"segment mask {seg_mask:#x} does not fit {width} bytes ({segments} segments)")
-    return seg_mask.to_bytes(width, "little")
-
-
-def build_op15_color(r: int, g: int, b: int, seg_mask: int, *, variant: int, kelvin: int = 0,
-                     tint: tuple[int, int, int] = (0, 0, 0), segments: int | None = None) -> bytes:
-    """Build a 0x33 05 15 01 colour-write frame: the frame's op15_color, whose form is the profile's
-    f_15_01. variant: 1 basic (form basic), 12 H60A1/H60A6 RGB and 11 CCT (both form kelvin_tint; 12
-    sends kelvin 0 and tint 0), from client_profile.color_scheme + the op.
-
-    ``segments`` is the device's segment count, which sets the mask width (op15_mask_width): None, the
-    default, keeps the legacy two-byte mask (seg_mask & 0xFFFF) exactly as before; 0..16 is also two
-    bytes; 17..56 is ceil(n/8) bytes, LSB first (BleUtils.X). ValueError above 56 segments or for a
-    seg_mask wider than its width."""
-    body = bytearray([0x05, 0x15, 0x01, r, g, b])
-    if variant == 12:
-        body += bytes(5)
-    elif variant == 11:
-        body += bytes([(kelvin >> 8) & 0xFF, kelvin & 0xFF, *tint])
-    if segments is None:
-        body += bytes([seg_mask & 0xFF, (seg_mask >> 8) & 0xFF])
-    else:
-        body += op15_mask_from_int(seg_mask, segments)
-    return append_bcc(bytes([0x33]) + body)
 
 
 # ────────── device profiles (devices.yaml -> {cloud goodsType | goodsType-0 SKU: client_profile}) ──────────
@@ -470,13 +432,6 @@ def _selftest(*, strict: bool = False) -> int:
     check("makeSelectedTwoBytes: 3 -> 07 00, 17 -> 00 00",
           make_selected_two_bytes([True] * 3) == b"\x07\x00"
           and make_selected_two_bytes([True] * 17) == bytes(2))
-    check("op15_mask_width 16/17/33/48/49/56 -> 2/3/5/6/7/7",
-          [op15_mask_width(n) for n in (16, 17, 33, 48, 49, 56)] == [2, 3, 5, 6, 7, 7])
-    check("build_op15_color default mask unchanged (2 bytes)",
-          build_op15_color(1, 2, 3, 0x1FFF, variant=12).hex() == "330515010102030000000000ff1f0000000000c2")
-    check("build_op15_color H6062 33 segments -> 5-byte mask",
-          build_op15_color(0xFF, 0, 0, (1 << 33) - 1, variant=12, segments=33).hex()
-          == "33051501ff00000000000000ffffffff010000dc")
 
     print("device profiles:")
     try:
@@ -543,11 +498,13 @@ def _selftest(*, strict: bool = False) -> int:
     g3 = group_reply(False, [255, 0, 0, 0, 255, 0])
     check("aa a5 reply, no brightness -> 3B records", g3.records[0].r == 255 and g3.records[1].g == 255)
 
-    wr = parse_frame(build_op15_color(0x11, 0x22, 0x33, 0x0003, variant=11, kelvin=2700, tint=(100, 50, 16)),
+    from govee_commands import build_op15_color_temp_bytes_r  # the catalogue imports this module
+
+    wr = parse_frame(build_op15_color_temp_bytes_r((100, 50, 16), 2700, [True, True] + [False] * 14),
                      "tx", make_profile(f_15_01="kelvin_tint", num_segments=16))
     ext = wr.body.params.params.data  # write_command -> mode_write -> color_15_write -> op15_color
-    check("build_op15_color(CCT) round-trips colour, kelvin and tint",
-          (ext.color.r, ext.color.g, ext.color.b, ext.kelvin) == (0x11, 0x22, 0x33, 2700)
+    check("build_op15_color_temp_bytes_r round-trips slot, kelvin and tint",
+          (ext.color.r, ext.color.g, ext.color.b, ext.kelvin) == (0xFF, 0xFF, 0xFF, 2700)
           and (ext.tint.r, ext.tint.g, ext.tint.b) == (100, 50, 16) and ext.is_cct)
 
     k05 = append_bcc(bytes([0x33, 0x05, 0x15, 0x05, 0x0A, 0x8C]))

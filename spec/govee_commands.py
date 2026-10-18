@@ -23,7 +23,7 @@ _V = TypeVar("_V")
 
 
 def _f32(x: float) -> float:
-    """Round to IEEE-754 single precision (a Java ``float``), as NumberUtil's ``100.0f`` forces."""
+    """Round to IEEE-754 single precision (a Java ``float``), as NumberUtil's float divisor 100 forces."""
     return float(struct.unpack("<f", struct.pack("<f", x))[0])
 
 
@@ -145,13 +145,13 @@ def build_brightness_from_percent(pct: int, lo: int = 20, hi: int = 254) -> byte
     base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:88-93,153-155;
     NumberUtil.calculateProgress base-classes10/com/govee/base2home/util/NumberUtil.java:47-49; caller
     GroupApplyVM base-classes13/com/govee/eco/basegroup/viewmodel/GroupApplyVM.java:2146-2147).
-    The mapping is computed in float32, as the app's ``100.0f`` literal forces (see :func:`_f32`).
+    The mapping is computed in float32, as the app's float divisor 100 forces (see :func:`_f32`).
     """
     p = min(max(pct, 1), 100)
     if lo == 1 and hi == 100:
         level = p
     else:
-        step = _f32(_f32((hi - lo) + 3) / _f32(100.0))  # ((max - min) + 3) / 100.0f
+        step = _f32(_f32((hi - lo) + 3) / _f32(100.0))  # ((max - min) + 3) / 100, in float32
         level = int(_f32(lo + _f32((p - 1) * step)))
     return append_bcc(bytes([0x33, 0x04, level & 0xFF]))
 
@@ -240,7 +240,7 @@ def build_diy_activate(code: int, music_code: int = 0) -> bytes:
     """33 05 0A <code u2le> <music_code u2le> activate DIY (music_code 0 == legacy 3-byte form).
     split_h6047/com/govee/h6047/ble/SubModeNewDiy.java:29 (getWriteBytes);
     base-classes11/com/govee/base2light/effectPlay/effect/mode/SubModeNewDiy.java:64 (getWriteBytes,
-    e==false).
+    e false).
     """
     return append_bcc(
         bytes(
@@ -252,7 +252,7 @@ def build_diy_activate(code: int, music_code: int = 0) -> bytes:
 def build_diy_activate_custom_music(code: int, music_code: int, music_type: int) -> bytes:
     """33 05 0A <code u2le> <music u4le> <type> activate DIY with custom music.
     base-classes11/com/govee/base2light/effectPlay/effect/mode/SubModeNewDiy.java:64 (getWriteBytes,
-    e==true :65-68).
+    e true :65-68).
     """
     m = music_code
     return append_bcc(
@@ -316,7 +316,7 @@ def build_mic_h6192() -> bytes:
 def build_mic_mode_color(r: int, g: int, b: int) -> bytes:
     """33 05 05 01 01 R G B mic mode with a fixed colour.
     base-classes11/com/govee/base2light/pact/newdetail/content/mic/SubModeMic.java:97 (getWriteBytes,
-    c==true); split_rgbiclight/com/govee/chassislightv1/ble/SubModeMic.java:32 (getWriteBytes).
+    c true); split_rgbiclight/com/govee/chassislightv1/ble/SubModeMic.java:32 (getWriteBytes).
     """
     return append_bcc(bytes([0x33, 0x05, 0x05, 0x01, 0x01, r & 0xFF, g & 0xFF, b & 0xFF]))
 
@@ -502,10 +502,12 @@ def build_op15_color_v5(
     r: int, g: int, b: int, seg_mask: int, *, kelvin: int = 0, mask_bytes: int = 2
 ) -> bytes:
     """33 05 15 01 [R,G,B][kelvin u16be, 0 for RGB][seg_mask LSB-first, mask_bytes long] (colour version 5
-    COLOR_MODE_0X15_NO_TEMP_RGB: Config.Zt
-    base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:13124-13131 ->
-    Bytes.l/u
+    COLOR_MODE_0X15_NO_TEMP_RGB: Config.J[5] = Config.Zt
+    base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:5527-5531,13124-13131 ->
+    Bytes.l for an RGB pick, Bytes.u for a Kelvin tint
     base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:379-390,541-556).
+    The app sizes the mask by the position count: 2 bytes up to 16 positions, else ceil(n/8)
+    (makeSelectedTwoBytes / BleUtils.X); pass that as mask_bytes.
     """
     return append_bcc(
         bytes([0x33, 0x05, 0x15, 0x01, r, g, b, (kelvin >> 8) & 0xFF, kelvin & 0xFF])
@@ -551,12 +553,34 @@ def build_op15_color_bytes_h(r: int, g: int, b: int, pos_set: Sequence[bool]) ->
     return append_bcc(bytes([0x33, 0x05, 0x15, 0x01, r & 0xFF, g & 0xFF, b & 0xFF, 0, 0, 0, 0, 0]) + mask)
 
 
+_OP15_BASIC_MAX_MASK_BYTES = 17 - 5  # the ext [15 01 R G B] + mask must fit frame bytes 2..18
+
+
+def build_op15_color_basic(r: int, g: int, b: int, pos_set: Sequence[bool]) -> bytes:
+    """33 05 15 01 [R,G,B][mask] RGB on the positions set in pos_set, the basic form (form_15_01 basic):
+    SubModeColorV1.getWriteBytes opType 1
+    split_h60ax/com/govee/pact_h60a0/ble/v1/SubModeColorV1.java:670-672,684-693. The ext is [15 01 R G B]
+    and the mask follows the colour directly: 2 bytes for a device of up to 16 segments
+    (makeSelectedTwoBytes), else BleUtils.X ceil(n/8); pos_set holds one entry per segment. The mode
+    controller copies the ext whole into the 20-byte frame (AbsSingleController.java:19 ->
+    base-classes10/com/govee/base2kt/utils/BleUtils.java:1030-1041), so more than 12 mask bytes (over
+    96 segments) do not fit before the BCC: ValueError.
+    """
+    mask = op15_mask(pos_set)
+    if len(mask) > _OP15_BASIC_MAX_MASK_BYTES:
+        raise ValueError(
+            f"{len(pos_set)} positions need a {len(mask)}-byte mask; the basic form fits at most"
+            f" {_OP15_BASIC_MAX_MASK_BYTES} (96 positions)"
+        )
+    return append_bcc(bytes([0x33, 0x05, 0x15, 0x01, r & 0xFF, g & 0xFF, b & 0xFF]) + mask)
+
+
 def build_op15_color_temp_bytes_r(
     tint: Sequence[int], kelvin: int, pos_set: Sequence[bool], kind: int = 1
 ) -> bytes:
     """33 05 15 01 [slot RGB][kelvin u16be][tint RGB][mask] colour temperature on pos_set (Bytes.r
     base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:474-501; the app's
-    tint is the picked colour or Constant.getTemColorByKelvin(K)). kind (Bytes.r's i5, :480-486):
+    tint is the picked colour or Constant.getTemColorByKelvin(K)). kind (Bytes.r's kind argument, :480-486):
     0 -> slot 00 00 00; 3 -> slot 00 00 00 when every position is set, else slot = tint with kelvin and
     tint zeroed (:492, :495); any other value (1, the usual one, or ColorUtils.R()) -> slot ff ff ff.
     Mask as Bytes.h (at ext byte 10, at most 7 bytes). Callers: Config.Yt (Config.java:12967),
@@ -627,7 +651,7 @@ def build_scene_ext_carousel(effect: int, music_code: int = 0, voice_type: int =
     """33 05 04 <effect u2le> <music u4le> <voiceType> extended scene frame, built only for the H6057 carousel
     effect string, never sent by a scene tab.
     base-classes11/com/govee/base2light/pact/newdetail/content/scene/SubModeScenes.java:60-69
-    (getWriteBytes, e == true) via
+    (getWriteBytes, e true) via
     base-classes11/com/govee/base2light/pact/newdetail/content/carousel/CarouselEffectManager.java:892-927
     (l).
     """
@@ -650,7 +674,7 @@ def build_scene_newdetail(effect: int, music_code: int = 0) -> bytes:
     """33 05 04 <effect u2le> <music u2le> newdetail scene-tab activate; music_code is sent only when the
     scene's music switch is on, else 0.
     base-classes11/com/govee/base2light/pact/newdetail/content/scene/SubModeScenes.java:59-77
-    (getWriteBytes, e == false) via BaseSceneViewMode.java:722-740 (Z2) and :864-924 (k3).
+    (getWriteBytes, e false) via BaseSceneViewMode.java:722-740 (Z2) and :864-924 (k3).
     """
     return append_bcc(
         bytes(
@@ -668,8 +692,8 @@ def build_scene_newdetail(effect: int, music_code: int = 0) -> bytes:
 
 
 def build_video_h6101(mode2: bool, a_flag: bool) -> bytes:
-    """33 05 00 <mode2?2:0> <!a> video mode, H6101. split_rgblight/com/govee/h6101/ble/SubModeVideo.java:38
-    (SubModeVideo.getWriteBytes).
+    """33 05 00 <2 for mode 2, else 0> <0 when a is set, else 1> video mode, H6101.
+    split_rgblight/com/govee/h6101/ble/SubModeVideo.java:38 (SubModeVideo.getWriteBytes).
     """
     return append_bcc(bytes([0x33, 0x05, 0x00, 2 if mode2 else 0, 0 if a_flag else 1]))
 
@@ -870,7 +894,7 @@ def read_auto_time(group: int) -> bytes:
 
 def build_delay_close(on: bool, minutes: int) -> bytes:
     """0x33 0B countdown auto-off [on, hours, minutes] from total minutes (DelayCloseController.q:46-50; kt
-    ControllerDelayClose(z,z2,i):74-76; TimeUtils.getHM:45-48).
+    ControllerDelayClose(write, on, minutes):74-76; TimeUtils.getHM:45-48).
     """
     m = max(0, minutes)
     return append_bcc(bytes([0x33, 0x0B, 1 if on else 0, (m // 60) & 0xFF, (m % 60) & 0xFF]))
@@ -886,7 +910,7 @@ def build_game_h6057(game_code: int) -> bytes:
 
 
 def read_delay_close() -> bytes:
-    """0xAA 0B, no selector (DelayCloseController():11-13 p()==null; kt
+    """0xAA 0B, no selector (DelayCloseController():11-13, p() null; kt
     ControllerDelayClose.Companion.b:51-53).
     """
     return read_request(0x0B)
@@ -902,7 +926,7 @@ def read_mode_bare() -> bytes:
     ComposeReadAllInfoV1 (split_h60ax/com/govee/pact_h60a0/adjust/v1/ComposeReadAllInfoV1.java:148), from
     BleOpV1.V (split_h60ax/com/govee/pact_h60a0/adjust/v1/BleOpV1.java:47-51).
     NOT the H6057 newdetail connect read: kt ControllerMode.Companion.b passes the synthetic-ctor mask 2, so
-    its ext defaults to {1} (base-classes11/com/govee/base2light/kt/general_controller/ControllerMode.java:
+    its ext defaults to [01] (base-classes11/com/govee/base2light/kt/general_controller/ControllerMode.java:
     45-47, 107-109), and Compose4InfoBleIotH6057$iControllerStrategy$1.java:165 sends AA 05 01 (read_mode).
     """
     return read_request(0x05)
@@ -1784,7 +1808,7 @@ def read_night_mode() -> bytes:
 
 def read_night_mode_or_direction() -> bytes:
     """Read 0x13 with no selector: night mode on bulblightv3 H601E/F, strip direction on H6104 (NewDetailVm.f5
-    Controller4ExtBytes.c({19})
+    Controller4ExtBytes.c with [0x13]
     split_bulblightstringv1/com/govee/bulblightv3/newdetail/NewDetailVm.java:773-781;
     DirectionController(boolean) split_rgblight/com/govee/h6104/ble/DirectionController.java:17-20).
     """
@@ -2286,7 +2310,7 @@ def read_preset_info() -> bytes:
 
 def build_set_light_end() -> bytes:
     """0x33 25 01: 'light end' write sent once after BLE connect on bulbs (VM4Light.i5).
-    split_bulblightstringv1/com/govee/bulblightstringv1/bulblight/VM4Light.java:966-983 (i5: payload {1},
+    split_bulblightstringv1/com/govee/bulblightstringv1/bulblight/VM4Light.java:966-983 (i5: payload [01],
     getCommandType = 37); base-classes10/com/govee/base2light/ble/controller/BleProtocolConstants.java:239
     (value_set_light_end = 37).
     """
@@ -2574,7 +2598,7 @@ def build_light_direction_exit_calibration(value: int) -> list[bytes]:
 def build_light_switch_h6057(on: bool) -> bytes:
     """33 30 [1|0]: H6057 main-light switch.
     split_hollowlamp/com/govee/h6057/origin/newDetail/H6057DetailVM.java:950-962 (h5:
-    ControllerSingle.Companion.c(command_light_switch = 48, [!cur ? 1 : 0])).
+    ControllerSingle.Companion.c(command_light_switch = 48, [1 when the light is off, else 0])).
     """
     return append_bcc(bytes([0x33, 0x30, 0x01 if on else 0x00]))
 
@@ -2806,7 +2830,7 @@ def read_op31() -> bytes:
 
 
 def read_strip_light_pos() -> bytes:
-    """0xAA 31, no selector: light position read (kt ControllerLightPos.makeController4Read$default
+    """0xAA 31, no selector: light position read (kt ControllerLightPos.makeController4Read, default args
     base-classes11/com/govee/base2light/kt/general_controller/ControllerLightPos.java:31-64; makeH610A /
     makeH7095 strategies). Reply validBytes[0] = pos (signed).
     """
@@ -2815,7 +2839,7 @@ def read_strip_light_pos() -> bytes:
 
 def build_h6057_pause_voice() -> bytes:
     """0x33 32 with no payload: H6057 white-noise pause (H6057DetailVM.G5 :694,
-    ControllerSingle.Companion.c(0x32, new byte[0])).
+    ControllerSingle.Companion.c(0x32) with an empty payload).
     """
     return append_bcc(bytes([0x33, 0x32]))
 
@@ -2847,14 +2871,14 @@ def read_check_camera() -> bytes:
 
 def build_lr_switch(first_on: bool, second_on: bool) -> bytes:
     """H6062/H7090 dual sub-strip switch, op = 0x01*first | 0x10*second (SwitchLRController.q
-    split_h6062/com/govee/striplight/ble/SwitchLRController.java:63-65; ControllerSwitchLR(true, {op})
+    split_h6062/com/govee/striplight/ble/SwitchLRController.java:63-65; ControllerSwitchLR(write, [op])
     split_h6062/com/govee/striplight/newdetail/VM4Light.java:726-741).
     """
     return append_bcc(bytes([0x33, 0x33, (0x01 if first_on else 0x00) | (0x10 if second_on else 0x00)]))
 
 
 def build_volume(volume: int) -> bytes:
-    """H6057 volume [volume u8] (H6057DetailVM.J5 ControllerSingle.c(command_volume=51, {volume})
+    """H6057 volume [volume u8] (H6057DetailVM.J5 ControllerSingle.c(command_volume = 51, [volume])
     split_hollowlamp/com/govee/h6057/origin/newDetail/H6057DetailVM.java:714-719).
     """
     return append_bcc(bytes([0x33, 0x33, volume & 0xFF]))
@@ -2915,7 +2939,7 @@ def build_bar_switch_index(index: int, on: bool) -> bytes:
 def build_bar_switch_pair(left: bool, right: bool) -> bytes:
     """H6047 both-bar switch in one frame [left, right] (ComposeLightController.q
     split_h6047/com/govee/h6047/ble/controller/ComposeLightController.java:34-36; NewDetailVm.h5
-    Controller4ExtBytes.e({54, left, right}) split_h6047/com/govee/h6047/detail/NewDetailVm.java:298).
+    Controller4ExtBytes.e([0x36, left, right]) split_h6047/com/govee/h6047/detail/NewDetailVm.java:298).
     """
     return append_bcc(bytes([0x33, 0x36, 0x01 if left else 0x00, 0x01 if right else 0x00]))
 
@@ -3076,7 +3100,7 @@ def build_on_off_memory(mode: int) -> bytes:
 
 
 def build_on_off_memory_legacy(on: bool) -> bytes:
-    """0x33 41 [on] power-on memory boolean form, no 0x02 selector (ControllerOnOffMemory.Companion.h(-1, z),
+    """0x33 41 [on] power-on memory boolean form, no 0x02 selector (ControllerOnOffMemory.Companion.h(-1, on),
     base-classes11/com/govee/base2light/kt/general_controller/ControllerOnOffMemory.java:79-81; caller
     H7031NewDetailVM.V4
     split_bulblightstringv1/com/govee/bulblightstringv2/newAdjust/h7031/H7031NewDetailVM.java:380).
@@ -3112,7 +3136,7 @@ def build_head_calibration(op: int, step: int | None = None) -> bytes:
 
 def build_head_calibration_enter() -> bytes:
     """0x33 42 01 - enter head (zone-index) calibration (CalibrationAcH60A6.K1 :392 -> v2 :306
-    Controller4ExtBytes.f((byte)66,{1}) / VM4LightH60A6.H5 :674-682; CalibrationAcH1270 :297 ->
+    Controller4ExtBytes.f(0x42, [01]) / VM4LightH60A6.H5 :674-682; CalibrationAcH1270 :297 ->
     VM4LightH1270.R5 :746-749; CalibrationAcH12D0 :401 -> VM4LightH12D0.K5 :655-658).
     """
     return append_bcc(bytes([0x33, 0x42, 0x01]))
@@ -3120,7 +3144,7 @@ def build_head_calibration_enter() -> bytes:
 
 def build_head_calibration_exit() -> bytes:
     """0x33 42 00 - leave head calibration without committing (CalibrationAcH60A6 j2 :178, k2 :186,
-    onBackPressed :426 detail flow only -> v2({0}) :306; CalibrationAcH1270 :142,:150,:367;
+    onBackPressed :426 detail flow only -> v2([00]) :306; CalibrationAcH1270 :142,:150,:367;
     CalibrationAcH12D0 :178,:186,:435).
     """
     return append_bcc(bytes([0x33, 0x42, 0x00]))
@@ -3853,7 +3877,7 @@ def build_h5901_irrigation(sno: int, minutes: int) -> bytes:
     """0x33 70: H5901 eco irrigation action [sno, 0x01, 0x01, minutes u16le].
     base-classes13/com/govee/eco/executeAction/parser/IrrigationActionParser.java:54-57
     (IrrigationActionParser.z); base-classes10/com/govee/base2kt/utils/BleUtils.java:132-142
-    (BleUtils.Companion.D, z=false -> lo,hi).
+    (BleUtils.Companion.D with its big-endian flag false: low byte first).
     """
     return append_bcc(bytes([0x33, 0x70, sno & 0xFF, 0x01, 0x01, minutes & 0xFF, (minutes >> 8) & 0xFF]))
 
@@ -4164,7 +4188,7 @@ def build_alarm_clock_switch(
 def read_alarm_clock_list() -> bytes:
     """AC 84 single request, multi-frame reply (all display alarms).
     base-classes11/com/govee/base2light/pact/newdetail/content/display/activity/DisplayAlarmClockListActivity.java:375-392
-    (H1 -> ControllerSingleRead.makeSingleRead$default(-124), sendWriteCmd :390); parser f2 :575-629.
+    (H1 -> ControllerSingleRead.makeSingleRead(0x84), sendWriteCmd :390); parser f2 :575-629.
     """
     return append_bcc(bytes([0xAC, 0x84]))
 
@@ -5228,7 +5252,7 @@ def read_rgbic_group_colors(part_brightness: bool, group_size: int, pieces: int)
 def build_auto_induction(on: bool) -> bytes:
     """Hollow/shape lamp auto-induction on/off [on] (OnOffAutoInductionController.q
     split_hollowlamp/com/govee/hollowlamp/ble/OnOffAutoInductionController.java:31-33; H6059NewDetailVM.O4
-    Controller4ExtBytes.d({-90, on})
+    Controller4ExtBytes.d([0xA6, on])
     split_hollowlamp/com/govee/hollowlamp/newdetails/H6059NewDetailVM.java:399).
     """
     return append_bcc(bytes([0x33, 0xA6, 0x01 if on else 0x00]))
@@ -5253,7 +5277,7 @@ def build_mtu_a6_package(
     """One 0xA6 / cmd 0x63 DaySync MTU big package as a list of variable-length frames, each ending in the XOR
     of its preceding bytes (DaySyncUtils.j/k/H
     base-classes11/com/govee/base2light/pact/newdetail/content/daySync/DaySyncUtils.java:926-949, 951-1018,
-    264-297; sent as ControllerMTUMulti(frames, 0x63, (byte)-90) by DaySyncUtils.w :1393-1407).
+    264-297; sent as ControllerMTUMulti(frames, 0x63, proType 0xA6) by DaySyncUtils.w :1393-1407).
     """
 
     def _x(b: bytes | bytearray) -> int:
@@ -5314,7 +5338,7 @@ def read_logo_or_auto_induction() -> bytes:
     ctor base-classes10/com/govee/base2light/ble/controller/LogoController.java:12-13;
     OnOffAutoInductionController() read ctor
     split_hollowlamp/com/govee/hollowlamp/ble/OnOffAutoInductionController.java:9-10;
-    Controller4ExtBytes.b({-90})
+    Controller4ExtBytes.b([0xA6])
     split_hollowlamp/com/govee/hollowlamp/newdetails/H6059NewDetailVM$connectBleSuc$1$5$1.java:308).
     """
     return read_request(0xA6)
@@ -5731,7 +5755,7 @@ def read_bluetooth_name() -> bytes:
     super(null), getCommandType 6) via
     base-classes10/com/govee/base2light/ble/controller/AbsController4BleSingleSendMultiBack.java:157-165;
     base-classes11/com/govee/base2light/kt/general_controller/Controller4ReadBluetoothNameMsg.java:131-142,201-218
-    (makeReadController$default ext null, getCommandType 6, p() = h) via
+    (makeReadController with no ext, getCommandType 6, p() = h) via
     base-classes10/com/govee/base2light/ble/controller/AbsSingleReadMultiReplyController.java:17-20 and
     base-classes10/com/govee/base2light/ble/controller/AbsSingleController.java:17-20.
     """
@@ -5742,7 +5766,7 @@ def read_combo_state() -> bytes:
     """0xAC 07 with no ext bytes (the default factory passes ext null); Controller4ReadComboState has no
     caller.
     base-classes11/com/govee/base2light/kt/general_controller/Controller4ReadComboState.java:131-142,201-218
-    (makeReadController$default ext null, ctor stores h, getCommandType 7, p() = h);
+    (makeReadController with no ext, ctor stores h, getCommandType 7, p() = h);
     base-classes10/com/govee/base2light/ble/controller/AbsSingleReadMultiReplyController.java:17-20
     (proType 0xAC); base-classes10/com/govee/base2light/ble/controller/AbsSingleController.java:17-20 (f =
     generate20Bytes(proType, cmd, p())).
@@ -6053,7 +6077,7 @@ def build_pair_process_complete() -> bytes:
 
 
 def read_low_blue_light(scale: int = True) -> bytes:
-    """0xAA BA [scale?1:0] low-blue-light read (ControllerLowBlueLight.p / u,
+    """0xAA BA [scale 1|0] low-blue-light read (ControllerLowBlueLight.p / u,
     base-classes11/com/govee/base2light/lowBlueLightControl/ControllerLowBlueLight.java:50-56,66-69,91-97;
     caller split_rgbiclight/com/govee/dreamcolorlightv1/adjust/v2/UiV3.java:326).
     """
@@ -6154,7 +6178,7 @@ def build_daysync_refresh_city() -> bytes:
 
 
 def read_daysync_running_node() -> bytes:
-    """0xAA F0 daysync running-node read (ControllerSingle.a((byte) -16) in DaySyncVM,
+    """0xAA F0 daysync running-node read (ControllerSingle.a(0xF0) in DaySyncVM,
     base-classes11/com/govee/base2light/pact/newdetail/content/daySync/DaySyncVM.java:312;
     base-classes11/com/govee/base2light/kt/general_controller/ControllerSingle.java:26-29).
     """
@@ -6162,14 +6186,14 @@ def read_daysync_running_node() -> bytes:
 
 
 def read_daysync_running() -> bytes:
-    """0xAA F1 is-daysync-running read, gated on DaySyncConfig.y(info)[2] (ControllerSingle.a((byte) -15) in
+    """0xAA F1 is-daysync-running read, gated on DaySyncConfig.y(info)[2] (ControllerSingle.a(0xF1) in
     DaySyncVM, base-classes11/com/govee/base2light/pact/newdetail/content/daySync/DaySyncVM.java:301-304).
     """
     return read_request(0xF1)
 
 
 def build_brightness(level: int) -> bytes:
-    """0x33 04 — brightness: one byte, (byte) level, as the app's per-SKU range already maps it.
+    """0x33 04 — brightness: one byte, the level's low 8 bits, as the app's per-SKU range already maps it.
     base-classes11/com/govee/base2light/kt/general_controller/ControllerBrightness.java:51-53,61-63,73-75
     (Companion.d);
     base-classes10/com/govee/base2light/ble/controller/BrightnessController.java:14-18,26-28,38-40 (q);
@@ -6329,7 +6353,7 @@ def build_logo(manual: bool, brightness: int = 0, r: int = 0, g: int = 0, b: int
 
 
 def build_low_blue_light(on: bool, level: int, *, scale: bool = True, b2: int = 100, b3: int = 100) -> bytes:
-    """0x33 BA [scale?1:0, on, b2, b3, level]: low-blue-light / eye-protection write; every app writer sends
+    """0x33 BA [scale 1|0, on, b2, b3, level]: low-blue-light / eye-protection write; every app writer sends
     [1, on, 100, 100, level] (ControllerLowBlueLight.q
     base-classes11/com/govee/base2light/lowBlueLightControl/ControllerLowBlueLight.java:40-48,62-64,81-84;
     ControllerEyeshadow.Companion.f/g
@@ -6389,19 +6413,6 @@ def build_music_code_sens(
     if sub_effect0 is not None:
         body.append(sub_effect0)
     return append_bcc(bytes(b & 0xFF for b in body))
-
-
-
-
-def build_op15_color_ver5(r: int, g: int, b: int, seg_mask: int, *, kelvin: int = 0) -> bytes:
-    """0x33 05 15 01 colour write, colour-instruction version 5: [R,G,B, kelvin u2be (0 = RGB), seg_mask LSB
-    first].
-    base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:5527-5531,13124-13131
-    (Config.J[5] = Zt -> Bytes.l for RGB, Bytes.u for a Kelvin colour); Bytes.java:379-390 (l), 541-556
-    (u).
-    """
-    body = bytes([0x33, 0x05, 0x15, 0x01, r, g, b, (kelvin >> 8) & 0xFF, kelvin & 0xFF])
-    return append_bcc(body + seg_mask.to_bytes(max(2, (seg_mask.bit_length() + 7) // 8), "little"))
 
 
 def build_relative_brightness(
@@ -6522,7 +6533,7 @@ def build_screen_bind_success() -> bytes:
 def build_status_request(types: list[int], *, command: int = 0x03) -> bytes:
     """0xAC status read [0xAC, command, N, *types]; reply is a 0xAC burst of TLVs.
     base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4BaseInfoSingleRead.java:166-180,230
-    (Companion.c prepends N; new ControllerSingleRead(ext));
+    (Companion.c prepends N; a ControllerSingleRead on that ext);
     base-classes11/com/govee/base2light/kt/general_controller/ControllerSingleRead.java:80-83,93-95 (cmd
     3);
     base-classes10/com/govee/base2light/ble/controller/AbsController4BleSingleSendMultiBack.java:158-165
@@ -6617,9 +6628,9 @@ def read_device_info(selector: int) -> bytes:
     """0xAA 07 [selector] device-info read; selector picks the field (0x02 SN, 0x03 hw ver, 0x07 DSP ver, 0x0A
     MCU sw ver, 0x0B MCU hw ver, 0x10 basic info, 0x11 basic wifi info).
     base-classes10/com/govee/base2light/ble/controller/McuSoftVersionControllerV1.java:26-28,32-34
-    (McuSoftVersionControllerV1.getCommandType 7 / p {10})
+    (McuSoftVersionControllerV1.getCommandType 7 / p [0x0a])
     base-classes10/com/govee/base2light/ble/controller/McuHardVersionControllerV1.java:26-28,32-34
-    (McuHardVersionControllerV1.getCommandType 7 / p {11})
+    (McuHardVersionControllerV1.getCommandType 7 / p [0x0b])
     base-classes10/com/govee/base2light/ble/controller/AbsOnlyReadSingleController.java:5-7 +
     AbsSingleController.java:18-19,28-29 + AbsController.java:77 (read -> f() -> proType 0xAA,
     BleUtils.generate20Bytes)
@@ -6645,7 +6656,7 @@ def read_device_wifi_info() -> bytes:
     PairToDeviceInfoReadController.java:245);
     base-classes10/com/govee/base2light/ble/controller/BasicWifiInfoController.java:36-43
     (getCommandType/p; no call site); base-classes4/com/govee/skubusiness/repo/BaseSkuRepo.java:296-299
-    (BaseSkuRepo.f -> GMessageSingleRead(7, {17}); no caller).
+    (BaseSkuRepo.f -> GMessageSingleRead(7, [0x11]); no caller).
     """
     return read_request(0x07, 0x11)
 
@@ -6675,8 +6686,9 @@ def read_ic_segment() -> bytes:
 
 def read_mode() -> bytes:
     """0xAA 05 01 mode read (selector 0x01 = govee_ble_frame mode_query.selector): legacy
-    AbsModeController.p {1} (base-classes10/com/govee/base2light/ble/controller/AbsModeController.java:34-37);
-    kt ControllerMode.Companion.b / .c default ext {1}
+    AbsModeController.p [01]
+    (base-classes10/com/govee/base2light/ble/controller/AbsModeController.java:34-37);
+    kt ControllerMode.Companion.b / .c default ext [01]
     (base-classes11/com/govee/base2light/kt/general_controller/ControllerMode.java:45-58,107-109), e.g. the
     H6057 newdetail connect read
     (split_hollowlamp/com/govee/h6057/origin/newDetail/controller/Compose4InfoBleIotH6057$iControllerStrategy$1.java:165).
@@ -6691,9 +6703,9 @@ def read_soft_version() -> bytes:
 def read_switch() -> bytes:
     """0xAA 01 — read power/relay state, also the cmd-1 keep-alive heartbeat (no selector; reply parsing
     varies by family). All emit BleUtils.Companion.p(0xAA, 0x01, null)
-    (base-classes10/com/govee/base2kt/utils/BleUtils.java:1030-1041) via AbsSingleController.f with p() ==
+    (base-classes10/com/govee/base2kt/utils/BleUtils.java:1030-1041) via AbsSingleController.f with p()
     null (base-classes10/com/govee/base2light/ble/controller/AbsSingleController.java:18-20,28-30,54-56) or
-    kt AbsController.getNextCommBytes with i == null
+    kt AbsController.getNextCommBytes with no ext
     (base-classes11/com/govee/base2light/kt/ble/AbsController.java:43-45): SwitchController read form
     (base-classes10/com/govee/base2light/ble/controller/SwitchController.java:9-11,24-26);
     H5080/H5083/H5085 goodsType 43 detail connect batch
@@ -7428,6 +7440,10 @@ _SELF_CHECKS: list[tuple[str, bool]] = [
             == bytes([0x33, 0x05, 0x15, 0x01, 0xFF, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0x7F, 0x00])
             and build_op15_color_v5(0xFF, 0x8C, 0x3C, 0x0003, kelvin=2700)[:11]
             == bytes([0x33, 0x05, 0x15, 0x01, 0xFF, 0x8C, 0x3C, 0x0A, 0x8C, 0x03, 0x00])
+            and build_op15_color_v5(0x10, 0x20, 0x30, 0x3F)
+            == append_bcc(bytes([0x33, 0x05, 0x15, 0x01, 0x10, 0x20, 0x30, 0x00, 0x00, 0x3F, 0x00]))
+            and build_op15_color_v5(0xFF, 0x8C, 0x3C, 0x7FFFFF, kelvin=2700, mask_bytes=3)
+            == append_bcc(bytes([0x33, 0x05, 0x15, 0x01, 0xFF, 0x8C, 0x3C, 0x0A, 0x8C, 0xFF, 0xFF, 0x7F]))
         ),
     ),
     _check(
@@ -7463,6 +7479,16 @@ _SELF_CHECKS: list[tuple[str, bool]] = [
             == "330515010000ff000000000001000000010000dd"
             and build_op15_color_bytes_h(0x10, 0x20, 0x30, [True] * 57)
             == build_op15_color_bytes_h(0x10, 0x20, 0x30, [True] * 56)  # coerceAtMost: 7 mask bytes
+        ),
+    ),
+    _check(
+        "build_op15_color_basic",
+        lambda: bool(
+            build_op15_color_basic(1, 2, 3, [True] * 14).hex() == "33051501010203ff3f00000000000000000000e2"
+            and build_op15_color_basic(0xFF, 0, 0, [True] * 33).hex()  # BleUtils.X above 16 segments
+            == "33051501ff0000ffffffff0100000000000000dc"
+            and len(build_op15_color_basic(0, 0, 0, [True] * 96)) == 20
+            and _raises(ValueError, lambda: build_op15_color_basic(0, 0, 0, [True] * 97))
         ),
     ),
     _check(
@@ -12586,15 +12612,6 @@ _SELF_CHECKS: list[tuple[str, bool]] = [
             and build_music_code_sens(0x40, 80, sub_mode=0x0E)[:6]
             == bytes([0x33, 0x05, 0x0E, 0x40, 0x50, 0x00])
             and build_music_code_sens(3, 99, sub_mode=0x01)[:6] == bytes([0x33, 0x05, 0x01, 0x03, 0x63, 0x00])
-        ),
-    ),
-    _check(
-        "build_op15_color_ver5",
-        lambda: bool(
-            build_op15_color_ver5(0x10, 0x20, 0x30, 0x3F)
-            == append_bcc(bytes([0x33, 0x05, 0x15, 0x01, 0x10, 0x20, 0x30, 0x00, 0x00, 0x3F, 0x00]))
-            and build_op15_color_ver5(0xFF, 0x8C, 0x3C, 0x7FFFFF, kelvin=2700)
-            == append_bcc(bytes([0x33, 0x05, 0x15, 0x01, 0xFF, 0x8C, 0x3C, 0x0A, 0x8C, 0xFF, 0xFF, 0x7F]))
         ),
     ),
     _check(

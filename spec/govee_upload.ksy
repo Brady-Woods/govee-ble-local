@@ -550,11 +550,12 @@ types:
     seq:
       - id: i
         type: u1
-      - id: param_1
+      - id: e
         type: u1
-      - id: param_2
+        doc: SuiJiJianBian keeps this byte as e[0]
+      - id: f
         type: u1
-        doc: a boolean for sub-effect 5
+        doc: a boolean for sub-effect 5; SuiJiJianBian keeps this byte as e[1]
       - id: palette
         type: palette
   diy_suijiliuxing:

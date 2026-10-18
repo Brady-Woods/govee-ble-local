@@ -148,7 +148,7 @@ onServicesDiscovered(GATT_SUCCESS)         → BTGattConnectEvent.connectedSuc
 enable notifications on ALL chars of svc     BleCommImp.c()/d()
    ├─ for each characteristic of service 1910 (2b10, 2b11, 2b12):
    ├─ setCharacteristicNotification(true)
-   └─ write CCCD 0x2902 = ENABLE_NOTIFICATION_VALUE {0x01,0x00}
+   └─ write CCCD 0x2902 = ENABLE_NOTIFICATION_VALUE [01 00]
        (so device pushes on 2b10 are captured without naming it)
    ▼
 (optional) requestMtu(N)                    BleController.J(int)  → onMtuChanged
@@ -173,7 +173,7 @@ Details:
   not auto-disconnect. The byte depends on the screen. Legacy controllers use `SINGLE_HEART = 0x01`
   (`AA 01`). Newdetail `ShareVM` screens pick it with `ConnectHeartbeat.c(K3())`; when `I3()` is false
   (H60A1 `VM4Light.I3:513-515`, `VM4LightH60A6.I3:684-686`) that is `0x00` (`SINGLE_HEART_BEAT`), so
-  `BleComm.l:76-80` sends `Controller4HeartCommon(0)` = `AA 00`. Auto-disconnect status `19` triggers
+  `BleComm.l:76-80` sends a `Controller4HeartCommon` for byte `0x00`, i.e. `AA 00`. Auto-disconnect status `19` triggers
   `EventAutoDisconnect`.
 - **Reconnect**: `ReconnectInfo` retries within the 15 s window; skips reconnect while the app
   is backgrounded unless flagged.
@@ -191,7 +191,7 @@ device opts into MTU-sized writes. The last byte is always an **XOR checksum (BC
 
 Reference implementations:
 - `BleUtils.v(packet, 19)` (`sources/com/govee/base2kt/utils/BleUtils.java:1239`)
-- `MultiPackageManager.b(bArr, 19)` (`sources/com/govee/ble/multi/MultiPackageManager.java:56`)
+- `MultiPackageManager.b(packet, 19)` (`sources/com/govee/ble/multi/MultiPackageManager.java:56`)
 
 ### 4.2 Single-command packet (`0x33` / `0xAA`)
 
@@ -213,7 +213,7 @@ byte  0        1             2 .. 18                    19
 | `SINGLE_WRITE_READ` | `0x3A` | write-and-read variant |
 | BBQ status notify | `0xAB` (−85) | BBQ thermometer telemetry push |
 
-- `proType` is chosen by `AbsSingleController.getProType()`: `write ? 0x33 : 0xAA`.
+- `proType` is chosen by `AbsSingleController.getProType()`: `0x33` for a write, else `0xAA`.
 - On the response, the device echoes `proType`/`commandType`. For writes, success is indicated
   by `value[2] == 0` (`AbsSingleController.t()`).
 - Read responses: the app strips bytes `[2..18]` (17 bytes) as the "valid" payload
@@ -222,7 +222,7 @@ byte  0        1             2 .. 18                    19
 **`0xAA` (read) payloads are NOT the `0x33` write payloads.** A read *request* is `AA <cmd> <selector>` —
 the byte after the command is a per-command **selector/index**, not the write field
 (`AbsSingleController.f()` → `generate20Bytes(0xAA, cmd, p())`, `p()` default empty). Source-confirmed
-selectors: **mode `AA 05 01`** (`AbsModeController.p()={1}` — the `0x01` is a **selector, not a
+selectors: **mode `AA 05 01`** (`AbsModeController.p()` = `[01]` — the `0x01` is a **selector, not a
 sub-mode**); **device-info `AA 07 <sel>`** (`0x02` serial, `0x03` hw, `0x04` sw, `0x10` basic, `0x11`
 wifi — a controller per selector). Firmware support for these selectors varies by SKU (firmware-sourced;
 per-selector detail in [§5.2](#52-device--wi-fi-info)). H6006/H6008 (shared `ble_msg_get_dev_info`,
@@ -259,7 +259,7 @@ The write builds `[op, R,G,B(=white), kHi,kLo, …]`; the reply parser reads `[o
 after op) — `SubModeColorV2.parse` / `ComposeChange2ColorMode.result`.
 
 Other mode reply sub-modes (traced): **`0x0D`** (h60a6-color) has **no field decode** — the legacy
-`SubModeColorV1.parse` reads only the op/gradual bit (`bArr[0]==1`), and both `0x0D`/`0x15` route there on
+`SubModeColorV1.parse` reads only the op/gradual bit (`byte 0 == 1`), and both `0x0D`/`0x15` route there on
 that stack, so `0x0D` is effectively write-only (its `[R,G,B,kHi,kLo,tR,tG,tB]` write body is never read
 back; kelvin comes only from the compose `0x15` path). **Music `0x13`** reply is family-dependent:
 H60A6 `SubModeMusicV1.parse` = `[musicCode][value][autoColorFlag][specColorFlag][R][G][B]` (truncates
@@ -284,7 +284,7 @@ START:  [0xA1, comType, 0x00, packetCount, 0…, checksum]
 DATA_i: [0xA1, comType, i(1-based), <16 data bytes>, checksum]     // repeat
 END:    [0xA1, comType, 0xFF, 0…, checksum]
 ```
-~300 ms is inserted between packets (`Thread.sleep(300)`).
+~300 ms is inserted between packets (a `Thread.sleep` of 300 ms).
 
 **Read sequence (header `0xA2`, −94):**
 ```
@@ -294,7 +294,7 @@ DATA_i:  [0xA2, comType, i, <16 data bytes>]          // device → app
 END:     [0xA2, comType, 0xFF, …]                     // device → app
 ```
 
-Result events: `MultiWriteResponse` (success = `bArr[2] == 0`) and `MultiReadResponse`
+Result events: `MultiWriteResponse` (success = `byte 2 == 0`) and `MultiReadResponse`
 (reassembled chunks). See `MultiPackageManager.g()` / `j()` / `i()`.
 
 **Other multi-write dialects** (declared in `BleProtocolConstants`, used by newer RGBIC devices
@@ -323,7 +323,7 @@ gate — see the ⚠️ box below, which is the authoritative statement of when 
 
 > **Choosing upload-vs-activate + the comByte/strip per scene** is a `(sceneType, versionArray)` dispatch.
 > The full rule — the `parseSceneV1` table, plus the **two curated-device bypasses** (bulbs force a
-> hardcoded `{1}`; H6052 type-5 uses the DIY path at comByte `9`) — is machine-readable at
+> hardcoded versionArray `{1}`; H6052 type-5 uses the DIY path at comByte `9`) — is machine-readable at
 > `devices.yaml scenes.dispatch` (`table` + `bypasses` + `family_apply`) and documented in
 > `SCENE_UPLOAD_ENCODING.md` §0b (per-device paths, Q4 table, implementer checklist).
 
@@ -338,7 +338,7 @@ END:    A3 | FF(seq)      | final ≤17 value bytes      | CK@19   (data-bearing
   byte 3 = **packetCount** = total frame count (start + middles + end).
 - `commBytes` occupies byte 4… (length *L*); the **value begins at byte `4+L`**; START carries
   `15 − L` inline value bytes. For the usual `L = 1`: commByte@4, value@5, 14 inline.
-- The `0xFF` END frame is always sent (`makeSendBytesV2` appends its separate END `bArr2`). It is
+- The `0xFF` END frame is always sent (`makeSendBytesV2` appends its separate END frame). It is
   **data-bearing only when the value is longer than START's `15 − L` inline bytes**: then it carries
   the final chunk (up to 17 bytes; a value that ends exactly on a frame boundary puts a full 17 there,
   never an extra empty frame), and packetCount = 1 + the frames after START. A **short value** (at
@@ -358,7 +358,7 @@ There are **two `0xA3` dialects**, differing in `commBytes` and how `value` is p
 
 | | (A) Legacy generic-scene | (B) DIY / graffiti — H60A6 & newer |
 |---|---|---|
-| entry | `makeWriteMultipleBytes(AbsMultipleControllerV1)` → commByte = `getCommandType()` (`:902-911`) | `MultiController.f.a(bytes, 88)` (→`0xA3`) **or** `Compose4DefWrite4Multi.d((byte)88,…)` (→`0xA4` MTU) — commByte = device protocol code `88` (see ⚠️ below) |
+| entry | `makeWriteMultipleBytes(AbsMultipleControllerV1)` → commByte = `getCommandType()` (`:902-911`) | `MultiController.f.a` with code `0x58` (→`0xA3`) **or** `Compose4DefWrite4Multi.d` with code `0x58` (→`0xA4` MTU) — commByte = device protocol code `88` (see ⚠️ below) |
 | **byte 4** | scene-version constant **V1=`0x01`, V2=`0x02`, V3=`0x07`, V6=`0x0C`** (`MULTI_V*_NEW_SCENES`), picked by `sceneType` in `ScenesOp.parseSceneV1` | **device graffiti/DIY protocol code** — H60A6 = **`0x58`** (`H60A6DiyParse.java:468`, `getProtocolCode()=88`) |
 | **value** | decoded cloud `scenceParam` (V3/graffiti strips the leading 2 bytes) | effect parsed then **re-serialized** — `H60A6GraffitiParse.toBytes()` = `[0x20, bgR,bgG,bgB, brightness, showType, layerCount, …]`; raw `0x50…` header consumed, so value starts `0x20` |
 | routing | `SceneControllerNoEventV1` ← `ScenesOp.parseSceneV1` (`:603`) | `BaseSceneViewMode.handleDiyNewConfig` (~`:1055`) → polymorphic `iDiyParse.makeBleController` (→ `0xA3`; `0xA4` only if effect byte ∈ `{0x5E,0x5D,0x20}`, see ⚠️) |
@@ -373,22 +373,24 @@ The same scene sent with dialect **A** — a generic comType (`0x02` = `MultiNew
 plus the *raw* blob, `A3 00 01 <count> 02 50 20 …` — is **rejected** (panel off). Note
 `0x58 = 0x50 | 0x08` arithmetically, so a client that ORs `0x08` onto the raw blob's `0x50` byte 0
 *accidentally* reproduces byte 4 — but the app's mechanism is a **constant protocol code `88` + a
-re-encoded value**, not a bitwise OR (there is no `value[0] |= 0x08` in the APK). Where the raw and
+re-encoded value**, not a bitwise OR (the APK never ORs `0x08` into value byte 0). Where the raw and
 re-encoded forms diverge (e.g. value byte 2), the re-encoded form is authoritative.
 
 > ⚠️ **`0xA3` vs `0xA4` (MTU) — mechanism resolved; `0xA3` is the effective form for every curated
 > device.** Dialect B has two builders, but which one runs is **gated by the effect's protocol byte, not
 > by MTU negotiation** (an earlier draft said "depends on MTU negotiation" — that was wrong):
-> - **`0xA3` form** — `MultiController.f.a(bytes, code)` → `makeSendBytesV1((byte) -93, code, bytes)`,
->   and `-93 & 0xFF = 0xA3`; commByte at **byte 4** (the layout above). This is what both the H60A6
->   (`A3 00 01 … 58 …`) and H61A8 (`A3 00 01 10 03 …`) hardware captures matched.
-> - **`0xA4` MTU form** — `Compose4DefWrite4Multi.d((byte)88, toBytes(), mtu,…)` →
->   `makeSendBytesMtu((byte) -92, 88, …)`, `-92 & 0xFF = 0xA4`; commByte at **byte 6** (MTU layout).
+> - **`0xA3` form** — `MultiController.f.a(bytes, code)` → `makeSendBytesV1` with proType `0xA3` (the
+>   app's -93 as an unsigned byte), then the code and the bytes; commByte at **byte 4** (the layout
+>   above). This is what both the H60A6 (`A3 00 01 … 58 …`) and H61A8 (`A3 00 01 10 03 …`) hardware
+>   captures matched.
+> - **`0xA4` MTU form** — `Compose4DefWrite4Multi.d` with code `0x58`, the `toBytes()` value and the MTU →
+>   `makeSendBytesMtu` with proType `0xA4` (-92 as an unsigned byte) and code `0x58`; commByte at
+>   **byte 6** (MTU layout).
 > - **The gate.** The `0xA4` path is reachable **only** through
->   `Compose4DefWrite4Multi.makeWriteController(b6, b10, …)` (`:196-209`), which requires **`b6 == 88`
->   (command `0x58`) AND `NewDiyEditConfig.isUseMtuCommand(b10) == true`** — and that returns true only
->   for effect bytes **∈ `{0x5E, 0x5D, 0x20}`** (`NewDiyEditConfig.java:57-61, 140-142`). Scene
->   controllers report `useMtuController() == false` (`AbsMultipleControllerV14Scenes:137-140`) and never
+>   `Compose4DefWrite4Multi.makeWriteController` (`:196-209`), which requires **its command argument to be
+>   `0x58` (88) AND `NewDiyEditConfig.isUseMtuCommand` to hold for its effect-byte argument** — and that
+>   holds only for effect bytes **∈ `{0x5E, 0x5D, 0x20}`** (`NewDiyEditConfig.java:57-61, 140-142`). Scene
+>   controllers report `useMtuController()` false (`AbsMultipleControllerV14Scenes:137-140`) and never
 >   take it.
 > - **Even when `0xA4` is chosen the frame is still 20 bytes unless a larger MTU was *cached*.** Chunk
 >   size = `MtuConfig.getAvailableMtuSize = max(getMtu(sku) − 3, 20)`, and `getMtu` defaults to `23 ⇒ 20`
@@ -399,8 +401,8 @@ re-encoded forms diverge (e.g. value byte 2), the re-encoded form is authoritati
 >   writes — the negotiated result must land in the cache first.
 >
 > **Second route to `0xA4` (correction to an earlier draft).** Beyond the `makeWriteController` gate
-> above, **`H60A6GraffitiParse.makeBleController` calls `Compose4DefWrite4Multi.d((byte)88, toBytes(), mtu)`
-> directly** (`:238`; `isNeedMtuPackage()==true` `:204`), *bypassing* that gate. So **every H60A6
+> above, **`H60A6GraffitiParse.makeBleController` calls `Compose4DefWrite4Multi.d` with code `0x58`, its
+> `toBytes()` value and the MTU directly** (`:238`; `isNeedMtuPackage()` is true, `:204`), *bypassing* that gate. So **every H60A6
 > `sceneType 5` graffiti scene uploads as `0xA4`.** Which type-5 scenes are graffiti is decided by
 > **parser order**, not `byte1` alone: `H60A6DiyParse` is tried **first** and wins iff `Pro4H60A6Diy.c`
 > parses — `byte0==0x50` **and** `(u16le@bytes[1..2]) + 3 == len` (the DIY length gate) **and** the layers
@@ -419,11 +421,11 @@ them apart** (`0x00` / `0x01` / `0x02`):
 
 | Builder | byte 2 | START header | START inline value | `0xFF` terminator | Chosen when / used by |
 |---|:--:|---|---|---|---|
-| `makeSendBytesV0` (`:743`) | `00` | `[A3, 00, 00, packs+2, commByte, 0×14]` | **none** — all value in MIDDLE/END | **empty** (bytes 2–18 = 0, *not* data-bearing) | `controller.p() == 0` — rare; **not** the scene/DIY path (`p()` = 1 there) |
+| `makeSendBytesV0` (`:743`) | `00` | `[A3, 00, 00, packs+2, commByte, 0×14]` | **none** — all value in MIDDLE/END | **empty** (bytes 2–18 = 0, *not* data-bearing) | the controller's `p()` is 0 — rare; **not** the scene/DIY path (`p()` = 1 there) |
 | `makeSendBytesV1`/`V2` (`:781`/`:785`) | `01` | `[A3, 00, 01, packetCount, commBytes…]` | `15 − L` bytes at byte `4+L` | **data-bearing** (final chunk) when the value exceeds the `15 − L` inline bytes; **empty** (packetCount 2) for a short value | the common path — **generic scenes + DIY-graffiti** (H61A8, H6047, H6052, bulbs) |
-| `makeSendBytesV3` / `K` (`:851`/`:111`) | `02` | `[A3, 00, 02, pktCount, commByte, ctrlNum, ctrlIdx, verify×8 @7]` | **4 bytes** @ byte 15 (after the verify block) | **data-bearing** | multi-controller scenes — `sceneV1.isNeedMulMulPackage()==true` (`BaseSceneViewMode:820`); returns `List<List<byte[]>>`, one START…`FF` group per controller |
+| `makeSendBytesV3` / `K` (`:851`/`:111`) | `02` | `[A3, 00, 02, pktCount, commByte, ctrlNum, ctrlIdx, verify×8 @7]` | **4 bytes** @ byte 15 (after the verify block) | **data-bearing** | multi-controller scenes — the scene's `isNeedMulMulPackage()` is true (`BaseSceneViewMode:820`); returns a list of frame lists, one START…`FF` group per controller |
 
-- **V1 = V2 with a 1-byte `commBytes`** — `makeSendBytesV1` delegates to `makeSendBytesV2` (`:781-783`); V2 exists so `commBytes` can be longer (e.g. `{commandType, p()}` = 2 bytes, `:919`). The frame-shape diagram above is this (V1/V2) form.
+- **V1 = V2 with a 1-byte `commBytes`** — `makeSendBytesV1` delegates to `makeSendBytesV2` (`:781-783`); V2 exists so `commBytes` can be longer (e.g. `[commandType, p()]` = 2 bytes, `:919`). The frame-shape diagram above is this (V1/V2) form.
 - **V0's `0xFF` terminator is always empty**; V1/V2 carry the last value chunk in the `0xFF` frame except for a short value that fits in START (then the END is empty and packetCount is 2), and V3 carries it there too.
 - **V3 inserts an 8-byte `verify` block** (6-byte LE timestamp + 2 random, `BleUtils.getSignedBytesFor6`) at bytes 7–14, leaving only 4 value bytes in its START; the H60A6/H61A8 captures are the **V1/V2** form (byte 2 = `01`), not V3.
 
@@ -431,8 +433,8 @@ them apart** (`0x00` / `0x01` / `0x02`):
 shows dialect-B *framing*; this one decodes the **value** — the part a client must build itself. Every
 link below was read first-hand from the decompiled Java:
 
-- `dreamcolorlightv1/ble/OpDiyCommDialog4BleV2.o()` (`:32`): `new MultiDiyGraffitiController(g.f(), g.g())`, where `g` is a `DiyGraffitiV2` (`:19`) — so the uploaded value **is** `DiyGraffitiV2.g()`.
-- `base2light/ble/controller/MultiDiyGraffitiController`: `g()` returns that `byte[]` verbatim (`:26-28`); `getCommandType() = (byte) 3` (`:31-33`); `p() = 1` (`:44-45`) → framed by `makeSendBytesV1(0xA3, 3, value)` (the V1/V2 sub-layout).
+- `dreamcolorlightv1/ble/OpDiyCommDialog4BleV2.o()` (`:32`): builds the `MultiDiyGraffitiController` from that screen's `DiyGraffitiV2` (`:19`), passing its `f()` and `g()` — so the uploaded value **is** `DiyGraffitiV2.g()`.
+- `base2light/ble/controller/MultiDiyGraffitiController`: `g()` returns that `byte[]` verbatim (`:26-28`); `getCommandType()` = `0x03` (`:31-33`); `p() = 1` (`:44-45`) → framed by `makeSendBytesV1(0xA3, 3, value)` (the V1/V2 sub-layout).
 - `base2light/ac/diy/DiyGraffitiV2.g()` (`:195-244`): the value serializer.
 
 Captured START frame (real plaintext H61A8 btsnoop):
@@ -526,7 +528,7 @@ would make `parseSceneV1` return `null` for type-5 anyway). Within `q3` the conc
 `0xA3` vs `0xA4` — is **blob-deterministic** (not MTU-, not coin-flip): `H60A6DiyParse` (→`MultiController`,
 **`0xA3`**) matches only if `Pro4H60A6Diy.c` parses (its `byte3` = `layerSize` must fit the blob,
 `Pro4H60A6Diy.java:78,83,104`); `H60A6GraffitiParse` (→`Compose4DefWrite4Multi`, **`0xA4`-MTU**, commByte
-`0x58`) matches iff **`byte1==0x20`** (`:298`, `b={0x50}` `:47`). **Confirmed from the catalog:** H60A6
+`0x58`) matches iff **`byte1==0x20`** (`:298`; field `b` = `[50]`, `:47`). **Confirmed from the catalog:** H60A6
 Aurora decodes to `50 20 00 FF 00 0C…` → `byte1=0x20` ⇒ **`H60A6GraffitiParse` → `0xA4`-MTU, commByte
 `0x58`** (`Pro4H60A6Diy` also fails its length gate: `bytes[1..2]`=`0x0020`=32, `32+3≠188`). So the
 `0xA3`-vs-`0xA4` choice is **fully param-deterministic** — and because `H60A6DiyParse` is tried **first**,
@@ -536,11 +538,11 @@ the test is the **DIY length gate**, not `byte1`: if `Pro4H60A6Diy.c` parses (`(
 (`32+3=35=len`), whereas Aurora → `0xA4` (`32+3=35 ≠ 188`). Catalog split **59 graffiti / 14 DIY**. Only the
 `0xA4` frame *size* (20 vs up to MTU 512) depends on cached MTU, not the param.
 **Otherwise, `parseSceneV1` (dialect A, `:756-781`):**
-```java
-sceneV1 = ScenesOp.parseSceneV1(sceneType, sceneCode, scenceParam, versionArray);
-if (sceneV1 != null) add SceneControllerNoEventV1(sceneV1);  // 0xA3 UPLOAD — conditional (dialect A value)
-add createSceneModeController(...);                          // 33 05 04 <sceneCode LE> — ALWAYS
-```
+1. `ScenesOp.parseSceneV1(sceneType, sceneCode, scenceParam, versionArray)` parses the scene.
+2. Only if it returns a scene, a `SceneControllerNoEventV1` for it is queued: the `0xA3` upload
+   (dialect A value), which is conditional.
+3. `createSceneModeController` is always queued: the `33 05 04 <sceneCode LE>` activation.
+
 So the app **uploads iff the param parses**, and the `33 05 04 <sceneCode>` activation is always sent
 in both cases. `parseSceneV1` returns null only when no `(versionArray, sceneType)` branch matches, the
 param is empty, Base64 fails, or the per-type validator fails — and those validators gate on
@@ -596,11 +598,12 @@ last  chunk (tag 0xFF):  [0xAC, 0xFF, <lastLen data bytes @2..>, zero pad, CK]
 - Chunks are matched **by position**: a middle chunk's tag must equal its position (1 … `pkts`−2), and
   tag `0xFF` is accepted only at position `pkts`−1 (`isSameController()` `:230-253`, `onResult()`
   `:313-332`). The app also accepts the last chunk tagged with its **position** (`pkts`−1) instead of
-  `0xFF`: `isSameController()` falls through to `K(tag) == backPos` (`:248`), and `onResult()` runs
+  `0xFF`: `isSameController()` falls through to a test that the tag (via `K`) equals the current position
+  `backPos` (`:248`), and `onResult()` runs
   `h()` at position `pkts`−1 whatever the tag (`:326-331`). The H60A6 sends `0xFF` (both real
   captures); a reassembler should accept either. The first chunk is matched on `[0xAC, 0x00, …, cmd@5, sub@6]` with `sub` = the reader's
   `d()` (`f()` `:128-131`): 0 for the H60A6 status read, whose `Compose4BaseInfoSingleRead` builds
-  `new ControllerSingleRead(…)` and leaves that field at its default (`Compose4BaseInfoSingleRead:256`,
+  a `ControllerSingleRead` and leaves that field at its default (`Compose4BaseInfoSingleRead:256`,
   `ControllerSingleRead.d()`).
 - **Single-packet reply** (`pkts` = 1): no further chunks; the data is `lastLen` (≤ 12) bytes from
   offset 7 of the first chunk (`g()`).
@@ -709,7 +712,7 @@ puts the `AA 07 xx` data at byte 3, right after the selector.
 
 | Selector | Controller | Response layout | Firmware (firmware-sourced) |
 |----------|-----------|-----------------|-----------------------------|
-| `0x02` | `SnController.java:42` | serial/UID: 8 bytes, **reversed** (`toAddressBytes(hFirst=false)`) | H6047 sends its stored id byte-reversed (`0x010053da`). The stored id is `[rand lo][rand hi][BLE addr reversed]`, created on the first AA 07 02 or AA b1 if absent (`0x010029c4`), so the reply is `[addr0..addr5][rand hi][rand lo]`. H6006/H6008: the device's colon-separated uuid string decoded into (strlen+1)/3 bytes and stored in reverse order (H6006 `0x9b03c87c`/`0x9b03c30e`; H6008 `0x9b03c740`/`0x9b0430e4`) |
+| `0x02` | `SnController.java:42` | serial/UID: 8 bytes, **reversed** (`toAddressBytes` with `hFirst` false) | H6047 sends its stored id byte-reversed (`0x010053da`). The stored id is `[rand lo][rand hi][BLE addr reversed]`, created on the first AA 07 02 or AA b1 if absent (`0x010029c4`), so the reply is `[addr0..addr5][rand hi][rand lo]`. H6006/H6008: the device's colon-separated uuid string decoded into (strlen+1)/3 bytes and stored in reverse order (H6006 `0x9b03c87c`/`0x9b03c30e`; H6008 `0x9b03c740`/`0x9b0430e4`) |
 | `0x03` | `HardVersionController.java:28-29` / `ControllerHardVersion` | ASCII hw version after the selector (from byte 3) | H6047: `"3.02.01"` (`0x010053a2`). H5083: `"1.02.00"` (`ble_msg_get_hw_version` `0x9b031984`) |
 | `0x04` | `SoftHardController.Companion.e` (live: split_h61d3 `PairViewModel:187` → `PairToDeviceInfoReadController`); `SoftVersionInDeviceInfoController` (no caller) | ASCII sw version after the selector | H6047 answers `"1.00.12"` (`0x010053ca`); the H6047 app path reads AA 06 instead. Not answered by H5083, H6006/H6008 (no reply) or H60A1/H60A6 (echo) |
 | `0x06` | — (no app controller) | — | 6-byte BLE MAC at reply bytes 3..8 (payload `[06]` + 6 bytes). Byte-reversed relative to the device's MAC string on H6006 (`0x9b03c988`), H6008 (`0x9b03c7ec`), H60A1 (`ble_msg_get_ble_macaddress` `0x9b0452b0`) and H60A6 (`0x9b04a6d8`). In the device's printed-string order on H5083 (`ble_msg_get_ble_macaddress` `0x9b0319cc`). H6047 BLE 1.00.12: handler `0x01005370` → `0x010053ce` |
@@ -784,7 +787,7 @@ Some families override the shared opcodes above. Confirmed cases:
 > **On `0x30` "zone power" — CONFIRMED (in a feature split).** This write was absent from `base.apk`
 > because **H60A6 ships as a separate dynamic feature module** (`split_pact_h60ax.apk`), not in the
 > base decompile. In that split it is built inline via the base helper
-> `Controller4ExtBytes.f((byte)0x30, [zoneIndex, state])` → on-wire `[0x33, 0x30, zoneIndex(0|1),
+> `Controller4ExtBytes.f` with command `0x30` and payload `[zoneIndex, state]` → on-wire `[0x33, 0x30, zoneIndex(0|1),
 > state(0|1)]` (`pact_h60a0/adjust/h60a6/VM4LightH60A6.java:1203-1205`). It is **readable**: a notify
 > frame `[0xEE, 0x30, main, zone0, zone1, …]` carries each state in **bit 1** (mask `0x02`) of its
 > byte (`VM4LightH60A6.java:336-344`). See [§15](#15-dynamic-feature-module-pact-split-devices).
@@ -880,14 +883,15 @@ constant** — this is the single biggest source of per-device divergence.
 
 ### 7.2 Worked example — H6159 (`com/govee/h6159/ble/Mode.java`)
 
-```
-parseSubMode(b, data):
-   b == 0x03 → SubModeMusic
-   b == 0x0E → ParamsSubMode4Music
-   b == 0x04 → SubModeScenes
-   b == 0x0A → SubModeNewDiy
-   else      → SubModeColor       (0x02)
-```
+`parseSubMode` picks the sub-mode class from the sub-mode byte:
+
+| sub-mode byte | class |
+|---|---|
+| `0x03` | `SubModeMusic` |
+| `0x0E` | `ParamsSubMode4Music` |
+| `0x04` | `SubModeScenes` |
+| `0x0A` | `SubModeNewDiy` |
+| any other | `SubModeColor` (`0x02`) |
 
 Contrast with H612526 (`color = 0x0B`), H6104 (`color = 0x02`, `music = 0x01`, `video = 0x00`),
 tablelamp/homelight (`color = 0x0D`, `music = 0x0F`), and the dreamcolor family
@@ -1252,7 +1256,7 @@ Where to look in the decompiled tree:
 
 1. Scan for the device (by MAC or advertised name/service data).
 2. `connectGatt` → discover services → find service `…0d1910`, characteristic `…0d2b11`.
-3. Enable notifications: `setCharacteristicNotification(true)` + write CCCD `…2902` = `{0x01,0x00}`.
+3. Enable notifications: `setCharacteristicNotification` (enabled) + write CCCD `…2902` = `[01 00]`.
 4. *(If the device requires it)* perform the AES/GCM session handshake ([§9](#9-encryption--session-key-handshake)).
 5. Send commands as 20-byte frames `[0x33, cmd, payload…, XOR]`; parse notifications
    `[0xEE, subType, …]` and read responses `[0xAA, cmd, …]`.
@@ -1423,7 +1427,7 @@ after the `[proType, cmd]` header (colour/mode sub-modes ride inside `33 05 …`
 | `0x01` | set colour (H60A1/H60A6 form) | `15 01 R G B 00 00 00 00 00 <mask0> <mask1>` |
 | `0x01` | set colour-temp (H60A1/H60A6) | `15 01 R G B <kHi> <kLo> <tintR> <tintG> <tintB> <mask0> <mask1>` |
 | `0x02` | set per-segment brightness | `15 02 <pct 0–100> <mask0> <mask1>` |
-| `0x05` | set colour-temp (opType 2, `OP_TYPE_SET_COLOR_TEMP`; H60A0) | `15 05 <kHi> <kLo>` (`getSignedBytesFor2(k, true)`) |
+| `0x05` | set colour-temp (opType 2, `OP_TYPE_SET_COLOR_TEMP`; H60A0) | `15 05 <kHi> <kLo>` (`getSignedBytesFor2` of the kelvin, high byte first) |
 | `0x05` | side brightness (`Bytes.H`, relative-brightness version 1, goodsType 80) | `15 05 <side 1/2/3> <value>` |
 | `0x05` | gradient (`Bytes.n`, GradientColor version 0) | `15 05 R1 G1 B1 R2 G2 B2 R3 G3 B3 <mask…>` |
 
@@ -1624,7 +1628,7 @@ How the app recognises a device over the air and decides which protocol dialect 
 ### 18.1 Scan & filter
 
 `ScanManager` + `BleScanCallbackImp21` (API 21+) / `LeScanCallbackImp` (legacy) deliver results as
-`ScanEvent{ device, byte[] scanRecord(62), rssi }`. Results are filtered by **MAC**, advertised
+`ScanEvent` (device, a 62-byte scanRecord, rssi). Results are filtered by **MAC**, advertised
 **name**, **service UUID**, and **RSSI** (≈3 s debounce; per-family min-RSSI, e.g. −45)
 (`ble/scan/*`).
 
@@ -1635,10 +1639,10 @@ derives `skuCode` by prefix:
 
 | Prefix | Rule | Example → skuCode |
 |--------|------|-------------------|
-| `ihoment_` / `Govee_` / `Minger_` | `split('_')` = `[brand, skuCode, tail]` | `ihoment_H6159_1A2B` → `H6159` |
-| `GBK_` | `split('_')` = `[GBK, skuCode, tail]` | `GBK_H5083_1234` → `H5083` |
-| `GVH` / `GVR` | `substring(2)` up to `_`; with no `_`, `substring(2,7)` and the name must be ≥ 11 chars. The 3rd char is **kept**, so `GVR…` gives `R…` (not rewritten to `H`) | `GVH6159_XXXX` → `H6159`; `GVR6184_XXXX` → `R6184` |
-| `GV` (fallback) | `skuCode = "H" + substring(2,6)`; the name must be ≥ 10 chars | `GV5122ABCD` → `H5122` |
+| `ihoment_` / `Govee_` / `Minger_` | split on `_` = `[brand, skuCode, tail]` | `ihoment_H6159_1A2B` → `H6159` |
+| `GBK_` | split on `_` = `[GBK, skuCode, tail]` | `GBK_H5083_1234` → `H5083` |
+| `GVH` / `GVR` | chars from index 2 up to the `_`; with no `_`, chars 2..6, and the name must be ≥ 11 chars. The 3rd char is **kept**, so `GVR…` gives `R…` (not rewritten to `H`) | `GVH6159_XXXX` → `H6159`; `GVR6184_XXXX` → `R6184` |
+| `GV` (fallback) | `skuCode` = `H` + chars 2..5; the name must be ≥ 10 chars | `GV5122ABCD` → `H5122` |
 
 ### 18.3 SKU → goodsType → (pactType, pactCode) → dialect
 
@@ -1674,7 +1678,7 @@ wire. Exchanged with `SecretKeyController(V1)`:
    (`T1`, `:108-114`, sends a read when no secret is known and a check otherwise; `onEventSecretKey`,
    `:392-430`, stores the returned `secretCode` and hands it to the family's `o2`), caches it in
    `SecretKeyConfig` (`base2home/scenes/SecretKeyConfig.java`, a persisted
-   `HashMap<bleAddress, secretCode>`; e.g. `h6047/add/PairAcV1.java:265-269`), then **binds** the
+   map of bleAddress to secretCode; e.g. `h6047/add/PairAcV1.java:265-269`), then **binds** the
    device — uploading the secret to the account.
 2. **Any other client** (second phone, reinstall, or a third-party local client): fetches the secret
    from the **account device record** and then **writes `0xB2`** to authorize.
@@ -1717,7 +1721,7 @@ How the app maps a device to its protocol/capabilities (decompiled-verified):
 - **The only capability read live from the device** is the **IC / segment count**, via BLE opcode **`0x40`**
   (`ControllerOnlyReadIcSegmentNum` → `{IC count u16, segment}`; `ControllerIcNum` → IC-group list; refresh `0x42`).
   IC-driven families (h61d3/H6641) compute segment count from it (`H61D3Support.e()` → `ceil(IC/d)`, `d`∈{3,4,5}
-  by goodsType — **H6641/247 → `d`=5**, `H61D3Support.e()` sets `r0=5` before the 247 branch);
+  by goodsType — **H6641/247 → `d`=5**, `H61D3Support.e()` sets `d` to 5 before the 247 branch);
   static families ignore it and use hard-coded per-goodsType counts (H60A6 and the H6047-family newdetail screens: `getColorPieceSize`; the old H6047 detail screen, goodsTypes 119/196/197: `Support.getBulbStringMaxNum`, which is 10 for H6047).
 
 **Implication for a local (no-cloud) client:** derive `goodsType` from the advertisement, then key a compiled

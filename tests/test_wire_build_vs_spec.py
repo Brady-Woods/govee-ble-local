@@ -130,7 +130,7 @@ def test_color_rgb_15_h60a6_up_to_16_segments() -> None:
         for _ in range(20):
             rgb = _rgb(r)
             assert b.color_rgb(*rgb, "h60a6", segments) == \
-                R.build_op15_color(*rgb, (1 << segments) - 1, variant=12)
+                C.build_op15_color_bytes_h(*rgb, [True] * segments)
 
 
 def test_color_temp_0d() -> None:
@@ -145,8 +145,8 @@ def test_color_temp_0d() -> None:
 def test_color_temp_15_h60a6_up_to_16_segments() -> None:
     for segments in (1, 8, 13, 15, 16):
         for kelvin in range(2000, 9001, 100):
-            assert b.color_temp(kelvin, "h60a6", segments) == R.build_op15_color(
-                255, 255, 255, (1 << segments) - 1, variant=11, kelvin=kelvin, tint=tint_for_kelvin(kelvin))
+            assert b.color_temp(kelvin, "h60a6", segments) == C.build_op15_color_temp_bytes_r(
+                tint_for_kelvin(kelvin), kelvin, [True] * segments)
 
 
 def test_h6061_color_temp() -> None:
@@ -178,8 +178,8 @@ def test_rgb_pick_as_kelvin_every_tint(kelvin_range: tuple[int, int]) -> None:
         assert b.color_rgb_frames(*rgb, "h6006", kelvin_range=kelvin_range) == [expect_0d]
         assert b.color_rgb_frames(*rgb, "h6188", kelvin_range=kelvin_range) == [expect_0d]
         # 0x15 (Config.Yt -> Bytes.r): white in the colour slot, the picked colour as the tint.
-        expect_15 = (R.build_op15_color(255, 255, 255, 0x1FFF, variant=11, kelvin=kelvin, tint=rgb) if inside
-                     else R.build_op15_color(*rgb, 0x1FFF, variant=12))
+        expect_15 = (C.build_op15_color_temp_bytes_r(rgb, kelvin, [True] * 13) if inside
+                     else C.build_op15_color_bytes_h(*rgb, [True] * 13))
         assert b.color_rgb_frames(*rgb, "h60a6", 13, kelvin_range=kelvin_range) == [expect_15]
         # h61a8 has no CCT: always RGB.
         assert b.color_rgb_frames(*rgb, "h61a8", 15, kelvin_range=kelvin_range) == [
@@ -202,7 +202,8 @@ def test_segment_rgb() -> None:
     for _ in range(N):
         segments = r.randrange(1, 17)
         mask, rgb = _mask(r, segments), _not_tint(r)
-        assert b.segment_rgb(mask, *rgb, "h60a6", segments) == R.build_op15_color(*rgb, mask, variant=12)
+        assert b.segment_rgb(mask, *rgb, "h60a6", segments) == \
+            C.build_op15_color_bytes_h(*rgb, _pos_set(mask, segments))
         assert b.segment_rgb(mask, *rgb, "h61a8", segments) == C.build_color_rgbic_0b(*rgb, mask)
 
 
@@ -211,8 +212,8 @@ def test_segment_color_temp() -> None:
     for _ in range(N):
         segments = r.randrange(1, 17)
         mask, kelvin = _mask(r, segments), r.randrange(20, 91) * 100
-        assert b.segment_color_temp(mask, kelvin, "h60a6", segments) == R.build_op15_color(
-            255, 255, 255, mask, variant=11, kelvin=kelvin, tint=tint_for_kelvin(kelvin))
+        assert b.segment_color_temp(mask, kelvin, "h60a6", segments) == C.build_op15_color_temp_bytes_r(
+            tint_for_kelvin(kelvin), kelvin, _pos_set(mask, segments))
 
 
 def test_segment_brightness_every_mask_width() -> None:
@@ -325,9 +326,9 @@ def _pos_set(mask: int, segments: int) -> list[bool]:
 
 def test_op15_colour_every_mask_width() -> None:
     """0x15 colour and CCT at every segment count up to 112, against the catalogue's Bytes.h / Bytes.r
-    builders (the app's 17-byte ext array, BleUtils.X above 16 positions, coerceAtMost 7 mask bytes) and,
-    up to 56, the reference's ``build_op15_color(segments=)``. Above 16 segments the mask is ceil(n/8)
-    bytes, cut to 7; this was the spec gap the audit found (#7), closed in faa2cb7."""
+    builders (the app's 17-byte ext array, BleUtils.X above 16 positions, coerceAtMost 7 mask bytes).
+    Above 16 segments the mask is ceil(n/8) bytes, cut to 7; this was the spec gap the audit found (#7),
+    closed in faa2cb7."""
     r = _rng(13)
     for segments in range(1, b.MAX_MASK_SEGMENTS + 1):
         if segments > 56:
@@ -342,14 +343,11 @@ def test_op15_colour_every_mask_width() -> None:
             rgb, kelvin = _not_tint(r), r.randrange(27, 66) * 100
             mask = _mask(r, segments)
             tint = tint_for_kelvin(kelvin)
-            assert b.color_rgb(*rgb, "h60a6", segments) == C.build_op15_color_bytes_h(*rgb, whole) == \
-                R.build_op15_color(*rgb, (1 << segments) - 1, variant=12, segments=segments)
+            assert b.color_rgb(*rgb, "h60a6", segments) == C.build_op15_color_bytes_h(*rgb, whole)
             assert b.segment_rgb(mask, *rgb, "h60a6", segments) == \
                 C.build_op15_color_bytes_h(*rgb, _pos_set(mask, segments))
-            ref_cct = R.build_op15_color(255, 255, 255, (1 << segments) - 1, variant=11, kelvin=kelvin,
-                                         tint=tint, segments=segments)
             assert b.color_temp(kelvin, "h60a6", segments) == \
-                C.build_op15_color_temp_bytes_r(tint, kelvin, whole) == ref_cct
+                C.build_op15_color_temp_bytes_r(tint, kelvin, whole)
             assert b.segment_color_temp(mask, kelvin, "h60a6", segments) == \
                 C.build_op15_color_temp_bytes_r(tint, kelvin, _pos_set(mask, segments))
 

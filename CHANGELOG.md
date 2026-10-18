@@ -863,6 +863,24 @@ model, from which the shipped readers are generated).
   - `meta`: every import must be the bare stem of another `spec/*.ksy`, so ksc can't pull in an
     unlinted file.
   - The current spec passes unchanged: 9 ksy, 205 types, 0 errors.
+- `spec/` now keeps CLAUDE.md rule 7 ("Cite, don't copy") and its one-builder-per-variant rule.
+  - Some 450 decompiled-code fragments in the docs, the `devices.yaml` notes, the catalogue docstrings and
+    the reference comments are rewritten in spec terms. Each keeps its citation and meaning. The rewrites
+    cover casts like `(byte)88`, `new byte[]{...}` and Java array literals; decompiler names like `bArr`,
+    `param_1`, `z2` and `LAB_...`; and pasted Java and C statements, ternaries and assembly. Firmware
+    `FUN_...` symbols stay, because they are the `IMAGE symbol @0xaddr` citation form.
+  - `govee_upload` `random_breath`: the fields `param_1` and `param_2` become `e` and `f`, the app's field
+    names (SuiJiHuXi.e / .f; SuiJiJianBian keeps the same two bytes as e[0] / e[1]). Nothing read them.
+  - `build_op15_color_ver5` duplicated `build_op15_color_v5` (`33 05 15 01`, colour version 5), and it
+    sized the mask from the mask's bit length instead of the position count. It is removed, and its
+    whole-frame vectors join v5's self-check.
+  - `govee_reference.build_op15_color` duplicated `build_op15_color_bytes_h` (its variant 12) and
+    `build_op15_color_temp_bytes_r` (variant 11). It is removed, along with the helpers only it used,
+    `op15_mask_width` and `op15_mask_from_int`. Its variant 1, the H60A0 basic form
+    (SubModeColorV1.getWriteBytes opType 1), is the new catalogue builder `build_op15_color_basic`.
+    `tests/test_wire_build_vs_spec.py` now compares against the catalogue builders, which give the same
+    bytes for all 2079 inputs it feeds.
+  - The catalogue has 462 builders and 759 self-checks, and `OPCODE_COVERAGE.md` indexes exactly those.
 - `33 05 15 05` (op15_kelvin, H60A0): the Kelvin is now spelled `u2be` (it already read high byte first; the
   generated code is unchanged). The app writes it high byte first (ControllerBuildH60A0.d), and no firmware image
   handles op 05: on H60A6 it falls to the default branch, which logs 'Unknow msg'. The citations point at that

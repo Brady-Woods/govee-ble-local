@@ -48,7 +48,7 @@ Every image implements the spec's §4.1 frame; the per-image differences are lis
 |---|---|
 | 20-byte application frame | The RTL images reject non-20-byte frames (`0x14` = 20), with per-image exceptions (`0xA5` mic frames; on H6008 also `0x3F` frames whose length is a multiple of 20). H6047 does not length-check `0x33`/`0xAA` frames. Detail below. |
 | `[proType][cmd][payload…][BCC]` | byte[0] = proType, byte[1] = command id, payload from byte[2] — identical across all six. |
-| **BCC = XOR of bytes 0..18 → byte[19]** | Byte-identical loop in every device: e.g. H6008 `LAB_9b0245f8` `b=0; for(p;p!=buf+0x13;) b^=*p; buf[0x13]=b`; H60A6 `FUN_9b053f04(frame,0x13)`; matches `govee_reference.bcc()` and `Controller4Aes.c()` (`b ^= bArr[i]`, i=1..18). |
+| **BCC = XOR of bytes 0..18 → byte[19]** | Byte-identical loop in every device: e.g. H6008 `@0x9b0245f8` starts from 0, XORs in bytes 0..18 and stores the result in byte 19; H60A6 `FUN_9b053f04` over the frame with length `0x13` (19); matches `govee_reference.bcc()` and `Controller4Aes.c()` (which starts from byte 0 and XORs in bytes 1..18). |
 | proType `0x33` write / `0xAA` read | Both present in every dispatcher. On H6047 both go into one table and each handler decides (below). |
 | multi-packet `0xA1` / `0xA3` | `0xA3` on H6006/H6008/H60A1/H60A6 (and in H5083's shared layer). `0xA1` on H5083/H60A1/H60A6, and on H6006/H6008 only as the `A1 11 …` Wi-Fi-provisioning multi-package. Both are device-accepted multi frames (spec `govee_ble_frame` `mpm_packet` / `a3_packet`). Detail below. |
 | 20-byte reply | Reply built and sent as `0x14` bytes: H6006 `FUN_9b03d3e4(payload,0x14)`, H6008 `FUN_9b03cffc(…,0x14)`, H60A6 `FUN_9b04b8ac(…,0x14)`. |
@@ -59,15 +59,15 @@ Per-image detail for the table:
   H6006/H6008 catch before any check.
   - H6006: `_system_ble_event_handler` (`0x9b03de60`) sends `A5 02 …` of any length to
     `ble_msg_group_test` (`0x9b03df50` → `0x9b03cf34`). Every other write goes to the shared
-    `_handle_write_msg` (`0x9b03d750`), which tests `len == 0x14` at `0x9b03d7a6`, and the dispatcher
-    repeats `if (*param_1 != 0x14)`.
+    `_handle_write_msg` (`0x9b03d750`), which tests the frame length against `0x14` (20) at `0x9b03d7a6`,
+    and the dispatcher repeats that length test.
   - H6008: the event handler `0x9b03d830` catches `A5 02` the same way (`0x9b03d8a2` → `0x9b03cc64`).
     The shared write handler (`0x9b03d4e8`) then skips the length and BCC checks only for
     byte[0]==`0xA5` (`0x9b03d56c`) and allows `0x3F` frames whose length is a multiple of 20
-    (`0x9b03d576-84`). The dispatcher `FUN_9b0244f0` tests only `*param_1 != 0x14` (`0x9b02451e`,
+    (`0x9b03d576-84`). The dispatcher `FUN_9b0244f0` tests only the frame length against `0x14` (`0x9b02451e`,
     `Invalid len %d`) and has no `0xA5` branch, so other `A5` frames are dropped.
-  - H60A1/H60A6: `(*frame != 0xa5) && (len != 0x14)`.
-  - H5083: `if (*param_1 != 0x14)`.
+  - H60A1/H60A6: a frame is rejected when byte 0 is not `0xA5` and its length is not `0x14` (20).
+  - H5083: tests the frame length against `0x14` (20).
   - H6047 has no length check on `0x33`/`0xAA` frames. It zero-fills a 0x100-byte buffer, copies 20
     bytes of whatever was written (`0x01005cfc-0x01005dc4`) and relies on the XOR BCC (`0x01005fca`).
     Only its `0xB0–0xBF` `group_pro` path checks len == 20 (`0x010105e0`), and its `0xA5` mic frame is
@@ -80,9 +80,9 @@ Per-image detail for the table:
 - **`0xA1` / `0xA3`.**
   - H6006/H6008 accept `0xA1` only as the `A1 11 …` Wi-Fi-provisioning multi-package (`MULTI_WIFI` =
     0x11). On H6006 it is handled in the shared layer (`_handle_write_msg` `0x9b03d856` →
-    `ble_msg_receive_mult_package` `0x9b03cd20`, `cmp r0,#0x11` at `0x9b03cd22`). On H6008 it is handled
-    in the dispatcher (`FUN_9b0244f0` `0x9b024b86` → `FUN_9b02444c`, `cmp r0,#0x11`). An `A1` frame with
-    any other byte[1] is dropped with no reply.
+    `ble_msg_receive_mult_package` `0x9b03cd20`, which compares byte[1] with `0x11` at `0x9b03cd22`). On
+    H6008 it is handled in the dispatcher (`FUN_9b0244f0` `0x9b024b86` → `FUN_9b02444c`, the same `0x11`
+    compare). An `A1` frame with any other byte[1] is dropped with no reply.
   - H5083 takes both in its shared write layer, ahead of the dispatcher. `A1 11 …` carries the Wi-Fi
     credentials (`ble_msg_receive_mult_package` `H5083.bin@0x9b031c2c`); a successful END is acked
     `A1 11 00`. `A3` frames whose reassembled payload type is `0x08` are IoT/MQTT-topic provisioning
@@ -175,8 +175,8 @@ Cross-check against the spec `command` enum:
 - `0x00` on H60A1/H60A6 is an explicit no-op case, not the default branch (tbh entry 0 → H60A1
   `0x9b02607e`, H60A6 `0x9b026b20`). The frame is sent back: AA is echoed, 33 gets status 0. The default
   branch instead logs `msg type error` and sets status 1. The app name is `SINGLE_HEART_BEAT` (0). It
-  is the app's heartbeat on these SKUs: `ShareVM.I3()` is false, so `ConnectHeartbeat.c(2)` = `0x00`
-  and `BleComm.l` sends `Controller4HeartCommon(0)` = `AA 00`.
+  is the app's heartbeat on these SKUs: `ShareVM.I3()` is false, so `ConnectHeartbeat.c` gives `0x00`
+  for argument 2 and `BleComm.l` sends a `Controller4HeartCommon` for byte `0x00`, i.e. `AA 00`.
 - H5083's `0x15` is the plug timer-delete write: `33 15` → internal msg `0xb5` MSG_SET_DEL_TIMER via
   `FUN_9b01f7a2`, which requires payload[0] = 0 and payload[1] ≤ 9. It is the app's h5080
   `timer_delete`. `0x02` is **not** an AA/33 opcode on H5083. The dispatcher compares byte[1] with 2
@@ -223,9 +223,9 @@ turned out to be a real app frame family the enum was missing (now added as `mic
   `0x9b0277ac`). Byte 2 `0x90` (`MicColorCmdController`) queues an internal message. The additive
   checksum is not checked and no reply is sent. (The H60A1/H60A6 handler, `group_ctrl_rec_ble_pkg`, is
   in §6.) An earlier draft of this note said the app never emits proType `0xA5`; that was wrong. The
-  app's mic-colour framing uses it: `AbsMicController.getProType()` returns `(byte) -91` = `0xA5`
+  app's mic-colour framing uses it: `AbsMicController.getProType()` returns -91, i.e. `0xA5`
   (`base-classes10/com/govee/base2light/ble/mic/controller/AbsMicController.java:55-56`; the frame builders at
-  `:23` and `:43` also write `bArr[0] = -91`), and it is the base of `MicSetRgbController`, `MicColorCmdController`
+  `:23` and `:43` also put -91 (`0xA5`) in byte 0), and it is the base of `MicSetRgbController`, `MicColorCmdController`
   and the newdetail `MicController`. So the firmware's length-exempt `0xA5` path is the device side of the app's
   mic-colour push. **Spec:** the `pro_type` enum (`govee_common.ksy`) has `0xA5` as `mic`, and the frame
   reads it on routes `mic_tx` / `mic_rx` (`mic_command` / `mic_reply`, checksum_kind sum8). (This is
@@ -254,7 +254,7 @@ turned out to be a real app frame family the enum was missing (now added as `mic
   CAUTION) with no body type, so a captured `66` frame reads as raw bytes.
 - **Handshake proType.** The spec already says `0xE7` (`GOVEE_BLE_GATT_PROTOCOL.md §9.1`). My firmware
   H6047 note had guessed `0xA5`. The APK is decisive: `Controller4Aes.g()` accepts the reply iff
-  `bArrB[0] == -25 && bArrB[1] == 1` — `-25` = **`0xE7`**. **The spec was right all along**; this
+  `byte 0 == -25` and `byte 1 == 1` — `-25` = **`0xE7`**. **The spec was right all along**; this
   corrects the *firmware note*, and the spec MD needs no change.
 
 ---
@@ -329,7 +329,7 @@ Where a handler body was decompiled (not just the dispatcher), the payload layou
     `A5 02 90 …` is also handled; neither gets a reply. The app sends it from the bulbs' control
     screen: `BulbLightApplication.create` registers `DelegateOnlyMic` for `Support4BulbLightV3.a`
     (goodsTypes 31/64/111/342/348/408), and `DelegateOnlyMic:63` → `DelegateMicPickup:1081` builds
-    `new MicSetRgbController(new byte[]{r,g,b})`.
+    a `MicSetRgbController` with the payload `[r, g, b]`.
   - H60A1/H60A6: it is `group_ctrl_rec_ble_pkg` (H60A1 `FUN_9b037458`, H60A6 `FUN_9b03c6b0`). Layout:
     - Length = byte 19, which `_ble_service_msg_handler` stamps there for short writes.
     - Additive checksum (sum of bytes 0..len-2) in byte len-1.
@@ -380,12 +380,12 @@ at `0x1000068a` is `0x2FC`.
   - Reply: the request echoed with byte 19 re-stamped. The handlers only log and return 0; nothing is
     written. H6006 does not answer (default branch, forwarded, dropped), nor do H5083 (only `02`/`03`/`06`,
     §2) and H6047 (`sel−2 > 4`, no reply, `0x01005396`).
-  - App: `McuSoftVersionControllerV1` (`{10}`) / `McuHardVersionControllerV1` (`{11}`) exist but are
+  - App: `McuSoftVersionControllerV1` (`[0A]`) / `McuHardVersionControllerV1` (`[0B]`) exist but are
     sent only from the generic connect step `ReadControllerFactory.b()` (`StepReadInfo:211`), which is
     not on these SKUs' add flows or control screens.
 - **`AA EF` — advertising protocol type (constants).**
   - Handlers: `ble_msg_get_adv_pro_type` on H6006 `0x9b03cc00` (sub-dispatcher `0x9b03ccb4`,
-    `cmp #0xef` at `0x9b03ccd2`), H60A1 `0x9b045558`, H60A6 `0x9b04a980`; H5083 `0x9b031b80`. All log
+    the `0xEF` compare at `0x9b03ccd2`), H60A1 `0x9b045558`, H60A6 `0x9b04a980`; H5083 `0x9b031b80`. All log
     `adv protocol data is %d %d %d`. H6008 does not answer (forwarded, dropped, no reply).
   - Reply: `aa ef 00 01 01` on H6006/H60A1/H60A6 and `aa ef 00 02 02` on H5083, then request bytes
     5..18 and the XOR. Read the app's way (`PactController.parseValidBytes`): pactType = u16be(bytes
@@ -397,19 +397,19 @@ at `0x1000068a` is `0x2FC`.
     advertisement (`BleBroadcastProcessor:33-34`). The library already builds the request
     (`govee_commands.py read_pact()`).
 - **`AB 01 04` — Matter GID read (proType `0xAB`, H5083).**
-  - Handler: shared write handler `0x9b032c7a` (`cmp r4,#1`, `DBG:Get matter req`) → `0x9b0327f0`
+  - Handler: shared write handler `0x9b032c7a` (a compare against 1, `DBG:Get matter req`) → `0x9b0327f0`
     selector 4 (`DBG:MATTER_GID_INFO`) → `0x9b0326f0` / `0x9b0326ac`.
   - Reply: AB-framed (byte 0 `0xAB`, XOR at 19), single or multi-packet, carrying `[04][gid ASCII]`.
     First frame `AB 00 <frame count u16 LE> <len> 01 <13 data bytes>`; continuations
     `AB <idx, or FF for the last> <17 data bytes>`. The handler then returns -1, so no extra echo is
     sent. `AB 01 01/02/03/05/06` are consumed with no reply; other selectors are forwarded and dropped.
   - App: `Controller4GidRead` (base-classes12 `one2multi`, `AbsAbReadController` proType -85, cmd 1,
-    ext `{4}`) exists, but no H5083 caller was traced.
+    ext `[04]`) exists, but no H5083 caller was traced.
 - **`33 07 ss` — device-info read with a `0x33` header (H6047; ss = `02`/`03`/`04`/`06`).**
   - Handler: `0x01005370`, which does not gate on frame type. Cmd `07` is not exempt, so the dispatcher
     first calls `multi_ble_exit_group_control` `0x01011ec0` (at `0x0100601c`): this read also exits
     group control.
-  - Reply: the same bodies as `AA 07 ss`, with header `33 07` (the send uses `r1 = 0x33` at
+  - Reply: the same bodies as `AA 07 ss`, with header `33 07` (the send passes `0x33` as the header at
     `0x010053be`).
   - App: none; the app always reads with `0xAA`.
 - **`33 14` / `33 20` / `33 21`, and the deferred `aa 14` / `aa 20` / `aa 21` (H6047).**
@@ -417,7 +417,7 @@ at `0x1000068a` is `0x2FC`.
     → `0x0100b7d8` (selectors 3/1/2). Deferred sender `0x0100b4fc` (UART message `0xa8`, UART table
     `0x0102c93c`).
   - Reply: immediately `<proType> <cmd>` + 17 bytes (`20`/`21`: a 7-byte version field + zeros; `14`:
-    the 17-byte field at `+0x10`). If the Wi-Fi module has not reported yet (`+0x24 != 1`), there is no
+    the 17-byte field at `+0x10`). If the Wi-Fi module has not reported yet (the flag at `+0x24` is not 1), there is no
     reply now: UART event `0xc8` is posted and the selector is kept at `+0x25`. Later an unsolicited
     `aa <cmd> …` arrives, always with an `0xAA` header; only the last pending selector is kept.
     `+0x24` is never cleared and boot code (`0x0100235e`) pre-requests the data, so the deferred case
@@ -485,14 +485,14 @@ control path. `AA 07 02` is rule 6's own example.
   - H60A1/H60A6: per-SKU dispatcher `0xFF`, AA branch with byte 2 == `08`: H60A1 `D60A1:497-505`
     (`FUN_9b02ca34` `_factory_getAgingFlag`), H60A6 `D60A6:662-672` (`FUN_9b02de4c`
     `_factory_getAgingFlag`). Reply `aa ff 08 <aging flag>`, then the rest echoed and the XOR.
-    **Side effect:** if the flag reads 0, the device also runs `FUN_9b0313dc` + `FUN_9b037884(0)`
-    (H60A1) or `FUN_9b033c3c` + `FUN_9b03cadc(0)` (H60A6; the latter stores 0 to `0x1001fee9`).
+    **Side effect:** if the flag reads 0, the device also runs `FUN_9b0313dc` + `FUN_9b037884` with 0
+    (H60A1) or `FUN_9b033c3c` + `FUN_9b03cadc` with 0 (H60A6; the latter stores 0 to `0x1001fee9`).
   - H6047: `0x010059a4` (cmd `0xff`), query path (proType != `0x33`) → `0x01006dac`. Reply
     `aa ff 08 [1 if the flash word at 0x79400 != 0xffffffff, else 0] 00.. BCC`; any other selector
     gets 17 zero bytes. No side effect was traced on this path, but what flash `0x79400` holds is not
     determined, so treat it as test-only too. Only the `0xAA` form is a read: `33 FF …` is H6047's set
     path, which stops the running device service (`0x01002568`).
-  - App: no sender (no command-`0xFF` controller with ext `{8}`).
+  - App: no sender (no command-`0xFF` controller with ext `[08]`).
 - **`66 01` / `66 02` (proType `0x66`) — factory-test entry. Caution: do not expose it in the library,
   even under rule 6.** All five RTL images; the sites are in §3. `66 01` → `ble_msg_enter_test`, reply
   `66 01 00×17 <XOR>` (`set_response_data` zeroes bytes 2..18, status 0); `66 02` is echoed; any other
@@ -505,7 +505,7 @@ control path. `AA 07 02` is rule 6's own example.
 
 - H6047 `AA 07 04` (7-byte ASCII software version; `0x01005370` selector `04` → `0x010053ca`). The app
   defines and sends `07 04` on H61D3 (`split_h61d3` `PairViewModel:187` → `PairToDeviceInfoReadController`
-  → `SoftHardController.Companion.e {4}`), so it is app-sourced, with H6047 as firmware corroboration.
+  → `SoftHardController.Companion.e` with ext `[04]`), so it is app-sourced, with H6047 as firmware corroboration.
   H6047's own pairing and connect paths read `AA 06` instead.
 - H6006/H6008 `AA 14` / `AA 20` / `AA 21`: live callers on gt 64 (`ControllerStrategyConfig.h0:634-654`).
   Handlers: H6006 `0x9b03ca0c` / `0x9b03ca90` / `0x9b03cb0c`; H6008 `0x9b03c844` / `0x9b03c89c` /
