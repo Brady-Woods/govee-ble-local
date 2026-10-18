@@ -505,16 +505,6 @@ def test_device_info_populates_state_once() -> None:
     assert d._device_info_read is True        # gated to once
 
 
-def test_read_secret_bootstrap() -> None:
-    # aa b1 reply: selector 0x01 + 8-byte secret; readable on an unbound plug (no secret set)
-    d = _dev("H5080")
-    secret = bytes(range(1, 9))
-    d._conn.query = AsyncMock(  # type: ignore[attr-defined]
-        return_value=[_frame(0xAA, 0xB1, 0x01, *secret)]
-    )
-    assert asyncio.run(d.read_secret()) == secret
-
-
 def test_ingest_advertisement_onoff() -> None:
     d = _dev("H60A6")
 

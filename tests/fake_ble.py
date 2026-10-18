@@ -1,23 +1,26 @@
-"""A scriptable fake Govee BLE peripheral for transport tests.
+"""Scriptable fake Govee BLE peripherals for transport tests.
 
-Stands in for the bleak client returned by ``establish_connection`` and behaves
-like the real hardware as observed in live frame captures:
+They stand in for the bleak client returned by ``establish_connection``. :class:`Peripheral` is the
+bleak side: the links, the GATT layout, and knobs that make a link half-dead, drop it mid-operation,
+fail service discovery, etc. Two peripherals answer on top of it:
 
-* AES_RC4_PSK handshake: replies to ``e7 01`` with the session key (delivered
-  TWICE, as BlueZ/the device double-deliver it), echoes ``e7 02`` ~immediately and
-  retransmits that echo again a little later (late enough to land inside the
-  first query of the session).
-* Acks every ``0x33`` write with ``[0x33, cmd, status]``.
-* Answers the ``0xAC`` status query with a scripted burst.
+* :class:`FirmwareGovee`: a ``spec/firmware.yaml`` image (H5083 today) run by
+  ``tests/firmware_sim.py``. Every frame and advert it sends is built through the spec.
+* :class:`FakeGovee`: a generic peripheral for the SKUs with no firmware image yet. It behaves like
+  the hardware as observed in live frame captures:
 
-Knobs let a test make a link half-dead (stop acking), reject writes, drop the
-link mid-operation, etc.
+  * AES_RC4_PSK handshake: it replies to ``e7 01`` with the session key (delivered TWICE, as
+    BlueZ/the device double-deliver it), echoes ``e7 02`` ~immediately and retransmits that echo
+    again a little later (late enough to land inside the first query of the session).
+  * It acks every ``0x33`` write with ``[0x33, cmd, status]``.
+  * It answers the ``0xAC`` status query with a scripted burst.
 """
 from __future__ import annotations
 
 import asyncio
 import inspect
 from collections.abc import Awaitable, Callable, Iterator
+from types import SimpleNamespace
 from typing import Any
 
 from bleak.backends.device import BLEDevice
@@ -25,6 +28,7 @@ from bleak.exc import BleakError
 
 from govee_ble_local.const import BGC_INFO_CHAR_UUID, PSK, SERVICE_UUID, WRITE_CHAR_UUID
 from govee_ble_local.crypto import checksum, decrypt, encrypt
+from govee_ble_local.wire import _spec
 
 SESSION_KEY = bytes(range(16))
 # The OTA V1 service: it also carries a 2b12 characteristic (spec/docs/GOVEE_BLE_GATT_PROTOCOL.md).
@@ -61,7 +65,7 @@ def status_burst(tlvs: bytes) -> list[bytes]:
 class FakeClient:
     """One BLE link. Created per establish_connection call."""
 
-    def __init__(self, device: FakeGovee, disconnected_callback: Callable[[Any], None] | None):
+    def __init__(self, device: Peripheral, disconnected_callback: Callable[[Any], None] | None):
         self.device = device
         self.is_connected = True
         self._disconnected_callback = disconnected_callback
@@ -106,6 +110,7 @@ class FakeClient:
         if self.is_connected:
             self.is_connected = False
             self.device.disconnects += 1
+            self.device.link_down(self)
             cb = self._disconnected_callback
             if cb is not None:
                 # bleak calls it from the transport after teardown
@@ -114,6 +119,7 @@ class FakeClient:
     def drop(self) -> None:
         """Peripheral/proxy-side link loss."""
         self.is_connected = False
+        self.device.link_down(self)
         if self._disconnected_callback is not None:
             self._disconnected_callback(self)
 
@@ -204,39 +210,25 @@ class _Services:
         return found[0] if found else None
 
 
-class FakeGovee:
-    """The peripheral: behaviour shared across links."""
+class Peripheral:
+    """The bleak side of a fake peripheral, shared across its links: the GATT layout and the
+    transport failure knobs. What it answers is a subclass's :meth:`handle_write`."""
 
-    def __init__(self, *, encrypted: bool = True) -> None:
-        self.encrypted = encrypted
-        self.bgc: bytes | None = bytes([1, 1]) if encrypted else None
+    def __init__(self) -> None:
+        self.bgc: bytes | None = None
         self.clients: list[FakeClient] = []
         self.disconnects = 0
         self.bgc_reads = 0
-        self.ack_status = 0
         self.dead_links = 0          # the first N links never answer anything
         self.write_error: BaseException | None = None
         self.fail_start_notify = False
-        self.late_echo_delay = 0.05  # e7 02 retransmit lands inside the next query
-        self.status_burst: list[bytes] = []
-        self.drop_terminal = False
-        self.received: list[bytes] = []  # decrypted application frames
-        self.read_replies: dict[int, bytes] = {}  # 0xAA command -> reply frame
-        self.on_write: Callable[[FakeClient, bytes], None] | None = None
         # -- failure-injection knobs (all default OFF) --
         self.establish_error: BaseException | None = None  # raised by establish()
         self.establish_calls = 0
         self.bgc_read_error: BaseException | None = None
-        self.withhold_e7_reply = False    # never answer e7 01
-        self.withhold_e7_confirm = False  # never echo e7 02
-        self.drop_on_e7 = False           # drop the link when e7 01 arrives
-        self.app_write_error: BaseException | None = None  # raised on post-handshake writes
-        self.no_ack_cmds: set[int] = set()  # 0x33 commands that are never acked
         self.disconnect_hangs = False     # client.disconnect() never returns
         self.disconnect_started = 0       # how many hanging disconnects were entered
         self.disconnect_error: BaseException | None = None  # raised by client.disconnect()
-        # First N links: ack the first 0x33 write and disconnect in the SAME loop tick.
-        self.ack_then_drop_links = 0
         self.start_notify_error: BaseException | None = None  # raised by start_notify()
         self.duplicate_bgc_char = False   # 2b12 under two services (collection lookup raises)
         # Resolved service UUIDs in discovery order (None: the default layout, see _Services).
@@ -257,7 +249,113 @@ class FakeGovee:
         if len(self.clients) < self.dead_links:
             client.dead = True
         self.clients.append(client)
+        self.link_up(client)
         return client
+
+    def link_up(self, client: FakeClient) -> None:
+        """A link came up (``establish``)."""
+
+    def link_down(self, client: FakeClient) -> None:
+        """A link went down: the central disconnected, or the peripheral or proxy dropped it."""
+
+    def handle_write(self, client: FakeClient, data: bytes) -> None:
+        raise NotImplementedError
+
+
+class FirmwareGovee(Peripheral):
+    """A peripheral whose behaviour is a ``spec/firmware.yaml`` image, run by ``tests/firmware_sim.py``:
+    every frame and advert it sends is built through the spec. One link at a time, as the device
+    takes one central. ``sim`` is the device: its state, clock (:meth:`Sim.advance`) and events
+    (:meth:`Sim.event`, e.g. ``"button"``)."""
+
+    reply_delay = 0.005   # the first frame of a reply; each later one lands 1 ms after the one before
+
+    def __init__(self, image_id: str | None = None, *, seed: int = 1) -> None:
+        from firmware_sim import H5083, Sim   # PyYAML is a test dependency: only this fake needs it
+
+        super().__init__()
+        self.sim = Sim(image_id or H5083, seed=seed)
+        if self.sim.im["gatt"]["bgc_info"]:
+            raise NotImplementedError("a 2b12 BGC-info characteristic is not modelled")
+        self.sim.on_send = self._deliver
+        self.sim.on_drop = self._device_drop
+        self._client: FakeClient | None = None
+        self._last_at = 0.0
+
+    @property
+    def received(self) -> list[bytes]:
+        """Each client write as the device decrypted it."""
+        return self.sim.received
+
+    def link_up(self, client: FakeClient) -> None:
+        self._client = client
+        self.sim.connect()
+
+    def link_down(self, client: FakeClient) -> None:
+        if client is self._client:
+            self._client = None
+            self.sim.disconnect()
+
+    def handle_write(self, client: FakeClient, data: bytes) -> None:
+        if client is self._client:
+            self.sim.write(data)
+
+    def _deliver(self, _what: str, _plain: bytes, wire: bytes) -> None:
+        client = self._client
+        if client is None:
+            return
+        loop = asyncio.get_running_loop()
+        self._last_at = max(loop.time() + self.reply_delay, self._last_at + 0.001)
+        client.push(wire, self._last_at - loop.time())
+
+    def _device_drop(self) -> None:
+        client, self._client = self._client, None
+        if client is not None:
+            asyncio.get_running_loop().call_soon(client.drop)
+
+    def advertisement(self) -> SimpleNamespace | None:
+        """What a scanner hears now, in bleak's ``AdvertisementData`` shape (``local_name``,
+        ``manufacturer_data`` as {company id: value}, ``rssi``), or None while the device doesn't
+        advertise. The device's advertising data and scan response are read through the
+        ``govee_scan_record`` root."""
+        sent = self.sim.advert()
+        if sent is None:
+            return None
+        name: str | None = None
+        mfg: dict[int, bytes] = {}
+        ad_type = _spec.ScanRecord.AdType
+        for blob in sent:
+            for ad in _spec.read(_spec.ScanRecord, blob).ad_structures:
+                kind = getattr(ad, "ad_type", None)
+                if kind == ad_type.complete_local_name:
+                    name = ad.data.text
+                elif kind == ad_type.manufacturer_specific:
+                    raw = bytes(ad._raw_data)   # bleak splits the AD: company id (u2le), then the value
+                    mfg[int.from_bytes(raw[:2], "little")] = raw[2:]
+        return SimpleNamespace(local_name=name, manufacturer_data=mfg, rssi=-60)
+
+
+class FakeGovee(Peripheral):
+    """The generic peripheral: canned replies for the SKUs with no firmware image."""
+
+    def __init__(self, *, encrypted: bool = True) -> None:
+        super().__init__()
+        self.encrypted = encrypted
+        self.bgc = bytes([1, 1]) if encrypted else None
+        self.ack_status = 0
+        self.late_echo_delay = 0.05  # e7 02 retransmit lands inside the next query
+        self.status_burst: list[bytes] = []
+        self.drop_terminal = False
+        self.received: list[bytes] = []  # decrypted application frames
+        self.read_replies: dict[int, bytes] = {}  # 0xAA command -> reply frame
+        self.on_write: Callable[[FakeClient, bytes], None] | None = None
+        self.withhold_e7_reply = False    # never answer e7 01
+        self.withhold_e7_confirm = False  # never echo e7 02
+        self.drop_on_e7 = False           # drop the link when e7 01 arrives
+        self.app_write_error: BaseException | None = None  # raised on post-handshake writes
+        self.no_ack_cmds: set[int] = set()  # 0x33 commands that are never acked
+        # First N links: ack the first 0x33 write and disconnect in the SAME loop tick.
+        self.ack_then_drop_links = 0
 
     # -- protocol ------------------------------------------------------------
     def _wire(self, plain: bytes, key: bytes | None) -> bytes:

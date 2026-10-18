@@ -22,10 +22,9 @@ from govee_ble_local.models import Encryption  # noqa: E402
 from govee_ble_local.transport import connection as conn_mod  # noqa: E402
 from govee_ble_local.wire import build, parse  # noqa: E402
 
-# sku -> (aa 06 reply, aa 07 03 reply, aa 07 02 reply, firmware, hardware, device id)
+# sku -> (aa 06 reply, aa 07 03 reply, aa 07 02 reply, firmware, hardware, device id). The H5083 reads
+# run against its firmware image instead (test_h5083_firmware.test_device_info_is_read_once_per_device).
 CAPTURES = {
-    "H5083": ("aa06312e30302e3330000000000000000000009e", "aa0703312e30322e30300000000000000000009d",
-              "aa0702d0a2b13c17989d860000000000000000c4", "1.00.30", "1.02.00", "86:9D:98:17:3C:B1:A2:D0"),
     "H6047": ("aa06312e30302e3132000000000000000000009e", "aa0703332e30322e30310000000000000000009e",
               "aa07027e17383732d4d671000000000000000088", "1.00.12", "3.02.01", "71:D6:D4:32:37:38:17:7E"),
     "H61A8": ("aa06332e30332e31380000000000000000000095", "aa0703332e30312e31300000000000000000009d",

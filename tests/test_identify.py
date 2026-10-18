@@ -4,7 +4,6 @@ from __future__ import annotations
 import pytest
 
 from govee_ble_local.identify import (
-    GoveeAdvertisement,
     identify,
     parse_broadcast_onoff,
     parse_manufacturer_data,
@@ -129,11 +128,6 @@ def test_manufacturer_ids_cover_the_encrypted_v1_v2_headers() -> None:
         assert parse_manufacturer_data({cid: bytes([0xEC, 0, 1, 2])}) is not None
 
 
-def test_identify_encrypted_device() -> None:
-    adv = identify("ihoment_H5083_A2D1", {_cid(0x41): bytes([0xEC, 0, 2, 2, 1])})
-    assert adv == GoveeAdvertisement("H5083", "ihoment_H5083_A2D1", True, 1, 2, 2)
-
-
 def test_identify_rejects_non_govee_and_unparseable_sku() -> None:
     assert identify(None, {}) is None
     assert identify("", {}) is None
@@ -155,5 +149,4 @@ def test_identify_unparseable_pact_is_plaintext_unknown() -> None:
     short = identify("Govee_H61A8_631F", {_cid(0x41): bytes([0xEC, 1])})
     assert short is not None and short.encrypted is False and short.pact_type == -1
     assert short.pact is None
-    parsed = identify("ihoment_H5083_A2D1", {_cid(0x41): bytes([0xEC, 0, 2, 2, 1])})
-    assert parsed is not None and parsed.pact == (2, 2) and parsed.encryption_known is True
+    # A parsed pact (an encrypted advert, pact 2 / 2): test_h5083_firmware's advert test.

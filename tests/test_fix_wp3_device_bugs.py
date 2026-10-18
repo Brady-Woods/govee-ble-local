@@ -501,7 +501,7 @@ def test_mode_color_parse_is_validated() -> None:
     ("sku", "byte", "on"),
     [
         ("H5080", 0x01, True), ("H5080", 0x10, False), ("H5080", 0x11, True), ("H5080", 0x02, False),
-        ("H5083", 0x10, False), ("H5085", 0xF0, False),
+        ("H5085", 0xF0, False),   # H5083: test_h5083_firmware (its relay read against the firmware)
         # gt 50 / 307: relays 0-1, the aa 01 heartbeat rule (onEventHeartV2). WAS: any bit.
         ("H5082", 0x10, False), ("H5082", 0x02, True), ("H5089", 0x80, False), ("H5089", 0x01, True),
         ("H5089", 0x00, False),

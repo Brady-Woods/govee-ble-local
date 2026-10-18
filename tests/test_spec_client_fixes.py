@@ -201,7 +201,8 @@ def test_h6006_kelvin_is_the_apps_range() -> None:
 
 # ── #1 / G3: each plug's main switch is its goodsType's frame ─────────────────────────────────
 @pytest.mark.parametrize(("sku", "on_frame", "off_frame"), [
-    ("H5080", "330111", "330110"), ("H5083", "330111", "330110"), ("H5085", "330111", "330110"),  # gt 43
+    # gt 43; the H5083 is test_h5083_firmware.test_set_power_switches_the_relay_and_reads_it_back
+    ("H5080", "330111", "330110"), ("H5085", "330111", "330110"),
     ("H5082", "3301ff", "3301f0"),                                                                # gt 50
     ("H5160", "3301ff", "3301f0"), ("H5161", "3301ff", "3301f0"),                                 # gt 90
     ("H5089", "330201", "330200"),                                                                # gt 307

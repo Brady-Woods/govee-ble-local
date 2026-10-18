@@ -159,15 +159,6 @@ def test_device_info_survives_a_silent_poll_after_a_responsive_one() -> None:
     assert d.state.firmware_version == "1.00.01" and d._device_info_read is True
 
 
-def test_device_info_one_shot_is_used_up_by_a_responsive_plug_poll() -> None:
-    d, log = _dev("H5083", {0x01: [_frame(0xAA, 0x01, 0x01)]})
-    run(d.update())
-    assert d._device_info_read is True
-    start = len(log)
-    run(d.update())
-    assert all(f[1] not in (0x06, 0x07) for _, f in log[start:])
-
-
 # ── WP3-069: plug adverts are decoded per goodsType, as the device-list models do ─────────────
 def _adv(switch: int) -> object:
     # header 0x02: BleUtil.parseBleBroadOnOff reads the switch byte only for a header >= 2
@@ -175,9 +166,11 @@ def _adv(switch: int) -> object:
 
 
 @pytest.mark.parametrize(("sku", "switch", "on"), [
-    ("H5083", 0x11, True),     # goodsType 43, Model.A: (b & 1) == 1. WAS: off (b != 1)
-    ("H5083", 0x10, False),
-    ("H5083", 0x02, False),
+    # goodsType 43, Model.A: (b & 1) == 1. WAS: off (b != 1). The H5083's own advert (switch = its relay,
+    # 0 / 1) is test_h5083_firmware.test_the_advert_identifies_the_plug_and_carries_its_relay.
+    ("H5080", 0x11, True),
+    ("H5080", 0x10, False),
+    ("H5080", 0x02, False),
     ("H5082", 0x02, True),     # goodsType 50/307, Model4Plug2.A: bit 0 or bit 1. WAS: off
     ("H5089", 0x03, True),
     ("H5082", 0x04, False),

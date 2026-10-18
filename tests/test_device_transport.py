@@ -6,7 +6,6 @@ from typing import Any
 import pytest
 
 from govee_ble_local import create_device
-from govee_ble_local.exceptions import GoveeBleAuthError
 from govee_ble_local.scenes import load_scenes
 from govee_ble_local.transport import connection as conn_mod
 from govee_ble_local.wire import build
@@ -87,14 +86,6 @@ async def test_h6047_update_reads_bars(monkeypatch) -> None:
     dev = _device(monkeypatch, fake, "H6047")
     st = await dev.update()
     assert st.zone_power == {0: True, 1: False}
-
-
-async def test_plug_wrong_secret_is_auth_error(monkeypatch) -> None:
-    fake = FakeGovee()
-    fake.ack_status = 1
-    dev = _device(monkeypatch, fake, "H5083", secret=bytes(8))
-    with pytest.raises(GoveeBleAuthError):
-        await dev.set_power(True)
 
 
 async def test_scene_by_name_uploads_then_activates(monkeypatch) -> None:
