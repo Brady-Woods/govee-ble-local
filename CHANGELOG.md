@@ -85,6 +85,18 @@ model, from which the shipped readers are generated).
   (default 20, today's frames).
 
 ### Changed
+- **The H60A6 status read no longer fails on its empty mode value (rule 6, FIRMWARE-SOURCED; library half of
+  cd8acdc, which is 6da26e0 rebased).**
+  - In music mode (0xA0), and in every mode but 04 / 0a / 0d / 13 / 15, the H60A6 SW1.00.41 sends an empty
+    TLV 0x05 (`[05][00]`) in the middle of its 0xAC burst, on purpose (FUN_9b025dc8 @0x9b025dd2-0x9b025ddc).
+  - The app's whole read fails there (Info4Detail.Q reads a first byte), so its power and brightness go
+    stale. Without this change, the library's read did the same.
+  - `parse_status` now reads past that one value (`govee_state.app_empty_mode_fails`): the mode stays
+    unknown (`StatusReply.mode` None, the state's mode left as it was), and the rest of the burst applies.
+  - Every other `app_read_fails` value still fails the read, a mode value short of its layout included.
+  - The analyzer no longer lists the empty value as a spec gap.
+  - Decided by the user: "I do't want to drop the [05][00] tolerance, that seems like a bug in the app to
+    me".
 - **H61A8 sends the app's 0x15 colour frames and gains colour temperature and per-segment brightness (A8;
   library half of 1beeb75).**
   - The goodsType 19 colour page sends the h60a6 scheme's 0x15 forms (Config.x[19] = 0 -> Config.Yt):

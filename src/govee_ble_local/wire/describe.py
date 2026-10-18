@@ -335,10 +335,11 @@ def status_burst_report(rx_ac: list[bytes]) -> StatusBurstReport:
     Like the runtime, only complete bursts are read; a burst with conflicting duplicate chunks is not
     read either. In those, a TLV type outside :data:`KNOWN_STATUS_REPLY_TLVS`, a TLV its spec type can't
     read, or one whose value fails the app's read (``status_tlv.app_read_fails``, e.g. an empty value the
-    app reads a byte of) is a real spec gap; so is a TLV whose len byte the app reads as negative (0x80
-    or more). A stream that ends in a 0-2 byte tail ends cleanly, as in the app. A complete burst whose
-    TLV stream overruns it is read up to the record that runs past and counted in
-    :attr:`StatusBurstReport.truncated`: the runtime uses no state from it.
+    app reads a byte of) is a real spec gap, except H60A6's empty 0x05 value, which the firmware sends by
+    design and the runtime reads past (``govee_state.app_empty_mode_fails``, FIRMWARE-SOURCED); so is a
+    TLV whose len byte the app reads as negative (0x80 or more). A stream that ends in a 0-2 byte tail ends
+    cleanly, as in the app. A complete burst whose TLV stream overruns it is read up to the record that runs
+    past and counted in :attr:`StatusBurstReport.truncated`: the runtime uses no state from it.
 
     A burst from a redacted field-test capture (first chunk zeroed past ``ac 00``,
     :func:`_header_redacted`) has no packet count and no payload: it is counted in
@@ -372,7 +373,7 @@ def status_burst_report(rx_ac: list[bytes]) -> StatusBurstReport:
             report.tlv_types[t] += 1
             if t not in KNOWN_STATUS_REPLY_TLVS:  # unknown type -> value falls to raw bytes
                 report.gaps.append(f"0xAC reply TLV type 0x{t:02x} not modelled")
-            elif tlv.app_read_fails:
+            elif tlv.app_read_fails and not tlv.value.app_empty_mode_fails:   # H60A6's empty 0x05: by design
                 report.gaps.append(
                     f"0xAC reply TLV type 0x{t:02x} (len {int(tlv.len_value)}) fails the app's read")
         if stop is None:

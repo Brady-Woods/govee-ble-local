@@ -17,6 +17,7 @@ from govee_ble_local.devices import _fold
 from govee_ble_local.devices.profile import DeviceProfile, ModeColorParse, profile_for, wire_profile
 from govee_ble_local.models import DeviceState
 from govee_ble_local.wire import build, parse, reassemble
+from govee_ble_local.wire.describe import status_burst_report
 
 from fake_ble import status_burst
 
@@ -68,15 +69,50 @@ def test_a_tlv_mode_and_an_aa05_reply_read_alike(body: tuple[int, ...]) -> None:
 
 
 def test_a_short_tlv_mode_fails_the_read_and_a_long_one_reads() -> None:
-    """A short or empty value fails the whole status read, as h60a1 Info4Detail.Q throws (WAS: zero padded
-    into made-up values, e.g. 2560 K out of ``15 01 0a``); a long one reads whatever follows the layout."""
+    """A value short of its sub-mode's layout fails the whole status read, as h60a1 Info4Detail.Q throws
+    (WAS: zero padded into made-up values, e.g. 2560 K out of ``15 01 0a``); a long one reads whatever follows
+    the layout. An empty one is the H60A6's own, read past (the next test)."""
     h60a6 = _profile("kelvin_15_rgb_kelvin_0d")
-    switch = bytes([0x01, 0x01, 0x01])   # a TLV after it (a lone [05][00] is the stream's 2-byte tail)
-    for short in (bytes([0x15, 0x01, 0x0A]), bytes([0x0D, 1, 2, 3, 4]), bytes([0x04, 0x2A]), b""):
+    switch = bytes([0x01, 0x01, 0x01])   # a TLV after it, so the mode isn't the stream's tail
+    for short in (bytes([0x15, 0x01, 0x0A]), bytes([0x0D, 1, 2, 3, 4]), bytes([0x04, 0x2A])):
         burst = status_burst(bytes([0x05, len(short)]) + short + switch)
         assert reassemble.parse_status(burst, decode=h60a6) == reassemble.StatusReply(), short.hex()
     long_value = bytes([0x0D, 1, 2, 3, 0x0A, 0x8C, *range(40)])
     assert parse.mode_color(_tlv_mode(long_value, h60a6)) == (None, 2700)
+
+
+def test_h60a6s_empty_mode_value_is_read_past_and_every_other_failure_still_fails() -> None:
+    # FIRMWARE-SOURCED (rule 6; govee_state.app_empty_mode_fails): H60A6 SW1.00.41 sends an empty [05][00] in
+    # music mode (0xA0) and every mode but 04 / 0a / 0d / 13 / 15 (FUN_9b025dc8 @0x9b025dd2-0x9b025ddc). The
+    # app's read fails on it (Info4Detail.Q reads a first byte), so its power and brightness go stale; the
+    # library reads past it with the mode unknown and applies the rest of the burst.
+    h60a6 = profile_for("H60A6")
+    assert h60a6 is not None
+    prof = wire_profile(h60a6)
+
+    def read(tlvs: bytes) -> reassemble.StatusReply:
+        return reassemble.parse_status(status_burst(tlvs), pieces=13, decode=prof)
+
+    # The firmware's own mid-burst layout: switch, brightness, the empty mode, the zones.
+    tlvs = bytes([0x01, 0x01, 0x01, 0x04, 0x01, 0x50, 0x05, 0x00, 0x30, 0x02, 0x01, 0x01])
+    st = read(tlvs)
+    assert (st.is_on, st.brightness, st.zone_power, st.mode) == (True, 0x50, {0: True, 1: True}, None)
+    state = DeviceState(scene_code=22)
+    assert _fold.apply_status(h60a6, state, st) == (True, True)
+    assert state.scene_code == 22 and (state.is_on, state.brightness) == (True, 80)   # mode left as it was
+    assert status_burst_report(status_burst(tlvs)).gaps == []    # by design, not a spec gap
+    # Followed by any byte it is a TLV, read past; ending the stream it is the 2-byte tail, which never fails.
+    for after in (b"\x01", b"\x01\x01", bytes([0x04, 0x01, 0x32]), bytes([0x05, 0x00, 0x01, 0x01, 0x01])):
+        assert read(bytes([0x05, 0x00]) + after).brightness is not None, after.hex()
+    assert read(bytes([0x01, 0x01, 0x01, 0x05, 0x00])).is_on is True
+    # Every other value the app's read fails on still fails it: the empty switch, brightness, device-info,
+    # timers, zones, power memory and colour group, a mode value short of its layout, a short timer list
+    # and a colour group short of its records.
+    switch, bri = bytes([0x01, 0x01, 0x01]), bytes([0x04, 0x01, 0x32])
+    for bad in ([0x01, 0x00], [0x04, 0x00], [0x07, 0x00], [0x23, 0x00], [0x30, 0x00], [0x41, 0x00],
+                [0xA5, 0x00], [0x05, 0x03, 0x15, 0x01, 0x0A], [0x05, 0x01, 0x04], [0x23, 0x01, 0x00],
+                [0xA5, 0x05, 0x01, 0x32, 1, 2, 3]):
+        assert read(switch + bytes(bad) + bri) == reassemble.StatusReply(), bytes(bad).hex()
 
 
 def test_the_signed_kelvin_tests_come_from_the_spec() -> None:

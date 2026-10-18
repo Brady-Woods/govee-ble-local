@@ -307,14 +307,20 @@ def parse_status(frames: list[bytes], *, pieces: int | None = None, decode: Any 
 
     A stream the app's walker throws on (:func:`read_status_stream`), or a value the spec flags as failing
     the app's read (``status_tlv.app_read_fails``: an empty switch, brightness, device-info, zone or
-    power-memory value, an empty or short mode value, a short timer list, a colour group short of its
+    power-memory value, a mode value short of its layout, a short timer list, a colour group short of its
     records), fails the app's whole read, so it gives NO state here. Nothing catches the throw
     (ComposeBleComm.K), the read times out into result2Fail (AbsComposeControllerWithOpResult.onOvertime),
     and the VM's failure callback (VM4LightH60A6$afterConnectedSingleReadDeviceInfo$1.m) reports it
     failed with P(1). Its success callback l(), which applies switch / brightness / device-info and syncs
     the mode to the screen, never runs; the zone / colour values its lambda (.o) had already stored stay
     in the Info4Detail model (plain setters) without that sync. Device then retries once and leaves state
-    stale."""
+    stale.
+
+    The one exception is FIRMWARE-SOURCED: the empty 0x05 value H60A6 sends on purpose in music mode and the
+    other modes it reports no bytes for (``govee_state.app_empty_mode_fails``; H60A6 FUN_9b025dc8
+    @0x9b025dd2-0x9b025ddc). The app's read fails on it, so its power and brightness go stale; the library
+    reads past it with the mode unknown (``StatusReply.mode`` None, the state's mode left as it was) and
+    applies the rest of the burst. A short mode value still fails the read."""
     st = StatusReply()
     buf, complete = _joined(frames)
     if not complete:
@@ -342,7 +348,10 @@ def parse_status(frames: list[bytes], *, pieces: int | None = None, decode: Any 
             if group != "skip":
                 groups.append(group)
             continue
-        if tlv.app_read_fails:
+        # FIRMWARE-SOURCED (rule 6): H60A6 sends an empty 0x05 value on purpose in mode 0xA0 (music) and every
+        # mode but 04 / 0a / 0d / 13 / 15 (FUN_9b025dc8 @0x9b025dd2-0x9b025ddc), where the app's read fails
+        # (Info4Detail.Q reads a first byte); the library reads past it with the mode unknown.
+        if tlv.app_read_fails and not tlv.value.app_empty_mode_fails:
             _LOGGER.debug("status reply: TLV 0x%02x (len %d) fails the app's read; no state used", typ,
                           int(tlv.len_value))
             return StatusReply()
