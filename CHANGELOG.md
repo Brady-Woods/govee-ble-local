@@ -930,6 +930,13 @@ model, from which the shipped readers are generated).
     no decoded state, return value or connection behaviour changes.
 
 ### Spec
+- dreamcolorlightv1 goodsType 19 (H61A8) gets a `client_profile.by_goods_type` entry. Its colour page sends
+  the 15 01 forms, not 0x0b (Config.x[19] = Py -> Config.Yt -> Bytes.h / Bytes.r), so `color_scheme: h60a6`.
+  `color_functions: [segment_brightness, color_temperature]` gives the two colour-page flags with consumers
+  (Config.I gO via Config.e). `kelvin_range` is [2000, 9000], and `kelvin_by_firmware` gives [2700, 6500] from
+  hardware 3.08.01 (KelvinConfig.Config.z2, a plain string compare). The schema takes these four keys per
+  goodsType. New opcode `segment_brightness_write` (33 05 15 02, Bytes.G), traced for 19 only. Bench, H61A8
+  SW 3.03.18 / HW 3.01.10: both 15 01 forms are acked, and `aa 05` reads 15 01 00 00 after a CCT write.
 - New `command_forms` selectors `f_40` (`form_40`: `unknown`, `ic_pair`, `one_count`, `device_count`) and `f_a3`
   (`form_a3`: `unknown`, `gradual`) say how a status screen reads TLV 0x40 / 0xA3 (rule 4 c). `govee_state`
   `app_read_fails` flags those values only where the screen reads them: H60A6, whose screen ignores both, no
