@@ -87,6 +87,12 @@ model, from which the shipped readers are generated).
   (default 20, today's frames).
 
 ### Changed
+- **The segment-mask caps are read from the spec's `len_cap` (rule 4 b).** `build.BRIGHTNESS_MASK_CAP`
+  is read off a built `op15_brightness` node, as `COLOR_MASK_CAP` is off `op15_color`. The per-segment
+  brightness frame and the 0x0b RGB frame pass the `len_cap` of the node they build. The library no
+  longer reads a mask out of zero bytes to learn a cap, and the private `_MASK_CAP_0B` is gone. The
+  frames built are byte-identical: the 10,557 builder cases of the differential match, and the caps
+  are unchanged at 7, 14 and 13.
 - **The H5083 tests run against its firmware image (S7a, test-only).** `tests/firmware_sim.py` runs a
   `spec/firmware.yaml` image as a peripheral: its accept rules, answers, effects, pushes, events and
   advert, under the image's cipher. Each request is read through the `govee_ble_frame` root, and

@@ -244,17 +244,17 @@ def normalize_kelvin(kelvin: int, lo: int | None = None, hi: int | None = None) 
     return out
 
 # Segment masks: the spec's seg_mask(num_segments, cap). Up to 16 segments the mask is two bytes
-# (BleUtils.makeSelectedTwoBytes); above that ceil(n/8) bytes, LSB first (BleUtils.X). Each body carries at
-# most its own cap, and the app's writers drop the positions past it (coerceAtMost): the 0x15 RGB and CCT
-# frames 7 bytes (op15_color form kelvin_tint's len_cap: Bytes.h :324, Bytes.r :499), per-segment
-# brightness 14 (op15_brightness's mask: Bytes.G :179). MAX_MASK_BYTES is the widest of those caps, so
+# (BleUtils.makeSelectedTwoBytes); above that ceil(n/8) bytes, LSB first (BleUtils.X). Each body that carries
+# a mask names its byte cap as its `len_cap` instance, and the app's writers drop the positions past it
+# (coerceAtMost). The library reads the cap off a built node: the 0x15 RGB and CCT frames 7 bytes
+# (op15_color form kelvin_tint), per-segment brightness 14 (op15_brightness), the 0x0b frame 13
+# (color_0b_rgb_mask, read where it is built). MAX_MASK_BYTES is the widest cap of the 0x15 bodies, so
 # MAX_MASK_SEGMENTS is the most segments any body the library writes can address.
 LEGACY_MASK_SEGMENTS: Final = 16
 _FORM_KELVIN_TINT: Final = int(_C.Form1501.kelvin_tint)   # [slot rgb][kelvin][tint][mask]: H60A6 family
 _FORM_KELVIN: Final = int(_C.Form1501.kelvin)             # [rgb][kelvin][mask]: colour version 5, H6061
 COLOR_MASK_CAP: Final = int(_spec.node(_F.Op15Color, None, _FORM_KELVIN_TINT, 0).len_cap)
-# op15_brightness's cap is a literal of its mask's params: read back off a mask read at full width.
-BRIGHTNESS_MASK_CAP: Final = int(_spec.read(_F.Op15Brightness, bytes(256), 8 * 255).mask.cap)
+BRIGHTNESS_MASK_CAP: Final = int(_spec.node(_F.Op15Brightness, None, 0).len_cap)
 MAX_MASK_BYTES: Final = max(COLOR_MASK_CAP, BRIGHTNESS_MASK_CAP)
 MAX_MASK_SEGMENTS: Final = MAX_MASK_BYTES * 8
 
@@ -355,10 +355,8 @@ def _cct0d_frame(rgb: tuple[int, int, int], kelvin: int = 0,
         _F.Color0dWrite, color=_spec.rgb(*rgb), kelvin=kelvin, tint=_spec.rgb(*tint)))
 
 
-# The 0x0b frame's posSet: the two-byte mask of up to 16 segments the library writes. Its mask cap is a
-# literal of color_0b_rgb_mask's mask params: read back off a mask read at full width.
+# The 0x0b frame's posSet: the two-byte mask of up to 16 segments the library writes.
 _PROFILE_0B: Final = _spec.profile(f_0b=_FORM_0B_RGB_MASK, num_segments=LEGACY_MASK_SEGMENTS)
-_MASK_CAP_0B: Final = int(_spec.read(_F.Color0bRgbMask, bytes(258), 8 * 255).mask.cap)
 
 
 def _rgbic0b_frame(rgb: tuple[int, int, int], mask: int) -> bytes:
@@ -369,7 +367,7 @@ def _rgbic0b_frame(rgb: tuple[int, int, int], mask: int) -> bytes:
     def params(mw: Any) -> Any:
         c = _spec.node(_F.Color0bWrite, mw, _FORM_0B_RGB_MASK, LEGACY_MASK_SEGMENTS)
         c.body = _spec.node(_F.Color0bRgbMask, c, LEGACY_MASK_SEGMENTS, color=_spec.rgb(*rgb))
-        c.body.mask = _spec.seg_mask(c.body, LEGACY_MASK_SEGMENTS, _MASK_CAP_0B, bits)
+        c.body.mask = _spec.seg_mask(c.body, LEGACY_MASK_SEGMENTS, int(c.body.len_cap), bits)
         return c
     return _mode_frame(_PROFILE_0B, _C.SubMode.color_rgbic_0b, params)
 
@@ -661,7 +659,7 @@ def segment_brightness(mask: int, pct: int, scheme: ColorScheme,
 
             def data(c15: Any) -> Any:
                 w = _spec.node(_F.Op15Brightness, c15, positions, pct=level)
-                w.mask = _spec.seg_mask(w, positions, BRIGHTNESS_MASK_CAP, _mask_bits(mask, positions))
+                w.mask = _spec.seg_mask(w, positions, int(w.len_cap), _mask_bits(mask, positions))
                 return w
             return _op15_frame(_spec.profile(num_segments=positions), _C.Op15.set_brightness, data)
         case "h61a8":
