@@ -89,14 +89,24 @@ model, from which the shipped readers are generated).
 ### Changed
 - **The H5083 tests run against its firmware image (S7a, test-only).** `tests/firmware_sim.py` runs a
   `spec/firmware.yaml` image as a peripheral: its accept rules, answers, effects, pushes, events and
-  advert, with every frame and advert built through the spec's classes and each request read through
-  the `govee_ble_frame` root. `fake_ble.FirmwareGovee` puts it behind the bleak fake (the bleak link and
-  the transport failure knobs moved to `fake_ble.Peripheral`, which the generic `FakeGovee` also uses).
-  `tests/test_h5083_firmware.py` drives a real `Device` for the H5083 (`h5083_sw1_00_30`) through the
-  pairing window, a wrong secret, the relay write and read-back, the once-per-device info reads and the
-  advert. It replaces the H5083 tests that used hand-built frames:
+  advert, under the image's cipher. Each request is read through the `govee_ble_frame` root, and
+  every frame and advert is built through the spec's classes (`wire._spec.emit` / `serialize`; an echo
+  re-emits the request as read, and padding is `govee_common::echo`). `fake_ble.FirmwareGovee` puts it
+  behind the bleak fake and honours the image's GATT layout: a write to another characteristic is lost,
+  and it notifies only on its own. The bleak link and the transport failure knobs moved to
+  `fake_ble.Peripheral`, which the generic `FakeGovee` also uses.
+
+  `tests/test_h5083_firmware.py` drives a real `Device` for the H5083 (`h5083_sw1_00_30`) through these
+  cases, checking what the library sent by request name, read through the spec:
+  - the pairing window;
+  - a wrong secret;
+  - the relay write and read-back;
+  - the once-per-device info reads (only `aa 06`, `aa 07 03` and `aa 07 02`);
+  - a paired session the plug drops after 10-11 s idle, and its reconnect;
+  - the advert.
+
+  It replaces the H5083 tests that used hand-built frames:
   - `test_device_transport.test_plug_wrong_secret_is_auth_error`;
-  - `test_fix_wp3_review.test_device_info_one_shot_is_used_up_by_a_responsive_plug_poll`;
   - `test_device_v3.test_read_secret_bootstrap` (an H5080, the same goodsType 43 profile);
   - `test_identify.test_identify_encrypted_device`, and the parsed-pact lines of
     `test_identify_unparseable_pact_is_plaintext_unknown`;
@@ -104,10 +114,20 @@ model, from which the shipped readers are generated).
     and `test_device_info_reads`' captures. The H5080 rows still pin goodsType 43's frame bytes and relay
     bit, and the other SKUs' captures still pin the reply layouts.
 
-  `test_plug_advert_on_off_follows_the_app` keeps goodsType 43's advert mask on H5080 rows: the H5083
-  only advertises 0 or 1. `tests/test_hand_frames_lint.py` fails on a frame-shaped literal in the
-  simulator, in `FirmwareGovee`, or in any test that names the H5083: a hand-frame helper call, a bytes
-  value led by a `pro_type` or the Govee marker, or a frame as hex. No change under `src/`.
+  `test_fix_wp3_review.test_device_info_one_shot_is_used_up_by_a_responsive_plug_poll` is deleted.
+  `test_device_info_survives_a_silent_poll_after_a_responsive_one` (H6008) covers it.
+  `test_plug_advert_on_off_follows_the_app` keeps goodsType 43's advert mask on H5080 rows, because the
+  H5083 only advertises 0 or 1. `test_scanner` takes its plug advert from the simulator.
+
+  Two checks in `tests/test_firmware_provenance.py` keep it so:
+  - At run time, an autouse fixture (`fake_ble.Provenance`) fails any test in which a `Device` whose SKU
+    has an image reads a frame or manufacturer payload that the image didn't send: a FakeGovee's
+    reply, a mocked `_conn.query`, or a hand-built advert. It also fails a test that sends the image a
+    request it can't read.
+  - Statically, the simulator builds no bytes outside the spec classes: no bytes from ints,
+    `to_bytes` or `struct`, int lists, or concatenation.
+
+  No change under `src/`.
 - `CLAUDE.md` gains "The spec is the bible", the anti-debt rules for `spec/`:
   - fix the spec in place;
   - structure wins over library use;

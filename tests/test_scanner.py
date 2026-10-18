@@ -10,7 +10,12 @@ from govee_ble_local import scanner
 from govee_ble_local.exceptions import GoveeBleConnectionError, GoveeBleError
 from govee_ble_local.scanner import DiscoveredDevice, discover, match, supported
 
-_MFG = {(0x88 << 8) | 0x41: bytes([0xEC, 0, 2, 2, 1])}
+from fake_ble import FirmwareGovee
+
+# A Govee plug's manufacturer data: the H5083's own advert, from its firmware image.
+_H5083_ADVERT = FirmwareGovee().advertisement()
+assert _H5083_ADVERT is not None
+_MFG = _H5083_ADVERT.manufacturer_data
 
 
 def _dev(addr: str, name: str | None) -> SimpleNamespace:

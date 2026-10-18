@@ -57,6 +57,7 @@ def pytest_sessionstart(session):  # type: ignore[no-untyped-def]
 
 
 # -- optional-dependency gate ---------------------------------------------------------------
+import importlib.util  # noqa: E402
 import os  # noqa: E402
 
 import pytest  # noqa: E402
@@ -89,3 +90,22 @@ def read_struct(obj):  # type: ignore[no-untyped-def]
     (``ReadWriteKaitaiStruct``): ``from_bytes`` / ``Cls(..., stream)`` only bind the stream."""
     obj._read()
     return obj
+
+
+# -- firmware-image provenance ----------------------------------------------------------------
+@pytest.fixture(autouse=True)
+def firmware_provenance(monkeypatch: pytest.MonkeyPatch):  # type: ignore[no-untyped-def]
+    """Fail a test in which a Device whose SKU has a spec/firmware.yaml image reads a frame or advert that
+    image didn't send (fake_ble.Provenance), or sends a request the image can't read. Such a device is
+    answered by its image (fake_ble.FirmwareGovee), never by a hand-built frame."""
+    if importlib.util.find_spec("yaml") is None:   # PyYAML is a test dependency; the images need it
+        yield None
+        return
+    from fake_ble import Provenance
+
+    provenance = Provenance()
+    provenance.install(monkeypatch)
+    yield provenance
+    found = provenance.verify()
+    if found:
+        pytest.fail("built by hand where the firmware image answers:\n" + "\n".join(found), pytrace=False)

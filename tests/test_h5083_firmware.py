@@ -1,12 +1,15 @@
 """The H5083 plug, driven end to end against its firmware image (spec/firmware.yaml h5083_sw1_00_30).
 
 The peripheral is tests/firmware_sim.py behind the bleak fake (fake_ble.FirmwareGovee). Every frame
-and advert it sends is built through the spec, and its answers, pairing state, relay and advert are
-the image's. The library under test is the real one: Device, transport, handshake and wire layer.
-What the device did is read from the image's answer ids (``sim.answered``), not from bytes. No test
-here builds a frame by hand (tests/test_hand_frames_lint.py).
+and advert it sends is built through the spec, and its answers, pairing state, relay, heartbeat and
+advert are the image's. The library under test is the real one: Device, transport, handshake and
+wire layer. What the library sent is read back through the spec by name (``sim.requests()``) and
+what the device did by its answer ids (``sim.answered``), not from bytes. A hand-built frame for an
+H5083 fails the provenance check (tests/test_firmware_provenance.py).
 """
 from __future__ import annotations
+
+import asyncio
 
 import pytest
 
@@ -19,7 +22,8 @@ from govee_ble_local.transport import connection as conn_mod
 from fake_ble import FirmwareGovee, ble_device
 
 ADDR = "AA:BB:CC:DD:EE:83"
-HANDSHAKE = ["e7_session_key", "e7_confirm"]
+HANDSHAKE = ["handshake_tx v1_request_session_key", "handshake_tx v1_confirm"]
+INFO_READS = ["read_tx soft_version", "read_tx device_info hard_version", "read_tx device_info sn"]
 
 
 @pytest.fixture
@@ -52,6 +56,10 @@ async def _paired(plug: FirmwareGovee) -> Device:
     return dev
 
 
+def _since(plug: FirmwareGovee, mark: int) -> list[str]:
+    return plug.sim.requests()[mark:]
+
+
 async def test_pairing_reads_the_secret_inside_the_button_window(plug: FirmwareGovee) -> None:
     # WAS test_device_v3.test_read_secret_bootstrap (an H5080, same goodsType 43 profile, answered by a
     # hand-built aa b1 reply). The unpaired plug answers aa b1 without its secret (selector 0) until its
@@ -73,7 +81,7 @@ async def test_a_wrong_secret_is_an_auth_error(plug: FirmwareGovee) -> None:
     dev = _device(plug, secret=bytes(8))
     with pytest.raises(GoveeBleAuthError):
         await dev.set_power(True)
-    assert plug.sim.answered == [*HANDSHAKE, "secret_check"]
+    assert plug.sim.requests() == [*HANDSHAKE, "write_tx secret_write"]
     assert plug.sim.state.pair_state == 0 and plug.sim.state.relay0 == 0
 
 
@@ -83,10 +91,11 @@ async def test_set_power_switches_the_relay_and_reads_it_back(plug: FirmwareGove
     # H5080 rows still pin goodsType 43's frame bytes and relay bit. A gt 43 power write is the one
     # frame: no 33 b5 re-sync after it (H5083NewDetailViewModel.y0).
     dev = await _paired(plug)
-    for on in (True, False):
-        mark = len(plug.sim.answered)
+    assert plug.sim.state.relay0 == 1    # the pairing press turned outlet 0 on: each write below changes it
+    for on in (False, True):
+        mark = len(plug.sim.received)
         await dev.set_power(on)
-        assert plug.sim.answered[mark:] == ["relay_write"]
+        assert _since(plug, mark) == ["write_tx power"] and plug.sim.answered[-1] == "relay_write"
         assert plug.sim.state.relay0 == int(on)
         st = await dev.update()
         assert st.is_on is on and st.optimistic is False
@@ -94,22 +103,50 @@ async def test_set_power_switches_the_relay_and_reads_it_back(plug: FirmwareGove
 
 
 async def test_device_info_is_read_once_per_device(plug: FirmwareGovee) -> None:
-    # WAS test_fix_wp3_review.test_device_info_one_shot_is_used_up_by_a_responsive_plug_poll and
-    # test_device_info_reads.test_device_info_read_sends_only_the_firmware_backed_reads[H5083] (live
-    # captures; the other SKUs' captures still pin the reply layouts). The first poll reads aa 06,
-    # aa 07 03 and aa 07 02 after the relay, and no later poll reads them again. Unpaired, the plug
-    # leaves the session's 33 b5 unanswered.
+    # WAS test_device_info_reads.test_device_info_read_sends_only_the_firmware_backed_reads[H5083] (live
+    # captures; the other SKUs' captures still pin the reply layouts). The first poll reads the relay,
+    # then aa 06, aa 07 03 and aa 07 02 and nothing else; no later poll reads them again. (A responsive
+    # poll using up the one-shot is test_fix_wp3_review.test_device_info_survives_a_silent_poll_after_a_
+    # responsive_one, on an H6008.)
     dev = _device(plug)
     st = await dev.update()
-    assert plug.sim.answered == [*HANDSHAKE, "power_read", "soft_version", "hard_version", "device_id"]
+    assert [r for r in plug.sim.requests() if r.startswith("read_tx")] == ["read_tx power", *INFO_READS]
+    assert plug.sim.answered[-4:] == ["power_read", "soft_version", "hard_version", "device_id"]
     assert (st.firmware_version, st.hardware_version) == (plug.sim.image.soft_version,
                                                           plug.sim.image.hard_version)
     # SnController: the reply carries the id reversed, printed as colon-separated hex
     assert st.device_id == ":".join(f"{b:02X}" for b in reversed(plug.sim.state.device_id))
     assert st.is_on is False and dev._device_info_read is True
-    mark = len(plug.sim.answered)
+    mark = len(plug.sim.received)
     await dev.update()
-    assert plug.sim.answered[mark:] == ["power_read"]
+    assert _since(plug, mark) == ["read_tx power"]
+
+
+async def test_a_paired_session_reconnects_after_the_plug_drops_it(plug: FirmwareGovee) -> None:
+    # The steady state Home Assistant runs, with the secret held from setup: a session that unlocks
+    # (33 b2), syncs the clock (33 b5, acked once paired) and polls. The plug drops a link that has had
+    # no write for 10-11 s (its heartbeat), and the next command reconnects with the same session
+    # setup. By then the pairing window has closed: the held secret still unlocks, and aa b1 no longer
+    # returns it.
+    pairing = _device(plug)
+    plug.sim.event("button")
+    secret = await pairing.read_secret()
+    assert secret is not None
+    await pairing.stop()
+    session = [*HANDSHAKE, "write_tx secret_write", "write_tx plug_sync_time"]
+    dev = _device(plug, secret=secret)
+    mark = len(plug.sim.received)
+    st = await dev.update()
+    assert _since(plug, mark) == [*session, "read_tx power", *INFO_READS]
+    assert plug.sim.answered[-6:-4] == ["secret_check", "time_sync"] and st.is_on is True
+    plug.sim.advance(11_000)
+    await asyncio.sleep(0.01)            # the link-loss callback
+    assert not plug.sim.link and not dev._conn.is_connected
+    mark = len(plug.sim.received)
+    await dev.set_power(False)
+    assert _since(plug, mark) == [*session, "write_tx power"]
+    assert plug.sim.state.relay0 == 0
+    assert await dev.read_secret() is None
 
 
 async def test_the_advert_identifies_the_plug_and_carries_its_relay(plug: FirmwareGovee) -> None:
