@@ -944,6 +944,18 @@ model, from which the shipped readers are generated).
     `tests/test_wire_build_vs_spec.py` now compares against the catalogue builders, which give the same
     bytes for all 2079 inputs it feeds.
   - The catalogue has 462 builders and 759 self-checks, and `OPCODE_COVERAGE.md` indexes exactly those.
+- The `govee_commands` builders lose their decompile-style parameter names (`b0`, `b2`, `c0`, `t`, `f`, `i`,
+  `p1`, `t1`, `field_a`, `a_flag` and the like). Each new name was traced from the app code the builder
+  cites: `build_low_blue_light` `red` / `green` (the app names the three value bytes red, green and blue;
+  `level` is the blue one), `build_video_color_cali` `yellow, blue, purple, red` (its calibration sliders),
+  `build_ai_filter` `red, green, blue, saturation, filter_code, duration_minutes`, `build_splicing_config`
+  `count, position`, `build_daysync_node` `hour, minute`, `build_diy_create_gif` `diy_code`,
+  `build_color_tem_type` `tem_type`, `build_pick_mic` `mic_source`, `build_video_h6101` `dynamic,
+  part_screen` and `build_video_h6104` `part_screen, sensitivity`. Values the app only copies from a reply
+  or always sends as 0 get `untraced_N`, and their docstrings say so: `build_set_ai_action(_v2)`
+  `untraced_0` / `untraced_1` and `build_splicing_sub_device_mac` `untraced_0`. The daysync upload builders'
+  local helpers `j` / `k` become `unsplit_package` / `split_package`. Bytes are unchanged, and nothing in
+  `src/` or `tests/` passed these parameters by keyword.
 - `33 05 15 05` (op15_kelvin, H60A0): the Kelvin is now spelled `u2be` (it already read high byte first; the
   generated code is unchanged). The app writes it high byte first (ControllerBuildH60A0.d), and no firmware image
   handles op 05: on H60A6 it falls to the default branch, which logs 'Unknow msg'. The citations point at that

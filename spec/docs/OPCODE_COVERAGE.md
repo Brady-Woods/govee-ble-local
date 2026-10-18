@@ -234,10 +234,10 @@
   - base-classes11/com/govee/base2light/pact/newdetail/content/scene/SubModeScenes.java:60-69 (getWriteBytes with e true: getSignedBytesFor4(b, or 0 when c is false; flag false), then d as one byte); base-classes11/com/govee/base2light/pact/newdetail/content/carousel/CarouselEffectManager.java:892-927 (l: sets e = true and the voice type when DeviceDetailConfig.k0(info).r(); static scenes embed modeControllerNoEvent.getNextCommBytes() into carouselEffect.effectStr via k at :924-926)
 - **`build_scene_newdetail`** (W): 33 05 04 [effect u2le] [music_code u2le: getMusicCode if getMusicSwitch else 0; always 0 for SameModeInfo] [00 x12] [bcc]
   - base-classes11/com/govee/base2light/pact/newdetail/content/scene/SubModeScenes.java:59-77 (getWriteBytes, e false: [f=4][getSignedBytesFor2(a,false)][getSignedBytesFor2(b, or 0 when c is false; flag false)]), :15-21 (fields, f = 4); base-classes11/com/govee/base2light/pact/newdetail/content/scene/BaseSceneViewMode.java:722-740 (Z2: effect = getSceneCode, b = getMusicCode, c = getMusicSwitch unless SameModeInfo)
-- **`build_video_h6101`** (W): 33 05 00 [2 for mode 2, else 0][0 when a is set, else 1]
-  - split_rgblight/com/govee/h6101/ble/SubModeVideo.java:38 (SubModeVideo.getWriteBytes); split_rgblight/com/govee/h6101/adjust/VideoFragment.java:42-58 (VideoFragment.s0/t0 posts the Mode)
-- **`build_video_h6104`** (W): 33 05 00 00 [!a][b]
-  - split_rgblight/com/govee/h6104/ble/SubModeVideo.java:38 (SubModeVideo.getWriteBytes); split_rgblight/com/govee/h6104/adjust/VideoFragment.java:41-57 (VideoFragment.s0/t0 posts the Mode)
+- **`build_video_h6101`** (W): 33 05 00 [effect: 2 dynamic, 0 soft][area: 0 part of the screen, 1 all of it]
+  - split_rgblight/com/govee/h6101/ble/SubModeVideo.java:38 (SubModeVideo.getWriteBytes); split_rgblight/com/govee/h6101/adjust/VideoFragment.java:37-58 (VideoFragment.s0/t0 posts the Mode); base-classes11/com/govee/base2light/light/v1/AbsVideoFragmentV1.java:39-79 (dynamic / soft and part / all buttons)
+- **`build_video_h6104`** (W): 33 05 00 00 [area: 0 part of the screen, 1 all of it][sensitivity]
+  - split_rgblight/com/govee/h6104/ble/SubModeVideo.java:38 (SubModeVideo.getWriteBytes); split_rgblight/com/govee/h6104/adjust/VideoFragment.java:37-58 (VideoFragment.s0/t0 posts the Mode); base-classes11/com/govee/base2light/light/v1/AbsVideoFragmentV2.java:39-72 (part / all buttons, sensitivity slider)
 
 ### `0x07` — source-modeled
 
@@ -528,8 +528,8 @@
 
 ### `0x26` — source-modeled
 
-- **`build_color_tem_type`** (W): 33 26 [type: 1|2]
-  - split_bulblightstringv1/com/govee/bulblightv3/newdetail/controller/Controller4ColorTemTypeSetting.java:15-17,30-33,65-71 (j=38, k=1, l=2; AbsControllerNoEvent4Single write); caller split_bulblightstringv1/com/govee/bulblightv3/newdetail/SettingAcNewDetail.java:426
+- **`build_color_tem_type`** (W): 33 26 [tem_type: 1 "brightest ever" | 2 "follow sub switch"]
+  - split_bulblightstringv1/com/govee/bulblightv3/newdetail/controller/Controller4ColorTemTypeSetting.java:15-17,30-33,65-71 (command 0x26; AbsControllerNoEvent4Single write); caller split_bulblightstringv1/com/govee/bulblightv3/newdetail/SettingAcNewDetail.java:426 (choices 1 and 2 :442, analytics labels :122-128)
 - **`build_take_photo_start`** (W): 33 26 01 64 FF FF 00
   - split_h61d3/com/govee/h61d3/ble/controller/TakePhotoController.java:27-34,43-48 ([1,100]+ColorUtils.n(-256)=FF FF 00, base-classes10/com/govee/base2kt/utils/ColorUtils.java:314-315; cmd BleProtocol.l=38); caller split_h61d3/com/govee/h61d3/adjust/recognition/ImageRecognitionActivity.java:429 (when i==1)
 - **`build_take_photo_stop`** (W): 33 26 00
@@ -682,14 +682,14 @@
 
 ### `0x40` — source-modeled
 
-- **`build_splicing_config`** (W): 33 40 01 [p1][layout][MAC_le x N] (payload <= 17 bytes)
-  - base-classes4/com/govee/splicing/controller/ControllerChangeSplicing.java:94-108 (Companion.d: [1, p1, a(p2, p1), reversed MACs]); base-classes4/com/govee/splicing/controller/ControllerChangeSplicing.java:71-81 (Companion.a: layout byte 0x60/0x6C/0x90/0x9C/0xD8)
+- **`build_splicing_config`** (W): 33 40 01 [count][layout][MAC_le x N] (payload <= 17 bytes); count = devices spliced to the main one, layout from count and the main device's position in the splice list
+  - base-classes4/com/govee/splicing/controller/ControllerChangeSplicing.java:94-108 (Companion.d: [1, count, layout, reversed MACs]); base-classes4/com/govee/splicing/controller/ControllerChangeSplicing.java:71-81 (Companion.a: layout byte 0x60/0x6C/0x90/0x9C/0xD8); count and position base-classes4/com/govee/splicing/splicingUi/DeviceSplicingActivity.java:428-456, base-classes4/com/govee/splicing/splicingUi/DeviceSplicingViewModel$exitSplicingModeAndClose$1.java:35-44
 - **`build_splicing_mode`** (W): 33 40 02 01 R G B (enter) | 33 40 02 00 (exit)
   - base-classes4/com/govee/splicing/controller/SplicingController.java:57-69 (getCommandType = g / q: [2,0] when colour is -1, else [2,1,R,G,B] via ColorUtils.n); base-classes4/com/govee/splicing/splicingUi/DeviceSplicingViewModel.java:418-426 (Z: enter with DeviceInfo colour), :438 (a0: exit via makeSplicingController)
 - **`build_splicing_release`** (W): 33 40 01 FF
   - base-classes10/com/govee/base2light/ble/H70B1DeviceUnbindController.java:22-30 (getCommandType = 64 / q = [01, ff]); base-classes4/com/govee/splicing/controller/ControllerReleaseSplicing.java:52-59 (getCommandType = cmd, default KmpDiyConstant.d0 = 64 :24-28 / q = [01, ff]; no caller)
-- **`build_splicing_sub_device_mac`** (W): 33 40 05 [b][MAC_le]
-  - base-classes4/com/govee/splicing/controller/ControllerChangeSplicing.java:111-116 (Companion.e: mergeByteArray([5, b], reversed MAC)); base-classes4/com/govee/splicing/controller/ControllerChangeSplicing.java:64-69 (makeSubDeviceBtMacController: cmd KmpDiyConstant.d0 = 64)
+- **`build_splicing_sub_device_mac`** (W): 33 40 05 [untraced_0][MAC_le]; untraced_0 untraced, every app caller sends 0
+  - base-classes4/com/govee/splicing/controller/ControllerChangeSplicing.java:111-116 (Companion.e: [5, untraced_0, reversed SPP MAC]); base-classes4/com/govee/splicing/controller/ControllerChangeSplicing.java:64-69 (makeSubDeviceBtMacController: cmd 64); callers base-classes4/com/govee/splicing/splicingUi/DeviceSplicingActivity.java:543,727
 - **`read_status_with_ic`** (R): AC 03 [n][types...]; TLV 0x40 = IC count in the 0xAC reply burst
   - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4BaseInfoSingleRead.java:166-179 (Compose4BaseInfoSingleRead.c: extBytes [len, *types]); base-classes11/com/govee/base2light/kt/general_controller/ControllerSingleRead.java:80-95 (ControllerSingleRead: command 3)
 
@@ -852,8 +852,8 @@
 
 ### `0x63` — source-modeled
 
-- **`build_daysync_node`** (W): [param_len u4le][node_id][time_code][t1][t2][brightness][tm+1][tm+1][action...] (payload record, not a frame)
-  - base-classes11/com/govee/base2light/pact/newdetail/content/daySync/DaySyncUtils.java:1426-1451 (DaySyncUtils.y); base-classes11/com/govee/base2light/pact/newdetail/content/daySync/DaySyncUtils.java:1453-1480 (DaySyncUtils.z)
+- **`build_daysync_node`** (W): [param_len u4le][node_id][time_code][hour][minute][brightness][tm+1][tm+1][action...] (payload record, not a frame); hour/minute = clock time (time_code 1) or the offset's absolute hours and minutes (2-7); a weather node (time_code 8) puts its weather type u16le there
+  - base-classes11/com/govee/base2light/pact/newdetail/content/daySync/DaySyncUtils.java:1426-1451 (DaySyncUtils.y); base-classes11/com/govee/base2light/pact/newdetail/content/daySync/DaySyncUtils.java:1453-1480 (DaySyncUtils.z); time_code :1024-1046 (DaySyncUtils.m)
 - **`build_daysync_scheme_incremental`** (W): A6 MTU transfer, cmd 63; value = [scheme_short_id][repeat_frequency: 0x00 every day | 0x80|bit i day i Mon=0..Sun=6][op_type=02][n_add][add/change node records 
   - base-classes11/com/govee/base2light/pact/newdetail/content/daySync/DaySyncUtils.java:918-924 (DaySyncUtils.i -> h(info, scheme, [1,2], deleteNodes, addOrChangeNodes)); base-classes11/com/govee/base2light/pact/newdetail/content/daySync/DaySyncUtils.java:878-914 (h: header x, n_add, add records from y, [n_delete]+ids; node list = add records + [delete block] last; third = F(deleteLens, addLens) for the 0x64 space check)
 
@@ -935,8 +935,8 @@
 
 ### `0x86` — source-modeled
 
-- **`build_diy_create_gif`** (W): 33 86 [01][b0 u16 LE][diyId u32 LE]
-  - base-classes10/com/govee/base2light/ac/diyNew/details/DiyEdit4DeviceCreateGifActivity.java:1974-1989 (l2: ControllerSingle.c(0x86, [1, LE2(b0), LE4(diyId)]))
+- **`build_diy_create_gif`** (W): 33 86 [01][diy_code u16 LE][diyId u32 LE]
+  - base-classes10/com/govee/base2light/ac/diyNew/details/DiyEdit4DeviceCreateGifActivity.java:1974-1989 (DiyEdit4DeviceCreateGifActivity.l2 -> ControllerSingle.c, command 0x86); diy_code is the activity's DIY code (:210,294,399,1624)
 - **`build_diy_create_gif_v1`** (W): 33 86 [01][diy_code u16le][diy_id u32le]
   - base-classes10/com/govee/base2light/ac/diyNew/details/DiyEdit4DeviceCreateGifActivity.java:1974-1989 (DiyEdit4DeviceCreateGifActivity.l2 -> ControllerSingle.Companion.c(0x86, ...)); base-classes11/com/govee/base2light/kt/general_controller/ControllerSingle.java:38-41 (Companion.c write, proType 0x33)
 
@@ -992,9 +992,9 @@
   - base-classes10/com/govee/base2light/ble/controller/MultipleController4Music.java:14-18,39-46,56-57 (MultipleController4Music.<init>/g/getCommandType/p); base-classes10/com/govee/base2light/ble/controller/AbsMultipleControllerV2.java:19-20 (AbsMultipleControllerV2.getProType 0xA3)
 - **`build_music_v2_then_mode`** (W): A3 V2 [0x41, music_code] frames (as build_music_multi_a3_v2), then 33 05 [mode_payload, at most 17 bytes]
   - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/MusicModeComposeController.java:21-28 (MusicModeComposeController.<init>: MusicControllerNoEvent3Result first, then the mode controller); base-classes10/com/govee/base2light/ble/controller/AbsComposeControllerWithOpResult.java:88-104 (b/c list order), :315-343 (onResult: next controller only after result 0; failure aborts)
-- **`build_set_ai_action`** (W): A3 V1 frames (comm 0x58 at START byte 4, 14 value bytes in START). Value: [preview 1/0][len u16le = 3n+9][field_a u16le][field_b u16le][light_type u16le][n u8][
-  - base-classes10/com/govee/base2light/ai4edit/controller/SetAiActionController.java:21-64 (SetAiActionController.c/d/getCommandType = 88); base-classes10/com/govee/base2light/ble/BleUtil.java:234-244 (BleUtil.getSignedBytesFor2, LE)
-- **`build_set_ai_action_v2`** (W): Same A3 V1 framing as build_set_ai_action (comm 0x58). Value: [preview][len u16le = 3n+11][field_a u16le][field_b u16le][light_type u16le][n][n x R,G,B][speed][
+- **`build_set_ai_action`** (W): A3 V1 frames (comm 0x58 at START byte 4, 14 value bytes in START). Value: [preview 1/0][len u16le = 3n+9][untraced_0 u16le][untraced_1 u16le][light_type u16le][n u8][n x R,G,B][speed][loop_time]; untraced_0 / untraced_1 untraced, the app copies them from the AC 01 edit-info reply and never interprets them
+  - base-classes10/com/govee/base2light/ai4edit/controller/SetAiActionController.java:21-64 (SetAiActionController.c/d/getCommandType = 88); base-classes10/com/govee/base2light/ble/BleUtil.java:234-244 (BleUtil.getSignedBytesFor2, LE); base-classes10/com/govee/base2light/ai4edit/AIEffectEditDialog.java:655-663 (untraced_0 / untraced_1 from the reply)
+- **`build_set_ai_action_v2`** (W): Same A3 V1 framing as build_set_ai_action (comm 0x58). Value: [preview][len u16le = 3n+11][untraced_0 u16le][untraced_1 u16le][light_type u16le][n][n x R,G,B][speed][loop_time][direction code][gradient]
   - base-classes10/com/govee/base2light/ai4edit/controller/SetAiActionControllerV2.java:15-31 (SetAiActionControllerV2.c); base-classes10/com/govee/base2light/ai4edit/controller/SetAiActionController.java:21-64 (SetAiActionController.c/d/getCommandType, inherited framing)
 - **`build_shape_layout_h6067`** (W): 0xA3 V1 framing (AbsMultipleControllerV1.p() = h = 1 -> MultipleControllerCommV1.makeWriteMultipleBytes -> makeSendBytesV1/V2): START A3 00 01 [count] [comm 0x3
   - split_h6061/com/govee/h6067/ble/MultiDeviceController.java:18-65 (MultiDeviceController.<init>(List,int goodsType)); split_h6061/com/govee/h6067/ble/MultiDeviceController.java:71-77 (g returns field i; getCommandType = 49 = 0x31), :83-85 (p = AbsMultipleControllerV1.h)
@@ -1061,8 +1061,8 @@
 
 ### `0xa9` — source-modeled
 
-- **`build_ai_filter`** (W): 33 A9 10 0F [on][b][c][d][e][f u16le][g u16le][year u16le][month][day][hour][minute] (UTC; fills bytes 2..18)
-  - base-classes12/com/govee/base2light/videomode/newdetail/controller/AiFilterController.java:40-46 (Companion.a; getter order f,g,d,a,h,e,c = bean fields a..g); bean base-classes12/com/govee/base2light/videomode/newdetail/bean/AiFilterStatusBean.java:43-92
+- **`build_ai_filter`** (W): 33 A9 10 0F [on][red][green][blue][saturation][filter_code u16le][duration_minutes u16le][year u16le][month][day][hour][minute] (the UTC end time, now + duration; fills bytes 2..18)
+  - base-classes12/com/govee/base2light/videomode/newdetail/controller/AiFilterController.java:40-46 (Companion.a); bean base-classes12/com/govee/base2light/videomode/newdetail/bean/AiFilterStatusBean.java:43-92; field meanings base-classes12/com/govee/base2light/videomode/function/aifilter/AiFilterViewModel.java:273,279
 - **`build_ai_identify_model`** (W): 33 A9 08 02 [model u16le]
   - base-classes10/com/govee/base2light/ai4edit/controller/ChangeAiModelController.java:16-30 (BleUtil.getSignedBytesFor2(i,false) LE, base-classes9/com/govee/base2home/pact/BleUtil.java:218-227); caller base-classes10/com/govee/base2light/ai4edit/BleIotOp.java:181
 - **`build_ai_switch`** (W): 33 A9 04 01 [on]
@@ -1083,8 +1083,8 @@
   - base-classes12/com/govee/base2light/videomode/newdetail/funtion/WhiteBalanceVmInterface.java:72-73,111-112 (updateWhiteBalanceAutoOld); caller base-classes12/com/govee/base2light/videomode/newdetail/funtion/WhiteBalanceInterface.java:54
 - **`build_video_brightness`** (W): 33 A9 02 01 [brightness]
   - base-classes12/com/govee/base2light/videomode/newdetail/funtion/WholeRLBrightnessVmInterface.java:32; snapshot AbsVideoNewDetailVm.java:218
-- **`build_video_color_cali`** (W): 33 A9 05 [3|4] [c0][c1][c2]([c3])
-  - base-classes12/com/govee/base2light/videomode/newdetail/controller/ColorCaliController.java:30-37 (a=[5,3,..], b=[5,4,..]); base-classes12/com/govee/base2light/videomode/newdetail/funtion/ColorCaliVmInterface.java:32-34 (4-value form when supportRedColor(), default true :37-39)
+- **`build_video_color_cali`** (W): 33 A9 05 [3|4] [yellow][blue][purple]([red]) (the per-colour offset sliders)
+  - base-classes12/com/govee/base2light/videomode/newdetail/controller/ColorCaliController.java:30-37 (3-value and 4-value forms); base-classes12/com/govee/base2light/videomode/newdetail/funtion/ColorCaliVmInterface.java:32-34 (4-value form when supportRedColor(), default true :37-39); slider order base-classes12/com/govee/base2light/videomode/newdetail/funtion/ColorCaliViewInterface.java:30-31, base-classes4/com/govee/ui/dialog/ColorCalibrationDialog.java:173-201; slider names base-classes9/com/govee/base2home/databinding/ComponentColorCalibrationDialogBinding.java:124-153
 - **`build_video_hdr_effect`** (W): 33 A9 11 02 [on][value]
   - base-classes12/com/govee/base2light/videomode/newdetail/controller/VideoHdrEffectController.java:31-33 ([17,2,bean.b()=on, bean.a()=value]; HDREffectBean.java:17-23); base-classes12/com/govee/base2light/videomode/newdetail/funtion/HDRContrastVmInterface.java:43
 - **`build_video_saturation`** (W): 33 A9 0E 01 [saturation]
@@ -1144,8 +1144,8 @@
 
 ### `0xac` — source-modeled
 
-- **`build_pick_mic`** (W): 33 AC [pick]
-  - base-classes12/com/govee/base2light/videomode/newdetail/funtion/SoundEffectVmInterface.java:38-45 (updatePickMic -> Controller4ExtBytes.e([-84, i]))
+- **`build_pick_mic`** (W): 33 AC [mic_source: 0 the device's microphone, 1 the phone or headphone]
+  - base-classes12/com/govee/base2light/videomode/newdetail/funtion/SoundEffectVmInterface.java:38-45 (updatePickMic -> Controller4ExtBytes.e, command 0xAC); source choice base-classes12/com/govee/base2light/videomode/newdetail/funtion/SoundEffectViewInterface$getSoundEffectView0$1$1.java:32-49
 - **`read_bluetooth_name`** (R): Request, 20 bytes: [0] 0xAC; [1] 0x06; [2..18] 0x00; [19] XOR = 0xAA. Two senders produce the same frame. Controller4ReadBluetoothName goes through AbsControlle
   - base-classes11/com/govee/base2light/kt/general_controller/Controller4ReadBluetoothName.java:45-51 (Controller4ReadBluetoothName.<init> / getCommandType = 6); base-classes10/com/govee/base2light/ble/controller/AbsController4BleSingleSendMultiBack.java:157-165 (getNextCommBytes / getProType)
 - **`read_combo_state`** (R): Request, 20 bytes: [0] proType 0xAC (AbsSingleReadMultiReplyController.java:17-20); [1] command 0x07 (Controller4ReadComboState.java:211-213); [2..18] ext h cop
@@ -1289,7 +1289,7 @@
 - **`build_combination_effect_value`**: Value bytes only (not a frame): [0x00][distinct effect count][segLen = 1 if n<=0 else ceil(n/8)] + per distinct effect: [segment mask, segLen bytes, bit s%8 of 
 - **`build_daysync_scheme_upload`**: Frames are MTU-sized, not 20-byte. Per big package: START [A6][00 00][01][pkg_count][pkg_index, 1-based][verify 8B][frames_in_pkg u16le][63][data...][XOR of all
 - **`build_logo`**: 33 A6 [01][brightness][R][G][B] 00.. BCC (manual colour) | 33 A6 [00] 00.. BCC (auto; nothing follows the 00, so brightness and colour are dropped)
-- **`build_low_blue_light`**: 33 BA [SetMethod SCALE=1/OTHER=0][on 0/1][b2 (always 100)][b3 (always 100)][level] + zero pad + XOR at byte 19
+- **`build_low_blue_light`**: 33 BA [SetMethod SCALE=1/OTHER=0][on 0/1][red (always 100)][green (always 100)][level = blue] + zero pad + XOR at byte 19
 - **`build_music_code_sens`**: 33 05 [sub_mode: 13 | 11 | 0C | 0E | 0F | 01] [code] [sens] [sub_effect0 if given], zero-padded, XOR at byte 19
 - **`build_relative_brightness`**: 33 AE [01][n: 06 SEGMENT6 | 04 SEGMENT4][left][top][right][bottom][strip_left][strip_right] 00.. [XOR]. The 6 value bytes are always sent whatever n is. For SEG
 - **`build_scene`**: 33 05 04 [effect u2le][music_code u2le, 0000 when the white-noise switch is off]

@@ -691,18 +691,24 @@ def build_scene_newdetail(effect: int, music_code: int = 0) -> bytes:
     )
 
 
-def build_video_h6101(mode2: bool, a_flag: bool) -> bytes:
-    """33 05 00 <2 for mode 2, else 0> <0 when a is set, else 1> video mode, H6101.
-    split_rgblight/com/govee/h6101/ble/SubModeVideo.java:38 (SubModeVideo.getWriteBytes).
+def build_video_h6101(dynamic: bool, part_screen: bool) -> bytes:
+    """33 05 00 <effect: 2 dynamic, 0 soft> <area: 0 part of the screen, 1 all of it> video mode, H6101.
+    split_rgblight/com/govee/h6101/ble/SubModeVideo.java:38 (SubModeVideo.getWriteBytes);
+    split_rgblight/com/govee/h6101/adjust/VideoFragment.java:37-58 and
+    base-classes11/com/govee/base2light/light/v1/AbsVideoFragmentV1.java:39-79 (the dynamic / soft and
+    part / all buttons).
     """
-    return append_bcc(bytes([0x33, 0x05, 0x00, 2 if mode2 else 0, 0 if a_flag else 1]))
+    return append_bcc(bytes([0x33, 0x05, 0x00, 2 if dynamic else 0, 0 if part_screen else 1]))
 
 
-def build_video_h6104(a_flag: bool, b: int) -> bytes:
-    """33 05 00 00 <!a> <b> video mode, H6104. split_rgblight/com/govee/h6104/ble/SubModeVideo.java:38
-    (SubModeVideo.getWriteBytes).
+def build_video_h6104(part_screen: bool, sensitivity: int) -> bytes:
+    """33 05 00 00 <area: 0 part of the screen, 1 all of it> <sensitivity> video mode, H6104.
+    split_rgblight/com/govee/h6104/ble/SubModeVideo.java:38 (SubModeVideo.getWriteBytes);
+    split_rgblight/com/govee/h6104/adjust/VideoFragment.java:37-58 and
+    base-classes11/com/govee/base2light/light/v1/AbsVideoFragmentV2.java:39-72 (the part / all buttons and
+    the sensitivity slider).
     """
-    return append_bcc(bytes([0x33, 0x05, 0x00, 0x00, 0 if a_flag else 1, b & 0xFF]))
+    return append_bcc(bytes([0x33, 0x05, 0x00, 0x00, 0 if part_screen else 1, sensitivity & 0xFF]))
 
 
 def build_diy_old_07(
@@ -2325,12 +2331,13 @@ def read_preset_color(page: int) -> bytes:
     return read_request(0x25, page)
 
 
-def build_color_tem_type(t: int) -> bytes:
-    """0x33 26 [type 1|2] - colour-temperature display type (Controller4ColorTemTypeSetting.a
+def build_color_tem_type(tem_type: int) -> bytes:
+    """0x33 26 [tem_type] - colour-temperature setting type: 1 "brightest ever", 2 "follow sub switch" (the
+    app's analytics labels for the two choices) (Controller4ColorTemTypeSetting.a
     split_bulblightstringv1/com/govee/bulblightv3/newdetail/controller/Controller4ColorTemTypeSetting.java:30-33,65-71;
-    SettingAcNewDetail.java:426).
+    SettingAcNewDetail.java:122-128,426,442).
     """
-    return append_bcc(bytes([0x33, 0x26, t & 0xFF]))
+    return append_bcc(bytes([0x33, 0x26, tem_type & 0xFF]))
 
 
 def build_take_photo_start() -> bytes:
@@ -3001,17 +3008,22 @@ def read_check_direction() -> bytes:
     return read_request(0x39)
 
 
-def build_splicing_config(p1: int, p2: int, macs: Sequence[str], cmd: int = 0x40) -> bytes:
-    """0x33 40 01 [p1, layout, MAC byte-reversed x N] (ControllerChangeSplicing.d:94-108; layout =
-    Companion.a(p2, p1):71-81; truncated to 17 bytes by kt AbsController.q:47-60).
+def build_splicing_config(count: int, position: int, macs: Sequence[str], cmd: int = 0x40) -> bytes:
+    """0x33 40 01 [count, layout, MAC byte-reversed x N]: count = the devices spliced to the main one (the
+    splice list less the main device), position = the main device's index in the splice list. Layout byte:
+    position 0 -> 0x60 for one sub-device, else 0x6C; position 1 -> 0x90 for one, else 0x9C; any other
+    position -> 0xD8 (ControllerChangeSplicing.d:94-108, layout ControllerChangeSplicing.a:71-81; truncated
+    to 17 bytes by kt AbsController.q:47-60). count and position:
+    base-classes4/com/govee/splicing/splicingUi/DeviceSplicingActivity.java:428-456;
+    base-classes4/com/govee/splicing/splicingUi/DeviceSplicingViewModel$exitSplicingModeAndClose$1.java:35-44.
     """
-    if p2 == 0:
-        layout = 0x60 if p1 == 1 else 0x6C
-    elif p2 != 1:
+    if position == 0:
+        layout = 0x60 if count == 1 else 0x6C
+    elif position != 1:
         layout = 0xD8
     else:
-        layout = 0x90 if p1 == 1 else 0x9C
-    body = bytes([0x01, p1 & 0xFF, layout])
+        layout = 0x90 if count == 1 else 0x9C
+    body = bytes([0x01, count & 0xFF, layout])
     for m in macs:
         body += bytes(int(x, 16) for x in m.split(":"))[::-1]
     return append_bcc(bytes([0x33, cmd & 0xFF]) + body[:17])
@@ -3032,10 +3044,13 @@ def build_splicing_release(cmd: int = 0x40) -> bytes:
     return append_bcc(bytes([0x33, cmd & 0xFF, 0x01, 0xFF]))
 
 
-def build_splicing_sub_device_mac(b: int, mac: str, cmd: int = 0x40) -> bytes:
-    """0x33 40 05 [b, MAC byte-reversed] (ControllerChangeSplicing.e:111-116)."""
+def build_splicing_sub_device_mac(untraced_0: int, mac: str, cmd: int = 0x40) -> bytes:
+    """0x33 40 05 [untraced_0, MAC byte-reversed]: send a sub-device's SPP MAC to the main device
+    (ControllerChangeSplicing.e:111-116). Meaning of untraced_0 untraced: every app caller sends 0
+    (base-classes4/com/govee/splicing/splicingUi/DeviceSplicingActivity.java:543,727).
+    """
     return append_bcc(
-        bytes([0x33, cmd & 0xFF, 0x05, b & 0xFF]) + bytes(int(x, 16) for x in mac.split(":"))[::-1]
+        bytes([0x33, cmd & 0xFF, 0x05, untraced_0 & 0xFF]) + bytes(int(x, 16) for x in mac.split(":"))[::-1]
     )
 
 
@@ -3676,14 +3691,17 @@ def build_diy_in_scenes_multi_a3(
 def build_daysync_node(
     node_id: int,
     time_code: int,
-    t1: int,
-    t2: int,
+    hour: int,
+    minute: int,
     brightness: int,
     transition_mode: int,
     action: Sequence[int],
 ) -> bytes:
     """One daysync node record (payload piece, not a frame): [param_len
-    u4le][node_id][time_code][t1][t2][brightness][tm+1][tm+1][action...]. DaySyncUtils.y
+    u4le][node_id][time_code][hour][minute][brightness][tm+1][tm+1][action...]. hour and minute are the
+    clock time for time_code 1 and the offset's absolute hours and minutes for time_codes 2-7 (time_code
+    from the node's time type and offset sign, DaySyncUtils.m :1024-1046); a weather node (time_code 8)
+    carries its weather type u16le in those two bytes. DaySyncUtils.y
     (base-classes11/com/govee/base2light/pact/newdetail/content/daySync/DaySyncUtils.java:1426-1451), z
     (:1453-1480), I (:299-324).
     """
@@ -3691,8 +3709,8 @@ def build_daysync_node(
         [
             node_id & 0xFF,
             time_code & 0xFF,
-            t1 & 0xFF,
-            t2 & 0xFF,
+            hour & 0xFF,
+            minute & 0xFF,
             brightness & 0xFF,
             (transition_mode + 1) & 0xFF,
             (transition_mode + 1) & 0xFF,
@@ -3734,7 +3752,7 @@ def build_daysync_scheme_incremental(
     )
     nodes = [*nodes, del_block]
 
-    def j(data: bytes) -> list[bytes | bytearray]:
+    def unsplit_package(data: bytes) -> list[bytes | bytearray]:
         s = bytearray(len(data) + 18)
         s[0] = 0xA6
         s[3] = 0x01
@@ -3743,9 +3761,9 @@ def build_daysync_scheme_incremental(
         e = bytes([0xA6, 0xFF, 0xFF])
         return [s, e + bytes([_x(e)])]
 
-    def k(data: bytes, cap0: int, capn: int, maxpk: int) -> list[bytes | bytearray]:
+    def split_package(data: bytes, cap0: int, capn: int, maxpk: int) -> list[bytes | bytearray]:
         if len(data) <= cap0:
-            return j(data)
+            return unsplit_package(data)
         s = bytearray(mtu)
         s[0] = 0xA6
         s[3] = 0x01
@@ -3769,7 +3787,7 @@ def build_daysync_scheme_incremental(
     capn = mtu - 4
     big = []
     if cap0 >= len(value):
-        big.append(j(value))
+        big.append(unsplit_package(value))
     else:
         cap_big = cap0 + (maxpk - 1) * capn
         acc, used = bytearray(value[:4]), 4
@@ -3777,14 +3795,14 @@ def build_daysync_scheme_incremental(
             if used + len(node) > cap_big:
                 if idx == 0:
                     return []
-                big.append(k(bytes(acc), cap0, capn, maxpk))
+                big.append(split_package(bytes(acc), cap0, capn, maxpk))
                 acc, used = bytearray(), 0
             if used == 0 and len(node) > cap_big:
                 return []
             acc += node
             used += len(node)
             if idx == len(nodes) - 1:
-                big.append(k(bytes(acc), cap0, capn, maxpk))
+                big.append(split_package(bytes(acc), cap0, capn, maxpk))
     if isinstance(verify8, (bytes, bytearray)) or all(isinstance(v, int) for v in verify8):
         verify = [bytes(verify8)[:8]] * len(big)  # type: ignore[arg-type]  # guard above restricts verify8 here to a flat byte sequence
     else:
@@ -4202,13 +4220,14 @@ def build_alarm_clock_ring_action(remind_later: bool) -> bytes:
     return append_bcc(bytes([0x33, 0x85, 0x01 if remind_later else 0x00]))
 
 
-def build_diy_create_gif(b0: int, diy_id: int) -> bytes:
-    """0x33 86 [01, b0 u16 LE, diyId u32 LE] create DIY GIF (DiyEdit4DeviceCreateGifActivity.l2,
-    base-classes10/com/govee/base2light/ac/diyNew/details/DiyEdit4DeviceCreateGifActivity.java:1974-1989).
+def build_diy_create_gif(diy_code: int, diy_id: int) -> bytes:
+    """0x33 86 [01, diy_code u16 LE, diyId u32 LE] create DIY GIF (DiyEdit4DeviceCreateGifActivity.l2,
+    base-classes10/com/govee/base2light/ac/diyNew/details/DiyEdit4DeviceCreateGifActivity.java:1974-1989;
+    the u16 is the activity's DIY code, the value it stores as the DiyValue's diyCode, :210,294,399,1624).
     """
     return append_bcc(
         bytes([0x33, 0x86, 0x01])
-        + (b0 & 0xFFFF).to_bytes(2, "little")
+        + (diy_code & 0xFFFF).to_bytes(2, "little")
         + (diy_id & 0xFFFFFFFF).to_bytes(4, "little")
     )
 
@@ -4345,8 +4364,8 @@ def _java_hashmap_order(keys: Sequence[_T], hashcode: Callable[[_T], int]) -> li
     while capacity < 64. Treeified bins (capacity >= 64) are not modelled.
     """
 
-    def spread(k: _T) -> int:
-        h = hashcode(k) & 0xFFFFFFFF
+    def spread(key: _T) -> int:
+        h = hashcode(key) & 0xFFFFFFFF
         return h ^ (h >> 16)
 
     table: list[list[_T]] | None
@@ -4935,15 +4954,18 @@ def build_music_v2_then_mode(music_code: int, value: bytes, mode_payload: bytes)
 
 def build_set_ai_action(
     preview: bool,
-    field_a: int,
-    field_b: int,
+    untraced_0: int,
+    untraced_1: int,
     light_type: int,
     colors: Sequence[int],
     speed: int,
     loop_time: int,
 ) -> list[bytes]:
-    """0xA3 V1 multi-packet, comm 0x58: AI-effect parameters [preview][len u16le = 3n+9][a u16le][b
-    u16le][light_type u16le][n][n x RGB][speed][loop_time].
+    """0xA3 V1 multi-packet, comm 0x58: AI-effect parameters [preview][len u16le = 3n+9][untraced_0
+    u16le][untraced_1 u16le][light_type u16le][n][n x RGB][speed][loop_time]. Meaning of untraced_0 and
+    untraced_1 untraced: the app copies them from the first two u16le of the payload of the AC 01 edit-info
+    reply (the read_ai_edit_info request) and never interprets them
+    (base-classes10/com/govee/base2light/ai4edit/AIEffectEditDialog.java:655-663).
     base-classes10/com/govee/base2light/ai4edit/controller/SetAiActionController.java:21-52 (c), :54-59 (d:
     makeSendBytesV1(0xA3, 88, value)), :62-64 (getCommandType = 88);
     base-classes10/com/govee/base2light/ai4edit/AIEffectEditDialog.java:706-711 (Y);
@@ -4956,10 +4978,10 @@ def build_set_ai_action(
             1 if preview else 0,
             ln & 0xFF,
             (ln >> 8) & 0xFF,
-            field_a & 0xFF,
-            (field_a >> 8) & 0xFF,
-            field_b & 0xFF,
-            (field_b >> 8) & 0xFF,
+            untraced_0 & 0xFF,
+            (untraced_0 >> 8) & 0xFF,
+            untraced_1 & 0xFF,
+            (untraced_1 >> 8) & 0xFF,
             light_type & 0xFF,
             (light_type >> 8) & 0xFF,
             n & 0xFF,
@@ -4987,8 +5009,8 @@ def build_set_ai_action(
 
 def build_set_ai_action_v2(
     preview: bool,
-    field_a: int,
-    field_b: int,
+    untraced_0: int,
+    untraced_1: int,
     light_type: int,
     colors: Sequence[int],
     speed: int,
@@ -4997,7 +5019,7 @@ def build_set_ai_action_v2(
     gradient: int,
 ) -> list[bytes]:
     """0xA3 V1 multi-packet, comm 0x58, V2 value: V1 layout with len u16le = 3n+11 and [direction
-    code][gradient] appended.
+    code][gradient] appended. untraced_0 and untraced_1 as in build_set_ai_action.
     base-classes10/com/govee/base2light/ai4edit/controller/SetAiActionControllerV2.java:15-31 (c);
     base-classes10/com/govee/base2light/ai4edit/controller/SetAiActionController.java:21-59 (c/d);
     base-classes10/com/govee/base2light/ai4edit/data/AiEditBean.java:109-130 (b: direction code 0-8);
@@ -5010,10 +5032,10 @@ def build_set_ai_action_v2(
             1 if preview else 0,
             ln & 0xFF,
             (ln >> 8) & 0xFF,
-            field_a & 0xFF,
-            (field_a >> 8) & 0xFF,
-            field_b & 0xFF,
-            (field_b >> 8) & 0xFF,
+            untraced_0 & 0xFF,
+            (untraced_0 >> 8) & 0xFF,
+            untraced_1 & 0xFF,
+            (untraced_1 >> 8) & 0xFF,
             light_type & 0xFF,
             (light_type >> 8) & 0xFF,
             n & 0xFF,
@@ -5388,22 +5410,24 @@ def read_sensitivity() -> bytes:
 
 def build_ai_filter(
     on: bool,
-    p_b: int,
-    p_c: int,
-    p_d: int,
-    p_e: int,
-    f: int,
-    g: int,
+    red: int,
+    green: int,
+    blue: int,
+    saturation: int,
+    filter_code: int,
+    duration_minutes: int,
     year: int,
     month: int,
     day: int,
     hour: int,
     minute: int,
 ) -> bytes:
-    """0x33 A9 10 0F [on,b,c,d,e,f u16le,g u16le,year u16le,mon,day,hour,min (UTC)] - AI filter
-    (AiFilterController.a
+    """0x33 A9 10 0F [on, red, green, blue, saturation, filter_code u16le, duration_minutes u16le, year
+    u16le, mon, day, hour, min] - AI filter: the filter's colour and saturation, its code, how long it runs,
+    and the UTC time it ends (now + duration) (AiFilterController.a
     base-classes12/com/govee/base2light/videomode/newdetail/controller/AiFilterController.java:40-46;
-    AiFilterVmInterface.java:65-67).
+    AiFilterVmInterface.java:65-67; field meanings from the filter-apply path
+    base-classes12/com/govee/base2light/videomode/function/aifilter/AiFilterViewModel.java:273,279).
     """
     return append_bcc(
         bytes(
@@ -5413,14 +5437,14 @@ def build_ai_filter(
                 0x10,
                 0x0F,
                 0x01 if on else 0x00,
-                p_b & 0xFF,
-                p_c & 0xFF,
-                p_d & 0xFF,
-                p_e & 0xFF,
-                f & 0xFF,
-                (f >> 8) & 0xFF,
-                g & 0xFF,
-                (g >> 8) & 0xFF,
+                red & 0xFF,
+                green & 0xFF,
+                blue & 0xFF,
+                saturation & 0xFF,
+                filter_code & 0xFF,
+                (filter_code >> 8) & 0xFF,
+                duration_minutes & 0xFF,
+                (duration_minutes >> 8) & 0xFF,
                 year & 0xFF,
                 (year >> 8) & 0xFF,
                 month & 0xFF,
@@ -5527,12 +5551,17 @@ def build_video_brightness(value: int) -> bytes:
     return append_bcc(bytes([0x33, 0xA9, 0x02, 0x01, value & 0xFF]))
 
 
-def build_video_color_cali(c0: int, c1: int, c2: int, c3: int | None = None) -> bytes:
-    """0x33 A9 05 [3|4] [c0..c2(,c3)] - colour calibration (ColorCaliController.a/b
+def build_video_color_cali(yellow: int, blue: int, purple: int, red: int | None = None) -> bytes:
+    """0x33 A9 05 [3|4] [yellow, blue, purple(, red)] - colour calibration: the per-colour offset sliders
+    (percent, 1-based); red is sent only when the device supports it (supportRedColor, default true)
+    (ColorCaliController.a/b
     base-classes12/com/govee/base2light/videomode/newdetail/controller/ColorCaliController.java:30-37;
-    ColorCaliVmInterface.java:34).
+    ColorCaliVmInterface.java:34; slider order
+    base-classes12/com/govee/base2light/videomode/newdetail/funtion/ColorCaliViewInterface.java:30-31,96-101,
+    base-classes4/com/govee/ui/dialog/ColorCalibrationDialog.java:83-140,173-201 and slider names
+    base-classes9/com/govee/base2home/databinding/ComponentColorCalibrationDialogBinding.java:124-153).
     """
-    vals = [c0, c1, c2] if c3 is None else [c0, c1, c2, c3]
+    vals = [yellow, blue, purple] if red is None else [yellow, blue, purple, red]
     return append_bcc(bytes([0x33, 0xA9, 0x05, len(vals), *[v & 0xFF for v in vals]]))
 
 
@@ -5742,11 +5771,14 @@ def read_wifi_func_list() -> bytes:
     return append_bcc(bytes([0xAB, 0x03]))
 
 
-def build_pick_mic(i: int) -> bytes:
-    """0x33 AC [i] sound pickup select (SoundEffectVmInterface.updatePickMic,
-    base-classes12/com/govee/base2light/videomode/newdetail/funtion/SoundEffectVmInterface.java:38-45).
+def build_pick_mic(mic_source: int) -> bytes:
+    """0x33 AC [mic_source] sound pickup select: 0 the device's own microphone, 1 the phone or headphone
+    microphone (SoundEffectVmInterface.updatePickMic,
+    base-classes12/com/govee/base2light/videomode/newdetail/funtion/SoundEffectVmInterface.java:38-45;
+    source choice
+    base-classes12/com/govee/base2light/videomode/newdetail/funtion/SoundEffectViewInterface$getSoundEffectView0$1$1.java:32-49).
     """
-    return append_bcc(bytes([0x33, 0xAC, i & 0xFF]))
+    return append_bcc(bytes([0x33, 0xAC, mic_source & 0xFF]))
 
 
 def read_bluetooth_name() -> bytes:
@@ -6277,7 +6309,7 @@ def build_daysync_scheme_upload(
             x ^= v
         return x
 
-    def j(data: bytes) -> list[bytes | bytearray]:
+    def unsplit_package(data: bytes) -> list[bytes | bytearray]:
         s = bytearray(len(data) + 18)
         s[0] = 0xA6
         s[3] = 0x01
@@ -6286,9 +6318,9 @@ def build_daysync_scheme_upload(
         e = bytes([0xA6, 0xFF, 0xFF])
         return [s, e + bytes([_x(e)])]
 
-    def k(data: bytes, cap0: int, capn: int, maxpk: int) -> list[bytes | bytearray]:
+    def split_package(data: bytes, cap0: int, capn: int, maxpk: int) -> list[bytes | bytearray]:
         if len(data) <= cap0:
-            return j(data)
+            return unsplit_package(data)
         s = bytearray(mtu)
         s[0] = 0xA6
         s[3] = 0x01
@@ -6312,7 +6344,7 @@ def build_daysync_scheme_upload(
     capn = mtu - 4
     big = []
     if cap0 >= len(value):
-        big.append(j(bytes(value)))
+        big.append(unsplit_package(bytes(value)))
     else:
         cap_big = cap0 + (maxpk - 1) * capn
         acc, used = bytearray(value[:4]), 0
@@ -6322,14 +6354,14 @@ def build_daysync_scheme_upload(
             if used + len(node) > cap_big:
                 if idx == 0:
                     return []
-                big.append(k(bytes(acc), cap0, capn, maxpk))
+                big.append(split_package(bytes(acc), cap0, capn, maxpk))
                 acc, used = bytearray(), 0
             if used == 0 and len(node) > cap_big:
                 return []
             acc += bytes(node)
             used += len(node)
             if idx == len(nodes) - 1:
-                big.append(k(bytes(acc), cap0, capn, maxpk))
+                big.append(split_package(bytes(acc), cap0, capn, maxpk))
     per_pkg = not isinstance(verify8, (bytes, bytearray))
     for n, pk in enumerate(big):
         s = cast(bytearray, pk[0])
@@ -6352,15 +6384,29 @@ def build_logo(manual: bool, brightness: int = 0, r: int = 0, g: int = 0, b: int
     return append_bcc(bytes([0x33, 0xA6, 0x01, brightness & 0xFF, r & 0xFF, g & 0xFF, b & 0xFF]))
 
 
-def build_low_blue_light(on: bool, level: int, *, scale: bool = True, b2: int = 100, b3: int = 100) -> bytes:
-    """0x33 BA [scale 1|0, on, b2, b3, level]: low-blue-light / eye-protection write; every app writer sends
-    [1, on, 100, 100, level] (ControllerLowBlueLight.q
+def build_low_blue_light(
+    on: bool, level: int, *, scale: bool = True, red: int = 100, green: int = 100
+) -> bytes:
+    """0x33 BA [scale 1|0, on, red, green, level]: low-blue-light / eye-protection write. The three value
+    bytes are the red, green and blue channels (the app's own names for them in its result type,
+    ControllerEyeshadow.java:234-235); level is the blue one. Every app writer sends [1, on, 100, 100, level]
+    (ControllerLowBlueLight.q
     base-classes11/com/govee/base2light/lowBlueLightControl/ControllerLowBlueLight.java:40-48,62-64,81-84;
     ControllerEyeshadow.Companion.f/g
     base-classes11/com/govee/base2light/kt/general_controller/ControllerEyeshadow.java:53-61,99-107,263-265).
     """
     return append_bcc(
-        bytes([0x33, 0xBA, 0x01 if scale else 0x00, 0x01 if on else 0x00, b2 & 0xFF, b3 & 0xFF, level & 0xFF])
+        bytes(
+            [
+                0x33,
+                0xBA,
+                0x01 if scale else 0x00,
+                0x01 if on else 0x00,
+                red & 0xFF,
+                green & 0xFF,
+                level & 0xFF,
+            ]
+        )
     )
 
 
@@ -12590,7 +12636,7 @@ _SELF_CHECKS: list[tuple[str, bool]] = [
         lambda: bool(
             build_low_blue_light(True, 30) == bytes.fromhex("33ba010164641e" + "00" * 12 + "97")
             and build_low_blue_light(False, 50)[:7] == bytes([0x33, 0xBA, 0x01, 0x00, 0x64, 0x64, 0x32])
-            and build_low_blue_light(True, 0, scale=False, b2=0, b3=0)[:7]
+            and build_low_blue_light(True, 0, scale=False, red=0, green=0)[:7]
             == bytes([0x33, 0xBA, 0x00, 0x01, 0x00, 0x00, 0x00])
         ),
     ),
