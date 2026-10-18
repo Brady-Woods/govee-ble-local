@@ -547,7 +547,7 @@ def parse_device_info(frame: bytes) -> DeviceInfo | None:
     """AA 07 reply: basic (0x10), wifi (0x11), SN (0x02) or hard-version (0x03) device info."""
     b = _reply_state(frame, _Command.device_info)
     info = None if b is None else getattr(b, "info", None)
-    if info is None:
+    if b is None or info is None:
         return None
     return device_info_from(int(b.selector), info)
 

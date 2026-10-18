@@ -123,6 +123,17 @@ model, from which the shipped readers are generated).
   - Build: `tools/gen_kaitai.sh` compiles every `spec/*.ksy` in one call (`--python-package .`), the build
     backend and the test staleness check list its nine modules, and `scripts/check.sh` runs the spec's own
     gate, `spec/checks/run.sh`.
+  - Removed from the wire modules (none was in `govee_ble_local.__all__`, so this is not a public-API break,
+    but code that imported them directly must move): `build.frame`; `parse.rx_frame`, the per-SKU mode
+    decoders `parse_kelvin`, `parse_bar_kelvin`, `parse_active_scene`, `parse_mode_0d`,
+    `parse_mode_0d_for`, `parse_mode_0d_rgb`, `parse_mode_0d_rgblight` and `parse_mode_rgb_kelvin_tint`,
+    their `kelvin_of`, `kelvin_signed_of`, `bar_kelvin_of`, `gradual_kelvin_of`, `cct_0d_of`, `rgb_0d_of`,
+    `rgb_kelvin_0d_of` and `rgb_kelvin_tint_of` helpers, and `SUBMODE4COLOR_SUB_MODES` (use
+    `parse.mode_reply(frame, devices.profile.wire_profile(profile))` and `parse.mode_color`);
+    `reassemble.group_record_count` (the spec's `color_group.num_records_wanted`) and the unused
+    `TYPE_SLEEP`, `TYPE_WAKEUP`, `TYPE_TIMERS`, `TYPE_BAR_SWITCH` and `TYPE_IC_NUM`; and the private
+    re-exports of the generated classes (`build._F`, `_node`, `_load`, `parse._parse_type`, `_parse`; use
+    `wire._spec`). `parse.mode_reply` and `parse.mode_value` now take the profile.
 - Documented deviation: the connection keeps dropping an RX frame whose XOR checksum fails, although the app
   never checks it (`ComposeBleComm.K:190-211` drops only a frame that isn't 20 bytes), so a corrupted frame
   is not decoded as state.
