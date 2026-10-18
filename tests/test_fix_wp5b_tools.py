@@ -421,11 +421,11 @@ def test_live_check_segments_match_by_segment_index(no_sleep: None) -> None:
 
 
 def test_private_library_names_the_tools_use_still_exist() -> None:
-    from bleak.backends.device import BLEDevice
+    from fake_ble import ble_device
 
     from govee_ble_local.registry import create_device
 
-    dev = create_device(BLEDevice("AA:BB:CC:DD:EE:FF", "H60A6", details={}), "H60A6")
+    dev = create_device(ble_device("AA:BB:CC:DD:EE:FF", "H60A6"), "H60A6")
     # power_semantics_probe (raw send) and h60a6_live_check.read_kelvin (raw query)
     assert inspect.iscoroutinefunction(dev._conn.send) and inspect.iscoroutinefunction(dev._conn.query)
     # fetch_scenes --audit

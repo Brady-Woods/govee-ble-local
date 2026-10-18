@@ -622,6 +622,12 @@ model, from which the shipped readers are generated).
   tooling only.
 
 ### Fixed
+- **The suite passes at the dependency floor again (tests and tools only).** CI's lowest-direct job (bleak 0.21,
+  bleak-retry-connector 3.0.0, cryptography 41.0.0, kaitaistruct 0.11) failed collection on a test that imported
+  `BleakCharacteristicNotFoundError`, which bleak 0.21 lacks. Three more places built a `BLEDevice` without the
+  `rssi` that bleak < 1.0 requires: two tests and `tools/fetch_scenes.py`. They now use the version-aware
+  `fake_ble.ble_device` (the tool uses the same check inline), and the test falls back to a `BleakError` with the
+  same text. The library itself builds no `BLEDevice`, so it was unaffected.
 - **The spec conformance tests run again (test-only).** `tests/test_spec_conformance.py` still imported the
   advertisement reader that S1 deleted with `govee_adv.ksy`. Under `CI=true`, which CI sets, that import
   stopped the whole pytest run at collection; locally the module was silently skipped. The devices.yaml

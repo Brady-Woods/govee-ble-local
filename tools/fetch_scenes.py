@@ -17,6 +17,7 @@ import argparse
 import base64
 import binascii
 import contextlib
+import inspect
 import json
 import os
 import pathlib
@@ -286,7 +287,11 @@ def audit(skus: list[str]) -> None:
         if not cat:
             print(f"{sku:7s} (no catalog)")
             continue
-        dev = create_device(BLEDevice("00:00:00:00:00:00", sku, details={}), sku)
+        # bleak < 1.0 requires rssi (the dependency floor is 0.21); >= 1.0 dropped it.
+        ble_kwargs: dict[str, Any] = {"details": {}}
+        if "rssi" in inspect.signature(BLEDevice.__init__).parameters:
+            ble_kwargs["rssi"] = 0
+        dev = create_device(BLEDevice("00:00:00:00:00:00", sku, **ble_kwargs), sku)
         upload = activate = blocked = placeholder = 0
         dialects: set[str] = set()
         for scene in cat.values():

@@ -12,10 +12,11 @@ from types import ModuleType, SimpleNamespace
 from typing import Any
 
 import pytest
-from bleak.backends.device import BLEDevice
 from bleak_retry_connector import BleakAbortedError, ble_device_description
 
 from govee_ble_local.exceptions import GoveeBleConnectionError
+
+from fake_ble import ble_device
 
 TOOLS = Path(__file__).resolve().parent.parent / "tools"
 ADDR = "98:17:3C:B1:A2:D1"
@@ -54,7 +55,7 @@ def _connect_error(name: str, address: str = ADDR) -> GoveeBleConnectionError:
     ``f"{name} - {description}: ..."`` with ``device.address`` as the description (and connection.py
     passes the address as ``name``), so it never names the device; other releases within the
     dependency floor may (``<address> - <name> -> <adapter>``), so the test builds that string itself."""
-    ble = BLEDevice(address, name, {"path": BLUEZ_PATH})
+    ble = ble_device(address, name, {"path": BLUEZ_PATH})
     inner = BleakAbortedError(f"{address} - {ble_device_description(ble)}: Failed to connect after "
                               "4 attempt(s): le-connection-abort-by-local")
     return GoveeBleConnectionError(f"{address}: connect failed: {inner}")

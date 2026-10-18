@@ -15,7 +15,7 @@ from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
-from bleak.exc import BleakCharacteristicNotFoundError
+from bleak import exc as bleak_exc
 from kaitaistruct import ValidationGreaterThanError
 from conftest import require_optional
 
@@ -224,7 +224,11 @@ def test_transport_constants_come_from_const_and_build() -> None:
 # ── WP1a-019: an e7 write error is worded neutrally ──────────────────────────────────────────
 async def test_handshake_write_error_is_not_called_a_link_loss(monkeypatch: pytest.MonkeyPatch) -> None:
     fake = FakeGovee()
-    fake.write_error = BleakCharacteristicNotFoundError(WRITE_CHAR_UUID)   # e.g. a stale service cache
+    # e.g. a stale service cache. BleakCharacteristicNotFoundError is newer than bleak's 0.21 floor;
+    # there a BleakError with the same text takes the same clause (_TRANSPORT_ERRORS).
+    not_found = getattr(bleak_exc, "BleakCharacteristicNotFoundError", None)
+    fake.write_error = (not_found(WRITE_CHAR_UUID) if not_found is not None
+                        else bleak_exc.BleakError(f"Characteristic {WRITE_CHAR_UUID} was not found!"))
     c = _conn(monkeypatch, fake)
     with pytest.raises(GoveeBleHandshakeConnectionError) as info:
         await c.connect()

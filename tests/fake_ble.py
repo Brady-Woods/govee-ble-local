@@ -45,9 +45,9 @@ SESSION_KEY = bytes(range(16))
 OTA_SERVICE_UUID = "00010203-0405-0607-0809-0a0b0c0d1912"
 
 
-def ble_device(address: str, name: str | None) -> BLEDevice:
+def ble_device(address: str, name: str | None, details: dict[str, Any] | None = None) -> BLEDevice:
     """Build a BLEDevice across bleak versions (<1.0 requires ``rssi``; >=1.0 dropped it)."""
-    kwargs: dict[str, Any] = {"details": {}}
+    kwargs: dict[str, Any] = {"details": {} if details is None else details}
     if "rssi" in inspect.signature(BLEDevice.__init__).parameters:
         kwargs["rssi"] = 0
     return BLEDevice(address, name, **kwargs)
