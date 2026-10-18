@@ -600,7 +600,7 @@ types:
             'govee_common::form_0b::rgb_kelvin': color_0b_rgb_kelvin
         if: form != govee_common::form_0b::rgb_mask or num_segments != 0
   color_0b_rgb_mask:
-    doc: '[rgb][seg_mask(num_segments, 13)]: a colour for the masked segments.'
+    doc: '[rgb][seg_mask(num_segments, len_cap)]: a colour for the masked segments.'
     doc-ref:
       - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:270-281
       - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:5542-5546
@@ -612,7 +612,13 @@ types:
       - id: color
         type: govee_common::rgb
       - id: mask
-        type: govee_common::seg_mask(num_segments, 13)
+        type: govee_common::seg_mask(num_segments, len_cap)
+    instances:
+      len_cap:
+        value: 13
+        doc: mask byte cap; the app cuts a longer mask to 13 bytes
+        doc-ref:
+          - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:279
   color_0b_rgb_kelvin:
     doc: |
       [rgb][kelvin u16be][15 position bits]; kelvin is set for RGB too, so
@@ -723,8 +729,8 @@ types:
         value: form != govee_common::form_15_01::basic and kelvin != 0
   op15_brightness:
     doc: |
-      33 05 15 02 [pct][seg_mask(num_segments, 14)]: one brightness for the
-      masked segments.
+      33 05 15 02 [pct][seg_mask(num_segments, len_cap)]: one brightness for
+      the masked segments.
     doc-ref:
       - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:172-181
       - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:5591-5595,10567-10570
@@ -737,7 +743,13 @@ types:
         type: u1
         doc: 0..100, raw
       - id: mask
-        type: govee_common::seg_mask(num_segments, 14)
+        type: govee_common::seg_mask(num_segments, len_cap)
+    instances:
+      len_cap:
+        value: 14
+        doc: mask byte cap; the app cuts a longer mask to 14 bytes
+        doc-ref:
+          - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:179
   op15_levels:
     doc: |
       33 05 15 03 [level x num_levels]: one brightness per group, at most 15.
@@ -837,7 +849,7 @@ types:
         doc: the brightness, raw
   op15_gradient:
     doc: |
-      [rgb x 3][seg_mask(num_segments, 6)]: the version-0 gradient write
+      [rgb x 3][seg_mask(num_segments, len_cap)]: the version-0 gradient write
       (goodsTypes 326 / 338 / 354 / 364).
     doc-ref:
       - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:404-420
@@ -851,7 +863,15 @@ types:
         repeat: expr
         repeat-expr: 3
       - id: mask
-        type: govee_common::seg_mask(num_segments, 6)
+        type: govee_common::seg_mask(num_segments, len_cap)
+    instances:
+      len_cap:
+        value: 6
+        doc: |
+          mask byte cap: the 6 bytes left in the 17-byte value. The app copies
+          the whole mask with no cut, so a longer one throws.
+        doc-ref:
+          - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:416-418
   write_ack:
     doc: |
       The 0x33 / 0x3A write ack [command][result][rest]; 0 = success, at byte 3

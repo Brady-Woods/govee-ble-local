@@ -857,6 +857,10 @@ model, from which the shipped readers are generated).
     no decoded state, return value or connection behaviour changes.
 
 ### Spec
+- Each `seg_mask` parent that passed a literal cap now names it as a `len_cap` value instance, as `op15_color`
+  does (rule 4 b): `op15_brightness` 14 and `color_0b_rgb_mask` 13 (the app cuts a longer mask, Bytes.G / Bytes.d),
+  and `op15_gradient` 6 (Bytes.n copies the mask with no cut, so a longer one throws). Instances only; the bytes
+  read and written are unchanged.
 - New `spec/firmware.yaml` and `spec/firmware.schema.json` give device behaviour, state and timing per
   firmware image, as data, so a spec-driven simulator builds every reply, push and advert from spec
   objects with no hand-built frames. The first image is H5083 SW1.00.30 (`h5083_sw1_00_30`). It covers:
