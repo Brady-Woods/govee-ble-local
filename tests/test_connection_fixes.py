@@ -11,7 +11,7 @@ from bleak.exc import BleakError
 
 from govee_ble_local import const
 from govee_ble_local.const import FRAME_LEN
-from govee_ble_local.crypto import checksum_ok, encrypt
+from govee_ble_local.crypto import encrypt
 from govee_ble_local.exceptions import (
     GoveeBleAuthError,
     GoveeBleCommandRejected,
@@ -22,6 +22,7 @@ from govee_ble_local.exceptions import (
 from govee_ble_local.models import Encryption
 from govee_ble_local.transport import connection as conn_mod
 from govee_ble_local.transport.connection import GoveeConnection, _LinkLost
+from govee_ble_local.wire import redact
 
 from fake_ble import OTA_SERVICE_UUID, SESSION_KEY, FakeGovee, ble_device, frame
 
@@ -306,24 +307,12 @@ def test_known_rx_types_are_the_specs_rx_pro_type() -> None:
     ) == conn_mod._KNOWN_RX_PRO_TYPES
 
 
-def test_mask_helper_recomputes_checksum() -> None:
-    secret = bytes([0x61, 0x55, 0x21, 0x09, 0x0B, 0x73, 0x5C, 0x54])
-    plain = frame(0x33, 0xB2, *secret)
-    masked = conn_mod._mask_secret(plain)
-    assert len(masked) == FRAME_LEN
-    assert masked[:2] == plain[:2] and masked[2:-1] == b"\xff" * (FRAME_LEN - 3)
-    assert checksum_ok(masked)
-    assert masked[-1] != plain[-1]  # no longer the XOR of the secret
-    # short/odd lengths: header kept, rest blanked, no checksum fabricated
-    assert conn_mod._mask_secret(b"\x33\xb2\x01\x02") == b"\x33\xb2\xff\xff"
-
-
 async def test_capture_and_mask_secret_share_one_helper(monkeypatch, caplog) -> None:
     caplog.set_level(logging.DEBUG, logger="govee_ble_local.frames")
     c = _make(monkeypatch, FakeGovee(encrypted=False))
     plain = frame(0x33, 0xB2, 1, 2, 3, 4, 5, 6, 7, 8)
     c._capture("tx", wire=plain, plain=plain, enc="none")
-    masked = conn_mod._mask_secret(plain).hex()
+    masked = redact.mask_secret(plain).hex()
     assert f"plain={masked} wire={masked}" in caplog.text
 
 

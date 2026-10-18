@@ -64,7 +64,7 @@ from ..const import (
     WRITE_ATTEMPTS,
     WRITE_CHAR_UUID,
 )
-from ..crypto import FrameCipher, checksum, checksum_ok
+from ..crypto import FrameCipher, checksum_ok
 from ..exceptions import (
     GoveeBleAuthError,
     GoveeBleCommandRejected,
@@ -79,15 +79,13 @@ from ..exceptions import (
 from ..models import Encryption
 from ..wire._spec import BgcInfo as _BgcInfo, Frame as _Frame
 from ..wire.build import (
-    CMD_SECRET_READ,
-    CMD_SECRET_WRITE,
     PRO_MULTI_AC,
-    PRO_READ,
     PRO_WRITE,
 )
 from ..wire.describe import describe_frame
 from ..wire.parse import bgc_encrypt_version, parse_write_ack
 from ..wire.reassemble import BurstAssembler
+from ..wire.redact import carries_secret, mask_secret, shown_hex
 from . import handshake
 from .framelog import Direction, FrameLog
 
@@ -123,29 +121,6 @@ _T = TypeVar("_T")
 def _err_text(err: BaseException) -> str:
     """An exception's message, or its class name when it has none (e.g. a bare EOFError())."""
     return str(err) or type(err).__name__
-
-
-def _carries_secret(plain: bytes) -> bool:
-    """True for a frame that carries the account-lock secret: a ``33 b2`` check write or an ``aa b1`` read
-    reply. Matched on the two header bytes on purpose, not through the spec's frame reader: masking must
-    fail closed, so a secret frame whose body doesn't parse (short, malformed, a capture fragment) is
-    still masked before it reaches a log or a frame capture."""
-    return len(plain) >= 2 and (
-        (plain[0] == PRO_WRITE and plain[1] == CMD_SECRET_WRITE)  # secret check write
-        or (plain[0] == PRO_READ and plain[1] == CMD_SECRET_READ)  # secret read reply
-    )
-
-
-def _mask_secret(frame: bytes) -> bytes:
-    """Blank the payload of a secret-carrying frame, keeping its 2-byte header.
-
-    The single masking helper (used for plain, wire and log output). A full-length
-    frame keeps a VALID trailing checksum - recomputed over the masked bytes, so it
-    never leaks the XOR of the secret; any other length is just header + blanks."""
-    if len(frame) != FRAME_LEN:
-        return frame[:2] + b"\xff" * (len(frame) - 2)
-    body = frame[:2] + b"\xff" * (FRAME_LEN - 3)
-    return body + bytes([checksum(body)])
 
 
 class _LinkLost(Exception):
@@ -260,9 +235,9 @@ class GoveeConnection:
         up in logs and diagnostics downloads. The wire bytes are masked too - on a
         plaintext link they ARE the secret, and on an encrypted link the session
         key is derivable from the captured handshake plus the library's public PSK."""
-        if plain is not None and _carries_secret(plain):
-            plain = _mask_secret(plain)
-            wire = _mask_secret(wire)
+        if plain is not None and carries_secret(plain):
+            plain = mask_secret(plain)
+            wire = mask_secret(wire)
         if self._framelog is not None:
             self._framelog.record(direction, wire=wire, plain=plain, enc=enc)
         if _FRAMES.isEnabledFor(logging.DEBUG):
@@ -324,8 +299,7 @@ class GoveeConnection:
         # drops only a frame that isn't 20 bytes, and the controllers read the body as it is. The library
         # drops a frame that fails the checksum instead of decoding a corrupted frame as state.
         if not checksum_ok(plain):
-            shown = _mask_secret(plain) if _carries_secret(plain) else plain
-            _LOGGER.debug("%s: dropped frame with bad checksum: %s", self.address, shown.hex())
+            _LOGGER.debug("%s: dropped frame with bad checksum: %s", self.address, shown_hex(plain))
             return
         if plain[0] not in _KNOWN_RX_PRO_TYPES:
             # Device-controlled input: warn once per proType, then DEBUG, so firmware that

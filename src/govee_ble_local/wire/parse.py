@@ -27,6 +27,7 @@ from ..models import Segment
 from . import _spec
 from ._spec import Common as _C, State as _S
 from .build import INFO_BASIC, INFO_HARD, INFO_SN, INFO_WIFI, SUB_COLOR_0D, SUB_COLOR_15, SUB_SCENE
+from .redact import shown_hex
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -73,7 +74,7 @@ def _reply(frame: bytes, prof: Any = _REPLY) -> Any:
         f = _spec.read_frame(frame, _spec.RX, prof)
     except Exception as exc:  # noqa: BLE001 - unknown enum / truncated frame -> not for us
         # A matched reply that won't parse is worth a breadcrumb (unknown enum / truncated).
-        _LOGGER.debug("frame did not parse against the spec: %s (%r)", bytes(frame).hex(), exc)
+        _LOGGER.debug("frame did not parse against the spec: %s (%r)", shown_hex(frame), exc)
         return None
     return None if f.pro_type != _C.ProType.read else f.body
 
@@ -102,7 +103,7 @@ def request_command(frame: bytes) -> int:
     (``AbsControllerNoEvent4Single.isSameController:176-179``). ValueError for a frame that isn't a read."""
     pro_type, command = _head_command(frame, _spec.TX)
     if pro_type != _C.ProType.read or command is None:
-        raise ValueError(f"not an aa read request: {bytes(frame).hex()}")
+        raise ValueError(f"not an aa read request: {shown_hex(frame)}")
     return int(command)
 
 

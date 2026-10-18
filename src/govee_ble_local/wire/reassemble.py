@@ -30,6 +30,7 @@ from ..const import FRAME_LEN
 from ..models import Segment
 from . import _spec, parse
 from ._spec import Common as _C, Frame as _F
+from .redact import shown_hex
 
 _LOGGER = logging.getLogger(__name__)
 _RECORDS_PER_GROUP = 4   # oneGroupColorSize (Support.getOneGroupColorSize): the index stride
@@ -167,7 +168,7 @@ class BurstAssembler:
                 return False
             if chunk is None:
                 _LOGGER.debug("status burst rejected: the first chunk's lastLen does not fit its packet: "
-                              "%s", fr.hex())
+                              "%s", shown_hex(fr))
                 self.status = "failed"
                 return True
             if int(chunk.command) != self.command or int(chunk.sub) != self.sub:

@@ -781,6 +781,19 @@ model, from which the shipped readers are generated).
   as it is saved. The capture keeps the first 0xAC chunk's header, so a lost chunk is still detectable, and
   zeroes every data byte.
 
+### Security
+- The account-lock secret no longer reaches the wire layer's log lines or exception text in the clear. A
+  reply that doesn't parse used to be logged as its full hex, so a malformed `aa b1` secret reply showed the
+  secret. `parse.request_command`'s error named the frame it was given, so a `33 b2` secret write handed to
+  it carried the secret into the exception message.
+  - Every frame logged or named in `wire/` now goes through `wire.redact.shown_hex`, which masks a
+    `33 b2` / `aa b1` frame by its two header bytes, so a frame whose body doesn't parse is masked too. The
+    only bytes still shown are field values, never whole frames.
+  - The masking helpers moved from `transport.connection` to `wire.redact` (`carries_secret`,
+    `mask_secret`). The frame capture, the connection's bad-checksum log and `tools/decrypt_btsnoop.py`
+    use them from there.
+  - Logging and exception text only: no byte sent, decoded state or return value changes.
+
 ### Spec
 - `33 05 15 05` (op15_kelvin, H60A0): the Kelvin is now spelled `u2be` (it already read high byte first; the
   generated code is unchanged). The app writes it high byte first (ControllerBuildH60A0.d), and no firmware image

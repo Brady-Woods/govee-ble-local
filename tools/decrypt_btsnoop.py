@@ -41,7 +41,7 @@ from btsnoop_mtu_scan import H4_ACL, H4_EVENT, read_records  # noqa: E402
 
 from govee_ble_local.const import FRAME_LEN, PSK  # noqa: E402
 from govee_ble_local.crypto import checksum, checksum_ok, decrypt  # noqa: E402
-from govee_ble_local.transport.connection import _carries_secret, _mask_secret  # noqa: E402
+from govee_ble_local.wire.redact import shown_hex  # noqa: E402
 
 HANDSHAKE = 0xE7
 # ATT opcodes carrying a value we care about.
@@ -196,8 +196,7 @@ def main(path: str, dump_types: set[int], show_all: bool, limit: int, starts_onl
         if starts_only and not (is_multi and len(frame) > 1 and frame[1] == 0x00):
             continue
         if (show_all or pro in dump_types) and dumped < limit:
-            shown = _mask_secret(frame) if _carries_secret(frame) else frame
-            print(f"  {peer} h{handle:#05x} {direction} {mode:5s} {len(frame):3d}B  {shown.hex()}")
+            print(f"  {peer} h{handle:#05x} {direction} {mode:5s} {len(frame):3d}B  {shown_hex(frame)}")
             dumped += 1
 
     print(f"  handshakes (session keys derived): {handshakes}")

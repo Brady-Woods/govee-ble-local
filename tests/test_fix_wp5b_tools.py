@@ -424,14 +424,14 @@ def test_private_library_names_the_tools_use_still_exist() -> None:
     from bleak.backends.device import BLEDevice
 
     from govee_ble_local.registry import create_device
-    from govee_ble_local.transport import connection
+    from govee_ble_local.wire import redact
 
     dev = create_device(BLEDevice("AA:BB:CC:DD:EE:FF", "H60A6", details={}), "H60A6")
     # power_semantics_probe (raw send) and h60a6_live_check.read_kelvin (raw query)
     assert inspect.iscoroutinefunction(dev._conn.send) and inspect.iscoroutinefunction(dev._conn.query)
     # decrypt_btsnoop masks account secrets before printing
     secret = _with_bcc(bytes([0x33, 0xB2]) + bytes(range(1, 18)))
-    masked = connection._mask_secret(secret)
-    assert connection._carries_secret(secret) and masked[:2] == secret[:2] and masked != secret
+    masked = redact.mask_secret(secret)
+    assert redact.carries_secret(secret) and masked[:2] == secret[:2] and masked != secret
     # fetch_scenes --audit
     assert isinstance(dev.profile.scene_versions, frozenset)
