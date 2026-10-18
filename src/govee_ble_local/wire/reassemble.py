@@ -35,9 +35,6 @@ from .redact import shown_hex
 _LOGGER = logging.getLogger(__name__)
 _RECORDS_PER_GROUP = 4   # oneGroupColorSize (Support.getOneGroupColorSize): the index stride
 
-# Chunk layout: the spec's status_chunk (AbsController4BleSingleSendMultiBack: the first chunk's header
-# and 12 data bytes, every other chunk's index and 17 data bytes; the BCC follows).
-MIN_CHUNK_LEN = FRAME_LEN - 1   # 19: a shorter record can't hold a whole chunk (it needs no BCC): skipped
 # Compose4BaseInfoSingleRead.u reads a TLV's len byte signed (`int i10 = it2[i7]` from a byte[]):
 # from this value up it is negative, `new byte[i10]` throws and the app's whole read fails. The spec's
 # status_tlv rejects it (`len_value` valid max 0x7f), which is what the walk goes by; kept for callers.
@@ -109,15 +106,33 @@ class TlvCut:
     negative_len: bool = False                 # status_tlv's `len_value` valid (max 0x7f) rejected it
 
 
-def read_ac_chunk(frame: bytes) -> Any:
-    """A 0xAC reply chunk read by the spec's ``status_chunk(true)`` (the frame's status_read_rx body: the
-    first chunk's index 0, ``num_packets`` u16le (``BleUtils.H(.., false)``), ``len_last``, command, sub
-    and 12 data bytes; every other chunk's index and 17), read off the 18 bytes after the proType, so a
-    record without its BCC still reads. None for a first chunk whose ``len_last`` doesn't fit its packet
-    (``len_last_fits``: AbsController4BleSingleSendMultiBack.g returns -1 and the app rejects the whole
-    burst). The caller has checked the record is at least :data:`MIN_CHUNK_LEN` bytes."""
-    chunk = _spec.read(_F.StatusChunk, frame[1:MIN_CHUNK_LEN], True)
+def _chunk_of(fr: bytes) -> Any:
+    """``fr``'s ``status_chunk`` (the body of a ``govee_ble_frame(rx)`` on the ``status_read_rx`` route: the
+    first chunk's index 0, ``num_packets`` u16le (``BleUtils.H(.., false)``), ``len_last``, command, sub and
+    12 data bytes; every other chunk's index and 17) when ``fr`` is a chunk the app takes: a 20-byte frame
+    (``ComposeBleComm.K:198`` drops any other length) with the 0xAC proType
+    (``AbsController4BleSingleSendMultiBack.isSameController:207``). Else None. The one place a record is
+    classified as a chunk (:class:`BurstAssembler`, :func:`read_ac_chunk`, ``describe``)."""
+    if len(fr) != FRAME_LEN:
+        return None
+    f = _spec.try_read_frame(fr, _spec.RX, _spec.PLAIN)
+    return f.body if f is not None and f.route == _F.Route.status_read_rx else None
+
+
+def _fitting(chunk: Any) -> Any:
+    """``chunk``, or None for a first chunk whose ``len_last`` doesn't fit its packet (``len_last_fits``:
+    AbsController4BleSingleSendMultiBack.g returns -1 and the app rejects the whole burst)."""
     return None if chunk.is_first and not chunk.len_last_fits else chunk
+
+
+def read_ac_chunk(frame: bytes) -> Any:
+    """A 0xAC reply chunk read through the frame root (:func:`_chunk_of`), or None for a first chunk whose
+    ``len_last`` doesn't fit its packet (:func:`_fitting`). ValueError for a record that isn't a 20-byte
+    0xAC RX frame."""
+    chunk = _chunk_of(frame)
+    if chunk is None:
+        raise ValueError(f"not a 20-byte 0xAC status chunk: {shown_hex(frame)}")
+    return _fitting(chunk)
 
 
 @dataclass
@@ -151,11 +166,13 @@ class BurstAssembler:
 
     def feed(self, fr: bytes) -> bool:
         """Offer one record; True when the app's state machine takes it."""
-        if len(fr) < MIN_CHUNK_LEN or fr[0] != _C.ProType.status_read:
-            _LOGGER.debug("status burst: skipping a record that is not a chunk (%d bytes)", len(fr))
+        body = _chunk_of(fr)
+        if body is None:
+            _LOGGER.debug("status burst: skipping a record that is not a 20-byte 0xAC chunk (%d bytes)",
+                          len(fr))
             return False
-        chunk = read_ac_chunk(fr)
-        index = 0 if chunk is None else int(chunk.index)   # only a first chunk can fail len_last_fits
+        chunk = _fitting(body)
+        index = int(body.index)   # a first chunk that doesn't fit is index 0 too
         kept = self._seen.setdefault(index, fr)
         if kept is not fr and kept != fr:
             self.conflicts += 1

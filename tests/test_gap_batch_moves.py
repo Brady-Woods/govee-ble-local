@@ -16,7 +16,7 @@ from govee_ble_local import identify, scenes
 from govee_ble_local.devices import _fold
 from govee_ble_local.devices.profile import PROFILES, profile_for, wire_profile
 from govee_ble_local.models import DeviceState
-from govee_ble_local.wire import build, parse, reassemble
+from govee_ble_local.wire import build, describe, parse, reassemble
 
 _ROOT = pathlib.Path(__file__).resolve().parent.parent
 
@@ -199,6 +199,24 @@ def test_a_first_chunk_whose_last_len_does_not_fit_rejects_the_burst() -> None:
     chunk = reassemble.read_ac_chunk(good)
     assert chunk is not None and chunk.is_first and int(chunk.len_first_data) == 3
     assert reassemble.reassemble([good]) == bytes([0x01, 0x01, 0x01])
+
+
+_ONE_PACKET = _frame(0xAC, 0x00, 0x01, 0x00, 3, 0x03, 0x00, 0x01, 0x01, 0x01)
+
+
+@pytest.mark.parametrize("record", [
+    _ONE_PACKET[:19],                                           # 19 bytes (no BCC): 1.3.0 took it
+    _ONE_PACKET + b"\x00",                                      # 21 bytes
+    _frame(0xAA, 0x00, 0x01, 0x00, 3, 0x03, 0x00, 1, 1, 1),     # 20 bytes, another proType
+])
+def test_only_a_20_byte_0xac_frame_is_a_chunk(record: bytes) -> None:
+    # ComposeBleComm.K:198 drops a notification that isn't 20 bytes; isSameController:207 takes only 0xAC.
+    assert reassemble.burst_chunks([record]) == ([], False, 0)
+    assert reassemble.reassemble([record]) == b""
+    assert describe._split_bursts([record]) == []
+    with pytest.raises(ValueError, match="not a 20-byte 0xAC status chunk"):
+        reassemble.read_ac_chunk(record)
+    assert reassemble.burst_chunks([_ONE_PACKET]) == ([_ONE_PACKET], True, 0)
 
 
 # ── writers ──────────────────────────────────────────────────────────────────────────────────

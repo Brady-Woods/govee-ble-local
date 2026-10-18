@@ -129,10 +129,8 @@ def chunk_redacted(chunk: bytes) -> bool:
     (``tools/field_test/masking.py``: the first chunk keeps its 7-byte header, the others
     ``ac <index>``). Such a chunk fails the checksum but is not corrupt; :func:`_header_redacted` is
     the stricter first-chunk test for a capture masked before the header was kept."""
-    if len(chunk) != FRAME_LEN or chunk[0] != _ProType.status_read:
-        return False
-    body = _reassemble.read_ac_chunk(chunk)   # status_chunk: the header the masking keeps, then its data
-    if body is None:   # a first chunk whose len_last doesn't fit: not a masked one
+    body = _reassemble._chunk_of(chunk)   # status_chunk: the header the masking keeps, then its data
+    if body is None or _reassemble._fitting(body) is None:   # not a chunk, or a head that doesn't fit
         return False
     return not any(bytes(body.data)) and chunk[-1] == 0
 
@@ -259,7 +257,7 @@ def _split_bursts(rx_ac: list[bytes]) -> list[list[bytes]]:
     (``ac00 ac00 ac01 ac01 ...``) only while the open burst holds nothing but copies of it; once a
     later chunk has arrived, an 0x00 chunk opens a new burst. Two polls of an unchanged light share
     their first chunk byte for byte, so a poll that lost its terminator is not folded into the
-    next. A record too short to be a chunk is skipped, as the runtime reassembler skips it
+    next. A record that isn't a 20-byte 0xAC chunk is skipped, as the runtime reassembler skips it
     (:func:`.reassemble.burst_chunks`).
 
     Residual case: a first chunk double-delivered AFTER interior chunks (``00 01 02 00 03 .. FF``)
@@ -269,10 +267,10 @@ def _split_bursts(rx_ac: list[bytes]) -> list[list[bytes]]:
     bursts: list[list[bytes]] = []
     cur: list[bytes] = []
     for fr in rx_ac:
-        if len(fr) < _reassemble.MIN_CHUNK_LEN:
+        chunk = _reassemble._chunk_of(fr)
+        if chunk is None:               # not a 20-byte 0xAC chunk
             continue
-        chunk = _reassemble.read_ac_chunk(fr)
-        idx = 0 if chunk is None else int(chunk.index)   # only a first chunk can fail its valid
+        idx = int(chunk.index)
         if idx == 0x00:                 # start of a burst
             if cur and all(c == fr for c in cur):   # double-delivered first chunk
                 cur.append(fr)

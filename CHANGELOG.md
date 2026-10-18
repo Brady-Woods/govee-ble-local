@@ -50,9 +50,8 @@ model, from which the shipped readers are generated).
 - Constants: `const.ADVERT_SUPPRESS_SECONDS` (15 s; moved from `devices.device`, still importable there),
   `const.DISCONNECT_TIMEOUT`, `const.QUERY_TERMINAL`, the parts `LOCAL_NAME_PREFIXES` is built from
   (`const.BRAND_MARKERS`, `GBK_PREFIX`, `GV_LONG_PREFIXES`, `GV_PREFIX`; the tuple is unchanged),
-  `wire.build.PRO_NOTIFY` (0xEE), `wire.build.PRO_MULTI_A1` (0xA1), `wire.reassemble.MIN_CHUNK_LEN`,
-  `SIGNED_LEN_MIN`, `TYPE_MODE`, `TYPE_SLEEP`, `TYPE_WAKEUP` and `TYPE_TIMERS`, and the
-  `transport.framelog.Direction` type.
+  `wire.build.PRO_NOTIFY` (0xEE), `wire.build.PRO_MULTI_A1` (0xA1), `wire.reassemble.SIGNED_LEN_MIN` and
+  `TYPE_MODE`, and the `transport.framelog.Direction` type.
 - `wire.reassemble.parse_status(frames, *, pieces=None)`: the device's colour-piece count, which sets how
   many records each 0xA5 colour group holds (see Fixed); and `wire.reassemble.group_record_count`, the app's
   rule for that count. `pieces` omitted keeps 1.3.0's reading (the count comes from each TLV's length).
@@ -226,7 +225,7 @@ model, from which the shipped readers are generated).
     `KNOWN_STATUS_REPLY_TLVS` is the `status_tlv_type` enum, which adds 0x16, 0x39 and 0xA3.
   - **Types:** H5089's `33 02` main switch is written with `total_switch_write`, so no frame body is
     written raw any more. The `aa 41` section count is read with `section_count_read`. A 0xAC reply chunk is
-    read with `multi_ac_reply_chunk` (`reassemble.read_ac_chunk`, new), whose `last_len` validation is the
+    read as the frame's `status_chunk` (`reassemble.read_ac_chunk`, new), whose `len_last_fits` is the
     app's whole-burst reject, so the hand-kept chunk offsets are gone. A write ack is read with `rx_frame`'s
     `write_ack` (`wire.parse.parse_write_ack`, new), for the connection's rejection check and the analyzer.
     The BGC-info value is read with `bgc_info` (`wire.parse.bgc_encrypt_version`, new; lenient for a short
@@ -472,6 +471,15 @@ model, from which the shipped readers are generated).
   tooling only.
 
 ### Fixed
+- **A 0xAC status chunk is a 20-byte 0xAC frame, as in the app.** `reassemble.reassemble` and `parse_status`
+  took any record of 19 bytes or more in 1.3.0, whatever its proType. They, and the new `burst_chunks`,
+  `BurstAssembler` and `describe.status_burst_report`, now take only a 20-byte 0xAC frame as a chunk, as
+  `ComposeBleComm.K:198` (any other length is dropped) and
+  `AbsController4BleSingleSendMultiBack.isSameController:207` do.
+  - The connection only delivers 20-byte frames, so nothing changes at runtime. It affects callers that
+    hand the reassembler records directly.
+  - A chunk is read through the frame root (`govee_ble_frame(rx)`, one private helper), and
+    `read_ac_chunk` raises `ValueError` for a record that isn't one.
 - `spec/checks/lint.py` passes `mypy --strict` and pyright again. The root-label loops no longer reuse the
   type-path variable, and the reachability walk declares its path types.
 - pyright is clean on `src/`, `_build_backend/` and `tools/` after the PORT. The TLV-walk test's
