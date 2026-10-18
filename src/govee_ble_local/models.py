@@ -99,7 +99,9 @@ class DeviceState:
     # only when it is > 0 (base OpInfo4Detail.parseModeValidBytes:766-778, pact_h60a0 h60a1
     # Info4Detail.Q:399-406 / :416-427), and H6047 its bars' only when they match (h6047 detail
     # Info4Detail ctor strategy :173-185). ``color_temp_kelvin`` is set only while the device is in
-    # colour-temperature mode; this one is never cleared by a report.
+    # colour-temperature mode (where the report carries no Kelvin, the H61A8's
+    # ``DeviceProfile.mode_reports_kelvin``, the Kelvin last sent stays until an RGB or scene write or a
+    # scene report); this one is never cleared by a report.
     last_color_temp_kelvin: int | None = None
 
     @property

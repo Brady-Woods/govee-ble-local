@@ -127,7 +127,7 @@ CMD_PLUG_SYNC_TIME: Final = int(_C.Command.plug_sync_time)       # 0xB5
 SUB_SCENE: Final = int(_C.SubMode.scene)                 # 0x04
 SUB_COLOR_15: Final = int(_C.SubMode.color_rgbic_15)     # 0x15 (H60A6/H6047/H6641)
 SUB_COLOR_0D: Final = int(_C.SubMode.color_cct_0d)       # 0x0D (H6006/H6008/H6052 bulbs)
-SUB_COLOR_0B: Final = int(_C.SubMode.color_rgbic_0b)     # 0x0B (H61A8)
+SUB_COLOR_0B: Final = int(_C.SubMode.color_rgbic_0b)     # 0x0B (the h61a8 scheme's frames)
 
 # op15 (enum govee_common::op15) — sub-op after 0x15
 OP15_SET_COLOR: Final = int(_C.Op15.set_color)            # 0x01

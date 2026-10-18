@@ -263,6 +263,10 @@ def test_a_scheme_without_segment_brightness_is_not_supported_with_the_sku() -> 
     with pytest.raises(GoveeBleNotSupported, match=r"^H61A8: "):
         run(d.set_segment_brightness([0], 50))
     assert _sent(d) == []
+    # The scheme itself still drives the RGB paths with its 0x0b frames: whole strip and one segment.
+    run(d.set_rgb((0xFF, 0, 0)))
+    run(d.set_segment_rgb([0], (0, 0xFF, 0)))
+    assert [f[:6].hex() for f in _sent(d)] == ["33050bff0000", "33050b00ff00"]
 
 
 def test_mechanism_a_direct_needs_groups_of_four() -> None:
@@ -285,12 +289,20 @@ def test_brightness_max_must_be_positive() -> None:
     # 0 would divide by zero on the first brightness read-back.
     with pytest.raises(GoveeBleInvalidValue, match="brightness_max"):
         DeviceProfile(skus=("HX",), capabilities=frozenset(), brightness_max=0)
-    # A Kelvin range by hardware version must be (version, low, high) with 0 < low <= high; a list of
-    # lists is taken as the tuple.
-    for bad in ((("3.08.01", 6500, 2700),), (("", 2700, 6500),), (("3.08.01", 0, 6500),), ((2, 3),)):
+    # A Kelvin range by hardware version: (version, low, high) entries with 0 < low <= high, highest version
+    # first and once each, on a base range they each overlap, leaving a range valid on every revision; a
+    # list of lists is taken as the tuple.
+    base = {"min_kelvin": 2000, "max_kelvin": 9000}
+    for bad, kw in (
+        ((("3.08.01", 6500, 2700),), base), ((("", 2700, 6500),), base), ((("3.08.01", 0, 6500),), base),
+        (((2, 3),), base), ((("3.08.01", 2700, 6500),), {}),                         # no base range
+        ((("3.08.01", 9500, 9900),), base),                                          # outside the base
+        ((("3.01.00", 2700, 6500), ("3.08.01", 2700, 6500)), base),                  # lowest first
+        ((("3.08.01", 2000, 2500), ("3.01.00", 8000, 9000)), base),                  # none valid on all
+    ):
         with pytest.raises(GoveeBleInvalidValue, match="kelvin_by_hardware"):
-            DeviceProfile(skus=("HX",), capabilities=frozenset(), kelvin_by_hardware=bad)  # type: ignore[arg-type]
-    listed = DeviceProfile(skus=("HX",), capabilities=frozenset(),
+            DeviceProfile(skus=("HX",), capabilities=frozenset(), kelvin_by_hardware=bad, **kw)  # type: ignore[arg-type]
+    listed = DeviceProfile(skus=("HX",), capabilities=frozenset(), **base,
                            kelvin_by_hardware=[["3.08.01", 2700, 6500]])  # type: ignore[arg-type]
     assert listed.kelvin_by_hardware == (("3.08.01", 2700, 6500),)
     DeviceProfile(skus=("HX",), capabilities=frozenset(), brightness_max=255)

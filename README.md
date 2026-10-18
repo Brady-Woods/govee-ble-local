@@ -110,7 +110,9 @@ the range or one channel off the table stay RGB. Not modelled: colour-set / mixe
 drag frames (RGB only). The H61A8's Kelvin range is [2000, 9000], or [2700, 6500] from hardware 3.08.01; until its
 hardware version is read (once per device, on the first poll) the range valid on both, [2700, 6500], applies
 (`Device.min_kelvin` / `max_kelvin` give the range in force). Its mode report carries no Kelvin, so after a
-colour-temperature write `state` keeps the Kelvin that was sent.
+colour-temperature write `state` keeps the Kelvin that was sent until an RGB or scene write or a scene
+report. Because it reports the same `15 01 00 00` after an RGB write too, a Kelvin the library sent stays in
+`state` across a colour change made in the Govee app.
 
 Read-back decodes the `aa 05` mode report the way the app's control screen does for each SKU. The
 H6052's screen reads its colour report as RGB only, so after a poll an H6052 in colour-temperature

@@ -71,11 +71,13 @@ def _remember_kelvin(state: DeviceState) -> None:
         state.last_color_temp_kelvin = state.color_temp_kelvin
 
 
-def apply_rgb(profile: DeviceProfile, state: DeviceState, rgb: tuple[int, int, int]) -> None:
+def apply_rgb(profile: DeviceProfile, state: DeviceState, rgb: tuple[int, int, int],
+              span: tuple[int, int] | None) -> None:
     """A whole-device RGB write: the colour, or - when the app sends it as a colour temperature
     (``build.rgb_as_kelvin``) - that Kelvin, which is what the device reports (and what the app
-    syncs to its Kelvin slider; both bars of a bar-switch device)."""
-    kelvin = build.rgb_as_kelvin(*rgb, profile.color_scheme, kelvin_range(profile, state.hardware_version))
+    syncs to its Kelvin slider; both bars of a bar-switch device). ``span`` is the Kelvin range the
+    frame was built with (:func:`kelvin_range`), so the state follows what was sent."""
+    kelvin = build.rgb_as_kelvin(*rgb, profile.color_scheme, span)
     if kelvin is None:
         state.rgb_color, state.color_temp_kelvin = rgb, None
     else:
@@ -234,7 +236,9 @@ def _apply_mode(profile: DeviceProfile, state: DeviceState, m: Any) -> None:
     A scene report clears the colours, as a scene activation does. A colour report folds by what its
     layout carries (:func:`parse.mode_color`): a Kelvin alone is authoritative for the Kelvin
     (:func:`apply_kelvin_report`: 0 means "not in colour-temperature mode", as on the bar path and in
-    the 0x0d report, so it clears ``color_temp_kelvin``); the bars' pair sets the per-bar Kelvin; a colour
+    the 0x0d report, so it clears ``color_temp_kelvin``, except where the report carries no Kelvin,
+    ``DeviceProfile.mode_reports_kelvin`` False: the H61A8, whose 0 leaves the Kelvin the library sent);
+    the bars' pair sets the per-bar Kelvin; a colour
     layout sets the colour or the colour temperature. A sub-mode the SKU's parse ignores leaves the
     colour as it was.
 

@@ -67,8 +67,8 @@ _C = Capability
 #    profile may use it): no colour temperature at all (build.color_temp / segment_color_temp).
 #  - h6006 / h6188 (0x0d): no segment mask in any colour frame (Bytes.f / p / A), so no SEGMENTS.
 #  - h6061: whole-device only; per-panel colour needs the user's layout, which is not modelled.
-# Narrower gaps inside a capability (H61A8 has SEGMENTS but no per-segment brightness) stay with
-# the builder, whose GoveeBleNotSupported the Device re-raises with the SKU.
+# Narrower gaps inside a capability (scheme h61a8 has SEGMENTS but no per-segment brightness) stay
+# with the builder, whose GoveeBleNotSupported the Device re-raises with the SKU.
 _SCHEME_LACKS: Final[Mapping[str, frozenset[Capability]]] = MappingProxyType({
     "h61a8": frozenset({_C.COLOR_TEMP}),
     "h6006": frozenset({_C.SEGMENTS}),
@@ -226,15 +226,20 @@ class DeviceProfile:
     ``BleOpV4.onEventSwitchV2`` -> ``G()``). Best effort: a failure is only logged."""
     kelvin_by_hardware: tuple[tuple[str, int, int], ...] = field(default=(), kw_only=True)
     """Kelvin ranges that replace [:attr:`min_kelvin`, :attr:`max_kelvin`] from a hardware version up:
-    ``(min_hard_version, min_kelvin, max_kelvin)`` entries, the first whose version the device's
-    hardware version (``aa 07 03``) is at least, compared as strings, as the app does
-    (``KelvinConfig.Config.z2``: ``versionHard >= "3.08.01"``; devices.yaml ``kelvin_by_firmware``).
+    ``(min_hard_version, min_kelvin, max_kelvin)`` entries, highest version first, of which the first
+    the device's hardware version (``aa 07 03``) is at least applies, compared as strings, as the app
+    does (``KelvinConfig.Config.z2``: ``versionHard >= "3.08.01"``; devices.yaml ``kelvin_by_firmware``).
     Until the hardware version is read, the range valid on every revision applies: the base range cut to
-    each entry's (``Device.min_kelvin`` / ``max_kelvin`` give the range in force)."""
+    each entry's (``Device.min_kelvin`` / ``max_kelvin`` give the range in force). Needs both
+    :attr:`min_kelvin` and :attr:`max_kelvin`; each entry must overlap the base range, and so must the
+    range valid on every revision."""
     mode_reports_kelvin: bool = field(default=True, kw_only=True)
     """Whether the ``aa 05`` mode report carries the Kelvin of a colour-temperature write. False where it
-    reads 0 after one (H61A8: ``15 01 00 00`` after either write, bench 2026-10-17): a report of Kelvin 0
-    then leaves the Kelvin the library sent, as the app's screen keeps what it set."""
+    reads 0 after one (H61A8: ``15 01 00 00`` after either write, bench 2026-10-17): a colour report of
+    Kelvin 0 or below then leaves ``color_temp_kelvin`` as the library set it, as the app's screen keeps
+    what it set. Only an RGB or scene write, or a scene report, clears it. Since the device reports
+    ``15 01 00 00`` after an RGB write too, a Kelvin the library sent stays in state across a colour
+    change made elsewhere (the Govee app)."""
 
     def __post_init__(self) -> None:
         """Validate each field: GoveeBleInvalidValue (a ValueError) on a value no Device can use.
@@ -294,11 +299,30 @@ class DeviceProfile:
                 f"{where}: color_readback_ic_per_piece={self.color_readback_ic_per_piece!r}")
         if isinstance(self.kelvin_by_hardware, list):
             object.__setattr__(self, "kelvin_by_hardware", tuple(map(tuple, self.kelvin_by_hardware)))
-        for entry in self.kelvin_by_hardware:
+        self._check_kelvin_by_hardware(where)
+
+    def _check_kelvin_by_hardware(self, where: str) -> None:
+        """:attr:`kelvin_by_hardware`'s rules: well-formed entries, highest version first, a base range,
+        and an overlap with it for each entry and for the range valid on every revision."""
+        gated = self.kelvin_by_hardware
+        if not gated:
+            return
+        bad = f"{where}: kelvin_by_hardware={gated!r}"
+        for entry in gated:
             if not (isinstance(entry, tuple) and len(entry) == 3 and isinstance(entry[0], str) and entry[0]
                     and all(isinstance(k, int) and not isinstance(k, bool) for k in entry[1:])
                     and 0 < entry[1] <= entry[2]):
-                raise GoveeBleInvalidValue(f"{where}: kelvin_by_hardware={self.kelvin_by_hardware!r}")
+                raise GoveeBleInvalidValue(bad)
+        lo, hi = self.min_kelvin, self.max_kelvin
+        if lo is None or hi is None:
+            raise GoveeBleInvalidValue(f"{bad} needs min_kelvin and max_kelvin")
+        versions = [entry[0] for entry in gated]
+        if versions != sorted(versions, reverse=True) or len(set(versions)) != len(versions):
+            raise GoveeBleInvalidValue(f"{bad}: list the versions highest first, once each")
+        if any(k_lo > hi or k_hi < lo for _version, k_lo, k_hi in gated):
+            raise GoveeBleInvalidValue(f"{bad}: each range must overlap [{lo}, {hi}]")
+        if max(lo, *(e[1] for e in gated)) > min(hi, *(e[2] for e in gated)):
+            raise GoveeBleInvalidValue(f"{bad}: no range is valid on every revision")
 
 
 def _where(p: DeviceProfile) -> str:
@@ -391,7 +415,8 @@ PROFILES: Final[tuple[DeviceProfile, ...]] = (
         color_readback="mechanism_a_direct", color_readback_per_batch=4, gradual=True,
         mode_color_parse="kelvin_15",
     ),
-    # H61A8 — rope: plaintext, 0x0b scheme, 15 segments, no CCT, dialect-A scenes.
+    # H61A8 — rope: plaintext, the h60a6 0x15 scheme (colour, CCT, per-segment brightness: see below),
+    # 15 segments, dialect-A scenes.
     # Mechanism-B per-segment colour read-back (spec Change 7): 0xAA 0xA5 (V2, adds
     # brightness) / 0xA2 (V1) per-batch frames, segment = (batch_seq-1)*per_batch+i.
     # 15 segments / 3-per-batch = 5 batches. Modeled from source; read back live from the bench

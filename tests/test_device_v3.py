@@ -220,9 +220,14 @@ def test_zone_and_segment_color_temp() -> None:
     asyncio.run(d2.set_segment_color_temp([0, 1, 2], 3000))
     assert _sent(d2)[0][12:14] == bytes([0x07, 0x00])        # mask {0,1,2}
 
-    # capability gating: no COLOR_TEMP (H61A8) / no SEGMENTS (bulb) -> not supported
-    with pytest.raises(GoveeBleNotSupported):
-        asyncio.run(_dev("H61A8").set_zone_color_temp("segment", 3000))
+    # capability gating: no COLOR_TEMP (a plug: every colour-temperature path) / no SEGMENTS (bulb) -> not
+    # supported, and nothing sent
+    plug = _dev("H5080")
+    for call in (lambda d: d.set_color_temp(3000), lambda d: d.set_segment_color_temp([0], 3000),
+                 lambda d: d.set_zone_color_temp("main", 3000), lambda d: d.turn_on(kelvin=3000)):
+        with pytest.raises(GoveeBleNotSupported):
+            asyncio.run(call(plug))
+    assert _sent(plug) == []
     with pytest.raises(GoveeBleNotSupported):
         asyncio.run(_dev("H6006").set_segment_color_temp([0], 3000))
 

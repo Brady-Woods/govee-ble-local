@@ -433,21 +433,22 @@ class Device:
 
     def _check_kelvin(self, kelvin: int) -> int:
         """The Kelvin that goes on the wire (and into ``state``) for ``kelvin``: clamped to the
-        profile range, then rounded to the 100 K grid, as the app does
+        device's range (:attr:`min_kelvin` / :attr:`max_kelvin`, which may follow its hardware version),
+        then rounded to the 100 K grid, as the app does
         (:func:`build.normalize_kelvin`). Out-of-range input is clamped, not rejected; only a
         non-int raises GoveeBleInvalidValue."""
         return build.normalize_kelvin(kelvin, self.min_kelvin, self.max_kelvin)
 
-    def _color_rgb_frames(self, rgb: tuple[int, int, int]) -> list[bytes]:
+    def _color_rgb_frames(self, rgb: tuple[int, int, int], span: tuple[int, int] | None) -> list[bytes]:
         """Frames for a whole-device RGB pick: one, except on a profile whose colour scheme writes the
         panels in groups (``h6061``: ``ceil(n/4)`` frames over :attr:`segment_count` panels). On every
         scheme with a colour-temperature mode, a colour that is exactly one of the app's Kelvin tint
-        colours within the SKU's range is the single CCT frame instead, as the app sends it
+        colours within the Kelvin range ``span`` (:meth:`_kelvin_range`, taken once per write so the
+        frame and the state agree) is the single CCT frame instead, as the app sends it
         (:func:`build.rgb_as_kelvin`)."""
         r, g, b = rgb
         return self._build_or_unsupported(
-            build.color_rgb_frames, r, g, b, self.profile.color_scheme, self.segment_count,
-            self._kelvin_range())
+            build.color_rgb_frames, r, g, b, self.profile.color_scheme, self.segment_count, span)
 
     def update_ble_device(self, ble_device: BLEDevice) -> None:
         """Swap in a fresh BLEDevice (e.g. a new scanner path) for later connects."""
@@ -648,9 +649,10 @@ class Device:
         if pct is not None:
             self._require(Capability.BRIGHTNESS)
             frames.append(self._brightness_frame(pct))
+        span = self._kelvin_range()   # once: the frame and the state use the same range
         if pick is not None:
             self._require(Capability.RGB)
-            frames += self._color_rgb_frames(pick)
+            frames += self._color_rgb_frames(pick, span)
         elif kelvin is not None:
             self._require(Capability.COLOR_TEMP)
             frames.append(self._build_or_unsupported(
@@ -664,7 +666,7 @@ class Device:
             if pct is not None:
                 self._state.brightness = pct
             if pick is not None:
-                _fold.apply_rgb(self.profile, self._state, pick)
+                _fold.apply_rgb(self.profile, self._state, pick, span)
             elif kelvin is not None:
                 _fold.apply_kelvin(self.profile, self._state, kelvin)
 
@@ -699,17 +701,19 @@ class Device:
         self._require(Capability.RGB)
         pick = _check_rgb(rgb)
         await self._ensure_segment_count()
-        await self._commit(self._color_rgb_frames(pick),
-                           lambda: _fold.apply_rgb(self.profile, self._state, pick))
+        span = self._kelvin_range()   # once: the frame and the state use the same range
+        await self._commit(self._color_rgb_frames(pick, span),
+                           lambda: _fold.apply_rgb(self.profile, self._state, pick, span))
 
     async def set_color_temp(self, kelvin: int) -> None:
         """Set the whole-device colour temperature (clears rgb and active scene).
 
         Raises GoveeBleNotSupported without COLOR_TEMP and GoveeBleInvalidValue for a non-int;
         GoveeBleError if a device that reports its own segment count (H6062) does not answer
-        that read. Like the app, an out-of-range value is clamped to the profile's kelvin range
-        (not rejected) and then rounded to the nearest 100 K, the only values the app sends; the
-        Kelvin actually sent is what ``state`` keeps, and the frame carries the app's tint."""
+        that read. Like the app, an out-of-range value is clamped to the device's Kelvin range
+        (:attr:`min_kelvin` / :attr:`max_kelvin`; not rejected) and then rounded to the nearest 100 K,
+        the only values the app sends; the Kelvin actually sent is what ``state`` keeps, and the frame
+        carries the app's tint."""
         self._require(Capability.COLOR_TEMP)
         sent = self._check_kelvin(kelvin)
         await self._ensure_segment_count()

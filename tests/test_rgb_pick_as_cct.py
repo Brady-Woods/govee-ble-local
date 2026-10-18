@@ -18,6 +18,7 @@ a hex literal checked against them; none of it is hardware-verified."""
 from __future__ import annotations
 
 import asyncio
+from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
@@ -356,6 +357,32 @@ def test_h61a8_sends_the_apps_0x15_frames() -> None:
     asyncio.run(d.set_color_temp(2700))
     assert [f.hex() for f in _sent(d)] == [H61A8_BENCH_RED, H61A8_BENCH_2700K, H61A8_BENCH_2700K]
     assert d.state.rgb_color is None and d.state.color_temp_kelvin == 2700
+    # A tint pick follows the range in force: 2000 K's tint is a CCT pick only at HW 3.01.10 ([2000, 9000]);
+    # unknown hardware ([2700, 6500], valid on every revision) and 3.08.01 send it as RGB.
+    tint_2000 = (0xFF, 0x8D, 0x0B)
+    as_cct = _cct15(2000, tint_2000, 0xFF, 0x7F)
+    assert as_cct.hex().endswith("f3")
+    for hardware, frame_, state in ((None, None, (tint_2000, None)), ("3.01.10", as_cct, (None, 2000)),
+                                    ("3.08.01", None, (tint_2000, None))):
+        h = _dev("H61A8")
+        h._state.hardware_version = hardware
+        asyncio.run(h.set_rgb(tint_2000))
+        rgb_frame = _frame(0x33, 0x05, 0x15, 0x01, *tint_2000, 0, 0, 0, 0, 0, 0xFF, 0x7F)   # Bytes.h
+        assert _sent(h) == [frame_ or rgb_frame], hardware
+        assert (h.state.rgb_color, h.state.color_temp_kelvin) == state, hardware
+    # One range per write: an aa 07 03 that lands mid-write (here, before the state is applied) changes
+    # neither the frame nor the state it records.
+    race = _dev("H61A8")
+    race._state.hardware_version = "3.01.10"
+    commit = race._commit
+
+    async def hardware_lands(frames: Any, apply: Any) -> None:
+        race._state.hardware_version = "3.08.01"
+        await commit(frames, apply)
+
+    race._commit = hardware_lands  # type: ignore[method-assign]
+    asyncio.run(race.set_rgb(tint_2000))
+    assert _sent(race) == [as_cct] and (race.state.rgb_color, race.state.color_temp_kelvin) == (None, 2000)
 
 
 # ── state after a conversion: Kelvin, no rgb (the app syncs the Kelvin) ──────

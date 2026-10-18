@@ -40,6 +40,13 @@ model, from which the shipped readers are generated).
   `"rgb_kelvin"`, the default, `"rgb_kelvin_tint"`, `"rgb_0d"`, `"kelvin"`, `"kelvin_15"` or
   `"rgb_kelvin_0d"`). `identify.parse_broadcast_onoff` gains a keyword-only `on_mask`; the default keeps the
   lights' `== 1` rule.
+- `DeviceProfile.kelvin_by_hardware` and `DeviceProfile.mode_reports_kelvin`, keyword-only and defaulted:
+  - `kelvin_by_hardware` holds Kelvin ranges by hardware version, highest version first, compared as
+    strings as the app does. `Device.min_kelvin` / `max_kelvin` give the range in force: until `aa 07 03`
+    is read, the range valid on every revision. A profile must give both base ends, and each range must
+    overlap the base.
+  - `mode_reports_kelvin` says whether the `aa 05` report carries a colour-temperature write's Kelvin. It
+    is False on the H61A8 (see Changed, A8).
 - Helpers: `wire.parse.parse_mode_rgb_kelvin_tint`, `parse_mode_0d_rgb`, `parse_mode_0d_for(frame, scheme)`
   and `SUBMODE4COLOR_SUB_MODES`, and the `wire.parse.GroupRecord` type; `wire.reassemble.burst_chunks`
   and `read_status_stream` (the 0xAC completeness rule and the status stream's root read, shared by the
@@ -67,7 +74,8 @@ model, from which the shipped readers are generated).
   report with a Kelvin of 0 or below (H60A6, H6062, H6641, H61A8) keeps it, as `SubMode4Color` takes a
   Kelvin only when it is > 0 (`OpInfo4Detail.parseModeValidBytes:766-778`; pact_h60a0 h60a1
   `Info4Detail.Q:399-406`); on H6047 it follows the bars only while both report the same Kelvin (h6047
-  detail `Info4Detail` ctor strategy :173-185). Writes set it too. Modeled from the decompiled app.
+  detail `Info4Detail` ctor strategy :173-185). Writes set it too. Modeled from the decompiled app. On the
+  H61A8, whose report carries no Kelvin, `color_temp_kelvin` stays as well (`mode_reports_kelvin`).
 - `wire.parse.parse_light_power`: an `aa 01` reply as a light reads it, on only for a byte of 1 (the spec's
   `switch_read_reply.light_is_on`); `parse_power` keeps the raw byte for the plugs' relay mask.
 - `GoveeConnection(session_frames=...)`: writes sent once per connection after the unlock, whose refusal
@@ -110,12 +118,13 @@ model, from which the shipped readers are generated).
     the device answers the 0x0b frame with status 01. The new RGB and 2700 K frames are byte for byte the
     ones acked 00 on the bench on 2026-10-17, and both recoloured all 15 segments.
   - After either write the device's `aa 05` reads `15 01 00 00`, so the report carries no Kelvin. On the
-    H61A8, a report of Kelvin 0 or below now leaves the Kelvin the library sent. This is a library state
-    rule and changes no frames: an RGB or scene write, or a report of another mode, still clears it.
-  - New `DeviceProfile` fields, keyword-only and defaulted:
-    - `kelvin_by_hardware`: Kelvin ranges by hardware version. `Device.min_kelvin` / `max_kelvin` give the
-      range in force: the range valid on every revision until `aa 07 03` is read, then the gated one.
-    - `mode_reports_kelvin`: False where the report carries no Kelvin.
+    H61A8, a colour report of Kelvin 0 or below now leaves the Kelvin the library sent. This is a library
+    state rule and changes no frames. Only an RGB or scene write, or a scene report, clears it; other
+    sub-modes leave it, as on every SKU. Because the H61A8 reports `15 01 00 00` after an RGB write too, a
+    Kelvin the library sent stays in state across a colour change made in the Govee app.
+  - The range and the report rule are the new `DeviceProfile` fields `kelvin_by_hardware` and
+    `mode_reports_kelvin` (see Added). An RGB pick reads the range once, so the frame and the state agree
+    even if `aa 07 03` lands mid-write.
   - The `h61a8` scheme stays for custom profiles; no built-in profile uses it now. It is the app's 0x0b
     colour instruction 3, used by goodsTypes 17, 18, 13, 3, 21 and 123 and by the old H6163 / H6117.
     Removing it is left for a major release.
