@@ -39,3 +39,9 @@ def shown_hex(frame: bytes) -> str:
     the secret, else as it is."""
     data = bytes(frame)
     return (mask_secret(data) if carries_secret(data) else data).hex()
+
+
+def shown_error(frame: bytes, exc: BaseException) -> str:
+    """A reader exception about ``frame`` for a log line or an issue text: only its type for a frame that
+    carries the secret (a ``valid`` failure's message would quote the field it read), else its repr."""
+    return type(exc).__name__ if carries_secret(bytes(frame)) else repr(exc)

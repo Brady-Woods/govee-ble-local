@@ -782,13 +782,19 @@ model, from which the shipped readers are generated).
   zeroes every data byte.
 
 ### Security
-- The account-lock secret no longer reaches the wire layer's log lines or exception text in the clear. A
-  reply that doesn't parse used to be logged as its full hex, so a malformed `aa b1` secret reply showed the
-  secret. `parse.request_command`'s error named the frame it was given, so a `33 b2` secret write handed to
-  it carried the secret into the exception message.
+- The wire layer masks the account-lock secret in its own log lines and exception text. This is defence in
+  depth for callers that hand `wire.parse` a frame directly (tools, tests, integrators). Neither site fires
+  from the shipped runtime: the connection drops a notification that isn't 20 bytes or fails its checksum
+  before any parse, and `Device` only hands `request_command` the `aa` reads it builds.
+  - Before, a reply that didn't parse was logged as its full hex, so a malformed `aa b1` secret reply (or a
+    `33 b2` frame too short for a write ack) showed the secret. `parse.request_command`'s error named the
+    frame it was given, so a `33 b2` secret write handed to it carried the secret into the exception
+    message.
   - Every frame logged or named in `wire/` now goes through `wire.redact.shown_hex`, which masks a
-    `33 b2` / `aa b1` frame by its two header bytes, so a frame whose body doesn't parse is masked too. The
-    only bytes still shown are field values, never whole frames.
+    `33 b2` / `aa b1` frame by its two header bytes, so a frame whose body doesn't parse is masked too. For
+    such a frame the reader's exception is shown by its type only (`wire.redact.shown_error`), since a
+    `valid` failure's message quotes the field it read; that applies to `describe`'s parse-error issues
+    as well. The only bytes still shown are field values, never whole frames.
   - The masking helpers moved from `transport.connection` to `wire.redact` (`carries_secret`,
     `mask_secret`). The frame capture, the connection's bad-checksum log and `tools/decrypt_btsnoop.py`
     use them from there.

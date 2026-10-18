@@ -27,7 +27,7 @@ from ..models import Segment
 from . import _spec
 from ._spec import Common as _C, State as _S
 from .build import INFO_BASIC, INFO_HARD, INFO_SN, INFO_WIFI, SUB_COLOR_0D, SUB_COLOR_15, SUB_SCENE
-from .redact import shown_hex
+from .redact import shown_error, shown_hex
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -74,7 +74,8 @@ def _reply(frame: bytes, prof: Any = _REPLY) -> Any:
         f = _spec.read_frame(frame, _spec.RX, prof)
     except Exception as exc:  # noqa: BLE001 - unknown enum / truncated frame -> not for us
         # A matched reply that won't parse is worth a breadcrumb (unknown enum / truncated).
-        _LOGGER.debug("frame did not parse against the spec: %s (%r)", shown_hex(frame), exc)
+        _LOGGER.debug("frame did not parse against the spec: %s (%s)", shown_hex(frame),
+                      shown_error(frame, exc))
         return None
     return None if f.pro_type != _C.ProType.read else f.body
 

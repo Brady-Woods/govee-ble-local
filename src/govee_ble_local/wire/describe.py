@@ -39,6 +39,7 @@ from . import _spec
 from . import reassemble as _reassemble
 from ._spec import Common as _C, Frame as _F
 from .parse import parse_write_ack
+from .redact import shown_error
 
 _ProType = _C.ProType
 _Command = _C.Command
@@ -107,7 +108,7 @@ def describe_frame(plain: bytes, direction: str = "?") -> tuple[str, list[Issue]
     try:
         f = _spec.read_frame(plain, d, _DESCRIBE)
     except Exception as exc:  # noqa: BLE001 - any reader failure on a valid frame is a spec gap
-        return ("parse_error", [("hard", f"kaitai parse failed: {exc!r}")])
+        return ("parse_error", [("hard", f"kaitai parse failed: {shown_error(plain, exc)}")])
 
     pt = f.pro_type
     if not isinstance(pt, _ProType):
@@ -153,7 +154,8 @@ def _describe_status(plain: bytes, direction: str) -> tuple[str, list[Issue]]:
     try:
         req = _spec.read_frame(plain, _spec.TX, _spec.PLAIN).body
     except Exception as exc:  # noqa: BLE001 - a request the spec can't read is a gap
-        return ("parse_error", [("hard", f"kaitai parse failed on the 0xAC request: {exc!r}")])
+        why = shown_error(plain, exc)
+        return ("parse_error", [("hard", f"kaitai parse failed on the 0xAC request: {why}")])
     args = getattr(req, "args", None)
     return (f"status-request/{0 if args is None else len(args.types)}", [])
 
