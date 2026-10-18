@@ -42,14 +42,27 @@ TYPE_ZONE = int(_C.Command.cmd_30)               # 0x30
 TYPE_SEG_INFO = int(_C.Command.cmd_41)           # 0x41: the seg / IC info (power memory) TLV
 TYPE_COLOR_GROUP = int(_C.Command.color_group)   # 0xA5
 # The status screen's 0x05 facts beyond the device's colour decode: the H60A6's (the one readback "status"
-# profile; devices.yaml h60ax wire.mode), from h60a1 Info4Detail.Q, which its status lambda hands the
-# TLV value (split_h60ax/com/govee/pact_h60a0/adjust/h60a1/Info4Detail.java:122-125, 380-433): the V2
-# music layout, and an empty or short value fails the whole read.
+# profile; devices.yaml h60ax wire.mode), from h60a1 Info4Detail.Q:380-433, which its status lambda hands
+# the TLV value: the V2 music layout (the SubMode4MusicV2 of Info4Detail.<init>:122-125), and an empty or
+# short value fails the whole read.
 _STATUS_MODE: Final = {"music": int(_C.MusicDecode.v2_default), "empty_fails": True}
 _COLOR_DECODES: Final = ("c02", "c0b", "c0d", "c14", "c15")
+# The tags whose value parse_status reads fields of (the mode's is kept whole, None when it is empty).
+_READS_A_VALUE: Final = frozenset({TYPE_SWITCH, TYPE_BRIGHTNESS, TYPE_ZONE, TYPE_DEVICE_INFO})
 # The brightness a successful status read applies when its stream has no 0x04 TLV: DeviceBaseInfoFromDevice's
 # default (base-classes11 .../newdetail/ble/controller/DeviceBaseInfoFromDevice.java:70-79, f = 100).
 _SUCCESS_BRIGHTNESS = 100
+
+
+def _h60a6_decode() -> Any:
+    """The H60A6's wire profile (``devices.profile.wire_profile``), the decode a status read takes when it is
+    given none: the H60A6 is the one device whose readback is the status read."""
+    from ..devices.profile import profile_for, wire_profile   # devices imports wire: resolved at call time
+
+    h60a6 = profile_for("H60A6")
+    if h60a6 is None:
+        raise RuntimeError("the H60A6 is missing from the profile table")
+    return wire_profile(h60a6)
 
 
 def status_profile(pieces: int | None, decode: Any = None) -> Any:
@@ -60,10 +73,11 @@ def status_profile(pieces: int | None, decode: Any = None) -> Any:
     screen's rule (``by_pieces``: the last of the ``ceil(pieces / 4)`` groups holds the remainder, each
     placed by its group byte); ``pieces`` None (no device context, e.g. the analyzer) counts each group's
     records from its TLV's len (``from_len``). The 0x05 value is read with ``decode``'s colour decode (the
-    device's ``devices.profile.wire_profile``; None: no colour decode) and the screen's music layout and
+    device's ``devices.profile.wire_profile``; None: the H60A6's) and the screen's music layout and
     empty-value rule (:data:`_STATUS_MODE`)."""
     rule = _C.GroupCountRule.from_len if pieces is None else _C.GroupCountRule.by_pieces
-    colour = {} if decode is None else {c: int(getattr(decode.mode, c)) for c in _COLOR_DECODES}
+    mode = (_h60a6_decode() if decode is None else decode).mode
+    colour = {c: int(getattr(mode, c)) for c in _COLOR_DECODES}
     return _spec.profile(
         f_30=int(_C.Form30.zone_power), f_41=int(_C.Form41.power_memory),
         f_a5=int(_C.FormA5.color_group), group_rule=int(rule), num_per_group=_RECORDS_PER_GROUP,
@@ -250,9 +264,9 @@ def read_status_stream(buf: bytes, *, pieces: int | None = None, decode: Any = N
     stepped by ``2 + len`` until fewer than three bytes remain, which it keeps as its ``tail`` (u() stops
     cleanly there, :257-267, :271-282). A tag 0 record is walked on, as u() hands it to the screen's
     fallback lambda. Where the read stops, the app's whole read fails: a len byte of 0x80 or more (u()
-    reads it signed, ``new byte[len]`` throws; ``len_value`` valid max 0x7f), a value past the buffer's
-    end (``System.arraycopy`` throws), or a value its type can't read. The stream's ``tlvs`` then end with
-    the record it stopped in (:func:`._spec.read_partial`)."""
+    reads the len signed and fails on a negative one; the spec's ``len_value`` is valid only up to 0x7f),
+    a value that runs past the stream's end (u()'s copy of it throws), or a value its type can't read. The
+    stream's ``tlvs`` then end with the record it stopped in (:func:`._spec.read_partial`)."""
     return _spec.read_partial(_spec.StatusStream, buf, status_profile(pieces, decode))
 
 
@@ -285,7 +299,8 @@ def parse_status(frames: list[bytes], *, pieces: int | None = None, decode: Any 
     reassembled buffer is then read in one go (:func:`read_status_stream`), each TLV's value the
     ``govee_state`` of its tag on the status path — switch / brightness / mode / zone / seg-info / colour
     groups / ``0x07`` device-info. No client-side TLV or value hand-parsing. ``decode`` is the device's
-    wire profile (``devices.profile.wire_profile``): its colour decode reads the 0x05 mode value.
+    wire profile (``devices.profile.wire_profile``): its colour decode reads the 0x05 mode value. None
+    (the default, as in 1.3.0) reads it with the H60A6's, the one device whose readback is this read.
 
     Only a complete burst is decoded (:func:`burst_chunks`): the app applies nothing from one that lost
     a chunk or its last packet, or whose chunks came out of order. A stream that ends in a 0-2 byte tail
@@ -356,6 +371,14 @@ def parse_status(frames: list[bytes], *, pieces: int | None = None, decode: Any 
                           int(tlv.len_value))
             return StatusReply()
         v: Any = getattr(tlv.value, "body", None)
+        if typ == TYPE_ZONE:
+            v = getattr(v, "body", None)   # the zone_bits
+        if v is None and typ in _READS_A_VALUE:
+            # The spec flags every empty value these reads need (app_read_fails); one it doesn't flag fails
+            # the read here as well, rather than raising out of the device's poll.
+            _LOGGER.debug("status reply: TLV 0x%02x (len %d) has no value to read; no state used", typ,
+                          int(tlv.len_value))
+            return StatusReply()
         if typ == TYPE_SWITCH:
             # power_state.is_on on the status path: != 0, as the app's status walker reads it
             # (Compose4BaseInfoSingleRead.u), unlike a light's aa 01 reply (== 1; approval item A4).
@@ -367,7 +390,7 @@ def parse_status(frames: list[bytes], *, pieces: int | None = None, decode: Any 
         elif typ == TYPE_ZONE:
             # bit0 of each byte (VM4LightH60A6$afterConnectedSingleReadDeviceInfo$1.o:
             # ParseUtils.getBit2Boolean(b, 1) = (b >> 0) & 1); the other bits are not zone power.
-            st.zone_power = {0: bool(v.body.zone_a_on), 1: bool(v.body.zone_b_on)}   # zone_bits: bit 0
+            st.zone_power = {0: bool(v.zone_a_on), 1: bool(v.zone_b_on)}   # zone_bits: bit 0
         elif typ == TYPE_DEVICE_INFO:
             # Compose4BaseInfoSingleRead.w reads only the basic (0x10) and Wi-Fi (0x11) blocks here; it
             # logs any other selector and skips it (device_info_record.app_decodes).

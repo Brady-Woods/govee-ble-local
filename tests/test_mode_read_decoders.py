@@ -105,14 +105,8 @@ def test_h60a6s_empty_mode_value_is_read_past_and_every_other_failure_still_fail
     for after in (b"\x01", b"\x01\x01", bytes([0x04, 0x01, 0x32]), bytes([0x05, 0x00, 0x01, 0x01, 0x01])):
         assert read(bytes([0x05, 0x00]) + after).brightness is not None, after.hex()
     assert read(bytes([0x01, 0x01, 0x01, 0x05, 0x00])).is_on is True
-    # Every other value the app's read fails on still fails it: the empty switch, brightness, device-info,
-    # timers, zones, power memory and colour group, a mode value short of its layout, a short timer list
-    # and a colour group short of its records.
-    switch, bri = bytes([0x01, 0x01, 0x01]), bytes([0x04, 0x01, 0x32])
-    for bad in ([0x01, 0x00], [0x04, 0x00], [0x07, 0x00], [0x23, 0x00], [0x30, 0x00], [0x41, 0x00],
-                [0xA5, 0x00], [0x05, 0x03, 0x15, 0x01, 0x0A], [0x05, 0x01, 0x04], [0x23, 0x01, 0x00],
-                [0xA5, 0x05, 0x01, 0x32, 1, 2, 3]):
-        assert read(switch + bytes(bad) + bri) == reassemble.StatusReply(), bytes(bad).hex()
+    # Every other value the app's read fails on still fails it, a short mode value included
+    # (test_app_burst_rules.test_the_h60a6_status_read_fails_where_its_screen_does).
 
 
 def test_the_signed_kelvin_tests_come_from_the_spec() -> None:

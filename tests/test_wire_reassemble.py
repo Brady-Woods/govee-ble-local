@@ -58,7 +58,8 @@ def test_out_of_order_chunks_are_not_reassembled() -> None:
 def test_parse_status_stops_on_padding() -> None:
     # The last chunk contributes only its lastLen bytes (AbsController4BleSingleSendMultiBack.h), so
     # the real burst ends exactly on its last TLV. A zero-padded buffer (lastLen counting the pad)
-    # still parses cleanly: the generated status_reply reader stops on the type-0 sentinel.
+    # still reads whole: the 5 zero bytes are two empty tag-0 records, walked on as u() hands them to the
+    # screen's fallback lambda, and a 1-byte tail.
     frames = [bytes.fromhex(h) for h in _BURST]
     buf = r.reassemble(frames)
     assert buf.endswith(bytes.fromhex("a5050464ff0000"))     # the last colour group, no pad

@@ -14,9 +14,10 @@ import pytest
 from fake_ble import FakeGovee, ble_device, frame
 
 from govee_ble_local.devices.device import make_device
+from govee_ble_local.devices.profile import profile_for, wire_profile
 from govee_ble_local.transport import connection as conn_mod
 from govee_ble_local.transport.connection import GoveeConnection
-from govee_ble_local.wire import build
+from govee_ble_local.wire import _spec, build, describe, parse
 from govee_ble_local.wire import reassemble as r
 
 # Real captured H60A6 0xAC status burst (13 segments, both zones on, brightness 80).
@@ -238,6 +239,61 @@ def test_a_tlv_cut_by_the_buffers_end_stops_cleanly(tail: bytes) -> None:
 ])
 def test_what_u_throws_on_gives_no_state(stream: bytes) -> None:
     assert _status(stream) == r.StatusReply()
+
+
+# The values the H60A6 status screen's read fails on (govee_state app_read_fails, under
+# reassemble.status_profile with the H60A6's wire profile), each mid-stream: a TLV follows, so none is the
+# stream's 2-byte tail. Compose4BaseInfoSingleRead.u hands each value to
+# VM4LightH60A6$afterConnectedSingleReadDeviceInfo$1.o (0x30 / 0x41 / 0xA5) and h60a1 Info4Detail.Q (0x05);
+# a throw fails the whole read. The empty 0x05 is the H60A6's own and is read past
+# (test_mode_read_decoders.test_h60a6s_empty_mode_value_is_read_past_and_every_other_failure_still_fails).
+_SCREEN_FAILS = [
+    [0x01, 0x00], [0x04, 0x00], [0x07, 0x00], [0x23, 0x00], [0x30, 0x00], [0x41, 0x00], [0xA5, 0x00],  # empty
+    [0x23, 0x01, 0x00],                      # a timer list short of its record
+    [0x05, 0x03, 0x15, 0x01, 0x0A],          # a mode value short of its sub-mode's layout
+    [0x05, 0x01, 0x04],
+    [0x05, 0x03, 0x13, 0x01, 0x50],          # music short of the V2 layout's colour flag (_STATUS_MODE)
+    [0xA5, 0x05, 0x01, 0x32, 1, 2, 3],       # a colour group short of its records
+]
+# ... and values it reads whole, so the records after them apply.
+_SCREEN_READS = [
+    [0x40, 0x00], [0x40, 0x01, 0x05], [0xA3, 0x00],   # its lambda reads neither: forms f_40 / f_a3 unknown
+    [0x00, 0x00], [0x00, 0x01, 0x07],                # a tag 0 is walked on (u() hands it to the fallback)
+    [0x05, 0x04, 0x13, 0x01, 0x50, 0x00],            # music with the V2 layout's colour flag
+]
+
+
+@pytest.mark.parametrize(("value", "reads"), [(bytes(v), False) for v in _SCREEN_FAILS]
+                         + [(bytes(v), True) for v in _SCREEN_READS],
+                         ids=[bytes(v).hex() for v in _SCREEN_FAILS + _SCREEN_READS])
+def test_the_h60a6_status_read_fails_where_its_screen_does(value: bytes, reads: bool) -> None:
+    h60a6 = profile_for("H60A6")
+    assert h60a6 is not None
+    st = r.parse_status(_chunk(bytes([0x01, 0x01, 0x01]) + value + bytes([0x04, 0x01, 0x32])), pieces=13,
+                        decode=wire_profile(h60a6))
+    assert ((st.is_on, st.brightness) == (True, 0x32)) if reads else st == r.StatusReply()
+
+
+def test_a_value_the_spec_leaves_unflagged_still_fails_the_read(monkeypatch: pytest.MonkeyPatch) -> None:
+    # parse_status reads fields of the switch, brightness, zone and device-info values. Were the spec to
+    # stop flagging an empty one (app_read_fails), the read still fails, rather than raising out of the poll.
+    monkeypatch.setattr(_spec.StatusStream.StatusTlv, "app_read_fails", property(lambda self: False))
+    for empty in ([0x01, 0x00], [0x04, 0x00], [0x07, 0x00], [0x30, 0x00]):
+        assert _status(bytes([0x01, 0x01, 0x01, *empty, 0x04, 0x01, 0x32])) == r.StatusReply(), empty
+
+
+def test_without_a_decode_the_status_read_takes_the_h60a6s() -> None:
+    # parse_status(decode=None), 1.3.0's call, and the analyzer read the 0x05 value with the H60A6's colour
+    # decode (the one device whose readback is this read): a 0x15 value short of its layout fails both.
+    h60a6 = profile_for("H60A6")
+    assert h60a6 is not None
+    report = _chunk(bytes([0x01, 0x01, 0x01, 0x05, 0x04, 0x15, 0x01, 0x0A, 0x8C, 0x04, 0x01, 0x32]))
+    assert parse.mode_color(r.parse_status(report).mode) == parse.mode_color(
+        r.parse_status(report, decode=wire_profile(h60a6)).mode) == parse.KelvinReport(kelvin=2700)
+    short = _chunk(bytes([0x01, 0x01, 0x01, 0x05, 0x03, 0x15, 0x01, 0x0A, 0x04, 0x01, 0x32]))
+    assert r.parse_status(short) == r.StatusReply()
+    assert describe.status_burst_report(short).gaps == [
+        "0xAC reply TLV type 0x05 (len 3) fails the app's read"]
 
 
 def _group(index: int, records: int, extra: bytes = b"") -> bytes:

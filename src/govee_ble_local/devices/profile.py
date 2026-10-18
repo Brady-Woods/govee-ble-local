@@ -440,7 +440,10 @@ PROFILES: Final[tuple[DeviceProfile, ...]] = (
     # HW 3.01.10 (2026-10-17): both 15 01 frames acked 00 and applied to all 15 segments, while 33 05 0b
     # was rejected (status 01); aa 05 reads 15 01 00 00 after either write, so the report carries no
     # Kelvin (mode_reports_kelvin). Bench 2026-10-18: 33 05 15 02 acked 00 and set only the masked
-    # segments' brightness (colours unchanged). The 3.08.01 range is not bench-verified (HW 3.01.10).
+    # segments' brightness (colours unchanged). Per-segment 15 01 (Bytes.r with a partial mask) is
+    # hardware-verified on the same unit: set_segment_color_temp at 5000 K and set_segment_rgb with
+    # 4000 K's tint each acked 00 and set exactly the masked segments to the tint, brightness unchanged.
+    # Not bench-verified (HW 3.01.10): the 3.08.01 range, and a Kelvin outside [2700, 6500].
     DeviceProfile(
         skus=("H61A8",),
         capabilities=frozenset({_C.POWER, _C.BRIGHTNESS, _C.RGB, _C.COLOR_TEMP, _C.SEGMENTS, _C.SCENES}),

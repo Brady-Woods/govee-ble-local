@@ -58,9 +58,11 @@ model, from which the shipped readers are generated).
   `const.DISCONNECT_TIMEOUT`, `const.QUERY_TERMINAL`, the parts `LOCAL_NAME_PREFIXES` is built from
   (`const.BRAND_MARKERS`, `GBK_PREFIX`, `GV_LONG_PREFIXES`, `GV_PREFIX`; the tuple is unchanged),
   `wire.build.PRO_NOTIFY` (0xEE), `wire.build.PRO_MULTI_A1` (0xA1), `wire.reassemble.TYPE_MODE`, and the `transport.framelog.Direction` type.
-- `wire.reassemble.parse_status(frames, *, pieces=None, decode=None)`: the device's colour-piece count, which sets how
-  many records each 0xA5 colour group holds (see Fixed); and `wire.reassemble.group_record_count`, the app's
-  rule for that count. `pieces` omitted keeps 1.3.0's reading (the count comes from each TLV's length).
+- `wire.reassemble.parse_status(frames, *, pieces=None, decode=None)`: `pieces` is the device's colour-piece
+  count, which sets how many records each 0xA5 colour group holds (see Fixed); omitted, it keeps 1.3.0's
+  reading (the count comes from each TLV's length). `decode` is the device's wire profile
+  (`devices.profile.wire_profile`), whose colour decode reads the 0x05 mode value; omitted, it is the H60A6's
+  (see Changed, rule 4 c).
 - `wire.build.PRO_MULTI_A2` (0xA2, `multi_read`), `wire.describe.chunk_redacted` and
   `devices.brightness.percent_to_device` (see Fixed).
 - `DeviceProfile.relay_power` (keyword-only, typed `devices.profile.RelayPower`: `"outlet0"`, the default and
@@ -130,8 +132,15 @@ model, from which the shipped readers are generated).
     Removing it is left for a major release.
   - Bench, 2026-10-18 (same unit): `set_segment_brightness([0..4], 50)` sent `33 05 15 02 32 1f 00 ..`, the
     app's Bytes.G, which was acked 00. The read-back changed only those segments' brightness, with no colour
-    changed, and the start state was restored exactly. Not live-verified (this unit is HW 3.01.10): the
-    [2700, 6500] range of hardware 3.08.01 and up, which stays source-traced.
+    changed, and the start state was restored exactly.
+  - Per-segment colour temperature is hardware-verified on the same unit (bench, SW 3.03.18 / HW 3.01.10,
+    2026-10-18). `set_segment_color_temp([0..4], 5000)` sent `33 05 15 01 ff ff ff 13 88 ff e7 cc 1f 00 ..`
+    (Bytes.r with a partial mask), and `set_segment_rgb([5, 6, 7], ...)` with 4000 K's tint sent it as
+    Bytes.r under the [2000, 9000] range. Both were acked 00. The read-back set exactly the masked segments
+    to the tint and left every brightness alone, and the start state was restored exactly. Not
+    app-traced.
+  - Not live-verified (this unit is HW 3.01.10): the [2700, 6500] range of hardware 3.08.01 and up, which
+    stays source-traced, and a Kelvin outside [2700, 6500].
 - **The 0xAC status burst is read through the spec's `govee_status_stream` root (rule 4 c).**
   - `parse_status` reads the joined burst in one go through `govee_status_stream`, under the H60A6 status
     screen's profile: zone bits, power memory and colour groups, 0x40 / 0xA3 unknown, the device's colour
@@ -140,21 +149,24 @@ model, from which the shipped readers are generated).
   - The read fails where the app's does: a stream that doesn't read, or a value the spec flags
     (`status_tlv.app_read_fails`). A colour group is still judged by its piece count.
   - The 0x05 TLV's `mode_report` comes straight from that read, with the device's colour decode
-    (`parse_status(..., decode=wire_profile(profile))`). `StatusReply.mode` carries it and is left out of
-    equality.
+    (`parse_status(..., decode=wire_profile(profile))`); without a `decode` (1.3.0's call), the H60A6's, the
+    one device whose readback is this read. `StatusReply.mode` carries it and is left out of equality.
+  - A switch, brightness, zone or device-info TLV with no value to read fails the read, even where the spec
+    doesn't flag it, rather than raising out of the device's poll.
   - Removed (all unreleased): `walk_status_tlvs`, `TlvCut`, `SIGNED_LEN_MIN`, `parse.mode_value` and the
-    library's own empty-value set. The analyzer (`describe.status_burst_report`) reads the same root and
-    reports where the read stopped.
+    library's own empty-value set. The analyzer (`describe.status_burst_report`) reads the same root, with
+    the H60A6's colour decode, so a 0x15 / 0x0d value short of its layout is a gap as the runtime rejects
+    it, and reports where the read stopped.
   - The decode changes are app-aligned and H60A6 only, from Compose4BaseInfoSingleRead.u and h60a1
     Info4Detail.Q:
     - a tag-0 record is walked on, not taken as the end;
     - an empty or short 0x23 timer value fails the read;
     - a mode value too short for its sub-mode's layout fails the read, where it was zero-padded into
       made-up values (`15 01 0a` read as 2560 K, below the device minimum);
-    - an empty mode value still fails the read (the music-mode tolerance comes next).
+    - an empty mode value fails the read (the H60A6's own is read past since: see the entry above).
   - A differential over 52,068 random bursts × piece counts changed the folded H60A6 state in 4,395 cases.
     Each of them falls in one of those categories, and no burst that read whole both times folds
-    differently.
+    differently, except via a tag-0 walk-on (the records after a tag 0 now apply).
   - `test_every_colour_profile_matches_the_mode_color_parse_devices_yaml_resolves` now also fails if a
     profiled SKU's devices.yaml `mode_color_parse_status` differs from its `mode_color_parse`.
   - Spec half: eedafe7 (a773057 rebased), which flags TLV 0x40 / 0xA3 only where the screen reads them.
@@ -296,7 +308,8 @@ model, from which the shipped readers are generated).
     `mode_read_params`;
   - a direct `aa a5 <group>` reply is read by `color_group_direct_frame(record_count)`, and a 0xAC 0xA5
     group by `color_group_status_counted(pieces, 4, 1)`;
-  - the TLV walk steps by `status_tlv.total_len`;
+  - the TLV walk stepped by `status_tlv.total_len` (since replaced by the `govee_status_stream` root read,
+    rule 4 c);
   - the live IC-count walk skips on the spec's `ic_count_checked` instead of a hand `>= 0x1000` test.
   Byte- and state-identical: equivalence run against c823fc5 (writers, readers, the TLV walk, parse_status,
   the mode decoders and folds, and every bench capture); the only differences are the new

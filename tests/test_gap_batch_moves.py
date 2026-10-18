@@ -16,7 +16,7 @@ from govee_ble_local import identify, scenes
 from govee_ble_local.devices import _fold
 from govee_ble_local.devices.profile import PROFILES, profile_for, wire_profile
 from govee_ble_local.models import DeviceState
-from govee_ble_local.wire import build, describe, parse, reassemble
+from govee_ble_local.wire import _spec, build, describe, parse, reassemble
 
 _ROOT = pathlib.Path(__file__).resolve().parent.parent
 
@@ -99,8 +99,9 @@ def _resolve_mode_color_parse(families: list[dict[str, Any]], sku: str, g0: int)
     # A profile is pact- and firmware-agnostic: no branch may apply.
     for e in (by_gt, by_model, entry):
         assert "mode_color_by_pact" not in e and "mode_color_by_firmware" not in e, (sku, e)
-    # The library reads the 0xAC 0x05 TLV with the same decode as the aa 05 reply (wire_profile serves
-    # both; the status stream's root read takes it): a SKU whose status strategy differs needs its own.
+    # The library reads the 0xAC 0x05 TLV with the aa 05 reply's colour decode (wire_profile's;
+    # reassemble.status_profile adds only the status screen's music layout and empty-value rule): a SKU
+    # whose status colour strategy differs needs its own.
     status = next((e for e in (by_gt, by_model, cp) if "mode_color_parse_status" in e), None)
     assert status is None or status["mode_color_parse_status"] == entry["mode_color_parse"], (sku, status)
     return str(entry["mode_color_parse"])
@@ -118,6 +119,25 @@ def test_every_colour_profile_matches_the_mode_color_parse_devices_yaml_resolves
         assert profile.mode_color_parse == _LIBRARY_NAME.get(spec_name, spec_name), (sku, g0, spec_name)
         if spec_name == "kelvin_pair_15":
             assert profile.bar_switch, sku
+
+
+def test_the_status_reads_profile_is_devices_yamls_h60a6_wire_entry() -> None:
+    # reassemble.status_profile's mode rules (_STATUS_MODE) and forms are the H60A6's (goodsType 303)
+    # devices.yaml h60ax wire entry: the family's, under 303's by_goods_type override.
+    yaml = require_optional("yaml", reason="PyYAML reads spec/devices.yaml")
+    families = yaml.safe_load((_ROOT / "spec" / "devices.yaml").read_text())["families"]
+    wire = next(f for f in families if f["id"] == "h60ax")["client_profile"]["wire"]
+    gt = wire["by_goods_type"]["303"]
+    mode = {**wire.get("mode", {}), **gt.get("mode", {})}
+    assert {"music": int(getattr(_spec.Common.MusicDecode, mode["music"])),
+            "empty_fails": mode["empty_fails"]} == reassemble._STATUS_MODE
+    forms = {**wire.get("forms", {}), **gt.get("forms", {})}
+    prof = reassemble.status_profile(13)
+    c = _spec.Common
+    for name, enum in (("f_30", c.Form30), ("f_40", c.Form40), ("f_41", c.Form41), ("f_a3", c.FormA3),
+                       ("f_a5", c.FormA5)):
+        want = int(getattr(enum, forms[name])) if name in forms else 0   # left out: unknown
+        assert int(getattr(prof.forms, name)) == want, name
 
 
 # ── signed Kelvins: per SKU, as the app reads them ───────────────────────────────────────────

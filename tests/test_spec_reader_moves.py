@@ -22,9 +22,12 @@ def _rng(salt: int) -> random.Random:
 
 
 # The 0xAC status TLV walk and its byte-walk oracle are gone (rule 4 c): the burst is read in one go through
-# the spec's govee_status_stream root, so the walk's rules are the spec's. What the read gives is pinned by
-# parse_status's outcomes (test_wire_reassemble, test_app_burst_rules, test_fix_wp2b_status_burst) and
-# where it stops by read_status_stream (test_fix_wp2b_status_burst, test_spec_field_moves).
+# the spec's govee_status_stream root, so the walk's rules are the spec's. The values that fail the read
+# and the ones it reads whole (empty values, short timer, mode, music and colour-group values, 0x40 /
+# 0xA3, a tag 0 walked on) are pinned mid-stream by
+# test_app_burst_rules.test_the_h60a6_status_read_fails_where_its_screen_does, the tail and the walker's
+# throws by test_app_burst_rules' other section-B tests, and where the read stops by read_status_stream
+# (test_fix_wp2b_status_burst, test_spec_field_moves).
 
 
 # ── 0xAC colour groups: color_group_read with the app's record count ─────────────────────────

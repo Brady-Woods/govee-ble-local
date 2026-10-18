@@ -216,15 +216,21 @@ def profile(
 ) -> Any:
     """A ``govee_profile`` for one set of device facts, every one keyword-only and defaulting to the
     spec's ``unknown`` / 0. Cached: the same facts give the same object, which parents check params
-    against by identity. The mode decode serves both the aa 05 reply and the status TLV 0x05 (the
-    library decodes both alike)."""
+    against by identity. One mode decode serves both the aa 05 reply (``mode``) and the status TLV 0x05
+    (``mode_status``) of a profile; the status read's own profile (``reassemble.status_profile``) adds the
+    status screen's music layout and empty-value rule, so a status TLV and an aa 05 reply of the same
+    mode can decode differently."""
     p = Profile
-    forms = p.CommandForms(f_01, f_02, f_09, f_12, f_13, f_14, f_30, f_36, f_40, f_41, f_a2, f_a3, f_a5,
-                           f_b0, f_0b, f_15_01, f_15_04, f_15_05, f_ee_30, f_ee_40)
-    decode = p.ModeDecode(c02, c0b, c0d, c14, c15, music, empty_fails)
-    return p(forms, p.DeviceCounts(num_segments, num_levels),
-             p.ColorGroupForm(group_rule, num_per_group, has_brightness, num_pieces),
-             p.PowerRule(relay_on_mask, relay_heartbeat_on_mask), decode, decode)
+    forms = p.CommandForms(
+        f_01=f_01, f_02=f_02, f_09=f_09, f_12=f_12, f_13=f_13, f_14=f_14, f_30=f_30, f_36=f_36, f_40=f_40,
+        f_41=f_41, f_a2=f_a2, f_a3=f_a3, f_a5=f_a5, f_b0=f_b0, f_0b=f_0b, f_15_01=f_15_01, f_15_04=f_15_04,
+        f_15_05=f_15_05, f_ee_30=f_ee_30, f_ee_40=f_ee_40)
+    decode = p.ModeDecode(c02=c02, c0b=c0b, c0d=c0d, c14=c14, c15=c15, music=music, empty_fails=empty_fails)
+    return p(forms=forms, counts=p.DeviceCounts(num_segments=num_segments, num_levels=num_levels),
+             group=p.ColorGroupForm(rule=group_rule, num_per_group=num_per_group,
+                                    has_brightness=has_brightness, num_pieces=num_pieces),
+             power=p.PowerRule(relay_on_mask=relay_on_mask, relay_heartbeat_on_mask=relay_heartbeat_on_mask),
+             mode=decode, mode_status=decode)
 
 
 PLAIN: Final[Any] = profile()   # no device facts: every form unknown, every count 0

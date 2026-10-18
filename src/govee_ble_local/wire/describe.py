@@ -331,7 +331,9 @@ def status_burst_report(rx_ac: list[bytes]) -> StatusBurstReport:
     identical first chunk can't be told from a double delivery), and a first chunk repeated after
     interior chunks, which splits one read into two incomplete bursts. Each burst is then judged
     by the runtime's own rule (:func:`.reassemble.burst_chunks`: the app's state machine, chunks
-    taken in order) and read by the runtime's own root read (:func:`.reassemble.read_status_stream`).
+    taken in order) and read by the runtime's own root read (:func:`.reassemble.read_status_stream`),
+    with the H60A6's colour decode (its default; the H60A6 is the one device whose readback is this read),
+    so a 0x15 / 0x0d mode value short of the H60A6's layout is a gap, as the runtime rejects it.
     Like the runtime, only complete bursts are read; a burst with conflicting duplicate chunks is not
     read either. In those, a TLV type outside :data:`KNOWN_STATUS_REPLY_TLVS`, a TLV its spec type can't
     read, or one whose value fails the app's read (``status_tlv.app_read_fails``, e.g. an empty value the
