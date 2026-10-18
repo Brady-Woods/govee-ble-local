@@ -1,6 +1,10 @@
 # sdist contents: the package, metadata and top-level docs only. No tests, tools, spec,
 # docs, scripts or CI config (those live in the git repo, not on PyPI).
 include LICENSE README.md CHANGELOG.md pyproject.toml
+# the in-tree build backend (pyproject backend-path) must ship, so a wheel can be built from the sdist
+graft _build_backend
+# src/ includes the generated Kaitai classes, which the sdist ships (spec/ and tools/ are pruned below,
+# so a wheel built from the sdist reuses them)
 graft src
 prune tests
 prune tools

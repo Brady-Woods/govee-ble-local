@@ -5,12 +5,27 @@ what to ask the tester. The runner (``runner.py``) knows nothing about any SKU. 
 drop ``plans/<sku>.py`` next to ``plans/h6188.py`` and call :func:`register_plan` at import time;
 ``plans/__init__.py`` imports every module in that directory, so neither the runner nor any
 existing plan needs to change.
+
+The step factories below (:func:`power_steps`, :func:`brightness_steps`, :func:`rgb_steps`,
+:func:`tint_pick_step`, :func:`scene_steps`) build the steps most plans share; bind a step's
+arguments with :func:`functools.partial` and :func:`state_is` rather than a ``lambda x=x:`` default,
+which a type checker can't follow.
 """
 from __future__ import annotations
 
 import dataclasses
-from collections.abc import Awaitable, Callable
-from typing import Any
+from collections.abc import Awaitable, Callable, Iterable
+from functools import partial
+from typing import TYPE_CHECKING, Any, TypeAlias
+
+if TYPE_CHECKING:   # typing only: the runner puts the library on sys.path when it is imported
+    from govee_ble_local import Device
+
+# A read-back snapshot (masking.snapshot): state key -> value, identifying keys already redacted.
+Snapshot: TypeAlias = dict[str, Any]
+Action: TypeAlias = Callable[[], Awaitable[None]]
+Expect: TypeAlias = Callable[[Snapshot], bool]
+RGB: TypeAlias = tuple[int, int, int]
 
 # State keys copied into every read-back snapshot unless a plan supplies its own tuple.
 DEFAULT_SNAPSHOT_KEYS: tuple[str, ...] = (
@@ -18,7 +33,8 @@ DEFAULT_SNAPSHOT_KEYS: tuple[str, ...] = (
     "firmware_version", "hardware_version", "serial_number", "wifi_mac",
 )
 # Identifying state keys: always replaced by "<redacted>" in the report, whatever the plan asks for.
-REDACTED_KEYS: tuple[str, ...] = ("serial_number", "wifi_mac")
+# ``device_id`` is DeviceState's alias of ``serial_number``; ``ble_mac`` a device-reported MAC.
+REDACTED_KEYS: tuple[str, ...] = ("serial_number", "device_id", "wifi_mac", "ble_mac")
 
 
 @dataclasses.dataclass
@@ -26,8 +42,8 @@ class Step:
     """One action, then a read-back check (``expect`` gets the redacted snapshot dict), then a question."""
 
     name: str
-    action: Callable[[], Awaitable[None]]
-    expect: Callable[[dict[str, Any]], bool] | None
+    action: Action
+    expect: Expect | None
     question: str
     free_text: bool = False
     note: str = ""
@@ -37,7 +53,7 @@ class Step:
 class PlanContext:
     """What a plan's ``build_steps`` gets: the connected device and the SKU's bundled scene codes."""
 
-    dev: Any                      # govee_ble_local Device, already created (connect happens in the runner)
+    dev: Device                   # already created (connect happens in the runner)
     sku: str
     scene_codes: dict[str, int]   # {scene name: code} from the bundled catalog ({} if none)
 
@@ -58,7 +74,7 @@ class SkuPlan:
     build_steps: Callable[[PlanContext], list[Step]]
     intro: str = ""                                   # shown to the tester before the steps run
     snapshot_keys: tuple[str, ...] = DEFAULT_SNAPSHOT_KEYS
-    restore: Callable[[Any, dict[str, Any]], Awaitable[None]] | None = None
+    restore: Callable[[Device, Snapshot], Awaitable[None]] | None = None
     extra_name_hints: tuple[str, ...] = ()
 
 
@@ -74,3 +90,65 @@ def register_plan(plan: SkuPlan) -> SkuPlan:
         raise ValueError(f"a field-test plan for {sku} is already registered")
     PLANS[sku] = plan
     return plan
+
+
+# --- step factories ---------------------------------------------------------------------------
+
+PRIMARIES: tuple[tuple[str, RGB], ...] = (("red", (255, 0, 0)), ("green", (0, 255, 0)), ("blue", (0, 0, 255)))
+BRIGHTNESS_LEVELS: tuple[tuple[int, str], ...] = (
+    (100, "Is it at FULL brightness?"), (1, "Is it VERY DIM but still lit?"),
+    (50, "Is it at roughly HALF brightness?"),
+)
+# The app's 4000 K tint colour (0xFFD5A1): an RGB pick of it is sent as colour temperature.
+TINT_4000K: RGB = (255, 213, 161)
+
+
+def state_is(key: str, value: object) -> Expect:
+    """An ``expect``: the read-back ``key`` is ``value`` (identity for True / False / None, else ==)."""
+    if value is None or isinstance(value, bool):
+        return lambda st: st[key] is value
+    return lambda st: bool(st[key] == value)
+
+
+def power_steps(dev: Device, off_question: str, on_question: str) -> list[Step]:
+    """``power_off`` then ``power_on``, each checked against the read-back ``is_on``."""
+    return [
+        Step("power_off", partial(dev.set_power, False), state_is("is_on", False), off_question),
+        Step("power_on", partial(dev.set_power, True), state_is("is_on", True), on_question),
+    ]
+
+
+def brightness_steps(dev: Device, note: str = "") -> list[Step]:
+    """``brightness_100`` / ``_1`` / ``_50`` (percent), each checked against the read-back."""
+    return [Step(f"brightness_{pct}", partial(dev.set_brightness, pct), state_is("brightness", pct), q,
+                 note=note) for pct, q in BRIGHTNESS_LEVELS]
+
+
+def rgb_steps(dev: Device, question: str, note: str = "",
+              expect: Callable[[RGB], Expect] | None = None) -> list[Step]:
+    """``rgb_red`` / ``rgb_green`` / ``rgb_blue``: whole-device RGB. ``question`` is formatted with
+    ``colour`` (``RED`` ...); ``expect(rgb)`` builds the check (default: the read-back ``rgb_color``)."""
+    steps: list[Step] = []
+    for label, rgb in PRIMARIES:
+        check = expect(rgb) if expect is not None else state_is("rgb_color", rgb)
+        steps.append(Step(f"rgb_{label}", partial(dev.set_rgb, rgb), check,
+                          question.format(colour=label.upper()), note=note))
+    return steps
+
+
+def is_4000k_cct(st: Snapshot) -> bool:
+    """The read-back is the whole-device 4000 K colour temperature (no RGB)."""
+    return bool(st["color_temp_kelvin"] == 4000 and st["rgb_color"] is None)
+
+
+def tint_pick_step(dev: Device, question: str, note: str, expect: Expect = is_4000k_cct) -> Step:
+    """``rgb_pick_equal_to_4000k_tint``: pick the 4000 K tint colour as RGB; the app sends it as CCT."""
+    return Step("rgb_pick_equal_to_4000k_tint", partial(dev.set_rgb, TINT_4000K), expect, question,
+                note=note)
+
+
+def scene_steps(dev: Device, names: Iterable[str], codes: dict[str, int]) -> list[Step]:
+    """One ``scene_<name>`` step per name: activate it by name, check the read-back scene code."""
+    return [Step(f"scene_{name}", partial(dev.set_scene_by_name, name),
+                 state_is("scene_code", codes.get(name)),
+                 f"Scene '{name}': is an effect/scene running (not a plain colour)?") for name in names]

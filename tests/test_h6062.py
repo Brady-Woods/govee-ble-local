@@ -15,7 +15,7 @@ from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
-from fake_ble import ble_device
+from fake_ble import ble_device, unacked_via
 
 from govee_ble_local import Capability, Encryption
 from govee_ble_local.devices.device import Device, make_device
@@ -78,7 +78,7 @@ class _Dev:
 
         d._conn.send = AsyncMock(side_effect=send)  # type: ignore[method-assign]
         d._conn.send_many = AsyncMock(side_effect=send_many)  # type: ignore[method-assign]
-        d._conn.send_unacked = AsyncMock(side_effect=send_many)  # type: ignore[method-assign]
+        d._conn.send_unacked = AsyncMock(side_effect=unacked_via(send_many))  # type: ignore[method-assign]
         d._conn.query = AsyncMock(side_effect=query)  # type: ignore[method-assign]
 
     @property
@@ -228,7 +228,7 @@ def test_power_and_brightness_do_not_need_the_count() -> None:
     assert t.queried == []
 
 
-@pytest.mark.parametrize("reply", [[], [_section(0x0038, 0)], [_section(0x0038, 57)],
+@pytest.mark.parametrize("reply", [[], [_section(0x0038, 0)], [_section(0x0038, 113)],
                                    [_frame(0xAA, 0x41)[:3]]])
 def test_unanswered_or_unusable_count_sends_no_colour_frame(reply: list[bytes]) -> None:
     t = _Dev({0x41: reply})
@@ -281,7 +281,7 @@ def test_update_reads_aa41_then_walks_ceil_n_over_4_groups(section: int, groups:
     st = asyncio.run(t.dev.update())
     q = t.queried
     # the app's order (ControllerStrategyConfig.O): aa 01, aa 04, aa 41, aa 05; then the colour walk
-    assert [f[:3].hex() for f in q[:4]] == ["aa0101", "aa0401", "aa4100", "aa0501"]
+    assert [f[:3].hex() for f in q[:4]] == ["aa0100", "aa0400", "aa4100", "aa0501"]   # no aa 01/04 selector
     walk = [f for f in q if f[1] == 0xA5]
     assert [f[2] for f in walk] == list(range(1, groups + 1))
     assert t.dev.segment_count == section

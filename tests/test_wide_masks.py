@@ -7,15 +7,17 @@ bytes, LSB first, above that. Bytes.C caps the width at 7 bytes; we reject more.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
-from test_device_gaps import _dev, _sent
-from test_device_v3 import _frame
+from fake_ble import ble_device, unacked_via
+from fake_ble import frame as _frame
 
 from govee_ble_local.crypto import checksum_ok
-from govee_ble_local.devices.device import _mask
+from govee_ble_local.devices.device import Device, _mask
+from govee_ble_local.devices.profile import profile_for
 from govee_ble_local.exceptions import GoveeBleInvalidValue, GoveeBleNotSupported
 from govee_ble_local.wire import build as b
 from govee_ble_local.wire.cct import tint_for_kelvin
@@ -30,6 +32,39 @@ def run(coro: Any) -> Any:
     return asyncio.run(coro)
 
 
+def _dev(sku: str, **profile_overrides: Any) -> Device:
+    """Device with every connection method mocked: writes are recorded, reads get no reply (a
+    test scripts ``query`` itself), so nothing reaches a real connection. ``profile_overrides``
+    build it on a changed copy of the SKU's profile (a profile is read-only after construction)."""
+    profile = profile_for(sku)
+    assert profile is not None
+    if profile_overrides:
+        profile = dataclasses.replace(profile, **profile_overrides)
+    return _mocked(Device(profile, ble_device("AA:BB:CC:DD:EE:17", sku), sku=sku))
+
+
+def _mocked(d: Device) -> Device:
+    """Replace ``d``'s connection I/O with recorders (see :func:`_dev`)."""
+    sent: list[bytes] = []
+
+    async def send(frame: bytes, **_k: object) -> None:
+        sent.append(frame)
+
+    async def send_many(frames: list[bytes]) -> None:
+        sent.extend(frames)
+
+    d._conn.send = AsyncMock(side_effect=send)  # type: ignore[method-assign]
+    d._conn.send_many = AsyncMock(side_effect=send_many)  # type: ignore[method-assign]
+    d._conn.send_unacked = AsyncMock(side_effect=unacked_via(send_many))  # type: ignore[method-assign]
+    d._conn.query = AsyncMock(return_value=[])  # type: ignore[method-assign]
+    d._sent = sent  # type: ignore[attr-defined]
+    return d
+
+
+def _sent(d: Device) -> list[bytes]:
+    return list(d._sent)  # type: ignore[attr-defined]
+
+
 def _all_ones(n: int) -> bytes:
     """Reference encoder: LSB-first bytes with the first n bits set, max(2, ceil(n/8)) of them."""
     width = max(2, (n + 7) // 8)
@@ -42,7 +77,7 @@ def test_mask_width(segments: int, width: int) -> None:
     assert b.mask_width(segments) == width
 
 
-@pytest.mark.parametrize("bad", [-1, 57, 64, 1000])
+@pytest.mark.parametrize("bad", [-1, 113, 1000])
 def test_mask_width_rejects_out_of_range(bad: int) -> None:
     with pytest.raises(GoveeBleInvalidValue, match="segment count"):
         b.mask_width(bad)
@@ -163,18 +198,22 @@ def test_mask_too_wide_for_the_segment_count_is_rejected() -> None:
         b.segment_rgb(-1, 1, 2, 3, "h60a6", 56)
 
 
-@pytest.mark.parametrize("segments", [57, 64, 100])
-def test_more_than_seven_mask_bytes_rejected_everywhere(segments: int) -> None:
+@pytest.mark.parametrize("segments", [57, 64, 100, 112])
+def test_past_56_segments_each_body_keeps_the_apps_cap(segments: int) -> None:
+    # The 0x15 RGB / CCT frames carry 7 mask bytes (Bytes.h / Bytes.r coerceAtMost 7), per-segment brightness
+    # ceil(n/8) up to 14 (Bytes.G coerceAtMost 14): the app drops the positions past the cap.
+    assert b.mask_width(segments, b.COLOR_MASK_CAP) == 7
+    assert b.mask_width(segments, b.BRIGHTNESS_MASK_CAP) == -(-segments // 8)
+    assert b.mask_positions(segments, b.COLOR_MASK_CAP) == 56
+    assert b.mask_positions(segments, b.BRIGHTNESS_MASK_CAP) == segments
+    assert b.color_rgb(1, 2, 3, "h60a6", segments)[12:19] == bytes([0xFF] * 7)
+    assert b.segment_rgb(1 | 1 << 60, 1, 2, 3, "h60a6", segments)[12:19] == bytes([1, 0, 0, 0, 0, 0, 0])
+    assert b.color_temp(4000, "h60a6", segments)[-8:-1] == bytes([0xFF] * 7)
+    width = -(-segments // 8)
+    frame = b.segment_brightness(1 << (segments - 1), 50, "h60a6", segments)
+    assert frame[5:5 + width] == (1 << (segments - 1)).to_bytes(width, "little")
     with pytest.raises(GoveeBleInvalidValue, match="segment count"):
-        b.color_rgb(1, 2, 3, "h60a6", segments)
-    with pytest.raises(GoveeBleInvalidValue, match="segment count"):
-        b.color_temp(4000, "h60a6", segments)
-    with pytest.raises(GoveeBleInvalidValue, match="segment count"):
-        b.segment_rgb(1, 1, 2, 3, "h60a6", segments)
-    with pytest.raises(GoveeBleInvalidValue, match="segment count"):
-        b.segment_color_temp(1, 4000, "h60a6", segments)
-    with pytest.raises(GoveeBleInvalidValue, match="segment count"):
-        b.segment_brightness(1, 50, "h60a6", segments)
+        b.color_rgb(1, 2, 3, "h60a6", 113)
 
 
 def test_schemes_without_a_0x15_mask_ignore_the_segment_count() -> None:
@@ -205,7 +244,7 @@ def test_runtime_segment_count_overrides_profile_and_reverts() -> None:
     assert d.segment_count == 13
 
 
-@pytest.mark.parametrize("bad", [0, -1, 57, True, 3.0, "23"])
+@pytest.mark.parametrize("bad", [0, -1, 113, True, 3.0, "23"])
 def test_set_segment_count_validates(bad: Any) -> None:
     d = _dev("H60A6")
     with pytest.raises(GoveeBleInvalidValue, match="segment count"):
@@ -290,9 +329,14 @@ def test_segment_writes_use_runtime_width_and_bounds() -> None:
 
 
 def test_segment_index_limits() -> None:
-    # Up to 16 segments the whole 2-byte mask stays addressable (a 10-segment H6047 takes 15).
-    assert _mask([0, 15]) == 0x8001 and _mask([15], 10) == 0x8000 and _mask([15], 16) == 0x8000
-    for n in (0, 10, 16):
+    # Indices stop at the segment count, as the app's position set does (BleUtils.Y / X): a 10-segment
+    # H6047 takes 0..9 and a 13-segment H60A6 0..12, not the 2-byte mask's 0..15.
+    assert _mask([0, 9], 10) == 0x0201 and _mask([12], 13) == 0x1000 and _mask([15], 16) == 0x8000
+    with pytest.raises(GoveeBleInvalidValue, match=r"0\.\.9"):
+        _mask([10], 10)
+    with pytest.raises(GoveeBleInvalidValue, match=r"0\.\.12"):
+        _mask([13], 13)
+    for n in (0, 16):   # 0: a custom profile with no count keeps the 2-byte mask's 16 positions
         with pytest.raises(GoveeBleInvalidValue, match=r"0\.\.15"):
             _mask([16], n)
     assert _mask([16], 17) == 1 << 16 and _mask([55], 56) == 1 << 55
@@ -311,10 +355,13 @@ def test_zone_writes_use_runtime_width() -> None:
 
 
 def test_unsupported_scheme_still_raises_not_supported_with_a_count() -> None:
+    # A custom profile pairing SEGMENTS with the mask-less 0x0d scheme is accepted (as 1.3.0); the
+    # builder refuses the frame, with the SKU named (the profile table refuses the pairing itself).
     d = _dev("H60A6", color_scheme="h6006")
     d.set_segment_count(23)
-    with pytest.raises(GoveeBleNotSupported):
+    with pytest.raises(GoveeBleNotSupported, match=r"^H60A6: "):
         run(d.set_segment_color_temp([1], 4000))
+    assert d._sent == []  # type: ignore[attr-defined]
 
 
 def test_direct_readback_walks_the_runtime_count() -> None:
@@ -341,3 +388,15 @@ def test_direct_readback_walks_the_runtime_count() -> None:
     assert asked == [1, 2, 3, 4, 5, 6]
     assert [s.index for s in d.state.segments] == list(range(23))
 
+
+def test_segment_state_follows_the_positions_the_frame_carries() -> None:
+    # 80 segments: the RGB frame's mask is cut to 7 bytes (positions 0..55), so segment 60 is neither sent
+    # nor folded into state; the brightness frame carries all 10 mask bytes.
+    d = _dev("H60A6")
+    d.set_segment_count(80)
+    run(d.set_segment_rgb([0, 60], (9, 8, 7)))
+    assert _sent(d)[-1][12:19] == bytes([1, 0, 0, 0, 0, 0, 0])
+    assert [s.index for s in d.state.segments if s.rgb == (9, 8, 7)] == [0]
+    run(d.set_segment_brightness([0, 60], 40))
+    assert _sent(d)[-1][5:15] == (1 | 1 << 60).to_bytes(10, "little")
+    assert sorted(s.index for s in d.state.segments if s.brightness == 40) == [0, 60]

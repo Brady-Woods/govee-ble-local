@@ -4,11 +4,20 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
+from bleak.exc import BleakError
 
 from govee_ble_local import scanner
+from govee_ble_local.exceptions import GoveeBleConnectionError, GoveeBleError
 from govee_ble_local.scanner import DiscoveredDevice, discover, match, supported
 
-_MFG = {(0x88 << 8) | 0x41: bytes([0xEC, 0, 2, 2, 1])}
+from fake_ble import FirmwareGovee
+
+# A Govee plug's manufacturer data: the H5083's own advert, from its firmware image (kept alive: the
+# provenance check accepts what a live image built).
+_H5083 = FirmwareGovee()
+_H5083_ADVERT = _H5083.advertisement()
+assert _H5083_ADVERT is not None
+_MFG = _H5083_ADVERT.manufacturer_data
 
 
 def _dev(addr: str, name: str | None) -> SimpleNamespace:
@@ -52,17 +61,19 @@ def fake_scan(monkeypatch: pytest.MonkeyPatch):
     return install
 
 
-async def test_discover_filters_dedups_and_sorts(fake_scan) -> None:  # type: ignore[no-untyped-def]
-    results = {
-        # same address under two keys: strongest RSSI must win
-        "k1": (_dev("AA:01", "Govee_H61A8_0001"), _adv(None, -80)),
-        "k2": (_dev("AA:01", "Govee_H61A8_0001"), _adv(None, -40)),
-        "k3": (_dev("AA:01", "Govee_H61A8_0001"), _adv(None, -90)),  # weaker, ignored
-        "k4": (_dev("AA:02", "ihoment_H5083_0002"), _adv(None, -60)),
-        "k5": (_dev("AA:03", "ihoment_H9999_0003"), _adv(None, -10)),  # unsupported
-        "k6": (_dev("AA:04", "Other"), _adv(None, -5)),                # not Govee
-        "k7": (_dev("AA:05", "ihoment_H5083_0005"), _adv(None, None)),  # no rssi
-    }
+def _by_address(*pairs: tuple[SimpleNamespace, SimpleNamespace]) -> dict:
+    # bleak's discover(return_adv=True) maps each address to its latest (device, advertisement).
+    return {dev.address: (dev, adv) for dev, adv in pairs}
+
+
+async def test_discover_filters_and_sorts(fake_scan) -> None:  # type: ignore[no-untyped-def]
+    results = _by_address(
+        (_dev("AA:01", "Govee_H61A8_0001"), _adv(None, -40)),
+        (_dev("AA:02", "ihoment_H5083_0002"), _adv(None, -60)),
+        (_dev("AA:03", "ihoment_H9999_0003"), _adv(None, -10)),  # unsupported
+        (_dev("AA:04", "Other"), _adv(None, -5)),                # not Govee
+        (_dev("AA:05", "ihoment_H5083_0005"), _adv(None, None)),  # no rssi
+    )
     seen = fake_scan(results)
     found = await discover(timeout=1.5)
     assert seen == {"timeout": 1.5, "return_adv": True}
@@ -73,6 +84,40 @@ async def test_discover_filters_dedups_and_sorts(fake_scan) -> None:  # type: ig
     assert everything[0].supported is False
 
 
+async def test_discover_rssi_zero_is_a_reading_not_missing(fake_scan) -> None:  # type: ignore[no-untyped-def]
+    # 0 dBm is a (very strong) reading: it sorts first, not alongside the devices with no RSSI.
+    fake_scan(_by_address(
+        (_dev("AA:01", "ihoment_H5083_0001"), _adv(None, None)),
+        (_dev("AA:02", "ihoment_H5083_0002"), _adv(None, -70)),
+        (_dev("AA:03", "ihoment_H5083_0003"), _adv(None, 0)),
+    ))
+    assert [d.address for d in await discover()] == ["AA:03", "AA:02", "AA:01"]
+
+
 async def test_discover_empty(fake_scan) -> None:  # type: ignore[no-untyped-def]
     fake_scan({})
     assert await discover() == []
+
+
+@pytest.mark.parametrize("err", [
+    BleakError("Bluetooth adapter not found"),   # no / powered-off adapter
+    FileNotFoundError(2, "No such file or directory"),   # no D-Bus socket (BlueZ)
+    ConnectionRefusedError(111, "Connection refused"),
+    EOFError(),                                   # D-Bus connection closed mid-scan
+])
+async def test_discover_failure_is_a_library_error(
+    monkeypatch: pytest.MonkeyPatch, err: BaseException
+) -> None:
+    async def failing_discover(**_kw: object) -> dict:
+        raise err
+
+    monkeypatch.setattr(scanner.BleakScanner, "discover", failing_discover)
+    with pytest.raises(GoveeBleConnectionError, match="BLE scan failed") as ei:
+        await discover(timeout=0.1)
+    assert isinstance(ei.value, GoveeBleError)
+    assert ei.value.__cause__ is err
+
+
+def test_discovered_device_is_documented() -> None:
+    for name in ("address", "sku", "name"):
+        assert getattr(DiscoveredDevice, name).__doc__, name

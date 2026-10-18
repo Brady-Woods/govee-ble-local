@@ -15,23 +15,36 @@ import argparse
 import collections
 import os
 import struct
-
+from collections.abc import Iterator
 
 MAX_RECORD = 1 << 20  # 1 MiB: far above any real HCI record; guards against corrupt headers
+# btsnoop datalink 1002 = HCI UART (H4): every record starts with the H4 packet-type byte. The other
+# datalinks have no such byte (1001 = un-encapsulated HCI, type in the record flags; btmon's 2001 =
+# Linux monitor), so parsing them as H4 would silently drop or misread every packet.
+DATALINK_H4 = 1002
+H4_ACL = 0x02
+H4_EVENT = 0x04
 
 
-def _records(path: str):
+def read_records(path: str) -> Iterator[tuple[int, bytes]]:
+    """Yield (record_flags, packet) for each record of a btsnoop H4 capture; packet[0] is the H4
+    packet type. Shared by decrypt_btsnoop.py. SystemExit for a non-btsnoop file, a datalink other
+    than 1002 (H4), or a corrupt record length (> 1 MiB or past the end of the file)."""
     with open(path, "rb") as f:
         size = os.fstat(f.fileno()).st_size
         hdr = f.read(16)
         if hdr[:8] != b"btsnoop\x00":
             raise SystemExit(f"{path}: not a btsnoop file")
         _ver, datalink = struct.unpack(">II", hdr[8:16])
+        if datalink != DATALINK_H4:
+            raise SystemExit(
+                f"{path}: unsupported btsnoop datalink {datalink} (need {DATALINK_H4}, HCI UART/H4)"
+            )
         while True:
             rh = f.read(24)
             if len(rh) < 24:
                 return
-            _orig, incl, _flags, _drops, _ts = struct.unpack(">IIIIq", rh)
+            _orig, incl, flags, _drops, _ts = struct.unpack(">IIIIq", rh)
             remaining = size - f.tell()
             if incl > MAX_RECORD or incl > remaining:
                 raise SystemExit(
@@ -41,23 +54,18 @@ def _records(path: str):
             data = f.read(incl)
             if len(data) < incl:
                 return
-            yield datalink, data
+            yield flags, data
 
 
-def _att_pdus(path: str):
-    """Yield (att_opcode, att_pdu_len) for ATT PDUs (CID 0x0004), skipping L2CAP
-    continuation fragments. att_pdu_len comes from the L2CAP length (robust to a
-    truncated 'included length' capture)."""
-    for _datalink, data in _records(path):
-        pkt = data
-        # datalink 1002 = HCI UART/H4: first byte = HCI packet type. Try that; if the
-        # first byte isn't ACL(0x02) we skip. (1001 = raw HCI ACL; handled the same way.)
-        if not pkt:
+def _att_pdus(path: str) -> Iterator[tuple[int, int, bytes]]:
+    """Yield (att_opcode, att_pdu_len, att_bytes) for ATT PDUs (CID 0x0004), skipping L2CAP
+    continuation fragments (only the first fragment's header is needed here). att_pdu_len comes
+    from the L2CAP length (robust to a truncated 'included length' capture); att_bytes is the
+    first fragment's ATT bytes."""
+    for _flags, pkt in read_records(path):
+        if not pkt or pkt[0] != H4_ACL:  # H4 packet type (datalink 1002): ACL data only
             continue
-        h4 = pkt[0]
         body = pkt[1:]
-        if h4 != 0x02:  # ACL data only
-            continue
         if len(body) < 4:
             continue
         handle_flags, _acl_len = struct.unpack("<HH", body[:4])
@@ -79,10 +87,10 @@ def _att_pdus(path: str):
 def main(path: str, dump_protype: bool = False) -> None:
     mtu_req: set[int] = set()
     mtu_rsp: set[int] = set()
-    write_len = collections.Counter()
-    first_byte = collections.Counter()   # first byte of 20-byte writes (proType if plaintext)
-    multi_frames = []                     # 0xA1/0xA3/0xA4 writes (plaintext scene/DIY)
-    big = []
+    write_len: collections.Counter[int] = collections.Counter()
+    first_byte: collections.Counter[int] = collections.Counter()  # 20-byte writes' byte 0 (proType)
+    multi_frames: list[str] = []          # 0xA1/0xA3/0xA4 writes (plaintext scene/DIY)
+    big: list[int] = []
     for op, l2len, att in _att_pdus(path):
         if op == 0x02 and len(att) >= 3:            # Exchange MTU Request
             mtu_req.add(struct.unpack("<H", att[1:3])[0])

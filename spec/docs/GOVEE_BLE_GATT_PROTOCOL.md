@@ -148,7 +148,7 @@ onServicesDiscovered(GATT_SUCCESS)         → BTGattConnectEvent.connectedSuc
 enable notifications on ALL chars of svc     BleCommImp.c()/d()
    ├─ for each characteristic of service 1910 (2b10, 2b11, 2b12):
    ├─ setCharacteristicNotification(true)
-   └─ write CCCD 0x2902 = ENABLE_NOTIFICATION_VALUE {0x01,0x00}
+   └─ write CCCD 0x2902 = ENABLE_NOTIFICATION_VALUE [01 00]
        (so device pushes on 2b10 are captured without naming it)
    ▼
 (optional) requestMtu(N)                    BleController.J(int)  → onMtuChanged
@@ -169,9 +169,12 @@ Details:
 - **MTU**: default 20/23 bytes. `BleController.J(mtu)` calls `requestMtu`. The encryption layer
   tracks the negotiated MTU (`EncryptionManager.f115473c`, default 20) and splits ciphertext
   accordingly. BLE 5 / 2M PHY support is probed (`BleController.P()`).
-- **Heartbeat / keep-alive**: `AbsHeartRunnable` periodically issues a heart command
-  (`SINGLE_HEART = 0x01`) so the device does not auto-disconnect. Auto-disconnect status
-  `19` triggers `EventAutoDisconnect`.
+- **Heartbeat / keep-alive**: `AbsHeartRunnable` periodically issues a heart command so the device does
+  not auto-disconnect. The byte depends on the screen. Legacy controllers use `SINGLE_HEART = 0x01`
+  (`AA 01`). Newdetail `ShareVM` screens pick it with `ConnectHeartbeat.c(K3())`; when `I3()` is false
+  (H60A1 `VM4Light.I3:513-515`, `VM4LightH60A6.I3:684-686`) that is `0x00` (`SINGLE_HEART_BEAT`), so
+  `BleComm.l:76-80` sends a `Controller4HeartCommon` for byte `0x00`, i.e. `AA 00`. Auto-disconnect status `19` triggers
+  `EventAutoDisconnect`.
 - **Reconnect**: `ReconnectInfo` retries within the 15 s window; skips reconnect while the app
   is backgrounded unless flagged.
 
@@ -188,7 +191,7 @@ device opts into MTU-sized writes. The last byte is always an **XOR checksum (BC
 
 Reference implementations:
 - `BleUtils.v(packet, 19)` (`sources/com/govee/base2kt/utils/BleUtils.java:1239`)
-- `MultiPackageManager.b(bArr, 19)` (`sources/com/govee/ble/multi/MultiPackageManager.java:56`)
+- `MultiPackageManager.b(packet, 19)` (`sources/com/govee/ble/multi/MultiPackageManager.java:56`)
 
 ### 4.2 Single-command packet (`0x33` / `0xAA`)
 
@@ -210,7 +213,7 @@ byte  0        1             2 .. 18                    19
 | `SINGLE_WRITE_READ` | `0x3A` | write-and-read variant |
 | BBQ status notify | `0xAB` (−85) | BBQ thermometer telemetry push |
 
-- `proType` is chosen by `AbsSingleController.getProType()`: `write ? 0x33 : 0xAA`.
+- `proType` is chosen by `AbsSingleController.getProType()`: `0x33` for a write, else `0xAA`.
 - On the response, the device echoes `proType`/`commandType`. For writes, success is indicated
   by `value[2] == 0` (`AbsSingleController.t()`).
 - Read responses: the app strips bytes `[2..18]` (17 bytes) as the "valid" payload
@@ -219,12 +222,31 @@ byte  0        1             2 .. 18                    19
 **`0xAA` (read) payloads are NOT the `0x33` write payloads.** A read *request* is `AA <cmd> <selector>` —
 the byte after the command is a per-command **selector/index**, not the write field
 (`AbsSingleController.f()` → `generate20Bytes(0xAA, cmd, p())`, `p()` default empty). Source-confirmed
-selectors: **mode `AA 05 01`** (`AbsModeController.p()={1}` — the `0x01` is a **selector, not a
+selectors: **mode `AA 05 01`** (`AbsModeController.p()` = `[01]` — the `0x01` is a **selector, not a
 sub-mode**); **device-info `AA 07 <sel>`** (`0x02` serial, `0x03` hw, `0x04` sw, `0x10` basic, `0x11`
-wifi — a controller per selector). ⚠️ **Source vs hardware:** `SwitchController`/`BrightnessController`
-don't override `p()`, so the `base2light` source emits `AA 01 00` / `AA 04 00` (empty), **not** the
-`AA 01 01` / `AA 04 01` some captures show — the trailing `0x01` for switch/brightness is unverified in
-source (firmware may ignore the byte, or a non-`base2light` path builds it).
+wifi — a controller per selector). Firmware support for these selectors varies by SKU (firmware-sourced;
+per-selector detail in [§5.2](#52-device--wi-fi-info)). H6006/H6008 (shared `ble_msg_get_dev_info`,
+H6006.bin `0x9b03cb88`, H6008.bin `0x9b03c92c`) answer only `02`/`03`/`06`, plus `0A`/`0B` with no data on
+H6008; `04`, `10` and `11` are forwarded and dropped with no reply. H60A1/H60A6 answer only `02`, `03`,
+`06` (BLE MAC) and `0A`/`0B` (no data, echo); `04`, `10` and `11` get the request echoed back unchanged
+(`H60A1.bin@0x9b0454bc`, `H60A6.bin@0x9b04a8e4`). H5083 (`ble_msg_get_dev_info` `0x9b031b08`) answers
+only `02`/`03`/`06`, and H6047 (`0x01005370`) only `02`/`03`/`04`/`06`.
+⚠️ **Source vs hardware:** `SwitchController`/`BrightnessController` don't override `p()`, so the
+`base2light` source emits `AA 01 00` / `AA 04 00` (empty), **not** the `AA 01 01` / `AA 04 01` some
+captures show — the trailing `0x01` for switch/brightness is not in the app source (a non-`base2light`
+path may build it). Every firmware image checked ignores that byte, so both request forms get the same
+reply (firmware-sourced):
+- **H6047** (BLE 1.00.12): the AA 01 query path (`0x01004fb0-0x01004fd4`) and AA 04 query path
+  (`0x010054f6-0x0100550c`) never read the payload, so `AA 01 00`/`AA 01 01` and `AA 04 00`/`AA 04 01`
+  get identical replies.
+- **H5083** (SW1.00.30): the firmware overwrites byte 2 of `AA 01` with the outlet state without reading
+  it (`H5083.bin@0x9b01f038-f03c`). H5083 has no `AA 04` handler at all.
+- **H6006/H6008**: the reply handler overwrites byte 2 with the state without reading it (H6006
+  `0x9b01f1c4`, `0x9b01f24c`; H6008 `0x9b0245f6`, `0x9b024622`).
+- **H60A1/H60A6**: the AA 01 and AA 04 branches write byte 2 from the state getter without reading it
+  (H60A1 `FUN_9b02a584` / `FUN_9b02ace0`; H60A6 `FUN_9b02b430` / `FUN_9b02bbdc`).
+
+Images not listed here were not checked.
 
 A read *reply* is `AA <cmd> <device-state…>`, parsed **per-(sub-mode, controller)** by `parseValidBytes`
 (2-byte header stripped, 17 bytes routed by sub-mode) — **not** a single form, and it differs from the
@@ -237,14 +259,15 @@ The write builds `[op, R,G,B(=white), kHi,kLo, …]`; the reply parser reads `[o
 after op) — `SubModeColorV2.parse` / `ComposeChange2ColorMode.result`.
 
 Other mode reply sub-modes (traced): **`0x0D`** (h60a6-color) has **no field decode** — the legacy
-`SubModeColorV1.parse` reads only the op/gradual bit (`bArr[0]==1`), and both `0x0D`/`0x15` route there on
+`SubModeColorV1.parse` reads only the op/gradual bit (`byte 0 == 1`), and both `0x0D`/`0x15` route there on
 that stack, so `0x0D` is effectively write-only (its `[R,G,B,kHi,kLo,tR,tG,tB]` write body is never read
 back; kelvin comes only from the compose `0x15` path). **Music `0x13`** reply is family-dependent:
 H60A6 `SubModeMusicV1.parse` = `[musicCode][value][autoColorFlag][specColorFlag][R][G][B]` (truncates
 early for new-music codes / specified-color); the general `SubModeNewMusic.parse` reads only
 `[musicCode][value]`; `0x16` `SubModeAbsMusic` = `[u16 count LE][value]`. (No `base2light` class uses
-sub-mode `0x11`.) The `.ksy` models `0xAA` via a distinct `read_command` type (`mode_read` →
-`cct_read_reply` / `music_read_reply`), not the `single_command` write payloads.
+sub-mode `0x11`.) The spec reads the `0xAA 05` reply through `read_reply` → `govee_state` → `mode_report`
+(its `color_report` layouts and `music_report`, chosen by the profile's mode decode), not through the
+`write_command` / `mode_write` write payloads.
 
 There is also a 3-argument form `generate20Bytes(proType, cmd, subCmd, payload)`
 (`BleUtils.java:1363`) placing an extra sub-command byte at index 2 and payload from index 3.
@@ -261,7 +284,7 @@ START:  [0xA1, comType, 0x00, packetCount, 0…, checksum]
 DATA_i: [0xA1, comType, i(1-based), <16 data bytes>, checksum]     // repeat
 END:    [0xA1, comType, 0xFF, 0…, checksum]
 ```
-~300 ms is inserted between packets (`Thread.sleep(300)`).
+~300 ms is inserted between packets (a `Thread.sleep` of 300 ms).
 
 **Read sequence (header `0xA2`, −94):**
 ```
@@ -271,7 +294,7 @@ DATA_i:  [0xA2, comType, i, <16 data bytes>]          // device → app
 END:     [0xA2, comType, 0xFF, …]                     // device → app
 ```
 
-Result events: `MultiWriteResponse` (success = `bArr[2] == 0`) and `MultiReadResponse`
+Result events: `MultiWriteResponse` (success = `byte 2 == 0`) and `MultiReadResponse`
 (reassembled chunks). See `MultiPackageManager.g()` / `j()` / `i()`.
 
 **Other multi-write dialects** (declared in `BleProtocolConstants`, used by newer RGBIC devices
@@ -300,7 +323,7 @@ gate — see the ⚠️ box below, which is the authoritative statement of when 
 
 > **Choosing upload-vs-activate + the comByte/strip per scene** is a `(sceneType, versionArray)` dispatch.
 > The full rule — the `parseSceneV1` table, plus the **two curated-device bypasses** (bulbs force a
-> hardcoded `{1}`; H6052 type-5 uses the DIY path at comByte `9`) — is machine-readable at
+> hardcoded versionArray `{1}`; H6052 type-5 uses the DIY path at comByte `9`) — is machine-readable at
 > `devices.yaml scenes.dispatch` (`table` + `bypasses` + `family_apply`) and documented in
 > `SCENE_UPLOAD_ENCODING.md` §0b (per-device paths, Q4 table, implementer checklist).
 
@@ -309,14 +332,22 @@ The `0xA3` frame shape:
 ```
 START:  A3 | 00(seq) | 01 | packetCount | commBytes… | inline value | CK@19
 MIDDLE: A3 | seq(1,2,…)   | 17 value bytes            | CK@19
-END:    A3 | FF(seq)      | final ≤17 value bytes      | CK@19   (data-bearing)
+END:    A3 | FF(seq)      | final ≤17 value bytes      | CK@19   (data-bearing for a long value)
 ```
 - byte 1 = seq (`0x00` start, `1,2,…` middles, `0xFF` end); byte 2 = literal `0x01`;
   byte 3 = **packetCount** = total frame count (start + middles + end).
 - `commBytes` occupies byte 4… (length *L*); the **value begins at byte `4+L`**; START carries
   `15 − L` inline value bytes. For the usual `L = 1`: commByte@4, value@5, 14 inline.
-- The `0xFF` END frame **carries the final data chunk** (it is *not* an empty terminator), except
-  when the payload happens to end exactly on a frame boundary.
+- The `0xFF` END frame is always sent (`makeSendBytesV2` appends its separate END frame). It is
+  **data-bearing only when the value is longer than START's `15 − L` inline bytes**: then it carries
+  the final chunk (up to 17 bytes; a value that ends exactly on a frame boundary puts a full 17 there,
+  never an extra empty frame), and packetCount = 1 + the frames after START. A **short value** (at
+  most `15 − L` bytes) rides whole in START; the END is then empty and packetCount is **2**.
+- Device side, **static firmware analysis (not hardware-verified)**: the H6006 firmware's `0xA3`
+  reassembler (`FUN_9b020d2c`, `firmware-h6006/decompiled/H6006_a3_reassembler.c`) stores START byte 3
+  as the packet count, accepts the `0xFF` END only when (frames after START, END included) + 1 ==
+  count, and copies 17 bytes from END bytes 2..18. So count 2 with an empty END is accepted, and the
+  count includes START and END.
 
 > **Correction (earlier drafts were wrong on two points, proven against H60A6 hardware):**
 > (1) byte 4 is a **commByte** that is *not always* a scene-version constant — for the DIY/graffiti
@@ -327,7 +358,7 @@ There are **two `0xA3` dialects**, differing in `commBytes` and how `value` is p
 
 | | (A) Legacy generic-scene | (B) DIY / graffiti — H60A6 & newer |
 |---|---|---|
-| entry | `makeWriteMultipleBytes(AbsMultipleControllerV1)` → commByte = `getCommandType()` (`:902-911`) | `MultiController.f.a(bytes, 88)` (→`0xA3`) **or** `Compose4DefWrite4Multi.d((byte)88,…)` (→`0xA4` MTU) — commByte = device protocol code `88` (see ⚠️ below) |
+| entry | `makeWriteMultipleBytes(AbsMultipleControllerV1)` → commByte = `getCommandType()` (`:902-911`) | `MultiController.f.a` with code `0x58` (→`0xA3`) **or** `Compose4DefWrite4Multi.d` with code `0x58` (→`0xA4` MTU) — commByte = device protocol code `88` (see ⚠️ below) |
 | **byte 4** | scene-version constant **V1=`0x01`, V2=`0x02`, V3=`0x07`, V6=`0x0C`** (`MULTI_V*_NEW_SCENES`), picked by `sceneType` in `ScenesOp.parseSceneV1` | **device graffiti/DIY protocol code** — H60A6 = **`0x58`** (`H60A6DiyParse.java:468`, `getProtocolCode()=88`) |
 | **value** | decoded cloud `scenceParam` (V3/graffiti strips the leading 2 bytes) | effect parsed then **re-serialized** — `H60A6GraffitiParse.toBytes()` = `[0x20, bgR,bgG,bgB, brightness, showType, layerCount, …]`; raw `0x50…` header consumed, so value starts `0x20` |
 | routing | `SceneControllerNoEventV1` ← `ScenesOp.parseSceneV1` (`:603`) | `BaseSceneViewMode.handleDiyNewConfig` (~`:1055`) → polymorphic `iDiyParse.makeBleController` (→ `0xA3`; `0xA4` only if effect byte ∈ `{0x5E,0x5D,0x20}`, see ⚠️) |
@@ -342,32 +373,36 @@ The same scene sent with dialect **A** — a generic comType (`0x02` = `MultiNew
 plus the *raw* blob, `A3 00 01 <count> 02 50 20 …` — is **rejected** (panel off). Note
 `0x58 = 0x50 | 0x08` arithmetically, so a client that ORs `0x08` onto the raw blob's `0x50` byte 0
 *accidentally* reproduces byte 4 — but the app's mechanism is a **constant protocol code `88` + a
-re-encoded value**, not a bitwise OR (there is no `value[0] |= 0x08` in the APK). Where the raw and
+re-encoded value**, not a bitwise OR (the APK never ORs `0x08` into value byte 0). Where the raw and
 re-encoded forms diverge (e.g. value byte 2), the re-encoded form is authoritative.
 
 > ⚠️ **`0xA3` vs `0xA4` (MTU) — mechanism resolved; `0xA3` is the effective form for every curated
 > device.** Dialect B has two builders, but which one runs is **gated by the effect's protocol byte, not
 > by MTU negotiation** (an earlier draft said "depends on MTU negotiation" — that was wrong):
-> - **`0xA3` form** — `MultiController.f.a(bytes, code)` → `makeSendBytesV1((byte) -93, code, bytes)`,
->   and `-93 & 0xFF = 0xA3`; commByte at **byte 4** (the layout above). This is what both the H60A6
->   (`A3 00 01 … 58 …`) and H61A8 (`A3 00 01 10 03 …`) hardware captures matched.
-> - **`0xA4` MTU form** — `Compose4DefWrite4Multi.d((byte)88, toBytes(), mtu,…)` →
->   `makeSendBytesMtu((byte) -92, 88, …)`, `-92 & 0xFF = 0xA4`; commByte at **byte 6** (MTU layout).
+> - **`0xA3` form** — `MultiController.f.a(bytes, code)` → `makeSendBytesV1` with proType `0xA3` (the
+>   app's -93 as an unsigned byte), then the code and the bytes; commByte at **byte 4** (the layout
+>   above). This is what both the H60A6 (`A3 00 01 … 58 …`) and H61A8 (`A3 00 01 10 03 …`) hardware
+>   captures matched.
+> - **`0xA4` MTU form** — `Compose4DefWrite4Multi.d` with code `0x58`, the `toBytes()` value and the MTU →
+>   `makeSendBytesMtu` with proType `0xA4` (-92 as an unsigned byte) and code `0x58`; commByte at
+>   **byte 6** (MTU layout).
 > - **The gate.** The `0xA4` path is reachable **only** through
->   `Compose4DefWrite4Multi.makeWriteController(b6, b10, …)` (`:196-209`), which requires **`b6 == 88`
->   (command `0x58`) AND `NewDiyEditConfig.isUseMtuCommand(b10) == true`** — and that returns true only
->   for effect bytes **∈ `{0x5E, 0x5D, 0x20}`** (`NewDiyEditConfig.java:57-61, 140-142`). Scene
->   controllers report `useMtuController() == false` (`AbsMultipleControllerV14Scenes:137-140`) and never
+>   `Compose4DefWrite4Multi.makeWriteController` (`:196-209`), which requires **its command argument to be
+>   `0x58` (88) AND `NewDiyEditConfig.isUseMtuCommand` to hold for its effect-byte argument** — and that
+>   holds only for effect bytes **∈ `{0x5E, 0x5D, 0x20}`** (`NewDiyEditConfig.java:57-61, 140-142`). Scene
+>   controllers report `useMtuController()` false (`AbsMultipleControllerV14Scenes:137-140`) and never
 >   take it.
 > - **Even when `0xA4` is chosen the frame is still 20 bytes unless a larger MTU was *cached*.** Chunk
 >   size = `MtuConfig.getAvailableMtuSize = max(getMtu(sku) − 3, 20)`, and `getMtu` defaults to `23 ⇒ 20`
->   (`MtuConfig.java:18,48,62-65`). `MtuConfig` is an app-internal per-SKU store written only by
->   `saveMtuData(…)`; it is **not** the GATT-negotiated ATT MTU. A negotiated 247/512 MTU does not by
->   itself widen these writes.
+>   (`MtuConfig.java:18,48,62-65`). `MtuConfig` is a per-SKU **cache of the negotiated ATT MTU**:
+>   `saveMtuData(…)` stores the `onMtuChanged` result only on a successful exchange (status 0), so a failed
+>   or absent exchange leaves `getMtu` at its `23` default ⇒ usable size 20. The `512` passed to `requestMtu`
+>   is only the *requested* size and is never stored, so requesting a large MTU does not by itself widen these
+>   writes — the negotiated result must land in the cache first.
 >
 > **Second route to `0xA4` (correction to an earlier draft).** Beyond the `makeWriteController` gate
-> above, **`H60A6GraffitiParse.makeBleController` calls `Compose4DefWrite4Multi.d((byte)88, toBytes(), mtu)`
-> directly** (`:238`; `isNeedMtuPackage()==true` `:204`), *bypassing* that gate. So **every H60A6
+> above, **`H60A6GraffitiParse.makeBleController` calls `Compose4DefWrite4Multi.d` with code `0x58`, its
+> `toBytes()` value and the MTU directly** (`:238`; `isNeedMtuPackage()` is true, `:204`), *bypassing* that gate. So **every H60A6
 > `sceneType 5` graffiti scene uploads as `0xA4`.** Which type-5 scenes are graffiti is decided by
 > **parser order**, not `byte1` alone: `H60A6DiyParse` is tried **first** and wins iff `Pro4H60A6Diy.c`
 > parses — `byte0==0x50` **and** `(u16le@bytes[1..2]) + 3 == len` (the DIY length gate) **and** the layers
@@ -386,21 +421,21 @@ them apart** (`0x00` / `0x01` / `0x02`):
 
 | Builder | byte 2 | START header | START inline value | `0xFF` terminator | Chosen when / used by |
 |---|:--:|---|---|---|---|
-| `makeSendBytesV0` (`:743`) | `00` | `[A3, 00, 00, packs+2, commByte, 0×14]` | **none** — all value in MIDDLE/END | **empty** (bytes 2–18 = 0, *not* data-bearing) | `controller.p() == 0` — rare; **not** the scene/DIY path (`p()` = 1 there) |
-| `makeSendBytesV1`/`V2` (`:781`/`:785`) | `01` | `[A3, 00, 01, packetCount, commBytes…]` | `15 − L` bytes at byte `4+L` | **data-bearing** (final chunk) | the common path — **generic scenes + DIY-graffiti** (H61A8, H6047, H6052, bulbs) |
-| `makeSendBytesV3` / `K` (`:851`/`:111`) | `02` | `[A3, 00, 02, pktCount, commByte, ctrlNum, ctrlIdx, verify×8 @7]` | **4 bytes** @ byte 15 (after the verify block) | **data-bearing** | multi-controller scenes — `sceneV1.isNeedMulMulPackage()==true` (`BaseSceneViewMode:820`); returns `List<List<byte[]>>`, one START…`FF` group per controller |
+| `makeSendBytesV0` (`:743`) | `00` | `[A3, 00, 00, packs+2, commByte, 0×14]` | **none** — all value in MIDDLE/END | **empty** (bytes 2–18 = 0, *not* data-bearing) | the controller's `p()` is 0 — rare; **not** the scene/DIY path (`p()` = 1 there) |
+| `makeSendBytesV1`/`V2` (`:781`/`:785`) | `01` | `[A3, 00, 01, packetCount, commBytes…]` | `15 − L` bytes at byte `4+L` | **data-bearing** (final chunk) when the value exceeds the `15 − L` inline bytes; **empty** (packetCount 2) for a short value | the common path — **generic scenes + DIY-graffiti** (H61A8, H6047, H6052, bulbs) |
+| `makeSendBytesV3` / `K` (`:851`/`:111`) | `02` | `[A3, 00, 02, pktCount, commByte, ctrlNum, ctrlIdx, verify×8 @7]` | **4 bytes** @ byte 15 (after the verify block) | **data-bearing** | multi-controller scenes — the scene's `isNeedMulMulPackage()` is true (`BaseSceneViewMode:820`); returns a list of frame lists, one START…`FF` group per controller |
 
-- **V1 = V2 with a 1-byte `commBytes`** — `makeSendBytesV1` delegates to `makeSendBytesV2` (`:781-783`); V2 exists so `commBytes` can be longer (e.g. `{commandType, p()}` = 2 bytes, `:919`). The frame-shape diagram above is this (V1/V2) form.
-- **V0's `0xFF` terminator is the only empty one**; V1/V2 and V3 all carry the last value chunk in the `0xFF` frame.
+- **V1 = V2 with a 1-byte `commBytes`** — `makeSendBytesV1` delegates to `makeSendBytesV2` (`:781-783`); V2 exists so `commBytes` can be longer (e.g. `[commandType, p()]` = 2 bytes, `:919`). The frame-shape diagram above is this (V1/V2) form.
+- **V0's `0xFF` terminator is always empty**; V1/V2 carry the last value chunk in the `0xFF` frame except for a short value that fits in START (then the END is empty and packetCount is 2), and V3 carries it there too.
 - **V3 inserts an 8-byte `verify` block** (6-byte LE timestamp + 2 random, `BleUtils.getSignedBytesFor6`) at bytes 7–14, leaving only 4 value bytes in its START; the H60A6/H61A8 captures are the **V1/V2** form (byte 2 = `01`), not V3.
 
 **Worked H61A8 example — the value layer (`DiyGraffitiV2.g()`), byte-exact.** The H60A6 example above
 shows dialect-B *framing*; this one decodes the **value** — the part a client must build itself. Every
 link below was read first-hand from the decompiled Java:
 
-- `dreamcolorlightv1/ble/OpDiyCommDialog4BleV2.o()` (`:32`): `new MultiDiyGraffitiController(g.f(), g.g())`, where `g` is a `DiyGraffitiV2` (`:19`) — so the uploaded value **is** `DiyGraffitiV2.g()`.
-- `base2light/ble/controller/MultiDiyGraffitiController`: `g()` returns that `byte[]` verbatim (`:26-28`); `getCommandType() = (byte) 3` (`:31-33`); `p() = 1` (`:44-45`) → framed by `makeSendBytesV1(0xA3, 3, value)` (the V1/V2 sub-layout).
-- `base2light/ac/diy/DiyGraffitiV2.g()` (`:210-259`): the value serializer.
+- `dreamcolorlightv1/ble/OpDiyCommDialog4BleV2.o()` (`:32`): builds the `MultiDiyGraffitiController` from that screen's `DiyGraffitiV2` (`:19`), passing its `f()` and `g()` — so the uploaded value **is** `DiyGraffitiV2.g()`.
+- `base2light/ble/controller/MultiDiyGraffitiController`: `g()` returns that `byte[]` verbatim (`:26-28`); `getCommandType()` = `0x03` (`:31-33`); `p() = 1` (`:44-45`) → framed by `makeSendBytesV1(0xA3, 3, value)` (the V1/V2 sub-layout).
+- `base2light/ac/diy/DiyGraffitiV2.g()` (`:195-244`): the value serializer.
 
 Captured START frame (real plaintext H61A8 btsnoop):
 ```
@@ -493,7 +528,7 @@ would make `parseSceneV1` return `null` for type-5 anyway). Within `q3` the conc
 `0xA3` vs `0xA4` — is **blob-deterministic** (not MTU-, not coin-flip): `H60A6DiyParse` (→`MultiController`,
 **`0xA3`**) matches only if `Pro4H60A6Diy.c` parses (its `byte3` = `layerSize` must fit the blob,
 `Pro4H60A6Diy.java:78,83,104`); `H60A6GraffitiParse` (→`Compose4DefWrite4Multi`, **`0xA4`-MTU**, commByte
-`0x58`) matches iff **`byte1==0x20`** (`:298`, `b={0x50}` `:47`). **Confirmed from the catalog:** H60A6
+`0x58`) matches iff **`byte1==0x20`** (`:298`; field `b` = `[50]`, `:47`). **Confirmed from the catalog:** H60A6
 Aurora decodes to `50 20 00 FF 00 0C…` → `byte1=0x20` ⇒ **`H60A6GraffitiParse` → `0xA4`-MTU, commByte
 `0x58`** (`Pro4H60A6Diy` also fails its length gate: `bytes[1..2]`=`0x0020`=32, `32+3≠188`). So the
 `0xA3`-vs-`0xA4` choice is **fully param-deterministic** — and because `H60A6DiyParse` is tried **first**,
@@ -503,16 +538,20 @@ the test is the **DIY length gate**, not `byte1`: if `Pro4H60A6Diy.c` parses (`(
 (`32+3=35=len`), whereas Aurora → `0xA4` (`32+3=35 ≠ 188`). Catalog split **59 graffiti / 14 DIY**. Only the
 `0xA4` frame *size* (20 vs up to MTU 512) depends on cached MTU, not the param.
 **Otherwise, `parseSceneV1` (dialect A, `:756-781`):**
-```java
-sceneV1 = ScenesOp.parseSceneV1(sceneType, sceneCode, scenceParam, versionArray);
-if (sceneV1 != null) add SceneControllerNoEventV1(sceneV1);  // 0xA3 UPLOAD — conditional (dialect A value)
-add createSceneModeController(...);                          // 33 05 04 <sceneCode LE> — ALWAYS
-```
+1. `ScenesOp.parseSceneV1(sceneType, sceneCode, scenceParam, versionArray)` parses the scene.
+2. Only if it returns a scene, a `SceneControllerNoEventV1` for it is queued: the `0xA3` upload
+   (dialect A value), which is conditional.
+3. `createSceneModeController` is always queued: the `33 05 04 <sceneCode LE>` activation.
+
 So the app **uploads iff the param parses**, and the `33 05 04 <sceneCode>` activation is always sent
 in both cases. `parseSceneV1` returns null only when no `(versionArray, sceneType)` branch matches, the
 param is empty, Base64 fails, or the per-type validator fails — and those validators gate on
 **`byte[0]` + length + `sceneType`** (`ShareDiy.isValidComposeBytes` → `bytes[0]==10`;
-`isValidGraffitiBytes` → `byte[0]==1 && len≥9`; `ScenesRgbIC`/`ScenesRgb` anchor on `byte[0]`), **never on
+`isValidGraffitiBytes` → `byte[0]==1 && len≥9` and a walk of the group headers from byte 9;
+`ScenesRgbIC` → a walk of the `byte[0]` length-prefixed effect records, each long enough for `f()`;
+`ScenesRgb` → `byte[0]`'s mode / colour-count bits and an exact length; each is modelled exactly in
+`govee_upload.ksy` as the form-`cloud` read of kinds `compose`, `scenes_graffiti_gate`, `rgbic_scene` and
+`rgb_scene`), **never on
 byte 3**.
 
 > **`byte 3 = 0xFF` is NOT an "activate-only" marker.** A grep for any `[3]`-index gate across
@@ -545,25 +584,62 @@ matches the live-implementation captures exactly.
 `FIRST_DATA_OFFSET=7`):
 
 ```
-first chunk (tag 0x00): [0xAC, 0x00, totalLo, totalHi, lastLen, cmd, sub, <12 data bytes @7..18>, CK]
+first chunk (tag 0x00):  [0xAC, 0x00, pktsLo, pktsHi, lastLen, cmd, sub, <12 data bytes @7..18>, CK]
 next  chunks (tag 0x01…): [0xAC, tag,  <17 data bytes @2..18>, CK]
-terminator (tag 0xFF):   delivers the concatenated buffer to the parser
+last  chunk (tag 0xFF):  [0xAC, 0xFF, <lastLen data bytes @2..>, zero pad, CK]
 ```
 
+- **`pkts`** (bytes 2-3, u16 **LE**, `BleUtils.H(…, false)`) = `allBackPkgs`: the **total packet count**,
+  including the first chunk and the `0xFF` chunk. **`lastLen`** (byte 4) = `endPkgLen`: the number of valid
+  data bytes in the last chunk (0..17) (`AbsController4BleSingleSendMultiBack.g()` `:133-177`).
+- The **`0xFF` chunk is the last data packet**, not an empty terminator: `h()` copies `lastLen` bytes
+  from its offset 2 and then delivers the buffer (`:203-217`). Middle chunks contribute 17 bytes from
+  offset 2 (`i()` `:219-227`).
+- Chunks are matched **by position**: a middle chunk's tag must equal its position (1 … `pkts`−2), and
+  tag `0xFF` is accepted only at position `pkts`−1 (`isSameController()` `:230-253`, `onResult()`
+  `:313-332`). The app also accepts the last chunk tagged with its **position** (`pkts`−1) instead of
+  `0xFF`: `isSameController()` falls through to a test that the tag (via `K`) equals the current position
+  `backPos` (`:248`), and `onResult()` runs
+  `h()` at position `pkts`−1 whatever the tag (`:326-331`). The H60A6 sends `0xFF` (both real
+  captures); a reassembler should accept either. The first chunk is matched on `[0xAC, 0x00, …, cmd@5, sub@6]` with `sub` = the reader's
+  `d()` (`f()` `:128-131`): 0 for the H60A6 status read, whose `Compose4BaseInfoSingleRead` builds
+  a `ControllerSingleRead` and leaves that field at its default (`Compose4BaseInfoSingleRead:256`,
+  `ControllerSingleRead.d()`).
+- **Single-packet reply** (`pkts` = 1): no further chunks; the data is `lastLen` (≤ 12) bytes from
+  offset 7 of the first chunk (`g()`).
+
+So the reassembled buffer is exactly `12 + 17 × (pkts − 2) + lastLen` bytes (`lastLen` alone when
+`pkts` = 1). Example, the real H60A6 burst `ac 00 0a 00 0c 03 00 …` … `ac ff …`: 10 packets, `lastLen` 12
+→ 12 + 17 × 8 + 12 = 160 bytes, which is exactly its TLV stream (the last 12 bytes, in the `0xFF` chunk,
+finish colour group 4). `govee_reference.reassemble_ac`/`chunk_ac` implement this; the cross-check test
+round-trips both real captures byte for byte.
+
 The reassembled buffer is a **header-less TLV stream** — `[type, len, value]`, `i += 2 + len` —
-parsed by `Compose4BaseInfoSingleRead.u()` (`:292`). `u()` itself handles `type 1` = on/off,
+parsed by `Compose4BaseInfoSingleRead.u()` (`:247-345`). `u()` itself handles `type 1` = on/off,
 `type 4` = brightness, `type 5` = **mode** block (`[sub_mode, params]`, delegated to the mode lambda),
 `type 7` = **device info** (`w()`: `sub 0x10` = `[uid(8), sw(3), hw(3), dsp(u16 LE)]`; `sub 0x11` =
-`[Wi-Fi MAC(6, forward), sw(3), hw(3)]` — same layout as the `aa 07` reply; note the UID in `sub 0x10`
+`[Wi-Fi MAC(6, forward), sw(3), hw(3)]`. This is the layout `BasicInfoController` / `BasicWifiInfoController`
+expect for `aa 07 10` / `aa 07 11`, but neither controller has a live caller, and H60A1/H60A6 firmware has
+no single-frame `07 10`/`07 11` handler (the request is echoed; firmware-sourced). On H60A6 these records
+exist only here, built by `ble_check_basic_info` (`H60A6.bin@0x9b04bdd8`). Note the UID in `sub 0x10`
 is byte-**reversed** while the Wi-Fi MAC in `sub 0x11` is **forward**, per §5.2), plus
-`0x11`/`0x12` sleep/wakeup and `0x23` timers. **Every other type** (`0x30` zone, `0x41` seg/IC,
+`0x11`/`0x12` sleep/wakeup and `0x23` timers. **Every other type** (`0x30` zone; `0x41` power-on
+memory on H60A6: value `[02][mode]`, firmware `FUN_9b02bfe4` = UserConfig+4, logged "start mode",
+written by app `Controller4OnOffMemory` `33 41 02 v`;
 **`0xA5` colour group**, …) is passed to a caller fallback lambda with the full `[type,len,value]`
 re-prepended. `0xA5` = **one colour group** `[group_index (1-based), record × count]`, record =
 **4-byte `[brightness, R, G, B]`** on part-brightness SKUs (all curated: H60A6/H6047/H6641) or 3-byte
-`[R, G, B]` on colour-only SKUs; **count = `(len − 1) / record_size`** (from the TLV `len`); global
-segment index = `(group_index − 1) × count + k`. All of these are modelled in `govee_ble.ksy`
-(`status_tlv` → `status_switch`/`status_brightness`/`mode_status`/`device_info_read`/`status_zone`/
-`status_seg_info`/`color_group_status`); only the `0x05` `params` sub-layout stays device-specific.
+`[R, G, B]` on colour-only SKUs. `color_group` with rule `from_len` takes **count = `(len − 1) / record_size`** from the
+TLV `len`; in Govee Home 7.7.02 most screens pass `Controller4ColorInfoByGroup.Companion.q` a count of their
+own, and q() reads exactly that many records, ignores what follows and throws on a shorter value (a few
+screens read the value with other helpers in other layouts; see `color_group`). H60A6
+(`VM4LightH60A6$afterConnectedSingleReadDeviceInfo$1.o:112-117`) takes 4 per group and the remainder in
+the last of `ceil(pieces / 4)` groups: profile `group` rule `by_pieces` (`num_per_group` 4, `num_pieces`).
+The H6038 family passes a fixed 4: rule `fixed`, `num_per_group` 4. Global
+segment index = `(group_index − 1) × count + k`. All of these are modelled in `govee_status_stream.ksy`
+(`status_tlv` → `govee_state`: `power_state` / `level` / `mode_report` / `device_info_record` /
+`cmd_30_state` (zone) / `cmd_41_state` (power memory) / `cmd_a5_state` → `color_group`); the `0x05`
+colour layout is the profile's `mode_status` decode.
 
 > **Not every SKU answers `0xAC` — some read `0xA5` colour groups *directly*.** The record layout above
 > (4-byte `[brightness,R,G,B]`) is shared, but the *transport* is not. The `0xAC` status burst is dispatched
@@ -578,12 +654,19 @@ segment index = `(group_index − 1) × count + k`. All of these are modelled in
 > `AC 03 03 41 30 A5` to an H6047/H6641 returns **zero frames** deterministically — it is never dispatched.
 > H6641 additionally reads IC count first (`0x40`, `VM4Light.C5:197`); group count = `ceil(IC / 5)`. In
 > `devices.yaml` this is the `per_segment_color_read` opcode (`0xa5`) on the `h6047`/`h61d3` families.
+> In the spec such a reply frame reads through `read_reply` → `govee_state` → `cmd_a5_state`: nothing in
+> the frame names the controller that asked, so the profile's `f_a5` picks the layout (`color_group`, read
+> with `group.num_per_group` = the SKU's group size, 4; or H61A8's `bulb_batch_v2` batch).
 
-> **Trailing padding:** the reassembled buffer is zero-padded to the last frame's 20-byte boundary, so it
-> usually ends in `0x00` bytes. `u()` stops once fewer than 2 bytes remain; no real TLV type is `0x00`.
-> A consumer must therefore terminate on a `0x00` type byte (or EOF), **not** parse to end-of-buffer — the
-> `.ksy` models this as `status_reply` `repeat-until: '_.type == 0 or _io.eof'` (parsing to EOS would throw
-> on a lone trailing zero, which has no room for its length byte).
+> **Trailing padding:** trimmed to `lastLen` as the app does (and as the shipped library's
+> `wire/reassemble.py` and `govee_reference.reassemble_ac` do), the buffer ends exactly at the last TLV. A
+> reassembler that doesn't trim, joining the whole 17-byte data region of the last chunk, gets the chunk's
+> zero padding on the end, so its buffer ends in `0x00` bytes. `u()` reads a TLV only while 3 or more bytes
+> remain (it stops when the tag or the length is the last byte, `Compose4BaseInfoSingleRead.java:254-284`)
+> and has no padding sentinel: a type-`0x00` TLV goes to the screen's fallback, which ignores it. The spec
+> walks the same way — `govee_status_stream` reads `status_tlv` while 3 or more bytes remain, tag 0 is an
+> ordinary TLV, and the 0-2 bytes left over are its `tail` — so both buffers read (the untrimmed one as
+> extra type-0 TLVs plus a tail) and re-write exactly.
 
 ---
 
@@ -597,8 +680,8 @@ shared opcodes:
 
 | Command | Byte | Direction | Meaning |
 |---------|------|-----------|---------|
-| `SINGLE_HEART` | `0x01` | W | heartbeat / keep-alive (also `SINGLE_MAIN_SWITCH`) |
-| power (`SINGLE_SWITCH`) | `0x01` | W/R | on/off (payload `01`/`00`) |
+| `SINGLE_HEART` | `0x01` | W | heartbeat / keep-alive (also `SINGLE_MAIN_SWITCH`). Newdetail `ShareVM` screens choose the byte with `ConnectHeartbeat.c(K3())`. With `I3()` false (H60A1, H60A6) it is `0x00` = `SINGLE_HEART_BEAT`, so they send `AA 00`. Firmware-sourced: the firmware answers that with an explicit no-op echo (H60A6 tbh[0] → `0x9b026b20`, H60A1 → `0x9b02607e`) |
+| power (`SINGLE_SWITCH`) | `0x01` | W/R | on/off. Lights: payload `01`/`00`. Plugs: `(relay mask << 4) + on bits` (`SwitchControllerV2.q`); H5083 sends `0x11` on / `0x10` off (`H5083NewDetailViewModel.x0`). Firmware-sourced for H5083 (`H5083.bin@0x9b01f6b4`): only the outlet-0 mask bit (bit 4) is honoured. `01`/`00` is acked but changes nothing, and `33 01` is served only after the `33 B2` pairing. The `AA 01` reply is `00`/`01`. |
 | `SINGLE_BRIGHTNESS` | `0x04` | W/R | brightness |
 | `SINGLE_MODE` | `0x05` | W/R | mode + sub-mode (color/scene/music/DIY) |
 | `SINGLE_SOFT_VERSION` | `0x06` | R | firmware version string |
@@ -615,32 +698,54 @@ shared opcodes:
 
 | Command | Byte | Meaning |
 |---------|------|---------|
-| `SINGLE_WIFI_MAC` | `0x14` | Wi-Fi MAC |
-| `SINGLE_WIFI_HARD_VERSION` | `0x20` | Wi-Fi module HW version |
-| `SINGLE_WIFI_SOFT_VERSION` | `0x21` | Wi-Fi module SW version |
+| `SINGLE_WIFI_MAC` | `0x14` | Wi-Fi MAC. Reply `AA 14 <mac6 forward> …echo… BCC`. The app sends it on the H6006/H6008 control screen (bulblight `ControllerStrategyConfig.h0:648-654`). Firmware: H6006 `ble_msg_get_wifi_mac_address` `0x9b03ca0c`, H6008 `0x9b03c844` |
+| `SINGLE_WIFI_HARD_VERSION` | `0x20` | Wi-Fi module HW version, ASCII from byte 2. The app sends it on the same control screen (`ControllerStrategyConfig.h0:634-647`). On H6006/H6008 it is the same string as `AA 07 03` (same getter; firmware H6006 `ble_msg_get_wifi_hwversion` `0x9b03ca90`, H6008 `0x9b03c89c`) |
+| `SINGLE_WIFI_SOFT_VERSION` | `0x21` | Wi-Fi module SW version, ASCII from byte 2. The app sends it on the same control screen (`ControllerStrategyConfig.h0:634-647`). On H6006/H6008 it is the same string as `AA 06` (firmware H6006 `ble_msg_get_wifi_swversion` `0x9b03cb0c`, H6008 `0x9b03c8e4`) |
 | `SINGLE_WIFI_DSP_VERSION` | `0x22` | DSP version |
-| `SINGLE_GET_DEVICE_INFO` | `0x41` | device info (WiFi devices) |
-| device-info sub-values | `UUID=0x02, HARD=0x03, SOFT=0x04, DSP=0x07` | sub-selectors within `0x07`/`0x41` |
+| `SINGLE_GET_DEVICE_INFO` | `0x41` | device info (WiFi devices). The same value is `SINGLE_ON_OFF_MEMORY`. On H60A6 firmware `0x41` is power-on memory: `33 41 02 <v>` writes it, and `AA 41` returns `[02][v]` (UserConfig+4; handler `H60A6.bin@0x9b0270a4`). The app writes it but reads it only from the `AC 03` TLV `0x41` ([§4.5](#45-single-request--multi-reply-status-read-0xac)), so the single-frame `AA 41` read is firmware-sourced |
+| device-info sub-values | `UUID=0x02, HARD=0x03, SOFT=0x04, DSP=0x07` | sub-selectors within `0x07`/`0x41`. H60A1/H60A6 firmware answers `07` sub `02`/`03`/`06`/`0A`/`0B` only |
 
-**Info-read sub-selectors under read command `0x07`** (frames `AA 07 <selector>`), verified in the
-`base2light` controllers:
+**Info-read sub-selectors under read command `0x07`** (frames `AA 07 <selector>`). The Controller and
+Response-layout columns are the app (the `base2light` controllers unless noted). The Firmware column is
+**firmware-sourced**, from the images in [§4.2](#42-single-command-packet-0x33--0xaa); a firmware reply
+puts the `AA 07 xx` data at byte 3, right after the selector.
 
-| Selector | Controller | Response layout |
-|----------|-----------|-----------------|
-| `0x02` | `SnController.java:42` | serial/UID: 8 bytes, **reversed** (`toAddressBytes(hFirst=false)`) |
-| `0x10` (16) | `BasicInfoController.java:39` | 8-byte UID (reversed) + two 3-byte firmware versions formatted `X.YY.ZZ` |
-| `0x11` (17) | `BasicWifiInfoController.java:46` | 6-byte **Wi-Fi MAC forward/high-first** (`parseWifiMac(...,true)`) + two 3-byte versions `X.YY.ZZ` |
+| Selector | Controller | Response layout | Firmware (firmware-sourced) |
+|----------|-----------|-----------------|-----------------------------|
+| `0x02` | `SnController.java:42` | serial/UID: 8 bytes, **reversed** (`toAddressBytes` with `hFirst` false) | H6047 sends its stored id byte-reversed (`0x010053da`). The stored id is `[rand lo][rand hi][BLE addr reversed]`, created on the first AA 07 02 or AA b1 if absent (`0x010029c4`), so the reply is `[addr0..addr5][rand hi][rand lo]`. H6006/H6008: the device's colon-separated uuid string decoded into (strlen+1)/3 bytes and stored in reverse order (H6006 `0x9b03c87c`/`0x9b03c30e`; H6008 `0x9b03c740`/`0x9b0430e4`) |
+| `0x03` | `HardVersionController.java:28-29` / `ControllerHardVersion` | ASCII hw version after the selector (from byte 3) | H6047: `"3.02.01"` (`0x010053a2`). H5083: `"1.02.00"` (`ble_msg_get_hw_version` `0x9b031984`) |
+| `0x04` | `SoftHardController.Companion.e` (live: split_h61d3 `PairViewModel:187` → `PairToDeviceInfoReadController`); `SoftVersionInDeviceInfoController` (no caller) | ASCII sw version after the selector | H6047 answers `"1.00.12"` (`0x010053ca`); the H6047 app path reads AA 06 instead. Not answered by H5083, H6006/H6008 (no reply) or H60A1/H60A6 (echo) |
+| `0x06` | — (no app controller) | — | 6-byte BLE MAC at reply bytes 3..8 (payload `[06]` + 6 bytes). Byte-reversed relative to the device's MAC string on H6006 (`0x9b03c988`), H6008 (`0x9b03c7ec`), H60A1 (`ble_msg_get_ble_macaddress` `0x9b0452b0`) and H60A6 (`0x9b04a6d8`). In the device's printed-string order on H5083 (`ble_msg_get_ble_macaddress` `0x9b0319cc`). H6047 BLE 1.00.12: handler `0x01005370` → `0x010053ce` |
+| `0x0A`/`0x0B` | `McuSoftVersionControllerV1` / `McuHardVersionControllerV1` | not traced here | H6008 and H60A1/H60A6: the handler writes no data, so the reply echoes the request. H6006, H5083, H6047: no reply |
+| `0x10` (16) | `BasicInfoController.java:39` | 8-byte UID (reversed) + two 3-byte firmware versions formatted `X.YY.ZZ` | Not answered by H6006/H6008, H5083 or H6047 (no reply). H60A1/H60A6 echo the request unchanged |
+| `0x11` (17) | `BasicWifiInfoController.java:46` | 6-byte **Wi-Fi MAC forward/high-first** (`parseWifiMac(...,true)`) + two 3-byte versions `X.YY.ZZ` | Not answered by H6006/H6008, H5083 or H6047 (no reply). H60A1/H60A6 echo the request unchanged |
 
 Note the endianness asymmetry: the UID/serial (`0x02`,`0x10`) is byte-reversed, but the Wi-Fi MAC
 (`0x11`) is forward.
+
+`BasicInfoController` and `BasicWifiInfoController` have no live caller in 7.7.02 (H5086 uses its own
+`DeviceBasicInfoController` / `WifiInfoController`). H60A1/H60A6 echo `AA 07 10` / `AA 07 11` unchanged,
+so they read back as all zero. On H60A6 the same layouts arrive as AC 03 TLV-7 records.
+
+**Firmware notes** (firmware-sourced; the per-SKU selector summary is in [§4.2](#42-single-command-packet-0x33--0xaa)):
+- **H5083** (SW1.00.30, `ble_msg_get_dev_info` `0x9b031b08`) answers only `02`/`03`/`06`. The firmware
+  writes no NUL or padding: bytes after the data are the request's bytes (zero for app-formed requests).
+  Every other selector (`04`, `07`, `0A`, `0B`, `10`, `11`) is forwarded to the dispatcher and dropped
+  with no reply.
+- **H6047** (BLE 1.00.12) does not answer `0x10`/`0x11`, nor `00`, `01`, `05`, `07` (DSP), `0a`/`0b`
+  (MCU) or anything above: `sel−2 > 4` returns without a reply (`0x01005396`).
+
+`0x14`/`0x20`/`0x21` are app-sent reads, not firmware-only. Besides the H6006/H6008 control screen
+(`ControllerStrategyConfig.h0:634-654`), the app sends them during H5083 setup (h5080 `PairAcV1.t2:652`)
+and H6047 setup (split_h6047 `PairAcV1:257`; detail connect via `Compose4InfoBleIot`).
 
 ### 5.3 IC / addressable-LED (RGBIC families)
 
 | Command | Byte | Meaning |
 |---------|------|---------|
 | `SINGLE_IC_SEGMENT_NUM` / `IC_NUM` | `0x40` | segment/IC count |
-| `SINGLE_WRITE_CHECK_IC` | `0x42` | refresh IC |
-| `SINGLE_CHECK_IC` / `CHECK_LAST_IC` | `0x46` | detect IC chip |
+| `SINGLE_WRITE_CHECK_IC` | `0x42` | refresh IC. On H60A6 firmware, `0x42` is the calibration mode instead (app `CalibrationAcH60A6`: `33 42 01` / `02 xx` / `FF` / `00`; firmware log `Get calibra msg %d`, `H60A6.bin@0x9b0269fe`) |
+| `SINGLE_CHECK_IC` / `CHECK_LAST_IC` | `0x46` | detect IC chip. ⚠️ **Not on H60A1/H60A6:** there `33 46` is a factory reset and reboot (app `SINGLE_RESET_DEVICE_NET` = 70; firmware-sourced: a `33 46` ack, then `Govee_GatewayConfig_Reset`, `HAL_Matter_Reset` and `Device rebooting ...`; H60A6 `0x9b03fa3c` / `0x9b0446c4`, H60A1 `0x9b03a6a8` / `0x9b03f408`). Do not send it to those SKUs as an IC check |
 | `SINGLE_WRITE_CHECK_IC_AMOUNT` | `0x43` | IC count check |
 
 ### 5.4 Multi-packet mode payloads (sub-command types carried inside `0xA1`/`0xA3` frames)
@@ -661,7 +766,7 @@ Note the endianness asymmetry: the UID/serial (`0x02`,`0x10`) is byte-reversed, 
 | `SINGLE_CHECK_SECRET_KEY` | `0xB2` (−78) | pairing secret check |
 | `SINGLE_READ_SECRET_KEY` | `0xB1` (−79) | read pairing secret |
 | `SINGLE_OTA_PREPARE` | `0xEE` (−18) | enter OTA mode |
-| `SINGLE_PACT` | `0xEF` (−17) | protocol/pact negotiation |
+| `SINGLE_PACT` | `0xEF` (−17) | Pact read: reply bytes 2-3 = pactType (u16be), byte 4 = pactCode (`PactController.parseValidBytes`). Sent only by the old pact-check flows (`AbsBlePact.o`) and skubusiness `BlePactChecker`, not on the H6006/H6008 control screen. Firmware-sourced: H6006 `ble_msg_get_adv_pro_type` (0x9b03cc00) returns a hard-coded `00 01 01` (pact 1/1), as do H60A1/H60A6 (`0x9b045558` / `0x9b04a980`); H5083 returns `00 02 02` (`0x9b031b80`). H6008 has no handler and sends no reply |
 | `SINGLE_DYNAMIC_API_SUPPORT` | `0xAB` (−85) | query dynamic-API capability |
 
 > **Note.** The `commandType` namespace is reused per feature; the same numeric value means
@@ -682,7 +787,7 @@ Some families override the shared opcodes above. Confirmed cases:
 > **On `0x30` "zone power" — CONFIRMED (in a feature split).** This write was absent from `base.apk`
 > because **H60A6 ships as a separate dynamic feature module** (`split_pact_h60ax.apk`), not in the
 > base decompile. In that split it is built inline via the base helper
-> `Controller4ExtBytes.f((byte)0x30, [zoneIndex, state])` → on-wire `[0x33, 0x30, zoneIndex(0|1),
+> `Controller4ExtBytes.f` with command `0x30` and payload `[zoneIndex, state]` → on-wire `[0x33, 0x30, zoneIndex(0|1),
 > state(0|1)]` (`pact_h60a0/adjust/h60a6/VM4LightH60A6.java:1203-1205`). It is **readable**: a notify
 > frame `[0xEE, 0x30, main, zone0, zone1, …]` carries each state in **bit 1** (mask `0x02`) of its
 > byte (`VM4LightH60A6.java:336-344`). See [§15](#15-dynamic-feature-module-pact-split-devices).
@@ -702,6 +807,11 @@ ON : 33 01 01 .. CK
 OFF: 33 01 00 .. CK
 Read: AA 01 00 .. CK   → response payload[0] = on/off
 ```
+
+`payload[0]` decode differs by path: the legacy controllers use `!= 0`
+(`SwitchController`/`SwitchControllerV2.java:30`), while the modern control-screen VMs use `== 1` —
+`ControllerSwitch.Companion.c` on the read reply (`ControllerSwitch.java:32`) and `ShareVM.N3` on the
+heartbeat frame's byte 2 (`ShareVM.java:1008`). They agree for `0`/`1` and differ only for a byte ≥ 2.
 
 ### Brightness — `BrightnessController` (`BrightnessController.java`)
 ```
@@ -773,14 +883,15 @@ constant** — this is the single biggest source of per-device divergence.
 
 ### 7.2 Worked example — H6159 (`com/govee/h6159/ble/Mode.java`)
 
-```
-parseSubMode(b, data):
-   b == 0x03 → SubModeMusic
-   b == 0x0E → ParamsSubMode4Music
-   b == 0x04 → SubModeScenes
-   b == 0x0A → SubModeNewDiy
-   else      → SubModeColor       (0x02)
-```
+`parseSubMode` picks the sub-mode class from the sub-mode byte:
+
+| sub-mode byte | class |
+|---|---|
+| `0x03` | `SubModeMusic` |
+| `0x0E` | `ParamsSubMode4Music` |
+| `0x04` | `SubModeScenes` |
+| `0x0A` | `SubModeNewDiy` |
+| any other | `SubModeColor` (`0x02`) |
 
 Contrast with H612526 (`color = 0x0B`), H6104 (`color = 0x02`, `music = 0x01`, `video = 0x00`),
 tablelamp/homelight (`color = 0x0D`, `music = 0x0F`), and the dreamcolor family
@@ -811,17 +922,18 @@ Common notify sub-types:
 
 | subType | Handler | Meaning |
 |---------|---------|---------|
-| `0x20` (32) | `DefParser.p` → per-SKU VM | **brightness/level** push: `level = value[0]` (`.ksy` `notify_level`) |
-| `0x30` (48) | `DefParser.M/O` + per-SKU VM | **switch / zone** push: H60A6 `main = bit0 value[1]`, `zone0 = value[2]`, `zone1 = value[3]` (`.ksy` `notify_switch_zone`) |
+| `0x20` (32) | `DefParser.p` → per-SKU VM | **brightness/level** push: `level = value[0]` (spec `govee_common::level`) |
+| `0x30` (48) | `DefParser.M/O` + per-SKU VM | **switch / zone** push: H60A6 `main = bit0 value[1]`, `zone0 = value[2]`, `zone1 = value[3]` (spec `notify_30`, rule per profile `f_ee_30`) |
 | `0x40` (64) | `DeviceStatusNotifyParse` (`:9`) | device connect/status block (10 bytes) → `EventDeviceStatus` |
-| `0x11` (17) | `WifiNotifyParse` (per device) | Wi-Fi connect result (`value[0]==0` = connected) (`.ksy` `notify_wifi`) |
+| `0x11` (17) | `WifiNotifyParse` (per device) | Wi-Fi connect result (`value[0]==0` = connected) (spec `wifi_status`) |
 | `0x01–0x07` | `NOTIFY_DETAIL_*` | light-status / battery / energy-saving / music / volume detail |
 | `0xED` (−19) | `NOTIFY_RECOGNITION` | AI / video-recognition status |
 | `0xEE` (−18) | OTA prepare ack | OTA state |
 
 The three the curated lighting SKUs actually push are `0x11` / `0x20` / `0x30` (`ShareVM.x4:2425` + per-SKU
-VM overrides); the `.ksy` `notify_frame` switches on these. Other subtypes are cross-category and modelled
-as annotations on the `notify_sub` enum.
+VM overrides); the spec's `notify` (frame route `notify_rx`) switches on these, and on `0x21` / `0x22` (H6062
+IC change) and `0x40` (H6047 slave states). Other subtypes are cross-category and modelled as annotations on
+the `govee_common::notify_sub` enum.
 
 BBQ thermometers instead push telemetry with `proType = 0xAB` (−85), handled in
 `base2newth/bbq/ble/AbsBleComm.java:54`.
@@ -863,7 +975,9 @@ post-handshake traffic is the **key**: the handshake uses a *fixed pre-shared ke
 (`LibTools.java:84`) returns `AESUtils.decode(R.string.app_communication, R.string.app_session)` —
 an AES-decoded, obfuscated string resource resolved at runtime. A live implementation reports the
 decoded value as ASCII **`MakingLifeSmarte`** (16 bytes); this is consistent with a 16-byte AES key
-but cannot be confirmed from static Java alone (it lives behind the resource decode).
+but cannot be confirmed from static Java alone (it lives behind the resource decode). The device side
+confirms it statically (firmware-sourced): the H5083 image (SW1.00.30) holds the literal at
+`0x9b813c66` and loads it as the AES key at connect (`0x9b032f18` → `0x9b0330dc`).
 
 ```
 1. App → device:  encrypt_AES(  [0xE7, 0x01, <random pad…>, CK]  )   // request session key
@@ -1142,7 +1256,7 @@ Where to look in the decompiled tree:
 
 1. Scan for the device (by MAC or advertised name/service data).
 2. `connectGatt` → discover services → find service `…0d1910`, characteristic `…0d2b11`.
-3. Enable notifications: `setCharacteristicNotification(true)` + write CCCD `…2902` = `{0x01,0x00}`.
+3. Enable notifications: `setCharacteristicNotification` (enabled) + write CCCD `…2902` = `[01 00]`.
 4. *(If the device requires it)* perform the AES/GCM session handshake ([§9](#9-encryption--session-key-handshake)).
 5. Send commands as 20-byte frames `[0x33, cmd, payload…, XOR]`; parse notifications
    `[0xEE, subType, …]` and read responses `[0xAA, cmd, …]`.
@@ -1165,8 +1279,8 @@ sections above have been corrected/expanded accordingly.
 | 3 | `scene_chunks` `0xA3` framing | **Superseded by hardware — re-fixed §4.4** | Two `0xA3` dialects exist. My first fix documented only the *legacy* one (comType@byte4 = version constant 1/2/7/12) and said "no `\|0x08`". H60A6 hardware proved it uses **dialect B** (DIY/graffiti): byte4 = device protocol code **`0x58`** (const 88, `≈0x50\|0x08` by coincidence), value = **re-encoded** graffiti `toBytes()` (not the raw blob), `0xFF` terminator data-bearing. §4.4 now documents both dialects; the legacy generic-scene framing is rejected by H60A6. **Still open:** the graffiti path has two builders — `0xA3` (commByte@byte4, hardware-tested) and `0xA4`-MTU (commByte@byte6, decompiled `makeSendBytesMtu`); the live default needs an official-app btsnoop (see §4.4 ⚠️). |
 | 4 | Plug sync-time `0xB5` | **Code correct; doc gap** → added §5.6/§6/§12.6 | Plug family uses `0xB5` with `[4-byte BE epoch, 0x01, tzHour, tzMin]`. The trailing `f9` seen live is a signed tz-hour byte (UTC−7), not a constant. Sent on connect / before timer writes. |
 | 5 | Device-info selectors `0x10`/`0x11` | **Code correct; doc gap** → added §5.2 | Under read `0x07`: `0x02`/`0x10` = UID/serial (reversed), `0x11` = Wi-Fi MAC (forward) + versions `X.YY.ZZ`. |
-| 6 | PSK literal | **Code plausibly correct; unverifiable from Java** → noted §9.1 | `LibTools.c()` = `AESUtils.decode(app_communication, app_session)` — a runtime-decoded resource, not a static literal. Live value `MakingLifeSmarte` is consistent but not statically provable. |
-| 7 | `0xAC` status burst | **Code correct; now fully confirmed** → §4.5 + §15 | 20-byte request `[0xAC, cmd, ext…, CK]`; ext = length-prefixed cmd list. H60A6 split confirms `AC 03 02 41 30` / `AC 03 03 41 30 A5` byte-for-byte. Reply chunks tag@byte1 (12 data@off7 first, 17 data@off2 rest, `0xFF` terminator) → TLV stream. |
+| 6 | PSK literal | **Code plausibly correct; unverifiable from Java** → noted §9.1 | `LibTools.c()` = `AESUtils.decode(app_communication, app_session)` — a runtime-decoded resource, not a static literal. Live value `MakingLifeSmarte` is consistent but not statically provable from the Java; the H5083 firmware holds it as a literal (§9.1). |
+| 7 | `0xAC` status burst | **Code correct; now fully confirmed** → §4.5 + §15 | 20-byte request `[0xAC, cmd, ext…, CK]`; ext = length-prefixed cmd list. H60A6 split confirms `AC 03 02 41 30` / `AC 03 03 41 30 A5` byte-for-byte. Reply chunks tag@byte1 (12 data@off7 first, 17 data@off2 middle, `lastLen` data@off2 in the data-bearing `0xFF` last chunk; first chunk bytes 2-3 = packet count) → TLV stream. |
 | 8 | `0x30` zone / `0x36` bar-switch | **BOTH confirmed** (were: `0x30` "not found") → §5.6 + §15 | `0x36` (`value_compose_light_switch`) real & readable (`AA 36`) — H6047 split. `0x30` zone-power **also confirmed**: `[0x33,0x30,zone,state]`, readable (bit 1 of each notify byte) — it was missing from base.apk only because **H60A6 ships as a separate feature split** (`split_pact_h60ax.apk`). Correction to the earlier "no `h6047`/`h60a6` package" note: those packages exist, delivered as on-demand modules. |
 | 9 | GCM handshake opcode `e7 1a` | **Confirmed** → added §9.3 | V2 (GCM) keeps header `0xE7` with sub-opcodes `0x19` (request), `0x1A` (confirm/data), `0x11` (single-packet variant) — vs V1's `0x01`/`0x02`. |
 
@@ -1308,12 +1422,17 @@ after the `[proType, cmd]` header (colour/mode sub-modes ride inside `33 05 …`
 
 | opType | Meaning | Payload |
 |--------|---------|---------|
-| `0x00` | apply mode | `15 00` |
+| `0x00` | apply mode (opType 3, `OP_TYPE_SET_MODE`) | `15 00` |
 | `0x01` | set colour (basic) | `15 01 R G B <mask0> <mask1>` |
 | `0x01` | set colour (H60A1/H60A6 form) | `15 01 R G B 00 00 00 00 00 <mask0> <mask1>` |
 | `0x01` | set colour-temp (H60A1/H60A6) | `15 01 R G B <kHi> <kLo> <tintR> <tintG> <tintB> <mask0> <mask1>` |
 | `0x02` | set per-segment brightness | `15 02 <pct 0–100> <mask0> <mask1>` |
-| `0x05` | set colour-temp (basic) | `15 05 <kLo> <kHi>` |
+| `0x05` | set colour-temp (opType 2, `OP_TYPE_SET_COLOR_TEMP`; H60A0) | `15 05 <kHi> <kLo>` (`getSignedBytesFor2` of the kelvin, high byte first) |
+| `0x05` | side brightness (`Bytes.H`, relative-brightness version 1, goodsType 80) | `15 05 <side 1/2/3> <value>` |
+| `0x05` | gradient (`Bytes.n`, GradientColor version 0) | `15 05 R1 G1 B1 R2 G2 B2 R3 G3 B3 <mask…>` |
+
+The op byte is not the `OP_TYPE` value: opType 2 writes op `0x05` and opType 3 op `0x00`. The three `0x05`
+layouts share the op byte with no discriminator; the spec picks one with the profile selector `f_15_05`.
 
 ### 16.2 Segment-selection bitmask
 
@@ -1350,7 +1469,7 @@ Read frames are `AA <cmd> <p()>`, where `p()` is the read payload (default = non
 |-------|-------|------|
 | power | `AA 01 00` | `SwitchController` doesn't override `p()` → `00`. A trailing `01` is a tolerated don't-care. |
 | brightness | `AA 04 00` | as above (`BrightnessController`) |
-| **mode** | `AA 05 01` | `AbsModeController.p()` returns `[1]` — the `01` **is** required here. |
+| **mode** | `AA 05 01` | `AbsModeController.p()` returns `[1]`, so the app always sends the `01` (send it). The H6006/H6008 firmware does not read it: the reply handler overwrites byte 2 with the current mode before building the reply (firmware-sourced; H6006 0x9b01f284, H6008 0x9b024634). H60A1/H60A6 (the AA 05 branch writes byte 2 from the mode getter: H60A1 `FUN_9b02afb4`; H60A6 `FUN_9b025dc8` via `FUN_9b02beec`) and H6047 (query path 0x01005860) do not read it either; H5083 has no `AA 05` handler. |
 
 **Mode read-back carries live kelvin.** The `AA 05 01` reply is a mode/sub-mode report; under colour
 sub-mode `0x15` its layout is `aa 05 15 01 <kelvin u16 big-endian> …` — i.e. **kelvin at reply bytes
@@ -1386,8 +1505,9 @@ ad-hoc note:
   → Properties (Read / Write / Write Without Response / Notify) → Descriptors (§2.1).
 - **Framing & grammar (§4–§7, §16)** use **RFC-style packet diagrams** (byte-offset rulers) and the
   **ABNF grammar** (RFC 5234) in §17.3.
-- **Binary layer** is mirrored by a **Kaitai Struct** definition (`../govee_ble.ksy`) — a
-  language-agnostic binary-format spec that generates parsers and HTML docs from one source.
+- **Binary layer** is mirrored by **Kaitai Struct** definitions (`../*.ksy`, entry point
+  `../govee_ble_frame.ksy`) — a language-agnostic binary-format spec that generates readers, writers and
+  HTML docs from one source.
 - **Device catalogue** is mirrored by a **machine-readable registry** (`../devices.yaml`, validated
   by `../devices.schema.json`) intended to be the single source of truth the per-device tables
   (§12, §15) and a client library are generated from.
@@ -1398,17 +1518,26 @@ ad-hoc note:
 |------|--------|---------|---------|
 | `../devices.schema.json` | JSON Schema 2020-12 | Structure/validation for the device registry | `jsonschema` |
 | `../devices.yaml` | YAML | Device registry: `name_parsing`, `advertisement`, `timing`, `command_catalog`, and per-family UUIDs/sub-mode bytes/opcodes/specs/confidence/sources | `yaml` + schema |
-| `../govee_ble.ksy` | Kaitai Struct | Binary layout of the 20-byte frame + `0xA1`/`0xA3`/`0xAC`/`0xE7` variants, mode/colour payloads, and notify sub-types | `kaitai-struct-compiler` |
-| `../govee_adv.ksy` | Kaitai Struct | Advertisement (manufacturer-data) parse: AD walk, company `0xEC88`, encrypted-flag, protocol version, pactType/pactCode | `kaitai-struct-compiler` |
+| `../govee_ble_frame.ksy` | Kaitai Struct | One GATT write / notification value, by `direction` and the device `govee_profile`: every proType route (`0x33`/`0x3A`/`0xAA`/`0xAC`/`0xAB`/`0xEE`/`0xE7`/`0xA5`/`0xA1`-`0xA4`), the mode/colour payloads and the notify sub-types | `kaitai-struct-compiler` |
+| `../govee_state.ksy` | Kaitai Struct | The device-state record shared by the `aa <cmd>` reply and the `0xAC` TLV `<cmd>` | `kaitai-struct-compiler` |
+| `../govee_status_stream.ksy` | Kaitai Struct | The joined `0xAC` status burst (TLV walk) | `kaitai-struct-compiler` |
+| `../govee_upload.ksy` | Kaitai Struct | Joined `0xA1`/`0xA3`/`0xA4` upload values and decoded cloud scene blobs, by kind and form | `kaitai-struct-compiler` |
+| `../govee_manufacturer_data.ksy`, `../govee_scan_record.ksy` | Kaitai Struct | Advertisement: the `0xFF` payload (company `0xEC88`, encrypted flag, protocol version, pactType/pactCode) and the AD walk | `kaitai-struct-compiler` |
+| `../govee_bgc_info.ksy` | Kaitai Struct | The GATT `2b12` value (cipher version) | `kaitai-struct-compiler` |
+| `../govee_profile.ksy`, `../govee_common.ksy` | Kaitai Struct | The per-device context params, and the shared enums and leaf types | `kaitai-struct-compiler` |
 
 Prose companions (in this `docs/` folder unless noted):
 - **`SCENE_UPLOAD_ENCODING.md`** — the scene/DIY upload encoding + dispatch reference (paths,
   `parseSceneV1` table, per-family bypasses, re-serializer field layouts, chunking). Referenced from §4.4.
-- **`USING_THE_KSY.md`** — how to compile and consume the `.ksy` in your own project (any target
-  language): the decrypt → reassemble → parse pipeline, worked examples, and gotchas.
+- **`USING_THE_KSY.md`** — how to compile and consume the `.ksy` files in your own project (any target
+  language): which root takes which bytes, the device profile, the decrypt → parse → join pipeline,
+  building messages, and gotchas.
 - **`../govee_reference.py`** (package root) — executable reference codec: the three things Kaitai can't do
-  (decrypt AES-ECB+RC4 · reassemble `0xAC`/multi-frame · XOR checksum) + dispatch wiring for the parametric
-  `.ksy` types, driven by `../devices.yaml → client_profile`. Doubles as the round-trip test harness.
+  (decrypt AES-ECB+RC4 · reassemble `0xAC`/multi-frame · XOR/sum8 checksum) + dispatch wiring that gives
+  the roots their `direction` and `govee_profile` (the library builds its profiles from
+  `../devices.yaml → client_profile`). Doubles as the round-trip test harness.
+- **`../govee_commands.py`** (package root) — the app-traced command-builder catalogue, indexed by
+  **`OPCODE_COVERAGE.md`**.
 
 Every claim in the machine artifacts cites decompiled Java `file:line`.
 
@@ -1417,9 +1546,10 @@ Every claim in the machine artifacts cites decompiled Java `file:line`.
 # validate the registry against its schema
 python -c "import json,yaml,jsonschema;jsonschema.validate(yaml.safe_load(open('devices.yaml')),json.load(open('devices.schema.json')))"
 
-# generate a parser + docs from the binary spec
-kaitai-struct-compiler -t python govee_ble.ksy      # → govee_ble_frame.py
-kaitai-struct-compiler -t html   govee_ble.ksy      # → govee_ble_frame.html
+# generate readers/writers + docs from the binary spec (all files in one call: they import each other)
+kaitai-struct-compiler -t python -w --outdir out *.ksy   # → out/govee_ble_frame.py, out/govee_common.py, …
+kaitai-struct-compiler -t html --outdir out *.ksy        # → out/govee_ble_frame.html, …
+bash checks/run.sh                                       # the spec gate: ksc python/java/js + lints
 ```
 
 > **Precedence.** Where this Markdown and the machine-readable artifacts disagree, the artifacts are canonical
@@ -1466,11 +1596,19 @@ a1-end       = %xA1 com-type %xFF 16OCTET
 a3-start     = %xA3 %x00 %x01 count com-type 14OCTET
 a3-data      = %xA3 index 17OCTET
 a3-end       = %xA3 %xFF 17OCTET
-com-type     = %x01 / %x02 / %x07 / %x0C       ; sceneType 1 / 2 / 3 / 6
+com-type     = %x01 / %x02 / %x04 / %x07 / %x0A / %x0C ; V1 / V2 / V4 / V3 / V5(compose) / V6(H610B)
 
 ; ── single-request / multi-reply read (0xAC) ──
 ac-request   = %xAC command len-prefix 1*OCTET ; e.g. AC 03 02 41 30
 len-prefix   = OCTET                           ; count of requested sub-commands
+ac-first     = %xAC %x00 pkt-count last-len command sub 12OCTET
+                                               ; pkt-count = 1: only the first last-len octets are data
+ac-data      = %xAC index 17OCTET              ; index = packet position 1 .. pkt-count - 2
+ac-last      = %xAC last-index 17OCTET         ; data-bearing: first last-len octets, then zero pad
+last-index   = %xFF / OCTET                    ; 0xFF (sent), or the position pkt-count - 1 (also accepted)
+pkt-count    = 2OCTET                          ; u16 LE: total packets incl. ac-first and ac-last
+last-len     = OCTET                           ; valid data octets in the last packet (0..17)
+sub          = OCTET                           ; = the reader's d() (0 for the H60A6 status read)
 
 ; ── handshake (0xE7) ──
 hs-frame     = %xE7 hs-op *OCTET
@@ -1490,7 +1628,7 @@ How the app recognises a device over the air and decides which protocol dialect 
 ### 18.1 Scan & filter
 
 `ScanManager` + `BleScanCallbackImp21` (API 21+) / `LeScanCallbackImp` (legacy) deliver results as
-`ScanEvent{ device, byte[] scanRecord(62), rssi }`. Results are filtered by **MAC**, advertised
+`ScanEvent` (device, a 62-byte scanRecord, rssi). Results are filtered by **MAC**, advertised
 **name**, **service UUID**, and **RSSI** (≈3 s debounce; per-family min-RSSI, e.g. −45)
 (`ble/scan/*`).
 
@@ -1501,10 +1639,10 @@ derives `skuCode` by prefix:
 
 | Prefix | Rule | Example → skuCode |
 |--------|------|-------------------|
-| `ihoment_` / `Govee_` / `Minger_` | `split('_')` = `[brand, skuCode, tail]` | `ihoment_H6159_1A2B` → `H6159` |
-| `GBK_` | `split('_')` = `[GBK, skuCode, tail]` | `GBK_H5083_1234` → `H5083` |
-| `GVH` / `GVR` | `substring(2)`; skuCode up to `_` or 5 chars | `GVH6159_XXXX` → `H6159` |
-| `GV` (fallback) | `skuCode = "H" + substring(2,6)` | `GV5122ABCD` → `H5122` |
+| `ihoment_` / `Govee_` / `Minger_` | split on `_` = `[brand, skuCode, tail]` | `ihoment_H6159_1A2B` → `H6159` |
+| `GBK_` | split on `_` = `[GBK, skuCode, tail]` | `GBK_H5083_1234` → `H5083` |
+| `GVH` / `GVR` | chars from index 2 up to the `_`; with no `_`, chars 2..6, and the name must be ≥ 11 chars. The 3rd char is **kept**, so `GVR…` gives `R…` (not rewritten to `H`) | `GVH6159_XXXX` → `H6159`; `GVR6184_XXXX` → `R6184` |
+| `GV` (fallback) | `skuCode` = `H` + chars 2..5; the name must be ≥ 10 chars | `GV5122ABCD` → `H5122` |
 
 ### 18.3 SKU → goodsType → (pactType, pactCode) → dialect
 
@@ -1519,7 +1657,7 @@ The registry records `goods_types` per family so a client can map advertisement 
   `0` = none, `1` = AES (§9.1), `2` = AES-GCM (§9.3) → gates `isEncryptionSupported`.
 - **`isFastConnectSupported`** decides the notification-enable path ([§3](#3-connection-lifecycle));
   cached in `ShortMemoryMgr`.
-- **`SINGLE_PACT` (`0xEF`)** negotiates the protocol/pact at the application layer.
+- **`SINGLE_PACT` (`0xEF`)** is a read-only report of the device's pact (type/code). It is not a negotiation: H6006/H60A1/H60A6 return a constant `00 01 01`, H5083 `00 02 02`, and H6008 does not answer (firmware-sourced; [§5.5](#55-secrets--encryption--ota)).
 
 ### 18.5 Pairing & the per-device secret (`secretCode`)
 
@@ -1531,32 +1669,34 @@ commands.
 
 **What it is:** 8 bytes, device-generated. Base64-encoded when stored/transported; raw 8 bytes on the
 wire. Exchanged with `SecretKeyController(V1)`:
-- **read `0xB1`** — device → app: reply `[0x01]` + 8 secret bytes (`SecretKeyControllerV1.parseValidBytes`, `:44`).
+- **read `0xB1`** — device → app: reply `[0x01]` + 8 secret bytes (`SecretKeyController.parseValidBytes`, `:52-67`; `SecretKeyControllerV1` overrides it with the same parse, `:39-55`).
 - **auth write `0xB2`** — app → device: the 8 raw bytes, sent right after connect to authorize the session.
 
 **How the app obtains it** — two paths, plus a local cache:
 
 1. **Original pairing client** (`AbsPairAc4SecretV1`): connects, **reads `0xB1`** from the device
-   (`:115` sends a read when no secret is known; `:427` stores the returned `secretCode`), caches it
-   in `SecretKeyConfig` (a persisted `HashMap<bleAddress, secretCode>`), then **binds** the device —
-   uploading the secret to the account.
+   (`T1`, `:108-114`, sends a read when no secret is known and a check otherwise; `onEventSecretKey`,
+   `:392-430`, stores the returned `secretCode` and hands it to the family's `o2`), caches it in
+   `SecretKeyConfig` (`base2home/scenes/SecretKeyConfig.java`, a persisted
+   map of bleAddress to secretCode; e.g. `h6047/add/PairAcV1.java:265-269`), then **binds** the
+   device — uploading the secret to the account.
 2. **Any other client** (second phone, reinstall, or a third-party local client): fetches the secret
    from the **account device record** and then **writes `0xB2`** to authorize.
 
-**Cloud API (account-authenticated).** Two hosts from `Constant.java` (prod; dev/pda variants exist):
-the **app API** `app.govee.com` (`:165`, account-level calls) and the **device API**
-`device.govee.com` (`:177`). The `device/rest/…` paths below are served by **`device.govee.com`**, not
+**Cloud API (account-authenticated).** Two hosts from `base2home/Constant.java` (prod; dev/pda
+variants at `:129-147`): the **app API** `app.govee.com` (`e`, `:154`, account-level calls) and the
+**device API** `device.govee.com` (`f`, `:163`). The `device/rest/…` paths below are served by **`device.govee.com`**, not
 the app host.
 
 | Purpose | Host + Method / path | Where the secret is |
 |---------|----------------------|---------------------|
-| **Upload (bind)** | `device.govee.com` — `POST device/rest/devices/v1/bind` (multi: `…/v1/multi-bind`) | inside the `deviceExt` JSON of `DeviceBindRequest` — `BindExt.secretCode = scanBleInfo.j()` (`AddMultipleDeviceReq.java:118`) |
-| **Retrieve** | `device.govee.com` — account device-list (returns each device's `deviceExt`/`bleExt`) + `device/rest/devices/v1/settings` | `bleExt.getSecretCode()` → surfaced via `DefInfo`/`ExtInfo` (`DefInfo.java:98`) |
+| **Upload (bind)** | `device.govee.com` — `POST device/rest/devices/v1/bind` (multi: `…/v1/multi-bind`) | inside the `deviceExt` JSON: `DeviceBindRequest.deviceExt` (the family's `BindExt`, e.g. `h6047/add/PairAcV1.java:99`), or for a multi-bind `AddMultipleDeviceReq.BindExtModel.secretCode = scanBleInfo.j()` (`AddMultipleDeviceReq.java:117`) |
+| **Retrieve** | `device.govee.com` — account device-list (returns each device's `deviceExt`/`bleExt`) + `device/rest/devices/v1/settings` | `bleExt.getSecretCode()` → surfaced via `DefInfo`/`ExtInfo` (`DefInfo.java:106-110`) |
 
 > **So: is it "the per-device secret you pull from the cloud"?** Yes. For any client that did not do
 > the original BLE pairing, the practical source is the **Govee account API device record
 > (`bleExt.secretCode`)**; the client then writes it back over `0xB2`. Endpoint paths from
-> `UrlConstants.java` (`f30910o` bind, `f30929x0` multi-bind, `f30928x` settings). The exact modern
+> `base2home/UrlConstants.java` (`p` bind `:101`, `f386y0` multi-bind `:138`, `y` settings `:135`; 7.7.02 names). The exact modern
 > device-list path is served by the account device service (`IDeviceNet`); the `secretCode` travels
 > in the per-device `deviceExt`/`bleExt` blob either way. See `devices.yaml → secret` for the
 > machine-readable version.
@@ -1581,7 +1721,7 @@ How the app maps a device to its protocol/capabilities (decompiled-verified):
 - **The only capability read live from the device** is the **IC / segment count**, via BLE opcode **`0x40`**
   (`ControllerOnlyReadIcSegmentNum` → `{IC count u16, segment}`; `ControllerIcNum` → IC-group list; refresh `0x42`).
   IC-driven families (h61d3/H6641) compute segment count from it (`H61D3Support.e()` → `ceil(IC/d)`, `d`∈{3,4,5}
-  by goodsType — **H6641/247 → `d`=5**, `H61D3Support.e()` sets `r0=5` before the 247 branch);
+  by goodsType — **H6641/247 → `d`=5**, `H61D3Support.e()` sets `d` to 5 before the 247 branch);
   static families ignore it and use hard-coded per-goodsType counts (H60A6 and the H6047-family newdetail screens: `getColorPieceSize`; the old H6047 detail screen, goodsTypes 119/196/197: `Support.getBulbStringMaxNum`, which is 10 for H6047).
 
 **Implication for a local (no-cloud) client:** derive `goodsType` from the advertisement, then key a compiled
@@ -1592,7 +1732,7 @@ only for the IC-driven families. The cloud is needed only for account niceties (
 ## 19. Advertisement / manufacturer-data structure
 
 Passive (connectionless) identity + state, parsed from the 62-byte scan record
-(`base2home/pact/BleUtil.java:829` `parseBleBroadcastPact`). Walk AD structures `[len][type][data]`;
+(`base-classes9/com/govee/base2home/pact/BleUtil.java:779-803` `parseBleBroadcastPact`). Walk AD structures `[len][type][data]`;
 in the **manufacturer AD (type `0xFF`, len ≥ 6)**:
 
 ```
@@ -1606,10 +1746,15 @@ data offset:  +0        +1  +2        +3  +4        +5  +6      +7
 
 - **Custom layout note:** the `flags` byte *precedes* the `0x88 0xEC` marker — this is not a standard
   leading 2-byte company identifier, so the payload is only meaningful once `0x88 0xEC` is matched.
-- **Sensors** (thermo/hygro, §11) use a **service-data (type `0x03`) prefix** variant of the same walk.
+- **Sensors** (thermo/hygro, §11) use a variant of the same walk (`parseBleBroadcastPact4MultiTh`,
+  `BleUtil.java:805-834`): the `0x88 0xEC` marker sits in a preceding **16-bit service-UUID list AD (type
+  `0x03`, len 3)**, and the `0xFF` AD is `[flags][pactType u16be][pactCode]` with no marker.
 - **Passive state listener:** `EventBleBroadcastListenerTrigger` toggles a broadcast listener that
   reads presence/protocol/state from advertisements without connecting.
-- Machine-readable model: [`govee_adv.ksy`](../govee_adv.ksy).
+- Machine-readable model: [`govee_manufacturer_data.ksy`](../govee_manufacturer_data.ksy) (the `0xFF`
+  payload, lenient on short or foreign payloads; `is_govee`, `encrypted`, `protocol_version`, `has_pact`,
+  `switch_byte`) and [`govee_scan_record.ksy`](../govee_scan_record.ksy) (the AD walk, which reaches the
+  `0xFF` payload and types the `0x03` UUID list and the `0x09` name).
 
 ## 20. Timing & reliability
 
@@ -1648,8 +1793,10 @@ onCharacteristicChanged(resp) ─▶ match echoed [proType,cmd] & value[2]==0 �
    └── timeout: RunnableOvertime ─▶ Event4ResponseOverTime ─▶ retry; if fail-count>10 ─▶ disconnect ─┘
 ```
 
-Heartbeat: `AbsHeartRunnable` polls periodically (per-device) with `SINGLE_HEART 0x01` to keep the
-link alive; GATT status `19` → `EventAutoDisconnect`.
+Heartbeat: `AbsHeartRunnable` polls periodically (per-device) to keep the link alive. The byte depends
+on the screen: `SINGLE_HEART 0x01` on legacy controllers, while newdetail `ShareVM` screens use
+`ConnectHeartbeat.c(K3())`, which is `AA 00` on H60A1/H60A6 ([§3](#3-connection-lifecycle), [§5.1](#51-core-control)).
+GATT status `19` → `EventAutoDisconnect`.
 
 ## 21. Expanded command catalog
 
@@ -1672,7 +1819,7 @@ commands (full detail in the registry):
 | `dreamcolorlightv1` (H61A8) | limit `0x0E`, light-num `0x0F`, gradual `0x14`/`0xA3`, IC `0x40/0x42/0x46`, bulb-colour read `0xA2` |
 | `bulblightv3` (H6008/H6006) | colour+CCT sub-mode `0x0D`, colour-temp-type `0x26` (H601EF); legacy `0x02` |
 | `tablelampv1` (H6052) | light-indicator `0x16` |
-| `h5080` (H5083 plug) | relay switch `0x01` (mask), sync-time `0xB5`, timer `0xB4` / V2 `0x13`, delay `0xB0`, spec `0xB3`, timer-count `0x12`, timer-delete `0x15`, not-disturb `0x16`, child-lock/indicator `0x1F`, OTA `0xAB` — **no `0x05` mode** (plug) |
+| `h5080` (H5083 plug) | relay switch `0x01` (mask), sync-time `0xB5`, timer `0xB4` / V2 `0x13`, delay `0xB0`, spec `0xB3`, timer-count `0x12`, timer-delete `0x15`, not-disturb `0x16`, child-lock/indicator `0x1F`, OTA pact report = proType `0xAB` frame `AB 02 <pactType lo> <pactType hi> <pactCode>` (`H5083NewDetailViewModel.java:214`; not an AA/33 opcode) — **no `0x05` mode** (plug). Firmware-sourced: H5083 SW1.00.30/HW1.02.00 dispatches AA `01 12 13 B0 B1 B3` and 33 `01 13 15 B0 B2 B5 FF`, and handles `AB 02` in its shared write layer (`0x9b032c7e`). `0x16`/`0x1F`/`0xB4` are absent there, consistent with the app's gates: `0x16`/`0x1F` need `Support.supportLockAndLightIndicator` (H5083, sw ≥ 1.00.03, hw ≥ 4.01.00), and `0xB4` needs `Support.isOldH5080` (sku H5080, sw ≤ 1.00.08), so it is never sent to an H5083. |
 | `h512x` (H5121/H5129 motion, H5130 pressure) | sensitivity `0x01` / interval `0x02` (H5121/H5129), light-sensor `0x03` (H5129); pressure `0x02–0x06` (H5130). Buttons **H5122/H5125/H5126 have no settings command set** (`goToSettingPage()=false`) — triggers arrive via cloud push |
 
 ---

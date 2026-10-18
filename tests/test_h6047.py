@@ -16,7 +16,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 from conftest import require_optional
-from fake_ble import ble_device
+from fake_ble import ble_device, unacked_via
 
 from govee_ble_local import Capability, Encryption
 from govee_ble_local.devices.device import Device, make_device
@@ -62,7 +62,7 @@ def _dev(replies: dict[int, Any] | None = None) -> Device:
 
     d._conn.send = AsyncMock(side_effect=send)  # type: ignore[method-assign]
     d._conn.send_many = AsyncMock(side_effect=send_many)  # type: ignore[method-assign]
-    d._conn.send_unacked = AsyncMock(side_effect=send_many)  # type: ignore[method-assign]
+    d._conn.send_unacked = AsyncMock(side_effect=unacked_via(send_many))  # type: ignore[method-assign]
     d._conn.query = AsyncMock(side_effect=query)  # type: ignore[method-assign]
     d._sent = sent  # type: ignore[attr-defined]
     d._queried = queried  # type: ignore[attr-defined]
@@ -126,9 +126,11 @@ def test_whole_device_off_marks_both_bars_off_on_leaves_them_unknown() -> None:
     d = _dev()
     asyncio.run(d.set_power(False))
     assert d.state.is_on is False and d.state.zone_power == {0: False, 1: False}
+    assert d.zone_is_on("left") is False and d.zone_is_on("right") is False
     asyncio.run(d.set_power(True))
     # the app learns which bars lit from the next aa 36 heartbeat; so does the library
     assert d.state.is_on is True and d.state.zone_power == {}
+    assert d.zone_is_on("left") is None and d.zone_is_on("right") is None   # unknown, not off
 
 
 def test_zone_power_after_whole_device_on_rereads_the_bars() -> None:
@@ -155,6 +157,9 @@ def test_zone_power_is_the_combined_33_36_frame() -> None:
         _pad("33360001"), _pad("33360000"), _pad("33360100")]
     assert _sent(d)[0].hex() == "33360001" + "00" * 15 + "04"     # BCC = 33 ^ 36 ^ 00 ^ 01
     assert d.state.zone_power == {0: True, 1: False} and d.state.is_on is True
+    assert d.zone_is_on("left") is True and d.zone_is_on("right") is False
+    with pytest.raises(GoveeBleNotSupported):
+        d.zone_is_on("middle")
 
 
 def test_zone_power_unknown_other_bar_is_read_first() -> None:
@@ -240,22 +245,32 @@ def test_gradual_not_supported_where_the_profile_lacks_it() -> None:
 
 # ── read-back parse ──────────────────────────────────────────────────────────
 def test_parse_bar_kelvin() -> None:
+    import spec_read
+
+    def bars(frame: bytes) -> object:
+        return spec_read.mode_color(frame, "kelvin_15", bar_switch=True)
+
     f = _frame(0xAA, 0x05, 0x15, 0x01, 0x0A, 0x8C, 0x0F, 0xA0)
-    assert parse.parse_bar_kelvin(f) == (2700, 4000)
-    assert parse.parse_kelvin(f) == 2700                      # the left kelvin, as before
-    assert parse.parse_bar_kelvin(_frame(0xAA, 0x05, 0x15, 0x00, 0, 0, 0, 0)) == (0, 0)
-    assert parse.parse_bar_kelvin(_frame(0xAA, 0x05, 0x04, 0x09, 0x00)) is None   # scene mode
-    assert parse.parse_bar_kelvin(_frame(0xAA, 0x04, 0x15)) is None               # not a mode reply
+    assert bars(f) == parse.BarKelvin(2700, 4000)
+    assert spec_read.mode_color(f) == parse.KelvinReport(2700)   # the left kelvin, as before
+    assert bars(_frame(0xAA, 0x05, 0x15, 0x00, 0, 0, 0, 0)) == parse.BarKelvin(0, 0)
+    assert bars(_frame(0xAA, 0x05, 0x04, 0x09, 0x00)) is None   # scene mode
+    assert bars(_frame(0xAA, 0x04, 0x15)) is None               # not a mode reply
 
 
 def test_ksy_reads_gradual_two_kelvins_and_the_feast_byte() -> None:
     require_optional("kaitaistruct", reason="Kaitai runtime not installed")
-    gb = require_optional("govee_ble_local._generated.govee_ble_frame")
-    mode = gb.GoveeBleFrame.from_bytes(_frame(0xAA, 0x05, 0x15, 0x01, 0x0A, 0x8C, 0x0F, 0xA0)).body.body
-    rest = mode.rest
-    assert (rest.op, rest.kelvin, rest.kelvin_right) == (1, 2700, 4000)    # [gradual][kL][kR]
-    bars = gb.GoveeBleFrame.from_bytes(_frame(0xAA, 0x36, 0x01, 0x00, 0x01)).body.body
-    assert (bars.left, bars.right, bars.movie_feast) == (1, 0, 1)
+    import spec_read
+
+    from govee_ble_local.wire import _spec
+
+    report = _frame(0xAA, 0x05, 0x15, 0x01, 0x0A, 0x8C, 0x0F, 0xA0)
+    pair = int(_spec.Common.ColorDecode.gradual_kelvin_pair_s16be)
+    layout = spec_read.rx(report, c15=pair).body.state.body.params.layout
+    assert (layout.gradual, layout.kelvin, layout.kelvin_b) == (1, 2700, 4000)    # [gradual][kL][kR]
+    bars = spec_read.rx(_frame(0xAA, 0x36, 0x01, 0x00, 0x01), f_36=int(_spec.Common.Form36.bar_pair))
+    bar = bars.body.state.body.body
+    assert (bar.left, bar.right, bar.feast) == (1, 0, 1)
 
 
 # ── read-back through update() ───────────────────────────────────────────────
@@ -367,6 +382,9 @@ def test_other_zoned_devices_do_not_gain_zone_kelvin() -> None:
     assert d is not None
     d._conn.send = AsyncMock()  # type: ignore[method-assign]
     d._conn.send_many = AsyncMock()  # type: ignore[method-assign]
+    d._conn.query = AsyncMock(side_effect=AssertionError("unexpected read"))  # type: ignore[method-assign]
+    d._conn.send_unacked = AsyncMock(  # type: ignore[method-assign]
+        side_effect=AssertionError("unexpected upload"))
     asyncio.run(d.set_zone_color_temp("background", 4000))
     asyncio.run(d.set_color_temp(4000))
     assert d.state.zone_color_temp_kelvin == {}

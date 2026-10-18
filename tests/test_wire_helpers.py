@@ -79,15 +79,26 @@ def test_merge_device_info_only_non_none() -> None:
     assert (s.serial_number, s.wifi_mac, s.firmware_version, s.hardware_version) == ("S1", "m", "f2", "h1")
 
 
-def test_build_or_unsupported_translates_value_error() -> None:
+def test_build_or_unsupported_translates_not_supported_only() -> None:
     d = _dev()
 
-    def boom(*_a: object) -> bytes:
-        raise ValueError("nope")
+    def unsupported(*_a: object) -> bytes:
+        raise GoveeBleNotSupported("nope")
 
-    with pytest.raises(GoveeBleNotSupported, match="H6006: nope"):
+    with pytest.raises(GoveeBleNotSupported, match=r"^H6006: nope$"):
+        d._build_or_unsupported(unsupported, 1)
+
+    def boom(*_a: object) -> bytes:
+        raise ValueError("nope")   # a builder bug, not an unsupported request: left alone
+
+    with pytest.raises(ValueError, match=r"^nope$"):
         d._build_or_unsupported(boom, 1)
     assert d._build_or_unsupported(lambda x: bytes([x]), 7) == b"\x07"
+
+    def two(x: int, *, y: int) -> bytes:
+        return bytes([x, y])
+
+    assert d._build_or_unsupported(two, 7, y=8) == b"\x07\x08"   # keyword arguments pass through
 
 
 def test_device_connect_delegates() -> None:

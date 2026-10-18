@@ -4,13 +4,20 @@ These pin TODAY's behaviour. Where that behaviour is a known bug the test says s
 with a `# CURRENT BEHAVIOR (bug BUG-n): ...` comment. No wall-clock assertions."""
 from __future__ import annotations
 
+import asyncio
+import logging
+
 import pytest
 from bleak.exc import BleakError
 
-from govee_ble_local.const import SESSION_ATTEMPTS
+from govee_ble_local.const import PSK, SESSION_ATTEMPTS
+from govee_ble_local.crypto import encrypt
 from govee_ble_local.exceptions import (
     GoveeBleAuthError,
     GoveeBleConnectionError,
+    GoveeBleHandshakeConnectionError,
+    GoveeBleHandshakeError,
+    GoveeBleHandshakeTimeout,
     GoveeBleInvalidValue,
     GoveeBleNotSupported,
     GoveeBleTimeout,
@@ -19,7 +26,7 @@ from govee_ble_local.models import Encryption
 from govee_ble_local.transport import connection as conn_mod
 from govee_ble_local.transport.connection import GoveeConnection
 
-from fake_ble import FakeGovee, ble_device, frame
+from fake_ble import SESSION_KEY, FakeGovee, FakeClient, ble_device, frame
 
 ADDR = "AA:BB:CC:DD:EE:FF"
 
@@ -29,7 +36,6 @@ def fast(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(conn_mod, "WRITE_ACK_TIMEOUT", 0.05)
     monkeypatch.setattr(conn_mod, "HANDSHAKE_STEP2_TIMEOUT", 0.05)
     monkeypatch.setattr(conn_mod, "HANDSHAKE_TIMEOUT", 0.1)
-    monkeypatch.setattr(conn_mod, "COMMAND_ACK_TIMEOUT", 0.05)
 
 
 def _make(monkeypatch, fake: FakeGovee, **kw) -> GoveeConnection:
@@ -42,9 +48,14 @@ def _make(monkeypatch, fake: FakeGovee, **kw) -> GoveeConnection:
 
 # -- connect / session setup -------------------------------------------------
 
+# A format-2 BGC value as the app parses it (BaseBgcInfo.Companion.a reads bytes 1..5): format 2,
+# encryptVersion 2 (AES-GCM), then the V2 flag, u16 and byte fields. ``[2, 2]`` alone the app can't read.
+_BGC_V2 = bytes([2, 2, 0, 0, 0, 0])
+
+
 async def test_bgc_v2_refused_not_retried(monkeypatch) -> None:
     fake = FakeGovee()
-    fake.bgc = bytes([2, 2])
+    fake.bgc = _BGC_V2
     c = _make(monkeypatch, fake)
     with pytest.raises(GoveeBleNotSupported):
         await c.connect()
@@ -53,10 +64,28 @@ async def test_bgc_v2_refused_not_retried(monkeypatch) -> None:
     assert fake.clients[0].is_connected is False  # torn down
 
 
+async def test_bgc_v2_known_refuses_later_calls_without_a_link(monkeypatch) -> None:
+    fake = FakeGovee()
+    fake.bgc = _BGC_V2
+    c = _make(monkeypatch, fake)
+    with pytest.raises(GoveeBleNotSupported):
+        await c.connect()
+    # WAS: every later connect/send/query (each HA poll) opened a full link just to refuse again.
+    # FIXED: once the BGC result is cached the refusal is raised before any connect.
+    with pytest.raises(GoveeBleNotSupported):
+        await c.connect()
+    with pytest.raises(GoveeBleNotSupported):
+        await c.query(frame(0xAC, 0x03), timeout=0.1)
+    assert len(fake.clients) == 1 and fake.bgc_reads == 1
+
+
 async def test_advertised_aes_gcm_refused(monkeypatch) -> None:
     fake = FakeGovee(encrypted=False)  # no BGC characteristic
     c = _make(monkeypatch, fake, encryption=Encryption.AES_GCM)
     with pytest.raises(GoveeBleNotSupported):
+        await c.send(frame(0x33, 0x01, 0x01))
+    assert len(fake.clients) == 1
+    with pytest.raises(GoveeBleNotSupported):  # settled (BGC absent): no second link
         await c.send(frame(0x33, 0x01, 0x01))
     assert len(fake.clients) == 1
 
@@ -79,6 +108,18 @@ async def test_connect_bleak_error_maps_to_connection_error(monkeypatch) -> None
     assert fake.establish_calls == SESSION_ATTEMPTS
 
 
+@pytest.mark.parametrize("exc", [BrokenPipeError(), ConnectionResetError(), EOFError()])
+async def test_connect_os_level_link_errors_map_to_connection_error(monkeypatch, exc) -> None:
+    # WAS: BrokenPipeError / ConnectionResetError (the D-Bus socket dropping) escaped connect()
+    # as bare builtins. FIXED: the shared transport-error set maps them like BleakError.
+    fake = FakeGovee()
+    fake.establish_error = exc
+    c = _make(monkeypatch, fake)
+    with pytest.raises(GoveeBleConnectionError, match=f"connect failed: {type(exc).__name__}"):
+        await c.connect()
+    assert fake.establish_calls == SESSION_ATTEMPTS
+
+
 async def test_bgc_read_error_is_transient_and_not_cached(monkeypatch) -> None:
     fake = FakeGovee()
     fake.bgc_read_error = BleakError("read failed")
@@ -92,8 +133,11 @@ async def test_handshake_timeout(monkeypatch) -> None:
     fake = FakeGovee()
     fake.withhold_e7_reply = True
     c = _make(monkeypatch, fake)
-    with pytest.raises(GoveeBleTimeout):
+    # WAS: a plain GoveeBleTimeout, so the public GoveeBleHandshakeError could never fire.
+    with pytest.raises(GoveeBleHandshakeTimeout) as info:
         await c.connect()
+    assert isinstance(info.value, GoveeBleTimeout)          # old handlers keep matching
+    assert isinstance(info.value, GoveeBleHandshakeError)
     assert len(fake.clients) == SESSION_ATTEMPTS
     assert not c.is_connected
 
@@ -102,9 +146,52 @@ async def test_handshake_link_lost(monkeypatch) -> None:
     fake = FakeGovee()
     fake.drop_on_e7 = True
     c = _make(monkeypatch, fake)
-    with pytest.raises(GoveeBleConnectionError, match="link lost during handshake"):
+    with pytest.raises(GoveeBleHandshakeConnectionError, match="link lost during handshake") as info:
+        await c.connect()
+    assert isinstance(info.value, GoveeBleConnectionError)  # old handlers keep matching
+    assert isinstance(info.value, GoveeBleHandshakeError)
+    assert len(fake.clients) == SESSION_ATTEMPTS
+
+
+async def test_handshake_link_lost_between_steps(monkeypatch) -> None:
+    fake = FakeGovee()
+    real = fake.handle_write
+
+    def drop_after_step1_reply(client: FakeClient, data: bytes) -> None:
+        if len(client.writes) != 1:
+            real(client, data)
+            return
+        reply = encrypt(frame(0xE7, 0x01, *SESSION_KEY), PSK)
+
+        def answer_then_drop() -> None:  # e7 01 answered, then the link dies before e7 02
+            client._notify(None, bytearray(reply))  # type: ignore[misc]
+            client.drop()
+
+        asyncio.get_running_loop().call_soon(answer_then_drop)
+
+    fake.handle_write = drop_after_step1_reply  # type: ignore[method-assign]
+    c = _make(monkeypatch, fake)
+    with pytest.raises(GoveeBleHandshakeConnectionError, match="link lost during handshake"):
         await c.connect()
     assert len(fake.clients) == SESSION_ATTEMPTS
+
+
+@pytest.mark.parametrize(
+    "exc", [BleakError("Not connected"), BrokenPipeError(), EOFError()],
+    ids=["bleak", "broken-pipe", "eof"],
+)
+async def test_handshake_write_transport_error_is_handshake_link_loss(monkeypatch, exc) -> None:
+    fake = FakeGovee()
+    fake.write_error = exc  # the e7 01 write itself fails: how BlueZ / proxies report a dropped link
+    c = _make(monkeypatch, fake)
+    # WAS: escaped _prepare_session as a plain GoveeBleConnectionError("connect failed: ..."), so
+    # `except GoveeBleHandshakeError` missed it while a TimeoutError on the same write matched.
+    with pytest.raises(GoveeBleHandshakeConnectionError, match="handshake write failed") as info:
+        await c.connect()
+    assert isinstance(info.value, GoveeBleConnectionError)  # old handlers keep matching
+    assert info.value.__cause__ is exc
+    assert len(fake.clients) == SESSION_ATTEMPTS            # still retried like any session failure
+    assert fake.disconnects == SESSION_ATTEMPTS and not c.is_connected  # every link torn down
 
 
 async def test_missing_step2_confirm_still_connects(monkeypatch) -> None:
@@ -168,9 +255,23 @@ async def test_run_maps_eof_error(monkeypatch) -> None:
     c = _make(monkeypatch, fake)
     await c.connect()
     fake.app_write_error = EOFError()
-    with pytest.raises(GoveeBleConnectionError):
+    with pytest.raises(GoveeBleConnectionError, match="EOFError"):  # never an empty message
         await c.send_unacked([frame(0xA3, 0x01)], gap=0)
     assert not c.is_connected
+
+
+@pytest.mark.parametrize("encrypted", [True, False])
+async def test_send_unacked_link_lost_mid_stream(monkeypatch, encrypted) -> None:
+    """A link drop between scene-upload frames is a GoveeBleConnectionError, never a bare
+    TypeError/AttributeError from encrypting with no key / writing with no client."""
+    fake = FakeGovee(encrypted=encrypted)
+    c = _make(monkeypatch, fake)
+    await c.connect()
+    fake.on_write = lambda client, plain: client.drop() if plain[0] == 0xA3 else None
+    guard = "session key lost" if encrypted else "connection lost"
+    with pytest.raises(GoveeBleConnectionError, match=guard):
+        await c.send_unacked([frame(0xA3, 0, 1), frame(0xA3, 1, 1), frame(0xA3, 0xFF, 1)], gap=0)
+    assert sum(f[0] == 0xA3 for f in fake.received) == 1
 
 
 async def test_write_bleak_error_retried_once_then_surfaces(monkeypatch) -> None:
@@ -181,6 +282,82 @@ async def test_write_bleak_error_retried_once_then_surfaces(monkeypatch) -> None
     with pytest.raises(GoveeBleConnectionError):
         await c.send(frame(0x33, 0x01, 0x01))
     assert len(fake.clients) == 2  # one reconnect-and-retry, then gives up
+
+
+def _fail_first_app_write(fake: FakeGovee, exc: BaseException) -> None:
+    """The first post-handshake write raises `exc` (one-shot); later writes are acked."""
+    state = {"failed": False}
+
+    def on_write(client: FakeClient, plain: bytes) -> None:
+        if not state["failed"]:
+            state["failed"] = True
+            raise exc
+        client.push(fake._wire(frame(0x33, plain[1], 0), SESSION_KEY), 0.005)
+
+    fake.on_write = on_write
+
+
+@pytest.mark.parametrize(
+    "exc", [BleakError("gone"), BrokenPipeError(), ConnectionResetError(), EOFError(), TimeoutError()]
+)
+async def test_one_shot_write_failure_reconnects_and_retries(monkeypatch, exc) -> None:
+    # WAS: only BleakError got the documented reconnect-and-retry. EOFError / TimeoutError failed
+    # the command outright, and BrokenPipeError escaped send() as a bare builtin with the
+    # client left up. FIXED: one transport-error set at every site.
+    fake = FakeGovee()
+    c = _make(monkeypatch, fake)
+    await c.connect()
+    _fail_first_app_write(fake, exc)
+    ack = await c.send(frame(0x33, 0x01, 0x01))
+    assert ack is not None and ack[:3] == bytes([0x33, 0x01, 0x00])
+    assert len(fake.clients) == 2 and fake.clients[0].is_connected is False
+
+
+async def test_write_retry_log_names_a_messageless_error(monkeypatch, caplog) -> None:
+    fake = FakeGovee()
+    c = _make(monkeypatch, fake)
+    await c.connect()
+    _fail_first_app_write(fake, EOFError())
+    caplog.set_level(logging.DEBUG, logger="govee_ble_local.transport.connection")
+    await c.send(frame(0x33, 0x01, 0x01))
+    # WAS: `err or type(err).__name__` is always `err` (exceptions are truthy): "on this link ()".
+    assert "failed on this link (EOFError); reconnecting" in caplog.text
+
+
+@pytest.mark.parametrize("exc", [BrokenPipeError(), ConnectionResetError(), EOFError()])
+async def test_persistent_os_level_write_error_is_connection_error(monkeypatch, exc) -> None:
+    fake = FakeGovee()
+    c = _make(monkeypatch, fake)
+    await c.connect()
+    fake.app_write_error = exc  # post-handshake writes only: the reconnect itself succeeds
+    with pytest.raises(GoveeBleConnectionError):
+        await c.send(frame(0x33, 0x01, 0x01))
+    assert len(fake.clients) == 2  # one reconnect-and-retry, then gives up
+    assert not c.is_connected and all(not cl.is_connected for cl in fake.clients)
+
+
+async def test_write_timeout_error_is_not_reported_as_operation_deadline(monkeypatch) -> None:
+    fake = FakeGovee()
+    c = _make(monkeypatch, fake)
+    await c.connect()
+    fake.app_write_error = TimeoutError()
+    with pytest.raises(GoveeBleTimeout, match="BLE I/O timed out") as info:
+        await c.send(frame(0x33, 0x01, 0x01))
+    # WAS: "operation exceeded 45s", although the 45 s deadline was never reached.
+    assert "exceeded" not in str(info.value)
+    assert len(fake.clients) == 2 and not c.is_connected
+
+
+async def test_unexpected_write_error_is_wrapped_and_link_closed(monkeypatch) -> None:
+    fake = FakeGovee()
+    c = _make(monkeypatch, fake)
+    await c.connect()
+    fake.app_write_error = RuntimeError("backend exploded")
+    # WAS: the bare RuntimeError escaped (the module promises GoveeBleError subclasses only).
+    with pytest.raises(GoveeBleConnectionError, match="backend exploded") as info:
+        await c.send_unacked([frame(0xA3, 0x01)], gap=0)
+    assert isinstance(info.value.__cause__, RuntimeError)
+    assert not c.is_connected and fake.clients[0].is_connected is False
 
 
 async def test_write_without_ack_times_out_after_retry(monkeypatch) -> None:

@@ -8,6 +8,7 @@ import pytest
 
 from govee_ble_local import debug
 
+
 # A valid 20-byte frame: 0x33 0x01 0x01 + zeros + xor checksum.
 def _frame(*head: int) -> bytes:
     body = bytes(head) + bytes(19 - len(head))
@@ -29,8 +30,8 @@ LOG_TEXT = (
 def test_frames_log_to_records() -> None:
     recs = debug.frames_log_to_records(LOG_TEXT)
     assert recs == [
-        {"dir": "tx", "plain": PLAIN, "wire": PLAIN, "enc": "session"},
-        {"dir": "rx", "plain": None, "wire": "deadbeef", "enc": "session"},
+        {"addr": "AA:BB", "dir": "tx", "plain": PLAIN, "wire": PLAIN, "enc": "session"},
+        {"addr": "AA:BB", "dir": "rx", "plain": None, "wire": "deadbeef", "enc": "session"},
     ]
 
 
@@ -38,10 +39,10 @@ def test_load_jsonl_skips_blank_lines_and_concatenates(tmp_path: Path) -> None:
     a, b = tmp_path / "a.jsonl", tmp_path / "b.jsonl"
     a.write_text(json.dumps({"dir": "tx", "plain": PLAIN}) + "\n\n   \n")
     b.write_text(json.dumps({"dir": "rx", "plain": None}) + "\n")
-    assert debug._load_jsonl([str(a), str(b)]) == [
+    assert debug._load_jsonl_checked([str(a), str(b)]) == ([
         {"dir": "tx", "plain": PLAIN},
         {"dir": "rx", "plain": None},
-    ]
+    ], 0)
 
 
 def test_analyze_reports_coverage(capsys: pytest.CaptureFixture[str]) -> None:
@@ -52,8 +53,8 @@ def test_analyze_reports_coverage(capsys: pytest.CaptureFixture[str]) -> None:
     out = capsys.readouterr().out
     assert "1 plaintext frames; 1 skipped/ciphertext" in out
     assert "coverage (dir + decoded label):" in out
-    assert "ISSUES (valid frames the spec does NOT represent):" in out
-    assert rc in (0, 1)
+    assert "ISSUES (valid frames the spec does NOT represent): 0" in out
+    assert rc == 0
 
 
 def test_analyze_flags_artifact_for_bad_checksum(capsys: pytest.CaptureFixture[str]) -> None:
@@ -66,7 +67,7 @@ def test_main_with_jsonl_path(tmp_path: Path, capsys: pytest.CaptureFixture[str]
     p = tmp_path / "cap.jsonl"
     p.write_text(json.dumps({"dir": "tx", "plain": PLAIN, "wire": PLAIN, "enc": ""}) + "\n")
     rc = debug.main([str(p)])
-    assert rc in (0, 1)
+    assert rc == 0
     assert "frame-log analysis" in capsys.readouterr().out
 
 
@@ -82,7 +83,7 @@ def test_main_from_frames_log_with_output(tmp_path: Path, capsys: pytest.Capture
     out = tmp_path / "session.jsonl"
     src.write_text(LOG_TEXT)
     rc = debug.main(["--from-frames-log", str(src), "-o", str(out)])
-    assert rc in (0, 1)
+    assert rc == 0
     printed = capsys.readouterr().out
     assert f"wrote 2 records to {out}" in printed
     written = [json.loads(x) for x in out.read_text().splitlines()]
@@ -92,8 +93,16 @@ def test_main_from_frames_log_with_output(tmp_path: Path, capsys: pytest.Capture
 def test_main_from_frames_log_without_output(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     src = tmp_path / "session.log"
     src.write_text(LOG_TEXT)
-    debug.main(["--from-frames-log", str(src)])
+    assert debug.main(["--from-frames-log", str(src)]) == 0
     assert "wrote" not in capsys.readouterr().out
+
+
+def test_main_from_frames_log_hard_gap_exits_1(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    bad = _frame(0x99, 0x01).hex()      # unknown proType: a hard issue
+    src = tmp_path / "session.log"
+    src.write_text(f"x DEBUG govee_ble_local.frames: AA:BB tx w plain={bad} wire={bad} enc=none\n")
+    assert debug.main(["--from-frames-log", str(src)]) == 1
+    assert "unknown proType 0x99" in capsys.readouterr().out
 
 
 def test_missing_file_exits_2_with_message(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -122,7 +131,7 @@ def test_malformed_lines_skipped_reported_and_analysis_continues(
     )
     rc = debug.main([str(p)])
     cap = capsys.readouterr()
-    assert rc in (0, 1)
+    assert rc == 0
     assert f"{p}:2: invalid JSON" in cap.err
     assert f"{p}:3: record is list" in cap.err
     assert f"{p}:4: invalid hex" in cap.err

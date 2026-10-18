@@ -18,6 +18,7 @@ a hex literal checked against them; none of it is hardware-verified."""
 from __future__ import annotations
 
 import asyncio
+from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
@@ -59,6 +60,11 @@ def _dev(sku: str, segments: int | None = None) -> Device:
 
     d._conn.send = AsyncMock(side_effect=send)  # type: ignore[method-assign]
     d._conn.send_many = AsyncMock(side_effect=send_many)  # type: ignore[method-assign]
+    # Any read or upload these write paths did not script fails loudly instead of reaching the
+    # real connection (and the host's Bluetooth stack).
+    d._conn.query = AsyncMock(side_effect=AssertionError("unexpected read"))  # type: ignore[method-assign]
+    d._conn.send_unacked = AsyncMock(  # type: ignore[method-assign]
+        side_effect=AssertionError("unexpected upload"))
     d._sent = sent  # type: ignore[attr-defined]
     return d
 
@@ -81,7 +87,11 @@ def _cct0d(kelvin: int, picked: tuple[int, int, int]) -> bytes:
 APP_RANGES = {
     "H60A6": (2700, 6500), "H6641": (2000, 9000), "H6062": (2000, 9000), "H6047": (2200, 6500),
     "H6188": (2000, 9000), "H6008": (2700, 6500), "H6004": (2700, 6500), "H6052": (2000, 9000),
-    "H6006": (2000, 9000), "H6061": (2000, 9000),
+    # H6006 and H6008 are goodsType 64 -> KelvinConfig.Config version 2 = [2700, 6500] (KelvinConfig.java:407,
+    # :544-546). WAS (2000, 9000) for H6006 (SPEC_CLIENT_AUDIT #3, VERIFICATION G30).
+    "H6006": (2700, 6500), "H6061": (2000, 9000),
+    # H61A8: KelvinConfig.Config.z2, [2000, 9000] below hardware "3.08.01" (test_device_v3 has the branch)
+    "H61A8": (2000, 9000),
 }
 
 
@@ -132,7 +142,9 @@ def test_set_rgb_tint_pick_sends_one_cct_frame(sku: str, segments: int | None, c
     d = _dev(sku, segments)
     asyncio.run(d.set_rgb(_rgb(colour)))
     assert [f.hex() for f in _sent(d)] == [expected]
-    d._conn.send.assert_awaited_once()          # type: ignore[attr-defined]  # one frame, not send_many
+    # One write of one frame (set_rgb always hands its frames to send_many, which acks each).
+    d._conn.send_many.assert_awaited_once()     # type: ignore[attr-defined]
+    assert len(d._conn.send_many.await_args.args[0]) == 1  # type: ignore[attr-defined]
 
 
 @pytest.mark.parametrize(("sku", "segments", "colour", "expected"), GOLDEN_WHOLE)
@@ -157,7 +169,7 @@ def test_h6047_bar_pick_uses_the_bar_mask() -> None:
     asyncio.run(d.set_zone_rgb("left", (0xFF, 0xC9, 0x87)))
     asyncio.run(d.set_zone_rgb("right", (0xFF, 0xC9, 0x87)))
     assert [f.hex() for f in _sent(d)] == [_cct15(3500, (0xFF, 0xC9, 0x87), 0x1F, 0x00).hex(),
-                                          _cct15(3500, (0xFF, 0xC9, 0x87), 0xE0, 0x03).hex()]
+                                           _cct15(3500, (0xFF, 0xC9, 0x87), 0xE0, 0x03).hex()]
     assert _sent(d)[0][12:14].hex() == "1f00"
 
 
@@ -166,7 +178,7 @@ def test_h60a6_zone_picks_are_one_cct_frame_with_the_zone_mask() -> None:
     asyncio.run(d.set_zone_rgb("main", (0xFF, 0xB9, 0x69)))
     asyncio.run(d.set_zone_rgb("background", (0xFF, 0xB4, 0x6B)))
     assert [f.hex() for f in _sent(d)] == [_cct15(3000, (0xFF, 0xB9, 0x69), 0x00, 0x10).hex(),
-                                          _cct15(3000, (0xFF, 0xB4, 0x6B), 0xFF, 0x0F).hex()]
+                                           _cct15(3000, (0xFF, 0xB4, 0x6B), 0xFF, 0x0F).hex()]
 
 
 def test_segment_picks_are_one_cct_frame_with_the_segment_mask() -> None:
@@ -251,7 +263,7 @@ def test_range_boundaries_exactly_at_and_just_outside(sku: str, segments: int | 
 
 def test_2000k_colour_is_rgb_below_a_2700k_minimum_and_cct_at_a_2000k_minimum() -> None:
     # 0xFF8D0B is the first colour of 2000 K
-    for sku in ("H60A6", "H6008", "H6004", "H6047"):                       # minimum 2700 / 2200
+    for sku in ("H60A6", "H6008", "H6006", "H6004", "H6047"):              # minimum 2700 / 2200
         d = _dev(sku)
         asyncio.run(d.set_rgb((0xFF, 0x8D, 0x0B)))
         p = profile_for(sku)
@@ -260,7 +272,7 @@ def test_2000k_colour_is_rgb_below_a_2700k_minimum_and_cct_at_a_2000k_minimum() 
     d = _dev("H6008")
     asyncio.run(d.set_rgb((0xFF, 0x8D, 0x0B)))
     assert _sent(d)[0].hex() == "33050dff8d0b0000000000000000000000000042"
-    for sku in ("H6641", "H6052", "H6188", "H6006", "H6062"):              # minimum 2000
+    for sku in ("H6641", "H6052", "H6188", "H6062"):                       # minimum 2000
         d = _dev(sku, 15 if sku == "H6062" else None)
         asyncio.run(d.set_rgb((0xFF, 0x8D, 0x0B)))
         assert d.state.color_temp_kelvin == 2000, sku
@@ -330,12 +342,47 @@ def test_color_rgb_stays_the_plain_rgb_frame() -> None:
     assert b.color_rgb(0xFF, 0xB9, 0x69, "h6188")[6:8] == b"\x00\x00"
 
 
-def test_h61a8_never_converts() -> None:
+# The H61A8's bench frames (SW 3.03.18 / HW 3.01.10, 2026-10-17): both acked 00 and applied to all 15
+# segments, where today's 0x0b frame was rejected (status 01).
+H61A8_BENCH_RED = "33051501ff00000000000000ff7f00000000005d"      # Bytes.h, (255, 0, 0)
+H61A8_BENCH_2700K = "33051501ffffff0a8cffae54ff7f0000000000de"    # Bytes.r, 2700 K and its tint
+
+
+def test_h61a8_sends_the_apps_0x15_frames() -> None:
+    # WAS: scheme h61a8 sent every pick as 0x0b RGB. goodsType 19 sends the 0x15 forms (Config.Yt,
+    # devices.yaml by_goods_type 19): RGB as Bytes.h, a Kelvin or its exact tint as Bytes.r, 15 segments.
     d = _dev("H61A8")
-    asyncio.run(d.set_rgb((0xFF, 0xB9, 0x69)))
-    asyncio.run(d.set_segment_rgb([1], (0xFF, 0xB9, 0x69)))
-    assert [f[2:3].hex() for f in _sent(d)] == ["0b", "0b"]
-    assert d.state.rgb_color == (0xFF, 0xB9, 0x69) and d.state.color_temp_kelvin is None
+    asyncio.run(d.set_rgb((0xFF, 0x00, 0x00)))
+    asyncio.run(d.set_rgb((0xFF, 0xAE, 0x54)))            # 2700 K's tint: sent as that Kelvin
+    asyncio.run(d.set_color_temp(2700))
+    assert [f.hex() for f in _sent(d)] == [H61A8_BENCH_RED, H61A8_BENCH_2700K, H61A8_BENCH_2700K]
+    assert d.state.rgb_color is None and d.state.color_temp_kelvin == 2700
+    # A tint pick follows the range in force: 2000 K's tint is a CCT pick only at HW 3.01.10 ([2000, 9000]);
+    # unknown hardware ([2700, 6500], valid on every revision) and 3.08.01 send it as RGB.
+    tint_2000 = (0xFF, 0x8D, 0x0B)
+    as_cct = _cct15(2000, tint_2000, 0xFF, 0x7F)
+    assert as_cct.hex().endswith("f3")
+    for hardware, frame_, state in ((None, None, (tint_2000, None)), ("3.01.10", as_cct, (None, 2000)),
+                                    ("3.08.01", None, (tint_2000, None))):
+        h = _dev("H61A8")
+        h._state.hardware_version = hardware
+        asyncio.run(h.set_rgb(tint_2000))
+        rgb_frame = _frame(0x33, 0x05, 0x15, 0x01, *tint_2000, 0, 0, 0, 0, 0, 0xFF, 0x7F)   # Bytes.h
+        assert _sent(h) == [frame_ or rgb_frame], hardware
+        assert (h.state.rgb_color, h.state.color_temp_kelvin) == state, hardware
+    # One range per write: an aa 07 03 that lands mid-write (here, before the state is applied) changes
+    # neither the frame nor the state it records.
+    race = _dev("H61A8")
+    race._state.hardware_version = "3.01.10"
+    commit = race._commit
+
+    async def hardware_lands(frames: Any, apply: Any) -> None:
+        race._state.hardware_version = "3.08.01"
+        await commit(frames, apply)
+
+    race._commit = hardware_lands  # type: ignore[method-assign]
+    asyncio.run(race.set_rgb(tint_2000))
+    assert _sent(race) == [as_cct] and (race.state.rgb_color, race.state.color_temp_kelvin) == (None, 2000)
 
 
 # ── state after a conversion: Kelvin, no rgb (the app syncs the Kelvin) ──────

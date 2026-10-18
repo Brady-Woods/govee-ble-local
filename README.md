@@ -20,12 +20,14 @@ Home Assistant integration, but has no Home Assistant dependency and can be used
 pip install govee-ble-local
 # optional Govee cloud-account helpers (pulls in aiohttp):
 pip install 'govee-ble-local[cloud]'
-# or, from a clone (editable, for development):
+# or, from a clone (editable, for development; needs the JVM kaitai-struct-compiler 0.11:
+#   brew install kaitai-struct-compiler, or bash scripts/install_ksc.sh on Debian/Ubuntu;
+#   see CONTRIBUTING.md):
 git clone https://github.com/Brady-Woods/govee-ble-local.git
 cd govee-ble-local && pip install -e '.[dev]'
 ```
 
-Requires Python 3.11+. Runtime dependencies are deliberately minimal and Home-Assistant-friendly:
+Requires Python 3.11+. Installing from PyPI needs no compiler: the wheel ships the generated Kaitai classes. Runtime dependencies are deliberately minimal and Home-Assistant-friendly:
 `bleak`, `bleak-retry-connector`, `cryptography` (all shipped with HA), plus `kaitaistruct` (a
 pure-Python, stdlib-only wire-parser runtime). Dev extras: `.[dev]` (everything a contributor needs), or individually `.[test]`, `.[typing]`,
 `.[lint]`, `.[audit]`, `.[docs]`.
@@ -62,13 +64,17 @@ The library follows Home-Assistant BLE-library conventions: identify a device fr
 advertisement, build a capability-driven `Device`, then drive it.
 
 - **`discover(timeout=10.0, *, supported_only=True)`** — active-scan → `list[DiscoveredDevice]`
-  (`.ble_device`, `.advertisement`, `.sku`, `.rssi`, `.supported`). `supported(name, mfg)` and
-  `match(ble_device, adv)` are the passive-matcher hooks for a HA-style scanner.
-- **`create_device(ble_device, sku, advertisement_data=None, *, secret=None, frame_log=None)`**
-  — construct a `Device` for the SKU (raises `GoveeBleNotSupported` if uncurated). Pass the
-  advertisement (`DiscoveredDevice.advertisement` or bleak's own): its encrypt flag selects the
-  command channel, which some firmwares set differently from the SKU's default (H6008).
-  `is_supported_sku(sku)` / `supported_skus()` / `device_profile_for(sku)` query the table.
+  (`.ble_device`, `.advertisement`, `.sku`, `.rssi`, `.supported`); raises
+  `GoveeBleConnectionError` when the scan itself fails (no adapter, adapter off, no BlueZ/D-Bus);
+  that error is also the `BleakError` / `OSError` / `EOFError` 1.3.0 raised, so either handler matches.
+  `supported(name, mfg)` and `match(ble_device, adv)` are the passive-matcher hooks for a
+  HA-style scanner.
+- **`create_device(ble_device, sku, advertisement_data=None, *, secret=None, frame_log=None,
+  idle_disconnect=None)`** — construct a `Device` for the SKU (raises `GoveeBleNotSupported` if
+  uncurated). Pass the advertisement (`DiscoveredDevice.advertisement` or bleak's own): its
+  encrypt flag selects the command channel, which some firmwares set differently from the SKU's
+  default (H6008). `is_supported_sku(sku)` / `supported_skus()` / `profile_for(sku)` query the
+  table (`device_profile_for(sku)` is a deprecated alias of `profile_for`, removed in 2.0).
 - **`Device`** — one capability-gated class (behaviour comes from its `DeviceProfile`, not
   subclasses). Commands are ACK-confirmed on the wire:
   `turn_on` / `turn_off` / `set_power`, `set_brightness`, `set_rgb`, `set_color_temp`,
@@ -98,10 +104,20 @@ as the app's Kelvin sliders send it).
 Like the app, a picked RGB colour that is exactly one of its Kelvin tint colours (178 of them, two per
 100 K step) and whose Kelvin is inside the SKU's range is sent as a colour-temperature frame instead of
 an RGB frame, and `state` then reports `color_temp_kelvin` with `rgb_color` unset: `set_rgb`, `turn_on(rgb=)`,
-`set_zone_rgb` and `set_segment_rgb` on the 0x15 devices (H60A6, H6641, H6062, H6047, with the same mask the
-RGB frame would use), the 0x0d bulbs and strip (H6004, H6006, H6008, H6052, H6188) and H6061. Colours outside the
-range or one channel off the table stay RGB. Not modelled: colour-set / mixed-colour picks and the real-time
-drag frames (RGB only), and H61A8's picks.
+`set_zone_rgb` and `set_segment_rgb` on the 0x15 devices (H60A6, H61A8, H6641, H6062, H6047, with the same mask
+the RGB frame would use), the 0x0d bulbs and strip (H6004, H6006, H6008, H6052, H6188) and H6061. Colours outside
+the range or one channel off the table stay RGB. Not modelled: colour-set / mixed-colour picks and the real-time
+drag frames (RGB only). The H61A8's Kelvin range is [2000, 9000], or [2700, 6500] from hardware 3.08.01; until its
+hardware version is read (once per device, on the first poll) the range valid on both, [2700, 6500], applies
+(`Device.min_kelvin` / `max_kelvin` give the range in force). Its mode report carries no Kelvin, so after a
+colour-temperature write `state` keeps the Kelvin that was sent until an RGB or scene write or a scene
+report. Because it reports the same `15 01 00 00` after an RGB write too, a Kelvin the library sent stays in
+`state` across a colour change made in the Govee app.
+
+Read-back decodes the `aa 05` mode report the way the app's control screen does for each SKU. The
+H6052's screen reads its colour report as RGB only, so after a poll an H6052 in colour-temperature
+mode reports the report's colour as `rgb_color` (for a CCT the app or this library set, the Kelvin's
+tint) and no `color_temp_kelvin`.
 
 The H6047 follows the app's frames too: whole-device power is `33 01` (`33 36` is only the per-bar
 buttons, `set_zone_power`), read-back covers its 10 segments, `Device.zone_color_temp_kelvin(name)`
@@ -131,10 +147,17 @@ flow trace, or the per-frame firehose, and decode a capture with the bundled
 
 ## Protocol
 
-The wire protocol is specified as Kaitai Struct definitions — [`spec/govee_ble.ksy`](spec/govee_ble.ksy)
-(command/reply frames) and [`spec/govee_adv.ksy`](spec/govee_adv.ksy) (advertisements) — with the
-per-device table in [`spec/devices.yaml`](spec/devices.yaml). The runtime readers under
-`govee_ble_local/_generated/` are generated from those (source of truth: the decompiled Govee app).
+The wire protocol is specified as Kaitai Struct definitions in [`spec/`](spec/): one root per message
+class — [`govee_ble_frame.ksy`](spec/govee_ble_frame.ksy) (every command/reply frame, typed by its
+direction and the device's [`govee_profile`](spec/govee_profile.ksy)), the decoded state
+([`govee_state.ksy`](spec/govee_state.ksy), [`govee_status_stream.ksy`](spec/govee_status_stream.ksy)),
+the upload values ([`govee_upload.ksy`](spec/govee_upload.ksy)), the advertisement
+([`govee_manufacturer_data.ksy`](spec/govee_manufacturer_data.ksy),
+[`govee_scan_record.ksy`](spec/govee_scan_record.ksy)) and the BGC-info value
+([`govee_bgc_info.ksy`](spec/govee_bgc_info.ksy)), sharing [`govee_common.ksy`](spec/govee_common.ksy)
+— with the per-device table in [`spec/devices.yaml`](spec/devices.yaml). The Kaitai read-write classes
+under `govee_ble_local/_generated/` are generated from those, and the library parses and builds every
+frame with them (source of truth: the decompiled Govee app).
 
 ## Contributing & versioning
 

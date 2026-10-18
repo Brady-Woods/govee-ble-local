@@ -29,7 +29,7 @@ def test_parse_real_h60a6_burst() -> None:
     assert len(st.segments) == 13                 # four 0xA5 groups: 4+4+4+1
     assert [s.index for s in st.segments] == list(range(13))
     names = {(255, 0, 0): "R", (0, 255, 0): "G", (0, 0, 255): "B"}
-    assert "".join(names.get(s.rgb, "?") for s in st.segments) == "RGBRGBRGBRGBR"
+    assert "".join(names.get(s.rgb, "?") if s.rgb else "?" for s in st.segments) == "RGBRGBRGBRGBR"
     assert st.segments[0].brightness == 50 and st.segments[1].brightness == 100
 
 
@@ -44,18 +44,31 @@ def test_doubled_delivery_reassembles_identically() -> None:
     assert st.zone_power == {0: True, 1: True}
 
 
-def test_out_of_order_chunks_reassemble_by_index() -> None:
+def test_out_of_order_chunks_are_not_reassembled() -> None:
+    # WAS: put back in index order. The app takes a chunk only when its index is the next one expected
+    # (AbsController4BleSingleSendMultiBack.isSameController:220), so an early chunk is ignored and,
+    # unless it comes again in order, the read never completes.
     frames = [bytes.fromhex(h) for h in _BURST]
     shuffled = [frames[3], frames[0], frames[-1], frames[1], frames[2], *frames[4:-1]]
-    assert r.reassemble(shuffled) == r.reassemble(frames)
+    assert r.reassemble(shuffled) == b"" and r.parse_status(shuffled) == r.StatusReply()
+    # ...but a chunk that arrives early and again in order is taken the second time.
+    assert r.reassemble([frames[3], *frames]) == r.reassemble(frames)
 
 
 def test_parse_status_stops_on_padding() -> None:
-    # the generated status_reply reader terminates on the trailing zero pad (repeat-until
-    # type==0) — a burst padded to the frame boundary parses cleanly to just the real TLVs.
+    # The last chunk contributes only its lastLen bytes (AbsController4BleSingleSendMultiBack.h), so
+    # the real burst ends exactly on its last TLV. A zero-padded buffer (lastLen counting the pad)
+    # still reads whole: the 5 zero bytes are two empty tag-0 records, walked on as u() hands them to the
+    # screen's fallback lambda, and a 1-byte tail.
     frames = [bytes.fromhex(h) for h in _BURST]
-    st = r.parse_status(frames)
+    buf = r.reassemble(frames)
+    assert buf.endswith(bytes.fromhex("a5050464ff0000"))     # the last colour group, no pad
+    padded = bytearray(frames[0])
+    padded[4] = 17                                           # lastLen 17: 5 zero bytes of pad joined
+    assert r.reassemble([bytes(padded), *frames[1:]]) == buf + bytes(5)
+    st = r.parse_status([bytes(padded), *frames[1:]])
     assert st.is_on is True and st.brightness == 0x50   # no throw, no phantom TLVs from the pad
+    assert len(st.segments) == 13
 
 
 def test_parse_status_extracts_device_info() -> None:
@@ -96,18 +109,17 @@ def test_live_burst_full() -> None:
     assert len(st.segments) == 13
 
 
-def test_lost_terminator_still_yields_core_state() -> None:
-    st = r.parse_status(_LIVE[:-1])
-    assert (st.is_on, st.brightness, st.zone_power) == (False, 100, {0: False, 1: False})
-    assert 0 < len(st.segments) < 13  # the prefix that arrived, nothing invented
+def test_a_lost_terminator_gives_no_state() -> None:
+    # WAS: the prefix's state. The app's read never completes (l() never runs), so nothing is applied.
+    assert r.parse_status(_LIVE[:-1]) == r.StatusReply()
+    assert r.burst_chunks(_LIVE[:-1])[1] is False
 
 
-def test_gap_never_splices_later_chunks_in() -> None:
-    gapped = _LIVE[:3] + _LIVE[4:]  # chunk 0x03 lost
-    st = r.parse_status(gapped)
-    assert st.is_on is False and st.brightness == 100
-    assert st.zone_power == {} and st.segments == []  # beyond the gap: dropped, not garbage
-    assert r.reassemble(gapped) == r.reassemble(_LIVE[:3])
+def test_a_gap_gives_no_state() -> None:
+    gapped = _LIVE[:3] + _LIVE[4:]  # chunk 0x03 lost: the app waits for it, ignoring the rest
+    assert r.parse_status(gapped) == r.StatusReply()
+    assert r.reassemble(gapped) == b""
+    assert r.burst_chunks(gapped)[0] == _LIVE[:3]   # the chunks the app took before the gap
 
 
 def test_duplicate_chunks_collapse() -> None:

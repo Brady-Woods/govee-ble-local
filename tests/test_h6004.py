@@ -25,7 +25,7 @@ from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
-from fake_ble import ble_device
+from fake_ble import ble_device, frames_of
 
 from govee_ble_local import Capability, Encryption
 from govee_ble_local.devices.device import Device, make_device
@@ -61,8 +61,8 @@ def _dev(replies: dict[int, list[bytes]] | None = None) -> Device:
     async def send_many(frames: list[bytes]) -> None:
         sent.extend(frames)
 
-    async def send_unacked(frames: list[bytes]) -> None:
-        unacked.extend(frames)
+    async def send_unacked(frames: Any) -> None:
+        unacked.extend(frames_of(frames))
 
     async def query(frame: bytes, **_k: object) -> list[bytes]:
         return list(table.get(frame[1], []))

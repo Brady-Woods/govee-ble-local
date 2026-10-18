@@ -10,9 +10,10 @@ import io
 import json
 import logging
 import os
+import sys
 import time
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 
 import pytest
 
@@ -24,6 +25,7 @@ from govee_ble_local.transport.connection import GoveeConnection
 from govee_ble_local.wire import build
 
 from fake_ble import FakeGovee, ble_device
+from fake_ble import frame as valid_frame
 
 TOOLS = Path(__file__).resolve().parent.parent / "tools"
 posix_only = pytest.mark.skipif(os.name != "posix", reason="POSIX semantics")
@@ -33,6 +35,9 @@ def _tool(name: str) -> ModuleType:
     spec = importlib.util.spec_from_file_location(f"_tool_{name}_final", TOOLS / f"{name}.py")
     assert spec and spec.loader
     mod = importlib.util.module_from_spec(spec)
+    # Registered before exec (the importlib recipe): a @dataclass in a tool resolves its
+    # string annotations through sys.modules[cls.__module__].
+    sys.modules[spec.name] = mod
     spec.loader.exec_module(mod)
     return mod
 
@@ -47,6 +52,7 @@ def _drain(timeout: float = 5.0) -> None:
 @pytest.fixture(autouse=True)
 def _reset_framelog() -> None:
     framelog._failed_paths.clear()
+    framelog._mode_warned.clear()
 
 
 # -- N-1: debug --from-frames-log validation ----------------------------------------------
@@ -54,7 +60,7 @@ def _reset_framelog() -> None:
 def test_frames_log_bad_hex_is_skipped_and_reported(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    good = "33" + "01" * 18 + "00"
+    good = valid_frame(0x33, 0x01, 0x01).hex()  # a valid write/switch frame (checksum included)
     log = tmp_path / "f.log"
     log.write_text(
         f"AA tx cmd plain=abc wire=00 enc=none\n"
@@ -62,7 +68,7 @@ def test_frames_log_bad_hex_is_skipped_and_reported(
     )
     rc = debug.main(["--from-frames-log", str(log)])
     cap = capsys.readouterr()
-    assert rc in (0, 1)
+    assert rc == 0  # a skipped malformed line is reported, never counted as a spec issue
     assert f"{log}:1:" in cap.err and "plain" in cap.err
     assert "1 malformed input line(s) skipped" in cap.out
     assert "1 plaintext frames" in cap.out
@@ -97,7 +103,8 @@ def test_decrypt_btsnoop_masks_secret_frames(
     assert secret.hex() not in out and reply.hex() not in out
     assert normal.hex() in out
     assert "33b2" in out and "aab1" in out  # headers kept
-    assert "never keys/secrets" in mod.__doc__ and "masked" in mod.__doc__
+    doc = mod.__doc__ or ""
+    assert "never keys/secrets" in doc and "masked" in doc
 
 
 # -- N-3 / N-8: framelog ------------------------------------------------------------------
@@ -145,18 +152,36 @@ def test_new_file_still_0600(tmp_path: Path) -> None:
 
 
 def test_record_revives_dead_writer(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # The restart is stubbed (FakeThread): a second real writer thread would outlive this test and
+    # consume the shared queue beside the first, breaking the check-before-lines order that
+    # framelog._process_batch relies on in later tests. A real restart is covered in a child process
+    # by test_framelog_hardening.py::test_record_revives_dead_writer_end_to_end.
     p = tmp_path / "r.jsonl"
-    log = framelog.FrameLog(str(p), "A")
+    log = framelog.FrameLog(str(p), "A")   # the real (live) writer drains the queue below
+    started: list[object] = []
 
     class Dead:
         def is_alive(self) -> bool:
             return False
 
+    class FakeThread:
+        def __init__(self, *, target: object, name: str, daemon: bool) -> None:
+            self.target, self._alive = target, False
+
+        def start(self) -> None:
+            self._alive = True
+            started.append(self.target)
+
+        def is_alive(self) -> bool:
+            return self._alive
+
     monkeypatch.setattr(framelog, "_writer", Dead())
+    monkeypatch.setattr(framelog, "threading", SimpleNamespace(Thread=FakeThread))
     log.record("tx", wire=b"\x01")
+    assert started == [framelog._write_forever]          # a dead writer was replaced, once
+    assert isinstance(framelog._writer, FakeThread) and framelog._writer.is_alive()
     _drain()
     assert len(p.read_text().splitlines()) == 1
-    assert framelog._writer is not None and framelog._writer.is_alive()
 
 
 # -- N-12: connection frame validation ----------------------------------------------------
@@ -272,5 +297,3 @@ def test_ci_falsy_values_do_not_require(monkeypatch: pytest.MonkeyPatch, val: st
     monkeypatch.delenv("GOVEE_REQUIRE_OPTIONAL_TESTS", raising=False)
     monkeypatch.setenv("CI", val)
     assert optional_deps_required() is False
-
-

@@ -1,0 +1,1151 @@
+doc: |
+  Device behaviour, state and timing per firmware image, as data: what a device
+  does with the frames the .ksy files describe. Schema: firmware.schema.json.
+  Every reply, push and advert is a spec object named by type path and seq ids;
+  a simulator builds them with no hand-built bytes. Firmware claims cite the
+  image (IMAGE symbol @0xaddr, or a decompiled path:line); a claim about the app
+  cites the app's decompile.
+
+images:
+  - id: h5083_sw1_00_30
+    doc: |
+      The H5083 Wi-Fi + BLE plug. A shared write layer decrypts every frame,
+      runs the E7 exchange, checks the BCC and itself answers AA 06 / 07 / 14 /
+      20 / 21 / EF, a complete A1 11, AB, 66 and 3F; it counts A1 11 and A3
+      frames and passes them on, with everything else, to the per-SKU
+      dispatcher, which is gated on pair state.
+    doc-ref:
+      - H5083 FUN_9b03289c @0x9b03289c
+      - firmware-h5083-wifi/decompiled/H5083_ble_dispatcher.c:59-402
+    sku: H5083
+    goods_type: 43
+    soft_version: 1.00.30
+    hard_version: 1.02.00
+    chip: RTL8720CF
+    file: def58f4ab490f41bbb43feb7c4cbccce-H5083_WIFI_BLE_HW1.02.00_SW1.00.30_OTA.bin
+    frame_len: 20
+
+    profile:
+      forms: { f_14: wifi_mac }
+      doc: FIRMWARE-SOURCED, the firmware answers AA 14 with its Wi-Fi MAC (the app sends it only while adding the device)
+      doc-ref:
+        - H5083 ble_msg_get_wifi_mac_address @0x9b031a24
+        - split_plugnew/com/govee/h5080/add/PairAcV1.java:652
+
+    gatt:
+      service: 00010203-0405-0607-0809-0a0b0c0d1910
+      notify: 00010203-0405-0607-0809-0a0b0c0d2b10
+      write: 00010203-0405-0607-0809-0a0b0c0d2b11
+      bgc_info: false
+      doc: no 2b12 characteristic; the advert flag 0x40 is the only sign of the cipher
+      doc-ref:
+        - H5083 data @0x9b80f7d9
+        - H5083 data @0x9b80f826
+        - H5083 data @0x9b80f87a
+        - H5083 FUN_9b029774 @0x9b029774
+
+    cipher: e7_v1
+
+    advert:
+      when: =state.session == 0 and state.adv_after_disconnect
+      let:
+        name: "='ihoment_%s_%02X%02X' % (image.sku, state.ble_mac[4], state.ble_mac[5])"
+      adv:
+        - { len_ad: 3, ad_type: appearance, data: [0, 0] }
+        - len_ad: 8
+          ad_type: manufacturer_specific
+          data:
+            type: govee_manufacturer_data
+            flags: 0x43
+            company_id: 0xec88
+            pact_type: 2
+            pact_code: 2
+            device_state: "=bytes([state.relay0])"
+      scan_response:
+        - { len_ad: 2, ad_type: flags, data: { type: govee_scan_record::flags_data, flags: 5 } }
+        - len_ad: =len(name) + 1
+          ad_type: complete_local_name
+          data: { type: govee_scan_record::local_name, raw: =name }
+      doc: |
+        [03 19 00 00][08 FF 43 88 EC 00 02 02 <switch>] and the scan response
+        [02 01 05][13 09 <name>]. The name ends in the last two octets of the BLE
+        MAC string, so it is always 18 chars, which sets flag 0x40 and pact 2 / 2
+        in the template. The switch byte follows the relay. After 33 FF 04 05
+        01 | 02, or the factory test, the device stops advertising at the next
+        disconnect.
+      doc-ref:
+        - H5083 data @0x100007a6
+        - H5083 data @0x1000078e
+        - H5083 FUN_9b029774 @0x9b029774
+        - H5083 FUN_9b029850 @0x9b029850
+        - H5083 FUN_9b01e354 @0x9b01e39a-0x9b01e3d8
+        - H5083 FUN_9b029a18 @0x9b029a18
+
+    state:
+      session:
+        init: 0
+        doc: 0 disconnected, 1 connected, 2 after E7 01, 3 after E7 02
+        doc-ref:
+          - H5083 data @0x10009b90
+          - H5083 FUN_9b032d14 @0x9b032d14
+      cipher:
+        init: psk
+        doc: the key frames are sent and read with, psk until E7 02 is answered, then session
+        doc-ref:
+          - H5083 FUN_9b032fb4 @0x9b032fb4
+      session_key:
+        init: =random_bytes(16)
+        doc: the key E7 01 hands out, new on every connect
+        doc-ref:
+          - H5083 data @0x10009a80
+          - H5083 FUN_9b032f98 @0x9b032f98
+      pair_state:
+        init: 0
+        doc: 0 none, 1 pairing (after AA B1), 2 paired (after a matching 33 B2); every connect sets 0
+        doc-ref:
+          - H5083 data @0x10000654
+          - H5083 FUN_9b021acc @0x9b021acc
+          - H5083 FUN_9b01e354 @0x9b01e462
+      relay0:
+        init: 0
+        doc: outlet 0, 0 off or 1 on; the advert switch byte mirrors it
+        doc-ref:
+          - H5083 data @0x10009448
+          - H5083 FUN_9b021668 @0x9b021668
+      secret:
+        init: null
+        persist: true
+        doc: the 8-byte account-lock secret, made on the first AA B1 inside the button window
+        doc-ref:
+          - H5083 FUN_9b021894 @0x9b021894
+          - H5083 FUN_9b021748 @0x9b021748
+      fallback_secret:
+        init: =random_bytes(8)
+        doc: what 33 B2 is compared with while no secret is made, a keyed hash of the BLE MAC string (opaque here)
+        doc-ref:
+          - H5083 FUN_9b021928 @0x9b021962-0x9b0219a0
+      last_key_ms:
+        init: null
+        doc: now_ms of the last button press (SHORT_KEY), for the AA B1 window
+        doc-ref:
+          - H5083 data @0x1000926c
+          - H5083 FUN_9b01ec6e @0x9b01ec6e
+      heartbeat_ticks:
+        init: 0
+        doc: seconds since the last GATT write
+        doc-ref:
+          - H5083 data @0x100093f0
+          - H5083 FUN_9b020cfc @0x9b020cfc
+      pair_key_ticks:
+        init: 0
+        doc: seconds spent in pair state 1
+        doc-ref:
+          - H5083 data @0x100093f4
+          - H5083 FUN_9b020d14 @0x9b020d14
+      timers:
+        init: "=[{'flags': 0, 'hour': 0, 'minute': 0, 'repeat': 0} for i in range(10)]"
+        persist: true
+        doc: the 10 timer records of outlet 0 (timer_record fields); the clock task reads them whatever the used flags
+        doc-ref:
+          - H5083 FUN_9b021a20 @0x9b021a20
+          - H5083 FUN_9b0219b0 @0x9b0219b0
+      timer_used:
+        init: =[False] * 10
+        persist: true
+        doc: each slot's used flag; the timer count is the number of leading used slots
+        doc-ref:
+          - H5083 FUN_9b0219e4 @0x9b0219e4
+      delay_minutes:
+        init: [0, 0]
+        doc: the two delays' set minutes; type 0 switches the outlet off at its end, type 1 on
+        doc-ref:
+          - H5083 FUN_9b021674 @0x9b021674
+          - H5083 FUN_9b020dd8 @0x9b020dd8
+      delay_end_ms:
+        init: [null, null]
+        doc: now_ms when each delay ends, or None (the firmware keeps it on its own clock)
+        doc-ref:
+          - H5083 FUN_9b0216c0 @0x9b0216c0
+      ntp_synced:
+        init: false
+        doc: the clock came from NTP
+        doc-ref:
+          - H5083 data @0x100093fa
+          - H5083 FUN_9b020dd8 @0x9b020dd8
+      ble_time_set:
+        init: false
+        doc: the clock came from 33 B5
+        doc-ref:
+          - H5083 data @0x100093f8
+          - H5083 FUN_9b0214f0 @0x9b0214f0
+      unix_s:
+        init: null
+        doc: the epoch 33 B5 last applied
+        doc-ref:
+          - H5083 FUN_9b0214f0 @0x9b0214f0
+      tz_hour:
+        init: 0
+        doc: the timezone hour 33 B5 last applied
+        doc-ref:
+          - H5083 FUN_9b0214f0 @0x9b0214f0
+      tz_min:
+        init: 0
+        doc: the timezone minute 33 B5 last applied
+        doc-ref:
+          - H5083 FUN_9b0214f0 @0x9b0214f0
+      soft_version:
+        init: =image.soft_version
+        doc: the version string of AA 06 and AA 21
+        doc-ref:
+          - H5083 HAL_Ota_GetSWVersion @0x9b02b1c8
+      hard_version:
+        init: =image.hard_version
+        doc: the version string of AA 07 03 and AA 20
+        doc-ref:
+          - H5083 data @0x9b809cc7
+      device_id:
+        init: =random_bytes(8)
+        persist: true
+        doc: the AA 07 02 id, as the reply carries it (the firmware reverses its stored uuid)
+        doc-ref:
+          - H5083 data @0x1000b140
+          - H5083 ble_msg_get_sn @0x9b031924
+      ble_mac:
+        init: =random_bytes(6)
+        doc: the BLE MAC in printed order (a scenario sets the link address)
+        doc-ref:
+          - H5083 ble_msg_get_ble_macaddress @0x9b0319cc
+      wifi_mac:
+        init: =random_bytes(6)
+        doc: the Wi-Fi MAC, forward order
+        doc-ref:
+          - H5083 ble_msg_get_wifi_mac_address @0x9b031a24
+      adv_after_disconnect:
+        init: true
+        doc: the device advertises again after a disconnect
+        doc-ref:
+          - H5083 data @0x100007b4
+          - H5083 FUN_9b02a368 @0x9b02a368
+      factory_test:
+        init: false
+        doc: CAUTION, the one-shot factory test some 33 FF starts
+        doc-ref:
+          - H5083 data @0x10009282
+          - H5083 FUN_9b022ae4 @0x9b022ae4
+      pact_type:
+        init: 0
+        persist: true
+        doc: the pact AB 02 stores (it only rises); the factory value is not traced
+        doc-ref:
+          - H5083 FUN_9b032308 @0x9b032308
+          - H5083 FUN_9b021ad8 @0x9b021ad8
+      pact_code:
+        init: 0
+        persist: true
+        doc: the pact code AB 02 stores with pact_type
+        doc-ref:
+          - H5083 FUN_9b032308 @0x9b032308
+      diy_count:
+        init: 0
+        doc: A1 DIY START's data-packet count
+        doc-ref:
+          - H5083 data @0x10009284
+      diy_counter:
+        init: 0
+        doc: A1 DIY data packets taken in order
+        doc-ref:
+          - H5083 data @0x10009283
+      wifi_count:
+        init: 0
+        doc: A1 11 START's data-packet count
+        doc-ref:
+          - H5083 data @0x1000995d
+      wifi_counter:
+        init: 0
+        doc: A1 11 data packets taken in order
+        doc-ref:
+          - H5083 data @0x1000995c
+      upload_buf:
+        init: =bytes(256)
+        doc: the 256-byte buffer A1 11 and A3 uploads share, cleared by either START
+        doc-ref:
+          - H5083 data @0x10009966
+          - H5083 ble_msg_receive_mult_package @0x9b031c4a
+          - H5083 FUN_9b03289c @0x9b032972
+      wifi_status:
+        init: 0
+        doc: the outcome of joining with accepted credentials, 0 connected; a scenario sets it
+        doc-ref:
+          - H5083 FUN_9b031e00 @0x9b031e00
+      wifi_reason:
+        init: 0
+        doc: the failure reason with it, 2 / 3 Wi-Fi connect failures, 1 or 4..6 post-connect failures
+        doc-ref:
+          - H5083 FUN_9b031e00 @0x9b031f00
+          - H5083 FUN_9b031e00 @0x9b032008
+      iot_count:
+        init: 0
+        doc: A3 START's frame count (START and END included)
+        doc-ref:
+          - H5083 FUN_9b03289c @0x9b03289c
+      iot_counter:
+        init: 0
+        doc: A3 frames taken since START
+        doc-ref:
+          - H5083 FUN_9b03289c @0x9b03289c
+      iot_result:
+        init: 0
+        doc: the IoT server outcome, 0 connected; a scenario sets it
+        doc-ref:
+          - H5083 send_iot_status @0x9b031860
+
+    accept:
+      - id: handshake_first
+        drop: =state.session in (1, 2) and frame.pro_type != pro_type.handshake
+        doc: until E7 02 is answered, only the E7 handler sees frames
+        doc-ref:
+          - H5083 FUN_9b03289c @0x9b0328e2
+      - id: checksum
+        drop: =not checksum_ok
+        doc: the XOR BCC is checked on the decrypted frame; a bad one gets no reply
+        doc-ref:
+          - H5083 FUN_9b031528 @0x9b031528
+          - H5083 FUN_9b032fb4 @0x9b032fb4
+      - id: length
+        layer: dispatcher
+        drop: =len(raw) != 20
+        doc: the dispatcher takes only 20-byte frames; the shared layer has no length check
+        doc-ref:
+          - firmware-h5083-wifi/decompiled/H5083_ble_dispatcher.c:87-92
+
+    answers:
+      # ---- the shared write layer ----
+      - id: e7_session_key
+        layer: shared
+        match: { route: handshake_tx, op: v1_request_session_key }
+        when: =state.session in (1, 2)
+        apply: after_reply
+        effects:
+          - set: { state.session: 2 }
+        reply:
+          route: handshake_rx
+          fill: request
+          body:
+            op: v1_request_session_key
+            key: { type: govee_ble_frame::session_key, key: =state.session_key }
+        doc: E7 01 gets the session key (byte 18 echoed), PSK-encrypted; it may repeat
+        doc-ref:
+          - H5083 FUN_9b032fb4 @0x9b03301e-0x9b033028
+      - id: e7_confirm
+        layer: shared
+        match: { route: handshake_tx, op: v1_confirm }
+        when: =state.session in (1, 2)
+        apply: after_reply
+        effects:
+          - set: { state.session: 3, state.cipher: session }
+        reply: echo
+        doc: E7 02 is echoed under the PSK, then the session key is used; E7 01 need not come first
+        doc-ref:
+          - H5083 FUN_9b032fb4 @0x9b033058-0x9b033064
+      - id: soft_version
+        layer: shared
+        match: { route: read_tx, command: soft_version }
+        when: =len(state.soft_version) <= 17
+        reply:
+          route: read_rx
+          fill: request
+          body:
+            command: soft_version
+            state: { body: { type: govee_common::version_text, raw: =state.soft_version } }
+        doc: |
+          AA 06, the version as ASCII from byte 2, at most 17 bytes. The firmware
+          writes no NUL (the next byte is the request's); version_text writes one.
+        doc-ref:
+          - H5083 FUN_9b031bc0 @0x9b031bc0
+          - H5083 ble_msg_get_version @0x9b0318dc
+      - id: device_id
+        layer: shared
+        match: { route: read_tx, command: device_info, selector.selector: sn }
+        reply:
+          route: read_rx
+          fill: request
+          body:
+            command: device_info
+            state:
+              body:
+                type: govee_state::device_info_record
+                selector: sn
+                info: { type: govee_state::uid_record, uid: =state.device_id }
+        doc: AA 07 02; AA 07 answers only 02 / 03 / 06, other selectors go on and are dropped
+        doc-ref:
+          - H5083 ble_msg_get_dev_info @0x9b031b08
+          - H5083 ble_msg_get_sn @0x9b031924
+      - id: hard_version
+        layer: shared
+        match: { route: read_tx, command: device_info, selector.selector: hard_version }
+        when: =len(state.hard_version) <= 16
+        reply:
+          route: read_rx
+          fill: request
+          body:
+            command: device_info
+            state:
+              body:
+                type: govee_state::device_info_record
+                selector: hard_version
+                info: { type: govee_common::version_text, raw: =state.hard_version }
+        doc: AA 07 03, ASCII from byte 3, at most 16 bytes (no NUL written; version_text writes one)
+        doc-ref:
+          - H5083 ble_msg_get_dev_info @0x9b031b0a-0x9b031b12
+          - H5083 ble_msg_get_hw_version @0x9b031984
+      - id: ble_mac
+        layer: shared
+        match: { route: read_tx, command: device_info, selector.selector: ble_mac }
+        reply:
+          route: read_rx
+          fill: request
+          body:
+            command: device_info
+            state:
+              body:
+                type: govee_state::device_info_record
+                selector: ble_mac
+                info: { type: govee_common::mac, addr: =state.ble_mac }
+        doc: FIRMWARE-SOURCED, AA 07 06, the BLE MAC in printed order
+        doc-ref:
+          - H5083 ble_msg_get_ble_macaddress @0x9b0319cc
+      - id: wifi_mac
+        layer: shared
+        match: { route: read_tx, command: cmd_14 }
+        reply:
+          route: read_rx
+          fill: request
+          body:
+            command: cmd_14
+            state:
+              body:
+                type: govee_state::cmd_14_state
+                body: { type: govee_common::mac, addr: =state.wifi_mac }
+        doc: AA 14, the Wi-Fi MAC, forward order
+        doc-ref:
+          - H5083 ble_msg_get_wifi_mac_address @0x9b031a24
+      - id: wifi_hard_version
+        layer: shared
+        match: { route: read_tx, command: wifi_hard_version }
+        when: =len(state.hard_version) <= 17
+        reply:
+          route: read_rx
+          fill: request
+          body:
+            command: wifi_hard_version
+            state: { body: { type: govee_common::version_text, raw: =state.hard_version } }
+        doc: AA 20, the AA 07 03 string (one SoC; no NUL written, version_text writes one)
+        doc-ref:
+          - H5083 ble_msg_get_wifi_hwversion @0x9b031a78
+      - id: wifi_soft_version
+        layer: shared
+        match: { route: read_tx, command: wifi_soft_version }
+        when: =len(state.soft_version) <= 17
+        reply:
+          route: read_rx
+          fill: request
+          body:
+            command: wifi_soft_version
+            state: { body: { type: govee_common::version_text, raw: =state.soft_version } }
+        doc: AA 21, the AA 06 string (one SoC; no NUL written, version_text writes one)
+        doc-ref:
+          - H5083 ble_msg_get_wifi_swversion @0x9b031ac0
+      - id: pact
+        layer: shared
+        match: { route: read_tx, command: pact }
+        reply:
+          route: read_rx
+          fill: request
+          body:
+            command: pact
+            state: { body: { type: govee_state::pact_state, pact_type: 2, pact_code: 2 } }
+        doc: FIRMWARE-SOURCED, AA EF, the constant 00 02 02
+        doc-ref:
+          - H5083 FUN_9b031b80 @0x9b031b80
+      - id: wifi_start
+        layer: shared
+        match: { route: multi_write_tx, com_type: wifi, position: 0 }
+        effects:
+          - set: { state.wifi_count: =req.num_packets, state.wifi_counter: 0, state.upload_buf: =bytes(256) }
+        forward: true
+        doc: A1 11 START clears the upload buffer, no reply; the frame also goes on to the dispatcher
+        doc-ref:
+          - H5083 ble_msg_receive_mult_package @0x9b031c2c
+      - id: wifi_data
+        layer: shared
+        match: { route: multi_write_tx, com_type: wifi }
+        when: =req.position not in (0, 255)
+        let:
+          at: =(req.position - 1) * 16
+        effects:
+          - when: =req.position == state.wifi_counter + 1
+            set: { state.wifi_counter: =state.wifi_counter + 1, state.upload_buf: "=state.upload_buf[:at] + req.chunk + state.upload_buf[at + 16:]" }
+        forward: true
+        doc: A1 11 DATA, 16 bytes each, taken only in order; no reply; the frame also goes on
+        doc-ref:
+          - H5083 ble_msg_receive_mult_package @0x9b031c2c
+      - id: wifi_end
+        layer: shared
+        match: { route: multi_write_tx, com_type: wifi, position: 255 }
+        let:
+          cred: =decode('govee_upload', state.upload_buf + bytes(0x10000), upload_kind.wifi_credentials, upload_form.wire)
+          ok: "=cred is not None and cred.value.len_ssid < 0x22 and cred.value.len_password < 0x42 and (cred.value.len_password == 0 or cred.value.len_password >= 8)"
+        when: =state.wifi_count == state.wifi_counter and ok
+        apply: after_reply
+        effects:
+          - push: wifi_status
+        reply:
+          route: multi_write_rx
+          fill: request
+          body: { com_type: wifi, result: 0 }
+        doc: |
+          A1 11 END with every packet taken and credentials it accepts: the ack
+          echoes END bytes 3..18, then the attempt to join ends in EE 11.
+        doc-ref:
+          - H5083 ble_msg_receive_mult_package @0x9b031c2c
+          - H5083 FUN_9b0315fc @0x9b0315fc
+          - H5083 FUN_9b031e00 @0x9b031e00
+      - id: wifi_end_rejected
+        layer: shared
+        match: { route: multi_write_tx, com_type: wifi, position: 255 }
+        when: =state.wifi_count == state.wifi_counter
+        effects:
+          - push: wifi_rejected
+        forward: true
+        doc: |
+          Credentials it rejects (an SSID of 34 or more, a password of 66 or more,
+          or of 1..7) get EE 11 01 01 and no ack. The frame goes on with byte 2
+          set to 1, which the dispatcher takes as A1 DATA 1 (not modelled).
+        doc-ref:
+          - H5083 ble_msg_receive_mult_package @0x9b031cde-0x9b031cea
+          - H5083 FUN_9b0315fc @0x9b0315fc
+      - id: wifi_end_short
+        layer: shared
+        match: { route: multi_write_tx, com_type: wifi, position: 255 }
+        forward: true
+        doc: an A1 11 END with packets missing is not acked; it goes on and is dropped
+        doc-ref:
+          - H5083 ble_msg_receive_mult_package @0x9b031c2c
+      - id: iot_start
+        layer: shared
+        match: { route: multi_write_v1_tx, index: 0 }
+        effects:
+          - set: { state.iot_count: =req.start.num_packets, state.iot_counter: 0, state.upload_buf: "=raw[4:19] + bytes(241)" }
+        forward: true
+        doc: |
+          FIRMWARE-SOURCED, A3 START (a count of all frames, START and END
+          included): the upload buffer takes frame bytes 4.. (the comm byte, then
+          data) whatever the marker. No reply; every A3 frame goes on and is
+          dropped.
+        doc-ref:
+          - H5083 FUN_9b03289c @0x9b03296a-0x9b032994
+      - id: iot_data
+        layer: shared
+        match: { route: multi_write_v1_tx }
+        when: =req.index != 255
+        let:
+          at: =req.index * 17 - 2
+        effects:
+          - when: =req.index == state.iot_counter + 1
+            set: { state.iot_counter: =state.iot_counter + 1, state.upload_buf: "=state.upload_buf[:at] + req.chunk + state.upload_buf[at + 17:]" }
+        forward: true
+        doc: FIRMWARE-SOURCED, A3 DATA, 17 bytes each, taken only in order; no reply
+        doc-ref:
+          - H5083 FUN_9b03289c @0x9b03289c
+      - id: iot_end
+        layer: shared
+        match: { route: multi_write_v1_tx, index: 255 }
+        let:
+          taken: =state.iot_counter + 1
+          done: =taken + 1 == state.iot_count
+          at: =taken * 17 - 2
+        effects:
+          - set: { state.iot_counter: =taken }
+          - when: =done
+            set: { state.upload_buf: "=state.upload_buf[:at] + req.chunk + state.upload_buf[at + 17:]" }
+          - when: =done and state.upload_buf[0] == comm_byte.iot_config
+            push: iot_status
+        forward: true
+        doc: |
+          FIRMWARE-SOURCED, A3 END. Complete, with the comm byte 08 still at the
+          head of the buffer (an A1 11 START clears it), the IoT server config
+          runs, whatever its URL length, and ends in A3 08.
+        doc-ref:
+          - H5083 FUN_9b03289c @0x9b0329e0-0x9b032a2a
+          - H5083 FUN_9b0317b4 @0x9b0317c8-0x9b0317f4
+          - H5083 FUN_9b0320bc @0x9b0321dc
+      - id: pact_report
+        layer: shared
+        match: { route: wifi_multi_tx, command: pact_report }
+        let:
+          sent: =(req.args.pact_type - 0x10000 if req.args.pact_type >= 0x8000 else req.args.pact_type) * 256 + req.args.pact_code
+        effects:
+          - when: =sent > state.pact_type * 256 + state.pact_code
+            set: { state.pact_type: =req.args.pact_type, state.pact_code: =req.args.pact_code }
+        reply:
+          route: wifi_multi_rx
+          fill: zero
+          body:
+            index: 0
+            num_packets: 1
+            len_last: 3
+            command: 2
+            data: { type: govee_ble_frame::pact_report, pact_type: =state.pact_type, pact_code: =state.pact_code }
+        doc: AB 02 stores a higher pact (its type compared signed) and always answers with the stored one
+        doc-ref:
+          - H5083 FUN_9b03289c @0x9b032c8a-0x9b032c94
+          - H5083 FUN_9b032308 @0x9b032308
+          - H5083 FUN_9b0326f0 @0x9b0326f0
+          - split_plugnew/com/govee/h5080/adjust/newdetail/H5083NewDetailViewModel.java:188-228
+      - id: matter_gid
+        layer: shared
+        match: { route: wifi_multi_tx, command: matter_info }
+        when: =raw[2] == 4
+        unmodelled: the AB 01 04 Matter GID multi-reply carries a GID this file does not model
+        doc: FIRMWARE-SOURCED, no app sender
+        doc-ref:
+          - H5083 FUN_9b0327f0 @0x9b0327f0
+      - id: matter_consumed
+        layer: shared
+        match: { route: wifi_multi_tx, command: matter_info }
+        when: =raw[2] in (1, 2, 3, 5, 6)
+        doc: FIRMWARE-SOURCED, AB 01 with selector 1-3, 5 or 6 is taken with no reply; others go on and are dropped
+        doc-ref:
+          - H5083 FUN_9b0327f0 @0x9b0327f0
+      - id: factory_test_echo
+        layer: shared
+        match: { route: factory_test_tx }
+        when: =raw[1] == 2
+        reply: echo
+        doc: "FIRMWARE-SOURCED, CAUTION, test-only: 66 02 is echoed"
+        doc-ref:
+          - H5083 FUN_9b031bfe @0x9b031bfe
+      - id: factory_test_start
+        layer: shared
+        match: { route: factory_test_tx }
+        when: =raw[1] == 1
+        unmodelled: 66 01 replies 66 01 00 .., and proType 0x66 has no spec body type
+        doc: FIRMWARE-SOURCED, CAUTION, test-only
+        doc-ref:
+          - H5083 FUN_9b031ba0 @0x9b031ba0
+      - id: multi_write_3f
+        layer: shared
+        match: { route: multiple_write_3f_tx }
+        unmodelled: 3F takes N x 20-byte subframes and replies [3F][type][status], and proType 0x3F has no spec body type
+        doc: FIRMWARE-SOURCED, CAUTION, no app user
+        doc-ref:
+          - H5083 FUN_9b03289c @0x9b03289c
+
+      # ---- the dispatcher (frames the shared layer forwards) ----
+      - id: power_read
+        layer: dispatcher
+        match: { route: read_tx, command: power }
+        reply:
+          route: read_rx
+          fill: request
+          body:
+            command: power
+            state: { body: { type: govee_state::power_state, state: =state.relay0, aux: "=raw[3]" } }
+        doc: AA 01 in any pair state; byte 2 is the relay, the rest is the request's
+        doc-ref:
+          - firmware-h5083-wifi/decompiled/H5083_ble_dispatcher.c:338-342
+          - firmware-h5083-wifi/decompiled/H5083_ble_dispatcher.c:146
+          - split_plugnew/com/govee/h5080/adjust/newdetail/H5083NewDetailRepository.java:324
+      - id: secret_read
+        layer: dispatcher
+        match: { route: read_tx, command: secret_read }
+        let:
+          in_window: =state.last_key_ms is not None and now_ms - state.last_key_ms <= 5000
+        effects:
+          - when: =state.pair_state != 1
+            set: { state.pair_key_ticks: 0 }
+          - set: { state.pair_state: 1 }
+          - when: =in_window and state.secret is None
+            set: { state.secret: =random_bytes(8) }
+        reply:
+          route: read_rx
+          fill: request
+          body:
+            command: secret_read
+            state:
+              body:
+                type: govee_state::secret_state
+                selector: =1 if in_window else 0
+                secret: =state.secret if in_window else random_bytes(8)
+        doc: |
+          AA B1 in any pair state. It sets pair state 1, demoting a paired session.
+          Within 5000 ms of a button press it returns selector 1 and the secret,
+          made now if absent; otherwise selector 0 and 8 random bytes.
+        doc-ref:
+          - firmware-h5083-wifi/decompiled/H5083_ble_dispatcher.c:345-376
+      - id: timer_count
+        layer: dispatcher
+        match: { route: read_tx, command: cmd_12 }
+        when: =state.pair_state == 2
+        let:
+          group: =raw[2]
+        reply:
+          route: read_rx
+          fill: request
+          body:
+            command: cmd_12
+            state:
+              body:
+                type: govee_state::cmd_12_state
+                body:
+                  type: govee_state::timer_count
+                  group: =group
+                  count: =leading(state.timer_used) if group == 0 else 0
+        doc: AA 12 [group]; only group 0 has timers (the app sends no group byte)
+        doc-ref:
+          - firmware-h5083-wifi/decompiled/H5083_ble_dispatcher.c:147-149
+          - split_plugnew/com/govee/h5080/adjust/newdetail/H5083NewDetailRepository.java:336
+      - id: timer_page
+        layer: dispatcher
+        match: { route: read_tx, command: cmd_13 }
+        when: =state.pair_state == 2
+        let:
+          group: =raw[2]
+          page: =raw[3]
+          count: =leading(state.timer_used) if group == 0 else 0
+        reply:
+          route: read_rx
+          fill: request
+          body:
+            command: cmd_13
+            state:
+              body:
+                type: govee_state::cmd_13_state
+                body:
+                  type: govee_state::plug_timer_page
+                  page_and_group: =(page | group << 4) & 0xff
+                  records: "=[state.timers[4 * page + i] if 4 * page + i < count else {'flags': 0, 'hour': 0, 'minute': 0, 'repeat': 0} for i in range(4)]"
+        doc: AA 13 [group][page], slots 4 * page.. +3; slots past the count, and any page >= 4, are zero
+        doc-ref:
+          - firmware-h5083-wifi/decompiled/H5083_ble_dispatcher.c:111-143
+          - split_plugnew/com/govee/h5080/adjust/newdetail/H5083NewDetailRepository.java:208
+      - id: delay_read
+        layer: dispatcher
+        match: { route: read_tx, command: cmd_b0 }
+        when: =state.pair_state == 2
+        let:
+          outlet: =raw[2]
+          kind: =raw[3]
+          known: =(state.ntp_synced or state.ble_time_set) and outlet == 0 and kind < 2
+          minutes: =state.delay_minutes[kind] if known else 0
+          left: "=(state.delay_end_ms[kind] - now_ms) // 1000 if known and state.delay_end_ms[kind] is not None else 0"
+        reply:
+          route: read_rx
+          fill: request
+          body:
+            command: cmd_b0
+            state:
+              body:
+                type: govee_state::cmd_b0_state
+                body:
+                  type: govee_state::plug_delay_state
+                  outlet: =outlet
+                  delay_type: =kind
+                  hour: =minutes // 60
+                  minute: =minutes % 60
+                  remaining_seconds: =left if 0 <= left <= 86400 else 0
+        doc: |
+          AA B0 [outlet][type]: the set time and the seconds left, all zero until
+          the clock is set; more than 86400 s left reads 0, and so do other
+          outlets and types.
+        doc-ref:
+          - firmware-h5083-wifi/decompiled/H5083_ble_dispatcher.c:158-188
+          - H5083 FUN_9b021674 @0x9b021674
+          - H5083 FUN_9b0216c0 @0x9b0216c0
+          - split_plugnew/com/govee/h5080/adjust/newdetail/H5083NewDetailRepository.java:326-327
+      - id: plug_spec
+        layer: dispatcher
+        match: { route: read_tx, command: plug_spec }
+        when: =state.pair_state == 2
+        reply:
+          route: read_rx
+          fill: request
+          body:
+            command: plug_spec
+            state: { body: { type: govee_state::plug_spec, spec: 0 } }
+        doc: AA B3, the spec byte 00
+        doc-ref:
+          - firmware-h5083-wifi/decompiled/H5083_ble_dispatcher.c:153-156
+      - id: relay_write
+        layer: dispatcher
+        match: { route: write_tx, command: power }
+        when: =state.pair_state == 2
+        apply: after_reply
+        effects:
+          - when: =req.params.body.state & 0x10 != 0
+            set: { state.relay0: =req.params.body.state & 1, state.delay_minutes: [0, 0], state.delay_end_ms: [null, null] }
+        reply:
+          route: write_rx
+          fill: zero
+          body: { command: power, result: 0 }
+        doc: |
+          33 01 is acked 0 first; then, if bit 4 is set, outlet 0 takes bit 0 and
+          both delays clear. A BLE write sends no AA 01 push.
+        doc-ref:
+          - firmware-h5083-wifi/decompiled/H5083_ble_dispatcher.c:265-272
+          - H5083 FUN_9b01f5d0 @0x9b01f6d8-0x9b01f6ee
+          - split_plugnew/com/govee/h5080/adjust/newdetail/H5083NewDetailViewModel.java:247-265
+      - id: timer_add
+        layer: dispatcher
+        match: { route: write_tx, command: cmd_13 }
+        when: =state.pair_state == 2
+        let:
+          ok: =req.params.body.outlet == 0 and req.params.body.slot < 10
+        apply: after_reply
+        effects:
+          - when: =ok
+            put: state.timers
+            at: =req.params.body.slot
+            value: =req.params.body.timer
+          - when: =ok
+            put: state.timer_used
+            at: =req.params.body.slot
+            value: true
+        reply:
+          route: write_rx
+          fill: zero
+          body: { command: cmd_13, result: =0 if ok else 1 }
+        doc: 33 13 [outlet 0][slot < 10][record], acked 1 when the gate fails
+        doc-ref:
+          - firmware-h5083-wifi/decompiled/H5083_ble_dispatcher.c:260-262
+          - firmware-h5083-wifi/decompiled/H5083_ble_dispatcher.c:278-284
+          - H5083 FUN_9b01f54c @0x9b01f54c
+          - split_plugnew/com/govee/h5080/adjust/newdetail/H5083NewDetailViewModel.java:267-269
+      - id: timer_delete
+        layer: dispatcher
+        match: { route: write_tx, command: plug_timer_delete }
+        when: =state.pair_state == 2
+        let:
+          slot: =req.params.slot
+          ok: =req.params.outlet == 0 and slot < 10
+          count: =leading(state.timer_used)
+          zero: "={'flags': 0, 'hour': 0, 'minute': 0, 'repeat': 0}"
+          src: =state.timers[count - 1] if count and slot != count - 1 else zero
+          tail: "={'flags': src['flags'], 'hour': src['hour'], 'minute': src['minute'], 'repeat': 0x80}"
+          slot9: "={'flags': state.timers[9]['flags'], 'hour': state.timers[9]['hour'], 'minute': state.timers[9]['minute'], 'repeat': 0}"
+        apply: after_reply
+        effects:
+          - when: =ok and count > 0
+            set:
+              state.timers: =[state.timers[i + 1] if slot <= i < count - 1 else tail if i == count - 1 else zero if i == slot else state.timers[i] for i in range(10)]
+              state.timer_used: =[state.timer_used[i] and i != count - 1 for i in range(10)]
+          - when: =ok and count == 0
+            set:
+              state.timers: =[zero if i == slot else slot9 if i == 9 else state.timers[i] for i in range(10)]
+              state.delay_minutes: =[state.delay_minutes[0], 0]
+              state.delay_end_ms: =[state.delay_end_ms[0], None]
+        reply:
+          route: write_rx
+          fill: zero
+          body: { command: plug_timer_delete, result: =0 if ok else 1 }
+        doc: |
+          33 15 [outlet 0][slot]. The record is cleared and the used ones after it
+          shift down; then the last used slot is freed whatever the slot, its
+          record kept as a one-shot (repeat 0x80) that the clock task still fires
+          once. Deleting an unused slot so hides the last timer. With no timers
+          the write lands in slot 9's repeat byte and the type-1 delay's end,
+          which cancels that delay at the next tick (here at once).
+        doc-ref:
+          - firmware-h5083-wifi/decompiled/H5083_ble_dispatcher.c:264-276
+          - H5083 FUN_9b021a54 @0x9b021a54-0x9b021ab4
+          - split_plugnew/com/govee/h5080/adjust/newdetail/H5083NewDetailViewModel.java:152-153
+      - id: delay_write
+        layer: dispatcher
+        match: { route: write_tx, command: cmd_b0 }
+        when: =state.pair_state == 2
+        let:
+          ok: =req.params.body.outlet == 0 and req.params.body.delay_type < 10
+          kind: =req.params.body.delay_type
+          minutes: =req.params.body.hour * 60 + req.params.body.minute
+          stored: =ok and kind < 2
+          sets: =stored and 0 < minutes <= 1440 and (state.ntp_synced or state.ble_time_set)
+        apply: after_reply
+        effects:
+          - when: =stored and minutes == 0
+            put: state.delay_minutes
+            at: =kind
+            value: 0
+          - when: =stored and minutes == 0
+            put: state.delay_end_ms
+            at: =kind
+            value: null
+          - when: =sets
+            put: state.delay_minutes
+            at: =kind
+            value: =minutes
+          - when: =sets
+            put: state.delay_end_ms
+            at: =kind
+            value: =now_ms + minutes * 60000
+        reply:
+          route: write_rx
+          fill: zero
+          body: { command: cmd_b0, result: =0 if ok else 1 }
+        doc: |
+          33 B0 [outlet 0][type][hour][minute]: 0 minutes cancels at once; more
+          than 1440, or a clock not yet set, is ignored but still acked 0. Types
+          2..9 pass the gate and change nothing.
+        doc-ref:
+          - firmware-h5083-wifi/decompiled/H5083_ble_dispatcher.c:240-241
+          - H5083 FUN_9b01f498 @0x9b01f498
+          - H5083 FUN_9b02168c @0x9b02168c
+          - split_plugnew/com/govee/h5080/adjust/newdetail/H5083NewDetailViewModel.java:169-170
+      - id: secret_check
+        layer: dispatcher
+        match: { route: write_tx, command: secret_write }
+        let:
+          same: =req.params.secret == (state.secret if state.secret is not None else state.fallback_secret)
+        effects:
+          - when: =same
+            set: { state.pair_state: 2 }
+        reply:
+          route: write_rx
+          fill: zero
+          body: { command: secret_write, result: =0 if same else 1 }
+        doc: 33 B2 in any pair state; a match pairs (0 -> 2 is allowed) and acks 0, a mismatch acks 1
+        doc-ref:
+          - firmware-h5083-wifi/decompiled/H5083_ble_dispatcher.c:306-329
+          - H5083 FUN_9b021928 @0x9b021928
+      - id: time_sync
+        layer: dispatcher
+        match: { route: write_tx, command: plug_sync_time }
+        when: =state.pair_state == 2
+        effects:
+          - when: =not state.ntp_synced
+            set: { state.unix_s: =req.params.unix_seconds }
+          - set: { state.ble_time_set: true }
+          - when: =req.params.marker_is_valid
+            set: { state.tz_hour: =req.params.tz_hour, state.tz_min: =req.params.tz_min }
+        reply:
+          route: write_rx
+          fill: zero
+          body: { command: plug_sync_time, result: 0 }
+        doc: 33 B5 is always acked 0; the epoch applies only before NTP, the timezone only with marker 1
+        doc-ref:
+          - firmware-h5083-wifi/decompiled/H5083_ble_dispatcher.c:245-251
+          - H5083 FUN_9b0214f0 @0x9b0214f0
+          - split_plugnew/com/govee/h5080/adjust/newdetail/H5083NewDetailRepository.java:324
+      - id: debug_write
+        layer: dispatcher
+        match: { route: write_tx, command: debug }
+        effects:
+          - when: =raw[2] == 4 and raw[3] == 5 and raw[4] in (1, 2)
+            set: { state.adv_after_disconnect: false }
+          - when: =not (raw[2] == 4 and raw[3] == 5) and not state.factory_test
+            set: { state.factory_test: true, state.adv_after_disconnect: false }
+        reply: echo
+        doc: |
+          FIRMWARE-SOURCED, CAUTION, no app sender: 33 FF in any pair state is
+          echoed. 04 05 01 | 02 stops advertising after the next disconnect; the
+          first other 33 FF starts the factory test, which does too. A client
+          must never send it.
+        doc-ref:
+          - firmware-h5083-wifi/decompiled/H5083_ble_dispatcher.c:291-304
+          - H5083 FUN_9b022ae4 @0x9b022b02
+      - id: diy_start
+        layer: dispatcher
+        match: { route: multi_write_tx, position: 0 }
+        when: =state.pair_state == 2
+        effects:
+          - set: { state.diy_count: =req.num_packets, state.diy_counter: 0 }
+        doc: A1 START (any comm byte), no reply; the data is logged and discarded
+        doc-ref:
+          - firmware-h5083-wifi/decompiled/H5083_ble_dispatcher.c:194-205
+      - id: diy_data
+        layer: dispatcher
+        match: { route: multi_write_tx }
+        when: =state.pair_state == 2 and req.position not in (0, 255)
+        effects:
+          - when: =req.position == state.diy_counter + 1
+            set: { state.diy_counter: =state.diy_counter + 1 }
+        doc: A1 DATA, taken only in order; no reply
+        doc-ref:
+          - firmware-h5083-wifi/decompiled/H5083_ble_dispatcher.c:218-233
+      - id: diy_end
+        layer: dispatcher
+        match: { route: multi_write_tx, com_type: 2, position: 255 }
+        when: =state.pair_state == 2 and state.diy_count == state.diy_counter
+        reply:
+          route: multi_write_rx
+          fill: zero
+          body: { com_type: 2, result: 0 }
+        doc: A1 02 END with every packet taken is acked [02][00]; any other END gets no reply
+        doc-ref:
+          - firmware-h5083-wifi/decompiled/H5083_ble_dispatcher.c:206-215
+
+    pushes:
+      power:
+        frame:
+          route: read_rx
+          fill: zero
+          body:
+            command: power
+            state: { body: { type: govee_state::power_state, state: =state.relay0, aux: 0 } }
+        doc: the unsolicited AA 01 [relay], zero-filled, sent in any pair or session state
+        doc-ref:
+          - H5083 FUN_9b01f5d0 @0x9b01f63c-0x9b01f656
+          - H5083 FUN_9b01fd18 @0x9b01fd18
+      wifi_status:
+        frame:
+          route: notify_rx
+          fill: zero
+          body:
+            sub: wifi_connect
+            data: { type: govee_ble_frame::wifi_status, status: "=1 if state.wifi_status else 0", reason: "=state.wifi_reason if state.wifi_status else 0" }
+        doc: EE 11, the result of joining Wi-Fi; status is a 0 / 1 flag, the reason 0 when connected
+        doc-ref:
+          - H5083 send_wifi_status @0x9b031804
+      wifi_rejected:
+        frame:
+          route: notify_rx
+          fill: zero
+          body:
+            sub: wifi_connect
+            data: { type: govee_ble_frame::wifi_status, status: 1, reason: 1 }
+        doc: EE 11 01 01, the credentials were rejected
+        doc-ref:
+          - H5083 ble_msg_receive_mult_package @0x9b031cde-0x9b031cea
+      iot_status:
+        frame:
+          route: multi_write_v1_rx
+          fill: zero
+          body: { command: iot_config, result: "=1 if state.iot_result else 0" }
+        doc: FIRMWARE-SOURCED, A3 08, the IoT server result as a 0 / 1 flag
+        doc-ref:
+          - H5083 send_iot_status @0x9b031860
+
+    events:
+      connect:
+        effects:
+          - set: { state.session: 1, state.cipher: psk, state.session_key: =random_bytes(16), state.pair_state: 0, state.heartbeat_ticks: 0 }
+        doc: a central connected; the key is new per connect
+        doc-ref:
+          - H5083 FUN_9b032d14 @0x9b032d60
+          - H5083 FUN_9b01e354 @0x9b01e462
+          - H5083 FUN_9b01e354 @0x9b01e4ec
+      disconnect:
+        effects:
+          - set: { state.session: 0, state.pair_state: 0 }
+        doc: the link dropped (the firmware zeroes the session on its own disconnect event, or on the one it raises to advertise again)
+        doc-ref:
+          - H5083 FUN_9b032d14 @0x9b032d8e
+          - H5083 FUN_9b029a18 @0x9b029a82
+          - H5083 FUN_9b01e354 @0x9b01e502
+      write:
+        effects:
+          - set: { state.heartbeat_ticks: 0 }
+        doc: every GATT write, read or dropped, restarts the heartbeat count
+        doc-ref:
+          - H5083 FUN_9b032d14 @0x9b032d80
+      tick:
+        let:
+          clock: =state.ntp_synced or state.ble_time_set
+          end0: =state.delay_end_ms[0]
+          end1: =state.delay_end_ms[1]
+          fire0: =clock and end0 is not None and -4000 <= end0 - now_ms <= 0
+          fire1: =clock and end1 is not None and -4000 <= end1 - now_ms <= 0
+          stale0: =clock and end0 is not None and end0 - now_ms < -4000
+          stale1: =clock and end1 is not None and end1 - now_ms < -4000
+        effects:
+          - when: =fire0
+            set: { state.relay0: 0 }
+          - when: =fire1
+            set: { state.relay0: 1 }
+          - when: =fire0 or stale0
+            set: { state.delay_minutes: "=[0, state.delay_minutes[1]]", state.delay_end_ms: "=[None, state.delay_end_ms[1]]" }
+          - when: =fire1 or stale1
+            set: { state.delay_minutes: "=[state.delay_minutes[0], 0]", state.delay_end_ms: "=[state.delay_end_ms[0], None]" }
+          - when: =fire0 or fire1
+            push: power
+          - when: =state.session != 0 and state.pair_state == 1
+            set: { state.pair_key_ticks: =state.pair_key_ticks + 1 }
+          - when: =state.session != 0 and state.pair_state == 1 and state.pair_key_ticks > 60
+            disconnect: true
+          - when: =state.session != 0
+            set: { state.heartbeat_ticks: =state.heartbeat_ticks + 1 }
+          - when: =state.session != 0 and state.heartbeat_ticks > 10
+            disconnect: true
+        doc: |
+          The clock task, once a second. A delay ends within 4 s of its time:
+          type 0 switches outlet 0 off, type 1 on; it then clears and pushes AA
+          01 (one missed by more than 4 s just clears). The device drops a link
+          after 61 s in pair state 1, and 10-11 s after the last write.
+        doc-ref:
+          - H5083 FUN_9b020dd8 @0x9b020dd8
+          - H5083 FUN_9b021714 @0x9b021714
+          - H5083 FUN_9b020dd8 @0x9b02120e-0x9b02122e
+          - H5083 FUN_9b020dd8 @0x9b021232-0x9b02124a
+          - H5083 FUN_9b02a2e8 @0x9b02a2e8
+      button:
+        effects:
+          - set: { state.last_key_ms: =now_ms, state.relay0: =1 - state.relay0, state.delay_minutes: [0, 0], state.delay_end_ms: [null, null] }
+          - push: power
+        doc: a short press of the device button, which toggles outlet 0 and opens the AA B1 window
+        doc-ref:
+          - H5083 FUN_9b01ec6e @0x9b01ec6e
+          - H5083 FUN_9b01ec46 @0x9b01ec68
+      timer_fire:
+        args: { hour: the device clock's hour, minute: its minute, weekday: its weekday 1..7 as the firmware counts it }
+        let:
+          due: "=[i for i in range(10) if state.timers[i]['flags'] & 0x80 and state.timers[i]['hour'] == event.hour and state.timers[i]['minute'] == event.minute and (state.timers[i]['repeat'] in (0, 0x80) or (state.timers[i]['repeat'] >> (event.weekday - 1)) & 1)]"
+          held: "=len([e for e in state.delay_end_ms if e is not None and 0 <= e - now_ms <= 86400000]) > 0"
+          any_off: "=len([i for i in due if state.timers[i]['flags'] & 1 == 0]) > 0"
+        when: =(state.ntp_synced or state.ble_time_set) and len(due) > 0
+        effects:
+          - when: =not held
+            set: { state.relay0: =0 if any_off else 1 }
+          - set:
+              state.timers: "=[{'flags': state.timers[i]['flags'] & 0x7f, 'hour': state.timers[i]['hour'], 'minute': state.timers[i]['minute'], 'repeat': 0x80} if i in due and state.timers[i]['repeat'] == 0x80 else state.timers[i] for i in range(10)]"
+          - push: power
+        doc: |
+          A scenario raises it once a minute of the device clock (the firmware's
+          clock task checks every slot each second, once per minute each). The due
+          timers are the enabled records at this hour and minute on a day they
+          repeat (repeat 0x80 is once, 0 every day). Outlet 0 goes off if any due
+          timer is off, else on, unless a delay has time left (the firmware also
+          holds to the end of the minute a delay ends in, not modelled). Due
+          one-shots disable themselves; one AA 01 push follows.
+        doc-ref:
+          - H5083 FUN_9b020dd8 @0x9b020dd8
+          - H5083 FUN_9b020dd8 @0x9b021010-0x9b0210d8
+          - H5083 FUN_9b020dd8 @0x9b02111c
+          - H5083 FUN_9b021a20 @0x9b021a20
+      cloud_turn:
+        args: { value: the relay byte the cloud sent (as in 33 01) }
+        effects:
+          - when: =event.value & 0x10 != 0
+            set: { state.relay0: =event.value & 1, state.delay_minutes: [0, 0], state.delay_end_ms: [null, null] }
+          - push: power
+        doc: a cloud 'turn' command takes the 33 01 path, then always pushes AA 01
+        doc-ref:
+          - H5083 FUN_9b01fd60 @0x9b01fe7a
+          - H5083 FUN_9b01f5d0 @0x9b01f6d8-0x9b01f6ee
+      cloud_status:
+        effects:
+          - push: power
+        doc: a cloud 'status' request, which pushes AA 01
+        doc-ref:
+          - H5083 FUN_9b01fd60 @0x9b01fe04-0x9b01fe16
+      cloud_connect:
+        effects:
+          - push: power
+        doc: the device reached its MQTT server and reports its state, which re-sends AA 01
+        doc-ref:
+          - H5083 FUN_9b01d8ec @0x9b01daee
+          - H5083 FUN_9b01d8ec @0x9b01db8a
+      ntp_sync:
+        effects:
+          - set: { state.ntp_synced: true }
+        doc: the clock synced from NTP
+        doc-ref:
+          - H5083 FUN_9b020dd8 @0x9b020dd8

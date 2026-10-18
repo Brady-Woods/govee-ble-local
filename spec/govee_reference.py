@@ -2,50 +2,94 @@
 """
 Govee BLE — reference codec (the "framing" layer Kaitai cannot express) + dispatch wiring.
 
-This is the executable half of the spec. `govee_ble.ksy` owns the *byte structure*; this module owns the
+This is the executable half of the spec. The `.ksy` files own the *byte structure*; this module owns the
 three things a single-buffer grammar structurally cannot do, each grounded in the decompiled app:
 
     (1) DECRYPT      V1 = AES-128-ECB(16-byte blocks) + RC4(remainder)   [com/govee/encryp/ble/Safe.java]
     (2) REASSEMBLE   multi-frame transfers (0xAC status; 0xA1/0xA3 alike) [GOVEE_BLE_GATT_PROTOCOL.md 4.5/4.3]
-    (3) XOR checksum (BCC) compute/verify                                [4.1]
+    (3) checksum     XOR (BCC) or sum8 compute/verify, per the frame's checksum_kind   [4.1]
 
-...plus thin `dispatch` helpers that feed the parametric .ksy types the one discriminator they need
-(`devices.yaml -> client_profile`). A real client is then: BLE-transport + this module + the generated
-parser + devices.yaml. Nothing else hand-parses bytes.
+...plus thin `dispatch` helpers that give the spec's roots their context: the direction and a
+`govee_profile` (make_profile; the library builds its profiles from `devices.yaml -> client_profile`).
+A real client is then: BLE-transport + this module + the generated parser + devices.yaml. Nothing else
+hand-parses bytes.
 
-Run (self-test / round-trip harness):
-    kaitai-struct-compiler -t python govee_ble.ksy      # -> govee_ble_frame.py (put on sys.path)
-    python govee_reference.py
+Run (self-test / round-trip harness), from spec/:
+    kaitai-struct-compiler -t python --outdir OUT *.ksy   # one module per .ksy: govee_ble_frame.py, ...
+    PYTHONPATH=OUT python govee_reference.py [--strict]
+
+Without a fresh `ksc` build on sys.path the parser checks use the library's generated classes
+(`../src/govee_ble_local/_generated`: run `tools/gen_kaitai.sh`, or `pip install -e .`). They are skipped
+(exit 0) only when neither can be imported, and `--strict` turns that skip into a failure.
 
 Only the crypto needs a third-party AES (pip install pycryptodome); everything else is stdlib + the Kaitai
 runtime (pip install kaitaistruct). RC4 is implemented here (Safe.f/g); AES-ECB is delegated.
 """
 from __future__ import annotations
+
+import importlib
+import pathlib
+from collections.abc import Sequence
 from io import BytesIO
+from typing import Any, Final, cast
 
-# ─────────────────────────── (3) XOR checksum (BCC) — §4.1 ───────────────────────────
 
-def bcc(frame: bytes) -> int:
+# ─────────────────────────── (3) checksum (XOR BCC, sum8) — §4.1 ───────────────────────────
+
+
+def bcc(frame: bytes | bytearray) -> int:
     """XOR of bytes 0..18 (BleUtils.o :1016). == frame[19] for a valid 20-byte frame."""
     x = 0
     for b in frame[:19]:
         x ^= b
     return x
 
+
+FRAME_LEN: Final = 20             # every frame is 20 bytes: 19 of proType/cmd/payload + the BCC
+FRAME_BODY_MAX: Final = FRAME_LEN - 1
+
+
 def append_bcc(payload: bytes) -> bytes:
-    """[proType, cmd, payload...] (<=19 bytes) -> a zero-padded 20-byte frame with the checksum at byte 19."""
-    b = bytearray(20)
+    """[proType, cmd, payload...] (<=19 bytes) -> a zero-padded 20-byte frame with the checksum at byte 19.
+
+    ValueError for a longer payload: the app cannot send one either (BleUtils.p :1030-1041 copies the
+    ext bytes into a 20-byte array at offset 2, so more than 18 throw and exactly 18 lose their last
+    byte to the BCC; AbsController.q :47-60 truncates ext bytes to 17 before that). Without this check
+    a 20-byte payload had byte 19 overwritten by the BCC and a longer one returned a >20-byte frame."""
+    if len(payload) > FRAME_BODY_MAX:
+        raise ValueError(
+            f"payload too long: {len(payload)} bytes (max {FRAME_BODY_MAX} so the frame fits in {FRAME_LEN})")
+    b = bytearray(FRAME_LEN)
     b[: len(payload)] = payload
-    b[19] = bcc(b)
+    b[FRAME_BODY_MAX] = bcc(b)
     return bytes(b)
+
 
 def verify_bcc(frame: bytes) -> bool:
     return len(frame) == 20 and frame[19] == bcc(frame)
+
+
+def checksum_ok(frame: bytes, kind: str) -> bool:
+    """The frame's last byte against the rule its route uses (govee_ble_frame.checksum_kind, by name):
+    "xor" = XOR of every byte before it (the 20-byte BCC, and the MTU-length 0xA4 / 0xA6 packets),
+    "sum8" = their 8-bit sum (0xA5 mic, 0xB0..0xBF), "none" = no checksum byte (0x05 gid info)."""
+    if kind == "none":
+        return True
+    if len(frame) < 2:
+        return False
+    if kind == "sum8":
+        return sum(frame[:-1]) & 0xFF == frame[-1]
+    x = 0
+    for b in frame[:-1]:
+        x ^= b
+    return x == frame[-1]
+
 
 # ─────────────────────── (1) V1 wire cipher (AES-ECB + RC4) — Safe.java ───────────────────────
 # Safe.b()/d(): for each full 16-byte block do AES-128-ECB/NoPadding; the trailing len%16 bytes go through
 # RC4 (Safe.f = KSA, Safe.g = PRGA-XOR). Same key for both. A 20-byte frame = 1 AES block + 4 RC4 bytes.
 # RC4 is re-keyed from the key ALONE every call (no IV) -> the remainder keystream is deterministic per key.
+
 
 def _rc4(data: bytes, key: bytes) -> bytes:
     s = list(range(256))
@@ -62,11 +106,14 @@ def _rc4(data: bytes, key: bytes) -> bytes:
         out.append(byte ^ s[(s[i] + s[j]) & 0xFF])
     return bytes(out)
 
+
 def crypt_v1(buf: bytes, key: bytes, *, encrypt: bool) -> bytes:
     """V1 codec (structure is symmetric; `encrypt` picks AES direction). Needs a 16-byte AES key
     (handshake = fixed PSK; payloads = session key). Raises if pycryptodome is absent."""
-    from Crypto.Cipher import AES  # pip install pycryptodome
-    aes = AES.new(key, AES.MODE_ECB)
+    # pycryptodome is optional (test extra only), so it is imported by name: the reference stays
+    # independent of the library's `cryptography` backend, and type checkers don't need it installed.
+    aes_mod: Any = importlib.import_module("Crypto.Cipher.AES")
+    aes = aes_mod.new(key, aes_mod.MODE_ECB)
     out = bytearray()
     nblocks = len(buf) // 16
     for i in range(nblocks):
@@ -77,92 +124,288 @@ def crypt_v1(buf: bytes, key: bytes, *, encrypt: bool) -> bytes:
         out += _rc4(buf[nblocks * 16 :], key)
     return bytes(out)
 
+
 # ─────────────────────── (2) reassembly: 0xAC status burst -> TLV buffer — §4.5 ───────────────────────
-# first frame (tag 0x00): [AC, 00, totalLo, totalHi, lastLen, cmd, sub, <12 data @7..18>, CK]
-# next  frames (tag 01..): [AC, tag, <17 data @2..18>, CK]
-# terminator  (tag 0xFF): signals completion. Reassembled = concat(data regions)[:total] (the TLV stream).
+# AbsController4BleSingleSendMultiBack (base2light/ble/controller), per received 20-byte frame:
+# first frame (tag 0x00): [AC, 00, pktsLo, pktsHi, lastLen, cmd, sub, <12 data @7..18>, CK]      (.f/.g)
+#                         pkts = allBackPkgs = TOTAL packet count incl. this one and the last (u16 LE,
+#                         BleUtils.H with its flag false); lastLen = endPkgLen = valid data bytes in the
+#                         last packet.
+# next  frames (tag = position 1..pkts-2): [AC, tag, <17 data @2..18>, CK]                         (.i)
+# last  frame (tag 0xFF, position pkts-1): [AC, FF, <lastLen data @2..>, zero pad, CK]            (.h)
+# pkts == 1: the first frame is the whole reply and holds lastLen (<= 12) data bytes @7 (.g).
+# isSameController() matches frames by position: a 0xFF tag only at position pkts-1, which also takes
+# its own position as the tag (K of the tag equals backPos); onResult() runs .h() at pkts-1 for either tag.
+# Reassembled = the concatenated data, exactly 12 + 17*(pkts-2) + lastLen bytes (the TLV stream).
+_AC_FIRST_LEN = 12   # AbsController4BleSingleSendMultiBack.a()
+_AC_DATA_LEN = 17    # ... f57173o (middle packets, .i)
+_AC_LAST_TAG = 0xFF  # ... f57169k (END_PKG)
+
 
 def reassemble_ac(frames: list[bytes]) -> bytes:
+    """An in-order 0xAC burst -> the TLV buffer (AbsController4BleSingleSendMultiBack.g/.i/.h).
+    ValueError for a burst the app would reject (short, out of order, or lastLen out of range).
+    The last packet may carry tag 0xFF (what the H60A6 sends) or its position pkts-1: the app
+    accepts both (isSameController/onResult)."""
     f0 = frames[0]
-    total = f0[2] | (f0[3] << 8)
-    data = bytearray(f0[7:19])
-    for f in frames[1:]:
-        if f[1] == 0xFF:
-            break
-        data += f[2:19]
-    return bytes(data[:total])
+    if f0[0] != 0xAC or f0[1] != 0x00:
+        raise ValueError("0xAC burst must start with the tag-0x00 frame")
+    count = f0[2] | (f0[3] << 8)  # allBackPkgs
+    last_len = f0[4]              # endPkgLen
+    if count == 1:
+        if last_len > _AC_FIRST_LEN:
+            raise ValueError(f"single-packet lastLen {last_len} > {_AC_FIRST_LEN}")
+        return bytes(f0[7 : 7 + last_len])
+    if count < 1 or last_len > _AC_DATA_LEN:
+        raise ValueError(f"bad 0xAC header: packets={count}, lastLen={last_len}")
+    if len(frames) < count:
+        raise ValueError(f"0xAC burst incomplete: {len(frames)} of {count} packets")
+    data = bytearray(f0[7 : 7 + _AC_FIRST_LEN])
+    for pos, f in enumerate(frames[1 : count - 1], start=1):
+        # isSameController checks END_PKG (0xFF) before the position, so it's refused mid-burst even
+        # at position 255 (:237-247)
+        if f[1] != pos or f[1] == _AC_LAST_TAG:
+            raise ValueError(f"0xAC packet {pos} carries tag {f[1]:#04x}")
+        data += f[2 : 2 + _AC_DATA_LEN]
+    last = frames[count - 1]
+    # isSameController takes 0xFF here (backPos is allBackPkgs-1, :237-239) or the position itself
+    # (K of the tag equals backPos, :248); onResult then runs .h() because backPos is allBackPkgs-1
+    # (:326-331).
+    if last[1] not in (_AC_LAST_TAG, count - 1):
+        raise ValueError(f"0xAC last packet carries tag {last[1]:#04x}, not 0xFF or {count - 1:#04x}")
+    data += last[2 : 2 + last_len]
+    return bytes(data)
 
-def chunk_ac(tlv: bytes, cmd: int = 0x03, sub: int = 0x02) -> list[bytes]:
-    """Inverse of reassemble_ac (for round-trip testing / building a request-response fixture)."""
-    total = len(tlv)
-    first, rest = tlv[:12], tlv[12:]
-    last_len = (len(rest) % 17) or (17 if rest else len(first))
-    frames = [append_bcc(bytes([0xAC, 0x00, total & 0xFF, (total >> 8) & 0xFF, last_len, cmd, sub]) + first)]
-    tag, i = 1, 0
-    while i < len(rest):
-        frames.append(append_bcc(bytes([0xAC, tag]) + rest[i : i + 17]))
-        i += 17
-        tag += 1
-    frames.append(append_bcc(bytes([0xAC, 0xFF])))  # terminator
+
+def chunk_ac(tlv: bytes, cmd: int = 0x03, sub: int = 0x00) -> list[bytes]:
+    """Inverse of reassemble_ac (for round-trip testing / building a request-response fixture).
+
+    ``sub`` (byte 6) must equal the reader's d() (AbsController4BleSingleSendMultiBack.f): 0 for the
+    H60A6 status read (Compose4BaseInfoSingleRead builds a ControllerSingleRead with d() left at 0),
+    which is what the H60A6 sends."""
+    if len(tlv) <= _AC_FIRST_LEN:  # single packet: lastLen bytes @7, no further frames
+        return [append_bcc(bytes([0xAC, 0x00, 1, 0, len(tlv), cmd, sub]) + tlv)]
+    rest = tlv[_AC_FIRST_LEN:]
+    chunks = [rest[i : i + _AC_DATA_LEN] for i in range(0, len(rest), _AC_DATA_LEN)]
+    count = 1 + len(chunks)
+    if count > _AC_LAST_TAG:  # the tag byte is the position; 0xFF is reserved for the last packet
+        raise ValueError(f"{len(tlv)}-byte TLV needs {count} packets; at most {_AC_LAST_TAG} fit")
+    head = bytes([0xAC, 0x00, count & 0xFF, (count >> 8) & 0xFF, len(chunks[-1]), cmd, sub])
+    frames = [append_bcc(head + tlv[:_AC_FIRST_LEN])]
+    for tag, chunk in enumerate(chunks[:-1], start=1):
+        frames.append(append_bcc(bytes([0xAC, tag]) + chunk))
+    frames.append(append_bcc(bytes([0xAC, _AC_LAST_TAG]) + chunks[-1]))  # data-bearing last packet
     return frames
+
 
 # ─────────────────────────── dispatch (wire the generated .ksy) ───────────────────────────
 # Import the ksc-generated parser. Kept lazy so the framing helpers above work even before you compile it.
+# ksc writes one module per .ksy file (govee_ble_frame, govee_status_stream, govee_state, govee_profile,
+# govee_common, ...). The six roots: govee_ble_frame(direction, profile) for one GATT value,
+# govee_status_stream(profile) for a joined 0xAC burst, govee_upload(kind, form) for a joined upload value
+# or a cloud blob, govee_manufacturer_data / govee_scan_record for adverts, govee_bgc_info for GATT 2b12.
 
-def _gbf():
-    import govee_ble_frame  # generated: `ksc -t python govee_ble.ksy`
-    return govee_ble_frame.GoveeBleFrame
+_READER_MODULES = (
+    "govee_ble_frame",                              # a fresh `ksc -t python *.ksy` on sys.path
+    "govee_ble_local._generated.govee_ble_frame",   # the library's generated classes (tools/gen_kaitai.sh)
+)
 
-def _stream(buf: bytes):
+
+def _frame_module() -> Any:
+    """The generated govee_ble_frame module. A fresh ksc build on sys.path wins, so the self-test checks
+    the .ksy being edited; otherwise the library's generated classes are used
+    (src/govee_ble_local/_generated: run tools/gen_kaitai.sh, or pip install -e .)."""
+    errors: list[str] = []
+    for name in _READER_MODULES:
+        try:
+            return importlib.import_module(name)
+        except ImportError as err:
+            errors.append(f"{name}: {err}")
+    raise ImportError(f"no generated frame reader importable ({'; '.join(errors)})")
+
+
+def _module(name: str) -> Any:
+    """The generated module ``name`` (e.g. "govee_status_stream") from the same build as the frame
+    reader, so one profile object serves every root."""
+    package = _frame_module().__name__.rpartition(".")[0]
+    return importlib.import_module(f"{package}.{name}" if package else name)
+
+
+def _gbf() -> Any:
+    """The generated GoveeBleFrame class (untyped, so Any)."""
+    return _frame_module().GoveeBleFrame
+
+
+def _stream(buf: bytes) -> Any:
     from kaitaistruct import KaitaiStream
     return KaitaiStream(BytesIO(buf))
 
-def parse_frame(frame20: bytes):
-    """Verify BCC, then parse one plaintext, single 20-byte frame (proType-switched)."""
-    if not verify_bcc(frame20):
-        raise ValueError("bad BCC")
-    return _gbf().from_bytes(frame20)
 
-def parse_status(tlv_buffer: bytes):
-    """A reassembled 0xAC buffer -> StatusReply (terminates on the 0x00 padding sentinel)."""
-    return _gbf().StatusReply(_stream(tlv_buffer))
+_FORMS: Final = ("f_01", "f_02", "f_09", "f_12", "f_13", "f_14", "f_30", "f_36", "f_40", "f_41", "f_a2",
+                 "f_a3", "f_a5", "f_b0", "f_0b", "f_15_01", "f_15_04", "f_15_05", "f_ee_30", "f_ee_40")
+# govee_profile struct -> its params, each with the govee_common enum it takes (None: a plain number)
+_LEAVES: Final[dict[str, dict[str, str | None]]] = {
+    "CommandForms": {f: "Form" + "".join(p.capitalize() for p in f[2:].split("_")) for f in _FORMS},
+    "DeviceCounts": {"num_segments": None, "num_levels": None},
+    "ColorGroupForm": {"rule": "GroupCountRule", "num_per_group": None, "has_brightness": None,
+                       "num_pieces": None},
+    "PowerRule": {"relay_on_mask": None, "relay_heartbeat_on_mask": None},
+    "ModeDecode": {"c02": "ColorDecode", "c0b": "ColorDecode", "c0d": "ColorDecode", "c14": "ColorDecode",
+                   "c15": "ColorDecode", "music": "MusicDecode", "empty_fails": None},
+}
 
-def parse_color_group(group_bytes: bytes, *, has_brightness: bool, record_count: int):
-    """One 0xA5 colour group; `has_brightness` (from client_profile) selects 4-byte vs 3-byte records."""
-    return _gbf().ColorGroupRead(record_count, 1 if has_brightness else 0, _stream(group_bytes))
 
-def build_op15_color(r: int, g: int, b: int, seg_mask: int, *, variant: int, kelvin: int = 0, tint=(0, 0, 0)):
-    """Build a 0x33 05 15 01 colour-write frame using the parametric op15_color_typed layout.
-    variant: 1 basic, 12 H60A1/H60A6 RGB, 11 CCT (from client_profile.color_scheme + the op)."""
-    body = bytearray([0x05, 0x15, 0x01, r, g, b])
-    if variant == 12:
-        body += bytes(5)
-    elif variant == 11:
-        body += bytes([(kelvin >> 8) & 0xFF, kelvin & 0xFF, *tint])
-    body += bytes([seg_mask & 0xFF, (seg_mask >> 8) & 0xFF])
-    return append_bcc(bytes([0x33]) + body)
+def make_profile(**facts: Any) -> Any:
+    """A govee_profile from flat keyword facts. Every fact left out is 0 (unknown / not_decoded / false),
+    so make_profile() is the all-zero analyzer profile (GENERIC): overloaded bodies stay raw bytes.
 
-# ─────────────────────── device profiles (devices.yaml -> {sku: client_profile}) ───────────────────────
+    Keys: the command_forms selectors f_01 .. f_ee_40; num_segments, num_levels; rule, num_per_group,
+    has_brightness, num_pieces; relay_on_mask, relay_heartbeat_on_mask; and the mode decode c02, c0b,
+    c0d, c14, c15, music, empty_fails (one mode_decode object serves both mode and mode_status). An
+    enum-typed fact may be given by its member name, e.g. make_profile(f_15_01="kelvin_tint").
+    Generated parents check a profile param by identity: build one object per set of device facts and
+    reuse it (the library's wire_profile() does this from devices.yaml)."""
+    profile_cls = _module("govee_profile").GoveeProfile
+    common = _module("govee_common").GoveeCommon
+    unknown = set(facts) - {k for params in _LEAVES.values() for k in params}
+    if unknown:
+        raise TypeError(f"unknown profile facts: {', '.join(sorted(unknown))}")
+    leaves: dict[str, Any] = {}
+    for leaf, params in _LEAVES.items():
+        kw: dict[str, Any] = {}
+        for key, enum_name in params.items():
+            value = facts.get(key, False if key in ("has_brightness", "empty_fails") else 0)
+            if isinstance(value, str):
+                if enum_name is None:
+                    raise TypeError(f"{key} takes a number, not {value!r}")
+                value = getattr(common, enum_name)[value]
+            kw[key] = value
+        leaves[leaf] = getattr(profile_cls, leaf)(**kw, _io=None)
+    mode = leaves["ModeDecode"]
+    return profile_cls(forms=leaves["CommandForms"], counts=leaves["DeviceCounts"],
+                       group=leaves["ColorGroupForm"], power=leaves["PowerRule"], mode=mode,
+                       mode_status=mode, _io=None)
 
-def load_profiles(devices_yaml_path: str) -> dict[str, dict]:
+
+def _ready(obj: Any) -> Any:
+    """``obj`` parsed, whichever reader build produced it. A read-only build (``ksc -t python``) reads
+    in ``__init__``; a read-write build (``tools/gen_kaitai.sh --read-write``, kaitaistruct 0.11
+    ``ReadWriteKaitaiStruct``) reads only on ``_read()``, and a second ``_read()`` on a read-only object
+    would fail, so read exactly when the object is a read-write one."""
+    from kaitaistruct import ReadWriteKaitaiStruct
+    if isinstance(obj, ReadWriteKaitaiStruct):
+        cast(Any, obj)._read()
+    return obj
+
+
+def parse_frame(frame: bytes, direction: str = "rx", profile: Any = None) -> Any:
+    """One plaintext frame (a GATT 2b11 write or 2b10 notification value, any length) -> GoveeBleFrame,
+    read with ``direction`` ("tx" client to device, "rx" device to client) and ``profile``
+    (make_profile(); None = the analyzer profile). The body is ``route``-switched (direction + proType);
+    ValueError when the trailer fails the frame's own checksum_kind (checksum_ok)."""
+    common = _module("govee_common").GoveeCommon
+    f = _ready(_gbf()(common.Direction[direction], make_profile() if profile is None else profile,
+                      _stream(frame)))
+    if not checksum_ok(frame, f.checksum_kind.name):
+        raise ValueError("bad checksum")
+    return f
+
+
+def parse_status(tlv_buffer: bytes, profile: Any = None) -> Any:
+    """A joined 0xAC buffer -> GoveeStatusStream: ``tlvs`` (status_tlv: tag, len_value, value =
+    govee_state) while 3 or more bytes remain, then the 0-2 byte ``tail``, as the app's walk (tag 0 is an
+    ordinary TLV). ``profile`` as for parse_frame."""
+    stream_cls = _module("govee_status_stream").GoveeStatusStream
+    return _ready(stream_cls(make_profile() if profile is None else profile, _stream(tlv_buffer)))
+
+
+# ───────────────────────── op15 segment masks (BleUtils.X / makeSelectedTwoBytes) ─────────────────────────
+# Every 0x15 colour/brightness builder picks its mask the same way: BleUtils.X when posSet has more than
+# 16 entries, else makeSelectedTwoBytes (color/Bytes.java h :323, r :498, G :178, b :229, d :278, l :387,
+# n :417, u :553; SubModeColorV1.getWriteBytes :672 keys it on its segment count). posSet has one entry
+# per device segment, so the width follows the segment count, not the selection.
+OP15_LEGACY_MASK_SEGMENTS: Final = 16   # makeSelectedTwoBytes: always 2 bytes, 00 00 if empty or > 16
+OP15_MAX_MASK_BYTES: Final = 7          # Bytes.h/r keep coerceAtMost(len, 17 - 10); Bytes.C truncates > 7
+
+
+def bleutils_x(pos_set: Sequence[bool]) -> bytes:
+    """BleUtils.X(posSet, true) (base-classes10/com/govee/base2kt/utils/BleUtils.java:406-438):
+    ceil(n/8) bytes, no cap; byte j holds positions 8j..8j+7 with position 8j+k at bit k (each 8-entry
+    chunk is written as a '1'/'0' string, reversed because the flag is true, then parsed base 2)."""
+    out = bytearray((len(pos_set) + 7) // 8)
+    for i, on in enumerate(pos_set):
+        if on:
+            out[i // 8] |= 1 << (i % 8)
+    return bytes(out)
+
+
+def make_selected_two_bytes(pos_set: Sequence[bool]) -> bytes:
+    """BleUtils.Y(posSet, true, false) = makeSelectedTwoBytes (BleUtils.java:444-494; BleUtil.java:412-443):
+    exactly two bytes in the X bit order, and 00 00 for an empty or a more-than-16-entry posSet."""
+    if not pos_set or len(pos_set) > OP15_LEGACY_MASK_SEGMENTS:
+        return bytes(2)
+    return bleutils_x([*pos_set, *([False] * (OP15_LEGACY_MASK_SEGMENTS - len(pos_set)))])
+
+
+def op15_mask(pos_set: Sequence[bool]) -> bytes:
+    """The mask the 0x15 builders write for posSet: 2 bytes up to 16 entries, else ceil(n/8) (uncapped;
+    each builder applies its own cap)."""
+    if len(pos_set) > OP15_LEGACY_MASK_SEGMENTS:
+        return bleutils_x(pos_set)
+    return make_selected_two_bytes(pos_set)
+
+
+# ────────── device profiles (devices.yaml -> {cloud goodsType | goodsType-0 SKU: client_profile}) ──────────
+
+
+def load_profiles(devices_yaml_path: str) -> dict[int | str, dict[str, Any]]:
+    """{routing key: family client_profile}, keyed the way the app picks a device-list record's family
+    (devices.yaml, colour-decode header, "device list"; SubConfig.Companion.b / c): by the record's cloud
+    goodsType when it is non-zero, whatever the SKU, and by its SKU only when the goodsType is 0.
+
+    A goodsType (int) keys the family whose goods_types holds it. A SKU (str) keys only a family a
+    goodsType-0 record reaches: one with no goods_types, or one listing 0 (the models of its
+    by_goods_type."0" entry where it has one, else all its models). So a SKU that several families list
+    resolves per goodsType instead of to whichever family was read last (H6102: 18 -> dreamcolorlightv1,
+    21 -> dreamcolorlightv2, 0 -> h6102). Families without a client_profile are not indexed. Two families
+    claiming one key raise ValueError. Look a record up with profile_for(); inside the family,
+    assigned_goods_type and by_goods_type / by_model still pick the branch."""
     import yaml
-    with open(devices_yaml_path) as fh:
+    with open(devices_yaml_path, encoding="utf-8") as fh:
         reg = yaml.safe_load(fh)
-    out: dict[str, dict] = {}
+    out: dict[int | str, dict[str, Any]] = {}
+    owner: dict[int | str, str] = {}
     for fam in reg.get("families", []):
         prof = fam.get("client_profile")
         if not prof:
             continue
-        for sku in fam.get("models", []) or []:
-            out[sku] = prof
+        goods_types = fam.get("goods_types") or []
+        keys: list[int | str] = [gt for gt in goods_types if gt]
+        if not goods_types or 0 in goods_types:
+            at_zero = (prof.get("by_goods_type") or {}).get("0") or {}
+            keys += at_zero.get("models") or fam.get("models") or []
+        for key in keys:
+            if key in owner:
+                raise ValueError(f"{key!r} routes to both {owner[key]} and {fam['id']}")
+            owner[key] = fam["id"]
+            out[key] = prof
     return out
+
+
+def profile_for(profiles: dict[int | str, dict[str, Any]], sku: str,
+                goods_type: int) -> dict[str, Any] | None:
+    """The family client_profile for one device-list record (its SKU and cloud goodsType), or None where no
+    family takes it (the app shows its unsupported card, DefNoSupportLib)."""
+    return profiles.get(goods_type if goods_type else sku)
+
 
 # ─────────────────────────────────────── self-test / harness ───────────────────────────────────────
 
-def _selftest() -> int:
+
+def _selftest(*, strict: bool = False) -> int:
     ok = True
 
-    def check(name, cond):
+    def check(name: str, cond: object) -> None:
         nonlocal ok
         print(f"  {'✅' if cond else '❌'} {name}")
         ok = ok and bool(cond)
@@ -175,35 +418,126 @@ def _selftest() -> int:
     tlv = bytes([0x01, 0x01, 0x01, 0x04, 0x01, 0x64,
                  0xA5, 0x0D, 0x01, 100, 255, 0, 0, 80, 0, 255, 0, 60, 0, 0, 255])
     check("0xAC reassemble(chunk(x)) == x", reassemble_ac(chunk_ac(tlv)) == tlv)
+    check("0xAC single-packet reassemble(chunk(x)) == x", reassemble_ac(chunk_ac(tlv[:6])) == tlv[:6])
+    try:
+        append_bcc(bytes(20))
+        check("append_bcc refuses a 20-byte payload", False)
+    except ValueError:
+        check("append_bcc refuses a 20-byte payload", True)
+
+    print("op15 masks:")
+    check("BleUtils.X: 33 positions -> ff ff ff ff 01", bleutils_x([True] * 33).hex() == "ffffffff01")
+    check("BleUtils.X: bit k of byte j = position 8j+k",
+          bleutils_x([True] + [False] * 7 + [True]) == b"\x01\x01")
+    check("makeSelectedTwoBytes: 3 -> 07 00, 17 -> 00 00",
+          make_selected_two_bytes([True] * 3) == b"\x07\x00"
+          and make_selected_two_bytes([True] * 17) == bytes(2))
+
+    print("device profiles:")
+    try:
+        import yaml
+    except ImportError:
+        print("  ⚠️  PyYAML not importable; the devices.yaml routing checks did not run.")
+    else:
+        path = pathlib.Path(__file__).with_name("devices.yaml")
+        fams = {f["id"]: f.get("client_profile")
+                for f in yaml.safe_load(path.read_text(encoding="utf-8"))["families"]}
+        profs = load_profiles(str(path))
+        check("H6102 routes by goodsType: 18 -> dreamcolorlightv1, 21 -> dreamcolorlightv2, 0 -> h6102",
+              len({str(fams[i]) for i in ("dreamcolorlightv1", "dreamcolorlightv2", "h6102")}) == 3
+              and profile_for(profs, "H6102", 18) == fams["dreamcolorlightv1"]
+              and profile_for(profs, "H6102", 21) == fams["dreamcolorlightv2"]
+              and profile_for(profs, "H6102", 0) == fams["h6102"])
+        check("a SKU is a key only at goodsType 0 (H6001 -> bulblightv3; H6006 is goodsType-keyed)",
+              profile_for(profs, "H6001", 0) == fams["bulblightv3"] and "H6006" not in profs
+              and profile_for(profs, "H6006", 64) == fams["bulblightv3"])
 
     try:
         _gbf()
-    except Exception as e:  # noqa: BLE001
-        print(f"  ⚠️  govee_ble_frame not importable ({e}); run ksc first. Skipping parser tests.")
+        for sibling in ("govee_common", "govee_profile", "govee_status_stream"):
+            _module(sibling)
+    except ImportError as e:
+        print(f"  ⚠️  {e}. Skipping parser tests (generate the classes with tools/gen_kaitai.sh, or "
+              "pip install -e .).")
+        if strict:
+            print("  ❌ --strict: parser tests skipped")
+            return 1
         return 0 if ok else 1
 
     print("parse dispatch:")
-    f = parse_frame(fr)
-    check("read reply AA 04 -> brightness 100", f.body.body.brightness == 100)
-    st = parse_status(tlv)
-    reals = [t for t in st.tlvs if t.type != 0]
-    check("0xAC status: 3 TLVs (switch/brightness/colour-group)", len(reals) == 3)
-    check("0xAC status: colour group 3x4B", reals[2].type == 0xA5 and len(reals[2].value.records) == 3)
-    check("0xAC status tolerates trailing padding",
-          len([t for t in parse_status(tlv + bytes(7)).tlvs if t.type != 0]) == 3)
+    command = _module("govee_common").GoveeCommon.Command
+    f = parse_frame(fr, "rx")  # read_reply -> govee_state -> level
+    check("read reply AA 04 (rx) -> brightness 100", f.body.state.body.level == 100)
+    check("read request AA 04 (tx) -> read_request brightness",
+          parse_frame(fr, "tx").body.command == command.brightness)
+    try:
+        parse_frame(fr[:19] + bytes([fr[19] ^ 1]))
+        check("parse_frame refuses a bad checksum", False)
+    except ValueError:
+        check("parse_frame refuses a bad checksum", True)
+    check("checksum_kind sum8 (A5 mic) and none (05 gid info)",
+          checksum_ok(bytes([0xA5, 0x02, 0x10, 0x01, 0xB8]), "sum8") and checksum_ok(bytes(20), "none"))
 
-    g4 = parse_color_group(bytes([3, 100, 255, 0, 0, 80, 0, 255, 0]), has_brightness=True, record_count=2)
-    check("color_group has_brightness=1 -> 4B", g4.records[0].brightness == 100 and g4.records[1].b == 0)
-    g3 = parse_color_group(bytes([3, 255, 0, 0, 0, 255, 0]), has_brightness=False, record_count=2)
-    check("color_group has_brightness=0 -> 3B", g3.records[0].r == 255 and g3.records[1].g == 255)
+    status_profile = make_profile(f_a5="color_group", rule="from_len", has_brightness=True)
+    st = parse_status(tlv, status_profile)
+    reals = [t for t in st.tlvs if t.tag != 0]
+    check("0xAC status: 3 TLVs (power/brightness/colour-group)", len(reals) == 3)
+    check("0xAC status: colour group 3x4B",  # status_tlv.value = govee_state -> cmd_a5_state -> color_group
+          reals[2].tag == command.color_group and len(reals[2].value.body.body.records) == 3)
+    padded = parse_status(tlv + bytes(7), status_profile)
+    check("0xAC status: trailing zero padding reads as type-0 TLVs and a 1-byte tail",
+          len([t for t in padded.tlvs if t.tag != 0]) == 3 and padded.tail == b"\x00")
 
-    wr = parse_frame(build_op15_color(0x11, 0x22, 0x33, 0x0003, variant=11, kelvin=2700, tint=(100, 50, 16)))
-    ext = wr.body.params.params.data  # single_command -> mode_payload -> color_15 -> op15_color (frame path)
-    check("build_op15_color(CCT) round-trips r/g/b", ext.r == 0x11 and ext.g == 0x22 and ext.b == 0x33)
+    def group_reply(has_brightness: bool, records: Sequence[int]) -> Any:
+        prof = make_profile(f_a5="color_group", rule="fixed", num_per_group=2, has_brightness=has_brightness)
+        return parse_frame(append_bcc(bytes([0xAA, 0xA5, 3, *records])), "rx", prof).body.state.body.body
+
+    g4 = group_reply(True, [100, 255, 0, 0, 80, 0, 255, 0])
+    check("aa a5 reply, has_brightness -> 4B records",
+          g4.group_index == 3 and g4.records[0].brightness == 100 and g4.records[1].b == 0)
+    g3 = group_reply(False, [255, 0, 0, 0, 255, 0])
+    check("aa a5 reply, no brightness -> 3B records", g3.records[0].r == 255 and g3.records[1].g == 255)
+
+    from govee_commands import build_op15_color_temp_bytes_r  # the catalogue imports this module
+
+    wr = parse_frame(build_op15_color_temp_bytes_r((100, 50, 16), 2700, [True, True] + [False] * 14),
+                     "tx", make_profile(f_15_01="kelvin_tint", num_segments=16))
+    ext = wr.body.params.params.data  # write_command -> mode_write -> color_15_write -> op15_color
+    check("build_op15_color_temp_bytes_r round-trips slot, kelvin and tint",
+          (ext.color.r, ext.color.g, ext.color.b, ext.kelvin) == (0xFF, 0xFF, 0xFF, 2700)
+          and (ext.tint.r, ext.tint.g, ext.tint.b) == (100, 50, 16) and ext.is_cct)
+
+    k05 = append_bcc(bytes([0x33, 0x05, 0x15, 0x05, 0x0A, 0x8C]))
+    kw = parse_frame(k05, "tx", make_profile(f_15_05="kelvin"))
+    check("33 05 15 05 0a 8c (op15_kelvin, H60A0) reads 2700 K, big-endian",
+          kw.body.params.params.data.body.kelvin == 2700)
+
+    # govee_commands.py — the full command-builder catalogue (0x33 writes / 0xAA reads). Each builder
+    # carries a self-check (byte-exact vs the app layout it was traced from); run them all here so the
+    # repo's self-test gate covers the whole catalogue. See docs/OPCODE_COVERAGE.md.
+    try:
+        import govee_commands  # noqa: F401
+        from govee_commands import _SELF_CHECKS  # list[(name, bool)]
+    except Exception as e:  # noqa: BLE001
+        print(f"  ⚠️  govee_commands not importable ({e}); skipping command-catalogue checks.")
+    else:
+        bad = [n for n, good in _SELF_CHECKS if not good]
+        check(f"govee_commands: {len(_SELF_CHECKS)} builder self-checks pass", not bad)
+        for n in bad[:10]:
+            print(f"      ✗ {n}")
 
     return 0 if ok else 1
 
 
 if __name__ == "__main__":
+    import argparse
+    import pathlib
     import sys
-    sys.exit(_selftest())
+
+    # From a checkout, fall back to the library's generated classes (src/govee_ble_local/_generated: run
+    # tools/gen_kaitai.sh, or pip install -e .). A fresh ksc build on PYTHONPATH, or an installed
+    # govee_ble_local, still comes first / works as before.
+    sys.path.append(str(pathlib.Path(__file__).resolve().parent.parent / "src"))
+    _ap = argparse.ArgumentParser(description="Reference-codec self-test.")
+    _ap.add_argument("--strict", action="store_true", help="fail (exit 1) if the parser tests are skipped")
+    sys.exit(_selftest(strict=_ap.parse_args().strict))

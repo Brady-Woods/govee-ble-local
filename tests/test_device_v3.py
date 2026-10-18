@@ -7,12 +7,14 @@ import base64
 from unittest.mock import AsyncMock
 
 import pytest
-from fake_ble import ble_device
+from fake_ble import ble_device, status_burst, unacked_via
 
 from govee_ble_local.devices.device import Device, make_device
 from govee_ble_local.devices.profile import PROFILES, profile_for
 from govee_ble_local.exceptions import GoveeBleNotSupported
+from govee_ble_local.identify import GoveeAdvertisement
 from govee_ble_local.models import Capability
+from govee_ble_local.wire import build
 from govee_ble_local.scenes import Scene
 
 
@@ -33,7 +35,7 @@ def _dev(sku: str, *, replies: list[bytes] | None = None) -> Device:
 
     d._conn.send = AsyncMock(side_effect=send)  # type: ignore[method-assign]
     d._conn.send_many = AsyncMock(side_effect=send_many)  # type: ignore[method-assign]
-    d._conn.send_unacked = AsyncMock(side_effect=send_many)  # type: ignore[method-assign]
+    d._conn.send_unacked = AsyncMock(side_effect=unacked_via(send_many))  # type: ignore[method-assign]
     d._conn.query = AsyncMock(side_effect=query)  # type: ignore[method-assign]
     d._sent = sent  # type: ignore[attr-defined]
     return d
@@ -126,9 +128,6 @@ def test_segment_write_updates_state() -> None:
 
 
 def test_capability_gating() -> None:
-    h61a8 = _dev("H61A8")            # no COLOR_TEMP
-    with pytest.raises(GoveeBleNotSupported):
-        asyncio.run(h61a8.set_color_temp(4000))
     bulb = _dev("H6006")             # no SEGMENTS
     with pytest.raises(GoveeBleNotSupported):
         asyncio.run(bulb.set_segment_rgb([0], (255, 0, 0)))
@@ -138,23 +137,32 @@ def test_capability_gating() -> None:
 
 
 def test_rgb_scheme_per_device() -> None:
-    for sku, prefix in (("H60A6", "33051501"), ("H6006", "33050d"), ("H61A8", "33050b")):
+    for sku, prefix in (("H60A6", "33051501"), ("H6006", "33050d"), ("H61A8", "33051501")):
         d = _dev(sku)
         asyncio.run(d.set_rgb((0xFF, 0, 0)))
         assert _sent(d)[0].hex().startswith(prefix), sku
 
 
-def test_plug_relay_and_sync_time() -> None:
+def test_plug_relay_power_frame_alone() -> None:
     d = _dev("H5080")
     asyncio.run(d.set_power(True))
     s = _sent(d)
-    assert s[0][:2].hex() == "3301" and s[0][2] == 0x11        # relay ON
-    assert s[1][:2].hex() == "33b5"                            # sync-time follow-up
-    # WAS (T7.1): power + sync-time in one all-or-nothing send_mixed (D-13: a sync-time failure
-    # raised and left state un-applied). FIXED: power via send_many, state applied, then
-    # sync-time via send(expect_ack=False) best-effort; frame order unchanged.
-    d._conn.send.assert_awaited_once()                         # type: ignore[attr-defined]
-    assert d._conn.send.await_args.kwargs == {"expect_ack": False}  # type: ignore[attr-defined]
+    assert len(s) == 1 and s[0][:2].hex() == "3301" and s[0][2] == 0x11   # relay ON
+    # WAS: a best-effort, unacked 33 b5 followed every plug power write. It is now sent once per
+    # connection, after the unlock (Device._session_frames), as every plug screen's connect read does.
+    d._conn.send.assert_not_awaited()                          # type: ignore[attr-defined]
+    assert d._conn._session_frames is not None                 # type: ignore[attr-defined]
+
+
+@pytest.mark.parametrize(("pct", "sent"), [(0, 1), (-3, 1), (1, 1), (100, 100), (101, 100)])
+def test_segment_brightness_is_clamped_to_the_sliders_1_to_100(pct: int, sent: int) -> None:
+    # ViewColorMode.t0:232-235 / DelegateColorV2Part.t0:459-462: setProgressRange({1, 100}); before,
+    # the library sent 0 for 0 or below.
+    d = _dev("H60A6")
+    asyncio.run(d.set_segment_brightness([12], pct))
+    frame = _sent(d)[-1]
+    assert frame[:4].hex() == "33051502" and frame[4] == sent
+    assert {s.index: s.brightness for s in d.state.segments} == {12: sent}
 
 
 def test_zone_bar_vs_direct() -> None:
@@ -165,6 +173,23 @@ def test_zone_bar_vs_direct() -> None:
     h6047.state.zone_power = {0: True, 1: True}
     asyncio.run(h6047.set_zone_power("left", False))
     assert _sent(h6047)[0][:4].hex() == "33360001"   # right bar kept ON
+
+
+def test_direct_zone_power_updates_zone_and_derived_power() -> None:
+    # H60A6 33 30 <zone> <on>: the zone's own state, and whole-device power derived once every zone
+    # is known (on while any zone is lit); unchanged while the other zone is unknown.
+    d = _dev("H60A6")
+    asyncio.run(d.set_zone_power("background", False))
+    assert _sent(d)[0][:4].hex() == "33300100"
+    assert d.state.zone_power == {1: False} and d.state.is_on is None
+    assert d.zone_is_on("background") is False and d.zone_is_on("main") is None
+    asyncio.run(d.set_zone_power("main", True))
+    assert _sent(d)[1][:4].hex() == "33300001"
+    assert d.state.is_on is True and d.zone_is_on("main") is True
+    asyncio.run(d.set_zone_power("main", False))
+    assert d.state.zone_power == {0: False, 1: False} and d.state.is_on is False
+    with pytest.raises(GoveeBleNotSupported):
+        d.zone_is_on("left")
 
 
 def test_bar_switch_reads_unknown_state_instead_of_assuming() -> None:
@@ -195,22 +220,36 @@ def test_zone_and_segment_color_temp() -> None:
     asyncio.run(d2.set_segment_color_temp([0, 1, 2], 3000))
     assert _sent(d2)[0][12:14] == bytes([0x07, 0x00])        # mask {0,1,2}
 
-    # capability gating: no COLOR_TEMP (H61A8) / no SEGMENTS (bulb) -> not supported
-    with pytest.raises(GoveeBleNotSupported):
-        asyncio.run(_dev("H61A8").set_zone_color_temp("segment", 3000))
+    # capability gating: no COLOR_TEMP (a plug: every colour-temperature path) / no SEGMENTS (bulb) -> not
+    # supported, and nothing sent
+    plug = _dev("H5080")
+    for call in (lambda d: d.set_color_temp(3000), lambda d: d.set_segment_color_temp([0], 3000),
+                 lambda d: d.set_zone_color_temp("main", 3000), lambda d: d.turn_on(kelvin=3000)):
+        with pytest.raises(GoveeBleNotSupported):
+            asyncio.run(call(plug))
+    assert _sent(plug) == []
     with pytest.raises(GoveeBleNotSupported):
         asyncio.run(_dev("H6006").set_segment_color_temp([0], 3000))
 
 
-
-def test_segment_brightness_unsupported_scheme_is_not_supported() -> None:
-    # H61A8 declares SEGMENTS but its colour scheme has no per-segment brightness:
-    # that is GoveeBleNotSupported (like segment CCT), never a bare ValueError.
+# A scheme with no per-segment brightness: test_fix_wp3_device_design
+# .test_a_scheme_without_segment_brightness_is_not_supported_with_the_sku.
+def test_h61a8_kelvin_range_follows_its_hardware_and_it_sends_15_02_segment_brightness() -> None:
+    # goodsType 19: KelvinConfig.Config.z2 gives [2700, 6500] from hardware "3.08.01", a string compare, else
+    # [2000, 9000]; until aa 07 03 gives the version, the range valid on both. color_functions
+    # segment_brightness sends Bytes.G (33 05 15 02).
     d = _dev("H61A8")
-    with pytest.raises(GoveeBleNotSupported):
-        asyncio.run(d.set_segment_brightness([0], 50))
-    assert _sent(d) == []
-    asyncio.run(_dev("H60A6").set_segment_brightness([0], 50))  # supported scheme still works
+    assert (d.min_kelvin, d.max_kelvin) == (2700, 6500)          # hardware not read yet
+    for hardware, span in (("3.01.10", (2000, 9000)), ("3.08.01", (2700, 6500)), ("3.10.00", (2700, 6500))):
+        d._state.hardware_version = hardware
+        assert (d.min_kelvin, d.max_kelvin) == span, hardware
+    for hardware, sent in (("3.01.10", 2000), ("3.08.01", 2700)):   # 2000 K: kept, or clamped up
+        d._state.hardware_version = hardware
+        asyncio.run(d.set_color_temp(2000))
+        assert int.from_bytes(_sent(d)[-1][7:9], "big") == sent and d.state.color_temp_kelvin == sent
+    asyncio.run(d.set_segment_brightness([0], 50))
+    assert _sent(d)[-1][:7].hex() == "33051502320100"             # [pct 50][mask: segment 0, 2 bytes]
+
 
 def test_gradual_setting() -> None:
     d = _dev("H61A8")                       # only curated SKU with the 0xA3 gradual flag
@@ -227,11 +266,16 @@ def test_scene_dialect_routing() -> None:
     def param(*head: int) -> str:
         return base64.b64encode(bytes(list(head) + [0] * 30)).decode()
 
-    # H6006 bulb: type-1 rgb -> comByte 1 @ a3 byte4
-    f = upload("H6006", Scene("x", 1, param(0x83), scene_type=1))
+    def exact(*blob: int) -> str:
+        return base64.b64encode(bytes(blob)).decode()
+
+    # H6006 bulb: type-1 rgb -> comByte 1 @ a3 byte4 (83 00 00: mode 0, no effects, no colours, which
+    # ScenesRgb.isValidProtocolBytes accepts; a zero-padded blob it rejects is only activated)
+    f = upload("H6006", Scene("x", 1, exact(0x83, 0, 0), scene_type=1))
     assert f and f[0][0] == 0xA3 and f[0][4] == 0x01
-    # H6047 rgbic: type-2 -> comByte 2
-    f = upload("H6047", Scene("x", 1, param(0x54, 0, 0, 2), scene_type=2))
+    assert upload("H6006", Scene("x", 1, param(0x83), scene_type=1)) is None
+    # H6047 rgbic: type-2 -> comByte 2 (00: no effects, which ScenesRgbIC.isValidProtocolBytes accepts)
+    f = upload("H6047", Scene("x", 1, exact(0x00), scene_type=2))
     assert f and f[0][4] == 0x02
     # H6052 type-5 (byte0 0x13) -> comByte 9 ; type-3 -> activate-only
     f = upload("H6052", Scene("x", 1, param(0x13, 1, 2, 3), scene_type=5))
@@ -246,35 +290,70 @@ def test_scene_dialect_routing() -> None:
     assert f and all(fr[0] == 0xA3 for fr in f)
 
 
-def test_h6641_mechanism_a_direct_readback_via_live_ic() -> None:
-    # H6641 (goodsType 247): H61D3Support.f0(247)=false, so it never dispatches the 0xAC status
-    # burst — per-segment colour is Controller4ColorInfoByGroup's DIRECT `aa a5 <group>` path
-    # (group size 4, source-confirmed), sized from a LIVE 0x40 IC-count read rather than the
-    # static write-mask width. The device reports BOTH the raw IC count (10) and its own
-    # precomputed group count (3 = ceil(10/4)) directly — no client-side divisor guess.
-    p = profile_for("H6641")
-    assert p.readback == "polled" and p.color_readback == "mechanism_a_direct"
-    assert p.color_readback_live_ic is True and p.color_readback_per_batch == 4
-
-    d = _dev("H6641")
-    IC_COUNT = 10  # -> groups of 4,4,2 (a genuinely SHORTER final group)
-
+def _h6641_ic_query(ic: int, third: int, asked: list[int]) -> AsyncMock:
+    """aa 40 -> [IC u2be][third byte]; aa a5 <g> -> four [brightness, r, g, b] records (the frame
+    is always full; the caller decides how many are real). Records the requested groups."""
     def _q(frame: bytes, **_kw: object) -> list[bytes]:
         if frame[1] == 0x40:                    # ic_count_query
-            return [_frame(0xAA, 0x40, 0x00, IC_COUNT, 3)]  # ic_count=10 (u2be), segment=3
+            return [_frame(0xAA, 0x40, ic >> 8, ic & 0xFF, third)]
         g = frame[2]                             # AA A5 <group>
-        n = min(4, IC_COUNT - (g - 1) * 4)
+        asked.append(g)
         recs: list[int] = []
-        for i in range(n):
+        for i in range(4):
             seg = (g - 1) * 4 + i
             recs += [50 + seg, seg, 0, 0]
         return [_frame(0xAA, 0xA5, g, *recs)]
+    return AsyncMock(side_effect=_q)
 
-    d._conn.query = AsyncMock(side_effect=_q)  # type: ignore[attr-defined]
+
+@pytest.mark.parametrize(
+    ("ic", "pieces"),
+    [
+        (50, 10),        # ceil(50 / 5) = 10 pieces -> groups of 4, 4, 2
+        (30, 9),         # below the range: clamped to 41 -> 9 pieces in 3 groups
+        (41, 9), (70, 14), (69, 14),
+        (200, 14),       # above the range: clamped to 70 -> 14 pieces in 4 groups
+        (0x9000, 9),     # a signed short below 0 (BleUtil.getSignedShort) clamps to 41
+    ],
+)
+def test_h6641_mechanism_a_direct_readback_via_live_ic(ic: int, pieces: int) -> None:
+    # H6641 (goodsType 247): H61D3Support.f0(247)=false, so it never dispatches the 0xAC status
+    # burst — per-segment colour is Controller4ColorInfoByGroup's DIRECT `aa a5 <group>` path
+    # (group size 4, source-confirmed), sized from a LIVE 0x40 IC-count read the way the app does
+    # it: ReadIcController.Companion.d clamps the IC to H61D3Support.q(247) = 41..70, and
+    # VM4Light.P5 walks ceil(N / 4) groups for N = H61D3Support.e(247, IC) = ceil(IC / 5) pieces.
+    # The reply's third byte (7 here, inconsistent on purpose) is never used.
+    p = profile_for("H6641")
+    assert p is not None
+    assert p.readback == "polled" and p.color_readback == "mechanism_a_direct"
+    assert p.color_readback_live_ic is True and p.color_readback_per_batch == 4
+    assert p.color_readback_ic_range == (41, 70) and p.color_readback_ic_per_piece == 5
+
+    d = _dev("H6641")
+    asked: list[int] = []
+    d._conn.query = _h6641_ic_query(ic, 7, asked)  # type: ignore[method-assign]
     asyncio.run(d._read_mechanism_a_direct())
+    assert asked == list(range(1, -(-pieces // 4) + 1))           # exactly the app's aa a5 reads
     segs = d.state.segments
-    assert [s.index for s in segs] == list(range(IC_COUNT))   # all 10, incl. the short last group
-    assert segs[9].rgb == (9, 0, 0) and segs[9].brightness == 59
+    assert [s.index for s in segs] == list(range(pieces))          # no phantom padding segments
+    last = pieces - 1
+    assert segs[last].rgb == (last, 0, 0) and segs[last].brightness == 50 + last
+
+
+def test_h6641_group_reply_is_placed_by_the_requested_group() -> None:
+    # Controller4ColorInfoByGroup.Companion.h/i drop the reply's own group byte; VM4Light.Q5 places
+    # the records by the group it asked for. A reply naming another group can't inject segments.
+    d = _dev("H6641")
+
+    def _q(frame: bytes, **_kw: object) -> list[bytes]:
+        if frame[1] == 0x40:
+            return [_frame(0xAA, 0x40, 0x00, 41, 0xFF)]           # 9 pieces, 3 groups
+        return [_frame(0xAA, 0xA5, 0xFF, *([7, 1, 2, 3] * 4))]   # every reply claims group 255
+
+    d._conn.query = AsyncMock(side_effect=_q)  # type: ignore[method-assign]
+    asyncio.run(d._read_mechanism_a_direct())
+    assert [s.index for s in d.state.segments] == list(range(9))
+    assert d._conn.query.await_count == 4                          # aa 40 + 3 aa a5, not 255
 
 
 def test_h6641_segment_control_wired() -> None:
@@ -336,13 +415,18 @@ def _status_query_mock(bursts: list[list[bytes]]) -> AsyncMock:
 
 
 def test_mode_0d_report_reads_colour_or_cct() -> None:
-    # 0x0d bulbs (H6006/H6008/H6052): aa 05 0d [r g b kelvin-u2be]. White + kelvin = CCT mode
-    # (live capture: aa 05 0d ff ff ff 0a 8c = 2700 K); anything else is an RGB colour.
-    d = _dev("H6052")
+    # 0x0d bulbs (H6006/H6008): aa 05 0d [r g b kelvin-s16be tint]; a Kelvin > 0 = CCT mode
+    # (live capture: aa 05 0d ff ff ff 0a 8c = 2700 K); a Kelvin of 0 is that RGB colour.
+    d = _dev("H6008")
     d._apply_mode_reply(_frame(0xAA, 0x05, 0x0D, 0xFF, 0xFF, 0xFF, 0x0A, 0x8C))
     assert d.state.color_temp_kelvin == 2700 and d.state.rgb_color is None
     d._apply_mode_reply(_frame(0xAA, 0x05, 0x0D, 255, 128, 64, 0, 0))
     assert d.state.rgb_color == (255, 128, 64) and d.state.color_temp_kelvin is None
+    # H6052's control screen (H6052InfoDetail.G) reads [r g b] only: the same live frame is RGB
+    # white with no Kelvin.
+    lamp = _dev("H6052")
+    lamp._apply_mode_reply(_frame(0xAA, 0x05, 0x0D, 0xFF, 0xFF, 0xFF, 0x0A, 0x8C))
+    assert lamp.state.rgb_color == (255, 255, 255) and lamp.state.color_temp_kelvin is None
 
 
 def test_mechanism_b_assembles_positional_segments() -> None:
@@ -408,7 +492,7 @@ def test_h6047_mechanism_a_direct_readback() -> None:
 
 
 def test_device_info_populates_state_once() -> None:
-    # Item 3: update() reads aa 07 basic/wifi/sn once and fills the static fields
+    # Item 3: update() reads the device info once and fills the static fields
     d = _dev("H60A6")
 
     def _info(frame: bytes, **_kw: object) -> list[bytes]:
@@ -424,20 +508,12 @@ def test_device_info_populates_state_once() -> None:
     d._conn.query = AsyncMock(side_effect=_info)  # type: ignore[attr-defined]
     asyncio.run(d._read_device_info())
     assert d.state.serial_number == "56:74:F4:53:E7:5C"
-    assert d.state.wifi_mac == "AA:BB:CC:DD:EE:FF"
-    assert d.state.firmware_version == "1.02.03" and d.state.hardware_version == "1.00.05"
+    # aa 07 10 / 11 are not sent (no firmware handler, no app sender): no Wi-Fi MAC or basic versions.
+    assert d.state.wifi_mac is None
+    assert d.state.firmware_version is None and d.state.hardware_version is None
+    assert {call.args[0][1:3].hex() for call in d._conn.query.call_args_list} == {"0600", "0703", "0702"}
     assert d.state.ble_mac is None            # no reply carries a distinct BLE MAC
     assert d._device_info_read is True        # gated to once
-
-
-def test_read_secret_bootstrap() -> None:
-    # aa b1 reply: selector 0x01 + 8-byte secret; readable on an unbound plug (no secret set)
-    d = _dev("H5080")
-    secret = bytes(range(1, 9))
-    d._conn.query = AsyncMock(  # type: ignore[attr-defined]
-        return_value=[_frame(0xAA, 0xB1, 0x01, *secret)]
-    )
-    assert asyncio.run(d.read_secret()) == secret
 
 
 def test_ingest_advertisement_onoff() -> None:
@@ -445,12 +521,15 @@ def test_ingest_advertisement_onoff() -> None:
 
     class _Adv:
         def __init__(self, on: int) -> None:
-            self.manufacturer_data = {0x8801: bytes([0xEC, 0, 0, 0, on])}
+            # header 0x02: BleUtil.parseBleBroadOnOff reads on/off only for a header >= 2
+            self.manufacturer_data = {0x8802: bytes([0xEC, 0, 0, 0, on])}
 
     assert d.ingest_advertisement(_Adv(1)) is True and d.state.is_on is True
     assert d.ingest_advertisement(_Adv(1)) is False          # unchanged -> no event
     assert d.ingest_advertisement(_Adv(0)) is True and d.state.is_on is False
     assert d.ingest_advertisement(object()) is False          # no manufacturer_data
+    v1 = type("Adv", (), {"manufacturer_data": {0x8801: bytes([0xEC, 0, 0, 0, 1])}})()
+    assert d.ingest_advertisement(v1) is False and d.state.is_on is False  # v1 header: no on/off
 
 
 def test_readback_status_maps_to_state() -> None:
@@ -475,6 +554,50 @@ def test_read_status_populates_device_info() -> None:
     assert d.state.hardware_version == "1.04.03"
     assert d.state.firmware_version == "1.00.41"
     assert d.state.serial_number == "2D:DB:5C:E7:53:F4:74:56"
+
+
+def _status_frames(d: Device) -> list[bytes]:
+    """Every 0xAC request a status read sends (no reply, so the read retries once)."""
+    asked: list[bytes] = []
+
+    async def query(frame: bytes, **_kw: object) -> list[bytes]:
+        asked.append(frame)
+        return []
+
+    d._conn.query = query  # type: ignore[method-assign,assignment]
+    asyncio.run(d._read_status())
+    return [f for f in asked if f[0] == 0xAC]
+
+
+@pytest.mark.parametrize(("pact", "full"), [
+    (None, True), ((1, 1), False), ((1, 0), False), ((2, 9), False), ((1, 2), True), ((1, 3), True),
+    ((1, 9), True),
+])
+def test_h60a6_asks_for_colour_groups_only_on_the_apps_pacts(
+    pact: tuple[int, int] | None, full: bool,
+) -> None:
+    # VM4LightH60A6$afterConnectedSingleReadDeviceInfo$1:158-161: [0x41, 0x30] + 0xA5 if J5(), which is
+    # goodsType 303 with pact type 1 and code >= 2 (Support.supportPartColor4H60A6:434-436). An unknown
+    # pact keeps the colour groups (the library may not have heard an advertisement yet).
+    d = _dev("H60A6")
+    d._pact = pact
+    frames = _status_frames(d)
+    assert len(frames) == 2 and frames == [build.status_query(full=full)] * 2   # the retry asks the same
+    assert frames[0][:6].hex() == ("ac0303" "4130a5" if full else "ac0302" "413000")
+
+
+def test_a_pact_heard_later_changes_the_next_status_request() -> None:
+    d = _dev("H60A6")
+    assert _status_frames(d)[0] == build.status_query(full=True)
+    d._learn_pact(GoveeAdvertisement(sku="H60A6", name="GVH60A6ABCD", encrypted=True,
+                                     broadcast_version=3, pact_type=1, pact_code=1))
+    assert d.pact == (1, 1) and _status_frames(d)[0] == build.status_query(full=False)
+
+
+def test_only_the_h60a6_gates_its_colour_groups_on_the_pact() -> None:
+    gated = {sku for p in PROFILES if p.status_color_groups_pact is not None for sku in p.skus}
+    h60a6 = profile_for("H60A6")
+    assert gated == {"H60A6"} and h60a6 is not None and h60a6.status_color_groups_pact == (1, 2)
 
 
 def test_read_status_retries_once_then_recovers(caplog: pytest.LogCaptureFixture) -> None:
@@ -511,6 +634,56 @@ def test_read_status_warns_and_preserves_state_after_two_empty_reads(
     assert len(warnings) == 1 and "state left stale" in warnings[0].message
     assert "<none>" in warnings[0].message  # chunk-index diagnostic: nothing received
     assert d.state.is_on is True  # unchanged — not erased by the empty reply
+
+
+def test_read_status_with_no_usable_data_is_not_a_read_back() -> None:
+    # Two empty 0xAC bursts and an unanswered aa 05 read nothing: state stays optimistic, the
+    # advertised on/off (the only other on/off source) is not suppressed, and the one-time
+    # "first poll" step is not consumed.
+    d = _dev("H60A6")
+    d._conn.query = _status_query_mock([[], []])  # type: ignore[method-assign]
+    asyncio.run(d.update())
+    assert d._conn.query.status_calls == 2  # type: ignore[attr-defined]
+    assert d.state.optimistic is True and d.state.is_on is None
+    assert d._advert_ignore_until == 0.0
+    assert d._polled_once is False
+
+
+def test_read_status_seeded_device_does_not_rearm_advert_suppression_on_empty_read() -> None:
+    d = _dev("H60A6")
+    d._conn.query = _status_query_mock([_STATUS_BURST])  # type: ignore[method-assign]
+    asyncio.run(d._read_status())
+    assert d.state.optimistic is False and d._advert_ignore_until > 0
+    d._advert_ignore_until = 0.0
+    d._conn.query = _status_query_mock([[], []])  # type: ignore[method-assign]
+    asyncio.run(d._read_status())
+    assert d._advert_ignore_until == 0.0                     # nothing read: adverts still honoured
+
+
+def test_a_status_read_without_switch_or_brightness_applies_the_apps_defaults() -> None:
+    # Only the burst's 0x05 mode TLV came back. The app applies a fresh DeviceBaseInfoFromDevice's switch
+    # (false) and brightness (100) on any successful read (h60a1 Info4Detail.n0:641-677), so the read
+    # reports power off, and like every power read it holds off the lagging advertised on/off. WAS: no
+    # on/off and no brightness, adverts not suppressed.
+    d = _dev("H60A6")
+    d.state.brightness = 42
+
+    async def query(frame: bytes, **_k: object) -> list[bytes]:
+        return status_burst(bytes([0x05, 0x03, 0x04, 0x01, 0x00])) if frame[0] == 0xAC else []
+
+    d._conn.query = AsyncMock(side_effect=query)  # type: ignore[method-assign]
+    asyncio.run(d._read_status())
+    assert d.state.optimistic is False and d.state.scene_code == 1
+    assert (d.state.is_on, d.state.brightness) == (False, 100)
+    assert d._advert_ignore_until > 0.0
+
+
+def test_chunk_indices_lists_each_received_chunk_once() -> None:
+    from govee_ble_local.devices._readback import chunk_indices   # the status-burst walk's helper
+
+    assert chunk_indices([b"\xac\x00", b"\xac\xff", b"\xac\x00"]) == "0x00,0xff"
+    assert chunk_indices([b"\xac"]) == ""                   # too short to carry an index
+    assert chunk_indices([]) == "<none>"
 
 
 def test_read_status_no_retry_when_first_attempt_succeeds() -> None:

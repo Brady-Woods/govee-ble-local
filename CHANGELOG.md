@@ -8,37 +8,1584 @@ model, from which the shipped readers are generated).
 
 ## [Unreleased]
 
+## [1.4.0] — 2026-10-18
+
 ### Added
 - `DeviceState.device_id`: the id the Govee app calls `device` (e.g. `2D:DB:5C:E7:53:F4:74:56`), read
   with `aa 07 02`. An alias of `serial_number`, which holds the same value.
 - `build.soft_version_query` (`aa 06`), `build.INFO_HARD` (`aa 07 03`) and `parse.parse_soft_version`.
+- New exceptions, defined in `govee_ble_local.exceptions` and exported in `govee_ble_local.__all__`:
+  `GoveeBleCommandRejected` (the device acknowledged a write with a non-zero status),
+  `GoveeBleHandshakeTimeout` and `GoveeBleHandshakeConnectionError` (both a `GoveeBleHandshakeError`, and
+  also a `GoveeBleTimeout` / `GoveeBleConnectionError`), and `GoveeBleUnknownName` (an unknown zone or
+  scene name; both a `GoveeBleInvalidValue` and a `GoveeBleNotSupported`).
+- `GoveeCloudAuthError` (a `GoveeCloudError`): the Govee account rejected the email/password (HTTP 401/403,
+  or a 401/403 `status` in the body), or rejected a saved token when there are no credentials to log in
+  again, so an integration can tell bad credentials from connectivity problems. Both cloud errors now live in
+  `govee_ble_local.exceptions` and are exported from `govee_ble_local` (catchable without the `cloud` extra)
+  and from `govee_ble_local.cloud`; `govee_ble_local.cloud.account.GoveeCloudError` still imports.
+- `Device.snapshot()`: a copy of the device state that later changes don't touch, to keep or compare;
+  `Device.state` stays the live object.
+- `GoveeAdvertisement.pact` (`(pact_type, pact_code)`, or None when the advertisement carried no pact info)
+  and `GoveeAdvertisement.encryption_known`, so callers no longer test the `-1` sentinel; and
+  `identify.from_advertisement()`, which identifies a bleak advertisement (or an already-parsed one) the
+  way `Device` and `scanner.match` do.
+- `scenes.async_load_scenes(sku)`: `load_scenes` without blocking the event loop (the first lookup per SKU
+  reads the bundled JSON in a worker thread; later ones are cached).
+- `transport.framelog.flush(timeout)`: waits, up to `timeout`, until the frame-capture writer has written
+  every queued record, and returns whether it drained. It blocks, so call it off the event loop.
+- `DeviceProfile` fields, keyword-only and defaulted: `relay_on_mask` and `advert_on_mask` (which bits of a
+  plug's relay reply and of its advertised switch byte mean "on"; their defaults, 0xFF and None, keep
+  1.3.0's rules of any relay bit and an advert byte of 1, so custom profiles behave as before),
+  `color_readback_ic_range` and `color_readback_ic_per_piece` (the live IC count's clamp and divisor), and
+  `mode_color_parse` (how the `aa 05` colour sub-modes are decoded, typed `devices.profile.ModeColorParse`:
+  `"rgb_kelvin"`, the default, `"rgb_kelvin_tint"`, `"rgb_0d"`, `"kelvin"`, `"kelvin_15"` or
+  `"rgb_kelvin_0d"`). `identify.parse_broadcast_onoff` gains a keyword-only `on_mask`; the default keeps the
+  lights' `== 1` rule.
+- `DeviceProfile.kelvin_by_hardware` and `DeviceProfile.mode_reports_kelvin`, keyword-only and defaulted:
+  - `kelvin_by_hardware` holds Kelvin ranges by hardware version, highest version first, compared as
+    strings as the app does. `Device.min_kelvin` / `max_kelvin` give the range in force: until `aa 07 03`
+    is read, the range valid on every revision. A profile must give both base ends, and each range must
+    overlap the base.
+  - `mode_reports_kelvin` says whether the `aa 05` report carries a colour-temperature write's Kelvin. It
+    is False on the H61A8 (see Changed, A8).
+- Helpers: `wire.parse.parse_mode_rgb_kelvin_tint`, `parse_mode_0d_rgb`, `parse_mode_0d_for(frame, scheme)`
+  and `SUBMODE4COLOR_SUB_MODES`, and the `wire.parse.GroupRecord` type; `wire.reassemble.burst_chunks`
+  and `read_status_stream` (the 0xAC completeness rule and the status stream's root read, shared by the
+  runtime and `govee-ble-analyze`); `wire.describe.status_burst_report` / `StatusBurstReport`, with `truncated` and
+  `redacted` counts, and the `wire.describe.Direction`, `Severity` and `Issue` types; and
+  `crypto.FrameCipher`, the frame cipher bound to one session key with its key setup done once (exactly
+  the bytes of `crypto.encrypt` / `crypto.decrypt`).
+- Constants: `const.ADVERT_SUPPRESS_SECONDS` (15 s; moved from `devices.device`, still importable there),
+  `const.DISCONNECT_TIMEOUT`, `const.QUERY_TERMINAL`, the parts `LOCAL_NAME_PREFIXES` is built from
+  (`const.BRAND_MARKERS`, `GBK_PREFIX`, `GV_LONG_PREFIXES`, `GV_PREFIX`; the tuple is unchanged),
+  `wire.build.PRO_NOTIFY` (0xEE), `wire.build.PRO_MULTI_A1` (0xA1), `wire.reassemble.TYPE_MODE`, and the `transport.framelog.Direction` type.
+- `wire.reassemble.parse_status(frames, *, pieces=None, decode=None)`: `pieces` is the device's colour-piece
+  count, which sets how many records each 0xA5 colour group holds (see Fixed); omitted, it keeps 1.3.0's
+  reading (the count comes from each TLV's length). `decode` is the device's wire profile
+  (`devices.profile.wire_profile`), whose colour decode reads the 0x05 mode value; omitted, it is the H60A6's
+  (see Changed, rule 4 c).
+- `wire.build.PRO_MULTI_A2` (0xA2, `multi_read`), `wire.describe.chunk_redacted` and
+  `devices.brightness.percent_to_device` (see Fixed).
+- `DeviceProfile.relay_power` (keyword-only, typed `devices.profile.RelayPower`: `"outlet0"`, the default and
+  1.3.0's `33 01 11 / 10`, `"all_outlets"` or `"total_switch"`) and the builders `wire.build.plug_all_outlets`
+  (`33 01 FF / F0`) and `plug_total_switch` (`33 02 01 / 00`), with `RELAY_ALL_ON` / `RELAY_ALL_OFF` and
+  `CMD_TOTAL_SWITCH`; the `ModeColorParse` value `"kelvin_15_rgb_kelvin_0d"`; and
+  `wire.reassemble.StatusReply.mode`, the 0xAC reply's 0x05 TLV (see Changed).
+- `DeviceState.last_color_temp_kelvin`: the colour temperature the device last reported or was set to
+  (> 0), kept while it is in another mode, as the app keeps its Kelvin. `color_temp_kelvin` still means
+  "in colour-temperature mode" and is cleared as before, so Home Assistant's colour mode is unchanged. A
+  report with a Kelvin of 0 or below (H60A6, H6062, H6641, H61A8) keeps it, as `SubMode4Color` takes a
+  Kelvin only when it is > 0 (`OpInfo4Detail.parseModeValidBytes:766-778`; pact_h60a0 h60a1
+  `Info4Detail.Q:399-406`); on H6047 it follows the bars only while both report the same Kelvin (h6047
+  detail `Info4Detail` ctor strategy :173-185). Writes set it too. Modeled from the decompiled app. On the
+  H61A8, whose report carries no Kelvin, `color_temp_kelvin` stays as well (`mode_reports_kelvin`).
+- `wire.parse.parse_light_power`: an `aa 01` reply as a light reads it, on only for a byte of 1 (the spec's
+  `switch_read_reply.light_is_on`); `parse_power` keeps the raw byte for the plugs' relay mask.
+- `GoveeConnection(session_frames=...)`: writes sent once per connection after the unlock, whose refusal
+  or missing ack is only logged; `GoveeConnection.write_payload_size`, the link's write size (ATT MTU - 3,
+  20..509, 20 when the backend can't say); `send_unacked` also takes a function of that size.
+- `wire.parse.request_command(frame)`: the command a built `aa` read request asks for (the frame reader's
+  `read_command.command`), which is the command its reply carries; and `wire.parse.IcCount.ic_count_checked`,
+  the IC count as the app's checking readers return it (the spec's `ic_count_checked`: None for a count of
+  0x1000 or more).
+- `wire.reassemble.BurstAssembler`: the app's 0xAC burst state machine, fed one record at a time
+  (`feed` returns whether the app takes it; `status` is `"waiting"`, `"complete"` or `"failed"`).
+- `DeviceProfile` fields, keyword-only and defaulted: `power_resync` (gt 50 / 90 plugs, see Fixed) and
+  `status_color_groups_pact` (the pact the 0xAC status read needs before it asks for the 0xA5 colour
+  groups). `scenes.scene_upload_frames` and `Device.scene_upload_frames` take a keyword-only `mtu`
+  (default 20, today's frames).
 
 ### Changed
-- Device info now uses the reads the app makes on connect: `aa 06` for the firmware version, `aa 07 03`
-  for the hardware version and `aa 07 02` for the device id (`SoftVersionController`,
-  `HardVersionController`, `SnController`). The binary `aa 07 10` basic read is only a fallback for a
-  device that left a version unknown. Live-verified (2026-10-15, app 7.7.02 source): H60A6, H6047,
-  H61A8, H6052, H6006, H6008 and H5083 all answer the three app reads; before, only the H60A6 reported
-  a firmware version at all, because the others ignore `aa 07 10`.
+- **The H60A6 status read no longer fails on its empty mode value (rule 6, FIRMWARE-SOURCED; library half of
+  cd8acdc, which is 6da26e0 rebased).**
+  - In music mode (0xA0), and in every mode but 04 / 0a / 0d / 13 / 15, the H60A6 SW1.00.41 sends an empty
+    TLV 0x05 (`[05][00]`) in the middle of its 0xAC burst, on purpose (FUN_9b025dc8 @0x9b025dd2-0x9b025ddc).
+  - The app's whole read fails there (Info4Detail.Q reads a first byte), so its power and brightness go
+    stale. Without this change, the library's read did the same.
+  - `parse_status` now reads past that one value (`govee_state.app_empty_mode_fails`): the mode stays
+    unknown (`StatusReply.mode` None, the state's mode left as it was), and the rest of the burst applies.
+  - Every other `app_read_fails` value still fails the read, a mode value short of its layout included.
+  - The analyzer no longer lists the empty value as a spec gap.
+  - Decided by the user: "I do't want to drop the [05][00] tolerance, that seems like a bug in the app to
+    me".
+- **H61A8 sends the app's 0x15 colour frames and gains colour temperature and per-segment brightness (A8;
+  library half of 1beeb75).**
+  - The goodsType 19 colour page sends the h60a6 scheme's 0x15 forms (Config.x[19] = 0 -> Config.Yt):
+    Bytes.h for RGB, and Bytes.r for a Kelvin or for an exact Kelvin tint picked as a colour. The 0x0b frame
+    is never sent.
+  - The H61A8 profile moves to `color_scheme="h60a6"` and gains COLOR_TEMP. Its Kelvin range is [2000, 9000],
+    or [2700, 6500] from hardware "3.08.01" (KelvinConfig.Config.z2, a string compare). Until `aa 07 03` gives
+    the hardware version, the range valid on both, [2700, 6500], applies.
+  - Per-segment brightness now works, as `33 05 15 02` (Bytes.G).
+  - **Fixes a live bug:** today's `set_rgb` on the bench H61A8 (SW 3.03.18, HW 3.01.10) is rejected, because
+    the device answers the 0x0b frame with status 01. The new RGB and 2700 K frames are byte for byte the
+    ones acked 00 on the bench on 2026-10-17, and both recoloured all 15 segments.
+  - After either write the device's `aa 05` reads `15 01 00 00`, so the report carries no Kelvin. On the
+    H61A8, a colour report of Kelvin 0 or below now leaves the Kelvin the library sent. This is a library
+    state rule and changes no frames. Only an RGB or scene write, or a scene report, clears it; other
+    sub-modes leave it, as on every SKU. Because the H61A8 reports `15 01 00 00` after an RGB write too, a
+    Kelvin the library sent stays in state across a colour change made in the Govee app.
+  - The range and the report rule are the new `DeviceProfile` fields `kelvin_by_hardware` and
+    `mode_reports_kelvin` (see Added). An RGB pick reads the range once, so the frame and the state agree
+    even if `aa 07 03` lands mid-write.
+  - The `h61a8` scheme stays for custom profiles; no built-in profile uses it now. It is the app's 0x0b
+    colour instruction 3, used by goodsTypes 17, 18, 13, 3, 21 and 123 and by the old H6163 / H6117.
+    Removing it is left for a major release.
+  - Bench, 2026-10-18 (same unit): `set_segment_brightness([0..4], 50)` sent `33 05 15 02 32 1f 00 ..`, the
+    app's Bytes.G, which was acked 00. The read-back changed only those segments' brightness, with no colour
+    changed, and the start state was restored exactly.
+  - Per-segment colour temperature is hardware-verified on the same unit (bench, SW 3.03.18 / HW 3.01.10,
+    2026-10-18). `set_segment_color_temp([0..4], 5000)` sent `33 05 15 01 ff ff ff 13 88 ff e7 cc 1f 00 ..`
+    (Bytes.r with a partial mask), and `set_segment_rgb([5, 6, 7], ...)` with 4000 K's tint sent it as
+    Bytes.r under the [2000, 9000] range. Both were acked 00. The read-back set exactly the masked segments
+    to the tint and left every brightness alone, and the start state was restored exactly. Not
+    app-traced.
+  - Not live-verified (this unit is HW 3.01.10): the [2700, 6500] range of hardware 3.08.01 and up, which
+    stays source-traced, and a Kelvin outside [2700, 6500].
+- **The 0xAC status burst is read through the spec's `govee_status_stream` root (rule 4 c).**
+  - `parse_status` reads the joined burst in one go through `govee_status_stream`, under the H60A6 status
+    screen's profile: zone bits, power memory and colour groups, 0x40 / 0xA3 unknown, the device's colour
+    decode, and Info4Detail.Q's V2 music layout and empty-value rule. The new `read_status_stream` returns
+    that read and where it stopped.
+  - The read fails where the app's does: a stream that doesn't read, or a value the spec flags
+    (`status_tlv.app_read_fails`). A colour group is still judged by its piece count.
+  - The 0x05 TLV's `mode_report` comes straight from that read, with the device's colour decode
+    (`parse_status(..., decode=wire_profile(profile))`); without a `decode` (1.3.0's call), the H60A6's, the
+    one device whose readback is this read. `StatusReply.mode` carries it and is left out of equality.
+  - A switch, brightness, zone or device-info TLV with no value to read fails the read, even where the spec
+    doesn't flag it, rather than raising out of the device's poll.
+  - Removed (all unreleased): `walk_status_tlvs`, `TlvCut`, `SIGNED_LEN_MIN`, `parse.mode_value` and the
+    library's own empty-value set. The analyzer (`describe.status_burst_report`) reads the same root, with
+    the H60A6's colour decode, so a 0x15 / 0x0d value short of its layout is a gap as the runtime rejects
+    it, and reports where the read stopped.
+  - The decode changes are app-aligned and H60A6 only, from Compose4BaseInfoSingleRead.u and h60a1
+    Info4Detail.Q:
+    - a tag-0 record is walked on, not taken as the end;
+    - an empty or short 0x23 timer value fails the read;
+    - a mode value too short for its sub-mode's layout fails the read, where it was zero-padded into
+      made-up values (`15 01 0a` read as 2560 K, below the device minimum);
+    - an empty mode value fails the read (the H60A6's own is read past since: see the entry above).
+  - A differential over 52,068 random bursts × piece counts changed the folded H60A6 state in 4,395 cases.
+    Each of them falls in one of those categories, and no burst that read whole both times folds
+    differently, except via a tag-0 walk-on (the records after a tag 0 now apply).
+  - `test_every_colour_profile_matches_the_mode_color_parse_devices_yaml_resolves` now also fails if a
+    profiled SKU's devices.yaml `mode_color_parse_status` differs from its `mode_color_parse`.
+  - Spec half: eedafe7 (a773057 rebased), which flags TLV 0x40 / 0xA3 only where the screen reads them.
+    `_spec.profile()` passes its new `f_40` / `f_a3` selectors.
+- **The segment-mask caps are read from the spec's `len_cap` (rule 4 b).** `build.BRIGHTNESS_MASK_CAP`
+  is read off a built `op15_brightness` node, as `COLOR_MASK_CAP` is off `op15_color`. The per-segment
+  brightness frame and the 0x0b RGB frame pass the `len_cap` of the node they build. The library no
+  longer reads a mask out of zero bytes to learn a cap, and the private `_MASK_CAP_0B` is gone. The
+  frames built are byte-identical: the 10,557 builder cases of the differential match, and the caps
+  are unchanged at 7, 14 and 13.
+- **The H5083 tests run against its firmware image (S7a, test-only).** `tests/firmware_sim.py` runs a
+  `spec/firmware.yaml` image as a peripheral: its accept rules, answers, effects, pushes, events and
+  advert, under the image's cipher. Each request is read through the `govee_ble_frame` root, and
+  every frame and advert is built through the spec's classes (`wire._spec.emit` / `serialize`; an echo
+  re-emits the request as read, and padding is `govee_common::echo`). `fake_ble.FirmwareGovee` puts it
+  behind the bleak fake and honours the image's GATT layout: a write to another characteristic is lost,
+  and it notifies only on its own. The bleak link and the transport failure knobs moved to
+  `fake_ble.Peripheral`, which the generic `FakeGovee` also uses.
+
+  `tests/test_h5083_firmware.py` drives a real `Device` for the H5083 (`h5083_sw1_00_30`) through these
+  cases, checking what the library sent by request name, read through the spec:
+  - the pairing window;
+  - a wrong secret;
+  - the relay write and read-back;
+  - the once-per-device info reads (only `aa 06`, `aa 07 03` and `aa 07 02`);
+  - a paired session the plug drops after 10-11 s idle, and its reconnect;
+  - the library's own idle timers (on a virtual loop clock) against the plug's heartbeat: it closes a
+    link 8 s after a poll, before the plug's 10-11 s drop, and after a 33 write its 30 s warm window
+    outlasts that drop, so the plug ends the session (pinned as they are);
+  - the advert.
+
+  It replaces the H5083 tests that used hand-built frames:
+  - `test_device_transport.test_plug_wrong_secret_is_auth_error`;
+  - `test_device_v3.test_read_secret_bootstrap` (an H5080, the same goodsType 43 profile);
+  - `test_identify.test_identify_encrypted_device`, and the parsed-pact lines of
+    `test_identify_unparseable_pact_is_plaintext_unknown`;
+  - the H5083 rows of `test_plug_power_frame_per_goods_type`, `test_plug_relay_bits_follow_the_detail_screen`
+    and `test_device_info_reads`' captures. The H5080 rows still pin goodsType 43's frame bytes and relay
+    bit, and the other SKUs' captures still pin the reply layouts.
+
+  `test_fix_wp3_review.test_device_info_one_shot_is_used_up_by_a_responsive_plug_poll` is deleted.
+  `test_device_info_survives_a_silent_poll_after_a_responsive_one` (H6008) covers it.
+  `test_plug_advert_on_off_follows_the_app` keeps goodsType 43's advert mask on H5080 rows, because the
+  H5083 only advertises 0 or 1. `test_scanner` takes its plug advert from the simulator.
+
+  Two checks in `tests/test_firmware_provenance.py` keep it so:
+  - At run time, an autouse fixture (`fake_ble.Provenance`) fails a test whenever an image-SKU device
+    gets a frame or advert its image didn't build and send it:
+    - A frame enters such a device's connection only as one delivery of a frame its image built, on the
+      link it arrived on.
+    - Every RX frame read while that device or its connection works must be such a delivery on the live
+      link. That catches a FakeGovee's reply, a mocked `_conn.query`, a frame handed to `sim.send`, and a
+      genuine frame replayed after a reconnect or read by another device.
+    - Every Govee manufacturer payload read for the SKU must come from a live image of this test (or one
+      made at import), whether it is read through the Device, `identify()` or the scanner.
+  - Its scope:
+    - The check also covers a Device built from an image SKU's profile without `sku=`, and Device
+      subclasses.
+    - It skips reads made to log or describe a frame, and other companies' manufacturer entries.
+    - It runs on a private MonkeyPatch, so a test's `monkeypatch.undo()` keeps it, and a test that
+      overrides its fixture fails.
+    - It also fails a test that sends an image a request the image can't read.
+  - Statically, the simulator (firmware_sim.py, `FirmwareGovee` and the fake_ble helpers it calls)
+    builds no bytes outside the spec classes. Its one conversion is `_image_bytes`, for the image's own
+    values. It uses no bytearray, `fromhex`, `struct`, `binascii`, `codecs` or padding, no int lists,
+    no writes of ints, no concatenation, and no imports outside the spec side of the library.
+
+  No change under `src/`.
+- `CLAUDE.md` gains "The spec is the bible", the anti-debt rules for `spec/`:
+  - fix the spec in place;
+  - structure wins over library use;
+  - one canonical path per message;
+  - six labelled entry points;
+  - context as params;
+  - nothing dead;
+  - cite the decompile, never copy it.
+
+  A closing list maps rules 3-7 to the Suite S lints that check their structure; the rest is for review.
+  `CONTRIBUTING.md` ground rules point to it, name the firmware as a source next to the app, give the
+  `doc-ref` citation form, and list Suite S in the `scripts/check.sh` gates.
+- The library moved onto the clean spec (spec/clean-spec a3e3e92: nine `spec/*.ksy` files, six of them
+  roots, every frame a `govee_ble_frame(direction, profile)`), with no change to the bytes sent or the
+  decoded state:
+  - `wire/_spec.py` is the library's one import of the generated classes and the spec's read-write
+    contract (read a parametric root, link and check every node, write in two passes with the checksum
+    by `checksum_kind`); `_spec.profile()` builds the `govee_profile` (command forms, counts, colour-group
+    rule, power rule, mode decode) of a set of device facts, cached, and
+    `devices.profile.wire_profile()` maps a `DeviceProfile` onto it.
+  - `wire.build` writes `write_command` / `mode_write` / `color_15_write` / `op15_color` /
+    `read_request` / `status_request` / `a3_packet` / `a4_packet` trees; the masks are the spec's
+    `seg_mask` over the posSet rounded up to whole bytes. `build.frame()` is gone (tests build raw frames
+    with `fake_ble.frame`).
+  - `wire.parse` reads a reply's `govee_state` under the profile it needs. The mode decoders collapse to
+    `mode_reply(frame, prof)` (the 0xAC 0x05 TLV is read in the status stream) and `mode_color()` (a `KelvinReport`, the bars'
+    `BarKelvin` or `(rgb, kelvin)`), which `_fold` folds whatever the SKU's layout; `parse_mode_0d*`,
+    `parse_kelvin`, `parse_bar_kelvin`, `parse_active_scene` and the `*_of` decoders are gone. Plug power is
+    `parse.parse_relay_on` (`power_state.is_on_heartbeat` with the profile's relay mask).
+  - `wire.reassemble` reads chunks as `status_chunk`, TLVs as `status_tlv(status_profile(pieces))` and the
+    colour groups by the spec's `color_group` rule (`group_record_count` is gone); `identify` reads
+    `govee_manufacturer_data`, the handshake `handshake_request` / `handshake_reply`, scene uploads
+    `govee_upload(kind, form)`.
+  - Kept as library rules until the approval list decides them: the TLV walk's edges (a type-0 byte ends
+    it; an empty switch / brightness / mode / device-info / zone / seg-info / colour-group value doesn't
+    read), the padded TLV 0x05, the default `"rgb_kelvin"` parse's unsigned Kelvin, group 0 dropped with no
+    pieces, the XOR drop, and a short `aa 05` reply dropped where its 0x15 / 0x0d / 0x13 layout doesn't
+    fit.
+  - Verified against cf03c90: 10,557 builder calls byte for byte (errors included) and 179,152 decode
+    results (replies, mode folds per profile, status bursts, adverts, handshake, scene uploads). What
+    differs: `describe` labels use the spec's enum names (`write/power`, `read/cmd_36`, ...) and every
+    command counts as a known status TLV tag; the connection's known RX proTypes are the spec's RX routes
+    (0x05, 0x3F, 0x66, 0xA5, 0xB0, 0xB3 and 0xB4 no longer log as unknown); and
+    `parse.parse_device_info_selector` returns 3 for an `aa 07 03` reply whose text is not UTF-8 (was None;
+    the read still yields nothing).
+  - Build: `tools/gen_kaitai.sh` compiles every `spec/*.ksy` in one call (`--python-package .`), the build
+    backend and the test staleness check list its nine modules, and `scripts/check.sh` runs the spec's own
+    gate, `spec/checks/run.sh`.
+  - Removed from the wire modules (none was in `govee_ble_local.__all__`, so this is not a public-API break,
+    but code that imported them directly must move): `build.frame`; `parse.rx_frame`, the per-SKU mode
+    decoders `parse_kelvin`, `parse_bar_kelvin`, `parse_active_scene`, `parse_mode_0d`,
+    `parse_mode_0d_for`, `parse_mode_0d_rgb`, `parse_mode_0d_rgblight` and `parse_mode_rgb_kelvin_tint`,
+    their `kelvin_of`, `kelvin_signed_of`, `bar_kelvin_of`, `gradual_kelvin_of`, `cct_0d_of`, `rgb_0d_of`,
+    `rgb_kelvin_0d_of` and `rgb_kelvin_tint_of` helpers, and `SUBMODE4COLOR_SUB_MODES` (use
+    `parse.mode_reply(frame, devices.profile.wire_profile(profile))` and `parse.mode_color`);
+    `reassemble.group_record_count` (the spec's `color_group.num_records_wanted`) and the unused
+    `TYPE_SLEEP`, `TYPE_WAKEUP`, `TYPE_TIMERS`, `TYPE_BAR_SWITCH` and `TYPE_IC_NUM`; and the private
+    re-exports of the generated classes (`build._F`, `_node`, `_load`, `parse._parse_type`, `_parse`; use
+    `wire._spec`). `parse.mode_reply` now takes the profile.
+- Documented deviation: the connection keeps dropping an RX frame whose XOR checksum fails, although the app
+  never checks it (`ComposeBleComm.K:190-211` drops only a frame that isn't 20 bytes), so a corrupted frame
+  is not decoded as state.
+- More of the library reads and writes through the spec's types (frame audit section F and the section-E
+  additive forms):
+  - every `aa` read waits for the reply its own request names (`parse.request_command`), not a hand-paired
+    `build.CMD_*` key (12 sites);
+  - read requests are the spec's `read_request_sized(selector_len)`;
+  - segment masks are written by the spec's `segment_mask` (its width rule, LSB first), within the
+    library's 7-byte cap;
+  - the `mode_read` decoders use its `sub_mode` and `is_submode4color` instances and read the params with
+    `mode_read_params`;
+  - a direct `aa a5 <group>` reply is read by `color_group_direct_frame(record_count)`, and a 0xAC 0xA5
+    group by `color_group_status_counted(pieces, 4, 1)`;
+  - the TLV walk stepped by `status_tlv.total_len` (since replaced by the `govee_status_stream` root read,
+    rule 4 c);
+  - the live IC-count walk skips on the spec's `ic_count_checked` instead of a hand `>= 0x1000` test.
+  Byte- and state-identical: equivalence run against c823fc5 (writers, readers, the TLV walk, parse_status,
+  the mode decoders and folds, and every bench capture); the only differences are the new
+  `IcCount.ic_count_checked` field and `_readback.live_ic_pieces` called directly with a count the walk
+  never passes it.
+- On the spec's section-E lockstep readers (2667e85): `build.secret_check` and `build.gradual` write the
+  spec's `SecretKeyWrite` / `GradualWrite` in place, now that `single_command.params` types 33 B2 / A3 (same
+  bytes); the 0xAC TLV walk reads 0x07 as the spec's `status_device_info` (`app_decodes` for the 0x10 / 0x11
+  selectors the app's `w()` decodes) instead of stepping past the others itself. A 0x05 mode TLV that the
+  spec's `mode_read` can't read (it types the value exactly; the app's per-sub-mode minimums aren't typed yet)
+  is handed on raw, as before. Byte- and state-identical (equivalence run against 8c89c31, every bench
+  capture identical). `govee-ble-analyze` no longer reports such 0x07 blocks, or 0xA5 groups whose len isn't
+  1 + 4k, as spec gaps, now reports a 0x05 value `mode_read` can't read, and counts a TLV the walk hands on
+  once in its TLV types (it counted a handed-on 0xA5 twice).
+- The test coverage floor in `scripts/check.sh` is now 95% of statements and branches (`--cov-branch`;
+  was 85% of lines), the same gate hass-govee-ble-local applies to the integration. Coverage today is
+  98% with branches. Development tooling only.
+- **The generated Kaitai classes are a build product, not committed source.** `src/govee_ble_local/_generated/`
+  is gitignored. An in-tree PEP 517 backend (`_build_backend/govee_build_backend.py`, `[build-system]
+  backend-path`) wraps setuptools and runs `tools/gen_kaitai.sh` before every sdist, wheel and editable
+  build. The sdist and wheel ship the result, and a wheel built from an sdist (which carries no `spec/` or
+  `tools/`) reuses the classes the sdist ships; with neither, the build fails with a message saying how to
+  get them. Building from the repository (`pip install -e .`, `pip install .`, `python -m build`) therefore
+  needs the JVM `kaitai-struct-compiler` 0.11; installing a released wheel or sdist doesn't, and the
+  published wheel has the same files as before. A git or VCS URL (`govee-ble-local @ git+https://...@ref`)
+  or a GitHub "Source code" archive is a repository build too, and needs bash and the JVM compiler, which
+  Home Assistant doesn't have: to test an unreleased build in Home Assistant, pin the wheel attached to a
+  prerelease GitHub Release, never a git ref. A `pip install --dry-run` of a git ref doesn't catch this,
+  because preparing metadata skips the generation step. `scripts/check.sh`'s drift check and
+  `gen_kaitai.sh --check` are gone; the readwrite build now clears `_generated/` first, so no leftover
+  module can ship. CI and the release workflow run `scripts/smoke_artifacts.sh`: the sdist must carry the
+  classes and no `spec/` or `tools/`, and the wheel, and a wheel built from the sdist, are installed into
+  fresh venvs and must import and build a frame, so a wheel without the classes can't be published. `pytest`
+  stops at once, saying to run the generator, when the classes are missing or older than `spec/*.ksy` or
+  `tools/gen_kaitai.sh` (an ignored `_generated/` survives a `git switch` or `git pull`). A repository build
+  that can't run the generator now ends with one message naming bash, the JVM compiler and the PyPI release,
+  instead of a `CalledProcessError` traceback.
+- **The `aa 05` mode decoders read the spec's `mode_read`, and the app's sign and CCT tests come from the
+  spec.** `wire.parse.mode_reply` (an `aa 05` reply) and `wire.parse.mode_value` (the 0xAC 0x05 TLV) return
+  the same `mode_read`, and the per-sub-mode decoders (`scene_of`, `kelvin_of`, `bar_kelvin_of`,
+  `gradual_kelvin_of`, `cct_0d_of`, `rgb_kelvin_tint_of`, `rgb_0d_of`, `rgb_kelvin_0d_of`, `sub_mode`; all
+  new) read it. The `parse_*` frame functions are unchanged wrappers. So the burst's mode no longer goes
+  through an `aa 05` frame built by hand (`devices._fold.mode_reply_frame` is gone, and no library module
+  calls the raw `wire.build.frame` helper now). The colour decoders no longer check the frame header or
+  slice it by hand. The Kelvin sign tests use `mode_color_0d_typed`'s `kelvin_signed`,
+  `report_kelvin_signed`, `is_cct` and `is_cct_positive` instead of `int.from_bytes(..., signed=True)` and
+  `>= 0x8000`, for H6062, the bulbs and H6188, H6061 and H60A6. No decode changes: an equivalence run over
+  7,360 20-byte replies through every decoder, 104,895 reply folds and 90,045 TLV folds (every profile, TLV
+  values 0-20 bytes long) matched the previous code. Only frames shorter than 20 bytes, which the
+  connection drops before decoding, decode differently. Bench 2026-10-16 (Mac, read-only): H6006, H6008,
+  H6047, H6052, H60A6 and H61A8 polled cleanly with the new decoders. Today's bench captures (447 replies:
+  55 `aa 05`, and 10 bursts whose 0x05 TLVs are 4 bytes long) decode the same through the old and the new
+  code.
+- **The library reads the spec owner's gap batch (c706502) instead of hand-kept values.**
+  - **Enums:** `wire.build`'s `INFO_*`, `POWER_*`, `RELAY_*`, `CMD_TOTAL_SWITCH`, `COMM_*`, the op15 colour
+    variants, the mode request selector, the 0xAC request command and the 0xA3 start marker now come from
+    `device_info_selector`, `light_power`, `relay_write`, `plug_command`, `multi_comm_byte`,
+    `op15_color_variant`, `mode_read_selector`, `multi_ac_command` and `a3_start_marker`. The
+    `mode_color_0d_typed` kinds come from `mode_0d_kind`, `reassemble.TYPE_*` from `status_tlv_type`, and the
+    connection's received-proType set from `rx_pro_type` (it now also knows 0x3A, 0xA6 and 0xAB, so those no
+    longer log an "unrecognised frame" warning; they were queued all along). The analyzer's
+    `KNOWN_STATUS_REPLY_TLVS` is the `status_tlv_type` enum, which adds 0x16, 0x39 and 0xA3.
+  - **Types:** H5089's `33 02` main switch is written with `total_switch_write`, so no frame body is
+    written raw any more. The `aa 41` section count is read with `section_count_read`. A 0xAC reply chunk is
+    read as the frame's `status_chunk` (`reassemble.read_ac_chunk`, new), whose `len_last_fits` is the
+    app's whole-burst reject, so the hand-kept chunk offsets are gone. A write ack is read with `rx_frame`'s
+    `write_ack` (`wire.parse.parse_write_ack`, new), for the connection's rejection check and the analyzer.
+    The BGC-info value is read with `bgc_info` (`wire.parse.bgc_encrypt_version`, new; lenient for a short
+    format-2 value, as chosen), and the handshake key with `handshake_key_reply_data`. The analyzer routes
+    on `rx_frame.pro_type` and judges a masked chunk from the spec chunk's data and checksum. The scene
+    upload reads each blob's lead byte with `h60a6_scene_param`, `h6052_graffiti_param`,
+    `compose_scene_param` and `scenes_graffiti_param`. An advertisement is read with
+    `manufacturer_data_lenient`, so the 4-byte length gate is gone (item 41's additive route).
+  - **Instances:** `mode_read.scene_code`, `bar_switch_read.left_on` / `right_on`, `gradual_read.is_on`,
+    `secret_read_reply.is_valid`, `notify_wifi.is_connected`, `status_zone.zone_a_on` / `zone_b_on`, the
+    device-info `uid_is_invalid` / `uid_has_leading_pair` / `wifi_mac_is_invalid`, `version3.text` /
+    `is_zero`, and `manufacturer_data.is_govee_pact` / `has_switch_state` / `switch_byte`.
+  - The H60A6 and H6061 0x0d report is read as kind 3 (`rgb_kelvin_0d`, `[r, g, b][kelvin]`, the five
+    bytes the app reads) instead of kind 2.
+  - Also from the 4017e19 frame audit:
+    - the zone, bar and gradual writers' 1/0 states come from `light_power`;
+    - `status_query` names its TLV types with `status_tlv_type` (it had borrowed the `command` enum);
+    - the TLV walk reads the stream with `status_reply_safe` (the same TLVs; `[]` for an empty buffer)
+      and ends on `status_tlv_type.padding`;
+    - the analyzer's mode-reply exemption uses `mode_read_selector.request` and `mode_read.scene_code`.
+    These are byte- and state-identical (equivalence run against f182c20, and the bench captures).
+  - `devices.yaml`'s h5080 `by_goods_type` now pins the plug profiles' `relay_power`, `relay_on_mask`
+    and `advert_on_mask` (a drift test, keyed by its `models`). A second drift test checks every colour
+    profile's `mode_color_parse` against the strategy `devices.yaml` resolves for its goodsType (the family
+    by the record's goodsType, by SKU only at 0; then `assigned_goods_type`; then `by_goods_type`,
+    `by_model`, the family default, pact and firmware branches). The spec's `kelvin_pair_15` (H6047) is the
+    library's `"kelvin_15"` on a bar-switch profile.
+  - Still left for a lockstep spec change: the `mode_read` 0x04 switch case, the `command` enum's 0x02
+    member, `pro_type` 0xA6, the root scan-record walk and the guard on `status_reply` itself.
+  An equivalence run against the previous code found no other difference: the writers, every bundled scene's
+  upload for every profile, 6,000 advertisements, the 0xAC bursts and TLV walks, the handshake replies, and
+  today's bench captures (972 frames, 48 bursts, 230 encrypted replies) all decode the same. The decode
+  changes are under Fixed.
+- **More library sites read the spec's own fields instead of raw bytes** (an independent inventory of
+  sites that ignored an existing spec field or instance).
+  - `wire.parse.find_reply` matches a reply on the frame reader's `pro_type` and `command`. A reply
+    whose body doesn't parse, such as an `aa 06` whose text isn't UTF-8, is still found.
+  - `parse_direct_color_group` reads the reader's raw body, and `parse_section_count` matches its
+    header via the reader (`on_off_memory`). Its body stays hand-decoded until the spec has a type.
+  - `parse_active_scene` reads the code with `scene_payload`; `mode_read` has no 0x04 case yet.
+  - The new `parse_device_info_selector` reads the `aa 07` selector for `_readback`.
+  - `wire.build`: the 0x0b colour writer uses `mode_payload`'s own `color_rgbic_0b` type (a u2le mask).
+    `status_query` names the requested types with the `command` enum.
+  - The 0xAC TLV walk takes its cut reasons from `status_tlv`: `len`'s `valid` (max 0x7f) and how far
+    the reader got. It drops its dead negative-length re-check after a whole `status_reply` parse.
+    `TlvCut` gains `negative_len`, and the analyzer uses it. A skipped 0x07 block, and the device info
+    `parse_status` folds, are read with `status_device_info`. A colour group with no piece count uses
+    `color_group_status.records`.
+  - The analyzer labels unknown values from the reader's fields.
+  - The handshake reply is read by the frame reader.
+  - The H60A6 scene upload picks DIY or graffiti with the spec's `h60a6_scene_value.is_diy`, and keeps
+    the app's graffiti fallback for a DIY that doesn't parse (spec item 26).
+  - The device's mode read hands the reader's `mode_read` straight to the fold.
+  - A 0x15 colour write's mask cap is the spec's `op15_color_write.mask_cap`, which the writer already
+    enforces: 7 bytes for variants 12 and 11, 10 for variant 5. No limit changes. The library builds
+    variants 12 and 11 at that same 7-byte cap, and H6061's variant 5 with a fixed 3-byte mask.
+    `MAX_MASK_BYTES` (56 segments) stays for the masks the spec has no cap for yet: op15 brightness and
+    the device's segment count.
+  No decode or frame changes, apart from the IC count under Fixed. An equivalence run over every
+  20-byte case matched the previous code:
+  - 2,435 frames through these readers and the analyzer;
+  - the 0x0b and status-query writers;
+  - 4,014 TLV walks and 5,000 status parses;
+  - 1,800 handshake replies;
+  - 3,088 H60A6 scene choices, including the 84 bundled scenes.
+  Today's bench captures (810 frames, 40 bursts, 193 encrypted replies) also decode the same. Bench
+  2026-10-16 (Mac, read-only): H6006, H6008, H6047, H6052, H60A6 and H61A8 polled cleanly with these
+  changes, including the encrypted H60A6 and H6008 handshakes and the `aa 06` / `aa 07` reads. H6641,
+  which uses the live IC count, was out of range.
+- **Every frame the library sends is written by the spec's generated Kaitai classes, and every frame it
+  reads is parsed by the same classes.** `govee_ble_local/_generated/` now holds Kaitai 0.11 read-write
+  classes (`ReadWriteKaitaiStruct`), generated by `tools/gen_kaitai.sh`, whose default build is now
+  read-write (`--read-only --out DIR` still writes auto-reading readers to a scratch directory).
+  Each `wire.build` builder is a `GoveeBleFrame` tree of the spec's own types. Where the frame's read
+  dispatch has no case for a write body or types it as the reply, the spec's standalone write type is used:
+  `ZonePowerWrite`, `BarSwitchWrite`, `GradualWrite`, `SecretKeyWrite` and `Op15ColorGroupWrite` for the
+  untyped bodies; `ReadRequest` for every `aa` request; `Op15ColorWrite`, `Op15BrightnessWide` and
+  `ColorRgbic0bWide` for the colour bodies. The `e7` handshake frame is written the same way. Only what
+  Kaitai can't express stays in code: the frame checksum, upload chunking and packet counts, the app's
+  tint/Kelvin choices and the caller-input checks. Every frame is byte-identical
+  (`tests/test_wire_build_vs_spec.py`, every builder against the app-traced catalogue). Cost: building a
+  frame takes about 20-55 µs and parsing one about 10-15 µs (about 1 and 3 µs before).
+- Code that uses `govee_ble_local._generated` directly (not public API): `from_bytes()` and
+  `Cls(..., stream)` no longer read; call `_read()` on the result.
+- `wire.build.plug_sync_time` refuses a time-zone hour or minute outside -128..127 (the spec's `s1` fields)
+  with `GoveeBleInvalidValue`, instead of masking it to a byte. Real offsets are within -14..14 hours.
+- **`aa 01` and `aa 04` are sent without the `01` selector byte**, as the app sends them
+  (`ControllerSwitch.Companion.b`, `ControllerBrightness.Companion.b`, the plugs' `SwitchController` /
+  `HeartGMessage`): `aa 01 00…` / `aa 04 00…`. No firmware image analysed reads byte 2 of these requests
+  (it is overwritten with the state), so devices answer the same. **A light's `aa 01` reply now means on only
+  for a byte of 1** (`ControllerSwitch.Companion.c`; the spec's `light_is_on`), as every curated control
+  screen reads it; it was any non-zero byte. Firmware and the app only ever store 0 or 1, so no state reads
+  differently in practice (the byte-2-or-more case is source-modelled). Plugs keep their relay-mask rule, and
+  the H60A6's power still comes from its status burst, where any non-zero byte is on (`status_switch.is_on`,
+  `Compose4BaseInfoSingleRead.u`). Live-checked on H6006, H6008, H6047 (on) and
+  H6052, H61A8 (off).
+- **Plug power is each goodsType's main switch** (Govee Home 7.7.02): the H5082 (goodsType 50) and the
+  H5160 / H5161 (90) send `33 01 FF / F0`, which switches every outlet (`UiV2` / `UiV4.onOffChange` ->
+  `SwitchControllerV2(on, 15)`), and the H5089 (307) sends `33 02 01 / 00` (`Ui4H5089.onOffChange` ->
+  `Controller4TotalSwitch`). They all sent `33 01 11 / 10`, which switches outlet 0 only, so `set_power(False)`
+  left the other outlets on and the next poll reported the plug on again. The H5080 / H5083 / H5085 (43) keep
+  `33 01 11 / 10`. `set_power(True)` on a partly-on plug turns every outlet on. The `33 b5` time sync still
+  follows. The H5082 and H5089 now have a profile each, so their `DeviceProfile.skus` is `("H5082",)` /
+  `("H5089",)`. Not modelled: after ON the H5089 app re-applies its cached night-light mode. Source-modelled:
+  no multi-outlet plug was in Bluetooth range (the H5083's frame is unchanged).
+- **H6006 colour temperature is 2700-6500 K** (was 2000-9000): the H6006 is goodsType 64, which the app maps
+  to `KelvinConfig` version 2 = [2700, 6500], as for the H6008. `set_color_temp` clamps to it, and an RGB pick
+  equal to a tint colour outside it is sent as RGB, as the app does. Home Assistant's slider narrows to match.
+- **The H60A6 poll is the 0xAC status burst alone**, the app's connect read: the mode comes from the burst's
+  0x05 TLV and the `aa 05 01` read that followed is no longer sent (one frame fewer per poll). The mode is
+  decoded as the H60A6's `Info4Detail.Q` does (`pact_h60a0` `h60a1.Info4Detail`): 0x15 `[gradual][kelvin
+  s16be]`, 0x0d `[r, g, b][kelvin s16be]` with colour temperature only for a Kelvin above 0, else the RGB.
+  Before, 0x0d took any non-zero Kelvin (read unsigned) as colour temperature. A 0x15 Kelvin of 0 or below
+  still clears the Kelvin, as before; the app keeps its last one. Live-checked for a 0x15 report (2700 K)
+  on the bench H60A6; the 0x0d branch is source-modelled.
+- `tools/gen_kaitai.sh` generates Kaitai 0.11 read-write (serializer) classes into `_generated/` (see
+  above). Its default build needs the JVM `kaitai-struct-compiler` 0.11.x on PATH
+  (`brew install kaitai-struct-compiler`; `KSC=` overrides), because the npm build's `compile()` API has no
+  read-write switch. `--read-only --out DIR` still writes auto-reading readers to a scratch directory and
+  is the one mode that can fall back to the pure-JS compiler; it refuses `_generated/` as its output. Its
+  `--check` mode is gone: nothing generated is committed to drift from (first entry in this section). Needed
+  only to build from the repository (see that entry); released wheels and sdists don't need it. Its
+  missing-compiler error now also names `bash scripts/install_ksc.sh` (Debian/Ubuntu) and the PyPI release,
+  which ships the classes.
+- Device info is read with `aa 06` (firmware version), `aa 07 03` (hardware version) and `aa 07 02`
+  (device id), and nothing else: the `aa 07 11` Wi-Fi read and the `aa 07 10` basic fallback are no longer
+  sent. No firmware image has a handler for those two (most drop the request, which cost a timeout on every
+  poll; the H60A1 / H60A6 echo it back as zeros) and the app never sends them. The three that remain are
+  handled by every firmware image analysed (H6006, H6008, H6047, H60A1, H60A6, H5083) and were answered
+  live (2026-10-15) by the H60A6, H6047, H61A8, H6052, H6006, H6008 and H5083. The app sends `aa 06` /
+  `aa 07 03` on the lights' control screens except the H60A6's (whose versions come from the 0xAC status
+  TLV), not on the H5080 / H5083 / H5085's, and `aa 07 02` only while pairing; there they are kept as
+  firmware-sourced extensions the app does not use (CLAUDE.md rule 6), marked as such in the code with the
+  firmware handlers they rely on. Before these reads, only the H60A6 reported a
+  firmware version, because the others ignore `aa 07 10`. `wifi_mac` now comes only from the H60A6's
+  status TLV (the `aa 07 11` read never returned one).
+- **The "device rejected write" log line moved from ERROR to DEBUG**, and the write raises the public
+  `GoveeBleCommandRejected` instead of a private class, so the caller decides what to log. An integration
+  that relied on the ERROR line, for example an always-on WARNING capture for diagnostics, must log
+  `GoveeBleCommandRejected` (and `GoveeBleAuthError`, a rejected secret) itself, to a logger its capture
+  covers (`docs/DIAGNOSTICS.md`). Until `hass-govee-ble-local` does, rejections are missing from its
+  downloadable diagnostics.
+- An RX frame with an unknown proType is logged at WARNING once per proType for the device's lifetime
+  (until the integration reloads); repeats go to DEBUG and cost nothing when DEBUG is off, so a device that
+  keeps pushing one can't flood the log.
+- Handshake failures raise `GoveeBleHandshakeTimeout` / `GoveeBleHandshakeConnectionError`, which subclass
+  the `GoveeBleTimeout` / `GoveeBleConnectionError` raised before, so `except GoveeBleHandshakeError` now
+  fires. That includes a failed `e7` write (BleakError "Not connected", `BrokenPipeError`, `EOFError`, or
+  bleak's characteristic-not-found error from a stale GATT cache), which 1.3.0 raised as
+  `GoveeBleConnectionError("connect to <address> failed: ...")` (a `BrokenPipeError` escaped unwrapped); its
+  message now reads `<address>: handshake write failed: ...`.
+- A connection raises only `GoveeBleError` subclasses: an unexpected backend error while connecting or during
+  an operation (e.g. a `RuntimeError` from `start_notify`), and a `BrokenPipeError` / `ConnectionResetError`
+  from the BLE stack, become `GoveeBleConnectionError`, chained to the original, and the link is closed.
+  Once a device is known to use AES-GCM (BGC v2), later calls raise `GoveeBleNotSupported` without opening
+  a link each time. `GoveeConnection.send_many()` rejects a non-write frame with `GoveeBleInvalidValue`
+  before any I/O. Not hardware-verified.
+- Connection error messages changed; anyone matching on the text needs the new forms. `connect to <address>
+  failed: ...` is now `<address>: connect failed: ...`, and `<address>: connect/handshake timed out` is now
+  `<address>: connect timed out`. A write timeout raised by the BLE stack reads `<address>: BLE I/O timed out
+  (...)`. An unexpected backend error reads `<address>: unexpected transport error: <repr>` during an
+  operation and `<address>: connect failed: <repr>` while connecting.
+- `discover()` raises `GoveeBleConnectionError` when the scan itself fails (no adapter, adapter powered
+  off, BlueZ / D-Bus unavailable). That error is also the `BleakError`, `OSError` or `EOFError` 1.3.0 let
+  through, so existing `except BleakError` handlers keep matching. A device reporting 0 dBm now sorts as
+  the strongest, not with the no-RSSI ones.
+- Typed argument errors: a request a colour scheme can't express (per-segment colour on a whole-device
+  scheme, CCT on H61A8) raises `GoveeBleNotSupported` from the builders instead of a bare `ValueError`
+  (not a `ValueError`, so `except ValueError` around a direct builder call no longer catches it), and
+  `Device` re-raises it with the SKU on every path. Bad input (a non-integer brightness, an 0xA4 `mtu`
+  outside 20..512 or an upload over its 16-bit packet count; at the `Device`, a malformed RGB, a non-int
+  brightness, a `str` or other non-bytes secret) raises `GoveeBleInvalidValue` before any I/O, and
+  `turn_on` now checks every argument before the segment-count read. `Device(secret=...)`,
+  `create_device(secret=...)` and `set_secret()` take `bytes`, `bytearray` or `memoryview` and store
+  `bytes`. An unknown zone or scene name raises `GoveeBleUnknownName`, still a `GoveeBleNotSupported`, so
+  existing handlers keep matching.
+- `device_profile_for` is deprecated in favour of `profile_for` (the same lookup): it emits a
+  `DeprecationWarning` and is removed in 2.0. `hass-govee-ble-local`'s config flow still calls it.
+- `DeviceProfile` validates its fields at construction and raises `GoveeBleInvalidValue` (a `ValueError`)
+  for empty or non-string SKUs, `brightness_max < 1`, a `brightness_range` whose 100 % overflows a byte,
+  `color_readback_per_batch < 1` and a malformed mask, IC range or IC divisor. A list of SKUs is still
+  accepted, and so is a custom profile pairing a capability with a colour scheme that can't express it, as
+  in 1.3.0; its setter now raises `GoveeBleNotSupported`. The built-in table is checked at import for those
+  pairings, a `mechanism_a_direct` group size other than 4, `color_readback_live_ic` without
+  `color_readback_ic_range` and a duplicate SKU. The new fields come after every 1.3.0 field, so the
+  positional signature and `dataclasses.fields()` order are unchanged.
+- `DeviceProfile.brightness_max` is deprecated (documented only, no warning); use `brightness_range`.
+- **H6052 colour read-back is RGB only.** After a poll, a lamp in colour-temperature mode reports the report's
+  colour as `rgb_color` (for a CCT the app or this library set, the Kelvin's tint) and no `color_temp_kelvin`,
+  as the app's control screen reads it: a `0x0d` report is `[r, g, b]`, its Kelvin bytes never read, and
+  `0x15` and the other colour sub-modes are ignored (`H6052NewDetailVM` -> `H6052InfoDetail.G`). `aa 05 0d ff
+  ff ff 0a 8c` now gives RGB (255, 255, 255) instead of 2700 K. Modeled from the decompiled app. Live-verified
+  on an H6052 (2026-10-15, macOS): after a 2700 K write the lamp reports `aa 05 0d ff ae 54 0a 8c ff ae 54`,
+  which now reads as RGB (255, 174, 84) with no Kelvin; what the app displays for that report is
+  source-modeled.
+- 0xAC status read-back: a reply that would fail the app's read gives no state, as the app shows none
+  (`Compose4BaseInfoSingleRead.u` throws, `AbsComposeControllerWithOpResult.onOvertime` fails the read, and
+  the `VM4LightH60A6` success callback that applies state never runs). That covers a TLV the spec can't read,
+  a TLV length byte of 0x80 or more (the app reads it signed) and a complete burst whose last TLV runs past
+  the reply. `Device` retries once, then leaves state stale. A burst that lost a chunk or its last packet gives
+  no state either (see the burst-assembly entry). Each poll that gets such a reply logs the existing `status
+  read returned no usable data after retry` WARNING. Modeled from the decompiled app; not hardware-verified.
+- `DeviceState.optimistic` on status-readback devices (H60A6) goes False only once a live field (power,
+  brightness, zones, segments or the mode report) comes back. 1.3.0 cleared it after any 0xAC poll that
+  wasn't discarded, even an empty or failed one; a poll that returned nothing, or only device info, now
+  leaves it True. The one-time INFO `first poll` line also waits for the first poll that read something
+  back.
+- `MANUFACTURER_IDS` also lists 0x8841 and 0x8842, the encrypted v1/v2 broadcast headers the app accepts
+  (`BleUtil.parseBleBroadcastPact`), so a Home Assistant manifest built from it matches those devices too.
+  Modeled from the decompiled app; not hardware-verified.
+- Signatures: `wire.build.status_query` takes `full` keyword-only; `handshake.build_step1` / `build_step2`
+  drop their unused `payload` (the app never sends one); `Device.set_segment_*` accept any sequence of
+  indices; whole-device colour builders called without a segment count use the scheme's default (23 panels
+  for H6061, 15 for H61A8, not H60A6's 13). Removed: the superseded,
+  unused `wire.parse.parse_mode_color_0d` (it dropped a 0x0d report's Kelvin), the unused
+  `const.COMMAND_ACK_TIMEOUT`, and the internal `GoveeConnection(on_notify=...)` hook with its type alias
+  `transport.connection.NotifyCallback`. `Device`'s frames are unchanged (it always passes its count); a
+  direct builder call that omits `segments` now gets the scheme's default mask. Modeled from the decompiled
+  app; not hardware-verified.
+- Cloud account: a token-only `GoveeCloudAccount` (no email/password) whose token expires raises
+  `GoveeCloudAuthError` instead of sending a login with empty credentials. Requests no longer follow HTTP
+  redirects, so the password is never re-sent to a redirect target; a 3xx is reported as `login failed
+  (HTTP 3xx)` / `<path> failed (HTTP 3xx)`. `CloudDevice.ble_mac` is documented as best effort.
+- `govee-ble-analyze`: `-o` creates the converted JSONL with mode 0600 and never writes through a symlink
+  (a failed write is `cannot write`, exit 2); `--help` keeps the module docs and documents exit codes
+  0/1/2; `--from-frames-log` records carry the device address (`addr`). The "malformed 0xAC bursts
+  skipped" count (and `analyze_status_bursts`' third element) counts only bursts that were not walked; the
+  report now also counts complete bursts walked up to a TLV overrun (the runtime uses no state from them)
+  and bursts from a redacted capture.
+- Docs: README lists `profile_for` (`device_profile_for` as its deprecated alias), `create_device`'s
+  `idle_disconnect` and `discover()`'s error. `docs/DIAGNOSTICS.md`'s log-level table matches the code
+  (nothing at ERROR, every warning site listed, timeouts as `GoveeBleTimeout`) and its redaction note says
+  what is masked (the account secret) and what is not.
+- Encrypted sessions do the cipher key setup once per session (`crypto.FrameCipher`; identical bytes, less
+  event-loop time). Log records keep the `govee_ble_local.devices.device` logger. Live-verified on encrypted
+  H60A6, H6008 and H5083 sessions (2026-10-15, macOS): every session frame matches the per-frame cipher byte
+  for byte.
+- CI and the release workflow generate the Kaitai read-write classes from `spec/*.ksy` in every job
+  that tests or builds. `scripts/install_ksc.sh` installs the pinned JVM `kaitai-struct-compiler` 0.11
+  (the upstream `.deb`, checked against its published SHA-256, and refused unless it matches
+  `tools/gen_kaitai.sh`'s pin), and `scripts/check.sh` now runs `tools/gen_kaitai.sh` before every other
+  gate, so a local run needs that compiler too (`brew install kaitai-struct-compiler`). Development
+  tooling only.
 
 ### Fixed
+- **The suite passes at the dependency floor again (tests and tools only).** CI's lowest-direct job (bleak 0.21,
+  bleak-retry-connector 3.0.0, cryptography 41.0.0, kaitaistruct 0.11) failed collection on a test that imported
+  `BleakCharacteristicNotFoundError`, which bleak 0.21 lacks. Three more places built a `BLEDevice` without the
+  `rssi` that bleak < 1.0 requires: two tests and `tools/fetch_scenes.py`. They now use the version-aware
+  `fake_ble.ble_device` (the tool uses the same check inline), and the test falls back to a `BleakError` with the
+  same text. The library itself builds no `BLEDevice`, so it was unaffected.
+- **A flaky timing assertion in the H5083 idle-link test (test-only).** The virtual clock adds the float timeouts
+  it jumps, so 9.0 + 3.0 s can land a hair under 12.0 (CI saw 11.99999999999998). The check now allows 1e-6 s.
+- **The spec conformance tests run again (test-only).** `tests/test_spec_conformance.py` still imported the
+  advertisement reader that S1 deleted with `govee_adv.ksy`. Under `CI=true`, which CI sets, that import
+  stopped the whole pytest run at collection; locally the module was silently skipped. The devices.yaml
+  schema and catalogue checks run again, and the advert check now reads its synthetic Govee AD through
+  the labelled `govee_scan_record` root (its manufacturer-specific case is `govee_manufacturer_data`).
+- **A 0xAC status chunk is a 20-byte 0xAC frame, as in the app.** `reassemble.reassemble` and `parse_status`
+  took any record of 19 bytes or more in 1.3.0, whatever its proType. They, and the new `burst_chunks`,
+  `BurstAssembler` and `describe.status_burst_report`, now take only a 20-byte 0xAC frame as a chunk, as
+  `ComposeBleComm.K:198` (any other length is dropped) and
+  `AbsController4BleSingleSendMultiBack.isSameController:207` do.
+  - The connection only delivers 20-byte frames, so nothing changes at runtime. It affects callers that
+    hand the reassembler records directly.
+  - A chunk is read through the frame root (`govee_ble_frame(rx)`, one private helper), and
+    `read_ac_chunk` raises `ValueError` for a record that isn't one.
+- `spec/checks/lint.py` passes `mypy --strict` and pyright again. The root-label loops no longer reuse the
+  type-path variable, and the reachability walk declares its path types.
+- pyright is clean on `src/`, `_build_backend/` and `tools/` after the PORT. The TLV-walk test's
+  helper reads a handed-on TLV's value bytes directly, so the PORT adds no pyright finding in `tests/`.
+- **Segment masks follow the app's caps, up to 112 segments.** Each body carries at most its own mask bytes,
+  and the app's writers drop the positions past them (`coerceAtMost`): the 0x15 RGB and colour-temperature
+  frames 7 bytes (the spec's `op15_color_write.mask_cap` for variants 12 / 11: `Bytes.h:324`, `Bytes.r:499`),
+  per-segment brightness 14 (`op15_brightness_wide.mask_cap`: `Bytes.G:179`). Before, the library refused
+  every write above 56 segments. `build.MAX_MASK_SEGMENTS` is now 112 (`MAX_MASK_BYTES` 14), so a device
+  or section count up to 112 is accepted; a colour write on more than 56 segments reaches the first 56, as
+  in the app, and the segment state folds only the positions a frame carried. New:
+  `build.COLOR_MASK_CAP`, `build.BRIGHTNESS_MASK_CAP`, `build.mask_positions(segments, mask_cap)`, and
+  `build.mask_width(segments, mask_cap=14)`. No curated SKU has more than 16 segments, so their frames
+  are unchanged. Source-modelled.
+- **A successful 0xAC status read applies the app's switch and brightness defaults.** Each read starts from
+  a fresh `DeviceBaseInfoFromDevice` (switch false, brightness 100; `DeviceBaseInfoFromDevice.java:70-79`),
+  and the H60A6 success callback applies it whole (`h60a1.Info4Detail.n0:641-677`: `g(info.j())`, the
+  switch; `i = info.b()`, the brightness). So a successful read whose stream has no 0x01 TLV now reads power
+  off, and no 0x04 TLV brightness 100; before, those stayed as they were. A failed read still applies
+  nothing. Captured bursts always carry both. Source-modelled.
+- **gt 50 / 307 plugs (H5082, H5089) read power from relays 0 and 1**, the app's `aa 01` heartbeat rule
+  (`HeartControllerV2` -> `BleOpV2.onEventHeartV2:216-231` / `BleOp4H5089.onEventHeartV2:331-341`, `open =
+  i(0) | i(1)`; the spec's `switch_read_reply.any_relay_0_1_is_on`), which the library's repeated poll
+  follows: `relay_on_mask` 0x03. Before, any relay bit (0xFF), the connect-read rule. Source-modelled.
+- **Library scenes upload only what the app's validators accept** (the spec's section-E types). A type-1 RGB
+  scene uploads only when `ScenesRgb.isValidProtocolBytes` accepts its blob (`ScenesOp.l:377-392`; the spec's
+  `rgb_scene_value.is_valid`), a type-2 RGBIC one only when `ScenesRgbIC.isValidProtocolBytes` does
+  (`ScenesOp.m:394-409`; `rgbic_scene_value`, which reads exactly that), and a type-3 graffiti one only when
+  `ShareDiy.isValidGraffitiBytes` does (`ScenesOp.n:411-429`; `scenes_graffiti_check.is_valid`: size >= 9,
+  lead 0x01, the group-header walk). Any other blob is only activated, as in the app; before, types 1 and 2
+  went out unchecked and type 3 checked only the lead byte. Every bundled scene plans as before (631
+  uploads, 25 activate-only, every profile); only a cloud or custom blob the app would not upload changes.
+  Source-modelled; not hardware-verified.
+- **0xAC status bursts are assembled as the app assembles them** (`AbsController4BleSingleSendMultiBack`
+  as `ControllerSingleRead` runs it: `isSameController:202-225`, `onResult:273-308`). The first chunk must
+  carry the request's command 3 and sub 0 (`f():100-103`); then each index is taken only in order, and the
+  last packet only once every packet before it is in. A duplicate, an early or out-of-order chunk, an early
+  0xFF or a first chunk of another command is ignored, as the app ignores it; a lastLen that doesn't fit
+  fails the read at once. Only a complete burst is decoded: one that lost a chunk or its last packet now
+  gives no state (one retry, then the state is left stale), where the library used to decode the prefix
+  that arrived (the app applies nothing: `l()` never runs and the read times out). `query` ends on a
+  complete or failed burst, ignores `terminal` for 0xAC, and only a chunk the app takes arms the idle gap,
+  so a stray early 0xFF or a late chunk of an earlier burst no longer ends the read before the burst
+  arrives. `burst_chunks` keeps its signature. Every captured H60A6 burst (16 reads) decodes as before.
+  Modeled from the decompiled app; the failure paths are not hardware-verified.
+- **The 0xAC TLV walk follows `Compose4BaseInfoSingleRead.u` at its edges.**
+  - The buffer ending before a TLV's value starts (no len byte, or none after it, whatever the len) is a
+    clean stop that keeps what was read (`u():257-267, :271-282`); before, it gave no state.
+  - A 0xA5 colour group whose len isn't 1 + 4k is read with the app's record count, extra bytes ignored
+    (VM `.o:112-116` -> `Controller4ColorInfoByGroup.Companion.q`); before, it stopped the walk.
+  - With the piece count, a group the app can't place fails the read (group 0, or one starting past the
+    last piece: `SubMode4Color.j:113-147` throws), and one starting exactly at the end is skipped; before,
+    group 0 was dropped and a group past the end added phantom segments.
+  - The last 0x07 device-info block wins (`w():370-437`): a basic block sets the serial when its UID is
+    valid and always sets the versions (None when zero); a Wi-Fi block always sets the Wi-Fi MAC. Before,
+    the first block won.
+  - Not changed, waiting for spec types: a type-0 byte still ends the walk (u() reads it as an ordinary
+    TLV), and a short 0x05 mode value is still padded.
+  Captured bursts decode as before. Modeled from the decompiled app; not hardware-verified.
+- **H61A8 segment colours are placed by the batch requested**, as goodsType 19's screen places them
+  (rgbiclight `VM4Light.N5:946-962` -> `Controller4ColorInfoByGroup.Companion.h` / `i`, which drop the
+  reply's group byte, -> `P5` with the loop's group -> `SubMode4Color.j`). Before, the reply's own batch
+  byte placed them and a byte outside the walk dropped the batch (the legacy dreamcolorlightv1 `BleOpV3`
+  screen, which goodsType 19 never opens). Bench replies carry the requested batch, so they read as before.
+- **A raw brightness byte reads as the control screen shows it** (`DelegateHeader.i0:230-239` ->
+  `ViewBrightness.b:353-365`): on a raw range (H6188's 20..254) the byte is clamped to the range before
+  `calculatePercent`, so it reads 1..100 (before: 0 for a byte below 18); on the percent range [1, 100] the
+  byte itself is shown. `SameModelCmdOp.E1` agrees on a raw range. Source-modelled (no H6188 on the bench).
+- **The plugs send the `33 b5` time sync as their app does.** Every plug screen sends it in its connect
+  read and waits for its ack (`SyncTimeController`, an `AbsOnlyWriteSingleController`): gt 43
+  `H5083NewDetailRepository.necessaryMessages:323-339`, gt 50 / 90 `BleOpV2.o0:141-171` /
+  `BleOpV4.l0:124-147`, gt 307 `BleOp4H5089.V:145-163`. The library now sends it once per connection,
+  acked, right after the `33 b2` unlock (`Device._session_frames`); a refusal or no ack is only logged.
+  Before, it went out unacked after every power write and never on connect. After each acked power
+  write, gt 50 (H5082) and gt 90 (H5160 / H5161) re-run their connect read list
+  (`BleOpV2.onEventSwitchV2:380-382` / `BleOpV4.onEventSwitchV2:299-301` -> `G()`), so those plugs
+  (`power_resync`) re-read `aa 06` and `aa 07 03` and re-send `33 b5`; their per-outlet timer and delay
+  reads are not modelled. gt 43 and gt 307 send nothing after a power write. Differences kept: on gt 50
+  / 90 the library reads `aa 06` / `aa 07 03` once per device rather than before `33 b5` on every
+  connect. Live-verified on an H5083 (gt 43, 2026-10-17, macOS): it acks `33 b5` (status 0) about 60 ms
+  after the unlock, a power write is followed by nothing more, and the next session sends `33 b2` then
+  `33 b5` again. gt 50 / 90 / 307 are source-modelled.
+- **Per-segment brightness is 1..100, the app's slider range** (`ViewColorMode.t0:232-235`,
+  `DelegateColorV2Part.t0:459-462`: `setProgressRange({1, 100})`). `Device.set_segment_brightness` and
+  `build.segment_brightness` clamp 0 and below to 1 (before: 0 was sent), as `set_brightness` already did
+  for the whole device. Affects the 0x15-scheme segment devices (H60A6, H6047, H6641, H6062).
+- **The H60A6 status read asks for the 0xA5 colour groups only on the pacts the app does**: its
+  request is `[0x41, 0x30]` plus 0xA5 if `J5()`
+  (`VM4LightH60A6$afterConnectedSingleReadDeviceInfo$1.invokeSuspend:158-161`; `VM4LightH60A6.J5:691-697`
+  -> `Support.supportPartColor4H60A6:434-436`: goodsType 303, pact type 1, pact code >= 2). An H60A6
+  advertising pact (1, 1) now gets `ac 03 02 41 30`; (1, >= 2) and a device whose pact hasn't been heard
+  yet keep `ac 03 03 41 30 a5`. A reply without 0xA5 leaves the segments as they were.
+- **The H60A6 graffiti (0xA4) upload is sized to the link's MTU**, as the app sizes it
+  (`H60A6GraffitiParse.makeBleController:240` -> `Compose4DefWrite4Multi.d:233-246` with
+  `MtuConfig.getAvailableMtuSize` = ATT MTU - 3, at least 20). The frames are planned once the link is up
+  (`send_unacked` with a function of `write_payload_size`), so a reconnect re-sizes them. A link that
+  reports no larger size (a BLE proxy, BlueZ before 5.62) keeps today's 20-byte frames. The 0xA3 DIY
+  upload is unchanged.
+- **Kelvin, version text and section count are read as the app reads them** (the spec owner's gap
+  batch). All of these are app-matching and source-modelled: they change only values the bench devices
+  don't report.
+  - H6641's 0x15 Kelvin is read signed (a plain `SubMode4Color`, `BleUtil.getSignedShort`): 0x8000 or
+    more is no colour temperature.
+  - H6047's two bar Kelvins are read signed (`cct_read_reply.kelvin_signed` / `kelvin_right_signed`;
+    h6047 `Info4Detail` D0/E0 `getSignedShort`). A negative bar Kelvin is treated as "not in colour
+    temperature", like 0.
+  - H61A8's colour reports are read as its screen reads them, with `mode_color_parse` `"kelvin"` (as
+    H6062 and fd4f794's `devices.yaml`). goodsType 19 opens the rgbiclight `AcNewDetail`
+    (dreamcolorlightv1 `SubLib4BleIot` -> `Model4BleIot.t:41-46`), whose base
+    `OpInfo4Detail.parseModeValidBytes:766-778` sends 0x15, 0x0b, 0x02 and 0x0d alike to `SubMode4Color`:
+    `[gradual][kelvin s16be]`, colour temperature only for a Kelvin > 0. Before, only 0x15 gave a Kelvin, read
+    unsigned (dreamcolorlightv1 `SubModeColorV2.parse`), which is the legacy AdjustAc screen goodsType 19
+    never opens. Modeled from the decompiled app; not hardware-verified (the bench H61A8 rejects the
+    library's colour write, so it sent no colour report).
+  - Device-info version text is the spec's `version3.text`, each byte read signed
+    (`Compose4BaseInfoSingleRead.v:363-368`, as chosen), so a byte of 0x80 or more renders negative.
+  - The `aa 41` section count's `sectionNum` is a signed byte (`section_count_read`). The device already
+    refused a count of 0x80 or more, so its segment count is unchanged.
+  - A graffiti (sceneType 3) library scene is uploaded only when its blob leads with 0x01
+    (`scenes_graffiti_param`; `ScenesOp.n` -> `ShareDiy.isValidGraffitiBytes`); otherwise it is only
+    activated, as in the app. All 25 bundled graffiti scenes pass. The app's other two checks (size >= 9
+    and a walk of the group headers) have no spec type yet and aren't made.
+- **`wire.parse.parse_ic_count` reads the IC count signed, as the app does.** It uses the spec's
+  `ic_segment_read.ic_count_signed`, after `ControllerOnlyReadIcSegmentNum` (`BleUtil.getSignedShort`).
+  An `aa 40` count of 0x8000 or more is now negative, as in the app. Before, it was returned unsigned,
+  and only `_readback.live_ic_pieces` sign-extended it. Live-IC colour read-back (H6641) is unchanged,
+  because `live_ic_pieces` already read it signed. App-matching and source-modelled: not
+  hardware-verified for counts of 0x8000 or more, which no bench device reports.
+- `govee-ble-analyze` knows the 0xAC status TLVs 0x36 (bar switch; the H6038 / H6048 status read requests
+  it, `VM4H6038`) and 0x40 (IC count; H6671 / H6672, `VM4LightH667172`), so their bursts are no longer reported
+  as spec gaps with exit code 1. New constants `wire.reassemble.TYPE_BAR_SWITCH` and `TYPE_IC_NUM`.
+- Segment setters refuse an index at or past the device's segment count (H60A6 13, H6047 10, H61A8 15),
+  with `GoveeBleInvalidValue` as for any bad index. The app's position set has exactly that many positions
+  and its mask encoders can't set a bit past it (`BleUtils.Y` / `BleUtils.X`); the library took any index up
+  to 15 on a device of 16 segments or fewer, so `set_segment_brightness([13, 14, 15], ...)` on an H60A6 sent
+  the mask `e0 00`, which the app never sends. Frames for valid indices are unchanged. (H6641 still uses its
+  static 16 until its count is read live.)
+- A custom `DeviceProfile` with `brightness_range=(1, 100)` writes the percent as it is
+  (`BrightnessConfig.Companion.c`); it wrote one more for 51..100. No table profile uses that range.
+- `wire.parse.parse_section_count` reads the H6062's IC count signed (`BleUtil.getSignedShort`), as its
+  docstring said. Only diagnostics read it.
+- 0xAC status burst: the last packet is the first of tag 0xFF and tag `packets - 1` to arrive once the
+  others are in, as the app takes it (`AbsController4BleSingleSendMultiBack.isSameController`). The library
+  always preferred 0xFF, so a corrupted burst carrying both spliced the wrong chunk in (a phantom segment).
+  The H60A6 sends only 0xFF, so its bursts decode as before.
+- `GoveeConnection.query` ends a 0xAC burst as soon as it is complete by the app's rule
+  (`wire.reassemble.BurstAssembler`): a one-packet reply, or a last packet tagged with its position, no longer
+  waits for the 0.6 s idle gap. The same frames come back.
+- RX frames of proType 0xA2 (`multi_read`, device to app in the spec) are no longer logged at WARNING as
+  unknown.
+- `govee-ble-analyze`: each 0xAC chunk's length and BCC are checked like any frame's (an artifact, and the
+  chunk is left out of burst reassembly, as the runtime drops it; a chunk zeroed by the capture masking is
+  not), and the TX status request is read with the spec reader (label `status-request/<N>`).
+- H60A6 scene upload plan (type 5): as the app's new-DIY path (`BaseSceneViewMode.r3`, parser order
+  `H60A6DiyConfig`), the decoded blob must start with 0x50, it goes out as a DIY (0xA3) only when the spec's
+  `diy_value` reads it with its length prefix covering the rest, else as a graffiti (0xA4) when
+  `graffiti_value` reads it, else the scene is only activated. Before, a blob of any first byte was uploaded,
+  by the length check alone. All 748 bundled scenes plan the same frames as before. The app re-serialises
+  what it parsed (`IDiyParse.toBytes`); that is not modelled.
+- H60A6 status read: each 0xA5 colour group of the 0xAC reply is now read with the app's record count for
+  the device's 13 colour pieces: 4 per group and 1 in the last
+  (`VM4LightH60A6$afterConnectedSingleReadDeviceInfo$1.o`; `pact_h60a0` `Support.getColorPieceSize` /
+  `getOneGroupColorSize`), read by `Controller4ColorInfoByGroup.Companion.q`. Extra records in the last group
+  no longer add segments 13-15, and a group short of its count fails the read, as it does in the app (no
+  state is used from that burst). Before, the count came from each TLV's length. Source-modelled; the bench
+  bursts carry the app's counts, so they decode as before.
 - macOS: the connect failed on the H60A6 and H6008 (`Failed to discover descriptors for characteristic
   13 ... UUID not allowed`) because CoreBluetooth rejects descriptor discovery on a characteristic
   of the Generic Attribute service. The connection now resolves only the Govee service
-  (`services=[SERVICE_UUID]`; BlueZ ignores the filter). Live-verified on four H60A6s and two H6008s
-  from a Mac.
+  (`services=[SERVICE_UUID]`; bleak's BlueZ and WinRT backends apply the same filter). Live-verified on
+  four H60A6s and two H6008s from a Mac.
 - The device id of an H60A6 was reported as `"00"`: its `aa 07 10` UID is all zeros, which the parser
   rendered as a value and so skipped the `aa 07 02` fallback. An all-zero UID is now no id
-  (`NumberUtil.isInvalidUuid`) and a single leading `00:00:` is dropped (`SnController`).
+  (`NumberUtil.isInvalidUuid`) and a single leading `00:00:` is dropped (`SnController`). Live-verified on
+  four H60A6s.
 - `create_device` ignored `DiscoveredDevice.advertisement` (the parsed `GoveeAdvertisement` that
   `discover()` returns): only bleak's raw advertisement set the encryption mode, so the natural
   `discover()` -> `create_device(..., d.advertisement)` flow fell back to the SKU profile. For an H6008
   (profile: plaintext; real firmware: encrypted, pact 1/1) every read was then sent in plaintext and
   went unanswered. Both advertisement types are accepted now. Live-verified on two H6008s.
+- Transport: `BrokenPipeError`, `ConnectionResetError`, `EOFError` and a write's `TimeoutError` get the same
+  reconnect-and-retry as `BleakError`; a write timeout is no longer reported as "operation exceeded 45s";
+  `query()` keeps the frames already received when its budget runs out (a complete burst came back truncated
+  under event-loop lag); a single-reply read waits its full 2 s (a stray late reply cut it to the 0.6 s burst
+  gap); and messages name the type of a message-less error. Not hardware-verified.
+- The BGC-info characteristic is found the way the app does (`BgcInfoReader.a`): the first service with UUID
+  1910, then its 2b12 characteristic. A firmware that also exposes 2b12 under the OTA service 1912 (on
+  backends that don't filter services), or two 1910 services that each carry 2b12, made bleak's
+  collection-wide lookup raise and every connect fail. Modeled from the decompiled app; not
+  hardware-verified.
+- A secret set with `set_secret()` on a live session is sent (`33 b2`) before the first frame of any setter,
+  scene upload or read-back on it, as the app's pairing flow does (`AbsPairAc4SecretV1.onEventSecretKey`).
+  In 1.3.0 a secret set on an open session was sent only at the next session setup, so the commands on that
+  link went out without it. It is not lost if that write is cancelled or fails while the session stays up; a
+  finished write (acked, rejected or unacked) is not resent. An unchanged secret, or one set on a profile
+  without `requires_secret`, queues no `33 b2`. Modeled from the decompiled app; not hardware-verified.
+- Scene uploads: a short value (14 bytes or fewer, including 15 bundled H6004/H6006/H6008 scenes such as H6006
+  "Asleep") is sent as a START frame (packet count 2) plus a separate empty END frame
+  (`MultipleControllerCommV1.makeSendBytesV2`), not one 0xFF frame with no START. A compose scene (sceneType
+  6) is uploaded only when its blob starts with 0x0a (`ScenesOp.o`); others, H60B0-style 0x51 blobs included,
+  are activate-only (no current profile reaches this). Modeled from the decompiled app. Live-verified on an
+  H6006 (2026-10-15, macOS): "Asleep" went out as `a3 00 01 02 01 83 01 ff e1 96 ...` then `a3 ff 00 ...`, the
+  device acked the upload and the activation, and the next read reported scene 1134. The compose gate is not
+  hardware-verified (no profile reaches it).
+- Colour frames the app never sends are refused: per-segment colour and brightness on the 0x0d bulb schemes
+  (`h6006`, `h6188`) raise instead of building a 0x15 RGBIC frame, an unknown colour scheme is refused
+  instead of getting H60A6's frames, and an explicit H6061 panel count of 0 is rejected even for a Kelvin
+  tint (it became 23 panels). Modeled from the decompiled app; not hardware-verified.
+- 0xAC status burst framing follows `AbsController4BleSingleSendMultiBack`: a burst is complete only when
+  every packet its first chunk declares has arrived, so a burst that lost the chunks before the 0xFF chunk
+  no longer splices it in at the wrong offset and a lone 0xFF chunk isn't read as the first; a one-packet
+  reply is complete by itself and is trimmed to its declared length, the last packet adds only its declared
+  byte count, and an impossible last-packet length is rejected. Modeled from the decompiled app; not
+  hardware-verified.
+- Read-back values as the app reads them: 0xAC zone power is bit 0 of each zone byte
+  (`ParseUtils.getBit2Boolean`); a 0x07 block whose selector isn't basic (0x10) or Wi-Fi (0x11) is stepped
+  past even when its body doesn't parse, and the Wi-Fi block's versions no longer become the device's
+  (`Compose4BaseInfoSingleRead.w`); gradual (`aa a3`) and H6047 bar power (`aa 36`) are on only for a byte of
+  1 (`ControllerGradual4BleWifi.h`, `ComposeLightController.parseValidBytes`); device-reported brightness is
+  clamped to 0..100. Modeled from the decompiled app. H6047 bar power is live-verified (2026-10-15, macOS:
+  left bar off, then on, read back per bar); the other rules are not hardware-verified.
+- H6006 / H6008 / H6004 / H6188 mode report decoded as the app does (`ModeParseStrategyConfig.a` via
+  `OpInfo4Detail.parseModeValidBytes`): sub-modes 0x15, 0x0b, 0x02 and 0x0d all read `[r, g, b][kelvin
+  s16be][tint]`; a Kelvin > 0 is CCT, 0 is the RGB, and a negative one shows the tint as RGB. `aa 05 15 01 0a
+  8c` now gives RGB (1, 10, 140) instead of 2700 K, and a 0x0b / 0x02 report updates the colour. Modeled from
+  the decompiled app. Live-verified on an H6006 and an encrypted H6008 (2026-10-15, macOS): their 0x0d reports
+  arrive as `[r, g, b][kelvin][00 00 00]` and decode to 2700 K after a CCT write and to RGB (16, 32, 48) after
+  a colour write. 0x15 / 0x0b / 0x02 reports and the H6004 / H6188 are not hardware-verified.
+- H6061: an `aa 05 15` report no longer clears the known RGB colour or stores a nonsense Kelvin (e.g. 511 or
+  65454), since `CubeNewInfo4Detail.U` decodes only the 0x0d report; and that report's Kelvin is a signed
+  short (`BleUtil.getSignedShort`), so 0x8000 or more reads as RGB, not a 32768 K colour temperature.
+  Modeled from the decompiled app; not hardware-verified.
+- Other mode reports: on H61A8 an `aa 05 0d` report no longer sets an RGB colour (it is a
+  `SubMode4Color` `[gradual][kelvin s16be]` report, see the H61A8 entry above); H6062 reads 0x0b / 0x02 / 0x0d
+  with the `SubMode4Color` parse (`OpInfo4Detail.parseModeValidBytes`); H6641 and H6047 ignore 0x0d
+  (`Info4Detail.parseModeValidBytes`). A scene report clears stale colour state and a colour-temperature
+  report of 0 clears the Kelvin. Modeled from the decompiled app. A colour-temperature report of 0 clearing
+  the Kelvin is live-verified on an H60A6 (2026-10-15: 4000 K, then red, then `aa 05 15 01 00 00` read back no
+  Kelvin); the rest is not hardware-verified.
+- Plugs follow the app per goodsType. The plug profile is split by goodsType into H5080/H5083/H5085,
+  H5082/H5089 and H5160/H5161, so `profile_for` returns three different plug profiles. Relay read-back: bit
+  0 on H5080/H5083/H5085, any bit on H5082/H5089, bits 0-2 on H5160/H5161 (`BleOpV1.onEventSwitchV2`,
+  `EventSwitchV2.i`, `BleOpV4.Z`; 1.3.0: any set bit meant on). Advertised on/off: bit
+  0 on H5080/H5083/H5085 and any bit on H5160/H5161 (h5080 `Model.A`), bit 0 or 1 on H5082/H5089
+  (`Model4Plug2.A`); before, only a byte of exactly 1 meant on, so 0x11 read as off. Modeled from the
+  decompiled app; not hardware-verified.
+- Advertisements: on/off is read only from broadcast headers 2 and above (`BleUtil.parseBleBroadOnOff`), so
+  v0/v1 adverts no longer flip power, and `identify.parse_broadcast_onoff()` returns None for a header byte
+  (the company-id low byte) below 2 or above 0x7F (negative as the app's signed byte); the advertised on/off
+  is ignored for 15 s only after an on/off read or a command, not after an empty, failed, brightness-only or
+  mode-only read; an advertised power change keeps zone and bar power consistent, so a later H6047 bar write
+  no longer lights an untouched bar; and a local name ending in `_` gives the app's SKU
+  (`BaseBleProcessor.parse`). Modeled from the decompiled app; not hardware-verified.
+- Per-segment colour read-back: H6641 derives its piece and group count from the IC count as the app does
+  (clamp 41..70, ceil(IC / 5) pieces, at most 4 reads; `ReadIcController`, `H61D3Support.e`), so it shows no
+  phantom segments and never walks 255 groups; replies are placed by the group requested, on H61A8 too (see
+  the mechanism-B entry). An `aa 40` IC count of 0x1000 or more (read signed) skips the segment walk, as
+  the app never stores it (`ReadIcController.Companion.a`). A custom profile with `color_readback_live_ic` and
+  no `color_readback_ic_range` uses the IC count unclamped. Modeled from the decompiled app; the H6641 change
+  is not hardware-verified. The H61A8 15-segment read-back still assembles on hardware (2026-10-15, macOS).
+- Device-info reads are tried again on the next poll when the device answered none of them and that poll's
+  state read got nothing either. 1.3.0 marked them done after one unanswered attempt, so a device first
+  polled while silent (wrong cipher, out of range) never reported its versions. A late Wi-Fi info reply can
+  no longer overwrite the firmware or hardware version. Modeled from the decompiled app; not
+  hardware-verified.
+- State: segment colour, segment brightness and zone colour writes clear the active scene, matching bar
+  Kelvins clear a stale RGB colour, concurrent whole-device power or scene writes and H6047 per-bar writes
+  no longer undo each other, and `set_zone_power` on H60A6 replaces `state.zone_power` instead of editing
+  the dict in place. Not hardware-verified.
+- A scene's upload and its activation are one unit, as the app sends them in one composed controller:
+  neither a poll nor a concurrent scene write can land between them. `set_scene_by_name` loads the bundled
+  catalog off the event loop, `update()` warms it, a catalog that exists but can't be read raises
+  `GoveeBleError` instead of `OSError` / `UnicodeDecodeError`, and `active_scene` is None on a device
+  without `SCENES`. Modeled from the decompiled app; not hardware-verified.
+- Frame capture: creating one (`frame_log=` / `GOVEE_FRAME_LOG`, built on the event loop) no longer touches
+  the filesystem. The directory check runs on the writer thread and disables only that capture, with one
+  warning (other captures on the same path keep writing). It warns once when it appends to a group- or
+  world-accessible file (POSIX; the mode is kept), reports a write failure again after the path recovered
+  and a full queue on each new overflow, and registers its exit-time flush at the first capture, not import.
+- Cloud: `CloudDevice`'s repr leaves out the BLE `secret`, so logging the device list can't leak the
+  account-lock key. A JSON null `sku` / `device` / `deviceName` no longer becomes "None", huge or
+  non-integral `pactType` / `pactCode` / `goodsType` are ignored rather than raising `OverflowError` or
+  being truncated, and a non-integral `scenceParamId` or a body nested too deeply for the JSON decoder
+  raises `GoveeCloudError` instead of `OverflowError` / `RecursionError`.
+- `govee-ble-analyze` reassembles 0xAC bursts per device, so overlapping bursts from several devices no
+  longer produce phantom "TLV type not modelled" issues and exit code 1. A double-delivered burst isn't
+  malformed, a burst missing interior or final chunks is, a poll that lost its 0xFF chunk is no longer
+  folded into the next poll with the same first chunk, and a TLV that won't parse is reported as a gap.
+- `govee-ble-analyze` no longer reports every burst of a redacted field-test capture as "malformed
+  (dropped/merged frames)" (older captures, whose first-chunk header was zeroed, are judged by chunk index).
+  `analyze()` skips and counts invalid records instead of raising `ValueError`, a deeply nested JSONL line
+  or a 1-byte `ac` record no longer crashes the CLI, `--from-frames-log` keeps the logger name out of the
+  address, and an unrecognised `dir` reads as `?`.
+- Field test, report: error messages (failed sends, read-backs, restores, aborted runs) no longer contain the
+  device's Bluetooth address, Wi-Fi MAC or the MAC digits of its advertised name. Every error string, and the
+  report as saved, goes through one scrubber that masks the address in any form (BlueZ D-Bus paths included),
+  any other MAC-shaped text and Govee-shaped names (`ihoment_H6188_xxxx`). Snapshots always redact the device
+  id and BLE MAC too. A device identified as one SKU (`ihoment_H6006_6188` is an H6006) no longer matches
+  another SKU's plan through the digits in its name, and Ctrl-C at a prompt no longer hangs the tool.
+- Field test, capture: the frame capture keeps no wire bytes (the ciphertext and the `e7` handshake, from
+  which the session key can be derived) and zeroes the `ac` status payloads like the device-info replies,
+  keeping only each burst's 7-byte first-chunk header so `govee-ble-analyze` still spots a lost chunk. It is
+  redacted only after `framelog.flush()` (at once if that fails, never left raw), and the report and capture
+  go through a fresh temp file and an atomic rename, never a planted symlink.
+- `tools/decrypt_btsnoop.py` decodes the exact-length 0xA3 / 0xA4 / 0xA6 multi-packet frames the app sends
+  (MTU-sized and short; `MultipleControllerCommV1.makeSendBytesMtu0xA6`) instead of dropping them, and
+  dumps 0xA6 by default (`--dump a1,a3,a4,a6`; `--starts` includes 0xA6). It takes a session key only from
+  an `e7 01` reply after the host's `e7 01` on the same connection and keeps keys per connection; it and
+  `btsnoop_mtu_scan.py` refuse captures that are not H4 (datalink 1002) instead of reporting nothing.
+- `tools/fetch_scenes.py`: `--audit` honours the SKUs given, shows their real scene versions and puts every
+  scene in one bucket; a re-fetch replaces stale upload metadata and picks up changed public blobs (keeping
+  a `--resolve`d blob only over the 0xFF stub); a corrupt catalog or failed write fails that SKU instead of
+  the run. `tools/power_semantics_probe.py` restores the H6047 with its own `33 36` bar frame and prints
+  `RESTORE FAILED` when a restore isn't acked or the starting state was never read; `h60a6_live_check.py`
+  matches segment colours by index and `--capture` uses `frame_log=`.
+- `tools/field_test`: the report and frame capture meant for a public GitHub issue no longer leak the
+  Bluetooth address. Error text (most transport errors start with the address) is scrubbed of the address in
+  any case and form, the Wi-Fi MAC derived from it, every other MAC-shaped token (BlueZ's `dev_XX_XX_...` path
+  included) and the MAC digits of Govee names (`ihoment_H6188_xxxx`), and the whole report is scrubbed again
+  as it is saved. The capture keeps the first 0xAC chunk's header, so a lost chunk is still detectable, and
+  zeroes every data byte.
+
+### Security
+- The wire layer masks the account-lock secret in its own log lines and exception text. This is defence in
+  depth for callers that hand `wire.parse` a frame directly (tools, tests, integrators). Neither site fires
+  from the shipped runtime: the connection drops a notification that isn't 20 bytes or fails its checksum
+  before any parse, and `Device` only hands `request_command` the `aa` reads it builds.
+  - Before, a reply that didn't parse was logged as its full hex, so a malformed `aa b1` secret reply
+    showed the secret, and a `33 b2` frame too short for a write ack its first secret byte.
+    `parse.request_command`'s error named the frame it was given, so a `33 b2` secret write handed to it
+    carried the secret into the exception message.
+  - Every frame logged or named in `wire/` now goes through `wire.redact.shown_hex`, which masks a
+    `33 b2` / `aa b1` frame by its two header bytes, so a frame whose body doesn't parse is masked too. For
+    such a frame the reader's exception is shown by its type only (`wire.redact.shown_error`), since a
+    `valid` failure's message quotes the field it read; that applies to `describe`'s parse-error issues
+    as well. The only bytes still shown are field values, never whole frames.
+  - The masking helpers moved from `transport.connection` to `wire.redact` (`carries_secret`,
+    `mask_secret`). The frame capture, the connection's bad-checksum log and `tools/decrypt_btsnoop.py`
+    use them from there.
+  - Logging, exception and analyzer issue text only: no byte sent and no decoded state changes.
+- The connection's frame capture and frames log fail closed. This was a real leak:
+  - A notification that arrives while the session isn't ready used to be recorded in the clear. That
+    covers frames between subscribing and the handshake, and frames after the teardown cleared the
+    session. A late or repeated `aa b1` reply landing while `stop()` tears the session down
+    (`read_secret` followed at once by `stop()`, the config-flow and reauth shape) was logged and captured
+    unmasked. That was shown with the test fake, not seen on hardware (not live-verified).
+  - Such a frame is now masked by its header on a plaintext link. On an encrypted link, where it can't be
+    checked, only its length is kept: its wire is blanked and the log line says `withheld`. That
+    includes the e7 handshake frames: their bytes plus the public PSK give the session key, so a capture
+    no longer lets anyone derive it.
+  - A secret frame's ciphertext is blanked whole. Its first two bytes, kept before, are AES over the block
+    that holds the secret: a check on a guess.
+  - Logging and capture text only: no byte sent, nothing that reaches the RX queue or the handshake, and
+    no decoded state, return value or connection behaviour changes.
 
 ### Spec
+- dreamcolorlightv1 goodsType 19 (H61A8) gets a `client_profile.by_goods_type` entry. Its colour page sends
+  the 15 01 forms, not 0x0b (Config.x[19] = Py -> Config.Yt -> Bytes.h / Bytes.r), so `color_scheme: h60a6`.
+  `color_functions: [segment_brightness, color_temperature]` gives the two colour-page flags with consumers
+  (Config.I gO via Config.e). `kelvin_range` is [2000, 9000], and `kelvin_by_firmware` gives [2700, 6500] from
+  hardware 3.08.01 (KelvinConfig.Config.z2, a plain string compare). The schema takes these four keys per
+  goodsType. New opcode `segment_brightness_write` (33 05 15 02, Bytes.G), traced for 19 only. Bench, H61A8
+  SW 3.03.18 / HW 3.01.10: both 15 01 forms are acked, and `aa 05` reads 15 01 00 00 after a CCT write.
+- New `govee_state` instance `app_empty_mode_fails` (`FIRMWARE-SOURCED`, `PROCEDURAL`): an empty TLV 0x05 value
+  where the mode decode has `empty_fails` (h60ax goodsTypes 235, 302, 303, 346, 356, 370, 373 and 390). H60A6
+  SW1.00.41 sends it on purpose in mode 0xA0 (music: a 33 05 13 write or an A5 02 83 mic colour push) and in every
+  mode but 04 / 0a / 0d / 13 / 15. The app's whole status read fails on it (Info4Detail.Q); a client reads past
+  it, with the mode unknown, and still fails on every other `app_read_fails`. `app_read_fails` now names it as one
+  of its terms; its results are unchanged. H60A1 SW1.02.20 builds no 0xAC burst, so it never sends the value.
+- New `command_forms` selectors `f_40` (`form_40`: `unknown`, `ic_pair`, `one_count`, `device_count`) and `f_a3`
+  (`form_a3`: `unknown`, `gradual`) say how a status screen reads TLV 0x40 / 0xA3 (rule 4 c). `govee_state`
+  `app_read_fails` flags those values only where the screen reads them: H60A6, whose screen ignores both, no
+  longer flags an empty 0xA3 or a short 0x40, and the IC pair reader's under-3-byte and byte-order failures are
+  now flagged (new `ic_count.app_pair_fails`, ControllerIcNum.e). `ic_total` now needs 3 bytes. The values stay
+  typed under every form. `devices.yaml` sets the facts on 23 goodsTypes in 15 families and the goodsType 69
+  pact (2,1) branch; `govee_reference.make_profile` takes the two new keywords.
+- Each `seg_mask` parent that passed a literal cap now names it as a `len_cap` value instance, as `op15_color`
+  does (rule 4 b): `op15_brightness` 14 and `color_0b_rgb_mask` 13 (the app cuts a longer mask, Bytes.G / Bytes.d),
+  and `op15_gradient` 6 (Bytes.n copies the mask with no cut, so a longer one throws). Instances only; the bytes
+  read and written are unchanged.
+- New `spec/firmware.yaml` and `spec/firmware.schema.json` give device behaviour, state and timing per
+  firmware image, as data, so a spec-driven simulator builds every reply, push and advert from spec
+  objects with no hand-built frames. The first image is H5083 SW1.00.30 (`h5083_sw1_00_30`). It covers:
+  - the shared write layer and the pair-gated dispatcher: drop rules, every answer, its effects and
+    whether they apply before or after the reply, and what goes on to the dispatcher;
+  - the E7 session, the AA B1 button window and 33 B2 pairing, timers (records and used flags apart),
+    delays, 33 B5, the A1 11 Wi-Fi and A3 IoT uploads in their shared buffer (the credentials decoded
+    with `govee_upload`), and the AB 02 pact report;
+  - the state model, the pushes (AA 01, EE 11, A3 08), the link events and the 1 s clock task (the
+    10-11 s heartbeat and 61 s pair-key disconnects, delay expiry), and scenario events (button, timer,
+    cloud);
+  - the advert and the scan response.
+
+  AB 01 04, 66 01 and 3F have no spec reply type and are marked unmodelled. The H5083 profile gains the
+  firmware-sourced form `f_14: wifi_mac` for AA 14. A throwaway simulator built from the file alone passed
+  every H5083 scenario.
+- `lint.py firmware` checks `firmware.yaml` against its schema. Every type path, node field, switch case
+  (picked by a sibling literal or the image profile's form), enum literal, match path, route, state name,
+  let, push, event arg and expression name must resolve against the `.ksy` types and the image. It also
+  checks the profile against devices.yaml, the doc-refs, and duplicate or YAML 1.1 boolean keys.
+- `govee_state` `pact_state` cites `H5083 FUN_9b031b80`; `ble_msg_get_adv_pro_type` is not an H5083 symbol.
+  FIRMWARE_VALIDATION §6 points the H5083 bodies to `firmware.yaml`.
+- Suite S closes the ways around its one-path rule that a review found.
+  - `roots`: the nine tops are pinned with their labels, so a new file top fails until the lint lists it.
+  - `roots`: a `CONTEXT` top has no seq or instances, and a `LIBRARY` top has no seq, params or instances.
+    No other type in the `CONTEXT` file reads bytes (a seq, or an instance that is not a `value:`).
+  - `roots`: every used type that reads bytes must be read from a root, not only reached as a param type,
+    so a param can't hide a parser.
+  - `roots`: a type name carrying a `typed`, `safe`, `sized` or `frame(s|d)` twin word fails; the root
+    `govee_ble_frame` is exempt.
+  - `banned` now also scans an instance, type or switch case whose id or key is `doc` or `title`. Before,
+    it skipped those as doc text.
+  - `meta`: every import must be the bare stem of another `spec/*.ksy`, so ksc can't pull in an
+    unlinted file.
+  - The current spec passes unchanged: 9 ksy, 205 types, 0 errors.
+- `spec/` now keeps CLAUDE.md rule 7 ("Cite, don't copy") and its one-builder-per-variant rule.
+  - Some 450 decompiled-code fragments in the docs, the `devices.yaml` notes, the catalogue docstrings and
+    the reference comments are rewritten in spec terms. Each keeps its citation and meaning. The rewrites
+    cover casts like `(byte)88`, `new byte[]{...}` and Java array literals; decompiler names like `bArr`,
+    `param_1`, `z2` and `LAB_...`; and pasted Java and C statements, ternaries and assembly. Firmware
+    `FUN_...` symbols stay, because they are the `IMAGE symbol @0xaddr` citation form.
+  - The `govee_upload` H60A6 DIY sub-effect fields lose their decompile identifiers (`param_1`, `t0`, `r`,
+    `q` and the like). The new names were traced through H60A6DiyParse and the labels on the DIY screens:
+    `speed` in every sub-effect, plus `laps`, `reverse`, `colorful`, `count`, `bead_count`,
+    `tail_length`, `duration`, and LiuDong4Area's `offset_0` / `offset_1`, which the app sets from the
+    direction. A byte the app gives no meaning gets a neutral `untraced_N` that says so in its doc. Only
+    ids change, and nothing read them.
+  - `build_op15_color_ver5` duplicated `build_op15_color_v5` (`33 05 15 01`, colour version 5), and it
+    sized the mask from the mask's bit length instead of the position count. It is removed, and its
+    whole-frame vectors join v5's self-check.
+  - `govee_reference.build_op15_color` duplicated `build_op15_color_bytes_h` (its variant 12) and
+    `build_op15_color_temp_bytes_r` (variant 11). It is removed, along with the helpers only it used,
+    `op15_mask_width` and `op15_mask_from_int`. Its variant 1, the H60A0 basic form
+    (SubModeColorV1.getWriteBytes opType 1), is the new catalogue builder `build_op15_color_basic`.
+    `tests/test_wire_build_vs_spec.py` now compares against the catalogue builders, which give the same
+    bytes for all 2079 inputs it feeds.
+  - The catalogue has 462 builders and 759 self-checks, and `OPCODE_COVERAGE.md` indexes exactly those.
+- The `govee_commands` builders lose their decompile-style parameter names (`b0`, `b2`, `c0`, `t`, `f`, `i`,
+  `p1`, `t1`, `field_a`, `a_flag` and the like). Each new name was traced from the app code the builder
+  cites: `build_low_blue_light` `red` / `green` (the app names the three value bytes red, green and blue;
+  `level` is the blue one), `build_video_color_cali` `yellow, blue, purple, red` (its calibration sliders),
+  `build_ai_filter` `red, green, blue, saturation, filter_code, duration_minutes`, `build_splicing_config`
+  `count, position`, `build_daysync_node` `hour, minute`, `build_diy_create_gif` `diy_code`,
+  `build_color_tem_type` `tem_type`, `build_pick_mic` `mic_source`, `build_video_h6101` `dynamic,
+  part_screen` and `build_video_h6104` `part_screen, sensitivity`. Values the app only copies from a reply
+  or always sends as 0 get `untraced_N`, and their docstrings say so: `build_set_ai_action(_v2)`
+  `untraced_0` / `untraced_1` and `build_splicing_sub_device_mac` `untraced_0`. The daysync upload builders'
+  local helpers `j` / `k` become `unsplit_package` / `split_package`. Bytes are unchanged, and nothing in
+  `src/` or `tests/` passed these parameters by keyword.
+- `build_diy_create_gif_v1` duplicated `build_diy_create_gif` (`33 86 01`, NOTIFY_DEVICE_CREATE_UPLOAD_GIF):
+  same parameters, same bytes, and the same and only app sender, DiyEdit4DeviceCreateGifActivity.l2. It is
+  removed. Its citations and whole-frame vector join `build_diy_create_gif`, whose two overlapping
+  self-checks become one. The catalogue has 461 builders and 757 self-checks, and `OPCODE_COVERAGE.md`
+  indexes exactly those.
+- `33 05 15 05` (op15_kelvin, H60A0): the Kelvin is now spelled `u2be` (it already read high byte first; the
+  generated code is unchanged). The app writes it high byte first (ControllerBuildH60A0.d), and no firmware image
+  handles op 05: on H60A6 it falls to the default branch, which logs 'Unknow msg'. The citations point at that
+  binary path. The catalogue keeps one builder, `build_op15_kelvin_05`. `build_op15_color_temp` and
+  `build_op15_color_temp_05` were byte-identical duplicates and are removed (759 self-checks). A reference check
+  reads `33 05 15 05 0a 8c` back as 2700 K. The last decompiler-style quotes in devices.yaml notes are rewritten in
+  spec terms.
+- The spec is restructured into nine Kaitai files that compile in one `ksc` call
+  (`-t python -w --python-package .`). They replace `govee_ble.ksy` and `govee_adv.ksy`, and every documented
+  fact and citation of the old files has moved to a new home.
+  - Shared files:
+    - `govee_common.ksy` (LIBRARY): the shared enums (`command`, `pro_type`, `sub_mode`, the 18 `form_*`
+      selectors, `color_decode`, `music_decode`, `group_count_rule` and others) and the context-free leaves
+      (`rgb`, `level`, `seg_mask`, `echo` and others).
+    - `govee_profile.ksy` (CONTEXT): `govee_profile(forms, counts, group, power, mode, mode_status)`, the device
+      facts a reader needs. Value 0 of every selector is `unknown`, which leaves an overloaded body as raw bytes.
+    - `govee_state.ksy` (SHARED PAYLOAD): `govee_state(command, source, profile)`, one type for an `aa` reply
+      body and a 0xAC TLV value.
+  - Six STANDALONE roots, one per byte source:
+    - `govee_ble_frame(direction, profile)`: one GATT 2b11 write or 2b10 notification, `[pro_type][body]
+      [checksum]`. `route` (direction and proType) picks the body; `checksum_kind` says xor, sum8 or none.
+    - `govee_status_stream(profile)`: one joined 0xAC status burst, read as TLVs and a 0-2 byte tail.
+    - `govee_upload(kind, form)`: a joined A1 / A3 / A4 value or a decoded cloud scenceParam.
+    - `govee_manufacturer_data`: the 0xFF manufacturer AD payload (was `govee_advertisement`).
+    - `govee_scan_record`: a raw advert or scan-response PDU.
+    - `govee_bgc_info`: the GATT 2b12 value.
+  - The rules:
+    - Each message has one type path.
+    - Context is params only: no `_root`, `_parent`, `io` / `pos` instances, `process` or opaque types.
+    - Every message ends with a lossless `rest` or a named data field.
+    - Every enum is applied to a field.
+    - Every form the app reads or a firmware sends reads without raising; the app's rejections are `app_*`
+      instances.
+- `devices.yaml`: every family with a `client_profile` gets a `wire` block, from which the library builds
+  `govee_profile`.
+  - The block holds `forms`, `counts`, `group`, `power`, `mode` and `mode_status`, with `by_model` /
+    `by_goods_type` / `by_pact` / `by_firmware` overrides.
+  - It adds `relay_heartbeat_on_mask`: 0x03 for goodsTypes 50 / 307, 0x01 for 43, 0x07 for 90.
+  - `ksy` and `mode_0d_kind` are removed; the `govee_common` enums hold their facts.
+  - `devices.schema.json` gains the matching `$defs`, with the selector enums taken from `govee_common.ksy`.
+- New `spec/checks/run.sh` (Suite S).
+  - It runs ksc for python and java with `-w`, then javascript, and fails on any compiler output.
+  - Then `checks/lint.py` checks the meta keys, the banned constructs, the six labelled roots and
+    reachability, that every enum is applied, schema and `mode_color_decode` enum equality, and the doc-ref
+    format.
+- `govee_reference.py` uses the new classes.
+  - `parse_frame(frame, direction, profile)` reads any frame length and checks the trailer by `checksum_kind`.
+  - `parse_status` returns `govee_status_stream`.
+  - New `make_profile(**facts)` and `checksum_ok`.
+  - `parse_color_group` is removed.
+  - The docs (`USING_THE_KSY.md`, `OPCODE_COVERAGE.md`, the GATT, firmware and scene-upload notes) name the
+    new files and types.
+- Review fixes to the new files:
+  - `33 05 15 05` has three app layouts, so it gets the selector `f_15_05` (`form_15_05`): `kelvin` [kelvin
+    u16be] (H60A0, SubModeColorV1 opType 2), `side_brightness` [side][value] (Bytes.H, goodsType 80) and
+    `gradient` [3 x RGB][mask] (Bytes.n). The Kelvin was read little-endian; the app writes it high byte
+    first. `govee_commands.build_op15_color_temp` now writes it big-endian too. devices.yaml sets `kelvin`
+    on goodsType 188 and `side_brightness` on 80. The `op15` enum docs give the right opTypes (0x05 is
+    opType 2, 0x00 is opType 3).
+  - A 0x15 01 colour write, and a 0x0b rgb_mask write, stay raw (bytes in `rest`) when the profile has no
+    segment count. Before, any set mask bit raised.
+  - `checksum_kind` builds its enum from an integer, so the generated Java compiles.
+  - `ic_count` (aa 40 / TLV 0x40) reads the second [IC][segment] pair at bytes 3..5 (`ic_count_2`,
+    `segment_2`), with `segment_signed`, `has_second_pair` and `ic_total` (the sum the goodsType-375 and
+    H6609 / H6250 screens use).
+  - `color_group` flags a group the TLV screen cannot place (`app_rejects_group`, `app_read_fails`) under rule
+    `fixed` too, when `num_pieces` is known. devices.yaml gives h6047 goodsTypes 277 / 288 / 298 their piece
+    counts (12 / 24 / 22).
+  - An aa a2 colour-only group (`f_a2: color_group_rgb`) always reads 3-byte records. Straightfloorlamp
+    goodsType 30 sets that form, for its reads below the firmware gate.
+  - Doc fixes: `f_ee_30` unknown still reads the EE 30 bytes; the plug heartbeat masks of goodsTypes 43 / 90
+    are verified; two devices.yaml / schema cross-references name the new types; seven docs that copied
+    decompiled code are prose now. In Java an unknown proType still reads as null (ksc 0.11 cannot put an
+    imported enum on a value instance); the frame doc says so.
+- Docs trimmed to essentials (docs only; generated code and bytes unchanged). The nine `.ksy` files go
+  from 9405 to 6758 lines, `devices.yaml` from 3788 to 3513 (comments only), and `devices.schema.json`
+  stays at 876 (shorter `description` strings): 14069 to 11147 lines in all. ksc's output differs only in
+  docstrings, plus the order of two sibling imports in `govee_scan_record` and `govee_state`.
+- `devices.yaml` striplight `color_temp_write` cites the BLE builder the colour-tab Kelvin slider runs
+  (`ColorViewModel.U` -> `ColorModeControllerConfig.c` -> `Config.Yt` -> `Bytes.r`). It used to cite
+  `ColorControllerConfig.b`, which builds the IoT command. The frame bytes are unchanged.
+- `devices.yaml` dreamcolorlightv1: a comment records that `color_scheme: h61a8` (the 0x0b write) describes
+  only colour version 3 (17 / 18 below their firmware gates, old H6163 / H6117, part brightness off). The 13
+  goodsTypes 71 to 262 send the h60a6 0x15 frames. `color_scheme` is per family, so the value stays.
+- LOCKSTEP (merge together with the library edits in spec/docs/LOCKSTEP_FRAME_AUDIT_E.md): the section-E forms
+  that change what existing readers return.
+  - `single_command.params` types 33 B2 / A3 / 14.
+  - `mode_read.selector_or_sub_mode` takes `enum: sub_mode`.
+  - `status_tlv` 0x07 reads `status_device_info`.
+  - `status_tlv` 0x05 reads `mode_read` over the exact value, so `cct_read_reply.kelvin_right` is read at
+    `_io.size >= 5`.
+  - `color_group_status.records` is `(len - 1) / 4` plus `trailing`.
+  - Without the library edits, 35 tests fail on each library branch (32 from the B2 / A3 builders, 3 from the
+    0x07 walk). With them, both branches pass.
+- `devices.yaml` now catalogues the light families and goodsTypes that Govee Home 7.7.02 routes but the file
+  did not model: 148 more light goodsTypes (113 -> 261 non-zero) and 205 more SKUs.
+  - How it was traced and checked:
+    - Each family was traced in the complete 7.7.02 decompile from its routing (PFD module, SubLib keys,
+      `Model.t`) through the control screen's connect reads, mode parser and colour builders, with every claim
+      cited `path:line`.
+    - Each trace was then re-traced independently from both ends before it went in. Corrections from that pass
+      are applied, and every Java citation resolves (4244 citations).
+  - 40 new families:
+    - pact_rgbiclight: `chassislightv1` (11 / 162) and `h7090` (44 / 127).
+    - pact_bulblightstringv1: `bulblightstringv2` (35 / 148 / 49 / 91).
+    - pact_hollowlamp: `straightfloorlamp` (30 / 69 / 312 / 377).
+    - pact_h6061: `h6069` (284). The cubelight screen sends it whole-device 0x0d frames, so it is its own
+      entry.
+    - pact_floorlamp: `h6071` (57 / 67), `h60b1` (300), `h60b0` (301).
+    - pact_h6079: `h6079` (156 / 209 / 376), `h6020` (210), `h6022` (249), `h1741` (365).
+    - pact_h6840: `h6840` (278 / 325 / 381 / 382) and `h6609` (173 / 181 / 260 / 362 / 374 / 378 / 392 / 398).
+    - pact_h70b1: `h70b3` (229 / 230 / 231 / 255 / 256), `h6800` (272), `h70b6` (329 / 341), `h70dx`
+      (267 / 268 / 269).
+    - pact_h6099: `pact_h6099` (191 / 203 / 253 / 273 / 327 / 336).
+    - pact_outdoorlight: `h7040` (36), `h7080` (45 / 55 / 56), `h7056` (304), `h7086` (293).
+    - pact_h7050: `h7050`, `h7057`, `h1630`, `h7045` and `h7020`, all 42 of its goodsTypes.
+    - pact_h7075: `h7075`, `h7078`, `h3751`, `h7072`, `h7076`, `h707a`, `h3700`, all 9 of its goodsTypes.
+    - pact_fanlight: `fanlight` (359 / 368), including the fan opcodes (0x31).
+    - pact_h6092: `h6092` (13 projector goodsTypes).
+    - pact_h6630: `h6630` (285 / 286). Its control screen is IoT-only.
+    - `h3a5x` (386) and `h682021` (280) are `untraced`, as h604a is: their feature splits are not in the
+      capture.
+  - Further goodsTypes and SKUs on existing families:
+    - `striplight`: H610A (80) and H610B (114) run the same screen and parser as H6062.
+    - `h6061`: 96 / 97 / 121 / 163 / 228. Panel counts and CCT mask widths differ per goodsType.
+    - `dreamcolorlightv1`: the 13 further SubLib4BleIot keys, 71 to 262, all `kelvin`. AdjustAcV3 is never
+      launched in 7.7.02.
+    - `bulblightv3`: the R-prefixed SKUs (R1501, R14A1, R14C2, R1401, R14C0, R14C1). They route by goodsType
+      to the same screen.
+    - `h61d3` 263: the 0xAC status read and its TLV 0xA5 record.
+  - New strategies:
+    - `rgb_kelvin_15`: H6071 / H6075 read the rgb_kelvin_0d body on sub-mode 0x15.
+    - `kelvin_14_15` and `gradual_14`: straightfloorlamp's colour sub-mode is 0x14.
+    - `bri_rgb_pair_15`, with the new decode `bri_rgb_pair`: H7061's two [brightness][r, g, b] head records.
+  - `devices.schema.json` accepts the new strategy and decode names, sub-mode "0x14", and `power_live`
+    `heartbeat_aa33`, the aa 33 left / right heartbeat of H610A.
+  - `encryption: secret_key_pairing` is set only where the control screen presents 0xB2 on connect: h6071,
+    fanlight from firmware 1.00.20 / 1.00.11, and h6630's square path. A secret used only by pairing, group or
+    room control is `none`, as for h6061 and striplight.
+- Frame-audit section E: the spec forms the library still builds or decodes by hand. Each was traced in the
+  Govee Home 7.7.02 decompile and checked by an adversarial reviewer. Additive only: 9 standalone types wired
+  into no dispatch, and value instances on existing types. No `pos` instances, so a written type is never
+  re-written from them. No enum is applied, no `switch-on` case is added, and no existing field or expression
+  changes. The harness (2,006,142 cases) shows 0 differences, and both branches' suites pass (2053 each).
+  - Requests:
+    - `read_request_sized(selector_len)` and `read_request_frame` write `aa <cmd> <selector...>` with the zero
+      fill the app's frames carry.
+  - Segment masks:
+    - `segment_mask(segment_count, mask_cap)` gives the app's width rule (2 bytes up to 16 segments, else
+      ceil(n/8), capped per body) and the per-segment bits, LSB first.
+    - `op15_brightness_wide.mask_cap` (14) and `color_rgbic_0b_wide.mask_cap` (13).
+  - Writes:
+    - `single_command_typed` types every 0x33 write body, including `33 B2` secret, `33 A3` and `33 14`
+      gradual. `single_command` itself is unchanged; the in-place cases are in the lockstep branch.
+  - Mode reports:
+    - `mode_read.sub_mode` is the `sub_mode` enum view of the byte. `mode_read.is_submode4color` covers
+      0x15 / 0x0b / 0x02 / 0x0d, as `OpInfo4Detail.x` hands them to SubMode4Color.
+    - `mode_read_params` exposes the raw params.
+    - `cct_read_reply.is_cct_positive` and `mode_color_0d_typed.is_cct_kelvin_positive` give the default
+      SubMode4Color rule, signed kelvin > 0.
+  - Status bursts:
+    - `color_group_status_counted(piece_count, group_size, has_brightness)` counts a 0xA5 group's records
+      from its group_index, as the app does.
+    - `status_tlv.total_len` and `status_device_info.app_decodes` (selectors 0x10 / 0x11).
+  - The `aa a5 <group>` direct reply:
+    - `color_group_direct_frame(record_count)` reads it, keeping the padding so it round-trips.
+  - Plugs:
+    - `switch_read_reply.relay0_is_on` .. `relay7_is_on`.
+    - `any_relay_is_on`, `any_relay_0_1_is_on` and `any_relay_0_2_is_on`: the per-goodsType read and
+      heartbeat rules.
+  - IC count:
+    - `ic_segment_read.ic_count_byte_order_suspect` (signed count >= 0x1000) and `ic_count_checked`.
+  - Library-scene upload validators, so a failed check can make a scene activate-only as the app does:
+    - `scenes_graffiti_check` mirrors ShareDiy.isValidGraffitiBytes exactly: size >= 9, the 0x01 lead and
+      the group-header walk.
+    - `rgb_scene_value.is_valid` mirrors ScenesRgb.isValidProtocolBytes.
+  - Held back as lockstep (they change what existing readers return): the single_command params cases,
+    status_tlv 0x07 -> status_device_info and 0x05 -> mode_read, and the sub_mode enum applied to
+    mode_read's field. They are measured on a separate branch for the library owner.
+- `devices.yaml`: non-colour data and citations that the complete Govee Home 7.7.02 decompile contradicts
+  are corrected. Every item was re-read in the code, and every Java citation in the file now resolves
+  (`file:line` within the file).
+  - `delivery`: 42 families move from `base_apk` to `feature_split`. 7.7.02 ships them in on-demand
+    pact_* splits (pact_rgblight, pact_rgbiclight, pact_bulblightstringv1, pact_hollowlamp, pact_plugnew,
+    pact_h705a, pact_h70b1, pact_tvlightv4, pact_h6099, pact_h604a), mapped by goodsType or SKU in
+    `base2home/pfd/Config.b()`. Each line names its module and Config line. h1162 stays `base_apk`: no
+    module claims its goodsTypes. The schema enum is unchanged; its description now says where the mapping
+    lives.
+  - h7004 `red_blue` is cmd 0x0d with payload `[red, blue]`, not 0x01. The plant screen writes
+    `33 0d <red> 01` and reads `aa 0d` at connect. The 1/2/3 codes of the legacy SubModeRedBlue classes
+    are never written. h7017 gains the same opcode.
+  - h6185: the `mic` opcode entry is removed. Mic is mode sub-mode 0x05 (`33 05 05 01`), and 7.7.02 has
+    no rhythm-point controller.
+  - tvlightv1: the sub-modes were right, but only the legacy `Mode` (0x0a / 0x0d) was cited. Scene 0x04
+    and music 0x0e are what the goodsType-12 control screen writes, now cited. `segment_limit` (0x0e,
+    `ControllerLimit`) gains its payload and read.
+  - h61d3: the connect switch is `VM4Light.d0` on `H61D3Support.l0` (goodsType 263), not `f0`, which is
+    goodsType 299. The per-group read is pieces = ceil(IC / 5), groups = ceil(pieces / 4)
+    (`VM4Light.w5` / `x5`), not "group count = ceil(IC / 5)". The library already reads 4 records per
+    group.
+  - bulblightv3: `checkSupportH6005Fuc` does pick H6001's colour sub-mode (0x0d when it holds, else
+    0x02, on the h6001 automation and effect paths). It never applies to H6006 / H6008.
+  - `secret` and the scene-dispatch sources: line numbers and field names updated to 7.7.02
+    (`UrlConstants` p / y / f386y0, `Constant` e / f, `DefInfo` :106, `AbsPairAc4SecretV1` T1 /
+    onEventSecretKey, `SecretKeyConfig` in base2home/scenes, `Diy.parseScenes4Diy` :95, `DiyGraffitiV3.a`
+    :128). The matching §18.5 text in `GOVEE_BLE_GATT_PROTOCOL.md` is corrected too.
+- `govee_reference.load_profiles` follows the app's family routing: cloud goodsType when non-zero, SKU only
+  at goodsType 0. It used to map each SKU to the last family that listed it (H6102 -> dreamcolorlightv2).
+  It now returns `{goodsType | goodsType-0 SKU: client_profile}`, rejects a key two families claim, and
+  `profile_for(profiles, sku, goods_type)` does the lookup. The self-test checks the H6102 and H6001 routes.
+- `devices.yaml` now records every light goodsType's colour-report strategy: how its Govee Home 7.7.02 control
+  screen decodes the colour sub-modes 0x15 / 0x0d / 0x0b / 0x02 of a mode report it gets over BLE (the aa 05
+  reply, or the 0xAC TLV 0x05).
+  - How it was traced and checked:
+    - Every goodsType and SKU-routed family was traced from its routing through to each colour decoder, with
+      file:line citations.
+    - Each trace was re-traced independently.
+    - Spot-checkers re-traced over 330 samples from scratch across two rounds, and all of them matched.
+    - The second round re-checked everything against the complete 7.7.02 decompile.
+  - New top-level sections:
+    - `mode_color_decode`: 19 body decodes. Each gives the byte layout, the Kelvin signedness, the rule for
+      when the app treats the report as a colour temperature, and the matching ksy type.
+    - `mode_color_parse`: 33 strategies, each a map from sub-mode to decode.
+    - The library's strategy names are reused wherever the app's decode is exactly that strategy.
+  - Per family: `client_profile.mode_color_parse`, with overrides `by_goods_type`, `by_model`,
+    `mode_color_by_pact`, `mode_color_by_firmware` and `mode_color_parse_status`.
+    - Coverage is 49 families and 113 goodsTypes.
+    - h604a stays `untraced`: its feature split is not in the 7.7.02 capture.
+  - `families[].assigned_goods_type` (18 items) records the goodsTypes the app assigns legacy SKUs itself, so
+    a client can resolve their strategy:
+    - BK-firmware rewrites to 39 / 40 / 17 / 44;
+    - new-firmware rewrites to 17 / 18 / 19 / 20;
+    - the two pairing binds, H613A-F to 39 and H615A-E to 40.
+  - The section header records the app's routing rules:
+    - family lookup by cloud goodsType, or by SKU at goodsType 0;
+    - the device-list and scan-time pact checks;
+    - when an entry is split by pact.
+  - `devices.schema.json` gains every new property, strictly typed.
+  - `mode_0d_kind` corrections:
+    - tablelampv1 goodsType 128 (H6078) is `cct`, not the inherited `rgb`.
+    - bulblightv3 goodsType 0 (old-firmware H6001) is `unmodelled`.
+    - bulblightv3 goodsTypes 9 / 10 (IoT-only) and 311 (H601E/F, no 0x0d decode) are `none`.
+  - Families gain the 46 goodsTypes and 43 models the app routes to them, each cited. H6184 leaves
+    dreamcolorlightv2; it is chassislightv1.
+  - Colour-report prose that the 7.7.02 code contradicts is corrected. Examples: s16be where the text said
+    u16 BE / u2be; the right parser classes; source line numbers that ran past the end of their files.
+  - `govee_ble.ksy` (doc text only): H61A8 (goodsType 19) reads the 0x15 Kelvin SIGNED. In 7.7.02 its screen
+    is the rgbiclight `AcNewDetail`, whose `OpInfo4Detail.x` decodes 0x15 / 0x0b / 0x02 / 0x0d alike. The
+    unsigned `SubModeColorV2.parse` serves only the legacy dreamcolorlightv1 screens, which goodsType 19
+    never opens. This corrects the item-16 doc in the gap batch below.
+  - `cct_read_reply`'s doc names the newdetail decoder and says the H6047 bar Kelvins are read signed.
+  - Additivity: the readers are unchanged (harness: 2,006,142 cases, 0 differences). Both branches' suites
+    pass (2037 each).
+- Spec gap batch: the decodes the library still hand-codes, now in the spec so it can follow later. Each item
+  was traced in the 7.7.02 decompile (firmware-sourced ones are marked with image and handler) and checked by
+  an adversarial reviewer. Additive: no new enum is applied to a field, no `switch-on` gains a case, and no
+  existing field, enum member or expression changes, except the two cases below. The additivity harness
+  (1,975,202 cases against the 994ea64 readers) differs only in the 300 `mode_color_0d_typed(kind=3)` cases.
+  Kind 3 used to read nothing and no caller passes it. The two intended `trailing` fields are excluded from the
+  comparison. Both branches' suites pass with this spec (2037 each, the same as before).
+  - New enums, applied to no field: `plug_command`, `light_power` / `relay_write` (the `33 01` value rules),
+    `device_info_selector`, `status_tlv_type`, `rx_pro_type`, `encrypt_version`, `mode_0d_kind`,
+    `op15_color_variant`, `mode_read_selector`, `multi_ac_command`, `multi_comm_byte` and `a3_start_marker`.
+    Member names avoid the YAML 1.1 booleans (`light_on` / `light_off`).
+  - New standalone types, wired into no dispatch:
+    - `total_switch_write` (H5089 `33 02`).
+    - `rx_frame`, a device-sent frame typed by proType that never raises on construction, with
+      `multi_ac_reply_chunk` (the 0xAC chunk header, last_len checked as the app does) and `write_ack`.
+    - `section_count_read` (`aa 41`, signed), `status_reply_safe` (an empty TLV buffer gives no entries) and
+      `pact_read_reply` (`aa ef`).
+    - `wifi_mac_read` (`aa 14`), `handshake_key_reply_data` (the E7 01 session key) and `bgc_info`.
+    - `device_info_ble_mac` (`aa 07 06`) and `aging_flag_read` (`aa ff 08`), both firmware-sourced; the
+      second is marked test-only.
+    - The scene-param wrappers `scenes_graffiti_param`, `compose_scene_param`, `h60a6_scene_param` and
+      `h6052_graffiti_param`.
+    - In `govee_adv.ksy`: `scan_record` / `scan_ad_structure` (the app's scan-record AD walk) and
+      `manufacturer_data_lenient`.
+  - New instances on existing types:
+    - `mode_read.scene_code`, and `cct_read_reply.kelvin_signed` / `kelvin_right_signed`.
+    - `status_zone.zone_a_on` / `zone_b_on`, `bar_switch_read.left_on` / `right_on` and `gradual_read.is_on`.
+    - `secret_read_reply.is_valid`, `sync_time_payload` / `plug_sync_time_payload.marker_is_valid` and
+      `notify_wifi.is_connected`.
+    - The uid / Wi-Fi-MAC validity tests on `device_info_basic` / `device_info_sn` / `device_info_wifi`.
+    - `version3.text` with `is_zero` and the signed parts.
+    - `manufacturer_data.is_govee_pact` / `has_switch_state` / `switch_byte`.
+  - The two exceptions:
+    - `mode_color_0d_report` and `bulb_group_color_read_v2` gain a `trailing` size-eos field. It holds the
+      bytes after the decoded part and sits inside the body substream, so it never takes the BCC.
+    - `mode_color_0d_typed` reads kind 3 as `[r, g, b][kelvin s16be]` from 5 bytes (h60a1 `Info4Detail`,
+      cube `CubeNewInfo4Detail`).
+  - User decisions applied:
+    - `bgc_info` is lenient like today's library rule: it never raises, and `effective_encrypt_version`
+      follows the library where the app throws (item 19).
+    - `version3.text` matches the app's signed `x()` rendering, e.g. `81 05 F6` -> `-127.05.0-10` (item 21).
+  - `devices.yaml` h5080 `client_profile.by_goods_type`, traced per goodsType: `relay_power`
+    (`outlet0` / `all_outlets` / `total_switch`), `relay_on_mask` and `advert_on_mask` for 43, 50, 90 and 307.
+    These come with the matching `devices.schema.json` properties.
+  - Doc and citation fixes:
+    - `device_info_read` / `read_request`: the H5086 `aa 07 10/11` senders are live, there are more
+      `07 07` senders, and `device_info_selector` lists the `07 08` selector.
+    - Corrected decode docs for `status_seg_info`, `bar_switch_write`, `op15_color_write` and the H60A6
+      scene-upload rule.
+    - Advert and GATT-doc line citations.
+  - Catalogue: the `read_mode_bare` / `read_mode` docstrings, and their `OPCODE_COVERAGE.md` entries, cite
+    the real senders (H6057 sends `aa 05 01`). The secret-key builder raises unless the secret is 0 or 8
+    bytes.
+  - Skipped:
+    - 25-ext (per-goodsType 0x15 colour-strategy data in `devices.yaml`): the 0x15 signedness is recorded
+      per SKU in `cct_read_reply.kelvin_signed`'s doc. A `by_goods_type` field needs each goodsType's detail
+      screen traced first.
+- Firmware-doc corrections. Every claim the spec makes about the six decompiled firmwares (H6047, H6006,
+  H6008, H5083, H60A1, H60A6) was re-checked against the images by disassembly, and each correction had an
+  adversarial check. Text and comments only: the ksy structure with docs removed, and its enums, are
+  identical to before, so the generated readers and the wire behaviour don't change.
+  - Corrected across `FIRMWARE_VALIDATION.md`, `GOVEE_BLE_GATT_PROTOCOL.md`, the ksy comments,
+    `OPCODE_COVERAGE.md` and the catalogue docstrings:
+    - H6047 is a BlueX/RivieraWaves ARM Thumb-2 SoC, not Telink.
+    - Every Realtek image drops a bad-BCC frame in its shared write layer. The OTA heads `B0`–`B5`/`BF` skip
+      that check on H60A1/H60A6 and are dropped on H6008.
+    - A shared info layer answers `AA 06/07/14/20/21` (`EF` too, except on H6008) before the per-SKU
+      dispatcher.
+    - `AA 07` answers `02/03/06` only. H6008 and H60A1/H60A6 also take `0A/0B` with no data. `10/11` have no
+      handler and get no reply, or an echo on H60A1/H60A6.
+    - Byte 2 of an `AA 01/04/05` read is never read by the firmware. The reply bytes after the data are the
+      request's bytes.
+    - The bulbs accept `A1` only as `A1 11` (Wi-Fi).
+    - `0x17` is a `33 FF` sub-type, not an opcode.
+    - Head `0x66` is a test stub on the Realtek images.
+    - The per-image opcode lists are corrected.
+  - Cautions, marked firmware-sourced: `33 46` factory-resets and reboots H60A1/H60A6 whatever the payload
+    (on the ksy `check_ic` enum and `build_check_ic` / `build_check_ic_step`). `33 FF`, `66 01/02` and
+    `AA FF 08` are test-only.
+  - `FIRMWARE_VALIDATION.md` §7 lists the firmware-sourced reads the app never sends, such as `AA 07 06`
+    (BLE MAC), H60A6 `AA 30` / `AA 41` and `AA EF`, with the images and handler addresses for each.
+  - `devices.yaml` h5080: the opcode set is labelled as the app's. The `0xA1` multi is the H5089
+    night-light DIY write, not multi-outlet. A firmware note says H5083 SW1.00.30 dispatches no
+    `0x16/0x1F/0xB4`.
+- `spec/govee_reference.py`: `parse_frame`, `parse_status` and `parse_color_group` (and so `_selftest`) work
+  with both reader builds. A read-write build (`tools/gen_kaitai.sh --read-write`) reads only on `_read()`, so
+  those objects are read once; the read-only classes read on construction and are left alone.
+- Standalone write-body types in `govee_ble.ksy`, so a client can serialize every library write with the Kaitai
+  0.11 read-write classes (the header, zero padding and BCC stay in code). None is wired into a `switch-on`, so
+  what the readers return is unchanged. Each layout and cap was traced in the 7.7.02 decompile and checked by
+  an adversarial reviewer, and each round-trips the catalogue builders' frames through both the read-only and
+  the read-write classes:
+  - single-command bodies: `zone_power_write` (`33 30 [zone, state]`, 3 zones on H12D0),
+    `light_direction_write` (`33 30 [value]`: H6038 direction, H6057 main-light switch), `gradual_write`
+    (`[state]` under `33 a3` or `33 14`), `secret_key_write` (`33 b2`, 8 bytes, no selector) and
+    `worry_free_at_night_write` (H6057's 7-byte `33 36` body). 0x30 and 0x36 are shared by several families,
+    and `zone_power_write [1, 0]` is byte-identical to `light_direction_write [1]`, so the family decides.
+  - op15: `op15_color_group_write` (`[group][RGB x 1..4]`, 1-based groups) and one `op15_color_write(variant,
+    mask_width)` covering basic (variant 1), H60A1/H60A6 RGB (12), CCT (11) and colour-instruction version 5,
+    with the mask width checked against each form's app cap (12 / 7 / 7 / 10 bytes: 17 minus the ext bytes
+    before the mask).
+  - wide masks: `op15_brightness_wide` (cap 14), `color_rgbic_0b_wide` (cap 13), and `color_0b_kelvin` (the
+    fixed 7-byte colour-version-6 0x0b form, which the existing 0x0b case can't tell apart).
+  - `read_request`: a writable `0xAA` request, `[command][selector]`, with every selector the app's
+    controllers define. `aa 01` / `aa 04` are bare, as the app sends them.
+- Per-family power and H60A6's 0x0D report, traced in the 7.7.02 decompile with an adversarial check per
+  family:
+  - Every curated control screen that reads the aa 01 reply decodes it `== 1` (`ControllerSwitch`). No
+    curated or profiled control screen reaches the legacy `SwitchController` `!= 0`, though older detail
+    screens for legacy goodsTypes (e.g. dreamcolorlightv1 `adjust/v1`-`v2`) and scene / IoT command paths do. The two rules are now
+    instances: `switch_read_reply.light_is_on` (`== 1`) and `status_switch.is_on` (0xAC TLV 0x01, `!= 0`).
+    `devices.yaml` `client_profile` gains `power_read` (`aa01` or `ac_status`), `power_live`
+    (`heartbeat_aa01`, `heartbeat_aa36`, `push_30`) and a `by_goods_type` override map
+    (`devices.schema.json`), filled for the 9 curated families. H60A4/H60A6 and H6039/H6038/H6048 send no
+    aa 01 read and take connect-time power from the 0xAC status TLV 0x01. h60ax is recorded per goodsType,
+    with its six untraced goodsTypes left out.
+  - H60A1/H60A4/H60A6 decode the 0x0D report as `rgb_kelvin_0d` on every pact (h60a1 `Info4Detail.Q`:
+    `[R,G,B,kelvin s16be]`, CCT only for a signed kelvin > 0, tint never read); new
+    `mode_color_0d_typed.is_cct_positive`. 0x15 stays H60A6's main colour report on pacts (1,2)/(1,3).
+- op15 segment masks in the reference and catalogue (the ksy `mask_width` param waits for a change made
+  together with the library): `bleutils_x`, `make_selected_two_bytes`, `op15_mask` and `op15_mask_width`
+  mirror `BleUtils.X` / `makeSelectedTwoBytes` (`ceil(n/8)` bytes above 16 segments, LSB first);
+  `build_op15_color(segments=...)` writes the wide mask (the default keeps the 2-byte form); new
+  `build_op15_color_bytes_h` / `build_op15_color_temp_bytes_r` mirror `Bytes.h` / `Bytes.r` (7-byte cap, as
+  the app has); `build_op15_gradient_color` raises above 48 segments, where the app's `Bytes.n` throws,
+  instead of silently returning the 48-segment frame; `append_bcc` raises on a payload over 19 bytes. All
+  match the library's `wire.build` byte for byte over 3-56 segments. 760 builder self-checks.
+- Spec-client audit fixes, each verified against the 7.7.02 decompile before applying:
+  - Signed 16-bit fields: the app reads the 0x0D mode-report kelvin (kinds 0 and 2) and the `aa 40` IC
+    count with `BleUtil.getSignedShort`. `govee_ble.ksy` keeps the raw `u2be` fields for existing readers
+    and adds `kelvin_signed`, `report_kelvin_signed` and `ic_count_signed` instances with the app's
+    reading; the `devices.schema.json` `mode_0d_kind` text no longer contradicts itself (`> 0` vs `!= 0`).
+  - 0xAC status TLVs: `status_tlv.len` gets `valid: {max: 0x7f}` (the app reads it signed and fails from
+    0x80), and a standalone `status_device_info` type records that the status parser decodes only selectors
+    0x10 / 0x11 of a 0x07 block and ignores the rest (the 0x07 case still decodes as `device_info_read`
+    for existing readers).
+  - `devices.yaml` / GATT doc: BGC-info byte 0 is the record format and byte 1 the encryptVersion (the
+    prose had them swapped); `GVR6184_XXXX` parses to `R6184`, not `H6184`; and the name-length gates
+    (≥ 11 for GVH/GVR without `_`, ≥ 10 for the bare `GV` fallback) are documented.
+  - `govee_commands.build_brightness_from_percent` computes in float32 like the app's `100.0f` (446
+    off-by-one results change, none in the app's real raw ranges). Reader regenerated (additive: the three
+    instances, `StatusDeviceInfo`, and the `len` check).
+- `tests/test_wire_build_vs_spec.py` (new): every TX builder in `wire.build` and `transport.handshake` is
+  compared byte for byte with its counterpart in the spec's app-traced catalogue (`spec/govee_commands.py`)
+  or reference codec (`spec/govee_reference.py`) over seeded-random inputs: power, brightness, every colour
+  scheme (the tint-pick-as-CCT path over all 178 tint colours), segments up to the 7-byte mask, zones,
+  bars, every scene code, 0xA3 and 0xA4 uploads, plug and secret writes, every read request and the `e7`
+  handshake. The 0x15 colour and CCT frames are bound at every segment count up to 56 to the catalogue's
+  `Bytes.h` / `Bytes.r` builders (the wide mask, added to the spec in faa2cb7). Every builder now equals its
+  catalogue counterpart; a frame that has to differ pending a decision goes in a ratchet that asserts the
+  difference instead of being skipped (the `aa 01` / `aa 04` selector was the last; see Changed).
+- The protocol constants in `wire.build` (`PRO_*`, `CMD_*`, `SUB_*`, `OP15_*`) and `transport.handshake`
+  (`HANDSHAKE_OPCODE` and the e7 steps) are now taken from the generated reader's enums instead of being
+  copied by hand; the names and values are unchanged (pinned by the test above). The device-info selectors
+  (`INFO_*`) and power values (`POWER_*`, `RELAY_*`) stay literals: the ksy has no enum for them yet.
+  `wire.build` is now the wire layer's one import of the generated reader.
+- More decoders read through the generated readers instead of slicing bytes: `parse_direct_color_group` and
+  the 0xAC colour groups (`color_group_read`); `parse_mode_0d` (`mode_color_0d_typed` kind 2, now the same
+  decode as `parse_mode_0d_rgblight`; it no longer takes the 8-10-byte frames the transport never delivers);
+  the `e7` handshake replies (`handshake`); `identify.parse_manufacturer_data` and `parse_broadcast_onoff`
+  (`govee_adv` `manufacturer_data`; a company id outside 16 bits, which bleak never reports, is skipped); and
+  the fallback 0xAC TLV walk (`status_tlv`, read off one shared stream). `tests/test_spec_reader_moves.py`
+  pins each to the byte-level decode it replaced; offline they were identical on 1.8M advertisement, 450k
+  handshake, 450k colour-group and 200k TLV-walk cases. The `wire.parse` module docstring now names the two
+  replies still hand-decoded (the `aa 05 04` scene code and the `aa 41` section count) and why. No frame
+  changed.
+- Re-verified several spec facts against the 7.7.02 decompile (adversarially) and the account device-list,
+  and corrected them: `switch_read_reply` keeps the legacy `SwitchController` `!= 0` semantics as primary and
+  now notes the modern control-screen VM path (`ControllerSwitch.Companion.c` / `ShareVM.N3`) that decodes
+  `== 1` (they differ only for a byte ≥ 2); `MtuConfig` is described as a per-SKU **cache of the negotiated
+  ATT MTU** (default 23, usable size = MTU − 3 floored at 20), written by `saveMtuData` from `onMtuChanged`
+  on a successful exchange — not an app value unrelated to negotiation. Updated `govee_ble.ksy`, the GATT doc
+  and `SCENE_UPLOAD_ENCODING.md`; reader regenerated (one docstring).
+- `spec/devices.yaml` goodsType annotations corrected from the account device-list: H6006 and H6008 are both
+  goodsType 64 (was `H6006 = 20` / `328 = H6008`; 328 is H8015, 20 is the H6001 legacy old-bulb), and H61A8
+  is goodsType 19 (was `207 = H61A8`; 207's SKU is cloud-only and is not H61A8). H6006's colour-temp write
+  uses the 0x0D native path like H6008, not 0x02. goodsType 19 added to the `dreamcolorlightv1` set.
+- `spec/govee_commands.py`: made ruff-clean and `mypy --strict`-clean under the repo config (style and
+  typing only — annotations don't execute under `from __future__ import annotations`; the builders and the
+  757 self-checks are unchanged).
+- `spec/govee_commands.py` (new): the full command-builder catalogue — 463 functions, one per
+  (opcode, variant) the Govee app emits across 99 opcodes, each traced to the decompiled app with a
+  `file:line` citation and a byte-exact self-check. `govee_reference._selftest` runs all 757 checks.
+  Companion to `govee_reference.py` (which keeps the framing primitives). Device-side cross-validated
+  against six firmware images; see `docs/FIRMWARE_VALIDATION.md`.
+- `spec/docs/OPCODE_COVERAGE.md` (new): opcode → builders index, with each opcode's verification tier
+  (firmware-confirmed vs source-modeled), whether `govee_ble.ksy` models it, the constant-only opcodes,
+  and the known gaps.
+- `spec/docs/DEVICE_CATALOGUE.md` (new): the app's full goodsType universe (390 values) vs the 79 the
+  spec models across 51 families, with the unmodeled lighting/plug families and the out-of-scope set,
+  from a source-grounded, adversarially-verified cross-check of the app's `GoodsType`/`Pact` registry.
+- `spec/docs/FIRMWARE_VALIDATION.md` (new): the device-firmware cross-validation of the frame model,
+  checksum and opcode inventory (six images: H6047 Telink + five RTL8720 Realtek), with the resolved
+  discrepancies (handshake is `0xE7`; `0xA5` is the app's mic framing; `0x66` is device-only).
+- `govee_ble.ksy`: `command` enum `0x25 preset_color` and `0xab dynamic_api_support` (were in the MD /
+  registry, missing from the enum); `pro_type 0xa5` + `mic_color_frame` (mic/music live-colour push — a
+  short, additive-checksum frame, deliberately NOT a `frame` case); standalone `bar_switch_write`
+  (`33 36` body `[left,right]`, not wired into `single_command` so a 0x36 frame's `params` stays raw);
+  `a3_start.comm_byte` doc gains V5=10 (compose) / V6=12 (H610B, shared with V7). Reader regenerated.
+- `spec/devices.yaml` / `devices.schema.json`: `mode_0d_kind` gains `rgb_kelvin_0d` (cube h6061 0x0d =
+  `[R,G,B,kelvin s16be]`, no tint); the `rgb_kelvin_tint` and h6188 `mode_read_color` notes corrected to
+  signed Kelvin (`getSignedShort`); the h60a6 `0xA3` END documented as empty for a short value
+  (`makeSendBytesV2`). `GOVEE_BLE_GATT_PROTOCOL.md` §17.3 ABNF `com-type` gains `%x04` (V4), `%x0A` (V5).
 - `govee_ble.ksy`: `soft_version_read` (`aa 06`, ASCII) and `device_info_hard_version` (`aa 07 03`,
-  ASCII). Readers regenerated (the diff is only these additions).
+  ASCII). Readers regenerated: these additions plus docstrings only (parsing unchanged).
+- 0xAC status reply (GATT §4.5, the §14 validation table and the §17.3 ABNF; `govee_ble.ksy` `multi_ac` /
+  `status_reply` docs), per `AbsController4BleSingleSendMultiBack`: bytes 2-3 of the first chunk are the
+  total packet count (u16 LE) and byte 4 the last chunk's data length; the 0xFF chunk is the last data
+  packet, not an empty terminator, and the app also accepts it tagged with its position (pkts - 1).
+  Single-packet replies are documented, and the padding note says the shipped reassembler trims to lastLen,
+  like the app.
+- `spec/govee_reference.py`: `reassemble_ac` / `chunk_ac` follow the app (packet count, lastLen, a last
+  packet tagged 0xFF or its position, 0xFF refused mid-burst) and reproduce both real H60A6 bursts byte for
+  byte (`tests/test_spec_reference_crosscheck.py`); `chunk_ac`'s `sub` defaults to 0x00 (was 0x02), the
+  H60A6 status read's `d()`. The self-test falls back to the library's generated classes (after
+  `tools/gen_kaitai.sh` or `pip install -e .`), so a run from a checkout executes every parser check, and
+  `--strict` fails if they are skipped.
+- `govee_adv.ksy`: `parseBleBroadOnOff` reads `data[6]` (`scanRecord[i6+8]`, the first byte after
+  pact_code; `BleUtil.java:749`), not `data[3]`.
+- 0xA3 upload (`govee_ble.ksy` `a3_start.packet_count`, GATT §4.4, SCENE_UPLOAD_ENCODING.md G7): a value that
+  fits START's 15 - len(commBytes) inline bytes gives packet count 2 and an empty 0xFF END
+  (`MultipleControllerCommV1.makeSendBytesV2`); a longer value's END carries the final chunk, a full 17 bytes
+  when it ends on a frame boundary. The H6006 firmware's a3 reassembler (`FUN_9b020d2c`) accepts both (static
+  firmware analysis). Live-verified on an H6006 (2026-10-15, macOS), which acked a short upload (packet count
+  2, empty END) and then reported the scene active.
+- SCENE_UPLOAD_ENCODING.md §0: commByte is the controller comType (V1=1, V2=2, V3=7, V5=10 compose,
+  V6=12 H610B), and compose is uploaded only when the decoded blob starts with 0x0a (`ScenesOp.o`).
+- `mode_color_0d_typed` kind 2 (`rgb_kelvin_tint`) covers the 0x0d bulbs H6006/H6008 as well as H6188
+  (bulblight `ModeParseStrategyConfig.a`, traced through `VM4Light` to `OpInfo4Detail.parseModeValidBytes`,
+  which takes CCT only for a signed Kelvin > 0); kind 1 stays H6052, whose control screen reads only
+  `[R,G,B]` (`H6052InfoDetail.G`). The H6006/H6008 firmware sends the tint as 0 and pre-zeroes the Kelvin
+  (static firmware analysis). `mode_read`, `mode_color_0d_report` and `is_cct` docs match; `devices.yaml`
+  bulblightv3 `mode_0d_kind` is `rgb_kelvin_tint` (was `cct`), and the schema and USING_THE_KSY.md follow.
+- `devices.yaml` h5080 `relay_switch`: the read-back on-rule per goodsType (43 = bit 0; 50/307 = any of the
+  8 bits; 90 = bits 0..2), matching the three plug profiles' `relay_on_mask` 0x01 / 0xFF / 0x07.
 
 ## [1.3.0] — 2026-10-15
 

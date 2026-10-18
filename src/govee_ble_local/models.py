@@ -94,9 +94,19 @@ class DeviceState:
     # curated SKU is confirmed to report this yet — stays None; the connectable address
     # is otherwise the Bluetooth MAC.
     ble_mac: str | None = None
+    # The colour temperature the device last reported or was set to (> 0), kept while it is in
+    # another mode, as the app keeps its Kelvin: SubMode4Color / Info4Detail take a report's Kelvin
+    # only when it is > 0 (base OpInfo4Detail.parseModeValidBytes:766-778, pact_h60a0 h60a1
+    # Info4Detail.Q:399-406 / :416-427), and H6047 its bars' only when they match (h6047 detail
+    # Info4Detail ctor strategy :173-185). ``color_temp_kelvin`` is set only while the device is in
+    # colour-temperature mode (where the report carries no Kelvin, the H61A8's
+    # ``DeviceProfile.mode_reports_kelvin``, the Kelvin last sent stays until an RGB or scene write or a
+    # scene report); this one is never cleared by a report.
+    last_color_temp_kelvin: int | None = None
 
     @property
     def device_id(self) -> str | None:
-        """The device id the Govee app calls ``device`` (e.g. ``2D:DB:5C:E7:53:F4:74:56``), read
-        with ``aa 07 02``. An alias of ``serial_number``."""
+        """The device id the Govee app calls ``device``; an alias of ``serial_number``.
+
+        E.g. ``2D:DB:5C:E7:53:F4:74:56``, read with ``aa 07 02``."""
         return self.serial_number

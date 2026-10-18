@@ -82,13 +82,14 @@ def test_non_int_rejected() -> None:
 def test_brightness_still_clamps() -> None:
     assert b.brightness(-5)[2] == 0 and b.brightness(500)[2] == 100
     assert b.segment_brightness(1, 500, "h60a6")[4] == 100
-    assert b.segment_brightness(1, -5, "h60a6")[4] == 0
+    # The segment slider's floor is 1 (ViewColorMode.t0: setProgressRange({1, 100})); 0 is never sent.
+    assert b.segment_brightness(1, -5, "h60a6")[4] == 1 and b.segment_brightness(1, 0, "h60a6")[4] == 1
 
 
 def test_all_segments_mask_rejects_what_no_mask_can_hold() -> None:
-    # Formerly clamped to 16 bits; now exact up to 56 segments (7 bytes) and an error above.
+    # Formerly clamped to 16 bits; exact up to 112 segments (the widest body cap, 14 bytes), an error above.
     assert b.all_segments_mask(16) == 0xFFFF and b.all_segments_mask(0) == 0
-    for bad in (-3, 57, 99):
+    for bad in (-3, 113, 200):
         with pytest.raises(GoveeBleInvalidValue, match="segment count"):
             b.all_segments_mask(bad)
 
@@ -98,12 +99,6 @@ def test_secret_check_requires_8_bytes(n: int) -> None:
     with pytest.raises(GoveeBleInvalidValue, match="8 bytes"):
         b.secret_check(bytes(n))
     assert b.secret_check(bytes(range(1, 9)))[2:10] == bytes(range(1, 9))
-
-
-def test_frame_too_long_message() -> None:
-    with pytest.raises(ValueError, match="payload too long: 19"):
-        b.frame(0x33, *range(19))
-    assert len(b.frame(0x33, *range(18))) == 20
 
 
 def test_invalid_value_is_value_error() -> None:

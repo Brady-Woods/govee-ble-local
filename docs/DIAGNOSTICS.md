@@ -6,20 +6,37 @@ namespace, so a consumer (e.g. a Home Assistant integration) can turn it up to u
 analysis — including over a Home Assistant **Bluetooth proxy**, which reaches devices a
 workstation can't.
 
-> ⚠️ **No redaction.** INFO/DEBUG and the frame tier log the account-lock **secret**
-> (`aa b1` / `33 b2`), the device **serial**, and the **Wi-Fi / BLE MAC** verbatim. Fine for
-> your own logs; a log you paste into a public bug report **will contain those**. Scrub before
-> sharing.
+> ⚠️ **Only the secret is redacted.** The account-lock **secret** (`33 b2` write / `aa b1` read
+> reply) is masked in the frame tier and in the JSONL capture. Its plaintext keeps the 2-byte header.
+> Its wire is masked the same way on a plaintext link and blanked whole on an encrypted one. On an
+> encrypted link, a frame with no plaintext keeps only its length: its wire is blanked and the frame
+> tier labels it `withheld`. That covers a frame that arrives before the session is ready (the e7
+> handshake included, so the session key can't be derived from a capture) or after the teardown.
+> Everything else is logged verbatim: every line carries the device's **BLE MAC**, and the frame tier
+> and captures include the device-info replies (**serial / device id**, **Wi-Fi MAC**). Fine for your
+> own logs; scrub a log before you paste it into a public bug report.
 
 ## Log levels
 
+The library follows Home Assistant's guidance for libraries: a failure is **raised** as a typed
+exception and the caller (the integration) decides whether and how to log it. So nothing is
+logged at ERROR; the failure detail is at DEBUG, next to the exception. A consumer that keeps an
+always-on WARNING capture of this logger (as the Home Assistant integration does for its
+diagnostics) sees a device rejection there only if it logs the `GoveeBleCommandRejected` (and the
+`GoveeBleAuthError` of a rejected secret key, the most common one on the plug family) itself, to a
+logger its capture also covers: for Home Assistant, the integration's own package logger, which is
+not a child of `govee_ble_local`.
+
 | Level | What you get |
 |-------|--------------|
-| **ERROR** | Control genuinely failed and you must act: the device **rejected** a write (non-zero result), no ACK after all retries, handshake failed, or an unsupported (AES-GCM V2) device. |
-| **WARNING** | Handled but unexpected — the "why is state stale / what's this device doing" signal: an RX frame the spec can't model (unknown proType/command/sub-type), a malformed status burst, or a status read that came back with no usable data. |
-| **INFO** | Lifecycle milestones, low volume, safe to leave on: connected, session ready (+ encryption mode), first successful poll (one-line state summary), disconnect. |
-| **DEBUG** | Per-operation protocol flow: each command sent (decoded, e.g. `TX write/mode/color_rgbic_15`), each ACK result, each read-back with the resulting state, reconnect/idle events, and `soft` coverage gaps (known opcode, unmodelled payload). |
-| **`govee_ble_local.frames`** (its own logger, at DEBUG) | The full-session firehose: **every** TX/RX frame — direction, decoded label, plaintext hex, on-air (wire) hex, encryption mode. This is the capture surface. Off unless you enable it explicitly; guarded so it costs nothing when off. |
+| **ERROR** | Nothing. A failure is raised instead: the device **rejected** a write (non-zero result) → `GoveeBleCommandRejected` (a rejected secret-key check → `GoveeBleAuthError`); no ACK after all retries, the operation deadline, a connect that timed out, or a BLE I/O call that timed out → `GoveeBleTimeout`; the e7 handshake failed → `GoveeBleHandshakeTimeout` (no reply in time) / `GoveeBleHandshakeConnectionError` (the link dropped, or an e7 write failed on it) — also a `GoveeBleTimeout` / `GoveeBleConnectionError`; the link failed → `GoveeBleConnectionError`; an unsupported (AES-GCM V2) device → `GoveeBleNotSupported`. All subclass `GoveeBleError`. |
+| **WARNING** | Handled but unexpected — the "why is state stale / what's this device doing" signal: an RX frame with an unknown proType (the first one of each proType for this device, until the integration reloads; repeats go to DEBUG), a status read that came back with no usable data even after its retry, a gt 50 / 90 plug switched but its post-power re-read (`aa 06`, `aa 07 03`, `33 b5`) lost the link, a state callback that raised, frame-capture problems (capture directory missing or not writable; an existing capture file that is group- or world-accessible, warned once per file; a write to the capture file failed; the capture queue overflowed), and (cloud extra) a malformed device secret in the account's device list, which is ignored. |
+| **INFO** | One line per device: its first successful poll that read state back, with a one-line state summary. |
+| **DEBUG** | Per-operation protocol flow: each command sent (decoded, e.g. `TX write/mode/color_rgbic_15`), a missing ACK and the reconnect-and-retry it triggers, a rejected write (with its status byte), session attempts, "session ready" (+ encryption mode), link drops (`disconnected`), dropped junk frames (bad checksum, late handshake retransmits), each poll's resulting state, and status bursts that were truncated or did not parse. |
+| **`govee_ble_local.frames`** (its own logger, at DEBUG) | The full-session firehose: **every** TX/RX frame — direction, decoded label, plaintext hex, on-air (wire) hex, encryption mode. A frame with no plaintext is labelled `cipher`, or `withheld` when its wire was blanked (see the redaction note above). This is the capture surface. Off unless you enable it explicitly; guarded so it costs nothing when off. |
+
+`soft` coverage gaps (a known opcode whose payload isn't modelled) are not logged at runtime;
+`govee-ble-analyze` reports them from a capture (see below).
 
 ## Enabling in Home Assistant
 

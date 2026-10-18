@@ -3,7 +3,11 @@ from __future__ import annotations
 
 import json
 
-from govee_ble_local.cloud.account import GoveeCloudAccount
+from conftest import require_optional
+
+require_optional("aiohttp")
+
+from govee_ble_local.cloud.account import GoveeCloudAccount  # noqa: E402
 
 
 def test_parse_secret_and_ble_mac_from_device_settings() -> None:

@@ -13,8 +13,9 @@ from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
+import spec_read
 from conftest import require_optional
-from fake_ble import ble_device
+from fake_ble import ble_device, unacked_via
 
 from govee_ble_local import Capability, Encryption
 from govee_ble_local.devices.brightness import percent_to_raw, raw_to_percent
@@ -22,8 +23,8 @@ from govee_ble_local.devices.device import Device, make_device
 from govee_ble_local.devices.profile import DeviceProfile, profile_for
 from govee_ble_local.exceptions import GoveeBleInvalidValue, GoveeBleNotSupported
 from govee_ble_local.scenes import load_scenes
+from govee_ble_local.wire import _spec
 from govee_ble_local.wire import build as b
-from govee_ble_local.wire import parse
 from govee_ble_local.wire.cct import tint_for_kelvin
 
 
@@ -54,7 +55,7 @@ def _dev(replies: dict[int, list[bytes]] | None = None) -> Device:
 
     d._conn.send = AsyncMock(side_effect=send)  # type: ignore[method-assign]
     d._conn.send_many = AsyncMock(side_effect=send_many)  # type: ignore[method-assign]
-    d._conn.send_unacked = AsyncMock(side_effect=send_many)  # type: ignore[method-assign]
+    d._conn.send_unacked = AsyncMock(side_effect=unacked_via(send_many))  # type: ignore[method-assign]
     d._conn.query = AsyncMock(side_effect=query)  # type: ignore[method-assign]
     d._sent = sent  # type: ignore[attr-defined]
     return d
@@ -131,15 +132,15 @@ def test_color_temp_carries_tint() -> None:
 
 def test_color_temp_round_trips_kaitai() -> None:
     require_optional("kaitaistruct", reason="Kaitai runtime not installed")
-    gb = require_optional("govee_ble_local._generated.govee_ble_frame")
-    m = gb.GoveeBleFrame.from_bytes(b.color_temp(4000, "h6188")).body.params
-    assert m.sub_type == gb.GoveeBleFrame.SubMode.color_cct_0d
-    assert (m.params.r, m.params.g, m.params.b, m.params.kelvin) == (0xFF, 0xFF, 0xFF, 4000)
-    assert (m.params.tint_r, m.params.tint_g, m.params.tint_b) == (0xFF, 0xD5, 0xA1)
+    m = spec_read.tx(b.color_temp(4000, "h6188")).body.params
+    assert m.sub_mode == _spec.Common.SubMode.color_cct_0d
+    c, t = m.params.color, m.params.tint
+    assert (c.r, c.g, c.b, m.params.kelvin) == (0xFF, 0xFF, 0xFF, 4000)
+    assert (t.r, t.g, t.b) == (0xFF, 0xD5, 0xA1)
 
 
 def test_segment_color_temp_rejected() -> None:
-    with pytest.raises(ValueError, match="h6188"):
+    with pytest.raises(GoveeBleNotSupported, match="h6188"):
         b.segment_color_temp(1, 3000, "h6188")
 
 
@@ -159,9 +160,12 @@ def test_percent_to_raw_known_values() -> None:
 
 
 def test_raw_to_percent_known_values_and_clamp() -> None:
-    # ceil((raw-20)/2.37f) + 1, clamped to 0..100
+    # ceil((raw-20)/2.37f) + 1 of the byte clamped to [20, 254] (ViewBrightness.b): 1..100. WAS: 0 below 20.
     assert [raw_to_percent(r, 20, 254) for r in (20, 21, 136, 254, 255)] == [1, 2, 50, 100, 100]
-    assert raw_to_percent(0, 20, 254) == 0
+    assert {raw_to_percent(r, 20, 254) for r in range(0, 18)} == {1}
+    assert raw_to_percent(0, 6, 254) == raw_to_percent(0, 40, 254) == 1
+    # The percent range [1, 100] shows the byte itself (setDrawTextIn100 false). WAS: calculatePercent.
+    assert [raw_to_percent(r, 1, 100) for r in (0, 1, 49, 100, 120)] == [0, 1, 49, 100, 100]
 
 
 def test_brightness_round_trip_every_percent() -> None:
@@ -173,37 +177,34 @@ def test_brightness_round_trip_every_percent() -> None:
 # ── read-back parse ──────────────────────────────────────────────────────────
 def test_parse_mode_0d_rgblight_kelvin_marks_cct() -> None:
     cct = _frame(0xAA, 0x05, 0x0D, 0x10, 0x20, 0x30, 0x0A, 0x8C, 0xFF, 0xAE, 0x54)
-    assert parse.parse_mode_0d_rgblight(cct) == (None, 2700)          # any kelvin != 0 => CCT
-    assert parse.parse_mode_0d(cct) == (None, 2700)                   # the bulbs use the same rule
+    assert spec_read.mode_color(cct) == (None, 2700)                       # the default: kelvin != 0 => CCT
+    assert spec_read.mode_color(cct, "rgb_kelvin_tint") == (None, 2700)    # H6188's own (the app's) decode
     rgb = _frame(0xAA, 0x05, 0x0D, 0x10, 0x20, 0x30)
-    assert parse.parse_mode_0d_rgblight(rgb) == ((0x10, 0x20, 0x30), None)
+    assert spec_read.mode_color(rgb) == ((0x10, 0x20, 0x30), None)
 
 
 def test_parse_mode_0d_rgblight_rejects_other_frames() -> None:
-    assert parse.parse_mode_0d_rgblight(_frame(0xAA, 0x05, 0x04, 0x09)) is None
-    assert parse.parse_mode_0d_rgblight(_frame(0xAA, 0x04, 0x0D)) is None
-    assert parse.parse_mode_0d_rgblight(b"\xaa\x05\x0d\x01\x02") is None   # truncated body
+    assert spec_read.mode_color(_frame(0xAA, 0x05, 0x04, 0x09)) is None
+    assert spec_read.mode_color(_frame(0xAA, 0x04, 0x0D)) is None
+    assert spec_read.mode_color(b"\xaa\x05\x0d\x01\x02") is None   # truncated body
 
 
-def test_ksy_mode_color_0d_typed_kind2() -> None:
+def test_ksy_colour_layouts() -> None:
     require_optional("kaitaistruct", reason="Kaitai runtime not installed")
-    gb = require_optional("govee_ble_local._generated.govee_ble_frame")
-    from io import BytesIO
+    st = _spec.State
 
-    from kaitaistruct import KaitaiStream
+    def layout(kind: str, body: bytes) -> Any:
+        decode = int(getattr(_spec.Common.ColorDecode, kind))
+        return _spec.read(st.ColorReport, body, decode, len(body)).layout
 
-    def typed(kind: int, body: bytes) -> Any:
-        return gb.GoveeBleFrame.ModeColor0dTyped(kind, KaitaiStream(BytesIO(body)))
-
-    t = typed(2, bytes([1, 2, 3, 0x0F, 0xA0, 0xFF, 0xD5, 0xA1]) + bytes(9))
-    assert (t.r, t.g, t.b, t.report_kelvin) == (1, 2, 3, 4000)
-    assert (t.tint_r, t.tint_g, t.tint_b) == (0xFF, 0xD5, 0xA1) and t.is_cct
-    assert not typed(2, bytes([1, 2, 3, 0, 0, 0, 0, 0])).is_cct
-    # kinds 0 / 1 unchanged
-    k0 = typed(0, bytes([1, 0x0A, 0x8C]))
-    assert (k0.gradual_flag, k0.kelvin) == (1, 2700) and not k0.is_cct
-    k1 = typed(1, bytes([7, 8, 9]))
-    assert (k1.r, k1.g, k1.b) == (7, 8, 9) and not k1.is_cct
+    t = layout("rgb_kelvin_tint", bytes([1, 2, 3, 0x0F, 0xA0, 0xFF, 0xD5, 0xA1]) + bytes(8))
+    assert (t.color.r, t.color.g, t.color.b, t.kelvin) == (1, 2, 3, 4000)
+    assert (t.tint.r, t.tint.g, t.tint.b) == (0xFF, 0xD5, 0xA1) and t.is_cct
+    assert not layout("rgb_kelvin_tint", bytes([1, 2, 3, 0, 0, 0, 0, 0])).is_cct
+    k0 = layout("gradual_kelvin_s16be", bytes([1, 0x0A, 0x8C]))
+    assert (k0.gradual, k0.kelvin) == (1, 2700) and k0.is_cct
+    k1 = layout("rgb", bytes([7, 8, 9]))
+    assert (k1.color.r, k1.color.g, k1.color.b) == (7, 8, 9) and not k1.is_cct
 
 
 # ── device ───────────────────────────────────────────────────────────────────
@@ -344,3 +345,11 @@ def test_field_test_runs_end_to_end_and_restores(tmp_path: Path, monkeypatch: py
     # nothing identifying is written: the address is masked to its vendor prefix
     text = report_path.read_text()
     assert "AA:BB:CC:DD:EE:88" not in text and rep["device"]["address"] == "AA:BB:CC:xx:xx:xx"
+
+
+@pytest.mark.parametrize(("raw", "pct"), [(0, 1), (17, 1), (20, 1), (136, 50), (0xFF, 100)])
+def test_a_reported_raw_brightness_reads_as_the_screen_shows_it(raw: int, pct: int) -> None:
+    # ViewBrightness.b: calculatePercent of the byte clamped to [20, 254], so never 0 (WAS: 0 below 18).
+    d = _dev({0x04: [_frame(0xAA, 0x04, raw)]})
+    asyncio.run(d._read_polled())
+    assert d.state.brightness == pct

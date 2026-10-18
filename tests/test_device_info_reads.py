@@ -22,10 +22,9 @@ from govee_ble_local.models import Encryption  # noqa: E402
 from govee_ble_local.transport import connection as conn_mod  # noqa: E402
 from govee_ble_local.wire import build, parse  # noqa: E402
 
-# sku -> (aa 06 reply, aa 07 03 reply, aa 07 02 reply, firmware, hardware, device id)
+# sku -> (aa 06 reply, aa 07 03 reply, aa 07 02 reply, firmware, hardware, device id). The H5083 reads
+# run against its firmware image instead (test_h5083_firmware.test_device_info_is_read_once_per_device).
 CAPTURES = {
-    "H5083": ("aa06312e30302e3330000000000000000000009e", "aa0703312e30322e30300000000000000000009d",
-              "aa0702d0a2b13c17989d860000000000000000c4", "1.00.30", "1.02.00", "86:9D:98:17:3C:B1:A2:D0"),
     "H6047": ("aa06312e30302e3132000000000000000000009e", "aa0703332e30322e30310000000000000000009e",
               "aa07027e17383732d4d671000000000000000088", "1.00.12", "3.02.01", "71:D6:D4:32:37:38:17:7E"),
     "H61A8": ("aa06332e30332e31380000000000000000000095", "aa0703332e30312e31300000000000000000009d",
@@ -95,7 +94,7 @@ def test_device_id_zero_uid_is_invalid_and_one_zero_header_is_dropped() -> None:
 
 
 @pytest.mark.parametrize("sku", sorted(set(CAPTURES) - {"H60A6"}))
-def test_update_reads_the_app_frames_and_skips_the_binary_basic_read(sku: str) -> None:
+def test_device_info_read_sends_only_the_firmware_backed_reads(sku: str) -> None:
     soft, hard, sn, firmware, hardware, device_id = CAPTURES[sku]
     by_request = {(0x06, 0): soft, (0x07, 0x03): hard, (0x07, 0x02): sn}
 
@@ -108,7 +107,8 @@ def test_update_reads_the_app_frames_and_skips_the_binary_basic_read(sku: str) -
     st = d.state
     assert (st.firmware_version, st.hardware_version) == (firmware, hardware)
     assert st.device_id == device_id == st.serial_number
-    assert [fr[1:3].hex() for fr in sent] == ["0600", "0703", "0702", "0711"]   # no aa 07 10
+    # No aa 07 10 / 11: no firmware image handles them and the app never sends them.
+    assert [fr[1:3].hex() for fr in sent] == ["0600", "0703", "0702"]
     assert d._device_info_read is True
 
 
@@ -130,14 +130,15 @@ def test_h60a6_device_id_comes_from_the_sn_read_despite_zeroed_basic() -> None:
     assert d.state.wifi_mac is None
 
 
-def test_binary_basic_read_is_the_fallback_when_the_app_reads_are_unanswered() -> None:
+def test_no_basic_or_wifi_read_even_when_the_app_reads_are_unanswered() -> None:
+    # WAS: aa 07 10 was a fallback for unknown versions. It has no firmware handler (H60A6 echoes the
+    # request as zeros), so it is never sent; a device that answers only it gives nothing.
     basic = frame(0xAA, 0x07, 0x10, 0x5C, 0xE7, 0x53, 0xF4, 0x74, 0x56, 0, 0, 1, 2, 3, 1, 0, 5)
 
     d, sent = _dev("H60A6", lambda fr: [basic] if fr[1:3] == b"\x07\x10" else [])
     asyncio.run(d._read_device_info())
-    assert d.state.firmware_version == "1.02.03" and d.state.hardware_version == "1.00.05"
-    assert d.state.device_id == "56:74:F4:53:E7:5C"
-    assert [fr[1:3].hex() for fr in sent][-1] == "0710"
+    assert [fr[1:3].hex() for fr in sent] == ["0600", "0703", "0702"]
+    assert (d.state.firmware_version, d.state.hardware_version, d.state.device_id) == (None, None, None)
 
 
 def test_ascii_reads_override_the_status_stream_versions() -> None:

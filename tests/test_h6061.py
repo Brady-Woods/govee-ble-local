@@ -8,6 +8,7 @@ and the h6061 family in spec/devices.yaml for citations); none are hardware-veri
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import importlib
 import json
 from pathlib import Path
@@ -15,15 +16,15 @@ from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
-from fake_ble import ble_device
+from fake_ble import ble_device, unacked_via
 
-from govee_ble_local import Capability, Encryption
+from govee_ble_local import Capability, DeviceState, Encryption
 from govee_ble_local.crypto import checksum_ok
+from govee_ble_local.devices import _fold
 from govee_ble_local.devices.device import Device, make_device
-from govee_ble_local.devices.profile import profile_for
+from govee_ble_local.devices.profile import DeviceProfile, profile_for
 from govee_ble_local.exceptions import GoveeBleInvalidValue, GoveeBleNotSupported
 from govee_ble_local.wire import build as b
-from govee_ble_local.wire import parse
 from govee_ble_local.wire.cct import _TINT_BY_KELVIN, tint_for_kelvin
 
 
@@ -62,7 +63,7 @@ def _dev(replies: dict[int, list[bytes]] | None = None,
 
     d._conn.send = AsyncMock(side_effect=send)  # type: ignore[method-assign]
     d._conn.send_many = AsyncMock(side_effect=send_many)  # type: ignore[method-assign]
-    d._conn.send_unacked = AsyncMock(side_effect=send_many)  # type: ignore[method-assign]
+    d._conn.send_unacked = AsyncMock(side_effect=unacked_via(send_many))  # type: ignore[method-assign]
     d._conn.query = AsyncMock(side_effect=query)  # type: ignore[method-assign]
     d._sent = sent  # type: ignore[attr-defined]
     d._queried = queried  # type: ignore[attr-defined]
@@ -153,13 +154,14 @@ def test_other_schemes_still_give_one_frame() -> None:
 
 
 def test_single_frame_rgb_and_segment_builders_refuse_h6061() -> None:
-    with pytest.raises(ValueError, match="color_rgb_frames"):
+    # the scheme can't express it: GoveeBleNotSupported (the Device re-raises it with the SKU)
+    with pytest.raises(GoveeBleNotSupported, match="color_rgb_frames"):
         b.color_rgb(1, 2, 3, "h6061", 23)
-    with pytest.raises(ValueError, match="whole-device only"):
+    with pytest.raises(GoveeBleNotSupported, match="whole-device only"):
         b.segment_rgb(1, 1, 2, 3, "h6061", 23)
-    with pytest.raises(ValueError, match="whole-device only"):
+    with pytest.raises(GoveeBleNotSupported, match="whole-device only"):
         b.segment_color_temp(1, 4000, "h6061", 23)
-    with pytest.raises(ValueError, match="whole-device only"):
+    with pytest.raises(GoveeBleNotSupported, match="whole-device only"):
         b.segment_brightness(1, 50, "h6061", 23)
 
 
@@ -172,7 +174,8 @@ def test_cct_23_panels_golden() -> None:
 
 
 def test_cct_mask_is_first_n_bits_lsb_first_in_three_bytes() -> None:
-    masks = {23: "ffff7f", 24 - 1: "ffff7f", 10: "ff0300", 16: "ffff00", 17: "ffff01",
+    # a one-panel layout is written as 23 panels (_h6061_panels: ColorPieceConfig.Config.s0)
+    masks = {23: "ffff7f", 22: "ffff3f", 1: "ffff7f", 10: "ff0300", 16: "ffff00", 17: "ffff01",
              12: "ff0f00", 4: "0f0000", 2: "030000"}
     for panels, mask in masks.items():
         f = b.color_temp(2700, "h6061", panels)
@@ -322,14 +325,76 @@ def test_update_reads_cct_from_the_0x0d_report() -> None:
 
 
 def test_the_0x0d_report_is_the_bulb_layout_not_the_rgblight_one() -> None:
+    import spec_read
+
     cct = _frame(0xAA, 0x05, 0x0D, 0x10, 0x20, 0x30, 0x0A, 0x8C)
-    assert parse.parse_mode_0d(cct) == (None, 2700)
+    assert spec_read.mode_color(cct, "rgb_kelvin_0d") == (None, 2700)
+
+
+# CubeNewInfo4Detail.U (7.7.02 split_h6061) decodes mode bytes 13 (colour), 4, 10 and 19 only and
+# logs anything else as "is not support!", so a 0x15 report leaves the app's colour as it was, even
+# though the H6061 itself writes 0x15 frames (33 05 15 04 group RGB, 33 05 15 01 CCT).
+def _h6061() -> DeviceProfile:
+    p = profile_for("H6061")
+    assert p is not None
+    return p
+
+
+def test_profile_decodes_only_the_0x0d_colour_report() -> None:
+    assert _h6061().mode_color_parse == "rgb_kelvin_0d"
+
+
+@pytest.mark.parametrize("report", [
+    _frame(0xAA, 0x05, 0x15, 0x04, 0x01, 0xFF, 0x00, 0x00),        # the group-RGB write's shape
+    _frame(0xAA, 0x05, 0x15, 0x01, 0xFF, 0xAE, 0x54, 0x0A, 0x8C),  # the CCT write's shape
+    _frame(0xAA, 0x05, 0x15, 0x01, 0x00, 0x0A, 0x8C),              # the bulbs' 0x15 kelvin layout
+    _frame(0xAA, 0x05, 0x0B, 0x00, 0x0A, 0x8C),                    # another colour sub-mode
+], ids=["15-04-rgb", "15-01-cct", "15-kelvin", "0b"])
+@pytest.mark.parametrize("before", [
+    DeviceState(rgb_color=(1, 2, 3)), DeviceState(color_temp_kelvin=2700, last_color_temp_kelvin=2700),
+    DeviceState(),
+], ids=["rgb", "kelvin", "unknown"])
+def test_a_non_0x0d_colour_report_leaves_the_colour_unchanged(
+        report: bytes, before: DeviceState) -> None:
+    state = dataclasses.replace(before)
+    _fold.apply_mode_reply(_h6061(), state, report)
+    assert state == before
+
+
+def test_update_keeps_the_written_colour_through_a_0x15_report() -> None:
+    d = _dev({0x01: [_frame(0xAA, 0x01, 0x01)], 0x04: [_frame(0xAA, 0x04, 0x37)],
+              0x05: [_frame(0xAA, 0x05, 0x15, 0x04, 0x01, 0xFF, 0x00, 0x00)]})
+
+    async def run() -> None:
+        await d.set_rgb((0x12, 0x34, 0x56))
+        await d.update()
+
+    asyncio.run(run())
+    assert d.state.rgb_color == (0x12, 0x34, 0x56) and d.state.color_temp_kelvin is None
+    assert d.state.is_on is True and d.state.brightness == 55   # the rest of the poll still lands
+
+
+def test_a_0x0d_report_after_an_ignored_0x15_is_still_decoded() -> None:
+    state = DeviceState(rgb_color=(1, 2, 3))
+    _fold.apply_mode_reply(_h6061(), state, _frame(0xAA, 0x05, 0x15, 0x01, 0xFF, 0xAE, 0x54, 0x0A, 0x8C))
+    _fold.apply_mode_reply(_h6061(), state, _frame(0xAA, 0x05, 0x0D, 0xFF, 0xD5, 0xA1, 0x0F, 0xA0))
+    assert state.color_temp_kelvin == 4000 and state.rgb_color is None
+    _fold.apply_mode_reply(_h6061(), state, _frame(0xAA, 0x05, 0x0D, 0x12, 0x34, 0x56, 0x00, 0x00))
+    assert state.rgb_color == (0x12, 0x34, 0x56) and state.color_temp_kelvin is None
+
+
+def test_a_negative_signed_kelvin_in_the_0x0d_report_is_an_rgb_colour() -> None:
+    # The ctor's SubMode4Color strategy reads BleUtil.getSignedShort(bArr[3], bArr[4]) and shows a
+    # Kelvin only when it is > 0, so 0x8000.. (negative) keeps the reported RGB colour.
+    d = _poll(_frame(0xAA, 0x05, 0x0D, 0x12, 0x34, 0x56, 0x80, 0x00))
+    assert d.state.rgb_color == (0x12, 0x34, 0x56) and d.state.color_temp_kelvin is None
 
 
 def test_update_queries_power_brightness_mode_then_every_group() -> None:
     d = _poll(_frame(0xAA, 0x05, 0x0D, 1, 2, 3, 0, 0))
     q = [f[:3].hex() for f in _queried(d) if f[1] in (0x01, 0x04, 0x05, 0xA5)]
-    assert q == ["aa0101", "aa0401", "aa0501"] + [f"aaa5{g:02x}" for g in range(1, 7)]
+    # aa 01 / aa 04 without a selector byte, as the app sends them
+    assert q == ["aa0100", "aa0400", "aa0501"] + [f"aaa5{g:02x}" for g in range(1, 7)]
 
 
 def test_update_reads_panel_colours_from_the_group_replies() -> None:
@@ -470,7 +535,9 @@ def test_tint_pick_uses_the_panel_count_mask() -> None:
 def test_set_rgb_tint_pick_reports_kelvin_state() -> None:
     d = _dev()
     asyncio.run(d.set_rgb((0xFF, 0xAE, 0x54)))
-    d._conn.send.assert_awaited_once()          # type: ignore[attr-defined]  # one frame, not send_many
+    # One write of one frame (set_rgb always hands its frames to send_many, which acks each).
+    d._conn.send_many.assert_awaited_once()     # type: ignore[attr-defined]
+    assert len(d._conn.send_many.await_args.args[0]) == 1  # type: ignore[attr-defined]
     assert d.state.color_temp_kelvin == 2700 and d.state.rgb_color is None
     asyncio.run(d.set_rgb((1, 2, 3)))
     assert d.state.rgb_color == (1, 2, 3) and d.state.color_temp_kelvin is None

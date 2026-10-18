@@ -1,36 +1,53 @@
-"""A scriptable fake Govee BLE peripheral for transport tests.
+"""Scriptable fake Govee BLE peripherals for transport tests.
 
-Stands in for the bleak client returned by ``establish_connection`` and behaves
-like the real hardware as observed in live frame captures:
+They stand in for the bleak client returned by ``establish_connection``. :class:`Peripheral` is the
+bleak side: the links, the GATT layout, and knobs that make a link half-dead, drop it mid-operation,
+fail service discovery, etc. Two peripherals answer on top of it:
 
-* AES_RC4_PSK handshake: replies to ``e7 01`` with the session key (delivered
-  TWICE, as BlueZ/the device double-deliver it), echoes ``e7 02`` ~immediately and
-  retransmits that echo again a little later (late enough to land inside the
-  first query of the session).
-* Acks every ``0x33`` write with ``[0x33, cmd, status]``.
-* Answers the ``0xAC`` status query with a scripted burst.
+* :class:`FirmwareGovee`: a ``spec/firmware.yaml`` image (H5083 today) run by
+  ``tests/firmware_sim.py``. Every frame and advert it sends is built through the spec.
+* :class:`FakeGovee`: a generic peripheral for the SKUs with no firmware image yet. It behaves like
+  the hardware as observed in live frame captures:
 
-Knobs let a test make a link half-dead (stop acking), reject writes, drop the
-link mid-operation, etc.
+  * AES_RC4_PSK handshake: it replies to ``e7 01`` with the session key (delivered TWICE, as
+    BlueZ/the device double-deliver it), echoes ``e7 02`` ~immediately and retransmits that echo
+    again a little later (late enough to land inside the first query of the session).
+  * It acks every ``0x33`` write with ``[0x33, cmd, status]``.
+  * It answers the ``0xAC`` status query with a scripted burst.
 """
 from __future__ import annotations
 
 import asyncio
+import contextvars
+import functools
 import inspect
-from collections.abc import Callable
+import sys
+import weakref
+from collections.abc import Awaitable, Callable, Iterator
+from types import SimpleNamespace
 from typing import Any
 
-from bleak.backends.device import BLEDevice
+import pytest
 
-from govee_ble_local.const import PSK
+from bleak.backends.device import BLEDevice
+from bleak.exc import BleakError
+
+from govee_ble_local.const import BGC_INFO_CHAR_UUID, PSK, SERVICE_UUID, WRITE_CHAR_UUID
 from govee_ble_local.crypto import checksum, decrypt, encrypt
+from govee_ble_local import identify as identify_mod
+from govee_ble_local.devices.device import Device
+from govee_ble_local.transport import connection as connection_mod
+from govee_ble_local.transport.connection import GoveeConnection
+from govee_ble_local.wire import _spec
 
 SESSION_KEY = bytes(range(16))
+# The OTA V1 service: it also carries a 2b12 characteristic (spec/docs/GOVEE_BLE_GATT_PROTOCOL.md).
+OTA_SERVICE_UUID = "00010203-0405-0607-0809-0a0b0c0d1912"
 
 
-def ble_device(address: str, name: str | None) -> BLEDevice:
+def ble_device(address: str, name: str | None, details: dict[str, Any] | None = None) -> BLEDevice:
     """Build a BLEDevice across bleak versions (<1.0 requires ``rssi``; >=1.0 dropped it)."""
-    kwargs: dict[str, Any] = {"details": {}}
+    kwargs: dict[str, Any] = {"details": {} if details is None else details}
     if "rssi" in inspect.signature(BLEDevice.__init__).parameters:
         kwargs["rssi"] = 0
     return BLEDevice(address, name, **kwargs)
@@ -41,27 +58,57 @@ def frame(*b: int) -> bytes:
     return body + bytes([checksum(body)])
 
 
+def status_burst(tlvs: bytes) -> list[bytes]:
+    """A 0xAC status reply carrying the TLV stream ``tlvs``, chunked as the device sends it
+    (AbsController4BleSingleSendMultiBack: first chunk [ac 00 <packets u16le> <lastLen> 03 00] + 12 data
+    bytes, later chunks 17, the last tagged 0xFF; one packet when it all fits in the first)."""
+    if len(tlvs) <= 12:
+        return [frame(0xAC, 0x00, 0x01, 0x00, len(tlvs), 0x03, 0x00, *tlvs)]
+    rest = tlvs[12:]
+    chunks = [rest[i:i + 17] for i in range(0, len(rest), 17)]
+    total = 1 + len(chunks)
+    out = [frame(0xAC, 0x00, total & 0xFF, total >> 8, len(chunks[-1]), 0x03, 0x00, *tlvs[:12])]
+    out += [frame(0xAC, 0xFF if i == len(chunks) else i, *c) for i, c in enumerate(chunks, start=1)]
+    return out
+
+
 class FakeClient:
     """One BLE link. Created per establish_connection call."""
 
-    def __init__(self, device: FakeGovee, disconnected_callback: Callable[[Any], None] | None):
+    def __init__(self, device: Peripheral, disconnected_callback: Callable[[Any], None] | None):
         self.device = device
         self.is_connected = True
         self._disconnected_callback = disconnected_callback
         self._notify: Callable[[Any, bytearray], None] | None = None
-        self.services = _Services(device.bgc)
+        self._services = _Services(
+            device.bgc, duplicate=device.duplicate_bgc_char, uuids=device.gatt_services,
+            write_size=device.write_size,
+        )
         self.writes: list[bytes] = []
         self.dead = False  # half-open: writes "succeed" but nothing comes back
+        self.notify_char: Any = None  # what start_notify subscribed to
+
+    @property
+    def services(self) -> _Services:
+        if self.device.services_error is not None:
+            raise self.device.services_error  # bleak: "Service Discovery has not been performed yet"
+        return self._services
+
+    @services.setter
+    def services(self, value: _Services) -> None:
+        self._services = value
 
     async def start_notify(self, _uuid: str, cb: Callable[[Any, bytearray], None]) -> None:
+        if self.device.start_notify_error is not None:
+            raise self.device.start_notify_error
         if self.device.fail_start_notify:
-            from bleak.exc import BleakError
-
             raise BleakError("notify failed")
+        self.notify_char = _uuid
         self._notify = cb
 
-    async def read_gatt_char(self, _char: Any) -> bytearray:
+    async def read_gatt_char(self, char: Any) -> bytearray:
         self.device.bgc_reads += 1
+        self.device.bgc_read_chars.append(char)
         if self.device.bgc_read_error is not None:
             raise self.device.bgc_read_error
         return bytearray(self.device.bgc or b"")
@@ -75,6 +122,7 @@ class FakeClient:
         if self.is_connected:
             self.is_connected = False
             self.device.disconnects += 1
+            self.device.link_down(self)
             cb = self._disconnected_callback
             if cb is not None:
                 # bleak calls it from the transport after teardown
@@ -83,6 +131,7 @@ class FakeClient:
     def drop(self) -> None:
         """Peripheral/proxy-side link loss."""
         self.is_connected = False
+        self.device.link_down(self)
         if self._disconnected_callback is not None:
             self._disconnected_callback(self)
 
@@ -97,56 +146,114 @@ class FakeClient:
         if self.device.write_error is not None:
             raise self.device.write_error
         self.writes.append(bytes(data))
-        if self.dead:
+        if self.dead or not self.device.accepts_write(_uuid):
             return
         self.device.handle_write(self, bytes(data))
 
 
-class _Services:
-    def __init__(self, bgc: bytes | None) -> None:
+class _Char:
+    """A resolved characteristic: its UUID and the service it sits under."""
+
+    def __init__(self, uuid: str, service: _Service) -> None:
+        self.uuid = uuid
+        self.service = service
+
+
+class _WriteChar(_Char):
+    """The control service's write characteristic, with bleak's ``max_write_without_response_size``."""
+
+    def __init__(self, service: _Service, size: object) -> None:
+        super().__init__(WRITE_CHAR_UUID, service)
+        self.max_write_without_response_size = size
+
+
+class _Service:
+    """One resolved GATT service. The Govee control service (1910) and the OTA service (1912)
+    carry the BGC-info char 2b12 when the device has one; any other service carries nothing."""
+
+    def __init__(self, bgc: bytes | None, *, uuid: str = SERVICE_UUID, write_size: object = None) -> None:
+        self.uuid = uuid
         self._bgc = bgc
+        has_bgc = bgc is not None and uuid in (SERVICE_UUID, OTA_SERVICE_UUID)
+        self.bgc_char = _Char(BGC_INFO_CHAR_UUID, self) if has_bgc else None
+        # The write char only when a test gives it a size (None: the default layout, no write char).
+        has_write = write_size is not None and uuid == SERVICE_UUID
+        self.write_char = _WriteChar(self, write_size) if has_write else None
 
-    def get_characteristic(self, _uuid: str) -> object | None:
-        return object() if self._bgc is not None else None
+    def get_characteristic(self, uuid: str) -> _Char | None:
+        # bleak's BleakGATTService.get_characteristic: the first match in THIS service, never raises.
+        if uuid == WRITE_CHAR_UUID:
+            return self.write_char
+        return self.bgc_char if uuid == BGC_INFO_CHAR_UUID else None
 
 
-class FakeGovee:
-    """The peripheral: behaviour shared across links."""
+class _Services:
+    """bleak's BleakGATTServiceCollection, reduced to what the library can touch."""
 
-    def __init__(self, *, encrypted: bool = True) -> None:
-        self.encrypted = encrypted
-        self.bgc: bytes | None = bytes([1, 1]) if encrypted else None
+    def __init__(
+        self, bgc: bytes | None, *, duplicate: bool = False, uuids: list[str] | None = None,
+        write_size: object = None,
+    ) -> None:
+        self._bgc = bgc
+        # `duplicate`: 2b12 also under the OTA service 1912 (as on some firmwares). `uuids`: the
+        # resolved services in discovery order; None is just 1910 (+ 1912 when `duplicate`).
+        self._duplicate = duplicate
+        if uuids is None:
+            uuids = [SERVICE_UUID, OTA_SERVICE_UUID] if duplicate else [SERVICE_UUID]
+        self.all = [_Service(bgc, uuid=u, write_size=write_size) for u in uuids]
+
+    def __iter__(self) -> Iterator[_Service]:
+        return iter(self.all)
+
+    def get_service(self, uuid: str) -> _Service | None:
+        # Like bleak: matched by UUID across the collection, raising when two services share it.
+        found = [s for s in self.all if s.uuid == uuid]
+        if len(found) > 1:
+            raise BleakError("Multiple Services with this UUID, refer to your desired service by "
+                             "the `handle` attribute instead.")
+        return found[0] if found else None
+
+    def get_characteristic(self, uuid: str) -> _Char | None:
+        # Like bleak: across every service, raising when the UUID exists under two of them.
+        found = [c for s in self.all if (c := s.get_characteristic(uuid)) is not None]
+        if len(found) > 1:
+            raise BleakError("Multiple Characteristics with this UUID, refer to your desired "
+                             "characteristic by the `handle` attribute instead.")
+        return found[0] if found else None
+
+
+class Peripheral:
+    """The bleak side of a fake peripheral, shared across its links: the GATT layout and the
+    transport failure knobs. What it answers is a subclass's :meth:`handle_write`."""
+
+    def __init__(self) -> None:
+        self.bgc: bytes | None = None
         self.clients: list[FakeClient] = []
         self.disconnects = 0
         self.bgc_reads = 0
-        self.ack_status = 0
         self.dead_links = 0          # the first N links never answer anything
         self.write_error: BaseException | None = None
         self.fail_start_notify = False
-        self.late_echo_delay = 0.05  # e7 02 retransmit lands inside the next query
-        self.status_burst: list[bytes] = []
-        self.drop_terminal = False
-        self.received: list[bytes] = []  # decrypted application frames
-        self.read_replies: dict[int, bytes] = {}  # 0xAA command -> reply frame
-        self.on_write: Callable[[FakeClient, bytes], None] | None = None
         # -- failure-injection knobs (all default OFF) --
         self.establish_error: BaseException | None = None  # raised by establish()
         self.establish_calls = 0
         self.bgc_read_error: BaseException | None = None
-        self.withhold_e7_reply = False    # never answer e7 01
-        self.withhold_e7_confirm = False  # never echo e7 02
-        self.drop_on_e7 = False           # drop the link when e7 01 arrives
-        self.app_write_error: BaseException | None = None  # raised on post-handshake writes
-        self.no_ack_cmds: set[int] = set()  # 0x33 commands that are never acked
         self.disconnect_hangs = False     # client.disconnect() never returns
         self.disconnect_started = 0       # how many hanging disconnects were entered
         self.disconnect_error: BaseException | None = None  # raised by client.disconnect()
-        self.ack_then_drop_links = 0      # first N links: ack the first 0x33 write and
-                                          # disconnect in the SAME loop tick
+        self.start_notify_error: BaseException | None = None  # raised by start_notify()
+        self.duplicate_bgc_char = False   # 2b12 under two services (collection lookup raises)
+        # Resolved service UUIDs in discovery order (None: the default layout, see _Services).
+        self.gatt_services: list[str] | None = None
+        self.services_error: BaseException | None = None  # raised by client.services
+        self.bgc_read_chars: list[Any] = []  # the characteristic object of each BGC read
+        # The write characteristic's max_write_without_response_size (None: no write char resolved).
+        self.write_size: object = None
 
     # -- establish_connection stand-in ---------------------------------------
     async def establish(self, _cls: Any, _device: Any, _name: str, **kwargs: Any) -> FakeClient:
         self.connect_kwargs = kwargs
+        self.connect_device = _device  # the BLEDevice this attempt connected with
         self.establish_calls += 1
         if self.establish_error is not None:
             raise self.establish_error
@@ -154,7 +261,391 @@ class FakeGovee:
         if len(self.clients) < self.dead_links:
             client.dead = True
         self.clients.append(client)
+        self.link_up(client)
         return client
+
+    def link_up(self, client: FakeClient) -> None:
+        """A link came up (``establish``)."""
+
+    def link_down(self, client: FakeClient) -> None:
+        """A link went down: the central disconnected, or the peripheral or proxy dropped it."""
+
+    def accepts_write(self, char: Any) -> bool:
+        """Whether a write to ``char`` (a UUID or a characteristic) reaches :meth:`handle_write`."""
+        return True
+
+    def handle_write(self, client: FakeClient, data: bytes) -> None:
+        raise NotImplementedError
+
+
+def _uuid(char: Any) -> str:
+    return str(getattr(char, "uuid", char)).lower()
+
+
+# Every FirmwareGovee still alive, and the test it was made in (None: at import, outside any test). The
+# provenance check (Provenance) accepts what the current test's images and the import-time ones built.
+_LIVE_IMAGES: weakref.WeakSet[FirmwareGovee] = weakref.WeakSet()
+_CURRENT_TEST: list[object | None] = [None]
+# bleak splits a manufacturer AD's payload after its first two bytes, its company id (u2le): the flags
+# byte and the marker's low byte (govee_manufacturer_data's PROCEDURAL note).
+_BLEAK_COMPANY_ID_LEN = 2
+
+
+class FirmwareGovee(Peripheral):
+    """A peripheral whose behaviour is a ``spec/firmware.yaml`` image, run by ``tests/firmware_sim.py``:
+    every frame and advert it sends is built through the spec, and only the image's GATT layout
+    (``image.gatt``) reaches it: a write to another characteristic is lost, and it notifies only on
+    its notify characteristic. One link at a time, as the device takes one central. ``sim`` is the
+    device: its state, clock (:meth:`Sim.advance`) and events (:meth:`Sim.event`, e.g. ``"button"``)."""
+
+    reply_delay = 0.005   # the first frame of a reply; each later one lands 1 ms after the one before
+
+    def __init__(self, image_id: str | None = None, *, seed: int = 1) -> None:
+        from firmware_sim import H5083, Sim   # PyYAML is a test dependency: only this fake needs it
+
+        super().__init__()
+        self.sim = Sim(image_id or H5083, seed=seed)
+        gatt = self.sim.im["gatt"]
+        if gatt["bgc_info"]:
+            raise NotImplementedError("a 2b12 BGC-info characteristic is not modelled")
+        self.gatt_services = [gatt["service"]]
+        self._write_char, self._notify_char = _uuid(gatt["write"]), _uuid(gatt["notify"])
+        self.sku = str(self.sim.im["sku"]).upper()
+        self.sim.on_send = self._deliver
+        self.sim.on_drop = self._device_drop
+        self._client: FakeClient | None = None
+        self._last_at = 0.0
+        # The frames the image built and delivered on each link, not yet received (plain, wire), and the
+        # manufacturer payloads of the adverts it built: their provenance.
+        self._pending: dict[FakeClient, list[tuple[bytes, bytes]]] = {}
+        self.advert_payloads: set[bytes] = set()
+        self.made_in = _CURRENT_TEST[0]
+        _LIVE_IMAGES.add(self)
+
+    @property
+    def received(self) -> list[bytes]:
+        """Each client write as the device decrypted it."""
+        return self.sim.received
+
+    def link_up(self, client: FakeClient) -> None:
+        self._client = client
+        self.sim.connect()
+
+    def link_down(self, client: FakeClient) -> None:
+        if client is self._client:
+            self._client = None
+            self.sim.disconnect()
+
+    def accepts_write(self, char: Any) -> bool:
+        return _uuid(char) == self._write_char
+
+    def handle_write(self, client: FakeClient, data: bytes) -> None:
+        if client is self._client:
+            self.sim.write(data)
+
+    def _deliver(self, _what: str, plain: bytes, wire: bytes) -> None:
+        client = self._client
+        if client is None or _uuid(client.notify_char) != self._notify_char:
+            return
+        if plain in self.sim.built:   # the image built it (a frame handed to sim.send has no provenance)
+            self._pending.setdefault(client, []).append((plain, wire))
+        loop = asyncio.get_running_loop()
+        self._last_at = max(loop.time() + self.reply_delay, self._last_at + 0.001)
+        client.push(wire, self._last_at - loop.time())
+
+    def _device_drop(self) -> None:
+        client, self._client = self._client, None
+        if client is not None:
+            asyncio.get_running_loop().call_soon(client.drop)
+
+    def follow_loop_clock(self) -> None:
+        """Drive the image's clock (its tick events) from the running loop's, one tick a second, from now
+        on: the device's timers then race the library's."""
+        loop = asyncio.get_running_loop()
+        start = loop.time() - self.sim.now_ms / 1000
+
+        def tick() -> None:
+            self.sim.advance(round((loop.time() - start) * 1000) - self.sim.now_ms)
+            loop.call_later(1.0, tick)
+
+        loop.call_later(1.0, tick)
+
+    def take(self, client: FakeClient, frame: bytes) -> tuple[bytes, bytes] | None:
+        """The delivery on ``client``'s link that ``frame`` is (its plaintext or its wire bytes), taken once:
+        a frame is received once."""
+        pending = self._pending.get(client, [])
+        for i, delivery in enumerate(pending):
+            if frame in delivery:
+                return pending.pop(i)
+        return None
+
+    def advertisement(self) -> SimpleNamespace | None:
+        """What a scanner hears now, in bleak's ``AdvertisementData`` shape (``local_name``,
+        ``manufacturer_data`` as {company id: value}, ``rssi``), or None while the device doesn't
+        advertise. The advertising data and the scan response are read through the
+        ``govee_scan_record`` root; bleak's company id is the spec's flags and marker fields."""
+        sent = self.sim.advert()
+        if sent is None:
+            return None
+        name: str | None = None
+        mfg: dict[int, bytes] = {}
+        ad_type = _spec.ScanRecord.AdType
+        for blob in sent:
+            for ad in _spec.read(_spec.ScanRecord, blob).ad_structures:
+                kind = getattr(ad, "ad_type", None)
+                if kind == ad_type.complete_local_name:
+                    name = ad.data.text
+                elif kind == ad_type.manufacturer_specific and blob in self.sim.built:
+                    m, payload = ad.data, ad._raw_data
+                    self.advert_payloads.add(payload)
+                    mfg[m.flags | (m.company_id & 0xFF) << 8] = payload[_BLEAK_COMPANY_ID_LEN:]
+        return SimpleNamespace(local_name=name, manufacturer_data=mfg, rssi=-60)
+
+
+def _subclasses(cls: type) -> list[type]:
+    out = []
+    for sub in cls.__subclasses__():
+        out += [sub, *_subclasses(sub)]
+    return out
+
+
+class Provenance:
+    """A Device whose SKU has a firmware.yaml image reads only what that image sent it.
+
+    * A frame reaches such a Device's connection (``GoveeConnection._enqueue``) only as one delivery of a
+      frame its image built, on the link it arrived on. A FakeGovee's reply, a frame handed to
+      ``sim.send``, or a second copy fails.
+    * While a method of that Device or of its connection runs (and in the tasks and callbacks they
+      start), every RX frame read through ``wire._spec`` is one of those deliveries on the live link.
+      A mocked ``_conn.query`` reply, a genuine frame replayed after a reconnect, or a frame another
+      device received fails.
+    * Every Govee manufacturer payload read for that SKU (``ingest_advertisement``, ``identify``,
+      ``scanner.supported`` / ``match``) is one a live image of that SKU built. Other companies' entries
+      are not checked.
+    * A request an image can't read fails.
+
+    The SKU is the device's, or the image SKU whose profile a Device was built from without ``sku=``.
+    Device subclasses are covered. Reads made to log or describe a frame are not checked. The patches
+    sit on a private MonkeyPatch, so a test's ``monkeypatch.undo()`` keeps them. tests/conftest.py runs
+    the check for every test and fails a test that overrides its fixture."""
+
+    def __init__(self) -> None:
+        from firmware_sim import image_skus
+
+        self.skus = image_skus()
+        self.violations: list[str] = []
+        self._mp = pytest.MonkeyPatch()
+        self._reader: contextvars.ContextVar[tuple[str, Any] | None] = contextvars.ContextVar(
+            "image_reader", default=None)
+        self._quiet: contextvars.ContextVar[bool] = contextvars.ContextVar("describing", default=False)
+        self._links: weakref.WeakKeyDictionary[Any, tuple[Any, set[bytes]]] = weakref.WeakKeyDictionary()
+        self._unreadable: dict[FirmwareGovee, int] = {}
+        self._read = _spec.read
+        self._identify_code = identify_mod.identify.__code__
+
+    # ── installing ─────────────────────────────────────────────────────────────
+    def install(self) -> None:
+        self._test = _CURRENT_TEST[0] = object()
+        self._unreadable = {fw: len(fw.sim.unreadable) for fw in _LIVE_IMAGES}
+        for cls in (Device, *_subclasses(Device)):
+            self._wrap(cls, self._device_scope)
+        self._wrap(GoveeConnection, self._connection_scope)
+        provenance = self
+
+        def init_subclass(cls: type, **kwargs: Any) -> None:   # a Device subclass made during the test
+            provenance._wrap(cls, provenance._device_scope)
+            super(Device, cls).__init_subclass__(**kwargs)  # type: ignore[misc]
+
+        self._mp.setattr(Device, "__init_subclass__", classmethod(init_subclass))
+        read, frame_head, describe_frame = _spec.read, _spec.frame_head, connection_mod.describe_frame
+
+        def checked_read(cls: Any, data: bytes, *params: Any) -> Any:
+            self._check(cls, data, params[0] if params else None)
+            return read(cls, data, *params)
+
+        def checked_frame_head(data: bytes, direction: int, prof: Any) -> Any:
+            self._check(_spec.Frame, data, direction)
+            return frame_head(data, direction, prof)
+
+        self._mp.setattr(_spec, "read", checked_read)
+        self._mp.setattr(_spec, "frame_head", checked_frame_head)
+        self._mp.setattr(connection_mod, "describe_frame", self._quietly(describe_frame))
+
+    def uninstall(self) -> None:
+        self._mp.undo()
+        _CURRENT_TEST[0] = None
+
+    def _images(self) -> list[FirmwareGovee]:
+        """The images this test may read from: the ones it made, and the ones made at import."""
+        return [fw for fw in list(_LIVE_IMAGES) if fw.made_in is None or fw.made_in is self._test]
+
+    def _wrap(self, cls: type, scope: Callable[..., Any]) -> None:
+        for name, fn in list(vars(cls).items()):
+            if not inspect.isfunction(fn) or inspect.isasyncgenfunction(fn):
+                continue
+            if cls is GoveeConnection and name == "_capture":
+                wrapped = self._quietly(fn)
+            elif cls is GoveeConnection and name == "_enqueue":
+                wrapped = self._scoped(fn, scope, admit=True)
+            else:
+                wrapped = self._scoped(fn, scope)
+            wrapped.__kwdefaults__ = fn.__kwdefaults__   # functools.wraps leaves them out; tests read them
+            self._mp.setattr(cls, name, wrapped)
+
+    def _quietly(self, fn: Any) -> Any:
+        @functools.wraps(fn)
+        def quiet(*args: Any, **kwargs: Any) -> Any:
+            token = self._quiet.set(True)
+            try:
+                return fn(*args, **kwargs)
+            finally:
+                self._quiet.reset(token)
+        return quiet
+
+    def _scoped(self, fn: Any, scope: Callable[..., Any], *, admit: bool = False) -> Any:
+        keep = object()
+
+        def enter(obj: Any, args: tuple[Any, ...], kwargs: dict[str, Any]) -> Any:
+            ctx = scope(fn, obj, args, kwargs, keep)
+            return None if ctx is keep else self._reader.set(ctx)
+
+        if inspect.iscoroutinefunction(fn):
+            @functools.wraps(fn)
+            async def scoped_async(obj: Any, *args: Any, **kwargs: Any) -> Any:
+                token = enter(obj, args, kwargs)
+                try:
+                    return await fn(obj, *args, **kwargs)
+                finally:
+                    if token is not None:
+                        self._reader.reset(token)
+            return scoped_async
+
+        @functools.wraps(fn)
+        def scoped(obj: Any, *args: Any, **kwargs: Any) -> Any:
+            token = enter(obj, args, kwargs)
+            try:
+                if admit:
+                    self._admit(obj, args[0] if args else kwargs.get("frame"))
+                out = fn(obj, *args, **kwargs)
+                if fn.__name__ == "__init__" and scope == self._device_scope:
+                    self._tag(obj, args, kwargs)
+                return out
+            finally:
+                if token is not None:
+                    self._reader.reset(token)
+        return scoped
+
+    # ── whose reads ────────────────────────────────────────────────────────────
+    def _image_sku(self, args: tuple[Any, ...], kwargs: dict[str, Any]) -> str | None:
+        """The image SKU a Device.__init__ call makes: its ``sku=``, or with none an image SKU its profile
+        serves (Device would name it after the profile's first SKU)."""
+        sku = kwargs.get("sku")
+        if sku:
+            return str(sku).upper() if str(sku).upper() in self.skus else None
+        profile = args[0] if args else kwargs.get("profile")
+        return next((s.upper() for s in getattr(profile, "skus", ()) if s.upper() in self.skus), None)
+
+    def _tag(self, dev: Any, args: tuple[Any, ...], kwargs: dict[str, Any]) -> None:
+        sku = self._image_sku(args, kwargs)
+        if sku is not None:
+            dev._provenance = (sku, dev._conn)
+            dev._conn._provenance = (sku, dev._conn)
+
+    def _device_scope(self, fn: Any, dev: Any, args: tuple[Any, ...], kwargs: dict[str, Any],
+                      _keep: Any) -> Any:
+        if fn.__name__ == "__init__":
+            sku = self._image_sku(args, kwargs)
+            return None if sku is None else (sku, None)
+        return getattr(dev, "_provenance", None)
+
+    def _connection_scope(self, fn: Any, conn: Any, args: tuple[Any, ...], kwargs: dict[str, Any],
+                          keep: Any) -> Any:
+        return getattr(conn, "_provenance", keep)
+
+    def _identifying(self) -> str | None:
+        """The image SKU an ``identify()`` call on the stack resolved from the advertised name."""
+        frame = sys._getframe(1)
+        while frame is not None:
+            if frame.f_code is self._identify_code:
+                sku = str(frame.f_locals.get("sku") or "").upper()
+                return sku if sku in self.skus else None
+            frame = frame.f_back  # type: ignore[assignment]
+        return None
+
+    # ── the checks ─────────────────────────────────────────────────────────────
+    def _fail(self, sku: str, what: str, raw: bytes) -> None:
+        self.violations.append(f"an {sku} {what} {raw.hex(' ')}, which its firmware image didn't send it")
+
+    def _admit(self, conn: Any, frame: Any) -> None:
+        prov = getattr(conn, "_provenance", None)
+        if prov is None or frame is None:
+            return
+        raw = bytes(frame)
+        client = getattr(conn, "_client", None)
+        link = self._links.get(conn)
+        if link is None or link[0] is not client:
+            link = self._links[conn] = (client, set())
+        fw = getattr(client, "device", None)
+        got = fw.take(client, raw) if isinstance(fw, FirmwareGovee) and fw.sku == prov[0] else None
+        if got is None:
+            self._fail(prov[0], "received", raw)
+        else:
+            link[1].update(got)
+
+    def _check(self, cls: Any, data: bytes, direction: Any) -> None:
+        if self._quiet.get():
+            return
+        raw = bytes(data)
+        if not raw:   # no reply: the library reads b"" as nothing
+            return
+        ctx = self._reader.get()
+        if cls is _spec.Frame and direction == _spec.RX and ctx is not None:
+            sku, conn = ctx
+            link = self._links.get(conn) if conn is not None else None
+            live = link is not None and (link[0] is conn._client or conn._client is None)
+            if not (live and raw in link[1]):
+                self._fail(sku, "read", raw)
+        elif cls is _spec.ManufacturerData:
+            sku = ctx[0] if ctx is not None else self._identifying()
+            if sku is None or not self._is_govee(raw):
+                return
+            if not any(raw in fw.advert_payloads for fw in self._images() if fw.sku == sku):
+                self._fail(sku, "read the advert", raw)
+
+    def _is_govee(self, raw: bytes) -> bool:
+        try:
+            return bool(self._read(_spec.ManufacturerData, raw).is_govee)
+        except Exception:   # noqa: BLE001 - a payload the spec can't read is no Govee entry
+            return False
+
+    def verify(self) -> list[str]:
+        """Every violation in this test, and every request an image couldn't read."""
+        unreadable = [f"{fw.sim.im['id']} can't read the request {raw.hex(' ')}"
+                      for fw in self._images() for raw in fw.sim.unreadable[self._unreadable.get(fw, 0):]]
+        return [*self.violations, *unreadable]
+
+
+class FakeGovee(Peripheral):
+    """The generic peripheral: canned replies for the SKUs with no firmware image."""
+
+    def __init__(self, *, encrypted: bool = True) -> None:
+        super().__init__()
+        self.encrypted = encrypted
+        self.bgc = bytes([1, 1]) if encrypted else None
+        self.ack_status = 0
+        self.late_echo_delay = 0.05  # e7 02 retransmit lands inside the next query
+        self.status_burst: list[bytes] = []
+        self.drop_terminal = False
+        self.received: list[bytes] = []  # decrypted application frames
+        self.read_replies: dict[int, bytes] = {}  # 0xAA command -> reply frame
+        self.on_write: Callable[[FakeClient, bytes], None] | None = None
+        self.withhold_e7_reply = False    # never answer e7 01
+        self.withhold_e7_confirm = False  # never echo e7 02
+        self.drop_on_e7 = False           # drop the link when e7 01 arrives
+        self.app_write_error: BaseException | None = None  # raised on post-handshake writes
+        self.no_ack_cmds: set[int] = set()  # 0x33 commands that are never acked
+        # First N links: ack the first 0x33 write and disconnect in the SAME loop tick.
+        self.ack_then_drop_links = 0
 
     # -- protocol ------------------------------------------------------------
     def _wire(self, plain: bytes, key: bytes | None) -> bytes:
@@ -211,3 +702,17 @@ class FakeGovee:
         elif plain[0] == 0xAA:
             reply = self.read_replies.get(plain[1], frame(0xAA, plain[1], 0x01))
             client.push(self._wire(reply, key), 0.005)
+
+
+def frames_of(frames: list[bytes] | Callable[[int], list[bytes]]) -> list[bytes]:
+    """What a ``send_unacked`` fake was given: a frame list, or (scene uploads) a function of the link's
+    write size, resolved with the default 20 as an unknown MTU is."""
+    return list(frames(20)) if callable(frames) else list(frames)
+
+
+def unacked_via(record: Callable[[list[bytes]], Awaitable[None]]) -> Callable[..., Awaitable[None]]:
+    """A ``send_unacked`` fake that hands the resolved frames to ``record`` (e.g. a ``send_many`` fake)."""
+    async def send_unacked(frames: Any, **_k: object) -> None:
+        await record(frames_of(frames))
+
+    return send_unacked

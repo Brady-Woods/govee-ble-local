@@ -11,6 +11,7 @@ from conftest import require_optional
 
 require_optional("kaitaistruct", reason="Kaitai runtime not installed")
 
+from govee_ble_local.crypto import checksum  # noqa: E402
 from govee_ble_local.wire.describe import (  # noqa: E402
     analyze_status_bursts,
     describe_frame,
@@ -39,7 +40,7 @@ def _soft(plain: bytes) -> list[str]:
 def test_power_frame_clean() -> None:
     label, issues = describe_frame(_frame(0x33, 0x01, 0x01))
     assert not [r for sev, r in issues if sev == "hard"]
-    assert label == "write/switch"
+    assert label == "write/power"
 
 
 def test_mode_color_frame_clean() -> None:
@@ -87,8 +88,8 @@ def test_known_but_unmodelled_payload_is_soft() -> None:
 
 
 def test_modeled_read_reply_is_clean() -> None:
-    label, issues = describe_frame(_frame(0xAA, 0x01, 0x01))  # switch_read_reply IS modelled
-    assert not issues and label == "read/switch"
+    label, issues = describe_frame(_frame(0xAA, 0x01, 0x01))  # power_state IS modelled
+    assert not issues and label == "read/power"
 
 
 def test_mechanism_b_read_reply_now_modelled() -> None:
@@ -148,9 +149,13 @@ def test_status_burst_reassembles_to_known_tlvs() -> None:
 def test_status_burst_unknown_tlv_flagged() -> None:
     a = bytearray(20)
     a[0], a[1] = 0xAC, 0x00
+    a[2], a[4] = 2, 0                        # header: 2 packets, last one carries 0 data bytes
+    a[5] = 0x03                              # command 3, sub 0: the status read's (isSameController)
     a[7], a[8], a[9] = 0x99, 0x01, 0x00     # unknown TLV type 0x99
     b = bytearray(20)
     b[0], b[1] = 0xAC, 0xFF
+    for c in (a, b):   # valid BCCs: a chunk failing it is dropped before reassembly
+        c[19] = checksum(bytes(c[:19]))
     _types, gaps, malformed = analyze_status_bursts([bytes(a), bytes(b)])
     assert any("0x99" in g for g in gaps) and malformed == 0
 

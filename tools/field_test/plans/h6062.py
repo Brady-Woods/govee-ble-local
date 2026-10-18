@@ -9,13 +9,47 @@ read-back for a segment-mixed state), so the light is left in the last colour of
 """
 from __future__ import annotations
 
-from typing import Any
+from functools import partial
+from typing import TYPE_CHECKING
 
-from ..plan import PlanContext, SkuPlan, Step, register_plan
+from ..plan import (
+    DEFAULT_SNAPSHOT_KEYS,
+    RGB,
+    Expect,
+    PlanContext,
+    SkuPlan,
+    Snapshot,
+    Step,
+    brightness_steps,
+    power_steps,
+    register_plan,
+    rgb_steps,
+    scene_steps,
+    state_is,
+    tint_pick_step,
+)
+
+if TYPE_CHECKING:
+    from govee_ble_local import Segment
 
 
-def _seg(st: dict[str, Any], index: int) -> Any:
+def _seg(st: Snapshot, index: int) -> Segment | None:
     return next((s for s in (st.get("segments") or []) if s.index == index), None)
+
+
+def _every_segment(rgb: RGB) -> Expect:
+    """An ``expect``: there are segments, and every one read back as ``rgb``."""
+    return lambda st: bool(st["segments"]) and all(g.rgb == rgb for g in st["segments"])
+
+
+def _segment_rgb(index: int, rgb: RGB) -> Expect:
+    """An ``expect``: segment ``index`` read back as ``rgb``."""
+    return lambda st: (seg := _seg(st, index)) is not None and seg.rgb == rgb
+
+
+def _segment_brightness(index: int, pct: int) -> Expect:
+    """An ``expect``: segment ``index`` read back at ``pct`` brightness."""
+    return lambda st: (seg := _seg(st, index)) is not None and seg.brightness == pct
 
 
 def build_steps(ctx: PlanContext) -> list[Step]:
@@ -23,54 +57,37 @@ def build_steps(ctx: PlanContext) -> list[Step]:
     n = dev.segment_count   # the aa 41 sectionNum, read by the runner's first update()
     first, mid, last = 0, n // 2, n - 1
     s: list[Step] = [
-        Step("segment_count", lambda: dev.set_rgb((255, 255, 255)),
+        Step("segment_count", partial(dev.set_rgb, (255, 255, 255)),
              lambda st: len(st["segments"] or []) == n,
              f"The library read {n} segments (aa 41 sectionNum). Is the whole light now WHITE? "
              "Type how many separate segments it really has.",
              free_text=True,
              note="read-back must hold exactly sectionNum segments; compare the aa 41 reply in the "
                   "frame capture"),
-        Step("power_off", lambda: dev.set_power(False), lambda st: st["is_on"] is False,
-             "Is the light OFF?"),
-        Step("power_on", lambda: dev.set_power(True), lambda st: st["is_on"] is True,
-             "Is the light ON again?"),
+        *power_steps(dev, "Is the light OFF?", "Is the light ON again?"),
     ]
-    for pct, q in ((100, "Is it at FULL brightness?"), (1, "Is it VERY DIM but still lit?"),
-                   (50, "Is it at roughly HALF brightness?")):
-        s.append(Step(f"brightness_{pct}", lambda pct=pct: dev.set_brightness(pct),
-                      lambda st, pct=pct: st["brightness"] == pct, q))
-    for label, rgb in (("red", (255, 0, 0)), ("green", (0, 255, 0)), ("blue", (0, 0, 255))):
-        s.append(Step(f"rgb_{label}", lambda rgb=rgb: dev.set_rgb(rgb),
-                      lambda st, rgb=rgb: bool(st["segments"]) and all(
-                          g.rgb == rgb for g in st["segments"]),
-                      f"Is EVERY segment solid {label.upper()}?"))
+    s += brightness_steps(dev)
+    s += rgb_steps(dev, "Is EVERY segment solid {colour}?", expect=_every_segment)
     for k, q in ((2000, "Is it VERY WARM (orange-ish) white?"), (4000, "Is it NEUTRAL white?"),
                  (6500, "Is it COOL white?"), (9000, "Is it VERY COOL (blue-ish) white?")):
-        s.append(Step(f"color_temp_{k}", lambda k=k: dev.set_color_temp(k),
-                      lambda st, k=k: st["color_temp_kelvin"] == k, q))
-    s.append(Step("rgb_pick_equal_to_4000k_tint", lambda: dev.set_rgb((255, 213, 161)),
-                  lambda st: st["color_temp_kelvin"] == 4000 and st["rgb_color"] is None,
-                  "Is every segment the same NEUTRAL white as at 4000 K (not a peach or orange colour)?",
-                  note="RGB pick 0xFFD5A1 = the 4000 K tint colour: "
-                       "the app sends CCT, 33 05 15 01 ff ff ff 0f a0 ff d5 a1 <mask>, not RGB (Config.Yt)"))
-    s.append(Step("segments_reset_blue", lambda: dev.set_rgb((0, 0, 255)), None,
+        s.append(Step(f"color_temp_{k}", partial(dev.set_color_temp, k), state_is("color_temp_kelvin", k), q))
+    s.append(tint_pick_step(
+        dev, "Is every segment the same NEUTRAL white as at 4000 K (not a peach or orange colour)?",
+        note="RGB pick 0xFFD5A1 = the 4000 K tint colour: "
+             "the app sends CCT, 33 05 15 01 ff ff ff 0f a0 ff d5 a1 <mask>, not RGB (Config.Yt)"))
+    s.append(Step("segments_reset_blue", partial(dev.set_rgb, (0, 0, 255)), None,
                   "Is every segment BLUE (baseline for the per-segment steps)?"))
     for label, idx in (("first", first), ("middle", mid), ("last", last)):
-        s.append(Step(f"segment_{label}_red", lambda idx=idx: dev.set_segment_rgb([idx], (255, 0, 0)),
-                      lambda st, idx=idx: getattr(_seg(st, idx), "rgb", None) == (255, 0, 0),
+        s.append(Step(f"segment_{label}_red", partial(dev.set_segment_rgb, [idx], (255, 0, 0)),
+                      _segment_rgb(idx, (255, 0, 0)),
                       f"Is ONLY the {label} segment (index {idx}) RED, all others blue?"))
     for label, idx in (("first", first), ("middle", mid), ("last", last)):
-        s.append(Step(f"segment_{label}_brightness_20",
-                      lambda idx=idx: dev.set_segment_brightness([idx], 20),
-                      lambda st, idx=idx: getattr(_seg(st, idx), "brightness", None) == 20,
+        s.append(Step(f"segment_{label}_brightness_20", partial(dev.set_segment_brightness, [idx], 20),
+                      _segment_brightness(idx, 20),
                       f"Is the {label} segment (index {idx}) clearly DIMMER than the others?"))
-    s.append(Step("segment_middle_color_temp_2700", lambda: dev.set_segment_color_temp([mid], 2700),
+    s.append(Step("segment_middle_color_temp_2700", partial(dev.set_segment_color_temp, [mid], 2700),
                   None, f"Is the middle segment (index {mid}) WARM white, the others unchanged?"))
-    for name in sorted(dev.scene_names)[:1]:
-        code = codes.get(name)
-        s.append(Step(f"scene_{name}", lambda name=name: dev.set_scene_by_name(name),
-                      lambda st, code=code: st["scene_code"] == code,
-                      f"Scene '{name}': is an effect/scene running (not a plain colour)?"))
+    s += scene_steps(dev, dev.scene_names[:1], codes)
     return s
 
 
@@ -80,6 +97,5 @@ PLAN = register_plan(SkuPlan(
     build_steps=build_steps,
     intro="H6062: segment count (aa 41), power, brightness, whole-device RGB and colour "
           "temperature, per-segment colour / brightness / colour temperature, one scene.",
-    snapshot_keys=("is_on", "brightness", "rgb_color", "color_temp_kelvin", "scene_code", "segments",
-                   "firmware_version", "hardware_version", "serial_number", "wifi_mac"),
+    snapshot_keys=(*DEFAULT_SNAPSHOT_KEYS, "segments"),
 ))

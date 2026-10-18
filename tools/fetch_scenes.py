@@ -17,14 +17,16 @@ import argparse
 import base64
 import binascii
 import contextlib
+import inspect
 import json
 import os
 import pathlib
 import re
-import tempfile
 import sys
+import tempfile
 import urllib.parse
 import urllib.request
+from typing import Any
 
 LIBRARY_URL = "https://app2.govee.com/appsku/v1/light-effect-libraries"
 # Self-contained on purpose (the cloud module carries its own copy). Override with
@@ -34,6 +36,7 @@ OUT_DIR = pathlib.Path(__file__).resolve().parent.parent / "src" / "govee_ble_lo
 # Upper bound on the library response body; real catalogs are well under 1 MiB.
 MAX_RESPONSE_BYTES = 8 * 1024 * 1024
 _SKU_RE = re.compile(r"[A-Za-z0-9]{3,8}")
+Entry = dict[str, Any]  # one scene's catalog entry (JSON object)
 
 
 def validate_sku(sku: str) -> str:
@@ -97,15 +100,14 @@ def _is_placeholder(param_b64: str | None) -> bool:
     bare-activate."""
     if not param_b64:
         return False
-    import base64
     try:
         raw = base64.b64decode(param_b64)
-    except Exception:
+    except (binascii.Error, ValueError):
         return False
     return len(raw) >= 4 and raw[3] == 0xFF
 
 
-def fetch(sku: str, app_version: str = DEFAULT_APP_VERSION) -> dict[str, dict[str, object]]:
+def fetch(sku: str, app_version: str = DEFAULT_APP_VERSION) -> dict[str, Entry]:
     url = f"{LIBRARY_URL}?sku={urllib.parse.quote(validate_sku(sku), safe='')}"
     req = urllib.request.Request(url, headers={"AppVersion": app_version})
     # Fixed https LIBRARY_URL; the only variable part (sku) is validated and URL-quoted above.
@@ -114,7 +116,7 @@ def fetch(sku: str, app_version: str = DEFAULT_APP_VERSION) -> dict[str, dict[st
     if len(raw) > MAX_RESPONSE_BYTES:
         raise ValueError(f"library response for {sku} exceeds {MAX_RESPONSE_BYTES} bytes; refusing")
     payload = json.loads(raw)
-    scenes: dict[str, dict[str, object]] = {}
+    scenes: dict[str, Entry] = {}
     for category in payload.get("data", {}).get("categories", []):
         for scene in category.get("scenes", []):
             effects = scene.get("lightEffects") or []
@@ -125,7 +127,7 @@ def fetch(sku: str, app_version: str = DEFAULT_APP_VERSION) -> dict[str, dict[st
             if code is None:
                 continue
             param = eff.get("scenceParam") or None
-            entry: dict[str, object] = {
+            entry: Entry = {
                 "code": int(code),
                 "param": param,
                 "category": category.get("categoryName"),
@@ -170,7 +172,7 @@ def resolve_placeholders(email: str, password: str, skus: list[str]) -> None:
                 path = catalog_path(sku)
                 if not path.exists():
                     continue
-                data = json.loads(path.read_text())
+                data = json.loads(path.read_text(encoding="utf-8"))
                 ids = [v["param_id"] for v in data.values() if v.get("placeholder") and v.get("param_id")]
                 if not ids:
                     continue
@@ -203,23 +205,32 @@ def _valid_resolved(entry: dict[str, object]) -> bool:
     return isinstance(entry.get("code"), int) and not entry.get("placeholder")
 
 
-def _merge(existing: dict[str, dict], fresh: dict[str, dict]) -> dict[str, dict]:
-    """Combine a fresh public fetch with an existing catalog: take fresh data,
-    but keep any existing entry that's already valid/resolved (never replace a
-    real effect blob with a fresh 0xff stub), and keep entries that dropped out
-    of the public library. This makes re-running idempotent and non-destructive
-    once placeholders have been resolved via --resolve."""
-    # Public metadata that is safe to refresh on a preserved (resolved) entry — it does
-    # NOT touch the param/placeholder resolution, only the upload-driver fields.
-    _refresh = ("scene_type", "cmd_version", "big_effect", "category")
-    merged: dict[str, dict] = {}
+# Public metadata refreshed onto a preserved (resolved) entry. fetch() only sets scene_type /
+# cmd_version / big_effect when the library has them, so they are REPLACED (absent -> dropped),
+# never merged: a stale upload-routing field would pick the wrong upload path.
+_REFRESH = ("scene_type", "cmd_version", "big_effect", "category")
+
+
+def _keeps_resolved_blob(ex: Entry | None, fr: Entry) -> bool:
+    """True if the fresh entry is the public 0xff STUB of a blob the existing entry already
+    resolved (same param_id): the one case where the existing blob beats the fresh fetch."""
+    return (ex is not None and _valid_resolved(ex) and bool(fr.get("placeholder"))
+            and ex.get("param_id") == fr.get("param_id"))
+
+
+def _merge(existing: dict[str, Entry], fresh: dict[str, Entry]) -> dict[str, Entry]:
+    """Combine a fresh public fetch with an existing catalog: take the fresh data, except
+    that a fresh 0xff stub never replaces a real effect blob already resolved via --resolve
+    (that entry keeps its blob, takes the fresh code, and has its public metadata replaced
+    from the fresh entry); and keep entries that dropped out of the public library. This
+    makes re-running idempotent and non-destructive once placeholders have been resolved."""
+    merged: dict[str, Entry] = {}
     for name, fr in fresh.items():
         ex = existing.get(name)
-        if ex is not None and _valid_resolved(ex):
-            keep = dict(ex)  # preserve resolved param/placeholder state...
-            for k in _refresh:  # ...but pull in fresh public metadata (e.g. scene_type)
-                if k in fr:
-                    keep[k] = fr[k]
+        if ex is not None and _keeps_resolved_blob(ex, fr):
+            keep = {k: v for k, v in ex.items() if k not in _REFRESH}
+            keep.update({k: fr[k] for k in _REFRESH if k in fr})
+            keep["code"] = fr["code"]
             merged[name] = keep
         else:
             merged[name] = fr
@@ -238,49 +249,60 @@ def scene_capable_skus() -> list[str]:
     """All supported SKUs whose device declares Capability.SCENES (so new
     families are covered automatically as they're added to the registry), except the
     APP_DEFINED_SCENE_SKUS whose catalogs are not from the scene library."""
+    from govee_ble_local import profile_for, supported_skus
     from govee_ble_local.models import Capability
-    from govee_ble_local.registry import device_profile_for, supported_skus
 
     out: list[str] = []
     for sku in supported_skus():
-        p = device_profile_for(sku)
+        p = profile_for(sku)
         if p is not None and Capability.SCENES in p.capabilities and sku not in APP_DEFINED_SCENE_SKUS:
             out.append(sku)
     return out
 
 
-def audit() -> None:
+def audit(skus: list[str]) -> None:
     """Report per-SKU scene-upload READINESS (read-only, no cloud). For each
-    scene-capable SKU, run every bundled scene through the device's real
-    ``Device.scene_upload_frames`` routing and bucket it:
+    SKU, run every bundled scene through the device's real
+    ``Device.scene_upload_frames`` routing and put it in exactly one bucket
+    (the four add up to ``total``):
       upload      = a dialect burst is produced (0xA3 / 0xA4-MTU)
       activate    = correctly bare-activated (no param, or static sceneType 0)
       BLOCKED     = has a real effect blob + non-static sceneType but NO upload path
-                    (would silently activate-only — the gap to close)
+                    (would silently activate-only — the gap to close), or the
+                    planner rejects it (GoveeBleInvalidValue / GoveeBleNotSupported)
       placeholder = unresolved 0xFF stub (needs `--resolve` with account creds)
+    Any other exception from the planner is a bug and propagates.
     """
     from bleak.backends.device import BLEDevice
 
+    from govee_ble_local.exceptions import GoveeBleInvalidValue, GoveeBleNotSupported
     from govee_ble_local.registry import create_device
     from govee_ble_local.scenes import load_scenes
 
     print(
         f"{'SKU':7s} {'total':>5s} {'upload':>16s} {'activate':>8s} {'BLOCKED':>7s} {'placeh':>6s}  versions"
     )
-    for sku in scene_capable_skus():
+    for sku in skus:
         cat = load_scenes(sku)
         if not cat:
-            print(f"{sku:7s} (no catalog)"); continue
-        dev = create_device(BLEDevice(f"00:00:00:00:00:{0:02x}", sku, details={}), sku)
+            print(f"{sku:7s} (no catalog)")
+            continue
+        # bleak < 1.0 requires rssi (the dependency floor is 0.21); >= 1.0 dropped it.
+        ble_kwargs: dict[str, Any] = {"details": {}}
+        if "rssi" in inspect.signature(BLEDevice.__init__).parameters:
+            ble_kwargs["rssi"] = 0
+        dev = create_device(BLEDevice("00:00:00:00:00:00", sku, **ble_kwargs), sku)
         upload = activate = blocked = placeholder = 0
         dialects: set[str] = set()
         for scene in cat.values():
             if scene.placeholder:
                 placeholder += 1
+                continue
             try:
                 frames = dev.scene_upload_frames(scene)
-            except Exception:
-                frames = None
+            except (GoveeBleInvalidValue, GoveeBleNotSupported):
+                blocked += 1  # the planner refuses this blob: a real upload gap
+                continue
             if frames:
                 upload += 1
                 dialects.add("0xA4" if any(f[0] == 0xA4 for f in frames) else "0xA3")
@@ -288,7 +310,7 @@ def audit() -> None:
                 blocked += 1
             else:
                 activate += 1
-        vers = sorted(getattr(dev, "_scene_versions", frozenset()))
+        vers = sorted(dev.profile.scene_versions)
         u = f"{upload}{sorted(dialects) if dialects else ''}"
         print(f"{sku:7s} {len(cat):5d} {u:>16s} {activate:8d} {blocked:7d} {placeholder:6d}  {vers}")
 
@@ -304,16 +326,23 @@ def main(skus: list[str], app_version: str = DEFAULT_APP_VERSION) -> int:
         try:
             path = catalog_path(sku)
             fresh = fetch(sku, app_version)
-            existing = json.loads(path.read_text()) if path.exists() else {}
-            if not isinstance(existing, dict):
-                raise ValueError(f"existing {path.name} is not a JSON object")
+            existing = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+            if not isinstance(existing, dict) or not all(isinstance(v, dict) for v in existing.values()):
+                raise ValueError(f"existing {path.name} is not a JSON object of scene objects")
         except Exception as err:
             print(f"{sku}: FETCH FAILED: {err}", file=sys.stderr)
             failures += 1
             continue
         scenes = _merge(existing, fresh)
-        write_catalog(path, scenes)
-        kept = sum(1 for n in scenes if n in existing and _valid_resolved(existing[n]))
+        try:
+            write_catalog(path, scenes)
+        except OSError as err:
+            print(f"{sku}: WRITE FAILED: {err}", file=sys.stderr)
+            failures += 1
+            continue
+        # preserved = taken from the existing catalog: resolved blobs kept over a public stub,
+        # plus scenes that are no longer in the public library
+        kept = sum(1 for n in scenes if n not in fresh or _keeps_resolved_blob(existing.get(n), fresh[n]))
         placeholders = sorted(n for n, v in scenes.items() if v.get("placeholder"))
         note = f"; {len(placeholders)} placeholders (run --resolve)" if placeholders else ""
         print(
@@ -329,7 +358,8 @@ def main(skus: list[str], app_version: str = DEFAULT_APP_VERSION) -> int:
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("skus", nargs="*", metavar="SKU", help="SKUs to fetch (default: all scene-capable)")
+    ap.add_argument("skus", nargs="*", metavar="SKU",
+                    help="SKUs to fetch / resolve / audit (default: all scene-capable)")
     mode = ap.add_mutually_exclusive_group()
     mode.add_argument("--audit", action="store_true", help="per-SKU upload readiness; no cloud call")
     mode.add_argument("--resolve", action="store_true",
@@ -348,7 +378,7 @@ if __name__ == "__main__":
     _a = parse_args()
     _skus = _a.skus or scene_capable_skus()
     if _a.audit:
-        audit()
+        audit(_skus)
     elif _a.resolve:
         _email = os.environ.get("GOVEE_EMAIL", "")
         _password = os.environ.get("GOVEE_PASSWORD", "")

@@ -16,39 +16,21 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import functools
 import os
 import sys
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 
-_REPO = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(_REPO / "src"))
+_TOOLS = Path(__file__).resolve().parent
+sys.path.insert(0, str(_TOOLS.parent / "src"))
+sys.path.insert(0, str(_TOOLS))  # sibling h60a6_live_check: the shared H60A6 scan helper
+
+from h60a6_live_check import find_device  # noqa: E402 - needs the sys.path entry above
 
 BLUE = (0, 0, 90)
 RED = (255, 0, 0)
 GREEN = (0, 200, 0)
-
-
-async def find_device(address: str | None):  # type: ignore[no-untyped-def]
-    from bleak import BleakScanner
-
-    if address:
-        return await BleakScanner.find_device_by_address(address, timeout=20.0)
-    from govee_ble_local.identify import sku_from_local_name
-
-    found: dict[str, tuple] = {}
-
-    def _cb(d, adv):  # type: ignore[no-untyped-def]
-        if sku_from_local_name(adv.local_name or d.name or "") == "H60A6":
-            found[d.address] = (d, adv)
-
-    sc = BleakScanner(detection_callback=_cb)
-    await sc.start()
-    await asyncio.sleep(8.0)
-    await sc.stop()
-    if not found:
-        return None
-    d, _ = max(found.values(), key=lambda t: (t[1].rssi if t[1] else -999))
-    return d
 
 
 async def main() -> int:
@@ -61,7 +43,7 @@ async def main() -> int:
 
     from govee_ble_local import create_device
 
-    ble = await find_device(args.address)
+    ble, _adv = await find_device(args.address)
     if ble is None:
         print("no H60A6 found — set --address / GOVEE_H60A6_ADDRESS")
         return 1
@@ -73,12 +55,14 @@ async def main() -> int:
 
     step = 0
 
-    async def obs(desc: str, *coros) -> None:  # type: ignore[no-untyped-def]
+    async def obs(desc: str, *calls: Callable[[], Awaitable[object]]) -> None:
+        """One OBSERVE step: run each zero-arg call in order (a coroutine is only created when its
+        call runs, so a failed send leaves nothing un-awaited)."""
         nonlocal step
         step += 1
         print(f"[{step:2}] OBSERVE: {desc}")
-        for c in coros:
-            await c
+        for call in calls:
+            await call()
         await asyncio.sleep(args.settle)
 
     try:
@@ -87,20 +71,21 @@ async def main() -> int:
         st = await dev.update()
         print(f"     read-back reports {len(st.segments)} segments\n")
 
-        await obs("baseline — ALL reported segments dim BLUE", dev.set_segment_rgb(list(range(n)), BLUE))
+        await obs("baseline — ALL reported segments dim BLUE",
+                  lambda: dev.set_segment_rgb(list(range(n)), BLUE))
         await obs(f"isolate TOP index {top} = RED  →  is the MAIN PANEL red (ring stays blue)?",
-                  dev.set_segment_rgb([top], RED))
+                  lambda: dev.set_segment_rgb([top], RED))
         await obs(f"restore {top} blue; isolate index {n - 2} = RED  →  last RING position?",
-                  dev.set_segment_rgb([top], BLUE), dev.set_segment_rgb([n - 2], RED))
+                  lambda: dev.set_segment_rgb([top], BLUE), lambda: dev.set_segment_rgb([n - 2], RED))
         await obs(f"restore {n - 2} blue; isolate index 0 = RED  →  first RING position?",
-                  dev.set_segment_rgb([n - 2], BLUE), dev.set_segment_rgb([0], RED))
+                  lambda: dev.set_segment_rgb([n - 2], BLUE), lambda: dev.set_segment_rgb([0], RED))
 
         # decisive independence: ring vs top in opposite colours, then read the device's
         # OWN per-segment report back — index `top` holding a distinct colour from 0..n-2
         # proves it's independently addressable (the library requirement for a "main" zone).
         await obs(f"ring 0..{n - 2} = GREEN, top {top} = RED  →  panel red, ring green?",
-                  dev.set_segment_rgb([0], BLUE),
-                  dev.set_segment_rgb(ring, GREEN), dev.set_segment_rgb([top], RED))
+                  lambda: dev.set_segment_rgb([0], BLUE),
+                  lambda: dev.set_segment_rgb(ring, GREEN), lambda: dev.set_segment_rgb([top], RED))
         st = await dev.update()
         by_idx = {s.index: s.rgb for s in st.segments}
         print(f"     read-back: ring sample idx0={by_idx.get(0)} idx{n - 2}={by_idx.get(n - 2)} "
@@ -109,13 +94,13 @@ async def main() -> int:
         print(f"     -> index {top} independently addressable from the ring: "
               f"{'YES' if indep else 'inconclusive (check the read-back above / watch the light)'}")
         await obs(f"SWAP: ring 0..{n - 2} = RED, top {top} = GREEN  →  panel green, ring red?",
-                  dev.set_segment_rgb(ring, RED), dev.set_segment_rgb([top], GREEN))
+                  lambda: dev.set_segment_rgb(ring, RED), lambda: dev.set_segment_rgb([top], GREEN))
 
         if args.full:
-            await obs("full sweep: re-baseline BLUE", dev.set_segment_rgb(list(range(n)), BLUE))
+            await obs("full sweep: re-baseline BLUE", lambda: dev.set_segment_rgb(list(range(n)), BLUE))
             for k in range(n):
                 await obs(f"index {k} = RED  (which element?)",
-                          dev.set_segment_rgb([k], RED))
+                          functools.partial(dev.set_segment_rgb, [k], RED))
                 await dev.set_segment_rgb([k], BLUE)
 
         print("\nprobe complete — leaving both zones on.")

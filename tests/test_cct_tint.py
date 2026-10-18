@@ -25,13 +25,14 @@ from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
+import spec_read
 from conftest import require_optional
 from fake_ble import ble_device
 
 from govee_ble_local.devices.device import Device, make_device
 from govee_ble_local.exceptions import GoveeBleInvalidValue
+from govee_ble_local.wire import _spec
 from govee_ble_local.wire import build as b
-from govee_ble_local.wire import parse
 from govee_ble_local.wire.cct import tint_for_kelvin
 
 # bleak splits the Govee AD into company id (hdr low byte, marker 0x88 high byte) + value
@@ -67,6 +68,11 @@ def _dev(sku: str, adv: Any = None) -> Device:
 
     d._conn.send = AsyncMock(side_effect=send)  # type: ignore[method-assign]
     d._conn.send_many = AsyncMock(side_effect=send_many)  # type: ignore[method-assign]
+    # Any read or upload these write paths did not script fails loudly instead of reaching the
+    # real connection (and the host's Bluetooth stack).
+    d._conn.query = AsyncMock(side_effect=AssertionError("unexpected read"))  # type: ignore[method-assign]
+    d._conn.send_unacked = AsyncMock(  # type: ignore[method-assign]
+        side_effect=AssertionError("unexpected upload"))
     d._sent = sent  # type: ignore[attr-defined]
     return d
 
@@ -191,22 +197,24 @@ def test_h6006_and_h6052_wide_range_ends() -> None:
     asyncio.run(d.set_color_temp(2000))
     asyncio.run(d.set_color_temp(9000))
     assert [f[:11].hex() for f in _sent(d)] == ["33050d" "ff8d0b" "07d0" "ff8d0b",
-                                                 "33050d" "d9e1ff" "2328" "d9e1ff"]
+                                                "33050d" "d9e1ff" "2328" "d9e1ff"]
 
 
 def test_h6188_form_is_unchanged_by_the_both_slot_form() -> None:
     f = b.color_temp(4000, "h6188")
     assert f[:11].hex() == "33050d" "ffffff" "0fa0" "ffd5a1"
-    assert f[:11] != b.color_temp(4000, "h6006")[:12]
+    h6006 = b.color_temp(4000, "h6006")
+    assert h6006[:11].hex() == "33050d" "ffd5a1" "0fa0" "ffd5a1"
+    assert f[:11] != h6006[:11]
 
 
 def test_both_slot_form_round_trips_kaitai() -> None:
     require_optional("kaitaistruct", reason="Kaitai runtime not installed")
-    gb = require_optional("govee_ble_local._generated.govee_ble_frame")
-    m = gb.GoveeBleFrame.from_bytes(b.color_temp(4000, "h6006")).body.params
-    assert m.sub_type == gb.GoveeBleFrame.SubMode.color_cct_0d
-    assert (m.params.r, m.params.g, m.params.b, m.params.kelvin) == (0xFF, 0xD5, 0xA1, 4000)
-    assert (m.params.tint_r, m.params.tint_g, m.params.tint_b) == (0xFF, 0xD5, 0xA1)
+    m = spec_read.tx(b.color_temp(4000, "h6006")).body.params
+    assert m.sub_mode == _spec.Common.SubMode.color_cct_0d
+    c, t = m.params.color, m.params.tint
+    assert (c.r, c.g, c.b, m.params.kelvin) == (0xFF, 0xD5, 0xA1, 4000)
+    assert (t.r, t.g, t.b) == (0xFF, 0xD5, 0xA1)
 
 
 # ── Kelvin: clamp to the device range, whole 100 K steps ─────────────────────
@@ -268,8 +276,8 @@ def test_device_rounds_zone_and_segment_cct() -> None:
 
 # ── read-back of the new write ───────────────────────────────────────────────
 def test_both_slot_report_reads_back_as_cct() -> None:
-    # The device holds what the app wrote: aa 05 0d <tint> <K> <tint>. The app treats any non-zero
-    # kelvin as CCT (bulblightstringv1 ModeParseStrategyConfig, tablelampv1 SubModeColor.parse).
+    # The device holds what the app wrote: aa 05 0d <tint> <K> <tint>. The app treats a kelvin > 0
+    # as CCT (bulblight ModeParseStrategyConfig.a -> OpInfo4Detail.parseModeValidBytes).
     d = _dev("H6008")
     d._apply_mode_reply(_frame(0xAA, 0x05, 0x0D, 0xFF, 0xAE, 0x54, 0x0A, 0x8C, 0xFF, 0xAE, 0x54))
     assert d.state.color_temp_kelvin == 2700 and d.state.rgb_color is None
@@ -278,7 +286,8 @@ def test_both_slot_report_reads_back_as_cct() -> None:
 
 
 def test_parse_mode_0d_rule() -> None:
-    assert parse.parse_mode_0d(_frame(0xAA, 0x05, 0x0D, 9, 8, 7, 0x0F, 0xA0)) == (None, 4000)
-    assert parse.parse_mode_0d(_frame(0xAA, 0x05, 0x0D, 9, 8, 7, 0, 0)) == ((9, 8, 7), None)
-    assert parse.parse_mode_0d(_frame(0xAA, 0x05, 0x04, 1)) is None
-    assert parse.parse_mode_0d(b"\xaa\x05\x0d\x01") is None
+    # The default "rgb_kelvin" parse's 0x0d decode: any non-zero Kelvin is CCT.
+    assert spec_read.mode_color(_frame(0xAA, 0x05, 0x0D, 9, 8, 7, 0x0F, 0xA0)) == (None, 4000)
+    assert spec_read.mode_color(_frame(0xAA, 0x05, 0x0D, 9, 8, 7, 0, 0)) == ((9, 8, 7), None)
+    assert spec_read.mode_color(_frame(0xAA, 0x05, 0x04, 1)) is None
+    assert spec_read.mode_color(b"\xaa\x05\x0d\x01") is None

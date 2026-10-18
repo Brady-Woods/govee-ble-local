@@ -4,6 +4,10 @@ lost terminators, late disconnect callbacks)."""
 from __future__ import annotations
 
 import asyncio
+import inspect
+import json
+import time
+from pathlib import Path
 
 import pytest
 from bleak.exc import BleakError
@@ -11,13 +15,15 @@ from bleak.exc import BleakError
 from govee_ble_local.crypto import checksum_ok
 from govee_ble_local.exceptions import (
     GoveeBleAuthError,
+    GoveeBleCommandRejected,
     GoveeBleConnectionError,
-    GoveeBleError,
     GoveeBleTimeout,
 )
 from govee_ble_local.models import Encryption
 from govee_ble_local.transport import connection as conn_mod
+from govee_ble_local.transport import framelog
 from govee_ble_local.transport.connection import GoveeConnection
+from govee_ble_local.wire import redact
 
 from fake_ble import FakeGovee, ble_device, frame
 
@@ -42,11 +48,11 @@ H60A6_BURST = [bytes.fromhex(h) for h in [
 def fast(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(conn_mod, "WRITE_ACK_TIMEOUT", 0.1)
     monkeypatch.setattr(conn_mod, "HANDSHAKE_STEP2_TIMEOUT", 0.1)
-    monkeypatch.setattr(conn_mod, "BURST_IDLE_GAP", 0.1)
 
 
-# query()'s idle_gap default is bound at import time, so the `fast` fixture does not change it.
-IDLE_GAP = GoveeConnection.query.__kwdefaults__["idle_gap"]
+# query()'s idle_gap default (BURST_IDLE_GAP) is bound when the method is defined, so patching
+# the module constant would change nothing; tests that need another gap pass idle_gap= instead.
+IDLE_GAP = inspect.signature(GoveeConnection.query).parameters["idle_gap"].default
 
 
 def spy_rx_waits(monkeypatch: pytest.MonkeyPatch, c: GoveeConnection) -> list[float]:
@@ -114,9 +120,20 @@ async def test_write_rejected_is_not_retried(monkeypatch, fast) -> None:
     fake = FakeGovee()
     fake.ack_status = 2
     c = _make(monkeypatch, fake)
-    with pytest.raises(GoveeBleError, match="rejected"):
+    # WAS: the private transport.connection._WriteRejected reached callers.
+    with pytest.raises(GoveeBleCommandRejected, match="rejected"):
         await c.send(frame(0x33, 0x01, 0x01))
     assert len(fake.clients) == 1
+    assert conn_mod._WriteRejected is GoveeBleCommandRejected  # old private name kept as an alias
+
+
+async def test_send_many_rejection_is_typed(monkeypatch, fast) -> None:
+    fake = FakeGovee()
+    fake.ack_status = 3
+    c = _make(monkeypatch, fake)
+    with pytest.raises(GoveeBleCommandRejected, match="status 0x03"):
+        await c.send_many([frame(0x33, 0x01, 0x01), frame(0x33, 0x04, 50)])
+    assert len(fake.received) == 1  # stops at the first refused write
 
 
 async def test_half_dead_link_reconnects_and_retries(monkeypatch, fast) -> None:
@@ -181,7 +198,7 @@ async def test_late_disconnect_callback_from_old_client_is_ignored(monkeypatch, 
     await c.disconnect()
     await c.connect()
     assert c.is_connected
-    c._on_disconnect(old)  # stale callback arriving late
+    c._on_disconnect(old)  # type: ignore[arg-type]  # stale callback arriving late
     assert c.is_connected and c._client is fake.clients[1]
 
 
@@ -203,6 +220,67 @@ async def test_secret_rejection_raises_auth_error(monkeypatch, fast) -> None:
         await c.connect()
 
 
+# -- session frames: once per connection, after the unlock; a refusal changes nothing ----------
+_UNLOCK = frame(0x33, 0xB2, *range(8))
+_SYNC = frame(0x33, 0xB5, 0x6A, 0x49, 0x90, 0x1A, 0x01, 0xF9, 0x00)
+
+
+def _session(monkeypatch, fake: FakeGovee) -> tuple[GoveeConnection, list[int]]:
+    calls: list[int] = []
+
+    def frames() -> list[bytes]:
+        calls.append(1)
+        return [_SYNC]
+
+    return _make(monkeypatch, fake, unlock_frames=lambda: [_UNLOCK], session_frames=frames), calls
+
+
+async def test_session_frames_follow_the_unlock_once_per_connection(monkeypatch, fast) -> None:
+    fake = FakeGovee(encrypted=False)
+    c, calls = _session(monkeypatch, fake)
+    await c.send(frame(0x33, 0x01, 0x11))
+    await c.send(frame(0x33, 0x01, 0x10))
+    assert [f[:2].hex() for f in fake.received] == ["33b2", "33b5", "3301", "3301"]
+    await c.disconnect()
+    await c.connect()                       # a new session sends both again, the provider asked anew
+    assert [f[:2].hex() for f in fake.received[4:]] == ["33b2", "33b5"]
+    assert len(calls) == 2
+
+
+@pytest.mark.parametrize("refusal", ["rejected", "unacked"])
+async def test_a_refused_session_frame_leaves_the_session_ready(monkeypatch, fast, refusal) -> None:
+    fake = FakeGovee(encrypted=False)
+    if refusal == "unacked":
+        fake.no_ack_cmds = {0xB5}
+    else:
+        def reject_sync(client, plain) -> None:
+            client.push(frame(0x33, plain[1], 0x01 if plain[1] == 0xB5 else 0x00), 0.005)
+
+        fake.on_write = reject_sync
+    c, _calls = _session(monkeypatch, fake)
+    await c.connect()                       # no GoveeBleAuthError: only the 33 b2 is the secret check
+    assert c.is_connected
+    await c.send(frame(0x33, 0x01, 0x11))
+    assert fake.received[-1][:2].hex() == "3301"
+
+
+async def test_link_lost_during_a_session_frame_retries_the_session(monkeypatch, fast) -> None:
+    fake = FakeGovee(encrypted=False)
+
+    def drop_first_sync(client, plain) -> None:
+        if plain[1] == 0xB5 and fake.clients.index(client) == 0:
+            client.drop()
+            return
+        client.push(frame(0x33, plain[1], 0x00), 0.005)
+
+    fake.on_write = drop_first_sync
+    c, calls = _session(monkeypatch, fake)
+    await c.connect()
+    assert c.is_connected and len(fake.clients) == 2
+    assert [f[:2].hex() for f in fake.received] == ["33b2", "33b5", "33b2", "33b5"]
+    assert len(calls) == 2
+
+
 async def test_bad_checksum_frames_are_dropped(monkeypatch, fast) -> None:
     fake = FakeGovee(encrypted=False)
 
@@ -212,7 +290,7 @@ async def test_bad_checksum_frames_are_dropped(monkeypatch, fast) -> None:
 
     fake.on_write = junk_then_ack
     c = _make(monkeypatch, fake)
-    with pytest.raises(GoveeBleError, match="rejected"):
+    with pytest.raises(GoveeBleCommandRejected, match="rejected"):
         await c.send(frame(0x33, 0x01, 0x01))
 
 
@@ -232,6 +310,10 @@ async def test_establish_uses_fresh_ble_device(monkeypatch, fast) -> None:
     newer = ble_device(ADDR, "via-proxy")
     c.update_ble_device(newer)
     assert fake.connect_kwargs["ble_device_callback"]() is newer
+    # What actually carries it: the next session attempt connects with the fresher device.
+    await c.disconnect()
+    await c.connect()
+    assert fake.connect_device is newer
 
 
 async def test_operation_timeout(monkeypatch, fast) -> None:
@@ -295,8 +377,8 @@ async def test_secret_is_masked_in_frame_capture(monkeypatch, fast, caplog) -> N
 
 @pytest.mark.parametrize("encrypted", [False, True])
 async def test_secret_is_masked_in_wire_capture(monkeypatch, fast, caplog, encrypted) -> None:
-    """On a plaintext link the wire bytes ARE the secret frame, and on an encrypted
-    link they are decryptable from the captured handshake - mask wire= too."""
+    """On a plaintext link the wire bytes ARE the secret frame: masked like the plaintext. On an
+    encrypted link the ciphertext is blanked whole (its first bytes are AES over the secret's block)."""
     import logging
 
     caplog.set_level(logging.DEBUG, logger="govee_ble_local.frames")
@@ -307,12 +389,83 @@ async def test_secret_is_masked_in_wire_capture(monkeypatch, fast, caplog, encry
     await c.connect()
     secret_lines = [r.getMessage() for r in caplog.records if " plain=33b2" in r.getMessage()]
     assert secret_lines, "the unlock frame must still be captured (masked)"
+    want = b"\xff" * len(unlock) if encrypted else redact.mask_secret(unlock)
     for line in secret_lines:
-        wire_hex = line.split(" wire=")[1].split(" ")[0]
-        # 2-byte header kept, payload blanked, checksum RECOMPUTED over the masked
-        # bytes (WAS: wire_hex[4:] == "ff"*18, i.e. an all-ff tail; FIXED: the last
-        # byte is the XOR of the masked frame, not a leak of the secret's XOR).
-        assert wire_hex[4:-2] == "ff" * 17
-        masked = bytes.fromhex(wire_hex)
-        assert checksum_ok(masked)
+        assert line.split(" wire=")[1].split(" ")[0] == want.hex()
     assert secret.hex() not in caplog.text
+
+
+def _wait_framelog_flushed(timeout: float = 5.0) -> None:
+    """Block until the frame-log writer thread has written every queued record."""
+    deadline = time.monotonic() + timeout
+    while framelog._QUEUE.unfinished_tasks and time.monotonic() < deadline:
+        time.sleep(0.005)
+    assert framelog._QUEUE.unfinished_tasks == 0
+
+
+@pytest.mark.parametrize("encrypted", [False, True])
+async def test_secret_is_masked_in_jsonl_frame_log(
+    monkeypatch, fast, tmp_path: Path, encrypted: bool
+) -> None:
+    """The persistent capture (frame_log= / $GOVEE_FRAME_LOG) gets attached to bug reports:
+    the 33 b2 secret must be masked in BOTH its plain and wire fields, as in the frames logger."""
+    path = tmp_path / "cap.jsonl"
+    fake = FakeGovee(encrypted=encrypted)
+    secret = bytes([0x61, 0x55, 0x21, 0x09, 0x0B, 0x73, 0x5C, 0x54])
+    c = _make(monkeypatch, fake, unlock_frames=lambda: [frame(0x33, 0xB2, *secret)],
+              frame_log=str(path))
+    await c.connect()
+    assert fake.received[0][2:10] == secret  # the device still gets the real key
+    _wait_framelog_flushed()
+    text = path.read_text()
+    records = [json.loads(line) for line in text.splitlines()]
+    secret_records = [r for r in records if (r["plain"] or "").startswith("33b2")]
+    assert [r["dir"] for r in secret_records] == ["tx", "rx"]  # the unlock write and its ack
+    # header kept, payload blanked, checksum recomputed
+    masked = redact.mask_secret(frame(0x33, 0xB2, *secret))
+    for rec in secret_records:
+        # wire masked too: on a plaintext link it IS the secret (masked like the plaintext); on an
+        # encrypted one it is blanked whole.
+        assert rec["plain"] == masked.hex() and checksum_ok(masked)
+        assert rec["wire"] == (b"\xff" * len(masked) if encrypted else masked).hex()
+    assert secret.hex() not in text
+
+
+# -- write_payload_size: the app's mtuSize (ATT MTU - 3), from the write characteristic ---------------
+@pytest.mark.parametrize(("size", "want"), [
+    (None, 20), (20, 20), (64, 64), (244, 244), (509, 509), (514, 509), (5, 20), (True, 20), ("x", 20),
+])
+async def test_write_payload_size_is_the_write_chars_size_clamped(monkeypatch, fast, size, want) -> None:
+    fake = FakeGovee(encrypted=False)
+    fake.write_size = size
+    c = _make(monkeypatch, fake)
+    assert c.write_payload_size == 20                      # not connected: the app's default
+    await c.connect()
+    assert c.write_payload_size == want
+
+
+async def test_write_payload_size_is_20_when_the_backend_cannot_say(monkeypatch, fast) -> None:
+    fake = FakeGovee(encrypted=False)
+    fake.write_size = 244
+    c = _make(monkeypatch, fake)
+    await c.connect()
+    fake.services_error = BleakError("Service Discovery has not been performed yet")
+    assert c.write_payload_size == 20
+
+
+async def test_send_unacked_sizes_frames_for_the_link_they_go_out_on(monkeypatch, fast) -> None:
+    fake = FakeGovee(encrypted=False)
+    fake.write_size = 244
+    c = _make(monkeypatch, fake)
+    sizes: list[int] = []
+
+    def plan(size: int) -> list[bytes]:
+        sizes.append(size)
+        return [frame(0xA3, 0x00, size & 0xFF)]
+
+    await c.send_unacked(plan, gap=0)                      # connects first, then plans
+    await c.disconnect()
+    fake.write_size = 64                                   # the next link negotiated less
+    await c.send_unacked(plan, gap=0)
+    assert sizes == [244, 64]
+    assert [f[2] for f in fake.received] == [244, 64]

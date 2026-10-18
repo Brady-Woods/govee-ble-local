@@ -75,10 +75,8 @@ def _status_tlv_cases() -> list[bytes]:
 def test_reassemble_fixed_vectors_agree(tlv: bytes) -> None:
     frames = ref.chunk_ac(tlv)
     assert ref.reassemble_ac(frames) == tlv
-    # shipped reassembly pads the last chunk to a whole 17/12-byte region; the payload prefix must match
-    joined = ra.reassemble(frames)
-    assert joined[: len(tlv)] == tlv
-    assert not any(joined[len(tlv):])  # remainder is just zero padding
+    # both trim the last chunk to lastLen (AbsController4BleSingleSendMultiBack.h), so no zero padding
+    assert ra.reassemble(frames) == tlv
 
 
 def test_reassemble_random_agree() -> None:
@@ -87,9 +85,98 @@ def test_reassemble_random_agree() -> None:
         tlv = _rand_bytes(r, r.randrange(1, 120))
         frames = ref.chunk_ac(tlv)
         assert ref.reassemble_ac(frames) == tlv
-        assert ra.reassemble(frames)[: len(tlv)] == tlv
+        assert ra.reassemble(frames) == tlv
         # the shipped one also tolerates double delivery; the reference is only a single pass
-        assert ra.reassemble(frames + frames[1:3])[: len(tlv)] == tlv
+        assert ra.reassemble(frames + frames[1:3]) == tlv
+
+
+# Real H60A6 0xAC bursts (same captures as tests/test_wire_reassemble.py _BURST / _LIVE): bytes 2-3 of
+# the first chunk = 0x000a = 10 packets (ac00..ac08 + acff), byte 4 = 0x0c = 12 data bytes in the
+# data-bearing 0xFF chunk (AbsController4BleSingleSendMultiBack.g/.h).
+_REAL_BURSTS = {
+    "burst": [
+        "ac000a000c0300010101040150050415010000e8",
+        "ac010707065774f453e75c0711105674f453e7f0",
+        "ac025cdb2d0100290104030000070d115ce753d9",
+        "ac03f474560100290104031104001e0f0f120749",
+        "ac04ff640000800f00231000000080000000808f",
+        "ac0500000080000000804102020130020101a57e",
+        "ac06110132ff00006400ff00640000ff64ff00ec",
+        "ac0700a511026400ff00640000ff64ff000064e2",
+        "ac0800ff00a51103640000ff64ff00006400ff77",
+        "acff00640000ffa5050464ff00000000000000f7",
+    ],
+    "live": [
+        "ac000a000c0300010100040164050415010a8c5b",
+        "ac010707065774f453e75c0711105674f453e7f0",
+        "ac025cdb2d0100290104030000070d115ce753d9",
+        "ac03f474560100290104031104001e0f0f120749",
+        "ac04ff640000800f00231000000080000000808f",
+        "ac0500000080000000804102020130020000a57e",
+        "ac06110164ffae5464ffae5464ffae5464ffaeee",
+        "ac0754a5110264ffae5464ffae5464ffae54644c",
+        "ac08ffae54a5110364ffae5464ffae5464ffae23",
+        "acff5464ffae54a5050464ffae540000000000a3",
+    ],
+}
+
+
+def _tlv_end(buf: bytes) -> int:
+    pos = 0
+    while pos + 2 <= len(buf) and buf[pos] != 0:
+        pos += 2 + buf[pos + 1]
+    return pos
+
+
+@pytest.mark.parametrize("name", sorted(_REAL_BURSTS))
+def test_reassemble_real_h60a6_burst_agrees(name: str) -> None:
+    frames = [bytes.fromhex(h) for h in _REAL_BURSTS[name]]
+    buf = ref.reassemble_ac(frames)
+    assert len(buf) == 12 + 17 * 8 + 12 == 160   # packet count 10, lastLen 12 from the 0xFF chunk
+    assert _tlv_end(buf) == len(buf)             # exactly the TLV stream, nothing past it
+    assert buf[-12:] == frames[-1][2:14]         # ...ending in the 0xFF chunk's lastLen data bytes
+    assert [t.tag for t in ref.parse_status(buf).tlvs][-4:] == [0xA5] * 4   # incl. group 4 (segment 12)
+    assert ra.reassemble(frames) == buf          # shipped trims the 0xFF chunk to lastLen too
+    assert ref.chunk_ac(buf) == frames           # the inverse reproduces the capture byte for byte
+
+
+def test_chunk_ac_header_is_packet_count_and_last_len() -> None:
+    tlv = bytes(range(1, 47))                    # 12 + 17 + 17: three packets
+    frames = ref.chunk_ac(tlv)
+    assert [f[1] for f in frames] == [0x00, 0x01, 0xFF]
+    assert (frames[0][2] | frames[0][3] << 8, frames[0][4]) == (3, 17)
+    assert frames[-1][2:19] == tlv[29:]          # the 0xFF chunk carries data
+    one = ref.chunk_ac(tlv[:5])                  # <= 12 bytes: one packet, lastLen bytes @7
+    assert len(one) == 1 and (one[0][2], one[0][3], one[0][4]) == (1, 0, 5)
+    assert ref.reassemble_ac(one) == tlv[:5]
+
+
+def test_reassemble_ac_rejects_what_the_app_rejects() -> None:
+    frames = ref.chunk_ac(bytes(range(1, 47)))
+    with pytest.raises(ValueError, match="incomplete"):
+        ref.reassemble_ac(frames[:2])
+    with pytest.raises(ValueError, match="tag"):
+        ref.reassemble_ac([frames[0], frames[2], frames[1]])
+    bad = bytearray(ref.chunk_ac(b"\x01\x02")[0])
+    bad[4] = 13                                  # single packet holds at most 12 bytes
+    with pytest.raises(ValueError, match="lastLen"):
+        ref.reassemble_ac([bytes(bad)])
+
+
+def test_selftest_falls_back_to_committed_reader(capsys: pytest.CaptureFixture[str]) -> None:
+    from govee_ble_local._generated.govee_ble_frame import GoveeBleFrame
+
+    assert ref._gbf() is GoveeBleFrame
+    assert ref._selftest(strict=True) == 0       # every parser check ran and passed
+    assert "Skipping" not in capsys.readouterr().out
+
+
+def test_selftest_skip_is_a_failure_only_when_strict(monkeypatch: pytest.MonkeyPatch,
+                                                     capsys: pytest.CaptureFixture[str]) -> None:
+    monkeypatch.setattr(ref, "_READER_MODULES", ("_no_such_reader_module",))
+    assert ref._selftest() == 0
+    assert ref._selftest(strict=True) == 1
+    assert "Skipping parser tests" in capsys.readouterr().out
 
 
 def test_aes_rc4_framing_agrees_when_pycryptodome_present() -> None:
@@ -101,3 +188,33 @@ def test_aes_rc4_framing_agrees_when_pycryptodome_present() -> None:
         enc = ref.crypt_v1(data, key, encrypt=True)
         assert enc == crypto.encrypt(data, key)
         assert ref.crypt_v1(enc, key, encrypt=False) == crypto.decrypt(enc, key) == data
+
+
+def _retag(frame: bytes, tag: int) -> bytes:
+    """``frame`` with its index byte replaced by ``tag`` (and the BCC fixed)."""
+    return ref.append_bcc(bytes([frame[0], tag]) + frame[2:19])
+
+
+def test_reassemble_ac_accepts_the_last_packet_tagged_with_its_position() -> None:
+    # isSameController takes the last packet's own position (K(tag) == backPos) as well as 0xFF, and
+    # onResult runs h() there either way (AbsController4BleSingleSendMultiBack:248, :326-331)
+    tlv = bytes(range(1, 47))                    # three packets: positions 0, 1, 2
+    frames = ref.chunk_ac(tlv)
+    frames[-1] = _retag(frames[-1], 2)
+    assert ref.reassemble_ac(frames) == tlv == ra.reassemble(frames)
+    with pytest.raises(ValueError, match="last packet carries tag 0x03"):
+        ref.reassemble_ac([*frames[:-1], _retag(frames[-1], 3)])   # neither 0xFF nor its position
+    real = [bytes.fromhex(h) for h in _REAL_BURSTS["burst"]]
+    assert ref.reassemble_ac([*real[:-1], _retag(real[-1], 9)]) == ref.reassemble_ac(real)
+
+
+def test_reassemble_ac_refuses_0xff_mid_burst() -> None:
+    # 257 packets: position 255 is a middle packet, and its tag byte can only be 0xFF, which
+    # isSameController reads as END_PKG out of place (:237-247), so the app never completes it
+    count = 257
+    head = bytes([0xAC, 0x00, count & 0xFF, count >> 8, 17, 0x03, 0x00]) + bytes(12)
+    frames = [ref.append_bcc(head)] + [ref.append_bcc(bytes([0xAC, pos & 0xFF]) + bytes(17))
+                                       for pos in range(1, count - 1)]
+    frames.append(ref.append_bcc(bytes([0xAC, 0xFF]) + bytes(17)))
+    with pytest.raises(ValueError, match="packet 255 carries tag 0xff"):
+        ref.reassemble_ac(frames)

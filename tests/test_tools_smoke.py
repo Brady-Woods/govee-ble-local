@@ -45,7 +45,7 @@ def test_tool_help_exits_zero(name: str) -> None:
 
 def test_no_real_macs_in_tools() -> None:
     mac = re.compile(r"\b[0-9A-Fa-f]{2}(?::[0-9A-Fa-f]{2}){5}\b")
-    placeholder = {"AA:BB:CC:DD:EE:FF", "00:00:00:00:00"}
+    placeholder = {"AA:BB:CC:DD:EE:FF", "00:00:00:00:00:00"}
     for path in TOOLS.rglob("*"):
         if path.is_file() and "__pycache__" not in path.parts:
             for m in mac.findall(path.read_text(errors="ignore")):
@@ -118,26 +118,40 @@ def test_fetch_parse_rejects_bad_sku() -> None:
 # --- btsnoop tools ----------------------------------------------------------------
 
 
-def _btsnoop(tmp_path: Path, incl: int, payload: bytes) -> Path:
+def _btsnoop(tmp_path: Path, incl: int, payload: bytes, datalink: int = 1002) -> Path:
     p = tmp_path / "cap.log"
-    p.write_bytes(b"btsnoop\x00" + struct.pack(">II", 1, 1002)
+    p.write_bytes(b"btsnoop\x00" + struct.pack(">II", 1, datalink)
                   + struct.pack(">IIIIq", incl, incl, 0, 0, 0) + payload)
     return p
 
 
+# decrypt_btsnoop reuses btsnoop_mtu_scan.read_records, so both tools are checked through it.
 @pytest.mark.parametrize("tool", ["decrypt_btsnoop", "btsnoop_mtu_scan"])
 def test_btsnoop_rejects_oversized_record(tool: str, tmp_path: Path) -> None:
     mod = _load(tool)
     with pytest.raises(SystemExit, match="corrupt btsnoop record"):
-        list(mod._records(str(_btsnoop(tmp_path, 2 << 20, b"\x00" * 8))))
+        list(mod.read_records(str(_btsnoop(tmp_path, 2 << 20, b"\x00" * 8))))
     with pytest.raises(SystemExit, match="corrupt btsnoop record"):
-        list(mod._records(str(_btsnoop(tmp_path, 64, b"\x00" * 8))))  # longer than the file
+        list(mod.read_records(str(_btsnoop(tmp_path, 64, b"\x00" * 8))))  # longer than the file
 
 
 @pytest.mark.parametrize("tool", ["decrypt_btsnoop", "btsnoop_mtu_scan"])
 def test_btsnoop_reads_valid_record(tool: str, tmp_path: Path) -> None:
-    out = list(_load(tool)._records(str(_btsnoop(tmp_path, 4, b"\x02\x01\x02\x03"))))
+    out = list(_load(tool).read_records(str(_btsnoop(tmp_path, 4, b"\x02\x01\x02\x03"))))
     assert len(out) == 1 and out[0][1] == b"\x02\x01\x02\x03"
+
+
+@pytest.mark.parametrize("tool", ["decrypt_btsnoop", "btsnoop_mtu_scan"])
+@pytest.mark.parametrize("datalink", [1001, 2001])
+def test_btsnoop_refuses_non_h4_datalink(tool: str, datalink: int, tmp_path: Path) -> None:
+    # 1001 (un-encapsulated HCI) / 2001 (btmon) records have no H4 type byte: parsing them as H4
+    # silently reported nothing, so the tools must refuse them instead.
+    cap = _btsnoop(tmp_path, 4, b"\x02\x01\x02\x03", datalink=datalink)
+    with pytest.raises(SystemExit, match=f"unsupported btsnoop datalink {datalink}"):
+        list(_load(tool).read_records(str(cap)))
+    if tool == "btsnoop_mtu_scan":
+        with pytest.raises(SystemExit, match="datalink"):
+            _load(tool).main(str(cap))
 
 
 def test_decrypt_argparse_preserves_documented_flags() -> None:
@@ -184,11 +198,11 @@ def test_read_kelvin_skips_other_submodes_and_does_not_swallow_attribute_errors(
 ) -> None:
     lc = _load("h60a6_live_check")
     assert asyncio.run(lc.read_kelvin(_FakeDev([_mode_frame(0x04, 2700)]))) is None
-    from govee_ble_local._generated.govee_ble_frame import GoveeBleFrame
+    from govee_ble_local.wire import _spec
 
     class Broken:
-        body = object()  # no .body -> must raise, not be swallowed
+        body = object()  # no .body.state -> must raise, not be swallowed
 
-    monkeypatch.setattr(GoveeBleFrame, "from_bytes", classmethod(lambda cls, b: Broken()))
+    monkeypatch.setattr(_spec, "read_frame", lambda *_a: Broken())
     with pytest.raises(AttributeError):
         asyncio.run(lc.read_kelvin(_FakeDev([_mode_frame(0x15, 2700)])))
