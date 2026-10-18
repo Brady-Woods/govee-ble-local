@@ -8,10 +8,11 @@
 #   1. ksc over every SPEC_DIR/*.ksy at once: python + java read-write (-w), then javascript
 #      (ksc's -w is java/python only). Any compiler output, warning or error, fails.
 #   2. lint.py: meta keys, banned constructs, labelled roots and reachability, enums applied,
-#      devices.schema.json / devices.yaml enum equality, doc-ref format.
+#      devices.schema.json / devices.yaml enum equality, doc-ref format, and firmware.yaml against
+#      its schema and the .ksy types.
 # Generated code goes to a temp dir that is removed on exit; nothing is written anywhere else.
 #
-# Env: PYTHON (default python3; needs PyYAML), KSC (default kaitai-struct-compiler, 0.11).
+# Env: PYTHON (default python3; needs PyYAML and jsonschema), KSC (default kaitai-struct-compiler, 0.11).
 set -euo pipefail
 
 here=$(cd "$(dirname "$0")" && pwd)

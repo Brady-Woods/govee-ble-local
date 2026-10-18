@@ -153,7 +153,9 @@ and fails on any output. Then `spec/checks/lint.py` runs:
 - `banned`: rule 5's banned constructs;
 - `enums`: rule 6, enums;
 - `schema`: rule 5, the enum selectors;
-- `doc-ref`: rule 7, the citation format.
+- `doc-ref`: rule 7, the citation format;
+- `firmware`: `firmware.yaml` (behaviour, state and timing per firmware image) against its
+  schema, and every type path, field and enum id in it against the `.ksy` files.
 
 Suite S is a floor, not compliance. A change shaped to pass a lint while breaking a rule is a
 violation: a renamed twin, a reference kept to hold a type alive, a type moved or relabelled to

@@ -1,0 +1,221 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "firmware.schema.json",
+  "title": "Govee firmware behaviour (spec/firmware.yaml)",
+  "description": "Device behaviour, state and timing per firmware image, as data. Byte formats are the .ksy files: every frame, advert and value here is a spec object named by its .ksy type path and seq ids. A device simulator reads a request with govee_ble_frame(direction = tx, profile), picks the first matching answer, and builds every reply, push and advert from these objects with no hand-built bytes.",
+  "type": "object",
+  "required": ["doc", "images"],
+  "additionalProperties": false,
+  "properties": {
+    "doc": { "type": "string" },
+    "images": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/image" } }
+  },
+  "$defs": {
+    "doc_ref": {
+      "description": "Citations, in the .ksy doc-ref form: a decompiled file's path:line, or IMAGE symbol @0xaddr.",
+      "type": "array", "minItems": 1, "items": { "type": "string" }
+    },
+    "id": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" },
+    "expr": {
+      "description": "An expression: a Python expression after the leading '='. Allowed: int, str, bool and None literals (no float or bytes); list, tuple and dict displays; names; attribute access, subscripts and slices; unary - ~ not; binary + - * // % << >> & | ^ (% also formats a str); comparisons, in, not in, is and is not; and, or; `a if c else b`; list comprehensions; calls to len, range, bytes, random_bytes(n), leading(list) (the number of leading true items) and decode(type, data, *params) (data read as that .ksy type with those params, or None when it does not read). Names: state (the image's state fields), image (the image's scalar fields), req (the request frame's body), frame (the request frame), raw (the request's decrypted bytes), checksum_ok (its checksum by checksum_kind; true for none), now_ms (the simulator clock), event (an event's args), the rule's let names, and every .ksy enum as name.member (route.read_tx, command.power), which evaluate to ints. An enum field evaluates to its int; a spec object's fields read as attributes, a state record's as keys.",
+      "type": "string", "pattern": "^="
+    },
+    "value": {
+      "description": "A field or state value: an expression, a literal (an int, bool or None; for an enum field, a member id or an int; for a str or bytes field, text, which a bytes field takes as ASCII; for a bytes field, a list of ints), a node (an object) or a list of values (a repeated field).",
+      "oneOf": [
+        { "$ref": "#/$defs/expr" },
+        { "type": "string", "not": { "pattern": "^=" } },
+        { "type": "integer" }, { "type": "boolean" }, { "type": "null" },
+        { "type": "array", "items": { "$ref": "#/$defs/value" } },
+        { "$ref": "#/$defs/node" }
+      ]
+    },
+    "node": {
+      "description": "A spec object: keys are seq ids of its type, and `type` names the type (a .ksy path). `type` is required where the field is a switch, and must be the case its selector picks (a sibling literal, or the image profile's form); a switch whose selector picks no case is left out, or, if sized, given as raw bytes. `type` also lets a node fill an untyped bytes field. Every other seq field without an `if` is given, except a contents field and the rest (govee_common::echo) or trailing size-eos field that the frame's fill covers; a field with an `if` is given when its condition holds. A list of ints is only for an untyped bytes field. A node's params are its parent field's type-call arguments, evaluated on the parent; the frame's are direction and the image profile. A record value (a dict, or a spec object stored in state) is written as a node of the field's type.",
+      "type": "object",
+      "propertyNames": { "pattern": "^([a-z][a-z0-9_]*|type)$" },
+      "properties": { "type": { "type": "string", "pattern": "^[a-z][a-z0-9_]*(::[a-z][a-z0-9_]*)*$" } },
+      "additionalProperties": { "$ref": "#/$defs/value" }
+    },
+    "frame": {
+      "description": "A frame the device sends: govee_ble_frame(direction = rx, profile) with pro_type and body type from `route`, frame_len bytes long. fill: every byte after the last given field, up to the checksum, is the request's byte at that offset (request), as when the firmware answers in the request buffer, or 0 (zero; always for a push). The simulator builds it from the state at the moment it is sent, computes the checksum by checksum_kind and sends it under state.cipher when the cipher is e7_v1; a push with no link is dropped.",
+      "type": "object",
+      "required": ["route", "fill", "body"],
+      "additionalProperties": false,
+      "properties": {
+        "route": { "$ref": "#/$defs/id" },
+        "fill": { "enum": ["request", "zero"] },
+        "body": { "$ref": "#/$defs/node" }
+      }
+    },
+    "effect": {
+      "description": "One step, in order: each sees the state the earlier ones left. set: evaluate every value, then assign each state path. put: store value at index at of a state list. push: send the named push. disconnect: the device drops the link, and the disconnect event runs at once (later steps see its state). `when` skips the step if false.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "when": { "$ref": "#/$defs/expr" },
+        "set": { "type": "object", "propertyNames": { "pattern": "^state\\.[a-z][a-z0-9_]*$" }, "additionalProperties": { "$ref": "#/$defs/value" } },
+        "put": { "type": "string", "pattern": "^state\\.[a-z][a-z0-9_]*$" },
+        "at": { "$ref": "#/$defs/expr" },
+        "value": { "$ref": "#/$defs/value" },
+        "push": { "$ref": "#/$defs/id" },
+        "disconnect": { "const": true }
+      },
+      "oneOf": [
+        { "required": ["set"], "not": { "anyOf": [{ "required": ["put"] }, { "required": ["at"] }, { "required": ["value"] }, { "required": ["push"] }, { "required": ["disconnect"] }] } },
+        { "required": ["put", "at", "value"], "not": { "anyOf": [{ "required": ["set"] }, { "required": ["push"] }, { "required": ["disconnect"] }] } },
+        { "required": ["push"], "not": { "anyOf": [{ "required": ["set"] }, { "required": ["put"] }, { "required": ["at"] }, { "required": ["value"] }, { "required": ["disconnect"] }] } },
+        { "required": ["disconnect"], "not": { "anyOf": [{ "required": ["set"] }, { "required": ["put"] }, { "required": ["at"] }, { "required": ["value"] }, { "required": ["push"] }] } }
+      ]
+    },
+    "effects": { "type": "array", "items": { "$ref": "#/$defs/effect" } },
+    "lets": {
+      "description": "Named expressions, evaluated in order before when and the effects; later ones and the rest of the rule can use them.",
+      "type": "object", "propertyNames": { "pattern": "^[a-z][a-z0-9_]*$" }, "additionalProperties": { "$ref": "#/$defs/expr" }
+    },
+    "accept": {
+      "description": "A drop rule. Before the answers of `layer` (or of every layer when absent), the frame is dropped with no reply if `drop` is true. A request that does not read as its route is dropped.",
+      "type": "object",
+      "required": ["id", "drop", "doc", "doc-ref"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "layer": { "enum": ["shared", "dispatcher"] },
+        "drop": { "$ref": "#/$defs/expr" },
+        "doc": { "type": "string" },
+        "doc-ref": { "$ref": "#/$defs/doc_ref" }
+      }
+    },
+    "answer": {
+      "description": "How the device handles one request. The simulator tries the shared layer's answers in order, then (unless one matched without `forward`) the dispatcher's. The first answer whose match and when hold applies; a frame no answer takes is dropped with no reply. match: the request's route, then body fields by dotted path, each equal to a literal; a path the request lacks does not match. apply: effects before the reply (default), or after it (the firmware queues them, so the reply goes first). reply: a frame, or echo (the request re-sent with a fresh checksum); none when absent. forward: the frame also goes on to the dispatcher's answers. unmodelled: the firmware answers, but the reply has no spec type; the simulator drops the frame, applies no effects and logs this text.",
+      "type": "object",
+      "required": ["id", "layer", "match", "doc", "doc-ref"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "layer": { "enum": ["shared", "dispatcher"] },
+        "match": {
+          "type": "object", "required": ["route"],
+          "propertyNames": { "pattern": "^(route|[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*)$" },
+          "additionalProperties": { "oneOf": [{ "type": "string", "not": { "pattern": "^=" } }, { "type": "integer" }] }
+        },
+        "let": { "$ref": "#/$defs/lets" },
+        "when": { "$ref": "#/$defs/expr" },
+        "effects": { "$ref": "#/$defs/effects" },
+        "apply": { "enum": ["before_reply", "after_reply"] },
+        "reply": { "oneOf": [{ "$ref": "#/$defs/frame" }, { "const": "echo" }] },
+        "forward": { "type": "boolean" },
+        "unmodelled": { "type": "string" },
+        "doc": { "type": "string" },
+        "doc-ref": { "$ref": "#/$defs/doc_ref" }
+      },
+      "not": { "required": ["reply", "unmodelled"] }
+    },
+    "state_field": {
+      "description": "One field of the device state: plain data (an int, bool, str, bytes, None, a list, or a record: a dict keyed by a type's seq ids; a spec object stored here becomes such a dict). init: its value at power-up (an expression may use image and random_bytes). persist: it survives a reboot.",
+      "type": "object",
+      "required": ["init", "doc", "doc-ref"],
+      "additionalProperties": false,
+      "properties": {
+        "init": { "$ref": "#/$defs/value" },
+        "persist": { "type": "boolean" },
+        "doc": { "type": "string" },
+        "doc-ref": { "$ref": "#/$defs/doc_ref" }
+      }
+    },
+    "event": {
+      "description": "An input from outside the request path, with named args. The simulator raises connect and disconnect on link up and down, write on every GATT write (before the accept rules) and tick at every multiple of 1000 of now_ms from power-up; a scenario raises the others (a button press, a timer firing, a cloud command).",
+      "type": "object",
+      "required": ["doc", "doc-ref", "effects"],
+      "additionalProperties": false,
+      "properties": {
+        "args": { "type": "object", "propertyNames": { "pattern": "^[a-z][a-z0-9_]*$" }, "additionalProperties": { "type": "string" } },
+        "let": { "$ref": "#/$defs/lets" },
+        "when": { "$ref": "#/$defs/expr" },
+        "effects": { "$ref": "#/$defs/effects" },
+        "doc": { "type": "string" },
+        "doc-ref": { "$ref": "#/$defs/doc_ref" }
+      }
+    },
+    "image": {
+      "type": "object",
+      "required": ["id", "doc", "doc-ref", "sku", "goods_type", "soft_version", "hard_version", "chip", "file", "frame_len", "profile", "gatt", "cipher", "advert", "state", "accept", "answers", "pushes", "events"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "doc": { "type": "string" },
+        "doc-ref": { "$ref": "#/$defs/doc_ref" },
+        "sku": { "type": "string", "pattern": "^H[0-9A-Z]{4}$" },
+        "goods_type": { "type": "integer" },
+        "soft_version": { "type": "string" },
+        "hard_version": { "type": "string" },
+        "chip": { "type": "string" },
+        "file": { "description": "The OTA image file name the behaviour was traced in.", "type": "string" },
+        "frame_len": { "description": "The length of every frame the device sends. A request of another length is not modelled.", "type": "integer", "minimum": 1 },
+        "profile": {
+          "description": "The device side's govee_profile: devices.yaml client_profile resolved for sku and goods_type (by_pact with the pact the advert carries; by_firmware with image soft_version and hard_version), then `forms` for selectors that profile leaves unknown (firmware-sourced, cited).",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "forms": { "type": "object", "propertyNames": { "pattern": "^f_[0-9a-z_]+$" }, "additionalProperties": { "type": "string" } },
+            "doc": { "type": "string" },
+            "doc-ref": { "$ref": "#/$defs/doc_ref" }
+          }
+        },
+        "gatt": {
+          "type": "object",
+          "required": ["service", "notify", "write", "bgc_info", "doc-ref"],
+          "additionalProperties": false,
+          "properties": {
+            "service": { "type": "string" },
+            "notify": { "type": "string" },
+            "write": { "type": "string" },
+            "bgc_info": { "description": "The 2b12 characteristic's UUID, or false when the device has none.", "oneOf": [{ "type": "string" }, { "const": false }] },
+            "doc": { "type": "string" },
+            "doc-ref": { "$ref": "#/$defs/doc_ref" }
+          }
+        },
+        "cipher": {
+          "description": "The link cipher: e7_v1 (AES-ECB + RC4 under the PSK until the E7 exchange, then state.session_key; PROCEDURAL in the library), or none. With e7_v1, state.cipher is psk or session.",
+          "enum": ["e7_v1", "none"]
+        },
+        "advert": {
+          "description": "What the device advertises while `when` holds: each list is govee_scan_record::ad_structure nodes, in order; each AD takes 1 + len_ad bytes.",
+          "type": "object",
+          "required": ["adv", "scan_response", "doc", "doc-ref"],
+          "additionalProperties": false,
+          "properties": {
+            "when": { "$ref": "#/$defs/expr" },
+            "let": { "$ref": "#/$defs/lets" },
+            "adv": { "type": "array", "items": { "$ref": "#/$defs/node" } },
+            "scan_response": { "type": "array", "items": { "$ref": "#/$defs/node" } },
+            "doc": { "type": "string" },
+            "doc-ref": { "$ref": "#/$defs/doc_ref" }
+          }
+        },
+        "state": { "type": "object", "propertyNames": { "pattern": "^[a-z][a-z0-9_]*$" }, "additionalProperties": { "$ref": "#/$defs/state_field" } },
+        "accept": { "type": "array", "items": { "$ref": "#/$defs/accept" } },
+        "answers": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/answer" } },
+        "pushes": {
+          "description": "Frames the device sends on its own, named for push effects.",
+          "type": "object", "propertyNames": { "pattern": "^[a-z][a-z0-9_]*$" },
+          "additionalProperties": {
+            "type": "object",
+            "required": ["frame", "doc", "doc-ref"],
+            "additionalProperties": false,
+            "properties": {
+              "frame": { "$ref": "#/$defs/frame" },
+              "doc": { "type": "string" },
+              "doc-ref": { "$ref": "#/$defs/doc_ref" }
+            }
+          }
+        },
+        "events": {
+          "type": "object", "required": ["connect", "disconnect"],
+          "propertyNames": { "pattern": "^[a-z][a-z0-9_]*$" },
+          "additionalProperties": { "$ref": "#/$defs/event" }
+        }
+      }
+    }
+  }
+}

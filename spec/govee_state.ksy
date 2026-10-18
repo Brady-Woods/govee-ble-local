@@ -1508,7 +1508,7 @@ types:
     doc-ref:
       - base-classes10/com/govee/base2light/ble/controller/PactController.java:9-20,33-40
       - H6006 ble_msg_get_adv_pro_type @0x9b03cc00
-      - H5083 ble_msg_get_adv_pro_type @0x9b031b80
+      - H5083 FUN_9b031b80 @0x9b031b80
     seq:
       - id: pact_type
         type: u2

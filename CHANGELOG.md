@@ -828,6 +828,28 @@ model, from which the shipped readers are generated).
     no decoded state, return value or connection behaviour changes.
 
 ### Spec
+- New `spec/firmware.yaml` and `spec/firmware.schema.json` give device behaviour, state and timing per
+  firmware image, as data, so a spec-driven simulator builds every reply, push and advert from spec
+  objects with no hand-built frames. The first image is H5083 SW1.00.30 (`h5083_sw1_00_30`). It covers:
+  - the shared write layer and the pair-gated dispatcher: drop rules, every answer, its effects and
+    whether they apply before or after the reply, and what goes on to the dispatcher;
+  - the E7 session, the AA B1 button window and 33 B2 pairing, timers (records and used flags apart),
+    delays, 33 B5, the A1 11 Wi-Fi and A3 IoT uploads in their shared buffer (the credentials decoded
+    with `govee_upload`), and the AB 02 pact report;
+  - the state model, the pushes (AA 01, EE 11, A3 08), the link events and the 1 s clock task (the
+    10-11 s heartbeat and 61 s pair-key disconnects, delay expiry), and scenario events (button, timer,
+    cloud);
+  - the advert and the scan response.
+
+  AB 01 04, 66 01 and 3F have no spec reply type and are marked unmodelled. The H5083 profile gains the
+  firmware-sourced form `f_14: wifi_mac` for AA 14. A throwaway simulator built from the file alone passed
+  every H5083 scenario.
+- `lint.py firmware` checks `firmware.yaml` against its schema. Every type path, node field, switch case
+  (picked by a sibling literal or the image profile's form), enum literal, match path, route, state name,
+  let, push, event arg and expression name must resolve against the `.ksy` types and the image. It also
+  checks the profile against devices.yaml, the doc-refs, and duplicate or YAML 1.1 boolean keys.
+- `govee_state` `pact_state` cites `H5083 FUN_9b031b80`; `ble_msg_get_adv_pro_type` is not an H5083 symbol.
+  FIRMWARE_VALIDATION §6 points the H5083 bodies to `firmware.yaml`.
 - Suite S closes the ways around its one-path rule that a review found.
   - `roots`: the nine tops are pinned with their labels, so a new file top fails until the lint lists it.
   - `roots`: a `CONTEXT` top has no seq or instances, and a `LIBRARY` top has no seq, params or instances.

@@ -317,10 +317,9 @@ Where a handler body was decompiled (not just the dispatcher), the payload layou
 
 ## 6. Open / not validated by firmware
 
-- Exact payload bodies of the non-RGB H5083 opcodes (`0x12`, `0x13`, `0x15`, `0xb0`, `0xb1`, `0xb3`,
-  `0xb5`; `0x02` is not an AA/33 opcode and `0xb4` is not dispatched). Traced so far, firmware-sourced:
-  the `AA 01` reply is the outlet-0 state `00`/`01`. `33 01 b` switches outlet 0 to `b & 1` only when
-  bit 4 is set (`H5083.bin@0x9b01f6b4`). The `AA B3` reply byte 2 is always `00` (`0x9b01f132`).
+- H5083 (SW1.00.30) is now traced in full, as data: `../firmware.yaml` image `h5083_sw1_00_30`
+  (every answer, state field, timer and push, with citations). `0x02` is not an AA/33 opcode and
+  `0xb4` is not dispatched.
 - Per-device handler bodies for `0x23`/`0xb1`/`0xb2`/`0xa5`/`0x40`/`0x30`. These are now traced on
   H60A1/H60A6 (see the corrected headers of `H60A1_ble_dispatcher.c` / `H60A6_ble_dispatcher.c`).
   Neither image dispatches `0x40`, and only H60A6 dispatches `0x30`. The other RTL images are still
