@@ -4,11 +4,18 @@ usage: python lint.py SPEC_DIR
 
 Reads SPEC_DIR/*.ksy, devices.schema.json and devices.yaml; writes nothing.
 
-  meta     meta id == file stem; license MIT; ks-version 0.11; endian and bit-endian set.
-  banned   _root / _parent in any expression; io / pos / process keys on an attribute;
+  meta     meta id == file stem; license MIT; ks-version 0.11; endian and bit-endian set;
+           every import is the bare stem of another SPEC_DIR/*.ksy.
+  banned   _root / _parent in any expression (doc text is skipped; an id or a switch case
+           named doc or title is not); io / pos / process keys on an attribute;
            `type: io` params; meta ks-opaque-types.
-  roots    every top-level doc starts with STANDALONE (, SHARED PAYLOAD, CONTEXT or LIBRARY;
-           the STANDALONE tops are exactly ROOTS; no nested type is labelled STANDALONE.
+  roots    the tops are exactly TOPS, each doc starting with its label: `STANDALONE (` for
+           the six ROOTS. No nested type is labelled STANDALONE. A CONTEXT top has no seq
+           or instances, no other CONTEXT-file type reads bytes (a seq or a non-value
+           instance), and a LIBRARY top has no seq, params or instances. Every used type
+           that reads bytes is read from a root through seq / instance / switch-case types,
+           not only through params. No type name carries a typed / safe / sized /
+           frame(s|d) twin word.
   reach    every type is used (seq, instance, param or switch-case type), transitively,
            from a STANDALONE top or a CONTEXT / LIBRARY top; no orphans.
   enums    every enum is applied by an `enum:` key; no enum has fewer than two members.
@@ -33,8 +40,12 @@ import yaml
 
 ROOTS = {"govee_ble_frame", "govee_status_stream", "govee_upload", "govee_manufacturer_data",
          "govee_scan_record", "govee_bgc_info"}
+TOPS = {**dict.fromkeys(ROOTS, "STANDALONE ("), "govee_state": "SHARED PAYLOAD",
+        "govee_profile": "CONTEXT", "govee_common": "LIBRARY"}
 TOP_LABELS = ("STANDALONE (", "SHARED PAYLOAD", "CONTEXT", "LIBRARY")
 SOURCE_LABELS = ("STANDALONE (", "CONTEXT", "LIBRARY")
+NO_BYTES = {"CONTEXT": ("seq", "instances"), "LIBRARY": ("seq", "params", "instances")}
+TWIN = re.compile(r"(^|_)(typed|safe|sized|frames?|framed)\d*(_|$)")
 DOC_KEYS = {"doc", "doc-ref", "-orig-id", "title"}
 BUILTIN = re.compile(r"([us][1248]|f[48])(le|be)?|b\d+(le|be)?|str|strz|bool|bytes|struct|any|io")
 REF_FILE = re.compile(r"[\w$./-]+\.(java|c|kt|smali):\d+(-\d+)?(,\s?\d+(-\d+)?)*")
@@ -87,12 +98,12 @@ def resolve_enum(ref: str, scope: Path_, types: dict[Path_, Any]) -> EnumKey | N
     return None
 
 
-def code_strings(node: Any) -> Iterator[str]:
+def code_strings(node: Any, in_cases: bool = False) -> Iterator[str]:
     if isinstance(node, dict):
         for k, v in node.items():
             yield str(k)
-            if k not in DOC_KEYS:
-                yield from code_strings(v)
+            if in_cases or k not in DOC_KEYS or isinstance(v, dict):
+                yield from code_strings(v, k == "cases")
     elif isinstance(node, list):
         for v in node:
             yield from code_strings(v)
@@ -112,6 +123,11 @@ def doc_refs(node: Any) -> Iterator[Any]:
             yield from doc_refs(v)
 
 
+def parses(t: dict[str, Any]) -> bool:
+    """A type reads bytes: it has a seq, or an instance that is not a `value:` instance."""
+    return bool(t.get("seq")) or any("value" not in a for a in (t.get("instances") or {}).values())
+
+
 def index_types(t: dict[str, Any], path: Path_, types: dict[Path_, Any]) -> None:
     types[path] = t
     for sub, st in (t.get("types") or {}).items():
@@ -129,6 +145,9 @@ def check_file(f: Path, y: dict[str, Any]) -> None:
     for k in ("endian", "bit-endian"):
         if k not in meta:
             err(f"{f.name}: meta lacks {k}")
+    for imp in meta.get("imports") or []:
+        if "/" in str(imp) or not (f.parent / f"{imp}.ksy").is_file():
+            err(f"{f.name}: import {imp!r} is not another spec .ksy (bare stem)")
     if "ks-opaque-types" in meta:
         err(f"{f.name}: banned meta ks-opaque-types")
     for s in code_strings({k: v for k, v in y.items() if k != "meta"}):
@@ -143,10 +162,13 @@ def check_file(f: Path, y: dict[str, Any]) -> None:
 
 def check_types(types: dict[Path_, Any]) -> None:
     edges: dict[Path_, set[Path_]] = {p: set() for p in types}
+    reads: dict[Path_, set[Path_]] = {p: set() for p in types}
     applied: set[EnumKey] = set()
     for p, t in types.items():
         if len(p) > 1 and str(t.get("doc", "")).startswith("STANDALONE"):
             err(f"{name(p)}: nested type labelled STANDALONE (only file tops are entry points)")
+        if TWIN.search(name(p).rsplit("::", 1)[-1]) and p != ("govee_ble_frame",):
+            err(f"{name(p)}: typed / safe / sized / frame twin name (one canonical path per message)")
         for kind, aid, a in attrs(t):
             where = f"{name(p)}/{kind}/{aid}"
             for k in ("io", "pos", "process"):
@@ -160,6 +182,8 @@ def check_types(types: dict[Path_, Any]) -> None:
                     err(f"{where}: unresolved type {ref}")
                 else:
                     edges[p].add(r)
+                    if kind != "params":
+                        reads[p].add(r)
             if isinstance(a.get("enum"), str):
                 e = resolve_enum(a["enum"], p, types)
                 if e is None:
@@ -167,11 +191,22 @@ def check_types(types: dict[Path_, Any]) -> None:
                 else:
                     applied.add(e)
     tops = {p: t for p, t in types.items() if len(p) == 1}
-    standalone = {p[0] for p, t in tops.items() if str(t.get("doc", "")).startswith("STANDALONE (")}
-    for root in sorted(ROOTS - standalone):
-        err(f"missing STANDALONE root {root}")
-    for root in sorted(standalone - ROOTS):
-        err(f"{root}: STANDALONE top is not one of the six roots {sorted(ROOTS)}")
+    for top in sorted(set(TOPS) - {p[0] for p in tops}):
+        err(f"missing top {top}")
+    for p, t in tops.items():
+        want = TOPS.get(p[0])
+        if want is None:
+            err(f"{p[0]}: not one of the nine tops {sorted(TOPS)} (a new top needs the user's approval)")
+        elif not str(t.get("doc", "")).startswith(want):
+            err(f"{p[0]}: top doc must start with {want!r}")
+    for p, t in types.items():
+        label = next((lb for lb in NO_BYTES if str(types[p[:1]].get("doc", "")).startswith(lb)), "")
+        if len(p) == 1:
+            for k in NO_BYTES.get(label, ()):
+                if t.get(k):
+                    err(f"{name(p)}: a {label} top has {k} (it is not a byte source)")
+        elif label == "CONTEXT" and parses(t):
+            err(f"{name(p)}: a CONTEXT-file type reads bytes (context is params only)")
     seen: list[Path_] = [p for p, t in tops.items() if str(t.get("doc", "")).startswith(SOURCE_LABELS)]
     reached: set[Path_] = set(seen)
     while seen:
@@ -180,6 +215,15 @@ def check_types(types: dict[Path_, Any]) -> None:
             seen.append(q)
     for p in sorted(set(types) - reached):
         err(f"{name(p)}: orphan type (not reachable from a STANDALONE, CONTEXT or LIBRARY top)")
+    read: set[Path_] = {(r,) for r in ROOTS if (r,) in types}
+    todo = list(read)
+    while todo:
+        for q in reads[todo.pop()] - read:
+            read.add(q)
+            todo.append(q)
+    for p in sorted(reached - read):
+        if parses(types[p]):
+            err(f"{name(p)}: reads bytes but no root reads it (a param type reads no bytes)")
     for p, t in types.items():
         for e, members in (t.get("enums") or {}).items():
             if len(members or {}) < 2:

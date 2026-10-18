@@ -88,8 +88,21 @@ model, from which the shipped readers are generated).
   (default 20, today's frames).
 
 ### Changed
-- The library moved onto the clean spec (spec/clean-spec a3e3e92: nine `spec/*.ksy` roots, every frame a
-  `govee_ble_frame(direction, profile)`), with no change to the bytes sent or the decoded state:
+- `CLAUDE.md` gains "The spec is the bible", the anti-debt rules for `spec/`:
+  - fix the spec in place;
+  - structure wins over library use;
+  - one canonical path per message;
+  - six labelled entry points;
+  - context as params;
+  - nothing dead;
+  - cite the decompile, never copy it.
+
+  A closing list maps rules 3-7 to the Suite S lints that check their structure; the rest is for review.
+  `CONTRIBUTING.md` ground rules point to it, name the firmware as a source next to the app, give the
+  `doc-ref` citation form, and list Suite S in the `scripts/check.sh` gates.
+- The library moved onto the clean spec (spec/clean-spec a3e3e92: nine `spec/*.ksy` files, six of them
+  roots, every frame a `govee_ble_frame(direction, profile)`), with no change to the bytes sent or the
+  decoded state:
   - `wire/_spec.py` is the library's one import of the generated classes and the spec's read-write
     contract (read a parametric root, link and check every node, write in two passes with the checksum
     by `checksum_kind`); `_spec.profile()` builds the `govee_profile` (command forms, counts, colour-group
@@ -815,6 +828,19 @@ model, from which the shipped readers are generated).
     no decoded state, return value or connection behaviour changes.
 
 ### Spec
+- Suite S closes the ways around its one-path rule that a review found.
+  - `roots`: the nine tops are pinned with their labels, so a new file top fails until the lint lists it.
+  - `roots`: a `CONTEXT` top has no seq or instances, and a `LIBRARY` top has no seq, params or instances.
+    No other type in the `CONTEXT` file reads bytes (a seq, or an instance that is not a `value:`).
+  - `roots`: every used type that reads bytes must be read from a root, not only reached as a param type,
+    so a param can't hide a parser.
+  - `roots`: a type name carrying a `typed`, `safe`, `sized` or `frame(s|d)` twin word fails; the root
+    `govee_ble_frame` is exempt.
+  - `banned` now also scans an instance, type or switch case whose id or key is `doc` or `title`. Before,
+    it skipped those as doc text.
+  - `meta`: every import must be the bare stem of another `spec/*.ksy`, so ksc can't pull in an
+    unlinted file.
+  - The current spec passes unchanged: 9 ksy, 205 types, 0 errors.
 - `33 05 15 05` (op15_kelvin, H60A0): the Kelvin is now spelled `u2be` (it already read high byte first; the
   generated code is unchanged). The app writes it high byte first (ControllerBuildH60A0.d), and no firmware image
   handles op 05: on H60A6 it falls to the default branch, which logs 'Unknow msg'. The citations point at that

@@ -6,9 +6,16 @@ lean on dependencies.
 
 ## Ground rules
 
-- **Source of truth is the decompiled Govee Home app (Java).** `spec/*.ksy` + `spec/devices.yaml` are
-  derived from it; when they disagree with the Java, the Java wins. Cite `Class.method:line` for
-  protocol claims. Real hardware confirms behaviour; a single packet capture only illustrates it.
+- **Source of truth is the decompiled Govee Home app (Java) and device firmware.** `spec/*.ksy` +
+  `spec/devices.yaml` are derived from them. The app wins wherever it covers a behaviour, and when
+  the spec disagrees with the decompile, the decompile wins. A spec `doc-ref` cites the decompiled
+  file's `path:line` (app or firmware) or firmware `IMAGE symbol @0xaddr`; prose and commits cite
+  `Class.method[:line]`. Real hardware confirms behaviour; a single packet capture only illustrates
+  it.
+- **The spec is the single canonical model.** It is corrected in place, with one type path per
+  message and six labelled entry points. It never grows parallel types for the library's
+  convenience. See "The spec is the bible" in `CLAUDE.md`; `spec/checks/run.sh` checks its
+  structural part.
 - **Dependencies:** runtime deps are limited to `bleak`, `bleak-retry-connector`, `cryptography`, and
   `kaitaistruct` (see `pyproject.toml`). The first three ship with Home Assistant; `kaitaistruct` is
   the one accepted exception (pure-Python, stdlib-only). **Don't add a runtime dependency without
@@ -53,12 +60,14 @@ kaitai-struct-compiler`; on Debian/Ubuntu, `bash scripts/install_ksc.sh`, which 
 enforces, fail-fast:
 
 1. `tools/gen_kaitai.sh` generates the read-write classes in `_generated/` from `spec/*.ksy`.
-2. `ruff check src tools tests spec _build_backend` (rules in `[tool.ruff.lint]`)
-3. `mypy src/govee_ble_local _build_backend` (`--strict`; generated classes exempt)
-4. `bandit -r src tools _build_backend` failing on Medium+ severity
-5. `pip-audit` over the package's resolved runtime dependencies (no ignores); skipped offline unless
+2. `spec/checks/run.sh` (Suite S): ksc python + java `-w` and javascript with no output, then
+   `spec/checks/lint.py` (see "The spec is the bible" in `CLAUDE.md`)
+3. `ruff check src tools tests spec _build_backend` (rules in `[tool.ruff.lint]`)
+4. `mypy src/govee_ble_local _build_backend` (`--strict`; generated classes exempt)
+5. `bandit -r src tools _build_backend` failing on Medium+ severity
+6. `pip-audit` over the package's resolved runtime dependencies (no ignores); skipped offline unless
    `CI=true`
-6. `pytest` with a coverage floor of 95% (`COV_MIN`) over the package's statements and branches
+7. `pytest` with a coverage floor of 95% (`COV_MIN`) over the package's statements and branches
    (generated readers omitted), the same gate hass-govee-ble-local applies to the integration
 
 With `CI=true`, missing optional test dependencies fail the run instead of skipping tests.

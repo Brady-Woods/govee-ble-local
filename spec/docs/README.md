@@ -2,7 +2,8 @@
 
 Reverse-engineered, source-grounded specification of the Govee Home BLE GATT protocol (vendor control
 service `00010203-0405-0607-0809-0a0b0c0d1910`). Every structural claim is cited to the decompiled Android
-app; the binary layer is an executable Kaitai grammar; the device catalogue is a schema-validated registry.
+app or device firmware; the binary layer is an executable Kaitai grammar; the device catalogue is a
+schema-validated registry.
 
 ## Layout
 This package is rooted at `spec/`. The **machine artifacts** (`*.ksy`, `devices.yaml`, `devices.schema.json`,
@@ -41,10 +42,12 @@ PYTHONPATH=/tmp/gsy python3 govee_reference.py --strict   # reference-codec self
 ```
 
 ## Provenance
-`file:line` citations of the form `base2light/...`, `sources/com/govee/...`, `splits/dec2/<family>/...`
-are relative to the **decompiled-APK root** (the parent of this folder), not to this package. They are the
-evidence for each claim; keep the decompile alongside if you need to re-verify.
+App `path:line` citations (`base-classes10/...`, `split_h60ax/...` and the like) are relative to the
+**app decompile root**; firmware `firmware-*/decompiled/*.c:line` citations are relative to the firmware
+workspace next to it; `IMAGE symbol @0xaddr` names a firmware image and an address in it. None of the
+decompile is in this package. The citations are the evidence for each claim; keep the decompile alongside
+if you need to re-verify.
 
-The authoritative sources are the decompiled Java and real hardware/btsnoop captures — this spec is derived
-from them and was cross-validated against an independent client's scene catalogue (543 scene values
-deep-parse) and plaintext captures.
+The authoritative sources are the decompiled app and firmware. This spec is derived from them; real hardware
+confirms behaviour and btsnoop captures illustrate it. It was cross-validated against an independent client's
+scene catalogue (543 scene values deep-parse) and plaintext captures.
