@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://govee-ble-local/spec/devices.schema.json",
   "title": "Govee BLE device registry",
-  "description": "Machine-readable registry of Govee BLE device families and their GATT/command surface. Companion to docs/GOVEE_BLE_GATT_PROTOCOL.md; intended to be consumed by clients (e.g. govee_ble_local) and to generate the per-device tables in the Markdown spec.",
+  "description": "Machine-readable registry of Govee BLE device families and their GATT/command surface, companion to docs/GOVEE_BLE_GATT_PROTOCOL.md.",
   "type": "object",
   "required": ["spec_version", "transport", "families"],
   "additionalProperties": false,
@@ -26,29 +26,29 @@
     "timing": { "$ref": "#/$defs/timing" },
     "secret": {
       "type": "object",
-      "description": "Per-device authorization secret used by families with encryption: secret_key_pairing (the 0xB1/0xB2 path). Not the AES cipher key.",
+      "description": "Per-device authorization secret of secret_key_pairing families (0xB1/0xB2), not the AES cipher key.",
       "additionalProperties": true
     },
     "scenes": {
       "type": "object",
-      "description": "Scene upload/activation model: the two 0xA3 dialects, placeholder handling, cloud scene-library + effect-strs API, and the AA 05 15 kelvin read-back.",
+      "description": "Scene upload/activation model: the 0xA3 dialects, placeholders, cloud scene library and the AA 05 15 kelvin read-back.",
       "additionalProperties": true
     },
     "mode_color_decode": {
       "type": "object",
-      "description": "Colour mode-report body decodes, by kind name: how a control screen reads the bytes after a colour sub-mode byte of the aa 05 reply / 0xAC status TLV 0x05 (Govee Home 7.7.02). One entry per distinct (byte layout, Kelvin signedness, CCT rule). Referenced by mode_color_parse.<strategy>.sub_modes. The keys are exactly the members of govee_common::color_decode but not_decoded; govee_state color_report(kind) decodes the body with the layout of the kind the device's govee_profile mode decode names (client_profile.wire).",
+      "description": "Colour mode-report body decodes, keyed by govee_common::color_decode member (not_decoded aside), one per distinct layout, Kelvin signedness and CCT rule.",
       "propertyNames": { "$ref": "#/$defs/modeColorDecodeKind" },
       "additionalProperties": { "$ref": "#/$defs/modeColorDecode" }
     },
     "mode_color_parse": {
       "type": "object",
-      "description": "Colour-report strategies, by name: each maps the colour sub-modes a screen decodes (0x15 / 0x0d / 0x0b / 0x02) to a mode_color_decode kind; a colour sub-mode it does not list is not decoded (the screen keeps its colour). Referenced by families[].client_profile.mode_color_parse and its overrides. Names shared with govee_ble_local's DeviceProfile.mode_color_parse are used only where the traced map is exactly that strategy.",
+      "description": "Colour-report strategies by name, each mapping colour sub-modes (0x15 / 0x0d / 0x0b / 0x02) to a mode_color_decode kind; an unlisted sub-mode is not decoded.",
       "propertyNames": { "$ref": "#/$defs/modeColorParse" },
       "additionalProperties": { "$ref": "#/$defs/modeColorStrategy" }
     },
     "command_catalog": {
       "type": "array",
-      "description": "Shared command opcodes (BleProtocolConstants). Per-family device-specific opcodes live in family.opcodes.",
+      "description": "Shared command opcodes (BleProtocolConstants); per-family ones live in family.opcodes.",
       "items": { "$ref": "#/$defs/catalog_entry" }
     },
     "families": {
@@ -103,11 +103,11 @@
       "required": ["id", "category", "models", "confidence"],
       "additionalProperties": false,
       "properties": {
-        "id": { "type": "string", "description": "Stable family id, usually the pact/package name (e.g. 'h60ax', 'dreamcolorlightv1')." },
+        "id": { "type": "string", "description": "Stable family id, usually the pact/package name (e.g. 'h60ax')." },
         "category": {
           "type": "string",
           "enum": ["rgbic_strip", "rgb_strip", "bulb", "light_bar", "panel", "string_light", "neon", "net_light", "lamp", "car_light", "tv_backlight", "hdmi_sync", "grow_light", "splicing_panel", "plug", "button", "sensor", "other_light"],
-          "description": "Physical device category. Lighting + plug + button/sensor scope."
+          "description": "Physical device category."
         },
         "models": {
           "type": "array",
@@ -117,18 +117,18 @@
         "goods_types": {
           "type": "array",
           "items": { "type": "integer" },
-          "description": "Govee goodsType/pactCode integer ids, when known. The app routes a record with a non-zero cloud goodsType to a family by that goodsType alone (its SubLib keys), never by the SKU; a SKU in models picks the family only for a goodsType-0 record (SubConfig.Companion.b)."
+          "description": "Govee goodsType/pactCode integer ids, when known; a record with a non-zero goodsType routes to a family by goodsType alone, by SKU only when it is 0 (base-classes3/com/govee/kt/ui/device/SubConfig.java:46-62)."
         },
         "assigned_goods_type": {
           "type": "array",
           "minItems": 1,
           "items": { "$ref": "#/$defs/assignedGoodsType" },
-          "description": "goodsTypes the app (Govee Home 7.7.02) assigns some of the family's SKUs itself in place of the account record's. Resolution of the goodsType gt a device runs under: g0 = the record's goodsType (0 when the SKU has no cloud goodsType); the device list routes a record by its goodsType when g0 != 0, else by SKU (base-classes3/com/govee/kt/ui/device/SubConfig.java:46-62), so only the items of the family that route reaches apply (g0 = 0: the SKU-keyed family, one that lists the SKU and has no goods_types or lists 0; else the family whose goods_types lists g0); a context 'device_list' item applies when the SKU is in models, g0 is in from_goods_type and every condition holds on the record's pact and versions, and then gt = goods_type (at most one item applies; none: gt = g0). gt is the key of every goodsType lookup for the control screen (client_profile.by_goods_type, the mode_color_parse resolution). A context 'bind' item is the record the pairing flow writes (goods_type, and pact when given): a client with no account record takes it as g0 and the record pact. Every goods_type here is in the family's goods_types or has a client_profile.by_goods_type entry, and every by_goods_type key goods_types does not list is the goods_type of an item."
+          "description": "goodsTypes the app assigns some of the family's SKUs itself: a matching device_list item (SKU in models, record goodsType in from_goods_type, condition holds) makes goods_type the gt that keys every control-screen goodsType lookup."
         },
         "delivery": {
           "type": "string",
           "enum": ["base_apk", "feature_split"],
-          "description": "Whether the family ships in base.apk or as an on-demand pact_* split (feature_split). Govee Home 7.7.02 maps goodsTypes and SKUs to their pact_* module in base2home/pfd/Config.b(); every captured split declares on-demand delivery."
+          "description": "Whether the family ships in base.apk or as an on-demand pact_* split (base2home/pfd/Config)."
         },
         "connectivity": {
           "type": "array",
@@ -160,7 +160,7 @@
         },
         "submodes": {
           "type": "object",
-          "description": "Sub-mode type byte (the byte after mode command 0x05) per function. Null/absent = unsupported by the family.",
+          "description": "Sub-mode type byte (the byte after mode command 0x05) per function; absent = unsupported.",
           "additionalProperties": false,
           "properties": {
             "color": { "$ref": "#/$defs/hexByte" },
@@ -185,10 +185,10 @@
             "properties": {
               "name": { "type": "string" },
               "cmd": { "$ref": "#/$defs/hexByte" },
-              "pro_type": { "type": "string", "description": "Header byte if not the default write 0x33 (hex like '0x33', or a note when unresolved between two builders)." },
+              "pro_type": { "type": "string", "description": "Header byte if not the default write 0x33 (hex, or a note when unresolved)." },
               "payload": { "type": "string", "description": "Human-readable payload layout, e.g. '[zone, state]'." },
               "readable": { "type": "boolean" },
-              "applies_to": { "type": "string", "description": "Comma-separated SKU list when an opcode is scoped to specific models within the family (e.g. 'H5121, H5129'). Absent = whole family." },
+              "applies_to": { "type": "string", "description": "Comma-separated SKUs the opcode is limited to (e.g. 'H5121, H5129'); absent = whole family." },
               "note": { "type": "string" }
             }
           }
@@ -215,7 +215,7 @@
             "scene_versions": {
               "type": "array",
               "items": { "type": "integer" },
-              "description": "versionArray accepted for scene uploads (maps sceneType -> comType per protocol §4.4)."
+              "description": "versionArray accepted for scene uploads (sceneType -> comType, protocol §4.4)."
             }
           }
         },
@@ -239,7 +239,7 @@
         },
         "pact": {
           "type": "object",
-          "description": "Protocol negotiation: which (pactType, pactCode) versions the family accepts (from the advertisement / scene versionArray).",
+          "description": "Which (pactType, pactCode) versions the family accepts.",
           "additionalProperties": false,
           "properties": {
             "scene_versions": { "type": "array", "items": { "type": "integer" }, "description": "sceneType values accepted -> comType (see protocol §4.4)." },
@@ -249,26 +249,26 @@
         "name_prefixes": {
           "type": "array",
           "items": { "type": "string" },
-          "description": "Advertised BLE name prefixes that resolve to this family (e.g. 'ihoment_H6047', 'GVH6047')."
+          "description": "Advertised BLE name prefixes that resolve to this family (e.g. 'ihoment_H6047')."
         },
         "client_profile": {
           "type": "object",
           "additionalProperties": false,
-          "description": "The discriminators a thin client feeds to the parametric .ksy types (the bits NOT in the byte stream). Lets the client be data-driven instead of hardcoding per-SKU structure; wire is the govee_profile context as data.",
+          "description": "Discriminators a thin client feeds the parametric .ksy types (facts not in the byte stream); wire is the govee_profile context as data.",
           "properties": {
-            "has_brightness": { "type": "boolean", "description": "Per-segment colour read-back record size: true = 4-byte [brightness,R,G,B], false = 3-byte [R,G,B]. From supportPartBrightness. It is govee_profile color_group_form.has_brightness (see wire); it sets the 0xA5 records only, as an aa a2 colour-only group (wire forms.f_a2 color_group_rgb) is always 3-byte." },
-            "color_scheme": { "type": "string", "description": "Colour-write byte-layout family driving op15/0x0d variant selection (e.g. 'h60a6', 'h6006', 'h61a8')." },
-            "power_read": { "type": "string", "enum": ["aa01", "ac_status"], "description": "Which message gives the control screen its power state at connect (Govee Home 7.7.02, traced per family). 'aa01' = the aa 01 read, decoded on when the byte == 1 (ControllerSwitch.Companion.c; govee_state power_state.is_on, source read_reply). 'ac_status' = the screen sends NO aa 01 read: power is TLV 0x01 of the 0xAC/0x03 single-read status burst, decoded on when the byte != 0 (Compose4BaseInfoSingleRead.u; govee_state power_state.is_on, source status_tlv). The two rules differ only for a byte >= 2." },
-            "power_live": { "type": "array", "uniqueItems": true, "items": { "type": "string", "enum": ["heartbeat_aa01", "heartbeat_aa36", "heartbeat_aa33", "push_30"] }, "description": "Where the control screen takes LIVE power updates after connect. 'heartbeat_aa01' = the aa 01 heartbeat reply, on when frame[2] == 1 (ShareVM.N3; only when the VM's I3() is true). 'heartbeat_aa36' = the aa 36 heartbeat, per bar frame[2] == 1 / frame[3] == 1 (h6047 old detail screen, NewDetailVm.A3). 'heartbeat_aa33' = the aa 33 left / right switch heartbeat, on when frame[2] != 0 (H610A, striplight goodsType 80, ComposeHeartController). 'push_30' = the ee 30 notify (notify_30; its layout is wire forms.f_ee_30): bit 0 of frame[3] on most screens, bit 0 of frame[5] on H60A0, per bar frame[4] == 1 / frame[5] == 1 on H6038/H6048; a family comment gives any other layout (e.g. bit 7 of frame[3] on H60B0)." },
-            "mode_color_parse": { "$ref": "#/$defs/modeColorParse", "description": "The family's default colour-report strategy (a key of the top-level mode_color_parse section): how its control screen decodes the colour sub-modes of the aa 05 mode report (Govee Home 7.7.02). Resolution for one device: its family is the one whose goods_types holds its account record's goodsType when that is non-zero, else the SKU-keyed family (one with no goods_types, or 0 among them) whose models hold its SKU (the app's SubLib key, SubConfig.Companion.b, with no fallback between the two; a non-zero goodsType that no family lists has not been traced). Let gt be the goodsType the app runs it under (the account record's goodsType, or the one the family's assigned_goods_type gives for a legacy SKU, e.g. a BK or new-firmware rewrite). Start from by_goods_type.<gt> if that entry has a mode_color_parse, else by_model.<SKU> if present, else this value. Then, in that entry, a mode_color_by_pact key equal to the device's 'pactType,pactCode' (where the screen's scan-time pact check runs, the advertised pact, which the screen writes over the record's before it connects; otherwise, and after a scan timeout, the record's) replaces it, and the first matching mode_color_by_firmware item replaces the result. 'none' = no colour sub-mode decoded." },
-            "mode_color_parse_status": { "$ref": "#/$defs/modeColorParse", "description": "The strategy for the 0x05 TLV of the 0xAC status burst, where the screen parses it differently from the aa 05 reply (absent = the same strategy as mode_color_parse)." },
-            "by_model": { "type": "object", "propertyNames": { "pattern": "^[A-Za-z0-9]+$" }, "additionalProperties": { "type": "object", "additionalProperties": false, "properties": { "mode_color_parse": { "$ref": "#/$defs/modeColorParse", "description": "This SKU's colour-report strategy." }, "mode_color_parse_status": { "$ref": "#/$defs/family/properties/client_profile/properties/mode_color_parse_status" }, "mode_color_by_pact": { "$ref": "#/$defs/modeColorByPact" }, "mode_color_by_firmware": { "$ref": "#/$defs/modeColorByFirmware" } } }, "description": "Per-SKU colour-report overrides (keys = a model of the family) where SKUs of one family (usually SKU-routed, goodsType 0) open different screens. A by_goods_type entry for the goodsType the app runs the device under wins over it. The app routes a record by its SKU only when its cloud goodsType is 0 (SubConfig.Companion.b); a record with a non-zero cloud goodsType reaches a family through that goodsType alone." },
-            "by_goods_type": { "type": "object", "propertyNames": { "pattern": "^[0-9]+$" }, "additionalProperties": { "type": "object", "additionalProperties": false, "properties": { "power_read": { "$ref": "#/$defs/family/properties/client_profile/properties/power_read" }, "power_live": { "$ref": "#/$defs/family/properties/client_profile/properties/power_live" }, "mode_color_parse": { "$ref": "#/$defs/modeColorParse", "description": "This goodsType's colour-report strategy (overrides the family's)." }, "mode_color_parse_status": { "$ref": "#/$defs/family/properties/client_profile/properties/mode_color_parse_status" }, "mode_color_by_pact": { "$ref": "#/$defs/modeColorByPact" }, "mode_color_by_firmware": { "$ref": "#/$defs/modeColorByFirmware" }, "relay_power": { "$ref": "#/$defs/family/properties/client_profile/properties/relay_power" }, "relay_on_mask": { "$ref": "#/$defs/family/properties/client_profile/properties/relay_on_mask" }, "advert_on_mask": { "$ref": "#/$defs/family/properties/client_profile/properties/advert_on_mask" }, "models": { "type": "array", "uniqueItems": true, "items": { "type": "string" }, "description": "The family's SKUs that have this goodsType (a subset of the family's models), so SKU-keyed client tables can be checked against the goodsType-keyed values." } } }, "description": "Per-goodsType overrides (keys = the goodsType as a decimal string) where one family's control screens differ by goodsType. A key may be a goodsType the family's goods_types does not list: one the app assigns the family's SKUs itself (a BK or new-firmware rewrite, Model.itemClickOp DefInfo.C0). The device list does not hold such a goodsType to its registered pacts: every rewrite is made in a Model.itemClickOp override that does not call the device-list pact check (AbsBaseBleModel.e), or on a goodsType-0 record, which reports no pact to it; only the screen's own scan check (its n4) limits the pact. Such a key is the goods_type of a families[].assigned_goods_type item. An override wins over the family-level value; a goodsType with neither has not been traced." },
-            "relay_power": { "type": "string", "enum": ["outlet0", "all_outlets", "total_switch"], "description": "Plugs: the frame the detail screen's main power button writes (Govee Home 7.7.02, traced per goodsType). 'outlet0' = 33 01 11 / 10, relay 0 only (the SwitchControllerV2.q :53-71 outlet-0 form, split_plugnew/com/govee/h5080/ble/controller/; goodsType 43's screen writes these bytes directly, split_plugnew/com/govee/h5080/adjust/newdetail/H5083NewDetailViewModel.x0 :247-251); 'all_outlets' = 33 01 FF / F0, every outlet (SwitchControllerV2(on, 15)); 'total_switch' = 33 02 01 / 00 (H5089, split_plugnew/com/govee/h5080/ble/controller/h5089/Controller4TotalSwitch)." },
-            "relay_on_mask": { "type": "integer", "minimum": 1, "maximum": 255, "description": "Plugs: the screen reads the device as on when (aa 01 reply byte 0 & relay_on_mask) != 0. power_state.state is a relay bitmask on plugs (bit i = relay i); this mask is the client-side rule, per goodsType. 0x01 = relay 0, 0x03 = relays 0-1, 0x07 = relays 0-2, 0xFF = any relay. It records the connect read (SwitchControllerV2) and is govee_profile power_rule.relay_on_mask (govee_state power_state.is_on); the aa 01 heartbeat rule is wire power.relay_heartbeat_on_mask (goodsTypes 50 / 307 read bits 0..1 = 0x03 there, HeartControllerV2). Written in hex in the YAML (an integer, not a hex string)." },
-            "advert_on_mask": { "type": "integer", "minimum": 1, "maximum": 255, "description": "Plugs: the device list reads the device as on when (advert switch byte & advert_on_mask) != 0. The byte is scanRecord[i+8] of the Govee AD (BleUtil.parseBleBroadOnOff; govee_manufacturer_data device_state[0], its switch_byte). Per goodsType. Written in hex in the YAML (an integer, not a hex string)." },
+            "has_brightness": { "type": "boolean", "description": "Per-segment 0xA5 colour read-back record: true = 4-byte [brightness,R,G,B], false = 3-byte [R,G,B] (an aa a2 colour group is always 3-byte)." },
+            "color_scheme": { "type": "string", "description": "Colour-write byte-layout family selecting the op15/0x0d variant (e.g. 'h60a6', 'h6006')." },
+            "power_read": { "type": "string", "enum": ["aa01", "ac_status"], "description": "Power source at connect (govee_state power_state.is_on): 'aa01' = the aa 01 read, on when the byte == 1; 'ac_status' = TLV 0x01 of the 0xAC/0x03 status burst (no aa 01 read), on when the byte != 0." },
+            "power_live": { "type": "array", "uniqueItems": true, "items": { "type": "string", "enum": ["heartbeat_aa01", "heartbeat_aa36", "heartbeat_aa33", "push_30"] }, "description": "Live power after connect: 'heartbeat_aa01' = aa 01 heartbeat, on when frame byte 2 == 1; 'heartbeat_aa36' = aa 36 heartbeat, per bar byte 2 / 3 == 1; 'heartbeat_aa33' = aa 33 switch heartbeat, on when byte 2 != 0; 'push_30' = the ee 30 notify (layout: wire forms.f_ee_30)." },
+            "mode_color_parse": { "$ref": "#/$defs/modeColorParse", "description": "The family's default colour-report strategy; by_goods_type.<gt>, else by_model.<SKU>, overrides it, then that entry's mode_color_by_pact and first matching mode_color_by_firmware; 'none' = no colour sub-mode decoded." },
+            "mode_color_parse_status": { "$ref": "#/$defs/modeColorParse", "description": "Strategy for the 0x05 TLV of the 0xAC status burst where it differs from the aa 05 reply (absent = mode_color_parse)." },
+            "by_model": { "type": "object", "propertyNames": { "pattern": "^[A-Za-z0-9]+$" }, "additionalProperties": { "type": "object", "additionalProperties": false, "properties": { "mode_color_parse": { "$ref": "#/$defs/modeColorParse" }, "mode_color_parse_status": { "$ref": "#/$defs/family/properties/client_profile/properties/mode_color_parse_status" }, "mode_color_by_pact": { "$ref": "#/$defs/modeColorByPact" }, "mode_color_by_firmware": { "$ref": "#/$defs/modeColorByFirmware" } } }, "description": "Per-SKU colour-report overrides (keys = a model of the family); a by_goods_type entry for the device's gt wins over it." },
+            "by_goods_type": { "type": "object", "propertyNames": { "pattern": "^[0-9]+$" }, "additionalProperties": { "type": "object", "additionalProperties": false, "properties": { "power_read": { "$ref": "#/$defs/family/properties/client_profile/properties/power_read" }, "power_live": { "$ref": "#/$defs/family/properties/client_profile/properties/power_live" }, "mode_color_parse": { "$ref": "#/$defs/modeColorParse" }, "mode_color_parse_status": { "$ref": "#/$defs/family/properties/client_profile/properties/mode_color_parse_status" }, "mode_color_by_pact": { "$ref": "#/$defs/modeColorByPact" }, "mode_color_by_firmware": { "$ref": "#/$defs/modeColorByFirmware" }, "relay_power": { "$ref": "#/$defs/family/properties/client_profile/properties/relay_power" }, "relay_on_mask": { "$ref": "#/$defs/family/properties/client_profile/properties/relay_on_mask" }, "advert_on_mask": { "$ref": "#/$defs/family/properties/client_profile/properties/advert_on_mask" }, "models": { "type": "array", "uniqueItems": true, "items": { "type": "string" }, "description": "The family's SKUs with this goodsType (a subset of models), to cross-check SKU-keyed client tables." } } }, "description": "Per-goodsType overrides (keys = the goodsType in decimal) that win over the family-level value; a key goods_types lacks is the goods_type of an assigned_goods_type item." },
+            "relay_power": { "type": "string", "enum": ["outlet0", "all_outlets", "total_switch"], "description": "Plugs: what the detail screen's power button writes: 'outlet0' = 33 01 11 / 10 (relay 0), 'all_outlets' = 33 01 FF / F0, 'total_switch' = 33 02 01 / 00 (H5089) (split_plugnew/com/govee/h5080/ble/controller/)." },
+            "relay_on_mask": { "type": "integer", "minimum": 1, "maximum": 255, "description": "Plugs: on at the connect read when (aa 01 reply byte 0 & relay_on_mask) != 0, bit i = relay i, absent = a light (govee_profile power_rule.relay_on_mask); an integer written in hex in the YAML." },
+            "advert_on_mask": { "type": "integer", "minimum": 1, "maximum": 255, "description": "Plugs: the device list reads on when (Govee AD switch byte & advert_on_mask) != 0 (govee_manufacturer_data device_state[0]); an integer written in hex in the YAML." },
             "wire": { "$ref": "#/$defs/wire" },
-            "wire_cipher": { "type": "string", "enum": ["runtime"], "description": "Always 'runtime': the plaintext/V1/V2 cipher is resolved per-connection from the advert encrypted-bit / BGC-info, never from a static per-SKU value." }
+            "wire_cipher": { "type": "string", "enum": ["runtime"], "description": "Always 'runtime': the cipher is resolved per connection from the advert encrypted bit / BGC info, never per SKU." }
           }
         },
         "confidence": { "$ref": "#/$defs/confidence" },
@@ -285,13 +285,13 @@
       "required": ["context", "models", "goods_type", "rule", "doc"],
       "description": "One goodsType the app assigns some of a family's SKUs itself.",
       "properties": {
-        "context": { "type": "string", "enum": ["device_list", "bind"], "description": "'device_list' = the device-list item's click handler (Model.itemClickOp / t) launches the control screen with goods_type in its DefInfo; 'bind' = the pairing flow writes goods_type (and pact) into the account record it creates; a bind item takes no from_goods_type and no condition." },
-        "models": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "pattern": "^[A-Za-z0-9]+$" }, "description": "The family's SKUs the rule covers (the app's SKU list intersected with the family's models)." },
-        "from_goods_type": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "integer", "minimum": 0 }, "description": "device_list only (required there): the record goodsTypes whose device-list route reaches the rewriting click handler: 0 for a SKU-keyed handler, else the goodsType keys of its ISubLib." },
+        "context": { "type": "string", "enum": ["device_list", "bind"], "description": "'device_list' = the device-list click handler opens the control screen with goods_type; 'bind' = the pairing flow writes goods_type (and pact) into the account record it creates." },
+        "models": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "pattern": "^[A-Za-z0-9]+$" }, "description": "The family's SKUs the rule covers." },
+        "from_goods_type": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "integer", "minimum": 0 }, "description": "device_list only: record goodsTypes whose route reaches the rewriting click handler (0 for a SKU-keyed one)." },
         "condition": { "$ref": "#/$defs/assignedGoodsTypeCondition" },
-        "goods_type": { "type": "integer", "minimum": 1, "description": "The goodsType the app assigns." },
-        "pact": { "type": "string", "pattern": "^[0-9]+,[0-9]+$", "description": "bind only: the 'pactType,pactCode' (decimal) the app writes into the record with goods_type." },
-        "rule": { "type": "string", "enum": ["OldRgbBkUtil.isOldRgbBk", "OldRgbBkUtil.isOldRgbBk4BleWifi", "OldRgbicBkUtil.isRgbicBk4Ble", "OldCarBkUtil.isBkCar", "OldDreamColorUtil.checkSupportNewDreamColorFuc", "OldDreamColorUtil.checkSupportNewDreamColorFuc4BleWifi", "OldBulbUtil.checkSupportH6005Fuc", "NewRgb2TLUtil.checkDeviceConfig", "NewRgb2TLUtil.checkDeviceConfig4BleIot"], "description": "The app predicate (com.govee.base2home.pact.support) that decides it; condition restates it on the record. OldRgbBkUtil.isOldRgbBk covers the BLE-only BK SKUs (pactType >= 10), isOldRgbBk4BleWifi the BLE+Wi-Fi ones (pactType >= 2); the Old*Util version tests read the record's BLE versions." },
+        "goods_type": { "type": "integer", "minimum": 1 },
+        "pact": { "type": "string", "pattern": "^[0-9]+,[0-9]+$", "description": "bind only: the 'pactType,pactCode' (decimal) written with goods_type." },
+        "rule": { "type": "string", "enum": ["OldRgbBkUtil.isOldRgbBk", "OldRgbBkUtil.isOldRgbBk4BleWifi", "OldRgbicBkUtil.isRgbicBk4Ble", "OldCarBkUtil.isBkCar", "OldDreamColorUtil.checkSupportNewDreamColorFuc", "OldDreamColorUtil.checkSupportNewDreamColorFuc4BleWifi", "OldBulbUtil.checkSupportH6005Fuc", "NewRgb2TLUtil.checkDeviceConfig", "NewRgb2TLUtil.checkDeviceConfig4BleIot"], "description": "The app predicate (com.govee.base2home.pact.support) that decides it; condition restates it on the record." },
         "doc": { "type": "string", "description": "Where the app does it (path:line relative to decomp-7.7.02)." }
       },
       "allOf": [
@@ -303,7 +303,7 @@
       "type": "object",
       "additionalProperties": false,
       "minProperties": 1,
-      "description": "Tests on the device record, all of which must hold (absent = unconditional). min_pact_type and min_pact_code are separate tests (pactType >= min_pact_type AND pactCode >= min_pact_code), not a pact order. Versions compare as the app does: BleUtil.parseVersion (base-classes9/com/govee/base2home/pact/BleUtil.java:1112-1121) drops the dots and reads one integer, so an empty or unparsable version reads 0 and fails; for 'a.bb.cc' versions that equals a field-by-field compare.",
+      "description": "Tests on the device record, all of which must hold: pactType >= min_pact_type and pactCode >= min_pact_code separately, versions as one integer with the dots dropped (BleUtil.parseVersion; empty or unparsable = 0, fails).",
       "properties": {
         "min_pact_type": { "type": "integer", "minimum": 0 },
         "min_pact_code": { "type": "integer", "minimum": 0 },
@@ -315,22 +315,22 @@
     "modeColorParse": {
       "type": "string",
       "enum": ["rgb_kelvin_tint", "rgb_0d", "kelvin", "kelvin_15", "rgb_kelvin_0d", "kelvin_15_rgb_kelvin_0d", "none", "untraced", "gradual_15", "gradual_0d", "kelvin_0d", "kelvin_0b", "kelvin_0b_15", "kelvin_15_nocct", "kelvin_0d_nocct", "kelvin_0b_nocct", "kelvin_02_nocct", "kelvin_only_15", "kelvin_pair_15", "kelvin_pair_0d_15", "rgb_kelvin_pair_0d_15", "kelvin_triple_15", "kelvin_triple_15_nocct", "rgb_kelvin_tint_no_0d", "rgb_kelvin_tint_positive_0d", "rgb_kelvin_0d_nocct", "rgb_all", "rgb_flag_tint", "rgb_flag_tint_no_0d", "rgb_flagnz_tint_02", "rgb_flag_tint_legacy", "rgb_pair_flag_lookup", "illumination_kelvin_15", "rgb_kelvin_15", "kelvin_14_15", "gradual_14", "bri_rgb_pair_15"],
-      "description": "A colour-report strategy name: a key of the top-level mode_color_parse section. It describes the decode the control screen applies to a mode report it gets over BLE (aa 05 reply, 0xAC TLV 0x05); 'none' = the screen never parses one or decodes no colour sub-mode, 'untraced' = the screen's code is not in the capture."
+      "description": "A colour-report strategy name (a key of the top-level mode_color_parse); 'none' = no colour sub-mode decoded, 'untraced' = the screen's code is not in the capture."
     },
     "modeColorDecodeKind": {
       "type": "string",
       "enum": ["gradual_kelvin_s16be", "gradual_kelvin_s16be_nocct", "gradual_only", "kelvin_s16be", "skip_kelvin_s16be_illumination", "gradual_kelvin_pair_s16be", "skip_kelvin_pair_s16be", "rgb_kelvin_pair_s16be", "gradual_kelvin_triple_s16be", "gradual_kelvin_triple_s16be_nocct", "rgb_kelvin_tint", "rgb_kelvin_tint_positive", "rgb_kelvin_0d", "rgb_kelvin_0d_nocct", "rgb", "rgb_flag1_tint", "rgb_flagnz_tint", "rgb_flag_tint_nokelvin", "rgb_pair_flag_lookup", "bri_rgb_pair"],
-      "description": "A colour mode-report body decode name: a key of the top-level mode_color_decode section, = a member of govee_common::color_decode (not_decoded aside)."
+      "description": "A colour mode-report body decode name: a key of mode_color_decode, a govee_common::color_decode member other than not_decoded."
     },
     "modeColorVersion": {
       "type": "string",
       "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
-      "description": "A firmware version 'a.bb.cc', compared numerically field by field; a device version that is empty or does not parse fails the comparison (the app then takes the older branch)."
+      "description": "A firmware version 'a.bb.cc', compared field by field; an empty or unparsable device version fails (the older branch applies)."
     },
     "modeColorByFirmware": {
       "type": "array",
       "minItems": 1,
-      "description": "Firmware branches of a colour strategy: the first item whose every min_* condition holds (device version >= the given one) replaces the entry's mode_color_parse; no match keeps it. Each family comment says which version source the app compares (BLE-read or the cached device record).",
+      "description": "Firmware branches: the first item whose every min_* holds replaces the entry's mode_color_parse (no match keeps it); the family's YAML comment names the version source.",
       "items": {
         "type": "object",
         "additionalProperties": false,
@@ -346,15 +346,15 @@
     },
     "modeColorByPact": {
       "type": "object",
-      "description": "Pact branches of a colour strategy, keyed 'pactType,pactCode' (decimal, e.g. '1,1', '65535,255'): when the device's pact matches a key, that sub-entry (its mode_color_parse, then its own mode_color_by_firmware) replaces the whole entry. Used where the decode differs by pact, and where the app assigns the goodsType itself (a BK rewrite), the screen reads aa 05 at connect for some pacts only and nothing else parses a BLE mode report: the entry's mode_color_parse is then 'none' and only the read pacts are listed. A cloud goodsType whose registered pacts are all read is not split: the device-list check (AbsBaseBleModel.e -> Pact.i, an exact match against the pacts registered for the cloud goodsType) turns any other pact the device reports away with the app-old dialog before a screen opens (a pact first seen by the screen's own scan is held only to that screen's n4).",
+      "description": "Pact branches keyed 'pactType,pactCode' (decimal): a matching key's sub-entry replaces the whole entry, the pact being the advertised one where the screen scans before connecting, else the record's.",
       "propertyNames": { "pattern": "^[0-9]+,[0-9]+$" },
       "additionalProperties": {
         "type": "object",
         "additionalProperties": false,
         "required": ["mode_color_parse"],
         "properties": {
-          "mode_color_parse": { "$ref": "#/$defs/modeColorParse", "description": "The strategy for this pact." },
-          "mode_color_by_firmware": { "$ref": "#/$defs/modeColorByFirmware", "description": "Firmware branches within this pact." }
+          "mode_color_parse": { "$ref": "#/$defs/modeColorParse" },
+          "mode_color_by_firmware": { "$ref": "#/$defs/modeColorByFirmware" }
         }
       }
     },
@@ -366,7 +366,7 @@
       "properties": {
         "sub_modes": {
           "type": "object",
-          "description": "Colour sub-mode byte ('0x15', '0x0d', '0x0b', '0x02'; '0x14' only where a package defines it as its colour sub-mode, the straightfloorlamp BleProtocol.sub_mode_color = 20) -> the mode_color_decode kind the screen applies to its body. Empty = no colour sub-mode decoded.",
+          "description": "Colour sub-mode byte -> the mode_color_decode kind applied to its body ('0x14' only where a package uses it as its colour sub-mode); empty = none decoded.",
           "propertyNames": { "enum": ["0x15", "0x0d", "0x0b", "0x02", "0x14"] },
           "additionalProperties": { "$ref": "#/$defs/modeColorDecodeKind" }
         },
@@ -379,16 +379,16 @@
       "required": ["layout", "kelvin_signed", "cct_rule", "doc"],
       "description": "One colour mode-report body decode.",
       "properties": {
-        "layout": { "type": "string", "description": "The bytes the screen reads, after the sub-mode byte (offsets into the body, sizes, endianness)." },
-        "kelvin_signed": { "type": ["boolean", "null"], "description": "true = the Kelvin is read signed (BleUtil.getSignedShort: 0x8000-0xFFFF read negative); false = unsigned; null = the body carries no Kelvin the screen reads." },
-        "cct_rule": { "type": "string", "description": "When the screen treats the report as a colour temperature vs an RGB colour, and what it shows." },
+        "layout": { "type": "string", "description": "Bytes read after the sub-mode byte (body offsets, sizes, endianness)." },
+        "kelvin_signed": { "type": ["boolean", "null"], "description": "true = Kelvin read signed (0x8000-0xFFFF negative); false = unsigned; null = no Kelvin read." },
+        "cct_rule": { "type": "string", "description": "When the screen shows the report as a colour temperature vs an RGB colour." },
         "doc": { "type": "string", "description": "Sources (parser path:line relative to decomp-7.7.02)." }
       }
     },
     "wire": {
       "type": "object",
       "additionalProperties": false,
-      "description": "The device's govee_profile (spec/govee_profile.ksy CONTEXT), as data. Resolve the family and the goodsType gt as for mode_color_parse. Layers, in order: this block, by_model.<SKU>, by_goods_type.<gt>; in each layer its own fields, then its by_pact entry for the device's pact, then its first matching by_firmware item. Each leaf (forms.f_xx, counts.x, group.x, power.x, mode.x, mode_status.x) is replaced on its own by a later layer, and an unset leaf is the param's 0 (unknown, not_decoded, false). The params kept in their existing keys: group.has_brightness = client_profile.has_brightness (false when absent); power.relay_on_mask = the by_goods_type entry's relay_on_mask (0 = a light); mode.c02 / c0b / c0d / c14 / c15 = the resolved mode_color_parse's sub_modes '0x02' / '0x0b' / '0x0d' / '0x14' / '0x15' (not_decoded when not listed), mode_status.cXX the same from mode_color_parse_status (else mode_color_parse); mode_status.music / empty_fails default to mode's. PROCEDURAL: the library resolves it (one keyword factory, one object per set of device facts).",
+      "description": "The device's govee_profile context (spec/govee_profile.ksy) as data, layered this block, by_model.<SKU>, by_goods_type.<gt> (each: own fields, by_pact, first matching by_firmware), a later layer replacing single leaves and an unset leaf being the param's 0.",
       "properties": {
         "doc": {
           "type": "string",
@@ -439,7 +439,7 @@
           "additionalProperties": {
             "$ref": "#/$defs/wireLayer"
           },
-          "description": "Per goodsType (the gt of client_profile.mode_color_parse's resolution); a goodsType of the family's goods_types or client_profile.by_goods_type."
+          "description": "Per goodsType gt (a key of goods_types or client_profile.by_goods_type)."
         },
         "by_model": {
           "type": "object",
@@ -449,7 +449,7 @@
           "additionalProperties": {
             "$ref": "#/$defs/wireLayer"
           },
-          "description": "Per SKU (a model of the family). A by_goods_type entry wins over it."
+          "description": "Per SKU (a model of the family); a by_goods_type entry wins over it."
         }
       }
     },
@@ -781,7 +781,7 @@
           "type": "integer",
           "minimum": 0,
           "maximum": 255,
-          "description": "aa 01 heartbeat: on when (byte & mask) != 0; 0 = as relay_on_mask. Written in hex in the YAML."
+          "description": "aa 01 heartbeat: on when (byte & mask) != 0, 0 = as relay_on_mask; written in hex in the YAML."
         }
       }
     },

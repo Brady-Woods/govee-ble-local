@@ -799,6 +799,10 @@ model, from which the shipped readers are generated).
     are verified; two devices.yaml / schema cross-references name the new types; seven docs that copied
     decompiled code are prose now. In Java an unknown proType still reads as null (ksc 0.11 cannot put an
     imported enum on a value instance); the frame doc says so.
+- Docs trimmed to essentials (docs only; generated code and bytes unchanged). The nine `.ksy` files go
+  from 9405 to 6758 lines, `devices.yaml` from 3788 to 3513 (comments only), and `devices.schema.json`
+  stays at 876 (shorter `description` strings): 14069 to 11147 lines in all. ksc's output differs only in
+  docstrings, plus the order of two sibling imports in `govee_scan_record` and `govee_state`.
 - `devices.yaml` striplight `color_temp_write` cites the BLE builder the colour-tab Kelvin slider runs
   (`ColorViewModel.U` -> `ColorModeControllerConfig.c` -> `Config.Yt` -> `Bytes.r`). It used to cite
   `ColorControllerConfig.b`, which builds the IoT command. The frame bytes are unchanged.
