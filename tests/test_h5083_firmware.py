@@ -10,6 +10,8 @@ H5083 fails the provenance check (tests/test_firmware_provenance.py).
 from __future__ import annotations
 
 import asyncio
+import contextlib
+from collections.abc import Iterator
 
 import pytest
 
@@ -58,6 +60,28 @@ async def _paired(plug: FirmwareGovee) -> Device:
 
 def _since(plug: FirmwareGovee, mark: int) -> list[str]:
     return plug.sim.requests()[mark:]
+
+
+@contextlib.contextmanager
+def _virtual_time() -> Iterator[None]:
+    """The running loop on a virtual clock: whenever it would wait for its next timer it jumps to it
+    (nothing here does real I/O), so a test spans seconds of loop time at once."""
+    loop = asyncio.get_running_loop()
+    now = [loop.time()]
+    select = loop._selector.select  # type: ignore[attr-defined]
+
+    def jump(timeout: float | None = None) -> object:
+        if timeout:
+            now[0] += timeout
+        return select(0)
+
+    loop.time = lambda: now[0]  # type: ignore[method-assign]
+    loop._selector.select = jump  # type: ignore[attr-defined]
+    try:
+        yield
+    finally:
+        del loop.time  # type: ignore[method-assign]
+        del loop._selector.select  # type: ignore[attr-defined]
 
 
 async def test_pairing_reads_the_secret_inside_the_button_window(plug: FirmwareGovee) -> None:
@@ -147,6 +171,38 @@ async def test_a_paired_session_reconnects_after_the_plug_drops_it(plug: Firmwar
     assert _since(plug, mark) == [*session, "write_tx power"]
     assert plug.sim.state.relay0 == 0
     assert await dev.read_secret() is None
+
+
+async def test_the_library_and_the_plug_close_an_idle_link_on_their_own_timers(plug: FirmwareGovee) -> None:
+    # Today's timers against the plug's: the library closes a link idle 8 s after a poll
+    # (IDLE_DISCONNECT_DELAY), before the plug's heartbeat drop at 10-11 s after the last write; after a
+    # 33 write its 30 s warm window (ACTIVE_IDLE_DELAY) outlasts that drop, so the plug ends the session.
+    # Pinned as they are: whether they should change is the backlogged S7-L2 question.
+    pairing = _device(plug)
+    plug.sim.event("button")
+    secret = await pairing.read_secret()
+    assert secret is not None
+    await pairing.stop()
+    adv = plug.advertisement()
+    assert adv is not None
+    dev = create_device(ble_device(ADDR, adv.local_name), "H5083", adv, secret=secret)   # default idle
+    loop = asyncio.get_running_loop()
+    with _virtual_time():
+        plug.follow_loop_clock()
+        await dev.update()
+        assert plug.sim.link and dev._conn.is_connected
+        await asyncio.sleep(7.5)
+        assert plug.sim.link and dev._conn.is_connected
+        await asyncio.sleep(1.0)        # 8.5 s after the poll: the library closed it
+        assert not plug.sim.link and not dev._conn.is_connected
+        assert "device drops the link" not in plug.sim.log
+        await dev.set_power(False)
+        written = loop.time()
+        await asyncio.sleep(9.0)        # past the 8 s idle: the warm window holds the link
+        assert plug.sim.link and dev._conn.is_connected
+        await asyncio.sleep(3.0)        # 12 s after the write: the plug dropped it
+        assert not plug.sim.link and plug.sim.log[-1] == "device drops the link"
+        assert loop.time() - written >= 12.0
 
 
 async def test_the_advert_identifies_the_plug_and_carries_its_relay(plug: FirmwareGovee) -> None:

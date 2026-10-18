@@ -98,6 +98,13 @@ def image_skus() -> frozenset[str]:
     return frozenset(str(i["sku"]).upper() for i in _yaml("firmware.yaml")["images"])
 
 
+def _image_bytes(v: Any) -> bytes:
+    """The bytes of a value the image (firmware.yaml) or a .ksy gives for an untyped bytes field: a str
+    (ASCII), a list of ints, or bytes. The simulator's one conversion to bytes; the static rule in
+    tests/test_firmware_provenance.py allows no other."""
+    return v.encode("ascii") if isinstance(v, str) else bytes(v)
+
+
 def _version_int(v: str) -> int:
     try:
         return int(str(v).replace(".", ""))
@@ -221,6 +228,7 @@ class Sim:
         self.log: list[str] = []
         self.gaps: set[str] = set()
         self.sent: list[tuple[str, bytes]] = []   # (what, plaintext) the device sent, in order
+        self.built: set[bytes] = set()            # every frame and advert the image built (its provenance)
         self.received: list[bytes] = []           # each client write, decrypted
         self.unreadable: list[bytes] = []         # the writes that don't read as a frame
         self.answered: list[str] = []             # the id of each answer that took a write
@@ -312,7 +320,7 @@ class Sim:
         tp = self.ksy.resolve(tname, (tname.split("::")[0],))
         assert tp is not None, tname
         try:
-            return _spec.read(self.ksy.cls(tp), bytes(data), *params)
+            return _spec.read(self.ksy.cls(tp), _image_bytes(data), *params)
         except Exception:   # noqa: BLE001 - decode() is None when the data does not read
             return None
 
@@ -351,8 +359,8 @@ class Sim:
             return {k: self.plain(getattr(v, k)) for k in ids if hasattr(v, k)}
         if isinstance(v, list):
             return [self.plain(x) for x in v]
-        if isinstance(v, bytearray):
-            return bytes(v)
+        if isinstance(v, (bytes, bytearray)):
+            return _image_bytes(v)
         if isinstance(v, int) and not isinstance(v, bool):
             return int(v)
         return v
@@ -434,7 +442,7 @@ class Sim:
             if fid in node:
                 setattr(obj, fid, self._convert(tp, a, obj, node[fid], scope, fills, trailing=trailing))
             elif "contents" in a:
-                setattr(obj, fid, bytes(a["contents"]))
+                setattr(obj, fid, _image_bytes(a["contents"]))
             elif a.get("type") == "govee_common::echo":
                 e = _FillEcho()
                 e.bytes = b""
@@ -489,10 +497,8 @@ class Sim:
         if isinstance(t, str) and _PRIM.match(_type_ref(t)[0]):
             return bool(v) if t == "b1" else int(v)
         # bytes fields (size, size-eos, terminator, or a switch with no case): the image's value
-        if isinstance(v, str):
-            return v.encode("ascii")
-        if isinstance(v, (list, tuple, bytes, bytearray)):
-            return bytes(v)
+        if isinstance(v, (str, list, tuple, bytes, bytearray)):
+            return _image_bytes(v)
         raise ValueError(f"{tp}.{a['id']}: cannot convert {v!r}")
 
     def _write(self, root: Any, length: int, fills: list[Any], fill: str, request: bytes | None,
@@ -517,7 +523,7 @@ class Sim:
         else:
             raise RuntimeError("the fill did not converge")
         if fill != "request" or request is None:
-            return out
+            return self._record(out)
         for f in fills:
             if isinstance(f, _FillEcho) and f._space:
                 # GAP: past the request's end (a shorter request) the echo writes zeros
@@ -526,7 +532,12 @@ class Sim:
                 if f.given or f.typed is not None:
                     raise NotImplementedError("GAP: a given trailing field under fill: request")
                 setattr(f.obj, f.fid, request[body_end - f.space:body_end])
-        return write(root, length)   # type: ignore[no-any-return]
+        return self._record(write(root, length))
+
+    def _record(self, built: bytes) -> bytes:
+        """``built`` as the image built it: what the provenance check (fake_ble.Provenance) accepts."""
+        self.built.add(built)
+        return built
 
     def frame(self, fr: dict[str, Any], scope: dict[str, Any], request: bytes | None,
               direction: int | None = None) -> bytes:
@@ -544,7 +555,7 @@ class Sim:
 
     # ── the link ─────────────────────────────────────────────────────────────
     def _key(self) -> bytes:
-        return PSK if self.state.cipher == "psk" else bytes(self.state.session_key)
+        return PSK if self.state.cipher == "psk" else _image_bytes(self.state.session_key)
 
     def _seal(self, plain: bytes) -> bytes:
         return plain if self.image.cipher == "none" else crypto.encrypt(plain, self._key())
@@ -672,7 +683,7 @@ class Sim:
                 self.effects(hit.get("effects"), scope)
             reply = hit.get("reply")
             if reply == "echo":   # the request frame as read, written again (its checksum by its kind)
-                self.send(f"echo {hit['id']}", _spec.emit(frame, len(raw)))
+                self.send(f"echo {hit['id']}", self._record(_spec.emit(frame, len(raw))))
             elif isinstance(reply, dict):
                 self.send(f"reply {hit['id']}", self.frame(reply, scope, raw))
             if after:

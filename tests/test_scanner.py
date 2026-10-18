@@ -12,8 +12,10 @@ from govee_ble_local.scanner import DiscoveredDevice, discover, match, supported
 
 from fake_ble import FirmwareGovee
 
-# A Govee plug's manufacturer data: the H5083's own advert, from its firmware image.
-_H5083_ADVERT = FirmwareGovee().advertisement()
+# A Govee plug's manufacturer data: the H5083's own advert, from its firmware image (kept alive: the
+# provenance check accepts what a live image built).
+_H5083 = FirmwareGovee()
+_H5083_ADVERT = _H5083.advertisement()
 assert _H5083_ADVERT is not None
 _MFG = _H5083_ADVERT.manufacturer_data
 

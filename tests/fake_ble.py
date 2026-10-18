@@ -21,16 +21,23 @@ import asyncio
 import contextvars
 import functools
 import inspect
+import sys
+import weakref
 from collections.abc import Awaitable, Callable, Iterator
 from types import SimpleNamespace
 from typing import Any
+
+import pytest
 
 from bleak.backends.device import BLEDevice
 from bleak.exc import BleakError
 
 from govee_ble_local.const import BGC_INFO_CHAR_UUID, PSK, SERVICE_UUID, WRITE_CHAR_UUID
 from govee_ble_local.crypto import checksum, decrypt, encrypt
+from govee_ble_local import identify as identify_mod
 from govee_ble_local.devices.device import Device
+from govee_ble_local.transport import connection as connection_mod
+from govee_ble_local.transport.connection import GoveeConnection
 from govee_ble_local.wire import _spec
 
 SESSION_KEY = bytes(range(16))
@@ -275,10 +282,10 @@ def _uuid(char: Any) -> str:
     return str(getattr(char, "uuid", char)).lower()
 
 
-# Every frame and manufacturer payload a FirmwareGovee sent in this test, and the FirmwareGovees made
-# (cleared per test by the provenance fixture, tests/conftest.py).
-_SENT_BY_IMAGES: set[bytes] = set()
-_IMAGES: list[FirmwareGovee] = []
+# Every FirmwareGovee still alive, and the test it was made in (None: at import, outside any test). The
+# provenance check (Provenance) accepts what the current test's images and the import-time ones built.
+_LIVE_IMAGES: weakref.WeakSet[FirmwareGovee] = weakref.WeakSet()
+_CURRENT_TEST: list[object | None] = [None]
 # bleak splits a manufacturer AD's payload after its first two bytes, its company id (u2le): the flags
 # byte and the marker's low byte (govee_manufacturer_data's PROCEDURAL note).
 _BLEAK_COMPANY_ID_LEN = 2
@@ -303,11 +310,17 @@ class FirmwareGovee(Peripheral):
             raise NotImplementedError("a 2b12 BGC-info characteristic is not modelled")
         self.gatt_services = [gatt["service"]]
         self._write_char, self._notify_char = _uuid(gatt["write"]), _uuid(gatt["notify"])
+        self.sku = str(self.sim.im["sku"]).upper()
         self.sim.on_send = self._deliver
         self.sim.on_drop = self._device_drop
         self._client: FakeClient | None = None
         self._last_at = 0.0
-        _IMAGES.append(self)
+        # The frames the image built and delivered on each link, not yet received (plain, wire), and the
+        # manufacturer payloads of the adverts it built: their provenance.
+        self._pending: dict[FakeClient, list[tuple[bytes, bytes]]] = {}
+        self.advert_payloads: set[bytes] = set()
+        self.made_in = _CURRENT_TEST[0]
+        _LIVE_IMAGES.add(self)
 
     @property
     def received(self) -> list[bytes]:
@@ -334,7 +347,8 @@ class FirmwareGovee(Peripheral):
         client = self._client
         if client is None or _uuid(client.notify_char) != self._notify_char:
             return
-        _SENT_BY_IMAGES.add(plain)
+        if plain in self.sim.built:   # the image built it (a frame handed to sim.send has no provenance)
+            self._pending.setdefault(client, []).append((plain, wire))
         loop = asyncio.get_running_loop()
         self._last_at = max(loop.time() + self.reply_delay, self._last_at + 0.001)
         client.push(wire, self._last_at - loop.time())
@@ -343,6 +357,27 @@ class FirmwareGovee(Peripheral):
         client, self._client = self._client, None
         if client is not None:
             asyncio.get_running_loop().call_soon(client.drop)
+
+    def follow_loop_clock(self) -> None:
+        """Drive the image's clock (its tick events) from the running loop's, one tick a second, from now
+        on: the device's timers then race the library's."""
+        loop = asyncio.get_running_loop()
+        start = loop.time() - self.sim.now_ms / 1000
+
+        def tick() -> None:
+            self.sim.advance(round((loop.time() - start) * 1000) - self.sim.now_ms)
+            loop.call_later(1.0, tick)
+
+        loop.call_later(1.0, tick)
+
+    def take(self, client: FakeClient, frame: bytes) -> tuple[bytes, bytes] | None:
+        """The delivery on ``client``'s link that ``frame`` is (its plaintext or its wire bytes), taken once:
+        a frame is received once."""
+        pending = self._pending.get(client, [])
+        for i, delivery in enumerate(pending):
+            if frame in delivery:
+                return pending.pop(i)
+        return None
 
     def advertisement(self) -> SimpleNamespace | None:
         """What a scanner hears now, in bleak's ``AdvertisementData`` shape (``local_name``,
@@ -360,36 +395,69 @@ class FirmwareGovee(Peripheral):
                 kind = getattr(ad, "ad_type", None)
                 if kind == ad_type.complete_local_name:
                     name = ad.data.text
-                elif kind == ad_type.manufacturer_specific:
-                    m, payload = ad.data, bytes(ad._raw_data)
-                    _SENT_BY_IMAGES.add(payload)
+                elif kind == ad_type.manufacturer_specific and blob in self.sim.built:
+                    m, payload = ad.data, ad._raw_data
+                    self.advert_payloads.add(payload)
                     mfg[m.flags | (m.company_id & 0xFF) << 8] = payload[_BLEAK_COMPANY_ID_LEN:]
         return SimpleNamespace(local_name=name, manufacturer_data=mfg, rssi=-60)
 
 
-class Provenance:
-    """A Device whose SKU has a firmware.yaml image reads only what that image sent.
+def _subclasses(cls: type) -> list[type]:
+    out = []
+    for sub in cls.__subclasses__():
+        out += [sub, *_subclasses(sub)]
+    return out
 
-    While a method of such a Device runs (and in the tasks and callbacks it starts), every RX frame and
-    every manufacturer payload the library reads through ``wire._spec`` must be one a
-    :class:`FirmwareGovee` sent in this test. That catches a hand-built reply from a FakeGovee or a
-    mocked ``_conn.query``, and a hand-built advert given to ``ingest_advertisement``. A request the
-    image can't read is a violation too. tests/conftest.py runs it for every test."""
+
+class Provenance:
+    """A Device whose SKU has a firmware.yaml image reads only what that image sent it.
+
+    * A frame reaches such a Device's connection (``GoveeConnection._enqueue``) only as one delivery of a
+      frame its image built, on the link it arrived on. A FakeGovee's reply, a frame handed to
+      ``sim.send``, or a second copy fails.
+    * While a method of that Device or of its connection runs (and in the tasks and callbacks they
+      start), every RX frame read through ``wire._spec`` is one of those deliveries on the live link.
+      A mocked ``_conn.query`` reply, a genuine frame replayed after a reconnect, or a frame another
+      device received fails.
+    * Every Govee manufacturer payload read for that SKU (``ingest_advertisement``, ``identify``,
+      ``scanner.supported`` / ``match``) is one a live image of that SKU built. Other companies' entries
+      are not checked.
+    * A request an image can't read fails.
+
+    The SKU is the device's, or the image SKU whose profile a Device was built from without ``sku=``.
+    Device subclasses are covered. Reads made to log or describe a frame are not checked. The patches
+    sit on a private MonkeyPatch, so a test's ``monkeypatch.undo()`` keeps them. tests/conftest.py runs
+    the check for every test and fails a test that overrides its fixture."""
 
     def __init__(self) -> None:
         from firmware_sim import image_skus
 
         self.skus = image_skus()
         self.violations: list[str] = []
-        self._reader: contextvars.ContextVar[str | None] = contextvars.ContextVar("image_sku", default=None)
+        self._mp = pytest.MonkeyPatch()
+        self._reader: contextvars.ContextVar[tuple[str, Any] | None] = contextvars.ContextVar(
+            "image_reader", default=None)
+        self._quiet: contextvars.ContextVar[bool] = contextvars.ContextVar("describing", default=False)
+        self._links: weakref.WeakKeyDictionary[Any, tuple[Any, set[bytes]]] = weakref.WeakKeyDictionary()
+        self._unreadable: dict[FirmwareGovee, int] = {}
+        self._read = _spec.read
+        self._identify_code = identify_mod.identify.__code__
 
-    def install(self, mp: Any) -> None:
-        _SENT_BY_IMAGES.clear()
-        _IMAGES.clear()
-        for name, fn in list(vars(Device).items()):
-            if inspect.isfunction(fn) and not inspect.isasyncgenfunction(fn):
-                mp.setattr(Device, name, self._scoped(fn))
-        read, frame_head = _spec.read, _spec.frame_head
+    # ── installing ─────────────────────────────────────────────────────────────
+    def install(self) -> None:
+        self._test = _CURRENT_TEST[0] = object()
+        self._unreadable = {fw: len(fw.sim.unreadable) for fw in _LIVE_IMAGES}
+        for cls in (Device, *_subclasses(Device)):
+            self._wrap(cls, self._device_scope)
+        self._wrap(GoveeConnection, self._connection_scope)
+        provenance = self
+
+        def init_subclass(cls: type, **kwargs: Any) -> None:   # a Device subclass made during the test
+            provenance._wrap(cls, provenance._device_scope)
+            super(Device, cls).__init_subclass__(**kwargs)  # type: ignore[misc]
+
+        self._mp.setattr(Device, "__init_subclass__", classmethod(init_subclass))
+        read, frame_head, describe_frame = _spec.read, _spec.frame_head, connection_mod.describe_frame
 
         def checked_read(cls: Any, data: bytes, *params: Any) -> Any:
             self._check(cls, data, params[0] if params else None)
@@ -399,51 +467,161 @@ class Provenance:
             self._check(_spec.Frame, data, direction)
             return frame_head(data, direction, prof)
 
-        mp.setattr(_spec, "read", checked_read)
-        mp.setattr(_spec, "frame_head", checked_frame_head)
+        self._mp.setattr(_spec, "read", checked_read)
+        self._mp.setattr(_spec, "frame_head", checked_frame_head)
+        self._mp.setattr(connection_mod, "describe_frame", self._quietly(describe_frame))
 
-    def _sku(self, dev: Any, fn: Any, args: tuple[Any, ...], kwargs: dict[str, Any]) -> str | None:
-        if fn.__name__ == "__init__":   # the SKU Device.__init__ will take
-            profile = args[0] if args else kwargs.get("profile")
-            sku = kwargs.get("sku") or (getattr(profile, "skus", None) or ("",))[0]
-        else:
-            sku = getattr(dev, "_sku", None) or ""
-        return sku.upper() if sku.upper() in self.skus else None
+    def uninstall(self) -> None:
+        self._mp.undo()
+        _CURRENT_TEST[0] = None
 
-    def _scoped(self, fn: Any) -> Any:
-        reader = self._reader
+    def _images(self) -> list[FirmwareGovee]:
+        """The images this test may read from: the ones it made, and the ones made at import."""
+        return [fw for fw in list(_LIVE_IMAGES) if fw.made_in is None or fw.made_in is self._test]
+
+    def _wrap(self, cls: type, scope: Callable[..., Any]) -> None:
+        for name, fn in list(vars(cls).items()):
+            if not inspect.isfunction(fn) or inspect.isasyncgenfunction(fn):
+                continue
+            if cls is GoveeConnection and name == "_capture":
+                wrapped = self._quietly(fn)
+            elif cls is GoveeConnection and name == "_enqueue":
+                wrapped = self._scoped(fn, scope, admit=True)
+            else:
+                wrapped = self._scoped(fn, scope)
+            wrapped.__kwdefaults__ = fn.__kwdefaults__   # functools.wraps leaves them out; tests read them
+            self._mp.setattr(cls, name, wrapped)
+
+    def _quietly(self, fn: Any) -> Any:
+        @functools.wraps(fn)
+        def quiet(*args: Any, **kwargs: Any) -> Any:
+            token = self._quiet.set(True)
+            try:
+                return fn(*args, **kwargs)
+            finally:
+                self._quiet.reset(token)
+        return quiet
+
+    def _scoped(self, fn: Any, scope: Callable[..., Any], *, admit: bool = False) -> Any:
+        keep = object()
+
+        def enter(obj: Any, args: tuple[Any, ...], kwargs: dict[str, Any]) -> Any:
+            ctx = scope(fn, obj, args, kwargs, keep)
+            return None if ctx is keep else self._reader.set(ctx)
+
         if inspect.iscoroutinefunction(fn):
             @functools.wraps(fn)
-            async def scoped_async(dev: Any, *args: Any, **kwargs: Any) -> Any:
-                token = reader.set(self._sku(dev, fn, args, kwargs))
+            async def scoped_async(obj: Any, *args: Any, **kwargs: Any) -> Any:
+                token = enter(obj, args, kwargs)
                 try:
-                    return await fn(dev, *args, **kwargs)
+                    return await fn(obj, *args, **kwargs)
                 finally:
-                    reader.reset(token)
+                    if token is not None:
+                        self._reader.reset(token)
             return scoped_async
 
         @functools.wraps(fn)
-        def scoped(dev: Any, *args: Any, **kwargs: Any) -> Any:
-            token = reader.set(self._sku(dev, fn, args, kwargs))
+        def scoped(obj: Any, *args: Any, **kwargs: Any) -> Any:
+            token = enter(obj, args, kwargs)
             try:
-                return fn(dev, *args, **kwargs)
+                if admit:
+                    self._admit(obj, args[0] if args else kwargs.get("frame"))
+                out = fn(obj, *args, **kwargs)
+                if fn.__name__ == "__init__" and scope == self._device_scope:
+                    self._tag(obj, args, kwargs)
+                return out
             finally:
-                reader.reset(token)
+                if token is not None:
+                    self._reader.reset(token)
         return scoped
 
+    # ── whose reads ────────────────────────────────────────────────────────────
+    def _image_sku(self, args: tuple[Any, ...], kwargs: dict[str, Any]) -> str | None:
+        """The image SKU a Device.__init__ call makes: its ``sku=``, or with none an image SKU its profile
+        serves (Device would name it after the profile's first SKU)."""
+        sku = kwargs.get("sku")
+        if sku:
+            return str(sku).upper() if str(sku).upper() in self.skus else None
+        profile = args[0] if args else kwargs.get("profile")
+        return next((s.upper() for s in getattr(profile, "skus", ()) if s.upper() in self.skus), None)
+
+    def _tag(self, dev: Any, args: tuple[Any, ...], kwargs: dict[str, Any]) -> None:
+        sku = self._image_sku(args, kwargs)
+        if sku is not None:
+            dev._provenance = (sku, dev._conn)
+            dev._conn._provenance = (sku, dev._conn)
+
+    def _device_scope(self, fn: Any, dev: Any, args: tuple[Any, ...], kwargs: dict[str, Any],
+                      _keep: Any) -> Any:
+        if fn.__name__ == "__init__":
+            sku = self._image_sku(args, kwargs)
+            return None if sku is None else (sku, None)
+        return getattr(dev, "_provenance", None)
+
+    def _connection_scope(self, fn: Any, conn: Any, args: tuple[Any, ...], kwargs: dict[str, Any],
+                          keep: Any) -> Any:
+        return getattr(conn, "_provenance", keep)
+
+    def _identifying(self) -> str | None:
+        """The image SKU an ``identify()`` call on the stack resolved from the advertised name."""
+        frame = sys._getframe(1)
+        while frame is not None:
+            if frame.f_code is self._identify_code:
+                sku = str(frame.f_locals.get("sku") or "").upper()
+                return sku if sku in self.skus else None
+            frame = frame.f_back  # type: ignore[assignment]
+        return None
+
+    # ── the checks ─────────────────────────────────────────────────────────────
+    def _fail(self, sku: str, what: str, raw: bytes) -> None:
+        self.violations.append(f"an {sku} {what} {raw.hex(' ')}, which its firmware image didn't send it")
+
+    def _admit(self, conn: Any, frame: Any) -> None:
+        prov = getattr(conn, "_provenance", None)
+        if prov is None or frame is None:
+            return
+        raw = bytes(frame)
+        client = getattr(conn, "_client", None)
+        link = self._links.get(conn)
+        if link is None or link[0] is not client:
+            link = self._links[conn] = (client, set())
+        fw = getattr(client, "device", None)
+        got = fw.take(client, raw) if isinstance(fw, FirmwareGovee) and fw.sku == prov[0] else None
+        if got is None:
+            self._fail(prov[0], "received", raw)
+        else:
+            link[1].update(got)
+
     def _check(self, cls: Any, data: bytes, direction: Any) -> None:
-        sku = self._reader.get()
-        received = cls is _spec.ManufacturerData or (cls is _spec.Frame and direction == _spec.RX)
-        if sku is None or not received:
+        if self._quiet.get():
             return
         raw = bytes(data)
-        if raw and raw not in _SENT_BY_IMAGES:   # empty: no reply (the library reads b"" as nothing)
-            self.violations.append(f"an {sku} read {raw.hex(' ')}, which its firmware image didn't send")
+        if not raw:   # no reply: the library reads b"" as nothing
+            return
+        ctx = self._reader.get()
+        if cls is _spec.Frame and direction == _spec.RX and ctx is not None:
+            sku, conn = ctx
+            link = self._links.get(conn) if conn is not None else None
+            live = link is not None and (link[0] is conn._client or conn._client is None)
+            if not (live and raw in link[1]):
+                self._fail(sku, "read", raw)
+        elif cls is _spec.ManufacturerData:
+            sku = ctx[0] if ctx is not None else self._identifying()
+            if sku is None or not self._is_govee(raw):
+                return
+            if not any(raw in fw.advert_payloads for fw in self._images() if fw.sku == sku):
+                self._fail(sku, "read the advert", raw)
+
+    def _is_govee(self, raw: bytes) -> bool:
+        try:
+            return bool(self._read(_spec.ManufacturerData, raw).is_govee)
+        except Exception:   # noqa: BLE001 - a payload the spec can't read is no Govee entry
+            return False
 
     def verify(self) -> list[str]:
-        """Every violation in this test, and every request a FirmwareGovee couldn't read."""
+        """Every violation in this test, and every request an image couldn't read."""
         unreadable = [f"{fw.sim.im['id']} can't read the request {raw.hex(' ')}"
-                      for fw in _IMAGES for raw in fw.sim.unreadable]
+                      for fw in self._images() for raw in fw.sim.unreadable[self._unreadable.get(fw, 0):]]
         return [*self.violations, *unreadable]
 
 

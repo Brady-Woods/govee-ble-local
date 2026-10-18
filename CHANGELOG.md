@@ -109,6 +109,9 @@ model, from which the shipped readers are generated).
   - the relay write and read-back;
   - the once-per-device info reads (only `aa 06`, `aa 07 03` and `aa 07 02`);
   - a paired session the plug drops after 10-11 s idle, and its reconnect;
+  - the library's own idle timers (on a virtual loop clock) against the plug's heartbeat: it closes a
+    link 8 s after a poll, before the plug's 10-11 s drop, and after a 33 write its 30 s warm window
+    outlasts that drop, so the plug ends the session (pinned as they are);
   - the advert.
 
   It replaces the H5083 tests that used hand-built frames:
@@ -126,12 +129,26 @@ model, from which the shipped readers are generated).
   H5083 only advertises 0 or 1. `test_scanner` takes its plug advert from the simulator.
 
   Two checks in `tests/test_firmware_provenance.py` keep it so:
-  - At run time, an autouse fixture (`fake_ble.Provenance`) fails any test in which a `Device` whose SKU
-    has an image reads a frame or manufacturer payload that the image didn't send: a FakeGovee's
-    reply, a mocked `_conn.query`, or a hand-built advert. It also fails a test that sends the image a
-    request it can't read.
-  - Statically, the simulator builds no bytes outside the spec classes: no bytes from ints,
-    `to_bytes` or `struct`, int lists, or concatenation.
+  - At run time, an autouse fixture (`fake_ble.Provenance`) fails a test whenever an image-SKU device
+    gets a frame or advert its image didn't build and send it:
+    - A frame enters such a device's connection only as one delivery of a frame its image built, on the
+      link it arrived on.
+    - Every RX frame read while that device or its connection works must be such a delivery on the live
+      link. That catches a FakeGovee's reply, a mocked `_conn.query`, a frame handed to `sim.send`, and a
+      genuine frame replayed after a reconnect or read by another device.
+    - Every Govee manufacturer payload read for the SKU must come from a live image of this test (or one
+      made at import), whether it is read through the Device, `identify()` or the scanner.
+  - Its scope:
+    - The check also covers a Device built from an image SKU's profile without `sku=`, and Device
+      subclasses.
+    - It skips reads made to log or describe a frame, and other companies' manufacturer entries.
+    - It runs on a private MonkeyPatch, so a test's `monkeypatch.undo()` keeps it, and a test that
+      overrides its fixture fails.
+    - It also fails a test that sends an image a request the image can't read.
+  - Statically, the simulator (firmware_sim.py, `FirmwareGovee` and the fake_ble helpers it calls)
+    builds no bytes outside the spec classes. Its one conversion is `_image_bytes`, for the image's own
+    values. It uses no bytearray, `fromhex`, `struct`, `binascii`, `codecs` or padding, no int lists,
+    no writes of ints, no concatenation, and no imports outside the spec side of the library.
 
   No change under `src/`.
 - `CLAUDE.md` gains "The spec is the bible", the anti-debt rules for `spec/`:
