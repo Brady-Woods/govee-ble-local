@@ -169,7 +169,10 @@ _FORM_0B_RGB_MASK: Final = int(_C.Form0b.rgb_mask)
 # (Bytes.r type 1) with the app's Kelvin->RGB tint.
 # "h6006" = 0x0d bulbs (H6006/H6008/H6052); CCT is the both-slot form `0d <tint> <K> <tint>`
 # (Config.bu -> Bytes.p).
-# "h61a8" = 0x0b RGBIC (no CCT).
+# "h61a8" = 0x0b RGBIC (no CCT): the app's colour instruction 3 (Config.J[3] = cu -> Bytes.d), which
+# goodsTypes 17, 18, 13, 3, 21 and 123 and the old H6163 / H6117 send. No built-in profile uses it: the
+# H61A8 (goodsType 19) sends the h60a6 forms (devices.yaml client_profile by_goods_type 19); it stays for
+# custom profiles.
 # "h6188" = 0x0d rgblight strip: same RGB frame as h6006, but the CCT is the white-slot form
 # `0d ff ff ff <K> <tint>` (Config.GM -> Bytes.A); this one is NOT the h6006 form.
 # "h6061" = Glide Hexa panels, 0x15 family with its own whole-device writes: RGB is ceil(n/4)
@@ -404,7 +407,8 @@ _PROFILE_H6061_GROUP: Final = _spec.profile(f_15_04=_FORM_RGB_GROUP)
 
 # Segment count a whole-device builder assumes when the caller passes none (``Device`` always passes
 # the profile's count). ``h6061`` takes the app's own fallback above, the 23-panel layout; ``h60a6`` and
-# ``h61a8`` take their namesake SKU's count (H60A6 13 segments, H61A8 15). The 0x0d schemes carry no mask.
+# ``h61a8`` take their namesake SKU's count (H60A6 13 segments, H61A8 15, the 0x0b frames' strip). The 0x0d
+# schemes carry no mask.
 _DEFAULT_SEGMENTS: Final[dict[ColorScheme, int]] = {"h60a6": 13, "h61a8": 15, "h6061": H6061_MAX_PANELS}
 
 

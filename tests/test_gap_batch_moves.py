@@ -129,12 +129,15 @@ def _fold_mode(sku: str, *mode: int, **start: object) -> DeviceState:
     return state
 
 
-@pytest.mark.parametrize("sku", ["H6641", "H61A8"])
-def test_the_0x15_kelvin_reads_signed(sku: str) -> None:
+@pytest.mark.parametrize(("sku", "kept"), [("H6641", None), ("H61A8", 2700)])
+def test_the_0x15_kelvin_reads_signed(sku: str, kept: int | None) -> None:
     # H6641 (a plain SubMode4Color) and H61A8 (base OpInfo4Detail): getSignedShort, so 0x8000 reads
-    # negative: not colour temperature, while the last Kelvin is kept, as the app keeps it.
-    st = _fold_mode(sku, 0x15, 0x01, 0x80, 0x00, color_temp_kelvin=2700, last_color_temp_kelvin=2700)
-    assert (st.color_temp_kelvin, st.last_color_temp_kelvin) == (None, 2700)
+    # negative: not colour temperature, while the last Kelvin is kept, as the app keeps it. The H61A8's
+    # report carries no Kelvin (15 01 00 00 after a CCT write; mode_reports_kelvin False), so a report of
+    # 0 or below leaves the Kelvin the library sent.
+    for kelvin in ((0x80, 0x00), (0x00, 0x00)):
+        st = _fold_mode(sku, 0x15, 0x01, *kelvin, color_temp_kelvin=2700, last_color_temp_kelvin=2700)
+        assert (st.color_temp_kelvin, st.last_color_temp_kelvin) == (kept, 2700)
     st = _fold_mode(sku, 0x15, 0x01, 0x0A, 0x8C)
     assert (st.color_temp_kelvin, st.last_color_temp_kelvin) == (2700, 2700)
 

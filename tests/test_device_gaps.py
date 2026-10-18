@@ -307,11 +307,8 @@ def test_invalid_inputs_raise_typed_errors_and_send_nothing() -> None:
     assert not isinstance(ei.value, GoveeBleNotSupported)
     assert _sent(d) == [] and d.state.rgb_color is None
 
-    # CURRENT BEHAVIOR (DES-1): a request the colour scheme can't express is GoveeBleNotSupported,
-    # prefixed with the SKU (here H61A8 has no per-segment brightness).
-    h61 = _dev("H61A8")
-    with pytest.raises(GoveeBleNotSupported, match=r"^H61A8: "):
-        asyncio.run(h61.set_segment_brightness([0], 50))
+    # A request the colour scheme can't express is GoveeBleNotSupported, prefixed with the SKU:
+    # test_fix_wp3_device_design.test_a_scheme_without_segment_brightness_is_not_supported_with_the_sku.
 
     # kelvin beyond u16 once wrapped silently (70000 -> 0x1170 on the wire, unwrapped value in
     # state). Like the app (KelvinConfig.calibrationKelvin) it is now clamped to the profile

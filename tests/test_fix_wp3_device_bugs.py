@@ -720,11 +720,8 @@ def test_builder_not_supported_is_prefixed_once_with_the_sku() -> None:
         d._build_or_unsupported(prefixed)
 
 
-def test_h61a8_segment_brightness_error_names_the_sku() -> None:
-    d = _dev("H61A8")
-    with pytest.raises(GoveeBleNotSupported, match=r"^H61A8: "):
-        run(d.set_segment_brightness([0], 50))
-    assert _sent(d) == []
+# A scheme with no per-segment brightness names the SKU: test_fix_wp3_device_design
+# .test_a_scheme_without_segment_brightness_is_not_supported_with_the_sku.
 
 
 def test_whole_device_colour_builder_error_names_the_sku(monkeypatch: pytest.MonkeyPatch) -> None:

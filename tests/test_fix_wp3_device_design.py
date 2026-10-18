@@ -255,9 +255,11 @@ def test_capability_the_scheme_cannot_express_is_rejected(scheme: str, cap: Capa
     assert profile_mod._index_by_sku((fine,)) == {"HX": fine}
 
 
-def test_h61a8_keeps_segments_without_segment_brightness() -> None:
-    # SEGMENTS is valid on h61a8 (per-segment RGB); the narrower gap stays with the builder.
-    d = _dev("H61A8")
+def test_a_scheme_without_segment_brightness_is_not_supported_with_the_sku() -> None:
+    # SEGMENTS is valid on scheme h61a8 (the 0x0b frames: per-segment RGB), which has no per-segment
+    # brightness: the narrower gap stays with the builder, GoveeBleNotSupported named for the SKU. No
+    # built-in profile uses the scheme since the H61A8 sends the 0x15 forms (291bda3); a custom one may.
+    d = _unchecked("H61A8", color_scheme="h61a8")
     with pytest.raises(GoveeBleNotSupported, match=r"^H61A8: "):
         run(d.set_segment_brightness([0], 50))
     assert _sent(d) == []
@@ -283,6 +285,14 @@ def test_brightness_max_must_be_positive() -> None:
     # 0 would divide by zero on the first brightness read-back.
     with pytest.raises(GoveeBleInvalidValue, match="brightness_max"):
         DeviceProfile(skus=("HX",), capabilities=frozenset(), brightness_max=0)
+    # A Kelvin range by hardware version must be (version, low, high) with 0 < low <= high; a list of
+    # lists is taken as the tuple.
+    for bad in ((("3.08.01", 6500, 2700),), (("", 2700, 6500),), (("3.08.01", 0, 6500),), ((2, 3),)):
+        with pytest.raises(GoveeBleInvalidValue, match="kelvin_by_hardware"):
+            DeviceProfile(skus=("HX",), capabilities=frozenset(), kelvin_by_hardware=bad)  # type: ignore[arg-type]
+    listed = DeviceProfile(skus=("HX",), capabilities=frozenset(),
+                           kelvin_by_hardware=[["3.08.01", 2700, 6500]])  # type: ignore[arg-type]
+    assert listed.kelvin_by_hardware == (("3.08.01", 2700, 6500),)
     DeviceProfile(skus=("HX",), capabilities=frozenset(), brightness_max=255)
 
 
@@ -298,7 +308,8 @@ def test_profile_errors_are_library_errors_and_value_errors() -> None:
     [lambda d: d.set_color_temp(3000), lambda d: d.turn_on(kelvin=3000, power=False)],
 )
 def test_colour_temperature_on_h61a8_scheme_is_not_supported_with_the_sku(call: Any) -> None:
-    d = _unchecked("H61A8", capabilities=frozenset({Capability.POWER, Capability.COLOR_TEMP}))
+    d = _unchecked("H61A8", color_scheme="h61a8",
+                   capabilities=frozenset({Capability.POWER, Capability.COLOR_TEMP}))
     with pytest.raises(GoveeBleNotSupported, match=r"^H61A8: h61a8 has no colour-temperature"):
         run(call(d))
     assert _sent(d) == []

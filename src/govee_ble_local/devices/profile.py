@@ -63,7 +63,8 @@ _C = Capability
 # (its builder refuses), so the table (_index_by_sku) refuses a profile declaring one rather than
 # fail at the setter. A custom profile is accepted, as in 1.3.0, and that setter raises
 # GoveeBleNotSupported.
-#  - h61a8: no colour temperature at all (build.color_temp / segment_color_temp).
+#  - h61a8 (the 0x0b frames, which no built-in profile sends since the H61A8 moved to h60a6; a custom
+#    profile may use it): no colour temperature at all (build.color_temp / segment_color_temp).
 #  - h6006 / h6188 (0x0d): no segment mask in any colour frame (Bytes.f / p / A), so no SEGMENTS.
 #  - h6061: whole-device only; per-panel colour needs the user's layout, which is not modelled.
 # Narrower gaps inside a capability (H61A8 has SEGMENTS but no per-segment brightness) stay with
@@ -223,6 +224,17 @@ class DeviceProfile:
     """Plug (gt 50 / 90): after every acked power write, re-read ``aa 06`` and ``aa 07 03`` and re-send
     the ``33 b5`` time sync, as the app re-runs its connect read list then (``BleOpV2`` /
     ``BleOpV4.onEventSwitchV2`` -> ``G()``). Best effort: a failure is only logged."""
+    kelvin_by_hardware: tuple[tuple[str, int, int], ...] = field(default=(), kw_only=True)
+    """Kelvin ranges that replace [:attr:`min_kelvin`, :attr:`max_kelvin`] from a hardware version up:
+    ``(min_hard_version, min_kelvin, max_kelvin)`` entries, the first whose version the device's
+    hardware version (``aa 07 03``) is at least, compared as strings, as the app does
+    (``KelvinConfig.Config.z2``: ``versionHard >= "3.08.01"``; devices.yaml ``kelvin_by_firmware``).
+    Until the hardware version is read, the range valid on every revision applies: the base range cut to
+    each entry's (``Device.min_kelvin`` / ``max_kelvin`` give the range in force)."""
+    mode_reports_kelvin: bool = field(default=True, kw_only=True)
+    """Whether the ``aa 05`` mode report carries the Kelvin of a colour-temperature write. False where it
+    reads 0 after one (H61A8: ``15 01 00 00`` after either write, bench 2026-10-17): a report of Kelvin 0
+    then leaves the Kelvin the library sent, as the app's screen keeps what it set."""
 
     def __post_init__(self) -> None:
         """Validate each field: GoveeBleInvalidValue (a ValueError) on a value no Device can use.
@@ -280,6 +292,13 @@ class DeviceProfile:
         if self.color_readback_ic_per_piece < 1:
             raise GoveeBleInvalidValue(
                 f"{where}: color_readback_ic_per_piece={self.color_readback_ic_per_piece!r}")
+        if isinstance(self.kelvin_by_hardware, list):
+            object.__setattr__(self, "kelvin_by_hardware", tuple(map(tuple, self.kelvin_by_hardware)))
+        for entry in self.kelvin_by_hardware:
+            if not (isinstance(entry, tuple) and len(entry) == 3 and isinstance(entry[0], str) and entry[0]
+                    and all(isinstance(k, int) and not isinstance(k, bool) for k in entry[1:])
+                    and 0 < entry[1] <= entry[2]):
+                raise GoveeBleInvalidValue(f"{where}: kelvin_by_hardware={self.kelvin_by_hardware!r}")
 
 
 def _where(p: DeviceProfile) -> str:
@@ -387,13 +406,24 @@ PROFILES: Final[tuple[DeviceProfile, ...]] = (
     # ModeParseStrategyConfig installs only music and scene strategies. So mode_color_parse "kelvin", as
     # H6062 (fd4f794's devices.yaml). The dreamcolorlightv1 Mode.parseSubMode / SubModeColorV2 path is
     # the legacy AdjustAc screen, which goodsType 19 never opens.
+    # Colour (devices.yaml dreamcolorlightv1 by_goods_type 19, spec 291bda3): the colour page resolves
+    # Config.x[19] = Py = 0, so Config.Yt sends the 0x15 forms of scheme h60a6, Bytes.h for RGB and
+    # Bytes.r for a Kelvin (or a Kelvin's exact tint), never 0x0b (Config.java:1175-1179, 5522-5526,
+    # 12960-12968). color_functions segment_brightness and color_temperature (Config.I[19] = gO): COLOR_TEMP,
+    # and 33 05 15 02 per-segment brightness (Bytes.G, Config.z[19] = bT = 0). Kelvin [2000, 9000], and
+    # [2700, 6500] from hardware "3.08.01" (KelvinConfig.Config.z2, a string compare). Bench, SW 3.03.18 /
+    # HW 3.01.10 (2026-10-17): both 15 01 frames acked 00 and applied to all 15 segments, while 33 05 0b
+    # was rejected (status 01); aa 05 reads 15 01 00 00 after either write, so the report carries no
+    # Kelvin (mode_reports_kelvin). Bench 2026-10-18: 33 05 15 02 acked 00 and set only the masked
+    # segments' brightness (colours unchanged). The 3.08.01 range is not bench-verified (HW 3.01.10).
     DeviceProfile(
         skus=("H61A8",),
-        capabilities=frozenset({_C.POWER, _C.BRIGHTNESS, _C.RGB, _C.SEGMENTS, _C.SCENES}),
-        color_scheme="h61a8", encryption=Encryption.NONE, segments=15,
+        capabilities=frozenset({_C.POWER, _C.BRIGHTNESS, _C.RGB, _C.COLOR_TEMP, _C.SEGMENTS, _C.SCENES}),
+        color_scheme="h60a6", encryption=Encryption.NONE, segments=15,
         scene_versions=frozenset({0, 1, 2, 3}), readback="polled",
         color_readback="mechanism_b", color_readback_per_batch=3, gradual=True,
-        mode_color_parse="kelvin",
+        mode_color_parse="kelvin", min_kelvin=2000, max_kelvin=9000,
+        kelvin_by_hardware=(("3.08.01", 2700, 6500),), mode_reports_kelvin=False,
     ),
     # H6006 / H6008 — legacy bulbs: plaintext, 0x0d scheme, type-1 rgb scene upload (version {1}).
     # The aa 05 mode report (Govee Home 7.7.02): bulblightv3 / bulblightv1 pact Model -> bulblight

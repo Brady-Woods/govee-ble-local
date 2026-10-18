@@ -85,6 +85,32 @@ model, from which the shipped readers are generated).
   (default 20, today's frames).
 
 ### Changed
+- **H61A8 sends the app's 0x15 colour frames and gains colour temperature and per-segment brightness (A8;
+  library half of 1beeb75).**
+  - The goodsType 19 colour page sends the h60a6 scheme's 0x15 forms (Config.x[19] = 0 -> Config.Yt):
+    Bytes.h for RGB, and Bytes.r for a Kelvin or for an exact Kelvin tint picked as a colour. The 0x0b frame
+    is never sent.
+  - The H61A8 profile moves to `color_scheme="h60a6"` and gains COLOR_TEMP. Its Kelvin range is [2000, 9000],
+    or [2700, 6500] from hardware "3.08.01" (KelvinConfig.Config.z2, a string compare). Until `aa 07 03` gives
+    the hardware version, the range valid on both, [2700, 6500], applies.
+  - Per-segment brightness now works, as `33 05 15 02` (Bytes.G).
+  - **Fixes a live bug:** today's `set_rgb` on the bench H61A8 (SW 3.03.18, HW 3.01.10) is rejected, because
+    the device answers the 0x0b frame with status 01. The new RGB and 2700 K frames are byte for byte the
+    ones acked 00 on the bench on 2026-10-17, and both recoloured all 15 segments.
+  - After either write the device's `aa 05` reads `15 01 00 00`, so the report carries no Kelvin. On the
+    H61A8, a report of Kelvin 0 or below now leaves the Kelvin the library sent. This is a library state
+    rule and changes no frames: an RGB or scene write, or a report of another mode, still clears it.
+  - New `DeviceProfile` fields, keyword-only and defaulted:
+    - `kelvin_by_hardware`: Kelvin ranges by hardware version. `Device.min_kelvin` / `max_kelvin` give the
+      range in force: the range valid on every revision until `aa 07 03` is read, then the gated one.
+    - `mode_reports_kelvin`: False where the report carries no Kelvin.
+  - The `h61a8` scheme stays for custom profiles; no built-in profile uses it now. It is the app's 0x0b
+    colour instruction 3, used by goodsTypes 17, 18, 13, 3, 21 and 123 and by the old H6163 / H6117.
+    Removing it is left for a major release.
+  - Bench, 2026-10-18 (same unit): `set_segment_brightness([0..4], 50)` sent `33 05 15 02 32 1f 00 ..`, the
+    app's Bytes.G, which was acked 00. The read-back changed only those segments' brightness, with no colour
+    changed, and the start state was restored exactly. Not live-verified (this unit is HW 3.01.10): the
+    [2700, 6500] range of hardware 3.08.01 and up, which stays source-traced.
 - **The 0xAC status burst is read through the spec's `govee_status_stream` root (rule 4 c).**
   - `parse_status` reads the joined burst in one go through `govee_status_stream`, under the H60A6 status
     screen's profile: zone bits, power memory and colour groups, 0x40 / 0xA3 unknown, the device's colour

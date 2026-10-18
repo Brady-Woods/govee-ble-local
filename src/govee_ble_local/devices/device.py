@@ -266,13 +266,20 @@ class Device:
 
     @property
     def min_kelvin(self) -> int | None:
-        """Lowest supported colour temperature, or None if unconstrained."""
-        return self.profile.min_kelvin
+        """Lowest supported colour temperature, or None if unconstrained. It may change once the
+        hardware version is read (:attr:`DeviceProfile.kelvin_by_hardware`)."""
+        span = self._kelvin_range()
+        return self.profile.min_kelvin if span is None else span[0]
 
     @property
     def max_kelvin(self) -> int | None:
-        """Highest supported colour temperature, or None if unconstrained."""
-        return self.profile.max_kelvin
+        """Highest supported colour temperature, or None if unconstrained (see :attr:`min_kelvin`)."""
+        span = self._kelvin_range()
+        return self.profile.max_kelvin if span is None else span[1]
+
+    def _kelvin_range(self) -> tuple[int, int] | None:
+        """The Kelvin range for this device's hardware version, as far as it is known."""
+        return _fold.kelvin_range(self.profile, self._state.hardware_version)
 
     @property
     def encryption(self) -> Encryption:
@@ -429,7 +436,7 @@ class Device:
         profile range, then rounded to the 100 K grid, as the app does
         (:func:`build.normalize_kelvin`). Out-of-range input is clamped, not rejected; only a
         non-int raises GoveeBleInvalidValue."""
-        return build.normalize_kelvin(kelvin, self.profile.min_kelvin, self.profile.max_kelvin)
+        return build.normalize_kelvin(kelvin, self.min_kelvin, self.max_kelvin)
 
     def _color_rgb_frames(self, rgb: tuple[int, int, int]) -> list[bytes]:
         """Frames for a whole-device RGB pick: one, except on a profile whose colour scheme writes the
@@ -440,7 +447,7 @@ class Device:
         r, g, b = rgb
         return self._build_or_unsupported(
             build.color_rgb_frames, r, g, b, self.profile.color_scheme, self.segment_count,
-            _fold.kelvin_range(self.profile))
+            self._kelvin_range())
 
     def update_ble_device(self, ble_device: BLEDevice) -> None:
         """Swap in a fresh BLEDevice (e.g. a new scanner path) for later connects."""
@@ -723,7 +730,7 @@ class Device:
         n = self.segment_count
         frame = self._build_or_unsupported(
             build.segment_rgb, _mask(indices, n), r, g, b, self.profile.color_scheme, n,
-            _fold.kelvin_range(self.profile))
+            self._kelvin_range())
 
         carried = self._carried(indices, build.COLOR_MASK_CAP)
 
@@ -739,7 +746,7 @@ class Device:
         / ``DelegateColorV2Part.t0:459-462``: ``setProgressRange({1, 100})``).
 
         Raises GoveeBleNotSupported without SEGMENTS or for colour schemes without per-segment
-        brightness (e.g. H61A8); GoveeBleInvalidValue for a non-int ``pct`` or a bad index;
+        brightness (the h61a8 0x0b scheme); GoveeBleInvalidValue for a non-int ``pct`` or a bad index;
         GoveeBleError if a device that reports its own segment count (H6062) does not answer
         that read."""
         self._require(Capability.SEGMENTS)
@@ -888,7 +895,7 @@ class Device:
         r, g, b = pick
         await self._ensure_segment_count()
         n = self.segment_count
-        kelvin_range = _fold.kelvin_range(self.profile)
+        kelvin_range = self._kelvin_range()
         frame = self._build_or_unsupported(
             build.segment_rgb, _mask(z.segments, n), r, g, b, self.profile.color_scheme, n, kelvin_range)
 

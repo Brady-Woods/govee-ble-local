@@ -128,9 +128,6 @@ def test_segment_write_updates_state() -> None:
 
 
 def test_capability_gating() -> None:
-    h61a8 = _dev("H61A8")            # no COLOR_TEMP
-    with pytest.raises(GoveeBleNotSupported):
-        asyncio.run(h61a8.set_color_temp(4000))
     bulb = _dev("H6006")             # no SEGMENTS
     with pytest.raises(GoveeBleNotSupported):
         asyncio.run(bulb.set_segment_rgb([0], (255, 0, 0)))
@@ -140,7 +137,7 @@ def test_capability_gating() -> None:
 
 
 def test_rgb_scheme_per_device() -> None:
-    for sku, prefix in (("H60A6", "33051501"), ("H6006", "33050d"), ("H61A8", "33050b")):
+    for sku, prefix in (("H60A6", "33051501"), ("H6006", "33050d"), ("H61A8", "33051501")):
         d = _dev(sku)
         asyncio.run(d.set_rgb((0xFF, 0, 0)))
         assert _sent(d)[0].hex().startswith(prefix), sku
@@ -230,14 +227,23 @@ def test_zone_and_segment_color_temp() -> None:
         asyncio.run(_dev("H6006").set_segment_color_temp([0], 3000))
 
 
-def test_segment_brightness_unsupported_scheme_is_not_supported() -> None:
-    # H61A8 declares SEGMENTS but its colour scheme has no per-segment brightness:
-    # that is GoveeBleNotSupported (like segment CCT), never a bare ValueError.
+# A scheme with no per-segment brightness: test_fix_wp3_device_design
+# .test_a_scheme_without_segment_brightness_is_not_supported_with_the_sku.
+def test_h61a8_kelvin_range_follows_its_hardware_and_it_sends_15_02_segment_brightness() -> None:
+    # goodsType 19: KelvinConfig.Config.z2 gives [2700, 6500] from hardware "3.08.01", a string compare, else
+    # [2000, 9000]; until aa 07 03 gives the version, the range valid on both. color_functions
+    # segment_brightness sends Bytes.G (33 05 15 02).
     d = _dev("H61A8")
-    with pytest.raises(GoveeBleNotSupported):
-        asyncio.run(d.set_segment_brightness([0], 50))
-    assert _sent(d) == []
-    asyncio.run(_dev("H60A6").set_segment_brightness([0], 50))  # supported scheme still works
+    assert (d.min_kelvin, d.max_kelvin) == (2700, 6500)          # hardware not read yet
+    for hardware, span in (("3.01.10", (2000, 9000)), ("3.08.01", (2700, 6500)), ("3.10.00", (2700, 6500))):
+        d._state.hardware_version = hardware
+        assert (d.min_kelvin, d.max_kelvin) == span, hardware
+    for hardware, sent in (("3.01.10", 2000), ("3.08.01", 2700)):   # 2000 K: kept, or clamped up
+        d._state.hardware_version = hardware
+        asyncio.run(d.set_color_temp(2000))
+        assert int.from_bytes(_sent(d)[-1][7:9], "big") == sent and d.state.color_temp_kelvin == sent
+    asyncio.run(d.set_segment_brightness([0], 50))
+    assert _sent(d)[-1][:7].hex() == "33051502320100"             # [pct 50][mask: segment 0, 2 bytes]
 
 
 def test_gradual_setting() -> None:

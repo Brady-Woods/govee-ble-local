@@ -89,6 +89,8 @@ APP_RANGES = {
     # H6006 and H6008 are goodsType 64 -> KelvinConfig.Config version 2 = [2700, 6500] (KelvinConfig.java:407,
     # :544-546). WAS (2000, 9000) for H6006 (SPEC_CLIENT_AUDIT #3, VERIFICATION G30).
     "H6006": (2700, 6500), "H6061": (2000, 9000),
+    # H61A8: KelvinConfig.Config.z2, [2000, 9000] below hardware "3.08.01" (test_device_v3 has the branch)
+    "H61A8": (2000, 9000),
 }
 
 
@@ -339,12 +341,21 @@ def test_color_rgb_stays_the_plain_rgb_frame() -> None:
     assert b.color_rgb(0xFF, 0xB9, 0x69, "h6188")[6:8] == b"\x00\x00"
 
 
-def test_h61a8_never_converts() -> None:
+# The H61A8's bench frames (SW 3.03.18 / HW 3.01.10, 2026-10-17): both acked 00 and applied to all 15
+# segments, where today's 0x0b frame was rejected (status 01).
+H61A8_BENCH_RED = "33051501ff00000000000000ff7f00000000005d"      # Bytes.h, (255, 0, 0)
+H61A8_BENCH_2700K = "33051501ffffff0a8cffae54ff7f0000000000de"    # Bytes.r, 2700 K and its tint
+
+
+def test_h61a8_sends_the_apps_0x15_frames() -> None:
+    # WAS: scheme h61a8 sent every pick as 0x0b RGB. goodsType 19 sends the 0x15 forms (Config.Yt,
+    # devices.yaml by_goods_type 19): RGB as Bytes.h, a Kelvin or its exact tint as Bytes.r, 15 segments.
     d = _dev("H61A8")
-    asyncio.run(d.set_rgb((0xFF, 0xB9, 0x69)))
-    asyncio.run(d.set_segment_rgb([1], (0xFF, 0xB9, 0x69)))
-    assert [f[2:3].hex() for f in _sent(d)] == ["0b", "0b"]
-    assert d.state.rgb_color == (0xFF, 0xB9, 0x69) and d.state.color_temp_kelvin is None
+    asyncio.run(d.set_rgb((0xFF, 0x00, 0x00)))
+    asyncio.run(d.set_rgb((0xFF, 0xAE, 0x54)))            # 2700 K's tint: sent as that Kelvin
+    asyncio.run(d.set_color_temp(2700))
+    assert [f.hex() for f in _sent(d)] == [H61A8_BENCH_RED, H61A8_BENCH_2700K, H61A8_BENCH_2700K]
+    assert d.state.rgb_color is None and d.state.color_temp_kelvin == 2700
 
 
 # ── state after a conversion: Kelvin, no rgb (the app syncs the Kelvin) ──────

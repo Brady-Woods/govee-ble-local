@@ -16,10 +16,22 @@ from .brightness import raw_to_percent
 from .profile import DeviceProfile, wire_profile
 
 
-def kelvin_range(profile: DeviceProfile) -> tuple[int, int] | None:
-    """The profile's inclusive Kelvin range, or None when it leaves either end open."""
-    lo, hi = profile.min_kelvin, profile.max_kelvin
-    return (lo, hi) if lo is not None and hi is not None else None
+def kelvin_range(profile: DeviceProfile, hardware: str | None = None) -> tuple[int, int] | None:
+    """The device's inclusive Kelvin range, or None when the profile leaves either end open: the first
+    :attr:`~.profile.DeviceProfile.kelvin_by_hardware` entry the ``hardware`` version is at least (a
+    string compare, as the app's), else the profile's base range. With the hardware version not yet read
+    (None), the range that holds on every revision: the base range cut to each entry's."""
+    lo_, hi_ = profile.min_kelvin, profile.max_kelvin
+    if lo_ is None or hi_ is None:
+        return None
+    if hardware is None:
+        for _min_hard, lo, hi in profile.kelvin_by_hardware:
+            lo_, hi_ = max(lo_, lo), min(hi_, hi)
+        return lo_, hi_
+    for min_hard, lo, hi in profile.kelvin_by_hardware:
+        if hardware >= min_hard:
+            return lo, hi
+    return lo_, hi_
 
 
 def brightness_pct(profile: DeviceProfile, raw: int) -> int:
@@ -63,7 +75,7 @@ def apply_rgb(profile: DeviceProfile, state: DeviceState, rgb: tuple[int, int, i
     """A whole-device RGB write: the colour, or - when the app sends it as a colour temperature
     (``build.rgb_as_kelvin``) - that Kelvin, which is what the device reports (and what the app
     syncs to its Kelvin slider; both bars of a bar-switch device)."""
-    kelvin = build.rgb_as_kelvin(*rgb, profile.color_scheme, kelvin_range(profile))
+    kelvin = build.rgb_as_kelvin(*rgb, profile.color_scheme, kelvin_range(profile, state.hardware_version))
     if kelvin is None:
         state.rgb_color, state.color_temp_kelvin = rgb, None
     else:
@@ -241,7 +253,8 @@ def _apply_mode(profile: DeviceProfile, state: DeviceState, m: Any) -> None:
     if isinstance(color, parse.BarKelvin):
         apply_zone_kelvin(profile, state, {0: color.left, 1: color.right})
     elif isinstance(color, parse.KelvinReport):
-        apply_kelvin_report(state, color.kelvin)
+        if color.kelvin > 0 or profile.mode_reports_kelvin:   # else the report can't say: keep what was sent
+            apply_kelvin_report(state, color.kelvin)
     elif color is not None:
         state.rgb_color, state.color_temp_kelvin = color
 

@@ -104,10 +104,13 @@ as the app's Kelvin sliders send it).
 Like the app, a picked RGB colour that is exactly one of its Kelvin tint colours (178 of them, two per
 100 K step) and whose Kelvin is inside the SKU's range is sent as a colour-temperature frame instead of
 an RGB frame, and `state` then reports `color_temp_kelvin` with `rgb_color` unset: `set_rgb`, `turn_on(rgb=)`,
-`set_zone_rgb` and `set_segment_rgb` on the 0x15 devices (H60A6, H6641, H6062, H6047, with the same mask the
-RGB frame would use), the 0x0d bulbs and strip (H6004, H6006, H6008, H6052, H6188) and H6061. Colours outside the
-range or one channel off the table stay RGB. Not modelled: colour-set / mixed-colour picks and the real-time
-drag frames (RGB only), and H61A8's picks.
+`set_zone_rgb` and `set_segment_rgb` on the 0x15 devices (H60A6, H61A8, H6641, H6062, H6047, with the same mask
+the RGB frame would use), the 0x0d bulbs and strip (H6004, H6006, H6008, H6052, H6188) and H6061. Colours outside
+the range or one channel off the table stay RGB. Not modelled: colour-set / mixed-colour picks and the real-time
+drag frames (RGB only). The H61A8's Kelvin range is [2000, 9000], or [2700, 6500] from hardware 3.08.01; until its
+hardware version is read (once per device, on the first poll) the range valid on both, [2700, 6500], applies
+(`Device.min_kelvin` / `max_kelvin` give the range in force). Its mode report carries no Kelvin, so after a
+colour-temperature write `state` keeps the Kelvin that was sent.
 
 Read-back decodes the `aa 05` mode report the way the app's control screen does for each SKU. The
 H6052's screen reads its colour report as RGB only, so after a poll an H6052 in colour-temperature
