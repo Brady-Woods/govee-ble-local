@@ -340,7 +340,9 @@ model, from which the shipped readers are generated).
   activates the type-3 graffiti scenes the app uploads over `e`); the `dispatch` source that called `c` its
   version array is corrected. A store test checks each bundled scene's op type against every scene set of
   its SKU and names the one known exception: H61A8's `{0, 1, 2}` (pact code 2, or soft 1.04.00 below part
-  brightness) hides its 36 RGBIC scenes at cmdVersion 1, which the library still uploads, as 1.4.0 did.
+  brightness) drops the op-type-3 lightEffect of its 36 RGBIC scenes at cmdVersion 1: it hides 31 of them
+  and plays another of their effects for 5 (Halloween, Waltz, Ballet, Street Dance, Puzzle Game), while the
+  library still uploads the bundled one, as 1.4.0 did.
 - `devices.schema.json`: `clientModel` (`client_profile.by_model.<SKU>`) takes `kelvin_range` and
   `brightness_range`, and `scene_power_on` (the scene apply's power-on; bulblightv3 H6009 / H6010, cited in
   row 64's doc), which the generator refuses on a SKU whose row offers no scenes.

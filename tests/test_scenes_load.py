@@ -31,8 +31,9 @@ RELEASED_SETS = {
     "H6641": "6bbb491551b4dfc4",
 }
 
-# The bundled scenes the app's scene list hides at one of their SKU's scene sets (devices.yaml
-# scenes.list_filter) while the library still offers them there: {(SKU, set): how many}.
+# The bundled scenes whose bundled lightEffect the app's scene list drops at one of their SKU's scene sets
+# (devices.yaml scenes.list_filter: it hides the scene, or plays another of its effects) while the library
+# still offers it there: {(SKU, set): how many}.
 LIST_FILTER_EXEMPT = {
     # Review G1, the user's call: H61A8 at pact code 2 ((1,2) / (2,2)) or from soft 1.04.00, below part
     # brightness (soft 1.06.00 and hard 1.00.02), e.g. soft 1.05.00 / hard 1.00.01, has the set {0, 1, 2}.
