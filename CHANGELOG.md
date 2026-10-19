@@ -257,8 +257,7 @@ model, from which the shipped readers are generated).
   43 / 50 / 90 / 307. The trace notes in `devices/profile.py` are now the rows' `doc` / `doc-ref`.
 - **Seven SKUs as modelled rows first** (one-device-list phase 2): rows for goodsTypes the spec already
   describes, added as `support: modelled` (source-modelled, not live-verified: no unit was on the bench).
-  The app trace below makes five of them `app_traced` (H6690, H7040, H60B1, H7056 and H1630); H6098 /
-  H8098 stay behind `allow_modelled`. Each row's `doc` names what is not traced.
+  The app trace below makes all seven `app_traced`. Each row's `doc` names what is not traced.
   - pact_h6099 203 (**H6098 / H8098**, pacts (1, 1) / (2, 1) / (3, 1)) and 336 (**H6690**, pact (1, 1)),
     one profile: the h60a6 0x15 frames, 14 segments by the direct `aa a5` groups of 4, Kelvin
     [2000, 9000], `kelvin_15` colour report. The app's colour strip sends 15 04 groups where the library
@@ -289,10 +288,22 @@ model, from which the shipped readers are generated).
     untraced`): **H6167** (dreamcolorlightv1 83), **H616D / H616E** (207), **H802A** (74) and **R1630**
     (h1630 364, which leaves `allow_modelled` with its row).
 
-  Behind `allow_modelled` (source-modelled, not live-verified): **H6098 / H8098** (pact_h6099 203, now
-  with gradual) and **H61B8 / H61B9** (h61d3 299). Where the screen sends sceneType-5 scenes through the
-  app's new-DIY parsers, the row says `scene_dialect: untraced`, so that SKU offers no scenes yet. The
-  H6042's wire piece count is now the control screen's 5, not 10. The 18 SKUs of 1.4.0 are unchanged.
+  Behind `allow_modelled` (source-modelled, not live-verified): **H61B8 / H61B9** (h61d3 299). Where the
+  screen sends sceneType-5 scenes through the app's new-DIY parsers, the row says `scene_dialect:
+  untraced`, so that SKU offers no scenes yet. The H6042's wire piece count is now the control screen's 5,
+  not 10. The 18 SKUs of 1.4.0 are unchanged.
+- **24 more SKUs on the phase-3 library changes**, all `app_traced`:
+  - bulblightv3 111 (**H1501 / H601A / H601B / H601C / H601D / H801A / H801C / H801D / R1501**), 348
+    (**H1401 / R1401**) and 408 (**H14B1**): the light connect write 33 25 01 (`connect_writes:
+    [light_effect_stop]`); 348's Kelvin range is [1000, 10000] from soft version 1.00.15, else
+    [2700, 6500];
+  - h7050 46 / 76 / 105 / 107 / 113 / 116 / 171 / 218 / 219 / 227 (**H7050 / H7060 / H7051 / H7062 /
+    H7065 / H7055 / H7066 / H7052 / H7053 / H7063**): the `aa a3` connect read without the gradual control;
+  - pact_h6099 203 (**H6098 / H8098**), promoted from `modelled`: the catalogue snapshot routes H8098 to
+    goodsType 203.
+
+  Behind `allow_modelled`: h61d3 261 (**H61F2 / H61F5 / H61F6**), Kelvin [1000, 10000] at pact (4, 1), else
+  [2700, 6500]; its piece count has no app cap, so the mask width is modelled, as on 299.
 - **H6004 routes to goodsType 64.** Rows 9 and 10 (H6003, and the H6004's Wi-Fi revision) say
   `connectivity: [wifi, iot]`, so no BLE client routes there.
 - **goodsType 64's scene versions are {0, 1}**, the control screen's `ScenesConfigBean` set

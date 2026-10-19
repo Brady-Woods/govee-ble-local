@@ -829,9 +829,91 @@ families:
             - split_bulblightstringv1/com/govee/bulblightstringv1/bulblight/Support4BulbLightV3.java:83-84
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:407,544-546,1389-1391
         "311": { power_live: [push_30], mode_color_parse: kelvin_only_15 }   # H601E / H601F; split_bulblightstringv1/com/govee/bulblightv3/newdetail/Info4Detail.java:666-706
-        "111": { models: [H601A, H601B, H601C, H801A, H801D, H1501, R1501], mode_color_parse: rgb_kelvin_tint }   # the SKUs at 111; split_bulblightstringv1/com/govee/bulblightstringv1/bulblight/Support4BulbLightV3.java:42-55
+        "111":   # H1501 / H601A / H601B / H601C / H601D / H801A / H801C / H801D / R1501, the bulblight AcNewDetail
+          models: [H1501, H601A, H601B, H601C, H601D, H801A, H801C, H801D, R1501]
+          pacts: ["1,1", "2,1"]
+          support: app_traced
+          mode_color_parse: rgb_kelvin_tint
+          color_functions: [color_temperature]
+          capabilities: [power, brightness, rgb, color_temp, scenes]
+          zones: []
+          account_lock: false
+          scene_dialect: untraced
+          scene_versions: [0, 1]
+          kelvin_range: [2700, 6500]
+          connect_reads: [brightness]
+          connect_writes: [light_effect_stop]
+          doc: >-
+            H1501 / H601A / H601B / H601C / H601D / H801A / H801C / H801D / R1501 on the bulblight AcNewDetail
+            (bulblightv3 pact Model.t), the 64 screen. Support4BulbLightV3's SKU lists tie H1501 / R1501 and H601A /
+            H601B / H601C / H801A / H801D to 111; H601D and H801C are the catalogue snapshot's routes. Pacts (1,1) /
+            (2,1) (supportPactV3_601A over the 64 list). Colour Config.x[111] = 2 = Config.bu (h6006, the family's);
+            Config.I[111] colour temperature on, segment brightness off. Kelvin KelvinConfig.Config.i[111] = 2 = [2700,
+            6500]. Brightness default version 1 = [1, 100]. Connect reads ControllerStrategyConfig.h0 (aa 04, aa 01, aa
+            05). Scenes versionArray {0, 1} (Support4BulbLightV3.g, bulblightv3 Support.supportScenesOp). After the
+            connect reads, VM4Light.i5 sends 33 25 01 (light_effect_stop; bulblight Support.c holds for 111) on every
+            connect. No account lock. Scene apply (BaseSceneViewMode.k3): a sceneType-5 scene whose param starts 0x50
+            goes through the new-DIY parser BulbDiyConfig registers for this goodsType at app init (DiyDelegateRegister,
+            from BulbLightApplication.create), not traced, so scene_dialect is untraced.
+          doc-ref:
+            - split_bulblightstringv1/com/govee/bulblightv3/pact/Support.java:78-83,357-372,374-379
+            - split_bulblightstringv1/com/govee/bulblightv3/pact/Model.java:29-38
+            - split_bulblightstringv1/com/govee/bulblightstringv1/bulblight/Support.java:29-32
+            - split_bulblightstringv1/com/govee/bulblightstringv1/bulblight/VM4Light.java:966-983
+            - split_bulblightstringv1/com/govee/bulblightstringv1/bulblight/VM4Light$connectBleSuc$1.java:43-73
+            - split_bulblightstringv1/com/govee/bulblightstringv1/bulblight/ControllerStrategyConfig.java:408-447,587-662
+            - split_bulblightstringv1/com/govee/bulblightstringv1/bulblight/Support4BulbLightV3.java:30-35,83-85,92-95,37-55
+            - split_bulblightstringv1/com/govee/bulblightstringv1/bulblight/mode/scene/ScenesDelegateRegister.java:35-46
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:1569-1573,4805-4809,5537-5541,10552-10555,13459-13467,16613-16616
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:402-411,564-568,1462-1464
+            - split_bulblightstringv1/com/govee/bulblightstringv1/bulblight/mode/diy/BulbDiyConfig.java:15-27
+            - split_bulblightstringv1/com/govee/bulblightstringv1/bulblight/mode/diy/DiyDelegateRegister.java:56-58
+            - split_bulblightstringv1/com/govee/bulblightstringv1/bulblight/BulbLightApplication.java:30-33
+            - base-classes11/com/govee/base2light/pact/newdetail/content/scene/BaseSceneViewMode.java:864-903,1152-1200
+            - base-classes10/com/govee/base2light/ac/diyNew/config/DiyNewConfig.java:61-65,140-146
         "342": { models: [H14C0, H14A1, R14A1, H14C2, R14C2], mode_color_parse: rgb_kelvin_tint }   # the 0x25 light-end write at connect goes only to H14A1 / R14A1 / H14C2 / R14C2; bulblight/Support.java:29-32
-        "348": { models: [H1401, R1401], mode_color_parse: rgb_kelvin_tint }   # R1401 shares 348; Kelvin [1000, 10000] from firmware 1.00.15, else [2700, 6500]; KelvinConfig.java:1446-1452
+        "348":   # H1401 / R1401, the bulblight AcNewDetail
+          models: [H1401, R1401]
+          pacts: ["1,1", "3,1", "3,2"]
+          support: app_traced
+          mode_color_parse: rgb_kelvin_tint
+          color_functions: [color_temperature]
+          capabilities: [power, brightness, rgb, color_temp, scenes]
+          zones: []
+          account_lock: false
+          scene_dialect: legacy_scene
+          scene_versions: [0, 1]
+          kelvin_range: [2700, 6500]
+          by_firmware:
+            - { min_soft_version: "1.00.15", kelvin_range: [1000, 10000], doc: "KelvinConfig.Config.Z2: versionSoft compared as a string with 1.00.15" }
+          connect_reads: [brightness]
+          connect_writes: [light_effect_stop]
+          doc: >-
+            H1401 / R1401 on the bulblight AcNewDetail (bulblightv3 pact Model.t), the 64 screen. Accepted pacts (1,1),
+            (3,1) and (3,2): Support.addSupportPact (supportPact4H1401); the screen's n4 (bulblight Support.e ->
+            Support4BulbLightV3.f) takes the bulb union list, which holds all three. Colour Config.x[348] = 2 =
+            Config.bu (h6006, the family's); Config.I[348] colour temperature on. Kelvin: version 2 = [2700, 6500], and
+            version 5 = [1000, 10000] from versionSoft 1.00.15 (KelvinConfig.Config.Z2 reads Info4BleIotDevice.a0, the
+            soft version, as a string compare), the by_firmware branch. Brightness default version 1 = [1, 100].
+            Connect: Support4BulbLightV3.i holds 348, so ControllerStrategyConfig.C0 takes h0 (aa 04, aa 01, aa 05);
+            after the connect reads VM4Light.i5 sends 33 25 01 (light_effect_stop; bulblight Support.c holds for 348) on
+            every connect. Scenes versionArray {0, 1} (Support4BulbLightV3.g). No account lock: the h0 strategy and the
+            connect callback send no 0xB2, as on 64 / 111. Not traced: the day-sync controllers DaySyncVM adds to the
+            connect (VM4Light.O4; the screen's day-sync mode list, DelegateModeList4DaySync and DaySyncConfig); they are
+            not listed, as the h61d3 rows' day-sync reads are not. Not hardware-verified.
+          doc-ref:
+            - split_bulblightstringv1/com/govee/bulblightv3/pact/Support.java:99-107,238-254
+            - split_bulblightstringv1/com/govee/bulblightv3/pact/Model.java:29-38
+            - split_bulblightstringv1/com/govee/bulblightstringv1/bulblight/Support.java:29-32,192-200
+            - split_bulblightstringv1/com/govee/bulblightstringv1/bulblight/VM4Light.java:966-983
+            - split_bulblightstringv1/com/govee/bulblightstringv1/bulblight/VM4Light$connectBleSuc$1.java:43-73
+            - split_bulblightstringv1/com/govee/bulblightstringv1/bulblight/ControllerStrategyConfig.java:408-447,587-662
+            - split_bulblightstringv1/com/govee/bulblightstringv1/bulblight/Support4BulbLightV3.java:27,30,57-59,68-80,83-85,92-95
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:402-411,559-563,1446-1452
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/DaySyncConfig.java:135-139
+            - split_bulblightstringv1/com/govee/bulblightstringv1/bulblight/BulbLightApplication.java:58-70
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:1559-1563,4795-4799,10155-10158,16303-16306
+            - base-classes11/com/govee/base2light/kt/comm/Info4BleIotDevice.java:366-368
         "20":   # H6005, the bulblight AcNewDetail. H6001 reaches 20 only through the soft >= 3.00.00 device-list rewrite (assigned_goods_type) and is not listed (doc)
           models: [H6005]
           pacts: ["1,1"]
@@ -993,6 +1075,45 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:63-86,198-213,250-258
             - base-classes12/com/govee/common2light/registry/LightCapabilityRegistry.java:96-109
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/TimerConfig.java:169-182
+        "408":   # H14B1, the bulblight AcNewDetail
+          models: [H14B1]
+          pacts: ["1,1", "1,2"]
+          support: app_traced
+          mode_color_parse: rgb_kelvin_tint
+          color_functions: [color_temperature]
+          capabilities: [power, brightness, rgb, color_temp, scenes]
+          zones: []
+          account_lock: false
+          scene_dialect: legacy_scene
+          scene_versions: [0, 1]
+          kelvin_range: [2700, 6500]
+          connect_reads: [brightness]
+          connect_writes: [light_effect_stop]
+          doc: >-
+            H14B1 on the bulblight AcNewDetail (bulblightv3 pact Model.t), the 64 screen. Accepted pacts (1,1) and
+            (1,2): Support.addSupportPact (supportPact4H14B1); the screen's n4 (bulblight Support.e ->
+            Support4BulbLightV3.f) takes the bulb union list, which holds both. H14B1 is tied to 408 by that
+            registration and the family's goods_types; it is not in the catalogue snapshot. Colour Config.x[408] = 2 =
+            Config.bu (h6006, the family's); Config.I[408] colour temperature on. Kelvin KelvinConfig.Config.i[408] = 2
+            = [2700, 6500]. Brightness default version 1 = [1, 100]. Connect: Support4BulbLightV3.i holds 408, so
+            ControllerStrategyConfig.C0 takes h0 (aa 04, aa 01, aa 05); after the connect reads VM4Light.i5 sends 33 25
+            01 (light_effect_stop; bulblight Support.c holds for 408) on every connect. Scenes versionArray {0, 1}
+            (Support4BulbLightV3.g). No account lock: the h0 strategy and the connect callback send no 0xB2, as on 64 /
+            111. Not traced: the day-sync controllers DaySyncVM adds to the connect (VM4Light.O4; the screen's day-sync
+            mode list, DelegateModeList4DaySync and DaySyncConfig); they are not listed, as the h61d3 rows' day-sync
+            reads are not. Not hardware-verified.
+          doc-ref:
+            - split_bulblightstringv1/com/govee/bulblightv3/pact/Support.java:108-113,255-270
+            - split_bulblightstringv1/com/govee/bulblightv3/pact/Model.java:29-38
+            - split_bulblightstringv1/com/govee/bulblightstringv1/bulblight/Support.java:29-32,192-200
+            - split_bulblightstringv1/com/govee/bulblightstringv1/bulblight/VM4Light.java:966-983
+            - split_bulblightstringv1/com/govee/bulblightstringv1/bulblight/VM4Light$connectBleSuc$1.java:43-73
+            - split_bulblightstringv1/com/govee/bulblightstringv1/bulblight/ControllerStrategyConfig.java:408-447,587-662
+            - split_bulblightstringv1/com/govee/bulblightstringv1/bulblight/Support4BulbLightV3.java:27,30,57-59,68-80,83-85,92-95
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:402-411,1089-1093,1195-1197
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/DaySyncConfig.java:140-144
+            - split_bulblightstringv1/com/govee/bulblightstringv1/bulblight/BulbLightApplication.java:58-70
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:2105-2109,5505-5509,10065-10068,16258-16261
       wire_cipher: runtime
       wire:
         forms: { f_01: light, f_09: datetime_epoch }
@@ -1628,6 +1749,46 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/content/scene/BaseSceneViewMode.java:864-903,1152-1200
             - base-classes10/com/govee/base2light/ac/diyNew/config/DiyNewConfig.java:61-65,140-146
             - base-classes2/com/govee/shared/checker/KmpGoodsType.java:148
+        "261":   # H61F2 / H61F5 / H61F6
+          models: [H61F2, H61F5, H61F6]
+          pacts: ["2,2", "3,1", "4,1"]
+          support: modelled
+          color_functions: [segment_brightness, color_temperature]
+          capabilities: [power, brightness, rgb, color_temp, segments, scenes, gradual]
+          zones: []
+          account_lock: false
+          scene_dialect: untraced
+          scene_versions: [0, 1, 2, 3]
+          kelvin_range: [2700, 6500]
+          brightness_range: [1, 100]
+          by_pact: { "4,1": { kelvin_range: [1000, 10000] } }
+          connect_reads: [brightness, gradual, ic_num, color_group]
+          connect_writes: []
+          ic_pieces: { min_ic: 0, max_ic: 4095, ic_per_piece: 5 }
+          doc: >-
+            H61F2 / H61F5 / H61F6. Same screen and connect as the traced rows (j0 in VM4Light.j5): aa 04, aa a3, aa 01,
+            aa 40, aa 05, direct aa a5 groups of 4; ColorModeV2, Config.x = 0, Config.P = 1, Config.I all true. Kelvin,
+            pact-gated: KelvinConfig.R2 gives version 5 = [1000, 10000] at pact (4, 1) and version 2 = [2700, 6500]
+            otherwise (H61D3Support.n0 / o say the same), hence the by_pact 4,1 range. Modelled, as 299: pieces =
+            ceil(IC / 5) with no app clamp, so max_ic 4095 and num_segments 56 have no app value. Brightness version 1;
+            scenes {0, 1, 2, 3}; no account lock. Scene apply (BaseSceneViewMode.k3): a sceneType-5 scene whose param
+            starts 0x50 goes through the new-DIY parser H61F6DiyConfig registers for this goodsType at app init
+            (ConfigDetail, from H61D3Application), not traced, so scene_dialect is untraced.
+          doc-ref:
+            - split_h61d3/com/govee/h61d3/pact/H61D3Support.java:896-908,1322-1324,1016-1019,1185-1192,1483-1490,1557-1558,1576-1578
+            - split_h61d3/com/govee/h61d3/pact/Model.java:108-120
+            - split_h61d3/com/govee/h61d3/adjustNew/VM4Light.java:542-550,636-669,1001-1004,1065-1075
+            - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4InfoBleIot$iControllerStrategy$1.java:154-251
+            - split_h61d3/com/govee/h61d3/adjustNew/ConfigDetail.java:80-93,211-224,302-307
+            - base-classes2/com/govee/shared/config/h61f6/H61F6SceneConfig.java:45-47
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:1045,15377-15380,5759,16193-16196,4490,16548-16551,3686,16853-16856
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:329-342,401-411,524,1341-1344
+            - base-classes11/com/govee/base2light/kt/comm/Info4BleIotDevice.java:208-218,417-418
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:198-212,251-259
+            - split_h61d3/com/govee/h61d3/adjustNew/diy/H61F6DiyConfig.java:345-352
+            - split_h61d3/com/govee/h61d3/H61D3Application.java:221
+            - base-classes11/com/govee/base2light/pact/newdetail/content/scene/BaseSceneViewMode.java:864-903,1152-1200
+            - base-classes10/com/govee/base2light/ac/diyNew/config/DiyNewConfig.java:61-65,140-146
       wire_cipher: runtime
       wire:
         forms: { f_01: light, f_09: datetime_epoch, f_ee_30: main_bit0_a }
@@ -1645,6 +1806,7 @@ families:
           "400": { forms: { f_a5: color_group, f_15_01: kelvin_tint }, counts: { num_segments: 5 }, group: { rule: fixed, num_per_group: 4 }, doc: "H1A42: aa a5 groups of 4 (split_h61d3/com/govee/h61d3/adjustNew/VM4Light.java:636-669); 5 = the cap of H61D3Support.e(400); the app's mask is the live piece count (as 247's 16)" }
           "403": { forms: { f_a5: color_group, f_15_01: kelvin_tint }, counts: { num_segments: 8 }, group: { rule: fixed, num_per_group: 4 }, doc: "H1AA2: aa a5 groups of 4 (split_h61d3/com/govee/h61d3/adjustNew/VM4Light.java:636-669); 8 = the cap of H61D3Support.e(403); the app's mask is the live piece count (as 247's 16)" }
           "404": { forms: { f_a5: color_group, f_15_01: kelvin_tint }, counts: { num_segments: 10 }, group: { rule: fixed, num_per_group: 4 }, doc: "H1AA5: aa a5 groups of 4 (split_h61d3/com/govee/h61d3/adjustNew/VM4Light.java:636-669); 10 = the cap of H61D3Support.e(404); the app's mask is the live piece count (as 247's 16)" }
+          "261": { forms: { f_a5: color_group, f_15_01: kelvin_tint }, counts: { num_segments: 56 }, group: { rule: fixed, num_per_group: 4 }, doc: "H61F2 / H61F5 / H61F6: direct aa a5 groups of 4; 56 is modelled (no app cap on the pieces)" }
     models: [H61B0, H61B3, H61B6, H61B8, H61B9, H61D2, H61D3, H61D4, H61D5, H61D6, H61E5, H61E6, H61F2, H61F5, H61F6, H1A42, H1A43, H1A44, H1A45, H1AB1, H1AB2, H1AB3, H1B6A, H6640, H6641, H703A, H703B, H1AA2, H1AA5]
     goods_types: [202, 239, 242, 246, 247, 261, 263, 264, 299, 367, 375, 384, 387, 388, 389, 400, 403, 404]   # 403 = H1AA2, 404 = H1AA5, 367 = H1A43 / H1A44; base-classes9/com/govee/base2home/pfd/Config.java:226
     delivery: feature_split
@@ -4715,7 +4877,7 @@ families:
           power_read: aa01
           power_live: [push_30]
           pacts: ["1,1", "2,1", "3,1"]
-          support: modelled
+          support: app_traced
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments, scenes, gradual]
           zones: []
@@ -4745,9 +4907,9 @@ families:
             whose param starts 0x50 goes through the family's new-DIY parsers (H6099DiyConfig registers 203), so
             scene_dialect stays untraced. Gradual: the colour page writes it through ColorModeControllerConfig.p
             (ColorViewModel.applyGradual), Config.G[203] = 0 -> Config.M[0] -> Bytes.w (33 a3), and the connect reads it
-            (aa a3). The realtime colour frame on pact (3,1) is not modelled. Modelled, not traced: H8098's tie to
-            goodsType 203 (the spec row's; the app names H8098 beside H6098 in pact_h6099 Support and CameraSkuConfig,
-            but no goodsType table for it was found). Not hardware-verified.
+            (aa a3). The realtime colour frame on pact (3,1) is not modelled. H8098's tie to goodsType 203 is the
+            catalogue snapshot's route (app2.govee.com/bi/rest/devices/v3/skus, 2026-10-18): the app names H8098 beside
+            H6098 in pact_h6099 Support and CameraSkuConfig, but holds no goodsType table for it. Not hardware-verified.
           doc-ref:
             - split_h6099/com/govee/pact_h6099/pact/Support.java:31-33,42-44,58-101,121-144,175-177,312-317
             - base-classes2/com/govee/shared/checker/KmpGoodsType.java:334
@@ -5413,6 +5575,438 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/content/color/ColorViewModel.java:858,883-899,1133-1147
             - base-classes11/com/govee/base2light/pact/newdetail/content/illumination/View4IlluminationMode.java:613-622
         "98": { models: [H7061], mode_color_parse: bri_rgb_pair_15 }   # H7061 two-head flood light (see the bri_rgb_pair decode); no aa a5 group reads
+        "46":   # H7050, the h7050515253 NewDetailVM screen
+          models: [H7050]
+          pacts: ["1,1"]
+          support: app_traced
+          color_functions: [segment_brightness, color_temperature]
+          capabilities: [power, brightness, rgb, color_temp, segments, scenes]
+          zones: []
+          account_lock: false
+          scene_dialect: untraced
+          scene_versions: [0, 1, 2, 3]
+          kelvin_range: [2000, 9000]
+          brightness_range: [1, 100]
+          connect_reads: [brightness, gradual, color_group]
+          connect_writes: []
+          doc: >-
+            H7050 on the h7050 NewDetailVM screen (h7050515253 NewDetailActivity, Model.t). Its n4 is goodsType-only;
+            the accepted pact is (1,1). Connect: the default Compose4InfoBleIot read (versions, Wi-Fi versions and MAC,
+            the time-sync write TimerConfig.f, timers, sleep, wake-up, aa 04, aa a3, aa 01, aa 05). After the aa 05
+            reply (NewDetailVM.U4) it adds the direct aa a5 groups: groups of Support.getOneGroupNum(46) = 3 over
+            getBulbStringMaxNum(46) = 15 pieces, so 5 groups. Colour page: the unified one. The normal-function flags
+            Config.I[46] turn gradual off and segment brightness and colour temperature on. With no Config.G key and the
+            null configGradualController, the screen offers no gradual control, although its connect reads aa a3.
+            Frames: the family's h60a6 0x15 forms. The main switch writes 33 01 (NewDetailVM.switchTrigger ->
+            ControllerSwitch); there is no zone switch. Mode report: the family's kelvin_15 (Info4Detail.N). Scenes:
+            ScenesConfigBean(2, 1, Support.supportScenesOp() = {0, 1, 2, 3}). Kelvin: no KelvinConfig entry, so version
+            0 = [2000, 9000] (Support.getColorTemRange agrees). Brightness: version 1 = percent. No account lock: the
+            connect list has no 0xB2 step (the secret is sent only by the pairing flows and the group effect op). Not
+            listed: the time-sync write, as on the phase-0 light rows. Scene apply (BaseSceneViewMode.k3): a sceneType-5
+            scene whose param starts 0x50 goes through the new-DIY parser H705051525355DiyConfig registers for this
+            goodsType at app init (H7050ApplicationImp), not traced, so scene_dialect is untraced. Not
+            hardware-verified.
+          doc-ref:
+            - split_h7050/com/govee/h7050/pact/Support.java:96-98,282-326,348-353,375-383,712-714
+            - split_h7050/com/govee/h7050/pact/deviceitem/Model.java:122-124
+            - base-classes2/com/govee/shared/config/h7050/H7050SceneConfig.java:45-47
+            - split_h7050/com/govee/h7050/adjust/newAdjust/h7050515253/NewDetailVM$connectBleSuc$1.java:70-81,97-119
+            - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4InfoBleIot.java:74-85
+            - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4InfoBleIot$iControllerStrategy$1.java:154-250
+            - split_h7050/com/govee/h7050/adjust/newAdjust/h7050515253/NewDetailVM.java:102-116,163-192,471-473,511-512,712-719,816-835
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:324-336,551-560,3610-4241,4340-4343,11798-11801,930-934,11544-11547
+            - base-classes11/com/govee/base2light/pact/newdetail/IColorModeFuc.java:101-104
+            - split_h7050/com/govee/h7050/adjust/newAdjust/h7050515253/NewDetailConfig.java:187-196
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:329-342,402-405
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:199-214,251-259
+            - split_h7050/com/govee/h7050/add/ConnectDialog.java:13
+            - split_h7050/com/govee/h7050/add/PairAcV1.java:75
+            - split_h7050/com/govee/h7050/adjust/newDiy/H705051525355DiyConfig.java:56,112-115
+            - split_h7050/com/govee/h7050/H7050ApplicationImp.java:89-94
+            - base-classes11/com/govee/base2light/pact/newdetail/content/scene/BaseSceneViewMode.java:864-903,1152-1200
+            - base-classes10/com/govee/base2light/ac/diyNew/config/DiyNewConfig.java:61-65,140-146
+        "76":   # H7060, the H70606162DetailVM screen
+          models: [H7060]
+          pacts: ["1,1"]
+          support: app_traced
+          color_functions: [segment_brightness, color_temperature]
+          capabilities: [power, brightness, rgb, color_temp, segments, scenes]
+          zones: []
+          account_lock: false
+          scene_dialect: untraced
+          scene_versions: [0, 1, 2, 3]
+          kelvin_range: [2700, 6500]
+          brightness_range: [1, 100]
+          connect_reads: [brightness, gradual, color_group]
+          connect_writes: []
+          doc: >-
+            H7060 on the h7050 H70606162DetailVM screen (Model.t sends 76 / 98 / 107 to H70606162NewDetailActivity). Its
+            n4 is goodsType-only; the accepted pact is (1,1). Connect: the default Compose4InfoBleIot read (the
+            time-sync write and info reads, aa 04, aa a3, aa 01, the M4 aa 41 power-off memory read for
+            Support.isSupportOutOffMemory, aa 05), then one direct aa a5 group of 4 over getBulbStringMaxNum(76) = 4
+            pieces (H70606162DetailVM.U4). Config.I[76] turns gradual off and segment brightness and colour temperature
+            on, with no Config.G key and the null configGradualController, so the screen offers no gradual control. The
+            main switch writes 33 01 (H70606162DetailVM.switchTrigger -> ControllerSwitch); there is no zone switch.
+            Mode report: kelvin_15 (H70606162Info4Detail.N, the default strategy). Scenes: ScenesConfigBean(2, 1, {0, 1,
+            2, 3}). Kelvin: KelvinConfig version 2 = [2700, 6500] (Support.getColorTemRange agrees). Brightness:
+            percent. No account lock. Not listed: the aa 41 setting read (D2) and the time-sync write. Scene apply
+            (BaseSceneViewMode.k3): a sceneType-5 scene whose param starts 0x50 goes through the new-DIY parser
+            H7060NewDiyConfig registers for this goodsType at app init (H7050ApplicationImp), not traced, so
+            scene_dialect is untraced. Not hardware-verified.
+          doc-ref:
+            - split_h7050/com/govee/h7050/pact/Support.java:100-102,214-216,282-326,348-353,375-383,546-548,712-714
+            - split_h7050/com/govee/h7050/pact/deviceitem/Model.java:118-121
+            - base-classes2/com/govee/shared/config/h7060/H7060SceneConfig.java:45-47
+            - split_h7050/com/govee/h7050/adjust/newAdjust/h60616263/H70606162DetailVM$connectBleSuc$1.java:70-81,97-119
+            - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4InfoBleIot$iControllerStrategy$1.java:154-250
+            - split_h7050/com/govee/h7050/adjust/newAdjust/h60616263/H70606162DetailVM.java:102-116,163-192,475-477,515-516,716-723,820-839
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:324-336,551-560,4430-4433,14676-14679
+            - base-classes11/com/govee/base2light/pact/newdetail/IColorModeFuc.java:101-104
+            - split_h7050/com/govee/h7050/adjust/newAdjust/h60616263/NewDetailConfig.java:95-104
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:329-342,407,599-603,1546-1548
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:199-214,251-259
+            - split_h7050/com/govee/h7050/add/ConnectDialog.java:13
+            - split_h7050/com/govee/h7050/adjust/newDiy/H7060NewDiyConfig.java:42,87
+            - split_h7050/com/govee/h7050/H7050ApplicationImp.java:89-94
+            - base-classes11/com/govee/base2light/pact/newdetail/content/scene/BaseSceneViewMode.java:864-903,1152-1200
+            - base-classes10/com/govee/base2light/ac/diyNew/config/DiyNewConfig.java:61-65,140-146
+        "105":   # H7051, the h7050515253 NewDetailVM screen
+          models: [H7051]
+          pacts: ["1,1"]
+          support: app_traced
+          color_functions: [segment_brightness, color_temperature]
+          capabilities: [power, brightness, rgb, color_temp, segments, scenes]
+          zones: []
+          account_lock: false
+          scene_dialect: untraced
+          scene_versions: [0, 1, 2, 3]
+          kelvin_range: [2000, 9000]
+          brightness_range: [1, 100]
+          connect_reads: [brightness, gradual, color_group]
+          connect_writes: []
+          doc: >-
+            H7051 on the h7050 NewDetailVM screen (Model.t). It is as H7050 (46): the default Compose4InfoBleIot connect
+            read (aa 04, aa a3, aa 01, aa 05, after the time-sync write and the info reads), then the direct aa a5
+            groups of Support.getOneGroupNum(105) = 3 over getBulbStringMaxNum(105) = 24 pieces, so 8 groups
+            (NewDetailVM.U4). Masks are wider than 16 bits (BleUtils.X, 3 bytes). Config.I[105] turns gradual off and
+            segment brightness and colour temperature on, with no Config.G key, so the screen offers no gradual control.
+            The main switch writes 33 01. Mode report: kelvin_15. Scenes: ScenesConfigBean(2, 1, {0, 1, 2, 3}). Kelvin:
+            no KelvinConfig entry, so version 0 = [2000, 9000]. Brightness: percent. No account lock. Not listed: the
+            time-sync write (phase-0 convention). Scene apply (BaseSceneViewMode.k3): a sceneType-5 scene whose param
+            starts 0x50 goes through the new-DIY parser H705051525355DiyConfig registers for this goodsType at app init
+            (H7050ApplicationImp), not traced, so scene_dialect is untraced. Not hardware-verified.
+          doc-ref:
+            - split_h7050/com/govee/h7050/pact/Support.java:112-114,282-326,348-353,375-383,438-440,712-714
+            - split_h7050/com/govee/h7050/pact/deviceitem/Model.java:122-124
+            - base-classes2/com/govee/shared/config/h7051/H7051SceneConfig.java:45-47
+            - split_h7050/com/govee/h7050/adjust/newAdjust/h7050515253/NewDetailVM$connectBleSuc$1.java:70-81,97-119
+            - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4InfoBleIot$iControllerStrategy$1.java:154-250
+            - split_h7050/com/govee/h7050/adjust/newAdjust/h7050515253/NewDetailVM.java:163-192,511-512,816-835
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:324-336,551-560,4345-4348,11954-11957
+            - base-classes11/com/govee/base2light/pact/newdetail/IColorModeFuc.java:101-104
+            - split_h7050/com/govee/h7050/adjust/newAdjust/h7050515253/NewDetailConfig.java:187-196
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:329-342,402-405
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:199-214,251-259
+            - split_h7050/com/govee/h7050/add/ConnectDialog.java:13
+            - split_h7050/com/govee/h7050/adjust/newDiy/H705051525355DiyConfig.java:56,112-115
+            - split_h7050/com/govee/h7050/H7050ApplicationImp.java:89-94
+            - base-classes11/com/govee/base2light/pact/newdetail/content/scene/BaseSceneViewMode.java:864-903,1152-1200
+            - base-classes10/com/govee/base2light/ac/diyNew/config/DiyNewConfig.java:61-65,140-146
+        "107":   # H7062, the H70606162DetailVM screen
+          models: [H7062]
+          pacts: ["1,1"]
+          support: app_traced
+          color_functions: [segment_brightness, color_temperature]
+          capabilities: [power, brightness, rgb, color_temp, segments, scenes]
+          zones: []
+          account_lock: false
+          scene_dialect: untraced
+          scene_versions: [0, 1, 2, 3]
+          kelvin_range: [2200, 6500]
+          brightness_range: [1, 100]
+          connect_reads: [brightness, gradual, color_group]
+          connect_writes: []
+          doc: >-
+            H7062 on the h7050 H70606162DetailVM screen (Model.t). Connect: the default Compose4InfoBleIot read (the
+            time-sync write and info reads, aa 04, aa a3, aa 01, aa 05), then the direct aa a5 groups of 4 over
+            getBulbStringMaxNum(107) = 6 pieces, so groups 1 and 2 (H70606162DetailVM.U4). Config.I[107] turns gradual
+            off and segment brightness and colour temperature on, with no Config.G key, so the screen offers no gradual
+            control. The main switch writes 33 01; there is no zone switch. Mode report: kelvin_15. Scenes:
+            ScenesConfigBean(2, 1, {0, 1, 2, 3}). Kelvin: KelvinConfig version 1 = [2200, 6500]. Brightness: percent. No
+            account lock. Not listed: the time-sync write. Scene apply (BaseSceneViewMode.k3): a sceneType-5 scene whose
+            param starts 0x50 goes through the new-DIY parser H7062NewDiyConfig registers for this goodsType at app init
+            (H7050ApplicationImp), not traced, so scene_dialect is untraced. Not hardware-verified.
+          doc-ref:
+            - split_h7050/com/govee/h7050/pact/Support.java:116-118,226-228,282-326,348-353,375-383,712-714
+            - split_h7050/com/govee/h7050/pact/deviceitem/Model.java:118-121
+            - base-classes2/com/govee/shared/config/h7062/H7062SceneConfig.java:45-47
+            - split_h7050/com/govee/h7050/adjust/newAdjust/h60616263/H70606162DetailVM$connectBleSuc$1.java:70-81,97-119
+            - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4InfoBleIot$iControllerStrategy$1.java:154-250
+            - split_h7050/com/govee/h7050/adjust/newAdjust/h60616263/H70606162DetailVM.java:163-192,475-477,515-516,820-839
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:324-336,551-560,4420-4423,14357-14360
+            - base-classes11/com/govee/base2light/pact/newdetail/IColorModeFuc.java:101-104
+            - split_h7050/com/govee/h7050/adjust/newAdjust/h60616263/NewDetailConfig.java:95-104
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:329-342,406,609-613,1590-1592
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:199-214,251-259
+            - split_h7050/com/govee/h7050/add/ConnectDialog.java:13
+            - split_h7050/com/govee/h7050/adjust/newDiy/H7062NewDiyConfig.java:42,93-94
+            - split_h7050/com/govee/h7050/H7050ApplicationImp.java:89-94
+            - base-classes11/com/govee/base2light/pact/newdetail/content/scene/BaseSceneViewMode.java:864-903,1152-1200
+            - base-classes10/com/govee/base2light/ac/diyNew/config/DiyNewConfig.java:61-65,140-146
+        "113":   # H7065, the h7050515253 NewDetailVM screen
+          models: [H7065]
+          pacts: ["1,1"]
+          support: app_traced
+          color_functions: [segment_brightness, color_temperature]
+          capabilities: [power, brightness, rgb, color_temp, segments, scenes]
+          zones: []
+          account_lock: false
+          scene_dialect: untraced
+          scene_versions: [0, 1, 2, 3]
+          kelvin_range: [2200, 6500]
+          brightness_range: [1, 100]
+          connect_reads: [brightness, gradual, color_group]
+          connect_writes: []
+          doc: >-
+            H7065 on the h7050 NewDetailVM screen (Model.t). Connect: the default Compose4InfoBleIot read (the time-sync
+            write and info reads, aa 04, aa a3, aa 01, aa 05), then one direct aa a5 group of 4 over
+            getBulbStringMaxNum(113) = 2 pieces (NewDetailVM.U4). Config.I[113] turns gradual off and segment brightness
+            and colour temperature on, with no Config.G key and the null configGradualController, so the screen offers
+            no gradual control. The main switch writes 33 01 (NewDetailVM.switchTrigger); there is no zone switch. Mode
+            report: kelvin_15 (Info4Detail.N). Scenes: ScenesConfigBean(2, 1, {0, 1, 2, 3}). Kelvin: KelvinConfig
+            version 1 = [2200, 6500] (Support.getColorTemRange agrees). Brightness: percent. No account lock. Not
+            listed: the time-sync write (phase-0 convention). Scene apply (BaseSceneViewMode.k3): a sceneType-5 scene
+            whose param starts 0x50 goes through the new-DIY parser H706566NewDiyConfig registers for this goodsType at
+            app init (H7050ApplicationImp), not traced, so scene_dialect is untraced. Not hardware-verified.
+          doc-ref:
+            - split_h7050/com/govee/h7050/pact/Support.java:120-122,282-326,348-353,375-383,712-714
+            - split_h7050/com/govee/h7050/pact/deviceitem/Model.java:122-124
+            - base-classes2/com/govee/shared/config/h7065/H7065SceneConfig.java:45-47
+            - split_h7050/com/govee/h7050/adjust/newAdjust/h7050515253/NewDetailVM$connectBleSuc$1.java:70-81,97-119
+            - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4InfoBleIot$iControllerStrategy$1.java:154-250
+            - split_h7050/com/govee/h7050/adjust/newAdjust/h7050515253/NewDetailVM.java:163-192,471-473,511-512,816-835
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:324-336,551-560,4335-4338,11632-11635
+            - base-classes11/com/govee/base2light/pact/newdetail/IColorModeFuc.java:101-104
+            - split_h7050/com/govee/h7050/adjust/newAdjust/h7050515253/NewDetailConfig.java:187-196
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:329-342,406,644-648,1678-1680
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:199-214,251-259
+            - split_h7050/com/govee/h7050/add/ConnectDialog.java:13
+            - split_h7050/com/govee/h7050/adjust/newDiy/H706566NewDiyConfig.java:106-110
+            - split_h7050/com/govee/h7050/H7050ApplicationImp.java:89-94
+            - base-classes11/com/govee/base2light/pact/newdetail/content/scene/BaseSceneViewMode.java:864-903,1152-1200
+            - base-classes10/com/govee/base2light/ac/diyNew/config/DiyNewConfig.java:61-65,140-146
+        "116":   # H7055, the h7050515253 NewDetailVM screen
+          models: [H7055]
+          pacts: ["1,1"]
+          support: app_traced
+          color_functions: [segment_brightness, color_temperature]
+          capabilities: [power, brightness, rgb, color_temp, segments, scenes]
+          zones: []
+          account_lock: false
+          scene_dialect: untraced
+          scene_versions: [0, 1, 2, 3]
+          kelvin_range: [2200, 6500]
+          brightness_range: [1, 100]
+          connect_reads: [brightness, gradual, color_group]
+          connect_writes: []
+          doc: >-
+            H7055 on the h7050 NewDetailVM screen (Model.t). Connect: the default Compose4InfoBleIot read (the time-sync
+            write and info reads, aa 04, aa a3, aa 01, aa 05), then one direct aa a5 group of 4 over
+            getBulbStringMaxNum(116) = 4 pieces (NewDetailVM.U4). Config.I[116] turns gradual off and segment brightness
+            and colour temperature on, with no Config.G key, so the screen offers no gradual control. The main switch
+            writes 33 01; there is no zone switch. Mode report: kelvin_15. Scenes: ScenesConfigBean(2, 1, {0, 1, 2, 3}).
+            Kelvin: KelvinConfig version 1 = [2200, 6500]. Brightness: percent. No account lock. Not listed: the
+            time-sync write (phase-0 convention). Scene apply (BaseSceneViewMode.k3): a sceneType-5 scene whose param
+            starts 0x50 goes through the new-DIY parser H705051525355DiyConfig registers for this goodsType at app init
+            (H7050ApplicationImp), not traced, so scene_dialect is untraced. Not hardware-verified.
+          doc-ref:
+            - split_h7050/com/govee/h7050/pact/Support.java:124-126,282-326,348-353,375-383,712-714
+            - split_h7050/com/govee/h7050/pact/deviceitem/Model.java:122-124
+            - base-classes2/com/govee/shared/config/h7055/H7055SceneConfig.java:45-47
+            - split_h7050/com/govee/h7050/adjust/newAdjust/h7050515253/NewDetailVM$connectBleSuc$1.java:70-81,97-119
+            - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4InfoBleIot$iControllerStrategy$1.java:154-250
+            - split_h7050/com/govee/h7050/adjust/newAdjust/h7050515253/NewDetailVM.java:163-192,471-473,511-512,816-835
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:324-336,551-560,4365-4368,12587-12590
+            - base-classes11/com/govee/base2light/pact/newdetail/IColorModeFuc.java:101-104
+            - split_h7050/com/govee/h7050/adjust/newAdjust/h7050515253/NewDetailConfig.java:187-196
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:329-342,406,629-633,1638-1640
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:199-214,251-259
+            - split_h7050/com/govee/h7050/add/ConnectDialog.java:13
+            - split_h7050/com/govee/h7050/adjust/newDiy/H705051525355DiyConfig.java:116-117
+            - split_h7050/com/govee/h7050/H7050ApplicationImp.java:89-94
+            - base-classes11/com/govee/base2light/pact/newdetail/content/scene/BaseSceneViewMode.java:864-903,1152-1200
+            - base-classes10/com/govee/base2light/ac/diyNew/config/DiyNewConfig.java:61-65,140-146
+        "171":   # H7066, the h7050515253 NewDetailVM screen
+          models: [H7066]
+          pacts: ["1,1"]
+          support: app_traced
+          color_functions: [segment_brightness, color_temperature]
+          capabilities: [power, brightness, rgb, color_temp, segments, scenes]
+          zones: []
+          account_lock: false
+          scene_dialect: untraced
+          scene_versions: [0, 1, 2, 3]
+          kelvin_range: [2200, 6500]
+          brightness_range: [1, 100]
+          connect_reads: [brightness, gradual, color_group]
+          connect_writes: []
+          doc: >-
+            H7066 on the h7050 NewDetailVM screen (Model.t). Connect: the default Compose4InfoBleIot read (the time-sync
+            write and info reads, aa 04, aa a3, aa 01, aa 05), then one direct aa a5 group of 4 over
+            getBulbStringMaxNum(171) = 4 pieces (NewDetailVM.U4). Config.I[171] turns gradual off and segment brightness
+            and colour temperature on, with no Config.G key, so the screen offers no gradual control. The main switch
+            writes 33 01; there is no zone switch. Mode report: kelvin_15. Scenes: ScenesConfigBean(2, 1, {0, 1, 2, 3}).
+            Kelvin: KelvinConfig version 1 = [2200, 6500]. Brightness: percent. No account lock. Not listed: the
+            time-sync write (phase-0 convention). Scene apply (BaseSceneViewMode.k3): a sceneType-5 scene whose param
+            starts 0x50 goes through the new-DIY parser H706566NewDiyConfig registers for this goodsType at app init
+            (H7050ApplicationImp), not traced, so scene_dialect is untraced. Not hardware-verified.
+          doc-ref:
+            - split_h7050/com/govee/h7050/pact/Support.java:135-137,282-326,348-353,375-383,712-714
+            - split_h7050/com/govee/h7050/pact/deviceitem/Model.java:122-124
+            - base-classes2/com/govee/shared/config/h7066/H7066SceneConfig.java:45-47
+            - split_h7050/com/govee/h7050/adjust/newAdjust/h7050515253/NewDetailVM$connectBleSuc$1.java:70-81,97-119
+            - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4InfoBleIot$iControllerStrategy$1.java:154-250
+            - split_h7050/com/govee/h7050/adjust/newAdjust/h7050515253/NewDetailVM.java:163-192,471-473,511-512,816-835
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:324-336,551-560,4330-4333,11468-11471
+            - base-classes11/com/govee/base2light/pact/newdetail/IColorModeFuc.java:101-104
+            - split_h7050/com/govee/h7050/adjust/newAdjust/h7050515253/NewDetailConfig.java:187-196
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:329-342,406,639-643,1666-1668
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:199-214,251-259
+            - split_h7050/com/govee/h7050/add/ConnectDialog.java:13
+            - split_h7050/com/govee/h7050/adjust/newDiy/H706566NewDiyConfig.java:106-110
+            - split_h7050/com/govee/h7050/H7050ApplicationImp.java:89-94
+            - base-classes11/com/govee/base2light/pact/newdetail/content/scene/BaseSceneViewMode.java:864-903,1152-1200
+            - base-classes10/com/govee/base2light/ac/diyNew/config/DiyNewConfig.java:61-65,140-146
+        "218":   # H7052, the h7050515253 NewDetailVM screen
+          models: [H7052]
+          pacts: ["1,1", "2,1"]
+          support: app_traced
+          color_functions: [segment_brightness, color_temperature]
+          capabilities: [power, brightness, rgb, color_temp, segments, scenes]
+          zones: []
+          account_lock: false
+          scene_dialect: untraced
+          scene_versions: [0, 1, 2, 3]
+          kelvin_range: [2000, 9000]
+          brightness_range: [1, 100]
+          connect_reads: [brightness, gradual, color_group]
+          connect_writes: []
+          doc: >-
+            H7052 on the h7050 NewDetailVM screen (Model.t). Its n4 is goodsType-only; the accepted pacts are (1,1) and
+            (2,1) (Support.supportPactV2). Connect: the default Compose4InfoBleIot read (the time-sync write and info
+            reads, aa 04, aa a3, aa 01, then the aa 41 power-off memory read that NewDetailVM.M4 adds for
+            Support.isSupportOutOffMemory, then aa 05). After that come the direct aa a5 groups of 4 over
+            getBulbStringMaxNum(218) = 15 pieces, so 4 groups. Config.I[218] turns gradual off and segment brightness
+            and colour temperature on, with no Config.G key, so the screen offers no gradual control. The main switch
+            writes 33 01; there is no zone switch. Mode report: kelvin_15. Scenes: ScenesConfigBean(2, 1, {0, 1, 2, 3}).
+            Kelvin: no KelvinConfig entry, so version 0 = [2000, 9000]. Brightness: percent. No account lock
+            (Support.isSupportDeviceLock is a device setting, not a 0xB2 step). Not listed: the aa 41 setting read
+            (decision D2) and the time-sync write (phase-0 convention). Scene apply (BaseSceneViewMode.k3): a
+            sceneType-5 scene whose param starts 0x50 goes through the new-DIY parser H705051525355DiyConfig registers
+            for this goodsType at app init (H7050ApplicationImp), not traced, so scene_dialect is untraced. Not
+            hardware-verified.
+          doc-ref:
+            - split_h7050/com/govee/h7050/pact/Support.java:139-141,178-180,262-265,282-326,348-353,375-383,546-548,712-714
+            - split_h7050/com/govee/h7050/pact/deviceitem/Model.java:122-124
+            - base-classes2/com/govee/shared/config/h7052/H7052SceneConfig.java:53-55
+            - split_h7050/com/govee/h7050/adjust/newAdjust/h7050515253/NewDetailVM$connectBleSuc$1.java:70-81,97-119
+            - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4InfoBleIot$iControllerStrategy$1.java:154-250
+            - split_h7050/com/govee/h7050/adjust/newAdjust/h7050515253/NewDetailVM.java:102-116,163-192,511-512,712-719,816-835
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:324-336,551-560,4350-4353,12116-12119
+            - base-classes11/com/govee/base2light/pact/newdetail/IColorModeFuc.java:101-104
+            - split_h7050/com/govee/h7050/adjust/newAdjust/h7050515253/NewDetailConfig.java:187-196
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:329-342,402-405
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:199-214,251-259
+            - split_h7050/com/govee/h7050/add/ConnectDialog.java:13
+            - split_h7050/com/govee/h7050/adjust/newDiy/H705051525355DiyConfig.java:56,112-115
+            - split_h7050/com/govee/h7050/H7050ApplicationImp.java:89-94
+            - base-classes11/com/govee/base2light/pact/newdetail/content/scene/BaseSceneViewMode.java:864-903,1152-1200
+            - base-classes10/com/govee/base2light/ac/diyNew/config/DiyNewConfig.java:61-65,140-146
+        "219":   # H7053, the h7050515253 NewDetailVM screen
+          models: [H7053]
+          pacts: ["1,1", "2,1"]
+          support: app_traced
+          color_functions: [segment_brightness, color_temperature]
+          capabilities: [power, brightness, rgb, color_temp, segments, scenes]
+          zones: []
+          account_lock: false
+          scene_dialect: untraced
+          scene_versions: [0, 1, 2, 3]
+          kelvin_range: [2000, 9000]
+          brightness_range: [1, 100]
+          connect_reads: [brightness, gradual, color_group]
+          connect_writes: []
+          doc: >-
+            H7053 on the h7050 NewDetailVM screen (Model.t), as H7052 (218). The accepted pacts are (1,1) and (2,1)
+            (Support.supportPactV2). Connect: the default Compose4InfoBleIot read (aa 04, aa a3, aa 01, the M4 aa 41
+            power-off memory read, aa 05), then the direct aa a5 groups of 4 over getBulbStringMaxNum(219) = 30 pieces,
+            so 8 groups. Masks are wider than 16 bits (BleUtils.X, 4 bytes). Config.I[219] turns gradual off and segment
+            brightness and colour temperature on, with no Config.G key, so the screen offers no gradual control. The
+            main switch writes 33 01. Mode report: kelvin_15. Scenes: ScenesConfigBean(2, 1, {0, 1, 2, 3}). Kelvin: no
+            KelvinConfig entry, so version 0 = [2000, 9000]. Brightness: percent. No account lock. Not listed: the aa 41
+            setting read (D2) and the time-sync write. Scene apply (BaseSceneViewMode.k3): a sceneType-5 scene whose
+            param starts 0x50 goes through the new-DIY parser H705051525355DiyConfig registers for this goodsType at app
+            init (H7050ApplicationImp), not traced, so scene_dialect is untraced. Not hardware-verified.
+          doc-ref:
+            - split_h7050/com/govee/h7050/pact/Support.java:142-144,181-183,262-268,282-326,348-353,375-383,546-548,712-714
+            - split_h7050/com/govee/h7050/pact/deviceitem/Model.java:122-124
+            - base-classes2/com/govee/shared/config/h7053/H7053SceneConfig.java:53-55
+            - split_h7050/com/govee/h7050/adjust/newAdjust/h7050515253/NewDetailVM$connectBleSuc$1.java:70-81,97-119
+            - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4InfoBleIot$iControllerStrategy$1.java:154-250
+            - split_h7050/com/govee/h7050/adjust/newAdjust/h7050515253/NewDetailVM.java:102-116,163-192,511-512,816-835
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:324-336,551-560,4355-4358,12272-12275
+            - base-classes11/com/govee/base2light/pact/newdetail/IColorModeFuc.java:101-104
+            - split_h7050/com/govee/h7050/adjust/newAdjust/h7050515253/NewDetailConfig.java:187-196
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:329-342,402-405
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:199-214,251-259
+            - split_h7050/com/govee/h7050/add/ConnectDialog.java:13
+            - split_h7050/com/govee/h7050/adjust/newDiy/H705051525355DiyConfig.java:56,112-115
+            - split_h7050/com/govee/h7050/H7050ApplicationImp.java:89-94
+            - base-classes11/com/govee/base2light/pact/newdetail/content/scene/BaseSceneViewMode.java:864-903,1152-1200
+            - base-classes10/com/govee/base2light/ac/diyNew/config/DiyNewConfig.java:61-65,140-146
+        "227":   # H7063, the h7050515253 NewDetailVM screen
+          models: [H7063]
+          pacts: ["1,1", "2,1"]
+          support: app_traced
+          color_functions: [segment_brightness, color_temperature]
+          capabilities: [power, brightness, rgb, color_temp, segments, scenes]
+          zones: []
+          account_lock: false
+          scene_dialect: untraced
+          scene_versions: [0, 1, 2, 3]
+          kelvin_range: [2700, 6500]
+          brightness_range: [1, 100]
+          connect_reads: [brightness, gradual, color_group]
+          connect_writes: []
+          doc: >-
+            H7063 on the h7050 NewDetailVM screen (Model.t). Its n4 is goodsType-only; the accepted pacts are (1,1) and
+            (2,1). Connect: the default Compose4InfoBleIot read (the time-sync write and info reads, aa 04, aa a3, aa
+            01, the M4 aa 41 power-off memory read, aa 05), then one direct aa a5 group of 4 over
+            getBulbStringMaxNum(227) = 3 pieces. Config.I[227] turns gradual off and segment brightness and colour
+            temperature on, with no Config.G key, so the screen offers no gradual control. The main switch writes 33 01;
+            there is no zone switch. Mode report: kelvin_15. Scenes: ScenesConfigBean(2, 1, {0, 1, 2, 3}). Kelvin:
+            KelvinConfig version 2 = [2700, 6500] (Support.getColorTemRange agrees). Brightness: percent. No account
+            lock (the H7063 connect dialog is a pairing flow, add/BleBroadcastProcessor). Not listed: the aa 41 setting
+            read (D2) and the time-sync write. Scene apply (BaseSceneViewMode.k3): a sceneType-5 scene whose param
+            starts 0x50 goes through the new-DIY parser H7063NewDiyConfig registers for this goodsType at app init
+            (H7050ApplicationImp), not traced, so scene_dialect is untraced. Not hardware-verified.
+          doc-ref:
+            - split_h7050/com/govee/h7050/pact/Support.java:145-150,244-246,282-326,348-353,375-383,546-548,712-714
+            - split_h7050/com/govee/h7050/pact/deviceitem/Model.java:122-124
+            - base-classes2/com/govee/shared/config/h7063/H7063SceneConfig.java:45-47
+            - split_h7050/com/govee/h7050/adjust/newAdjust/h7050515253/NewDetailVM$connectBleSuc$1.java:70-81,97-119
+            - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4InfoBleIot$iControllerStrategy$1.java:154-250
+            - split_h7050/com/govee/h7050/adjust/newAdjust/h7050515253/NewDetailVM.java:102-116,163-192,471-473,511-512,816-835
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:324-336,551-560,4360-4363,12431-12434
+            - base-classes11/com/govee/base2light/pact/newdetail/IColorModeFuc.java:101-104
+            - split_h7050/com/govee/h7050/adjust/newAdjust/h7050515253/NewDetailConfig.java:187-196
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:329-342,407,634-638,1654-1656
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:199-214,251-259
+            - split_h7050/com/govee/h7050/add/ConnectDialog.java:13
+            - split_h7050/com/govee/h7050/adjust/newDiy/H7063NewDiyConfig.java:45,107
+            - split_h7050/com/govee/h7050/H7050ApplicationImp.java:89-94
+            - base-classes11/com/govee/base2light/pact/newdetail/content/scene/BaseSceneViewMode.java:864-903,1152-1200
+            - base-classes10/com/govee/base2light/ac/diyNew/config/DiyNewConfig.java:61-65,140-146
       wire_cipher: runtime
       wire:
         doc: "groups Support.getOneGroupNum, pieces getBulbStringMaxNum (Support.java:282-383)"
