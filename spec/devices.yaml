@@ -2257,11 +2257,44 @@ families:
       mode_color_parse: gradual_15   # 300, pact (1,1): TLV 0x05 gives the gradual byte only, colour from TLV 0xA5; split_floorlamp/com/govee/h60b1/detail/Info4Detail.java:364-395
       power_read: ac_status   # no aa 01 read: TLV 0x01 != 0
       power_live: [push_30]   # heartbeat reply unparsed; ee 30 bit 0 of frame[3]
+      by_goods_type:
+        "300":   # H60B1, the H60B1ViewModel screen
+          models: [H60B1]
+          pacts: ["1,1"]
+          support: modelled
+          capabilities: [power, brightness, rgb, color_temp, segments, scenes]
+          zones: []
+          account_lock: false
+          scene_dialect: untraced
+          status_read: [cmd_41, color_group]
+          connect_reads: []
+          connect_writes: []
+          doc: >-
+            H60B1 on the H60B1ViewModel screen. Its connect read is the 0xAC status read alone (no aa 01 / aa 05):
+            ac 03 02 41 a5 (H60B1ViewModel.T4); TLV 0x01 is the power, TLV 0x05 the mode (the gradual byte only,
+            gradual_15), TLV 0x41 the power-off memory and TLV 0xA5 the 3 colour pieces, (len - 1) / 4 records
+            (H60B1ViewModel.U4). Frames: the 0x15 forms through Yt (Bytes.h, Bytes.r type 1) over a 3-piece mask
+            (H60B1ColorMode: top / mid / bottom), the illumination slider Bytes.C(K, 3, 1); brightness version 1 =
+            percent. Kelvin [2700, 6500] and scenes {0, 2, 3, 5} are the family specs; the 300 -> KelvinConfig
+            version 2 mapping is not cited, and the scene apply path is not traced (scene_dialect untraced). Not
+            cited: the accepted pact (only the goods_types note "Pact (1,1)" at SubLib.java:22), zones (no zone
+            switch in the family's opcodes), the account lock (the family note: no 0xB1 / 0xB2 on the detail
+            screen). Not listed in connect_writes: the TimerConfig.f controller queued before the status read
+            (Compose4BaseInfoSingleRead), which the spec does not spell out; the H60A6 row lists none either.
+            Modelled, not hardware-verified.
+          doc-ref:
+            - split_floorlamp/com/govee/h60b1/pact/SubLib.java:20-26
+            - base-classes2/com/govee/shared/checker/KmpGoodsType.java:191
+            - split_floorlamp/com/govee/h60b1/detail/H60B1ViewModel.java:114-140,149-165,971-995
+            - split_floorlamp/com/govee/h60b1/detail/Info4Detail.java:364-395
+            - split_floorlamp/com/govee/h60b1/detail/mode/H60B1ColorMode.java:392-440,465-479
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:843-847,1126-1129
+            - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4BaseInfoSingleRead.java:229-230
       wire_cipher: runtime
       wire:
         forms: { f_01: light, f_09: datetime_epoch, f_41: power_memory, f_a5: color_group, f_15_01: kelvin_tint, f_ee_30: main_bit0_a }
         counts: { num_segments: 3 }
-        group: { rule: from_len, num_per_group: 4 }
+        group: { rule: from_len, num_per_group: 3 }   # 3 per group, H60B1Support.e = 3 (per_segment_color_read)
     models: [H60B1]   # 300 = H60B1; base-classes2/com/govee/shared/checker/KmpGoodsType.java:191
     goods_types: [300]   # Pact (1,1); split_floorlamp/com/govee/h60b1/pact/SubLib.java:22
     delivery: feature_split   # pact_floorlamp (base-classes9/com/govee/base2home/pfd/Config.java:162)
@@ -3270,6 +3303,42 @@ families:
       mode_color_parse: gradual_15   # 304, pact (1,1): TLV 0x05 gradual only, aa 05 alike; split_outdoorlight/com/govee/h7056/detail/Info4Detail.java:362-393
       power_read: ac_status   # no aa 01 read: TLV 0x01 != 0
       power_live: [push_30]   # ee 30 bit 0 of frame[3]; the type-2 heartbeat stores nothing
+      by_goods_type:
+        "304":   # H7056, the h7056 detail screen (H7056ViewModel)
+          models: [H7056]
+          pacts: ["1,1"]
+          support: modelled
+          capabilities: [power, brightness, rgb, color_temp, segments, scenes]
+          zones: []
+          account_lock: false
+          scene_dialect: untraced
+          status_read: [cmd_41, color_group]
+          connect_reads: []
+          connect_writes: []
+          doc: >-
+            H7056 (goodsType 304, KmpGoodsType) on the h7056 detail screen (H7056ViewModel). Its connect read is the 0xAC
+            status read alone, ac 03 02 41 a5 (Compose4BaseInfoSingleRead -> ControllerSingleRead; no aa 01 / aa 05):
+            TLV 0x01 power, 0x04 brightness, 0x05 mode (gradual only, Info4Detail; the aa 05 re-read alike), 0x41 power-off
+            memory and 0xA5 the 8 pieces' colours in groups of 4, [group, 4 x {bri, R, G, B}] (H7056ViewModel.U4). Pact
+            (1,1) only (H7056Support.a; the screen's n4). Colour: Config.Yt -> Bytes.h, CCT Bytes.r type 1 (the h60a6
+            frames) over 8 pieces (ColorPieceConfig.j); segment brightness Config.z[304] = 0 -> Bytes.G. Kelvin version 2 =
+            [2700, 6500] (H7056Support.c agrees); brightness version 1 = percent. Scenes: the family's protocol note says
+            ScenesOp multi-packet over the set {0, 2, 3, 5, 6}, neither with a citation, so the apply path is untraced and
+            the row offers no scenes yet. Not in the row: the 33 a3 gradual write (Config.G[304] = 0), which the screen never
+            reads back. Live power is the ee 30 push (bit 0 of frame[3]), then the off->on aa 05 / aa a5 re-read. No secret
+            on control connects (account_lock false: no 0xB2 in the connect read; the app's control-screen path for it is
+            not cited). Modelled, not hardware-verified.
+          doc-ref:
+            - base-classes2/com/govee/shared/checker/KmpGoodsType.java:237
+            - split_outdoorlight/com/govee/h7056/detail/H7056ViewModel.java:146-171,859-869
+            - split_outdoorlight/com/govee/h7056/detail/Info4Detail.java:362-393
+            - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4BaseInfoSingleRead.java:166-180
+            - base-classes11/com/govee/base2light/kt/general_controller/ControllerSingleRead.java:80-83
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:2887-2891,12960-12968
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:172-181,474-501
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/ColorPieceConfig.java:376-378,1616-1622
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:407,794-798,1438-1440
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:252-259,848-852,1141-1144
       wire_cipher: runtime
       wire:
         forms: { f_01: light, f_09: datetime_epoch, f_41: power_memory, f_a5: color_group, f_15_01: kelvin_tint, f_ee_30: main_bit0_a }
@@ -3447,6 +3516,35 @@ families:
       mode_color_parse: gradual_15   # 0xAC TLV 0x05 after the day-sync reads; split_h7050/com/govee/h7050/newdetail/Info4Detail.java:436-438
       power_read: ac_status   # TLV 0x01
       power_live: [push_30]   # ee 30 bit 0 of frame[3]
+      by_goods_type:
+        "364":   # H1630, the h7050 VM4LightH1630 screen
+          models: [H1630]
+          pacts: ["1,1", "1,2", "1,3"]
+          support: modelled
+          capabilities: [power, brightness, rgb, color_temp, scenes]
+          zones: []
+          account_lock: false
+          scene_dialect: untraced
+          status_read: [cmd_41, color_group]
+          connect_reads: []
+          connect_writes: []
+          doc: >-
+            H1630 on the h7050 VM4LightH1630 screen. Connect: the 0xAC status read ac 03 02 41 a5
+            (VM4LightH1630$afterConnectedSingleReadDeviceInfo$1); TLV 0x01 is the power, TLV 0x05 the mode (gradual only,
+            Info4Detail), TLV 0xA5 a gradient record [piece, brightness, 3 x RGB] (Controller4ColorInfoByGroup.r), which
+            has no wire form here and is not decoded. Live: the ee 30 switch (bit 0 of value[1]); switch-on re-reads the
+            mode. Colour 0x15 through Config.Yt: RGB Bytes.h, CCT Bytes.r with the white type, 1 piece
+            (Support.getColorPieceSize(364) = 1). Kelvin [1000, 10000] (KelvinConfig version 5), brightness percent and
+            scenes {0, 1, 2, 3, 4, 5, 13} are the family specs; the scene apply path is not traced (scene_dialect
+            untraced). Modelled: the pacts (1,1) (1,2) (1,3) are a spec comment with no citation; the capabilities are
+            read from the family's opcodes (a Kelvin control is not cited); account_lock false rests on the family's
+            encryption none (as h7050 / h7057). Not modelled: the day-sync reads before the status read (aa f1, aa f0,
+            then ac 09, when DaySyncConfig.A), which nothing on the control path reads. H1630 is paired with 364 by name
+            only (spec/docs/DEVICE_CATALOGUE.md). Not hardware-verified.
+          doc-ref:
+            - split_h7050/com/govee/h7050/newdetail/h1630/VM4LightH1630$afterConnectedSingleReadDeviceInfo$1.java:151-180
+            - split_h7050/com/govee/h7050/newdetail/h1630/VM4LightH1630.java:375-392
+            - split_h7050/com/govee/h7050/newdetail/Info4Detail.java:422-454
       wire_cipher: runtime
       wire:
         forms: { f_01: light, f_09: datetime_epoch, f_15_01: kelvin_tint, f_ee_30: main_bit0_a }

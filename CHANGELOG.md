@@ -150,7 +150,7 @@ model, from which the shipped readers are generated).
   and `mode_reports_kelvin`, with `doc` and `doc-ref`. The rows are 303 (H60A6), 119 (H6047), 19 (H61A8),
   64 (H6004 / H6006 / H6008), 22 (H6052), 247 (H6641), 0 (H6188), 41 (H6062), 51 (H6061) and the plugs'
   43 / 50 / 90 / 307. The trace notes in `devices/profile.py` are now the rows' `doc` / `doc-ref`.
-- **Four SKUs behind the modelled opt-in** (one-device-list phase 2): rows for goodsTypes the spec
+- **Seven SKUs behind the modelled opt-in** (one-device-list phase 2): rows for goodsTypes the spec
   already describes, every one `support: modelled` (source-modelled, not live-verified: no unit was on the
   bench), so `allow_modelled=True` admits them and the default table (the 18) is unchanged. Each row's
   `doc` names the facts that are inferred rather than traced.
@@ -160,6 +160,11 @@ model, from which the shipped readers are generated).
     sends per-colour 15 01 masks (documented).
   - h7040 36 (**H7040**, pact (1, 1)): whole-device 0x0d colour and CCT (the h6006 scheme), Kelvin
     [2000, 9000], `rgb_kelvin_0d` colour report.
+  - Three status-read rows, each read with its own wire facts (`DeviceProfile.status_decode`) and
+    requesting `ac 03 02 41 a5`, with a `gradual_15` mode report: h60b1 300 (**H60B1**, pact (1, 1)): the
+    h60a6 0x15 frames over 3 pieces, colour groups counted from the TLV len; h7056 304 (**H7056**, pact
+    (1, 1)): 8 pieces in fixed groups of 4; h1630 364 (**H1630**, pacts (1, 1) / (1, 2) / (1, 3)): one
+    piece, Kelvin [1000, 10000], its 0xA5 gradient record not decoded.
   None of them offers scenes yet: their scene apply path isn't traced (`scene_dialect: untraced`).
 - **H6004 routes to goodsType 64.** Rows 9 and 10 (H6003, and the H6004's Wi-Fi revision) say
   `connectivity: [wifi, iot]`, so no BLE client routes there.
