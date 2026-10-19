@@ -88,7 +88,8 @@ advertisement, build a capability-driven `Device`, then drive it.
   `capabilities`, `zones`, `min_kelvin` / `max_kelvin`, `scene_names`, `state`,
   `register_callback`. Methods for unsupported capabilities raise `GoveeBleNotSupported`.
 - **`DeviceState`** — parsed state: `is_on`, `brightness` (0–100), `rgb_color`,
-  `color_temp_kelvin`, `segments` (`list[Segment]`), `zone_power`, `zone_color_temp_kelvin` (H6047
+  `color_temp_kelvin`, `segments` (`list[Segment]`), `zone_power`, `zone_power_confirmed` (when each
+  zone's power was last learned from the device), `zone_color_temp_kelvin` (H6047
   reads one Kelvin per bar), `gradual`, `scene_code`, plus
   device-info (`device_id` / `serial_number`, `wifi_mac`, `hardware_version`, `firmware_version`,
   `ble_mac`), read with the Govee app's own frames (`aa 06`, `aa 07 03`, `aa 07 02`).

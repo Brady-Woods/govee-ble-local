@@ -103,6 +103,46 @@ class DeviceState:
     # ``DeviceProfile.mode_reports_kelvin``, the Kelvin last sent stays until an RGB or scene write or a
     # scene report); this one is never cleared by a report.
     last_color_temp_kelvin: int | None = None
+    # Last, so the positional order of the fields before it stays as it was.
+    zone_power_confirmed: dict[int, float] = field(default_factory=dict, compare=False)
+    """When the device last told the library each zone's power: ``time.monotonic()`` seconds, keyed like
+    ``zone_power``. An entry vouches that ``zone_power`` still holds the value the device gave at that
+    time; a zone without one holds a value the library assumed, or none.
+
+    Stamped only by the device: the 0xAC status read's TLV 0x30 (each zone it carries), a bar-switch
+    device's ``aa 36`` read (both bars), and an acked write whose frame sets the zone: ``33 30`` its own
+    zone only (the other zone's power is carried along: it keeps the stamp it had and gets no new one),
+    ``33 36`` both bars, and a whole-device power write whose frames set every zone (one ``33 30`` per
+    zone; the ``33 01`` of a ``DeviceProfile.global_power`` fixture; an H6047's ``33 01`` off; see
+    ``Device._power_zones``). Never by the model: a scene activation, the zones a power write assumes,
+    and an advertisement stamp nothing.
+
+    Any other change to a zone's value drops its stamp, and so does forgetting the zone (its key leaving
+    ``zone_power``). For example, a scene activation that assumes a ring confirmed off is now lit drops
+    the ring's stamp. So does an advertisement's "off" over a zone confirmed on, and an advertisement's
+    "on" over zones that all read off forgets them, as an H6047 ``33 01`` on forgets the bars. A zone
+    whose value such a change leaves as it was keeps its stamp.
+
+    A stamp also goes, with ``zone_power`` left as it was, when the device may hold another power for the
+    zone than the one held:
+
+    - a power write that raises, since it may have reached the device (a timeout, a cancellation, a lost
+      link, even a refusal: the transport writes a frame on every attempt). Every zone it targets loses its
+      stamp, whatever power it is held at: a ``33 30`` its own zone, a ``33 36`` both bars, and a
+      whole-device power write or a scene activation every zone;
+    - a write that wakes the device while it is not known to be on, which lights every zone (an H60A6
+      ``33 04`` / ``33 05``, an H6047 ``33 04`` / ``33 05``; see ``Device._wake_power``): a zone held off
+      loses its stamp. After a write that may have switched the device off raised, or a zone-off on a device
+      not known to be on (an H60A6 ``33 30`` leaves the main switch as it was), ``is_on`` is not trusted to
+      rule a wake out until a read or an acked write over every zone gives the on/off again;
+    - an H6047 ``aa 01`` reply (bar 0 | bar 1) that the bars' held power contradicts;
+    - an acked ``33 01`` off on a bar-switch device without profile zones (H6042): no firmware in hand says
+      what it leaves the bars its ``aa 36`` read at.
+
+    ``Device.snapshot()`` copies it. It is left out of equality, so a read that re-confirms the same power
+    leaves the state equal to a snapshot taken before it. ``dataclasses.asdict()`` and ``repr()`` still
+    include it, and a read that re-confirms a zone gives it a new time, so a consumer that diffs those to
+    detect a change should drop it."""
 
     @property
     def device_id(self) -> str | None:

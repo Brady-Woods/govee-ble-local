@@ -1,13 +1,15 @@
 """How a write or a read-back changes a device's :class:`~..models.DeviceState`.
 
 Pure functions over a :class:`~.profile.DeviceProfile` and the state they change in place: no I/O,
-no locks and no stale-read check. :class:`~.device.Device` calls them once a write has gone out
+no locks and no stale-read check (the one clock they read is ``time.monotonic()``, for the zones'
+``zone_power_confirmed`` stamps). :class:`~.device.Device` calls them once a write has gone out
 (``Device._commit``) or a reply has passed the stale-read check (``Device._read_fresh``), so they can
 be exercised with a bare ``DeviceState``.
 """
 from __future__ import annotations
 
-from collections.abc import Sequence
+import time
+from collections.abc import Iterable, Mapping, Sequence
 from typing import Any
 
 from ..models import DeviceState, Segment
@@ -110,22 +112,68 @@ def brightness_pct(profile: DeviceProfile, raw: int, pact: tuple[int, int] | Non
     return max(0, min(100, pct))
 
 
+def _set_zone_power(state: DeviceState, zone_power: dict[int, bool], confirmed: Iterable[int] = ()) -> None:
+    """Assign ``state.zone_power`` (``zone_power`` itself: every writer assigns a new dict) and keep
+    ``state.zone_power_confirmed`` with it. Each zone of ``confirmed`` that ``zone_power`` holds (its power
+    learned from the device by this change: a read of it, or an acked frame that sets it) is stamped now
+    (``time.monotonic()``). Every other zone keeps its stamp only while it keeps its value, so a zone this
+    change forgets, or gives a value the device did not report, loses it. Every writer of ``zone_power``
+    goes through here."""
+    old = state.zone_power
+    stamps = {i: t for i, t in state.zone_power_confirmed.items()
+              if i in zone_power and zone_power[i] == old.get(i)}
+    now = time.monotonic()
+    stamps.update((i, now) for i in confirmed if i in zone_power)
+    state.zone_power = zone_power
+    state.zone_power_confirmed = stamps
+
+
+def unconfirm_zones(state: DeviceState, zones: Iterable[int] | None = None) -> None:
+    """The device may hold another power for these zones (None: every zone) than the one held, and the
+    library has not learned which: a power write that targets them raised once it may have reached the
+    device (``Device._commit``). Each loses its ``zone_power_confirmed`` stamp, whatever its held power;
+    ``zone_power`` itself is left as it is."""
+    stamps = state.zone_power_confirmed
+    gone = set(stamps) if zones is None else stamps.keys() & set(zones)
+    if gone:
+        state.zone_power_confirmed = {i: t for i, t in stamps.items() if i not in gone}
+
+
+def unconfirm_contradicted(state: DeviceState, power: Mapping[int, bool]) -> None:
+    """The device may now hold ``power`` for these zones without the library folding it in: a write that
+    wakes them (which only lights, ``Device._wake_power``), or a reply that rules any other power out. Each
+    zone that ``state.zone_power`` holds at another power loses its ``zone_power_confirmed`` stamp (one held
+    at that power holds it either way); ``zone_power`` itself is left as it is."""
+    unconfirm_zones(state, [i for i, on in power.items() if state.zone_power.get(i) != on])
+
+
 # -- writes -----------------------------------------------------------------
-def apply_power(profile: DeviceProfile, state: DeviceState, on: bool) -> None:
-    """Whole-device power, and the zones it drives."""
+def apply_power(profile: DeviceProfile, state: DeviceState, on: bool, *,
+                confirmed: Iterable[int] = ()) -> None:
+    """Whole-device power, and the zones it drives. ``confirmed``: the zones the acked power write's
+    frames set (``Device._power_zones``), stamped as learned from the device. Empty (the default) for the
+    power a scene activation implies (:func:`apply_scene`), so a zone whose value that changes loses its
+    stamp."""
     state.is_on = on
     if profile.bar_switch and on:
         # 33 01 on: the app does not say which bars light (it learns that from the next aa 36
         # heartbeat), so don't guess; the next zone write re-reads them rather than assuming.
-        state.zone_power = {}
+        _set_zone_power(state, {})
     elif profile.zones:
-        state.zone_power = {z.power_index: on for z in profile.zones}
+        _set_zone_power(state, {z.power_index: on for z in profile.zones}, confirmed)
+    elif profile.bar_switch:
+        # 33 01 off on a bar-switch device without profile zones (H6042): the bars its aa 36 read keep
+        # their power, but no firmware in hand says what the off leaves them at, so they are not vouched for.
+        unconfirm_zones(state)
 
 
-def apply_zone_power(profile: DeviceProfile, state: DeviceState, zone_power: dict[int, bool]) -> None:
-    """A zone power write: the zones' power (a new dict, as every writer of ``zone_power`` assigns)
-    and, once every zone is known, the whole-device on/off (on while any zone is)."""
-    state.zone_power = zone_power
+def apply_zone_power(profile: DeviceProfile, state: DeviceState, zone_power: dict[int, bool], *,
+                     confirmed: Iterable[int] = ()) -> None:
+    """A zone power write: the zones' power (a new dict, as every writer of ``zone_power`` assigns), the
+    zones the acked frame set (``confirmed``: a ``33 30`` its own zone, a ``33 36`` both bars) stamped as
+    learned from the device, and, once every zone is known, the whole-device on/off (on while any zone
+    is)."""
+    _set_zone_power(state, zone_power, confirmed)
     if profile.zones and len(zone_power) == len(profile.zones):
         state.is_on = any(zone_power.values())
 
@@ -163,7 +211,9 @@ def apply_kelvin(profile: DeviceProfile, state: DeviceState, kelvin: int) -> Non
 
 
 def apply_scene(profile: DeviceProfile, state: DeviceState, code: int) -> None:
-    """A ``33 05 04`` scene activation: the device is on, in that scene, with no solid colour."""
+    """A ``33 05 04`` scene activation: the device is on, in that scene, with no solid colour. Its zones'
+    power is assumed (:func:`apply_power` with no zone confirmed), never learned: a zone it turns on loses
+    a stamp of "off"."""
     state.scene_code = code
     apply_power(profile, state, True)
     state.rgb_color = None
@@ -226,19 +276,21 @@ def apply_advert_power(profile: DeviceProfile, state: DeviceState, on: bool) -> 
     """The on/off an advertisement carries, with the zones kept consistent as the power setters keep
     them: off -> every zone is off (as :func:`apply_power`); on -> which zones lit is not known, so
     zones that all read off are forgotten and the next zone write / poll re-reads them (as after a
-    bar-switch 33 01 on) instead of trusting the stale "off"."""
+    bar-switch 33 01 on) instead of trusting the stale "off". An advertisement confirms no zone (it
+    carries the whole-device on/off only): a zone its "off" turns off loses its stamp, and so does a
+    zone its "on" forgets."""
     state.is_on = on
     if profile.zones:
         if not on:
-            state.zone_power = {z.power_index: False for z in profile.zones}
+            _set_zone_power(state, {z.power_index: False for z in profile.zones})
         elif not any(state.zone_power.values()):
-            state.zone_power = {}
+            _set_zone_power(state, {})
 
 
 def apply_bar_switch(state: DeviceState, bars: tuple[bool, bool]) -> None:
-    """An ``aa 36`` bar-switch reply: both bars, and the device on while either is (the app's
-    NewDetailVm heart parse)."""
-    state.zone_power = {0: bars[0], 1: bars[1]}
+    """An ``aa 36`` bar-switch reply: both bars, learned from the device, and the device on while either
+    is (the app's NewDetailVm heart parse)."""
+    _set_zone_power(state, {0: bars[0], 1: bars[1]}, (0, 1))
     state.is_on = bars[0] or bars[1]
 
 
@@ -259,7 +311,7 @@ def apply_status(
         state.brightness = brightness_pct(profile, st.brightness, pact)
         applied = True
     if st.zone_power:
-        state.zone_power = st.zone_power
+        _set_zone_power(state, st.zone_power, st.zone_power)   # TLV 0x30: each zone it carries
         applied = True
     if st.segments:
         # A burst whose tail was lost carries only a prefix of the segments;

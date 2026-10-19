@@ -13,7 +13,7 @@ import contextlib
 import copy
 import logging
 import time
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from typing import Final, Literal, Never, ParamSpec, TypedDict, TypeVar
 
 from bleak.backends.device import BLEDevice
@@ -181,6 +181,10 @@ class Device:
         # (_read_fresh), so a stale read never overwrites a newer setter. Not a lock: setters never
         # wait.
         self._mutation_seq = 0
+        # A write that may have switched the device off raised, or an acked zone-off on a device not known to
+        # be on derived is_on from the zones (_commit): is_on may say on for a device that is off, so
+        # _wake_power does not trust it until a read or an acked write over every zone gives the on/off again.
+        self._power_unsure = False
         # Serializes the bar-switch read-modify-write in set_zone_power (one frame carries both
         # bars). Lock order: _scene_lock, then this, then _read_gate, then the connection lock;
         # never take it from inside a connection operation.
@@ -558,6 +562,7 @@ class Device:
         if applied:
             self._state.optimistic = False
         if power_read:
+            self._power_unsure = False   # is_on is the device's again (see _wake_power)
             self._mark_authoritative()
 
     def _zone_power_lock(self) -> contextlib.AbstractAsyncContextManager[None]:
@@ -573,7 +578,8 @@ class Device:
         self._mutation_seq += 1
 
     async def _commit(
-        self, frames: bytes | list[bytes], apply: Callable[[], None], *, authoritative: bool = True
+        self, frames: bytes | list[bytes], apply: Callable[[], None], *, authoritative: bool = True,
+        zones: Mapping[int, bool] | None = None, fixture: bool = False,
     ) -> None:
         """Write ``frames`` and fold the change into state: the protocol every setter follows.
 
@@ -582,17 +588,78 @@ class Device:
         read is then discarded, :meth:`_read_fresh`), ``apply`` the optimistic state, make it
         authoritative over the lagging advertised on/off for ``ADVERT_SUPPRESS_SECONDS`` (unless
         ``authoritative`` is False, as for the gradual flag) and notify. A failed write raises and
-        applies nothing. A secret set on the live session goes out first (:meth:`set_secret`)."""
+        applies nothing. A secret set on the live session goes out first (:meth:`set_secret`).
+
+        A power write names the zones it targets, for ``DeviceState.zone_power_confirmed``: ``zones``, the
+        power its frames give each zone they set (``apply`` folds it in), and ``fixture`` for a whole-device
+        power write or a scene activation, which targets every zone. When the write raises, it may have
+        reached the device: the transport writes a frame on every attempt and once more on a fresh link, so
+        even a refusal can follow an attempt that landed without an ack, and a raise does not say whether a
+        frame went out. So every zone it targets loses its stamp, whatever power it is held at
+        (:func:`._fold.unconfirm_zones`): ``zones``, or every zone with ``fixture``. A write whose ``zones``
+        are all off may also have switched the device off, so ``_power_unsure`` is set; an acked one whose
+        ``zones`` cover every profile zone clears it (the state's on/off is the device's). An acked one whose
+        ``zones`` are all off and cover only some zones (an H60A6 ``33 30`` off, which leaves the main switch
+        as it was) sets it when the device was not known to be on: ``apply`` derives ``is_on`` from the
+        zones, which does not make it so.
+
+        A zone the frames wake without the state saying so (:meth:`_wake_power`, checked again once the
+        frames went out: a power-off may have applied while this write waited for the link) loses a stamp
+        of "off", acked or not (:func:`._fold.unconfirm_contradicted`)."""
         await self._send_pending_unlock()
-        if isinstance(frames, bytes):
-            await self._conn.send(frames)
-        else:
-            await self._conn.send_many(frames)
+        batch = [frames] if isinstance(frames, bytes) else frames
+        wake = self._wake_power(batch)
+        try:
+            if isinstance(frames, bytes):
+                await self._conn.send(frames)
+            else:
+                await self._conn.send_many(frames)
+        except BaseException:
+            _fold.unconfirm_zones(self._state, None if fixture else (zones or ()))
+            _fold.unconfirm_contradicted(self._state, {**wake, **self._wake_power(batch)})
+            if zones and not any(zones.values()):
+                self._power_unsure = True
+            raise
+        wake = {**wake, **self._wake_power(batch)}   # a power-off applied while this write waited
+        known_on = self._state.is_on is True and not self._power_unsure
         self._mutated()
         apply()
+        _fold.unconfirm_contradicted(self._state, wake)
+        if zones is not None and len(zones) == len(self.profile.zones):
+            self._power_unsure = False
+        elif zones and not any(zones.values()) and not known_on:
+            # A zone-off that sets only its own zone (H60A6 33 30: FUN_9b0278dc zone mode sets the main switch
+            # only on a zone-on) leaves the main switch as it was, so the on/off apply derives from the zones
+            # (on while any zone is) does not make a device not known to be on known to be on.
+            self._power_unsure = True
         if authoritative:
             self._mark_authoritative()
         self._notify()
+
+    def _wake_power(self, frames: Sequence[bytes]) -> dict[int, bool]:
+        """The zones ``frames`` light on the device without the library folding it in, as a power for
+        :func:`._fold.unconfirm_contradicted`: every zone, on, for a write that wakes a zoned device not
+        known to be on (``is_on`` not True, or ``_power_unsure``); else none. The state keeps the zones'
+        power as it was, so a zone it holds off loses its stamp. FIRMWARE-SOURCED, per profile:
+
+        - :attr:`.DeviceProfile.global_power` (H60A6): a ``33 04`` brightness or ``33 05`` mode write. With
+          the main switch off (FUN_9b02b430 == 0) the dispatcher (FUN_9b02687c, ``H60A6_ble_dispatcher.c``)
+          case 4 (a level <= 100) posts MSG_SET_TURN(1) (FUN_9b027dc2; FUN_9b0278dc mode 0 sets the main
+          and both zone flags) and case 5 sets them itself (FUN_9b02b3fc, FUN_9b02b43c, FUN_9b02b470),
+          except a music (0x13) write with byte 3 = 0. The 2026-10-12 bench saw colour and brightness
+          writes wake the fixture (devices.yaml ``global_switch``).
+        - :attr:`.DeviceProfile.bar_switch` (H6047): a ``33 04`` or ``33 05``. While both bar flags are off
+          (0x0102a5a8, the bar 0 | bar 1 the aa 01 query answers) each handler runs the power-on sequence
+          FUN_01002750, whose FUN_01002720(1) sets both bar flags: the 0x04 handler (0x01005454) at
+          0x01005482-0x0100548a (``H6047_firmware_BLE_notes.md``), and the 0x05 handler (0x01005510), whose
+          every 0x33 sub-type reaches 0x010057fc-0x01005802."""
+        p = self.profile
+        if not p.zones or (self._state.is_on is True and not self._power_unsure):
+            return {}
+        wakes = (build.CMD_BRIGHTNESS, build.CMD_MODE) if p.global_power or p.bar_switch else ()
+        if any(f[0] == build.PRO_WRITE and f[1] in wakes for f in frames):
+            return dict.fromkeys((z.power_index for z in p.zones), True)
+        return {}
 
     def _stale(self, seq: int, what: str) -> bool:
         """True (and logged) if a setter applied state since ``seq`` was captured, i.e. the
@@ -649,9 +716,43 @@ class Device:
             return build.plug_total_switch(on)
         _unhandled(kind, "relay_power")
 
+    def _power_zones(self) -> tuple[int, ...]:
+        """The power indices of the zones an acked :meth:`_power_frames` write sets on the device, case by
+        case as :meth:`_power_frames` picks the frames, so their power is learned from the device
+        (``DeviceState.zone_power_confirmed``):
+
+        - one ``33 30`` per zone: each sets its own zone, so every zone;
+        - a plug's relay frame: no zone;
+        - ``33 01``: every zone, FIRMWARE-SOURCED for each profile that has zones and sends it.
+
+          - H60A6 (:attr:`.DeviceProfile.global_power`, the only profile with it): the 33 01 dispatch
+            posts MSG_SET_TURN (FUN_9b027dc2), whose case of _mqtt_response_handle (FUN_9b028bc8
+            @0x9b028ea4-0x9b028eb0) sets the main flag and both zone flags from its byte (FUN_9b0278dc
+            @0x9b02791c-0x9b027930: FUN_9b02b3fc, FUN_9b02b43c, FUN_9b02b470), the zone flags aa 30
+            reads (FUN_9b02b464 / FUN_9b02b498). The bench showed it too (2026-10-12: off clears both
+            zones, on lights both).
+          - H6047 (:attr:`.DeviceProfile.bar_switch`; the H6042, the other one, has no zones): the
+            power handler sets both bar flags from its byte (H6047 FUN_01004f32 @0x01004f5c-0x01004f60
+            -> FUN_01002720 @0x01002720, through FUN_01002d14), the flags aa 36 reads (FUN_01006934,
+            FUN_01002cf4). Only an "off" stamps: after an "on" the library forgets the bars, as the
+            app does (:func:`._fold.apply_power`).
+
+          The app models neither: its switch ack sets only the main switch (``VM4LightH60A6.K5:265-277``,
+          ``NewDetailVm.F5:178-191``) and takes the zones from the next ee 30 push
+          (``VM4LightH60A6.t5:553-561``) or aa 36 heartbeat. A new zoned profile that sends ``33 01``
+          needs the same evidence for its firmware."""
+        p = self.profile
+        zones = tuple(z.power_index for z in p.zones)
+        if p.zones and not p.global_power and not p.bar_switch:
+            return zones   # one 33 30 per zone
+        if p.relay:
+            return ()      # the relay frame
+        return zones       # 33 01
+
     def _apply_power(self, on: bool) -> None:
-        """Optimistic state for whole-device power and the zones it drives (:func:`._fold.apply_power`)."""
-        _fold.apply_power(self.profile, self._state, on)
+        """State for an acked whole-device power write: the power, the zones it drives and the zones its
+        frames set (:meth:`_power_zones`; :func:`._fold.apply_power`)."""
+        _fold.apply_power(self.profile, self._state, on, confirmed=self._power_zones())
 
     async def set_power(self, on: bool) -> None:
         """Switch the device on or off.
@@ -661,7 +762,8 @@ class Device:
         a failure there is only logged."""
         self._require(Capability.POWER)
         async with self._zone_power_lock():
-            await self._commit(self._power_frames(on), lambda: self._apply_power(on))
+            await self._commit(self._power_frames(on), lambda: self._apply_power(on),
+                               zones=dict.fromkeys(self._power_zones(), on), fixture=True)
         await self._resync_after_power()
 
     async def _resync_after_power(self) -> None:
@@ -742,7 +844,8 @@ class Device:
                 _fold.apply_kelvin(self.profile, self._state, kelvin)
 
         async with self._zone_power_lock():
-            await self._commit(frames, apply)
+            await self._commit(frames, apply, fixture=power,
+                               zones=dict.fromkeys(self._power_zones(), True) if power else None)
         if power:
             await self._resync_after_power()
 
@@ -907,9 +1010,10 @@ class Device:
         Raises GoveeBleInvalidValue (also a GoveeBleNotSupported) for an unknown zone."""
         return self._state.zone_power.get(self._zone(name).power_index)
 
-    def _apply_zone_power(self, zone_power: dict[int, bool]) -> None:
-        """Optimistic state for a zone power write (:func:`._fold.apply_zone_power`)."""
-        _fold.apply_zone_power(self.profile, self._state, zone_power)
+    def _apply_zone_power(self, zone_power: dict[int, bool], confirmed: tuple[int, ...]) -> None:
+        """State for an acked zone power write whose frame set the ``confirmed`` zones
+        (:func:`._fold.apply_zone_power`)."""
+        _fold.apply_zone_power(self.profile, self._state, zone_power, confirmed=confirmed)
 
     async def set_zone_power(self, name: str, on: bool) -> None:
         """Switch one zone on or off.
@@ -924,9 +1028,11 @@ class Device:
             return
 
         def apply() -> None:
-            self._apply_zone_power({**self._state.zone_power, z.power_index: on})
+            # 33 30 sets its own zone only (H60A6 FUN_9b0278dc @0x9b027966-0x9b027996): the other
+            # zone's power is carried along as it was, keeping the stamp it had and getting no new one.
+            self._apply_zone_power({**self._state.zone_power, z.power_index: on}, (z.power_index,))
 
-        await self._commit(build.zone_power(z.power_index, on), apply)
+        await self._commit(build.zone_power(z.power_index, on), apply, zones={z.power_index: on})
 
     async def _set_bar_power(self, index: int, on: bool) -> None:
         """Bar-switch read-modify-write; the caller holds ``_bar_lock`` (which every other writer of
@@ -947,7 +1053,9 @@ class Device:
                 "not changing it blindly")
         target = {0: zp.get(0, False), 1: zp.get(1, False)}
         target[index] = on
-        await self._commit(build.bar_switch(target[0], target[1]), lambda: self._apply_zone_power(target))
+        # 33 36 sets both bars (H6047 FUN_01006934 @0x01006956-0x01006962), so both are confirmed.
+        await self._commit(build.bar_switch(target[0], target[1]),
+                           lambda: self._apply_zone_power(target, (0, 1)), zones=target)
 
     async def _read_bar_switch(self, budget: ConnectBudget | None = None) -> _ReadResult:
         """Read the bar switch into state: "applied" (bars and the derived on/off were read back),
@@ -1038,7 +1146,8 @@ class Device:
         ``_scene_lock`` and :meth:`_zone_power_lock`."""
         activate = build.scene_activate(code)
         await self._commit([*lead, activate] if lead else activate,
-                           lambda: _fold.apply_scene(self.profile, self._state, code))
+                           lambda: _fold.apply_scene(self.profile, self._state, code),
+                           zones=dict.fromkeys(self._power_zones(), True) if lead else None, fixture=True)
 
     def scene_upload_frames(self, scene: Scene, *, mtu: int = 20) -> list[bytes] | None:
         """The a3/a4 frames that upload ``scene`` to this device (per its profile's scene
@@ -1074,9 +1183,19 @@ class Device:
             lead = self._scene_power_frames()
             if frames:
                 if lead:   # the app prepends the switch to the whole composed write, upload included
-                    await self._conn.send_many(lead)
+                    # The switch is folded in only with the activation: until then a zone it lights that
+                    # the state holds off loses its stamp, and if the switch or the upload raises, every
+                    # zone does (a whole-device power write that may have reached the device, as in _commit).
+                    _fold.unconfirm_contradicted(self._state, dict.fromkeys(self._power_zones(), True))
+                    try:
+                        await self._conn.send_many(lead)
+                        await self._conn.send_unacked(sized)
+                    except BaseException:
+                        _fold.unconfirm_zones(self._state)
+                        raise
                     lead = []
-                await self._conn.send_unacked(sized)
+                else:
+                    await self._conn.send_unacked(sized)
             await self._activate_scene(scene.code, lead)
 
     # -- misc settings ------------------------------------------------------
@@ -1336,6 +1455,13 @@ class Device:
         came back (see :meth:`_read_status`)."""
         def apply_power(on: bool) -> None:
             self._state.is_on = on
+            held = self._state.zone_power
+            if self.profile.bar_switch and on != any(held.values()):
+                # aa 01 answers bar 0 | bar 1 (H6047 FUN_01004f32, query path 0x01004fb0-0x01004fd4), so
+                # this reply rules out the bars' held power: their stamps go, and the aa 36 read after it
+                # (if answered) re-reads them. The H6042 (no zones; no firmware in hand) only ever loses a
+                # stamp here.
+                _fold.unconfirm_contradicted(self._state, dict.fromkeys(held, on))
 
         def apply_brightness(raw: int) -> None:
             self._state.brightness = self._brightness_pct(raw)

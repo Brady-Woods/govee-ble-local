@@ -9,6 +9,56 @@ model, from which the shipped readers are generated).
 ## [Unreleased]
 
 ### Added
+- `DeviceState.zone_power_confirmed` (`dict[int, float]`, keyed like `zone_power`): the `time.monotonic()`
+  time the device last told the library each zone's power. An entry vouches that `zone_power` still holds
+  the value the device gave then. Asked by the Home Assistant integration (latency fix #4: power a zone
+  first, and skip that on a zone confirmed lit). It inferred a confirmation from `zone_power` being
+  assigned a new dict, which every writer does: an H60A6 `33 30` to the main panel "confirmed" the ring's
+  cached power too, and `apply_power` and a scene activation assign one without reading anything.
+  - Stamped only by the device: the 0xAC status read's TLV 0x30 (each zone it carries), the `aa 36` bar
+    read (both bars), and an acked write whose frame sets the zone. That is a `33 30` for its own zone
+    only, a `33 36` for both bars, one `33 30` per zone (no current profile), and a `33 01` that sets
+    every zone.
+  - The `33 01` case is FIRMWARE-SOURCED; the app's switch ack sets only the main switch
+    (`VM4LightH60A6.K5`, `NewDetailVm.F5`). It covers the H60A6's on and off (`FUN_9b0278dc
+    @0x9b02791c-0x9b027930`, both zone flags, as the 2026-10-12 bench showed) and the H6047's off
+    (`FUN_01004f32 @0x01004f5c-0x01004f60 -> FUN_01002720`, both bar flags). After an H6047 on, the
+    library forgets the bars, as the app does.
+  - Never by the model: a scene activation, the zones a power write assumes, and an advertisement stamp
+    nothing.
+  - A zone loses its stamp when the library forgets it: an advertisement's "on" over zones that all read
+    off, or an H6047 `33 01` on or scene activation. It also loses it when its value changes without
+    the device saying so: a scene activation that assumes a ring confirmed off is lit, or an
+    advertisement's "off" over a zone confirmed on. A zone whose value stays the same keeps its stamp.
+  - A zone also loses its stamp, with its value left as it was, when the device may hold another power
+    for it than the one held:
+    - a power write that raises, since it may have reached the device: the transport writes a frame on
+      every attempt and once more on a fresh link, so even a refusal can follow an attempt that landed
+      unacked. Every zone the write targets loses its stamp, whatever power it is held at: a `33 30` its
+      own zone, a `33 36` both bars, and a whole-device power write or a scene activation (a scene's
+      power-on lead, its upload and its activation included) every zone.
+    - a write that wakes the device while it is not known to be on, which lights every zone (a zone held
+      off loses its stamp). FIRMWARE-SOURCED: an H60A6 `33 04` or `33 05` (the dispatcher `FUN_9b02687c`,
+      case 4 -> `MSG_SET_TURN(1)`, case 5, lights the main switch and both zones, as the 2026-10-12 bench
+      saw), and an H6047 `33 04` or `33 05` (while both bars are off each handler, `0x01005454` and
+      `0x01005510`, runs the power-on sequence `FUN_01002750`, which sets both bar flags). The wake is
+      checked again once the frame went out (a power-off may have applied while it waited for the link).
+      After a write that may have switched the device off raised, or a zone-off on a device not known to be
+      on (an H60A6 `33 30` leaves the main switch as it was), `is_on` is not trusted to rule a wake out
+      until a read gives the on/off again or an acked write sets every zone.
+    - an H6047 `aa 01` reply that the bars' held power contradicts. It answers bar 0 | bar 1
+      (`FUN_01004f32`), so an "off" rules out a bar held lit, and an "on" rules out bars all held off,
+      when the `aa 36` read after it is lost.
+    - an acked `33 01` off on an H6042 (bars read by `aa 36`, no profile zones): no firmware in hand says
+      what it leaves the bars at.
+  - It is the last field (the positional order before it is unchanged). It is left out of equality, so a
+    poll that re-confirms the same power leaves the state equal to a `snapshot()` taken before it;
+    `snapshot()` copies it. `dataclasses.asdict()` and `repr()` still include it, and a read that
+    re-confirms a zone gives it a new time, so a consumer that diffs those to detect a change should drop
+    it.
+  - Additive: no frame, read or other field changes. A differential against e7687f4 over every table
+    profile (failed, refused, cancelled and part-failed writes, wakes and concurrent setters included)
+    found them identical.
 - `DeviceProfile.mode_color_parse_status` (keyword-only, default None): the 0xAC status read's TLV 0x05
   decode where it differs from the `aa 05` reply's (devices.yaml `mode_color_parse_status`). `wire_profile`
   passes it to the spec's `mode_status` param, which the status read now takes (`_spec.profile(mode_status=)`).
