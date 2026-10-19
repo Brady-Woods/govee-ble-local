@@ -865,7 +865,11 @@ families:
             H6008), the screen's scene apply (BaseSceneViewMode.k3, each of its three composed writes) prepends the
             power-on switch, 33 01 01 (SwitchControllerConfig.d: ControllerSwitch for 64), while its stored switch state
             for the device is off, and DeviceSwitchConfig.getSwitch reads an unknown state as off
-            (ApplyOffNeedOpenHelper.a / .b / .d): their by_model scene_power_on. HARDWARE-VERIFIED on an H6006 and an
+            (ApplyOffNeedOpenHelper.a / .b / .d): their by_model scene_power_on. Not modelled, the two other paths
+            that prepend it: the same-mode (group) screen's scene apply, where k3 passes forceTreatAsOff = the
+            device info is a SameModeInfo, so it always prepends it; and the DIY apply (DiyApplyVM.v0 / w0), which
+            prepends it the same way (while off on the control screen, always in same-mode). The library applies a
+            scene as the control screen does and sends no DIY. HARDWARE-VERIFIED on an H6006 and an
             encrypted H6008 (bench 2026-10-15, macOS):
             their 0x0d reports decode to 2700 K after a CCT write and to the RGB after a colour write; the H6006 acked a short
             scene upload (packet count 2, empty END) and then reported the scene active; both controlled with no secret. No
@@ -887,6 +891,7 @@ families:
             - split_bulblightstringv1/com/govee/bulblightstringv1/bulblight/mode/diy/BulbDiyConfig.java:15-27
             - split_bulblightstringv1/com/govee/bulblightstringv1/bulblight/mode/diy/DiyDelegateRegister.java:56-58
             - base-classes11/com/govee/base2light/pact/newdetail/content/scene/BaseSceneViewMode.java:864-903,913,925,990,1152-1200
+            - base-classes11/com/govee/base2light/pact/newdetail/content/diy/DiyApplyVM.java:766-775
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/SwitchControllerConfig.java:94-123
             - base-classes9/com/govee/base2home/onOff/DeviceSwitchConfig.java:35-41
         "311": { power_live: [push_30], mode_color_parse: kelvin_only_15 }   # H601E / H601F; split_bulblightstringv1/com/govee/bulblightv3/newdetail/Info4Detail.java:666-706
