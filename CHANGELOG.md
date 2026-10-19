@@ -271,8 +271,10 @@ model, from which the shipped readers are generated).
   classes, with `$PYTHON`.
 - **Bundled scene catalogs are stored once by content.** `scenes/index.json` maps each SKU to its scene set,
   `scenes/<set>.json`, named by the first 16 hex digits of the file's SHA-256, so SKUs with the same scenes
-  share one file (H6006 / H6008 and H61A8 / H6641 today: 10 catalogs become 8 sets, 179 KB of JSON 132 KB).
-  Every set is the SKU's old `<SKU>.json`, byte for byte, and `load_scenes`, `async_load_scenes` and
+  share one file (H6006 / H6008 and H61A8 / H6641: 1.4.0's ten catalogs are eight sets). Measured, the store
+  (every set and the index) is 150,289 B, 39,106 B deflated in the wheel, against 178,840 B and 46,066 B for
+  1.4.0's ten catalogs, with the two sets the admitted models add (Added). 1.4.0's sets are each the
+  SKU's old `<SKU>.json`, byte for byte, and `load_scenes`, `async_load_scenes` and
   `scene_names_by_code` are unchanged. An index entry naming a set that is not bundled raises GoveeBleError
   like an unreadable catalog. `tools/fetch_scenes.py` writes the new layout (a new set before the index,
   then removes the sets no SKU names) and stores nothing for a SKU the library has no scenes for.
