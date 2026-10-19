@@ -200,18 +200,18 @@ class Device:
             idle_disconnect=IDLE_DISCONNECT_DELAY if idle_disconnect is None else idle_disconnect,
         )
 
-    def _learn_pact(self, adv: GoveeAdvertisement | None) -> None:
+    def _learn_pact(self, adv: GoveeAdvertisement | None) -> bool:
         """Remember the advertised ``(pact_type, pact_code)``; the app reads the same pair
         (``BleUtil.parseBleBroadcastPact``) into the device model. Exposed as :attr:`pact`; it decides
         whether the 0xAC status read asks for colour groups (:meth:`_wants_color_groups`), and picks the
         profile's pact entries for the scene set and the Kelvin and brightness ranges. An advertisement
-        without pact info changes nothing.
+        without pact info changes nothing. Returns whether :attr:`pact` changed.
 
         The profile was routed when the device was built (``create_device``) and is kept: a pact heard
         later that none of its rows accepts, where the app's scan would refuse the device or take another
         row (``profile.refuses_pact``), is logged as a warning, once per change of pact."""
         if adv is None or adv.pact is None or adv.pact == self._pact:
-            return
+            return False
         self._pact = adv.pact
         if refuses_pact(self.profile, self._sku, adv.pact):
             _LOGGER.warning(
@@ -219,11 +219,13 @@ class Device:
                 "it there or takes another row); it keeps the profile it was built with",
                 self._ble_device.address, self._sku, *adv.pact,
             )
+        return True
 
     @property
     def pact(self) -> tuple[int, int] | None:
         """The advertised ``(pact_type, pact_code)``, or None if no advertisement carrying it
-        has been seen (e.g. a device built without advertisement data)."""
+        has been seen (e.g. a device built without advertisement data). An advertisement that changes
+        it notifies the callbacks (:meth:`ingest_advertisement`)."""
         return self._pact
 
     def _resolve_encryption(self, adv: GoveeAdvertisement | None) -> Encryption:
@@ -352,7 +354,9 @@ class Device:
     def register_callback(self, cb: StateCallback) -> Callable[[], None]:
         """Register a state-change callback; returns a function that unregisters it.
 
-        The callback gets the live :attr:`state` (call :meth:`snapshot` to keep a copy). A callback
+        The callback gets the live :attr:`state` (call :meth:`snapshot` to keep a copy). The state
+        setters and :meth:`update` call it, and so does :meth:`ingest_advertisement` when an advertisement
+        changed the on/off or the :attr:`pact` (its return value reports only the on/off). A callback
         that raises is logged and does not affect other callbacks."""
         self._callbacks.append(cb)
 
@@ -491,21 +495,30 @@ class Device:
         """Update passive state from a BLE advertisement — no connection needed.
 
         Reads on/off from the Govee manufacturer data (identify.parse_broadcast_onoff, decoded
-        with the profile's ``advert_on_mask`` on the plugs); returns True if `state.is_on` changed
-        (so a caller can notify selectively). Ignored for ``ADVERT_SUPPRESS_SECONDS`` after a
-        command or authoritative read."""
+        with the profile's ``advert_on_mask`` on the plugs) and the advertised pact (:attr:`pact`).
+        Returns True if `state.is_on` changed (so a caller can notify selectively). The callbacks also
+        fire when the advertised :attr:`pact` changes: once per advertisement, with the pact already
+        stored, whether or not the on/off changed with it.
+
+        The on/off is ignored for ``ADVERT_SUPPRESS_SECONDS`` after a command or authoritative read,
+        which are fresher than the advert's. The pact is not: no command or read sets it. Any change of
+        the pact counts, since :attr:`pact` is itself exposed and the values it picks (:attr:`min_kelvin`
+        / :attr:`max_kelvin`, :attr:`scene_versions`, the brightness range and whether brightness can be
+        written yet, the 0xAC status read's colour groups) may change with it. An advertisement without
+        pact info, or with the pact already heard, leaves it as it was."""
         mfg = getattr(advertisement_data, "manufacturer_data", None)
         if not mfg:
             return False
-        self._learn_pact(from_advertisement(advertisement_data, self._ble_device.name))
+        pact_changed = self._learn_pact(from_advertisement(advertisement_data, self._ble_device.name))
         on = parse_broadcast_onoff(mfg, on_mask=self.profile.advert_on_mask)
-        if on is None or on == self._state.is_on:
-            return False
-        if time.monotonic() < self._advert_ignore_until:
-            return False  # fresher state from a command/read; advert lags
-        _fold.apply_advert_power(self.profile, self._state, on)   # zones kept consistent (state only)
-        self._notify()
-        return True
+        # Within the suppress window a command/read is fresher than the lagging advertised on/off.
+        power_changed = False
+        if on is not None and on != self._state.is_on and time.monotonic() >= self._advert_ignore_until:
+            _fold.apply_advert_power(self.profile, self._state, on)   # zones kept consistent (state only)
+            power_changed = True
+        if power_changed or pact_changed:
+            self._notify()
+        return power_changed
 
     async def connect(self) -> None:
         """Establish the BLE session now (connect, handshake, unlock) instead of lazily on

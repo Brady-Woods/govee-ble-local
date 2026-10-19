@@ -342,6 +342,16 @@ model, from which the shipped readers are generated).
   routed to, and a later advertisement whose pact none of that profile's rows accepts (where the app's scan
   refuses the device or takes another row; `profile.refuses_pact`) logs a warning, once per change of pact.
   1.4.0's 18 SKUs at a pact no row lists keep their 1.x fallback and log nothing.
+- **An advertisement that changes the pact notifies the callbacks**: `Device.ingest_advertisement`
+  returns True if `state.is_on` changed, as in 1.4.0; the callbacks also fire when the advertised pact is
+  first heard or changes (one notification when the on/off changes too), with the pact already stored. It
+  learned the pact silently, so what the pact picks (`min_kelvin` / `max_kelvin` by `kelvin_by_pact` on
+  H61F2 / H61F5 / H61F6, the brightness range and whether brightness can be written yet by
+  `brightness_by_pact`, `scene_versions` by `scene_versions_by_pact`, the H60A6 0xAC status read's colour
+  groups) reached a callback only at the next update. Any change of `Device.pact` counts, as it is itself
+  exposed. `ADVERT_SUPPRESS_SECONDS` still holds back only the advertised on/off: a new pact inside that
+  window notifies, and the on/off is left as it was. An advertisement without pact info, or with the pact
+  already heard, notifies nothing; the on/off path and the return value are unchanged.
 - **A colour report with no CCT test is not a Kelvin** (the nocct fold): `parse.mode_color` honours the
   layout's `is_cct` on the `[gradual][kelvin s16be]` decodes, so a `gradual_kelvin_s16be_nocct` report
   (mode_color_parse `kelvin_15_nocct`, `kelvin_0d_nocct`, ...) reads as `KelvinReport(0)`, not
