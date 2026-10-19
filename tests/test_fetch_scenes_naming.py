@@ -7,12 +7,14 @@ codes and blobs are never reused. Checked after every fetch:
   INV       a stored name keeps its scene, and a change of its code or category is printed; a printed keep
             never moves it to another scene, and only a printed guess does, off a scene the library still
             answered at the SKU's previous fetch and no longer lists (N2, N3)
-  UNIQ      every listed scene is stored, each under a name of its own
+  UNIQ      every listed scene is stored, each under a name of its own (but one main() cuts for sceneType
+            5: the blob --resolve baked in is a new-DIY one)
   IDEM      an identical re-fetch changes nothing and prints no change
   SAME      a first fetch names a response alike whatever the store holds (N6: no other SKU's names)
   DET       shuffling the categories and scenes of every response changes no stored catalog
   RETIRE    a removed name comes back only on its own scene, exactly, and printed; its scene's exact return
-            (a resolved blob's: as its placeholder) takes it back; it stays retired, a reclaim too (N1)
+            (a resolved blob's: as its placeholder; a placeholder's: with its param id) takes it back; it
+            stays retired, a reclaim too (N1)
   KEEP      a name is removed only for a scene refused for good or cut (sceneType 5), and printed (N3, N4)
   FOLLOW    a name whose scene the app now plays at another of its own lightEffects follows it (N3)
   RESOLVED  a blob --resolve baked in stays while the library ships that scene as a placeholder (N7)
@@ -53,8 +55,9 @@ LINES = {"keep": "stored names keep their scene", "guess": "stored names are gue
 Lib = list[dict[str, Any]]
 
 
-def _resolved(pid: int) -> str:
-    return base64.b64encode(b"\x93" + pid.to_bytes(3, "big")).decode()
+def _resolved(pid: int, scene_type: object = None) -> str:
+    """The blob the offline --resolve bakes in for a param id: a new-DIY one (0x50) for sceneType 5."""
+    return base64.b64encode((b"\x50" if scene_type == 5 else b"\x93") + pid.to_bytes(3, "big")).decode()
 
 
 def _same(a: dict[str, Any], b: dict[str, Any]) -> bool:
@@ -174,6 +177,9 @@ def render(lib: Lib, shuffle: random.Random | None = None) -> bytes:
         if e.get("type5"):
             d.update(sceneType=0, specialEffect=[{"supportSku": list(SKUS), "sceneCode": e["code"],
                                                   "sceneType": 5, "scenceParam": P50}])
+        if e.get("big5"):   # a sceneType-5 placeholder: listed, and cut once --resolve bakes a 0x50 blob in
+            d.update(sceneType=0, specialEffect=[{"supportSku": list(SKUS), "sceneCode": e["code"],
+                                                  "sceneType": 5, "scenceParam": "", "bigEffectStr": 1}])
         return d
 
     cats = []
@@ -278,7 +284,9 @@ def replay(fs: ModuleType, rounds: list[dict[str, Any]], root: Path,
 
                 listed, names = fs.CAP["named"]
                 shown = {owner[entry["param_id"]] for _own, entry, _codes in listed}   # the scenes listed
-                if len(set(names)) != len(names) or not set(names) <= set(after):
+                kept = {n for (_own, entry, _codes), n in zip(listed, names, strict=True)
+                        if entry["param_id"] not in fs.CAP["out"]}   # all but the ones main() cuts
+                if len(set(names)) != len(names) or not kept <= set(after):
                     fail("UNIQ", f"{names} -> {sorted(after)}")
                 for n in set(before) & set(after):
                     u0, u1 = uid(before[n]), uid(after[n])
@@ -312,7 +320,9 @@ def replay(fs: ModuleType, rounds: list[dict[str, Any]], root: Path,
                     blobs = {entry["param"], _resolved(pid) if entry.get("placeholder") else entry["param"]}
                     for m, (u, was) in retired.get(sku, {}).items():   # an exact return reclaims its name
                         if m != n and m not in after and u == owner[pid] and fs.scene_name(m, was) == own \
-                                and fs._scene(was) == fs._scene(entry) and was["param"] in blobs:
+                                and fs._scene(was) == fs._scene(entry) and was["param"] in blobs \
+                                and (was["param"] or not entry.get("placeholder")
+                                     or was.get("param_id") == pid):   # a placeholder: by its param id
                             fail("RETIRE", f"{m!r} of scene {u} not reclaimed by its exact return: {n!r}")
                     exact = [m for m, b in before.items() if fs.scene_name(m, b) == own and _same(b, entry)]
                     twins = [e for o, e, _c in listed if o == own and _same(e, entry)]
@@ -336,7 +346,7 @@ def replay(fs: ModuleType, rounds: list[dict[str, Any]], root: Path,
             catalog = fs.read_catalog(sku, root)
             for e in catalog.values():
                 if e.get("placeholder") and e.get("param_id"):
-                    e.update(param=_resolved(e["param_id"]))
+                    e.update(param=_resolved(e["param_id"], e.get("scene_type")))
                     e.pop("placeholder")
             if catalog:
                 fs.store_catalog(sku, catalog, root)
@@ -371,6 +381,7 @@ def _rounds(*libs: Lib, skus: tuple[str, ...] = ("H6641",), resolve: int = -1) -
 
 
 _X50 = _e(50, 1, "kwUF", stype=2, cmdv=1)   # H6641 plays it before code 40
+_DUSK5 = _e(30, 2, None, big5=True)   # a sceneType-5 placeholder
 _FIXED = {
     # N1: Rain refused for good, then a new Rain; the old one comes back exactly
     "retired": _rounds(_lib(("Party", [(1, "Snow", [_e(5, 1)]), (2, "Rain", [_e(10, 2)])])),
@@ -442,9 +453,39 @@ _FIXED = {
                                         (2, "Glow", [_e(30, 2, stype=2, cmdv=1)])]))),
     # N5: two identical scenes of one name, fetched twice: alike, so each keeps its name
     "twins": _rounds(_lib(("Party", [(1, "Glow", [_e(30, 1)]), (2, "Glow", [_e(30, 1)])]))),
+    # N5 / N7: same-code placeholder siblings, resolved; one's param id reissued, then it is renumbered:
+    # the other keeps its name and blob, and no identical re-fetch adds a name
+    "resolved siblings": _rounds(
+        _lib(("Party", [(1, "Glow", [_e(30, 1, None, big=True)]), (2, "Glow", [_e(30, 2, None, big=True)])])),
+        _lib(("Party", [(1, "Glow", [_e(30, 3, None, big=True)]), (2, "Glow", [_e(30, 2, None, big=True)])])),
+        _lib(("Party", [(1, "Glow", [_e(40, 3, None, big=True)]), (2, "Glow", [_e(30, 2, None, big=True)])])),
+        resolve=0),
+    # N5: as that, and the other's cmdVersion changes as it is renumbered: a placeholder has no blob to match
+    # its sibling's placeholder by, so it keeps its own name by its param id
+    "resolved siblings, a new cmdVersion": _rounds(
+        _lib(("Party", [(1, "Glow", [_e(30, 1, None, big=True)]), (2, "Glow", [_e(30, 2, None, big=True)])])),
+        _lib(("Party", [(1, "Glow", [_e(30, 3, None, big=True)]), (2, "Glow", [_e(30, 2, None, big=True)])])),
+        _lib(("Party", [(1, "Glow", [_e(40, 3, None, big=True)]),
+                        (2, "Glow", [_e(30, 2, None, big=True, cmdv=1)])])),
+        resolve=0),
+    # N5 / N7: two identical placeholders, resolved, fetched again: alike, so each keeps its name and blob
+    "resolved twins": _rounds(*(_lib(("Party", [(1, "Glow", [_e(30, 1, None, big=True)]),
+                                                (2, "Glow", [_e(30, 1, None, big=True)])]))
+                                for _ in range(2)), resolve=0),
+    # N1: a sceneType-5 placeholder whose blob --resolve bakes in is a new-DIY one, cut and retired: listed
+    # again, it is cut again, so no reclaim is printed
+    "type5 resolved": _rounds(*(_lib(("Party", [(1, "Snow", [_e(5, 1)]), (2, "Dusk", [_DUSK5])]))
+                                for _ in range(2)), resolve=0),
+    # N7: that one renumbered as its category is renamed takes a new name, which keeps its placeholder: the
+    # resolved blob it would take by its param id is cut
+    "type5 resolved, renumbered": _rounds(
+        _lib(("Party", [(1, "Snow", [_e(5, 1)])]), ("Zootopia 2", [(2, "Dusk", [_DUSK5])])),
+        _lib(("Party", [(1, "Snow", [_e(5, 1)])]), ("Zootopia", [(2, "Dusk", [{**_DUSK5, "code": 31}])])),
+        resolve=0),
 }
 
 
 @pytest.mark.parametrize("case", list(_FIXED))
 def test_fixed_histories_keep_every_name_on_its_scene(case: str, fs: ModuleType, tmp_path: Path) -> None:
     assert check(fs, _FIXED[case], tmp_path, 0) == []
+

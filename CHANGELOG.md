@@ -473,8 +473,9 @@ model, from which the shipped readers are generated).
   fetch names a response alike whatever the store holds (the bundled H61A8 / H6641 "Flash" is 14769, which a
   first fetch of H6168 picks too); no other SKU's stored names are taken (over the 93 SKUs fetched on
   2026-10-19 that changes no name). A re-fetch keeps the name of the stored scene of its sceneName that holds
-  a listed scene's code and category (ties by the whole entry, then blob and param id); else, only where
-  exactly one stored and one listed scene fit each other, by one of its own lightEffects' codes or by category
+  a listed scene's code and category (ties by the whole entry, a resolved one's as its placeholder, then by
+  blob and param id; a placeholder has no blob, so it ties by its param id); else, only where exactly one
+  stored and one listed scene fit each other, by one of its own lightEffects' codes or by category
   and blob (H6006's 26 recodes keep their blob), printed as a move, or by category and param id or category
   alone, printed as a guess. A guess passes over a stored scene whose code the library still answers under any
   sceneName, and a blob match over one it still answers at its own sceneName and category; both pass over one
@@ -486,15 +487,16 @@ model, from which the shipped readers are generated).
   too, so two names hold one code. Only one whose scene the SKU's scene list refuses for good (its op set), or
   a sceneType-5 scene the library does not upload, is removed, printed, and retired in a tombstone,
   `tools/scene_tombstone.json` (out of the package; the store, the loader and the pool are unchanged): only
-  that scene's exact return (sceneName, code, category and blob) takes the name back, printed, and one whose
-  blob `--resolve` baked in returns so as its placeholder of the same param id, the blob coming back with the
-  name. Scenes are named after the sceneType-5 scenes a `legacy_scene` SKU does not upload are left out, and a
-  blob resolved by `--resolve` is kept while the library ships its scene as a placeholder of the same param
-  id: under the name the scene keeps (through a renumber or a category rename too, with the new code and
-  category), else by the scene's code and category, else by the one resolved entry of that param id (a bare
-  entry of it has no blob to keep, so the scene stays a placeholder). A seeded property test replays 200
-  random histories and 17 fixed ones through `main()`. No bundled catalog changes, and no released name is
-  gone (1.0.0 to 1.4.0), so the tombstone starts empty.
+  that scene's exact return (sceneName, code, category and blob; a placeholder's with its param id) takes the
+  name back, printed where the sceneType-5 cut keeps it, and one whose blob `--resolve` baked in returns so as
+  its placeholder of the same param id, the blob coming back with the name. Scenes are named after the
+  sceneType-5 scenes a `legacy_scene` SKU does not upload are left out, and a blob resolved by `--resolve` is
+  kept while the library ships its scene as a placeholder of the same param id: under the name the scene keeps
+  (through a renumber or a category rename too, with the new code and category), else by the scene's code and
+  category, else by the one resolved entry of that param id (a bare entry of it has no blob to keep, so the
+  scene stays a placeholder, as a new name does where the sceneType-5 cut would drop that blob). A seeded
+  property test replays 200 random histories and 22 fixed ones through `main()`. No bundled catalog changes,
+  and no released name is gone (1.0.0 to 1.4.0), so the tombstone starts empty.
 
 ### Spec
 - `devices.yaml` `scenes.list_filter`: which library scenes the control screen lists and with which

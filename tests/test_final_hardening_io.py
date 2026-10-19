@@ -248,6 +248,18 @@ def test_fetch_skips_what_the_apps_base64_decoder_skips(monkeypatch: pytest.Monk
     assert fs.fetch("H6087")["s"]["param"] == "AA//"   # H6087's escaped "\/", read as "/"
 
 
+def test_fetch_refuses_a_param_that_is_no_string(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A scenceParam that is no string (a number, a list, true) fails the SKU's fetch: the scene is not
+    stored as a bare one, activated by its code alone."""
+    fs = _tool("fetch_scenes")
+    for param in (12345, ["kwEB"], True):
+        scene = {"sceneName": "s", "lightEffects": [{"sceneCode": 7, "scenceParam": param}]}
+        body = json.dumps({"data": {"categories": [{"categoryName": "c", "scenes": [scene]}]}}).encode()
+        monkeypatch.setattr(fs.urllib.request, "urlopen", lambda *a, body=body, **k: _Resp(body))
+        with pytest.raises(ValueError, match="'param' must be str or null"):
+            fs.fetch("H6641")
+
+
 def test_fetch_flags_a_placeholder_by_the_apps_signal(monkeypatch: pytest.MonkeyPatch) -> None:
     """A placeholder is a big-effect scene with an empty param (BaseSceneViewMode / SceneDataVM fetch it),
     not a param whose byte 3 is 0xFF: H1401's Christmas, a well-formed 0x93 RGB scene."""
