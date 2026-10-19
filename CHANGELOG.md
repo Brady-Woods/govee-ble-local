@@ -282,13 +282,23 @@ model, from which the shipped readers are generated).
 - **`tools/fetch_scenes.py` reads a scene's values for the SKU, as the app does**
   (`CategoryV1.LightEffect`, `CategoryV1.java:323-422`): a `specialEffect` entry whose `supportSku` holds
   the SKU overrides the base code, scene type, param, param id, cmdVersion and big-effect flag (it took the
-  base `lightEffects[0]` values only), and a scene the app gates on version `rules` is stored with
-  `rules: true` (the library does not filter by them; no bundled scene has any). The AppVersion header is
+  base `lightEffects[0]` values only). The AppVersion header is
   now the traced app's, 7.7.02 (the scene library answers 7.5.20 identically for every bundled SKU; the
   catalogue endpoint does not, listing 15 more SKUs at 7.7.02, so `tools/fetch_catalog.py` no longer shares
   the constant and asks as its snapshot's `app_version` records: Spec). The bundled catalogs are not
   re-fetched here: a re-fetch would change 1.4.0's H6004, H6006 / H6008, H60A6, H61A8 and H6641 catalogs,
   which is for the user.
+- **`tools/fetch_scenes.py` keeps the lightEffect the app's scene list keeps** (devices.yaml
+  `scenes.list_filter`; `SceneDataVM.b2` -> `CategoryV1.checkSupportNew` -> `SceneV1.checkSupport` /
+  `checkVersion`, then `SceneDataVM.Companion.k`). Before it takes a scene's first lightEffect it drops each
+  one whose op type for the SKU (`CategoryV1.getOpType`: scene type and cmdVersion) is outside the SKU's op
+  set (a base sceneType 0 passes any), a DIY (op type 5) one without effect codes, and an expired one, and it
+  skips an expired category. The op set is the screen's `ScenesConfigBean` `c`, which each scene row's
+  `scene_versions` holds (Spec); the tool takes the union of the SKU's sets (the newest firmware's), and an
+  empty set (a null `c`) filters nothing. The firmware is unknown at fetch time, so a scene whose first
+  surviving effect has version `rules` is left out and named, and the `rules` flag is no longer written. A
+  re-fetch no longer keeps an existing scene the library still lists but the filter refuses. Over the
+  public library of 2026-10-19 the filter changes none of the 14 bundled SKUs' catalogs.
 - **A scene placeholder is the app's own signal**: `tools/fetch_scenes.py` flags a scene `placeholder` only
   when it is a big-effect scene (`bigEffectStr`) with an empty param, which the app fetches before the apply
   (`BaseSceneViewMode.java:630`, `SceneDataVM.java:1324`), not when a param's byte 3 is 0xFF. That heuristic
@@ -309,6 +319,14 @@ model, from which the shipped readers are generated).
   colour-temperature mode. Latent: no current SKU uses those decodes.
 
 ### Spec
+- `devices.yaml` `scenes.list_filter`: which library scenes the control screen lists and with which
+  lightEffect (the op-set, DIY-code, version-rule and effective-time filters, the op-type table), cited.
+  `devices.schema.json` `scene_versions` says what it holds: the `ScenesConfigBean`'s `c`, the op set the
+  scene list is filtered by, which is also the upload versionArray where the bean has no apply set `e`
+  (`ScenesConfigBean.j`). Every scene row's bean was checked: only H6052's has an `e` that differs, `{1, 3}`
+  against `c` = `{0, 1, 4, 5}`, and its row's doc now says so (and that the library, as 1.4.0, only
+  activates the type-3 graffiti scenes the app uploads over `e`); the `dispatch` source that called `c` its
+  version array is corrected.
 - `devices.schema.json`: `clientModel` (`client_profile.by_model.<SKU>`) takes `kelvin_range` and
   `brightness_range`, and `scene_power_on` (the scene apply's power-on; bulblightv3 H6009 / H6010, cited in
   row 64's doc), which the generator refuses on a SKU whose row offers no scenes.

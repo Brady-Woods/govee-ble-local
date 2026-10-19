@@ -190,7 +190,7 @@ scenes:
       gets supportScenesOp(gt), {0, 1} for goodsType 64 (split_bulblightstringv1/com/govee/bulblightv3/pact/Support.java:374-379),
       the row's scene_versions. Both upload a type-1 RGB scene (controller V1, comm_byte 0x01, strip 0); version 0
       has no table row. The H6052's type-5 scenes take their own dialect (upload.dialects.tablelamp_h6052_type5_diy).
-    sources: ["base2light/ble/ScenesOp.java:535-640 (parseEffect/parseScene/parseSceneV1)", "bulblightv3/pact/Support.java:137-147 (is2NewScenesMode)", "split_bulblightstringv1/com/govee/bulblightv3/pact/Support.java:374-379 (supportScenesOp: {0,1} for 64)", "tablelampv1/pact/Support.java:110-112,172-174 (isH6078 + supportScenesOpSet)", "tablelampv1/newAdjust/h6052/H6052DetailsConfig.java:76 (ScenesConfigBean version_array = supportScenesOpSet)", "tablelampv1/adjust/Diy.java:95-109 (parseScenes4Diy)", "tablelampv1/newAdjust/h6052/H6052ScenesViewMode.java:47-49 (k3: type 5 -> parseScenes4Diy, else parseSceneV1)", "base2light/ble/MultipleDiyInScenesController.java:13-25 (comByte 3/4/9)", "base2light/ac/diy/DiyGraffitiV3.java:128-148 (a() re-encode)"]
+    sources: ["base2light/ble/ScenesOp.java:535-640 (parseEffect/parseScene/parseSceneV1)", "bulblightv3/pact/Support.java:137-147 (is2NewScenesMode)", "split_bulblightstringv1/com/govee/bulblightv3/pact/Support.java:374-379 (supportScenesOp: {0,1} for 64)", "tablelampv1/pact/Support.java:110-112,172-174 (isH6078 + supportScenesOpSet)", "tablelampv1/newAdjust/h6052/H6052DetailsConfig.java:76 (ScenesConfigBean opScenesSet c = supportScenesOpSet(22), apply set e = {1, 3}: k3's versionArray is j() = e)", "tablelampv1/adjust/Diy.java:95-109 (parseScenes4Diy)", "tablelampv1/newAdjust/h6052/H6052ScenesViewMode.java:47-49 (k3: type 5 -> parseScenes4Diy, else parseSceneV1)", "base2light/ble/MultipleDiyInScenesController.java:13-25 (comByte 3/4/9)", "base2light/ac/diy/DiyGraffitiV3.java:128-148 (a() re-encode)"]
 
   placeholder:
     decision: "Per scene, the 0xA3 upload is prepended ONLY IF ScenesOp.parseSceneV1 returns non-null; the 33 05 04 activation is always sent. (BaseSceneViewMode.java:757-781)"
@@ -209,6 +209,26 @@ scenes:
       invented rule and will skip a required upload.
     fetch_when_stub: "If bigEffectStr==1 and param empty, fetch the real blob then upload."
     sources: ["base2light/pact/newdetail/content/scene/BaseSceneViewMode.java:476,757-781", "base2light/ble/ScenesOp.java:603-640", "base2light/ac/diy/local/ShareDiy.java:128,148,167-183"]
+  list_filter:
+    rule: >-
+      Which library scenes the control screen lists, and with which lightEffect. SceneDataVM.b2 skips a category
+      out of its effective time, then, when the screen has an op set, runs CategoryV1.checkSupportNew(sku, op
+      set, the device's DIY EffectCodes, soft / hard version), then Companion.k. Per scene, each lightEffect is
+      dropped when: SceneV1.checkSupport
+      refuses it (a base sceneType 0 passes on any op set when its version rules hold; any other passes when its
+      op type for the SKU, op_type below over getSceneType / cmdVersion, is in the op set, and an op type 5 only
+      with diyEffectCode for the SKU that the device's EffectCodes support); checkVersion (filterVersion 1)
+      finds its version rules for the SKU (getSupportRules: a hardVersion entry matching the device, softVersion
+      at or below its soft version) unmet; or Companion.k finds it expired (checkEffectiveTime 1 and the time in
+      none of its effectiveTimes). A scene with no lightEffect left is not listed; one with any plays the first
+      left. The op set is the ScenesConfigBean's c (opScenesSet, SceneDataVM.L = m()); a null c (an empty
+      scene_versions: H61A8 below soft 1.04.00 at pact code 1) skips checkSupportNew, so only the expiry
+      filters. A client_profile row's scene_versions holds c (devices.schema.json). The bundled catalogs follow
+      this rule at fetch time (tools/fetch_scenes.py, over the union of the SKU's sets): the firmware and the
+      device's EffectCodes are unknown there, so a scene whose first firmware-independent survivor has version
+      rules is left out, and an op type 5 with DIY codes is kept.
+    op_type: { "0": 0, "1": 1, "2": "2 at cmdVersion 0, else 3", "3": 4, "4": 4, "5": 5, "6": 6, other: -1 }
+    sources: ["base-classes11/com/govee/base2light/pact/newdetail/content/scene/SceneDataVM.java:256-268,292-306,1454-1461,1502-1515,1626-1633", "base-classes10/com/govee/base2light/ble/scenes/CategoryV1.java:166-191,277-321,382-394,450-455,591-602,684-753,1441-1465", "base-classes11/com/govee/base2light/pact/newdetail/content/scene/ScenesConfigBean.java:78-87,212-219,231-233", "base-classes10/com/govee/base2light/ac/diy/v1/EffectCodes.java:101-123"]
   cloud_api:
     library:
       endpoints: ["GET /bff-app/v2/devices/scenes", "GET /bff-app/v2/devices/categories/scenes", "GET /bff-app/v2/devices/scenes/new", "GET /bff-app/v1/light-effect-libraries"]
@@ -3804,14 +3824,22 @@ families:
             CCT Bytes.p in the both-slot form. The 0x0d report is [r, g, b] only (H6052InfoDetail.G), so a CCT the lamp holds
             reads back as its colour (live: aa 05 0d ff ff ff 0a 8c = RGB (255, 255, 255), no Kelvin). Kelvin: the wire range
             is KelvinConfig version 0 = [2000, 9000] (Support's [2200, 6500] is unused); the screen shows [2200, 6500] with
-            translation version 1, a linear map of the comm range (display only, no wire effect). Scenes: sceneType 5
-            through Diy.parseScenes4Diy (the tablelamp_h6052_type5_diy dialect), the rest through parseSceneV1 over
-            {0, 1, 4, 5}. Not traced: whether the screen offers its 2 colour pieces (getColorSize 2) as segment colour, so
-            no segments are listed. Bench (2026-10-15/16, macOS): polled cleanly and answered aa 06 / aa 07 03, with no
+            translation version 1, a linear map of the comm range (display only, no wire effect). Scenes: the bean is
+            ScenesConfigBean(0, 1, c = Support.supportScenesOpSet(22) = {0, 1, 4, 5}, e = {1, 3}, H6052ScenesViewMode);
+            scene_versions holds c, the scene list's op set (scenes.list_filter). The apply (H6052ScenesViewMode.k3)
+            sends sceneType 5 through Diy.parseScenes4Diy (the tablelamp_h6052_type5_diy dialect) and the rest through
+            parseSceneV1 over the bean's j() = e = {1, 3}, not c. Not modelled: the library uploads over scene_versions,
+            so a type-3 graffiti scene, which the app uploads (parseSceneV1's version-3 branch, comm_byte 0x07, strip
+            2), is only activated (25 of the 43 bundled at 1.4.0), as 1.4.0 does. Not traced: whether the screen offers
+            its 2 colour pieces (getColorSize 2) as segment colour, so no segments are listed. Bench (2026-10-15/16, macOS): polled cleanly and answered aa 06 / aa 07 03, with no
             secret (account_lock false); its writes are not hardware-verified.
           doc-ref:
             - split_hollowlamp/com/govee/tablelampv1/pact/Support.java:40-45,62-64,172-174
             - base-classes2/com/govee/shared/config/h6052/H6052SceneConfig.java:59-61
+            - split_hollowlamp/com/govee/tablelampv1/newAdjust/h6052/H6052DetailsConfig.java:73-81
+            - split_hollowlamp/com/govee/tablelampv1/newAdjust/h6052/H6052ScenesViewMode.java:42-49
+            - base-classes11/com/govee/base2light/pact/newdetail/content/scene/ScenesConfigBean.java:78-87,212-219,231-233
+            - base-classes10/com/govee/base2light/ble/ScenesOp.java:541-551
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:619,1107-1111,1129-1133,1167-1169,1614-1616,1754-1775
         "128": { models: [H6078], power_live: [push_30], mode_color_parse: kelvin_0d }   # H6078; split_hollowlamp/com/govee/tablelampv1/newAdjust/H6078InfoDetail.java:304-342
       wire_cipher: runtime

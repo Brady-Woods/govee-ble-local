@@ -215,7 +215,7 @@
             "scene_versions": {
               "type": "array",
               "items": { "type": "integer" },
-              "description": "versionArray accepted for scene uploads (sceneType -> comType, protocol §4.4), family-wide; a client_profile.by_goods_type row's scene_versions wins over it."
+              "description": "The control screen's ScenesConfigBean c (opScenesSet): the op set its scene list is filtered by (devices.yaml scenes.list_filter) and, where the bean has no apply set e (supportApplyOpSet), the versionArray parseSceneV1 uploads with (ScenesConfigBean.j: e, else c; sceneType -> comType, protocol §4.4); empty = a null c (no filter, activate only). Family-wide; a client_profile.by_goods_type row's scene_versions wins over it. Of the scene rows only H6052's bean has an e that differs (its row's doc)."
             }
           }
         },

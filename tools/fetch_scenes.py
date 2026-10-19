@@ -4,7 +4,8 @@
 Uses the public (no-auth) app scene-library endpoint:
     GET https://app2.govee.com/appsku/v1/light-effect-libraries?sku=<SKU>
 (only an AppVersion header). Each scene yields a BLE `sceneCode` and a base64
-`scenceParam` (the effect blob uploaded via the a3-chunk burst). Writes each SKU's
+`scenceParam` (the effect blob uploaded via the a3-chunk burst), taken from the lightEffect
+the app's scene list keeps for the SKU (devices.yaml scenes.list_filter). Writes each SKU's
 catalog into src/govee_ble_local/scenes/ (so it ships with the library and no runtime
 cloud call is needed), stored once by content: `<set>.json` is named by the first 16
 hex digits of its SHA-256 and `index.json` maps each SKU to its set, so SKUs with the
@@ -27,8 +28,10 @@ import pathlib
 import re
 import sys
 import tempfile
+import time
 import urllib.parse
 import urllib.request
+from collections.abc import Collection
 from typing import Any
 
 LIBRARY_URL = "https://app2.govee.com/appsku/v1/light-effect-libraries"
@@ -172,9 +175,8 @@ def for_sku(sku: str, eff: dict[str, Any]) -> dict[str, Any]:
     - param and param id: the first such entry with a param / a non-zero id (getScenesParam,
       getScenesParamId); cmdVersion and bigEffectStr: the first such entry's (getCmdVersion,
       isBigEffectScene);
-    - rules: the version rules that gate the scene (getSupportRules: the entry's where its type is used),
-      which the app filters the scene by (CategoryV1.SceneV1.checkVersion / checkSupport) and the library
-      does not: their presence is recorded."""
+    - rules: the version rules that gate the lightEffect on the firmware (getSupportRules: the entry's where
+      its type is used), which the app's scene list applies (:func:`listed_effect`)."""
     specials = [x for x in eff.get("specialEffect") or () if sku in (x.get("supportSku") or ())]
     first = specials[0] if specials else None
     out = {"code": eff.get("sceneCode"), "type": eff.get("sceneType"), "param": eff.get("scenceParam"),
@@ -196,10 +198,90 @@ def for_sku(sku: str, eff: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-def fetch(sku: str, app_version: str = DEFAULT_APP_VERSION) -> dict[str, Entry]:
-    """``sku``'s scenes from the public scene library: each scene's first lightEffect, with the values the
-    app reads for the SKU (:func:`for_sku`)."""
+def op_type(scene_type: int | None, cmd_version: int | None) -> int:
+    """A lightEffect's op type from its scene type and cmdVersion for the SKU (CategoryV1.LightEffect.
+    getOpType, CategoryV1.java:295-321; devices.yaml scenes.list_filter.op_type): 0, 1, 4 for a graffiti (3)
+    or a cube (4), 2 or 3 for an RGBIC scene (2) at cmdVersion 0 or not, 5, 6, else -1."""
+    t = scene_type or 0
+    if t == 2:
+        return 2 if not cmd_version else 3
+    return {0: 0, 1: 1, 3: 4, 4: 4, 5: 5, 6: 6}.get(t, -1)
+
+
+def op_set(sku: str) -> frozenset[int] | None:
+    """The scene op set fetch() filters ``sku``'s scenes by, or None for no filter: the ScenesConfigBean's
+    ``c`` (opScenesSet), which SceneDataVM takes as its op set (SceneDataVM.java:1632, ScenesConfigBean.m) and
+    hands to CategoryV1.checkSupportNew, run only with one (:1502-1514). The library takes it from the SKU's
+    rows: every scene row's ``scene_versions`` is its bean's ``c`` (devices.schema.json), so this is the
+    union of the non-empty sets (row, ``by_pact``, ``by_firmware``) of the SKU's routes that offer scenes,
+    the newest firmware's as the library assumes before the device-info read. An empty set is the bean's
+    null ``c`` (H61A8 below soft 1.04.00 at pact code 1): no filter, which the union is when every set is
+    empty or no row offers scenes. A smaller set of the SKU's may hide a scene this keeps: test_scenes_load
+    checks each set and names the exceptions."""
+    routes = [f for f in scene_rows().get(validate_sku(sku), []) if "scenes" in f["capabilities"]]
+    sets = [s for f in routes for s in (f["scene_versions"], *(v for _p, v in f["scene_versions_by_pact"]),
+                                        *(v for _s, _h, v in f["scene_versions_by_firmware"]))]
+    return frozenset(v for s in sets for v in s) or None
+
+
+def effective(item: dict[str, Any], now_ms: float) -> bool:
+    """Whether a category or lightEffect is in force at ``now_ms`` (SceneDataVM.Companion.g, SceneDataVM.java:
+    256-268): it is, unless its ``checkEffectiveTime`` is 1 and ``now_ms`` falls in none of its
+    ``effectiveTimes`` windows."""
+    windows = item.get("effectiveTimes") or ()
+    if item.get("checkEffectiveTime") != 1 or not windows:
+        return True
+    return any(w.get("startTime", 0) <= now_ms <= w.get("endTime", 0) for w in windows)
+
+
+def _supported(sku: str, eff: dict[str, Any], ops: frozenset[int]) -> bool:
+    """SceneV1.checkSupport's firmware-independent test of one lightEffect (CategoryV1.java:684-724): a base
+    sceneType 0 passes whatever the op set (op4StaticTypeByVersion; its rules are the firmware gate, below);
+    any other passes when its op type for the SKU is in ``ops``, and an op type 5 only with DIY effect codes
+    (isSupport :591-602, getDiyEffectCode :277-289; EffectCodes.supportDiyEffect refuses none). Whether the
+    device's own DIY codes hold them (its DiyConfigBean's EffectCodes) is not in the spec: kept."""
+    if (eff.get("sceneType") or 0) == 0:
+        return True
+    own = for_sku(sku, eff)
+    kind = op_type(own["type"], own["cmd_version"])
+    if kind not in ops:
+        return False
+    if kind != 5:
+        return True
+    codes = next((x["diyEffectCode"] for x in eff.get("specialEffect") or ()
+                  if sku in (x.get("supportSku") or ()) and x.get("diyEffectCode")), eff.get("diyEffectCode"))
+    return bool(codes)
+
+
+def listed_effect(sku: str, effects: list[dict[str, Any]], ops: frozenset[int] | None,
+                  now_ms: float) -> tuple[dict[str, Any] | None, bool]:
+    """The lightEffect the app's scene list plays for ``sku``, as ``(effect, gated)`` (devices.yaml
+    scenes.list_filter): with an op set, SceneDataVM.b2 runs CategoryV1.checkSupportNew (SceneDataVM.java:
+    1502-1514), which drops each lightEffect SceneV1.checkSupport refuses (:func:`_supported`) or whose
+    version rules the firmware fails (checkVersion, filterVersion 1: isBleOpSupport4Set over getSupportRules,
+    CategoryV1.java:166-191, 726-753); then Companion.k drops the expired ones (:func:`effective`, :1515). The
+    scene plays the first left (getSceneType(0, ...) and the like). The firmware is unknown here, so when the
+    first effect the firmware-independent tests leave has rules, which one plays depends on the firmware:
+    ``(None, True)``, left out, because the library can't follow the gate and the next effect is not what the
+    app plays where the rules hold. ``(None, False)`` when none is left: the app lists no such scene."""
+    left = [e for e in effects if (ops is None or _supported(sku, e, ops)) and effective(e, now_ms)]
+    if not left:
+        return None, False
+    if ops is not None and for_sku(sku, left[0])["rules"]:
+        return None, True
+    return left[0], False
+
+
+def fetch(sku: str, app_version: str = DEFAULT_APP_VERSION, *, seen: set[str] | None = None
+          ) -> dict[str, Entry]:
+    """``sku``'s scenes from the public scene library: each listed scene's lightEffect for the SKU
+    (:func:`listed_effect`, over :func:`op_set` and the categories in force), with the values the app reads
+    for it (:func:`for_sku`). A scene whose effect depends on the firmware's version rules is left out, and
+    named on stdout. ``seen``, when given, gets the name of every scene the library answered with, listed or
+    not (:func:`_merge`)."""
     key = validate_sku(sku)
+    ops = op_set(key)
+    now_ms = time.time() * 1000
     url = f"{LIBRARY_URL}?sku={urllib.parse.quote(key, safe='')}"
     req = urllib.request.Request(url, headers={"AppVersion": app_version})
     # Fixed https LIBRARY_URL; the only variable part (sku) is validated and URL-quoted above.
@@ -209,12 +291,19 @@ def fetch(sku: str, app_version: str = DEFAULT_APP_VERSION) -> dict[str, Entry]:
         raise ValueError(f"library response for {sku} exceeds {MAX_RESPONSE_BYTES} bytes; refusing")
     payload = json.loads(raw)
     scenes: dict[str, Entry] = {}
+    gated: list[str] = []
     for category in payload.get("data", {}).get("categories", []):
+        if seen is not None:
+            seen.update(str(s.get("sceneName")) for s in category.get("scenes", []))
+        if not effective(category, now_ms):   # SceneDataVM.b2 skips a category out of its time (:1454-1461)
+            continue
         for scene in category.get("scenes", []):
-            effects = scene.get("lightEffects") or []
-            if not effects:
+            listed, held = listed_effect(key, scene.get("lightEffects") or [], ops, now_ms)
+            if held:
+                gated.append(str(scene.get("sceneName")))
+            if listed is None:
                 continue
-            eff = for_sku(key, effects[0])
+            eff = for_sku(key, listed)
             if eff["code"] is None:
                 continue
             param = eff["param"] or None
@@ -235,13 +324,14 @@ def fetch(sku: str, app_version: str = DEFAULT_APP_VERSION) -> dict[str, Entry]:
                 entry["cmd_version"] = int(eff["cmd_version"])
             if eff["big_effect"]:
                 entry["big_effect"] = True
-            if eff["rules"]:
-                entry["rules"] = True   # version-gated in the app; not modelled
             if _is_placeholder(entry):
                 # real blob must come from the authenticated effect-strs endpoint
                 entry["placeholder"] = True
             validate_entry(scene.get("sceneName"), entry)
             scenes[scene["sceneName"]] = entry
+    if gated:
+        print(f"{key}: left out {len(gated)} scenes whose effect the firmware's version rules pick: "
+              f"{', '.join(gated)}")
     return scenes
 
 
@@ -308,12 +398,15 @@ def _keeps_resolved_blob(ex: Entry | None, fr: Entry) -> bool:
             and ex.get("param_id") == fr.get("param_id"))
 
 
-def _merge(existing: dict[str, Entry], fresh: dict[str, Entry]) -> dict[str, Entry]:
+def _merge(existing: dict[str, Entry], fresh: dict[str, Entry],
+           public: Collection[str] | None = None) -> dict[str, Entry]:
     """Combine a fresh public fetch with an existing catalog: take the fresh data, except
     that a fresh placeholder never replaces a real effect blob already resolved via --resolve
     (that entry keeps its blob, takes the fresh code, and has its public metadata replaced
     from the fresh entry); and keep entries that dropped out of the public library. This
-    makes re-running idempotent and non-destructive once placeholders have been resolved."""
+    makes re-running idempotent and non-destructive once placeholders have been resolved.
+    ``public`` (fetch's ``seen``) is every scene the library still answers with: one of them that
+    the app's scene list leaves out for the SKU (:func:`listed_effect`) is not kept."""
     merged: dict[str, Entry] = {}
     for name, fr in fresh.items():
         ex = existing.get(name)
@@ -325,7 +418,8 @@ def _merge(existing: dict[str, Entry], fresh: dict[str, Entry]) -> dict[str, Ent
         else:
             merged[name] = fr
     for name, ex in existing.items():
-        merged.setdefault(name, ex)  # scene no longer public but we have it
+        if public is None or name not in public:
+            merged.setdefault(name, ex)  # scene no longer public but we have it
     return merged
 
 
@@ -462,14 +556,15 @@ def main(skus: list[str], app_version: str = DEFAULT_APP_VERSION) -> int:
         if sku in APP_DEFINED_SCENE_SKUS:
             print(f"{sku}: skipped (scene list is compiled into the app, not the scene library)")
             continue
+        public: set[str] = set()
         try:
-            fresh = fetch(sku, app_version)
+            fresh = fetch(sku, app_version, seen=public)
             existing = read_catalog(sku)
         except Exception as err:
             print(f"{sku}: FETCH FAILED: {err}", file=sys.stderr)
             failures += 1
             continue
-        scenes = _merge(existing, fresh)
+        scenes = _merge(existing, fresh, public)
         versions = legacy_versions(sku)
         held = sorted(n for n, v in scenes.items() if versions is not None and uploads_type5(v, versions))
         if held:

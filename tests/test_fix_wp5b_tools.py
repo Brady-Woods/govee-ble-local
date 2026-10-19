@@ -212,6 +212,7 @@ def test_merge_keeps_a_resolved_blob_over_the_public_stub() -> None:
     merged = fs._merge(existing, {"A": stub})
     assert merged["A"] == {"code": 12, "param": "REAL", "param_id": 5, "scene_type": 2, "category": "new"}
     assert merged["Gone"] == existing["Gone"]                   # no longer public: kept
+    assert "Gone" not in fs._merge(existing, {"A": stub}, {"A", "Gone"})   # public, not listed: dropped
     other = dict(stub, param_id=6)                              # a different effect: re-resolve it
     assert fs._merge(existing, {"A": other})["A"] == other
 
@@ -282,7 +283,7 @@ def test_main_counts_corrupt_catalog_and_write_failure(monkeypatch: pytest.Monke
                                                        capsys: pytest.CaptureFixture[str]) -> None:
     fs = _load("fetch_scenes")
     monkeypatch.setattr(fs, "OUT_DIR", tmp_path)
-    monkeypatch.setattr(fs, "fetch", lambda sku, app_version="": {"A": {"code": 1, "param": None}})
+    monkeypatch.setattr(fs, "fetch", lambda sku, app_version="", **_kw: {"A": {"code": 1, "param": None}})
     (tmp_path / "index.json").write_text('{"H60A6": "0123456789abcdef"}', encoding="utf-8")
     (tmp_path / "0123456789abcdef.json").write_text('{"A": "not a scene object"}', encoding="utf-8")
     assert fs.main(["H60A6", "H61A8"]) == 1            # the corrupt one fails, the run goes on
@@ -304,7 +305,7 @@ def test_main_leaves_out_the_type5_scenes_legacy_scene_does_not_upload(monkeypat
     fetched = {"Rgb": {"code": 1, "param": None, "scene_type": 1},
                "NewDiy": {"code": 2, "param": base64.b64encode(b"\x50\x01\x02").decode(), "scene_type": 5},
                "Diy": {"code": 3, "param": base64.b64encode(b"\x13\x01\x02").decode(), "scene_type": 5}}
-    monkeypatch.setattr(fs, "fetch", lambda sku, app_version="": dict(fetched))
+    monkeypatch.setattr(fs, "fetch", lambda sku, app_version="", **_kw: dict(fetched))
     assert fs.main(["H6006", "H1630", "H60A6"]) == 0
     assert set(fs.read_catalog("H6006", tmp_path)) == {"Rgb", "Diy"}   # legacy_scene {0, 1}: Diy activates
     assert set(fs.read_catalog("H1630", tmp_path)) == {"Rgb"}          # version 13: parseSceneV1 uploads 5

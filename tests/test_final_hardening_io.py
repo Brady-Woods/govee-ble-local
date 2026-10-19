@@ -263,8 +263,9 @@ def test_fetch_flags_a_placeholder_by_the_apps_signal(monkeypatch: pytest.Monkey
 
 def test_fetch_takes_the_skus_special_effect(monkeypatch: pytest.MonkeyPatch) -> None:
     """CategoryV1.LightEffect: a specialEffect entry whose supportSku holds the SKU overrides the base
-    code, type, param, param id, cmdVersion and bigEffectStr; its rules are recorded. Another SKU's entry is
-    ignored, and an entry without a code or a param types the scene static when the base has a param id."""
+    code, type, param, param id, cmdVersion and bigEffectStr, and its rules gate the scene (left out). Another
+    SKU's entry is ignored, and an entry without a code or a param types the scene static when the base has a
+    param id."""
     fs = _tool("fetch_scenes")
     base = {"sceneCode": 10, "sceneType": 1, "scenceParam": "AAAA", "scenceParamId": 5, "cmdVersion": 0}
     rules = [{"hardVersion": "1.00.00", "softVersion": "1.00.01"}]
@@ -277,12 +278,50 @@ def test_fetch_takes_the_skus_special_effect(monkeypatch: pytest.MonkeyPatch) ->
     body = json.dumps({"data": {"categories": [{"categoryName": "c", "scenes": scenes}]}}).encode()
     monkeypatch.setattr(fs.urllib.request, "urlopen", lambda *a, **k: _Resp(body))
     got = fs.fetch("H6641")
-    assert got["Own"] == {"code": 11, "param": "BBBB", "category": "c", "param_id": 6, "scene_type": 2,
-                          "cmd_version": 1, "rules": True}
+    assert fs.for_sku("H6641", scenes[0]["lightEffects"][0]) == {
+        "code": 11, "type": 2, "param": "BBBB", "param_id": 6, "cmd_version": 1, "big_effect": False,
+        "rules": rules}
+    assert "Own" not in got   # its H6641 effect has version rules
     assert got["Bare"] == {"code": 10, "param": "AAAA", "category": "c", "param_id": 5, "scene_type": 0,
                            "cmd_version": 0}
     assert fs.fetch("H6006")["Own"] == {"code": 10, "param": "AAAA", "category": "c", "param_id": 5,
                                         "scene_type": 1, "cmd_version": 0}
+
+
+def test_fetch_lists_what_the_apps_scene_list_lists(monkeypatch: pytest.MonkeyPatch,
+                                                    capsys: pytest.CaptureFixture[str]) -> None:
+    """devices.yaml scenes.list_filter: each lightEffect whose op type for the SKU is outside the SKU's op set
+    (a base sceneType 0 passes any), a DIY one without effect codes, an expired one and an expired category
+    are dropped before the first left plays; a scene whose first effect left has version rules is left out
+    (the firmware picks), and one with none left is not listed. An empty op set (a null bean set) filters
+    nothing but the time."""
+    fs = _tool("fetch_scenes")
+    rgbic1 = {"sceneCode": 1, "sceneType": 2, "cmdVersion": 1, "scenceParam": "AAAA"}   # op type 3
+    rgbic0 = {**rgbic1, "sceneCode": 2, "cmdVersion": 0}                                # op type 2
+    static = {"sceneCode": 3, "sceneType": 0, "scenceParam": ""}
+    diy = {"sceneCode": 4, "sceneType": 5, "scenceParam": "AAAA"}
+    gated = {**rgbic0, "sceneCode": 5, "rules": [{"hardVersion": "1.00.01", "softVersion": "1.05.00"}]}
+    gone = {"checkEffectiveTime": 1, "effectiveTimes": [{"startTime": 0, "endTime": 1}]}
+    scenes = {"Op": [rgbic1, rgbic0], "Static": [static], "NoCodes": [diy],
+              "Codes": [{**diy, "diyEffectCode": [797]}], "Gated": [gated, rgbic0],
+              "AfterGate": [rgbic0, gated], "Expired": [{**rgbic0, **gone}, rgbic1]}
+    season = {"categoryName": "old", **gone, "scenes": [{"sceneName": "Season", "lightEffects": [static]}]}
+    body = json.dumps({"data": {"categories": [
+        {"categoryName": "c", "scenes": [{"sceneName": n, "lightEffects": e} for n, e in scenes.items()]},
+        season]}}).encode()
+    monkeypatch.setattr(fs.urllib.request, "urlopen", lambda *a, **k: _Resp(body))
+    assert (fs.op_set("H61A8"), fs.op_set("H6006"), fs.op_set("H9999")) == ({0, 1, 2, 3}, {0, 1}, None)
+    seen: set[str] = set()
+    assert {n: e["code"] for n, e in fs.fetch("H6047", seen=seen).items()} == {
+        "Op": 1, "Static": 3, "AfterGate": 2, "Expired": 1}
+    assert seen == {*scenes, "Season"}
+    out = capsys.readouterr().out
+    assert "H6047: left out 1 scenes whose effect the firmware's version rules pick: Gated" in out
+    assert set(fs.fetch("H6006")) == {"Static"}
+    assert {n: e["code"] for n, e in fs.fetch("H60A6").items()} == {
+        "Op": 1, "Static": 3, "Codes": 4, "AfterGate": 2, "Expired": 1}
+    assert {n: e["code"] for n, e in fs.fetch("H9999").items()} == {
+        "Op": 1, "Static": 3, "NoCodes": 4, "Codes": 4, "Gated": 5, "AfterGate": 2, "Expired": 1}
 
 
 def test_fetch_validate_entry_rejects_bad_base64() -> None:

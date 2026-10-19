@@ -101,14 +101,14 @@ def test_fetch_main_exits_nonzero_on_failure(monkeypatch: pytest.MonkeyPatch, tm
     fs = _load("fetch_scenes")
     monkeypatch.setattr(fs, "OUT_DIR", tmp_path)
 
-    def boom(sku: str, app_version: str = "") -> dict:
+    def boom(sku: str, app_version: str = "", **_kw: object) -> dict:
         raise OSError("network down")
 
     monkeypatch.setattr(fs, "fetch", boom)
     assert fs.main(["H60A6", "H61A8"]) == 2
     assert "FETCH FAILED" in capsys.readouterr().err
     monkeypatch.setattr(
-        fs, "fetch", lambda sku, app_version="": {"x": {"code": 1, "param": None, "category": None}}
+        fs, "fetch", lambda sku, app_version="", **_kw: {"x": {"code": 1, "param": None, "category": None}}
     )
     assert fs.main(["H60A6"]) == 0
     assert fs.read_catalog("H60A6", tmp_path) == {"x": {"code": 1, "param": None, "category": None}}
