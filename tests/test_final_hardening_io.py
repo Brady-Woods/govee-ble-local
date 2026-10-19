@@ -239,6 +239,14 @@ def test_fetch_accepts_normal_response(monkeypatch: pytest.MonkeyPatch) -> None:
     assert fs.fetch("H60A6") == {}
 
 
+def test_fetch_skips_what_the_apps_base64_decoder_skips(monkeypatch: pytest.MonkeyPatch) -> None:
+    fs = _tool("fetch_scenes")
+    scene = {"sceneName": "s", "lightEffects": [{"sceneCode": 7, "scenceParam": "AA\\/\\/"}]}
+    body = json.dumps({"data": {"categories": [{"categoryName": "c", "scenes": [scene]}]}}).encode()
+    monkeypatch.setattr(fs.urllib.request, "urlopen", lambda *a, **k: _Resp(body))
+    assert fs.fetch("H6087")["s"]["param"] == "AA//"   # H6087's escaped "\/", read as "/"
+
+
 def test_fetch_validate_entry_rejects_bad_base64() -> None:
     fs = _tool("fetch_scenes")
     with pytest.raises(ValueError, match="base64"):

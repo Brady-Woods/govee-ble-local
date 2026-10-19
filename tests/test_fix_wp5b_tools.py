@@ -258,6 +258,16 @@ def test_audit_counts_planner_refusals_and_propagates_bugs(monkeypatch: pytest.M
         fs.audit(["H60A6"])
 
 
+def test_audit_reports_a_catalogued_sku_the_table_does_not_support(monkeypatch: pytest.MonkeyPatch,
+                                                                  capsys: pytest.CaptureFixture[str]) -> None:
+    from govee_ble_local.scenes import Scene
+
+    fs = _load("fetch_scenes")
+    monkeypatch.setattr("govee_ble_local.scenes.load_scenes", lambda sku: {"a": Scene("a", 1, None)})
+    fs.audit(["H9999"])
+    assert "H9999   (not a supported SKU)" in capsys.readouterr().out
+
+
 def test_audit_cli_honours_positional_skus() -> None:
     r = subprocess.run(  # noqa: S603 - fixed argv, sys.executable
         [sys.executable, str(TOOLS / "fetch_scenes.py"), "--audit", "H60A6"],

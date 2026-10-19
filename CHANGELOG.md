@@ -143,6 +143,13 @@ model, from which the shipped readers are generated).
   read-back walks the static pieces. An `ic_num` read still needs `ic_pieces` (now the sizing or `fixed`)
   and the direct colour read-back, and `ic_pieces` the read; H6641's live sizing is unchanged. No current
   SKU sets it.
+- Bundled scene catalogs for the newly admitted models whose profile offers scenes: H6002, H1401 / R1401
+  and H14B1 (H14B1 shares H6004's set), fetched from the public scene library with `tools/fetch_scenes.py`
+  into the content-keyed store. The other newly admitted models get no catalog yet: their scene upload
+  dialect is untraced, so their profiles offer no scenes, and a catalog would be dead data. Each one comes
+  with the change that traces its family's scene path. The Christmas scene of H1401 / R1401 / H14B1 is
+  shipped by the public library only as a 0xFF stub and stays an unresolved placeholder (resolving it
+  needs an account).
 
 ### Changed
 - **The 0xAC status request is built from the profile**, not hard-coded to the H60A6's: the resolver takes
@@ -222,6 +229,12 @@ model, from which the shipped readers are generated).
   `scene_names_by_code` are unchanged. An index entry naming a set that is not bundled raises GoveeBleError
   like an unreadable catalog. `tools/fetch_scenes.py` writes the new layout (a new set before the index,
   then removes the sets no SKU names) and stores nothing for a SKU the library has no scenes for.
+- `tools/fetch_scenes.py` drops the characters the app's decoder skips from a scene blob:
+  `android.util.Base64.decode(str, NO_WRAP)` (`Encode.decryByBase64`,
+  `base-classes10/com/govee/base2home/util/Encode.java:29-31`) skips every character outside the alphabet
+  and `=`. Four of H6087's library blobs carry a JSON-escaped `\/`, which the app reads as `/`, so that SKU
+  fetches now. `--audit` reports a SKU that has a catalog but no device-table row as not supported instead
+  of raising.
 
 ### Fixed
 - **A colour report with no CCT test is not a Kelvin** (the nocct fold): `parse.mode_color` honours the

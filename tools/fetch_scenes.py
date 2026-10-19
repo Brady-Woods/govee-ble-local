@@ -40,6 +40,11 @@ OUT_DIR = pathlib.Path(__file__).resolve().parent.parent / "src" / "govee_ble_lo
 MAX_RESPONSE_BYTES = 8 * 1024 * 1024
 _SKU_RE = re.compile(r"[A-Za-z0-9]{3,8}")
 _SET_RE = re.compile(r"[0-9a-f]{16}")
+# The app decodes a scene blob with android.util.Base64.decode(str, NO_WRAP) (Encode.decryByBase64,
+# base-classes10/com/govee/base2home/util/Encode.java:29-31), which skips every character outside the
+# alphabet and '='. Some library blobs carry such characters (H6087's JSON-escaped "\/"), so fetch()
+# drops them too and stores the blob the app decodes.
+_NOT_BASE64 = re.compile(r"[^A-Za-z0-9+/=]")
 INDEX_NAME = "index.json"
 Entry = dict[str, Any]  # one scene's catalog entry (JSON object)
 
@@ -180,6 +185,8 @@ def fetch(sku: str, app_version: str = DEFAULT_APP_VERSION) -> dict[str, Entry]:
             if code is None:
                 continue
             param = eff.get("scenceParam") or None
+            if isinstance(param, str):
+                param = _NOT_BASE64.sub("", param) or None
             entry: Entry = {
                 "code": int(code),
                 "param": param,
@@ -341,7 +348,11 @@ def audit(skus: list[str]) -> None:
         ble_kwargs: dict[str, Any] = {"details": {}}
         if "rssi" in inspect.signature(BLEDevice.__init__).parameters:
             ble_kwargs["rssi"] = 0
-        dev = create_device(BLEDevice("00:00:00:00:00:00", sku, **ble_kwargs), sku)
+        try:
+            dev = create_device(BLEDevice("00:00:00:00:00:00", sku, **ble_kwargs), sku)
+        except GoveeBleNotSupported:
+            print(f"{sku:7s} (not a supported SKU)")
+            continue
         upload = activate = blocked = placeholder = 0
         dialects: set[str] = set()
         for scene in cat.values():
