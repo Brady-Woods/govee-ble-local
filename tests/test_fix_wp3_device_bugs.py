@@ -18,7 +18,6 @@ from fake_ble import frame as _frame
 
 from govee_ble_local.devices import _readback
 from govee_ble_local.devices import device as device_mod
-from govee_ble_local.devices import profile as profile_mod
 from govee_ble_local.devices.device import Device, _local_tz, make_device
 from govee_ble_local.devices.profile import DeviceProfile, profile_for
 from govee_ble_local.exceptions import GoveeBleError, GoveeBleInvalidValue, GoveeBleNotSupported
@@ -614,10 +613,8 @@ def test_brightness_range_of_the_table_is_accepted() -> None:
 
 def test_live_ic_profile_needs_its_ic_derivation() -> None:
     # color_readback_live_ic is a 1.3.0 field: a custom profile setting it alone is still accepted
-    # (the reported count is used unclamped); the profile table needs the app's clamp.
-    bare = DeviceProfile(skus=("HX",), capabilities=frozenset(), color_readback_live_ic=True)
-    with pytest.raises(ValueError, match="color_readback_ic_range"):
-        profile_mod._index_by_sku((bare,))
+    # (the reported count is used unclamped); the table's build needs the app's clamp (ic_pieces).
+    DeviceProfile(skus=("HX",), capabilities=frozenset(), color_readback_live_ic=True)
     with pytest.raises(ValueError, match="color_readback_ic_per_piece"):
         DeviceProfile(skus=("HX",), capabilities=frozenset(), color_readback_live_ic=True,
                       color_readback_ic_range=(1, 2), color_readback_ic_per_piece=0)

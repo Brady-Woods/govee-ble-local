@@ -15,12 +15,27 @@ model, from which the shipped readers are generated).
   No current SKU sets it.
 - `DeviceProfile.scene_versions_by_firmware` (keyword-only, default `()`): `(min_soft_version,
   min_hard_version, versions)` entries that replace `scene_versions` from a firmware version up (a row's
-  `by_firmware`; versions compared field by field), and `Device.scene_versions`, the set in force, which
-  `Device.scene_upload_frames` uses.
+  `by_firmware`; versions compared field by field). A version not yet read meets every gate on it, as the
+  newest firmware would, so one failed version read doesn't hold back the other's gates.
+- `DeviceProfile.scene_versions_by_pact` (keyword-only, default `()`): `((pact_type, pact_code), versions)`
+  entries that replace `scene_versions` on an advertised pact (a row's `by_pact`), applied before the
+  firmware entries. `Device.scene_versions` is the set in force for the advertised pact and the read
+  versions, and `Device.scene_upload_frames` uses it.
 - `tools/gen_devices.py`, and `src/govee_ble_local/_generated/devices.py` as a build product (gitignored,
-  shipped in the sdist and wheel, covered by the conftest staleness guard and the backend's
-  `_GENERATED_FILES`). The generator keeps only what the library reads, by an allow-list checked against
-  `devices.schema.json`, and fails the build on a missing fact or one the library can't serve.
+  shipped in the sdist and wheel, covered by the conftest staleness guard, which also watches
+  `devices/_resolve.py`, and the backend's `_GENERATED_FILES`). The generator keeps only what the library
+  reads, by an allow-list checked against `devices.schema.json`, and fails the build on a missing fact or
+  one the library can't serve, never the import. It refuses, among others: a wire `by_pact` / `by_firmware`
+  branch (the library reads the wire with both unknown; H60A6's unread pact (1,1) piece count and
+  capabilities are allowed as pinned), a mode decode or a command form other than the ones the library
+  reads with or sends, a `has_brightness`, `power_live`, `color_functions` or family `encryption` value it
+  doesn't implement, a row without `models`, `pacts`, `account_lock`, `brightness_range` (with
+  `brightness`), `power_resync` (plugs) or `color_scheme` where one is used, a colour capability on a plug,
+  a capability a family-default scheme would drop, out-of-range values (Kelvin and brightness ranges and
+  their branches, masks, zone segments, group size, IC range, version gates), `connect_reads` that don't
+  list `brightness` / `gradual` exactly where the library reads them, and, checked before the admission
+  cut, a SKU that two BLE rows with `support` list, whatever their support level, or that an
+  `assigned_goods_type` item in any family names.
 
 ### Changed
 - **The supported-device table is generated from `spec/devices.yaml`** (one-device-list phase 1). The hand
@@ -31,14 +46,18 @@ model, from which the shipped readers are generated).
   which follow the spec:
   - H6006 / H6008 `scene_versions` {1} -> {0, 1}, and H6641 {0, 1, 2, 3, 10} -> {0, 1, 2, 3}, the control
     screens' sets. No frame changes: no library scene needs version 0 or 10.
-  - **H61A8 scenes follow its firmware** (decision D6). `scene_versions` is goodsType 19's base set (empty:
-    activate only) and `scene_versions_by_firmware` holds its `newVersion4Ble` gates, which
-    `Device.scene_versions` applies once the first poll has read the soft and hard versions: {0, 1, 2, 3}
-    on the bench unit (SW 3.03.18 / HW 3.01.10), as 1.x sent, {0, 1, 2} from soft 1.04.00, and activate
-    only below it, also at pact code 2 (whose {0, 1, 2} the pact-unknown profile does not take). Until that
-    read the newest firmware's {0, 1, 2, 3} applies, as 1.x sent, so nothing changes before it.
+  - **H61A8 scenes follow its pact and firmware** (decision D6). `scene_versions` is goodsType 19's base
+    set (empty: activate only), `scene_versions_by_pact` gives {0, 1, 2} at pact code 2 whatever the soft
+    version, and `scene_versions_by_firmware` holds its `newVersion4Ble` gates, which
+    `Device.scene_versions` applies with the advertised pact and the soft and hard versions the first poll
+    reads: {0, 1, 2, 3} on the bench unit (SW 3.03.18 / HW 3.01.10), as 1.x sent, {0, 1, 2} from soft
+    1.04.00, and activate only below it on pact code 1. A version not yet read meets its gates, so until
+    that read the newest firmware's {0, 1, 2, 3} applies, as 1.x sent, and nothing changes before it.
   - H6047 `mode_color_parse` is `kelvin_pair_15`, the spec's name for its bars' 0x15 decode, which is
     unchanged.
+  - H6641 keeps gradual off. Its row now lists the gradual flag the screen reads and writes, and the
+    library holds it off by a named rule (`devices/_resolve.py`) until an H6641 bench check, so no frame
+    changes.
 - **Profiles group SKUs with identical facts.** H6004, H6006 and H6008 share one profile, so
   `profile_for("H6006").skus[0]` and `profile_for("H6008").skus[0]` are now `"H6004"`. Only a `Device`
   built without `sku=` sees it (`create_device` always passes the SKU). Profile order follows
@@ -48,8 +67,12 @@ model, from which the shipped readers are generated).
   (`_MODE_DECODES` is gone). `ModeColorParse` is now `str`; `"rgb_kelvin"` stays the default for a custom
   profile.
 - The fallback cipher, used only when no advertisement says, is AES-RC4 on account-locked rows (the plugs)
-  and on the H60A6, as before, and none elsewhere (decision D4). A newly admitted SKU follows its
-  advertisement.
+  and on H60A6's row (303), the 1.x compatibility rule, as before, and none elsewhere (decision D4). A newly
+  admitted SKU follows its advertisement.
+- The table's coherence checks (a capability its colour scheme can't express, a direct colour read-back in
+  groups other than 4, a live IC read without its clamp) run when the table is built, in
+  `devices/_resolve.py`, not when `govee_ble_local` is imported. `DeviceProfile` still validates every
+  field of a custom profile.
 - Building from the repository also needs PyYAML, which the in-tree backend asks the frontend for
   (`get_requires_for_build_*`). An sdist ships the generated table, and the runtime dependencies are
   unchanged: nothing under `src/` imports yaml. `tools/gen_kaitai.sh` writes the table after the Kaitai
@@ -83,7 +106,14 @@ model, from which the shipped readers are generated).
   IC-count read its `ic_pieces`; `doc-ref` items must be in the `.ksy` citation form. Family `specs` and
   `pact` lose the values that were one SKU's or that repeated `specs` (`pact.scene_versions` in 9 families).
 - `spec/govee_reference.py`: `ble_rows` (the BLE route for a SKU and advertised pact) and `client_row` (one
-  row's facts for a pact and firmware), with self-test checks.
+  row's facts for a pact and firmware), with self-test checks. The Kelvin gate (a `kelvin_range` item's
+  `min_hard_version`) is a string compare, as the app's `KelvinConfig.Config.z2` and the library's, in
+  `client_row` and the `clientFirmware` description: hard 10.00.00 is below 3.08.01.
+- Row 247 (H6641) lists the gradual flag its screen reads at connect and writes (`capabilities` and
+  `connect_reads`); row 51 (H6061) names its colour scheme, `h6061`. The plug rows 50, 90 and 307 and row 19
+  (H61A8) carry the citations the hand table had (`UiV2` / `UiV4` / `Ui4H5089.onOffChange`, the
+  `/rgbic/newdetail` route and `SubMode4Color`'s parse), and the plug rows say app-traced, not
+  source-modelled.
 
 ## [1.4.0] — 2026-10-18
 

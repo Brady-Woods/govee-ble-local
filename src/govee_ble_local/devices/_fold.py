@@ -13,7 +13,8 @@ from typing import Any
 from ..models import DeviceState, Segment
 from ..wire import build, parse, reassemble
 from .brightness import raw_to_percent
-from .profile import DeviceProfile, _version, wire_profile
+from ._resolve import version
+from .profile import DeviceProfile, wire_profile
 
 
 def kelvin_range(profile: DeviceProfile, hardware: str | None = None) -> tuple[int, int] | None:
@@ -34,28 +35,35 @@ def kelvin_range(profile: DeviceProfile, hardware: str | None = None) -> tuple[i
     return lo_, hi_
 
 
-def scene_versions(profile: DeviceProfile, soft: str | None = None,
-                   hard: str | None = None) -> frozenset[int]:
-    """The device's scene versionArray: :attr:`~.profile.DeviceProfile.scene_versions`, replaced by each
+def scene_versions(profile: DeviceProfile, soft: str | None = None, hard: str | None = None,
+                   pact: tuple[int, int] | None = None) -> frozenset[int]:
+    """The device's scene versionArray, as the spec resolves a row (``govee_reference.client_row``):
+    :attr:`~.profile.DeviceProfile.scene_versions`, replaced by the
+    :attr:`~.profile.DeviceProfile.scene_versions_by_pact` set of the advertised ``pact``, then by each
     :attr:`~.profile.DeviceProfile.scene_versions_by_firmware` entry whose gates the ``soft`` / ``hard``
-    versions meet, in order (``govee_reference.client_row``). An unread (None) version meets no gate.
+    versions meet, in order.
 
-    Before either version is read, the last entry's set applies, the newest firmware's, which is what the
-    library sent before the gates were modelled (H61A8: {0, 1, 2, 3}), so nothing changes until the read."""
-    if soft is None and hard is None and profile.scene_versions_by_firmware:
-        return frozenset(profile.scene_versions_by_firmware[-1][2])
+    The pre-read rule is per version: one not yet read (None) meets every gate on it, as the newest firmware
+    would, which is what the library sent before the gates were modelled (H61A8: {0, 1, 2, 3} until the
+    device-info read). So a read that brought one version back still applies the gates it can test."""
     out = profile.scene_versions
-    have_soft, have_hard = _version(soft), _version(hard)
+    for key, versions in profile.scene_versions_by_pact:
+        if key == pact:
+            out = frozenset(versions)
     for min_soft, min_hard, versions in profile.scene_versions_by_firmware:
-        if _meets(have_soft, min_soft) and _meets(have_hard, min_hard):
+        if _meets(soft, min_soft) and _meets(hard, min_hard):
             out = frozenset(versions)
     return out
 
 
-def _meets(version: tuple[int, ...] | None, gate: str) -> bool:
-    """Whether a device version meets a ``min_*`` gate (``""``: no gate; an unread version meets none)."""
-    need = _version(gate)
-    return need is None or (version is not None and version >= need)
+def _meets(text: str | None, gate: str) -> bool:
+    """Whether a device version meets a ``min_*`` gate: ``""`` is no gate, an unread version (None) meets
+    it, and a read one compares field by field (one that does not parse meets none)."""
+    need = version(gate)
+    if need is None or text is None:
+        return True
+    have = version(text)
+    return have is not None and have >= need
 
 
 def brightness_pct(profile: DeviceProfile, raw: int) -> int:

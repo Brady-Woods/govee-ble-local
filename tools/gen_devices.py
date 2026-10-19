@@ -13,9 +13,11 @@ prose, and the library needs no YAML parser at run time.
 The projection is an allow-list over the schema (spec/devices.schema.json): at each definition the library
 reads, the properties named in KEEP, each of which must be one the schema declares there; a definition KEEP
 doesn't name is copied whole with every property its schema declares. So no key is dropped by its name
-wherever it occurs. Before writing, the generator resolves every row with the library's own resolver
-(devices/_resolve.py, standard library only) and checks each colour decode against govee_common.ksy, so a
-missing fact, or one the library can't serve, fails here and never at import.
+wherever it occurs. Before writing, the generator checks the BLE routes over the whole document (a SKU two
+rows with support list is refused whatever their support), resolves every admitted row with the library's
+own resolver (devices/_resolve.py, standard library only), which checks each value the library uses, and
+checks each colour decode against govee_common.ksy, so a missing fact, or one the library can't serve,
+fails here and never at import.
 
 Build-time only: PyYAML, which the in-tree backend asks the build frontend for in a repository build
 (get_requires_for_build_*). An sdist ships the generated module, so a build from it needs nothing.
@@ -37,26 +39,28 @@ SPEC = ROOT / "spec"
 OUT = ROOT / "src" / "govee_ble_local" / "_generated"
 RESOLVER = ROOT / "src" / "govee_ble_local" / "devices" / "_resolve.py"
 
-# Schema definition -> the properties the library reads there (a definition not listed is copied whole).
-# A name added here gets its key in the matching TypedDict of devices/_resolve.py in the same change (mypy
-# checks the generated literal against them).
+# Schema definition -> the properties the library reads there, to serve them or to check that it can (a
+# definition not listed is copied whole). A name added here gets its key in the matching TypedDict of
+# devices/_resolve.py in the same change (mypy checks the generated literal against them).
 _LAYER = ("forms", "counts", "group", "power", "mode", "mode_status")
 _GATES = ("min_soft_version", "min_hard_version", "min_wifi_soft_version")
 _ROW_FACTS = ("scene_versions", "kelvin_range", "brightness_range")
 KEEP: dict[str, tuple[str, ...]] = {
     "#": ("mode_color_parse", "families"),
     "#/$defs/modeColorStrategy": ("sub_modes",),
-    "#/$defs/family": ("id", "connectivity", "specs", "client_profile"),
+    "#/$defs/family": ("id", "connectivity", "specs", "encryption", "assigned_goods_type", "client_profile"),
     "#/$defs/family/properties/specs": _ROW_FACTS,
+    "#/$defs/assignedGoodsType": ("models", "goods_type"),
     "#/$defs/family/properties/client_profile": (
-        "color_scheme", "power_read", "mode_color_parse", "mode_color_parse_status", "relay_power",
-        "relay_on_mask", "advert_on_mask", "by_model", "by_goods_type", "wire"),
+        "has_brightness", "color_scheme", "power_read", "power_live", "mode_color_parse",
+        "mode_color_parse_status", "relay_power", "relay_on_mask", "advert_on_mask", "by_model",
+        "by_goods_type", "wire"),
     "#/$defs/clientRow": (
-        "models", "connectivity", "pacts", "support", "power_read", "mode_color_parse",
+        "models", "connectivity", "pacts", "support", "power_read", "power_live", "mode_color_parse",
         "mode_color_parse_status", "relay_power", "relay_on_mask", "advert_on_mask", "color_scheme",
-        "capabilities", "zones", "account_lock", "scene_dialect", *_ROW_FACTS, "mode_reports_kelvin",
-        "status_read", "connect_reads", "connect_writes", "power_resync", "ic_pieces", "by_pact",
-        "by_firmware"),
+        "color_functions", "capabilities", "zones", "account_lock", "scene_dialect", *_ROW_FACTS,
+        "mode_reports_kelvin", "status_read", "connect_reads", "connect_writes", "power_resync", "ic_pieces",
+        "by_pact", "by_firmware"),
     "#/$defs/clientModel": ("mode_color_parse", "mode_color_parse_status", "by_pact", "by_firmware"),
     "#/$defs/clientBranch": (
         "mode_color_parse", "mode_color_parse_status", "status_read", "capabilities", "connect_reads",
@@ -192,12 +196,14 @@ def load(raw: bytes) -> Any:
 
 def project(doc: dict[str, Any], schema: dict[str, Any]) -> tuple[dict[str, Any], tuple[dict[str, Any], ...]]:
     """``(mode_color_parse table, families)``: devices.yaml ``doc`` through KEEP, checked by the library's
-    resolver and against govee_common.ksy. GenError on a missing fact or one the library can't serve."""
+    resolver (the routes over the whole document, before the admission cut, then each admitted row) and
+    against govee_common.ksy. GenError on a missing fact or one the library can't serve."""
     resolve = _resolver()
-    projected = Projector(schema).project(_supported(doc, resolve.ADMITTED), "#")
-    table, families = projected["mode_color_parse"], projected["families"]
-    _check_decodes(table)
     try:
+        resolve.routes(doc["families"])
+        projected = Projector(schema).project(_supported(doc, resolve.ADMITTED), "#")
+        table, families = projected["mode_color_parse"], projected["families"]
+        _check_decodes(table)
         resolve.profiles(families, table)
     except resolve.SpecError as exc:
         raise GenError(str(exc)) from None

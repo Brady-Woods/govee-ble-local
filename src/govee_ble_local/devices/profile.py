@@ -47,20 +47,6 @@ _DEFAULT_PARSE: Final = "rgb_kelvin"
 # "total_switch"= 33 02 01 / 00 (goodsType 307 H5089; Controller4TotalSwitch).
 RelayPower = Literal["outlet0", "all_outlets", "total_switch"]
 
-# Capabilities a colour scheme cannot express (_resolve.SCHEME_LACKS): wire.build has no frame for them
-# on that scheme (its builder refuses), so a spec row's resolution drops them and the table
-# (_index_by_sku) refuses a profile declaring one rather than fail at the setter. A custom profile is
-# accepted, as in 1.3.0, and that setter raises GoveeBleNotSupported. Narrower gaps inside a capability
-# (scheme h61a8 has SEGMENTS but no per-segment brightness) stay with the builder, whose
-# GoveeBleNotSupported the Device re-raises with the SKU.
-_SCHEME_LACKS: Final[Mapping[str, frozenset[Capability]]] = MappingProxyType({
-    scheme: frozenset(map(Capability, lacks)) for scheme, lacks in _resolve.SCHEME_LACKS.items()})
-# mechanism_a_direct's group size. Controller4ColorInfoByGroup takes it from its caller, and every
-# caller the profiles model walks groups of 4: H6047 NewDetailVm.n5, H6641 H61D3Support.r(), H6062
-# and H6061 ceil(n / 4). A table profile that leaves color_readback_per_batch at mechanism_b's 3 is
-# a typo (_index_by_sku refuses it).
-_DIRECT_GROUP_SIZE: Final = 4
-
 # The spec's mode_color_parse table as govee_profile mode_decode params: name -> {c15: color_decode, ...} (a
 # sub-mode left out is not decoded), plus the library default (_DEFAULT_PARSE).
 _CD = _spec.Common.ColorDecode
@@ -108,8 +94,8 @@ class DeviceProfile:
     """The SKU's scene versionArray (the app's supported-scene version set, e.g.
     Support.supportScenesOp): a library scene is uploaded only when the version its scene type
     needs is in the set, and is activate-only otherwise (:func:`..scenes.scene_upload_params`).
-    :attr:`scene_versions_by_firmware` may replace it once the firmware versions are read
-    (``Device.scene_versions`` is the set in force)."""
+    :attr:`scene_versions_by_pact` (the advertised pact) and :attr:`scene_versions_by_firmware` (the
+    read firmware versions) may replace it (``Device.scene_versions`` is the set in force)."""
     scene_dialect: SceneDialect = "A"
     """How a scene's parameters become upload frames; see :data:`SceneDialect`."""
     min_kelvin: int | None = None
@@ -244,10 +230,18 @@ class DeviceProfile:
         default=(), kw_only=True)
     """Scene sets that replace :attr:`scene_versions` from a firmware version up: ``(min_soft_version,
     min_hard_version, versions)`` entries, ``""`` for no gate on that version, of which each one whose gates
-    the device's soft (``aa 06``) and hard (``aa 07 03``) versions meet applies, in order, the last winning
-    (a devices.yaml row's ``by_firmware``: goodsType 19's ``Support.newVersion4Ble``). Versions compare field
-    by field (``1.06.00``); an unread version meets no gate, so until the device-info read the base set
-    applies."""
+    the device's soft (``aa 06``) and hard (``aa 07 03``) versions meet applies, in order, the last winning,
+    after :attr:`scene_versions_by_pact` (a devices.yaml row's ``by_firmware``: goodsType 19's
+    ``Support.newVersion4Ble``). Versions compare field by field (``1.06.00``). A version not yet read meets
+    every gate on it, as the newest firmware would, so until the device-info read the last entry's set
+    applies (1.x's assumption), and a single unread version does not hold back the other's gates; a read
+    version that does not parse meets none."""
+    scene_versions_by_pact: tuple[tuple[tuple[int, int], tuple[int, ...]], ...] = field(
+        default=(), kw_only=True)
+    """Scene sets that replace :attr:`scene_versions` on an advertised pact: ``((pact_type, pact_code),
+    versions)`` entries (a devices.yaml row's ``by_pact``: goodsType 19 at pact code 2, whose
+    ``newVersion4Ble`` is 1 whatever the soft version). Applied before :attr:`scene_versions_by_firmware`,
+    the order of the spec's resolution (``govee_reference.client_row``); a pact not yet heard applies none."""
 
     def __post_init__(self) -> None:
         """Validate each field: GoveeBleInvalidValue (a ValueError) on a value no Device can use.
@@ -256,8 +250,8 @@ class DeviceProfile:
         that the builders can't serve together (a capability the colour scheme has no frame for, a
         direct colour read-back in groups other than 4, a live IC read without its derivation) are
         accepted here, as in 1.3.0; the setter or read concerned then raises GoveeBleNotSupported or
-        does without, and the table itself is checked for them when it is indexed
-        (:func:`_index_by_sku`)."""
+        does without. The generated table's values are checked, those combinations included, when it is
+        built (devices/_resolve.py), so none reaches this check."""
         if isinstance(self.skus, list):
             # 1.3.0 accepted a list; keep it as the declared tuple, so the frozen profile stays hashable.
             object.__setattr__(self, "skus", tuple(self.skus))
@@ -313,6 +307,18 @@ class DeviceProfile:
             object.__setattr__(self, "kelvin_by_hardware", tuple(map(tuple, self.kelvin_by_hardware)))
         self._check_kelvin_by_hardware(where)
         self._check_scene_versions_by_firmware(where)
+        self._check_scene_versions_by_pact(where)
+
+    def _check_scene_versions_by_pact(self, where: str) -> None:
+        """:attr:`scene_versions_by_pact`'s rules: ``((pact_type, pact_code), versions)`` entries of
+        non-negative ints (a list is kept as a tuple)."""
+        gated = tuple((tuple(pact), tuple(versions)) for pact, versions in self.scene_versions_by_pact)
+        object.__setattr__(self, "scene_versions_by_pact", gated)
+        for pact, versions in gated:
+            if (len(pact) != 2
+                    or not all(isinstance(v, int) and not isinstance(v, bool) and v >= 0
+                               for v in (*pact, *versions))):
+                raise GoveeBleInvalidValue(f"{where}: scene_versions_by_pact={gated!r}")
 
     def _check_scene_versions_by_firmware(self, where: str) -> None:
         """:attr:`scene_versions_by_firmware`'s rules: ``(soft, hard, versions)`` entries with at least one
@@ -322,7 +328,7 @@ class DeviceProfile:
         object.__setattr__(self, "scene_versions_by_firmware", gated)
         for soft, hard, versions in gated:
             gates = [g for g in (soft, hard) if g != ""]
-            if (not gates or not all(isinstance(g, str) and _version(g) is not None for g in gates)
+            if (not gates or not all(isinstance(g, str) and _resolve.version(g) is not None for g in gates)
                     or not all(isinstance(v, int) and not isinstance(v, bool) and v >= 0 for v in versions)):
                 raise GoveeBleInvalidValue(f"{where}: scene_versions_by_firmware={gated!r}")
 
@@ -350,35 +356,9 @@ class DeviceProfile:
             raise GoveeBleInvalidValue(f"{bad}: no range is valid on every revision")
 
 
-def _version(text: str | None) -> tuple[int, ...] | None:
-    """A firmware version (``1.06.00``) as a tuple compared field by field (``govee_reference._version``);
-    None for an unread or unparsable one."""
-    try:
-        return tuple(int(f) for f in text.split(".")) if text else None
-    except ValueError:
-        return None
-
-
 def _where(p: DeviceProfile) -> str:
     """The profile error messages' prefix, e.g. ``DeviceProfile[H6006]``."""
     return f"DeviceProfile[{', '.join(p.skus)}]"
-
-
-def _incoherent(p: DeviceProfile) -> str | None:
-    """Why the builders can't serve ``p``'s fields together, or None.
-
-    Checked for the table (:func:`_index_by_sku`), where it is a typo. A custom profile may combine
-    them, as in 1.3.0: the setter for a capability its scheme can't express raises
-    GoveeBleNotSupported, and a direct read-back walks the group size it was given."""
-    lacking = p.capabilities & _SCHEME_LACKS.get(p.color_scheme, frozenset())
-    if lacking:
-        return f"color_scheme={p.color_scheme!r} cannot express {sorted(c.name for c in lacking)}"
-    if p.color_readback == "mechanism_a_direct" and p.color_readback_per_batch != _DIRECT_GROUP_SIZE:
-        return (f"color_readback_per_batch={p.color_readback_per_batch!r} (mechanism_a_direct "
-                f"reads groups of {_DIRECT_GROUP_SIZE})")
-    if p.color_readback_live_ic and p.color_readback_ic_range is None:
-        return "color_readback_live_ic needs color_readback_ic_range (the app's IC clamp)"
-    return None
 
 
 def _from_spec(skus: tuple[str, ...], facts: Mapping[str, Any]) -> DeviceProfile:
@@ -401,13 +381,10 @@ devices.yaml row's ``doc`` and ``doc-ref``."""
 
 def _index_by_sku(profiles: tuple[DeviceProfile, ...]) -> dict[str, DeviceProfile]:
     """``{SKU upper-cased: profile}`` for the profile table; GoveeBleInvalidValue if a SKU is listed
-    twice (case-insensitive), which would otherwise resolve silently to whichever profile came last,
-    or a profile combines fields the builders can't serve together (:func:`_incoherent`)."""
+    twice (case-insensitive), which would otherwise resolve silently to whichever profile came last.
+    The table's values were checked when it was built (devices/_resolve.py)."""
     by_sku: dict[str, DeviceProfile] = {}
     for p in profiles:
-        problem = _incoherent(p)
-        if problem is not None:
-            raise GoveeBleInvalidValue(f"{_where(p)}: {problem}")
         for sku in p.skus:
             key = sku.upper()
             if key in by_sku:

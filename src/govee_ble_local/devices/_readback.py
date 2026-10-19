@@ -129,7 +129,7 @@ async def walk_mechanism_a_direct(dev: ReadTarget, read_reply: ReadReply) -> lis
     callback drops the reply's own group byte (``Controller4ColorInfoByGroup.Companion.h``/``i``
     pass only the colours on; ``VM4Light.Q5`` places them by its loop index)."""
     profile = dev.profile
-    group_size = profile.color_readback_per_batch   # 4 on every table profile (profile._incoherent)
+    group_size = profile.color_readback_per_batch   # 4 on every table profile (devices/_resolve.py)
     if profile.color_readback_live_ic:
         ic_reply = await read_reply(build.ic_count_query())
         ic = parse.parse_ic_count(ic_reply) if ic_reply else None
@@ -180,7 +180,7 @@ def live_ic_pieces(dev: ReadTarget, ic: int) -> int:
     never stores the count (``VM4Light.D5`` does not run), the same as a failed read; the spec's
     ``ic_count_checked`` is None there and the walk skips."""
     ic_range = dev.profile.color_readback_ic_range
-    # Every table profile has its clamp (profile._incoherent); a custom profile without one uses the
+    # Every table profile has its clamp (devices/_resolve.py); a custom profile without one uses the
     # reported count as it is, never below 0.
     clamped = max(0, ic) if ic_range is None else max(ic_range[0], min(ic_range[1], ic))
     return build.ceil_div(clamped, dev.profile.color_readback_ic_per_piece)

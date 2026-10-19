@@ -110,7 +110,7 @@ def _mask(indices: Sequence[int], segments: int) -> int:
     below it: the app's position set has exactly that many positions (the piece count), and its mask
     encoders can't set a bit past it (``BleUtils.Y`` copies the set into the 2-byte mask's low bits;
     above 16 ``BleUtils.X`` writes exactly ``segments`` bits). A count of 0 (a custom profile given
-    SEGMENTS without segments; the profile table refuses that) keeps the 2-byte mask's 16 positions,
+    SEGMENTS without segments; the table's build refuses that) keeps the 2-byte mask's 16 positions,
     so the colour scheme's own refusal (GoveeBleNotSupported) still comes first."""
     limit = segments or build.LEGACY_MASK_SEGMENTS
     m = 0
@@ -280,8 +280,11 @@ class Device:
     @property
     def scene_versions(self) -> frozenset[int]:
         """The scene versionArray in force: :attr:`DeviceProfile.scene_versions`, or the
-        :attr:`DeviceProfile.scene_versions_by_firmware` set the read soft / hard versions select."""
-        return _fold.scene_versions(self.profile, self._state.firmware_version, self._state.hardware_version)
+        :attr:`DeviceProfile.scene_versions_by_pact` set of the advertised pact and the
+        :attr:`DeviceProfile.scene_versions_by_firmware` set the soft / hard versions select
+        (:func:`._fold.scene_versions`; a version not yet read meets its gates)."""
+        return _fold.scene_versions(self.profile, self._state.firmware_version,
+                                    self._state.hardware_version, self._pact)
 
     def _kelvin_range(self) -> tuple[int, int] | None:
         """The Kelvin range for this device's hardware version, as far as it is known."""

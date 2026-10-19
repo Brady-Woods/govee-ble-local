@@ -237,24 +237,6 @@ def test_duplicate_sku_in_the_table_is_rejected() -> None:
     assert profile_mod._index_by_sku((a,)) == {"HX1": a}
 
 
-@pytest.mark.parametrize(
-    ("scheme", "cap"),
-    [("h61a8", Capability.COLOR_TEMP), ("h6006", Capability.SEGMENTS),
-     ("h6188", Capability.SEGMENTS), ("h6061", Capability.SEGMENTS)],
-)
-def test_capability_the_scheme_cannot_express_is_rejected(scheme: str, cap: Capability) -> None:
-    # The profile table refuses the pairing; a custom profile is accepted, as in 1.3.0 (its setter
-    # raises GoveeBleNotSupported, tests/test_device_gaps.py).
-    custom = DeviceProfile(skus=("HX",), capabilities=frozenset({Capability.POWER, cap}),
-                           color_scheme=scheme)  # type: ignore[arg-type]
-    with pytest.raises(GoveeBleInvalidValue, match=cap.name):
-        profile_mod._index_by_sku((custom,))
-    # the same scheme without that capability is fine in the table too
-    fine = DeviceProfile(skus=("HX",), capabilities=frozenset({Capability.POWER}),
-                         color_scheme=scheme)  # type: ignore[arg-type]
-    assert profile_mod._index_by_sku((fine,)) == {"HX": fine}
-
-
 def test_a_scheme_without_segment_brightness_is_not_supported_with_the_sku() -> None:
     # SEGMENTS is valid on scheme h61a8 (the 0x0b frames: per-segment RGB), which has no per-segment
     # brightness: the narrower gap stays with the builder, GoveeBleNotSupported named for the SKU. No
@@ -271,14 +253,11 @@ def test_a_scheme_without_segment_brightness_is_not_supported_with_the_sku() -> 
 
 def test_mechanism_a_direct_needs_groups_of_four() -> None:
     # WAS: a mechanism_a_direct profile that left color_readback_per_batch at mechanism_b's default
-    # 3 silently read 3-colour groups (the `or 4` fallback never fired). The table refuses that; a
-    # custom profile is accepted, as in 1.3.0, and walks the group size it was given.
+    # 3 silently read 3-colour groups (the `or 4` fallback never fired). The table's build refuses that
+    # (devices/_resolve.py: groups of 4); a custom profile is accepted, as in 1.3.0, and walks the group
+    # size it was given.
     three = DeviceProfile(skus=("HX",), capabilities=frozenset(), color_readback="mechanism_a_direct")
-    with pytest.raises(GoveeBleInvalidValue, match="color_readback_per_batch"):
-        profile_mod._index_by_sku((three,))
-    four = DeviceProfile(skus=("HX",), capabilities=frozenset(), color_readback="mechanism_a_direct",
-                         color_readback_per_batch=4)
-    assert profile_mod._index_by_sku((four,)) == {"HX": four}
+    assert three.color_readback_per_batch == 3
     for bad in (0, -1):   # a group size no read-back can walk is refused at construction
         with pytest.raises(GoveeBleInvalidValue, match="color_readback_per_batch"):
             DeviceProfile(skus=("HX",), capabilities=frozenset(), color_readback="mechanism_b",

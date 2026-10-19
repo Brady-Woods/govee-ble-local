@@ -25,6 +25,7 @@ from dataclasses import dataclass, field
 from typing import Any, Final, Literal
 
 from ..const import FRAME_LEN
+from ..devices import _resolve
 from ..models import Segment
 from . import _spec, parse
 from ._spec import Common as _C, Frame as _F
@@ -44,8 +45,9 @@ TYPE_COLOR_GROUP = int(_C.Command.color_group)   # 0xA5
 # The status screen's 0x05 facts beyond the device's colour decode: the H60A6's (the one readback "status"
 # profile; devices.yaml h60ax wire.mode), from h60a1 Info4Detail.Q:380-433, which its status lambda hands
 # the TLV value: the V2 music layout (the SubMode4MusicV2 of Info4Detail.<init>:122-125), and an empty or
-# short value fails the whole read.
-_STATUS_MODE: Final = {"music": int(_C.MusicDecode.v2_default), "empty_fails": True}
+# short value fails the whole read. The table's build checks every status row's against the same entry.
+_STATUS_MODE: Final = {"music": int(_C.MusicDecode[_resolve.SERVED_MODE["status"]["music"]]),
+                       "empty_fails": _resolve.SERVED_MODE["status"]["empty_fails"]}
 _COLOR_DECODES: Final = ("c02", "c0b", "c0d", "c14", "c15")
 # The tags whose value parse_status reads fields of (the mode's is kept whole, None when it is empty).
 _READS_A_VALUE: Final = frozenset({TYPE_SWITCH, TYPE_BRIGHTNESS, TYPE_ZONE, TYPE_DEVICE_INFO})

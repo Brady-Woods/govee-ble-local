@@ -356,7 +356,7 @@ def test_zone_writes_use_runtime_width() -> None:
 
 def test_unsupported_scheme_still_raises_not_supported_with_a_count() -> None:
     # A custom profile pairing SEGMENTS with the mask-less 0x0d scheme is accepted (as 1.3.0); the
-    # builder refuses the frame, with the SKU named (the profile table refuses the pairing itself).
+    # builder refuses the frame, with the SKU named (the table's build refuses the pairing itself).
     d = _dev("H60A6", color_scheme="h6006")
     d.set_segment_count(23)
     with pytest.raises(GoveeBleNotSupported, match=r"^H60A6: "):

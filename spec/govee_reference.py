@@ -432,7 +432,8 @@ def client_row(reg: dict[str, Any], family_id: str, goods_type: int, *,
     device. The row's own values, then its by_pact branch for the pact (none when the pact is unknown),
     then every by_firmware item whose min_* all hold, in order (an unknown version fails its test); a
     layered fact the row lacks (scene_versions, kelvin_range, brightness_range) comes from the family
-    specs."""
+    specs. Versions compare field by field, but a kelvin_range item's gate is a string compare, as the
+    app's (KelvinConfig.Config.z2: versionHard.compareTo("3.08.01") >= 0)."""
     fam = next(f for f in reg["families"] if f["id"] == family_id)
     row = (fam.get("client_profile") or {}).get("by_goods_type", {})[str(goods_type)]
     out = {k: v for k, v in row.items() if k not in ("by_pact", "by_firmware", "doc", "doc-ref")}
@@ -442,11 +443,16 @@ def client_row(reg: dict[str, Any], family_id: str, goods_type: int, *,
     if pact is not None:
         out.update({k: v for k, v in ((row.get("by_pact") or {}).get(f"{pact[0]},{pact[1]}") or {}).items()
                     if k != "doc"})
-    have = {"min_soft_version": _version(soft), "min_hard_version": _version(hard),
-            "min_wifi_soft_version": _version(wifi_soft)}
+    have = {"min_soft_version": soft, "min_hard_version": hard, "min_wifi_soft_version": wifi_soft}
+
+    def holds(gate: str, dev: str | None, as_string: bool) -> bool:
+        if as_string:
+            return bool(dev) and str(dev) >= gate
+        need, got = _version(gate), _version(dev)
+        return need is not None and got is not None and got >= need
+
     for item in row.get("by_firmware") or []:
-        gates = {k: _version(v) for k, v in item.items() if k.startswith("min_")}
-        if all(g is not None and (dev := have[k]) is not None and dev >= g for k, g in gates.items()):
+        if all(holds(v, have[k], "kelvin_range" in item) for k, v in item.items() if k.startswith("min_")):
             out.update({k: v for k, v in item.items() if not k.startswith("min_") and k != "doc"})
     return out
 
@@ -511,10 +517,11 @@ def _selftest(*, strict: bool = False) -> int:
                  for s, h in (("3.03.18", "3.01.10"), ("1.03.00", "3.08.01"), ("1.05.00", "1.00.01"))]
         check("H61A8 firmware branches: SW 3.03.18 / HW 3.01.10 -> {0,1,2,3} and [2000, 9000]; soft "
               "1.03.00 on (1,1) -> activate only, HW 3.08.01 -> [2700, 6500]; soft 1.05.00 -> {0,1,2}; "
-              "(1,2) -> {0,1,2}",
+              "(1,2) -> {0,1,2}; HW 10.00.00 is below 3.08.01 (a string compare)",
               [(r["scene_versions"], r["kelvin_range"]) for r in h61a8]
               == [([0, 1, 2, 3], [2000, 9000]), ([], [2700, 6500]), ([0, 1, 2], [2000, 9000])]
-              and client_row(reg, "dreamcolorlightv1", 19, pact=(1, 2))["scene_versions"] == [0, 1, 2])
+              and client_row(reg, "dreamcolorlightv1", 19, pact=(1, 2))["scene_versions"] == [0, 1, 2]
+              and client_row(reg, "dreamcolorlightv1", 19, hard="10.00.00")["kelvin_range"] == [2000, 9000])
         check("H60A6 pact (1,1): no 0xA5 in the status read; with the pact unknown the row's own applies",
               client_row(reg, "h60ax", 303, pact=(1, 1))["status_read"] == ["cmd_41", "cmd_30"]
               and client_row(reg, "h60ax", 303)["status_read"] == ["cmd_41", "cmd_30", "color_group"])

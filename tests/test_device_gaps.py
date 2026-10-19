@@ -16,7 +16,6 @@ from unittest.mock import AsyncMock
 import pytest
 from fake_ble import ble_device, unacked_via
 
-from govee_ble_local.devices import profile as profile_mod
 from govee_ble_local.devices.device import Device, make_device
 from govee_ble_local.devices.profile import profile_for
 from govee_ble_local.exceptions import (
@@ -171,12 +170,11 @@ def test_set_color_temp_updates_state_and_clears_rgb() -> None:
 
 def test_segment_color_temp_unsupported_scheme_is_not_supported() -> None:
     # A custom H6008 profile given SEGMENTS is accepted, as in 1.3.0, and fails at the setter: no
-    # 0x0d (h6006) colour frame carries a segment mask. Only the profile table refuses the pairing.
+    # 0x0d (h6006) colour frame carries a segment mask. Only the table's build refuses the pairing
+    # (devices/_resolve.py SCHEME_LACKS).
     profile = profile_for("H6008")
     assert profile is not None
     segmented = dataclasses.replace(profile, capabilities=profile.capabilities | {Capability.SEGMENTS})
-    with pytest.raises(GoveeBleInvalidValue, match="SEGMENTS"):
-        profile_mod._index_by_sku((segmented,))
     d = _dev("H6008", capabilities=segmented.capabilities)
     with pytest.raises(GoveeBleNotSupported, match=r"^H6008: "):
         asyncio.run(d.set_segment_color_temp([0], 4000))  # h6006 CCT has no segment mask
@@ -211,8 +209,6 @@ def test_set_zone_color_temp_sends_zone_mask() -> None:
 
 def test_set_zone_color_temp_unsupported_scheme_and_unknown_zone() -> None:
     d = _dev("H60A6", color_scheme="h6006")   # a segmented profile on a mask-less scheme (as 1.3.0)
-    with pytest.raises(GoveeBleInvalidValue, match="SEGMENTS"):
-        profile_mod._index_by_sku((d.profile,))   # the table refuses it
     with pytest.raises(GoveeBleNotSupported, match=r"^H60A6: "):
         asyncio.run(d.set_zone_color_temp("main", 4000))
     # An unknown zone is bad caller input; it is still a GoveeBleNotSupported, as it was.

@@ -453,7 +453,7 @@
       "additionalProperties": false,
       "minProperties": 2,
       "anyOf": [ { "required": ["min_soft_version"] }, { "required": ["min_hard_version"] }, { "required": ["min_wifi_soft_version"] } ],
-      "description": "A firmware branch of a client_profile row, applied after by_pact when its every min_* holds (versions compare as modeColorVersion; an empty or unparsable device version fails). Every matching item applies, in list order, a later item's leaves replacing an earlier's: the app's version gates are independent per fact (unlike wire's by_firmware, where the first match applies). No match keeps the row's values; firmware facts resolve after the device-info read, so capabilities never depend on them.",
+      "description": "A firmware branch of a client_profile row, applied after by_pact when its every min_* holds (versions compare as modeColorVersion, but a kelvin_range item's min_hard_version is a string compare, as KelvinConfig.Config.z2's versionHard.compareTo is: hard 10.00.00 is below 3.08.01; an empty or unparsable device version fails). Every matching item applies, in list order, a later item's leaves replacing an earlier's: the app's version gates are independent per fact (unlike wire's by_firmware, where the first match applies). No match keeps the row's values; firmware facts resolve after the device-info read, so capabilities never depend on them.",
       "properties": {
         "min_soft_version": { "$ref": "#/$defs/modeColorVersion", "description": "Minimum BLE firmware (soft) version." },
         "min_hard_version": { "$ref": "#/$defs/modeColorVersion", "description": "Minimum BLE hardware version." },
