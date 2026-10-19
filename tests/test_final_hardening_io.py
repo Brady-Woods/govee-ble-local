@@ -331,6 +331,35 @@ def test_fetch_lists_what_the_apps_scene_list_lists(monkeypatch: pytest.MonkeyPa
         "DiyFirst": 4}
 
 
+def test_fetch_stores_same_named_scenes_apart(monkeypatch: pytest.MonkeyPatch,
+                                              capsys: pytest.CaptureFixture[str]) -> None:
+    """A catalog maps a name to one scene, and the app lists a name in more than one category (H61A8's
+    "Flash": Emotion's 2020, Zootopia 2's 14769): the first listed keeps it, unless the stored catalog holds
+    it for another of them, and each other is stored as "<name> (<category>)" (", n" when that is taken
+    too) and printed. _merge counts a scene stored apart as public under its own name."""
+    fs = _tool("fetch_scenes")
+
+    def category(name: str, *codes: int) -> dict[str, object]:
+        return {"categoryName": name, "scenes": [{"sceneName": "Flash", "lightEffects": [
+            {"sceneCode": c, "scenceParam": ""}]} for c in codes]}
+
+    body = json.dumps({"data": {"categories": [category("Emotion", 2020),
+                                               category("Zootopia 2", 14769, 14770)]}}).encode()
+    monkeypatch.setattr(fs.urllib.request, "urlopen", lambda *a, **k: _Resp(body))
+    got = fs.fetch("H61A8")
+    assert {n: e["code"] for n, e in got.items()} == {
+        "Flash": 2020, "Flash (Zootopia 2)": 14769, "Flash (Zootopia 2, 2)": 14770}
+    assert ('H61A8: 2 scenes share a name with another the app lists, stored apart: "Flash (Zootopia 2)" '
+            '(code 14769; "Flash" is Emotion\'s, code 2020), "Flash (Zootopia 2, 2)" (code 14770; "Flash" is '
+            "Emotion's, code 2020)") in capsys.readouterr().out
+    stored = {"Flash": got["Flash (Zootopia 2)"]}   # as the last-one-wins fetch stored it
+    assert {n: e["code"] for n, e in fs.fetch("H61A8", existing=stored).items()} == {
+        "Flash": 14769, "Flash (Emotion)": 2020, "Flash (Zootopia 2)": 14770}
+    assert fs.fetch("H61A8", existing=got) == got   # a re-fetch renames nothing
+    apart = {"Flash (Emotion)": got["Flash"]}
+    assert fs._merge(apart, {}, {"Flash"}) == {} and fs._merge(apart, {}, {"Other"}) == apart
+
+
 def test_fetch_validate_entry_rejects_bad_base64() -> None:
     fs = _tool("fetch_scenes")
     with pytest.raises(ValueError, match="base64"):

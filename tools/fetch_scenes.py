@@ -11,6 +11,14 @@ cloud call is needed), stored once by content: `<set>.json` is named by the firs
 hex digits of its SHA-256 and `index.json` maps each SKU to its set, so SKUs with the
 same scenes share one file.
 
+A catalog maps a scene name to one scene, but the app lists a name in more than one category
+(H61A8 / H6641: Emotion's "Flash", code 2020, and Zootopia 2's, 14769). One scene keeps the
+name and each other is stored as "<name> (<its category>)", for example "Flash (Emotion)",
+or "<name> (<category>, 2)", 3 and so on where that is taken too. The one that keeps it is
+the scene the stored catalog already holds under it, when the fetch lists one of that name in
+its category, so a re-fetch renames no stored scene; else the first the app lists
+(stored_names). Every collision is printed.
+
     python3 tools/fetch_scenes.py            # all supported SKUs
     python3 tools/fetch_scenes.py H60A6 H61A8
 """
@@ -31,7 +39,7 @@ import tempfile
 import time
 import urllib.parse
 import urllib.request
-from collections.abc import Collection
+from collections.abc import Collection, Mapping
 from typing import Any
 
 LIBRARY_URL = "https://app2.govee.com/appsku/v1/light-effect-libraries"
@@ -283,16 +291,48 @@ def listed_effect(sku: str, effects: list[dict[str, Any]], ops: frozenset[int] |
     return left[0], False
 
 
-def fetch(sku: str, app_version: str = DEFAULT_APP_VERSION, *, seen: set[str] | None = None
-          ) -> dict[str, Entry]:
+def _label(category: object) -> str:
+    """A category's name as a stored name's suffix."""
+    return category if isinstance(category, str) and category else "no category"
+
+
+def stored_names(listed: list[tuple[str, Entry]], existing: Mapping[str, Entry] | None = None) -> list[str]:
+    """The names the ``listed`` scenes (``(sceneName, entry)``, in the app's list order: category by category,
+    as the library answers) are stored under, one per scene. Of the scenes of one name, one keeps it: the
+    one ``existing`` (the stored catalog) holds under it, matched by category, when one is listed; else the
+    first listed. Each other is stored as "<name> (<its category>)", or "<name> (<category>, 2)", 3 and so on
+    where that is taken too (the same name twice in one category, or a scene of that name)."""
+    held = existing or {}
+    keeper: dict[str, int] = {}
+    for name in dict.fromkeys(n for n, _e in listed):
+        idx = [i for i, (n, _e) in enumerate(listed) if n == name]
+        same = [i for i in idx if name in held and listed[i][1].get("category") == held[name].get("category")]
+        keeper[name] = (same or idx)[0]
+    taken = set(keeper)
+    out: list[str] = []
+    for i, (name, entry) in enumerate(listed):
+        stored = name
+        if keeper[name] != i:
+            label, n = _label(entry.get("category")), 2
+            stored = f"{name} ({label})"
+            while stored in taken:
+                stored, n = f"{name} ({label}, {n})", n + 1
+            taken.add(stored)
+        out.append(stored)
+    return out
+
+
+def fetch(sku: str, app_version: str = DEFAULT_APP_VERSION, *, seen: set[str] | None = None,
+          existing: Mapping[str, Entry] | None = None) -> dict[str, Entry]:
     """``sku``'s scenes from the public scene library: each listed scene's lightEffect for the SKU
     (:func:`listed_effect`, over :func:`op_set` and the categories in force), with the values the app reads
     for it (:func:`for_sku`). A scene whose effect depends on the firmware's version rules is left out, and
     named on stdout. Where one of the SKU's scene sets is empty (a null op set: SceneDataVM.b2 runs no
     checkSupportNew, only Companion.k, SceneDataVM.java:1502-1515), a scene the app plays another effect for
     there (the first in force, which the union may drop) keeps the union's, and is named on stdout too.
-    ``seen``, when given, gets the name of every scene the library answered with, listed or not
-    (:func:`_merge`)."""
+    Scenes the app lists under one name are stored apart (:func:`stored_names`, over ``existing``, the
+    stored catalog), and each renamed one is named on stdout. ``seen``, when given, gets the name of every
+    scene the library answered with, listed or not (:func:`_merge`)."""
     key = validate_sku(sku)
     ops = op_set(key)
     null_set = any(not s for s in scene_sets(key))
@@ -305,7 +345,7 @@ def fetch(sku: str, app_version: str = DEFAULT_APP_VERSION, *, seen: set[str] | 
     if len(raw) > MAX_RESPONSE_BYTES:
         raise ValueError(f"library response for {sku} exceeds {MAX_RESPONSE_BYTES} bytes; refusing")
     payload = json.loads(raw)
-    scenes: dict[str, Entry] = {}
+    named: list[tuple[str, Entry]] = []
     gated: list[str] = []
     unfiltered: list[str] = []
     for category in payload.get("data", {}).get("categories", []):
@@ -347,7 +387,14 @@ def fetch(sku: str, app_version: str = DEFAULT_APP_VERSION, *, seen: set[str] | 
                 # real blob must come from the authenticated effect-strs endpoint
                 entry["placeholder"] = True
             validate_entry(scene.get("sceneName"), entry)
-            scenes[scene["sceneName"]] = entry
+            named.append((scene["sceneName"], entry))
+    names = stored_names(named, existing)
+    scenes = dict(zip(names, (e for _n, e in named), strict=True))
+    renamed = [f'"{new}" (code {e["code"]}; "{name}" is {_label(scenes[name].get("category"))}\'s, code '
+               f'{scenes[name]["code"]})' for (name, e), new in zip(named, names, strict=True) if new != name]
+    if renamed:
+        print(f"{key}: {len(renamed)} scenes share a name with another the app lists, stored apart: "
+              f"{', '.join(renamed)}")
     if gated:
         print(f"{key}: left out {len(gated)} scenes whose effect the firmware's version rules pick: "
               f"{', '.join(gated)}")
@@ -431,7 +478,8 @@ def _merge(existing: dict[str, Entry], fresh: dict[str, Entry],
     from the fresh entry); and keep entries that dropped out of the public library. This
     makes re-running idempotent and non-destructive once placeholders have been resolved.
     ``public`` (fetch's ``seen``) is every scene the library still answers with: one of them that
-    the app's scene list leaves out for the SKU (:func:`listed_effect`) is not kept."""
+    the app's scene list leaves out for the SKU (:func:`listed_effect`) is not kept, nor is one stored
+    apart from a same-named scene (:func:`stored_names`) under a name in ``public``."""
     merged: dict[str, Entry] = {}
     for name, fr in fresh.items():
         ex = existing.get(name)
@@ -443,9 +491,18 @@ def _merge(existing: dict[str, Entry], fresh: dict[str, Entry],
         else:
             merged[name] = fr
     for name, ex in existing.items():
-        if public is None or name not in public:
+        if public is None or not _answered(name, ex, public):
             merged.setdefault(name, ex)  # scene no longer public but we have it
     return merged
+
+
+def _answered(name: str, entry: Entry, public: Collection[str]) -> bool:
+    """Whether the scene stored as ``name`` is one the library answers with: its name is in ``public``, or
+    it is stored apart (:func:`stored_names`) as "<a name in public> (<its category>[, n])"."""
+    if name in public:
+        return True
+    hit = re.fullmatch(rf"(.+) \({re.escape(_label(entry.get('category')))}(?:, \d+)?\)", name)
+    return hit is not None and hit.group(1) in public
 
 
 # SKUs whose scene list is compiled into the app, not served by the scene library: their
@@ -583,8 +640,8 @@ def main(skus: list[str], app_version: str = DEFAULT_APP_VERSION) -> int:
             continue
         public: set[str] = set()
         try:
-            fresh = fetch(sku, app_version, seen=public)
             existing = read_catalog(sku)
+            fresh = fetch(sku, app_version, seen=public, existing=existing)
         except Exception as err:
             print(f"{sku}: FETCH FAILED: {err}", file=sys.stderr)
             failures += 1
