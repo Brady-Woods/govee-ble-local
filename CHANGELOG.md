@@ -116,11 +116,16 @@ model, from which the shipped readers are generated).
     route and field.
 - **A light's connect write** (device-list phase 3): `DeviceProfile.light_effect_stop` (keyword-only,
   default False) and `build.light_effect_stop()`, the `33 25 01` the bulb screens write on connect, once
-  their connect reads succeed (bulblight `VM4Light.i5`). A light row may now list `connect_writes: [light_effect_stop]` (the resolver
-  allowed connect writes only on plugs, `plug_sync_time`); the library sends it once per session after the
-  handshake and any unlock, as it sends a plug's time sync (the app sends it after its connect reads, which
-  the library makes on its polls). Set on bulblightv3 111 / 348 / 408: H1501, H601A, H601B, H601C, H601D,
-  H801A, H801C, H801D, R1501, H1401, R1401 and H14B1 (Spec).
+  their connect reads succeed (bulblight `VM4Light.i5`). A light row may now list
+  `connect_writes: [light_effect_stop]` (the resolver allowed connect writes only on plugs,
+  `plug_sync_time`); the library sends it once per session after the handshake and any unlock, as it sends
+  a plug's time sync. The app sends it once per screen connect, after its connect reads. The library
+  connects for every poll after the idle disconnect and makes those reads on its polls, so the write goes
+  out on every such poll, before the reads; it only stops a running `33 24` effect. It is sent without
+  waiting for its ack (`GoveeConnection(session_ack=False)`; a plug's time sync still waits), so a device
+  that doesn't ack it costs no ack timeout per poll. Source-modelled, not live-verified. Set on bulblightv3
+  111 / 348 / 408: H1501, H601A, H601B, H601C, H601D, H801A, H801C, H801D, R1501, H1401, R1401 and H14B1
+  (Spec).
 - **The `aa a3` read without the gradual control** (device-list phase 3): `DeviceProfile.gradual_read_only`
   (keyword-only, default False). Some screens read the gradual flag at connect (the default
   `Compose4InfoBleIot` read) but offer no gradual control; a row may now list `gradual` in `connect_reads`

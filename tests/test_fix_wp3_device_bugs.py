@@ -114,8 +114,9 @@ def test_relay_sync_time_payload(monkeypatch: pytest.MonkeyPatch, off: int, tz: 
     monkeypatch.setattr(device_mod.time, "localtime", lambda _ts=None: _Tm(off))
     d = _dev("H5080")
     assert d._session_frames() == [build.plug_sync_time(0x6A49901A, *tz)]
-    light = _dev("H6008", light_effect_stop=True)._conn._session_frames   # the provider the session runs
-    assert light is not None and light() == [build.light_effect_stop()]
+    light = _dev("H6008", light_effect_stop=True)._conn   # the provider the session runs, without ack waits
+    assert light._session_frames is not None and light._session_frames() == [build.light_effect_stop()]
+    assert not light._session_ack and d._conn._session_ack   # a plug waits for its time sync's ack
 
 
 # ── WP3-017: register_callback's unsubscribe ──────────────────────────────────────────────

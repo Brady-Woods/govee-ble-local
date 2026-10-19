@@ -149,6 +149,7 @@ class GoveeConnection:
         idle_disconnect: float = IDLE_DISCONNECT_DELAY,
         frame_log: str | None = None,
         session_frames: Callable[[], list[bytes]] | None = None,
+        session_ack: bool = True,
     ) -> None:
         self._ble_device = ble_device
         self._encryption = encryption
@@ -160,8 +161,11 @@ class GoveeConnection:
         self._unlock_frames = unlock_frames
         # Writes the app sends once per connection after the unlock, whose rejection or missing ack
         # changes nothing - e.g. the plugs' `33 b5` time sync. A provider, called per session, so a
-        # frame can carry the time it is sent.
+        # frame can carry the time it is sent. With session_ack each waits for its ack (the plug screens
+        # wait for the time sync's); without, each is sent once and not waited for, so a device that never
+        # acks one (a light's `33 25 01`) costs no ack timeout on each session.
         self._session_frames = session_frames
+        self._session_ack = session_ack
         self._idle_disconnect = idle_disconnect
         self._client: BleakClientWithServiceCache | None = None
         self._session_key: bytes | None = None
@@ -533,7 +537,10 @@ class GoveeConnection:
         if self._session_frames is not None:
             for frame in self._session_frames():
                 try:
-                    await self._send_write_verified(frame)
+                    if self._session_ack:
+                        await self._send_write_verified(frame)
+                    else:
+                        await self._send_frame(frame)
                 except _LinkLost as err:
                     raise GoveeBleConnectionError(
                         f"{self.address}: link lost during session setup"

@@ -286,9 +286,11 @@ class DeviceProfile:
     light_effect_stop: bool = field(default=False, kw_only=True)
     """A light whose screen writes ``33 25 01`` (``light_effect_stop``) on connect (a devices.yaml row's
     ``connect_writes``; bulblight ``VM4Light$connectBleSuc$1.j`` -> ``VM4Light.i5``): every session sends it
-    after the handshake and any unlock, as a plug's time sync is sent. The app sends it once its connect
-    reads succeed, and the library makes those reads on its polls instead. A rejection or a missing ack is
-    only logged."""
+    after the handshake and any unlock, as a plug's time sync is sent, without waiting for its ack. The app
+    sends it once per screen connect, once its connect reads succeed. The library connects for every poll
+    after the idle disconnect and makes those reads on its polls, so it goes out before each poll's reads; it
+    only stops a running ``33 24`` effect (the spec's ``light_effect_stop``). Source-modelled, not
+    live-verified."""
     gradual_read_only: bool = field(default=False, kw_only=True)
     """Ignored with :attr:`gradual`. Without it: the screen still reads the ``aa a3`` gradual flag at connect
     (the default ``Compose4InfoBleIot`` read) but offers no gradual control, so

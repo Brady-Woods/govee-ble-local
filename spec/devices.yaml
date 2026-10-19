@@ -870,7 +870,9 @@ families:
             6500]. Brightness default version 1 = [1, 100]. Connect reads ControllerStrategyConfig.h0 (aa 04, aa 01, aa
             05). Scenes versionArray {0, 1} (Support4BulbLightV3.g, bulblightv3 Support.supportScenesOp). After the
             connect reads, VM4Light.i5 sends 33 25 01 (light_effect_stop; bulblight Support.c holds for 111) on every
-            connect. No account lock. Scene apply (BaseSceneViewMode.k3): a sceneType-5 scene whose param starts 0x50
+            connect. The library sends it on every session, without waiting for the ack, so after the idle disconnect
+            before each poll's reads; it only stops a running 33 24 effect (light_effect_stop). Source-modelled, not
+            live-verified. No account lock. Scene apply (BaseSceneViewMode.k3): a sceneType-5 scene whose param starts 0x50
             goes through the new-DIY parser BulbDiyConfig registers for this goodsType at app init (DiyDelegateRegister,
             from BulbLightApplication.create), not traced, so scene_dialect is untraced.
           doc-ref:
@@ -915,7 +917,9 @@ families:
             soft version, as a string compare), the by_firmware branch. Brightness default version 1 = [1, 100].
             Connect: Support4BulbLightV3.i holds 348, so ControllerStrategyConfig.C0 takes h0 (aa 04, aa 01, aa 05);
             after the connect reads VM4Light.i5 sends 33 25 01 (light_effect_stop; bulblight Support.c holds for 348) on
-            every connect. Scenes versionArray {0, 1} (Support4BulbLightV3.g). No account lock: the h0 strategy and the
+            every connect. The library sends it on every session, without waiting for the ack, so after the idle
+            disconnect before each poll's reads; it only stops a running 33 24 effect (light_effect_stop).
+            Source-modelled, not live-verified. Scenes versionArray {0, 1} (Support4BulbLightV3.g). No account lock: the h0 strategy and the
             connect callback send no 0xB2, as on 64 / 111. Not traced: the day-sync controllers DaySyncVM adds to the
             connect (VM4Light.O4; the screen's day-sync mode list, DelegateModeList4DaySync and DaySyncConfig); they are
             not listed, as the h61d3 rows' day-sync reads are not. Not hardware-verified.
@@ -1120,7 +1124,9 @@ families:
             Config.bu (h6006, the family's); Config.I[408] colour temperature on. Kelvin KelvinConfig.Config.i[408] = 2
             = [2700, 6500]. Brightness default version 1 = [1, 100]. Connect: Support4BulbLightV3.i holds 408, so
             ControllerStrategyConfig.C0 takes h0 (aa 04, aa 01, aa 05); after the connect reads VM4Light.i5 sends 33 25
-            01 (light_effect_stop; bulblight Support.c holds for 408) on every connect. Scenes versionArray {0, 1}
+            01 (light_effect_stop; bulblight Support.c holds for 408) on every connect. The library sends it on every
+            session, without waiting for the ack, so after the idle disconnect before each poll's reads; it only stops
+            a running 33 24 effect (light_effect_stop). Source-modelled, not live-verified. Scenes versionArray {0, 1}
             (Support4BulbLightV3.g). No account lock: the h0 strategy and the connect callback send no 0xB2, as on 64 /
             111. Not traced: the day-sync controllers DaySyncVM adds to the connect (VM4Light.O4; the screen's day-sync
             mode list, DelegateModeList4DaySync and DaySyncConfig); they are not listed, as the h61d3 rows' day-sync

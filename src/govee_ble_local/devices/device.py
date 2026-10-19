@@ -195,6 +195,7 @@ class Device:
             encryption=enc,
             unlock_frames=self._unlock_frames if profile.requires_secret else None,
             session_frames=self._session_frames if profile.relay or profile.light_effect_stop else None,
+            session_ack=profile.relay,
             frame_log=frame_log,
             idle_disconnect=IDLE_DISCONNECT_DELAY if idle_disconnect is None else idle_disconnect,
         )
@@ -380,7 +381,9 @@ class Device:
         after ``aa 06`` and ``aa 07 03`` (which the library reads once per Device instead,
         ``_readback.read_device_info``); gt 307: ``BleOp4H5089.V:145-163``, first. A light's: ``33 25 01``
         where :attr:`.DeviceProfile.light_effect_stop` is set (bulblight ``VM4Light$connectBleSuc$1.j`` ->
-        ``VM4Light.i5``, once the connect reads succeed). A rejection or a missing ack is only logged
+        ``VM4Light.i5``, once the connect reads succeed), sent without waiting for its ack
+        (``session_ack``): the library connects for every poll after the idle disconnect, so a device that
+        doesn't ack it would cost an ack timeout per poll. A plug's rejection or missing ack is only logged
         (``GoveeConnection._prepare_session``)."""
         return [*([self._sync_time_frame()] if self.profile.relay else ()),
                 *([build.light_effect_stop()] if self.profile.light_effect_stop else ())]
