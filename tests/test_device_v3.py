@@ -642,6 +642,25 @@ def test_the_status_reply_is_read_with_the_profiles_status_decode() -> None:
             dataclasses.replace(h60a6, status_decode=bad)
 
 
+@pytest.mark.parametrize("sku", ["H1630", "R1630"])
+def test_h1630_status_read_fails_on_a_short_power_memory_value(sku: str) -> None:
+    # h1630 364 reads TLV 0x41 as the power-off memory (f_41 power_memory): the screen's status lambda stores
+    # the value's byte 1 unguarded (VM4LightH1630$afterConnectedSingleReadDeviceInfo$1.o), so a 0x41 value of
+    # 0 or 1 byte fails the app's whole read, and the library's, wherever it sits; one of 2 bytes reads as
+    # before. An empty 0x41 as the stream's last two bytes is no TLV to the walker, so it reads as before.
+    p = profile_for(sku)
+    assert p is not None and ("f_41", "power_memory") in p.status_decode
+    power, brightness = bytes([0x01, 0x01, 0x01]), bytes([0x04, 0x01, 0x32])
+    for value, fails in ((b"", True), (b"\x02", True), (b"\x02\x01", False)):
+        tlv = bytes([0x41, len(value), *value])
+        for tlvs in (tlv + power + brightness, power + tlv + brightness):
+            st = reassemble.parse_status(status_burst(tlvs), pieces=1, decode=wire_profile(p))
+            assert (st.is_on, st.brightness) == ((None, None) if fails else (True, 50))
+    tail = reassemble.parse_status(status_burst(power + brightness + bytes([0x41, 0x00])), pieces=1,
+                                   decode=wire_profile(p))
+    assert (tail.is_on, tail.brightness) == (True, 50)
+
+
 def test_read_status_retries_once_then_recovers(caplog: pytest.LogCaptureFixture) -> None:
     # A dropped/truncated 0xAC burst (e.g. a lost BLE notification) yields an empty parse on
     # the first attempt; a fresh query is independent and usually succeeds — retry once before

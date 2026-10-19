@@ -553,6 +553,15 @@ model, from which the shipped readers are generated).
   family's 0x0b senders (17 / 18 below their gates; H6102, H6163 and H6117 by their firmware). The other two
   give the app's whole list: by goodsType, 3, and 13 / 17 / 18 / 21 below their gates; by SKU, H7022 /
   H7024, and the old H6102, H6107, H6116, H6117, H6125, H6126, H6127, H6161 and H6163 by their firmware.
+- **H1630 / R1630 (h1630 364) read the 0xAC status TLV 0x41 as the power-off memory** (`f_41:
+  power_memory`, as on H60A6, H60B1 and H7056). The app's status lambda stores the value's byte 1 with no
+  guard (`VM4LightH1630$afterConnectedSingleReadDeviceInfo$1.o`, into `Info4Detail.r`, the field
+  `Info4Detail.N` fills from an `aa 41` reply). So a status reply whose 0x41 value is 1 byte long, or empty
+  (but as the stream's last two bytes, which the app's walker does not read as a TLV), now fails the read, as
+  the app's does: it gives no state, the poll retries once, and then power, brightness and mode stay as they
+  were. A 0x41 value of 2 bytes or more reads as before, and the library still uses nothing from it. The
+  0xA5 gradient record's own failure (`Controller4ColorInfoByGroup.r` reads 11 bytes) is not flagged yet, as
+  the record has no wire form. No other SKU's profile changes.
 
 ## [1.4.0] — 2026-10-18
 
