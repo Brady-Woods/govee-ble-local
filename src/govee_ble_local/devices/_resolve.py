@@ -30,10 +30,6 @@ the row lacks fails the build: nothing defaults silently.
   elsewhere they need a colour scheme. An ``untraced`` scene dialect drops ``scenes``; ``none`` is activate
   only. An ``untraced`` colour parse on a row with ``rgb`` or ``color_temp`` raises (``none`` is a traced
   value: the screen parses no colour).
-- Held until a bench check (:data:`_HELD`): H6641's gradual flag. Row 247 lists it (its screen reads aa a3
-  at connect and writes 33 a3), but 1.x sent neither frame, and changing that needs an H6641 bench check
-  and the user's approval (the held feat/h6641-gradual), so the capability and its connect read are off.
-  A held capability must stay listed in both, so the listing can't drift while it is held.
 - The reads the library makes: the 0xAC status read is the H60A6's request (``build.status_query``):
   ``status_read`` must be ``[cmd_41, cmd_30, color_group]``, and a pact branch that drops ``color_group``
   becomes ``status_color_groups_pact`` (one pact type, from its lowest code that keeps it). A polled row
@@ -276,8 +272,6 @@ SCHEME_LACKS: Final[Mapping[str, frozenset[str]]] = {
     "h6188": frozenset({"segments"}),
     "h6061": frozenset({"segments"}),
 }
-# Capabilities a row lists that the library holds off, with the connect read of the same name (module doc).
-_HELD: Final[Mapping[tuple[str, str], frozenset[str]]] = {("h61d3", "247"): frozenset({"gradual"})}
 # Wire branches the library leaves unread on purpose: (family, layer, branch) -> the branch exactly.
 _UNREAD_WIRE_BRANCHES: Final[Mapping[tuple[str, str, str], Mapping[str, Any]]] = {
     ("h60ax", "by_goods_type 303", "by_pact 1,1"): {"group": {"num_pieces": 1}},
@@ -437,10 +431,7 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str]) -> dic
     row_caps = frozenset(need(row.get("capabilities"), "capabilities"))
     if not row_caps <= {*CAPABILITIES, "gradual"}:
         fail(f"capabilities {sorted(row_caps - {*CAPABILITIES, 'gradual'})}")
-    held = _HELD.get((fam["id"], gt), frozenset())
-    if not held <= row_caps & set(row.get("connect_reads") or ()):
-        fail(f"held {sorted(held)} must be listed in both capabilities and connect_reads (_HELD)")
-    caps = set(row_caps - held)
+    caps = set(row_caps)
     scheme = row.get("color_scheme") or cp.get("color_scheme")
     if row_caps & {"rgb", "color_temp", "segments"}:
         if relay:
@@ -484,7 +475,7 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str]) -> dic
         readback = _READBACK[power_read]
         if (readback == "status") != (status_read is not None):
             fail(f"power_read {power_read!r} with status_read {status_read!r}")
-    reads = set(need(row.get("connect_reads"), "connect_reads")) - held
+    reads = set(need(row.get("connect_reads"), "connect_reads"))
     if not reads <= _READS:
         fail(f"connect_reads {sorted(reads - _READS)} are not served")
     if ("brightness" in reads) != (readback == "polled"):

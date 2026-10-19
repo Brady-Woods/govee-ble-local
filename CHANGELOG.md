@@ -55,9 +55,11 @@ model, from which the shipped readers are generated).
     that read the newest firmware's {0, 1, 2, 3} applies, as 1.x sent, and nothing changes before it.
   - H6047 `mode_color_parse` is `kelvin_pair_15`, the spec's name for its bars' 0x15 decode, which is
     unchanged.
-  - H6641 keeps gradual off. Its row now lists the gradual flag the screen reads and writes, and the
-    library holds it off by a named rule (`devices/_resolve.py`) until an H6641 bench check, so no frame
-    changes.
+  - **H6641 gradual** (`gradual=True`): `Device.update` reads `aa a3` on every poll and `set_gradual`
+    writes `33 a3` instead of raising, as its control screen does, and `state.gradual` is a bool, not None.
+    Bench-checked on an H6641 (firmware 1.01.13, 2026-10-18, govee-apks
+    `library-audit/BENCH_h6641_gradual.md`): it answers `aa a3`, acks `33 a3 01` and `00` and reads each
+    back. Its BLE brightness steps fade with the flag on or off.
 - **Profiles group SKUs with identical facts.** H6004, H6006 and H6008 share one profile, so
   `profile_for("H6006").skus[0]` and `profile_for("H6008").skus[0]` are now `"H6004"`. Only a `Device`
   built without `sku=` sees it (`create_device` always passes the SKU). Profile order follows

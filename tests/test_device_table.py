@@ -84,6 +84,8 @@ _CHANGED: dict[tuple[str, str], tuple[Any, Any]] = {
     ("H6008", "scene_versions"): (frozenset({1}), frozenset({0, 1})),
     # The control screen's ConfigDetail set; the library never sent version 10.
     ("H6641", "scene_versions"): (frozenset({0, 1, 2, 3, 10}), frozenset({0, 1, 2, 3})),
+    # The screen reads aa a3 at connect and writes 33 a3, which an H6641 answers and acks (bench, 2026-10-18).
+    ("H6641", "gradual"): (False, True),
     # goodsType 19's set follows the pact code and the firmware (newVersion4Ble); a version not yet read meets
     # its gates, so until the first poll reads them the newest firmware's {0, 1, 2, 3} applies, as 1.x sent.
     # The bench unit (SW 3.03.18 / HW 3.01.10) keeps it (checked below).
@@ -244,8 +246,6 @@ _REFUSED: tuple[tuple[str, str, _Edit, str], ...] = (
     ("tablelampv1", "22", lambda f: _row(f, "22").update(connect_reads=[]), "connect_reads lists brightness"),
     ("h6047", "119", lambda f: _row(f, "119")["connect_reads"].remove("gradual"),
      "connect_reads lists gradual"),
-    ("h61d3", "247", lambda f: _row(f, "247")["capabilities"].remove("gradual"),
-     "held ['gradual'] must be listed"),
     ("h61d3", "247", lambda f: _row(f, "247").pop("ic_pieces"), "an ic_num read needs"),
     ("h61d3", "247", lambda f: _row(f, "247")["ic_pieces"].update(min_ic=80), "ic_pieces"),
     ("h5080", "43", lambda f: _row(f, "43").update(connect_writes=[]), "connect_writes []"),

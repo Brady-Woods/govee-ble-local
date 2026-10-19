@@ -1001,7 +1001,7 @@ class Device:
     # -- misc settings ------------------------------------------------------
     async def set_gradual(self, on: bool) -> None:
         """Toggle the gradual/fade-on-BLE↔wifi-handoff flag (0xA3). Only SKUs whose profile
-        sets ``gradual`` (H61A8, H6047) support it; others raise GoveeBleNotSupported."""
+        sets ``gradual`` (H61A8, H6047, H6641) support it; others raise GoveeBleNotSupported."""
         if not self.profile.gradual:
             raise GoveeBleNotSupported(f"{self._sku}: gradual (BLE/wifi fade) not supported")
 

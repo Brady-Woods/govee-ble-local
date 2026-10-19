@@ -826,8 +826,9 @@ families:
             the afterConnected one). Connect: the default Compose4InfoBleIot read (aa 01, aa 04, aa a3 through
             ControllerGradual4BleWifi, aa 05), the aa 40 IC count (ReadIcController, bytes 0-1 signed, clamped to [41, 70]),
             then the direct aa a5 groups of H61D3Support.t = 4 over ceil(IC / 5) pieces (VM4Light.w5); the reply's third
-            byte is not used. Gradual: the screen reads the flag at connect (that aa a3) and writes it 33 a3; neither
-            frame has been checked on an H6641. Scenes: the control screen's set {0, 1, 2, 3} (ConfigDetail); version 10 is not offered there. Kelvin
+            byte is not used. Gradual: the screen reads the flag at connect (that aa a3) and writes it 33 a3. Live
+            (firmware 1.01.13): aa a3 answers, 33 a3 01 / 00 are acked and read back, and BLE brightness steps fade with the
+            flag on or off. Scenes: the control screen's set {0, 1, 2, 3} (ConfigDetail); version 10 is not offered there. Kelvin
             version 0 = [2000, 9000] (KelvinConfig has no 247 key); brightness version 1 = percent. Live: ac 03 03 41 30 a5
             returns no frame, and the device is controlled with no secret (account_lock false; the app's control-screen
             path for it is not cited); colour writes are not hardware-verified.
