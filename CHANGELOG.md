@@ -68,13 +68,15 @@ model, from which the shipped readers are generated).
   - **10 SKUs gain a route**, by the catalogue's goodsType alone, with no bench check. Nine are on
     goodsType 64, the bulb row: H6009, H600A, H600B, H600C, H600D, H6010, H6011, H6013 and H800B. They
     share the H6004 / H6006 / H6008 profile, whose `skus` lists them after those three. The tenth,
-    **R1630**, is on the h1630 row 364 and shares H1630's profile. That row is `modelled` (Spec), so R1630,
-    like H1630, is admitted only with `allow_modelled`.
+    **R1630**, is on the h1630 row 364 and shares H1630's profile. A catalogue SKU takes its row's support
+    level, so R1630 is admitted by default now that the app trace makes that row `app_traced` (Spec).
+  - The admit commit's rows (Spec, "42 more SKUs") extend the catalogue routes to 14 SKUs: **H6167**
+    (dreamcolorlightv1 83), **H616D / H616E** (207) and **H802A** (74) join those rows' profiles.
   - They stay gated on the row's pacts. The 1.x fallback for a pact no row accepts (D3) covers only SKUs a
     row lists (the generated `CATALOGUE_SKUS` are the rest), since the app's scan drops a device whose
     pact it can't parse (`BaseBleProcessor.g`).
-  - The nine bulbs ship without named scenes (scene codes only), and R1630 without scenes, as H1630 has
-    none yet. The bulb row's doc says how they route.
+  - The nine bulbs ship without named scenes (scene codes only), and the five others without scenes, as
+    their rows offer none yet (`scene_dialect: untraced`). Each row's doc says how they route.
   - A SKU that a row lists keeps the spec's route. A non-zero catalogue conflict leaves the SKU unrouted
     and on the review list the generator prints, unless an `assigned_goods_type` item of the row's family
     cites the app's rewrite of that goodsType. A SKU no row lists also goes on the list when the app
@@ -253,10 +255,10 @@ model, from which the shipped readers are generated).
   and `mode_reports_kelvin`, with `doc` and `doc-ref`. The rows are 303 (H60A6), 119 (H6047), 19 (H61A8),
   64 (H6004 / H6006 / H6008), 22 (H6052), 247 (H6641), 0 (H6188), 41 (H6062), 51 (H6061) and the plugs'
   43 / 50 / 90 / 307. The trace notes in `devices/profile.py` are now the rows' `doc` / `doc-ref`.
-- **Seven SKUs behind the modelled opt-in** (one-device-list phase 2): rows for goodsTypes the spec
-  already describes, every one `support: modelled` (source-modelled, not live-verified: no unit was on the
-  bench), so `allow_modelled=True` admits them and the default table (the 18) is unchanged. Each row's
-  `doc` names the facts that are inferred rather than traced.
+- **Seven SKUs as modelled rows first** (one-device-list phase 2): rows for goodsTypes the spec already
+  describes, added as `support: modelled` (source-modelled, not live-verified: no unit was on the bench).
+  The app trace below makes five of them `app_traced` (H6690, H7040, H60B1, H7056 and H1630); H6098 /
+  H8098 stay behind `allow_modelled`. Each row's `doc` names what is not traced.
   - pact_h6099 203 (**H6098 / H8098**, pacts (1, 1) / (2, 1) / (3, 1)) and 336 (**H6690**, pact (1, 1)),
     one profile: the h60a6 0x15 frames, 14 segments by the direct `aa a5` groups of 4, Kelvin
     [2000, 9000], `kelvin_15` colour report. The app's colour strip sends 15 04 groups where the library
@@ -269,6 +271,28 @@ model, from which the shipped readers are generated).
     (1, 1)): 8 pieces in fixed groups of 4; h1630 364 (**H1630**, pacts (1, 1) / (1, 2) / (1, 3)): one
     piece, Kelvin [1000, 10000], its 0xA5 gradient record not decoded.
   None of them offers scenes yet: their scene apply path isn't traced (`scene_dialect: untraced`).
+- **42 more SKUs from the targeted app trace** (one-device-list, the admit commit): `client_profile`
+  rows for the goodsTypes the trace completed, each with its accepted pacts and its control-screen facts,
+  cited in `doc-ref`. Admitted by default (`app_traced`, not hardware-verified):
+  - bulblightv3: **H6005** (20), **H6002** (31, scenes only), **H8015** (328, colour temperature only);
+  - h61d3: **H6640** (242), **H61B3 / H61B6** (264), **H1A43 / H1A44** (367), **H1B6A** (384), **H1AB1**
+    (387), **H1AB2** (388), **H1AB3** (389), **H1A42** (400), **H1AA2** (403), **H1AA5** (404);
+  - dreamcolorlightv1: **H617C / H617E / H617F** (70), **H617A** (73), **H618A** (74), **H619A** (75),
+    **H619Z** (83), **H6168** (136), **H61BE** (175), **H6176 / H61BC** (176), **H61BA** (178), **H6175**
+    (187), **H616C** (207), **H6169** (262);
+  - **H610B** (striplight 114), **H6042** (h6047 197), **B7080 / B7081 / B7082** (h7080 45 / 55 / 56),
+    **H6087 / H6088** (h7050 77 / 157);
+  - phase 2's modelled rows, now traced: **H6690** (pact_h6099 336, with gradual), **H7040** (h7040 36),
+    **H60B1** (h60b1 300), **H7056** (h7056 304) and **H1630** (h1630 364);
+  - the catalogue snapshot also routes five SKUs no row lists to these rows, admitted with them by
+    catalogue goodsType alone (not bench-checked, and without scenes: these rows say `scene_dialect:
+    untraced`): **H6167** (dreamcolorlightv1 83), **H616D / H616E** (207), **H802A** (74) and **R1630**
+    (h1630 364, which leaves `allow_modelled` with its row).
+
+  Behind `allow_modelled` (source-modelled, not live-verified): **H6098 / H8098** (pact_h6099 203, now
+  with gradual) and **H61B8 / H61B9** (h61d3 299). Where the screen sends sceneType-5 scenes through the
+  app's new-DIY parsers, the row says `scene_dialect: untraced`, so that SKU offers no scenes yet. The
+  H6042's wire piece count is now the control screen's 5, not 10. The 18 SKUs of 1.4.0 are unchanged.
 - **H6004 routes to goodsType 64.** Rows 9 and 10 (H6003, and the H6004's Wi-Fi revision) say
   `connectivity: [wifi, iot]`, so no BLE client routes there.
 - **goodsType 64's scene versions are {0, 1}**, the control screen's `ScenesConfigBean` set
