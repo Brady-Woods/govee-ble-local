@@ -438,7 +438,7 @@ _ROUNDS: dict[str, tuple[_Step, ...]] = {
         _then((_EMOTION, _ZOOTOPIA, ("Party", (("Wave", 101, "GGGG"), ("Ripple", 102, "HHHH")))),
               {**_STORED, "Wave": (101, "Party", "GGGG"), "Ripple": (102, "Party", "HHHH")},
               ("Wave", "Ripple"))),
-    "literal":(_FIRST, _then((_EMOTION, _ZOOTOPIA, ("Specials", (("Flash (Emotion)", 500, "HHHH"),))),
+    "literal": (_FIRST, _then((_EMOTION, _ZOOTOPIA, ("Specials", (("Flash (Emotion)", 500, "HHHH"),))),
                               {**_STORED, "Flash (Emotion) (Specials)": (500, "Specials", "HHHH")},
                               ("Flash (Emotion) (Specials)",))),
 }

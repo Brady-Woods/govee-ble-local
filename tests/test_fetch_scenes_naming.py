@@ -7,6 +7,10 @@ codes and blobs are never reused. Checked after every fetch:
   INV       a stored name keeps its scene, and a change of its code or category is printed; a printed keep
             never moves it to another scene, and only a printed guess does, off a scene the library still
             answered at the SKU's previous fetch and no longer lists (N2, N3)
+  GUESS     a name kept at a new code, none of its scene's own, with a new blob or none, is printed as a
+            guess (N2: category and param id, or category alone)
+  UNSURE    a listed scene more than one stored scene fits (or that fits one more than one does) takes a
+            new name, printed as ambiguous (N2)
   UNIQ      every listed scene is stored, each under a name of its own (but one main() cuts for sceneType
             5: the blob --resolve baked in is a new-DIY one)
   IDEM      an identical re-fetch changes nothing and prints no change
@@ -48,7 +52,7 @@ EDITS = ("reorder", "add_cat", "rm_cat", "rename_cat", "renumber", "blob", "pid"
          "rename_scene", "restore")
 GONE = {"checkEffectiveTime": 1, "effectiveTimes": [{"startTime": 0, "endTime": 1}]}
 P50 = base64.b64encode(b"\x50\x01\x02").decode()   # a new-DIY blob, which a legacy_scene SKU cuts
-NAME = re.compile(r'"((?:[^"]|"(?! \(code))*)" \(code')
+NAME = re.compile(r'(?:: |\), )"((?:[^"]|"(?! \(code))*)" \(code')   # each entry, not a quoted second name
 LINES = {"keep": "stored names keep their scene", "guess": "stored names are guessed onto",
          "removed": "removed ", "back": "retired names come back", "apart": "share a name with another",
          "unsure": "are ambiguous"}
@@ -232,6 +236,7 @@ def fs(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
     def stored_names(listed: list[Any], *a: Any, **k: Any) -> list[str]:
         names = named(listed, *a, **k)
         mod.CAP["named"] = (copy.deepcopy(listed), list(names))
+        mod.CAP["unsure"] = {names[i] for i in k.get("ambiguous", a[4] if len(a) > 4 else None) or {}}
         return names
 
     mod._in_time, mod.uploads_type5, mod.stored_names = _in_time, uploads_type5, stored_names
@@ -243,7 +248,7 @@ def _fetch(fs: ModuleType, sku: str, body: bytes, root: Path) -> tuple[dict[str,
     of line printed."""
     fs.OUT_DIR, fs.TOMBSTONE, fs.BODIES[sku] = root, root / "tombstone.json", body
     fs.CAP.clear()
-    fs.CAP.update(out=set(), named=([], []))
+    fs.CAP.update(out=set(), named=([], []), unsure=set())
     out = io.StringIO()
     with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
         assert fs.main([sku]) == 0, out.getvalue()
@@ -284,6 +289,8 @@ def replay(fs: ModuleType, rounds: list[dict[str, Any]], root: Path,
 
                 listed, names = fs.CAP["named"]
                 shown = {owner[entry["param_id"]] for _own, entry, _codes in listed}   # the scenes listed
+                if not fs.CAP["unsure"] <= said["unsure"]:
+                    fail("UNSURE", f"{sorted(fs.CAP['unsure'] - said['unsure'])} not printed as ambiguous")
                 kept = {n for (_own, entry, _codes), n in zip(listed, names, strict=True)
                         if entry["param_id"] not in fs.CAP["out"]}   # all but the ones main() cuts
                 if len(set(names)) != len(names) or not kept <= set(after):
@@ -312,6 +319,12 @@ def replay(fs: ModuleType, rounds: list[dict[str, Any]], root: Path,
                             fail("RETIRE", f"{n!r} of scene {u} {fs._scene(was)} back on {uid(after[n])}")
                 for (own, entry, codes), n in zip(listed, names, strict=True):
                     pid = entry.get("param_id")
+                    prior = before.get(n)   # kept at a new code, not its own, with a new blob or none
+                    if prior is not None and prior.get("category") == entry["category"] \
+                            and prior["code"] not in codes \
+                            and not (entry["param"] and prior.get("param") == entry["param"]) \
+                            and (n not in said["guess"] or n in said["keep"]):
+                        fail("GUESS", f"{n!r} {fs._scene(prior)} -> {fs._scene(entry)} printed as no guess")
                     olds = [b for b in before.values()
                             if b.get("param_id") == pid and not b.get("placeholder")]
                     if entry.get("placeholder") and len(olds) == 1 and olds[0]["param"] == _resolved(pid) \
@@ -482,6 +495,16 @@ _FIXED = {
         _lib(("Party", [(1, "Snow", [_e(5, 1)])]), ("Zootopia 2", [(2, "Dusk", [_DUSK5])])),
         _lib(("Party", [(1, "Snow", [_e(5, 1)])]), ("Zootopia", [(2, "Dusk", [{**_DUSK5, "code": 31}])])),
         resolve=0),
+    # N2: a new Glow plays code 30 and also has codes 10 and 20, two stored Glows' codes, so it is ambiguous;
+    # a weaker match (category and blob, to the dropped-out Glow 99) does not then take a name for it
+    "ambiguous, then a weaker fit": _rounds(
+        _lib(("Party", [(1, "Glow", [_e(10, 1, "kwEB")]), (3, "Glow", [_e(99, 3, "kwKK")])]),
+             ("Life", [(2, "Glow", [_e(20, 2, "kwEC")])])),
+        _lib(("Party", [(4, "Glow", [_e(30, 4, "kwKK"), _e(10, 5, "kwEB"), _e(20, 6, "kwEC")])]))),
+    # N2: a Glow at a new code and blob keeps its param id: a guess (the param id only breaks a tie)
+    "guess by param id": _rounds(
+        _lib(("Party", [(1, "Glow", [_e(10, 1, "kwEB")]), (2, "Glow", [_e(20, 2, "kwEC")])])),
+        _lib(("Party", [(1, "Glow", [_e(11, 1, "kwED")]), (2, "Glow", [_e(20, 2, "kwEC")])]))),
 }
 
 
@@ -489,3 +512,30 @@ _FIXED = {
 def test_fixed_histories_keep_every_name_on_its_scene(case: str, fs: ModuleType, tmp_path: Path) -> None:
     assert check(fs, _FIXED[case], tmp_path, 0) == []
 
+
+def test_the_tombstone_is_written_before_the_store(fs: ModuleType, tmp_path: Path) -> None:
+    """N1: where the tombstone can't be written, the store does not lose the name it would retire."""
+    _fetch(fs, "H6641", render(_FIXED["retired"][0]["lib"]), tmp_path)
+    write = fs.write_catalog
+
+    def tombstone_fails(path: Path, data: object) -> None:
+        if path == fs.TOMBSTONE:
+            raise OSError("disk full")
+        write(path, data)
+
+    fs.write_catalog, fs.BODIES["H6641"] = tombstone_fails, render(_FIXED["retired"][1]["lib"])
+    fs.CAP.update(out=set(), named=([], []), unsure=set())
+    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+        assert fs.main(["H6641"]) == 1
+    assert "Rain" in fs.read_catalog("H6641", tmp_path)
+
+
+def test_a_scene_cut_for_scene_type_5_is_removed_and_retired(fs: ModuleType, tmp_path: Path) -> None:
+    """N1 / N4: a stored scene the library now ships as a sceneType-5 new-DIY scene (fetch()'s cut) is
+    removed, printed and retired."""
+    lib = _lib(("Party", [(1, "Snow", [_e(5, 1)]), (2, "Rain", [_e(10, 2)])]))
+    _fetch(fs, "H6641", render(lib), tmp_path)
+    lib[0]["scenes"][1]["effects"][0]["type5"] = True
+    after, said = _fetch(fs, "H6641", render(lib), tmp_path)
+    assert "Rain" not in after and "Rain" in said["removed"]
+    assert "Rain" in fs.read_tombstone(tmp_path / "tombstone.json")["H6641"]["retired"]
