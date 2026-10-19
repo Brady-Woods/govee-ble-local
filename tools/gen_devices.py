@@ -236,23 +236,34 @@ def load(raw: bytes) -> Any:
     return yaml.load(raw, Loader=loader)  # noqa: S506  # nosec B506  # a safe loader
 
 
+# What the snapshot holds (tools/fetch_catalog.py writes it): its prose and date, and per SKU the goodsType
+# and ic only, so no product name, image or URL gets in.
+_SNAPSHOT_KEYS = frozenset({"doc", "doc-ref", "fetched", "skus", "source_app"})
+_ENTRY_KEYS = frozenset({"goodsType", "ic"})
+
+
 def snapshot(path: pathlib.Path = CATALOGUE) -> dict[str, int]:
     """The catalogue snapshot's ``{SKU: goodsType}`` (its ``ic`` is read nowhere: _resolve's module doc).
-    GenError on a missing or malformed file, a SKU that isn't 3-8 upper-case alphanumerics (as
-    tools/fetch_catalog.py writes them), or an entry without a non-negative int goodsType."""
+    GenError on a missing or malformed file, a top-level key outside :data:`_SNAPSHOT_KEYS`, a SKU that isn't
+    3-8 upper-case alphanumerics (as tools/fetch_catalog.py writes them), or an entry whose keys are not
+    exactly goodsType and ic, each a non-negative int."""
     try:
-        skus = json.loads(path.read_text(encoding="utf-8"))["skus"]
+        data = json.loads(path.read_text(encoding="utf-8"))
+        skus = data["skus"]
     except (OSError, ValueError, KeyError, TypeError) as exc:
         raise GenError(f"{path.name}: {exc!r}") from None
+    extra = sorted(set(data) - _SNAPSHOT_KEYS)
+    if extra:
+        raise GenError(f"{path.name}: keys {extra} (it holds only {sorted(_SNAPSHOT_KEYS)})")
     if not isinstance(skus, dict) or not skus:
         raise GenError(f"{path.name}: no skus")
     out: dict[str, int] = {}
     for sku, entry in skus.items():
-        gt = entry.get("goodsType") if isinstance(entry, dict) else None
-        if (not re.fullmatch(r"[A-Z0-9]{3,8}", sku) or not isinstance(gt, int) or isinstance(gt, bool)
-                or gt < 0):
-            raise GenError(f"{path.name}: {sku!r} is no SKU with a non-negative int goodsType")
-        out[sku] = gt
+        keys, values = (set(entry), entry.values()) if isinstance(entry, dict) else (set(), ())
+        if (not re.fullmatch(r"[A-Z0-9]{3,8}", sku) or keys != _ENTRY_KEYS
+                or not all(isinstance(v, int) and not isinstance(v, bool) and v >= 0 for v in values)):
+            raise GenError(f"{path.name}: {sku!r} is no SKU with exactly a non-negative int goodsType and ic")
+        out[sku] = entry["goodsType"]
     return out
 
 

@@ -9,6 +9,7 @@ import pathlib
 import sys
 from typing import Any
 
+import pytest
 from conftest import require_optional
 
 from govee_ble_local._generated.devices import FAMILIES, MODE_COLOR_PARSE
@@ -61,6 +62,35 @@ def test_the_catalogue_routes_only_skus_no_row_lists() -> None:
     groups = [skus for skus, _fields, _routes in _resolve.profiles(cut, table)]
     assert ("H6004", "H6006", "H6008", "H0064") in groups and not any("H6052" in g for g in groups)
     assert "tablelampv1" not in {f["id"] for f in cut}   # its only row with support was 22
+
+
+def test_the_snapshot_holds_only_each_skus_goods_type_and_ic(tmp_path: pathlib.Path) -> None:
+    # tools/fetch_catalog.py keeps each product's sku, goodsType and ic (no names, images or URLs) and refuses
+    # a non-200 answer or a SKU listed twice with different values; the generator refuses any other key.
+    fetch = _load(_ROOT / "tools" / "fetch_catalog.py", "fetch_catalog_under_test")
+    item = {"sku": "h6009", "goodsType": 64, "ic": 0, "name": "Smart Bulb", "url": "https://example.com/b"}
+    payload = {"status": 200, "categories": [{"supportGroups": [{"supportSkuList": [
+        {"products": [item, {**item, "sku": "H6009"}, {"sku": "H802A", "goodsType": 74, "ic": 15}]}]}]}]}
+    assert fetch.products(payload) == {"H6009": {"goodsType": 64, "ic": 0},
+                                       "H802A": {"goodsType": 74, "ic": 15}}
+    with pytest.raises(ValueError, match="status 500"):
+        fetch.products({**payload, "status": 500})
+    payload["categories"][0]["supportGroups"][0]["supportSkuList"][0]["products"].append({**item, "ic": 1})
+    with pytest.raises(ValueError, match="H6009 is listed twice"):
+        fetch.products(payload)
+    require_optional("yaml", reason="the generator reads spec/devices.yaml")
+    gen = _load(_ROOT / "tools" / "gen_devices.py", "gen_devices_snapshot")
+    good = {"fetched": "2026-10-18", "skus": {"H6009": {"goodsType": 64, "ic": 0}}}
+    named, short = {"H6009": {"goodsType": 64, "ic": 0, "name": "x"}}, {"H6009": {"goodsType": 64}}
+    for bad, error in (({**good, "names": {}}, r"keys \['names'\]"),
+                       ({**good, "skus": named}, "'H6009' is no SKU"),
+                       ({**good, "skus": short}, "'H6009' is no SKU")):
+        path = tmp_path / "snapshot.json"
+        path.write_text(json.dumps(bad), encoding="utf-8")
+        with pytest.raises(SystemExit, match=error):
+            gen.snapshot(path)
+    path.write_text(json.dumps(good), encoding="utf-8")
+    assert gen.snapshot(path) == {"H6009": 64}
 
 
 def _load(path: pathlib.Path, name: str) -> Any:

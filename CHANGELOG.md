@@ -279,6 +279,8 @@ model, from which the shipped readers are generated).
   (`CategoriesConfig.getDefIcNum`). The device table takes its routes (Added). `tools/fetch_catalog.py`
   refreshes it from the endpoint or a saved response, and rewrites only `fetched` and `skus`. It is
   dev-only and standard-library, reuses `fetch_scenes.py`'s request handling, and the build never runs it.
+  The generator refuses a snapshot with a top-level key other than `doc`, `doc-ref`, `fetched`, `skus` and
+  `source_app`, or an entry whose keys are not exactly `goodsType` and `ic`, so no name or URL can get in.
 - **devices.yaml can now route and describe the 18 supported SKUs on its own** (one-device-list phase 0).
   Each one's goodsType has a `client_profile.by_goods_type` row with the facts the library's hand table
   holds: `models`, `pacts` (the accepted pacts, `Support.addSupportPact`; `any` for the SKU-routed H6188),
