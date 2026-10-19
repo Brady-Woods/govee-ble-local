@@ -225,6 +225,8 @@ def test_merge_keeps_a_resolved_blob_over_the_public_stub() -> None:
     assert "Gone" in fs._merge(existing, {"A": stub}, seen(live=(3,)))               # listed as another name
     assert "Gone" in fs._merge(existing, {"A": stub}, seen(gone=((3, "B"),), live=(3,)))   # a sibling refused
     assert fs._merge(existing, {"B": stub})["B"]["param"] == "REAL"             # kept by scene, not by name
+    bare = {"A": {"code": 10, "param": None, "param_id": 5, "category": "c"}}   # never a placeholder
+    assert fs._merge(bare, {"A": stub})["A"] == stub            # no blob to keep: still a placeholder
     other = dict(stub, param_id=6)                              # another effect: re-resolve it
     assert fs._merge(existing, {"A": other})["A"] == other
     for moved in (dict(stub, code=11), dict(stub, category="d")):   # "A" renumbered, its category renamed
@@ -233,6 +235,8 @@ def test_merge_keeps_a_resolved_blob_over_the_public_stub() -> None:
         assert fs._merge(existing, {"B": moved})["B"] == kept   # a new name: the one resolved entry of its id
         twice = {**existing, "C": {**existing["A"], "code": 12, "param": "ALSO"}}
         assert fs._merge(twice, {"B": moved})["B"] == moved     # two of its id: re-resolve it
+        bare = {"Bare": {"code": 40, "param": None, "param_id": 5, "category": "e"}}   # never a placeholder
+        assert fs._merge(bare, {"B": moved})["B"] == moved      # a bare entry of its id has no blob to keep
 
 
 _ROW = re.compile(r"^(\S+)\s+(\d+)\s+(\d+)(\[[^\]]*\])?\s+(\d+)\s+(\d+)\s+(\d+)\s+(\[.*\])$")

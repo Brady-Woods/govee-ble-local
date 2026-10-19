@@ -11,7 +11,8 @@ codes and blobs are never reused. Checked after every fetch:
   IDEM      an identical re-fetch changes nothing and prints no change
   SAME      a first fetch names a response alike whatever the store holds (N6: no other SKU's names)
   DET       shuffling the categories and scenes of every response changes no stored catalog
-  RETIRE    a removed name comes back only on its own scene, exactly, and printed (N1)
+  RETIRE    a removed name comes back only on its own scene, exactly, and printed; its scene's exact return
+            (a resolved blob's: as its placeholder) takes it back (N1)
   KEEP      a name is removed only for a scene refused for good or cut (sceneType 5), and printed (N3, N4)
   FOLLOW    a name whose scene the app now plays at another of its own lightEffects follows it (N3)
   RESOLVED  a blob --resolve baked in stays while the library ships that scene as a placeholder (N7)
@@ -297,6 +298,11 @@ def replay(fs: ModuleType, rounds: list[dict[str, Any]], root: Path,
                     if entry.get("placeholder") and len(olds) == 1 and olds[0]["param"] == _resolved(pid) \
                             and after[n]["param"] != olds[0]["param"]:
                         fail("RESOLVED", f"{n!r} lost the blob of param id {pid}")
+                    blobs = {entry["param"], _resolved(pid) if entry.get("placeholder") else entry["param"]}
+                    for m, (u, was) in retired.get(sku, {}).items():   # an exact return reclaims its name
+                        if m != n and m not in after and u == owner[pid] and fs.scene_name(m, was) == own \
+                                and fs._scene(was) == fs._scene(entry) and was["param"] in blobs:
+                            fail("RETIRE", f"{m!r} of scene {u} not reclaimed by its exact return: {n!r}")
                     holders = [m for m, b in before.items() if uid(b) == owner[pid]]
                     if len(holders) == 1 and holders[0] not in dropped:
                         b = before[holders[0]]
@@ -358,6 +364,10 @@ _FIXED = {
                             ("Life", [(3, "Rain", [_e(20, 3, "kwIC")])])),
                        _lib(("Party", [(1, "Snow", [_e(5, 1)]), (2, "Rain", [_e(10, 2)])]),
                             ("Life", [(3, "Rain", [_e(20, 3, "kwIC")])]))),
+    # N1 / N7: a resolved placeholder refused for good, then back as the same placeholder: its name, its blob
+    "retired resolved": _rounds(*(_lib(("Party", [(1, "Snow", [_e(5, 1)]),
+                                                  (2, "Dusk", [_e(30, 2, None, big=True, refused=out)])]))
+                                  for out in (False, True, False)), resolve=0),
     # N2: Christmas dropped, then a new Christmas of its category
     "dropped": _rounds(_lib(("Festival", [(1, "Christmas", [_e(10, 1)]), (2, "Snow", [_e(12, 2)])])),
                        _lib(("Festival", [(2, "Snow", [_e(12, 2)])])),

@@ -413,7 +413,20 @@ _ROUNDS: dict[str, tuple[_Step, ...]] = {
     "another SKU's history": (_then((_EMOTION,), _EARLY, sku="H6168"),
                               _then((_EMOTION, _ZOOTOPIA), _LATE, ("Flash (Zootopia 2)",), sku="H6168"),
                               _FIRST),
-    "literal": (_FIRST, _then((_EMOTION, _ZOOTOPIA, ("Specials", (("Flash (Emotion)", 500, "HHHH"),))),
+    # renamed while out of its time: still answered, so its names follow it once it is back in force
+    "category renamed while expired": (
+        _FIRST, _then((_EMOTION, ("Zootopia", _ZOOTOPIA[1], _EXPIRED))),
+        _then((_EMOTION, ("Zootopia", _ZOOTOPIA[1])), {**_STORED, "Flash": (14770, "Zootopia", "DDDD"),
+                                                      "Flash (Zootopia 2)": (14769, "Zootopia", "CCCC")},
+              ("Flash", "Flash (Zootopia 2)"))),
+    # a block renumbered by one, blobs kept: one scene's old code is the next one's new code
+    "codes shifted": (
+        _then((_EMOTION, _ZOOTOPIA, ("Party", (("Wave", 100, "GGGG"), ("Ripple", 101, "HHHH")))),
+              {**_STORED, "Wave": (100, "Party", "GGGG"), "Ripple": (101, "Party", "HHHH")}),
+        _then((_EMOTION, _ZOOTOPIA, ("Party", (("Wave", 101, "GGGG"), ("Ripple", 102, "HHHH")))),
+              {**_STORED, "Wave": (101, "Party", "GGGG"), "Ripple": (102, "Party", "HHHH")},
+              ("Wave", "Ripple"))),
+    "literal":(_FIRST, _then((_EMOTION, _ZOOTOPIA, ("Specials", (("Flash (Emotion)", 500, "HHHH"),))),
                               {**_STORED, "Flash (Emotion) (Specials)": (500, "Specials", "HHHH")},
                               ("Flash (Emotion) (Specials)",))),
 }
