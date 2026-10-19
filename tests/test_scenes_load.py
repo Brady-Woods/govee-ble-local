@@ -22,6 +22,14 @@ EXPECTED = {
     "H60A6": 84, "H61A8": 148, "H6641": 148, "H6004": 63, "H6062": 70, "H6188": 9,
     "H1401": 94, "R1401": 94, "H14B1": 63, "H6002": 8,
 }
+# 1.4.0's ten, each pinned to its set: the SHA-256 prefix of 1.4.0's <SKU>.json, which the set is byte for
+# byte, so a change to one of their catalogs fails even at the same count.
+RELEASED_SETS = {
+    "H6004": "8adf963b1cda677f", "H6006": "29425dd1a9d18cc1", "H6008": "29425dd1a9d18cc1",
+    "H6047": "8d3223a1b569c4cd", "H6052": "b667e19af3548ddc", "H6062": "bdae7b88d3d1f3ec",
+    "H60A6": "380ce4dd009e54ef", "H6188": "3a4741fa1ff4c533", "H61A8": "6bbb491551b4dfc4",
+    "H6641": "6bbb491551b4dfc4",
+}
 
 # The bundled scenes the app's scene list hides at one of their SKU's scene sets (devices.yaml
 # scenes.list_filter) while the library still offers them there: {(SKU, set): how many}.
@@ -162,9 +170,11 @@ def test_the_bundled_scenes_are_ones_the_app_lists():
 def test_the_scene_store_is_the_device_tables():
     """The store and the table agree: the SKUs with a catalog are exactly the ones offered scenes (a SKU
     without one is not: _resolve's module doc), each set is named by its SHA-256 prefix, and every set is some
-    SKU's (no orphan). EXPECTED pins each catalog's size, so a re-pointed or dropped catalog fails."""
+    SKU's (no orphan). EXPECTED pins each catalog's size, so a re-pointed or dropped catalog fails, and
+    RELEASED_SETS each of 1.4.0's ten to its set, so a change to one of them fails."""
     files = resources.files(scenes)
     index = json.loads((files / "index.json").read_text(encoding="utf-8"))
+    assert {sku: index.get(sku) for sku in RELEASED_SETS} == RELEASED_SETS
     offered: set[str] = set()
     for opt_in in (False, True):
         for sku in supported_skus(allow_modelled=opt_in):
