@@ -3034,8 +3034,77 @@ families:
       mode_color_parse: kelvin_15   # every goodsType and pact; the aa a5 group reads overwrite the tint; split_h6099/com/govee/pact_h6099/detail/Info4Detail.java:749-808
       by_goods_type:
         "191": { models: [H6099], power_read: aa01, power_live: [push_30] }   # H6099: no aa 01 heartbeat; ee 30 bit 0 of frame[3]
-        "203": { models: [H6098, H8098], power_read: aa01, power_live: [push_30] }   # H6098 / H8098; pacts (1,1) / (2,1) / (3,1)
-        "336": { models: [H6690], power_read: aa01, power_live: [push_30] }   # H6690; pact (1,1)
+        "203":   # H6098 / H8098, the pact_h6099 detail screen (NewDetailVm)
+          models: [H6098, H8098]
+          power_read: aa01
+          power_live: [push_30]
+          pacts: ["1,1", "2,1", "3,1"]
+          support: modelled
+          color_functions: [segment_brightness, color_temperature]
+          capabilities: [power, brightness, rgb, color_temp, segments, scenes]
+          zones: []
+          account_lock: false
+          scene_dialect: untraced
+          connect_reads: [brightness, color_group]
+          connect_writes: []
+          doc: >-
+            H6098 / H8098 on the pact_h6099 detail screen (NewDetailVm). Colour: version Config.x = 0 -> Config.Yt:
+            Bytes.h, and Bytes.r (white type 1) for a Kelvin-tint colour; segment brightness Config.L version 0 ->
+            Bytes.G; Config.e has every colour-page flag on. The colour strip sends 15 04 groups (Config.A = 1, Bytes.m)
+            with 15 03 brightness groups, where the library's h60a6 scheme sends per-colour 15 01 masks (a divergence,
+            not a missing frame). 14 pieces (Support.getColorPieceSize), read back by the direct aa a5 groups 1..4 of 4
+            after every aa 05 reply (NewDetailVm.o5). Connect: the default strategy's aa 04, the aa 05 read and the
+            groups; the aa 40 IC read is stored only and not modelled. Kelvin, brightness and scene versions are the
+            family specs ([2000, 9000], percent, {0, 1, 2, 3}); the scene apply path is not traced (scene_dialect
+            untraced). Modelled, not traced: the pacts (the row comment's (1,1) / (2,1) / (3,1), uncited), capabilities
+            (from the family's colour opcodes), gradual (left out), zones (none; the ee 30 sub-switch flags are not
+            traced as light zones), connect_writes, and the account lock (the family's: no 0xB1 / 0xB2 on control
+            connects). The realtime colour frame on pact (3,1) is not modelled. Not hardware-verified.
+          doc-ref:
+            - split_h6099/com/govee/pact_h6099/pact/Support.java:42-101,121-144
+            - split_h6099/com/govee/pact_h6099/detail/NewDetailVm$connectBleSuc$1.java:46-143
+            - split_h6099/com/govee/pact_h6099/detail/NewDetailVm.java:437-485
+            - split_h6099/com/govee/pact_h6099/detail/Info4Detail.java:749-808
+            - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4InfoBleIot$iControllerStrategy$1.java:224
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/ColorModeControllerConfig.java:207-256,1069-1099
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:4435,4645,4875-4890
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/ColorPieceConfig.java:385-387,1451-1470
+        "336":   # H6690, the pact_h6099 detail screen (NewDetailVm)
+          models: [H6690]
+          power_read: aa01
+          power_live: [push_30]
+          pacts: ["1,1"]
+          support: modelled
+          color_functions: [segment_brightness, color_temperature]
+          capabilities: [power, brightness, rgb, color_temp, segments, scenes]
+          zones: []
+          account_lock: false
+          scene_dialect: untraced
+          connect_reads: [brightness, color_group]
+          connect_writes: []
+          doc: >-
+            H6690 on the pact_h6099 detail screen (NewDetailVm), with H6098 / H8098 (203). Colour: version Config.x = 0
+            -> Config.Yt: Bytes.h, and Bytes.r (white type 1) for a Kelvin-tint colour; segment brightness Config.L
+            version 0 -> Bytes.G; Config.e has every colour-page flag on. The colour strip sends 15 04 groups
+            (Config.A = 1, Bytes.m) with 15 03 brightness groups, where the library's h60a6 scheme sends per-colour
+            15 01 masks (a divergence, not a missing frame). 14 pieces (Support.getColorPieceSize), read back by the
+            direct aa a5 groups 1..4 of 4 after every aa 05 reply (NewDetailVm.o5). Connect: the default strategy's
+            aa 04, the aa 05 read and the groups; the aa 40 IC read is stored only and not modelled. Kelvin, brightness
+            and scene versions are the family specs ([2000, 9000], percent, {0, 1, 2, 3}); the scene apply path is not
+            traced (scene_dialect untraced). Modelled, not traced: the pact (the row comment's (1,1), uncited),
+            capabilities (from the family's colour opcodes), gradual (left out), zones (none; the ee 30 sub-switch
+            flags are not traced as light zones), connect_writes, and the account lock (the family's: no 0xB1 / 0xB2
+            on control connects). The realtime colour frame (Config.g0 version 0) is not modelled. Not
+            hardware-verified.
+          doc-ref:
+            - split_h6099/com/govee/pact_h6099/pact/Support.java:42-101,121-144
+            - split_h6099/com/govee/pact_h6099/detail/NewDetailVm$connectBleSuc$1.java:46-143
+            - split_h6099/com/govee/pact_h6099/detail/NewDetailVm.java:437-485
+            - split_h6099/com/govee/pact_h6099/detail/Info4Detail.java:749-808
+            - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4InfoBleIot$iControllerStrategy$1.java:224
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/ColorModeControllerConfig.java:207-256,1069-1099
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:4435,4645,4875-4890
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/ColorPieceConfig.java:385-387,1451-1470
         "327": { models: [H66A0], power_read: aa01, power_live: [push_30] }   # H66A0; Kelvin [2700, 6500]; realtime colour version 2 (see realtime_color)
         "273": { models: [H6097], power_read: aa01, power_live: [heartbeat_aa01, push_30] }   # H6097; aa 01 heartbeat and ee 30 bit 0 of frame[3]; split_h6099/com/govee/pact_h6099/adjust/h6097/Info4Detail.java:463-524
         "253": { models: [H605A], power_read: aa01, power_live: [heartbeat_aa01] }   # H605A; its ee 30 handler carries no power; split_h6099/com/govee/pact_h6099/adjust/newdetail/Info4Detail.java:761-826
@@ -3091,6 +3160,39 @@ families:
       mode_color_parse: rgb_kelvin_0d   # goodsType 36, pact (1,1); split_outdoorlight/com/govee/h7040/detail/Info4Detail.java:496-522
       power_read: aa01   # in the connect read set; Compose4InfoBle$iControllerStrategy$1.java:124-128
       power_live: [heartbeat_aa01]   # aa 01 heartbeat on the registered pact (1,1); the ee 30 handler never applies there
+      by_goods_type:
+        "36":   # H7040, the h7040 detail screen
+          models: [H7040]
+          pacts: ["1,1"]
+          support: modelled
+          capabilities: [power, brightness, rgb, color_temp, scenes]
+          zones: []
+          account_lock: false
+          scene_dialect: untraced
+          connect_reads: [brightness]
+          connect_writes: []
+          doc: >-
+            H7040 (camping lantern) on the h7040 detail screen (NewDetailVm). Accepted pact (1,1) only
+            (Support.addSupportPact; the screen's n4 = Support.supportPactV1). Connect (Compose4InfoBle): aa 04 and aa 01
+            in the read set, the aa 05 report decoded as rgb_kelvin_0d (Info4Detail); no 0xAC status read and no 0xB2
+            step (account_lock false). Colour 0x0d through Config.x[36] = 2 -> Config.bu: RGB Bytes.f with no segment
+            mask (one piece), and Bytes.p when the picked colour is a Kelvin tint in [2000, 9000]
+            (KelvinConfig.Config.i[36] = 0). Brightness percent (BrightnessConfig version 1). Scenes: versionArray
+            {0, 1} (Support.java:143-145); the scene apply path is not cited, so scene_dialect untraced. Kelvin,
+            brightness and scene_versions are the family specs. Modelled: the capabilities are read from the family's
+            opcodes (color_temp from the Bytes.p frame, the h6006 scheme's both-slot CCT form; a Kelvin control on the
+            colour page is not cited). Not modelled: the aa 0b SOS read the screen adds at connect (NewDetailVm.o5 ->
+            q5, SosController); nothing on the control path reads it. Not hardware-verified.
+          doc-ref:
+            - split_outdoorlight/com/govee/h7040/pact/Support.java:48-55,143-145
+            - split_outdoorlight/com/govee/h7040/pact/deviceitem/Model.java:86-89
+            - split_outdoorlight/com/govee/h7040/detail/Compose4InfoBle$iControllerStrategy$1.java:91-141
+            - split_outdoorlight/com/govee/h7040/detail/NewDetailVm.java:306-309,416-467,1018-1025
+            - split_outdoorlight/com/govee/h7040/detail/Info4Detail.java:150-161,496-522
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:1499-1503,5537-5541,13459-13467
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:291-299,431-450
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:193-200,402-405,694-698,1175-1177
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:199-215,252-259
       wire_cipher: runtime
       wire:
         forms: { f_01: light, f_09: datetime_epoch }

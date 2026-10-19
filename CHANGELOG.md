@@ -47,9 +47,9 @@ model, from which the shipped readers are generated).
 - **The modelled-row opt-in**: `allow_modelled=True` on `profile_for`, `is_supported_sku`,
   `supported_skus` and `create_device` also admits rows whose `support` is `modelled` (inferred, not
   traced). Off by default, so the default table is the user's "app-traced by default"; and as the build
-  refuses a SKU that a modelled row and a traced row both list, the opt-in only adds SKUs. No row is
-  `modelled` yet. `scanner.supported`, `scanner.match` and `discover` take it too, so an opted-in
-  caller's scan reports those devices as supported.
+  refuses a SKU that a modelled row and a traced row both list, the opt-in only adds SKUs. The `modelled`
+  rows are listed under Spec. `scanner.supported`, `scanner.match` and `discover` take it too, so an
+  opted-in caller's scan reports those devices as supported.
 - `DeviceProfile.status_read` (keyword-only, default `(0x41, 0x30, 0xA5)`, 1.x's request): the TLV types
   the 0xAC status read requests, in order, from the row's `status_read`. `build.status_query(types=)`
   builds a request from them (`full` stays for the H60A6's default).
@@ -137,6 +137,17 @@ model, from which the shipped readers are generated).
   and `mode_reports_kelvin`, with `doc` and `doc-ref`. The rows are 303 (H60A6), 119 (H6047), 19 (H61A8),
   64 (H6004 / H6006 / H6008), 22 (H6052), 247 (H6641), 0 (H6188), 41 (H6062), 51 (H6061) and the plugs'
   43 / 50 / 90 / 307. The trace notes in `devices/profile.py` are now the rows' `doc` / `doc-ref`.
+- **Four SKUs behind the modelled opt-in** (one-device-list phase 2): rows for goodsTypes the spec
+  already describes, every one `support: modelled` (source-modelled, not live-verified: no unit was on the
+  bench), so `allow_modelled=True` admits them and the default table (the 18) is unchanged. Each row's
+  `doc` names the facts that are inferred rather than traced.
+  - pact_h6099 203 (**H6098 / H8098**, pacts (1, 1) / (2, 1) / (3, 1)) and 336 (**H6690**, pact (1, 1)),
+    one profile: the h60a6 0x15 frames, 14 segments by the direct `aa a5` groups of 4, Kelvin
+    [2000, 9000], `kelvin_15` colour report. The app's colour strip sends 15 04 groups where the library
+    sends per-colour 15 01 masks (documented).
+  - h7040 36 (**H7040**, pact (1, 1)): whole-device 0x0d colour and CCT (the h6006 scheme), Kelvin
+    [2000, 9000], `rgb_kelvin_0d` colour report.
+  None of them offers scenes yet: their scene apply path isn't traced (`scene_dialect: untraced`).
 - **H6004 routes to goodsType 64.** Rows 9 and 10 (H6003, and the H6004's Wi-Fi revision) say
   `connectivity: [wifi, iot]`, so no BLE client routes there.
 - **goodsType 64's scene versions are {0, 1}**, the control screen's `ScenesConfigBean` set
