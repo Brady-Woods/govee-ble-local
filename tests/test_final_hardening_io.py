@@ -330,8 +330,9 @@ def test_fetch_lists_what_the_apps_scene_list_lists(monkeypatch: pytest.MonkeyPa
     listed = {"Op": 1, "Static": 3, "AfterGate": 2, "Expired": 1, "DiyFirst": 2}
     assert {n: e["code"] for n, e in fs.fetch("H6047", seen=seen).items()} == listed
     # the op set refuses the DIY ones for good; Gated (the firmware's version rules) and Season (out of its
-    # time) are left out only for now, like the listed ones at each of their lightEffects
-    assert seen.gone == {("NoCodes", "c", 4): {"AAAA"}, ("Codes", "c", 4): {"AAAA"}}
+    # time) are left out only for now, like the listed ones at each of their lightEffects; each refused one
+    # with its blob and param id (none here)
+    assert seen.gone == {("NoCodes", "c", 4): {("AAAA", None)}, ("Codes", "c", 4): {("AAAA", None)}}
     assert seen.live == {(n, "c", e["sceneCode"]) for n, es in scenes.items() if n not in ("NoCodes", "Codes")
                          for e in es} | {("Season", "old", 3)}
     out = capsys.readouterr().out

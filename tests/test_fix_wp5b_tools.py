@@ -215,7 +215,7 @@ def test_merge_keeps_a_resolved_blob_over_the_public_stub() -> None:
     def seen(gone: tuple[tuple[int, str | None], ...] = (), live: tuple[int, ...] = ()) -> Any:
         out = fs.Answered()
         for code, blob in gone:
-            out.gone.setdefault(("Gone", "c", code), set()).add(blob)
+            out.gone.setdefault(("Gone", "c", code), set()).add((blob, None))   # "Gone" has no param id
         out.live |= {("Gone", "c", code) for code in live}
         return out
 
