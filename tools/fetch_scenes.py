@@ -11,20 +11,22 @@ cloud call is needed), stored once by content: `<set>.json` is named by the firs
 hex digits of its SHA-256 and `index.json` maps each SKU to its set, so SKUs with the
 same scenes share one file.
 
-A stored name is a Home Assistant effect name that automations keep, so a re-fetch never points
-one at another scene (stored_names). Each stored scene records the sceneName the app lists it
-under (``scene_name``, written only where the stored name differs) and its category. A listed
-scene keeps the stored name of the stored scene of its sceneName it matches, by code and
-category, else by code (its category renamed), else by category (its code changed); the last two
-are printed. Only a scene that matches none gets a new name, never one the stored catalog holds:
-its sceneName where that is free, else "<name> (<its category>)", for example "Flash (Emotion)",
-or "<name> (<category>, 2)", 3 and so on. The app lists a name in more than one category (H61A8 /
-H6641: Emotion's "Flash", code 2020, and Zootopia 2's, 14769); of the new scenes of one sceneName,
-the highest code keeps it, whatever the app's list order (the bundled catalog holds 14769 so). A
-stored scene the fetch no longer lists stays under its name: one the library dropped, and one left
-out only for its time (an expired category or effect) or the firmware's version rules. Only one the
-library still answers and the SKU's scene list refuses for good (its op set), or a sceneType-5 scene
-the library does not upload, is removed, and printed.
+A stored name is a Home Assistant effect name that automations keep, so a re-fetch never points one
+at another scene (stored_names). Each stored scene records the sceneName the app lists it under
+(``scene_name``, written only where the stored name differs) and its category. A listed scene keeps
+the stored name of the stored scene of its sceneName it matches: by code, category and blob, else by
+code and category, by code (its category renamed), by category and blob, by category (its code
+changed); the moves are printed, and a match short of code and category passes over a stored scene
+the library still answers as stored. Only a scene that matches none gets a new name, never one the
+stored catalog holds: the name another SKU's stored catalog gives the same scene where that is free,
+else its sceneName where that is free, else "<name> (<its category>)" (for example
+"Flash (Emotion)"), or "<name> (<category>, 2)", 3 and so on. The app lists a name in more than one category
+(H61A8 / H6641: Emotion's "Flash", code 2020, and Zootopia 2's, 14769); of the new scenes of one
+sceneName that no other SKU names, the highest code keeps it, whatever the app's list order (the
+bundled catalog holds 14769 so). A stored scene the fetch no longer lists stays under its name: one
+the library dropped, and one left out only for its time (an expired category or effect) or the
+firmware's version rules. Only one the library still answers and the SKU's scene list refuses for
+good (its op set), or a sceneType-5 scene the library does not upload, is removed, and printed.
 
     python3 tools/fetch_scenes.py            # all supported SKUs
     python3 tools/fetch_scenes.py H60A6 H61A8
@@ -151,6 +153,23 @@ def read_catalog(sku: str, out_dir: pathlib.Path | None = None) -> dict[str, Ent
     if not isinstance(data, dict) or not all(isinstance(v, dict) for v in data.values()):
         raise ValueError(f"scene set {name} ({sku}) is not a JSON object of scene objects")
     return data
+
+
+def _peers(sku: str, out_dir: pathlib.Path | None = None) -> tuple[dict[str, Entry], ...]:
+    """The other SKUs' stored catalogs, in SKU order, each scene set once (:func:`stored_names`'s peers). A
+    set that does not read is skipped and named on stderr; fetching its own SKU reports it."""
+    index, key = read_index(out_dir), validate_sku(sku)
+    first: dict[str, str] = {}   # scene set -> the first SKU that points to it
+    for other in sorted(index):
+        if other != key:
+            first.setdefault(index[other], other)
+    out = []
+    for other in first.values():
+        try:
+            out.append(read_catalog(other, out_dir))
+        except (OSError, ValueError) as err:
+            print(f"{sku}: {other}'s stored catalog is not read for its names: {err}", file=sys.stderr)
+    return tuple(out)
 
 
 def store_catalog(sku: str, data: dict[str, Entry], out_dir: pathlib.Path | None = None) -> str:
@@ -340,41 +359,75 @@ def _order(entry: Entry) -> tuple[int, str, str]:
     return (_code(entry), _label(entry.get("category")), _dumps(entry))
 
 
-# How a listed scene matches a stored one of its sceneName, best first: by code and category, by code
-# (its category renamed), by category (its code changed).
-_MATCHES = (("code", "category"), ("code",), ("category",))
+# How a listed scene matches a stored one of its sceneName, best first: by code, category and blob, by code
+# and category, by code (its category renamed), by category and blob (its code changed: H6006's 26 recodes
+# keep their blob), by category. The blob passes pair same-named scenes of one code or one category by
+# their own blob, not by code or name order.
+_MATCHES = (("code", "category", "param"), ("code", "category"), ("code",), ("category", "param"),
+            ("category",))
+Listed = tuple[str, Entry, frozenset[int]]   # (sceneName, entry, the codes of its lightEffects for the SKU)
 
 
-def stored_names(listed: list[tuple[str, Entry]], existing: Mapping[str, Entry] | None = None) -> list[str]:
-    """The names the ``listed`` scenes (``(sceneName, entry)``) are stored under, one per scene, whatever the
-    order they are listed in.
+def _exact(keys: tuple[str, ...]) -> bool:
+    """Whether a match on ``keys`` holds the scene's code and category, its identity (:func:`_scene`)."""
+    return "code" in keys and "category" in keys
 
-    - Each listed scene takes the name of a stored scene in ``existing`` (the stored catalog) of its sceneName
-      (:func:`scene_name`) that no other has taken, matched by code and category, else by code, else by
-      category (:data:`_MATCHES`). Each match is tried for every listed scene before the next, scenes in
-      sceneName and code order, so the best match wins and a stored name is never moved to another scene
-      of its name.
-    - A scene that matches none gets a name that neither ``existing`` nor another listed scene holds: its
-      sceneName, which of the new scenes of that sceneName the highest code takes (:func:`_order`; the
-      bundled H61A8 / H6641 catalog holds that one, the last-one-wins fetch's pick); else
-      "<name> (<its category>)", or "<name> (<category>, 2)", 3 and so on, in code order. The sceneNames
-      are given out before any is stored apart, so a sceneName that reads "<name> (<category>)" keeps it
-      where it is free."""
-    free = dict(existing or {})
-    taken = set(free)
-    names: list[str | None] = [None] * len(listed)
-    order = sorted(range(len(listed)), key=lambda i: (listed[i][0], _order(listed[i][1])))
-    for keys in _MATCHES:
+
+def _pair(listed: list[Listed], order: list[int], names: list[str | None], pool: dict[str, Entry],
+          matches: tuple[tuple[str, ...], ...], answers: Collection[Answer]) -> None:
+    """Give each unnamed listed scene the name of an entry of ``pool`` of its sceneName, by the first of
+    ``matches`` that finds one, each match tried for every scene (in ``order``) before the next; a name taken
+    leaves ``pool``. In a match short of code and category, an entry the library still answers at its own
+    sceneName, category and code (``answers``) is that scene's, not this one's, unless its code is one of
+    this scene's own lightEffects'."""
+    for keys in matches:
         for i in order:
-            own, entry = listed[i]
+            own, entry, codes = listed[i]
             if names[i] is not None:
                 continue
-            hits = sorted((n for n, e in free.items()
-                           if scene_name(n, e) == own and all(e.get(k) == entry.get(k) for k in keys)),
-                          key=lambda n: (_code(free[n]), n))
+            hits = sorted((n for n, e in pool.items()
+                           if scene_name(n, e) == own and all(e.get(k) == entry.get(k) for k in keys)
+                           and (_exact(keys) or e.get("code") in codes
+                                or (own, e.get("category"), e.get("code")) not in answers)),
+                          key=lambda n: (_code(pool[n]), n))
             if hits:
                 names[i] = hits[0]
-                del free[hits[0]]
+                del pool[hits[0]]
+
+
+def stored_names(listed: list[Listed], existing: Mapping[str, Entry] | None = None,
+                 answers: Collection[Answer] = (), peers: tuple[Mapping[str, Entry], ...] = ()) -> list[str]:
+    """The names the ``listed`` scenes (:data:`Listed`) are stored under, one per scene, whatever the order
+    they are listed in.
+
+    - Each listed scene takes the name of a stored scene in ``existing`` (the stored catalog) of its sceneName
+      (:func:`scene_name`) that no other has taken, by the first match of :data:`_MATCHES` that finds one:
+      by code, category and blob, else by code and category, by code, by category and blob, by category.
+      Each match is tried for every listed scene before the next, scenes in sceneName and code order, so
+      the best match wins and a stored name is never moved to another scene of its name. A match short of
+      code and category passes over a stored scene the library still answers at its own
+      sceneName, category and code (``answers``, fetch's :func:`_answers`), unless that code is one of the
+      listed scene's own lightEffects': that scene is still there, and its name stays its own.
+    - A scene that matches none takes the name another SKU's stored catalog (``peers``, in SKU order) gives
+      the same scene (its sceneName, code and category; one of its blob first), where neither
+      ``existing`` nor another listed scene holds it, so identical responses name alike whatever each SKU's
+      history.
+    - Any other gets a name that neither ``existing`` nor another listed scene holds: its sceneName, which
+      of the new scenes of that sceneName the highest code takes (:func:`_order`; the bundled H61A8 / H6641
+      catalog holds that one, the last-one-wins fetch's pick); else "<name> (<its category>)", or
+      "<name> (<category>, 2)", 3 and so on, in code order. The sceneNames are given out before any is stored
+      apart, so a sceneName that reads "<name> (<category>)" keeps it where it is free."""
+    taken = set(existing or {})
+    names: list[str | None] = [None] * len(listed)
+    order = sorted(range(len(listed)), key=lambda i: (listed[i][0], _order(listed[i][1])))
+    _pair(listed, order, names, dict(existing or {}), _MATCHES, answers)
+    pool: dict[str, Entry] = {}
+    for peer in peers:
+        for n, e in peer.items():
+            if n not in taken:
+                pool.setdefault(n, e)
+    _pair(listed, order, names, pool, tuple(k for k in _MATCHES if _exact(k)), ())
+    taken.update(n for n in names if n is not None)
     new: dict[str, list[int]] = {}
     for i in order:
         if names[i] is None:
@@ -422,7 +475,8 @@ def _in_time(sku: str, effects: list[dict[str, Any]], ops: frozenset[int] | None
 
 
 def fetch(sku: str, app_version: str = DEFAULT_APP_VERSION, *, seen: set[Answer] | None = None,
-          existing: Mapping[str, Entry] | None = None) -> dict[str, Entry]:
+          existing: Mapping[str, Entry] | None = None,
+          peers: tuple[Mapping[str, Entry], ...] = ()) -> dict[str, Entry]:
     """``sku``'s scenes from the public scene library: each listed scene's lightEffect for the SKU
     (:func:`listed_effect`, over :func:`op_set` and the categories in force), with the values the app reads
     for it (:func:`for_sku`). A scene whose effect depends on the firmware's version rules is left out, and
@@ -431,11 +485,12 @@ def fetch(sku: str, app_version: str = DEFAULT_APP_VERSION, *, seen: set[Answer]
     there (the first in force, which the union may drop) keeps the union's, and is named on stdout too. For a
     ``legacy_scene`` SKU the sceneType-5 scenes the library does not upload are left out
     (:func:`uploads_type5`) and named, before any scene is named. The rest are named over ``existing``, the
-    stored catalog (:func:`stored_names`); stdout names each new one stored apart and each stored name whose
-    scene has a new code or category. ``seen``, when given, gets ``(sceneName, category, code)`` of every
-    scene the library answered with that is listed or left out for good (:func:`_answers`, for
-    :func:`_merge`): not one left out only for its time (its category's or its effects') or the firmware's
-    version rules (:func:`_in_time`), which _merge keeps under its stored name, as one the library dropped."""
+    stored catalog, and ``peers``, the other SKUs' (:func:`stored_names`); stdout names each new one stored
+    apart and each stored name whose scene has a new code or category. ``seen``, when given, gets
+    ``(sceneName, category, code)`` of every scene the library answered with that is listed or left out for
+    good (:func:`_answers`, for :func:`_merge`): not one left out only for its time (its category's or its
+    effects') or the firmware's version rules (:func:`_in_time`), which _merge keeps under its stored name,
+    as one the library dropped."""
     key = validate_sku(sku)
     ops = op_set(key)
     null_set = any(not s for s in scene_sets(key))
@@ -450,7 +505,7 @@ def fetch(sku: str, app_version: str = DEFAULT_APP_VERSION, *, seen: set[Answer]
         raise ValueError(f"library response for {sku} exceeds {MAX_RESPONSE_BYTES} bytes; refusing")
     payload = json.loads(raw)
     held_back: set[Answer] = set()   # left out for their time or version rules only: _merge keeps them
-    named: list[tuple[str, Entry]] = []
+    named: list[Listed] = []
     gated: list[str] = []
     unfiltered: list[str] = []
     type5: list[str] = []
@@ -459,12 +514,13 @@ def fetch(sku: str, app_version: str = DEFAULT_APP_VERSION, *, seen: set[Answer]
         in_force = effective(category, now_ms)
         for scene in category.get("scenes", []):
             effects = scene.get("lightEffects") or []
+            answered = _scene_answers(key, category, scene)
             listed, held = listed_effect(key, effects, ops, now_ms) if in_force else (None, False)
             if held:
                 gated.append(str(scene.get("sceneName")))
             if listed is None:
                 if _in_time(key, effects, ops, now_ms):
-                    held_back |= _scene_answers(key, category, scene)
+                    held_back |= answered
                 continue
             eff = for_sku(key, listed)
             if eff["code"] is None:
@@ -496,19 +552,20 @@ def fetch(sku: str, app_version: str = DEFAULT_APP_VERSION, *, seen: set[Answer]
             if versions is not None and uploads_type5(entry, versions):
                 type5.append(str(scene["sceneName"]))
                 continue
-            named.append((scene["sceneName"], entry))
+            named.append((scene["sceneName"], entry, frozenset(code for _n, _c, code in answered)))
+    answers = _answers(key, payload)
     if seen is not None:
-        seen.update(_answers(key, payload) - held_back)
+        seen.update(answers - held_back)
     stored = existing or {}
-    names = stored_names(named, stored)
+    names = stored_names(named, stored, answers, peers)
     scenes: dict[str, Entry] = {}
     apart: list[str] = []
     moved: list[str] = []
-    for (own, entry), name in zip(named, names, strict=True):
+    for (own, entry, _codes), name in zip(named, names, strict=True):
         if name != own:
             entry["scene_name"] = own
         scenes[name] = entry
-    for (own, entry), name in zip(named, names, strict=True):
+    for (own, entry, _codes), name in zip(named, names, strict=True):
         was = stored.get(name)
         if was is None and name != own:
             plain = scenes.get(own) or stored.get(own) or {}
@@ -774,7 +831,7 @@ def main(skus: list[str], app_version: str = DEFAULT_APP_VERSION) -> int:
         public: set[Answer] = set()
         try:
             existing = read_catalog(sku)
-            fresh = fetch(sku, app_version, seen=public, existing=existing)
+            fresh = fetch(sku, app_version, seen=public, existing=existing, peers=_peers(sku))
         except Exception as err:
             print(f"{sku}: FETCH FAILED: {err}", file=sys.stderr)
             failures += 1

@@ -338,11 +338,18 @@ _RULES = {"rules": [{"hardVersion": "1.00.01", "softVersion": "1.05.00"}]}
 # (category name, ((sceneName, code, param[, lightEffect fields]), ...)[, category fields])
 _Library = tuple[tuple[Any, ...], ...]
 _Step = tuple[str, _Library, dict[str, tuple[int, str, str]], tuple[str, ...]]
-# The app lists "Flash" in two categories (H61A8: Emotion's 2020, Zootopia 2's 14769), here twice in one.
-_EMOTION = ("Emotion", (("Flash", 2020, "EEEE"), ("Glow", 30, "AAAA")))
+# The app lists "Flash" in two categories (H61A8: Emotion's 2020, Zootopia 2's 14769), here twice in one,
+# and "Glow" twice in one at one code, with two blobs.
+_EMOTION = ("Emotion", (("Flash", 2020, "EEEE"), ("Glow", 30, "AAAA"), ("Glow", 30, "BBBB")))
 _ZOOTOPIA = ("Zootopia 2", (("Flash", 14769, "CCCC"), ("Flash", 14770, "DDDD")))
 _STORED = {"Flash": (14770, "Zootopia 2", "DDDD"), "Flash (Emotion)": (2020, "Emotion", "EEEE"),
-           "Flash (Zootopia 2)": (14769, "Zootopia 2", "CCCC"), "Glow": (30, "Emotion", "AAAA")}
+           "Flash (Zootopia 2)": (14769, "Zootopia 2", "CCCC"), "Glow": (30, "Emotion", "BBBB"),
+           "Glow (Emotion)": (30, "Emotion", "AAAA")}
+# H6168 fetched before Zootopia 2 was listed, then after
+_EARLY = {"Flash": (2020, "Emotion", "EEEE"), "Glow": (30, "Emotion", "BBBB"),
+          "Glow (Emotion)": (30, "Emotion", "AAAA")}
+_LATE = {**_EARLY, "Flash (Zootopia 2)": (14769, "Zootopia 2", "CCCC"),
+         "Flash (Zootopia 2, 2)": (14770, "Zootopia 2", "DDDD")}
 
 
 def _then(library: _Library, after: dict[str, tuple[int, str, str]] = _STORED, printed: tuple[str, ...] = (),
@@ -368,6 +375,11 @@ _ROUNDS: dict[str, tuple[_Step, ...]] = {
                           ("Flash (Zootopia 2, 2)", "Flash (Party)"))),
     "renumber": (_FIRST, _then(_zootopia(_ZOOTOPIA[1][0], ("Flash", 14771, "DDDD")),
                                {**_STORED, "Flash": (14771, "Zootopia 2", "DDDD")}, ("Flash",))),
+    # the renumbered holder keeps its name by its blob, not the dropped-out sibling's lower code
+    "sibling dropped, then the holder renumbered": (
+        _FIRST, _then(_zootopia(_HOLDER)),
+        _then(_zootopia(("Flash", 14771, "DDDD")), {**_STORED, "Flash": (14771, "Zootopia 2", "DDDD")},
+              ("Flash",))),
     "category rename": (_FIRST, _then((_EMOTION, ("Zootopia", _ZOOTOPIA[1])),
                                       {**_STORED, "Flash": (14770, "Zootopia", "DDDD"),
                                        "Flash (Zootopia 2)": (14769, "Zootopia", "CCCC")},
@@ -385,6 +397,18 @@ _ROUNDS: dict[str, tuple[_Step, ...]] = {
     # answered, refused for good (op type -1): removed, and printed
     "refused": (_FIRST, _then(_zootopia(_ZOOTOPIA[1][0], (*_HOLDER, {"sceneType": 9})),
                               {n: v for n, v in _STORED.items() if n != "Flash"}, ("Flash",))),
+    # the refused holder is still answered, so a new scene of its category does not take its name
+    "refused, and a same-category scene": (
+        _FIRST, _then(_zootopia(_ZOOTOPIA[1][0], (*_HOLDER, {"sceneType": 9}), ("Flash", 14771, "FFFF")),
+                      {**{n: v for n, v in _STORED.items() if n != "Flash"},
+                       "Flash (Zootopia 2, 2)": (14771, "Zootopia 2", "FFFF")},
+                      ("Flash", "Flash (Zootopia 2, 2)")),
+        _then(_zootopia(*_ZOOTOPIA[1], ("Flash", 14771, "FFFF")),
+              {**_STORED, "Flash (Zootopia 2, 2)": (14771, "Zootopia 2", "FFFF")})),
+    # identical responses name alike whatever the history: a first fetch takes another SKU's names
+    "a peer's names": (_then((_EMOTION,), _EARLY, sku="H6168"),
+                       _then((_EMOTION, _ZOOTOPIA), _LATE, ("Flash (Zootopia 2)",), sku="H6168"),
+                       _then(_FIRST[1], _LATE)),
     "literal": (_FIRST, _then((_EMOTION, _ZOOTOPIA, ("Specials", (("Flash (Emotion)", 500, "HHHH"),))),
                               {**_STORED, "Flash (Emotion) (Specials)": (500, "Specials", "HHHH")},
                               ("Flash (Emotion) (Specials)",))),
@@ -409,10 +433,12 @@ def test_fetch_never_points_a_stored_name_at_another_scene(change: str, monkeypa
     """A stored name is an effect name automations keep. A first fetch names the scenes the app lists under
     one name whatever their order: the highest code keeps it, each other is "<name> (<category>)" (", n"
     where that is taken), and each records its sceneName. A re-fetch matches each listed scene to a stored
-    one of its sceneName (by code and category, else code, else category); only a new one gets a new name,
-    never a stored one. A stored scene no longer listed keeps its name, unless the library still answers it
-    and the SKU's scene list refuses it for good; one left out for its time or version rules is kept. Round
-    by round, every stored name keeps its code, category and blob or is printed."""
+    one of its sceneName (by code, category and blob, else code and category, and so on to category
+    alone, passing over one the library still answers); only a new one gets a new name, another SKU's name for
+    the same scene first, never a stored one. A stored scene no longer listed keeps its name, unless the
+    library still answers it and the SKU's scene list refuses it for good; one left out for its time or
+    version rules is kept. Round by round, every stored name keeps its code, category and blob or is
+    printed."""
     fs = _tool("fetch_scenes")
     monkeypatch.setattr(fs, "OUT_DIR", tmp_path)
 
@@ -430,7 +456,8 @@ def test_fetch_never_points_a_stored_name_at_another_scene(change: str, monkeypa
         assert view(stored) == after
         if step == _FIRST and not before:
             assert {n: e.get("scene_name") for n, e in stored.items()} == {
-                "Flash": None, "Flash (Emotion)": "Flash", "Flash (Zootopia 2)": "Flash", "Glow": None}
+                "Flash": None, "Flash (Emotion)": "Flash", "Flash (Zootopia 2)": "Flash", "Glow": None,
+                "Glow (Emotion)": "Glow"}
         out = capsys.readouterr().out
         changes = "\n".join(line for line in out.splitlines() if "stored names" in line)
         for name, scene in before.items():

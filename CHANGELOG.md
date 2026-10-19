@@ -335,17 +335,20 @@ model, from which the shipped readers are generated).
   the 93 SKUs fetched on 2026-10-19, H1A42's "Sleep" and "Meditation" and H60B1's "Dusk" among them), and the
   fetch kept only the last of them. Each one is now stored: a new one under its sceneName where that is free,
   else as "<name> (<category>)" or "<name> (<category>, n)", with its sceneName in a new `scene_name` key
-  where the two differ (the loader ignores the key). Of the new scenes of one sceneName the highest code keeps
-  it, whatever the list order, so identical responses give identical names (the bundled H61A8 / H6641 "Flash"
-  is 14769, which a first fetch picks too). A re-fetch matches each listed scene to a stored one of its
-  sceneName by code and category, else by code (its category renamed), else by category (its code changed),
-  and prints the last two; only a scene that matches none gets a new name, and never one the store holds. A
-  stored scene no longer listed keeps its name, as does one left out only for its time (an expired category or
-  effect) or the firmware's version rules, so its name is never freed for another scene; only one the library
-  still answers that the SKU's scene list refuses for good (its op set), or a sceneType-5 scene the library
-  does not upload, is removed and printed. Scenes are named after the sceneType-5 scenes a `legacy_scene` SKU
-  does not upload are left out, and a blob resolved by `--resolve` is kept by the scene's code, category and
-  param id, not by its name. No bundled catalog changes.
+  where the two differ (the loader ignores the key). A new scene first takes the name another SKU's stored
+  catalog gives the same scene (its sceneName, code and category) where that is free; of the other new scenes
+  of one sceneName the highest code keeps it, whatever the list order, so identical responses give identical
+  names whatever each SKU's history (the bundled H61A8 / H6641 "Flash" is 14769, which a first fetch of H6168
+  picks too). A re-fetch matches each listed scene to a stored one of its sceneName by code, category and
+  blob, else by code and category, by code (its category renamed), by category and blob, by category (its code
+  changed; H6006's 26 recodes keep their blob), and prints each move; a match short of code and category
+  passes over a stored scene the library still answers as stored. Only a scene that matches none gets a new
+  name, and never one the store holds. A stored scene no longer listed keeps its name, as does one left out
+  only for its time (an expired category or effect) or the firmware's version rules, so its name is never
+  freed for another scene; only one the library still answers that the SKU's scene list refuses for good (its
+  op set), or a sceneType-5 scene the library does not upload, is removed and printed. Scenes are named after
+  the sceneType-5 scenes a `legacy_scene` SKU does not upload are left out, and a blob resolved by `--resolve`
+  is kept by the scene's code, category and param id, not by its name. No bundled catalog changes.
 
 ### Spec
 - `devices.yaml` `scenes.list_filter`: which library scenes the control screen lists and with which
