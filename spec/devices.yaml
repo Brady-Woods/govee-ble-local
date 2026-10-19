@@ -1119,8 +1119,10 @@ families:
           doc: >-
             H14B1 on the bulblight AcNewDetail (bulblightv3 pact Model.t), the 64 screen. Accepted pacts (1,1) and
             (1,2): Support.addSupportPact (supportPact4H14B1); the screen's n4 (bulblight Support.e ->
-            Support4BulbLightV3.f) takes the bulb union list, which holds both. H14B1 is tied to 408 by that
-            registration and the family's goods_types; it is not in the catalogue snapshot. Colour Config.x[408] = 2 =
+            Support4BulbLightV3.f) takes the bulb union list, which holds both. H14B1 is tied to 408 by naming alone:
+            supportPact4H14B1, KmpGoodsType GOODS_TYPE_VALUE_H14B1 = 408 and the DiyConfig4H14B1 BulbDiyConfig
+            registers for 408 carry the SKU in their names, and no code maps the SKU to the goodsType; it is not in
+            the catalogue snapshot. Colour Config.x[408] = 2 =
             Config.bu (h6006, the family's); Config.I[408] colour temperature on. Kelvin KelvinConfig.Config.i[408] = 2
             = [2700, 6500]. Brightness default version 1 = [1, 100]. Connect: Support4BulbLightV3.i holds 408, so
             ControllerStrategyConfig.C0 takes h0 (aa 04, aa 01, aa 05); after the connect reads VM4Light.i5 sends 33 25
@@ -1143,6 +1145,8 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/DaySyncConfig.java:140-144
             - split_bulblightstringv1/com/govee/bulblightstringv1/bulblight/BulbLightApplication.java:58-70
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:2105-2109,5505-5509,10065-10068,16258-16261
+            - base-classes2/com/govee/shared/checker/KmpGoodsType.java:135
+            - split_bulblightstringv1/com/govee/bulblightstringv1/bulblight/mode/diy/BulbDiyConfig.java:38
       wire_cipher: runtime
       wire:
         forms: { f_01: light, f_09: datetime_epoch }
@@ -1296,9 +1300,12 @@ families:
             power-off-memory read, the TimerConfig.f time sync, the day-sync reads. Scene apply (BaseSceneViewMode.k3):
             a sceneType-5 scene whose param starts 0x50 goes through the new-DIY parser H6640DiyConfig registers for
             this goodsType at app init (ConfigDetail, from H61D3Application), not traced, so scene_dialect is untraced.
-            Not hardware-verified.
+            Not hardware-verified. The two SKUs differ in one per-SKU split: the multi-colour config
+            SupportMultiColorConfig lists goodsType 264, and its h gives 3 at 264 for H61B6 only, not H61B3; nothing
+            this row models depends on it.
           doc-ref:
             - split_h61d3/com/govee/h61d3/pact/H61D3Support.java:887-895,1206-1208,1016-1019,1155-1158,1203,1557-1558,1576-1578
+            - base-classes9/com/govee/base2home/color/SupportMultiColorConfig.java:32,118-170,172-175
             - split_h61d3/com/govee/h61d3/pact/Model.java:108-120
             - split_h61d3/com/govee/h61d3/adjustNew/VM4Light.java:542-550,576-580,636-669,984-986,1001-1004,1031-1034,1041-1044,1065-1075
             - split_h61d3/com/govee/h61d3/adjustNew/VM4Light$connectBleSuc$1.java:71-82,92-123
@@ -1688,8 +1695,9 @@ families:
           connect_writes: []
           ic_pieces: { min_ic: 0, max_ic: 8, ic_per_piece: 1 }
           doc: >-
-            H1AA2 (goodsType 403: KmpGoodsType GOODS_TYPE_VALUE_H1AA2, H1AA2SceneConfig.match; not in the catalogue
-            snapshot). NewLightDetailActivity (Model.t), the adjustNew screen of row 247: VM4Light.d0 -> connectBleSuc,
+            H1AA2 (goodsType 403, tied by naming alone: KmpGoodsType GOODS_TYPE_VALUE_H1AA2 and
+            H1AA2SceneConfig.match carry the SKU in their names, and no code maps the SKU to the goodsType; not in the
+            catalogue snapshot). NewLightDetailActivity (Model.t), the adjustNew screen of row 247: VM4Light.d0 -> connectBleSuc,
             the Compose4InfoBleIot read (aa 04, aa a3, aa 01, the extra reads, aa 05) with the aa 40 IC count
             (ReadIcController.b) and, from the aa 05 reply, direct aa a5 groups of 4 (VM4Light.w5, 4-byte records).
             Pieces = min(IC, 8) (H61D3Support.e, W), the raw count (no 403 range); min_ic 0 stands for the app's
@@ -1741,8 +1749,9 @@ families:
           connect_writes: []
           ic_pieces: { min_ic: 0, max_ic: 10, ic_per_piece: 1 }
           doc: >-
-            H1AA5 (goodsType 404: KmpGoodsType GOODS_TYPE_VALUE_H1AA5, H1AA5SceneConfig.match; not in the catalogue
-            snapshot). NewLightDetailActivity (Model.t), the adjustNew screen of row 247: VM4Light.d0 -> connectBleSuc,
+            H1AA5 (goodsType 404, tied by naming alone: KmpGoodsType GOODS_TYPE_VALUE_H1AA5 and
+            H1AA5SceneConfig.match carry the SKU in their names, and no code maps the SKU to the goodsType; not in the
+            catalogue snapshot). NewLightDetailActivity (Model.t), the adjustNew screen of row 247: VM4Light.d0 -> connectBleSuc,
             the Compose4InfoBleIot read (aa 04, aa a3, aa 01, the extra reads, aa 05) with the aa 40 IC count
             (ReadIcController.b) and, from the aa 05 reply, direct aa a5 groups of 4 (VM4Light.w5, 4-byte records).
             Pieces = min(IC, 10) (H61D3Support.e, Y), the raw count (no 404 range); min_ic 0 stands for the app's
@@ -3185,9 +3194,12 @@ families:
             starts 0x50 goes through RgbicDiyConfig's new-DIY parsers (registered for every rgbiclight n4 goodsType but
             175), not traced, so scene_dialect untraced. Not hardware-verified. Not modelled: the whole-strip set
             (ColorViewModel.O) goes through the 0x40 a3 multi-colour write (ColorControllerConfig.n names 176), which
-            the library does not send.
+            the library does not send. The two SKUs differ in one per-SKU split: the multi-colour config
+            SupportMultiColorConfig lists goodsType 176, and its g gives 2 at 176 for H6176 only, not H61BC; nothing
+            this row models depends on it.
           doc-ref:
             - split_rgbiclight/com/govee/dreamcolorlightv1/pact/Support.java:164,323-329,670-684,953-958,1042-1044,1300-1316,1344-1349,1403-1405,1476-1487,1522-1524,1713-1730,1745-1759,1775-1777,1814-1819,1911-1957,1973-2005
+            - base-classes9/com/govee/base2home/color/SupportMultiColorConfig.java:32,118-170,172-175
             - split_rgbiclight/com/govee/dreamcolorlightv1/pact/SubLib4BleIot.java:20-25
             - split_rgbiclight/com/govee/dreamcolorlightv1/pact/DeviceItem4BleIot.java:20
             - split_rgbiclight/com/govee/dreamcolorlightv1/pact/Model4BleIot.java:41-46
@@ -4943,10 +4955,13 @@ families:
             scene_dialect stays untraced. Gradual: the colour page writes it through ColorModeControllerConfig.p
             (ColorViewModel.applyGradual), Config.G[203] = 0 -> Config.M[0] -> Bytes.w (33 a3), and the connect reads it
             (aa a3). The realtime colour frame on pact (3,1) is not modelled. H8098's tie to goodsType 203 is the
-            catalogue snapshot's route (app2.govee.com/bi/rest/devices/v3/skus, 2026-10-18): the app names H8098 beside
-            H6098 in pact_h6099 Support and CameraSkuConfig, but holds no goodsType table for it. Not hardware-verified.
+            catalogue snapshot's route (app2.govee.com/bi/rest/devices/v3/skus, 2026-10-18), and the app's code ties
+            them too: pact_h6099 MatterSupport's interceptor tests goodsType 203 (Support.isGoodsTypeH6098) with the
+            SKU H8098 (Support.k), as it tests 203 with H6098; the app also names H8098 beside H6098 in Support and
+            CameraSkuConfig. Not hardware-verified.
           doc-ref:
             - split_h6099/com/govee/pact_h6099/pact/Support.java:31-33,42-44,58-101,121-144,175-177,312-317
+            - split_h6099/com/govee/pact_h6099/pact/MatterSupport.java:14-21
             - base-classes2/com/govee/shared/checker/KmpGoodsType.java:334
             - base-classes2/com/govee/shared/config/h6098/H6098SceneConfig.java:45-47
             - split_h6099/com/govee/pact_h6099/detail/config/DetailConfig.java:39-124

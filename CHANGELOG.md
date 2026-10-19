@@ -363,7 +363,7 @@ model, from which the shipped readers are generated).
   - h7050 46 / 76 / 105 / 107 / 113 / 116 / 171 / 218 / 219 / 227 (**H7050 / H7060 / H7051 / H7062 /
     H7065 / H7055 / H7066 / H7052 / H7053 / H7063**): the `aa a3` connect read without the gradual control;
   - pact_h6099 203 (**H6098 / H8098**), promoted from `modelled`: the catalogue snapshot routes H8098 to
-    goodsType 203.
+    goodsType 203, and the app's pact_h6099 `MatterSupport` ties them in code too.
 
   Behind `allow_modelled`: h61d3 261 (**H61F2 / H61F5 / H61F6**), Kelvin [1000, 10000] at pact (4, 1), else
   [2700, 6500]; its piece count has no app cap, so the mask width is modelled, as on 299.
