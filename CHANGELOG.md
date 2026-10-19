@@ -84,10 +84,14 @@ model, from which the shipped readers are generated).
     `app_traced` (Spec).
   - The admit commit's rows (Spec, "41 more SKUs") extend the catalogue routes to 14 SKUs: **H6167**
     (dreamcolorlightv1 83), **H616D / H616E** (207) and **H802A** (74) join those rows' profiles.
+  - The snapshot's refresh at AppVersion 7.7.02 (Spec) adds a 15th, **R14B1**, on H14B1's row (bulblightv3
+    408, `app_traced`), so it is admitted by default. It has no bundled scene catalog, so it offers no scenes
+    and shares row 111's profile (H1501 / H601A / ... / R1501), whose `skus` gains it last. H14B1 keeps its own
+    profile. No other SKU's route or profile field changes.
   - They are served only at the row's pacts, as every SKU outside 1.4.0's 18 is (see Changed): the app's
     scan refuses a device whose pact its goodsType doesn't accept (`AbsBaseBleModel.e`, `checkProtocol` ->
     `Pact.i`).
-  - The nine bulbs and the five others offer no scenes until a catalog is bundled for them (scenes need
+  - The nine bulbs and the six others offer no scenes until a catalog is bundled for them (scenes need
     a catalog: Changed). Each row's doc says how they route.
   - A SKU that a row lists keeps the spec's route. A non-zero catalogue conflict leaves the SKU unrouted
     and on the review list the generator prints, unless an `assigned_goods_type` item of the row's family
@@ -189,7 +193,7 @@ model, from which the shipped readers are generated).
 - **Scenes need a bundled catalog**, as every SKU of 1.4.0 that offers them ships one. The generator bakes
   the scene store's SKUs (`scenes/index.json`) into the table (`_generated` `SCENE_CATALOGS`), and a profile
   offers `SCENES` only to them; the row's scene facts are still checked. So no SKU offers an effect list
-  with nothing in it (Home Assistant showed only "off" for the nine catalogue bulbs). The 74 admitted SKUs
+  with nothing in it (Home Assistant showed only "off" for the nine catalogue bulbs). The 75 admitted SKUs
   (and 5 behind `allow_modelled`) whose row offers scenes but have no catalog offer none until theirs is
   bundled. `tools/fetch_scenes.py` with no SKUs lists the SKUs whose row offers scenes, catalog or not.
   A test ties the store to the table: the SKUs with a catalog are exactly those offered scenes, each set is
@@ -382,8 +386,17 @@ model, from which the shipped readers are generated).
   `clientRow.pacts` description says so. None of these rows has `support`.
 - **`spec/govee_catalog.json`: a dated snapshot of Govee's public product catalogue** (`GET
   https://app2.govee.com/bi/rest/devices/v3/skus`, the app's `ICategoriesApi`: an AppVersion header, no
-  account; fetched 2026-10-18 with AppVersion 7.5.20, which its `app_version` records). It holds 617 SKUs,
-  each with its goodsType and ic only (no names, images or URLs). Its doc cites how the app uses them.
+  account; fetched 2026-10-19 with AppVersion 7.7.02, the traced app's, which its `app_version` records). It
+  holds 632 SKUs, each with its goodsType and ic only (no names, images or URLs). Its doc cites how the app
+  uses them.
+  - It was first fetched on 2026-10-18 with AppVersion 7.5.20 (617 SKUs). The 7.7.02 refresh adds 15 SKUs
+    and changes or drops none. **R14B1** (408) gains a route (Added).
+  - **H14B1** (408), **H1AA2** (403) and **H1AA5** (404) are listed by their rows at the same goodsType.
+    Their docs no longer say the snapshot lacks them.
+  - **H1880** / **H3860** (h6092 402 / 401), **H3010-H3013** (h7020 411) and **H6250** (h6609 398) are
+    listed by rows without support or pacts, so they stay unrouted. **H3700** (383), **H5210** (407),
+    **H6821** (280) and **H8150** (397) have no row.
+  - The review list (H615E) and the unrouted set (empty) are unchanged.
   Every catalogue goodsType goes into the app's SKU → goodsType map (`CategoriesDataManager.n` →
   `Pact.j`), which a scan reads before the built-in table (`Pact.f` → `Constant4L5.hasKnowSupportGoodsType`,
   default 0). goodsType 0 is the legacy code: a scan at 0 parses no advertised pact and re-derives the
@@ -392,8 +405,8 @@ model, from which the shipped readers are generated).
   rewrite. ic is the app's default IC count (`CategoriesConfig.getDefIcNum`). The device table takes its
   routes (Added). `tools/fetch_catalog.py` refreshes it from the endpoint or a saved response, and rewrites
   only `app_version`, `fetched` and `skus`. It asks with the snapshot's own `app_version` unless
-  `--app-version` names another, since the endpoint's answer depends on it (on 2026-10-19 it listed 632
-  SKUs at 7.7.02). It is dev-only and standard-library, reuses `fetch_scenes.py`'s request handling, and the
+  `--app-version` names another, since the endpoint's answer depends on it (on 2026-10-19 it listed 617
+  SKUs at 7.5.20). It is dev-only and standard-library, reuses `fetch_scenes.py`'s request handling, and the
   build never runs it. The generator refuses a snapshot with a top-level key other than `app_version`,
   `doc`, `doc-ref`, `fetched`, `skus` and `source_app`, an `app_version` that is missing or not in the app's
   version form, a `fetched` that is missing or not an ISO date (as `fetch_catalog.py` writes it), or an entry

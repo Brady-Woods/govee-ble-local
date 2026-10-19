@@ -1178,10 +1178,11 @@ families:
           doc: >-
             H14B1 on the bulblight AcNewDetail (bulblightv3 pact Model.t), the 64 screen. Accepted pacts (1,1) and
             (1,2): Support.addSupportPact (supportPact4H14B1); the screen's n4 (bulblight Support.e ->
-            Support4BulbLightV3.f) takes the bulb union list, which holds both. H14B1 is tied to 408 by naming alone:
-            supportPact4H14B1, KmpGoodsType GOODS_TYPE_VALUE_H14B1 = 408 and the DiyConfig4H14B1 BulbDiyConfig
-            registers for 408 carry the SKU in their names, and no code maps the SKU to the goodsType; it is not in
-            the catalogue snapshot. Colour Config.x[408] = 2 =
+            Support4BulbLightV3.f) takes the bulb union list, which holds both. In the code H14B1 is tied to 408 by
+            naming alone: supportPact4H14B1, KmpGoodsType GOODS_TYPE_VALUE_H14B1 = 408 and the DiyConfig4H14B1
+            BulbDiyConfig registers for 408 carry the SKU in their names, and no code maps the SKU to the goodsType;
+            the catalogue snapshot (spec/govee_catalog.json, asked as AppVersion 7.7.02) gives it 408 too. Colour
+            Config.x[408] = 2 =
             Config.bu (h6006, the family's); Config.I[408] colour temperature on. Kelvin KelvinConfig.Config.i[408] = 2
             = [2700, 6500]. Brightness default version 1 = [1, 100]. Connect: Support4BulbLightV3.i holds 408, so
             ControllerStrategyConfig.C0 takes h0 (aa 04, aa 01, aa 05); after the connect reads VM4Light.i5 sends 33 25
@@ -1194,7 +1195,10 @@ families:
             no sceneType-5 scene that leads 0x50. No account lock: the h0 strategy and the connect callback send no
             0xB2, as on 64 / 111. Not traced: the day-sync controllers DaySyncVM adds to the connect (VM4Light.O4; the
             screen's day-sync mode list, DelegateModeList4DaySync and DaySyncConfig); they are not listed, as the h61d3
-            rows' day-sync reads are not. Not hardware-verified.
+            rows' day-sync reads are not. Not hardware-verified. The catalogue snapshot also gives R14B1 goodsType 408,
+            and no row lists it, so the library routes it to this row by that goodsType alone, at its pacts and with its
+            facts. The per-SKU sweep of the app finds no string literal naming R14B1, and its mode components in the
+            bundled localSkuComponentConfigs.json are H14B1's.
           doc-ref:
             - split_bulblightstringv1/com/govee/bulblightstringv1/bulblight/mode/diy/BulbDiyConfig.java:29-41
             - split_bulblightstringv1/com/govee/bulblightstringv1/bulblight/mode/diy/DiyDelegateRegister.java:56-58
@@ -1773,8 +1777,8 @@ families:
           ic_pieces: { min_ic: 0, max_ic: 8, ic_per_piece: 1 }
           doc: >-
             H1AA2 (goodsType 403, tied by naming alone: KmpGoodsType GOODS_TYPE_VALUE_H1AA2 and
-            H1AA2SceneConfig.match carry the SKU in their names, and no code maps the SKU to the goodsType; not in the
-            catalogue snapshot). NewLightDetailActivity (Model.t), the adjustNew screen of row 247: VM4Light.d0 -> connectBleSuc,
+            H1AA2SceneConfig.match carry the SKU in their names, and no code maps the SKU to the goodsType; the
+            catalogue snapshot, asked as AppVersion 7.7.02, gives it 403 too). NewLightDetailActivity (Model.t), the adjustNew screen of row 247: VM4Light.d0 -> connectBleSuc,
             the Compose4InfoBleIot read (aa 04, aa a3, aa 01, the extra reads, aa 05) with the aa 40 IC count
             (ReadIcController.b) and, from the aa 05 reply, direct aa a5 groups of 4 (VM4Light.w5, 4-byte records).
             Pieces = min(IC, 8) (H61D3Support.e, W), the raw count (no 403 range); min_ic 0 stands for the app's
@@ -1828,8 +1832,8 @@ families:
           ic_pieces: { min_ic: 0, max_ic: 10, ic_per_piece: 1 }
           doc: >-
             H1AA5 (goodsType 404, tied by naming alone: KmpGoodsType GOODS_TYPE_VALUE_H1AA5 and
-            H1AA5SceneConfig.match carry the SKU in their names, and no code maps the SKU to the goodsType; not in the
-            catalogue snapshot). NewLightDetailActivity (Model.t), the adjustNew screen of row 247: VM4Light.d0 -> connectBleSuc,
+            H1AA5SceneConfig.match carry the SKU in their names, and no code maps the SKU to the goodsType; the
+            catalogue snapshot, asked as AppVersion 7.7.02, gives it 404 too). NewLightDetailActivity (Model.t), the adjustNew screen of row 247: VM4Light.d0 -> connectBleSuc,
             the Compose4InfoBleIot read (aa 04, aa a3, aa 01, the extra reads, aa 05) with the aa 40 IC count
             (ReadIcController.b) and, from the aa 05 reply, direct aa a5 groups of 4 (VM4Light.w5, 4-byte records).
             Pieces = min(IC, 10) (H61D3Support.e, Y), the raw count (no 404 range); min_ic 0 stands for the app's

@@ -1,5 +1,5 @@
 {
- "app_version": "7.5.20",
+ "app_version": "7.7.02",
  "doc": "Govee's public product catalogue, cut to each product's sku, goodsType and ic (no names, images or URLs). Source: GET https://app2.govee.com/bi/rest/devices/v3/skus, the app's ICategoriesApi, which answers with only an AppVersion header and no account; fetched on the date in `fetched`, with the AppVersion header in `app_version`, by tools/fetch_catalog.py, which rewrites only `app_version`, `fetched` and `skus` (the answer depends on it: on 2026-10-19 the endpoint listed 632 SKUs at 7.7.02 and 617 at 7.5.20). goodsType: the app puts every catalogue product's goodsType, 0 included, into its SKU -> goodsType map (CategoriesDataManager.n -> Pact.j), and a scan takes the SKU's goodsType from that map, falling back to the built-in table only for a SKU the map lacks (Pact.f -> Constant4L5.hasKnowSupportGoodsType, whose default is 0). goodsType 0 is the legacy code, not a route: a scan at goodsType 0 parses no advertised pact and re-derives the device by its SKU (BaseBleProcessor.c: the SKU-keyed OldDreamColorUtil / OldBulbUtil parsers; BaseBleProcessor.g: no protocol), and the device list rewrites 0 by SKU and pact or version (devices.yaml assigned_goods_type, from_goods_type [0]). So a catalogue goodsType 0 never routes, and is never devices.yaml's goodsType-0 row (H6188's, which its SKU routes). Precedence: devices.yaml wins where a client_profile row lists the SKU. A non-zero catalogue goodsType that none of the SKU's rows has is a conflict, settled only where an assigned_goods_type item cites the app's rewrite of it to the row's goodsType (an item whose from_goods_type names the catalogue goodsType, or, with no from_goods_type, one that the pact conditions; an unconditioned pairing write cites none); an unsettled one leaves the SKU unrouted, for review. A SKU no row lists routes to the BLE row of its catalogue goodsType. ic: the product's default IC count (Product.ic), which the app reads by SKU in CategoriesConfig.getDefIcNum (0 for a SKU it lacks). Nothing reads it unless a row's app trace cites that read, and no segment count or ic_pieces is derived from it.",
  "doc-ref": [
   "base-classes10/com/govee/base2home/sku/ICategoriesApi.java:10",
@@ -10,7 +10,7 @@
   "base-classes10/com/govee/base2home/sku/Product.java:10-11",
   "base-classes10/com/govee/base2home/sku/CategoriesConfig.java:28-47"
  ],
- "fetched": "2026-10-18",
+ "fetched": "2026-10-19",
  "skus": {
   "B5178": {
    "goodsType": 14,
@@ -84,6 +84,10 @@
    "goodsType": 342,
    "ic": 1
   },
+  "H14B1": {
+   "goodsType": 408,
+   "ic": 1
+  },
   "H14C0": {
    "goodsType": 342,
    "ic": 1
@@ -120,6 +124,10 @@
    "goodsType": 399,
    "ic": 5
   },
+  "H1880": {
+   "goodsType": 402,
+   "ic": 3
+  },
   "H1A42": {
    "goodsType": 400,
    "ic": 12
@@ -134,6 +142,14 @@
   },
   "H1A45": {
    "goodsType": 375,
+   "ic": 80
+  },
+  "H1AA2": {
+   "goodsType": 403,
+   "ic": 32
+  },
+  "H1AA5": {
+   "goodsType": 404,
    "ic": 80
   },
   "H1AB1": {
@@ -167,6 +183,22 @@
   "H3001": {
    "goodsType": 361,
    "ic": 8
+  },
+  "H3010": {
+   "goodsType": 411,
+   "ic": 15
+  },
+  "H3011": {
+   "goodsType": 411,
+   "ic": 30
+  },
+  "H3012": {
+   "goodsType": 411,
+   "ic": 60
+  },
+  "H3013": {
+   "goodsType": 411,
+   "ic": 60
   },
   "H30D0": {
    "goodsType": 391,
@@ -204,9 +236,17 @@
    "goodsType": 349,
    "ic": 8
   },
+  "H3700": {
+   "goodsType": 383,
+   "ic": 7
+  },
   "H3751": {
    "goodsType": 354,
    "ic": 72
+  },
+  "H3860": {
+   "goodsType": 401,
+   "ic": 2
   },
   "H3A51": {
    "goodsType": 386,
@@ -498,6 +538,10 @@
   },
   "H5199": {
    "goodsType": 155,
+   "ic": 0
+  },
+  "H5210": {
+   "goodsType": 407,
    "ic": 0
   },
   "H5220": {
@@ -1420,6 +1464,10 @@
    "goodsType": 261,
    "ic": 100
   },
+  "H6250": {
+   "goodsType": 398,
+   "ic": 320
+  },
   "H6350": {
    "goodsType": 374,
    "ic": 160
@@ -1499,6 +1547,10 @@
   "H6811": {
    "goodsType": 256,
    "ic": 480
+  },
+  "H6821": {
+   "goodsType": 280,
+   "ic": 240
   },
   "H6840": {
    "goodsType": 278,
@@ -2356,6 +2408,10 @@
    "goodsType": 321,
    "ic": 0
   },
+  "H8150": {
+   "goodsType": 397,
+   "ic": 0
+  },
   "H8604": {
    "goodsType": 243,
    "ic": 90
@@ -2390,6 +2446,10 @@
   },
   "R14A1": {
    "goodsType": 342,
+   "ic": 1
+  },
+  "R14B1": {
+   "goodsType": 408,
    "ic": 1
   },
   "R14C0": {
