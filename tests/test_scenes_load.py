@@ -3,14 +3,25 @@ from __future__ import annotations
 
 import base64
 import dataclasses
+import errno
+import gc
 import hashlib
 import json
+import lzma
+import threading
+import time
+import traceback
+import weakref
+from concurrent.futures import ThreadPoolExecutor
 from importlib import resources
+from types import SimpleNamespace
 
 import pytest
 from conftest import FakeSceneFiles, scene_store
+from fake_ble import ble_device
 
 from govee_ble_local import profile_for, scenes, supported_skus
+from govee_ble_local.devices.device import make_device
 from govee_ble_local.exceptions import GoveeBleError, GoveeBleInvalidValue
 from govee_ble_local.models import Capability
 from govee_ble_local.scenes import load_scenes, scene_names_by_code
@@ -100,10 +111,10 @@ def test_unknown_valid_sku():
 @pytest.fixture
 def fake_catalog(monkeypatch):
     def install(text):
-        scenes._catalog.cache_clear()
+        scenes._store.cache_clear()
         monkeypatch.setattr(scenes.resources, "files", lambda _pkg: FakeSceneFiles(text))
     yield install
-    scenes._catalog.cache_clear()
+    scenes._store.cache_clear()
 
 
 def _bad(pool: list, skus: dict | None = None) -> str:
@@ -122,14 +133,219 @@ _A, _B = {"name": "a", "code": 1}, {"name": "b", "code": 2}
      _bad([_A], {"H1234": [1]}), _bad([_A, _B], {"H1234": [1, 0]}),
      _bad([_A, {**_A, "code": 2}], {"H1234": [0, 1]}),   # two scenes of one name
      _bad([_A], {"h1234": [0]}),
-     _bad([_A, _B])],   # b is no SKU's: an orphan
+     _bad([_A, _B]),   # b is no SKU's: an orphan
+     # a code JSON reads as a float (inf: int() raised OverflowError) or a nesting too deep for json.loads
+     # (RecursionError): a library error like any other
+     '{"pool": [{"name": "a", "code": 1e999}], "skus": {"H1234": [0]}}',
+     '{"pool": [{"name": "a", "code": Infinity}], "skus": {"H1234": [0]}}',
+     "[" * 100_000,
+     # nothing is coerced: what tools/fetch_scenes.py refuses to write (scenes._validate_entry)
+     *(_bad([{**_A, **bad}]) for bad in (
+         {"code": "7"}, {"code": 1.9}, {"code": True}, {"code": -1}, {"code": 0x10000}, {"code": None},
+         {"scene_type": "2"}, {"scene_type": 2.0}, {"cmd_version": False}, {"param_id": True},
+         {"placeholder": "no"}, {"placeholder": 1}, {"big_effect": "yes"}, {"big_effect": 0},
+         {"category": 5}, {"param": 3}, {"param": "é"}, {"name": 5})),
+     _bad([_B, _A], {"H1234": [0, 1]}),   # the pool out of its content order
+     _bad([_A, _A], {"H1234": [0], "H5678": [1]})],   # one scene twice in the pool
 )
 def test_malformed_catalog(fake_catalog, text):
     fake_catalog(text)
-    with pytest.raises(GoveeBleError, match="scene catalog for H1234 is malformed") as ei:
+    with pytest.raises(GoveeBleError, match="the bundled scene store is malformed") as ei:
         load_scenes("h1234")
     assert not isinstance(ei.value, GoveeBleInvalidValue)
     assert ei.value.__cause__ is not None
+
+
+@pytest.mark.parametrize("name", [{"param": "SECRETBLOB"}, ["SECRETBLOB"]])
+def test_a_name_that_is_no_string_is_not_quoted(fake_catalog, name):
+    fake_catalog(_bad([{**_A, "name": name}]))
+    with pytest.raises(GoveeBleError, match="not a non-empty string") as ei:
+        load_scenes("H1234")
+    assert "SECRETBLOB" not in "".join(traceback.format_exception(ei.value))   # named by its type: a blob
+
+
+def test_a_store_of_every_typed_key_loads(fake_catalog):
+    full = {"code": 0xFFFF, "param": "kwr/", "category": "c", "scene_name": "A", "param_id": 7,
+            "scene_type": 1, "cmd_version": 0, "placeholder": True, "big_effect": False, "other": [1.5]}
+    nulls = {"code": 0, **{key: None for key, _type in scenes._ENTRY_TYPES}, "rules": None}
+    fake_catalog(scene_store("H1234", {"a": full, "b": nulls}))
+    a, b = load_scenes("H1234").values()
+    assert a == scenes.Scene("a", 0xFFFF, "kwr/", "c", 7, True, scene_type=1, cmd_version=0, big_effect=False)
+    assert b == scenes.Scene("b", 0, None)
+
+
+class _CountingFiles(FakeSceneFiles):
+    """FakeSceneFiles that counts the store's reads, each one taking ``delay`` seconds."""
+
+    def __init__(self, store):
+        super().__init__(store)
+        self.reads = 0
+        self.delay = 0.0
+
+    def __truediv__(self, file):
+        path = super().__truediv__(file)
+
+        def read_text(encoding=None):
+            self.reads += 1
+            time.sleep(self.delay)
+            return path.read_text(encoding)
+        return type(path)(read_text=read_text)
+
+
+@pytest.fixture
+def counted(monkeypatch):
+    """Installs a store of ``store`` (FakeSceneFiles) whose reads are counted, and returns its files;
+    ``clear=False`` keeps the store already read cached."""
+    def install(store, *, clear=True):
+        if clear:
+            scenes._store.cache_clear()
+        files = _CountingFiles(store)
+        monkeypatch.setattr(scenes, "resources", SimpleNamespace(files=lambda _pkg: files))
+        return files
+    scenes._store.cache_clear()
+    yield install
+    scenes._store.cache_clear()
+
+
+def test_the_store_is_read_and_checked_once(counted):
+    files = counted(scene_store("H1234", {"a": {"code": 3}}))
+    for sku in ("H1234", "h1234", "H9999", "H6006"):
+        load_scenes(sku)
+        scene_names_by_code(sku)
+    assert files.reads == 1 and load_scenes("H1234") == {"a": scenes.Scene("a", 3, None)}
+    scenes._store.cache_clear()   # the tests' path: the next lookup reads it again
+    assert load_scenes("H6006") == {} and files.reads == 2
+
+
+def test_first_lookups_made_at_once_read_the_store_once(counted):
+    # one per device's setup (hass-govee-ble-local sets its config entries up at once): functools.cache has
+    # no lock, so without _STORE_LOCK each thread that missed it read and checked the whole store
+    files = counted(scene_store("H1234", {"a": {"code": 3}}))
+    files.delay = 0.05
+    barrier = threading.Barrier(8)
+
+    def lookup(_i):
+        barrier.wait()
+        return load_scenes("H1234")
+
+    with ThreadPoolExecutor(8) as pool:
+        found = list(pool.map(lookup, range(8)))
+    assert files.reads == 1 and found == [{"a": scenes.Scene("a", 3, None)}] * 8
+
+
+def test_the_first_failure_is_kept(counted):
+    error = PermissionError(13, "Permission denied")
+    files = counted(error)
+    raised = []
+    for sku in ("H1234", "H9999", "H6006", "H1234"):
+        with pytest.raises(GoveeBleError, match="could not be read") as ei:
+            load_scenes(sku)
+        raised.append(ei.value)
+    with pytest.raises(GoveeBleError):
+        scene_names_by_code("H6006")
+    assert files.reads == 1                          # a package file does not heal: it is not read again
+    assert len({id(e) for e in raised}) == len(raised)   # each lookup's own error: no raise changes another's
+    assert all(str(e) == str(raised[0]) and e.__cause__ is error for e in raised)
+    depth, tb = 0, raised[-1].__traceback__
+    while tb is not None:
+        depth, tb = depth + 1, tb.tb_next
+    assert depth <= 3                                # a fresh error each raise: its traceback never grows
+
+
+@pytest.mark.parametrize(("store", "message"), [
+    (_bad([{**_A, "param": "!!"}]), "'param' is not valid base64"),   # a ValueError from a binascii.Error
+    (PermissionError(13, "Permission denied"), "Permission denied"),
+])
+def test_the_kept_failure_keeps_no_frame_alive(counted, store, message):
+    class Local:
+        pass
+
+    def first_lookup():
+        local = Local()
+        with pytest.raises(GoveeBleError, match=message):
+            load_scenes("H1234")
+        return weakref.ref(local)
+
+    counted(store)
+    alive = first_lookup()
+    gc.collect()
+    assert alive() is None   # a kept traceback's frames led back to the first lookup's caller, and its locals
+    chain, link = [], scenes._store()
+    while link is not None:
+        chain.append(link)
+        link = link.__cause__ or link.__context__
+    assert len(chain) >= 2 and all(e.__traceback__ is None and str(e) for e in chain)   # every message stays
+
+
+@pytest.mark.parametrize("store", [
+    lambda: _bad([{**_A, "param": "!!"}]),   # a ValueError from a binascii.Error
+    lambda: "{not json",                      # a JSONDecodeError, json's StopIteration its context
+    lambda: UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte"),   # not UTF-8
+    lambda: PermissionError(13, "Permission denied"),
+], ids=["base64", "json", "utf8", "permission"])
+def test_the_kept_failure_keeps_not_the_callers_exception(counted, store):
+    # every exception raised while the first lookup's caller handles one takes that one in as its
+    # __context__: the kept failure's chain neither holds it nor strips its traceback
+    class Handled(Exception):
+        pass
+
+    def first_lookup():
+        try:
+            raise Handled("the caller's own error")
+        except Handled as handled:
+            with pytest.raises(GoveeBleError):
+                load_scenes("H1234")
+            assert handled.__traceback__ is not None   # the caller's, as the caller has it
+            return weakref.ref(handled)
+
+    counted(store())
+    alive = first_lookup()
+    gc.collect()
+    assert alive() is None   # nor what it references, kept for the life of the process
+    with pytest.raises(GoveeBleError) as ei:
+        load_scenes("H6006")   # a later, unrelated lookup
+    assert "the caller's own error" not in "".join(traceback.format_exception(ei.value))
+
+
+@pytest.mark.parametrize("error", [
+    RuntimeError("File 'x' is encrypted, password required for extraction"),   # a member flagged encrypted
+    NotImplementedError("That compression method is not supported"),   # an unknown method, flag bit 5 or 6
+    lzma.LZMAError("Corrupt input data"),   # a damaged LZMA member
+])
+def test_a_corrupt_zip_member_is_unreadable(counted, error):
+    # a store.json member of a zipped install: zipfile raises these, so the read is a library error
+    files = counted(error)
+    for sku in ("H1234", "H6006"):
+        with pytest.raises(GoveeBleError, match="could not be read"):
+            load_scenes(sku)
+    assert files.reads == 1   # kept, not raised (functools.cache keeps no raise: each lookup read again)
+
+
+def test_a_read_error_of_the_process_is_not_kept(counted):
+    files = counted(OSError(errno.EMFILE, "Too many open files"))
+    with pytest.raises(GoveeBleError, match=r"could not be read: OSError: .*Too many open files"):
+        load_scenes("H1234")
+    files._store = scene_store("H1234", {"a": {"code": 3}})   # the process has file descriptors again
+    assert load_scenes("H1234") == {"a": scenes.Scene("a", 3, None)} and files.reads == 2
+
+
+async def test_device_scene_properties_need_no_io_once_loaded(counted):
+    d = make_device(ble_device("AA:BB:CC:DD:EE:5B", "H6008"), "H6008")
+    assert d is not None
+    names = sorted(await scenes.async_load_scenes("H6008"))   # the real store, loaded as update() does
+    d._state.scene_code = load_scenes("H6008")["Aurora"].code
+    unreadable = counted(OSError(5, "I/O error"), clear=False)   # a read now would raise
+    assert d.scene_names == names and d.active_scene == "Aurora"
+    assert unreadable.reads == 0
+
+
+@pytest.mark.parametrize("entry", [None, [], "x", 5])
+def test_validate_entry_refuses_any_value_with_value_error(entry):
+    with pytest.raises(ValueError, match="not an object"):
+        scenes._validate_entry("a", entry)
+    for name in (None, "", 5):
+        with pytest.raises(ValueError, match="not a non-empty string"):
+            scenes._validate_entry(name, {"code": 1})
 
 
 def test_valid_fake_catalog(fake_catalog):

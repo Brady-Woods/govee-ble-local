@@ -365,9 +365,9 @@ class Device:
     def scene_names(self) -> list[str]:
         """Sorted names of the bundled scenes; empty without the SCENES capability.
 
-        The first lookup per SKU reads the bundled catalog from disk; :meth:`update` (and
+        The first lookup (of any SKU) reads the bundled scene store from disk; :meth:`update` (and
         :meth:`set_scene_by_name`) load it in a worker thread first, so on the event loop this is
-        a cache hit once the device has been polled."""
+        a cache hit, with no I/O, once the device has been polled."""
         return sorted(load_scenes(self._sku)) if Capability.SCENES in self.capabilities else []
 
     @property

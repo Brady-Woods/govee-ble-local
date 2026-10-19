@@ -5,17 +5,23 @@ scenes, unique and sorted by content (the scene name, then the entry's JSON with
 {name, code, param, category, ...}; ``skus`` maps each SKU to its catalog, the increasing indexes of its
 scenes in ``pool``, so SKUs that share a scene share its entry. `code` is the BLE activation code; `param`
 is the base64 effect blob for the a3-chunk upload (None if the device bare-activates). Regenerate with
-tools/fetch_scenes.py.
+tools/fetch_scenes.py, which checks each entry with this module's check (``_validate_entry``). The store is
+read and checked once, on the first lookup of any SKU.
 """
 from __future__ import annotations
 
 import asyncio
 import base64
 import binascii
+import errno
 import functools
 import itertools
 import json
 import re
+import sys
+import threading
+import zipfile
+import zlib
 from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import IntEnum
@@ -27,6 +33,11 @@ from ..exceptions import GoveeBleError, GoveeBleInvalidValue
 from ..wire import build
 from ..wire import _spec
 from ..wire._spec import Frame as _F, Upload as _U
+
+try:
+    from lzma import LZMAError as _LZMAError
+except ImportError:   # a Python built without lzma reads no LZMA member either
+    _LZMAError = zlib.error  # type: ignore[assignment,misc]
 
 if TYPE_CHECKING:
     from ..devices.profile import SceneDialect
@@ -123,6 +134,14 @@ class Scene:
 
 _SKU_RE = re.compile(r"[A-Za-z0-9]{3,8}")
 _STORE = "store.json"
+_NO_SCENES: Final[Mapping[str, Scene]] = MappingProxyType({})
+# The scene_select activation's effect field is a u2 (build.scene_activate): the codes a scene can have.
+_MAX_CODE: Final = 0xFFFF
+# Read errors of the process's state, not of the package file (too many open files, out of memory, try
+# again): not kept, so the next lookup reads the store again.
+_TRANSIENT: Final = frozenset({errno.EMFILE, errno.ENFILE, errno.ENOMEM, errno.EAGAIN})
+# Held across the first lookup's read, so lookups made at once read the store once.
+_STORE_LOCK: Final = threading.Lock()
 
 
 class _MalformedSceneParam(GoveeBleInvalidValue):
@@ -130,37 +149,97 @@ class _MalformedSceneParam(GoveeBleInvalidValue):
 
 
 @functools.cache
-def _catalog(sku: str) -> MappingProxyType[str, Scene]:
-    """Parse + cache one (already validated, upper-case) SKU's catalog, read-only. Each first lookup reads and
-    checks the whole store (:func:`_catalogs`), so a store that is missing, unreadable or malformed raises
-    GoveeBleError for every SKU, one it holds no catalog for too."""
+def _store() -> Mapping[str, Mapping[str, Scene]] | GoveeBleError:
+    """Every SKU's catalog in the bundled store, ``{SKU: {name: Scene}}``, read-only: the store is read and
+    checked (:func:`_catalogs`) once, on the first lookup of any SKU.
+
+    A store that is missing, unreadable or malformed gives the GoveeBleError that says so, returned, not
+    raised, so the cache keeps this first failure: :func:`_catalog` raises a GoveeBleError of it (its message
+    and cause) for every SKU, one the store holds no catalog for too, and the store is not read again (a
+    package file changes only with a reinstall). A read error of the process's state (:data:`_TRANSIENT`:
+    too many open files, out of memory) is raised, not kept, so the next lookup reads the store again. A
+    test that swaps the store calls ``_store.cache_clear()`` before and after. The kept failure holds no
+    traceback, and neither does any exception of its chain (``__cause__`` / ``__context__``): a traceback's
+    frames lead back through the first lookup to its caller, whose frames and locals the cache would keep
+    alive for the life of the process; every message stays (:func:`_failure`). Nor does its chain hold the
+    exception the first lookup's caller was handling, which is the caller's, not the store's."""
+    outer = sys.exc_info()[1]   # what the first lookup's caller is handling: not the store's, never kept
     try:
         # This module is the package's __init__, so __name__ is the package that holds the JSON.
         raw = (resources.files(__name__) / _STORE).read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError, ModuleNotFoundError) as err:
-        # The store ships with the package: one that is missing or can't be read (permissions, I/O, not UTF-8)
-        # is a library error like a malformed one, so the scene properties and Device.update() raise only
-        # GoveeBleError.
-        raise GoveeBleError(f"scene catalog for {sku} could not be read: {err!r}") from err
+    # RuntimeError: a zip member flagged encrypted, or one of an unknown method or flag (NotImplementedError)
+    except (OSError, UnicodeDecodeError, ModuleNotFoundError, zipfile.BadZipFile, zlib.error, _LZMAError,
+            RuntimeError) as err:
+        # The store ships with the package: one that is missing or can't be read (permissions, I/O, not UTF-8,
+        # a corrupt member of a zipped install) is a library error like a malformed one, so the scene
+        # properties and Device.update() raise only GoveeBleError. The cause is quoted by its str: the repr
+        # of a UnicodeDecodeError holds the whole store, every blob in it.
+        message = f"the bundled scene store could not be read: {type(err).__name__}: {err}"
+        if isinstance(err, OSError) and err.errno in _TRANSIENT:
+            # raised, so not kept (functools.cache keeps no raise): the next lookup reads again
+            raise GoveeBleError(message) from err
+        return _failure(message, err, outer)
     try:
         catalogs = _catalogs(json.loads(raw))
-    except (ValueError, TypeError, KeyError, AttributeError) as err:
-        # binascii.Error (bad base64) is a ValueError; its repr never quotes the blob.
-        raise GoveeBleError(f"scene catalog for {sku} is malformed: {err!r}") from err
-    return MappingProxyType({scene.name: scene for scene in catalogs.get(sku, ())})
+    except (ValueError, RecursionError) as err:
+        # _catalogs raises only ValueError (binascii.Error, bad base64, is one; its repr never quotes the
+        # blob); json.loads raises RecursionError on a store nested too deep.
+        return _failure(f"the bundled scene store is malformed: {err!r}", err, outer)
+    return MappingProxyType({sku: MappingProxyType({scene.name: scene for scene in scenes})
+                             for sku, scenes in catalogs.items()})
+
+
+def _failure(message: str, cause: BaseException, outer: BaseException | None) -> GoveeBleError:
+    """The GoveeBleError :func:`_store` keeps: of ``message``, caused by ``cause`` as ``raise ... from cause``
+    would chain it, with the traceback of every exception of the chain (``cause``, its ``__cause__`` and
+    ``__context__``, theirs, ...) dropped, so it keeps no frame alive; the messages stay. ``outer`` is the
+    exception the first lookup's caller was handling (None if none), which a link raised while it was handled
+    took in as its ``__context__``: that link is cut, so the kept failure neither holds it (nor what it
+    references) nor shows it in a later lookup's log, and its traceback is left to the caller handling it."""
+    error = GoveeBleError(message)
+    error.__cause__ = cause
+    chain: list[BaseException | None] = [cause]
+    seen: set[int] = set()
+    while chain:
+        link = chain.pop()
+        if link is not None and id(link) not in seen:
+            seen.add(id(link))
+            link.__traceback__ = None
+            if outer is not None and link.__context__ is outer:
+                link.__context__ = None   # the caller's own exception: left as it is, and not kept
+            chain += (link.__cause__, link.__context__)
+    return error
+
+
+def _catalog(sku: str) -> Mapping[str, Scene]:
+    """One (already validated, upper-case) SKU's catalog from :func:`_store`, read-only, empty where the store
+    holds none; where the store failed, a GoveeBleError of that first failure (its message and cause), every
+    time. :data:`_STORE_LOCK` makes first lookups made at once (one per device's setup) read the store once:
+    functools.cache has no lock of its own, so each lookup that missed it would read and check it."""
+    with _STORE_LOCK:
+        store = _store()
+    if isinstance(store, GoveeBleError):
+        # A fresh error each time: one shared instance would carry each raise's traceback and the exception
+        # its caller was handling to every other caller, and keep the last caller's frames alive.
+        raise GoveeBleError(*store.args) from store.__cause__
+    return store.get(sku, _NO_SCENES)
 
 
 def _catalogs(store: Any) -> dict[str, list[Scene]]:
-    """Every SKU's catalog in the parsed ``store``, its scenes in pool order. Raises ValueError / TypeError /
-    KeyError / AttributeError unless ``store`` is an object of exactly ``pool``, a list of scene entries
-    (:func:`_scene`), and ``skus``, which maps each upper-case SKU to the strictly increasing indexes of at
-    least one pool entry, no two of one name, and every pool entry is some SKU's (no orphan)."""
+    """Every SKU's catalog in the parsed ``store``, its scenes in pool order. Raises ValueError unless
+    ``store`` is an object of exactly ``pool``, a list of scene entries (:func:`_scene`), unique and sorted
+    by content (the name, then the entry's JSON with sorted keys, as tools/fetch_scenes.py's ``layout``
+    writes it), and ``skus``, which maps each upper-case SKU to the strictly increasing indexes of at least
+    one pool entry, no two of one name, and every pool entry is some SKU's (no orphan)."""
     if not isinstance(store, dict) or set(store) != {"pool", "skus"}:
         raise ValueError("the store is not an object of 'pool' and 'skus'")
     entries, skus = store["pool"], store["skus"]
     if not isinstance(entries, list) or not isinstance(skus, dict):
-        raise TypeError("the store's 'pool' is not a list, or its 'skus' not an object")
+        raise ValueError("the store's 'pool' is not a list, or its 'skus' not an object")
     pool = [_scene(i, entry) for i, entry in enumerate(entries)]
+    keys = [(entry["name"], json.dumps(entry, sort_keys=True, separators=(",", ":"))) for entry in entries]
+    if any(a >= b for a, b in itertools.pairwise(keys)):
+        raise ValueError("the pool is not unique and sorted by content")
     catalogs: dict[str, list[Scene]] = {}
     for key, refs in skus.items():
         if not (isinstance(key, str) and _SKU_RE.fullmatch(key) and key == key.upper()):
@@ -179,27 +258,66 @@ def _catalogs(store: Any) -> dict[str, list[Scene]]:
 
 
 def _scene(i: int, entry: Any) -> Scene:
-    """Pool entry ``i`` as a Scene. Its param is checked now, so a corrupt bundled blob fails at load, not at
-    upload, and a scene with version ``rules`` is refused: the app lists it only on firmware its rules allow
-    (devices.yaml scenes.list_filter), which the library doesn't model, so offered it would show on every
-    one. A ``scene_name`` (the sceneName tools/fetch_scenes.py records for a scene stored apart) that is not
-    a string is refused too, as the tool refuses it."""
-    name = entry["name"]
+    """Pool entry ``i`` (a scene entry with its ``name``) as a Scene, once :func:`_validate_entry` takes it.
+    Its values are taken as they are: nothing is coerced."""
+    if not isinstance(entry, dict):
+        raise ValueError(f"pool entry {i} is not an object")
+    _validate_entry(entry.get("name"), entry)
+    return Scene(
+        entry["name"], entry["code"], entry.get("param"), entry.get("category"),
+        entry.get("param_id"), entry.get("placeholder") is True,
+        scene_type=entry.get("scene_type"), cmd_version=entry.get("cmd_version"),
+        big_effect=entry.get("big_effect") is True,
+    )
+
+
+# A scene entry's typed keys: each one's type where it is not null (a key left out is null). An int is never
+# a bool here.
+_ENTRY_TYPES: Final[tuple[tuple[str, type], ...]] = (
+    ("param", str), ("category", str), ("scene_name", str), ("param_id", int), ("scene_type", int),
+    ("cmd_version", int), ("placeholder", bool), ("big_effect", bool),
+)
+
+
+def _validate_entry(name: object, entry: object) -> None:
+    """Check one scene entry named ``name`` (the store's pool entry holds it as its ``name`` key, the tool's
+    catalog as its key) as the loader takes it; raises ValueError where it fails. It is the one check of the
+    loader (:func:`_scene`) and of tools/fetch_scenes.py's ``validate_entry``, so the loader refuses exactly
+    what the tool refuses to write:
+
+    - ``name`` is a non-empty string and ``entry`` an object;
+    - ``code`` is an int from 0 to 0xFFFF, the scene_select effect the activation sends
+      (``build.scene_activate``);
+    - ``param``, ``category`` and ``scene_name`` (the sceneName the tool records for a scene stored apart)
+      are strings, ``param_id``, ``scene_type`` and ``cmd_version`` ints, ``placeholder`` and ``big_effect``
+      bools, or null (a key left out is null). Nothing is coerced: a code "7", 1.9 or true, a scene type "2"
+      and a placeholder "no" are refused, as is a bool where an int goes;
+    - a ``param`` that is not empty is strict base64, so a corrupt bundled blob fails at load, not at upload;
+    - an entry with version ``rules`` is refused: the app lists that scene only on firmware its rules allow
+      (devices.yaml scenes.list_filter), which the library doesn't model, so offered it would show on every
+      one.
+
+    Other keys are not read. A message names the key and the type, never the value (a blob is never quoted).
+    """
     if not isinstance(name, str) or not name:
-        raise ValueError(f"pool entry {i} has no scene name")
+        raise ValueError(f"the scene name ({type(name).__name__}) is not a non-empty string")
+    if not isinstance(entry, dict):
+        raise ValueError(f"{name!r}: the entry is not an object")
+    code = entry.get("code")
+    if type(code) is not int or not 0 <= code <= _MAX_CODE:
+        raise ValueError(f"{name!r}: 'code' must be an int from 0 to {_MAX_CODE}, got {type(code).__name__}")
+    if entry.get("rules"):
+        raise ValueError(f"{name!r} is gated by version rules, which the library can't follow")
+    for key, typ in _ENTRY_TYPES:
+        value = entry.get(key)
+        if value is not None and type(value) is not typ:
+            raise ValueError(f"{name!r}: '{key}' must be {typ.__name__} or null, got {type(value).__name__}")
     param = entry.get("param")
     if param:
-        base64.b64decode(param, validate=True)
-    if entry.get("rules"):
-        raise ValueError(f"{name!r} is gated by version rules")
-    if entry.get("scene_name") is not None and not isinstance(entry["scene_name"], str):
-        raise ValueError(f"{name!r}'s scene_name is not a string")
-    return Scene(
-        name, int(entry["code"]), param, entry.get("category"),
-        entry.get("param_id"), bool(entry.get("placeholder", False)),
-        scene_type=entry.get("scene_type"), cmd_version=entry.get("cmd_version"),
-        big_effect=bool(entry.get("big_effect", False)),
-    )
+        try:
+            base64.b64decode(param, validate=True)
+        except ValueError as err:   # binascii.Error, or a character outside ASCII
+            raise ValueError(f"{name!r}: 'param' is not valid base64: {err}") from err
 
 
 def _catalog_key(sku: str) -> str:
@@ -214,10 +332,13 @@ def load_scenes(sku: str) -> dict[str, Scene]:
     """Return {scene_name: Scene} for a SKU, or {} if no catalog is bundled.
 
     Returns a fresh dict each call (Scene is frozen), so callers can't corrupt the cache.
-    The first call per SKU reads and parses the bundled JSON from disk; on an event loop
-    use :func:`async_load_scenes` (or call this from an executor) for that first call.
-    Raises GoveeBleInvalidValue for a malformed SKU, GoveeBleError for a missing, corrupt or
-    unreadable store.
+    The first call (of any SKU) reads and checks the whole bundled store from disk, once; on
+    an event loop use :func:`async_load_scenes` (or call this from an executor) for that
+    first call. Raises GoveeBleInvalidValue for a malformed SKU, GoveeBleError for a missing,
+    corrupt or unreadable store: a GoveeBleError of the first such failure (its message and
+    cause), raised by every later call with no second read, except a read error of the
+    process's state (too many open files, out of memory), after which the next call reads
+    the store again.
     """
     return dict(_catalog(_catalog_key(sku)))
 
@@ -225,14 +346,14 @@ def load_scenes(sku: str) -> dict[str, Scene]:
 async def async_load_scenes(sku: str) -> dict[str, Scene]:
     """:func:`load_scenes` without blocking the event loop.
 
-    The first lookup per SKU reads and parses the bundled JSON from disk; this runs that
-    in a worker thread (later lookups are cached and return immediately)."""
+    The first lookup (of any SKU) reads and checks the bundled store from disk; this runs
+    that in a worker thread (later lookups are cached and return immediately)."""
     return await asyncio.to_thread(load_scenes, sku)
 
 
 # Reverse indexes {code: name}, keyed by catalog key. Each entry remembers the catalog it
 # was built from and is rebuilt when `_catalog` returns a different mapping (for example
-# after `_catalog.cache_clear()`), so the two caches can't disagree.
+# after `_store.cache_clear()`), so the two caches can't disagree.
 _NAMES_BY_CODE: dict[str, tuple[Mapping[str, Scene], Mapping[int, str]]] = {}
 
 

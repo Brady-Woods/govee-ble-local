@@ -163,9 +163,13 @@ def test_reassemble_ac_rejects_what_the_app_rejects() -> None:
         ref.reassemble_ac([bytes(bad)])
 
 
-def test_selftest_falls_back_to_committed_reader(capsys: pytest.CaptureFixture[str]) -> None:
+def test_selftest_falls_back_to_committed_reader(capsys: pytest.CaptureFixture[str],
+                                                 monkeypatch: pytest.MonkeyPatch) -> None:
     from govee_ble_local._generated.govee_ble_frame import GoveeBleFrame
 
+    # The self-test imports the builder catalogue, spec/govee_commands.py, as a top-level `govee_commands`
+    # (which imports `govee_reference` so): spec/ is on the path here, whatever ran before.
+    monkeypatch.syspath_prepend(str(_REF_PATH.parent))
     assert ref._gbf() is GoveeBleFrame
     assert ref._selftest(strict=True) == 0       # every parser check ran and passed
     assert "Skipping" not in capsys.readouterr().out

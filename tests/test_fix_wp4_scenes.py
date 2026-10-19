@@ -68,7 +68,7 @@ def test_bad_base64_is_not_double_wrapped() -> None:
 # -- cached reverse index --------------------------------------------------------------------
 
 def test_names_by_code_cached_fresh_and_follows_catalog(monkeypatch: pytest.MonkeyPatch) -> None:
-    scenes._catalog.cache_clear()
+    scenes._store.cache_clear()
     try:
         a = FakeSceneFiles(scene_store("H4321", {"a": {"code": 3}}))
         b = FakeSceneFiles(scene_store("H4321", {"b": {"code": 4}}))
@@ -78,25 +78,25 @@ def test_names_by_code_cached_fresh_and_follows_catalog(monkeypatch: pytest.Monk
         first.clear()                                           # caller copy: cache unaffected
         assert scene_names_by_code("h4321") == {3: "a"}
         assert scenes._NAMES_BY_CODE["H4321"][1] is index       # not rebuilt
-        scenes._catalog.cache_clear()                           # a new catalog -> new index
+        scenes._store.cache_clear()                             # a new catalog -> new index
         monkeypatch.setattr(scenes.resources, "files", lambda _pkg: b)
         assert scene_names_by_code("H4321") == {4: "b"}
     finally:
-        scenes._catalog.cache_clear()
+        scenes._store.cache_clear()
         scenes._NAMES_BY_CODE.pop("H4321", None)
 
 
-def test_every_lookup_checks_the_whole_store(monkeypatch: pytest.MonkeyPatch) -> None:
-    scenes._catalog.cache_clear()
+def test_a_malformed_store_fails_every_lookup(monkeypatch: pytest.MonkeyPatch) -> None:
+    scenes._store.cache_clear()
     try:
         outside = FakeSceneFiles('{"pool": [{"name": "a", "code": 1}], "skus": {"H4321": [0, 1]}}')
         monkeypatch.setattr(scenes.resources, "files", lambda _pkg: outside)
         with pytest.raises(GoveeBleError, match="malformed"):
             scenes.load_scenes("H4321")                          # a scene outside the pool
         with pytest.raises(GoveeBleError, match="malformed"):
-            scenes.load_scenes("H9999")                          # no catalog of its own: the store is read
+            scenes.load_scenes("H9999")                          # no catalog of its own: the store's error
     finally:
-        scenes._catalog.cache_clear()
+        scenes._store.cache_clear()
 
 
 def test_names_by_code_bad_sku_still_invalid_value() -> None:

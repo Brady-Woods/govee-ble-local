@@ -393,16 +393,28 @@ model, from which the shipped readers are generated).
   bundled SKU, `load_scenes` (every `Scene` field), `scene_names_by_code` and `scene_upload_frames` at MTU
   20, 182, 244 and 509, at each of the SKU's scene sets, are what they were, and for 1.4.0's 18 SKUs what
   1.4.0's wheel returns at the same scene versions. `load_scenes`, `async_load_scenes` and
-  `scene_names_by_code` are unchanged, and a SKU the store has no catalog for still gets `{}`. The first
-  lookup of each SKU reads and checks the whole store, so one that is missing, unreadable or malformed
-  raises GoveeBleError for any SKU: an entry with no name or code, a bad blob, version rules or a
-  `scene_name` that is not a string (as `tools/fetch_scenes.py` refuses one), an index
-  outside the pool or out of order, two scenes of one name in a catalog, a SKU with no scenes or not in
-  upper case, and an entry no SKU holds (an orphan) are refused. `tools/fetch_scenes.py` reads and writes
-  the store: each write lays it out again from every SKU's catalog (`layout`) in one atomic replace, so the
-  same catalogs give the same bytes and a scene no SKU holds leaves the pool, and a corrupt store fails
-  every SKU's fetch and is left as it is. Its naming (stable names, `scene_name`) and the lightEffect it
-  takes for the SKU are unchanged, and it still stores nothing for a SKU the library has no scenes for.
+  `scene_names_by_code` are unchanged, and a SKU the store has no catalog for still gets `{}`. The store is
+  read and checked once, on the first lookup of any SKU (not on each SKU's first lookup), even where
+  several first lookups run together (one per device's setup), and one that is
+  missing, unreadable or malformed raises GoveeBleError for every SKU: that first failure is kept, and every
+  later lookup raises a GoveeBleError of it (its message and cause) with no second read (a package file
+  changes only with a reinstall). The kept failure holds no traceback, nor does any exception of its cause
+  chain, so it keeps no caller's frames alive; every message stays. Nor does it hold the exception the first
+  lookup's caller was handling, so that exception is left as its caller has it and no later lookup's log
+  shows it. A read error of the process's state (too
+  many open files, out of memory: EMFILE, ENFILE, ENOMEM, EAGAIN) is not kept, so the next lookup reads the
+  store again. An entry `tools/fetch_scenes.py` refuses to write (the loader and the tool share one check:
+  Fixed), an index outside the pool or out of order, a pool out of its content order or holding one scene
+  twice, two scenes of one name in a catalog, a SKU with no scenes or not in upper case, and an entry no SKU
+  holds (an orphan) are refused. `tools/fetch_scenes.py` reads and writes the store: each write lays it out
+  again from every SKU's catalog (`layout`) and checks it as the loader reads it, in one atomic replace, so
+  the same catalogs give the same bytes, a scene no SKU holds leaves the pool and a store the loader refuses
+  is never written, and a corrupt store fails every SKU's fetch and is left as it is. `layout` refuses two
+  spellings of one SKU (`h6006` and `H6006`, which it merged into one catalog: the union of both, or one the
+  loader refused where both held a scene of one name), and a
+  rewritten store is left readable by all (mode 0644; the temporary file it replaces the store with is created
+  0600). Its naming (stable names, `scene_name`) and the lightEffect it takes for the SKU are unchanged, and
+  it still stores nothing for a SKU the library has no scenes for.
 - **`tools/fetch_scenes.py` reads a scene's values for the SKU, as the app does**
   (`CategoryV1.LightEffect`, `CategoryV1.java:323-422`): a `specialEffect` entry whose `supportSku` holds
   the SKU overrides the base code, scene type, param, param id, cmdVersion and big-effect flag (it took the
@@ -545,6 +557,26 @@ model, from which the shipped readers are generated).
   cut would drop that blob). A seeded property test replays 200 random histories and 61 fixed ones through
   `main()`. No bundled catalog changes, and no released name is gone (1.0.0 to 1.4.0), so the tombstone starts
   empty.
+- **A corrupt bundled scene catalog raises only GoveeBleError, and nothing in it is coerced.** A code JSON
+  reads as an infinite float (`1e999`, `Infinity`) raised OverflowError, a store nested too deep
+  RecursionError, and a corrupt `store.json` member of a zipped install (`importlib.resources` reads one)
+  `zipfile.BadZipFile`, `zlib.error` or `lzma.LZMAError`, or RuntimeError for a member flagged encrypted
+  (NotImplementedError for one of an unknown compression method or flag), past GoveeBleError (1.4.0's
+  per-SKU files did too); the first two are malformed now, the zip errors unreadable. An unreadable store's
+  error quotes its cause by its str, not its repr: for a store that is not UTF-8 the repr held the whole
+  store, every blob in it (about 171,700 characters for one stray byte in the 165,015 B store, against about
+  140 now); `tools/fetch_scenes.py`'s error for a store or tombstone that is not UTF-8 held the whole file
+  too, and now quotes its cause the same way. A scene name that is not a string is named by its type, not
+  quoted (a name holding a blob put all of it in the error). The loader
+  coerced mistyped values that `tools/fetch_scenes.py` refuses to write, or took them as they were: a code
+  `"7"`, `1.9` or `true` read as 7, 1 and 1, a scene type `"2"` stayed a string and a placeholder `"no"` read
+  as True. One entry check, `scenes._validate_entry`, is now the loader's and the tool's (`validate_entry`
+  calls it), so the loader refuses exactly what the tool refuses: a name that is not a non-empty string, a
+  code that is not an int from 0 to 0xFFFF (`build.scene_activate`'s range: a negative or larger code can't
+  be sent), a param, category or `scene_name` that is not a string, a param id, scene type or cmdVersion that
+  is not an int (a bool is not one), a placeholder or big-effect flag that is not a bool (each may be null
+  or left out), a param that is not strict base64, and version rules. No bundled scene changes:
+  `load_scenes` and `scene_names_by_code` give what they did for every SKU, and `store.json` is unchanged.
 
 ### Spec
 - `devices.yaml` `scenes.list_filter`: which library scenes the control screen lists and with which

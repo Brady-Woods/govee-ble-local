@@ -2,6 +2,8 @@
 H6052, a scan failure that still matches 1.3.0's handlers, and an unreadable scene catalog."""
 from __future__ import annotations
 
+import zipfile
+import zlib
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
@@ -166,24 +168,28 @@ async def test_except_bleak_error_still_catches_a_failed_scan(monkeypatch: pytes
 def unreadable(monkeypatch: pytest.MonkeyPatch) -> Any:
     """Installs bundled files whose store raises ``error`` when read (None: no store at all)."""
     def install(error: Exception | None) -> None:
-        scenes._catalog.cache_clear()
+        scenes._store.cache_clear()
         files = FakeSceneFiles(error)
         monkeypatch.setattr(scenes, "resources", SimpleNamespace(files=lambda _pkg: files))
 
     yield install
-    scenes._catalog.cache_clear()   # nothing read through the stub stays cached
+    scenes._store.cache_clear()   # nothing read through the stub stays cached
 
 
 @pytest.mark.parametrize("error", [
     PermissionError(13, "Permission denied"),
     IsADirectoryError(21, "Is a directory"),
-    UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte"),
+    UnicodeDecodeError("utf-8", b'{"param": "kwr/"}\xff', 17, 18, "invalid start byte"),
+    # a corrupt member of a zipped install (importlib.resources reads one)
+    zipfile.BadZipFile("Bad CRC-32 for file 'govee_ble_local/scenes/store.json'"),
+    zlib.error("Error -3 while decompressing data: invalid block type"),
 ])
 def test_unreadable_catalog_raises_a_library_error(unreadable: Any, error: Exception) -> None:
     unreadable(error)
     with pytest.raises(GoveeBleError, match="could not be read") as ei:
         scenes.load_scenes("H6008")
     assert ei.value.__cause__ is error
+    assert "kwr/" not in str(ei.value)   # the cause by its str: a UnicodeDecodeError's repr holds the store
 
 
 def test_a_missing_store_is_a_library_error(unreadable: Any) -> None:

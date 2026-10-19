@@ -51,15 +51,15 @@ def test_build_scene_upload_a3_too_large_is_invalid_value() -> None:
 
 
 def test_catalog_with_bad_param_is_malformed(monkeypatch: pytest.MonkeyPatch) -> None:
-    scenes._catalog.cache_clear()
+    scenes._store.cache_clear()
     bad = FakeSceneFiles(scene_store("H1234", {"a": {"code": 3, "param": "!!bad!!"}}))
     monkeypatch.setattr(scenes.resources, "files", lambda _pkg: bad)
     try:
-        with pytest.raises(GoveeBleError, match="scene catalog for H1234 is malformed") as ei:
+        with pytest.raises(GoveeBleError, match="the bundled scene store is malformed") as ei:
             load_scenes("H1234")
         assert "!!bad!!" not in str(ei.value)
     finally:
-        scenes._catalog.cache_clear()
+        scenes._store.cache_clear()
 
 
 def test_frame_len_literals_unchanged() -> None:

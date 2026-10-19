@@ -49,7 +49,6 @@ from __future__ import annotations
 
 import argparse
 import base64
-import binascii
 import contextlib
 import inspect
 import json
@@ -104,34 +103,25 @@ def validate_sku(sku: str) -> str:
 
 
 def validate_entry(name: object, entry: dict[str, object]) -> None:
-    """Check one fetched scene against what ``scenes.load_scenes`` requires; raises ValueError. That refuses
-    a scene with ``rules`` (version-gated in the app, which the library can't follow)."""
-    if not isinstance(name, str) or not name:
-        raise ValueError(f"scene name {name!r} is not a non-empty string")
-    if not isinstance(entry.get("code"), int) or isinstance(entry.get("code"), bool):
-        raise ValueError(f"{name}: missing/non-integer 'code'")
-    if entry.get("rules"):
-        raise ValueError(f"{name}: gated by version rules, which the library can't follow")
-    for key, typ in (("param", str), ("category", str), ("param_id", int),
-                     ("scene_type", int), ("cmd_version", int), ("scene_name", str)):
-        v = entry.get(key)
-        if v is not None and not isinstance(v, typ):
-            raise ValueError(f"{name}: '{key}' must be {typ.__name__} or null, got {type(v).__name__}")
-    param = entry.get("param")
-    if isinstance(param, str) and param:
-        try:
-            base64.b64decode(param, validate=True)
-        except (binascii.Error, ValueError) as err:
-            raise ValueError(f"{name}: 'param' is not valid base64: {err}") from err
+    """Check one scene as ``scenes.load_scenes`` takes it, by the loader's own check
+    (``scenes._validate_entry``), so the tool writes no scene the loader refuses and refuses none it takes;
+    raises ValueError. That refuses a mistyped value (nothing is coerced), a code outside 0 to 0xFFFF, a blob
+    that is not base64 and a scene with ``rules`` (version-gated in the app, which the library can't
+    follow)."""
+    from govee_ble_local import scenes
+
+    scenes._validate_entry(name, entry)
 
 
 def write_catalog(path: pathlib.Path, data: object) -> None:
     """Write the scene store (or another JSON file) atomically: temp file in the same directory, then
-    ``os.replace``."""
+    ``os.replace``. The file is left 0644, readable by all whatever the umask (it is package data): mkstemp
+    creates the temp file 0600, which the replace would give the file."""
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as fh:
             fh.write(_dumps(data))
+        os.chmod(tmp, 0o644)
         os.replace(tmp, path)
     except BaseException:
         with contextlib.suppress(OSError):
@@ -153,11 +143,16 @@ def layout(catalogs: Mapping[str, Mapping[str, Entry]]) -> dict[str, Any]:
     ``pool``, each scene of them once (its entry with its ``name``), sorted by name, then by its JSON with
     sorted keys; ``skus``, each SKU's pool indexes in increasing order, which is its catalog's name order.
     The same catalogs give the same store, whatever order they or their scenes come in, and a scene no SKU
-    holds is in no pool. Raises ValueError on an empty catalog, an invalid scene (:func:`validate_entry`) or
-    an entry that carries a ``name`` of its own."""
+    holds is in no pool. Raises ValueError on an empty catalog, an invalid scene (:func:`validate_entry`), an
+    entry that carries a ``name`` of its own, or two catalogs of one SKU (its spellings, "h6006" and "H6006",
+    which would be one catalog of both)."""
     pool: dict[str, Entry] = {}   # _canon -> pool entry
     refs: dict[str, list[str]] = {}   # SKU -> its scenes' _canon
+    spelled: dict[str, str] = {}   # SKU -> the key its catalog is given under
     for sku, scenes in catalogs.items():
+        key = validate_sku(sku)
+        if spelled.setdefault(key, sku) != sku:
+            raise ValueError(f"{key}: two catalogs, {spelled[key]!r} and {sku!r}")
         if not scenes:
             raise ValueError(f"{sku}: an empty catalog is not stored")
         for name, entry in scenes.items():
@@ -166,7 +161,7 @@ def layout(catalogs: Mapping[str, Mapping[str, Entry]]) -> dict[str, Any]:
                 raise ValueError(f"{sku}: scene {name!r} carries a 'name' of its own")
             full = {"name": name, **entry}
             pool.setdefault(_canon(full), full)
-            refs.setdefault(validate_sku(sku), []).append(_canon(full))
+            refs.setdefault(key, []).append(_canon(full))
     order = sorted(pool, key=lambda c: (pool[c]["name"], c))
     at = {c: i for i, c in enumerate(order)}
     return {"pool": [pool[c] for c in order],
@@ -185,8 +180,9 @@ def read_store(out_dir: pathlib.Path | None = None) -> dict[str, dict[str, Entry
     try:
         store = json.loads(path.read_text(encoding="utf-8"))
         scenes._catalogs(store)
-    except (ValueError, TypeError, KeyError, AttributeError) as err:
-        raise ValueError(f"{STORE_NAME} is malformed: {err!r}") from err
+    except (ValueError, RecursionError) as err:   # _catalogs raises ValueError; json.loads RecursionError too
+        # quoted by its str: the repr of a UnicodeDecodeError holds the whole file, every blob in it
+        raise ValueError(f"{STORE_NAME} is malformed: {type(err).__name__}: {err}") from err
     pool = store["pool"]
     return {sku: {pool[i]["name"]: {k: v for k, v in pool[i].items() if k != "name"} for i in refs}
             for sku, refs in store["skus"].items()}
@@ -219,7 +215,8 @@ def read_tombstone(path: pathlib.Path | None = None) -> dict[str, dict[str, Any]
             if not all(isinstance(n, str) and n for n in dropped) or dropped != sorted(set(dropped)):
                 raise ValueError(f"{sku}: 'dropped' is not sorted, unique names")
     except (ValueError, TypeError, AttributeError) as err:
-        raise ValueError(f"{path.name} is malformed: {err!r}") from err
+        # quoted by its str, as read_store quotes it
+        raise ValueError(f"{path.name} is malformed: {type(err).__name__}: {err}") from err
     return tomb
 
 
@@ -235,12 +232,16 @@ def _record(retired: Mapping[str, Entry], dropped: Collection[str]) -> dict[str,
 
 def store_catalog(sku: str, data: dict[str, Entry], out_dir: pathlib.Path | None = None) -> int:
     """Store ``sku``'s catalog and return the pool's size: the store is laid out again from every SKU's
-    catalog (:func:`layout`), so a scene no SKU holds any more leaves the pool, and written in one atomic
-    replace, so it is never half written."""
+    catalog (:func:`layout`), so a scene no SKU holds any more leaves the pool, checked as the library reads
+    it (``scenes._catalogs``, ValueError: a store the loader refuses is never written), and written in one
+    atomic replace, so it is never half written."""
+    from govee_ble_local import scenes
+
     base = out_dir or OUT_DIR
     catalogs = read_store(base)
     catalogs[validate_sku(sku)] = data
     store = layout(catalogs)
+    scenes._catalogs(store)
     write_catalog(base / STORE_NAME, store)
     return len(store["pool"])
 
@@ -373,12 +374,12 @@ def listed_effect(sku: str, effects: list[dict[str, Any]], ops: frozenset[int] |
     return left[0], False
 
 
-def _label(category: object) -> str:
-    """A category's name as a stored name's suffix."""
-    return category if isinstance(category, str) and category else "no category"
+def _label(category: str | None) -> str:
+    """A category's name as a stored name's suffix (an entry's category is a str or null: validate_entry)."""
+    return category or "no category"
 
 
-def _apart(name: str, category: object) -> str:
+def _apart(name: str, category: str | None) -> str:
     """``name`` stored apart for a scene of ``category``: "<name> (<category>)"."""
     return f"{name} ({_label(category)})"
 
@@ -395,8 +396,8 @@ def _of(entry: Entry) -> str:
 def scene_name(name: str, entry: Entry) -> str:
     """The sceneName the app lists the scene stored as ``name`` under: its ``scene_name``, which fetch()
     writes where the two differ (a scene stored apart), else ``name``."""
-    own = entry.get("scene_name")
-    return own if isinstance(own, str) and own else name
+    own: str | None = entry.get("scene_name")   # a str or null: validate_entry
+    return own or name
 
 
 def _scene(entry: Entry) -> tuple[object, object]:
@@ -405,8 +406,8 @@ def _scene(entry: Entry) -> tuple[object, object]:
 
 
 def _code(entry: Entry) -> int:
-    code = entry.get("code")
-    return code if isinstance(code, int) else 0
+    code: int = entry["code"]   # an int: every fetched, stored and retired entry passes validate_entry
+    return code
 
 
 def _order(entry: Entry) -> tuple[int, str, str]:
@@ -813,7 +814,6 @@ def resolve_placeholders(email: str, password: str, skus: list[str],
                 for v in data.values():
                     pid = v.get("param_id")
                     if v.get("placeholder") and pid in real:
-                        validate_entry(f"param_id {pid}", {"code": 0, "param": real[pid]})
                         v["param"] = real[pid]
                         v.pop("placeholder", None)
                         fixed += 1
@@ -828,11 +828,12 @@ def resolve_placeholders(email: str, password: str, skus: list[str],
 def _valid_resolved(entry: dict[str, object]) -> bool:
     """True if an existing catalog entry is already a complete, usable
     definition we should PRESERVE rather than clobber with a fresh public
-    fetch: it has an integer code and is NOT flagged as an unresolved
-    placeholder. The ``placeholder`` flag is the source of truth — --resolve
+    fetch: it is NOT flagged as an unresolved placeholder (every stored and
+    retired entry has an int code: read_store and read_tombstone check it with
+    the shared check). The ``placeholder`` flag is the source of truth — --resolve
     pops it once the real blob is baked in. A ``param``-less (bare-activate) scene
     is valid too."""
-    return isinstance(entry.get("code"), int) and not entry.get("placeholder")
+    return not entry.get("placeholder")
 
 
 def _resolved(existing: Mapping[str, Entry], name: str, fr: Entry) -> Entry | None:
