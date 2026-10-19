@@ -32,9 +32,11 @@ import urllib.request
 from typing import Any
 
 LIBRARY_URL = "https://app2.govee.com/appsku/v1/light-effect-libraries"
-# Self-contained on purpose (the cloud module carries its own copy). Override with
-# --app-version or $GOVEE_APP_VERSION if Govee starts rejecting this value.
-DEFAULT_APP_VERSION = "7.5.20"
+# The traced app's version (decomp-7.7.02). Self-contained on purpose (the cloud module carries its own
+# copy). The scene library answered 7.5.20 byte for byte as 7.7.02 for every bundled SKU (2026-10-19);
+# the catalogue endpoint tools/fetch_catalog.py reads with it did not (15 more SKUs at 7.7.02). Override
+# with --app-version or $GOVEE_APP_VERSION if Govee starts rejecting this value.
+DEFAULT_APP_VERSION = "7.7.02"
 OUT_DIR = pathlib.Path(__file__).resolve().parent.parent / "src" / "govee_ble_local" / "scenes"
 # Upper bound on the library response body; real catalogs are well under 1 MiB.
 MAX_RESPONSE_BYTES = 8 * 1024 * 1024
@@ -63,7 +65,7 @@ def validate_entry(name: object, entry: dict[str, object]) -> None:
     if not isinstance(entry.get("code"), int) or isinstance(entry.get("code"), bool):
         raise ValueError(f"{name}: missing/non-integer 'code'")
     for key, typ in (("param", str), ("category", str), ("param_id", int),
-                     ("scene_type", int), ("cmd_version", int)):
+                     ("scene_type", int), ("cmd_version", int), ("rules", bool)):
         v = entry.get(key)
         if v is not None and not isinstance(v, typ):
             raise ValueError(f"{name}: '{key}' must be {typ.__name__} or null, got {type(v).__name__}")
@@ -158,8 +160,46 @@ def _is_placeholder(entry: Entry) -> bool:
     return bool(entry.get("big_effect")) and not entry.get("param")
 
 
+def for_sku(sku: str, eff: dict[str, Any]) -> dict[str, Any]:
+    """One lightEffect's values for ``sku``, as the app reads them (CategoryV1.LightEffect,
+    base-classes10/com/govee/base2light/ble/scenes/CategoryV1.java:323-422): a ``specialEffect`` entry whose
+    ``supportSku`` holds the SKU overrides the base values.
+
+    - code: the first such entry's ``sceneCode`` when above 0 (getSceneCode);
+    - scene type: that entry's ``sceneType`` when its code is above 0, or its type is and it has a param;
+      else 0 when it has no param and the base ``scenceParamId`` is set; else the base (getSceneType);
+    - param and param id: the first such entry with a param / a non-zero id (getScenesParam,
+      getScenesParamId); cmdVersion and bigEffectStr: the first such entry's (getCmdVersion,
+      isBigEffectScene);
+    - rules: the version rules that gate the scene (getSupportRules: the entry's where its type is used),
+      which the app filters the scene by (CategoryV1.SceneV1.checkVersion / checkSupport) and the library
+      does not: their presence is recorded."""
+    specials = [x for x in eff.get("specialEffect") or () if sku in (x.get("supportSku") or ())]
+    first = specials[0] if specials else None
+    out = {"code": eff.get("sceneCode"), "type": eff.get("sceneType"), "param": eff.get("scenceParam"),
+           "param_id": eff.get("scenceParamId"), "cmd_version": eff.get("cmdVersion"),
+           "big_effect": eff.get("bigEffectStr") == 1, "rules": eff.get("rules")}
+    if first is not None:
+        own_type = (first.get("sceneCode") or 0) > 0 or ((first.get("sceneType") or 0) > 0
+                                                           and bool(first.get("scenceParam")))
+        if (first.get("sceneCode") or 0) > 0:
+            out["code"] = first["sceneCode"]
+        if own_type:
+            out["type"], out["rules"] = first.get("sceneType"), first.get("rules")
+        elif not first.get("scenceParam") and (eff.get("scenceParamId") or 0) > 0:
+            out["type"] = 0
+        out["cmd_version"] = first.get("cmdVersion") or 0   # the DTO's int field: 0 when absent
+        out["big_effect"] = first.get("bigEffectStr") == 1
+    out["param"] = next((x["scenceParam"] for x in specials if x.get("scenceParam")), out["param"])
+    out["param_id"] = next((x["scenceParamId"] for x in specials if x.get("scenceParamId")), out["param_id"])
+    return out
+
+
 def fetch(sku: str, app_version: str = DEFAULT_APP_VERSION) -> dict[str, Entry]:
-    url = f"{LIBRARY_URL}?sku={urllib.parse.quote(validate_sku(sku), safe='')}"
+    """``sku``'s scenes from the public scene library: each scene's first lightEffect, with the values the
+    app reads for the SKU (:func:`for_sku`)."""
+    key = validate_sku(sku)
+    url = f"{LIBRARY_URL}?sku={urllib.parse.quote(key, safe='')}"
     req = urllib.request.Request(url, headers={"AppVersion": app_version})
     # Fixed https LIBRARY_URL; the only variable part (sku) is validated and URL-quoted above.
     with urllib.request.urlopen(req, timeout=20) as resp:  # nosec B310
@@ -173,29 +213,29 @@ def fetch(sku: str, app_version: str = DEFAULT_APP_VERSION) -> dict[str, Entry]:
             effects = scene.get("lightEffects") or []
             if not effects:
                 continue
-            eff = effects[0]
-            code = eff.get("sceneCode")
-            if code is None:
+            eff = for_sku(key, effects[0])
+            if eff["code"] is None:
                 continue
-            param = eff.get("scenceParam") or None
+            param = eff["param"] or None
             if isinstance(param, str):
                 param = _NOT_BASE64.sub("", param) or None
             entry: Entry = {
-                "code": int(code),
+                "code": int(eff["code"]),
                 "param": param,
                 "category": category.get("categoryName"),
             }
-            pid = eff.get("scenceParamId")
-            if pid is not None:
-                entry["param_id"] = int(pid)
+            if eff["param_id"] is not None:
+                entry["param_id"] = int(eff["param_id"])
             # Path-B upload drivers (see spec/docs/SCENE_UPLOAD_ENCODING.md): scene_type +
             # cmd_version pick the a3 commByte; bigEffectStr flags fetch-required.
-            if eff.get("sceneType") is not None:
-                entry["scene_type"] = int(eff["sceneType"])
-            if eff.get("cmdVersion") is not None:
-                entry["cmd_version"] = int(eff["cmdVersion"])
-            if eff.get("bigEffectStr"):
+            if eff["type"] is not None:
+                entry["scene_type"] = int(eff["type"])
+            if eff["cmd_version"] is not None:
+                entry["cmd_version"] = int(eff["cmd_version"])
+            if eff["big_effect"]:
                 entry["big_effect"] = True
+            if eff["rules"]:
+                entry["rules"] = True   # version-gated in the app; not modelled
             if _is_placeholder(entry):
                 # real blob must come from the authenticated effect-strs endpoint
                 entry["placeholder"] = True
@@ -256,7 +296,7 @@ def _valid_resolved(entry: dict[str, object]) -> bool:
 # Public metadata refreshed onto a preserved (resolved) entry. fetch() only sets scene_type /
 # cmd_version / big_effect when the library has them, so they are REPLACED (absent -> dropped),
 # never merged: a stale upload-routing field would pick the wrong upload path.
-_REFRESH = ("scene_type", "cmd_version", "big_effect", "category")
+_REFRESH = ("scene_type", "cmd_version", "big_effect", "rules", "category")
 
 
 def _keeps_resolved_blob(ex: Entry | None, fr: Entry) -> bool:

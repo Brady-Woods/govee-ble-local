@@ -261,6 +261,30 @@ def test_fetch_flags_a_placeholder_by_the_apps_signal(monkeypatch: pytest.Monkey
     assert [n for n, e in got.items() if e.get("placeholder")] == ["Big"]
 
 
+def test_fetch_takes_the_skus_special_effect(monkeypatch: pytest.MonkeyPatch) -> None:
+    """CategoryV1.LightEffect: a specialEffect entry whose supportSku holds the SKU overrides the base
+    code, type, param, param id, cmdVersion and bigEffectStr; its rules are recorded. Another SKU's entry is
+    ignored, and an entry without a code or a param types the scene static when the base has a param id."""
+    fs = _tool("fetch_scenes")
+    base = {"sceneCode": 10, "sceneType": 1, "scenceParam": "AAAA", "scenceParamId": 5, "cmdVersion": 0}
+    rules = [{"hardVersion": "1.00.00", "softVersion": "1.00.01"}]
+    own = {"supportSku": ["H6641"], "sceneCode": 11, "sceneType": 2, "scenceParam": "BBBB",
+           "scenceParamId": 6, "cmdVersion": 1, "bigEffectStr": 0, "rules": rules}
+    other = {**own, "supportSku": ["H61A8"], "sceneCode": 12, "scenceParam": "CCCC"}
+    bare = {"supportSku": ["H6641"], "sceneCode": 0, "sceneType": 1, "scenceParam": "", "scenceParamId": 0}
+    scenes = [{"sceneName": "Own", "lightEffects": [{**base, "specialEffect": [other, own]}]},
+              {"sceneName": "Bare", "lightEffects": [{**base, "specialEffect": [bare]}]}]
+    body = json.dumps({"data": {"categories": [{"categoryName": "c", "scenes": scenes}]}}).encode()
+    monkeypatch.setattr(fs.urllib.request, "urlopen", lambda *a, **k: _Resp(body))
+    got = fs.fetch("H6641")
+    assert got["Own"] == {"code": 11, "param": "BBBB", "category": "c", "param_id": 6, "scene_type": 2,
+                          "cmd_version": 1, "rules": True}
+    assert got["Bare"] == {"code": 10, "param": "AAAA", "category": "c", "param_id": 5, "scene_type": 0,
+                           "cmd_version": 0}
+    assert fs.fetch("H6006")["Own"] == {"code": 10, "param": "AAAA", "category": "c", "param_id": 5,
+                                        "scene_type": 1, "cmd_version": 0}
+
+
 def test_fetch_validate_entry_rejects_bad_base64() -> None:
     fs = _tool("fetch_scenes")
     with pytest.raises(ValueError, match="base64"):

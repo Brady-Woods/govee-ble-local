@@ -278,6 +278,15 @@ model, from which the shipped readers are generated).
   `scene_names_by_code` are unchanged. An index entry naming a set that is not bundled raises GoveeBleError
   like an unreadable catalog. `tools/fetch_scenes.py` writes the new layout (a new set before the index,
   then removes the sets no SKU names) and stores nothing for a SKU the library has no scenes for.
+- **`tools/fetch_scenes.py` reads a scene's values for the SKU, as the app does**
+  (`CategoryV1.LightEffect`, `CategoryV1.java:323-422`): a `specialEffect` entry whose `supportSku` holds
+  the SKU overrides the base code, scene type, param, param id, cmdVersion and big-effect flag (it took the
+  base `lightEffects[0]` values only), and a scene the app gates on version `rules` is stored with
+  `rules: true` (the library does not filter by them; no bundled scene has any). The AppVersion header is
+  now the traced app's, 7.7.02 (the scene library answers 7.5.20 identically for every bundled SKU;
+  `tools/fetch_catalog.py`, which shares the constant, gets 15 more catalogue SKUs at 7.7.02). The bundled
+  catalogs are not re-fetched here: a re-fetch would change 1.4.0's H6004, H6006 / H6008, H60A6, H61A8 and
+  H6641 catalogs, which is for the user.
 - **A scene placeholder is the app's own signal**: `tools/fetch_scenes.py` flags a scene `placeholder` only
   when it is a big-effect scene (`bigEffectStr`) with an empty param, which the app fetches before the apply
   (`BaseSceneViewMode.java:630`, `SceneDataVM.java:1324`), not when a param's byte 3 is 0xFF. That heuristic
