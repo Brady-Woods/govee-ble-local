@@ -314,11 +314,14 @@ def test_fetch_lists_what_the_apps_scene_list_lists(monkeypatch: pytest.MonkeyPa
         season]}}).encode()
     monkeypatch.setattr(fs.urllib.request, "urlopen", lambda *a, **k: _Resp(body))
     assert (fs.op_set("H61A8"), fs.op_set("H6006"), fs.op_set("H9999")) == ({0, 1, 2, 3}, {0, 1}, None)
-    seen: set[tuple[str, object, int]] = set()
+    seen = fs.Answered()
     listed = {"Op": 1, "Static": 3, "AfterGate": 2, "Expired": 1, "DiyFirst": 2}
     assert {n: e["code"] for n, e in fs.fetch("H6047", seen=seen).items()} == listed
-    # Gated (the firmware's version rules) and Season (out of its time) are left out only for now
-    assert seen == {(n, "c", e["sceneCode"]) for n, es in scenes.items() if n != "Gated" for e in es}
+    # the op set refuses the DIY ones for good; Gated (the firmware's version rules) and Season (out of its
+    # time) are left out only for now, like the listed ones at each of their lightEffects
+    assert seen.gone == {("NoCodes", "c", 4): {"AAAA"}, ("Codes", "c", 4): {"AAAA"}}
+    assert seen.live == {(n, "c", e["sceneCode"]) for n, es in scenes.items() if n not in ("NoCodes", "Codes")
+                         for e in es} | {("Season", "old", 3)}
     out = capsys.readouterr().out
     assert "H6047: left out 1 scenes whose effect the firmware's version rules pick: Gated" in out
     assert "empty scene set" not in out
@@ -397,18 +400,19 @@ _ROUNDS: dict[str, tuple[_Step, ...]] = {
     # answered, refused for good (op type -1): removed, and printed
     "refused": (_FIRST, _then(_zootopia(_ZOOTOPIA[1][0], (*_HOLDER, {"sceneType": 9})),
                               {n: v for n, v in _STORED.items() if n != "Flash"}, ("Flash",))),
-    # the refused holder is still answered, so a new scene of its category does not take its name
+    # the refused holder is retired, so a new scene of its category does not take its name, and only the
+    # holder's exact return takes it back
     "refused, and a same-category scene": (
         _FIRST, _then(_zootopia(_ZOOTOPIA[1][0], (*_HOLDER, {"sceneType": 9}), ("Flash", 14771, "FFFF")),
                       {**{n: v for n, v in _STORED.items() if n != "Flash"},
                        "Flash (Zootopia 2, 2)": (14771, "Zootopia 2", "FFFF")},
                       ("Flash", "Flash (Zootopia 2, 2)")),
         _then(_zootopia(*_ZOOTOPIA[1], ("Flash", 14771, "FFFF")),
-              {**_STORED, "Flash (Zootopia 2, 2)": (14771, "Zootopia 2", "FFFF")})),
-    # identical responses name alike whatever the history: a first fetch takes another SKU's names
-    "a peer's names": (_then((_EMOTION,), _EARLY, sku="H6168"),
-                       _then((_EMOTION, _ZOOTOPIA), _LATE, ("Flash (Zootopia 2)",), sku="H6168"),
-                       _then(_FIRST[1], _LATE)),
+              {**_STORED, "Flash (Zootopia 2, 2)": (14771, "Zootopia 2", "FFFF")}, ("Flash",))),
+    # a first fetch names a response alike whatever another SKU's history: no other SKU's names are taken
+    "another SKU's history": (_then((_EMOTION,), _EARLY, sku="H6168"),
+                              _then((_EMOTION, _ZOOTOPIA), _LATE, ("Flash (Zootopia 2)",), sku="H6168"),
+                              _FIRST),
     "literal": (_FIRST, _then((_EMOTION, _ZOOTOPIA, ("Specials", (("Flash (Emotion)", 500, "HHHH"),))),
                               {**_STORED, "Flash (Emotion) (Specials)": (500, "Specials", "HHHH")},
                               ("Flash (Emotion) (Specials)",))),
@@ -433,14 +437,15 @@ def test_fetch_never_points_a_stored_name_at_another_scene(change: str, monkeypa
     """A stored name is an effect name automations keep. A first fetch names the scenes the app lists under
     one name whatever their order: the highest code keeps it, each other is "<name> (<category>)" (", n"
     where that is taken), and each records its sceneName. A re-fetch matches each listed scene to a stored
-    one of its sceneName (by code, category and blob, else code and category, and so on to category
-    alone, passing over one the library still answers); only a new one gets a new name, another SKU's name for
-    the same scene first, never a stored one. A stored scene no longer listed keeps its name, unless the
-    library still answers it and the SKU's scene list refuses it for good; one left out for its time or
+    one of its sceneName (by code and category, else code, and so on to category alone, passing over one the
+    library still answers); only a new one gets a new name, never a stored or retired one, and never another
+    SKU's. A stored scene no longer listed keeps its name, unless the SKU's scene list refuses its scene for
+    good: then it is retired, and only the scene's exact return takes it back. One left out for its time or
     version rules is kept. Round by round, every stored name keeps its code, category and blob or is
     printed."""
     fs = _tool("fetch_scenes")
     monkeypatch.setattr(fs, "OUT_DIR", tmp_path)
+    monkeypatch.setattr(fs, "TOMBSTONE", tmp_path / "tombstone.json")
 
     def view(catalog: dict[str, Any]) -> dict[str, tuple[object, object, object]]:
         return {n: (e["code"], e["category"], e["param"]) for n, e in catalog.items()}

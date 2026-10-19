@@ -461,28 +461,35 @@ model, from which the shipped readers are generated).
   layout's `is_cct` on the `[gradual][kelvin s16be]` decodes, so a `gradual_kelvin_s16be_nocct` report
   (mode_color_parse `kelvin_15_nocct`, `kelvin_0d_nocct`, ...) reads as `KelvinReport(0)`, not
   colour-temperature mode. Latent: no current SKU uses those decodes.
-- **`tools/fetch_scenes.py` keeps every same-named scene and never points a stored name at another scene.** A
-  stored name is a Home Assistant effect name that automations keep. The app lists one sceneName in more than
-  one category, or twice in one (H61A8 / H6641: Emotion's "Flash", code 2020, and Zootopia 2's, 14769; 41 of
-  the 93 SKUs fetched on 2026-10-19, H1A42's "Sleep" and "Meditation" and H60B1's "Dusk" among them), and the
-  fetch kept only the last of them. Each one is now stored: a new one under its sceneName where that is free,
-  else as "<name> (<category>)" or "<name> (<category>, n)", with its sceneName in a new `scene_name` key
-  where the two differ (the loader ignores the key). A new scene first takes the name another SKU's stored
-  catalog gives the same scene (its sceneName, code and category) where that is free; of the other new scenes
-  of one sceneName the highest code keeps it, whatever the list order, so identical responses give identical
-  names whatever each SKU's history (the bundled H61A8 / H6641 "Flash" is 14769, which a first fetch of H6168
-  picks too). A re-fetch matches each listed scene to a stored one of its sceneName by code, category and
-  blob, else by code and category, by code (its category renamed), by category and blob, by category (its code
-  changed; H6006's 26 recodes keep their blob), and prints each move; a match short of code and category
-  passes over a stored scene the library still answers as stored. Only a scene that matches none gets a new
-  name, and never one the store holds. A stored scene no longer listed keeps its name, as does one left out
-  only for its time (an expired category or effect) or the firmware's version rules, so its name is never
-  freed for another scene; only one the library still answers that the SKU's scene list refuses for good (its
-  op set), or a sceneType-5 scene the library does not upload, is removed and printed. Scenes are named after
-  the sceneType-5 scenes a `legacy_scene` SKU does not upload are left out, and a blob resolved by `--resolve`
-  is kept while the library ships its scene as a placeholder of the same param id: under the name the scene
-  keeps (through a renumber or a category rename too, with the new code and category), else by the scene's
-  code and category. No bundled catalog changes.
+- **`tools/fetch_scenes.py` keeps every same-named scene, never points a stored name at another scene, and
+  never gives a removed name to another.** A stored name is a Home Assistant effect name that automations
+  keep. The app lists one sceneName in more than one category, or twice in one (H61A8 / H6641: Emotion's
+  "Flash", code 2020, and Zootopia 2's, 14769; 41 of the 93 SKUs fetched on 2026-10-19, H1A42's "Sleep" and
+  "Meditation" and H60B1's "Dusk" among them), and the fetch kept only the last of them. Each one is now
+  stored: a new one under its sceneName where that is free, else as "<name> (<category>)" or "<name>
+  (<category>, n)", with its sceneName in a new `scene_name` key where the two differ (the loader ignores the
+  key). Of the new scenes of one sceneName the highest code keeps it, whatever the list order, so a first
+  fetch names a response alike whatever the store holds (the bundled H61A8 / H6641 "Flash" is 14769, which a
+  first fetch of H6168 picks too); no other SKU's stored names are taken (over the 93 SKUs fetched on
+  2026-10-19 that changes no name). A re-fetch keeps the name of the stored scene of its sceneName that holds
+  a listed scene's code and category (ties by the whole entry, then blob and param id); else, only where
+  exactly one stored and one listed scene fit each other, by one of its own lightEffects' codes or by category
+  and blob (H6006's 26 recodes keep their blob), printed as a move, or by category and param id or category
+  alone, printed as a guess. Those pass over a stored scene whose code the library still answers, under any
+  sceneName, and one the previous fetch found gone from the library; where more than one fits, the scene takes
+  a new name, printed as ambiguous. Only a scene that matches none gets a new name, never one the store or the
+  tombstone holds. A stored scene no longer listed keeps its name, as do one left out only for its time (an
+  expired category or effect) or the firmware's version rules and one listed under another name; a sceneName
+  the app renames keeps its old name too, so two names hold one code. Only one whose scene the SKU's scene
+  list refuses for good (its op set), or a sceneType-5 scene the library does not upload, is removed, printed,
+  and retired in a tombstone, `tools/scene_tombstone.json` (out of the package; the store, the loader and the
+  pool are unchanged): only that scene's exact return (sceneName, code, category and blob) takes the name
+  back, printed. Scenes are named after the sceneType-5 scenes a `legacy_scene` SKU does not upload are left
+  out, and a blob resolved by `--resolve` is kept while the library ships its scene as a placeholder of the
+  same param id: under the name the scene keeps (through a renumber or a category rename too, with the new
+  code and category), else by the scene's code and category, else by the one resolved entry of that param id.
+  A seeded property test replays 200 random histories and nine fixed ones through `main()`. No bundled catalog
+  changes, and no released name is gone (1.0.0 to 1.4.0), so the tombstone starts empty.
 
 ### Spec
 - `devices.yaml` `scenes.list_filter`: which library scenes the control screen lists and with which

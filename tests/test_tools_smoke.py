@@ -99,6 +99,7 @@ def test_fetch_main_exits_nonzero_on_failure(monkeypatch: pytest.MonkeyPatch, tm
                                              capsys: pytest.CaptureFixture[str]) -> None:
     fs = _load("fetch_scenes")
     monkeypatch.setattr(fs, "OUT_DIR", tmp_path)
+    monkeypatch.setattr(fs, "TOMBSTONE", tmp_path / "tombstone.json")
 
     def boom(sku: str, app_version: str = "", **_kw: object) -> dict:
         raise OSError("network down")

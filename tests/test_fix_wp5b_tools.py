@@ -211,15 +211,28 @@ def test_merge_keeps_a_resolved_blob_over_the_public_stub() -> None:
     merged = fs._merge(existing, {"A": stub})
     assert merged["A"] == {"code": 10, "param": "REAL", "param_id": 5, "scene_type": 2, "category": "c"}
     assert merged["Gone"] == existing["Gone"]                   # no longer public: kept
-    assert "Gone" not in fs._merge(existing, {"A": stub}, {("Gone", "c", 3)})   # public, not listed: dropped
-    assert "Gone" in fs._merge(existing, {"A": stub}, {("Gone", "c", 4)})       # another scene of its name
+
+    def seen(gone: tuple[tuple[int, str | None], ...] = (), live: tuple[int, ...] = ()) -> Any:
+        out = fs.Answered()
+        for code, blob in gone:
+            out.gone.setdefault(("Gone", "c", code), set()).add(blob)
+        out.live |= {("Gone", "c", code) for code in live}
+        return out
+
+    assert "Gone" not in fs._merge(existing, {"A": stub}, seen(gone=((3, None),)))   # refused for good
+    assert "Gone" not in fs._merge(existing, {"A": stub}, seen(gone=((3, "B"),)))    # its blob changed too
+    assert "Gone" in fs._merge(existing, {"A": stub}, seen(gone=((4, None),)))       # another one of its name
+    assert "Gone" in fs._merge(existing, {"A": stub}, seen(live=(3,)))               # listed as another name
+    assert "Gone" in fs._merge(existing, {"A": stub}, seen(gone=((3, "B"),), live=(3,)))   # a sibling refused
     assert fs._merge(existing, {"B": stub})["B"]["param"] == "REAL"             # kept by scene, not by name
     other = dict(stub, param_id=6)                              # another effect: re-resolve it
     assert fs._merge(existing, {"A": other})["A"] == other
     for moved in (dict(stub, code=11), dict(stub, category="d")):   # "A" renumbered, its category renamed
-        assert fs._merge(existing, {"A": moved})["A"] == {
-            **{k: v for k, v in moved.items() if k != "placeholder"}, "param": "REAL"}
-        assert fs._merge(existing, {"B": moved})["B"] == moved   # another name and scene: re-resolve it
+        kept = {**{k: v for k, v in moved.items() if k != "placeholder"}, "param": "REAL"}
+        assert fs._merge(existing, {"A": moved})["A"] == kept
+        assert fs._merge(existing, {"B": moved})["B"] == kept   # a new name: the one resolved entry of its id
+        twice = {**existing, "C": {**existing["A"], "code": 12, "param": "ALSO"}}
+        assert fs._merge(twice, {"B": moved})["B"] == moved     # two of its id: re-resolve it
 
 
 _ROW = re.compile(r"^(\S+)\s+(\d+)\s+(\d+)(\[[^\]]*\])?\s+(\d+)\s+(\d+)\s+(\d+)\s+(\[.*\])$")
@@ -288,6 +301,7 @@ def test_main_counts_corrupt_catalog_and_write_failure(monkeypatch: pytest.Monke
                                                        capsys: pytest.CaptureFixture[str]) -> None:
     fs = _load("fetch_scenes")
     monkeypatch.setattr(fs, "OUT_DIR", tmp_path)
+    monkeypatch.setattr(fs, "TOMBSTONE", tmp_path / "tombstone.json")
     monkeypatch.setattr(fs, "fetch", lambda sku, app_version="", **_kw: {"A": {"code": 1, "param": None}})
     corrupt = '{"pool": [{"name": "A", "code": 1}], "skus": {"H60A6": [1]}}'
     (tmp_path / "store.json").write_text(corrupt, encoding="utf-8")
@@ -310,6 +324,7 @@ def test_main_leaves_out_the_type5_scenes_legacy_scene_does_not_upload(monkeypat
                                                                        tmp_path: Path) -> None:
     fs = _load("fetch_scenes")
     monkeypatch.setattr(fs, "OUT_DIR", tmp_path)
+    monkeypatch.setattr(fs, "TOMBSTONE", tmp_path / "tombstone.json")
     fetched = {"Rgb": {"code": 1, "param": None, "scene_type": 1},
                "NewDiy": {"code": 2, "param": base64.b64encode(b"\x50\x01\x02").decode(), "scene_type": 5},
                "Diy": {"code": 3, "param": base64.b64encode(b"\x13\x01\x02").decode(), "scene_type": 5}}
