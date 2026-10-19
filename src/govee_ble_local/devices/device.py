@@ -268,7 +268,8 @@ class Device:
     @property
     def min_kelvin(self) -> int | None:
         """Lowest supported colour temperature, or None if unconstrained. It may change once the
-        hardware version is read (:attr:`DeviceProfile.kelvin_by_hardware`) or a pact is advertised
+        hardware or soft version is read (:attr:`DeviceProfile.kelvin_by_hardware` /
+        :attr:`DeviceProfile.kelvin_by_software`) or a pact is advertised
         (:attr:`DeviceProfile.kelvin_by_pact`)."""
         span = self._kelvin_range()
         return self.profile.min_kelvin if span is None else span[0]
@@ -289,9 +290,10 @@ class Device:
                                     self._state.hardware_version, self._pact)
 
     def _kelvin_range(self) -> tuple[int, int] | None:
-        """The Kelvin range for this device's hardware version and advertised pact, as far as they are
+        """The Kelvin range for this device's firmware versions and advertised pact, as far as they are
         known."""
-        return _fold.kelvin_range(self.profile, self._state.hardware_version, self._pact)
+        return _fold.kelvin_range(self.profile, self._state.hardware_version, self._pact,
+                                  self._state.firmware_version)
 
     @property
     def encryption(self) -> Encryption:
@@ -448,7 +450,7 @@ class Device:
 
     def _check_kelvin(self, kelvin: int) -> int:
         """The Kelvin that goes on the wire (and into ``state``) for ``kelvin``: clamped to the
-        device's range (:attr:`min_kelvin` / :attr:`max_kelvin`, which may follow its hardware version),
+        device's range (:attr:`min_kelvin` / :attr:`max_kelvin`, which may follow its firmware versions),
         then rounded to the 100 K grid, as the app does
         (:func:`build.normalize_kelvin`). Out-of-range input is clamped, not rejected; only a
         non-int raises GoveeBleInvalidValue."""

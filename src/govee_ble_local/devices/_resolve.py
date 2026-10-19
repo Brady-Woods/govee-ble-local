@@ -16,8 +16,10 @@ The spec's resolution (devices.schema.json ``clientRow``, ``spec/govee_reference
 (else the family's) connectivity. A SKU that several rows list has one route per row; the client picks
 among them by the advertised pact, else the goodsType (``profile.profile_for``), and :func:`routes` gives
 the SKUs that one row routes. A row's facts are its own, else the family ``client_profile``'s, and the
-layered ones (scene_versions, kelvin_range, brightness_range) fall back to the family ``specs``. The wire
-facts layer the family ``wire``, ``by_model.<SKU>`` and ``by_goods_type.<gt>``. A profile is resolved with
+layered ones (scene_versions, kelvin_range, brightness_range) fall back to the family ``specs``; the
+library also reads a SKU's ``by_model`` Kelvin and brightness ranges between the two (the schema's
+by_model, which the row wins over; ``client_row`` takes no SKU). The wire facts layer the family
+``wire``, ``by_model.<SKU>`` and ``by_goods_type.<gt>``. A profile is resolved with
 the pact and the firmware unknown; the pact- and firmware-gated facts the library follows at run time are
 named below.
 
@@ -87,9 +89,12 @@ the row lacks fails the build: nothing defaults silently.
   the row's capabilities), and raise elsewhere or when that branch changes; a branch on any other fact
   raises.
 - Firmware branches resolve after the device-info read (D6): a ``kelvin_range`` item gated on the hardware
-  version alone becomes ``kelvin_by_hardware`` (compared as a string, as ``KelvinConfig.Config.z2`` does),
-  and a ``scene_versions`` item gated on the soft and / or hard version becomes
-  ``scene_versions_by_firmware`` (the goodsType-19 gates, Support.newVersion4Ble). Before the read, each
+  version alone becomes ``kelvin_by_hardware``, and one gated on the soft version alone
+  ``kelvin_by_software`` (both compared as a string, as ``KelvinConfig.Config.z2`` / ``Z2`` / ``X2`` do).
+  They are the row's, or the SKU's ``by_model`` ones over its own ``kelvin_range`` (bulblightv3 H14A1),
+  never both, and on one version. A ``by_model`` range under the row's own (which wins) raises. A
+  ``scene_versions`` item gated on the soft and / or hard version becomes ``scene_versions_by_firmware``
+  (the goodsType-19 gates, Support.newVersion4Ble). Before the read, each
   version not yet read meets its own gates, so the newest firmware's set applies, as 1.x assumed (H61A8:
   {0, 1, 2, 3}), and the Kelvin range is the one valid on every revision. Any other firmware fact or gate
   raises.
@@ -180,9 +185,11 @@ class Row(TypedDict, total=False):
 
 
 class ClientModel(TypedDict, total=False):
-    """``clientModel``: a per-SKU colour-report override."""
+    """``clientModel``: a per-SKU override."""
     mode_color_parse: str
     mode_color_parse_status: str
+    kelvin_range: tuple[int, ...]
+    brightness_range: tuple[int, ...]
     by_pact: dict[str, Branch]
     by_firmware: tuple[FirmwareBranch, ...]
 
@@ -610,17 +617,31 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str]) -> dic
     w = _wire(fam, gt, sku, fail)
     forms, counts, group, power = w["forms"], w["counts"], w["group"], w["power"]
     relay = forms.get("f_01") == "relays"
-    if model.get("by_pact") or model.get("by_firmware"):
-        fail("by_model pact / firmware branches are not served")
+    if model.get("by_pact") or any(k != "kelvin_range" and not k.startswith("min_")
+                                   for item in model.get("by_firmware") or () for k in item):
+        fail("by_model pact / firmware branches are not served (but a firmware kelvin_range)")
     if fam.get("encryption") not in _CIPHERS:
         fail(f"encryption {fam.get('encryption')!r} is not a cipher the library implements")
 
-    # Layered facts: the row's own (its pact and firmware branches resolve apart), else the family specs.
+    # Layered facts: the row's own (its pact and firmware branches resolve apart), else the SKU's by_model
+    # entry, else the family specs.
     own: dict[str, object] = dict(row)
+    mine: dict[str, object] = dict(model)
     specs: dict[str, object] = dict(fam.get("specs") or {})
-    layered: dict[str, Any] = {k: own[k] if k in own else specs[k]
-                               for k in _LAYERED if k in own or k in specs}
-    kelvin_by_hardware, scenes_by_firmware = _firmware(row, fail)
+    shadowed = sorted(k for k in _LAYERED if k in own and k in mine)
+    if shadowed:
+        fail(f"by_model {shadowed} under the row's own (the row's wins)")
+    layered: dict[str, Any] = {k: own[k] if k in own else mine[k] if k in mine else specs[k]
+                               for k in _LAYERED if k in own or k in mine or k in specs}
+    row_kelvin, scenes_by_firmware = _firmware(row, fail)
+    model_kelvin, _no_scenes = _firmware(model, fail)
+    kelvin_fw = row_kelvin or model_kelvin
+    if ((row_kelvin and model_kelvin) or (model_kelvin and "kelvin_range" not in mine)
+            or len({gate for gate, *_entry in kelvin_fw}) > 1):
+        fail("Kelvin firmware branches must be the row's, or the SKU's by_model ones over its own "
+             "kelvin_range, on one version")
+    kelvin_by_version = [(at, lo, hi) for _gate, at, lo, hi in kelvin_fw]
+    by_soft = any(gate == "min_soft_version" for gate, *_entry in kelvin_fw)
 
     status_read = row.get("status_read")
     by_pact = row.get("by_pact") or {}
@@ -670,13 +691,13 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str]) -> dic
         need(layered.get("kelvin_range"), "kelvin_range")
     kelvin = (_kelvin(layered["kelvin_range"], "kelvin_range", fail)
               if layered.get("kelvin_range") is not None and not relay else None)
-    _check_kelvin_by_hardware(kelvin, kelvin_by_hardware, fail)
+    _check_kelvin_by_firmware(kelvin, kelvin_by_version, fail)
     kelvin_by_pact = tuple(sorted(
         [(_pact(key), *_kelvin(branch["kelvin_range"], f"pact {key} kelvin_range", fail))
          for key, branch in by_pact.items() if "kelvin_range" in branch], key=lambda e: e[0]))
-    if kelvin_by_pact and (kelvin is None or kelvin_by_hardware):
-        fail("a pact kelvin_range needs a base kelvin_range (the row's or the family's) and no Kelvin "
-             "firmware branch")
+    if kelvin_by_pact and (kelvin is None or kelvin_fw):
+        fail("a pact kelvin_range needs a base kelvin_range (the row's, the SKU's by_model or the family's) "
+             "and no Kelvin firmware branch")
     bright = need(layered.get("brightness_range"), "brightness_range") if "brightness" in caps else None
     raw_bright = _brightness(bright, "brightness_range", fail) if bright is not None else None
     bright_by_pact = tuple(sorted(
@@ -780,7 +801,8 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str]) -> dic
         "brightness_by_pact": bright_by_pact,
         "status_color_groups_pact": gate,
         "power_resync": bool(resync),
-        "kelvin_by_hardware": tuple(sorted(kelvin_by_hardware, reverse=True)),
+        "kelvin_by_hardware": () if by_soft else tuple(sorted(kelvin_by_version, reverse=True)),
+        "kelvin_by_software": tuple(sorted(kelvin_by_version, reverse=True)) if by_soft else (),
         "mode_reports_kelvin": bool(row.get("mode_reports_kelvin", True)),
         "light_effect_stop": writes == ("light_effect_stop",),
     }
@@ -895,11 +917,12 @@ def _check_forms(forms: Mapping[str, str], used: Sequence[tuple[str, str]], fail
             fail(f"wire forms {form} {forms.get(form)!r}, where the library uses {member}")
 
 
-def _firmware(row: Row, fail: Fail) -> tuple[list[tuple[str, int, int]],
-                                             list[tuple[str, str, tuple[int, ...]]]]:
-    """The row's ``by_firmware`` items as ``kelvin_by_hardware`` and ``scene_versions_by_firmware``
+def _firmware(row: Row | ClientModel, fail: Fail) -> tuple[list[tuple[str, str, int, int]],
+                                                           list[tuple[str, str, tuple[int, ...]]]]:
+    """The row's (or a by_model entry's) ``by_firmware`` items as Kelvin entries, ``(gate, version, min,
+    max)`` with the gate ``min_hard_version`` or ``min_soft_version``, and ``scene_versions_by_firmware``
     entries."""
-    kelvin: list[tuple[str, int, int]] = []
+    kelvin: list[tuple[str, str, int, int]] = []
     scenes: list[tuple[str, str, tuple[int, ...]]] = []
     for item in row.get("by_firmware") or ():
         gates: dict[str, Any] = {k: v for k, v in item.items() if k.startswith("min_")}
@@ -907,10 +930,10 @@ def _firmware(row: Row, fail: Fail) -> tuple[list[tuple[str, int, int]],
         if not all(version(v) for v in gates.values()):
             fail(f"firmware gates {gates} are not all a.bb.cc versions")
         if "kelvin_range" in facts:
-            if set(gates) != {"min_hard_version"} or len(facts) != 1:
-                fail("a Kelvin firmware branch must gate on min_hard_version alone")
-            kelvin.append((gates["min_hard_version"],
-                           *_kelvin(facts["kelvin_range"], "firmware kelvin_range", fail)))
+            if len(facts) != 1 or set(gates) not in ({"min_hard_version"}, {"min_soft_version"}):
+                fail("a Kelvin firmware branch must gate on min_hard_version or min_soft_version alone")
+            (gate, at), = gates.items()
+            kelvin.append((gate, at, *_kelvin(facts["kelvin_range"], "firmware kelvin_range", fail)))
         elif set(facts) == {"scene_versions"}:
             if not gates or not set(gates) <= {"min_soft_version", "min_hard_version"}:
                 fail("a scene firmware branch must gate on the soft / hard version")
@@ -928,17 +951,17 @@ def _kelvin(value: Any, name: str, fail: Fail) -> tuple[int, int]:
     return int(value[0]), int(value[1])
 
 
-def _check_kelvin_by_hardware(base: tuple[int, int] | None, gated: Sequence[tuple[str, int, int]],
+def _check_kelvin_by_firmware(base: tuple[int, int] | None, gated: Sequence[tuple[str, int, int]],
                               fail: Fail) -> None:
-    """``kelvin_by_hardware``'s rules (``DeviceProfile._check_kelvin_by_hardware``): a base range, one entry
-    per version, each overlapping the base, and a range valid on every revision."""
+    """``kelvin_by_hardware`` / ``kelvin_by_software``'s rules (``DeviceProfile._check_kelvin_by_version``):
+    a base range, one entry per version, each overlapping the base, and a range valid on every revision."""
     if not gated:
         return
     lo, hi = base if base is not None else (0, -1)
     if (base is None or len({v for v, _lo, _hi in gated}) != len(gated)
             or any(k_lo > hi or k_hi < lo for _v, k_lo, k_hi in gated)
             or max(lo, *(e[1] for e in gated)) > min(hi, *(e[2] for e in gated))):
-        fail(f"Kelvin firmware branches {list(gated)} need the row's kelvin_range {base}, one per version, "
+        fail(f"Kelvin firmware branches {list(gated)} need a base kelvin_range {base}, one per version, "
              "each overlapping it and a range valid on every revision")
 
 

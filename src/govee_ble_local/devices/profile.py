@@ -238,6 +238,11 @@ class DeviceProfile:
     each entry's (``Device.min_kelvin`` / ``max_kelvin`` give the range in force). Needs both
     :attr:`min_kelvin` and :attr:`max_kelvin`; each entry must overlap the base range, and so must the
     range valid on every revision."""
+    kelvin_by_software: tuple[tuple[str, int, int], ...] = field(default=(), kw_only=True)
+    """The same from a soft version up: ``(min_soft_version, min_kelvin, max_kelvin)`` entries, applied with
+    the device's soft version (``aa 06``) exactly as :attr:`kelvin_by_hardware` is with the hardware
+    version, compared as strings too (``KelvinConfig.Config.Z2``: bulblightv3 goodsType 348 from
+    ``"1.00.15"``). The same rules; a profile has entries of one kind only."""
     mode_reports_kelvin: bool = field(default=True, kw_only=True)
     """Whether the ``aa 05`` mode report carries the Kelvin of a colour-temperature write. False where it
     reads 0 after one (H61A8: ``15 01 00 00`` after either write, bench 2026-10-17): a colour report of
@@ -373,9 +378,12 @@ class DeviceProfile:
         if self.color_readback_ic_per_piece < 1:
             raise GoveeBleInvalidValue(
                 f"{where}: color_readback_ic_per_piece={self.color_readback_ic_per_piece!r}")
-        if isinstance(self.kelvin_by_hardware, list):
-            object.__setattr__(self, "kelvin_by_hardware", tuple(map(tuple, self.kelvin_by_hardware)))
-        self._check_kelvin_by_hardware(where)
+        for name in ("kelvin_by_hardware", "kelvin_by_software"):
+            if isinstance(getattr(self, name), list):
+                object.__setattr__(self, name, tuple(map(tuple, getattr(self, name))))
+            self._check_kelvin_by_version(where, name)
+        if self.kelvin_by_hardware and self.kelvin_by_software:
+            raise GoveeBleInvalidValue(f"{where}: kelvin_by_hardware and kelvin_by_software (one kind only)")
         self._check_scene_versions_by_firmware(where)
         self._check_scene_versions_by_pact(where)
         self._check_ranges_by_pact(where)
@@ -393,9 +401,10 @@ class DeviceProfile:
         if not all(_pact_key(pact) and all(isinstance(k, int) and not isinstance(k, bool) for k in (lo, hi))
                    and 0 < lo <= hi for pact, lo, hi in kelvin):
             raise GoveeBleInvalidValue(f"{where}: kelvin_by_pact={kelvin!r}")
-        if kelvin and (self.min_kelvin is None or self.max_kelvin is None or self.kelvin_by_hardware):
+        if kelvin and (self.min_kelvin is None or self.max_kelvin is None or self.kelvin_by_hardware
+                       or self.kelvin_by_software):
             raise GoveeBleInvalidValue(f"{where}: kelvin_by_pact needs min_kelvin and max_kelvin, and no "
-                                       "kelvin_by_hardware")
+                                       "kelvin_by_hardware / kelvin_by_software")
         if not all(_pact_key(pact) and (span is None or _raw_range(span)) for pact, span in bright):
             raise GoveeBleInvalidValue(f"{where}: brightness_by_pact={bright!r}")
 
@@ -449,13 +458,14 @@ class DeviceProfile:
                     or not all(isinstance(v, int) and not isinstance(v, bool) and v >= 0 for v in versions)):
                 raise GoveeBleInvalidValue(f"{where}: scene_versions_by_firmware={gated!r}")
 
-    def _check_kelvin_by_hardware(self, where: str) -> None:
-        """:attr:`kelvin_by_hardware`'s rules: well-formed entries, highest version first, a base range,
-        and an overlap with it for each entry and for the range valid on every revision."""
-        gated = self.kelvin_by_hardware
+    def _check_kelvin_by_version(self, where: str, name: str) -> None:
+        """:attr:`kelvin_by_hardware` / :attr:`kelvin_by_software` (``name``)'s rules: well-formed entries,
+        highest version first, a base range, and an overlap with it for each entry and for the range valid
+        on every revision."""
+        gated: tuple[tuple[str, int, int], ...] = getattr(self, name)
         if not gated:
             return
-        bad = f"{where}: kelvin_by_hardware={gated!r}"
+        bad = f"{where}: {name}={gated!r}"
         for entry in gated:
             if not (isinstance(entry, tuple) and len(entry) == 3 and isinstance(entry[0], str) and entry[0]
                     and all(isinstance(k, int) and not isinstance(k, bool) for k in entry[1:])

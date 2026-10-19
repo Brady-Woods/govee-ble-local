@@ -197,13 +197,18 @@ _REFUSED: tuple[tuple[str, str, _Edit, str], ...] = (
      "firmware gates"),
     ("dreamcolorlightv1", "19", lambda f: _row(f, "19")["by_firmware"][2].update(min_soft_version="1.00.00"),
      "a Kelvin firmware branch must gate"),
+    ("dreamcolorlightv1", "19", lambda f: f["client_profile"].setdefault("by_model", {}).setdefault(
+        "H61A8", {}).update(by_firmware=[{"min_soft_version": "1.00.00", "kelvin_range": [2700, 6500]}]),
+     "Kelvin firmware branches must be the row's"),
+    ("dreamcolorlightv1", "19", lambda f: f["client_profile"].setdefault("by_model", {}).setdefault(
+        "H61A8", {}).update(kelvin_range=[2700, 6500]), "by_model ['kelvin_range'] under the row's own"),
     ("dreamcolorlightv1", "19", lambda f: _row(f, "19")["by_firmware"][0].update(
         min_wifi_soft_version="1.00.00"), "a scene firmware branch must gate"),
     ("dreamcolorlightv1", "19", lambda f: _row(f, "19")["by_firmware"].append(
         {"min_soft_version": "1.00.00", "brightness_range": [1, 100]}),
      "firmware branch on ['brightness_range']"),
     ("dreamcolorlightv1", "19", lambda f: _row(f, "19")["by_firmware"][2].update(kelvin_range=[9500, 9800]),
-     "Kelvin firmware branches"),
+     "need a base kelvin_range (2000, 9000), one per version"),
     ("h60ax", "303", lambda f: _row(f, "303")["by_pact"]["1,1"].update(mode_color_parse="kelvin_15"),
      "pact branch 1,1 on ['mode_color_parse']"),
     ("dreamcolorlightv1", "19", lambda f: _row(f, "19")["by_pact"]["1,2"].update(kelvin_range=[2700, 6500]),

@@ -18,25 +18,27 @@ from .profile import DeviceProfile, wire_profile
 
 
 def kelvin_range(profile: DeviceProfile, hardware: str | None = None,
-                 pact: tuple[int, int] | None = None) -> tuple[int, int] | None:
+                 pact: tuple[int, int] | None = None, soft: str | None = None) -> tuple[int, int] | None:
     """The device's inclusive Kelvin range, or None when the profile leaves either end open: the first
-    :attr:`~.profile.DeviceProfile.kelvin_by_hardware` entry the ``hardware`` version is at least (a
-    string compare, as the app's), else the profile's base range, or the
-    :attr:`~.profile.DeviceProfile.kelvin_by_pact` range of the advertised ``pact`` (a profile has one kind
-    of entry or the other). With the hardware version not yet read (None), the range that holds on every
-    revision: the base range cut to each entry's."""
+    :attr:`~.profile.DeviceProfile.kelvin_by_hardware` entry the ``hardware`` version is at least (or
+    :attr:`~.profile.DeviceProfile.kelvin_by_software` entry the ``soft`` version is; a string compare, as
+    the app's), else the profile's base range, or the :attr:`~.profile.DeviceProfile.kelvin_by_pact` range
+    of the advertised ``pact`` (a profile has one kind of entry only). With that version not yet read
+    (None), the range that holds on every revision: the base range cut to each entry's."""
     lo_, hi_ = profile.min_kelvin, profile.max_kelvin
     if lo_ is None or hi_ is None:
         return None
     for key, lo, hi in profile.kelvin_by_pact:
         if key == pact:
             lo_, hi_ = lo, hi
-    if hardware is None:
-        for _min_hard, lo, hi in profile.kelvin_by_hardware:
+    gated, have = ((profile.kelvin_by_software, soft) if profile.kelvin_by_software
+                   else (profile.kelvin_by_hardware, hardware))
+    if have is None:
+        for _min_version, lo, hi in gated:
             lo_, hi_ = max(lo_, lo), min(hi_, hi)
         return lo_, hi_
-    for min_hard, lo, hi in profile.kelvin_by_hardware:
-        if hardware >= min_hard:
+    for min_version, lo, hi in gated:
+        if have >= min_version:
             return lo, hi
     return lo_, hi_
 

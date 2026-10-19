@@ -204,12 +204,12 @@
               "items": { "type": "integer" },
               "minItems": 2,
               "maxItems": 2,
-              "description": "[min, max] CCT in kelvin, family-wide; a client_profile.by_goods_type row's kelvin_range wins over it."
+              "description": "[min, max] CCT in kelvin, family-wide; a client_profile.by_goods_type row's kelvin_range, then the SKU's by_model kelvin_range, wins over it."
             },
             "brightness_range": {
               "type": "array",
               "items": { "type": "integer" },
-              "description": "[min, max] on the wire (before any scaling), family-wide; a client_profile.by_goods_type row's brightness_range wins over it; [1, 100] = percent."
+              "description": "[min, max] on the wire (before any scaling), family-wide; a client_profile.by_goods_type row's brightness_range, then the SKU's by_model brightness_range, wins over it; [1, 100] = percent."
             },
             "brightness_scaling": { "type": "string", "description": "e.g. '1-100 -> 20-254' or 'raw percent'." },
             "scene_versions": {
@@ -261,7 +261,7 @@
             "power_live": { "type": "array", "uniqueItems": true, "items": { "type": "string", "enum": ["heartbeat_aa01", "heartbeat_aa36", "heartbeat_aa33", "push_30"] }, "description": "Live power after connect: 'heartbeat_aa01' = aa 01 heartbeat, on when frame byte 2 == 1; 'heartbeat_aa36' = aa 36 heartbeat, per bar byte 2 / 3 == 1; 'heartbeat_aa33' = aa 33 switch heartbeat, on when byte 2 != 0; 'push_30' = the ee 30 notify (layout: wire forms.f_ee_30)." },
             "mode_color_parse": { "$ref": "#/$defs/modeColorParse", "description": "The family's default colour-report strategy; by_goods_type.<gt>, else by_model.<SKU>, overrides it, then that entry's by_pact and every matching by_firmware (clientBranch, clientFirmware); 'none' = no colour sub-mode decoded." },
             "mode_color_parse_status": { "$ref": "#/$defs/modeColorParse", "description": "Strategy for the 0x05 TLV of the 0xAC status burst where it differs from the aa 05 reply (absent = mode_color_parse)." },
-            "by_model": { "type": "object", "propertyNames": { "pattern": "^[A-Za-z0-9]+$" }, "additionalProperties": { "$ref": "#/$defs/clientModel" }, "description": "Per-SKU colour-report overrides (keys = a model of the family); a by_goods_type entry for the device's gt wins over it." },
+            "by_model": { "type": "object", "propertyNames": { "pattern": "^[A-Za-z0-9]+$" }, "additionalProperties": { "$ref": "#/$defs/clientModel" }, "description": "Per-SKU overrides (keys = a model of the family): the colour report and the Kelvin and brightness ranges; a by_goods_type entry for the device's gt wins over it." },
             "by_goods_type": { "type": "object", "propertyNames": { "pattern": "^[0-9]+$" }, "additionalProperties": { "$ref": "#/$defs/clientRow" }, "description": "Per-goodsType rows (keys = the goodsType in decimal) that win over the family-level values; a key goods_types lacks is the goods_type of an assigned_goods_type item. A row with support is a BLE route for its models (clientRow)." },
             "relay_power": { "type": "string", "enum": ["outlet0", "all_outlets", "total_switch"], "description": "Plugs: what the detail screen's power button writes: 'outlet0' = 33 01 11 / 10 (relay 0), 'all_outlets' = 33 01 FF / F0, 'total_switch' = 33 02 01 / 00 (H5089) (split_plugnew/com/govee/h5080/ble/controller/)." },
             "relay_on_mask": { "type": "integer", "minimum": 1, "maximum": 255, "description": "Plugs: on at the connect read when (aa 01 reply byte 0 & relay_on_mask) != 0, bit i = relay i, absent = a light (govee_profile power_rule.relay_on_mask); an integer written in hex in the YAML." },
@@ -430,10 +430,12 @@
     "clientModel": {
       "type": "object",
       "additionalProperties": false,
-      "description": "A per-SKU colour-report override: mode_color_parse and its pact and firmware branches only.",
+      "description": "A per-SKU override: mode_color_parse, the Kelvin and brightness ranges (used where the SKU's by_goods_type row has none), and their pact and firmware branches.",
       "properties": {
         "mode_color_parse": { "$ref": "#/$defs/modeColorParse" },
         "mode_color_parse_status": { "$ref": "#/$defs/family/properties/client_profile/properties/mode_color_parse_status" },
+        "kelvin_range": { "$ref": "#/$defs/family/properties/specs/properties/kelvin_range", "description": "[min, max] CCT in kelvin of this SKU's colour page (KelvinConfig by SKU); the row's own kelvin_range wins over it." },
+        "brightness_range": { "$ref": "#/$defs/family/properties/specs/properties/brightness_range", "description": "This SKU's brightness range; the row's own brightness_range wins over it." },
         "by_pact": { "$ref": "#/$defs/clientRow/properties/by_pact" },
         "by_firmware": { "$ref": "#/$defs/clientRow/properties/by_firmware" }
       }
@@ -460,7 +462,7 @@
       "additionalProperties": false,
       "minProperties": 2,
       "anyOf": [ { "required": ["min_soft_version"] }, { "required": ["min_hard_version"] }, { "required": ["min_wifi_soft_version"] } ],
-      "description": "A firmware branch of a client_profile row, applied after by_pact when its every min_* holds (versions compare as modeColorVersion, but a kelvin_range item's min_hard_version is a string compare, as KelvinConfig.Config.z2's versionHard.compareTo is: hard 10.00.00 is below 3.08.01; an empty or unparsable device version fails). Every matching item applies, in list order, a later item's leaves replacing an earlier's: the app's version gates are independent per fact (unlike wire's by_firmware, where the first match applies). No match keeps the row's values; firmware facts resolve after the device-info read, so capabilities never depend on them.",
+      "description": "A firmware branch of a client_profile row, applied after by_pact when its every min_* holds (versions compare as modeColorVersion, but a kelvin_range item's min_hard_version or min_soft_version is a string compare, as KelvinConfig.Config.z2's versionHard.compareTo and Z2 / X2's versionSoft.compareTo are: hard 10.00.00 is below 3.08.01; an empty or unparsable device version fails). Every matching item applies, in list order, a later item's leaves replacing an earlier's: the app's version gates are independent per fact (unlike wire's by_firmware, where the first match applies). No match keeps the row's values; firmware facts resolve after the device-info read, so capabilities never depend on them.",
       "properties": {
         "min_soft_version": { "$ref": "#/$defs/modeColorVersion", "description": "Minimum BLE firmware (soft) version." },
         "min_hard_version": { "$ref": "#/$defs/modeColorVersion", "description": "Minimum BLE hardware version." },

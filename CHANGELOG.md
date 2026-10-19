@@ -125,6 +125,15 @@ model, from which the shipped readers are generated).
   status TLV) use the range in force; `_fold.brightness_range(profile, pact)` gives it. A pact Kelvin range
   needs a base one (the row's or the family's) and no Kelvin firmware branch, and a pact brightness range
   the brightness capability. No current SKU sets them.
+- **Kelvin ranges by soft version and per model** (device-list phase 3): `DeviceProfile.kelvin_by_software`
+  (keyword-only, default `()`), `(min_soft_version, min_kelvin, max_kelvin)` entries applied with the
+  device's soft version (`aa 06`) as `kelvin_by_hardware` is with the hardware version: compared as
+  strings (`KelvinConfig.Config.Z2`), and until the version is read the range valid on every revision
+  applies. A row's (or a SKU's `by_model`) `by_firmware` Kelvin item may now gate on `min_soft_version`
+  alone, not only on `min_hard_version` alone (one kind per row). `client_profile.by_model.<SKU>` may carry
+  `kelvin_range` and `brightness_range`, used where the SKU's row has none (the row's wins, as the schema
+  says; one under the row's own raises), and a `by_firmware` Kelvin item over its own `kelvin_range`
+  (bulblightv3 H14A1). No current SKU sets them.
 - **The `aa 40` read that does not size the pieces** (device-list phase 3): `DeviceProfile.ic_num_read_only`
   (keyword-only, default False). Some screens read the IC count at connect although their piece count is
   fixed; such a row now says `ic_pieces: fixed` (the resolver served the read only with the IC sizing), and
@@ -212,6 +221,8 @@ model, from which the shipped readers are generated).
   colour-temperature mode. Latent: no current SKU uses those decodes.
 
 ### Spec
+- `devices.schema.json`: `clientModel` (`client_profile.by_model.<SKU>`) takes `kelvin_range` and
+  `brightness_range`.
 - `devices.schema.json`: `ic_pieces` may be `fixed` (the IC count read at connect sizes nothing: the
   screen's piece count is fixed), and `ic_pieces` now requires the `ic_num` read.
 - **The pact-conditioned reassignments' target rows list their SKUs and pacts**: the pacts the app

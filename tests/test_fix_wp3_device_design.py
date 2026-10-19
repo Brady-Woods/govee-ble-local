@@ -352,6 +352,18 @@ def test_brightness_max_must_be_positive() -> None:
     assert (d.min_kelvin, d.max_kelvin, d._brightness_pct(50)) == (1000, 10000, 19)
     d._pact = (2, 1)
     assert (d.max_kelvin, d._brightness_pct(50), d._brightness_frame(50)) == (9000, 50, build.brightness(50))
+    # Kelvin by soft version: as by hardware version, one kind per profile.
+    soft = {"min_kelvin": 2700, "max_kelvin": 6500, "kelvin_by_software": [["1.00.15", 1000, 10000]]}
+    with pytest.raises(GoveeBleInvalidValue, match="one kind only"):
+        DeviceProfile(skus=("HX",), capabilities=frozenset(), **soft,  # type: ignore[arg-type]
+                      kelvin_by_hardware=(("3.08.01", 2700, 6500),))
+    d = Device(DeviceProfile(skus=("HX",), capabilities=frozenset(), **soft),  # type: ignore[arg-type]
+               ble_device("AA:BB:CC:DD:EE:4C", "HX"))
+    assert (d.min_kelvin, d.max_kelvin) == (2700, 6500)   # unread: the range valid on every revision
+    d._state.firmware_version = "1.00.15"
+    assert (d.min_kelvin, d.max_kelvin) == (1000, 10000)
+    d._state.firmware_version = "1.00.14"
+    assert (d.min_kelvin, d.max_kelvin) == (2700, 6500)
 
 
 def test_profile_errors_are_library_errors_and_value_errors() -> None:
