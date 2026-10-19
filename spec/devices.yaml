@@ -4313,6 +4313,11 @@ families:
       - { name: per_segment_color_read, cmd: "0xa5", readable: true, payload: "connect: 0xAC TLV 0xA5 [group, 4 x {brightness, R, G, B}]; later direct `aa a5 <1..3>` (9 pieces / 4 per group)", note: "VM4H60B0.Z4 :319-327, t5 :512-539; Support.c(301) = 9, Support.k(301) = 4 (h60b0/Support.java:157-159,208-210)" }
       - { name: brightness, cmd: "0x04", payload: "[percent 1..100]", note: "configBrightnessController is the null default (VM4H60B0.java:794-796) -> BrightnessConfig.b; no BrightnessConfig entry for 301 -> [1, 100]" }
       - { name: power, cmd: "0x01", payload: "[on]", note: "switchTrigger -> ControllerSwitch.d (VM4H60B0.java:1473-1497)" }
+    # NOT c: scene_versions [1, 6, 10] is the bean's apply set e (supportApplyOpSet {1, 10, 6}, what ScenesConfigBean.j
+    # hands parseSceneV1 at BaseSceneViewMode.java:903), not its op set c (opScenesSet {1, 0, 5, 4, 6}):
+    # split_floorlamp/com/govee/h60b0/ConfigH60B0.java:145; base-classes11/com/govee/base2light/pact/newdetail/content/
+    # scene/ScenesConfigBean.java:78-87,212-219. A row's scene_versions is c (devices.schema.json): don't admit a 301
+    # row with this value as its scene_versions; its row takes c and documents the upload over e (as H6052's row).
     specs: { segments: "9 colour pieces: 0-7 side light, 8 top light (Support.c(301) = 9; ColorPieceConfig set f0 -> 9, ColorPieceConfig.java:379-380,1629-1633; split by SubMode4Operate.m, operate/SubMode4Operate.java:86-110); the bottom light is white-only (Kelvin + relative brightness)", kelvin_range: [2700, 6500], brightness_range: [1, 100], brightness_scaling: "raw percent", scene_versions: [1, 6, 10] }   # parseSceneV1 gets supportApplyOpSet {1, 10, 6}; KelvinConfig version 2 = [2700, 6500]
     encryption: none   # no 0xB1 / 0xB2 on the control connect; the secret is used by group / effect ops
     pact:
@@ -4370,6 +4375,12 @@ families:
       - { name: disconnect_classic_bt, cmd: "0x34", note: "Controller4ExtBytes [52] (X5 split_h6079/com/govee/h6079/newdetail/h6079/H6079VM4Light.java:1717-1733; Constant 'type_setting_key_disconnect_classic_ble' -> 52, split_h6079/com/govee/h6079/newdetail/Constant.java:44-46)" }
       - { name: mode_read_kelvin, cmd: "0x05", readable: true, payload: "AA 05 01 -> AA 05 15 [gradual u8][kelvin s16be]; kelvin > 0 => colour temperature (every piece tinted Constant.getTemColorByKelvin(K)); RGB from the aa a5 group reads", note: "H6079NewInfo4Detail.a0 :592-605 with the SubMode4Color default strategy; see client_profile.mode_color_parse" }
     # kelvin_range is per goodsType: 156 / 209 [2200, 6500] (below), 376 [1000, 10000] (KelvinConfig.java:401-411).
+    # NOT c: scene_versions [1, 2, 6] is the bean's apply set e (Support.supportApplySceneOp, what ScenesConfigBean.j
+    # hands parseSceneV1), not its op set c (Support.supportScenesOpSet = {0, 1, 2, 3, 6}): the 156 / 209 / 376 bean
+    # split_h6079/com/govee/h6079/newdetail/NewDetailConfig.java:108,111-114; split_h6079/com/govee/h6079/pact/
+    # Support.java:247-249,327-329; base-classes11/com/govee/base2light/pact/newdetail/content/scene/
+    # ScenesConfigBean.java:78-87,212-219. A row's scene_versions is c (devices.schema.json): don't admit a row of
+    # this family with this value as its scene_versions; its row takes c and documents the upload over e (as H6052's).
     specs: { segments: "156 H6079 = 14 (9 pole + 5 base), 209 H607C/H807C = 13 (8 + 5), 376 H16B0 = 17 (8 + 9): Support.getBulbStringMaxNum (split_h6079/com/govee/h6079/pact/Support.java:113-118) for the aa a5 groups (4 per group: 4 / 4 / 5 groups) and ColorPieceConfig sets P() -> 14, O() -> 13, Q() -> 17 for the write mask (base-classes11/com/govee/base2light/pact/newdetail/config/fuc/ColorPieceConfig.java:1444-1481, 354-452); the last H pieces are the second zone (H6079ColorMode.H = 5, H607cColorMode.H = 5, H16B0ColorMode.H = 9; split_h6079/com/govee/h6079/newdetail/h6079/color/H6079ColorMode.java:134, h0 :499-520)", kelvin_range: [2200, 6500], brightness_range: [1, 100], brightness_scaling: "raw percent", scene_versions: [1, 2, 6] }   # parseSceneV1 gets supportApplySceneOp {1, 2, 6}
     encryption: none   # the 0xB2 secret is sent only on group / room control connects
     notify:
@@ -4411,6 +4422,12 @@ families:
       - { name: power, cmd: "0x01", payload: "[on]", note: "switchTrigger -> ControllerSwitch.d (split_h6079/com/govee/h6020/newDetial/H6020VM4Light.java:3045-3068)" }
       - { name: sub_switch, cmd: "0x30", payload: "[index, on]: 0 light, 1 base, 2 pair status, 3 pair voice, 4 pair effect, 5 do-not-disturb, 6 classic-BT, 7 energy save, 8 / 9 / 10 / 11 / 55 other settings", note: "newDetial/ControllerOneClick (split_h6079/com/govee/h6020/newDetial/ControllerOneClick.java:30,35-37) from I5 (split_h6079/com/govee/h6020/newDetial/H6020VM4Light.java:1374-1394); index map newDetial/Constant.c :102-137" }
       - { name: mode_read_kelvin, cmd: "0x05", readable: true, payload: "0xAC TLV 0x05 (connect) or AA 05 01 reply (e4, off->on): [0x15][gradual u8][kelvin s16be]; the Kelvin is stored, never tested", note: "H6020Info4Detail.r0 :979-981; see client_profile.mode_color_parse" }
+    # NOT c: scene_versions [0, 1, 2, 3, 10] is the bean's apply set e (Support.X(210), what ScenesConfigBean.j hands
+    # parseSceneV1), not its op set c (Support.Y(210) = {0, 1, 2, 3, 5}): the 210 bean split_h6079/com/govee/h6020/
+    # newDetial/H6020NewDetailConfig.java:131,133-136; split_h6079/com/govee/h6020/pact/Support.java:266-268,389-402;
+    # base-classes11/com/govee/base2light/pact/newdetail/content/scene/ScenesConfigBean.java:78-87,212-219. A row's
+    # scene_versions is c (devices.schema.json): don't admit a 210 row with this value as its scene_versions; its row
+    # takes c and documents the upload over e (as H6052's row).
     specs: { segments: 6, kelvin_range: [2700, 6500], brightness_range: [1, 100], brightness_scaling: "raw percent", scene_versions: [0, 1, 2, 3, 10] }   # 6 pieces; KelvinConfig version 2 = [2700, 6500]; parseSceneV1 gets {0, 1, 2, 3, 10}
     encryption: none   # the secret is sent only on group / room control connects
     notify:
@@ -4445,6 +4462,10 @@ families:
       - { name: power, cmd: "0x01", readable: true, payload: "[on]", note: "read at connect (power_read aa01); write switchTrigger -> ControllerSwitch.d (split_h6079/com/govee/h6020/h6022/VM4Light.java:970-994)" }
       - { name: worry_free_at_night, cmd: "0x30", readable: true, payload: "WorryFreeAtNightBean (read at connect; write ControllerWorryFreeAtNight.b with the bean)", note: "split_h6079/com/govee/h6020/h6022/ControllerWorryFreeAtNight.java:36-50,76-78. The same command byte is the ee 30 switch notify" }
       - { name: mode_read_color, cmd: "0x05", readable: true, payload: "AA 05 01 -> AA 05 0d [r, g, b u8][kelvin s16be]; kelvin > 0 => colour temperature, colour derived from the Kelvin; kelvin <= 0 => the RGB", note: "Info4Detail ctor strategy :110-123 run by H :346-348" }
+    # c, unlike h6020's e: scene_versions [0, 1, 2, 3, 5, 12] is the 249 bean's op set c (Support.Y(249)), and that bean
+    # has no apply set e, so ScenesConfigBean.j hands the same c to parseSceneV1: split_h6079/com/govee/h6020/
+    # H6020ApplicationImp.java:97,100-103; split_h6079/com/govee/h6020/pact/Support.java:270-272,397-402;
+    # base-classes11/com/govee/base2light/pact/newdetail/content/scene/ScenesConfigBean.java:78-87,212-219.
     specs: { segments: "none: whole-device 0x0d colour (Support.i(249) = 1, split_h6079/com/govee/h6020/pact/Support.java:491-496; ColorPieceConfig: 249 is in set o0 -> x() -> 1 piece, base-classes11/com/govee/base2light/pact/newdetail/config/fuc/ColorPieceConfig.java:406-407,1041-1042,1725-1732; the 0x0d writer Bytes.f / Bytes.p carries no mask)", kelvin_range: [2700, 6500], brightness_range: [1, 100], brightness_scaling: "raw percent", scene_versions: [0, 1, 2, 3, 5, 12] }   # KelvinConfig version 2 = [2700, 6500]; parseSceneV1 gets {0, 1, 2, 3, 5, 12}
     encryption: none   # as h6020: the secret only on group / room control
     notify:
