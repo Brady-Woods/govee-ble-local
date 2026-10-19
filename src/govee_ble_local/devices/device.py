@@ -202,8 +202,9 @@ class Device:
     def _learn_pact(self, adv: GoveeAdvertisement | None) -> None:
         """Remember the advertised ``(pact_type, pact_code)``; the app reads the same pair
         (``BleUtil.parseBleBroadcastPact``) into the device model. Exposed as :attr:`pact`; it decides
-        whether the 0xAC status read asks for colour groups (:meth:`_wants_color_groups`). An
-        advertisement without pact info changes nothing."""
+        whether the 0xAC status read asks for colour groups (:meth:`_wants_color_groups`), and picks the
+        profile's pact entries for the scene set and the Kelvin and brightness ranges. An advertisement
+        without pact info changes nothing."""
         if adv is not None and adv.pact is not None:
             self._pact = adv.pact
 
@@ -267,7 +268,8 @@ class Device:
     @property
     def min_kelvin(self) -> int | None:
         """Lowest supported colour temperature, or None if unconstrained. It may change once the
-        hardware version is read (:attr:`DeviceProfile.kelvin_by_hardware`)."""
+        hardware version is read (:attr:`DeviceProfile.kelvin_by_hardware`) or a pact is advertised
+        (:attr:`DeviceProfile.kelvin_by_pact`)."""
         span = self._kelvin_range()
         return self.profile.min_kelvin if span is None else span[0]
 
@@ -287,8 +289,9 @@ class Device:
                                     self._state.hardware_version, self._pact)
 
     def _kelvin_range(self) -> tuple[int, int] | None:
-        """The Kelvin range for this device's hardware version, as far as it is known."""
-        return _fold.kelvin_range(self.profile, self._state.hardware_version)
+        """The Kelvin range for this device's hardware version and advertised pact, as far as they are
+        known."""
+        return _fold.kelvin_range(self.profile, self._state.hardware_version, self._pact)
 
     @property
     def encryption(self) -> Encryption:
@@ -561,14 +564,16 @@ class Device:
 
     def _brightness_pct(self, raw: int) -> int:
         """The device-reported brightness byte as a 0..100 percent (:func:`._fold.brightness_pct`)."""
-        return _fold.brightness_pct(self.profile, raw)
+        return _fold.brightness_pct(self.profile, raw, self._pact)
 
     # -- power / brightness -------------------------------------------------
     def _brightness_frame(self, pct: int) -> bytes:
         """33 04 for a 1..100 percent: verbatim on percent devices, mapped onto the raw
-        range on devices with ``brightness_range`` (:func:`.brightness.percent_to_device`)."""
-        if self.profile.brightness_range is not None:
-            return build.brightness_raw(percent_to_device(pct, *self.profile.brightness_range))
+        range in force on devices with one (``brightness_range``, or ``brightness_by_pact`` for the
+        advertised pact: :func:`._fold.brightness_range`; :func:`.brightness.percent_to_device`)."""
+        span = _fold.brightness_range(self.profile, self._pact)
+        if span is not None:
+            return build.brightness_raw(percent_to_device(pct, *span))
         return build.brightness(pct)
 
     def _power_frames(self, on: bool) -> list[bytes]:
@@ -1189,7 +1194,7 @@ class Device:
 
         def apply(st: reassemble.StatusReply) -> None:
             nonlocal applied, power_read
-            applied, power_read = _fold.apply_status(self.profile, self._state, st)
+            applied, power_read = _fold.apply_status(self.profile, self._state, st, self._pact)
 
         # The burst is the whole poll, as the app's connect read is: its 0x05 TLV carries the mode
         # (_fold.apply_status), so no aa 05 read follows it.

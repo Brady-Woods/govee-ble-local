@@ -17,14 +17,20 @@ from ._resolve import version
 from .profile import DeviceProfile, wire_profile
 
 
-def kelvin_range(profile: DeviceProfile, hardware: str | None = None) -> tuple[int, int] | None:
+def kelvin_range(profile: DeviceProfile, hardware: str | None = None,
+                 pact: tuple[int, int] | None = None) -> tuple[int, int] | None:
     """The device's inclusive Kelvin range, or None when the profile leaves either end open: the first
     :attr:`~.profile.DeviceProfile.kelvin_by_hardware` entry the ``hardware`` version is at least (a
-    string compare, as the app's), else the profile's base range. With the hardware version not yet read
-    (None), the range that holds on every revision: the base range cut to each entry's."""
+    string compare, as the app's), else the profile's base range, or the
+    :attr:`~.profile.DeviceProfile.kelvin_by_pact` range of the advertised ``pact`` (a profile has one kind
+    of entry or the other). With the hardware version not yet read (None), the range that holds on every
+    revision: the base range cut to each entry's."""
     lo_, hi_ = profile.min_kelvin, profile.max_kelvin
     if lo_ is None or hi_ is None:
         return None
+    for key, lo, hi in profile.kelvin_by_pact:
+        if key == pact:
+            lo_, hi_ = lo, hi
     if hardware is None:
         for _min_hard, lo, hi in profile.kelvin_by_hardware:
             lo_, hi_ = max(lo_, lo), min(hi_, hi)
@@ -66,11 +72,24 @@ def _meets(text: str | None, gate: str) -> bool:
     return have is not None and have >= need
 
 
-def brightness_pct(profile: DeviceProfile, raw: int) -> int:
-    """The device-reported brightness byte as the 0..100 percent ``state`` documents: clamped
-    on every path, so a misbehaving device can't push e.g. 255 % into state."""
-    if profile.brightness_range is not None:
-        return raw_to_percent(raw, *profile.brightness_range)
+def brightness_range(profile: DeviceProfile, pact: tuple[int, int] | None = None) -> tuple[int, int] | None:
+    """The device's raw brightness range in force, None for percent: the profile's
+    :attr:`~.profile.DeviceProfile.brightness_range`, or the
+    :attr:`~.profile.DeviceProfile.brightness_by_pact` range of the advertised ``pact``."""
+    span = profile.brightness_range
+    for key, by_pact in profile.brightness_by_pact:
+        if key == pact:
+            span = by_pact
+    return span
+
+
+def brightness_pct(profile: DeviceProfile, raw: int, pact: tuple[int, int] | None = None) -> int:
+    """The device-reported brightness byte as the 0..100 percent ``state`` documents, read with the range
+    in force for ``pact`` (:func:`brightness_range`): clamped on every path, so a misbehaving device can't
+    push e.g. 255 % into state."""
+    span = brightness_range(profile, pact)
+    if span is not None:
+        return raw_to_percent(raw, *span)
     full = profile.brightness_max
     pct = raw if full == 100 else round(raw * 100 / full)
     return max(0, min(100, pct))
@@ -209,9 +228,11 @@ def apply_bar_switch(state: DeviceState, bars: tuple[bool, bool]) -> None:
 
 
 def apply_status(
-    profile: DeviceProfile, state: DeviceState, st: reassemble.StatusReply
+    profile: DeviceProfile, state: DeviceState, st: reassemble.StatusReply,
+    pact: tuple[int, int] | None = None,
 ) -> tuple[bool, bool]:
-    """Fold a 0xAC status burst into state. Returns ``(applied, power_read)``: whether a live field
+    """Fold a 0xAC status burst into state (its brightness read with the range in force for the advertised
+    ``pact``). Returns ``(applied, power_read)``: whether a live field
     came back (state is then no longer optimistic) and whether on/off did (the advertised on/off is
     then suppressed for a while; ``Device._finish_read``). The static device-info fields are merged
     but count as neither, and an empty burst sets neither."""
@@ -220,7 +241,7 @@ def apply_status(
         state.is_on = st.is_on
         applied = power_read = True
     if st.brightness is not None:
-        state.brightness = brightness_pct(profile, st.brightness)
+        state.brightness = brightness_pct(profile, st.brightness, pact)
         applied = True
     if st.zone_power:
         state.zone_power = st.zone_power

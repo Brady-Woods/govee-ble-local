@@ -290,6 +290,18 @@ class DeviceProfile:
     :meth:`~.device.Device.update` reads it on every poll, as it does for :attr:`gradual`, and discards the
     reply (``state.gradual`` stays None; a devices.yaml row whose ``connect_reads`` lists ``gradual``
     without the capability)."""
+    kelvin_by_pact: tuple[tuple[tuple[int, int], int, int], ...] = field(default=(), kw_only=True)
+    """Kelvin ranges that replace [:attr:`min_kelvin`, :attr:`max_kelvin`] on an advertised pact:
+    ``((pact_type, pact_code), min_kelvin, max_kelvin)`` entries (a devices.yaml row's ``by_pact``
+    ``kelvin_range``: goodsType 261 at pact (4, 1)). A pact not yet heard applies none, as for
+    :attr:`scene_versions_by_pact` (``Device.min_kelvin`` / ``max_kelvin`` give the range in force). Needs
+    both :attr:`min_kelvin` and :attr:`max_kelvin`, and no :attr:`kelvin_by_hardware`."""
+    brightness_by_pact: tuple[tuple[tuple[int, int], tuple[int, int] | None], ...] = field(
+        default=(), kw_only=True)
+    """Brightness ranges that replace :attr:`brightness_range` on an advertised pact: ``((pact_type,
+    pact_code), (min, max))`` entries, None for percent (a devices.yaml row's ``by_pact``
+    ``brightness_range``: stringlightv2 goodsType 1 reports percent at pact (2, 1)). A pact not yet heard
+    applies none; ``Device`` writes and reads brightness with the range in force."""
 
     def __post_init__(self) -> None:
         """Validate each field: GoveeBleInvalidValue (a ValueError) on a value no Device can use.
@@ -322,11 +334,8 @@ class DeviceProfile:
             if value not in _DECODES and not (value is None and name == "mode_color_parse_status"):
                 raise GoveeBleInvalidValue(f"{where}: {name}={value!r} is not a mode_color_parse name "
                                            f"(spec/devices.yaml mode_color_parse, or {_DEFAULT_PARSE!r})")
-        if self.brightness_range is not None:
-            lo, hi = self.brightness_range
-            # 100 % must map to a byte too, or set_brightness(100) would fail on valid input.
-            if not 0 <= lo < hi <= 0xFF or percent_to_raw(100, lo, hi) > 0xFF:
-                raise GoveeBleInvalidValue(f"{where}: brightness_range={self.brightness_range!r}")
+        if self.brightness_range is not None and not _raw_range(self.brightness_range):
+            raise GoveeBleInvalidValue(f"{where}: brightness_range={self.brightness_range!r}")
         if self.brightness_max < 1:
             raise GoveeBleInvalidValue(f"{where}: brightness_max={self.brightness_max!r}")
         for name in ("relay_on_mask", "advert_on_mask"):
@@ -363,6 +372,26 @@ class DeviceProfile:
         self._check_kelvin_by_hardware(where)
         self._check_scene_versions_by_firmware(where)
         self._check_scene_versions_by_pact(where)
+        self._check_ranges_by_pact(where)
+
+    def _check_ranges_by_pact(self, where: str) -> None:
+        """:attr:`kelvin_by_pact` / :attr:`brightness_by_pact`'s rules: ``(pact_type, pact_code)`` keys of
+        non-negative ints, Kelvin ranges with 0 < min <= max over a base range and without
+        :attr:`kelvin_by_hardware`, brightness ranges that :attr:`brightness_range` could hold (lists are
+        kept as tuples)."""
+        kelvin = tuple((tuple(pact), lo, hi) for pact, lo, hi in self.kelvin_by_pact)
+        bright = tuple((tuple(pact), None if span is None else tuple(span))
+                       for pact, span in self.brightness_by_pact)
+        object.__setattr__(self, "kelvin_by_pact", kelvin)
+        object.__setattr__(self, "brightness_by_pact", bright)
+        if not all(_pact_key(pact) and all(isinstance(k, int) and not isinstance(k, bool) for k in (lo, hi))
+                   and 0 < lo <= hi for pact, lo, hi in kelvin):
+            raise GoveeBleInvalidValue(f"{where}: kelvin_by_pact={kelvin!r}")
+        if kelvin and (self.min_kelvin is None or self.max_kelvin is None or self.kelvin_by_hardware):
+            raise GoveeBleInvalidValue(f"{where}: kelvin_by_pact needs min_kelvin and max_kelvin, and no "
+                                       "kelvin_by_hardware")
+        if not all(_pact_key(pact) and (span is None or _raw_range(span)) for pact, span in bright):
+            raise GoveeBleInvalidValue(f"{where}: brightness_by_pact={bright!r}")
 
     def _check_status_decode(self, where: str) -> None:
         """:attr:`status_decode`'s rules: ``(param, value)`` pairs, each param once and one of
@@ -436,6 +465,20 @@ class DeviceProfile:
             raise GoveeBleInvalidValue(f"{bad}: each range must overlap [{lo}, {hi}]")
         if max(lo, *(e[1] for e in gated)) > min(hi, *(e[2] for e in gated)):
             raise GoveeBleInvalidValue(f"{bad}: no range is valid on every revision")
+
+
+def _raw_range(span: tuple[int, ...]) -> bool:
+    """A raw ``(min, max)`` brightness range a Device can use: 100 % must map to a byte too, or
+    set_brightness(100) would fail on valid input."""
+    if len(span) != 2 or not all(isinstance(v, int) and not isinstance(v, bool) for v in span):
+        return False
+    lo, hi = span
+    return 0 <= lo < hi <= 0xFF and percent_to_raw(100, lo, hi) <= 0xFF
+
+
+def _pact_key(pact: tuple[int, ...]) -> bool:
+    """A ``(pact_type, pact_code)`` key of non-negative ints."""
+    return len(pact) == 2 and all(isinstance(v, int) and not isinstance(v, bool) and v >= 0 for v in pact)
 
 
 def _where(p: DeviceProfile) -> str:

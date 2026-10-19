@@ -337,6 +337,21 @@ def test_brightness_max_must_be_positive() -> None:
                            kelvin_by_hardware=[["3.08.01", 2700, 6500]])  # type: ignore[arg-type]
     assert listed.kelvin_by_hardware == (("3.08.01", 2700, 6500),)
     DeviceProfile(skus=("HX",), capabilities=frozenset(), brightness_max=255)
+    # Ranges by pact apply on that advertised pact only; a Kelvin one needs a base range and no
+    # kelvin_by_hardware, a brightness one is a raw range or None (percent).
+    k41 = {"kelvin_by_pact": (((4, 1), 1000, 10000),)}
+    for bad in (k41, {**k41, **base, "kelvin_by_hardware": (("3.08.01", 2700, 6500),)},
+                {"brightness_by_pact": (((2, 1), (0, 300)),)}):
+        with pytest.raises(GoveeBleInvalidValue, match="_by_pact"):
+            DeviceProfile(skus=("HX",), capabilities=frozenset(), **bad)  # type: ignore[arg-type]
+    d = Device(DeviceProfile(skus=("HX",), capabilities=frozenset(), **base, **k41, brightness_range=(6, 254),
+                             brightness_by_pact=[[[2, 1], None]]),  # type: ignore[arg-type]
+               ble_device("AA:BB:CC:DD:EE:4B", "HX"))
+    assert (d.min_kelvin, d.max_kelvin, d._brightness_pct(50)) == (2000, 9000, 19)
+    d._pact = (4, 1)
+    assert (d.min_kelvin, d.max_kelvin, d._brightness_pct(50)) == (1000, 10000, 19)
+    d._pact = (2, 1)
+    assert (d.max_kelvin, d._brightness_pct(50), d._brightness_frame(50)) == (9000, 50, build.brightness(50))
 
 
 def test_profile_errors_are_library_errors_and_value_errors() -> None:

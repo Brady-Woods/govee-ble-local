@@ -77,7 +77,10 @@ the row lacks fails the build: nothing defaults silently.
   1)'s one colour piece: decision D3, the library keeps the row's 13).
 - Pact branches: ``status_read`` becomes the gate above, and ``scene_versions`` becomes
   ``scene_versions_by_pact``, which ``Device.scene_versions`` applies with the advertised pact before the
-  firmware entries (goodsType 19 at pact code 2); ``capabilities`` take the row's own values only on the
+  firmware entries (goodsType 19 at pact code 2); ``kelvin_range`` and ``brightness_range`` become
+  ``kelvin_by_pact`` / ``brightness_by_pact``, which ``Device`` applies with the advertised pact the same
+  way (goodsType 261 at pact (4, 1); a pact Kelvin range needs a base one and no Kelvin firmware branch, a
+  pact brightness range the brightness capability); ``capabilities`` take the row's own values only on the
   D3 branch, pinned exactly as the wire one is (:data:`_UNREAD_PACT_CAPABILITIES`: H60A6 pact (1, 1) keeps
   the row's capabilities), and raise elsewhere or when that branch changes; a branch on any other fact
   raises.
@@ -339,7 +342,7 @@ _READBACK: Final = {"aa01": "polled", "ac_status": "status"}   # power_read -> D
 _STATUS_TLV_FORMS: Final = ("f_30", "f_36", "f_40", "f_41", "f_a3")
 _GROUP_RULES: Final = frozenset({"from_len", "fixed", "by_pieces"})   # govee_common::group_count_rule, read
 _READS: Final = frozenset({"brightness", "gradual", "cmd_36", "color_group", "ic_num", "cmd_41"})
-_PACT_FACTS: Final = frozenset({"status_read", "scene_versions"})
+_PACT_FACTS: Final = frozenset({"status_read", "scene_versions", "kelvin_range", "brightness_range"})
 # Pact branches whose capabilities the library leaves unread: (family, goodsType, pact key) -> the branch's
 # capabilities exactly. D3: H60A6 at pact (1, 1) keeps the row's capabilities.
 _UNREAD_PACT_CAPABILITIES: Final[Mapping[tuple[str, str, str], tuple[str, ...]]] = {
@@ -666,12 +669,19 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str]) -> dic
     kelvin = (_kelvin(layered["kelvin_range"], "kelvin_range", fail)
               if layered.get("kelvin_range") is not None and not relay else None)
     _check_kelvin_by_hardware(kelvin, kelvin_by_hardware, fail)
+    kelvin_by_pact = tuple(sorted(
+        [(_pact(key), *_kelvin(branch["kelvin_range"], f"pact {key} kelvin_range", fail))
+         for key, branch in by_pact.items() if "kelvin_range" in branch], key=lambda e: e[0]))
+    if kelvin_by_pact and (kelvin is None or kelvin_by_hardware):
+        fail("a pact kelvin_range needs a base kelvin_range (the row's or the family's) and no Kelvin "
+             "firmware branch")
     bright = need(layered.get("brightness_range"), "brightness_range") if "brightness" in caps else None
-    # NumberUtil.calculateProgress(100) = min + 99 * (max - min + 3) / 100 must be a byte too.
-    if bright is not None and not (len(bright) == 2 and all(map(_is_int, bright))
-                                   and 0 <= bright[0] < bright[1] <= 0xFF
-                                   and bright[0] + 99 * bright[1] + 297 < 0x100 * 100):
-        fail(f"brightness_range {list(bright)} is not a raw [min, max] that 100 % maps into a byte")
+    raw_bright = _brightness(bright, "brightness_range", fail) if bright is not None else None
+    bright_by_pact = tuple(sorted(
+        [(_pact(key), _brightness(branch["brightness_range"], f"pact {key} brightness_range", fail))
+         for key, branch in by_pact.items() if "brightness_range" in branch], key=lambda e: e[0]))
+    if bright_by_pact and bright is None:
+        fail("a pact brightness_range without the brightness capability")
 
     readback = "plug"
     if not relay:
@@ -759,7 +769,9 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str]) -> dic
         "color_readback_per_batch": int(per_group) if color_readback == "mechanism_a_direct" else 3,
         "color_readback_live_ic": live_ic,
         "section_count_read": section_count,
-        "brightness_range": tuple(bright) if bright is not None and tuple(bright) != _PERCENT else None,
+        "brightness_range": raw_bright,
+        "kelvin_by_pact": kelvin_by_pact,
+        "brightness_by_pact": bright_by_pact,
         "status_color_groups_pact": gate,
         "power_resync": bool(resync),
         "kelvin_by_hardware": tuple(sorted(kelvin_by_hardware, reverse=True)),
@@ -922,6 +934,15 @@ def _check_kelvin_by_hardware(base: tuple[int, int] | None, gated: Sequence[tupl
             or max(lo, *(e[1] for e in gated)) > min(hi, *(e[2] for e in gated))):
         fail(f"Kelvin firmware branches {list(gated)} need the row's kelvin_range {base}, one per version, "
              "each overlapping it and a range valid on every revision")
+
+
+def _brightness(value: Any, name: str, fail: Fail) -> tuple[int, int] | None:
+    """A raw ``[min, max]`` brightness range as a tuple, None for percent (``[1, 100]``); ``fail`` unless
+    100 % maps into a byte: NumberUtil.calculateProgress(100) = min + 99 * (max - min + 3) / 100."""
+    if not (len(value) == 2 and all(map(_is_int, value)) and 0 <= value[0] < value[1] <= 0xFF
+            and value[0] + 99 * value[1] + 297 < 0x100 * 100):
+        fail(f"{name} {list(value)} is not a raw [min, max] that 100 % maps into a byte")
+    return None if tuple(value) == _PERCENT else (int(value[0]), int(value[1]))
 
 
 def _scene_set(value: Any, fail: Fail) -> tuple[int, ...]:

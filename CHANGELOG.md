@@ -116,6 +116,15 @@ model, from which the shipped readers are generated).
   without the capability (the resolver tied the read to the capability), and `Device.update` then reads
   `aa a3` on every poll and discards the reply (`state.gradual` stays None). The capability still needs the
   read. No current SKU sets it.
+- **Kelvin and brightness ranges by pact** (device-list phase 3): `DeviceProfile.kelvin_by_pact`
+  (`((pact_type, pact_code), min_kelvin, max_kelvin)` entries) and `DeviceProfile.brightness_by_pact`
+  (`((pact_type, pact_code), (min, max) | None)`, None = percent), both keyword-only, default `()`, from a
+  row's `by_pact` `kelvin_range` / `brightness_range` (the resolver refused both). They replace the base
+  range on that advertised pact, as `scene_versions_by_pact` does, and a pact not yet heard applies none:
+  `Device.min_kelvin` / `max_kelvin`, the brightness write and every brightness read-back (`aa 04`, the
+  status TLV) use the range in force; `_fold.brightness_range(profile, pact)` gives it. A pact Kelvin range
+  needs a base one (the row's or the family's) and no Kelvin firmware branch, and a pact brightness range
+  the brightness capability. No current SKU sets them.
 
 ### Changed
 - **The 0xAC status request is built from the profile**, not hard-coded to the H60A6's: the resolver takes
