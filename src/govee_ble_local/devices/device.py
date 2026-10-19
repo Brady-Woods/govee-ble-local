@@ -1068,6 +1068,8 @@ class Device:
 
             await self._read_command("gradual", build.gradual_query(),
                                      parse.parse_gradual, apply_gradual)
+        elif self.profile.gradual_read_only:
+            await self._read_reply(build.gradual_query())   # the screen's connect read; nothing is exposed
         # Device-info (mac/hw/fw/serial) — static-ish, read once the device answers one of them.
         if not self._device_info_read and self.profile.readback != "none":
             try:

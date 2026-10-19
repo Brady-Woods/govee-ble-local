@@ -62,8 +62,10 @@ the row lacks fails the build: nothing defaults silently.
   the TLV 0x05's mode decode (mode_status over mode). The library takes the zone bits from TLV 0x30, so a
   requested ``cmd_30`` needs ``f_30: zone_power``. A pact branch may only drop ``color_group``, which
   becomes ``status_color_groups_pact`` (one pact type, from its lowest code that keeps it). A polled row
-  reads aa 04 on every poll and an ``aa a3`` exactly when it has ``gradual``, so ``connect_reads`` lists
-  ``brightness`` exactly on a polled row and ``gradual`` exactly with the capability. Every command form
+  reads aa 04 on every poll and a gradual row ``aa a3``, so ``connect_reads`` lists ``brightness`` exactly
+  on a polled row and ``gradual`` wherever the capability is; a ``gradual`` read without the capability (the
+  screen's default ``Compose4InfoBleIot`` read, with no gradual control) is made on every poll too and its
+  reply discarded (``DeviceProfile.gradual_read_only``). Every command form
   the library sends or reads for the row must be the row's (wire ``forms``), a polled row's aa 05 reply is
   read with the spec's default decode (:data:`_MODE_UNSET`), and a colour-group read is of 4-byte records
   in the row's wire ``group.num_per_group`` (and, in the status read, its ``group.rule``).
@@ -684,8 +686,8 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str]) -> dic
         fail(f"connect_reads {sorted(reads - _READS)} are not served")
     if ("brightness" in reads) != (readback == "polled"):
         fail("connect_reads lists brightness exactly on a polled row (the library reads aa 04 every poll)")
-    if ("gradual" in reads) != ("gradual" in caps):
-        fail("connect_reads lists gradual exactly with the capability (the library reads aa a3 then)")
+    if "gradual" in caps and "gradual" not in reads:
+        fail("connect_reads lists gradual with the capability (the library reads aa a3 for it)")
     color_readback = ""
     if "color_group" in reads:
         color_readback = {"color_group": "mechanism_a_direct", "bulb_batch_v2": "mechanism_b"}.get(
@@ -752,6 +754,7 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str]) -> dic
         "bar_switch": bar,
         "global_power": bool(zones) and not bar and forms.get("f_01") == "light",
         "gradual": "gradual" in caps,
+        "gradual_read_only": "gradual" in reads and "gradual" not in caps,
         "color_readback": color_readback,
         "color_readback_per_batch": int(per_group) if color_readback == "mechanism_a_direct" else 3,
         "color_readback_live_ic": live_ic,

@@ -244,6 +244,9 @@ def test_update_reads_gradual_flag() -> None:
     d2 = _dev("H61A8", {0xA3: [_frame(0xAA, 0xA3, 0x00)]})
     asyncio.run(d2.update())
     assert d2.state.gradual is False
+    d3 = _dev("H6008", {0xA3: [_frame(0xAA, 0xA3, 0x01)]}, gradual_read_only=True)   # read, not exposed
+    asyncio.run(d3.update())
+    assert d3.state.gradual is None and any(f[1] == 0xA3 for f in _queried(d3))
 
 
 def test_update_gradual_no_reply_leaves_state() -> None:

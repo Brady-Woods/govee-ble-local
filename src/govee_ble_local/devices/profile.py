@@ -284,6 +284,12 @@ class DeviceProfile:
     after the handshake and any unlock, as a plug's time sync is sent. The app sends it once its connect
     reads succeed, and the library makes those reads on its polls instead. A rejection or a missing ack is
     only logged."""
+    gradual_read_only: bool = field(default=False, kw_only=True)
+    """Ignored with :attr:`gradual`. Without it: the screen still reads the ``aa a3`` gradual flag at connect
+    (the default ``Compose4InfoBleIot`` read) but offers no gradual control, so
+    :meth:`~.device.Device.update` reads it on every poll, as it does for :attr:`gradual`, and discards the
+    reply (``state.gradual`` stays None; a devices.yaml row whose ``connect_reads`` lists ``gradual``
+    without the capability)."""
 
     def __post_init__(self) -> None:
         """Validate each field: GoveeBleInvalidValue (a ValueError) on a value no Device can use.

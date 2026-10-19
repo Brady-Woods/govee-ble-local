@@ -110,6 +110,12 @@ model, from which the shipped readers are generated).
   allowed connect writes only on plugs, `plug_sync_time`); the library sends it once per session after the
   handshake and any unlock, as it sends a plug's time sync (the app sends it after its connect reads, which
   the library makes on its polls). No current SKU sets it.
+- **The `aa a3` read without the gradual control** (device-list phase 3): `DeviceProfile.gradual_read_only`
+  (keyword-only, default False). Some screens read the gradual flag at connect (the default
+  `Compose4InfoBleIot` read) but offer no gradual control; a row may now list `gradual` in `connect_reads`
+  without the capability (the resolver tied the read to the capability), and `Device.update` then reads
+  `aa a3` on every poll and discards the reply (`state.gradual` stays None). The capability still needs the
+  read. No current SKU sets it.
 
 ### Changed
 - **The 0xAC status request is built from the profile**, not hard-coded to the H60A6's: the resolver takes
