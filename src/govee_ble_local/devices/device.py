@@ -662,8 +662,10 @@ class Device:
         Raises GoveeBleInvalidValue before any I/O for both ``rgb`` and ``kelvin``, an ``rgb`` that is
         not an (r, g, b) triple of 0..255 ints, or a non-int brightness or kelvin;
         GoveeBleNotSupported without the capability a requested part needs (POWER, BRIGHTNESS, RGB,
-        COLOR_TEMP) or when the colour scheme can't express it; GoveeBleError if a device that
-        reports its own segment count (H6062) does not answer that read."""
+        COLOR_TEMP) or when the colour scheme can't express it, and for a ``brightness`` while the
+        device's brightness range waits for the advertised pact (as :meth:`set_brightness`), before
+        any write, so the power-on is not sent either; GoveeBleError if a device that reports its own
+        segment count (H6062) does not answer that read."""
         if rgb is not None and kelvin is not None:
             raise GoveeBleInvalidValue("turn_on: pass either rgb or kelvin, not both")
         pick = _check_rgb(rgb) if rgb is not None else None
@@ -712,7 +714,11 @@ class Device:
     async def set_brightness(self, pct: int) -> None:
         """Set brightness in percent (clamped to 1..100; 0 is never sent).
 
-        Raises GoveeBleNotSupported without BRIGHTNESS; GoveeBleInvalidValue for a non-int."""
+        Raises GoveeBleNotSupported without BRIGHTNESS, and before any I/O while the device's brightness
+        range waits for the advertised pact: on a profile with ``brightness_by_pact`` (the pact picks the
+        byte the app writes) until an advertisement carrying the pact is heard (:attr:`pact`;
+        :meth:`ingest_advertisement`, or the advertisement given at construction). GoveeBleInvalidValue
+        for a non-int."""
         self._require(Capability.BRIGHTNESS)
         level = _check_pct(pct)
 
