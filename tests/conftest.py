@@ -34,8 +34,8 @@ def generated_classes_problem(root: pathlib.Path) -> str | None:
     They are a build product (gitignored), so they can be missing, and an ignored ``_generated/``
     survives a ``git switch`` or ``git pull`` that changes the spec: then they are older than
     ``spec/*.ksy``, ``spec/devices.yaml`` (or its schema, which the table's projection follows), the
-    catalogue snapshot (``spec/govee_catalog.json``, whose routes the table carries), the scene store's
-    index (``scenes/index.json``: only a SKU with a catalog is offered scenes), a generator, or the
+    catalogue snapshot (``spec/govee_catalog.json``, whose routes the table carries), the scene store
+    (``scenes/store.json``: only a SKU with a catalog is offered scenes), a generator, or the
     device resolver (``devices/_resolve.py``, whose admission rule decides the table's cut). Git gives
     every file a checkout rewrites a fresh mtime, so an input
     newer than the oldest output means the classes were built from something else (a touch or a stash
@@ -51,7 +51,7 @@ def generated_classes_problem(root: pathlib.Path) -> str | None:
               root / "spec" / "devices.yaml", root / "spec" / "devices.schema.json",
               root / "spec" / "govee_catalog.json", root / "tools" / "gen_devices.py",
               root / "src" / "govee_ble_local" / "devices" / "_resolve.py",
-              root / "src" / "govee_ble_local" / "scenes" / "index.json"]
+              root / "src" / "govee_ble_local" / "scenes" / "store.json"]
     oldest_output = min((generated / n).stat().st_mtime for n in outputs)
     stale = sorted(p.name for p in inputs if p.is_file() and p.stat().st_mtime > oldest_output)
     if stale:
@@ -72,6 +72,7 @@ def pytest_sessionstart(session):  # type: ignore[no-untyped-def]
 
 # -- optional-dependency gate ---------------------------------------------------------------
 import importlib.util  # noqa: E402
+import json  # noqa: E402
 import os  # noqa: E402
 from types import SimpleNamespace  # noqa: E402
 from typing import Any  # noqa: E402
@@ -108,23 +109,27 @@ def read_struct(obj):  # type: ignore[no-untyped-def]
     return obj
 
 
-class FakeSceneFiles:
-    """Stands in for ``scenes.resources.files(...)``: ``index.json`` names the set ``name`` for ``sku``,
-    whose read returns ``text``, or raises it when it is an exception (a missing file when None). No
-    ``sku``: no index."""
+def scene_store(sku: str, catalog: dict[str, dict[str, Any]]) -> str:
+    """The text of a scene store (``scenes/store.json``) holding ``catalog`` ({name: entry}) for ``sku``."""
+    pool = [{"name": name, **entry} for name, entry in sorted(catalog.items())]
+    return json.dumps({"pool": pool, "skus": {sku: list(range(len(pool)))}})
 
-    def __init__(self, sku: str | None, text: str | Exception | None, name: str = "0123456789abcdef") -> None:
-        self._files = {} if sku is None else {"index.json": f'{{"{sku}": "{name}"}}', f"{name}.json": text}
+
+class FakeSceneFiles:
+    """Stands in for ``scenes.resources.files(...)``: reading ``store.json`` returns ``store`` (a store's
+    text, :func:`scene_store`), or raises it when it is an exception, or a missing file's error when None."""
+
+    def __init__(self, store: str | Exception | None) -> None:
+        self._store = store
 
     def __truediv__(self, file: str) -> Any:
         def read_text(encoding: str | None = None) -> str:
             assert encoding == "utf-8"
-            text = self._files.get(file)
-            if text is None:
+            if file != "store.json" or self._store is None:
                 raise FileNotFoundError(2, "No such file", file)
-            if isinstance(text, Exception):
-                raise text
-            return text
+            if isinstance(self._store, Exception):
+                raise self._store
+            return self._store
         return SimpleNamespace(read_text=read_text)
 
 

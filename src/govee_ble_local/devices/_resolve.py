@@ -65,7 +65,7 @@ the row lacks fails the build: nothing defaults silently.
   ``segments`` on a relay row raises (the library resolves no colour scheme or Kelvin range for a plug), and
   elsewhere they need a colour scheme. An ``untraced`` scene dialect drops ``scenes``; ``none`` is activate
   only. Scenes need a bundled catalog, as every SKU of 1.4.0 that offers them ships one: a SKU the scene
-  store has no catalog for (``scenes/index.json``, the generated ``SCENE_CATALOGS``, which
+  store has no catalog for (``scenes/store.json``, the generated ``SCENE_CATALOGS``, which
   :func:`profiles` takes as ``catalogued``) is offered no ``scenes``, its row's scene facts still checked.
   An ``untraced`` colour parse on a row with ``rgb`` or ``color_temp`` raises (``none`` is a traced value:
   the screen parses no colour).

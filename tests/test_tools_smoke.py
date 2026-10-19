@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib.util
+import json
 import py_compile
 import re
 import struct
@@ -66,24 +67,22 @@ def test_fetch_validate_sku_rejects(sku: str) -> None:
         _load("fetch_scenes").validate_sku(sku)
 
 
-def test_fetch_set_path_inside_out_dir(tmp_path: Path) -> None:
+def test_fetch_stores_each_scene_once(tmp_path: Path) -> None:
     fs = _load("fetch_scenes")
-    assert fs.set_path("0123456789abcdef", tmp_path) == tmp_path.resolve() / "0123456789abcdef.json"
+    x, y = {"code": 1, "param": None}, {"code": 2, "param": None}
+    assert fs.store_catalog("H6006", {"x": x}, tmp_path) == 1
+    assert fs.store_catalog("h6008", {"y": y, "x": x}, tmp_path) == 2     # x is both SKUs': one entry
+    assert fs.read_store(tmp_path) == {"H6006": {"x": x}, "H6008": {"x": x, "y": y}}
+    assert fs.read_catalog("H6004", tmp_path) == {}
+    store = json.loads((tmp_path / "store.json").read_text(encoding="utf-8"))
+    assert store == {"pool": [{"name": "x", **x}, {"name": "y", **y}],
+                     "skus": {"H6006": [0], "H6008": [0, 1]}}
+    assert fs.layout({"H6008": {"y": y, "x": x}, "H6006": {"x": x}}) == store   # whatever the order
+    fs.store_catalog("H6006", {"y": y}, tmp_path)
+    assert fs.store_catalog("H6008", {"y": y}, tmp_path) == 1             # no SKU holds x now: it leaves
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["store.json"]
     with pytest.raises(ValueError):
-        fs.set_path("../../evil", tmp_path)
-
-
-def test_fetch_stores_each_scene_set_once(tmp_path: Path) -> None:
-    fs = _load("fetch_scenes")
-    a, b = {"x": {"code": 1, "param": None}}, {"y": {"code": 2, "param": None}}
-    name = fs.store_catalog("H6006", a, tmp_path)
-    assert fs.store_catalog("h6008", a, tmp_path) == name       # same scenes, one set
-    assert fs.read_index(tmp_path) == {"H6006": name, "H6008": name}
-    assert fs.read_catalog("H6008", tmp_path) == a and fs.read_catalog("H6004", tmp_path) == {}
-    fs.store_catalog("H6006", b, tmp_path)
-    fs.store_catalog("H6008", b, tmp_path)                      # nothing names `a` now: removed
-    assert sorted(p.name for p in tmp_path.iterdir()) == [f"{fs.read_index(tmp_path)['H6006']}.json",
-                                                          "index.json"]
+        fs.store_catalog("H6006", {}, tmp_path)                           # an empty catalog is not stored
 
 
 def test_fetch_validate_entry() -> None:

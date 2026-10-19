@@ -289,10 +289,13 @@ def test_main_counts_corrupt_catalog_and_write_failure(monkeypatch: pytest.Monke
     fs = _load("fetch_scenes")
     monkeypatch.setattr(fs, "OUT_DIR", tmp_path)
     monkeypatch.setattr(fs, "fetch", lambda sku, app_version="", **_kw: {"A": {"code": 1, "param": None}})
-    (tmp_path / "index.json").write_text('{"H60A6": "0123456789abcdef"}', encoding="utf-8")
-    (tmp_path / "0123456789abcdef.json").write_text('{"A": "not a scene object"}', encoding="utf-8")
-    assert fs.main(["H60A6", "H61A8"]) == 1            # the corrupt one fails, the run goes on
-    assert "H60A6: FETCH FAILED" in capsys.readouterr().err
+    corrupt = '{"pool": [{"name": "A", "code": 1}], "skus": {"H60A6": [1]}}'
+    (tmp_path / "store.json").write_text(corrupt, encoding="utf-8")
+    assert fs.main(["H60A6", "H61A8"]) == 2            # each fails, the run goes on, the store stays as it is
+    assert capsys.readouterr().err.count("FETCH FAILED") == 2
+    assert (tmp_path / "store.json").read_text(encoding="utf-8") == corrupt
+    (tmp_path / "store.json").unlink()
+    assert fs.main(["H61A8"]) == 0
     assert fs.read_catalog("H61A8", tmp_path) == {"A": {"code": 1, "param": None}}
 
     def disk_full(path: Path, data: object) -> None:

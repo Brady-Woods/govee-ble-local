@@ -8,7 +8,7 @@ import json
 from importlib import resources
 
 import pytest
-from conftest import FakeSceneFiles
+from conftest import FakeSceneFiles, scene_store
 
 from govee_ble_local import profile_for, scenes, supported_skus
 from govee_ble_local.exceptions import GoveeBleError, GoveeBleInvalidValue
@@ -22,13 +22,13 @@ EXPECTED = {
     "H60A6": 84, "H61A8": 148, "H6641": 148, "H6004": 63, "H6062": 70, "H6188": 9,
     "H1401": 94, "R1401": 94, "H14B1": 63, "H6002": 8,
 }
-# 1.4.0's ten, each pinned to its set: the SHA-256 prefix of 1.4.0's <SKU>.json, which the set is byte for
-# byte, so a change to one of their catalogs fails even at the same count.
-RELEASED_SETS = {
-    "H6004": "8adf963b1cda677f", "H6006": "29425dd1a9d18cc1", "H6008": "29425dd1a9d18cc1",
-    "H6047": "8d3223a1b569c4cd", "H6052": "b667e19af3548ddc", "H6062": "bdae7b88d3d1f3ec",
-    "H60A6": "380ce4dd009e54ef", "H6188": "3a4741fa1ff4c533", "H61A8": "6bbb491551b4dfc4",
-    "H6641": "6bbb491551b4dfc4",
+# 1.4.0's ten, each pinned to its content (_content of v1.4.0's load_scenes, from the 1.4.0 wheel), so a
+# change to one of their catalogs fails even at the same count.
+RELEASED = {
+    "H6004": "64c882fa0abdd5ef", "H6006": "7827c664fbe0e692", "H6008": "7827c664fbe0e692",
+    "H6047": "493a456314cc7cdb", "H6052": "e23d874ec5ca609b", "H6062": "acc242d1ab4a9e52",
+    "H60A6": "a1b7070e74ef0276", "H6188": "b1fce838b659f7bb", "H61A8": "74f16a978bb9d70f",
+    "H6641": "74f16a978bb9d70f",
 }
 
 # The bundled scenes whose bundled lightEffect the app's scene list drops at one of their SKU's scene sets
@@ -42,6 +42,18 @@ LIST_FILTER_EXEMPT = {
     # did (_plan_upload doesn't filter by the op set). Until G1 lands.
     ("H61A8", frozenset({0, 1, 2})): 36,
 }
+
+
+def _content(sku: str) -> str:
+    """``load_scenes(sku)``'s content: the first 16 hex digits of the SHA-256 of every Scene field of every
+    scene, in order, as JSON with sorted keys."""
+    rows = [dataclasses.asdict(s) for s in load_scenes(sku).values()]
+    return hashlib.sha256(json.dumps(rows, sort_keys=True).encode("utf-8")).hexdigest()[:16]
+
+
+def _store() -> dict:
+    """The bundled store, as JSON."""
+    return json.loads((resources.files(scenes) / "store.json").read_text(encoding="utf-8"))
 
 
 def _op_type(scene_type: int | None, cmd_version: int | None) -> int:
@@ -89,15 +101,27 @@ def test_unknown_valid_sku():
 def fake_catalog(monkeypatch):
     def install(text):
         scenes._catalog.cache_clear()
-        monkeypatch.setattr(scenes.resources, "files", lambda _pkg: FakeSceneFiles("H1234", text))
+        monkeypatch.setattr(scenes.resources, "files", lambda _pkg: FakeSceneFiles(text))
     yield install
     scenes._catalog.cache_clear()
 
 
+def _bad(pool: list, skus: dict | None = None) -> str:
+    return json.dumps({"pool": pool, "skus": {"H1234": [0]} if skus is None else skus})
+
+
+_A, _B = {"name": "a", "code": 1}, {"name": "b", "code": 2}
+
+
 @pytest.mark.parametrize(
     "text",
-    ["{not json", "[1, 2]", '"str"', '{"a": {"param": null}}', '{"a": 5}', '{"a": {"code": "xx"}}',
-     '{"a": {"code": 1, "rules": true}}'],   # version-gated in the app (scenes.list_filter): refused
+    ["{not json", "[1, 2]", '{"pool": {}, "skus": {}}', _bad([5]), _bad([{"name": "a", "param": None}]),
+     _bad([{"name": "a", "code": "xx"}]), _bad([{"name": "", "code": 1}]),
+     _bad([{**_A, "rules": True}]),   # version-gated in the app (scenes.list_filter): refused
+     _bad([_A], {"H1234": [1]}), _bad([_A, _B], {"H1234": [1, 0]}),
+     _bad([_A, {**_A, "code": 2}], {"H1234": [0, 1]}),   # two scenes of one name
+     _bad([_A], {"h1234": [0]}),
+     _bad([_A, _B])],   # b is no SKU's: an orphan
 )
 def test_malformed_catalog(fake_catalog, text):
     fake_catalog(text)
@@ -108,7 +132,7 @@ def test_malformed_catalog(fake_catalog, text):
 
 
 def test_valid_fake_catalog(fake_catalog):
-    fake_catalog('{"a": {"code": 3, "param": null}, "b": {"code": 3}}')
+    fake_catalog(scene_store("H1234", {"a": {"code": 3, "param": None}, "b": {"code": 3}}))
     assert scene_names_by_code("H1234") == {3: "a"}
 
 
@@ -131,8 +155,7 @@ def test_no_legacy_scene_catalog_holds_a_type5_scene_the_app_uploads():
     so a legacy_scene SKU's bundled catalog holds none the app uploads: none whose param leads 0x50 (the
     new-DIY parser a goodsType registers, BaseSceneViewMode.r3), and none at all where its versions hold one
     of parseSceneV1's sceneType-5 branches (7 to 13)."""
-    index = json.loads((resources.files(scenes) / "index.json").read_text(encoding="utf-8"))
-    for sku in index:
+    for sku in _store()["skus"]:
         p = profile_for(sku, allow_modelled=True)
         if p is not None and p.scene_dialect != "A":
             continue   # H60A6, H6052: a sceneType-5 dialect of their own
@@ -153,9 +176,8 @@ def test_the_bundled_scenes_are_ones_the_app_lists():
     effect only, so that is checked at fetch time (fetch_scenes.fetch names such scenes), not here. (The app
     lets a base sceneType-0 effect through any set; a catalog keeps the SKU's type only, so a base-static
     scene typed otherwise for its SKU would be named here too.)"""
-    index = json.loads((resources.files(scenes) / "index.json").read_text(encoding="utf-8"))
     reached = set()
-    for sku in index:
+    for sku in _store()["skus"]:
         p = profile_for(sku, allow_modelled=True)
         assert p is not None, sku
         catalog = load_scenes(sku).values()
@@ -172,12 +194,15 @@ def test_the_bundled_scenes_are_ones_the_app_lists():
 
 def test_the_scene_store_is_the_device_tables():
     """The store and the table agree: the SKUs with a catalog are exactly the ones offered scenes (a SKU
-    without one is not: _resolve's module doc), each set is named by its SHA-256 prefix, and every set is some
-    SKU's (no orphan). EXPECTED pins each catalog's size, so a re-pointed or dropped catalog fails, and
-    RELEASED_SETS each of 1.4.0's ten to its set, so a change to one of them fails."""
+    without one is not: _resolve's module doc). The store is tools/fetch_scenes.py's layout: the pool holds
+    each scene once, sorted by content (its name, then its JSON with sorted keys), every entry some SKU's (no
+    orphan), in the tool's JSON form, and it is the package's only JSON. EXPECTED pins each catalog's size,
+    so a re-pointed or dropped catalog fails, and RELEASED each of 1.4.0's ten to 1.4.0's content (every
+    Scene field), so a change to one of them fails even at the same count."""
     files = resources.files(scenes)
-    index = json.loads((files / "index.json").read_text(encoding="utf-8"))
-    assert {sku: index.get(sku) for sku in RELEASED_SETS} == RELEASED_SETS
+    text = (files / "store.json").read_text(encoding="utf-8")
+    store = json.loads(text)
+    assert {sku: _content(sku) for sku in RELEASED} == RELEASED
     offered: set[str] = set()
     for opt_in in (False, True):
         for sku in supported_skus(allow_modelled=opt_in):
@@ -185,9 +210,9 @@ def test_the_scene_store_is_the_device_tables():
             assert p is not None, sku   # every SKU routes without its pact
             if Capability.SCENES in p.capabilities:
                 offered.add(sku)
-    assert set(index) == offered == set(EXPECTED)
-    sets = {f.name.removesuffix(".json"): f.read_text(encoding="utf-8") for f in files.iterdir()
-            if f.name.endswith(".json") and f.name != "index.json"}
-    assert set(sets) == set(index.values())
-    for name, text in sets.items():
-        assert hashlib.sha256(text.encode("utf-8")).hexdigest()[:16] == name
+    assert set(store["skus"]) == offered == set(EXPECTED)
+    keys = [(e["name"], json.dumps(e, sort_keys=True, separators=(",", ":"))) for e in store["pool"]]
+    assert keys == sorted(set(keys))
+    assert {i for refs in store["skus"].values() for i in refs} == set(range(len(keys)))
+    assert text == json.dumps(store, indent=1, sort_keys=True)
+    assert [f.name for f in files.iterdir() if f.name.endswith(".json")] == ["store.json"]

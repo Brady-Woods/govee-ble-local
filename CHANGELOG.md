@@ -182,22 +182,24 @@ model, from which the shipped readers are generated).
   `Device.set_scene` and `set_scene_by_name` send it first, ahead of any upload, unless `state.is_on` is True.
   H6004 / H6006 / H6008 and every other SKU send what they sent.
 - Bundled scene catalogs for the newly admitted models whose profile offers scenes: H6002, H1401 / R1401
-  and H14B1 (H14B1 shares H6004's set), fetched from the public scene library with `tools/fetch_scenes.py`
-  into the content-keyed store. The other newly admitted models get no catalog yet, so they offer no scenes
+  and H14B1 (H14B1 shares H6004's scenes), fetched from the public scene library with `tools/fetch_scenes.py`
+  into the scene store. The other newly admitted models get no catalog yet, so they offer no scenes
   (Changed). Every scene in them carries its blob. H1401 / R1401's Christmas is a well-formed 82-byte 0x93
   RGB scene and uploads as one; it is no placeholder (Changed: the placeholder flag). H14B1 shares H6004's
-  set, whose Christmas, the same scene, keeps 1.4.0's `placeholder` flag, which only `Scene.placeholder`
+  scenes, whose Christmas, the same scene, keeps 1.4.0's `placeholder` flag, which only `Scene.placeholder`
   reads.
 
 ### Changed
 - **Scenes need a bundled catalog**, as every SKU of 1.4.0 that offers them ships one. The generator bakes
-  the scene store's SKUs (`scenes/index.json`) into the table (`_generated` `SCENE_CATALOGS`), and a profile
+  the scene store's SKUs (`scenes/store.json`'s `skus`) into the table (`_generated` `SCENE_CATALOGS`), and a profile
   offers `SCENES` only to them; the row's scene facts are still checked. So no SKU offers an effect list
   with nothing in it (Home Assistant showed only "off" for the nine catalogue bulbs). The 75 admitted SKUs
   (and 5 behind `allow_modelled`) whose row offers scenes but have no catalog offer none until theirs is
   bundled. `tools/fetch_scenes.py` with no SKUs lists the SKUs whose row offers scenes, catalog or not.
-  A test ties the store to the table: the SKUs with a catalog are exactly those offered scenes, each set is
-  named by its SHA-256 prefix and named by some SKU, and every catalog's scene count is pinned.
+  A test ties the store to the table: the SKUs with a catalog are exactly those offered scenes, the store is
+  the fetch tool's layout, and every catalog's scene count is pinned, with each of 1.4.0's ten catalogs
+  pinned to 1.4.0's content (every `Scene` field of every scene, in order), so a change at the same count
+  fails.
   `scripts/smoke_artifacts.sh` loads every bundled catalog from the installed wheel. 1.4.0's 18 SKUs keep
   their scenes.
 - **The 0xAC status request is built from the profile**, not hard-coded to the H60A6's: the resolver takes
@@ -274,15 +276,26 @@ model, from which the shipped readers are generated).
   (`get_requires_for_build_*`). An sdist ships the generated table, and the runtime dependencies are
   unchanged: nothing under `src/` imports yaml. `tools/gen_kaitai.sh` writes the table after the Kaitai
   classes, with `$PYTHON`.
-- **Bundled scene catalogs are stored once by content.** `scenes/index.json` maps each SKU to its scene set,
-  `scenes/<set>.json`, named by the first 16 hex digits of the file's SHA-256, so SKUs with the same scenes
-  share one file (H6006 / H6008 and H61A8 / H6641: 1.4.0's ten catalogs are eight sets). Measured, the store
-  (every set and the index) is 150,289 B, 39,106 B deflated in the wheel, against 178,840 B and 46,066 B for
-  1.4.0's ten catalogs, with the two sets the admitted models add (Added). 1.4.0's sets are each the
-  SKU's old `<SKU>.json`, byte for byte, and `load_scenes`, `async_load_scenes` and
-  `scene_names_by_code` are unchanged. An index entry naming a set that is not bundled raises GoveeBleError
-  like an unreadable catalog. `tools/fetch_scenes.py` writes the new layout (a new set before the index,
-  then removes the sets no SKU names) and stores nothing for a SKU the library has no scenes for.
+- **Bundled scene catalogs are stored once per scene**, in one file, `scenes/store.json`, in place of 1.4.0's
+  `<SKU>.json` files. Its `pool` lists each bundled scene once (its name and entry), sorted by content (the
+  name, then the entry's JSON with sorted keys), and its `skus` maps each SKU to the increasing indexes of
+  its scenes in the pool, so SKUs that share a scene share its entry: 1.4.0's ten catalogs (748 scenes) are
+  512 entries, and with the admitted models' four catalogs (Added), 1,007 scenes are 614. Measured, the store
+  is 165,015 B, 35,866 B deflated in the wheel, against 178,840 B and 46,066 B for 1.4.0's ten catalogs (and
+  150,289 B and 39,106 B for a layout of one file per distinct catalog, with an index, which it replaces
+  before release), and the wheel 295,748 B against that layout's 300,604 B. No scene changes: for every
+  bundled SKU, `load_scenes` (every `Scene` field), `scene_names_by_code` and `scene_upload_frames` at MTU
+  20, 182, 244 and 509, at each of the SKU's scene sets, are what they were, and for 1.4.0's 18 SKUs what
+  1.4.0's wheel returns at the same scene versions. `load_scenes`, `async_load_scenes` and
+  `scene_names_by_code` are unchanged, and a SKU the store has no catalog for still gets `{}`. The first
+  lookup of each SKU reads and checks the whole store, so one that is missing, unreadable or malformed
+  raises GoveeBleError for any SKU: an entry with no name or code, a bad blob or version rules, an index
+  outside the pool or out of order, two scenes of one name in a catalog, a SKU with no scenes or not in
+  upper case, and an entry no SKU holds (an orphan) are refused. `tools/fetch_scenes.py` reads and writes
+  the store: each write lays it out again from every SKU's catalog (`layout`) in one atomic replace, so the
+  same catalogs give the same bytes and a scene no SKU holds leaves the pool, and a corrupt store fails
+  every SKU's fetch and is left as it is. Its naming (stable names, `scene_name`) and the lightEffect it
+  takes for the SKU are unchanged, and it still stores nothing for a SKU the library has no scenes for.
 - **`tools/fetch_scenes.py` reads a scene's values for the SKU, as the app does**
   (`CategoryV1.LightEffect`, `CategoryV1.java:323-422`): a `specialEffect` entry whose `supportSku` holds
   the SKU overrides the base code, scene type, param, param id, cmdVersion and big-effect flag (it took the

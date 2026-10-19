@@ -28,8 +28,8 @@ app_traced, since the snapshot's goodsType is no bench check. One that a row wit
 goodsType the snapshot contradicts, with no cited rewrite, leaves those rows (a row left with no SKUs is
 dropped). The generator prints how many SKUs only the snapshot routes, and the review
 list. It also prints the routes of the pact-conditioned assigned_goods_type items that no row carries yet
-(_resolve.reassignment_review). The module's SCENE_CATALOGS are the SKUs of the scene store's
-index (src/govee_ble_local/scenes/index.json), the only ones the library's profiles offer scenes to.
+(_resolve.reassignment_review). The module's SCENE_CATALOGS are the SKUs of the scene store
+(src/govee_ble_local/scenes/store.json's skus), the only ones the library's profiles offer scenes to.
 
 Build-time only: PyYAML, which the in-tree backend asks the build frontend for in a repository build
 (get_requires_for_build_*). An sdist ships the generated module, so a build from it needs nothing.
@@ -52,7 +52,7 @@ import yaml
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 SPEC = ROOT / "spec"
 CATALOGUE = SPEC / "govee_catalog.json"
-SCENE_INDEX = ROOT / "src" / "govee_ble_local" / "scenes" / "index.json"
+SCENE_STORE = ROOT / "src" / "govee_ble_local" / "scenes" / "store.json"
 OUT = ROOT / "src" / "govee_ble_local" / "_generated"
 RESOLVER = ROOT / "src" / "govee_ble_local" / "devices" / "_resolve.py"
 
@@ -292,16 +292,17 @@ def snapshot(path: pathlib.Path = CATALOGUE) -> dict[str, int]:
     return out
 
 
-def scene_catalogs(path: pathlib.Path = SCENE_INDEX) -> frozenset[str]:
-    """The SKUs the scene store has a catalog for (``scenes/index.json``'s keys, which tools/fetch_scenes.py
-    writes): the only ones a profile offers scenes to (_resolve's module doc). GenError on a malformed
-    index."""
+def scene_catalogs(path: pathlib.Path = SCENE_STORE) -> frozenset[str]:
+    """The SKUs the scene store has a catalog for (``scenes/store.json``'s ``skus`` keys, which
+    tools/fetch_scenes.py writes): the only ones a profile offers scenes to (_resolve's module doc). GenError
+    on a store without an object of them (the library's loader checks the rest)."""
     try:
-        index = json.loads(path.read_text(encoding="utf-8"))
+        store = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
         raise GenError(f"{path.name}: {exc!r}") from None
+    index = store.get("skus") if isinstance(store, dict) else None
     if not isinstance(index, dict) or not all(re.fullmatch(r"[A-Z0-9]{3,8}", k) for k in index):
-        raise GenError(f"{path.name}: not an object keyed by upper-case SKUs")
+        raise GenError(f"{path.name}: no skus object keyed by upper-case SKUs")
     return frozenset(index)
 
 
@@ -361,7 +362,7 @@ def render(raw: bytes, schema: dict[str, Any]) -> tuple[str, list[str]]:
     only = frozenset(sku for skus in routed.added.values() for sku in skus)
     fmt = pprint.PrettyPrinter(width=110, sort_dicts=False).pformat
     return "\n".join([
-        '"""Generated from spec/devices.yaml, spec/govee_catalog.json and scenes/index.json by '
+        '"""Generated from spec/devices.yaml, spec/govee_catalog.json and scenes/store.json by '
         'tools/gen_devices.py: do not edit (a build product, never committed)."""',
         "from __future__ import annotations",
         "",
@@ -372,7 +373,7 @@ def render(raw: bytes, schema: dict[str, Any]) -> tuple[str, list[str]]:
         "",
         f"MODE_COLOR_PARSE: Final[dict[str, ModeColorStrategy]] = {fmt(table)}",
         f"FAMILIES: Final[tuple[Family, ...]] = {fmt(families)}",
-        "# The SKUs with a bundled scene catalog (src/govee_ble_local/scenes/index.json): the only ones a"
+        "# The SKUs with a bundled scene catalog (src/govee_ble_local/scenes/store.json): the only ones a"
         " profile offers scenes to.",
         f"SCENE_CATALOGS: Final[frozenset[str]] = frozenset({fmt(tuple(sorted(scene_catalogs())))})",
         "",

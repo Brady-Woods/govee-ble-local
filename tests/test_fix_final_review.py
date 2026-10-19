@@ -164,10 +164,10 @@ async def test_except_bleak_error_still_catches_a_failed_scan(monkeypatch: pytes
 # ── an unreadable scene catalog is a library error ─────────────────────────────────────────
 @pytest.fixture
 def unreadable(monkeypatch: pytest.MonkeyPatch) -> Any:
-    """Installs bundled files whose H6008 set raises ``error`` when read (None: no index at all)."""
+    """Installs bundled files whose store raises ``error`` when read (None: no store at all)."""
     def install(error: Exception | None) -> None:
         scenes._catalog.cache_clear()
-        files = FakeSceneFiles(None if error is None else "H6008", error)
+        files = FakeSceneFiles(error)
         monkeypatch.setattr(scenes, "resources", SimpleNamespace(files=lambda _pkg: files))
 
     yield install
@@ -186,9 +186,10 @@ def test_unreadable_catalog_raises_a_library_error(unreadable: Any, error: Excep
     assert ei.value.__cause__ is error
 
 
-def test_missing_catalog_is_still_empty(unreadable: Any) -> None:
-    unreadable(None)
-    assert scenes.load_scenes("H6008") == {}
+def test_a_missing_store_is_a_library_error(unreadable: Any) -> None:
+    unreadable(None)   # the store ships with the package: a missing one fails loudly, not as no scenes
+    with pytest.raises(GoveeBleError, match="could not be read"):
+        scenes.load_scenes("H6008")
 
 
 async def test_update_survives_an_unreadable_catalog(unreadable: Any) -> None:

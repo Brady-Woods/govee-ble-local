@@ -8,7 +8,7 @@ from __future__ import annotations
 import base64
 
 import pytest
-from conftest import FakeSceneFiles
+from conftest import FakeSceneFiles, scene_store
 
 from govee_ble_local import scenes
 from govee_ble_local.const import FRAME_LEN
@@ -52,7 +52,7 @@ def test_build_scene_upload_a3_too_large_is_invalid_value() -> None:
 
 def test_catalog_with_bad_param_is_malformed(monkeypatch: pytest.MonkeyPatch) -> None:
     scenes._catalog.cache_clear()
-    bad = FakeSceneFiles("H1234", '{"a": {"code": 3, "param": "!!bad!!"}}')
+    bad = FakeSceneFiles(scene_store("H1234", {"a": {"code": 3, "param": "!!bad!!"}}))
     monkeypatch.setattr(scenes.resources, "files", lambda _pkg: bad)
     try:
         with pytest.raises(GoveeBleError, match="scene catalog for H1234 is malformed") as ei:

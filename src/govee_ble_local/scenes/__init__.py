@@ -1,9 +1,11 @@
 """Built-in scene catalogs (per-SKU), fetched from Govee's scene library.
 
-`index.json` maps each SKU to its scene set, `<set>.json`, named by the first 16 hex digits of the
-SHA-256 of the file, so SKUs with the same scenes share one file. A set maps scene name -> {code,
-param, category}. `code` is the BLE activation code; `param` is the base64 effect blob for the
-a3-chunk upload (None if the device bare-activates). Regenerate with tools/fetch_scenes.py.
+`store.json` holds every SKU's catalog, each scene stored once: ``pool`` is the list of the bundled
+scenes, unique and sorted by content (the scene name, then the entry's JSON with sorted keys), each
+{name, code, param, category, ...}; ``skus`` maps each SKU to its catalog, the increasing indexes of its
+scenes in ``pool``, so SKUs that share a scene share its entry. `code` is the BLE activation code; `param`
+is the base64 effect blob for the a3-chunk upload (None if the device bare-activates). Regenerate with
+tools/fetch_scenes.py.
 """
 from __future__ import annotations
 
@@ -11,6 +13,7 @@ import asyncio
 import base64
 import binascii
 import functools
+import itertools
 import json
 import re
 from collections.abc import Mapping
@@ -119,7 +122,7 @@ class Scene:
 
 
 _SKU_RE = re.compile(r"[A-Za-z0-9]{3,8}")
-_SET_RE = re.compile(r"[0-9a-f]{16}")
+_STORE = "store.json"
 
 
 class _MalformedSceneParam(GoveeBleInvalidValue):
@@ -128,55 +131,72 @@ class _MalformedSceneParam(GoveeBleInvalidValue):
 
 @functools.cache
 def _catalog(sku: str) -> MappingProxyType[str, Scene]:
-    """Parse + cache one (already validated, upper-case) SKU's catalog, read-only."""
-    name: object = None
+    """Parse + cache one (already validated, upper-case) SKU's catalog, read-only. Each first lookup reads and
+    checks the whole store (:func:`_catalogs`), so a store that is missing, unreadable or malformed raises
+    GoveeBleError for every SKU, one it holds no catalog for too."""
     try:
         # This module is the package's __init__, so __name__ is the package that holds the JSON.
-        files = resources.files(__name__)
-        index = json.loads((files / "index.json").read_text(encoding="utf-8"))
-        if not isinstance(index, dict):
-            raise ValueError(f"index.json is {type(index).__name__}, expected object")
-        if sku not in index:
-            return MappingProxyType({})
-        name = index[sku]
-        if not isinstance(name, str) or not _SET_RE.fullmatch(name):
-            raise ValueError(f"index.json names {name!r}, not a scene set")
-        raw = (files / f"{name}.json").read_text(encoding="utf-8")
-    except (FileNotFoundError, ModuleNotFoundError) as err:
-        if name is None:  # no index: nothing is bundled
-            return MappingProxyType({})
+        raw = (resources.files(__name__) / _STORE).read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError, ModuleNotFoundError) as err:
+        # The store ships with the package: one that is missing or can't be read (permissions, I/O, not UTF-8)
+        # is a library error like a malformed one, so the scene properties and Device.update() raise only
+        # GoveeBleError.
         raise GoveeBleError(f"scene catalog for {sku} could not be read: {err!r}") from err
-    except (OSError, UnicodeDecodeError) as err:
-        # A bundled catalog that is there but can't be read (permissions, I/O, not UTF-8) is a library
-        # error like a malformed one, so the scene properties and Device.update() raise only GoveeBleError.
-        raise GoveeBleError(f"scene catalog for {sku} could not be read: {err!r}") from err
-    except ValueError as err:  # the index is not a JSON object of set names
-        raise GoveeBleError(f"scene catalog for {sku} is malformed: {err!r}") from err
     try:
-        data = json.loads(raw)
-        if not isinstance(data, dict):
-            raise TypeError(f"top-level value is {type(data).__name__}, expected object")
-        for scene_name, v in data.items():
-            param = v.get("param")
-            if param:  # validate now so a corrupt bundled blob fails at load, not at upload
-                base64.b64decode(param, validate=True)
-            if v.get("rules"):
-                # The app lists the scene only on firmware its version rules allow (devices.yaml
-                # scenes.list_filter), which the library doesn't model: offered, it would show on every one.
-                raise ValueError(f"{scene_name!r} is gated by version rules")
-        scenes = {
-            name: Scene(
-                name, int(v["code"]), v.get("param"), v.get("category"),
-                v.get("param_id"), bool(v.get("placeholder", False)),
-                scene_type=v.get("scene_type"), cmd_version=v.get("cmd_version"),
-                big_effect=bool(v.get("big_effect", False)),
-            )
-            for name, v in data.items()
-        }
+        catalogs = _catalogs(json.loads(raw))
     except (ValueError, TypeError, KeyError, AttributeError) as err:
         # binascii.Error (bad base64) is a ValueError; its repr never quotes the blob.
         raise GoveeBleError(f"scene catalog for {sku} is malformed: {err!r}") from err
-    return MappingProxyType(scenes)
+    return MappingProxyType({scene.name: scene for scene in catalogs.get(sku, ())})
+
+
+def _catalogs(store: Any) -> dict[str, list[Scene]]:
+    """Every SKU's catalog in the parsed ``store``, its scenes in pool order. Raises ValueError / TypeError /
+    KeyError / AttributeError unless ``store`` is an object of exactly ``pool``, a list of scene entries
+    (:func:`_scene`), and ``skus``, which maps each upper-case SKU to the strictly increasing indexes of at
+    least one pool entry, no two of one name, and every pool entry is some SKU's (no orphan)."""
+    if not isinstance(store, dict) or set(store) != {"pool", "skus"}:
+        raise ValueError("the store is not an object of 'pool' and 'skus'")
+    entries, skus = store["pool"], store["skus"]
+    if not isinstance(entries, list) or not isinstance(skus, dict):
+        raise TypeError("the store's 'pool' is not a list, or its 'skus' not an object")
+    pool = [_scene(i, entry) for i, entry in enumerate(entries)]
+    catalogs: dict[str, list[Scene]] = {}
+    for key, refs in skus.items():
+        if not (isinstance(key, str) and _SKU_RE.fullmatch(key) and key == key.upper()):
+            raise ValueError(f"{key!r} is not an upper-case SKU")
+        if (not isinstance(refs, list) or not refs
+                or not all(type(i) is int and 0 <= i < len(pool) for i in refs)
+                or any(a >= b for a, b in itertools.pairwise(refs))):
+            raise ValueError(f"{key}'s catalog is not strictly increasing indexes into the pool")
+        catalogs[key] = [pool[i] for i in refs]
+        if len({scene.name for scene in catalogs[key]}) != len(refs):
+            raise ValueError(f"{key}'s catalog holds two scenes of one name")
+    used = {i for refs in skus.values() for i in refs}
+    if len(used) != len(pool):
+        raise ValueError(f"pool entry {min(set(range(len(pool))) - used)} is no SKU's")
+    return catalogs
+
+
+def _scene(i: int, entry: Any) -> Scene:
+    """Pool entry ``i`` as a Scene. Its param is checked now, so a corrupt bundled blob fails at load, not at
+    upload, and a scene with version ``rules`` is refused: the app lists it only on firmware its rules allow
+    (devices.yaml scenes.list_filter), which the library doesn't model, so offered it would show on every
+    one."""
+    name = entry["name"]
+    if not isinstance(name, str) or not name:
+        raise ValueError(f"pool entry {i} has no scene name")
+    param = entry.get("param")
+    if param:
+        base64.b64decode(param, validate=True)
+    if entry.get("rules"):
+        raise ValueError(f"{name!r} is gated by version rules")
+    return Scene(
+        name, int(entry["code"]), param, entry.get("category"),
+        entry.get("param_id"), bool(entry.get("placeholder", False)),
+        scene_type=entry.get("scene_type"), cmd_version=entry.get("cmd_version"),
+        big_effect=bool(entry.get("big_effect", False)),
+    )
 
 
 def _catalog_key(sku: str) -> str:
@@ -193,8 +213,8 @@ def load_scenes(sku: str) -> dict[str, Scene]:
     Returns a fresh dict each call (Scene is frozen), so callers can't corrupt the cache.
     The first call per SKU reads and parses the bundled JSON from disk; on an event loop
     use :func:`async_load_scenes` (or call this from an executor) for that first call.
-    Raises GoveeBleInvalidValue for a malformed SKU, GoveeBleError for a corrupt or unreadable
-    catalog.
+    Raises GoveeBleInvalidValue for a malformed SKU, GoveeBleError for a missing, corrupt or
+    unreadable store.
     """
     return dict(_catalog(_catalog_key(sku)))
 

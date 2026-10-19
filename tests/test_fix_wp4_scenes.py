@@ -5,7 +5,7 @@ from __future__ import annotations
 import base64
 
 import pytest
-from conftest import FakeSceneFiles
+from conftest import FakeSceneFiles, scene_store
 
 from govee_ble_local import scenes
 from govee_ble_local.exceptions import GoveeBleError, GoveeBleInvalidValue
@@ -70,7 +70,8 @@ def test_bad_base64_is_not_double_wrapped() -> None:
 def test_names_by_code_cached_fresh_and_follows_catalog(monkeypatch: pytest.MonkeyPatch) -> None:
     scenes._catalog.cache_clear()
     try:
-        a, b = FakeSceneFiles("H4321", '{"a": {"code": 3}}'), FakeSceneFiles("H4321", '{"b": {"code": 4}}')
+        a = FakeSceneFiles(scene_store("H4321", {"a": {"code": 3}}))
+        b = FakeSceneFiles(scene_store("H4321", {"b": {"code": 4}}))
         monkeypatch.setattr(scenes.resources, "files", lambda _pkg: a)
         first = scene_names_by_code("H4321")
         index = scenes._NAMES_BY_CODE["H4321"][1]
@@ -85,17 +86,15 @@ def test_names_by_code_cached_fresh_and_follows_catalog(monkeypatch: pytest.Monk
         scenes._NAMES_BY_CODE.pop("H4321", None)
 
 
-def test_index_must_name_a_bundled_set(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_every_lookup_checks_the_whole_store(monkeypatch: pytest.MonkeyPatch) -> None:
     scenes._catalog.cache_clear()
     try:
-        missing, not_a_set = FakeSceneFiles("H4321", None), FakeSceneFiles("H4321", "{}", name="../x")
-        monkeypatch.setattr(scenes.resources, "files", lambda _pkg: missing)
-        assert scenes.load_scenes("H9999") == {}                 # not in the index: no catalog
-        with pytest.raises(GoveeBleError, match="could not be read"):
-            scenes.load_scenes("H4321")                          # the set it names is not bundled
-        monkeypatch.setattr(scenes.resources, "files", lambda _pkg: not_a_set)
+        outside = FakeSceneFiles('{"pool": [{"name": "a", "code": 1}], "skus": {"H4321": [0, 1]}}')
+        monkeypatch.setattr(scenes.resources, "files", lambda _pkg: outside)
         with pytest.raises(GoveeBleError, match="malformed"):
-            scenes.load_scenes("H4321")                          # not a set name
+            scenes.load_scenes("H4321")                          # a scene outside the pool
+        with pytest.raises(GoveeBleError, match="malformed"):
+            scenes.load_scenes("H9999")                          # no catalog of its own: the store is read
     finally:
         scenes._catalog.cache_clear()
 

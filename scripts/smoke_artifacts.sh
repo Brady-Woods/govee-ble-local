@@ -85,7 +85,7 @@ assert "H60A6" in govee_ble_local.supported_skus(), "the wheel ships no device t
 import json
 from importlib import resources
 from govee_ble_local import scenes
-index = json.loads((resources.files(scenes) / "index.json").read_text(encoding="utf-8"))
+index = json.loads((resources.files(scenes) / "store.json").read_text(encoding="utf-8"))["skus"]
 assert index and all(scenes.load_scenes(sku) for sku in index), "the wheel ships a broken scene store"
 print("   imports, a frame round trip and", len(index), "scene catalogs OK:", govee_ble_local.__file__)
 '

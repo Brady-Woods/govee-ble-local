@@ -6,10 +6,10 @@ Uses the public (no-auth) app scene-library endpoint:
 (only an AppVersion header). Each scene yields a BLE `sceneCode` and a base64
 `scenceParam` (the effect blob uploaded via the a3-chunk burst), taken from the lightEffect
 the app's scene list keeps for the SKU (devices.yaml scenes.list_filter). Writes each SKU's
-catalog into src/govee_ble_local/scenes/ (so it ships with the library and no runtime
-cloud call is needed), stored once by content: `<set>.json` is named by the first 16
-hex digits of its SHA-256 and `index.json` maps each SKU to its set, so SKUs with the
-same scenes share one file.
+catalog into src/govee_ble_local/scenes/store.json (so it ships with the library and no
+runtime cloud call is needed), each scene stored once: the store's `pool` lists every
+bundled scene once, sorted by content, and `skus` maps each SKU to the indexes of its
+scenes in it (layout), so SKUs that share a scene share its entry.
 
 A stored name is a Home Assistant effect name that automations keep, so a re-fetch never points one
 at another scene (stored_names). Each stored scene records the sceneName the app lists it under
@@ -37,7 +37,6 @@ import argparse
 import base64
 import binascii
 import contextlib
-import hashlib
 import inspect
 import json
 import os
@@ -63,13 +62,12 @@ OUT_DIR = pathlib.Path(__file__).resolve().parent.parent / "src" / "govee_ble_lo
 # Upper bound on the library response body; real catalogs are well under 1 MiB.
 MAX_RESPONSE_BYTES = 8 * 1024 * 1024
 _SKU_RE = re.compile(r"[A-Za-z0-9]{3,8}")
-_SET_RE = re.compile(r"[0-9a-f]{16}")
 # The app decodes a scene blob with android.util.Base64.decode(str, NO_WRAP) (Encode.decryByBase64,
 # base-classes10/com/govee/base2home/util/Encode.java:29-31), which skips every character outside the
 # alphabet and '='. Some library blobs carry such characters (H6087's JSON-escaped "\/"), so fetch()
 # drops them too and stores the blob the app decodes.
 _NOT_BASE64 = re.compile(r"[^A-Za-z0-9+/=]")
-INDEX_NAME = "index.json"
+STORE_NAME = "store.json"
 Entry = dict[str, Any]  # one scene's catalog entry (JSON object)
 Answer = tuple[str, object, int]  # (sceneName, category, code) of a scene the library answers with
 
@@ -104,10 +102,11 @@ def validate_entry(name: object, entry: dict[str, object]) -> None:
 
 
 def write_catalog(path: pathlib.Path, data: object) -> None:
-    """Write a scene set or the index atomically: temp file in the same directory, then ``os.replace``."""
+    """Write the scene store (or another JSON file) atomically: temp file in the same directory, then
+    ``os.replace``."""
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
     try:
-        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as fh:  # the bytes set_name() hashes
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as fh:
             fh.write(_dumps(data))
         os.replace(tmp, path)
     except BaseException:
@@ -120,74 +119,81 @@ def _dumps(data: object) -> str:
     return json.dumps(data, indent=1, sort_keys=True)
 
 
-def set_name(text: str) -> str:
-    """A scene set's name: the first 16 hex digits of the SHA-256 of its file's text."""
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
+def _canon(entry: Entry) -> str:
+    """A pool entry's content as one string: its JSON with sorted keys and no whitespace."""
+    return json.dumps(entry, sort_keys=True, separators=(",", ":"))
 
 
-def set_path(name: str, out_dir: pathlib.Path | None = None) -> pathlib.Path:
-    """Path of the scene set ``name``; anything but a set name is refused, so it stays in ``out_dir``."""
-    if not _SET_RE.fullmatch(name):
-        raise ValueError(f"invalid scene set name {name!r}: expected 16 lower-case hex digits")
-    return (out_dir or OUT_DIR).resolve() / f"{name}.json"
+def layout(catalogs: Mapping[str, Mapping[str, Entry]]) -> dict[str, Any]:
+    """The scene store of ``catalogs`` ({SKU: {name: entry}}), as the library reads it (scenes/__init__.py):
+    ``pool``, each scene of them once (its entry with its ``name``), sorted by name, then by its JSON with
+    sorted keys; ``skus``, each SKU's pool indexes in increasing order, which is its catalog's name order.
+    The same catalogs give the same store, whatever order they or their scenes come in, and a scene no SKU
+    holds is in no pool. Raises ValueError on an empty catalog, an invalid scene (:func:`validate_entry`) or
+    an entry that carries a ``name`` of its own."""
+    pool: dict[str, Entry] = {}   # _canon -> pool entry
+    refs: dict[str, list[str]] = {}   # SKU -> its scenes' _canon
+    for sku, scenes in catalogs.items():
+        if not scenes:
+            raise ValueError(f"{sku}: an empty catalog is not stored")
+        for name, entry in scenes.items():
+            validate_entry(name, entry)
+            if "name" in entry:
+                raise ValueError(f"{sku}: scene {name!r} carries a 'name' of its own")
+            full = {"name": name, **entry}
+            pool.setdefault(_canon(full), full)
+            refs.setdefault(validate_sku(sku), []).append(_canon(full))
+    order = sorted(pool, key=lambda c: (pool[c]["name"], c))
+    at = {c: i for i, c in enumerate(order)}
+    return {"pool": [pool[c] for c in order],
+            "skus": {sku: sorted(at[c] for c in own) for sku, own in sorted(refs.items())}}
 
 
-def read_index(out_dir: pathlib.Path | None = None) -> dict[str, str]:
-    """The store's SKU -> scene set index ({} if there is none yet)."""
-    path = (out_dir or OUT_DIR) / INDEX_NAME
+def read_store(out_dir: pathlib.Path | None = None) -> dict[str, dict[str, Entry]]:
+    """Every SKU's stored catalog, ``{SKU: {name: entry}}`` with each entry without its ``name`` ({} when
+    there is no store yet). The store is checked as the library reads it (``scenes._catalogs``): ValueError
+    when it is malformed."""
+    from govee_ble_local import scenes
+
+    path = (out_dir or OUT_DIR) / STORE_NAME
     if not path.exists():
         return {}
-    index = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(index, dict) or not all(isinstance(v, str) and _SET_RE.fullmatch(v)
-                                              for v in index.values()):
-        raise ValueError(f"{INDEX_NAME} is not a JSON object of scene set names")
-    return index
+    try:
+        store = json.loads(path.read_text(encoding="utf-8"))
+        scenes._catalogs(store)
+    except (ValueError, TypeError, KeyError, AttributeError) as err:
+        raise ValueError(f"{STORE_NAME} is malformed: {err!r}") from err
+    pool = store["pool"]
+    return {sku: {pool[i]["name"]: {k: v for k, v in pool[i].items() if k != "name"} for i in refs}
+            for sku, refs in store["skus"].items()}
 
 
 def read_catalog(sku: str, out_dir: pathlib.Path | None = None) -> dict[str, Entry]:
-    """``sku``'s stored catalog ({} if the index has none)."""
-    name = read_index(out_dir).get(validate_sku(sku))
-    if name is None:
-        return {}
-    data = json.loads(set_path(name, out_dir).read_text(encoding="utf-8"))
-    if not isinstance(data, dict) or not all(isinstance(v, dict) for v in data.values()):
-        raise ValueError(f"scene set {name} ({sku}) is not a JSON object of scene objects")
-    return data
+    """``sku``'s stored catalog ({} if the store has none)."""
+    return read_store(out_dir).get(validate_sku(sku), {})
 
 
 def _peers(sku: str, out_dir: pathlib.Path | None = None) -> tuple[dict[str, Entry], ...]:
-    """The other SKUs' stored catalogs, in SKU order, each scene set once (:func:`stored_names`'s peers). A
-    set that does not read is skipped and named on stderr; fetching its own SKU reports it."""
-    index, key = read_index(out_dir), validate_sku(sku)
-    first: dict[str, str] = {}   # scene set -> the first SKU that points to it
-    for other in sorted(index):
-        if other != key:
-            first.setdefault(index[other], other)
-    out = []
-    for other in first.values():
-        try:
-            out.append(read_catalog(other, out_dir))
-        except (OSError, ValueError) as err:
-            print(f"{sku}: {other}'s stored catalog is not read for its names: {err}", file=sys.stderr)
+    """The other SKUs' stored catalogs, in SKU order, each distinct catalog once (:func:`stored_names`'s
+    peers)."""
+    catalogs, key = read_store(out_dir), validate_sku(sku)
+    out: list[dict[str, Entry]] = []
+    for other in sorted(catalogs):
+        if other != key and catalogs[other] not in out:
+            out.append(catalogs[other])
     return tuple(out)
 
 
-def store_catalog(sku: str, data: dict[str, Entry], out_dir: pathlib.Path | None = None) -> str:
-    """Store ``sku``'s catalog once by content and return its set name: write the set if it is new,
-    point the index at it, then delete the sets no SKU points to. The set is written before the
-    index, so the index never names a missing set."""
+def store_catalog(sku: str, data: dict[str, Entry], out_dir: pathlib.Path | None = None) -> int:
+    """Store ``sku``'s catalog and return the pool's size: the store is laid out again from every SKU's
+    catalog (:func:`layout`), so a scene no SKU holds any more leaves the pool, and written in one atomic
+    replace, so it is never half written."""
     base = out_dir or OUT_DIR
-    name = set_name(_dumps(data))
-    path = set_path(name, base)
-    if not path.exists():
-        write_catalog(path, data)
-    index = read_index(base)
-    index[validate_sku(sku)] = name
-    write_catalog(base / INDEX_NAME, index)
-    for stale in base.glob("*.json"):
-        if _SET_RE.fullmatch(stale.stem) and stale.stem not in index.values():
-            stale.unlink()
-    return name
+    catalogs = read_store(base)
+    catalogs[validate_sku(sku)] = data
+    store = layout(catalogs)
+    write_catalog(base / STORE_NAME, store)
+    return len(store["pool"])
 
 
 def _is_placeholder(entry: Entry) -> bool:
@@ -846,8 +852,8 @@ def main(skus: list[str], app_version: str = DEFAULT_APP_VERSION) -> int:
             print(f"{sku}: removed {len(gone)} stored names whose scene the library still answers and the "
                   f"SKU's scene list refuses, or the library does not upload: {', '.join(gone)}")
         try:
-            name = store_catalog(sku, scenes)
-        except OSError as err:
+            pooled = store_catalog(sku, scenes)
+        except (OSError, ValueError) as err:
             print(f"{sku}: WRITE FAILED: {err}", file=sys.stderr)
             failures += 1
             continue
@@ -857,7 +863,7 @@ def main(skus: list[str], app_version: str = DEFAULT_APP_VERSION) -> int:
         placeholders = sorted(n for n, v in scenes.items() if v.get("placeholder"))
         note = f"; {len(placeholders)} placeholders (run --resolve)" if placeholders else ""
         print(
-            f"{sku}: {len(scenes)} scenes -> scenes/{name}.json "
+            f"{sku}: {len(scenes)} scenes -> scenes/{STORE_NAME} ({pooled} in the pool) "
             f"[{kept} preserved]{note}"
         )
         if placeholders:
