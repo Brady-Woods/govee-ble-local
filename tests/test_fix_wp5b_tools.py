@@ -205,16 +205,17 @@ def test_merge_takes_fresh_blob_and_drops_stale_routing_fields() -> None:
 def test_merge_keeps_a_resolved_blob_over_the_public_stub() -> None:
     fs = _load("fetch_scenes")
     existing = {"A": {"code": 10, "param": "REAL", "param_id": 5, "scene_type": 1, "big_effect": True,
-                      "category": "old"},
-                "Gone": {"code": 3, "param": None}}
-    stub = {"code": 12, "param": "STUB", "param_id": 5, "placeholder": True, "scene_type": 2,
-            "category": "new"}
+                      "category": "c"},
+                "Gone": {"code": 3, "param": None, "category": "c"}}
+    stub = {"code": 10, "param": "STUB", "param_id": 5, "placeholder": True, "scene_type": 2, "category": "c"}
     merged = fs._merge(existing, {"A": stub})
-    assert merged["A"] == {"code": 12, "param": "REAL", "param_id": 5, "scene_type": 2, "category": "new"}
+    assert merged["A"] == {"code": 10, "param": "REAL", "param_id": 5, "scene_type": 2, "category": "c"}
     assert merged["Gone"] == existing["Gone"]                   # no longer public: kept
-    assert "Gone" not in fs._merge(existing, {"A": stub}, {"A", "Gone"})   # public, not listed: dropped
-    other = dict(stub, param_id=6)                              # a different effect: re-resolve it
-    assert fs._merge(existing, {"A": other})["A"] == other
+    assert "Gone" not in fs._merge(existing, {"A": stub}, {("Gone", "c", 3)})   # public, not listed: dropped
+    assert "Gone" in fs._merge(existing, {"A": stub}, {("Gone", "c", 4)})       # another scene of its name
+    assert fs._merge(existing, {"B": stub})["B"]["param"] == "REAL"             # kept by scene, not by name
+    for other in (dict(stub, param_id=6), dict(stub, code=11), dict(stub, category="d")):   # re-resolve it
+        assert fs._merge(existing, {"A": other})["A"] == other
 
 
 _ROW = re.compile(r"^(\S+)\s+(\d+)\s+(\d+)(\[[^\]]*\])?\s+(\d+)\s+(\d+)\s+(\d+)\s+(\[.*\])$")

@@ -329,6 +329,21 @@ model, from which the shipped readers are generated).
   layout's `is_cct` on the `[gradual][kelvin s16be]` decodes, so a `gradual_kelvin_s16be_nocct` report
   (mode_color_parse `kelvin_15_nocct`, `kelvin_0d_nocct`, ...) reads as `KelvinReport(0)`, not
   colour-temperature mode. Latent: no current SKU uses those decodes.
+- **`tools/fetch_scenes.py` keeps every same-named scene and never points a stored name at another scene.** A
+  stored name is a Home Assistant effect name that automations keep. The app lists one sceneName in more than
+  one category, or twice in one (H61A8 / H6641: Emotion's "Flash", code 2020, and Zootopia 2's, 14769; 41 of
+  the 93 SKUs fetched on 2026-10-19, H1A42's "Sleep" and "Meditation" and H60B1's "Dusk" among them), and the
+  fetch kept only the last of them. Each one is now stored: a new one under its sceneName where that is free,
+  else as "<name> (<category>)" or "<name> (<category>, n)", with its sceneName in a new `scene_name` key
+  where the two differ (the loader ignores the key). Of the new scenes of one sceneName the highest code keeps
+  it, whatever the list order, so identical responses give identical names (the bundled H61A8 / H6641 "Flash"
+  is 14769, which a first fetch picks too). A re-fetch matches each listed scene to a stored one of its
+  sceneName by code and category, else by code (its category renamed), else by category (its code changed),
+  and prints the last two; only a scene that matches none gets a new name, and never one the store holds. A
+  stored scene no longer listed keeps its name, and one the library still answers that the SKU's scene list
+  leaves out is removed and printed. Scenes are named after the sceneType-5 scenes a `legacy_scene` SKU does
+  not upload are left out, and a blob resolved by `--resolve` is kept by the scene's code, category and param
+  id, not by its name. No bundled catalog changes.
 
 ### Spec
 - `devices.yaml` `scenes.list_filter`: which library scenes the control screen lists and with which

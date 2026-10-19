@@ -14,6 +14,7 @@ import sys
 import time
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -313,10 +314,10 @@ def test_fetch_lists_what_the_apps_scene_list_lists(monkeypatch: pytest.MonkeyPa
         season]}}).encode()
     monkeypatch.setattr(fs.urllib.request, "urlopen", lambda *a, **k: _Resp(body))
     assert (fs.op_set("H61A8"), fs.op_set("H6006"), fs.op_set("H9999")) == ({0, 1, 2, 3}, {0, 1}, None)
-    seen: set[str] = set()
+    seen: set[tuple[str, object, int]] = set()
     listed = {"Op": 1, "Static": 3, "AfterGate": 2, "Expired": 1, "DiyFirst": 2}
     assert {n: e["code"] for n, e in fs.fetch("H6047", seen=seen).items()} == listed
-    assert seen == {*scenes, *(f"{n} (c)" for n in scenes), "Season", "Season (old)"}
+    assert seen == {(n, "c", e["sceneCode"]) for n, es in scenes.items() for e in es} | {("Season", "old", 3)}
     out = capsys.readouterr().out
     assert "H6047: left out 1 scenes whose effect the firmware's version rules pick: Gated" in out
     assert "empty scene set" not in out
@@ -331,41 +332,94 @@ def test_fetch_lists_what_the_apps_scene_list_lists(monkeypatch: pytest.MonkeyPa
         "DiyFirst": 4}
 
 
-def test_fetch_stores_same_named_scenes_apart(monkeypatch: pytest.MonkeyPatch,
-                                              capsys: pytest.CaptureFixture[str]) -> None:
-    """A catalog maps a name to one scene, and the app lists a name in more than one category (H61A8's
-    "Flash": Emotion's 2020, Zootopia 2's 14769): the first listed keeps it, unless the stored catalog holds
-    it for another of them (by code and category, else code, else category), and each other is stored as
-    "<name> (<category>)" (", n" when that is taken too) and printed. _merge counts a scene stored apart as
-    public while the library answers its name in its category."""
+_EXPIRED = {"checkEffectiveTime": 1, "effectiveTimes": [{"startTime": 0, "endTime": 1}]}
+_Library = tuple[tuple[Any, ...], ...]   # (category name, ((sceneName, code), ...)[, category fields])
+# The app lists "Flash" in two categories (H61A8: Emotion's 2020, Zootopia 2's 14769), here twice in one.
+_EMOTION = ("Emotion", (("Flash", 2020), ("Glow", 30)))
+_ZOOTOPIA = ("Zootopia 2", (("Flash", 14769), ("Flash", 14770)))
+_STORED = {"Flash": (14770, "Zootopia 2"), "Flash (Emotion)": (2020, "Emotion"),
+           "Flash (Zootopia 2)": (14769, "Zootopia 2"), "Glow": (30, "Emotion")}
+_ROUNDS: dict[str, tuple[_Library, dict[str, tuple[int, str]], tuple[str, ...]]] = {
+    # change: (the library re-fetched, the stored names after it, the names printed)
+    "re-fetch": ((_EMOTION, _ZOOTOPIA), _STORED, ()),
+    "reorder": ((("Zootopia 2", _ZOOTOPIA[1][::-1]), ("Emotion", _EMOTION[1][::-1])), _STORED, ()),
+    "add": ((_EMOTION, ("Zootopia 2", (*_ZOOTOPIA[1], ("Flash", 15000))), ("Party", (("Flash", 99),))),
+            {**_STORED, "Flash (Zootopia 2, 2)": (15000, "Zootopia 2"), "Flash (Party)": (99, "Party")},
+            ("Flash (Zootopia 2, 2)", "Flash (Party)")),
+    "renumber": ((_EMOTION, ("Zootopia 2", (("Flash", 14769), ("Flash", 14771)))),
+                 {**_STORED, "Flash": (14771, "Zootopia 2")}, ("Flash",)),
+    "category rename": ((_EMOTION, ("Zootopia", _ZOOTOPIA[1])),
+                        {**_STORED, "Flash": (14770, "Zootopia"), "Flash (Zootopia 2)": (14769, "Zootopia")},
+                        ("Flash", "Flash (Zootopia 2)")),
+    "category removed": ((_EMOTION,), _STORED, ()),   # dropped out of the library: kept
+    "category expired": ((_EMOTION, (*_ZOOTOPIA, _EXPIRED)),   # answered, not listed: removed
+                         {n: v for n, v in _STORED.items() if v[1] != "Zootopia 2"},
+                         ("Flash", "Flash (Zootopia 2)")),
+    "holder removed": ((_EMOTION, ("Zootopia 2", (("Flash", 14769),))), _STORED, ()),
+    "literal": ((_EMOTION, _ZOOTOPIA, ("Specials", (("Flash (Emotion)", 500),))),   # a sceneName
+                {**_STORED, "Flash (Emotion) (Specials)": (500, "Specials")},
+                ("Flash (Emotion) (Specials)",)),
+}
+
+
+def _library(categories: _Library) -> bytes:
+    def category(name: str, scenes: tuple[tuple[str, int], ...], *more: dict[str, Any]) -> dict[str, Any]:
+        return {"categoryName": name, **{k: v for m in more for k, v in m.items()},
+                "scenes": [{"sceneName": n, "lightEffects": [{"sceneCode": c, "scenceParam": ""}]}
+                           for n, c in scenes]}
+    return json.dumps({"data": {"categories": [category(*c) for c in categories]}}).encode()
+
+
+@pytest.mark.parametrize("change", list(_ROUNDS))
+def test_fetch_never_points_a_stored_name_at_another_scene(change: str, monkeypatch: pytest.MonkeyPatch,
+                                                           tmp_path: Path,
+                                                           capsys: pytest.CaptureFixture[str]) -> None:
+    """A stored name is an effect name automations keep. A first fetch names the scenes the app lists under
+    one name whatever their order: the highest code keeps it, each other is "<name> (<category>)" (", n"
+    where that is taken), and each records its sceneName. A re-fetch matches each listed scene to a stored
+    one of its sceneName (by code and category, else code, else category); only a new one gets a new name,
+    never a stored one, and a stored scene no longer listed keeps its name unless the library still answers
+    it. Over each change to the library, every stored name keeps its code and category or is printed."""
     fs = _tool("fetch_scenes")
+    monkeypatch.setattr(fs, "OUT_DIR", tmp_path)
+    library, after, printed = _ROUNDS[change]
 
-    def category(name: str, *codes: int) -> dict[str, object]:
-        return {"categoryName": name, "scenes": [{"sceneName": "Flash", "lightEffects": [
-            {"sceneCode": c, "scenceParam": ""}]} for c in codes]}
+    def fetch_from(categories: _Library) -> dict[str, tuple[object, object]]:
+        body = _library(categories)
+        monkeypatch.setattr(fs.urllib.request, "urlopen", lambda *a, **k: _Resp(body))
+        assert fs.main(["H61A8"]) == 0
+        return {n: (e["code"], e["category"]) for n, e in fs.read_catalog("H61A8", tmp_path).items()}
 
-    body = json.dumps({"data": {"categories": [category("Emotion", 2020),
-                                               category("Zootopia 2", 14769, 14770)]}}).encode()
+    assert fetch_from(_ROUNDS["reorder"][0]) == _STORED   # a first fetch: the list order does not count
+    first = fs.read_catalog("H61A8", tmp_path)
+    assert {n: e.get("scene_name") for n, e in first.items()} == {
+        "Flash": None, "Flash (Emotion)": "Flash", "Flash (Zootopia 2)": "Flash", "Glow": None}
+    capsys.readouterr()
+    assert fetch_from(library) == after
+    out = capsys.readouterr().out
+    changes = "\n".join(line for line in out.splitlines() if "stored names" in line)
+    for name, scene in _STORED.items():
+        assert after.get(name) == scene or f'"{name}"' in changes, name
+    assert all(f'"{name}"' in out for name in printed)
+    assert bool(changes) == any(n in _STORED for n in printed)
+
+
+def test_fetch_names_the_scenes_left_after_the_type5_ones(monkeypatch: pytest.MonkeyPatch,
+                                                          capsys: pytest.CaptureFixture[str]) -> None:
+    """A sceneType-5 scene a legacy_scene SKU leaves out (H6006: its param leads 0x50) is left out before
+    the scenes are named, so it takes no name from another scene of its sceneName."""
+    fs = _tool("fetch_scenes")
+    diy = {"supportSku": ["H6006"], "sceneCode": 9, "sceneType": 5,
+           "scenceParam": base64.b64encode(b"\x50\x01\x02").decode()}
+    body = json.dumps({"data": {"categories": [
+        {"categoryName": "A", "scenes": [{"sceneName": "X", "lightEffects": [
+            {"sceneCode": 8, "sceneType": 0, "scenceParam": "", "specialEffect": [diy]}]}]},
+        {"categoryName": "B", "scenes": [{"sceneName": "X", "lightEffects": [
+            {"sceneCode": 3, "sceneType": 1, "scenceParam": ""}]}]}]}}).encode()
     monkeypatch.setattr(fs.urllib.request, "urlopen", lambda *a, **k: _Resp(body))
-    got = fs.fetch("H61A8")
-    assert {n: e["code"] for n, e in got.items()} == {
-        "Flash": 2020, "Flash (Zootopia 2)": 14769, "Flash (Zootopia 2, 2)": 14770}
-    assert ('H61A8: 2 scenes share a name with another the app lists, stored apart: "Flash (Zootopia 2)" '
-            '(code 14769; "Flash" is Emotion\'s, code 2020), "Flash (Zootopia 2, 2)" (code 14770; "Flash" is '
-            "Emotion's, code 2020)") in capsys.readouterr().out
-    z1, z2 = got["Flash (Zootopia 2)"], got["Flash (Zootopia 2, 2)"]
-    stored = {"Flash": z2}   # as the last-one-wins fetch stored it
-    assert {n: e["code"] for n, e in fs.fetch("H61A8", existing=stored).items()} == {
-        "Flash": 14770, "Flash (Emotion)": 2020, "Flash (Zootopia 2)": 14769}
-    for held, keeps in (({**z2, "category": "Zootopia"}, 14770),   # matched by code
-                        ({**z1, "code": 1}, 14769)):               # by category
-        assert fs.fetch("H61A8", existing={"Flash": held})["Flash"]["code"] == keeps
-    assert fs.fetch("H61A8", existing=got) == got   # a re-fetch renames nothing
-    seen: set[str] = set()
-    fs.fetch("H61A8", seen=seen)
-    apart = {"Flash (Emotion)": got["Flash"], "Flash (Zootopia 2, 3)": z2}
-    assert fs._merge(apart, {}, seen) == {}
-    assert fs._merge(apart, {}, {"Flash", "Flash (Zootopia 2)"}) == {"Flash (Emotion)": got["Flash"]}   # gone
+    assert {n: e["code"] for n, e in fs.fetch("H6006").items()} == {"X": 3}
+    assert "H6006: left out 1 sceneType-5 scenes the app uploads and the library does not" in (
+        capsys.readouterr().out)
 
 
 def test_fetch_validate_entry_rejects_bad_base64() -> None:
