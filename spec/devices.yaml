@@ -1023,7 +1023,7 @@ families:
         "328":   # H8015, the bulblight AcNewDetail with its local illumination-only mode list
           models: [H8015]
           pacts: ["1,1"]
-          support: app_traced
+          support: modelled   # traced, held: the library sends the illumination tab's Kelvin write alone (doc)
           color_scheme: h6188
           capabilities: [power, brightness, color_temp]
           zones: []
@@ -1050,6 +1050,11 @@ families:
             only other write, sendLightEndController (33 25 01, VM4Light.i5), is gated by bulblight Support.c, which
             excludes 328. The connect pact check accepts any pact (bulblight Support.e: 328 is not a Support4BulbLightV3
             goodsType); the accepted pact is (1,1). No account lock: no 0xB2 in the connect strategy or callback.
+            Held behind allow_modelled (support: modelled), though the facts above are traced: the illumination tab,
+            the screen's only colour-temperature control, writes the Kelvin frame and 33 04 <the current brightness>
+            as one Compose4DefWrite (View4IlluminationMode.I0: the Kelvin controller, then the brightness one), where
+            Device.set_color_temp sends the Kelvin frame alone. The row is admitted once the library sends that pair
+            ("Match the Govee app", rule 1).
           doc-ref:
             - split_bulblightstringv1/com/govee/bulblightv3/pact/Support.java:90-92,289-304
             - split_bulblightstringv1/com/govee/bulblightv3/pact/Model.java:29-38
@@ -1058,7 +1063,7 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/ModeConfig.java:557-563
             - base-classes11/com/govee/base2light/pact/newdetail/content/success/DelegateCurMode.java:327-336
             - base-classes11/com/govee/base2light/pact/newdetail/content/illumination/DelegateLighting.java:233-234
-            - base-classes11/com/govee/base2light/pact/newdetail/content/illumination/View4IlluminationMode.java:612-630
+            - base-classes11/com/govee/base2light/pact/newdetail/content/illumination/View4IlluminationMode.java:612-660
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:72-101,240-243,254-269,329-342,402-411,549-553,1401-1403
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/ColorModeControllerConfig.java:499-525
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:232-256,277-292,438-449,602-605,1564-1568,5625-5629,6264-6268,9972-9974,15731-15734,16458-16461

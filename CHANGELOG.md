@@ -71,7 +71,7 @@ model, from which the shipped readers are generated).
     share the H6004 / H6006 / H6008 profile, whose `skus` lists them after those three. The tenth,
     **R1630**, is on the h1630 row 364 and shares H1630's profile. A catalogue SKU takes its row's support
     level, so R1630 is admitted by default now that the app trace makes that row `app_traced` (Spec).
-  - The admit commit's rows (Spec, "42 more SKUs") extend the catalogue routes to 14 SKUs: **H6167**
+  - The admit commit's rows (Spec, "41 more SKUs") extend the catalogue routes to 14 SKUs: **H6167**
     (dreamcolorlightv1 83), **H616D / H616E** (207) and **H802A** (74) join those rows' profiles.
   - They are served only at the row's pacts, as every SKU outside 1.4.0's 18 is (see Changed): the app's
     scan refuses a device whose pact its goodsType doesn't accept (`AbsBaseBleModel.e`, `checkProtocol` ->
@@ -297,10 +297,10 @@ model, from which the shipped readers are generated).
     (1, 1)): 8 pieces in fixed groups of 4; h1630 364 (**H1630**, pacts (1, 1) / (1, 2) / (1, 3)): one
     piece, Kelvin [1000, 10000], its 0xA5 gradient record not decoded.
   None of them offers scenes yet: their scene apply path isn't traced (`scene_dialect: untraced`).
-- **42 more SKUs from the targeted app trace** (one-device-list, the admit commit): `client_profile`
+- **41 more SKUs from the targeted app trace** (one-device-list, the admit commit): `client_profile`
   rows for the goodsTypes the trace completed, each with its accepted pacts and its control-screen facts,
   cited in `doc-ref`. Admitted by default (`app_traced`, not hardware-verified):
-  - bulblightv3: **H6005** (20), **H6002** (31, scenes only), **H8015** (328, colour temperature only);
+  - bulblightv3: **H6005** (20), **H6002** (31, scenes only);
   - h61d3: **H6640** (242), **H61B3 / H61B6** (264), **H1A43 / H1A44** (367), **H1B6A** (384), **H1AB1**
     (387), **H1AB2** (388), **H1AB3** (389), **H1A42** (400), **H1AA2** (403), **H1AA5** (404);
   - dreamcolorlightv1: **H617C / H617E / H617F** (70), **H617A** (73), **H618A** (74), **H619A** (75),
@@ -315,7 +315,11 @@ model, from which the shipped readers are generated).
     untraced`): **H6167** (dreamcolorlightv1 83), **H616D / H616E** (207), **H802A** (74) and **R1630**
     (h1630 364, which leaves `allow_modelled` with its row).
 
-  Behind `allow_modelled` (source-modelled, not live-verified): **H61B8 / H61B9** (h61d3 299). Where the
+  Behind `allow_modelled` (source-modelled, not live-verified): **H61B8 / H61B9** (h61d3 299), and
+  **H8015** (bulblightv3 328, colour temperature only). 328's facts are traced, but its illumination tab, the
+  only colour-temperature control, writes the Kelvin frame and `33 04` with the current brightness as one
+  write (`View4IlluminationMode.I0`), where `Device.set_color_temp` sends the Kelvin frame alone, so the row
+  is held (`support: modelled`) until the library sends that pair. Where the
   screen sends sceneType-5 scenes through the app's new-DIY parsers, the row says `scene_dialect:
   untraced`, so that SKU offers no scenes yet. The H6042's wire piece count is now the control screen's 5,
   not 10. The 18 SKUs of 1.4.0 are unchanged.
