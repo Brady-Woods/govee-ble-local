@@ -495,12 +495,34 @@ _FIXED = {
         _lib(("Party", [(1, "Snow", [_e(5, 1)])]), ("Zootopia 2", [(2, "Dusk", [_DUSK5])])),
         _lib(("Party", [(1, "Snow", [_e(5, 1)])]), ("Zootopia", [(2, "Dusk", [{**_DUSK5, "code": 31}])])),
         resolve=0),
+    # IDEM: that one matched at a new category (own code) or code (category and param id), then cut, retires
+    # with the entry it was to hold, so the identical re-fetch reclaims it and changes nothing
+    "type5 resolved, category renamed": _rounds(
+        _lib(("Party", [(1, "Snow", [_e(5, 1)])]), ("Zootopia 2", [(2, "Dusk", [_DUSK5])])),
+        _lib(("Party", [(1, "Snow", [_e(5, 1)])]), ("Zootopia", [(2, "Dusk", [_DUSK5])])), resolve=0),
+    "type5 resolved, renumbered alone": _rounds(
+        _lib(("Party", [(1, "Snow", [_e(5, 1)]), (2, "Dusk", [_DUSK5])])),
+        _lib(("Party", [(1, "Snow", [_e(5, 1)]), (2, "Dusk", [{**_DUSK5, "code": 31}])])), resolve=0),
     # N2: a new Glow plays code 30 and also has codes 10 and 20, two stored Glows' codes, so it is ambiguous;
     # a weaker match (category and blob, to the dropped-out Glow 99) does not then take a name for it
     "ambiguous, then a weaker fit": _rounds(
         _lib(("Party", [(1, "Glow", [_e(10, 1, "kwEB")]), (3, "Glow", [_e(99, 3, "kwKK")])]),
              ("Life", [(2, "Glow", [_e(20, 2, "kwEC")])])),
         _lib(("Party", [(4, "Glow", [_e(30, 4, "kwKK"), _e(10, 5, "kwEB"), _e(20, 6, "kwEC")])]))),
+    # N4: two same-code Glows; one leaves the library as the other is refused for good: only the refused one
+    # is removed, and the dropped one keeps its name (fetched twice, again once the refused one is retired)
+    "sibling refused": _rounds(_lib(("Party", [(1, "Snow", [_e(5, 1)]), (2, "Glow", [_e(30, 2, "AAAA")]),
+                                               (3, "Glow", [_e(30, 3, "BBBB")])])),
+                               *(_lib(("Party", [(1, "Snow", [_e(5, 1)]),
+                                                 (3, "Glow", [_e(30, 3, "BBBB", refused=True)])])),) * 2),
+    # N2: Rain leaves the library, comes back in another category (a new name: the dropped name is not taken
+    # by its own code), and a same-code Rain joins it: the dropped name takes neither
+    "dropped, back elsewhere": _rounds(
+        _lib(("Life", [(1, "Snow", [_e(5, 1)]), (2, "Rain", [_e(10, 2)])])),
+        _lib(("Life", [(1, "Snow", [_e(5, 1)])])),
+        _lib(("Life", [(1, "Snow", [_e(5, 1)])]), ("Party", [(2, "Rain", [_e(10, 2)])])),
+        _lib(("Life", [(1, "Snow", [_e(5, 1)])]), ("Party", [(2, "Rain", [_e(10, 2)]),
+                                                            (3, "Rain", [_e(10, 3, "kwIC")])]))),
     # N2: a Glow at a new code and blob keeps its param id: a guess (the param id only breaks a tie)
     "guess by param id": _rounds(
         _lib(("Party", [(1, "Glow", [_e(10, 1, "kwEB")]), (2, "Glow", [_e(20, 2, "kwEC")])])),
@@ -539,3 +561,23 @@ def test_a_scene_cut_for_scene_type_5_is_removed_and_retired(fs: ModuleType, tmp
     after, said = _fetch(fs, "H6641", render(lib), tmp_path)
     assert "Rain" not in after and "Rain" in said["removed"]
     assert "Rain" in fs.read_tombstone(tmp_path / "tombstone.json")["H6641"]["retired"]
+
+
+def test_main_keys_the_tombstone_by_the_upper_case_sku(fs: ModuleType, tmp_path: Path) -> None:
+    """N1: main() given a lower-case SKU uses its upper-case tombstone record, so a retired name stays."""
+    for rnd in _FIXED["retired"][:2]:
+        _fetch(fs, "H6641", render(rnd["lib"]), tmp_path)
+    fs.BODIES["H6641"] = render(_FIXED["retired"][2]["lib"])
+    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+        assert fs.main(["h6641"]) == 0
+    assert "Rain" not in fs.read_catalog("H6641", tmp_path)
+    assert set(fs.read_tombstone(tmp_path / "tombstone.json")) == {"H6641"}
+
+
+def test_a_param_id_breaks_a_category_tie(fs: ModuleType, tmp_path: Path) -> None:
+    """N2 (the real H1A42 Sleep shape): one of two stored Sleeps drops out as the other takes a new code and
+    blob; by category alone either stored Sleep fits it, and its param id breaks the tie: a guess."""
+    rounds = _rounds(_lib(("Life", [(1, "Sleep", [_e(12683, 1)]), (2, "Sleep", [_e(12067, 2, "kwIC")])])),
+                     _lib(("Life", [(1, "Sleep", [_e(14000, 1, "kwMD")])])))
+    assert check(fs, rounds, tmp_path, 0) == []
+    assert fs.read_catalog("H6641", tmp_path / "ordered")["Sleep"]["code"] == 14000
