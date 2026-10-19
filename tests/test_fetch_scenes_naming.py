@@ -12,10 +12,12 @@ codes and blobs are never reused. Checked after every fetch:
   SAME      a first fetch names a response alike whatever the store holds (N6: no other SKU's names)
   DET       shuffling the categories and scenes of every response changes no stored catalog
   RETIRE    a removed name comes back only on its own scene, exactly, and printed; its scene's exact return
-            (a resolved blob's: as its placeholder) takes it back (N1)
+            (a resolved blob's: as its placeholder) takes it back; it stays retired, a reclaim too (N1)
   KEEP      a name is removed only for a scene refused for good or cut (sceneType 5), and printed (N3, N4)
   FOLLOW    a name whose scene the app now plays at another of its own lightEffects follows it (N3)
   RESOLVED  a blob --resolve baked in stays while the library ships that scene as a placeholder (N7)
+  STAY      a listed scene keeps the name of the one stored scene of its sceneName with its code, category,
+            blob and param id, where it is the one listed so (N5)
 """
 from __future__ import annotations
 
@@ -53,6 +55,11 @@ Lib = list[dict[str, Any]]
 
 def _resolved(pid: int) -> str:
     return base64.b64encode(b"\x93" + pid.to_bytes(3, "big")).decode()
+
+
+def _same(a: dict[str, Any], b: dict[str, Any]) -> bool:
+    """STAY's key: one code, category, blob and param id."""
+    return all(a.get(k) == b.get(k) for k in ("code", "category", "param", "param_id"))
 
 
 class Gen:
@@ -285,6 +292,10 @@ def replay(fs: ModuleType, rounds: list[dict[str, Any]], root: Path,
                     if n not in said["removed"] or uid(before[n]) not in out:
                         fail("KEEP", f"{n!r} (scene {uid(before[n])}) removed")
                     retired.setdefault(sku, {})[n] = (uid(before[n]), before[n])
+                lost = set(retired.get(sku, {})) - set(fs.read_tombstone(root / "tombstone.json").get(sku, {})
+                                                       .get("retired", {}))
+                if lost:   # retirement is permanent, a reclaim too
+                    fail("RETIRE", f"{sorted(lost)} left the tombstone")
                 for n in set(after) - set(before):
                     if n in retired.get(sku, {}):
                         u, was = retired[sku][n]
@@ -303,6 +314,10 @@ def replay(fs: ModuleType, rounds: list[dict[str, Any]], root: Path,
                         if m != n and m not in after and u == owner[pid] and fs.scene_name(m, was) == own \
                                 and fs._scene(was) == fs._scene(entry) and was["param"] in blobs:
                             fail("RETIRE", f"{m!r} of scene {u} not reclaimed by its exact return: {n!r}")
+                    exact = [m for m, b in before.items() if fs.scene_name(m, b) == own and _same(b, entry)]
+                    twins = [e for o, e, _c in listed if o == own and _same(e, entry)]
+                    if len(exact) == 1 and len(twins) == 1 and n != exact[0]:
+                        fail("STAY", f"{exact[0]!r}, its code, category, blob and param id, left for {n!r}")
                     holders = [m for m, b in before.items() if uid(b) == owner[pid]]
                     if len(holders) == 1 and holders[0] not in dropped:
                         b = before[holders[0]]
@@ -364,6 +379,15 @@ _FIXED = {
                             ("Life", [(3, "Rain", [_e(20, 3, "kwIC")])])),
                        _lib(("Party", [(1, "Snow", [_e(5, 1)]), (2, "Rain", [_e(10, 2)])]),
                             ("Life", [(3, "Rain", [_e(20, 3, "kwIC")])]))),
+    # N1: refused Rain back with a new blob, and refused Dusk gone as a new Dusk comes: neither is its scene's
+    # exact return, so neither takes a retired name
+    "retired, not exactly": _rounds(
+        _lib(("Party", [(1, "Snow", [_e(5, 1)]), (2, "Rain", [_e(10, 2, "kwUF")]),
+                        (4, "Dusk", [_e(40, 4, "kwQE")])])),
+        _lib(("Party", [(1, "Snow", [_e(5, 1)]), (2, "Rain", [_e(10, 2, "kwUF", refused=True)]),
+                        (4, "Dusk", [_e(40, 4, "kwQE", refused=True)])])),
+        _lib(("Party", [(1, "Snow", [_e(5, 1)]), (2, "Rain", [_e(10, 2, "kwIC")]),
+                        (5, "Dusk", [_e(50, 5, "kwMD")])]))),
     # N1 / N7: a resolved placeholder refused for good, then back as the same placeholder: its name, its blob
     "retired resolved": _rounds(*(_lib(("Party", [(1, "Snow", [_e(5, 1)]),
                                                   (2, "Dusk", [_e(30, 2, None, big=True, refused=out)])]))
@@ -397,6 +421,27 @@ _FIXED = {
     # N7: a resolved placeholder renumbered as its category is renamed takes a new name, and its blob
     "resolved": _rounds(_lib(("Party", [(1, "Dusk", [_e(30, 7, None, big=True)])])),
                         _lib(("Life", [(1, "Dusk", [_e(31, 7, None, big=True)])])), resolve=0),
+    # N2: one Glow renumbered (new blob and param id) as the other moves to Life: both stored Glows fit it,
+    # so it takes a new name, not the lowest
+    "ambiguous stored": _rounds(_lib(("Party", [(1, "Glow", [_e(10, 1)]), (2, "Glow", [_e(20, 2, "kwIC")])])),
+                                _lib(("Party", [(1, "Glow", [_e(11, 3, "kwMD")])]),
+                                     ("Life", [(2, "Glow", [_e(22, 4, "kwQE")])]))),
+    # N2: the stored Glows an ambiguous scene fits stay out of every later match
+    "ambiguous held": _rounds(_lib(("Party", [(1, "Glow", [_e(10, 1)]), (2, "Glow", [_e(20, 2)])])),
+                              _lib(("Party", [(1, "Glow", [_e(11, 3)]), (2, "Glow", [_e(22, 2, "kwIC")]),
+                                              (4, "Glow", [_e(40, 4, "kwMD")])]))),
+    # N2: a bare Glow leaves as a new bare Glow comes: a guess by category alone, printed as one
+    "bare": _rounds(_lib(("Party", [(1, "Glow", [_e(10, 1, None)])])),
+                    _lib(("Party", [(2, "Glow", [_e(20, 2, None)])]))),
+    # N5: same-code siblings both take a new blob and param id: either could be either, so neither is swapped
+    "swap": _rounds(_lib(("Party", [(1, "Glow", [_e(30, 1)]), (2, "Glow", [_e(30, 2, "kwIC")])])),
+                    _lib(("Party", [(1, "Glow", [_e(30, 3, "kwMD")]), (2, "Glow", [_e(30, 4, "kwQE")])]))),
+    # N5: same-code siblings that differ only in param id both turn RGBIC: each keeps its name by param id
+    "param id": _rounds(_lib(("Party", [(1, "Glow", [_e(30, 1)]), (2, "Glow", [_e(30, 2)])])),
+                        _lib(("Party", [(1, "Glow", [_e(30, 1, stype=2, cmdv=1)]),
+                                        (2, "Glow", [_e(30, 2, stype=2, cmdv=1)])]))),
+    # N5: two identical scenes of one name, fetched twice: alike, so each keeps its name
+    "twins": _rounds(_lib(("Party", [(1, "Glow", [_e(30, 1)]), (2, "Glow", [_e(30, 1)])]))),
 }
 
 

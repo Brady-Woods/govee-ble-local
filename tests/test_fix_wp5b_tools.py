@@ -225,6 +225,9 @@ def test_merge_keeps_a_resolved_blob_over_the_public_stub() -> None:
     assert "Gone" in fs._merge(existing, {"A": stub}, seen(live=(3,)))               # listed as another name
     assert "Gone" in fs._merge(existing, {"A": stub}, seen(gone=((3, "B"),), live=(3,)))   # a sibling refused
     assert fs._merge(existing, {"B": stub})["B"]["param"] == "REAL"             # kept by scene, not by name
+    no_id = {**{k: v for k, v in stub.items() if k != "param_id"}, "code": 11, "category": "d"}
+    plain = {**existing, "Plain": {"code": 20, "param": "PLAIN", "category": "d"}}   # a blob, no param id
+    assert fs._merge(plain, {"B": no_id})["B"] == no_id         # no param id: not "Plain"'s, which has none
     bare = {"A": {"code": 10, "param": None, "param_id": 5, "category": "c"}}   # never a placeholder
     assert fs._merge(bare, {"A": stub})["A"] == stub            # no blob to keep: still a placeholder
     other = dict(stub, param_id=6)                              # another effect: re-resolve it
@@ -313,6 +316,12 @@ def test_main_counts_corrupt_catalog_and_write_failure(monkeypatch: pytest.Monke
     assert capsys.readouterr().err.count("FETCH FAILED") == 2
     assert (tmp_path / "store.json").read_text(encoding="utf-8") == corrupt
     (tmp_path / "store.json").unlink()
+    for bad in ("{", '{"h61a8": {"dropped": ["A"]}}', '{"H61A8": {"dropped": ["B", "A"]}}'):
+        (tmp_path / "tombstone.json").write_text(bad, encoding="utf-8")
+        assert fs.main(["H61A8"]) == 1                 # a malformed tombstone fails the SKU, left as it is
+        assert (tmp_path / "tombstone.json").read_text(encoding="utf-8") == bad
+        assert not (tmp_path / "store.json").exists()
+    (tmp_path / "tombstone.json").unlink()
     assert fs.main(["H61A8"]) == 0
     assert fs.read_catalog("H61A8", tmp_path) == {"A": {"code": 1, "param": None}}
 
@@ -337,6 +346,10 @@ def test_main_leaves_out_the_type5_scenes_legacy_scene_does_not_upload(monkeypat
     assert set(fs.read_catalog("H6006", tmp_path)) == {"Rgb", "Diy"}   # legacy_scene {0, 1}: Diy activates
     assert set(fs.read_catalog("H1630", tmp_path)) == {"Rgb"}          # version 13: parseSceneV1 uploads 5
     assert set(fs.read_catalog("H60A6", tmp_path)) == set(fetched)     # its own type-5 dialect
+    fs.store_catalog("H6006", {n: fetched[n] for n in ("Rgb", "NewDiy")}, tmp_path)   # stored before the cut
+    assert fs.main(["H6006"]) == 0
+    assert set(fs.read_catalog("H6006", tmp_path)) == {"Rgb", "Diy"}
+    assert set(fs.read_tombstone(tmp_path / "tombstone.json")["H6006"]["retired"]) == {"NewDiy"}   # retired
 
 
 # --- power_semantics_probe -------------------------------------------------------------------
