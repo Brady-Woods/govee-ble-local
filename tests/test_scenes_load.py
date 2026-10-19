@@ -23,6 +23,24 @@ EXPECTED = {
     "H1401": 94, "R1401": 94, "H14B1": 63, "H6002": 8,
 }
 
+# The bundled scenes the app's scene list hides at one of their SKU's scene sets (devices.yaml
+# scenes.list_filter) while the library still offers them there: {(SKU, set): how many}.
+LIST_FILTER_EXEMPT = {
+    # Review G1, the user's call: H61A8 at pact code 2 ((1,2) / (2,2)) or from soft 1.04.00, below part
+    # brightness (soft 1.06.00 and hard 1.00.02), e.g. soft 1.05.00 / hard 1.00.01, has the set {0, 1, 2}.
+    # Its 36 RGBIC scenes at cmdVersion 1 are op type 3 (CategoryV1.getOpType), which the list drops there
+    # (RgbIcLightRegistry.java:723, CategoryV1.java:295-321,591-602); the library still uploads them, as 1.4.0
+    # did (_plan_upload doesn't filter by the op set). Until G1 lands.
+    ("H61A8", frozenset({0, 1, 2})): 36,
+}
+
+
+def _op_type(scene_type: int | None, cmd_version: int | None) -> int:
+    """A scene's op type (CategoryV1.LightEffect.getOpType, CategoryV1.java:295-321; scenes.list_filter)."""
+    if scene_type == 2:
+        return 2 if not cmd_version else 3
+    return {0: 0, 1: 1, 3: 4, 4: 4, 5: 5, 6: 6}.get(scene_type or 0, -1)
+
 
 @pytest.mark.parametrize(("sku", "count"), EXPECTED.items())
 def test_shipped_catalogs(sku, count):
@@ -116,6 +134,29 @@ def test_no_legacy_scene_catalog_holds_a_type5_scene_the_app_uploads():
             raw = base64.b64decode(scene.param or "")
             new_diy = len(raw) >= 2 and raw[0] == 0x50
             assert scene.scene_type != 5 or not (type5_branch or new_diy), (sku, scene.name)
+
+
+def test_the_bundled_scenes_are_ones_the_app_lists():
+    """devices.yaml scenes.list_filter: each bundled scene's op type (its scene type and cmdVersion for the
+    SKU) is in every one of its SKU's scene sets (the row's, each by_pact and each by_firmware one), but for
+    the counts LIST_FILTER_EXEMPT names. An empty set is a null op set, which filters nothing. (The app lets a
+    base sceneType-0 effect through any set; a catalog keeps the SKU's type only, so a base-static scene typed
+    otherwise for its SKU would be named here too.)"""
+    index = json.loads((resources.files(scenes) / "index.json").read_text(encoding="utf-8"))
+    reached = set()
+    for sku in index:
+        p = profile_for(sku, allow_modelled=True)
+        assert p is not None, sku
+        catalog = load_scenes(sku).values()
+        for versions in (p.scene_versions, *(v for _p, v in p.scene_versions_by_pact),
+                         *(v for _s, _h, v in p.scene_versions_by_firmware)):
+            if not versions:
+                continue
+            key = (sku, frozenset(versions))
+            hidden = sum(1 for s in catalog if _op_type(s.scene_type, s.cmd_version) not in versions)
+            assert hidden == LIST_FILTER_EXEMPT.get(key, 0), (sku, sorted(versions))
+            reached |= {key} & set(LIST_FILTER_EXEMPT)
+    assert reached == set(LIST_FILTER_EXEMPT)   # no stale exemption
 
 
 def test_the_scene_store_is_the_device_tables():
