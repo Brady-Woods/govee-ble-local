@@ -37,6 +37,7 @@ Build-time only: PyYAML, which the in-tree backend asks the build frontend for i
 from __future__ import annotations
 
 import argparse
+import datetime
 import importlib.util
 import json
 import pathlib
@@ -245,10 +246,22 @@ _SNAPSHOT_KEYS = frozenset({"app_version", "doc", "doc-ref", "fetched", "skus", 
 _ENTRY_KEYS = frozenset({"goodsType", "ic"})
 
 
+def _iso_date(text: object) -> bool:
+    """Whether ``text`` is a calendar date written YYYY-MM-DD."""
+    if not isinstance(text, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", text):
+        return False
+    try:
+        datetime.date.fromisoformat(text)
+    except ValueError:
+        return False
+    return True
+
+
 def snapshot(path: pathlib.Path = CATALOGUE) -> dict[str, int]:
     """The catalogue snapshot's ``{SKU: goodsType}`` (its ``ic`` is read nowhere: _resolve's module doc).
     GenError on a missing or malformed file, a top-level key outside :data:`_SNAPSHOT_KEYS`, an
-    ``app_version`` missing or not in the app's version form (7.5.20, 7.7.02), a SKU that isn't 3-8
+    ``app_version`` missing or not in the app's version form (7.5.20, 7.7.02), a ``fetched`` missing or not
+    an ISO date (2026-10-18, as tools/fetch_catalog.py checks and writes it), a SKU that isn't 3-8
     upper-case alphanumerics (as tools/fetch_catalog.py writes them), or an entry whose keys are not exactly
     goodsType and ic, each a non-negative int."""
     try:
@@ -263,6 +276,10 @@ def snapshot(path: pathlib.Path = CATALOGUE) -> dict[str, int]:
     if not isinstance(version, str) or not re.fullmatch(r"\d+\.\d+\.\d{2}", version):
         raise GenError(f"{path.name}: app_version {version!r} is not the AppVersion it was fetched with "
                        "(such as 7.5.20)")
+    fetched = data.get("fetched")
+    if not _iso_date(fetched):
+        raise GenError(f"{path.name}: fetched {fetched!r} is not the date it was fetched on "
+                       "(such as 2026-10-18)")
     if not isinstance(skus, dict) or not skus:
         raise GenError(f"{path.name}: no skus")
     out: dict[str, int] = {}

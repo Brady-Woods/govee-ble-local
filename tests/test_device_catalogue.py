@@ -73,7 +73,7 @@ def test_the_catalogue_routes_only_skus_no_row_lists() -> None:
 def test_the_snapshot_holds_only_each_skus_goods_type_and_ic(tmp_path: pathlib.Path) -> None:
     # tools/fetch_catalog.py keeps each product's sku, goodsType and ic (no names, images or URLs) and refuses
     # a non-200 answer or a SKU listed twice with different values; the generator refuses any other key, and a
-    # snapshot that records no AppVersion in the app's form.
+    # snapshot that records no AppVersion in the app's form or no ISO fetch date.
     fetch = _load(_ROOT / "tools" / "fetch_catalog.py", "fetch_catalog_under_test")
     item = {"sku": "h6009", "goodsType": 64, "ic": 0, "name": "Smart Bulb", "url": "https://example.com/b"}
     payload = {"status": 200, "categories": [{"supportGroups": [{"supportSkuList": [
@@ -100,6 +100,8 @@ def test_the_snapshot_holds_only_each_skus_goods_type_and_ic(tmp_path: pathlib.P
     for bad, error in (({**good, "names": {}}, r"keys \['names'\]"),
                        ({**good, "app_version": "7.7.2"}, "app_version '7.7.2'"),
                        ({k: v for k, v in good.items() if k != "app_version"}, "app_version None"),
+                       ({k: v for k, v in good.items() if k != "fetched"}, "fetched None"),
+                       ({**good, "fetched": "2026-13-01"}, "fetched '2026-13-01'"),
                        ({**good, "skus": named}, "'H6009' is no SKU"),
                        ({**good, "skus": short}, "'H6009' is no SKU")):
         path = tmp_path / "snapshot.json"
