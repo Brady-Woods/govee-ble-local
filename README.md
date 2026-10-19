@@ -63,18 +63,22 @@ asyncio.run(main())
 The library follows Home-Assistant BLE-library conventions: identify a device from its
 advertisement, build a capability-driven `Device`, then drive it.
 
-- **`discover(timeout=10.0, *, supported_only=True)`** — active-scan → `list[DiscoveredDevice]`
-  (`.ble_device`, `.advertisement`, `.sku`, `.rssi`, `.supported`); raises
+- **`discover(timeout=10.0, *, supported_only=True, allow_modelled=False)`** — active-scan →
+  `list[DiscoveredDevice]` (`.ble_device`, `.advertisement`, `.sku`, `.rssi`, `.supported`); raises
   `GoveeBleConnectionError` when the scan itself fails (no adapter, adapter off, no BlueZ/D-Bus);
   that error is also the `BleakError` / `OSError` / `EOFError` 1.3.0 raised, so either handler matches.
   `supported(name, mfg)` and `match(ble_device, adv)` are the passive-matcher hooks for a
   HA-style scanner.
 - **`create_device(ble_device, sku, advertisement_data=None, *, secret=None, frame_log=None,
-  idle_disconnect=None)`** — construct a `Device` for the SKU (raises `GoveeBleNotSupported` if
-  uncurated). Pass the advertisement (`DiscoveredDevice.advertisement` or bleak's own): its
-  encrypt flag selects the command channel, which some firmwares set differently from the SKU's
-  default (H6008). `is_supported_sku(sku)` / `supported_skus()` / `profile_for(sku)` query the
-  table (`device_profile_for(sku)` is a deprecated alias of `profile_for`, removed in 2.0).
+  idle_disconnect=None, goods_type=None, allow_modelled=False)`** — construct a `Device` for the SKU
+  (raises `GoveeBleNotSupported` if unsupported). Pass the advertisement (`DiscoveredDevice.advertisement`
+  or bleak's own): its encrypt flag selects the command channel, which some firmwares set differently
+  from the SKU's default (H6008), and its pact the SKU's devices.yaml row. `is_supported_sku(sku)` /
+  `supported_skus()` / `profile_for(sku)` query the table; `profile_for` and `is_supported_sku` take
+  `pact=` / `goods_type=` to pick between rows, and `allow_modelled=True` (also on `supported_skus`,
+  `create_device`, `supported`, `match` and `discover`) admits the rows the spec marks `modelled`
+  (inferred from the app, not traced), which are off by default (`device_profile_for(sku)` is a
+  deprecated alias of `profile_for`, removed in 2.0).
 - **`Device`** — one capability-gated class (behaviour comes from its `DeviceProfile`, not
   subclasses). Commands are ACK-confirmed on the wire:
   `turn_on` / `turn_off` / `set_power`, `set_brightness`, `set_rgb`, `set_color_temp`,

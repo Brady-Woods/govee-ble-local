@@ -118,8 +118,8 @@ async def walk_mechanism_a_direct(dev: ReadTarget, read_reply: ReadReply) -> lis
     """H6047/H6641 per-segment colour via Controller4ColorInfoByGroup's direct per-group
     requests (AA A5 <group>), or None when the walk was skipped or no group came back. A different
     controller from H61A8's mechanism_b (BulbGroupColorV2); they only share the wire opcode. Group
-    size is a fixed client constant (`color_readback_per_batch`, source-confirmed 4 for both
-    curated SKUs). The total piece count — and hence the group count, ceil(pieces / group size) —
+    size is the profile's `color_readback_per_batch` (the spec row's wire group num_per_group, 4 on
+    every current SKU). The total piece count — and hence the group count, ceil(pieces / group size) —
     comes from either a static per-SKU value (`color_readback_segments`/`segments`; H6047 uses its
     10 `segments`) or, when `color_readback_live_ic` is set (H6641), a live `0x40` IC-count read
     derived the way the app does (:func:`live_ic_pieces`). When that read fails the app still walks
@@ -129,7 +129,7 @@ async def walk_mechanism_a_direct(dev: ReadTarget, read_reply: ReadReply) -> lis
     callback drops the reply's own group byte (``Controller4ColorInfoByGroup.Companion.h``/``i``
     pass only the colours on; ``VM4Light.Q5`` places them by its loop index)."""
     profile = dev.profile
-    group_size = profile.color_readback_per_batch   # 4 on every table profile (devices/_resolve.py)
+    group_size = profile.color_readback_per_batch   # >= 1 (DeviceProfile); the spec's num_per_group
     if profile.color_readback_live_ic:
         ic_reply = await read_reply(build.ic_count_query())
         ic = parse.parse_ic_count(ic_reply) if ic_reply else None

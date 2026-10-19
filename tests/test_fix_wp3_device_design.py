@@ -16,8 +16,17 @@ import pytest
 from fake_ble import ble_device, frames_of
 from fake_ble import frame as _frame
 
-from govee_ble_local import LOCAL_NAME_PREFIXES, MANUFACTURER_IDS, scanner
+from govee_ble_local import (
+    LOCAL_NAME_PREFIXES,
+    MANUFACTURER_IDS,
+    create_device,
+    is_supported_sku,
+    scanner,
+    supported_skus,
+)
 from govee_ble_local import identify as identify_mod
+from govee_ble_local._generated.devices import FAMILIES, MODE_COLOR_PARSE
+from govee_ble_local.devices import _resolve
 from govee_ble_local.devices import profile as profile_mod
 from govee_ble_local.devices.device import Device, make_device
 from govee_ble_local.devices.profile import PROFILES, DeviceProfile, profile_for
@@ -227,14 +236,53 @@ def test_empty_skus_no_longer_fail_late_with_an_index_error() -> None:
         Device(DeviceProfile(skus=(), capabilities=frozenset()), ble_device("AA:BB:CC:DD:EE:3B", "x"))
 
 
-def test_duplicate_sku_in_the_table_is_rejected() -> None:
-    a = DeviceProfile(skus=("HX1",), capabilities=frozenset())
-    b = DeviceProfile(skus=("hx1", "HX2"), capabilities=frozenset())
-    with pytest.raises(GoveeBleInvalidValue, match="'hx1' appears twice"):
-        profile_mod._index_by_sku((a, b))
-    with pytest.raises(GoveeBleInvalidValue, match="appears twice"):
-        profile_mod._index_by_sku((DeviceProfile(skus=("HX1", "HX1"), capabilities=frozenset()),))
-    assert profile_mod._index_by_sku((a,)) == {"HX1": a}
+def _with_row(gt: str, **row: Any) -> Any:
+    """The generated families with one more bulblightv3 row ``gt``: goodsType 64's, with ``row``'s facts."""
+    families = copy.deepcopy(FAMILIES)
+    rows = next(f for f in families if f["id"] == "bulblightv3")["client_profile"]["by_goods_type"]
+    rows[gt] = {**rows["64"], **row}
+    return families
+
+
+def test_a_sku_several_rows_list_is_routed_by_its_pact(monkeypatch: pytest.MonkeyPatch) -> None:
+    # WAS: a SKU that two rows list failed the build ("routed by two rows"). profile_for now takes the row
+    # that accepts the advertised pact, else the goodsType; with neither it is unsupported
+    # (devices.schema.json clientRow), and create_device routes it from the advertisement it is given.
+    families = _with_row("65", models=("H6008",), pacts=("3,1",), capabilities=("power", "brightness"))
+    monkeypatch.setattr(profile_mod, "_ADMITTED", profile_mod._table(families, _resolve.ADMITTED))
+    bulb, dimmer = profile_for("H6008", pact=(1, 1)), profile_for("H6008", pact=(3, 1))
+    assert bulb is not None and Capability.RGB in bulb.capabilities
+    assert dimmer is not None and dimmer.capabilities == {Capability.POWER, Capability.BRIGHTNESS}
+    assert profile_for("H6008", goods_type=65) is dimmer and profile_for("h6008", goods_type=64) is bulb
+    assert profile_for("H6008") is None and profile_for("H6008", pact=(9, 9)) is None
+    assert profile_for("H6006") is bulb and "H6008" in supported_skus()   # one row: no pact needed
+    adv = GoveeAdvertisement("H6008", "GVH60082691", False, 3, 3, 1)
+    assert create_device(ble_device("AA:BB:CC:DD:EE:3C", adv.name), "H6008", adv).profile is dimmer
+    assert "H6008" not in _resolve.routes(families) and "H6006" in _resolve.routes(families)
+
+
+def test_a_modelled_row_needs_the_opt_in(monkeypatch: pytest.MonkeyPatch) -> None:
+    # "App-traced by default": a modelled row (inferred, not traced) is admitted only with allow_modelled,
+    # gated on its pacts. The build refuses a SKU that it and a traced row both list, so the opt-in only adds.
+    with pytest.raises(_resolve.SpecError, match="also listed by bulblightv3 64"):
+        _resolve.routes(_with_row("65", models=("H6008",), support="modelled"))
+    families = _with_row("65", models=("HX65",), pacts=("3,1",), support="modelled",
+                         capabilities=("power", "brightness"))
+    monkeypatch.setattr(profile_mod, "_MODELLED", profile_mod._table(families, _resolve.MODELLED))
+    assert profile_for("HX65") is None and not is_supported_sku("HX65", pact=(3, 1))
+    assert "HX65" not in supported_skus() and "HX65" in supported_skus(allow_modelled=True)
+    modelled = profile_for("HX65", allow_modelled=True)
+    assert modelled is not None and modelled.capabilities == {Capability.POWER, Capability.BRIGHTNESS}
+    assert profile_for("HX65", pact=(1, 1), allow_modelled=True) is None   # no traced row to fall back to
+    ble = ble_device("AA:BB:CC:DD:EE:3D", "GVHX65")
+    with pytest.raises(GoveeBleNotSupported, match="HX65"):
+        create_device(ble, "HX65")
+    assert create_device(ble, "HX65", allow_modelled=True).profile is modelled
+    mfg = {0x8801: bytes([0xEC, 0, 3, 1])}                  # pact (3, 1)
+    assert not scanner.supported("Govee_HX65_ABCD", mfg) and scanner.supported("Govee_HX65_ABCD", mfg,
+                                                                                 allow_modelled=True)
+    hit = scanner.match(ble, _raw_adv("Govee_HX65_ABCD", mfg), allow_modelled=True)
+    assert hit is not None and hit.supported
 
 
 def test_a_scheme_without_segment_brightness_is_not_supported_with_the_sku() -> None:
@@ -251,12 +299,16 @@ def test_a_scheme_without_segment_brightness_is_not_supported_with_the_sku() -> 
     assert [f[:6].hex() for f in _sent(d)] == ["33050bff0000", "33050b00ff00"]
 
 
-def test_mechanism_a_direct_needs_groups_of_four() -> None:
-    # WAS: a mechanism_a_direct profile that left color_readback_per_batch at mechanism_b's default
-    # 3 silently read 3-colour groups (the `or 4` fallback never fired). The table's build refuses that
-    # (devices/_resolve.py: groups of 4); a custom profile is accepted, as in 1.3.0, and walks the group
-    # size it was given.
-    three = DeviceProfile(skus=("HX",), capabilities=frozenset(), color_readback="mechanism_a_direct")
+def test_the_direct_group_size_is_the_specs() -> None:
+    # WAS: the table refused a direct read-back in groups other than 4. The group size is the row's wire
+    # group num_per_group (4 on every current SKU), which the table takes as it is; a custom profile walks
+    # the group size it was given.
+    families = copy.deepcopy(FAMILIES)
+    next(f for f in families if f["id"] == "h6047")["client_profile"]["wire"]["group"]["num_per_group"] = 3
+    [fields] = [f for skus, f, _routes in _resolve.profiles(families, MODE_COLOR_PARSE) if "H6047" in skus]
+    assert fields["color_readback_per_batch"] == 3
+    three = DeviceProfile(skus=("HX",), capabilities=frozenset(), color_readback="mechanism_a_direct",
+                          color_readback_per_batch=3)
     assert three.color_readback_per_batch == 3
     for bad in (0, -1):   # a group size no read-back can walk is refused at construction
         with pytest.raises(GoveeBleInvalidValue, match="color_readback_per_batch"):

@@ -7,17 +7,18 @@
 tools/gen_kaitai.sh runs it after the Kaitai classes, so every build (the in-tree backend), scripts/check.sh
 and CI generate both. The module holds what the library reads of devices.yaml, as Python literals typed by
 govee_ble_local/devices/_resolve.py: the mode_color_parse table, and each family that has a supported
-client_profile row (clientRow `support`), with only those rows and their wire layers. Nothing in it is
-prose, and the library needs no YAML parser at run time.
+client_profile row (clientRow `support`, any level: a modelled row is admitted on the caller's opt-in), with
+only those rows and their wire layers. Nothing in it is prose, and the library needs no YAML parser at run
+time.
 
 The projection is an allow-list over the schema (spec/devices.schema.json): at each definition the library
 reads, the properties named in KEEP, each of which must be one the schema declares there; a definition KEEP
 doesn't name is copied whole with every property its schema declares. So no key is dropped by its name
-wherever it occurs. Before writing, the generator checks the BLE routes over the whole document (a SKU two
-rows with support list is refused whatever their support), resolves every admitted row with the library's
-own resolver (devices/_resolve.py, standard library only), which checks each value the library uses, and
-checks each colour decode against govee_common.ksy, so a missing fact, or one the library can't serve,
-fails here and never at import.
+wherever it occurs. Before writing, the generator checks the BLE routes over the whole document (a SKU
+that a modelled row and a hardware_verified / app_traced row both list is refused), resolves every row with
+support, of every level, with the library's own resolver (devices/_resolve.py, standard library only), which
+checks each value the library uses, and checks each colour decode and each status_read TLV type against
+govee_common.ksy, so a missing fact, or one the library can't serve, fails here and never at import.
 
 Build-time only: PyYAML, which the in-tree backend asks the build frontend for in a repository build
 (get_requires_for_build_*). An sdist ships the generated module, so a build from it needs nothing.
@@ -142,8 +143,8 @@ def _plain(value: Any) -> Any:
 
 
 def _supported(doc: dict[str, Any], admitted: frozenset[str]) -> dict[str, Any]:
-    """``doc`` cut to the families with an admitted row: only those rows, their by_model entries and their
-    wire layers (the goodsType's and its models')."""
+    """``doc`` cut to the families with a row whose support is in ``admitted``: only those rows, their
+    by_model entries and their wire layers (the goodsType's and its models')."""
     families = []
     for fam in doc["families"]:
         cp = fam.get("client_profile") or {}
@@ -176,16 +177,34 @@ def _resolver() -> Any:
     return module
 
 
+def _members(enum: str) -> set[str]:
+    """The member ids of govee_common.ksy's enum ``enum``."""
+    common = yaml.safe_load((SPEC / "govee_common.ksy").read_text(encoding="utf-8"))
+    return {entry["id"] if isinstance(entry, dict) else entry for entry in common["enums"][enum].values()}
+
+
 def _check_decodes(table: dict[str, Any]) -> None:
     """Every colour decode the mode_color_parse table names is a govee_common::color_decode member."""
-    common = yaml.safe_load((SPEC / "govee_common.ksy").read_text(encoding="utf-8"))
-    members = {entry["id"] if isinstance(entry, dict) else entry
-               for entry in common["enums"]["color_decode"].values()}
+    members = _members("color_decode")
     for name, strategy in table.items():
         for sub_mode, decode in strategy["sub_modes"].items():
             if sub_mode not in SUB_MODES or decode not in members:
                 raise GenError(f"mode_color_parse.{name}: {sub_mode} -> {decode} is not a mode_decode param "
                                "and color_decode member")
+
+
+def _check_status_reads(families: tuple[dict[str, Any], ...]) -> None:
+    """Every TLV type a row's status_read (or a pact branch's) requests is a govee_common::command member,
+    whose code the library sends (devices/profile.py)."""
+    members = _members("command")
+    for fam in families:
+        for gt, row in fam["client_profile"]["by_goods_type"].items():
+            for read in (row.get("status_read") or (), *(b.get("status_read") or () for b in
+                                                          (row.get("by_pact") or {}).values())):
+                unknown = sorted(set(read) - members)
+                if unknown:
+                    raise GenError(f"{fam['id']} goodsType {gt}: status_read {unknown} not in govee_common "
+                                   "enum command")
 
 
 def load(raw: bytes) -> Any:
@@ -196,15 +215,16 @@ def load(raw: bytes) -> Any:
 
 def project(doc: dict[str, Any], schema: dict[str, Any]) -> tuple[dict[str, Any], tuple[dict[str, Any], ...]]:
     """``(mode_color_parse table, families)``: devices.yaml ``doc`` through KEEP, checked by the library's
-    resolver (the routes over the whole document, before the admission cut, then each admitted row) and
-    against govee_common.ksy. GenError on a missing fact or one the library can't serve."""
+    resolver (the routes over the whole document, then each row with support, of every level) and against
+    govee_common.ksy. GenError on a missing fact or one the library can't serve."""
     resolve = _resolver()
     try:
         resolve.routes(doc["families"])
-        projected = Projector(schema).project(_supported(doc, resolve.ADMITTED), "#")
+        projected = Projector(schema).project(_supported(doc, resolve.LEVELS), "#")
         table, families = projected["mode_color_parse"], projected["families"]
         _check_decodes(table)
-        resolve.profiles(families, table)
+        _check_status_reads(families)
+        resolve.profiles(families, table, resolve.LEVELS)   # modelled rows too: the opt-in builds them
     except resolve.SpecError as exc:
         raise GenError(str(exc)) from None
     return table, families

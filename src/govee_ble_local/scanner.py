@@ -76,16 +76,19 @@ class DiscoveredDevice:
         return self.advertisement.name
 
 
-def supported(name: str | None, manufacturer_data: dict[int, bytes]) -> bool:
-    """True if this advertisement is a Govee device this library can control.
-    Suitable as a Home Assistant passive-matcher hook."""
+def supported(name: str | None, manufacturer_data: dict[int, bytes], *, allow_modelled: bool = False) -> bool:
+    """True if this advertisement is a Govee device this library can control (its SKU at its advertised
+    pact, as ``create_device`` routes it, with the same ``allow_modelled``). Suitable as a Home Assistant
+    passive-matcher hook."""
     adv = identify(name, manufacturer_data)
-    return adv is not None and is_supported_sku(adv.sku)
+    return adv is not None and is_supported_sku(adv.sku, pact=adv.pact, allow_modelled=allow_modelled)
 
 
-def match(ble_device: BLEDevice, advertisement_data: AdvertisementData) -> DiscoveredDevice | None:
+def match(ble_device: BLEDevice, advertisement_data: AdvertisementData, *,
+          allow_modelled: bool = False) -> DiscoveredDevice | None:
     """Identify one advertisement into a DiscoveredDevice, or None if it isn't
-    a recognizable Govee device.
+    a recognizable Govee device. ``supported`` is as :func:`supported` decides it, with the same
+    ``allow_modelled``.
 
     Attributes are read defensively (``getattr``) so a partial advertisement
     object is tolerated; the name falls back to the BLEDevice's (:func:`.identify.from_advertisement`,
@@ -94,18 +97,21 @@ def match(ble_device: BLEDevice, advertisement_data: AdvertisementData) -> Disco
     if adv is None:
         return None
     rssi = getattr(advertisement_data, "rssi", None)
-    return DiscoveredDevice(ble_device, adv, rssi, is_supported_sku(adv.sku))
+    return DiscoveredDevice(ble_device, adv, rssi,
+                            is_supported_sku(adv.sku, pact=adv.pact, allow_modelled=allow_modelled))
 
 
 def _rssi_key(device: DiscoveredDevice) -> int:
     return device.rssi if device.rssi is not None else _NO_RSSI
 
 
-async def discover(timeout: float = 10.0, *, supported_only: bool = True) -> list[DiscoveredDevice]:
+async def discover(timeout: float = 10.0, *, supported_only: bool = True,
+                   allow_modelled: bool = False) -> list[DiscoveredDevice]:
     """Active-scan for Govee devices, strongest signal first.
 
     Returns one entry per address, built from the latest advertisement bleak kept for it.
-    `supported_only` filters to SKUs this library can control.
+    `supported_only` filters to SKUs this library can control; `allow_modelled` counts the spec's
+    ``modelled`` rows as supported too (:func:`match`).
 
     Raises GoveeBleConnectionError if the scan itself fails (no adapter, adapter powered off,
     BlueZ / D-Bus unavailable). That error is also a BleakError, OSError or EOFError, whichever the
@@ -116,6 +122,7 @@ async def discover(timeout: float = 10.0, *, supported_only: bool = True) -> lis
         wrapper = next(ours for theirs, ours in _SCAN_ERRORS if isinstance(err, theirs))
         raise wrapper(f"BLE scan failed: {err}") from err
     # bleak keys `results` by address, so each address appears once.
-    hits = [match(ble_device, adv_data) for ble_device, adv_data in results.values()]
+    hits = [match(ble_device, adv_data, allow_modelled=allow_modelled)
+            for ble_device, adv_data in results.values()]
     found = [h for h in hits if h is not None and (h.supported or not supported_only)]
     return sorted(found, key=_rssi_key, reverse=True)

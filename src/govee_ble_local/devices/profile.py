@@ -4,16 +4,17 @@ A ``DeviceProfile`` carries everything the capability-driven :class:`~.device.De
 needs for one SKU family. The supported table, :data:`PROFILES`, is generated from the spec:
 ``spec/devices.yaml``'s supported ``client_profile`` rows (``_generated/devices.py``, built by
 ``tools/gen_devices.py``) resolved by :mod:`._resolve`, one profile per group of SKUs whose
-resolved facts are identical. The wire cipher is resolved at connect from the advertisement, so
-``encryption`` here is only the fallback default; ``requires_secret`` is the separate account-lock
-capability.
+resolved facts are identical. :func:`profile_for` routes a SKU to its row, by the advertised pact
+or the goodsType where several rows list it. The wire cipher is resolved at connect from the
+advertisement, so ``encryption`` here is only the fallback default; ``requires_secret`` is the
+separate account-lock capability.
 """
 from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Any, Final, Literal, get_args
+from typing import Any, Final, Literal, NamedTuple, get_args
 
 from .._generated import devices as _devices
 from ..exceptions import GoveeBleInvalidValue
@@ -46,6 +47,11 @@ _DEFAULT_PARSE: Final = "rgb_kelvin"
 #                 SwitchControllerV2(on, 15));
 # "total_switch"= 33 02 01 / 00 (goodsType 307 H5089; Controller4TotalSwitch).
 RelayPower = Literal["outlet0", "all_outlets", "total_switch"]
+
+# 1.x's 0xAC status request, the H60A6's (DeviceProfile.status_read): 0x41 seg info, 0x30 zones, 0xA5 colour
+# groups.
+_CMD = _spec.Common.Command
+_H60A6_STATUS_READ: Final = (int(_CMD.cmd_41), int(_CMD.cmd_30), int(_CMD.color_group))
 
 # The spec's mode_color_parse table as govee_profile mode_decode params: name -> {c15: color_decode, ...} (a
 # sub-mode left out is not decoded), plus the library default (_DEFAULT_PARSE).
@@ -133,8 +139,8 @@ class DeviceProfile:
     request, group size 4 — a DIFFERENT controller from mechanism_b that happens to share the
     0xA5 wire opcode). 0x0d bulbs read colour/CCT from the polled 0x05 mode report instead."""
     color_readback_per_batch: int = 3
-    """Group size per reply: mechanism_b V2 = 3 (the default; V1 = 4); mechanism_a_direct must
-    set 4."""
+    """Group size per reply: mechanism_b V2 = 3 (the default; V1 = 4); mechanism_a_direct = the
+    group size its screen walks (devices.yaml wire ``group.num_per_group``: 4 on every current SKU)."""
     color_readback_segments: int | None = None
     """Static read-back piece count, when it differs from the WRITE/addressable :attr:`segments`
     count (a per-SKU fact from devices.yaml).
@@ -242,16 +248,20 @@ class DeviceProfile:
     versions)`` entries (a devices.yaml row's ``by_pact``: goodsType 19 at pact code 2, whose
     ``newVersion4Ble`` is 1 whatever the soft version). Applied before :attr:`scene_versions_by_firmware`,
     the order of the spec's resolution (``govee_reference.client_row``); a pact not yet heard applies none."""
+    status_read: tuple[int, ...] = field(default=_H60A6_STATUS_READ, kw_only=True)
+    """``readback="status"``: the TLV types the 0xAC status read requests, in request order (command codes;
+    a devices.yaml row's ``status_read``). The default is the H60A6's ``0x41, 0x30, 0xA5``, 1.x's request.
+    The 0xA5 colour groups are left out while :attr:`status_color_groups_pact` rules them out (a list is
+    kept as a tuple)."""
 
     def __post_init__(self) -> None:
         """Validate each field: GoveeBleInvalidValue (a ValueError) on a value no Device can use.
 
         Fail at construction, not silently at poll time, on a typo. Values that are each valid but
         that the builders can't serve together (a capability the colour scheme has no frame for, a
-        direct colour read-back in groups other than 4, a live IC read without its derivation) are
-        accepted here, as in 1.3.0; the setter or read concerned then raises GoveeBleNotSupported or
-        does without. The generated table's values are checked, those combinations included, when it is
-        built (devices/_resolve.py), so none reaches this check."""
+        live IC read without its derivation) are accepted here, as in 1.3.0; the setter or read concerned
+        then raises GoveeBleNotSupported or does without. The generated table's values are checked, those
+        combinations included, when it is built (devices/_resolve.py), so none reaches this check."""
         if isinstance(self.skus, list):
             # 1.3.0 accepted a list; keep it as the declared tuple, so the frozen profile stays hashable.
             object.__setattr__(self, "skus", tuple(self.skus))
@@ -294,6 +304,13 @@ class DeviceProfile:
                 isinstance(gate, tuple) and len(gate) == 2
                 and all(isinstance(v, int) and not isinstance(v, bool) and 0 <= v <= 0xFF for v in gate)):
             raise GoveeBleInvalidValue(f"{where}: status_color_groups_pact={gate!r}")
+        if isinstance(self.status_read, list):
+            object.__setattr__(self, "status_read", tuple(self.status_read))
+        types = self.status_read
+        if (not isinstance(types, tuple) or not types or len(set(types)) != len(types)
+                or not all(isinstance(t, int) and not isinstance(t, bool) and 0 <= t <= 0xFF for t in types)):
+            raise GoveeBleInvalidValue(
+                f"{where}: status_read={types!r} (distinct command codes, at least one)")
         if self.color_readback_per_batch < 1:   # a group size of 0 would never finish a read-back
             raise GoveeBleInvalidValue(
                 f"{where}: color_readback_per_batch={self.color_readback_per_batch!r}")
@@ -368,42 +385,77 @@ def _from_spec(skus: tuple[str, ...], facts: Mapping[str, Any]) -> DeviceProfile
     kw["encryption"] = Encryption.AES_RC4_PSK if kw.pop("aes_fallback") else Encryption.NONE
     kw["zones"] = tuple(Zone(name, power_index=index, segments=segs) for name, index, segs in kw["zones"])
     kw["scene_versions"] = frozenset(kw["scene_versions"])
+    if "status_read" in kw:
+        kw["status_read"] = tuple(int(_CMD[name]) for name in kw["status_read"])
     return DeviceProfile(skus=skus, **kw)
 
 
-PROFILES: Final[tuple[DeviceProfile, ...]] = tuple(
-    _from_spec(skus, facts)
-    for skus, facts in _resolve.profiles(_devices.FAMILIES, _devices.MODE_COLOR_PARSE))
+class _Route(NamedTuple):
+    """One BLE row's route for a SKU: its goodsType, its accepted pacts (None = any) and its profile."""
+    goods_type: int
+    pacts: frozenset[tuple[int, int]] | None
+    profile: DeviceProfile
+
+
+def _table(families: tuple[_resolve.Family, ...], admitted: frozenset[str]
+           ) -> tuple[tuple[DeviceProfile, ...], dict[str, tuple[_Route, ...]]]:
+    """The profiles of the ``admitted`` rows of ``families`` and ``{SKU upper-cased: its routes}``, in
+    devices.yaml order."""
+    profiles: list[DeviceProfile] = []
+    routes: dict[str, list[_Route]] = {}
+    for skus, facts, members in _resolve.profiles(families, _devices.MODE_COLOR_PARSE, admitted):
+        p = _from_spec(skus, facts)
+        profiles.append(p)
+        for route in members:
+            routes.setdefault(route.sku.upper(), []).append(_Route(route.goods_type, route.pacts, p))
+    return tuple(profiles), {sku: tuple(hits) for sku, hits in routes.items()}
+
+
+_ADMITTED: Final = _table(_devices.FAMILIES, _resolve.ADMITTED)
+_MODELLED: Final = _table(_devices.FAMILIES, _resolve.MODELLED)
+PROFILES: Final[tuple[DeviceProfile, ...]] = _ADMITTED[0]
 """The supported SKUs' profiles, generated from spec/devices.yaml (module doc): one per group of SKUs whose
-resolved facts are identical, in devices.yaml order. A SKU's evidence, citations and bench notes are its
+resolved facts are identical, in devices.yaml order: the ``hardware_verified`` and ``app_traced`` rows (the
+``modelled`` ones only come through ``allow_modelled``). A SKU's evidence, citations and bench notes are its
 devices.yaml row's ``doc`` and ``doc-ref``."""
 
 
-def _index_by_sku(profiles: tuple[DeviceProfile, ...]) -> dict[str, DeviceProfile]:
-    """``{SKU upper-cased: profile}`` for the profile table; GoveeBleInvalidValue if a SKU is listed
-    twice (case-insensitive), which would otherwise resolve silently to whichever profile came last.
-    The table's values were checked when it was built (devices/_resolve.py)."""
-    by_sku: dict[str, DeviceProfile] = {}
-    for p in profiles:
-        for sku in p.skus:
-            key = sku.upper()
-            if key in by_sku:
-                raise GoveeBleInvalidValue(f"SKU {sku!r} appears twice in the device profile table")
-            by_sku[key] = p
-    return by_sku
+def profile_for(sku: str, *, pact: tuple[int, int] | None = None, goods_type: int | None = None,
+                allow_modelled: bool = False) -> DeviceProfile | None:
+    """The profile for ``sku`` (case-insensitive), or None if unsupported.
+
+    The candidates are the spec's BLE rows that list ``sku`` and accept the advertised ``pact``
+    (``(pact_type, pact_code)``, ``GoveeAdvertisement.pact``; None: any), at ``goods_type`` where given.
+    Exactly one candidate (or several with identical facts) is the SKU's profile; several that differ are
+    unsupported: pass the goodsType to pick one. The rows are the ``hardware_verified`` and ``app_traced``
+    ones; ``allow_modelled`` also takes ``modelled`` rows (inferred, not traced), and as the build refuses a
+    SKU that rows of both kinds list (``_resolve.routes``), it only adds SKUs, never changes a route. A pact
+    no row accepts still routes a SKU that one ``hardware_verified`` / ``app_traced`` profile serves, as in
+    1.x (the pact picks between rows, never refuses the only one); a ``modelled`` row stays gated on its
+    pacts."""
+    key = sku.upper()
+    for table in (_ADMITTED, _MODELLED) if allow_modelled else (_ADMITTED,):
+        hits = {id(r.profile): r.profile for r in table[1].get(key, ())
+                if (pact is None or r.pacts is None or pact in r.pacts)
+                and (goods_type is None or r.goods_type == goods_type)}
+        if hits:
+            return next(iter(hits.values())) if len(hits) == 1 else None
+    if pact is not None:   # D3: no released SKU is demoted by a pact its row doesn't list
+        loose = {id(r.profile): r.profile for r in _ADMITTED[1].get(key, ())
+                 if goods_type is None or r.goods_type == goods_type}
+        if len(loose) == 1:
+            return next(iter(loose.values()))
+    return None
 
 
-_BY_SKU: dict[str, DeviceProfile] = _index_by_sku(PROFILES)
-
-
-def profile_for(sku: str) -> DeviceProfile | None:
-    """The profile for ``sku`` (case-insensitive), or None if unsupported."""
-    return _BY_SKU.get(sku.upper())
-
-
-def supported_skus() -> list[str]:
-    """All supported SKUs, sorted."""
-    return sorted(_BY_SKU)
+def supported_skus(*, allow_modelled: bool = False) -> list[str]:
+    """All supported SKUs, sorted: every SKU a ``hardware_verified`` or ``app_traced`` row routes (and with
+    ``allow_modelled`` a ``modelled`` one). A SKU that several rows list needs the pact or the goodsType to
+    pick its profile (:func:`profile_for`)."""
+    skus = set(_ADMITTED[1])
+    if allow_modelled:
+        skus |= set(_MODELLED[1])
+    return sorted(skus)
 
 
 def _decode(profile: DeviceProfile, name: str) -> dict[str, int]:

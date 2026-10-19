@@ -722,7 +722,7 @@ def test_builder_not_supported_is_prefixed_once_with_the_sku() -> None:
 
 
 def test_whole_device_colour_builder_error_names_the_sku(monkeypatch: pytest.MonkeyPatch) -> None:
-    def unsupported(*_a: object) -> list[bytes]:
+    def unsupported(*_a: object, **_k: object) -> list[bytes]:
         raise GoveeBleNotSupported("unknown colour scheme 'x'")
 
     monkeypatch.setattr(device_mod.build, "color_rgb_frames", unsupported)

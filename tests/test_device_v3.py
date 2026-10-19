@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import dataclasses
 from unittest.mock import AsyncMock
 
 import pytest
@@ -598,6 +599,18 @@ def test_only_the_h60a6_gates_its_colour_groups_on_the_pact() -> None:
     gated = {sku for p in PROFILES if p.status_color_groups_pact is not None for sku in p.skus}
     h60a6 = profile_for("H60A6")
     assert gated == {"H60A6"} and h60a6 is not None and h60a6.status_color_groups_pact == (1, 2)
+
+
+def test_the_status_request_is_the_profiles_status_read() -> None:
+    # The request is the profile's status_read (a devices.yaml row's) in its order, here goodsType 263's
+    # [0x41, 0xA5, 0x40, 0x16]; a pact outside status_color_groups_pact drops only the 0xA5 colour groups.
+    h60a6 = profile_for("H60A6")
+    assert h60a6 is not None and h60a6.status_read == (0x41, 0x30, 0xA5)
+    d = Device(dataclasses.replace(h60a6, status_read=(0x41, 0xA5, 0x40, 0x16)),
+               ble_device("AA:BB:CC:DD:EE:21", "GVH60A6"))
+    assert _status_frames(d)[0][:7].hex() == "ac0304" "41a54016"
+    d._pact = (1, 1)
+    assert _status_frames(d)[0][:6].hex() == "ac0303" "414016"
 
 
 def test_read_status_retries_once_then_recovers(caplog: pytest.LogCaptureFixture) -> None:

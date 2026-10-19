@@ -130,6 +130,9 @@ def test_the_signed_kelvin_tests_come_from_the_spec() -> None:
     # SubMode4Color's default [gradual][kelvin s16be].
     gradual = _tlv_mode(bytes([0x15, 0x01, 0xFF, 0xFF]), _profile("kelvin"))
     assert parse.mode_color(gradual) == parse.KelvinReport(-1)
+    # The same bytes under a decode with no CCT test (kelvin_15_nocct): never a Kelvin.
+    nocct = _tlv_mode(bytes([0x15, 0x01, 0x0A, 0x8C]), _profile("kelvin_15_nocct"))
+    assert parse.mode_color(nocct) == parse.KelvinReport(0)
 
 
 @pytest.mark.parametrize(("mode", "rgb", "kelvin"), [

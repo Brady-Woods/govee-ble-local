@@ -33,11 +33,52 @@ model, from which the shipped readers are generated).
   `brightness`), `power_resync` (plugs) or `color_scheme` where one is used, a colour capability on a plug,
   a capability a family-default scheme would drop, out-of-range values (Kelvin and brightness ranges and
   their branches, masks, zone segments, group size, IC range, version gates), `connect_reads` that don't
-  list `brightness` / `gradual` exactly where the library reads them, and, checked before the admission
-  cut, a SKU that two BLE rows with `support` list, whatever their support level, or that an
-  `assigned_goods_type` item in any family names.
+  list `brightness` / `gradual` exactly where the library reads them, and, checked over the whole
+  document, a SKU that a `modelled` row and a `hardware_verified` / `app_traced` row both list, or that an
+  `assigned_goods_type` item in any family names. Rows of every support level are resolved and checked.
+- **Routing by pact and goodsType** (one-device-list phase 2): `profile_for(sku, *, pact=None,
+  goods_type=None, allow_modelled=False)` and `is_supported_sku` with the same keywords. The candidates
+  are the devices.yaml BLE rows that list the SKU and accept the advertised `(pact_type, pact_code)` (any
+  row when the pact is unknown), at `goods_type` where given; exactly one (or several with identical
+  facts) is the SKU's profile, several that differ are unsupported until the goodsType picks one, and
+  none falls back to the SKU's one traced profile, as in 1.x (see Changed). `create_device`
+  takes the pact from the advertisement it is given, so the profile, and every capability, is settled
+  before any entity is built; it also takes `goods_type` and `allow_modelled`.
+- **The modelled-row opt-in**: `allow_modelled=True` on `profile_for`, `is_supported_sku`,
+  `supported_skus` and `create_device` also admits rows whose `support` is `modelled` (inferred, not
+  traced). Off by default, so the default table is the user's "app-traced by default"; and as the build
+  refuses a SKU that a modelled row and a traced row both list, the opt-in only adds SKUs. No row is
+  `modelled` yet. `scanner.supported`, `scanner.match` and `discover` take it too, so an opted-in
+  caller's scan reports those devices as supported.
+- `DeviceProfile.status_read` (keyword-only, default `(0x41, 0x30, 0xA5)`, 1.x's request): the TLV types
+  the 0xAC status read requests, in order, from the row's `status_read`. `build.status_query(types=)`
+  builds a request from them (`full` stays for the H60A6's default).
+- `build.color_rgb_frames(..., pieces=)` and `build.color_temp(..., pieces=)`: an `h6061` device's panel
+  count, which bounds the layout and sizes the CCT mask (`ColorPieceConfig.k`, the count rounded up to
+  whole bytes); None keeps the H6061's 23. `Device` passes its profile's `segments`.
 
 ### Changed
+- **The 0xAC status request is built from the profile**, not hard-coded to the H60A6's: the resolver takes
+  the row's `status_read` (command names, checked against govee_common's `command` enum by the
+  generator) instead of refusing anything but `[cmd_41, cmd_30, color_group]`, and a pact branch may drop
+  `color_group` (the `status_color_groups_pact` gate). The reply is still read as the H60A6 status screen
+  reads it, so a status row's requested 0x30 / 0x41 / 0xA5 must have that read's wire forms (zone_power /
+  power_memory / color_group, four records a group) and its status mode the screen's. The H60A6 sends the
+  same bytes: `ac 03 03 41 30 a5`, and `ac 03 02 41 30` at pact (1, 1).
+- **A SKU that several rows list is routed, not refused** (see `profile_for`), where the rows are all
+  `hardware_verified` / `app_traced` or all `modelled`; the build still refuses a SKU that rows of both
+  kinds list. `_resolve.routes` gives the SKUs one row routes, and `_resolve.profiles` each
+  group's routes (goodsType, accepted pacts). `create_device`, `scanner.supported` and `scanner.match` now
+  pass the advertised pact, which picks between a SKU's rows (`Support.addSupportPact`). A pact no row
+  accepts still routes a SKU that one `hardware_verified` / `app_traced` profile serves, as in 1.x, so no
+  unit of the 18 is refused; a `modelled` row stays gated on its pacts. Without a pact (no advertisement,
+  or one without pact info) nothing changes.
+- **The direct `aa a5` group size is the spec's**: `color_readback_per_batch` comes from the row's wire
+  `group.num_per_group` (4 on the four direct read-back SKUs, as before), and the table no longer refuses a
+  direct read-back in groups other than 4.
+- **The H6061 panel count is the profile's** (`segments`, the row's wire `counts.num_segments`, 23 on the
+  H6061, as before) instead of the builder's 23, so the other Glide goodsTypes' counts (20 to 25) can be
+  written once their rows are admitted.
 - **The supported-device table is generated from `spec/devices.yaml`** (one-device-list phase 1). The hand
   table in `devices/profile.py` is gone: `PROFILES` is built from the supported `client_profile` rows,
   which `tools/gen_devices.py` projects into `_generated/devices.py` at build time and
@@ -71,14 +112,20 @@ model, from which the shipped readers are generated).
 - The fallback cipher, used only when no advertisement says, is AES-RC4 on account-locked rows (the plugs)
   and on H60A6's row (303), the 1.x compatibility rule, as before, and none elsewhere (decision D4). A newly
   admitted SKU follows its advertisement.
-- The table's coherence checks (a capability its colour scheme can't express, a direct colour read-back in
-  groups other than 4, a live IC read without its clamp) run when the table is built, in
+- The table's coherence checks (a capability its colour scheme can't express, a live IC read without its
+  clamp) run when the table is built, in
   `devices/_resolve.py`, not when `govee_ble_local` is imported. `DeviceProfile` still validates every
   field of a custom profile.
 - Building from the repository also needs PyYAML, which the in-tree backend asks the frontend for
   (`get_requires_for_build_*`). An sdist ships the generated table, and the runtime dependencies are
   unchanged: nothing under `src/` imports yaml. `tools/gen_kaitai.sh` writes the table after the Kaitai
   classes, with `$PYTHON`.
+
+### Fixed
+- **A colour report with no CCT test is not a Kelvin** (the nocct fold): `parse.mode_color` honours the
+  layout's `is_cct` on the `[gradual][kelvin s16be]` decodes, so a `gradual_kelvin_s16be_nocct` report
+  (mode_color_parse `kelvin_15_nocct`, `kelvin_0d_nocct`, ...) reads as `KelvinReport(0)`, not
+  colour-temperature mode. Latent: no current SKU uses those decodes.
 
 ### Spec
 - **devices.yaml can now route and describe the 18 supported SKUs on its own** (one-device-list phase 0).

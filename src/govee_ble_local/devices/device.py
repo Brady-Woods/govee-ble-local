@@ -457,7 +457,8 @@ class Device:
         (:func:`build.rgb_as_kelvin`)."""
         r, g, b = rgb
         return self._build_or_unsupported(
-            build.color_rgb_frames, r, g, b, self.profile.color_scheme, self.segment_count, span)
+            build.color_rgb_frames, r, g, b, self.profile.color_scheme, self.segment_count, span,
+            pieces=self.profile.segments or None)
 
     def update_ble_device(self, ble_device: BLEDevice) -> None:
         """Swap in a fresh BLEDevice (e.g. a new scanner path) for later connects."""
@@ -665,7 +666,8 @@ class Device:
         elif kelvin is not None:
             self._require(Capability.COLOR_TEMP)
             frames.append(self._build_or_unsupported(
-                build.color_temp, kelvin, self.profile.color_scheme, self.segment_count))
+                build.color_temp, kelvin, self.profile.color_scheme, self.segment_count,
+                pieces=self.profile.segments or None))
         if not frames:
             return
 
@@ -727,7 +729,8 @@ class Device:
         sent = self._check_kelvin(kelvin)
         await self._ensure_segment_count()
         frame = self._build_or_unsupported(
-            build.color_temp, sent, self.profile.color_scheme, self.segment_count)
+            build.color_temp, sent, self.profile.color_scheme, self.segment_count,
+            pieces=self.profile.segments or None)
         await self._commit(frame, lambda: _fold.apply_kelvin(self.profile, self._state, sent))
 
     async def set_segment_rgb(self, indices: Sequence[int], rgb: tuple[int, int, int]) -> None:
@@ -1155,11 +1158,19 @@ class Device:
             return True
         return self._pact[0] == gate[0] and self._pact[1] >= gate[1]
 
+    def _status_types(self) -> tuple[int, ...]:
+        """The TLV types the 0xAC status read requests: the profile's ``status_read``, without the 0xA5
+        colour groups where :meth:`_wants_color_groups` rules them out."""
+        types = self.profile.status_read
+        if self._wants_color_groups():
+            return types
+        return tuple(t for t in types if t != reassemble.TYPE_COLOR_GROUP)
+
     async def _query_status(self) -> tuple[reassemble.StatusReply, list[bytes], list[bytes]]:
         async with self._read_gate:   # never between a scene's upload and its activation
             await self._send_pending_unlock()   # a secret set on the live session goes first
             frames = await self._conn.query(
-                build.status_query(full=self._wants_color_groups()), timeout=STATUS_READ_TIMEOUT)
+                build.status_query(types=self._status_types()), timeout=STATUS_READ_TIMEOUT)
         ac = [f for f in frames if f and f[0] == build.PRO_MULTI_AC]
         status = reassemble.parse_status(ac, pieces=self.segment_count, decode=wire_profile(self.profile))
         return status, ac, frames

@@ -197,7 +197,8 @@ ColorReport = tuple[Rgb | None, int | None]   # (rgb, None) or (None, kelvin)
 @dataclass(frozen=True)
 class KelvinReport:
     """A colour report that carries only a Kelvin (SubMode4Color's ``[gradual][kelvin s16be]``): > 0 is
-    colour-temperature mode, 0 or below is not (and carries no colour)."""
+    colour-temperature mode, 0 or below is not (and carries no colour). A decode with no CCT test (the
+    ``_nocct`` ones: the layout's ``is_cct`` is false) is never colour-temperature mode: 0."""
     kelvin: int
 
 
@@ -254,7 +255,8 @@ def mode_color(m: Any, *, unsigned_kelvin: bool = False) -> ModeColor | None:
     """The colour a ``mode_report`` carries in the layout its profile's mode decode picked for its
     sub-mode, or None (another sub-mode, a sub-mode the decode leaves undecoded, a short layout):
 
-    * ``gradual_kelvin`` (SubMode4Color's default parse): :class:`KelvinReport`;
+    * ``gradual_kelvin`` (SubMode4Color's default parse): :class:`KelvinReport`, its Kelvin above 0 only
+      where the layout's ``is_cct`` holds (never on the ``_nocct`` decodes);
     * ``kelvin_pair`` (H6047's bars): :class:`BarKelvin`;
     * ``rgb_kelvin_tint`` (``ModeParseStrategyConfig.a``): ``(None, kelvin)`` for a Kelvin > 0 (``is_cct``),
       the tint as the colour for a negative one (``shows_tint``), else the colour;
@@ -271,7 +273,12 @@ def mode_color(m: Any, *, unsigned_kelvin: bool = False) -> ModeColor | None:
     # A field a short layout doesn't reach is an absent attribute (read with getattr).
     if isinstance(layout, _S.GradualKelvin):
         k = getattr(layout, "kelvin", None)
-        return None if k is None else KelvinReport(int(k) & 0xFFFF if unsigned_kelvin else int(k))
+        if k is None:
+            return None
+        if unsigned_kelvin:
+            return KelvinReport(int(k) & 0xFFFF)
+        # is_cct: the decode's CCT test; a Kelvin it rejects is not CCT, so never above 0 (a nocct decode).
+        return KelvinReport(int(k) if layout.is_cct else min(int(k), 0))
     if isinstance(layout, _S.KelvinPair):
         left, right = getattr(layout, "kelvin", None), getattr(layout, "kelvin_b", None)
         return None if left is None else BarKelvin(int(left), int(right or 0))

@@ -155,7 +155,7 @@ _STATUS_PAIR = ["cmd_41", "cmd_30"]
 # (family, goodsType, an edit of that family, the refusal): one line per rule of devices/_resolve.py.
 _REFUSED: tuple[tuple[str, str, _Edit, str], ...] = (
     # routes (over the whole document, before the admission cut)
-    ("bulblightv3", "64", lambda f: _row(f, "64").pop("models"), "an admitted row needs models"),
+    ("bulblightv3", "64", lambda f: _row(f, "64").pop("models"), "a row with support needs models"),
     ("h6047", "196", lambda f: f["client_profile"]["by_goods_type"].update(
         {"196": {**_row(f, "119"), "support": "modelled"}}), "also listed by h6047 119"),
     ("tablelampv1", "22", lambda f: _row(f, "22").update(models=[""]),
@@ -179,7 +179,9 @@ _REFUSED: tuple[tuple[str, str, _Edit, str], ...] = (
     ("striplight", "41", lambda f: _wire(f)["forms"].update(f_41="power_memory"),
      "an aa 41 read without f_41"),
     ("h6047", "119", lambda f: _wire(f, "119")["forms"].update(f_36="bar_index"), "the aa 36 read and f_36"),
-    ("striplight", "41", lambda f: _wire(f)["group"].update(num_per_group=3), "wire group num_per_group 3"),
+    ("striplight", "41", lambda f: _wire(f)["group"].update(num_per_group=0), "wire group num_per_group 0"),
+    ("h60ax", "303", lambda f: _wire(f)["group"].update(num_per_group=3),
+     "status_read color_group with wire group num_per_group 3"),
     # family facts
     ("h5080", "43", lambda f: f["client_profile"].update(by_model={"H5080": {"by_pact": {"1,1": {
         "mode_color_parse": "none"}}}}), "by_model pact / firmware branches"),
@@ -209,8 +211,10 @@ _REFUSED: tuple[tuple[str, str, _Edit, str], ...] = (
      "pact branch 1,1 on ['capabilities']"),
     ("h60ax", "303", lambda f: _row(f, "303")["by_pact"]["1,1"]["capabilities"].remove("scenes"),
      "pact branch 1,1 on ['capabilities']"),
-    ("h60ax", "303", lambda f: _row(f, "303").update(status_read=_STATUS_PAIR),
-     "status_read ['cmd_41', 'cmd_30']"),
+    ("h60ax", "303", lambda f: _row(f, "303").update(status_read=["cmd_41", "cmd_41"]),
+     "status_read ['cmd_41', 'cmd_41'] (distinct"),
+    ("h60ax", "303", lambda f: _row(f, "303")["status_read"].append("cmd_zz"),
+     "status_read ['cmd_zz'] not in govee_common"),
     ("h60ax", "303", lambda f: _row(f, "303")["by_pact"]["1,1"].update(status_read=["cmd_41"]),
      "a pact's status_read"),
     ("h60ax", "303", lambda f: _row(f, "303").update(pacts="any"), "needs listed pacts"),
@@ -276,10 +280,14 @@ def test_the_generator_keeps_data_keys_and_raises_on_a_missing_fact() -> None:
     for fam_id, gt, edit, error in _REFUSED:
         with pytest.raises(SystemExit, match=rf"{fam_id} goodsType {gt}\b[^:]*: .*{re.escape(error)}"):
             gen.project(edited(fam_id, edit), schema)
-    # A modelled row is not admitted: its family leaves the table, and the build passes.
+    # A modelled row is built and checked, but admitted only on the opt-in.
     modelled = edited("tablelampv1", lambda f: _row(f, "22").update(support="modelled"))
-    _table, cut = gen.project(modelled, schema)
-    assert "tablelampv1" not in {f["id"] for f in cut}
+    table, cut = gen.project(modelled, schema)
+
+    def skus(levels: frozenset[str]) -> set[str]:
+        return {sku for group, _fields, _routes in _resolve.profiles(cut, table, levels) for sku in group}
+
+    assert "H6052" not in skus(_resolve.ADMITTED) and "H6052" in skus(_resolve.MODELLED)
 
 
 def _reference() -> Any:
