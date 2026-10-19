@@ -317,7 +317,8 @@ def test_fetch_lists_what_the_apps_scene_list_lists(monkeypatch: pytest.MonkeyPa
     seen: set[tuple[str, object, int]] = set()
     listed = {"Op": 1, "Static": 3, "AfterGate": 2, "Expired": 1, "DiyFirst": 2}
     assert {n: e["code"] for n, e in fs.fetch("H6047", seen=seen).items()} == listed
-    assert seen == {(n, "c", e["sceneCode"]) for n, es in scenes.items() for e in es} | {("Season", "old", 3)}
+    # Gated (the firmware's version rules) and Season (out of its time) are left out only for now
+    assert seen == {(n, "c", e["sceneCode"]) for n, es in scenes.items() if n != "Gated" for e in es}
     out = capsys.readouterr().out
     assert "H6047: left out 1 scenes whose effect the firmware's version rules pick: Gated" in out
     assert "empty scene set" not in out
@@ -333,40 +334,71 @@ def test_fetch_lists_what_the_apps_scene_list_lists(monkeypatch: pytest.MonkeyPa
 
 
 _EXPIRED = {"checkEffectiveTime": 1, "effectiveTimes": [{"startTime": 0, "endTime": 1}]}
-_Library = tuple[tuple[Any, ...], ...]   # (category name, ((sceneName, code), ...)[, category fields])
+_RULES = {"rules": [{"hardVersion": "1.00.01", "softVersion": "1.05.00"}]}
+# (category name, ((sceneName, code, param[, lightEffect fields]), ...)[, category fields])
+_Library = tuple[tuple[Any, ...], ...]
+_Step = tuple[str, _Library, dict[str, tuple[int, str, str]], tuple[str, ...]]
 # The app lists "Flash" in two categories (H61A8: Emotion's 2020, Zootopia 2's 14769), here twice in one.
-_EMOTION = ("Emotion", (("Flash", 2020), ("Glow", 30)))
-_ZOOTOPIA = ("Zootopia 2", (("Flash", 14769), ("Flash", 14770)))
-_STORED = {"Flash": (14770, "Zootopia 2"), "Flash (Emotion)": (2020, "Emotion"),
-           "Flash (Zootopia 2)": (14769, "Zootopia 2"), "Glow": (30, "Emotion")}
-_ROUNDS: dict[str, tuple[_Library, dict[str, tuple[int, str]], tuple[str, ...]]] = {
-    # change: (the library re-fetched, the stored names after it, the names printed)
-    "re-fetch": ((_EMOTION, _ZOOTOPIA), _STORED, ()),
-    "reorder": ((("Zootopia 2", _ZOOTOPIA[1][::-1]), ("Emotion", _EMOTION[1][::-1])), _STORED, ()),
-    "add": ((_EMOTION, ("Zootopia 2", (*_ZOOTOPIA[1], ("Flash", 15000))), ("Party", (("Flash", 99),))),
-            {**_STORED, "Flash (Zootopia 2, 2)": (15000, "Zootopia 2"), "Flash (Party)": (99, "Party")},
-            ("Flash (Zootopia 2, 2)", "Flash (Party)")),
-    "renumber": ((_EMOTION, ("Zootopia 2", (("Flash", 14769), ("Flash", 14771)))),
-                 {**_STORED, "Flash": (14771, "Zootopia 2")}, ("Flash",)),
-    "category rename": ((_EMOTION, ("Zootopia", _ZOOTOPIA[1])),
-                        {**_STORED, "Flash": (14770, "Zootopia"), "Flash (Zootopia 2)": (14769, "Zootopia")},
-                        ("Flash", "Flash (Zootopia 2)")),
-    "category removed": ((_EMOTION,), _STORED, ()),   # dropped out of the library: kept
-    "category expired": ((_EMOTION, (*_ZOOTOPIA, _EXPIRED)),   # answered, not listed: removed
-                         {n: v for n, v in _STORED.items() if v[1] != "Zootopia 2"},
-                         ("Flash", "Flash (Zootopia 2)")),
-    "holder removed": ((_EMOTION, ("Zootopia 2", (("Flash", 14769),))), _STORED, ()),
-    "literal": ((_EMOTION, _ZOOTOPIA, ("Specials", (("Flash (Emotion)", 500),))),   # a sceneName
-                {**_STORED, "Flash (Emotion) (Specials)": (500, "Specials")},
-                ("Flash (Emotion) (Specials)",)),
+_EMOTION = ("Emotion", (("Flash", 2020, "EEEE"), ("Glow", 30, "AAAA")))
+_ZOOTOPIA = ("Zootopia 2", (("Flash", 14769, "CCCC"), ("Flash", 14770, "DDDD")))
+_STORED = {"Flash": (14770, "Zootopia 2", "DDDD"), "Flash (Emotion)": (2020, "Emotion", "EEEE"),
+           "Flash (Zootopia 2)": (14769, "Zootopia 2", "CCCC"), "Glow": (30, "Emotion", "AAAA")}
+
+
+def _then(library: _Library, after: dict[str, tuple[int, str, str]] = _STORED, printed: tuple[str, ...] = (),
+          sku: str = "H61A8") -> _Step:
+    """One fetch of ``sku`` from ``library``: the stored names after it and the names it must print."""
+    return (sku, library, after, printed)
+
+
+def _zootopia(*scenes: tuple[Any, ...], more: tuple[dict[str, Any], ...] = ()) -> _Library:
+    return (_EMOTION, ("Zootopia 2", scenes, *more))
+
+
+_FIRST = _then((("Zootopia 2", _ZOOTOPIA[1][::-1]), ("Emotion", _EMOTION[1][::-1])))   # whatever the order
+_HOLDER = ("Flash", 14770, "DDDD")
+_ROUNDS: dict[str, tuple[_Step, ...]] = {
+    # change: a first fetch of H61A8, then each library fetched in turn
+    "re-fetch": (_FIRST, _FIRST),
+    "reorder": (_FIRST, _then((_EMOTION, _ZOOTOPIA))),
+    "add": (_FIRST, _then((_EMOTION, ("Zootopia 2", (*_ZOOTOPIA[1], ("Flash", 15000, "FFFF"))),
+                           ("Party", (("Flash", 99, "GGGG"),))),
+                          {**_STORED, "Flash (Zootopia 2, 2)": (15000, "Zootopia 2", "FFFF"),
+                           "Flash (Party)": (99, "Party", "GGGG")},
+                          ("Flash (Zootopia 2, 2)", "Flash (Party)"))),
+    "renumber": (_FIRST, _then(_zootopia(_ZOOTOPIA[1][0], ("Flash", 14771, "DDDD")),
+                               {**_STORED, "Flash": (14771, "Zootopia 2", "DDDD")}, ("Flash",))),
+    "category rename": (_FIRST, _then((_EMOTION, ("Zootopia", _ZOOTOPIA[1])),
+                                      {**_STORED, "Flash": (14770, "Zootopia", "DDDD"),
+                                       "Flash (Zootopia 2)": (14769, "Zootopia", "CCCC")},
+                                      ("Flash", "Flash (Zootopia 2)"))),
+    "category removed": (_FIRST, _then((_EMOTION,))),   # dropped out of the library: kept
+    "holder removed": (_FIRST, _then(_zootopia(_ZOOTOPIA[1][0]))),
+    # answered, left out for its time or the firmware's version rules: kept, and its name stays its own
+    "category expired": (_FIRST, _then(_zootopia(*_ZOOTOPIA[1], more=(_EXPIRED,)))),
+    "expired, then a same-named scene": (
+        _FIRST, _then(_zootopia(*_ZOOTOPIA[1], more=(_EXPIRED,))),
+        _then((*_zootopia(*_ZOOTOPIA[1], more=(_EXPIRED,)), ("Party", (("Flash", 16000, "GGGG"),))),
+              {**_STORED, "Flash (Party)": (16000, "Party", "GGGG")}, ("Flash (Party)",))),
+    "effect expired": (_FIRST, _then(_zootopia(_ZOOTOPIA[1][0], (*_HOLDER, _EXPIRED)))),
+    "version rules": (_FIRST, _then(_zootopia(_ZOOTOPIA[1][0], (*_HOLDER, _RULES)))),
+    # answered, refused for good (op type -1): removed, and printed
+    "refused": (_FIRST, _then(_zootopia(_ZOOTOPIA[1][0], (*_HOLDER, {"sceneType": 9})),
+                              {n: v for n, v in _STORED.items() if n != "Flash"}, ("Flash",))),
+    "literal": (_FIRST, _then((_EMOTION, _ZOOTOPIA, ("Specials", (("Flash (Emotion)", 500, "HHHH"),))),
+                              {**_STORED, "Flash (Emotion) (Specials)": (500, "Specials", "HHHH")},
+                              ("Flash (Emotion) (Specials)",))),
 }
 
 
 def _library(categories: _Library) -> bytes:
-    def category(name: str, scenes: tuple[tuple[str, int], ...], *more: dict[str, Any]) -> dict[str, Any]:
-        return {"categoryName": name, **{k: v for m in more for k, v in m.items()},
-                "scenes": [{"sceneName": n, "lightEffects": [{"sceneCode": c, "scenceParam": ""}]}
-                           for n, c in scenes]}
+    def fields(*more: dict[str, Any]) -> dict[str, Any]:
+        return {k: v for m in more for k, v in m.items()}
+
+    def category(name: str, scenes: tuple[tuple[Any, ...], ...], *more: dict[str, Any]) -> dict[str, Any]:
+        return {"categoryName": name, **fields(*more), "scenes": [
+            {"sceneName": n, "lightEffects": [{"sceneCode": c, "scenceParam": p, **fields(*fx)}]}
+            for n, c, p, *fx in scenes]}
     return json.dumps({"data": {"categories": [category(*c) for c in categories]}}).encode()
 
 
@@ -378,30 +410,33 @@ def test_fetch_never_points_a_stored_name_at_another_scene(change: str, monkeypa
     one name whatever their order: the highest code keeps it, each other is "<name> (<category>)" (", n"
     where that is taken), and each records its sceneName. A re-fetch matches each listed scene to a stored
     one of its sceneName (by code and category, else code, else category); only a new one gets a new name,
-    never a stored one, and a stored scene no longer listed keeps its name unless the library still answers
-    it. Over each change to the library, every stored name keeps its code and category or is printed."""
+    never a stored one. A stored scene no longer listed keeps its name, unless the library still answers it
+    and the SKU's scene list refuses it for good; one left out for its time or version rules is kept. Round
+    by round, every stored name keeps its code, category and blob or is printed."""
     fs = _tool("fetch_scenes")
     monkeypatch.setattr(fs, "OUT_DIR", tmp_path)
-    library, after, printed = _ROUNDS[change]
 
-    def fetch_from(categories: _Library) -> dict[str, tuple[object, object]]:
-        body = _library(categories)
-        monkeypatch.setattr(fs.urllib.request, "urlopen", lambda *a, **k: _Resp(body))
-        assert fs.main(["H61A8"]) == 0
-        return {n: (e["code"], e["category"]) for n, e in fs.read_catalog("H61A8", tmp_path).items()}
+    def view(catalog: dict[str, Any]) -> dict[str, tuple[object, object, object]]:
+        return {n: (e["code"], e["category"], e["param"]) for n, e in catalog.items()}
 
-    assert fetch_from(_ROUNDS["reorder"][0]) == _STORED   # a first fetch: the list order does not count
-    first = fs.read_catalog("H61A8", tmp_path)
-    assert {n: e.get("scene_name") for n, e in first.items()} == {
-        "Flash": None, "Flash (Emotion)": "Flash", "Flash (Zootopia 2)": "Flash", "Glow": None}
-    capsys.readouterr()
-    assert fetch_from(library) == after
-    out = capsys.readouterr().out
-    changes = "\n".join(line for line in out.splitlines() if "stored names" in line)
-    for name, scene in _STORED.items():
-        assert after.get(name) == scene or f'"{name}"' in changes, name
-    assert all(f'"{name}"' in out for name in printed)
-    assert bool(changes) == any(n in _STORED for n in printed)
+    for step in _ROUNDS[change]:
+        sku, library, after, printed = step
+        before = view(fs.read_catalog(sku, tmp_path))
+        body = _library(library)
+        monkeypatch.setattr(fs.urllib.request, "urlopen", lambda *a, body=body, **k: _Resp(body))
+        capsys.readouterr()
+        assert fs.main([sku]) == 0
+        stored = fs.read_catalog(sku, tmp_path)
+        assert view(stored) == after
+        if step == _FIRST and not before:
+            assert {n: e.get("scene_name") for n, e in stored.items()} == {
+                "Flash": None, "Flash (Emotion)": "Flash", "Flash (Zootopia 2)": "Flash", "Glow": None}
+        out = capsys.readouterr().out
+        changes = "\n".join(line for line in out.splitlines() if "stored names" in line)
+        for name, scene in before.items():
+            assert after.get(name) == scene or f'"{name}"' in changes, name
+        assert all(f'"{name}"' in out for name in printed)
+        assert bool(changes) == any(n in before for n in printed)
 
 
 def test_fetch_names_the_scenes_left_after_the_type5_ones(monkeypatch: pytest.MonkeyPatch,

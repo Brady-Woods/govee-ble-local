@@ -340,10 +340,12 @@ model, from which the shipped readers are generated).
   is 14769, which a first fetch picks too). A re-fetch matches each listed scene to a stored one of its
   sceneName by code and category, else by code (its category renamed), else by category (its code changed),
   and prints the last two; only a scene that matches none gets a new name, and never one the store holds. A
-  stored scene no longer listed keeps its name, and one the library still answers that the SKU's scene list
-  leaves out is removed and printed. Scenes are named after the sceneType-5 scenes a `legacy_scene` SKU does
-  not upload are left out, and a blob resolved by `--resolve` is kept by the scene's code, category and param
-  id, not by its name. No bundled catalog changes.
+  stored scene no longer listed keeps its name, as does one left out only for its time (an expired category or
+  effect) or the firmware's version rules, so its name is never freed for another scene; only one the library
+  still answers that the SKU's scene list refuses for good (its op set), or a sceneType-5 scene the library
+  does not upload, is removed and printed. Scenes are named after the sceneType-5 scenes a `legacy_scene` SKU
+  does not upload are left out, and a blob resolved by `--resolve` is kept by the scene's code, category and
+  param id, not by its name. No bundled catalog changes.
 
 ### Spec
 - `devices.yaml` `scenes.list_filter`: which library scenes the control screen lists and with which
