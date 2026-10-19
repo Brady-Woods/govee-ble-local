@@ -120,6 +120,25 @@ def test_fetch_app_version_flag_and_env(monkeypatch: pytest.MonkeyPatch) -> None
     assert fs.parse_args(["--app-version", "9.9.9", "H60A6"]).app_version == "9.9.9"
     monkeypatch.setenv("GOVEE_APP_VERSION", "1.2.3")
     assert _load("fetch_scenes").parse_args([]).app_version == "1.2.3"
+    # --resolve logs in with the same AppVersion, not the cloud client's default (review SCN-8).
+    versions: list[str] = []
+
+    class Account:
+        def __init__(self, email: str, password: str, *, app_version: str) -> None:
+            versions.append(app_version)
+
+        async def login(self) -> None:
+            return None
+
+        async def close(self) -> None:
+            return None
+
+    cloud = ModuleType("govee_ble_local.cloud")
+    cloud.GoveeCloudAccount = Account  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "govee_ble_local.cloud", cloud)
+    fs.resolve_placeholders("a@b.c", "pw", [], "9.9.9")
+    fs.resolve_placeholders("a@b.c", "pw", [])
+    assert versions == ["9.9.9", fs.DEFAULT_APP_VERSION]
 
 
 def test_fetch_parse_rejects_bad_sku() -> None:

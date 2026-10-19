@@ -285,7 +285,8 @@ model, from which the shipped readers are generated).
   base `lightEffects[0]` values only). The AppVersion header is
   now the traced app's, 7.7.02 (the scene library answers 7.5.20 identically for every bundled SKU; the
   catalogue endpoint does not, listing 15 more SKUs at 7.7.02, so `tools/fetch_catalog.py` no longer shares
-  the constant and asks as its snapshot's `app_version` records: Spec). The bundled catalogs are not
+  the constant and asks as its snapshot's `app_version` records: Spec), and `--resolve` logs in with it
+  too (it used the cloud client's default, 7.5.20). The bundled catalogs are not
   re-fetched here: a re-fetch would change 1.4.0's H6004, H6006 / H6008, H60A6, H61A8 and H6641 catalogs,
   which is for the user.
 - **`tools/fetch_scenes.py` keeps the lightEffect the app's scene list keeps** (devices.yaml

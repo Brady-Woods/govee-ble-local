@@ -39,7 +39,8 @@ LIBRARY_URL = "https://app2.govee.com/appsku/v1/light-effect-libraries"
 # copy). The scene library answered 7.5.20 byte for byte as 7.7.02 for every bundled SKU (2026-10-19);
 # the catalogue endpoint did not (15 more SKUs at 7.7.02), so tools/fetch_catalog.py asks as its snapshot's
 # app_version records instead. Override with --app-version or $GOVEE_APP_VERSION if Govee starts rejecting
-# this value.
+# this value. --resolve logs in with it too (the cloud client's own default, cloud/account.py APP_VERSION, is
+# the library's runtime one).
 DEFAULT_APP_VERSION = "7.7.02"
 OUT_DIR = pathlib.Path(__file__).resolve().parent.parent / "src" / "govee_ble_local" / "scenes"
 # Upper bound on the library response body; real catalogs are well under 1 MiB.
@@ -338,10 +339,13 @@ def fetch(sku: str, app_version: str = DEFAULT_APP_VERSION, *, seen: set[str] | 
     return scenes
 
 
-def resolve_placeholders(email: str, password: str, skus: list[str]) -> None:
+def resolve_placeholders(email: str, password: str, skus: list[str],
+                         app_version: str = DEFAULT_APP_VERSION) -> None:
     """Log into the Govee account and bake real effect blobs into the catalogs
     for placeholder scenes (via the authenticated effect-strs endpoint), so the
-    shipped JSON is complete and no runtime cloud call is needed.
+    shipped JSON is complete and no runtime cloud call is needed. The login and
+    the effect-strs request carry ``app_version``, as the library fetch does (the
+    cloud client's own default is the library's runtime one).
 
     Credentials: passed here only to obtain a token; nothing is persisted by
     this tool beyond the resulting scene blobs. Prefer env vars GOVEE_EMAIL /
@@ -352,7 +356,7 @@ def resolve_placeholders(email: str, password: str, skus: list[str]) -> None:
     from govee_ble_local.cloud import GoveeCloudAccount
 
     async def run() -> None:
-        acct = GoveeCloudAccount(email, password)
+        acct = GoveeCloudAccount(email, password, app_version=app_version)
         try:
             await acct.login()
             for sku in skus:
@@ -608,7 +612,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     mode.add_argument("--resolve", action="store_true",
                       help="bake real blobs for placeholder scenes (needs GOVEE_EMAIL/GOVEE_PASSWORD)")
     ap.add_argument("--app-version", default=os.environ.get("GOVEE_APP_VERSION", DEFAULT_APP_VERSION),
-                    help=f"AppVersion header (env GOVEE_APP_VERSION; default {DEFAULT_APP_VERSION})")
+                    help="AppVersion header of the fetch and of the --resolve login "
+                         f"(env GOVEE_APP_VERSION; default {DEFAULT_APP_VERSION})")
     args = ap.parse_args(argv)
     try:
         args.skus = [validate_sku(x) for x in args.skus]
@@ -627,6 +632,6 @@ if __name__ == "__main__":
         _password = os.environ.get("GOVEE_PASSWORD", "")
         if not _email or not _password:
             sys.exit("--resolve needs GOVEE_EMAIL and GOVEE_PASSWORD env vars")
-        resolve_placeholders(_email, _password, _skus)
+        resolve_placeholders(_email, _password, _skus, _a.app_version)
     else:
         sys.exit(1 if main(_skus, _a.app_version) else 0)
