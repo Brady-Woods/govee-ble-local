@@ -169,10 +169,12 @@ _FORM_0B_RGB_MASK: Final = int(_C.Form0b.rgb_mask)
 # (Bytes.r type 1) with the app's Kelvin->RGB tint.
 # "h6006" = 0x0d bulbs (H6006/H6008/H6052); CCT is the both-slot form `0d <tint> <K> <tint>`
 # (Config.bu -> Bytes.p).
-# "h61a8" = 0x0b RGBIC (no CCT): the app's colour instruction 3 (Config.J[3] = cu -> Bytes.d), which
-# goodsTypes 17, 18, 13, 3, 21 and 123 and the old H6163 / H6117 send. No built-in profile uses it: the
-# H61A8 (goodsType 19) sends the h60a6 forms (devices.yaml client_profile by_goods_type 19); it stays for
-# custom profiles.
+# "h61a8" = 0x0b RGBIC (no CCT): the app's colour instruction 3 (Config.J[3] = cu -> Bytes.d). By goodsType
+# (Config.x) goodsType 3 sends it, and goodsTypes 13, 17, 18 and 21 below their gates; by SKU (Config.w,
+# which the app reads first) H7022 / H7024, and the old H6102, H6107, H6116, H6117, H6125, H6126, H6127,
+# H6161 and H6163 by their firmware. No built-in profile uses it: the H61A8 (goodsType 19) sends the h60a6
+# forms, as do 123 and the other dreamcolorlightv1 goodsTypes from 19 up (devices.yaml dreamcolorlightv1
+# client_profile); it stays for custom profiles.
 # "h6188" = 0x0d rgblight strip: same RGB frame as h6006, but the CCT is the white-slot form
 # `0d ff ff ff <K> <tint>` (Config.GM -> Bytes.A); this one is NOT the h6006 form.
 # "h6061" = Glide Hexa panels, 0x15 family with its own whole-device writes: RGB is ceil(n/4)

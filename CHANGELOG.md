@@ -540,6 +540,19 @@ model, from which the shipped readers are generated).
   (H61A8) carry the citations the hand table had (`UiV2` / `UiV4` / `Ui4H5089.onOffChange`, the
   `/rgbic/newdetail` route and `SubMode4Color`'s parse), and the plug rows say app-traced, not
   source-modelled.
+- **dreamcolorlightv1's family `color_scheme` is `h60a6`** (was `h61a8`): the 0x15 frames that every
+  goodsType of the family but 17 / 18 below their gates sends. The app's colour `Config.x` is 0 for 19, 70,
+  71, 73, 74, 75, 83, 123, 136, 178, 187, 193, 204, 207 and 234; 175 / 176 / 262 have no entry and take
+  version 0 too. The 0x0b frames come from `Config.x` for 17 / 18 below their gates, and from the SKU map
+  `Config.w`, which the app reads first, for the old H6102, H6163 and H6117 by their firmware. Every row
+  already names `h60a6`, so no row's facts change: the resolved device table is unchanged, and the
+  generated one differs only in that family default.
+- **goodsType 123 is not a 0x0b goodsType**: its `Config.x` entry (`Bv`) is 0 for every device, as
+  `Support4DreamColorV1.h` is true for every goodsType but 17 / 18 / 19. The dreamcolorlightv1 wire doc, the
+  `wire.build` colour-scheme comment and 1.4.0's notes listed it with 17 / 18. The wire doc now gives the
+  family's 0x0b senders (17 / 18 below their gates; H6102, H6163 and H6117 by their firmware). The other two
+  give the app's whole list: by goodsType, 3, and 13 / 17 / 18 / 21 below their gates; by SKU, H7022 /
+  H7024, and the old H6102, H6107, H6116, H6117, H6125, H6126, H6127, H6161 and H6163 by their firmware.
 
 ## [1.4.0] — 2026-10-18
 
@@ -663,8 +676,9 @@ model, from which the shipped readers are generated).
     `mode_reports_kelvin` (see Added). An RGB pick reads the range once, so the frame and the state agree
     even if `aa 07 03` lands mid-write.
   - The `h61a8` scheme stays for custom profiles; no built-in profile uses it now. It is the app's 0x0b
-    colour instruction 3, used by goodsTypes 17, 18, 13, 3, 21 and 123 and by the old H6163 / H6117.
-    Removing it is left for a major release.
+    colour instruction 3, used by goodsType 3, by goodsTypes 13, 17, 18 and 21 below their gates, by H7022
+    / H7024, and, depending on their firmware, by the old H6102, H6107, H6116, H6117, H6125, H6126, H6127,
+    H6161 and H6163. Removing it is left for a major release.
   - Bench, 2026-10-18 (same unit): `set_segment_brightness([0..4], 50)` sent `33 05 15 02 32 1f 00 ..`, the
     app's Bytes.G, which was acked 00. The read-back changed only those segments' brightness, with no colour
     changed, and the start state was restored exactly.
