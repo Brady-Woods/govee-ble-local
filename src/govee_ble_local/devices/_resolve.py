@@ -67,6 +67,9 @@ the row lacks fails the build: nothing defaults silently.
   the library sends or reads for the row must be the row's (wire ``forms``), a polled row's aa 05 reply is
   read with the spec's default decode (:data:`_MODE_UNSET`), and a colour-group read is of 4-byte records
   in the row's wire ``group.num_per_group`` (and, in the status read, its ``group.rule``).
+- The writes on every connect (``connect_writes``): a plug's ``plug_sync_time``, and on a light nothing or
+  ``light_effect_stop`` (``DeviceProfile.light_effect_stop``), each sent once per session after the
+  handshake and any unlock.
 - Wire branches: the library reads the wire with the pact and the firmware unknown, so a wire ``by_pact`` /
   ``by_firmware`` branch raises, but for the unread ones of :data:`_UNREAD_WIRE_BRANCHES` (H60A6 pact (1,
   1)'s one colour piece: decision D3, the library keeps the row's 13).
@@ -714,9 +717,10 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str]) -> dic
     bar = forms.get("f_36") == "bar_pair"
     if ("cmd_36" in reads) != bar:
         fail("the aa 36 read and f_36 bar_pair go together")
-    if tuple(need(row.get("connect_writes"), "connect_writes")) != (("plug_sync_time",) if relay else ()):
-        fail(f"connect_writes {list(row.get('connect_writes') or ())} (the library sends the plug time "
-             "sync, on every relay row only)")
+    writes = tuple(need(row.get("connect_writes"), "connect_writes"))
+    if writes not in ((("plug_sync_time",),) if relay else ((), ("light_effect_stop",))):
+        fail(f"connect_writes {list(writes)} (the library sends the plug time sync on every relay row, and "
+             "light_effect_stop or nothing on a light)")
     resync = row.get("power_resync")
     if relay:
         need(resync, "power_resync")
@@ -757,6 +761,7 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str]) -> dic
         "power_resync": bool(resync),
         "kelvin_by_hardware": tuple(sorted(kelvin_by_hardware, reverse=True)),
         "mode_reports_kelvin": bool(row.get("mode_reports_kelvin", True)),
+        "light_effect_stop": writes == ("light_effect_stop",),
     }
     if ("segments" in row_caps or color_readback) and not out["segments"]:   # before SCHEME_LACKS (h6061)
         fail("segments or a colour read-back without wire counts num_segments")

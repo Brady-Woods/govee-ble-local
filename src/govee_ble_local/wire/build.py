@@ -778,6 +778,16 @@ def scene_upload_a4_mtu(value: bytes, comm_byte: int, *, mtu: int = 20) -> list[
                                 for seq, chunk in enumerate(chunks, start=1)]
 
 
+# ── connect writes ───────────────────────────────────────────────────────────
+_EFFECT_STOP: Final = 0x01   # light_effect_stop.value: 1 stops the 0x24 effect (other values are no-ops)
+
+
+def light_effect_stop() -> bytes:
+    """33 25 01: stop the ``33 24`` light effect (``light_effect_stop``), the write the bulb screens send on
+    every connect (bulblight ``VM4Light.i5``, ``getCommandType`` 37)."""
+    return _write_frame(_PLAIN, _C.Command.light_effect_stop, _params(_F.LightEffectStop, value=_EFFECT_STOP))
+
+
 # ── plug / secret ────────────────────────────────────────────────────────────
 _SYNC_MARKER: Final = 0x01   # epoch_time.marker_is_valid: the app always sends 1
 

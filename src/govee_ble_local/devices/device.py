@@ -194,7 +194,7 @@ class Device:
             ble_device,
             encryption=enc,
             unlock_frames=self._unlock_frames if profile.requires_secret else None,
-            session_frames=self._session_frames if profile.relay else None,
+            session_frames=self._session_frames if profile.relay or profile.light_effect_stop else None,
             frame_log=frame_log,
             idle_disconnect=IDLE_DISCONNECT_DELAY if idle_disconnect is None else idle_disconnect,
         )
@@ -368,14 +368,17 @@ class Device:
         return build.plug_sync_time(ts, *_local_tz(ts))
 
     def _session_frames(self) -> list[bytes]:
-        """A plug's once-per-connection writes after the unlock: the ``33 b5`` time sync, which every
+        """The once-per-connection writes after the unlock. A plug's: the ``33 b5`` time sync, which every
         plug screen sends in its connect read and waits to be acked (``SyncTimeController`` is an
         ``AbsOnlyWriteSingleController``, ``super(true)``). gt 43: ``H5083NewDetailRepository.
         necessaryMessages:323-339``, first; gt 50 / 90: ``BleOpV2.o0:141-171`` / ``BleOpV4.l0:124-147``,
         after ``aa 06`` and ``aa 07 03`` (which the library reads once per Device instead,
-        ``_readback.read_device_info``); gt 307: ``BleOp4H5089.V:145-163``, first. A rejection or a
-        missing ack is only logged (``GoveeConnection._prepare_session``)."""
-        return [self._sync_time_frame()]
+        ``_readback.read_device_info``); gt 307: ``BleOp4H5089.V:145-163``, first. A light's: ``33 25 01``
+        where :attr:`.DeviceProfile.light_effect_stop` is set (bulblight ``VM4Light$connectBleSuc$1.j`` ->
+        ``VM4Light.i5``, once the connect reads succeed). A rejection or a missing ack is only logged
+        (``GoveeConnection._prepare_session``)."""
+        return [*([self._sync_time_frame()] if self.profile.relay else ()),
+                *([build.light_effect_stop()] if self.profile.light_effect_stop else ())]
 
     @staticmethod
     def _checked_secret(secret: bytes | None) -> bytes | None:

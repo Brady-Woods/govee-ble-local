@@ -252,6 +252,8 @@ _REFUSED: tuple[tuple[str, str, _Edit, str], ...] = (
     ("h61d3", "247", lambda f: _row(f, "247").pop("ic_pieces"), "an ic_num read needs"),
     ("h61d3", "247", lambda f: _row(f, "247")["ic_pieces"].update(min_ic=80), "ic_pieces"),
     ("h5080", "43", lambda f: _row(f, "43").update(connect_writes=[]), "connect_writes []"),
+    ("bulblightv3", "64", lambda f: _row(f, "64").update(connect_writes=["plug_sync_time"]),
+     "connect_writes ['plug_sync_time']"),
     # plugs
     ("h5080", "50", lambda f: _row(f, "50").pop("power_resync"), "no power_resync"),
     ("bulblightv3", "64", lambda f: _row(f, "64").update(power_resync=True), "power_resync on a light"),

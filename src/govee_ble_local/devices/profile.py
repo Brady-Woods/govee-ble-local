@@ -278,6 +278,12 @@ class DeviceProfile:
     true), and the TLV 0x05's ``music`` layout and ``empty_fails`` rule. A form left out is unknown: that TLV
     is not read, and a 0xA5 TLV not read as colour groups is skipped. The default is the H60A6 status
     screen's, 1.x's decode (a list is kept as a tuple)."""
+    light_effect_stop: bool = field(default=False, kw_only=True)
+    """A light whose screen writes ``33 25 01`` (``light_effect_stop``) on connect (a devices.yaml row's
+    ``connect_writes``; bulblight ``VM4Light$connectBleSuc$1.j`` -> ``VM4Light.i5``): every session sends it
+    after the handshake and any unlock, as a plug's time sync is sent. The app sends it once its connect
+    reads succeed, and the library makes those reads on its polls instead. A rejection or a missing ack is
+    only logged."""
 
     def __post_init__(self) -> None:
         """Validate each field: GoveeBleInvalidValue (a ValueError) on a value no Device can use.

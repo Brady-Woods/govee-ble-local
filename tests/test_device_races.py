@@ -207,9 +207,10 @@ def test_only_plugs_send_the_session_time_sync() -> None:
             d = make_device(ble_device("AA:BB:CC:DD:EE:71", sku), sku)
             assert d is not None
             provider = d._conn._session_frames
-            assert (provider is not None) == profile.relay, sku
+            assert (provider is not None) == (profile.relay or profile.light_effect_stop), sku
             if provider is not None:
-                assert [f[:2].hex() for f in provider()] == ["33b5"]
+                assert [f[:2].hex() for f in provider()] == [
+                    *(["33b5"] if profile.relay else ()), *(["3325"] if profile.light_effect_stop else ())]
             assert profile.power_resync == (sku in ("H5082", "H5160", "H5161")), sku
 
 

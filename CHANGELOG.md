@@ -104,6 +104,12 @@ model, from which the shipped readers are generated).
     row.
   - No row involved has support, so no SKU's library route changes yet, and 1.4.0's 18 SKUs keep every
     route and field.
+- **A light's connect write** (device-list phase 3): `DeviceProfile.light_effect_stop` (keyword-only,
+  default False) and `build.light_effect_stop()`, the `33 25 01` the bulb screens write on connect, once
+  their connect reads succeed (bulblight `VM4Light.i5`). A light row may now list `connect_writes: [light_effect_stop]` (the resolver
+  allowed connect writes only on plugs, `plug_sync_time`); the library sends it once per session after the
+  handshake and any unlock, as it sends a plug's time sync (the app sends it after its connect reads, which
+  the library makes on its polls). No current SKU sets it.
 
 ### Changed
 - **The 0xAC status request is built from the profile**, not hard-coded to the H60A6's: the resolver takes
