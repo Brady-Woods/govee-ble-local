@@ -479,14 +479,15 @@ model, from which the shipped readers are generated).
   and blob (H6006's 26 recodes keep their blob), printed as a move, or by category and param id or category
   alone, printed as a guess. A guess passes over a stored scene whose code the library still answers under any
   sceneName, and a blob match over one it still answers at its own sceneName and category; both pass over one
-  the previous fetch found gone from the library (its sceneName answered at its code under no category). Where
-  more than one fits, the scene takes a new name, printed as ambiguous. Only a scene that matches none gets a
-  new name, never one the store or the tombstone holds. A stored scene no longer listed keeps its name, as do
-  one left out only for its time (an expired category or effect, its category renamed meanwhile too) or the
-  firmware's version rules and one listed under another name; a sceneName the app renames keeps its old name
-  too, so two names hold one code. Only one whose scene the SKU's scene list refuses for good (its op set), or
-  a sceneType-5 scene the library does not upload, is removed, printed, and retired in a tombstone,
-  `tools/scene_tombstone.json` (out of the package; the store, the loader and the pool are unchanged): only
+  a fetch found gone from the library since it was last listed (its sceneName answered at its code under no
+  category). Where more than one fits, the scene takes a new name, printed as ambiguous. Only a scene that
+  matches none gets a new name, never one the store or the tombstone holds. A stored scene no longer listed
+  keeps its name, as do one left out only for its time (an expired category or effect, its category renamed
+  meanwhile too) or the firmware's version rules and one listed under another name; a sceneName the app
+  renames keeps its old name too, so two names hold one code. Only one whose scene the SKU's scene list
+  refuses for good (its op set), or a sceneType-5 scene the library does not upload, is removed, printed, and
+  retired in a tombstone, `tools/scene_tombstone.json` (out of the package; the store, the loader and the pool
+  are unchanged), with the entry it held (one the fetch matched, then cut: the entry it was to hold): only
   that scene's exact return (sceneName, code, category and blob; a placeholder's with its param id) takes the
   name back, printed where the sceneType-5 cut keeps it, and one whose blob `--resolve` baked in returns so as
   its placeholder of the same param id, the blob coming back with the name. Scenes are named after the
