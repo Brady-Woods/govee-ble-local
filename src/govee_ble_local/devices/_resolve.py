@@ -77,9 +77,11 @@ the row lacks fails the build: nothing defaults silently.
   reads aa 04 on every poll and a gradual row ``aa a3``, so ``connect_reads`` lists ``brightness`` exactly
   on a polled row and ``gradual`` wherever the capability is; a ``gradual`` read without the capability (the
   screen's default ``Compose4InfoBleIot`` read, with no gradual control) is made on every poll too and its
-  reply discarded (``DeviceProfile.gradual_read_only``). An ``ic_num`` read goes with ``ic_pieces`` and the
-  direct colour read-back: it sizes the read-back's pieces (H6641), or, with ``ic_pieces: fixed``, it is
-  made on every poll and discarded (``DeviceProfile.ic_num_read_only``: a fixed piece count). Every command
+  reply discarded (``DeviceProfile.gradual_read_only``), on a polled light row only: that is where the
+  default read is traced (the h7050 screens), and a status or plug row's reads are its own strategy's. An
+  ``ic_num`` read goes with ``ic_pieces`` and the direct colour read-back: it sizes the read-back's pieces
+  (H6641), or, with ``ic_pieces: fixed``, it is made on every poll and discarded
+  (``DeviceProfile.ic_num_read_only``: a fixed piece count). Every command
   form the library sends or reads for the row must be the row's (wire ``forms``), a polled row's aa 05 reply
   is read with the spec's default decode (:data:`_MODE_UNSET`), and a colour-group read is of 4-byte
   records in the row's wire ``group.num_per_group`` (and, in the status read, its ``group.rule``).
@@ -762,6 +764,9 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str]) -> dic
         fail("connect_reads lists brightness exactly on a polled row (the library reads aa 04 every poll)")
     if "gradual" in caps and "gradual" not in reads:
         fail("connect_reads lists gradual with the capability (the library reads aa a3 for it)")
+    if "gradual" in reads and "gradual" not in caps and readback != "polled":
+        fail("a gradual read without the capability is served on a polled light row only (the screens' "
+             "default Compose4InfoBleIot read)")
     color_readback = ""
     if "color_group" in reads:
         color_readback = {"color_group": "mechanism_a_direct", "bulb_batch_v2": "mechanism_b"}.get(

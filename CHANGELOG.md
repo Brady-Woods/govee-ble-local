@@ -125,8 +125,9 @@ model, from which the shipped readers are generated).
   (keyword-only, default False). Some screens read the gradual flag at connect (the default
   `Compose4InfoBleIot` read) but offer no gradual control; a row may now list `gradual` in `connect_reads`
   without the capability (the resolver tied the read to the capability), and `Device.update` then reads
-  `aa a3` on every poll and discards the reply (`state.gradual` stays None). The capability still needs the
-  read. Set on the ten h7050 rows (Spec): H7050, H7060, H7051, H7062, H7065, H7055, H7066, H7052, H7053
+  `aa a3` on every poll and discards the reply (`state.gradual` stays None). Only a polled light row may
+  list it, where the default read is traced; the build refuses it on a status or plug row. The capability
+  still needs the read. Set on the ten h7050 rows (Spec): H7050, H7060, H7051, H7062, H7065, H7055, H7066, H7052, H7053
   and H7063.
 - **Kelvin and brightness ranges by pact** (device-list phase 3): `DeviceProfile.kelvin_by_pact`
   (`((pact_type, pact_code), min_kelvin, max_kelvin)` entries) and `DeviceProfile.brightness_by_pact`
