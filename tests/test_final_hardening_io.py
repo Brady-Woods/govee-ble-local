@@ -247,6 +247,20 @@ def test_fetch_skips_what_the_apps_base64_decoder_skips(monkeypatch: pytest.Monk
     assert fs.fetch("H6087")["s"]["param"] == "AA//"   # H6087's escaped "\/", read as "/"
 
 
+def test_fetch_flags_a_placeholder_by_the_apps_signal(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A placeholder is a big-effect scene with an empty param (BaseSceneViewMode / SceneDataVM fetch it),
+    not a param whose byte 3 is 0xFF: H1401's Christmas, a well-formed 0x93 RGB scene."""
+    fs = _tool("fetch_scenes")
+    christmas = base64.b64encode(bytes([0x93, 0x0A, 0xFF, 0xFF, 0xFF, 0x32])).decode()
+    scenes = [{"sceneName": "Christmas", "lightEffects": [{"sceneCode": 1, "scenceParam": christmas}]},
+              {"sceneName": "Big", "lightEffects": [{"sceneCode": 2, "scenceParam": "", "bigEffectStr": 1}]},
+              {"sceneName": "Bare", "lightEffects": [{"sceneCode": 3, "scenceParam": ""}]}]
+    body = json.dumps({"data": {"categories": [{"categoryName": "c", "scenes": scenes}]}}).encode()
+    monkeypatch.setattr(fs.urllib.request, "urlopen", lambda *a, **k: _Resp(body))
+    got = fs.fetch("H1401")
+    assert [n for n, e in got.items() if e.get("placeholder")] == ["Big"]
+
+
 def test_fetch_validate_entry_rejects_bad_base64() -> None:
     fs = _tool("fetch_scenes")
     with pytest.raises(ValueError, match="base64"):

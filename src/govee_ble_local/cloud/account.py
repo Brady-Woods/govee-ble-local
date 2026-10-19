@@ -351,7 +351,8 @@ class GoveeCloudAccount:
     async def get_scene_effect_strs(self, param_ids: list[int]) -> dict[int, str]:
         """Fetch the real effect blobs for placeholder scenes, keyed by scenceParamId.
 
-        The public scene library stubs these out (placeholder 0xff header). Upload the
+        The public scene library ships these without their blob (a big-effect scene with an empty
+        param, the app's signal to fetch it: BaseSceneViewMode / SceneDataVM). Upload the
         returned base64 blobs via the a3-chunk burst, then activate: this is how the app
         renders 'big'/DIY-backed built-in scenes like Aurora.
         """

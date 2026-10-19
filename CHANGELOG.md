@@ -179,9 +179,10 @@ model, from which the shipped readers are generated).
 - Bundled scene catalogs for the newly admitted models whose profile offers scenes: H6002, H1401 / R1401
   and H14B1 (H14B1 shares H6004's set), fetched from the public scene library with `tools/fetch_scenes.py`
   into the content-keyed store. The other newly admitted models get no catalog yet, so they offer no scenes
-  (Changed). The Christmas scene of H1401 / R1401 / H14B1 is
-  shipped by the public library only as a 0xFF stub and stays an unresolved placeholder (resolving it
-  needs an account).
+  (Changed). Every scene in them carries its blob. H1401 / R1401's Christmas is a well-formed 82-byte 0x93
+  RGB scene and uploads as one; it is no placeholder (Changed: the placeholder flag). H14B1 shares H6004's
+  set, whose Christmas, the same scene, keeps 1.4.0's `placeholder` flag, which only `Scene.placeholder`
+  reads.
 
 ### Changed
 - **Scenes need a bundled catalog**, as every SKU of 1.4.0 that offers them ships one. The generator bakes
@@ -275,6 +276,12 @@ model, from which the shipped readers are generated).
   `scene_names_by_code` are unchanged. An index entry naming a set that is not bundled raises GoveeBleError
   like an unreadable catalog. `tools/fetch_scenes.py` writes the new layout (a new set before the index,
   then removes the sets no SKU names) and stores nothing for a SKU the library has no scenes for.
+- **A scene placeholder is the app's own signal**: `tools/fetch_scenes.py` flags a scene `placeholder` only
+  when it is a big-effect scene (`bigEffectStr`) with an empty param, which the app fetches before the apply
+  (`BaseSceneViewMode.java:630`, `SceneDataVM.java:1324`), not when a param's byte 3 is 0xFF. That heuristic
+  took H1401 / R1401's Christmas, a well-formed 82-byte 0x93 RGB scene whose frames were always sent, for a
+  stub; its set loses the flag (`5cc121e05ebbda2d`, was `347134bb28e5895f`). The same flag on 1.4.0's H6004
+  set (shared by H14B1) is left as shipped.
 - `tools/fetch_scenes.py` drops the characters the app's decoder skips from a scene blob:
   `android.util.Base64.decode(str, NO_WRAP)` (`Encode.decryByBase64`,
   `base-classes10/com/govee/base2home/util/Encode.java:29-31`) skips every character outside the alphabet

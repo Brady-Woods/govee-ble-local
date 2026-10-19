@@ -145,24 +145,17 @@ def store_catalog(sku: str, data: dict[str, Entry], out_dir: pathlib.Path | None
     return name
 
 
-def _is_placeholder(param_b64: str | None) -> bool:
-    """A "placeholder" is a big/DIY-backed scene the public library ships as a
-    STUB blob (0xff at byte[3]); its real effect data must be fetched from the
-    authenticated effect-strs endpoint (see get_scene_effect_strs) and uploaded
-    via the a3-chunk burst.
+def _is_placeholder(entry: Entry) -> bool:
+    """A "placeholder" is a big-effect scene the public library ships without its blob: the app's own signal,
+    ``isBigEffectScene`` with an empty ``scenceParam``, on which it fetches the effect before the apply
+    (BaseSceneViewMode.java:630, SceneDataVM.java:1324, base-classes11/com/govee/base2light/pact/newdetail/
+    content/scene/). Its real blob comes from the authenticated effect-strs endpoint (--resolve).
 
-    A scene with NO public param is NOT a placeholder — it is a device-built-in
-    scene activated by bare code (33 05 04 <lo> <hi>), with no upload and no
-    server blob (the effect-strs endpoint returns empty for these). Treating
-    those as placeholders is wrong: they resolve to nothing and should just
-    bare-activate."""
-    if not param_b64:
-        return False
-    try:
-        raw = base64.b64decode(param_b64)
-    except (binascii.Error, ValueError):
-        return False
-    return len(raw) >= 4 and raw[3] == 0xFF
+    Nothing else is: a scene with no param and no big-effect flag is a device-built-in scene activated by
+    bare code (33 05 04 <lo> <hi>), and a scene with a param uploads that param, whatever its bytes. (Before,
+    a param whose byte 3 was 0xFF was taken for a stub: H1401's Christmas, a well-formed 0x93 RGB scene, was
+    flagged so.)"""
+    return bool(entry.get("big_effect")) and not entry.get("param")
 
 
 def fetch(sku: str, app_version: str = DEFAULT_APP_VERSION) -> dict[str, Entry]:
@@ -203,7 +196,7 @@ def fetch(sku: str, app_version: str = DEFAULT_APP_VERSION) -> dict[str, Entry]:
                 entry["cmd_version"] = int(eff["cmdVersion"])
             if eff.get("bigEffectStr"):
                 entry["big_effect"] = True
-            if _is_placeholder(param):
+            if _is_placeholder(entry):
                 # real blob must come from the authenticated effect-strs endpoint
                 entry["placeholder"] = True
             validate_entry(scene.get("sceneName"), entry)
@@ -255,10 +248,8 @@ def _valid_resolved(entry: dict[str, object]) -> bool:
     definition we should PRESERVE rather than clobber with a fresh public
     fetch: it has an integer code and is NOT flagged as an unresolved
     placeholder. The ``placeholder`` flag is the source of truth — --resolve
-    pops it once the real blob is baked in. We deliberately do NOT re-run the
-    0xff-stub heuristic on the param here: a resolved effect blob can legitimately
-    carry 0xff at byte[3], and re-checking would wrongly discard it. A
-    ``param``-less (bare-activate) scene is valid too."""
+    pops it once the real blob is baked in. A ``param``-less (bare-activate) scene
+    is valid too."""
     return isinstance(entry.get("code"), int) and not entry.get("placeholder")
 
 
@@ -269,15 +260,16 @@ _REFRESH = ("scene_type", "cmd_version", "big_effect", "category")
 
 
 def _keeps_resolved_blob(ex: Entry | None, fr: Entry) -> bool:
-    """True if the fresh entry is the public 0xff STUB of a blob the existing entry already
-    resolved (same param_id): the one case where the existing blob beats the fresh fetch."""
+    """True if the fresh entry is the public placeholder (a big-effect scene without its blob) of a
+    blob the existing entry already resolved (same param_id): the one case where the existing blob
+    beats the fresh fetch."""
     return (ex is not None and _valid_resolved(ex) and bool(fr.get("placeholder"))
             and ex.get("param_id") == fr.get("param_id"))
 
 
 def _merge(existing: dict[str, Entry], fresh: dict[str, Entry]) -> dict[str, Entry]:
     """Combine a fresh public fetch with an existing catalog: take the fresh data, except
-    that a fresh 0xff stub never replaces a real effect blob already resolved via --resolve
+    that a fresh placeholder never replaces a real effect blob already resolved via --resolve
     (that entry keeps its blob, takes the fresh code, and has its public metadata replaced
     from the fresh entry); and keep entries that dropped out of the public library. This
     makes re-running idempotent and non-destructive once placeholders have been resolved."""
@@ -372,7 +364,7 @@ def audit(skus: list[str]) -> None:
       BLOCKED     = has a real effect blob + non-static sceneType but NO upload path
                     (would silently activate-only — the gap to close), or the
                     planner rejects it (GoveeBleInvalidValue / GoveeBleNotSupported)
-      placeholder = unresolved 0xFF stub (needs `--resolve` with account creds)
+      placeholder = a big-effect scene without its blob (needs `--resolve` with account creds)
     Any other exception from the planner is a bug and propagates.
     """
     from bleak.backends.device import BLEDevice
