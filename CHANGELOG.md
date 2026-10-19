@@ -68,15 +68,17 @@ model, from which the shipped readers are generated).
 - **The catalogue snapshot routes the SKUs no devices.yaml row lists** (`spec/govee_catalog.json`, read
   only by the generator, `_resolve.catalogue`; no cloud call at run time). Such a SKU routes to the BLE row
   with support at its catalogue goodsType, never at goodsType 0, when that is the only row at it, as the
-  app's `Pact.f` routes it. It takes the row's facts and joins its profile, at the row's support level capped
-  at `app_traced` (`_resolve.catalogue_support`): the snapshot's goodsType is no bench check, so the
-  catalogue bulbs on the `hardware_verified` bulb row are `app_traced`, and a `modelled` row's stay behind
-  `allow_modelled`. The generated row carries them apart from its own SKUs (`catalogue_models`, a key the
-  generator adds), and each target row's doc records the per-SKU sweep of the app for them: every string
-  literal naming one, and its mode components.
+  app's `Pact.f` routes it. It takes the row's facts (and shares a profile where the resolved facts match),
+  at the row's support level capped at `app_traced` (`_resolve.catalogue_support`): the snapshot's
+  goodsType is no bench check, so the catalogue bulbs on the `hardware_verified` bulb row are `app_traced`,
+  and a `modelled` row's stay behind `allow_modelled`. The generated row carries them apart from its own
+  SKUs (`catalogue_models`, a key the generator adds), and each target row's doc records the per-SKU sweep
+  of the app for them: every string literal naming one, and its mode components.
   - **10 SKUs gain a route**, by the catalogue's goodsType alone, with no bench check. Nine are on
     goodsType 64, the bulb row: H6009, H600A, H600B, H600C, H600D, H6010, H6011, H6013 and H800B. They
-    share the H6004 / H6006 / H6008 profile, whose `skus` lists them after those three. The tenth,
+    take the bulb row's facts but offer no scenes until a catalog is bundled (Changed), so they form two
+    profiles of their own: H600A / H600B / H600C / H600D / H6011 / H6013 / H800B, and H6009 / H6010
+    (`scene_power_on`). The H6004 / H6006 / H6008 profile's `skus` is those three, as in 1.4.0. The tenth,
     **R1630**, is on the h1630 row 364 and shares H1630's profile. A catalogue SKU takes its row's support
     level, capped at `app_traced`, so R1630 is admitted by default now that the app trace makes that row
     `app_traced` (Spec).
@@ -96,9 +98,8 @@ model, from which the shipped readers are generated).
     unrouted. Seven are such a rewrite: H6145 / H6146 / H6147 / H6171 13 → 17, H6118 / H6194 6 → 39 and
     H6179 12 → 39. H615E's item is the unconditioned pairing write of 40, which cites no rewrite of its
     catalogue 108, so it is for review.
-  - No route of 1.4.0's 18 SKUs changes, and no profile field but the bulb profile's `skus`. The
-    snapshot's ic is read nowhere: no row's app trace uses it. The conftest staleness guard watches the
-    snapshot.
+  - No route or profile field of 1.4.0's 18 SKUs changes. The snapshot's ic is read nowhere: no row's app
+    trace uses it. The conftest staleness guard watches the snapshot.
 - **Pact-conditioned reassignments route by pact.** The 11 `assigned_goods_type` items whose condition
   tests the pact alone (`min_pact_type` / `min_pact_code`) are now routing data instead of a refusal. Each
   SKU is listed on the row of the goodsType the app rewrites it to, with the pacts at or above the gate. It
