@@ -50,8 +50,10 @@ the row lacks fails the build: nothing defaults silently.
   (``Protocol.c``, Protocol.java:41-48).
 - The catalogue snapshot (:func:`catalogue`, the precedence of ``spec/govee_catalog.json``'s doc): a SKU no
   row lists routes to the BLE row with support at its catalogue goodsType when that is the only row at it
-  (the app's ``Pact.f``), at that row's support level and with its facts, and never at goodsType 0 (the
-  legacy code). Such a SKU is served only at the row's pacts, outside the pact fallback. A SKU a row lists
+  (the app's ``Pact.f``), with its facts, and never at goodsType 0 (the legacy code). Its support level is
+  the row's capped at ``app_traced`` (:func:`catalogue_support`): the snapshot's goodsType is no bench check,
+  so a ``hardware_verified`` row's evidence is not the SKU's, and a ``modelled`` row's SKU stays behind the
+  opt-in. Such a SKU is served only at the row's pacts, outside the pact fallback. A SKU a row lists
   keeps the spec's route, unless its catalogue goodsType is a conflict (non-zero, and none of its rows'),
   which only an ``assigned_goods_type`` item citing the app's rewrite settles: an unsettled one is unrouted
   and on the generator's review list. The snapshot's ``ic`` is read nowhere: no row's app trace cites the
@@ -161,6 +163,9 @@ class FirmwareBranch(TypedDict, total=False):
 class Row(TypedDict, total=False):
     """``clientRow``: one goodsType of ``client_profile.by_goods_type``."""
     models: tuple[str, ...]
+    # Not a devices.yaml key: the SKUs only the catalogue snapshot routes to the row, which the generator adds
+    # (tools/gen_devices.py GENERATED; :func:`catalogue`), served at :func:`catalogue_support`.
+    catalogue_models: tuple[str, ...]
     connectivity: tuple[str, ...]
     pacts: tuple[str, ...] | str
     support: str
@@ -510,9 +515,16 @@ def reassignment_review(families: Sequence[Family]) -> tuple[str, ...]:
 
 
 def _is_route(fam: Family, row: Row) -> bool:
-    """A row is a BLE route: it lists models and pacts, and ble is in its (else its family's) connectivity."""
-    return bool(row.get("models")) and "pacts" in row and "ble" in (
+    """A row is a BLE route: it lists models (or the generator gave it catalogue routes) and pacts, and ble is
+    in its (else its family's) connectivity."""
+    return bool(row.get("models") or row.get("catalogue_models")) and "pacts" in row and "ble" in (
         row.get("connectivity") or fam.get("connectivity") or ())
+
+
+def catalogue_support(level: str) -> str:
+    """The support level of a SKU only the catalogue snapshot routes to a row at ``level``: the row's, capped
+    at ``app_traced``."""
+    return "app_traced" if level == "hardware_verified" else level
 
 
 class Catalogue(NamedTuple):
@@ -583,30 +595,34 @@ def catalogue(families: Sequence[Family], snapshot: Mapping[str, int]) -> Catalo
     return Catalogue({k: tuple(v) for k, v in added.items()}, frozenset(unrouted), tuple(review))
 
 
-def _rows(families: Sequence[Family], admitted: Collection[str]) -> Iterator[tuple[Family, str, Row]]:
-    """Each BLE row whose support level is in ``admitted``, in devices.yaml order."""
+def _members(families: Sequence[Family], admitted: Collection[str]) -> Iterator[tuple[Family, str, Row, str]]:
+    """``(family, goodsType, row, SKU)`` for each SKU a BLE row routes at a support level in ``admitted``, in
+    devices.yaml order: the row's models at its own level, then its catalogue routes at
+    :func:`catalogue_support`."""
     for fam in families:
         for gt, row in ((fam.get("client_profile") or {}).get("by_goods_type") or {}).items():
-            if row.get("support") in admitted and _is_route(fam, row):
-                yield fam, gt, row
+            level, route = row.get("support", ""), _is_route(fam, row)
+            own = (row.get("models") or ()) if route and level in admitted else ()
+            via = ((row.get("catalogue_models") or ())
+                   if route and catalogue_support(level) in admitted else ())
+            yield from ((fam, gt, row, sku) for sku in (*own, *via))
 
 
 def profiles(families: Sequence[Family], parse_names: Collection[str], admitted: Collection[str] = ADMITTED
              ) -> list[tuple[tuple[str, ...], dict[str, Any], tuple[Route, ...]]]:
-    """``[(skus, fields, routes)]``: DeviceProfile field values for each group of (row, SKU) routes of the
-    ``admitted`` rows whose resolved facts are identical, in devices.yaml order (row models order within a
-    row), with those routes. ``parse_names`` are the mode_color_parse table's names. SpecError on a fact
-    missing or not served."""
+    """``[(skus, fields, routes)]``: DeviceProfile field values for each group of (row, SKU) routes at a
+    support level in ``admitted`` (a catalogue route's is :func:`catalogue_support`) whose resolved facts are
+    identical, in devices.yaml order (row models, then its catalogue routes, within a row), with those routes.
+    ``parse_names`` are the mode_color_parse table's names. SpecError on a fact missing or not served."""
     groups: dict[str, tuple[list[str], dict[str, Any], list[Route]]] = {}
-    for fam, gt, row in _rows(families, admitted):
-        pacts = row.get("pacts", "any")   # every route has pacts (_rows); 'any' tests none
+    for fam, gt, row, sku in _members(families, admitted):
+        pacts = row.get("pacts", "any")   # every route has pacts (_members); 'any' tests none
         accepted = None if isinstance(pacts, str) else frozenset(_pact(p) for p in pacts)
-        for sku in row.get("models") or ():
-            fields = _fields(fam, gt, sku, parse_names)
-            skus, _same, members = groups.setdefault(repr(sorted(fields.items())), ([], fields, []))
-            if sku not in skus:
-                skus.append(sku)
-            members.append(Route(sku, int(gt), accepted))
+        fields = _fields(fam, gt, sku, parse_names)
+        skus, _same, members = groups.setdefault(repr(sorted(fields.items())), ([], fields, []))
+        if sku not in skus:
+            skus.append(sku)
+        members.append(Route(sku, int(gt), accepted))
     return [(tuple(skus), fields, tuple(members)) for skus, fields, members in groups.values()]
 
 

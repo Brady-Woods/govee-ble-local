@@ -65,12 +65,18 @@ model, from which the shipped readers are generated).
 - **The catalogue snapshot routes the SKUs no devices.yaml row lists** (`spec/govee_catalog.json`, read
   only by the generator, `_resolve.catalogue`; no cloud call at run time). Such a SKU routes to the BLE row
   with support at its catalogue goodsType, never at goodsType 0, when that is the only row at it, as the
-  app's `Pact.f` routes it. It takes the row's support level and facts and joins its profile.
+  app's `Pact.f` routes it. It takes the row's facts and joins its profile, at the row's support level capped
+  at `app_traced` (`_resolve.catalogue_support`): the snapshot's goodsType is no bench check, so the
+  catalogue bulbs on the `hardware_verified` bulb row are `app_traced`, and a `modelled` row's stay behind
+  `allow_modelled`. The generated row carries them apart from its own SKUs (`catalogue_models`, a key the
+  generator adds), and each target row's doc records the per-SKU sweep of the app for them: every string
+  literal naming one, and its mode components.
   - **10 SKUs gain a route**, by the catalogue's goodsType alone, with no bench check. Nine are on
     goodsType 64, the bulb row: H6009, H600A, H600B, H600C, H600D, H6010, H6011, H6013 and H800B. They
     share the H6004 / H6006 / H6008 profile, whose `skus` lists them after those three. The tenth,
     **R1630**, is on the h1630 row 364 and shares H1630's profile. A catalogue SKU takes its row's support
-    level, so R1630 is admitted by default now that the app trace makes that row `app_traced` (Spec).
+    level, capped at `app_traced`, so R1630 is admitted by default now that the app trace makes that row
+    `app_traced` (Spec).
   - The admit commit's rows (Spec, "41 more SKUs") extend the catalogue routes to 14 SKUs: **H6167**
     (dreamcolorlightv1 83), **H616D / H616E** (207) and **H802A** (74) join those rows' profiles.
   - They are served only at the row's pacts, as every SKU outside 1.4.0's 18 is (see Changed): the app's

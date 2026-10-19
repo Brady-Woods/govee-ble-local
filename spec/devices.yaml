@@ -813,11 +813,22 @@ families:
             aa 05 polled, no segment read (Support.getColorPieceSize 0). Scenes: the control screen's ScenesConfigBean
             versionArray {0, 1} (Support.supportScenesOp(64); ScenesDelegateRegister through Support4BulbLightV3.g):
             parseSceneV1 uploads a type-1 RGB scene with commByte 0x01, type 0 activates only; the {1} of
-            Support.is2NewScenesMode is the IoT / group path (scenes.dispatch.iot_apply), the same upload set. H6009, H600A
-            and H6010 also appear at 64 (bulblight Support.d) but are not traced here: the library routes them, and the
-            other SKUs the catalogue snapshot gives goodsType 64, to this row by that goodsType alone
-            (spec/govee_catalog.json), at its pacts. No account lock; plaintext unless
-            the advertisement says otherwise. HARDWARE-VERIFIED on an H6006 and an encrypted H6008 (bench 2026-10-15, macOS):
+            Support.is2NewScenesMode is the IoT / group path (scenes.dispatch.iot_apply), the same upload set. No account
+            lock; plaintext unless the advertisement says otherwise. Catalogue routes: H6009, H600A, H600B, H600C, H600D,
+            H6010, H6011, H6013 and H800B have catalogue goodsType 64 and no row (spec/govee_catalog.json), so the
+            library routes them to this row by that goodsType alone, at its pacts and with its facts, at app_traced, not
+            this row's hardware_verified: none of them was on the bench. The per-SKU sweep of the app for them (every
+            string literal naming one; the screen's mode components in the bundled localSkuComponentConfigs.json are
+            H6006's for each) finds: ApplyOffNeedOpenConfig.d = {H6009, H6010}, which ApplyOffNeedOpenHelper switches on
+            (33 01 01) before a scene or DIY apply while the screen's switch state is off, a scene-path fact this row
+            does not model; ColorTemConfig.H, the deprecated colour-temperature check off the control screen (rule 5),
+            which lists the other seven but not H600D or H6011, where the control screen keys colour temperature by
+            goodsType (the colour and Kelvin versions above), as this row does; bulblight Support.d, a soft / hard
+            version gate on H6009 / H600A / H6010 (and H6004 / H6006 / H6008) that only adds a settings item
+            (SettingAc.Z1); and, off the BLE control path, WlanSupportVersion.y (Wi-Fi LAN control: H6009 / H600A /
+            H6010), BulbLightApplication's Matter add config (H6011) and DynamicDomainConfig registrations (H6011, H600D,
+            H600B, H800B, H600C, H6013, H6010), and AddDeviceConfig.c's pairing set (H6009, H6010). Nothing else names
+            them. HARDWARE-VERIFIED on an H6006 and an encrypted H6008 (bench 2026-10-15, macOS):
             their 0x0d reports decode to 2700 K after a CCT write and to the RGB after a colour write; the H6006 acked a short
             scene upload (packet count 2, empty END) and then reported the scene active; both controlled with no secret. No
             H6004 on the bench.
@@ -828,6 +839,13 @@ families:
             - split_bulblightstringv1/com/govee/bulblightstringv1/bulblight/mode/scene/ScenesDelegateRegister.java:35-46
             - split_bulblightstringv1/com/govee/bulblightstringv1/bulblight/Support4BulbLightV3.java:83-84
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:407,544-546,1389-1391
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/ApplyOffNeedOpenConfig.java:29-43
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/ApplyOffNeedOpenHelper.java:53-69,80-118
+            - base-classes10/com/govee/base2light/colortemp/ColorTemConfig.java:383-389
+            - split_bulblightstringv1/com/govee/bulblightstringv1/bulblight/SettingAc.java:248-261
+            - base-classes12/com/govee/base2light/wlanControl/WlanSupportVersion.java:305-325
+            - split_bulblightstringv1/com/govee/bulblightstringv1/bulblight/BulbLightApplication.java:75-80,393-400
+            - base-classes10/com/govee/base2light/connect/constant/AddDeviceConfig.java:296-306
         "311": { power_live: [push_30], mode_color_parse: kelvin_only_15 }   # H601E / H601F; split_bulblightstringv1/com/govee/bulblightv3/newdetail/Info4Detail.java:666-706
         "111":   # H1501 / H601A / H601B / H601C / H601D / H801A / H801C / H801D / R1501, the bulblight AcNewDetail
           models: [H1501, H601A, H601B, H601C, H601D, H801A, H801C, H801D, R1501]
@@ -2835,9 +2853,12 @@ families:
             account lock: strategy E1 sends no 0xB1 / 0xB2. Not listed, as on goodsType 19: E1's 33 09 time sync
             (TimerConfig.f). Not bench-verified; the Kelvin read-back is the app's decode (mode_reports_kelvin absent).
             The catalogue snapshot (spec/govee_catalog.json) also gives H802A goodsType 74, and no row lists it, so the
-            library routes it to this row by that goodsType alone, at its pacts; it is not traced here.
+            library routes it to this row by that goodsType alone, at its pacts and with its facts. The per-SKU sweep of
+            the app for H802A (every string literal naming it) finds only Support.setDynamicApi's DynamicDomainConfig
+            registration, off the BLE control path, and its mode components in the bundled
+            localSkuComponentConfigs.json are H618A's.
           doc-ref:
-            - split_rgbiclight/com/govee/dreamcolorlightv1/pact/Support.java:164,261-275,288,295,299-300,305-313,670-684,953-958,986-1004,1300-1316,1340-1349,1403-1405,1476-1487,1713-1730,1745-1759,1775-1786,1814-1819,1911-1953,1963-2005
+            - split_rgbiclight/com/govee/dreamcolorlightv1/pact/Support.java:164,261-275,288,295,299-300,305-313,670-684,953-958,986-1004,1300-1316,1340-1349,1379-1382,1403-1405,1476-1487,1713-1730,1745-1759,1775-1786,1814-1819,1911-1953,1963-2005
             - split_rgbiclight/com/govee/dreamcolorlightv1/pact/SubLib4BleIot.java:22
             - split_rgbiclight/com/govee/dreamcolorlightv1/pact/Model4BleIot.java:41-46
             - split_rgbiclight/com/govee/rgbiclight/Support.java:98-114,216-235,459-462
@@ -2956,7 +2977,8 @@ families:
             on goodsType 19: E1's 33 09 time sync (TimerConfig.f). Not bench-verified; the Kelvin read-back is the app's
             decode (mode_reports_kelvin absent), not observed. The catalogue snapshot (spec/govee_catalog.json) also
             gives H6167 goodsType 83, and no row lists it, so the library routes it to this row by that goodsType alone,
-            at its pacts; it is not traced here.
+            at its pacts and with its facts. The per-SKU sweep of the app finds no string literal naming H6167, and its
+            mode components in the bundled localSkuComponentConfigs.json are H619Z's.
           doc-ref:
             - split_rgbiclight/com/govee/dreamcolorlightv1/pact/Support.java:164,261-275,291,302,305-313,670-684,953-958,986-1004,1300-1316,1340-1349,1403-1405,1446-1448,1476-1487,1713-1730,1745-1759,1775-1786,1814-1819,1911-1953,1963-2005
             - split_rgbiclight/com/govee/dreamcolorlightv1/pact/SubLib4BleIot.java:22
@@ -3350,10 +3372,12 @@ families:
             (supportPartBrightness4BleWifi is true for 207 whatever the firmware). Scene apply: a sceneType-5 scene whose
             param starts 0x50 goes through RgbicDiyConfig's new-DIY parsers, not traced, so scene_dialect untraced. Not
             hardware-verified. The catalogue snapshot (spec/govee_catalog.json) also gives H616D and H616E goodsType
-            207, and no row lists them, so the library routes them to this row by that goodsType alone, at its pacts;
-            they are not traced here.
+            207, and no row lists them, so the library routes them to this row by that goodsType alone, at its pacts and
+            with its facts. The per-SKU sweep of the app for them (every string literal naming one) finds only Support's
+            product-name table (Outdoor Strip Lights 2, with H616C), which sends nothing, and their mode components in
+            the bundled localSkuComponentConfigs.json are H616C's.
           doc-ref:
-            - split_rgbiclight/com/govee/dreamcolorlightv1/pact/Support.java:164,361-367,670-684,953-958,1300-1316,1344-1349,1403-1405,1476-1487,1522-1524,1713-1730,1745-1747,1775-1777,1911-1957,1973-2005
+            - split_rgbiclight/com/govee/dreamcolorlightv1/pact/Support.java:88,91,164,361-367,670-684,922-923,953-958,1300-1316,1344-1349,1403-1405,1476-1487,1522-1524,1713-1730,1745-1747,1775-1777,1911-1957,1973-2005
             - split_rgbiclight/com/govee/dreamcolorlightv1/pact/SubLib4BleIot.java:20-25
             - split_rgbiclight/com/govee/dreamcolorlightv1/pact/DeviceItem4BleIot.java:20
             - split_rgbiclight/com/govee/dreamcolorlightv1/pact/Model4BleIot.java:41-46
@@ -6142,7 +6166,9 @@ families:
             init), so scene_dialect is untraced. Not modelled: the day-sync reads before the status read (aa f1, aa f0,
             then ac 09, when DaySyncConfig.A), which nothing on the control path reads. Not hardware-verified. The
             catalogue snapshot (spec/govee_catalog.json) also gives R1630 goodsType 364, and no row lists it, so the
-            library routes it to this row by that goodsType alone, at its pacts; it is not traced here.
+            library routes it to this row by that goodsType alone, at its pacts and with its facts. The per-SKU sweep of
+            the app finds no string literal naming R1630, and its mode components in the bundled
+            localSkuComponentConfigs.json are H1630's.
           doc-ref:
             - split_h7050/com/govee/h7050/pact/Support.java:55,94-95,201-203,282-326,406-407,705-710,325,328-353
             - base-classes2/com/govee/shared/checker/KmpGoodsType.java:137

@@ -22,9 +22,11 @@ govee_common.ksy, so a missing fact, or one the library can't serve, fails here 
 
 The rows also take the routes of the committed catalogue snapshot, spec/govee_catalog.json (the build reads
 it and nothing fetched): _resolve.catalogue over the whole document, by the snapshot's precedence. A SKU no
-row lists joins the models of the BLE row of its catalogue goodsType (never goodsType 0). One that a row
-with support lists at a goodsType the snapshot contradicts, with no cited rewrite, leaves those rows (a row
-left with no models is dropped). The generator prints how many SKUs only the snapshot routes, and the review
+row lists joins the BLE row of its catalogue goodsType (never goodsType 0), in the row's catalogue_models, a
+key the generator adds (GENERATED): it takes the row's facts, at the row's support level capped at
+app_traced, since the snapshot's goodsType is no bench check. One that a row with support lists at a
+goodsType the snapshot contradicts, with no cited rewrite, leaves those rows (a row left with no SKUs is
+dropped). The generator prints how many SKUs only the snapshot routes, and the review
 list. It also prints the routes of the pact-conditioned assigned_goods_type items that no row carries yet
 (_resolve.reassignment_review).
 
@@ -53,7 +55,8 @@ RESOLVER = ROOT / "src" / "govee_ble_local" / "devices" / "_resolve.py"
 
 # Schema definition -> the properties the library reads there, to serve them or to check that it can (a
 # definition not listed is copied whole). A name added here gets its key in the matching TypedDict of
-# devices/_resolve.py in the same change (mypy checks the generated literal against them).
+# devices/_resolve.py in the same change (mypy checks the generated literal against them). GENERATED names the
+# keys the generator itself adds at a definition, which the schema must not declare there.
 _LAYER = ("forms", "counts", "group", "power", "mode", "mode_status")
 _GATES = ("min_soft_version", "min_hard_version", "min_wifi_soft_version")
 _ROW_FACTS = ("scene_versions", "kelvin_range", "brightness_range")
@@ -84,6 +87,8 @@ KEEP: dict[str, tuple[str, ...]] = {
     "#/$defs/wireBranch": _LAYER,
     "#/$defs/wireFirmware": (*_LAYER, *_GATES),
 }
+# catalogue_models: the SKUs only the catalogue snapshot routes to the row (_with_catalogue).
+GENERATED: dict[str, tuple[str, ...]] = {"#/$defs/clientRow": ("catalogue_models",)}
 # The colour sub-mode keys of a modeColorStrategy -> govee_profile mode_decode params (c02 .. c15).
 SUB_MODES = frozenset({"0x02", "0x0b", "0x0d", "0x14", "0x15"})
 
@@ -105,6 +110,10 @@ class Projector:
             missing = [k for k in keys if k not in props]
             if missing:
                 raise GenError(f"KEEP lists {missing} at {pointer}, which the schema does not declare there")
+        for pointer, keys in GENERATED.items():
+            declared = [k for k in keys if k in (self.node(pointer).get("properties") or {})]
+            if declared:
+                raise GenError(f"GENERATED lists {declared} at {pointer}, which the schema declares there")
 
     def node(self, pointer: str) -> dict[str, Any]:
         """The schema object at a JSON pointer ``#/a/b``."""
@@ -116,7 +125,7 @@ class Projector:
     def project(self, value: Any, pointer: str) -> Any:
         """``value`` (at schema ``pointer``) as Python literals: lists become tuples, and a mapping keeps the
         properties KEEP names at its definition, or all of them (the schema's, as the test suite validates
-        devices.yaml against it) when KEEP names none."""
+        devices.yaml against it) when KEEP names none, and the keys GENERATED names there."""
         node = self.node(pointer)
         while "$ref" in node:
             pointer = node["$ref"]
@@ -130,6 +139,7 @@ class Projector:
         props = node.get("properties") or {}
         extra = node.get("additionalProperties")
         keys = [k for k in KEEP[pointer] if k in value] if pointer in KEEP else list(value)
+        keys += [k for k in GENERATED.get(pointer, ()) if k in value]
         out = {}
         for key in keys:
             if not isinstance(key, str):
@@ -164,7 +174,8 @@ def _supported(doc: dict[str, Any], admitted: frozenset[str]) -> dict[str, Any]:
                 if row.get("support") in admitted}
         if not rows:
             continue
-        models = {m for row in rows.values() for m in row.get("models") or ()}
+        models = {m for row in rows.values() for key in ("models", "catalogue_models")
+                  for m in row.get(key) or ()}
         cp = {**cp, "by_goods_type": rows}
         if "by_model" in cp:
             cp["by_model"] = {m: v for m, v in cp["by_model"].items() if m in models}
@@ -246,9 +257,10 @@ def snapshot(path: pathlib.Path = CATALOGUE) -> dict[str, int]:
 
 
 def _with_catalogue(doc: dict[str, Any], routed: Any) -> dict[str, Any]:
-    """``doc`` with the catalogue's routes (``_resolve.Catalogue``): each added SKU in its row's models, after
-    the row's own, and each unrouted one out of the rows with support; a row left with no models routes
-    nothing and is dropped."""
+    """``doc`` with the catalogue's routes (``_resolve.Catalogue``): each unrouted SKU out of the rows with
+    support, and each added one in its row's ``catalogue_models`` (GENERATED: _resolve serves those SKUs with
+    the row's facts, at its support level capped at app_traced). A row left with neither routes nothing and is
+    dropped."""
     families = []
     for fam in doc["families"]:
         rows = (fam.get("client_profile") or {}).get("by_goods_type") or {}
@@ -256,11 +268,11 @@ def _with_catalogue(doc: dict[str, Any], routed: Any) -> dict[str, Any]:
         for gt, row in rows.items():
             own = list(row.get("models") or ())
             models = [m for m in own if "support" not in row or m.upper() not in routed.unrouted]
-            models += routed.added.get((fam["id"], gt), ())
-            if models == own:
+            added = list(routed.added.get((fam["id"], gt), ()))
+            if models == own and not added:
                 kept[gt] = row
-            elif models:
-                kept[gt] = {**row, "models": models}
+            elif models or added:
+                kept[gt] = {**row, "models": models, **({"catalogue_models": added} if added else {})}
         families.append({**fam, "client_profile": {**fam["client_profile"], "by_goods_type": kept}}
                         if kept != rows else fam)
     return {**doc, "families": families}

@@ -11,6 +11,7 @@ from typing import Any
 
 from conftest import require_optional
 
+from govee_ble_local._generated.devices import FAMILIES, MODE_COLOR_PARSE
 from govee_ble_local.devices import _resolve
 from govee_ble_local.devices.profile import profile_for
 
@@ -32,6 +33,13 @@ def test_the_catalogue_routes_only_skus_no_row_lists() -> None:
             assert p is not None and sku in p.skus, sku
             assert p is profile_for(sku, goods_type=int(gt), allow_modelled=True), sku
             assert profile_for(sku, pact=(9, 9), allow_modelled=True) is None, sku   # no 1.x pact fallback
+
+    # A catalogue route's support is its row's capped at app_traced: the bulb row's bench check isn't theirs.
+    def served(level: str) -> set[str]:
+        return {sku for skus, _fields, _routes in _resolve.profiles(FAMILIES, MODE_COLOR_PARSE, {level})
+                for sku in skus}
+    assert "H6006" in served("hardware_verified") and "H6009" not in served("hardware_verified")
+    assert "H6009" in served("app_traced") and _resolve.catalogue_support("modelled") == "modelled"
     cat = _resolve.catalogue(fams, {
         "H0000": 0,      # goodsType 0 never routes, even with H6188's goodsType-0 row
         "H0064": 64,     # no row lists it: its goodsType's row routes it
