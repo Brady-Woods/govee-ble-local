@@ -84,8 +84,8 @@ model, from which the shipped readers are generated).
   - They are served only at the row's pacts, as every SKU outside 1.4.0's 18 is (see Changed): the app's
     scan refuses a device whose pact its goodsType doesn't accept (`AbsBaseBleModel.e`, `checkProtocol` ->
     `Pact.i`).
-  - The nine bulbs ship without named scenes (scene codes only), and the five others without scenes, as
-    their rows offer none yet (`scene_dialect: untraced`). Each row's doc says how they route.
+  - The nine bulbs and the five others ship without named scenes (scene codes only): no catalog is
+    bundled for them yet. Each row's doc says how they route.
   - A SKU that a row lists keeps the spec's route. A non-zero catalogue conflict leaves the SKU unrouted
     and on the review list the generator prints, unless an `assigned_goods_type` item of the row's family
     cites the app's rewrite of that goodsType: one whose `from_goods_type` names it, or, with none, one
@@ -171,9 +171,7 @@ model, from which the shipped readers are generated).
   `ic_pieces: fixed` yet, so no SKU sets it.
 - Bundled scene catalogs for the newly admitted models whose profile offers scenes: H6002, H1401 / R1401
   and H14B1 (H14B1 shares H6004's set), fetched from the public scene library with `tools/fetch_scenes.py`
-  into the content-keyed store. The other newly admitted models get no catalog yet: their scene upload
-  dialect is untraced, so their profiles offer no scenes, and a catalog would be dead data. Each one comes
-  with the change that traces its family's scene path. The Christmas scene of H1401 / R1401 / H14B1 is
+  into the content-keyed store. The other newly admitted models get no catalog yet. The Christmas scene of H1401 / R1401 / H14B1 is
   shipped by the public library only as a 0xFF stub and stays an unresolved placeholder (resolving it
   needs an account).
 
@@ -324,7 +322,7 @@ model, from which the shipped readers are generated).
     h60a6 0x15 frames over 3 pieces, colour groups counted from the TLV len; h7056 304 (**H7056**, pact
     (1, 1)): 8 pieces in fixed groups of 4; h1630 364 (**H1630**, pacts (1, 1) / (1, 2) / (1, 3)): one
     piece, Kelvin [1000, 10000], its 0xA5 gradient record not decoded.
-  None of them offers scenes yet: their scene apply path isn't traced (`scene_dialect: untraced`).
+  Their scene dialect is now `legacy_scene` (the new-DIY rule below).
 - **41 more SKUs from the targeted app trace** (one-device-list, the admit commit): `client_profile`
   rows for the goodsTypes the trace completed, each with its accepted pacts and its control-screen facts,
   cited in `doc-ref`. Admitted by default (`app_traced`, not hardware-verified):
@@ -339,17 +337,15 @@ model, from which the shipped readers are generated).
   - phase 2's modelled rows, now traced: **H6690** (pact_h6099 336, with gradual), **H7040** (h7040 36),
     **H60B1** (h60b1 300), **H7056** (h7056 304) and **H1630** (h1630 364);
   - the catalogue snapshot also routes five SKUs no row lists to these rows, admitted with them by
-    catalogue goodsType alone (not bench-checked, and without scenes: these rows say `scene_dialect:
-    untraced`): **H6167** (dreamcolorlightv1 83), **H616D / H616E** (207), **H802A** (74) and **R1630**
+    catalogue goodsType alone (not bench-checked): **H6167** (dreamcolorlightv1 83), **H616D / H616E** (207), **H802A** (74) and **R1630**
     (h1630 364, which leaves `allow_modelled` with its row).
 
   Behind `allow_modelled` (source-modelled, not live-verified): **H61B8 / H61B9** (h61d3 299), and
   **H8015** (bulblightv3 328, colour temperature only). 328's facts are traced, but its illumination tab, the
   only colour-temperature control, writes the Kelvin frame and `33 04` with the current brightness as one
   write (`View4IlluminationMode.I0`), where `Device.set_color_temp` sends the Kelvin frame alone, so the row
-  is held (`support: modelled`) until the library sends that pair. Where the
-  screen sends sceneType-5 scenes through the app's new-DIY parsers, the row says `scene_dialect:
-  untraced`, so that SKU offers no scenes yet. The H6042's wire piece count is now the control screen's 5,
+  is held (`support: modelled`) until the library sends that pair. The
+  H6042's wire piece count is now the control screen's 5,
   not 10. The 18 SKUs of 1.4.0 are unchanged.
 - **24 more SKUs on the phase-3 library changes**, all `app_traced`:
   - bulblightv3 111 (**H1501 / H601A / H601B / H601C / H601D / H801A / H801C / H801D / R1501**), 348
@@ -367,6 +363,22 @@ model, from which the shipped readers are generated).
 
   Behind `allow_modelled`: h61d3 261 (**H61F2 / H61F5 / H61F6**), Kelvin [1000, 10000] at pact (4, 1), else
   [2700, 6500]; its piece count has no app cap, so the mask width is modelled, as on 299.
+- **One scene dialect for the goodsTypes that register a new-DIY parser.** On such a goodsType
+  (`DiyNewConfig.addDiyEffectParse`), the control screen sends a sceneType-5 scene whose param leads 0x50
+  through that parser (`BaseSceneViewMode.r3`) and every other scene through `parseSceneV1`, as on 64, 348
+  and 408, which were already `legacy_scene`. The rows held `untraced` for that registration alone are now
+  `legacy_scene` too, so they offer scenes (by code until their catalogs are bundled): h6047 197, bulblightv3
+  111 / 20, h61d3 242 / 264 / 299 / 367 / 384 / 387 / 388 / 389 / 400 / 403 / 404 / 261, dreamcolorlightv1
+  70 / 73 / 74 / 75 / 83 / 136 / 175 / 176 / 178 / 187 / 207 / 262, h60b1 300, pact_h6099 203 / 336, h7040
+  36, h7080 45 / 55 / 56, h7056 304, h7050 77 / 157 / 46 / 76 / 105 / 107 / 113 / 116 / 171 / 218 / 219 / 227
+  and h1630 364: 70 SKUs (5 of them behind `allow_modelled`). striplight 114 (H610B, its own scene view
+  model) and h6061 51 stay `untraced`. The library uploads no sceneType-5 scene under `legacy_scene` (it only
+  activates one), so a `legacy_scene` SKU's bundled catalog holds none that the app uploads: none whose param
+  leads 0x50, and none at all where its scene versions hold one of `parseSceneV1`'s sceneType-5 branches (7
+  to 13: H1630's 13). `tools/fetch_scenes.py` leaves such scenes out, and a test checks every bundled
+  catalog. 1.4.0's catalogs hold no sceneType-5 scene outside H60A6 and H6052, which have their own type-5
+  dialects, so nothing they send changes. Rows 64, 348 and 408 now cite `BulbDiyConfig.a` / `.b` (348 does
+  have a new-DIY parser).
 - **H6004 routes to goodsType 64.** Rows 9 and 10 (H6003, and the H6004's Wi-Fi revision) say
   `connectivity: [wifi, iot]`, so no BLE client routes there.
 - **goodsType 64's scene versions are {0, 1}**, the control screen's `ScenesConfigBean` set

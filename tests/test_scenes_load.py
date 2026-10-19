@@ -1,12 +1,15 @@
-"""Scene catalog loader: SKU validation, error contract, cache isolation."""
+"""Scene catalog loader: SKU validation, error contract, cache isolation; the bundled store and the table."""
 from __future__ import annotations
 
+import base64
 import dataclasses
+import json
+from importlib import resources
 
 import pytest
 from conftest import FakeSceneFiles
 
-from govee_ble_local import scenes
+from govee_ble_local import profile_for, scenes
 from govee_ble_local.exceptions import GoveeBleError, GoveeBleInvalidValue
 from govee_ble_local.scenes import load_scenes, scene_names_by_code
 
@@ -89,3 +92,22 @@ def test_mutation_isolation():
     names = scene_names_by_code("H6006")
     names.clear()
     assert scene_names_by_code("H6006")
+
+
+def test_no_legacy_scene_catalog_holds_a_type5_scene_the_app_uploads():
+    """devices.schema.json scene_dialect: the library only activates a sceneType-5 scene under legacy_scene,
+    so a legacy_scene SKU's bundled catalog holds none the app uploads: none whose param leads 0x50 (the
+    new-DIY parser a goodsType registers, BaseSceneViewMode.r3), and none at all where its versions hold one
+    of parseSceneV1's sceneType-5 branches (7 to 13)."""
+    index = json.loads((resources.files(scenes) / "index.json").read_text(encoding="utf-8"))
+    for sku in index:
+        p = profile_for(sku, allow_modelled=True)
+        if p is not None and p.scene_dialect != "A":
+            continue   # H60A6, H6052: a sceneType-5 dialect of their own
+        sets = [] if p is None else [p.scene_versions, *(v for _p, v in p.scene_versions_by_pact),
+                                     *(v for _s, _h, v in p.scene_versions_by_firmware)]
+        type5_branch = any(7 <= v <= 13 for s in sets for v in s)
+        for scene in load_scenes(sku).values():
+            raw = base64.b64decode(scene.param or "")
+            new_diy = len(raw) >= 2 and raw[0] == 0x50
+            assert scene.scene_type != 5 or not (type5_branch or new_diy), (sku, scene.name)

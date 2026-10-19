@@ -302,6 +302,43 @@ def _merge(existing: dict[str, Entry], fresh: dict[str, Entry]) -> dict[str, Ent
 APP_DEFINED_SCENE_SKUS = frozenset({"H6188"})
 
 
+# parseSceneV1's sceneType-5 branches, versions 7 to 13 (ScenesOp.parseSceneV1,
+# base-classes10/com/govee/base2light/ble/ScenesOp.java:555-575; devices.yaml scenes.dispatch.table).
+_TYPE5_VERSIONS = frozenset(range(7, 14))
+
+
+def uploads_type5(entry: Entry, versions: frozenset[int]) -> bool:
+    """True if the app uploads this sceneType-5 scene on a ``legacy_scene`` screen whose scene versions are
+    ``versions``: one whose decoded param leads 0x50 (at least 2 bytes) goes through the goodsType's new-DIY
+    parser (BaseSceneViewMode.r3, base-classes11/com/govee/base2light/pact/newdetail/content/scene/
+    BaseSceneViewMode.java:1152-1200), and any other through a sceneType-5 branch of parseSceneV1 where the
+    versions hold one. The library uploads no sceneType-5 scene under legacy_scene (it only activates one), so
+    such a scene is left out of the catalog until its path is modelled."""
+    if entry.get("scene_type") != 5:
+        return False
+    if versions & _TYPE5_VERSIONS:
+        return True
+    raw = base64.b64decode(entry.get("param") or "")
+    return len(raw) >= 2 and raw[0] == 0x50
+
+
+def legacy_versions(sku: str) -> frozenset[int] | None:
+    """The scene versions of ``sku``'s ``legacy_scene`` profile (every version of its pact and firmware sets),
+    or None when its profile uploads sceneType 5 in a dialect of its own (H60A6, H6052). A SKU without a
+    profile counts as legacy_scene with no versions, so a fetch for it leaves out what a legacy screen would
+    upload."""
+    from govee_ble_local import profile_for
+
+    p = profile_for(sku, allow_modelled=True)
+    if p is None:
+        return frozenset()
+    if p.scene_dialect != "A":
+        return None
+    sets = [p.scene_versions, *(v for _pact, v in p.scene_versions_by_pact),
+            *(v for _soft, _hard, v in p.scene_versions_by_firmware)]
+    return frozenset(v for s in sets for v in s)
+
+
 def scene_capable_skus() -> list[str]:
     """All supported SKUs whose device declares Capability.SCENES (so new
     families are covered automatically as they're added to the registry), except the
@@ -392,6 +429,12 @@ def main(skus: list[str], app_version: str = DEFAULT_APP_VERSION) -> int:
             failures += 1
             continue
         scenes = _merge(existing, fresh)
+        versions = legacy_versions(sku)
+        held = sorted(n for n, v in scenes.items() if versions is not None and uploads_type5(v, versions))
+        if held:
+            scenes = {n: v for n, v in scenes.items() if n not in held}
+            print(f"{sku}: left out {len(held)} sceneType-5 scenes the app uploads and the library does not "
+                  f"(legacy_scene): {', '.join(held)}")
         if not scenes:
             print(f"{sku}: no scenes in the library; nothing stored")
             continue

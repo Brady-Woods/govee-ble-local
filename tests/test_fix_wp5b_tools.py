@@ -3,6 +3,7 @@ power_semantics_probe, h60a6_live_check). Offline: no BLE hardware, no network."
 from __future__ import annotations
 
 import asyncio
+import base64
 import importlib.util
 import inspect
 import re
@@ -294,6 +295,20 @@ def test_main_counts_corrupt_catalog_and_write_failure(monkeypatch: pytest.Monke
     monkeypatch.setattr(fs, "write_catalog", disk_full)
     assert fs.main(["H61A8", "H6052"]) == 2
     assert capsys.readouterr().err.count("WRITE FAILED") == 2
+
+
+def test_main_leaves_out_the_type5_scenes_legacy_scene_does_not_upload(monkeypatch: pytest.MonkeyPatch,
+                                                                       tmp_path: Path) -> None:
+    fs = _load("fetch_scenes")
+    monkeypatch.setattr(fs, "OUT_DIR", tmp_path)
+    fetched = {"Rgb": {"code": 1, "param": None, "scene_type": 1},
+               "NewDiy": {"code": 2, "param": base64.b64encode(b"\x50\x01\x02").decode(), "scene_type": 5},
+               "Diy": {"code": 3, "param": base64.b64encode(b"\x13\x01\x02").decode(), "scene_type": 5}}
+    monkeypatch.setattr(fs, "fetch", lambda sku, app_version="": dict(fetched))
+    assert fs.main(["H6006", "H1630", "H60A6"]) == 0
+    assert set(fs.read_catalog("H6006", tmp_path)) == {"Rgb", "Diy"}   # legacy_scene {0, 1}: Diy activates
+    assert set(fs.read_catalog("H1630", tmp_path)) == {"Rgb"}          # version 13: parseSceneV1 uploads 5
+    assert set(fs.read_catalog("H60A6", tmp_path)) == set(fetched)     # its own type-5 dialect
 
 
 # --- power_semantics_probe -------------------------------------------------------------------

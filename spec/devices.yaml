@@ -146,6 +146,7 @@ scenes:
         comm_byte: "scene-version constant: V1=0x01, V2=0x02, V3=0x07, V6=0x0C (MULTI_V*_NEW_SCENES), chosen by sceneType via ScenesOp.parseSceneV1"
         value: "decoded cloud scenceParam (V3/graffiti strips leading 2 bytes)"
         path: "SceneControllerNoEventV1 <- ScenesOp.parseSceneV1"
+        new_diy: "On a goodsType that registers a new-DIY parser (DiyNewConfig.addDiyEffectParse; most do), BaseSceneViewMode.r3 (:1152-1200) first takes a sceneType-5 scene whose decoded param leads 0x50 and has at least 2 bytes, and sends it through that parser; every other scene reaches parseSceneV1 (BaseSceneViewMode.k3 :864-903). The library uploads no sceneType-5 scene under legacy_scene, so a legacy_scene SKU's bundled catalog holds no such scene, nor any sceneType-5 scene where its scene versions hold one of parseSceneV1's sceneType-5 branches (dispatch.table versions 7 to 13)."
       diy_graffiti:
         comm_byte: "device DIY/graffiti protocol code (H60A6 = 0x58 = constant 88, from H60A6DiyParse/getProtocolCode)"
         value: "effect parsed then RE-SERIALIZED (H60A6GraffitiParse.toBytes() = [0x20, bgR,bgG,bgB, brightness, showType, layerCount, ...]); raw 0x50 header consumed"
@@ -686,7 +687,7 @@ families:
           capabilities: [power, brightness, rgb, color_temp, segments, scenes, gradual]
           zones: []
           account_lock: false
-          scene_dialect: untraced
+          scene_dialect: legacy_scene
           scene_versions: [0, 1, 2, 3]
           kelvin_range: [2000, 9000]
           brightness_range: [1, 100]
@@ -715,9 +716,11 @@ families:
             old-detail goodsType (kelvin_pair_15, the family value); NewDetailVm.A5's per-bar repaint is 119 / 196 only.
             Scenes: ScenesConfigBean opScenesSet Support.supportScenesOpSet(197) = {0, 1, 2, 3} (H6042SceneConfig.match
             197). Scene apply (BaseSceneViewMode.r3): a sceneType-5 scene whose param starts 0x50 goes through
-            DiyProtocolParseShare0x00, which the old detail screen's DiyConfig registers for 197 at app init, not
-            traced, so scene_dialect is untraced. The wire row for 197 carries counts num_segments 5 (not
-            getGoodsType4ColorSegment's 10, which is not the control screen's count). Not hardware-verified.
+            DiyProtocolParseShare0x00, which the old detail screen's DiyConfig registers for 197 at app init, which is
+            not modelled; every other scene goes through parseSceneV1 (BaseSceneViewMode.r3), so scene_dialect is
+            legacy_scene and the bundled catalog holds no sceneType-5 scene that leads 0x50. The wire row for 197
+            carries counts num_segments 5 (not getGoodsType4ColorSegment's 10, which is not the control screen's count).
+            Not hardware-verified.
           doc-ref:
             - split_h6047/com/govee/h6047/pact/Support.java:26,52-57,98-112,121-133,155-157,178-180,214-220,273-288,345-350
             - split_h6047/com/govee/h6047/pact/Model.java:44-58
@@ -813,22 +816,26 @@ families:
             aa 05 polled, no segment read (Support.getColorPieceSize 0). Scenes: the control screen's ScenesConfigBean
             versionArray {0, 1} (Support.supportScenesOp(64); ScenesDelegateRegister through Support4BulbLightV3.g):
             parseSceneV1 uploads a type-1 RGB scene with commByte 0x01, type 0 activates only; the {1} of
-            Support.is2NewScenesMode is the IoT / group path (scenes.dispatch.iot_apply), the same upload set. No account
-            lock; plaintext unless the advertisement says otherwise. Catalogue routes: H6009, H600A, H600B, H600C, H600D,
-            H6010, H6011, H6013 and H800B have catalogue goodsType 64 and no row (spec/govee_catalog.json), so the
-            library routes them to this row by that goodsType alone, at its pacts and with its facts, at app_traced, not
-            this row's hardware_verified: none of them was on the bench. The per-SKU sweep of the app for them (every
-            string literal naming one; the screen's mode components in the bundled localSkuComponentConfigs.json are
-            H6006's for each) finds: ApplyOffNeedOpenConfig.d = {H6009, H6010}, which ApplyOffNeedOpenHelper switches on
-            (33 01 01) before a scene or DIY apply while the screen's switch state is off, a scene-path fact this row
-            does not model; ColorTemConfig.H, the deprecated colour-temperature check off the control screen (rule 5),
-            which lists the other seven but not H600D or H6011, where the control screen keys colour temperature by
-            goodsType (the colour and Kelvin versions above), as this row does; bulblight Support.d, a soft / hard
-            version gate on H6009 / H600A / H6010 (and H6004 / H6006 / H6008) that only adds a settings item
-            (SettingAc.Z1); and, off the BLE control path, WlanSupportVersion.y (Wi-Fi LAN control: H6009 / H600A /
-            H6010), BulbLightApplication's Matter add config (H6011) and DynamicDomainConfig registrations (H6011, H600D,
-            H600B, H800B, H600C, H6013, H6010), and AddDeviceConfig.c's pairing set (H6009, H6010). Nothing else names
-            them. HARDWARE-VERIFIED on an H6006 and an encrypted H6008 (bench 2026-10-15, macOS):
+            Support.is2NewScenesMode is the IoT / group path (scenes.dispatch.iot_apply), the same upload set.
+            BulbDiyConfig.a registers a new-DIY parser for 64 (DiyDelegateRegister): a sceneType-5 scene whose param
+            starts 0x50 goes through it (BaseSceneViewMode.r3), which is not modelled; every other scene goes through
+            parseSceneV1, so scene_dialect is legacy_scene and the bundled catalog holds no sceneType-5 scene that leads
+            0x50. No account lock; plaintext unless the advertisement says otherwise. Catalogue routes: H6009, H600A,
+            H600B, H600C, H600D, H6010, H6011, H6013 and H800B have catalogue goodsType 64 and no row
+            (spec/govee_catalog.json), so the library routes them to this row by that goodsType alone, at its pacts and
+            with its facts, at app_traced, not this row's hardware_verified: none of them was on the bench. The per-SKU
+            sweep of the app for them (every string literal naming one; the screen's mode components in the bundled
+            localSkuComponentConfigs.json are H6006's for each) finds: ApplyOffNeedOpenConfig.d = {H6009, H6010}, which
+            ApplyOffNeedOpenHelper switches on (33 01 01) before a scene or DIY apply while the screen's switch state is
+            off, a scene-path fact this row does not model; ColorTemConfig.H, the deprecated colour-temperature check
+            off the control screen (rule 5), which lists the other seven but not H600D or H6011, where the control
+            screen keys colour temperature by goodsType (the colour and Kelvin versions above), as this row does;
+            bulblight Support.d, a soft / hard version gate on H6009 / H600A / H6010 (and H6004 / H6006 / H6008) that
+            only adds a settings item (SettingAc.Z1); and, off the BLE control path, WlanSupportVersion.y (Wi-Fi LAN
+            control: H6009 / H600A / H6010), BulbLightApplication's Matter add config (H6011) and DynamicDomainConfig
+            registrations (H6011, H600D, H600B, H800B, H600C, H6013, H6010), and AddDeviceConfig.c's pairing set (H6009,
+            H6010). Nothing else names them. HARDWARE-VERIFIED on an H6006 and an encrypted H6008 (bench 2026-10-15,
+            macOS):
             their 0x0d reports decode to 2700 K after a CCT write and to the RGB after a colour write; the H6006 acked a short
             scene upload (packet count 2, empty END) and then reported the scene active; both controlled with no secret. No
             H6004 on the bench.
@@ -846,6 +853,9 @@ families:
             - base-classes12/com/govee/base2light/wlanControl/WlanSupportVersion.java:305-325
             - split_bulblightstringv1/com/govee/bulblightstringv1/bulblight/BulbLightApplication.java:75-80,393-400
             - base-classes10/com/govee/base2light/connect/constant/AddDeviceConfig.java:296-306
+            - split_bulblightstringv1/com/govee/bulblightstringv1/bulblight/mode/diy/BulbDiyConfig.java:15-27
+            - split_bulblightstringv1/com/govee/bulblightstringv1/bulblight/mode/diy/DiyDelegateRegister.java:56-58
+            - base-classes11/com/govee/base2light/pact/newdetail/content/scene/BaseSceneViewMode.java:864-903,1152-1200
         "311": { power_live: [push_30], mode_color_parse: kelvin_only_15 }   # H601E / H601F; split_bulblightstringv1/com/govee/bulblightv3/newdetail/Info4Detail.java:666-706
         "111":   # H1501 / H601A / H601B / H601C / H601D / H801A / H801C / H801D / R1501, the bulblight AcNewDetail
           models: [H1501, H601A, H601B, H601C, H601D, H801A, H801C, H801D, R1501]
@@ -856,7 +866,7 @@ families:
           capabilities: [power, brightness, rgb, color_temp, scenes]
           zones: []
           account_lock: false
-          scene_dialect: untraced
+          scene_dialect: legacy_scene
           scene_versions: [0, 1]
           kelvin_range: [2700, 6500]
           connect_reads: [brightness]
@@ -874,7 +884,9 @@ families:
             before each poll's reads; it only stops a running 33 24 effect (light_effect_stop). Source-modelled, not
             live-verified. No account lock. Scene apply (BaseSceneViewMode.k3): a sceneType-5 scene whose param starts 0x50
             goes through the new-DIY parser BulbDiyConfig registers for this goodsType at app init (DiyDelegateRegister,
-            from BulbLightApplication.create), not traced, so scene_dialect is untraced.
+            from BulbLightApplication.create), which is not modelled; every other scene goes through parseSceneV1
+            (BaseSceneViewMode.r3), so scene_dialect is legacy_scene and the bundled catalog holds no sceneType-5 scene
+            that leads 0x50.
           doc-ref:
             - split_bulblightstringv1/com/govee/bulblightv3/pact/Support.java:78-83,357-372,374-379
             - split_bulblightstringv1/com/govee/bulblightv3/pact/Model.java:29-38
@@ -919,11 +931,18 @@ families:
             after the connect reads VM4Light.i5 sends 33 25 01 (light_effect_stop; bulblight Support.c holds for 348) on
             every connect. The library sends it on every session, without waiting for the ack, so after the idle
             disconnect before each poll's reads; it only stops a running 33 24 effect (light_effect_stop).
-            Source-modelled, not live-verified. Scenes versionArray {0, 1} (Support4BulbLightV3.g). No account lock: the h0 strategy and the
-            connect callback send no 0xB2, as on 64 / 111. Not traced: the day-sync controllers DaySyncVM adds to the
-            connect (VM4Light.O4; the screen's day-sync mode list, DelegateModeList4DaySync and DaySyncConfig); they are
-            not listed, as the h61d3 rows' day-sync reads are not. Not hardware-verified.
+            Source-modelled, not live-verified. Scenes versionArray {0, 1} (Support4BulbLightV3.g). BulbDiyConfig.b
+            registers a new-DIY parser for 348 (DiyDelegateRegister): a sceneType-5 scene whose param starts 0x50 goes
+            through it (BaseSceneViewMode.r3), which is not modelled; every other scene goes through parseSceneV1, so
+            scene_dialect is legacy_scene and the bundled catalog holds no sceneType-5 scene that leads 0x50. No account
+            lock: the h0 strategy and the connect callback send no 0xB2, as on 64 / 111. Not traced: the day-sync
+            controllers DaySyncVM adds to the connect (VM4Light.O4; the screen's day-sync mode list,
+            DelegateModeList4DaySync and DaySyncConfig); they are not listed, as the h61d3 rows' day-sync reads are not.
+            Not hardware-verified.
           doc-ref:
+            - split_bulblightstringv1/com/govee/bulblightstringv1/bulblight/mode/diy/BulbDiyConfig.java:29-41
+            - split_bulblightstringv1/com/govee/bulblightstringv1/bulblight/mode/diy/DiyDelegateRegister.java:56-58
+            - base-classes11/com/govee/base2light/pact/newdetail/content/scene/BaseSceneViewMode.java:864-903,1152-1200
             - split_bulblightstringv1/com/govee/bulblightv3/pact/Support.java:99-107,238-254
             - split_bulblightstringv1/com/govee/bulblightv3/pact/Model.java:29-38
             - split_bulblightstringv1/com/govee/bulblightstringv1/bulblight/Support.java:29-32,192-200
@@ -944,7 +963,7 @@ families:
           capabilities: [power, brightness, rgb, color_temp, scenes]
           zones: []
           account_lock: false
-          scene_dialect: untraced
+          scene_dialect: legacy_scene
           kelvin_range: [2000, 9000]
           brightness_range: [20, 254]
           connect_reads: [brightness]
@@ -968,7 +987,9 @@ families:
             h6001/sku/Model.itemClickOp), and with versionArray {1} there; the library cannot route that, so H6001 stays
             on row 0. Scene apply (BaseSceneViewMode.k3): a sceneType-5 scene whose param starts 0x50 goes through the
             new-DIY parser BulbDiyConfig registers for this goodsType at app init (DiyDelegateRegister, from
-            BulbLightApplication.create), not traced, so scene_dialect is untraced.
+            BulbLightApplication.create), which is not modelled; every other scene goes through parseSceneV1
+            (BaseSceneViewMode.r3), so scene_dialect is legacy_scene and the bundled catalog holds no sceneType-5 scene
+            that leads 0x50.
           doc-ref:
             - split_bulblightstringv1/com/govee/bulblightstringv1/bulblightv2/pact/Support.java:26,34-38
             - split_bulblightstringv1/com/govee/bulblightstringv1/bulblightv2/pact/Model.java:8,31-36
@@ -1127,13 +1148,19 @@ families:
             = [2700, 6500]. Brightness default version 1 = [1, 100]. Connect: Support4BulbLightV3.i holds 408, so
             ControllerStrategyConfig.C0 takes h0 (aa 04, aa 01, aa 05); after the connect reads VM4Light.i5 sends 33 25
             01 (light_effect_stop; bulblight Support.c holds for 408) on every connect. The library sends it on every
-            session, without waiting for the ack, so after the idle disconnect before each poll's reads; it only stops
-            a running 33 24 effect (light_effect_stop). Source-modelled, not live-verified. Scenes versionArray {0, 1}
-            (Support4BulbLightV3.g). No account lock: the h0 strategy and the connect callback send no 0xB2, as on 64 /
-            111. Not traced: the day-sync controllers DaySyncVM adds to the connect (VM4Light.O4; the screen's day-sync
-            mode list, DelegateModeList4DaySync and DaySyncConfig); they are not listed, as the h61d3 rows' day-sync
-            reads are not. Not hardware-verified.
+            session, without waiting for the ack, so after the idle disconnect before each poll's reads; it only stops a
+            running 33 24 effect (light_effect_stop). Source-modelled, not live-verified. Scenes versionArray {0, 1}
+            (Support4BulbLightV3.g). BulbDiyConfig.b registers a new-DIY parser for 408 (DiyDelegateRegister): a
+            sceneType-5 scene whose param starts 0x50 goes through it (BaseSceneViewMode.r3), which is not modelled;
+            every other scene goes through parseSceneV1, so scene_dialect is legacy_scene and the bundled catalog holds
+            no sceneType-5 scene that leads 0x50. No account lock: the h0 strategy and the connect callback send no
+            0xB2, as on 64 / 111. Not traced: the day-sync controllers DaySyncVM adds to the connect (VM4Light.O4; the
+            screen's day-sync mode list, DelegateModeList4DaySync and DaySyncConfig); they are not listed, as the h61d3
+            rows' day-sync reads are not. Not hardware-verified.
           doc-ref:
+            - split_bulblightstringv1/com/govee/bulblightstringv1/bulblight/mode/diy/BulbDiyConfig.java:29-41
+            - split_bulblightstringv1/com/govee/bulblightstringv1/bulblight/mode/diy/DiyDelegateRegister.java:56-58
+            - base-classes11/com/govee/base2light/pact/newdetail/content/scene/BaseSceneViewMode.java:864-903,1152-1200
             - split_bulblightstringv1/com/govee/bulblightv3/pact/Support.java:108-113,255-270
             - split_bulblightstringv1/com/govee/bulblightv3/pact/Model.java:29-38
             - split_bulblightstringv1/com/govee/bulblightstringv1/bulblight/Support.java:29-32,192-200
@@ -1229,7 +1256,7 @@ families:
           capabilities: [power, brightness, rgb, color_temp, segments, scenes, gradual]
           zones: []
           account_lock: false
-          scene_dialect: untraced
+          scene_dialect: legacy_scene
           scene_versions: [0, 1, 2, 3]
           kelvin_range: [2000, 9000]
           brightness_range: [1, 100]
@@ -1248,8 +1275,9 @@ families:
             No account lock: no 0xB1 / 0xB2 controller on the control connect. Not listed, as on 247: the aa 41
             power-off-memory read, the TimerConfig.f time sync, the day-sync reads. Scene apply (BaseSceneViewMode.k3):
             a sceneType-5 scene whose param starts 0x50 goes through the new-DIY parser H6640DiyConfig registers for
-            this goodsType at app init (ConfigDetail, from H61D3Application), not traced, so scene_dialect is untraced.
-            Not hardware-verified.
+            this goodsType at app init (ConfigDetail, from H61D3Application), which is not modelled; every other scene
+            goes through parseSceneV1 (BaseSceneViewMode.r3), so scene_dialect is legacy_scene and the bundled catalog
+            holds no sceneType-5 scene that leads 0x50. Not hardware-verified.
           doc-ref:
             - split_h61d3/com/govee/h61d3/pact/H61D3Support.java:870-878,1331-1333,1016-1019,1183-1184,1192,1551-1553,1576-1578
             - split_h61d3/com/govee/h61d3/pact/Model.java:108-120
@@ -1279,7 +1307,7 @@ families:
           capabilities: [power, brightness, rgb, color_temp, segments, scenes, gradual]
           zones: []
           account_lock: false
-          scene_dialect: untraced
+          scene_dialect: legacy_scene
           scene_versions: [0, 1, 2, 3]
           kelvin_range: [2000, 9000]
           brightness_range: [1, 100]
@@ -1299,10 +1327,11 @@ families:
             account lock: no 0xB1 / 0xB2 controller on the control connect. Not listed, as on 247: the aa 41
             power-off-memory read, the TimerConfig.f time sync, the day-sync reads. Scene apply (BaseSceneViewMode.k3):
             a sceneType-5 scene whose param starts 0x50 goes through the new-DIY parser H6640DiyConfig registers for
-            this goodsType at app init (ConfigDetail, from H61D3Application), not traced, so scene_dialect is untraced.
-            Not hardware-verified. The two SKUs differ in one per-SKU split: the multi-colour config
-            SupportMultiColorConfig lists goodsType 264, and its h gives 3 at 264 for H61B6 only, not H61B3; nothing
-            this row models depends on it.
+            this goodsType at app init (ConfigDetail, from H61D3Application), which is not modelled; every other scene
+            goes through parseSceneV1 (BaseSceneViewMode.r3), so scene_dialect is legacy_scene and the bundled catalog
+            holds no sceneType-5 scene that leads 0x50. Not hardware-verified. The two SKUs differ in one per-SKU split:
+            the multi-colour config SupportMultiColorConfig lists goodsType 264, and its h gives 3 at 264 for H61B6
+            only, not H61B3; nothing this row models depends on it.
           doc-ref:
             - split_h61d3/com/govee/h61d3/pact/H61D3Support.java:887-895,1206-1208,1016-1019,1155-1158,1203,1557-1558,1576-1578
             - base-classes9/com/govee/base2home/color/SupportMultiColorConfig.java:32,118-170,172-175
@@ -1333,7 +1362,7 @@ families:
           capabilities: [power, brightness, rgb, color_temp, segments, scenes, gradual]
           zones: []
           account_lock: false
-          scene_dialect: untraced
+          scene_dialect: legacy_scene
           scene_versions: [0, 1, 2, 3]
           kelvin_range: [2700, 6500]
           brightness_range: [1, 100]
@@ -1353,7 +1382,9 @@ families:
             Kelvin version 2 = [2700, 6500]; brightness version 1 = percent; scenes {0, 1, 2, 3}. No account lock, as
             the traced rows. Not hardware-verified. Scene apply (BaseSceneViewMode.k3): a sceneType-5 scene whose param
             starts 0x50 goes through the new-DIY parser H61F6DiyConfig registers for this goodsType at app init
-            (ConfigDetail, from H61D3Application), not traced, so scene_dialect is untraced.
+            (ConfigDetail, from H61D3Application), which is not modelled; every other scene goes through parseSceneV1
+            (BaseSceneViewMode.r3), so scene_dialect is legacy_scene and the bundled catalog holds no sceneType-5 scene
+            that leads 0x50.
           doc-ref:
             - split_h61d3/com/govee/h61d3/pact/H61D3Support.java:919-927,1223-1225,1016-1019,1185-1192,1557-1558,1576-1578
             - split_h61d3/com/govee/h61d3/pact/Model.java:108-120
@@ -1380,7 +1411,7 @@ families:
           capabilities: [power, brightness, rgb, color_temp, segments, scenes, gradual]
           zones: []
           account_lock: false
-          scene_dialect: untraced
+          scene_dialect: legacy_scene
           scene_versions: [0, 1, 2, 3]
           kelvin_range: [1000, 10000]
           brightness_range: [1, 100]
@@ -1400,8 +1431,9 @@ families:
             config. No account lock: no 0xB1 / 0xB2 controller on the control connect. Not listed, as on 247: the aa 41
             power-off-memory read, the TimerConfig.f time sync, the day-sync reads. Scene apply (BaseSceneViewMode.k3):
             a sceneType-5 scene whose param starts 0x50 goes through the new-DIY parser H61F6DiyConfig registers for
-            this goodsType at app init (ConfigDetail, from H61D3Application), not traced, so scene_dialect is untraced.
-            Not hardware-verified.
+            this goodsType at app init (ConfigDetail, from H61D3Application), which is not modelled; every other scene
+            goes through parseSceneV1 (BaseSceneViewMode.r3), so scene_dialect is legacy_scene and the bundled catalog
+            holds no sceneType-5 scene that leads 0x50. Not hardware-verified.
           doc-ref:
             - split_h61d3/com/govee/h61d3/pact/H61D3Support.java:928-944,764-766,1016-1019,1137-1140,1203,1557-1558,1576-1578
             - split_h61d3/com/govee/h61d3/pact/Model.java:108-120
@@ -1431,7 +1463,7 @@ families:
           capabilities: [power, brightness, rgb, color_temp, segments, scenes, gradual]
           zones: []
           account_lock: false
-          scene_dialect: untraced
+          scene_dialect: legacy_scene
           scene_versions: [0, 1, 2, 3]
           kelvin_range: [1000, 10000]
           brightness_range: [1, 100]
@@ -1451,7 +1483,9 @@ families:
             0xB2 controller on the control connect. Not listed, as on 247: the aa 41 power-off-memory read, the
             TimerConfig.f time sync, the day-sync reads. Scene apply (BaseSceneViewMode.k3): a sceneType-5 scene whose
             param starts 0x50 goes through the new-DIY parser H1B6ADiyConfig registers for this goodsType at app init
-            (ConfigDetail, from H61D3Application), not traced, so scene_dialect is untraced. Not hardware-verified.
+            (ConfigDetail, from H61D3Application), which is not modelled; every other scene goes through parseSceneV1
+            (BaseSceneViewMode.r3), so scene_dialect is legacy_scene and the bundled catalog holds no sceneType-5 scene
+            that leads 0x50. Not hardware-verified.
           doc-ref:
             - split_h61d3/com/govee/h61d3/pact/H61D3Support.java:909-913,1126-1128,1016-1019,1134-1136,1557-1558,1576-1578
             - split_h61d3/com/govee/h61d3/pact/Model.java:108-120
@@ -1483,7 +1517,7 @@ families:
           capabilities: [power, brightness, rgb, color_temp, segments, scenes, gradual]
           zones: []
           account_lock: false
-          scene_dialect: untraced
+          scene_dialect: legacy_scene
           scene_versions: [0, 1, 2, 3]
           kelvin_range: [1000, 10000]
           brightness_range: [1, 100]
@@ -1503,8 +1537,9 @@ families:
             account lock: no 0xB1 / 0xB2 controller on the control connect. Not listed, as on 247: the aa 41
             power-off-memory read, the TimerConfig.f time sync, the day-sync reads. Scene apply (BaseSceneViewMode.k3):
             a sceneType-5 scene whose param starts 0x50 goes through the new-DIY parser H1AB1DiyConfig registers for
-            this goodsType at app init (ConfigDetail, from H61D3Application), not traced, so scene_dialect is untraced.
-            Not hardware-verified.
+            this goodsType at app init (ConfigDetail, from H61D3Application), which is not modelled; every other scene
+            goes through parseSceneV1 (BaseSceneViewMode.r3), so scene_dialect is legacy_scene and the bundled catalog
+            holds no sceneType-5 scene that leads 0x50. Not hardware-verified.
           doc-ref:
             - split_h61d3/com/govee/h61d3/pact/H61D3Support.java:954-962,1012-1014,833-835,1016-1019,1163-1166,1203,1557-1558,1576-1578
             - split_h61d3/com/govee/h61d3/pact/Model.java:108-120
@@ -1534,7 +1569,7 @@ families:
           capabilities: [power, brightness, rgb, color_temp, segments, scenes, gradual]
           zones: []
           account_lock: false
-          scene_dialect: untraced
+          scene_dialect: legacy_scene
           scene_versions: [0, 1, 2, 3]
           kelvin_range: [1000, 10000]
           brightness_range: [1, 100]
@@ -1554,8 +1589,9 @@ families:
             account lock: no 0xB1 / 0xB2 controller on the control connect. Not listed, as on 247: the aa 41
             power-off-memory read, the TimerConfig.f time sync, the day-sync reads. Scene apply (BaseSceneViewMode.k3):
             a sceneType-5 scene whose param starts 0x50 goes through the new-DIY parser H1AB1DiyConfig registers for
-            this goodsType at app init (ConfigDetail, from H61D3Application), not traced, so scene_dialect is untraced.
-            Not hardware-verified.
+            this goodsType at app init (ConfigDetail, from H61D3Application), which is not modelled; every other scene
+            goes through parseSceneV1 (BaseSceneViewMode.r3), so scene_dialect is legacy_scene and the bundled catalog
+            holds no sceneType-5 scene that leads 0x50. Not hardware-verified.
           doc-ref:
             - split_h61d3/com/govee/h61d3/pact/H61D3Support.java:963-971,1012-1014,1081-1083,1016-1019,1167-1170,1203,1557-1558,1576-1578
             - split_h61d3/com/govee/h61d3/pact/Model.java:108-120
@@ -1585,7 +1621,7 @@ families:
           capabilities: [power, brightness, rgb, color_temp, segments, scenes, gradual]
           zones: []
           account_lock: false
-          scene_dialect: untraced
+          scene_dialect: legacy_scene
           scene_versions: [0, 1, 2, 3]
           kelvin_range: [1000, 10000]
           brightness_range: [1, 100]
@@ -1606,7 +1642,9 @@ families:
             connect. Not listed, as on 247: the aa 41 power-off-memory read, the TimerConfig.f time sync, the day-sync
             reads. Scene apply (BaseSceneViewMode.k3): a sceneType-5 scene whose param starts 0x50 goes through the
             new-DIY parser H1AB1DiyConfig registers for this goodsType at app init (ConfigDetail, from
-            H61D3Application), not traced, so scene_dialect is untraced. Not hardware-verified.
+            H61D3Application), which is not modelled; every other scene goes through parseSceneV1
+            (BaseSceneViewMode.r3), so scene_dialect is legacy_scene and the bundled catalog holds no sceneType-5 scene
+            that leads 0x50. Not hardware-verified.
           doc-ref:
             - split_h61d3/com/govee/h61d3/pact/H61D3Support.java:972-980,1012-1014,1106-1108,1016-1019,1171,1198-1200,1203,1557-1558,1576-1578
             - split_h61d3/com/govee/h61d3/pact/Model.java:108-120
@@ -1636,7 +1674,7 @@ families:
           capabilities: [power, brightness, rgb, color_temp, segments, scenes, gradual]
           zones: []
           account_lock: false
-          scene_dialect: untraced
+          scene_dialect: legacy_scene
           scene_versions: [0, 1, 2, 3]
           kelvin_range: [1000, 10000]
           brightness_range: [1, 100]
@@ -1656,8 +1694,9 @@ families:
             account lock: no 0xB1 / 0xB2 controller on the control connect. Not listed, as on 247: the aa 41
             power-off-memory read, the TimerConfig.f time sync, the day-sync reads. Scene apply (BaseSceneViewMode.k3):
             a sceneType-5 scene whose param starts 0x50 goes through the new-DIY parser H1A42DiyConfig registers for
-            this goodsType at app init (ConfigDetail, from H61D3Application), not traced, so scene_dialect is untraced.
-            Not hardware-verified.
+            this goodsType at app init (ConfigDetail, from H61D3Application), which is not modelled; every other scene
+            goes through parseSceneV1 (BaseSceneViewMode.r3), so scene_dialect is legacy_scene and the bundled catalog
+            holds no sceneType-5 scene that leads 0x50. Not hardware-verified.
           doc-ref:
             - split_h61d3/com/govee/h61d3/pact/H61D3Support.java:981-989,745-747,1016-1019,1172-1176,1203,1557-1558,1576-1578
             - split_h61d3/com/govee/h61d3/pact/Model.java:108-120
@@ -1687,7 +1726,7 @@ families:
           capabilities: [power, brightness, rgb, color_temp, segments, scenes, gradual]
           zones: []
           account_lock: false
-          scene_dialect: untraced
+          scene_dialect: legacy_scene
           scene_versions: [0, 1, 2, 3]
           kelvin_range: [1000, 10000]
           brightness_range: [1, 100]
@@ -1709,8 +1748,9 @@ families:
             account lock: no 0xB1 / 0xB2 controller on the control connect. Not listed, as on 247: the aa 41
             power-off-memory read, the TimerConfig.f time sync, the day-sync reads. Scene apply (BaseSceneViewMode.k3):
             a sceneType-5 scene whose param starts 0x50 goes through the new-DIY parser H1AB1DiyConfig registers for
-            this goodsType at app init (ConfigDetail, from H61D3Application), not traced, so scene_dialect is untraced.
-            Not hardware-verified.
+            this goodsType at app init (ConfigDetail, from H61D3Application), which is not modelled; every other scene
+            goes through parseSceneV1 (BaseSceneViewMode.r3), so scene_dialect is legacy_scene and the bundled catalog
+            holds no sceneType-5 scene that leads 0x50. Not hardware-verified.
           doc-ref:
             - split_h61d3/com/govee/h61d3/pact/H61D3Support.java:990-998,816-818,805-807,1016-1019,1177-1180,1203,1557-1558,1576-1578
             - split_h61d3/com/govee/h61d3/pact/Model.java:108-120
@@ -1741,7 +1781,7 @@ families:
           capabilities: [power, brightness, rgb, color_temp, segments, scenes, gradual]
           zones: []
           account_lock: false
-          scene_dialect: untraced
+          scene_dialect: legacy_scene
           scene_versions: [0, 1, 2, 3]
           kelvin_range: [1000, 10000]
           brightness_range: [1, 100]
@@ -1763,8 +1803,9 @@ families:
             account lock: no 0xB1 / 0xB2 controller on the control connect. Not listed, as on 247: the aa 41
             power-off-memory read, the TimerConfig.f time sync, the day-sync reads. Scene apply (BaseSceneViewMode.k3):
             a sceneType-5 scene whose param starts 0x50 goes through the new-DIY parser H1AB1DiyConfig registers for
-            this goodsType at app init (ConfigDetail, from H61D3Application), not traced, so scene_dialect is untraced.
-            Not hardware-verified.
+            this goodsType at app init (ConfigDetail, from H61D3Application), which is not modelled; every other scene
+            goes through parseSceneV1 (BaseSceneViewMode.r3), so scene_dialect is legacy_scene and the bundled catalog
+            holds no sceneType-5 scene that leads 0x50. Not hardware-verified.
           doc-ref:
             - split_h61d3/com/govee/h61d3/pact/H61D3Support.java:999-1006,816-818,825-827,1016-1019,1182,1194-1196,1203,1557-1558,1576-1578
             - split_h61d3/com/govee/h61d3/pact/Model.java:108-120
@@ -1795,7 +1836,7 @@ families:
           capabilities: [power, brightness, rgb, color_temp, segments, scenes, gradual]
           zones: []
           account_lock: false
-          scene_dialect: untraced
+          scene_dialect: legacy_scene
           scene_versions: [0, 1, 2, 3]
           kelvin_range: [2700, 6500]
           brightness_range: [1, 100]
@@ -1811,7 +1852,9 @@ families:
             ceil(IC / 5) with no app clamp, so max_ic 4095 and num_segments 56 have no app value. Brightness version 1;
             scenes {0, 1, 2, 3}; no account lock. Scene apply (BaseSceneViewMode.k3): a sceneType-5 scene whose param
             starts 0x50 goes through the new-DIY parser H61F6DiyConfig registers for this goodsType at app init
-            (ConfigDetail, from H61D3Application), not traced, so scene_dialect is untraced.
+            (ConfigDetail, from H61D3Application), which is not modelled; every other scene goes through parseSceneV1
+            (BaseSceneViewMode.r3), so scene_dialect is legacy_scene and the bundled catalog holds no sceneType-5 scene
+            that leads 0x50.
           doc-ref:
             - split_h61d3/com/govee/h61d3/pact/H61D3Support.java:896-908,1322-1324,1016-1019,1185-1192,1483-1490,1557-1558,1576-1578
             - split_h61d3/com/govee/h61d3/pact/Model.java:108-120
@@ -2714,7 +2757,7 @@ families:
           capabilities: [power, brightness, rgb, color_temp, segments, scenes, gradual]
           zones: []
           account_lock: false
-          scene_dialect: untraced
+          scene_dialect: legacy_scene
           scene_versions: [0, 1, 2]
           kelvin_range: [2000, 9000]
           brightness_range: [1, 100]
@@ -2741,10 +2784,11 @@ families:
             ScenesConfigBean takes getSupportScenesOpSet; newVersion4Ble is 1 (70 is not 17 / 18 / 19), and 70 is in Q0,
             so {0, 1, 2, 3} when supportPartBrightness4Ble holds (by_firmware), else {0, 1, 2}. Scene apply
             (BaseSceneViewMode.k3): a sceneType-5 scene whose param starts 0x50 goes through RgbicDiyConfig's new-DIY
-            parsers (registered for every rgbiclight n4 goodsType but 175), not traced, so scene_dialect is untraced. No
-            account lock: strategy e1 sends no 0xB1 / 0xB2. Not listed, as on goodsType 19: e1's 33 09 time sync
-            (TimerConfig.f). Not bench-verified; the Kelvin read-back is the app's decode (mode_reports_kelvin absent),
-            not observed.
+            parsers (registered for every rgbiclight n4 goodsType but 175), which are not modelled; every other scene
+            goes through parseSceneV1 (BaseSceneViewMode.r3), so scene_dialect is legacy_scene and the bundled catalog
+            holds no sceneType-5 scene that leads 0x50. No account lock: strategy e1 sends no 0xB1 / 0xB2. Not listed,
+            as on goodsType 19: e1's 33 09 time sync (TimerConfig.f). Not bench-verified; the Kelvin read-back is the
+            app's decode (mode_reports_kelvin absent), not observed.
           doc-ref:
             - split_rgbiclight/com/govee/dreamcolorlightv1/pact/Support.java:188,194-202,278-285,670-684,953-958,986-1008,1300-1316,1340-1349,1403-1405,1476-1487,1713-1743,1775-1786,1814-1819,1841-1909
             - split_rgbiclight/com/govee/dreamcolorlightv1/pact/SubLib.java:22
@@ -2777,7 +2821,7 @@ families:
           capabilities: [power, brightness, rgb, color_temp, segments, scenes]
           zones: []
           account_lock: false
-          scene_dialect: untraced
+          scene_dialect: legacy_scene
           scene_versions: [0, 1, 2]
           kelvin_range: [2000, 9000]
           brightness_range: [1, 100]
@@ -2803,9 +2847,11 @@ families:
             ScenesConfigBean takes getSupportScenesOpSet; newVersion4Ble is 1, and 73 is in Q0, so {0, 1, 2, 3} when
             supportPartBrightness4Ble holds (by_firmware), else {0, 1, 2}. Scene apply (BaseSceneViewMode.k3): a
             sceneType-5 scene whose param starts 0x50 goes through RgbicDiyConfig's new-DIY parsers (registered for
-            every rgbiclight n4 goodsType but 175), not traced, so scene_dialect is untraced. No account lock: strategy
-            e1 sends no 0xB1 / 0xB2. Not listed, as on goodsType 19: e1's 33 09 time sync (TimerConfig.f). Not
-            bench-verified; the Kelvin read-back is the app's decode (mode_reports_kelvin absent), not observed.
+            every rgbiclight n4 goodsType but 175), which are not modelled; every other scene goes through parseSceneV1
+            (BaseSceneViewMode.r3), so scene_dialect is legacy_scene and the bundled catalog holds no sceneType-5 scene
+            that leads 0x50. No account lock: strategy e1 sends no 0xB1 / 0xB2. Not listed, as on goodsType 19: e1's 33
+            09 time sync (TimerConfig.f). Not bench-verified; the Kelvin read-back is the app's decode
+            (mode_reports_kelvin absent), not observed.
           doc-ref:
             - split_rgbiclight/com/govee/dreamcolorlightv1/pact/Support.java:188,194-202,279-285,670-684,953-958,986-1008,1300-1316,1340-1349,1403-1405,1476-1487,1713-1743,1775-1786,1814-1819,1841-1909
             - split_rgbiclight/com/govee/dreamcolorlightv1/pact/SubLib.java:22
@@ -2837,7 +2883,7 @@ families:
           capabilities: [power, brightness, rgb, color_temp, segments, scenes]
           zones: []
           account_lock: false
-          scene_dialect: untraced
+          scene_dialect: legacy_scene
           scene_versions: [0, 1, 2]
           kelvin_range: [2000, 9000]
           brightness_range: [1, 100]
@@ -2864,14 +2910,15 @@ families:
             dreamcolorlightv1 ScenesConfigBean takes getSupportScenesOpSet; newVersion4Ble is 1, and 74 is not in Q0, so
             {0, 1, 2, 3} when supportPartBrightness4BleWifi holds (by_firmware), else {0, 1, 2}. Scene apply
             (BaseSceneViewMode.k3): a sceneType-5 scene whose param starts 0x50 goes through RgbicDiyConfig's new-DIY
-            parsers (registered for every rgbiclight n4 goodsType but 175), not traced, so scene_dialect is untraced. No
-            account lock: strategy E1 sends no 0xB1 / 0xB2. Not listed, as on goodsType 19: E1's 33 09 time sync
-            (TimerConfig.f). Not bench-verified; the Kelvin read-back is the app's decode (mode_reports_kelvin absent).
-            The catalogue snapshot (spec/govee_catalog.json) also gives H802A goodsType 74, and no row lists it, so the
-            library routes it to this row by that goodsType alone, at its pacts and with its facts. The per-SKU sweep of
-            the app for H802A (every string literal naming it) finds only Support.setDynamicApi's DynamicDomainConfig
-            registration, off the BLE control path, and its mode components in the bundled
-            localSkuComponentConfigs.json are H618A's.
+            parsers (registered for every rgbiclight n4 goodsType but 175), which are not modelled; every other scene
+            goes through parseSceneV1 (BaseSceneViewMode.r3), so scene_dialect is legacy_scene and the bundled catalog
+            holds no sceneType-5 scene that leads 0x50. No account lock: strategy E1 sends no 0xB1 / 0xB2. Not listed,
+            as on goodsType 19: E1's 33 09 time sync (TimerConfig.f). Not bench-verified; the Kelvin read-back is the
+            app's decode (mode_reports_kelvin absent). The catalogue snapshot (spec/govee_catalog.json) also gives H802A
+            goodsType 74, and no row lists it, so the library routes it to this row by that goodsType alone, at its
+            pacts and with its facts. The per-SKU sweep of the app for H802A (every string literal naming it) finds only
+            Support.setDynamicApi's DynamicDomainConfig registration, off the BLE control path, and its mode components
+            in the bundled localSkuComponentConfigs.json are H618A's.
           doc-ref:
             - split_rgbiclight/com/govee/dreamcolorlightv1/pact/Support.java:164,261-275,288,295,299-300,305-313,670-684,953-958,986-1004,1300-1316,1340-1349,1379-1382,1403-1405,1476-1487,1713-1730,1745-1759,1775-1786,1814-1819,1911-1953,1963-2005
             - split_rgbiclight/com/govee/dreamcolorlightv1/pact/SubLib4BleIot.java:22
@@ -2903,7 +2950,7 @@ families:
           capabilities: [power, brightness, rgb, color_temp, segments, scenes, gradual]
           zones: []
           account_lock: false
-          scene_dialect: untraced
+          scene_dialect: legacy_scene
           scene_versions: [0, 1, 2]
           kelvin_range: [2000, 9000]
           brightness_range: [1, 100]
@@ -2928,9 +2975,10 @@ families:
             newVersion4Ble is 1, and 75 is not in Q0, so {0, 1, 2, 3} when supportPartBrightness4BleWifi holds
             (by_firmware), else {0, 1, 2}. Scene apply (BaseSceneViewMode.k3): a sceneType-5 scene whose param starts
             0x50 goes through RgbicDiyConfig's new-DIY parsers (registered for every rgbiclight n4 goodsType but 175),
-            not traced, so scene_dialect is untraced. No account lock: strategy E1 sends no 0xB1 / 0xB2. Not listed, as
-            on goodsType 19: E1's 33 09 time sync (TimerConfig.f). Not bench-verified; the Kelvin read-back is the app's
-            decode (mode_reports_kelvin absent), not observed.
+            which are not modelled; every other scene goes through parseSceneV1 (BaseSceneViewMode.r3), so scene_dialect
+            is legacy_scene and the bundled catalog holds no sceneType-5 scene that leads 0x50. No account lock:
+            strategy E1 sends no 0xB1 / 0xB2. Not listed, as on goodsType 19: E1's 33 09 time sync (TimerConfig.f). Not
+            bench-verified; the Kelvin read-back is the app's decode (mode_reports_kelvin absent), not observed.
           doc-ref:
             - split_rgbiclight/com/govee/dreamcolorlightv1/pact/Support.java:164,261-275,289,301,305-313,670-684,953-958,986-1004,1300-1316,1340-1349,1403-1405,1446-1448,1476-1487,1713-1730,1745-1759,1775-1786,1814-1819,1911-1953,1963-2005
             - split_rgbiclight/com/govee/dreamcolorlightv1/pact/SubLib4BleIot.java:22
@@ -2962,7 +3010,7 @@ families:
           capabilities: [power, brightness, rgb, color_temp, segments, scenes]
           zones: []
           account_lock: false
-          scene_dialect: untraced
+          scene_dialect: legacy_scene
           scene_versions: [0, 1, 2]
           kelvin_range: [2000, 9000]
           brightness_range: [1, 100]
@@ -2988,12 +3036,14 @@ families:
             newVersion4Ble is 1, and 83 is not in Q0, so {0, 1, 2, 3} when supportPartBrightness4BleWifi holds
             (by_firmware), else {0, 1, 2}. Scene apply (BaseSceneViewMode.k3): a sceneType-5 scene whose param starts
             0x50 goes through RgbicDiyConfig's new-DIY parsers (registered for every rgbiclight n4 goodsType but 175),
-            not traced, so scene_dialect is untraced. No account lock: strategy E1 sends no 0xB1 / 0xB2. Not listed, as
-            on goodsType 19: E1's 33 09 time sync (TimerConfig.f). Not bench-verified; the Kelvin read-back is the app's
-            decode (mode_reports_kelvin absent), not observed. The catalogue snapshot (spec/govee_catalog.json) also
-            gives H6167 goodsType 83, and no row lists it, so the library routes it to this row by that goodsType alone,
-            at its pacts and with its facts. The per-SKU sweep of the app finds no string literal naming H6167, and its
-            mode components in the bundled localSkuComponentConfigs.json are H619Z's.
+            which are not modelled; every other scene goes through parseSceneV1 (BaseSceneViewMode.r3), so scene_dialect
+            is legacy_scene and the bundled catalog holds no sceneType-5 scene that leads 0x50. No account lock:
+            strategy E1 sends no 0xB1 / 0xB2. Not listed, as on goodsType 19: E1's 33 09 time sync (TimerConfig.f). Not
+            bench-verified; the Kelvin read-back is the app's decode (mode_reports_kelvin absent), not observed. The
+            catalogue snapshot (spec/govee_catalog.json) also gives H6167 goodsType 83, and no row lists it, so the
+            library routes it to this row by that goodsType alone, at its pacts and with its facts. The per-SKU sweep of
+            the app finds no string literal naming H6167, and its mode components in the bundled
+            localSkuComponentConfigs.json are H619Z's.
           doc-ref:
             - split_rgbiclight/com/govee/dreamcolorlightv1/pact/Support.java:164,261-275,291,302,305-313,670-684,953-958,986-1004,1300-1316,1340-1349,1403-1405,1446-1448,1476-1487,1713-1730,1745-1759,1775-1786,1814-1819,1911-1953,1963-2005
             - split_rgbiclight/com/govee/dreamcolorlightv1/pact/SubLib4BleIot.java:22
@@ -3025,7 +3075,7 @@ families:
           capabilities: [power, brightness, rgb, color_temp, segments, scenes, gradual]
           zones: []
           account_lock: false
-          scene_dialect: untraced
+          scene_dialect: legacy_scene
           scene_versions: [0, 1, 2]
           kelvin_range: [2000, 9000]
           brightness_range: [1, 100]
@@ -3053,9 +3103,11 @@ families:
             ScenesConfigBean takes getSupportScenesOpSet; newVersion4Ble is 1, and 136 is not in Q0, so {0, 1, 2, 3}
             when supportPartBrightness4BleWifi holds (by_firmware), else {0, 1, 2}. Scene apply (BaseSceneViewMode.k3):
             a sceneType-5 scene whose param starts 0x50 goes through RgbicDiyConfig's new-DIY parsers (registered for
-            every rgbiclight n4 goodsType but 175), not traced, so scene_dialect is untraced. No account lock: strategy
-            E1 sends no 0xB1 / 0xB2. Not listed, as on goodsType 19: E1's 33 09 time sync (TimerConfig.f). Not
-            bench-verified; the Kelvin read-back is the app's decode (mode_reports_kelvin absent).
+            every rgbiclight n4 goodsType but 175), which are not modelled; every other scene goes through parseSceneV1
+            (BaseSceneViewMode.r3), so scene_dialect is legacy_scene and the bundled catalog holds no sceneType-5 scene
+            that leads 0x50. No account lock: strategy E1 sends no 0xB1 / 0xB2. Not listed, as on goodsType 19: E1's 33
+            09 time sync (TimerConfig.f). Not bench-verified; the Kelvin read-back is the app's decode
+            (mode_reports_kelvin absent).
           doc-ref:
             - split_rgbiclight/com/govee/dreamcolorlightv1/pact/Support.java:164,261-275,292,304,305-313,670-684,953-958,986-1004,1300-1316,1340-1349,1403-1405,1446-1448,1476-1487,1522-1524,1713-1730,1745-1759,1775-1786,1814-1819,1911-1953,1963-2005
             - split_rgbiclight/com/govee/dreamcolorlightv1/pact/SubLib4BleIot.java:22
@@ -3090,7 +3142,7 @@ families:
           capabilities: [power, brightness, rgb, color_temp, segments, scenes, gradual]
           zones: []
           account_lock: false
-          scene_dialect: untraced
+          scene_dialect: legacy_scene
           scene_versions: [0, 1, 2]
           kelvin_range: [2000, 9000]
           brightness_range: [1, 100]
@@ -3121,8 +3173,9 @@ families:
             dreamcolorlightv1 ScenesConfigBean(1, 0, supportScenesOp) (no local scene list matches 175):
             getSupportScenesOpSet = {0, 1, 2, 3} at hard >= 1.00.02 and soft >= 1.06.00, else {0, 1, 2} (newVersion4Ble
             is 1 for 175). Scene apply: a sceneType-5 scene whose param starts 0x50 goes through the new-DIY parsers
-            RgbicDiyConfig registers for 175 (its own graffiti parser), which are not traced, so scene_dialect untraced.
-            Not hardware-verified.
+            RgbicDiyConfig registers for 175 (its own graffiti parser), which are not modelled; every other scene goes
+            through parseSceneV1 (BaseSceneViewMode.r3), so scene_dialect is legacy_scene and the bundled catalog holds
+            no sceneType-5 scene that leads 0x50. Not hardware-verified.
           doc-ref:
             - split_rgbiclight/com/govee/dreamcolorlightv1/pact/Support.java:164,346-349,670-684,953-958,1042-1044,1300-1316,1344-1349,1403-1405,1476-1487,1522-1524,1713-1730,1745-1759,1775-1777,1814-1819,1911-1957,1973-2005
             - split_rgbiclight/com/govee/dreamcolorlightv1/pact/SubLib4BleIot.java:20-25
@@ -3162,7 +3215,7 @@ families:
           capabilities: [power, brightness, rgb, color_temp, segments, scenes, gradual]
           zones: []
           account_lock: false
-          scene_dialect: untraced
+          scene_dialect: legacy_scene
           scene_versions: [0, 1, 2]
           kelvin_range: [2000, 9000]
           brightness_range: [1, 100]
@@ -3192,11 +3245,12 @@ families:
             key -> version 1 = percent. Scenes: ScenesConfigBean(1, 0, supportScenesOp): getSupportScenesOpSet = {0, 1,
             2, 3} at hard >= 1.00.02 and soft >= 1.06.00, else {0, 1, 2}. Scene apply: a sceneType-5 scene whose param
             starts 0x50 goes through RgbicDiyConfig's new-DIY parsers (registered for every rgbiclight n4 goodsType but
-            175), not traced, so scene_dialect untraced. Not hardware-verified. Not modelled: the whole-strip set
-            (ColorViewModel.O) goes through the 0x40 a3 multi-colour write (ColorControllerConfig.n names 176), which
-            the library does not send. The two SKUs differ in one per-SKU split: the multi-colour config
-            SupportMultiColorConfig lists goodsType 176, and its g gives 2 at 176 for H6176 only, not H61BC; nothing
-            this row models depends on it.
+            175), which are not modelled; every other scene goes through parseSceneV1 (BaseSceneViewMode.r3), so
+            scene_dialect is legacy_scene and the bundled catalog holds no sceneType-5 scene that leads 0x50. Not
+            hardware-verified. Not modelled: the whole-strip set (ColorViewModel.O) goes through the 0x40 a3
+            multi-colour write (ColorControllerConfig.n names 176), which the library does not send. The two SKUs differ
+            in one per-SKU split: the multi-colour config SupportMultiColorConfig lists goodsType 176, and its g gives 2
+            at 176 for H6176 only, not H61BC; nothing this row models depends on it.
           doc-ref:
             - split_rgbiclight/com/govee/dreamcolorlightv1/pact/Support.java:164,323-329,670-684,953-958,1042-1044,1300-1316,1344-1349,1403-1405,1476-1487,1522-1524,1713-1730,1745-1759,1775-1777,1814-1819,1911-1957,1973-2005
             - base-classes9/com/govee/base2home/color/SupportMultiColorConfig.java:32,118-170,172-175
@@ -3237,7 +3291,7 @@ families:
           capabilities: [power, brightness, rgb, color_temp, segments, scenes]
           zones: []
           account_lock: false
-          scene_dialect: untraced
+          scene_dialect: legacy_scene
           scene_versions: [0, 1, 2]
           kelvin_range: [2000, 9000]
           brightness_range: [1, 100]
@@ -3262,8 +3316,9 @@ families:
             control or read. Kelvin: KelvinConfig has no 178 key -> version 0 = [2000, 9000], no showing translation.
             Brightness: BrightnessConfig has no H61BA / 178 key -> version 1 = percent. Scenes: ScenesConfigBean(1, 0,
             supportScenesOp): getSupportScenesOpSet = {0, 1, 2, 3} at hard >= 1.00.02 and soft >= 1.06.00, else {0, 1, 2}.
-            Scene apply: a sceneType-5 scene whose param starts 0x50 goes through RgbicDiyConfig's new-DIY parsers, not
-            traced, so scene_dialect untraced. Not hardware-verified.
+            Scene apply: a sceneType-5 scene whose param starts 0x50 goes through RgbicDiyConfig's new-DIY parsers,
+            which are not modelled; every other scene goes through parseSceneV1 (BaseSceneViewMode.r3), so scene_dialect
+            is legacy_scene and the bundled catalog holds no sceneType-5 scene that leads 0x50. Not hardware-verified.
           doc-ref:
             - split_rgbiclight/com/govee/dreamcolorlightv1/pact/Support.java:164,336-342,670-684,953-958,1042-1044,1300-1316,1344-1349,1403-1405,1476-1487,1522-1524,1713-1730,1745-1759,1775-1777,1814-1819,1911-1957,1973-2005
             - split_rgbiclight/com/govee/dreamcolorlightv1/pact/SubLib4BleIot.java:20-25
@@ -3301,7 +3356,7 @@ families:
           capabilities: [power, brightness, rgb, color_temp, segments, scenes, gradual]
           zones: []
           account_lock: false
-          scene_dialect: untraced
+          scene_dialect: legacy_scene
           scene_versions: [0, 1, 2]
           kelvin_range: [2000, 9000]
           brightness_range: [1, 100]
@@ -3326,8 +3381,9 @@ families:
             KelvinConfig has no 187 key -> version 0 = [2000, 9000], no showing translation. Brightness: BrightnessConfig has
             no H6175 / 187 key -> version 1 = percent. Scenes: ScenesConfigBean(1, 0, supportScenesOp):
             getSupportScenesOpSet = {0, 1, 2, 3} at hard >= 1.00.02 and soft >= 1.06.00, else {0, 1, 2}. Scene apply: a
-            sceneType-5 scene whose param starts 0x50 goes through RgbicDiyConfig's new-DIY parsers, not traced, so
-            scene_dialect untraced. Not hardware-verified.
+            sceneType-5 scene whose param starts 0x50 goes through RgbicDiyConfig's new-DIY parsers, which are not
+            modelled; every other scene goes through parseSceneV1 (BaseSceneViewMode.r3), so scene_dialect is
+            legacy_scene and the bundled catalog holds no sceneType-5 scene that leads 0x50. Not hardware-verified.
           doc-ref:
             - split_rgbiclight/com/govee/dreamcolorlightv1/pact/Support.java:164,323,343-345,670-684,953-958,1042-1044,1300-1316,1344-1349,1403-1405,1476-1487,1522-1524,1713-1730,1745-1759,1775-1777,1814-1819,1911-1957,1973-2005
             - split_rgbiclight/com/govee/dreamcolorlightv1/pact/SubLib4BleIot.java:20-25
@@ -3365,7 +3421,7 @@ families:
           capabilities: [power, brightness, rgb, color_temp, segments, scenes, gradual]
           zones: []
           account_lock: false
-          scene_dialect: untraced
+          scene_dialect: legacy_scene
           scene_versions: [0, 1, 2, 3]
           kelvin_range: [2700, 6500]
           brightness_range: [1, 100]
@@ -3388,12 +3444,14 @@ families:
             no showing translation (no KelvinConfig.m entry). Brightness: BrightnessConfig has no H616C / 207 key ->
             version 1 = percent. Scenes: ScenesConfigBean(1, 0, supportScenesOp): getSupportScenesOpSet = {0, 1, 2, 3}
             (supportPartBrightness4BleWifi is true for 207 whatever the firmware). Scene apply: a sceneType-5 scene whose
-            param starts 0x50 goes through RgbicDiyConfig's new-DIY parsers, not traced, so scene_dialect untraced. Not
-            hardware-verified. The catalogue snapshot (spec/govee_catalog.json) also gives H616D and H616E goodsType
-            207, and no row lists them, so the library routes them to this row by that goodsType alone, at its pacts and
-            with its facts. The per-SKU sweep of the app for them (every string literal naming one) finds only Support's
-            product-name table (Outdoor Strip Lights 2, with H616C), which sends nothing, and their mode components in
-            the bundled localSkuComponentConfigs.json are H616C's.
+            param starts 0x50 goes through RgbicDiyConfig's new-DIY parsers, which are not modelled; every other scene
+            goes through parseSceneV1 (BaseSceneViewMode.r3), so scene_dialect is legacy_scene and the bundled catalog
+            holds no sceneType-5 scene that leads 0x50. Not hardware-verified. The catalogue snapshot
+            (spec/govee_catalog.json) also gives H616D and H616E goodsType 207, and no row lists them, so the library
+            routes them to this row by that goodsType alone, at its pacts and with its facts. The per-SKU sweep of the
+            app for them (every string literal naming one) finds only Support's product-name table (Outdoor Strip Lights
+            2, with H616C), which sends nothing, and their mode components in the bundled localSkuComponentConfigs.json
+            are H616C's.
           doc-ref:
             - split_rgbiclight/com/govee/dreamcolorlightv1/pact/Support.java:88,91,164,361-367,670-684,922-923,953-958,1300-1316,1344-1349,1403-1405,1476-1487,1522-1524,1713-1730,1745-1747,1775-1777,1911-1957,1973-2005
             - split_rgbiclight/com/govee/dreamcolorlightv1/pact/SubLib4BleIot.java:20-25
@@ -3431,7 +3489,7 @@ families:
           capabilities: [power, brightness, rgb, color_temp, segments, scenes, gradual]
           zones: []
           account_lock: false
-          scene_dialect: untraced
+          scene_dialect: legacy_scene
           scene_versions: [0, 1, 2]
           kelvin_range: [2000, 9000]
           brightness_range: [1, 100]
@@ -3459,7 +3517,9 @@ families:
             translation. Brightness: BrightnessConfig has no H6169 / 262 key -> version 1 = percent. Scenes:
             ScenesConfigBean(1, 0, supportScenesOp): getSupportScenesOpSet = {0, 1, 2, 3} at hard >= 1.00.02 and soft >=
             1.06.00, else {0, 1, 2}. Scene apply: a sceneType-5 scene whose param starts 0x50 goes through RgbicDiyConfig's
-            new-DIY parsers, not traced, so scene_dialect untraced. Not hardware-verified.
+            new-DIY parsers, which are not modelled; every other scene goes through parseSceneV1 (BaseSceneViewMode.r3),
+            so scene_dialect is legacy_scene and the bundled catalog holds no sceneType-5 scene that leads 0x50. Not
+            hardware-verified.
           doc-ref:
             - split_rgbiclight/com/govee/dreamcolorlightv1/pact/Support.java:164,294,303,670-684,953-958,1300-1316,1344-1349,1403-1405,1446-1452,1476-1487,1522-1524,1713-1730,1745-1759,1775-1786,1814-1819,1911-1957,1963-2005
             - split_rgbiclight/com/govee/dreamcolorlightv1/pact/SubLib4BleIot.java:20-25
@@ -4100,7 +4160,7 @@ families:
           capabilities: [power, brightness, rgb, color_temp, segments, scenes]
           zones: []
           account_lock: false
-          scene_dialect: untraced
+          scene_dialect: legacy_scene
           status_read: [cmd_41, color_group]
           connect_reads: []
           connect_writes: []
@@ -4117,8 +4177,10 @@ families:
             Bytes.C(K, 3, 1); brightness version 1 = percent. Kelvin version 2 = [2700, 6500] (KelvinConfig maps 300 -> 2).
             Scenes: ScenesConfigBean(2, 1, H60B1Support.k() = {0, 2, 3, 5}). Scene apply (BaseSceneViewMode.k3): a
             sceneType-5 scene whose param starts 0x50 goes through the family's new-DIY parser (H60B1DiyConfig registers 300
-            at app init), so scene_dialect stays untraced. Not listed: the TimerConfig.f sync-time controller queued before
-            the status read (Compose4BaseInfoSingleRead), as on the H60A6 row. Not hardware-verified.
+            at app init), which is not modelled; every other scene goes through parseSceneV1 (BaseSceneViewMode.r3), so
+            scene_dialect is legacy_scene and the bundled catalog holds no sceneType-5 scene that leads 0x50. Not
+            listed: the TimerConfig.f sync-time controller queued before the status read (Compose4BaseInfoSingleRead),
+            as on the H60A6 row. Not hardware-verified.
           doc-ref:
             - split_floorlamp/com/govee/h60b1/pact/SubLib.java:20-26
             - split_floorlamp/com/govee/h60b1/pact/H60B1Support.java:39-44,91-93,32-37,48-50
@@ -4929,7 +4991,7 @@ families:
           capabilities: [power, brightness, rgb, color_temp, segments, scenes, gradual]
           zones: []
           account_lock: false
-          scene_dialect: untraced
+          scene_dialect: legacy_scene
           connect_reads: [brightness, gradual, color_group]
           connect_writes: []
           doc: >-
@@ -4951,14 +5013,16 @@ families:
             (Support.getColorPieceSize). Kelvin version 0 = [2000, 9000] (no KelvinConfig entry); brightness
             BrightnessConfig.b -> ControllerBrightness, percent. Scenes: ScenesConfigBean(1, 1,
             Support.supportScenesOpSet(203) = {0, 1, 2, 3}). Scene apply (BaseSceneViewMode.k3): a sceneType-5 scene
-            whose param starts 0x50 goes through the family's new-DIY parsers (H6099DiyConfig registers 203), so
-            scene_dialect stays untraced. Gradual: the colour page writes it through ColorModeControllerConfig.p
-            (ColorViewModel.applyGradual), Config.G[203] = 0 -> Config.M[0] -> Bytes.w (33 a3), and the connect reads it
-            (aa a3). The realtime colour frame on pact (3,1) is not modelled. H8098's tie to goodsType 203 is the
-            catalogue snapshot's route (app2.govee.com/bi/rest/devices/v3/skus, 2026-10-18), and the app's code ties
-            them too: pact_h6099 MatterSupport's interceptor tests goodsType 203 (Support.isGoodsTypeH6098) with the
-            SKU H8098 (Support.k), as it tests 203 with H6098; the app also names H8098 beside H6098 in Support and
-            CameraSkuConfig. Not hardware-verified.
+            whose param starts 0x50 goes through the family's new-DIY parsers (H6099DiyConfig registers 203), which are
+            not modelled; every other scene goes through parseSceneV1 (BaseSceneViewMode.r3), so scene_dialect is
+            legacy_scene and the bundled catalog holds no sceneType-5 scene that leads 0x50. Gradual: the colour page
+            writes it through ColorModeControllerConfig.p (ColorViewModel.applyGradual), Config.G[203] = 0 ->
+            Config.M[0] -> Bytes.w (33 a3), and the connect reads it (aa a3). The realtime colour frame on pact (3,1) is
+            not modelled. H8098's tie to goodsType 203 is the catalogue snapshot's route
+            (app2.govee.com/bi/rest/devices/v3/skus, 2026-10-18), and the app's code ties them too: pact_h6099
+            MatterSupport's interceptor tests goodsType 203 (Support.isGoodsTypeH6098) with the SKU H8098 (Support.k),
+            as it tests 203 with H6098; the app also names H8098 beside H6098 in Support and CameraSkuConfig. Not
+            hardware-verified.
           doc-ref:
             - split_h6099/com/govee/pact_h6099/pact/Support.java:31-33,42-44,58-101,121-144,175-177,312-317
             - split_h6099/com/govee/pact_h6099/pact/MatterSupport.java:14-21
@@ -4993,7 +5057,7 @@ families:
           capabilities: [power, brightness, rgb, color_temp, segments, scenes, gradual]
           zones: []
           account_lock: false
-          scene_dialect: untraced
+          scene_dialect: legacy_scene
           connect_reads: [brightness, gradual, color_group]
           connect_writes: []
           doc: >-
@@ -5015,10 +5079,12 @@ families:
             missing frame). 14 pieces (Support.getColorPieceSize). Kelvin version 0 = [2000, 9000] (no KelvinConfig
             entry); brightness BrightnessConfig.b -> ControllerBrightness, percent. Scenes: ScenesConfigBean(1, 1,
             Support.supportScenesOpSet(336) = {0, 1, 2, 3}). Scene apply (BaseSceneViewMode.k3): a sceneType-5 scene
-            whose param starts 0x50 goes through the family's new-DIY parsers (H6099DiyConfig registers 336), so
-            scene_dialect stays untraced. Gradual: the colour page writes it through ColorModeControllerConfig.p
-            (ColorViewModel.applyGradual), Config.G[336] = 0 -> Config.M[0] -> Bytes.w (33 a3), and the connect reads it
-            (aa a3). The realtime colour frame (Config.g0 version 0) is not modelled. Not hardware-verified.
+            whose param starts 0x50 goes through the family's new-DIY parsers (H6099DiyConfig registers 336), which are
+            not modelled; every other scene goes through parseSceneV1 (BaseSceneViewMode.r3), so scene_dialect is
+            legacy_scene and the bundled catalog holds no sceneType-5 scene that leads 0x50. Gradual: the colour page
+            writes it through ColorModeControllerConfig.p (ColorViewModel.applyGradual), Config.G[336] = 0 ->
+            Config.M[0] -> Bytes.w (33 a3), and the connect reads it (aa a3). The realtime colour frame (Config.g0
+            version 0) is not modelled. Not hardware-verified.
           doc-ref:
             - split_h6099/com/govee/pact_h6099/pact/Support.java:31-33,42-44,58-101,121-144,183-185,312-317,274-289
             - base-classes2/com/govee/shared/checker/KmpGoodsType.java:215
@@ -5106,7 +5172,7 @@ families:
           capabilities: [power, brightness, rgb, color_temp, scenes]
           zones: []
           account_lock: false
-          scene_dialect: untraced
+          scene_dialect: legacy_scene
           connect_reads: [brightness]
           connect_writes: []
           doc: >-
@@ -5123,9 +5189,10 @@ families:
             KelvinConfig.m). Brightness: BrightnessConfig.b -> ControllerBrightness, version 1 = percent. Scenes:
             ScenesConfigBean(2, 1, Support.supportScenesOpSet() = {0, 1}). Scene apply (BaseSceneViewMode.k3): a sceneType-5
             scene whose param starts 0x50 goes through the family's new-DIY parsers (H7085DiyNewConfig registers 36 at app
-            init), the rest through parseSceneV1, so no listed dialect fits and scene_dialect is untraced. Not modelled: the
-            aa 0b SOS read the screen adds at connect (NewDetailVm.o5 -> q5, SosController); nothing on the control path
-            reads it. Not hardware-verified.
+            init), which are not modelled; every other scene goes through parseSceneV1 (BaseSceneViewMode.r3), so
+            scene_dialect is legacy_scene and the bundled catalog holds no sceneType-5 scene that leads 0x50. Not
+            modelled: the aa 0b SOS read the screen adds at connect (NewDetailVm.o5 -> q5, SosController); nothing on
+            the control path reads it. Not hardware-verified.
           doc-ref:
             - split_outdoorlight/com/govee/h7040/pact/Support.java:48-55,143-145
             - split_outdoorlight/com/govee/h7040/pact/NewDetailsConfig.java:42-135
@@ -5192,7 +5259,7 @@ families:
           capabilities: [power, brightness, rgb, color_temp, segments, scenes]
           zones: []
           account_lock: false
-          scene_dialect: untraced
+          scene_dialect: legacy_scene
           connect_reads: [brightness, color_group]
           connect_writes: []
           doc: >-
@@ -5212,8 +5279,9 @@ families:
             that is an in-range tint (Kelvin version 0 = [2000, 9000], no KelvinConfig entry); relative brightness 15 02
             (Bytes.G). Brightness: BrightnessConfig.b -> ControllerBrightness, version 1 = percent. Scenes:
             ScenesConfigBean(2, 1, {0, 1, 2, 3}). Scene apply (BaseSceneViewMode.k3): a sceneType-5 scene whose param starts
-            0x50 goes through the family's new-DIY parsers (H7085DiyNewConfig registers 45 / 55 / 56 at app init), so
-            scene_dialect is untraced. Not hardware-verified.
+            0x50 goes through the family's new-DIY parsers (H7085DiyNewConfig registers 45 / 55 / 56 at app init), which
+            are not modelled; every other scene goes through parseSceneV1 (BaseSceneViewMode.r3), so scene_dialect is
+            legacy_scene and the bundled catalog holds no sceneType-5 scene that leads 0x50. Not hardware-verified.
           doc-ref:
             - split_outdoorlight/com/govee/h7080/pact/Support.java:27-29,52-66,68-76,85-97,94-96,116-118
             - base-classes2/com/govee/shared/checker/KmpGoodsType.java:97-99
@@ -5242,7 +5310,7 @@ families:
           capabilities: [power, brightness, rgb, color_temp, segments, scenes]
           zones: []
           account_lock: false
-          scene_dialect: untraced
+          scene_dialect: legacy_scene
           connect_reads: [brightness, color_group]
           connect_writes: []
           doc: >-
@@ -5262,8 +5330,9 @@ families:
             that is an in-range tint (Kelvin version 0 = [2000, 9000], no KelvinConfig entry); relative brightness 15 02
             (Bytes.G). Brightness: BrightnessConfig.b -> ControllerBrightness, version 1 = percent. Scenes:
             ScenesConfigBean(2, 1, {0, 1, 2, 3}). Scene apply (BaseSceneViewMode.k3): a sceneType-5 scene whose param starts
-            0x50 goes through the family's new-DIY parsers (H7085DiyNewConfig registers 45 / 55 / 56 at app init), so
-            scene_dialect is untraced. Not hardware-verified.
+            0x50 goes through the family's new-DIY parsers (H7085DiyNewConfig registers 45 / 55 / 56 at app init), which
+            are not modelled; every other scene goes through parseSceneV1 (BaseSceneViewMode.r3), so scene_dialect is
+            legacy_scene and the bundled catalog holds no sceneType-5 scene that leads 0x50. Not hardware-verified.
           doc-ref:
             - split_outdoorlight/com/govee/h7080/pact/Support.java:27-29,52-66,68-76,85-97,94-96,116-118
             - base-classes2/com/govee/shared/checker/KmpGoodsType.java:97-99
@@ -5292,7 +5361,7 @@ families:
           capabilities: [power, brightness, rgb, color_temp, segments, scenes]
           zones: []
           account_lock: false
-          scene_dialect: untraced
+          scene_dialect: legacy_scene
           connect_reads: [brightness, color_group]
           connect_writes: []
           doc: >-
@@ -5312,8 +5381,9 @@ families:
             that is an in-range tint (Kelvin version 0 = [2000, 9000], no KelvinConfig entry); relative brightness 15 02
             (Bytes.G). Brightness: BrightnessConfig.b -> ControllerBrightness, version 1 = percent. Scenes:
             ScenesConfigBean(2, 1, {0, 1, 2, 3}). Scene apply (BaseSceneViewMode.k3): a sceneType-5 scene whose param starts
-            0x50 goes through the family's new-DIY parsers (H7085DiyNewConfig registers 45 / 55 / 56 at app init), so
-            scene_dialect is untraced. Not hardware-verified.
+            0x50 goes through the family's new-DIY parsers (H7085DiyNewConfig registers 45 / 55 / 56 at app init), which
+            are not modelled; every other scene goes through parseSceneV1 (BaseSceneViewMode.r3), so scene_dialect is
+            legacy_scene and the bundled catalog holds no sceneType-5 scene that leads 0x50. Not hardware-verified.
           doc-ref:
             - split_outdoorlight/com/govee/h7080/pact/Support.java:27-29,52-66,68-76,85-97,94-96,116-118
             - base-classes2/com/govee/shared/checker/KmpGoodsType.java:97-99
@@ -5381,7 +5451,7 @@ families:
           capabilities: [power, brightness, rgb, color_temp, segments, scenes]
           zones: []
           account_lock: false
-          scene_dialect: untraced
+          scene_dialect: legacy_scene
           status_read: [cmd_41, color_group]
           connect_reads: []
           connect_writes: []
@@ -5400,8 +5470,9 @@ families:
             (H7056Support.c agrees); brightness BrightnessConfig.b -> ControllerBrightness, version 1 = percent. Scenes:
             ScenesConfigBean(2, 1, H7056Support.k() = {0, 2, 3, 5, 6}). Scene apply (BaseSceneViewMode.k3): a sceneType-5
             scene whose param starts 0x50 goes through the family's new-DIY parsers (H7056DiyConfig registers 304 at app
-            init), so scene_dialect is untraced. Not in the row: the 33 a3 gradual write (Config.G[304] = 0), which the screen
-            never reads back. Not hardware-verified.
+            init), which are not modelled; every other scene goes through parseSceneV1 (BaseSceneViewMode.r3), so
+            scene_dialect is legacy_scene and the bundled catalog holds no sceneType-5 scene that leads 0x50. Not in the
+            row: the 33 a3 gradual write (Config.G[304] = 0), which the screen never reads back. Not hardware-verified.
           doc-ref:
             - base-classes2/com/govee/shared/checker/KmpGoodsType.java:237
             - base-classes2/com/govee/shared/config/h7056/H7056SceneConfig.java:54-56
@@ -5510,7 +5581,7 @@ families:
           capabilities: [power, brightness, rgb, color_temp, segments, scenes]
           zones: []
           account_lock: false
-          scene_dialect: untraced
+          scene_dialect: legacy_scene
           scene_versions: [0, 1, 2, 3]
           kelvin_range: [2200, 6500]
           connect_reads: [brightness, color_group]
@@ -5535,8 +5606,9 @@ families:
             reads (KelvinConfig.m; Support.getColorTemRange agrees), so kelvin_range is [2200, 6500], not the family
             intersection [2700, 6500]. Scenes: ScenesConfigBean opScenesSet {0, 1, 2, 3}, version (0, 0)
             (h60616263/NewDetailConfig.java:142). Scene apply (BaseSceneViewMode.k3): a sceneType-5 scene whose param
-            starts 0x50 goes through the family's new-DIY parsers (H6087DiyConfig registers 77 at app init), so
-            scene_dialect is untraced. Not hardware-verified.
+            starts 0x50 goes through the family's new-DIY parsers (H6087DiyConfig registers 77 at app init), which are
+            not modelled; every other scene goes through parseSceneV1 (BaseSceneViewMode.r3), so scene_dialect is
+            legacy_scene and the bundled catalog holds no sceneType-5 scene that leads 0x50. Not hardware-verified.
           doc-ref:
             - split_h7050/com/govee/h7050/adjust/newAdjust/VM4Light.java:255-281,825-832,974-993,557-562,595-599
             - split_h7050/com/govee/h7050/pact/Support.java:66,210-260,282-326,570-579,104-106,355-361
@@ -5571,7 +5643,7 @@ families:
           capabilities: [power, brightness, rgb, color_temp, segments, scenes]
           zones: []
           account_lock: false
-          scene_dialect: untraced
+          scene_dialect: legacy_scene
           scene_versions: [0, 1, 2, 3]
           connect_reads: [brightness, color_group]
           connect_writes: []
@@ -5596,8 +5668,9 @@ families:
             KelvinConfig maps 157 to version 2 = [2700, 6500], the family's value (Support.getColorTemRange agrees).
             Scenes: ScenesConfigBean opScenesSet Support.supportScenesOp() = {0, 1, 2, 3}, version (2, 0)
             (h60616263/NewDetailConfig.java:187). Scene apply (BaseSceneViewMode.k3): a sceneType-5 scene whose param
-            starts 0x50 goes through the family's new-DIY parsers (H6088DiyConfig registers 157 at app init), so
-            scene_dialect is untraced. Not hardware-verified.
+            starts 0x50 goes through the family's new-DIY parsers (H6088DiyConfig registers 157 at app init), which are
+            not modelled; every other scene goes through parseSceneV1 (BaseSceneViewMode.r3), so scene_dialect is
+            legacy_scene and the bundled catalog holds no sceneType-5 scene that leads 0x50. Not hardware-verified.
           doc-ref:
             - split_h7050/com/govee/h7050/adjust/newAdjust/VM4Light.java:255-281,825-832,974-993,557-562,595-599
             - split_h7050/com/govee/h7050/pact/Support.java:66,210-260,282-326,570-579,712-714,128-133,355-361
@@ -5633,7 +5706,7 @@ families:
           capabilities: [power, brightness, rgb, color_temp, segments, scenes]
           zones: []
           account_lock: false
-          scene_dialect: untraced
+          scene_dialect: legacy_scene
           scene_versions: [0, 1, 2, 3]
           kelvin_range: [2000, 9000]
           brightness_range: [1, 100]
@@ -5654,8 +5727,9 @@ families:
             connect list has no 0xB2 step (the secret is sent only by the pairing flows and the group effect op). Not
             listed: the time-sync write, as on the phase-0 light rows. Scene apply (BaseSceneViewMode.k3): a sceneType-5
             scene whose param starts 0x50 goes through the new-DIY parser H705051525355DiyConfig registers for this
-            goodsType at app init (H7050ApplicationImp), not traced, so scene_dialect is untraced. Not
-            hardware-verified.
+            goodsType at app init (H7050ApplicationImp), which is not modelled; every other scene goes through
+            parseSceneV1 (BaseSceneViewMode.r3), so scene_dialect is legacy_scene and the bundled catalog holds no
+            sceneType-5 scene that leads 0x50. Not hardware-verified.
           doc-ref:
             - split_h7050/com/govee/h7050/pact/Support.java:96-98,282-326,348-353,375-383,712-714
             - split_h7050/com/govee/h7050/pact/deviceitem/Model.java:122-124
@@ -5683,7 +5757,7 @@ families:
           capabilities: [power, brightness, rgb, color_temp, segments, scenes]
           zones: []
           account_lock: false
-          scene_dialect: untraced
+          scene_dialect: legacy_scene
           scene_versions: [0, 1, 2, 3]
           kelvin_range: [2700, 6500]
           brightness_range: [1, 100]
@@ -5701,8 +5775,9 @@ families:
             2, 3}). Kelvin: KelvinConfig version 2 = [2700, 6500] (Support.getColorTemRange agrees). Brightness:
             percent. No account lock. Not listed: the aa 41 setting read (D2) and the time-sync write. Scene apply
             (BaseSceneViewMode.k3): a sceneType-5 scene whose param starts 0x50 goes through the new-DIY parser
-            H7060NewDiyConfig registers for this goodsType at app init (H7050ApplicationImp), not traced, so
-            scene_dialect is untraced. Not hardware-verified.
+            H7060NewDiyConfig registers for this goodsType at app init (H7050ApplicationImp), which is not modelled;
+            every other scene goes through parseSceneV1 (BaseSceneViewMode.r3), so scene_dialect is legacy_scene and the
+            bundled catalog holds no sceneType-5 scene that leads 0x50. Not hardware-verified.
           doc-ref:
             - split_h7050/com/govee/h7050/pact/Support.java:100-102,214-216,282-326,348-353,375-383,546-548,712-714
             - split_h7050/com/govee/h7050/pact/deviceitem/Model.java:118-121
@@ -5728,7 +5803,7 @@ families:
           capabilities: [power, brightness, rgb, color_temp, segments, scenes]
           zones: []
           account_lock: false
-          scene_dialect: untraced
+          scene_dialect: legacy_scene
           scene_versions: [0, 1, 2, 3]
           kelvin_range: [2000, 9000]
           brightness_range: [1, 100]
@@ -5744,7 +5819,9 @@ families:
             no KelvinConfig entry, so version 0 = [2000, 9000]. Brightness: percent. No account lock. Not listed: the
             time-sync write (phase-0 convention). Scene apply (BaseSceneViewMode.k3): a sceneType-5 scene whose param
             starts 0x50 goes through the new-DIY parser H705051525355DiyConfig registers for this goodsType at app init
-            (H7050ApplicationImp), not traced, so scene_dialect is untraced. Not hardware-verified.
+            (H7050ApplicationImp), which is not modelled; every other scene goes through parseSceneV1
+            (BaseSceneViewMode.r3), so scene_dialect is legacy_scene and the bundled catalog holds no sceneType-5 scene
+            that leads 0x50. Not hardware-verified.
           doc-ref:
             - split_h7050/com/govee/h7050/pact/Support.java:112-114,282-326,348-353,375-383,438-440,712-714
             - split_h7050/com/govee/h7050/pact/deviceitem/Model.java:122-124
@@ -5770,7 +5847,7 @@ families:
           capabilities: [power, brightness, rgb, color_temp, segments, scenes]
           zones: []
           account_lock: false
-          scene_dialect: untraced
+          scene_dialect: legacy_scene
           scene_versions: [0, 1, 2, 3]
           kelvin_range: [2200, 6500]
           brightness_range: [1, 100]
@@ -5785,7 +5862,9 @@ families:
             ScenesConfigBean(2, 1, {0, 1, 2, 3}). Kelvin: KelvinConfig version 1 = [2200, 6500]. Brightness: percent. No
             account lock. Not listed: the time-sync write. Scene apply (BaseSceneViewMode.k3): a sceneType-5 scene whose
             param starts 0x50 goes through the new-DIY parser H7062NewDiyConfig registers for this goodsType at app init
-            (H7050ApplicationImp), not traced, so scene_dialect is untraced. Not hardware-verified.
+            (H7050ApplicationImp), which is not modelled; every other scene goes through parseSceneV1
+            (BaseSceneViewMode.r3), so scene_dialect is legacy_scene and the bundled catalog holds no sceneType-5 scene
+            that leads 0x50. Not hardware-verified.
           doc-ref:
             - split_h7050/com/govee/h7050/pact/Support.java:116-118,226-228,282-326,348-353,375-383,712-714
             - split_h7050/com/govee/h7050/pact/deviceitem/Model.java:118-121
@@ -5811,7 +5890,7 @@ families:
           capabilities: [power, brightness, rgb, color_temp, segments, scenes]
           zones: []
           account_lock: false
-          scene_dialect: untraced
+          scene_dialect: legacy_scene
           scene_versions: [0, 1, 2, 3]
           kelvin_range: [2200, 6500]
           brightness_range: [1, 100]
@@ -5827,7 +5906,9 @@ families:
             version 1 = [2200, 6500] (Support.getColorTemRange agrees). Brightness: percent. No account lock. Not
             listed: the time-sync write (phase-0 convention). Scene apply (BaseSceneViewMode.k3): a sceneType-5 scene
             whose param starts 0x50 goes through the new-DIY parser H706566NewDiyConfig registers for this goodsType at
-            app init (H7050ApplicationImp), not traced, so scene_dialect is untraced. Not hardware-verified.
+            app init (H7050ApplicationImp), which is not modelled; every other scene goes through parseSceneV1
+            (BaseSceneViewMode.r3), so scene_dialect is legacy_scene and the bundled catalog holds no sceneType-5 scene
+            that leads 0x50. Not hardware-verified.
           doc-ref:
             - split_h7050/com/govee/h7050/pact/Support.java:120-122,282-326,348-353,375-383,712-714
             - split_h7050/com/govee/h7050/pact/deviceitem/Model.java:122-124
@@ -5853,7 +5934,7 @@ families:
           capabilities: [power, brightness, rgb, color_temp, segments, scenes]
           zones: []
           account_lock: false
-          scene_dialect: untraced
+          scene_dialect: legacy_scene
           scene_versions: [0, 1, 2, 3]
           kelvin_range: [2200, 6500]
           brightness_range: [1, 100]
@@ -5868,7 +5949,9 @@ families:
             Kelvin: KelvinConfig version 1 = [2200, 6500]. Brightness: percent. No account lock. Not listed: the
             time-sync write (phase-0 convention). Scene apply (BaseSceneViewMode.k3): a sceneType-5 scene whose param
             starts 0x50 goes through the new-DIY parser H705051525355DiyConfig registers for this goodsType at app init
-            (H7050ApplicationImp), not traced, so scene_dialect is untraced. Not hardware-verified.
+            (H7050ApplicationImp), which is not modelled; every other scene goes through parseSceneV1
+            (BaseSceneViewMode.r3), so scene_dialect is legacy_scene and the bundled catalog holds no sceneType-5 scene
+            that leads 0x50. Not hardware-verified.
           doc-ref:
             - split_h7050/com/govee/h7050/pact/Support.java:124-126,282-326,348-353,375-383,712-714
             - split_h7050/com/govee/h7050/pact/deviceitem/Model.java:122-124
@@ -5894,7 +5977,7 @@ families:
           capabilities: [power, brightness, rgb, color_temp, segments, scenes]
           zones: []
           account_lock: false
-          scene_dialect: untraced
+          scene_dialect: legacy_scene
           scene_versions: [0, 1, 2, 3]
           kelvin_range: [2200, 6500]
           brightness_range: [1, 100]
@@ -5909,7 +5992,9 @@ families:
             Kelvin: KelvinConfig version 1 = [2200, 6500]. Brightness: percent. No account lock. Not listed: the
             time-sync write (phase-0 convention). Scene apply (BaseSceneViewMode.k3): a sceneType-5 scene whose param
             starts 0x50 goes through the new-DIY parser H706566NewDiyConfig registers for this goodsType at app init
-            (H7050ApplicationImp), not traced, so scene_dialect is untraced. Not hardware-verified.
+            (H7050ApplicationImp), which is not modelled; every other scene goes through parseSceneV1
+            (BaseSceneViewMode.r3), so scene_dialect is legacy_scene and the bundled catalog holds no sceneType-5 scene
+            that leads 0x50. Not hardware-verified.
           doc-ref:
             - split_h7050/com/govee/h7050/pact/Support.java:135-137,282-326,348-353,375-383,712-714
             - split_h7050/com/govee/h7050/pact/deviceitem/Model.java:122-124
@@ -5935,7 +6020,7 @@ families:
           capabilities: [power, brightness, rgb, color_temp, segments, scenes]
           zones: []
           account_lock: false
-          scene_dialect: untraced
+          scene_dialect: legacy_scene
           scene_versions: [0, 1, 2, 3]
           kelvin_range: [2000, 9000]
           brightness_range: [1, 100]
@@ -5953,8 +6038,9 @@ families:
             (Support.isSupportDeviceLock is a device setting, not a 0xB2 step). Not listed: the aa 41 setting read
             (decision D2) and the time-sync write (phase-0 convention). Scene apply (BaseSceneViewMode.k3): a
             sceneType-5 scene whose param starts 0x50 goes through the new-DIY parser H705051525355DiyConfig registers
-            for this goodsType at app init (H7050ApplicationImp), not traced, so scene_dialect is untraced. Not
-            hardware-verified.
+            for this goodsType at app init (H7050ApplicationImp), which is not modelled; every other scene goes through
+            parseSceneV1 (BaseSceneViewMode.r3), so scene_dialect is legacy_scene and the bundled catalog holds no
+            sceneType-5 scene that leads 0x50. Not hardware-verified.
           doc-ref:
             - split_h7050/com/govee/h7050/pact/Support.java:139-141,178-180,262-265,282-326,348-353,375-383,546-548,712-714
             - split_h7050/com/govee/h7050/pact/deviceitem/Model.java:122-124
@@ -5980,7 +6066,7 @@ families:
           capabilities: [power, brightness, rgb, color_temp, segments, scenes]
           zones: []
           account_lock: false
-          scene_dialect: untraced
+          scene_dialect: legacy_scene
           scene_versions: [0, 1, 2, 3]
           kelvin_range: [2000, 9000]
           brightness_range: [1, 100]
@@ -5996,7 +6082,9 @@ families:
             KelvinConfig entry, so version 0 = [2000, 9000]. Brightness: percent. No account lock. Not listed: the aa 41
             setting read (D2) and the time-sync write. Scene apply (BaseSceneViewMode.k3): a sceneType-5 scene whose
             param starts 0x50 goes through the new-DIY parser H705051525355DiyConfig registers for this goodsType at app
-            init (H7050ApplicationImp), not traced, so scene_dialect is untraced. Not hardware-verified.
+            init (H7050ApplicationImp), which is not modelled; every other scene goes through parseSceneV1
+            (BaseSceneViewMode.r3), so scene_dialect is legacy_scene and the bundled catalog holds no sceneType-5 scene
+            that leads 0x50. Not hardware-verified.
           doc-ref:
             - split_h7050/com/govee/h7050/pact/Support.java:142-144,181-183,262-268,282-326,348-353,375-383,546-548,712-714
             - split_h7050/com/govee/h7050/pact/deviceitem/Model.java:122-124
@@ -6022,7 +6110,7 @@ families:
           capabilities: [power, brightness, rgb, color_temp, segments, scenes]
           zones: []
           account_lock: false
-          scene_dialect: untraced
+          scene_dialect: legacy_scene
           scene_versions: [0, 1, 2, 3]
           kelvin_range: [2700, 6500]
           brightness_range: [1, 100]
@@ -6039,7 +6127,9 @@ families:
             lock (the H7063 connect dialog is a pairing flow, add/BleBroadcastProcessor). Not listed: the aa 41 setting
             read (D2) and the time-sync write. Scene apply (BaseSceneViewMode.k3): a sceneType-5 scene whose param
             starts 0x50 goes through the new-DIY parser H7063NewDiyConfig registers for this goodsType at app init
-            (H7050ApplicationImp), not traced, so scene_dialect is untraced. Not hardware-verified.
+            (H7050ApplicationImp), which is not modelled; every other scene goes through parseSceneV1
+            (BaseSceneViewMode.r3), so scene_dialect is legacy_scene and the bundled catalog holds no sceneType-5 scene
+            that leads 0x50. Not hardware-verified.
           doc-ref:
             - split_h7050/com/govee/h7050/pact/Support.java:145-150,244-246,282-326,348-353,375-383,546-548,712-714
             - split_h7050/com/govee/h7050/pact/deviceitem/Model.java:122-124
@@ -6163,7 +6253,7 @@ families:
           capabilities: [power, brightness, rgb, color_temp, scenes]
           zones: []
           account_lock: false
-          scene_dialect: untraced
+          scene_dialect: legacy_scene
           status_read: [cmd_41, color_group]
           connect_reads: []
           connect_writes: []
@@ -6184,7 +6274,10 @@ families:
             BrightnessConfig.b -> ControllerBrightness, version 1 = percent (no entry). Scenes: ScenesConfigBean(2, 1,
             Support.supportSceneOp(364) = {0, 1, 2, 3, 5, 4, 13}). Scene apply (BaseSceneViewMode.k3): a sceneType-5
             scene whose param starts 0x50 goes through the family's new-DIY parsers (H1630DiyConfig registers 364 at app
-            init), so scene_dialect is untraced. Not modelled: the day-sync reads before the status read (aa f1, aa f0,
+            init), and any other sceneType-5 scene through parseSceneV1's version-13 branch
+            (ScenesOp.parseScenes4H1630Graffiti); the library models neither (it only activates a sceneType-5 scene).
+            Every other scene goes through parseSceneV1 (BaseSceneViewMode.r3), so scene_dialect is legacy_scene and the
+            bundled catalog holds no sceneType-5 scene. Not modelled: the day-sync reads before the status read (aa f1, aa f0,
             then ac 09, when DaySyncConfig.A), which nothing on the control path reads. Not hardware-verified. The
             catalogue snapshot (spec/govee_catalog.json) also gives R1630 goodsType 364, and no row lists it, so the
             library routes it to this row by that goodsType alone, at its pacts and with its facts. The per-SKU sweep of
@@ -6211,6 +6304,7 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:63-85,199-215,252-259
             - base-classes11/com/govee/base2light/pact/newdetail/content/scene/BaseSceneViewMode.java:864-903,1152-1200
             - base-classes10/com/govee/base2light/ac/diyNew/config/DiyNewConfig.java:61-65,140-146
+            - base-classes10/com/govee/base2light/ble/ScenesOp.java:541-578,596-602
       wire_cipher: runtime
       wire:
         forms: { f_01: light, f_09: datetime_epoch, f_15_01: kelvin_tint, f_ee_30: main_bit0_a }
