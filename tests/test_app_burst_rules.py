@@ -252,7 +252,7 @@ _SCREEN_FAILS = [
     [0x23, 0x01, 0x00],                      # a timer list short of its record
     [0x05, 0x03, 0x15, 0x01, 0x0A],          # a mode value short of its sub-mode's layout
     [0x05, 0x01, 0x04],
-    [0x05, 0x03, 0x13, 0x01, 0x50],          # music short of the V2 layout's colour flag (_STATUS_MODE)
+    [0x05, 0x03, 0x13, 0x01, 0x50],          # music short of the H60A6's V2 layout's colour flag
     [0xA5, 0x05, 0x01, 0x32, 1, 2, 3],       # a colour group short of its records
 ]
 # ... and values it reads whole, so the records after them apply.

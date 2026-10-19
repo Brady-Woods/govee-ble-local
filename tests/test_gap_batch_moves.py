@@ -30,17 +30,17 @@ def _frame(*payload: int) -> bytes:
 
 
 def test_the_status_reads_profile_is_devices_yamls_h60a6_wire_entry() -> None:
-    # reassemble.status_profile's mode rules (_STATUS_MODE) and forms are the H60A6's (goodsType 303)
-    # devices.yaml h60ax wire entry: the family's, under 303's by_goods_type override.
+    # reassemble.status_profile's mode rules and forms are the H60A6's (goodsType 303) devices.yaml h60ax
+    # wire entry: the family's, under 303's by_goods_type override.
     yaml = require_optional("yaml", reason="PyYAML reads spec/devices.yaml")
     families = yaml.safe_load((_ROOT / "spec" / "devices.yaml").read_text())["families"]
     wire = next(f for f in families if f["id"] == "h60ax")["client_profile"]["wire"]
     gt = wire["by_goods_type"]["303"]
     mode = {**wire.get("mode", {}), **gt.get("mode", {})}
-    assert {"music": int(getattr(_spec.Common.MusicDecode, mode["music"])),
-            "empty_fails": mode["empty_fails"]} == reassemble._STATUS_MODE
     forms = {**wire.get("forms", {}), **gt.get("forms", {})}
     prof = reassemble.status_profile(13)
+    assert (int(prof.mode_status.music), prof.mode_status.empty_fails) == (
+        int(getattr(_spec.Common.MusicDecode, mode["music"])), mode["empty_fails"])
     c = _spec.Common
     for name, enum in (("f_30", c.Form30), ("f_40", c.Form40), ("f_41", c.Form41), ("f_a3", c.FormA3),
                        ("f_a5", c.FormA5)):

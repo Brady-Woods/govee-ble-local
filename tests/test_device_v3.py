@@ -11,11 +11,11 @@ import pytest
 from fake_ble import ble_device, status_burst, unacked_via
 
 from govee_ble_local.devices.device import Device, make_device
-from govee_ble_local.devices.profile import PROFILES, profile_for
-from govee_ble_local.exceptions import GoveeBleNotSupported
+from govee_ble_local.devices.profile import PROFILES, profile_for, wire_profile
+from govee_ble_local.exceptions import GoveeBleInvalidValue, GoveeBleNotSupported
 from govee_ble_local.identify import GoveeAdvertisement
 from govee_ble_local.models import Capability
-from govee_ble_local.wire import build
+from govee_ble_local.wire import build, reassemble
 from govee_ble_local.scenes import Scene
 
 
@@ -611,6 +611,35 @@ def test_the_status_request_is_the_profiles_status_read() -> None:
     assert _status_frames(d)[0][:7].hex() == "ac0304" "41a54016"
     d._pact = (1, 1)
     assert _status_frames(d)[0][:6].hex() == "ac0303" "414016"
+
+
+def test_the_status_reply_is_read_with_the_profiles_status_decode() -> None:
+    # The 0xAC reply is read with the profile's status_decode (a devices.yaml row's wire facts), not always
+    # the H60A6 screen's: here 3-record groups by the fixed rule, placed 3 apart, where the H60A6's by_pieces
+    # count of 4 fails the read; counted from the len, they set no segment past the piece count; with no
+    # colour-group form the 0xA5 TLV is skipped, and with no zone_power form the 0x30 TLV is.
+    h60a6 = profile_for("H60A6")
+    assert h60a6 is not None
+    records = [(90, 1, 2, 3), (80, 4, 5, 6), (70, 7, 8, 9)]
+    burst = status_burst(bytes([0x01, 0x01, 0x01, 0x05, 0x00, 0xA5, 13, 0x02, *sum(records, ())]))
+    assert reassemble.parse_status(burst, pieces=13, decode=wire_profile(h60a6)) == reassemble.StatusReply()
+    groups = dataclasses.replace(h60a6, status_decode=(
+        ("f_a5", "color_group"), ("group_rule", "fixed"), ("num_per_group", 3), ("has_brightness", True)))
+    st = reassemble.parse_status(burst, pieces=13, decode=wire_profile(groups))
+    assert st.is_on is True and [(s.index, s.rgb) for s in st.segments] == [
+        (3, (1, 2, 3)), (4, (4, 5, 6)), (5, (7, 8, 9))]
+    by_len = dataclasses.replace(h60a6, status_decode=(
+        ("f_a5", "color_group"), ("group_rule", "from_len"), ("num_per_group", 3), ("has_brightness", True)))
+    by_len_st = reassemble.parse_status(burst, pieces=4, decode=wire_profile(by_len))
+    assert [s.index for s in by_len_st.segments] == [3]
+    bare = dataclasses.replace(h60a6, status_decode=(("music", "v2_default"),))
+    assert reassemble.parse_status(burst, pieces=13, decode=wire_profile(bare)).segments == []
+    no_zones = reassemble.parse_status(status_burst(bytes([0x01, 0x01, 0x01, 0x30, 0x02, 0x01, 0x00])),
+                                       pieces=13, decode=wire_profile(bare))
+    assert no_zones.is_on is True and no_zones.zone_power == {}
+    for bad in ((("f_a5", "color_group"),), (("f_99", "x"),), (("num_per_group", 0),)):
+        with pytest.raises(GoveeBleInvalidValue, match="status_decode"):
+            dataclasses.replace(h60a6, status_decode=bad)
 
 
 def test_read_status_retries_once_then_recovers(caplog: pytest.LogCaptureFixture) -> None:

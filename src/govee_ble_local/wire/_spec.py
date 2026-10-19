@@ -216,11 +216,12 @@ def profile(
 ) -> Any:
     """A ``govee_profile`` for one set of device facts, every one keyword-only and defaulting to the
     spec's ``unknown`` / 0. Cached: the same facts give the same object, which parents check params
-    against by identity. The colour decodes ``c02`` .. ``c15`` are the aa 05 reply's (``mode``);
-    ``mode_status`` gives the status TLV 0x05's as ``(param, value)`` pairs where they differ (devices.yaml
-    mode_color_parse_status), else the TLV takes the reply's. The status read's own profile
-    (``reassemble.status_profile``) adds the status screen's music layout and empty-value rule, so a status
-    TLV and an aa 05 reply of the same mode can decode differently."""
+    against by identity. The mode decode ``c02`` .. ``c15``, ``music`` and ``empty_fails`` is the aa 05
+    reply's (``mode``); ``mode_status`` gives the status TLV 0x05's as ``(param, value)`` pairs where it
+    differs (devices.yaml mode_color_parse_status, and a status row's wire mode: its music layout and
+    empty-value rule): a colour sub-mode it leaves out is not decoded, a ``music`` / ``empty_fails`` it leaves
+    out is the reply's. Without it the TLV takes the reply's decode. So a status TLV and an aa 05 reply of the
+    same mode can decode differently."""
     p = Profile
     forms = p.CommandForms(
         f_01=f_01, f_02=f_02, f_09=f_09, f_12=f_12, f_13=f_13, f_14=f_14, f_30=f_30, f_36=f_36, f_40=f_40,
@@ -228,8 +229,8 @@ def profile(
         f_15_05=f_15_05, f_ee_30=f_ee_30, f_ee_40=f_ee_40)
     decode = p.ModeDecode(c02=c02, c0b=c0b, c0d=c0d, c14=c14, c15=c15, music=music, empty_fails=empty_fails)
     status = decode if mode_status is None else p.ModeDecode(
-        **{"c02": 0, "c0b": 0, "c0d": 0, "c14": 0, "c15": 0, **dict(mode_status)}, music=music,
-        empty_fails=empty_fails)
+        **{"c02": 0, "c0b": 0, "c0d": 0, "c14": 0, "c15": 0, "music": music, "empty_fails": empty_fails,
+           **dict(mode_status)})
     return p(forms=forms, counts=p.DeviceCounts(num_segments=num_segments, num_levels=num_levels),
              group=p.ColorGroupForm(rule=group_rule, num_per_group=num_per_group,
                                     has_brightness=has_brightness, num_pieces=num_pieces),

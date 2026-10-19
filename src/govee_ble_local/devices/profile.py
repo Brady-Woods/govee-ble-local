@@ -52,6 +52,20 @@ RelayPower = Literal["outlet0", "all_outlets", "total_switch"]
 # groups.
 _CMD = _spec.Common.Command
 _H60A6_STATUS_READ: Final = (int(_CMD.cmd_41), int(_CMD.cmd_30), int(_CMD.color_group))
+# 1.x's 0xAC reply decode, the H60A6 status screen's (DeviceProfile.status_decode): its devices.yaml row's
+# wire facts (h60ax goodsType 303): the zone bits, the power memory and the colour groups (four [brightness,
+# r, g, b] records a group, counted by the piece count), the V2 music layout and an empty or short 0x05
+# failing the read.
+_H60A6_STATUS_DECODE: Final = (
+    ("empty_fails", True), ("f_30", "zone_power"), ("f_41", "power_memory"), ("f_a5", "color_group"),
+    ("group_rule", "by_pieces"), ("has_brightness", True), ("music", "v2_default"), ("num_per_group", 4))
+# status_decode's enum params (govee_profile param -> its govee_common enum); num_per_group is a count and
+# has_brightness / empty_fails are flags.
+_C = _spec.Common
+_STATUS_ENUMS: Final[Mapping[str, Any]] = MappingProxyType({
+    "f_30": _C.Form30, "f_36": _C.Form36, "f_40": _C.Form40, "f_41": _C.Form41, "f_a3": _C.FormA3,
+    "f_a5": _C.FormA5, "group_rule": _C.GroupCountRule, "music": _C.MusicDecode})
+_STATUS_FLAGS: Final = ("has_brightness", "empty_fails")
 
 # The spec's mode_color_parse table as govee_profile mode_decode params: name -> {c15: color_decode, ...} (a
 # sub-mode left out is not decoded), plus the library default (_DEFAULT_PARSE).
@@ -253,6 +267,15 @@ class DeviceProfile:
     a devices.yaml row's ``status_read``). The default is the H60A6's ``0x41, 0x30, 0xA5``, 1.x's request.
     The 0xA5 colour groups are left out while :attr:`status_color_groups_pact` rules them out (a list is
     kept as a tuple)."""
+    status_decode: tuple[tuple[str, str | int | bool], ...] = field(
+        default=_H60A6_STATUS_DECODE, kw_only=True)
+    """``readback="status"``: how the 0xAC reply is read, a devices.yaml row's wire facts as ``(govee_profile
+    param, value)`` pairs: the forms of the TLVs the status stream reads (``f_30``, ``f_36``, ``f_40``,
+    ``f_41``, ``f_a3``, ``f_a5``: govee_common enum names), the colour-group form where it reads TLV 0xA5 as
+    colour groups (``f_a5`` ``"color_group"`` with ``group_rule``, ``num_per_group`` and ``has_brightness``
+    true), and the TLV 0x05's ``music`` layout and ``empty_fails`` rule. A form left out is unknown: that TLV
+    is not read, and a 0xA5 TLV not read as colour groups is skipped. The default is the H60A6 status
+    screen's, 1.x's decode (a list is kept as a tuple)."""
 
     def __post_init__(self) -> None:
         """Validate each field: GoveeBleInvalidValue (a ValueError) on a value no Device can use.
@@ -311,6 +334,7 @@ class DeviceProfile:
                 or not all(isinstance(t, int) and not isinstance(t, bool) and 0 <= t <= 0xFF for t in types)):
             raise GoveeBleInvalidValue(
                 f"{where}: status_read={types!r} (distinct command codes, at least one)")
+        self._check_status_decode(where)
         if self.color_readback_per_batch < 1:   # a group size of 0 would never finish a read-back
             raise GoveeBleInvalidValue(
                 f"{where}: color_readback_per_batch={self.color_readback_per_batch!r}")
@@ -325,6 +349,33 @@ class DeviceProfile:
         self._check_kelvin_by_hardware(where)
         self._check_scene_versions_by_firmware(where)
         self._check_scene_versions_by_pact(where)
+
+    def _check_status_decode(self, where: str) -> None:
+        """:attr:`status_decode`'s rules: ``(param, value)`` pairs, each param once and one of
+        :data:`_STATUS_ENUMS` (a member name of its enum), ``num_per_group`` (1..255) or a flag (a bool);
+        colour groups (``f_a5`` ``"color_group"``) need their rule, group size and 4-byte records, which is
+        what the status read reads (a list is kept as a tuple)."""
+        bad = f"{where}: status_decode={self.status_decode!r}"
+        try:
+            pairs: tuple[tuple[Any, ...], ...] = tuple(tuple(pair) for pair in self.status_decode)
+            facts: dict[Any, Any] = dict(pair for pair in pairs if len(pair) == 2)
+        except TypeError:
+            raise GoveeBleInvalidValue(bad) from None
+        object.__setattr__(self, "status_decode", pairs)
+        ok = len(facts) == len(pairs)
+        for name, value in facts.items():
+            enum = _STATUS_ENUMS.get(name)
+            if enum is not None:
+                ok = ok and isinstance(value, str) and value in enum.__members__
+            elif name == "num_per_group":
+                ok = ok and isinstance(value, int) and not isinstance(value, bool) and 1 <= value <= 0xFF
+            else:
+                ok = ok and name in _STATUS_FLAGS and isinstance(value, bool)
+        if facts.get("f_a5") == "color_group":
+            ok = ok and facts.get("group_rule", "unknown") != "unknown" and "num_per_group" in facts \
+                and facts.get("has_brightness") is True
+        if not ok:
+            raise GoveeBleInvalidValue(bad)
 
     def _check_scene_versions_by_pact(self, where: str) -> None:
         """:attr:`scene_versions_by_pact`'s rules: ``((pact_type, pact_code), versions)`` entries of
@@ -470,10 +521,24 @@ def wire_profile(profile: DeviceProfile) -> Any:
     """The spec's ``govee_profile`` for the device facts a reply's decode depends on: the mode decode
     (:attr:`DeviceProfile.mode_color_parse`, and the bars' 0x15 on a :attr:`DeviceProfile.bar_switch`
     device) for the aa 05 report, the status TLV 0x05's (``mode_status``:
-    :attr:`DeviceProfile.mode_color_parse_status`, else the same), and the plug's relay mask
+    :attr:`DeviceProfile.mode_color_parse_status`, else the same), the plug's relay mask
     (:attr:`DeviceProfile.relay_on_mask`, the aa 01 heartbeat rule the library's poll follows:
-    ``power_state.is_on_heartbeat``). Cached per set of facts (``_spec.profile``)."""
+    ``power_state.is_on_heartbeat``), and on a ``readback="status"`` profile the 0xAC reply's decode
+    (:attr:`DeviceProfile.status_decode`: its forms and colour-group form, and the TLV 0x05's music layout and
+    empty-value rule in ``mode_status``), which ``reassemble.status_profile`` reads the status stream with.
+    Cached per set of facts (``_spec.profile``)."""
     status = profile.mode_color_parse_status
-    mode_status = None if status is None else tuple(sorted(_decode(profile, status).items()))
-    return _spec.profile(**_decode(profile, profile.mode_color_parse), mode_status=mode_status,
-                         relay_on_mask=profile.relay_on_mask, relay_heartbeat_on_mask=profile.relay_on_mask)
+    mode_status = None if status is None else _decode(profile, status)
+    reads: dict[str, Any] = {}
+    if profile.readback == "status":
+        facts = dict(profile.status_decode)
+        reads = {name: int(enum[facts[name]]) for name, enum in _STATUS_ENUMS.items()
+                 if name in facts and name != "music"}
+        reads.update({name: facts[name] for name in ("num_per_group", "has_brightness") if name in facts})
+        colours = mode_status if mode_status is not None else _decode(profile, profile.mode_color_parse)
+        mode_status = {**colours, "music": int(_C.MusicDecode[facts.get("music", "not_decoded")]),
+                       "empty_fails": bool(facts.get("empty_fails", False))}
+    return _spec.profile(**_decode(profile, profile.mode_color_parse),
+                         mode_status=None if mode_status is None else tuple(sorted(mode_status.items())),
+                         relay_on_mask=profile.relay_on_mask, relay_heartbeat_on_mask=profile.relay_on_mask,
+                         **reads)

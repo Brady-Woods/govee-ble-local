@@ -43,9 +43,10 @@ def _tlv_mode(body: bytes, prof: Any) -> Any:
 
 
 def _profile(parse_name: str, *, bar_switch: bool = False) -> Any:
-    """The wire profile of a profile on ``parse_name`` (the mode decode alone matters here)."""
+    """The wire profile of a status-read profile on ``parse_name`` (the mode decode alone matters here; its
+    status decode is the default, the H60A6's)."""
     return wire_profile(DeviceProfile(skus=("TEST",), capabilities=frozenset(), bar_switch=bar_switch,
-                                      mode_color_parse=parse_name))  # type: ignore[arg-type]
+                                      readback="status", mode_color_parse=parse_name))  # type: ignore[arg-type]
 
 
 _BODIES = [

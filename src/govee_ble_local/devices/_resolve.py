@@ -38,16 +38,18 @@ the row lacks fails the build: nothing defaults silently.
   only. An ``untraced`` colour parse on a row with ``rgb`` or ``color_temp`` raises (``none`` is a traced
   value: the screen parses no colour).
 - The reads the library makes: the 0xAC status read is the row's ``status_read``, in its order
-  (``DeviceProfile.status_read``, ``build.status_query(types=)``). Its reply is read as the H60A6 status
-  screen reads it (``reassemble.status_profile``), so a requested 0x30 / 0x41 / 0xA5 must have that read's
-  wire form (:data:`_STATUS_FORMS`), a requested 0xA5 its groups of :data:`_STATUS_GROUP` records, and the
-  row's status mode must be that screen's (:data:`SERVED_MODE`). A pact branch may only drop
-  ``color_group``, which becomes ``status_color_groups_pact`` (one pact type, from its lowest code that
-  keeps it). A polled row reads aa 04 on every poll and an ``aa a3`` exactly when it has ``gradual``, so
-  ``connect_reads`` lists ``brightness`` exactly on a polled row and ``gradual`` exactly with the
-  capability. Every command form the library sends or reads for the row must be the row's (wire
-  ``forms``), the mode decodes are the ones it reads with (:data:`SERVED_MODE`), and a colour-group read is
-  of 4-byte records; the direct ``aa a5`` read walks the row's wire ``group.num_per_group``.
+  (``DeviceProfile.status_read``, ``build.status_query(types=)``), and its reply is read with the row's own
+  wire facts (``DeviceProfile.status_decode``, ``reassemble.status_profile``): the forms of the TLVs the
+  status stream reads (:data:`_STATUS_TLV_FORMS`), the colour-group form where it reads the 0xA5 TLV as
+  colour groups (a requested ``color_group`` under ``f_a5: color_group``; any other 0xA5 is skipped), and
+  the TLV 0x05's mode decode (mode_status over mode). The library takes the zone bits from TLV 0x30, so a
+  requested ``cmd_30`` needs ``f_30: zone_power``. A pact branch may only drop ``color_group``, which
+  becomes ``status_color_groups_pact`` (one pact type, from its lowest code that keeps it). A polled row
+  reads aa 04 on every poll and an ``aa a3`` exactly when it has ``gradual``, so ``connect_reads`` lists
+  ``brightness`` exactly on a polled row and ``gradual`` exactly with the capability. Every command form
+  the library sends or reads for the row must be the row's (wire ``forms``), a polled row's aa 05 reply is
+  read with the spec's default decode (:data:`_MODE_UNSET`), and a colour-group read is of 4-byte records
+  in the row's wire ``group.num_per_group`` (and, in the status read, its ``group.rule``).
 - Wire branches: the library reads the wire with the pact and the firmware unknown, so a wire ``by_pact`` /
   ``by_firmware`` branch raises, but for the unread ones of :data:`_UNREAD_WIRE_BRANCHES` (H60A6 pact (1,
   1)'s one colour piece: decision D3, the library keeps the row's 13).
@@ -289,12 +291,10 @@ SCHEME_LACKS: Final[Mapping[str, frozenset[str]]] = {
 _UNREAD_WIRE_BRANCHES: Final[Mapping[tuple[str, str, str], Mapping[str, Any]]] = {
     ("h60ax", "by_goods_type 303", "by_pact 1,1"): {"group": {"num_pieces": 1}},
 }
-# The mode decodes (wireMode) the library reads a row's mode reports with: the aa 05 reply's is the spec's
-# default, every leaf unset (profile.wire_profile passes neither), and the 0xAC TLV 0x05's the H60A6 status
-# screen's (wire.reassemble._STATUS_MODE is built from this entry).
+# The mode decode (wireMode) the library reads a polled row's aa 05 replies with: the spec's default, every
+# leaf unset (profile.wire_profile passes neither). A status row's TLV 0x05 takes the row's own
+# (DeviceProfile.status_decode).
 _MODE_UNSET: Final[ModeDecode] = {"music": "not_decoded", "empty_fails": False}
-SERVED_MODE: Final[Mapping[str, ModeDecode]] = {
-    "aa05": _MODE_UNSET, "status": {"music": "v2_default", "empty_fails": True}}
 # The family encryption tags the library implements: plaintext, the AES-RC4 PSK channel, and the account
 # lock, whose cipher is resolved at connect (aes_gcm_v2 is detected at connect but not implemented).
 _CIPHERS: Final = frozenset({"none", "aes_v1", "secret_key_pairing"})
@@ -302,13 +302,10 @@ _CIPHERS: Final = frozenset({"none", "aes_v1", "secret_key_pairing"})
 _DIALECTS: Final = {"legacy_scene": "A", "diy_graffiti": "B_h60a6", "tablelamp_h6052_type5_diy": "B_h6052",
                     "none": "A"}
 _READBACK: Final = {"aa01": "polled", "ac_status": "status"}   # power_read -> DeviceProfile.readback
-# The 0xAC reply's wire facts as reassemble.status_profile reads them (the H60A6 status screen's): the form of
-# each TLV it decodes, and the 0xA5 group size (wire.reassemble._RECORDS_PER_GROUP); its TLV 0x05 decode is
-# SERVED_MODE's "status".
-_STATUS_FORMS: Final[Mapping[str, tuple[str, str]]] = {
-    "cmd_30": ("f_30", "zone_power"), "cmd_41": ("f_41", "power_memory"),
-    "color_group": ("f_a5", "color_group")}
-_STATUS_GROUP: Final = 4
+# The forms of the TLVs the status stream reads (govee_state's TLV-typed tags; reassemble.status_profile): the
+# row's own, in DeviceProfile.status_decode. f_a5 goes in only where the 0xA5 TLV is read as colour groups.
+_STATUS_TLV_FORMS: Final = ("f_30", "f_36", "f_40", "f_41", "f_a3")
+_GROUP_RULES: Final = frozenset({"from_len", "fixed", "by_pieces"})   # govee_common::group_count_rule, read
 _READS: Final = frozenset({"brightness", "gradual", "cmd_36", "color_group", "ic_num", "cmd_41"})
 _PACT_FACTS: Final = frozenset({"status_read", "scene_versions"})
 # Pact branches whose capabilities the library leaves unread: (family, goodsType, pact key) -> the branch's
@@ -529,17 +526,19 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str]) -> dic
             forms.get("f_a5", ""), "")
         if not color_readback:
             fail(f"colour read-back with f_a5 {forms.get('f_a5')!r}")
-    status_groups = "color_group" in (status_read or ())
+    # The status read takes colour groups from TLV 0xA5 where it requests them and the row reads them so.
+    status_groups = "color_group" in (status_read or ()) and forms.get("f_a5") == "color_group"
     if (color_readback or status_groups) and cp.get("has_brightness") is not True:
         fail("a colour-group read without has_brightness true (the library reads [brightness, r, g, b])")
-    # The direct read walks the row's group size (Controller4ColorInfoByGroup takes it from its caller); the
-    # status reply's groups are the H60A6 screen's.
+    # Either read walks the row's group size (Controller4ColorInfoByGroup takes it from its caller), and the
+    # status read counts each group's records by the row's rule.
     per_group = group.get("num_per_group")
-    if color_readback == "mechanism_a_direct" and not (_is_int(per_group) and per_group >= 1):
-        fail(f"wire group num_per_group {per_group!r} (the direct aa a5 read walks groups of it)")
-    if status_groups and per_group != _STATUS_GROUP:
-        fail(f"status_read color_group with wire group num_per_group {per_group!r} (the status reply reads "
-             f"groups of {_STATUS_GROUP})")
+    if (color_readback == "mechanism_a_direct" or status_groups) \
+            and not (_is_int(per_group) and per_group >= 1):
+        fail(f"wire group num_per_group {per_group!r} (the colour groups are read in groups of it)")
+    if status_groups and group.get("rule") not in _GROUP_RULES:
+        fail(f"wire group rule {group.get('rule')!r} (the status read counts its colour groups' records by "
+             "it)")
     live_ic = "ic_num" in reads
     ic = row.get("ic_pieces")
     if live_ic and (color_readback != "mechanism_a_direct" or ic is None):
@@ -605,6 +604,13 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str]) -> dic
         out["color_scheme"] = scheme
     if status_read is not None:
         out["status_read"] = tuple(status_read)   # command names; devices/profile.py takes their codes
+        decode: dict[str, Any] = {f: forms[f] for f in _STATUS_TLV_FORMS
+                                  if forms.get(f, "unknown") != "unknown"}
+        if status_groups:
+            decode.update(f_a5="color_group", group_rule=group["rule"], num_per_group=int(per_group),
+                          has_brightness=True)
+        decode.update({**_MODE_UNSET, **w["mode"], **w["mode_status"]})   # the TLV 0x05's
+        out["status_decode"] = tuple(sorted(decode.items()))
     if ic is not None:
         out["color_readback_ic_range"] = (ic["min_ic"], ic["max_ic"])
         out["color_readback_ic_per_piece"] = ic["ic_per_piece"]
@@ -658,14 +664,14 @@ def _wire(fam: Family, gt: str, sku: str, fail: Fail) -> dict[str, Any]:
 
 
 def _check_mode(w: Mapping[str, Any], readback: str, fail: Fail) -> None:
-    """The row's wire ``mode`` / ``mode_status`` must be the decodes the library reads its mode reports with
-    (:data:`SERVED_MODE`): the 0xAC TLV 0x05's on a status row (mode_status over mode), the aa 05 reply's on a
-    polled row (no mode_status: it has no status read), none on a plug."""
-    mode = {**_MODE_UNSET, **w["mode"]}
+    """The row's wire ``mode`` / ``mode_status`` must be a decode the library reads its mode reports with: on
+    a status row any (the TLV 0x05 takes the row's own, mode_status over mode, ``status_decode``), on a
+    polled row the aa 05 reply's, the spec's default (:data:`_MODE_UNSET`; no mode_status: it has no status
+    read), none on a plug."""
     if readback == "status":
-        served = {**mode, **w["mode_status"]} == SERVED_MODE["status"]
-    elif readback == "polled":
-        served = mode == SERVED_MODE["aa05"] and not w["mode_status"]
+        return
+    if readback == "polled":
+        served = {**_MODE_UNSET, **w["mode"]} == _MODE_UNSET and not w["mode_status"]
     else:
         served = not w["mode"] and not w["mode_status"]
     if not served:
@@ -675,9 +681,8 @@ def _check_mode(w: Mapping[str, Any], readback: str, fail: Fail) -> None:
 def _forms_used(out: Mapping[str, Any], caps: Collection[str], status_read: Sequence[str],
                 relay: bool) -> list[tuple[str, str]]:
     """``[(command form, the member the library sends or reads)]`` for one resolved row: the power frame, a
-    plug's total switch, the colour scheme's frames, the zone switch and the TLVs the status read requests
-    (:data:`_STATUS_FORMS`; the colour read-back, aa 41 and aa 36 forms are checked where they are
-    derived)."""
+    plug's total switch, the colour scheme's frames, and the zone switch and the zone bits the status read
+    takes from TLV 0x30 (the colour read-back, aa 41 and aa 36 forms are checked where they are derived)."""
     used = [("f_01", "relays" if relay else "light")]
     if relay and out.get("relay_power") == "total_switch":
         used.append(("f_02", "total_switch"))
@@ -689,9 +694,8 @@ def _forms_used(out: Mapping[str, Any], caps: Collection[str], status_read: Sequ
                  *([("f_15_01", "kelvin")] if "color_temp" in caps else ())]
     if scheme == "h61a8" and set(caps) & {"rgb", "segments"}:
         used.append(("f_0b", "rgb_mask"))
-    if out["zones"] and not out["bar_switch"]:
+    if (out["zones"] and not out["bar_switch"]) or "cmd_30" in status_read:
         used.append(("f_30", "zone_power"))
-    used += [_STATUS_FORMS[tlv] for tlv in status_read if tlv in _STATUS_FORMS]
     return used
 
 

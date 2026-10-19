@@ -53,6 +53,11 @@ model, from which the shipped readers are generated).
 - `DeviceProfile.status_read` (keyword-only, default `(0x41, 0x30, 0xA5)`, 1.x's request): the TLV types
   the 0xAC status read requests, in order, from the row's `status_read`. `build.status_query(types=)`
   builds a request from them (`full` stays for the H60A6's default).
+- `DeviceProfile.status_decode` (keyword-only, default the H60A6 status screen's, 1.x's decode): how the
+  0xAC reply is read, the row's wire facts as `(govee_profile param, value)` pairs: the forms of the TLVs
+  the status stream reads, the colour-group form where it reads TLV 0xA5 as colour groups (rule, group
+  size, 4-byte records), and the TLV 0x05's music layout and empty-value rule. `wire_profile` carries it
+  on a `readback="status"` profile, and `reassemble.status_profile` reads the stream with it.
 - `build.color_rgb_frames(..., pieces=)` and `build.color_temp(..., pieces=)`: an `h6061` device's panel
   count, which bounds the layout and sizes the CCT mask (`ColorPieceConfig.k`, the count rounded up to
   whole bytes); None keeps the H6061's 23. `Device` passes its profile's `segments`.
@@ -61,10 +66,18 @@ model, from which the shipped readers are generated).
 - **The 0xAC status request is built from the profile**, not hard-coded to the H60A6's: the resolver takes
   the row's `status_read` (command names, checked against govee_common's `command` enum by the
   generator) instead of refusing anything but `[cmd_41, cmd_30, color_group]`, and a pact branch may drop
-  `color_group` (the `status_color_groups_pact` gate). The reply is still read as the H60A6 status screen
-  reads it, so a status row's requested 0x30 / 0x41 / 0xA5 must have that read's wire forms (zone_power /
-  power_memory / color_group, four records a group) and its status mode the screen's. The H60A6 sends the
-  same bytes: `ac 03 03 41 30 a5`, and `ac 03 02 41 30` at pact (1, 1).
+  `color_group` (the `status_color_groups_pact` gate). The H60A6 sends the same bytes: `ac 03 03 41 30 a5`,
+  and `ac 03 02 41 30` at pact (1, 1).
+- **The 0xAC status reply is read with the row's own wire facts** (`DeviceProfile.status_decode`), not the
+  H60A6 status screen's: the TLV forms, the colour-group rule and group size (the segment stride too), and
+  the TLV 0x05's music layout and empty-value rule. The build no longer requires a status row to have the
+  H60A6's forms, groups of 4 and status mode; it requires `f_30: zone_power` where `cmd_30` is requested
+  (the library takes the zone bits from it) and, where a requested `color_group` is read as colour groups
+  (`f_a5: color_group`), a group rule, a group size and 4-byte records. A 0xA5 TLV the row doesn't read as
+  colour groups is skipped instead of failing the read, and so is a 0x30 TLV it doesn't read as zone bits
+  (its `f_30` is not `zone_power`). No colour group sets a segment at or past the device's piece count
+  (`segments`), whatever its record count. The H60A6's decode is its row's, so it
+  reads every reply as before, the empty `[05][00]` music value included.
 - **A SKU that several rows list is routed, not refused** (see `profile_for`), where the rows are all
   `hardware_verified` / `app_traced` or all `modelled`; the build still refuses a SKU that rows of both
   kinds list. `_resolve.routes` gives the SKUs one row routes, and `_resolve.profiles` each

@@ -170,7 +170,7 @@ _REFUSED: tuple[tuple[str, str, _Edit, str], ...] = (
     ("striplight", "41", lambda f: _wire(f, "41").update(
         by_firmware=[{"min_soft_version": "1.00.00", "forms": {"f_a5": "bulb_batch_v2"}}]),
      "wire by_goods_type 41 by_firmware 0 is not served"),
-    ("h60ax", "303", lambda f: _wire(f)["mode"].update(music="v1_flagged"), "wire mode"),
+    ("striplight", "41", lambda f: _wire(f).update(mode={"music": "v1_flagged"}), "wire mode"),
     ("h60ax", "303", lambda f: _wire(f, "303")["forms"].update(f_30="light_direction"),
      "wire forms f_30 'light_direction', where the library uses zone_power"),
     ("dreamcolorlightv1", "19", lambda f: (_row(f, "19").update(color_scheme="h61a8"),
@@ -180,8 +180,7 @@ _REFUSED: tuple[tuple[str, str, _Edit, str], ...] = (
      "an aa 41 read without f_41"),
     ("h6047", "119", lambda f: _wire(f, "119")["forms"].update(f_36="bar_index"), "the aa 36 read and f_36"),
     ("striplight", "41", lambda f: _wire(f)["group"].update(num_per_group=0), "wire group num_per_group 0"),
-    ("h60ax", "303", lambda f: _wire(f)["group"].update(num_per_group=3),
-     "status_read color_group with wire group num_per_group 3"),
+    ("h60ax", "303", lambda f: _wire(f, "303")["group"].update(rule="unknown"), "wire group rule 'unknown'"),
     # family facts
     ("h5080", "43", lambda f: f["client_profile"].update(by_model={"H5080": {"by_pact": {"1,1": {
         "mode_color_parse": "none"}}}}), "by_model pact / firmware branches"),
