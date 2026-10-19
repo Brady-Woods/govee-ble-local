@@ -148,9 +148,11 @@ def test_no_legacy_scene_catalog_holds_a_type5_scene_the_app_uploads():
 def test_the_bundled_scenes_are_ones_the_app_lists():
     """devices.yaml scenes.list_filter: each bundled scene's op type (its scene type and cmdVersion for the
     SKU) is in every one of its SKU's scene sets (the row's, each by_pact and each by_firmware one), but for
-    the counts LIST_FILTER_EXEMPT names. An empty set is a null op set, which filters nothing. (The app lets a
-    base sceneType-0 effect through any set; a catalog keeps the SKU's type only, so a base-static scene typed
-    otherwise for its SKU would be named here too.)"""
+    the counts LIST_FILTER_EXEMPT names. An empty set is a null op set: the app's list filters no op type
+    there, but plays a scene's first effect in force, which may not be the bundled one; a catalog keeps one
+    effect only, so that is checked at fetch time (fetch_scenes.fetch names such scenes), not here. (The app
+    lets a base sceneType-0 effect through any set; a catalog keeps the SKU's type only, so a base-static
+    scene typed otherwise for its SKU would be named here too.)"""
     index = json.loads((resources.files(scenes) / "index.json").read_text(encoding="utf-8"))
     reached = set()
     for sku in index:

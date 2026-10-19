@@ -212,20 +212,27 @@ def op_type(scene_type: int | None, cmd_version: int | None) -> int:
     return {0: 0, 1: 1, 3: 4, 4: 4, 5: 5, 6: 6}.get(t, -1)
 
 
+def scene_sets(sku: str) -> list[Collection[int]]:
+    """Every scene set of ``sku``'s routes that offer scenes: each row's ``scene_versions`` and each of its
+    ``by_pact`` and ``by_firmware`` ones, as :func:`op_set` and fetch() read them."""
+    routes = [f for f in scene_rows().get(validate_sku(sku), []) if "scenes" in f["capabilities"]]
+    return [s for f in routes for s in (f["scene_versions"], *(v for _p, v in f["scene_versions_by_pact"]),
+                                        *(v for _s, _h, v in f["scene_versions_by_firmware"]))]
+
+
 def op_set(sku: str) -> frozenset[int] | None:
     """The scene op set fetch() filters ``sku``'s scenes by, or None for no filter: the ScenesConfigBean's
     ``c`` (opScenesSet), which SceneDataVM takes as its op set (SceneDataVM.java:1632, ScenesConfigBean.m) and
     hands to CategoryV1.checkSupportNew, run only with one (:1502-1514). The library takes it from the SKU's
     rows: every scene row's ``scene_versions`` is its bean's ``c`` (devices.schema.json), so this is the
-    union of the non-empty sets (row, ``by_pact``, ``by_firmware``) of the SKU's routes that offer scenes,
-    the newest firmware's as the library assumes before the device-info read. An empty set is the bean's
-    null ``c`` (H61A8 below soft 1.04.00 at pact code 1): no filter, which the union is when every set is
-    empty or no row offers scenes. A smaller set of the SKU's may hide a scene this keeps: test_scenes_load
-    checks each set and names the exceptions."""
-    routes = [f for f in scene_rows().get(validate_sku(sku), []) if "scenes" in f["capabilities"]]
-    sets = [s for f in routes for s in (f["scene_versions"], *(v for _p, v in f["scene_versions_by_pact"]),
-                                        *(v for _s, _h, v in f["scene_versions_by_firmware"]))]
-    return frozenset(v for s in sets for v in s) or None
+    union of the non-empty sets (row, ``by_pact``, ``by_firmware``) of the SKU's routes that offer scenes
+    (:func:`scene_sets`), the newest firmware's as the library assumes before the device-info read. An empty
+    set is the bean's null ``c`` (H61A8 below soft 1.04.00 at pact code 1: Support.getSupportScenesOpSet,
+    split_rgbiclight/com/govee/dreamcolorlightv1/pact/Support.java:953-956): no filter, which the union is
+    when every set is empty or no row offers scenes. A smaller set of the SKU's may hide a scene this keeps:
+    test_scenes_load checks each set and names the exceptions. At an empty set the app may play an effect
+    before the union's pick (one the union drops): fetch() names those scenes."""
+    return frozenset(v for s in scene_sets(sku) for v in s) or None
 
 
 def effective(item: dict[str, Any], now_ms: float) -> bool:
@@ -281,10 +288,14 @@ def fetch(sku: str, app_version: str = DEFAULT_APP_VERSION, *, seen: set[str] | 
     """``sku``'s scenes from the public scene library: each listed scene's lightEffect for the SKU
     (:func:`listed_effect`, over :func:`op_set` and the categories in force), with the values the app reads
     for it (:func:`for_sku`). A scene whose effect depends on the firmware's version rules is left out, and
-    named on stdout. ``seen``, when given, gets the name of every scene the library answered with, listed or
-    not (:func:`_merge`)."""
+    named on stdout. Where one of the SKU's scene sets is empty (a null op set: SceneDataVM.b2 runs no
+    checkSupportNew, only Companion.k, SceneDataVM.java:1502-1515), a scene the app plays another effect for
+    there (the first in force, which the union may drop) keeps the union's, and is named on stdout too.
+    ``seen``, when given, gets the name of every scene the library answered with, listed or not
+    (:func:`_merge`)."""
     key = validate_sku(sku)
     ops = op_set(key)
+    null_set = any(not s for s in scene_sets(key))
     now_ms = time.time() * 1000
     url = f"{LIBRARY_URL}?sku={urllib.parse.quote(key, safe='')}"
     req = urllib.request.Request(url, headers={"AppVersion": app_version})
@@ -296,13 +307,15 @@ def fetch(sku: str, app_version: str = DEFAULT_APP_VERSION, *, seen: set[str] | 
     payload = json.loads(raw)
     scenes: dict[str, Entry] = {}
     gated: list[str] = []
+    unfiltered: list[str] = []
     for category in payload.get("data", {}).get("categories", []):
         if seen is not None:
             seen.update(str(s.get("sceneName")) for s in category.get("scenes", []))
         if not effective(category, now_ms):   # SceneDataVM.b2 skips a category out of its time (:1454-1461)
             continue
         for scene in category.get("scenes", []):
-            listed, held = listed_effect(key, scene.get("lightEffects") or [], ops, now_ms)
+            effects = scene.get("lightEffects") or []
+            listed, held = listed_effect(key, effects, ops, now_ms)
             if held:
                 gated.append(str(scene.get("sceneName")))
             if listed is None:
@@ -310,6 +323,8 @@ def fetch(sku: str, app_version: str = DEFAULT_APP_VERSION, *, seen: set[str] | 
             eff = for_sku(key, listed)
             if eff["code"] is None:
                 continue
+            if null_set and listed_effect(key, effects, None, now_ms)[0] is not listed:
+                unfiltered.append(str(scene.get("sceneName")))
             param = eff["param"] or None
             if isinstance(param, str):
                 param = _NOT_BASE64.sub("", param) or None
@@ -336,6 +351,9 @@ def fetch(sku: str, app_version: str = DEFAULT_APP_VERSION, *, seen: set[str] | 
     if gated:
         print(f"{key}: left out {len(gated)} scenes whose effect the firmware's version rules pick: "
               f"{', '.join(gated)}")
+    if unfiltered:
+        print(f"{key}: at its empty scene set (no op set) the app plays another lightEffect for "
+              f"{len(unfiltered)} scenes: {', '.join(unfiltered)}")
     return scenes
 
 

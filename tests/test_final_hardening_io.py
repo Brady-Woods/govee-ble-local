@@ -294,7 +294,8 @@ def test_fetch_lists_what_the_apps_scene_list_lists(monkeypatch: pytest.MonkeyPa
     (a base sceneType 0 passes any), a DIY one without effect codes, an expired one and an expired category
     are dropped before the first left plays; a scene whose first effect left has version rules is left out
     (the firmware picks), and one with none left is not listed. An empty op set (a null bean set) filters
-    nothing but the time."""
+    nothing but the time; where one of the SKU's sets is empty (H61A8's), a scene whose first effect in force
+    is not the one the union keeps (a DIY one without codes, which the union drops) is named."""
     fs = _tool("fetch_scenes")
     rgbic1 = {"sceneCode": 1, "sceneType": 2, "cmdVersion": 1, "scenceParam": "AAAA"}   # op type 3
     rgbic0 = {**rgbic1, "sceneCode": 2, "cmdVersion": 0}                                # op type 2
@@ -304,7 +305,8 @@ def test_fetch_lists_what_the_apps_scene_list_lists(monkeypatch: pytest.MonkeyPa
     gone = {"checkEffectiveTime": 1, "effectiveTimes": [{"startTime": 0, "endTime": 1}]}
     scenes = {"Op": [rgbic1, rgbic0], "Static": [static], "NoCodes": [diy],
               "Codes": [{**diy, "diyEffectCode": [797]}], "Gated": [gated, rgbic0],
-              "AfterGate": [rgbic0, gated], "Expired": [{**rgbic0, **gone}, rgbic1]}
+              "AfterGate": [rgbic0, gated], "Expired": [{**rgbic0, **gone}, rgbic1],
+              "DiyFirst": [diy, rgbic0]}
     season = {"categoryName": "old", **gone, "scenes": [{"sceneName": "Season", "lightEffects": [static]}]}
     body = json.dumps({"data": {"categories": [
         {"categoryName": "c", "scenes": [{"sceneName": n, "lightEffects": e} for n, e in scenes.items()]},
@@ -312,16 +314,21 @@ def test_fetch_lists_what_the_apps_scene_list_lists(monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(fs.urllib.request, "urlopen", lambda *a, **k: _Resp(body))
     assert (fs.op_set("H61A8"), fs.op_set("H6006"), fs.op_set("H9999")) == ({0, 1, 2, 3}, {0, 1}, None)
     seen: set[str] = set()
-    assert {n: e["code"] for n, e in fs.fetch("H6047", seen=seen).items()} == {
-        "Op": 1, "Static": 3, "AfterGate": 2, "Expired": 1}
+    listed = {"Op": 1, "Static": 3, "AfterGate": 2, "Expired": 1, "DiyFirst": 2}
+    assert {n: e["code"] for n, e in fs.fetch("H6047", seen=seen).items()} == listed
     assert seen == {*scenes, "Season"}
     out = capsys.readouterr().out
     assert "H6047: left out 1 scenes whose effect the firmware's version rules pick: Gated" in out
+    assert "empty scene set" not in out
+    assert {n: e["code"] for n, e in fs.fetch("H61A8").items()} == listed
+    assert ("H61A8: at its empty scene set (no op set) the app plays another lightEffect for 1 scenes: "
+            "DiyFirst") in capsys.readouterr().out
     assert set(fs.fetch("H6006")) == {"Static"}
     assert {n: e["code"] for n, e in fs.fetch("H60A6").items()} == {
-        "Op": 1, "Static": 3, "Codes": 4, "AfterGate": 2, "Expired": 1}
+        "Op": 1, "Static": 3, "Codes": 4, "AfterGate": 2, "Expired": 1, "DiyFirst": 2}
     assert {n: e["code"] for n, e in fs.fetch("H9999").items()} == {
-        "Op": 1, "Static": 3, "NoCodes": 4, "Codes": 4, "Gated": 5, "AfterGate": 2, "Expired": 1}
+        "Op": 1, "Static": 3, "NoCodes": 4, "Codes": 4, "Gated": 5, "AfterGate": 2, "Expired": 1,
+        "DiyFirst": 4}
 
 
 def test_fetch_validate_entry_rejects_bad_base64() -> None:
