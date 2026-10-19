@@ -245,6 +245,9 @@ model, from which the shipped readers are generated).
 ### Spec
 - `devices.schema.json`: `clientModel` (`client_profile.by_model.<SKU>`) takes `kelvin_range` and
   `brightness_range`.
+- `spec/govee_reference.py`: `client_row` takes the device's `sku` (keyword-only), as the library resolves
+  a SKU: a Kelvin or brightness range the row lacks comes from the SKU's `by_model` entry, and its
+  `by_firmware` Kelvin items, before the family `specs`. Without it, every result is unchanged.
 - `devices.schema.json`: `ic_pieces` may be `fixed` (the IC count read at connect sizes nothing: the
   screen's piece count is fixed), and `ic_pieces` now requires the `ic_num` read.
 - **The pact-conditioned reassignments' target rows list their SKUs and pacts**: the pacts the app

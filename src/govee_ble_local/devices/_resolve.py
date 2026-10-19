@@ -16,9 +16,9 @@ The spec's resolution (devices.schema.json ``clientRow``, ``spec/govee_reference
 (else the family's) connectivity. A SKU that several rows list has one route per row; the client picks
 among them by the advertised pact, else the goodsType (``profile.profile_for``), and :func:`routes` gives
 the SKUs that one row routes. A row's facts are its own, else the family ``client_profile``'s, and the
-layered ones (scene_versions, kelvin_range, brightness_range) fall back to the family ``specs``; the
-library also reads a SKU's ``by_model`` Kelvin and brightness ranges between the two (the schema's
-by_model, which the row wins over; ``client_row`` takes no SKU). The wire facts layer the family
+layered ones (scene_versions, kelvin_range, brightness_range) fall back to the family ``specs``, with a
+SKU's ``by_model`` Kelvin and brightness ranges between the two (the schema's by_model, which the row
+wins over; ``client_row``'s ``sku``). The wire facts layer the family
 ``wire``, ``by_model.<SKU>`` and ``by_goods_type.<gt>``. A profile is resolved with
 the pact and the firmware unknown; the pact- and firmware-gated facts the library follows at run time are
 named below.

@@ -425,18 +425,30 @@ def _version(text: str | None) -> tuple[int, ...] | None:
         return None
 
 
-def client_row(reg: dict[str, Any], family_id: str, goods_type: int, *,
+def client_row(reg: dict[str, Any], family_id: str, goods_type: int, *, sku: str | None = None,
                pact: tuple[int, int] | None = None, soft: str | None = None, hard: str | None = None,
                wifi_soft: str | None = None) -> dict[str, Any]:
-    """PROCEDURAL (devices.schema.json clientRow / clientBranch / clientFirmware): one row's facts for a
-    device. The row's own values, then its by_pact branch for the pact (none when the pact is unknown),
-    then every by_firmware item whose min_* all hold, in order (an unknown version fails its test); a
-    layered fact the row lacks (scene_versions, kelvin_range, brightness_range) comes from the family
-    specs. Versions compare field by field, but a kelvin_range item's gate is a string compare, as the
-    app's (KelvinConfig.Config.z2: versionHard.compareTo("3.08.01") >= 0)."""
+    """PROCEDURAL (devices.schema.json clientRow / clientModel / clientBranch / clientFirmware): one row's
+    facts for a device. The row's own values, then its by_pact branch for the pact (none when the pact is
+    unknown), then every by_firmware item whose min_* all hold, in order (an unknown version fails its
+    test); a layered fact the row lacks (scene_versions, kelvin_range, brightness_range) comes from the
+    family specs. With the device's ``sku``, a range the row lacks (kelvin_range, brightness_range) comes
+    from the SKU's client_profile.by_model entry before the family specs, and that entry's by_firmware
+    items carry it too, ahead of the row's items. The row's own range wins over the model's and its
+    branches (the library refuses a by_model range under it). Only the ranges: the by_model colour report
+    is not resolved here. Versions compare field by field, but a kelvin_range item's gate is a string
+    compare, as the app's (KelvinConfig.Config.z2: versionHard.compareTo("3.08.01") >= 0).
+
+    Known difference: where several kelvin_range items hold, the last in list order wins here, while the
+    library takes the one with the highest version (``_fold.kelvin_range``); the two agree when the items
+    are listed by ascending version."""
     fam = next(f for f in reg["families"] if f["id"] == family_id)
-    row = (fam.get("client_profile") or {}).get("by_goods_type", {})[str(goods_type)]
+    profile = fam.get("client_profile") or {}
+    row = profile.get("by_goods_type", {})[str(goods_type)]
+    model = ((profile.get("by_model") or {}).get(sku) if sku else None) or {}
+    ranges = {k for k in ("kelvin_range", "brightness_range") if k not in row}   # the model's to give
     out = {k: v for k, v in row.items() if k not in ("by_pact", "by_firmware", "doc", "doc-ref")}
+    out.update({k: model[k] for k in ranges if k in model})
     for k in ("scene_versions", "kelvin_range", "brightness_range"):
         if k not in out and k in (fam.get("specs") or {}):
             out[k] = fam["specs"][k]
@@ -451,7 +463,9 @@ def client_row(reg: dict[str, Any], family_id: str, goods_type: int, *,
         need, got = _version(gate), _version(dev)
         return need is not None and got is not None and got >= need
 
-    for item in row.get("by_firmware") or []:
+    items = [*({k: v for k, v in item.items() if k.startswith("min_") or k in ranges}
+               for item in model.get("by_firmware") or []), *(row.get("by_firmware") or [])]
+    for item in items:
         if all(holds(v, have[k], "kelvin_range" in item) for k, v in item.items() if k.startswith("min_")):
             out.update({k: v for k, v in item.items() if not k.startswith("min_") and k != "doc"})
     return out
