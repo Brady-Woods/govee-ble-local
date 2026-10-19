@@ -119,13 +119,15 @@ model, from which the shipped readers are generated).
   their connect reads succeed (bulblight `VM4Light.i5`). A light row may now list `connect_writes: [light_effect_stop]` (the resolver
   allowed connect writes only on plugs, `plug_sync_time`); the library sends it once per session after the
   handshake and any unlock, as it sends a plug's time sync (the app sends it after its connect reads, which
-  the library makes on its polls). No current SKU sets it.
+  the library makes on its polls). Set on bulblightv3 111 / 348 / 408: H1501, H601A, H601B, H601C, H601D,
+  H801A, H801C, H801D, R1501, H1401, R1401 and H14B1 (Spec).
 - **The `aa a3` read without the gradual control** (device-list phase 3): `DeviceProfile.gradual_read_only`
   (keyword-only, default False). Some screens read the gradual flag at connect (the default
   `Compose4InfoBleIot` read) but offer no gradual control; a row may now list `gradual` in `connect_reads`
   without the capability (the resolver tied the read to the capability), and `Device.update` then reads
   `aa a3` on every poll and discards the reply (`state.gradual` stays None). The capability still needs the
-  read. No current SKU sets it.
+  read. Set on the ten h7050 rows (Spec): H7050, H7060, H7051, H7062, H7065, H7055, H7066, H7052, H7053
+  and H7063.
 - **Kelvin and brightness ranges by pact** (device-list phase 3): `DeviceProfile.kelvin_by_pact`
   (`((pact_type, pact_code), min_kelvin, max_kelvin)` entries) and `DeviceProfile.brightness_by_pact`
   (`((pact_type, pact_code), (min, max) | None)`, None = percent), both keyword-only, default `()`, from a
@@ -134,7 +136,8 @@ model, from which the shipped readers are generated).
   `Device.min_kelvin` / `max_kelvin`, the brightness write and every brightness read-back (`aa 04`, the
   status TLV) use the range in force; `_fold.brightness_range(profile, pact)` gives it. A pact Kelvin range
   needs a base one (the row's or the family's) and no Kelvin firmware branch, and a pact brightness range
-  the brightness capability. No current SKU sets them.
+  the brightness capability. `kelvin_by_pact` is set only on h61d3 261 (H61F2 / H61F5 / H61F6, behind
+  `allow_modelled`), and no row sets `brightness_by_pact` yet.
 - **Kelvin ranges by soft version and per model** (device-list phase 3): `DeviceProfile.kelvin_by_software`
   (keyword-only, default `()`), `(min_soft_version, min_kelvin, max_kelvin)` entries applied with the
   device's soft version (`aa 06`) as `kelvin_by_hardware` is with the hardware version: compared as
@@ -143,14 +146,15 @@ model, from which the shipped readers are generated).
   alone, not only on `min_hard_version` alone (one kind per row). `client_profile.by_model.<SKU>` may carry
   `kelvin_range` and `brightness_range`, used where the SKU's row has none (the row's wins, as the schema
   says; one under the row's own raises), and a `by_firmware` Kelvin item over its own `kelvin_range`
-  (bulblightv3 H14A1). No current SKU sets them.
+  (bulblightv3 H14A1). `kelvin_by_software` is set on H1401 / R1401 (bulblightv3 348); no row uses a
+  `by_model` range yet.
 - **The `aa 40` read that does not size the pieces** (device-list phase 3): `DeviceProfile.ic_num_read_only`
   (keyword-only, default False). Some screens read the IC count at connect although their piece count is
   fixed; such a row now says `ic_pieces: fixed` (the resolver served the read only with the IC sizing), and
   `Device.update` then reads `aa 40` on every poll, before the colour read-back, and discards the reply; the
   read-back walks the static pieces. An `ic_num` read still needs `ic_pieces` (now the sizing or `fixed`)
-  and the direct colour read-back, and `ic_pieces` the read; H6641's live sizing is unchanged. No current
-  SKU sets it.
+  and the direct colour read-back, and `ic_pieces` the read; H6641's live sizing is unchanged. No row says
+  `ic_pieces: fixed` yet, so no SKU sets it.
 - Bundled scene catalogs for the newly admitted models whose profile offers scenes: H6002, H1401 / R1401
   and H14B1 (H14B1 shares H6004's set), fetched from the public scene library with `tools/fetch_scenes.py`
   into the content-keyed store. The other newly admitted models get no catalog yet: their scene upload
@@ -337,7 +341,11 @@ model, from which the shipped readers are generated).
   - bulblightv3 111 (**H1501 / H601A / H601B / H601C / H601D / H801A / H801C / H801D / R1501**), 348
     (**H1401 / R1401**) and 408 (**H14B1**): the light connect write 33 25 01 (`connect_writes:
     [light_effect_stop]`); 348's Kelvin range is [1000, 10000] from soft version 1.00.15, else
-    [2700, 6500];
+    [2700, 6500]. So an H1401 / R1401's range widens from [2700, 6500] (valid on every revision, until the
+    soft version is read) to [1000, 10000] after the first poll's `aa 06` read on such firmware, as the
+    app's slider does. `Device.min_kelvin` / `max_kelvin` follow it. In Home Assistant, until the
+    integration refreshes its entity's range after that read, the colour-temperature slider keeps the setup
+    range [2700, 6500], while service calls and the reported state can go past it;
   - h7050 46 / 76 / 105 / 107 / 113 / 116 / 171 / 218 / 219 / 227 (**H7050 / H7060 / H7051 / H7062 /
     H7065 / H7055 / H7066 / H7052 / H7053 / H7063**): the `aa a3` connect read without the gradual control;
   - pact_h6099 203 (**H6098 / H8098**), promoted from `modelled`: the catalogue snapshot routes H8098 to
