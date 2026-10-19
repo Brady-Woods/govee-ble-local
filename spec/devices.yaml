@@ -847,17 +847,21 @@ families:
             H600B, H600C, H600D, H6010, H6011, H6013 and H800B have catalogue goodsType 64 and no row
             (spec/govee_catalog.json), so the library routes them to this row by that goodsType alone, at its pacts and
             with its facts, at app_traced, not this row's hardware_verified: none of them was on the bench. The per-SKU
-            sweep of the app for them (every string literal naming one; the screen's mode components in the bundled
+            sweep of the app for them (every string literal naming one, and the one string constant that does,
+            bulblightv3 Support.d = H6009, at its two uses; the screen's mode components in the bundled
             localSkuComponentConfigs.json are H6006's for each) finds: ApplyOffNeedOpenConfig.d = {H6009, H6010}, which
             ApplyOffNeedOpenHelper switches on (33 01 01) before a scene or DIY apply while the screen's switch state is
             off, the scene apply's power-on below; ColorTemConfig.H, the deprecated colour-temperature check off the
             control screen (rule 5), which lists the other seven but not H600D or H6011, where the control screen keys
             colour temperature by goodsType (the colour and Kelvin versions above), as this row does; bulblight
-            Support.d, a soft / hard version gate on H6009 / H600A / H6010 (and H6004 / H6006 / H6008) that only adds a
-            settings item (SettingAc.Z1); and, off the BLE control path, WlanSupportVersion.y (Wi-Fi LAN control: H6009
-            / H600A / H6010), BulbLightApplication's Matter add config (H6011) and DynamicDomainConfig registrations
-            (H6011, H600D, H600B, H800B, H600C, H6013, H6010), and AddDeviceConfig.c's pairing set (H6009, H6010).
-            Nothing else names them. For H6009 and H6010 only (ApplyOffNeedOpenConfig's SKU set; not H6004 / H6006 /
+            Support.d, a soft / hard version gate on H6009 (through the constant) / H600A / H6010 (and H6004 / H6006 /
+            H6008) that only adds a settings item (SettingAc.Z1); and, off the BLE control path, WlanSupportVersion.y
+            (Wi-Fi LAN control: H6009 / H600A / H6010), BulbLightApplication's Matter add config (H6011) and its
+            goodsType-64 MatterInterceptor, a soft / hard version gate over H6009 (through the constant), H6010 and
+            H600A (and H6004 / H6006 / H6008) that decides the Matter add-device flow (its intercept is not
+            decompiled; JADX's fragments name the SKUs and versions), DynamicDomainConfig registrations (H6011, H600D,
+            H600B, H800B, H600C, H6013, H6010), and AddDeviceConfig.c's pairing set (H6009, H6010). Nothing else
+            names them. For H6009 and H6010 only (ApplyOffNeedOpenConfig's SKU set; not H6004 / H6006 /
             H6008), the screen's scene apply (BaseSceneViewMode.k3, each of its three composed writes) prepends the
             power-on switch, 33 01 01 (SwitchControllerConfig.d: ControllerSwitch for 64), while its stored switch state
             for the device is off, and DeviceSwitchConfig.getSwitch reads an unknown state as off
@@ -867,9 +871,9 @@ families:
             scene upload (packet count 2, empty END) and then reported the scene active; both controlled with no secret. No
             H6004 on the bench.
           doc-ref:
-            - split_bulblightstringv1/com/govee/bulblightv3/pact/Support.java:68-76,374-379
+            - split_bulblightstringv1/com/govee/bulblightv3/pact/Support.java:30,68-76,374-379
             - base-classes2/com/govee/shared/checker/KmpGoodsType.java:85
-            - split_bulblightstringv1/com/govee/bulblightstringv1/bulblight/Support.java:96-187
+            - split_bulblightstringv1/com/govee/bulblightstringv1/bulblight/Support.java:45,96-187
             - split_bulblightstringv1/com/govee/bulblightstringv1/bulblight/mode/scene/ScenesDelegateRegister.java:35-46
             - split_bulblightstringv1/com/govee/bulblightstringv1/bulblight/Support4BulbLightV3.java:83-84
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:407,544-546,1389-1391
@@ -878,7 +882,7 @@ families:
             - base-classes10/com/govee/base2light/colortemp/ColorTemConfig.java:383-389
             - split_bulblightstringv1/com/govee/bulblightstringv1/bulblight/SettingAc.java:248-261
             - base-classes12/com/govee/base2light/wlanControl/WlanSupportVersion.java:305-325
-            - split_bulblightstringv1/com/govee/bulblightstringv1/bulblight/BulbLightApplication.java:75-80,393-400
+            - split_bulblightstringv1/com/govee/bulblightstringv1/bulblight/BulbLightApplication.java:75-381,393-400
             - base-classes10/com/govee/base2light/connect/constant/AddDeviceConfig.java:296-306
             - split_bulblightstringv1/com/govee/bulblightstringv1/bulblight/mode/diy/BulbDiyConfig.java:15-27
             - split_bulblightstringv1/com/govee/bulblightstringv1/bulblight/mode/diy/DiyDelegateRegister.java:56-58
