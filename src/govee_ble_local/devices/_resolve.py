@@ -55,9 +55,11 @@ the row lacks fails the build: nothing defaults silently.
   so a ``hardware_verified`` row's evidence is not the SKU's, and a ``modelled`` row's SKU stays behind the
   opt-in. Such a SKU is served only at the row's pacts, outside the pact fallback. A SKU a row lists
   keeps the spec's route, unless its catalogue goodsType is a conflict (non-zero, and none of its rows'),
-  which only an ``assigned_goods_type`` item citing the app's rewrite settles: an unsettled one is unrouted
-  and on the generator's review list. The snapshot's ``ic`` is read nowhere: no row's app trace cites the
-  app's read of it (``CategoriesConfig.getDefIcNum``), and no count is derived from it.
+  which only an ``assigned_goods_type`` item citing the app's rewrite of it settles: one whose
+  ``from_goods_type`` names the catalogue goodsType, or, with none, one that the pact conditions (an
+  unconditioned pairing write, H615E's, settles nothing). An unsettled one is unrouted and on the
+  generator's review list. The snapshot's ``ic`` is read nowhere: no row's app trace cites the app's read
+  of it (``CategoriesConfig.getDefIcNum``), and no count is derived from it.
 - A row's colour scheme drops the capabilities it has no frame for (:data:`SCHEME_LACKS`), but only a
   scheme the row names itself: a family default that would drop one raises. ``rgb``, ``color_temp`` or
   ``segments`` on a relay row raises (the library resolves no colour scheme or Kelvin range for a plug), and
@@ -514,6 +516,14 @@ def reassignment_review(families: Sequence[Family]) -> tuple[str, ...]:
     return tuple(_reassignments(families))
 
 
+def _rewrites(item: AssignedGoodsType, code: int) -> bool:
+    """An ``assigned_goods_type`` item cites the app's rewrite of catalogue goodsType ``code``: its
+    ``from_goods_type`` names it, or, with none (from any goodsType), its condition tests the pact. An
+    unconditioned or firmware-gated item from any goodsType (H615E's pairing write) cites none."""
+    sources = item.get("from_goods_type")
+    return code in sources if sources is not None else pact_gate(item) is not None
+
+
 def _is_route(fam: Family, row: Row) -> bool:
     """A row is a BLE route: it lists models (or the generator gave it catalogue routes) and pacts, and ble is
     in its (else its family's) connectivity."""
@@ -544,9 +554,10 @@ def catalogue(families: Sequence[Family], snapshot: Mapping[str, int]) -> Catalo
 
     A SKU that some client_profile row lists keeps the spec's goodsType. Its catalogue goodsType is a conflict
     when it is non-zero and none of those rows has it. An ``assigned_goods_type`` item of a listing row's
-    family that names the SKU at that row's goodsType, from the catalogue's (or from any, without
-    ``from_goods_type``), settles it, whatever its condition: the app's cited rewrite (:func:`routes`
-    checks or refuses that item on a routed SKU). An unsettled conflict is for review, and a row with
+    family that names the SKU at that row's goodsType settles it when the item is the app's cited rewrite of
+    that catalogue goodsType (:func:`_rewrites`; :func:`routes` checks or refuses that item on a routed SKU).
+    Any other item, such as an unconditioned pairing write, settles nothing. An unsettled conflict is for
+    review, and a row with
     support no longer routes the SKU. A SKU no row lists routes to the BLE row with support at its
     catalogue goodsType when that is the only row at it, but never at 0 (the legacy code, not H6188's
     goodsType-0 row); an ``assigned_goods_type`` item naming it (the app rewrites its goodsType), or rows of
@@ -573,7 +584,7 @@ def catalogue(families: Sequence[Family], snapshot: Mapping[str, int]) -> Catalo
         if key in listed:
             here = {(fam["id"], int(g)) for fam, g, _row in listed[key]}
             if code == 0 or code in {g for _f, g in here} or any(
-                    (owner, item.get("goods_type")) in here and code in item.get("from_goods_type", (code,))
+                    (owner, item.get("goods_type")) in here and _rewrites(item, code)
                     for owner, item in rewrites.get(key, ())):
                 continue
             rows = ", ".join(f"{fam['id']} {g}" for fam, g, _row in listed[key])

@@ -86,11 +86,13 @@ model, from which the shipped readers are generated).
     their rows offer none yet (`scene_dialect: untraced`). Each row's doc says how they route.
   - A SKU that a row lists keeps the spec's route. A non-zero catalogue conflict leaves the SKU unrouted
     and on the review list the generator prints, unless an `assigned_goods_type` item of the row's family
-    cites the app's rewrite of that goodsType. A SKU no row lists also goes on the list when the app
-    rewrites its goodsType, or when rows of several families share that goodsType.
-  - Today the list is empty. The 8 non-zero conflicts are all on rows without support, and each is such a
-    rewrite: H6145 / H6146 / H6147 / H6171 13 → 17, H6118 / H6194 6 → 39, H6179 12 → 39, and H615E's
-    pairing write of 40.
+    cites the app's rewrite of that goodsType: one whose `from_goods_type` names it, or, with none, one
+    that the pact conditions. A SKU no row lists also goes on the list when the app rewrites its goodsType, or when rows of
+    several families share that goodsType.
+  - Today the list holds H615E alone. The 8 non-zero conflicts are all on rows without support, so none is
+    unrouted. Seven are such a rewrite: H6145 / H6146 / H6147 / H6171 13 → 17, H6118 / H6194 6 → 39 and
+    H6179 12 → 39. H615E's item is the unconditioned pairing write of 40, which cites no rewrite of its
+    catalogue 108, so it is for review.
   - No route of 1.4.0's 18 SKUs changes, and no profile field but the bulb profile's `skus`. The
     snapshot's ic is read nowhere: no row's app trace uses it. The conftest staleness guard watches the
     snapshot.

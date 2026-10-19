@@ -25,9 +25,11 @@ def test_the_catalogue_routes_only_skus_no_row_lists() -> None:
     schema = json.loads((_ROOT / "spec" / "devices.schema.json").read_text(encoding="utf-8"))
     doc = gen.load((_ROOT / "spec" / "devices.yaml").read_bytes())
     fams = doc["families"]
-    # The committed snapshot settles every conflict, and each SKU it routes is supported on its row.
+    # The committed snapshot unroutes no listed SKU, and each SKU it routes is supported on its row. H615E's
+    # conflict (catalogue 108, row 40) is for review: its item is an unconditioned pairing write, no rewrite.
     committed = _resolve.catalogue(fams, gen.snapshot())
-    assert committed.review == () and not committed.unrouted and committed.added
+    assert [line.split(":")[0] for line in committed.review] == ["H615E"]
+    assert not committed.unrouted and committed.added
     for (_fam, gt), skus in committed.added.items():
         for sku in skus:
             p = profile_for(sku, allow_modelled=True)   # the SKU takes its row's support level
