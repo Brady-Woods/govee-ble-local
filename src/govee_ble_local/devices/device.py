@@ -1120,16 +1120,29 @@ class Device:
           regardless, giving up only at the 9th, so pass ``connect_timeout`` to bound the time. A link
           that never came up is not tried again by the session retry. None:
           ``const.CONNECT_MAX_ATTEMPTS`` (3) per establishment, and the session retry
-          (``const.SESSION_ATTEMPTS``) may establish once more.
-        * ``connect_timeout``: seconds a connect (the link, the BGC read, the handshake and the
-          unlock, with their retries) may take. Then the link the library holds is torn down (up to
-          ``const.DISCONNECT_TIMEOUT``, 5 s, more) and GoveeBleTimeout is raised, with the device
-          lock free and the connection ready for the next operation. A connect cancelled inside
-          bleak is cleaned up by the BLE backend, which only ``const.OPERATION_TIMEOUT`` bounds (the
-          lock is held until it is done): BlueZ disconnects it; bleak's CoreBluetooth backend (macOS)
-          leaves the pending connection request, so the device may stay connected to the host. The
-          reads after the connect are not counted. None: no limit of its own. Each operation's
-          ``const.OPERATION_TIMEOUT`` (45 s) bounds it either way.
+          (``const.SESSION_ATTEMPTS``) may establish once more. So ``connect_attempts=3`` is not the
+          default: a link that never comes up is established once, not twice (one whose session
+          setup failed is still re-established once, as at the default).
+        * ``connect_timeout``: seconds each connect (the link, the BGC read, the handshake and the
+          unlock, with their retries) may take. Then the link the library holds is torn down, its
+          disconnect (and any an earlier operation's cancellation left running) waited for up to
+          ``const.DISCONNECT_TIMEOUT`` (5 s) more and abandoned at that bound, and only then is
+          GoveeBleTimeout raised, with the device lock free and the connection ready for the next
+          operation. When that wait would run past the operation's ``const.OPERATION_TIMEOUT`` (a
+          ``connect_timeout`` above ``OPERATION_TIMEOUT`` - ``DISCONNECT_TIMEOUT``, 40 s, or a later
+          connect of the same operation, such as the pending unlock's write retry), the deadline ends
+          it instead: GoveeBleTimeout ("operation exceeded 45s") is raised at the deadline, and the
+          teardown is left to its abandon at its own ``DISCONNECT_TIMEOUT`` bound, as on any
+          deadline. A call cancelled by its caller during that wait gives the lock up at once,
+          leaving the teardown to the same abandon. A connect cancelled inside bleak is cleaned up by
+          the BLE backend, which only ``const.OPERATION_TIMEOUT`` bounds (the lock is held until it is
+          done): BlueZ disconnects it; bleak's CoreBluetooth backend (macOS) leaves the pending
+          connection request, so the device may stay connected to the host. The limit is per
+          connect, not per call: the reads after the connect are not counted, and when the link drops
+          between reads the next read connects again with the whole limit, so a call that connects k
+          times can take k times ``connect_timeout`` (plus each connect's teardown) in its connects.
+          None: no limit of its own. Each operation's ``const.OPERATION_TIMEOUT`` (45 s) bounds it
+          either way.
 
         Raises GoveeBleInvalidValue, before any I/O, unless ``connect_attempts`` is an integer >= 1
         and ``connect_timeout`` a finite number > 0 (where given)."""

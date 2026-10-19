@@ -195,18 +195,28 @@ model, from which the shipped readers are generated).
   `max_attempts` for each connect of that poll (the attempts that time out or fail outright; it still
   tries again after transient failures such as a missing device or no free connection slot, giving up at
   the 9th, so pair it with `connect_timeout` to bound the time); a link that never came up is not tried
-  again, and one whose session setup failed is still re-established once (`SESSION_ATTEMPTS`). `connect_timeout` bounds each
-  connect phase of that poll (the link, the BGC read, the handshake, the unlock), not its reads: when it runs
-  out, the link the library holds is torn down, `GoveeBleTimeout` is raised with the device lock free (the
-  teardown of a half-made link can take up to `DISCONNECT_TIMEOUT`, 5 s, more), and the next operation
-  connects afresh. A connect cancelled inside bleak is cleaned up by the BLE backend, which only
-  `OPERATION_TIMEOUT` bounds: BlueZ disconnects it; bleak's CoreBluetooth backend (macOS) leaves the pending
-  connection request, so the device may stay connected to the host. They hold every connect the
-  call makes (normally its first read's; also a reconnect after a link lost mid-poll) and nothing else:
-  setters and other calls keep the defaults, and `update()` without them is unchanged (`CONNECT_MAX_ATTEMPTS`
-  3 per establishment, the 45 s `OPERATION_TIMEOUT`). An attempt count that isn't an integer of at least 1,
-  or a timeout that isn't a finite number above 0, raises `GoveeBleInvalidValue` before any I/O. On the
-  transport, `GoveeConnection.query` and `send` take the same limits as `connect_budget`
+  again, and one whose session setup failed is still re-established once (`SESSION_ATTEMPTS`). So
+  `connect_attempts=3` is not the default: the default establishes a link that never comes up twice (3
+  attempts each), an explicit 3 once. `connect_timeout` bounds each connect of that poll (the link, the BGC
+  read, the handshake, the unlock), not its reads: when it runs out, the link the library holds is torn
+  down, its disconnect (and any that an earlier operation's cancellation left running) waited for up to
+  `DISCONNECT_TIMEOUT` (5 s) more and abandoned at that bound, and only then is `GoveeBleTimeout` raised with
+  the device lock free, so the next operation connects afresh with no disconnect of an old link still
+  running. When that wait would run past the operation's `OPERATION_TIMEOUT` (a `connect_timeout` above
+  `OPERATION_TIMEOUT` − `DISCONNECT_TIMEOUT`, 40 s, or a later connect of the same operation, such as the
+  pending unlock's write retry), the deadline ends it instead: `GoveeBleTimeout` ("operation exceeded 45s") is
+  raised at the deadline, and the teardown is left to its abandon at its own `DISCONNECT_TIMEOUT` bound, as on
+  any deadline; a poll its caller cancels during that wait likewise gives the lock up at once, leaving the
+  teardown to that abandon, as at the defaults. The limit is per connect, not per poll: a poll whose link drops
+  between its reads connects again with the whole limit, so one that connects k times can take k times
+  `connect_timeout` (plus each teardown) in its connects. A connect cancelled inside bleak is cleaned up by
+  the BLE backend, which only `OPERATION_TIMEOUT` bounds: BlueZ disconnects it; bleak's CoreBluetooth backend
+  (macOS) leaves the pending connection request, so the device may stay connected to the host. They hold
+  every connect the call makes (normally its first read's; also a reconnect after a link lost mid-poll) and
+  nothing else: setters and other calls keep the defaults, and `update()` without them is unchanged
+  (`CONNECT_MAX_ATTEMPTS` 3 per establishment, the 45 s `OPERATION_TIMEOUT`). An attempt count that isn't an
+  integer of at least 1, or a timeout that isn't a finite number above 0, raises `GoveeBleInvalidValue` before
+  any I/O. On the transport, `GoveeConnection.query` and `send` take the same limits as `connect_budget`
   (`transport.connection.ConnectBudget`).
 
 ### Changed
@@ -379,7 +389,24 @@ model, from which the shipped readers are generated).
 - **A wedged disconnect is abandoned at `DISCONNECT_TIMEOUT` even when the operation is cut short in its
   wait**: a teardown whose caller is cancelled while it waits (the operation deadline, or a poll's
   `connect_timeout`, on a failed connect at a wedged proxy) keeps running and is cancelled at the same bound,
-  as an uninterrupted one is. It was left running for good, holding its bleak client.
+  as an uninterrupted one is. It was left running for good, holding its bleak client. A poll's
+  `connect_timeout` that runs out also waits out every teardown still running whose wait was cut short (its
+  own, or one an earlier operation's cancellation cut short) to its bound before it raises and gives the
+  device lock up, so the next connect doesn't start while an old link's disconnect still runs (a poll retried
+  down that path stacked stale clients, which hold connection slots on an ESPHome proxy). A cancellation of
+  that wait (the poll's caller, or the operation deadline) gives the lock up at once and leaves the teardown
+  to its abandon at the bound, as at the defaults.
+- **A superseded link's notifications are dropped**: each link's notify callback is bound to its client, and
+  a frame from any client but the current one (a link whose teardown was cut short or abandoned can still
+  deliver) is dropped with a DEBUG line, so it never reaches the next session's queue, where its handshake or
+  first read took it. A superseded client's disconnect callback was already ignored.
+- **A cancellation in the same tick as a reply is not lost on Python 3.11**: the reply wait is an
+  `asyncio.timeout` instead of `asyncio.wait_for`, which on 3.11 returns a frame that arrives in the same tick
+  as a cancellation of its caller (the operation deadline, a poll's `connect_timeout`, the caller's own) and
+  swallows the cancellation (gh-86296). The semantics are now those of 3.12+ on 3.11.3 and later (3.12+
+  unchanged); 3.11.0–3.11.2's `asyncio.timeout` has gh-102780, so in a task that carries a suppressed
+  cancellation a reply wait that runs out raises `CancelledError` there. A frame already queued is still
+  returned with no time left.
 - **A colour report with no CCT test is not a Kelvin** (the nocct fold): `parse.mode_color` honours the
   layout's `is_cct` on the `[gradual][kelvin s16be]` decodes, so a `gradual_kelvin_s16be_nocct` report
   (mode_color_parse `kelvin_15_nocct`, `kelvin_0d_nocct`, ...) reads as `KelvinReport(0)`, not

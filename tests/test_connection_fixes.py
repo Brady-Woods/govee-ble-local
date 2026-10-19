@@ -10,8 +10,8 @@ import pytest
 from bleak.exc import BleakError
 
 from govee_ble_local import const
-from govee_ble_local.const import FRAME_LEN
-from govee_ble_local.crypto import encrypt
+from govee_ble_local.const import FRAME_LEN, PSK
+from govee_ble_local.crypto import decrypt, encrypt
 from govee_ble_local.exceptions import (
     GoveeBleAuthError,
     GoveeBleCommandRejected,
@@ -445,6 +445,58 @@ async def test_stale_frames_are_drained_before_unacked_sends(monkeypatch) -> Non
     c._enqueue(frame(0xEE, 0x01))
     await c.send_unacked([frame(0xA3, 0x00, 0x01)], gap=0)
     assert c._rx.qsize() == 0
+
+
+async def test_a_superseded_links_notifications_never_reach_the_next_session(monkeypatch, caplog) -> None:
+    # A link whose teardown wedged (abandoned at DISCONNECT_TIMEOUT) is still up and still notifies: its
+    # e7 01 reply, carrying its own session's key, lands in the next link's handshake ahead of that link's.
+    stale_key = bytes(range(16, 32))
+
+    class Superseded(FakeGovee):
+        def handle_write(self, client, data) -> None:
+            if client is self.clients[-1] and len(self.clients) > 1 and decrypt(data, PSK)[:2] == b"\xe7\x01":
+                self.clients[0]._notify(None, bytearray(encrypt(frame(0xE7, 0x01, *stale_key), PSK)))
+            super().handle_write(client, data)
+
+    caplog.set_level(logging.DEBUG, logger="govee_ble_local.transport.connection")
+    fake = Superseded()
+    c = _make(monkeypatch, fake)
+    await c.connect()
+    fake.disconnect_hangs = True
+    await c.disconnect()   # abandoned at its bound: the old link stays up
+    fake.disconnect_hangs = False
+    assert fake.clients[0].is_connected
+    caplog.clear()
+    await c.connect()
+    assert c._session_key == SESSION_KEY   # the new link's own key, not the stale one
+    assert "dropped a notification from a superseded link" in caplog.text
+    assert await c.send(frame(0x33, 0x01, 0x01)) == frame(0x33, 0x01, 0x00)   # and the session works
+    fake.clients[1]._notify(None, bytearray(encrypt(frame(0x33, 0x01, 0x00), SESSION_KEY)))
+    assert c._rx.qsize() == 1   # the current link's frames are still taken
+    await c.disconnect()
+
+
+# -- the reply wait never swallows a cancellation ------------------------------
+
+@pytest.mark.parametrize("ticks", [0, 1, 2])
+async def test_a_cancellation_of_a_reply_wait_is_never_swallowed(ticks: int) -> None:
+    # gh-86296: on Python 3.11 asyncio.wait_for returned a frame that its inner task had taken when the
+    # caller's cancellation (the operation deadline, a connect limit) arrived, and swallowed the
+    # cancellation. The reply wait is an asyncio.timeout in the caller's own task: a cancellation the
+    # waiting task accepts is raised, and the frame stays queued.
+    c = GoveeConnection(ble_device(ADDR, "GVH60A6X"))
+    reply = frame(0x33, 0x01, 0x00)
+    waiter = asyncio.ensure_future(c._next_rx(5.0))
+    await asyncio.sleep(0)   # waiting on the empty queue
+    c._enqueue(reply)
+    for _ in range(ticks):   # the cancellation lands this many loop iterations after the frame
+        await asyncio.sleep(0)
+    if waiter.cancel():   # accepted: the wait had not returned
+        with pytest.raises(asyncio.CancelledError):
+            await waiter
+        assert c._rx.get_nowait() == reply
+    else:   # the wait had returned the frame first
+        assert ticks and waiter.result() == reply
 
 
 # -- query(): frames already queued at the deadline are collected --------------

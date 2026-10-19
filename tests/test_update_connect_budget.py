@@ -3,7 +3,10 @@ device that doesn't answer gives the device lock up sooner, while every other ca
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import dataclasses
+import inspect
+import sys
 from typing import Any
 from unittest.mock import AsyncMock
 
@@ -19,6 +22,7 @@ from govee_ble_local.transport import connection as conn_mod
 from govee_ble_local.transport.connection import ConnectBudget, GoveeConnection
 from govee_ble_local.wire import build
 
+import fake_ble
 from fake_ble import FakeGovee, ble_device
 
 ADDR = "AA:BB:CC:DD:EE:01"
@@ -40,13 +44,15 @@ def _bulb(monkeypatch: pytest.MonkeyPatch, fake: FakeGovee) -> Device:
 
 
 def _spy_timeouts(monkeypatch: pytest.MonkeyPatch) -> list[float | None]:
-    """The delay of every asyncio.timeout opened from now on: the connection's operation deadlines and
-    connect limits."""
+    """The delay of every asyncio.timeout opened from now on but the reply waits' (``_next_rx``): the
+    connection's operation deadlines and connect limits."""
     seen: list[float | None] = []
     real = asyncio.timeout
+    reply_wait = inspect.unwrap(GoveeConnection._next_rx).__code__   # conftest's provenance check wraps it
 
     def spy(delay: float | None) -> asyncio.Timeout:
-        seen.append(delay)
+        if sys._getframe(1).f_code is not reply_wait:
+            seen.append(delay)
         return real(delay)
 
     monkeypatch.setattr(conn_mod.asyncio, "timeout", spy)
@@ -142,20 +148,193 @@ async def test_a_command_queued_behind_a_timed_out_poll_gets_the_lock_and_runs(
     assert len(fake.clients) == 2 and fake.connect_kwargs["max_attempts"] == CONNECT_MAX_ATTEMPTS
 
 
-async def test_a_teardown_cut_short_by_the_connect_limit_is_still_abandoned_at_its_bound(
-    monkeypatch: pytest.MonkeyPatch,
+@pytest.mark.parametrize("wedged", [False, True])
+async def test_a_teardown_cut_short_by_the_connect_limit_ends_before_the_lock_is_handed_on(
+    monkeypatch: pytest.MonkeyPatch, wedged: bool,
 ) -> None:
+    # The link comes up, its setup fails, and its disconnect outlasts the limit (slow, or wedged): the limit
+    # runs out inside the teardown's wait. The poll raises only once that disconnect has finished, or was
+    # abandoned at its DISCONNECT_TIMEOUT bound, so a poll retried down this path never starts its connect
+    # while the old link's disconnect still runs, and never has two disconnects in flight.
     monkeypatch.setattr(conn_mod, "DISCONNECT_TIMEOUT", 0.2)
+    loop = asyncio.get_running_loop()
     fake = FakeGovee()
-    fake.start_notify_error = BleakError("notify failed")   # the link comes up, its setup fails...
-    fake.disconnect_hangs = True   # ...and its teardown wedges: the limit runs out inside that wait
+    fake.start_notify_error = BleakError("notify failed")
     dev = _bulb(monkeypatch, fake)
+    conn = dev._conn
+    log: list[tuple[str, float]] = []
+    in_flight = peak = 0
+
+    async def disconnect(client: fake_ble.FakeClient) -> None:
+        nonlocal in_flight, peak
+        in_flight += 1
+        peak = max(peak, in_flight)
+        log.append(("disconnect", loop.time()))
+        try:
+            await asyncio.sleep(3600 if wedged else 0.1)
+            client.is_connected = False
+            log.append(("disconnected", loop.time()))
+        finally:
+            in_flight -= 1
+
+    real_abandon = conn._abandon_disconnect
+
+    def abandon(task: asyncio.Task[None]) -> None:
+        before = task.cancelling()
+        real_abandon(task)
+        if task.cancelling() > before:
+            log.append(("abandon", loop.time()))
+
+    monkeypatch.setattr(fake_ble.FakeClient, "disconnect", disconnect)
+    monkeypatch.setattr(conn, "_abandon_disconnect", abandon)
+    fake.link_up = lambda _client: log.append(("establish", loop.time()))   # type: ignore[method-assign]
+    for _ in range(2):   # the poll, and one retry of it
+        with pytest.raises(GoveeBleTimeout, match=r"connect exceeded 0\.05s"):
+            await dev.update(connect_attempts=1, connect_timeout=0.05)
+        log.append(("raised", loop.time()))
+        assert not conn._lock.locked() and conn._client is None
+        if wedged:   # the one teardown left is abandoned (cancelled), not running on
+            assert [t.cancelling() for t in conn._background] == [1]
+        else:
+            assert not conn._background and not fake.clients[-1].is_connected
+    ended = "abandon" if wedged else "disconnected"
+    assert [kind for kind, _ in log] == ["establish", "disconnect", ended, "raised"] * 2
+    for start, end in ((log[1][1], log[2][1]), (log[5][1], log[6][1])):
+        assert end - start >= (0.2 if wedged else 0.1) - 0.01   # past the limit: waited out, to its bound
+    assert peak == 1
+    await asyncio.sleep(0.01)
+    assert not conn._background and not conn._teardowns
+
+
+@pytest.mark.parametrize("own_teardown", [True, False])
+async def test_a_connect_limit_also_waits_out_a_teardown_an_earlier_cancellation_cut_short(
+    monkeypatch: pytest.MonkeyPatch, own_teardown: bool,
+) -> None:
+    # A poll at the defaults is cancelled by its caller inside link 1's wedged teardown, which runs on to its
+    # abandon at DISCONNECT_TIMEOUT. A budgeted poll then runs out its limit: inside its own slow teardown
+    # (own_teardown), or in a hung establish, with no teardown of its own. Either way it raises only once
+    # link 1's teardown is abandoned (and its own has finished), and the next connect comes after that.
+    monkeypatch.setattr(conn_mod, "DISCONNECT_TIMEOUT", 0.3)
+    loop = asyncio.get_running_loop()
+    fake = FakeGovee()
+    fake.start_notify_error = BleakError("notify failed")
+    dev = _bulb(monkeypatch, fake)
+    conn = dev._conn
+    log: list[tuple[str, float]] = []
+    tearing_down = asyncio.Event()
+    establishes = 0
+
+    async def disconnect(client: fake_ble.FakeClient) -> None:
+        link = fake.clients.index(client) + 1
+        log.append((f"disconnect {link}", loop.time()))
+        tearing_down.set()
+        await asyncio.sleep(3600 if link == 1 else 0.1)
+        client.is_connected = False
+        log.append((f"disconnected {link}", loop.time()))
+
+    async def establish(*args: Any, **kwargs: Any) -> fake_ble.FakeClient:
+        nonlocal establishes
+        establishes += 1
+        if establishes == 2 and not own_teardown:
+            await asyncio.Event().wait()   # the budgeted poll's establish hangs: the limit cancels it
+        return await fake.establish(*args, **kwargs)
+
+    real_abandon = conn._abandon_disconnect
+
+    def abandon(task: asyncio.Task[None]) -> None:
+        before = task.cancelling()
+        real_abandon(task)
+        if task.cancelling() > before:
+            log.append(("abandon", loop.time()))
+
+    monkeypatch.setattr(fake_ble.FakeClient, "disconnect", disconnect)
+    monkeypatch.setattr(conn_mod, "establish_connection", establish)
+    monkeypatch.setattr(conn, "_abandon_disconnect", abandon)
+    fake.link_up = lambda client: log.append(   # type: ignore[method-assign]
+        (f"establish {fake.clients.index(client) + 1}", loop.time()),
+    )
+
+    def still_running() -> list[asyncio.Task[None]]:
+        return [t for t in conn._background if not t.cancelling()]
+
+    first = asyncio.create_task(dev.update())
+    await tearing_down.wait()
+    await asyncio.sleep(0.05)
+    first.cancel()   # by its caller, inside link 1's teardown
+    with pytest.raises(asyncio.CancelledError):
+        await first
+    assert not conn._lock.locked() and len(still_running()) == 1
     with pytest.raises(GoveeBleTimeout, match=r"connect exceeded 0\.05s"):
         await dev.update(connect_attempts=1, connect_timeout=0.05)
-    teardowns = set(dev._conn._background)
-    assert fake.disconnect_started == 1 and len(teardowns) == 1 and not dev._conn._lock.locked()
-    await asyncio.sleep(0.3)   # past DISCONNECT_TIMEOUT from the teardown's start
-    assert all(t.cancelled() for t in teardowns) and not dev._conn._background
+    log.append(("raised", loop.time()))
+    assert not conn._lock.locked() and not still_running()
+    fake.start_notify_error = None
+    assert (await dev.update()).is_on is True   # the next connect, at the defaults
+    own = ["establish 2", "disconnect 2", "disconnected 2"] if own_teardown else []
+    nxt = "establish 3" if own_teardown else "establish 2"
+    assert [kind for kind, _ in log] == ["establish 1", "disconnect 1", *own, "abandon", "raised", nxt]
+    assert log[-3][1] - log[1][1] >= 0.3 - 0.01   # link 1's teardown abandoned at its own bound
+    await dev._conn.disconnect()
+
+
+@pytest.mark.parametrize("cut_by", ["caller", "deadline"])
+async def test_a_wait_out_cut_short_leaves_the_teardown_to_its_abandon(
+    monkeypatch: pytest.MonkeyPatch, cut_by: str,
+) -> None:
+    # The documented exception: when the poll's wait-out of a teardown the limit cut short is itself cut short
+    # (its caller cancels it, or the operation deadline runs out), the lock is given up at once and the
+    # teardown runs on to the abandon scheduled at its own DISCONNECT_TIMEOUT bound, as at the defaults.
+    monkeypatch.setattr(conn_mod, "DISCONNECT_TIMEOUT", 0.3)
+    if cut_by == "deadline":
+        monkeypatch.setattr(conn_mod, "OPERATION_TIMEOUT", 0.1)
+    fake = FakeGovee()
+    fake.start_notify_error = BleakError("notify failed")
+    fake.disconnect_hangs = True
+    dev = _bulb(monkeypatch, fake)
+    conn = dev._conn
+    poll = asyncio.create_task(dev.update(connect_attempts=1, connect_timeout=0.05))
+    if cut_by == "caller":
+        await asyncio.sleep(0.1)   # past the limit: the poll is waiting link 1's teardown out
+        assert fake.disconnect_started == 1 and not poll.done() and conn._lock.locked()
+        poll.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await poll
+    else:
+        with pytest.raises(GoveeBleTimeout, match=r"operation exceeded"):
+            await poll
+    teardowns = set(conn._background)
+    assert not conn._lock.locked() and len(teardowns) == 1
+    assert not any(t.cancelling() for t in teardowns)   # running on, not abandoned yet
+    await asyncio.sleep(0.3)   # past its bound
+    assert all(t.cancelled() for t in teardowns) and not conn._background and not conn._teardowns
+
+
+@pytest.mark.parametrize("depth", [0, 1, 2])
+async def test_a_teardown_that_ends_as_its_wait_is_cancelled_is_not_kept(depth: int) -> None:
+    # The disconnect finishes, and the task waiting for it is cancelled `depth` loop iterations later,
+    # before it resumes: its done callback has already run, so nothing may stay in _teardowns.
+    loop = asyncio.get_running_loop()
+    conn = GoveeConnection(ble_device("AA:BB:CC:DD:EE:01", "GVH6006"))
+    waiter: list[asyncio.Task[None]] = []
+
+    def later(n: int) -> None:
+        if n == 0:
+            waiter[0].cancel()
+        else:
+            loop.call_soon(later, n - 1)
+
+    class Client:
+        is_connected = True
+
+        async def disconnect(self) -> None:
+            later(depth)
+
+    conn._client = Client()  # type: ignore[assignment]
+    waiter.append(asyncio.ensure_future(conn._disconnect_locked()))
+    with contextlib.suppress(asyncio.CancelledError):
+        await waiter[0]
+    await asyncio.sleep(0)
+    assert not conn._teardowns and not conn._background
 
 
 async def test_a_connect_limit_running_out_on_the_pending_unlocks_reconnect_ends_the_poll(
