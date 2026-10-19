@@ -6,6 +6,7 @@ import copy
 import importlib.util
 import json
 import pathlib
+import re
 import sys
 from typing import Any
 
@@ -59,8 +60,11 @@ def test_the_catalogue_routes_only_skus_no_row_lists() -> None:
     rows = next(f for f in twin if f["id"] == "h6047")["client_profile"]["by_goods_type"]
     rows["64"] = {"models": ["H6047"]}
     assert [line.split(":")[0] for line in _resolve.catalogue(twin, {"H0064": 64}).review] == ["H0064"]
-    # The build: an added SKU joins its row's profile, and a row its only SKU leaves is dropped.
-    table, cut = gen.project(doc, schema, {"H0064": 64, "H6052": 23})
+    # The build: an added SKU joins its row's profile, and a row its only SKU leaves is dropped. A by_model
+    # entry needs its SKU's row or catalogue route (H6009 / H6010's scene_power_on are catalogue routes).
+    with pytest.raises(SystemExit, match=re.escape("bulblightv3 by_model ['H6009', 'H6010']: no row")):
+        gen.project(doc, schema, {"H0064": 64})
+    table, cut = gen.project(doc, schema, {"H0064": 64, "H6052": 23, "H6009": 64, "H6010": 64})
     groups = [skus for skus, _fields, _routes in _resolve.profiles(cut, table)]
     assert ("H6004", "H6006", "H6008", "H0064") in groups and not any("H6052" in g for g in groups)
     assert "tablelampv1" not in {f["id"] for f in cut}   # its only row with support was 22

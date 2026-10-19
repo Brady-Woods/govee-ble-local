@@ -237,10 +237,11 @@ def test_empty_skus_no_longer_fail_late_with_an_index_error() -> None:
 
 
 def _with_row(gt: str, **row: Any) -> Any:
-    """The generated families with one more bulblightv3 row ``gt``: goodsType 64's, with ``row``'s facts."""
+    """The generated families with one more bulblightv3 row ``gt``: goodsType 64's, with ``row``'s facts (not
+    64's catalogue routes, which the snapshot gives 64 alone)."""
     families = copy.deepcopy(FAMILIES)
     rows = next(f for f in families if f["id"] == "bulblightv3")["client_profile"]["by_goods_type"]
-    rows[gt] = {**rows["64"], **row}
+    rows[gt] = {**{k: v for k, v in rows["64"].items() if k != "catalogue_models"}, **row}
     return families
 
 

@@ -430,12 +430,13 @@
     "clientModel": {
       "type": "object",
       "additionalProperties": false,
-      "description": "A per-SKU override: mode_color_parse, the Kelvin and brightness ranges (used where the SKU's by_goods_type row has none), and their pact and firmware branches.",
+      "description": "A per-SKU override: mode_color_parse, the Kelvin and brightness ranges (used where the SKU's by_goods_type row has none), their pact and firmware branches, and the scene apply's power-on.",
       "properties": {
         "mode_color_parse": { "$ref": "#/$defs/modeColorParse" },
         "mode_color_parse_status": { "$ref": "#/$defs/family/properties/client_profile/properties/mode_color_parse_status" },
         "kelvin_range": { "$ref": "#/$defs/family/properties/specs/properties/kelvin_range", "description": "[min, max] CCT in kelvin of this SKU's colour page (KelvinConfig by SKU); the row's own kelvin_range wins over it." },
         "brightness_range": { "$ref": "#/$defs/family/properties/specs/properties/brightness_range", "description": "This SKU's brightness range; the row's own brightness_range wins over it." },
+        "scene_power_on": { "type": "boolean", "description": "true = the control screen writes the power-on switch (33 01 01, SwitchControllerConfig.d) ahead of a scene or DIY apply while its stored switch state for the device is off, and an unknown state reads as off (ApplyOffNeedOpenConfig's SKU set, ApplyOffNeedOpenHelper.b / .d, DeviceSwitchConfig.getSwitch); absent = false. Only on a SKU whose row offers scenes." },
         "by_pact": { "$ref": "#/$defs/clientRow/properties/by_pact" },
         "by_firmware": { "$ref": "#/$defs/clientRow/properties/by_firmware" }
       }

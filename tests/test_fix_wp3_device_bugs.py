@@ -353,6 +353,41 @@ def test_unknown_scene_name_raises_typed_error_and_sends_nothing() -> None:
     assert _sent(d) == [] and _unacked(d) == [] and d.state.scene_code is None
 
 
+@pytest.mark.parametrize(("sku", "is_on", "lead"), [
+    ("H6009", None, True), ("H6010", False, True), ("H6009", True, False), ("H6006", None, False)])
+def test_h6009_h6010_lead_a_scene_write_with_the_power_on(monkeypatch: pytest.MonkeyPatch, sku: str,
+                                                         is_on: bool | None, lead: bool) -> None:
+    """ApplyOffNeedOpenConfig (H6009 / H6010 only): the app prepends 33 01 01 to a scene apply, upload
+    included, while its stored switch state is off, and reads an unknown one as off."""
+    on = [build.switch(True)] if lead else []
+    d = _dev(sku)
+    d._state.is_on = is_on
+    run(d.set_scene(7))
+    assert _sent(d) == [*on, build.scene_activate(7)] and d.state.is_on is True
+    # By name, with an upload (H6006's catalog: no H6009 / H6010 catalog is bundled yet).
+    catalog = load_scenes("H6006")
+    monkeypatch.setattr(device_mod, "async_load_scenes", lambda _sku: asyncio.sleep(0, catalog))
+    d = _dev(sku)
+    d._state.is_on = is_on
+    name = next(n for n, s in catalog.items() if d.scene_upload_frames(s))
+    order: list[str] = []
+    many, unacked = d._conn.send_many.side_effect, d._conn.send_unacked.side_effect
+
+    async def lead_first(frames: list[bytes]) -> None:
+        order.append("lead")
+        await many(frames)
+
+    async def upload(frames: Any, **k: object) -> None:
+        order.append("upload")
+        await unacked(frames, **k)
+
+    d._conn.send_many.side_effect = lead_first  # type: ignore[attr-defined]
+    d._conn.send_unacked.side_effect = upload  # type: ignore[attr-defined]
+    run(d.set_scene_by_name(name))
+    assert order == (["lead", "upload"] if lead else ["upload"]) and _unacked(d)
+    assert _sent(d) == [*on, build.scene_activate(catalog[name].code)]
+
+
 def test_set_scene_by_name_loads_the_catalog_off_the_loop(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[str] = []
     real = device_mod.async_load_scenes

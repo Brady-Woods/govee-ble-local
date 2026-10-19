@@ -87,15 +87,17 @@ the row lacks fails the build: nothing defaults silently.
   records in the row's wire ``group.num_per_group`` (and, in the status read, its ``group.rule``).
 - The writes on every connect (``connect_writes``): a plug's ``plug_sync_time``, and on a light nothing or
   ``light_effect_stop`` (``DeviceProfile.light_effect_stop``), each sent once per session after the
-  handshake and any unlock.
+  handshake and any unlock. A SKU's ``by_model`` ``scene_power_on`` (the power-on ahead of a scene apply,
+  H6009 / H6010) becomes ``DeviceProfile.scene_power_on``, on a row with ``scenes`` only.
 - Wire branches: the library reads the wire with the pact and the firmware unknown, so a wire ``by_pact`` /
   ``by_firmware`` branch raises, but for the unread ones of :data:`_UNREAD_WIRE_BRANCHES` (H60A6 pact (1,
   1)'s one colour piece: decision D3, the library keeps the row's 13).
 - Pact branches are at the row's listed pacts only (a branch elsewhere is reached by no device: it raises),
   and a family with a row with support takes ``by_model`` / ``wire.by_model`` entries only for SKUs one of
-  its rows lists (:func:`routes`). ``status_read`` becomes the gate above, and ``scene_versions`` becomes
-  ``scene_versions_by_pact``, which ``Device.scene_versions`` applies with the advertised pact before the
-  firmware entries (goodsType 19 at pact code 2); ``kelvin_range`` and ``brightness_range`` become
+  its rows lists or the catalogue snapshot routes to one of them (:func:`sku_entries`). ``status_read``
+  becomes the gate above, and ``scene_versions`` becomes ``scene_versions_by_pact``, which
+  ``Device.scene_versions`` applies with the advertised pact before the firmware entries (goodsType 19 at
+  pact code 2); ``kelvin_range`` and ``brightness_range`` become
   ``kelvin_by_pact`` / ``brightness_by_pact``, which ``Device`` applies with the advertised pact the same
   way (goodsType 261 at pact (4, 1); a pact Kelvin range needs a base one and no Kelvin firmware branch, a
   pact brightness range the brightness capability); ``capabilities`` take the row's own values only on the
@@ -210,6 +212,7 @@ class ClientModel(TypedDict, total=False):
     mode_color_parse_status: str
     kelvin_range: tuple[int, ...]
     brightness_range: tuple[int, ...]
+    scene_power_on: bool
     by_pact: dict[str, Branch]
     by_firmware: tuple[FirmwareBranch, ...]
 
@@ -429,10 +432,9 @@ def routes(families: Sequence[Family]) -> dict[str, tuple[Family, str, str]]:
     a row with support (any level) that is no BLE route, for a SKU that a ``modelled`` row and an admitted
     row both list (the spec's ``ble_rows`` counts both wherever both accept the pact, so the opt-in would no
     longer be additive), for a routed SKU that an ``assigned_goods_type`` item in any family names (matched
-    as the routes are, case-insensitively) unless the item's condition tests the pact alone, for a row
-    that disagrees with a pact-conditioned item (:func:`_reassignments`), and, in a family with a row with
-    support, for a ``by_model`` or ``wire.by_model`` entry of a SKU no row of the family lists. The
-    generator runs it over the whole document (its cut keeps only the listed SKUs' entries)."""
+    as the routes are, case-insensitively) unless the item's condition tests the pact alone, and for a row
+    that disagrees with a pact-conditioned item (:func:`_reassignments`). The generator runs it over the
+    whole document."""
     listed: dict[str, list[tuple[Family, str, str, bool]]] = {}
     for fam in families:
         rows = (fam.get("client_profile") or {}).get("by_goods_type") or {}
@@ -454,17 +456,6 @@ def routes(families: Sequence[Family]) -> dict[str, tuple[Family, str, str]]:
                                     "leave the admitted routes as they are)")
                 hits.append((fam, gt, sku, admitted))
     for fam in families:
-        cp = fam.get("client_profile") or {}
-        rows = cp.get("by_goods_type") or {}
-        if any("support" in row for row in rows.values()):
-            own = {m.upper() for row in rows.values() for m in row.get("models") or () if isinstance(m, str)}
-            for layer, entries in (("by_model", cp.get("by_model") or {}),
-                                   ("wire by_model", (cp.get("wire") or {}).get("by_model") or {})):
-                unlisted = sorted(sku for sku in entries if sku.upper() not in own)
-                if unlisted:
-                    raise SpecError(f"{fam['id']} {layer} {unlisted}: no row of the family lists them (a "
-                                    "per-SKU entry needs the SKU's row)")
-    for fam in families:
         for item in fam.get("assigned_goods_type") or ():
             if pact_gate(item) is not None:
                 continue   # routing data: _reassignments checks it against the rows
@@ -476,6 +467,27 @@ def routes(families: Sequence[Family]) -> dict[str, tuple[Family, str, str]]:
                                     "(the library follows only a pact-conditioned reassignment)")
     _reassignments(families)
     return {key: hits[0][:3] for key, hits in listed.items() if len(hits) == 1 and hits[0][3]}
+
+
+def sku_entries(families: Sequence[Family], routed: Catalogue) -> None:
+    """SpecError, in a family with a row with support, for a ``by_model`` or ``wire.by_model`` entry of a
+    SKU that no row of the family lists and that ``routed`` (:func:`catalogue` over the same ``families``)
+    routes to none of them (H6009 / H6010's ``scene_power_on`` are such catalogue routes). The generator
+    runs it over the whole document, since its cut keeps only the routed SKUs' entries and would drop a
+    stray one silently."""
+    for fam in families:
+        cp = fam.get("client_profile") or {}
+        rows = cp.get("by_goods_type") or {}
+        if any("support" in row for row in rows.values()):
+            own = {m.upper() for row in rows.values() for m in row.get("models") or () if isinstance(m, str)}
+            own.update(sku for (fam_id, _gt), skus in routed.added.items() if fam_id == fam["id"]
+                       for sku in skus)
+            for layer, entries in (("by_model", cp.get("by_model") or {}),
+                                   ("wire by_model", (cp.get("wire") or {}).get("by_model") or {})):
+                unlisted = sorted(sku for sku in entries if sku.upper() not in own)
+                if unlisted:
+                    raise SpecError(f"{fam['id']} {layer} {unlisted}: no row of the family lists them (a "
+                                    "per-SKU entry needs the SKU's row or catalogue route)")
 
 
 def pact_gate(item: AssignedGoodsType) -> tuple[int, int] | None:
@@ -882,7 +894,10 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str]) -> dic
         "kelvin_by_software": tuple(sorted(kelvin_by_version, reverse=True)) if by_soft else (),
         "mode_reports_kelvin": bool(row.get("mode_reports_kelvin", True)),
         "light_effect_stop": writes == ("light_effect_stop",),
+        "scene_power_on": bool(model.get("scene_power_on", False)),
     }
+    if out["scene_power_on"] and "scenes" not in row_caps:
+        fail("by_model scene_power_on on a row without the scenes capability")
     if ("segments" in row_caps or color_readback) and not out["segments"]:   # before SCHEME_LACKS (h6061)
         fail("segments or a colour read-back without wire counts num_segments")
     for name, _index, segs in zones:

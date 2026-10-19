@@ -37,7 +37,8 @@ model, from which the shipped readers are generated).
   doesn't list (no device reaches it), and, checked over the whole document, a SKU that a `modelled` row
   and a `hardware_verified` / `app_traced` row both list, or that an `assigned_goods_type` item in any
   family names, and in a family with a supported row a `by_model` or `wire.by_model` entry for a SKU none
-  of its rows lists. Rows of every support level are resolved and checked.
+  of its rows lists and the catalogue snapshot routes to none of them. Rows of every support level are
+  resolved and checked.
 - **Routing by pact and goodsType** (one-device-list phase 2): `profile_for(sku, *, pact=None,
   goods_type=None, allow_modelled=False)` and `is_supported_sku` with the same keywords. The candidates
   are the devices.yaml BLE rows that list the SKU and accept the advertised `(pact_type, pact_code)` (any
@@ -169,6 +170,12 @@ model, from which the shipped readers are generated).
   read-back walks the static pieces. An `ic_num` read still needs `ic_pieces` (now the sizing or `fixed`)
   and the direct colour read-back, and `ic_pieces` the read; H6641's live sizing is unchanged. No row says
   `ic_pieces: fixed` yet, so no SKU sets it.
+- **H6009 / H6010 power on before a scene** (the review's A3d): `DeviceProfile.scene_power_on` (keyword-only,
+  default False), from a SKU's devices.yaml `by_model` `scene_power_on`. The app's scene apply prepends the
+  power-on switch (`33 01 01`) for exactly these two SKUs (`ApplyOffNeedOpenConfig`, `ApplyOffNeedOpenHelper`)
+  while its stored switch state is off, and reads an unknown state as off (`DeviceSwitchConfig.getSwitch`), so
+  `Device.set_scene` and `set_scene_by_name` send it first, ahead of any upload, unless `state.is_on` is True.
+  H6004 / H6006 / H6008 and every other SKU send what they sent.
 - Bundled scene catalogs for the newly admitted models whose profile offers scenes: H6002, H1401 / R1401
   and H14B1 (H14B1 shares H6004's set), fetched from the public scene library with `tools/fetch_scenes.py`
   into the content-keyed store. The other newly admitted models get no catalog yet. The Christmas scene of H1401 / R1401 / H14B1 is
@@ -272,7 +279,8 @@ model, from which the shipped readers are generated).
 
 ### Spec
 - `devices.schema.json`: `clientModel` (`client_profile.by_model.<SKU>`) takes `kelvin_range` and
-  `brightness_range`.
+  `brightness_range`, and `scene_power_on` (the scene apply's power-on; bulblightv3 H6009 / H6010, cited in
+  row 64's doc), which the generator refuses on a SKU whose row offers no scenes.
 - `spec/govee_reference.py`: `client_row` takes the device's `sku` (keyword-only), as the library resolves
   a SKU: a Kelvin or brightness range the row lacks comes from the SKU's `by_model` entry, and its
   `by_firmware` Kelvin items, before the family `specs`. Without it, every result is unchanged.

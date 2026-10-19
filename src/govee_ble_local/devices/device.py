@@ -977,12 +977,22 @@ class Device:
         Raises GoveeBleNotSupported without SCENES."""
         self._require(Capability.SCENES)
         async with self._scene_lock, self._zone_power_lock():
-            await self._activate_scene(code)
+            await self._activate_scene(code, self._scene_power_frames())
 
-    async def _activate_scene(self, code: int) -> None:
-        """Send the ``33 05 04`` activation and apply its state (the device is on, in that scene, with
-        no solid colour); the caller holds ``_scene_lock`` and :meth:`_zone_power_lock`."""
-        await self._commit(build.scene_activate(code),
+    def _scene_power_frames(self) -> list[bytes]:
+        """The power-on that leads a scene write on a :attr:`.DeviceProfile.scene_power_on` device not
+        known to be on (``ApplyOffNeedOpenHelper.b``: the app's stored switch state, off when unknown), else
+        none."""
+        if self.profile.scene_power_on and self._state.is_on is not True:
+            return self._power_frames(True)
+        return []
+
+    async def _activate_scene(self, code: int, lead: list[bytes]) -> None:
+        """Send the ``33 05 04`` activation, after the ``lead`` frames (:meth:`_scene_power_frames`), and
+        apply its state (the device is on, in that scene, with no solid colour); the caller holds
+        ``_scene_lock`` and :meth:`_zone_power_lock`."""
+        activate = build.scene_activate(code)
+        await self._commit([*lead, activate] if lead else activate,
                            lambda: _fold.apply_scene(self.profile, self._state, code))
 
     def scene_upload_frames(self, scene: Scene, *, mtu: int = 20) -> list[bytes] | None:
@@ -1016,9 +1026,13 @@ class Device:
 
         async with self._scene_lock, self._zone_power_lock(), self._read_gate:
             await self._send_pending_unlock()   # before the upload, not between it and the activation
+            lead = self._scene_power_frames()
             if frames:
+                if lead:   # the app prepends the switch to the whole composed write, upload included
+                    await self._conn.send_many(lead)
+                    lead = []
                 await self._conn.send_unacked(sized)
-            await self._activate_scene(scene.code)
+            await self._activate_scene(scene.code, lead)
 
     # -- misc settings ------------------------------------------------------
     async def set_gradual(self, on: bool) -> None:

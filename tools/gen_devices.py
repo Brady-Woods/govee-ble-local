@@ -77,7 +77,7 @@ KEEP: dict[str, tuple[str, ...]] = {
         "mode_reports_kelvin", "status_read", "connect_reads", "connect_writes", "power_resync", "ic_pieces",
         "by_pact", "by_firmware"),
     "#/$defs/clientModel": ("mode_color_parse", "mode_color_parse_status", "kelvin_range", "brightness_range",
-                            "by_pact", "by_firmware"),
+                            "scene_power_on", "by_pact", "by_firmware"),
     "#/$defs/clientBranch": (
         "mode_color_parse", "mode_color_parse_status", "status_read", "capabilities", "connect_reads",
         *_ROW_FACTS),
@@ -293,12 +293,13 @@ def project(doc: dict[str, Any], schema: dict[str, Any], catalogue: Mapping[str,
             ) -> tuple[dict[str, Any], tuple[dict[str, Any], ...]]:
     """``(mode_color_parse table, families)``: devices.yaml ``doc`` with the routes of ``catalogue`` (SKU ->
     goodsType; default the committed snapshot), through KEEP, checked by the library's resolver (the routes
-    over the whole document, then each row with support, of every level) and against govee_common.ksy.
-    GenError on a missing fact or one the library can't serve."""
+    over the whole document, its per-SKU entries with the catalogue's routes, then each row with support, of
+    every level) and against govee_common.ksy. GenError on a missing fact or one the library can't serve."""
     resolve = _resolver()
     try:
         resolve.routes(doc["families"])
         routed = resolve.catalogue(doc["families"], snapshot() if catalogue is None else catalogue)
+        resolve.sku_entries(doc["families"], routed)   # before the cut, which drops a stray entry silently
         doc = _with_catalogue(doc, routed)
         projected = Projector(schema).project(_supported(doc, resolve.LEVELS), "#")
         table, families = projected["mode_color_parse"], projected["families"]

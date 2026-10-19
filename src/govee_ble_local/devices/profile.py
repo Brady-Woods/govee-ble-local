@@ -318,6 +318,12 @@ class DeviceProfile:
     :meth:`~.device.Device.update` reads it on every poll, before the colour read-back as the screen reads
     it before the ``aa a5`` groups, and discards the reply; the read-back walks the static pieces (a
     devices.yaml row with ``ic_pieces: fixed``)."""
+    scene_power_on: bool = field(default=False, kw_only=True)
+    """A scene write is led by the power-on switch (``33 01 01``) unless the device is known to be on: the
+    screen prepends it to a scene apply while its stored switch state is off, and an unknown state reads as
+    off (``ApplyOffNeedOpenConfig``: H6009 / H6010; ``ApplyOffNeedOpenHelper.b`` / ``.d``;
+    ``DeviceSwitchConfig.getSwitch``; a devices.yaml ``by_model`` ``scene_power_on``). ``Device.set_scene``
+    and ``set_scene_by_name`` send it first, ahead of any upload, while ``state.is_on`` is not True."""
 
     def __post_init__(self) -> None:
         """Validate each field: GoveeBleInvalidValue (a ValueError) on a value no Device can use.

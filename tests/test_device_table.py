@@ -288,6 +288,8 @@ _REFUSED: tuple[tuple[str, str, _Edit, str], ...] = (
     # plugs
     ("h5080", "50", lambda f: _row(f, "50").pop("power_resync"), "no power_resync"),
     ("bulblightv3", "64", lambda f: _row(f, "64").update(power_resync=True), "power_resync on a light"),
+    ("bulblightv3", "328", lambda f: f["client_profile"]["by_model"].update(H8015={"scene_power_on": True}),
+     "by_model scene_power_on on a row without the scenes capability"),
     ("h5080", "50", lambda f: _row(f, "50").update(relay_power="all_outlet"), "relay_power 'all_outlet'"),
     ("h5080", "43", lambda f: _row(f, "43").update(advert_on_mask=300), "advert_on_mask 300"),
 )
