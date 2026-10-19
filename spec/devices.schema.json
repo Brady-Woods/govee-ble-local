@@ -352,7 +352,7 @@
             { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "pattern": "^[0-9]+,[0-9]+$" } },
             { "const": "any" }
           ],
-          "description": "The 'pactType,pactCode' pairs (decimal) the app accepts for this goodsType (Support.addSupportPact); 'any' where the route tests no pact (a goodsType-0 SKU match). A row without pacts is never a route."
+          "description": "The 'pactType,pactCode' pairs (decimal) the app accepts for this goodsType (Support.addSupportPact); 'any' where the route tests no pact (a goodsType-0 SKU match). A row without pacts is never a route. On a row that a pact-conditioned assigned_goods_type item reassigns its SKUs to, only the pairs at or above its gate; on a row of a goodsType it reassigns from, only pairs below it."
         },
         "support": { "enum": ["hardware_verified", "app_traced", "modelled"], "description": "The row's evidence. app_traced = the row's facts traced on the control-screen path and cited in doc-ref (a gap the trace knows of is named in doc); hardware_verified = app_traced, and the control path also observed on a device (doc names the device, the date and what was seen); modelled = inferred, not traced." },
         "power_read": { "$ref": "#/$defs/family/properties/client_profile/properties/power_read" },

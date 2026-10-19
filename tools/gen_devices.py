@@ -25,7 +25,9 @@ it and nothing fetched): _resolve.catalogue over the whole document, by the snap
 row lists joins the models of the BLE row of its catalogue goodsType (never goodsType 0). One that a row
 with support lists at a goodsType the snapshot contradicts, with no cited rewrite, leaves those rows (a row
 left with no models is dropped). The module's CATALOGUE_SKUS are the SKUs only the snapshot routes, and the
-generator prints how many there are and the review list.
+generator prints how many there are and the review list. It also prints the routes of the pact-conditioned
+assigned_goods_type items that no row carries yet (_resolve.reassignment_review); REASSIGNED_SKUS are those
+items' SKUs.
 
 Build-time only: PyYAML, which the in-tree backend asks the build frontend for in a repository build
 (get_requires_for_build_*). An sdist ships the generated module, so a build from it needs nothing.
@@ -61,7 +63,7 @@ KEEP: dict[str, tuple[str, ...]] = {
     "#/$defs/modeColorStrategy": ("sub_modes",),
     "#/$defs/family": ("id", "connectivity", "specs", "encryption", "assigned_goods_type", "client_profile"),
     "#/$defs/family/properties/specs": _ROW_FACTS,
-    "#/$defs/assignedGoodsType": ("models", "goods_type"),
+    "#/$defs/assignedGoodsType": ("models", "goods_type", "from_goods_type", "condition"),
     "#/$defs/family/properties/client_profile": (
         "has_brightness", "color_scheme", "power_read", "power_live", "mode_color_parse",
         "mode_color_parse_status", "relay_power", "relay_on_mask", "advert_on_mask", "by_model",
@@ -285,12 +287,18 @@ def project(doc: dict[str, Any], schema: dict[str, Any], catalogue: Mapping[str,
     return table, families
 
 
-def render(raw: bytes, schema: dict[str, Any]) -> tuple[str, Any]:
-    """The generated module's source for devices.yaml ``raw``, and the committed catalogue snapshot's routes
-    (``_resolve.Catalogue``) for :func:`main` to report."""
+def render(raw: bytes, schema: dict[str, Any]) -> tuple[str, list[str]]:
+    """The generated module's source for devices.yaml ``raw``, and the lines :func:`main` reports: the
+    committed catalogue snapshot's routes and review list, and the routes of the pact-conditioned
+    assigned_goods_type items that no row carries yet."""
     doc, catalogue = load(raw), snapshot()
     table, families = project(doc, schema, catalogue)
-    routed = _resolver().catalogue(doc["families"], catalogue)
+    resolve = _resolver()
+    routed = resolve.catalogue(doc["families"], catalogue)
+    reassigned = resolve.reassignment_review(doc["families"])
+    gated = frozenset(sku.upper() for fam in doc["families"] for item in fam.get("assigned_goods_type") or ()
+                      if resolve.pact_gate(item) is not None for sku in item.get("models") or ()
+                      if isinstance(sku, str))
     only = frozenset(sku for skus in routed.added.values() for sku in skus)
     fmt = pprint.PrettyPrinter(width=110, sort_dicts=False).pformat
     return "\n".join([
@@ -307,8 +315,14 @@ def render(raw: bytes, schema: dict[str, Any]) -> tuple[str, Any]:
         f"FAMILIES: Final[tuple[Family, ...]] = {fmt(families)}",
         "# The SKUs only the catalogue snapshot routes (profile_for keeps them on their row's pacts).",
         f"CATALOGUE_SKUS: Final[frozenset[str]] = frozenset({fmt(tuple(sorted(only)))})",
+        "# The SKUs of the pact-conditioned assigned_goods_type items (profile_for keeps them on their rows'"
+        " pacts).",
+        f"REASSIGNED_SKUS: Final[frozenset[str]] = frozenset({fmt(tuple(sorted(gated)))})",
         "",
-    ]), routed
+    ]), [f">> catalogue snapshot: {len(only)} SKUs routed that no devices.yaml row lists, "
+         f"{len(routed.review)} for review", *(f"   review: {line}" for line in routed.review),
+         f">> pact-conditioned reassignments: {len(reassigned)} for review",
+         *(f"   review: {line}" for line in reassigned)]
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -317,15 +331,12 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
     schema = json.loads((SPEC / "devices.schema.json").read_text(encoding="utf-8"))
     raw = (SPEC / "devices.yaml").read_bytes()
-    text, routed = render(raw, schema)
+    text, report = render(raw, schema)
     compile(text, "devices.py", "exec")   # valid Python before it is written
     args.out.mkdir(parents=True, exist_ok=True)
     (args.out / "devices.py").write_text(text, encoding="utf-8")
     print(f">> devices table: {args.out / 'devices.py'} ({len(text)} bytes)")
-    print(f">> catalogue snapshot: {sum(map(len, routed.added.values()))} SKUs routed that no devices.yaml "
-          f"row lists, {len(routed.review)} for review")
-    for line in routed.review:
-        print(f"   review: {line}")
+    print("\n".join(report))
     return 0
 
 

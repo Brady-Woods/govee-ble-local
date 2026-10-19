@@ -487,7 +487,8 @@ def profile_for(sku: str, *, pact: tuple[int, int] | None = None, goods_type: in
     no row accepts still routes a SKU that one ``hardware_verified`` / ``app_traced`` profile serves, as in
     1.x (the pact picks between rows, never refuses the only one); a ``modelled`` row, and a SKU only the
     catalogue snapshot routes (no 1.x unit to keep), stay gated on their row's pacts, as the app's scan is
-    (``BaseBleProcessor.g``: no protocol, no device)."""
+    (``BaseBleProcessor.g``: no protocol, no device). So does a SKU of a pact-conditioned
+    ``assigned_goods_type`` item: its pact picks the row the app's rewrite picks."""
     key = sku.upper()
     for table in (_ADMITTED, _MODELLED) if allow_modelled else (_ADMITTED,):
         hits = {id(r.profile): r.profile for r in table[1].get(key, ())
@@ -495,7 +496,8 @@ def profile_for(sku: str, *, pact: tuple[int, int] | None = None, goods_type: in
                 and (goods_type is None or r.goods_type == goods_type)}
         if hits:
             return next(iter(hits.values())) if len(hits) == 1 else None
-    if pact is not None and key not in _devices.CATALOGUE_SKUS:   # D3: no row-listed SKU is demoted by a pact
+    gated = key in _devices.CATALOGUE_SKUS or key in _devices.REASSIGNED_SKUS
+    if pact is not None and not gated:   # D3: no row-listed SKU is demoted by a pact its row doesn't list
         loose = {id(r.profile): r.profile for r in _ADMITTED[1].get(key, ())
                  if goods_type is None or r.goods_type == goods_type}
         if len(loose) == 1:

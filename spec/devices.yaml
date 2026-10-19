@@ -1098,7 +1098,7 @@ families:
     client_profile:
       mode_color_parse: rgb_kelvin_tint   # goodsType 0 SKUs (Support4H6159); split_rgblight/com/govee/rgblight/mode/ModeParseStrategyConfig.java:38-43
       by_goods_type:
-        "40": { mode_color_parse: none, by_pact: { "2,1": { mode_color_parse: rgb_kelvin_tint } } }   # BK BLE+Wi-Fi firmware runs as 40; aa 05 read only on pact (2,1); base-classes9/com/govee/base2home/pact/support/OldRgbBkUtil.java:87-97
+        "40": { models: [H6159, H6110, H6109, H614B, H614E], pacts: ["2,1"], mode_color_parse: none, by_pact: { "2,1": { mode_color_parse: rgb_kelvin_tint } } }   # BK BLE+Wi-Fi firmware runs as 40; aa 05 read only on pact (2,1); base-classes9/com/govee/base2home/pact/support/OldRgbBkUtil.java:87-97; pacts: split_rgblight/com/govee/stringlightv2/pact/Support.java:170-172, at the (2,1) gate
       wire:
         forms: { f_01: light, f_09: datetime_epoch }
     models: [H6159, H6110, H6109, H614A, H614B, H614E]
@@ -1117,7 +1117,7 @@ families:
     client_profile:
       mode_color_parse: rgb_flag_tint   # H6160 at goodsType 0; split_rgblight/com/govee/rgblight/mode/ModeParseStrategyConfig.java:53-61
       by_goods_type:
-        "40": { models: [H6160], mode_color_parse: none, by_pact: { "2,1": { mode_color_parse: rgb_kelvin_tint } } }   # BK firmware runs as 40; aa 05 read only on pact (2,1); rgblight/add/Model.java:54-55
+        "40": { models: [H6160], pacts: ["2,1"], mode_color_parse: none, by_pact: { "2,1": { mode_color_parse: rgb_kelvin_tint } } }   # BK firmware runs as 40; aa 05 read only on pact (2,1); rgblight/add/Model.java:54-55; pacts: split_rgblight/com/govee/stringlightv2/pact/Support.java:170-172, at the (2,1) gate
         "19": { models: [H6163, H6117], mode_color_parse: kelvin }   # versionHard >= 1.00.02 runs as 19; the off->on re-read is parsed on every pact; rgbiclight/h6160/sku/Model.java:61-64
       by_model:
         H6163: { mode_color_parse: rgb_flag_tint_no_0d, by_firmware: [ { min_soft_version: "1.03.18", mode_color_parse: rgb_kelvin_tint_no_0d } ] }   # old hardware (< 1.00.02); flag form below firmware 1.03.18; split_rgbiclight/com/govee/rgbiclight/h6160/newdetail/InfoDetail.java:236-273
@@ -1373,7 +1373,7 @@ families:
     client_profile:
       mode_color_parse: rgb_flag_tint   # goodsType 0 (H6113Support); split_rgblight/com/govee/rgblight/mode/ModeParseStrategyConfig.java:53-61
       by_goods_type:
-        "39": { mode_color_parse: none, by_pact: { "10,1": { mode_color_parse: rgb_kelvin_tint }, "10,2": { mode_color_parse: rgb_kelvin_tint } } }   # BK firmware runs as 39; aa 05 read only on pacts (10,1) / (10,2); base-classes10/com/govee/base2home/util/SkuToGoodsTypeUtil.java:89-91
+        "39": { models: [H6113], pacts: ["10,1", "10,2"], mode_color_parse: none, by_pact: { "10,1": { mode_color_parse: rgb_kelvin_tint }, "10,2": { mode_color_parse: rgb_kelvin_tint } } }   # BK firmware runs as 39; aa 05 read only on pacts (10,1) / (10,2); base-classes10/com/govee/base2home/util/SkuToGoodsTypeUtil.java:89-91; pacts: split_rgblight/com/govee/stringlightv2/pact/Support.java:157-158, all at or above the (10,1) gate
       wire:
         forms: { f_01: light, f_09: datetime_epoch }
     models: [H6113]
@@ -1393,7 +1393,7 @@ families:
     client_profile:
       mode_color_parse: rgb_flag_tint   # goodsType 0 (H6113Support covers H6114); split_rgblight/com/govee/h6113/H6113Support.java:21-26
       by_goods_type:
-        "39": { mode_color_parse: none, by_pact: { "10,1": { mode_color_parse: rgb_kelvin_tint }, "10,2": { mode_color_parse: rgb_kelvin_tint } } }   # BK firmware runs as 39; aa 05 read only on pacts (10,1) / (10,2); SkuToGoodsTypeUtil.java:80-82
+        "39": { models: [H6114], pacts: ["10,1", "10,2"], mode_color_parse: none, by_pact: { "10,1": { mode_color_parse: rgb_kelvin_tint }, "10,2": { mode_color_parse: rgb_kelvin_tint } } }   # BK firmware runs as 39; aa 05 read only on pacts (10,1) / (10,2); SkuToGoodsTypeUtil.java:80-82; pacts: split_rgblight/com/govee/stringlightv2/pact/Support.java:157-158, all at or above the (10,1) gate
       wire:
         forms: { f_01: light, f_09: datetime_epoch }
     models: [H6114]
@@ -1413,7 +1413,7 @@ families:
     client_profile:
       mode_color_parse: kelvin   # goodsType 0, and 44 on BK car firmware; aa a5 reads need hard >= 1.00.03, soft >= 1.06.00 (split_rgbiclight/com/govee/rgbiclight/Support.java:278-283)
       by_goods_type:
-        "44": { mode_color_parse: kelvin }   # BK car firmware, same screen as goodsType 0
+        "44": { models: [H6119], pacts: ["10,1", "10,2"], mode_color_parse: kelvin }   # BK car firmware, same screen as goodsType 0; pacts: split_rgbiclight/com/govee/h7090/pact/Support.java:35-40, all at or above the (10,1) gate
       wire:
         forms: { f_01: light, f_09: datetime_epoch, f_14: gradual }
         by_goods_type:
@@ -1494,7 +1494,7 @@ families:
     client_profile:
       mode_color_parse: rgb_flag_tint   # goodsType 0 (Support4H613839); split_rgblight/com/govee/rgblight/mode/ModeParseStrategyConfig.java:52-62
       by_goods_type:
-        "39": { mode_color_parse: none, by_pact: { "10,1": { mode_color_parse: rgb_kelvin_tint }, "10,2": { mode_color_parse: rgb_kelvin_tint }, "65535,255": { mode_color_parse: rgb_flag_tint } } }   # BK firmware runs as 39; only the listed pacts get the aa 05 read; h613839/sku/Model.java:62,76
+        "39": { models: [H6138, H6139], pacts: ["10,1", "10,2"], mode_color_parse: none, by_pact: { "10,1": { mode_color_parse: rgb_kelvin_tint }, "10,2": { mode_color_parse: rgb_kelvin_tint }, "65535,255": { mode_color_parse: rgb_flag_tint } } }   # BK firmware runs as 39; only the listed pacts get the aa 05 read; h613839/sku/Model.java:62,76; pacts: split_rgblight/com/govee/stringlightv2/pact/Support.java:157-158, all at or above the (10,1) gate (the H613A-F bind at (65535,255) is unconditioned: not routed)
       wire:
         forms: { f_01: light, f_09: clock }
         by_goods_type:
@@ -1515,7 +1515,7 @@ families:
     client_profile:
       mode_color_parse: rgb_flag_tint   # goodsType 0 (H6181Support); split_rgblight/com/govee/h6181/H6181Support.java:18-20
       by_goods_type:
-        "39": { mode_color_parse: none, by_pact: { "10,1": { mode_color_parse: rgb_kelvin_tint }, "10,2": { mode_color_parse: rgb_kelvin_tint } } }   # BK firmware runs as 39; aa 05 read only on pacts (10,1) / (10,2); SkuToGoodsTypeUtil.java:80-82
+        "39": { models: [H6181], pacts: ["10,1", "10,2"], mode_color_parse: none, by_pact: { "10,1": { mode_color_parse: rgb_kelvin_tint }, "10,2": { mode_color_parse: rgb_kelvin_tint } } }   # BK firmware runs as 39; aa 05 read only on pacts (10,1) / (10,2); SkuToGoodsTypeUtil.java:80-82; pacts: split_rgblight/com/govee/stringlightv2/pact/Support.java:157-158, all at or above the (10,1) gate
       wire:
         forms: { f_01: light, f_09: datetime_epoch }
     models: [H6181]
@@ -1533,7 +1533,7 @@ families:
     client_profile:
       mode_color_parse: rgb_flag_tint   # goodsType 0 (H6182Support); split_rgblight/com/govee/h6182/H6182Support.java:18-20
       by_goods_type:
-        "40": { mode_color_parse: none, by_pact: { "2,1": { mode_color_parse: rgb_kelvin_tint } } }   # BK firmware runs as 40; aa 05 read only on pact (2,1); rgblight/add/Model.java:54-55
+        "40": { models: [H6182], pacts: ["2,1"], mode_color_parse: none, by_pact: { "2,1": { mode_color_parse: rgb_kelvin_tint } } }   # BK firmware runs as 40; aa 05 read only on pact (2,1); rgblight/add/Model.java:54-55; pacts: split_rgblight/com/govee/stringlightv2/pact/Support.java:170-172, at the (2,1) gate
       wire:
         forms: { f_01: light, f_09: clock }
         by_goods_type:
@@ -1854,7 +1854,7 @@ families:
     client_profile:
       mode_color_parse: kelvin   # goodsType 13; split_rgbiclight/com/govee/barelightv1/pact/Model.java:54-70
       by_goods_type:
-        "17": { models: [H6145, H6146, H6147, H6171], mode_color_parse: kelvin }   # BK firmware runs as 17; every pact via the off->on re-read; base-classes9/com/govee/base2home/pact/support/OldRgbicBkUtil.java:59-69
+        "17": { models: [H6145, H6146, H6147, H6171], pacts: ["10,1", "10,2", "10,3"], mode_color_parse: kelvin }   # BK firmware runs as 17; every pact via the off->on re-read; base-classes9/com/govee/base2home/pact/support/OldRgbicBkUtil.java:59-69; pacts: split_rgbiclight/com/govee/dreamcolorlightv1/pact/Support.java:237-244,280-281, those at or above the (10,1) gate (not 17's (1,1) / (1,2))
       wire:
         doc: "Config.G[13] = 1: 33 14 gradual"
         forms: { f_01: light, f_09: datetime_epoch, f_14: gradual }
@@ -2037,7 +2037,7 @@ families:
     client_profile:
       mode_color_parse: rgb_kelvin_tint   # goodsType 6; split_rgblight/com/govee/carlightv1/Support4CarLight.java:37-40
       by_goods_type:
-        "39": { models: [H6118, H6194], mode_color_parse: none, by_pact: { "10,1": { mode_color_parse: rgb_kelvin_tint }, "10,2": { mode_color_parse: rgb_kelvin_tint } } }   # BK firmware runs as 39 in memory (the account record stays 6); aa 05 read only on pacts (10,1) / (10,2); carlightv1/pact/Model.java:59-61
+        "39": { models: [H6118, H6194], pacts: ["10,1", "10,2"], mode_color_parse: none, by_pact: { "10,1": { mode_color_parse: rgb_kelvin_tint }, "10,2": { mode_color_parse: rgb_kelvin_tint } } }   # BK firmware runs as 39 in memory (the account record stays 6); aa 05 read only on pacts (10,1) / (10,2); carlightv1/pact/Model.java:59-61; pacts: split_rgblight/com/govee/stringlightv2/pact/Support.java:157-158, all at or above the (10,1) gate
       wire:
         forms: { f_01: light, f_09: datetime_epoch }
     models: [H6118, H6194]
@@ -2941,7 +2941,7 @@ families:
     client_profile:
       mode_color_parse: rgb_kelvin_tint   # goodsType 12; split_rgblight/com/govee/rgblight/VM4Light.java:580-601
       by_goods_type:
-        "39": { models: [H6179], mode_color_parse: none, by_pact: { "10,1": { mode_color_parse: rgb_kelvin_tint }, "10,2": { mode_color_parse: rgb_kelvin_tint } } }   # BK chip runs as 39; aa 05 read only on pacts (10,1) / (10,2); rgblight/add/ModelBle.java:37-44
+        "39": { models: [H6179], pacts: ["10,1", "10,2"], mode_color_parse: none, by_pact: { "10,1": { mode_color_parse: rgb_kelvin_tint }, "10,2": { mode_color_parse: rgb_kelvin_tint } } }   # BK chip runs as 39; aa 05 read only on pacts (10,1) / (10,2); rgblight/add/ModelBle.java:37-44; pacts: split_rgblight/com/govee/stringlightv2/pact/Support.java:157-158, all at or above the (10,1) gate
       wire:
         forms: { f_01: light, f_09: datetime_epoch }
         by_goods_type:

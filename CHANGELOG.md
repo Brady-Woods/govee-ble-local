@@ -85,6 +85,25 @@ model, from which the shipped readers are generated).
   - No route of 1.4.0's 18 SKUs changes, and no profile field but the bulb profile's `skus`. The
     snapshot's ic is read nowhere: no row's app trace uses it. The conftest staleness guard watches the
     snapshot.
+- **Pact-conditioned reassignments route by pact.** The 11 `assigned_goods_type` items whose condition
+  tests the pact alone (`min_pact_type` / `min_pact_code`) are now routing data instead of a refusal. Each
+  SKU is listed on the row of the goodsType the app rewrites it to, with the pacts at or above the gate. It
+  belongs on a row of the goodsType it is rewritten from with pacts below the gate, and no such row exists
+  yet. The advertised pact then picks the row the app's rewrite picks.
+  - `_resolve.routes` checks every such item against the rows. The build fails when a row lists one of its
+    SKUs at the target goodsType with a pact below the gate, at a source goodsType with a pact at or above
+    it, or at either with `any`.
+  - The 5 firmware-conditioned items and the 2 unconditioned pairing writes stay refused on a routed SKU.
+    The generated table now keeps each item's `from_goods_type` and `condition`, so the check reads the
+    same there.
+  - The generator prints what is left for review (`_resolve.reassignment_review`). That is the source side
+    of every item, 20 SKUs, since no row lists them at the goodsType they are rewritten from (0, 13, 6 or
+    12). It also lists H6119, which h7090's row 44 lists without pacts.
+  - `profile_for`'s 1.x fallback for a pact no row accepts skips these SKUs (the generated
+    `REASSIGNED_SKUS`), as it skips catalogue-only SKUs, so a pact below the gate never reaches the target
+    row.
+  - No row involved has support, so no SKU's library route changes yet, and 1.4.0's 18 SKUs keep every
+    route and field.
 
 ### Changed
 - **The 0xAC status request is built from the profile**, not hard-coded to the H60A6's: the resolver takes
@@ -165,6 +184,13 @@ model, from which the shipped readers are generated).
   colour-temperature mode. Latent: no current SKU uses those decodes.
 
 ### Spec
+- **The pact-conditioned reassignments' target rows list their SKUs and pacts**: the pacts the app
+  registers for the target goodsType, cut to those at or above the item's gate. goodsType 40 (h6159,
+  h6160, h6182) takes (2,1) (stringlightv2 `Support.addSupportPact`). goodsType 39 (h6113, h6114,
+  h613839's H6138 / H6139, h6181, carlightv1, tvlightv1) takes (10,1) / (10,2), the same table. goodsType
+  44 (h6119) takes (10,1) / (10,2) (h7090 `Support.addSupportPact`). goodsType 17 (barelightv1) takes
+  (10,1) / (10,2) / (10,3) and not 17's (1,1) / (1,2) (dreamcolorlightv1 `Support.addSupportPact`). The
+  `clientRow.pacts` description says so. None of these rows has `support`.
 - **`spec/govee_catalog.json`: a dated snapshot of Govee's public product catalogue** (`GET
   https://app2.govee.com/bi/rest/devices/v3/skus`, the app's `ICategoriesApi`: an AppVersion header, no
   account; fetched 2026-10-18). It holds 617 SKUs, each with its goodsType and ic only (no names, images or
