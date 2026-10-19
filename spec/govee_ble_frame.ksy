@@ -37,7 +37,7 @@ seq:
         'route::write_read_tx': write_command(profile)
         'route::write_rx': write_ack
         'route::write_read_rx': write_ack
-        'route::read_tx': read_request
+        'route::read_tx': read_request(profile)
         'route::read_rx': read_reply(profile)
         'route::status_read_tx': status_request
         'route::status_read_rx': status_chunk(true)
@@ -56,6 +56,10 @@ seq:
         'route::multi_write_v2_tx': a4_packet
         'route::multi_write_v2_rx': upload_ack
         'route::mtu_multiple_write_rx': upload_ack
+        'route::multiple_write_3f_tx': matter_packet
+        'route::multiple_write_3f_rx': matter_result
+        'route::factory_test_tx': factory_test_request
+        'route::factory_test_rx': factory_test_reply
     doc: typed by route; raw bytes for a route with no case
   - id: checksum
     type: u1
@@ -908,11 +912,15 @@ types:
   read_request:
     doc: |
       The 0xAA read request [command][selector][rest]; most reads send no
-      selector, and an untyped selector stays in rest.
+      selector, and an untyped selector stays in rest. The selector of 0x12,
+      0x13 and 0xB0 is typed per profile form; any other form leaves it in rest.
     doc-ref:
       - base-classes10/com/govee/base2light/ble/controller/AbsSingleController.java:17-20
       - base-classes11/com/govee/base2light/kt/ble/AbsController.java:30-60
       - base-classes10/com/govee/base2kt/utils/BleUtils.java:1005-1017
+    params:
+      - id: profile
+        type: govee_profile
     seq:
       - id: command
         type: u1
@@ -923,9 +931,12 @@ types:
           cases:
             'govee_common::command::mode': mode_query
             'govee_common::command::device_info': device_info_query
+            'govee_common::command::cmd_12': cmd_12_query(profile.forms.f_12)
+            'govee_common::command::cmd_13': cmd_13_query(profile.forms.f_13)
             'govee_common::command::color_group_rgb': group_query
             'govee_common::command::color_group': group_query
             'govee_common::command::new_timer': timer_query
+            'govee_common::command::cmd_b0': cmd_b0_query(profile.forms.f_b0)
             'govee_common::command::debug': debug_query
         doc: absent for an untyped command
       - id: rest
@@ -947,6 +958,89 @@ types:
       - id: selector
         type: u1
         enum: govee_common::device_info_selector
+  cmd_12_query:
+    doc: AA 12, per form_12 (the wake-up read sends no selector)
+    doc-ref:
+      - base-classes11/com/govee/base2light/kt/general_controller/ControllerWakeUp.java:133-141
+    params:
+      - id: form
+        type: u1
+        enum: govee_common::form_12
+    seq:
+      - id: body
+        type:
+          switch-on: form
+          cases:
+            'govee_common::form_12::timer_count': timer_count_query
+  timer_count_query:
+    doc: |
+      The h5080 timer-count read AA 12 [group]; the reply counts the group's
+      timers and echoes the group.
+    doc-ref:
+      - split_plugnew/com/govee/h5080/ble/controller/NewTimerCountController.java:23-25
+      - split_plugnew/com/govee/h5080/adjust/newdetail/H5083NewDetailRepository.java:336
+      - firmware-h5083-wifi/decompiled/H5083_ble_dispatcher.c:147-149
+    seq:
+      - id: group
+        type: u1
+        doc: |
+          FIRMWARE-SOURCED on H5083: its screen sends no group byte, so the
+          zero fill reads group 0, the one group with timers
+        doc-ref:
+          - H5083 FUN_9b01ee34 @0x9b01f072-0x9b01f078
+  cmd_13_query:
+    doc: AA 13, per form_13 (the night-mode read sends no selector)
+    doc-ref:
+      - split_bulblightstringv1/com/govee/bulblightv3/newdetail/NewDetailVm.java:773-781
+    params:
+      - id: form
+        type: u1
+        enum: govee_common::form_13
+    seq:
+      - id: body
+        type:
+          switch-on: form
+          cases:
+            'govee_common::form_13::plug_timer': plug_timer_page_query
+  plug_timer_page_query:
+    doc: |
+      H5083 AA 13 [group][page], one page of four timer records; the screen
+      sends group 0 and pages 0 .. ceil(count / 4) - 1.
+    doc-ref:
+      - split_plugnew/com/govee/h5080/adjust/newdetail/H5083NewDetailRepository.java:206-209
+      - firmware-h5083-wifi/decompiled/H5083_ble_dispatcher.c:111-143
+    seq:
+      - id: group
+        type: u1
+      - id: page
+        type: u1
+        doc: slots 4 * page .. 4 * page + 3; a page of 4 or more reads all zero
+  cmd_b0_query:
+    doc: AA B0, per form_b0
+    params:
+      - id: form
+        type: u1
+        enum: govee_common::form_b0
+    seq:
+      - id: body
+        type:
+          switch-on: form
+          cases:
+            'govee_common::form_b0::plug_delay': plug_delay_query
+  plug_delay_query:
+    doc: |
+      The h5080 plug delay read AA B0 [outlet][type]; the H5083 screen reads
+      types 0 and 1 of outlet 0.
+    doc-ref:
+      - split_plugnew/com/govee/h5080/ble/controller/TurnOnOffDelayController.java:90-92
+      - split_plugnew/com/govee/h5080/adjust/newdetail/H5083NewDetailRepository.java:326-327
+      - firmware-h5083-wifi/decompiled/H5083_ble_dispatcher.c:158-188
+    seq:
+      - id: outlet
+        type: u1
+      - id: delay_type
+        type: u1
+        doc: the delay kind the reply echoes
   group_query:
     doc: AA A5 / AA A2 [group] colour-group read, group 1-based.
     doc-ref:
@@ -1446,6 +1540,136 @@ types:
     instances:
       is_ok:
         value: result == 0
+  matter_packet:
+    doc: |
+      FIRMWARE-SOURCED, CAUTION: one 20-byte 0x3F Matter-factory unit
+      [index][start if index 0][chunk]: 0 START, then 1..n in order, 0xFF END.
+      At END the firmware joins the chunks and runs the START's op; no app
+      sender, never send it. H5083, H6008, H60A1 and H60A6 also take n units
+      back to back in one write (n x 20 bytes, each with its own XOR); H6006
+      takes one unit per write.
+      PROCEDURAL: the client splits and joins the value, and reads each 20-byte
+      unit of a longer write through the root. A START write too short for its
+      head (under 6 bytes) does not read.
+    doc-ref:
+      - base-classes10/com/govee/base2light/ble/controller/BleProtocolConstants.java:35
+      - H5083 FUN_9b03289c @0x9b032a7c
+      - H6006 _handle_write_msg @0x9b03d7a6
+      - H6006 _handle_write_msg @0x9b03da24
+      - H6008 code @0x9b03d576-0x9b03d584
+      - H6008 code @0x9b03d5f4
+      - H60A1 _handle_write_msg @0x9b04667e-0x9b04668c
+      - H60A1 _handle_write_msg @0x9b04674a
+      - H60A6 FUN_9b04c190 @0x9b04c280-0x9b04c28e
+      - H60A6 FUN_9b04c190 @0x9b04c34c
+    seq:
+      - id: index
+        type: u1
+      - id: start
+        type: matter_start
+        if: index == 0
+      - id: chunk
+        size-eos: true
+        doc: 17 bytes per unit, 14 in START
+  matter_start:
+    doc: FIRMWARE-SOURCED, the 0x3F START head (unit bytes 2..4).
+    doc-ref:
+      - H5083 FUN_9b03289c @0x9b032ac0-0x9b032ade
+    seq:
+      - id: reserved
+        type: u1
+        doc: not read; the firmware keeps it with the data
+      - id: num_packets
+        type: u1
+        doc: unit count, START and END included
+      - id: op
+        type: u1
+        doc: the op END runs; the ops differ per image
+  matter_result:
+    doc: |
+      FIRMWARE-SOURCED: the 0x3F reply [op][status][rest], sent after END or
+      after a unit the walk rejects (out of order, END before the count, no
+      buffer, or a bad XOR on a later unit of the same write); the other units
+      get none. A write whose first 20 bytes fail the XOR is dropped by the
+      shared BCC check with no reply, so a bad XOR on H6006 (one unit per
+      write) is never answered.
+    doc-ref:
+      - H5083 FUN_9b03289c @0x9b0328fe
+      - H5083 FUN_9b03289c @0x9b032c0c-0x9b032c3a
+      - H5083 FUN_9b0324b4 @0x9b0324b4
+      - H6006 _handle_write_msg @0x9b03d7ec
+      - H6006 FUN_9b03d174 @0x9b03d174
+      - H60A6 FUN_9b04c190 @0x9b04c2cc
+      - H60A6 FUN_9b04c190 @0x9b04c5d6-0x9b04c606
+      - H60A6 FUN_9b04b254 @0x9b04b254
+    seq:
+      - id: op
+        type: u1
+        doc: the op of the last START
+      - id: status
+        type: u1
+        doc: |
+          1 for a rejected unit, an unknown op or no START; else the op's own
+          result, per op and image. Ops 1, 2 and 4 give 0 on success, else 1
+          or 2. Op 3 (the gid set) gives 0, even when a length over its limit
+          stores nothing. Op 5 (the encrypted gid, H5083 and H6006) gives 1 on
+          H5083 and 0 on H6006 for a length over its limit, 0xFF on a gid MD5
+          mismatch, and otherwise the low byte of the AES ECB init or crypt
+          error or of the gid store's result (0 when stored)
+        doc-ref:
+          - H5083 FUN_9b0324b4 @0x9b0324d0-0x9b0324da
+          - H5083 FUN_9b033be8 @0x9b033be8-0x9b033bf8
+          - H5083 FUN_9b0324b4 @0x9b03251c-0x9b03257a
+          - H5083 FUN_9b033e2c @0x9b033ef2-0x9b033efe
+          - H5083 FUN_9b033e2c @0x9b033f6a-0x9b033f76
+          - H5083 FUN_9b033e2c @0x9b033f8c-0x9b033fa8
+          - H6006 FUN_9b03d174 @0x9b03d1d4-0x9b03d1d8
+          - H6006 FUN_9b03d174 @0x9b03d230-0x9b03d2cc
+          - H6006 FUN_9b03f130 @0x9b03f274-0x9b03f27c
+          - H6006 FUN_9b03f130 @0x9b03f30e-0x9b03f314
+          - H6006 FUN_9b03f130 @0x9b03f32a-0x9b03f346
+          - H60A6 FUN_9b04b254 @0x9b04b268-0x9b04b2ae
+      - id: rest
+        type: govee_common::echo
+        doc: zero
+  factory_test_request:
+    doc: |
+      FIRMWARE-SOURCED, CAUTION, test-only: the 0x66 request [op][rest]. 66 01
+      logs the start and is answered, with no state change; 66 02 is echoed; any
+      other op goes on to the dispatcher. No app sender; never send it.
+    doc-ref:
+      - H5083 FUN_9b031bfe @0x9b031bfe
+      - H6006 FUN_9b03ccf2 @0x9b03ccf2
+      - H6008 FUN_9b03c9ee @0x9b03c9ee
+      - H60A1 FUN_9b04564e @0x9b04564e
+      - H60A6 FUN_9b04aa76 @0x9b04aa76
+    seq:
+      - id: op
+        type: u1
+        enum: factory_test_op
+      - id: rest
+        type: govee_common::echo
+  factory_test_reply:
+    doc: |
+      FIRMWARE-SOURCED: the 0x66 reply [op][status if 01][rest]. 66 01 is
+      answered 66 01 00 with bytes 2..18 zeroed; 66 02 comes back as sent (H6047
+      echoes every 66 frame).
+    doc-ref:
+      - H5083 FUN_9b0318b4 @0x9b0318b4
+      - H6006 ble_msg_enter_test @0x9b03cc60
+      - H60A6 set_response_data @0x9b04a44c
+      - H6047 code @0x010064be-0x010064d8
+    seq:
+      - id: op
+        type: u1
+        enum: factory_test_op
+      - id: status
+        type: u1
+        if: op == factory_test_op::enter_test
+        doc: 0
+      - id: rest
+        type: govee_common::echo
+        doc: zero after 66 01; the request's bytes after 66 02
 enums:
   route:
     0x005:
@@ -1464,16 +1688,16 @@ enums:
       id: write_read_rx
     0x03f:
       id: multiple_write_3f_tx
-      doc: FIRMWARE-SOURCED, CAUTION Matter-factory n x 20-byte write; raw
+      doc: FIRMWARE-SOURCED, CAUTION Matter-factory unit (n x 20 bytes per write)
     0x13f:
       id: multiple_write_3f_rx
-      doc: the 3F reply [3F][op][status], sent only at END or on error; raw
+      doc: the 3F reply [3F][op][status], sent only at END or on a unit the walk rejects
     0x066:
       id: factory_test_tx
-      doc: FIRMWARE-SOURCED, CAUTION factory-test entry 66 01 / 66 02; raw
+      doc: FIRMWARE-SOURCED, CAUTION factory-test hook 66 01 / 66 02
     0x166:
       id: factory_test_rx
-      doc: 66 01 00 .. / the 66 02 echo; raw
+      doc: 66 01 00 .. / the 66 02 echo
     0x0a1:
       id: multi_write_tx
     0x1a1:
@@ -1664,6 +1888,19 @@ enums:
       id: wifi_func_list
       doc-ref:
         - base-classes10/com/govee/base2light/ble/controller/Controller4ReadWifiFuncList.java:80-84
+  factory_test_op:
+    0x01:
+      id: enter_test
+      doc: FIRMWARE-SOURCED, CAUTION, logs the start and is answered 66 01 00; no state change
+      doc-ref:
+        - H5083 FUN_9b031bfe @0x9b031bfe
+        - H60A6 FUN_9b04aa76 @0x9b04aa76
+    0x02:
+      id: echo
+      doc: FIRMWARE-SOURCED, echoed as sent
+      doc-ref:
+        - H5083 FUN_9b031bfe @0x9b031bfe
+        - H60A6 FUN_9b04aa76 @0x9b04aa76
   a3_marker:
     0x00:
       id: v0

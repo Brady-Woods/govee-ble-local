@@ -81,11 +81,13 @@ def _op15_frame(prof: Any, op: Any, make_data: Callable[[Any], Any]) -> bytes:
 
 
 def _request(command: Any, selector_cls: Any = None, **selector: Any) -> bytes:
-    """``aa <command> [selector]``: the spec's ``read_request``, the app's ``BleUtils.Companion.p(0xAA,
-    command, ext)``; the selector is typed for the reads that carry one (``mode_query``,
-    ``device_info_query``, ``group_query``), and the zero fill after it is the request's ``rest``."""
+    """``aa <command> [selector]``: the spec's ``read_request`` under the frame's profile (``_PLAIN``), the
+    app's ``BleUtils.Companion.p(0xAA, command, ext)``; the selector is typed for the reads that carry one
+    (``mode_query``, ``device_info_query``, ``group_query``), and the zero fill after it is the request's
+    ``rest``. The AA 12 / 13 / B0 selectors are typed per profile form (``cmd_12_query`` ...), which this
+    builder doesn't build: the library sends none of those reads."""
     def body(f: Any) -> Any:
-        rr = _spec.node(_F.ReadRequest, f, command=command, rest=_spec.echo())
+        rr = _spec.node(_F.ReadRequest, f, f.profile, command=command, rest=_spec.echo())
         if selector_cls is not None:
             rr.selector = _spec.node(selector_cls, rr, **selector)
         return rr

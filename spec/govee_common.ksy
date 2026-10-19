@@ -233,12 +233,14 @@ enums:
       id: multiple_write_v1_3f
       -orig-id: MULTIPLE_WRITE_V1_3F
       doc: |
-        FIRMWARE-SOURCED: a Matter write of n x 20-byte units in one GATT write;
-        only the END unit (or an error) is answered, [3F][op][status].
+        FIRMWARE-SOURCED, CAUTION: Matter-factory write units, n x 20 bytes per
+        write (one on H6006); only END or a unit the walk rejects is answered
+        [3F][op][status], and a write failing the shared BCC check gets nothing.
       doc-ref:
         - base-classes10/com/govee/base2light/ble/controller/BleProtocolConstants.java:35
         - H60A6 FUN_9b04c190 @0x9b04c190
         - H60A6 FUN_9b04b254 @0x9b04b254
+        - H6006 _handle_write_msg @0x9b03d7a6
     0x66:
       id: factory_test
       doc: |

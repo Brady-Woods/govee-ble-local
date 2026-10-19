@@ -34,7 +34,8 @@ H6047 is a flat image at `0x0100_0000`, with RAM code `0x20000bb0` loaded from f
 | H60A6 | RTL8720CF | `FUN_9b02687c` | `firmware-h60a6-wifi/decompiled/H60A6_ble_dispatcher.c` |
 
 On the five RTL images a shared `_handle_write_msg` layer runs ahead of the per-SKU dispatcher in this
-table. It does the length and BCC checks, answers the info reads and handles head `0x66` (§1–§3).
+table. It does the BCC check and, except on H5083, the length check, answers the info reads and
+handles head `0x66` (§1–§3).
 
 (All firmware work is static analysis; none was confirmed on live hardware.)
 
@@ -46,7 +47,7 @@ Every image implements the spec's §4.1 frame; the per-image differences are lis
 
 | Spec claim | Firmware evidence |
 |---|---|
-| 20-byte application frame | The RTL images reject non-20-byte frames (`0x14` = 20), with per-image exceptions (`0xA5` mic frames; on H6008 also `0x3F` frames whose length is a multiple of 20). H6047 does not length-check `0x33`/`0xAA` frames. Detail below. |
+| 20-byte application frame | The RTL images reject non-20-byte frames (`0x14` = 20), with per-image exceptions (`0xA5` mic frames; on H6008, H60A1 and H60A6, `0x3F` frames whose length is a multiple of 20; on H5083 the shared layer checks no length, so every head it handles passes at any length). H6047 does not length-check `0x33`/`0xAA` frames. Detail below. |
 | `[proType][cmd][payload…][BCC]` | byte[0] = proType, byte[1] = command id, payload from byte[2] — identical across all six. |
 | **BCC = XOR of bytes 0..18 → byte[19]** | Byte-identical loop in every device: e.g. H6008 `@0x9b0245f8` starts from 0, XORs in bytes 0..18 and stores the result in byte 19; H60A6 `FUN_9b053f04` over the frame with length `0x13` (19); matches `govee_reference.bcc()` and `Controller4Aes.c()` (which starts from byte 0 and XORs in bytes 1..18). |
 | proType `0x33` write / `0xAA` read | Both present in every dispatcher. On H6047 both go into one table and each handler decides (below). |
@@ -55,8 +56,8 @@ Every image implements the spec's §4.1 frame; the per-image differences are lis
 
 Per-image detail for the table:
 
-- **Length check.** The RTL images reject non-20-byte frames, except the `A5 02` mic frames that
-  H6006/H6008 catch before any check.
+- **Length check.** The RTL images reject non-20-byte frames, except as listed below (the `A5 02` mic
+  frames that H6006/H6008 catch before any check, and the per-image cases).
   - H6006: `_system_ble_event_handler` (`0x9b03de60`) sends `A5 02 …` of any length to
     `ble_msg_group_test` (`0x9b03df50` → `0x9b03cf34`). Every other write goes to the shared
     `_handle_write_msg` (`0x9b03d750`), which tests the frame length against `0x14` (20) at `0x9b03d7a6`,
@@ -66,8 +67,13 @@ Per-image detail for the table:
     byte[0]==`0xA5` (`0x9b03d56c`) and allows `0x3F` frames whose length is a multiple of 20
     (`0x9b03d576-84`). The dispatcher `FUN_9b0244f0` tests only the frame length against `0x14` (`0x9b02451e`,
     `Invalid len %d`) and has no `0xA5` branch, so other `A5` frames are dropped.
-  - H60A1/H60A6: a frame is rejected when byte 0 is not `0xA5` and its length is not `0x14` (20).
-  - H5083: tests the frame length against `0x14` (20).
+  - H60A1/H60A6: the `group_pro` heads `0xB0`–`0xB5`/`0xBF` go to their handler first (H60A1
+    `0x9b04665c-6a` → `0x9b038108`, H60A6 `0x9b04c258-66` → `0x9b03d350`). Any other frame is rejected
+    when its length is not `0x14` (20), except `0xA5` (and `0xA4` on H60A6) and a `0x3F` frame whose
+    length is a multiple of 20 (H60A1 `0x9b04667e-8c`, H60A6 `0x9b04c280-8e`).
+  - H5083: the dispatcher tests the frame length against `0x14` (20). The shared layer has no length
+    check and walks a `0x3F` write in len / 20 units (`FUN_9b03289c`); a shorter write that passes the
+    shared BCC check on bytes 0..19 walks no unit and is answered with status 1.
   - H6047 has no length check on `0x33`/`0xAA` frames. It zero-fills a 0x100-byte buffer, copies 20
     bytes of whatever was written (`0x01005cfc-0x01005dc4`) and relies on the XOR BCC (`0x01005fca`).
     Only its `0xB0–0xBF` `group_pro` path checks len == 20 (`0x010105e0`), and its `0xA5` mic frame is
@@ -251,7 +257,7 @@ turned out to be a real app frame family the enum was missing (now added as `mic
   `ble_msg_enter_test` was traced on H60A6 to log `start` and reply only, with no mode change, and it
   returns no device state; the library must still not send it, even under rule 6 (§7.3). Device-side
   only. It was left out of `pro_type` at first; the clean spec names it `factory_test` (FIRMWARE-SOURCED,
-  CAUTION) with no body type, so a captured `66` frame reads as raw bytes.
+  CAUTION) and reads a captured `66` frame as `factory_test_request` / `factory_test_reply`.
 - **Handshake proType.** The spec already says `0xE7` (`GOVEE_BLE_GATT_PROTOCOL.md §9.1`). My firmware
   H6047 note had guessed `0xA5`. The APK is decisive: `Controller4Aes.g()` accepts the reply iff
   `byte 0 == -25` and `byte 1 == 1` — `-25` = **`0xE7`**. **The spec was right all along**; this
@@ -309,11 +315,11 @@ Where a handler body was decompiled (not just the dispatcher), the payload layou
   Its firmware side is `ble_msg_group_test` on H6006/H6008 (§3) and `group_ctrl_rec_ble_pkg` on
   H60A1/H60A6 (§6). `0x66` is not added: on the RTL images it is a factory-test stub that returns no
   state (§3), the app has no sender, and its purpose beyond that is unknown; if it is ever added it is
-  firmware-sourced (rule 6); the clean spec later added it that way, as `factory_test` (CAUTION, no body
-  type). The handshake is already `0xE7`. No library (`src/`) change. Device-side
-  notes (the incoming-BCC check in the RTL shared layer, which drops bad-BCC frames while the per-SKU
-  dispatchers do not re-check; the `0x66` test stub) live in this file; the main MD already documents
-  the handshake correctly.
+  firmware-sourced (rule 6); the clean spec later added it that way, as `factory_test` (CAUTION), with
+  the `factory_test_request` / `factory_test_reply` bodies. The handshake is already `0xE7`. No
+  library (`src/`) change. Device-side notes (the incoming-BCC check in the RTL shared layer, which
+  drops bad-BCC frames while the per-SKU dispatchers do not re-check; the `0x66` test stub) live in
+  this file; the main MD already documents the handshake correctly.
 
 ## 6. Open / not validated by firmware
 

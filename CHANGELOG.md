@@ -333,6 +333,10 @@ model, from which the shipped readers are generated).
   and `=`. Four of H6087's library blobs carry a JSON-escaped `\/`, which the app reads as `/`, so that SKU
   fetches now. `--audit` reports a SKU that has a catalog but no device-table row as not supported instead
   of raising.
+- **`wire.build`'s read requests pass the spec's `read_request` its new profile param** (the library half
+  of the AA 12 / 13 / B0 selector typing, Spec): the frame's profile, the plain one. No library read sends
+  AA 12, 13 or B0, so no byte changes: every read frame of every supported SKU's rows, by default and with
+  `allow_modelled`, is as before.
 
 ### Fixed
 - **`devices.device.make_device` routes by the advertised pact**, as `create_device` does: it passes the
@@ -562,6 +566,22 @@ model, from which the shipped readers are generated).
   were. A 0x41 value of 2 bytes or more reads as before, and the library still uses nothing from it. The
   0xA5 gradient record's own failure (`Controller4ColorInfoByGroup.r` reads 11 bytes) is not flagged yet, as
   the record has no wire form. No other SKU's profile changes.
+- `read_request` takes the profile and types the AA 12 / AA 13 / AA B0 selector per form (rule 6):
+  `timer_count_query` [group] (FIRMWARE-SOURCED on H5083, whose screen sends none),
+  `plug_timer_page_query` [group][page] and `plug_delay_query` [outlet][delay_type]
+  (H5083NewDetailRepository.loadParser:206-209, necessaryMessages:326-336). Any other form leaves the
+  selector in rest. ProType 0x3F and 0x66 get FIRMWARE-SOURCED, CAUTION bodies, traced on the H5083, H6006,
+  H6008, H60A1 and H60A6 shared write layers and never sent: `matter_packet` / `matter_start` (the 20-byte
+  Matter-factory units, START op a plain byte since the ops differ per image) with the `matter_result`
+  [op][status] reply, and `factory_test_request` / `factory_test_reply` (`factory_test_op`: 66 01 logs and
+  is answered 66 01 00, 66 02 is echoed, and H6047 echoes every 66 frame). `matter_result.status` gives
+  each op's results: ops 1, 2 and 4 give 0, 1 or 2; op 3 (the gid set) always 0, even when it stores
+  nothing; op 5 (the encrypted gid, H5083 and H6006) 1 on H5083 and 0 on H6006 for a length over its
+  limit, 0xFF on a gid MD5 mismatch, else the low byte of the AES ECB init or crypt error or of the gid
+  store's result. `matter_packet`'s doc and FIRMWARE_VALIDATION give the per-image 3F length rules.
+  `firmware.yaml` is unchanged while the simulator is paused: it still reads the H5083 timer, page and
+  delay selectors as raw bytes, the same bytes the typed fields read, and its `factory_test_start` and
+  `multi_write_3f` notes still say 0x66 and 0x3F have no spec body type.
 
 ## [1.4.0] — 2026-10-18
 
