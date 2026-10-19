@@ -480,25 +480,25 @@ model, from which the shipped readers are generated).
   alone, printed as a guess. A guess passes over a stored scene whose code the library still answers under any
   sceneName, and a blob match over one it still answers at its own sceneName and category; both pass over one
   a fetch found gone from the library since it was last listed (its sceneName answered at its code under no
-  category, but where another stored name sits). Where more than one fits, the scene takes a new name,
-  printed as ambiguous. Only a scene that matches none gets a new name, never one the store or the tombstone
-  holds. A stored scene no longer listed keeps its name, as do one left out only for its time (an expired
-  category or effect, its category renamed meanwhile too) or the firmware's version rules and one listed
-  under another name; a sceneName the app renames keeps its old name too, so two names hold one code. Only
-  one whose scene the SKU's scene list refuses for good (its op set), or a sceneType-5 scene the library
-  does not upload, is removed (where two stored scenes the fetch does not list could be that scene, neither
-  is), printed, and retired in a tombstone, `tools/scene_tombstone.json` (out of the package; the store, the
-  loader and the pool are unchanged), with the entry it held (one the fetch matched, then cut: the entry it
-  was to hold): only that scene's exact return (sceneName, code, category and blob; a placeholder's with its
-  param id) takes the name back, printed where the sceneType-5 cut keeps it, and one whose blob `--resolve`
-  baked in returns so as its placeholder of the same param id, the blob coming back with the name. Scenes
-  are named after the sceneType-5 scenes a `legacy_scene` SKU does not upload are left out, and a blob
-  resolved by `--resolve` is kept while the library ships its scene as a placeholder of the same param id:
-  under the name the scene keeps (through a renumber or a category rename too, with the new code and
-  category), else by the scene's code and category, else by the one resolved entry of that param id (a bare
-  entry of it has no blob to keep, so the scene stays a placeholder, as a new name does where the
-  sceneType-5 cut would drop that blob). A seeded property test replays 200 random histories and 34 fixed
-  ones through `main()`. No bundled catalog changes, and no released name is gone (1.0.0 to 1.4.0), so the
+  category, but where another stored or retired name sits). Where more than one fits, the scene takes a new
+  name, printed as ambiguous. Only a scene that matches none gets a new name, never one the store or the
+  tombstone holds. A stored scene no longer listed keeps its name, as do one left out only for its time (an
+  expired category or effect, its category renamed meanwhile too) or the firmware's version rules and one
+  listed under another name (its param id); a sceneName the app renames keeps its old name too, so two names
+  hold one code. Only one whose scene the SKU's scene list refuses for good (its op set), or a sceneType-5
+  scene the library does not upload, is removed (where two stored scenes the fetch does not list could be that
+  scene, neither is), printed, and retired in a tombstone, `tools/scene_tombstone.json` (out of the package;
+  the store, the loader and the pool are unchanged), with the entry it held (one the fetch matched, then cut:
+  the entry it was to hold): only that scene's exact return (sceneName, code, category and blob; a
+  placeholder's with its param id) takes the name back, printed where the sceneType-5 cut keeps it, and one
+  whose blob `--resolve` baked in returns so as its placeholder of the same param id, the blob coming back
+  with the name. Scenes are named after the sceneType-5 scenes a `legacy_scene` SKU does not upload are left
+  out, and a blob resolved by `--resolve` is kept while the library ships its scene as a placeholder of the
+  same param id: under the name the scene keeps (through a renumber or a category rename too, with the new
+  code and category), else by the scene's code and category, else by the one resolved entry of that param id
+  (a bare entry of it has no blob to keep, so the scene stays a placeholder, as a new name does where the
+  sceneType-5 cut would drop that blob). A seeded property test replays 200 random histories and 34 fixed ones
+  through `main()`. No bundled catalog changes, and no released name is gone (1.0.0 to 1.4.0), so the
   tombstone starts empty.
 
 ### Spec
