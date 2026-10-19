@@ -24,10 +24,9 @@ The rows also take the routes of the committed catalogue snapshot, spec/govee_ca
 it and nothing fetched): _resolve.catalogue over the whole document, by the snapshot's precedence. A SKU no
 row lists joins the models of the BLE row of its catalogue goodsType (never goodsType 0). One that a row
 with support lists at a goodsType the snapshot contradicts, with no cited rewrite, leaves those rows (a row
-left with no models is dropped). The module's CATALOGUE_SKUS are the SKUs only the snapshot routes, and the
-generator prints how many there are and the review list. It also prints the routes of the pact-conditioned
-assigned_goods_type items that no row carries yet (_resolve.reassignment_review); REASSIGNED_SKUS are those
-items' SKUs.
+left with no models is dropped). The generator prints how many SKUs only the snapshot routes, and the review
+list. It also prints the routes of the pact-conditioned assigned_goods_type items that no row carries yet
+(_resolve.reassignment_review).
 
 Build-time only: PyYAML, which the in-tree backend asks the build frontend for in a repository build
 (get_requires_for_build_*). An sdist ships the generated module, so a build from it needs nothing.
@@ -297,9 +296,6 @@ def render(raw: bytes, schema: dict[str, Any]) -> tuple[str, list[str]]:
     resolve = _resolver()
     routed = resolve.catalogue(doc["families"], catalogue)
     reassigned = resolve.reassignment_review(doc["families"])
-    gated = frozenset(sku.upper() for fam in doc["families"] for item in fam.get("assigned_goods_type") or ()
-                      if resolve.pact_gate(item) is not None for sku in item.get("models") or ()
-                      if isinstance(sku, str))
     only = frozenset(sku for skus in routed.added.values() for sku in skus)
     fmt = pprint.PrettyPrinter(width=110, sort_dicts=False).pformat
     return "\n".join([
@@ -314,11 +310,6 @@ def render(raw: bytes, schema: dict[str, Any]) -> tuple[str, list[str]]:
         "",
         f"MODE_COLOR_PARSE: Final[dict[str, ModeColorStrategy]] = {fmt(table)}",
         f"FAMILIES: Final[tuple[Family, ...]] = {fmt(families)}",
-        "# The SKUs only the catalogue snapshot routes (profile_for keeps them on their row's pacts).",
-        f"CATALOGUE_SKUS: Final[frozenset[str]] = frozenset({fmt(tuple(sorted(only)))})",
-        "# The SKUs of the pact-conditioned assigned_goods_type items (profile_for keeps them on their rows'"
-        " pacts).",
-        f"REASSIGNED_SKUS: Final[frozenset[str]] = frozenset({fmt(tuple(sorted(gated)))})",
         "",
     ]), [f">> catalogue snapshot: {len(only)} SKUs routed that no devices.yaml row lists, "
          f"{len(routed.review)} for review", *(f"   review: {line}" for line in routed.review),

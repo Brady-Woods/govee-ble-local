@@ -41,7 +41,8 @@ model, from which the shipped readers are generated).
   are the devices.yaml BLE rows that list the SKU and accept the advertised `(pact_type, pact_code)` (any
   row when the pact is unknown), at `goods_type` where given; exactly one (or several with identical
   facts) is the SKU's profile, several that differ are unsupported until the goodsType picks one, and
-  none falls back to the SKU's one traced profile, as in 1.x (see Changed). `create_device`
+  none is unsupported, but for 1.4.0's 18 SKUs, which fall back to their one traced profile, as in 1.x
+  (see Changed). `create_device`
   takes the pact from the advertisement it is given, so the profile, and every capability, is settled
   before any entity is built; it also takes `goods_type` and `allow_modelled`.
 - **The modelled-row opt-in**: `allow_modelled=True` on `profile_for`, `is_supported_sku`,
@@ -72,9 +73,9 @@ model, from which the shipped readers are generated).
     level, so R1630 is admitted by default now that the app trace makes that row `app_traced` (Spec).
   - The admit commit's rows (Spec, "42 more SKUs") extend the catalogue routes to 14 SKUs: **H6167**
     (dreamcolorlightv1 83), **H616D / H616E** (207) and **H802A** (74) join those rows' profiles.
-  - They stay gated on the row's pacts. The 1.x fallback for a pact no row accepts (D3) covers only SKUs a
-    row lists (the generated `CATALOGUE_SKUS` are the rest), since the app's scan drops a device whose
-    pact it can't parse (`BaseBleProcessor.g`).
+  - They are served only at the row's pacts, as every SKU outside 1.4.0's 18 is (see Changed): the app's
+    scan refuses a device whose pact its goodsType doesn't accept (`AbsBaseBleModel.e`, `checkProtocol` ->
+    `Pact.i`).
   - The nine bulbs ship without named scenes (scene codes only), and the five others without scenes, as
     their rows offer none yet (`scene_dialect: untraced`). Each row's doc says how they route.
   - A SKU that a row lists keeps the spec's route. A non-zero catalogue conflict leaves the SKU unrouted
@@ -101,9 +102,8 @@ model, from which the shipped readers are generated).
   - The generator prints what is left for review (`_resolve.reassignment_review`). That is the source side
     of every item, 20 SKUs, since no row lists them at the goodsType they are rewritten from (0, 13, 6 or
     12). It also lists H6119, which h7090's row 44 lists without pacts.
-  - `profile_for`'s 1.x fallback for a pact no row accepts skips these SKUs (the generated
-    `REASSIGNED_SKUS`), as it skips catalogue-only SKUs, so a pact below the gate never reaches the target
-    row.
+  - `profile_for`'s 1.x fallback for a pact no row accepts covers none of these SKUs (only 1.4.0's 18), so
+    a pact below the gate never reaches the target row.
   - No row involved has support, so no SKU's library route changes yet, and 1.4.0's 18 SKUs keep every
     route and field.
 - **A light's connect write** (device-list phase 3): `DeviceProfile.light_effect_stop` (keyword-only,
@@ -171,10 +171,14 @@ model, from which the shipped readers are generated).
   `hardware_verified` / `app_traced` or all `modelled`; the build still refuses a SKU that rows of both
   kinds list. `_resolve.routes` gives the SKUs one row routes, and `_resolve.profiles` each
   group's routes (goodsType, accepted pacts). `create_device`, `scanner.supported` and `scanner.match` now
-  pass the advertised pact, which picks between a SKU's rows (`Support.addSupportPact`). A pact no row
-  accepts still routes a SKU that one `hardware_verified` / `app_traced` profile serves, as in 1.x, so no
-  unit of the 18 is refused; a `modelled` row stays gated on its pacts. Without a pact (no advertisement,
-  or one without pact info) nothing changes.
+  pass the advertised pact, which picks between a SKU's rows (`Support.addSupportPact`). Every SKU is
+  served only at its rows' pacts, as the app's scan serves it: `AbsBaseBleModel.e` (`checkProtocol` ->
+  `Pact.i`) refuses a pact the goodsType doesn't accept, and the accepted pacts compare exactly
+  (`Protocol.c`). The one exception is the 1.x compatibility rule (decision D3,
+  `_resolve.PACT_FALLBACK_SKUS`): at a pact no row accepts, each of 1.4.0's 18 SKUs still routes to its one
+  `hardware_verified` / `app_traced` profile, as in 1.x, so no released unit is refused. A SKU admitted
+  since is not: H617C or B7080 at pact (1, 1), or H8098 at a pact its row doesn't list, is unsupported.
+  Without a pact (no advertisement, or one without pact info) nothing changes.
 - **The direct `aa a5` group size is the spec's**: `color_readback_per_batch` comes from the row's wire
   `group.num_per_group` (4 on the four direct read-back SKUs, as before), and the table no longer refuses a
   direct read-back in groups other than 4.

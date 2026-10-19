@@ -103,6 +103,11 @@ _FIRMWARE = ((None, None), ("3.03.18", "3.01.10"), ("1.03.00", "3.08.01"), ("1.0
 
 def test_the_generated_table_is_masters_hand_table_but_for_the_spec_fixes() -> None:
     assert set(_MASTER) <= set(supported_skus())
+    # D3's 1.x pact fallback is frozen at these 18; every SKU admitted later is served only at its rows'
+    # pacts, as the app's checkProtocol (Pact.i) serves it.
+    assert set(_MASTER) == _resolve.PACT_FALLBACK_SKUS
+    assert not [sku for sku in supported_skus(allow_modelled=True)
+                if sku not in _MASTER and profile_for(sku, pact=(99, 99), allow_modelled=True) is not None]
     # The resolver's value sets (standard library only) are the profile's Literals.
     assert set(_resolve.COLOR_SCHEMES) == set(get_args(ColorScheme))
     assert set(_resolve.RELAY_POWERS) == set(get_args(RelayPower))
@@ -120,6 +125,7 @@ def test_the_generated_table_is_masters_hand_table_but_for_the_spec_fixes() -> N
         # The same decode context for every reply (one cached govee_profile for the same facts), and the
         # route the spec's reference resolver gives.
         assert wire_profile(new) is wire_profile(old), sku
+        assert profile_for(sku, pact=(99, 99)) is new, sku   # D3: a pact no row lists keeps 1.x's route
         fam, gt, _sku = routes[sku]
         assert reference.ble_rows(registry, sku) == [(fam["id"], int(gt))], sku
         # A firmware-gated scene set is master's until the device-info read; the reference's after it.

@@ -554,12 +554,11 @@ def profile_for(sku: str, *, pact: tuple[int, int] | None = None, goods_type: in
     Exactly one candidate (or several with identical facts) is the SKU's profile; several that differ are
     unsupported: pass the goodsType to pick one. The rows are the ``hardware_verified`` and ``app_traced``
     ones; ``allow_modelled`` also takes ``modelled`` rows (inferred, not traced), and as the build refuses a
-    SKU that rows of both kinds list (``_resolve.routes``), it only adds SKUs, never changes a route. A pact
-    no row accepts still routes a SKU that one ``hardware_verified`` / ``app_traced`` profile serves, as in
-    1.x (the pact picks between rows, never refuses the only one); a ``modelled`` row, and a SKU only the
-    catalogue snapshot routes (no 1.x unit to keep), stay gated on their row's pacts, as the app's scan is
-    (``BaseBleProcessor.g``: no protocol, no device). So does a SKU of a pact-conditioned
-    ``assigned_goods_type`` item: its pact picks the row the app's rewrite picks."""
+    SKU that rows of both kinds list (``_resolve.routes``), it only adds SKUs, never changes a route. A SKU is
+    served only at its rows' pacts, as the app's scan serves it (``AbsBaseBleModel.e``: ``checkProtocol`` ->
+    ``Pact.i`` refuses a pact the goodsType doesn't accept), but for the 1.x pact fallback (decision D3,
+    ``_resolve.PACT_FALLBACK_SKUS``): at a pact no row accepts, each of the 18 SKUs 1.4.0 shipped still routes
+    to its one ``hardware_verified`` / ``app_traced`` profile, as in 1.x, so no released unit is demoted."""
     key = sku.upper()
     for table in (_ADMITTED, _MODELLED) if allow_modelled else (_ADMITTED,):
         hits = {id(r.profile): r.profile for r in table[1].get(key, ())
@@ -567,8 +566,7 @@ def profile_for(sku: str, *, pact: tuple[int, int] | None = None, goods_type: in
                 and (goods_type is None or r.goods_type == goods_type)}
         if hits:
             return next(iter(hits.values())) if len(hits) == 1 else None
-    gated = key in _devices.CATALOGUE_SKUS or key in _devices.REASSIGNED_SKUS
-    if pact is not None and not gated:   # D3: no row-listed SKU is demoted by a pact its row doesn't list
+    if pact is not None and key in _resolve.PACT_FALLBACK_SKUS:   # D3, the 1.x compatibility rule
         loose = {id(r.profile): r.profile for r in _ADMITTED[1].get(key, ())
                  if goods_type is None or r.goods_type == goods_type}
         if len(loose) == 1:

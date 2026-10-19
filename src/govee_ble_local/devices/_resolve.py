@@ -37,15 +37,21 @@ the row lacks fails the build: nothing defaults silently.
   pacts at or above its gate, and on a row of a goodsType it rewrites from with pacts below it, so the
   advertised pact picks the row the app's rewrite picks. A row that lists one of them with pacts on the
   wrong side raises, and a route no row carries yet is for review (:func:`reassignment_review`). Those SKUs
-  (``_generated`` ``REASSIGNED_SKUS``) stay gated on their rows' pacts, as catalogue-only SKUs do, so a
-  pact below the gate never reaches the target row through ``profile_for``'s 1.x fallback. A SKU that a
+  are outside the pact fallback (below), so a pact below the gate never reaches the target row. A SKU that a
   ``modelled`` row and an admitted row both list raises too: the spec's routing (``ble_rows``) counts both
   wherever both accept the pact, and the opt-in must leave the admitted routes as they are.
+- The pact fallback (decision D3), the 1.x compatibility rule: 1.4.0 routed each of its 18 SKUs whatever
+  pact its advertisement carried, so ``profile.profile_for`` still routes one of them
+  (:data:`PACT_FALLBACK_SKUS`, frozen at those 18) to its only admitted profile at a pact no row accepts, and
+  no released unit is demoted by a pact its row doesn't list. Every other SKU (one a row lists, one only the
+  catalogue snapshot routes, one of a reassignment) is served only at its rows' pacts, as the app's scan
+  serves it: a device whose advertised pact its goodsType doesn't accept is refused
+  (``AbsBaseBleModel.e``:158-174, ``checkProtocol`` -> ``Pact.i``), and the accepted pacts compare exactly
+  (``Protocol.c``, Protocol.java:41-48).
 - The catalogue snapshot (:func:`catalogue`, the precedence of ``spec/govee_catalog.json``'s doc): a SKU no
   row lists routes to the BLE row with support at its catalogue goodsType when that is the only row at it
   (the app's ``Pact.f``), at that row's support level and with its facts, and never at goodsType 0 (the
-  legacy code). Such a SKU (``_generated`` ``CATALOGUE_SKUS``) stays gated on the row's pacts: the 1.x
-  fallback of ``profile.profile_for`` covers only the SKUs a row lists. A SKU a row lists
+  legacy code). Such a SKU is served only at the row's pacts, outside the pact fallback. A SKU a row lists
   keeps the spec's route, unless its catalogue goodsType is a conflict (non-zero, and none of its rows'),
   which only an ``assigned_goods_type`` item citing the app's rewrite settles: an unsettled one is unrouted
   and on the generator's review list. The snapshot's ``ic`` is read nowhere: no row's app trace cites the
@@ -357,6 +363,11 @@ _PACT_FACTS: Final = frozenset({"status_read", "scene_versions", "kelvin_range",
 _UNREAD_PACT_CAPABILITIES: Final[Mapping[tuple[str, str, str], tuple[str, ...]]] = {
     ("h60ax", "303", "1,1"): ("power", "brightness", "rgb", "color_temp", "scenes")}
 _AES_FALLBACK_ROWS: Final = frozenset({("h60ax", "303")})   # D4: 1.x's fallback, kept for the unlocked H60A6
+# D3, the 1.x pact fallback (module doc): the 18 SKUs 1.4.0 shipped, frozen. profile.profile_for still routes
+# one of them to its only admitted profile at a pact no row accepts; every other SKU only at its rows' pacts.
+PACT_FALLBACK_SKUS: Final = frozenset({
+    "H60A6", "H6047", "H61A8", "H6004", "H6006", "H6008", "H6052", "H6641", "H6188", "H6062", "H6061",
+    "H5080", "H5083", "H5085", "H5082", "H5089", "H5160", "H5161"})
 _LAYERED: Final = ("scene_versions", "kelvin_range", "brightness_range")
 _PERCENT: Final = (1, 100)
 _BLOCKS: Final = ("forms", "counts", "group", "power", "mode", "mode_status")
