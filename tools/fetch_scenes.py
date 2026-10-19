@@ -641,20 +641,19 @@ def _valid_resolved(entry: dict[str, object]) -> bool:
     return isinstance(entry.get("code"), int) and not entry.get("placeholder")
 
 
-# Public metadata refreshed onto a preserved (resolved) entry. fetch() only sets scene_type /
-# cmd_version / big_effect / scene_name when the library has them, so they are REPLACED (absent ->
-# dropped), never merged: a stale upload-routing field would pick the wrong upload path.
-_REFRESH = ("scene_type", "cmd_version", "big_effect", "rules", "category", "scene_name")
-
-
 def _resolved(existing: Mapping[str, Entry], name: str, fr: Entry) -> Entry | None:
     """The existing entry whose blob, resolved by --resolve, the fresh entry ``fr`` (stored as ``name``)
-    keeps: ``fr`` is the public placeholder (a big-effect scene without its blob) of a scene of the same
-    code and category whose resolved entry has its param_id, the one case where the existing blob beats the
-    fresh fetch. Matched by scene, not by name; one stored under ``name`` is taken first."""
+    keeps: ``fr`` is the public placeholder (a big-effect scene without its blob) of a resolved entry with its
+    param_id (the key effect-strs resolves by), the one case where the existing blob beats the fresh fetch.
+    That is the entry stored under ``name`` (stored_names matched it to ``fr``, through a renumber or a
+    category rename too), else one of the same code and category under another name."""
     if not fr.get("placeholder"):
         return None
-    for n in sorted(existing, key=lambda n: (n != name, n)):
+    own = existing.get(name)
+    if own is not None and _valid_resolved(own) and fr.get("param_id") is not None \
+            and own.get("param_id") == fr.get("param_id"):
+        return own
+    for n in sorted(existing):
         ex = existing[n]
         if (_valid_resolved(ex) and (ex.get("code"), ex.get("category"), ex.get("param_id"))
                 == (fr.get("code"), fr.get("category"), fr.get("param_id"))):
@@ -664,25 +663,21 @@ def _resolved(existing: Mapping[str, Entry], name: str, fr: Entry) -> Entry | No
 
 def _merge(existing: dict[str, Entry], fresh: dict[str, Entry],
            public: Collection[Answer] | None = None) -> dict[str, Entry]:
-    """Combine a fresh public fetch, named over ``existing`` (fetch's ``existing``, so a name both hold is
-    one scene), with the existing catalog: take the fresh data, except that a fresh placeholder never
-    replaces a real effect blob already resolved via --resolve (:func:`_resolved`: that entry keeps its blob
-    and has its public metadata replaced from the fresh entry); and keep each stored scene the fetch no
-    longer lists, under its name. This makes re-running idempotent and non-destructive once placeholders
-    have been resolved. ``public`` (fetch's ``seen``) is every scene the library still answers with and
-    the SKU's scene list lists or leaves out for good: a stored scene not listed that it holds, which the
-    app's scene list refuses for the SKU (:func:`listed_effect`, or a sceneType 5 the library does not
-    upload), is not kept (:func:`_answered`). One left out only for its time or version rules is not in it,
-    so it stays under its name."""
+    """Combine a fresh public fetch, named over ``existing`` (fetch's ``existing``, so a name both hold is one
+    scene), with the existing catalog: take the fresh data, except that a fresh placeholder never replaces a
+    real effect blob already resolved via --resolve (:func:`_resolved`: the fresh entry, its code, category
+    and upload metadata replaced, not merged, keeps that blob); and keep each stored scene the fetch no longer
+    lists, under its name. This makes re-running idempotent and non-destructive once placeholders have been
+    resolved. ``public`` (fetch's ``seen``) is every scene the library still answers with and the SKU's scene
+    list lists or leaves out for good: a stored scene not listed that it holds, which the app's scene list
+    refuses for the SKU (:func:`listed_effect`, or a sceneType 5 the library does not upload), is not kept
+    (:func:`_answered`). One left out only for its time or version rules is not in it, so it stays under its
+    name."""
     merged: dict[str, Entry] = {}
     for name, fr in fresh.items():
         ex = _resolved(existing, name, fr)
-        if ex is not None:
-            keep = {k: v for k, v in ex.items() if k not in _REFRESH}
-            keep.update({k: fr[k] for k in _REFRESH if k in fr})
-            merged[name] = keep
-        else:
-            merged[name] = fr
+        merged[name] = fr if ex is None else {**{k: v for k, v in fr.items() if k != "placeholder"},
+                                              "param": ex.get("param")}
     for name, ex in existing.items():
         if name not in fresh and (public is None or not _answered(name, ex, public)):
             merged[name] = ex  # scene no longer public but we have it

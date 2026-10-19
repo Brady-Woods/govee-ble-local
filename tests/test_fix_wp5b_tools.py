@@ -214,8 +214,12 @@ def test_merge_keeps_a_resolved_blob_over_the_public_stub() -> None:
     assert "Gone" not in fs._merge(existing, {"A": stub}, {("Gone", "c", 3)})   # public, not listed: dropped
     assert "Gone" in fs._merge(existing, {"A": stub}, {("Gone", "c", 4)})       # another scene of its name
     assert fs._merge(existing, {"B": stub})["B"]["param"] == "REAL"             # kept by scene, not by name
-    for other in (dict(stub, param_id=6), dict(stub, code=11), dict(stub, category="d")):   # re-resolve it
-        assert fs._merge(existing, {"A": other})["A"] == other
+    other = dict(stub, param_id=6)                              # another effect: re-resolve it
+    assert fs._merge(existing, {"A": other})["A"] == other
+    for moved in (dict(stub, code=11), dict(stub, category="d")):   # "A" renumbered, its category renamed
+        assert fs._merge(existing, {"A": moved})["A"] == {
+            **{k: v for k, v in moved.items() if k != "placeholder"}, "param": "REAL"}
+        assert fs._merge(existing, {"B": moved})["B"] == moved   # another name and scene: re-resolve it
 
 
 _ROW = re.compile(r"^(\S+)\s+(\d+)\s+(\d+)(\[[^\]]*\])?\s+(\d+)\s+(\d+)\s+(\d+)\s+(\[.*\])$")

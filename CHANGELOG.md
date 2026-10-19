@@ -348,7 +348,9 @@ model, from which the shipped readers are generated).
   freed for another scene; only one the library still answers that the SKU's scene list refuses for good (its
   op set), or a sceneType-5 scene the library does not upload, is removed and printed. Scenes are named after
   the sceneType-5 scenes a `legacy_scene` SKU does not upload are left out, and a blob resolved by `--resolve`
-  is kept by the scene's code, category and param id, not by its name. No bundled catalog changes.
+  is kept while the library ships its scene as a placeholder of the same param id: under the name the scene
+  keeps (through a renumber or a category rename too, with the new code and category), else by the scene's
+  code and category. No bundled catalog changes.
 
 ### Spec
 - `devices.yaml` `scenes.list_filter`: which library scenes the control screen lists and with which
