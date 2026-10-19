@@ -215,6 +215,12 @@ _REFUSED: tuple[tuple[str, str, _Edit, str], ...] = (
      "firmware branch on ['brightness_range']"),
     ("dreamcolorlightv1", "19", lambda f: _row(f, "19")["by_firmware"][2].update(kelvin_range=[9500, 9800]),
      "need a base kelvin_range (2000, 9000), one per version"),
+    ("dreamcolorlightv1", "19", lambda f: _row(f, "19")["by_firmware"][2].update(min_hard_version="3.8.01"),
+     "Kelvin firmware gate '3.8.01' is not the app's a.bb.cc form"),
+    ("h60ax", "235", lambda f: f["client_profile"]["by_goods_type"].update({"235": {
+        **_row(f, "303"), "models": ["HX235"],
+        "by_firmware": [{"min_hard_version": "1.04.03", "kelvin_range": [2700, 6500]}]}}),
+     "whose gate the app compares numerically (KelvinConfig.Config.Y2"),
     ("h60ax", "303", lambda f: _row(f, "303")["by_pact"]["1,1"].update(mode_color_parse="kelvin_15"),
      "pact branch 1,1 on ['mode_color_parse']"),
     ("dreamcolorlightv1", "19", lambda f: _row(f, "19")["by_pact"]["1,2"].update(kelvin_range=[2700, 6500]),

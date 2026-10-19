@@ -156,8 +156,10 @@ model, from which the shipped readers are generated).
   alone, not only on `min_hard_version` alone (one kind per row). `client_profile.by_model.<SKU>` may carry
   `kelvin_range` and `brightness_range`, used where the SKU's row has none (the row's wins, as the schema
   says; one under the row's own raises), and a `by_firmware` Kelvin item over its own `kelvin_range`
-  (bulblightv3 H14A1). `kelvin_by_software` is set on H1401 / R1401 (bulblightv3 348); no row uses a
-  `by_model` range yet.
+  (bulblightv3 H14A1). Since a gate compares as a string, the build refuses one that isn't the app's
+  `a.bb.cc` form with two-digit fields, and any Kelvin firmware gate on goodsType 235, whose
+  `KelvinConfig.Config.Y2` compares the version numerically (`BleUtils.isHigherVersion`).
+  `kelvin_by_software` is set on H1401 / R1401 (bulblightv3 348); no row uses a `by_model` range yet.
 - **The `aa 40` read that does not size the pieces** (device-list phase 3): `DeviceProfile.ic_num_read_only`
   (keyword-only, default False). Some screens read the IC count at connect although their piece count is
   fixed; such a row now says `ic_pieces: fixed` (the resolver served the read only with the IC sizing), and
