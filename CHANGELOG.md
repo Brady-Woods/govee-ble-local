@@ -188,6 +188,26 @@ model, from which the shipped readers are generated).
   RGB scene and uploads as one; it is no placeholder (Changed: the placeholder flag). H14B1 shares H6004's
   scenes, whose Christmas, the same scene, keeps 1.4.0's `placeholder` flag, which only `Scene.placeholder`
   reads.
+- **A poll can hold its connect to tighter limits**: `Device.update(*, connect_attempts=None,
+  connect_timeout=None)`, so a background poll at a device that doesn't answer gives the device lock up
+  sooner and a command queued behind it waits less of its caller's own deadline (the command's own 45 s
+  `OPERATION_TIMEOUT` starts only once it holds the lock). `connect_attempts` is bleak-retry-connector's
+  `max_attempts` for each connect of that poll (the attempts that time out or fail outright; it still
+  tries again after transient failures such as a missing device or no free connection slot, giving up at
+  the 9th, so pair it with `connect_timeout` to bound the time); a link that never came up is not tried
+  again, and one whose session setup failed is still re-established once (`SESSION_ATTEMPTS`). `connect_timeout` bounds each
+  connect phase of that poll (the link, the BGC read, the handshake, the unlock), not its reads: when it runs
+  out, the link the library holds is torn down, `GoveeBleTimeout` is raised with the device lock free (the
+  teardown of a half-made link can take up to `DISCONNECT_TIMEOUT`, 5 s, more), and the next operation
+  connects afresh. A connect cancelled inside bleak is cleaned up by the BLE backend, which only
+  `OPERATION_TIMEOUT` bounds: BlueZ disconnects it; bleak's CoreBluetooth backend (macOS) leaves the pending
+  connection request, so the device may stay connected to the host. They hold every connect the
+  call makes (normally its first read's; also a reconnect after a link lost mid-poll) and nothing else:
+  setters and other calls keep the defaults, and `update()` without them is unchanged (`CONNECT_MAX_ATTEMPTS`
+  3 per establishment, the 45 s `OPERATION_TIMEOUT`). An attempt count that isn't an integer of at least 1,
+  or a timeout that isn't a finite number above 0, raises `GoveeBleInvalidValue` before any I/O. On the
+  transport, `GoveeConnection.query` and `send` take the same limits as `connect_budget`
+  (`transport.connection.ConnectBudget`).
 
 ### Changed
 - **Scenes need a bundled catalog**, as every SKU of 1.4.0 that offers them ships one. The generator bakes
@@ -356,6 +376,10 @@ model, from which the shipped readers are generated).
   exposed. `ADVERT_SUPPRESS_SECONDS` still holds back only the advertised on/off: a new pact inside that
   window notifies, and the on/off is left as it was. An advertisement without pact info, or with the pact
   already heard, notifies nothing; the on/off path and the return value are unchanged.
+- **A wedged disconnect is abandoned at `DISCONNECT_TIMEOUT` even when the operation is cut short in its
+  wait**: a teardown whose caller is cancelled while it waits (the operation deadline, or a poll's
+  `connect_timeout`, on a failed connect at a wedged proxy) keeps running and is cancelled at the same bound,
+  as an uninterrupted one is. It was left running for good, holding its bleak client.
 - **A colour report with no CCT test is not a Kelvin** (the nocct fold): `parse.mode_color` honours the
   layout's `is_cct` on the `[gradual][kelvin s16be]` decodes, so a `gradual_kelvin_s16be_nocct` report
   (mode_color_parse `kelvin_15_nocct`, `kelvin_0d_nocct`, ...) reads as `KelvinReport(0)`, not

@@ -11,7 +11,10 @@ Reliability rules this module enforces (each one learned from live failures):
 
 * Every public operation runs under one lock and one overall deadline
   (``OPERATION_TIMEOUT``), and only ever raises :class:`GoveeBleError`
-  subclasses - never a bare bleak/asyncio exception.
+  subclasses - never a bare bleak/asyncio exception. A caller can hold one
+  operation's connect to its own ``max_attempts`` and a time limit
+  (:class:`ConnectBudget`), so it gives the lock up sooner on a device that
+  doesn't answer.
 * A link that stops acknowledging writes is treated as half-dead: it is torn
   down and the write is retried once on a freshly established link.
 * A disconnect wakes anything waiting on a reply immediately instead of letting
@@ -21,7 +24,9 @@ Reliability rules this module enforces (each one learned from live failures):
   counter), and its task is held so it can't be garbage-collected mid-flight.
 * Teardown is detached and bounded: ``client.disconnect()`` runs as its own task
   (not cancelled with the caller) and is awaited for at most ``DISCONNECT_TIMEOUT``,
-  so a wedged proxy can't hold the device lock. Its errors are logged, never raised.
+  so a wedged proxy can't hold the device lock; at that bound it is abandoned
+  (cancelled), even when the caller was cancelled mid-wait. Its errors are logged,
+  never raised.
 * Errors are normalised: bleak/asyncio/timeout failures surface as typed
   :class:`GoveeBleError` subclasses (auth and not-supported errors are permanent and
   never retried; a write the device refuses is :class:`GoveeBleCommandRejected`).
@@ -32,8 +37,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import time
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from typing import Final, Literal, TypeVar, overload
 
 from bleak.backends.characteristic import BleakGATTCharacteristic
@@ -132,6 +139,65 @@ class _LinkLost(Exception):
 _WriteRejected = GoveeBleCommandRejected
 
 
+@dataclass(frozen=True, slots=True)
+class ConnectBudget:
+    """One operation's own connect limits, in place of the transport's (``Device.update``'s
+    ``connect_attempts`` / ``connect_timeout``). They hold only the connect phase of the operation they
+    are passed to (:meth:`GoveeConnection.query`, :meth:`GoveeConnection.send`): every other operation,
+    and the reads and writes after the connect, keep the defaults.
+
+    * ``attempts``: bleak-retry-connector's ``max_attempts`` for each establishment the connect makes, i.e.
+      how many attempts that time out or fail outright it makes before giving up. bleak-retry-connector
+      also tries again after a transient failure (device not found, no free connection slot,
+      ``ESP_GATT_CONN_FAIL_ESTABLISH``, ``le-connection-abort-by-local``) whatever ``attempts`` is, and
+      gives up only at the 9th (``MAX_TRANSIENT_ERRORS``), so ``timeout`` is what bounds the time. A
+      link that never came up is not tried again by the session retry (``SESSION_ATTEMPTS``), which still
+      re-establishes a link whose session setup failed. None:
+      ``CONNECT_MAX_ATTEMPTS`` per establishment, which the session retry may repeat.
+    * ``timeout``: seconds the connect phase (the link, the BGC read, the handshake, the unlock and the
+      session frames, with their retries) may take. Then the link the library holds is torn down (within
+      ``DISCONNECT_TIMEOUT``) and GoveeBleTimeout is raised. A connect cancelled inside bleak
+      (``establish_connection``) is cleaned up by the BLE backend, which only ``OPERATION_TIMEOUT`` bounds:
+      BlueZ disconnects it; bleak's CoreBluetooth backend (macOS) leaves the pending connection request,
+      so the device may stay connected to the host. None: no limit of its own. The operation's
+      ``OPERATION_TIMEOUT`` bounds the whole operation either way.
+
+    Raises GoveeBleInvalidValue unless each one given is valid: ``attempts`` an integer of at least 1,
+    ``timeout`` a finite number above 0."""
+
+    attempts: int | None = None
+    timeout: float | None = None
+
+    def __post_init__(self) -> None:
+        attempts, timeout = self.attempts, self.timeout
+        if attempts is not None and (
+            isinstance(attempts, bool) or not isinstance(attempts, int) or attempts < 1
+        ):
+            raise GoveeBleInvalidValue(f"connect_attempts must be an integer >= 1, got {_shown(attempts)}")
+        if timeout is not None and (
+            isinstance(timeout, bool) or not isinstance(timeout, (int, float))
+            or not _finite(timeout) or timeout <= 0
+        ):
+            raise GoveeBleInvalidValue(f"connect_timeout must be a finite number > 0, got {_shown(timeout)}")
+
+
+def _shown(value: object) -> str:
+    """``repr``, or a stand-in for an int past ``sys.get_int_max_str_digits()``, whose repr raises
+    ValueError."""
+    try:
+        return repr(value)
+    except ValueError:
+        return f"<{type(value).__name__} too large to show>"
+
+
+def _finite(value: float) -> bool:
+    """``math.isfinite``, false for an integer too large for a float (which it raises OverflowError on)."""
+    try:
+        return math.isfinite(value)
+    except OverflowError:
+        return False
+
+
 class GoveeConnection:
     """One on-demand BLE session with a Govee device.
 
@@ -173,6 +239,9 @@ class GoveeConnection:
         # and cleared with _session_key.
         self._session_cipher: FrameCipher | None = None
         self._ready = False  # connected AND session set up
+        # Links establish_connection has brought up: tells the session retry whether a failed
+        # attempt got a link (_open_session_locked).
+        self._links_opened = 0
         self._closed = False
         self._bgc_version: int | None = None  # cached after the first successful read
         self._bgc_checked = False
@@ -375,7 +444,10 @@ class GoveeConnection:
         self._closed = True
         await self.disconnect()
 
-    async def _ensure_connected_locked(self) -> None:
+    async def _ensure_connected_locked(self, budget: ConnectBudget | None = None) -> None:
+        """The connect phase of an operation: connect and set the session up, unless it is up.
+        ``budget`` is the operation's own connect limits (:class:`ConnectBudget`); None keeps the
+        transport's."""
         if self._closed:
             raise GoveeBleConnectionError(f"{self.address}: connection closed")
         if self.is_connected:
@@ -385,14 +457,39 @@ class GoveeConnection:
             raise GoveeBleNotSupported(
                 f"{self.address}: AES-GCM (V2) handshake not yet implemented"
             )
+        if budget is None or budget.timeout is None:
+            await self._open_session_locked(budget)
+            return
+        try:
+            async with asyncio.timeout(budget.timeout):
+                await self._open_session_locked(budget)
+        except TimeoutError as err:
+            # Only this limit raises a TimeoutError here: the BLE stack's own arrive as GoveeBleTimeout
+            # (_connect_locked), and the operation deadline as a cancellation. _connect_locked has torn
+            # down the link it held on the way out, as on any cancellation; a connect cancelled inside
+            # establish_connection was cleaned up by bleak's backend (see ConnectBudget).
+            raise GoveeBleTimeout(
+                f"{self.address}: connect exceeded {budget.timeout:g}s"
+            ) from err
+
+    async def _open_session_locked(self, budget: ConnectBudget | None) -> None:
+        """Up to ``SESSION_ATTEMPTS`` connects (:meth:`_connect_locked`), each an establishment with
+        bleak-retry-connector's ``max_attempts`` of ``CONNECT_MAX_ATTEMPTS``, or the budget's ``attempts``
+        (attempts that time out or fail outright; it tries again after a transient failure regardless,
+        giving up at the 9th). With the budget's, a link that never came up is not tried again:
+        establish_connection has made the operation's attempts."""
+        attempts = None if budget is None else budget.attempts
         last_err: GoveeBleError | None = None
         for attempt in range(1, SESSION_ATTEMPTS + 1):
+            links = self._links_opened
             try:
-                await self._connect_locked()
+                await self._connect_locked(CONNECT_MAX_ATTEMPTS if attempts is None else attempts)
                 return
             except (GoveeBleNotSupported, GoveeBleAuthError):
                 raise  # permanent: a retry can only repeat the same refusal
             except GoveeBleError as err:
+                if attempts is not None and self._links_opened == links:
+                    raise  # no link came up: the budget's attempts are spent
                 last_err = err
                 _LOGGER.debug(
                     "%s: session attempt %d/%d failed: %s",
@@ -402,7 +499,7 @@ class GoveeConnection:
             raise AssertionError("unreachable: no session attempt ran")
         raise last_err
 
-    async def _connect_locked(self) -> None:
+    async def _connect_locked(self, max_attempts: int) -> None:
         try:
             if self._client is None or not self._client.is_connected:
                 self._client = await establish_connection(
@@ -410,7 +507,7 @@ class GoveeConnection:
                     self._ble_device,
                     self._ble_device.address,
                     disconnected_callback=self._on_disconnect,
-                    max_attempts=CONNECT_MAX_ATTEMPTS,
+                    max_attempts=max_attempts,
                     # A fresher BLEDevice reaches the next session attempt through
                     # self._ble_device (each attempt re-reads it). This callback is only
                     # offered to bleak-retry-connector: 4.x accepts it but never calls
@@ -423,6 +520,7 @@ class GoveeConnection:
                     # client.services; the BGC lookup below is scoped to this service anyway.
                     services=[SERVICE_UUID],
                 )
+                self._links_opened += 1
                 self._drain()
                 await self._client.start_notify(NOTIFY_CHAR_UUID, self._handle_notify)
             await self._prepare_session()
@@ -607,16 +705,29 @@ class GoveeConnection:
         # Run the teardown as its own task: bounded by DISCONNECT_TIMEOUT so a wedged
         # proxy can't hold the device lock forever, yet NOT cancelled if our caller is
         # cancelled (the client is already forgotten, so nothing else would close it).
-        task = asyncio.get_running_loop().create_task(client.disconnect())
+        loop = asyncio.get_running_loop()
+        abandon_at = loop.time() + DISCONNECT_TIMEOUT
+        task = loop.create_task(client.disconnect())
         self._background.add(task)
         task.add_done_callback(self._disconnect_done)
-        _done, pending = await asyncio.wait({task}, timeout=DISCONNECT_TIMEOUT)
-        if pending:
-            _LOGGER.debug(
-                "%s: disconnect did not finish within %.0fs; abandoning it",
-                self.address, DISCONNECT_TIMEOUT,
-            )
-            task.cancel()
+        try:
+            await asyncio.wait({task}, timeout=DISCONNECT_TIMEOUT)
+        except asyncio.CancelledError:
+            # Our caller was cancelled mid-wait (the operation deadline, a connect limit): the
+            # teardown runs on, and is abandoned at the same bound.
+            loop.call_at(abandon_at, self._abandon_disconnect, task)
+            raise
+        self._abandon_disconnect(task)
+
+    def _abandon_disconnect(self, task: asyncio.Task[None]) -> None:
+        """Cancel a teardown still running at its ``DISCONNECT_TIMEOUT`` (a wedged proxy)."""
+        if task.done():
+            return
+        _LOGGER.debug(
+            "%s: disconnect did not finish within %.0fs; abandoning it",
+            self.address, DISCONNECT_TIMEOUT,
+        )
+        task.cancel()
 
     def _disconnect_done(self, task: asyncio.Task[None]) -> None:
         self._background.discard(task)
@@ -692,15 +803,25 @@ class GoveeConnection:
                 self._schedule_idle_timer()
 
     @overload
-    async def send(self, frame_plaintext: bytes, *, expect_ack: Literal[True] = ...) -> bytes: ...
+    async def send(
+        self, frame_plaintext: bytes, *, expect_ack: Literal[True] = ...,
+        connect_budget: ConnectBudget | None = ...,
+    ) -> bytes: ...
 
     @overload
-    async def send(self, frame_plaintext: bytes, *, expect_ack: Literal[False]) -> None: ...
+    async def send(
+        self, frame_plaintext: bytes, *, expect_ack: Literal[False],
+        connect_budget: ConnectBudget | None = ...,
+    ) -> None: ...
 
     @overload
-    async def send(self, frame_plaintext: bytes, *, expect_ack: bool) -> bytes | None: ...
+    async def send(
+        self, frame_plaintext: bytes, *, expect_ack: bool, connect_budget: ConnectBudget | None = ...,
+    ) -> bytes | None: ...
 
-    async def send(self, frame_plaintext: bytes, *, expect_ack: bool = True) -> bytes | None:
+    async def send(
+        self, frame_plaintext: bytes, *, expect_ack: bool = True, connect_budget: ConnectBudget | None = None,
+    ) -> bytes | None:
         """Connect+handshake if needed, then send one 20-byte plaintext frame.
 
         A write (proType 0x33) with expect_ack MIRRORS the app's comm layer: it
@@ -712,7 +833,8 @@ class GoveeConnection:
         sends the frame once and returns None. Only writes have an ack to wait for: a
         non-write frame with ``expect_ack=True`` raises GoveeBleInvalidValue
         (use :meth:`query` to read replies). A frame shorter than 2 bytes (no commandType)
-        raises GoveeBleInvalidValue before any I/O."""
+        raises GoveeBleInvalidValue before any I/O. ``connect_budget`` holds this operation's
+        connects (the retry's reconnect too) to its limits (:class:`ConnectBudget`)."""
         self._check_frame(frame_plaintext)
         is_write = frame_plaintext[0] == PRO_WRITE
         if expect_ack:
@@ -720,8 +842,8 @@ class GoveeConnection:
 
         async def op() -> bytes | None:
             if expect_ack:
-                return await self._write_locked(frame_plaintext)
-            await self._ensure_connected_locked()
+                return await self._write_locked(frame_plaintext, connect_budget)
+            await self._ensure_connected_locked(connect_budget)
             self._drain()
             await self._send_frame(frame_plaintext)
             return None
@@ -759,12 +881,13 @@ class GoveeConnection:
 
         await self._run(op, extend_warm=True)
 
-    async def _write_locked(self, frame_plaintext: bytes) -> bytes:
+    async def _write_locked(self, frame_plaintext: bytes, budget: ConnectBudget | None = None) -> bytes:
         """Ack-verified write with one reconnect-and-retry. Only failures AFTER the
         link was up trigger the retry (a link that stops acking is usually
         half-dead while bleak still reports it connected); a connect failure is
-        not retried here - establish_connection already retried it."""
-        await self._ensure_connected_locked()
+        not retried here - establish_connection already retried it. Both connects
+        are held to ``budget`` (:class:`ConnectBudget`)."""
+        await self._ensure_connected_locked(budget)
         try:
             return await self._send_write_verified(frame_plaintext)
         except (
@@ -776,7 +899,7 @@ class GoveeConnection:
                 self.address, frame_plaintext[1], _err_text(err),
             )
             await self._disconnect_locked()
-        await self._ensure_connected_locked()
+        await self._ensure_connected_locked(budget)
         return await self._send_write_verified(frame_plaintext)
 
     async def send_unacked(
@@ -851,6 +974,7 @@ class GoveeConnection:
         opcode: int = PRO_MULTI_AC,
         terminal: int = QUERY_TERMINAL,
         idle_gap: float | None = BURST_IDLE_GAP,
+        connect_budget: ConnectBudget | None = None,
     ) -> list[bytes]:
         """Send a query trigger and collect the resulting NOTIFY burst.
 
@@ -868,10 +992,13 @@ class GoveeConnection:
         read ends when the burst is complete (a one-packet reply, or the last packet
         once every packet before it is in) or failed (a first chunk whose lastLen
         doesn't fit), and only a chunk the app takes arms ``idle_gap``, so a stray
-        early 0xFF or a late chunk of an earlier burst doesn't end it."""
+        early 0xFF or a late chunk of an earlier burst doesn't end it.
+
+        ``connect_budget`` holds this operation's connect, not its reads, to its limits
+        (:class:`ConnectBudget`)."""
 
         async def op() -> list[bytes]:
-            await self._ensure_connected_locked()
+            await self._ensure_connected_locked(connect_budget)
             self._drain()
             await self._send_frame(frame_plaintext)
             loop = asyncio.get_running_loop()

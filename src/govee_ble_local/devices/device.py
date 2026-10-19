@@ -14,7 +14,7 @@ import copy
 import logging
 import time
 from collections.abc import Awaitable, Callable, Sequence
-from typing import Final, Literal, Never, ParamSpec, TypeVar
+from typing import Final, Literal, Never, ParamSpec, TypedDict, TypeVar
 
 from bleak.backends.device import BLEDevice
 from bleak.backends.scanner import AdvertisementData
@@ -33,7 +33,7 @@ from ..identify import GoveeAdvertisement, from_advertisement, parse_broadcast_o
 from ..models import Capability, DeviceState, Encryption, Segment, Zone
 from ..scenes import Scene, async_load_scenes, load_scenes, scene_names_by_code
 from ..scenes import scene_upload_frames as _scene_upload_frames
-from ..transport.connection import GoveeConnection
+from ..transport.connection import ConnectBudget, GoveeConnection
 from ..wire import build, parse, reassemble
 from . import _fold, _readback
 from .brightness import percent_to_device
@@ -55,6 +55,16 @@ _ReadResult = Literal["applied", "stale", "none"]
 # report their colour only there). The app's connect read includes aa 05 for every polled SKU in
 # the profile table (see the profile notes); a test pins that each of them still issues it.
 _MODE_REPORT_CAPS: Final = frozenset({Capability.SCENES, Capability.COLOR_TEMP, Capability.RGB})
+
+
+class _BudgetKw(TypedDict, total=False):
+    connect_budget: ConnectBudget
+
+
+def _budget_kw(budget: ConnectBudget | None) -> _BudgetKw:
+    """The ``connect_budget`` keyword of a transport call (:meth:`Device.update`'s limits), passed only
+    when a poll set one: every other call keeps the transport's call shape."""
+    return {} if budget is None else {"connect_budget": budget}
 
 
 def _local_tz(unix_ts: int) -> tuple[int, int]:
@@ -436,11 +446,14 @@ class Device:
             self._unlock_pending = True
         self._secret = checked
 
-    async def _send_pending_unlock(self) -> None:
+    async def _send_pending_unlock(self, budget: ConnectBudget | None = None) -> None:
         """Send the ``33 b2`` unlock for a secret set while the session was already up (see
         :meth:`set_secret`). Without a live session nothing is sent: the next session setup sends
         it. A rejection is a GoveeBleAuthError, as at session setup; an unacked unlock is only
-        logged, as at session setup (``GoveeConnection._prepare_session``)."""
+        logged, as at session setup (``GoveeConnection._prepare_session``). ``budget``: the
+        calling poll's connect limits (:meth:`update`); a timeout that leaves the session down (the
+        write retry's reconnect ran out of them) is raised, and the next session setup sends the
+        unlock."""
         if not self._unlock_pending:
             return
         self._unlock_pending = False   # taken: a concurrent operation doesn't send it twice
@@ -449,7 +462,7 @@ class Device:
             return   # the next session setup sends it (or there is none)
         done = False   # the write finished: acked, rejected, or unacked (treated as sent)
         try:
-            await self._conn.send(build.secret_check(secret))
+            await self._conn.send(build.secret_check(secret), **_budget_kw(budget))
             done = True
         except GoveeBleCommandRejected as err:
             done = True
@@ -457,6 +470,8 @@ class Device:
                 f"{self._sku}: device rejected the secret key - it is wrong or the device was re-paired"
             ) from err
         except GoveeBleTimeout:
+            if budget is not None and not self._conn.is_connected:
+                raise   # the poll's connect limit ran out on the write retry's reconnect: nothing sent
             done = True
             _LOGGER.debug("%s (%s): no ack for unlock frame (continuing)", self.address, self._sku)
         finally:
@@ -934,7 +949,7 @@ class Device:
         target[index] = on
         await self._commit(build.bar_switch(target[0], target[1]), lambda: self._apply_zone_power(target))
 
-    async def _read_bar_switch(self) -> _ReadResult:
+    async def _read_bar_switch(self, budget: ConnectBudget | None = None) -> _ReadResult:
         """Read the bar switch into state: "applied" (bars and the derived on/off were read back),
         "stale" (the reply was discarded: a setter applied state meanwhile) or "none" (no usable
         reply)."""
@@ -942,7 +957,7 @@ class Device:
             _fold.apply_bar_switch(self._state, bars)
 
         return await self._read_command(
-            "bar-switch", build.bar_switch_query(), parse.parse_bar_switch, apply)
+            "bar-switch", build.bar_switch_query(), parse.parse_bar_switch, apply, budget)
 
     async def set_zone_rgb(self, name: str, rgb: tuple[int, int, int]) -> None:
         """Set the colour of one zone (its segment mask).
@@ -1077,7 +1092,9 @@ class Device:
         await self._commit(build.gradual(on), apply, authoritative=False)
 
     # -- read-back ----------------------------------------------------------
-    async def update(self) -> DeviceState:
+    async def update(
+        self, *, connect_attempts: int | None = None, connect_timeout: float | None = None,
+    ) -> DeviceState:
         """Poll the device and fold the replies into state; returns the current state.
 
         Reads are not serialized against setters (the connection lock is per-operation), so a
@@ -1087,9 +1104,39 @@ class Device:
         read means "state is newer than this poll": ``update()`` still returns the current
         (setter-applied) state and notifies, but does not consume the one-time "first poll" step
         (``_polled_once``); callers simply poll again later. Static device-info is exempt (never
-        raced by setters)."""
+        raced by setters).
+
+        ``connect_attempts`` and ``connect_timeout`` hold this poll's connects to tighter limits than
+        the transport's, so a background poll at a device that doesn't answer gives the device lock
+        up sooner, and a command queued behind it keeps more of its caller's deadline (the command's
+        own ``const.OPERATION_TIMEOUT`` starts only once it holds the lock). They hold every connect
+        this call makes: normally only its first read's, plus a reconnect when the link is lost
+        mid-poll. Setters and other calls keep the defaults.
+
+        * ``connect_attempts``: bleak-retry-connector's ``max_attempts`` for each establishment this
+          call makes, i.e. how many attempts that time out or fail outright it makes before giving
+          up. bleak-retry-connector also tries again after a transient failure (device not found, no
+          free connection slot, ``ESP_GATT_CONN_FAIL_ESTABLISH``, ``le-connection-abort-by-local``)
+          regardless, giving up only at the 9th, so pass ``connect_timeout`` to bound the time. A link
+          that never came up is not tried again by the session retry. None:
+          ``const.CONNECT_MAX_ATTEMPTS`` (3) per establishment, and the session retry
+          (``const.SESSION_ATTEMPTS``) may establish once more.
+        * ``connect_timeout``: seconds a connect (the link, the BGC read, the handshake and the
+          unlock, with their retries) may take. Then the link the library holds is torn down (up to
+          ``const.DISCONNECT_TIMEOUT``, 5 s, more) and GoveeBleTimeout is raised, with the device
+          lock free and the connection ready for the next operation. A connect cancelled inside
+          bleak is cleaned up by the BLE backend, which only ``const.OPERATION_TIMEOUT`` bounds (the
+          lock is held until it is done): BlueZ disconnects it; bleak's CoreBluetooth backend (macOS)
+          leaves the pending connection request, so the device may stay connected to the host. The
+          reads after the connect are not counted. None: no limit of its own. Each operation's
+          ``const.OPERATION_TIMEOUT`` (45 s) bounds it either way.
+
+        Raises GoveeBleInvalidValue, before any I/O, unless ``connect_attempts`` is an integer >= 1
+        and ``connect_timeout`` a finite number > 0 (where given)."""
+        budget = (None if connect_attempts is None and connect_timeout is None
+                  else ConnectBudget(connect_attempts, connect_timeout))
         discarded_before = self._discarded_reads
-        await self._send_pending_unlock()
+        await self._send_pending_unlock(budget)
         if not self._scenes_warm and Capability.SCENES in self.capabilities:
             # Load the bundled scene catalog off the loop once, so the sync scene_names /
             # active_scene properties are cache hits when read on the event loop.
@@ -1100,26 +1147,27 @@ class Device:
                 _LOGGER.debug("%s (%s): scene catalog not loaded: %s", self.address, self._sku, err)
         state_read = False   # this poll's state read brought a live field back (_finish_read)
         if self.profile.readback == "status":
-            state_read = await self._read_status()
+            state_read = await self._read_status(budget)
         elif self.profile.readback == "polled":
-            state_read = await self._read_polled()
+            state_read = await self._read_polled(budget)
         elif self.profile.readback == "plug":
-            state_read = await self._read_plug()
+            state_read = await self._read_plug(budget)
         elif self.profile.readback == "none":
             pass
         else:
             _unhandled(self.profile.readback, "readback")
         if self.profile.ic_num_read_only and not self.profile.color_readback_live_ic:
-            await self._read_reply(build.ic_count_query())   # the screen's connect read; it sizes nothing
+            # The screen's connect read; it sizes nothing.
+            await self._read_reply(build.ic_count_query(), budget)
         # Segment / single-colour read-back layered on top (spec Change 7).
         if self.profile.color_readback == "mechanism_b":
-            await self._read_mechanism_b()
+            await self._read_mechanism_b(budget)
         elif self.profile.color_readback == "mechanism_a_direct":
             if self.profile.section_count_read and self._segment_count is None:
                 _LOGGER.debug("%s (%s): segment count unknown; skipping segment colour read-back",
                               self.address, self._sku)
             else:
-                await self._read_mechanism_a_direct()
+                await self._read_mechanism_a_direct(budget)
         elif self.profile.color_readback == "":
             pass   # no segment colour read-back ("" is ColorReadBack's "none")
         else:
@@ -1129,13 +1177,14 @@ class Device:
                 self._state.gradual = on
 
             await self._read_command("gradual", build.gradual_query(),
-                                     parse.parse_gradual, apply_gradual)
+                                     parse.parse_gradual, apply_gradual, budget)
         elif self.profile.gradual_read_only:
-            await self._read_reply(build.gradual_query())   # the screen's connect read; nothing is exposed
+            # The screen's connect read; nothing is exposed.
+            await self._read_reply(build.gradual_query(), budget)
         # Device-info (mac/hw/fw/serial) — static-ish, read once the device answers one of them.
         if not self._device_info_read and self.profile.readback != "none":
             try:
-                await self._read_device_info(state_read=state_read)
+                await self._read_device_info(budget, state_read=state_read)
             except GoveeBleError as err:
                 # Flag stays False so the next poll retries; the state read above is still good.
                 _LOGGER.debug("%s (%s): device-info read failed (%s); retrying next poll",
@@ -1158,7 +1207,7 @@ class Device:
         the colour / colour temperature of the solid-colour sub-mode."""
         _fold.apply_mode_reply(self.profile, self._state, reply)
 
-    async def _read_plug(self) -> bool:
+    async def _read_plug(self, budget: ConnectBudget | None = None) -> bool:
         """Poll a plug's relay state (aa 01 -> relay bitmask) so state.is_on reflects the device
         rather than the last command sent. On means one of the profile's ``relay_on_mask`` bits is
         set (:func:`.parse.parse_relay_on`): bit 0 on the single-outlet SKUs, as the app's
@@ -1169,16 +1218,19 @@ class Device:
             self._state.is_on = on
 
         applied = await self._read_command(
-            "plug power", build.power_query(), lambda r: parse.parse_relay_on(r, prof), apply) == "applied"
+            "plug power", build.power_query(), lambda r: parse.parse_relay_on(r, prof), apply,
+            budget) == "applied"
         self._finish_read(applied, power_read=applied)
         return applied
 
-    async def _read_device_info(self, *, state_read: bool = False) -> None:
+    async def _read_device_info(
+        self, budget: ConnectBudget | None = None, *, state_read: bool = False,
+    ) -> None:
         """Populate the static device-info fields (``aa 06``, ``aa 07 03``, ``aa 07 02``;
         :func:`._readback.read_device_info`). Best-effort, and done once the device has answered;
         unanswered reads leave fields None. ``state_read``: the same poll's state read brought a
         live field back."""
-        answered = await _readback.read_device_info(self, self._read_reply)
+        answered = await _readback.read_device_info(self, lambda f: self._read_reply(f, budget))
         # Done once the reads completed without raising on a device that answered in this poll: one
         # of these reads, or the poll's state read. An unanswered selector on a responsive device is
         # not retried every poll (each costs INFO_READ_TIMEOUT), but a poll on which the device was
@@ -1198,23 +1250,26 @@ class Device:
         _fold.merge_device_info(
             self._state, serial=serial, wifi_mac=wifi_mac, firmware=firmware, hardware=hardware)
 
-    async def _read_mechanism_b(self) -> None:
+    async def _read_mechanism_b(self, budget: ConnectBudget | None = None) -> None:
         """H61A8's per-segment colour via BulbGroupColorV2 (``aa a5 <seq>``, V2;
         :func:`._readback.walk_mechanism_b`), applied whole unless a setter raced it."""
-        await self._read_fresh("segment colour", lambda: _readback.walk_mechanism_b(self, self._read_reply),
-                               self._apply_segments)
+        await self._read_fresh(
+            "segment colour",
+            lambda: _readback.walk_mechanism_b(self, lambda f: self._read_reply(f, budget)),
+            self._apply_segments)
 
     def _apply_segments(self, segments: list[Segment]) -> None:
         """Fold a whole segment-colour read-back into state."""
         self._state.segments = segments
 
-    async def _read_mechanism_a_direct(self) -> None:
+    async def _read_mechanism_a_direct(self, budget: ConnectBudget | None = None) -> None:
         """H6047/H6641/H6062/H6061 per-segment colour via Controller4ColorInfoByGroup's direct
         per-group requests (``aa a5 <group>``; :func:`._readback.walk_mechanism_a_direct`), applied
         whole unless a setter raced it."""
-        await self._read_fresh("segment colour",
-                               lambda: _readback.walk_mechanism_a_direct(self, self._read_reply),
-                               self._apply_segments)
+        await self._read_fresh(
+            "segment colour",
+            lambda: _readback.walk_mechanism_a_direct(self, lambda f: self._read_reply(f, budget)),
+            self._apply_segments)
 
     def _wants_color_groups(self) -> bool:
         """Whether the 0xAC status read asks for the 0xA5 colour groups (``status_color_groups_pact``):
@@ -1233,16 +1288,19 @@ class Device:
             return types
         return tuple(t for t in types if t != reassemble.TYPE_COLOR_GROUP)
 
-    async def _query_status(self) -> tuple[reassemble.StatusReply, list[bytes], list[bytes]]:
+    async def _query_status(
+        self, budget: ConnectBudget | None = None,
+    ) -> tuple[reassemble.StatusReply, list[bytes], list[bytes]]:
         async with self._read_gate:   # never between a scene's upload and its activation
-            await self._send_pending_unlock()   # a secret set on the live session goes first
+            await self._send_pending_unlock(budget)   # a secret set on the live session goes first
             frames = await self._conn.query(
-                build.status_query(types=self._status_types()), timeout=STATUS_READ_TIMEOUT)
+                build.status_query(types=self._status_types()), timeout=STATUS_READ_TIMEOUT,
+                **_budget_kw(budget))
         ac = [f for f in frames if f and f[0] == build.PRO_MULTI_AC]
         status = reassemble.parse_status(ac, pieces=self.segment_count, decode=wire_profile(self.profile))
         return status, ac, frames
 
-    async def _read_status(self) -> bool:
+    async def _read_status(self, budget: ConnectBudget | None = None) -> bool:
         # `applied` (returned): a live field came back (state no longer optimistic). `power_read`:
         # on/off came back, so the advertised on/off is suppressed for a while (_finish_read).
         # Neither is set by an empty burst (the "state left stale" case) nor by the static
@@ -1255,11 +1313,12 @@ class Device:
 
         # The burst is the whole poll, as the app's connect read is: its 0x05 TLV carries the mode
         # (_fold.apply_status), so no aa 05 read follows it.
-        await self._read_fresh("status", lambda: _readback.status_burst(self, self._query_status), apply)
+        await self._read_fresh(
+            "status", lambda: _readback.status_burst(self, lambda: self._query_status(budget)), apply)
         self._finish_read(applied, power_read)
         return applied
 
-    async def _read_polled(self) -> bool:
+    async def _read_polled(self, budget: ConnectBudget | None = None) -> bool:
         """The polled read-back (aa 01 / aa 04 / aa 36 / aa 41 / aa 05); returns whether a live field
         came back (see :meth:`_read_status`)."""
         def apply_power(on: bool) -> None:
@@ -1272,32 +1331,32 @@ class Device:
         # switch) must be noticed even when we last saw it off.
         # A light is on only for a byte of 1, as the app's control screens read it (parse_light_power).
         power_read = await self._read_command(
-            "power", build.power_query(), parse.parse_light_power, apply_power) == "applied"
+            "power", build.power_query(), parse.parse_light_power, apply_power, budget) == "applied"
         applied = power_read   # see _read_status / _finish_read
         if await self._read_command("brightness", build.brightness_query(),
-                                    parse.parse_brightness, apply_brightness) == "applied":
+                                    parse.parse_brightness, apply_brightness, budget) == "applied":
             applied = True
-        if self.profile.bar_switch and await self._read_bar_switch() == "applied":
+        if self.profile.bar_switch and await self._read_bar_switch(budget) == "applied":
             applied = power_read = True   # the bars set is_on (device on iff either bar is on)
         if self.profile.section_count_read:
             # The app's connect order: aa 01, aa 04, aa 41, aa 05 (ControllerStrategyConfig.O).
-            await self._read_section_count()
-        if self.capabilities & _MODE_REPORT_CAPS and await self._read_mode() == "applied":
+            await self._read_section_count(budget)
+        if self.capabilities & _MODE_REPORT_CAPS and await self._read_mode(budget) == "applied":
             applied = True
         self._finish_read(applied, power_read)
         return applied
 
-    async def _read_mode(self) -> _ReadResult:
+    async def _read_mode(self, budget: ConnectBudget | None = None) -> _ReadResult:
         """Read the aa 05 mode report into state (:meth:`_apply_mode_reply`)."""
         prof = wire_profile(self.profile)
         return await self._read_command("mode", build.mode_query(), lambda r: parse.mode_reply(r, prof),
-                                        lambda m: _fold.apply_mode(self.profile, self._state, m))
+                                        lambda m: _fold.apply_mode(self.profile, self._state, m), budget)
 
-    async def _read_section_count(self) -> bool:
+    async def _read_section_count(self, budget: ConnectBudget | None = None) -> bool:
         """Read the segment count the device reports (``aa 41`` -> ``sectionNum``) and adopt it
         as :attr:`segment_count`, as the app does on every connect. Returns False (state left as
         it was) when the device does not answer or reports a count the masks cannot carry."""
-        reply = await self._read_reply(build.section_count_query())
+        reply = await self._read_reply(build.section_count_query(), budget)
         sc = parse.parse_section_count(reply) if reply else None
         if sc is None or not 1 <= sc.section_num <= build.MAX_MASK_SEGMENTS:
             _LOGGER.debug("%s (%s): aa 41 section-count read gave no usable count (%s)",
@@ -1338,26 +1397,28 @@ class Device:
     async def _read_command(
         self, what: str, frame: bytes,
         parser: Callable[[bytes], _T | None], apply: Callable[[_T], None],
+        budget: ConnectBudget | None = None,
     ) -> _ReadResult:
         """:meth:`_read_fresh` of one ``aa`` read: the reply to ``frame``, decoded by ``parser`` (None: not
         a usable reply)."""
         async def read() -> _T | None:
-            reply = await self._read_reply(frame)
+            reply = await self._read_reply(frame, budget)
             return None if reply is None else parser(reply)
 
         return await self._read_fresh(what, read, apply)
 
-    async def _read_reply(self, frame: bytes) -> bytes | None:
+    async def _read_reply(self, frame: bytes, budget: ConnectBudget | None = None) -> bytes | None:
         """Send one ``aa`` read and return its reply - the ``aa`` frame with the request's own command
         (:func:`.parse.request_command`) - or None after ``INFO_READ_TIMEOUT``. A single-reply read:
         ``idle_gap=None``, so a stray ``aa`` frame (a late reply to an earlier read) can't cut the wait
-        short to the burst idle gap."""
+        short to the burst idle gap. ``budget``: the calling poll's connect limits (:meth:`update`), or
+        None for the transport's."""
         command_type = parse.request_command(frame)
         async with self._read_gate:   # never between a scene's upload and its activation
-            await self._send_pending_unlock()   # a secret set on the live session goes first
+            await self._send_pending_unlock(budget)   # a secret set on the live session goes first
             frames = await self._conn.query(
                 frame, opcode=build.PRO_READ, terminal=command_type, timeout=INFO_READ_TIMEOUT,
-                idle_gap=None)
+                idle_gap=None, **_budget_kw(budget))
         return parse.find_reply(frames, command_type)
 
     async def read_secret(self) -> bytes | None:
