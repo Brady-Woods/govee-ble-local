@@ -3,20 +3,24 @@ from __future__ import annotations
 
 import base64
 import dataclasses
+import hashlib
 import json
 from importlib import resources
 
 import pytest
 from conftest import FakeSceneFiles
 
-from govee_ble_local import profile_for, scenes
+from govee_ble_local import profile_for, scenes, supported_skus
 from govee_ble_local.exceptions import GoveeBleError, GoveeBleInvalidValue
+from govee_ble_local.models import Capability
 from govee_ble_local.scenes import load_scenes, scene_names_by_code
 
-# Counts captured from the pre-change loader.
+# Every bundled catalog's scene count (1.4.0's ten, then the admitted models'), so a catalog re-pointed,
+# added or dropped fails here (test_the_scene_store_is_the_device_tables).
 EXPECTED = {
     "H6006": 59, "H6008": 59, "H6047": 65, "H6052": 43,
-    "H60A6": 84, "H61A8": 148, "H6641": 148,
+    "H60A6": 84, "H61A8": 148, "H6641": 148, "H6004": 63, "H6062": 70, "H6188": 9,
+    "H1401": 94, "R1401": 94, "H14B1": 63, "H6002": 8,
 }
 
 
@@ -111,3 +115,24 @@ def test_no_legacy_scene_catalog_holds_a_type5_scene_the_app_uploads():
             raw = base64.b64decode(scene.param or "")
             new_diy = len(raw) >= 2 and raw[0] == 0x50
             assert scene.scene_type != 5 or not (type5_branch or new_diy), (sku, scene.name)
+
+
+def test_the_scene_store_is_the_device_tables():
+    """The store and the table agree: the SKUs with a catalog are exactly the ones offered scenes (a SKU
+    without one is not: _resolve's module doc), each set is named by its SHA-256 prefix, and every set is some
+    SKU's (no orphan). EXPECTED pins each catalog's size, so a re-pointed or dropped catalog fails."""
+    files = resources.files(scenes)
+    index = json.loads((files / "index.json").read_text(encoding="utf-8"))
+    offered: set[str] = set()
+    for opt_in in (False, True):
+        for sku in supported_skus(allow_modelled=opt_in):
+            p = profile_for(sku, allow_modelled=opt_in)
+            assert p is not None, sku   # every SKU routes without its pact
+            if Capability.SCENES in p.capabilities:
+                offered.add(sku)
+    assert set(index) == offered == set(EXPECTED)
+    sets = {f.name.removesuffix(".json"): f.read_text(encoding="utf-8") for f in files.iterdir()
+            if f.name.endswith(".json") and f.name != "index.json"}
+    assert set(sets) == set(index.values())
+    for name, text in sets.items():
+        assert hashlib.sha256(text.encode("utf-8")).hexdigest()[:16] == name

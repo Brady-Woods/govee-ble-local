@@ -64,8 +64,11 @@ the row lacks fails the build: nothing defaults silently.
   scheme the row names itself: a family default that would drop one raises. ``rgb``, ``color_temp`` or
   ``segments`` on a relay row raises (the library resolves no colour scheme or Kelvin range for a plug), and
   elsewhere they need a colour scheme. An ``untraced`` scene dialect drops ``scenes``; ``none`` is activate
-  only. An ``untraced`` colour parse on a row with ``rgb`` or ``color_temp`` raises (``none`` is a traced
-  value: the screen parses no colour).
+  only. Scenes need a bundled catalog, as every SKU of 1.4.0 that offers them ships one: a SKU the scene
+  store has no catalog for (``scenes/index.json``, the generated ``SCENE_CATALOGS``, which
+  :func:`profiles` takes as ``catalogued``) is offered no ``scenes``, its row's scene facts still checked.
+  An ``untraced`` colour parse on a row with ``rgb`` or ``color_temp`` raises (``none`` is a traced value:
+  the screen parses no colour).
 - The reads the library makes: the 0xAC status read is the row's ``status_read``, in its order
   (``DeviceProfile.status_read``, ``build.status_query(types=)``), and its reply is read with the row's own
   wire facts (``DeviceProfile.status_decode``, ``reassemble.status_profile``): the forms of the TLVs the
@@ -656,17 +659,20 @@ def _members(families: Sequence[Family], admitted: Collection[str]) -> Iterator[
             yield from ((fam, gt, row, sku) for sku in (*own, *via))
 
 
-def profiles(families: Sequence[Family], parse_names: Collection[str], admitted: Collection[str] = ADMITTED
+def profiles(families: Sequence[Family], parse_names: Collection[str], admitted: Collection[str] = ADMITTED,
+             catalogued: Collection[str] | None = None
              ) -> list[tuple[tuple[str, ...], dict[str, Any], tuple[Route, ...]]]:
     """``[(skus, fields, routes)]``: DeviceProfile field values for each group of (row, SKU) routes at a
     support level in ``admitted`` (a catalogue route's is :func:`catalogue_support`) whose resolved facts are
     identical, in devices.yaml order (row models, then its catalogue routes, within a row), with those routes.
-    ``parse_names`` are the mode_color_parse table's names. SpecError on a fact missing or not served."""
+    ``parse_names`` are the mode_color_parse table's names; ``catalogued`` are the SKUs (upper-case) with a
+    bundled scene catalog, the only ones offered scenes (None: no cut). SpecError on a fact missing or not
+    served."""
     groups: dict[str, tuple[list[str], dict[str, Any], list[Route]]] = {}
     for fam, gt, row, sku in _members(families, admitted):
         pacts = row.get("pacts", "any")   # every route has pacts (_members); 'any' tests none
         accepted = None if isinstance(pacts, str) else frozenset(_pact(p) for p in pacts)
-        fields = _fields(fam, gt, sku, parse_names)
+        fields = _fields(fam, gt, sku, parse_names, catalogued)
         skus, _same, members = groups.setdefault(repr(sorted(fields.items())), ([], fields, []))
         if sku not in skus:
             skus.append(sku)
@@ -674,7 +680,8 @@ def profiles(families: Sequence[Family], parse_names: Collection[str], admitted:
     return [(tuple(skus), fields, tuple(members)) for skus, fields, members in groups.values()]
 
 
-def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str]) -> dict[str, Any]:
+def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
+            catalogued: Collection[str] | None = None) -> dict[str, Any]:
     """One routed SKU's DeviceProfile field values (see the module doc for the rules)."""
     cp = fam.get("client_profile") or {}
     row = (cp.get("by_goods_type") or {})[gt]
@@ -766,7 +773,7 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str]) -> dic
     dialect = row.get("scene_dialect")
     if "scenes" in caps and dialect not in (*_DIALECTS, "untraced"):
         fail(f"scene_dialect {dialect!r}")
-    if dialect == "untraced":
+    if dialect == "untraced" or (catalogued is not None and sku.upper() not in catalogued):
         caps.discard("scenes")
     uploads = "scenes" in caps and dialect != "none"
     scenes = _scene_set(need(layered.get("scene_versions"), "scene_versions"), fail) if uploads else ()

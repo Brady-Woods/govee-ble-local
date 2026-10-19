@@ -34,7 +34,8 @@ def generated_classes_problem(root: pathlib.Path) -> str | None:
     They are a build product (gitignored), so they can be missing, and an ignored ``_generated/``
     survives a ``git switch`` or ``git pull`` that changes the spec: then they are older than
     ``spec/*.ksy``, ``spec/devices.yaml`` (or its schema, which the table's projection follows), the
-    catalogue snapshot (``spec/govee_catalog.json``, whose routes the table carries), a generator, or the
+    catalogue snapshot (``spec/govee_catalog.json``, whose routes the table carries), the scene store's
+    index (``scenes/index.json``: only a SKU with a catalog is offered scenes), a generator, or the
     device resolver (``devices/_resolve.py``, whose admission rule decides the table's cut). Git gives
     every file a checkout rewrites a fresh mtime, so an input
     newer than the oldest output means the classes were built from something else (a touch or a stash
@@ -49,7 +50,8 @@ def generated_classes_problem(root: pathlib.Path) -> str | None:
     inputs = [*(root / "spec").glob("*.ksy"), root / "tools" / "gen_kaitai.sh",
               root / "spec" / "devices.yaml", root / "spec" / "devices.schema.json",
               root / "spec" / "govee_catalog.json", root / "tools" / "gen_devices.py",
-              root / "src" / "govee_ble_local" / "devices" / "_resolve.py"]
+              root / "src" / "govee_ble_local" / "devices" / "_resolve.py",
+              root / "src" / "govee_ble_local" / "scenes" / "index.json"]
     oldest_output = min((generated / n).stat().st_mtime for n in outputs)
     stale = sorted(p.name for p in inputs if p.is_file() and p.stat().st_mtime > oldest_output)
     if stale:

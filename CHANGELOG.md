@@ -85,8 +85,8 @@ model, from which the shipped readers are generated).
   - They are served only at the row's pacts, as every SKU outside 1.4.0's 18 is (see Changed): the app's
     scan refuses a device whose pact its goodsType doesn't accept (`AbsBaseBleModel.e`, `checkProtocol` ->
     `Pact.i`).
-  - The nine bulbs and the five others ship without named scenes (scene codes only): no catalog is
-    bundled for them yet. Each row's doc says how they route.
+  - The nine bulbs and the five others offer no scenes until a catalog is bundled for them (scenes need
+    a catalog: Changed). Each row's doc says how they route.
   - A SKU that a row lists keeps the spec's route. A non-zero catalogue conflict leaves the SKU unrouted
     and on the review list the generator prints, unless an `assigned_goods_type` item of the row's family
     cites the app's rewrite of that goodsType: one whose `from_goods_type` names it, or, with none, one
@@ -178,11 +178,22 @@ model, from which the shipped readers are generated).
   H6004 / H6006 / H6008 and every other SKU send what they sent.
 - Bundled scene catalogs for the newly admitted models whose profile offers scenes: H6002, H1401 / R1401
   and H14B1 (H14B1 shares H6004's set), fetched from the public scene library with `tools/fetch_scenes.py`
-  into the content-keyed store. The other newly admitted models get no catalog yet. The Christmas scene of H1401 / R1401 / H14B1 is
+  into the content-keyed store. The other newly admitted models get no catalog yet, so they offer no scenes
+  (Changed). The Christmas scene of H1401 / R1401 / H14B1 is
   shipped by the public library only as a 0xFF stub and stays an unresolved placeholder (resolving it
   needs an account).
 
 ### Changed
+- **Scenes need a bundled catalog**, as every SKU of 1.4.0 that offers them ships one. The generator bakes
+  the scene store's SKUs (`scenes/index.json`) into the table (`_generated` `SCENE_CATALOGS`), and a profile
+  offers `SCENES` only to them; the row's scene facts are still checked. So no SKU offers an effect list
+  with nothing in it (Home Assistant showed only "off" for the nine catalogue bulbs). The 74 admitted SKUs
+  (and 5 behind `allow_modelled`) whose row offers scenes but have no catalog offer none until theirs is
+  bundled. `tools/fetch_scenes.py` with no SKUs lists the SKUs whose row offers scenes, catalog or not.
+  A test ties the store to the table: the SKUs with a catalog are exactly those offered scenes, each set is
+  named by its SHA-256 prefix and named by some SKU, and every catalog's scene count is pinned.
+  `scripts/smoke_artifacts.sh` loads every bundled catalog from the installed wheel. 1.4.0's 18 SKUs keep
+  their scenes.
 - **The 0xAC status request is built from the profile**, not hard-coded to the H60A6's: the resolver takes
   the row's `status_read` (command names, checked against govee_common's `command` enum by the
   generator) instead of refusing anything but `[cmd_41, cmd_30, color_group]`, and a pact branch may drop
@@ -375,7 +386,7 @@ model, from which the shipped readers are generated).
   (`DiyNewConfig.addDiyEffectParse`), the control screen sends a sceneType-5 scene whose param leads 0x50
   through that parser (`BaseSceneViewMode.r3`) and every other scene through `parseSceneV1`, as on 64, 348
   and 408, which were already `legacy_scene`. The rows held `untraced` for that registration alone are now
-  `legacy_scene` too, so they offer scenes (by code until their catalogs are bundled): h6047 197, bulblightv3
+  `legacy_scene` too, so they offer scenes once their catalogs are bundled: h6047 197, bulblightv3
   111 / 20, h61d3 242 / 264 / 299 / 367 / 384 / 387 / 388 / 389 / 400 / 403 / 404 / 261, dreamcolorlightv1
   70 / 73 / 74 / 75 / 83 / 136 / 175 / 176 / 178 / 187 / 207 / 262, h60b1 300, pact_h6099 203 / 336, h7040
   36, h7080 45 / 55 / 56, h7056 304, h7050 77 / 157 / 46 / 76 / 105 / 107 / 113 / 116 / 171 / 218 / 219 / 227

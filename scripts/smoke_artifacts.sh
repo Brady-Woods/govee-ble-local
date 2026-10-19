@@ -11,7 +11,7 @@
 #   1. the sdist ships the classes and no spec/ or tools/ (with those, a build from the sdist would
 #      regenerate and need the JVM compiler, and this script couldn't tell: it runs with ksc on PATH);
 #   2. the wheel as built (python -m build makes it from the sdist, as PyPI users get it) installs into
-#      a fresh venv, outside the repository, and imports;
+#      a fresh venv, outside the repository, imports, and loads every bundled scene catalog;
 #   3. so does a wheel pip builds from the sdist, which reuses the classes the sdist ships.
 # Building runs in a throwaway venv, never in $PYTHON itself, and needs the pinned JVM
 # kaitai-struct-compiler (scripts/install_ksc.sh); every step needs network for the runtime
@@ -82,7 +82,12 @@ assert "site-packages" in govee_ble_local.__file__, govee_ble_local.__file__
 f = _spec.read_frame(build.power_query(), _spec.TX, _spec.PLAIN)   # aa 01: built, then read back
 assert f.body.command == _spec.Common.Command.power, f.body.command
 assert "H60A6" in govee_ble_local.supported_skus(), "the wheel ships no device table"
-print("   imports and a frame round trip OK:", govee_ble_local.__file__)
+import json
+from importlib import resources
+from govee_ble_local import scenes
+index = json.loads((resources.files(scenes) / "index.json").read_text(encoding="utf-8"))
+assert index and all(scenes.load_scenes(sku) for sku in index), "the wheel ships a broken scene store"
+print("   imports, a frame round trip and", len(index), "scene catalogs OK:", govee_ble_local.__file__)
 '
 
 smoke() {   # smoke <wheel> <venv name>

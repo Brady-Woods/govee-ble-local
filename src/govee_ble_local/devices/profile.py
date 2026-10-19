@@ -544,7 +544,8 @@ def _table(families: tuple[_resolve.Family, ...], admitted: frozenset[str]
     devices.yaml order."""
     profiles: list[DeviceProfile] = []
     routes: dict[str, list[_Route]] = {}
-    for skus, facts, members in _resolve.profiles(families, _devices.MODE_COLOR_PARSE, admitted):
+    for skus, facts, members in _resolve.profiles(families, _devices.MODE_COLOR_PARSE, admitted,
+                                                  _devices.SCENE_CATALOGS):
         p = _from_spec(skus, facts)
         profiles.append(p)
         for route in members:

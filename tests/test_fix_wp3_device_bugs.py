@@ -360,14 +360,20 @@ def test_h6009_h6010_lead_a_scene_write_with_the_power_on(monkeypatch: pytest.Mo
     """ApplyOffNeedOpenConfig (H6009 / H6010 only): the app prepends 33 01 01 to a scene apply, upload
     included, while its stored switch state is off, and reads an unknown one as off."""
     on = [build.switch(True)] if lead else []
-    d = _dev(sku)
+    # No H6009 / H6010 catalog is bundled yet, so their profile offers no scenes: give them goodsType 64's
+    # scene facts, and H6006's catalog, as a bundled one will.
+    bulb, h6009 = profile_for("H6006"), profile_for("H6009")
+    assert bulb is not None and h6009 is not None and h6009.scene_power_on
+    assert Capability.SCENES not in h6009.capabilities
+    scened = dict(capabilities=bulb.capabilities, scene_versions=bulb.scene_versions)
+    d = _dev(sku, **scened)
     d._state.is_on = is_on
     run(d.set_scene(7))
     assert _sent(d) == [*on, build.scene_activate(7)] and d.state.is_on is True
-    # By name, with an upload (H6006's catalog: no H6009 / H6010 catalog is bundled yet).
+    # By name, with an upload.
     catalog = load_scenes("H6006")
     monkeypatch.setattr(device_mod, "async_load_scenes", lambda _sku: asyncio.sleep(0, catalog))
-    d = _dev(sku)
+    d = _dev(sku, **scened)
     d._state.is_on = is_on
     name = next(n for n, s in catalog.items() if d.scene_upload_frames(s))
     order: list[str] = []

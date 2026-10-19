@@ -322,36 +322,44 @@ def uploads_type5(entry: Entry, versions: frozenset[int]) -> bool:
     return len(raw) >= 2 and raw[0] == 0x50
 
 
-def legacy_versions(sku: str) -> frozenset[int] | None:
-    """The scene versions of ``sku``'s ``legacy_scene`` profile (every version of its pact and firmware sets),
-    or None when its profile uploads sceneType 5 in a dialect of its own (H60A6, H6052). A SKU without a
-    profile counts as legacy_scene with no versions, so a fetch for it leaves out what a legacy screen would
-    upload."""
-    from govee_ble_local import profile_for
+def scene_rows(levels: frozenset[str] | None = None) -> dict[str, list[dict[str, Any]]]:
+    """``{SKU: [profile fields of each of its routes]}`` for the device table's rows at ``levels`` (default:
+    every level), resolved without the library's catalog cut: a profile offers scenes only to a SKU with a
+    bundled catalog (devices/_resolve.py), and these are the facts its row gives before that, so a SKU whose
+    row offers scenes is listed before its catalog exists."""
+    from govee_ble_local._generated import devices
+    from govee_ble_local.devices import _resolve
 
-    p = profile_for(sku, allow_modelled=True)
-    if p is None:
-        return frozenset()
-    if p.scene_dialect != "A":
+    out: dict[str, list[dict[str, Any]]] = {}
+    for skus, fields, _routes in _resolve.profiles(devices.FAMILIES, devices.MODE_COLOR_PARSE,
+                                                   _resolve.LEVELS if levels is None else levels):
+        for sku in skus:
+            out.setdefault(sku.upper(), []).append(fields)
+    return out
+
+
+def legacy_versions(sku: str) -> frozenset[int] | None:
+    """The scene versions of ``sku``'s ``legacy_scene`` routes (every version of their pact and firmware
+    sets), or None when each of its routes uploads sceneType 5 in a dialect of its own (H60A6, H6052). A SKU
+    the table has no row for counts as legacy_scene with no versions, so a fetch for it leaves out what a
+    legacy screen would upload."""
+    routes = [f for f in scene_rows().get(validate_sku(sku), []) if "scenes" in f["capabilities"]]
+    legacy = [f for f in routes if f["scene_dialect"] == "A"]
+    if routes and not legacy:
         return None
-    sets = [p.scene_versions, *(v for _pact, v in p.scene_versions_by_pact),
-            *(v for _soft, _hard, v in p.scene_versions_by_firmware)]
+    sets = [s for f in legacy for s in (f["scene_versions"], *(v for _p, v in f["scene_versions_by_pact"]),
+                                        *(v for _s, _h, v in f["scene_versions_by_firmware"]))]
     return frozenset(v for s in sets for v in s)
 
 
 def scene_capable_skus() -> list[str]:
-    """All supported SKUs whose device declares Capability.SCENES (so new
-    families are covered automatically as they're added to the registry), except the
-    APP_DEFINED_SCENE_SKUS whose catalogs are not from the scene library."""
-    from govee_ble_local import profile_for, supported_skus
-    from govee_ble_local.models import Capability
+    """The SKUs whose admitted row offers scenes (so new families are covered as they're added to
+    devices.yaml), whether or not a catalog is bundled for them yet, except the APP_DEFINED_SCENE_SKUS
+    whose catalogs are not from the scene library."""
+    from govee_ble_local.devices import _resolve
 
-    out: list[str] = []
-    for sku in supported_skus():
-        p = profile_for(sku)
-        if p is not None and Capability.SCENES in p.capabilities and sku not in APP_DEFINED_SCENE_SKUS:
-            out.append(sku)
-    return out
+    return sorted(sku for sku, routes in scene_rows(_resolve.ADMITTED).items()
+                  if any("scenes" in f["capabilities"] for f in routes) and sku not in APP_DEFINED_SCENE_SKUS)
 
 
 def audit(skus: list[str]) -> None:
