@@ -582,6 +582,18 @@ model, from which the shipped readers are generated).
   `firmware.yaml` is unchanged while the simulator is paused: it still reads the H5083 timer, page and
   delay selectors as raw bytes, the same bytes the typed fields read, and its `factory_test_start` and
   `multi_write_3f` notes still say 0x66 and 0x3F have no spec body type.
+- **The h5080 timer forms cover the family, not just H5083.** `f_12: timer_count` (AA 12 [group] ->
+  [group][count], the group being the outlet) is the family's: every h5080 screen sends the same count read
+  (NewTimerCountController from BleOpV2.o0, BleOpV4.l0 and BleOp4H5089.V / Y; the H5083 screen sends the same
+  bytes, H5083NewDetailRepository.necessaryMessages). `f_13: plug_timer` (the AA 13 [group][page] page read,
+  its reply and the 33 13 add) goes on goodsTypes 43, 50 and 90: every goodsType-43 SKU (H5080, H5083, H5085)
+  opens the H5083 screen (Model.t), and the H5082 and H5160 / H5161 screens send the same [outlet][page] read
+  (NewTimerControllerV2.p). The H5089 (307) keeps `f_13` unknown: its page read packs [group << 4 | page] into
+  one byte (Controller4H5089TimerInfo.p), which `plug_timer_page_query` doesn't type. Some firmware is read
+  with AA B4 instead of AA 12: the H5083 screen on H5080 soft 1.00.08 and below (Support.isOldH5080), and the
+  H5082 screen on its connect reads until `UiV2.M`, at info-over, finds soft 1.00.11 or above and switches to
+  AA 12. The timer types' docs say h5080 where they said H5083, and keep H5083's firmware facts as H5083's.
+  The library uses neither form, so no frame or decode changes, and H5083's forms are as before.
 
 ## [1.4.0] — 2026-10-18
 

@@ -131,7 +131,7 @@ types:
         type: s1
   timer_record:
     doc: |
-      One 4-byte timer record [flags][hour][minute][repeat] (lights, H5083).
+      One 4-byte timer record [flags][hour][minute][repeat] (lights, h5080 plugs).
     doc-ref:
       - base-classes11/com/govee/base2light/kt/general_controller/ControllerNewTimer.java:52-77
       - base-classes12/com/govee/base_h71xx/sku_base/adjust/component/bean/TimerInfo.java:39-50
@@ -488,19 +488,21 @@ enums:
       id: cmd_12
       -orig-id: [SINGLE_WAKEUP]
       doc: |
-        per form_12: the wake-up timer or the H5083 timer count (AA 12)
+        per form_12: the wake-up timer or the h5080 timer count (AA 12)
       doc-ref:
         - base-classes10/com/govee/base2light/ble/controller/BleProtocolConstants.java:166
         - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/TimerConfig.java:332-388
         - split_plugnew/com/govee/h5080/adjust/newdetail/H5083NewDetailRepository.java:220
+        - split_plugnew/com/govee/h5080/ble/controller/NewTimerCountController.java:19-31
     0x13:
       id: cmd_13
       -orig-id: [NIGHT_MODE]
       doc: |
-        per form_13: night mode or the H5083 plug timer (33 13 add, AA 13 page)
+        per form_13: night mode or the h5080 plug timer (33 13 add, AA 13 page)
       doc-ref:
         - base-classes10/com/govee/base2light/ble/controller/BleProtocolConstants.java:78
         - split_plugnew/com/govee/h5080/adjust/newdetail/H5083NewDetailRepository.java:234-246
+        - split_plugnew/com/govee/h5080/ble/controller/NewTimerControllerV2.java:87-102
         - firmware-h5083-wifi/decompiled/H5083_ble_dispatcher.c:111-143
     0x14:
       id: cmd_14
@@ -1453,9 +1455,10 @@ enums:
       doc: the wake-up timer, untyped
     2:
       id: timer_count
-      doc: H5083 timer count (AA 12 -> [group][count])
+      doc: h5080 timer count (AA 12 [group] -> [group][count]), on every h5080 screen
       doc-ref:
         - split_plugnew/com/govee/h5080/adjust/newdetail/H5083NewDetailRepository.java:220
+        - split_plugnew/com/govee/h5080/ble/controller/NewTimerCountController.java:19-31
   form_13:
     0:
       id: unknown
@@ -1465,9 +1468,13 @@ enums:
       doc: untyped
     2:
       id: plug_timer
-      doc: H5083 plug timer (33 13 add; AA 13 page)
+      doc: |
+        h5080 plug timer (33 13 add; AA 13 [group][page] page read), on the
+        goodsType 43, 50 and 90 screens
       doc-ref:
         - split_plugnew/com/govee/h5080/adjust/newdetail/H5083NewDetailRepository.java:234-246
+        - split_plugnew/com/govee/h5080/ble/controller/NewTimerControllerV2.java:53-66
+        - split_plugnew/com/govee/h5080/ble/controller/NewTimerControllerV2.java:87-102
   form_14:
     0:
       id: unknown

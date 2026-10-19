@@ -2184,15 +2184,24 @@ families:
             - split_plugnew/com/govee/h5080/adjust/h5089/Ui4H5089.java:929-946
             - split_plugnew/com/govee/h5080/adjust/h5089/BleOp4H5089.java:147,173-185,267-310,661-674
       wire:
-        doc: "SwitchControllerV2 relay byte (split_plugnew/com/govee/h5080/ble/controller/SwitchControllerV2.java:53-71); TurnOnOffDelayController"
-        forms: { f_01: relays, f_b0: plug_delay }
-        by_model:
-          H5083: { forms: { f_12: timer_count, f_13: plug_timer }, doc: "H5083 new detail screen (split_plugnew/com/govee/h5080/adjust/newdetail/H5083NewDetailRepository.java:220, 234-246)" }
+        doc: >-
+          SwitchControllerV2 relay byte (split_plugnew/com/govee/h5080/ble/controller/SwitchControllerV2.java:53-71);
+          TurnOnOffDelayController. f_12: every h5080 screen's AA 12 timer count, [group] -> [group][count], the group
+          being the outlet (and 2 for the H5089's night light): NewTimerCountController (ble/controller/NewTimerCountController.java:19-31)
+          from BleOpV2.o0 (adjust/v2/BleOpV2.java:147-151), BleOpV4.l0 (adjust/v4_h5160/BleOpV4.java:130-131) and
+          BleOp4H5089.V / Y (adjust/h5089/BleOp4H5089.java:155-183), and the H5083 screen's same bytes, a single read with
+          no group byte (adjust/newdetail/H5083NewDetailRepository.java:336, parser :197-223). Some firmware is read with
+          AA B4 [outlet][FF] (command 0xB4 plug_timer, ble/controller/NewTimerController.java:67-69) instead: the H5083 screen
+          on H5080 soft 1.00.08 and below, or an unread version (H5083NewDetailRepository.java:332-334, pact/Support.java:141-143);
+          the H5082 screen on its connect reads until UiV2.M, at info-over, finds soft 1.00.11 or above and switches them
+          to AA 12, reading the shown outlet's count at once (adjust/v2/UiV2.java:131-134, 507-509, 661-668;
+          BleOpV2.java:67, 147-151, 181-183, 559-561).
+        forms: { f_01: relays, f_12: timer_count, f_b0: plug_delay }
         by_goods_type:
-          "43": { power: { relay_heartbeat_on_mask: 0x01 }, doc: "heartbeat: bit 0 (BleOpV1 / BleOpV3.onEventHeartV2 through i for relay 0, split_plugnew/com/govee/h5080/adjust/v1/BleOpV1.java:209-232, adjust/v3/BleOpV3.java:202-225; the H5083 screen's one aa 01 parser, adjust/newdetail/H5083NewDetailRepository.java:162-167)" }
-          "50": { power: { relay_heartbeat_on_mask: 0x03 }, doc: "heartbeat: bits 0-1 (HeartControllerV2 -> BleOpV2.onEventHeartV2, split_plugnew/com/govee/h5080/adjust/v2/BleOpV2.java:208-231)" }
-          "90": { power: { relay_heartbeat_on_mask: 0x07 }, doc: "heartbeat: the first 3 bits (the size of the m0 list), as the connect read (split_plugnew/com/govee/h5080/adjust/v4_h5160/BleOpV4.java:179-186, 203-215)" }
-          "307": { forms: { f_02: total_switch }, power: { relay_heartbeat_on_mask: 0x03 }, doc: "heartbeat: bits 0-1 (BleOp4H5089.onEventHeartV2, split_plugnew/com/govee/h5080/adjust/h5089/BleOp4H5089.java:328-341); 33 02 total switch" }
+          "43": { forms: { f_13: plug_timer }, power: { relay_heartbeat_on_mask: 0x01 }, doc: "heartbeat: bit 0 (BleOpV1 / BleOpV3.onEventHeartV2 through i for relay 0, split_plugnew/com/govee/h5080/adjust/v1/BleOpV1.java:209-232, adjust/v3/BleOpV3.java:202-225; the H5083 screen's one aa 01 parser, adjust/newdetail/H5083NewDetailRepository.java:162-167). Every goodsType-43 SKU (H5080, H5083, H5085) opens the H5083 screen (pact/Model.java:191-197, D0 :74-99), whose AA 13 page read is [0][page] (adjust/newdetail/H5083NewDetailRepository.java:206-209, parser :231-272) and 33 13 add [0][slot][record] (adjust/newdetail/H5083NewDetailViewModel.java:267-269)" }
+          "50": { forms: { f_13: plug_timer }, power: { relay_heartbeat_on_mask: 0x03 }, doc: "heartbeat: bits 0-1 (HeartControllerV2 -> BleOpV2.onEventHeartV2, split_plugnew/com/govee/h5080/adjust/v2/BleOpV2.java:208-231). AA 13 page read [outlet][page] (BleOpV2.onNewTimerCountController, BleOpV2.java:514-516; ble/controller/NewTimerControllerV2.java:91-93, parser :53-66) and 33 13 add [outlet][slot][record] (NewTimerControllerV2.java:100-102, adjust/v2/UiV2.java:951-953)" }
+          "90": { forms: { f_13: plug_timer }, power: { relay_heartbeat_on_mask: 0x07 }, doc: "heartbeat: the first 3 bits (the size of the m0 list), as the connect read (split_plugnew/com/govee/h5080/adjust/v4_h5160/BleOpV4.java:179-186, 203-215). AA 13 page read [outlet][page] (BleOpV4.onNewTimerCountController, BleOpV4.java:431-433; ble/controller/NewTimerControllerV2.java:91-93, parser :53-66) and 33 13 add [outlet][slot][record] (NewTimerControllerV2.java:100-102, adjust/v4_h5160/UiV4.java:828-830)" }
+          "307": { forms: { f_02: total_switch }, power: { relay_heartbeat_on_mask: 0x03 }, doc: "heartbeat: bits 0-1 (BleOp4H5089.onEventHeartV2, split_plugnew/com/govee/h5080/adjust/h5089/BleOp4H5089.java:328-341); 33 02 total switch. f_13 stays unknown: the H5089 screen's AA 13 page read packs its selector into one byte, [group << 4 | page] (BleOp4H5089.onNewTimerCountController, adjust/h5089/BleOp4H5089.java:616-618; ble/controller/h5089/Controller4H5089TimerInfo.java:44-46), which plug_timer_page_query does not type, though its reply and its 33 13 add are plug_timer's (Controller4H5089TimerInfo.java:21-34; Ui4H5089.onTimerInfoEditEvent, adjust/h5089/Ui4H5089.java:1011)" }
     models: [H5080, H5082, H5083, H5085, H5089, H5160, H5161]
     goods_types: [43, 50, 90, 307]   # 43 = 1-outlet (H5080/H5083/H5085); 50/307 = 2-outlet; 90 = 3-outlet
     delivery: feature_split   # pact_plugnew (base-classes9/com/govee/base2home/pfd/Config.java:243)

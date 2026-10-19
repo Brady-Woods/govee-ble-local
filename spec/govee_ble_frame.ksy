@@ -295,7 +295,7 @@ types:
       marker_is_valid:
         value: marker == 1
   cmd_13_write:
-    doc: 33 13, per form_13 (night mode is untyped; H5083 timer add)
+    doc: 33 13, per form_13 (night mode is untyped; h5080 timer add)
     params:
       - id: form
         type: u1
@@ -308,9 +308,11 @@ types:
             'govee_common::form_13::plug_timer': plug_timer_write
   plug_timer_write:
     doc: |
-      H5083 timer add 33 13 [outlet = 0][slot < 10][timer_record], paired only.
+      The h5080 timer add 33 13 [outlet][slot][timer_record]; the H5083 screen
+      sends outlet 0, and H5083 takes only outlet 0 and slot < 10, paired.
     doc-ref:
-      - split_plugnew/com/govee/h5080/adjust/newdetail/H5083NewDetailViewModel.java:265-268
+      - split_plugnew/com/govee/h5080/adjust/newdetail/H5083NewDetailViewModel.java:267-269
+      - split_plugnew/com/govee/h5080/ble/controller/NewTimerControllerV2.java:100-102
       - firmware-h5083-wifi/decompiled/H5083_ble_dispatcher.c:260-262
       - H5083 FUN_9b01f780 @0x9b01f780
     seq:
@@ -975,7 +977,8 @@ types:
   timer_count_query:
     doc: |
       The h5080 timer-count read AA 12 [group]; the reply counts the group's
-      timers and echoes the group.
+      timers and echoes the group. The group is the outlet (2 is the H5089's
+      night light).
     doc-ref:
       - split_plugnew/com/govee/h5080/ble/controller/NewTimerCountController.java:23-25
       - split_plugnew/com/govee/h5080/adjust/newdetail/H5083NewDetailRepository.java:336
@@ -984,9 +987,11 @@ types:
       - id: group
         type: u1
         doc: |
-          FIRMWARE-SOURCED on H5083: its screen sends no group byte, so the
-          zero fill reads group 0, the one group with timers
+          The goodsType-43 screen (H5080, H5083, H5085) sends no group byte.
+          FIRMWARE-SOURCED on H5083: the zero fill reads group 0, the one group
+          with timers
         doc-ref:
+          - split_plugnew/com/govee/h5080/pact/Model.java:191-197
           - H5083 FUN_9b01ee34 @0x9b01f072-0x9b01f078
   cmd_13_query:
     doc: AA 13, per form_13 (the night-mode read sends no selector)
@@ -1004,17 +1009,20 @@ types:
             'govee_common::form_13::plug_timer': plug_timer_page_query
   plug_timer_page_query:
     doc: |
-      H5083 AA 13 [group][page], one page of four timer records; the screen
-      sends group 0 and pages 0 .. ceil(count / 4) - 1.
+      The h5080 AA 13 page read [group][page], one page of four timer records:
+      pages 0 .. ceil(count / 4) - 1 of the group's AA 12 count. The H5083
+      screen sends group 0.
     doc-ref:
       - split_plugnew/com/govee/h5080/adjust/newdetail/H5083NewDetailRepository.java:206-209
+      - split_plugnew/com/govee/h5080/adjust/v2/BleOpV2.java:514-516
+      - split_plugnew/com/govee/h5080/ble/controller/NewTimerControllerV2.java:91-93
       - firmware-h5083-wifi/decompiled/H5083_ble_dispatcher.c:111-143
     seq:
       - id: group
         type: u1
       - id: page
         type: u1
-        doc: slots 4 * page .. 4 * page + 3; a page of 4 or more reads all zero
+        doc: slots 4 * page .. 4 * page + 3; on H5083 a page of 4 or more reads all zero
   cmd_b0_query:
     doc: AA B0, per form_b0
     params:
