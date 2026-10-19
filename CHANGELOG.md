@@ -132,11 +132,15 @@ model, from which the shipped readers are generated).
   (`((pact_type, pact_code), min_kelvin, max_kelvin)` entries) and `DeviceProfile.brightness_by_pact`
   (`((pact_type, pact_code), (min, max) | None)`, None = percent), both keyword-only, default `()`, from a
   row's `by_pact` `kelvin_range` / `brightness_range` (the resolver refused both). They replace the base
-  range on that advertised pact, as `scene_versions_by_pact` does, and a pact not yet heard applies none:
-  `Device.min_kelvin` / `max_kelvin`, the brightness write and every brightness read-back (`aa 04`, the
-  status TLV) use the range in force; `_fold.brightness_range(profile, pact)` gives it. A pact Kelvin range
-  needs a base one (the row's or the family's) and no Kelvin firmware branch, and a pact brightness range
-  the brightness capability. `kelvin_by_pact` is set only on h61d3 261 (H61F2 / H61F5 / H61F6, behind
+  range on that advertised pact, as `scene_versions_by_pact` does: `Device.min_kelvin` / `max_kelvin`, the
+  brightness write and every brightness read-back (`aa 04`, the status TLV) use the range in force;
+  `_fold.brightness_range(profile, pact)` gives it. Until a pact is heard (the app always knows it; the
+  library may not), the Kelvin range is the one valid on every pact, the base cut to each entry's, and a
+  profile with `brightness_by_pact` neither writes nor reads the brightness byte: the write raises
+  GoveeBleNotSupported and `state.brightness` stays None (`_fold.brightness_pending`), since the pact picks
+  what the byte means. A pact Kelvin range needs a base one (the row's or the family's) that it overlaps, a
+  range valid on every pact and no Kelvin firmware branch, and a pact brightness range the brightness
+  capability. `kelvin_by_pact` is set only on h61d3 261 (H61F2 / H61F5 / H61F6, behind
   `allow_modelled`), and no row sets `brightness_by_pact` yet.
 - **Kelvin ranges by soft version and per model** (device-list phase 3): `DeviceProfile.kelvin_by_software`
   (keyword-only, default `()`), `(min_soft_version, min_kelvin, max_kelvin)` entries applied with the

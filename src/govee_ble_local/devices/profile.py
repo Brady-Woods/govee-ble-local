@@ -298,15 +298,18 @@ class DeviceProfile:
     kelvin_by_pact: tuple[tuple[tuple[int, int], int, int], ...] = field(default=(), kw_only=True)
     """Kelvin ranges that replace [:attr:`min_kelvin`, :attr:`max_kelvin`] on an advertised pact:
     ``((pact_type, pact_code), min_kelvin, max_kelvin)`` entries (a devices.yaml row's ``by_pact``
-    ``kelvin_range``: goodsType 261 at pact (4, 1)). A pact not yet heard applies none, as for
-    :attr:`scene_versions_by_pact` (``Device.min_kelvin`` / ``max_kelvin`` give the range in force). Needs
-    both :attr:`min_kelvin` and :attr:`max_kelvin`, and no :attr:`kelvin_by_hardware`."""
+    ``kelvin_range``: goodsType 261 at pact (4, 1)). Until a pact is heard, the range valid on every pact
+    applies: the base range cut to each entry's (``Device.min_kelvin`` / ``max_kelvin`` give the range in
+    force). Needs both :attr:`min_kelvin` and :attr:`max_kelvin`, and no :attr:`kelvin_by_hardware`; each
+    entry must overlap the base range, and so must the range valid on every pact."""
     brightness_by_pact: tuple[tuple[tuple[int, int], tuple[int, int] | None], ...] = field(
         default=(), kw_only=True)
     """Brightness ranges that replace :attr:`brightness_range` on an advertised pact: ``((pact_type,
     pact_code), (min, max))`` entries, None for percent (a devices.yaml row's ``by_pact``
-    ``brightness_range``: stringlightv2 goodsType 1 reports percent at pact (2, 1)). A pact not yet heard
-    applies none; ``Device`` writes and reads brightness with the range in force."""
+    ``brightness_range``: stringlightv2 goodsType 1 reports percent at pact (2, 1)). ``Device`` writes and
+    reads brightness with the range in force, so with entries and no pact heard it writes none (the write
+    raises GoveeBleNotSupported) and reads none (``state.brightness`` stays None): the byte's meaning waits
+    for the pact."""
     ic_num_read_only: bool = field(default=False, kw_only=True)
     """Ignored with :attr:`color_readback_live_ic`. Without it: the screen reads the ``aa 40`` IC count at
     connect, but its piece count is fixed (``getColorPieceSize`` whatever the IC: h6609 goodsType 181), so
@@ -391,8 +394,8 @@ class DeviceProfile:
     def _check_ranges_by_pact(self, where: str) -> None:
         """:attr:`kelvin_by_pact` / :attr:`brightness_by_pact`'s rules: ``(pact_type, pact_code)`` keys of
         non-negative ints, Kelvin ranges with 0 < min <= max over a base range and without
-        :attr:`kelvin_by_hardware`, brightness ranges that :attr:`brightness_range` could hold (lists are
-        kept as tuples)."""
+        :attr:`kelvin_by_hardware`, each overlapping the base range, with a range valid on every pact,
+        brightness ranges that :attr:`brightness_range` could hold (lists are kept as tuples)."""
         kelvin = tuple((tuple(pact), lo, hi) for pact, lo, hi in self.kelvin_by_pact)
         bright = tuple((tuple(pact), None if span is None else tuple(span))
                        for pact, span in self.brightness_by_pact)
@@ -405,6 +408,12 @@ class DeviceProfile:
                        or self.kelvin_by_software):
             raise GoveeBleInvalidValue(f"{where}: kelvin_by_pact needs min_kelvin and max_kelvin, and no "
                                        "kelvin_by_hardware / kelvin_by_software")
+        if (kelvin and self.min_kelvin is not None and self.max_kelvin is not None
+                and not _resolve.overlaps_every((self.min_kelvin, self.max_kelvin),
+                                                [(lo, hi) for _pact, lo, hi in kelvin])):
+            raise GoveeBleInvalidValue(f"{where}: kelvin_by_pact={kelvin!r}: each range must overlap "
+                                       f"[{self.min_kelvin}, {self.max_kelvin}], and so must the range "
+                                       "valid on every pact")
         if not all(_pact_key(pact) and (span is None or _raw_range(span)) for pact, span in bright):
             raise GoveeBleInvalidValue(f"{where}: brightness_by_pact={bright!r}")
 

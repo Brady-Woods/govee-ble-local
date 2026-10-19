@@ -736,6 +736,9 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str]) -> dic
     if kelvin_by_pact and (kelvin is None or kelvin_fw):
         fail("a pact kelvin_range needs a base kelvin_range (the row's, the SKU's by_model or the family's) "
              "and no Kelvin firmware branch")
+    if kelvin is not None and not overlaps_every(kelvin, [(lo, hi) for _key, lo, hi in kelvin_by_pact]):
+        fail(f"pact kelvin_ranges {[list(e[1:]) for e in kelvin_by_pact]} must each overlap the base "
+             f"{list(kelvin)}, and so must the range valid on every pact (used until the pact is heard)")
     bright = need(layered.get("brightness_range"), "brightness_range") if "brightness" in caps else None
     raw_bright = _brightness(bright, "brightness_range", fail) if bright is not None else None
     bright_by_pact = tuple(sorted(
@@ -1001,6 +1004,14 @@ def _check_kelvin_by_firmware(base: tuple[int, int] | None, gated: Sequence[tupl
             or max(lo, *(e[1] for e in gated)) > min(hi, *(e[2] for e in gated))):
         fail(f"Kelvin firmware branches {list(gated)} need a base kelvin_range {base}, one per version, "
              "each overlapping it and a range valid on every revision")
+
+
+def overlaps_every(base: tuple[int, int], ranges: Sequence[tuple[int, int]]) -> bool:
+    """Each of ``ranges`` overlaps the ``base`` range, and the base cut to all of them is not empty: the
+    range valid on every pact (or revision) the library uses until it is known."""
+    lo, hi = base
+    return (all(r_lo <= hi and r_hi >= lo for r_lo, r_hi in ranges)
+            and max([lo, *(r[0] for r in ranges)]) <= min([hi, *(r[1] for r in ranges)]))
 
 
 def _brightness(value: Any, name: str, fail: Fail) -> tuple[int, int] | None:

@@ -219,6 +219,8 @@ _REFUSED: tuple[tuple[str, str, _Edit, str], ...] = (
      "pact branch 1,1 on ['mode_color_parse']"),
     ("dreamcolorlightv1", "19", lambda f: _row(f, "19")["by_pact"]["1,2"].update(kelvin_range=[2700, 6500]),
      "a pact kelvin_range needs a base kelvin_range"),
+    ("h61d3", "261", lambda f: _row(f, "261")["by_pact"]["4,1"].update(kelvin_range=[9500, 9800]),
+     "must each overlap the base [2700, 6500]"),
     ("h5080", "43", lambda f: _row(f, "43").update(by_pact={"1,1": {"brightness_range": [1, 100]}}),
      "a pact brightness_range without the brightness capability"),
     ("bulblightv3", "64", lambda f: _row(f, "64").update(by_pact={"1,1": {"capabilities": ["power"]}}),

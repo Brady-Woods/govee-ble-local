@@ -23,13 +23,16 @@ def kelvin_range(profile: DeviceProfile, hardware: str | None = None,
     :attr:`~.profile.DeviceProfile.kelvin_by_hardware` entry the ``hardware`` version is at least (or
     :attr:`~.profile.DeviceProfile.kelvin_by_software` entry the ``soft`` version is; a string compare, as
     the app's), else the profile's base range, or the :attr:`~.profile.DeviceProfile.kelvin_by_pact` range
-    of the advertised ``pact`` (a profile has one kind of entry only). With that version not yet read
-    (None), the range that holds on every revision: the base range cut to each entry's."""
+    of the advertised ``pact`` (a profile has one kind of entry only). With that version or the pact not yet
+    known (None), the range that holds on every revision, or on every pact: the base range cut to each
+    entry's."""
     lo_, hi_ = profile.min_kelvin, profile.max_kelvin
     if lo_ is None or hi_ is None:
         return None
     for key, lo, hi in profile.kelvin_by_pact:
-        if key == pact:
+        if pact is None:
+            lo_, hi_ = max(lo_, lo), min(hi_, hi)
+        elif key == pact:
             lo_, hi_ = lo, hi
     gated, have = ((profile.kelvin_by_software, soft) if profile.kelvin_by_software
                    else (profile.kelvin_by_hardware, hardware))
@@ -85,10 +88,20 @@ def brightness_range(profile: DeviceProfile, pact: tuple[int, int] | None = None
     return span
 
 
-def brightness_pct(profile: DeviceProfile, raw: int, pact: tuple[int, int] | None = None) -> int:
+def brightness_pending(profile: DeviceProfile, pact: tuple[int, int] | None) -> bool:
+    """Whether the brightness byte's range waits for the advertised pact: a profile with
+    :attr:`~.profile.DeviceProfile.brightness_by_pact` and no pact heard. The app always knows the pact, so
+    the library neither writes nor reads that byte until it does (``Device`` refuses the write)."""
+    return bool(profile.brightness_by_pact) and pact is None
+
+
+def brightness_pct(profile: DeviceProfile, raw: int, pact: tuple[int, int] | None = None) -> int | None:
     """The device-reported brightness byte as the 0..100 percent ``state`` documents, read with the range
     in force for ``pact`` (:func:`brightness_range`): clamped on every path, so a misbehaving device can't
-    push e.g. 255 % into state."""
+    push e.g. 255 % into state. None (not known) while the range waits for the pact
+    (:func:`brightness_pending`)."""
+    if brightness_pending(profile, pact):
+        return None
     span = brightness_range(profile, pact)
     if span is not None:
         return raw_to_percent(raw, *span)

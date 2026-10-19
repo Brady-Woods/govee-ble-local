@@ -564,15 +564,21 @@ class Device:
         )
         return True
 
-    def _brightness_pct(self, raw: int) -> int:
-        """The device-reported brightness byte as a 0..100 percent (:func:`._fold.brightness_pct`)."""
+    def _brightness_pct(self, raw: int) -> int | None:
+        """The device-reported brightness byte as a 0..100 percent, None while its range waits for the
+        advertised pact (:func:`._fold.brightness_pct`)."""
         return _fold.brightness_pct(self.profile, raw, self._pact)
 
     # -- power / brightness -------------------------------------------------
     def _brightness_frame(self, pct: int) -> bytes:
         """33 04 for a 1..100 percent: verbatim on percent devices, mapped onto the raw
         range in force on devices with one (``brightness_range``, or ``brightness_by_pact`` for the
-        advertised pact: :func:`._fold.brightness_range`; :func:`.brightness.percent_to_device`)."""
+        advertised pact: :func:`._fold.brightness_range`; :func:`.brightness.percent_to_device`).
+        GoveeBleNotSupported while that range waits for the pact (:func:`._fold.brightness_pending`): which
+        byte the app writes depends on it."""
+        if _fold.brightness_pending(self.profile, self._pact):
+            raise GoveeBleNotSupported(f"{self._sku}: brightness waits for the advertised pact, which picks "
+                                       "its range")
         span = _fold.brightness_range(self.profile, self._pact)
         if span is not None:
             return build.brightness_raw(percent_to_device(pct, *span))
