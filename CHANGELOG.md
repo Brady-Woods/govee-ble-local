@@ -283,10 +283,11 @@ model, from which the shipped readers are generated).
   the SKU overrides the base code, scene type, param, param id, cmdVersion and big-effect flag (it took the
   base `lightEffects[0]` values only), and a scene the app gates on version `rules` is stored with
   `rules: true` (the library does not filter by them; no bundled scene has any). The AppVersion header is
-  now the traced app's, 7.7.02 (the scene library answers 7.5.20 identically for every bundled SKU;
-  `tools/fetch_catalog.py`, which shares the constant, gets 15 more catalogue SKUs at 7.7.02). The bundled
-  catalogs are not re-fetched here: a re-fetch would change 1.4.0's H6004, H6006 / H6008, H60A6, H61A8 and
-  H6641 catalogs, which is for the user.
+  now the traced app's, 7.7.02 (the scene library answers 7.5.20 identically for every bundled SKU; the
+  catalogue endpoint does not, listing 15 more SKUs at 7.7.02, so `tools/fetch_catalog.py` no longer shares
+  the constant and asks as its snapshot's `app_version` records: Spec). The bundled catalogs are not
+  re-fetched here: a re-fetch would change 1.4.0's H6004, H6006 / H6008, H60A6, H61A8 and H6641 catalogs,
+  which is for the user.
 - **A scene placeholder is the app's own signal**: `tools/fetch_scenes.py` flags a scene `placeholder` only
   when it is a big-effect scene (`bigEffectStr`) with an empty param, which the app fetches before the apply
   (`BaseSceneViewMode.java:630`, `SceneDataVM.java:1324`), not when a param's byte 3 is 0xFF. That heuristic
@@ -324,18 +325,21 @@ model, from which the shipped readers are generated).
   `clientRow.pacts` description says so. None of these rows has `support`.
 - **`spec/govee_catalog.json`: a dated snapshot of Govee's public product catalogue** (`GET
   https://app2.govee.com/bi/rest/devices/v3/skus`, the app's `ICategoriesApi`: an AppVersion header, no
-  account; fetched 2026-10-18). It holds 617 SKUs, each with its goodsType and ic only (no names, images or
-  URLs). Its doc cites how the app uses them. Every catalogue goodsType goes into the app's SKU → goodsType
-  map (`CategoriesDataManager.n` → `Pact.j`), which a scan reads before the built-in table (`Pact.f` →
-  `Constant4L5.hasKnowSupportGoodsType`, default 0). goodsType 0 is the legacy code: a scan at 0 parses no
-  advertised pact and re-derives the device by SKU (`BaseBleProcessor.c` / `.g`), so a catalogue 0 never
-  routes. A devices.yaml row that lists a SKU wins, and a non-zero conflict is settled only by an
-  `assigned_goods_type` item that cites the app's rewrite. ic is the app's default IC count
-  (`CategoriesConfig.getDefIcNum`). The device table takes its routes (Added). `tools/fetch_catalog.py`
-  refreshes it from the endpoint or a saved response, and rewrites only `fetched` and `skus`. It is
-  dev-only and standard-library, reuses `fetch_scenes.py`'s request handling, and the build never runs it.
-  The generator refuses a snapshot with a top-level key other than `doc`, `doc-ref`, `fetched`, `skus` and
-  `source_app`, or an entry whose keys are not exactly `goodsType` and `ic`, so no name or URL can get in.
+  account; fetched 2026-10-18 with AppVersion 7.5.20, which its `app_version` records). It holds 617 SKUs,
+  each with its goodsType and ic only (no names, images or URLs). Its doc cites how the app uses them.
+  Every catalogue goodsType goes into the app's SKU → goodsType map (`CategoriesDataManager.n` →
+  `Pact.j`), which a scan reads before the built-in table (`Pact.f` → `Constant4L5.hasKnowSupportGoodsType`,
+  default 0). goodsType 0 is the legacy code: a scan at 0 parses no advertised pact and re-derives the
+  device by SKU (`BaseBleProcessor.c` / `.g`), so a catalogue 0 never routes. A devices.yaml row that lists
+  a SKU wins, and a non-zero conflict is settled only by an `assigned_goods_type` item that cites the app's
+  rewrite. ic is the app's default IC count (`CategoriesConfig.getDefIcNum`). The device table takes its
+  routes (Added). `tools/fetch_catalog.py` refreshes it from the endpoint or a saved response, and rewrites
+  only `app_version`, `fetched` and `skus`. It asks with the snapshot's own `app_version` unless
+  `--app-version` names another, since the endpoint's answer depends on it (on 2026-10-19 it listed 632
+  SKUs at 7.7.02). It is dev-only and standard-library, reuses `fetch_scenes.py`'s request handling, and the
+  build never runs it. The generator refuses a snapshot with a top-level key other than `app_version`,
+  `doc`, `doc-ref`, `fetched`, `skus` and `source_app`, an `app_version` that is missing or not in the app's
+  version form, or an entry whose keys are not exactly `goodsType` and `ic`, so no name or URL can get in.
 - **devices.yaml can now route and describe the 18 supported SKUs on its own** (one-device-list phase 0).
   Each one's goodsType has a `client_profile.by_goods_type` row with the facts the library's hand table
   holds: `models`, `pacts` (the accepted pacts, `Support.addSupportPact`; `any` for the SKU-routed H6188),

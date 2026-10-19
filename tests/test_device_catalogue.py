@@ -72,13 +72,22 @@ def test_the_catalogue_routes_only_skus_no_row_lists() -> None:
 
 def test_the_snapshot_holds_only_each_skus_goods_type_and_ic(tmp_path: pathlib.Path) -> None:
     # tools/fetch_catalog.py keeps each product's sku, goodsType and ic (no names, images or URLs) and refuses
-    # a non-200 answer or a SKU listed twice with different values; the generator refuses any other key.
+    # a non-200 answer or a SKU listed twice with different values; the generator refuses any other key, and a
+    # snapshot that records no AppVersion in the app's form.
     fetch = _load(_ROOT / "tools" / "fetch_catalog.py", "fetch_catalog_under_test")
     item = {"sku": "h6009", "goodsType": 64, "ic": 0, "name": "Smart Bulb", "url": "https://example.com/b"}
     payload = {"status": 200, "categories": [{"supportGroups": [{"supportSkuList": [
         {"products": [item, {**item, "sku": "H6009"}, {"sku": "H802A", "goodsType": 74, "ic": 15}]}]}]}]}
     assert fetch.products(payload) == {"H6009": {"goodsType": 64, "ic": 0},
                                        "H802A": {"goodsType": 74, "ic": 15}}
+    # main() records the AppVersion it asked with, by default the snapshot's own, and keeps the prose.
+    saved, out = tmp_path / "saved.json", tmp_path / "out.json"
+    saved.write_text(json.dumps(payload), encoding="utf-8")
+    out.write_text(json.dumps({"doc": "kept", "app_version": "7.5.20", "skus": {}}), encoding="utf-8")
+    for flags, version in (((), "7.5.20"), (("--app-version", "7.7.02"), "7.7.02")):
+        assert fetch.main(["--from", str(saved), "--fetched", "2026-10-18", "--out", str(out), *flags]) == 0
+        assert json.loads(out.read_text(encoding="utf-8")) == {
+            "doc": "kept", "app_version": version, "fetched": "2026-10-18", "skus": fetch.products(payload)}
     with pytest.raises(ValueError, match="status 500"):
         fetch.products({**payload, "status": 500})
     payload["categories"][0]["supportGroups"][0]["supportSkuList"][0]["products"].append({**item, "ic": 1})
@@ -86,9 +95,11 @@ def test_the_snapshot_holds_only_each_skus_goods_type_and_ic(tmp_path: pathlib.P
         fetch.products(payload)
     require_optional("yaml", reason="the generator reads spec/devices.yaml")
     gen = _load(_ROOT / "tools" / "gen_devices.py", "gen_devices_snapshot")
-    good = {"fetched": "2026-10-18", "skus": {"H6009": {"goodsType": 64, "ic": 0}}}
+    good = {"app_version": "7.5.20", "fetched": "2026-10-18", "skus": {"H6009": {"goodsType": 64, "ic": 0}}}
     named, short = {"H6009": {"goodsType": 64, "ic": 0, "name": "x"}}, {"H6009": {"goodsType": 64}}
     for bad, error in (({**good, "names": {}}, r"keys \['names'\]"),
+                       ({**good, "app_version": "7.7.2"}, "app_version '7.7.2'"),
+                       ({k: v for k, v in good.items() if k != "app_version"}, "app_version None"),
                        ({**good, "skus": named}, "'H6009' is no SKU"),
                        ({**good, "skus": short}, "'H6009' is no SKU")):
         path = tmp_path / "snapshot.json"
@@ -97,6 +108,7 @@ def test_the_snapshot_holds_only_each_skus_goods_type_and_ic(tmp_path: pathlib.P
             gen.snapshot(path)
     path.write_text(json.dumps(good), encoding="utf-8")
     assert gen.snapshot(path) == {"H6009": 64}
+    assert gen.snapshot(out) == {"H6009": 64, "H802A": 74}   # what main() wrote
 
 
 def _load(path: pathlib.Path, name: str) -> Any:

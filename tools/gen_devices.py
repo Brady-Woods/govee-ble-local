@@ -238,17 +238,19 @@ def load(raw: bytes) -> Any:
     return yaml.load(raw, Loader=loader)  # noqa: S506  # nosec B506  # a safe loader
 
 
-# What the snapshot holds (tools/fetch_catalog.py writes it): its prose and date, and per SKU the goodsType
-# and ic only, so no product name, image or URL gets in.
-_SNAPSHOT_KEYS = frozenset({"doc", "doc-ref", "fetched", "skus", "source_app"})
+# What the snapshot holds (tools/fetch_catalog.py writes it): its prose, the AppVersion header it was
+# fetched with (the endpoint's answer depends on it) and its date, and per SKU the goodsType and ic only, so
+# no product name, image or URL gets in.
+_SNAPSHOT_KEYS = frozenset({"app_version", "doc", "doc-ref", "fetched", "skus", "source_app"})
 _ENTRY_KEYS = frozenset({"goodsType", "ic"})
 
 
 def snapshot(path: pathlib.Path = CATALOGUE) -> dict[str, int]:
     """The catalogue snapshot's ``{SKU: goodsType}`` (its ``ic`` is read nowhere: _resolve's module doc).
-    GenError on a missing or malformed file, a top-level key outside :data:`_SNAPSHOT_KEYS`, a SKU that isn't
-    3-8 upper-case alphanumerics (as tools/fetch_catalog.py writes them), or an entry whose keys are not
-    exactly goodsType and ic, each a non-negative int."""
+    GenError on a missing or malformed file, a top-level key outside :data:`_SNAPSHOT_KEYS`, an
+    ``app_version`` missing or not in the app's version form (7.5.20, 7.7.02), a SKU that isn't 3-8
+    upper-case alphanumerics (as tools/fetch_catalog.py writes them), or an entry whose keys are not exactly
+    goodsType and ic, each a non-negative int."""
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
         skus = data["skus"]
@@ -257,6 +259,10 @@ def snapshot(path: pathlib.Path = CATALOGUE) -> dict[str, int]:
     extra = sorted(set(data) - _SNAPSHOT_KEYS)
     if extra:
         raise GenError(f"{path.name}: keys {extra} (it holds only {sorted(_SNAPSHOT_KEYS)})")
+    version = data.get("app_version")
+    if not isinstance(version, str) or not re.fullmatch(r"\d+\.\d+\.\d{2}", version):
+        raise GenError(f"{path.name}: app_version {version!r} is not the AppVersion it was fetched with "
+                       "(such as 7.5.20)")
     if not isinstance(skus, dict) or not skus:
         raise GenError(f"{path.name}: no skus")
     out: dict[str, int] = {}

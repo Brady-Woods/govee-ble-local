@@ -5,19 +5,23 @@ Uses the app's catalogue endpoint, public like fetch_scenes.py's scene library (
 AppVersion header):
     GET https://app2.govee.com/bi/rest/devices/v3/skus
 (ICategoriesApi; the app feeds every product's goodsType to Pact.j, CategoriesDataManager.n). The
-snapshot keeps each product's sku, goodsType and ic only, with no names or URLs, and the date it was
-fetched. The file's doc and doc-ref are spec prose: the tool keeps them and rewrites only `fetched` and
-`skus`. tools/gen_devices.py reads the committed snapshot; no build and no runtime code runs this tool.
+snapshot keeps each product's sku, goodsType and ic only, with no names or URLs, the date it was
+fetched, and the AppVersion header it was asked with (`app_version`): the answer depends on it (on
+2026-10-19 the endpoint listed 632 SKUs at 7.7.02 and 617 at 7.5.20). --app-version defaults to the
+snapshot's own `app_version`, so a refresh asks as the last fetch did and a move to another app version
+is explicit. The file's doc and doc-ref are spec prose: the tool keeps them and rewrites only
+`app_version`, `fetched` and `skus`. tools/gen_devices.py reads the committed snapshot; no build and no
+runtime code runs this tool.
 
-    python3 tools/fetch_catalog.py                                  # fetch, then refresh the snapshot
-    python3 tools/fetch_catalog.py --from saved.json --fetched 2026-10-18   # a saved response instead
+    python3 tools/fetch_catalog.py                          # fetch, then refresh the snapshot
+    python3 tools/fetch_catalog.py --app-version 7.7.02     # the same, asking as another app version
+    python3 tools/fetch_catalog.py --from saved.json --fetched 2026-10-18 --app-version 7.5.20   # saved
 """
 from __future__ import annotations
 
 import argparse
 import datetime
 import json
-import os
 import pathlib
 import sys
 import urllib.request
@@ -26,7 +30,6 @@ from typing import Any
 _TOOLS = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(_TOOLS))  # sibling fetch_scenes: the same public endpoint handling
 from fetch_scenes import (  # noqa: E402 - needs the sys.path entry above
-    DEFAULT_APP_VERSION,
     MAX_RESPONSE_BYTES,
     validate_sku,
     write_catalog,
@@ -36,8 +39,8 @@ CATALOGUE_URL = "https://app2.govee.com/bi/rest/devices/v3/skus"
 OUT = _TOOLS.parent / "spec" / "govee_catalog.json"
 
 
-def fetch(app_version: str = DEFAULT_APP_VERSION) -> Any:
-    """The endpoint's JSON response."""
+def fetch(app_version: str) -> Any:
+    """The endpoint's JSON response, asked with AppVersion ``app_version``."""
     req = urllib.request.Request(CATALOGUE_URL, headers={"AppVersion": app_version})
     # Fixed https CATALOGUE_URL, no variable part.
     with urllib.request.urlopen(req, timeout=20) as resp:  # nosec B310
@@ -75,16 +78,21 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--from", dest="source", type=pathlib.Path, help="a saved endpoint response")
     ap.add_argument("--fetched", default=datetime.date.today().isoformat(),
                     help="the fetch date written to the snapshot (default today)")
-    ap.add_argument("--app-version", default=os.environ.get("GOVEE_APP_VERSION", DEFAULT_APP_VERSION),
-                    help=f"AppVersion header (env GOVEE_APP_VERSION; default {DEFAULT_APP_VERSION})")
+    ap.add_argument("--app-version",
+                    help="the AppVersion header, recorded as the snapshot's app_version (default the "
+                         "snapshot's own app_version, so a refresh asks as the last fetch did; with --from, "
+                         "the version the saved response was fetched with)")
     ap.add_argument("--out", type=pathlib.Path, default=OUT)
     args = ap.parse_args(argv)
     datetime.date.fromisoformat(args.fetched)
-    payload = json.loads(args.source.read_text(encoding="utf-8")) if args.source else fetch(args.app_version)
-    skus = products(payload)
     snapshot = json.loads(args.out.read_text(encoding="utf-8")) if args.out.is_file() else {}
-    write_catalog(args.out, {**snapshot, "fetched": args.fetched, "skus": skus})
-    print(f">> {args.out}: {len(skus)} SKUs, fetched {args.fetched}")
+    app_version = args.app_version or snapshot.get("app_version")
+    if not isinstance(app_version, str):
+        ap.error(f"{args.out} records no app_version: pass --app-version")
+    payload = json.loads(args.source.read_text(encoding="utf-8")) if args.source else fetch(app_version)
+    skus = products(payload)
+    write_catalog(args.out, {**snapshot, "app_version": app_version, "fetched": args.fetched, "skus": skus})
+    print(f">> {args.out}: {len(skus)} SKUs at AppVersion {app_version}, fetched {args.fetched}")
     return 0
 
 

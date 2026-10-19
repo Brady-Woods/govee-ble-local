@@ -34,8 +34,9 @@ from typing import Any
 LIBRARY_URL = "https://app2.govee.com/appsku/v1/light-effect-libraries"
 # The traced app's version (decomp-7.7.02). Self-contained on purpose (the cloud module carries its own
 # copy). The scene library answered 7.5.20 byte for byte as 7.7.02 for every bundled SKU (2026-10-19);
-# the catalogue endpoint tools/fetch_catalog.py reads with it did not (15 more SKUs at 7.7.02). Override
-# with --app-version or $GOVEE_APP_VERSION if Govee starts rejecting this value.
+# the catalogue endpoint did not (15 more SKUs at 7.7.02), so tools/fetch_catalog.py asks as its snapshot's
+# app_version records instead. Override with --app-version or $GOVEE_APP_VERSION if Govee starts rejecting
+# this value.
 DEFAULT_APP_VERSION = "7.7.02"
 OUT_DIR = pathlib.Path(__file__).resolve().parent.parent / "src" / "govee_ble_local" / "scenes"
 # Upper bound on the library response body; real catalogs are well under 1 MiB.
