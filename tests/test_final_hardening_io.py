@@ -316,7 +316,7 @@ def test_fetch_lists_what_the_apps_scene_list_lists(monkeypatch: pytest.MonkeyPa
     seen: set[str] = set()
     listed = {"Op": 1, "Static": 3, "AfterGate": 2, "Expired": 1, "DiyFirst": 2}
     assert {n: e["code"] for n, e in fs.fetch("H6047", seen=seen).items()} == listed
-    assert seen == {*scenes, "Season"}
+    assert seen == {*scenes, *(f"{n} (c)" for n in scenes), "Season", "Season (old)"}
     out = capsys.readouterr().out
     assert "H6047: left out 1 scenes whose effect the firmware's version rules pick: Gated" in out
     assert "empty scene set" not in out
@@ -335,8 +335,9 @@ def test_fetch_stores_same_named_scenes_apart(monkeypatch: pytest.MonkeyPatch,
                                               capsys: pytest.CaptureFixture[str]) -> None:
     """A catalog maps a name to one scene, and the app lists a name in more than one category (H61A8's
     "Flash": Emotion's 2020, Zootopia 2's 14769): the first listed keeps it, unless the stored catalog holds
-    it for another of them, and each other is stored as "<name> (<category>)" (", n" when that is taken
-    too) and printed. _merge counts a scene stored apart as public under its own name."""
+    it for another of them (by code and category, else code, else category), and each other is stored as
+    "<name> (<category>)" (", n" when that is taken too) and printed. _merge counts a scene stored apart as
+    public while the library answers its name in its category."""
     fs = _tool("fetch_scenes")
 
     def category(name: str, *codes: int) -> dict[str, object]:
@@ -352,12 +353,19 @@ def test_fetch_stores_same_named_scenes_apart(monkeypatch: pytest.MonkeyPatch,
     assert ('H61A8: 2 scenes share a name with another the app lists, stored apart: "Flash (Zootopia 2)" '
             '(code 14769; "Flash" is Emotion\'s, code 2020), "Flash (Zootopia 2, 2)" (code 14770; "Flash" is '
             "Emotion's, code 2020)") in capsys.readouterr().out
-    stored = {"Flash": got["Flash (Zootopia 2)"]}   # as the last-one-wins fetch stored it
+    z1, z2 = got["Flash (Zootopia 2)"], got["Flash (Zootopia 2, 2)"]
+    stored = {"Flash": z2}   # as the last-one-wins fetch stored it
     assert {n: e["code"] for n, e in fs.fetch("H61A8", existing=stored).items()} == {
-        "Flash": 14769, "Flash (Emotion)": 2020, "Flash (Zootopia 2)": 14770}
+        "Flash": 14770, "Flash (Emotion)": 2020, "Flash (Zootopia 2)": 14769}
+    for held, keeps in (({**z2, "category": "Zootopia"}, 14770),   # matched by code
+                        ({**z1, "code": 1}, 14769)):               # by category
+        assert fs.fetch("H61A8", existing={"Flash": held})["Flash"]["code"] == keeps
     assert fs.fetch("H61A8", existing=got) == got   # a re-fetch renames nothing
-    apart = {"Flash (Emotion)": got["Flash"]}
-    assert fs._merge(apart, {}, {"Flash"}) == {} and fs._merge(apart, {}, {"Other"}) == apart
+    seen: set[str] = set()
+    fs.fetch("H61A8", seen=seen)
+    apart = {"Flash (Emotion)": got["Flash"], "Flash (Zootopia 2, 3)": z2}
+    assert fs._merge(apart, {}, seen) == {}
+    assert fs._merge(apart, {}, {"Flash", "Flash (Zootopia 2)"}) == {"Flash (Emotion)": got["Flash"]}   # gone
 
 
 def test_fetch_validate_entry_rejects_bad_base64() -> None:

@@ -15,9 +15,9 @@ A catalog maps a scene name to one scene, but the app lists a name in more than 
 (H61A8 / H6641: Emotion's "Flash", code 2020, and Zootopia 2's, 14769). One scene keeps the
 name and each other is stored as "<name> (<its category>)", for example "Flash (Emotion)",
 or "<name> (<category>, 2)", 3 and so on where that is taken too. The one that keeps it is
-the scene the stored catalog already holds under it, when the fetch lists one of that name in
-its category, so a re-fetch renames no stored scene; else the first the app lists
-(stored_names). Every collision is printed.
+the scene the stored catalog already holds under it, when the fetch lists it (matched by code
+and category, else by code, else by category), so a re-fetch does not move a stored name to
+another scene; else the first the app lists (stored_names). Every collision is printed.
 
     python3 tools/fetch_scenes.py            # all supported SKUs
     python3 tools/fetch_scenes.py H60A6 H61A8
@@ -296,25 +296,41 @@ def _label(category: object) -> str:
     return category if isinstance(category, str) and category else "no category"
 
 
+def _apart(name: str, category: object) -> str:
+    """``name`` stored apart for a scene of ``category``: "<name> (<category>)"."""
+    return f"{name} ({_label(category)})"
+
+
+def _holder(idx: list[int], listed: list[tuple[str, Entry]], held: Entry | None) -> int:
+    """Which of the same-named ``listed`` scenes at ``idx`` keeps the name: the one ``held`` (the stored
+    catalog's scene of that name) is, matched by code and category, else by code, else by category (the first
+    such); else the first listed."""
+    if held is not None:
+        for keys in (("code", "category"), ("code",), ("category",)):
+            hit = [i for i in idx if all(listed[i][1].get(k) == held.get(k) for k in keys)]
+            if hit:
+                return hit[0]
+    return idx[0]
+
+
 def stored_names(listed: list[tuple[str, Entry]], existing: Mapping[str, Entry] | None = None) -> list[str]:
     """The names the ``listed`` scenes (``(sceneName, entry)``, in the app's list order: category by category,
     as the library answers) are stored under, one per scene. Of the scenes of one name, one keeps it: the
-    one ``existing`` (the stored catalog) holds under it, matched by category, when one is listed; else the
-    first listed. Each other is stored as "<name> (<its category>)", or "<name> (<category>, 2)", 3 and so on
-    where that is taken too (the same name twice in one category, or a scene of that name)."""
+    one ``existing`` (the stored catalog) holds under it, matched by code and category, else by code, else by
+    category, when one is listed (:func:`_holder`); else the first listed. Each other is stored as
+    "<name> (<its category>)", or "<name> (<category>, 2)", 3 and so on where that is taken too (the same name
+    twice in one category, or a scene of that name)."""
     held = existing or {}
     keeper: dict[str, int] = {}
     for name in dict.fromkeys(n for n, _e in listed):
-        idx = [i for i, (n, _e) in enumerate(listed) if n == name]
-        same = [i for i in idx if name in held and listed[i][1].get("category") == held[name].get("category")]
-        keeper[name] = (same or idx)[0]
+        keeper[name] = _holder([i for i, (n, _e) in enumerate(listed) if n == name], listed, held.get(name))
     taken = set(keeper)
     out: list[str] = []
     for i, (name, entry) in enumerate(listed):
         stored = name
         if keeper[name] != i:
             label, n = _label(entry.get("category")), 2
-            stored = f"{name} ({label})"
+            stored = _apart(name, label)
             while stored in taken:
                 stored, n = f"{name} ({label}, {n})", n + 1
             taken.add(stored)
@@ -332,7 +348,8 @@ def fetch(sku: str, app_version: str = DEFAULT_APP_VERSION, *, seen: set[str] | 
     there (the first in force, which the union may drop) keeps the union's, and is named on stdout too.
     Scenes the app lists under one name are stored apart (:func:`stored_names`, over ``existing``, the
     stored catalog), and each renamed one is named on stdout. ``seen``, when given, gets the name of every
-    scene the library answered with, listed or not (:func:`_merge`)."""
+    scene the library answered with, listed or not, and that name with its category, "<name> (<category>)"
+    (:func:`_merge`)."""
     key = validate_sku(sku)
     ops = op_set(key)
     null_set = any(not s for s in scene_sets(key))
@@ -350,7 +367,9 @@ def fetch(sku: str, app_version: str = DEFAULT_APP_VERSION, *, seen: set[str] | 
     unfiltered: list[str] = []
     for category in payload.get("data", {}).get("categories", []):
         if seen is not None:
-            seen.update(str(s.get("sceneName")) for s in category.get("scenes", []))
+            for s in category.get("scenes", []):
+                answered = str(s.get("sceneName"))
+                seen.update((answered, _apart(answered, category.get("categoryName"))))
         if not effective(category, now_ms):   # SceneDataVM.b2 skips a category out of its time (:1454-1461)
             continue
         for scene in category.get("scenes", []):
@@ -479,7 +498,8 @@ def _merge(existing: dict[str, Entry], fresh: dict[str, Entry],
     makes re-running idempotent and non-destructive once placeholders have been resolved.
     ``public`` (fetch's ``seen``) is every scene the library still answers with: one of them that
     the app's scene list leaves out for the SKU (:func:`listed_effect`) is not kept, nor is one stored
-    apart from a same-named scene (:func:`stored_names`) under a name in ``public``."""
+    apart from a same-named scene (:func:`stored_names`) whose name the library still answers in its
+    category (:func:`_answered`)."""
     merged: dict[str, Entry] = {}
     for name, fr in fresh.items():
         ex = existing.get(name)
@@ -498,11 +518,14 @@ def _merge(existing: dict[str, Entry], fresh: dict[str, Entry],
 
 def _answered(name: str, entry: Entry, public: Collection[str]) -> bool:
     """Whether the scene stored as ``name`` is one the library answers with: its name is in ``public``, or
-    it is stored apart (:func:`stored_names`) as "<a name in public> (<its category>[, n])"."""
+    it is stored apart (:func:`stored_names`) as "<name> (<its category>[, n])" and the library answers
+    that name in that category (``public`` holds "<name> (<category>)", fetch's ``seen``). A scene stored
+    apart whose same-named scene of another category is all the library still answers has dropped out."""
     if name in public:
         return True
-    hit = re.fullmatch(rf"(.+) \({re.escape(_label(entry.get('category')))}(?:, \d+)?\)", name)
-    return hit is not None and hit.group(1) in public
+    category = entry.get("category")
+    hit = re.fullmatch(rf"(.+) \({re.escape(_label(category))}(?:, \d+)?\)", name)
+    return hit is not None and _apart(hit.group(1), category) in public
 
 
 # SKUs whose scene list is compiled into the app, not served by the scene library: their
