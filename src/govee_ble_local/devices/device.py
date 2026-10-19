@@ -1054,6 +1054,8 @@ class Device:
             pass
         else:
             _unhandled(self.profile.readback, "readback")
+        if self.profile.ic_num_read_only and not self.profile.color_readback_live_ic:
+            await self._read_reply(build.ic_count_query())   # the screen's connect read; it sizes nothing
         # Segment / single-colour read-back layered on top (spec Change 7).
         if self.profile.color_readback == "mechanism_b":
             await self._read_mechanism_b()

@@ -302,6 +302,12 @@ class DeviceProfile:
     pact_code), (min, max))`` entries, None for percent (a devices.yaml row's ``by_pact``
     ``brightness_range``: stringlightv2 goodsType 1 reports percent at pact (2, 1)). A pact not yet heard
     applies none; ``Device`` writes and reads brightness with the range in force."""
+    ic_num_read_only: bool = field(default=False, kw_only=True)
+    """Ignored with :attr:`color_readback_live_ic`. Without it: the screen reads the ``aa 40`` IC count at
+    connect, but its piece count is fixed (``getColorPieceSize`` whatever the IC: h6609 goodsType 181), so
+    :meth:`~.device.Device.update` reads it on every poll, before the colour read-back as the screen reads
+    it before the ``aa a5`` groups, and discards the reply; the read-back walks the static pieces (a
+    devices.yaml row with ``ic_pieces: fixed``)."""
 
     def __post_init__(self) -> None:
         """Validate each field: GoveeBleInvalidValue (a ValueError) on a value no Device can use.

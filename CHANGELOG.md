@@ -125,6 +125,13 @@ model, from which the shipped readers are generated).
   status TLV) use the range in force; `_fold.brightness_range(profile, pact)` gives it. A pact Kelvin range
   needs a base one (the row's or the family's) and no Kelvin firmware branch, and a pact brightness range
   the brightness capability. No current SKU sets them.
+- **The `aa 40` read that does not size the pieces** (device-list phase 3): `DeviceProfile.ic_num_read_only`
+  (keyword-only, default False). Some screens read the IC count at connect although their piece count is
+  fixed; such a row now says `ic_pieces: fixed` (the resolver served the read only with the IC sizing), and
+  `Device.update` then reads `aa 40` on every poll, before the colour read-back, and discards the reply; the
+  read-back walks the static pieces. An `ic_num` read still needs `ic_pieces` (now the sizing or `fixed`)
+  and the direct colour read-back, and `ic_pieces` the read; H6641's live sizing is unchanged. No current
+  SKU sets it.
 
 ### Changed
 - **The 0xAC status request is built from the profile**, not hard-coded to the H60A6's: the resolver takes
@@ -205,6 +212,8 @@ model, from which the shipped readers are generated).
   colour-temperature mode. Latent: no current SKU uses those decodes.
 
 ### Spec
+- `devices.schema.json`: `ic_pieces` may be `fixed` (the IC count read at connect sizes nothing: the
+  screen's piece count is fixed), and `ic_pieces` now requires the `ic_num` read.
 - **The pact-conditioned reassignments' target rows list their SKUs and pacts**: the pacts the app
   registers for the target goodsType, cut to those at or above the item's gate. goodsType 40 (h6159,
   h6160, h6182) takes (2,1) (stringlightv2 `Support.addSupportPact`). goodsType 39 (h6113, h6114,

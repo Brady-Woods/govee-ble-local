@@ -260,6 +260,10 @@ def test_live_ic_read_failure_skips_segment_readback() -> None:
     asyncio.run(d._read_mechanism_a_direct())
     assert d.state.segments == []
     assert all(f[1] == 0x40 for f in _queried(d))  # no per-group reads attempted
+    d2 = _dev("H6047", ic_num_read_only=True)   # an aa 40 read that sizes nothing: the static walk still runs
+    asyncio.run(d2.update())
+    asked = [f[1] for f in _queried(d2)]
+    assert 0x40 in asked and 0xA5 in asked and asked.index(0x40) < asked.index(0xA5)
 
 
 def test_device_info_serial_falls_back_to_sn_selector() -> None:

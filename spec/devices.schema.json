@@ -390,15 +390,21 @@
         "connect_writes": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/commandId" }, "description": "The writes sent on every connect after the handshake and any account_lock check, in order." },
         "power_resync": { "type": "boolean", "description": "Plugs: after each acked power write the screen re-runs its connect sequence (device-info reads, connect_writes)." },
         "ic_pieces": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["min_ic", "max_ic", "ic_per_piece"],
-          "properties": {
-            "min_ic": { "type": "integer", "minimum": 0 },
-            "max_ic": { "type": "integer", "minimum": 0 },
-            "ic_per_piece": { "type": "integer", "minimum": 1 }
-          },
-          "description": "The colour pieces from the IC count read at connect (connect_reads ic_num): ceil(clamp(IC, min_ic, max_ic) / ic_per_piece)."
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["min_ic", "max_ic", "ic_per_piece"],
+              "properties": {
+                "min_ic": { "type": "integer", "minimum": 0 },
+                "max_ic": { "type": "integer", "minimum": 0 },
+                "ic_per_piece": { "type": "integer", "minimum": 1 }
+              },
+              "description": "ceil(clamp(IC, min_ic, max_ic) / ic_per_piece) pieces."
+            },
+            { "const": "fixed", "description": "The IC count sizes nothing: the screen's piece count is fixed (the row's static pieces)." }
+          ],
+          "description": "The colour pieces from the IC count read at connect (connect_reads ic_num)."
         },
         "by_pact": { "type": "object", "propertyNames": { "pattern": "^[0-9]+,[0-9]+$" }, "additionalProperties": { "$ref": "#/$defs/clientBranch" }, "description": "Pact branches, keyed 'pactType,pactCode' (decimal) (clientBranch)." },
         "by_firmware": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/clientFirmware" }, "description": "Firmware branches, applied after by_pact (clientFirmware)." },
@@ -410,7 +416,8 @@
         { "if": { "required": ["support", "connectivity"] }, "then": { "properties": { "connectivity": { "contains": { "const": "ble" } } } } },
         { "if": { "required": ["capabilities"], "properties": { "capabilities": { "contains": { "const": "scenes" } } } }, "then": { "required": ["scene_dialect"] } },
         { "if": { "required": ["support", "relay_power"] }, "then": { "required": ["power_resync"] } },
-        { "if": { "required": ["connect_reads"], "properties": { "connect_reads": { "contains": { "const": "ic_num" } } } }, "then": { "required": ["ic_pieces"] } }
+        { "if": { "required": ["connect_reads"], "properties": { "connect_reads": { "contains": { "const": "ic_num" } } } }, "then": { "required": ["ic_pieces"] } },
+        { "if": { "required": ["ic_pieces"] }, "then": { "required": ["connect_reads"], "properties": { "connect_reads": { "contains": { "const": "ic_num" } } } } }
       ]
     },
     "clientCapabilities": {

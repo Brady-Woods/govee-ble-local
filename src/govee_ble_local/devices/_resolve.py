@@ -65,10 +65,12 @@ the row lacks fails the build: nothing defaults silently.
   reads aa 04 on every poll and a gradual row ``aa a3``, so ``connect_reads`` lists ``brightness`` exactly
   on a polled row and ``gradual`` wherever the capability is; a ``gradual`` read without the capability (the
   screen's default ``Compose4InfoBleIot`` read, with no gradual control) is made on every poll too and its
-  reply discarded (``DeviceProfile.gradual_read_only``). Every command form
-  the library sends or reads for the row must be the row's (wire ``forms``), a polled row's aa 05 reply is
-  read with the spec's default decode (:data:`_MODE_UNSET`), and a colour-group read is of 4-byte records
-  in the row's wire ``group.num_per_group`` (and, in the status read, its ``group.rule``).
+  reply discarded (``DeviceProfile.gradual_read_only``). An ``ic_num`` read goes with ``ic_pieces`` and the
+  direct colour read-back: it sizes the read-back's pieces (H6641), or, with ``ic_pieces: fixed``, it is
+  made on every poll and discarded (``DeviceProfile.ic_num_read_only``: a fixed piece count). Every command
+  form the library sends or reads for the row must be the row's (wire ``forms``), a polled row's aa 05 reply
+  is read with the spec's default decode (:data:`_MODE_UNSET`), and a colour-group read is of 4-byte
+  records in the row's wire ``group.num_per_group`` (and, in the status read, its ``group.rule``).
 - The writes on every connect (``connect_writes``): a plug's ``plug_sync_time``, and on a light nothing or
   ``light_effect_stop`` (``DeviceProfile.light_effect_stop``), each sent once per session after the
   handshake and any unlock.
@@ -172,7 +174,7 @@ class Row(TypedDict, total=False):
     connect_reads: tuple[str, ...]
     connect_writes: tuple[str, ...]
     power_resync: bool
-    ic_pieces: IcPieces
+    ic_pieces: IcPieces | str
     by_pact: dict[str, Branch]
     by_firmware: tuple[FirmwareBranch, ...]
 
@@ -717,12 +719,15 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str]) -> dic
     if status_groups and group.get("rule") not in _GROUP_RULES:
         fail(f"wire group rule {group.get('rule')!r} (the status read counts its colour groups' records by "
              "it)")
-    live_ic = "ic_num" in reads
     ic = row.get("ic_pieces")
-    if live_ic and (color_readback != "mechanism_a_direct" or ic is None):
-        fail("an ic_num read needs the direct colour read-back and ic_pieces")
-    if ic is not None and not (0 <= ic["min_ic"] <= ic["max_ic"] and ic["ic_per_piece"] >= 1):
-        fail(f"ic_pieces {dict(ic)} (min_ic <= max_ic, ic_per_piece >= 1)")
+    if ("ic_num" in reads) != (ic is not None) or (ic is not None and color_readback != "mechanism_a_direct"):
+        fail("an ic_num read and ic_pieces go together, with the direct colour read-back")
+    sized = None if ic is None or isinstance(ic, str) else ic   # the IC count sizes the pieces (H6641)
+    if isinstance(ic, str) and ic != "fixed":
+        fail(f"ic_pieces {ic!r} (fixed, or the IC sizing)")
+    if sized is not None and not (0 <= sized["min_ic"] <= sized["max_ic"] and sized["ic_per_piece"] >= 1):
+        fail(f"ic_pieces {dict(sized)} (min_ic <= max_ic, ic_per_piece >= 1)")
+    live_ic = sized is not None
     section_count = "cmd_41" in reads
     if section_count and forms.get("f_41") != "section_count":
         fail("an aa 41 read without f_41 section_count")
@@ -768,6 +773,7 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str]) -> dic
         "color_readback": color_readback,
         "color_readback_per_batch": int(per_group) if color_readback == "mechanism_a_direct" else 3,
         "color_readback_live_ic": live_ic,
+        "ic_num_read_only": ic == "fixed",
         "section_count_read": section_count,
         "brightness_range": raw_bright,
         "kelvin_by_pact": kelvin_by_pact,
@@ -794,9 +800,9 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str]) -> dic
                           has_brightness=True)
         decode.update({**_MODE_UNSET, **w["mode"], **w["mode_status"]})   # the TLV 0x05's
         out["status_decode"] = tuple(sorted(decode.items()))
-    if ic is not None:
-        out["color_readback_ic_range"] = (ic["min_ic"], ic["max_ic"])
-        out["color_readback_ic_per_piece"] = ic["ic_per_piece"]
+    if sized is not None:
+        out["color_readback_ic_range"] = (sized["min_ic"], sized["max_ic"])
+        out["color_readback_ic_per_piece"] = sized["ic_per_piece"]
     if relay:
         relay_power = need(row.get("relay_power", cp.get("relay_power")), "relay_power")
         if relay_power not in RELAY_POWERS:
