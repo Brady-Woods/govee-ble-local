@@ -395,6 +395,7 @@ def _rounds(*libs: Lib, skus: tuple[str, ...] = ("H6641",), resolve: int = -1) -
 
 _X50 = _e(50, 1, "kwUF", stype=2, cmdv=1)   # H6641 plays it before code 40
 _DUSK5 = _e(30, 2, None, big5=True)   # a sceneType-5 placeholder
+_GLOWS = [(2, "Glow", [_e(30, 2, "AAAA")]), (3, "Glow", [_e(30, 3, "BBBB")])]   # same-code siblings
 _FIXED = {
     # N1: Rain refused for good, then a new Rain; the old one comes back exactly
     "retired": _rounds(_lib(("Party", [(1, "Snow", [_e(5, 1)]), (2, "Rain", [_e(10, 2)])])),
@@ -527,6 +528,41 @@ _FIXED = {
     "guess by param id": _rounds(
         _lib(("Party", [(1, "Glow", [_e(10, 1, "kwEB")]), (2, "Glow", [_e(20, 2, "kwEC")])])),
         _lib(("Party", [(1, "Glow", [_e(11, 1, "kwED")]), (2, "Glow", [_e(20, 2, "kwEC")])]))),
+    # N1: a placeholder refused for good, then a bare scene of its sceneName, code and category with another
+    # param id: not its exact return (a placeholder returns with its param id), so it takes a new name
+    "retired placeholder, back bare": _rounds(
+        _lib(("Party", [(1, "Snow", [_e(5, 1)]), (2, "Dusk", [_e(30, 2, None, big=True)])])),
+        _lib(("Party", [(1, "Snow", [_e(5, 1)]), (2, "Dusk", [_e(30, 2, None, big=True, refused=True)])])),
+        _lib(("Party", [(1, "Snow", [_e(5, 1)]), (3, "Dusk", [_e(30, 3, None)])]))),
+    # N4: two same-code Glows; one leaves the library as the other is refused for good with a new blob, or
+    # cut for sceneType 5: which of them the library changed is not known, so neither is removed
+    "sibling dropped, other refused with a new blob": _rounds(
+        _lib(("Party", [(1, "Snow", [_e(5, 1)]), *_GLOWS])),
+        _lib(("Party", [(1, "Snow", [_e(5, 1)]), (3, "Glow", [_e(30, 3, "CCCC", refused=True)])]))),
+    "sibling dropped, other cut": _rounds(
+        _lib(("Party", [(1, "Snow", [_e(5, 1)]), *_GLOWS])),
+        _lib(("Party", [(1, "Snow", [_e(5, 1)]), (3, "Glow", [_e(30, 3, "BBBB", type5=True)])]))),
+    # N3 / N4: two Dusks of one code and blob, with two param ids; one is renumbered (its blob and param id
+    # kept, so still listed) as the other is refused for good: only the refused one, by its param id, goes
+    "twins, one refused": _rounds(
+        _lib(("Emotion", [(1, "Snow", [_e(5, 1)]), (4, "Dusk", [_e(101, 2, "kwEAAw==")]),
+                          (8, "Dusk", [_e(101, 6, "kwEAAw==")])])),
+        _lib(("Emotion", [(1, "Snow", [_e(5, 1)]), (4, "Dusk", [_e(116, 2, "kwEAAw==")]),
+                          (8, "Dusk", [_e(101, 6, "kwEAAw==", refused=True)])]))),
+    # N2: a Glow in Party and one in Life at one code; the Party one leaves the library (dropped: the Life
+    # one's answer is its own), then the Life one leaves as a new Glow comes to Party: the dropped name takes
+    # none; so too with the Life one out for its time
+    "dropped, another category's at its code": _rounds(
+        _lib(("Party", [(1, "Snow", [_e(5, 1)]), (2, "Glow", [_e(10, 2, "AAAA")])]),
+             ("Life", [(3, "Glow", [_e(10, 3, "BBBB")])])),
+        _lib(("Party", [(1, "Snow", [_e(5, 1)])]), ("Life", [(3, "Glow", [_e(10, 3, "BBBB")])])),
+        _lib(("Party", [(1, "Snow", [_e(5, 1)]), (4, "Glow", [_e(99, 4, "CCCC")])]))),
+    "dropped, another category's at its code out of its time": _rounds(
+        _lib(("Party", [(1, "Snow", [_e(5, 1)]), (2, "Glow", [_e(10, 2, "AAAA")])]),
+             ("Life", [(3, "Glow", [_e(10, 3, "BBBB")])])),
+        _lib(("Party", [(1, "Snow", [_e(5, 1)])]),
+             ("Life", [(3, "Glow", [_e(10, 3, "BBBB", expired=True)])])),
+        _lib(("Party", [(1, "Snow", [_e(5, 1)]), (4, "Glow", [_e(99, 4, "CCCC")])]))),
 }
 
 
@@ -581,3 +617,17 @@ def test_a_param_id_breaks_a_category_tie(fs: ModuleType, tmp_path: Path) -> Non
                      _lib(("Life", [(1, "Sleep", [_e(14000, 1, "kwMD")])])))
     assert check(fs, rounds, tmp_path, 0) == []
     assert fs.read_catalog("H6641", tmp_path / "ordered")["Sleep"]["code"] == 14000
+
+
+def test_a_refused_twin_is_removed_where_its_twin_is_listed(fs: ModuleType, tmp_path: Path) -> None:
+    """N4: of two Glows of one code and blob, one is listed as it was and one is refused for good with a new
+    param id; the listed one is not the refused scene, so the other is removed by its blob, and retired."""
+    rounds = _rounds(_lib(("Party", [(1, "Snow", [_e(5, 1)]), (2, "Glow", [_e(30, 2)]),
+                                     (3, "Glow", [_e(30, 3)])])),
+                     _lib(("Party", [(1, "Snow", [_e(5, 1)]), (2, "Glow", [_e(30, 2)]),
+                                     (3, "Glow", [_e(30, 4, refused=True)])])))
+    assert check(fs, rounds, tmp_path, 0) == []
+    after = fs.read_catalog("H6641", tmp_path / "ordered")
+    assert sorted(e["param_id"] for e in after.values()) == [1, 2]
+    retired = fs.read_tombstone(tmp_path / "ordered" / "tombstone.json")["H6641"]["retired"]
+    assert [e["param_id"] for e in retired.values()] == [3]
