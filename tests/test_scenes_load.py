@@ -69,7 +69,8 @@ def fake_catalog(monkeypatch):
 
 @pytest.mark.parametrize(
     "text",
-    ["{not json", "[1, 2]", '"str"', '{"a": {"param": null}}', '{"a": 5}', '{"a": {"code": "xx"}}'],
+    ["{not json", "[1, 2]", '"str"', '{"a": {"param": null}}', '{"a": 5}', '{"a": {"code": "xx"}}',
+     '{"a": {"code": 1, "rules": true}}'],   # version-gated in the app (scenes.list_filter): refused
 )
 def test_malformed_catalog(fake_catalog, text):
     fake_catalog(text)

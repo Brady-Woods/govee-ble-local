@@ -299,6 +299,10 @@ model, from which the shipped readers are generated).
   surviving effect has version `rules` is left out and named, and the `rules` flag is no longer written. A
   re-fetch no longer keeps an existing scene the library still lists but the filter refuses. Over the
   public library of 2026-10-19 the filter changes none of the 14 bundled SKUs' catalogs.
+- **A bundled scene gated by version rules is refused**: `load_scenes` raises GoveeBleError (malformed) for a
+  catalog with a scene marked `rules: true`, and `tools/fetch_scenes.py`'s `validate_entry` refuses one. The
+  app lists such a scene only on the firmware its rules allow, which the library doesn't model, so offered
+  it would show on every firmware (the loader used to drop the key). No bundled scene has one.
 - **A scene placeholder is the app's own signal**: `tools/fetch_scenes.py` flags a scene `placeholder` only
   when it is a big-effect scene (`bigEffectStr`) with an empty param, which the app fetches before the apply
   (`BaseSceneViewMode.java:630`, `SceneDataVM.java:1324`), not when a param's byte 3 is 0xFF. That heuristic

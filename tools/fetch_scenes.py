@@ -63,13 +63,16 @@ def validate_sku(sku: str) -> str:
 
 
 def validate_entry(name: object, entry: dict[str, object]) -> None:
-    """Check one fetched scene against what ``scenes.load_scenes`` requires; raises ValueError."""
+    """Check one fetched scene against what ``scenes.load_scenes`` requires; raises ValueError. That refuses
+    a scene with ``rules`` (version-gated in the app, which the library can't follow)."""
     if not isinstance(name, str) or not name:
         raise ValueError(f"scene name {name!r} is not a non-empty string")
     if not isinstance(entry.get("code"), int) or isinstance(entry.get("code"), bool):
         raise ValueError(f"{name}: missing/non-integer 'code'")
+    if entry.get("rules"):
+        raise ValueError(f"{name}: gated by version rules, which the library can't follow")
     for key, typ in (("param", str), ("category", str), ("param_id", int),
-                     ("scene_type", int), ("cmd_version", int), ("rules", bool)):
+                     ("scene_type", int), ("cmd_version", int)):
         v = entry.get(key)
         if v is not None and not isinstance(v, typ):
             raise ValueError(f"{name}: '{key}' must be {typ.__name__} or null, got {type(v).__name__}")

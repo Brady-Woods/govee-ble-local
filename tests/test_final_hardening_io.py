@@ -328,6 +328,8 @@ def test_fetch_validate_entry_rejects_bad_base64() -> None:
     fs = _tool("fetch_scenes")
     with pytest.raises(ValueError, match="base64"):
         fs.validate_entry("s", {"code": 1, "param": "not base64!!"})
+    with pytest.raises(ValueError, match="version rules"):
+        fs.validate_entry("s", {"code": 1, "param": None, "rules": True})
     fs.validate_entry("s", {"code": 1, "param": base64.b64encode(b"abc").decode()})
 
 

@@ -156,10 +156,14 @@ def _catalog(sku: str) -> MappingProxyType[str, Scene]:
         data = json.loads(raw)
         if not isinstance(data, dict):
             raise TypeError(f"top-level value is {type(data).__name__}, expected object")
-        for v in data.values():
+        for scene_name, v in data.items():
             param = v.get("param")
             if param:  # validate now so a corrupt bundled blob fails at load, not at upload
                 base64.b64decode(param, validate=True)
+            if v.get("rules"):
+                # The app lists the scene only on firmware its version rules allow (devices.yaml
+                # scenes.list_filter), which the library doesn't model: offered, it would show on every one.
+                raise ValueError(f"{scene_name!r} is gated by version rules")
         scenes = {
             name: Scene(
                 name, int(v["code"]), v.get("param"), v.get("category"),
