@@ -61,6 +61,30 @@ model, from which the shipped readers are generated).
 - `build.color_rgb_frames(..., pieces=)` and `build.color_temp(..., pieces=)`: an `h6061` device's panel
   count, which bounds the layout and sizes the CCT mask (`ColorPieceConfig.k`, the count rounded up to
   whole bytes); None keeps the H6061's 23. `Device` passes its profile's `segments`.
+- **The catalogue snapshot routes the SKUs no devices.yaml row lists** (`spec/govee_catalog.json`, read
+  only by the generator, `_resolve.catalogue`; no cloud call at run time). Such a SKU routes to the BLE row
+  with support at its catalogue goodsType, never at goodsType 0, when that is the only row at it, as the
+  app's `Pact.f` routes it. It takes the row's support level and facts and joins its profile.
+  - **10 SKUs gain a route**, by the catalogue's goodsType alone, with no bench check. Nine are on
+    goodsType 64, the bulb row: H6009, H600A, H600B, H600C, H600D, H6010, H6011, H6013 and H800B. They
+    share the H6004 / H6006 / H6008 profile, whose `skus` lists them after those three. The tenth,
+    **R1630**, is on the h1630 row 364 and shares H1630's profile. That row is `modelled` (Spec), so R1630,
+    like H1630, is admitted only with `allow_modelled`.
+  - They stay gated on the row's pacts. The 1.x fallback for a pact no row accepts (D3) covers only SKUs a
+    row lists (the generated `CATALOGUE_SKUS` are the rest), since the app's scan drops a device whose
+    pact it can't parse (`BaseBleProcessor.g`).
+  - The nine bulbs ship without named scenes (scene codes only), and R1630 without scenes, as H1630 has
+    none yet. The bulb row's doc says how they route.
+  - A SKU that a row lists keeps the spec's route. A non-zero catalogue conflict leaves the SKU unrouted
+    and on the review list the generator prints, unless an `assigned_goods_type` item of the row's family
+    cites the app's rewrite of that goodsType. A SKU no row lists also goes on the list when the app
+    rewrites its goodsType, or when rows of several families share that goodsType.
+  - Today the list is empty. The 8 non-zero conflicts are all on rows without support, and each is such a
+    rewrite: H6145 / H6146 / H6147 / H6171 13 → 17, H6118 / H6194 6 → 39, H6179 12 → 39, and H615E's
+    pairing write of 40.
+  - No route of 1.4.0's 18 SKUs changes, and no profile field but the bulb profile's `skus`. The
+    snapshot's ic is read nowhere: no row's app trace uses it. The conftest staleness guard watches the
+    snapshot.
 
 ### Changed
 - **The 0xAC status request is built from the profile**, not hard-coded to the H60A6's: the resolver takes
@@ -150,9 +174,9 @@ model, from which the shipped readers are generated).
   advertised pact and re-derives the device by SKU (`BaseBleProcessor.c` / `.g`), so a catalogue 0 never
   routes. A devices.yaml row that lists a SKU wins, and a non-zero conflict is settled only by an
   `assigned_goods_type` item that cites the app's rewrite. ic is the app's default IC count
-  (`CategoriesConfig.getDefIcNum`). Nothing reads the snapshot yet. `tools/fetch_catalog.py` refreshes it
-  from the endpoint or a saved response, and rewrites only `fetched` and `skus`. It is dev-only and
-  standard-library, reuses `fetch_scenes.py`'s request handling, and the build never runs it.
+  (`CategoriesConfig.getDefIcNum`). The device table takes its routes (Added). `tools/fetch_catalog.py`
+  refreshes it from the endpoint or a saved response, and rewrites only `fetched` and `skus`. It is
+  dev-only and standard-library, reuses `fetch_scenes.py`'s request handling, and the build never runs it.
 - **devices.yaml can now route and describe the 18 supported SKUs on its own** (one-device-list phase 0).
   Each one's goodsType has a `client_profile.by_goods_type` row with the facts the library's hand table
   holds: `models`, `pacts` (the accepted pacts, `Support.addSupportPact`; `any` for the SKU-routed H6188),

@@ -100,9 +100,10 @@ def test_profile() -> None:
 
 def test_same_wire_behaviour_as_the_h6008_sibling() -> None:
     # One goodsType-64 row: the three bulbs resolve to identical facts, so they share one profile (scenes:
-    # the control screen's version array {0, 1}, Support4BulbLightV3.g).
+    # the control screen's version array {0, 1}, Support4BulbLightV3.g); the SKUs the catalogue snapshot
+    # routes to the row follow them.
     h6004, h6008 = profile_for("H6004"), profile_for("H6008")
-    assert h6004 is not None and h6004 is h6008 and h6004.skus == ("H6004", "H6006", "H6008")
+    assert h6004 is not None and h6004 is h6008 and h6004.skus[:3] == ("H6004", "H6006", "H6008")
 
 
 @pytest.mark.parametrize("sku", ["H6003", "H6085"])

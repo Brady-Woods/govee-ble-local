@@ -42,7 +42,9 @@ bash tools/gen_docs.sh              # build the pdoc API reference (needs .[docs
 The Kaitai read-write classes in `src/govee_ble_local/_generated/` are a **build product** of
 `spec/*.ksy`, gitignored and never committed, and so is the supported-device table there, `devices.py`,
 which `tools/gen_devices.py` writes from `spec/devices.yaml` (the library's `PROFILES` is built from it;
-there is no hand table to edit: a device is supported when its devices.yaml row has `support`). Every
+there is no hand table to edit: a device is supported when its devices.yaml row has `support`, or, for a
+SKU no row lists, when the committed catalogue snapshot `spec/govee_catalog.json` gives it such a row's
+(non-zero) goodsType; `tools/fetch_catalog.py` refreshes the snapshot, and the generator prints its review list). Every
 build generates them: the in-tree PEP 517 backend (`_build_backend/`, `[build-system] backend-path`) runs
 `tools/gen_kaitai.sh`, which runs `tools/gen_devices.py` too, before setuptools builds an sdist, a wheel or
 an editable install, so `pip install -e .`, `pip install .` and `python -m build` need PyYAML (the backend
@@ -55,7 +57,8 @@ attached to a prerelease GitHub Release (`govee-ble-local @
 https://github.com/Brady-Woods/govee-ble-local/releases/download/vX.Y.ZrcN/govee_ble_local-X.Y.ZrcN-py3-none-any.whl`),
 never a git ref. The integration's `pip install --dry-run` dependency check doesn't catch a git ref,
 because preparing metadata skips the generation step. Without the generated modules, or with modules older
-than `spec/*.ksy`, `spec/devices.yaml`, its schema or a generator, the test suite stops at once and says to
+than `spec/*.ksy`, `spec/devices.yaml`, its schema, the catalogue snapshot or a generator, the test suite
+stops at once and says to
 run the generator.
 
 **`bash scripts/check.sh` must pass before you push** (it is the code gate CI and the release

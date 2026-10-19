@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate src/govee_ble_local/_generated/devices.py from spec/devices.yaml (a build product).
+"""Generate src/govee_ble_local/_generated/devices.py from spec/devices.yaml and the catalogue snapshot.
 
     python tools/gen_devices.py               # -> src/govee_ble_local/_generated/devices.py
     python tools/gen_devices.py --out DIR     # -> DIR/devices.py
@@ -20,6 +20,13 @@ support, of every level, with the library's own resolver (devices/_resolve.py, s
 checks each value the library uses, and checks each colour decode and each status_read TLV type against
 govee_common.ksy, so a missing fact, or one the library can't serve, fails here and never at import.
 
+The rows also take the routes of the committed catalogue snapshot, spec/govee_catalog.json (the build reads
+it and nothing fetched): _resolve.catalogue over the whole document, by the snapshot's precedence. A SKU no
+row lists joins the models of the BLE row of its catalogue goodsType (never goodsType 0). One that a row
+with support lists at a goodsType the snapshot contradicts, with no cited rewrite, leaves those rows (a row
+left with no models is dropped). The module's CATALOGUE_SKUS are the SKUs only the snapshot routes, and the
+generator prints how many there are and the review list.
+
 Build-time only: PyYAML, which the in-tree backend asks the build frontend for in a repository build
 (get_requires_for_build_*). An sdist ships the generated module, so a build from it needs nothing.
 """
@@ -30,13 +37,16 @@ import importlib.util
 import json
 import pathlib
 import pprint
+import re
 import sys
+from collections.abc import Mapping
 from typing import Any
 
 import yaml
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 SPEC = ROOT / "spec"
+CATALOGUE = SPEC / "govee_catalog.json"
 OUT = ROOT / "src" / "govee_ble_local" / "_generated"
 RESOLVER = ROOT / "src" / "govee_ble_local" / "devices" / "_resolve.py"
 
@@ -213,13 +223,58 @@ def load(raw: bytes) -> Any:
     return yaml.load(raw, Loader=loader)  # noqa: S506  # nosec B506  # a safe loader
 
 
-def project(doc: dict[str, Any], schema: dict[str, Any]) -> tuple[dict[str, Any], tuple[dict[str, Any], ...]]:
-    """``(mode_color_parse table, families)``: devices.yaml ``doc`` through KEEP, checked by the library's
-    resolver (the routes over the whole document, then each row with support, of every level) and against
-    govee_common.ksy. GenError on a missing fact or one the library can't serve."""
+def snapshot(path: pathlib.Path = CATALOGUE) -> dict[str, int]:
+    """The catalogue snapshot's ``{SKU: goodsType}`` (its ``ic`` is read nowhere: _resolve's module doc).
+    GenError on a missing or malformed file, a SKU that isn't 3-8 upper-case alphanumerics (as
+    tools/fetch_catalog.py writes them), or an entry without a non-negative int goodsType."""
+    try:
+        skus = json.loads(path.read_text(encoding="utf-8"))["skus"]
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise GenError(f"{path.name}: {exc!r}") from None
+    if not isinstance(skus, dict) or not skus:
+        raise GenError(f"{path.name}: no skus")
+    out: dict[str, int] = {}
+    for sku, entry in skus.items():
+        gt = entry.get("goodsType") if isinstance(entry, dict) else None
+        if (not re.fullmatch(r"[A-Z0-9]{3,8}", sku) or not isinstance(gt, int) or isinstance(gt, bool)
+                or gt < 0):
+            raise GenError(f"{path.name}: {sku!r} is no SKU with a non-negative int goodsType")
+        out[sku] = gt
+    return out
+
+
+def _with_catalogue(doc: dict[str, Any], routed: Any) -> dict[str, Any]:
+    """``doc`` with the catalogue's routes (``_resolve.Catalogue``): each added SKU in its row's models, after
+    the row's own, and each unrouted one out of the rows with support; a row left with no models routes
+    nothing and is dropped."""
+    families = []
+    for fam in doc["families"]:
+        rows = (fam.get("client_profile") or {}).get("by_goods_type") or {}
+        kept: dict[str, Any] = {}
+        for gt, row in rows.items():
+            own = list(row.get("models") or ())
+            models = [m for m in own if "support" not in row or m.upper() not in routed.unrouted]
+            models += routed.added.get((fam["id"], gt), ())
+            if models == own:
+                kept[gt] = row
+            elif models:
+                kept[gt] = {**row, "models": models}
+        families.append({**fam, "client_profile": {**fam["client_profile"], "by_goods_type": kept}}
+                        if kept != rows else fam)
+    return {**doc, "families": families}
+
+
+def project(doc: dict[str, Any], schema: dict[str, Any], catalogue: Mapping[str, int] | None = None
+            ) -> tuple[dict[str, Any], tuple[dict[str, Any], ...]]:
+    """``(mode_color_parse table, families)``: devices.yaml ``doc`` with the routes of ``catalogue`` (SKU ->
+    goodsType; default the committed snapshot), through KEEP, checked by the library's resolver (the routes
+    over the whole document, then each row with support, of every level) and against govee_common.ksy.
+    GenError on a missing fact or one the library can't serve."""
     resolve = _resolver()
     try:
         resolve.routes(doc["families"])
+        routed = resolve.catalogue(doc["families"], snapshot() if catalogue is None else catalogue)
+        doc = _with_catalogue(doc, routed)
         projected = Projector(schema).project(_supported(doc, resolve.LEVELS), "#")
         table, families = projected["mode_color_parse"], projected["families"]
         _check_decodes(table)
@@ -230,13 +285,17 @@ def project(doc: dict[str, Any], schema: dict[str, Any]) -> tuple[dict[str, Any]
     return table, families
 
 
-def render(raw: bytes, schema: dict[str, Any]) -> str:
-    """The generated module's source for devices.yaml ``raw``."""
-    table, families = project(load(raw), schema)
+def render(raw: bytes, schema: dict[str, Any]) -> tuple[str, Any]:
+    """The generated module's source for devices.yaml ``raw``, and the committed catalogue snapshot's routes
+    (``_resolve.Catalogue``) for :func:`main` to report."""
+    doc, catalogue = load(raw), snapshot()
+    table, families = project(doc, schema, catalogue)
+    routed = _resolver().catalogue(doc["families"], catalogue)
+    only = frozenset(sku for skus in routed.added.values() for sku in skus)
     fmt = pprint.PrettyPrinter(width=110, sort_dicts=False).pformat
     return "\n".join([
-        '"""Generated from spec/devices.yaml by tools/gen_devices.py: do not edit (a build product, never '
-        'committed)."""',
+        '"""Generated from spec/devices.yaml and spec/govee_catalog.json by tools/gen_devices.py: do not '
+        'edit (a build product, never committed)."""',
         "from __future__ import annotations",
         "",
         "from typing import TYPE_CHECKING, Final",
@@ -246,8 +305,10 @@ def render(raw: bytes, schema: dict[str, Any]) -> str:
         "",
         f"MODE_COLOR_PARSE: Final[dict[str, ModeColorStrategy]] = {fmt(table)}",
         f"FAMILIES: Final[tuple[Family, ...]] = {fmt(families)}",
+        "# The SKUs only the catalogue snapshot routes (profile_for keeps them on their row's pacts).",
+        f"CATALOGUE_SKUS: Final[frozenset[str]] = frozenset({fmt(tuple(sorted(only)))})",
         "",
-    ])
+    ]), routed
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -255,11 +316,16 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--out", type=pathlib.Path, default=OUT)
     args = ap.parse_args(argv)
     schema = json.loads((SPEC / "devices.schema.json").read_text(encoding="utf-8"))
-    text = render((SPEC / "devices.yaml").read_bytes(), schema)
+    raw = (SPEC / "devices.yaml").read_bytes()
+    text, routed = render(raw, schema)
     compile(text, "devices.py", "exec")   # valid Python before it is written
     args.out.mkdir(parents=True, exist_ok=True)
     (args.out / "devices.py").write_text(text, encoding="utf-8")
     print(f">> devices table: {args.out / 'devices.py'} ({len(text)} bytes)")
+    print(f">> catalogue snapshot: {sum(map(len, routed.added.values()))} SKUs routed that no devices.yaml "
+          f"row lists, {len(routed.review)} for review")
+    for line in routed.review:
+        print(f"   review: {line}")
     return 0
 
 

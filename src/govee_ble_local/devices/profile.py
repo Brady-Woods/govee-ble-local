@@ -4,7 +4,9 @@ A ``DeviceProfile`` carries everything the capability-driven :class:`~.device.De
 needs for one SKU family. The supported table, :data:`PROFILES`, is generated from the spec:
 ``spec/devices.yaml``'s supported ``client_profile`` rows (``_generated/devices.py``, built by
 ``tools/gen_devices.py``) resolved by :mod:`._resolve`, one profile per group of SKUs whose
-resolved facts are identical. :func:`profile_for` routes a SKU to its row, by the advertised pact
+resolved facts are identical. A row's SKUs include those the committed catalogue snapshot
+(``spec/govee_catalog.json``) routes to it by their goodsType, where no row lists them (no cloud
+call at run time). :func:`profile_for` routes a SKU to its row, by the advertised pact
 or the goodsType where several rows list it. The wire cipher is resolved at connect from the
 advertisement, so ``encryption`` here is only the fallback default; ``requires_secret`` is the
 separate account-lock capability.
@@ -468,7 +470,8 @@ PROFILES: Final[tuple[DeviceProfile, ...]] = _ADMITTED[0]
 """The supported SKUs' profiles, generated from spec/devices.yaml (module doc): one per group of SKUs whose
 resolved facts are identical, in devices.yaml order: the ``hardware_verified`` and ``app_traced`` rows (the
 ``modelled`` ones only come through ``allow_modelled``). A SKU's evidence, citations and bench notes are its
-devices.yaml row's ``doc`` and ``doc-ref``."""
+devices.yaml row's ``doc`` and ``doc-ref``, and for a SKU only the catalogue snapshot routes, also the
+snapshot's goodsType for it."""
 
 
 def profile_for(sku: str, *, pact: tuple[int, int] | None = None, goods_type: int | None = None,
@@ -482,8 +485,9 @@ def profile_for(sku: str, *, pact: tuple[int, int] | None = None, goods_type: in
     ones; ``allow_modelled`` also takes ``modelled`` rows (inferred, not traced), and as the build refuses a
     SKU that rows of both kinds list (``_resolve.routes``), it only adds SKUs, never changes a route. A pact
     no row accepts still routes a SKU that one ``hardware_verified`` / ``app_traced`` profile serves, as in
-    1.x (the pact picks between rows, never refuses the only one); a ``modelled`` row stays gated on its
-    pacts."""
+    1.x (the pact picks between rows, never refuses the only one); a ``modelled`` row, and a SKU only the
+    catalogue snapshot routes (no 1.x unit to keep), stay gated on their row's pacts, as the app's scan is
+    (``BaseBleProcessor.g``: no protocol, no device)."""
     key = sku.upper()
     for table in (_ADMITTED, _MODELLED) if allow_modelled else (_ADMITTED,):
         hits = {id(r.profile): r.profile for r in table[1].get(key, ())
@@ -491,7 +495,7 @@ def profile_for(sku: str, *, pact: tuple[int, int] | None = None, goods_type: in
                 and (goods_type is None or r.goods_type == goods_type)}
         if hits:
             return next(iter(hits.values())) if len(hits) == 1 else None
-    if pact is not None:   # D3: no released SKU is demoted by a pact its row doesn't list
+    if pact is not None and key not in _devices.CATALOGUE_SKUS:   # D3: no row-listed SKU is demoted by a pact
         loose = {id(r.profile): r.profile for r in _ADMITTED[1].get(key, ())
                  if goods_type is None or r.goods_type == goods_type}
         if len(loose) == 1:

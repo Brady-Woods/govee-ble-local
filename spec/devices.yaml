@@ -752,7 +752,9 @@ families:
             versionArray {0, 1} (Support.supportScenesOp(64); ScenesDelegateRegister through Support4BulbLightV3.g):
             parseSceneV1 uploads a type-1 RGB scene with commByte 0x01, type 0 activates only; the {1} of
             Support.is2NewScenesMode is the IoT / group path (scenes.dispatch.iot_apply), the same upload set. H6009, H600A
-            and H6010 also appear at 64 (bulblight Support.d) but are not traced here. No account lock; plaintext unless
+            and H6010 also appear at 64 (bulblight Support.d) but are not traced here: the library routes them, and the
+            other SKUs the catalogue snapshot gives goodsType 64, to this row by that goodsType alone
+            (spec/govee_catalog.json), at its pacts. No account lock; plaintext unless
             the advertisement says otherwise. HARDWARE-VERIFIED on an H6006 and an encrypted H6008 (bench 2026-10-15, macOS):
             their 0x0d reports decode to 2700 K after a CCT write and to the RGB after a colour write; the H6006 acked a short
             scene upload (packet count 2, empty END) and then reported the scene active; both controlled with no secret. No

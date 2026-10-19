@@ -7,7 +7,9 @@ identical, with each route's goodsType and accepted pacts, which ``devices/profi
 :data:`~.profile.PROFILES` table and its routing index. The generator runs :func:`routes` over the whole
 document and the same :func:`profiles` over its projection, every support level, before it writes the
 module, so a missing fact, or one the library can't serve, fails the build with :class:`SpecError` and never
-an import. Nothing here imports the package, so the generator can load this file on its own.
+an import. Nothing here imports the package, so the generator can load this file on its own. The generator
+also runs :func:`catalogue` over the whole document with the committed catalogue snapshot
+(``spec/govee_catalog.json``), and the rows' ``models`` in the projection carry the SKUs it routes.
 
 The spec's resolution (devices.schema.json ``clientRow``, ``spec/govee_reference.py`` ``ble_rows`` /
 ``client_row``): a row is a BLE route for its models when it has ``support``, ``pacts`` and ``ble`` in its
@@ -31,6 +33,15 @@ the row lacks fails the build: nothing defaults silently.
   goodsType. A SKU that a ``modelled`` row and an admitted row both list raises too: the spec's routing
   (``ble_rows``) counts both wherever both accept the pact, and the opt-in must leave the admitted routes as
   they are.
+- The catalogue snapshot (:func:`catalogue`, the precedence of ``spec/govee_catalog.json``'s doc): a SKU no
+  row lists routes to the BLE row with support at its catalogue goodsType when that is the only row at it
+  (the app's ``Pact.f``), at that row's support level and with its facts, and never at goodsType 0 (the
+  legacy code). Such a SKU (``_generated`` ``CATALOGUE_SKUS``) stays gated on the row's pacts: the 1.x
+  fallback of ``profile.profile_for`` covers only the SKUs a row lists. A SKU a row lists
+  keeps the spec's route, unless its catalogue goodsType is a conflict (non-zero, and none of its rows'),
+  which only an ``assigned_goods_type`` item citing the app's rewrite settles: an unsettled one is unrouted
+  and on the generator's review list. The snapshot's ``ic`` is read nowhere: no row's app trace cites the
+  app's read of it (``CategoriesConfig.getDefIcNum``), and no count is derived from it.
 - A row's colour scheme drops the capabilities it has no frame for (:data:`SCHEME_LACKS`), but only a
   scheme the row names itself: a family default that would drop one raises. ``rgb``, ``color_temp`` or
   ``segments`` on a relay row raises (the library resolves no colour scheme or Kelvin range for a plug), and
@@ -246,6 +257,7 @@ class AssignedGoodsType(TypedDict, total=False):
     """``assignedGoodsType``: SKUs of the family whose goodsType the app rewrites itself."""
     models: tuple[str, ...]
     goods_type: int
+    from_goods_type: tuple[int, ...]   # read over the whole document only (:func:`catalogue`)
 
 
 class Family(TypedDict, total=False):
@@ -390,6 +402,74 @@ def _is_route(fam: Family, row: Row) -> bool:
     """A row is a BLE route: it lists models and pacts, and ble is in its (else its family's) connectivity."""
     return bool(row.get("models")) and "pacts" in row and "ble" in (
         row.get("connectivity") or fam.get("connectivity") or ())
+
+
+class Catalogue(NamedTuple):
+    """The catalogue snapshot's routes over devices.yaml (:func:`catalogue`)."""
+    added: dict[tuple[str, str], tuple[str, ...]]
+    """``{(family id, goodsType): SKUs}``: the SKUs no row lists that the snapshot routes to that row."""
+    unrouted: frozenset[str]
+    """Upper-cased SKUs that a row with support lists at a goodsType the snapshot contradicts, with no cited
+    rewrite: the spec's route doesn't win, so no row routes them."""
+    review: tuple[str, ...]
+    """One line per SKU the snapshot leaves for review, which the generator prints."""
+
+
+def catalogue(families: Sequence[Family], snapshot: Mapping[str, int]) -> Catalogue:
+    """The routes ``snapshot`` (``spec/govee_catalog.json``: SKU -> catalogue goodsType) adds to
+    devices.yaml's ``families`` (the whole document), with SKUs compared upper-cased as :func:`routes` does.
+
+    A SKU that some client_profile row lists keeps the spec's goodsType. Its catalogue goodsType is a conflict
+    when it is non-zero and none of those rows has it. An ``assigned_goods_type`` item of a listing row's
+    family that names the SKU at that row's goodsType, from the catalogue's (or from any, without
+    ``from_goods_type``), settles it, whatever its condition: the app's cited rewrite (:func:`routes` refuses
+    that item on a routed SKU). An unsettled conflict is for review, and a row with support no longer routes
+    the SKU. A SKU no row lists routes to the BLE row with support at its catalogue goodsType when that is the
+    only row at it, but never at 0 (the legacy code, not H6188's goodsType-0 row); an ``assigned_goods_type``
+    item naming it (the app rewrites its goodsType), or rows of several families at that goodsType, leave it
+    for review."""
+    listed: dict[str, list[tuple[Family, str, Row]]] = {}
+    rows_at: dict[int, list[tuple[Family, str, Row]]] = {}
+    for fam in families:
+        for gt, row in ((fam.get("client_profile") or {}).get("by_goods_type") or {}).items():
+            for sku in row.get("models") or ():
+                if isinstance(sku, str):
+                    listed.setdefault(sku.upper(), []).append((fam, gt, row))
+            rows_at.setdefault(int(gt), []).append((fam, gt, row))
+    rewrites: dict[str, list[tuple[str, AssignedGoodsType]]] = {}
+    for fam in families:
+        for item in fam.get("assigned_goods_type") or ():
+            for sku in item.get("models") or ():
+                if isinstance(sku, str):
+                    rewrites.setdefault(sku.upper(), []).append((fam["id"], item))
+    added: dict[tuple[str, str], list[str]] = {}
+    unrouted: set[str] = set()
+    review: list[str] = []
+    for sku, code in sorted(snapshot.items()):
+        key = sku.upper()
+        if key in listed:
+            here = {(fam["id"], int(g)) for fam, g, _row in listed[key]}
+            if code == 0 or code in {g for _f, g in here} or any(
+                    (owner, item.get("goods_type")) in here and code in item.get("from_goods_type", (code,))
+                    for owner, item in rewrites.get(key, ())):
+                continue
+            rows = ", ".join(f"{fam['id']} {g}" for fam, g, _row in listed[key])
+            routed = any("support" in row for _fam, _g, row in listed[key])
+            review.append(f"{key}: catalogue goodsType {code}, devices.yaml {rows}, no cited rewrite"
+                          + ("; unrouted" if routed else ""))
+            if routed:
+                unrouted.add(key)
+        elif code != 0 and any("support" in row and _is_route(fam, row)
+                               for fam, _g, row in rows_at.get(code, ())):
+            hits = rows_at[code]
+            if key in rewrites:
+                review.append(f"{key}: catalogue goodsType {code}, rewritten by an assigned_goods_type item")
+            elif len(hits) > 1:
+                review.append(f"{key}: catalogue goodsType {code} has rows in "
+                              + ", ".join(fam["id"] for fam, _g, _row in hits))
+            else:
+                added.setdefault((hits[0][0]["id"], hits[0][1]), []).append(key)
+    return Catalogue({k: tuple(v) for k, v in added.items()}, frozenset(unrouted), tuple(review))
 
 
 def _rows(families: Sequence[Family], admitted: Collection[str]) -> Iterator[tuple[Family, str, Row]]:
