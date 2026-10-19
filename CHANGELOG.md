@@ -33,9 +33,11 @@ model, from which the shipped readers are generated).
   `brightness`), `power_resync` (plugs) or `color_scheme` where one is used, a colour capability on a plug,
   a capability a family-default scheme would drop, out-of-range values (Kelvin and brightness ranges and
   their branches, masks, zone segments, group size, IC range, version gates), `connect_reads` that don't
-  list `brightness` / `gradual` exactly where the library reads them, and, checked over the whole
-  document, a SKU that a `modelled` row and a `hardware_verified` / `app_traced` row both list, or that an
-  `assigned_goods_type` item in any family names. Rows of every support level are resolved and checked.
+  list `brightness` / `gradual` exactly where the library reads them, a pact branch at a pact the row
+  doesn't list (no device reaches it), and, checked over the whole document, a SKU that a `modelled` row
+  and a `hardware_verified` / `app_traced` row both list, or that an `assigned_goods_type` item in any
+  family names, and in a family with a supported row a `by_model` or `wire.by_model` entry for a SKU none
+  of its rows lists. Rows of every support level are resolved and checked.
 - **Routing by pact and goodsType** (one-device-list phase 2): `profile_for(sku, *, pact=None,
   goods_type=None, allow_modelled=False)` and `is_supported_sku` with the same keywords. The candidates
   are the devices.yaml BLE rows that list the SKU and accept the advertised `(pact_type, pact_code)` (any

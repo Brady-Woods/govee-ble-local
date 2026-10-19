@@ -223,6 +223,8 @@ _REFUSED: tuple[tuple[str, str, _Edit, str], ...] = (
      "whose gate the app compares numerically (KelvinConfig.Config.Y2"),
     ("h60ax", "303", lambda f: _row(f, "303")["by_pact"]["1,1"].update(mode_color_parse="kelvin_15"),
      "pact branch 1,1 on ['mode_color_parse']"),
+    ("h60ax", "303", lambda f: _row(f, "303")["by_pact"].update({"9,9": {"status_read": _STATUS_PAIR}}),
+     "pact branches ['9,9'] are not among the row's pacts"),
     ("dreamcolorlightv1", "19", lambda f: _row(f, "19")["by_pact"]["1,2"].update(kelvin_range=[2700, 6500]),
      "a pact kelvin_range needs a base kelvin_range"),
     ("h61d3", "261", lambda f: _row(f, "261")["by_pact"]["4,1"].update(kelvin_range=[9500, 9800]),
@@ -310,6 +312,10 @@ def test_the_generator_keeps_data_keys_and_raises_on_a_missing_fact() -> None:
     for fam_id, gt, edit, error in _REFUSED:
         with pytest.raises(SystemExit, match=rf"{fam_id} goodsType {gt}\b[^:]*: .*{re.escape(error)}"):
             gen.project(edited(fam_id, edit), schema)
+    # A per-SKU entry of a SKU no row of the family lists (in a family the library serves).
+    stray = edited("h6047", lambda f: f["client_profile"]["wire"].setdefault("by_model", {}).update(HX1={}))
+    with pytest.raises(SystemExit, match=re.escape("h6047 wire by_model ['HX1']: no row of the family")):
+        gen.project(stray, schema)
     # A modelled row is built and checked, but admitted only on the opt-in.
     modelled = edited("tablelampv1", lambda f: _row(f, "22").update(support="modelled"))
     table, cut = gen.project(modelled, schema)

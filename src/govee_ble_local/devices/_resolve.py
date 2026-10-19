@@ -91,7 +91,9 @@ the row lacks fails the build: nothing defaults silently.
 - Wire branches: the library reads the wire with the pact and the firmware unknown, so a wire ``by_pact`` /
   ``by_firmware`` branch raises, but for the unread ones of :data:`_UNREAD_WIRE_BRANCHES` (H60A6 pact (1,
   1)'s one colour piece: decision D3, the library keeps the row's 13).
-- Pact branches: ``status_read`` becomes the gate above, and ``scene_versions`` becomes
+- Pact branches are at the row's listed pacts only (a branch elsewhere is reached by no device: it raises),
+  and a family with a row with support takes ``by_model`` / ``wire.by_model`` entries only for SKUs one of
+  its rows lists (:func:`routes`). ``status_read`` becomes the gate above, and ``scene_versions`` becomes
   ``scene_versions_by_pact``, which ``Device.scene_versions`` applies with the advertised pact before the
   firmware entries (goodsType 19 at pact code 2); ``kelvin_range`` and ``brightness_range`` become
   ``kelvin_by_pact`` / ``brightness_by_pact``, which ``Device`` applies with the advertised pact the same
@@ -427,9 +429,10 @@ def routes(families: Sequence[Family]) -> dict[str, tuple[Family, str, str]]:
     a row with support (any level) that is no BLE route, for a SKU that a ``modelled`` row and an admitted
     row both list (the spec's ``ble_rows`` counts both wherever both accept the pact, so the opt-in would no
     longer be additive), for a routed SKU that an ``assigned_goods_type`` item in any family names (matched
-    as the routes are, case-insensitively) unless the item's condition tests the pact alone, and for a row
-    that disagrees with a pact-conditioned item (:func:`_reassignments`). The generator runs it over the
-    whole document."""
+    as the routes are, case-insensitively) unless the item's condition tests the pact alone, for a row
+    that disagrees with a pact-conditioned item (:func:`_reassignments`), and, in a family with a row with
+    support, for a ``by_model`` or ``wire.by_model`` entry of a SKU no row of the family lists. The
+    generator runs it over the whole document (its cut keeps only the listed SKUs' entries)."""
     listed: dict[str, list[tuple[Family, str, str, bool]]] = {}
     for fam in families:
         rows = (fam.get("client_profile") or {}).get("by_goods_type") or {}
@@ -450,6 +453,17 @@ def routes(families: Sequence[Family]) -> dict[str, tuple[Family, str, str]]:
                                     f"{other[1]}, a row of the other admission (the modelled opt-in must "
                                     "leave the admitted routes as they are)")
                 hits.append((fam, gt, sku, admitted))
+    for fam in families:
+        cp = fam.get("client_profile") or {}
+        rows = cp.get("by_goods_type") or {}
+        if any("support" in row for row in rows.values()):
+            own = {m.upper() for row in rows.values() for m in row.get("models") or () if isinstance(m, str)}
+            for layer, entries in (("by_model", cp.get("by_model") or {}),
+                                   ("wire by_model", (cp.get("wire") or {}).get("by_model") or {})):
+                unlisted = sorted(sku for sku in entries if sku.upper() not in own)
+                if unlisted:
+                    raise SpecError(f"{fam['id']} {layer} {unlisted}: no row of the family lists them (a "
+                                    "per-SKU entry needs the SKU's row)")
     for fam in families:
         for item in fam.get("assigned_goods_type") or ():
             if pact_gate(item) is not None:
@@ -697,6 +711,11 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str]) -> dic
 
     status_read = row.get("status_read")
     by_pact = row.get("by_pact") or {}
+    listed_pacts = row.get("pacts")
+    stray = sorted(set(by_pact) - set(listed_pacts)) if isinstance(listed_pacts, tuple) else []
+    if stray:
+        fail(f"pact branches {stray} are not among the row's pacts {list(listed_pacts or ())} (no device at "
+             "them reaches the row)")
     for key, branch in by_pact.items():
         pinned = _UNREAD_PACT_CAPABILITIES.get((fam["id"], gt, key))
         unread = ({"capabilities"} if pinned is not None and tuple(branch.get("capabilities") or ()) == pinned
