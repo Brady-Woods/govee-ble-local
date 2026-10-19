@@ -37,7 +37,7 @@ from ..transport.connection import GoveeConnection
 from ..wire import build, parse, reassemble
 from . import _fold, _readback
 from .brightness import percent_to_device
-from .profile import DeviceProfile, profile_for, wire_profile
+from .profile import DeviceProfile, profile_for, refuses_pact, wire_profile
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -205,9 +205,20 @@ class Device:
         (``BleUtil.parseBleBroadcastPact``) into the device model. Exposed as :attr:`pact`; it decides
         whether the 0xAC status read asks for colour groups (:meth:`_wants_color_groups`), and picks the
         profile's pact entries for the scene set and the Kelvin and brightness ranges. An advertisement
-        without pact info changes nothing."""
-        if adv is not None and adv.pact is not None:
-            self._pact = adv.pact
+        without pact info changes nothing.
+
+        The profile was routed when the device was built (``create_device``) and is kept: a pact heard
+        later that none of its rows accepts, where the app's scan would refuse the device or take another
+        row (``profile.refuses_pact``), is logged as a warning, once per change of pact."""
+        if adv is None or adv.pact is None or adv.pact == self._pact:
+            return
+        self._pact = adv.pact
+        if refuses_pact(self.profile, self._sku, adv.pact):
+            _LOGGER.warning(
+                "%s (%s): advertises pact %d,%d, which no row of its profile accepts (the app's scan refuses "
+                "it there or takes another row); it keeps the profile it was built with",
+                self._ble_device.address, self._sku, *adv.pact,
+            )
 
     @property
     def pact(self) -> tuple[int, int] | None:
@@ -1356,11 +1367,15 @@ def make_device(
     frame_log: str | None = None,
     idle_disconnect: float | None = None,
 ) -> Device | None:
-    """Build a capability-driven Device for `sku`, or None if unsupported."""
-    p = profile_for(sku)
+    """Build a capability-driven Device for `sku`, or None if unsupported at the advertisement's pact.
+
+    As ``registry.create_device`` (which raises instead): the pact of ``advertisement_data`` picks the
+    SKU's row (``profile_for(sku, pact=...)``), so a pact the SKU's rows refuse gives None."""
+    adv = from_advertisement(advertisement_data, ble_device.name)
+    p = profile_for(sku, pact=adv.pact if adv is not None else None)
     if p is None:
         return None
     return Device(
-        p, ble_device, advertisement_data, sku=sku, secret=secret, frame_log=frame_log,
-        idle_disconnect=idle_disconnect,
+        p, ble_device, adv if adv is not None else advertisement_data, sku=sku, secret=secret,
+        frame_log=frame_log, idle_disconnect=idle_disconnect,
     )

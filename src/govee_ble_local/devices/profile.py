@@ -592,6 +592,17 @@ def profile_for(sku: str, *, pact: tuple[int, int] | None = None, goods_type: in
     return None
 
 
+def refuses_pact(profile: DeviceProfile, sku: str, pact: tuple[int, int]) -> bool:
+    """Whether ``sku``'s routes to ``profile`` (any support level) all refuse ``pact``, and the 1.x pact
+    fallback doesn't route it there either: :func:`profile_for` would not give ``profile`` for this
+    advertisement. False for a profile no route of ``sku`` carries (built by hand: nothing to check)."""
+    key = sku.upper()
+    mine = [r for table in (_ADMITTED, _MODELLED) for r in table[1].get(key, ()) if r.profile is profile]
+    if not mine or any(r.pacts is None or pact in r.pacts for r in mine):
+        return False
+    return profile_for(key, pact=pact) is not profile
+
+
 def supported_skus(*, allow_modelled: bool = False) -> list[str]:
     """All supported SKUs, sorted: every SKU a ``hardware_verified`` or ``app_traced`` row routes (and with
     ``allow_modelled`` a ``modelled`` one). A SKU that several rows list needs the pact or the goodsType to

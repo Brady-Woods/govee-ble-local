@@ -317,6 +317,13 @@ model, from which the shipped readers are generated).
   of raising.
 
 ### Fixed
+- **`devices.device.make_device` routes by the advertised pact**, as `create_device` does: it passes the
+  advertisement's pact to `profile_for`, so a pact the SKU's rows refuse gives None (it took the SKU's
+  profile whatever the pact). Internal (not in `__all__`); no behaviour change without an advertisement.
+- **A pact heard after the device is built that its rows refuse is logged**: `Device` keeps the profile it was
+  routed to, and a later advertisement whose pact none of that profile's rows accepts (where the app's scan
+  refuses the device or takes another row; `profile.refuses_pact`) logs a warning, once per change of pact.
+  1.4.0's 18 SKUs at a pact no row lists keep their 1.x fallback and log nothing.
 - **A colour report with no CCT test is not a Kelvin** (the nocct fold): `parse.mode_color` honours the
   layout's `is_cct` on the `[gradual][kelvin s16be]` decodes, so a `gradual_kelvin_s16be_nocct` report
   (mode_color_parse `kelvin_15_nocct`, `kelvin_0d_nocct`, ...) reads as `KelvinReport(0)`, not

@@ -245,10 +245,12 @@ def _with_row(gt: str, **row: Any) -> Any:
     return families
 
 
-def test_a_sku_several_rows_list_is_routed_by_its_pact(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_sku_several_rows_list_is_routed_by_its_pact(monkeypatch: pytest.MonkeyPatch,
+                                                       caplog: pytest.LogCaptureFixture) -> None:
     # WAS: a SKU that two rows list failed the build ("routed by two rows"). profile_for now takes the row
     # that accepts the advertised pact, else the goodsType; with neither it is unsupported
-    # (devices.schema.json clientRow), and create_device routes it from the advertisement it is given.
+    # (devices.schema.json clientRow), and create_device and make_device route it from the advertisement
+    # they are given. A pact heard later that the device's rows refuse is logged; the profile stays.
     families = _with_row("65", models=("H6008",), pacts=("3,1",), capabilities=("power", "brightness"))
     monkeypatch.setattr(profile_mod, "_ADMITTED", profile_mod._table(families, _resolve.ADMITTED))
     bulb, dimmer = profile_for("H6008", pact=(1, 1)), profile_for("H6008", pact=(3, 1))
@@ -260,6 +262,15 @@ def test_a_sku_several_rows_list_is_routed_by_its_pact(monkeypatch: pytest.Monke
     adv = GoveeAdvertisement("H6008", "GVH60082691", False, 3, 3, 1)
     assert create_device(ble_device("AA:BB:CC:DD:EE:3C", adv.name), "H6008", adv).profile is dimmer
     assert "H6008" not in _resolve.routes(families) and "H6006" in _resolve.routes(families)
+    caplog.set_level("WARNING", logger="govee_ble_local")
+    d = make_device(ble_device("AA:BB:CC:DD:EE:3C", adv.name), "H6008", adv)
+    assert d is not None and d.profile is dimmer and d.pact == (3, 1) and not caplog.records
+    assert make_device(ble_device("AA:BB:CC:DD:EE:3C", adv.name), "H6008",
+                       dataclasses.replace(adv, pact_type=9, pact_code=9)) is None
+    d._learn_pact(dataclasses.replace(adv, pact_type=1))   # pact (1, 1): the bulb row's, not the dimmer's
+    d._learn_pact(dataclasses.replace(adv, pact_type=1))   # unchanged: not logged again
+    assert d.pact == (1, 1) and d.profile is dimmer
+    assert [r.getMessage().split(": ", 1)[1][:28] for r in caplog.records] == ["advertises pact 1,1, which n"]
 
 
 def test_a_modelled_row_needs_the_opt_in(monkeypatch: pytest.MonkeyPatch) -> None:
