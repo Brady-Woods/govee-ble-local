@@ -182,7 +182,8 @@ def _scene(i: int, entry: Any) -> Scene:
     """Pool entry ``i`` as a Scene. Its param is checked now, so a corrupt bundled blob fails at load, not at
     upload, and a scene with version ``rules`` is refused: the app lists it only on firmware its rules allow
     (devices.yaml scenes.list_filter), which the library doesn't model, so offered it would show on every
-    one."""
+    one. A ``scene_name`` (the sceneName tools/fetch_scenes.py records for a scene stored apart) that is not
+    a string is refused too, as the tool refuses it."""
     name = entry["name"]
     if not isinstance(name, str) or not name:
         raise ValueError(f"pool entry {i} has no scene name")
@@ -191,6 +192,8 @@ def _scene(i: int, entry: Any) -> Scene:
         base64.b64decode(param, validate=True)
     if entry.get("rules"):
         raise ValueError(f"{name!r} is gated by version rules")
+    if entry.get("scene_name") is not None and not isinstance(entry["scene_name"], str):
+        raise ValueError(f"{name!r}'s scene_name is not a string")
     return Scene(
         name, int(entry["code"]), param, entry.get("category"),
         entry.get("param_id"), bool(entry.get("placeholder", False)),

@@ -369,7 +369,8 @@ model, from which the shipped readers are generated).
   1.4.0's wheel returns at the same scene versions. `load_scenes`, `async_load_scenes` and
   `scene_names_by_code` are unchanged, and a SKU the store has no catalog for still gets `{}`. The first
   lookup of each SKU reads and checks the whole store, so one that is missing, unreadable or malformed
-  raises GoveeBleError for any SKU: an entry with no name or code, a bad blob or version rules, an index
+  raises GoveeBleError for any SKU: an entry with no name or code, a bad blob, version rules or a
+  `scene_name` that is not a string (as `tools/fetch_scenes.py` refuses one), an index
   outside the pool or out of order, two scenes of one name in a catalog, a SKU with no scenes or not in
   upper case, and an entry no SKU holds (an orphan) are refused. `tools/fetch_scenes.py` reads and writes
   the store: each write lays it out again from every SKU's catalog (`layout`) in one atomic replace, so the

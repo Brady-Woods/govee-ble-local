@@ -118,6 +118,7 @@ _A, _B = {"name": "a", "code": 1}, {"name": "b", "code": 2}
     ["{not json", "[1, 2]", '{"pool": {}, "skus": {}}', _bad([5]), _bad([{"name": "a", "param": None}]),
      _bad([{"name": "a", "code": "xx"}]), _bad([{"name": "", "code": 1}]),
      _bad([{**_A, "rules": True}]),   # version-gated in the app (scenes.list_filter): refused
+     _bad([{**_A, "scene_name": 5}]),   # fetch_scenes records a sceneName as a string
      _bad([_A], {"H1234": [1]}), _bad([_A, _B], {"H1234": [1, 0]}),
      _bad([_A, {**_A, "code": 2}], {"H1234": [0, 1]}),   # two scenes of one name
      _bad([_A], {"h1234": [0]}),
