@@ -71,6 +71,8 @@ def pytest_sessionstart(session):  # type: ignore[no-untyped-def]
 # -- optional-dependency gate ---------------------------------------------------------------
 import importlib.util  # noqa: E402
 import os  # noqa: E402
+from types import SimpleNamespace  # noqa: E402
+from typing import Any  # noqa: E402
 
 import pytest  # noqa: E402
 
@@ -102,6 +104,26 @@ def read_struct(obj):  # type: ignore[no-untyped-def]
     (``ReadWriteKaitaiStruct``): ``from_bytes`` / ``Cls(..., stream)`` only bind the stream."""
     obj._read()
     return obj
+
+
+class FakeSceneFiles:
+    """Stands in for ``scenes.resources.files(...)``: ``index.json`` names the set ``name`` for ``sku``,
+    whose read returns ``text``, or raises it when it is an exception (a missing file when None). No
+    ``sku``: no index."""
+
+    def __init__(self, sku: str | None, text: str | Exception | None, name: str = "0123456789abcdef") -> None:
+        self._files = {} if sku is None else {"index.json": f'{{"{sku}": "{name}"}}', f"{name}.json": text}
+
+    def __truediv__(self, file: str) -> Any:
+        def read_text(encoding: str | None = None) -> str:
+            assert encoding == "utf-8"
+            text = self._files.get(file)
+            if text is None:
+                raise FileNotFoundError(2, "No such file", file)
+            if isinstance(text, Exception):
+                raise text
+            return text
+        return SimpleNamespace(read_text=read_text)
 
 
 # -- firmware-image provenance ----------------------------------------------------------------

@@ -215,6 +215,13 @@ model, from which the shipped readers are generated).
   (`get_requires_for_build_*`). An sdist ships the generated table, and the runtime dependencies are
   unchanged: nothing under `src/` imports yaml. `tools/gen_kaitai.sh` writes the table after the Kaitai
   classes, with `$PYTHON`.
+- **Bundled scene catalogs are stored once by content.** `scenes/index.json` maps each SKU to its scene set,
+  `scenes/<set>.json`, named by the first 16 hex digits of the file's SHA-256, so SKUs with the same scenes
+  share one file (H6006 / H6008 and H61A8 / H6641 today: 10 catalogs become 8 sets, 179 KB of JSON 132 KB).
+  Every set is the SKU's old `<SKU>.json`, byte for byte, and `load_scenes`, `async_load_scenes` and
+  `scene_names_by_code` are unchanged. An index entry naming a set that is not bundled raises GoveeBleError
+  like an unreadable catalog. `tools/fetch_scenes.py` writes the new layout (a new set before the index,
+  then removes the sets no SKU names) and stores nothing for a SKU the library has no scenes for.
 
 ### Fixed
 - **A colour report with no CCT test is not a Kelvin** (the nocct fold): `parse.mode_color` honours the

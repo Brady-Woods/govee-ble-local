@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 from bleak.exc import BleakError
-from conftest import require_optional
+from conftest import FakeSceneFiles, require_optional
 
 require_optional("kaitaistruct", reason="Kaitai runtime not installed")
 
@@ -162,24 +162,13 @@ async def test_except_bleak_error_still_catches_a_failed_scan(monkeypatch: pytes
 
 
 # ── an unreadable scene catalog is a library error ─────────────────────────────────────────
-class _Unreadable:
-    """Stands in for ``resources.files(...)``: every catalog file raises ``error`` when read."""
-
-    def __init__(self, error: Exception) -> None:
-        self.error = error
-
-    def __truediv__(self, _name: str) -> _Unreadable:
-        return self
-
-    def read_text(self, encoding: str = "utf-8") -> str:
-        raise self.error
-
-
 @pytest.fixture
 def unreadable(monkeypatch: pytest.MonkeyPatch) -> Any:
-    def install(error: Exception) -> None:
+    """Installs bundled files whose H6008 set raises ``error`` when read (None: no index at all)."""
+    def install(error: Exception | None) -> None:
         scenes._catalog.cache_clear()
-        monkeypatch.setattr(scenes, "resources", SimpleNamespace(files=lambda _pkg: _Unreadable(error)))
+        files = FakeSceneFiles(None if error is None else "H6008", error)
+        monkeypatch.setattr(scenes, "resources", SimpleNamespace(files=lambda _pkg: files))
 
     yield install
     scenes._catalog.cache_clear()   # nothing read through the stub stays cached
@@ -198,7 +187,7 @@ def test_unreadable_catalog_raises_a_library_error(unreadable: Any, error: Excep
 
 
 def test_missing_catalog_is_still_empty(unreadable: Any) -> None:
-    unreadable(FileNotFoundError(2, "No such file"))
+    unreadable(None)
     assert scenes.load_scenes("H6008") == {}
 
 

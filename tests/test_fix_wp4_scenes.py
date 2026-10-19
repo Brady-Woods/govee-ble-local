@@ -5,9 +5,10 @@ from __future__ import annotations
 import base64
 
 import pytest
+from conftest import FakeSceneFiles
 
 from govee_ble_local import scenes
-from govee_ble_local.exceptions import GoveeBleInvalidValue
+from govee_ble_local.exceptions import GoveeBleError, GoveeBleInvalidValue
 from govee_ble_local.scenes import Scene, scene_names_by_code, scene_upload_frames, scene_upload_params
 from govee_ble_local.wire import build
 
@@ -66,32 +67,37 @@ def test_bad_base64_is_not_double_wrapped() -> None:
 
 # -- cached reverse index --------------------------------------------------------------------
 
-class _Res:
-    def __init__(self, text: str) -> None:
-        self._text = text
-
-    def __truediv__(self, _name: str) -> _Res:
-        return self
-
-    def read_text(self, encoding: str | None = None) -> str:
-        return self._text
-
-
 def test_names_by_code_cached_fresh_and_follows_catalog(monkeypatch: pytest.MonkeyPatch) -> None:
     scenes._catalog.cache_clear()
     try:
-        monkeypatch.setattr(scenes.resources, "files", lambda _pkg: _Res('{"a": {"code": 3}}'))
+        a, b = FakeSceneFiles("H4321", '{"a": {"code": 3}}'), FakeSceneFiles("H4321", '{"b": {"code": 4}}')
+        monkeypatch.setattr(scenes.resources, "files", lambda _pkg: a)
         first = scene_names_by_code("H4321")
         index = scenes._NAMES_BY_CODE["H4321"][1]
         first.clear()                                           # caller copy: cache unaffected
         assert scene_names_by_code("h4321") == {3: "a"}
         assert scenes._NAMES_BY_CODE["H4321"][1] is index       # not rebuilt
         scenes._catalog.cache_clear()                           # a new catalog -> new index
-        monkeypatch.setattr(scenes.resources, "files", lambda _pkg: _Res('{"b": {"code": 4}}'))
+        monkeypatch.setattr(scenes.resources, "files", lambda _pkg: b)
         assert scene_names_by_code("H4321") == {4: "b"}
     finally:
         scenes._catalog.cache_clear()
         scenes._NAMES_BY_CODE.pop("H4321", None)
+
+
+def test_index_must_name_a_bundled_set(monkeypatch: pytest.MonkeyPatch) -> None:
+    scenes._catalog.cache_clear()
+    try:
+        missing, not_a_set = FakeSceneFiles("H4321", None), FakeSceneFiles("H4321", "{}", name="../x")
+        monkeypatch.setattr(scenes.resources, "files", lambda _pkg: missing)
+        assert scenes.load_scenes("H9999") == {}                 # not in the index: no catalog
+        with pytest.raises(GoveeBleError, match="could not be read"):
+            scenes.load_scenes("H4321")                          # the set it names is not bundled
+        monkeypatch.setattr(scenes.resources, "files", lambda _pkg: not_a_set)
+        with pytest.raises(GoveeBleError, match="malformed"):
+            scenes.load_scenes("H4321")                          # not a set name
+    finally:
+        scenes._catalog.cache_clear()
 
 
 def test_names_by_code_bad_sku_still_invalid_value() -> None:

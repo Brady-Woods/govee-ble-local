@@ -4,9 +4,11 @@
 Uses the public (no-auth) app scene-library endpoint:
     GET https://app2.govee.com/appsku/v1/light-effect-libraries?sku=<SKU>
 (only an AppVersion header). Each scene yields a BLE `sceneCode` and a base64
-`scenceParam` (the effect blob uploaded via the a3-chunk burst). Writes one
-JSON per SKU to src/govee_ble_local/scenes/<SKU>.json so the catalog ships with
-the library and no runtime cloud call is needed.
+`scenceParam` (the effect blob uploaded via the a3-chunk burst). Writes each SKU's
+catalog into src/govee_ble_local/scenes/ (so it ships with the library and no runtime
+cloud call is needed), stored once by content: `<set>.json` is named by the first 16
+hex digits of its SHA-256 and `index.json` maps each SKU to its set, so SKUs with the
+same scenes share one file.
 
     python3 tools/fetch_scenes.py            # all supported SKUs
     python3 tools/fetch_scenes.py H60A6 H61A8
@@ -17,6 +19,7 @@ import argparse
 import base64
 import binascii
 import contextlib
+import hashlib
 import inspect
 import json
 import os
@@ -36,6 +39,8 @@ OUT_DIR = pathlib.Path(__file__).resolve().parent.parent / "src" / "govee_ble_lo
 # Upper bound on the library response body; real catalogs are well under 1 MiB.
 MAX_RESPONSE_BYTES = 8 * 1024 * 1024
 _SKU_RE = re.compile(r"[A-Za-z0-9]{3,8}")
+_SET_RE = re.compile(r"[0-9a-f]{16}")
+INDEX_NAME = "index.json"
 Entry = dict[str, Any]  # one scene's catalog entry (JSON object)
 
 
@@ -44,15 +49,6 @@ def validate_sku(sku: str) -> str:
     if not _SKU_RE.fullmatch(sku):
         raise ValueError(f"invalid SKU {sku!r}: expected 3-8 alphanumeric characters")
     return sku.upper()
-
-
-def catalog_path(sku: str, out_dir: pathlib.Path | None = None) -> pathlib.Path:
-    """Output path for a SKU's catalog; guaranteed to resolve inside ``out_dir``."""
-    base = (out_dir or OUT_DIR).resolve()
-    path = (base / f"{validate_sku(sku)}.json").resolve()
-    if path.parent != base:
-        raise ValueError(f"refusing to write outside {base}: {path}")
-    return path
 
 
 def validate_entry(name: object, entry: dict[str, object]) -> None:
@@ -75,16 +71,73 @@ def validate_entry(name: object, entry: dict[str, object]) -> None:
 
 
 def write_catalog(path: pathlib.Path, data: object) -> None:
-    """Write a catalog atomically: temp file in the same directory, then ``os.replace``."""
+    """Write a scene set or the index atomically: temp file in the same directory, then ``os.replace``."""
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            fh.write(json.dumps(data, indent=1, sort_keys=True))
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as fh:  # the bytes set_name() hashes
+            fh.write(_dumps(data))
         os.replace(tmp, path)
     except BaseException:
         with contextlib.suppress(OSError):
             os.unlink(tmp)
         raise
+
+
+def _dumps(data: object) -> str:
+    return json.dumps(data, indent=1, sort_keys=True)
+
+
+def set_name(text: str) -> str:
+    """A scene set's name: the first 16 hex digits of the SHA-256 of its file's text."""
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
+
+
+def set_path(name: str, out_dir: pathlib.Path | None = None) -> pathlib.Path:
+    """Path of the scene set ``name``; anything but a set name is refused, so it stays in ``out_dir``."""
+    if not _SET_RE.fullmatch(name):
+        raise ValueError(f"invalid scene set name {name!r}: expected 16 lower-case hex digits")
+    return (out_dir or OUT_DIR).resolve() / f"{name}.json"
+
+
+def read_index(out_dir: pathlib.Path | None = None) -> dict[str, str]:
+    """The store's SKU -> scene set index ({} if there is none yet)."""
+    path = (out_dir or OUT_DIR) / INDEX_NAME
+    if not path.exists():
+        return {}
+    index = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(index, dict) or not all(isinstance(v, str) and _SET_RE.fullmatch(v)
+                                              for v in index.values()):
+        raise ValueError(f"{INDEX_NAME} is not a JSON object of scene set names")
+    return index
+
+
+def read_catalog(sku: str, out_dir: pathlib.Path | None = None) -> dict[str, Entry]:
+    """``sku``'s stored catalog ({} if the index has none)."""
+    name = read_index(out_dir).get(validate_sku(sku))
+    if name is None:
+        return {}
+    data = json.loads(set_path(name, out_dir).read_text(encoding="utf-8"))
+    if not isinstance(data, dict) or not all(isinstance(v, dict) for v in data.values()):
+        raise ValueError(f"scene set {name} ({sku}) is not a JSON object of scene objects")
+    return data
+
+
+def store_catalog(sku: str, data: dict[str, Entry], out_dir: pathlib.Path | None = None) -> str:
+    """Store ``sku``'s catalog once by content and return its set name: write the set if it is new,
+    point the index at it, then delete the sets no SKU points to. The set is written before the
+    index, so the index never names a missing set."""
+    base = out_dir or OUT_DIR
+    name = set_name(_dumps(data))
+    path = set_path(name, base)
+    if not path.exists():
+        write_catalog(path, data)
+    index = read_index(base)
+    index[validate_sku(sku)] = name
+    write_catalog(base / INDEX_NAME, index)
+    for stale in base.glob("*.json"):
+        if _SET_RE.fullmatch(stale.stem) and stale.stem not in index.values():
+            stale.unlink()
+    return name
 
 
 def _is_placeholder(param_b64: str | None) -> bool:
@@ -169,10 +222,7 @@ def resolve_placeholders(email: str, password: str, skus: list[str]) -> None:
         try:
             await acct.login()
             for sku in skus:
-                path = catalog_path(sku)
-                if not path.exists():
-                    continue
-                data = json.loads(path.read_text(encoding="utf-8"))
+                data = read_catalog(sku)
                 ids = [v["param_id"] for v in data.values() if v.get("placeholder") and v.get("param_id")]
                 if not ids:
                     continue
@@ -185,7 +235,7 @@ def resolve_placeholders(email: str, password: str, skus: list[str]) -> None:
                         v["param"] = real[pid]
                         v.pop("placeholder", None)
                         fixed += 1
-                write_catalog(path, data)
+                store_catalog(sku, data)
                 print(f"{sku}: resolved {fixed}/{len(ids)} placeholder scenes")
         finally:
             await acct.close()
@@ -324,18 +374,18 @@ def main(skus: list[str], app_version: str = DEFAULT_APP_VERSION) -> int:
             print(f"{sku}: skipped (scene list is compiled into the app, not the scene library)")
             continue
         try:
-            path = catalog_path(sku)
             fresh = fetch(sku, app_version)
-            existing = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
-            if not isinstance(existing, dict) or not all(isinstance(v, dict) for v in existing.values()):
-                raise ValueError(f"existing {path.name} is not a JSON object of scene objects")
+            existing = read_catalog(sku)
         except Exception as err:
             print(f"{sku}: FETCH FAILED: {err}", file=sys.stderr)
             failures += 1
             continue
         scenes = _merge(existing, fresh)
+        if not scenes:
+            print(f"{sku}: no scenes in the library; nothing stored")
+            continue
         try:
-            write_catalog(path, scenes)
+            name = store_catalog(sku, scenes)
         except OSError as err:
             print(f"{sku}: WRITE FAILED: {err}", file=sys.stderr)
             failures += 1
@@ -346,7 +396,7 @@ def main(skus: list[str], app_version: str = DEFAULT_APP_VERSION) -> int:
         placeholders = sorted(n for n, v in scenes.items() if v.get("placeholder"))
         note = f"; {len(placeholders)} placeholders (run --resolve)" if placeholders else ""
         print(
-            f"{sku}: {len(scenes)} scenes -> scenes/{path.name} "
+            f"{sku}: {len(scenes)} scenes -> scenes/{name}.json "
             f"[{kept} preserved]{note}"
         )
         if placeholders:

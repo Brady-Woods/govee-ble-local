@@ -66,11 +66,24 @@ def test_fetch_validate_sku_rejects(sku: str) -> None:
         _load("fetch_scenes").validate_sku(sku)
 
 
-def test_fetch_catalog_path_inside_out_dir(tmp_path: Path) -> None:
+def test_fetch_set_path_inside_out_dir(tmp_path: Path) -> None:
     fs = _load("fetch_scenes")
-    assert fs.catalog_path("h60a6", tmp_path) == tmp_path.resolve() / "H60A6.json"
+    assert fs.set_path("0123456789abcdef", tmp_path) == tmp_path.resolve() / "0123456789abcdef.json"
     with pytest.raises(ValueError):
-        fs.catalog_path("../../evil", tmp_path)
+        fs.set_path("../../evil", tmp_path)
+
+
+def test_fetch_stores_each_scene_set_once(tmp_path: Path) -> None:
+    fs = _load("fetch_scenes")
+    a, b = {"x": {"code": 1, "param": None}}, {"y": {"code": 2, "param": None}}
+    name = fs.store_catalog("H6006", a, tmp_path)
+    assert fs.store_catalog("h6008", a, tmp_path) == name       # same scenes, one set
+    assert fs.read_index(tmp_path) == {"H6006": name, "H6008": name}
+    assert fs.read_catalog("H6008", tmp_path) == a and fs.read_catalog("H6004", tmp_path) == {}
+    fs.store_catalog("H6006", b, tmp_path)
+    fs.store_catalog("H6008", b, tmp_path)                      # nothing names `a` now: removed
+    assert sorted(p.name for p in tmp_path.iterdir()) == [f"{fs.read_index(tmp_path)['H6006']}.json",
+                                                          "index.json"]
 
 
 def test_fetch_validate_entry() -> None:
@@ -98,7 +111,7 @@ def test_fetch_main_exits_nonzero_on_failure(monkeypatch: pytest.MonkeyPatch, tm
         fs, "fetch", lambda sku, app_version="": {"x": {"code": 1, "param": None, "category": None}}
     )
     assert fs.main(["H60A6"]) == 0
-    assert (tmp_path / "H60A6.json").exists()
+    assert fs.read_catalog("H60A6", tmp_path) == {"x": {"code": 1, "param": None, "category": None}}
 
 
 def test_fetch_app_version_flag_and_env(monkeypatch: pytest.MonkeyPatch) -> None:

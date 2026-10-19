@@ -4,6 +4,7 @@ from __future__ import annotations
 import dataclasses
 
 import pytest
+from conftest import FakeSceneFiles
 
 from govee_ble_local import scenes
 from govee_ble_local.exceptions import GoveeBleError, GoveeBleInvalidValue
@@ -50,23 +51,11 @@ def test_unknown_valid_sku():
     assert scene_names_by_code("H9999") == {}
 
 
-class _Res:
-    def __init__(self, text):
-        self._text = text
-
-    def __truediv__(self, _name):
-        return self
-
-    def read_text(self, encoding=None):
-        assert encoding == "utf-8"
-        return self._text
-
-
 @pytest.fixture
 def fake_catalog(monkeypatch):
     def install(text):
         scenes._catalog.cache_clear()
-        monkeypatch.setattr(scenes.resources, "files", lambda _pkg: _Res(text))
+        monkeypatch.setattr(scenes.resources, "files", lambda _pkg: FakeSceneFiles("H1234", text))
     yield install
     scenes._catalog.cache_clear()
 

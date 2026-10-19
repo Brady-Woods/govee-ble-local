@@ -272,10 +272,11 @@ def test_main_counts_corrupt_catalog_and_write_failure(monkeypatch: pytest.Monke
     fs = _load("fetch_scenes")
     monkeypatch.setattr(fs, "OUT_DIR", tmp_path)
     monkeypatch.setattr(fs, "fetch", lambda sku, app_version="": {"A": {"code": 1, "param": None}})
-    (tmp_path / "H60A6.json").write_text('{"A": "not a scene object"}', encoding="utf-8")
+    (tmp_path / "index.json").write_text('{"H60A6": "0123456789abcdef"}', encoding="utf-8")
+    (tmp_path / "0123456789abcdef.json").write_text('{"A": "not a scene object"}', encoding="utf-8")
     assert fs.main(["H60A6", "H61A8"]) == 1            # the corrupt one fails, the run goes on
     assert "H60A6: FETCH FAILED" in capsys.readouterr().err
-    assert (tmp_path / "H61A8.json").exists()
+    assert fs.read_catalog("H61A8", tmp_path) == {"A": {"code": 1, "param": None}}
 
     def disk_full(path: Path, data: object) -> None:
         raise OSError("disk full")

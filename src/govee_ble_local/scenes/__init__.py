@@ -1,8 +1,9 @@
 """Built-in scene catalogs (per-SKU), fetched from Govee's scene library.
 
-Each `<SKU>.json` maps scene name -> {code, param, category}. `code` is the
-BLE activation code; `param` is the base64 effect blob for the a3-chunk upload
-(None if the device bare-activates). Regenerate with tools/fetch_scenes.py.
+`index.json` maps each SKU to its scene set, `<set>.json`, named by the first 16 hex digits of the
+SHA-256 of the file, so SKUs with the same scenes share one file. A set maps scene name -> {code,
+param, category}. `code` is the BLE activation code; `param` is the base64 effect blob for the
+a3-chunk upload (None if the device bare-activates). Regenerate with tools/fetch_scenes.py.
 """
 from __future__ import annotations
 
@@ -118,6 +119,7 @@ class Scene:
 
 
 _SKU_RE = re.compile(r"[A-Za-z0-9]{3,8}")
+_SET_RE = re.compile(r"[0-9a-f]{16}")
 
 
 class _MalformedSceneParam(GoveeBleInvalidValue):
@@ -127,15 +129,29 @@ class _MalformedSceneParam(GoveeBleInvalidValue):
 @functools.cache
 def _catalog(sku: str) -> MappingProxyType[str, Scene]:
     """Parse + cache one (already validated, upper-case) SKU's catalog, read-only."""
+    name: object = None
     try:
         # This module is the package's __init__, so __name__ is the package that holds the JSON.
-        raw = (resources.files(__name__) / f"{sku}.json").read_text(encoding="utf-8")
-    except (FileNotFoundError, ModuleNotFoundError):
-        return MappingProxyType({})
+        files = resources.files(__name__)
+        index = json.loads((files / "index.json").read_text(encoding="utf-8"))
+        if not isinstance(index, dict):
+            raise ValueError(f"index.json is {type(index).__name__}, expected object")
+        if sku not in index:
+            return MappingProxyType({})
+        name = index[sku]
+        if not isinstance(name, str) or not _SET_RE.fullmatch(name):
+            raise ValueError(f"index.json names {name!r}, not a scene set")
+        raw = (files / f"{name}.json").read_text(encoding="utf-8")
+    except (FileNotFoundError, ModuleNotFoundError) as err:
+        if name is None:  # no index: nothing is bundled
+            return MappingProxyType({})
+        raise GoveeBleError(f"scene catalog for {sku} could not be read: {err!r}") from err
     except (OSError, UnicodeDecodeError) as err:
         # A bundled catalog that is there but can't be read (permissions, I/O, not UTF-8) is a library
         # error like a malformed one, so the scene properties and Device.update() raise only GoveeBleError.
         raise GoveeBleError(f"scene catalog for {sku} could not be read: {err!r}") from err
+    except ValueError as err:  # the index is not a JSON object of set names
+        raise GoveeBleError(f"scene catalog for {sku} is malformed: {err!r}") from err
     try:
         data = json.loads(raw)
         if not isinstance(data, dict):
