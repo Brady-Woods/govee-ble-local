@@ -141,6 +141,18 @@ model, from which the shipped readers are generated).
   colour-temperature mode. Latent: no current SKU uses those decodes.
 
 ### Spec
+- **`spec/govee_catalog.json`: a dated snapshot of Govee's public product catalogue** (`GET
+  https://app2.govee.com/bi/rest/devices/v3/skus`, the app's `ICategoriesApi`: an AppVersion header, no
+  account; fetched 2026-10-18). It holds 617 SKUs, each with its goodsType and ic only (no names, images or
+  URLs). Its doc cites how the app uses them. Every catalogue goodsType goes into the app's SKU → goodsType
+  map (`CategoriesDataManager.n` → `Pact.j`), which a scan reads before the built-in table (`Pact.f` →
+  `Constant4L5.hasKnowSupportGoodsType`, default 0). goodsType 0 is the legacy code: a scan at 0 parses no
+  advertised pact and re-derives the device by SKU (`BaseBleProcessor.c` / `.g`), so a catalogue 0 never
+  routes. A devices.yaml row that lists a SKU wins, and a non-zero conflict is settled only by an
+  `assigned_goods_type` item that cites the app's rewrite. ic is the app's default IC count
+  (`CategoriesConfig.getDefIcNum`). Nothing reads the snapshot yet. `tools/fetch_catalog.py` refreshes it
+  from the endpoint or a saved response, and rewrites only `fetched` and `skus`. It is dev-only and
+  standard-library, reuses `fetch_scenes.py`'s request handling, and the build never runs it.
 - **devices.yaml can now route and describe the 18 supported SKUs on its own** (one-device-list phase 0).
   Each one's goodsType has a `client_profile.by_goods_type` row with the facts the library's hand table
   holds: `models`, `pacts` (the accepted pacts, `Support.addSupportPact`; `any` for the SKU-routed H6188),

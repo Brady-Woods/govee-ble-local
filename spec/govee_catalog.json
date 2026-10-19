@@ -1,0 +1,2484 @@
+{
+ "doc": "Govee's public product catalogue, cut to each product's sku, goodsType and ic (no names, images or URLs). Source: GET https://app2.govee.com/bi/rest/devices/v3/skus, the app's ICategoriesApi, which answers with only an AppVersion header and no account; fetched on the date in `fetched` by tools/fetch_catalog.py, which rewrites only `fetched` and `skus`. goodsType: the app puts every catalogue product's goodsType, 0 included, into its SKU -> goodsType map (CategoriesDataManager.n -> Pact.j), and a scan takes the SKU's goodsType from that map, falling back to the built-in table only for a SKU the map lacks (Pact.f -> Constant4L5.hasKnowSupportGoodsType, whose default is 0). goodsType 0 is the legacy code, not a route: a scan at goodsType 0 parses no advertised pact and re-derives the device by its SKU (BaseBleProcessor.c: the SKU-keyed OldDreamColorUtil / OldBulbUtil parsers; BaseBleProcessor.g: no protocol), and the device list rewrites 0 by SKU and pact or version (devices.yaml assigned_goods_type, from_goods_type [0]). So a catalogue goodsType 0 never routes, and is never devices.yaml's goodsType-0 row (H6188's, which its SKU routes). Precedence: devices.yaml wins where a client_profile row lists the SKU. A non-zero catalogue goodsType that none of the SKU's rows has is a conflict, settled only where an assigned_goods_type item cites the app's rewrite of it to the row's goodsType; an unsettled one leaves the SKU unrouted, for review. A SKU no row lists routes to the BLE row of its catalogue goodsType. ic: the product's default IC count (Product.ic), which the app reads by SKU in CategoriesConfig.getDefIcNum (0 for a SKU it lacks). Nothing reads it unless a row's app trace cites that read, and no segment count or ic_pieces is derived from it.",
+ "doc-ref": [
+  "base-classes10/com/govee/base2home/sku/ICategoriesApi.java:10",
+  "base-classes10/com/govee/base2home/sku/CategoriesDataManager.java:247-273",
+  "base-classes9/com/govee/base2home/pact/Pact.java:94-97,113-116",
+  "base-classes9/com/govee/base2home/Constant4L5.java:213-267",
+  "base-classes9/com/govee/base2home/main/choose/BaseBleProcessor.java:86-100,221-234",
+  "base-classes10/com/govee/base2home/sku/Product.java:10-11",
+  "base-classes10/com/govee/base2home/sku/CategoriesConfig.java:28-47"
+ ],
+ "fetched": "2026-10-18",
+ "skus": {
+  "B5178": {
+   "goodsType": 14,
+   "ic": 0
+  },
+  "B7080": {
+   "goodsType": 45,
+   "ic": 4
+  },
+  "B7081": {
+   "goodsType": 55,
+   "ic": 8
+  },
+  "B7082": {
+   "goodsType": 56,
+   "ic": 6
+  },
+  "H1161": {
+   "goodsType": 32,
+   "ic": 0
+  },
+  "H1162": {
+   "goodsType": 87,
+   "ic": 0
+  },
+  "H1163": {
+   "goodsType": 137,
+   "ic": 0
+  },
+  "H1167": {
+   "goodsType": 182,
+   "ic": 0
+  },
+  "H1168": {
+   "goodsType": 186,
+   "ic": 520
+  },
+  "H1232": {
+   "goodsType": 356,
+   "ic": 139
+  },
+  "H1250": {
+   "goodsType": 370,
+   "ic": 216
+  },
+  "H1252": {
+   "goodsType": 373,
+   "ic": 139
+  },
+  "H1270": {
+   "goodsType": 346,
+   "ic": 13
+  },
+  "H12D0": {
+   "goodsType": 390,
+   "ic": 23
+  },
+  "H1310": {
+   "goodsType": 359,
+   "ic": 9
+  },
+  "H1370": {
+   "goodsType": 368,
+   "ic": 9
+  },
+  "H1401": {
+   "goodsType": 348,
+   "ic": 1
+  },
+  "H14A1": {
+   "goodsType": 342,
+   "ic": 1
+  },
+  "H14C0": {
+   "goodsType": 342,
+   "ic": 1
+  },
+  "H14C1": {
+   "goodsType": 342,
+   "ic": 1
+  },
+  "H14C2": {
+   "goodsType": 342,
+   "ic": 1
+  },
+  "H1630": {
+   "goodsType": 364,
+   "ic": 12
+  },
+  "H16B0": {
+   "goodsType": 376,
+   "ic": 66
+  },
+  "H16C0": {
+   "goodsType": 377,
+   "ic": 28
+  },
+  "H1741": {
+   "goodsType": 365,
+   "ic": 8
+  },
+  "H1771": {
+   "goodsType": 395,
+   "ic": 4
+  },
+  "H1811": {
+   "goodsType": 399,
+   "ic": 5
+  },
+  "H1A42": {
+   "goodsType": 400,
+   "ic": 12
+  },
+  "H1A43": {
+   "goodsType": 367,
+   "ic": 20
+  },
+  "H1A44": {
+   "goodsType": 367,
+   "ic": 40
+  },
+  "H1A45": {
+   "goodsType": 375,
+   "ic": 80
+  },
+  "H1AB1": {
+   "goodsType": 387,
+   "ic": 30
+  },
+  "H1AB2": {
+   "goodsType": 388,
+   "ic": 50
+  },
+  "H1AB3": {
+   "goodsType": 389,
+   "ic": 100
+  },
+  "H1B6A": {
+   "goodsType": 384,
+   "ic": 14
+  },
+  "H2800": {
+   "goodsType": 396,
+   "ic": 16
+  },
+  "H2A40": {
+   "goodsType": 360,
+   "ic": 72
+  },
+  "H2A41": {
+   "goodsType": 360,
+   "ic": 100
+  },
+  "H3001": {
+   "goodsType": 361,
+   "ic": 8
+  },
+  "H30D0": {
+   "goodsType": 391,
+   "ic": 15
+  },
+  "H30D1": {
+   "goodsType": 391,
+   "ic": 30
+  },
+  "H3200": {
+   "goodsType": 353,
+   "ic": 4
+  },
+  "H3351": {
+   "goodsType": 371,
+   "ic": 1
+  },
+  "H3401": {
+   "goodsType": 394,
+   "ic": 20
+  },
+  "H3500": {
+   "goodsType": 345,
+   "ic": 4
+  },
+  "H3501": {
+   "goodsType": 339,
+   "ic": 8
+  },
+  "H3510": {
+   "goodsType": 349,
+   "ic": 4
+  },
+  "H3511": {
+   "goodsType": 349,
+   "ic": 8
+  },
+  "H3751": {
+   "goodsType": 354,
+   "ic": 72
+  },
+  "H3A51": {
+   "goodsType": 386,
+   "ic": 84
+  },
+  "H3A52": {
+   "goodsType": 386,
+   "ic": 126
+  },
+  "H3A53": {
+   "goodsType": 386,
+   "ic": 168
+  },
+  "H5001": {
+   "goodsType": 26,
+   "ic": 0
+  },
+  "H5010": {
+   "goodsType": 0,
+   "ic": 0
+  },
+  "H5020": {
+   "goodsType": 0,
+   "ic": 0
+  },
+  "H5023": {
+   "goodsType": 0,
+   "ic": 0
+  },
+  "H5024": {
+   "goodsType": 0,
+   "ic": 0
+  },
+  "H5026": {
+   "goodsType": 0,
+   "ic": 0
+  },
+  "H5040": {
+   "goodsType": 0,
+   "ic": 0
+  },
+  "H5041": {
+   "goodsType": 0,
+   "ic": 0
+  },
+  "H5042": {
+   "goodsType": 198,
+   "ic": 0
+  },
+  "H5043": {
+   "goodsType": 158,
+   "ic": 0
+  },
+  "H5044": {
+   "goodsType": 291,
+   "ic": 0
+  },
+  "H5051": {
+   "goodsType": 0,
+   "ic": 0
+  },
+  "H5052": {
+   "goodsType": 0,
+   "ic": 0
+  },
+  "H5053": {
+   "goodsType": 0,
+   "ic": 0
+  },
+  "H5054": {
+   "goodsType": 0,
+   "ic": 0
+  },
+  "H5055": {
+   "goodsType": 0,
+   "ic": 0
+  },
+  "H5058": {
+   "goodsType": 159,
+   "ic": 0
+  },
+  "H5059": {
+   "goodsType": 292,
+   "ic": 0
+  },
+  "H5071": {
+   "goodsType": 0,
+   "ic": 0
+  },
+  "H5072": {
+   "goodsType": 0,
+   "ic": 0
+  },
+  "H5074": {
+   "goodsType": 0,
+   "ic": 0
+  },
+  "H5075": {
+   "goodsType": 0,
+   "ic": 0
+  },
+  "H5080": {
+   "goodsType": 43,
+   "ic": 0
+  },
+  "H5081": {
+   "goodsType": 4,
+   "ic": 0
+  },
+  "H5082": {
+   "goodsType": 50,
+   "ic": 0
+  },
+  "H5083": {
+   "goodsType": 43,
+   "ic": 0
+  },
+  "H5085": {
+   "goodsType": 43,
+   "ic": 0
+  },
+  "H5086": {
+   "goodsType": 195,
+   "ic": 0
+  },
+  "H5089": {
+   "goodsType": 307,
+   "ic": 0
+  },
+  "H5100": {
+   "goodsType": 66,
+   "ic": 0
+  },
+  "H5101": {
+   "goodsType": 8,
+   "ic": 0
+  },
+  "H5102": {
+   "goodsType": 8,
+   "ic": 0
+  },
+  "H5103": {
+   "goodsType": 106,
+   "ic": 0
+  },
+  "H5104": {
+   "goodsType": 154,
+   "ic": 0
+  },
+  "H5105": {
+   "goodsType": 190,
+   "ic": 0
+  },
+  "H5106": {
+   "goodsType": 124,
+   "ic": 0
+  },
+  "H5107": {
+   "goodsType": 220,
+   "ic": 0
+  },
+  "H5108": {
+   "goodsType": 194,
+   "ic": 0
+  },
+  "H5109": {
+   "goodsType": 199,
+   "ic": 0
+  },
+  "H5110": {
+   "goodsType": 287,
+   "ic": 0
+  },
+  "H5111": {
+   "goodsType": 310,
+   "ic": 0
+  },
+  "H5112": {
+   "goodsType": 330,
+   "ic": 0
+  },
+  "H5121": {
+   "goodsType": 130,
+   "ic": 0
+  },
+  "H5122": {
+   "goodsType": 131,
+   "ic": 0
+  },
+  "H5123": {
+   "goodsType": 132,
+   "ic": 0
+  },
+  "H5124": {
+   "goodsType": 139,
+   "ic": 0
+  },
+  "H5125": {
+   "goodsType": 144,
+   "ic": 0
+  },
+  "H5126": {
+   "goodsType": 145,
+   "ic": 0
+  },
+  "H5127": {
+   "goodsType": 183,
+   "ic": 0
+  },
+  "H5129": {
+   "goodsType": 206,
+   "ic": 0
+  },
+  "H5130": {
+   "goodsType": 238,
+   "ic": 0
+  },
+  "H5140": {
+   "goodsType": 319,
+   "ic": 0
+  },
+  "H5151": {
+   "goodsType": 65,
+   "ic": 0
+  },
+  "H5160": {
+   "goodsType": 90,
+   "ic": 0
+  },
+  "H5161": {
+   "goodsType": 90,
+   "ic": 0
+  },
+  "H5171": {
+   "goodsType": 320,
+   "ic": 0
+  },
+  "H5174": {
+   "goodsType": 8,
+   "ic": 0
+  },
+  "H5177": {
+   "goodsType": 8,
+   "ic": 0
+  },
+  "H5179": {
+   "goodsType": 7,
+   "ic": 0
+  },
+  "H5181": {
+   "goodsType": 28,
+   "ic": 0
+  },
+  "H5182": {
+   "goodsType": 33,
+   "ic": 0
+  },
+  "H5183": {
+   "goodsType": 29,
+   "ic": 0
+  },
+  "H5184": {
+   "goodsType": 34,
+   "ic": 0
+  },
+  "H5185": {
+   "goodsType": 48,
+   "ic": 0
+  },
+  "H5191": {
+   "goodsType": 281,
+   "ic": 0
+  },
+  "H5192": {
+   "goodsType": 282,
+   "ic": 0
+  },
+  "H5194": {
+   "goodsType": 314,
+   "ic": 0
+  },
+  "H5196": {
+   "goodsType": 169,
+   "ic": 0
+  },
+  "H5198": {
+   "goodsType": 85,
+   "ic": 0
+  },
+  "H5199": {
+   "goodsType": 155,
+   "ic": 0
+  },
+  "H5220": {
+   "goodsType": 369,
+   "ic": 0
+  },
+  "H5310": {
+   "goodsType": 366,
+   "ic": 0
+  },
+  "H5610": {
+   "goodsType": 344,
+   "ic": 0
+  },
+  "H5830": {
+   "goodsType": 357,
+   "ic": 0
+  },
+  "H5901": {
+   "goodsType": 363,
+   "ic": 0
+  },
+  "H6001": {
+   "goodsType": 0,
+   "ic": 0
+  },
+  "H6002": {
+   "goodsType": 31,
+   "ic": 0
+  },
+  "H6003": {
+   "goodsType": 9,
+   "ic": 0
+  },
+  "H6004": {
+   "goodsType": 64,
+   "ic": 0
+  },
+  "H6005": {
+   "goodsType": 20,
+   "ic": 0
+  },
+  "H6006": {
+   "goodsType": 64,
+   "ic": 0
+  },
+  "H6008": {
+   "goodsType": 64,
+   "ic": 0
+  },
+  "H6009": {
+   "goodsType": 64,
+   "ic": 0
+  },
+  "H600A": {
+   "goodsType": 64,
+   "ic": 0
+  },
+  "H600B": {
+   "goodsType": 64,
+   "ic": 1
+  },
+  "H600C": {
+   "goodsType": 64,
+   "ic": 0
+  },
+  "H600D": {
+   "goodsType": 64,
+   "ic": 0
+  },
+  "H6010": {
+   "goodsType": 64,
+   "ic": 0
+  },
+  "H6011": {
+   "goodsType": 64,
+   "ic": 0
+  },
+  "H6013": {
+   "goodsType": 64,
+   "ic": 0
+  },
+  "H601A": {
+   "goodsType": 111,
+   "ic": 0
+  },
+  "H601B": {
+   "goodsType": 111,
+   "ic": 0
+  },
+  "H601C": {
+   "goodsType": 111,
+   "ic": 0
+  },
+  "H601D": {
+   "goodsType": 111,
+   "ic": 0
+  },
+  "H601E": {
+   "goodsType": 311,
+   "ic": 7
+  },
+  "H601F": {
+   "goodsType": 311,
+   "ic": 7
+  },
+  "H6020": {
+   "goodsType": 210,
+   "ic": 250
+  },
+  "H6022": {
+   "goodsType": 249,
+   "ic": 210
+  },
+  "H6038": {
+   "goodsType": 288,
+   "ic": 132
+  },
+  "H6039": {
+   "goodsType": 277,
+   "ic": 132
+  },
+  "H6042": {
+   "goodsType": 197,
+   "ic": 14
+  },
+  "H6043": {
+   "goodsType": 196,
+   "ic": 28
+  },
+  "H6046": {
+   "goodsType": 112,
+   "ic": 10
+  },
+  "H6047": {
+   "goodsType": 119,
+   "ic": 20
+  },
+  "H6048": {
+   "goodsType": 298,
+   "ic": 46
+  },
+  "H6049": {
+   "goodsType": 25,
+   "ic": 12
+  },
+  "H604A": {
+   "goodsType": 95,
+   "ic": 48
+  },
+  "H604B": {
+   "goodsType": 109,
+   "ic": 28
+  },
+  "H604C": {
+   "goodsType": 122,
+   "ic": 48
+  },
+  "H604D": {
+   "goodsType": 133,
+   "ic": 28
+  },
+  "H6050": {
+   "goodsType": 27,
+   "ic": 0
+  },
+  "H6051": {
+   "goodsType": 37,
+   "ic": 0
+  },
+  "H6052": {
+   "goodsType": 22,
+   "ic": 0
+  },
+  "H6053": {
+   "goodsType": 23,
+   "ic": 0
+  },
+  "H6054": {
+   "goodsType": 25,
+   "ic": 0
+  },
+  "H6055": {
+   "goodsType": 42,
+   "ic": 0
+  },
+  "H6056": {
+   "goodsType": 52,
+   "ic": 12
+  },
+  "H6057": {
+   "goodsType": 104,
+   "ic": 0
+  },
+  "H6058": {
+   "goodsType": 59,
+   "ic": 0
+  },
+  "H6059": {
+   "goodsType": 84,
+   "ic": 0
+  },
+  "H605A": {
+   "goodsType": 253,
+   "ic": 56
+  },
+  "H605B": {
+   "goodsType": 82,
+   "ic": 50
+  },
+  "H605C": {
+   "goodsType": 120,
+   "ic": 100
+  },
+  "H605D": {
+   "goodsType": 82,
+   "ic": 50
+  },
+  "H6061": {
+   "goodsType": 51,
+   "ic": 0
+  },
+  "H6062": {
+   "goodsType": 41,
+   "ic": 57
+  },
+  "H6063": {
+   "goodsType": 228,
+   "ic": 66
+  },
+  "H6065": {
+   "goodsType": 121,
+   "ic": 12
+  },
+  "H6066": {
+   "goodsType": 96,
+   "ic": 6
+  },
+  "H6067": {
+   "goodsType": 97,
+   "ic": 6
+  },
+  "H6069": {
+   "goodsType": 284,
+   "ic": 700
+  },
+  "H606A": {
+   "goodsType": 163,
+   "ic": 33
+  },
+  "H6071": {
+   "goodsType": 57,
+   "ic": 0
+  },
+  "H6072": {
+   "goodsType": 30,
+   "ic": 66
+  },
+  "H6073": {
+   "goodsType": 58,
+   "ic": 0
+  },
+  "H6075": {
+   "goodsType": 67,
+   "ic": 0
+  },
+  "H6076": {
+   "goodsType": 69,
+   "ic": 14
+  },
+  "H6078": {
+   "goodsType": 128,
+   "ic": 0
+  },
+  "H6079": {
+   "goodsType": 156,
+   "ic": 64
+  },
+  "H607C": {
+   "goodsType": 209,
+   "ic": 144
+  },
+  "H6085": {
+   "goodsType": 0,
+   "ic": 0
+  },
+  "H6086": {
+   "goodsType": 0,
+   "ic": 0
+  },
+  "H6087": {
+   "goodsType": 77,
+   "ic": 4
+  },
+  "H6088": {
+   "goodsType": 157,
+   "ic": 6
+  },
+  "H6089": {
+   "goodsType": 0,
+   "ic": 0
+  },
+  "H608A": {
+   "goodsType": 184,
+   "ic": 25
+  },
+  "H608B": {
+   "goodsType": 184,
+   "ic": 15
+  },
+  "H608C": {
+   "goodsType": 184,
+   "ic": 10
+  },
+  "H608D": {
+   "goodsType": 184,
+   "ic": 50
+  },
+  "H6091": {
+   "goodsType": 101,
+   "ic": 7
+  },
+  "H6092": {
+   "goodsType": 167,
+   "ic": 0
+  },
+  "H6093": {
+   "goodsType": 271,
+   "ic": 0
+  },
+  "H6094": {
+   "goodsType": 322,
+   "ic": 4
+  },
+  "H6095": {
+   "goodsType": 323,
+   "ic": 7
+  },
+  "H6097": {
+   "goodsType": 273,
+   "ic": 24
+  },
+  "H6098": {
+   "goodsType": 203,
+   "ic": 50
+  },
+  "H6099": {
+   "goodsType": 191,
+   "ic": 50
+  },
+  "H609D": {
+   "goodsType": 331,
+   "ic": 30
+  },
+  "H60A0": {
+   "goodsType": 188,
+   "ic": 13
+  },
+  "H60A1": {
+   "goodsType": 235,
+   "ic": 14
+  },
+  "H60A4": {
+   "goodsType": 302,
+   "ic": 11
+  },
+  "H60A6": {
+   "goodsType": 303,
+   "ic": 133
+  },
+  "H60B0": {
+   "goodsType": 301,
+   "ic": 9
+  },
+  "H60B1": {
+   "goodsType": 300,
+   "ic": 3
+  },
+  "H60B2": {
+   "goodsType": 312,
+   "ic": 3
+  },
+  "H60B3": {
+   "goodsType": 301,
+   "ic": 9
+  },
+  "H60C1": {
+   "goodsType": 324,
+   "ic": 3
+  },
+  "H6101": {
+   "goodsType": 0,
+   "ic": 0
+  },
+  "H6102": {
+   "goodsType": 0,
+   "ic": 60
+  },
+  "H6104": {
+   "goodsType": 0,
+   "ic": 0
+  },
+  "H6105": {
+   "goodsType": 0,
+   "ic": 0
+  },
+  "H6107": {
+   "goodsType": 0,
+   "ic": 0
+  },
+  "H6109": {
+   "goodsType": 0,
+   "ic": 0
+  },
+  "H610A": {
+   "goodsType": 80,
+   "ic": 24
+  },
+  "H610B": {
+   "goodsType": 114,
+   "ic": 112
+  },
+  "H6110": {
+   "goodsType": 0,
+   "ic": 0
+  },
+  "H6113": {
+   "goodsType": 0,
+   "ic": 0
+  },
+  "H6114": {
+   "goodsType": 0,
+   "ic": 0
+  },
+  "H6116": {
+   "goodsType": 0,
+   "ic": 50
+  },
+  "H6117": {
+   "goodsType": 0,
+   "ic": 50
+  },
+  "H6118": {
+   "goodsType": 6,
+   "ic": 0
+  },
+  "H6119": {
+   "goodsType": 0,
+   "ic": 12
+  },
+  "H611A": {
+   "goodsType": 21,
+   "ic": 60
+  },
+  "H6121": {
+   "goodsType": 1,
+   "ic": 0
+  },
+  "H6125": {
+   "goodsType": 0,
+   "ic": 50
+  },
+  "H6126": {
+   "goodsType": 0,
+   "ic": 50
+  },
+  "H6127": {
+   "goodsType": 0,
+   "ic": 50
+  },
+  "H6129": {
+   "goodsType": 0,
+   "ic": 0
+  },
+  "H612A": {
+   "goodsType": 234,
+   "ic": 20
+  },
+  "H612B": {
+   "goodsType": 234,
+   "ic": 30
+  },
+  "H612C": {
+   "goodsType": 234,
+   "ic": 40
+  },
+  "H612D": {
+   "goodsType": 234,
+   "ic": 60
+  },
+  "H612E": {
+   "goodsType": 234,
+   "ic": 80
+  },
+  "H612F": {
+   "goodsType": 234,
+   "ic": 12
+  },
+  "H6138": {
+   "goodsType": 0,
+   "ic": 0
+  },
+  "H6139": {
+   "goodsType": 0,
+   "ic": 0
+  },
+  "H613A": {
+   "goodsType": 39,
+   "ic": 0
+  },
+  "H613B": {
+   "goodsType": 39,
+   "ic": 0
+  },
+  "H613C": {
+   "goodsType": 39,
+   "ic": 0
+  },
+  "H613D": {
+   "goodsType": 39,
+   "ic": 0
+  },
+  "H613E": {
+   "goodsType": 39,
+   "ic": 0
+  },
+  "H613F": {
+   "goodsType": 39,
+   "ic": 0
+  },
+  "H613G": {
+   "goodsType": 2,
+   "ic": 0
+  },
+  "H6141": {
+   "goodsType": 1,
+   "ic": 0
+  },
+  "H6142": {
+   "goodsType": 1,
+   "ic": 0
+  },
+  "H6143": {
+   "goodsType": 21,
+   "ic": 50
+  },
+  "H6144": {
+   "goodsType": 21,
+   "ic": 50
+  },
+  "H6145": {
+   "goodsType": 13,
+   "ic": 50
+  },
+  "H6146": {
+   "goodsType": 13,
+   "ic": 50
+  },
+  "H6147": {
+   "goodsType": 13,
+   "ic": 60
+  },
+  "H6148": {
+   "goodsType": 16,
+   "ic": 0
+  },
+  "H614A": {
+   "goodsType": 0,
+   "ic": 0
+  },
+  "H614B": {
+   "goodsType": 0,
+   "ic": 0
+  },
+  "H614E": {
+   "goodsType": 0,
+   "ic": 0
+  },
+  "H6154": {
+   "goodsType": 1,
+   "ic": 0
+  },
+  "H6159": {
+   "goodsType": 0,
+   "ic": 0
+  },
+  "H615A": {
+   "goodsType": 40,
+   "ic": 0
+  },
+  "H615B": {
+   "goodsType": 40,
+   "ic": 0
+  },
+  "H615C": {
+   "goodsType": 40,
+   "ic": 0
+  },
+  "H615D": {
+   "goodsType": 40,
+   "ic": 0
+  },
+  "H615E": {
+   "goodsType": 108,
+   "ic": 0
+  },
+  "H6160": {
+   "goodsType": 0,
+   "ic": 0
+  },
+  "H6161": {
+   "goodsType": 0,
+   "ic": 30
+  },
+  "H6163": {
+   "goodsType": 0,
+   "ic": 50
+  },
+  "H6165": {
+   "goodsType": 0,
+   "ic": 0
+  },
+  "H6166": {
+   "goodsType": 0,
+   "ic": 0
+  },
+  "H6167": {
+   "goodsType": 83,
+   "ic": 12
+  },
+  "H6168": {
+   "goodsType": 136,
+   "ic": 38
+  },
+  "H6169": {
+   "goodsType": 262,
+   "ic": 46
+  },
+  "H616B": {
+   "goodsType": 68,
+   "ic": 0
+  },
+  "H616C": {
+   "goodsType": 207,
+   "ic": 40
+  },
+  "H616D": {
+   "goodsType": 207,
+   "ic": 30
+  },
+  "H616E": {
+   "goodsType": 207,
+   "ic": 40
+  },
+  "H6170": {
+   "goodsType": 2,
+   "ic": 0
+  },
+  "H6171": {
+   "goodsType": 13,
+   "ic": 60
+  },
+  "H6172": {
+   "goodsType": 71,
+   "ic": 40
+  },
+  "H6173": {
+   "goodsType": 71,
+   "ic": 40
+  },
+  "H6175": {
+   "goodsType": 187,
+   "ic": 20
+  },
+  "H6176": {
+   "goodsType": 176,
+   "ic": 60
+  },
+  "H6178": {
+   "goodsType": 78,
+   "ic": 0
+  },
+  "H6179": {
+   "goodsType": 12,
+   "ic": 0
+  },
+  "H617A": {
+   "goodsType": 73,
+   "ic": 15
+  },
+  "H617C": {
+   "goodsType": 70,
+   "ic": 30
+  },
+  "H617E": {
+   "goodsType": 70,
+   "ic": 30
+  },
+  "H617F": {
+   "goodsType": 70,
+   "ic": 45
+  },
+  "H617G": {
+   "goodsType": 351,
+   "ic": 60
+  },
+  "H6181": {
+   "goodsType": 0,
+   "ic": 0
+  },
+  "H6182": {
+   "goodsType": 0,
+   "ic": 0
+  },
+  "H6184": {
+   "goodsType": 11,
+   "ic": 21
+  },
+  "H6185": {
+   "goodsType": 0,
+   "ic": 0
+  },
+  "H6188": {
+   "goodsType": 0,
+   "ic": 0
+  },
+  "H618A": {
+   "goodsType": 74,
+   "ic": 15
+  },
+  "H618C": {
+   "goodsType": 71,
+   "ic": 30
+  },
+  "H618E": {
+   "goodsType": 71,
+   "ic": 30
+  },
+  "H618F": {
+   "goodsType": 71,
+   "ic": 45
+  },
+  "H618G": {
+   "goodsType": 352,
+   "ic": 60
+  },
+  "H6192": {
+   "goodsType": 143,
+   "ic": 0
+  },
+  "H6194": {
+   "goodsType": 6,
+   "ic": 0
+  },
+  "H6195": {
+   "goodsType": 1,
+   "ic": 0
+  },
+  "H6196": {
+   "goodsType": 2,
+   "ic": 0
+  },
+  "H6198": {
+   "goodsType": 24,
+   "ic": 38
+  },
+  "H6199": {
+   "goodsType": 24,
+   "ic": 50
+  },
+  "H619A": {
+   "goodsType": 75,
+   "ic": 20
+  },
+  "H619B": {
+   "goodsType": 71,
+   "ic": 30
+  },
+  "H619C": {
+   "goodsType": 71,
+   "ic": 40
+  },
+  "H619D": {
+   "goodsType": 71,
+   "ic": 30
+  },
+  "H619E": {
+   "goodsType": 71,
+   "ic": 40
+  },
+  "H619Z": {
+   "goodsType": 83,
+   "ic": 12
+  },
+  "H61A0": {
+   "goodsType": 71,
+   "ic": 42
+  },
+  "H61A1": {
+   "goodsType": 71,
+   "ic": 28
+  },
+  "H61A2": {
+   "goodsType": 71,
+   "ic": 70
+  },
+  "H61A3": {
+   "goodsType": 71,
+   "ic": 56
+  },
+  "H61A5": {
+   "goodsType": 71,
+   "ic": 140
+  },
+  "H61A8": {
+   "goodsType": 19,
+   "ic": 140
+  },
+  "H61A9": {
+   "goodsType": 204,
+   "ic": 180
+  },
+  "H61B1": {
+   "goodsType": 123,
+   "ic": 50
+  },
+  "H61B2": {
+   "goodsType": 71,
+   "ic": 30
+  },
+  "H61B3": {
+   "goodsType": 264,
+   "ic": 30
+  },
+  "H61B5": {
+   "goodsType": 123,
+   "ic": 50
+  },
+  "H61B6": {
+   "goodsType": 264,
+   "ic": 100
+  },
+  "H61B8": {
+   "goodsType": 299,
+   "ic": 40
+  },
+  "H61B9": {
+   "goodsType": 299,
+   "ic": 60
+  },
+  "H61BA": {
+   "goodsType": 178,
+   "ic": 20
+  },
+  "H61BC": {
+   "goodsType": 176,
+   "ic": 40
+  },
+  "H61BE": {
+   "goodsType": 175,
+   "ic": 40
+  },
+  "H61C2": {
+   "goodsType": 141,
+   "ic": 28
+  },
+  "H61C3": {
+   "goodsType": 141,
+   "ic": 42
+  },
+  "H61C5": {
+   "goodsType": 141,
+   "ic": 70
+  },
+  "H61D2": {
+   "goodsType": 202,
+   "ic": 28
+  },
+  "H61D3": {
+   "goodsType": 202,
+   "ic": 42
+  },
+  "H61D4": {
+   "goodsType": 202,
+   "ic": 56
+  },
+  "H61D5": {
+   "goodsType": 202,
+   "ic": 70
+  },
+  "H61D6": {
+   "goodsType": 202,
+   "ic": 140
+  },
+  "H61E0": {
+   "goodsType": 123,
+   "ic": 20
+  },
+  "H61E1": {
+   "goodsType": 123,
+   "ic": 50
+  },
+  "H61E5": {
+   "goodsType": 239,
+   "ic": 36
+  },
+  "H61E6": {
+   "goodsType": 246,
+   "ic": 60
+  },
+  "H61F2": {
+   "goodsType": 261,
+   "ic": 20
+  },
+  "H61F5": {
+   "goodsType": 261,
+   "ic": 50
+  },
+  "H61F6": {
+   "goodsType": 261,
+   "ic": 100
+  },
+  "H6350": {
+   "goodsType": 374,
+   "ic": 160
+  },
+  "H6351": {
+   "goodsType": 392,
+   "ic": 320
+  },
+  "H6601": {
+   "goodsType": 138,
+   "ic": 36
+  },
+  "H6602": {
+   "goodsType": 142,
+   "ic": 72
+  },
+  "H6603": {
+   "goodsType": 192,
+   "ic": 42
+  },
+  "H6604": {
+   "goodsType": 243,
+   "ic": 100
+  },
+  "H6608": {
+   "goodsType": 172,
+   "ic": 48
+  },
+  "H6609": {
+   "goodsType": 173,
+   "ic": 36
+  },
+  "H6630": {
+   "goodsType": 285,
+   "ic": 1024
+  },
+  "H6631": {
+   "goodsType": 286,
+   "ic": 1664
+  },
+  "H6640": {
+   "goodsType": 242,
+   "ic": 42
+  },
+  "H6641": {
+   "goodsType": 247,
+   "ic": 70
+  },
+  "H6671": {
+   "goodsType": 332,
+   "ic": 44
+  },
+  "H6672": {
+   "goodsType": 332,
+   "ic": 56
+  },
+  "H6690": {
+   "goodsType": 336,
+   "ic": 18
+  },
+  "H66A0": {
+   "goodsType": 327,
+   "ic": 90
+  },
+  "H66A1": {
+   "goodsType": 327,
+   "ic": 124
+  },
+  "H6800": {
+   "goodsType": 272,
+   "ic": 0
+  },
+  "H6810": {
+   "goodsType": 255,
+   "ic": 240
+  },
+  "H6811": {
+   "goodsType": 256,
+   "ic": 480
+  },
+  "H6840": {
+   "goodsType": 278,
+   "ic": 316
+  },
+  "H6841": {
+   "goodsType": 325,
+   "ic": 370
+  },
+  "H6842": {
+   "goodsType": 381,
+   "ic": 610
+  },
+  "H6843": {
+   "goodsType": 382,
+   "ic": 1210
+  },
+  "H6850": {
+   "goodsType": 378,
+   "ic": 280
+  },
+  "H6860": {
+   "goodsType": 362,
+   "ic": 50
+  },
+  "H6861": {
+   "goodsType": 362,
+   "ic": 100
+  },
+  "H6870": {
+   "goodsType": 260,
+   "ic": 250
+  },
+  "H6871": {
+   "goodsType": 260,
+   "ic": 375
+  },
+  "H7001": {
+   "goodsType": 0,
+   "ic": 0
+  },
+  "H7002": {
+   "goodsType": 3,
+   "ic": 30
+  },
+  "H7004": {
+   "goodsType": 0,
+   "ic": 0
+  },
+  "H7010": {
+   "goodsType": 35,
+   "ic": 0
+  },
+  "H7011": {
+   "goodsType": 35,
+   "ic": 0
+  },
+  "H7012": {
+   "goodsType": 49,
+   "ic": 0
+  },
+  "H7013": {
+   "goodsType": 49,
+   "ic": 0
+  },
+  "H7014": {
+   "goodsType": 0,
+   "ic": 0
+  },
+  "H7015": {
+   "goodsType": 62,
+   "ic": 30
+  },
+  "H7016": {
+   "goodsType": 63,
+   "ic": 30
+  },
+  "H7017": {
+   "goodsType": 0,
+   "ic": 0
+  },
+  "H7019": {
+   "goodsType": 148,
+   "ic": 8
+  },
+  "H7020": {
+   "goodsType": 53,
+   "ic": 15
+  },
+  "H7021": {
+   "goodsType": 54,
+   "ic": 15
+  },
+  "H7022": {
+   "goodsType": 0,
+   "ic": 24
+  },
+  "H7023": {
+   "goodsType": 0,
+   "ic": 6
+  },
+  "H7024": {
+   "goodsType": 0,
+   "ic": 24
+  },
+  "H7025": {
+   "goodsType": 296,
+   "ic": 15
+  },
+  "H7026": {
+   "goodsType": 318,
+   "ic": 30
+  },
+  "H7027": {
+   "goodsType": 337,
+   "ic": 45
+  },
+  "H7028": {
+   "goodsType": 53,
+   "ic": 15
+  },
+  "H7029": {
+   "goodsType": 149,
+   "ic": 8
+  },
+  "H702A": {
+   "goodsType": 316,
+   "ic": 15
+  },
+  "H702B": {
+   "goodsType": 316,
+   "ic": 30
+  },
+  "H702C": {
+   "goodsType": 316,
+   "ic": 45
+  },
+  "H7031": {
+   "goodsType": 91,
+   "ic": 0
+  },
+  "H7032": {
+   "goodsType": 91,
+   "ic": 0
+  },
+  "H7033": {
+   "goodsType": 161,
+   "ic": 45
+  },
+  "H7037": {
+   "goodsType": 221,
+   "ic": 15
+  },
+  "H7038": {
+   "goodsType": 221,
+   "ic": 30
+  },
+  "H7039": {
+   "goodsType": 221,
+   "ic": 45
+  },
+  "H703A": {
+   "goodsType": 263,
+   "ic": 45
+  },
+  "H703B": {
+   "goodsType": 263,
+   "ic": 90
+  },
+  "H7040": {
+   "goodsType": 36,
+   "ic": 0
+  },
+  "H7041": {
+   "goodsType": 100,
+   "ic": 25
+  },
+  "H7042": {
+   "goodsType": 102,
+   "ic": 50
+  },
+  "H7045": {
+   "goodsType": 338,
+   "ic": 10
+  },
+  "H7046": {
+   "goodsType": 338,
+   "ic": 20
+  },
+  "H7050": {
+   "goodsType": 46,
+   "ic": 15
+  },
+  "H7051": {
+   "goodsType": 105,
+   "ic": 25
+  },
+  "H7052": {
+   "goodsType": 218,
+   "ic": 15
+  },
+  "H7053": {
+   "goodsType": 219,
+   "ic": 30
+  },
+  "H7055": {
+   "goodsType": 116,
+   "ic": 8
+  },
+  "H7056": {
+   "goodsType": 304,
+   "ic": 16
+  },
+  "H7057": {
+   "goodsType": 274,
+   "ic": 4
+  },
+  "H7058": {
+   "goodsType": 275,
+   "ic": 6
+  },
+  "H705A": {
+   "goodsType": 125,
+   "ic": 36
+  },
+  "H705B": {
+   "goodsType": 125,
+   "ic": 36
+  },
+  "H705C": {
+   "goodsType": 125,
+   "ic": 36
+  },
+  "H705D": {
+   "goodsType": 240,
+   "ic": 108
+  },
+  "H705E": {
+   "goodsType": 240,
+   "ic": 108
+  },
+  "H705F": {
+   "goodsType": 240,
+   "ic": 108
+  },
+  "H7060": {
+   "goodsType": 76,
+   "ic": 4
+  },
+  "H7061": {
+   "goodsType": 98,
+   "ic": 2
+  },
+  "H7062": {
+   "goodsType": 107,
+   "ic": 6
+  },
+  "H7063": {
+   "goodsType": 227,
+   "ic": 3
+  },
+  "H7065": {
+   "goodsType": 113,
+   "ic": 2
+  },
+  "H7066": {
+   "goodsType": 171,
+   "ic": 4
+  },
+  "H7067": {
+   "goodsType": 250,
+   "ic": 12
+  },
+  "H7068": {
+   "goodsType": 250,
+   "ic": 12
+  },
+  "H7069": {
+   "goodsType": 250,
+   "ic": 18
+  },
+  "H706A": {
+   "goodsType": 180,
+   "ic": 120
+  },
+  "H706B": {
+   "goodsType": 180,
+   "ic": 120
+  },
+  "H706C": {
+   "goodsType": 180,
+   "ic": 120
+  },
+  "H7070": {
+   "goodsType": 283,
+   "ic": 0
+  },
+  "H7071": {
+   "goodsType": 334,
+   "ic": 1
+  },
+  "H7072": {
+   "goodsType": 294,
+   "ic": 6
+  },
+  "H7073": {
+   "goodsType": 333,
+   "ic": 1
+  },
+  "H7075": {
+   "goodsType": 205,
+   "ic": 10
+  },
+  "H7076": {
+   "goodsType": 313,
+   "ic": 36
+  },
+  "H7078": {
+   "goodsType": 245,
+   "ic": 12
+  },
+  "H707A": {
+   "goodsType": 326,
+   "ic": 108
+  },
+  "H707B": {
+   "goodsType": 326,
+   "ic": 162
+  },
+  "H707C": {
+   "goodsType": 326,
+   "ic": 216
+  },
+  "H7086": {
+   "goodsType": 293,
+   "ic": 20
+  },
+  "H7087": {
+   "goodsType": 315,
+   "ic": 3
+  },
+  "H7090": {
+   "goodsType": 44,
+   "ic": 12
+  },
+  "H7092": {
+   "goodsType": 162,
+   "ic": 24
+  },
+  "H7093": {
+   "goodsType": 289,
+   "ic": 2
+  },
+  "H7094": {
+   "goodsType": 290,
+   "ic": 4
+  },
+  "H7095": {
+   "goodsType": 127,
+   "ic": 0
+  },
+  "H70A1": {
+   "goodsType": 193,
+   "ic": 20
+  },
+  "H70A2": {
+   "goodsType": 193,
+   "ic": 40
+  },
+  "H70A3": {
+   "goodsType": 193,
+   "ic": 60
+  },
+  "H70B1": {
+   "goodsType": 134,
+   "ic": 520
+  },
+  "H70B3": {
+   "goodsType": 229,
+   "ic": 520
+  },
+  "H70B4": {
+   "goodsType": 230,
+   "ic": 520
+  },
+  "H70B5": {
+   "goodsType": 231,
+   "ic": 520
+  },
+  "H70B6": {
+   "goodsType": 329,
+   "ic": 960
+  },
+  "H70B8": {
+   "goodsType": 341,
+   "ic": 1536
+  },
+  "H70BC": {
+   "goodsType": 216,
+   "ic": 400
+  },
+  "H70C1": {
+   "goodsType": 181,
+   "ic": 100
+  },
+  "H70C2": {
+   "goodsType": 181,
+   "ic": 200
+  },
+  "H70C4": {
+   "goodsType": 260,
+   "ic": 200
+  },
+  "H70C5": {
+   "goodsType": 260,
+   "ic": 300
+  },
+  "H70C7": {
+   "goodsType": 260,
+   "ic": 500
+  },
+  "H70C9": {
+   "goodsType": 260,
+   "ic": 1000
+  },
+  "H70CB": {
+   "goodsType": 181,
+   "ic": 200
+  },
+  "H70D1": {
+   "goodsType": 267,
+   "ic": 400
+  },
+  "H70D2": {
+   "goodsType": 268,
+   "ic": 800
+  },
+  "H70D3": {
+   "goodsType": 269,
+   "ic": 1200
+  },
+  "H7100": {
+   "goodsType": 129,
+   "ic": 0
+  },
+  "H7101": {
+   "goodsType": 93,
+   "ic": 0
+  },
+  "H7102": {
+   "goodsType": 93,
+   "ic": 0
+  },
+  "H7103": {
+   "goodsType": 251,
+   "ic": 0
+  },
+  "H7105": {
+   "goodsType": 201,
+   "ic": 0
+  },
+  "H7106": {
+   "goodsType": 200,
+   "ic": 0
+  },
+  "H7107": {
+   "goodsType": 297,
+   "ic": 0
+  },
+  "H7111": {
+   "goodsType": 86,
+   "ic": 0
+  },
+  "H7112": {
+   "goodsType": 236,
+   "ic": 0
+  },
+  "H7120": {
+   "goodsType": 118,
+   "ic": 0
+  },
+  "H7121": {
+   "goodsType": 72,
+   "ic": 0
+  },
+  "H7122": {
+   "goodsType": 79,
+   "ic": 0
+  },
+  "H7123": {
+   "goodsType": 110,
+   "ic": 0
+  },
+  "H7124": {
+   "goodsType": 224,
+   "ic": 0
+  },
+  "H7126": {
+   "goodsType": 160,
+   "ic": 0
+  },
+  "H7127": {
+   "goodsType": 254,
+   "ic": 0
+  },
+  "H7128": {
+   "goodsType": 225,
+   "ic": 0
+  },
+  "H7129": {
+   "goodsType": 226,
+   "ic": 0
+  },
+  "H712C": {
+   "goodsType": 223,
+   "ic": 0
+  },
+  "H7130": {
+   "goodsType": 60,
+   "ic": 0
+  },
+  "H7131": {
+   "goodsType": 115,
+   "ic": 0
+  },
+  "H7132": {
+   "goodsType": 115,
+   "ic": 0
+  },
+  "H7133": {
+   "goodsType": 174,
+   "ic": 0
+  },
+  "H7134": {
+   "goodsType": 179,
+   "ic": 0
+  },
+  "H7135": {
+   "goodsType": 153,
+   "ic": 0
+  },
+  "H7137": {
+   "goodsType": 222,
+   "ic": 0
+  },
+  "H713A": {
+   "goodsType": 164,
+   "ic": 0
+  },
+  "H713B": {
+   "goodsType": 165,
+   "ic": 0
+  },
+  "H713C": {
+   "goodsType": 166,
+   "ic": 0
+  },
+  "H713E": {
+   "goodsType": 237,
+   "ic": 0
+  },
+  "H7140": {
+   "goodsType": 151,
+   "ic": 0
+  },
+  "H7141": {
+   "goodsType": 61,
+   "ic": 0
+  },
+  "H7142": {
+   "goodsType": 81,
+   "ic": 0
+  },
+  "H7143": {
+   "goodsType": 126,
+   "ic": 0
+  },
+  "H7145": {
+   "goodsType": 170,
+   "ic": 0
+  },
+  "H7146": {
+   "goodsType": 217,
+   "ic": 0
+  },
+  "H7147": {
+   "goodsType": 232,
+   "ic": 0
+  },
+  "H7148": {
+   "goodsType": 233,
+   "ic": 0
+  },
+  "H7149": {
+   "goodsType": 258,
+   "ic": 0
+  },
+  "H714E": {
+   "goodsType": 259,
+   "ic": 0
+  },
+  "H7150": {
+   "goodsType": 94,
+   "ic": 0
+  },
+  "H7151": {
+   "goodsType": 147,
+   "ic": 0
+  },
+  "H7152": {
+   "goodsType": 308,
+   "ic": 0
+  },
+  "H7160": {
+   "goodsType": 99,
+   "ic": 0
+  },
+  "H7161": {
+   "goodsType": 146,
+   "ic": 0
+  },
+  "H7162": {
+   "goodsType": 189,
+   "ic": 0
+  },
+  "H7170": {
+   "goodsType": 103,
+   "ic": 0
+  },
+  "H7171": {
+   "goodsType": 135,
+   "ic": 0
+  },
+  "H7172": {
+   "goodsType": 117,
+   "ic": 0
+  },
+  "H7173": {
+   "goodsType": 177,
+   "ic": 0
+  },
+  "H7175": {
+   "goodsType": 168,
+   "ic": 0
+  },
+  "H717A": {
+   "goodsType": 135,
+   "ic": 0
+  },
+  "H717D": {
+   "goodsType": 211,
+   "ic": 0
+  },
+  "H7180": {
+   "goodsType": 152,
+   "ic": 0
+  },
+  "H7184": {
+   "goodsType": 208,
+   "ic": 0
+  },
+  "H7205": {
+   "goodsType": 0,
+   "ic": 0
+  },
+  "H7212": {
+   "goodsType": 0,
+   "ic": 0
+  },
+  "H7214": {
+   "goodsType": 0,
+   "ic": 0
+  },
+  "H7308": {
+   "goodsType": 0,
+   "ic": 0
+  },
+  "H7309": {
+   "goodsType": 0,
+   "ic": 0
+  },
+  "H7310": {
+   "goodsType": 0,
+   "ic": 0
+  },
+  "H7311": {
+   "goodsType": 0,
+   "ic": 0
+  },
+  "H7312": {
+   "goodsType": 0,
+   "ic": 0
+  },
+  "H7313": {
+   "goodsType": 0,
+   "ic": 0
+  },
+  "H7315": {
+   "goodsType": 0,
+   "ic": 0
+  },
+  "H7317": {
+   "goodsType": 0,
+   "ic": 0
+  },
+  "H7318": {
+   "goodsType": 0,
+   "ic": 0
+  },
+  "H800B": {
+   "goodsType": 64,
+   "ic": 1
+  },
+  "H8015": {
+   "goodsType": 328,
+   "ic": 1
+  },
+  "H801A": {
+   "goodsType": 111,
+   "ic": 1
+  },
+  "H801B": {
+   "goodsType": 125,
+   "ic": 144
+  },
+  "H801C": {
+   "goodsType": 111,
+   "ic": 0
+  },
+  "H801D": {
+   "goodsType": 111,
+   "ic": 1
+  },
+  "H8022": {
+   "goodsType": 249,
+   "ic": 132
+  },
+  "H8025": {
+   "goodsType": 296,
+   "ic": 15
+  },
+  "H8026": {
+   "goodsType": 318,
+   "ic": 23
+  },
+  "H802A": {
+   "goodsType": 74,
+   "ic": 15
+  },
+  "H8048": {
+   "goodsType": 298,
+   "ic": 46
+  },
+  "H8057": {
+   "goodsType": 274,
+   "ic": 4
+  },
+  "H805A": {
+   "goodsType": 240,
+   "ic": 108
+  },
+  "H805B": {
+   "goodsType": 240,
+   "ic": 108
+  },
+  "H805C": {
+   "goodsType": 240,
+   "ic": 108
+  },
+  "H805D": {
+   "goodsType": 240,
+   "ic": 132
+  },
+  "H8066": {
+   "goodsType": 305,
+   "ic": 4
+  },
+  "H8067": {
+   "goodsType": 393,
+   "ic": 6
+  },
+  "H8069": {
+   "goodsType": 284,
+   "ic": 700
+  },
+  "H806A": {
+   "goodsType": 180,
+   "ic": 120
+  },
+  "H806C": {
+   "goodsType": 180,
+   "ic": 120
+  },
+  "H8072": {
+   "goodsType": 30,
+   "ic": 66
+  },
+  "H8076": {
+   "goodsType": 69,
+   "ic": 14
+  },
+  "H807C": {
+   "goodsType": 209,
+   "ic": 144
+  },
+  "H808A": {
+   "goodsType": 184,
+   "ic": 25
+  },
+  "H8098": {
+   "goodsType": 203,
+   "ic": 42
+  },
+  "H80A1": {
+   "goodsType": 235,
+   "ic": 14
+  },
+  "H80A4": {
+   "goodsType": 302,
+   "ic": 11
+  },
+  "H80B5": {
+   "goodsType": 123,
+   "ic": 100
+  },
+  "H80C4": {
+   "goodsType": 260,
+   "ic": 200
+  },
+  "H80C5": {
+   "goodsType": 260,
+   "ic": 300
+  },
+  "H80D1": {
+   "goodsType": 267,
+   "ic": 400
+  },
+  "H8102": {
+   "goodsType": 335,
+   "ic": 0
+  },
+  "H8120": {
+   "goodsType": 317,
+   "ic": 0
+  },
+  "H8121": {
+   "goodsType": 306,
+   "ic": 0
+  },
+  "H8122": {
+   "goodsType": 372,
+   "ic": 0
+  },
+  "H8131": {
+   "goodsType": 321,
+   "ic": 0
+  },
+  "H8604": {
+   "goodsType": 243,
+   "ic": 90
+  },
+  "H8630": {
+   "goodsType": 285,
+   "ic": 1024
+  },
+  "H8811": {
+   "goodsType": 256,
+   "ic": 480
+  },
+  "H8840": {
+   "goodsType": 278,
+   "ic": 316
+  },
+  "H8841": {
+   "goodsType": 325,
+   "ic": 370
+  },
+  "R1250": {
+   "goodsType": 370,
+   "ic": 216
+  },
+  "R1310": {
+   "goodsType": 359,
+   "ic": 9
+  },
+  "R1401": {
+   "goodsType": 348,
+   "ic": 1
+  },
+  "R14A1": {
+   "goodsType": 342,
+   "ic": 1
+  },
+  "R14C0": {
+   "goodsType": 342,
+   "ic": 1
+  },
+  "R14C1": {
+   "goodsType": 342,
+   "ic": 1
+  },
+  "R14C2": {
+   "goodsType": 342,
+   "ic": 1
+  },
+  "R1501": {
+   "goodsType": 111,
+   "ic": 1
+  },
+  "R1630": {
+   "goodsType": 364,
+   "ic": 12
+  },
+  "R16D0": {
+   "goodsType": 69,
+   "ic": 14
+  },
+  "R1741": {
+   "goodsType": 365,
+   "ic": 8
+  },
+  "R1810": {
+   "goodsType": 340,
+   "ic": 3
+  },
+  "R2A80": {
+   "goodsType": 327,
+   "ic": 90
+  },
+  "R2A81": {
+   "goodsType": 327,
+   "ic": 124
+  },
+  "R3A51": {
+   "goodsType": 386,
+   "ic": 84
+  },
+  "R5044": {
+   "goodsType": 291,
+   "ic": 0
+  },
+  "R5112": {
+   "goodsType": 330,
+   "ic": 0
+  },
+  "R60B3": {
+   "goodsType": 301,
+   "ic": 9
+  },
+  "R617G": {
+   "goodsType": 351,
+   "ic": 60
+  },
+  "R618D": {
+   "goodsType": 352,
+   "ic": 60
+  },
+  "R6842": {
+   "goodsType": 381,
+   "ic": 610
+  },
+  "R6861": {
+   "goodsType": 362,
+   "ic": 50
+  },
+  "R6871": {
+   "goodsType": 260,
+   "ic": 375
+  },
+  "R707A": {
+   "goodsType": 326,
+   "ic": 108
+  },
+  "R707B": {
+   "goodsType": 326,
+   "ic": 162
+  },
+  "R707C": {
+   "goodsType": 326,
+   "ic": 216
+  }
+ },
+ "source_app": "com.govee.home 7.7.02; doc-ref paths are relative to decomp-7.7.02"
+}
