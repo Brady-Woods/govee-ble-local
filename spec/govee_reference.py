@@ -399,6 +399,78 @@ def profile_for(profiles: dict[int | str, dict[str, Any]], sku: str,
     return profiles.get(goods_type if goods_type else sku)
 
 
+def ble_rows(reg: dict[str, Any], sku: str, pact: tuple[int, int] | None = None) -> list[tuple[str, int]]:
+    """PROCEDURAL (BLE routing, devices.schema.json clientRow): the (family id, goodsType) rows a BLE client
+    that knows only the SKU and the advertised pact may route `sku` to. A row qualifies when it has support,
+    its models list the SKU, its connectivity (else the family's) holds ble, and its pacts are 'any' or hold
+    the pact (any listed pact when the pact is unknown); a row without pacts is never a route. Exactly one
+    row is a route; none or several leave the SKU unrouted unless the caller knows the goodsType."""
+    out: list[tuple[str, int]] = []
+    for fam in reg.get("families", []):
+        for gt, row in ((fam.get("client_profile") or {}).get("by_goods_type") or {}).items():
+            pacts = row.get("pacts")
+            if ("support" not in row or sku not in (row.get("models") or []) or pacts is None
+                    or "ble" not in (row.get("connectivity") or fam.get("connectivity") or [])):
+                continue
+            if pacts == "any" or pact is None or f"{pact[0]},{pact[1]}" in pacts:
+                out.append((fam["id"], int(gt)))
+    return out
+
+
+def _version(text: str | None) -> tuple[int, ...] | None:
+    """modeColorVersion 'a.bb.cc' as a tuple compared field by field; None for an empty or unparsable one."""
+    try:
+        return tuple(int(f) for f in str(text).split(".")) if text else None
+    except ValueError:
+        return None
+
+
+def client_row(reg: dict[str, Any], family_id: str, goods_type: int, *, sku: str | None = None,
+               pact: tuple[int, int] | None = None, soft: str | None = None, hard: str | None = None,
+               wifi_soft: str | None = None) -> dict[str, Any]:
+    """PROCEDURAL (devices.schema.json clientRow / clientModel / clientBranch / clientFirmware): one row's
+    facts for a device. The row's own values, then its by_pact branch for the pact (none when the pact is
+    unknown), then every by_firmware item whose min_* all hold, in order (an unknown version fails its
+    test); a layered fact the row lacks (scene_versions, kelvin_range, brightness_range) comes from the
+    family specs. With the device's ``sku``, a range the row lacks (kelvin_range, brightness_range) comes
+    from the SKU's client_profile.by_model entry before the family specs, and that entry's by_firmware
+    items carry it too, ahead of the row's items. The row's own range wins over the model's and its
+    branches (the library refuses a by_model range under it). Only the ranges: the by_model colour report
+    is not resolved here. Versions compare field by field, but a kelvin_range item's gate is a string
+    compare, as the app's (KelvinConfig.Config.z2: versionHard.compareTo("3.08.01") >= 0).
+
+    Known difference: where several kelvin_range items hold, the last in list order wins here, while the
+    library takes the one with the highest version (``_fold.kelvin_range``); the two agree when the items
+    are listed by ascending version."""
+    fam = next(f for f in reg["families"] if f["id"] == family_id)
+    profile = fam.get("client_profile") or {}
+    row = profile.get("by_goods_type", {})[str(goods_type)]
+    model = ((profile.get("by_model") or {}).get(sku) if sku else None) or {}
+    ranges = {k for k in ("kelvin_range", "brightness_range") if k not in row}   # the model's to give
+    out = {k: v for k, v in row.items() if k not in ("by_pact", "by_firmware", "doc", "doc-ref")}
+    out.update({k: model[k] for k in ranges if k in model})
+    for k in ("scene_versions", "kelvin_range", "brightness_range"):
+        if k not in out and k in (fam.get("specs") or {}):
+            out[k] = fam["specs"][k]
+    if pact is not None:
+        out.update({k: v for k, v in ((row.get("by_pact") or {}).get(f"{pact[0]},{pact[1]}") or {}).items()
+                    if k != "doc"})
+    have = {"min_soft_version": soft, "min_hard_version": hard, "min_wifi_soft_version": wifi_soft}
+
+    def holds(gate: str, dev: str | None, as_string: bool) -> bool:
+        if as_string:
+            return bool(dev) and str(dev) >= gate
+        need, got = _version(gate), _version(dev)
+        return need is not None and got is not None and got >= need
+
+    items = [*({k: v for k, v in item.items() if k.startswith("min_") or k in ranges}
+               for item in model.get("by_firmware") or []), *(row.get("by_firmware") or [])]
+    for item in items:
+        if all(holds(v, have[k], "kelvin_range" in item) for k, v in item.items() if k.startswith("min_")):
+            out.update({k: v for k, v in item.items() if not k.startswith("min_") and k != "doc"})
+    return out
+
+
 # ─────────────────────────────────────── self-test / harness ───────────────────────────────────────
 
 
@@ -451,6 +523,25 @@ def _selftest(*, strict: bool = False) -> int:
         check("a SKU is a key only at goodsType 0 (H6001 -> bulblightv3; H6006 is goodsType-keyed)",
               profile_for(profs, "H6001", 0) == fams["bulblightv3"] and "H6006" not in profs
               and profile_for(profs, "H6006", 64) == fams["bulblightv3"])
+        reg = yaml.safe_load(path.read_text(encoding="utf-8"))
+        check("BLE routes: H6004 -> bulblightv3 64 (10 is IoT-only); H60A6 at (1,3) -> 303, at (2,1) none",
+              ble_rows(reg, "H6004") == [("bulblightv3", 64)]
+              and ble_rows(reg, "H60A6", (1, 3)) == [("h60ax", 303)] and ble_rows(reg, "H60A6", (2, 1)) == [])
+        h61a8 = [client_row(reg, "dreamcolorlightv1", 19, pact=pact, soft=s, hard=h)
+                 for pact, s, h in (((1, 1), "3.03.18", "3.01.10"), ((1, 1), "1.03.00", "3.08.01"),
+                                    ((1, 2), "1.05.00", "1.00.01"))]
+        h6168 = [client_row(reg, "dreamcolorlightv1", 136, soft=s, hard=h)
+                 for s, h in (("1.06.00", "1.00.02"), ("1.06.00", "1.00.01"), ("1.05.00", "3.01.10"))]
+        check("firmware branches: H61A8 {0,1,2,3} at every pact and firmware, HW 3.08.01 -> [2700, 6500], "
+              "HW 10.00.00 below it (a string compare); H6168 {0,1,2,3} from soft 1.06.00 and hard 1.00.02 "
+              "(part brightness), else {0,1,2}",
+              [(r["scene_versions"], r["kelvin_range"]) for r in h61a8]
+              == [([0, 1, 2, 3], [2000, 9000]), ([0, 1, 2, 3], [2700, 6500]), ([0, 1, 2, 3], [2000, 9000])]
+              and client_row(reg, "dreamcolorlightv1", 19, hard="10.00.00")["kelvin_range"] == [2000, 9000]
+              and [r["scene_versions"] for r in h6168] == [[0, 1, 2, 3], [0, 1, 2], [0, 1, 2]])
+        check("H60A6 pact (1,1): no 0xA5 in the status read; with the pact unknown the row's own applies",
+              client_row(reg, "h60ax", 303, pact=(1, 1))["status_read"] == ["cmd_41", "cmd_30"]
+              and client_row(reg, "h60ax", 303)["status_read"] == ["cmd_41", "cmd_30", "color_group"])
 
     try:
         _gbf()

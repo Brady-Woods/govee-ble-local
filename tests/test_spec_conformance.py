@@ -1,7 +1,6 @@
 """Offline conformance against ``spec/`` (no device):
   1. spec/devices.yaml validates against spec/devices.schema.json.
-  2. every SKU the library supports exists in the spec catalog.
-  3. the generated scan-record reader (the labelled govee_scan_record root) parses a Govee AD.
+  2. the generated scan-record reader (the labelled govee_scan_record root) parses a Govee AD.
 (Command-frame conformance is covered by tests/test_wire_build.py — every builder
 round-trips through the generated reader.)
 """
@@ -14,8 +13,6 @@ from conftest import read_struct, require_optional
 
 require_optional("kaitaistruct", reason="Kaitai runtime not installed")
 GoveeScanRecord = require_optional("govee_ble_local._generated.govee_scan_record").GoveeScanRecord
-
-from govee_ble_local.registry import supported_skus  # noqa: E402
 
 _SPEC = pathlib.Path(__file__).resolve().parent.parent / "spec"
 
@@ -30,13 +27,6 @@ def test_devices_yaml_validates_against_schema() -> None:
     doc = _load_yaml(_SPEC / "devices.yaml")
     schema = json.loads((_SPEC / "devices.schema.json").read_text(encoding="utf-8"))
     jsonschema.validate(instance=doc, schema=schema)  # raises on violation
-
-
-def test_supported_skus_present_in_spec_catalog() -> None:
-    doc = _load_yaml(_SPEC / "devices.yaml")
-    catalog = {m.upper() for fam in doc["families"] for m in fam.get("models", [])}
-    missing = {s.upper() for s in supported_skus()} - catalog
-    assert not missing, f"library SKUs absent from spec/devices.yaml: {sorted(missing)}"
 
 
 def test_advertisement_reader_parses_govee() -> None:

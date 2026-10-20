@@ -9,12 +9,13 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Any, get_args
+from typing import Any
 
 import pytest
 
 from govee_ble_local.devices import _fold
-from govee_ble_local.devices.profile import DeviceProfile, ModeColorParse, profile_for, wire_profile
+from govee_ble_local._generated.devices import MODE_COLOR_PARSE
+from govee_ble_local.devices.profile import DeviceProfile, profile_for, wire_profile
 from govee_ble_local.models import DeviceState
 from govee_ble_local.wire import build, parse, reassemble
 from govee_ble_local.wire.describe import status_burst_report
@@ -42,9 +43,10 @@ def _tlv_mode(body: bytes, prof: Any) -> Any:
 
 
 def _profile(parse_name: str, *, bar_switch: bool = False) -> Any:
-    """The wire profile of a profile on ``parse_name`` (the mode decode alone matters here)."""
+    """The wire profile of a status-read profile on ``parse_name`` (the mode decode alone matters here; its
+    status decode is the default, the H60A6's)."""
     return wire_profile(DeviceProfile(skus=("TEST",), capabilities=frozenset(), bar_switch=bar_switch,
-                                      mode_color_parse=parse_name))  # type: ignore[arg-type]
+                                      readback="status", mode_color_parse=parse_name))  # type: ignore[arg-type]
 
 
 _BODIES = [
@@ -54,7 +56,9 @@ _BODIES = [
     (0x15, 0x01, 0xFF, 0xFF),               # [gradual][kelvin -1]
     (0x04, 0x2A, 0x01),                     # scene 0x012A
 ]
-_PROFILES = [_profile(name) for name in get_args(ModeColorParse)] + [_profile("kelvin_15", bar_switch=True)]
+# Every mode_color_parse name: the spec's table, and the library's default.
+_PROFILES = [*(_profile(name) for name in ("rgb_kelvin", *MODE_COLOR_PARSE)),
+             _profile("kelvin_15", bar_switch=True)]
 
 
 @pytest.mark.parametrize("body", _BODIES)
@@ -127,6 +131,9 @@ def test_the_signed_kelvin_tests_come_from_the_spec() -> None:
     # SubMode4Color's default [gradual][kelvin s16be].
     gradual = _tlv_mode(bytes([0x15, 0x01, 0xFF, 0xFF]), _profile("kelvin"))
     assert parse.mode_color(gradual) == parse.KelvinReport(-1)
+    # The same bytes under a decode with no CCT test (kelvin_15_nocct): never a Kelvin.
+    nocct = _tlv_mode(bytes([0x15, 0x01, 0x0A, 0x8C]), _profile("kelvin_15_nocct"))
+    assert parse.mode_color(nocct) == parse.KelvinReport(0)
 
 
 @pytest.mark.parametrize(("mode", "rgb", "kelvin"), [

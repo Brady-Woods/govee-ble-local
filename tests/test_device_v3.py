@@ -4,17 +4,19 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import dataclasses
+import time
 from unittest.mock import AsyncMock
 
 import pytest
 from fake_ble import ble_device, status_burst, unacked_via
 
 from govee_ble_local.devices.device import Device, make_device
-from govee_ble_local.devices.profile import PROFILES, profile_for
-from govee_ble_local.exceptions import GoveeBleNotSupported
+from govee_ble_local.devices.profile import PROFILES, profile_for, wire_profile
+from govee_ble_local.exceptions import GoveeBleInvalidValue, GoveeBleNotSupported
 from govee_ble_local.identify import GoveeAdvertisement
 from govee_ble_local.models import Capability
-from govee_ble_local.wire import build
+from govee_ble_local.wire import build, reassemble
 from govee_ble_local.scenes import Scene
 
 
@@ -171,6 +173,8 @@ def test_zone_bar_vs_direct() -> None:
     assert _sent(h60a6)[0][:2].hex() == "3330"
     h6047 = _dev("H6047")            # combined 33 36
     h6047.state.zone_power = {0: True, 1: True}
+    now = time.monotonic()   # both bars confirmed just now: no aa 36 read first (ZONE_POWER_FRESH_SECONDS)
+    h6047.state.zone_power_confirmed = {0: now, 1: now}
     asyncio.run(h6047.set_zone_power("left", False))
     assert _sent(h6047)[0][:4].hex() == "33360001"   # right bar kept ON
 
@@ -598,6 +602,66 @@ def test_only_the_h60a6_gates_its_colour_groups_on_the_pact() -> None:
     gated = {sku for p in PROFILES if p.status_color_groups_pact is not None for sku in p.skus}
     h60a6 = profile_for("H60A6")
     assert gated == {"H60A6"} and h60a6 is not None and h60a6.status_color_groups_pact == (1, 2)
+
+
+def test_the_status_request_is_the_profiles_status_read() -> None:
+    # The request is the profile's status_read (a devices.yaml row's) in its order, here goodsType 263's
+    # [0x41, 0xA5, 0x40, 0x16]; a pact outside status_color_groups_pact drops only the 0xA5 colour groups.
+    h60a6 = profile_for("H60A6")
+    assert h60a6 is not None and h60a6.status_read == (0x41, 0x30, 0xA5)
+    d = Device(dataclasses.replace(h60a6, status_read=(0x41, 0xA5, 0x40, 0x16)),
+               ble_device("AA:BB:CC:DD:EE:21", "GVH60A6"))
+    assert _status_frames(d)[0][:7].hex() == "ac0304" "41a54016"
+    d._pact = (1, 1)
+    assert _status_frames(d)[0][:6].hex() == "ac0303" "414016"
+
+
+def test_the_status_reply_is_read_with_the_profiles_status_decode() -> None:
+    # The 0xAC reply is read with the profile's status_decode (a devices.yaml row's wire facts), not always
+    # the H60A6 screen's: here 3-record groups by the fixed rule, placed 3 apart, where the H60A6's by_pieces
+    # count of 4 fails the read; counted from the len, they set no segment past the piece count; with no
+    # colour-group form the 0xA5 TLV is skipped, and with no zone_power form the 0x30 TLV is.
+    h60a6 = profile_for("H60A6")
+    assert h60a6 is not None
+    records = [(90, 1, 2, 3), (80, 4, 5, 6), (70, 7, 8, 9)]
+    burst = status_burst(bytes([0x01, 0x01, 0x01, 0x05, 0x00, 0xA5, 13, 0x02, *sum(records, ())]))
+    assert reassemble.parse_status(burst, pieces=13, decode=wire_profile(h60a6)) == reassemble.StatusReply()
+    groups = dataclasses.replace(h60a6, status_decode=(
+        ("f_a5", "color_group"), ("group_rule", "fixed"), ("num_per_group", 3), ("has_brightness", True)))
+    st = reassemble.parse_status(burst, pieces=13, decode=wire_profile(groups))
+    assert st.is_on is True and [(s.index, s.rgb) for s in st.segments] == [
+        (3, (1, 2, 3)), (4, (4, 5, 6)), (5, (7, 8, 9))]
+    by_len = dataclasses.replace(h60a6, status_decode=(
+        ("f_a5", "color_group"), ("group_rule", "from_len"), ("num_per_group", 3), ("has_brightness", True)))
+    by_len_st = reassemble.parse_status(burst, pieces=4, decode=wire_profile(by_len))
+    assert [s.index for s in by_len_st.segments] == [3]
+    bare = dataclasses.replace(h60a6, status_decode=(("music", "v2_default"),))
+    assert reassemble.parse_status(burst, pieces=13, decode=wire_profile(bare)).segments == []
+    no_zones = reassemble.parse_status(status_burst(bytes([0x01, 0x01, 0x01, 0x30, 0x02, 0x01, 0x00])),
+                                       pieces=13, decode=wire_profile(bare))
+    assert no_zones.is_on is True and no_zones.zone_power == {}
+    for bad in ((("f_a5", "color_group"),), (("f_99", "x"),), (("num_per_group", 0),)):
+        with pytest.raises(GoveeBleInvalidValue, match="status_decode"):
+            dataclasses.replace(h60a6, status_decode=bad)
+
+
+@pytest.mark.parametrize("sku", ["H1630", "R1630"])
+def test_h1630_status_read_fails_on_a_short_power_memory_value(sku: str) -> None:
+    # h1630 364 reads TLV 0x41 as the power-off memory (f_41 power_memory): the screen's status lambda stores
+    # the value's byte 1 unguarded (VM4LightH1630$afterConnectedSingleReadDeviceInfo$1.o), so a 0x41 value of
+    # 0 or 1 byte fails the app's whole read, and the library's, wherever it sits; one of 2 bytes reads as
+    # before. An empty 0x41 as the stream's last two bytes is no TLV to the walker, so it reads as before.
+    p = profile_for(sku)
+    assert p is not None and ("f_41", "power_memory") in p.status_decode
+    power, brightness = bytes([0x01, 0x01, 0x01]), bytes([0x04, 0x01, 0x32])
+    for value, fails in ((b"", True), (b"\x02", True), (b"\x02\x01", False)):
+        tlv = bytes([0x41, len(value), *value])
+        for tlvs in (tlv + power + brightness, power + tlv + brightness):
+            st = reassemble.parse_status(status_burst(tlvs), pieces=1, decode=wire_profile(p))
+            assert (st.is_on, st.brightness) == ((None, None) if fails else (True, 50))
+    tail = reassemble.parse_status(status_burst(power + brightness + bytes([0x41, 0x00])), pieces=1,
+                                   decode=wire_profile(p))
+    assert (tail.is_on, tail.brightness) == (True, 50)
 
 
 def test_read_status_retries_once_then_recovers(caplog: pytest.LogCaptureFixture) -> None:

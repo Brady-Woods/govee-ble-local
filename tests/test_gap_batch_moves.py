@@ -1,20 +1,18 @@
 """The library on the spec owner's gap batch (c706502): the new enums, standalone types and instances.
 
-Pins what each move reads from the spec, the app-matching decode changes it brings (signed Kelvins on
-H6641 and the H6047 bars, signed version text, a signed section count) and the plug profile rows
-against devices.yaml. No hardware."""
+Pins what each move reads from the spec and the app-matching decode changes it brings (signed Kelvins on
+H6641 and the H6047 bars, signed version text, a signed section count). No hardware."""
 from __future__ import annotations
 
 import base64
 import pathlib
-from typing import Any
 
 import pytest
 from conftest import require_optional
 
 from govee_ble_local import identify, scenes
 from govee_ble_local.devices import _fold
-from govee_ble_local.devices.profile import PROFILES, profile_for, wire_profile
+from govee_ble_local.devices.profile import profile_for, wire_profile
 from govee_ble_local.models import DeviceState
 from govee_ble_local.wire import _spec, build, describe, parse, reassemble
 
@@ -31,108 +29,18 @@ def _frame(*payload: int) -> bytes:
     return bytes(buf)
 
 
-# ── devices.yaml: the plug rows match h5080's client_profile.by_goods_type ──────────────────
-def _plug_goods_types() -> list[tuple[str, str, dict[str, object]]]:
-    yaml = require_optional("yaml", reason="PyYAML reads spec/devices.yaml")
-    rows = []
-    for fam in yaml.safe_load((_ROOT / "spec" / "devices.yaml").read_text())["families"]:
-        for gt, entry in ((fam.get("client_profile") or {}).get("by_goods_type") or {}).items():
-            if "relay_power" not in entry:   # a colour-strategy entry, not a plug's
-                continue
-            for model in entry.get("models") or []:
-                rows.append((str(gt), model, entry))
-    return rows
-
-
-# The aa 01 heartbeat rule the library's poll follows where it differs from the connect read devices.yaml's
-# relay_on_mask records: gt 50 / 307 read bits 0..1 (devices.schema.json relay_on_mask's doc;
-# switch_read_reply.any_relay_0_1_is_on).
-_HEARTBEAT_ON_MASK = {"50": 0x03, "307": 0x03}
-
-
-def test_every_plug_profile_matches_its_goods_type_in_devices_yaml() -> None:
-    rows = _plug_goods_types()
-    plugs = {"H5080", "H5082", "H5083", "H5085", "H5089", "H5160", "H5161"}
-    assert {model for _gt, model, _e in rows} >= plugs
-    for gt, model, entry in rows:
-        profile = profile_for(model)
-        assert profile is not None, model
-        got = (profile.relay_power, profile.relay_on_mask, profile.advert_on_mask)
-        on_mask = _HEARTBEAT_ON_MASK.get(gt, entry["relay_on_mask"])
-        want = (entry["relay_power"], on_mask, entry["advert_on_mask"])
-        assert got == want, (gt, model)
-
-
-# ── devices.yaml: each colour profile's mode_color_parse is the strategy the spec resolves for it ──
-# The goodsType each SKU-keyed profile is written for: its account record's, as profile.py's comments
-# trace it (0 = no cloud goodsType, routed by SKU). Every colour profile must be listed here.
-_PROFILE_GOODS_TYPE = {
-    "H60A6": 303, "H6047": 119, "H61A8": 19, "H6006": 64, "H6008": 64, "H6004": 64, "H6052": 22,
-    "H6641": 247, "H6188": 0, "H6062": 41, "H6061": 51,
-}
-# The spec reuses a library name only where the traced map is exactly that strategy. Its other names the
-# library implements under one of its own: kelvin_pair_15 (the H6047 old detail screen, one Kelvin per bar)
-# is "kelvin_15" on a bar_switch profile, which reads the pair (parse.bar_kelvin_of).
-_LIBRARY_NAME = {"kelvin_pair_15": "kelvin_15"}
-
-
-def _resolve_mode_color_parse(families: list[dict[str, Any]], sku: str, g0: int) -> str:
-    """devices.schema.json client_profile.mode_color_parse: the family by the record's goodsType (by SKU
-    only at 0, no fallback between the two), then assigned_goods_type, then by_goods_type.<gt>,
-    by_model.<SKU>, the family default; pact and firmware branches last."""
-    if g0:
-        fams = [f for f in families if g0 in (f.get("goods_types") or [])]
-    else:
-        fams = [f for f in families if sku in (f.get("models") or [])
-                and (not f.get("goods_types") or 0 in f["goods_types"])]
-    assert len(fams) == 1, (sku, g0, [f["id"] for f in fams])
-    fam = fams[0]
-    # A device_list item's condition is on the record's pact or firmware, which a profile does not carry,
-    # so none may apply to a profiled SKU.
-    assigned = [a for a in fam.get("assigned_goods_type") or []
-                if a["context"] == "device_list" and sku in a["models"] and g0 in a["from_goods_type"]]
-    assert not assigned, (sku, assigned)
-    cp = fam.get("client_profile") or {}
-    by_gt = (cp.get("by_goods_type") or {}).get(str(g0)) or {}
-    by_model = (cp.get("by_model") or {}).get(sku) or {}
-    entry = next(e for e in (by_gt, by_model, cp) if "mode_color_parse" in e)
-    # A profile is pact- and firmware-agnostic: no branch may apply.
-    for e in (by_gt, by_model, entry):
-        assert "mode_color_by_pact" not in e and "mode_color_by_firmware" not in e, (sku, e)
-    # The library reads the 0xAC 0x05 TLV with the aa 05 reply's colour decode (wire_profile's;
-    # reassemble.status_profile adds only the status screen's music layout and empty-value rule): a SKU
-    # whose status colour strategy differs needs its own.
-    status = next((e for e in (by_gt, by_model, cp) if "mode_color_parse_status" in e), None)
-    assert status is None or status["mode_color_parse_status"] == entry["mode_color_parse"], (sku, status)
-    return str(entry["mode_color_parse"])
-
-
-def test_every_colour_profile_matches_the_mode_color_parse_devices_yaml_resolves() -> None:
-    yaml = require_optional("yaml", reason="PyYAML reads spec/devices.yaml")
-    families = yaml.safe_load((_ROOT / "spec" / "devices.yaml").read_text())["families"]
-    colour = {sku for p in PROFILES if p.mode_color_parse != "rgb_kelvin" or not p.relay for sku in p.skus}
-    assert colour == set(_PROFILE_GOODS_TYPE)
-    for sku, g0 in _PROFILE_GOODS_TYPE.items():
-        profile = profile_for(sku)
-        assert profile is not None, sku
-        spec_name = _resolve_mode_color_parse(families, sku, g0)
-        assert profile.mode_color_parse == _LIBRARY_NAME.get(spec_name, spec_name), (sku, g0, spec_name)
-        if spec_name == "kelvin_pair_15":
-            assert profile.bar_switch, sku
-
-
 def test_the_status_reads_profile_is_devices_yamls_h60a6_wire_entry() -> None:
-    # reassemble.status_profile's mode rules (_STATUS_MODE) and forms are the H60A6's (goodsType 303)
-    # devices.yaml h60ax wire entry: the family's, under 303's by_goods_type override.
+    # reassemble.status_profile's mode rules and forms are the H60A6's (goodsType 303) devices.yaml h60ax
+    # wire entry: the family's, under 303's by_goods_type override.
     yaml = require_optional("yaml", reason="PyYAML reads spec/devices.yaml")
     families = yaml.safe_load((_ROOT / "spec" / "devices.yaml").read_text())["families"]
     wire = next(f for f in families if f["id"] == "h60ax")["client_profile"]["wire"]
     gt = wire["by_goods_type"]["303"]
     mode = {**wire.get("mode", {}), **gt.get("mode", {})}
-    assert {"music": int(getattr(_spec.Common.MusicDecode, mode["music"])),
-            "empty_fails": mode["empty_fails"]} == reassemble._STATUS_MODE
     forms = {**wire.get("forms", {}), **gt.get("forms", {})}
     prof = reassemble.status_profile(13)
+    assert (int(prof.mode_status.music), prof.mode_status.empty_fails) == (
+        int(getattr(_spec.Common.MusicDecode, mode["music"])), mode["empty_fails"])
     c = _spec.Common
     for name, enum in (("f_30", c.Form30), ("f_40", c.Form40), ("f_41", c.Form41), ("f_a3", c.FormA3),
                        ("f_a5", c.FormA5)):

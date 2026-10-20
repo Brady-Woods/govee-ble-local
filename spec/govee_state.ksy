@@ -1004,10 +1004,11 @@ types:
         doc: the value ends inside a record the app copies (it throws)
   timer_count:
     doc: |
-      Form timer_count of 0x12: the H5083 AA 12 reply [group echo][count].
+      Form timer_count of 0x12: the h5080 AA 12 reply [group echo][count].
     doc-ref:
       - firmware-h5083-wifi/decompiled/H5083_ble_dispatcher.c:147-149
       - split_plugnew/com/govee/h5080/adjust/newdetail/H5083NewDetailRepository.java:197-223
+      - split_plugnew/com/govee/h5080/ble/controller/NewTimerCountController.java:27-31
     seq:
       - id: group
         type: u1
@@ -1017,10 +1018,11 @@ types:
         doc: the number of timers, read as ceil(count / 4) AA 13 pages
   plug_timer_page:
     doc: |
-      Form plug_timer of 0x13: the H5083 AA 13 reply [page | group << 4][4 x
+      Form plug_timer of 0x13: the h5080 AA 13 reply [page | group << 4][4 x
       timer_record].
     doc-ref:
       - split_plugnew/com/govee/h5080/adjust/newdetail/H5083NewDetailRepository.java:232-246
+      - split_plugnew/com/govee/h5080/ble/controller/NewTimerControllerV2.java:53-66
       - base-classes12/com/govee/base_h71xx/sku_base/adjust/component/bean/TimerInfo.java:52-60
       - firmware-h5083-wifi/decompiled/H5083_ble_dispatcher.c:111-143
     seq:
@@ -1030,7 +1032,7 @@ types:
         type: govee_common::timer_record
         repeat: expr
         repeat-expr: 4
-        doc: zero past the timer count, and all zero for a page >= 4
+        doc: on H5083, zero past the timer count and all zero for a page >= 4
     instances:
       page:
         value: page_and_group & 0x0f

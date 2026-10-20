@@ -7,7 +7,7 @@ backend-path = ["_build_backend"]
 
 [project]
 name = "govee-ble-local"
-version = "1.4.0"
+version = "1.5.0"
 description = "Local Bluetooth LE control of Govee devices — no cloud, no LAN API."
 readme = { file = "README.md", content-type = "text/markdown" }
 license = "MIT"
@@ -64,8 +64,9 @@ Issues = "https://github.com/Brady-Woods/govee-ble-local/issues"
 
 [project.optional-dependencies]
 # Dev/test/docs only — NOT runtime. PyYAML + jsonschema validate spec/devices.yaml in the
-# test suite (the runtime device table is hardcoded Python in devices/profile.py; nothing under
-# src/ imports yaml). See CLAUDE.md for the dependency policy.
+# test suite. The runtime device table is generated Python (src/govee_ble_local/_generated/devices.py,
+# from spec/devices.yaml by tools/gen_devices.py at build time; the in-tree backend asks for PyYAML in a
+# repository build only), so nothing under src/ imports yaml. See CLAUDE.md for the dependency policy.
 test = [
     "pytest", "pytest-asyncio", "pytest-cov", "jsonschema>=4.0", "PyYAML>=6.0", "aiohttp>=3.9",
     # Independent AES reference for tests/test_spec_reference_crosscheck.py. Test-only: never a
@@ -119,6 +120,12 @@ ignore_missing_imports = true
 [[tool.mypy.overrides]]
 module = ["govee_ble_local._generated.*"]
 ignore_errors = true
+
+# The generated device table is data typed by devices/_resolve.py's TypedDicts: checked strictly (a
+# concrete module name wins over the wildcard above).
+[[tool.mypy.overrides]]
+module = ["govee_ble_local._generated.devices"]
+ignore_errors = false
 
 [tool.vulture]
 exclude = ["src/govee_ble_local/_generated"]

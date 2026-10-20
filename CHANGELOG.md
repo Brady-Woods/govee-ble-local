@@ -8,6 +8,971 @@ model, from which the shipped readers are generated).
 
 ## [Unreleased]
 
+## [1.5.0] — 2026-10-20
+
+### Added
+- `DeviceState.zone_power_confirmed` (`dict[int, float]`, keyed like `zone_power`): the `time.monotonic()`
+  time the device last told the library each zone's power. An entry vouches that `zone_power` still holds
+  the value the device gave then. Asked by the Home Assistant integration (latency fix #4: power a zone
+  first, and skip that on a zone confirmed lit). It inferred a confirmation from `zone_power` being
+  assigned a new dict, which every writer does: an H60A6 `33 30` to the main panel "confirmed" the ring's
+  cached power too, and `apply_power` and a scene activation assign one without reading anything.
+  - Stamped only by the device: the 0xAC status read's TLV 0x30 (each zone it carries, with the two
+    exceptions below), the `aa 36` bar read (both bars), and an acked write whose frame sets the zone. That
+    is a `33 30` for its own zone only, a `33 36` for both bars, one `33 30` per zone (no current profile),
+    and a `33 01` that sets every zone.
+  - The `33 01` case is FIRMWARE-SOURCED; the app's switch ack sets only the main switch
+    (`VM4LightH60A6.K5`, `NewDetailVm.F5`). It covers the H60A6's on and off (`FUN_9b0278dc
+    @0x9b02791c-0x9b027930`, both zone flags, as the 2026-10-12 bench showed) and the H6047's off
+    (`FUN_01004f32 @0x01004f5c-0x01004f60 -> FUN_01002720`, both bar flags). After an H6047 on, the
+    library forgets the bars, as the app does.
+  - Never by the model: a scene activation, the zones a power write assumes, and an advertisement stamp
+    nothing.
+  - TLV 0x30 does not stamp a zone, which takes the reported power and loses the stamp it had, when:
+    - it reports the zone lit while the same burst's TLV 0x01 does not say on (an "off" still stamps). The
+      device says it is off (on the H60A6, TLV 0x01 is the main switch flag), so the zone's flag does not
+      say it is lit.
+    - on an H60A6, a `33 01` / `33 30` (or a `33 04` wake) set the zone since the last reply that carried
+      it, and the reply does not report the one power those writes can leave it at (the last acked `33 01` /
+      `33 30`'s, and that of each later write that raised, or may not have posted: a `33 04` wake).
+      FIRMWARE-SOURCED: the dispatcher acks those once it has posted them (`MSG_SET_TURN` 0xB2 /
+      `MSG_SET_TURN_MULT` 0xB7, `_mqtt_response_pushDeviceMsg FUN_9b027b88`), its message thread applies them
+      later, in order (`_mqtt_response_thread_func FUN_9b028fb0` -> `_mqtt_response_handle FUN_9b028bc8` ->
+      `FUN_9b0278dc`), and the 0xAC reply is built from the flags as they are (`ble_msg_one_to_more
+      FUN_9b04bdd8`), so a reply answered in between reports the old power. The next reply stamps the zone.
+  - A zone loses its stamp when the library forgets it: an advertisement's "on" over zones that all read
+    off, or an H6047 `33 01` on or scene activation. It also loses it when its value changes without the
+    device saying so: an advertisement's "off" over a zone confirmed on. A zone whose value stays the same
+    keeps its stamp, except through a scene activation, acked or not, which drops every zone's stamp: what
+    it does to the zone flags is not traced (H60A6 `FUN_9b025124`, H6047 handler `0x01005510`).
+  - A zone also loses its stamp, with its value left as it was, when the device may hold another power
+    for it than the one held:
+    - a power write that raises, since it may have reached the device: the transport writes a frame on
+      every attempt and once more on a fresh link, so even a refusal can follow an attempt that landed
+      unacked. Every zone the write targets loses its stamp, whatever power it is held at: a `33 30` its
+      own zone, a `33 36` both bars, and a whole-device power write or a scene activation (a scene's
+      power-on lead, its upload and its activation included) every zone.
+    - a write that wakes the device while it is not known to be on, which lights every zone (a zone held
+      off loses its stamp). FIRMWARE-SOURCED: an H60A6 `33 04` or `33 05` (the dispatcher `FUN_9b02687c`,
+      case 4 -> `MSG_SET_TURN(1)` whatever the level, case 5, lights the main switch and both zones, as the
+      2026-10-12 bench saw), and an H6047 `33 04` or `33 05` (while both bars are off each handler,
+      `0x01005454` and `0x01005510`, runs the power-on sequence `FUN_01002750`, which sets both bar flags).
+      The wake is checked again once the frame went out (a power-off may have applied while it waited for
+      the link). `is_on` is not trusted to rule a wake out after a write that may have switched the device
+      off raised; after an acked zone-off over some zones (an H60A6 `33 30`) unless the device was known to
+      be on and every other zone is held lit with a stamp, since a zone-off that leaves no zone lit also
+      switches the main switch off (`FUN_9b0278dc @0x9b027972-0x9b027986`: both zone flags 0 ->
+      `FUN_9b02b3fc(0)`, then `FUN_9b033e28`); and after a status reply that came before an H60A6 power
+      write applied (above). A read issued after the last of these, or an acked write that sets every zone,
+      gives the on/off again: a write that fails while a multi-read poll is past its power read leaves it
+      untrusted. On an H60A6 a write also counts as a wake while a `33 01` on or `33 30` zone-on is posted
+      and no reply has carried it, since the dispatcher checks the main switch as the message thread has
+      left it.
+    - an H6047 `aa 01` reply that the bars' held power contradicts. It answers bar 0 | bar 1
+      (`FUN_01004f32`), so an "off" rules out a bar held lit, and an "on" rules out bars all held off,
+      when the `aa 36` read after it is lost.
+    - an acked `33 01` off on an H6042 (bars read by `aa 36`, no profile zones): no firmware in hand says
+      what it leaves the bars at.
+  - It is the last field (the positional order before it is unchanged). It is left out of equality, so a
+    poll that re-confirms the same power leaves the state equal to a `snapshot()` taken before it;
+    `snapshot()` copies it. `dataclasses.asdict()` and `repr()` still include it, and a read that
+    re-confirms a zone gives it a new time, so a consumer that diffs those to detect a change should drop
+    it. `dataclasses.replace(state, zone_power=...)` carries the same `zone_power_confirmed` dict into the
+    copy, still vouching for the old values: a consumer that replaces `zone_power` should drop the stamps
+    too.
+  - Additive: no frame, read or other field changes, besides the H6047 bar write's `aa 36` re-read (under
+    Fixed), which reads the stamps. The field's first cut (d47d22a) was identical to e7687f4 in a
+    differential over every table profile (failed, refused, cancelled and part-failed writes, wakes and
+    concurrent setters included); this entry differs from that cut only in that re-read and the field
+    itself.
+- `const.ZONE_POWER_FRESH_SECONDS` (120 s): how long a `DeviceState.zone_power_confirmed` stamp counts as
+  fresh for the H6047 bar write's `aa 36` re-read (see Fixed).
+- `DeviceProfile.mode_color_parse_status` (keyword-only, default None): the 0xAC status read's TLV 0x05
+  decode where it differs from the `aa 05` reply's (devices.yaml `mode_color_parse_status`). `wire_profile`
+  passes it to the spec's `mode_status` param, which the status read now takes (`_spec.profile(mode_status=)`).
+  No current SKU sets it.
+- `DeviceProfile.scene_versions_by_firmware` (keyword-only, default `()`): `(min_soft_version,
+  min_hard_version, versions)` entries that replace `scene_versions` from a firmware version up (a row's
+  `by_firmware`; versions compared field by field). A version not yet read meets every gate on it, as the
+  newest firmware would, so one failed version read doesn't hold back the other's gates, and `Device.update`
+  reads it again on the next poll (Fixed). The dreamcolorlightv1 rows of goodsTypes 70 to 262 hold their
+  part-brightness gates in it; no current profile sets it, since none of those SKUs has a catalog yet.
+- `DeviceProfile.scene_versions_by_pact` (keyword-only, default `()`): `((pact_type, pact_code), versions)`
+  entries that replace `scene_versions` on an advertised pact (a row's `by_pact`), applied before the
+  firmware entries. `Device.scene_versions` is the set in force for the advertised pact and the read
+  versions, and `Device.scene_upload_frames` uses it. No current row sets it.
+- `tools/gen_devices.py`, and `src/govee_ble_local/_generated/devices.py` as a build product (gitignored,
+  shipped in the sdist and wheel, covered by the conftest staleness guard, which also watches
+  `devices/_resolve.py`, and the backend's `_GENERATED_FILES`). The generator keeps only what the library
+  reads, by an allow-list checked against `devices.schema.json`, and fails the build on a missing fact or
+  one the library can't serve, never the import. It refuses, among others: a wire `by_pact` / `by_firmware`
+  branch (the library reads the wire with both unknown; H60A6's unread pact (1,1) piece count and
+  capabilities are allowed as pinned), a mode decode or a command form other than the ones the library
+  reads with or sends, a `has_brightness`, `power_live`, `color_functions` or family `encryption` value it
+  doesn't implement, a row without `models`, `pacts`, `account_lock`, `brightness_range` (with
+  `brightness`), `power_resync` (plugs) or `color_scheme` where one is used, a colour capability on a plug,
+  a capability a family-default scheme would drop, out-of-range values (Kelvin and brightness ranges and
+  their branches, masks, zone segments, group size, IC range, version gates), `connect_reads` that don't
+  list `brightness` / `gradual` exactly where the library reads them, a pact branch at a pact the row
+  doesn't list (no device reaches it), and, checked over the whole document, a SKU that a `modelled` row
+  and a `hardware_verified` / `app_traced` row both list, or that an `assigned_goods_type` item in any
+  family names, and in a family with a supported row a `by_model` or `wire.by_model` entry for a SKU none
+  of its rows lists and the catalogue snapshot routes to none of them. Rows of every support level are
+  resolved and checked.
+- **Routing by pact and goodsType** (one-device-list phase 2): `profile_for(sku, *, pact=None,
+  goods_type=None, allow_modelled=False)` and `is_supported_sku` with the same keywords. The candidates
+  are the devices.yaml BLE rows that list the SKU and accept the advertised `(pact_type, pact_code)` (any
+  row when the pact is unknown), at `goods_type` where given; exactly one (or several with identical
+  facts) is the SKU's profile, several that differ are unsupported until the goodsType picks one, and
+  none is unsupported, but for 1.4.0's 18 SKUs, which fall back to their one traced profile, as in 1.x
+  (see Changed). `create_device`
+  takes the pact from the advertisement it is given, so the profile, and every capability, is settled
+  before any entity is built; it also takes `goods_type` and `allow_modelled`.
+- **The modelled-row opt-in**: `allow_modelled=True` on `profile_for`, `is_supported_sku`,
+  `supported_skus` and `create_device` also admits rows whose `support` is `modelled` (inferred, not
+  traced). Off by default, so the default table is the user's "app-traced by default"; and as the build
+  refuses a SKU that a modelled row and a traced row both list, the opt-in only adds SKUs. The `modelled`
+  rows are listed under Spec. `scanner.supported`, `scanner.match` and `discover` take it too, so an
+  opted-in caller's scan reports those devices as supported.
+- `DeviceProfile.status_read` (keyword-only, default `(0x41, 0x30, 0xA5)`, 1.x's request): the TLV types
+  the 0xAC status read requests, in order, from the row's `status_read`. `build.status_query(types=)`
+  builds a request from them (`full` stays for the H60A6's default).
+- `DeviceProfile.status_decode` (keyword-only, default the H60A6 status screen's, 1.x's decode): how the
+  0xAC reply is read, the row's wire facts as `(govee_profile param, value)` pairs: the forms of the TLVs
+  the status stream reads, the colour-group form where it reads TLV 0xA5 as colour groups (rule, group
+  size, 4-byte records), and the TLV 0x05's music layout and empty-value rule. `wire_profile` carries it
+  on a `readback="status"` profile, and `reassemble.status_profile` reads the stream with it.
+- `build.color_rgb_frames(..., pieces=)` and `build.color_temp(..., pieces=)`: an `h6061` device's panel
+  count, which bounds the layout and sizes the CCT mask (`ColorPieceConfig.k`, the count rounded up to
+  whole bytes); None keeps the H6061's 23. `Device` passes its profile's `segments`.
+- **The catalogue snapshot routes the SKUs no devices.yaml row lists** (`spec/govee_catalog.json`, read
+  only by the generator, `_resolve.catalogue`; no cloud call at run time). Such a SKU routes to the BLE row
+  with support at its catalogue goodsType, never at goodsType 0, when that is the only row at it, as the
+  app's `Pact.f` routes it. It takes the row's facts (and shares a profile where the resolved facts match),
+  at the row's support level capped at `app_traced` (`_resolve.catalogue_support`): the snapshot's
+  goodsType is no bench check, so the catalogue bulbs on the `hardware_verified` bulb row are `app_traced`,
+  and a `modelled` row's stay behind `allow_modelled`. The generated row carries them apart from its own
+  SKUs (`catalogue_models`, a key the generator adds), and each target row's doc records the per-SKU sweep
+  of the app for them: every string literal naming one, and its mode components.
+  - **10 SKUs gain a route**, by the catalogue's goodsType alone, with no bench check. Nine are on
+    goodsType 64, the bulb row: H6009, H600A, H600B, H600C, H600D, H6010, H6011, H6013 and H800B. They
+    take the bulb row's facts but offer no scenes until a catalog is bundled (Changed), so they form two
+    profiles of their own: H600A / H600B / H600C / H600D / H6011 / H6013 / H800B, and H6009 / H6010
+    (`scene_power_on`). The H6004 / H6006 / H6008 profile's `skus` is those three (1.4.0 had a profile for
+    each of them: Changed, "Profiles group SKUs with identical facts"). The tenth, **R1630**, is on the
+    h1630 row 364 and shares H1630's profile. A catalogue SKU takes its row's support level, capped at
+    `app_traced`, so R1630 is admitted by default now that the app trace makes that row `app_traced` (Spec).
+  - The admit commit's rows (Spec, "41 more SKUs") extend the catalogue routes to 14 SKUs: **H6167**
+    (dreamcolorlightv1 83), **H616D / H616E** (207) and **H802A** (74) join those rows' profiles.
+  - The snapshot's refresh at AppVersion 7.7.02 (Spec) adds a 15th, **R14B1**, on H14B1's row (bulblightv3
+    408, `app_traced`), so it is admitted by default. It has no bundled scene catalog, so it offers no scenes
+    and shares row 111's profile (H1501 / H601A / ... / R1501), whose `skus` gains it last. H14B1 keeps its own
+    profile. No other SKU's route or profile field changes.
+  - They are served only at the row's pacts, as every SKU outside 1.4.0's 18 is (see Changed): the app's
+    scan refuses a device whose pact its goodsType doesn't accept (`AbsBaseBleModel.e`, `checkProtocol` ->
+    `Pact.i`).
+  - The nine bulbs and the six others offer no scenes until a catalog is bundled for them (scenes need
+    a catalog: Changed). Each row's doc says how they route.
+  - A SKU that a row lists keeps the spec's route. A non-zero catalogue conflict leaves the SKU unrouted
+    and on the review list the generator prints, unless an `assigned_goods_type` item of the row's family
+    cites the app's rewrite of that goodsType: one whose `from_goods_type` names it, or, with none, one
+    that the pact conditions. A SKU no row lists also goes on the list when the app rewrites its goodsType, or when rows of
+    several families share that goodsType.
+  - Today the list holds H615E alone. The 8 non-zero conflicts are all on rows without support, so none is
+    unrouted. Seven are such a rewrite: H6145 / H6146 / H6147 / H6171 13 → 17, H6118 / H6194 6 → 39 and
+    H6179 12 → 39. H615E's item is the unconditioned pairing write of 40, which cites no rewrite of its
+    catalogue 108, so it is for review.
+  - No route or profile field of 1.4.0's 18 SKUs changes. The snapshot's ic is read nowhere: no row's app
+    trace uses it. The conftest staleness guard watches the snapshot.
+- **Pact-conditioned reassignments route by pact.** The 11 `assigned_goods_type` items whose condition
+  tests the pact alone (`min_pact_type` / `min_pact_code`) are now routing data instead of a refusal. Each
+  SKU is listed on the row of the goodsType the app rewrites it to, with the pacts at or above the gate. It
+  belongs on a row of the goodsType it is rewritten from with pacts below the gate, and no such row exists
+  yet. The advertised pact then picks the row the app's rewrite picks.
+  - `_resolve.routes` checks every such item against the rows. The build fails when a row lists one of its
+    SKUs at the target goodsType with a pact below the gate, at a source goodsType with a pact at or above
+    it, or at either with `any`.
+  - The 5 firmware-conditioned items and the 2 unconditioned pairing writes stay refused on a routed SKU.
+    The generated table now keeps each item's `from_goods_type` and `condition`, so the check reads the
+    same there.
+  - The generator prints what is left for review (`_resolve.reassignment_review`). That is the source side
+    of every item, 20 SKUs, since no row lists them at the goodsType they are rewritten from (0, 13, 6 or
+    12). It also lists H6119, which h7090's row 44 lists without pacts.
+  - `profile_for`'s 1.x fallback for a pact no row accepts covers none of these SKUs (only 1.4.0's 18), so
+    a pact below the gate never reaches the target row.
+  - No row involved has support, so no SKU's library route changes yet, and 1.4.0's 18 SKUs keep every
+    route and field.
+- **A light's connect write** (device-list phase 3): `DeviceProfile.light_effect_stop` (keyword-only,
+  default False) and `build.light_effect_stop()`, the `33 25 01` the bulb screens write on connect, once
+  their connect reads succeed (bulblight `VM4Light.i5`). A light row may now list
+  `connect_writes: [light_effect_stop]` (the resolver allowed connect writes only on plugs,
+  `plug_sync_time`); the library sends it once per session after the handshake and any unlock, as it sends
+  a plug's time sync. The app sends it once per screen connect, after its connect reads. The library
+  connects for every poll after the idle disconnect and makes those reads on its polls, so the write goes
+  out on every such poll, before the reads; it only stops a running `33 24` effect. It is sent without
+  waiting for its ack (`GoveeConnection(session_ack=False)`; a plug's time sync still waits), so a device
+  that doesn't ack it costs no ack timeout per poll. Source-modelled, not live-verified. Set on bulblightv3
+  111 / 348 / 408: H1501, H601A, H601B, H601C, H601D, H801A, H801C, H801D, R1501, H1401, R1401 and H14B1
+  (Spec).
+- **The `aa a3` read without the gradual control** (device-list phase 3): `DeviceProfile.gradual_read_only`
+  (keyword-only, default False). Some screens read the gradual flag at connect (the default
+  `Compose4InfoBleIot` read) but offer no gradual control; a row may now list `gradual` in `connect_reads`
+  without the capability (the resolver tied the read to the capability), and `Device.update` then reads
+  `aa a3` on every poll and discards the reply (`state.gradual` stays None). Only a polled light row may
+  list it, where the default read is traced; the build refuses it on a status or plug row. The capability
+  still needs the read. Set on the ten h7050 rows (Spec): H7050, H7060, H7051, H7062, H7065, H7055, H7066, H7052, H7053
+  and H7063.
+- **Kelvin and brightness ranges by pact** (device-list phase 3): `DeviceProfile.kelvin_by_pact`
+  (`((pact_type, pact_code), min_kelvin, max_kelvin)` entries) and `DeviceProfile.brightness_by_pact`
+  (`((pact_type, pact_code), (min, max) | None)`, None = percent), both keyword-only, default `()`, from a
+  row's `by_pact` `kelvin_range` / `brightness_range` (the resolver refused both). They replace the base
+  range on that advertised pact, as `scene_versions_by_pact` does: `Device.min_kelvin` / `max_kelvin`, the
+  brightness write and every brightness read-back (`aa 04`, the status TLV) use the range in force;
+  `_fold.brightness_range(profile, pact)` gives it. Until a pact is heard (the app always knows it; the
+  library may not), the Kelvin range is the one valid on every pact, the base cut to each entry's, and a
+  profile with `brightness_by_pact` neither writes nor reads the brightness byte: the write raises
+  GoveeBleNotSupported and `state.brightness` stays None (`_fold.brightness_pending`), since the pact picks
+  what the byte means. A pact Kelvin range needs a base one (the row's or the family's) that it overlaps, a
+  range valid on every pact and no Kelvin firmware branch, and a pact brightness range the brightness
+  capability. `kelvin_by_pact` is set only on h61d3 261 (H61F2 / H61F5 / H61F6, behind
+  `allow_modelled`), and no row sets `brightness_by_pact` yet.
+- **Kelvin ranges by soft version and per model** (device-list phase 3): `DeviceProfile.kelvin_by_software`
+  (keyword-only, default `()`), `(min_soft_version, min_kelvin, max_kelvin)` entries applied with the
+  device's soft version (`aa 06`) as `kelvin_by_hardware` is with the hardware version: compared as
+  strings (`KelvinConfig.Config.Z2`), and until the version is read the range valid on every revision
+  applies. A row's (or a SKU's `by_model`) `by_firmware` Kelvin item may now gate on `min_soft_version`
+  alone, not only on `min_hard_version` alone (one kind per row). `client_profile.by_model.<SKU>` may carry
+  `kelvin_range` and `brightness_range`, used where the SKU's row has none (the row's wins, as the schema
+  says; one under the row's own raises), and a `by_firmware` Kelvin item over its own `kelvin_range`
+  (bulblightv3 H14A1). Since a gate compares as a string, the build refuses one that isn't the app's
+  `a.bb.cc` form with two-digit fields, and any Kelvin firmware gate on goodsType 235, whose
+  `KelvinConfig.Config.Y2` compares the version numerically (`BleUtils.isHigherVersion`).
+  `kelvin_by_software` is set on H1401 / R1401 (bulblightv3 348); no row uses a `by_model` range yet.
+- **The `aa 40` read that does not size the pieces** (device-list phase 3): `DeviceProfile.ic_num_read_only`
+  (keyword-only, default False). Some screens read the IC count at connect although their piece count is
+  fixed; such a row now says `ic_pieces: fixed` (the resolver served the read only with the IC sizing), and
+  `Device.update` then reads `aa 40` on every poll, before the colour read-back, and discards the reply; the
+  read-back walks the static pieces. An `ic_num` read still needs `ic_pieces` (now the sizing or `fixed`)
+  and the direct colour read-back, and `ic_pieces` the read; H6641's live sizing is unchanged. No row says
+  `ic_pieces: fixed` yet, so no SKU sets it.
+- **H6009 / H6010 power on before a scene** (the review's A3d): `DeviceProfile.scene_power_on` (keyword-only,
+  default False), from a SKU's devices.yaml `by_model` `scene_power_on`. The app's scene apply prepends the
+  power-on switch (`33 01 01`) for exactly these two SKUs (`ApplyOffNeedOpenConfig`, `ApplyOffNeedOpenHelper`)
+  while its stored switch state is off, and reads an unknown state as off (`DeviceSwitchConfig.getSwitch`), so
+  `Device.set_scene` and `set_scene_by_name` send it first, ahead of any upload, unless `state.is_on` is True.
+  H6004 / H6006 / H6008 and every other SKU send what they sent.
+- Bundled scene catalogs for the newly admitted models whose profile offers scenes: H6002, H1401 / R1401
+  and H14B1 (H14B1 shares H6004's scenes), fetched from the public scene library with `tools/fetch_scenes.py`
+  into the scene store. The other newly admitted models get no catalog yet, so they offer no scenes
+  (Changed). Every scene in them carries its blob. H1401 / R1401's Christmas is a well-formed 82-byte 0x93
+  RGB scene and uploads as one; it is no placeholder (Changed: the placeholder flag). H14B1 shares H6004's
+  scenes, whose Christmas, the same scene, loses 1.4.0's `placeholder` flag with the re-fetch (Changed),
+  which only `Scene.placeholder` reads.
+- **A poll can hold its connect to tighter limits**: `Device.update(*, connect_attempts=None,
+  connect_timeout=None)`, so a background poll at a device that doesn't answer gives the device lock up
+  sooner and a command queued behind it waits less of its caller's own deadline (the command's own 45 s
+  `OPERATION_TIMEOUT` starts only once it holds the lock). `connect_attempts` is bleak-retry-connector's
+  `max_attempts` for each connect of that poll (the attempts that time out or fail outright; it still
+  tries again after transient failures such as a missing device or no free connection slot, giving up at
+  the 9th, so pair it with `connect_timeout` to bound the time); a link that never came up is not tried
+  again, and one whose session setup failed is still re-established once (`SESSION_ATTEMPTS`). So
+  `connect_attempts=3` is not the default: the default establishes a link that never comes up twice (3
+  attempts each), an explicit 3 once. `connect_timeout` bounds each connect of that poll (the link, the BGC
+  read, the handshake, the unlock), not its reads: when it runs out, the link the library holds is torn
+  down, its disconnect (and any that an earlier operation's cancellation left running) waited for up to
+  `DISCONNECT_TIMEOUT` (5 s) more and abandoned at that bound, and only then is `GoveeBleTimeout` raised with
+  the device lock free, so the next operation connects afresh with no disconnect of an old link still
+  running. When that wait would run past the operation's `OPERATION_TIMEOUT` (a `connect_timeout` above
+  `OPERATION_TIMEOUT` − `DISCONNECT_TIMEOUT`, 40 s, or a later connect of the same operation, such as the
+  pending unlock's write retry), the deadline ends it instead: `GoveeBleTimeout` ("operation exceeded 45s") is
+  raised at the deadline, and the teardown is left to its abandon at its own `DISCONNECT_TIMEOUT` bound, as on
+  any deadline; a poll its caller cancels during that wait likewise gives the lock up at once, leaving the
+  teardown to that abandon, as at the defaults. The limit is per connect, not per poll: a poll whose link drops
+  between its reads connects again with the whole limit, so one that connects k times can take k times
+  `connect_timeout` (plus each teardown) in its connects. A connect cancelled inside bleak is cleaned up by
+  the BLE backend, which only `OPERATION_TIMEOUT` bounds: BlueZ disconnects it; bleak's CoreBluetooth backend
+  (macOS) leaves the pending connection request, so the device may stay connected to the host. They hold
+  every connect the call makes (normally its first read's; also a reconnect after a link lost mid-poll) and
+  nothing else: setters and other calls keep the defaults, and `update()` without them is unchanged
+  (`CONNECT_MAX_ATTEMPTS` 3 per establishment, the 45 s `OPERATION_TIMEOUT`). An attempt count that isn't an
+  integer of at least 1, or a timeout that isn't a finite number above 0, raises `GoveeBleInvalidValue` before
+  any I/O. On the transport, `GoveeConnection.query` and `send` take the same limits as `connect_budget`
+  (`transport.connection.ConnectBudget`).
+- `scenes.load_scenes`, `scenes.async_load_scenes` and `scenes.scene_names_by_code` take `scene_versions=`
+  (keyword-only, default None): the catalog the Govee app's scene list shows at that scene set (devices.yaml
+  `scenes.list_filter`), normally `Device.scene_versions`. None gives the SKU's whole bundled catalog, as
+  before. The loader does not know the device table, so a set the store records nothing at (the union of the
+  SKU's sets, or one the SKU never has) gives the whole catalog. A `scene_versions` that is not a collection
+  of non-negative ints raises `GoveeBleInvalidValue`: a `collections.abc.Collection`, read once, so a
+  generator or another one-shot iterator is refused (passed twice, it would read as the empty set the second
+  time), a bytes, bytearray or memoryview counts as its ints, and a version too long to write as a key
+  (`10**5000`) is refused too; the message names the type, never the value. The store is read and checked
+  once, as before, and the catalog of every set is built then: every later lookup, at any set, is from
+  memory.
+
+### Changed
+- **A device offers the scenes the Govee app lists at its scene set** (review G1). `Device.scene_names`,
+  `Device.active_scene` and `Device.set_scene_by_name` use the catalog at `Device.scene_versions`.
+  - The app's list drops each lightEffect whose op type is not in the set and plays the first one left
+    (`SceneDataVM.b2` -> `CategoryV1.checkSupportNew`; `BaseSceneViewMode.U2`). So at a smaller set a scene is
+    hidden, or plays another of its effects.
+  - A hidden scene is not in `scene_names`, and `set_scene_by_name` refuses it with `GoveeBleUnknownName` (a
+    `GoveeBleNotSupported`), sending nothing: "unknown scene 'Awaken' at scene set [0, 1, 2]". `active_scene`
+    is None for its code, and for the code of an effect a listed scene does not play there: the app's list
+    highlights the scene whose effect at position 0, the one it plays, has the reported code
+    (`SceneListAdapter`, `getSceneCode(0, sku)`; `SceneDataVM.i1` only picks the category page).
+  - A scene that plays another effect keeps its name, and uploads and activates that effect. The upload is
+    planned as before (`ScenesOp.parseSceneV1` uploads whatever effect it is handed); `set_scene_by_name`
+    takes `scene_versions` once per call, for the lookup and the plan alike.
+  - **No bundled catalog has a smaller scene set yet**, so no device offers or sends anything else in this
+    release: the H61A8 keeps {0, 1, 2, 3} at every pact and firmware, as 1.4.0 (Spec: its scene rule is
+    dreamcolorlightv2's, which has no pact gate). The rows that do have one, the dreamcolorlightv1 goodsTypes
+    70 to 262 ({0, 1, 2} below part brightness: H6168 at soft 1.05.00, for example, hides scenes such as
+    Awaken there and plays Halloween's RGB effect, code 110, in place of 2497), are offered scenes once
+    their catalogs are bundled.
+  - Names never change; only which scenes are offered. The `GoveeBleUnknownName` message for any name not
+    listed now names the set, on every SKU: "H6008: unknown scene 'X' at scene set [0, 1]" (its class is
+    unchanged).
+  - Before the device-info read the set is the newest firmware's (a version not yet read meets every gate), so
+    that read can only shrink the list. `set_scene_by_name` reads a version the set depends on first (`aa 06`
+    / `aa 07 03`, on the same connection), so it never plays a scene, or an effect, the device's own set
+    does not; `scene_names` may list the newest firmware's scenes until the read. A change of the advertised
+    pact can move the list either way, on a row with a pact scene set (none today). Both notify the
+    callbacks. Once the store is loaded (`update()` loads it off the loop) `scene_names` and `active_scene`
+    read no file and raise nothing, at any set.
+  - **A consumer that keeps `scene_names` must read it again on each update**, including the released Home
+    Assistant integration v1.4.1, which sets its `effect_list` once, at setup (its `light.py`): a name the
+    library no longer offers at the device's set then fails loudly (`GoveeBleUnknownName`) when picked.
+    hass-govee-ble-local's release branch reads it again on every coordinator update.
+- **`tools/fetch_scenes.py` evaluates the app's list filter at each of the SKU's scene sets** (its row's,
+  `by_pact` and `by_firmware` sets, the empty one included) and stores, per scene, each set where the result
+  differs from the union's (`by_set`, below). A scene whose pick at a set is an effect the library can't store
+  (version rules, no code, a sceneType-5 upload, a placeholder, an entry the shared check refuses, such as a
+  code past 0xFFFF) is hidden at that set only, and printed, never a failed fetch; its entry at the union, the
+  pre-read list and the tombstone are what they were. A value read as an int that is not one (JSON's 1e999
+  among them) fails the SKU's fetch, whichever lightEffect holds it (the tool's int check, below). A scene
+  listed only at an empty set (one the union refuses) is left out and printed: names never come back after
+  the read. The empty-set note is gone.
+  - Naming ignores the per-set results, so a change to a scene's other effects never renames it, and a
+    retired name keeps its entry at the union only. Alike twins (one sceneName and one entry at the union)
+    take the order of their whole lightEffect content, not the response's, so a reordered response never
+    swaps which name plays which effect at a set, and a first fetch names them alike whatever the order.
+  - Each scene whose result at a set is not the one the store held is printed by name, per set: hidden
+    there, plays an effect there (its code and category), changes from one effect to another, or listed there
+    again.
+  - A kept scene the fetch no longer lists keeps its results at the SKU's current sets only: one at a set the
+    SKU no longer has is dropped, printed, and at a set added since, the scene is hidden where its entry's op
+    type is outside the set (the app plays a later effect there, or hides it). A kept scene's effect at a set
+    that the sceneType-5 cut newly drops is not listed at that set, printed, rather than the scene dropped.
+  - `--audit` plans each SKU at each of its scene sets, one row per set: every scene of the catalog offered
+    there, the effects it plays there included, through the upload planner at that set.
+  - No bundled catalog has a smaller set yet (H61A8's is its only one), so the store's `by_set` is `{}`;
+    the dreamcolorlightv1 catalogs follow in 1.5.1.
+- **Scenes need a bundled catalog**, as every SKU of 1.4.0 that offers them ships one. The generator bakes
+  the scene store's SKUs (`scenes/store.json`'s `skus`) into the table (`_generated` `SCENE_CATALOGS`), and a profile
+  offers `SCENES` only to them; the row's scene facts are still checked. So no SKU offers an effect list
+  with nothing in it (Home Assistant showed only "off" for the nine catalogue bulbs). The 75 admitted SKUs
+  (and 5 behind `allow_modelled`) whose row offers scenes but have no catalog offer none until theirs is
+  bundled. `tools/fetch_scenes.py` with no SKUs lists the SKUs whose row offers scenes, catalog or not.
+  A test ties the store to the table: the SKUs with a catalog are exactly those offered scenes, the store is
+  the fetch tool's layout, and every catalog's scene count is pinned, with each catalog pinned to its
+  released content (`RELEASED`: every `Scene` field of every scene, in order), so a change at the same count
+  fails.
+  `scripts/smoke_artifacts.sh` loads every bundled catalog from the installed wheel. 1.4.0's 18 SKUs keep
+  their scenes.
+- **The 0xAC status request is built from the profile**, not hard-coded to the H60A6's: the resolver takes
+  the row's `status_read` (command names, checked against govee_common's `command` enum by the
+  generator) instead of refusing anything but `[cmd_41, cmd_30, color_group]`, and a pact branch may drop
+  `color_group` (the `status_color_groups_pact` gate). The H60A6 sends the same bytes: `ac 03 03 41 30 a5`,
+  and `ac 03 02 41 30` at pact (1, 1).
+- **The 0xAC status reply is read with the row's own wire facts** (`DeviceProfile.status_decode`), not the
+  H60A6 status screen's: the TLV forms, the colour-group rule and group size (the segment stride too), and
+  the TLV 0x05's music layout and empty-value rule. The build no longer requires a status row to have the
+  H60A6's forms, groups of 4 and status mode; it requires `f_30: zone_power` where `cmd_30` is requested
+  (the library takes the zone bits from it) and, where a requested `color_group` is read as colour groups
+  (`f_a5: color_group`), a group rule, a group size and 4-byte records. A 0xA5 TLV the row doesn't read as
+  colour groups is skipped instead of failing the read, and so is a 0x30 TLV it doesn't read as zone bits
+  (its `f_30` is not `zone_power`). No colour group sets a segment at or past the device's piece count
+  (`segments`), whatever its record count. The H60A6's decode is its row's, so it
+  reads every reply as before, the empty `[05][00]` music value included.
+- **A SKU that several rows list is routed, not refused** (see `profile_for`), where the rows are all
+  `hardware_verified` / `app_traced` or all `modelled`; the build still refuses a SKU that rows of both
+  kinds list. `_resolve.routes` gives the SKUs one row routes, and `_resolve.profiles` each
+  group's routes (goodsType, accepted pacts). `create_device`, `scanner.supported` and `scanner.match` now
+  pass the advertised pact, which picks between a SKU's rows (`Support.addSupportPact`). Every SKU is
+  served only at its rows' pacts, as the app's scan serves it: `AbsBaseBleModel.e` (`checkProtocol` ->
+  `Pact.i`) refuses a pact the goodsType doesn't accept, and the accepted pacts compare exactly
+  (`Protocol.c`). The one exception is the 1.x compatibility rule (decision D3,
+  `_resolve.PACT_FALLBACK_SKUS`): at a pact no row accepts, each of 1.4.0's 18 SKUs still routes to its one
+  `hardware_verified` / `app_traced` profile, as in 1.x, so no released unit is refused. A SKU admitted
+  since is not: H617C or B7080 at pact (1, 1), or H8098 at a pact its row doesn't list, is unsupported.
+  Without a pact (no advertisement, or one without pact info) nothing changes.
+- **The direct `aa a5` group size is the spec's**: `color_readback_per_batch` comes from the row's wire
+  `group.num_per_group` (4 on the four direct read-back SKUs, as before), and the table no longer refuses a
+  direct read-back in groups other than 4.
+- **The H6061 panel count is the profile's** (`segments`, the row's wire `counts.num_segments`, 23 on the
+  H6061, as before) instead of the builder's 23, so the other Glide goodsTypes' counts (20 to 25) can be
+  written once their rows are admitted.
+- **The supported-device table is generated from `spec/devices.yaml`** (one-device-list phase 1). The hand
+  table in `devices/profile.py` is gone: `PROFILES` is built from the supported `client_profile` rows,
+  which `tools/gen_devices.py` projects into `_generated/devices.py` at build time and
+  `devices/_resolve.py` resolves. `PROFILES`, `profile_for`, `supported_skus`, `is_supported_sku`,
+  `create_device` and `__all__` keep their meaning, and the 18 SKUs keep every profile field but these,
+  which follow the spec:
+  - H6006 / H6008 `scene_versions` {1} -> {0, 1}, and H6641 {0, 1, 2, 3, 10} -> {0, 1, 2, 3}, the control
+    screens' sets. No frame changes: no library scene needs version 0 or 10.
+  - H6047 `mode_color_parse` is `kelvin_pair_15`, the spec's name for its bars' 0x15 decode, which is
+    unchanged.
+  - **H6641 gradual** (`gradual=True`): `Device.update` reads `aa a3` on every poll and `set_gradual`
+    writes `33 a3` instead of raising, as its control screen does, and `state.gradual` is a bool, not None.
+    Bench-checked on an H6641 (firmware 1.01.13, 2026-10-18, govee-apks
+    `library-audit/BENCH_h6641_gradual.md`): it answers `aa a3`, acks `33 a3 01` and `00` and reads each
+    back. Its BLE brightness steps fade with the flag on or off.
+- **Profiles group SKUs with identical facts.** H6004, H6006 and H6008 share one profile, so
+  `profile_for("H6006").skus[0]` and `profile_for("H6008").skus[0]` are now `"H6004"`. Only a `Device`
+  built without `sku=` sees it (`create_device` always passes the SKU). Profile order follows
+  devices.yaml.
+- `DeviceProfile.mode_color_parse` takes any name of the spec's mode_color_parse table (devices.yaml
+  `mode_color_parse`), not a closed `Literal`, and `wire_profile` reads the decode from that table
+  (`_MODE_DECODES` is gone). `ModeColorParse` is now `str`; `"rgb_kelvin"` stays the default for a custom
+  profile.
+- The fallback cipher, used only when no advertisement says, is AES-RC4 on account-locked rows (the plugs)
+  and on H60A6's row (303), the 1.x compatibility rule, as before, and none elsewhere (decision D4). A newly
+  admitted SKU follows its advertisement.
+- The table's coherence checks (a capability its colour scheme can't express, a live IC read without its
+  clamp) run when the table is built, in
+  `devices/_resolve.py`, not when `govee_ble_local` is imported. `DeviceProfile` still validates every
+  field of a custom profile.
+- Building from the repository also needs PyYAML, which the in-tree backend asks the frontend for
+  (`get_requires_for_build_*`). An sdist ships the generated table, and the runtime dependencies are
+  unchanged: nothing under `src/` imports yaml. `tools/gen_kaitai.sh` writes the table after the Kaitai
+  classes, with `$PYTHON`.
+- **Bundled scene catalogs are stored once per scene**, in one file, `scenes/store.json`, in place of 1.4.0's
+  `<SKU>.json` files. Its `pool` lists each bundled scene once (its name and entry), sorted by content (the
+  name, then the entry's JSON with sorted keys), and its `skus` maps each SKU to the increasing indexes of
+  its scenes in the pool, so SKUs that share a scene share its entry. As released, after the catalogs'
+  re-fetch (below), the 14 catalogs' 1,010 scenes are 715 entries, the store is 194,010 B, 38,549 B deflated
+  in the wheel, and the wheel is 323,432 B. Measured when the layout landed, over the catalogs as they were
+  before the re-fetch: 1.4.0's ten catalogs (748 scenes) were 512 entries, and with the admitted models' four
+  catalogs (Added), 1,007 scenes were 614; the store was 165,015 B, 35,866 B deflated in the wheel, against
+  178,840 B and 46,066 B for 1.4.0's ten catalogs (and 150,289 B and 39,106 B for a layout of one file per
+  distinct catalog, with an index, which it replaces before release), and the wheel 295,748 B against that
+  layout's 300,604 B. The layout itself changes no scene: over those catalogs, for every bundled SKU,
+  `load_scenes` (every `Scene` field), `scene_names_by_code` and `scene_upload_frames` at MTU 20, 182, 244
+  and 509, at each of the SKU's scene sets, gave what they gave before it, and for 1.4.0's 18 SKUs what
+  1.4.0's wheel returns at the same scene versions. The catalog changes are the re-fetch's (below).
+  `load_scenes`, `async_load_scenes` and
+  `scene_names_by_code` are unchanged, and a SKU the store has no catalog for still gets `{}`. The store is
+  read and checked once, on the first lookup of any SKU (not on each SKU's first lookup), even where
+  several first lookups run together (one per device's setup), and one that is
+  missing, unreadable or malformed raises GoveeBleError for every SKU: that first failure's message is kept
+  (it names the cause's type and text), and with no second read (a package file changes only with a
+  reinstall) the lookup that read the store raises a GoveeBleError of it from its real cause, and every
+  later lookup a fresh one from None. No exception is kept, so no traceback and no caller's frames, nothing
+  a caller does to the error it was given (a `raise err.__cause__` put its frames into the one cause every
+  later lookup chained, for the life of the process), and not the exception the first lookup's caller was
+  handling. A read error of the process's state (too many open files, out of memory: EMFILE, ENFILE,
+  ENOMEM, EAGAIN) and a RecursionError (a first lookup made near the recursion limit, which left the store
+  unreadable for good, one a frame from it included, which escaped as itself; and a store nested too deep,
+  which every lookup now reads again) are not kept, so the next lookup reads the store again. A device's
+  `scene_names` and `active_scene` raise a failed load's error (any, kept or not) with no I/O, and its next
+  `update()` loads the store again in a worker thread: `update()` marked the catalog loaded though its load
+  failed, so after a failure the loader does not keep every later read re-read the store on the event loop.
+  A lookup the first read
+  makes on its own thread (a signal handler, a finalizer or a trace hook run inside it) reads the store too:
+  the lock across the first read is re-entrant, where a plain lock deadlocked that thread, every later
+  lookup and the event loop. An entry `tools/fetch_scenes.py` refuses to write (the loader and the tool share one check:
+  Fixed), an index outside the pool or out of order, a pool out of its content order or holding one scene
+  twice, two scenes of one name in a catalog, a SKU with no scenes or not in upper case, and an entry no SKU
+  holds (an orphan) are refused. `tools/fetch_scenes.py` reads and writes the store: each write lays it out
+  again from every SKU's catalog (`layout`) and checks the text it writes as the loader reads it (that text
+  parsed, not the layout in memory), in one atomic replace, so
+  the same catalogs give the same bytes, a scene no SKU holds leaves the pool and a store the loader refuses
+  is never written, and a corrupt store fails every SKU's fetch and is left as it is. `layout` refuses two
+  spellings of one SKU (`h6006` and `H6006`, which it merged into one catalog: the union of both, or one the
+  loader refused where both held a scene of one name), and a
+  rewritten store is left readable by all (mode 0644; the temporary file it replaces the store with is created
+  0600). Its naming (stable names, `scene_name`) and the lightEffect it takes for the SKU are unchanged, and
+  it still stores nothing for a SKU the library has no scenes for. The store also holds `by_set` (review G1,
+  always present, `{}` where nothing differs), which maps a SKU and a scene set (its versions sorted and
+  comma-joined, `""` for the empty set) to the scenes listed differently there: `null` for one not listed,
+  else the pool index of the entry the app plays there, an entry of the same name. The loader refuses an
+  override of a name the SKU's catalog lacks, of a SKU without one, a ref to another scene's entry or to the
+  catalog's own, a set key not in that canonical form, an empty map, and a pool entry that carries `by_set`
+  (the shared entry check), and counts the overrides' entries against orphans. No bundled catalog has an
+  override yet: `by_set` is `{}`.
+- **`tools/fetch_scenes.py` reads a scene's values for the SKU, as the app does**
+  (`CategoryV1.LightEffect`, `CategoryV1.java:323-422`): a `specialEffect` entry whose `supportSku` holds
+  the SKU overrides the base code, scene type, param, param id, cmdVersion and big-effect flag (it took the
+  base `lightEffects[0]` values only). The AppVersion header is
+  now the traced app's, 7.7.02 (the scene library answers 7.5.20 identically for every bundled SKU; the
+  catalogue endpoint does not, listing 15 more SKUs at 7.7.02, so `tools/fetch_catalog.py` no longer shares
+  the constant and asks as its snapshot's `app_version` records: Spec), and `--resolve` logs in with it
+  too (it used the cloud client's default, 7.5.20). The bundled catalogs are re-fetched with it in their
+  own change (below), which changes 1.4.0's H6004, H60A6, H61A8 and H6641 catalogs (H6006 / H6008 keep
+  1.4.0's).
+- **`tools/fetch_scenes.py` keeps the lightEffect the app's scene list keeps** (devices.yaml
+  `scenes.list_filter`; `SceneDataVM.b2` -> `CategoryV1.checkSupportNew` -> `SceneV1.checkSupport` /
+  `checkVersion`, then `SceneDataVM.Companion.k`). Before it takes a scene's first lightEffect it drops each
+  one whose op type for the SKU (`CategoryV1.getOpType`: scene type and cmdVersion) is outside the SKU's op
+  set (a base sceneType 0 passes any), a DIY (op type 5) one without effect codes, and an expired one, and it
+  skips an expired category. The op set is the screen's `ScenesConfigBean` `c`, which each scene row's
+  `scene_versions` holds (Spec); the tool takes the union of the SKU's sets (the newest firmware's), and an
+  empty set (a null `c`) filters nothing. The firmware is unknown at fetch time, so a scene whose first
+  surviving effect has version `rules` is left out and named, and the `rules` flag is no longer written. A
+  re-fetch no longer keeps an existing scene the library still lists but the filter refuses. Over the
+  public library of 2026-10-19 the filter changes none of the 14 bundled SKUs' catalogs.
+- **A bundled scene gated by version rules is refused**: `load_scenes` raises GoveeBleError (malformed) for a
+  catalog with a scene marked `rules: true`, and `tools/fetch_scenes.py`'s `validate_entry` refuses one. The
+  app lists such a scene only on the firmware its rules allow, which the library doesn't model, so offered
+  it would show on every firmware (the loader used to drop the key). No bundled scene has one.
+- **A scene placeholder is the app's own signal**: `tools/fetch_scenes.py` flags a scene `placeholder` only
+  when it is a big-effect scene (`bigEffectStr`) with an empty param, which the app fetches before the apply
+  (`BaseSceneViewMode.java:630`, `SceneDataVM.java:1324`), not when a param's byte 3 is 0xFF. That heuristic
+  took H1401 / R1401's Christmas, a well-formed 82-byte 0x93 RGB scene whose frames were always sent, for a
+  stub; its set loses the flag (`5cc121e05ebbda2d`, was `347134bb28e5895f`). The same flag on 1.4.0's H6004
+  set (shared by H14B1) goes with the re-fetch (below).
+- `tools/fetch_scenes.py` drops the characters the app's decoder skips from a scene blob:
+  `android.util.Base64.decode(str, NO_WRAP)` (`Encode.decryByBase64`,
+  `base-classes10/com/govee/base2home/util/Encode.java:29-31`) skips every character outside the alphabet
+  and `=`. Four of H6087's library blobs carry a JSON-escaped `\/`, which the app reads as `/`, so that SKU
+  fetches now. `--audit` reports a SKU that has a catalog but no device-table row as not supported instead
+  of raising.
+- **The bundled catalogs are re-fetched** with `tools/fetch_scenes.py` as it ships here, over the public scene
+  library of 2026-10-19 (AppVersion 7.7.02, no `--resolve`), so each scene takes the values the app reads
+  for its SKU (the `specialEffect` entry, above) and keeps its name, and the scenes the app has added are
+  bundled. H6047, H6052, H6062, H1401 / R1401 and H6002 are unchanged, H6188's catalog is the app's own,
+  not fetched, and H6006 / H6008 are not re-fetched (below). The store holds 1,010 scenes in 715 entries,
+  its `by_set` still `{}`, and every catalog is pinned to its content (`tests/test_scenes_load.py`
+  `RELEASED`).
+  - H6006 / H6008 keep their 1.4.0 catalogs: on the bench on 2026-10-20 the 2026-10-19 library's codes did
+    not play on them. Aurora at its new code, 1174, showed white on an H6006 (hardware 1.02.00), where
+    1.4.0's 4019 plays it, and White Light as a plain activation of its new 1201 left an H6008 on its last
+    scene. The app's per-device scene fetch is to be investigated in 1.5.1.
+  - H6641: 92 of its 148 scenes take its own param id (White Light 17861, was 13890), 65 of them its own
+    blob too, so those 65 upload other bytes. H61A8: 8 scenes take their own param id and blob (Flash, Gary,
+    Judy, Nick, Sailboat, White Light, ZDP Duo, ZDP Trio). Both add Emotion's "Flash" (code 2020) as
+    "Flash (Emotion)": Zootopia 2's (14769) keeps "Flash", as 1.4.0 bundled it.
+    - H61A8's White Light (param id 13902, uploaded at its scene set {0, 1, 2, 3}): Live-verified on the
+      bench 2026-10-20 (wire, read-back, seen: the planned upload and activation sent and acked, the device
+      reporting its code, 10564, and the scene seen).
+    - H6641's White Light (param id 17861): Live-verified on the bench 2026-10-20 (wire, read-back, seen).
+    - H6641's Aurora (code 215, param id 17474): live-verified (wire and read-back) on the bench 2026-10-20;
+      visual inconclusive.
+    - Their other scenes, "Flash (Emotion)" among them: source-modelled from the 2026-10-19 library
+      responses; not live-verified.
+  - H60A6: a Natural "Lightning" (24448) is new: source-modelled from the 2026-10-19 library responses; not
+    live-verified.
+  - The library no longer lists Disney's Moana for H60A6. Its three scenes, Motunui, Heart of the Island and
+    Wayfinding, stay under their names with their blobs, as scenes the library dropped (the tombstone's
+    `dropped`), so an automation that names one still plays it.
+  - H6004 / H14B1: Christmas loses 1.4.0's `placeholder` flag (the placeholder entry above); its frames were
+    always sent. Source-modelled from the 2026-10-19 library responses; not live-verified.
+- **`wire.build`'s read requests pass the spec's `read_request` its new profile param** (the library half
+  of the AA 12 / 13 / B0 selector typing, Spec): the frame's profile, the plain one. No library read sends
+  AA 12, 13 or B0, so no byte changes: every read frame of every supported SKU's rows, by default and with
+  `allow_modelled`, is as before.
+
+### Fixed
+- **An H6047 bar write no longer sends a stale other bar.** One `33 36` carries both bars, and since 1.1.0
+  `set_zone_power` read them (`aa 36`) only while a bar was unknown, so it sent the other bar's cached power
+  however old: with the bars read {left on, right off} and the right bar switched on in the app a few minutes
+  later, a left-bar write (Home Assistant powers a zone before its colour or `turn_on`) sent `33 36 01 00` and
+  the right bar went dark. The app builds its `33 36` from bars its `aa 36` heartbeat keeps current (h6047
+  `NewDetailVm.D5:669-720` from `Info4Detail.D` / `F`, which `NewDetailVm.A3` parseHeart `:574-612` sets on
+  every `ComposeLightHeartController` reply). The library now reads the bars first unless the other bar's
+  power was confirmed by the device (`DeviceState.zone_power_confirmed`) at most
+  `const.ZONE_POWER_FRESH_SECONDS` (new, 120 s, the bound the Home Assistant integration uses) ago, and
+  sends what it read. When that read goes unanswered or fails on a live link, a held other bar is sent as
+  held, as the app sends the bars of its last heartbeat, and the write goes out as it did before (with its
+  own reconnect-and-retry); a connect that fails raises, as before, without a second connect for the write.
+  An unknown other bar still raises, as does a failed read while a bar is unknown. Not fixed: the held bar
+  can be any age, where the app's comes from a heartbeat it repeats, so when that one read is lost a bar
+  switched elsewhere since is still switched back, as before. This adds an `aa 36` read before such a write.
+  Live-verified on the bench 2026-10-20 on an H6047 (firmware 1.00.12): with the right bar's confirmation
+  aged to 125 s (past the 120 s bound), `set_zone_power('left', True)` read `aa 36` first and sent the right
+  bar as read (`33 36 01 00`, acked), and the left bar came on.
+- **A version a firmware-gated fact tests is read until it is in** (review G1). `Device.update()` takes the
+  device-info read as done once the device answered, as before, but each later poll reads a version that a
+  `scene_versions_by_firmware` gate or a Kelvin firmware range (`kelvin_by_hardware` /
+  `kelvin_by_software`) tests and that the read did not bring back, alone (`aa 06` for the soft version,
+  `aa 07 03` for the hard one), until it is in. One lost reply no longer holds those facts at the newest
+  firmware's for the life of the `Device`: the H61A8's Kelvin range waited for its hard version for good.
+  A SKU with no such fact reads neither again, as before.
+- **`devices.device.make_device` routes by the advertised pact**, as `create_device` does: it passes the
+  advertisement's pact to `profile_for`, so a pact the SKU's rows refuse gives None (it took the SKU's
+  profile whatever the pact). Internal (not in `__all__`); no behaviour change without an advertisement.
+- **A pact heard after the device is built that its rows refuse is logged**: `Device` keeps the profile it was
+  routed to, and a later advertisement whose pact none of that profile's rows accepts (where the app's scan
+  refuses the device or takes another row; `profile.refuses_pact`) logs a warning, once per change of pact.
+  1.4.0's 18 SKUs at a pact no row lists keep their 1.x fallback and log nothing.
+- **An advertisement that changes the pact notifies the callbacks**: `Device.ingest_advertisement`
+  returns True if `state.is_on` changed, as in 1.4.0; the callbacks also fire when the advertised pact is
+  first heard or changes (one notification when the on/off changes too), with the pact already stored. It
+  learned the pact silently, so what the pact picks (`min_kelvin` / `max_kelvin` by `kelvin_by_pact` on
+  H61F2 / H61F5 / H61F6, the brightness range and whether brightness can be written yet by
+  `brightness_by_pact`, `scene_versions` by `scene_versions_by_pact`, the H60A6 0xAC status read's colour
+  groups) reached a callback only at the next update. Any change of `Device.pact` counts, as it is itself
+  exposed. `ADVERT_SUPPRESS_SECONDS` still holds back only the advertised on/off: a new pact inside that
+  window notifies, and the on/off is left as it was. An advertisement without pact info, or with the pact
+  already heard, notifies nothing; the on/off path and the return value are unchanged.
+- **A wedged disconnect is abandoned at `DISCONNECT_TIMEOUT` even when the operation is cut short in its
+  wait**: a teardown whose caller is cancelled while it waits (the operation deadline, or a poll's
+  `connect_timeout`, on a failed connect at a wedged proxy) keeps running and is cancelled at the same bound,
+  as an uninterrupted one is. It was left running for good, holding its bleak client. A poll's
+  `connect_timeout` that runs out also waits out every teardown still running whose wait was cut short (its
+  own, or one an earlier operation's cancellation cut short) to its bound before it raises and gives the
+  device lock up, so the next connect doesn't start while an old link's disconnect still runs (a poll retried
+  down that path stacked stale clients, which hold connection slots on an ESPHome proxy). A cancellation of
+  that wait (the poll's caller, or the operation deadline) gives the lock up at once and leaves the teardown
+  to its abandon at the bound, as at the defaults.
+- **A superseded link's notifications are dropped**: each link's notify callback is bound to its client, and
+  a frame from any client but the current one (a link whose teardown was cut short or abandoned can still
+  deliver) is dropped with a DEBUG line, so it never reaches the next session's queue, where its handshake or
+  first read took it. A superseded client's disconnect callback was already ignored.
+- **A cancellation in the same tick as a reply is not lost on Python 3.11**: the reply wait is an
+  `asyncio.timeout` instead of `asyncio.wait_for`, which on 3.11 returns a frame that arrives in the same tick
+  as a cancellation of its caller (the operation deadline, a poll's `connect_timeout`, the caller's own) and
+  swallows the cancellation (gh-86296). The semantics are now those of 3.12+ on 3.11.3 and later (3.12+
+  unchanged); 3.11.0–3.11.2's `asyncio.timeout` has gh-102780, so in a task that carries a suppressed
+  cancellation a reply wait that runs out raises `CancelledError` there. A frame already queued is still
+  returned with no time left.
+- **A colour report with no CCT test is not a Kelvin** (the nocct fold): `parse.mode_color` honours the
+  layout's `is_cct` on the `[gradual][kelvin s16be]` decodes, so a `gradual_kelvin_s16be_nocct` report
+  (mode_color_parse `kelvin_15_nocct`, `kelvin_0d_nocct`, ...) reads as `KelvinReport(0)`, not
+  colour-temperature mode. Latent: no current SKU uses those decodes.
+- **`tools/fetch_scenes.py` keeps every same-named scene, never points a stored name at another scene, and
+  never gives a removed name to another.** A stored name is a Home Assistant effect name that automations
+  keep. The app lists one sceneName in more than one category, or twice in one (H61A8 / H6641: Emotion's
+  "Flash", code 2020, and Zootopia 2's, 14769; 41 of the 93 SKUs fetched on 2026-10-19, H1A42's "Sleep" and
+  "Meditation" and H60B1's "Dusk" among them), and the fetch kept only the last of them. Each one is now
+  stored: a new one under its sceneName where that is free, else as "<name> (<category>)" or "<name>
+  (<category>, n)", with its sceneName in a new `scene_name` key where the two differ (the loader ignores the
+  key). Of the new scenes of one sceneName the highest code keeps it, whatever the list order, so a first
+  fetch names a response alike whatever the store holds (the bundled H61A8 / H6641 "Flash" is 14769, which a
+  first fetch of H6168 picks too); no other SKU's stored names are taken (over the 93 SKUs fetched on
+  2026-10-19 that changes no name). A re-fetch keeps the name of the stored scene of its sceneName that holds
+  a listed scene's code and category (ties by the whole entry, a resolved one's as its placeholder, then by
+  blob and param id; a placeholder has no blob, so it ties by its param id); else, only where exactly one
+  stored and one listed scene fit each other, by one of its own lightEffects' codes or by category and blob
+  (a scene the library renumbers keeps its name), printed as a move, or by category and param id or category
+  alone, printed as a guess. A guess passes over a stored scene whose code the library still answers under any
+  sceneName, or whose param id another listed scene carries (its scene, listed under another name), and a blob
+  match over one it still answers at its own sceneName and category; both pass over one a fetch found gone
+  from the library (its sceneName listed, or left out only for its time or rules, at its code under no
+  category but where another stored or retired name sits), or found its scene (its param id) listed under
+  another name or left out only for its time or rules at another code, since it was last listed, but a blob
+  match with its param id too: that scene back at a new code, printed as a move (for example a scene whose
+  category the library drops and later lists again at a new code with the same blob and param id; where more
+  than one listed or stored scene fits so, the name stays dropped). Where more than one fits, the scene takes
+  a new name, printed as ambiguous. Only a scene that matches none gets a new name, never one the store or the
+  tombstone holds. A stored scene no longer listed keeps its name, as do one
+  left out only for its time (an expired category or effect, its category renamed meanwhile too) or the
+  firmware's version rules and one listed under another name or left out so at another code (its param id);
+  a sceneName the app renames keeps its old name too, so two names hold one code. Only one whose scene the
+  SKU's scene list refuses for good (its op set), or a sceneType-5 scene the library does not upload, is
+  removed (where two stored scenes the fetch does not list could be that scene, neither is), printed, and
+  retired in a tombstone (a SKU whose every stored scene is removed so leaves the store, its names retired:
+  the store kept a catalog the cut emptied, unretired, and each re-fetch printed its moves again; a later
+  fetch whose every listed scene is refused or cut says so, not that the library has no scenes),
+  `tools/scene_tombstone.json` (out of the package; the store, the loader and the pool are unchanged), with
+  the entry it held (one the fetch matched, then cut: the entry it was to hold): only that scene's exact
+  return (sceneName, code, category and blob; a placeholder's with its param id) takes the name back, printed
+  where the sceneType-5 cut keeps it, and one whose blob `--resolve` baked in returns so as its placeholder of
+  the same param id, the blob coming back with the name. Scenes are named after the sceneType-5 scenes a
+  `legacy_scene` SKU does not upload are left out, and a blob resolved by `--resolve` is kept while the
+  library ships its scene as a placeholder of the same param id: under the name the scene keeps (through a
+  renumber or a category rename too, with the new code and category), else by the scene's code and category,
+  else by the resolved entries of that param id where they hold one blob (one scene under more names; a bare
+  entry of it has no blob to keep, so the scene stays a placeholder, as a new name does where the sceneType-5
+  cut would drop that blob). A library value the tool reads as an int (a lightEffect's or a `specialEffect`
+  entry's `sceneCode`, `scenceParamId`, `sceneType`, `cmdVersion` or `bigEffectStr`, any SKU's, listed or
+  not) that is not an int or null fails the SKU's fetch, with the store and the tombstone as they are: a scene
+  type `1.9` or `"1"` read as one the SKU's list refuses removed and retired the stored name, and every name
+  of a SKU whose every scene type was so, its catalog out of the store (the app's Gson fails the whole
+  response on a bool or a fraction). A seeded property test replays 200 random histories and 64 fixed ones
+  through `main()`. No bundled catalog changes, and no released name is gone (1.0.0 to 1.4.0), so the
+  tombstone starts with no record. It holds `store_sha256`, the sha256 of the `store.json` it was written
+  with: every write of the store (`--resolve`'s too) writes it, so `tests/test_fetch_scenes_store.py` fails a
+  `store.json` committed without its tombstone (a fresh checkout would let a new scene take a retired name
+  silently), and a run (`--resolve`'s too) over a tombstone that is missing or not the store's fetches and
+  writes nothing: restore `tools/scene_tombstone.json` from git, or pass `--reset-tombstone` for a deliberate
+  reset. A change of the tombstone alone (a name dropped) leaves `store.json` as it was, so a run that changes
+  the tombstone ends by printing `tools/scene_tombstone.json changed (N records): commit it with this run`.
+  With only `OUT_DIR` pointed elsewhere, the committed tombstone pairs with the bundled store and its
+  `store_sha256` is left as it is.
+- **A corrupt bundled scene catalog raises only GoveeBleError, and nothing in it is coerced.** A code JSON
+  reads as an infinite float (`1e999`, `Infinity`) raised OverflowError, a store nested too deep
+  RecursionError, and a corrupt `store.json` member of a zipped install (`importlib.resources` reads one)
+  `zipfile.BadZipFile`, `zlib.error` or `lzma.LZMAError`, RuntimeError for a member flagged encrypted
+  (NotImplementedError for one of an unknown compression method or flag), or EOFError for one that runs
+  past the archive's end (entries that overlap at one offset, which zipfile only warns of on 3.12.14,
+  3.13.15 and 3.14.6; it has no text, so the message names its type alone), past GoveeBleError (1.4.0's
+  per-SKU files did too); the first two are malformed now (the deep one not kept, as a RecursionError never
+  is), the zip errors unreadable. An unreadable store's
+  error quotes its cause by its str, not its repr: for a store that is not UTF-8 the repr held the whole
+  store, every blob in it (about 201,600 characters for one stray byte in the 194,010 B store as released,
+  against about 140 now); `tools/fetch_scenes.py`'s error for a store or tombstone that is not UTF-8 held
+  the whole file too, and now quotes its cause the same way, and a tombstone nested too deep is malformed
+  (its RecursionError escaped). A scene name that is not a string is named by its type, not
+  quoted (a name holding a blob put all of it in the error). The loader
+  coerced mistyped values that `tools/fetch_scenes.py` refuses to write, or took them as they were: a code
+  `"7"`, `1.9` or `true` read as 7, 1 and 1, a scene type `"2"` stayed a string and a placeholder `"no"` read
+  as True. One entry check, `scenes._validate_entry`, is now the loader's and the tool's (`validate_entry`
+  calls it), so the loader refuses exactly what the tool refuses: a name that is not a non-empty string, a
+  code that is not an int from 0 to 0xFFFF (`build.scene_activate`'s range: a negative or larger code can't
+  be sent), a param, category or `scene_name` that is not a string, a param id, scene type or cmdVersion that
+  is not an int (a bool is not one), a placeholder or big-effect flag that is not a bool (each may be null
+  or left out), a param that is not strict base64, and version rules. `tools/fetch_scenes.py` coerced such
+  values from the library too: it took `int()` of a scene's code, param id, scene type and cmdVersion before
+  the check (`1.9` and `true` were stored as 1, `"7"` as 7), a specialEffect's cmdVersion `or 0` (`false` as
+  0) and a bigEffectStr `true` as 1 (a big effect). It takes the values as they are now, each an int or null
+  (its check of the library's values, above, fails the SKU's fetch on any other); an int outside a Java int's
+  range fails the fetch too, as Gson's `nextInt` fails the app's whole response on one (a scene type of
+  `2**31` read as op type -1 removed and retired the stored name, and a param id of `2**31` was stored), and
+  so does a `supportSku` that is not a list of strings (the SKU's `in` test took a string for a substring:
+  `"H6641" in "H66411"`). The 93 responses fetched on 2026-10-19 carry JSON ints only, all small (10,611
+  lightEffects and their 225,510 specialEffect entries; none has a bigEffectStr), and every supportSku is a
+  list of strings. This fix changes no bundled scene: `load_scenes` and `scene_names_by_code` give what they
+  did for every SKU, and `store.json` is unchanged by it.
+
+### Spec
+- `devices.yaml` `scenes.list_filter`: which library scenes the control screen lists and with which
+  lightEffect (the op-set, DIY-code, version-rule and effective-time filters, the op-type table), cited.
+  `devices.schema.json` `scene_versions` says what it holds: the `ScenesConfigBean`'s `c`, the op set the
+  scene list is filtered by, which is also the upload versionArray where the bean has no apply set `e`
+  (`ScenesConfigBean.j`). Every scene row's bean was checked: only H6052's has an `e` that differs, `{1, 3}`
+  against `c` = `{0, 1, 4, 5}`, and its row's doc now says so (and that the library, as 1.4.0, only
+  activates the type-3 graffiti scenes the app uploads over `e`); the `dispatch` source that called `c` its
+  version array is corrected. A store test checks, at every scene set of each bundled SKU and with no
+  exception, that every scene the library offers there has an op type in the set, that every scene it hides
+  or replaces there is one whose catalog effect's op type is not, and that the pre-read set offers the whole
+  catalog.
+- `scenes.list_filter`: the bundled catalogs follow the rule at each of the SKU's scene sets (a catalog holds
+  each scene's pick at the union, and per set where it differs, that the scene is not listed there or the
+  lightEffect it plays there), a scene whose pick at one of its sets the library can't follow is not listed
+  at that set, the list highlights the listed scene whose effect at position 0 has the reported code
+  (`SceneListAdapter.java:155-159`; `SceneDataVM.i1` only picks the category page, `DelegateSceneV2.java:
+  373-375`), and a client offers the catalog of the set in force. Cites
+  `BaseSceneViewMode.java:466-477,591-697`. A null op set is an empty `scene_versions` (the H61A8 example
+  is gone: its set is never null, below).
+- **Row 19 (H61A8) cites the scene rule the app reaches** (review G1). `DeviceDetailConfig.k0` takes the
+  first scene interceptor registered for a goodsType, and for 19 that is dreamcolorlightv2's
+  (`RgbIcLightRegistry` registers `DreamColorV2Register` ahead of the chain whose dreamcolorlightv1 `$33`
+  and `LightVersionServiceImpl.supportScenesOp` the row cited, which never run for 19). Its op set,
+  dreamcolorlightv2 `Support.getSupportScenesOpSet`, is never null for 19 and has no pact gate: {0, 1, 2, 3},
+  or {0, 1, 2} on a Telink hard version below hard 1.00.01 or soft 1.06.00, a test that is not a minimum
+  version and that the row does not model (as for its brightness: the row holds for non-Telink hardware,
+  such as the bench unit, SW 3.03.18 / HW 3.01.10). So `scene_versions` is [0, 1, 2, 3], 1.4.0's set, with
+  no `by_pact` and no scene `by_firmware` (the row had the dreamcolorlightv1 rule: activate only below soft
+  1.04.00 at pact code 1, {0, 1, 2} at pact code 2 or from soft 1.04.00 below part brightness); the H61A8
+  sends what 1.4.0 sent at every pact and firmware. Not modelled, and in the row's doc: at pact (1,1) below
+  soft 1.04.00 the app's scene tab shows its built-in static list (`DelegateScene4DreamColorLightV1V2UIV1`,
+  `DeviceDetailConfig.l0`'s first match), and a version the app has not read, or that is empty, gives
+  {0, 1, 2} there. The same bean gives 19's DIY version. `spec/govee_reference.py`'s self-test and
+  `spec/docs/SCENE_UPLOAD_ENCODING.md`'s goodsType-19 row follow. A test checks that each row's cited scene, DIY
+  or brightness interceptor is the first the app's lookup finds for its goodsType (the dreamcolor
+  goodsTypes' registration order in `RgbIcLightRegistry`, and the app's one brightness interceptor); the
+  dreamcolorlightv1 rows of goodsTypes 70 to 262 cite theirs.
+- `devices.schema.json`: `clientModel` (`client_profile.by_model.<SKU>`) takes `kelvin_range` and
+  `brightness_range`, and `scene_power_on` (the scene apply's power-on; bulblightv3 H6009 / H6010, cited in
+  row 64's doc), which the generator refuses on a SKU whose row offers no scenes.
+- `spec/govee_reference.py`: `client_row` takes the device's `sku` (keyword-only), as the library resolves
+  a SKU: a Kelvin or brightness range the row lacks comes from the SKU's `by_model` entry, and its
+  `by_firmware` Kelvin items, before the family `specs`. Without it, every result is unchanged.
+- `devices.schema.json`: `ic_pieces` may be `fixed` (the IC count read at connect sizes nothing: the
+  screen's piece count is fixed), and `ic_pieces` now requires the `ic_num` read.
+- **The pact-conditioned reassignments' target rows list their SKUs and pacts**: the pacts the app
+  registers for the target goodsType, cut to those at or above the item's gate. goodsType 40 (h6159,
+  h6160, h6182) takes (2,1) (stringlightv2 `Support.addSupportPact`). goodsType 39 (h6113, h6114,
+  h613839's H6138 / H6139, h6181, carlightv1, tvlightv1) takes (10,1) / (10,2), the same table. goodsType
+  44 (h6119) takes (10,1) / (10,2) (h7090 `Support.addSupportPact`). goodsType 17 (barelightv1) takes
+  (10,1) / (10,2) / (10,3) and not 17's (1,1) / (1,2) (dreamcolorlightv1 `Support.addSupportPact`). The
+  `clientRow.pacts` description says so. None of these rows has `support`.
+- **`spec/govee_catalog.json`: a dated snapshot of Govee's public product catalogue** (`GET
+  https://app2.govee.com/bi/rest/devices/v3/skus`, the app's `ICategoriesApi`: an AppVersion header, no
+  account; fetched 2026-10-19 with AppVersion 7.7.02, the traced app's, which its `app_version` records). It
+  holds 632 SKUs, each with its goodsType and ic only (no names, images or URLs). Its doc cites how the app
+  uses them.
+  - It was first fetched on 2026-10-18 with AppVersion 7.5.20 (617 SKUs). The 7.7.02 refresh adds 15 SKUs
+    and changes or drops none. **R14B1** (408) gains a route (Added).
+  - **H14B1** (408), **H1AA2** (403) and **H1AA5** (404) are listed by their rows at the same goodsType.
+    Their docs no longer say the snapshot lacks them.
+  - **H1880** / **H3860** (h6092 402 / 401), **H3010-H3013** (h7020 411) and **H6250** (h6609 398) are
+    listed by rows without support or pacts, so they stay unrouted. **H3700** (383), **H5210** (407),
+    **H6821** (280) and **H8150** (397) have no row.
+  - The review list (H615E) and the unrouted set (empty) are unchanged.
+  Every catalogue goodsType goes into the app's SKU → goodsType map (`CategoriesDataManager.n` →
+  `Pact.j`), which a scan reads before the built-in table (`Pact.f` → `Constant4L5.hasKnowSupportGoodsType`,
+  default 0). goodsType 0 is the legacy code: a scan at 0 parses no advertised pact and re-derives the
+  device by SKU (`BaseBleProcessor.c` / `.g`), so a catalogue 0 never routes. A devices.yaml row that lists
+  a SKU wins, and a non-zero conflict is settled only by an `assigned_goods_type` item that cites the app's
+  rewrite. ic is the app's default IC count (`CategoriesConfig.getDefIcNum`). The device table takes its
+  routes (Added). `tools/fetch_catalog.py` refreshes it from the endpoint or a saved response, and rewrites
+  only `app_version`, `fetched` and `skus`. It asks with the snapshot's own `app_version` unless
+  `--app-version` names another, since the endpoint's answer depends on it (on 2026-10-19 it listed 617
+  SKUs at 7.5.20). It is dev-only and standard-library, reuses `fetch_scenes.py`'s request handling, and the
+  build never runs it. The generator refuses a snapshot with a top-level key other than `app_version`,
+  `doc`, `doc-ref`, `fetched`, `skus` and `source_app`, an `app_version` that is missing or not in the app's
+  version form, a `fetched` that is missing or not an ISO date (as `fetch_catalog.py` writes it), or an entry
+  whose keys are not exactly `goodsType` and `ic`, so no name or URL can get in.
+- **devices.yaml can now route and describe the 18 supported SKUs on its own** (one-device-list phase 0).
+  Each one's goodsType has a `client_profile.by_goods_type` row with the facts the library's hand table
+  holds: `models`, `pacts` (the accepted pacts, `Support.addSupportPact`; `any` for the SKU-routed H6188),
+  `support` (`hardware_verified`, `app_traced` or `modelled`), `capabilities`, `zones`, `account_lock`,
+  `scene_dialect`, `scene_versions`, `kelvin_range`, `brightness_range`, `status_read` (the 0xAC request),
+  `connect_reads` (the state reads besides aa 01 and aa 05), `connect_writes`, `power_resync`, `ic_pieces`
+  and `mode_reports_kelvin`, with `doc` and `doc-ref`. The rows are 303 (H60A6), 119 (H6047), 19 (H61A8),
+  64 (H6004 / H6006 / H6008), 22 (H6052), 247 (H6641), 0 (H6188), 41 (H6062), 51 (H6061) and the plugs'
+  43 / 50 / 90 / 307. The trace notes in `devices/profile.py` are now the rows' `doc` / `doc-ref`.
+- **Seven SKUs as modelled rows first** (one-device-list phase 2): rows for goodsTypes the spec already
+  describes, added as `support: modelled` (source-modelled, not live-verified: no unit was on the bench).
+  The app trace below makes all seven `app_traced`. Each row's `doc` names what is not traced.
+  - pact_h6099 203 (**H6098 / H8098**, pacts (1, 1) / (2, 1) / (3, 1)) and 336 (**H6690**, pact (1, 1)),
+    one profile: the h60a6 0x15 frames, 14 segments by the direct `aa a5` groups of 4, Kelvin
+    [2000, 9000], `kelvin_15` colour report. The app's colour strip sends 15 04 groups where the library
+    sends per-colour 15 01 masks (documented).
+  - h7040 36 (**H7040**, pact (1, 1)): whole-device 0x0d colour and CCT (the h6006 scheme), Kelvin
+    [2000, 9000], `rgb_kelvin_0d` colour report.
+  - Three status-read rows, each read with its own wire facts (`DeviceProfile.status_decode`) and
+    requesting `ac 03 02 41 a5`, with a `gradual_15` mode report: h60b1 300 (**H60B1**, pact (1, 1)): the
+    h60a6 0x15 frames over 3 pieces, colour groups counted from the TLV len; h7056 304 (**H7056**, pact
+    (1, 1)): 8 pieces in fixed groups of 4; h1630 364 (**H1630**, pacts (1, 1) / (1, 2) / (1, 3)): one
+    piece, Kelvin [1000, 10000], its 0xA5 gradient record not decoded.
+  Their scene dialect is now `legacy_scene` (the new-DIY rule below).
+- **41 more SKUs from the targeted app trace** (one-device-list, the admit commit): `client_profile`
+  rows for the goodsTypes the trace completed, each with its accepted pacts and its control-screen facts,
+  cited in `doc-ref`. Admitted by default (`app_traced`, not hardware-verified):
+  - bulblightv3: **H6005** (20), **H6002** (31, scenes only);
+  - h61d3: **H6640** (242), **H61B3 / H61B6** (264), **H1A43 / H1A44** (367), **H1B6A** (384), **H1AB1**
+    (387), **H1AB2** (388), **H1AB3** (389), **H1A42** (400), **H1AA2** (403), **H1AA5** (404);
+  - dreamcolorlightv1: **H617C / H617E / H617F** (70), **H617A** (73), **H618A** (74), **H619A** (75),
+    **H619Z** (83), **H6168** (136), **H61BE** (175), **H6176 / H61BC** (176), **H61BA** (178), **H6175**
+    (187), **H616C** (207), **H6169** (262);
+  - **H610B** (striplight 114), **H6042** (h6047 197), **B7080 / B7081 / B7082** (h7080 45 / 55 / 56),
+    **H6087 / H6088** (h7050 77 / 157);
+  - phase 2's modelled rows, now traced: **H6690** (pact_h6099 336, with gradual), **H7040** (h7040 36),
+    **H60B1** (h60b1 300), **H7056** (h7056 304) and **H1630** (h1630 364);
+  - the catalogue snapshot also routes five SKUs no row lists to these rows, admitted with them by
+    catalogue goodsType alone (not bench-checked): **H6167** (dreamcolorlightv1 83), **H616D / H616E** (207), **H802A** (74) and **R1630**
+    (h1630 364, which leaves `allow_modelled` with its row).
+
+  Behind `allow_modelled` (source-modelled, not live-verified): **H61B8 / H61B9** (h61d3 299), and
+  **H8015** (bulblightv3 328, colour temperature only). 328's facts are traced, but its illumination tab, the
+  only colour-temperature control, writes the Kelvin frame and `33 04` with the current brightness as one
+  write (`View4IlluminationMode.I0`), where `Device.set_color_temp` sends the Kelvin frame alone, so the row
+  is held (`support: modelled`) until the library sends that pair. The
+  H6042's wire piece count is now the control screen's 5,
+  not 10. The 18 SKUs of 1.4.0 are unchanged.
+- **24 more SKUs on the phase-3 library changes**, all `app_traced`:
+  - bulblightv3 111 (**H1501 / H601A / H601B / H601C / H601D / H801A / H801C / H801D / R1501**), 348
+    (**H1401 / R1401**) and 408 (**H14B1**): the light connect write 33 25 01 (`connect_writes:
+    [light_effect_stop]`); 348's Kelvin range is [1000, 10000] from soft version 1.00.15, else
+    [2700, 6500]. So an H1401 / R1401's range widens from [2700, 6500] (valid on every revision, until the
+    soft version is read) to [1000, 10000] after the first poll's `aa 06` read on such firmware, as the
+    app's slider does. `Device.min_kelvin` / `max_kelvin` follow it. In Home Assistant, until the
+    integration refreshes its entity's range after that read, the colour-temperature slider keeps the setup
+    range [2700, 6500], while service calls and the reported state can go past it;
+  - h7050 46 / 76 / 105 / 107 / 113 / 116 / 171 / 218 / 219 / 227 (**H7050 / H7060 / H7051 / H7062 /
+    H7065 / H7055 / H7066 / H7052 / H7053 / H7063**): the `aa a3` connect read without the gradual control;
+  - pact_h6099 203 (**H6098 / H8098**), promoted from `modelled`: the catalogue snapshot routes H8098 to
+    goodsType 203, and the app's pact_h6099 `MatterSupport` ties them in code too.
+
+  Behind `allow_modelled`: h61d3 261 (**H61F2 / H61F5 / H61F6**), Kelvin [1000, 10000] at pact (4, 1), else
+  [2700, 6500]; its piece count has no app cap, so the mask width is modelled, as on 299.
+- **One scene dialect for the goodsTypes that register a new-DIY parser.** On such a goodsType
+  (`DiyNewConfig.addDiyEffectParse`), the control screen sends a sceneType-5 scene whose param leads 0x50
+  through that parser (`BaseSceneViewMode.r3`) and every other scene through `parseSceneV1`, as on 64, 348
+  and 408, which were already `legacy_scene`. The rows held `untraced` for that registration alone are now
+  `legacy_scene` too, so they offer scenes once their catalogs are bundled: h6047 197, bulblightv3
+  111 / 20, h61d3 242 / 264 / 299 / 367 / 384 / 387 / 388 / 389 / 400 / 403 / 404 / 261, dreamcolorlightv1
+  70 / 73 / 74 / 75 / 83 / 136 / 175 / 176 / 178 / 187 / 207 / 262, h60b1 300, pact_h6099 203 / 336, h7040
+  36, h7080 45 / 55 / 56, h7056 304, h7050 77 / 157 / 46 / 76 / 105 / 107 / 113 / 116 / 171 / 218 / 219 / 227
+  and h1630 364: 70 SKUs (5 of them behind `allow_modelled`). striplight 114 (H610B, its own scene view
+  model) and h6061 51 stay `untraced`. The library uploads no sceneType-5 scene under `legacy_scene` (it only
+  activates one), so a `legacy_scene` SKU's bundled catalog holds none that the app uploads: none whose param
+  leads 0x50, and none at all where its scene versions hold one of `parseSceneV1`'s sceneType-5 branches (7
+  to 13: H1630's 13). `tools/fetch_scenes.py` leaves such scenes out, and a test checks every bundled
+  catalog. 1.4.0's catalogs hold no sceneType-5 scene outside H60A6 and H6052, which have their own type-5
+  dialects, so nothing they send changes. Rows 64, 348 and 408 now cite `BulbDiyConfig.a` / `.b` (348 does
+  have a new-DIY parser).
+- **H6004 routes to goodsType 64.** Rows 9 and 10 (H6003, and the H6004's Wi-Fi revision) say
+  `connectivity: [wifi, iot]`, so no BLE client routes there.
+- **goodsType 64's scene versions are {0, 1}**, the control screen's `ScenesConfigBean` set
+  (`Support.supportScenesOp(64)`). The `{1}` of `Support.is2NewScenesMode` is the IoT / group path, now
+  `scenes.dispatch.iot_apply`. `scenes.dispatch.family_apply` (a per-SKU table that repeated the rows and
+  contradicted the control screens) is gone, and H6052's type-5 path moved from `scenes.dispatch.bypasses`
+  to `scenes.upload.dialects.tablelamp_h6052_type5_diy`.
+- **One pact and firmware branch mechanism per row.** `mode_color_by_pact` / `mode_color_by_firmware` (14
+  and 4 sites) and A8's `kelvin_by_firmware` fold into general `by_pact` / `by_firmware` branches on
+  `client_profile` rows (`clientBranch` / `clientFirmware`); the values are unchanged. Every matching
+  firmware item applies, in order, since the app's gates are independent per fact (the dreamcolorlightv1
+  rows' scene sets, from part brightness, and goodsType 19's Kelvin range). The TV-light pact (1,1) branch's nested firmware gate
+  is now the row's own `by_firmware`, with the same results.
+- **Schema completeness check** (`devices.schema.json` `clientRow.allOf`): a row with `support` must carry
+  its routing and control facts, a row offering scenes its dialect, a plug row `power_resync`, and an
+  IC-count read its `ic_pieces`; `doc-ref` items must be in the `.ksy` citation form. Family `specs` and
+  `pact` lose the values that were one SKU's or that repeated `specs` (`pact.scene_versions` in 9 families).
+- `spec/govee_reference.py`: `ble_rows` (the BLE route for a SKU and advertised pact) and `client_row` (one
+  row's facts for a pact and firmware), with self-test checks. The Kelvin gate (a `kelvin_range` item's
+  `min_hard_version`) is a string compare, as the app's `KelvinConfig.Config.z2` and the library's, in
+  `client_row` and the `clientFirmware` description: hard 10.00.00 is below 3.08.01.
+- Row 247 (H6641) lists the gradual flag its screen reads at connect and writes (`capabilities` and
+  `connect_reads`); row 51 (H6061) names its colour scheme, `h6061`. The plug rows 50, 90 and 307 and row 19
+  (H61A8) carry the citations the hand table had (`UiV2` / `UiV4` / `Ui4H5089.onOffChange`, the
+  `/rgbic/newdetail` route and `SubMode4Color`'s parse), and the plug rows say app-traced, not
+  source-modelled.
+- **dreamcolorlightv1's family `color_scheme` is `h60a6`** (was `h61a8`): the 0x15 frames that every
+  goodsType of the family but 17 / 18 below their gates sends. The app's colour `Config.x` is 0 for 19, 70,
+  71, 73, 74, 75, 83, 123, 136, 178, 187, 193, 204, 207 and 234; 175 / 176 / 262 have no entry and take
+  version 0 too. The 0x0b frames come from `Config.x` for 17 / 18 below their gates, and from the SKU map
+  `Config.w`, which the app reads first, for the old H6102, H6163 and H6117 by their firmware. Every row
+  already names `h60a6`, so no row's facts change: the resolved device table is unchanged, and the
+  generated one differs only in that family default.
+- **goodsType 123 is not a 0x0b goodsType**: its `Config.x` entry (`Bv`) is 0 for every device, as
+  `Support4DreamColorV1.h` is true for every goodsType but 17 / 18 / 19. The dreamcolorlightv1 wire doc, the
+  `wire.build` colour-scheme comment and 1.4.0's notes listed it with 17 / 18. The wire doc now gives the
+  family's 0x0b senders (17 / 18 below their gates; H6102, H6163 and H6117 by their firmware). The other two
+  give the app's whole list: by goodsType, 3, and 13 / 17 / 18 / 21 below their gates; by SKU, H7022 /
+  H7024, and the old H6102, H6107, H6116, H6117, H6125, H6126, H6127, H6161 and H6163 by their firmware.
+- **H1630 / R1630 (h1630 364) read the 0xAC status TLV 0x41 as the power-off memory** (`f_41:
+  power_memory`, as on H60A6, H60B1 and H7056). The app's status lambda stores the value's byte 1 with no
+  guard (`VM4LightH1630$afterConnectedSingleReadDeviceInfo$1.o`, into `Info4Detail.r`, the field
+  `Info4Detail.N` fills from an `aa 41` reply). So a status reply whose 0x41 value is 1 byte long, or empty
+  (but as the stream's last two bytes, which the app's walker does not read as a TLV), now fails the read, as
+  the app's does: it gives no state, the poll retries once, and then power, brightness and mode stay as they
+  were. A 0x41 value of 2 bytes or more reads as before, and the library still uses nothing from it. The
+  0xA5 gradient record's own failure (`Controller4ColorInfoByGroup.r` reads 11 bytes) is not flagged yet, as
+  the record has no wire form. No other SKU's profile changes.
+- `read_request` takes the profile and types the AA 12 / AA 13 / AA B0 selector per form (rule 6):
+  `timer_count_query` [group] (FIRMWARE-SOURCED on H5083, whose screen sends none),
+  `plug_timer_page_query` [group][page] and `plug_delay_query` [outlet][delay_type]
+  (H5083NewDetailRepository.loadParser:206-209, necessaryMessages:326-336). Any other form leaves the
+  selector in rest. ProType 0x3F and 0x66 get FIRMWARE-SOURCED, CAUTION bodies, traced on the H5083, H6006,
+  H6008, H60A1 and H60A6 shared write layers and never sent: `matter_packet` / `matter_start` (the 20-byte
+  Matter-factory units, START op a plain byte since the ops differ per image) with the `matter_result`
+  [op][status] reply, and `factory_test_request` / `factory_test_reply` (`factory_test_op`: 66 01 logs and
+  is answered 66 01 00, 66 02 is echoed, and H6047 echoes every 66 frame). `matter_result.status` gives
+  each op's results: ops 1, 2 and 4 give 0, 1 or 2; op 3 (the gid set) always 0, even when it stores
+  nothing; op 5 (the encrypted gid, H5083 and H6006) 1 on H5083 and 0 on H6006 for a length over its
+  limit, 0xFF on a gid MD5 mismatch, else the low byte of the AES ECB init or crypt error or of the gid
+  store's result. `matter_packet`'s doc and FIRMWARE_VALIDATION give the per-image 3F length rules.
+  `firmware.yaml` is unchanged while the simulator is paused: it still reads the H5083 timer, page and
+  delay selectors as raw bytes, the same bytes the typed fields read, and its `factory_test_start` and
+  `multi_write_3f` notes still say 0x66 and 0x3F have no spec body type.
+- **The h5080 timer forms cover the family, not just H5083.** `f_12: timer_count` (AA 12 [group] ->
+  [group][count], the group being the outlet) is the family's: every h5080 screen sends the same count read
+  (NewTimerCountController from BleOpV2.o0, BleOpV4.l0 and BleOp4H5089.V / Y; the H5083 screen sends the same
+  bytes, H5083NewDetailRepository.necessaryMessages). `f_13: plug_timer` (the AA 13 [group][page] page read,
+  its reply and the 33 13 add) goes on goodsTypes 43, 50 and 90: every goodsType-43 SKU (H5080, H5083, H5085)
+  opens the H5083 screen (Model.t), and the H5082 and H5160 / H5161 screens send the same [outlet][page] read
+  (NewTimerControllerV2.p). The H5089 (307) keeps `f_13` unknown: its page read packs [group << 4 | page] into
+  one byte (Controller4H5089TimerInfo.p), which `plug_timer_page_query` doesn't type. Some firmware is read
+  with AA B4 instead of AA 12: the H5083 screen on H5080 soft 1.00.08 and below (Support.isOldH5080), and the
+  H5082 screen on its connect reads until `UiV2.M`, at info-over, finds soft 1.00.11 or above and switches to
+  AA 12. The timer types' docs say h5080 where they said H5083, and keep H5083's firmware facts as H5083's.
+  The library uses neither form, so no frame or decode changes, and H5083's forms are as before.
+
 ## [1.4.0] — 2026-10-18
 
 ### Added
@@ -130,8 +1095,9 @@ model, from which the shipped readers are generated).
     `mode_reports_kelvin` (see Added). An RGB pick reads the range once, so the frame and the state agree
     even if `aa 07 03` lands mid-write.
   - The `h61a8` scheme stays for custom profiles; no built-in profile uses it now. It is the app's 0x0b
-    colour instruction 3, used by goodsTypes 17, 18, 13, 3, 21 and 123 and by the old H6163 / H6117.
-    Removing it is left for a major release.
+    colour instruction 3, used by goodsType 3, by goodsTypes 13, 17, 18 and 21 below their gates, by H7022
+    / H7024, and, depending on their firmware, by the old H6102, H6107, H6116, H6117, H6125, H6126, H6127,
+    H6161 and H6163. Removing it is left for a major release.
   - Bench, 2026-10-18 (same unit): `set_segment_brightness([0..4], 50)` sent `33 05 15 02 32 1f 00 ..`, the
     app's Bytes.G, which was acked 00. The read-back changed only those segments' brightness, with no colour
     changed, and the start state was restored exactly.

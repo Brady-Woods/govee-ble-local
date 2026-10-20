@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib.util
+import json
 import py_compile
 import re
 import struct
@@ -15,8 +16,8 @@ import pytest
 
 TOOLS = Path(__file__).resolve().parent.parent / "tools"
 ARGPARSE_TOOLS = [
-    "fetch_scenes.py", "decrypt_btsnoop.py", "btsnoop_mtu_scan.py", "power_semantics_probe.py",
-    "analyze_frame_log.py", "h60a6_live_check.py", "h60a6_cct_choreography.py",
+    "fetch_scenes.py", "fetch_catalog.py", "decrypt_btsnoop.py", "btsnoop_mtu_scan.py",
+    "power_semantics_probe.py", "analyze_frame_log.py", "h60a6_live_check.py", "h60a6_cct_choreography.py",
     "h60a6_segment_map_probe.py",
 ]
 
@@ -66,11 +67,22 @@ def test_fetch_validate_sku_rejects(sku: str) -> None:
         _load("fetch_scenes").validate_sku(sku)
 
 
-def test_fetch_catalog_path_inside_out_dir(tmp_path: Path) -> None:
+def test_fetch_stores_each_scene_once(tmp_path: Path) -> None:
     fs = _load("fetch_scenes")
-    assert fs.catalog_path("h60a6", tmp_path) == tmp_path.resolve() / "H60A6.json"
+    x, y = {"code": 1, "param": None}, {"code": 2, "param": None}
+    assert fs.store_catalog("H6006", {"x": x}, tmp_path) == 1
+    assert fs.store_catalog("h6008", {"y": y, "x": x}, tmp_path) == 2     # x is both SKUs': one entry
+    assert fs.read_store(tmp_path) == {"H6006": {"x": x}, "H6008": {"x": x, "y": y}}
+    assert fs.read_catalog("H6004", tmp_path) == {}
+    store = json.loads((tmp_path / "store.json").read_text(encoding="utf-8"))
+    assert store == {"pool": [{"name": "x", **x}, {"name": "y", **y}],
+                     "skus": {"H6006": [0], "H6008": [0, 1]}, "by_set": {}}
+    assert fs.layout({"H6008": {"y": y, "x": x}, "H6006": {"x": x}}) == store   # whatever the order
+    fs.store_catalog("H6006", {"y": y}, tmp_path)
+    assert fs.store_catalog("H6008", {"y": y}, tmp_path) == 1             # no SKU holds x now: it leaves
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["store.json"]
     with pytest.raises(ValueError):
-        fs.catalog_path("../../evil", tmp_path)
+        fs.store_catalog("H6006", {}, tmp_path)                           # an empty catalog is not stored
 
 
 def test_fetch_validate_entry() -> None:
@@ -87,18 +99,19 @@ def test_fetch_main_exits_nonzero_on_failure(monkeypatch: pytest.MonkeyPatch, tm
                                              capsys: pytest.CaptureFixture[str]) -> None:
     fs = _load("fetch_scenes")
     monkeypatch.setattr(fs, "OUT_DIR", tmp_path)
+    monkeypatch.setattr(fs, "TOMBSTONE", tmp_path / "tombstone.json")
 
-    def boom(sku: str, app_version: str = "") -> dict:
+    def boom(sku: str, app_version: str = "", **_kw: object) -> dict:
         raise OSError("network down")
 
     monkeypatch.setattr(fs, "fetch", boom)
     assert fs.main(["H60A6", "H61A8"]) == 2
     assert "FETCH FAILED" in capsys.readouterr().err
     monkeypatch.setattr(
-        fs, "fetch", lambda sku, app_version="": {"x": {"code": 1, "param": None, "category": None}}
+        fs, "fetch", lambda sku, app_version="", **_kw: {"x": {"code": 1, "param": None, "category": None}}
     )
     assert fs.main(["H60A6"]) == 0
-    assert (tmp_path / "H60A6.json").exists()
+    assert fs.read_catalog("H60A6", tmp_path) == {"x": {"code": 1, "param": None, "category": None}}
 
 
 def test_fetch_app_version_flag_and_env(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -107,6 +120,25 @@ def test_fetch_app_version_flag_and_env(monkeypatch: pytest.MonkeyPatch) -> None
     assert fs.parse_args(["--app-version", "9.9.9", "H60A6"]).app_version == "9.9.9"
     monkeypatch.setenv("GOVEE_APP_VERSION", "1.2.3")
     assert _load("fetch_scenes").parse_args([]).app_version == "1.2.3"
+    # --resolve logs in with the same AppVersion, not the cloud client's default (review SCN-8).
+    versions: list[str] = []
+
+    class Account:
+        def __init__(self, email: str, password: str, *, app_version: str) -> None:
+            versions.append(app_version)
+
+        async def login(self) -> None:
+            return None
+
+        async def close(self) -> None:
+            return None
+
+    cloud = ModuleType("govee_ble_local.cloud")
+    cloud.GoveeCloudAccount = Account  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "govee_ble_local.cloud", cloud)
+    fs.resolve_placeholders("a@b.c", "pw", [], "9.9.9")
+    fs.resolve_placeholders("a@b.c", "pw", [])
+    assert versions == ["9.9.9", fs.DEFAULT_APP_VERSION]
 
 
 def test_fetch_parse_rejects_bad_sku() -> None:

@@ -18,7 +18,6 @@ Tints: 2700 K ffae54, 2800 K ffb25b, 4000 K ffd5a1, 6500 K fff9fb. Not hardware-
 from __future__ import annotations
 
 import asyncio
-import dataclasses
 import importlib
 from pathlib import Path
 from typing import Any
@@ -100,11 +99,11 @@ def test_profile() -> None:
 
 
 def test_same_wire_behaviour_as_the_h6008_sibling() -> None:
+    # One goodsType-64 row: the three bulbs resolve to identical facts, so they share one profile (scenes:
+    # the control screen's version array {0, 1}, Support4BulbLightV3.g); the SKUs the catalogue snapshot
+    # routes to the row follow them.
     h6004, h6008 = profile_for("H6004"), profile_for("H6008")
-    assert h6004 is not None and h6008 is not None
-    # scenes: the control screen's version array {0, 1} (Support4BulbLightV3.g) vs H6008's {1};
-    # both upload the same scene types (parseSceneV1 has no version-0 branch)
-    assert h6004 == dataclasses.replace(h6008, skus=("H6004",), scene_versions=frozenset({0, 1}))
+    assert h6004 is not None and h6004 is h6008 and h6004.skus[:3] == ("H6004", "H6006", "H6008")
 
 
 @pytest.mark.parametrize("sku", ["H6003", "H6085"])
@@ -128,7 +127,7 @@ def test_device_is_made_for_an_advertised_h6004() -> None:
     adv = identify("Govee_H6004_1A2B", {})
     assert adv is not None
     d = make_device(ble_device("AA:BB:CC:DD:EE:04", "Govee_H6004_1A2B"), adv.sku)
-    assert d is not None and d.profile.skus == ("H6004",)
+    assert d is not None and d.sku == "H6004" and "H6004" in d.profile.skus
 
 
 # ── builders: golden frames ──────────────────────────────────────────────────

@@ -16,13 +16,13 @@ from types import ModuleType, SimpleNamespace
 from typing import Any
 
 import pytest
-from conftest import generated_classes_problem, generated_outputs
+from conftest import generated_classes_problem, generated_outputs, kaitai_outputs
 from kaitaistruct import ReadWriteKaitaiStruct
 
 _ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 
-@pytest.mark.parametrize("module", generated_outputs(_ROOT))
+@pytest.mark.parametrize("module", kaitai_outputs(_ROOT))
 def test_generated_classes_are_a_read_write_build(module: str) -> None:
     # Each spec root (spec/<root>.ksy -> _generated/<root>.py: class GoveeBleFrame, GoveeState, ...).
     stem = module.removesuffix(".py")
@@ -43,6 +43,17 @@ def _backend() -> ModuleType:
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def test_backend_asks_for_pyyaml_in_a_repository_build_only(tmp_path: pathlib.Path,
+                                                           monkeypatch: pytest.MonkeyPatch) -> None:
+    # The device table's generator needs PyYAML at build time; an sdist ships the table, so its builds don't.
+    backend = _backend()
+    setuptools = SimpleNamespace(get_requires_for_build_wheel=lambda _c: [])
+    monkeypatch.setattr(backend, "_setuptools", lambda: setuptools)
+    assert backend.get_requires_for_build_wheel() == ["PyYAML>=6.0"]
+    _sdist_tree(tmp_path, backend, shipped=True)
+    assert backend.get_requires_for_build_wheel() == []
 
 
 def test_backend_generates_in_a_repository_build(monkeypatch: pytest.MonkeyPatch) -> None:

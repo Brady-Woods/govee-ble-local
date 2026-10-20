@@ -322,9 +322,10 @@ with a different byte layout, but it is reached only for new-DIY effects behind 
 gate — see the ⚠️ box below, which is the authoritative statement of when each is used.
 
 > **Choosing upload-vs-activate + the comByte/strip per scene** is a `(sceneType, versionArray)` dispatch.
-> The full rule — the `parseSceneV1` table, plus the **two curated-device bypasses** (bulbs force a
-> hardcoded versionArray `{1}`; H6052 type-5 uses the DIY path at comByte `9`) — is machine-readable at
-> `devices.yaml scenes.dispatch` (`table` + `bypasses` + `family_apply`) and documented in
+> The full rule — the `parseSceneV1` table, the per-goodsType versionArray, and the two sceneType-5
+> dialects that bypass `parseSceneV1` (H60A6 DIY graffiti at comByte `0x58`; H6052 type-5 DIY at comByte
+> `9`) — is machine-readable in `devices.yaml`: `scenes.dispatch.table`, `scenes.upload.dialects`, and each
+> goodsType row's `client_profile.by_goods_type.<gt>.scene_dialect` / `scene_versions`. It is documented in
 > `SCENE_UPLOAD_ENCODING.md` §0b (per-device paths, Q4 table, implementer checklist).
 
 The `0xA3` frame shape:
@@ -1528,7 +1529,7 @@ ad-hoc note:
 
 Prose companions (in this `docs/` folder unless noted):
 - **`SCENE_UPLOAD_ENCODING.md`** — the scene/DIY upload encoding + dispatch reference (paths,
-  `parseSceneV1` table, per-family bypasses, re-serializer field layouts, chunking). Referenced from §4.4.
+  `parseSceneV1` table, per-dialect paths, re-serializer field layouts, chunking). Referenced from §4.4.
 - **`USING_THE_KSY.md`** — how to compile and consume the `.ksy` files in your own project (any target
   language): which root takes which bytes, the device profile, the decrypt → parse → join pipeline,
   building messages, and gotchas.

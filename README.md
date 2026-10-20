@@ -63,35 +63,44 @@ asyncio.run(main())
 The library follows Home-Assistant BLE-library conventions: identify a device from its
 advertisement, build a capability-driven `Device`, then drive it.
 
-- **`discover(timeout=10.0, *, supported_only=True)`** — active-scan → `list[DiscoveredDevice]`
-  (`.ble_device`, `.advertisement`, `.sku`, `.rssi`, `.supported`); raises
+- **`discover(timeout=10.0, *, supported_only=True, allow_modelled=False)`** — active-scan →
+  `list[DiscoveredDevice]` (`.ble_device`, `.advertisement`, `.sku`, `.rssi`, `.supported`); raises
   `GoveeBleConnectionError` when the scan itself fails (no adapter, adapter off, no BlueZ/D-Bus);
   that error is also the `BleakError` / `OSError` / `EOFError` 1.3.0 raised, so either handler matches.
   `supported(name, mfg)` and `match(ble_device, adv)` are the passive-matcher hooks for a
   HA-style scanner.
 - **`create_device(ble_device, sku, advertisement_data=None, *, secret=None, frame_log=None,
-  idle_disconnect=None)`** — construct a `Device` for the SKU (raises `GoveeBleNotSupported` if
-  uncurated). Pass the advertisement (`DiscoveredDevice.advertisement` or bleak's own): its
-  encrypt flag selects the command channel, which some firmwares set differently from the SKU's
-  default (H6008). `is_supported_sku(sku)` / `supported_skus()` / `profile_for(sku)` query the
-  table (`device_profile_for(sku)` is a deprecated alias of `profile_for`, removed in 2.0).
+  idle_disconnect=None, goods_type=None, allow_modelled=False)`** — construct a `Device` for the SKU
+  (raises `GoveeBleNotSupported` if unsupported). Pass the advertisement (`DiscoveredDevice.advertisement`
+  or bleak's own): its encrypt flag selects the command channel, which some firmwares set differently
+  from the SKU's default (H6008), and its pact the SKU's devices.yaml row. `is_supported_sku(sku)` /
+  `supported_skus()` / `profile_for(sku)` query the table; `profile_for` and `is_supported_sku` take
+  `pact=` / `goods_type=` to pick between rows, and `allow_modelled=True` (also on `supported_skus`,
+  `create_device`, `supported`, `match` and `discover`) admits the rows the spec marks `modelled`
+  (inferred from the app, not traced), which are off by default (`device_profile_for(sku)` is a
+  deprecated alias of `profile_for`, removed in 2.0).
 - **`Device`** — one capability-gated class (behaviour comes from its `DeviceProfile`, not
   subclasses). Commands are ACK-confirmed on the wire:
   `turn_on` / `turn_off` / `set_power`, `set_brightness`, `set_rgb`, `set_color_temp`,
   `set_segment_rgb` / `set_segment_brightness` / `set_segment_color_temp`,
   `set_zone_power` / `set_zone_rgb` / `set_zone_color_temp`,
   `set_scene` / `set_scene_by_name`, and `update()` (read-back). Introspection:
-  `capabilities`, `zones`, `min_kelvin` / `max_kelvin`, `scene_names`, `state`,
-  `register_callback`. Methods for unsupported capabilities raise `GoveeBleNotSupported`.
+  `capabilities`, `zones`, `min_kelvin` / `max_kelvin`, `scene_names` (the scenes the Govee app lists at
+  the device's scene set, `scene_versions`), `state`, `register_callback`. Methods for unsupported
+  capabilities raise `GoveeBleNotSupported`.
 - **`DeviceState`** — parsed state: `is_on`, `brightness` (0–100), `rgb_color`,
-  `color_temp_kelvin`, `segments` (`list[Segment]`), `zone_power`, `zone_color_temp_kelvin` (H6047
+  `color_temp_kelvin`, `segments` (`list[Segment]`), `zone_power`, `zone_power_confirmed` (when each
+  zone's power was last learned from the device), `zone_color_temp_kelvin` (H6047
   reads one Kelvin per bar), `gradual`, `scene_code`, plus
   device-info (`device_id` / `serial_number`, `wifi_mac`, `hardware_version`, `firmware_version`,
   `ble_mac`), read with the Govee app's own frames (`aa 06`, `aa 07 03`, `aa 07 02`).
 - **`Capability`** — `POWER`, `BRIGHTNESS`, `RGB`, `COLOR_TEMP`, `SEGMENTS`, `SCENES`.
 
 Curated SKUs: **H60A6**, **H6047**, **H61A8**, **H6004** (the BLE revision; the Wi-Fi-only one can't be controlled over BLE), **H6006/H6008**, **H6052**, **H6641**, **H6188**, **H6062**, **H6061** (Glide Hexa: whole-device power, brightness, colour and colour temperature), and the
-plug family (**H5080/H5082/H5083/H5085/H5089/H5160/H5161**). Segment-colour read-back and some
+plug family (**H5080/H5082/H5083/H5085/H5089/H5160/H5161**). Govee's public catalogue (a snapshot in
+`spec/govee_catalog.json`) also routes H6009, H600A-H600D, H6010, H6011, H6013 and H800B to the
+H6004/H6006/H6008 profile by their goodsType (64), not bench-checked and without named scenes (scene
+codes only). Segment-colour read-back and some
 scene dialects on the non-H60A6 SKUs are source-modelled and not yet hardware-verified.
 
 Colour temperature matches the Govee app's frames: like the app, an out-of-range Kelvin is clamped to
@@ -157,7 +166,8 @@ the upload values ([`govee_upload.ksy`](spec/govee_upload.ksy)), the advertiseme
 ([`govee_bgc_info.ksy`](spec/govee_bgc_info.ksy)), sharing [`govee_common.ksy`](spec/govee_common.ksy)
 — with the per-device table in [`spec/devices.yaml`](spec/devices.yaml). The Kaitai read-write classes
 under `govee_ble_local/_generated/` are generated from those, and the library parses and builds every
-frame with them (source of truth: the decompiled Govee app).
+frame with them; its supported-device table is generated from `devices.yaml` too (source of truth: the
+decompiled Govee app).
 
 ## Contributing & versioning
 

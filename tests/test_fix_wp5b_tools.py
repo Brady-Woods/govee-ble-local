@@ -3,6 +3,8 @@ power_semantics_probe, h60a6_live_check). Offline: no BLE hardware, no network."
 from __future__ import annotations
 
 import asyncio
+import base64
+import hashlib
 import importlib.util
 import inspect
 import re
@@ -204,15 +206,41 @@ def test_merge_takes_fresh_blob_and_drops_stale_routing_fields() -> None:
 def test_merge_keeps_a_resolved_blob_over_the_public_stub() -> None:
     fs = _load("fetch_scenes")
     existing = {"A": {"code": 10, "param": "REAL", "param_id": 5, "scene_type": 1, "big_effect": True,
-                      "category": "old"},
-                "Gone": {"code": 3, "param": None}}
-    stub = {"code": 12, "param": "STUB", "param_id": 5, "placeholder": True, "scene_type": 2,
-            "category": "new"}
+                      "category": "c"},
+                "Gone": {"code": 3, "param": None, "category": "c"}}
+    stub = {"code": 10, "param": "STUB", "param_id": 5, "placeholder": True, "scene_type": 2, "category": "c"}
     merged = fs._merge(existing, {"A": stub})
-    assert merged["A"] == {"code": 12, "param": "REAL", "param_id": 5, "scene_type": 2, "category": "new"}
+    assert merged["A"] == {"code": 10, "param": "REAL", "param_id": 5, "scene_type": 2, "category": "c"}
     assert merged["Gone"] == existing["Gone"]                   # no longer public: kept
-    other = dict(stub, param_id=6)                              # a different effect: re-resolve it
+
+    def seen(gone: tuple[tuple[int, str | None], ...] = (), live: tuple[int, ...] = ()) -> Any:
+        out = fs.Answered()
+        for code, blob in gone:
+            out.gone.setdefault(("Gone", "c", code), set()).add((blob, None))   # "Gone" has no param id
+        out.live |= {("Gone", "c", code) for code in live}
+        return out
+
+    assert "Gone" not in fs._merge(existing, {"A": stub}, seen(gone=((3, None),)))   # refused for good
+    assert "Gone" not in fs._merge(existing, {"A": stub}, seen(gone=((3, "B"),)))    # its blob changed too
+    assert "Gone" in fs._merge(existing, {"A": stub}, seen(gone=((4, None),)))       # another one of its name
+    assert "Gone" in fs._merge(existing, {"A": stub}, seen(live=(3,)))               # listed as another name
+    assert "Gone" in fs._merge(existing, {"A": stub}, seen(gone=((3, "B"),), live=(3,)))   # a sibling refused
+    assert fs._merge(existing, {"B": stub})["B"]["param"] == "REAL"             # kept by scene, not by name
+    no_id = {**{k: v for k, v in stub.items() if k != "param_id"}, "code": 11, "category": "d"}
+    plain = {**existing, "Plain": {"code": 20, "param": "PLAIN", "category": "d"}}   # a blob, no param id
+    assert fs._merge(plain, {"B": no_id})["B"] == no_id         # no param id: not "Plain"'s, which has none
+    bare = {"A": {"code": 10, "param": None, "param_id": 5, "category": "c"}}   # never a placeholder
+    assert fs._merge(bare, {"A": stub})["A"] == stub            # no blob to keep: still a placeholder
+    other = dict(stub, param_id=6)                              # another effect: re-resolve it
     assert fs._merge(existing, {"A": other})["A"] == other
+    for moved in (dict(stub, code=11), dict(stub, category="d")):   # "A" renumbered, its category renamed
+        kept = {**{k: v for k, v in moved.items() if k != "placeholder"}, "param": "REAL"}
+        assert fs._merge(existing, {"A": moved})["A"] == kept
+        assert fs._merge(existing, {"B": moved})["B"] == kept   # a new name: the one resolved entry of its id
+        twice = {**existing, "C": {**existing["A"], "code": 12, "param": "ALSO"}}
+        assert fs._merge(twice, {"B": moved})["B"] == moved     # two of its id: re-resolve it
+        bare = {"Bare": {"code": 40, "param": None, "param_id": 5, "category": "e"}}   # never a placeholder
+        assert fs._merge(bare, {"B": moved})["B"] == moved      # a bare entry of its id has no blob to keep
 
 
 _ROW = re.compile(r"^(\S+)\s+(\d+)\s+(\d+)(\[[^\]]*\])?\s+(\d+)\s+(\d+)\s+(\d+)\s+(\[.*\])$")
@@ -237,25 +265,35 @@ def test_audit_reports_versions_and_one_bucket_per_scene(capsys: pytest.CaptureF
 
 def test_audit_counts_planner_refusals_and_propagates_bugs(monkeypatch: pytest.MonkeyPatch,
                                                            capsys: pytest.CaptureFixture[str]) -> None:
-    from govee_ble_local.devices.device import Device
+    from govee_ble_local import scenes
     from govee_ble_local.exceptions import GoveeBleInvalidValue
 
     fs = _load("fetch_scenes")
 
-    def refuse(self: Device, scene: Any) -> None:
+    def refuse(scene: Any, *_a: Any, **_k: Any) -> None:
         raise GoveeBleInvalidValue("malformed")
 
-    monkeypatch.setattr(Device, "scene_upload_frames", refuse)
+    monkeypatch.setattr(scenes, "scene_upload_frames", refuse)   # the planner audit runs at each set
     fs.audit(["H60A6"])
     (row,) = _audit_rows(capsys.readouterr().out)
     assert int(row.group(6)) == int(row.group(2)) - int(row.group(7))   # every non-placeholder BLOCKED
 
-    def bug(self: Device, scene: Any) -> None:
+    def bug(scene: Any, *_a: Any, **_k: Any) -> None:
         raise TypeError("programming error")
 
-    monkeypatch.setattr(Device, "scene_upload_frames", bug)
+    monkeypatch.setattr(scenes, "scene_upload_frames", bug)
     with pytest.raises(TypeError):
         fs.audit(["H60A6"])
+
+
+def test_audit_reports_a_catalogued_sku_the_table_does_not_support(monkeypatch: pytest.MonkeyPatch,
+                                                                  capsys: pytest.CaptureFixture[str]) -> None:
+    from govee_ble_local.scenes import Scene
+
+    fs = _load("fetch_scenes")
+    monkeypatch.setattr("govee_ble_local.scenes.load_scenes", lambda sku: {"a": Scene("a", 1, None)})
+    fs.audit(["H9999"])
+    assert "H9999   (not a supported SKU)" in capsys.readouterr().out
 
 
 def test_audit_cli_honours_positional_skus() -> None:
@@ -271,18 +309,50 @@ def test_main_counts_corrupt_catalog_and_write_failure(monkeypatch: pytest.Monke
                                                        capsys: pytest.CaptureFixture[str]) -> None:
     fs = _load("fetch_scenes")
     monkeypatch.setattr(fs, "OUT_DIR", tmp_path)
-    monkeypatch.setattr(fs, "fetch", lambda sku, app_version="": {"A": {"code": 1, "param": None}})
-    (tmp_path / "H60A6.json").write_text('{"A": "not a scene object"}', encoding="utf-8")
-    assert fs.main(["H60A6", "H61A8"]) == 1            # the corrupt one fails, the run goes on
-    assert "H60A6: FETCH FAILED" in capsys.readouterr().err
-    assert (tmp_path / "H61A8.json").exists()
+    monkeypatch.setattr(fs, "TOMBSTONE", tmp_path / "tombstone.json")
+    monkeypatch.setattr(fs, "fetch", lambda sku, app_version="", **_kw: {"A": {"code": 1, "param": None}})
+    corrupt = '{"pool": [{"name": "A", "code": 1}], "skus": {"H60A6": [1]}, "by_set": {}}'
+    (tmp_path / "store.json").write_text(corrupt, encoding="utf-8")
+    sha = hashlib.sha256(corrupt.encode()).hexdigest()   # its tombstone, so the store's read is what fails
+    (tmp_path / "tombstone.json").write_text(f'{{"store_sha256": "{sha}"}}', encoding="utf-8")
+    assert fs.main(["H60A6", "H61A8"]) == 2            # each fails, the run goes on, the store stays as it is
+    assert capsys.readouterr().err.count("FETCH FAILED") == 2
+    assert (tmp_path / "store.json").read_text(encoding="utf-8") == corrupt
+    (tmp_path / "store.json").unlink()
+    for bad in ("{", '{"h61a8": {"dropped": ["A"]}}', '{"H61A8": {"dropped": ["B", "A"]}}'):
+        (tmp_path / "tombstone.json").write_text(bad, encoding="utf-8")
+        assert fs.main(["H61A8"]) == 1                 # a malformed tombstone fails the SKU, left as it is
+        assert (tmp_path / "tombstone.json").read_text(encoding="utf-8") == bad
+        assert not (tmp_path / "store.json").exists()
+    (tmp_path / "tombstone.json").unlink()
+    assert fs.main(["H61A8"]) == 0
+    assert fs.read_catalog("H61A8", tmp_path) == {"A": {"code": 1, "param": None}}
 
-    def disk_full(path: Path, data: object) -> None:
+    def disk_full(path: Path, text: str) -> None:
         raise OSError("disk full")
 
-    monkeypatch.setattr(fs, "write_catalog", disk_full)
+    monkeypatch.setattr(fs, "_write_text", disk_full)   # every write: the store's and the tombstone's
     assert fs.main(["H61A8", "H6052"]) == 2
     assert capsys.readouterr().err.count("WRITE FAILED") == 2
+
+
+def test_main_leaves_out_the_type5_scenes_legacy_scene_does_not_upload(monkeypatch: pytest.MonkeyPatch,
+                                                                       tmp_path: Path) -> None:
+    fs = _load("fetch_scenes")
+    monkeypatch.setattr(fs, "OUT_DIR", tmp_path)
+    monkeypatch.setattr(fs, "TOMBSTONE", tmp_path / "tombstone.json")
+    fetched = {"Rgb": {"code": 1, "param": None, "scene_type": 1},
+               "NewDiy": {"code": 2, "param": base64.b64encode(b"\x50\x01\x02").decode(), "scene_type": 5},
+               "Diy": {"code": 3, "param": base64.b64encode(b"\x13\x01\x02").decode(), "scene_type": 5}}
+    monkeypatch.setattr(fs, "fetch", lambda sku, app_version="", **_kw: dict(fetched))
+    assert fs.main(["H6006", "H1630", "H60A6"]) == 0
+    assert set(fs.read_catalog("H6006", tmp_path)) == {"Rgb", "Diy"}   # legacy_scene {0, 1}: Diy activates
+    assert set(fs.read_catalog("H1630", tmp_path)) == {"Rgb"}          # version 13: parseSceneV1 uploads 5
+    assert set(fs.read_catalog("H60A6", tmp_path)) == set(fetched)     # its own type-5 dialect
+    fs.store_catalog("H6006", {n: fetched[n] for n in ("Rgb", "NewDiy")}, tmp_path)   # stored before the cut
+    assert fs.main(["H6006"]) == 0
+    assert set(fs.read_catalog("H6006", tmp_path)) == {"Rgb", "Diy"}
+    assert set(fs.read_tombstone(tmp_path / "tombstone.json")["H6006"]["retired"]) == {"NewDiy"}   # retired
 
 
 # --- power_semantics_probe -------------------------------------------------------------------

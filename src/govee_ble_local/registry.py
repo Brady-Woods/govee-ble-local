@@ -9,7 +9,7 @@ from bleak.backends.scanner import AdvertisementData
 from .devices.device import Device
 from .devices.profile import DeviceProfile, profile_for, supported_skus
 from .exceptions import GoveeBleNotSupported
-from .identify import GoveeAdvertisement
+from .identify import GoveeAdvertisement, from_advertisement
 
 __all__ = [
     "Device",
@@ -33,9 +33,11 @@ def device_profile_for(sku: str) -> DeviceProfile | None:
     return profile_for(sku)
 
 
-def is_supported_sku(sku: str) -> bool:
-    """True if the DeviceProfile table has an entry for `sku`."""
-    return profile_for(sku) is not None
+def is_supported_sku(sku: str, *, pact: tuple[int, int] | None = None, goods_type: int | None = None,
+                     allow_modelled: bool = False) -> bool:
+    """True if `sku` has a DeviceProfile: :func:`~govee_ble_local.devices.profile.profile_for` with the
+    same arguments is not None."""
+    return profile_for(sku, pact=pact, goods_type=goods_type, allow_modelled=allow_modelled) is not None
 
 
 def create_device(
@@ -46,12 +48,18 @@ def create_device(
     secret: bytes | None = None,
     frame_log: str | None = None,
     idle_disconnect: float | None = None,
+    goods_type: int | None = None,
+    allow_modelled: bool = False,
 ) -> Device:
     """Construct a capability-driven Device for `sku`.
 
     Pass the device's advertisement (bleak's, or ``DiscoveredDevice.advertisement``): its encrypt
-    flag picks the command channel. Without one the SKU's profile default is used, which is wrong
-    for a device whose firmware encrypts although the profile says plaintext (e.g. the H6008).
+    flag picks the command channel, and its pact the SKU's spec row (``profile_for(sku, pact=...)``),
+    so the profile, and with it every capability, is settled here, before any entity is built. Without
+    one the SKU's profile default cipher is used, which is wrong for a device whose firmware encrypts
+    although the profile says plaintext (e.g. the H6008), and a SKU that several rows list needs
+    ``goods_type``. ``allow_modelled`` also admits a ``modelled`` row (inferred from the app, not
+    traced; see ``profile_for``).
 
     Pass ``secret`` (the 8-byte account-lock key, ``build.SECRET_LEN``) for a device whose profile
     requires one (the plug family); it is sent after every handshake. ``Device.set_secret`` can
@@ -64,12 +72,15 @@ def create_device(
     frame-tier logger ``govee_ble_local.frames`` is the other, filesystem-free, capture
     surface — see the diagnostics docs).
 
-    Raises GoveeBleNotSupported if `sku` has no DeviceProfile, and GoveeBleInvalidValue if
-    ``secret`` is not exactly 8 bytes."""
-    profile = profile_for(sku)
+    Raises GoveeBleNotSupported if `sku` has no DeviceProfile (at the advertised pact), and
+    GoveeBleInvalidValue if ``secret`` is not exactly 8 bytes."""
+    adv = from_advertisement(advertisement_data, ble_device.name)
+    pact = adv.pact if adv is not None else None
+    profile = profile_for(sku, pact=pact, goods_type=goods_type, allow_modelled=allow_modelled)
     if profile is None:
-        raise GoveeBleNotSupported(f"unsupported SKU: {sku}")
+        at = "" if pact is None else f" at pact {pact[0]},{pact[1]}"
+        raise GoveeBleNotSupported(f"unsupported SKU: {sku}{at}")
     return Device(
-        profile, ble_device, advertisement_data, sku=sku, secret=secret, frame_log=frame_log,
-        idle_disconnect=idle_disconnect,
+        profile, ble_device, adv if adv is not None else advertisement_data, sku=sku, secret=secret,
+        frame_log=frame_log, idle_disconnect=idle_disconnect,
     )

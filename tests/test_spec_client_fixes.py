@@ -5,12 +5,10 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
-import pathlib
 from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
-from conftest import require_optional
 
 from fake_ble import FakeGovee, ble_device, frame, unacked_via
 from govee_ble_local.crypto import checksum
@@ -311,30 +309,7 @@ def test_h60a6_status_power_is_any_non_zero_byte() -> None:
     assert st.is_on is True
 
 
-# ── F2 (faa2cb7 review): each SKU reads power where devices.yaml says the app does ───────────
-_GOODS_TYPE = {"H60A6": 303, "H6047": 119, "H6641": 247, "H6052": 22, "H61A8": 19, "H6006": 64, "H6008": 64}
-
-
-def _power_read(goods_type: int) -> str | None:
-    yaml = require_optional("yaml", reason="PyYAML reads spec/devices.yaml")
-    path = pathlib.Path(__file__).resolve().parent.parent / "spec" / "devices.yaml"
-    for fam in yaml.safe_load(path.read_text())["families"]:
-        if goods_type in (fam.get("goods_types") or []):
-            cp = fam.get("client_profile") or {}
-            override = (cp.get("by_goods_type") or {}).get(str(goods_type)) or {}
-            return override.get("power_read", cp.get("power_read"))
-    return None
-
-
-@pytest.mark.parametrize("sku", sorted(_GOODS_TYPE))
-def test_power_source_matches_the_spec(sku: str) -> None:
-    power_read = _power_read(_GOODS_TYPE[sku])
-    assert power_read in ("aa01", "ac_status"), sku
-    profile = profile_for(sku)
-    assert profile is not None
-    assert (power_read == "ac_status") == (profile.readback == "status"), sku
-
-
+# ── F2 (faa2cb7 review): the H60A6 reads power from the status burst only ──────────────────────
 def test_h60a6_state_poll_is_the_status_burst_only() -> None:
     # power_read ac_status: no aa 01 / 04 / 05 in the state read, just ac 03 03 41 30 a5 (one retry at most).
     d = _dev("H60A6")

@@ -7,11 +7,12 @@
 #     scripts/check.sh
 #
 # Gates (in order, fail-fast):
-#   1. generate the Kaitai read-write classes in src/govee_ble_local/_generated from spec/*.ksy
-#      (tools/gen_kaitai.sh), so every later gate runs against the spec as it is. They are a build
-#      product (gitignored; every build generates them, see _build_backend/). It needs the pinned
-#      JVM kaitai-struct-compiler (gen_kaitai.sh KSC_SERIES): `brew install kaitai-struct-compiler`,
-#      or scripts/install_ksc.sh on Debian/Ubuntu (what CI runs).
+#   1. generate the Kaitai read-write classes in src/govee_ble_local/_generated from spec/*.ksy, and the
+#      device table from spec/devices.yaml (tools/gen_kaitai.sh, with the venv's Python and its PyYAML),
+#      so every later gate runs against the spec as it is. They are a build product (gitignored; every
+#      build generates them, see _build_backend/). It needs the pinned JVM kaitai-struct-compiler
+#      (gen_kaitai.sh KSC_SERIES): `brew install kaitai-struct-compiler`, or scripts/install_ksc.sh on
+#      Debian/Ubuntu (what CI runs).
 #   2. the spec's structural gate, Suite S (spec/checks/run.sh, owned by the spec side: ksc python /
 #      java / javascript with no warnings, then spec/checks/lint.py)
 #   3. ruff check over src tools tests spec _build_backend (rules in [tool.ruff.lint])
@@ -38,19 +39,19 @@ PYTHON="${PYTHON:-python3}"
 VENV="${VENV:-.venv-check}"
 COV_MIN="${COV_MIN:-95}"
 
-echo ">> generate the Kaitai read-write classes from spec/*.ksy"
-# gen_kaitai.sh itself requires the pinned JVM compiler for this build (no JS fallback).
-bash tools/gen_kaitai.sh
-
 if [ ! -x "$VENV/bin/python" ]; then
   echo ">> creating venv: $VENV"
   "$PYTHON" -m venv "$VENV"
 fi
 # shellcheck source=/dev/null
 source "$VENV/bin/activate"
+python -m pip install --quiet --upgrade pip PyYAML
+
+echo ">> generate the Kaitai read-write classes from spec/*.ksy and the device table from spec/devices.yaml"
+# gen_kaitai.sh itself requires the pinned JVM compiler for this build (no JS fallback).
+PYTHON=python bash tools/gen_kaitai.sh
 
 echo ">> installing (editable + test + typing + lint extras)"
-python -m pip install --quiet --upgrade pip
 python -m pip install --quiet -e ".[test,typing,lint]"
 
 echo ">> spec lints (Suite S)"

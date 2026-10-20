@@ -7,8 +7,11 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import errno
 import time
 from collections.abc import Callable
+from importlib import resources
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
 
@@ -16,9 +19,9 @@ import pytest
 from fake_ble import ble_device, frames_of, status_burst
 from fake_ble import frame as _frame
 
+from govee_ble_local import scenes
 from govee_ble_local.devices import _readback
 from govee_ble_local.devices import device as device_mod
-from govee_ble_local.devices import profile as profile_mod
 from govee_ble_local.devices.device import Device, _local_tz, make_device
 from govee_ble_local.devices.profile import DeviceProfile, profile_for
 from govee_ble_local.exceptions import GoveeBleError, GoveeBleInvalidValue, GoveeBleNotSupported
@@ -69,6 +72,7 @@ def _dev(sku: str, replies: Replies | None = None, **profile_overrides: Any) -> 
     d._conn.send_many = AsyncMock(side_effect=send_many)  # type: ignore[method-assign]
     d._conn.send_unacked = AsyncMock(side_effect=send_unacked)  # type: ignore[method-assign]
     d._conn.query = AsyncMock(side_effect=query)  # type: ignore[method-assign]
+    d._conn.connect = AsyncMock()  # type: ignore[method-assign]
     d._sent = sent  # type: ignore[attr-defined]
     d._queried = queried  # type: ignore[attr-defined]
     d._unacked = unacked  # type: ignore[attr-defined]
@@ -115,6 +119,9 @@ def test_relay_sync_time_payload(monkeypatch: pytest.MonkeyPatch, off: int, tz: 
     monkeypatch.setattr(device_mod.time, "localtime", lambda _ts=None: _Tm(off))
     d = _dev("H5080")
     assert d._session_frames() == [build.plug_sync_time(0x6A49901A, *tz)]
+    light = _dev("H6008", light_effect_stop=True)._conn   # the provider the session runs, without ack waits
+    assert light._session_frames is not None and light._session_frames() == [build.light_effect_stop()]
+    assert not light._session_ack and d._conn._session_ack   # a plug waits for its time sync's ack
 
 
 # ── WP3-017: register_callback's unsubscribe ──────────────────────────────────────────────
@@ -158,7 +165,10 @@ def test_h6047_advert_off_marks_both_bars_off() -> None:
     assert d.ingest_advertisement(_adv(0)) is True
     assert d.state.zone_power == {0: False, 1: False}
     run(d.set_zone_power("left", True))
-    assert _queried(d) == [] and _sent(d)[0][:4].hex() == "33360100"   # the right bar stays off
+    # The advertisement vouches for no bar, so the write reads the bars first (ZONE_POWER_FRESH_SECONDS);
+    # unanswered, it keeps the held one.
+    assert [q[:2].hex() for q in _queried(d)] == ["aa36"]
+    assert _sent(d)[0][:4].hex() == "33360100"   # the right bar stays off
 
 
 def test_h6047_advert_on_with_both_bars_off_forgets_them() -> None:
@@ -351,19 +361,60 @@ def test_unknown_scene_name_raises_typed_error_and_sends_nothing() -> None:
     assert _sent(d) == [] and _unacked(d) == [] and d.state.scene_code is None
 
 
+@pytest.mark.parametrize(("sku", "is_on", "lead"), [
+    ("H6009", None, True), ("H6010", False, True), ("H6009", True, False), ("H6006", None, False)])
+def test_h6009_h6010_lead_a_scene_write_with_the_power_on(monkeypatch: pytest.MonkeyPatch, sku: str,
+                                                         is_on: bool | None, lead: bool) -> None:
+    """ApplyOffNeedOpenConfig (H6009 / H6010 only): the app prepends 33 01 01 to a scene apply, upload
+    included, while its stored switch state is off, and reads an unknown one as off."""
+    on = [build.switch(True)] if lead else []
+    # No H6009 / H6010 catalog is bundled yet, so their profile offers no scenes: give them goodsType 64's
+    # scene facts, and H6006's catalog, as a bundled one will.
+    bulb, h6009 = profile_for("H6006"), profile_for("H6009")
+    assert bulb is not None and h6009 is not None and h6009.scene_power_on
+    assert Capability.SCENES not in h6009.capabilities
+    scened = dict(capabilities=bulb.capabilities, scene_versions=bulb.scene_versions)
+    d = _dev(sku, **scened)
+    d._state.is_on = is_on
+    run(d.set_scene(7))
+    assert _sent(d) == [*on, build.scene_activate(7)] and d.state.is_on is True
+    # By name, with an upload.
+    catalog = load_scenes("H6006")
+    monkeypatch.setattr(device_mod, "async_load_scenes", lambda _sku, **_at: asyncio.sleep(0, catalog))
+    d = _dev(sku, **scened)
+    d._state.is_on = is_on
+    name = next(n for n, s in catalog.items() if d.scene_upload_frames(s))
+    order: list[str] = []
+    many, unacked = d._conn.send_many.side_effect, d._conn.send_unacked.side_effect
+
+    async def lead_first(frames: list[bytes]) -> None:
+        order.append("lead")
+        await many(frames)
+
+    async def upload(frames: Any, **k: object) -> None:
+        order.append("upload")
+        await unacked(frames, **k)
+
+    d._conn.send_many.side_effect = lead_first  # type: ignore[attr-defined]
+    d._conn.send_unacked.side_effect = upload  # type: ignore[attr-defined]
+    run(d.set_scene_by_name(name))
+    assert order == (["lead", "upload"] if lead else ["upload"]) and _unacked(d)
+    assert _sent(d) == [*on, build.scene_activate(catalog[name].code)]
+
+
 def test_set_scene_by_name_loads_the_catalog_off_the_loop(monkeypatch: pytest.MonkeyPatch) -> None:
-    calls: list[str] = []
+    calls: list[tuple[str, Any]] = []
     real = device_mod.async_load_scenes
 
-    async def spy(sku: str) -> Any:
-        calls.append(sku)
-        return await real(sku)
+    async def spy(sku: str, *, scene_versions: Any = None) -> Any:
+        calls.append((sku, scene_versions))
+        return await real(sku, scene_versions=scene_versions)
 
     monkeypatch.setattr(device_mod, "async_load_scenes", spy)
     d = _dev("H6008")
     name = d.scene_names[0]
     run(d.set_scene_by_name(name))
-    assert calls == ["H6008"] and d.state.scene_code == load_scenes("H6008")[name].code
+    assert calls == [("H6008", d.scene_versions)] and d.state.scene_code == load_scenes("H6008")[name].code
 
 
 def test_update_warms_the_scene_catalog_once(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -390,6 +441,80 @@ def test_update_survives_a_corrupt_scene_catalog(monkeypatch: pytest.MonkeyPatch
     monkeypatch.setattr(device_mod, "async_load_scenes", broken)
     d = _dev("H6008", {0x01: [_frame(0xAA, 0x01, 0x01)]})
     assert run(d.update()).is_on is True
+
+
+class _Store:
+    """Stands in for ``scenes.resources.files(...)``: the bundled store's text, its reads counted, or
+    ``error`` raised, or ``text`` returned in its place, where set."""
+
+    def __init__(self) -> None:
+        self.real = (resources.files(scenes) / "store.json").read_text(encoding="utf-8")
+        self.reads = 0
+        self.error: BaseException | None = None
+        self.text: str | None = None
+
+    def __truediv__(self, _name: str) -> _Store:
+        return self
+
+    def read_text(self, encoding: str | None = None) -> str:
+        self.reads += 1
+        if self.error is not None:
+            raise self.error
+        return self.text or self.real
+
+
+@pytest.mark.parametrize("fail", ["emfile", "recursion", "deep"])
+def test_a_failed_scene_load_is_raised_with_no_io_and_update_loads_it_again(
+        fail: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Review H1: update() marked the catalog loaded though its load failed, so after a failure the loader
+    does not keep (a transient read error, a RecursionError, a store nested too deep) every sync scene_names
+    or active_scene read re-read the store on the event loop. They raise the last failure, a GoveeBleError,
+    with no I/O now, and the next update() loads the store again off the loop (async_load_scenes)."""
+    files, loads = _Store(), []
+    if fail == "deep":
+        files.text = "[" * 100_000
+    else:
+        files.error = (OSError(errno.EMFILE, "Too many open files") if fail == "emfile"
+                       else RecursionError("maximum recursion depth exceeded"))
+    real = device_mod.async_load_scenes
+
+    async def spy(sku: str) -> Any:
+        loads.append(sku)
+        return await real(sku)
+
+    monkeypatch.setattr(device_mod, "async_load_scenes", spy)
+    monkeypatch.setattr(scenes, "resources", SimpleNamespace(files=lambda _pkg: files))
+    scenes._store.cache_clear()
+    try:
+        d = _dev("H6008", {0x01: [_frame(0xAA, 0x01, 0x01)]})
+        run(d.update())
+        assert loads == ["H6008"] and files.reads == 1
+        d._state.scene_code = 1
+        for _ in range(3):
+            with pytest.raises(GoveeBleError, match="bundled scene store"):
+                _ = d.scene_names
+            with pytest.raises(GoveeBleError, match="bundled scene store"):
+                _ = d.active_scene
+        assert files.reads == 1   # no I/O
+        files.error = files.text = None
+        run(d.update())
+        assert loads == ["H6008"] * 2 and files.reads == 2
+        assert d.scene_names == sorted(load_scenes("H6008"))
+        run(d.update())
+        assert loads == ["H6008"] * 2 and files.reads == 2   # loaded: once
+        # a first read on a device that was never polled fails so too, and the next update() loads again
+        scenes._store.cache_clear()
+        files.error = OSError(errno.EMFILE, "Too many open files")
+        other = _dev("H6008", {0x01: [_frame(0xAA, 0x01, 0x01)]})
+        for _ in range(3):
+            with pytest.raises(GoveeBleError, match="Too many open files"):
+                _ = other.scene_names
+        assert files.reads == 3
+        files.error = None
+        run(other.update())
+        assert other.scene_names == d.scene_names and files.reads == 4
+    finally:
+        scenes._store.cache_clear()
 
 
 def test_active_scene_needs_the_scenes_capability() -> None:
@@ -614,10 +739,8 @@ def test_brightness_range_of_the_table_is_accepted() -> None:
 
 def test_live_ic_profile_needs_its_ic_derivation() -> None:
     # color_readback_live_ic is a 1.3.0 field: a custom profile setting it alone is still accepted
-    # (the reported count is used unclamped); the profile table needs the app's clamp.
-    bare = DeviceProfile(skus=("HX",), capabilities=frozenset(), color_readback_live_ic=True)
-    with pytest.raises(ValueError, match="color_readback_ic_range"):
-        profile_mod._index_by_sku((bare,))
+    # (the reported count is used unclamped); the table's build needs the app's clamp (ic_pieces).
+    DeviceProfile(skus=("HX",), capabilities=frozenset(), color_readback_live_ic=True)
     with pytest.raises(ValueError, match="color_readback_ic_per_piece"):
         DeviceProfile(skus=("HX",), capabilities=frozenset(), color_readback_live_ic=True,
                       color_readback_ic_range=(1, 2), color_readback_ic_per_piece=0)
@@ -725,7 +848,7 @@ def test_builder_not_supported_is_prefixed_once_with_the_sku() -> None:
 
 
 def test_whole_device_colour_builder_error_names_the_sku(monkeypatch: pytest.MonkeyPatch) -> None:
-    def unsupported(*_a: object) -> list[bytes]:
+    def unsupported(*_a: object, **_k: object) -> list[bytes]:
         raise GoveeBleNotSupported("unknown colour scheme 'x'")
 
     monkeypatch.setattr(device_mod.build, "color_rgb_frames", unsupported)

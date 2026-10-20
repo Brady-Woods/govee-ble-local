@@ -118,8 +118,8 @@ async def walk_mechanism_a_direct(dev: ReadTarget, read_reply: ReadReply) -> lis
     """H6047/H6641 per-segment colour via Controller4ColorInfoByGroup's direct per-group
     requests (AA A5 <group>), or None when the walk was skipped or no group came back. A different
     controller from H61A8's mechanism_b (BulbGroupColorV2); they only share the wire opcode. Group
-    size is a fixed client constant (`color_readback_per_batch`, source-confirmed 4 for both
-    curated SKUs). The total piece count — and hence the group count, ceil(pieces / group size) —
+    size is the profile's `color_readback_per_batch` (the spec row's wire group num_per_group, 4 on
+    every current SKU). The total piece count — and hence the group count, ceil(pieces / group size) —
     comes from either a static per-SKU value (`color_readback_segments`/`segments`; H6047 uses its
     10 `segments`) or, when `color_readback_live_ic` is set (H6641), a live `0x40` IC-count read
     derived the way the app does (:func:`live_ic_pieces`). When that read fails the app still walks
@@ -129,7 +129,7 @@ async def walk_mechanism_a_direct(dev: ReadTarget, read_reply: ReadReply) -> lis
     callback drops the reply's own group byte (``Controller4ColorInfoByGroup.Companion.h``/``i``
     pass only the colours on; ``VM4Light.Q5`` places them by its loop index)."""
     profile = dev.profile
-    group_size = profile.color_readback_per_batch   # 4 on every table profile (profile._incoherent)
+    group_size = profile.color_readback_per_batch   # >= 1 (DeviceProfile); the spec's num_per_group
     if profile.color_readback_live_ic:
         ic_reply = await read_reply(build.ic_count_query())
         ic = parse.parse_ic_count(ic_reply) if ic_reply else None
@@ -180,7 +180,7 @@ def live_ic_pieces(dev: ReadTarget, ic: int) -> int:
     never stores the count (``VM4Light.D5`` does not run), the same as a failed read; the spec's
     ``ic_count_checked`` is None there and the walk skips."""
     ic_range = dev.profile.color_readback_ic_range
-    # Every table profile has its clamp (profile._incoherent); a custom profile without one uses the
+    # Every table profile has its clamp (devices/_resolve.py); a custom profile without one uses the
     # reported count as it is, never below 0.
     clamped = max(0, ic) if ic_range is None else max(ic_range[0], min(ic_range[1], ic))
     return build.ceil_div(clamped, dev.profile.color_readback_ic_per_piece)
@@ -221,16 +221,23 @@ async def read_device_info(dev: ReadTarget, read_reply: ReadReply) -> bool:
     return answered or got
 
 
-async def read_versions(dev: ReadTarget, read_reply: ReadReply) -> bool:
+async def read_versions(dev: ReadTarget, read_reply: ReadReply, *, soft: bool = True,
+                        hard: bool = True) -> bool:
     """``aa 06`` (firmware) then ``aa 07 03`` (hardware version), folded into ``dev.state``; returns
-    whether the device answered either. The first two reads of :func:`read_device_info`, and the gt 50 /
-    90 plugs' re-read after a power write (``Device._resync_after_power``)."""
-    soft = await read_reply(build.soft_version_query())
-    _fold.merge_device_info(dev.state, firmware=parse.parse_soft_version(soft or b""))
-    got, info = await read_info_reply(dev, read_reply, build.INFO_HARD)
-    if info is not None:
-        _fold.merge_device_info(dev.state, serial=info.serial, hardware=info.hw_version)
-    return soft is not None or got
+    whether the device answered either. The first two reads of :func:`read_device_info`, the gt 50 / 90
+    plugs' re-read after a power write (``Device._resync_after_power``), and, one of them alone where only
+    ``soft`` or ``hard``, the re-read of a version a firmware-gated fact still waits for
+    (``Device._read_missing_versions``)."""
+    got_soft = got_hard = False
+    if soft:
+        reply = await read_reply(build.soft_version_query())
+        _fold.merge_device_info(dev.state, firmware=parse.parse_soft_version(reply or b""))
+        got_soft = reply is not None
+    if hard:
+        got_hard, info = await read_info_reply(dev, read_reply, build.INFO_HARD)
+        if info is not None:
+            _fold.merge_device_info(dev.state, serial=info.serial, hardware=info.hw_version)
+    return got_soft or got_hard
 
 
 async def read_info_reply(

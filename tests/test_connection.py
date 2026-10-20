@@ -264,6 +264,17 @@ async def test_a_refused_session_frame_leaves_the_session_ready(monkeypatch, fas
     assert fake.received[-1][:2].hex() == "3301"
 
 
+async def test_session_frames_without_ack_waits_cost_no_timeout(monkeypatch, fast) -> None:
+    # session_ack=False (a light's 33 25 01): each session sends the frame once and does not wait for an ack,
+    # so a device that never acks it costs no ack timeout (the verified path would send it twice).
+    fake = FakeGovee(encrypted=False)
+    fake.no_ack_cmds = {0x25}
+    stop = frame(0x33, 0x25, 0x01)
+    c = _make(monkeypatch, fake, session_frames=lambda: [stop], session_ack=False)
+    await c.send(frame(0x33, 0x01, 0x01))
+    assert [f[:2].hex() for f in fake.received] == ["3325", "3301"]
+
+
 async def test_link_lost_during_a_session_frame_retries_the_session(monkeypatch, fast) -> None:
     fake = FakeGovee(encrypted=False)
 

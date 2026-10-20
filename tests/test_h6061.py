@@ -300,6 +300,18 @@ def test_panel_count_above_23_is_refused_at_write_time() -> None:
     assert _sent(d) == []
 
 
+def test_the_panel_count_is_the_profiles() -> None:
+    # The device's piece count is its row's wire counts.num_segments (the profile's segments; 25 on
+    # goodsType 96): seven group frames, and the CCT mask over 32 positions, ColorPieceConfig.k.
+    d = _dev()
+    d.profile = dataclasses.replace(d.profile, segments=25)
+    asyncio.run(d.set_rgb((1, 2, 3)))
+    assert [x[4] for x in _sent(d)] == [1, 2, 3, 4, 5, 6, 7]
+    assert _sent(d)[6][5:11] == bytes([1, 2, 3]) + bytes(3)
+    asyncio.run(d.set_color_temp(4000))
+    assert _sent(d)[7][9:14].hex() == "ffffff0100"
+
+
 # ── read-back ────────────────────────────────────────────────────────────────
 def _poll(mode_reply: bytes, groups: dict[int, bytes] | None = None) -> Device:
     d = _dev({

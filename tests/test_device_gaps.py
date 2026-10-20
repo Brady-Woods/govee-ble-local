@@ -16,7 +16,6 @@ from unittest.mock import AsyncMock
 import pytest
 from fake_ble import ble_device, unacked_via
 
-from govee_ble_local.devices import profile as profile_mod
 from govee_ble_local.devices.device import Device, make_device
 from govee_ble_local.devices.profile import profile_for
 from govee_ble_local.exceptions import (
@@ -171,12 +170,11 @@ def test_set_color_temp_updates_state_and_clears_rgb() -> None:
 
 def test_segment_color_temp_unsupported_scheme_is_not_supported() -> None:
     # A custom H6008 profile given SEGMENTS is accepted, as in 1.3.0, and fails at the setter: no
-    # 0x0d (h6006) colour frame carries a segment mask. Only the profile table refuses the pairing.
+    # 0x0d (h6006) colour frame carries a segment mask. Only the table's build refuses the pairing
+    # (devices/_resolve.py SCHEME_LACKS).
     profile = profile_for("H6008")
     assert profile is not None
     segmented = dataclasses.replace(profile, capabilities=profile.capabilities | {Capability.SEGMENTS})
-    with pytest.raises(GoveeBleInvalidValue, match="SEGMENTS"):
-        profile_mod._index_by_sku((segmented,))
     d = _dev("H6008", capabilities=segmented.capabilities)
     with pytest.raises(GoveeBleNotSupported, match=r"^H6008: "):
         asyncio.run(d.set_segment_color_temp([0], 4000))  # h6006 CCT has no segment mask
@@ -211,8 +209,6 @@ def test_set_zone_color_temp_sends_zone_mask() -> None:
 
 def test_set_zone_color_temp_unsupported_scheme_and_unknown_zone() -> None:
     d = _dev("H60A6", color_scheme="h6006")   # a segmented profile on a mask-less scheme (as 1.3.0)
-    with pytest.raises(GoveeBleInvalidValue, match="SEGMENTS"):
-        profile_mod._index_by_sku((d.profile,))   # the table refuses it
     with pytest.raises(GoveeBleNotSupported, match=r"^H60A6: "):
         asyncio.run(d.set_zone_color_temp("main", 4000))
     # An unknown zone is bad caller input; it is still a GoveeBleNotSupported, as it was.
@@ -248,6 +244,9 @@ def test_update_reads_gradual_flag() -> None:
     d2 = _dev("H61A8", {0xA3: [_frame(0xAA, 0xA3, 0x00)]})
     asyncio.run(d2.update())
     assert d2.state.gradual is False
+    d3 = _dev("H6008", {0xA3: [_frame(0xAA, 0xA3, 0x01)]}, gradual_read_only=True)   # read, not exposed
+    asyncio.run(d3.update())
+    assert d3.state.gradual is None and any(f[1] == 0xA3 for f in _queried(d3))
 
 
 def test_update_gradual_no_reply_leaves_state() -> None:
@@ -261,6 +260,10 @@ def test_live_ic_read_failure_skips_segment_readback() -> None:
     asyncio.run(d._read_mechanism_a_direct())
     assert d.state.segments == []
     assert all(f[1] == 0x40 for f in _queried(d))  # no per-group reads attempted
+    d2 = _dev("H6047", ic_num_read_only=True)   # an aa 40 read that sizes nothing: the static walk still runs
+    asyncio.run(d2.update())
+    asked = [f[1] for f in _queried(d2)]
+    assert 0x40 in asked and 0xA5 in asked and asked.index(0x40) < asked.index(0xA5)
 
 
 def test_device_info_serial_falls_back_to_sn_selector() -> None:

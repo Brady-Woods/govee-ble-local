@@ -204,18 +204,18 @@
               "items": { "type": "integer" },
               "minItems": 2,
               "maxItems": 2,
-              "description": "[min, max] CCT in kelvin."
+              "description": "[min, max] CCT in kelvin, family-wide; a client_profile.by_goods_type row's kelvin_range, then the SKU's by_model kelvin_range, wins over it."
             },
             "brightness_range": {
               "type": "array",
               "items": { "type": "integer" },
-              "description": "[min, max] on the wire (before any scaling)."
+              "description": "[min, max] on the wire (before any scaling), family-wide; a client_profile.by_goods_type row's brightness_range, then the SKU's by_model brightness_range, wins over it; [1, 100] = percent."
             },
             "brightness_scaling": { "type": "string", "description": "e.g. '1-100 -> 20-254' or 'raw percent'." },
             "scene_versions": {
               "type": "array",
               "items": { "type": "integer" },
-              "description": "versionArray accepted for scene uploads (sceneType -> comType, protocol §4.4)."
+              "description": "The control screen's ScenesConfigBean c (opScenesSet): the op set its scene list is filtered by (devices.yaml scenes.list_filter) and, where the bean has no apply set e (supportApplyOpSet), the versionArray parseSceneV1 uploads with (ScenesConfigBean.j: e, else c; sceneType -> comType, protocol §4.4); empty = a null c (no filter, activate only). Family-wide; a client_profile.by_goods_type row's scene_versions wins over it. Of the scene rows only H6052's bean has an e that differs (its row's doc)."
             }
           }
         },
@@ -239,10 +239,9 @@
         },
         "pact": {
           "type": "object",
-          "description": "Which (pactType, pactCode) versions the family accepts.",
+          "description": "Notes on the family's pact gates; a routed goodsType's accepted pacts are its client_profile.by_goods_type row's pacts.",
           "additionalProperties": false,
           "properties": {
-            "scene_versions": { "type": "array", "items": { "type": "integer" }, "description": "sceneType values accepted -> comType (see protocol §4.4)." },
             "note": { "type": "string" }
           }
         },
@@ -260,10 +259,10 @@
             "color_scheme": { "type": "string", "description": "Colour-write byte-layout family selecting the op15/0x0d variant (e.g. 'h60a6', 'h6006')." },
             "power_read": { "type": "string", "enum": ["aa01", "ac_status"], "description": "Power source at connect (govee_state power_state.is_on): 'aa01' = the aa 01 read, on when the byte == 1; 'ac_status' = TLV 0x01 of the 0xAC/0x03 status burst (no aa 01 read), on when the byte != 0." },
             "power_live": { "type": "array", "uniqueItems": true, "items": { "type": "string", "enum": ["heartbeat_aa01", "heartbeat_aa36", "heartbeat_aa33", "push_30"] }, "description": "Live power after connect: 'heartbeat_aa01' = aa 01 heartbeat, on when frame byte 2 == 1; 'heartbeat_aa36' = aa 36 heartbeat, per bar byte 2 / 3 == 1; 'heartbeat_aa33' = aa 33 switch heartbeat, on when byte 2 != 0; 'push_30' = the ee 30 notify (layout: wire forms.f_ee_30)." },
-            "mode_color_parse": { "$ref": "#/$defs/modeColorParse", "description": "The family's default colour-report strategy; by_goods_type.<gt>, else by_model.<SKU>, overrides it, then that entry's mode_color_by_pact and first matching mode_color_by_firmware; 'none' = no colour sub-mode decoded." },
+            "mode_color_parse": { "$ref": "#/$defs/modeColorParse", "description": "The family's default colour-report strategy; by_goods_type.<gt>, else by_model.<SKU>, overrides it, then that entry's by_pact and every matching by_firmware (clientBranch, clientFirmware); 'none' = no colour sub-mode decoded." },
             "mode_color_parse_status": { "$ref": "#/$defs/modeColorParse", "description": "Strategy for the 0x05 TLV of the 0xAC status burst where it differs from the aa 05 reply (absent = mode_color_parse)." },
-            "by_model": { "type": "object", "propertyNames": { "pattern": "^[A-Za-z0-9]+$" }, "additionalProperties": { "type": "object", "additionalProperties": false, "properties": { "mode_color_parse": { "$ref": "#/$defs/modeColorParse" }, "mode_color_parse_status": { "$ref": "#/$defs/family/properties/client_profile/properties/mode_color_parse_status" }, "mode_color_by_pact": { "$ref": "#/$defs/modeColorByPact" }, "mode_color_by_firmware": { "$ref": "#/$defs/modeColorByFirmware" } } }, "description": "Per-SKU colour-report overrides (keys = a model of the family); a by_goods_type entry for the device's gt wins over it." },
-            "by_goods_type": { "type": "object", "propertyNames": { "pattern": "^[0-9]+$" }, "additionalProperties": { "type": "object", "additionalProperties": false, "properties": { "power_read": { "$ref": "#/$defs/family/properties/client_profile/properties/power_read" }, "power_live": { "$ref": "#/$defs/family/properties/client_profile/properties/power_live" }, "mode_color_parse": { "$ref": "#/$defs/modeColorParse" }, "mode_color_parse_status": { "$ref": "#/$defs/family/properties/client_profile/properties/mode_color_parse_status" }, "mode_color_by_pact": { "$ref": "#/$defs/modeColorByPact" }, "mode_color_by_firmware": { "$ref": "#/$defs/modeColorByFirmware" }, "relay_power": { "$ref": "#/$defs/family/properties/client_profile/properties/relay_power" }, "relay_on_mask": { "$ref": "#/$defs/family/properties/client_profile/properties/relay_on_mask" }, "advert_on_mask": { "$ref": "#/$defs/family/properties/client_profile/properties/advert_on_mask" }, "color_scheme": { "$ref": "#/$defs/family/properties/client_profile/properties/color_scheme" }, "color_functions": { "$ref": "#/$defs/colorFunctions" }, "kelvin_range": { "$ref": "#/$defs/family/properties/specs/properties/kelvin_range", "description": "[min, max] CCT in kelvin of this goodsType's colour page; wins over the family's specs.kelvin_range." }, "kelvin_by_firmware": { "$ref": "#/$defs/kelvinByFirmware" }, "models": { "type": "array", "uniqueItems": true, "items": { "type": "string" }, "description": "The family's SKUs with this goodsType (a subset of models), to cross-check SKU-keyed client tables." } } }, "description": "Per-goodsType overrides (keys = the goodsType in decimal) that win over the family-level value (kelvin_range over specs.kelvin_range); a key goods_types lacks is the goods_type of an assigned_goods_type item." },
+            "by_model": { "type": "object", "propertyNames": { "pattern": "^[A-Za-z0-9]+$" }, "additionalProperties": { "$ref": "#/$defs/clientModel" }, "description": "Per-SKU overrides (keys = a model of the family): the colour report and the Kelvin and brightness ranges; a by_goods_type entry for the device's gt wins over it." },
+            "by_goods_type": { "type": "object", "propertyNames": { "pattern": "^[0-9]+$" }, "additionalProperties": { "$ref": "#/$defs/clientRow" }, "description": "Per-goodsType rows (keys = the goodsType in decimal) that win over the family-level values; a key goods_types lacks is the goods_type of an assigned_goods_type item. A row with support is a BLE route for its models (clientRow)." },
             "relay_power": { "type": "string", "enum": ["outlet0", "all_outlets", "total_switch"], "description": "Plugs: what the detail screen's power button writes: 'outlet0' = 33 01 11 / 10 (relay 0), 'all_outlets' = 33 01 FF / F0, 'total_switch' = 33 02 01 / 00 (H5089) (split_plugnew/com/govee/h5080/ble/controller/)." },
             "relay_on_mask": { "type": "integer", "minimum": 1, "maximum": 255, "description": "Plugs: on at the connect read when (aa 01 reply byte 0 & relay_on_mask) != 0, bit i = relay i, absent = a light (govee_profile power_rule.relay_on_mask); an integer written in hex in the YAML." },
             "advert_on_mask": { "type": "integer", "minimum": 1, "maximum": 255, "description": "Plugs: the device list reads on when (Govee AD switch byte & advert_on_mask) != 0 (govee_manufacturer_data device_state[0]); an integer written in hex in the YAML." },
@@ -327,35 +326,153 @@
       "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
       "description": "A firmware version 'a.bb.cc', compared field by field; an empty or unparsable device version fails (the older branch applies)."
     },
-    "modeColorByFirmware": {
+    "commandId": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$",
+      "description": "A govee_common::command member id (govee_common.ksy enum command), e.g. cmd_41, color_group, plug_sync_time."
+    },
+    "docRef": {
       "type": "array",
       "minItems": 1,
-      "description": "Firmware branches: the first item whose every min_* holds replaces the entry's mode_color_parse (no match keeps it); the family's YAML comment names the version source.",
       "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["mode_color_parse"],
-        "minProperties": 2,
-        "properties": {
-          "min_soft_version": { "$ref": "#/$defs/modeColorVersion", "description": "Minimum BLE firmware (soft) version." },
-          "min_hard_version": { "$ref": "#/$defs/modeColorVersion", "description": "Minimum BLE hardware version." },
-          "min_wifi_soft_version": { "$ref": "#/$defs/modeColorVersion", "description": "Minimum Wi-Fi module firmware version." },
-          "mode_color_parse": { "$ref": "#/$defs/modeColorParse", "description": "The strategy when the conditions hold." }
-        }
+        "type": "string",
+        "pattern": "^([\\w$./-]+\\.(java|c|kt|smali):\\d+(-\\d+)?(,\\s?\\d+(-\\d+)?)*|H[0-9A-Z]{4}(/H[0-9A-Z]{4})? [\\w.'<>-]+ @0x[0-9a-f]{6,8}(-0x[0-9a-f]{6,8})?)$"
+      },
+      "description": "Citations in the .ksy doc-ref form (spec/checks/lint.py REF_FILE / REF_ADDR): a decompiled file's path:line relative to decomp-7.7.02, or IMAGE symbol @0xaddr."
+    },
+    "clientRow": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "One goodsType row of client_profile.by_goods_type. Its fields override the family-level ones. A row with support is a BLE route: a client that knows the SKU and the advertised pact picks the rows whose models list the SKU, whose connectivity (else the family's) holds ble and whose pacts hold the pact (or are 'any'); the row then carries every fact a client needs to drive it (allOf below). The layered facts (scene_versions, kelvin_range, brightness_range) resolve on the row (its own values, then by_pact, then every matching by_firmware), else from the family specs.",
+      "properties": {
+        "models": { "type": "array", "uniqueItems": true, "items": { "type": "string" }, "description": "The family's SKUs at this goodsType (a subset of models): the SKUs routed to this row, as traced; the app may serve others at this goodsType." },
+        "connectivity": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "enum": ["ble", "wifi", "iot"] }, "description": "This goodsType's links where they differ from the family's; a row without ble is never a BLE route." },
+        "pacts": {
+          "oneOf": [
+            { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "pattern": "^[0-9]+,[0-9]+$" } },
+            { "const": "any" }
+          ],
+          "description": "The 'pactType,pactCode' pairs (decimal) the app accepts for this goodsType (Support.addSupportPact); 'any' where the route tests no pact (a goodsType-0 SKU match). A row without pacts is never a route. On a row that a pact-conditioned assigned_goods_type item reassigns its SKUs to, only the pairs at or above its gate; on a row of a goodsType it reassigns from, only pairs below it."
+        },
+        "support": { "enum": ["hardware_verified", "app_traced", "modelled"], "description": "The row's evidence. app_traced = the row's facts traced on the control-screen path and cited in doc-ref (a gap the trace knows of is named in doc); hardware_verified = app_traced, and the control path also observed on a device (doc names the device, the date and what was seen); modelled = inferred, not traced, or traced but held because the library does not yet send what the app sends (doc names the gap); admitted only on the client's opt-in." },
+        "power_read": { "$ref": "#/$defs/family/properties/client_profile/properties/power_read" },
+        "power_live": { "$ref": "#/$defs/family/properties/client_profile/properties/power_live" },
+        "mode_color_parse": { "$ref": "#/$defs/modeColorParse" },
+        "mode_color_parse_status": { "$ref": "#/$defs/family/properties/client_profile/properties/mode_color_parse_status" },
+        "relay_power": { "$ref": "#/$defs/family/properties/client_profile/properties/relay_power" },
+        "relay_on_mask": { "$ref": "#/$defs/family/properties/client_profile/properties/relay_on_mask" },
+        "advert_on_mask": { "$ref": "#/$defs/family/properties/client_profile/properties/advert_on_mask" },
+        "color_scheme": { "$ref": "#/$defs/family/properties/client_profile/properties/color_scheme" },
+        "color_functions": { "$ref": "#/$defs/colorFunctions" },
+        "capabilities": { "$ref": "#/$defs/clientCapabilities" },
+        "zones": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "power_index", "segments"],
+            "properties": {
+              "id": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" },
+              "power_index": { "type": "integer", "minimum": 0, "maximum": 255, "description": "The zone's index in its power write (33 30 <index>; 33 36 bar order)." },
+              "segments": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "integer", "minimum": 0 }, "description": "The colour pieces (mask bits) the zone covers." }
+            }
+          },
+          "description": "Independently switched zones; [] = unzoned."
+        },
+        "account_lock": { "type": "boolean", "description": "The control screen sends the 0xB2 secret check after the handshake on every connect, and the device ignores commands until it does. The family encryption tag secret_key_pairing describes the pairing / group flows, not this." },
+        "scene_dialect": { "enum": ["legacy_scene", "diy_graffiti", "tablelamp_h6052_type5_diy", "none", "untraced"], "description": "How the control screen uploads a scene: a key of scenes.upload.dialects (legacy_scene = ScenesOp.parseSceneV1 for every sceneType, also on a goodsType that registers a new-DIY parser, where BaseSceneViewMode.r3 first takes a sceneType-5 scene whose param leads 0x50; the library uploads no sceneType-5 scene under legacy_scene, so a legacy_scene SKU's bundled catalog holds none that the app uploads: none leading 0x50, and none at all where the scene versions hold a sceneType-5 branch of parseSceneV1 (7 to 13; tools/fetch_scenes.py leaves them out); diy_graffiti / tablelamp_h6052_type5_diy = that dialect for sceneType 5, parseSceneV1 for the rest), 'none' = activate only, 'untraced' = the apply path is not traced." },
+        "scene_versions": { "$ref": "#/$defs/family/properties/specs/properties/scene_versions" },
+        "kelvin_range": { "$ref": "#/$defs/family/properties/specs/properties/kelvin_range", "description": "[min, max] CCT in kelvin of this goodsType's colour page; wins over the family's specs.kelvin_range." },
+        "brightness_range": { "$ref": "#/$defs/family/properties/specs/properties/brightness_range" },
+        "mode_reports_kelvin": { "type": "boolean", "description": "false = the device's aa 05 colour report carries Kelvin 0 after a colour-temperature write, so the Kelvin last written stands, as the screen keeps what it set (hardware-observed; doc names the device); absent = the report carries it." },
+        "status_read": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "$ref": "#/$defs/commandId" }, "description": "The connect read is the 0xAC status read (no aa 01 / aa 05 reads): the types it requests (govee_ble_frame status_read_args.types), in request order; absent = no status read." },
+        "connect_reads": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/commandId" }, "description": "The state reads (aa <command>) the control screen sends at connect besides the power read (power_read / relay_on_mask) and the aa 05 mode read (mode_color_parse), in the app's order; device-info, timer and Wi-Fi reads are not listed." },
+        "connect_writes": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/commandId" }, "description": "The writes sent on every connect after the handshake and any account_lock check, in order." },
+        "power_resync": { "type": "boolean", "description": "Plugs: after each acked power write the screen re-runs its connect sequence (device-info reads, connect_writes)." },
+        "ic_pieces": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["min_ic", "max_ic", "ic_per_piece"],
+              "properties": {
+                "min_ic": { "type": "integer", "minimum": 0 },
+                "max_ic": { "type": "integer", "minimum": 0 },
+                "ic_per_piece": { "type": "integer", "minimum": 1 }
+              },
+              "description": "ceil(clamp(IC, min_ic, max_ic) / ic_per_piece) pieces."
+            },
+            { "const": "fixed", "description": "The IC count sizes nothing: the screen's piece count is fixed (the row's static pieces)." }
+          ],
+          "description": "The colour pieces from the IC count read at connect (connect_reads ic_num)."
+        },
+        "by_pact": { "type": "object", "propertyNames": { "pattern": "^[0-9]+,[0-9]+$" }, "additionalProperties": { "$ref": "#/$defs/clientBranch" }, "description": "Pact branches, keyed 'pactType,pactCode' (decimal) (clientBranch)." },
+        "by_firmware": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/clientFirmware" }, "description": "Firmware branches, applied after by_pact (clientFirmware)." },
+        "doc": { "type": "string" },
+        "doc-ref": { "$ref": "#/$defs/docRef" }
+      },
+      "allOf": [
+        { "if": { "required": ["support"] }, "then": { "required": ["models", "pacts", "capabilities", "zones", "account_lock", "connect_reads", "connect_writes", "doc", "doc-ref"] } },
+        { "if": { "required": ["support", "connectivity"] }, "then": { "properties": { "connectivity": { "contains": { "const": "ble" } } } } },
+        { "if": { "required": ["capabilities"], "properties": { "capabilities": { "contains": { "const": "scenes" } } } }, "then": { "required": ["scene_dialect"] } },
+        { "if": { "required": ["support", "relay_power"] }, "then": { "required": ["power_resync"] } },
+        { "if": { "required": ["connect_reads"], "properties": { "connect_reads": { "contains": { "const": "ic_num" } } } }, "then": { "required": ["ic_pieces"] } },
+        { "if": { "required": ["ic_pieces"] }, "then": { "required": ["connect_reads"], "properties": { "connect_reads": { "contains": { "const": "ic_num" } } } } }
+      ]
+    },
+    "clientCapabilities": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "enum": ["power", "brightness", "rgb", "color_temp", "segments", "scenes", "gradual"] },
+      "description": "The controls the goodsType's control screen offers on the BLE path, by control whichever page offers it (color_functions, where traced, is the colour page's own flag set and agrees with it): gradual = the 0xA3 gradual flag, segments = per-piece colour. The family specs and the row's layered facts give each one's range."
+    },
+    "clientModel": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "A per-SKU override: mode_color_parse, the Kelvin and brightness ranges (used where the SKU's by_goods_type row has none), their pact and firmware branches, and the scene apply's power-on.",
+      "properties": {
+        "mode_color_parse": { "$ref": "#/$defs/modeColorParse" },
+        "mode_color_parse_status": { "$ref": "#/$defs/family/properties/client_profile/properties/mode_color_parse_status" },
+        "kelvin_range": { "$ref": "#/$defs/family/properties/specs/properties/kelvin_range", "description": "[min, max] CCT in kelvin of this SKU's colour page (KelvinConfig by SKU); the row's own kelvin_range wins over it." },
+        "brightness_range": { "$ref": "#/$defs/family/properties/specs/properties/brightness_range", "description": "This SKU's brightness range; the row's own brightness_range wins over it." },
+        "scene_power_on": { "type": "boolean", "description": "true = the control screen writes the power-on switch (33 01 01, SwitchControllerConfig.d) ahead of a scene or DIY apply while its stored switch state for the device is off, and an unknown state reads as off (ApplyOffNeedOpenConfig's SKU set, ApplyOffNeedOpenHelper.b / .d, DeviceSwitchConfig.getSwitch); absent = false. Only on a SKU whose row offers scenes." },
+        "by_pact": { "$ref": "#/$defs/clientRow/properties/by_pact" },
+        "by_firmware": { "$ref": "#/$defs/clientRow/properties/by_firmware" }
       }
     },
-    "modeColorByPact": {
+    "clientBranch": {
       "type": "object",
-      "description": "Pact branches keyed 'pactType,pactCode' (decimal): a matching key's sub-entry replaces the whole entry, the pact being the advertised one where the screen scans before connecting, else the record's.",
-      "propertyNames": { "pattern": "^[0-9]+,[0-9]+$" },
-      "additionalProperties": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["mode_color_parse"],
-        "properties": {
-          "mode_color_parse": { "$ref": "#/$defs/modeColorParse" },
-          "mode_color_by_firmware": { "$ref": "#/$defs/modeColorByFirmware" }
-        }
+      "additionalProperties": false,
+      "minProperties": 1,
+      "description": "A pact branch of a client_profile row: applied over the row's own values when the device's pact is the key, its leaves replacing the row's. The pact is the advertised one where the screen scans before connecting, else the record's; with the pact unknown, the row's own values apply. Firmware branches stay on the row (by_firmware), as in wire.",
+      "properties": {
+        "doc": { "type": "string" },
+        "mode_color_parse": { "$ref": "#/$defs/modeColorParse" },
+        "mode_color_parse_status": { "$ref": "#/$defs/family/properties/client_profile/properties/mode_color_parse_status" },
+        "status_read": { "$ref": "#/$defs/clientRow/properties/status_read" },
+        "capabilities": { "$ref": "#/$defs/clientCapabilities" },
+        "connect_reads": { "$ref": "#/$defs/clientRow/properties/connect_reads" },
+        "scene_versions": { "$ref": "#/$defs/family/properties/specs/properties/scene_versions" },
+        "kelvin_range": { "$ref": "#/$defs/family/properties/specs/properties/kelvin_range" },
+        "brightness_range": { "$ref": "#/$defs/family/properties/specs/properties/brightness_range" }
+      }
+    },
+    "clientFirmware": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 2,
+      "anyOf": [ { "required": ["min_soft_version"] }, { "required": ["min_hard_version"] }, { "required": ["min_wifi_soft_version"] } ],
+      "description": "A firmware branch of a client_profile row, applied after by_pact when its every min_* holds (versions compare as modeColorVersion, but a kelvin_range item's min_hard_version or min_soft_version is a string compare, as KelvinConfig.Config.z2's versionHard.compareTo and Z2 / X2's versionSoft.compareTo are: hard 10.00.00 is below 3.08.01; an empty or unparsable device version fails). Every matching item applies, in list order, a later item's leaves replacing an earlier's: the app's version gates are independent per fact (unlike wire's by_firmware, where the first match applies). No match keeps the row's values; firmware facts resolve after the device-info read, so capabilities never depend on them.",
+      "properties": {
+        "min_soft_version": { "$ref": "#/$defs/modeColorVersion", "description": "Minimum BLE firmware (soft) version." },
+        "min_hard_version": { "$ref": "#/$defs/modeColorVersion", "description": "Minimum BLE hardware version." },
+        "min_wifi_soft_version": { "$ref": "#/$defs/modeColorVersion", "description": "Minimum Wi-Fi module firmware version." },
+        "doc": { "type": "string" },
+        "mode_color_parse": { "$ref": "#/$defs/modeColorParse" },
+        "scene_versions": { "$ref": "#/$defs/family/properties/specs/properties/scene_versions" },
+        "kelvin_range": { "$ref": "#/$defs/family/properties/specs/properties/kelvin_range" },
+        "brightness_range": { "$ref": "#/$defs/family/properties/specs/properties/brightness_range" }
       }
     },
     "colorFunctions": {
@@ -363,20 +480,6 @@
       "uniqueItems": true,
       "items": { "type": "string", "enum": ["segment_brightness", "color_temperature"] },
       "description": "The colour page's segment-brightness and colour-temperature flags, the 4th and 5th of the app's five normal-function flags (color Config.e, base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:551-560): a listed name is on, an unlisted one off; absent = not traced. segment_brightness = the relative-brightness slider (its frame is the family's segment_brightness_write); color_temperature = the Kelvin slider over kelvin_range (the colour write's CCT form)."
-    },
-    "kelvinByFirmware": {
-      "type": "array",
-      "minItems": 1,
-      "description": "Firmware branches, for the entry's models only (the app's test also names the SKU): the first item whose min_hard_version is at or below the device's BLE hardware version, compared as plain strings (KelvinConfig.Config.z2, base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:1790-1792), replaces the entry's kelvin_range (no match keeps it); an empty version fails. For versions of the same field widths (a.bb.cc) this equals modeColorVersion's field compare.",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["min_hard_version", "kelvin_range"],
-        "properties": {
-          "min_hard_version": { "$ref": "#/$defs/modeColorVersion", "description": "Minimum BLE hardware version (modeColorVersion's form, compared as a string)." },
-          "kelvin_range": { "$ref": "#/$defs/family/properties/specs/properties/kelvin_range" }
-        }
-      }
     },
     "modeColorStrategy": {
       "type": "object",

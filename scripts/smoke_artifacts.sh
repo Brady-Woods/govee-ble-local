@@ -11,7 +11,7 @@
 #   1. the sdist ships the classes and no spec/ or tools/ (with those, a build from the sdist would
 #      regenerate and need the JVM compiler, and this script couldn't tell: it runs with ksc on PATH);
 #   2. the wheel as built (python -m build makes it from the sdist, as PyPI users get it) installs into
-#      a fresh venv, outside the repository, and imports;
+#      a fresh venv, outside the repository, imports, and loads every bundled scene catalog;
 #   3. so does a wheel pip builds from the sdist, which reuses the classes the sdist ships.
 # Building runs in a throwaway venv, never in $PYTHON itself, and needs the pinned JVM
 # kaitai-struct-compiler (scripts/install_ksc.sh); every step needs network for the runtime
@@ -62,6 +62,8 @@ sdist=${sdists[0]}
 listing=$(tar -tzf "$sdist")
 grep -q '^[^/]*/src/govee_ble_local/_generated/govee_ble_frame\.py$' <<<"$listing" \
   || { echo "error: $sdist lacks the generated Kaitai classes" >&2; exit 1; }
+grep -q '^[^/]*/src/govee_ble_local/_generated/devices\.py$' <<<"$listing" \
+  || { echo "error: $sdist lacks the generated device table" >&2; exit 1; }
 if grep -qE '^[^/]+/(spec|tools)/' <<<"$listing"; then
   echo "error: $sdist ships spec/ or tools/, so a wheel built from it regenerates and needs the JVM compiler" >&2
   exit 1
@@ -79,7 +81,13 @@ assert issubclass(GoveeBleFrame, ReadWriteKaitaiStruct), "the wheel ships a read
 assert "site-packages" in govee_ble_local.__file__, govee_ble_local.__file__
 f = _spec.read_frame(build.power_query(), _spec.TX, _spec.PLAIN)   # aa 01: built, then read back
 assert f.body.command == _spec.Common.Command.power, f.body.command
-print("   imports and a frame round trip OK:", govee_ble_local.__file__)
+assert "H60A6" in govee_ble_local.supported_skus(), "the wheel ships no device table"
+import json
+from importlib import resources
+from govee_ble_local import scenes
+index = json.loads((resources.files(scenes) / "store.json").read_text(encoding="utf-8"))["skus"]
+assert index and all(scenes.load_scenes(sku) for sku in index), "the wheel ships a broken scene store"
+print("   imports, a frame round trip and", len(index), "scene catalogs OK:", govee_ble_local.__file__)
 '
 
 smoke() {   # smoke <wheel> <venv name>

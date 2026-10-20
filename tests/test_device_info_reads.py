@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock
 import pytest
 from conftest import require_optional
 from fake_ble import FakeGovee, ble_device, frame
+from conftest import gated_scene_profile
 
 require_optional("kaitaistruct", reason="Kaitai runtime not installed")
 
@@ -110,6 +111,57 @@ def test_device_info_read_sends_only_the_firmware_backed_reads(sku: str) -> None
     # No aa 07 10 / 11: no firmware image handles them and the app never sends them.
     assert [fr[1:3].hex() for fr in sent] == ["0600", "0703", "0702"]
     assert d._device_info_read is True
+
+
+def _info_reads(sent: list[bytes]) -> list[str]:
+    """The device-info reads among ``sent`` (aa 06, aa 07 <selector>), as their request bytes."""
+    return [fr[1:3].hex() for fr in sent if fr[:2] in (b"\xaa\x06", b"\xaa\x07")]
+
+
+@pytest.mark.parametrize("lost", ["0600", "0703"])
+def test_a_version_a_firmware_gate_tests_is_read_again_until_it_is_in(lost: str) -> None:
+    """Review G1 item 2: one lost aa 06 or aa 07 03 reply no longer fixes a firmware-gated fact for the life
+    of the Device. The device-info read is done once the device answered, as before, but each later poll reads
+    the version a gate tests that it did not bring back, alone, until it is in. H6168 with its scene gate
+    (soft 1.06.00 and hard 1.00.02: conftest.gated_scene_profile) on soft 1.05.00 / hard 3.01.10: while the
+    soft version is missing its gate counts as met ({0, 1, 2, 3}, the newest firmware's), while the hard one
+    is the read soft version already fails it ({0, 1, 2}, which no hard version changes); then its own
+    {0, 1, 2} either way."""
+    soft, hard, sn, *_ = CAPTURES["H61A8"]
+    replies = {"0600": bytes.fromhex(soft).replace(b"3.03.18", b"1.05.00"), "0703": bytes.fromhex(hard),
+               "0702": bytes.fromhex(sn)}
+    answers = {**replies, lost: b""}   # this poll loses it
+    d, sent = _dev("H6168", lambda fr: [answers[fr[1:3].hex()]] if answers.get(fr[1:3].hex()) else [])
+    d.profile = gated_scene_profile()
+    asyncio.run(d.update())
+    assert _info_reads(sent) == ["0600", "0703", "0702"] and d._device_info_read
+    assert d.scene_versions == ({0, 1, 2, 3} if lost == "0600" else {0, 1, 2})
+    sent.clear()
+    asyncio.run(d.update())   # lost again: only it is sent
+    assert _info_reads(sent) == [lost]
+    answers[lost] = replies[lost]
+    sent.clear()
+    asyncio.run(d.update())
+    assert _info_reads(sent) == [lost] and d.scene_versions == {0, 1, 2}
+    sent.clear()
+    asyncio.run(d.update())   # both in: no device-info read any more
+    assert _info_reads(sent) == []
+
+
+def test_only_the_version_a_gate_tests_is_read_again() -> None:
+    """The H61A8's one firmware-gated fact is its Kelvin range (the hard version, KelvinConfig.Config.z2): a
+    lost aa 07 03 is read again on the next poll, a lost aa 06 is not (no gate tests it), and a SKU with no
+    firmware-gated fact (H6006) reads neither again, as before."""
+    soft, hard, sn, *_ = CAPTURES["H61A8"]
+    for sku, lost, again in (("H61A8", "0703", ["0703"]), ("H61A8", "0600", []), ("H6006", "0703", [])):
+        answers = {"0600": bytes.fromhex(soft), "0703": bytes.fromhex(hard), "0702": bytes.fromhex(sn)}
+        del answers[lost]
+        d, sent = _dev(sku, lambda fr, a=answers: [a[fr[1:3].hex()]] if fr[1:3].hex() in a else [])
+        asyncio.run(d.update())
+        assert _info_reads(sent) == ["0600", "0703", "0702"], sku
+        sent.clear()
+        asyncio.run(d.update())
+        assert _info_reads(sent) == again, (sku, lost)
 
 
 def test_h60a6_device_id_comes_from_the_sn_read_despite_zeroed_basic() -> None:

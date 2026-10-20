@@ -31,7 +31,6 @@ from ._spec import Common as _C, Frame as _F
 from .redact import shown_hex
 
 _LOGGER = logging.getLogger(__name__)
-_RECORDS_PER_GROUP = 4   # oneGroupColorSize (Support.getOneGroupColorSize): the index stride
 
 # TLV tags (enum command) the status decode looks at.
 TYPE_SWITCH = int(_C.Command.power)              # 0x01
@@ -41,11 +40,8 @@ TYPE_DEVICE_INFO = int(_C.Command.device_info)   # 0x07
 TYPE_ZONE = int(_C.Command.cmd_30)               # 0x30
 TYPE_SEG_INFO = int(_C.Command.cmd_41)           # 0x41: the seg / IC info (power memory) TLV
 TYPE_COLOR_GROUP = int(_C.Command.color_group)   # 0xA5
-# The status screen's 0x05 facts beyond the device's colour decode: the H60A6's (the one readback "status"
-# profile; devices.yaml h60ax wire.mode), from h60a1 Info4Detail.Q:380-433, which its status lambda hands
-# the TLV value: the V2 music layout (the SubMode4MusicV2 of Info4Detail.<init>:122-125), and an empty or
-# short value fails the whole read.
-_STATUS_MODE: Final = {"music": int(_C.MusicDecode.v2_default), "empty_fails": True}
+# The forms of the TLVs the status stream reads (govee_state's TLV-typed tags), from the device's decode.
+_TLV_FORMS: Final = ("f_30", "f_36", "f_40", "f_41", "f_a3", "f_a5")
 _COLOR_DECODES: Final = ("c02", "c0b", "c0d", "c14", "c15")
 # The tags whose value parse_status reads fields of (the mode's is kept whole, None when it is empty).
 _READS_A_VALUE: Final = frozenset({TYPE_SWITCH, TYPE_BRIGHTNESS, TYPE_ZONE, TYPE_DEVICE_INFO})
@@ -56,7 +52,7 @@ _SUCCESS_BRIGHTNESS = 100
 
 def _h60a6_decode() -> Any:
     """The H60A6's wire profile (``devices.profile.wire_profile``), the decode a status read takes when it is
-    given none: the H60A6 is the one device whose readback is the status read."""
+    given none (1.x's, where the H60A6 was the one device whose readback is the status read)."""
     from ..devices.profile import profile_for, wire_profile   # devices imports wire: resolved at call time
 
     h60a6 = profile_for("H60A6")
@@ -66,22 +62,25 @@ def _h60a6_decode() -> Any:
 
 
 def status_profile(pieces: int | None, decode: Any = None) -> Any:
-    """The ``govee_profile`` a status stream is read under, the H60A6 status screen's: 0x30 as the zone bits
-    (bit 0 of each byte, ``VM4LightH60A6$afterConnectedSingleReadDeviceInfo$1.o``), 0x41 as the power
-    memory and 0xA5 as the colour groups, four ``[brightness, r, g, b]`` records a group; 0x40 and 0xA3
-    stay unknown (its lambda reads neither). With the device's colour-piece count the groups follow the
-    screen's rule (``by_pieces``: the last of the ``ceil(pieces / 4)`` groups holds the remainder, each
-    placed by its group byte); ``pieces`` None (no device context, e.g. the analyzer) counts each group's
-    records from its TLV's len (``from_len``). The 0x05 value is read with ``decode``'s colour decode (the
-    device's ``devices.profile.wire_profile``; None: the H60A6's) and the screen's music layout and
-    empty-value rule (:data:`_STATUS_MODE`)."""
-    rule = _C.GroupCountRule.from_len if pieces is None else _C.GroupCountRule.by_pieces
-    mode = (_h60a6_decode() if decode is None else decode).mode
-    colour = {c: int(getattr(mode, c)) for c in _COLOR_DECODES}
+    """The ``govee_profile`` a status stream is read under: the device's own status decode, ``decode`` (its
+    ``devices.profile.wire_profile``, built from its devices.yaml row's wire facts,
+    ``DeviceProfile.status_decode``; None: the H60A6's). That is the forms of the TLVs the stream reads
+    (:data:`_TLV_FORMS`; on the H60A6, 0x30 as the zone bits, bit 0 of each byte,
+    ``VM4LightH60A6$afterConnectedSingleReadDeviceInfo$1.o``, 0x41 as the power memory and 0xA5 as the
+    colour groups, with 0x40 and 0xA3 unknown, as its lambda reads neither), the colour-group form (the
+    H60A6's: four ``[brightness, r, g, b]`` records a group by its ``by_pieces`` rule, the last of the
+    ``ceil(pieces / 4)`` groups holding the remainder, each placed by its group byte) with the device's
+    colour-piece count, and the TLV 0x05's decode (``mode_status``: its colour decode, music layout and
+    empty-value rule). ``pieces`` None (no device context, e.g. the analyzer) counts each group's records
+    from its TLV's len (``from_len``)."""
+    d = _h60a6_decode() if decode is None else decode
+    group, mode = d.group, d.mode_status
+    rule = _C.GroupCountRule.from_len if pieces is None else group.rule
     return _spec.profile(
-        f_30=int(_C.Form30.zone_power), f_41=int(_C.Form41.power_memory),
-        f_a5=int(_C.FormA5.color_group), group_rule=int(rule), num_per_group=_RECORDS_PER_GROUP,
-        has_brightness=True, num_pieces=pieces or 0, **colour, **_STATUS_MODE)
+        **{f: int(getattr(d.forms, f)) for f in _TLV_FORMS}, group_rule=int(rule),
+        num_per_group=int(group.num_per_group), has_brightness=bool(group.has_brightness),
+        num_pieces=pieces or 0, **{c: int(getattr(mode, c)) for c in _COLOR_DECODES},
+        music=int(mode.music), empty_fails=bool(mode.empty_fails))
 
 
 @dataclass
@@ -306,14 +305,18 @@ def parse_status(frames: list[bytes], *, pieces: int | None = None, decode: Any 
     a chunk or its last packet, or whose chunks came out of order. A stream that ends in a 0-2 byte tail
     keeps what it read, as u() does.
 
-    Segment global index = ``(group_index-1) * 4 + k`` (oneGroupColorSize stride). Each colour group
-    is read by the spec's ``color_group`` with the app's record count for ``pieces``, the device's
-    colour-piece count (the H60A6's 13, ``pact_h60a0.pact.Support.getColorPieceSize``), so extra
-    records are ignored and a group short of its count fails the read, as in the app. With ``pieces``, a
-    group the app can't place fails the read too: group 0, or one starting past the last piece
-    (``SubMode4Color.j:113-147`` throws; that includes every group byte of 0x80 or more), while a group
-    starting exactly at the end (``pieces`` a multiple of 4) is a no-op and skipped
-    (``color_group.is_placed``). ``pieces`` None takes the count from the TLV len and drops group 0.
+    Segment global index = ``(group_index-1) * group size + k`` (oneGroupColorSize stride: the decode's
+    ``num_per_group``, 4 on the H60A6). Each colour group is read by the spec's ``color_group`` with the
+    app's record count for ``pieces``, the device's colour-piece count (the H60A6's 13,
+    ``pact_h60a0.pact.Support.getColorPieceSize``), so extra records are ignored and a group short of its
+    count fails the read, as in the app. With ``pieces``, a group the app can't place fails the read too:
+    group 0, or one starting past the last piece (``SubMode4Color.j:113-147`` throws; that includes every
+    group byte of 0x80 or more), while a group starting exactly at the end (``pieces`` a multiple of 4) is
+    a no-op and skipped (``color_group.is_placed``). ``pieces`` None takes the count from the TLV len and
+    drops group 0. With ``pieces``, no segment is set at or past it (a ``from_len`` count is the TLV
+    len's, not the device's). A 0xA5 TLV the decode doesn't read as colour groups (its ``f_a5`` is not
+    ``color_group``: a record shape the library doesn't read) is skipped. A 0x30 TLV the decode doesn't
+    read as zone bits (its ``f_30`` is not ``zone_power``) is skipped too.
     Device-info: the last block wins, as the app's setters do (``Compose4BaseInfoSingleRead.w:370-437``):
     a basic 0x10 block sets the serial when its UID is valid and always sets the versions (None when
     zero); a Wi-Fi 0x11 block always sets the Wi-Fi MAC (None when zero). The 0x11 block's versions are
@@ -341,6 +344,9 @@ def parse_status(frames: list[bytes], *, pieces: int | None = None, decode: Any 
     if not complete:
         _LOGGER.debug("status reply incomplete: the app decodes nothing from it; no state used")
         return st
+    prof = status_profile(pieces, decode)
+    reads_groups = int(prof.forms.f_a5) == int(_C.FormA5.color_group)
+    reads_zones = int(prof.forms.f_30) == int(_C.Form30.zone_power)
     stream, err = read_status_stream(buf, pieces=pieces, decode=decode)
     tlvs = list(getattr(stream, "tlvs", None) or [])
     if err is not None:
@@ -354,6 +360,8 @@ def parse_status(frames: list[bytes], *, pieces: int | None = None, decode: Any 
     for tlv in tlvs:
         typ = int(tlv.tag)
         if typ == TYPE_COLOR_GROUP:
+            if not reads_groups:
+                continue
             group = _color_group(tlv, pieces)
             if group == "fail":
                 _LOGGER.debug("status reply: colour group TLV (len %d) is short of the app's record count "
@@ -363,6 +371,8 @@ def parse_status(frames: list[bytes], *, pieces: int | None = None, decode: Any 
             if group != "skip":
                 groups.append(group)
             continue
+        if typ == TYPE_ZONE and not reads_zones:
+            continue   # the library reads TLV 0x30 as the zone bits only (f_30 zone_power)
         # FIRMWARE-SOURCED (rule 6): H60A6 sends an empty 0x05 value on purpose in mode 0xA0 (music) and every
         # mode but 04 / 0a / 0d / 13 / 15 (FUN_9b025dc8 @0x9b025dd2-0x9b025ddc), where the app's read fails
         # (Info4Detail.Q reads a first byte); the library reads past it with the mode unknown.
@@ -410,7 +420,9 @@ def parse_status(frames: list[bytes], *, pieces: int | None = None, decode: Any 
                     st.serial_number = info.serial
                 st.firmware_version, st.hardware_version = info.sw_version, info.hw_version
     # Same positional assembly as the direct group replies (oneGroupColorSize stride).
-    st.segments = parse.direct_groups_to_segments(groups, _RECORDS_PER_GROUP)
+    st.segments = parse.direct_groups_to_segments(groups, int(prof.group.num_per_group))
+    if pieces:   # the device's piece count bounds the segment index (a from_len count is the TLV len's)
+        st.segments = [s for s in st.segments if s.index < pieces]
     # A read that succeeded applies the switch and brightness whether or not the stream carried them: each
     # read starts from a fresh DeviceBaseInfoFromDevice (switch false, brightness 100; its constructor),
     # which u() fills from the 0x01 / 0x04 TLVs, and the success callback hands it to h60a1 Info4Detail.n0
