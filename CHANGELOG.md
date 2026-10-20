@@ -478,17 +478,19 @@ model, from which the shipped readers are generated).
   stored and one listed scene fit each other, by one of its own lightEffects' codes or by category
   and blob (H6006's 26 recodes keep their blob), printed as a move, or by category and param id or category
   alone, printed as a guess. A guess passes over a stored scene whose code the library still answers under any
-  sceneName, and a blob match over one it still answers at its own sceneName and category; both pass over one
-  a fetch found gone from the library (its sceneName answered at its code under no category, but where another
-  stored or retired name sits), or found its scene (its param id) listed under another name or left out only
-  for its time or rules at another code, since it was last listed. Where more than one fits, the scene takes a
-  new name, printed as ambiguous. Only a scene that matches none gets a new name, never one the store or the
-  tombstone holds. A stored scene no longer listed keeps its name, as do one left out only for its time (an
-  expired category or effect, its category renamed meanwhile too) or the firmware's version rules and one
-  listed under another name or left out so at another code (its param id); a sceneName the app renames keeps
-  its old name too, so two names hold one code. Only one whose scene the SKU's scene list refuses for good
-  (its op set), or a sceneType-5 scene the library does not upload, is removed (where two stored scenes the
-  fetch does not list could be that scene, neither is), printed, and retired in a tombstone,
+  sceneName, or whose param id another listed scene carries (its scene, listed under another name), and a blob
+  match over one it still answers at its own sceneName and category; both pass over one a fetch found gone
+  from the library (its sceneName listed, or left out only for its time or rules, at its code under no
+  category but where another stored or retired name sits), or found its scene (its param id) listed under
+  another name or left out only for its time or rules at another code, since it was last listed. Where more
+  than one fits, the scene takes a new name, printed as ambiguous. Only a scene that matches none gets a new
+  name, never one the store or the tombstone holds. A stored scene no longer listed keeps its name, as do one
+  left out only for its time (an expired category or effect, its category renamed meanwhile too) or the
+  firmware's version rules and one listed under another name or left out so at another code (its param id);
+  a sceneName the app renames keeps its old name too, so two names hold one code. Only one whose scene the
+  SKU's scene list refuses for good (its op set), or a sceneType-5 scene the library does not upload, is
+  removed (where two stored scenes the fetch does not list could be that scene, neither is), printed, and
+  retired in a tombstone,
   `tools/scene_tombstone.json` (out of the package; the store, the loader and the pool are unchanged), with
   the entry it held (one the fetch matched, then cut: the entry it was to hold): only that scene's exact
   return (sceneName, code, category and blob; a placeholder's with its param id) takes the name back, printed

@@ -20,10 +20,11 @@ ties go by the whole entry, then blob and param id). Else, where exactly one sto
 scene fit each other, it keeps that one's name by one of its own lightEffects' codes (its category
 renamed, or the app's list plays another of its lightEffects), by category and blob (its code changed:
 H6006's 26 recodes keep their blob), or, printed as a guess, by category and param id or category alone.
-A guess passes over a stored scene whose code the library still answers under any sceneName, and a blob
-match over one it still answers at its own sceneName and category (that scene is still there); both pass
-over one a fetch found gone from the library, or found its scene (its param id) listed under another name
-or left out only for its time or rules at another code, since it was last listed. Where more than one fits,
+A guess passes over a stored scene whose code the library still answers under any sceneName, or whose param
+id another listed scene carries (its scene, listed under another name), and a blob match over one it still
+answers at its own sceneName and category (that scene is still there); both pass over one a fetch found gone
+from the library, or found its scene (its param id) listed under another name or left out only for its time
+or rules at another code, since it was last listed. Where more than one fits,
 it takes a new name, printed as ambiguous. Only a scene that matches none gets a new name, never one the
 store or the tombstone holds: its sceneName where that is free, else "<name> (<its category>)" (for example
 "Flash (Emotion)"), or "<name> (<category>, 2)", 3 and so on. The app lists a name in more than one
@@ -85,11 +86,11 @@ STORE_NAME = "store.json"
 # removed from the store to the entry it held (one the fetch matched, then cut: the entry it was to hold), and
 # only that scene's return by its sceneName, code, category and blob (a blob --resolve baked in: as its
 # placeholder) takes it back; ``dropped`` lists the stored names whose scene a fetch found gone from the
-# library (its sceneName answered at its code under no category, but where another stored or retired name
-# sits), or found (its param id) listed under another name or left out only for its time or rules at another
-# code, since they were last listed: only a match by code and category keeps one, and a scene of another blob
-# refused at its place later is not its own. Next to the tool, never in the package: the store and the loader
-# are unchanged. A SKU with neither has no record; there is no file until one is written.
+# library (its sceneName listed or held at its code under no category, but where another stored or retired
+# name sits), or found (its param id) listed under another name or left out only for its time or rules at
+# another code, since they were last listed: only a match by code and category keeps one, and a scene of
+# another blob refused at its place later is not its own. Next to the tool, never in the package: the store
+# and the loader are unchanged. A SKU with neither has no record; there is no file until one is written.
 TOMBSTONE = pathlib.Path(__file__).resolve().parent / "scene_tombstone.json"
 Entry = dict[str, Any]  # one scene's catalog entry (JSON object)
 Answer = tuple[str, object, int]  # (sceneName, category, code) of a scene the library answers with
@@ -517,8 +518,9 @@ def stored_names(listed: list[Listed], existing: Mapping[str, Entry] | None = No
       left out only for its time or rules at another code, since it was last listed), and,
       unless its code is one of the listed scene's own lightEffects', over one the library still answers
       (``answers``, fetch's :func:`_answers`): a guess (:data:`_GUESSES`) over one whose code it answers
-      under any sceneName or category, a blob match over one it answers at its own sceneName, category and
-      code. That scene is still there, and its name stays its own.
+      under any sceneName or category, or whose param id another listed scene carries (its scene, listed
+      under another name), a blob match over one it answers at its own sceneName, category and code. That
+      scene is still there, and its name stays its own.
     - Any other gets a name that neither ``existing``, ``retired`` nor another listed scene holds: its
       sceneName, which of the new scenes of that sceneName the highest code takes (:func:`_order`; the
       bundled H61A8 / H6641 catalog holds that one, the last-one-wins fetch's pick); else
@@ -528,6 +530,10 @@ def stored_names(listed: list[Listed], existing: Mapping[str, Entry] | None = No
     live = dict(existing or {})
     back = {n: e for n, e in (retired or {}).items() if n not in live}
     still = {code for _name, _category, code in answers}   # the codes some library scene is still at
+    carriers: dict[object, set[int]] = {}   # param id -> the listed scenes that carry it
+    for i, (_own, entry, _codes) in enumerate(listed):
+        if entry.get("param_id") is not None:
+            carriers.setdefault(entry["param_id"], set()).add(i)
     taken = set(live) | set(back)
     names: list[str | None] = [None] * len(listed)
     order = sorted(range(len(listed)), key=lambda i: (listed[i][0], _order(listed[i][1])))
@@ -539,11 +545,13 @@ def stored_names(listed: list[Listed], existing: Mapping[str, Entry] | None = No
             own, entry, codes = listed[i]
             if names[i] is not None or i in unsure:
                 continue
+            elsewhere = {pid for pid, at in carriers.items() if at != {i}}   # listed as another scene
             hits = {n for n, e in pool.items() if scene_name(n, e) == own
                     and (fits(entry, codes, e) or (step == 0 and _unresolved(e) == entry))
                     and (step < _EXACT or (n not in dropped and (
                         e.get("code") in codes
-                        or (e.get("code") not in still if how in _GUESSES
+                        or (e.get("code") not in still and e.get("param_id") not in elsewhere
+                            if how in _GUESSES
                             else (own, e.get("category"), e.get("code")) not in answers))))}
             if hits:
                 found[i] = hits
@@ -628,10 +636,6 @@ class Answered:
         self.held: set[Answer] = set()
         self.held_ids: dict[object, set[Answer]] = {}   # param id -> its places, of each scene held so
         self.gone: dict[Answer, set[tuple[str | None, object]]] = {}
-
-    def answers(self) -> set[Answer]:
-        """Every scene's (sceneName, category, code) the library answers with."""
-        return self.live | set(self.gone)
 
     def refuse(self, sku: str, category: Mapping[str, Any], scene: Mapping[str, Any]) -> None:
         """Count one library scene among ``gone``, at each of its lightEffects for ``sku``
@@ -903,14 +907,16 @@ def _gone(name: str, entry: Entry, seen: Answered, stored: Mapping[str, Entry],
       id can't be told apart, so each stays);
     - else, unless the fetch lists its param id or leaves it out only for its time or rules (``shown``: its
       scene is listed under another name, or held at another place), with its blob, where no other of them
-      there has that blob and no same-named scene there is left out only for its time or rules
-      (``seen.held``): two scenes of one blob differ by their param id alone;
+      there has that blob or is a resolved one the library answers there as its placeholder (of its param
+      id: that one may be the scene refused) and no same-named scene there is left out only for its time or
+      rules (``seen.held``): two scenes of one blob differ by their param id alone;
     - or, unless the fetch lists or holds its param id so, with another blob, where no scene listed or left
       out only for its time or rules answers it there (``seen.live``: a same-named scene of one code is not
       taken for it), no other stored scene sits there (which of them the library changed is not known, so each
-      stays), no retired one there holds a blob it answers (that one is the scene left out; this one was
-      dropped) and the name is not on the tombstone's dropped list (``dropped``: its scene left the library,
-      or was listed or held elsewhere, since it was last listed; the one refused there now is another)."""
+      stays), no retired one there holds a blob it answers or is a resolved one it answers as its placeholder
+      (that one is the scene left out; this one was dropped) and the name is not on the tombstone's dropped
+      list (``dropped``: its scene left the library, or was listed or held elsewhere, since it was last
+      listed; the one refused there now is another)."""
     at = _answer_of(name, entry)
     ids = seen.gone.get(at)
     if ids is None:
@@ -920,25 +926,29 @@ def _gone(name: str, entry: Entry, seen: Answered, stored: Mapping[str, Entry],
     def there(scenes: Mapping[str, Entry]) -> list[Entry]:
         return [e for n, e in scenes.items() if n != name and _answer_of(n, e) == at]
 
+    def placeholder_of(e: Entry) -> bool:   # a resolved one, answered as its placeholder of its param id
+        return _unresolved(e) is not None and (None, e.get("param_id")) in ids
+
     others = [*there(stored), *there(retired)]
     if (blob, pid) in ids:
         return all((e.get("param"), e.get("param_id")) != (blob, pid) for e in others)
     if pid in shown:
         return False
     if blob in blobs:
-        return at not in seen.held and all(e.get("param") != blob for e in others)
-    return not dropped and at not in seen.live and not there(stored) and all(
-        e.get("param") not in blobs for e in there(retired))
+        return at not in seen.held and all(e.get("param") != blob and not placeholder_of(e) for e in others)
+    return not dropped and at not in seen.live and not there(stored) and not any(
+        e.get("param") in blobs or placeholder_of(e) for e in there(retired))
 
 
 def _still_there(name: str, entry: Entry, answers: Collection[Answer], scenes: Mapping[str, Entry],
                  retired: Mapping[str, Entry]) -> bool:
     """Whether the library still answers the scene stored as ``name``: its sceneName at its code
-    (``answers``, fetch's ``seen``) under a category where no other stored name (``scenes``) and no retired
+    (``answers``, fetch's ``seen.live``: listed, or left out only for its time or rules; a scene refused for
+    good or cut is not still there) under a category where no other stored name (``scenes``) and no retired
     one (``retired``: the tombstone's with this fetch's removals, but the ones ``scenes`` holds again) sits,
     its own or another (one out only for its time or rules as its category is renamed). An answer where
-    another name sits is that name's scene, a retired one's too: the scene refused for good or cut, or out for
-    its time since."""
+    another name sits is that name's scene, a retired one's too (its scene refused for good or cut, and out
+    only for its time or rules since)."""
     own, _category, code = _answer_of(name, entry)
     held = {_answer_of(n, e) for m in (scenes, retired) for n, e in m.items() if n != name}
     return any(a not in held for a in answers if a[0] == own and a[2] == code)
@@ -1124,11 +1134,11 @@ def main(skus: list[str], app_version: str = DEFAULT_APP_VERSION) -> int:
             print(f"{sku}: removed {len(gone)} stored names whose scene the SKU's scene list refuses for "
                   f"good, or the library does not upload; retired, so only that scene's return takes one "
                   f"back: {', '.join(_described(n, existing[n]) for n in gone)}")
-        # dropped: a kept name the library no longer answers (:func:`_still_there`), or whose scene (its param
-        # id) the fetch lists under another name or leaves out only for its time or rules at another code (an
-        # answer at its own place is another scene's), and stays so until it is listed again (a match by code
-        # and category) or removed
-        answers = seen.answers()
+        # dropped: a kept name the library no longer lists or holds (:func:`_still_there`), or whose scene
+        # (its param id) the fetch lists under another name or leaves out only for its time or rules at
+        # another code (an answer at its own place is another scene's), and stays so until it is listed again
+        # (a match by code and category) or removed
+        answers = seen.live   # a scene refused for good or cut is not still there, at any category
         was_dropped = set(record.get("dropped", ()))
         # a name this fetch matched and the cut drops retires with the entry it was to hold, so its scene's
         # identical return reclaims it (and the cut drops it again): a re-fetch changes nothing
