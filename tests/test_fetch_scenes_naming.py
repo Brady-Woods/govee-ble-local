@@ -526,6 +526,24 @@ _FIXED = {
         _lib(("Life", [(1, "Snow", [_e(5, 1)])]), ("Party", [(2, "Rain", [_e(10, 2)])])),
         _lib(("Life", [(1, "Snow", [_e(5, 1)])]), ("Party", [(2, "Rain", [_e(10, 2)]),
                                                             (3, "Rain", [_e(10, 3, "kwIC")])]))),
+    # N2 / N3: a Flash renamed Dusk and renumbered (its blob and param id kept) as a new Flash comes to Party:
+    # the stored Flash's scene is listed (its param id, as Dusk), so no guess gives "Flash" to the new one;
+    # so too for a resolved Flash moved to Life and renumbered (its new name takes the blob by its param id)
+    # as a Dusk is renamed Flash, and for two scenes that swap sceneNames and are both renumbered
+    "renamed and renumbered, a new one of its old name": _rounds(
+        _lib(("Party", [(1, "Snow", [_e(5, 1)]), (2, "Flash", [_e(30, 2, "AAAA")])])),
+        _lib(("Party", [(1, "Snow", [_e(5, 1)]), (2, "Dusk", [_e(31, 2, "AAAA")]),
+                        (3, "Flash", [_e(40, 3, "BBBB")])]))),
+    "resolved, moved and renumbered, another renamed to it": _rounds(
+        _lib(("Party", [(1, "Snow", [_e(5, 1)]), (2, "Flash", [_e(30, 2, None, big=True)]),
+                        (3, "Dusk", [_e(40, 3, "BBBB")])])),
+        _lib(("Party", [(1, "Snow", [_e(5, 1)]), (3, "Flash", [_e(40, 3, "BBBB")])]),
+             ("Life", [(2, "Flash", [_e(31, 2, None, big=True)])])), resolve=0),
+    "two swap sceneNames, renumbered": _rounds(
+        _lib(("Party", [(1, "Snow", [_e(5, 1)]), (2, "Flash", [_e(30, 2, "AAAA")]),
+                        (3, "Dusk", [_e(40, 3, "BBBB")])])),
+        _lib(("Party", [(1, "Snow", [_e(5, 1)]), (2, "Dusk", [_e(31, 2, "AAAA")]),
+                        (3, "Flash", [_e(41, 3, "BBBB")])]))),
     # N2: a Glow at a new code and blob keeps its param id: a guess (the param id only breaks a tie)
     "guess by param id": _rounds(
         _lib(("Party", [(1, "Glow", [_e(10, 1, "kwEB")]), (2, "Glow", [_e(20, 2, "kwEC")])])),
@@ -618,6 +636,13 @@ _FIXED = {
         _lib(("Party", [(1, "Snow", [_e(5, 1)])]),
              ("Natural", [(2, "Dusk", [_e(141, 2, "k35E", expired=True)]),
                           (5, "Dusk", [_e(141, 6, "k35E", refused=True)])]))),
+    # N4: as that, with the held Dusk at a new param id (one its stored scene does not have, held at no other
+    # code): either Dusk may be the stored one, so it is not removed by its blob alone
+    "held at a new param id, a twin refused": _rounds(
+        _lib(("Party", [(1, "Snow", [_e(5, 1)])]), ("Natural", [(2, "Dusk", [_e(141, 2, "k35E")])])),
+        _lib(("Party", [(1, "Snow", [_e(5, 1)])]),
+             ("Natural", [(2, "Dusk", [_e(141, 7, "k35E", expired=True)]),
+                          (5, "Dusk", [_e(141, 6, "k35E", refused=True)])]))),
     # N3: a Glow renumbered (its blob and param id kept; a new name, as its old code still answers) as a new
     # Glow at its old code is refused for good: its scene is listed (its param id), so its name stays; so too
     # for a resolved placeholder, whose blob the new name takes, and a placeholder of another param id, and
@@ -693,6 +718,27 @@ _FIXED = {
         _lib(("Party", [(1, "Snow", [_e(5, 1)]), (2, "Glow", [_e(31, 2, "AAAA", expired=True)]),
                         (3, "Glow", [_e(30, 3, "BBBB", refused=True)])])),
         _lib(("Party", [(1, "Snow", [_e(5, 1)]), (3, "Glow", [_e(30, 3, "BBBB", refused=True)])]))),
+    # N2: the Party Glow leaves the library as a never-stored Glow at its code comes to Life refused for good,
+    # or cut: neither is the Party one (a scene refused or cut is not still there), so the name is dropped and
+    # a new Party Glow takes none
+    **{f"dropped, a never-stored one at its code {how} elsewhere": _rounds(
+        _lib(("Party", [(1, "Snow", [_e(5, 1)]), (2, "Glow", [_e(10, 2, "AAAA")])])),
+        _lib(("Party", [(1, "Snow", [_e(5, 1)])]),
+             ("Life", [(3, "Glow", [_e(10, 3, "BBBB", **{how: True})])])),
+        _lib(("Party", [(1, "Snow", [_e(5, 1)]), (4, "Glow", [_e(99, 4, "CCCC")])])))
+       for how in ("refused", "type5")},
+    # N4: a resolved placeholder refused for good is retired with its blob; a same-code Glow (with a blob, a
+    # placeholder or bare) comes, then leaves the library while the placeholder is still refused: the library
+    # answers the retired one as its placeholder, so the other keeps its name
+    **{f"resolved retired, a sibling {kind} comes and leaves": _rounds(
+        _lib(("Party", [(1, "Snow", [_e(5, 1)]), (3, "Glow", [_e(30, 3, None, big=True)])])),
+        _lib(("Party", [(1, "Snow", [_e(5, 1)]), (3, "Glow", [_e(30, 3, None, big=True, refused=True)])])),
+        _lib(("Party", [(1, "Snow", [_e(5, 1)]), (2, "Glow", [sibling]),
+                        (3, "Glow", [_e(30, 3, None, big=True, refused=True)])])),
+        _lib(("Party", [(1, "Snow", [_e(5, 1)]), (3, "Glow", [_e(30, 3, None, big=True, refused=True)])])),
+        resolve=0)
+       for kind, sibling in (("with a blob", _e(30, 2, "AAAA")), ("placeholder", _e(30, 2, None, big=True)),
+                             ("bare", _e(30, 2, None)))},
 }
 
 
