@@ -459,18 +459,28 @@ model, from which the shipped readers are generated).
   `scene_names_by_code` are unchanged, and a SKU the store has no catalog for still gets `{}`. The store is
   read and checked once, on the first lookup of any SKU (not on each SKU's first lookup), even where
   several first lookups run together (one per device's setup), and one that is
-  missing, unreadable or malformed raises GoveeBleError for every SKU: that first failure is kept, and every
-  later lookup raises a GoveeBleError of it (its message and cause) with no second read (a package file
-  changes only with a reinstall). The kept failure holds no traceback, nor does any exception of its cause
-  chain, so it keeps no caller's frames alive; every message stays. Nor does it hold the exception the first
-  lookup's caller was handling, so that exception is left as its caller has it and no later lookup's log
-  shows it. A read error of the process's state (too
-  many open files, out of memory: EMFILE, ENFILE, ENOMEM, EAGAIN) is not kept, so the next lookup reads the
-  store again. An entry `tools/fetch_scenes.py` refuses to write (the loader and the tool share one check:
+  missing, unreadable or malformed raises GoveeBleError for every SKU: that first failure's message is kept
+  (it names the cause's type and text), and with no second read (a package file changes only with a
+  reinstall) the lookup that read the store raises a GoveeBleError of it from its real cause, and every
+  later lookup a fresh one from None. No exception is kept, so no traceback and no caller's frames, nothing
+  a caller does to the error it was given (a `raise err.__cause__` put its frames into the one cause every
+  later lookup chained, for the life of the process), and not the exception the first lookup's caller was
+  handling. A read error of the process's state (too many open files, out of memory: EMFILE, ENFILE,
+  ENOMEM, EAGAIN) and a RecursionError (a first lookup made near the recursion limit, which left the store
+  unreadable for good, one a frame from it included, which escaped as itself; and a store nested too deep,
+  which every lookup now reads again) are not kept, so the next lookup reads the store again. A device's
+  `scene_names` and `active_scene` raise a failed load's error (any, kept or not) with no I/O, and its next
+  `update()` loads the store again in a worker thread: `update()` marked the catalog loaded though its load
+  failed, so after a failure the loader does not keep every later read re-read the store on the event loop.
+  A lookup the first read
+  makes on its own thread (a signal handler, a finalizer or a trace hook run inside it) reads the store too:
+  the lock across the first read is re-entrant, where a plain lock deadlocked that thread, every later
+  lookup and the event loop. An entry `tools/fetch_scenes.py` refuses to write (the loader and the tool share one check:
   Fixed), an index outside the pool or out of order, a pool out of its content order or holding one scene
   twice, two scenes of one name in a catalog, a SKU with no scenes or not in upper case, and an entry no SKU
   holds (an orphan) are refused. `tools/fetch_scenes.py` reads and writes the store: each write lays it out
-  again from every SKU's catalog (`layout`) and checks it as the loader reads it, in one atomic replace, so
+  again from every SKU's catalog (`layout`) and checks the text it writes as the loader reads it (that text
+  parsed, not the layout in memory), in one atomic replace, so
   the same catalogs give the same bytes, a scene no SKU holds leaves the pool and a store the loader refuses
   is never written, and a corrupt store fails every SKU's fetch and is left as it is. `layout` refuses two
   spellings of one SKU (`h6006` and `H6006`, which it merged into one catalog: the union of both, or one the
@@ -655,13 +665,17 @@ model, from which the shipped readers are generated).
 - **A corrupt bundled scene catalog raises only GoveeBleError, and nothing in it is coerced.** A code JSON
   reads as an infinite float (`1e999`, `Infinity`) raised OverflowError, a store nested too deep
   RecursionError, and a corrupt `store.json` member of a zipped install (`importlib.resources` reads one)
-  `zipfile.BadZipFile`, `zlib.error` or `lzma.LZMAError`, or RuntimeError for a member flagged encrypted
-  (NotImplementedError for one of an unknown compression method or flag), past GoveeBleError (1.4.0's
-  per-SKU files did too); the first two are malformed now, the zip errors unreadable. An unreadable store's
+  `zipfile.BadZipFile`, `zlib.error` or `lzma.LZMAError`, RuntimeError for a member flagged encrypted
+  (NotImplementedError for one of an unknown compression method or flag), or EOFError for one that runs
+  past the archive's end (entries that overlap at one offset, which zipfile only warns of on 3.12.14,
+  3.13.15 and 3.14.6; it has no text, so the message names its type alone), past GoveeBleError (1.4.0's
+  per-SKU files did too); the first two are malformed now (the deep one not kept, as a RecursionError never
+  is), the zip errors unreadable. An unreadable store's
   error quotes its cause by its str, not its repr: for a store that is not UTF-8 the repr held the whole
   store, every blob in it (about 171,700 characters for one stray byte in the 165,015 B store, against about
   140 now); `tools/fetch_scenes.py`'s error for a store or tombstone that is not UTF-8 held the whole file
-  too, and now quotes its cause the same way. A scene name that is not a string is named by its type, not
+  too, and now quotes its cause the same way, and a tombstone nested too deep is malformed (its
+  RecursionError escaped). A scene name that is not a string is named by its type, not
   quoted (a name holding a blob put all of it in the error). The loader
   coerced mistyped values that `tools/fetch_scenes.py` refuses to write, or took them as they were: a code
   `"7"`, `1.9` or `true` read as 7, 1 and 1, a scene type `"2"` stayed a string and a placeholder `"no"` read
@@ -670,8 +684,18 @@ model, from which the shipped readers are generated).
   code that is not an int from 0 to 0xFFFF (`build.scene_activate`'s range: a negative or larger code can't
   be sent), a param, category or `scene_name` that is not a string, a param id, scene type or cmdVersion that
   is not an int (a bool is not one), a placeholder or big-effect flag that is not a bool (each may be null
-  or left out), a param that is not strict base64, and version rules. No bundled scene changes:
-  `load_scenes` and `scene_names_by_code` give what they did for every SKU, and `store.json` is unchanged.
+  or left out), a param that is not strict base64, and version rules. `tools/fetch_scenes.py` coerced such
+  values from the library too: it took `int()` of a scene's code, param id, scene type and cmdVersion before
+  the check (`1.9` and `true` were stored as 1, `"7"` as 7), a specialEffect's cmdVersion `or 0` (`false` as
+  0) and a bigEffectStr `true` as 1 (a big effect). It takes the values as they are now, each an int or null
+  (its check of the library's values, above, fails the SKU's fetch on any other); an int outside a Java int's
+  range fails the fetch too, as Gson's `nextInt` fails the app's whole response on one (a scene type of
+  `2**31` read as op type -1 removed and retired the stored name, and a param id of `2**31` was stored), and
+  so does a `supportSku` that is not a list of strings (the SKU's `in` test took a string for a substring:
+  `"H6641" in "H66411"`). The 93 responses fetched on 2026-10-19 carry JSON ints only, all small (10,611
+  lightEffects and their 225,510 specialEffect entries; none has a bigEffectStr), and every supportSku is a
+  list of strings. No bundled scene changes: `load_scenes` and `scene_names_by_code` give what they did for
+  every SKU, and `store.json` is unchanged.
 
 ### Spec
 - `devices.yaml` `scenes.list_filter`: which library scenes the control screen lists and with which

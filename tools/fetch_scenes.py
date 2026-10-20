@@ -165,12 +165,18 @@ def _check(name: object, entry: Entry) -> None:
 
 def write_catalog(path: pathlib.Path, data: object) -> None:
     """Write the scene store (or another JSON file) atomically: temp file in the same directory, then
-    ``os.replace``. The file is left 0644, readable by all whatever the umask (it is package data): mkstemp
-    creates the temp file 0600, which the replace would give the file."""
+    ``os.replace`` (:func:`_write_text` of its JSON)."""
+    _write_text(path, _dumps(data))
+
+
+def _write_text(path: pathlib.Path, text: str) -> None:
+    """Write ``text`` to ``path`` atomically: temp file in the same directory, then ``os.replace``. The file
+    is left 0644, readable by all whatever the umask (it is package data): mkstemp creates the temp file
+    0600, which the replace would give the file."""
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as fh:
-            fh.write(_dumps(data))
+            fh.write(text)
         os.chmod(tmp, 0o644)
         os.replace(tmp, path)
     except BaseException:
@@ -291,7 +297,7 @@ def read_tombstone(path: pathlib.Path | None = None) -> dict[str, Any]:
             dropped = record.get("dropped", [])
             if not all(isinstance(n, str) and n for n in dropped) or dropped != sorted(set(dropped)):
                 raise ValueError(f"{sku}: 'dropped' is not sorted, unique names")
-    except (ValueError, TypeError, AttributeError) as err:
+    except (ValueError, TypeError, AttributeError, RecursionError) as err:   # json.loads: RecursionError too
         # quoted by its str, as read_store quotes it
         raise ValueError(f"{path.name} is malformed: {type(err).__name__}: {err}") from err
     return tomb
@@ -309,16 +315,17 @@ def _record(retired: Mapping[str, Entry], dropped: Collection[str]) -> dict[str,
 
 def store_catalog(sku: str, data: dict[str, Entry] | None, out_dir: pathlib.Path | None = None) -> int:
     """Store ``sku``'s catalog and return the pool's size: the store is laid out again from every SKU's
-    catalog (:func:`layout`), so a scene no SKU holds any more leaves the pool, checked as the library reads
-    it (``scenes._catalogs``, ValueError: a store the loader refuses is never written), and written in one
-    atomic replace, so it is never half written. ``data`` None takes the SKU's catalog out of the store
-    (main(): each of its stored scenes removed); an empty one is refused. The sha256 of the store the
-    tombstone pairs with (:func:`_paired_dir`: main()'s and --resolve's, OUT_DIR, but the bundled one where
-    only OUT_DIR is pointed elsewhere) is written into the tombstone (:data:`TOMBSTONE`, ``store_sha256``)
-    first, where that changes it: tests/test_fetch_scenes_store.py checks that the committed tombstone holds
-    the committed store's, so a store.json committed without its tombstone fails. Any other store has no
-    tombstone: one ``out_dir`` names, and a scratch OUT_DIR's beside the committed tombstone (review F3-R2:
-    its sha256 went into the committed tombstone)."""
+    catalog (:func:`layout`), so a scene no SKU holds any more leaves the pool; its text is checked as the
+    library reads it (``scenes._catalogs`` of that text, parsed; ValueError: a store the loader refuses is
+    never written), and that text is written in one atomic replace, so it is never half written. ``data``
+    None takes the SKU's catalog out of the store (main(): each of its stored scenes removed); an empty one
+    is refused. The sha256 of the store the tombstone pairs with (:func:`_paired_dir`: main()'s and
+    --resolve's, OUT_DIR, but the bundled one where only OUT_DIR is pointed elsewhere) is written into the
+    tombstone (:data:`TOMBSTONE`, ``store_sha256``) first, where that changes it:
+    tests/test_fetch_scenes_store.py checks that the committed tombstone holds the committed store's, so a
+    store.json committed without its tombstone fails. Any other store has no tombstone: one ``out_dir``
+    names, and a scratch OUT_DIR's beside the committed tombstone (review F3-R2: its sha256 went into the
+    committed tombstone)."""
     from govee_ble_local import scenes
 
     base = out_dir or OUT_DIR
@@ -329,13 +336,14 @@ def store_catalog(sku: str, data: dict[str, Entry] | None, out_dir: pathlib.Path
     else:
         catalogs[key] = data
     store = layout(catalogs)
-    scenes._catalogs(store)
+    text = _dumps(store)
+    scenes._catalogs(json.loads(text))   # the text written, as the loader reads it
     if base.resolve() == _paired_dir().resolve():
         tomb = read_tombstone()
-        sha = hashlib.sha256(_dumps(store).encode("utf-8")).hexdigest()   # the bytes write_catalog writes
+        sha = hashlib.sha256(text.encode("utf-8")).hexdigest()
         if tomb.get(STORE_SHA256) != sha:
             write_catalog(TOMBSTONE, {**tomb, STORE_SHA256: sha})
-    write_catalog(base / STORE_NAME, store)
+    _write_text(base / STORE_NAME, text)
     return len(store["pool"])
 
 
@@ -418,7 +426,8 @@ def for_sku(sku: str, eff: dict[str, Any]) -> dict[str, Any]:
             out["type"], out["rules"] = first.get("sceneType"), first.get("rules")
         elif not first.get("scenceParam") and (eff.get("scenceParamId") or 0) > 0:
             out["type"] = 0
-        out["cmd_version"] = first.get("cmdVersion") or 0   # the DTO's int field: 0 when absent
+        # the DTO's int field: 0 when absent or null; any other value as it is (fetch() refuses a bool)
+        out["cmd_version"] = 0 if first.get("cmdVersion") is None else first["cmdVersion"]
         out["big_effect"] = first.get("bigEffectStr") == 1
     out["param"] = next((x["scenceParam"] for x in specials if x.get("scenceParam")), out["param"])
     out["param_id"] = next((x["scenceParamId"] for x in specials if x.get("scenceParamId")), out["param_id"])
@@ -428,7 +437,9 @@ def for_sku(sku: str, eff: dict[str, Any]) -> dict[str, Any]:
 def op_type(scene_type: int | None, cmd_version: int | None) -> int:
     """A lightEffect's op type from its scene type and cmdVersion for the SKU (CategoryV1.LightEffect.
     getOpType, CategoryV1.java:295-321; devices.yaml scenes.list_filter.op_type): 0, 1, 4 for a graffiti (3)
-    or a cube (4), 2 or 3 for an RGBIC scene (2) at cmdVersion 0 or not, 5, 6, else -1."""
+    or a cube (4), 2 or 3 for an RGBIC scene (2) at cmdVersion 0 or not, 5, 6, else -1. No op set holds -1,
+    so a SKU's scene list refuses a scene of an unknown type (sceneType 9, say) for good, and main() removes
+    and retires its stored name."""
     t = scene_type or 0
     if t == 2:
         return 2 if not cmd_version else 3
@@ -809,26 +820,43 @@ class Answered:
 
 
 # The int fields fetch() reads of a lightEffect and of each of its specialEffect entries
-# (CategoryV1.LightEffect and SpecialEffect, CategoryV1.java:91-112, 1152-1162: Java ints).
+# (CategoryV1.LightEffect and SpecialEffect, CategoryV1.java:91-112, 1152-1162: Java ints), and a Java int's
+# range, which Gson's nextInt reads (JsonReader.nextInt: a value outside it fails the whole response).
 _INT_FIELDS = ("sceneCode", "scenceParamId", "sceneType", "cmdVersion", "bigEffectStr")
+_JAVA_INT: Final = range(-2**31, 2**31)
 
 
 def _check_ints(scene: Mapping[str, Any]) -> None:
     """ValueError where a lightEffect of ``scene``, or one of its specialEffect entries (any SKU's), holds a
-    value of :data:`_INT_FIELDS` that is not an int or null (a bool, 1.9, 7.0 or "7"), so the SKU's fetch
-    fails and the store and the tombstone are left as they are. fetch() checks each scene before it reads any
-    of its values, listed or not: the list filter took a scene type of 1.9 or "1" for an op type the SKU
-    refuses, a scene refused for good, so main() removed and retired its stored name, and where every scene
-    type was so, the SKU's whole catalog (an emptied catalog leaves the store); a code true counted as code 1.
-    Gson, the app's reader, fails the whole response on a bool or a fraction (it reads 7.0 and "7" as 7; no
-    saved response uses either form)."""
+    value of :data:`_INT_FIELDS` that is not an int or null (a bool, 1.9, 7.0 or "7", or an int outside a Java
+    int's range, :data:`_JAVA_INT`), or a ``supportSku`` that is not a list of strings or null, so the SKU's
+    fetch fails and the store and the tombstone are left as they are. fetch() checks each scene before it
+    reads any of its values, listed or not: the list filter took a scene type of 1.9 or "1" for an op type the
+    SKU refuses, a scene refused for good, so main() removed and retired its stored name, and where every
+    scene type was so, the SKU's whole catalog (an emptied catalog leaves the store); a code true counted as
+    code 1. Gson, the app's reader, fails the whole response on a bool, a fraction or an int out of range (it
+    reads 7.0 and "7" as 7; no saved response uses either form), and on a ``supportSku`` that is not an array
+    of strings, which for_sku's ``in`` read as a substring test ("H6641" in "H66411").
+
+    A null is taken as absent: an entry key left out, or the base lightEffect's value where a specialEffect
+    entry's is null. Gson leaves a Java int's default, 0, for a null base sceneCode, scenceParamId, sceneType
+    or cmdVersion (where the app plays code 0, the tool keeps the stored name of a scene at a null code, and
+    marks it dropped; it leaves the other three out of the entry); for a specialEffect entry null and 0
+    agree. No saved response has a null in any of them. An int in range is data, whatever it is: an op type
+    of -1 (an unknown scene type, such as 9) is one the SKU's op set refuses for good (:func:`op_type`)."""
+    name = scene.get("sceneName")
     for eff in scene.get("lightEffects") or ():
         for node in (eff, *(eff.get("specialEffect") or ())):
             for field in _INT_FIELDS:
                 value = node.get(field)
-                if value is not None and type(value) is not int:
-                    raise ValueError(f"{scene.get('sceneName')!r}: {field!r} must be an int or null, "
-                                     f"got {type(value).__name__}")
+                if value is not None and (type(value) is not int or value not in _JAVA_INT):
+                    got = "an int outside a Java int" if type(value) is int else type(value).__name__
+                    raise ValueError(f"{name!r}: {field!r} must be an int or null, got {got}")
+            skus = node.get("supportSku")
+            if node is not eff and skus is not None and not (
+                    isinstance(skus, list) and all(isinstance(x, str) for x in skus)):
+                raise ValueError(f"{name!r}: 'supportSku' must be a list of strings or null, "
+                                 f"got {type(skus).__name__}")
 
 
 def fetch(sku: str, app_version: str = DEFAULT_APP_VERSION, *, seen: Answered | None = None,
@@ -1014,19 +1042,22 @@ def _entry(sku: str, category: Mapping[str, Any], scene: Mapping[str, Any],
     eff = for_sku(sku, effect)
     if eff["code"] is None:
         return None
+    # the values as the library gives them, each an int or null (_check_ints), not int() of them (which took
+    # 1.9 and true for 1 before that check); the shared check (validate_entry) refuses a code, param id,
+    # scene type or cmdVersion that is no int too
     entry: Entry = {
-        "code": int(eff["code"]),
+        "code": eff["code"],
         "param": _blob(eff["param"]) if isinstance(eff["param"], str) else (eff["param"] or None),
         "category": category.get("categoryName"),
     }
     if eff["param_id"] is not None:
-        entry["param_id"] = int(eff["param_id"])
+        entry["param_id"] = eff["param_id"]
     # Path-B upload drivers (see spec/docs/SCENE_UPLOAD_ENCODING.md): scene_type +
     # cmd_version pick the a3 commByte; bigEffectStr flags fetch-required.
     if eff["type"] is not None:
-        entry["scene_type"] = int(eff["type"])
+        entry["scene_type"] = eff["type"]
     if eff["cmd_version"] is not None:
-        entry["cmd_version"] = int(eff["cmd_version"])
+        entry["cmd_version"] = eff["cmd_version"]
     if eff["big_effect"]:
         entry["big_effect"] = True
     if _is_placeholder(entry):

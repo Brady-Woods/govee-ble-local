@@ -328,10 +328,10 @@ def test_main_counts_corrupt_catalog_and_write_failure(monkeypatch: pytest.Monke
     assert fs.main(["H61A8"]) == 0
     assert fs.read_catalog("H61A8", tmp_path) == {"A": {"code": 1, "param": None}}
 
-    def disk_full(path: Path, data: object) -> None:
+    def disk_full(path: Path, text: str) -> None:
         raise OSError("disk full")
 
-    monkeypatch.setattr(fs, "write_catalog", disk_full)
+    monkeypatch.setattr(fs, "_write_text", disk_full)   # every write: the store's and the tombstone's
     assert fs.main(["H61A8", "H6052"]) == 2
     assert capsys.readouterr().err.count("WRITE FAILED") == 2
 

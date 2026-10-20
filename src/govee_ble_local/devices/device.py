@@ -177,7 +177,10 @@ class Device:
         self._secret = self._checked_secret(secret)
         # set_secret() changed the secret: send its 33 b2 unlock on the live session (see set_secret).
         self._unlock_pending = False
-        self._scenes_warm = False        # bundled scene catalog loaded off the loop (update())
+        self._scenes_warm = False        # bundled scene catalog loaded off the loop (update()), and it worked
+        # The last scene catalog load's failure (its message), which the sync scene properties raise with no
+        # I/O until update() loads the catalog again off the loop (_scene_lookup).
+        self._scenes_error: str | None = None
         self._state = DeviceState(optimistic=True)
         self._segment_count: int | None = None   # runtime-reported; overrides profile.segments
         self._device_info_read = False   # device-info (mac/hw/fw/sn) read once, lazily
@@ -379,10 +382,15 @@ class Device:
 
         The first lookup (of any SKU) reads the bundled scene store from disk; :meth:`update` (and
         :meth:`set_scene_by_name`) load it in a worker thread first, so on the event loop this is
-        a lookup in memory, with no I/O at any scene set, once the device has been polled."""
+        a lookup in memory, with no I/O at any scene set, once a poll has loaded it. Where a load
+        failed (:meth:`update`'s, or a first read here), this raises that failure, a GoveeBleError,
+        with no I/O, until the next :meth:`update` loads the store again in a worker thread: a store
+        the loader keeps as unreadable or malformed, and one it does not keep, which the next lookup
+        would read again (a transient read error, a RecursionError, a store nested too deep
+        included)."""
         if Capability.SCENES not in self.capabilities:
             return []
-        return sorted(load_scenes(self._sku, scene_versions=self.scene_versions))
+        return sorted(self._scene_lookup(load_scenes))
 
     @property
     def active_scene(self) -> str | None:
@@ -392,11 +400,24 @@ class Device:
         so a hidden scene's code, or the code of an effect a listed scene does not play there, is None too:
         the app's list highlights the scene whose effect at position 0, the one it plays, has the reported
         code (``SceneListAdapter``, ``getSceneCode(0, sku)``; ``SceneDataVM.i1`` only picks the category
-        page). With no I/O once loaded, as :attr:`scene_names`."""
+        page). With no I/O once loaded, as :attr:`scene_names`, whose failure it raises too."""
         code = self._state.scene_code
         if code is None or Capability.SCENES not in self.capabilities:
             return None
-        return scene_names_by_code(self._sku, scene_versions=self.scene_versions).get(code)
+        return self._scene_lookup(scene_names_by_code).get(code)
+
+    def _scene_lookup(self, lookup: Callable[..., _T]) -> _T:
+        """``lookup(sku, scene_versions=...)`` at the scene set in force (:attr:`scene_versions`), for the
+        sync scene properties; after a failed load, a fresh GoveeBleError of its message, with no I/O (the
+        store is not read on the event loop again: :meth:`update` loads it)."""
+        if self._scenes_error is not None:
+            raise GoveeBleError(self._scenes_error)
+        versions = self.scene_versions
+        try:
+            return lookup(self._sku, scene_versions=versions)
+        except GoveeBleError as err:
+            self._scenes_warm, self._scenes_error = False, str(err)
+            raise
 
     def register_callback(self, cb: StateCallback) -> Callable[[], None]:
         """Register a state-change callback; returns a function that unregisters it.
@@ -1409,13 +1430,16 @@ class Device:
         discarded_before = self._discarded_reads
         await self._send_pending_unlock(budget)
         if not self._scenes_warm and Capability.SCENES in self.capabilities:
-            # Load the bundled scene catalog off the loop once, so the sync scene_names /
-            # active_scene properties are cache hits when read on the event loop.
-            self._scenes_warm = True
+            # Load the bundled scene catalog off the loop, so the sync scene_names / active_scene
+            # properties are cache hits when read on the event loop: once it works, a failed load again
+            # at each poll (the properties raise its failure meanwhile, with no I/O).
             try:
                 await async_load_scenes(self._sku)
             except GoveeBleError as err:
+                self._scenes_error = str(err)
                 _LOGGER.debug("%s (%s): scene catalog not loaded: %s", self.address, self._sku, err)
+            else:
+                self._scenes_warm, self._scenes_error = True, None
         state_read = False   # this poll's state read brought a live field back (_finish_read)
         if self.profile.readback == "status":
             state_read = await self._read_status(budget)

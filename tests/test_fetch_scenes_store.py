@@ -89,10 +89,26 @@ def test_a_store_the_loader_refuses_is_not_written(tmp_path: Path, monkeypatch: 
     assert (tmp_path / "store.json").read_bytes() == before
 
 
+def test_the_text_written_is_the_text_checked(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Review ST-4: store_catalog checks the text it writes, parsed as the loader parses it, not the layout in
+    memory: a text the loader refuses is not written though its layout passes."""
+    fs = _fs()
+    fs.store_catalog("H1234", {"a": {"code": 1, "param": None}}, tmp_path)
+    before = (tmp_path / "store.json").read_bytes()
+    dumps = fs._dumps
+    monkeypatch.setattr(fs, "_dumps", lambda data: dumps(data).replace('"code": 2', '"code": "2"'))
+    with pytest.raises(ValueError, match="'code' must be an int"):
+        fs.store_catalog("H1234", {"a": {"code": 2, "param": None}}, tmp_path)
+    assert (tmp_path / "store.json").read_bytes() == before
+
+
 def test_read_store_refuses_a_store_nested_too_deep(tmp_path: Path) -> None:
     (tmp_path / "store.json").write_text("[" * 100_000, encoding="utf-8")
     with pytest.raises(ValueError, match=r"store\.json is malformed"):
         _fs().read_store(tmp_path)
+    (tmp_path / "tombstone.json").write_text("[" * 100_000, encoding="utf-8")   # review ST-5: so too
+    with pytest.raises(ValueError, match=r"tombstone\.json is malformed: RecursionError"):
+        _fs().read_tombstone(tmp_path / "tombstone.json")
 
 
 def test_a_file_that_is_not_utf8_is_not_quoted(tmp_path: Path) -> None:
@@ -368,7 +384,8 @@ def test_a_per_set_entry_is_checked_as_any_entry(tmp_path: Path) -> None:
                          ({"0,1,2": {**good, "name": "a"}}, "carries a 'name' of its own"),
                          ([], "'by_set' is not an object"),
                          ({"2,1": {"code": 2, "param": None}}, "is not a sorted, comma-joined scene set"),
-                         ({0: {"code": 2, "param": None}}, "is not a sorted, comma-joined scene set"),
+                         # a key its JSON keeps (since ST-4 the text written is checked: an int 0 is "0")
+                         ({"01": {"code": 2, "param": None}}, "is not a sorted, comma-joined scene set"),
                          ({"0,1,2": dict(good)}, "no other pool entry of that name")):   # the default's own
         with pytest.raises(ValueError, match=message):
             fs.store_catalog("H1234", {"a": {**good, "by_set": bad}}, tmp_path)
@@ -449,8 +466,8 @@ def test_a_store_written_with_its_tombstone_records_its_sha256(tmp_path: Path,
     digest = _sha256(tmp_path / "store.json")
     assert fs.read_tombstone() == {"H1234": {"dropped": ["b"]}, "store_sha256": digest}
     writes: list[Path] = []
-    write = fs.write_catalog
-    monkeypatch.setattr(fs, "write_catalog", lambda path, data: (writes.append(path), write(path, data)))
+    write = fs._write_text   # every write, the store's and the tombstone's
+    monkeypatch.setattr(fs, "_write_text", lambda path, text: (writes.append(path), write(path, text)))
     fs.store_catalog("H1234", {"a": {"code": 1, "param": None}})
     assert writes == [tmp_path / "store.json"]   # the same store: the tombstone is not rewritten
     fs.store_catalog("H1234", {"a": {"code": 2, "param": None}})
@@ -621,8 +638,10 @@ def _stored(fs: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
     _library({}, {"scenceParamId": False}, b={}),
     _library({}, {"scenceParamId": 9, "sceneType": False}, b={}),
     _library({}, {"scenceParamId": 9, "sceneType": 1.5}, b={}),
+    _library({"sceneType": 2**31}, b={}),
+    _library({}, {"scenceParamId": 9, "sceneType": -2**31 - 1}, b={}),
 ], ids=["type-1.9", "type-1.5", "type-str", "every-type-str", "special-code-false", "special-id-false",
-        "special-type-false", "special-type-1.5"])
+        "special-type-false", "special-type-1.5", "type-2**31", "special-type-below-a-java-int"])
 def test_a_value_that_is_no_int_changes_no_stored_scene(then: bytes, tmp_path: Path,
                                                          monkeypatch: pytest.MonkeyPatch) -> None:
     """The F2 guard (review ingestion follow-up): a stored scene's lightEffect at a scene type of 1.9 or "1"
@@ -649,6 +668,34 @@ def test_a_code_true_is_no_code_1(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
     assert _main(fs, monkeypatch, _library({"sceneCode": 1, "sceneType": 9}, b={}))[0] == 0
     assert sorted(fs.read_catalog("H6641")) == ["b"]
     assert sorted(fs.read_tombstone()["H6641"]["retired"]) == ["a"]
+
+
+@pytest.mark.parametrize("value", [2**31, -2**31 - 1, 10**20])
+@pytest.mark.parametrize("key", _INTS)
+def test_fetch_refuses_an_int_outside_a_java_int(key: str, value: int,
+                                                 monkeypatch: pytest.MonkeyPatch) -> None:
+    """Review H2: the fields are Java ints, and Gson's nextInt fails the whole response on one outside their
+    range; the tool took it as data (a scene type of 2**31 for op type -1, a scene refused for good, so main()
+    removed and retired its name; a param id of 2**31 stored as it was). Of a lightEffect and of a
+    specialEffect entry, it fails the SKU's fetch."""
+    for body in (_library({key: value}), _library({}, {"scenceParamId": 9, key: value})):
+        with pytest.raises(ValueError, match=f"'{key}' must be an int or null, got an int outside"):
+            _fetch(monkeypatch, body)
+
+
+def test_fetch_takes_the_ends_of_a_java_int(monkeypatch: pytest.MonkeyPatch) -> None:
+    for value in (2**31 - 1, -2**31):
+        assert _fetch(monkeypatch, _library({"scenceParamId": value}))["a"]["param_id"] == value
+
+
+@pytest.mark.parametrize("skus", ["H6641", ["H6641", 5], {"H6641": 1}, 5, True])
+def test_fetch_refuses_a_support_sku_that_is_no_list_of_strings(skus: object,
+                                                                monkeypatch: pytest.MonkeyPatch) -> None:
+    """Review H5: for_sku's ``sku in supportSku`` took a string for a substring test ("H6641" in "H66411"),
+    and Gson fails the whole response on a supportSku that is not an array of strings. A null one is none."""
+    with pytest.raises(ValueError, match="'supportSku' must be a list of strings or null"):
+        _fetch(monkeypatch, _library({}, {"supportSku": skus, "scenceParamId": 9}))
+    assert _fetch(monkeypatch, _library({}, {"supportSku": None, "scenceParamId": 9}))["a"]["param_id"] == 5
 
 
 def test_fetch_takes_the_int_forms_the_saved_responses_use(monkeypatch: pytest.MonkeyPatch) -> None:

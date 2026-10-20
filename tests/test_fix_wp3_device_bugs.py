@@ -7,8 +7,11 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import errno
 import time
 from collections.abc import Callable
+from importlib import resources
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
 
@@ -16,6 +19,7 @@ import pytest
 from fake_ble import ble_device, frames_of, status_burst
 from fake_ble import frame as _frame
 
+from govee_ble_local import scenes
 from govee_ble_local.devices import _readback
 from govee_ble_local.devices import device as device_mod
 from govee_ble_local.devices.device import Device, _local_tz, make_device
@@ -437,6 +441,80 @@ def test_update_survives_a_corrupt_scene_catalog(monkeypatch: pytest.MonkeyPatch
     monkeypatch.setattr(device_mod, "async_load_scenes", broken)
     d = _dev("H6008", {0x01: [_frame(0xAA, 0x01, 0x01)]})
     assert run(d.update()).is_on is True
+
+
+class _Store:
+    """Stands in for ``scenes.resources.files(...)``: the bundled store's text, its reads counted, or
+    ``error`` raised, or ``text`` returned in its place, where set."""
+
+    def __init__(self) -> None:
+        self.real = (resources.files(scenes) / "store.json").read_text(encoding="utf-8")
+        self.reads = 0
+        self.error: BaseException | None = None
+        self.text: str | None = None
+
+    def __truediv__(self, _name: str) -> _Store:
+        return self
+
+    def read_text(self, encoding: str | None = None) -> str:
+        self.reads += 1
+        if self.error is not None:
+            raise self.error
+        return self.text or self.real
+
+
+@pytest.mark.parametrize("fail", ["emfile", "recursion", "deep"])
+def test_a_failed_scene_load_is_raised_with_no_io_and_update_loads_it_again(
+        fail: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Review H1: update() marked the catalog loaded though its load failed, so after a failure the loader
+    does not keep (a transient read error, a RecursionError, a store nested too deep) every sync scene_names
+    or active_scene read re-read the store on the event loop. They raise the last failure, a GoveeBleError,
+    with no I/O now, and the next update() loads the store again off the loop (async_load_scenes)."""
+    files, loads = _Store(), []
+    if fail == "deep":
+        files.text = "[" * 100_000
+    else:
+        files.error = (OSError(errno.EMFILE, "Too many open files") if fail == "emfile"
+                       else RecursionError("maximum recursion depth exceeded"))
+    real = device_mod.async_load_scenes
+
+    async def spy(sku: str) -> Any:
+        loads.append(sku)
+        return await real(sku)
+
+    monkeypatch.setattr(device_mod, "async_load_scenes", spy)
+    monkeypatch.setattr(scenes, "resources", SimpleNamespace(files=lambda _pkg: files))
+    scenes._store.cache_clear()
+    try:
+        d = _dev("H6008", {0x01: [_frame(0xAA, 0x01, 0x01)]})
+        run(d.update())
+        assert loads == ["H6008"] and files.reads == 1
+        d._state.scene_code = 1
+        for _ in range(3):
+            with pytest.raises(GoveeBleError, match="bundled scene store"):
+                _ = d.scene_names
+            with pytest.raises(GoveeBleError, match="bundled scene store"):
+                _ = d.active_scene
+        assert files.reads == 1   # no I/O
+        files.error = files.text = None
+        run(d.update())
+        assert loads == ["H6008"] * 2 and files.reads == 2
+        assert d.scene_names == sorted(load_scenes("H6008"))
+        run(d.update())
+        assert loads == ["H6008"] * 2 and files.reads == 2   # loaded: once
+        # a first read on a device that was never polled fails so too, and the next update() loads again
+        scenes._store.cache_clear()
+        files.error = OSError(errno.EMFILE, "Too many open files")
+        other = _dev("H6008", {0x01: [_frame(0xAA, 0x01, 0x01)]})
+        for _ in range(3):
+            with pytest.raises(GoveeBleError, match="Too many open files"):
+                _ = other.scene_names
+        assert files.reads == 3
+        files.error = None
+        run(other.update())
+        assert other.scene_names == d.scene_names and files.reads == 4
+    finally:
+        scenes._store.cache_clear()
 
 
 def test_active_scene_needs_the_scenes_capability() -> None:

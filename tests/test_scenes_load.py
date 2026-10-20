@@ -9,6 +9,7 @@ import hashlib
 import itertools
 import json
 import lzma
+import sys
 import threading
 import time
 import traceback
@@ -318,7 +319,10 @@ def test_the_first_failure_is_kept(counted):
         scene_names_by_code("H6006")
     assert files.reads == 1                          # a package file does not heal: it is not read again
     assert len({id(e) for e in raised}) == len(raised)   # each lookup's own error: no raise changes another's
-    assert all(str(e) == str(raised[0]) and e.__cause__ is error for e in raised)
+    assert all(str(e) == str(raised[0]) for e in raised)
+    assert "PermissionError: [Errno 13] Permission denied" in str(raised[0])   # the cause's type and text
+    assert raised[0].__cause__ is error                    # the lookup that read the store: its real cause
+    assert all(e.__cause__ is None and e.__suppress_context__ for e in raised[1:])   # only the message kept
     depth, tb = 0, raised[-1].__traceback__
     while tb is not None:
         depth, tb = depth + 1, tb.tb_next
@@ -326,9 +330,9 @@ def test_the_first_failure_is_kept(counted):
 
 
 @pytest.mark.parametrize(("store", "message"), [
-    (_bad([{**_A, "param": "!!"}]), "'param' is not valid base64"),   # a ValueError from a binascii.Error
-    (PermissionError(13, "Permission denied"), "Permission denied"),
-])
+    (lambda: _bad([{**_A, "param": "!!"}]), "'param' is not valid base64"),   # a ValueError: binascii.Error
+    (lambda: PermissionError(13, "Permission denied"), "Permission denied"),
+], ids=["base64", "permission"])
 def test_the_kept_failure_keeps_no_frame_alive(counted, store, message):
     class Local:
         pass
@@ -339,15 +343,13 @@ def test_the_kept_failure_keeps_no_frame_alive(counted, store, message):
             load_scenes("H1234")
         return weakref.ref(local)
 
-    counted(store)
+    files = counted(store())
     alive = first_lookup()
+    files._store = None   # the fake's own exception, which it raised: a real read raises a fresh one
     gc.collect()
     assert alive() is None   # a kept traceback's frames led back to the first lookup's caller, and its locals
-    chain, link = [], scenes._store()
-    while link is not None:
-        chain.append(link)
-        link = link.__cause__ or link.__context__
-    assert len(chain) >= 2 and all(e.__traceback__ is None and str(e) for e in chain)   # every message stays
+    kept = scenes._store()
+    assert isinstance(kept, scenes._Failure) and kept.cause is None and message in kept.message   # only it
 
 
 @pytest.mark.parametrize("store", [
@@ -371,8 +373,9 @@ def test_the_kept_failure_keeps_not_the_callers_exception(counted, store):
             assert handled.__traceback__ is not None   # the caller's, as the caller has it
             return weakref.ref(handled)
 
-    counted(store())
+    files = counted(store())
     alive = first_lookup()
+    files._store = None   # the fake's own exception, raised while the caller handled its own: not the store's
     gc.collect()
     assert alive() is None   # nor what it references, kept for the life of the process
     with pytest.raises(GoveeBleError) as ei:
@@ -384,6 +387,7 @@ def test_the_kept_failure_keeps_not_the_callers_exception(counted, store):
     RuntimeError("File 'x' is encrypted, password required for extraction"),   # a member flagged encrypted
     NotImplementedError("That compression method is not supported"),   # an unknown method, flag bit 5 or 6
     lzma.LZMAError("Corrupt input data"),   # a damaged LZMA member
+    EOFError(),   # review ST-2: a member that runs past the archive's end (overlapping entries at one offset)
 ])
 def test_a_corrupt_zip_member_is_unreadable(counted, error):
     # a store.json member of a zipped install: zipfile raises these, so the read is a library error
@@ -394,10 +398,193 @@ def test_a_corrupt_zip_member_is_unreadable(counted, error):
     assert files.reads == 1   # kept, not raised (functools.cache keeps no raise: each lookup read again)
 
 
+def test_an_error_with_no_text_is_named_by_its_type(counted):
+    """Review H5: an EOFError has no text, so the message ended "EOFError: " with nothing after it."""
+    counted(EOFError())
+    with pytest.raises(GoveeBleError) as ei:
+        load_scenes("H1234")
+    assert str(ei.value) == "the bundled scene store could not be read: EOFError"
+
+
+def test_one_of_first_lookups_made_at_once_takes_the_cause(counted, monkeypatch):
+    """Review H3 (L15): of first lookups made at once over a store that fails, only the one that read it is
+    raised from its cause (it takes the cause out of the cache under _STORE_LOCK); every other one from None.
+    The kept failure's cause is slow to take here, so a take outside the lock would hand it to more."""
+    class SlowFailure:
+        def __init__(self, message, cause):
+            self.message, self._cause = message, cause
+
+        @property
+        def cause(self):
+            taken = self._cause
+            time.sleep(0.01)   # another taker meanwhile finds it still there
+            return taken
+
+        @cause.setter
+        def cause(self, value):
+            self._cause = value
+
+    monkeypatch.setattr(scenes, "_Failure", SlowFailure)
+    files = counted(PermissionError(13, "Permission denied"))
+    files.delay = 0.05
+    barrier = threading.Barrier(8)
+
+    def lookup(_i):
+        barrier.wait()
+        try:
+            load_scenes("H1234")
+        except GoveeBleError as err:
+            return err
+        return None
+
+    with ThreadPoolExecutor(8) as pool:
+        raised = list(pool.map(lookup, range(8)))
+    assert files.reads == 1 and all(isinstance(e, GoveeBleError) for e in raised)
+    assert sum(e.__cause__ is not None for e in raised) == 1
+
+
+def test_a_callers_use_of_the_error_reaches_no_later_lookup(counted):
+    """Review ST-3: the kept failure shared one cause object, so a caller's ``raise err.__cause__`` (or a note
+    added to it) put its frames into that cause for the life of the process, and into every later lookup's
+    error. Only the message is kept now: a later lookup's error is a fresh one, raised from None."""
+    class Local:
+        pass
+
+    alive = []
+
+    def unwrapping_caller():
+        local = Local()
+        alive.append(weakref.ref(local))
+        try:
+            load_scenes("H1234")
+        except GoveeBleError as err:
+            assert err.__cause__ is not None   # the lookup that read the store: from the real cause
+            err.__cause__.add_note("the first caller's note")
+            raise err.__cause__  # noqa: B904 - an unwrap: the cause takes this frame into its traceback
+
+    counted(_bad([{**_A, "param": "!!"}]))
+    with pytest.raises(ValueError):
+        unwrapping_caller()
+    gc.collect()
+    assert alive[0]() is None   # the cache kept the cause, and with it this caller's frames
+    with pytest.raises(GoveeBleError, match="'param' is not valid base64") as ei:
+        load_scenes("H6006")
+    shown = "".join(traceback.format_exception(ei.value))
+    assert ei.value.__cause__ is None and "unwrapping_caller" not in shown
+    assert "the first caller's note" not in shown
+
+
+def _depth() -> int:
+    frame, depth = sys._getframe(), 0
+    while frame is not None:
+        frame, depth = frame.f_back, depth + 1
+    return depth
+
+
+def test_a_recursion_error_is_not_kept(counted, monkeypatch):
+    """Review: a RecursionError is a RuntimeError, so the read kept it as an unreadable store (and the check
+    as a malformed one), and a first lookup made near the recursion limit left the store unreadable for good.
+    It is raised as a GoveeBleError and not kept, in both, so the next lookup reads the store again."""
+    files = counted(RecursionError("maximum recursion depth exceeded"))
+    with pytest.raises(GoveeBleError, match="could not be read: RecursionError") as ei:
+        load_scenes("H1234")
+    assert isinstance(ei.value.__cause__, RecursionError)   # review H3 (L12): raised from it
+    files._store = scene_store("H1234", {"a": {"code": 3}})
+    assert load_scenes("H1234") == {"a": scenes.Scene("a", 3, None)} and files.reads == 2
+    scenes._store.cache_clear()
+    check = scenes._catalogs
+    calls = []
+
+    def once(store):
+        calls.append(1)
+        if len(calls) == 1:
+            raise RecursionError("maximum recursion depth exceeded")
+        return check(store)
+
+    monkeypatch.setattr(scenes, "_catalogs", once)
+    with pytest.raises(GoveeBleError, match="is malformed: RecursionError") as ei:
+        load_scenes("H1234")
+    assert isinstance(ei.value.__cause__, RecursionError)
+    assert load_scenes("H1234") == {"a": scenes.Scene("a", 3, None)} and files.reads == 4
+
+
+def test_a_recursion_error_of_the_call_to_the_store_is_not_kept(counted, monkeypatch):
+    """Review H4: a lookup a frame from the recursion limit raised its RecursionError from the call to _store
+    itself, before _store's try blocks, so it escaped as itself, past a caller's ``except GoveeBleError``
+    (Home Assistant's setup). It is raised as a GoveeBleError from it, and not kept."""
+    files = counted(scene_store("H1234", {"a": {"code": 3}}))
+    real, calls = scenes._store, []
+
+    def store():
+        calls.append(1)
+        if len(calls) == 1:
+            raise RecursionError("maximum recursion depth exceeded")
+        return real()
+
+    def at_the_limit(_err):   # the handler runs at the limit too: a Python call there would raise again
+        raise RecursionError("maximum recursion depth exceeded")
+
+    store.cache_clear = real.cache_clear   # type: ignore[attr-defined]
+    monkeypatch.setattr(scenes, "_store", store)
+    monkeypatch.setattr(scenes, "_named", at_the_limit)   # as the read's handler calls it
+    with pytest.raises(GoveeBleError, match="could not be read: RecursionError: maximum recursion") as ei:
+        load_scenes("H1234")
+    assert isinstance(ei.value.__cause__, RecursionError)
+    assert load_scenes("H1234") == {"a": scenes.Scene("a", 3, None)} and files.reads == 1
+
+
+def test_a_deep_first_lookup_leaves_the_store_readable(counted):
+    """Review: a first lookup made a few frames short of the recursion limit, then a shallow one, which reads
+    the store. Each depth from 1 to 79 frames short of the limit is tried on a fresh cache."""
+    counted(scene_store("H1234", {"a": {"code": 3}}))
+    limit, failed = sys.getrecursionlimit(), []
+
+    def deep(short):
+        if _depth() < limit - short:
+            return deep(short)
+        try:
+            load_scenes("H1234")
+        except (GoveeBleError, RecursionError) as err:
+            failed.append(err)
+        return None
+
+    for short in range(1, 80):
+        scenes._store.cache_clear()
+        deep(short)
+        assert load_scenes("H1234") == {"a": scenes.Scene("a", 3, None)}, short
+    assert any(isinstance(e, GoveeBleError) and isinstance(e.__cause__, RecursionError) for e in failed)
+
+
+def test_a_lookup_the_first_read_makes_on_its_thread_returns(counted, monkeypatch):
+    """Review ST-1: _STORE_LOCK was a plain Lock held across the first read, so a lookup that read made on
+    its own thread (a signal handler, a finalizer or a trace hook run inside it) deadlocked that thread and
+    every later lookup. A re-entrant lookup from inside the first read (here from _catalogs) returns."""
+    files = counted(scene_store("H1234", {"a": {"code": 3}}))
+    # a fresh lock of its kind, held by no other test (3.11 and 3.12 can't create a _thread.lock by its type)
+    kind = threading.RLock if isinstance(scenes._STORE_LOCK, type(threading.RLock())) else threading.Lock
+    monkeypatch.setattr(scenes, "_STORE_LOCK", kind())
+    check, entered, inner, outer = scenes._catalogs, [], [], []
+
+    def reentrant(store):
+        if not entered:
+            entered.append(True)
+            inner.append(load_scenes("H1234"))   # the same thread, the first read under way
+        return check(store)
+
+    monkeypatch.setattr(scenes, "_catalogs", reentrant)
+    thread = threading.Thread(target=lambda: outer.append(load_scenes("H1234")), daemon=True)
+    thread.start()
+    thread.join(10)
+    assert not thread.is_alive(), "the lookup inside the first read deadlocked _STORE_LOCK"
+    assert inner == outer == [{"a": scenes.Scene("a", 3, None)}] and files.reads == 2
+    assert load_scenes("H6006") == {} and files.reads == 2   # read and kept: later lookups read nothing
+
+
 def test_a_read_error_of_the_process_is_not_kept(counted):
     files = counted(OSError(errno.EMFILE, "Too many open files"))
-    with pytest.raises(GoveeBleError, match=r"could not be read: OSError: .*Too many open files"):
+    with pytest.raises(GoveeBleError, match=r"could not be read: OSError: .*Too many open files") as ei:
         load_scenes("H1234")
+    assert isinstance(ei.value.__cause__, OSError) and ei.value.__cause__.errno == errno.EMFILE   # H3 (L12)
     files._store = scene_store("H1234", {"a": {"code": 3}})   # the process has file descriptors again
     assert load_scenes("H1234") == {"a": scenes.Scene("a", 3, None)} and files.reads == 2
 
@@ -406,7 +593,9 @@ async def test_every_lookup_at_every_set_goes_through_the_one_catalog_call(monke
     """Every scene lookup, at every scene set, is one call of ``scenes._catalog(sku)``, which its callers pick
     the set from: hass-govee-ble-local's tests make the store unreadable by patching that call with a
     one-argument stand-in that raises (its broken_scene_store fixture), so a lookup must raise the stand-in's
-    GoveeBleError, never a TypeError of a second argument."""
+    GoveeBleError, never a TypeError of a second argument. A device's sync scene properties make that call
+    only until a lookup fails: then they raise its failure with no call (the hardening follow-up's H1), so
+    active_scene is read on a device of its own."""
     called: list[str] = []
 
     def unreadable(sku):
@@ -415,11 +604,12 @@ async def test_every_lookup_at_every_set_goes_through_the_one_catalog_call(monke
 
     monkeypatch.setattr(scenes, "_catalog", unreadable)
     dev = make_device(ble_device("AA:BB:CC:DD:EE:5E", "H61A8"), "H61A8")
-    assert dev is not None
-    dev._state.scene_code = 110
+    other = make_device(ble_device("AA:BB:CC:DD:EE:5F", "H61A8"), "H61A8")
+    assert dev is not None and other is not None
+    dev._state.scene_code = other._state.scene_code = 110
     lookups = [lambda: load_scenes("H61A8"), lambda: load_scenes("H61A8", scene_versions={0, 1, 2}),
                lambda: scene_names_by_code("H61A8", scene_versions=()), lambda: dev.scene_names,
-               lambda: dev.active_scene]
+               lambda: other.active_scene]
     for lookup in lookups:
         with pytest.raises(GoveeBleError, match="could not be read"):
             lookup()
@@ -427,6 +617,10 @@ async def test_every_lookup_at_every_set_goes_through_the_one_catalog_call(monke
                  lambda: dev.set_scene_by_name("Halloween")):
         with pytest.raises(GoveeBleError, match="could not be read"):
             await coro()
+    assert called == ["H61A8"] * 7
+    for prop in (lambda: dev.active_scene, lambda: other.scene_names):   # after a failed lookup: no call
+        with pytest.raises(GoveeBleError, match="could not be read"):
+            prop()
     assert called == ["H61A8"] * 7
 
 

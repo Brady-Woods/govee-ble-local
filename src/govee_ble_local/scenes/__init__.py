@@ -30,7 +30,6 @@ import functools
 import itertools
 import json
 import re
-import sys
 import threading
 import zipfile
 import zlib
@@ -156,91 +155,99 @@ _MAX_CODE: Final = 0xFFFF
 # Read errors of the process's state, not of the package file (too many open files, out of memory, try
 # again): not kept, so the next lookup reads the store again.
 _TRANSIENT: Final = frozenset({errno.EMFILE, errno.ENFILE, errno.ENOMEM, errno.EAGAIN})
-# Held across the first lookup's read, so lookups made at once read the store once.
-_STORE_LOCK: Final = threading.Lock()
+# Held across the first lookup's read, so lookups made at once read the store once. Re-entrant: a lookup the
+# first read makes on its own thread (a signal handler, a finalizer or a trace hook run inside it) reads the
+# store itself, where a plain Lock would deadlock that thread, every later lookup and the event loop.
+_STORE_LOCK: Final = threading.RLock()
 
 
 class _MalformedSceneParam(GoveeBleInvalidValue):
     """A scene's bundled/cloud effect blob is not valid base64."""
 
 
+@dataclass
+class _Failure:
+    """The store's first failure as :func:`_store`'s cache keeps it: its ``message``, which names the cause's
+    type and text. ``cause`` is the real cause only until the lookup that read the store takes it out
+    (:func:`_catalog`), so the cache keeps no exception: no traceback, no frame of the first lookup or its
+    caller, nothing a caller did to the error it was given (``raise err.__cause__`` adds its frames to that
+    exception), and not the exception the first lookup's caller was handling."""
+
+    message: str
+    cause: BaseException | None
+
+
 @functools.cache
-def _store() -> Mapping[str, Mapping[str | None, _Catalog]] | GoveeBleError:
+def _store() -> Mapping[str, Mapping[str | None, _Catalog]] | _Failure:
     """Every SKU's catalogs in the bundled store, ``{SKU: {key: catalog}}`` (:func:`_catalogs`: None the
     SKU's whole catalog, each ``by_set`` key the one at that set), read-only: the store is read and checked
     once, on the first lookup of any SKU, and every catalog of every set is built then.
 
-    A store that is missing, unreadable or malformed gives the GoveeBleError that says so, returned, not
-    raised, so the cache keeps this first failure: :func:`_catalog` raises a GoveeBleError of it (its message
-    and cause) for every SKU, one the store holds no catalog for too, and the store is not read again (a
-    package file changes only with a reinstall). A read error of the process's state (:data:`_TRANSIENT`:
-    too many open files, out of memory) is raised, not kept, so the next lookup reads the store again. A
-    test that swaps the store calls ``_store.cache_clear()`` before and after. The kept failure holds no
-    traceback, and neither does any exception of its chain (``__cause__`` / ``__context__``): a traceback's
-    frames lead back through the first lookup to its caller, whose frames and locals the cache would keep
-    alive for the life of the process; every message stays (:func:`_failure`). Nor does its chain hold the
-    exception the first lookup's caller was handling, which is the caller's, not the store's."""
-    outer = sys.exc_info()[1]   # what the first lookup's caller is handling: not the store's, never kept
+    A store that is missing, unreadable or malformed gives a :class:`_Failure` of the message that says so,
+    returned, not raised, so the cache keeps this first failure: :func:`_catalog` raises a GoveeBleError of it
+    for every SKU, one the store holds no catalog for too, and the store is not read again (a package file
+    changes only with a reinstall). Only the message is kept: the lookup that read the store raises from the
+    real cause, every later one from None. A read error of the process's state (:data:`_TRANSIENT`: too many
+    open files, out of memory) and a RecursionError (a first lookup made near the recursion limit, or a store
+    nested too deep for json.loads) are raised as a GoveeBleError, not kept, so the next lookup reads the
+    store again. A test that swaps the store calls ``_store.cache_clear()`` before and after."""
     try:
         # This module is the package's __init__, so __name__ is the package that holds the JSON.
         raw = (resources.files(__name__) / _STORE).read_text(encoding="utf-8")
-    # RuntimeError: a zip member flagged encrypted, or one of an unknown method or flag (NotImplementedError)
-    except (OSError, UnicodeDecodeError, ModuleNotFoundError, zipfile.BadZipFile, zlib.error, _LZMAError,
-            RuntimeError) as err:
+    # RuntimeError: a zip member flagged encrypted, or one of an unknown method or flag (NotImplementedError);
+    # EOFError: a member that runs past the archive's end (entries that overlap at one offset, of which
+    # zipfile only warns)
+    except (OSError, UnicodeDecodeError, ModuleNotFoundError, EOFError, zipfile.BadZipFile, zlib.error,
+            _LZMAError, RuntimeError) as err:
         # The store ships with the package: one that is missing or can't be read (permissions, I/O, not UTF-8,
         # a corrupt member of a zipped install) is a library error like a malformed one, so the scene
         # properties and Device.update() raise only GoveeBleError. The cause is quoted by its str: the repr
         # of a UnicodeDecodeError holds the whole store, every blob in it.
-        message = f"the bundled scene store could not be read: {type(err).__name__}: {err}"
-        if isinstance(err, OSError) and err.errno in _TRANSIENT:
+        message = f"the bundled scene store could not be read: {_named(err)}"
+        if isinstance(err, RecursionError) or (isinstance(err, OSError) and err.errno in _TRANSIENT):
             # raised, so not kept (functools.cache keeps no raise): the next lookup reads again
             raise GoveeBleError(message) from err
-        return _failure(message, err, outer)
+        return _Failure(message, err)
     try:
         catalogs = _catalogs(json.loads(raw))
     except (ValueError, RecursionError) as err:
         # _catalogs raises only ValueError (binascii.Error, bad base64, is one; its repr never quotes the
-        # blob); json.loads raises RecursionError on a store nested too deep.
-        return _failure(f"the bundled scene store is malformed: {err!r}", err, outer)
+        # blob); json.loads raises RecursionError on a store nested too deep, and any step near the limit
+        message = f"the bundled scene store is malformed: {err!r}"
+        if isinstance(err, RecursionError):
+            raise GoveeBleError(message) from err   # not kept, as above
+        return _Failure(message, err)
     return MappingProxyType({sku: MappingProxyType(sets) for sku, sets in catalogs.items()})
 
 
-def _failure(message: str, cause: BaseException, outer: BaseException | None) -> GoveeBleError:
-    """The GoveeBleError :func:`_store` keeps: of ``message``, caused by ``cause`` as ``raise ... from cause``
-    would chain it, with the traceback of every exception of the chain (``cause``, its ``__cause__`` and
-    ``__context__``, theirs, ...) dropped, so it keeps no frame alive; the messages stay. ``outer`` is the
-    exception the first lookup's caller was handling (None if none), which a link raised while it was handled
-    took in as its ``__context__``: that link is cut, so the kept failure neither holds it (nor what it
-    references) nor shows it in a later lookup's log, and its traceback is left to the caller handling it."""
-    error = GoveeBleError(message)
-    error.__cause__ = cause
-    chain: list[BaseException | None] = [cause]
-    seen: set[int] = set()
-    while chain:
-        link = chain.pop()
-        if link is not None and id(link) not in seen:
-            seen.add(id(link))
-            link.__traceback__ = None
-            if outer is not None and link.__context__ is outer:
-                link.__context__ = None   # the caller's own exception: left as it is, and not kept
-            chain += (link.__cause__, link.__context__)
-    return error
+def _named(err: BaseException) -> str:
+    """``err`` as a message quotes it: its type's name, then its text where it has one (an EOFError has
+    none)."""
+    text = str(err)
+    return f"{type(err).__name__}: {text}" if text else type(err).__name__
 
 
 def _catalog(sku: str) -> Mapping[str | None, _Catalog]:
     """One (already validated, upper-case) SKU's catalogs from :func:`_store`, read-only, by ``by_set`` key
     (:func:`_set_key`; None its whole catalog): :data:`_NO_SETS` where the store holds none for the SKU;
-    where the store failed, a GoveeBleError of that first failure (its message and cause), every time. Every
-    scene lookup, at every set, goes through this one call; its callers pick the set (the whole catalog
-    where the store records nothing at it). A plain lookup once the store is read: no I/O.
-    :data:`_STORE_LOCK` makes first lookups made at once (one per device's setup) read the store once:
-    functools.cache has no lock of its own, so each lookup that missed it would read and check it."""
+    where the store failed, a fresh GoveeBleError of that first failure's message every time, raised from
+    its real cause by the lookup that read the store (which takes the cause out of the cache) and from None
+    by every later one. Every scene lookup, at every set, goes through this one call; its callers pick the
+    set (the whole catalog where the store records nothing at it). A plain lookup once the store is read: no
+    I/O. :data:`_STORE_LOCK` makes first lookups made at once (one per device's setup) read the store once:
+    functools.cache has no lock of its own, so each lookup that missed it would read and check it. A
+    RecursionError of the call to _store itself (a lookup a frame from the recursion limit, before its try
+    blocks) is raised as a GoveeBleError too, not kept."""
     with _STORE_LOCK:
-        store = _store()
-    if isinstance(store, GoveeBleError):
-        # A fresh error each time: one shared instance would carry each raise's traceback and the exception
-        # its caller was handling to every other caller, and keep the last caller's frames alive.
-        raise GoveeBleError(*store.args) from store.__cause__
+        try:
+            store = _store()
+        except RecursionError as err:   # no call of a Python function here: this frame is at the limit
+            raise GoveeBleError(f"the bundled scene store could not be read: RecursionError: {err}") from err
+        cause = None
+        if isinstance(store, _Failure):
+            cause, store.cause = store.cause, None
+    if isinstance(store, _Failure):
+        raise GoveeBleError(store.message) from cause
     return store.get(sku, _NO_SETS)
 
 
@@ -437,9 +444,13 @@ def load_scenes(sku: str, *, scene_versions: Collection[int] | None = None) -> d
     :func:`async_load_scenes` (or call this from an executor) for that first call. Raises
     GoveeBleInvalidValue for a malformed SKU or a ``scene_versions`` that is not a collection of
     non-negative ints, GoveeBleError for a missing, corrupt or unreadable store: a GoveeBleError of the
-    first such failure (its message and cause), raised by every later call with no second read, except a
-    read error of the process's state (too many open files, out of memory), after which the next call
-    reads the store again.
+    first such failure's message, from its cause where this call read the store, and from None in every
+    later call, with no second read, except a read error of the process's state (too many open files, out
+    of memory) or a RecursionError (a first call made near the recursion limit, or a store nested too deep
+    for json.loads), which are not kept: the next call reads the store again, and so does every call until
+    one works (a store nested too deep never does). A device's sync scene properties
+    (``Device.scene_names``, ``Device.active_scene``) don't read it again after such a failure: they raise
+    it, and the device's next ``update()`` loads the store again in a worker thread.
     """
     key = _catalog_key(sku)
     at = None if scene_versions is None else _set_key(scene_versions)
