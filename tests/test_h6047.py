@@ -64,6 +64,7 @@ def _dev(replies: dict[int, Any] | None = None) -> Device:
     d._conn.send_many = AsyncMock(side_effect=send_many)  # type: ignore[method-assign]
     d._conn.send_unacked = AsyncMock(side_effect=unacked_via(send_many))  # type: ignore[method-assign]
     d._conn.query = AsyncMock(side_effect=query)  # type: ignore[method-assign]
+    d._conn.connect = AsyncMock()  # type: ignore[method-assign]
     d._sent = sent  # type: ignore[attr-defined]
     d._queried = queried  # type: ignore[attr-defined]
     return d

@@ -85,6 +85,12 @@ BURST_IDLE_GAP: Final = 0.6
 # this long: Govee refreshes the broadcast on/off byte lazily, so a stale advertisement
 # arriving right after a toggle would otherwise flip the state straight back.
 ADVERT_SUPPRESS_SECONDS: Final = 15.0
+# How long a DeviceState.zone_power_confirmed stamp counts as fresh where the library itself relies on one: a
+# bar-switch device's 33 36 carries both bars, so Device._set_bar_power reads them (aa 36) before it unless
+# the other bar was confirmed at most this long ago. The app builds its 33 36 from bars its aa 36 heartbeat
+# keeps current (h6047 NewDetailVm.D5 / A3). 120 s is the bound the Home Assistant integration uses for its
+# own "zone confirmed lit" check.
+ZONE_POWER_FRESH_SECONDS: Final = 120.0
 
 # --- Read/query timing and framing ----------------------------------------
 # Overall timeout for the 0xAC status-burst read (Device._query_status).

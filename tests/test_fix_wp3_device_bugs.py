@@ -68,6 +68,7 @@ def _dev(sku: str, replies: Replies | None = None, **profile_overrides: Any) -> 
     d._conn.send_many = AsyncMock(side_effect=send_many)  # type: ignore[method-assign]
     d._conn.send_unacked = AsyncMock(side_effect=send_unacked)  # type: ignore[method-assign]
     d._conn.query = AsyncMock(side_effect=query)  # type: ignore[method-assign]
+    d._conn.connect = AsyncMock()  # type: ignore[method-assign]
     d._sent = sent  # type: ignore[attr-defined]
     d._queried = queried  # type: ignore[attr-defined]
     d._unacked = unacked  # type: ignore[attr-defined]
@@ -160,7 +161,10 @@ def test_h6047_advert_off_marks_both_bars_off() -> None:
     assert d.ingest_advertisement(_adv(0)) is True
     assert d.state.zone_power == {0: False, 1: False}
     run(d.set_zone_power("left", True))
-    assert _queried(d) == [] and _sent(d)[0][:4].hex() == "33360100"   # the right bar stays off
+    # The advertisement vouches for no bar, so the write reads the bars first (ZONE_POWER_FRESH_SECONDS);
+    # unanswered, it keeps the held one.
+    assert [q[:2].hex() for q in _queried(d)] == ["aa36"]
+    assert _sent(d)[0][:4].hex() == "33360100"   # the right bar stays off
 
 
 def test_h6047_advert_on_with_both_bars_off_forgets_them() -> None:

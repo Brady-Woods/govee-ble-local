@@ -9,7 +9,7 @@ be exercised with a bare ``DeviceState``.
 from __future__ import annotations
 
 import time
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Collection, Iterable, Mapping, Sequence
 from typing import Any
 
 from ..models import DeviceState, Segment
@@ -147,13 +147,19 @@ def unconfirm_contradicted(state: DeviceState, power: Mapping[int, bool]) -> Non
     unconfirm_zones(state, [i for i, on in power.items() if state.zone_power.get(i) != on])
 
 
+def confirmed_within(state: DeviceState, zone: int, seconds: float) -> bool:
+    """Whether ``zone``'s power was learned from the device at most ``seconds`` ago: it has a
+    ``zone_power_confirmed`` stamp, read against the same ``time.monotonic()`` clock that stamps it."""
+    stamp = state.zone_power_confirmed.get(zone)
+    return stamp is not None and time.monotonic() - stamp <= seconds
+
+
 # -- writes -----------------------------------------------------------------
 def apply_power(profile: DeviceProfile, state: DeviceState, on: bool, *,
                 confirmed: Iterable[int] = ()) -> None:
     """Whole-device power, and the zones it drives. ``confirmed``: the zones the acked power write's
     frames set (``Device._power_zones``), stamped as learned from the device. Empty (the default) for the
-    power a scene activation implies (:func:`apply_scene`), so a zone whose value that changes loses its
-    stamp."""
+    power a scene activation implies (:func:`apply_scene`, which then drops every zone's stamp)."""
     state.is_on = on
     if profile.bar_switch and on:
         # 33 01 on: the app does not say which bars light (it learns that from the next aa 36
@@ -212,10 +218,16 @@ def apply_kelvin(profile: DeviceProfile, state: DeviceState, kelvin: int) -> Non
 
 def apply_scene(profile: DeviceProfile, state: DeviceState, code: int) -> None:
     """A ``33 05 04`` scene activation: the device is on, in that scene, with no solid colour. Its zones'
-    power is assumed (:func:`apply_power` with no zone confirmed), never learned: a zone it turns on loses
-    a stamp of "off"."""
+    power is assumed (:func:`apply_power` with no zone confirmed), never learned, and every zone loses its
+    stamp, one whose held power stays as it was too: what the activation does to the zone flags is not
+    traced (H60A6: the dispatcher's case 5 hands it to FUN_9b025124 whatever the main switch
+    (@0x9b026b80), then lights the main switch and both zones if it was off (@0x9b026b92-0x9b026ba6); what
+    FUN_9b025124 does to the zone flags with the switch on is not traced; H6047: the 0x05 handler
+    0x01005510 is traced only as writing scene and segment data), so it vouches for none, as a failed one
+    does (``Device._commit``)."""
     state.scene_code = code
     apply_power(profile, state, True)
+    unconfirm_zones(state)
     state.rgb_color = None
     state.color_temp_kelvin = None
     apply_zone_kelvin(profile, state, {0: None, 1: None})
@@ -296,13 +308,23 @@ def apply_bar_switch(state: DeviceState, bars: tuple[bool, bool]) -> None:
 
 def apply_status(
     profile: DeviceProfile, state: DeviceState, st: reassemble.StatusReply,
-    pact: tuple[int, int] | None = None,
+    pact: tuple[int, int] | None = None, *, unsettled: Collection[int] = (),
 ) -> tuple[bool, bool]:
     """Fold a 0xAC status burst into state (its brightness read with the range in force for the advertised
     ``pact``). Returns ``(applied, power_read)``: whether a live field
     came back (state is then no longer optimistic) and whether on/off did (the advertised on/off is
     then suppressed for a while; ``Device._finish_read``). The static device-info fields are merged
-    but count as neither, and an empty burst sets neither."""
+    but count as neither, and an empty burst sets neither.
+
+    TLV 0x30 stamps each zone it carries (``zone_power_confirmed``), except:
+
+    - a zone it reports lit while the same burst's TLV 0x01 does not say on: the device says it is off
+      (H60A6: TLV 0x01 is the main switch flag), so the zone's flag does not vouch that it is lit (an "off"
+      still stamps);
+    - a zone of ``unsettled``: the reply may predate a power write the device had not applied yet
+      (``Device._read_status``).
+
+    Such a zone takes the reported power, as before, and loses the stamp it had."""
     applied = power_read = False
     if st.is_on is not None:
         state.is_on = st.is_on
@@ -311,7 +333,10 @@ def apply_status(
         state.brightness = brightness_pct(profile, st.brightness, pact)
         applied = True
     if st.zone_power:
-        _set_zone_power(state, st.zone_power, st.zone_power)   # TLV 0x30: each zone it carries
+        vouched = [i for i, on in st.zone_power.items()
+                   if (st.is_on is True or not on) and i not in unsettled]
+        _set_zone_power(state, st.zone_power, vouched)   # TLV 0x30: each zone it carries and vouches for
+        unconfirm_zones(state, [i for i in st.zone_power if i not in vouched])
         applied = True
     if st.segments:
         # A burst whose tail was lost carries only a prefix of the segments;

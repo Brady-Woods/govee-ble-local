@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from collections.abc import Callable, Sequence
 from typing import Any
 
@@ -122,6 +123,8 @@ async def test_bar_switch_read_does_not_overwrite_set_zone_power() -> None:
     g = Gate(_cmd(0x36), [_reply(0xAA, 0x36, 0x01, 0x01)])     # stale: both bars on
     d = _dev("H6047", gates=[g])
     d.state.zone_power = {0: True, 1: True}
+    now = time.monotonic()   # both bars confirmed just now: the toggle writes without an aa 36 read first
+    d.state.zone_power_confirmed = {0: now, 1: now}
     await _poll_during(d, g, lambda: d.set_zone_power("left", False))
     assert d.state.zone_power == {0: False, 1: True}
 

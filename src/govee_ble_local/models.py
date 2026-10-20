@@ -109,19 +109,30 @@ class DeviceState:
     ``zone_power``. An entry vouches that ``zone_power`` still holds the value the device gave at that
     time; a zone without one holds a value the library assumed, or none.
 
-    Stamped only by the device: the 0xAC status read's TLV 0x30 (each zone it carries), a bar-switch
-    device's ``aa 36`` read (both bars), and an acked write whose frame sets the zone: ``33 30`` its own
-    zone only (the other zone's power is carried along: it keeps the stamp it had and gets no new one),
-    ``33 36`` both bars, and a whole-device power write whose frames set every zone (one ``33 30`` per
-    zone; the ``33 01`` of a ``DeviceProfile.global_power`` fixture; an H6047's ``33 01`` off; see
-    ``Device._power_zones``). Never by the model: a scene activation, the zones a power write assumes,
-    and an advertisement stamp nothing.
+    Stamped only by the device: the 0xAC status read's TLV 0x30 (each zone it carries, with two
+    exceptions below), a bar-switch device's ``aa 36`` read (both bars), and an acked write whose frame
+    sets the zone: ``33 30`` its own zone only (the other zone's power is carried along: it keeps the
+    stamp it had and gets no new one), ``33 36`` both bars, and a whole-device power write whose frames set
+    every zone (one ``33 30`` per zone; the ``33 01`` of a ``DeviceProfile.global_power`` fixture; an
+    H6047's ``33 01`` off; see ``Device._power_zones``). Never by the model: a scene activation, the zones
+    a power write assumes, and an advertisement stamp nothing.
+
+    TLV 0x30 does not stamp, and the zone loses the stamp it had while taking the reported power:
+
+    - a zone it reports lit in a burst whose TLV 0x01 does not say on (an "off" still stamps): the device
+      says it is off (H60A6: TLV 0x01 is the main switch flag), so the zone's flag does not say it is lit;
+    - on an H60A6, a zone a ``33 01`` / ``33 30`` (or a ``33 04`` wake) set since the last reply that
+      carried it, unless the reply reports the one power those writes can leave it at (the last acked
+      ``33 01`` / ``33 30``'s, and that of each later write that raised, or may not have posted: a ``33 04``
+      wake). FIRMWARE-SOURCED: the dispatcher acks those once it has posted them to its message thread,
+      which applies them later, in order, and the 0xAC reply is built from the flags as they are, so the
+      reply may predate them (see ``Device._read_status``). The next reply stamps the zone.
 
     Any other change to a zone's value drops its stamp, and so does forgetting the zone (its key leaving
-    ``zone_power``). For example, a scene activation that assumes a ring confirmed off is now lit drops
-    the ring's stamp. So does an advertisement's "off" over a zone confirmed on, and an advertisement's
-    "on" over zones that all read off forgets them, as an H6047 ``33 01`` on forgets the bars. A zone
-    whose value such a change leaves as it was keeps its stamp.
+    ``zone_power``): an advertisement's "off" over a zone confirmed on, and an advertisement's "on" over
+    zones that all read off forgets them, as an H6047 ``33 01`` on forgets the bars. A zone whose value such
+    a change leaves as it was keeps its stamp. A scene activation, acked or not, drops every zone's stamp:
+    what it does to the zone flags is not traced (H60A6 ``FUN_9b025124``, H6047 handler ``0x01005510``).
 
     A stamp also goes, with ``zone_power`` left as it was, when the device may hold another power for the
     zone than the one held:
@@ -132,17 +143,30 @@ class DeviceState:
       whole-device power write or a scene activation every zone;
     - a write that wakes the device while it is not known to be on, which lights every zone (an H60A6
       ``33 04`` / ``33 05``, an H6047 ``33 04`` / ``33 05``; see ``Device._wake_power``): a zone held off
-      loses its stamp. After a write that may have switched the device off raised, or a zone-off on a device
-      not known to be on (an H60A6 ``33 30`` leaves the main switch as it was), ``is_on`` is not trusted to
-      rule a wake out until a read or an acked write over every zone gives the on/off again;
+      loses its stamp. ``is_on`` is not trusted to rule a wake out after a write that may have switched the
+      device off raised; after an acked zone-off over some zones (an H60A6 ``33 30``), unless the device
+      was known to be on and every other zone is held lit with a stamp, since a zone-off that leaves no
+      zone lit also switches the main switch off (``FUN_9b0278dc`` @0x9b027972-0x9b027986); and after a
+      status reply that came before an H60A6 power write applied (above). A read issued after the last of
+      these, or an acked write over every zone, gives the on/off again. On an H60A6 a write still counts as
+      a wake while a ``33 01`` on or ``33 30`` zone-on is posted and no reply has carried it: the
+      dispatcher checks the main switch as the message thread has left it;
     - an H6047 ``aa 01`` reply (bar 0 | bar 1) that the bars' held power contradicts;
     - an acked ``33 01`` off on a bar-switch device without profile zones (H6042): no firmware in hand says
       what it leaves the bars its ``aa 36`` read at.
 
+    The library reads the stamps in two places: an H6047 bar write (``33 36`` carries both bars) reads the
+    bars first unless the other bar was confirmed at most ``const.ZONE_POWER_FRESH_SECONDS`` ago (the only
+    place a stamp changes a frame), and an acked H60A6 zone-off keeps ``is_on`` trusted to rule a wake out
+    only while every other zone is held lit with a stamp (``Device._commit``, ``_others_confirmed_lit``). So
+    a stamp a consumer sets or keeps changes both.
+
     ``Device.snapshot()`` copies it. It is left out of equality, so a read that re-confirms the same power
     leaves the state equal to a snapshot taken before it. ``dataclasses.asdict()`` and ``repr()`` still
     include it, and a read that re-confirms a zone gives it a new time, so a consumer that diffs those to
-    detect a change should drop it."""
+    detect a change should drop it. ``dataclasses.replace(state, zone_power=...)`` carries the same
+    ``zone_power_confirmed`` dict (the same object) into the copy, still vouching for the old values: a
+    consumer that replaces ``zone_power`` should drop the stamps too (``zone_power_confirmed={}``)."""
 
     @property
     def device_id(self) -> str | None:

@@ -15,10 +15,10 @@ model, from which the shipped readers are generated).
   first, and skip that on a zone confirmed lit). It inferred a confirmation from `zone_power` being
   assigned a new dict, which every writer does: an H60A6 `33 30` to the main panel "confirmed" the ring's
   cached power too, and `apply_power` and a scene activation assign one without reading anything.
-  - Stamped only by the device: the 0xAC status read's TLV 0x30 (each zone it carries), the `aa 36` bar
-    read (both bars), and an acked write whose frame sets the zone. That is a `33 30` for its own zone
-    only, a `33 36` for both bars, one `33 30` per zone (no current profile), and a `33 01` that sets
-    every zone.
+  - Stamped only by the device: the 0xAC status read's TLV 0x30 (each zone it carries, with the two
+    exceptions below), the `aa 36` bar read (both bars), and an acked write whose frame sets the zone. That
+    is a `33 30` for its own zone only, a `33 36` for both bars, one `33 30` per zone (no current profile),
+    and a `33 01` that sets every zone.
   - The `33 01` case is FIRMWARE-SOURCED; the app's switch ack sets only the main switch
     (`VM4LightH60A6.K5`, `NewDetailVm.F5`). It covers the H60A6's on and off (`FUN_9b0278dc
     @0x9b02791c-0x9b027930`, both zone flags, as the 2026-10-12 bench showed) and the H6047's off
@@ -26,10 +26,23 @@ model, from which the shipped readers are generated).
     library forgets the bars, as the app does.
   - Never by the model: a scene activation, the zones a power write assumes, and an advertisement stamp
     nothing.
+  - TLV 0x30 does not stamp a zone, which takes the reported power and loses the stamp it had, when:
+    - it reports the zone lit while the same burst's TLV 0x01 does not say on (an "off" still stamps). The
+      device says it is off (on the H60A6, TLV 0x01 is the main switch flag), so the zone's flag does not
+      say it is lit.
+    - on an H60A6, a `33 01` / `33 30` (or a `33 04` wake) set the zone since the last reply that carried
+      it, and the reply does not report the one power those writes can leave it at (the last acked `33 01` /
+      `33 30`'s, and that of each later write that raised, or may not have posted: a `33 04` wake).
+      FIRMWARE-SOURCED: the dispatcher acks those once it has posted them (`MSG_SET_TURN` 0xB2 /
+      `MSG_SET_TURN_MULT` 0xB7, `_mqtt_response_pushDeviceMsg FUN_9b027b88`), its message thread applies them
+      later, in order (`_mqtt_response_thread_func FUN_9b028fb0` -> `_mqtt_response_handle FUN_9b028bc8` ->
+      `FUN_9b0278dc`), and the 0xAC reply is built from the flags as they are (`ble_msg_one_to_more
+      FUN_9b04bdd8`), so a reply answered in between reports the old power. The next reply stamps the zone.
   - A zone loses its stamp when the library forgets it: an advertisement's "on" over zones that all read
-    off, or an H6047 `33 01` on or scene activation. It also loses it when its value changes without
-    the device saying so: a scene activation that assumes a ring confirmed off is lit, or an
-    advertisement's "off" over a zone confirmed on. A zone whose value stays the same keeps its stamp.
+    off, or an H6047 `33 01` on or scene activation. It also loses it when its value changes without the
+    device saying so: an advertisement's "off" over a zone confirmed on. A zone whose value stays the same
+    keeps its stamp, except through a scene activation, acked or not, which drops every zone's stamp: what
+    it does to the zone flags is not traced (H60A6 `FUN_9b025124`, H6047 handler `0x01005510`).
   - A zone also loses its stamp, with its value left as it was, when the device may hold another power
     for it than the one held:
     - a power write that raises, since it may have reached the device: the transport writes a frame on
@@ -39,13 +52,20 @@ model, from which the shipped readers are generated).
       power-on lead, its upload and its activation included) every zone.
     - a write that wakes the device while it is not known to be on, which lights every zone (a zone held
       off loses its stamp). FIRMWARE-SOURCED: an H60A6 `33 04` or `33 05` (the dispatcher `FUN_9b02687c`,
-      case 4 -> `MSG_SET_TURN(1)`, case 5, lights the main switch and both zones, as the 2026-10-12 bench
-      saw), and an H6047 `33 04` or `33 05` (while both bars are off each handler, `0x01005454` and
-      `0x01005510`, runs the power-on sequence `FUN_01002750`, which sets both bar flags). The wake is
-      checked again once the frame went out (a power-off may have applied while it waited for the link).
-      After a write that may have switched the device off raised, or a zone-off on a device not known to be
-      on (an H60A6 `33 30` leaves the main switch as it was), `is_on` is not trusted to rule a wake out
-      until a read gives the on/off again or an acked write sets every zone.
+      case 4 -> `MSG_SET_TURN(1)` whatever the level, case 5, lights the main switch and both zones, as the
+      2026-10-12 bench saw), and an H6047 `33 04` or `33 05` (while both bars are off each handler,
+      `0x01005454` and `0x01005510`, runs the power-on sequence `FUN_01002750`, which sets both bar flags).
+      The wake is checked again once the frame went out (a power-off may have applied while it waited for
+      the link). `is_on` is not trusted to rule a wake out after a write that may have switched the device
+      off raised; after an acked zone-off over some zones (an H60A6 `33 30`) unless the device was known to
+      be on and every other zone is held lit with a stamp, since a zone-off that leaves no zone lit also
+      switches the main switch off (`FUN_9b0278dc @0x9b027972-0x9b027986`: both zone flags 0 ->
+      `FUN_9b02b3fc(0)`, then `FUN_9b033e28`); and after a status reply that came before an H60A6 power
+      write applied (above). A read issued after the last of these, or an acked write that sets every zone,
+      gives the on/off again: a write that fails while a multi-read poll is past its power read leaves it
+      untrusted. On an H60A6 a write also counts as a wake while a `33 01` on or `33 30` zone-on is posted
+      and no reply has carried it, since the dispatcher checks the main switch as the message thread has
+      left it.
     - an H6047 `aa 01` reply that the bars' held power contradicts. It answers bar 0 | bar 1
       (`FUN_01004f32`), so an "off" rules out a bar held lit, and an "on" rules out bars all held off,
       when the `aa 36` read after it is lost.
@@ -55,10 +75,16 @@ model, from which the shipped readers are generated).
     poll that re-confirms the same power leaves the state equal to a `snapshot()` taken before it;
     `snapshot()` copies it. `dataclasses.asdict()` and `repr()` still include it, and a read that
     re-confirms a zone gives it a new time, so a consumer that diffs those to detect a change should drop
-    it.
-  - Additive: no frame, read or other field changes. A differential against e7687f4 over every table
-    profile (failed, refused, cancelled and part-failed writes, wakes and concurrent setters included)
-    found them identical.
+    it. `dataclasses.replace(state, zone_power=...)` carries the same `zone_power_confirmed` dict into the
+    copy, still vouching for the old values: a consumer that replaces `zone_power` should drop the stamps
+    too.
+  - Additive: no frame, read or other field changes, besides the H6047 bar write's `aa 36` re-read (under
+    Fixed), which reads the stamps. The field's first cut (d47d22a) was identical to e7687f4 in a
+    differential over every table profile (failed, refused, cancelled and part-failed writes, wakes and
+    concurrent setters included); this entry differs from that cut only in that re-read and the field
+    itself.
+- `const.ZONE_POWER_FRESH_SECONDS` (120 s): how long a `DeviceState.zone_power_confirmed` stamp counts as
+  fresh for the H6047 bar write's `aa 36` re-read (see Fixed).
 - `DeviceProfile.mode_color_parse_status` (keyword-only, default None): the 0xAC status read's TLV 0x05
   decode where it differs from the `aa 05` reply's (devices.yaml `mode_color_parse_status`). `wire_profile`
   passes it to the spec's `mode_status` param, which the status read now takes (`_spec.profile(mode_status=)`).
@@ -420,6 +446,21 @@ model, from which the shipped readers are generated).
   `allow_modelled`, is as before.
 
 ### Fixed
+- **An H6047 bar write no longer sends a stale other bar.** One `33 36` carries both bars, and since 1.1.0
+  `set_zone_power` read them (`aa 36`) only while a bar was unknown, so it sent the other bar's cached power
+  however old: with the bars read {left on, right off} and the right bar switched on in the app a few minutes
+  later, a left-bar write (Home Assistant powers a zone before its colour or `turn_on`) sent `33 36 01 00` and
+  the right bar went dark. The app builds its `33 36` from bars its `aa 36` heartbeat keeps current (h6047
+  `NewDetailVm.D5:669-720` from `Info4Detail.D` / `F`, which `NewDetailVm.A3` parseHeart `:574-612` sets on
+  every `ComposeLightHeartController` reply). The library now reads the bars first unless the other bar's
+  power was confirmed by the device (`DeviceState.zone_power_confirmed`) at most
+  `const.ZONE_POWER_FRESH_SECONDS` (new, 120 s, the bound the Home Assistant integration uses) ago, and
+  sends what it read. When that read goes unanswered or fails on a live link, a held other bar is sent as
+  held, as the app sends the bars of its last heartbeat, and the write goes out as it did before (with its
+  own reconnect-and-retry); a connect that fails raises, as before, without a second connect for the write.
+  An unknown other bar still raises, as does a failed read while a bar is unknown. Not fixed: the held bar
+  can be any age, where the app's comes from a heartbeat it repeats, so when that one read is lost a bar
+  switched elsewhere since is still switched back, as before. This adds an `aa 36` read before such a write.
 - **`devices.device.make_device` routes by the advertised pact**, as `create_device` does: it passes the
   advertisement's pact to `profile_for`, so a pact the SKU's rows refuse gives None (it took the SKU's
   profile whatever the pact). Internal (not in `__all__`); no behaviour change without an advertisement.

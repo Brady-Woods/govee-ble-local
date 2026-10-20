@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import dataclasses
+import time
 from unittest.mock import AsyncMock
 
 import pytest
@@ -172,6 +173,8 @@ def test_zone_bar_vs_direct() -> None:
     assert _sent(h60a6)[0][:2].hex() == "3330"
     h6047 = _dev("H6047")            # combined 33 36
     h6047.state.zone_power = {0: True, 1: True}
+    now = time.monotonic()   # both bars confirmed just now: no aa 36 read first (ZONE_POWER_FRESH_SECONDS)
+    h6047.state.zone_power_confirmed = {0: now, 1: now}
     asyncio.run(h6047.set_zone_power("left", False))
     assert _sent(h6047)[0][:4].hex() == "33360001"   # right bar kept ON
 
