@@ -8,6 +8,8 @@ model, from which the shipped readers are generated).
 
 ## [Unreleased]
 
+## [1.5.0] — 2026-10-20
+
 ### Added
 - `DeviceState.zone_power_confirmed` (`dict[int, float]`, keyed like `zone_power`): the `time.monotonic()`
   time the device last told the library each zone's power. An entry vouches that `zone_power` still holds
@@ -156,10 +158,10 @@ model, from which the shipped readers are generated).
     goodsType 64, the bulb row: H6009, H600A, H600B, H600C, H600D, H6010, H6011, H6013 and H800B. They
     take the bulb row's facts but offer no scenes until a catalog is bundled (Changed), so they form two
     profiles of their own: H600A / H600B / H600C / H600D / H6011 / H6013 / H800B, and H6009 / H6010
-    (`scene_power_on`). The H6004 / H6006 / H6008 profile's `skus` is those three, as in 1.4.0. The tenth,
-    **R1630**, is on the h1630 row 364 and shares H1630's profile. A catalogue SKU takes its row's support
-    level, capped at `app_traced`, so R1630 is admitted by default now that the app trace makes that row
-    `app_traced` (Spec).
+    (`scene_power_on`). The H6004 / H6006 / H6008 profile's `skus` is those three (1.4.0 had a profile for
+    each of them: Changed, "Profiles group SKUs with identical facts"). The tenth, **R1630**, is on the
+    h1630 row 364 and shares H1630's profile. A catalogue SKU takes its row's support level, capped at
+    `app_traced`, so R1630 is admitted by default now that the app trace makes that row `app_traced` (Spec).
   - The admit commit's rows (Spec, "41 more SKUs") extend the catalogue routes to 14 SKUs: **H6167**
     (dreamcolorlightv1 83), **H616D / H616E** (207) and **H802A** (74) join those rows' profiles.
   - The snapshot's refresh at AppVersion 7.7.02 (Spec) adds a 15th, **R14B1**, on H14B1's row (bulblightv3
@@ -373,8 +375,8 @@ model, from which the shipped readers are generated).
   (and 5 behind `allow_modelled`) whose row offers scenes but have no catalog offer none until theirs is
   bundled. `tools/fetch_scenes.py` with no SKUs lists the SKUs whose row offers scenes, catalog or not.
   A test ties the store to the table: the SKUs with a catalog are exactly those offered scenes, the store is
-  the fetch tool's layout, and every catalog's scene count is pinned, with each of 1.4.0's ten catalogs
-  pinned to 1.4.0's content (every `Scene` field of every scene, in order), so a change at the same count
+  the fetch tool's layout, and every catalog's scene count is pinned, with each catalog pinned to its
+  released content (`RELEASED`: every `Scene` field of every scene, in order), so a change at the same count
   fails.
   `scripts/smoke_artifacts.sh` loads every bundled catalog from the installed wheel. 1.4.0's 18 SKUs keep
   their scenes.
@@ -448,14 +450,18 @@ model, from which the shipped readers are generated).
 - **Bundled scene catalogs are stored once per scene**, in one file, `scenes/store.json`, in place of 1.4.0's
   `<SKU>.json` files. Its `pool` lists each bundled scene once (its name and entry), sorted by content (the
   name, then the entry's JSON with sorted keys), and its `skus` maps each SKU to the increasing indexes of
-  its scenes in the pool, so SKUs that share a scene share its entry: 1.4.0's ten catalogs (748 scenes) are
-  512 entries, and with the admitted models' four catalogs (Added), 1,007 scenes are 614. Measured, the store
-  is 165,015 B, 35,866 B deflated in the wheel, against 178,840 B and 46,066 B for 1.4.0's ten catalogs (and
-  150,289 B and 39,106 B for a layout of one file per distinct catalog, with an index, which it replaces
-  before release), and the wheel 295,748 B against that layout's 300,604 B. No scene changes: for every
-  bundled SKU, `load_scenes` (every `Scene` field), `scene_names_by_code` and `scene_upload_frames` at MTU
-  20, 182, 244 and 509, at each of the SKU's scene sets, are what they were, and for 1.4.0's 18 SKUs what
-  1.4.0's wheel returns at the same scene versions. `load_scenes`, `async_load_scenes` and
+  its scenes in the pool, so SKUs that share a scene share its entry. As released, after the catalogs'
+  re-fetch (below), the 14 catalogs' 1,010 scenes are 715 entries, the store is 194,010 B, 38,549 B deflated
+  in the wheel, and the wheel is 323,432 B. Measured when the layout landed, over the catalogs as they were
+  before the re-fetch: 1.4.0's ten catalogs (748 scenes) were 512 entries, and with the admitted models' four
+  catalogs (Added), 1,007 scenes were 614; the store was 165,015 B, 35,866 B deflated in the wheel, against
+  178,840 B and 46,066 B for 1.4.0's ten catalogs (and 150,289 B and 39,106 B for a layout of one file per
+  distinct catalog, with an index, which it replaces before release), and the wheel 295,748 B against that
+  layout's 300,604 B. The layout itself changes no scene: over those catalogs, for every bundled SKU,
+  `load_scenes` (every `Scene` field), `scene_names_by_code` and `scene_upload_frames` at MTU 20, 182, 244
+  and 509, at each of the SKU's scene sets, gave what they gave before it, and for 1.4.0's 18 SKUs what
+  1.4.0's wheel returns at the same scene versions. The catalog changes are the re-fetch's (below).
+  `load_scenes`, `async_load_scenes` and
   `scene_names_by_code` are unchanged, and a SKU the store has no catalog for still gets `{}`. The store is
   read and checked once, on the first lookup of any SKU (not on each SKU's first lookup), even where
   several first lookups run together (one per device's setup), and one that is
@@ -494,7 +500,7 @@ model, from which the shipped readers are generated).
   override of a name the SKU's catalog lacks, of a SKU without one, a ref to another scene's entry or to the
   catalog's own, a set key not in that canonical form, an empty map, and a pool entry that carries `by_set`
   (the shared entry check), and counts the overrides' entries against orphans. No bundled catalog has an
-  override yet: `by_set` is `{}`, and the pool is 1.4.0's otherwise.
+  override yet: `by_set` is `{}`.
 - **`tools/fetch_scenes.py` reads a scene's values for the SKU, as the app does**
   (`CategoryV1.LightEffect`, `CategoryV1.java:323-422`): a `specialEffect` entry whose `supportSku` holds
   the SKU overrides the base code, scene type, param, param id, cmdVersion and big-effect flag (it took the
@@ -547,12 +553,21 @@ model, from which the shipped readers are generated).
     blob too, so those 65 upload other bytes. H61A8: 8 scenes take their own param id and blob (Flash, Gary,
     Judy, Nick, Sailboat, White Light, ZDP Duo, ZDP Trio). Both add Emotion's "Flash" (code 2020) as
     "Flash (Emotion)": Zootopia 2's (14769) keeps "Flash", as 1.4.0 bundled it.
-  - H60A6: a Natural "Lightning" (24448) is new.
+    - H61A8's White Light (param id 13902, uploaded at its scene set {0, 1, 2, 3}): Live-verified on the
+      bench 2026-10-20 (wire, read-back, seen: the planned upload and activation sent and acked, the device
+      reporting its code, 10564, and the scene seen).
+    - H6641's White Light (param id 17861): Live-verified on the bench 2026-10-20 (wire, read-back, seen).
+    - H6641's Aurora (code 215, param id 17474): live-verified (wire and read-back) on the bench 2026-10-20;
+      visual inconclusive.
+    - Their other scenes, "Flash (Emotion)" among them: source-modelled from the 2026-10-19 library
+      responses; not live-verified.
+  - H60A6: a Natural "Lightning" (24448) is new: source-modelled from the 2026-10-19 library responses; not
+    live-verified.
   - The library no longer lists Disney's Moana for H60A6. Its three scenes, Motunui, Heart of the Island and
     Wayfinding, stay under their names with their blobs, as scenes the library dropped (the tombstone's
     `dropped`), so an automation that names one still plays it.
   - H6004 / H14B1: Christmas loses 1.4.0's `placeholder` flag (the placeholder entry above); its frames were
-    always sent.
+    always sent. Source-modelled from the 2026-10-19 library responses; not live-verified.
 - **`wire.build`'s read requests pass the spec's `read_request` its new profile param** (the library half
   of the AA 12 / 13 / B0 selector typing, Spec): the frame's profile, the plain one. No library read sends
   AA 12, 13 or B0, so no byte changes: every read frame of every supported SKU's rows, by default and with
@@ -574,6 +589,9 @@ model, from which the shipped readers are generated).
   An unknown other bar still raises, as does a failed read while a bar is unknown. Not fixed: the held bar
   can be any age, where the app's comes from a heartbeat it repeats, so when that one read is lost a bar
   switched elsewhere since is still switched back, as before. This adds an `aa 36` read before such a write.
+  Live-verified on the bench 2026-10-20 on an H6047 (firmware 1.00.12): with the right bar's confirmation
+  aged to 125 s (past the 120 s bound), `set_zone_power('left', True)` read `aa 36` first and sent the right
+  bar as read (`33 36 01 00`, acked), and the left bar came on.
 - **A version a firmware-gated fact tests is read until it is in** (review G1). `Device.update()` takes the
   device-info read as done once the device answered, as before, but each later poll reads a version that a
   `scene_versions_by_firmware` gate or a Kelvin firmware range (`kelvin_by_hardware` /
@@ -636,19 +654,19 @@ model, from which the shipped readers are generated).
   2026-10-19 that changes no name). A re-fetch keeps the name of the stored scene of its sceneName that holds
   a listed scene's code and category (ties by the whole entry, a resolved one's as its placeholder, then by
   blob and param id; a placeholder has no blob, so it ties by its param id); else, only where exactly one
-  stored and one listed scene fit each other, by one of its own lightEffects' codes or by category
-  and blob (H6006's 26 recodes keep their blob), printed as a move, or by category and param id or category
+  stored and one listed scene fit each other, by one of its own lightEffects' codes or by category and blob
+  (a scene the library renumbers keeps its name), printed as a move, or by category and param id or category
   alone, printed as a guess. A guess passes over a stored scene whose code the library still answers under any
   sceneName, or whose param id another listed scene carries (its scene, listed under another name), and a blob
   match over one it still answers at its own sceneName and category; both pass over one a fetch found gone
   from the library (its sceneName listed, or left out only for its time or rules, at its code under no
   category but where another stored or retired name sits), or found its scene (its param id) listed under
   another name or left out only for its time or rules at another code, since it was last listed, but a blob
-  match with its param id too: that scene back at a new code, printed as a move (H6006's "Motunui" left with
-  Disney's Moana and came back at 1176 from 4476 with its blob and param id 43314; where more than one listed
-  or stored scene fits so, the name stays dropped). Where more than one fits, the scene takes a new name,
-  printed as ambiguous. Only a scene that matches none gets a new
-  name, never one the store or the tombstone holds. A stored scene no longer listed keeps its name, as do one
+  match with its param id too: that scene back at a new code, printed as a move (for example a scene whose
+  category the library drops and later lists again at a new code with the same blob and param id; where more
+  than one listed or stored scene fits so, the name stays dropped). Where more than one fits, the scene takes
+  a new name, printed as ambiguous. Only a scene that matches none gets a new name, never one the store or the
+  tombstone holds. A stored scene no longer listed keeps its name, as do one
   left out only for its time (an expired category or effect, its category renamed meanwhile too) or the
   firmware's version rules and one listed under another name or left out so at another code (its param id);
   a sceneName the app renames keeps its old name too, so two names hold one code. Only one whose scene the
@@ -693,10 +711,10 @@ model, from which the shipped readers are generated).
   per-SKU files did too); the first two are malformed now (the deep one not kept, as a RecursionError never
   is), the zip errors unreadable. An unreadable store's
   error quotes its cause by its str, not its repr: for a store that is not UTF-8 the repr held the whole
-  store, every blob in it (about 171,700 characters for one stray byte in the 165,015 B store, against about
-  140 now); `tools/fetch_scenes.py`'s error for a store or tombstone that is not UTF-8 held the whole file
-  too, and now quotes its cause the same way, and a tombstone nested too deep is malformed (its
-  RecursionError escaped). A scene name that is not a string is named by its type, not
+  store, every blob in it (about 201,600 characters for one stray byte in the 194,010 B store as released,
+  against about 140 now); `tools/fetch_scenes.py`'s error for a store or tombstone that is not UTF-8 held
+  the whole file too, and now quotes its cause the same way, and a tombstone nested too deep is malformed
+  (its RecursionError escaped). A scene name that is not a string is named by its type, not
   quoted (a name holding a blob put all of it in the error). The loader
   coerced mistyped values that `tools/fetch_scenes.py` refuses to write, or took them as they were: a code
   `"7"`, `1.9` or `true` read as 7, 1 and 1, a scene type `"2"` stayed a string and a placeholder `"no"` read
@@ -715,8 +733,8 @@ model, from which the shipped readers are generated).
   so does a `supportSku` that is not a list of strings (the SKU's `in` test took a string for a substring:
   `"H6641" in "H66411"`). The 93 responses fetched on 2026-10-19 carry JSON ints only, all small (10,611
   lightEffects and their 225,510 specialEffect entries; none has a bigEffectStr), and every supportSku is a
-  list of strings. No bundled scene changes: `load_scenes` and `scene_names_by_code` give what they did for
-  every SKU, and `store.json` is unchanged.
+  list of strings. This fix changes no bundled scene: `load_scenes` and `scene_names_by_code` give what they
+  did for every SKU, and `store.json` is unchanged by it.
 
 ### Spec
 - `devices.yaml` `scenes.list_filter`: which library scenes the control screen lists and with which
