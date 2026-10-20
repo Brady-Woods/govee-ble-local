@@ -92,11 +92,13 @@ model, from which the shipped readers are generated).
 - `DeviceProfile.scene_versions_by_firmware` (keyword-only, default `()`): `(min_soft_version,
   min_hard_version, versions)` entries that replace `scene_versions` from a firmware version up (a row's
   `by_firmware`; versions compared field by field). A version not yet read meets every gate on it, as the
-  newest firmware would, so one failed version read doesn't hold back the other's gates.
+  newest firmware would, so one failed version read doesn't hold back the other's gates, and `Device.update`
+  reads it again on the next poll (Fixed). The dreamcolorlightv1 rows of goodsTypes 70 to 262 hold their
+  part-brightness gates in it; no current profile sets it, since none of those SKUs has a catalog yet.
 - `DeviceProfile.scene_versions_by_pact` (keyword-only, default `()`): `((pact_type, pact_code), versions)`
   entries that replace `scene_versions` on an advertised pact (a row's `by_pact`), applied before the
   firmware entries. `Device.scene_versions` is the set in force for the advertised pact and the read
-  versions, and `Device.scene_upload_frames` uses it.
+  versions, and `Device.scene_upload_frames` uses it. No current row sets it.
 - `tools/gen_devices.py`, and `src/govee_ble_local/_generated/devices.py` as a build product (gitignored,
   shipped in the sdist and wheel, covered by the conftest staleness guard, which also watches
   `devices/_resolve.py`, and the backend's `_GENERATED_FILES`). The generator keeps only what the library
@@ -294,8 +296,75 @@ model, from which the shipped readers are generated).
   integer of at least 1, or a timeout that isn't a finite number above 0, raises `GoveeBleInvalidValue` before
   any I/O. On the transport, `GoveeConnection.query` and `send` take the same limits as `connect_budget`
   (`transport.connection.ConnectBudget`).
+- `scenes.load_scenes`, `scenes.async_load_scenes` and `scenes.scene_names_by_code` take `scene_versions=`
+  (keyword-only, default None): the catalog the Govee app's scene list shows at that scene set (devices.yaml
+  `scenes.list_filter`), normally `Device.scene_versions`. None gives the SKU's whole bundled catalog, as
+  before. The loader does not know the device table, so a set the store records nothing at (the union of the
+  SKU's sets, or one the SKU never has) gives the whole catalog. A `scene_versions` that is not a collection
+  of non-negative ints raises `GoveeBleInvalidValue`: a `collections.abc.Collection`, read once, so a
+  generator or another one-shot iterator is refused (passed twice, it would read as the empty set the second
+  time), a bytes, bytearray or memoryview counts as its ints, and a version too long to write as a key
+  (`10**5000`) is refused too; the message names the type, never the value. The store is read and checked
+  once, as before, and the catalog of every set is built then: every later lookup, at any set, is from
+  memory.
 
 ### Changed
+- **A device offers the scenes the Govee app lists at its scene set** (review G1). `Device.scene_names`,
+  `Device.active_scene` and `Device.set_scene_by_name` use the catalog at `Device.scene_versions`.
+  - The app's list drops each lightEffect whose op type is not in the set and plays the first one left
+    (`SceneDataVM.b2` -> `CategoryV1.checkSupportNew`; `BaseSceneViewMode.U2`). So at a smaller set a scene is
+    hidden, or plays another of its effects.
+  - A hidden scene is not in `scene_names`, and `set_scene_by_name` refuses it with `GoveeBleUnknownName` (a
+    `GoveeBleNotSupported`), sending nothing: "unknown scene 'Awaken' at scene set [0, 1, 2]". `active_scene`
+    is None for its code, and for the code of an effect a listed scene does not play there: the app's list
+    highlights the scene whose effect at position 0, the one it plays, has the reported code
+    (`SceneListAdapter`, `getSceneCode(0, sku)`; `SceneDataVM.i1` only picks the category page).
+  - A scene that plays another effect keeps its name, and uploads and activates that effect. The upload is
+    planned as before (`ScenesOp.parseSceneV1` uploads whatever effect it is handed); `set_scene_by_name`
+    takes `scene_versions` once per call, for the lookup and the plan alike.
+  - **No bundled catalog has a smaller scene set yet**, so no device offers or sends anything else in this
+    release: the H61A8 keeps {0, 1, 2, 3} at every pact and firmware, as 1.4.0 (Spec: its scene rule is
+    dreamcolorlightv2's, which has no pact gate). The rows that do have one, the dreamcolorlightv1 goodsTypes
+    70 to 262 ({0, 1, 2} below part brightness: H6168 at soft 1.05.00, for example, hides scenes such as
+    Awaken there and plays Halloween's RGB effect, code 110, in place of 2497), are offered scenes once
+    their catalogs are bundled.
+  - Names never change; only which scenes are offered. The `GoveeBleUnknownName` message for any name not
+    listed now names the set, on every SKU: "H6008: unknown scene 'X' at scene set [0, 1]" (its class is
+    unchanged).
+  - Before the device-info read the set is the newest firmware's (a version not yet read meets every gate), so
+    that read can only shrink the list. `set_scene_by_name` reads a version the set depends on first (`aa 06`
+    / `aa 07 03`, on the same connection), so it never plays a scene, or an effect, the device's own set
+    does not; `scene_names` may list the newest firmware's scenes until the read. A change of the advertised
+    pact can move the list either way, on a row with a pact scene set (none today). Both notify the
+    callbacks. Once the store is loaded (`update()` loads it off the loop) `scene_names` and `active_scene`
+    read no file and raise nothing, at any set.
+  - **A consumer that keeps `scene_names` must read it again on each update**, including the released Home
+    Assistant integration v1.4.1, which sets its `effect_list` once, at setup (its `light.py`): a name the
+    library no longer offers at the device's set then fails loudly (`GoveeBleUnknownName`) when picked.
+    hass-govee-ble-local's release branch reads it again on every coordinator update.
+- **`tools/fetch_scenes.py` evaluates the app's list filter at each of the SKU's scene sets** (its row's,
+  `by_pact` and `by_firmware` sets, the empty one included) and stores, per scene, each set where the result
+  differs from the union's (`by_set`, below). A scene whose pick at a set is an effect the library can't store
+  (version rules, no code, a sceneType-5 upload, a placeholder, an entry the shared check refuses, such as a
+  code past 0xFFFF or one no int holds, JSON's 1e999) is hidden at that set only, and printed, never a failed
+  fetch; its entry at the union, the pre-read list and the tombstone are what they were. A scene listed only
+  at an empty set (one the union refuses) is left out and printed: names never come back after the read. The
+  empty-set note is gone.
+  - Naming ignores the per-set results, so a change to a scene's other effects never renames it, and a
+    retired name keeps its entry at the union only. Alike twins (one sceneName and one entry at the union)
+    take the order of their whole lightEffect content, not the response's, so a reordered response never
+    swaps which name plays which effect at a set, and a first fetch names them alike whatever the order.
+  - Each scene whose result at a set is not the one the store held is printed by name, per set: hidden
+    there, plays an effect there (its code and category), changes from one effect to another, or listed there
+    again.
+  - A kept scene the fetch no longer lists keeps its results at the SKU's current sets only: one at a set the
+    SKU no longer has is dropped, printed, and at a set added since, the scene is hidden where its entry's op
+    type is outside the set (the app plays a later effect there, or hides it). A kept scene's effect at a set
+    that the sceneType-5 cut newly drops is not listed at that set, printed, rather than the scene dropped.
+  - `--audit` plans each SKU at each of its scene sets, one row per set: every scene of the catalog offered
+    there, the effects it plays there included, through the upload planner at that set.
+  - No bundled catalog has a smaller set yet (H61A8's is its only one), so the store's `by_set` is `{}`;
+    the dreamcolorlightv1 catalogs come with the data commit.
 - **Scenes need a bundled catalog**, as every SKU of 1.4.0 that offers them ships one. The generator bakes
   the scene store's SKUs (`scenes/store.json`'s `skus`) into the table (`_generated` `SCENE_CATALOGS`), and a profile
   offers `SCENES` only to them; the row's scene facts are still checked. So no SKU offers an effect list
@@ -349,13 +418,6 @@ model, from which the shipped readers are generated).
   which follow the spec:
   - H6006 / H6008 `scene_versions` {1} -> {0, 1}, and H6641 {0, 1, 2, 3, 10} -> {0, 1, 2, 3}, the control
     screens' sets. No frame changes: no library scene needs version 0 or 10.
-  - **H61A8 scenes follow its pact and firmware** (decision D6). `scene_versions` is goodsType 19's base
-    set (empty: activate only), `scene_versions_by_pact` gives {0, 1, 2} at pact code 2 whatever the soft
-    version, and `scene_versions_by_firmware` holds its `newVersion4Ble` gates, which
-    `Device.scene_versions` applies with the advertised pact and the soft and hard versions the first poll
-    reads: {0, 1, 2, 3} on the bench unit (SW 3.03.18 / HW 3.01.10), as 1.x sent, {0, 1, 2} from soft
-    1.04.00, and activate only below it on pact code 1. A version not yet read meets its gates, so until
-    that read the newest firmware's {0, 1, 2, 3} applies, as 1.x sent, and nothing changes before it.
   - H6047 `mode_color_parse` is `kelvin_pair_15`, the spec's name for its bars' 0x15 decode, which is
     unchanged.
   - **H6641 gradual** (`gradual=True`): `Device.update` reads `aa a3` on every poll and `set_gradual`
@@ -414,7 +476,14 @@ model, from which the shipped readers are generated).
   loader refused where both held a scene of one name), and a
   rewritten store is left readable by all (mode 0644; the temporary file it replaces the store with is created
   0600). Its naming (stable names, `scene_name`) and the lightEffect it takes for the SKU are unchanged, and
-  it still stores nothing for a SKU the library has no scenes for.
+  it still stores nothing for a SKU the library has no scenes for. The store also holds `by_set` (review G1,
+  always present, `{}` where nothing differs), which maps a SKU and a scene set (its versions sorted and
+  comma-joined, `""` for the empty set) to the scenes listed differently there: `null` for one not listed,
+  else the pool index of the entry the app plays there, an entry of the same name. The loader refuses an
+  override of a name the SKU's catalog lacks, of a SKU without one, a ref to another scene's entry or to the
+  catalog's own, a set key not in that canonical form, an empty map, and a pool entry that carries `by_set`
+  (the shared entry check), and counts the overrides' entries against orphans. No bundled catalog has an
+  override yet: `by_set` is `{}`, and the pool is 1.4.0's otherwise.
 - **`tools/fetch_scenes.py` reads a scene's values for the SKU, as the app does**
   (`CategoryV1.LightEffect`, `CategoryV1.java:323-422`): a `specialEffect` entry whose `supportSku` holds
   the SKU overrides the base code, scene type, param, param id, cmdVersion and big-effect flag (it took the
@@ -473,6 +542,13 @@ model, from which the shipped readers are generated).
   An unknown other bar still raises, as does a failed read while a bar is unknown. Not fixed: the held bar
   can be any age, where the app's comes from a heartbeat it repeats, so when that one read is lost a bar
   switched elsewhere since is still switched back, as before. This adds an `aa 36` read before such a write.
+- **A version a firmware-gated fact tests is read until it is in** (review G1). `Device.update()` takes the
+  device-info read as done once the device answered, as before, but each later poll reads a version that a
+  `scene_versions_by_firmware` gate or a Kelvin firmware range (`kelvin_by_hardware` /
+  `kelvin_by_software`) tests and that the read did not bring back, alone (`aa 06` for the soft version,
+  `aa 07 03` for the hard one), until it is in. One lost reply no longer holds those facts at the newest
+  firmware's for the life of the `Device`: the H61A8's Kelvin range waited for its hard version for good.
+  A SKU with no such fact reads neither again, as before.
 - **`devices.device.make_device` routes by the advertised pact**, as `create_device` does: it passes the
   advertisement's pact to `profile_for`, so a pact the SKU's rows refuse gives None (it took the SKU's
   profile whatever the pact). Internal (not in `__all__`); no behaviour change without an advertisement.
@@ -586,11 +662,36 @@ model, from which the shipped readers are generated).
   (`ScenesConfigBean.j`). Every scene row's bean was checked: only H6052's has an `e` that differs, `{1, 3}`
   against `c` = `{0, 1, 4, 5}`, and its row's doc now says so (and that the library, as 1.4.0, only
   activates the type-3 graffiti scenes the app uploads over `e`); the `dispatch` source that called `c` its
-  version array is corrected. A store test checks each bundled scene's op type against every scene set of
-  its SKU and names the one known exception: H61A8's `{0, 1, 2}` (pact code 2, or soft 1.04.00 below part
-  brightness) drops the op-type-3 lightEffect of its 36 RGBIC scenes at cmdVersion 1: it hides 31 of them
-  and plays another of their effects for 5 (Halloween, Waltz, Ballet, Street Dance, Puzzle Game), while the
-  library still uploads the bundled one, as 1.4.0 did.
+  version array is corrected. A store test checks, at every scene set of each bundled SKU and with no
+  exception, that every scene the library offers there has an op type in the set, that every scene it hides
+  or replaces there is one whose catalog effect's op type is not, and that the pre-read set offers the whole
+  catalog.
+- `scenes.list_filter`: the bundled catalogs follow the rule at each of the SKU's scene sets (a catalog holds
+  each scene's pick at the union, and per set where it differs, that the scene is not listed there or the
+  lightEffect it plays there), a scene whose pick at one of its sets the library can't follow is not listed
+  at that set, the list highlights the listed scene whose effect at position 0 has the reported code
+  (`SceneListAdapter.java:155-159`; `SceneDataVM.i1` only picks the category page, `DelegateSceneV2.java:
+  373-375`), and a client offers the catalog of the set in force. Cites
+  `BaseSceneViewMode.java:466-477,591-697`. A null op set is an empty `scene_versions` (the H61A8 example
+  is gone: its set is never null, below).
+- **Row 19 (H61A8) cites the scene rule the app reaches** (review G1). `DeviceDetailConfig.k0` takes the
+  first scene interceptor registered for a goodsType, and for 19 that is dreamcolorlightv2's
+  (`RgbIcLightRegistry` registers `DreamColorV2Register` ahead of the chain whose dreamcolorlightv1 `$33`
+  and `LightVersionServiceImpl.supportScenesOp` the row cited, which never run for 19). Its op set,
+  dreamcolorlightv2 `Support.getSupportScenesOpSet`, is never null for 19 and has no pact gate: {0, 1, 2, 3},
+  or {0, 1, 2} on a Telink hard version below hard 1.00.01 or soft 1.06.00, a test that is not a minimum
+  version and that the row does not model (as for its brightness: the row holds for non-Telink hardware,
+  such as the bench unit, SW 3.03.18 / HW 3.01.10). So `scene_versions` is [0, 1, 2, 3], 1.4.0's set, with
+  no `by_pact` and no scene `by_firmware` (the row had the dreamcolorlightv1 rule: activate only below soft
+  1.04.00 at pact code 1, {0, 1, 2} at pact code 2 or from soft 1.04.00 below part brightness); the H61A8
+  sends what 1.4.0 sent at every pact and firmware. Not modelled, and in the row's doc: at pact (1,1) below
+  soft 1.04.00 the app's scene tab shows its built-in static list (`DelegateScene4DreamColorLightV1V2UIV1`,
+  `DeviceDetailConfig.l0`'s first match), and a version the app has not read, or that is empty, gives
+  {0, 1, 2} there. The same bean gives 19's DIY version. `spec/govee_reference.py`'s self-test and
+  `spec/docs/SCENE_UPLOAD_ENCODING.md`'s goodsType-19 row follow. A test checks that each row's cited scene, DIY
+  or brightness interceptor is the first the app's lookup finds for its goodsType (the dreamcolor
+  goodsTypes' registration order in `RgbIcLightRegistry`, and the app's one brightness interceptor); the
+  dreamcolorlightv1 rows of goodsTypes 70 to 262 cite theirs.
 - `devices.schema.json`: `clientModel` (`client_profile.by_model.<SKU>`) takes `kelvin_range` and
   `brightness_range`, and `scene_power_on` (the scene apply's power-on; bulblightv3 H6009 / H6010, cited in
   row 64's doc), which the generator refuses on a SKU whose row offers no scenes.
@@ -723,8 +824,8 @@ model, from which the shipped readers are generated).
 - **One pact and firmware branch mechanism per row.** `mode_color_by_pact` / `mode_color_by_firmware` (14
   and 4 sites) and A8's `kelvin_by_firmware` fold into general `by_pact` / `by_firmware` branches on
   `client_profile` rows (`clientBranch` / `clientFirmware`); the values are unchanged. Every matching
-  firmware item applies, in order, since the app's gates are independent per fact (goodsType 19's scene
-  set, from `newVersion4Ble`, and its Kelvin range). The TV-light pact (1,1) branch's nested firmware gate
+  firmware item applies, in order, since the app's gates are independent per fact (the dreamcolorlightv1
+  rows' scene sets, from part brightness, and goodsType 19's Kelvin range). The TV-light pact (1,1) branch's nested firmware gate
   is now the row's own `by_firmware`, with the same results.
 - **Schema completeness check** (`devices.schema.json` `clientRow.allOf`): a row with `support` must carry
   its routing and control facts, a row offering scenes its dialect, a plug row `power_resync`, and an

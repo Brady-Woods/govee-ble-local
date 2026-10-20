@@ -4,9 +4,21 @@
 scenes, unique and sorted by content (the scene name, then the entry's JSON with sorted keys), each
 {name, code, param, category, ...}; ``skus`` maps each SKU to its catalog, the increasing indexes of its
 scenes in ``pool``, so SKUs that share a scene share its entry. `code` is the BLE activation code; `param`
-is the base64 effect blob for the a3-chunk upload (None if the device bare-activates). Regenerate with
-tools/fetch_scenes.py, which checks each entry with this module's check (``_validate_entry``). The store is
-read and checked once, on the first lookup of any SKU.
+is the base64 effect blob for the a3-chunk upload (None if the device bare-activates).
+
+A SKU's catalog is the one the Govee app's scene list shows at the union of the SKU's scene sets
+(devices.yaml scenes.list_filter). At a smaller set the app's list drops each lightEffect whose op type
+is not in the set and plays the first one left, so a scene may be hidden there, or play another of its
+effects. ``by_set`` records that: it maps a SKU and a scene set (its versions sorted ascending and joined
+by ``,``, ``""`` for the empty set: :func:`_set_key`) to the scenes listed differently there, each name
+of the SKU's catalog to ``null`` (not listed at that set) or the pool index of the entry it plays there,
+an entry of the same name. Every other scene is as in the catalog. ``by_set`` is ``{}`` where nothing
+differs. :func:`load_scenes` and :func:`scene_names_by_code` take ``scene_versions=`` for the catalog at
+a set; :class:`~govee_ble_local.devices.device.Device` uses its :attr:`scene_versions`.
+
+Regenerate with tools/fetch_scenes.py, which checks each entry with this module's check
+(``_validate_entry``). The store is read and checked once, on the first lookup of any SKU; every lookup
+after it, at any scene set, is from memory.
 """
 from __future__ import annotations
 
@@ -22,7 +34,7 @@ import sys
 import threading
 import zipfile
 import zlib
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from dataclasses import dataclass
 from enum import IntEnum
 from importlib import resources
@@ -134,7 +146,11 @@ class Scene:
 
 _SKU_RE = re.compile(r"[A-Za-z0-9]{3,8}")
 _STORE = "store.json"
-_NO_SCENES: Final[Mapping[str, Scene]] = MappingProxyType({})
+# One catalog as the lookups take it: {name: Scene} in pool order, and {code: name} (first name wins).
+_Catalog = tuple[Mapping[str, Scene], Mapping[int, str]]
+_NO_CATALOG: Final[_Catalog] = (MappingProxyType({}), MappingProxyType({}))
+# The catalogs of a SKU the store holds none for: empty at every set.
+_NO_SETS: Final[Mapping[str | None, _Catalog]] = MappingProxyType({None: _NO_CATALOG})
 # The scene_select activation's effect field is a u2 (build.scene_activate): the codes a scene can have.
 _MAX_CODE: Final = 0xFFFF
 # Read errors of the process's state, not of the package file (too many open files, out of memory, try
@@ -149,9 +165,10 @@ class _MalformedSceneParam(GoveeBleInvalidValue):
 
 
 @functools.cache
-def _store() -> Mapping[str, Mapping[str, Scene]] | GoveeBleError:
-    """Every SKU's catalog in the bundled store, ``{SKU: {name: Scene}}``, read-only: the store is read and
-    checked (:func:`_catalogs`) once, on the first lookup of any SKU.
+def _store() -> Mapping[str, Mapping[str | None, _Catalog]] | GoveeBleError:
+    """Every SKU's catalogs in the bundled store, ``{SKU: {key: catalog}}`` (:func:`_catalogs`: None the
+    SKU's whole catalog, each ``by_set`` key the one at that set), read-only: the store is read and checked
+    once, on the first lookup of any SKU, and every catalog of every set is built then.
 
     A store that is missing, unreadable or malformed gives the GoveeBleError that says so, returned, not
     raised, so the cache keeps this first failure: :func:`_catalog` raises a GoveeBleError of it (its message
@@ -185,8 +202,7 @@ def _store() -> Mapping[str, Mapping[str, Scene]] | GoveeBleError:
         # _catalogs raises only ValueError (binascii.Error, bad base64, is one; its repr never quotes the
         # blob); json.loads raises RecursionError on a store nested too deep.
         return _failure(f"the bundled scene store is malformed: {err!r}", err, outer)
-    return MappingProxyType({sku: MappingProxyType({scene.name: scene for scene in scenes})
-                             for sku, scenes in catalogs.items()})
+    return MappingProxyType({sku: MappingProxyType(sets) for sku, sets in catalogs.items()})
 
 
 def _failure(message: str, cause: BaseException, outer: BaseException | None) -> GoveeBleError:
@@ -211,10 +227,13 @@ def _failure(message: str, cause: BaseException, outer: BaseException | None) ->
     return error
 
 
-def _catalog(sku: str) -> Mapping[str, Scene]:
-    """One (already validated, upper-case) SKU's catalog from :func:`_store`, read-only, empty where the store
-    holds none; where the store failed, a GoveeBleError of that first failure (its message and cause), every
-    time. :data:`_STORE_LOCK` makes first lookups made at once (one per device's setup) read the store once:
+def _catalog(sku: str) -> Mapping[str | None, _Catalog]:
+    """One (already validated, upper-case) SKU's catalogs from :func:`_store`, read-only, by ``by_set`` key
+    (:func:`_set_key`; None its whole catalog): :data:`_NO_SETS` where the store holds none for the SKU;
+    where the store failed, a GoveeBleError of that first failure (its message and cause), every time. Every
+    scene lookup, at every set, goes through this one call; its callers pick the set (the whole catalog
+    where the store records nothing at it). A plain lookup once the store is read: no I/O.
+    :data:`_STORE_LOCK` makes first lookups made at once (one per device's setup) read the store once:
     functools.cache has no lock of its own, so each lookup that missed it would read and check it."""
     with _STORE_LOCK:
         store = _store()
@@ -222,25 +241,66 @@ def _catalog(sku: str) -> Mapping[str, Scene]:
         # A fresh error each time: one shared instance would carry each raise's traceback and the exception
         # its caller was handling to every other caller, and keep the last caller's frames alive.
         raise GoveeBleError(*store.args) from store.__cause__
-    return store.get(sku, _NO_SCENES)
+    return store.get(sku, _NO_SETS)
 
 
-def _catalogs(store: Any) -> dict[str, list[Scene]]:
-    """Every SKU's catalog in the parsed ``store``, its scenes in pool order. Raises ValueError unless
-    ``store`` is an object of exactly ``pool``, a list of scene entries (:func:`_scene`), unique and sorted
-    by content (the name, then the entry's JSON with sorted keys, as tools/fetch_scenes.py's ``layout``
-    writes it), and ``skus``, which maps each upper-case SKU to the strictly increasing indexes of at least
-    one pool entry, no two of one name, and every pool entry is some SKU's (no orphan)."""
-    if not isinstance(store, dict) or set(store) != {"pool", "skus"}:
-        raise ValueError("the store is not an object of 'pool' and 'skus'")
-    entries, skus = store["pool"], store["skus"]
-    if not isinstance(entries, list) or not isinstance(skus, dict):
-        raise ValueError("the store's 'pool' is not a list, or its 'skus' not an object")
+def _set_key(versions: Collection[int]) -> str:
+    """The canonical key of the scene set ``versions`` (its scene versions, as
+    :attr:`~govee_ble_local.devices.device.Device.scene_versions` gives them): the versions sorted
+    ascending, each once, joined by ``,``; ``""`` for the empty set. The store's ``by_set`` keys are in this
+    form only, and tools/fetch_scenes.py keys them by this function. GoveeBleInvalidValue unless
+    ``versions`` is a collection (``collections.abc.Collection``, read once) of non-negative ints (a bool is
+    not one), each short enough to write as a key: so a str is refused (its members are strs) and a bytes,
+    bytearray or memoryview of bytes is a collection of ints like any other, while a generator or another
+    one-shot iterator is refused (it is not a collection: given twice, it would read as the empty set the
+    second time). The message names the type only, never the value (an int too long to write can't be)."""
+    members = list(versions) if isinstance(versions, Collection) else None
+    try:
+        if members is not None and all(isinstance(v, int) and not isinstance(v, bool) and v >= 0
+                                       for v in members):
+            return ",".join(str(int(v)) for v in sorted(set(members)))
+    except ValueError:   # a version past the int-to-str limit (sys.get_int_max_str_digits), as 10**5000
+        pass
+    raise GoveeBleInvalidValue(
+        f"scene_versions is not a collection of non-negative ints ({type(versions).__name__})")
+
+
+def _canonical(key: object) -> bool:
+    """Whether ``key`` is a scene set's key in :func:`_set_key`'s form."""
+    if not isinstance(key, str):
+        return False
+    try:
+        return _set_key([int(v) for v in key.split(",")] if key else []) == key
+    except ValueError:   # not decimal ints, or a negative one (GoveeBleInvalidValue)
+        return False
+
+
+def _catalogs(store: Any) -> dict[str, dict[str | None, _Catalog]]:
+    """Every SKU's catalogs in the parsed ``store``: ``{SKU: {None: its catalog, key: its catalog at the
+    set of that by_set key}}``, each a :data:`_Catalog` of its scenes in pool order (a scene the set plays
+    another entry for keeps its place, under its name; one not listed there is left out) and its codes,
+    the first name of each code. Raises ValueError unless ``store`` is an object of exactly:
+
+    - ``pool``, a list of scene entries (:func:`_scene`), unique and sorted by content (the name, then the
+      entry's JSON with sorted keys, as tools/fetch_scenes.py's ``layout`` writes it);
+    - ``skus``, which maps each upper-case SKU to the strictly increasing indexes of at least one pool
+      entry, no two of one name;
+    - ``by_set``, which maps SKUs of ``skus`` to non-empty objects that map canonical scene-set keys
+      (:func:`_set_key`) to non-empty objects that map names of that SKU's catalog to null or the index of
+      a pool entry of that name other than the catalog's own;
+
+    and every pool entry is some SKU's or some override's (no orphan). A pool entry that carries
+    ``by_set`` of its own is refused (:func:`_validate_entry`), so an override never nests."""
+    if not isinstance(store, dict) or set(store) != {"pool", "skus", "by_set"}:
+        raise ValueError("the store is not an object of 'pool', 'skus' and 'by_set'")
+    entries, skus, by_set = store["pool"], store["skus"], store["by_set"]
+    if not isinstance(entries, list) or not isinstance(skus, dict) or not isinstance(by_set, dict):
+        raise ValueError("the store's 'pool' is not a list, or its 'skus' or 'by_set' not an object")
     pool = [_scene(i, entry) for i, entry in enumerate(entries)]
     keys = [(entry["name"], json.dumps(entry, sort_keys=True, separators=(",", ":"))) for entry in entries]
     if any(a >= b for a, b in itertools.pairwise(keys)):
         raise ValueError("the pool is not unique and sorted by content")
-    catalogs: dict[str, list[Scene]] = {}
+    defaults: dict[str, dict[str, int]] = {}   # SKU -> {name: its catalog's pool index}
     for key, refs in skus.items():
         if not (isinstance(key, str) and _SKU_RE.fullmatch(key) and key == key.upper()):
             raise ValueError(f"{key!r} is not an upper-case SKU")
@@ -248,13 +308,42 @@ def _catalogs(store: Any) -> dict[str, list[Scene]]:
                 or not all(type(i) is int and 0 <= i < len(pool) for i in refs)
                 or any(a >= b for a, b in itertools.pairwise(refs))):
             raise ValueError(f"{key}'s catalog is not strictly increasing indexes into the pool")
-        catalogs[key] = [pool[i] for i in refs]
-        if len({scene.name for scene in catalogs[key]}) != len(refs):
+        defaults[key] = {pool[i].name: i for i in refs}
+        if len(defaults[key]) != len(refs):
             raise ValueError(f"{key}'s catalog holds two scenes of one name")
     used = {i for refs in skus.values() for i in refs}
+    for sku, sets in by_set.items():
+        if sku not in defaults or not isinstance(sets, dict) or not sets:
+            raise ValueError(f"by_set {sku!r} is not a non-empty object of a SKU of 'skus'")
+        for at, names in sets.items():
+            if not _canonical(at) or not isinstance(names, dict) or not names:
+                raise ValueError(f"{sku}'s by_set {at!r} is not a sorted, comma-joined scene set of a "
+                                 f"non-empty object")
+            for name, i in names.items():
+                if name not in defaults[sku]:
+                    raise ValueError(f"{sku}'s by_set {at!r} names {name!r}, which its catalog lacks")
+                if i is not None and not (type(i) is int and 0 <= i < len(pool) and pool[i].name == name
+                                          and i != defaults[sku][name]):
+                    raise ValueError(f"{sku}'s by_set {at!r} gives {name!r} no other pool entry of that name")
+                if i is not None:
+                    used.add(i)
     if len(used) != len(pool):
-        raise ValueError(f"pool entry {min(set(range(len(pool))) - used)} is no SKU's")
-    return catalogs
+        raise ValueError(f"pool entry {min(set(range(len(pool))) - used)} is no SKU's or override's")
+    out: dict[str, dict[str | None, _Catalog]] = {}
+    for sku, own in defaults.items():
+        out[sku] = {None: _catalog_of([pool[i] for i in own.values()])}
+        for at, names in by_set.get(sku, {}).items():
+            picked = (names.get(name, i) for name, i in own.items())
+            out[sku][at] = _catalog_of([pool[i] for i in picked if i is not None])
+    return out
+
+
+def _catalog_of(scenes: list[Scene]) -> _Catalog:
+    """The :data:`_Catalog` of ``scenes`` (no two of one name), in their order."""
+    codes: dict[int, str] = {}
+    for scene in scenes:
+        codes.setdefault(scene.code, scene.name)
+    return MappingProxyType({scene.name: scene for scene in scenes}), MappingProxyType(codes)
 
 
 def _scene(i: int, entry: Any) -> Scene:
@@ -295,7 +384,9 @@ def _validate_entry(name: object, entry: object) -> None:
     - a ``param`` that is not empty is strict base64, so a corrupt bundled blob fails at load, not at upload;
     - an entry with version ``rules`` is refused: the app lists that scene only on firmware its rules allow
       (devices.yaml scenes.list_filter), which the library doesn't model, so offered it would show on every
-      one.
+      one;
+    - an entry with a ``by_set`` key is refused: the per-set entries are the store's ``by_set``, each a flat
+      entry of its own, so none nests.
 
     Other keys are not read. A message names the key and the type, never the value (a blob is never quoted).
     """
@@ -308,6 +399,8 @@ def _validate_entry(name: object, entry: object) -> None:
         raise ValueError(f"{name!r}: 'code' must be an int from 0 to {_MAX_CODE}, got {type(code).__name__}")
     if entry.get("rules"):
         raise ValueError(f"{name!r} is gated by version rules, which the library can't follow")
+    if "by_set" in entry:
+        raise ValueError(f"{name!r}: an entry carries no 'by_set' (the store's by_set holds per-set entries)")
     for key, typ in _ENTRY_TYPES:
         value = entry.get(key)
         if value is not None and type(value) is not typ:
@@ -328,50 +421,50 @@ def _catalog_key(sku: str) -> str:
     return key.upper()
 
 
-def load_scenes(sku: str) -> dict[str, Scene]:
+def load_scenes(sku: str, *, scene_versions: Collection[int] | None = None) -> dict[str, Scene]:
     """Return {scene_name: Scene} for a SKU, or {} if no catalog is bundled.
 
+    ``scene_versions`` None (the default) gives the SKU's whole bundled catalog, the scenes the Govee
+    app's scene list shows at the union of the SKU's scene sets. A set (normally
+    :attr:`~govee_ble_local.devices.device.Device.scene_versions`, one of the SKU's scene sets) gives
+    the catalog the app's list shows at that set (devices.yaml scenes.list_filter): a scene the app hides
+    there is left out, and one it plays another lightEffect for keeps its name and holds that effect. The
+    loader does not know the device table, so at a set the SKU never has it gives the whole catalog.
+
     Returns a fresh dict each call (Scene is frozen), so callers can't corrupt the cache.
-    The first call (of any SKU) reads and checks the whole bundled store from disk, once; on
-    an event loop use :func:`async_load_scenes` (or call this from an executor) for that
-    first call. Raises GoveeBleInvalidValue for a malformed SKU, GoveeBleError for a missing,
-    corrupt or unreadable store: a GoveeBleError of the first such failure (its message and
-    cause), raised by every later call with no second read, except a read error of the
-    process's state (too many open files, out of memory), after which the next call reads
-    the store again.
+    The first call (of any SKU) reads and checks the whole bundled store from disk, once, and builds the
+    catalog of every set; every later call, at any set, is from memory. On an event loop use
+    :func:`async_load_scenes` (or call this from an executor) for that first call. Raises
+    GoveeBleInvalidValue for a malformed SKU or a ``scene_versions`` that is not a collection of
+    non-negative ints, GoveeBleError for a missing, corrupt or unreadable store: a GoveeBleError of the
+    first such failure (its message and cause), raised by every later call with no second read, except a
+    read error of the process's state (too many open files, out of memory), after which the next call
+    reads the store again.
     """
-    return dict(_catalog(_catalog_key(sku)))
+    key = _catalog_key(sku)
+    at = None if scene_versions is None else _set_key(scene_versions)
+    sets = _catalog(key)
+    return dict(sets.get(at, sets[None])[0])
 
 
-async def async_load_scenes(sku: str) -> dict[str, Scene]:
+async def async_load_scenes(sku: str, *, scene_versions: Collection[int] | None = None) -> dict[str, Scene]:
     """:func:`load_scenes` without blocking the event loop.
 
     The first lookup (of any SKU) reads and checks the bundled store from disk; this runs
     that in a worker thread (later lookups are cached and return immediately)."""
-    return await asyncio.to_thread(load_scenes, sku)
+    return await asyncio.to_thread(load_scenes, sku, scene_versions=scene_versions)
 
 
-# Reverse indexes {code: name}, keyed by catalog key. Each entry remembers the catalog it
-# was built from and is rebuilt when `_catalog` returns a different mapping (for example
-# after `_store.cache_clear()`), so the two caches can't disagree.
-_NAMES_BY_CODE: dict[str, tuple[Mapping[str, Scene], Mapping[int, str]]] = {}
+def scene_names_by_code(sku: str, *, scene_versions: Collection[int] | None = None) -> dict[int, str]:
+    """Reverse index {code: name} for a SKU's catalog at ``scene_versions`` (as :func:`load_scenes`; first
+    name wins).
 
-
-def scene_names_by_code(sku: str) -> dict[int, str]:
-    """Reverse index {code: name} for a SKU's catalog (first name wins).
-
-    Built once per catalog and cached; returns a fresh dict each call.
+    Built with the catalog, once; returns a fresh dict each call.
     """
     key = _catalog_key(sku)
-    catalog = _catalog(key)
-    hit = _NAMES_BY_CODE.get(key)
-    if hit is None or hit[0] is not catalog:
-        index: dict[int, str] = {}
-        for name, scene in catalog.items():
-            index.setdefault(scene.code, name)
-        hit = (catalog, MappingProxyType(index))
-        _NAMES_BY_CODE[key] = hit
-    return dict(hit[1])
+    at = None if scene_versions is None else _set_key(scene_versions)
+    sets = _catalog(key)
+    return dict(sets.get(at, sets[None])[1])
 
 
 def _decode_param(scene: Scene) -> bytes:

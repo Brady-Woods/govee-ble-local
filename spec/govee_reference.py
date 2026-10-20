@@ -527,15 +527,18 @@ def _selftest(*, strict: bool = False) -> int:
         check("BLE routes: H6004 -> bulblightv3 64 (10 is IoT-only); H60A6 at (1,3) -> 303, at (2,1) none",
               ble_rows(reg, "H6004") == [("bulblightv3", 64)]
               and ble_rows(reg, "H60A6", (1, 3)) == [("h60ax", 303)] and ble_rows(reg, "H60A6", (2, 1)) == [])
-        h61a8 = [client_row(reg, "dreamcolorlightv1", 19, pact=(1, 1), soft=s, hard=h)
-                 for s, h in (("3.03.18", "3.01.10"), ("1.03.00", "3.08.01"), ("1.05.00", "1.00.01"))]
-        check("H61A8 firmware branches: SW 3.03.18 / HW 3.01.10 -> {0,1,2,3} and [2000, 9000]; soft "
-              "1.03.00 on (1,1) -> activate only, HW 3.08.01 -> [2700, 6500]; soft 1.05.00 -> {0,1,2}; "
-              "(1,2) -> {0,1,2}; HW 10.00.00 is below 3.08.01 (a string compare)",
+        h61a8 = [client_row(reg, "dreamcolorlightv1", 19, pact=pact, soft=s, hard=h)
+                 for pact, s, h in (((1, 1), "3.03.18", "3.01.10"), ((1, 1), "1.03.00", "3.08.01"),
+                                    ((1, 2), "1.05.00", "1.00.01"))]
+        h6168 = [client_row(reg, "dreamcolorlightv1", 136, soft=s, hard=h)
+                 for s, h in (("1.06.00", "1.00.02"), ("1.06.00", "1.00.01"), ("1.05.00", "3.01.10"))]
+        check("firmware branches: H61A8 {0,1,2,3} at every pact and firmware, HW 3.08.01 -> [2700, 6500], "
+              "HW 10.00.00 below it (a string compare); H6168 {0,1,2,3} from soft 1.06.00 and hard 1.00.02 "
+              "(part brightness), else {0,1,2}",
               [(r["scene_versions"], r["kelvin_range"]) for r in h61a8]
-              == [([0, 1, 2, 3], [2000, 9000]), ([], [2700, 6500]), ([0, 1, 2], [2000, 9000])]
-              and client_row(reg, "dreamcolorlightv1", 19, pact=(1, 2))["scene_versions"] == [0, 1, 2]
-              and client_row(reg, "dreamcolorlightv1", 19, hard="10.00.00")["kelvin_range"] == [2000, 9000])
+              == [([0, 1, 2, 3], [2000, 9000]), ([0, 1, 2, 3], [2700, 6500]), ([0, 1, 2, 3], [2000, 9000])]
+              and client_row(reg, "dreamcolorlightv1", 19, hard="10.00.00")["kelvin_range"] == [2000, 9000]
+              and [r["scene_versions"] for r in h6168] == [[0, 1, 2, 3], [0, 1, 2], [0, 1, 2]])
         check("H60A6 pact (1,1): no 0xA5 in the status read; with the pact unknown the row's own applies",
               client_row(reg, "h60ax", 303, pact=(1, 1))["status_read"] == ["cmd_41", "cmd_30"]
               and client_row(reg, "h60ax", 303)["status_read"] == ["cmd_41", "cmd_30", "color_group"])

@@ -11,6 +11,18 @@ runtime cloud call is needed), each scene stored once: the store's `pool` lists 
 bundled scene once, sorted by content, and `skus` maps each SKU to the indexes of its
 scenes in it (layout), so SKUs that share a scene share its entry.
 
+The app's scene list runs that filter at the scene set in force, so a fetch runs it at each of the SKU's
+scene sets (scene_sets). A scene's entry is its pick at the union of the sets (op_set), the newest
+firmware's; where the result at a smaller set differs, the entry's ``by_set`` (the store's ``by_set``,
+layout) records it per set: None where the app lists no such scene there, else the entry of the effect it
+plays there. A scene whose pick at a set is an effect the library can't store (version rules, no code, a
+sceneType-5 upload, a placeholder) is not listed at that set only, and printed. Naming ignores the per-set
+results: a name follows the scene's entry at the union, so a change to its other effects never renames it,
+and the tombstone keeps that entry only. Alike twins (one sceneName, one entry at the union) take the order
+of their whole lightEffect content, not the response's, so a reorder never swaps which plays which effect.
+Each scene whose result at a set is not the one the store held is printed by name, per set; a kept scene
+the fetch no longer lists keeps its results at the SKU's current sets only (_reconciled).
+
 A stored name is a Home Assistant effect name that automations keep, so a re-fetch never points one at
 another scene (stored_names), and a name the store gave up never comes back on another scene (the
 tombstone, TOMBSTONE). Each stored scene records the sceneName the app lists it under (``scene_name``,
@@ -60,8 +72,8 @@ import tempfile
 import time
 import urllib.parse
 import urllib.request
-from collections.abc import Callable, Collection, Mapping
-from typing import Any
+from collections.abc import Callable, Collection, Mapping, Sequence
+from typing import Any, Final
 
 LIBRARY_URL = "https://app2.govee.com/appsku/v1/light-effect-libraries"
 # The traced app's version (decomp-7.7.02). Self-contained on purpose (the cloud module carries its own
@@ -106,11 +118,31 @@ def validate_entry(name: object, entry: dict[str, object]) -> None:
     """Check one scene as ``scenes.load_scenes`` takes it, by the loader's own check
     (``scenes._validate_entry``), so the tool writes no scene the loader refuses and refuses none it takes;
     raises ValueError. That refuses a mistyped value (nothing is coerced), a code outside 0 to 0xFFFF, a blob
-    that is not base64 and a scene with ``rules`` (version-gated in the app, which the library can't
-    follow)."""
+    that is not base64, a scene with ``rules`` (version-gated in the app, which the library can't follow) and
+    an entry that carries ``by_set`` (a flat entry: :func:`_check` takes the tool's own form)."""
     from govee_ble_local import scenes
 
     scenes._validate_entry(name, entry)
+
+
+def _default(entry: Entry) -> Entry:
+    """A fetched or stored entry without its per-set results (``by_set``): the scene's entry at the union
+    of its SKU's scene sets, a flat entry."""
+    return {k: v for k, v in entry.items() if k != "by_set"}
+
+
+def _check(name: object, entry: Entry) -> None:
+    """Check one fetched or stored entry of the tool's own form: :func:`validate_entry` of its default
+    (:func:`_default`) and of each per-set entry of its ``by_set`` (an object of scene-set keys to None or an
+    entry), ValueError where one fails. The store's rules for ``by_set`` (canonical keys, no empty map, no
+    entry of the default's) are the loader's, which layout's caller runs (``scenes._catalogs``)."""
+    by_set = entry.get("by_set", {}) if isinstance(entry, dict) else {}
+    if not isinstance(by_set, dict):
+        raise ValueError(f"{name!r}: 'by_set' is not an object")
+    validate_entry(name, _default(entry) if isinstance(entry, dict) else entry)
+    for alt in by_set.values():
+        if alt is not None:
+            validate_entry(name, alt)
 
 
 def write_catalog(path: pathlib.Path, data: object) -> None:
@@ -133,21 +165,25 @@ def _dumps(data: object) -> str:
     return json.dumps(data, indent=1, sort_keys=True)
 
 
-def _canon(entry: Entry) -> str:
-    """A pool entry's content as one string: its JSON with sorted keys and no whitespace."""
+def _canon(entry: object) -> str:
+    """A pool entry's content (or a library scene's lightEffects) as one string: its JSON with sorted keys
+    and no whitespace."""
     return json.dumps(entry, sort_keys=True, separators=(",", ":"))
 
 
 def layout(catalogs: Mapping[str, Mapping[str, Entry]]) -> dict[str, Any]:
     """The scene store of ``catalogs`` ({SKU: {name: entry}}), as the library reads it (scenes/__init__.py):
-    ``pool``, each scene of them once (its entry with its ``name``), sorted by name, then by its JSON with
-    sorted keys; ``skus``, each SKU's pool indexes in increasing order, which is its catalog's name order.
-    The same catalogs give the same store, whatever order they or their scenes come in, and a scene no SKU
-    holds is in no pool. Raises ValueError on an empty catalog, an invalid scene (:func:`validate_entry`), an
-    entry that carries a ``name`` of its own, or two catalogs of one SKU (its spellings, "h6006" and "H6006",
-    which would be one catalog of both)."""
+    ``pool``, each scene of them once (its entry with its ``name``, without its ``by_set``) and each per-set
+    entry of their ``by_set`` once (with its scene's ``name``), sorted by name, then by its JSON with sorted
+    keys; ``skus``, each SKU's pool indexes in increasing order, which is its catalog's name order;
+    ``by_set``, ``{SKU: {set key: {name: None or the pool index of its entry there}}}`` for each SKU and set
+    where an entry records a per-set result. The same catalogs give the same store, whatever order they or
+    their scenes come in, and a scene no SKU holds is in no pool. Raises ValueError on an empty catalog, an
+    invalid scene (:func:`_check`), an entry or a per-set entry that carries a ``name`` of its own, or two
+    catalogs of one SKU (its spellings, "h6006" and "H6006", which would be one catalog of both)."""
     pool: dict[str, Entry] = {}   # _canon -> pool entry
     refs: dict[str, list[str]] = {}   # SKU -> its scenes' _canon
+    sets: dict[str, dict[str, dict[str, str | None]]] = {}   # SKU -> set key -> name -> _canon (None: hidden)
     spelled: dict[str, str] = {}   # SKU -> the key its catalog is given under
     for sku, scenes in catalogs.items():
         key = validate_sku(sku)
@@ -156,22 +192,32 @@ def layout(catalogs: Mapping[str, Mapping[str, Entry]]) -> dict[str, Any]:
         if not scenes:
             raise ValueError(f"{sku}: an empty catalog is not stored")
         for name, entry in scenes.items():
-            validate_entry(name, entry)
-            if "name" in entry:
-                raise ValueError(f"{sku}: scene {name!r} carries a 'name' of its own")
-            full = {"name": name, **entry}
+            _check(name, entry)
+            for one in (entry, *(alt for alt in entry.get("by_set", {}).values() if alt is not None)):
+                if "name" in one:
+                    raise ValueError(f"{sku}: scene {name!r} carries a 'name' of its own")
+            full = {"name": name, **_default(entry)}
             pool.setdefault(_canon(full), full)
             refs.setdefault(key, []).append(_canon(full))
+            for at_set, alt in entry.get("by_set", {}).items():
+                pick = None if alt is None else {"name": name, **alt}
+                if pick is not None:
+                    pool.setdefault(_canon(pick), pick)
+                sets.setdefault(key, {}).setdefault(at_set, {})[name] = None if pick is None else _canon(pick)
     order = sorted(pool, key=lambda c: (pool[c]["name"], c))
     at = {c: i for i, c in enumerate(order)}
     return {"pool": [pool[c] for c in order],
-            "skus": {sku: sorted(at[c] for c in own) for sku, own in sorted(refs.items())}}
+            "skus": {sku: sorted(at[c] for c in own) for sku, own in sorted(refs.items())},
+            "by_set": {sku: {k: {n: None if c is None else at[c] for n, c in names.items()}
+                             for k, names in own_sets.items()}
+                       for sku, own_sets in sorted(sets.items())}}
 
 
 def read_store(out_dir: pathlib.Path | None = None) -> dict[str, dict[str, Entry]]:
     """Every SKU's stored catalog, ``{SKU: {name: entry}}`` with each entry without its ``name`` ({} when
-    there is no store yet). The store is checked as the library reads it (``scenes._catalogs``): ValueError
-    when it is malformed."""
+    there is no store yet), and with its ``by_set`` where the store's ``by_set`` records a per-set result
+    for it (``{set key: None or its entry there}``, each without its ``name``). The store is checked as the
+    library reads it (``scenes._catalogs``): ValueError when it is malformed."""
     from govee_ble_local import scenes
 
     path = (out_dir or OUT_DIR) / STORE_NAME
@@ -184,8 +230,16 @@ def read_store(out_dir: pathlib.Path | None = None) -> dict[str, dict[str, Entry
         # quoted by its str: the repr of a UnicodeDecodeError holds the whole file, every blob in it
         raise ValueError(f"{STORE_NAME} is malformed: {type(err).__name__}: {err}") from err
     pool = store["pool"]
-    return {sku: {pool[i]["name"]: {k: v for k, v in pool[i].items() if k != "name"} for i in refs}
-            for sku, refs in store["skus"].items()}
+
+    def unnamed(i: int) -> Entry:
+        return {k: v for k, v in pool[i].items() if k != "name"}
+
+    out = {sku: {pool[i]["name"]: unnamed(i) for i in refs} for sku, refs in store["skus"].items()}
+    for sku, own_sets in store["by_set"].items():
+        for at_set, names in own_sets.items():
+            for name, i in names.items():
+                out[sku][name].setdefault("by_set", {})[at_set] = None if i is None else unnamed(i)
+    return out
 
 
 def read_catalog(sku: str, out_dir: pathlib.Path | None = None) -> dict[str, Entry]:
@@ -318,12 +372,22 @@ def op_set(sku: str) -> frozenset[int] | None:
     rows: every scene row's ``scene_versions`` is its bean's ``c`` (devices.schema.json), so this is the
     union of the non-empty sets (row, ``by_pact``, ``by_firmware``) of the SKU's routes that offer scenes
     (:func:`scene_sets`), the newest firmware's as the library assumes before the device-info read. An empty
-    set is the bean's null ``c`` (H61A8 below soft 1.04.00 at pact code 1: Support.getSupportScenesOpSet,
-    split_rgbiclight/com/govee/dreamcolorlightv1/pact/Support.java:953-956): no filter, which the union is
-    when every set is empty or no row offers scenes. A smaller set of the SKU's may hide a scene this keeps:
-    test_scenes_load checks each set and names the exceptions. At an empty set the app may play an effect
-    before the union's pick (one the union drops): fetch() names those scenes."""
+    set is the bean's null ``c``: no filter, which the union is when every set is empty or no row offers
+    scenes. At each other set of the SKU's (:func:`_smaller_sets`,
+    the empty one included) the app may hide a scene this keeps or play another of its effects: fetch()
+    stores each such result in the scene's ``by_set``."""
     return frozenset(v for s in scene_sets(sku) for v in s) or None
+
+
+def _smaller_sets(sku: str) -> list[tuple[str, frozenset[int]]]:
+    """Each distinct scene set of ``sku``'s (:func:`scene_sets`) but the union (:func:`op_set`; an empty set
+    where that is None), the empty one included, with its key (``scenes._set_key``, the loader's form), in
+    key order."""
+    from govee_ble_local import scenes
+
+    union = op_set(sku) or frozenset()
+    return sorted(((scenes._set_key(s), s) for s in {frozenset(s) for s in scene_sets(sku)} - {union}),
+                  key=lambda pair: pair[0])
 
 
 def effective(item: dict[str, Any], now_ms: float) -> bool:
@@ -416,8 +480,10 @@ def _order(entry: Entry) -> tuple[int, str, str]:
 
 
 def _content(entry: Entry) -> Entry:
-    """A stored entry's scene, without the sceneName it records (``scene_name``)."""
-    return {k: v for k, v in entry.items() if k != "scene_name"}
+    """A stored entry's scene, without the sceneName it records (``scene_name``) and without its per-set
+    results (``by_set``), which naming ignores: a scene is matched by its entry at the union of its SKU's
+    sets only, so a change to its other effects never renames it."""
+    return {k: v for k, v in entry.items() if k not in ("scene_name", "by_set")}
 
 
 def _unresolved(entry: Entry) -> Entry | None:
@@ -654,12 +720,23 @@ def fetch(sku: str, app_version: str = DEFAULT_APP_VERSION, *, seen: Answered | 
           dropped: Collection[str] = ()) -> dict[str, Entry]:
     """``sku``'s scenes from the public scene library: each listed scene's lightEffect for the SKU
     (:func:`listed_effect`, over :func:`op_set` and the categories in force), with the values the app reads
-    for it (:func:`for_sku`). A scene whose effect depends on the firmware's version rules is left out, and
-    named on stdout. Where one of the SKU's scene sets is empty (a null op set: SceneDataVM.b2 runs no
-    checkSupportNew, only Companion.k, SceneDataVM.java:1502-1515), a scene the app plays another effect for
-    there (the first in force, which the union may drop) keeps the union's, and is named on stdout too. For a
-    ``legacy_scene`` SKU the sceneType-5 scenes the library does not upload are left out
-    (:func:`uploads_type5`) and named, before any scene is named. The rest are named over ``existing``, the
+    for it (:func:`for_sku`, :func:`_entry`). A scene whose effect depends on the firmware's version rules is
+    left out, and named on stdout. For a ``legacy_scene`` SKU the sceneType-5 scenes the library does not
+    upload are left out (:func:`uploads_type5`) and named, before any scene is named.
+
+    The app's list runs the same filter at the scene set in force, so each listed scene is evaluated again at
+    each other scene set of the SKU's (:func:`_smaller_sets`; at an empty one, a null op set, SceneDataVM.b2
+    runs no checkSupportNew, only Companion.k, SceneDataVM.java:1502-1515). Where the result there differs,
+    the scene's entry gets a ``by_set`` of that set's key: None where nothing is left (the app lists no such
+    scene there), or where the effect left first is one the library can't store (its version rules decide,
+    it has no code, it is a sceneType-5 upload the library does not make, a placeholder, or an entry the
+    shared check refuses, a number no int holds among them: never a failed fetch), which is named on stdout
+    per set; else the entry of that effect. A per-set result changes nothing else: not the scene's entry, its
+    name (stored_names never sees one) or what ``seen`` gets (main() names each scene whose result at a set
+    is not the store's). A scene the union lists no effect of, but an empty set of the SKU's would, is left
+    out (names never come back after the device-info read, which only shrinks the list) and named on stdout.
+
+    The rest are named over ``existing``, the
     stored catalog, and the SKU's tombstone record, ``retired`` and ``dropped`` (:func:`stored_names`);
     stdout names each stored name whose scene has a new code or category (a match by category and param id
     or category alone as a guess), each new scene stored apart, and each new one more than one stored scene
@@ -671,7 +748,7 @@ def fetch(sku: str, app_version: str = DEFAULT_APP_VERSION, *, seen: Answered | 
     key = validate_sku(sku)
     seen = Answered() if seen is None else seen
     ops = op_set(key)
-    null_set = any(not s for s in scene_sets(key))
+    smaller = _smaller_sets(key)
     versions = legacy_versions(key)
     now_ms = time.time() * 1000
     url = f"{LIBRARY_URL}?sku={urllib.parse.quote(key, safe='')}"
@@ -683,9 +760,12 @@ def fetch(sku: str, app_version: str = DEFAULT_APP_VERSION, *, seen: Answered | 
         raise ValueError(f"library response for {sku} exceeds {MAX_RESPONSE_BYTES} bytes; refusing")
     payload = json.loads(raw)
     named: list[Listed] = []
+    per_set: list[dict[str, Entry | None]] = []   # each named scene's by_set
+    contents: list[str] = []   # each named scene's lightEffects, as one string (_canon)
     gated: list[str] = []
-    unfiltered: list[str] = []
     type5: list[str] = []
+    only_empty: list[str] = []   # listed by the app at an empty set only
+    unfollowed: dict[str, list[str]] = {}   # set key -> the scenes hidden there for an effect not stored
     for category in payload.get("data", {}).get("categories", []):
         # SceneDataVM.b2 skips a category out of its time (:1454-1461)
         in_force = effective(category, now_ms)
@@ -696,6 +776,9 @@ def fetch(sku: str, app_version: str = DEFAULT_APP_VERSION, *, seen: Answered | 
             if held:
                 gated.append(str(scene.get("sceneName")))
             if listed is None:
+                if in_force and not held and any(not s for _k, s in smaller) \
+                        and listed_effect(key, effects, None, now_ms)[0] is not None:
+                    only_empty.append(str(scene.get("sceneName")))
                 if _in_time(key, effects, ops, now_ms):
                     seen.live |= answered
                     seen.held |= answered
@@ -707,45 +790,56 @@ def fetch(sku: str, app_version: str = DEFAULT_APP_VERSION, *, seen: Answered | 
                 else:
                     seen.refuse(key, category, scene)
                 continue
-            eff = for_sku(key, listed)
-            if eff["code"] is None:   # listed, but there is no code to activate it by
+            entry = _entry(key, category, scene, listed)
+            if entry is None:   # listed, but there is no code to activate it by
                 seen.refuse(key, category, scene)
                 continue
-            if null_set and listed_effect(key, effects, None, now_ms)[0] is not listed:
-                unfiltered.append(str(scene.get("sceneName")))
-            entry: Entry = {
-                "code": int(eff["code"]),
-                # a param that is no string stays, so validate_entry refuses it (and the SKU fails)
-                "param": _blob(eff["param"]) if isinstance(eff["param"], str) else (eff["param"] or None),
-                "category": category.get("categoryName"),
-            }
-            if eff["param_id"] is not None:
-                entry["param_id"] = int(eff["param_id"])
-            # Path-B upload drivers (see spec/docs/SCENE_UPLOAD_ENCODING.md): scene_type +
-            # cmd_version pick the a3 commByte; bigEffectStr flags fetch-required.
-            if eff["type"] is not None:
-                entry["scene_type"] = int(eff["type"])
-            if eff["cmd_version"] is not None:
-                entry["cmd_version"] = int(eff["cmd_version"])
-            if eff["big_effect"]:
-                entry["big_effect"] = True
-            if _is_placeholder(entry):
-                # real blob must come from the authenticated effect-strs endpoint
-                entry["placeholder"] = True
-            validate_entry(scene.get("sceneName"), entry)
             if versions is not None and uploads_type5(entry, versions):
                 type5.append(str(scene["sceneName"]))
                 seen.refuse(key, category, scene)
                 continue
             seen.live |= answered
             named.append((scene["sceneName"], entry, frozenset(code for _n, _c, code in answered)))
+            overrides: dict[str, Entry | None] = {}
+            for at_set, versions_at in smaller:
+                pick, rules = listed_effect(key, effects, versions_at or None, now_ms)
+                if pick is None and not rules:
+                    overrides[at_set] = None   # none left there: the app lists no such scene
+                    continue
+                try:
+                    alt = None if pick is None else _entry(key, category, scene, pick)
+                except (ValueError, TypeError, OverflowError):   # not stored there: an effect the shared
+                    alt = None   # check refuses, or one whose number no int holds (JSON reads 1e999 as inf)
+                if alt == entry:
+                    continue   # the union's pick plays there too (or an effect of the same values)
+                if alt is None or _is_placeholder(alt) \
+                        or (versions is not None and uploads_type5(alt, versions)):
+                    overrides[at_set] = None   # listed there, with an effect the library can't store
+                    unfollowed.setdefault(at_set, []).append(str(scene["sceneName"]))
+                else:
+                    overrides[at_set] = alt
+            per_set.append(overrides)
+            contents.append(_canon(effects))
+    # Twins (one sceneName and one entry at the union) differ only in their other lightEffects, so naming,
+    # which pairs alike scenes in the order they come, would give each its name by the response's order: they
+    # take the order of their whole lightEffect content instead, so a reordered response never swaps which
+    # name plays which effect at a smaller set, and a first fetch names them alike whatever the order.
+    twins: dict[tuple[str, str], list[int]] = {}
+    for i, (own, entry, _codes) in enumerate(named):
+        twins.setdefault((own, _canon(entry)), []).append(i)
+    for places in (idx for idx in twins.values() if len(idx) > 1):
+        ranked = [(named[i], per_set[i]) for i in sorted(places, key=lambda i: contents[i])]
+        for i, (item, overrides) in zip(places, ranked, strict=True):
+            named[i], per_set[i] = item, overrides
     stored, back = existing or {}, retired or {}
     unsure: dict[int, list[str]] = {}
     names = stored_names(named, stored, _answers(key, payload), back, dropped, unsure)
     scenes: dict[str, Entry] = {}
-    for (own, entry, _codes), name in zip(named, names, strict=True):
+    for (own, entry, _codes), name, overrides in zip(named, names, per_set, strict=True):
         if name != own:
             entry["scene_name"] = own
+        if overrides:   # after naming, which ignores it
+            entry["by_set"] = overrides
         scenes[name] = entry
     apart, moved, guessed, ambiguous = [], [], [], []
     for i, ((own, entry, codes), name) in enumerate(zip(named, names, strict=True)):
@@ -778,10 +872,50 @@ def fetch(sku: str, app_version: str = DEFAULT_APP_VERSION, *, seen: Answered | 
     if gated:
         print(f"{key}: left out {len(gated)} scenes whose effect the firmware's version rules pick: "
               f"{', '.join(gated)}")
-    if unfiltered:
-        print(f"{key}: at its empty scene set (no op set) the app plays another lightEffect for "
-              f"{len(unfiltered)} scenes: {', '.join(unfiltered)}")
+    if only_empty:
+        print(f"{key}: left out {len(only_empty)} scenes the app lists only at its empty scene set (no op "
+              f"filter): {', '.join(only_empty)}")
+    for at_set, _versions_at in smaller:
+        if at_set in unfollowed:
+            print(f"{key}: hidden at scene set {_shown(at_set)}, where the app plays an effect the library "
+                  f"can't store (version rules / no code / sceneType 5 / placeholder / invalid): "
+                  f"{len(unfollowed[at_set])} scenes: {', '.join(unfollowed[at_set])}")
     return scenes
+
+
+def _shown(at_set: str) -> str:
+    """A scene set's key as printed: "[0, 1, 2]", "[]" for the empty set."""
+    return f"[{', '.join(at_set.split(','))}]" if at_set else "[]"
+
+
+def _entry(sku: str, category: Mapping[str, Any], scene: Mapping[str, Any],
+           effect: dict[str, Any]) -> Entry | None:
+    """The catalog entry of ``effect``, one lightEffect of the library ``scene`` in ``category``, with the
+    values the app reads for ``sku`` (:func:`for_sku`), checked (:func:`validate_entry`); None when it has no
+    code to activate it by. A param that is no string stays, so the check refuses it (and the SKU fails)."""
+    eff = for_sku(sku, effect)
+    if eff["code"] is None:
+        return None
+    entry: Entry = {
+        "code": int(eff["code"]),
+        "param": _blob(eff["param"]) if isinstance(eff["param"], str) else (eff["param"] or None),
+        "category": category.get("categoryName"),
+    }
+    if eff["param_id"] is not None:
+        entry["param_id"] = int(eff["param_id"])
+    # Path-B upload drivers (see spec/docs/SCENE_UPLOAD_ENCODING.md): scene_type +
+    # cmd_version pick the a3 commByte; bigEffectStr flags fetch-required.
+    if eff["type"] is not None:
+        entry["scene_type"] = int(eff["type"])
+    if eff["cmd_version"] is not None:
+        entry["cmd_version"] = int(eff["cmd_version"])
+    if eff["big_effect"]:
+        entry["big_effect"] = True
+    if _is_placeholder(entry):
+        # real blob must come from the authenticated effect-strs endpoint
+        entry["placeholder"] = True
+    validate_entry(scene.get("sceneName"), entry)
+    return entry
 
 
 def resolve_placeholders(email: str, password: str, skus: list[str],
@@ -1023,8 +1157,14 @@ def scene_capable_skus() -> list[str]:
 
 def audit(skus: list[str]) -> None:
     """Report per-SKU scene-upload READINESS (read-only, no cloud). For each
-    SKU, run every bundled scene through the device's real
-    ``Device.scene_upload_frames`` routing and put it in exactly one bucket
+    SKU, at each of its scene sets (the union, :func:`op_set`, which is the
+    device's before the device-info read, then each smaller one,
+    :func:`_smaller_sets`: one row each, its versions last), run every scene
+    of the catalog the library offers at that set (``load_scenes(sku,
+    scene_versions=...)``, the effects it plays there included) through the
+    real upload planner at that set
+    (``scenes.scene_upload_frames`` with the device's scene dialect, as
+    ``Device.set_scene_by_name`` plans it) and put it in exactly one bucket
     (the four add up to ``total``):
       upload      = a dialect burst is produced (0xA3 / 0xA4-MTU)
       activate    = correctly bare-activated (no param, or static sceneType 0)
@@ -1036,15 +1176,15 @@ def audit(skus: list[str]) -> None:
     """
     from bleak.backends.device import BLEDevice
 
+    from govee_ble_local import scenes
     from govee_ble_local.exceptions import GoveeBleInvalidValue, GoveeBleNotSupported
     from govee_ble_local.registry import create_device
-    from govee_ble_local.scenes import load_scenes
 
     print(
         f"{'SKU':7s} {'total':>5s} {'upload':>16s} {'activate':>8s} {'BLOCKED':>7s} {'placeh':>6s}  versions"
     )
     for sku in skus:
-        cat = load_scenes(sku)
+        cat = scenes.load_scenes(sku)
         if not cat:
             print(f"{sku:7s} (no catalog)")
             continue
@@ -1057,27 +1197,87 @@ def audit(skus: list[str]) -> None:
         except GoveeBleNotSupported:
             print(f"{sku:7s} (not a supported SKU)")
             continue
-        upload = activate = blocked = placeholder = 0
-        dialects: set[str] = set()
-        for scene in cat.values():
-            if scene.placeholder:
-                placeholder += 1
+        union = op_set(sku) or frozenset()   # the catalog's own set, the device's before its device-info read
+        for versions in (union, *(s for _k, s in _smaller_sets(sku))):
+            at = cat if versions == union else scenes.load_scenes(sku, scene_versions=versions)
+            upload = activate = blocked = placeholder = 0
+            dialects: set[str] = set()
+            for scene in at.values():
+                if scene.placeholder:
+                    placeholder += 1
+                    continue
+                try:
+                    frames = scenes.scene_upload_frames(scene, dev.profile.scene_dialect, versions)
+                except (GoveeBleInvalidValue, GoveeBleNotSupported):
+                    blocked += 1  # the planner refuses this blob: a real upload gap
+                    continue
+                if frames:
+                    upload += 1
+                    dialects.add("0xA4" if any(f[0] == 0xA4 for f in frames) else "0xA3")
+                elif scene.param and scene.scene_type not in (0, None):
+                    blocked += 1
+                else:
+                    activate += 1
+            u = f"{upload}{sorted(dialects) if dialects else ''}"
+            print(f"{sku:7s} {len(at):5d} {u:>16s} {activate:8d} {blocked:7d} {placeholder:6d}  "
+                  f"{sorted(versions)}")
+
+
+_UNION: Final = "as at the union"   # a scene with no per-set result at a set: its entry at the union plays
+
+
+def _set_changes(sku: str, existing: Mapping[str, Entry], scenes: Mapping[str, Entry],
+                 sets: Collection[str]) -> list[str]:
+    """A line per scene set of ``sets`` (keys) naming each scene of ``scenes`` whose result there is not the
+    one the store held (``existing``; a scene new to the store held none, so its entry at the union played
+    there): hidden there, plays an effect there (its code and category), changes from one effect there to
+    another (or to a new entry of the same code and category), or listed again there, as at the union or
+    with an effect. Naming never sees a per-set result, so this is the only line such a change gets."""
+    def there(entry: Entry | None, at: str) -> Entry | str | None:   # the one str is _UNION
+        own = {} if entry is None else entry.get("by_set", {})
+        return own.get(at, _UNION)
+
+    lines: list[str] = []
+    for at in sorted(sets):
+        changed: list[str] = []
+        for n in sorted(scenes):
+            was, now = there(existing.get(n), at), there(scenes[n], at)
+            if was == now:
                 continue
-            try:
-                frames = dev.scene_upload_frames(scene)
-            except (GoveeBleInvalidValue, GoveeBleNotSupported):
-                blocked += 1  # the planner refuses this blob: a real upload gap
-                continue
-            if frames:
-                upload += 1
-                dialects.add("0xA4" if any(f[0] == 0xA4 for f in frames) else "0xA3")
-            elif scene.param and scene.scene_type not in (0, None):
-                blocked += 1
+            if now is None:
+                changed.append(f'"{n}" hidden')
+            elif was is None:
+                how = "as at the union" if isinstance(now, str) else f"plays {_of(now)}"
+                changed.append(f'"{n}" listed again, {how}')
+            elif isinstance(now, str):
+                changed.append(f'"{n}" plays its entry at the union again ({_of(scenes[n])})')
+            elif isinstance(was, str):
+                changed.append(f'"{n}" plays {_of(now)}')
             else:
-                activate += 1
-        vers = sorted(dev.profile.scene_versions)
-        u = f"{upload}{sorted(dialects) if dialects else ''}"
-        print(f"{sku:7s} {len(cat):5d} {u:>16s} {activate:8d} {blocked:7d} {placeholder:6d}  {vers}")
+                new = ", a new entry" if _of(was) == _of(now) else ""
+                changed.append(f'"{n}" changes from {_of(was)} to {_of(now)}{new}')
+        if changed:
+            lines.append(f"{sku}: {len(changed)} scenes change at scene set {_shown(at)}: "
+                         f"{', '.join(changed)}")
+    return lines
+
+
+def _reconciled(entry: Entry, sets: Sequence[tuple[str, frozenset[int]]]) -> Entry:
+    """A stored scene the fetch no longer lists (kept under its name), its per-set results reconciled with
+    the SKU's smaller scene sets ``sets`` (:func:`_smaller_sets`): one at a set the SKU no longer has is
+    dropped, and at a set it has none for (one added since it was last listed) the scene is hidden where its
+    entry's op type is outside the set (a base sceneType 0 passes any): the app then plays a later
+    lightEffect or hides it (DESIGN section 1), which the store can't know, so the library can't follow it.
+    At the empty set (no op filter) the entry stands."""
+    own = entry.get("by_set", {})
+    out: dict[str, Entry | None] = {}
+    for at, versions in sets:
+        if at in own:
+            out[at] = own[at]
+        elif versions and (entry.get("scene_type") or 0) != 0 \
+                and op_type(entry.get("scene_type"), entry.get("cmd_version")) not in versions:
+            out[at] = None
+    return {**_default(entry), **({"by_set": out} if out else {})}
 
 
 def main(skus: list[str], app_version: str = DEFAULT_APP_VERSION) -> int:
@@ -1123,6 +1323,29 @@ def main(skus: list[str], app_version: str = DEFAULT_APP_VERSION) -> int:
             scenes = {n: v for n, v in scenes.items() if n not in held}
             print(f"{sku}: left out {len(held)} sceneType-5 scenes the app uploads and the library does not "
                   f"(legacy_scene): {', '.join(held)}")
+        # a kept scene's per-set effect the cut drops: the scene is not listed at that set (fetch() stores a
+        # listed one's so)
+        recut: dict[str, list[str]] = {}
+        for n, v in scenes.items():
+            for at_set, alt in v.get("by_set", {}).items():
+                if versions is not None and alt is not None and uploads_type5(alt, versions):
+                    recut.setdefault(at_set, []).append(n)
+        for at_set, names in sorted(recut.items()):
+            for n in names:
+                scenes[n] = {**scenes[n], "by_set": {**scenes[n]["by_set"], at_set: None}}
+            print(f"{sku}: hidden at scene set {_shown(at_set)}, where the app plays an effect the library "
+                  f"can't store (sceneType 5): {len(names)} scenes: {', '.join(names)}")
+        # a kept scene's per-set results, from the fetch that last listed it, follow the SKU's sets now (a
+        # listed one's are this fetch's, at exactly those sets)
+        smaller = _smaller_sets(sku)
+        stale: dict[str, list[str]] = {}
+        for n in [n for n in scenes if n not in fresh]:
+            for at_set in sorted(set(scenes[n].get("by_set", {})) - {k for k, _v in smaller}):
+                stale.setdefault(at_set, []).append(n)
+            scenes[n] = _reconciled(scenes[n], smaller)
+        for at_set, names in sorted(stale.items()):
+            print(f"{sku}: scene set {_shown(at_set)} is none of the SKU's now: the results there of "
+                  f"{len(names)} stored scenes are dropped: {', '.join(names)}")
         if not scenes:
             print(f"{sku}: no scenes in the library; nothing stored")
             continue
@@ -1135,6 +1358,8 @@ def main(skus: list[str], app_version: str = DEFAULT_APP_VERSION) -> int:
             print(f"{sku}: removed {len(gone)} stored names whose scene the SKU's scene list refuses for "
                   f"good, or the library does not upload; retired, so only that scene's return takes one "
                   f"back: {', '.join(_described(n, existing[n]) for n in gone)}")
+        for line in _set_changes(sku, existing, scenes, [k for k, _v in smaller]):
+            print(line)
         # dropped: a kept name the library no longer lists or holds (:func:`_still_there`), or whose scene
         # (its param id) the fetch lists under another name or leaves out only for its time or rules at
         # another code (an answer at its own place is another scene's), and stays so until it is listed again
@@ -1143,7 +1368,8 @@ def main(skus: list[str], app_version: str = DEFAULT_APP_VERSION) -> int:
         was_dropped = set(record.get("dropped", ()))
         # a name this fetch matched and the cut drops retires with the entry it was to hold, so its scene's
         # identical return reclaims it (and the cut drops it again): a re-fetch changes nothing
-        retire = {**retired, **{n: cut[n] if n in fresh else existing[n] for n in gone}}
+        # (its entry at the union only: a name comes back by that alone)
+        retire = {**retired, **{n: _default(cut[n] if n in fresh else existing[n]) for n in gone}}
         out = {n: e for n, e in retire.items() if n not in scenes}   # a reclaimed name sits in scenes
         listed_ids = {e.get("param_id") for e in fresh.values()} - {None}
         # held at another code only: a scene whose category is renamed while it is out still follows
@@ -1165,6 +1391,8 @@ def main(skus: list[str], app_version: str = DEFAULT_APP_VERSION) -> int:
         kept = sum(1 for n in scenes if n not in fresh or scenes[n] != fresh[n])
         placeholders = sorted(n for n, v in scenes.items() if v.get("placeholder"))
         note = f"; {len(placeholders)} placeholders (run --resolve)" if placeholders else ""
+        differ = sum(1 for v in scenes.values() if v.get("by_set"))
+        note += f"; {differ} scenes differ at a smaller scene set" if differ else ""
         print(
             f"{sku}: {len(scenes)} scenes -> scenes/{STORE_NAME} ({pooled} in the pool) "
             f"[{kept} preserved]{note}"

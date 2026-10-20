@@ -6,6 +6,7 @@ import dataclasses
 import errno
 import gc
 import hashlib
+import itertools
 import json
 import lzma
 import threading
@@ -21,10 +22,12 @@ from conftest import FakeSceneFiles, scene_store
 from fake_ble import ble_device
 
 from govee_ble_local import profile_for, scenes, supported_skus
-from govee_ble_local.devices.device import make_device
+from govee_ble_local.devices import _fold
+from govee_ble_local.devices.device import Device, make_device
+from govee_ble_local.devices.profile import DeviceProfile
 from govee_ble_local.exceptions import GoveeBleError, GoveeBleInvalidValue
 from govee_ble_local.models import Capability
-from govee_ble_local.scenes import load_scenes, scene_names_by_code
+from govee_ble_local.scenes import async_load_scenes, load_scenes, scene_names_by_code
 
 # Every bundled catalog's scene count (1.4.0's ten, then the admitted models'), so a catalog re-pointed,
 # added or dropped fails here (test_the_scene_store_is_the_device_tables).
@@ -41,25 +44,25 @@ RELEASED = {
     "H60A6": "a1b7070e74ef0276", "H6188": "b1fce838b659f7bb", "H61A8": "74f16a978bb9d70f",
     "H6641": "74f16a978bb9d70f",
 }
-
-# The bundled scenes whose bundled lightEffect the app's scene list drops at one of their SKU's scene sets
-# (devices.yaml scenes.list_filter: it hides the scene, or plays another of its effects) while the library
-# still offers it there: {(SKU, set): how many}.
-LIST_FILTER_EXEMPT = {
-    # Review G1, the user's call: H61A8 at pact code 2 ((1,2) / (2,2)) or from soft 1.04.00, below part
-    # brightness (soft 1.06.00 and hard 1.00.02), e.g. soft 1.05.00 / hard 1.00.01, has the set {0, 1, 2}.
-    # Its 36 RGBIC scenes at cmdVersion 1 are op type 3 (CategoryV1.getOpType), which the list drops there
-    # (RgbIcLightRegistry.java:723, CategoryV1.java:295-321,591-602); the library still uploads them, as 1.4.0
-    # did (_plan_upload doesn't filter by the op set). Until G1 lands.
-    ("H61A8", frozenset({0, 1, 2})): 36,
-}
+# Every catalog the store records at a scene set (its by_set), {(SKU, set): (scene count, _content)}, so a
+# per-set catalog re-pointed, added or dropped fails here too. None yet: every bundled SKU has one scene set
+# (H61A8's is {0, 1, 2, 3} at every pact and firmware, devices.yaml row 19); the dreamcolorlightv1 SKUs'
+# {0, 1, 2} catalogs come with the data commit.
+AT_SET: dict[tuple[str, tuple[int, ...]], tuple[int, str]] = {}
 
 
-def _content(sku: str) -> str:
-    """``load_scenes(sku)``'s content: the first 16 hex digits of the SHA-256 of every Scene field of every
-    scene, in order, as JSON with sorted keys."""
-    rows = [dataclasses.asdict(s) for s in load_scenes(sku).values()]
+def _content(sku: str, versions: tuple[int, ...] | None = None) -> str:
+    """``load_scenes(sku, scene_versions=versions)``'s content: the first 16 hex digits of the SHA-256 of
+    every Scene field of every scene, in order, as JSON with sorted keys."""
+    rows = [dataclasses.asdict(s) for s in load_scenes(sku, scene_versions=versions).values()]
     return hashlib.sha256(json.dumps(rows, sort_keys=True).encode("utf-8")).hexdigest()[:16]
+
+
+def _sets(p: DeviceProfile) -> list[frozenset[int]]:
+    """Every distinct scene set of profile ``p``: its own, each ``by_pact`` and each ``by_firmware`` one."""
+    found = (p.scene_versions, *(v for _p, v in p.scene_versions_by_pact),
+             *(v for _s, _h, v in p.scene_versions_by_firmware))
+    return list(dict.fromkeys(frozenset(v) for v in found))
 
 
 def _store() -> dict:
@@ -117,11 +120,18 @@ def fake_catalog(monkeypatch):
     scenes._store.cache_clear()
 
 
-def _bad(pool: list, skus: dict | None = None) -> str:
-    return json.dumps({"pool": pool, "skus": {"H1234": [0]} if skus is None else skus})
+def _bad(pool: list, skus: dict | None = None, by_set: object = None) -> str:
+    return json.dumps({"pool": pool, "skus": {"H1234": [0]} if skus is None else skus,
+                       "by_set": {} if by_set is None else by_set})
 
 
 _A, _B = {"name": "a", "code": 1}, {"name": "b", "code": 2}
+_A9 = {"name": "a", "code": 9}   # another entry of the name "a", after _A in the pool's content order
+
+
+def _at(names: object, at: str = "0,1,2", sku: str = "H1234") -> str:
+    """A store of _A (H1234's catalog) and _A9, whose by_set gives H1234 ``names`` at ``at``."""
+    return _bad([_A, _A9], {"H1234": [0]}, {sku: {at: names}})
 
 
 @pytest.mark.parametrize(
@@ -154,6 +164,69 @@ def test_malformed_catalog(fake_catalog, text):
         load_scenes("h1234")
     assert not isinstance(ei.value, GoveeBleInvalidValue)
     assert ei.value.__cause__ is not None
+
+
+@pytest.mark.parametrize(("text", "message"), [
+    # the store's one shape holds by_set, an object
+    (json.dumps({"pool": [_A], "skus": {"H1234": [0]}}), "not an object of 'pool', 'skus' and 'by_set'"),
+    (_bad([_A], by_set=[]), "'by_set' not an object"),
+    (_bad([{**_A, "by_set": {}}]), "carries no 'by_set'"),   # a pool entry with one: none nests
+    (_at({"a": 1}, sku="H5678"), "by_set 'H5678' is not a non-empty object of a SKU"),   # no catalog
+    (_bad([_A], by_set={"H1234": {}}), "by_set 'H1234' is not a non-empty object"),
+    (_bad([_A], by_set={"H1234": []}), "by_set 'H1234' is not a non-empty object"),
+    (_bad([_A], by_set={"H1234": ["0,1,2"]}), "by_set 'H1234' is not a non-empty object"),   # no object
+    (json.dumps({"pool": [_A], "skus": {"H1234": [0]}, "by_set": {}, "more": {}}),
+     "not an object of 'pool', 'skus' and 'by_set'"),   # exactly those three
+    *((_at({"a": 1}, at), f"by_set {at!r} is not a sorted, comma-joined scene set")
+      for at in ("2,1,0", "0, 1, 2", "00,1,2", "0,1,1", "-1", "x", "0,1,2,", ",")),
+    *((_at(names), "is not a sorted, comma-joined scene set of a non-empty object")
+      for names in ({}, None, [1])),
+    (_at({"b": None}), "names 'b', which its catalog lacks"),
+    *((_at({"a": i}), "gives 'a' no other pool entry of that name") for i in (0, 2, True, "1", -1, 1.0)),
+    (_bad([_A, _B], {"H1234": [0], "H5678": [1]}, {"H1234": {"0,1,2": {"a": 1}}}),
+     "gives 'a' no other pool entry of that name"),   # another name's entry
+    (_bad([_A, _A9], {"H1234": [0]}), "pool entry 1 is no SKU's or override's"),   # an orphan
+])
+def test_a_malformed_by_set_is_refused(fake_catalog, text, message):
+    fake_catalog(text)
+    with pytest.raises(GoveeBleError, match="the bundled scene store is malformed") as ei:
+        load_scenes("H1234")
+    assert message in str(ei.value)
+
+
+def test_the_catalog_at_a_scene_set(fake_catalog):
+    """by_set: at a set the store records, a scene it maps to null is left out, and one it maps to a pool
+    entry holds that entry under its own name, at its place; every other scene, and every set it records
+    nothing at, is the catalog's. scene_names_by_code follows (first name wins)."""
+    a9 = {"name": "a", "code": 9, "param": "kwE=", "category": "x", "scene_type": 1}   # before _A by content
+    pool = [a9, _A, _B, {"name": "c", "code": 1}]
+    fake_catalog(_bad(pool, {"H1234": [1, 2, 3]}, {"H1234": {"0,1,2": {"a": 0, "b": None}, "": {"c": None}}}))
+    whole = {n: scenes.Scene(n, code, None) for n, code in (("a", 1), ("b", 2), ("c", 1))}
+    assert load_scenes("H1234") == whole and scene_names_by_code("H1234") == {1: "a", 2: "b"}
+    at012 = load_scenes("h1234", scene_versions={2, 1, 0})
+    assert list(at012) == ["a", "c"] and at012["a"] == scenes.Scene("a", 9, "kwE=", "x", scene_type=1)
+    assert scene_names_by_code("H1234", scene_versions=[0, 1, 2]) == {9: "a", 1: "c"}
+    assert load_scenes("H1234", scene_versions=frozenset()) == {"a": whole["a"], "b": whole["b"]}
+    for other in ({0, 1}, (0, 1, 2, 3), range(3, 6)):   # a set the store records nothing at
+        assert load_scenes("H1234", scene_versions=other) == whole
+    assert load_scenes("H9999", scene_versions={0, 1, 2}) == {}
+    assert scene_names_by_code("H9999", scene_versions=[]) == {}
+    at012.clear()
+    assert len(load_scenes("H1234", scene_versions=(0, 1, 2))) == 2   # a fresh dict each call
+    for bad in ([True], [-1], "012", 5, [1.5], [None], [10**5000], [-10**5000], iter([0, 1, 2]),
+                (v for v in (0, 1, 2))):
+        with pytest.raises(GoveeBleInvalidValue, match="not a collection of non-negative ints"):
+            load_scenes("H1234", scene_versions=bad)
+        with pytest.raises(GoveeBleInvalidValue):
+            scene_names_by_code("H1234", scene_versions=bad)
+    for ints in (b"\x00\x01\x02", bytearray(b"\x02\x01\x00"), memoryview(b"\x00\x01\x02")):   # its ints
+        assert load_scenes("H1234", scene_versions=ints) == load_scenes("H1234", scene_versions={0, 1, 2})
+
+
+async def test_async_load_scenes_takes_the_scene_set():
+    for versions in (None, (0, 1, 2), (), {0, 1, 2, 3}):
+        assert await async_load_scenes("H61A8", scene_versions=versions) == load_scenes(
+            "H61A8", scene_versions=versions)
 
 
 @pytest.mark.parametrize("name", [{"param": "SECRETBLOB"}, ["SECRETBLOB"]])
@@ -329,13 +402,64 @@ def test_a_read_error_of_the_process_is_not_kept(counted):
     assert load_scenes("H1234") == {"a": scenes.Scene("a", 3, None)} and files.reads == 2
 
 
+async def test_every_lookup_at_every_set_goes_through_the_one_catalog_call(monkeypatch):
+    """Every scene lookup, at every scene set, is one call of ``scenes._catalog(sku)``, which its callers pick
+    the set from: hass-govee-ble-local's tests make the store unreadable by patching that call with a
+    one-argument stand-in that raises (its broken_scene_store fixture), so a lookup must raise the stand-in's
+    GoveeBleError, never a TypeError of a second argument."""
+    called: list[str] = []
+
+    def unreadable(sku):
+        called.append(sku)
+        raise GoveeBleError("the bundled scene store could not be read: FileNotFoundError")
+
+    monkeypatch.setattr(scenes, "_catalog", unreadable)
+    dev = make_device(ble_device("AA:BB:CC:DD:EE:5E", "H61A8"), "H61A8")
+    assert dev is not None
+    dev._state.scene_code = 110
+    lookups = [lambda: load_scenes("H61A8"), lambda: load_scenes("H61A8", scene_versions={0, 1, 2}),
+               lambda: scene_names_by_code("H61A8", scene_versions=()), lambda: dev.scene_names,
+               lambda: dev.active_scene]
+    for lookup in lookups:
+        with pytest.raises(GoveeBleError, match="could not be read"):
+            lookup()
+    for coro in (lambda: async_load_scenes("H61A8", scene_versions=[0, 1, 2]),
+                 lambda: dev.set_scene_by_name("Halloween")):
+        with pytest.raises(GoveeBleError, match="could not be read"):
+            await coro()
+    assert called == ["H61A8"] * 7
+
+
 async def test_device_scene_properties_need_no_io_once_loaded(counted):
+    """Once the store is loaded (update() loads it off the loop), Device.scene_names and active_scene read no
+    file and raise nothing, at every scene set the device can be at: each set's catalog is built with the
+    store, and the lookup is from memory."""
     d = make_device(ble_device("AA:BB:CC:DD:EE:5B", "H6008"), "H6008")
-    assert d is not None
+    h61a8 = make_device(ble_device("AA:BB:CC:DD:EE:5C", "H61A8"), "H61A8")
+    assert d is not None and h61a8 is not None
     names = sorted(await scenes.async_load_scenes("H6008"))   # the real store, loaded as update() does
     d._state.scene_code = load_scenes("H6008")["Aurora"].code
     unreadable = counted(OSError(5, "I/O error"), clear=False)   # a read now would raise
     assert d.scene_names == names and d.active_scene == "Aurora"
+    h61a8._state.scene_code = 2497
+    assert len(h61a8.scene_names) == 148 and h61a8.active_scene == "Halloween"
+    # every bundled SKU, at every set its versions and pact reach (unread, below each gate, at each gate)
+    for sku in _store()["skus"]:
+        p = profile_for(sku, allow_modelled=True)
+        assert p is not None
+        dev = Device(p, ble_device("AA:BB:CC:DD:EE:5D", sku), sku=sku)
+        gates = [g for s, h, _v in p.scene_versions_by_firmware for g in (s, h) if g]
+        reached = set()
+        for pact in (None, *(key for key, _v in p.scene_versions_by_pact)):
+            for soft, hard in itertools.product((None, "0.00.00", *gates), repeat=2):
+                dev._pact, dev._state.firmware_version, dev._state.hardware_version = pact, soft, hard
+                reached.add(dev.scene_versions)
+                codes = scene_names_by_code(sku, scene_versions=dev.scene_versions)
+                assert dev.scene_names == sorted(load_scenes(sku, scene_versions=dev.scene_versions))
+                for code in (*codes, 0x10000):
+                    dev._state.scene_code = code
+                    assert dev.active_scene == codes.get(code)
+        assert reached <= set(_sets(p)), sku
     assert unreadable.reads == 0
 
 
@@ -365,61 +489,91 @@ def test_mutation_isolation():
     names = scene_names_by_code("H6006")
     names.clear()
     assert scene_names_by_code("H6006")
+    at = load_scenes("H6006", scene_versions={0, 1})
+    at.clear()
+    assert len(load_scenes("H6006", scene_versions={0, 1})) == n
 
 
 def test_no_legacy_scene_catalog_holds_a_type5_scene_the_app_uploads():
     """devices.schema.json scene_dialect: the library only activates a sceneType-5 scene under legacy_scene,
-    so a legacy_scene SKU's bundled catalog holds none the app uploads: none whose param leads 0x50 (the
-    new-DIY parser a goodsType registers, BaseSceneViewMode.r3), and none at all where its versions hold one
-    of parseSceneV1's sceneType-5 branches (7 to 13)."""
+    so a legacy_scene SKU's bundled catalog holds none the app uploads, at any of its scene sets: none whose
+    param leads 0x50 (the new-DIY parser a goodsType registers, BaseSceneViewMode.r3), and none at all where
+    its versions hold one of parseSceneV1's sceneType-5 branches (7 to 13)."""
     for sku in _store()["skus"]:
         p = profile_for(sku, allow_modelled=True)
         if p is not None and p.scene_dialect != "A":
             continue   # H60A6, H6052: a sceneType-5 dialect of their own
-        sets = [] if p is None else [p.scene_versions, *(v for _p, v in p.scene_versions_by_pact),
-                                     *(v for _s, _h, v in p.scene_versions_by_firmware)]
+        sets = [] if p is None else _sets(p)
         type5_branch = any(7 <= v <= 13 for s in sets for v in s)
-        for scene in load_scenes(sku).values():
-            raw = base64.b64decode(scene.param or "")
-            new_diy = len(raw) >= 2 and raw[0] == 0x50
-            assert scene.scene_type != 5 or not (type5_branch or new_diy), (sku, scene.name)
+        for at in (None, *sets):
+            for scene in load_scenes(sku, scene_versions=at).values():
+                raw = base64.b64decode(scene.param or "")
+                new_diy = len(raw) >= 2 and raw[0] == 0x50
+                assert scene.scene_type != 5 or not (type5_branch or new_diy), (sku, at, scene.name)
 
 
 def test_the_bundled_scenes_are_ones_the_app_lists():
-    """devices.yaml scenes.list_filter: each bundled scene's op type (its scene type and cmdVersion for the
-    SKU) is in every one of its SKU's scene sets (the row's, each by_pact and each by_firmware one), but for
-    the counts LIST_FILTER_EXEMPT names. An empty set is a null op set: the app's list filters no op type
-    there, but plays a scene's first effect in force, which may not be the bundled one; a catalog keeps one
-    effect only, so that is checked at fetch time (fetch_scenes.fetch names such scenes), not here. (The app
-    lets a base sceneType-0 effect through any set; a catalog keeps the SKU's type only, so a base-static
-    scene typed otherwise for its SKU would be named here too.)"""
-    reached = set()
-    for sku in _store()["skus"]:
+    """devices.yaml scenes.list_filter, at every scene set of each catalog's SKU (the row's, each by_pact and
+    each by_firmware one), with no exemption: the catalog the library offers there (``load_scenes`` at that
+    set) is what the app's list filter leaves, as far as the store can show it.
+
+    (i) At a non-empty set, every scene offered has an op type (its scene type and cmdVersion for the SKU) in
+    the set: the filter drops each effect of another.
+    (ii) At a non-empty set, every scene the store hides or replaces there has an entry (its pick at the union
+    of the SKU's sets) whose op type is not in the set, and a replaced one plays an entry of its category:
+    each stored per-set result is one the filter needs, since the effects before the union's pick fail at any
+    smaller set too (tools/fetch_scenes.fetch).
+    (iii) Every set the store records a result at is one of the SKU's: none is stale.
+    (iv) Before the device-info read (every version unread; at each pact the profile lists, and at none) the
+    catalog offered is the whole one, so the read can only shrink the list.
+
+    An empty set is a null op set, which filters no op type: only (iii) holds there. Which effect left plays,
+    the first in the library's order, the store alone can't show: tools/fetch_scenes.fetch runs the whole
+    filter over the library's response at every set. (The app lets a base sceneType-0 effect through any
+    set; a catalog keeps the SKU's type only, so a base-static scene typed otherwise for its SKU would be
+    named here too.)"""
+    store = _store()
+    for sku in store["skus"]:
         p = profile_for(sku, allow_modelled=True)
         assert p is not None, sku
-        catalog = load_scenes(sku).values()
-        for versions in (p.scene_versions, *(v for _p, v in p.scene_versions_by_pact),
-                         *(v for _s, _h, v in p.scene_versions_by_firmware)):
+        whole = load_scenes(sku)
+        sets = _sets(p)
+        keys = {",".join(map(str, sorted(s))) for s in sets}
+        assert set(store["by_set"].get(sku, {})) <= keys, sku   # (iii)
+        for versions in sets:
             if not versions:
                 continue
-            key = (sku, frozenset(versions))
-            hidden = sum(1 for s in catalog if _op_type(s.scene_type, s.cmd_version) not in versions)
-            assert hidden == LIST_FILTER_EXEMPT.get(key, 0), (sku, sorted(versions))
-            reached |= {key} & set(LIST_FILTER_EXEMPT)
-    assert reached == set(LIST_FILTER_EXEMPT)   # no stale exemption
+            at = load_scenes(sku, scene_versions=versions)
+            where = (sku, sorted(versions))
+            outside = [n for n, s in at.items() if _op_type(s.scene_type, s.cmd_version) not in versions]
+            assert outside == [], where   # (i)
+            changed = {n for n, s in whole.items() if at.get(n) != s}
+            assert [n for n in changed if _op_type(whole[n].scene_type, whole[n].cmd_version) in versions] \
+                == [], where   # (ii)
+            assert all(at[n].category == whole[n].category for n in changed & set(at)), where
+        for pact in (None, *(key for key, _v in p.scene_versions_by_pact)):   # (iv)
+            pre_read = _fold.scene_versions(p, None, None, pact)
+            assert load_scenes(sku, scene_versions=pre_read) == whole, (sku, pact)
 
 
 def test_the_scene_store_is_the_device_tables():
     """The store and the table agree: the SKUs with a catalog are exactly the ones offered scenes (a SKU
-    without one is not: _resolve's module doc). The store is tools/fetch_scenes.py's layout: the pool holds
-    each scene once, sorted by content (its name, then its JSON with sorted keys), every entry some SKU's (no
-    orphan), in the tool's JSON form, and it is the package's only JSON. EXPECTED pins each catalog's size,
-    so a re-pointed or dropped catalog fails, and RELEASED each of 1.4.0's ten to 1.4.0's content (every
-    Scene field), so a change to one of them fails even at the same count."""
+    without one is not: _resolve's module doc). The store is tools/fetch_scenes.py's layout, an object of
+    ``pool``, ``skus`` and ``by_set``: the pool holds each scene once, sorted by content (its name, then its
+    JSON with sorted keys), every entry some SKU's catalog's or some override's (no orphan), in the tool's
+    JSON form, and it is the package's only JSON. EXPECTED pins each catalog's size, so a re-pointed or
+    dropped catalog fails, RELEASED each of 1.4.0's ten to 1.4.0's content (every Scene field), so a change
+    to one of them fails even at the same count, and AT_SET each catalog the store records at a scene set to
+    its size and content, so every catalog is content-pinned at every set it differs at."""
     files = resources.files(scenes)
     text = (files / "store.json").read_text(encoding="utf-8")
     store = json.loads(text)
+    assert set(store) == {"pool", "skus", "by_set"}
     assert {sku: _content(sku) for sku in RELEASED} == RELEASED
+    recorded = {(sku, tuple(int(v) for v in key.split(",")) if key else ())
+                for sku, sets in store["by_set"].items() for key in sets}
+    assert recorded == set(AT_SET)
+    assert {at: (len(load_scenes(at[0], scene_versions=at[1])), _content(*at)) for at in AT_SET} == AT_SET
     offered: set[str] = set()
     for opt_in in (False, True):
         for sku in supported_skus(allow_modelled=opt_in):
@@ -430,6 +584,9 @@ def test_the_scene_store_is_the_device_tables():
     assert set(store["skus"]) == offered == set(EXPECTED)
     keys = [(e["name"], json.dumps(e, sort_keys=True, separators=(",", ":"))) for e in store["pool"]]
     assert keys == sorted(set(keys))
-    assert {i for refs in store["skus"].values() for i in refs} == set(range(len(keys)))
+    refs = ({i for r in store["skus"].values() for i in r}
+            | {i for sets in store["by_set"].values() for names in sets.values()
+               for i in names.values() if i is not None})
+    assert refs == set(range(len(keys)))
     assert text == json.dumps(store, indent=1, sort_keys=True)
     assert [f.name for f in files.iterdir() if f.name.endswith(".json")] == ["store.json"]

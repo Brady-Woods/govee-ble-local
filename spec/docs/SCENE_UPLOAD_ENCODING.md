@@ -37,7 +37,7 @@ after the row's `by_pact` / `by_firmware`).
 | **303** (H60A6) | `{0,1,2,3,5}` | `parseSceneV1`; graffiti/DIY (type 5) via the **DIY dialect** (§G5) | type 1/2/3 → comByte 1/2/7; graffiti/DIY → `0x58`, `0xA3`/`0xA4` |
 | **119** (H6047) | `{0,1,2,3}` | `parseSceneV1` | type 1/2/3 → comByte 1/2/7 |
 | **247** (H6641) | `{0,1,2,3}` (the control screen's `ConfigDetail` set; version 10 is not offered there) | `parseSceneV1` | type 1/2/3 → comByte 1/2/7 |
-| **19** (H61A8) | `{0,1,2,3}` with part brightness (soft ≥ 1.06.00 and hard ≥ 1.00.02), else `{0,1,2}`; none (activate only) below soft 1.04.00 unless the pact code is 2 | `parseSceneV1` | type 1/2(/3) → comByte 1/2(/7) |
+| **19** (H61A8) | `{0,1,2,3}` (the dreamcolorlightv2 bean, the first scene interceptor for 19: `{0,1,2}` only on a Telink hard version below hard 1.00.01 or soft 1.06.00, which the row does not model; devices.yaml row 19) | `parseSceneV1` | type 1/2/3 → comByte 1/2/7 |
 | **22** (H6052) / **128** (H6078) | H6052 `{0,1,4,5}` · H6078 `{0,1,5,9}` | **H6052 type 5 → `Diy.parseScenes4Diy` (dialect)**; else `parseSceneV1` | see Q2/Q3 |
 | **64** (H6004, H6006, H6008) | `{0,1}` (`supportScenesOp(64)`) | `parseSceneV1` | type 1 → comByte 1; see Q1 |
 
@@ -124,9 +124,10 @@ controller (never a payload byte).
 >   `ScenesConfigBean.j()` (`:224`) returns it, but the ints are hardcoded per-SKU (e.g.
 >   `pact_h60a0/pact/Support.supportScenesOpSet:461`). A client obtains only `goodsType` from the cloud
 >   device record (`AbsDevice.goodsType`) and hardcodes the rest. **Concrete: H60A6 (goodsType 303) =
->   `{0,1,2,3,5}`** (`supportScenesOpSet`); **H61A8 = `{1,2}`** (hardcoded at
->   `dreamcolorlightv1/pact/Support.is2NewScenesMode:1108` — dreamcolor uses the legacy scene path, not
->   `ScenesConfigBean`). Only needed to disambiguate `sceneType==5`. *(Note: `parseSceneV1` tests
+>   `{0,1,2,3,5}`** (`supportScenesOpSet`); **H61A8 = `{0,1,2,3}`**, its `ScenesConfigBean`'s `c` from
+>   the dreamcolorlightv2 interceptor (`dreamcolorlightv2/adjust/DetailConfig.java:24-33` →
+>   `dreamcolorlightv2/pact/Support.getSupportScenesOpSet:337-342`; the goodsType-19 row of the table
+>   above). Only needed to disambiguate `sceneType==5`. *(Note: `parseSceneV1` tests
 >   for versions 1/2/3/6/7… in the array; the `0` and `5` in H60A6's array match no branch, so H60A6's dialect-A
 >   scenes are effectively sceneTypes 1/2/3 → comType 1/2/7; its graffiti effects use Path A instead.)*
 >

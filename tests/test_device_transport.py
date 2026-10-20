@@ -1,11 +1,16 @@
 """Device driven end-to-end over the fake peripheral (real transport, real wire layer)."""
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from conftest import FakeSceneFiles, gated_scene_profile, gated_scene_store
 
 from govee_ble_local import create_device
+from govee_ble_local.devices.device import Device
+from govee_ble_local import scenes as scenes_mod
+from govee_ble_local.exceptions import GoveeBleUnknownName
 from govee_ble_local.scenes import load_scenes
 from govee_ble_local.transport import connection as conn_mod
 from govee_ble_local.wire import build
@@ -99,6 +104,60 @@ async def test_scene_by_name_uploads_then_activates(monkeypatch) -> None:
     await dev.set_scene_by_name(name)
     assert frames and fake.received == [*frames, build.scene_activate(scene.code)]
     assert dev.active_scene == name and dev.state.is_on
+
+
+async def test_scenes_follow_the_scene_set(monkeypatch) -> None:
+    """Review G1: the scenes the Govee app lists at the device's scene set, and the effect it plays there. An
+    H6168 (goodsType 136, a dreamcolorlightv1 row: {0, 1, 2} below part brightness) at soft 1.05.00 / hard
+    1.00.01 has the set {0, 1, 2}, where the list drops its op-type-3 effects (devices.yaml
+    scenes.list_filter): "Awaken" has none left and is not offered, and "Halloween" plays its RGB effect, code
+    110. Before the device-info read the set is the newest firmware's, {0, 1, 2, 3}, with every scene; and
+    set_scene_by_name reads the versions the set depends on first, on the same connection, so it never plays
+    an effect the device's own set does not (review G1 item 3)."""
+    store = gated_scene_store()   # (reads the bundled store first)
+    fake = FakeGovee(encrypted=False)
+    monkeypatch.setattr(conn_mod, "establish_connection", fake.establish)
+    dev = Device(gated_scene_profile(), ble_device("AA:BB:CC:DD:EE:01", "GVH6168"), sku="H6168")
+    dev._conn._idle_disconnect = 0
+    scenes_mod._store.cache_clear()
+    monkeypatch.setattr(scenes_mod, "resources", SimpleNamespace(files=lambda _pkg: FakeSceneFiles(store)))
+    try:
+        await dev.update()   # warms the scene store; the fake answers no version read: both unread
+        assert dev.scene_versions == {0, 1, 2, 3} and dev.scene_names == ["Awaken", "Halloween", "Plain"]
+        union = load_scenes("H6168")["Halloween"]
+        frames = dev.scene_upload_frames(union)
+        assert union.code == 2497 and frames and len(frames) == 10 and frames[0][4] == 0x02   # V2 RGBIC
+        reads = [build.soft_version_query(), build.device_info_query(build.INFO_HARD)]
+        fake.received.clear()
+        await dev.set_scene_by_name("Halloween")   # the versions read first: still unanswered, so the union's
+        assert fake.received == [*reads, *frames, build.scene_activate(2497)]
+        assert dev.active_scene == "Halloween"
+
+        fake.read_replies[0x06] = frame(0xAA, 0x06, *b"1.05.00")
+        fake.read_replies[0x07] = frame(0xAA, 0x07, 0x03, *b"1.00.01")
+        there = load_scenes("H6168", scene_versions={0, 1, 2})["Halloween"]
+        frames = scenes_mod.scene_upload_frames(there, dev.profile.scene_dialect, frozenset({0, 1, 2}))
+        assert there.code == 110 and there.scene_type == 1 and frames and len(frames) == 3
+        assert frames[0][:5] == bytes([0xA3, 0x00, 0x01, 3, 0x01])   # 3 packets, commByte 0x01 (V1 RGB)
+        fake.received.clear()
+        await dev.set_scene_by_name("Halloween")   # read first: {0, 1, 2}, so Halloween plays 110
+        assert fake.received == [*reads, *frames, build.scene_activate(110)]
+        assert dev.active_scene == "Halloween"
+        assert (dev.state.firmware_version, dev.state.hardware_version) == ("1.05.00", "1.00.01")
+
+        def unreadable(_pkg: str) -> Any:
+            raise OSError(5, "I/O error")
+
+        monkeypatch.setattr(scenes_mod, "resources", SimpleNamespace(files=unreadable))   # no read now
+        assert dev.scene_versions == {0, 1, 2} and dev.scene_names == ["Halloween", "Plain"]
+        dev._state.scene_code = 2497
+        assert dev.active_scene is None   # 2497 is no scene listed at {0, 1, 2}: Halloween plays 110 there
+        fake.received.clear()
+        with pytest.raises(GoveeBleUnknownName, match=r"unknown scene 'Awaken' at scene set \[0, 1, 2\]"):
+            await dev.set_scene_by_name("Awaken")
+        assert fake.received == []   # versions read: no read, and nothing sent
+    finally:
+        scenes_mod._store.cache_clear()
 
 
 async def test_update_ble_device_reaches_next_connect(monkeypatch) -> None:

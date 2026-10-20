@@ -258,16 +258,17 @@ class DeviceProfile:
     """Scene sets that replace :attr:`scene_versions` from a firmware version up: ``(min_soft_version,
     min_hard_version, versions)`` entries, ``""`` for no gate on that version, of which each one whose gates
     the device's soft (``aa 06``) and hard (``aa 07 03``) versions meet applies, in order, the last winning,
-    after :attr:`scene_versions_by_pact` (a devices.yaml row's ``by_firmware``: goodsType 19's
-    ``Support.newVersion4Ble``). Versions compare field by field (``1.06.00``). A version not yet read meets
-    every gate on it, as the newest firmware would, so until the device-info read the last entry's set
-    applies (1.x's assumption), and a single unread version does not hold back the other's gates; a read
+    after :attr:`scene_versions_by_pact` (a devices.yaml row's ``by_firmware``: the dreamcolorlightv1 rows'
+    part-brightness gates, ``Support.getSupportScenesOpSet``). Versions compare field by field
+    (``1.06.00``). A version not yet read meets every gate on it, as the newest firmware would, so until the
+    device-info read the last entry's set applies (1.x's assumption), and a single unread version does not
+    hold back the other's gates (``Device.update`` reads a missing one again on the next poll); a read
     version that does not parse meets none."""
     scene_versions_by_pact: tuple[tuple[tuple[int, int], tuple[int, ...]], ...] = field(
         default=(), kw_only=True)
     """Scene sets that replace :attr:`scene_versions` on an advertised pact: ``((pact_type, pact_code),
-    versions)`` entries (a devices.yaml row's ``by_pact``: goodsType 19 at pact code 2, whose
-    ``newVersion4Ble`` is 1 whatever the soft version). Applied before :attr:`scene_versions_by_firmware`,
+    versions)`` entries (a devices.yaml row's ``by_pact``; no current row has one). Applied before
+    :attr:`scene_versions_by_firmware`,
     the order of the spec's resolution (``govee_reference.client_row``); a pact not yet heard applies none."""
     status_read: tuple[int, ...] = field(default=_H60A6_STATUS_READ, kw_only=True)
     """``readback="status"``: the TLV types the 0xAC status read requests, in request order (command codes;

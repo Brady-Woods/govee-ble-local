@@ -264,23 +264,23 @@ def test_audit_reports_versions_and_one_bucket_per_scene(capsys: pytest.CaptureF
 
 def test_audit_counts_planner_refusals_and_propagates_bugs(monkeypatch: pytest.MonkeyPatch,
                                                            capsys: pytest.CaptureFixture[str]) -> None:
-    from govee_ble_local.devices.device import Device
+    from govee_ble_local import scenes
     from govee_ble_local.exceptions import GoveeBleInvalidValue
 
     fs = _load("fetch_scenes")
 
-    def refuse(self: Device, scene: Any) -> None:
+    def refuse(scene: Any, *_a: Any, **_k: Any) -> None:
         raise GoveeBleInvalidValue("malformed")
 
-    monkeypatch.setattr(Device, "scene_upload_frames", refuse)
+    monkeypatch.setattr(scenes, "scene_upload_frames", refuse)   # the planner audit runs at each set
     fs.audit(["H60A6"])
     (row,) = _audit_rows(capsys.readouterr().out)
     assert int(row.group(6)) == int(row.group(2)) - int(row.group(7))   # every non-placeholder BLOCKED
 
-    def bug(self: Device, scene: Any) -> None:
+    def bug(scene: Any, *_a: Any, **_k: Any) -> None:
         raise TypeError("programming error")
 
-    monkeypatch.setattr(Device, "scene_upload_frames", bug)
+    monkeypatch.setattr(scenes, "scene_upload_frames", bug)
     with pytest.raises(TypeError):
         fs.audit(["H60A6"])
 
@@ -310,7 +310,7 @@ def test_main_counts_corrupt_catalog_and_write_failure(monkeypatch: pytest.Monke
     monkeypatch.setattr(fs, "OUT_DIR", tmp_path)
     monkeypatch.setattr(fs, "TOMBSTONE", tmp_path / "tombstone.json")
     monkeypatch.setattr(fs, "fetch", lambda sku, app_version="", **_kw: {"A": {"code": 1, "param": None}})
-    corrupt = '{"pool": [{"name": "A", "code": 1}], "skus": {"H60A6": [1]}}'
+    corrupt = '{"pool": [{"name": "A", "code": 1}], "skus": {"H60A6": [1]}, "by_set": {}}'
     (tmp_path / "store.json").write_text(corrupt, encoding="utf-8")
     assert fs.main(["H60A6", "H61A8"]) == 2            # each fails, the run goes on, the store stays as it is
     assert capsys.readouterr().err.count("FETCH FAILED") == 2

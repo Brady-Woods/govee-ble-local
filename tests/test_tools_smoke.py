@@ -76,7 +76,7 @@ def test_fetch_stores_each_scene_once(tmp_path: Path) -> None:
     assert fs.read_catalog("H6004", tmp_path) == {}
     store = json.loads((tmp_path / "store.json").read_text(encoding="utf-8"))
     assert store == {"pool": [{"name": "x", **x}, {"name": "y", **y}],
-                     "skus": {"H6006": [0], "H6008": [0, 1]}}
+                     "skus": {"H6006": [0], "H6008": [0, 1]}, "by_set": {}}
     assert fs.layout({"H6008": {"y": y, "x": x}, "H6006": {"x": x}}) == store   # whatever the order
     fs.store_catalog("H6006", {"y": y}, tmp_path)
     assert fs.store_catalog("H6008", {"y": y}, tmp_path) == 1             # no SKU holds x now: it leaves

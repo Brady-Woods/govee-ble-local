@@ -99,8 +99,8 @@ the row lacks fails the build: nothing defaults silently.
   and a family with a row with support takes ``by_model`` / ``wire.by_model`` entries only for SKUs one of
   its rows lists or the catalogue snapshot routes to one of them (:func:`sku_entries`). ``status_read``
   becomes the gate above, and ``scene_versions`` becomes ``scene_versions_by_pact``, which
-  ``Device.scene_versions`` applies with the advertised pact before the firmware entries (goodsType 19 at
-  pact code 2); ``kelvin_range`` and ``brightness_range`` become
+  ``Device.scene_versions`` applies with the advertised pact before the firmware entries;
+  ``kelvin_range`` and ``brightness_range`` become
   ``kelvin_by_pact`` / ``brightness_by_pact``, which ``Device`` applies with the advertised pact the same
   way (goodsType 261 at pact (4, 1); a pact Kelvin range needs a base one and no Kelvin firmware branch, a
   pact brightness range the brightness capability); ``capabilities`` take the row's own values only on the
@@ -115,10 +115,10 @@ the row lacks fails the build: nothing defaults silently.
   235's ``Config.Y2``, ``BleUtils.isHigherVersion``) raises. They are the row's, or the SKU's ``by_model``
   ones over its own ``kelvin_range`` (bulblightv3 H14A1), never both, and on one version. A ``by_model``
   range under the row's own (which wins) raises. A ``scene_versions`` item gated on the soft and / or hard
-  version becomes ``scene_versions_by_firmware`` (the goodsType-19 gates, Support.newVersion4Ble). Before
-  the read, each version not yet read meets its own gates, so the newest firmware's set applies, as 1.x
-  assumed (H61A8: {0, 1, 2, 3}), and the Kelvin range is the one valid on every revision. Any other
-  firmware fact or gate raises.
+  version becomes ``scene_versions_by_firmware`` (the dreamcolorlightv1 rows' part-brightness gates,
+  Support.getSupportScenesOpSet). Before the read, each version not yet read meets its own gates, so the
+  newest firmware's set applies, as 1.x assumed, and the Kelvin range is the one valid on every revision.
+  Any other firmware fact or gate raises.
 - Plug power read-back: the wire's ``relay_heartbeat_on_mask`` beats the row's ``relay_on_mask``, because
   every aa 01 poll the library makes follows the heartbeat rule (``power_state.is_on_heartbeat``). So for
   goodsTypes 50 and 307 the row's 0xFF (the connect read's) is never consumed, and the library uses their

@@ -363,21 +363,40 @@ class Device:
 
     @property
     def scene_names(self) -> list[str]:
-        """Sorted names of the bundled scenes; empty without the SCENES capability.
+        """Sorted names of the bundled scenes the Govee app lists at the scene set in force
+        (:attr:`scene_versions`, devices.yaml scenes.list_filter); empty without the SCENES capability.
+
+        The app's list drops each lightEffect whose op type is not in the set and plays the first one
+        left: a scene with none left is hidden there and not listed, and one that plays another of its
+        effects there keeps its name (:meth:`set_scene_by_name` sends that effect). Names never change;
+        only which scenes are listed. Before the device-info read the set is the newest firmware's (a
+        version not yet read meets every gate, :func:`._fold.scene_versions`), so that read can only
+        shrink the list (:meth:`set_scene_by_name` reads a version the set depends on first, so it never
+        plays a scene the read hides); a version the read did not bring back is read again on each later
+        :meth:`update` until it is in. A change of the advertised :attr:`pact` can move it either way, on a
+        profile with :attr:`DeviceProfile.scene_versions_by_pact`. Both notify the callbacks. Sorted by
+        name, so the order is stable.
 
         The first lookup (of any SKU) reads the bundled scene store from disk; :meth:`update` (and
         :meth:`set_scene_by_name`) load it in a worker thread first, so on the event loop this is
-        a cache hit, with no I/O, once the device has been polled."""
-        return sorted(load_scenes(self._sku)) if Capability.SCENES in self.capabilities else []
+        a lookup in memory, with no I/O at any scene set, once the device has been polled."""
+        if Capability.SCENES not in self.capabilities:
+            return []
+        return sorted(load_scenes(self._sku, scene_versions=self.scene_versions))
 
     @property
     def active_scene(self) -> str | None:
-        """Name of the active scene, or None if no scene (or an uncatalogued code) is active, or
-        the device has no SCENES capability (as :attr:`scene_names`)."""
+        """Name of the active scene among the scenes listed at the scene set in force (as
+        :attr:`scene_names`), or None if no scene (or an uncatalogued code) is active, or the device has
+        no SCENES capability. The code is looked up among the effects the listed scenes play at that set,
+        so a hidden scene's code, or the code of an effect a listed scene does not play there, is None too:
+        the app's list highlights the scene whose effect at position 0, the one it plays, has the reported
+        code (``SceneListAdapter``, ``getSceneCode(0, sku)``; ``SceneDataVM.i1`` only picks the category
+        page). With no I/O once loaded, as :attr:`scene_names`."""
         code = self._state.scene_code
         if code is None or Capability.SCENES not in self.capabilities:
             return None
-        return scene_names_by_code(self._sku).get(code)
+        return scene_names_by_code(self._sku, scene_versions=self.scene_versions).get(code)
 
     def register_callback(self, cb: StateCallback) -> Callable[[], None]:
         """Register a state-change callback; returns a function that unregisters it.
@@ -1253,15 +1272,25 @@ class Device:
         """The a3/a4 frames that upload ``scene`` to this device (per its profile's scene
         dialect and supported scene versions), or None when it is activate-only. ``mtu`` is the
         link's write size (``GoveeConnection.write_payload_size``), which only the H60A6's 0xA4
-        graffiti upload uses. Pure: no I/O."""
+        graffiti upload uses. Pure: no I/O. It plans whatever effect ``scene`` holds, as the app's
+        upload does (``ScenesOp.parseSceneV1``); take the Scene from
+        ``load_scenes(sku, scene_versions=device.scene_versions)`` to send what the app sends."""
         return _scene_upload_frames(scene, self.profile.scene_dialect, self.scene_versions, mtu=mtu)
 
     async def set_scene_by_name(self, name: str) -> None:
-        """Upload (if the scene needs it) and activate a bundled scene by name.
+        """Upload (if the scene needs it) and activate a bundled scene by name, one the Govee app
+        lists at the scene set in force (:attr:`scene_names`), with the effect it plays there.
 
-        Raises GoveeBleNotSupported without SCENES, and GoveeBleInvalidValue (also a
-        GoveeBleNotSupported) for an unknown name, sending nothing. The bundled catalog is loaded in
-        a worker thread, never on the event loop.
+        Raises GoveeBleNotSupported without SCENES, and GoveeBleUnknownName (a GoveeBleInvalidValue
+        and a GoveeBleNotSupported) for a name not listed at that set, a scene hidden there included,
+        sending nothing. A scene that plays another of its effects at that set uploads and activates
+        that effect. :attr:`scene_versions` is taken once per call: the name is looked up, and the
+        upload planned, at that one set, so an advertisement that changes the pact mid-call can't split
+        them. Where the set depends on a firmware version not read yet
+        (:attr:`DeviceProfile.scene_versions_by_firmware`), that version is read first, on the same
+        connection, so the name is looked up and planned at the device's own set, not the newest
+        firmware's (:attr:`scene_names` may list the newest firmware's scenes until then). The bundled
+        catalog is loaded in a worker thread, never on the event loop.
 
         The upload and the activation go out back to back: the app sends them as one composed
         controller (``BaseSceneViewMode.getSceneComposeController`` -> ``Compose4DefWrite4Multi``, an
@@ -1269,14 +1298,19 @@ class Device:
         controller). So no other scene write (``_scene_lock``) and no read-back (``_read_gate``: a
         poll waits for the activation) lands between them; other setters are not held back."""
         self._require(Capability.SCENES)
-        scene = (await async_load_scenes(self._sku)).get(name)
+        soft, hard = self._versions_missing(scenes=True)
+        if soft or hard:   # the set depends on a version not read yet: read it before the lookup
+            await self._read_missing_versions(soft, hard)
+        versions = self.scene_versions   # taken once per call
+        scene = (await async_load_scenes(self._sku, scene_versions=versions)).get(name)
         if scene is None:
-            raise GoveeBleUnknownName(f"{self._sku}: unknown scene {name!r}")
-        frames = self.scene_upload_frames(scene)   # planned before any I/O: a bad scene sends nothing
+            raise GoveeBleUnknownName(f"{self._sku}: unknown scene {name!r} at scene set {sorted(versions)}")
+        dialect = self.profile.scene_dialect
+        frames = _scene_upload_frames(scene, dialect, versions)   # before any I/O: a bad scene sends nothing
 
         def sized(size: int) -> list[bytes]:
             # Re-planned for the link it goes out on: the 0xA4 graffiti frames take its MTU.
-            return self.scene_upload_frames(scene, mtu=size) or []
+            return _scene_upload_frames(scene, dialect, versions, mtu=size) or []
 
         async with self._scene_lock, self._zone_power_lock(), self._read_gate:
             await self._send_pending_unlock()   # before the upload, not between it and the activation
@@ -1418,10 +1452,15 @@ class Device:
         elif self.profile.gradual_read_only:
             # The screen's connect read; nothing is exposed.
             await self._read_reply(build.gradual_query(), budget)
-        # Device-info (mac/hw/fw/serial) — static-ish, read once the device answers one of them.
-        if not self._device_info_read and self.profile.readback != "none":
+        # Device-info (mac/hw/fw/serial) — static-ish, read once the device answers one of them; then a
+        # version a firmware-gated fact tests that the read did not bring back, alone, on each later poll.
+        missing = self._versions_missing()
+        if (not self._device_info_read or any(missing)) and self.profile.readback != "none":
             try:
-                await self._read_device_info(budget, state_read=state_read)
+                if not self._device_info_read:
+                    await self._read_device_info(budget, state_read=state_read)
+                else:
+                    await self._read_missing_versions(*missing, budget=budget)
             except GoveeBleError as err:
                 # Flag stays False so the next poll retries; the state read above is still good.
                 _LOGGER.debug("%s (%s): device-info read failed (%s); retrying next poll",
@@ -1475,6 +1514,23 @@ class Device:
         # silent throughout (wrong cipher, lost notifications, out of range) or a link drop mid-read
         # leaves it for the next poll, even when an earlier poll did read state.
         self._device_info_read = answered or state_read
+
+    def _versions_missing(self, *, scenes: bool = False) -> tuple[bool, bool]:
+        """The version reads a firmware-gated fact of the profile still waits for, ``(aa 06, aa 07 03)``:
+        each version such a fact tests (:func:`._fold.gated_versions`; ``scenes``: the scene set's gates
+        only) that is not read yet. Until it is read its gates count as met (the newest firmware's facts)."""
+        soft, hard = _fold.gated_versions(self.profile, scenes=scenes)
+        return (soft and self._state.firmware_version is None, hard and self._state.hardware_version is None)
+
+    async def _read_missing_versions(self, soft: bool, hard: bool,
+                                     budget: ConnectBudget | None = None) -> None:
+        """Read the soft (``aa 06``) and / or hard (``aa 07 03``) version alone, the ones
+        :meth:`_versions_missing` names (:func:`._readback.read_versions`): the device-info read is done
+        once the device answered, but a version a firmware-gated fact tests is read until it is in, so one
+        lost reply never holds the facts at the newest firmware's for the life of the Device."""
+        _LOGGER.debug("%s (%s): reading the %s version a firmware gate tests", self.address, self._sku,
+                      " and ".join(v for v, want in (("soft", soft), ("hard", hard)) if want))
+        await _readback.read_versions(self, lambda f: self._read_reply(f, budget), soft=soft, hard=hard)
 
     def _merge_device_info(
         self,

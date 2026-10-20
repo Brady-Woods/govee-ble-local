@@ -74,22 +74,20 @@ def test_names_by_code_cached_fresh_and_follows_catalog(monkeypatch: pytest.Monk
         b = FakeSceneFiles(scene_store("H4321", {"b": {"code": 4}}))
         monkeypatch.setattr(scenes.resources, "files", lambda _pkg: a)
         first = scene_names_by_code("H4321")
-        index = scenes._NAMES_BY_CODE["H4321"][1]
         first.clear()                                           # caller copy: cache unaffected
         assert scene_names_by_code("h4321") == {3: "a"}
-        assert scenes._NAMES_BY_CODE["H4321"][1] is index       # not rebuilt
         scenes._store.cache_clear()                             # a new catalog -> new index
         monkeypatch.setattr(scenes.resources, "files", lambda _pkg: b)
         assert scene_names_by_code("H4321") == {4: "b"}
     finally:
         scenes._store.cache_clear()
-        scenes._NAMES_BY_CODE.pop("H4321", None)
 
 
 def test_a_malformed_store_fails_every_lookup(monkeypatch: pytest.MonkeyPatch) -> None:
     scenes._store.cache_clear()
     try:
-        outside = FakeSceneFiles('{"pool": [{"name": "a", "code": 1}], "skus": {"H4321": [0, 1]}}')
+        outside = FakeSceneFiles(
+            '{"pool": [{"name": "a", "code": 1}], "skus": {"H4321": [0, 1]}, "by_set": {}}')
         monkeypatch.setattr(scenes.resources, "files", lambda _pkg: outside)
         with pytest.raises(GoveeBleError, match="malformed"):
             scenes.load_scenes("H4321")                          # a scene outside the pool

@@ -85,8 +85,9 @@ advertisement, build a capability-driven `Device`, then drive it.
   `set_segment_rgb` / `set_segment_brightness` / `set_segment_color_temp`,
   `set_zone_power` / `set_zone_rgb` / `set_zone_color_temp`,
   `set_scene` / `set_scene_by_name`, and `update()` (read-back). Introspection:
-  `capabilities`, `zones`, `min_kelvin` / `max_kelvin`, `scene_names`, `state`,
-  `register_callback`. Methods for unsupported capabilities raise `GoveeBleNotSupported`.
+  `capabilities`, `zones`, `min_kelvin` / `max_kelvin`, `scene_names` (the scenes the Govee app lists at
+  the device's scene set, `scene_versions`), `state`, `register_callback`. Methods for unsupported
+  capabilities raise `GoveeBleNotSupported`.
 - **`DeviceState`** — parsed state: `is_on`, `brightness` (0–100), `rgb_color`,
   `color_temp_kelvin`, `segments` (`list[Segment]`), `zone_power`, `zone_power_confirmed` (when each
   zone's power was last learned from the device), `zone_color_temp_kelvin` (H6047

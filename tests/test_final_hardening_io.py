@@ -17,6 +17,7 @@ from types import ModuleType, SimpleNamespace
 from typing import Any
 
 import pytest
+from conftest import SETS_SKU, with_scene_sets
 
 from govee_ble_local import debug
 from govee_ble_local.exceptions import GoveeBleInvalidValue
@@ -306,9 +307,11 @@ def test_fetch_lists_what_the_apps_scene_list_lists(monkeypatch: pytest.MonkeyPa
     """devices.yaml scenes.list_filter: each lightEffect whose op type for the SKU is outside the SKU's op set
     (a base sceneType 0 passes any), a DIY one without effect codes, an expired one and an expired category
     are dropped before the first left plays; a scene whose first effect left has version rules is left out
-    (the firmware picks), and one with none left is not listed. An empty op set (a null bean set) filters
-    nothing but the time; where one of the SKU's sets is empty (H61A8's), a scene whose first effect in force
-    is not the one the union keeps (a DIY one without codes, which the union drops) is named."""
+    (the firmware picks), and one with none left is not listed. At each other scene set of the SKU's
+    (SETS_SKU's {0, 1, 2}, and its empty one: a null bean set, which filters nothing but the time) the result
+    is stored where it differs: a scene with nothing left is not listed there, and one whose first effect left
+    is another plays that one there. A scene only the empty set lists (a DIY one, which the union drops) is
+    left out and named."""
     fs = _tool("fetch_scenes")
     rgbic1 = {"sceneCode": 1, "sceneType": 2, "cmdVersion": 1, "scenceParam": "AAAA"}   # op type 3
     rgbic0 = {**rgbic1, "sceneCode": 2, "cmdVersion": 0}                                # op type 2
@@ -337,10 +340,17 @@ def test_fetch_lists_what_the_apps_scene_list_lists(monkeypatch: pytest.MonkeyPa
                          for e in es} | {("Season", "old", 3)}
     out = capsys.readouterr().out
     assert "H6047: left out 1 scenes whose effect the firmware's version rules pick: Gated" in out
-    assert "empty scene set" not in out
-    assert {n: e["code"] for n, e in fs.fetch("H61A8").items()} == listed
-    assert ("H61A8: at its empty scene set (no op set) the app plays another lightEffect for 1 scenes: "
-            "DiyFirst") in capsys.readouterr().out
+    assert "empty scene set" not in out and "scene set [" not in out
+    with_scene_sets(fs, monkeypatch)
+    got = fs.fetch(SETS_SKU)
+    assert {n: e["code"] for n, e in got.items()} == listed
+    # per set, the code it plays there, or None: Op plays its op-2 effect at {0, 1, 2}, Expired has none left
+    # there, and at the empty set DiyFirst plays its DIY effect, which the union drops
+    assert {n: {k: alt and alt["code"] for k, alt in e["by_set"].items()}
+            for n, e in got.items() if "by_set" in e} == {
+        "Op": {"0,1,2": 2}, "Expired": {"0,1,2": None}, "DiyFirst": {"": 4}}
+    assert (f"{SETS_SKU}: left out 2 scenes the app lists only at its empty scene set (no op filter): "
+            "NoCodes, Codes") in capsys.readouterr().out
     assert set(fs.fetch("H6006")) == {"Static"}
     assert {n: e["code"] for n, e in fs.fetch("H60A6").items()} == {
         "Op": 1, "Static": 3, "Codes": 4, "AfterGate": 2, "Expired": 1, "DiyFirst": 2}

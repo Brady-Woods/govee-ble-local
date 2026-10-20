@@ -376,7 +376,7 @@ def test_h6009_h6010_lead_a_scene_write_with_the_power_on(monkeypatch: pytest.Mo
     assert _sent(d) == [*on, build.scene_activate(7)] and d.state.is_on is True
     # By name, with an upload.
     catalog = load_scenes("H6006")
-    monkeypatch.setattr(device_mod, "async_load_scenes", lambda _sku: asyncio.sleep(0, catalog))
+    monkeypatch.setattr(device_mod, "async_load_scenes", lambda _sku, **_at: asyncio.sleep(0, catalog))
     d = _dev(sku, **scened)
     d._state.is_on = is_on
     name = next(n for n, s in catalog.items() if d.scene_upload_frames(s))
@@ -399,18 +399,18 @@ def test_h6009_h6010_lead_a_scene_write_with_the_power_on(monkeypatch: pytest.Mo
 
 
 def test_set_scene_by_name_loads_the_catalog_off_the_loop(monkeypatch: pytest.MonkeyPatch) -> None:
-    calls: list[str] = []
+    calls: list[tuple[str, Any]] = []
     real = device_mod.async_load_scenes
 
-    async def spy(sku: str) -> Any:
-        calls.append(sku)
-        return await real(sku)
+    async def spy(sku: str, *, scene_versions: Any = None) -> Any:
+        calls.append((sku, scene_versions))
+        return await real(sku, scene_versions=scene_versions)
 
     monkeypatch.setattr(device_mod, "async_load_scenes", spy)
     d = _dev("H6008")
     name = d.scene_names[0]
     run(d.set_scene_by_name(name))
-    assert calls == ["H6008"] and d.state.scene_code == load_scenes("H6008")[name].code
+    assert calls == [("H6008", d.scene_versions)] and d.state.scene_code == load_scenes("H6008")[name].code
 
 
 def test_update_warms_the_scene_catalog_once(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -221,16 +221,23 @@ async def read_device_info(dev: ReadTarget, read_reply: ReadReply) -> bool:
     return answered or got
 
 
-async def read_versions(dev: ReadTarget, read_reply: ReadReply) -> bool:
+async def read_versions(dev: ReadTarget, read_reply: ReadReply, *, soft: bool = True,
+                        hard: bool = True) -> bool:
     """``aa 06`` (firmware) then ``aa 07 03`` (hardware version), folded into ``dev.state``; returns
-    whether the device answered either. The first two reads of :func:`read_device_info`, and the gt 50 /
-    90 plugs' re-read after a power write (``Device._resync_after_power``)."""
-    soft = await read_reply(build.soft_version_query())
-    _fold.merge_device_info(dev.state, firmware=parse.parse_soft_version(soft or b""))
-    got, info = await read_info_reply(dev, read_reply, build.INFO_HARD)
-    if info is not None:
-        _fold.merge_device_info(dev.state, serial=info.serial, hardware=info.hw_version)
-    return soft is not None or got
+    whether the device answered either. The first two reads of :func:`read_device_info`, the gt 50 / 90
+    plugs' re-read after a power write (``Device._resync_after_power``), and, one of them alone where only
+    ``soft`` or ``hard``, the re-read of a version a firmware-gated fact still waits for
+    (``Device._read_missing_versions``)."""
+    got_soft = got_hard = False
+    if soft:
+        reply = await read_reply(build.soft_version_query())
+        _fold.merge_device_info(dev.state, firmware=parse.parse_soft_version(reply or b""))
+        got_soft = reply is not None
+    if hard:
+        got_hard, info = await read_info_reply(dev, read_reply, build.INFO_HARD)
+        if info is not None:
+            _fold.merge_device_info(dev.state, serial=info.serial, hardware=info.hw_version)
+    return got_soft or got_hard
 
 
 async def read_info_reply(

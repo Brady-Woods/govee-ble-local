@@ -57,8 +57,10 @@ def scene_versions(profile: DeviceProfile, soft: str | None = None, hard: str | 
     versions meet, in order.
 
     The pre-read rule is per version: one not yet read (None) meets every gate on it, as the newest firmware
-    would, which is what the library sent before the gates were modelled (H61A8: {0, 1, 2, 3} until the
-    device-info read). So a read that brought one version back still applies the gates it can test."""
+    would, which is what the library sent before the gates were modelled (the dreamcolorlightv1 rows:
+    {0, 1, 2, 3} until the device-info read; the app, whose version parse gives 0 for one it has not read,
+    fails them). So a read that brought one version back still applies the gates it can test, and
+    ``Device`` reads the other again on the next poll (:func:`gated_versions`)."""
     out = profile.scene_versions
     for key, versions in profile.scene_versions_by_pact:
         if key == pact:
@@ -67,6 +69,17 @@ def scene_versions(profile: DeviceProfile, soft: str | None = None, hard: str | 
         if _meets(soft, min_soft) and _meets(hard, min_hard):
             out = frozenset(versions)
     return out
+
+
+def gated_versions(profile: DeviceProfile, *, scenes: bool = False) -> tuple[bool, bool]:
+    """Whether a firmware-gated fact of ``profile`` tests the soft (``aa 06``) and the hard (``aa 07 03``)
+    version, ``(soft, hard)``: a :attr:`~.profile.DeviceProfile.scene_versions_by_firmware` gate on it, or,
+    unless ``scenes`` (the scene set's gates only), a :attr:`~.profile.DeviceProfile.kelvin_by_software` /
+    :attr:`~.profile.DeviceProfile.kelvin_by_hardware` entry."""
+    gates = profile.scene_versions_by_firmware
+    soft = any(s for s, _h, _v in gates) or (not scenes and bool(profile.kelvin_by_software))
+    hard = any(h for _s, h, _v in gates) or (not scenes and bool(profile.kelvin_by_hardware))
+    return soft, hard
 
 
 def _meets(text: str | None, gate: str) -> bool:

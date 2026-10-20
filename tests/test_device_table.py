@@ -86,13 +86,6 @@ _CHANGED: dict[tuple[str, str], tuple[Any, Any]] = {
     ("H6641", "scene_versions"): (frozenset({0, 1, 2, 3, 10}), frozenset({0, 1, 2, 3})),
     # The screen reads aa a3 at connect and writes 33 a3, which an H6641 answers and acks (bench, 2026-10-18).
     ("H6641", "gradual"): (False, True),
-    # goodsType 19's set follows the pact code and the firmware (newVersion4Ble); a version not yet read meets
-    # its gates, so until the first poll reads them the newest firmware's {0, 1, 2, 3} applies, as 1.x sent.
-    # The bench unit (SW 3.03.18 / HW 3.01.10) keeps it (checked below).
-    ("H61A8", "scene_versions"): (frozenset({0, 1, 2, 3}), frozenset()),
-    ("H61A8", "scene_versions_by_firmware"): (
-        (), (("1.04.00", "", (0, 1, 2)), ("1.06.00", "1.00.02", (0, 1, 2, 3)))),
-    ("H61A8", "scene_versions_by_pact"): ((), (((1, 2), (0, 1, 2)), ((2, 2), (0, 1, 2)))),
     # The spec's name for the bars' 0x15 decode (one Kelvin per bar); the decode itself is unchanged.
     ("H6047", "mode_color_parse"): ("kelvin_15", "kelvin_pair_15"),
 }
@@ -134,17 +127,83 @@ def test_the_generated_table_is_masters_hand_table_but_for_the_spec_fixes() -> N
         for soft, hard in _FIRMWARE[1:] if new.scene_versions or new.scene_versions_by_firmware else ():
             ref = reference.client_row(registry, fam["id"], int(gt), soft=soft, hard=hard)
             assert _fold.scene_versions(new, soft, hard) == set(ref["scene_versions"]), (sku, soft, hard)
-    # H61A8 at pact code 2 below soft 1.04.00: the pact's {0, 1, 2}, as the reference (hard version unread).
-    h61a8 = profile_for("H61A8")
-    assert h61a8 is not None
-    ref = reference.client_row(registry, "dreamcolorlightv1", 19, pact=(1, 2), soft="1.03.00")
-    assert _fold.scene_versions(h61a8, "1.03.00", pact=(1, 2)) == set(ref["scene_versions"]) == {0, 1, 2}
     # One profile per group of identical facts (the bulbs, the goodsType-43 and -90 plugs), else one per SKU.
     groups = (tuple(sku for sku in p.skus if sku in _MASTER) for p in PROFILES)
     assert sorted(g for g in groups if g) == sorted([
         ("H6004", "H6006", "H6008"), ("H5080", "H5083", "H5085"), ("H5160", "H5161"),
         *((sku,) for sku in ("H60A6", "H6047", "H61A8", "H6052", "H6641", "H6188", "H6062", "H6061", "H5082",
                              "H5089"))])
+
+
+# The scene and DIY interceptors split_rgbiclight's RgbIcLightRegistry.a() registers for the dreamcolor
+# goodsTypes, in its order (RgbIcLightRegistry.java:187-188, DreamColorV2Register then DreamColorV1Register,
+# then the :360 chain), and the app's one brightness interceptor (rgblight). DeviceDetailConfig.k0 (scene),
+# .Y (DIY) and .N (brightness) take the first registered that matches the device
+# (base-classes11/com/govee/base2light/pact/newdetail/DeviceDetailConfig.java:224-232,366-378,567-577); no
+# other split registers one that matches these goodsTypes. Each is (lookup, the goodsTypes it matches, its
+# cites: the interceptor, and the rule only it reaches). $40 matches where
+# LightVersionServiceImpl.getDiySupport is not null, on dreamcolorlightv1 goodsTypes only
+# (LightVersionServiceImpl.java:28-31).
+_RGBIC = "split_rgbiclight/com/govee/"
+_DCV1 = frozenset({19, 71, 74, 75, 83, 262, 123, 175, 176, 193, 187, 178, 136, 204, 207, 234,   # Support.f0
+                   17, 18, 70, 73})   # Q0 (dreamcolorlightv1/pact/Support.java:164,188)
+_DCV1_SCENES = ((f"{_RGBIC}dreamcolorlightv1/LightVersionServiceImpl.java", 168, 175),   # supportScenesOp
+                (f"{_RGBIC}dreamcolorlightv1/pact/Support.java", 953, 958))   # getSupportScenesOpSet
+_DCV2 = frozenset({17, 18, 19, 21})
+_FIRST_MATCH: tuple[tuple[str, frozenset[int], tuple[tuple[str, int, int], ...]], ...] = (
+    ("scene", _DCV2, ((f"{_RGBIC}dreamcolorlightv2/adjust/DetailConfig.java", 24, 33),
+                      (f"{_RGBIC}dreamcolorlightv2/pact/Support.java", 337, 342))),
+    ("diy", _DCV2, ((f"{_RGBIC}dreamcolorlightv2/adjust/DetailConfig.java", 34, 43),
+                    (f"{_RGBIC}dreamcolorlightv2/pact/Support.java", 291, 296))),
+    ("diy", frozenset({178}), ((f"{_RGBIC}dreamcolorlightv1/adjust/DetailConfig.java", 19, 28),)),
+    ("scene", frozenset({70}),   # $32
+     ((f"{_RGBIC}rgbiclight/RgbIcLightRegistry.java", 708, 718), *_DCV1_SCENES)),
+    ("scene", _DCV1, ((f"{_RGBIC}rgbiclight/RgbIcLightRegistry.java", 719, 730), *_DCV1_SCENES)),   # $33
+    ("diy", _DCV1, ((f"{_RGBIC}rgbiclight/RgbIcLightRegistry.java", 801, 811),)),   # $40
+    # Support4StringLightV2.E (split_rgblight/com/govee/stringlightv2/Support4StringLightV2.java:37,46,171)
+    ("brightness", frozenset({1, 2, 39, 40, 68, 78, 108, 143}),
+     (("split_rgblight/com/govee/rgblight/RgbLightDetailRegistrar.java", 36, 48),)),
+)
+_CITE = re.compile(r"(?P<path>[^:\s]+\.java):(?P<lines>[0-9,-]+)")
+
+
+def test_each_row_cites_the_interceptor_the_app_reaches() -> None:
+    """Review G1: a row's scene, DIY or brightness rule is the one of the first interceptor the app's lookup
+    finds for its goodsType. H61A8 (19) cited the dreamcolorlightv1 $33 (RgbIcLightRegistry.java:723), which
+    the dreamcolorlightv2 interceptor registered ahead of it shadows for 19. Each line range a row's doc-refs
+    cite that covers an interceptor of _FIRST_MATCH (or the rule only it reaches) names the first of those it
+    covers that matches the row's goodsType, and that is the goodsType's first match for that lookup (a range
+    over several, as :708-730 over $32 and $33, names the first that applies); a row that offers scenes
+    cites its goodsType's first scene match."""
+    yaml = require_optional("yaml", reason="the guard reads spec/devices.yaml")
+    registry = yaml.safe_load((_ROOT / "spec" / "devices.yaml").read_text(encoding="utf-8"))
+    offered: set[int] = set()
+    for fam in registry["families"]:
+        for gt_key, row in ((fam.get("client_profile") or {}).get("by_goods_type") or {}).items():
+            gt, where = int(gt_key), (fam["id"], gt_key)
+            spans = [(m["path"], int(lo), int(hi or lo)) for ref in row.get("doc-ref") or ()
+                     for m in [_CITE.fullmatch(str(ref))] if m
+                     for lo, _dash, hi in (r.partition("-") for r in m["lines"].split(","))]
+            for lookup in ("scene", "diy", "brightness"):
+                first = next((i for i, (kind, gts, _own) in enumerate(_FIRST_MATCH)
+                              if kind == lookup and gt in gts), None)
+                named = []
+                for path, lo, hi in spans:
+                    covered = [i for i, (kind, gts, own) in enumerate(_FIRST_MATCH) if kind == lookup
+                               and any(p == path and lo <= b and a <= hi for p, a, b in own)]
+                    if covered:
+                        named.append(next((i for i in covered if gt in _FIRST_MATCH[i][1]), None))
+                assert all(i == first for i in named), (*where, lookup, _path_of(named), first)
+                if lookup == "scene" and first is not None and "scenes" in (row.get("capabilities") or ()):
+                    assert first in named, (*where, "cites no scene interceptor")
+                    offered.add(gt)
+    # the rows that offer scenes on these goodsTypes, each checked
+    assert offered == {19, 70, 73, 74, 75, 83, 136, 175, 176, 178, 187, 207, 262}
+
+
+def _path_of(named: list[int | None]) -> list[str | None]:
+    """The interceptors ``named`` (indexes of _FIRST_MATCH), as their first cite, for an assertion message."""
+    return [None if i is None else f"{_FIRST_MATCH[i][2][0][0]}:{_FIRST_MATCH[i][2][0][1]}" for i in named]
 
 
 def _row(fam: dict[str, Any], gt: str) -> Any:
@@ -199,23 +258,23 @@ _REFUSED: tuple[tuple[str, str, _Edit, str], ...] = (
     ("h6047", "119", lambda f: _row(f, "119").update(mode_color_parse="untraced"),
      "mode_color_parse untraced"),
     # firmware and pact branches
-    ("dreamcolorlightv1", "19", lambda f: _row(f, "19")["by_firmware"][0].update(min_soft_version="1.x"),
+    ("dreamcolorlightv1", "136", lambda f: _row(f, "136")["by_firmware"][0].update(min_soft_version="1.x"),
      "firmware gates"),
-    ("dreamcolorlightv1", "19", lambda f: _row(f, "19")["by_firmware"][2].update(min_soft_version="1.00.00"),
+    ("dreamcolorlightv1", "19", lambda f: _row(f, "19")["by_firmware"][0].update(min_soft_version="1.00.00"),
      "a Kelvin firmware branch must gate"),
     ("dreamcolorlightv1", "19", lambda f: f["client_profile"].setdefault("by_model", {}).setdefault(
         "H61A8", {}).update(by_firmware=[{"min_soft_version": "1.00.00", "kelvin_range": [2700, 6500]}]),
      "Kelvin firmware branches must be the row's"),
     ("dreamcolorlightv1", "19", lambda f: f["client_profile"].setdefault("by_model", {}).setdefault(
         "H61A8", {}).update(kelvin_range=[2700, 6500]), "by_model ['kelvin_range'] under the row's own"),
-    ("dreamcolorlightv1", "19", lambda f: _row(f, "19")["by_firmware"][0].update(
+    ("dreamcolorlightv1", "136", lambda f: _row(f, "136")["by_firmware"][0].update(
         min_wifi_soft_version="1.00.00"), "a scene firmware branch must gate"),
     ("dreamcolorlightv1", "19", lambda f: _row(f, "19")["by_firmware"].append(
         {"min_soft_version": "1.00.00", "brightness_range": [1, 100]}),
      "firmware branch on ['brightness_range']"),
-    ("dreamcolorlightv1", "19", lambda f: _row(f, "19")["by_firmware"][2].update(kelvin_range=[9500, 9800]),
+    ("dreamcolorlightv1", "19", lambda f: _row(f, "19")["by_firmware"][0].update(kelvin_range=[9500, 9800]),
      "need a base kelvin_range (2000, 9000), one per version"),
-    ("dreamcolorlightv1", "19", lambda f: _row(f, "19")["by_firmware"][2].update(min_hard_version="3.8.01"),
+    ("dreamcolorlightv1", "19", lambda f: _row(f, "19")["by_firmware"][0].update(min_hard_version="3.8.01"),
      "Kelvin firmware gate '3.8.01' is not the app's a.bb.cc form"),
     ("h60ax", "235", lambda f: f["client_profile"]["by_goods_type"].update({"235": {
         **_row(f, "303"), "models": ["HX235"],
@@ -225,7 +284,8 @@ _REFUSED: tuple[tuple[str, str, _Edit, str], ...] = (
      "pact branch 1,1 on ['mode_color_parse']"),
     ("h60ax", "303", lambda f: _row(f, "303")["by_pact"].update({"9,9": {"status_read": _STATUS_PAIR}}),
      "pact branches ['9,9'] are not among the row's pacts"),
-    ("dreamcolorlightv1", "19", lambda f: _row(f, "19")["by_pact"]["1,2"].update(kelvin_range=[2700, 6500]),
+    ("dreamcolorlightv1", "19",
+     lambda f: _row(f, "19").update(by_pact={"1,2": {"kelvin_range": [2700, 6500]}}),
      "a pact kelvin_range needs a base kelvin_range"),
     ("h61d3", "261", lambda f: _row(f, "261")["by_pact"]["4,1"].update(kelvin_range=[9500, 9800]),
      "must each overlap the base [2700, 6500]"),

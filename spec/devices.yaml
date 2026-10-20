@@ -221,14 +221,22 @@ scenes:
       finds its version rules for the SKU (getSupportRules: a hardVersion entry matching the device, softVersion
       at or below its soft version) unmet; or Companion.k finds it expired (checkEffectiveTime 1 and the time in
       none of its effectiveTimes). A scene with no lightEffect left is not listed; one with any plays the first
-      left. The op set is the ScenesConfigBean's c (opScenesSet, SceneDataVM.L = m()); a null c (an empty
-      scene_versions: H61A8 below soft 1.04.00 at pact code 1) skips checkSupportNew, so only the expiry
-      filters. A client_profile row's scene_versions holds c (devices.schema.json). The bundled catalogs follow
-      this rule at fetch time (tools/fetch_scenes.py, over the union of the SKU's sets): the firmware and the
-      device's EffectCodes are unknown there, so a scene whose first firmware-independent survivor has version
-      rules is left out, and an op type 5 with DIY codes is kept.
+      left (BaseSceneViewMode.U2, at position 0), and the list highlights the listed scene whose lightEffect at
+      position 0, the one it plays, has the scene code the device reports (SceneListAdapter, getSceneCode(0, sku);
+      SceneDataVM.i1 only picks the category page to show, DelegateSceneV2). The op set is the ScenesConfigBean's
+      c (opScenesSet, SceneDataVM.L = m()); a null c (an empty scene_versions) skips checkSupportNew, so only
+      the expiry filters. A client_profile row's scene_versions holds c
+      (devices.schema.json). The bundled catalogs follow this rule at fetch time (tools/fetch_scenes.py), at
+      each of the SKU's scene sets: the firmware and the device's EffectCodes are unknown there, so an op type 5
+      with DIY codes is kept. A catalog holds each scene's pick at the union of the SKU's sets and, per set
+      where the result differs, that the scene is not listed there or the lightEffect it plays there. A scene
+      whose pick at the union has version rules is not bundled, and nor is a scene the union refuses, even where
+      an empty set would list it. A scene whose pick at one of its sets the library cannot follow (version
+      rules, no code, a sceneType-5 upload the library does not make, a big effect without its blob, a value
+      the library's scene entry check refuses) is not listed at that set. A client offers the catalog of the
+      set in force.
     op_type: { "0": 0, "1": 1, "2": "2 at cmdVersion 0, else 3", "3": 4, "4": 4, "5": 5, "6": 6, other: -1 }
-    sources: ["base-classes11/com/govee/base2light/pact/newdetail/content/scene/SceneDataVM.java:256-268,292-306,1454-1461,1502-1515,1626-1633", "base-classes10/com/govee/base2light/ble/scenes/CategoryV1.java:166-191,277-321,382-394,450-455,591-602,684-753,1441-1465", "base-classes11/com/govee/base2light/pact/newdetail/content/scene/ScenesConfigBean.java:78-87,212-219,231-233", "base-classes10/com/govee/base2light/ac/diy/v1/EffectCodes.java:101-123"]
+    sources: ["base-classes11/com/govee/base2light/pact/newdetail/content/scene/SceneDataVM.java:256-268,292-306,1454-1461,1502-1515,1626-1633,1745-1775", "base-classes10/com/govee/base2light/ble/scenes/CategoryV1.java:166-191,277-321,382-394,450-455,591-602,684-753,1441-1465", "base-classes11/com/govee/base2light/pact/newdetail/content/scene/ScenesConfigBean.java:78-87,212-219,231-233", "base-classes10/com/govee/base2light/ac/diy/v1/EffectCodes.java:101-123", "base-classes11/com/govee/base2light/pact/newdetail/content/scene/BaseSceneViewMode.java:466-477,591-697", "base-classes11/com/govee/base2light/pact/newdetail/content/scene/adapter/SceneListAdapter.java:155-159", "base-classes11/com/govee/base2light/pact/newdetail/content/scene/DelegateSceneV2.java:373-375"]
   cloud_api:
     library:
       endpoints: ["GET /bff-app/v2/devices/scenes", "GET /bff-app/v2/devices/categories/scenes", "GET /bff-app/v2/devices/scenes/new", "GET /bff-app/v1/light-effect-libraries"]
@@ -2758,40 +2766,55 @@ families:
           zones: []
           account_lock: false
           scene_dialect: legacy_scene
-          scene_versions: []
+          scene_versions: [0, 1, 2, 3]
           kelvin_range: [2000, 9000]
           brightness_range: [1, 100]
           mode_reports_kelvin: false
           connect_reads: [brightness, gradual, color_group]
           connect_writes: []
-          by_pact:
-            "1,2": { scene_versions: [0, 1, 2], doc: "pact code 2: newVersion4Ble is 1 whatever the soft version" }
-            "2,2": { scene_versions: [0, 1, 2], doc: "pact code 2, as 1,2" }
           by_firmware:
-            - { min_soft_version: "1.04.00", scene_versions: [0, 1, 2], doc: "newVersion4Ble is not 0 from soft 1.04.00" }
-            - { min_soft_version: "1.06.00", min_hard_version: "1.00.02", scene_versions: [0, 1, 2, 3], doc: "part brightness adds version 3" }
             - { min_hard_version: "3.08.01", kelvin_range: [2700, 6500], doc: "KelvinConfig.Config.z2, for SKU H61A8 (the row's only model): a string compare (versionHard.compareTo), so a hard 10.00.00 is below 3.08.01" }
           doc: >-
             H61A8 on the rgbiclight AcNewDetail screen (Model4BleIot.t -> /rgbic/newdetail). Connect reads
             (ControllerStrategyConfig.E1): aa 01, aa 04, aa a3 (gradual), aa 05, then the aa a5 V2 batches (bulb_batch_v2, 3
             records a frame). The aa 05 colour sub-modes go to SubMode4Color's default parse, [gradual][kelvin s16be]
-            (mode_color_parse kelvin). Gradual: written 33 a3 at Config.G[19] version 0. Scenes: getSupportScenesOpSet over newVersion4Ble(pact code, soft, hard): no
-            versionArray (activate only) below soft 1.04.00 unless the pact code is 2; {0, 1, 2, 3} with part brightness
-            (soft >= 1.06.00 and hard >= 1.00.02), else {0, 1, 2}. Kelvin version 2 for SKU H61A8 from hard 3.08.01, else
-            version 0. Brightness: BrightnessConfig gives 19 version 1 = percent unless the hard version is a Telink one
-            (major '1': version 0, raw [20, 254]); that test is not a minimum version, so it is not modelled, and the row
-            holds for non-Telink hardware such as the bench unit. HARDWARE-VERIFIED on an H61A8 SW 3.03.18 / HW 3.01.10
+            (mode_color_parse kelvin). Gradual: written 33 a3 at Config.G[19] version 0. Scenes: the ScenesConfigBean is
+            the first scene interceptor DeviceDetailConfig.k0 finds for 19, the dreamcolorlightv2 DetailConfig's
+            (RgbIcLightRegistry.a runs DreamColorV2Register at :187, ahead of the chain whose dreamcolorlightv1
+            interceptors, $33 and LightVersionServiceImpl.supportScenesOp, also match 19 and are never reached for it).
+            Its op set is the dreamcolorlightv2 getSupportScenesOpSet: never null for 19 (newScenesVersion is 0 only for
+            goodsType 21) and with no pact gate; {0, 1, 2, 3} when supportSubModeColor4PartBrightness holds (both
+            versions parse above 0, and the hard version is not a Telink one, or is at hard >= 1.00.01 and soft >=
+            1.06.00), else {0, 1, 2}. The Telink test (OtaType.isTelinkOta: a 7-character hard version whose major is
+            '1') is not a minimum version, so it is not modelled: the row's {0, 1, 2, 3} holds for non-Telink hardware
+            such as the bench unit, as its brightness below does, and for a Telink one at hard >= 1.00.01 and soft >=
+            1.06.00. The same bean gives 19's DIY version (getDiyVersion: 2 under part brightness, else 1). Not
+            modelled either: at pact (1,1) below soft 1.04.00 the scene tab (DeviceDetailConfig.l0's first match,
+            RgbIcLightRegistry $14, supportv2UIV1 at pacts (1,1) / (1,2)) is DelegateScene4DreamColorLightV1V2UIV1,
+            which shows the app's built-in static list, not the library's catalog, where ScenesSupport.a is 0; and a
+            version the app has not read, or that is empty, parses to 0, which gives {0, 1, 2} there. Kelvin version 2
+            for SKU H61A8 from hard 3.08.01, else version 0. Brightness: BrightnessConfig gives 19 version 1 = percent
+            unless the hard version is a Telink one (major '1': version 0, raw [20, 254]); that test is not a minimum
+            version, so it is not modelled, and the row holds for non-Telink hardware such as the bench unit.
+            HARDWARE-VERIFIED on an H61A8 SW 3.03.18 / HW 3.01.10
             (bench 2026-10-16 to 2026-10-18, macOS): the 15 01 colour and Kelvin frames and 15 02 segment brightness acked 00
             and applied (33 05 0b was rejected, status 01); aa a5 reads back 15 segments; aa 05 reads 15 01 00 00 after
             either colour write (mode_reports_kelvin false); controlled with no secret (account_lock false; the app's
             control-screen path for it is not cited). Not bench-verified: the 3.08.01 range, a Kelvin outside [2700, 6500].
           doc-ref:
-            - split_rgbiclight/com/govee/dreamcolorlightv1/pact/Support.java:261-275,953-958,1300-1316,1340-1342,1745-1758
+            - split_rgbiclight/com/govee/dreamcolorlightv1/pact/Support.java:261-275
             - base-classes2/com/govee/shared/config/h61a8/H61A8SceneConfig.java:46-48
-            - split_rgbiclight/com/govee/rgbiclight/RgbIcLightRegistry.java:723
+            - split_rgbiclight/com/govee/rgbiclight/RgbIcLightRegistry.java:187,360,399-412
+            - split_rgbiclight/com/govee/dreamcolorlightv2/DreamColorV2Register.java:37
+            - split_rgbiclight/com/govee/dreamcolorlightv2/adjust/DetailConfig.java:24-43
+            - split_rgbiclight/com/govee/dreamcolorlightv2/pact/Support.java:291-296,337-342,418-420,497-511
+            - base-classes11/com/govee/base2light/pact/newdetail/DeviceDetailConfig.java:366-378,567-577,713-723
+            - base-classes11/com/govee/base2light/pact/newdetail/content/success/DelegateCurMode.java:256-273
+            - split_rgbiclight/com/govee/rgbiclight/mode/scene/DelegateScene4DreamColorLightV1V2UIV1.java:58-59,92-106
+            - split_rgbiclight/com/govee/rgbiclight/mode/scene/config/ScenesSupport.java:39-62
+            - base-classes9/com/govee/base2home/pact/BleUtil.java:1112-1121
             - split_rgbiclight/com/module/router/pact_rgbiclight__ModuleRouter__Registered.java:96
             - base-classes11/com/govee/base2light/pact/newdetail/sub/SubMode4Color.java:44-48
-            - split_rgbiclight/com/govee/dreamcolorlightv1/LightVersionServiceImpl.java:169-175
             - split_rgbiclight/com/govee/rgbiclight/ControllerStrategyConfig.java:896-1015
             - base-classes11/com/govee/base2light/kt/comm/Info4BleIotDevice.java:351-353,366-368,412
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:402-411,1064-1068,1790-1792
