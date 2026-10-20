@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import base64
+import contextlib
 import dataclasses
 import errno
 import gc
@@ -9,7 +10,6 @@ import hashlib
 import itertools
 import json
 import lzma
-import sys
 import threading
 import time
 import traceback
@@ -487,11 +487,21 @@ def test_a_callers_use_of_the_error_reaches_no_later_lookup(counted):
     assert "the first caller's note" not in shown
 
 
-def _depth() -> int:
-    frame, depth = sys._getframe(), 0
-    while frame is not None:
-        frame, depth = frame.f_back, depth + 1
-    return depth
+def _headroom() -> int:
+    """How many more nested Python calls fit below the caller before a RecursionError.
+
+    Measured, not counted from the frames: on 3.11 the recursion limit also counts C-level calls (pytest's
+    among them), so a frame count says there is room where there is none."""
+    calls = 0
+
+    def probe() -> None:
+        nonlocal calls
+        calls += 1
+        probe()
+
+    with contextlib.suppress(RecursionError):
+        probe()
+    return calls
 
 
 def test_a_recursion_error_is_not_kept(counted, monkeypatch):
@@ -550,11 +560,11 @@ def test_a_deep_first_lookup_leaves_the_store_readable(counted):
     """Review: a first lookup made a few frames short of the recursion limit, then a shallow one, which reads
     the store. Each depth from 1 to 79 frames short of the limit is tried on a fresh cache."""
     counted(scene_store("H1234", {"a": {"code": 3}}))
-    limit, failed = sys.getrecursionlimit(), []
+    failed: list[BaseException] = []
 
-    def deep(short):
-        if _depth() < limit - short:
-            return deep(short)
+    def deep(remaining):
+        if remaining > 0:
+            return deep(remaining - 1)
         try:
             load_scenes("H1234")
         except (GoveeBleError, RecursionError) as err:
@@ -563,7 +573,7 @@ def test_a_deep_first_lookup_leaves_the_store_readable(counted):
 
     for short in range(1, 80):
         scenes._store.cache_clear()
-        deep(short)
+        deep(_headroom() - short)
         assert load_scenes("H1234") == {"a": scenes.Scene("a", 3, None)}, short
     assert any(isinstance(e, GoveeBleError) and isinstance(e.__cause__, RecursionError) for e in failed)
 
