@@ -33,22 +33,35 @@ from govee_ble_local.scenes import async_load_scenes, load_scenes, scene_names_b
 # Every bundled catalog's scene count (1.4.0's ten, then the admitted models'), so a catalog re-pointed,
 # added or dropped fails here (test_the_scene_store_is_the_device_tables).
 EXPECTED = {
-    "H6006": 59, "H6008": 59, "H6047": 65, "H6052": 43,
-    "H60A6": 84, "H61A8": 148, "H6641": 148, "H6004": 63, "H6062": 70, "H6188": 9,
+    "H6006": 66, "H6008": 66, "H6047": 65, "H6052": 43,
+    "H60A6": 85, "H61A8": 149, "H6641": 149, "H6004": 63, "H6062": 70, "H6188": 9,
     "H1401": 94, "R1401": 94, "H14B1": 63, "H6002": 8,
 }
-# 1.4.0's ten, each pinned to its content (_content of v1.4.0's load_scenes, from the 1.4.0 wheel), so a
-# change to one of their catalogs fails even at the same count.
+# Every bundled catalog pinned to its content (_content of load_scenes), so a change to any of them fails
+# even at the same count. 1.4.0's ten held 1.4.0's content (the 1.4.0 wheel's) until 1.5.0's re-fetch
+# (tools/fetch_scenes.py over the public library of 2026-10-19); each one it changed gives 1.4.0's and why.
 RELEASED = {
-    "H6004": "64c882fa0abdd5ef", "H6006": "7827c664fbe0e692", "H6008": "7827c664fbe0e692",
+    # 1.4.0 64c882fa0abdd5ef: Christmas is no placeholder (only a big-effect scene without a param is)
+    "H6004": "57dc60da73d4ee29",
+    # 1.4.0 7827c664fbe0e692: 26 recodes (4018-4042 and 4067 to 1173-1197 and 1201; White Light takes its
+    # specialEffect's param id 18140, and sceneType 0), 7 new Natural scenes; Disney's Moana's three, gone
+    # from the library, kept (dropped)
+    "H6006": "6ca1e19e34efe0de", "H6008": "6ca1e19e34efe0de",
     "H6047": "493a456314cc7cdb", "H6052": "e23d874ec5ca609b", "H6062": "acc242d1ab4a9e52",
-    "H60A6": "a1b7070e74ef0276", "H6188": "b1fce838b659f7bb", "H61A8": "74f16a978bb9d70f",
-    "H6641": "74f16a978bb9d70f",
+    # 1.4.0 a1b7070e74ef0276: a new Natural "Lightning" (24448); Disney's Moana's three kept (dropped)
+    "H60A6": "03c2aa3f543ec8d1",
+    "H6188": "b1fce838b659f7bb",
+    # 1.4.0 74f16a978bb9d70f (both): their specialEffect values (H61A8: 8 scenes' param and param id; H6641:
+    # 92 scenes', 27 of them the param id alone), and Emotion's Flash (2020) new as "Flash (Emotion)"
+    "H61A8": "27f9674173f5c2f7", "H6641": "9da94ff28ac7a57f",
+    "H1401": "61b53e825a507185", "R1401": "61b53e825a507185",
+    "H14B1": "57dc60da73d4ee29",   # H6004's scenes, its Christmas no placeholder (was 1.4.0's H6004's)
+    "H6002": "06fe006f08f933d2",
 }
 # Every catalog the store records at a scene set (its by_set), {(SKU, set): (scene count, _content)}, so a
-# per-set catalog re-pointed, added or dropped fails here too. None yet: every bundled SKU has one scene set
+# per-set catalog re-pointed, added or dropped fails here too. None: every bundled SKU has one scene set
 # (H61A8's is {0, 1, 2, 3} at every pact and firmware, devices.yaml row 19); the dreamcolorlightv1 SKUs'
-# {0, 1, 2} catalogs come with the data commit.
+# {0, 1, 2} catalogs follow in 1.5.1.
 AT_SET: dict[tuple[str, tuple[int, ...]], tuple[int, str]] = {}
 
 
@@ -636,7 +649,7 @@ async def test_device_scene_properties_need_no_io_once_loaded(counted):
     unreadable = counted(OSError(5, "I/O error"), clear=False)   # a read now would raise
     assert d.scene_names == names and d.active_scene == "Aurora"
     h61a8._state.scene_code = 2497
-    assert len(h61a8.scene_names) == 148 and h61a8.active_scene == "Halloween"
+    assert len(h61a8.scene_names) == EXPECTED["H61A8"] and h61a8.active_scene == "Halloween"
     # every bundled SKU, at every set its versions and pact reach (unread, below each gate, at each gate)
     for sku in _store()["skus"]:
         p = profile_for(sku, allow_modelled=True)
@@ -756,13 +769,14 @@ def test_the_scene_store_is_the_device_tables():
     ``pool``, ``skus`` and ``by_set``: the pool holds each scene once, sorted by content (its name, then its
     JSON with sorted keys), every entry some SKU's catalog's or some override's (no orphan), in the tool's
     JSON form, and it is the package's only JSON. EXPECTED pins each catalog's size, so a re-pointed or
-    dropped catalog fails, RELEASED each of 1.4.0's ten to 1.4.0's content (every Scene field), so a change
-    to one of them fails even at the same count, and AT_SET each catalog the store records at a scene set to
+    dropped catalog fails, RELEASED each catalog to its content (every Scene field), so a change to one of
+    them fails even at the same count, and AT_SET each catalog the store records at a scene set to
     its size and content, so every catalog is content-pinned at every set it differs at."""
     files = resources.files(scenes)
     text = (files / "store.json").read_text(encoding="utf-8")
     store = json.loads(text)
     assert set(store) == {"pool", "skus", "by_set"}
+    assert set(RELEASED) == set(EXPECTED)   # every catalog content-pinned
     assert {sku: _content(sku) for sku in RELEASED} == RELEASED
     recorded = {(sku, tuple(int(v) for v in key.split(",")) if key else ())
                 for sku, sets in store["by_set"].items() for key in sets}

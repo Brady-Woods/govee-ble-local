@@ -1,3 +1,24 @@
 {
- "store_sha256": "b2317631195146b7ca9881a346bb3f3908ec98c885c6ab930b90e156e2150df1"
+ "H6006": {
+  "dropped": [
+   "Heart of the Island",
+   "Motunui",
+   "Wayfinding"
+  ]
+ },
+ "H6008": {
+  "dropped": [
+   "Heart of the Island",
+   "Motunui",
+   "Wayfinding"
+  ]
+ },
+ "H60A6": {
+  "dropped": [
+   "Heart of the Island",
+   "Motunui",
+   "Wayfinding"
+  ]
+ },
+ "store_sha256": "2c0fa8bed9a4493e402887f46a39c6d374a8ddfec3350a0b1eaf7d9d57792625"
 }

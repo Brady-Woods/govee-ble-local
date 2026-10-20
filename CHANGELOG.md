@@ -264,8 +264,8 @@ model, from which the shipped readers are generated).
   into the scene store. The other newly admitted models get no catalog yet, so they offer no scenes
   (Changed). Every scene in them carries its blob. H1401 / R1401's Christmas is a well-formed 82-byte 0x93
   RGB scene and uploads as one; it is no placeholder (Changed: the placeholder flag). H14B1 shares H6004's
-  scenes, whose Christmas, the same scene, keeps 1.4.0's `placeholder` flag, which only `Scene.placeholder`
-  reads.
+  scenes, whose Christmas, the same scene, loses 1.4.0's `placeholder` flag with the re-fetch (Changed),
+  which only `Scene.placeholder` reads.
 - **A poll can hold its connect to tighter limits**: `Device.update(*, connect_attempts=None,
   connect_timeout=None)`, so a background poll at a device that doesn't answer gives the device lock up
   sooner and a command queued behind it waits less of its caller's own deadline (the command's own 45 s
@@ -365,7 +365,7 @@ model, from which the shipped readers are generated).
   - `--audit` plans each SKU at each of its scene sets, one row per set: every scene of the catalog offered
     there, the effects it plays there included, through the upload planner at that set.
   - No bundled catalog has a smaller set yet (H61A8's is its only one), so the store's `by_set` is `{}`;
-    the dreamcolorlightv1 catalogs come with the data commit.
+    the dreamcolorlightv1 catalogs follow in 1.5.1.
 - **Scenes need a bundled catalog**, as every SKU of 1.4.0 that offers them ships one. The generator bakes
   the scene store's SKUs (`scenes/store.json`'s `skus`) into the table (`_generated` `SCENE_CATALOGS`), and a profile
   offers `SCENES` only to them; the row's scene facts are still checked. So no SKU offers an effect list
@@ -502,9 +502,8 @@ model, from which the shipped readers are generated).
   now the traced app's, 7.7.02 (the scene library answers 7.5.20 identically for every bundled SKU; the
   catalogue endpoint does not, listing 15 more SKUs at 7.7.02, so `tools/fetch_catalog.py` no longer shares
   the constant and asks as its snapshot's `app_version` records: Spec), and `--resolve` logs in with it
-  too (it used the cloud client's default, 7.5.20). The bundled catalogs are not
-  re-fetched here: a re-fetch would change 1.4.0's H6004, H6006 / H6008, H60A6, H61A8 and H6641 catalogs,
-  which is for the user.
+  too (it used the cloud client's default, 7.5.20). The bundled catalogs are re-fetched with it in their
+  own change (below), which changes 1.4.0's H6004, H6006 / H6008, H60A6, H61A8 and H6641 catalogs.
 - **`tools/fetch_scenes.py` keeps the lightEffect the app's scene list keeps** (devices.yaml
   `scenes.list_filter`; `SceneDataVM.b2` -> `CategoryV1.checkSupportNew` -> `SceneV1.checkSupport` /
   `checkVersion`, then `SceneDataVM.Companion.k`). Before it takes a scene's first lightEffect it drops each
@@ -525,13 +524,34 @@ model, from which the shipped readers are generated).
   (`BaseSceneViewMode.java:630`, `SceneDataVM.java:1324`), not when a param's byte 3 is 0xFF. That heuristic
   took H1401 / R1401's Christmas, a well-formed 82-byte 0x93 RGB scene whose frames were always sent, for a
   stub; its set loses the flag (`5cc121e05ebbda2d`, was `347134bb28e5895f`). The same flag on 1.4.0's H6004
-  set (shared by H14B1) is left as shipped.
+  set (shared by H14B1) goes with the re-fetch (below).
 - `tools/fetch_scenes.py` drops the characters the app's decoder skips from a scene blob:
   `android.util.Base64.decode(str, NO_WRAP)` (`Encode.decryByBase64`,
   `base-classes10/com/govee/base2home/util/Encode.java:29-31`) skips every character outside the alphabet
   and `=`. Four of H6087's library blobs carry a JSON-escaped `\/`, which the app reads as `/`, so that SKU
   fetches now. `--audit` reports a SKU that has a catalog but no device-table row as not supported instead
   of raising.
+- **The bundled catalogs are re-fetched** with `tools/fetch_scenes.py` as it ships here, over the public scene
+  library of 2026-10-19 (AppVersion 7.7.02, no `--resolve`), so each scene takes the values the app reads
+  for its SKU (the `specialEffect` entry, above) and keeps its name, and the scenes the app has added are
+  bundled. H6047, H6052, H6062, H1401 / R1401 and H6002 are unchanged, and H6188's catalog is the app's own,
+  not fetched. The store holds 1,024 scenes in 690 entries, its `by_set` still `{}`, and every catalog is
+  pinned to its content (`tests/test_scenes_load.py` `RELEASED`).
+  - H6641: 92 of its 148 scenes take its own param id (White Light 17861, was 13890), 65 of them its own
+    blob too, so those 65 upload other bytes. H61A8: 8 scenes take their own param id and blob (Flash, Gary,
+    Judy, Nick, Sailboat, White Light, ZDP Duo, ZDP Trio). Both add Emotion's "Flash" (code 2020) as
+    "Flash (Emotion)": Zootopia 2's (14769) keeps "Flash", as 1.4.0 bundled it.
+  - H6006 / H6008: 26 scenes are recoded, each under its name with its blob (4018-4042 to 1173-1197, White
+    Light 4067 to 1201). White Light takes its `specialEffect`'s param id, 18140, and so sceneType 0 (an
+    entry with no param or code of its own over a base param id: `CategoryV1.LightEffect.getSceneType`,
+    `CategoryV1.java:329-343`), so it is activated by its code and no longer uploaded. Seven Natural scenes
+    are new: Cloudy, Cloudy Day, Thunderstorm, Snowing, Floating Mist, Windy Day and Clear Sky (4490-4496).
+  - H60A6: a Natural "Lightning" (24448) is new.
+  - The library no longer lists Disney's Moana for H6006 / H6008 or H60A6. Its three scenes, Motunui, Heart
+    of the Island and Wayfinding, stay under their names with their blobs, as scenes the library dropped
+    (the tombstone's `dropped`), so an automation that names one still plays it.
+  - H6004 / H14B1: Christmas loses 1.4.0's `placeholder` flag (the placeholder entry above); its frames were
+    always sent.
 - **`wire.build`'s read requests pass the spec's `read_request` its new profile param** (the library half
   of the AA 12 / 13 / B0 selector typing, Spec): the frame's profile, the plain one. No library read sends
   AA 12, 13 or B0, so no byte changes: every read frame of every supported SKU's rows, by default and with
