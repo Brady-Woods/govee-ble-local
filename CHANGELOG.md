@@ -503,7 +503,8 @@ model, from which the shipped readers are generated).
   catalogue endpoint does not, listing 15 more SKUs at 7.7.02, so `tools/fetch_catalog.py` no longer shares
   the constant and asks as its snapshot's `app_version` records: Spec), and `--resolve` logs in with it
   too (it used the cloud client's default, 7.5.20). The bundled catalogs are re-fetched with it in their
-  own change (below), which changes 1.4.0's H6004, H6006 / H6008, H60A6, H61A8 and H6641 catalogs.
+  own change (below), which changes 1.4.0's H6004, H60A6, H61A8 and H6641 catalogs (H6006 / H6008 keep
+  1.4.0's).
 - **`tools/fetch_scenes.py` keeps the lightEffect the app's scene list keeps** (devices.yaml
   `scenes.list_filter`; `SceneDataVM.b2` -> `CategoryV1.checkSupportNew` -> `SceneV1.checkSupport` /
   `checkVersion`, then `SceneDataVM.Companion.k`). Before it takes a scene's first lightEffect it drops each
@@ -534,22 +535,22 @@ model, from which the shipped readers are generated).
 - **The bundled catalogs are re-fetched** with `tools/fetch_scenes.py` as it ships here, over the public scene
   library of 2026-10-19 (AppVersion 7.7.02, no `--resolve`), so each scene takes the values the app reads
   for its SKU (the `specialEffect` entry, above) and keeps its name, and the scenes the app has added are
-  bundled. H6047, H6052, H6062, H1401 / R1401 and H6002 are unchanged, and H6188's catalog is the app's own,
-  not fetched. The store holds 1,024 scenes in 690 entries, its `by_set` still `{}`, and every catalog is
-  pinned to its content (`tests/test_scenes_load.py` `RELEASED`).
+  bundled. H6047, H6052, H6062, H1401 / R1401 and H6002 are unchanged, H6188's catalog is the app's own,
+  not fetched, and H6006 / H6008 are not re-fetched (below). The store holds 1,010 scenes in 715 entries,
+  its `by_set` still `{}`, and every catalog is pinned to its content (`tests/test_scenes_load.py`
+  `RELEASED`).
+  - H6006 / H6008 keep their 1.4.0 catalogs: on the bench on 2026-10-20 the 2026-10-19 library's codes did
+    not play on them. Aurora at its new code, 1174, showed white on an H6006 (hardware 1.02.00), where
+    1.4.0's 4019 plays it, and White Light as a plain activation of its new 1201 left an H6008 on its last
+    scene. The app's per-device scene fetch is to be investigated in 1.5.1.
   - H6641: 92 of its 148 scenes take its own param id (White Light 17861, was 13890), 65 of them its own
     blob too, so those 65 upload other bytes. H61A8: 8 scenes take their own param id and blob (Flash, Gary,
     Judy, Nick, Sailboat, White Light, ZDP Duo, ZDP Trio). Both add Emotion's "Flash" (code 2020) as
     "Flash (Emotion)": Zootopia 2's (14769) keeps "Flash", as 1.4.0 bundled it.
-  - H6006 / H6008: 26 scenes are recoded, each under its name with its blob (4018-4042 to 1173-1197, White
-    Light 4067 to 1201). White Light takes its `specialEffect`'s param id, 18140, and so sceneType 0 (an
-    entry with no param or code of its own over a base param id: `CategoryV1.LightEffect.getSceneType`,
-    `CategoryV1.java:329-343`), so it is activated by its code and no longer uploaded. Seven Natural scenes
-    are new: Cloudy, Cloudy Day, Thunderstorm, Snowing, Floating Mist, Windy Day and Clear Sky (4490-4496).
   - H60A6: a Natural "Lightning" (24448) is new.
-  - The library no longer lists Disney's Moana for H6006 / H6008 or H60A6. Its three scenes, Motunui, Heart
-    of the Island and Wayfinding, stay under their names with their blobs, as scenes the library dropped
-    (the tombstone's `dropped`), so an automation that names one still plays it.
+  - The library no longer lists Disney's Moana for H60A6. Its three scenes, Motunui, Heart of the Island and
+    Wayfinding, stay under their names with their blobs, as scenes the library dropped (the tombstone's
+    `dropped`), so an automation that names one still plays it.
   - H6004 / H14B1: Christmas loses 1.4.0's `placeholder` flag (the placeholder entry above); its frames were
     always sent.
 - **`wire.build`'s read requests pass the spec's `read_request` its new profile param** (the library half

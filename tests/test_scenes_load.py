@@ -33,20 +33,19 @@ from govee_ble_local.scenes import async_load_scenes, load_scenes, scene_names_b
 # Every bundled catalog's scene count (1.4.0's ten, then the admitted models'), so a catalog re-pointed,
 # added or dropped fails here (test_the_scene_store_is_the_device_tables).
 EXPECTED = {
-    "H6006": 66, "H6008": 66, "H6047": 65, "H6052": 43,
+    "H6006": 59, "H6008": 59, "H6047": 65, "H6052": 43,
     "H60A6": 85, "H61A8": 149, "H6641": 149, "H6004": 63, "H6062": 70, "H6188": 9,
     "H1401": 94, "R1401": 94, "H14B1": 63, "H6002": 8,
 }
 # Every bundled catalog pinned to its content (_content of load_scenes), so a change to any of them fails
 # even at the same count. 1.4.0's ten held 1.4.0's content (the 1.4.0 wheel's) until 1.5.0's re-fetch
-# (tools/fetch_scenes.py over the public library of 2026-10-19); each one it changed gives 1.4.0's and why.
+# (tools/fetch_scenes.py over the public library of 2026-10-19), which leaves H6006 / H6008 out; each one it
+# changed gives 1.4.0's and why.
 RELEASED = {
     # 1.4.0 64c882fa0abdd5ef: Christmas is no placeholder (only a big-effect scene without a param is)
     "H6004": "57dc60da73d4ee29",
-    # 1.4.0 7827c664fbe0e692: 26 recodes (4018-4042 and 4067 to 1173-1197 and 1201; White Light takes its
-    # specialEffect's param id 18140, and sceneType 0), 7 new Natural scenes; Disney's Moana's three, gone
-    # from the library, kept (dropped)
-    "H6006": "6ca1e19e34efe0de", "H6008": "6ca1e19e34efe0de",
+    # 1.4.0's, not re-fetched: on the bench of 2026-10-20 the 2026-10-19 library's codes did not play on them
+    "H6006": "7827c664fbe0e692", "H6008": "7827c664fbe0e692",
     "H6047": "493a456314cc7cdb", "H6052": "e23d874ec5ca609b", "H6062": "acc242d1ab4a9e52",
     # 1.4.0 a1b7070e74ef0276: a new Natural "Lightning" (24448); Disney's Moana's three kept (dropped)
     "H60A6": "03c2aa3f543ec8d1",
