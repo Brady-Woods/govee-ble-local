@@ -13,7 +13,7 @@ codes and blobs are never reused. Checked after every fetch:
             new name, printed as ambiguous (N2)
   UNIQ      every listed scene is stored, each under a name of its own (but one main() cuts for sceneType
             5: the blob --resolve baked in is a new-DIY one)
-  IDEM      an identical re-fetch changes nothing and prints no change
+  IDEM      an identical re-fetch changes nothing, in the store or the tombstone, and prints no change
   SAME      a first fetch names a response alike whatever the store holds (N6: no other SKU's names)
   DET       shuffling the categories and scenes of every response changes no stored catalog
   RETIRE    a removed name comes back only on its own scene, exactly, and printed; its scene's exact return
@@ -278,7 +278,8 @@ def replay(fs: ModuleType, rounds: list[dict[str, Any]], root: Path,
             for sku in rnd["skus"]:
                 body = render(rnd["lib"], shuffle)
                 before = fs.read_catalog(sku, root)
-                dropped = set(fs.read_tombstone(root / "tombstone.json").get(sku, {}).get("dropped", ()))
+                record = fs.read_tombstone(root / "tombstone.json").get(sku, {})
+                dropped = set(record.get("dropped", ()))
                 after, said = _fetch(fs, sku, body, root)
                 snaps.append(after)
                 if shuffle:
@@ -347,7 +348,8 @@ def replay(fs: ModuleType, rounds: list[dict[str, Any]], root: Path,
                         if (fs.scene_name(holders[0], b) == own and b["category"] == entry["category"]
                                 and b["code"] in codes - {entry["code"]} and n != holders[0]):
                             fail("FOLLOW", f"{holders[0]!r} left its scene {owner[pid]} to {n!r}")
-                if rep and (after != before or any(said.values())):
+                if rep and (after != before or any(said.values())
+                            or fs.read_tombstone(root / "tombstone.json").get(sku, {}) != record):
                     fail("IDEM", f"{ {k: v for k, v in said.items() if v} }")
                 if not before and sku not in last:
                     alone, _said = _fetch(fs, sku, body, root.parent / f"{root.name}-{sku}-{ri}")
@@ -571,6 +573,14 @@ _FIXED = {
         _lib(("Life", [(1, "Snow", [_e(5, 1)])]),
              ("Party", [(3, "Rain", [_e(10, 3, "kwIC", expired=True)])])),
         _lib(("Life", [(1, "Snow", [_e(5, 1)]), (4, "Rain", [_e(99, 4, "kwMD")])]))),
+    # N2: two Glows at code 10 (Party, Natural) leave the library as a new Glow at code 10 comes to Life
+    # (either could be it: a new name, printed as ambiguous): that answer is the new name's, so both are
+    # dropped, and once it leaves too a new Party Glow takes neither name
+    "dropped, a new one at its code": _rounds(
+        _lib(("Party", [(1, "Snow", [_e(5, 1)]), (2, "Glow", [_e(10, 2, "AAAA")])]),
+             ("Natural", [(3, "Glow", [_e(10, 3, "BBBB")])])),
+        _lib(("Party", [(1, "Snow", [_e(5, 1)])]), ("Life", [(5, "Glow", [_e(10, 5, "CCCC")])])),
+        _lib(("Party", [(1, "Snow", [_e(5, 1)]), (6, "Glow", [_e(99, 6, "DDDD")])]))),
     # N2: the Party Glow leaves the library as the Life one at its code is refused for good (removed): the
     # refused one's answer is its retired name's, so the Party one is dropped and a new Party Glow takes no
     # name; so too with the Life one back out of its time (not listed) as the Party one leaves, with the Life
@@ -610,7 +620,8 @@ _FIXED = {
                           (5, "Dusk", [_e(141, 6, "k35E", refused=True)])]))),
     # N3: a Glow renumbered (its blob and param id kept; a new name, as its old code still answers) as a new
     # Glow at its old code is refused for good: its scene is listed (its param id), so its name stays; so too
-    # for a resolved placeholder, whose blob the new name takes, and a placeholder of another param id
+    # for a resolved placeholder, whose blob the new name takes, and a placeholder of another param id, and
+    # for a refused Glow there with its blob (another param id)
     "renumbered, another refused at its code": _rounds(
         _lib(("Party", [(1, "Snow", [_e(5, 1)]), (2, "Glow", [_e(30, 2, "AAAA")])])),
         _lib(("Party", [(1, "Snow", [_e(5, 1)]), (2, "Glow", [_e(31, 2, "AAAA")]),
@@ -619,6 +630,69 @@ _FIXED = {
         _lib(("Party", [(1, "Snow", [_e(5, 1)]), (2, "Glow", [_e(30, 2, None, big=True)])])),
         _lib(("Party", [(1, "Snow", [_e(5, 1)]), (2, "Glow", [_e(31, 2, None, big=True)]),
                         (3, "Glow", [_e(30, 3, None, big=True, refused=True)])])), resolve=0),
+    "renumbered, a same-blob one refused at its code": _rounds(
+        _lib(("Party", [(1, "Snow", [_e(5, 1)]), (2, "Glow", [_e(30, 2, "AAAA")])])),
+        _lib(("Party", [(1, "Snow", [_e(5, 1)]), (2, "Glow", [_e(31, 2, "AAAA")]),
+                        (3, "Glow", [_e(30, 3, "AAAA", refused=True)])]))),
+    # N2 / N3: as those, one round on: the kept old name is dropped (its param id is listed under the new
+    # name), so once the refused Glow leaves, a new Glow takes no name; so too with the Glow at the old code
+    # out of its time instead of refused
+    "renumbered, another refused at its code, then a new Glow": _rounds(
+        _lib(("Party", [(1, "Snow", [_e(5, 1)]), (2, "Glow", [_e(30, 2, "AAAA")])])),
+        _lib(("Party", [(1, "Snow", [_e(5, 1)]), (2, "Glow", [_e(31, 2, "AAAA")]),
+                        (3, "Glow", [_e(30, 3, "BBBB", refused=True)])])),
+        _lib(("Party", [(1, "Snow", [_e(5, 1)]), (2, "Glow", [_e(31, 2, "AAAA")]),
+                        (4, "Glow", [_e(99, 4, "CCCC")])]))),
+    "resolved, renumbered, a placeholder refused at its code, then a new Glow": _rounds(
+        _lib(("Party", [(1, "Snow", [_e(5, 1)]), (2, "Glow", [_e(30, 2, None, big=True)])])),
+        _lib(("Party", [(1, "Snow", [_e(5, 1)]), (2, "Glow", [_e(31, 2, None, big=True)]),
+                        (3, "Glow", [_e(30, 3, None, big=True, refused=True)])])),
+        _lib(("Party", [(1, "Snow", [_e(5, 1)]), (2, "Glow", [_e(31, 2, None, big=True)]),
+                        (4, "Glow", [_e(99, 4, None, big=True)])])), resolve=0),
+    "renumbered, another out of its time at its code, then a new Glow": _rounds(
+        _lib(("Party", [(1, "Snow", [_e(5, 1)]), (2, "Glow", [_e(30, 2, "AAAA")])])),
+        _lib(("Party", [(1, "Snow", [_e(5, 1)]), (2, "Glow", [_e(31, 2, "AAAA")]),
+                        (3, "Glow", [_e(30, 3, "BBBB", expired=True)])])),
+        _lib(("Party", [(1, "Snow", [_e(5, 1)]), (2, "Glow", [_e(31, 2, "AAAA")]),
+                        (4, "Glow", [_e(99, 4, "CCCC")])]))),
+    # N3 / N4: a Dusk renumbered while out of its time (its param id held at its new code) as a never-stored
+    # Dusk at its old code is refused for good, or cut: the stored one is not that scene, so it stays (and is
+    # dropped, as its param id is held at another code); back in time, its scene is stored apart, printed
+    "renumbered out of its time, another refused at its code": _rounds(
+        _lib(("Party", [(1, "Snow", [_e(5, 1)]), (2, "Dusk", [_e(30, 2, "AAAA")])])),
+        _lib(("Party", [(1, "Snow", [_e(5, 1)]), (2, "Dusk", [_e(31, 2, "AAAA", expired=True)]),
+                        (3, "Dusk", [_e(30, 3, "BBBB", refused=True)])])),
+        _lib(("Party", [(1, "Snow", [_e(5, 1)]), (2, "Dusk", [_e(31, 2, "AAAA")])]))),
+    "renumbered out of its time, another cut at its code": _rounds(
+        _lib(("Party", [(1, "Snow", [_e(5, 1)]), (2, "Dusk", [_e(30, 2, "AAAA")])])),
+        _lib(("Party", [(1, "Snow", [_e(5, 1)]), (2, "Dusk", [_e(31, 2, "AAAA", expired=True)]),
+                        (3, "Dusk", [_e(30, 3, "BBBB", type5=True)])])),
+        _lib(("Party", [(1, "Snow", [_e(5, 1)]), (2, "Dusk", [_e(31, 2, "AAAA")])]))),
+    # N2 / N4: a Glow of two lightEffects (codes 30 and 31) out of its time is held at each one's own code, so
+    # its name's param id (code 30's) is held at no other code and the name is not dropped; back in Life at
+    # code 31 as the Zootopia 2 Glow of code 31 leaves, both stored Glows fit it by an own code: a new name,
+    # printed as ambiguous (were the Party name dropped, the Zootopia 2 name would move onto it)
+    "held at two codes, back at its other": _rounds(
+        _lib(("Party", [(1, "Snow", [_e(5, 1)]), (2, "Glow", [_e(30, 2, "AAAA"), _e(31, 3, "BBBB")])]),
+             ("Zootopia 2", [(4, "Glow", [_e(31, 4, "CCCC")])])),
+        _lib(("Party", [(1, "Snow", [_e(5, 1)]),
+                        (2, "Glow", [_e(30, 2, "AAAA", expired=True), _e(31, 3, "BBBB", expired=True)])]),
+             ("Zootopia 2", [(4, "Glow", [_e(31, 4, "CCCC")])])),
+        _lib(("Party", [(1, "Snow", [_e(5, 1)])]),
+             ("Life", [(2, "Glow", [_e(30, 2, "AAAA", expired=True), _e(31, 3, "BBBB")])]))),
+    # N4: a Glow renumbered (listed, or out of its time) as a never-stored Glow at its old code is refused for
+    # good; then the renumbered one leaves the library: the refused one was never its scene (the old name is
+    # dropped), so the old name stays
+    "renumbered, another refused at its code, then it leaves": _rounds(
+        _lib(("Party", [(1, "Snow", [_e(5, 1)]), (2, "Glow", [_e(30, 2, "AAAA")])])),
+        _lib(("Party", [(1, "Snow", [_e(5, 1)]), (2, "Glow", [_e(31, 2, "AAAA")]),
+                        (3, "Glow", [_e(30, 3, "BBBB", refused=True)])])),
+        _lib(("Party", [(1, "Snow", [_e(5, 1)]), (3, "Glow", [_e(30, 3, "BBBB", refused=True)])]))),
+    "renumbered out of its time, another refused at its code, then it leaves": _rounds(
+        _lib(("Party", [(1, "Snow", [_e(5, 1)]), (2, "Glow", [_e(30, 2, "AAAA")])])),
+        _lib(("Party", [(1, "Snow", [_e(5, 1)]), (2, "Glow", [_e(31, 2, "AAAA", expired=True)]),
+                        (3, "Glow", [_e(30, 3, "BBBB", refused=True)])])),
+        _lib(("Party", [(1, "Snow", [_e(5, 1)]), (3, "Glow", [_e(30, 3, "BBBB", refused=True)])]))),
 }
 
 
@@ -664,6 +738,16 @@ def test_main_keys_the_tombstone_by_the_upper_case_sku(fs: ModuleType, tmp_path:
         assert fs.main(["h6641"]) == 0
     assert "Rain" not in fs.read_catalog("H6641", tmp_path)
     assert set(fs.read_tombstone(tmp_path / "tombstone.json")) == {"H6641"}
+
+
+def test_main_reports_an_invalid_sku_and_goes_on(fs: ModuleType, tmp_path: Path) -> None:
+    """N1: main() reports a SKU validate_sku refuses as FETCH FAILED and goes on with the next one."""
+    _fetch(fs, "H6641", render(_FIXED["retired"][0]["lib"]), tmp_path)
+    err = io.StringIO()
+    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+        assert fs.main(["H6-41", "h6641"]) == 1
+    assert "H6-41: FETCH FAILED" in err.getvalue()
+    assert set(fs.read_catalog("H6641", tmp_path)) == {"Rain", "Snow"}
 
 
 def test_a_param_id_breaks_a_category_tie(fs: ModuleType, tmp_path: Path) -> None:
@@ -739,3 +823,21 @@ def test_a_reclaimed_name_holds_no_place_it_left(fs: ModuleType, tmp_path: Path)
     after = fs.read_catalog("H6641", tmp_path / "ordered")
     assert {n: (e["code"], e["category"]) for n, e in after.items()} == {
         "Glow": (32, "Party"), "Glow (Party)": (30, "Life"), "Snow": (5, "Party")}
+
+
+def test_a_param_id_under_two_names_of_one_blob_resolves_at_once(fs: ModuleType, tmp_path: Path) -> None:
+    """N7 / IDEM: a Rain renumbered twice as a placeholder of its param id, each time to a new name (its old
+    codes stay answered), holds that param id's blob under its first two names; as a new Rain takes the first
+    name by its code and category, the newest name takes the blob at once (one blob, under any names), so the
+    identical re-fetch changes nothing."""
+    snow = (1, "Snow", [_e(5, 1)])
+    libs = [_lib(("Life", [snow, (2, "Rain", [_e(30, 2, "AAAA")])])),
+            _lib(("Life", [snow, (2, "Rain", [_e(31, 2, None, big=True)]),
+                           (3, "Rain", [_e(30, 3, "BBBB", refused=True)])])),
+            _lib(("Life", [snow, (2, "Rain", [_e(32, 2, None, big=True)]),
+                           (4, "Rain", [_e(31, 4, "CCCC", rules=True)]), (5, "Rain", [_e(30, 5, "DDDD")])]))]
+    for lib in libs:
+        after, _said = _fetch(fs, "H6641", render(lib), tmp_path)
+    again, said = _fetch(fs, "H6641", render(libs[-1]), tmp_path)
+    assert after["Rain (Life, 2)"]["param"] == "AAAA"
+    assert again == after and not any(said.values())

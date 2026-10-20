@@ -499,7 +499,7 @@ model, from which the shipped readers are generated).
   renumber or a category rename too, with the new code and category), else by the scene's code and category,
   else by the resolved entries of that param id where they hold one blob (one scene under more names; a bare
   entry of it has no blob to keep, so the scene stays a placeholder, as a new name does where the sceneType-5
-  cut would drop that blob). A seeded property test replays 200 random histories and 42 fixed ones through
+  cut would drop that blob). A seeded property test replays 200 random histories and 52 fixed ones through
   `main()`. No bundled catalog changes, and no released name is gone (1.0.0 to 1.4.0), so the tombstone starts
   empty.
 
