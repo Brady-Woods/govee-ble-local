@@ -31,6 +31,7 @@ import base64
 import contextlib
 import copy
 import functools
+import hashlib
 import importlib.util
 import io
 import json
@@ -718,6 +719,24 @@ _FIXED = {
         _lib(("Party", [(1, "Snow", [_e(5, 1)]), (2, "Glow", [_e(31, 2, "AAAA", expired=True)]),
                         (3, "Glow", [_e(30, 3, "BBBB", refused=True)])])),
         _lib(("Party", [(1, "Snow", [_e(5, 1)]), (3, "Glow", [_e(30, 3, "BBBB", refused=True)])]))),
+    # N2: H6006's Motunui leaves the library with Disney's Moana (dropped), then comes back renumbered 4476 ->
+    # 1176 with its blob and param id: the one stored scene and the one listed scene that fit each other by
+    # category, blob and param id, so the dropped name follows it, printed as a keep (review F1)
+    "dropped, back renumbered with its blob and param id": _rounds(
+        _lib(("Natural", [(1, "Aurora", [_e(1174, 10)])]),
+             ("Disney's Moana", [(2, "Motunui", [_e(4476, 43314, "kwT/6/8AADLI")])])),
+        _lib(("Natural", [(1, "Aurora", [_e(1174, 10)])])),
+        _lib(("Natural", [(1, "Aurora", [_e(1174, 10)])]),
+             ("Disney's Moana", [(2, "Motunui", [_e(1176, 43314, "kwT/6/8AADLI")])])), skus=("H6006",)),
+    # N1 / IDEM: a sceneType-5 placeholder, the SKU's only scene, resolved to a new-DIY blob, then listed
+    # under a renamed category: the cut empties the catalog, so the name is removed and retired with the entry
+    # it was to hold, and the SKU's catalog leaves the store; the identical re-fetch reclaims it, cut again,
+    # silently (review F2); so too for a SKU's only scene refused for good
+    "type5 resolved, the whole catalog cut": _rounds(
+        _lib(("Zootopia 2", [(2, "Dusk", [_DUSK5])])), _lib(("Zootopia", [(2, "Dusk", [_DUSK5])])),
+        resolve=0),
+    "refused, the whole catalog": _rounds(_lib(("Party", [(2, "Rain", [_e(10, 2)])])),
+                                          _lib(("Party", [(2, "Rain", [_e(10, 2, refused=True)])]))),
     # N2: the Party Glow leaves the library as a never-stored Glow at its code comes to Life refused for good,
     # or cut: neither is the Party one (a scene refused or cut is not still there), so the name is dropped and
     # a new Party Glow takes none
@@ -783,7 +802,7 @@ def test_main_keys_the_tombstone_by_the_upper_case_sku(fs: ModuleType, tmp_path:
     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
         assert fs.main(["h6641"]) == 0
     assert "Rain" not in fs.read_catalog("H6641", tmp_path)
-    assert set(fs.read_tombstone(tmp_path / "tombstone.json")) == {"H6641"}
+    assert set(fs.read_tombstone(tmp_path / "tombstone.json")) == {"H6641", "store_sha256"}
 
 
 def test_main_reports_an_invalid_sku_and_goes_on(fs: ModuleType, tmp_path: Path) -> None:
@@ -887,3 +906,97 @@ def test_a_param_id_under_two_names_of_one_blob_resolves_at_once(fs: ModuleType,
     again, said = _fetch(fs, "H6641", render(libs[-1]), tmp_path)
     assert after["Rain (Life, 2)"]["param"] == "AAAA"
     assert again == after and not any(said.values())
+
+
+@pytest.mark.parametrize(("back", "names"), [
+    (_e(1176, 43314, "kwT/6/8AADLI"), {"Aurora", "Motunui"}),   # its blob and param id: it follows
+    (_e(1176, 43315, "kwT/6/8AADLI"), {"Aurora", "Motunui", "Motunui (Disney's Moana)"}),   # another param id
+    (_e(1176, 43314, "kwT/6/8AAAAA"), {"Aurora", "Motunui", "Motunui (Disney's Moana)"}),   # another blob
+])
+def test_a_dropped_name_follows_its_scene_back_by_blob_and_param_id(
+        back: dict[str, Any], names: set[str], fs: ModuleType, tmp_path: Path) -> None:
+    """N2 (review F1, the real H6006 Motunui history): a dropped name follows its scene back at a new code by
+    category and blob only with its param id too, printed as a keep, and is no longer dropped; with another
+    param id or blob it stays dropped, and the scene takes a new name."""
+    aurora, moana = ("Natural", [(1, "Aurora", [_e(1174, 10)])]), "Disney's Moana"
+    libs = [_lib(aurora, (moana, [(2, "Motunui", [_e(4476, 43314, "kwT/6/8AADLI")])])), _lib(aurora),
+            _lib(aurora, (moana, [(2, "Motunui", [back])]))]
+    assert check(fs, _rounds(*libs, skus=("H6006",)), tmp_path / "check", 0) == []
+    for lib in libs:
+        after, said = _fetch(fs, "H6006", render(lib), tmp_path)
+    assert set(after) == names
+    record = fs.read_tombstone(tmp_path / "tombstone.json").get("H6006", {})
+    if names == {"Aurora", "Motunui"}:
+        assert after["Motunui"]["code"] == 1176 and said["keep"] == {"Motunui"} and "dropped" not in record
+    else:
+        assert after["Motunui"]["code"] == 4476 and record["dropped"] == ["Motunui"] and not said["keep"]
+
+
+def test_a_dropped_name_two_listed_scenes_fit_stays_dropped(fs: ModuleType, tmp_path: Path) -> None:
+    """N2 (review F1): where two listed scenes fit the dropped name by category, blob and param id, neither
+    takes it (ambiguous), and it stays dropped."""
+    aurora, moana = ("Natural", [(1, "Aurora", [_e(1174, 10)])]), "Disney's Moana"
+    libs = [_lib(aurora, (moana, [(2, "Motunui", [_e(4476, 43314, "kwT/6/8AADLI")])])), _lib(aurora),
+            _lib(aurora, (moana, [(2, "Motunui", [_e(1176, 43314, "kwT/6/8AADLI")]),
+                                  (3, "Motunui", [_e(1177, 43314, "kwT/6/8AADLI")])]))]
+    for lib in libs:
+        after, said = _fetch(fs, "H6006", render(lib), tmp_path)
+    assert after["Motunui"]["code"] == 4476 and said["unsure"] and not said["keep"]
+    assert fs.read_tombstone(tmp_path / "tombstone.json")["H6006"]["dropped"] == ["Motunui"]
+
+
+@pytest.mark.parametrize("case", ["type5 resolved, the whole catalog cut", "refused, the whole catalog"])
+def test_a_catalog_its_every_scene_removed_leaves_the_store(case: str, fs: ModuleType,
+                                                            tmp_path: Path) -> None:
+    """N1 / IDEM (review F2): where the sceneType-5 cut (or a refusal for good) removes a SKU's every stored
+    scene, the names are removed and retired as where scenes are left, and the SKU's catalog leaves the store;
+    an identical re-fetch prints no change and changes nothing."""
+    rounds = _FIXED[case]
+    _fetch(fs, "H6641", render(rounds[0]["lib"]), tmp_path)
+    if rounds[0]["resolve"]:
+        catalog = fs.read_catalog("H6641", tmp_path)
+        catalog["Dusk"].update(param=_resolved(2, 5))
+        catalog["Dusk"].pop("placeholder")
+        fs.store_catalog("H6641", catalog, tmp_path)
+    name = next(iter(fs.read_catalog("H6641", tmp_path)))
+    after, said = _fetch(fs, "H6641", render(rounds[1]["lib"]), tmp_path)
+    assert after == {} and "H6641" not in fs.read_store(tmp_path) and said["removed"] == {name}
+    tomb = fs.read_tombstone(tmp_path / "tombstone.json")
+    assert set(tomb["H6641"]["retired"]) == {name}
+    again, said = _fetch(fs, "H6641", render(rounds[1]["lib"]), tmp_path)
+    assert again == {} and not any(said.values()) and fs.read_tombstone(tmp_path / "tombstone.json") == tomb
+
+
+@pytest.mark.parametrize("case", ["type5 resolved, the whole catalog cut", "refused, the whole catalog"])
+def test_an_emptied_catalogs_refetch_says_its_scenes_are_refused_or_cut(case: str, fs: ModuleType,
+                                                                        tmp_path: Path) -> None:
+    """Review N5: once F2 takes a SKU's catalog out of the store, each later fetch whose every listed scene is
+    refused or cut printed "no scenes in the library; nothing stored", though the library lists them. It
+    says so now; a library with no scene for the SKU still has none."""
+    rounds = _FIXED[case]
+    _fetch(fs, "H6641", render(rounds[0]["lib"]), tmp_path)
+    if rounds[0]["resolve"]:
+        catalog = fs.read_catalog("H6641", tmp_path)
+        catalog["Dusk"].update(param=_resolved(2, 5))
+        catalog["Dusk"].pop("placeholder")
+        fs.store_catalog("H6641", catalog, tmp_path)
+    fs.BODIES.update(H6641=render(rounds[1]["lib"]), H6047=render(_lib()))
+    said = []
+    for sku in ("H6641", "H6641", "H6047"):   # the fetch that empties the catalog, its re-fetch, none listed
+        fs.CAP.update(out=set(), named=([], []), unsure=set())
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
+            assert fs.main([sku]) == 0
+        said.append([line for line in out.getvalue().splitlines() if "nothing stored" in line])
+    assert fs.read_store(tmp_path) == {}
+    assert said == [[], ["H6641: every listed scene is refused or cut; nothing stored"],
+                    ["H6047: no scenes in the library; nothing stored"]]
+
+
+def test_main_writes_the_stores_sha256_into_the_tombstone(fs: ModuleType, tmp_path: Path) -> None:
+    """Review F3: each store main() writes, its sha256 is in the tombstone (``store_sha256``), so a
+    store.json committed without its tombstone fails test_fetch_scenes_store; an emptied store's too."""
+    for rnd in [*_FIXED["retired"], *_FIXED["refused, the whole catalog"]]:
+        _fetch(fs, "H6641", render(rnd["lib"]), tmp_path)
+        digest = hashlib.sha256((tmp_path / "store.json").read_bytes()).hexdigest()
+        assert fs.read_tombstone(tmp_path / "tombstone.json")["store_sha256"] == digest

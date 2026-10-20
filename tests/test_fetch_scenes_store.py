@@ -1,13 +1,19 @@
 """tools/fetch_scenes.py writes only a store the loader reads: its entry check is the loader's, its layout
-refuses two catalogs of one SKU, it checks the store before writing it, and it leaves the store 0644."""
+refuses two catalogs of one SKU, it checks the store before writing it, and it leaves the store 0644. The
+tombstone holds the sha256 of the store it was written with, the committed pair agrees, and main() and
+--resolve refuse to run over a tombstone that is missing or not the store's. A library value fetch() reads as
+an int that is no int fails the SKU's fetch."""
 from __future__ import annotations
 
 import base64
+import contextlib
+import hashlib
 import importlib.util
 import io
 import json
 import os
 import stat
+import sys
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from typing import Any
@@ -18,6 +24,7 @@ from conftest import SETS_SKU, FakeSceneFiles, with_scene_sets
 from govee_ble_local import scenes
 
 _TOOL = Path(__file__).resolve().parent.parent / "tools" / "fetch_scenes.py"
+_STORE = Path(__file__).resolve().parent.parent / "src" / "govee_ble_local" / "scenes" / "store.json"
 
 
 def _fs() -> ModuleType:
@@ -126,7 +133,7 @@ def _op1(code: int, param: str, **more: Any) -> dict[str, Any]:
     return {"sceneCode": code, "sceneType": 1, "cmdVersion": 0, "scenceParam": param, **more}   # RGB, op 1
 
 
-def _library(*scenes: tuple[str, str, list[dict[str, Any]]]) -> bytes:
+def _listing(*scenes: tuple[str, str, list[dict[str, Any]]]) -> bytes:
     """A library response of ``scenes`` ((category, sceneName, lightEffects), ...), in that order."""
     cats: dict[str, list[dict[str, Any]]] = {}
     for category, name, effects in scenes:
@@ -167,61 +174,70 @@ def test_fetch_stores_what_the_app_lists_at_each_scene_set(sets_tool: ModuleType
     """At {0, 1, 2} the app's list drops the op-type-3 effects: a scene with an op-1 effect after it plays
     that one there, one with none left is not listed there, and one whose effect left first has version rules
     is not listed there either (the library can't follow them), printed, its entry at the union as without
-    G1, as is one whose effect left first there is one the shared entry check refuses (a code past 0xFFFF, a
-    code no int holds: JSON's Infinity, round 2's T1): never a failed fetch. A scene only the empty set lists
+    G1, as is one whose effect left first there is one the shared entry check refuses (a code past 0xFFFF):
+    never a failed fetch. A scene only the empty set lists
     (op type 5, which the union drops) is left out, printed. What the tool writes, its store read back and
     the library's loader give at each set, each scene's result at a set printed by name; a re-fetch changes
     nothing."""
     fs = sets_tool
-    _serve(monkeypatch, fs, _library(("c", "Twice", [_op3(10, "AAAA"), _op1(11, "BBBB")]),
+    _serve(monkeypatch, fs, _listing(("c", "Twice", [_op3(10, "AAAA"), _op1(11, "BBBB")]),
                       ("c", "Gone", [_op3(20, "CCCC")]),
                       ("c", "Ruled", [_op3(30, "DDDD"), _op1(31, "EEEE", rules=_RULES)]),
                       ("c", "OnlyEmpty", [{"sceneCode": 40, "sceneType": 5, "scenceParam": "AAAA"}]),
                       ("c", "Plain", [_op1(50, "FFFF")]),
                       ("c", "Bad", [_op3(80, "IIII"), {"sceneCode": 0x10000, "sceneType": 1,
-                                                        "scenceParam": "JJJJ"}]),
-                      ("c", "Inf", [_op3(90, "KKKK"), {"sceneCode": float("inf"), "sceneType": 1,
-                                                        "scenceParam": "LLLL"}])))
+                                                        "scenceParam": "JJJJ"}])))
     union = {n: {"code": code, "param": param, "category": "c", "scene_type": 2, "cmd_version": 1}
              for n, code, param in (("Twice", 10, "AAAA"), ("Gone", 20, "CCCC"), ("Ruled", 30, "DDDD"),
-                                    ("Bad", 80, "IIII"), ("Inf", 90, "KKKK"))}
+                                    ("Bad", 80, "IIII"))}
     plain = {"code": 50, "param": "FFFF", "category": "c", "scene_type": 1, "cmd_version": 0}
     hidden = {"by_set": {"0,1,2": None}}
     expected = {"Twice": {**union["Twice"], "by_set": {"0,1,2": {**plain, "code": 11, "param": "BBBB"}}},
                 "Gone": {**union["Gone"], **hidden}, "Ruled": {**union["Ruled"], **hidden}, "Plain": plain,
-                "Bad": {**union["Bad"], **hidden}, "Inf": {**union["Inf"], **hidden}}
+                "Bad": {**union["Bad"], **hidden}}
     assert fs.fetch(_SKU) == expected
     out = capsys.readouterr().out
     assert (f"{_SKU}: left out 1 scenes the app lists only at its empty scene set (no op filter): "
             "OnlyEmpty") in out
     assert (f"{_SKU}: hidden at scene set [0, 1, 2], where the app plays an effect the library can't store "
-            "(version rules / no code / sceneType 5 / placeholder / invalid): 3 scenes: Ruled, Bad, Inf"
-            ) in out
+            "(version rules / no code / sceneType 5 / placeholder / invalid): 2 scenes: Ruled, Bad") in out
     assert fs.main([_SKU]) == 0
     out = capsys.readouterr().out
-    assert (f'{_SKU}: 5 scenes change at scene set [0, 1, 2]: "Bad" hidden, "Gone" hidden, "Inf" hidden, '
+    assert (f'{_SKU}: 4 scenes change at scene set [0, 1, 2]: "Bad" hidden, "Gone" hidden, '
             '"Ruled" hidden, "Twice" plays code 11, c') in out and "change at scene set []" not in out
-    assert "5 scenes differ at a smaller scene set" in out
+    assert "4 scenes differ at a smaller scene set" in out
     assert fs.read_catalog(_SKU) == expected   # layout, then read_store: the tool's form back
     text = (tmp_path / "store.json").read_text(encoding="utf-8")
     store = json.loads(text)
     twice = store["pool"].index({"name": "Twice", **expected["Twice"]["by_set"]["0,1,2"]})
-    assert store["by_set"] == {_SKU: {"0,1,2": {"Bad": None, "Gone": None, "Inf": None, "Ruled": None,
-                                                "Twice": twice}}}
+    assert store["by_set"] == {_SKU: {"0,1,2": {"Bad": None, "Gone": None, "Ruled": None, "Twice": twice}}}
     assert fs.main([_SKU]) == 0   # an identical re-fetch changes nothing, and prints no per-set change
     assert (tmp_path / "store.json").read_text(encoding="utf-8") == text
     assert "change at scene set" not in capsys.readouterr().out
-    assert not (tmp_path / "tombstone.json").exists()
+    assert fs.read_tombstone() == {"store_sha256": hashlib.sha256(text.encode()).hexdigest()}   # no record
     scenes._store.cache_clear()
     monkeypatch.setattr(scenes, "resources", SimpleNamespace(files=lambda _pkg: FakeSceneFiles(text)))
     try:
         assert {n: s.code for n, s in scenes.load_scenes(_SKU).items()} == {
-            "Bad": 80, "Gone": 20, "Inf": 90, "Plain": 50, "Ruled": 30, "Twice": 10}
+            "Bad": 80, "Gone": 20, "Plain": 50, "Ruled": 30, "Twice": 10}
         assert {n: s.code for n, s in scenes.load_scenes(_SKU, scene_versions={0, 1, 2}).items()} == {
             "Plain": 50, "Twice": 11}
         assert scenes.load_scenes(_SKU, scene_versions=()) == scenes.load_scenes(_SKU)
     finally:
         scenes._store.cache_clear()
+
+
+def test_a_pick_at_a_smaller_set_that_is_no_int_fails_the_fetch(sets_tool: ModuleType,
+                                                                monkeypatch: pytest.MonkeyPatch) -> None:
+    """A code no int holds (JSON reads Infinity, or 1e999, as a float) on the effect a smaller set plays
+    fails the SKU's fetch, as a value that is no int does on any lightEffect (_check_ints, the naming
+    follow-up's F2 guard; the app's Gson fails the whole response), with nothing written."""
+    fs = sets_tool
+    inf = {"sceneCode": float("inf"), "sceneType": 1, "scenceParam": "LLLL"}   # json.dumps writes Infinity
+    _serve(monkeypatch, fs, _listing(("c", "Inf", [_op3(90, "KKKK"), inf])))
+    with pytest.raises(ValueError, match="'sceneCode' must be an int or null, got float"):
+        fs.fetch(_SKU)
+    assert fs.main([_SKU]) == 1 and not (fs.OUT_DIR / "store.json").exists()
 
 
 def test_naming_ignores_the_per_set_results(sets_tool: ModuleType, capsys: pytest.CaptureFixture[str],
@@ -235,12 +251,12 @@ def test_naming_ignores_the_per_set_results(sets_tool: ModuleType, capsys: pytes
     def twins(alternate: str) -> list[tuple[str, str, list[dict[str, Any]]]]:
         return [("Festival", "Halloween", [_op3(2497, "kwE="), _op1(110, alternate)])] * 2
 
-    _serve(monkeypatch, fs, _library(*twins("kwI="), ("c", "Twice", [_op3(10, "AAAA"), _op1(11, "BBBB")])))
+    _serve(monkeypatch, fs, _listing(*twins("kwI="), ("c", "Twice", [_op3(10, "AAAA"), _op1(11, "BBBB")])))
     assert fs.main([_SKU]) == 0
     names = fs.read_catalog(_SKU)
     assert set(names) == {"Halloween", "Halloween (Festival)", "Twice"}
     capsys.readouterr()
-    _serve(monkeypatch, fs, _library(*twins("kwM="), ("c", "Twice", [_op3(10, "AAAA"), _op1(11, "BBBB")])))
+    _serve(monkeypatch, fs, _listing(*twins("kwM="), ("c", "Twice", [_op3(10, "AAAA"), _op1(11, "BBBB")])))
     assert fs.main([_SKU]) == 0
     again = fs.read_catalog(_SKU)
     out = capsys.readouterr().out
@@ -252,23 +268,23 @@ def test_naming_ignores_the_per_set_results(sets_tool: ModuleType, capsys: pytes
         "Halloween": "kwM=", "Halloween (Festival)": "kwM="}
     assert {n: fs._default(e) for n, e in again.items()} == {n: fs._default(e) for n, e in names.items()}
     # Twice loses its op-1 effect: not listed at {0, 1, 2} now; its name and entry at the union stay
-    _serve(monkeypatch, fs, _library(*twins("kwM="), ("c", "Twice", [_op3(10, "AAAA")])))
+    _serve(monkeypatch, fs, _listing(*twins("kwM="), ("c", "Twice", [_op3(10, "AAAA")])))
     assert fs.main([_SKU]) == 0
     out = capsys.readouterr().out
     assert f'{_SKU}: 1 scenes change at scene set [0, 1, 2]: "Twice" hidden' in out
     assert fs.read_catalog(_SKU)["Twice"] == {**fs._default(names["Twice"]), "by_set": {"0,1,2": None}}
     # ... and gets it back: listed again there, with that effect
-    _serve(monkeypatch, fs, _library(*twins("kwM="), ("c", "Twice", [_op3(10, "AAAA"), _op1(11, "BBBB")])))
+    _serve(monkeypatch, fs, _listing(*twins("kwM="), ("c", "Twice", [_op3(10, "AAAA"), _op1(11, "BBBB")])))
     assert fs.main([_SKU]) == 0
     assert (f'{_SKU}: 1 scenes change at scene set [0, 1, 2]: "Twice" listed again, plays code 11, c'
             ) in capsys.readouterr().out
     # Twice's scene is refused for good now (its only effect is op type 5, at its code and blob): removed,
     # and retired with its entry at the union, not its per-set results
     refused = {"sceneCode": 10, "sceneType": 5, "scenceParam": "AAAA"}
-    _serve(monkeypatch, fs, _library(*twins("kwM="), ("c", "Twice", [refused])))
+    _serve(monkeypatch, fs, _listing(*twins("kwM="), ("c", "Twice", [refused])))
     assert fs.main([_SKU]) == 0
     assert set(fs.read_catalog(_SKU)) == {"Halloween", "Halloween (Festival)"}
-    assert fs.read_tombstone() == {_SKU: {"retired": {"Twice": fs._default(names["Twice"])}}}
+    assert fs.read_tombstone()[_SKU] == {"retired": {"Twice": fs._default(names["Twice"])}}
     assert "by_set" not in fs.read_tombstone()[_SKU]["retired"]["Twice"]
 
 
@@ -285,13 +301,13 @@ def test_twins_take_the_order_of_their_content(sets_tool: ModuleType, capsys: py
     def played() -> dict[str, int]:
         return {n: e["by_set"]["0,1,2"]["code"] for n, e in fs.read_catalog(_SKU).items()}
 
-    _serve(monkeypatch, fs, _library(a, b))
+    _serve(monkeypatch, fs, _listing(a, b))
     assert fs.main([_SKU]) == 0
     first = played()
     assert sorted(first.values()) == [110, 111]
     text = (tmp_path / "store.json").read_text(encoding="utf-8")
     capsys.readouterr()
-    _serve(monkeypatch, fs, _library(b, a))   # the response reordered
+    _serve(monkeypatch, fs, _listing(b, a))   # the response reordered
     assert fs.main([_SKU]) == 0
     assert played() == first and (tmp_path / "store.json").read_text(encoding="utf-8") == text
     assert "change at scene set" not in capsys.readouterr().out
@@ -371,7 +387,7 @@ def test_unstorable_alternates_are_hidden_there(sets_tool: ModuleType, capsys: p
     special = {"supportSku": [_SKU], "sceneCode": 61, "sceneType": 5, "scenceParam": "UAEC"}   # 50 01 02
     diy = {"sceneCode": 61, "sceneType": 0, "scenceParam": "", "specialEffect": [special]}
     big = {"sceneCode": 71, "sceneType": 1, "cmdVersion": 0, "scenceParam": "", "bigEffectStr": 1}
-    _serve(monkeypatch, fs, _library(("c", "Diy", [_op3(60, "GGGG"), diy]),
+    _serve(monkeypatch, fs, _listing(("c", "Diy", [_op3(60, "GGGG"), diy]),
                                      ("c", "Big", [_op3(70, "HHHH"), big]),
                                      ("c", "Plain", [_op1(50, "FFFF")])))
     got = fs.fetch(_SKU)
@@ -407,3 +423,355 @@ def test_audit_plans_each_scene_set(capsys: pytest.CaptureFixture[str],
     rows = capsys.readouterr().out.splitlines()[1:]
     assert [" ".join(row.split()) for row in rows] == [
         "H6168 3 0 3 0 0 [0, 1, 2, 3]", "H6168 2 1['0xA3'] 1 0 0 [0, 1, 2]"]
+
+
+def _sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def test_the_committed_tombstone_holds_the_committed_stores_sha256() -> None:
+    """Review F3: a store.json committed without the tombstone its fetch wrote fails here (a fresh checkout
+    would let a new scene take a retired name silently). Run tools/fetch_scenes.py, which writes both, and
+    commit both."""
+    tomb = _fs().read_tombstone()
+    assert tomb.get("store_sha256") == _sha256(_STORE), (
+        "tools/scene_tombstone.json is not store.json's: refresh its store_sha256 with a store write "
+        "(tools/fetch_scenes.py, store_catalog), never by hand, and commit the tombstone from that same run")
+
+
+def test_a_store_written_with_its_tombstone_records_its_sha256(tmp_path: Path,
+                                                                monkeypatch: pytest.MonkeyPatch) -> None:
+    fs = _fs()
+    monkeypatch.setattr(fs, "OUT_DIR", tmp_path)
+    monkeypatch.setattr(fs, "TOMBSTONE", tmp_path / "tombstone.json")
+    fs.write_catalog(fs.TOMBSTONE, {"H1234": {"dropped": ["b"]}})
+    fs.store_catalog("H1234", {"a": {"code": 1, "param": None}})
+    digest = _sha256(tmp_path / "store.json")
+    assert fs.read_tombstone() == {"H1234": {"dropped": ["b"]}, "store_sha256": digest}
+    writes: list[Path] = []
+    write = fs.write_catalog
+    monkeypatch.setattr(fs, "write_catalog", lambda path, data: (writes.append(path), write(path, data)))
+    fs.store_catalog("H1234", {"a": {"code": 1, "param": None}})
+    assert writes == [tmp_path / "store.json"]   # the same store: the tombstone is not rewritten
+    fs.store_catalog("H1234", {"a": {"code": 2, "param": None}})
+    assert writes[1:] == [tmp_path / "tombstone.json", tmp_path / "store.json"]   # the tombstone first
+    assert fs.read_tombstone()["store_sha256"] == _sha256(tmp_path / "store.json")
+    fs.store_catalog("H1234", None)   # None takes the SKU's catalog out of the store
+    assert fs.read_store() == {} and fs.read_tombstone()["store_sha256"] == _sha256(tmp_path / "store.json")
+    (tmp_path / "x").mkdir()
+    fs.store_catalog("H1234", {"a": {"code": 3, "param": None}}, tmp_path / "x")   # a store elsewhere: none
+    assert writes[-1] == tmp_path / "x" / "store.json" and fs.read_tombstone()["H1234"] == {"dropped": ["b"]}
+
+
+def test_resolve_writes_the_stores_sha256(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    fs = _fs()
+    monkeypatch.setattr(fs, "OUT_DIR", tmp_path)
+    monkeypatch.setattr(fs, "TOMBSTONE", tmp_path / "tombstone.json")
+    fs.store_catalog("H1234", {"a": {"code": 1, "param": None, "param_id": 7, "placeholder": True,
+                                     "big_effect": True}})
+
+    class Account:
+        def __init__(self, *_a: object, **_k: object) -> None:
+            pass
+
+        async def login(self) -> None:
+            return None
+
+        async def get_scene_effect_strs(self, ids: list[int]) -> dict[int, str]:
+            return {7: "kwEB"}
+
+        async def close(self) -> None:
+            return None
+
+    cloud = ModuleType("govee_ble_local.cloud")
+    cloud.GoveeCloudAccount = Account  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "govee_ble_local.cloud", cloud)
+    fs.resolve_placeholders("a@b.c", "pw", ["H1234"])
+    assert fs.read_catalog("H1234")["a"]["param"] == "kwEB"
+    assert fs.read_tombstone()["store_sha256"] == _sha256(tmp_path / "store.json")
+
+
+@pytest.mark.parametrize("digest", ["", "62608FD3" * 8, "62608fd3", 62608, None])
+def test_read_tombstone_refuses_a_malformed_store_sha256(digest: object, tmp_path: Path) -> None:
+    path = tmp_path / "tombstone.json"
+    path.write_text(json.dumps({"store_sha256": digest}), encoding="utf-8")
+    with pytest.raises(ValueError, match="is not a lower-case hex sha256"):
+        _fs().read_tombstone(path)
+
+
+def _library(effect: dict[str, Any], special: dict[str, Any] | None = None, *, sku: str = "H6641",
+             b: dict[str, Any] | None = None, more: list[dict[str, Any]] | None = None) -> bytes:
+    """A scene-library response of one Party scene "a" whose lightEffect is ``effect`` over a well-formed base
+    (and ``special``, a specialEffect entry for ``sku``, where given; ``more``, its further lightEffects), and
+    a scene "b" whose lightEffect is ``b`` over a base of its own (code 8, param id 6), where given."""
+    eff = {"sceneCode": 7, "sceneType": 1, "scenceParam": "kwEB", "scenceParamId": 5, "cmdVersion": 0,
+           **effect}
+    if special is not None:
+        eff["specialEffect"] = [{"supportSku": [sku], **special}]
+    scenes = [{"sceneId": 1, "sceneName": "a", "lightEffects": [eff, *(more or ())]}]
+    if b is not None:
+        other = {"sceneCode": 8, "sceneType": 1, "scenceParam": "kwEC", "scenceParamId": 6, "cmdVersion": 0}
+        scenes.append({"sceneId": 2, "sceneName": "b", "lightEffects": [{**other, **b}]})
+    return json.dumps({"data": {"categories": [{"categoryName": "Party", "scenes": scenes}]}}).encode()
+
+
+class _Response(io.BytesIO):
+    """A library response, as urlopen's context manager gives it."""
+
+    def __enter__(self) -> _Response:
+        return self
+
+    def __exit__(self, *_a: object) -> None:
+        return None
+
+
+def _fetch(monkeypatch: pytest.MonkeyPatch, body: bytes) -> dict[str, Any]:
+    fs = _fs()
+    monkeypatch.setattr(fs.urllib.request, "urlopen", lambda _req, timeout=0: _Response(body))
+    with contextlib.redirect_stdout(io.StringIO()):
+        return fs.fetch("H6641")
+
+
+_INTS = ("sceneCode", "scenceParamId", "sceneType", "cmdVersion", "bigEffectStr")
+
+
+@pytest.mark.parametrize(("key", "value"), [(k, v) for k in _INTS for v in (True, False, 1.9, 7.0, "7")])
+def test_fetch_refuses_a_value_that_is_no_int(key: str, value: object,
+                                              monkeypatch: pytest.MonkeyPatch) -> None:
+    """The F2 guard (review ingestion): every int field fetch() reads of a lightEffect is checked before it is
+    read, listed or not. A scene type 1.9, 7.0 or "7" was taken for an op type H6641 refuses, a scene refused
+    for good (so, since F2, every name of a SKU whose every scene type was so was removed, and its catalog
+    left the store), a code true for code 1 and a bigEffectStr true for a big effect. Every saved response
+    (93 SKUs, 10,611 lightEffects and their 225,510 specialEffect entries) carries JSON ints only."""
+    with pytest.raises(ValueError, match=f"'{key}' must be an int or null, got {type(value).__name__}"):
+        _fetch(monkeypatch, _library({key: value}))
+
+
+def test_fetch_refuses_a_special_effects_cmd_version_that_is_no_int(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A specialEffect's cmdVersion is 0 only where the entry has none (the DTO's int field), and a bool or a
+    fraction is refused (``or 0`` took false for 0)."""
+    assert _fetch(monkeypatch, _library({}, {"scenceParamId": 9}))["a"]["cmd_version"] == 0   # none: 0
+    for bad in (False, True, 1.5):
+        with pytest.raises(ValueError, match="'cmdVersion' must be an int"):
+            _fetch(monkeypatch, _library({}, {"scenceParamId": 9, "cmdVersion": bad}))
+
+
+@pytest.mark.parametrize("sku", ["H6641", "H6008"])
+@pytest.mark.parametrize(("key", "value"), [(k, v) for k in _INTS for v in (True, False, 1.5, "7")])
+def test_fetch_refuses_a_special_effect_value_that_is_no_int(sku: str, key: str, value: object,
+                                                             monkeypatch: pytest.MonkeyPatch) -> None:
+    """A specialEffect's code, param id or scene type false (the entry passed over), a scene type 1.5 that is
+    not the effect's own, and any value of another SKU's entry are refused: Gson fails the whole response on
+    any of them."""
+    with pytest.raises(ValueError, match=f"'{key}' must be an int or null"):
+        _fetch(monkeypatch, _library({}, {"scenceParamId": 9, key: value}, sku=sku))
+
+
+@pytest.mark.parametrize(("effect", "special", "more"), [
+    ({}, None, [{"sceneCode": 9, "sceneType": "1"}]),
+    ({}, None, [{"sceneCode": 9, "sceneType": 1}, {"sceneCode": 10, "sceneType": 1.5}]),
+    ({}, {"scenceParamId": 9},
+     [{"sceneCode": 9, "specialEffect": [{"supportSku": ["H6641"], "sceneType": "1"}]}]),
+], ids=["second-light-effect", "third-light-effect", "special-of-the-second"])
+def test_every_light_effect_is_checked(effect: dict[str, Any], special: dict[str, Any] | None,
+                                       more: list[dict[str, Any]], monkeypatch: pytest.MonkeyPatch) -> None:
+    """Review H3 (T11): a scene type that is no int on a lightEffect after the first, or on a specialEffect
+    entry of one, fails the fetch as on the first."""
+    with pytest.raises(ValueError, match="'sceneType' must be an int or null"):
+        _fetch(monkeypatch, _library(effect, special, more=more))
+
+
+def test_every_special_effect_entry_is_checked(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Review H3 (T11b): a scene type that is no int on a specialEffect entry after the first fails the fetch
+    as on the first."""
+    eff = {"sceneCode": 7, "sceneType": 1, "scenceParam": "kwEB", "scenceParamId": 5, "cmdVersion": 0,
+           "specialEffect": [{"supportSku": ["H6641"], "scenceParamId": 9},
+                             {"supportSku": ["H6008"], "sceneType": "1"}]}
+    body = json.dumps({"data": {"categories": [{"categoryName": "Party", "scenes": [
+        {"sceneId": 1, "sceneName": "a", "lightEffects": [eff]}]}]}}).encode()
+    with pytest.raises(ValueError, match="'sceneType' must be an int or null"):
+        _fetch(monkeypatch, body)
+
+
+def _main(fs: ModuleType, monkeypatch: pytest.MonkeyPatch, body: bytes, *,
+          reset: bool = False) -> tuple[int, str, str]:
+    """main() for H6641 over the library response ``body``: what it returns, its stdout and its stderr."""
+    monkeypatch.setattr(fs.urllib.request, "urlopen", lambda _req, timeout=0: _Response(body))
+    out, err = io.StringIO(), io.StringIO()
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        return fs.main(["H6641"], reset=reset), out.getvalue(), err.getvalue()
+
+
+def _stored(fs: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+            first: bytes) -> tuple[bytes, bytes]:
+    """The bytes of the store and the tombstone main() writes into ``tmp_path`` from ``first``."""
+    monkeypatch.setattr(fs, "OUT_DIR", tmp_path)
+    monkeypatch.setattr(fs, "TOMBSTONE", tmp_path / "tombstone.json")
+    rc, _out, err = _main(fs, monkeypatch, first)
+    assert (rc, err) == (0, "")
+    return (tmp_path / "store.json").read_bytes(), fs.TOMBSTONE.read_bytes()
+
+
+@pytest.mark.parametrize("then", [
+    _library({"sceneType": 1.9}, b={}),
+    _library({"sceneType": 1.5}, b={}),
+    _library({"sceneType": "1"}, b={}),
+    _library({"sceneType": "1"}, b={"sceneType": "1"}),
+    _library({}, {"scenceParamId": 9, "sceneCode": False}, b={}),
+    _library({}, {"scenceParamId": False}, b={}),
+    _library({}, {"scenceParamId": 9, "sceneType": False}, b={}),
+    _library({}, {"scenceParamId": 9, "sceneType": 1.5}, b={}),
+], ids=["type-1.9", "type-1.5", "type-str", "every-type-str", "special-code-false", "special-id-false",
+        "special-type-false", "special-type-1.5"])
+def test_a_value_that_is_no_int_changes_no_stored_scene(then: bytes, tmp_path: Path,
+                                                         monkeypatch: pytest.MonkeyPatch) -> None:
+    """The F2 guard (review ingestion follow-up): a stored scene's lightEffect at a scene type of 1.9 or "1"
+    was refused for good (an op type H6641 refuses), so main() returned 0, removed its stored name and
+    retired it; where every scene type was so, the SKU's whole catalog left the store (F2), every name
+    retired. A specialEffect's value that is no int rewrote the store. The SKU's fetch fails now, and the
+    store and the tombstone are unchanged."""
+    fs = _fs()
+    store, tomb = _stored(fs, monkeypatch, tmp_path, _library({}, b={}))
+    assert sorted(fs.read_catalog("H6641")) == ["a", "b"]
+    rc, _out, err = _main(fs, monkeypatch, then)
+    assert rc == 1 and "H6641: FETCH FAILED: 'a': " in err and "must be an int or null" in err
+    assert (tmp_path / "store.json").read_bytes() == store and fs.TOMBSTONE.read_bytes() == tomb
+
+
+def test_a_code_true_is_no_code_1(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Answered.refuse took a refused effect's code true for code 1 (True == 1), so a stored scene at code 1
+    was removed and retired. The SKU's fetch fails now; code 1 itself at a scene type H6641 refuses (9) is
+    still refused for good."""
+    fs = _fs()
+    store, tomb = _stored(fs, monkeypatch, tmp_path, _library({"sceneCode": 1}, b={}))
+    assert _main(fs, monkeypatch, _library({"sceneCode": True, "sceneType": 9}, b={}))[0] == 1
+    assert (tmp_path / "store.json").read_bytes() == store and fs.TOMBSTONE.read_bytes() == tomb
+    assert _main(fs, monkeypatch, _library({"sceneCode": 1, "sceneType": 9}, b={}))[0] == 0
+    assert sorted(fs.read_catalog("H6641")) == ["b"]
+    assert sorted(fs.read_tombstone()["H6641"]["retired"]) == ["a"]
+
+
+def test_fetch_takes_the_int_forms_the_saved_responses_use(monkeypatch: pytest.MonkeyPatch) -> None:
+    # the specialEffect's form in the saved responses: a param id and a cmdVersion, no param (scene type 0)
+    entry = _fetch(monkeypatch, _library({}, {"scenceParamId": 9, "cmdVersion": 1}))["a"]
+    assert entry == {"code": 7, "param": "kwEB", "category": "Party", "param_id": 9, "scene_type": 0,
+                     "cmd_version": 1}
+    assert _fetch(monkeypatch, _library({}))["a"] == {"code": 7, "param": "kwEB", "category": "Party",
+                                                      "param_id": 5, "scene_type": 1, "cmd_version": 0}
+
+
+# H6641's scene "b" refused for good (scene type 9, op type -1), then a new scene "b" at another code and blob
+_REFUSE_B = _library({}, b={"sceneType": 9})
+_NEW_B = _library({}, b={"sceneCode": 9, "scenceParam": "kwED", "scenceParamId": 10})
+
+
+@pytest.mark.parametrize("lost", ["missing", "stale", "no-sha"])
+def test_main_refuses_a_tombstone_that_is_missing_or_not_the_stores(lost: str, tmp_path: Path,
+                                                                     monkeypatch: pytest.MonkeyPatch) -> None:
+    """Review N1 (F3-R1): main() read a missing tombstone as {} and a stale one as current, so a retired name
+    went silently to a new scene (here "b", retired, to the new "b" at code 9), and the run wrote a fresh pair
+    that the pairing test took. Where the store exists and the tombstone is missing or its store_sha256 is not
+    the store's, every SKU fails before anything is fetched or written, and both files are left as they are;
+    --reset-tombstone (``reset``) goes on over it."""
+    fs = _fs()
+    _stored(fs, monkeypatch, tmp_path, _library({}, b={}))
+    first = fs.TOMBSTONE.read_bytes()   # the first run's tombstone: no record
+    assert _main(fs, monkeypatch, _REFUSE_B)[0] == 0
+    assert set(fs.read_tombstone()["H6641"]["retired"]) == {"b"}
+    if lost == "missing":
+        fs.TOMBSTONE.unlink()
+    elif lost == "stale":
+        fs.TOMBSTONE.write_bytes(first)   # its store_sha256 is the first store's
+    else:
+        fs.write_catalog(fs.TOMBSTONE, {k: v for k, v in fs.read_tombstone().items() if k != "store_sha256"})
+    store = (tmp_path / "store.json").read_bytes()
+    tomb = fs.TOMBSTONE.read_bytes() if fs.TOMBSTONE.exists() else None
+    monkeypatch.setattr(fs, "fetch", lambda *_a, **_k: pytest.fail("fetched over an unpaired tombstone"))
+    rc, out, err = _main(fs, monkeypatch, _NEW_B)
+    assert rc != 0 and out == ""
+    assert f"restore {fs.TOMBSTONE} from git" in err and "--reset-tombstone" in err
+    assert (tmp_path / "store.json").read_bytes() == store
+    assert (fs.TOMBSTONE.read_bytes() if fs.TOMBSTONE.exists() else None) == tomb
+    monkeypatch.undo()
+    _stored(fs, monkeypatch, tmp_path / "x", _library({}))   # a store of its own, paired: no refusal
+    assert _main(fs, monkeypatch, _library({}))[0] == 0
+
+
+def test_reset_tombstone_goes_on_over_it_and_pairs_them_again(tmp_path: Path,
+                                                              monkeypatch: pytest.MonkeyPatch) -> None:
+    """Review N1: --reset-tombstone, a deliberate reset, goes on over a missing tombstone (a lost one's
+    retired name is then free, so the new "b" takes it), and the run's store write pairs them again."""
+    fs = _fs()
+    _stored(fs, monkeypatch, tmp_path, _library({}, b={}))
+    assert _main(fs, monkeypatch, _REFUSE_B)[0] == 0
+    fs.TOMBSTONE.unlink()
+    assert _main(fs, monkeypatch, _NEW_B)[0] != 0
+    rc, out, _err = _main(fs, monkeypatch, _NEW_B, reset=True)
+    assert rc == 0 and fs.read_catalog("H6641")["b"]["code"] == 9
+    assert fs.read_tombstone() == {"store_sha256": _sha256(tmp_path / "store.json")}
+    assert f"{fs.TOMBSTONE} changed (0 records): commit it with this run" in out
+    assert _main(fs, monkeypatch, _NEW_B)[0] == 0   # paired again
+    assert fs.parse_args(["--reset-tombstone", "H6641"]).reset_tombstone
+    assert not fs.parse_args(["--resolve"]).reset_tombstone
+    assert fs._shown(fs._BUNDLED_TOMBSTONE) == "tools/scene_tombstone.json"
+
+
+def test_resolve_refuses_a_tombstone_that_is_not_the_stores(tmp_path: Path,
+                                                            monkeypatch: pytest.MonkeyPatch) -> None:
+    """Review N1: --resolve writes the store too, so it refuses as main() does, before it logs in."""
+    fs = _fs()
+    monkeypatch.setattr(fs, "OUT_DIR", tmp_path)
+    monkeypatch.setattr(fs, "TOMBSTONE", tmp_path / "tombstone.json")
+    fs.store_catalog("H1234", {"a": {"code": 1, "param": None, "param_id": 7, "placeholder": True,
+                                     "big_effect": True}})
+    fs.TOMBSTONE.unlink()
+    store = (tmp_path / "store.json").read_bytes()
+    cloud = ModuleType("govee_ble_local.cloud")
+    cloud.GoveeCloudAccount = lambda *_a, **_k: pytest.fail("logged in")  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "govee_ble_local.cloud", cloud)
+    err = io.StringIO()
+    with contextlib.redirect_stderr(err):
+        assert fs.resolve_placeholders("a@b.c", "pw", ["H1234"]) == 1
+    assert "--resolve refused" in err.getvalue() and f"restore {fs.TOMBSTONE} from git" in err.getvalue()
+    assert (tmp_path / "store.json").read_bytes() == store and not fs.TOMBSTONE.exists()
+
+
+def test_main_says_when_it_changes_the_tombstone(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Review N2: store_sha256 can't see a change of the tombstone alone: a name dropped (here "b", gone from
+    the library) leaves the store's bytes as they were, so a lost tombstone diff still paired. A run that
+    changes the tombstone ends by saying so, to be committed with the run; one that does not says nothing."""
+    fs = _fs()
+    store, _tomb = _stored(fs, monkeypatch, tmp_path, _library({}, b={}))
+    rc, out, _err = _main(fs, monkeypatch, _library({}))
+    assert rc == 0 and fs.read_tombstone()["H6641"] == {"dropped": ["b"]}
+    assert (tmp_path / "store.json").read_bytes() == store   # the tombstone alone changed
+    assert out.splitlines()[-1] == f"{fs.TOMBSTONE} changed (1 records): commit it with this run"
+    assert "changed (" not in _main(fs, monkeypatch, _library({}))[1]   # an identical re-fetch
+
+
+def test_a_scratch_store_leaves_the_committed_tombstone(tmp_path: Path,
+                                                        monkeypatch: pytest.MonkeyPatch) -> None:
+    """Review N3 (F3-R2): with only OUT_DIR pointed elsewhere, store_catalog wrote the scratch store's sha256
+    into the committed tombstone. The committed tombstone pairs with the bundled store, so a scratch store
+    leaves its store_sha256 as it is (where TOMBSTONE is pointed elsewhere too, it gets that store's)."""
+    fs = _fs()
+    bundled, scratch, committed = tmp_path / "bundled", tmp_path / "scratch", tmp_path / "tombstone.json"
+    bundled.mkdir()
+    scratch.mkdir()
+    for name, value in (("_BUNDLED_DIR", bundled), ("OUT_DIR", bundled), ("_BUNDLED_TOMBSTONE", committed),
+                        ("TOMBSTONE", committed)):
+        monkeypatch.setattr(fs, name, value)
+    fs.store_catalog("H6641", {"a": {"code": 1, "param": None}})   # the bundled pair
+    digest = _sha256(bundled / "store.json")
+    assert fs.read_tombstone() == {"store_sha256": digest}
+    tomb = committed.read_bytes()
+    (scratch / "store.json").write_bytes((bundled / "store.json").read_bytes())
+    monkeypatch.setattr(fs, "OUT_DIR", scratch)
+    fs.store_catalog("H6641", {"a": {"code": 2, "param": None}})
+    assert committed.read_bytes() == tomb
+    rc, _out, _err = _main(fs, monkeypatch, _library({}, b={}))   # main() over the scratch store
+    assert rc == 0 and "b" in fs.read_catalog("H6641") and _sha256(scratch / "store.json") != digest
+    assert fs.read_tombstone()["store_sha256"] == digest   # a record may change, not the sha256
+    monkeypatch.setattr(fs, "TOMBSTONE", scratch / "tombstone.json")   # pointed elsewhere with it
+    fs.store_catalog("H6641", {"a": {"code": 3, "param": None}})
+    assert fs.read_tombstone() == {"store_sha256": _sha256(scratch / "store.json")}

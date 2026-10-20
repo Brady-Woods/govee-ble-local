@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
 import importlib.util
 import inspect
 import re
@@ -312,6 +313,8 @@ def test_main_counts_corrupt_catalog_and_write_failure(monkeypatch: pytest.Monke
     monkeypatch.setattr(fs, "fetch", lambda sku, app_version="", **_kw: {"A": {"code": 1, "param": None}})
     corrupt = '{"pool": [{"name": "A", "code": 1}], "skus": {"H60A6": [1]}, "by_set": {}}'
     (tmp_path / "store.json").write_text(corrupt, encoding="utf-8")
+    sha = hashlib.sha256(corrupt.encode()).hexdigest()   # its tombstone, so the store's read is what fails
+    (tmp_path / "tombstone.json").write_text(f'{{"store_sha256": "{sha}"}}', encoding="utf-8")
     assert fs.main(["H60A6", "H61A8"]) == 2            # each fails, the run goes on, the store stays as it is
     assert capsys.readouterr().err.count("FETCH FAILED") == 2
     assert (tmp_path / "store.json").read_text(encoding="utf-8") == corrupt

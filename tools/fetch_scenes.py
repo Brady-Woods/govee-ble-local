@@ -36,7 +36,8 @@ A guess passes over a stored scene whose code the library still answers under an
 id another listed scene carries (its scene, listed under another name), and a blob match over one it still
 answers at its own sceneName and category (that scene is still there); both pass over one a fetch found gone
 from the library, or found its scene (its param id) listed under another name or left out only for its time
-or rules at another code, since it was last listed. Where more than one fits,
+or rules at another code, since it was last listed, but a blob match with its param id too (its scene back at
+a new code: H6006's Motunui, dropped with Disney's Moana, back at 1176 from 4476). Where more than one fits,
 it takes a new name, printed as ambiguous. Only a scene that matches none gets a new name, never one the
 store or the tombstone holds: its sceneName where that is free, else "<name> (<its category>)" (for example
 "Flash (Emotion)"), or "<name> (<category>, 2)", 3 and so on. The app lists a name in more than one
@@ -52,7 +53,11 @@ upload, is removed (where two stored scenes the fetch does not list could be tha
 printed, and retired in the tombstone, so only that scene's exact return (its sceneName, code, category
 and blob) takes the name back, printed too; a placeholder, which has no blob, returns so with its param id,
 and a scene whose blob --resolve baked in as its placeholder of the same param id, taking the blob back with
-the name. Every change to a stored name is printed.
+the name. A SKU whose every stored scene is removed so leaves the store. Every change to a stored name is
+printed. The tombstone records the sha256 of the store it was written with: a run over a tombstone that is
+missing or not the store's fetches and writes nothing (restore tools/scene_tombstone.json from git;
+--reset-tombstone goes on over it, a deliberate reset), and a run that changes the tombstone says so: commit
+it with that run, whether or not store.json changed.
 
     python3 tools/fetch_scenes.py            # all supported SKUs
     python3 tools/fetch_scenes.py H60A6 H61A8
@@ -62,6 +67,7 @@ from __future__ import annotations
 import argparse
 import base64
 import contextlib
+import hashlib
 import inspect
 import json
 import os
@@ -99,10 +105,22 @@ STORE_NAME = "store.json"
 # placeholder) takes it back; ``dropped`` lists the stored names whose scene a fetch found gone from the
 # library (its sceneName listed or held at its code under no category, but where another stored or retired
 # name sits), or found (its param id) listed under another name or left out only for its time or rules at
-# another code, since they were last listed: only a match by code and category keeps one, and a scene of
-# another blob refused at its place later is not its own. Next to the tool, never in the package: the store
-# and the loader are unchanged. A SKU with neither has no record; there is no file until one is written.
+# another code, since they were last listed: only a match by code and category, or by category, blob and param
+# id (its scene back at a new code), keeps one, and a scene of another blob refused at its place later is not
+# its own. A SKU with neither has no record. ``store_sha256`` is the sha256 of store.json as the tool last
+# wrote it (store_catalog), so tests/test_fetch_scenes_store.py fails a store.json committed without its
+# tombstone (a fresh checkout would let a new scene take a retired name silently), and main() and --resolve
+# refuse to run over a tombstone that is missing or not the store's (:func:`_unpaired`). It can't see a
+# change of the tombstone alone (a name dropped, the store's bytes the same): main() prints each change of the
+# tombstone, which is committed with that run. Next to the tool, never in the package: the store and the
+# loader are unchanged.
 TOMBSTONE = pathlib.Path(__file__).resolve().parent / "scene_tombstone.json"
+STORE_SHA256 = "store_sha256"
+# The bundled store's directory and the committed tombstone, which OUT_DIR and TOMBSTONE may be pointed away
+# from (a test, a scratch run): the committed tombstone pairs with the bundled store (:func:`_paired_dir`).
+_BUNDLED_DIR, _BUNDLED_TOMBSTONE = OUT_DIR, TOMBSTONE
+_ROOT = pathlib.Path(__file__).resolve().parent.parent
+_SHA256_RE = re.compile(r"[0-9a-f]{64}")
 Entry = dict[str, Any]  # one scene's catalog entry (JSON object)
 Answer = tuple[str, object, int]  # (sceneName, category, code) of a scene the library answers with
 
@@ -247,11 +265,12 @@ def read_catalog(sku: str, out_dir: pathlib.Path | None = None) -> dict[str, Ent
     return read_store(out_dir).get(validate_sku(sku), {})
 
 
-def read_tombstone(path: pathlib.Path | None = None) -> dict[str, dict[str, Any]]:
+def read_tombstone(path: pathlib.Path | None = None) -> dict[str, Any]:
     """The tombstone (:data:`TOMBSTONE`), ``{SKU: {"retired": {name: entry}, "dropped": [name, ...]}}`` with
-    either key left out where empty ({} when there is no file yet). ValueError when it is malformed: a SKU not
-    in upper case, an empty record or another key, a retired entry :func:`validate_entry` refuses, or dropped
-    names that are not sorted, unique strings."""
+    either key left out where empty, and ``store_sha256``, the sha256 of the store written with it ({} when
+    there is no file yet). ValueError when it is malformed: a SKU not in upper case, an empty record or
+    another key, a retired entry :func:`validate_entry` refuses, dropped names that are not sorted, unique
+    strings, or a ``store_sha256`` that is not a lower-case hex sha256."""
     path = path or TOMBSTONE
     if not path.exists():
         return {}
@@ -260,6 +279,10 @@ def read_tombstone(path: pathlib.Path | None = None) -> dict[str, dict[str, Any]
         if not isinstance(tomb, dict):
             raise TypeError("not an object")
         for sku, record in tomb.items():
+            if sku == STORE_SHA256:
+                if not (isinstance(record, str) and _SHA256_RE.fullmatch(record)):
+                    raise ValueError(f"{STORE_SHA256!r} is not a lower-case hex sha256")
+                continue
             if validate_sku(sku) != sku or not isinstance(record, dict) or not record \
                     or not set(record) <= {"retired", "dropped"}:
                 raise ValueError(f"{sku!r}: not an upper-case SKU's record of 'retired' and 'dropped'")
@@ -284,20 +307,75 @@ def _record(retired: Mapping[str, Entry], dropped: Collection[str]) -> dict[str,
     return record
 
 
-def store_catalog(sku: str, data: dict[str, Entry], out_dir: pathlib.Path | None = None) -> int:
+def store_catalog(sku: str, data: dict[str, Entry] | None, out_dir: pathlib.Path | None = None) -> int:
     """Store ``sku``'s catalog and return the pool's size: the store is laid out again from every SKU's
     catalog (:func:`layout`), so a scene no SKU holds any more leaves the pool, checked as the library reads
     it (``scenes._catalogs``, ValueError: a store the loader refuses is never written), and written in one
-    atomic replace, so it is never half written."""
+    atomic replace, so it is never half written. ``data`` None takes the SKU's catalog out of the store
+    (main(): each of its stored scenes removed); an empty one is refused. The sha256 of the store the
+    tombstone pairs with (:func:`_paired_dir`: main()'s and --resolve's, OUT_DIR, but the bundled one where
+    only OUT_DIR is pointed elsewhere) is written into the tombstone (:data:`TOMBSTONE`, ``store_sha256``)
+    first, where that changes it: tests/test_fetch_scenes_store.py checks that the committed tombstone holds
+    the committed store's, so a store.json committed without its tombstone fails. Any other store has no
+    tombstone: one ``out_dir`` names, and a scratch OUT_DIR's beside the committed tombstone (review F3-R2:
+    its sha256 went into the committed tombstone)."""
     from govee_ble_local import scenes
 
     base = out_dir or OUT_DIR
     catalogs = read_store(base)
-    catalogs[validate_sku(sku)] = data
+    key = validate_sku(sku)
+    if data is None:
+        catalogs.pop(key, None)
+    else:
+        catalogs[key] = data
     store = layout(catalogs)
     scenes._catalogs(store)
+    if base.resolve() == _paired_dir().resolve():
+        tomb = read_tombstone()
+        sha = hashlib.sha256(_dumps(store).encode("utf-8")).hexdigest()   # the bytes write_catalog writes
+        if tomb.get(STORE_SHA256) != sha:
+            write_catalog(TOMBSTONE, {**tomb, STORE_SHA256: sha})
     write_catalog(base / STORE_NAME, store)
     return len(store["pool"])
+
+
+def _paired_dir() -> pathlib.Path:
+    """The directory of the store.json whose sha256 the tombstone (:data:`TOMBSTONE`) records: OUT_DIR, but
+    the bundled store's where only OUT_DIR is pointed elsewhere, as the committed tombstone is the bundled
+    store's."""
+    return OUT_DIR if TOMBSTONE != _BUNDLED_TOMBSTONE else _BUNDLED_DIR
+
+
+def _shown(path: pathlib.Path) -> str:
+    """``path`` as printed: from the repository root where it is under it (tools/scene_tombstone.json)."""
+    try:
+        return str(path.relative_to(_ROOT))
+    except ValueError:
+        return str(path)
+
+
+def _unpaired() -> str | None:
+    """Why the tombstone does not pair with its store (:func:`_paired_dir`), or None where it does, or where
+    there is no store yet. It does not where the store exists and the tombstone is missing, or its
+    ``store_sha256`` is not the store's sha256 (review F3-R1: a lost or stale tombstone, read as current,
+    let a new scene take a retired name silently, and the run wrote a fresh pair the pairing test took). A
+    tombstone or a store that can't be read is left to each SKU's read (FETCH FAILED)."""
+    store = _paired_dir() / STORE_NAME
+    try:
+        if not store.exists():
+            return None
+        digest = hashlib.sha256(store.read_bytes()).hexdigest()
+        recorded = read_tombstone().get(STORE_SHA256) if TOMBSTONE.exists() else None
+    except (OSError, ValueError):
+        return None
+    if recorded == digest:
+        return None
+    why = ("is missing" if not TOMBSTONE.exists()
+           else "holds no store_sha256" if recorded is None
+           else f"is stale: its store_sha256 is not the sha256 of {_shown(store)}")
+    return (f"{_shown(TOMBSTONE)} {why}, so the names it retired or dropped may be lost: restore "
+            f"{_shown(TOMBSTONE)} from git (or pass --reset-tombstone to go on over it as it is, a "
+            f"deliberate reset)")
 
 
 def _is_placeholder(entry: Entry) -> bool:
@@ -537,6 +615,20 @@ def _how(entry: Entry, codes: frozenset[int], stored: Entry) -> str:
     return next(how for how, fits in _MATCHES if fits(entry, codes, stored))
 
 
+def _returns(how: str, entry: Entry, stored: Entry) -> bool:
+    """Whether a dropped stored scene (the tombstone's ``dropped``) fits the listed scene ``entry`` as its own
+    return: by category and blob (``how``) with its param id too, its scene back at a new code (H6006's
+    Motunui, dropped with Disney's Moana, back at 1176 from 4476 with its blob and param id 43314). No other
+    close match takes a dropped name.
+
+    A twin can take it so (review F1-R1, accepted): a name dropped as its scene was listed under another name
+    at its code follows a second library scene of its sceneName, category, blob and param id at a new code,
+    while its own scene sits renamed at the old code. The twin plays the same effect, the keep is printed, and
+    a name not dropped follows such a twin by the same match."""
+    return how == "category and blob" and stored.get("param_id") is not None \
+        and stored.get("param_id") == entry.get("param_id")
+
+
 def _groups(fits: Mapping[int, set[str]]) -> list[tuple[list[int], list[str]]]:
     """The connected groups of ``fits`` (listed scene -> the stored names that fit it), each as its listed
     scenes and its stored names, sorted."""
@@ -582,7 +674,8 @@ def stored_names(listed: list[Listed], existing: Mapping[str, Entry] | None = No
       the whole entry or by code, category and blob: its scene's exact return.
     - A close match (short of code and category) passes over a stored scene in ``dropped`` (the
       tombstone's: one a fetch found gone from the library, or found its scene listed under another name or
-      left out only for its time or rules at another code, since it was last listed), and,
+      left out only for its time or rules at another code, since it was last listed), but by category and
+      blob with its param id too (:func:`_returns`: its scene back at a new code), and,
       unless its code is one of the listed scene's own lightEffects', over one the library still answers
       (``answers``, fetch's :func:`_answers`): a guess (:data:`_GUESSES`) over one whose code it answers
       under any sceneName or category, or whose param id another listed scene carries (its scene, listed
@@ -615,7 +708,7 @@ def stored_names(listed: list[Listed], existing: Mapping[str, Entry] | None = No
             elsewhere = {pid for pid, at in carriers.items() if at != {i}}   # listed as another scene
             hits = {n for n, e in pool.items() if scene_name(n, e) == own
                     and (fits(entry, codes, e) or (step == 0 and _unresolved(e) == entry))
-                    and (step < _EXACT or (n not in dropped and (
+                    and (step < _EXACT or ((n not in dropped or _returns(how, entry, e)) and (
                         e.get("code") in codes
                         or (e.get("code") not in still and e.get("param_id") not in elsewhere
                             if how in _GUESSES
@@ -715,6 +808,29 @@ class Answered:
                                                                              own["param_id"]))
 
 
+# The int fields fetch() reads of a lightEffect and of each of its specialEffect entries
+# (CategoryV1.LightEffect and SpecialEffect, CategoryV1.java:91-112, 1152-1162: Java ints).
+_INT_FIELDS = ("sceneCode", "scenceParamId", "sceneType", "cmdVersion", "bigEffectStr")
+
+
+def _check_ints(scene: Mapping[str, Any]) -> None:
+    """ValueError where a lightEffect of ``scene``, or one of its specialEffect entries (any SKU's), holds a
+    value of :data:`_INT_FIELDS` that is not an int or null (a bool, 1.9, 7.0 or "7"), so the SKU's fetch
+    fails and the store and the tombstone are left as they are. fetch() checks each scene before it reads any
+    of its values, listed or not: the list filter took a scene type of 1.9 or "1" for an op type the SKU
+    refuses, a scene refused for good, so main() removed and retired its stored name, and where every scene
+    type was so, the SKU's whole catalog (an emptied catalog leaves the store); a code true counted as code 1.
+    Gson, the app's reader, fails the whole response on a bool or a fraction (it reads 7.0 and "7" as 7; no
+    saved response uses either form)."""
+    for eff in scene.get("lightEffects") or ():
+        for node in (eff, *(eff.get("specialEffect") or ())):
+            for field in _INT_FIELDS:
+                value = node.get(field)
+                if value is not None and type(value) is not int:
+                    raise ValueError(f"{scene.get('sceneName')!r}: {field!r} must be an int or null, "
+                                     f"got {type(value).__name__}")
+
+
 def fetch(sku: str, app_version: str = DEFAULT_APP_VERSION, *, seen: Answered | None = None,
           existing: Mapping[str, Entry] | None = None, retired: Mapping[str, Entry] | None = None,
           dropped: Collection[str] = ()) -> dict[str, Entry]:
@@ -730,8 +846,9 @@ def fetch(sku: str, app_version: str = DEFAULT_APP_VERSION, *, seen: Answered | 
     the scene's entry gets a ``by_set`` of that set's key: None where nothing is left (the app lists no such
     scene there), or where the effect left first is one the library can't store (its version rules decide,
     it has no code, it is a sceneType-5 upload the library does not make, a placeholder, or an entry the
-    shared check refuses, a number no int holds among them: never a failed fetch), which is named on stdout
-    per set; else the entry of that effect. A per-set result changes nothing else: not the scene's entry, its
+    shared check refuses, a code past 0xFFFF among them: never a failed fetch; a value that is no int, JSON's
+    1e999 among them, has failed the fetch first, :func:`_check_ints`), which is named on stdout per set;
+    else the entry of that effect. A per-set result changes nothing else: not the scene's entry, its
     name (stored_names never sees one) or what ``seen`` gets (main() names each scene whose result at a set
     is not the store's). A scene the union lists no effect of, but an empty set of the SKU's would, is left
     out (names never come back after the device-info read, which only shrinks the list) and named on stdout.
@@ -770,6 +887,7 @@ def fetch(sku: str, app_version: str = DEFAULT_APP_VERSION, *, seen: Answered | 
         # SceneDataVM.b2 skips a category out of its time (:1454-1461)
         in_force = effective(category, now_ms)
         for scene in category.get("scenes", []):
+            _check_ints(scene)   # before any of its values is read: a mistyped one fails the SKU's fetch
             effects = scene.get("lightEffects") or []
             answered = _scene_answers(key, category, scene)
             listed, held = listed_effect(key, effects, ops, now_ms) if in_force else (None, False)
@@ -809,7 +927,7 @@ def fetch(sku: str, app_version: str = DEFAULT_APP_VERSION, *, seen: Answered | 
                 try:
                     alt = None if pick is None else _entry(key, category, scene, pick)
                 except (ValueError, TypeError, OverflowError):   # not stored there: an effect the shared
-                    alt = None   # check refuses, or one whose number no int holds (JSON reads 1e999 as inf)
+                    alt = None   # check refuses (a code past 0xFFFF; _check_ints refused one that is no int)
                 if alt == entry:
                     continue   # the union's pick plays there too (or an effect of the same values)
                 if alt is None or _is_placeholder(alt) \
@@ -877,13 +995,13 @@ def fetch(sku: str, app_version: str = DEFAULT_APP_VERSION, *, seen: Answered | 
               f"filter): {', '.join(only_empty)}")
     for at_set, _versions_at in smaller:
         if at_set in unfollowed:
-            print(f"{key}: hidden at scene set {_shown(at_set)}, where the app plays an effect the library "
-                  f"can't store (version rules / no code / sceneType 5 / placeholder / invalid): "
+            print(f"{key}: hidden at scene set {_set_shown(at_set)}, where the app plays an effect the "
+                  f"library can't store (version rules / no code / sceneType 5 / placeholder / invalid): "
                   f"{len(unfollowed[at_set])} scenes: {', '.join(unfollowed[at_set])}")
     return scenes
 
 
-def _shown(at_set: str) -> str:
+def _set_shown(at_set: str) -> str:
     """A scene set's key as printed: "[0, 1, 2]", "[]" for the empty set."""
     return f"[{', '.join(at_set.split(','))}]" if at_set else "[]"
 
@@ -919,18 +1037,25 @@ def _entry(sku: str, category: Mapping[str, Any], scene: Mapping[str, Any],
 
 
 def resolve_placeholders(email: str, password: str, skus: list[str],
-                         app_version: str = DEFAULT_APP_VERSION) -> None:
+                         app_version: str = DEFAULT_APP_VERSION, *, reset: bool = False) -> int:
     """Log into the Govee account and bake real effect blobs into the catalogs
     for placeholder scenes (via the authenticated effect-strs endpoint), so the
     shipped JSON is complete and no runtime cloud call is needed. The login and
     the effect-strs request carry ``app_version``, as the library fetch does (the
-    cloud client's own default is the library's runtime one).
+    cloud client's own default is the library's runtime one). Returns 1, with no
+    login and nothing written, where the tombstone does not pair with the store
+    (:func:`_unpaired`) and ``reset`` (--reset-tombstone) is not given; else 0.
 
     Credentials: passed here only to obtain a token; nothing is persisted by
     this tool beyond the resulting scene blobs. Prefer env vars GOVEE_EMAIL /
     GOVEE_PASSWORD over CLI args.
     """
     import asyncio
+
+    why = None if reset else _unpaired()
+    if why is not None:
+        print(f"--resolve refused, nothing written: {why}", file=sys.stderr)
+        return 1
 
     from govee_ble_local.cloud import GoveeCloudAccount
 
@@ -957,6 +1082,7 @@ def resolve_placeholders(email: str, password: str, skus: list[str],
             await acct.close()
 
     asyncio.run(run())
+    return 0
 
 
 def _valid_resolved(entry: dict[str, object]) -> bool:
@@ -1257,7 +1383,7 @@ def _set_changes(sku: str, existing: Mapping[str, Entry], scenes: Mapping[str, E
                 new = ", a new entry" if _of(was) == _of(now) else ""
                 changed.append(f'"{n}" changes from {_of(was)} to {_of(now)}{new}')
         if changed:
-            lines.append(f"{sku}: {len(changed)} scenes change at scene set {_shown(at)}: "
+            lines.append(f"{sku}: {len(changed)} scenes change at scene set {_set_shown(at)}: "
                          f"{', '.join(changed)}")
     return lines
 
@@ -1280,10 +1406,24 @@ def _reconciled(entry: Entry, sets: Sequence[tuple[str, frozenset[int]]]) -> Ent
     return {**_default(entry), **({"by_set": out} if out else {})}
 
 
-def main(skus: list[str], app_version: str = DEFAULT_APP_VERSION) -> int:
+def main(skus: list[str], app_version: str = DEFAULT_APP_VERSION, *, reset: bool = False) -> int:
     """Fetch + merge each SKU's catalog. Returns the number of SKUs that failed. Every stored name the store
-    loses is retired in the tombstone (:data:`TOMBSTONE`), written before the store, whatever removed it."""
+    loses is retired in the tombstone (:data:`TOMBSTONE`), written before the store, whatever removed it.
+
+    Where the tombstone does not pair with the store (:func:`_unpaired`: missing, or not the store's), every
+    SKU fails before anything is fetched or written, unless ``reset`` (--reset-tombstone, a deliberate reset:
+    the run goes on over the tombstone as it is, none where it is missing, and its store write pairs them
+    again). A run that changes the tombstone ends by saying so (review N2: ``store_sha256`` can't see a
+    change of the tombstone alone, so it is committed with the run whether or not store.json changed)."""
+    why = None if reset else _unpaired()
+    if why is not None:
+        print(f"every SKU refused, nothing fetched or written: {why}", file=sys.stderr)
+        return max(len(skus), 1)
     OUT_DIR.mkdir(parents=True, exist_ok=True)
+    try:
+        before: dict[str, Any] | None = read_tombstone()
+    except ValueError:   # each SKU's read fails on it, and nothing is written
+        before = None
     failures = 0
     for raw in skus:
         try:   # the tombstone's records are keyed by the upper-case SKU, as the store's are
@@ -1333,8 +1473,8 @@ def main(skus: list[str], app_version: str = DEFAULT_APP_VERSION) -> int:
         for at_set, names in sorted(recut.items()):
             for n in names:
                 scenes[n] = {**scenes[n], "by_set": {**scenes[n]["by_set"], at_set: None}}
-            print(f"{sku}: hidden at scene set {_shown(at_set)}, where the app plays an effect the library "
-                  f"can't store (sceneType 5): {len(names)} scenes: {', '.join(names)}")
+            print(f"{sku}: hidden at scene set {_set_shown(at_set)}, where the app plays an effect the "
+                  f"library can't store (sceneType 5): {len(names)} scenes: {', '.join(names)}")
         # a kept scene's per-set results, from the fetch that last listed it, follow the SKU's sets now (a
         # listed one's are this fetch's, at exactly those sets)
         smaller = _smaller_sets(sku)
@@ -1344,11 +1484,16 @@ def main(skus: list[str], app_version: str = DEFAULT_APP_VERSION) -> int:
                 stale.setdefault(at_set, []).append(n)
             scenes[n] = _reconciled(scenes[n], smaller)
         for at_set, names in sorted(stale.items()):
-            print(f"{sku}: scene set {_shown(at_set)} is none of the SKU's now: the results there of "
+            print(f"{sku}: scene set {_set_shown(at_set)} is none of the SKU's now: the results there of "
                   f"{len(names)} stored scenes are dropped: {', '.join(names)}")
-        if not scenes:
-            print(f"{sku}: no scenes in the library; nothing stored")
+        if not scenes and not existing:
+            if seen.gone or held or retired:   # review N5: the library lists them (a catalog the cut emptied)
+                print(f"{sku}: every listed scene is refused or cut; nothing stored")
+            else:
+                print(f"{sku}: no scenes in the library; nothing stored")
             continue
+        # else as with scenes left: a stored name the cut drops (or refused for good) is removed and retired,
+        # and the emptied catalog leaves the store (store_catalog of None), so a re-fetch changes nothing
         back = sorted(n for n in scenes if n in retired and n not in existing)
         if back:   # after the cut: a reclaimed name it drops stays retired
             print(f"{sku}: {len(back)} retired names come back with their scene (its sceneName, code, "
@@ -1363,7 +1508,7 @@ def main(skus: list[str], app_version: str = DEFAULT_APP_VERSION) -> int:
         # dropped: a kept name the library no longer lists or holds (:func:`_still_there`), or whose scene
         # (its param id) the fetch lists under another name or leaves out only for its time or rules at
         # another code (an answer at its own place is another scene's), and stays so until it is listed again
-        # (a match by code and category) or removed
+        # (a match by code and category, or by category, blob and param id) or removed
         answers = seen.live   # a scene refused for good or cut is not still there, at any category
         was_dropped = set(record.get("dropped", ()))
         # a name this fetch matched and the cut drops retires with the entry it was to hold, so its scene's
@@ -1381,10 +1526,13 @@ def main(skus: list[str], app_version: str = DEFAULT_APP_VERSION) -> int:
         try:
             if now != record:   # the tombstone first: a name is retired before the store loses it
                 write_catalog(TOMBSTONE, {s: r for s, r in sorted({**tomb, sku: now}.items()) if r})
-            pooled = store_catalog(sku, scenes)
+            pooled = store_catalog(sku, scenes or None)   # its sha256 into the tombstone, then the store
         except (OSError, ValueError) as err:
             print(f"{sku}: WRITE FAILED: {err}", file=sys.stderr)
             failures += 1
+            continue
+        if not scenes:
+            print(f"{sku}: no scenes left; its catalog is out of scenes/{STORE_NAME} ({pooled} in the pool)")
             continue
         # preserved = taken from the existing catalog: resolved blobs kept over a public stub,
         # plus scenes that are no longer in the public library
@@ -1399,6 +1547,12 @@ def main(skus: list[str], app_version: str = DEFAULT_APP_VERSION) -> int:
         )
         if placeholders:
             print(f"    unresolved placeholders: {', '.join(placeholders)}")
+    with contextlib.suppress(OSError, ValueError):   # one this run wrote reads back
+        after = read_tombstone()
+        if before is not None and after != before:   # the SKU records changed, of 'retired' and 'dropped'
+            records = sum(before.get(k) != after.get(k) for k in before.keys() | after.keys()
+                          if k != STORE_SHA256)
+            print(f"{_shown(TOMBSTONE)} changed ({records} records): commit it with this run")
     if failures:
         print(f"{failures}/{len(skus)} SKU fetch(es) failed", file=sys.stderr)
     return failures
@@ -1412,6 +1566,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     mode.add_argument("--audit", action="store_true", help="per-SKU upload readiness; no cloud call")
     mode.add_argument("--resolve", action="store_true",
                       help="bake real blobs for placeholder scenes (needs GOVEE_EMAIL/GOVEE_PASSWORD)")
+    ap.add_argument("--reset-tombstone", action="store_true",
+                    help="go on where tools/scene_tombstone.json is missing or not store.json's (its "
+                         "store_sha256), as it is (none where it is missing): a deliberate reset, which "
+                         "the run's store write pairs again; the names a lost tombstone retired are free")
     ap.add_argument("--app-version", default=os.environ.get("GOVEE_APP_VERSION", DEFAULT_APP_VERSION),
                     help="AppVersion header of the fetch and of the --resolve login "
                          f"(env GOVEE_APP_VERSION; default {DEFAULT_APP_VERSION})")
@@ -1433,6 +1591,6 @@ if __name__ == "__main__":
         _password = os.environ.get("GOVEE_PASSWORD", "")
         if not _email or not _password:
             sys.exit("--resolve needs GOVEE_EMAIL and GOVEE_PASSWORD env vars")
-        resolve_placeholders(_email, _password, _skus, _a.app_version)
+        sys.exit(resolve_placeholders(_email, _password, _skus, _a.app_version, reset=_a.reset_tombstone))
     else:
-        sys.exit(1 if main(_skus, _a.app_version) else 0)
+        sys.exit(1 if main(_skus, _a.app_version, reset=_a.reset_tombstone) else 0)

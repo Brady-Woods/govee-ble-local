@@ -346,10 +346,11 @@ model, from which the shipped readers are generated).
   `by_pact` and `by_firmware` sets, the empty one included) and stores, per scene, each set where the result
   differs from the union's (`by_set`, below). A scene whose pick at a set is an effect the library can't store
   (version rules, no code, a sceneType-5 upload, a placeholder, an entry the shared check refuses, such as a
-  code past 0xFFFF or one no int holds, JSON's 1e999) is hidden at that set only, and printed, never a failed
-  fetch; its entry at the union, the pre-read list and the tombstone are what they were. A scene listed only
-  at an empty set (one the union refuses) is left out and printed: names never come back after the read. The
-  empty-set note is gone.
+  code past 0xFFFF) is hidden at that set only, and printed, never a failed fetch; its entry at the union, the
+  pre-read list and the tombstone are what they were. A value read as an int that is not one (JSON's 1e999
+  among them) fails the SKU's fetch, whichever lightEffect holds it (the tool's int check, below). A scene
+  listed only at an empty set (one the union refuses) is left out and printed: names never come back after
+  the read. The empty-set note is gone.
   - Naming ignores the per-set results, so a change to a scene's other effects never renames it, and a
     retired name keeps its entry at the union only. Alike twins (one sceneName and one entry at the union)
     take the order of their whole lightEffect content, not the response's, so a reordered response never
@@ -611,15 +612,20 @@ model, from which the shipped readers are generated).
   match over one it still answers at its own sceneName and category; both pass over one a fetch found gone
   from the library (its sceneName listed, or left out only for its time or rules, at its code under no
   category but where another stored or retired name sits), or found its scene (its param id) listed under
-  another name or left out only for its time or rules at another code, since it was last listed. Where more
-  than one fits, the scene takes a new name, printed as ambiguous. Only a scene that matches none gets a new
+  another name or left out only for its time or rules at another code, since it was last listed, but a blob
+  match with its param id too: that scene back at a new code, printed as a move (H6006's "Motunui" left with
+  Disney's Moana and came back at 1176 from 4476 with its blob and param id 43314; where more than one listed
+  or stored scene fits so, the name stays dropped). Where more than one fits, the scene takes a new name,
+  printed as ambiguous. Only a scene that matches none gets a new
   name, never one the store or the tombstone holds. A stored scene no longer listed keeps its name, as do one
   left out only for its time (an expired category or effect, its category renamed meanwhile too) or the
   firmware's version rules and one listed under another name or left out so at another code (its param id);
   a sceneName the app renames keeps its old name too, so two names hold one code. Only one whose scene the
   SKU's scene list refuses for good (its op set), or a sceneType-5 scene the library does not upload, is
   removed (where two stored scenes the fetch does not list could be that scene, neither is), printed, and
-  retired in a tombstone,
+  retired in a tombstone (a SKU whose every stored scene is removed so leaves the store, its names retired:
+  the store kept a catalog the cut emptied, unretired, and each re-fetch printed its moves again; a later
+  fetch whose every listed scene is refused or cut says so, not that the library has no scenes),
   `tools/scene_tombstone.json` (out of the package; the store, the loader and the pool are unchanged), with
   the entry it held (one the fetch matched, then cut: the entry it was to hold): only that scene's exact
   return (sceneName, code, category and blob; a placeholder's with its param id) takes the name back, printed
@@ -630,9 +636,22 @@ model, from which the shipped readers are generated).
   renumber or a category rename too, with the new code and category), else by the scene's code and category,
   else by the resolved entries of that param id where they hold one blob (one scene under more names; a bare
   entry of it has no blob to keep, so the scene stays a placeholder, as a new name does where the sceneType-5
-  cut would drop that blob). A seeded property test replays 200 random histories and 61 fixed ones through
-  `main()`. No bundled catalog changes, and no released name is gone (1.0.0 to 1.4.0), so the tombstone starts
-  empty.
+  cut would drop that blob). A library value the tool reads as an int (a lightEffect's or a `specialEffect`
+  entry's `sceneCode`, `scenceParamId`, `sceneType`, `cmdVersion` or `bigEffectStr`, any SKU's, listed or
+  not) that is not an int or null fails the SKU's fetch, with the store and the tombstone as they are: a scene
+  type `1.9` or `"1"` read as one the SKU's list refuses removed and retired the stored name, and every name
+  of a SKU whose every scene type was so, its catalog out of the store (the app's Gson fails the whole
+  response on a bool or a fraction). A seeded property test replays 200 random histories and 64 fixed ones
+  through `main()`. No bundled catalog changes, and no released name is gone (1.0.0 to 1.4.0), so the
+  tombstone starts with no record. It holds `store_sha256`, the sha256 of the `store.json` it was written
+  with: every write of the store (`--resolve`'s too) writes it, so `tests/test_fetch_scenes_store.py` fails a
+  `store.json` committed without its tombstone (a fresh checkout would let a new scene take a retired name
+  silently), and a run (`--resolve`'s too) over a tombstone that is missing or not the store's fetches and
+  writes nothing: restore `tools/scene_tombstone.json` from git, or pass `--reset-tombstone` for a deliberate
+  reset. A change of the tombstone alone (a name dropped) leaves `store.json` as it was, so a run that changes
+  the tombstone ends by printing `tools/scene_tombstone.json changed (N records): commit it with this run`.
+  With only `OUT_DIR` pointed elsewhere, the committed tombstone pairs with the bundled store and its
+  `store_sha256` is left as it is.
 - **A corrupt bundled scene catalog raises only GoveeBleError, and nothing in it is coerced.** A code JSON
   reads as an infinite float (`1e999`, `Infinity`) raised OverflowError, a store nested too deep
   RecursionError, and a corrupt `store.json` member of a zipped install (`importlib.resources` reads one)
