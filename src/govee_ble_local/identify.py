@@ -31,8 +31,12 @@ The app reads an advertisement two ways, and so does the library:
   it remembered from earlier broadcasts. The light screen refuses a matched broadcast without a pact block
   (``AbsViewMode4Op.onScanEvent`` -> ``p0(999)``); the library uses the profile default then. The app
   re-learns the flag from every broadcast (``BleBroadVersionCache.d``); a Device re-learns it from each
-  advertisement it ingests, for its next session, when every Govee pact entry agrees
-  (:func:`_pact_encrypt_flags`).
+  advertisement it ingests, for its next session, when every Govee pact entry agrees (:func:`_pact_entries`).
+- Merged records: the app parses one broadcast at a time and takes its first Govee AD, for the pact
+  (``AbsBaseBleModel.y`` -> ``GoodsType.parseBleBroadcastPactInfo``) and for the on/off (``AbsBaseBleModel.z``
+  -> ``BleUtil.parseBleBroadOnOff``), both from each broadcast (``AbsBleItem.B``). A scanner's record can hold
+  several Govee entries, so a Device learns the pact and the flag only when every pact entry agrees
+  (:func:`_pact_entries`), and reads the on/off from the entry that last changed (:func:`_latest_govee_key`).
 - Group control (``GroupScanOpImp``) matches scan results by name; the library has no group control.
 """
 from __future__ import annotations
@@ -119,16 +123,17 @@ def sku_from_local_name(name: str) -> str | None:
     return None
 
 
-def _govee_entries(mfg: dict[int, bytes]) -> Iterator[Any]:
-    """Each Govee entry of bleak's ``manufacturer_data``, read by the spec's ``govee_manufacturer_data``
-    over the payload bleak split: ``company_id`` (2 bytes, little-endian) then the value. Entries
-    without the Govee marker (``is_govee``) or with a company id that can't be two bytes are skipped."""
+def _govee_entries(mfg: dict[int, bytes]) -> Iterator[tuple[int, Any]]:
+    """Each Govee entry of bleak's ``manufacturer_data`` with its company id, in the dict's order, read by the
+    spec's ``govee_manufacturer_data`` over the payload bleak split: ``company_id`` (2 bytes, little-endian)
+    then the value. Entries without the Govee marker (``is_govee``) or with a company id that can't be two
+    bytes are skipped."""
     for company_id, value in mfg.items():
         if not 0 <= company_id <= 0xFFFF:
             continue
         entry = _spec.read(_spec.ManufacturerData, company_id.to_bytes(2, "little") + bytes(value))
         if entry.is_govee:
-            yield entry
+            yield company_id, entry
 
 
 def parse_manufacturer_data(mfg: dict[int, bytes]) -> tuple[bool, int, int, int] | None:
@@ -143,16 +148,17 @@ def parse_manufacturer_data(mfg: dict[int, bytes]) -> tuple[bool, int, int, int]
     ``govee_manufacturer_data`` type (:func:`_govee_entries`); a broadcast version of 0 is not a pact
     broadcast (BleUtil.parseBleBroadcastPact).
     """
-    for entry in _govee_entries(mfg):
+    for _, entry in _govee_entries(mfg):
         if not entry.has_pact:   # the pact fields fit and is_govee_pact: protocol_version >= 1
             continue
         return bool(entry.encrypted), int(entry.protocol_version), int(entry.pact_type), int(entry.pact_code)
     return None
 
 
-def _pact_encrypt_flags(mfg: dict[int, bytes]) -> dict[int, bool]:
-    """The encrypt flag of every Govee pact entry of ``mfg``, by its header byte (the spec's ``flags``), in
-    the dict's order: the entries :func:`parse_manufacturer_data` would consider, all of them.
+def _pact_entries(mfg: dict[int, bytes]) -> dict[int, tuple[bool, tuple[int, int]]]:
+    """The encrypt flag and the ``(pact_type, pact_code)`` of every Govee pact entry of ``mfg``, by its header
+    byte (the spec's ``flags``), in the dict's order: the entries :func:`parse_manufacturer_data` would
+    consider, all of them.
 
     The app reads one broadcast and takes its first pact entry (``BleUtil.parseBleBroadcastPact:785-796``).
     A scanner's record can hold more than one: Home Assistant's (habluetooth, and BlueZ before it) keeps every
@@ -160,8 +166,43 @@ def _pact_encrypt_flags(mfg: dict[int, bytes]) -> dict[int, bool]:
     key, so a device whose header changed, or another device's frame merged under its address, leaves two
     Govee entries. Two entries never share a header (the key's high byte is the marker's 0x88).
 
-    Package-internal: :class:`~govee_ble_local.devices.device.Device` re-learns its cipher from it."""
-    return {int(entry.flags): bool(entry.encrypted) for entry in _govee_entries(mfg) if entry.has_pact}
+    Package-internal: :class:`~govee_ble_local.devices.device.Device` re-learns its cipher and its pact from
+    it, each only when every entry agrees on it."""
+    return {
+        int(entry.flags): (bool(entry.encrypted), (int(entry.pact_type), int(entry.pact_code)))
+        for _, entry in _govee_entries(mfg) if entry.has_pact
+    }
+
+
+def _govee_record(mfg: dict[int, bytes]) -> dict[int, bytes]:
+    """``mfg`` cut to its Govee entries (:func:`_govee_entries`): company id to value, in the dict's order.
+
+    Package-internal: a Device keeps the last one it ingested, to tell which entry changed
+    (:func:`_latest_govee_key`)."""
+    return {company_id: bytes(mfg[company_id]) for company_id, _ in _govee_entries(mfg)}
+
+
+def _latest_govee_key(record: dict[int, bytes], previous: dict[int, bytes], latest: int | None) -> int | None:
+    """The company id of the Govee entry the latest broadcast carried, as far as two successive records show
+    it: the first entry of ``record`` (a :func:`_govee_record`) whose value differs from the one ``previous``
+    held under the same id; else ``latest``, the one found before (None when none has been).
+
+    The app reads the latest broadcast's own Govee AD (``AbsBleItem.B``). Home Assistant's record (habluetooth
+    ``base_scanner._async_on_advertisement_internal``, as BlueZ) merges each frame into the previous record,
+    ``{**prev, **new}``: a key keeps its first slot and holds the value of the last frame that carried it,
+    and a stale key (the header before an OTA) or a foreign one (another device's frame merged under the
+    address) stays frozen at its last value. So only an entry whose value changed is known to come from the
+    latest frame. A key ``previous`` lacks doesn't count: another device's frame merged once, or a key another
+    scanner's record brings back, would take over for good. An OTA's new header counts from its first
+    change, which on the modelled images is its first power change (the switch byte is the only state byte
+    that moves).
+
+    Package-internal: ``Device.advertised_on`` reads the on/off from this entry."""
+    for company_id, value in record.items():
+        before = previous.get(company_id)
+        if before is not None and before != value:
+            return company_id
+    return latest
 
 
 def parse_broadcast_onoff(mfg: dict[int, bytes], *, on_mask: int | None = None) -> bool | None:
@@ -177,8 +218,12 @@ def parse_broadcast_onoff(mfg: dict[int, bytes], *, on_mask: int | None = None) 
 
     ``on_mask`` decodes the byte as a bitmask instead: ON when any of its bits is set. The plugs'
     device-list models do that (h5080 ``Model.z``, ``Model4Plug2.z``; see
-    ``DeviceProfile.advert_on_mask``). ``Device.advertised_on`` applies the device's own mask."""
-    for entry in _govee_entries(mfg):
+    ``DeviceProfile.advert_on_mask``). ``Device.advertised_on`` applies the device's own mask.
+
+    The first Govee entry that carries the byte is read, as the app reads one broadcast. A merged record's
+    first entry may be a stale one; ``Device.advertised_on`` hands it the entry that last changed
+    (:func:`_latest_govee_key`)."""
+    for _, entry in _govee_entries(mfg):
         # has_switch_state: a header byte >= 2 read signed (BleUtil.parseBleBroadOnOff:
         # (signed) scanRecord[i6 + 2] >= 2) and a byte after pact_code, its switch_byte.
         if not entry.has_switch_state:
@@ -248,8 +293,8 @@ def bound_advertisement(
     (``BleUtil.parseBleBroadcastPact:779-803`` reads one broadcast and returns the first) only while the dict
     holds one advertisement's entries. A scanner's merged record keeps every manufacturer-data key it has
     heard for the address, and the header byte is part of the key, so after a header change the stale entry
-    comes first. A Device re-learns its cipher from a later advertisement only when every Govee pact entry
-    agrees on the flag (:meth:`.Device.ingest_advertisement`, :func:`_pact_encrypt_flags`); this read and
+    comes first. A Device re-learns its cipher and its pact from a later advertisement only when every Govee
+    pact entry agrees on each (:meth:`.Device.ingest_advertisement`, :func:`_pact_entries`); this read and
     the constructor's stay on the first entry.
 
     App basis, for the light goodsTypes: the control screen finds a bound device by its stored MAC, not its

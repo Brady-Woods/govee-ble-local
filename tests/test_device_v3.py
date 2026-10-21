@@ -613,8 +613,7 @@ def test_h60a6_asks_for_colour_groups_only_on_the_apps_pacts(
 def test_a_pact_heard_later_changes_the_next_status_request() -> None:
     d = _dev("H60A6")
     assert _status_frames(d)[0] == build.status_query(full=True)
-    d._learn_pact(GoveeAdvertisement(sku="H60A6", name="GVH60A6ABCD", encrypted=True,
-                                     broadcast_version=3, pact_type=1, pact_code=1))
+    d._learn_pact((1, 1))
     assert d.pact == (1, 1) and _status_frames(d)[0] == build.status_query(full=False)
 
 
