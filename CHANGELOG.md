@@ -8,6 +8,8 @@ model, from which the shipped readers are generated).
 
 ## [Unreleased]
 
+## [1.6.0] — 2026-10-21
+
 ### Added
 - **`Device.release() -> bool`**: drop the BLE link now and end the 30 s warm window a write opened
   (`const.ACTIVE_IDLE_DELAY`), keeping the Device usable; the next operation reconnects (link, handshake,
