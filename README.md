@@ -89,7 +89,10 @@ advertisement, build a capability-driven `Device`, then drive it.
   `set_zone_power` / `set_zone_rgb` / `set_zone_color_temp`,
   `set_scene` / `set_scene_by_name`, and `update()` (read-back). Introspection:
   `capabilities`, `zones`, `min_kelvin` / `max_kelvin`, `scene_names` (the scenes the Govee app lists at
-  the device's scene set, `scene_versions`), `state`, `register_callback`. Methods for unsupported
+  the device's scene set, `scene_versions`), `state`, `register_callback`, `power_read_at` (when a read
+  last returned the on/off, while `state.is_on` still holds it). `advertised_on(advertisement_data)`
+  decodes an advertisement's on/off as the device does, without changing state; `ingest_advertisement`
+  folds it in. Methods for unsupported
   capabilities raise `GoveeBleNotSupported`. The link comes up with the first operation (or `connect()`)
   and drops `idle_disconnect` seconds after the last one (8 s by default), or 30 s after a command
   (`const.ACTIVE_IDLE_DELAY`, so quick follow-ups skip the reconnect). While it is up the `Device` sends
