@@ -12,6 +12,23 @@ Ported exactly from the app:
   the encrypt flag and low nibble is the broadcast version; the company-id high
   byte + first data byte are the Govee marker ``{0x88, 0xEC}``; then
   ``pactType`` (2 bytes) and ``pactCode`` (1 byte). (BleUtil.parseBleBroadcastPact)
+
+The app reads an advertisement two ways, and so does the library:
+- The add-device scan identifies a device by its name (``BaseBleProcessor.parse``): :func:`identify`,
+  :func:`from_advertisement`, and through them ``scanner.py``. A non-Govee name is not a Govee device.
+- The light control screen of a bound device finds it by its stored MAC (``AbsViewMode4Op.s0``,
+  ``AbsViewMode4OpWithOtaCheck.s2``; the name only when no MAC is stored) and parses the broadcast's pact
+  block with the stored goodsType (``AbsViewMode4OpWithOtaCheck.j1`` ->
+  ``GoodsType.parseBleBroadcastPactInfo``), whatever the name. ``AbsViewMode4OpWithOtaCheck.w2`` stores the
+  encrypt flag per MAC (``BleBroadVersionCache.c`` / ``d``), and the cipher is chosen from it at connect
+  (``EncryptionUtils.isEncryptionSupported``). A Device, built for a SKU its caller already knows, reads its
+  advertisements that way (:func:`_bound_advertisement`).
+- Other bound-device paths: the H5083 plug screen reads the flag the same way. The H5085 / H5089 plug screen
+  (``BlePactV1.r``) also needs the stored name to match, and with a foreign name connects by MAC on the flag
+  it remembered from earlier broadcasts. The light screen refuses a matched broadcast without a pact block
+  (``AbsViewMode4Op.onScanEvent`` -> ``p0(999)``); the library uses the profile default then. The app
+  re-learns the flag from every broadcast; a Device fixes its cipher when it is built.
+- Group control (``GroupScanOpImp``) matches scan results by name; the library has no group control.
 """
 from __future__ import annotations
 
@@ -42,8 +59,8 @@ class GoveeAdvertisement:
     :attr:`pact` and :attr:`encryption_known` rather than testing the sentinel.
     """
 
-    sku: str                # e.g. "H5083" (from the local name)
-    name: str               # full local name
+    sku: str                # e.g. "H5083" (from a Govee local name, else a bound device's caller's)
+    name: str               # full local name (a bound device's may be any name, or "")
     encrypted: bool         # uses the encrypted command channel; meaningful only if encryption_known
     broadcast_version: int  # header low nibble (0 when the pact is unknown)
     pact_type: int          # protocol type (from mfg data); -1 when unknown, see `pact`
@@ -181,3 +198,29 @@ def from_advertisement(adv: object, fallback_name: str | None = None) -> GoveeAd
     name = getattr(adv, "local_name", None) or fallback_name
     mfg = getattr(adv, "manufacturer_data", None) or {}
     return identify(name, mfg)
+
+
+def _bound_advertisement(adv: object, fallback_name: str | None, sku: str) -> GoveeAdvertisement | None:
+    """Read the advertisement of a device its caller has already identified as ``sku``, as the app's control
+    screen reads a bound device's: by the Govee manufacturer data, whatever the local name.
+
+    A Govee name gives exactly what :func:`from_advertisement` gives. Otherwise the first Govee pact block of
+    the manufacturer data (:func:`parse_manufacturer_data`) is read, labelled with ``sku`` and the advertised
+    name (else ``fallback_name``, else ""); None when there is none, as before. "First" is the dict's order,
+    which is the app's first AD only while the dict holds one advertisement's entries; a merged record read
+    under a Govee name has the same limit. The app's path is ``AbsViewMode4OpWithOtaCheck.s2`` / ``j1`` (see
+    the module docstring): it doesn't read the name of a device it found by its stored MAC. Here the caller
+    vouches that ``adv`` is the device's own, as the app's MAC match does. A non-Govee name reaches a Device
+    this way when a scanner pins another device's advertisement on it: Home Assistant's merged record for an
+    H6008 once carried a neighbour's name.
+
+    Package-internal (not in ``__all__``): :func:`identify` and the scanner keep the add-device name gate."""
+    found = from_advertisement(adv, fallback_name)
+    if found is not None:
+        return found
+    parsed = parse_manufacturer_data(getattr(adv, "manufacturer_data", None) or {})
+    if parsed is None:
+        return None
+    encrypted, version, pact_type, pact_code = parsed
+    name = getattr(adv, "local_name", None) or fallback_name or ""
+    return GoveeAdvertisement(sku.upper(), name, encrypted, version, pact_type, pact_code)

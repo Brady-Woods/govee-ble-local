@@ -35,7 +35,7 @@ from ..exceptions import (
     GoveeBleTimeout,
     GoveeBleUnknownName,
 )
-from ..identify import GoveeAdvertisement, from_advertisement, parse_broadcast_onoff
+from ..identify import GoveeAdvertisement, _bound_advertisement, parse_broadcast_onoff
 from ..models import Capability, DeviceState, Encryption, Segment, Zone
 from ..scenes import Scene, async_load_scenes, load_scenes, scene_names_by_code
 from ..scenes import scene_upload_frames as _scene_upload_frames
@@ -163,7 +163,8 @@ class Device:
         """Build a Device for ``profile`` (:func:`~govee_ble_local.create_device` looks it up by SKU).
 
         ``advertisement_data`` (bleak's, or a parsed :class:`GoveeAdvertisement`) picks the command
-        channel from its encrypt flag; without one the profile default is used. ``sku`` names the
+        channel from its encrypt flag, read from its Govee manufacturer data whatever the advertised name;
+        without one (or without a Govee pact block) the profile default is used. ``sku`` names the
         device (default: the profile's first SKU). ``secret`` is the 8-byte account-lock key, sent
         after every handshake on a profile that requires one (:meth:`set_secret` can supply it
         later). ``frame_log=<path>`` persists a JSONL session capture. ``idle_disconnect`` is the
@@ -226,7 +227,8 @@ class Device:
         self._advert_ignore_until = 0.0   # monotonic; see ADVERT_SUPPRESS_SECONDS
         # (pact_type, pact_code) from the Govee advertisement, or None until one is heard.
         self._pact: tuple[int, int] | None = None
-        adv = from_advertisement(advertisement_data, ble_device.name)   # parsed once, used twice
+        # Parsed once, used twice; read as a bound device's, whatever its name (_bound_advertisement).
+        adv = _bound_advertisement(advertisement_data, ble_device.name, self._sku)
         self._learn_pact(adv)
         enc = self._resolve_encryption(adv)
         self._conn = GoveeConnection(
@@ -585,7 +587,8 @@ class Device:
         """Update passive state from a BLE advertisement — no connection needed.
 
         Reads on/off from the Govee manufacturer data (identify.parse_broadcast_onoff, decoded
-        with the profile's ``advert_on_mask`` on the plugs) and the advertised pact (:attr:`pact`).
+        with the profile's ``advert_on_mask`` on the plugs) and the advertised pact (:attr:`pact`), both
+        whatever the advertised name. The command channel stays the one chosen when the Device was built.
         Returns True if `state.is_on` changed (so a caller can notify selectively). The callbacks also
         fire when the advertised :attr:`pact` changes: once per advertisement, with the pact already
         stored, whether or not the on/off changed with it.
@@ -599,7 +602,8 @@ class Device:
         mfg = getattr(advertisement_data, "manufacturer_data", None)
         if not mfg:
             return False
-        pact_changed = self._learn_pact(from_advertisement(advertisement_data, self._ble_device.name))
+        adv = _bound_advertisement(advertisement_data, self._ble_device.name, self._sku)
+        pact_changed = self._learn_pact(adv)
         on = parse_broadcast_onoff(mfg, on_mask=self.profile.advert_on_mask)
         # Within the suppress window a command/read is fresher than the lagging advertised on/off.
         power_changed = False
@@ -1935,7 +1939,7 @@ def make_device(
 
     As ``registry.create_device`` (which raises instead): the pact of ``advertisement_data`` picks the
     SKU's row (``profile_for(sku, pact=...)``), so a pact the SKU's rows refuse gives None."""
-    adv = from_advertisement(advertisement_data, ble_device.name)
+    adv = _bound_advertisement(advertisement_data, ble_device.name, sku)
     p = profile_for(sku, pact=adv.pact if adv is not None else None)
     if p is None:
         return None
