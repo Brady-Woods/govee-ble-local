@@ -63,6 +63,14 @@ IDLE_DISCONNECT_DELAY: Final = 8.0
 # polls/reads use the shorter base delay above, so idle devices still release the
 # adapter's scarce slots quickly.
 ACTIVE_IDLE_DELAY: Final = 30.0
+# While the link is up the app's control screen sends a keep-alive read every 2000 ms (AbsBle.F; the
+# ctlchannel plug screen's BleClientProxy.Builder f; devices.yaml timing.heartbeat.interval_ms), and the
+# firmware drops a link that has had no write for 10-11 s. GoveeConnection sends the profile's heartbeat at
+# this interval; it never extends the link past the idle delays above.
+HEARTBEAT_INTERVAL: Final = 2.0
+# Bound on one heartbeat's write, so a wedged proxy write can't hold the device lock (a heartbeat is not an
+# operation: OPERATION_TIMEOUT doesn't cover it). The app waits for no ack or reply either.
+HEARTBEAT_WRITE_TIMEOUT: Final = 1.0
 CONNECT_MAX_ATTEMPTS: Final = 3
 # A fresh link whose session setup (BGC read / handshake / unlock) fails is torn
 # down and re-established this many times in total before giving up.

@@ -376,9 +376,9 @@ def test_h61a8_sends_the_apps_0x15_frames() -> None:
     race._state.hardware_version = "3.01.10"
     commit = race._commit
 
-    async def hardware_lands(frames: Any, apply: Any) -> None:
+    async def hardware_lands(frames: Any, apply: Any, **kw: Any) -> None:
         race._state.hardware_version = "3.08.01"
-        await commit(frames, apply)
+        await commit(frames, apply, **kw)
 
     race._commit = hardware_lands  # type: ignore[method-assign]
     asyncio.run(race.set_rgb(tint_2000))

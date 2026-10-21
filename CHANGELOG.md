@@ -8,6 +8,159 @@ model, from which the shipped readers are generated).
 
 ## [Unreleased]
 
+## [1.6.0] — 2026-10-21
+
+### Added
+- **`Device.release() -> bool`**: drop the BLE link now and end the 30 s warm window a write opened
+  (`const.ACTIVE_IDLE_DELAY`), keeping the Device usable; the next operation reconnects (link, handshake,
+  unlock, session frames) with no window left over: a poll gets the base idle delay, a command opens its own
+  30 s window. For a caller that knows no follow-up is coming (a voice command, an automation, one device of
+  a multi-device burst), so a held link stops holding a proxy connection slot. Asked by the Home Assistant
+  integration, to hold the link only while a person uses the GUI.
+  - It takes the Device's locks in their documented order (`_scene_lock`, `_bar_lock`, `_read_gate`, then
+    the connection's), so each link operation running or queued before it finishes on the current link (each
+    lock is FIFO), and it never lands between a scene's upload and its activation or between an H6047 bar's
+    `aa 36` read and its `33 36` write. It can land between the steps of a call that no Device lock spans (a
+    poll's reads, a plug's power write and its re-read); those later steps reconnect, as does an operation
+    queued after it (a plug's re-read ends with its `33 b5` time sync, a write, so that new link opens a fresh
+    30 s window). A `set_scene_by_name()` holds `_scene_lock` for the whole call, its version read and catalog
+    load included, so a release called after it starts drops the link after the activation.
+  - A write called after it either queues behind it and reconnects or, if it reaches the link first (a setter
+    that takes no Device lock, or is handed one, while `release()` waits for one), keeps the link and its
+    window: the release then drops nothing and returns False. That is checked per link, under the connection
+    lock, after every operation queued before the drop: a write its caller cancels (before or after its frames
+    go out), or one whose link has gone since, keeps nothing. A write the device refuses (a
+    `GoveeBleCommandRejected`) reached the device on that link, so it keeps it too.
+  - Returns True when a link was up and was dropped, False when it dropped nothing (no link up, after
+    `stop()`, which it never reopens, or a write called after it wrote on the link that is up). It never raises
+    a `GoveeBleError`: the teardown is bounded by `const.DISCONNECT_TIMEOUT` and its errors are logged at DEBUG.
+    Cancelled while it waits for a lock, it drops nothing; cancelled during the teardown, the teardown runs on
+    to that bound. A dropped link logs its own DEBUG line, `link released by caller`.
+  - `release()` calls `GoveeConnection.disconnect(keep=...)` and returns its result (what a test double that
+    replaces `Device._conn` needs for it is under Changed).
+  - The heartbeat stops with the link and the next session arms its own (one chain). A secret set on the
+    live session (`set_secret()`) goes out once, in the next session's setup.
+  - The warm window it ends lives with the link (see Fixed).
+  - Live-verified on the bench 2026-10-20 on an H6006, two H6008s, an H60A6, an H6047 and an H5083 (govee-apks
+    library-audit/heartbeat-1.6.0/bench/runs/mac_20261020_232012, run E): `release()` returned True and dropped
+    the link at once, nothing went out for the 6 s the link was down, and the next `update()` reconnected on a
+    new link with a new session and one heartbeat chain, a beat every 2.00 s.
+- `DeviceProfile.heartbeat` (keyword-only, `int | None`, default None) and `DeviceProfile.heartbeat_timing`
+  (keyword-only, `"fixed_rate"` or `"after_quiet"`, default `"fixed_rate"`): the command code of the keep-alive
+  read the SKU's control screen sends, and when. Every generated profile has one (its devices.yaml row's); a
+  profile built by hand keeps 1.5.0's behaviour and sends none. To turn it off for any supported SKU, build the
+  `Device` from `dataclasses.replace(profile, heartbeat=None)`, the one field: without a heartbeat the timing
+  is ignored, so H5080 / H5083 / H5085's `"after_quiet"` needs no reset and no beat goes out on either timing.
+  Validated at construction: one of the four keep-alive command codes (`0x00`, `0x01`, `0x33`, `0x36`) or
+  None, and a known timing (checked with or without a heartbeat). Also `build.heartbeat(command)` (the
+  `aa <command>` read for one of those four codes; any other `command` raises `GoveeBleInvalidValue`) and
+  `const.HEARTBEAT_INTERVAL` (2.0 s) / `const.HEARTBEAT_WRITE_TIMEOUT` (1.0 s).
+
+### Changed
+- `Device.set_scene_by_name()` now holds the scene lock (`_scene_lock`) for its whole call: its version read
+  (when the scene set waits for one) and its catalog load (a worker-thread hop) as well as its upload and
+  activation, where 1.5.0 took it only for those two. So a concurrent scene write (another `set_scene_by_name()`,
+  a `set_scene(code)`) and `release()` wait for a catalog load that is running. Polls and the other setters are
+  not held back by it.
+- A test double that replaces `Device._conn` needs more of `GoveeConnection` than 1.5.0's `Device` used
+  (`connect()`, `send()`, `send_many()`, `send_unacked()`, `query()`, `close()`, `update_ble_device()`,
+  `encryption`, and `is_connected`, read only while a `set_secret()` has left a `33 b2` pending):
+  `hold_heartbeat()`, a synchronous context manager (a no-op is enough), for the calls listed under
+  Fixed; `link_number`, an int property read after every write and by `release()` (0, no link, records
+  nothing); and, once its tests call `release()`, `async def disconnect(self, *, keep=None) -> bool` (`keep`,
+  when given, is asked under the connection lock: True keeps the link and returns False).
+
+### Fixed
+- **A held link no longer drops about 10 s after the last command** (#30). The app's control screen sends a
+  keep-alive read every 2000 ms while the link is up, and the firmware drops a link that has had no write for
+  10-11 s (H6006 `FUN_9b02801c`, and H5083, H60A6 and the H6047 BLE MCU the same; the H6008 has no such timer):
+  a field A19 bulb (an H6006 by the device manifest; the address match is inferred) dropped 10.45 s after its
+  last write, and the H5083 firmware simulation ended the 30 s warm window (`ACTIVE_IDLE_DELAY`) at about 11 s.
+  `GoveeConnection` now sends the profile's heartbeat while the link is up, so a link lasts as long as the
+  library's idle policy says and no longer: 8 s after a poll, the 30 s warm window after a write, or for good
+  with `idle_disconnect=0`.
+  - The frame is the row's (`aa 01` on most SKUs, `aa 00` on H60A6, H60B1, H6098 / H8098 / H6690, H7056 and
+    H1630 / R1630, `aa 36` on H6047 / H6042), the read the screen's view model picks (`ShareVM.K3` ->
+    `ConnectHeartbeat.c`, an `IHeart`, or the plug screens' heart controllers).
+  - Timing: a fixed 2 s rate from the moment the session is set up (handshake, unlock, session writes), so no
+    beat goes out at link-up (`AbsBle.HeartRunnable`); on goodsType 43 (H5080 / H5083 / H5085) 2 s after the
+    last operation that sent a frame, each one restarting the wait (the ctlchannel `HeartHandler.e`, which
+    restarts it on every send; a `connect()` that finds the link up sends nothing and restarts nothing).
+  - A tick is dropped, not queued, while an operation holds or waits for the link, or while a poll's reads, a
+    scene's upload and activation, an H6047 bar read-modify-write, a plug's power write and re-read, or an
+    H6062's `aa 41` segment-count read and the colour write it sizes run (`GoveeConnection.hold_heartbeat`), so
+    no beat lands between frames the app sends back to back (the app reads `aa 41` in its connect read, during
+    which it sends none). `Device` now calls `GoveeConnection.hold_heartbeat()` (a synchronous context manager)
+    in `update()`, `set_power()` (so `turn_off()` too), `turn_on()`, an H6047 bar's `set_zone_power()`, every
+    `set_scene_by_name()` (an activate-only scene too) and, on every profile, the colour setters `set_rgb()`,
+    `set_color_temp()`, `set_segment_rgb()`, `set_segment_brightness()`, `set_segment_color_temp()`,
+    `set_zone_rgb()` and `set_zone_color_temp()`. On an H6062 (the one profile that reads its segment count; it
+    has no zones) the first five, like a `turn_on()` with a colour or Kelvin, hold its lazy `aa 41` read and the
+    write it sizes; on every other profile they hold only their write. `set_brightness()`, `set_gradual()`,
+    `set_scene(code)` and a non-bar `set_zone_power()` hold nothing. What a test double that replaces
+    `Device._conn` now needs is under Changed.
+  - A beat is one write, bounded at `const.HEARTBEAT_WRITE_TIMEOUT` (1 s, new), never waits for an ack, and its
+    failure is logged at DEBUG only. It never touches the idle timer or the warm window, and a disconnect (the
+    idle one, `disconnect()` or `close()`) or an operation that wants the link cancels a beat still writing
+    rather than wait for it, so no command waits for a beat (the app writes its beat off its command queue) and
+    neither the idle close nor the warm window moves. Its reply is not folded into state: it stays in the
+    receive queue, which the next operation drains, as an `ee 30` push does (a deviation from the app, which
+    folds `aa 01` / `aa 36` / plug replies; the follow-up is to fold heartbeat replies and `ee 30` pushes
+    through one hook).
+  - Every frame a link held under 2 s sends is unchanged, as is every profile field but the two new ones.
+    Home Assistant's 1 s post-poll idle leaves room for at most one beat after a poll; command links now really
+    stay up 30 s, holding a proxy connection slot that long. `const.ACTIVE_IDLE_DELAY` keeps its name and value.
+  - Every held link now logs each beat as a TX / RX pair, one pair every 2 s, to `frame_log` and to the
+    `govee_ble_local.frames` logger (DEBUG): 28 lines (14 beats) in the 30 s warm window of a command that brings
+    the link up in under 2 s (the window starts with the command, the first beat 2 s after the session is set
+    up; 26 lines for a 2-4 s connect), and 30 lines (15 beats) when the link was already up, one beat fewer for
+    each tick an operation or a hold drops.
+  - Live-verified on the bench 2026-10-20 on the same six units (the same run, runs A-D): without a heartbeat
+    the H6006, H60A6, H6047 and H5083 dropped the link 10.05-10.73 s after the last write and both H6008s held
+    it; with the profile's heartbeat every unit held a 40 s watch at `idle_disconnect=0` with a beat every
+    2.00 s, the library closed the link 8 s after a poll at the default idle (beats at +2, +4 and +6 s), and it
+    held 30 s at `idle_disconnect=30`.
+- **A poll that reconnects inside a write's 30 s warm window no longer keeps the new link until those 30 s
+  end**: the window now lives with the link, so every teardown ends it (`GoveeConnection.disconnect()`, which
+  now returns whether a link was up; the idle one; a failed operation's), and so does a device-side drop. Such
+  a poll gets the base idle delay. A write whose link drops mid-write and that is retried on a fresh link
+  keeps its window there. Status: source-modelled and unit-tested; not live-verified (the 2026-10-20 bench
+  sends reads only, so it opens no warm window).
+
+### Spec
+- `devices.yaml` clientRow `heartbeat` (a govee_common command id: `power`, `heartbeat`, `volume` or `cmd_36`)
+  and `heartbeat_timing` (`fixed_rate`, the default, or `after_quiet`), required on every row with support, with
+  no family default, so an untraced row can't inherit one. All 66 supported rows are set (104 SKUs with the
+  modelled ones), each citing its deciding view-model method in doc-ref: 58 `power`, 6 `heartbeat` (`aa 00`: the
+  screens whose `I3` is false), 2 `cmd_36` (`NewDetailVm.A3` -> `ComposeLightHeartController`), and
+  `after_quiet` only on h5080 43. The traced unsupported rows are annotated too: h6047 277 / 288 / 298
+  `heartbeat`, striplight 80 `volume`. The h7040 / h7080 rows' docs note that their screens send `aa 01` only at
+  exactly pacts (1,1) / (2,1) and `aa 00` at any other; a test pins those pacts.
+- `timing.heartbeat` (typed in the schema): the 2000 ms interval, both timings, the skip rules, what the app
+  does with the reply and with a failure, the FIRMWARE-SOURCED drop without it (H6006, H5083, H60A6, H6047; none
+  on H6008), and the library's deviations as PROCEDURAL notes (the link follows the idle policy; ticks dropped
+  while the link is busy or a sequence holds it; the first beat one interval after the session is set up, and
+  on after_quiet the wait restarted when each operation that sent a frame ends; the reply left in the queue,
+  with the follow-up named; one bounded write, not retried, cut short by a disconnect or an operation).
+- The generator keeps both keys and checks each heartbeat against govee_common's command enum and the
+  resolver's `HEARTBEATS` (the four keep-alive reads, whose codes `DeviceProfile` accepts); the resolver
+  requires it and checks it one way against `power_live`: `heartbeat_aa01` / `heartbeat_aa36` /
+  `heartbeat_aa33` need `power` / `cmd_36` / `volume`, and a relay row `power`. No `.ksy` grammar change (the
+  beat is the existing `read_request`); the govee_common `heartbeat`, `power`, `volume` and `cmd_36` command docs
+  name their keep-alive use. `spec/docs/GOVEE_BLE_GATT_PROTOCOL.md` describes the heartbeat per screen.
+- H60A6 and H6047: hardware-verified that a whole-fixture on restores every zone (2026-10-20, through Home
+  Assistant, on the H60A6 'hall 8407' and the H6047 'office bars'; run file govee-apks
+  `library-audit/heartbeat-1.6.0/zone_restore_20261021_010747.json`). Each device's name and SKU come from
+  Home Assistant's device registry, and the frames named here are the ones the library builds for the run's
+  Home Assistant light calls (the fixture's and each zone's turn on / turn off), not captured. With one zone
+  switched off while the fixture was on (an H60A6 `33 30` to the main panel, an H6047 `33 36` to the left
+  bar), `33 01 00` then `33 01 01` lit both zones again, as the next poll read back; so did an off and on
+  alone, and one after both zones were switched off with the fixture off. That is the firmware model
+  already cited (H60A6 `FUN_9b0278dc` mode 0: main = zone 0 = zone 1; H6047 `FUN_01004f32` -> `FUN_01002720`:
+  both bars = the byte). The devices.yaml h60ax 303 and h6047 119 row docs and their `global_switch` /
+  `compose_light_switch` notes carry the marker, and the two rows' doc-refs cite those firmware sites. Doc
+  only: no frame, field or reader changes.
+
 ## [1.5.0] — 2026-10-20
 
 ### Added

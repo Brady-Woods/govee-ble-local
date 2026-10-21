@@ -68,6 +68,13 @@ def create_device(
     ``idle_disconnect`` is the seconds of inactivity after which the link is dropped. None uses
     the library default (``const.IDLE_DISCONNECT_DELAY``, 8 s); 0 or less keeps the link up.
 
+    While the link is up the device sends its profile's keep-alive read
+    (``DeviceProfile.heartbeat``, every 2 s), which never keeps it up longer than that idle
+    policy. To send none, build the Device from the profile with that one field cleared, on any
+    SKU (its ``heartbeat_timing`` is then ignored): ``Device(dataclasses.replace(profile_for(sku, pact=...,
+    goods_type=goods_type, allow_modelled=allow_modelled), heartbeat=None), ble_device, advertisement_data,
+    sku=sku)`` (the arguments given here).
+
     Pass ``frame_log=<path>`` to persist a JSONL session capture for this device (the
     frame-tier logger ``govee_ble_local.frames`` is the other, filesystem-free, capture
     surface — see the diagnostics docs).

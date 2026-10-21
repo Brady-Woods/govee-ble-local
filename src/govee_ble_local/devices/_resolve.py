@@ -92,6 +92,12 @@ the row lacks fails the build: nothing defaults silently.
   ``light_effect_stop`` (``DeviceProfile.light_effect_stop``), each sent once per session after the
   handshake and any unlock. A SKU's ``by_model`` ``scene_power_on`` (the power-on ahead of a scene apply,
   H6009 / H6010) becomes ``DeviceProfile.scene_power_on``, on a row with ``scenes`` only.
+- The keep-alive: every row names the read its screen sends while the link is up (``heartbeat``, no family
+  default), which becomes ``DeviceProfile.heartbeat`` (its command code), and its ``heartbeat_timing``
+  (``fixed_rate`` unless the row says ``after_quiet``). A row's live power checks it, one way only: a
+  ``heartbeat_aa01`` / ``heartbeat_aa36`` / ``heartbeat_aa33`` power_live needs the heartbeat ``power`` /
+  ``cmd_36`` / ``volume``, and a relay row ``power`` (a plug's outlets are the aa 01 reply's); a
+  ``push_30``-only row may send any.
 - Wire branches: the library reads the wire with the pact and the firmware unknown, so a wire ``by_pact`` /
   ``by_firmware`` branch raises, but for the unread ones of :data:`_UNREAD_WIRE_BRANCHES` (H60A6 pact (1,
   1)'s one colour piece: decision D3, the library keeps the row's 13).
@@ -185,6 +191,8 @@ class Row(TypedDict, total=False):
     support: str
     power_read: str
     power_live: tuple[str, ...]
+    heartbeat: str
+    heartbeat_timing: str
     mode_color_parse: str
     mode_color_parse_status: str
     relay_power: str
@@ -346,6 +354,14 @@ LEVELS: Final = ADMITTED | MODELLED
 CAPABILITIES: Final = ("power", "brightness", "rgb", "color_temp", "segments", "scenes")   # models.Capability
 COLOR_SCHEMES: Final = ("h60a6", "h6006", "h6188", "h61a8", "h6061")   # wire.build.ColorScheme
 RELAY_POWERS: Final = ("outlet0", "all_outlets", "total_switch")        # devices.profile.RelayPower
+HEARTBEAT_TIMINGS: Final = ("fixed_rate", "after_quiet")         # transport.connection.HeartbeatTiming
+# The keep-alive reads a screen sends (clientRow heartbeat, govee_common command ids; DeviceProfile.heartbeat
+# takes their codes): ConnectHeartbeat.c's four types (1 aa 01, 2 aa 00, 3 aa 33, 4 aa 36), which cover the
+# IHeart controllers' aa 36 / aa 33 and the plug screens' aa 01.
+HEARTBEATS: Final = ("power", "heartbeat", "volume", "cmd_36")
+# A heartbeat power_live is the reply to the screen's own keep-alive: the command it sends (the cross-check).
+_LIVE_HEARTBEATS: Final[Mapping[str, str]] = {
+    "heartbeat_aa01": "power", "heartbeat_aa36": "cmd_36", "heartbeat_aa33": "volume"}
 # The capabilities a colour scheme has no frame for (wire.build refuses them), which a row's resolution drops
 # (only from a scheme the row names itself):
 #  - h61a8 (the 0x0b frames): no colour temperature (build.color_temp / segment_color_temp);
@@ -862,10 +878,23 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
         fail("power_resync on a light (the library re-syncs a plug's session only)")
     live_served = {"heartbeat_aa01": readback == "polled", "heartbeat_aa36": bar,
                    "push_30": forms.get("f_ee_30", "unknown") != "unknown"}
-    for live in row.get("power_live", cp.get("power_live")) or ():
+    lives = row.get("power_live", cp.get("power_live")) or ()
+    for live in lives:
         if not live_served.get(live, False):
             fail(f"power_live {live} is not served (the library polls aa 01, the aa 36 bars or the status "
                  "read, and an ee 30 push needs its wire f_ee_30)")
+    heartbeat = need(row.get("heartbeat"), "heartbeat")
+    timing = row.get("heartbeat_timing", "fixed_rate")
+    if timing not in HEARTBEAT_TIMINGS:
+        fail(f"heartbeat_timing {timing!r} (one of {list(HEARTBEAT_TIMINGS)})")
+    # One way only: a heartbeat power_live, or a plug's relay (its aa 01 heartbeat reply), names the read the
+    # screen sends; nothing in the app ties a push_30-only row to aa 00.
+    sent = {_LIVE_HEARTBEATS[live] for live in lives if live in _LIVE_HEARTBEATS}
+    if relay:
+        sent.add("power")
+    if sent and sent != {heartbeat}:
+        fail(f"heartbeat {heartbeat} where power_live {list(lives)}{' and the relay' if relay else ''} take "
+             f"power from the reply to {' / '.join(sorted(sent))}")
     _check_mode(w, readback, fail)
 
     zones = tuple((z["id"], z["power_index"], tuple(z["segments"])) for z in need(row.get("zones"), "zones"))
@@ -902,6 +931,8 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
         "mode_reports_kelvin": bool(row.get("mode_reports_kelvin", True)),
         "light_effect_stop": writes == ("light_effect_stop",),
         "scene_power_on": bool(model.get("scene_power_on", False)),
+        "heartbeat": heartbeat,    # a command name; devices/profile.py takes its code
+        "heartbeat_timing": timing,
     }
     if out["scene_power_on"] and "scenes" not in row_caps:
         fail("by_model scene_power_on on a row without the scenes capability")
