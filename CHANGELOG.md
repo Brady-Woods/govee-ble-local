@@ -8,6 +8,8 @@ model, from which the shipped readers are generated).
 
 ## [Unreleased]
 
+## [1.6.1] — 2026-10-21
+
 ### Fixed
 - **A device whose advertised name isn't a Govee name, or that has none, now gets the cipher its advertisement
   announces.** `create_device`, `make_device` and the `Device` constructor read the encrypt flag and the pact from
