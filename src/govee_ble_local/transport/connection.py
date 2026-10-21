@@ -708,7 +708,19 @@ class GoveeConnection:
         """Read the BGC-info characteristic and return the device's
         encryptVersion (0/1/2), or None if the characteristic is absent.
         Port of BgcInfoReader.a()/d(): data[0] is the format; for format 1 or
-        2 the version is data[1]. Static per device, so read once."""
+        2 the version is data[1].
+
+        Read once per connection object, so once per Device, and the result cached. The app reads it on
+        every connect: BgcInfoReaderPool.onConnectedInfoChange (BgcInfoReaderPool.java:72-87) resets the
+        reader on connect and drops it on disconnect, and each link reads 2b12 again before its first frame
+        (EncryptionBluetoothGattCallback.onServicesDiscovered:190-207). The library keeps the one read by
+        decision (2026-10-21), so a firmware update that changes the version is seen by the next Device.
+
+        Raises GoveeBleConnectionError when the lookup or the read fails, and caches nothing, so the
+        session loop's next attempt reads again on a new link. The app sends no frame on a link whose
+        2b12 read failed: BgcInfoReader.a:69-77 waits for a read callback that, unstarted, never
+        comes, and BgcInfoReaderPool.checkNeedParseInfo:46 takes only a status-0 read, so
+        EncryptionBluetoothGattCallback.r never runs."""
         if self._bgc_checked:
             return self._bgc_version
         client = self._require_client()
@@ -722,16 +734,16 @@ class GoveeConnection:
             service = next((s for s in client.services if s.uuid == SERVICE_UUID), None)
             char = service.get_characteristic(BGC_INFO_CHAR_UUID) if service is not None else None
         except BleakError as err:  # client.services: "Service Discovery has not been performed yet"
-            _LOGGER.debug("%s: BGC lookup failed: %s", self.address, err)
-            return None  # not cached: the advertised mode stands, retried next connect
+            raise GoveeBleConnectionError(
+                f"{self.address}: BGC lookup failed: {_err_text(err)}") from err
         if char is None:
             version = None
         else:
             try:
                 data = bytes(await client.read_gatt_char(char))
-            except BleakError as err:
-                _LOGGER.debug("%s: BGC read failed: %s", self.address, err)
-                return None  # transient: try again next connect
+            except _TRANSPORT_ERRORS as err:
+                raise GoveeBleConnectionError(
+                    f"{self.address}: BGC read failed: {_err_text(err)}") from err
             version = bgc_encrypt_version(data)   # the spec's bgc_info (BgcInfoReader.a / .d)
         self._bgc_version, self._bgc_checked = version, True
         return version
@@ -746,7 +758,7 @@ class GoveeConnection:
         # The only place the session's mode is set: from the advertised mode as it is now, so one handed
         # over later (set_advertised_encryption), even during the BGC read, waits for the next session.
         # BGC is authoritative for the version (1=RC4, 2=GCM); 0/absent keeps the advertised mode
-        # (isEncryptionSupported = adv OR bgc).
+        # (isEncryptionSupported = adv OR bgc). A failed read fails this attempt before any frame is sent.
         advertised = self._advert_encryption
         self._encryption = self._session_mode(advertised)
         await self._read_bgc_encrypt_version()

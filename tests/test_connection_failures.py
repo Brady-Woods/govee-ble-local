@@ -216,13 +216,65 @@ async def test_connect_os_level_link_errors_map_to_connection_error(monkeypatch,
     assert fake.establish_calls == SESSION_ATTEMPTS
 
 
-async def test_bgc_read_error_is_transient_and_not_cached(monkeypatch) -> None:
+# -- a failed BGC read fails that attempt -----------------------------------------
+# The app sends no frame on a link whose 2b12 read failed (BgcInfoReader.a waits for a read callback;
+# BgcInfoReaderPool.checkNeedParseInfo takes only a status-0 read, so EncryptionBluetoothGattCallback.r
+# never runs). The library tears the link down and the session loop reads again on a new one.
+
+def _first_link_only(fake: FakeGovee, knob: str, err: BaseException) -> None:
+    """Inject ``err`` through the fake's ``knob`` on the first link only."""
+    setattr(fake, knob, err)
+
+    def link_up(_client: FakeClient) -> None:
+        if len(fake.clients) > 1:
+            setattr(fake, knob, None)
+
+    fake.link_up = link_up  # type: ignore[method-assign]
+
+
+async def test_bgc_read_error_fails_the_attempt_and_the_next_link_reads_again(monkeypatch) -> None:
+    fake = FakeGovee()   # BGC encryptVersion 1
+    _first_link_only(fake, "bgc_read_error", BleakError("read failed"))
+    c = _make(monkeypatch, fake, encryption=Encryption.NONE)   # it advertises plaintext
+    # WAS: the session ran on the advertised mode, plaintext frames a BGC-1 device ignores.
+    await c.connect()
+    assert len(fake.clients) == 2 and fake.bgc_reads == 2
+    assert fake.clients[0].is_connected is False and fake.clients[0].writes == []   # nothing sent on it
+    assert c.is_connected and c.encryption is Encryption.AES_RC4_PSK and c._bgc_checked
+
+
+@pytest.mark.parametrize("exc", [BleakError("read failed"), EOFError(), BrokenPipeError()])
+async def test_bgc_read_error_on_every_link_fails_the_connect(monkeypatch, exc) -> None:
     fake = FakeGovee()
-    fake.bgc_read_error = BleakError("read failed")
+    fake.bgc_read_error = exc
     c = _make(monkeypatch, fake)
-    await c.connect()  # falls back to the advertised mode
-    assert c.is_connected
-    assert c._bgc_checked is False
+    with pytest.raises(GoveeBleConnectionError, match=f"BGC read failed: {str(exc) or type(exc).__name__}"):
+        await c.connect()
+    assert len(fake.clients) == SESSION_ATTEMPTS and fake.bgc_reads == SESSION_ATTEMPTS
+    assert all(not cl.is_connected and cl.writes == [] for cl in fake.clients)
+    assert c._bgc_checked is False   # nothing cached: the next connect reads again
+    fake.bgc_read_error = None
+    await c.connect()
+    assert c.is_connected and c._bgc_checked and fake.bgc_reads == SESSION_ATTEMPTS + 1
+
+
+async def test_bgc_lookup_error_fails_the_attempt_and_the_next_link_reads(monkeypatch) -> None:
+    fake = FakeGovee()
+    _first_link_only(fake, "services_error", BleakError("Service Discovery has not been performed yet"))
+    c = _make(monkeypatch, fake, encryption=Encryption.NONE)
+    await c.connect()
+    assert len(fake.clients) == 2 and fake.bgc_reads == 1   # the first link never got to the read
+    assert fake.clients[0].is_connected is False and fake.clients[0].writes == []
+    assert c.is_connected and c.encryption is Encryption.AES_RC4_PSK and c._bgc_checked
+
+
+async def test_bgc_lookup_error_on_every_link_fails_the_connect(monkeypatch) -> None:
+    fake = FakeGovee()
+    fake.services_error = BleakError("Service Discovery has not been performed yet")
+    c = _make(monkeypatch, fake)
+    with pytest.raises(GoveeBleConnectionError, match="BGC lookup failed"):
+        await c.connect()
+    assert len(fake.clients) == SESSION_ATTEMPTS and fake.bgc_reads == 0 and c._bgc_checked is False
 
 
 async def test_handshake_timeout(monkeypatch) -> None:
