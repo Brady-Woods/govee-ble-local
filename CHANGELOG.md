@@ -111,6 +111,18 @@ model, from which the shipped readers are generated).
   `heartbeat_aa33` need `power` / `cmd_36` / `volume`, and a relay row `power`. No `.ksy` grammar change (the
   beat is the existing `read_request`); the govee_common `heartbeat`, `power`, `volume` and `cmd_36` command docs
   name their keep-alive use. `spec/docs/GOVEE_BLE_GATT_PROTOCOL.md` describes the heartbeat per screen.
+- H60A6 and H6047: hardware-verified that a whole-fixture on restores every zone (2026-10-20, through Home
+  Assistant, on the H60A6 'hall 8407' and the H6047 'office bars'; run file govee-apks
+  `library-audit/heartbeat-1.6.0/zone_restore_20261021_010747.json`). Each device's name and SKU come from
+  Home Assistant's device registry, and the frames named here are the ones the library builds for the run's
+  Home Assistant light calls (the fixture's and each zone's turn on / turn off), not captured. With one zone
+  switched off while the fixture was on (an H60A6 `33 30` to the main panel, an H6047 `33 36` to the left
+  bar), `33 01 00` then `33 01 01` lit both zones again, as the next poll read back; so did an off and on
+  alone, and one after both zones were switched off with the fixture off. That is the firmware model
+  already cited (H60A6 `FUN_9b0278dc` mode 0: main = zone 0 = zone 1; H6047 `FUN_01004f32` -> `FUN_01002720`:
+  both bars = the byte). The devices.yaml h60ax 303 and h6047 119 row docs and their `global_switch` /
+  `compose_light_switch` notes carry the marker, and the two rows' doc-refs cite those firmware sites. Doc
+  only: no frame, field or reader changes.
 
 ## [1.5.0] — 2026-10-20
 

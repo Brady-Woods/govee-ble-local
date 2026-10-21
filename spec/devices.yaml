@@ -705,7 +705,14 @@ families:
             with the aa 00 heartbeat and its ee 30 pushes. HARDWARE-VERIFIED on an H60A6 (bench 2026-10-12 to 2026-10-16):
             the segment-map probe drove piece 12 (the main panel) and pieces 0-11 (the ring) to opposite colours and read them
             back apart; 33 01 00 clears and 33 01 01 lights both zones; the 0xA3 diy_graffiti upload (live capture); control
-            with no secret (account_lock false; the app's control-screen path for it is not cited).
+            with no secret (account_lock false; the app's control-screen path for it is not cited). HARDWARE-VERIFIED that a
+            whole-fixture on restores every zone (2026-10-20, through Home Assistant, on the H60A6 'hall 8407', run file
+            govee-apks library-audit/heartbeat-1.6.0/zone_restore_20261021_010747.json; the device's name and SKU are from
+            Home Assistant's device registry, and the frames named are the ones the library builds for the run's light
+            calls, not captured): with the main panel switched off (33 30 00 00) while the fixture was on, 33 01 00 then
+            33 01 01 lit both zones again, as the next poll read back; so did an off and on alone, and one after both zones
+            were switched off with the fixture off. It is the firmware's model (FIRMWARE-SOURCED: 33 01 sets the main flag
+            and both zone flags from its byte, FUN_9b0278dc mode 0 @0x9b02791c-0x9b027930).
           doc-ref:
             - split_h60ax/com/govee/pact_h60a0/pact/Support.java:91-100,154-159,434-436,472-482
             - base-classes2/com/govee/shared/checker/KmpGoodsType.java:189
@@ -713,6 +720,7 @@ families:
             - split_h60ax/com/govee/pact_h60a0/adjust/h60a6/VM4LightH60A6.java:684-686,691-697,1212-1216,1252-1271
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:405-408,789-792,1426-1428
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:251-259
+            - H60A6 FUN_9b0278dc @0x9b02791c-0x9b027930
         "324": { models: [H60C1], mode_color_parse: gradual_15 }   # H60C1; split_h60ax/com/govee/pact_h60a0/adjust/h60c1/Info4DetailH60C1.java:381
       wire:
         doc: "pieces: Support.getColorPieceSize (split_h60ax/com/govee/pact_h60a0/pact/Support.java:130-159), 4 per group (:183-185); music and empty_fails: h60a1 Info4Detail.Q (split_h60ax/com/govee/pact_h60a0/adjust/h60a1/Info4Detail.java:122-125, 380-433)"
@@ -738,7 +746,7 @@ families:
     submodes: { color: "0x15", color_alt: "0x0d", scene: "0x04", music: "0x13", diy: "0x0a" }
     opcodes:
       - { name: zone_power, cmd: "0x30", payload: "[zoneIndex, state]", readable: true, note: "H60A6 dual-zone; notify state in bit 1 of each byte. zone 0 = MAIN PANEL = segment-mask index 12; zone 1 = BACKGROUND RGBIC ring = segment indices 0-11. HARDWARE-VERIFIED (segment-map probe: driving idx12 vs 0-11 to opposite colours, the device read-back holds idx12 distinct). The 0x15 colour/CCT seg_mask thus addresses the panel via bit 12, the ring via 0x0FFF, whole device via 0x1FFF." }
-      - { name: global_switch, cmd: "0x01", payload: "[state]", readable: true, note: "MASTER switch over both zones. HARDWARE-VERIFIED (H60A6, 2026-10-12, via HA probe): 33 01 00 clears both zone flags; 33 01 01 lights BOTH zones even when each was switched off individually; zone-on, colour (0x05 0x15) and brightness (0x04) writes each also wake the fixture. Status TLV 0x01 reports it. Back-to-back (unpaced) writes are all acked but no faster than sequential." }
+      - { name: global_switch, cmd: "0x01", payload: "[state]", readable: true, note: "MASTER switch over both zones. HARDWARE-VERIFIED (H60A6, 2026-10-12, via HA probe): 33 01 00 clears both zone flags; 33 01 01 lights BOTH zones even when each was switched off individually; zone-on, colour (0x05 0x15) and brightness (0x04) writes each also wake the fixture. HARDWARE-VERIFIED (the H60A6 'hall 8407', 2026-10-20, via HA, run file zone_restore_20261021_010747.json; the device's name and SKU from the HA device registry; the frames are the ones the library builds for the run's light calls, not captured): a whole-fixture on restores every zone, also when one zone was switched off with the fixture on before the 33 01 00 (FIRMWARE-SOURCED: FUN_9b0278dc mode 0 sets main = zone 0 = zone 1 = the byte). Status TLV 0x01 reports it. Back-to-back (unpaced) writes are all acked but no faster than sequential." }
       - { name: color_temp_write, cmd: "0x05", payload: "[0x15, 0x01, ff ff ff, kelvin u2be, tintR, tintG, tintB, seg_mask u2le]", note: "Bytes.r(tint, K, mask, type=1) (type 1 = white in bytes 2-4); tint = Constant.getTemColorByKelvin(K), K a whole 100 K step clamped to the device range (KelvinConfig.calibrationKelvin; the UI picks the tint then Config recovers K via getColorTemKelvin). Whole-device CCT on H60A6 is ONE frame with the all-segments mask (0x1FFF, bytes ff 1f), for both Kelvin sliders: colour tab = All mode DelegateColorV2.G0 (posSet = all 13 positions, ColorModeUtil.e) -> ColorViewModel.U -> ColorModeControllerConfig.c -> Config.Yt -> Bytes.r(tint, K, posSet, 1); illumination tab = KelvinConfig.b -> ColorModeControllerConfig.h -> Config.N[0] (EM) -> Bytes.C(K, 13, 1) (7.7.02 trace, goodsType 303, pact (1,3)). Per zone: main panel mask 00 10, ring ff 0f. The two-frame main-then-ring form is only the colour-stripe/snapshot apply path (VM4LightH60A6.configColorStripController -> pact_h60a0/pact/ControllerBuild.j), not the Kelvin slider. Pact gates in the app: colour version 0x15 only for pact type 1 and code >= 2 (Config.kw), below that the 0x0d form (Bytes.p), not modelled (the library sends the 0x15 frame whatever the pact, as it does when the pact is unknown); the colour-tab Kelvin slider is visible for pact (1,1) or (1,>=3) only (Config.iQ). RGB PICK (7.7.02): a picked colour that is exactly one of the Kelvin tint colours (Constant.k2 = ColorUtils.e, 178 colours) whose Kelvin lies in kelvin_range (inclusive) is sent instead of color_write as [0x15, 0x01, ff ff ff, kelvin u2be, PICKED R, G, B, mask] (the picked colour is the tint, one frame, the mask the RGB frame would use): ColorModeControllerConfig.c -> Config.Yt: Bytes.r (the colour, KelvinConfig.c of it, posSet, the white type) when KelvinConfig.i holds for the colour, else Bytes.h (the colour, posSet). Library: build.rgb_as_kelvin / color_rgb_frames / segment_rgb." }
       - { name: per_segment_color_read, cmd: "0xa5", readable: true, payload: "mechanism (A): reply groups [groupIndex, 4x{brightness,R,G,B}]; group count = ceil(getColorPieceSize/4); H60A6 pieceCount=13 (goodsType 303); records are 4-byte incl brightness (NOT [segIndex,R,G,B]). See IC/segment note." }
       - { name: on_off_memory, cmd: "0x41", payload: "[2, mode]" }
@@ -793,7 +801,14 @@ families:
             sound-pickup read the screen adds at connect for 119 (govee_common::command has no 0xac member, and nothing on
             the control path reads it). Bench (macOS): bar power switched and read back per bar (2026-10-15), polled cleanly
             (2026-10-16), with no secret (account_lock false; the app's control-screen path for it is not cited); colour
-            writes are not hardware-verified.
+            writes are not hardware-verified. HARDWARE-VERIFIED that a whole-fixture on restores both bars (2026-10-20,
+            through Home Assistant, on the H6047 'office bars', run file govee-apks
+            library-audit/heartbeat-1.6.0/zone_restore_20261021_010747.json; the device's name and SKU are from Home
+            Assistant's device registry, and the frames named are the ones the library builds for the run's light calls,
+            not captured): with the left bar switched off (33 36 00 01) while the fixture was on, 33 01 00 then 33 01 01 lit
+            both bars again, as the next poll's aa 36 read back; so did an off and on alone, and one after both bars were
+            switched off with the fixture off. It is the firmware's model (FIRMWARE-SOURCED: the power handler sets both bar
+            flags from its byte, FUN_01004f32 @0x01004f5c-0x01004f60 -> FUN_01002720).
           doc-ref:
             - split_h6047/com/govee/h6047/pact/Support.java:43-45,121-129,186-188,345-350
             - base-classes2/com/govee/shared/config/h6047/H6047SceneConfig.java:45-47
@@ -805,6 +820,8 @@ families:
             - base-classes10/com/govee/base2light/capability/legacy/LegacyColorCapabilityProvider.java:218-221
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:251-259
             - split_h6047/com/govee/h6047/ble/controller/ComposeLightHeartController.java:9-11
+            - H6047 FUN_01004f32 @0x01004f5c-0x01004f60
+            - H6047 FUN_01002720 @0x01002720
         "277": { power_read: ac_status, power_live: [push_30], heartbeat: heartbeat, mode_color_parse: gradual_15 }   # H6039; ee 30 bit 0 of frame[3]; split_h6047/com/govee/h6047/newdetail/Info4Detail.java:400-433; aa 00: I3 false (split_h6047/com/govee/h6047/newdetail/vm/VM4Light.java:616-618)
         "288": { power_read: ac_status, power_live: [push_30], heartbeat: heartbeat, mode_color_parse: gradual_15 }   # H6038; ee 30 per bar frame[4] / frame[5]; aa 00: I3 false (split_h6047/com/govee/h6047/newdetail/h6038/VM4H6038.java:771-773)
         "298": { power_read: ac_status, power_live: [push_30], heartbeat: heartbeat, mode_color_parse: gradual_15 }   # H6048; ee 30 per bar frame[4] / frame[5]; aa 00: I3 false (split_h6047/com/govee/h6047/newdetail/h6048/VM4H6048.java:744-746)
@@ -893,7 +910,7 @@ families:
     protocol: { single_packet: true, multi_dialects: ["0xA1", "0xA3", "0xAC"], mode_command: "0x05" }   # 0xAC status read only on H6038 / H6039 / H6048; H6047 reads colour by direct aa a5
     submodes: { color: "0x15", scene: "0x04", music: "0x13", diy: "0x0a", video: "0x00" }
     opcodes:
-      - { name: compose_light_switch, cmd: "0x36", readable: true, payload: "H6047 [left,right]; others [position(0|1), state]; read AA 36 = [left, right, movie/feast switch]", note: "H6047 (119): 33 36 <left> <right> is the PER-BAR button frame only (NewDetailVm.D5, Controller4ExtBytes [54,left,right]). The main switch sends the global 33 01 <on> (NewDetailVm.switchTrigger -> ControllerSwitch). The app shows the device on when left OR right is on (aa 36 heartbeat, ComposeLightHeartController). The third reply byte is the movie/feast switch (EventFeastHeart), not needed for control. H6043 (196) sends [54, index, state] per bar instead." }
+      - { name: compose_light_switch, cmd: "0x36", readable: true, payload: "H6047 [left,right]; others [position(0|1), state]; read AA 36 = [left, right, movie/feast switch]", note: "H6047 (119): 33 36 <left> <right> is the PER-BAR button frame only (NewDetailVm.D5, Controller4ExtBytes [54,left,right]). The main switch sends the global 33 01 <on> (NewDetailVm.switchTrigger -> ControllerSwitch), which sets both bars to <on> (FIRMWARE-SOURCED: FUN_01004f32 -> FUN_01002720; HARDWARE-VERIFIED 2026-10-20 via HA on the H6047 'office bars', run file zone_restore_20261021_010747.json, the device's name and SKU from the HA device registry; the frames are the ones the library builds for the run's light calls, not captured: 33 01 00 then 33 01 01 lit both bars after one was switched off with the fixture on). The app shows the device on when left OR right is on (aa 36 heartbeat, ComposeLightHeartController). The third reply byte is the movie/feast switch (EventFeastHeart), not needed for control. H6043 (196) sends [54, index, state] per bar instead." }
       - { name: swap_light, cmd: "0x34", payload: "[] (empty)", note: "Not modelled (SwapLightController). The left/right bar order can be swapped during setup (h6047/add/LightPosAc), so the library's zone names are logical, not physical." }
       - { name: sound_pickup_read, cmd: "0xac", readable: true, payload: "AA AC reply [pickSoundType] (1 = headphone, else device)", note: "Not modelled. H6047 (119) only: a single connect-time read (NewDetailVm$connectBleSuc$1, Controller4ExtBytes [0xAC] -> Info4Detail.A0), NOT the 0xAC status pro type / burst." }
       - { name: color_temp_write, cmd: "0x05", payload: "[0x15, 0x01, ff ff ff, kelvin u2be, tintR, tintG, tintB, seg_mask u2le]", note: "H6047 (119): SubModeColor.makeSubModeColor4Kelvin / H6047ColorControllerConfig -> Config.Yt -> Bytes.r type 1; tint = Constant.getTemColorByKelvin(K) (whole 100 K steps, clamped to the SKU range). RGB PICK (7.7.02): a picked colour that is exactly one of the Kelvin tint colours (Constant.k2 = ColorUtils.e, 178 colours) whose Kelvin lies in kelvin_range (inclusive) is sent instead of color_write as [0x15, 0x01, ff ff ff, kelvin u2be, PICKED R, G, B, mask] (the picked colour is the tint, one frame, the mask the RGB frame would use): ColorModeControllerConfig.c -> Config.Yt: Bytes.r (the colour, KelvinConfig.c of it, posSet, the white type) when KelvinConfig.i holds for the colour, else Bytes.h (the colour, posSet). Library: build.rgb_as_kelvin / color_rgb_frames / segment_rgb." }
