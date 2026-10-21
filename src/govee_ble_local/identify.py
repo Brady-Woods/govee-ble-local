@@ -27,7 +27,9 @@ The app reads an advertisement two ways, and so does the library:
   (``BlePactV1.r``) also needs the stored name to match, and with a foreign name connects by MAC on the flag
   it remembered from earlier broadcasts. The light screen refuses a matched broadcast without a pact block
   (``AbsViewMode4Op.onScanEvent`` -> ``p0(999)``); the library uses the profile default then. The app
-  re-learns the flag from every broadcast; a Device fixes its cipher when it is built.
+  re-learns the flag from every broadcast (``BleBroadVersionCache.d``); a Device re-learns it from each
+  advertisement it ingests, for its next session, when every Govee pact entry agrees
+  (:func:`_pact_encrypt_flags`).
 - Group control (``GroupScanOpImp``) matches scan results by name; the library has no group control.
 """
 from __future__ import annotations
@@ -141,6 +143,20 @@ def parse_manufacturer_data(mfg: dict[int, bytes]) -> tuple[bool, int, int, int]
             continue
         return bool(entry.encrypted), int(entry.protocol_version), int(entry.pact_type), int(entry.pact_code)
     return None
+
+
+def _pact_encrypt_flags(mfg: dict[int, bytes]) -> dict[int, bool]:
+    """The encrypt flag of every Govee pact entry of ``mfg``, by its header byte (the spec's ``flags``), in
+    the dict's order: the entries :func:`parse_manufacturer_data` would consider, all of them.
+
+    The app reads one broadcast and takes its first pact entry (``BleUtil.parseBleBroadcastPact:785-796``).
+    A scanner's record can hold more than one: Home Assistant's (habluetooth, and BlueZ before it) keeps every
+    manufacturer-data key it has heard for the address, each with its latest value. The header is part of the
+    key, so a device whose header changed, or another device's frame merged under its address, leaves two
+    Govee entries. Two entries never share a header (the key's high byte is the marker's 0x88).
+
+    Package-internal: :class:`~govee_ble_local.devices.device.Device` re-learns its cipher from it."""
+    return {int(entry.flags): bool(entry.encrypted) for entry in _govee_entries(mfg) if entry.has_pact}
 
 
 def parse_broadcast_onoff(mfg: dict[int, bytes], *, on_mask: int | None = None) -> bool | None:
