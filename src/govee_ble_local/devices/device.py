@@ -35,7 +35,7 @@ from ..exceptions import (
     GoveeBleTimeout,
     GoveeBleUnknownName,
 )
-from ..identify import GoveeAdvertisement, _bound_advertisement, parse_broadcast_onoff
+from ..identify import GoveeAdvertisement, bound_advertisement, parse_broadcast_onoff
 from ..models import Capability, DeviceState, Encryption, Segment, Zone
 from ..scenes import Scene, async_load_scenes, load_scenes, scene_names_by_code
 from ..scenes import scene_upload_frames as _scene_upload_frames
@@ -227,8 +227,8 @@ class Device:
         self._advert_ignore_until = 0.0   # monotonic; see ADVERT_SUPPRESS_SECONDS
         # (pact_type, pact_code) from the Govee advertisement, or None until one is heard.
         self._pact: tuple[int, int] | None = None
-        # Parsed once, used twice; read as a bound device's, whatever its name (_bound_advertisement).
-        adv = _bound_advertisement(advertisement_data, ble_device.name, self._sku)
+        # Parsed once, used twice; read as a bound device's, whatever its name (bound_advertisement).
+        adv = bound_advertisement(advertisement_data, self._sku, fallback_name=ble_device.name)
         self._learn_pact(adv)
         enc = self._resolve_encryption(adv)
         self._conn = GoveeConnection(
@@ -602,7 +602,7 @@ class Device:
         mfg = getattr(advertisement_data, "manufacturer_data", None)
         if not mfg:
             return False
-        adv = _bound_advertisement(advertisement_data, self._ble_device.name, self._sku)
+        adv = bound_advertisement(advertisement_data, self._sku, fallback_name=self._ble_device.name)
         pact_changed = self._learn_pact(adv)
         on = parse_broadcast_onoff(mfg, on_mask=self.profile.advert_on_mask)
         # Within the suppress window a command/read is fresher than the lagging advertised on/off.
@@ -1939,7 +1939,7 @@ def make_device(
 
     As ``registry.create_device`` (which raises instead): the pact of ``advertisement_data`` picks the
     SKU's row (``profile_for(sku, pact=...)``), so a pact the SKU's rows refuse gives None."""
-    adv = _bound_advertisement(advertisement_data, ble_device.name, sku)
+    adv = bound_advertisement(advertisement_data, sku, fallback_name=ble_device.name)
     p = profile_for(sku, pact=adv.pact if adv is not None else None)
     if p is None:
         return None

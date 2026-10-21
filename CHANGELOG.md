@@ -8,6 +8,25 @@ model, from which the shipped readers are generated).
 
 ## [Unreleased]
 
+### Added
+- **`bound_advertisement(advertisement_data, sku, *, fallback_name=None)`, in `__all__`.** It reads an
+  advertisement's pact and encrypt flag from its Govee manufacturer data whatever the local name, for a caller
+  that has no `Device` yet. It returns the public `GoveeAdvertisement` (`.pact`, `.encrypted`,
+  `.encryption_known`), labelled with the caller's SKU, or None when the name isn't a Govee name and there's no
+  Govee pact block.
+  - **What it is:** the read `create_device`, `make_device` and the `Device` make of their advertisement since
+    1.6.1, until now package-internal as `identify._bound_advertisement`. Its pact is the pact `create_device`
+    routes the profile by. After a `GoveeBleNotSupported` it is the pact that was refused, even for a renamed or
+    nameless Home Assistant record, where `identify()`'s name gate returns None.
+  - **App basis:** the light control screen matches a bound device by its stored MAC, not its name
+    (`AbsViewMode4OpWithOtaCheck.s2`). It parses the broadcast with the stored goodsType
+    (`AbsViewMode4OpWithOtaCheck.j1` -> `GoodsType.parseBleBroadcastPactInfo` -> `BleUtil.parseBleBroadcastPact`)
+    and keeps the encrypt flag (`AbsViewMode4OpWithOtaCheck.w2`). The caller's `sku` stands for that stored
+    device.
+  - **What stays internal:** `identify.parse_manufacturer_data`, the raw parser under it. Its bare
+    `(encrypted, broadcast_version, pact_type, pact_code)` tuple can't grow a field without a MAJOR, and how a
+    merged record's Govee entries are read may still change. Discovery keeps the name gate as before.
+
 ## [1.6.1] — 2026-10-21
 
 ### Fixed
