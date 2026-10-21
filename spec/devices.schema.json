@@ -357,6 +357,8 @@
         "support": { "enum": ["hardware_verified", "app_traced", "modelled"], "description": "The row's evidence. app_traced = the row's facts traced on the control-screen path and cited in doc-ref (a gap the trace knows of is named in doc); hardware_verified = app_traced, and the control path also observed on a device (doc names the device, the date and what was seen); modelled = inferred, not traced, or traced but held because the library does not yet send what the app sends (doc names the gap); admitted only on the client's opt-in." },
         "power_read": { "$ref": "#/$defs/family/properties/client_profile/properties/power_read" },
         "power_live": { "$ref": "#/$defs/family/properties/client_profile/properties/power_live" },
+        "heartbeat": { "$ref": "#/$defs/commandId", "enum": ["power", "heartbeat", "volume", "cmd_36"], "description": "The keep-alive read the control screen sends while the link is up (timing.heartbeat): aa <command> with the zero fill, govee_ble_frame read_request with no selector. The command is a govee_common::command member id: the ConnectHeartbeat type the screen's view model picks, ShareVM.K3 = ConnectHeartbeat.a(I3()): 1 power = aa 01 when I3 is true, 2 heartbeat = aa 00 when it is false (ConnectHeartbeat.c also maps 3 -> aa 33 and 4 -> aa 36); or the controller of the IHeart its A3 sets (BleComm.l: aa 36 on H6047 / H6042, aa 33 on H610A); or the plug screens' (h5080 BleComm.l HeartControllerV2, ctlchannel HeartGMessage: aa 01). Set on each row with support, which cites the deciding Class.method in doc-ref; no family default." },
+        "heartbeat_timing": { "enum": ["fixed_rate", "after_quiet"], "description": "When the heartbeat goes out (timing.heartbeat.timing): 'fixed_rate' = every interval_ms from the screen's start (AbsBle.HeartRunnable; a tick due while the link is busy is dropped, not queued); 'after_quiet' = interval_ms after the last frame the screen sent, every send restarting the wait (ctlchannel HeartHandler.e). Absent = fixed_rate." },
         "mode_color_parse": { "$ref": "#/$defs/modeColorParse" },
         "mode_color_parse_status": { "$ref": "#/$defs/family/properties/client_profile/properties/mode_color_parse_status" },
         "relay_power": { "$ref": "#/$defs/family/properties/client_profile/properties/relay_power" },
@@ -412,7 +414,8 @@
         "doc-ref": { "$ref": "#/$defs/docRef" }
       },
       "allOf": [
-        { "if": { "required": ["support"] }, "then": { "required": ["models", "pacts", "capabilities", "zones", "account_lock", "connect_reads", "connect_writes", "doc", "doc-ref"] } },
+        { "if": { "required": ["support"] }, "then": { "required": ["models", "pacts", "capabilities", "zones", "account_lock", "connect_reads", "connect_writes", "heartbeat", "doc", "doc-ref"] } },
+        { "if": { "required": ["heartbeat_timing"] }, "then": { "required": ["heartbeat"] } },
         { "if": { "required": ["support", "connectivity"] }, "then": { "properties": { "connectivity": { "contains": { "const": "ble" } } } } },
         { "if": { "required": ["capabilities"], "properties": { "capabilities": { "contains": { "const": "scenes" } } } }, "then": { "required": ["scene_dialect"] } },
         { "if": { "required": ["support", "relay_power"] }, "then": { "required": ["power_resync"] } },
@@ -1008,7 +1011,33 @@
         "connection": { "type": "object", "additionalProperties": true },
         "command": { "type": "object", "additionalProperties": true },
         "multi_packet": { "type": "object", "additionalProperties": true },
-        "ota": { "type": "object", "additionalProperties": true }
+        "ota": { "type": "object", "additionalProperties": true },
+        "heartbeat": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["interval_ms", "frame", "timing", "skip", "reply", "failure", "firmware", "deviations", "doc-ref"],
+          "description": "The keep-alive read the control screens send while the link is up; each row with support names its command (clientRow heartbeat) and timing (clientRow heartbeat_timing).",
+          "properties": {
+            "interval_ms": { "type": "integer", "minimum": 1, "description": "The beat period, and the after_quiet wait (AbsBle.F; BleClientProxy.Builder f)." },
+            "frame": { "type": "string", "description": "The bytes of one beat." },
+            "timing": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["fixed_rate", "after_quiet"],
+              "properties": {
+                "fixed_rate": { "type": "string", "description": "clientRow heartbeat_timing fixed_rate." },
+                "after_quiet": { "type": "string", "description": "clientRow heartbeat_timing after_quiet." }
+              },
+              "description": "The two mechanisms, one per heartbeat_timing value."
+            },
+            "skip": { "type": "string", "description": "When a due tick sends nothing." },
+            "reply": { "type": "string", "description": "What the screen does with the reply." },
+            "failure": { "type": "string", "description": "How a beat is written, and what its failure does." },
+            "firmware": { "type": "string", "description": "FIRMWARE-SOURCED: what the device does without it." },
+            "deviations": { "type": "array", "minItems": 1, "items": { "type": "string" }, "description": "PROCEDURAL: where a client of this spec (govee-ble-local) differs from the app, each a decision." },
+            "doc-ref": { "$ref": "#/$defs/docRef" }
+          }
+        }
       }
     }
   }

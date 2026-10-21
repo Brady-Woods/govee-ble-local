@@ -296,6 +296,14 @@ def test_read_request(name: str, lib: Callable[[], bytes], spec: Callable[[], by
     assert lib() == spec(), name
 
 
+def test_heartbeat_request() -> None:
+    # The four ConnectHeartbeat types (ConnectHeartbeat.c: 1 -> aa 01, 2 -> aa 00, 3 -> aa 33, 4 -> aa 36),
+    # and the old screens' 0xAA 00 HeartControllerNoEvent.
+    for heartbeat_type, command in ((1, 0x01), (2, 0x00), (3, 0x33), (4, 0x36)):
+        assert b.heartbeat(command) == C.read_connect_heartbeat(heartbeat_type), heartbeat_type
+    assert b.heartbeat(0x00) == C.read_heartbeat()
+
+
 def test_parametrised_read_requests() -> None:
     for seq in range(256):
         assert b.bulb_group_query(seq) == C.read_color_group(seq)

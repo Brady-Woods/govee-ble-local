@@ -18,6 +18,7 @@ fail service discovery, etc. Two peripherals answer on top of it:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import contextvars
 import functools
 import inspect
@@ -56,6 +57,28 @@ def ble_device(address: str, name: str | None, details: dict[str, Any] | None = 
 def frame(*b: int) -> bytes:
     body = bytes(b) + b"\x00" * (19 - len(b))
     return body + bytes([checksum(body)])
+
+
+@contextlib.contextmanager
+def virtual_time() -> Iterator[None]:
+    """The running loop on a virtual clock: whenever it would wait for its next timer it jumps to it
+    (nothing here does real I/O), so a test spans seconds of loop time at once."""
+    loop = asyncio.get_running_loop()
+    now = [loop.time()]
+    select = loop._selector.select  # type: ignore[attr-defined]
+
+    def jump(timeout: float | None = None) -> object:
+        if timeout:
+            now[0] += timeout
+        return select(0)
+
+    loop.time = lambda: now[0]  # type: ignore[method-assign]
+    loop._selector.select = jump  # type: ignore[attr-defined]
+    try:
+        yield
+    finally:
+        del loop.time  # type: ignore[method-assign]
+        del loop._selector.select  # type: ignore[attr-defined]
 
 
 def status_burst(tlvs: bytes) -> list[bytes]:

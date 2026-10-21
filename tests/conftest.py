@@ -115,6 +115,15 @@ def scene_store(sku: str, catalog: dict[str, dict[str, Any]]) -> str:
     return json.dumps({"pool": pool, "skus": {sku: list(range(len(pool)))}, "by_set": {}})
 
 
+def no_heartbeat(profile: Any) -> Any:
+    """``profile`` sending no heartbeat (1.5.0's behaviour): for a test that pins exactly what a link held
+    2 s or more sends, or the device's own timer without the beat. The documented opt-out, the one field
+    (its timing, ``after_quiet`` on goodsType 43, is then ignored)."""
+    import dataclasses
+
+    return dataclasses.replace(profile, heartbeat=None)
+
+
 # A valid RGB scene blob (ScenesRgb.isValidProtocolBytes, three V1 a3 frames): H61A8's Halloween effect at
 # code 110, which its library response lists after the cmdVersion-1 one (code 2497) the catalog holds.
 RGB_BLOB = "gwb/9QAFAP///wUA/+n/BQD///8FAP/p2QUA//j/BgAE/x4A/1oA/zIA/3gA"

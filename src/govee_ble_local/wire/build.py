@@ -821,6 +821,16 @@ def power_query() -> bytes:
     return _request(_C.Command.power)
 
 
+def heartbeat(command: int) -> bytes:
+    """``aa <command>`` with the zero fill: the keep-alive read a control screen sends while the link is up
+    (spec devices.yaml timing.heartbeat; the row's ``heartbeat``), the spec's read_request with no selector,
+    as the app's heart controllers build it (``Controller4HeartCommon`` for ``ConnectHeartbeat.c``'s byte, an
+    ``IHeart``'s controller, ``HeartGMessage.getSendBytes``). ``command`` is a govee_common command code:
+    aa 01 (``power``, the same bytes as :func:`power_query`), aa 00, aa 33 or aa 36 (the same bytes as
+    :func:`bar_switch_query`)."""
+    return _request(_C.Command(command))
+
+
 def brightness_query() -> bytes:
     """aa 04: read the brightness (reply: parse_brightness). No selector byte, as the app sends it
     (ControllerBrightness.Companion.b, ControllerBrightness.java:40-48)."""

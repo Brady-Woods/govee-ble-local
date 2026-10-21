@@ -155,7 +155,7 @@ enable notifications on ALL chars of svc     BleCommImp.c()/d()
    ▼
 (optional) encryption handshake             §9
    ▼
-CONNECTED — ready for commands. Heartbeat runnable polls to keep alive.
+CONNECTED — ready for commands. The screen's heartbeat (an aa read every 2000 ms) keeps the link.
 ```
 
 Details:
@@ -169,11 +169,19 @@ Details:
 - **MTU**: default 20/23 bytes. `BleController.J(mtu)` calls `requestMtu`. The encryption layer
   tracks the negotiated MTU (`EncryptionManager.f115473c`, default 20) and splits ciphertext
   accordingly. BLE 5 / 2M PHY support is probed (`BleController.P()`).
-- **Heartbeat / keep-alive**: `AbsHeartRunnable` periodically issues a heart command so the device does
-  not auto-disconnect. The byte depends on the screen. Legacy controllers use `SINGLE_HEART = 0x01`
-  (`AA 01`). Newdetail `ShareVM` screens pick it with `ConnectHeartbeat.c(K3())`; when `I3()` is false
-  (H60A1 `VM4Light.I3:513-515`, `VM4LightH60A6.I3:684-686`) that is `0x00` (`SINGLE_HEART_BEAT`), so
-  `BleComm.l:76-80` sends a `Controller4HeartCommon` for byte `0x00`, i.e. `AA 00`. Auto-disconnect status `19` triggers
+- **Heartbeat / keep-alive**: while the screen is open its heartbeat sends one 20-byte read, `AA <cmd>` with
+  the zero fill, every 2000 ms (`AbsBle.F`; `AbsBle.HeartRunnable` reposts itself at that fixed rate, and a tick
+  the screen skips is dropped: `AbsHeartRunnable.a`). The byte depends on the screen. Legacy controllers use
+  `SINGLE_HEART = 0x01` (`AA 01`). Newdetail `ShareVM` screens pick it with `ConnectHeartbeat.c(K3())`: `AA 01`
+  when `I3()` is true; `0x00` (`SINGLE_HEART_BEAT`) when it is false (H60A1 `VM4Light.I3:513-515`,
+  `VM4LightH60A6.I3:684-686`), so `BleComm.l:76-80` sends a `Controller4HeartCommon` for byte `0x00`, i.e.
+  `AA 00`; or the controller of the `IHeart` the screen's `A3()` sets (H6047 / H6042: `AA 36`). The ctlchannel
+  plug screen (goodsType 43) sends its `HeartGMessage` (`AA 01`) once 2000 ms pass with nothing sent
+  (`HeartHandler.e` restarts the wait on every send). A newdetail screen sends none until its connect-time info
+  read is over (`ShareVM.R` -> `updateSkipHeart`), nor while a compose or multi-packet send is in flight
+  (`AbsBle.I`). Per row: `devices.yaml` clientRow `heartbeat` / `heartbeat_timing`, and `timing.heartbeat`.
+  FIRMWARE-SOURCED: the H6006, H5083, H60A6 and H6047 firmware drop a link that has had no write for 10-11 s
+  (H6006 `FUN_9b02801c`); the H6008 firmware has no such timer. Auto-disconnect status `19` triggers
   `EventAutoDisconnect`.
 - **Reconnect**: `ReconnectInfo` retries within the 15 s window; skips reconnect while the app
   is backgrounded unless flagged.
@@ -681,7 +689,7 @@ shared opcodes:
 
 | Command | Byte | Direction | Meaning |
 |---------|------|-----------|---------|
-| `SINGLE_HEART` | `0x01` | W | heartbeat / keep-alive (also `SINGLE_MAIN_SWITCH`). Newdetail `ShareVM` screens choose the byte with `ConnectHeartbeat.c(K3())`. With `I3()` false (H60A1, H60A6) it is `0x00` = `SINGLE_HEART_BEAT`, so they send `AA 00`. Firmware-sourced: the firmware answers that with an explicit no-op echo (H60A6 tbh[0] → `0x9b026b20`, H60A1 → `0x9b02607e`) |
+| `SINGLE_HEART` | `0x01` | R | heartbeat / keep-alive `AA 01`, every 2000 ms while the screen is open (also `SINGLE_MAIN_SWITCH`). Newdetail `ShareVM` screens choose the byte with `ConnectHeartbeat.c(K3())`. With `I3()` false (H60A1, H60A6, H60B1, H6098 / H8098 / H6690, H7056, H1630) it is `0x00` = `SINGLE_HEART_BEAT`, so they send `AA 00`; H6047 / H6042 send `AA 36` (their `IHeart`). Per row: `devices.yaml` clientRow `heartbeat`. Firmware-sourced: the firmware answers `AA 00` with an explicit no-op echo (H60A6 tbh[0] → `0x9b026b20`, H60A1 → `0x9b02607e`) |
 | power (`SINGLE_SWITCH`) | `0x01` | W/R | on/off. Lights: payload `01`/`00`. Plugs: `(relay mask << 4) + on bits` (`SwitchControllerV2.q`); H5083 sends `0x11` on / `0x10` off (`H5083NewDetailViewModel.x0`). Firmware-sourced for H5083 (`H5083.bin@0x9b01f6b4`): only the outlet-0 mask bit (bit 4) is honoured. `01`/`00` is acked but changes nothing, and `33 01` is served only after the `33 B2` pairing. The `AA 01` reply is `00`/`01`. |
 | `SINGLE_BRIGHTNESS` | `0x04` | W/R | brightness |
 | `SINGLE_MODE` | `0x05` | W/R | mode + sub-mode (color/scene/music/DIY) |
@@ -831,8 +839,10 @@ it is not a fixed constant.)
 
 ### Heartbeat — `HeartController`
 ```
-AA 01 00 .. CK      // periodic keep-alive; device echoes status
+AA 01 00 .. CK      // periodic keep-alive, every 2000 ms; the reply carries the power / relay byte
 ```
+The command is the screen's (`devices.yaml` clientRow `heartbeat`): `AA 01`, `AA 00`, `AA 33` or `AA 36`
+(`timing.heartbeat`).
 
 ### Read firmware version — `SoftVersionController`
 ```
@@ -1794,9 +1804,11 @@ onCharacteristicChanged(resp) ─▶ match echoed [proType,cmd] & value[2]==0 �
    └── timeout: RunnableOvertime ─▶ Event4ResponseOverTime ─▶ retry; if fail-count>10 ─▶ disconnect ─┘
 ```
 
-Heartbeat: `AbsHeartRunnable` polls periodically (per-device) to keep the link alive. The byte depends
-on the screen: `SINGLE_HEART 0x01` on legacy controllers, while newdetail `ShareVM` screens use
-`ConnectHeartbeat.c(K3())`, which is `AA 00` on H60A1/H60A6 ([§3](#3-connection-lifecycle), [§5.1](#51-core-control)).
+Heartbeat: `AbsHeartRunnable` sends one read every 2000 ms (`AbsBle.F`) to keep the link alive, outside this
+queue (`ControllerComm.l` / `m`: no ack wait, no failure count). The byte depends on the screen:
+`SINGLE_HEART 0x01` on legacy controllers, while newdetail `ShareVM` screens use `ConnectHeartbeat.c(K3())`,
+which is `AA 00` on H60A1/H60A6 ([§3](#3-connection-lifecycle), [§5.1](#51-core-control); `devices.yaml`
+`timing.heartbeat`).
 GATT status `19` → `EventAutoDisconnect`.
 
 ## 21. Expanded command catalog

@@ -14,13 +14,14 @@ separate account-lock capability.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 from typing import Any, Final, Literal, NamedTuple, get_args
 
 from .._generated import devices as _devices
 from ..exceptions import GoveeBleInvalidValue
 from ..models import Capability, Encryption, Zone
+from ..transport.connection import HeartbeatTiming
 from ..wire import _spec
 from ..wire.build import ColorScheme
 from . import _resolve
@@ -53,6 +54,8 @@ RelayPower = Literal["outlet0", "all_outlets", "total_switch"]
 # 1.x's 0xAC status request, the H60A6's (DeviceProfile.status_read): 0x41 seg info, 0x30 zones, 0xA5 colour
 # groups.
 _CMD = _spec.Common.Command
+# The keep-alive reads' command codes (DeviceProfile.heartbeat): aa 01, aa 00, aa 33 and aa 36.
+_HEARTBEATS: Final = frozenset(int(_CMD[name]) for name in _resolve.HEARTBEATS)
 _H60A6_STATUS_READ: Final = (int(_CMD.cmd_41), int(_CMD.cmd_30), int(_CMD.color_group))
 # 1.x's 0xAC reply decode, the H60A6 status screen's (DeviceProfile.status_decode): its devices.yaml row's
 # wire facts (h60ax goodsType 303): the zone bits, the power memory and the colour groups (four [brightness,
@@ -325,6 +328,23 @@ class DeviceProfile:
     off (``ApplyOffNeedOpenConfig``: H6009 / H6010; ``ApplyOffNeedOpenHelper.b`` / ``.d``;
     ``DeviceSwitchConfig.getSwitch``; a devices.yaml ``by_model`` ``scene_power_on``). ``Device.set_scene``
     and ``set_scene_by_name`` send it first, ahead of any upload, while ``state.is_on`` is not True."""
+    heartbeat: int | None = field(default=None, kw_only=True)
+    """The keep-alive read the SKU's control screen sends while the link is up, as its command code, one of
+    the four keep-alive command codes (``0x01`` aa 01, ``0x00`` aa 00, ``0x33`` aa 33, ``0x36`` aa 36: a
+    devices.yaml row's ``heartbeat``, the screen's ``ConnectHeartbeat`` type or ``IHeart``), or None for none
+    (the default, so a profile built by hand sends none, as in 1.5.0). The firmware of several SKUs drops a
+    link that has had no write for 10-11 s (spec devices.yaml timing.heartbeat). A :class:`~.device.Device`
+    sends ``aa <heartbeat>`` every ``const.HEARTBEAT_INTERVAL`` (2 s) while its link is up, never between the
+    reads of one poll or the frames of one scene write, and never keeping a link up longer than its idle
+    delay would. To send none on any SKU whose row has one, clear this one field:
+    ``dataclasses.replace(profile, heartbeat=None)``; :attr:`heartbeat_timing` (``"after_quiet"`` on H5080 /
+    H5083 / H5085) is then ignored and needs no reset."""
+    heartbeat_timing: HeartbeatTiming = field(default="fixed_rate", kw_only=True)
+    """When :attr:`heartbeat` goes out: ``"fixed_rate"``, every interval from the session's start (the light
+    screens' and legacy plug screens' ``AbsBle.HeartRunnable``), or ``"after_quiet"``, an interval after the
+    last operation that sent a frame, each one restarting the wait (goodsType 43's ctlchannel
+    ``HeartHandler.e``, which restarts it on every send: H5080, H5083 and H5085). Checked either way, and
+    ignored without a :attr:`heartbeat`: then no beat goes out at all, on either timing."""
 
     def __post_init__(self) -> None:
         """Validate each field: GoveeBleInvalidValue (a ValueError) on a value no Device can use.
@@ -348,6 +368,7 @@ class DeviceProfile:
             ("readback", ReadBack),
             ("color_readback", ColorReadBack),
             ("relay_power", RelayPower),
+            ("heartbeat_timing", HeartbeatTiming),
         ):
             value = getattr(self, name)
             if value not in get_args(allowed):
@@ -399,6 +420,13 @@ class DeviceProfile:
         self._check_scene_versions_by_firmware(where)
         self._check_scene_versions_by_pact(where)
         self._check_ranges_by_pact(where)
+        # heartbeat_timing is checked above whatever the heartbeat, and ignored without one, so
+        # replace(profile, heartbeat=None) alone turns the beat off on every SKU.
+        beat = self.heartbeat
+        if beat is not None and (
+                isinstance(beat, bool) or not isinstance(beat, int) or beat not in _HEARTBEATS):
+            raise GoveeBleInvalidValue(
+                f"{where}: heartbeat={beat!r} (0x00, 0x01, 0x33 or 0x36: a keep-alive read, or None)")
 
     def _check_ranges_by_pact(self, where: str) -> None:
         """:attr:`kelvin_by_pact` / :attr:`brightness_by_pact`'s rules: ``(pact_type, pact_code)`` keys of
@@ -529,6 +557,7 @@ def _from_spec(skus: tuple[str, ...], facts: Mapping[str, Any]) -> DeviceProfile
     kw["scene_versions"] = frozenset(kw["scene_versions"])
     if "status_read" in kw:
         kw["status_read"] = tuple(int(_CMD[name]) for name in kw["status_read"])
+    kw["heartbeat"] = int(_CMD[kw["heartbeat"]])
     return DeviceProfile(skus=skus, **kw)
 
 
@@ -596,12 +625,22 @@ def profile_for(sku: str, *, pact: tuple[int, int] | None = None, goods_type: in
 def refuses_pact(profile: DeviceProfile, sku: str, pact: tuple[int, int]) -> bool:
     """Whether ``sku``'s routes to ``profile`` (any support level) all refuse ``pact``, and the 1.x pact
     fallback doesn't route it there either: :func:`profile_for` would not give ``profile`` for this
-    advertisement. False for a profile no route of ``sku`` carries (built by hand: nothing to check)."""
+    advertisement. A route's profile with only its heartbeat cleared (the documented opt-out,
+    ``dataclasses.replace(profile, heartbeat=None)``) counts as that route's. False for a profile no route
+    of ``sku`` carries (built by hand: nothing to check)."""
     key = sku.upper()
-    mine = [r for table in (_ADMITTED, _MODELLED) for r in table[1].get(key, ()) if r.profile is profile]
+    mine = [r for table in (_ADMITTED, _MODELLED) for r in table[1].get(key, ())
+            if _routed(r.profile, profile)]
     if not mine or any(r.pacts is None or pact in r.pacts for r in mine):
         return False
-    return profile_for(key, pact=pact) is not profile
+    return not _routed(profile_for(key, pact=pact), profile)
+
+
+def _routed(routed: DeviceProfile | None, profile: DeviceProfile) -> bool:
+    """``profile`` is ``routed``, or ``routed`` with only its heartbeat cleared (the documented opt-out,
+    ``dataclasses.replace(profile, heartbeat=None)``), which keeps the row's routing."""
+    return routed is not None and (routed is profile or (
+        profile.heartbeat is None and replace(routed, heartbeat=None) == profile))
 
 
 def supported_skus(*, allow_modelled: bool = False) -> list[str]:

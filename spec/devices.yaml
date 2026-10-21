@@ -87,6 +87,104 @@ timing:
     default: 23
     requested: 512
     source: "h70b2/origin/ble/MtuConfig.java"
+  heartbeat:
+    interval_ms: 2000
+    frame: >-
+      aa <command>, the zero fill and the xor: govee_ble_frame read_request with no selector (the controller's
+      BleUtils.Companion.p(0xAA, command, null)). The command is the row's heartbeat (clientRow heartbeat): aa 01,
+      aa 00, aa 33 or aa 36.
+    timing:
+      fixed_rate: >-
+        The light screens and the legacy plug screens (AbsBle): AbsBle.r0 posts the HeartRunnable and AbsBle.t0
+        removes it. Each run (AbsHeartRunnable.a) sends the beat (HeartRunnable.d) unless the screen's skip test holds
+        (HeartRunnable.b -> Q), then reposts itself F() = 2000 ms later (HeartRunnable.c), so a skipped tick is
+        dropped, not queued, and the cadence does not move.
+      after_quiet: >-
+        The ctlchannel plug screen (goodsType 43, BaseSkuSharedViewModel.I: a HeartGMessage of aa R() = aa 01):
+        HeartHandler.startHeart waits f = 2000 ms (BleClientProxy.Builder), and HeartHandler.e restarts that wait on
+        every send (BleClientProxy.D / E), the beat's own included. So a beat goes out only once 2000 ms pass in which
+        the screen sent nothing.
+    skip: >-
+      A newdetail screen skips every tick until its connect-time info read is over (ShareVM.R ->
+      updateSkipHeart(status != 2) sets Ble4NewDetail's static skip flag, which Ble4NewDetail.Q tests): its first beat
+      follows the info read. Every AbsBle screen also skips a tick during an OTA or a reboot (key_flag_updating /
+      key_flag_rebooting) and while a compose or multi-packet send is in flight (AbsBle.I: ComposeBleComm.x,
+      AbsMultipleBleComm.e, AbsMultiple4PtRealBleComm.a); not for a plain single write. The legacy plug screens
+      (h5080 Ble.Q) have no info gate: they test only the OTA / reboot flags and AbsBle.I.
+    reply: >-
+      An aa 01 screen (ConnectHeartbeat type 1, no IHeart): newdetail BleComm.G hands each notified aa 01 frame to
+      ShareVM.N3, which sets the switch from byte 2 == 1 (J3; on a change most screens re-read, e.g. bulblight
+      VM4Light.J3's Compose4Off2On) and passes the frame to IFeastChange.parseFeastStatus. An aa 00 screen (type 2):
+      the reply changes nothing (G hands on type 1 only). An A3 IHeart (H6047 / H6042, aa 36): every notified frame
+      goes to its parseHeart, which sets the bars and the feast switch. The legacy plugs: HeartControllerV2 ->
+      EventHeartV2, the outlet bits; the ctlchannel plug: BaseSkuRepo.parserHeartBeat, the power from byte 2.
+    failure: >-
+      The beat is written outside the command queue (HeartRunnable.d -> AbsBleComm.y / z -> ControllerComm.l / m, an
+      executor of its own): a RunnableSendMsg (ControllerComm.g: 100 ms, 3 retries) that writes once and, while the
+      local write call fails, retries up to 3 times 100 ms apart (up to 4 attempts). No ack or reply is waited for, a
+      missing reply is not counted, and a failed beat ends nothing (EventHeart carries commandRetry false).
+    firmware: >-
+      FIRMWARE-SOURCED: the device enforces it. Its timer task adds one to a counter every second and, past 10,
+      disconnects the link (H6006 SW1.00.59 FUN_9b02801c: cmp 0xa, then HAL_BLE_Disconnect FUN_9b03543c, which
+      posts io message 0x101, whose handler FUN_9b03519c disconnects with reason 0x13); every write to 2b11 zeroes
+      the counter (FUN_9b028b64, from the BLE event handler's write case). So a link with no write for 10-11 s is
+      dropped, and the heartbeat, a write every 2 s, keeps it. The same timer: H5083 SW1.00.30 (firmware.yaml
+      h5083_sw1_00_30 heartbeat_ticks), H60A6 SW1.00.41 (FUN_9b02a2bc) and the H6047 BLE MCU 1.00.12 (now - last
+      write > 10000 ms, FUN_01005ce8). H6008 SW1.01.25 has none: its reset hook FUN_9b02c0d4 is an empty return.
+    deviations:
+      - >-
+        PROCEDURAL (govee-ble-local): the link lasts as long as the library's idle policy keeps it (8 s after a read,
+        30 s after a write, or for good with idle disconnect off), not while a screen is open; a beat never extends it
+        and never delays a command (an idle or caller's disconnect, or an operation, due while a beat writes cancels
+        that write rather than wait for it).
+      - >-
+        PROCEDURAL (govee-ble-local): a tick is dropped while any operation holds or waits for the link, or while a
+        multi-operation sequence holds the heartbeat (a poll's reads, a scene's upload and activation, a bar
+        read-modify-write, a plug's power write and re-sync); the app skips for a compose or multi-packet send and its
+        info read only, not for a plain write.
+      - >-
+        PROCEDURAL (govee-ble-local): the first beat comes one interval after the session is set up (the handshake,
+        any unlock and the session writes), not on the app's connect phase (at most 2 s apart); the legacy plug
+        screens have no info gate at all. On an after_quiet row the wait restarts when each operation that sent a
+        frame ends, not at each send within it (HeartHandler.e restarts it on every send).
+      - >-
+        PROCEDURAL (govee-ble-local): the reply is not folded into state. It is left in the receive queue, which the
+        next operation drains (as it drains an ee 30 push). The follow-up: fold heartbeat replies and ee 30 pushes
+        through one hook.
+      - >-
+        PROCEDURAL (govee-ble-local): one write without response, bounded at 1 s and not retried, and cut short by
+        a disconnect or an operation that wants the link (above), where the app's runs to its end beside its command
+        queue.
+    doc-ref:
+      - base-classes10/com/govee/base2light/ble/AbsBle.java:79-138,237-239,250-261,686-690,707-710
+      - base-classes10/com/govee/base2light/ble/AbsHeartRunnable.java:8-15
+      - base-classes12/com/govee/common2light/capability/connect/ConnectHeartbeat.java:15-17,26-38
+      - base-classes11/com/govee/base2light/pact/newdetail/ShareVM.java:979-1015,1348-1350,1362-1364,1401-1408
+      - base-classes11/com/govee/base2light/pact/newdetail/ble/BleComm.java:37-47,76-84
+      - base-classes11/com/govee/base2light/pact/newdetail/ble/Ble4NewDetail.java:32-37
+      - split_bulblightstringv1/com/govee/bulblightstringv1/bulblight/VM4Light.java:420-447
+      - split_h6047/com/govee/h6047/detail/NewDetailVm.java:581-612
+      - base-classes10/com/govee/base2light/ble/comm/AbsBleComm.java:476-484
+      - base-classes10/com/govee/base2light/ble/comm/ControllerComm.java:69-71,131-147
+      - base-classes10/com/govee/base2light/ble/comm/RunnableSendMsg.java:22-28,36-55
+      - base-classes10/com/govee/base2light/ble/controller/EventHeart.java:9-12
+      - split_plugnew/com/govee/h5080/ble/Ble.java:23-28
+      - split_plugnew/com/govee/h5080/ble/controller/HeartControllerV2.java:17-35
+      - base-classes4/com/govee/skubusiness/viewmodel/BaseSkuSharedViewModel.java:434-449,495-497
+      - base-classes4/com/govee/skubusiness/repo/BaseSkuRepo.java:396-411
+      - base-classes13/com/govee/ctlchannel/heart/HeartGMessage.java:80-83
+      - base-classes13/com/govee/ctlchannel/heart/HeartHandler.java:98-109,130-139
+      - base-classes13/com/govee/ctlchannel/ble/BleClientProxy.java:175-184,527-531,544-548
+      - H6006 FUN_9b02801c @0x9b0284a0-0x9b0284da
+      - H6006 FUN_9b03543c @0x9b03543c
+      - H6006 FUN_9b03519c @0x9b0351b2
+      - H6006 FUN_9b028b64 @0x9b028b64
+      - H6006 FUN_9b03de60 @0x9b03df48
+      - H5083 FUN_9b020dd8 @0x9b020dd8
+      - H5083 FUN_9b032d14 @0x9b032d80
+      - H60A6 FUN_9b02a2bc @0x9b02a2bc
+      - H6047 FUN_01005ce8 @0x010064f4
+      - H6008 FUN_9b02c0d4 @0x9b02c0d4
 
 # ─────────────── Per-device authorization secret (families tagged `encryption: secret_key_pairing`) ───────────────
 # secret_key_pairing = account-lock only; the wire cipher is picked at connect from the advert / BGC info (BleUtil.java:839).
@@ -592,6 +690,7 @@ families:
           status_read: [cmd_41, cmd_30, color_group]
           connect_reads: []
           connect_writes: []
+          heartbeat: heartbeat
           by_pact:
             "1,1": { status_read: [cmd_41, cmd_30], capabilities: [power, brightness, rgb, color_temp, scenes], doc: "no part colour: getColorPieceSize(303, 1, 1) = 1 and supportPartColor4H60A6 needs pact code >= 2, so no 0xA5 request and no segment colour (the wire by_pact 1,1 branch)" }
           doc: >-
@@ -611,7 +710,7 @@ families:
             - split_h60ax/com/govee/pact_h60a0/pact/Support.java:91-100,154-159,434-436,472-482
             - base-classes2/com/govee/shared/checker/KmpGoodsType.java:189
             - split_h60ax/com/govee/pact_h60a0/adjust/h60a6/VM4LightH60A6$afterConnectedSingleReadDeviceInfo$1.java:133,158-161
-            - split_h60ax/com/govee/pact_h60a0/adjust/h60a6/VM4LightH60A6.java:691-697,1212-1216,1252-1271
+            - split_h60ax/com/govee/pact_h60a0/adjust/h60a6/VM4LightH60A6.java:684-686,691-697,1212-1216,1252-1271
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:405-408,789-792,1426-1428
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:251-259
         "324": { models: [H60C1], mode_color_parse: gradual_15 }   # H60C1; split_h60ax/com/govee/pact_h60a0/adjust/h60c1/Info4DetailH60C1.java:381
@@ -681,6 +780,7 @@ families:
           brightness_range: [1, 100]
           connect_reads: [brightness, gradual, cmd_36, color_group]
           connect_writes: []
+          heartbeat: cmd_36
           doc: >-
             H6047 on the old detail screen (h6047 pact Model.t -> detail/NewDetailAc), which sends no 0xAC status read
             (ac 03 03 41 30 a5 returned no frame on hardware, CHANGELOG 1.0.1). Connect: the default Compose4InfoBleIot read
@@ -698,15 +798,16 @@ families:
             - split_h6047/com/govee/h6047/pact/Support.java:43-45,121-129,186-188,345-350
             - base-classes2/com/govee/shared/config/h6047/H6047SceneConfig.java:45-47
             - split_h6047/com/govee/h6047/detail/NewDetailVm$connectBleSuc$1.java:141-161
-            - split_h6047/com/govee/h6047/detail/NewDetailVm.java:630-651,695-699,862-864
+            - split_h6047/com/govee/h6047/detail/NewDetailVm.java:574-614,630-651,695-699,862-864
             - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4InfoBleIot$iControllerStrategy$1.java:229-233
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:3946,16858-16861
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:406,654-658,1702-1704
             - base-classes10/com/govee/base2light/capability/legacy/LegacyColorCapabilityProvider.java:218-221
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:251-259
-        "277": { power_read: ac_status, power_live: [push_30], mode_color_parse: gradual_15 }   # H6039; ee 30 bit 0 of frame[3]; split_h6047/com/govee/h6047/newdetail/Info4Detail.java:400-433
-        "288": { power_read: ac_status, power_live: [push_30], mode_color_parse: gradual_15 }   # H6038; ee 30 per bar frame[4] / frame[5]
-        "298": { power_read: ac_status, power_live: [push_30], mode_color_parse: gradual_15 }   # H6048; ee 30 per bar frame[4] / frame[5]
+            - split_h6047/com/govee/h6047/ble/controller/ComposeLightHeartController.java:9-11
+        "277": { power_read: ac_status, power_live: [push_30], heartbeat: heartbeat, mode_color_parse: gradual_15 }   # H6039; ee 30 bit 0 of frame[3]; split_h6047/com/govee/h6047/newdetail/Info4Detail.java:400-433; aa 00: I3 false (split_h6047/com/govee/h6047/newdetail/vm/VM4Light.java:616-618)
+        "288": { power_read: ac_status, power_live: [push_30], heartbeat: heartbeat, mode_color_parse: gradual_15 }   # H6038; ee 30 per bar frame[4] / frame[5]; aa 00: I3 false (split_h6047/com/govee/h6047/newdetail/h6038/VM4H6038.java:771-773)
+        "298": { power_read: ac_status, power_live: [push_30], heartbeat: heartbeat, mode_color_parse: gradual_15 }   # H6048; ee 30 per bar frame[4] / frame[5]; aa 00: I3 false (split_h6047/com/govee/h6047/newdetail/h6048/VM4H6048.java:744-746)
         "197":   # H6042, the old detail screen
           models: [H6042]
           pacts: ["1,1", "2,1"]
@@ -721,6 +822,7 @@ families:
           brightness_range: [1, 100]
           connect_reads: [brightness, gradual, cmd_36, color_group]
           connect_writes: []
+          heartbeat: cmd_36
           doc: >-
             H6042 on the old detail screen (h6047 pact Model.t -> detail/NewDetailAc; its n4 = Support.supportPackCheck
             -> supportPactV3: the (1,1) / (2,1) registered for 197). It sends no 0xAC status read (the aa ac read is
@@ -752,7 +854,7 @@ families:
           doc-ref:
             - split_h6047/com/govee/h6047/pact/Support.java:26,52-57,98-112,121-133,155-157,178-180,214-220,273-288,345-350
             - split_h6047/com/govee/h6047/pact/Model.java:44-58
-            - split_h6047/com/govee/h6047/detail/NewDetailVm.java:293-302,343-380,574-610,669-725,742-770,980-1009,1183-1190,1341-1369
+            - split_h6047/com/govee/h6047/detail/NewDetailVm.java:293-302,343-380,574-614,669-725,742-770,980-1009,1183-1190,1341-1369
             - split_h6047/com/govee/h6047/detail/NewDetailVm$connectBleSuc$1.java:93-105,141-162
             - split_h6047/com/govee/h6047/detail/header/HeaderDelegate.java:364,372
             - split_h6047/com/govee/h6047/detail/config/DetailConfig.java:43-54,65-75,100-115,131-133
@@ -771,6 +873,7 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:199-214,251-258
             - split_h6047/com/govee/h6047/detail/config/DiyConfig.java:14-26
             - base-classes11/com/govee/base2light/pact/newdetail/content/scene/BaseSceneViewMode.java:880-893,1152-1200
+            - split_h6047/com/govee/h6047/ble/controller/ComposeLightHeartController.java:9-11
       wire_cipher: runtime
       wire:
         doc: "33 36: [54, left, right] on the old detail screen except H6043 [54, index, state] (split_h6047/com/govee/h6047/detail/NewDetailVm.java:695-699); colour groups: Controller4ColorInfoByGroup (base-classes11/com/govee/base2light/kt/general_controller/Controller4ColorInfoByGroup.java:145-175)"
@@ -840,6 +943,7 @@ families:
           kelvin_range: [2700, 6500]
           connect_reads: [brightness]
           connect_writes: []
+          heartbeat: power
           doc: >-
             The bulblight AcNewDetail (bulblightv3 pact Model.t -> VM4Light). Colour version Config.x[64] = 2 (Config.bu):
             RGB Bytes.f, CCT Bytes.p in the both-slot form. Kelvin version 2 = [2700, 6500]. Brightness percent
@@ -902,6 +1006,7 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/content/diy/DiyApplyVM.java:766-775
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/SwitchControllerConfig.java:94-123
             - base-classes9/com/govee/base2home/onOff/DeviceSwitchConfig.java:35-41
+            - split_bulblightstringv1/com/govee/bulblightstringv1/bulblight/VM4Light.java:416-418
         "311": { power_live: [push_30], mode_color_parse: kelvin_only_15 }   # H601E / H601F; split_bulblightstringv1/com/govee/bulblightv3/newdetail/Info4Detail.java:666-706
         "111":   # H1501 / H601A / H601B / H601C / H601D / H801A / H801C / H801D / R1501, the bulblight AcNewDetail
           models: [H1501, H601A, H601B, H601C, H601D, H801A, H801C, H801D, R1501]
@@ -917,6 +1022,7 @@ families:
           kelvin_range: [2700, 6500]
           connect_reads: [brightness]
           connect_writes: [light_effect_stop]
+          heartbeat: power
           doc: >-
             H1501 / H601A / H601B / H601C / H601D / H801A / H801C / H801D / R1501 on the bulblight AcNewDetail
             (bulblightv3 pact Model.t), the 64 screen. Support4BulbLightV3's SKU lists tie H1501 / R1501 and H601A /
@@ -937,7 +1043,7 @@ families:
             - split_bulblightstringv1/com/govee/bulblightv3/pact/Support.java:78-83,357-372,374-379
             - split_bulblightstringv1/com/govee/bulblightv3/pact/Model.java:29-38
             - split_bulblightstringv1/com/govee/bulblightstringv1/bulblight/Support.java:29-32
-            - split_bulblightstringv1/com/govee/bulblightstringv1/bulblight/VM4Light.java:966-983
+            - split_bulblightstringv1/com/govee/bulblightstringv1/bulblight/VM4Light.java:416-418,966-983
             - split_bulblightstringv1/com/govee/bulblightstringv1/bulblight/VM4Light$connectBleSuc$1.java:43-73
             - split_bulblightstringv1/com/govee/bulblightstringv1/bulblight/ControllerStrategyConfig.java:408-447,587-662
             - split_bulblightstringv1/com/govee/bulblightstringv1/bulblight/Support4BulbLightV3.java:30-35,83-85,92-95,37-55
@@ -966,6 +1072,7 @@ families:
             - { min_soft_version: "1.00.15", kelvin_range: [1000, 10000], doc: "KelvinConfig.Config.Z2: versionSoft compared as a string with 1.00.15" }
           connect_reads: [brightness]
           connect_writes: [light_effect_stop]
+          heartbeat: power
           doc: >-
             H1401 / R1401 on the bulblight AcNewDetail (bulblightv3 pact Model.t), the 64 screen. Accepted pacts (1,1),
             (3,1) and (3,2): Support.addSupportPact (supportPact4H1401); the screen's n4 (bulblight Support.e ->
@@ -992,7 +1099,7 @@ families:
             - split_bulblightstringv1/com/govee/bulblightv3/pact/Support.java:99-107,238-254
             - split_bulblightstringv1/com/govee/bulblightv3/pact/Model.java:29-38
             - split_bulblightstringv1/com/govee/bulblightstringv1/bulblight/Support.java:29-32,192-200
-            - split_bulblightstringv1/com/govee/bulblightstringv1/bulblight/VM4Light.java:966-983
+            - split_bulblightstringv1/com/govee/bulblightstringv1/bulblight/VM4Light.java:416-418,966-983
             - split_bulblightstringv1/com/govee/bulblightstringv1/bulblight/VM4Light$connectBleSuc$1.java:43-73
             - split_bulblightstringv1/com/govee/bulblightstringv1/bulblight/ControllerStrategyConfig.java:408-447,587-662
             - split_bulblightstringv1/com/govee/bulblightstringv1/bulblight/Support4BulbLightV3.java:27,30,57-59,68-80,83-85,92-95
@@ -1014,6 +1121,7 @@ families:
           brightness_range: [20, 254]
           connect_reads: [brightness]
           connect_writes: []
+          heartbeat: power
           doc: >-
             H6005 on the bulblight AcNewDetail (bulblightv2 pact Model.t); the mode list comes from the server
             components (VM4Light.X3 false), as for 64. Colour page: Config.x[20] = version 2 = Config.J[2] = Config.bu,
@@ -1039,7 +1147,7 @@ families:
           doc-ref:
             - split_bulblightstringv1/com/govee/bulblightstringv1/bulblightv2/pact/Support.java:26,34-38
             - split_bulblightstringv1/com/govee/bulblightstringv1/bulblightv2/pact/Model.java:8,31-36
-            - split_bulblightstringv1/com/govee/bulblightstringv1/bulblight/VM4Light.java:630-636,966-983,1017-1022,1097-1104
+            - split_bulblightstringv1/com/govee/bulblightstringv1/bulblight/VM4Light.java:416-418,630-636,966-983,1017-1022,1097-1104
             - split_bulblightstringv1/com/govee/bulblightstringv1/bulblight/ControllerStrategyConfig.java:408-447,454-508,469
             - split_bulblightstringv1/com/govee/bulblightstringv1/bulblight/VM4Light$connectBleSuc$1.java:43-73,86-96,106-139
             - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4InfoBleIot.java:80-85,117-122
@@ -1076,6 +1184,7 @@ families:
           scene_dialect: legacy_scene
           connect_reads: [brightness]
           connect_writes: []
+          heartbeat: power
           doc: >-
             H6002 on the bulblight AcNewDetail (bulblightv3 pact Model.t; only 311 takes NewDetailAc). For SKU H6002 the
             screen skips the server mode components (VM4Light.X3) and shows its local list, scene only (VM4Light.C3 =
@@ -1095,7 +1204,7 @@ families:
           doc-ref:
             - split_bulblightstringv1/com/govee/bulblightv3/pact/Support.java:62-66,323-338
             - split_bulblightstringv1/com/govee/bulblightv3/pact/Model.java:29-38
-            - split_bulblightstringv1/com/govee/bulblightstringv1/bulblight/VM4Light.java:400-414,630-636,966-983,1017-1022,1097-1104,1240-1264
+            - split_bulblightstringv1/com/govee/bulblightstringv1/bulblight/VM4Light.java:400-414,416-418,630-636,966-983,1017-1022,1097-1104,1240-1264
             - base-classes11/com/govee/base2light/pact/newdetail/ShareVM.java:1481-1482,1561-1562
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/ModeConfig.java:557-563
             - split_bulblightstringv1/com/govee/bulblightstringv1/bulblight/ControllerStrategyConfig.java:408-447,510-585,525
@@ -1120,6 +1229,7 @@ families:
           kelvin_range: [2700, 6500]
           connect_reads: [brightness]
           connect_writes: []
+          heartbeat: power
           doc: >-
             H8015 on the bulblight AcNewDetail (bulblightv3 pact Model.t). For goodsType 328 the screen skips the server
             mode components (VM4Light.X3) and shows its local list, illumination only (VM4Light.C3 = [13]; ModeConfig
@@ -1147,7 +1257,7 @@ families:
           doc-ref:
             - split_bulblightstringv1/com/govee/bulblightv3/pact/Support.java:90-92,289-304
             - split_bulblightstringv1/com/govee/bulblightv3/pact/Model.java:29-38
-            - split_bulblightstringv1/com/govee/bulblightstringv1/bulblight/VM4Light.java:400-414,630-636,679-681,689-691,777-779,966-983,1017-1022,1097-1104
+            - split_bulblightstringv1/com/govee/bulblightstringv1/bulblight/VM4Light.java:400-414,416-418,630-636,679-681,689-691,777-779,966-983,1017-1022,1097-1104
             - base-classes11/com/govee/base2light/pact/newdetail/ShareVM.java:1481-1482,1561-1562
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/ModeConfig.java:557-563
             - base-classes11/com/govee/base2light/pact/newdetail/content/success/DelegateCurMode.java:327-336
@@ -1183,6 +1293,7 @@ families:
           kelvin_range: [2700, 6500]
           connect_reads: [brightness]
           connect_writes: [light_effect_stop]
+          heartbeat: power
           doc: >-
             H14B1 on the bulblight AcNewDetail (bulblightv3 pact Model.t), the 64 screen. Accepted pacts (1,1) and
             (1,2): Support.addSupportPact (supportPact4H14B1); the screen's n4 (bulblight Support.e ->
@@ -1214,7 +1325,7 @@ families:
             - split_bulblightstringv1/com/govee/bulblightv3/pact/Support.java:108-113,255-270
             - split_bulblightstringv1/com/govee/bulblightv3/pact/Model.java:29-38
             - split_bulblightstringv1/com/govee/bulblightstringv1/bulblight/Support.java:29-32,192-200
-            - split_bulblightstringv1/com/govee/bulblightstringv1/bulblight/VM4Light.java:966-983
+            - split_bulblightstringv1/com/govee/bulblightstringv1/bulblight/VM4Light.java:416-418,966-983
             - split_bulblightstringv1/com/govee/bulblightstringv1/bulblight/VM4Light$connectBleSuc$1.java:43-73
             - split_bulblightstringv1/com/govee/bulblightstringv1/bulblight/ControllerStrategyConfig.java:408-447,587-662
             - split_bulblightstringv1/com/govee/bulblightstringv1/bulblight/Support4BulbLightV3.java:27,30,57-59,68-80,83-85,92-95
@@ -1276,6 +1387,7 @@ families:
           brightness_range: [1, 100]
           connect_reads: [brightness, gradual, ic_num, color_group]
           connect_writes: []
+          heartbeat: power
           ic_pieces: { min_ic: 41, max_ic: 70, ic_per_piece: 5 }
           doc: >-
             H6641. H61D3Support.f0(247) is false, so the connect is connectBleSuc, with no 0xAC status read (only 263 gets
@@ -1297,6 +1409,7 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:3756-3758,4625-4627,10848-10851,13068-13069
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:402-405
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:198-212,251-259
+            - split_h61d3/com/govee/h61d3/adjustNew/VM4Light.java:811-813
         "263": { models: [H703A, H703B], power_read: ac_status }   # 263 reads TLV 0x01 != 0 and starts off when the reply lacks it; Compose4BaseInfoSingleRead.java:286-292
         "242":   # H6640
           models: [H6640]
@@ -1312,6 +1425,7 @@ families:
           brightness_range: [1, 100]
           connect_reads: [brightness, gradual, ic_num, color_group]
           connect_writes: []
+          heartbeat: power
           ic_pieces: { min_ic: 26, max_ic: 42, ic_per_piece: 3 }
           doc: >-
             H6640. NewLightDetailActivity (Model.t), the adjustNew screen of row 247: VM4Light.d0 -> connectBleSuc, the
@@ -1331,7 +1445,7 @@ families:
           doc-ref:
             - split_h61d3/com/govee/h61d3/pact/H61D3Support.java:870-878,1331-1333,1016-1019,1183-1184,1192,1551-1553,1576-1578
             - split_h61d3/com/govee/h61d3/pact/Model.java:108-120
-            - split_h61d3/com/govee/h61d3/adjustNew/VM4Light.java:542-550,576-580,636-669,984-986,1001-1004,1031-1034,1041-1044,1065-1075
+            - split_h61d3/com/govee/h61d3/adjustNew/VM4Light.java:542-550,576-580,636-669,811-813,984-986,1001-1004,1031-1034,1041-1044,1065-1075
             - split_h61d3/com/govee/h61d3/adjustNew/VM4Light$connectBleSuc$1.java:71-82,92-123
             - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4InfoBleIot$iControllerStrategy$1.java:154-251
             - split_h61d3/com/govee/h61d3/ble/controller/ReadIcController.java:49-63,68-110,134-136
@@ -1363,6 +1477,7 @@ families:
           brightness_range: [1, 100]
           connect_reads: [brightness, gradual, ic_num, color_group]
           connect_writes: []
+          heartbeat: power
           ic_pieces: { min_ic: 0, max_ic: 15, ic_per_piece: 1 }
           doc: >-
             H61B3 / H61B6. NewLightDetailActivity (Model.t), the adjustNew screen of row 247: VM4Light.d0 ->
@@ -1386,7 +1501,7 @@ families:
             - split_h61d3/com/govee/h61d3/pact/H61D3Support.java:887-895,1206-1208,1016-1019,1155-1158,1203,1557-1558,1576-1578
             - base-classes9/com/govee/base2home/color/SupportMultiColorConfig.java:32,118-170,172-175
             - split_h61d3/com/govee/h61d3/pact/Model.java:108-120
-            - split_h61d3/com/govee/h61d3/adjustNew/VM4Light.java:542-550,576-580,636-669,984-986,1001-1004,1031-1034,1041-1044,1065-1075
+            - split_h61d3/com/govee/h61d3/adjustNew/VM4Light.java:542-550,576-580,636-669,811-813,984-986,1001-1004,1031-1034,1041-1044,1065-1075
             - split_h61d3/com/govee/h61d3/adjustNew/VM4Light$connectBleSuc$1.java:71-82,92-123
             - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4InfoBleIot$iControllerStrategy$1.java:154-251
             - split_h61d3/com/govee/h61d3/ble/controller/ReadIcController.java:49-63,68-110,134-136
@@ -1418,6 +1533,7 @@ families:
           brightness_range: [1, 100]
           connect_reads: [brightness, gradual, ic_num, color_group]
           connect_writes: []
+          heartbeat: power
           ic_pieces: { min_ic: 0, max_ic: 4095, ic_per_piece: 5 }
           doc: >-
             H61B8 / H61B9. Same screen and code path as the traced rows (Model.t -> NewLightDetailActivity; f0 in
@@ -1438,7 +1554,7 @@ families:
           doc-ref:
             - split_h61d3/com/govee/h61d3/pact/H61D3Support.java:919-927,1223-1225,1016-1019,1185-1192,1557-1558,1576-1578
             - split_h61d3/com/govee/h61d3/pact/Model.java:108-120
-            - split_h61d3/com/govee/h61d3/adjustNew/VM4Light.java:542-550,636-669,1001-1004,1031-1034,1065-1075
+            - split_h61d3/com/govee/h61d3/adjustNew/VM4Light.java:542-550,636-669,811-813,1001-1004,1031-1034,1065-1075
             - split_h61d3/com/govee/h61d3/adjustNew/VM4Light$connectBleSuc$1.java:71-82,92-123
             - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4InfoBleIot$iControllerStrategy$1.java:154-251
             - split_h61d3/com/govee/h61d3/ble/controller/ReadIcController.java:49-63,68-110
@@ -1467,6 +1583,7 @@ families:
           brightness_range: [1, 100]
           connect_reads: [brightness, gradual, ic_num, color_group]
           connect_writes: []
+          heartbeat: power
           ic_pieces: { min_ic: 0, max_ic: 15, ic_per_piece: 1 }
           doc: >-
             H1A43 / H1A44. NewLightDetailActivity (Model.t), the adjustNew screen of row 247: VM4Light.d0 ->
@@ -1487,7 +1604,7 @@ families:
           doc-ref:
             - split_h61d3/com/govee/h61d3/pact/H61D3Support.java:928-944,764-766,1016-1019,1137-1140,1203,1557-1558,1576-1578
             - split_h61d3/com/govee/h61d3/pact/Model.java:108-120
-            - split_h61d3/com/govee/h61d3/adjustNew/VM4Light.java:542-550,576-580,636-669,984-986,1001-1004,1031-1034,1041-1044,1065-1075
+            - split_h61d3/com/govee/h61d3/adjustNew/VM4Light.java:542-550,576-580,636-669,811-813,984-986,1001-1004,1031-1034,1041-1044,1065-1075
             - split_h61d3/com/govee/h61d3/adjustNew/VM4Light$connectBleSuc$1.java:71-82,92-123
             - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4InfoBleIot$iControllerStrategy$1.java:154-251
             - split_h61d3/com/govee/h61d3/ble/controller/ReadIcController.java:49-63,68-110,134-136
@@ -1519,6 +1636,7 @@ families:
           brightness_range: [1, 100]
           connect_reads: [brightness, gradual, ic_num, color_group]
           connect_writes: []
+          heartbeat: power
           ic_pieces: { min_ic: 1, max_ic: 7, ic_per_piece: 1 }
           doc: >-
             H1B6A. NewLightDetailActivity (Model.t), the adjustNew screen of row 247: VM4Light.d0 -> connectBleSuc, the
@@ -1539,7 +1657,7 @@ families:
           doc-ref:
             - split_h61d3/com/govee/h61d3/pact/H61D3Support.java:909-913,1126-1128,1016-1019,1134-1136,1557-1558,1576-1578
             - split_h61d3/com/govee/h61d3/pact/Model.java:108-120
-            - split_h61d3/com/govee/h61d3/adjustNew/VM4Light.java:542-550,576-580,636-669,984-986,1001-1004,1031-1034,1041-1044,1065-1075
+            - split_h61d3/com/govee/h61d3/adjustNew/VM4Light.java:542-550,576-580,636-669,811-813,984-986,1001-1004,1031-1034,1041-1044,1065-1075
             - split_h61d3/com/govee/h61d3/adjustNew/VM4Light$connectBleSuc$1.java:71-82,92-123
             - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4InfoBleIot$iControllerStrategy$1.java:154-251
             - split_h61d3/com/govee/h61d3/ble/controller/ReadIcController.java:49-63,68-110,134-136
@@ -1573,6 +1691,7 @@ families:
           brightness_range: [1, 100]
           connect_reads: [brightness, gradual, ic_num, color_group]
           connect_writes: []
+          heartbeat: power
           ic_pieces: { min_ic: 0, max_ic: 6, ic_per_piece: 1 }
           doc: >-
             H1AB1. NewLightDetailActivity (Model.t), the adjustNew screen of row 247: VM4Light.d0 -> connectBleSuc, the
@@ -1593,7 +1712,7 @@ families:
           doc-ref:
             - split_h61d3/com/govee/h61d3/pact/H61D3Support.java:954-962,1012-1014,833-835,1016-1019,1163-1166,1203,1557-1558,1576-1578
             - split_h61d3/com/govee/h61d3/pact/Model.java:108-120
-            - split_h61d3/com/govee/h61d3/adjustNew/VM4Light.java:542-550,576-580,636-669,984-986,1001-1004,1031-1034,1041-1044,1065-1075
+            - split_h61d3/com/govee/h61d3/adjustNew/VM4Light.java:542-550,576-580,636-669,811-813,984-986,1001-1004,1031-1034,1041-1044,1065-1075
             - split_h61d3/com/govee/h61d3/adjustNew/VM4Light$connectBleSuc$1.java:71-82,92-123
             - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4InfoBleIot$iControllerStrategy$1.java:154-251
             - split_h61d3/com/govee/h61d3/ble/controller/ReadIcController.java:49-63,68-110,134-136
@@ -1625,6 +1744,7 @@ families:
           brightness_range: [1, 100]
           connect_reads: [brightness, gradual, ic_num, color_group]
           connect_writes: []
+          heartbeat: power
           ic_pieces: { min_ic: 0, max_ic: 10, ic_per_piece: 1 }
           doc: >-
             H1AB2. NewLightDetailActivity (Model.t), the adjustNew screen of row 247: VM4Light.d0 -> connectBleSuc, the
@@ -1645,7 +1765,7 @@ families:
           doc-ref:
             - split_h61d3/com/govee/h61d3/pact/H61D3Support.java:963-971,1012-1014,1081-1083,1016-1019,1167-1170,1203,1557-1558,1576-1578
             - split_h61d3/com/govee/h61d3/pact/Model.java:108-120
-            - split_h61d3/com/govee/h61d3/adjustNew/VM4Light.java:542-550,576-580,636-669,984-986,1001-1004,1031-1034,1041-1044,1065-1075
+            - split_h61d3/com/govee/h61d3/adjustNew/VM4Light.java:542-550,576-580,636-669,811-813,984-986,1001-1004,1031-1034,1041-1044,1065-1075
             - split_h61d3/com/govee/h61d3/adjustNew/VM4Light$connectBleSuc$1.java:71-82,92-123
             - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4InfoBleIot$iControllerStrategy$1.java:154-251
             - split_h61d3/com/govee/h61d3/ble/controller/ReadIcController.java:49-63,68-110,134-136
@@ -1677,6 +1797,7 @@ families:
           brightness_range: [1, 100]
           connect_reads: [brightness, gradual, ic_num, color_group]
           connect_writes: []
+          heartbeat: power
           ic_pieces: { min_ic: 0, max_ic: 20, ic_per_piece: 1 }
           doc: >-
             H1AB3. NewLightDetailActivity (Model.t), the adjustNew screen of row 247: VM4Light.d0 -> connectBleSuc, the
@@ -1698,7 +1819,7 @@ families:
           doc-ref:
             - split_h61d3/com/govee/h61d3/pact/H61D3Support.java:972-980,1012-1014,1106-1108,1016-1019,1171,1198-1200,1203,1557-1558,1576-1578
             - split_h61d3/com/govee/h61d3/pact/Model.java:108-120
-            - split_h61d3/com/govee/h61d3/adjustNew/VM4Light.java:542-550,576-580,636-669,984-986,1001-1004,1031-1034,1041-1044,1065-1075
+            - split_h61d3/com/govee/h61d3/adjustNew/VM4Light.java:542-550,576-580,636-669,811-813,984-986,1001-1004,1031-1034,1041-1044,1065-1075
             - split_h61d3/com/govee/h61d3/adjustNew/VM4Light$connectBleSuc$1.java:71-82,92-123
             - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4InfoBleIot$iControllerStrategy$1.java:154-251
             - split_h61d3/com/govee/h61d3/ble/controller/ReadIcController.java:49-63,68-110,134-136
@@ -1730,6 +1851,7 @@ families:
           brightness_range: [1, 100]
           connect_reads: [brightness, gradual, ic_num, color_group]
           connect_writes: []
+          heartbeat: power
           ic_pieces: { min_ic: 0, max_ic: 5, ic_per_piece: 1 }
           doc: >-
             H1A42. NewLightDetailActivity (Model.t), the adjustNew screen of row 247: VM4Light.d0 -> connectBleSuc, the
@@ -1750,7 +1872,7 @@ families:
           doc-ref:
             - split_h61d3/com/govee/h61d3/pact/H61D3Support.java:981-989,745-747,1016-1019,1172-1176,1203,1557-1558,1576-1578
             - split_h61d3/com/govee/h61d3/pact/Model.java:108-120
-            - split_h61d3/com/govee/h61d3/adjustNew/VM4Light.java:542-550,576-580,636-669,984-986,1001-1004,1031-1034,1041-1044,1065-1075
+            - split_h61d3/com/govee/h61d3/adjustNew/VM4Light.java:542-550,576-580,636-669,811-813,984-986,1001-1004,1031-1034,1041-1044,1065-1075
             - split_h61d3/com/govee/h61d3/adjustNew/VM4Light$connectBleSuc$1.java:71-82,92-123
             - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4InfoBleIot$iControllerStrategy$1.java:154-251
             - split_h61d3/com/govee/h61d3/ble/controller/ReadIcController.java:49-63,68-110,134-136
@@ -1782,6 +1904,7 @@ families:
           brightness_range: [1, 100]
           connect_reads: [brightness, gradual, ic_num, color_group]
           connect_writes: []
+          heartbeat: power
           ic_pieces: { min_ic: 0, max_ic: 8, ic_per_piece: 1 }
           doc: >-
             H1AA2 (goodsType 403, tied by naming alone: KmpGoodsType GOODS_TYPE_VALUE_H1AA2 and
@@ -1804,7 +1927,7 @@ families:
           doc-ref:
             - split_h61d3/com/govee/h61d3/pact/H61D3Support.java:990-998,816-818,805-807,1016-1019,1177-1180,1203,1557-1558,1576-1578
             - split_h61d3/com/govee/h61d3/pact/Model.java:108-120
-            - split_h61d3/com/govee/h61d3/adjustNew/VM4Light.java:542-550,576-580,636-669,984-986,1001-1004,1031-1034,1041-1044,1065-1075
+            - split_h61d3/com/govee/h61d3/adjustNew/VM4Light.java:542-550,576-580,636-669,811-813,984-986,1001-1004,1031-1034,1041-1044,1065-1075
             - split_h61d3/com/govee/h61d3/adjustNew/VM4Light$connectBleSuc$1.java:71-82,92-123
             - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4InfoBleIot$iControllerStrategy$1.java:154-251
             - split_h61d3/com/govee/h61d3/ble/controller/ReadIcController.java:49-63,68-110,134-136
@@ -1837,6 +1960,7 @@ families:
           brightness_range: [1, 100]
           connect_reads: [brightness, gradual, ic_num, color_group]
           connect_writes: []
+          heartbeat: power
           ic_pieces: { min_ic: 0, max_ic: 10, ic_per_piece: 1 }
           doc: >-
             H1AA5 (goodsType 404, tied by naming alone: KmpGoodsType GOODS_TYPE_VALUE_H1AA5 and
@@ -1859,7 +1983,7 @@ families:
           doc-ref:
             - split_h61d3/com/govee/h61d3/pact/H61D3Support.java:999-1006,816-818,825-827,1016-1019,1182,1194-1196,1203,1557-1558,1576-1578
             - split_h61d3/com/govee/h61d3/pact/Model.java:108-120
-            - split_h61d3/com/govee/h61d3/adjustNew/VM4Light.java:542-550,576-580,636-669,984-986,1001-1004,1031-1034,1041-1044,1065-1075
+            - split_h61d3/com/govee/h61d3/adjustNew/VM4Light.java:542-550,576-580,636-669,811-813,984-986,1001-1004,1031-1034,1041-1044,1065-1075
             - split_h61d3/com/govee/h61d3/adjustNew/VM4Light$connectBleSuc$1.java:71-82,92-123
             - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4InfoBleIot$iControllerStrategy$1.java:154-251
             - split_h61d3/com/govee/h61d3/ble/controller/ReadIcController.java:49-63,68-110,134-136
@@ -1893,6 +2017,7 @@ families:
           by_pact: { "4,1": { kelvin_range: [1000, 10000] } }
           connect_reads: [brightness, gradual, ic_num, color_group]
           connect_writes: []
+          heartbeat: power
           ic_pieces: { min_ic: 0, max_ic: 4095, ic_per_piece: 5 }
           doc: >-
             H61F2 / H61F5 / H61F6. Same screen and connect as the traced rows (j0 in VM4Light.j5): aa 04, aa a3, aa 01,
@@ -1908,7 +2033,7 @@ families:
           doc-ref:
             - split_h61d3/com/govee/h61d3/pact/H61D3Support.java:896-908,1322-1324,1016-1019,1185-1192,1483-1490,1557-1558,1576-1578
             - split_h61d3/com/govee/h61d3/pact/Model.java:108-120
-            - split_h61d3/com/govee/h61d3/adjustNew/VM4Light.java:542-550,636-669,1001-1004,1065-1075
+            - split_h61d3/com/govee/h61d3/adjustNew/VM4Light.java:542-550,636-669,811-813,1001-1004,1065-1075
             - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4InfoBleIot$iControllerStrategy$1.java:154-251
             - split_h61d3/com/govee/h61d3/adjustNew/ConfigDetail.java:80-93,211-224,302-307
             - base-classes2/com/govee/shared/config/h61f6/H61F6SceneConfig.java:45-47
@@ -1987,6 +2112,7 @@ families:
           scene_versions: [0, 1, 2, 3]
           connect_reads: [brightness, cmd_41, color_group]
           connect_writes: []
+          heartbeat: power
           doc: >-
             H6062 on the striplight AcNewDetail: one screen and one colour builder for every pact. Frames: the 0x15 forms
             (ColorControllerConfig.d -> Config.Yt: Bytes.h, Bytes.r, Bytes.G). Segments: the device's sectionNum from aa 41
@@ -2004,7 +2130,8 @@ families:
             - split_h6062/com/govee/striplight/newdetail/ControllerStrategyConfig.java:468-548
             - split_h6062/com/govee/striplight/newdetail/NewDetailRegister.java:200-218
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:4056-4058,12111-12114
-        "80": { models: [H610A], power_live: [heartbeat_aa33], pacts: ["1,1"], doc-ref: [split_h6062/com/govee/striplight/pact/Support.java:78-80] }
+            - split_h6062/com/govee/striplight/newdetail/VM4Light.java:620-624,647-649
+        "80": { models: [H610A], power_live: [heartbeat_aa33], heartbeat: volume, pacts: ["1,1"], doc-ref: [split_h6062/com/govee/striplight/pact/Support.java:78-80, split_h6062/com/govee/striplight/newdetail/VM4Light.java:620-643, split_h6062/com/govee/striplight/ble/ComposeHeartController.java:9-11] }   # aa 33: VM4Light.A3 sets the ComposeHeartController (SINGLE_LR_SWITCH 0x33) for goodsType 80
         "114":   # H610B
           models: [H610B]
           pacts: ["1,1"]
@@ -2017,6 +2144,7 @@ families:
           scene_versions: [0, 5, 7]
           connect_reads: [brightness, color_group]
           connect_writes: []
+          heartbeat: power
           doc: >-
             H610B (goodsType 114: H610BSceneConfig.match) on the striplight AcNewDetail, the H6062 screen and colour builder.
             Connect (ControllerStrategyConfig.q0, chosen for 114): versions, Wi-Fi versions and MAC, the sync-time write,
@@ -2041,7 +2169,7 @@ families:
             - split_h6062/com/govee/striplight/newdetail/NewDetailRegister.java:230-244,256-297
             - split_h6062/com/govee/striplight/newdetail/ColorMode4H610B.java:287-289
             - split_h6062/com/govee/striplight/newdetail/ControllerStrategyConfig.java:450-457,654-734
-            - split_h6062/com/govee/striplight/newdetail/VM4Light.java:363-407,1279-1298
+            - split_h6062/com/govee/striplight/newdetail/VM4Light.java:363-407,620-624,647-649,1279-1298
             - split_h6062/com/govee/striplight/newdetail/newdiy/DiyConfig.java:29-30
             - base-classes11/com/govee/base2light/pact/newdetail/content/success/DelegateCurMode.java:185-202
             - base-classes11/com/govee/base2light/pact/newdetail/content/colorv2/DelegateColorV2.java:779-801
@@ -2114,6 +2242,8 @@ families:
           account_lock: true
           connect_reads: []
           connect_writes: [plug_sync_time]
+          heartbeat: power
+          heartbeat_timing: after_quiet
           power_resync: false
           doc: >-
             H5080 / H5083 / H5085 open the H5083 new detail screen (h5080 pact Model). Connect: the 33 b2 secret check
@@ -2121,12 +2251,17 @@ families:
             messages). After a power write the screen sends nothing more (H5083NewDetailViewModel.y0). HARDWARE-VERIFIED on
             an H5083 (bench 2026-10-17, macOS): it acks 33 b5 about 60 ms after the unlock, a power write is followed by
             nothing more, and the next session sends 33 b2 then 33 b5 again.
+            Heartbeat: aa 01 (the screen's HeartGMessage, R() = 1) once 2000 ms pass with nothing sent: the ctlchannel
+            HeartHandler.e restarts the wait on every send (heartbeat_timing after_quiet).
           doc-ref:
             - split_plugnew/com/govee/h5080/pact/Support.java:43-73
             - split_plugnew/com/govee/h5080/pact/Model.java:191-197
             - base-classes4/com/govee/skubusiness/ISupport.java:26-28
             - split_plugnew/com/govee/h5080/adjust/newdetail/H5083NewDetailRepository.java:322-326
             - split_plugnew/com/govee/h5080/adjust/newdetail/H5083NewDetailViewModel.java:144-150
+            - base-classes4/com/govee/skubusiness/viewmodel/BaseSkuSharedViewModel.java:434-449,495-497
+            - base-classes13/com/govee/ctlchannel/heart/HeartGMessage.java:80-83
+            - base-classes13/com/govee/ctlchannel/heart/HeartHandler.java:98-109,130-139
         "50":   # the aa 01 heartbeat reads bits 0-1 only (0x03)
           models: [H5082]
           relay_power: all_outlets
@@ -2139,6 +2274,7 @@ families:
           account_lock: true
           connect_reads: []
           connect_writes: [plug_sync_time]
+          heartbeat: power
           power_resync: true
           doc: >-
             H5082 (UiV2 / BleOpV2). Connect: the 33 b2 secret check (SecretKeyController), then 33 b5. The main switch writes
@@ -2148,6 +2284,9 @@ families:
             - split_plugnew/com/govee/h5080/pact/Support.java:43-73
             - split_plugnew/com/govee/h5080/adjust/v2/UiV2.java:887-890
             - split_plugnew/com/govee/h5080/adjust/v2/BleOpV2.java:146,380-382,570-575
+            - split_plugnew/com/govee/h5080/ble/BleComm.java:14-16
+            - split_plugnew/com/govee/h5080/ble/Ble.java:23-28
+            - base-classes10/com/govee/base2light/ble/controller/HeartController.java:19-21
         "90":   # the connect read takes bits 0-2 (3 outlets)
           models: [H5160, H5161]
           relay_power: all_outlets
@@ -2160,6 +2299,7 @@ families:
           account_lock: true
           connect_reads: []
           connect_writes: [plug_sync_time]
+          heartbeat: power
           power_resync: true
           doc: >-
             H5160 / H5161 (UiV4 / BleOpV4). Connect: the 33 b2 secret check, then 33 b5. The main switch writes 33 01 FF / F0
@@ -2169,6 +2309,9 @@ families:
             - split_plugnew/com/govee/h5080/pact/Support.java:43-73
             - split_plugnew/com/govee/h5080/adjust/v4_h5160/UiV4.java:765-768
             - split_plugnew/com/govee/h5080/adjust/v4_h5160/BleOpV4.java:129,299-301,489-494
+            - split_plugnew/com/govee/h5080/ble/BleComm.java:14-16
+            - split_plugnew/com/govee/h5080/ble/Ble.java:23-28
+            - base-classes10/com/govee/base2light/ble/controller/HeartController.java:19-21
         "307":   # the aa 01 heartbeat reads bits 0-1 only (0x03)
           models: [H5089]
           relay_power: total_switch
@@ -2181,6 +2324,7 @@ families:
           account_lock: true
           connect_reads: []
           connect_writes: [plug_sync_time]
+          heartbeat: power
           power_resync: false
           doc: >-
             H5089 (Ui4H5089 / BleOp4H5089). Connect: the 33 b2 secret check, then 33 b5. The main switch writes 33 02 01 / 00
@@ -2191,6 +2335,9 @@ families:
             - split_plugnew/com/govee/h5080/pact/Support.java:43-73
             - split_plugnew/com/govee/h5080/adjust/h5089/Ui4H5089.java:929-946
             - split_plugnew/com/govee/h5080/adjust/h5089/BleOp4H5089.java:147,173-185,267-310,661-674
+            - split_plugnew/com/govee/h5080/ble/BleComm.java:14-16
+            - split_plugnew/com/govee/h5080/ble/Ble.java:23-28
+            - base-classes10/com/govee/base2light/ble/controller/HeartController.java:19-21
       wire:
         doc: >-
           SwitchControllerV2 relay byte (split_plugnew/com/govee/h5080/ble/controller/SwitchControllerV2.java:53-71);
@@ -2304,6 +2451,7 @@ families:
           scene_dialect: none
           connect_reads: [brightness]
           connect_writes: []
+          heartbeat: power
           doc: >-
             SkuBleProcessor.onItemClick takes a goodsType-0 record of this SKU and tests no pact. Colour 0x0d: RGB Bytes.f,
             CCT Config.GM -> Bytes.A (white slot); an RGB pick equal to a Kelvin tint in range goes in the h6006 form
@@ -2315,6 +2463,7 @@ families:
           doc-ref:
             - split_rgblight/com/govee/rgblight/add/SkuBleProcessor.java:44-60
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:254,356
+            - split_rgblight/com/govee/rgblight/VM4Light.java:648-650
       wire:
         forms: { f_01: light, f_09: datetime_epoch }
     models: [H6188]
@@ -2356,6 +2505,7 @@ families:
           scene_dialect: untraced
           connect_reads: [brightness, color_group]
           connect_writes: []
+          heartbeat: power
           doc: >-
             H6061 on the cubelight screen, which offers per-panel colour and scenes; its scene apply path is not traced
             (scene_dialect untraced). Panel count n: the user's layout size, else 23 (ColorPieceConfig.f(51)); the device
@@ -2368,6 +2518,7 @@ families:
           doc-ref:
             - split_h6061/com/govee/cubelight/pact/Support.java:99-107
             - base-classes2/com/govee/shared/config/h6061/H6061SceneConfig.java:46-48
+            - split_h6061/com/govee/cubelight/newdetails/CubeVM4Light.java:531-533
         "96": { models: [H6066] }   # Glide Hexa Pro
         "97": { models: [H6067] }   # Glide Tri
         "121": { models: [H6065] }   # Govee Glide Y Lights (h6067/pact/Support.java:84)
@@ -2772,6 +2923,7 @@ families:
           mode_reports_kelvin: false
           connect_reads: [brightness, gradual, color_group]
           connect_writes: []
+          heartbeat: power
           by_firmware:
             - { min_hard_version: "3.08.01", kelvin_range: [2700, 6500], doc: "KelvinConfig.Config.z2, for SKU H61A8 (the row's only model): a string compare (versionHard.compareTo), so a hard 10.00.00 is below 3.08.01" }
           doc: >-
@@ -2821,6 +2973,7 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:198-212,251-259,683-687,1311-1314
             - base-classes9/com/govee/base2home/ota/OtaType.java:69-70,84-85
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:3806,12421-12424
+            - split_rgbiclight/com/govee/rgbiclight/VM4Light.java:728-730
         "70":
           models: [H617C, H617E, H617F]
           connectivity: [ble]
@@ -2837,6 +2990,7 @@ families:
           brightness_range: [1, 100]
           connect_reads: [brightness, gradual, color_group]
           connect_writes: []
+          heartbeat: power
           by_firmware:
             - { min_soft_version: "1.06.00", min_hard_version: "1.00.03", scene_versions: [0, 1, 2, 3], doc: "70 is in Q0, so getSupportScenesOpSet takes supportPartBrightness4Ble: hard >= 1.00.03 and soft >= 1.06.00 (BleUtil.parseVersion, both > 0)" }
           doc: >-
@@ -2870,7 +3024,7 @@ families:
             - split_rgbiclight/com/govee/rgbiclight/Support.java:98-114,216-235,441-443
             - split_rgbiclight/com/govee/dreamcolorlightv1/LightVersionServiceImpl.java:18-25,76-91,115-128,145-148,155-161,168-175
             - split_rgbiclight/com/govee/rgbiclight/ControllerStrategyConfig.java:1018-1114,1344-1431
-            - split_rgbiclight/com/govee/rgbiclight/VM4Light.java:160-170,650-669,882-970
+            - split_rgbiclight/com/govee/rgbiclight/VM4Light.java:160-170,650-669,728-730,882-970
             - split_rgbiclight/com/govee/rgbiclight/RgbIcLightRegistry.java:554-581,708-730,193
             - base-classes9/com/govee/base2home/pact/Protocol.java:41-48
             - base-classes11/com/govee/base2light/pact/newdetail/OpInfo4Detail.java:743-812
@@ -2901,6 +3055,7 @@ families:
           brightness_range: [1, 100]
           connect_reads: [brightness, color_group]
           connect_writes: []
+          heartbeat: power
           by_firmware:
             - { min_soft_version: "1.06.00", min_hard_version: "1.00.03", scene_versions: [0, 1, 2, 3], doc: "73 is in Q0, so getSupportScenesOpSet takes supportPartBrightness4Ble: hard >= 1.00.03 and soft >= 1.06.00 (BleUtil.parseVersion, both > 0)" }
           doc: >-
@@ -2933,7 +3088,7 @@ families:
             - split_rgbiclight/com/govee/rgbiclight/Support.java:98-114,216-235,444-446
             - split_rgbiclight/com/govee/dreamcolorlightv1/LightVersionServiceImpl.java:18-25,76-91,115-128,145-148,155-161,168-175
             - split_rgbiclight/com/govee/rgbiclight/ControllerStrategyConfig.java:1018-1114,1344-1431
-            - split_rgbiclight/com/govee/rgbiclight/VM4Light.java:160-170,650-669,882-970
+            - split_rgbiclight/com/govee/rgbiclight/VM4Light.java:160-170,650-669,728-730,882-970
             - split_rgbiclight/com/govee/rgbiclight/RgbIcLightRegistry.java:554-581,708-730,193
             - base-classes9/com/govee/base2home/pact/Protocol.java:41-48
             - base-classes11/com/govee/base2light/pact/newdetail/OpInfo4Detail.java:743-812
@@ -2963,6 +3118,7 @@ families:
           brightness_range: [1, 100]
           connect_reads: [brightness, color_group]
           connect_writes: []
+          heartbeat: power
           by_firmware:
             - { min_soft_version: "1.06.00", min_hard_version: "1.00.02", scene_versions: [0, 1, 2, 3], doc: "supportPartBrightness4BleWifi (74 is not in Q0): hard >= 1.00.02 and soft >= 1.06.00 (BleUtil.parseVersion, both > 0)" }
           doc: >-
@@ -3000,7 +3156,7 @@ families:
             - split_rgbiclight/com/govee/rgbiclight/Support.java:98-114,216-235,459-462
             - split_rgbiclight/com/govee/dreamcolorlightv1/LightVersionServiceImpl.java:18-25,76-91,115-128,145-148,155-161,168-175
             - split_rgbiclight/com/govee/rgbiclight/ControllerStrategyConfig.java:896-1015,1018-1114
-            - split_rgbiclight/com/govee/rgbiclight/VM4Light.java:160-170,650-669,882-970
+            - split_rgbiclight/com/govee/rgbiclight/VM4Light.java:160-170,650-669,728-730,882-970
             - split_rgbiclight/com/govee/rgbiclight/RgbIcLightRegistry.java:554-581,708-730,193
             - base-classes9/com/govee/base2home/pact/Protocol.java:41-48
             - base-classes11/com/govee/base2light/pact/newdetail/OpInfo4Detail.java:743-812
@@ -3030,6 +3186,7 @@ families:
           brightness_range: [1, 100]
           connect_reads: [brightness, gradual, color_group]
           connect_writes: []
+          heartbeat: power
           by_firmware:
             - { min_soft_version: "1.06.00", min_hard_version: "1.00.02", scene_versions: [0, 1, 2, 3], doc: "supportPartBrightness4BleWifi (75 is not in Q0): hard >= 1.00.02 and soft >= 1.06.00 (BleUtil.parseVersion, both > 0)" }
           doc: >-
@@ -3060,7 +3217,7 @@ families:
             - split_rgbiclight/com/govee/rgbiclight/Support.java:98-114,216-235,463-465
             - split_rgbiclight/com/govee/dreamcolorlightv1/LightVersionServiceImpl.java:18-25,76-91,115-128,145-148,155-161,168-175
             - split_rgbiclight/com/govee/rgbiclight/ControllerStrategyConfig.java:896-1015,1018-1114
-            - split_rgbiclight/com/govee/rgbiclight/VM4Light.java:160-170,650-669,882-970
+            - split_rgbiclight/com/govee/rgbiclight/VM4Light.java:160-170,650-669,728-730,882-970
             - split_rgbiclight/com/govee/rgbiclight/RgbIcLightRegistry.java:554-581,708-730,193
             - base-classes9/com/govee/base2home/pact/Protocol.java:41-48
             - base-classes11/com/govee/base2light/pact/newdetail/OpInfo4Detail.java:743-812
@@ -3090,6 +3247,7 @@ families:
           brightness_range: [1, 100]
           connect_reads: [brightness, color_group]
           connect_writes: []
+          heartbeat: power
           by_firmware:
             - { min_soft_version: "1.06.00", min_hard_version: "1.00.02", scene_versions: [0, 1, 2, 3], doc: "supportPartBrightness4BleWifi (83 is not in Q0): hard >= 1.00.02 and soft >= 1.06.00 (BleUtil.parseVersion, both > 0)" }
           doc: >-
@@ -3125,7 +3283,7 @@ families:
             - split_rgbiclight/com/govee/rgbiclight/Support.java:98-114,216-235,466-468
             - split_rgbiclight/com/govee/dreamcolorlightv1/LightVersionServiceImpl.java:18-25,76-91,115-128,145-148,155-161,168-175
             - split_rgbiclight/com/govee/rgbiclight/ControllerStrategyConfig.java:896-1015,1018-1114
-            - split_rgbiclight/com/govee/rgbiclight/VM4Light.java:160-170,650-669,882-970
+            - split_rgbiclight/com/govee/rgbiclight/VM4Light.java:160-170,650-669,728-730,882-970
             - split_rgbiclight/com/govee/rgbiclight/RgbIcLightRegistry.java:554-581,708-730,193
             - base-classes9/com/govee/base2home/pact/Protocol.java:41-48
             - base-classes11/com/govee/base2light/pact/newdetail/OpInfo4Detail.java:743-812
@@ -3155,6 +3313,7 @@ families:
           brightness_range: [1, 100]
           connect_reads: [brightness, gradual, color_group]
           connect_writes: []
+          heartbeat: power
           by_firmware:
             - { min_soft_version: "1.06.00", min_hard_version: "1.00.02", scene_versions: [0, 1, 2, 3], doc: "supportPartBrightness4BleWifi (136 is not in Q0): hard >= 1.00.02 and soft >= 1.06.00 (BleUtil.parseVersion, both > 0)" }
           doc: >-
@@ -3189,7 +3348,7 @@ families:
             - split_rgbiclight/com/govee/rgbiclight/Support.java:98-114,216-235,402-407,472-474
             - split_rgbiclight/com/govee/dreamcolorlightv1/LightVersionServiceImpl.java:18-25,76-91,115-128,145-148,155-161,168-175
             - split_rgbiclight/com/govee/rgbiclight/ControllerStrategyConfig.java:896-1015,1018-1114
-            - split_rgbiclight/com/govee/rgbiclight/VM4Light.java:160-170,650-669,882-970,1184-1188,1218-1222
+            - split_rgbiclight/com/govee/rgbiclight/VM4Light.java:160-170,650-669,728-730,882-970,1184-1188,1218-1222
             - split_rgbiclight/com/govee/rgbiclight/RgbIcLightRegistry.java:554-581,708-730,193
             - split_rgbiclight/com/govee/rgbiclight/mode/color/ColorModeV1_2.java:355-360
             - split_rgbiclight/com/govee/rgbiclight/mode/color/ColorControllerConfig.java:507-519,522-528,556-560
@@ -3222,6 +3381,7 @@ families:
           brightness_range: [1, 100]
           connect_reads: [brightness, gradual, color_group]
           connect_writes: []
+          heartbeat: power
           by_firmware:
             - { min_soft_version: "1.06.00", min_hard_version: "1.00.02", scene_versions: [0, 1, 2, 3], doc: "supportPartBrightness4BleWifi: hard >= 1.00.02 and soft >= 1.06.00 (both parsable)" }
           doc: >-
@@ -3259,7 +3419,7 @@ families:
             - split_rgbiclight/com/govee/rgbiclight/Support.java:98-114,197-235,402-407,493-497
             - split_rgbiclight/com/govee/dreamcolorlightv1/LightVersionServiceImpl.java:76-91,110-133,155-175
             - split_rgbiclight/com/govee/rgbiclight/ControllerStrategyConfig.java:383-390,896-1015,1077,1103-1105
-            - split_rgbiclight/com/govee/rgbiclight/VM4Light.java:882-970,1140-1147,1184-1188,1683-1702
+            - split_rgbiclight/com/govee/rgbiclight/VM4Light.java:728-730,882-970,1140-1147,1184-1188,1683-1702
             - base-classes11/com/govee/base2light/kt/general_controller/Controller4ColorInfoByGroup.java:145-175
             - base-classes11/com/govee/base2light/pact/newdetail/OpInfo4Detail.java:743-812
             - base-classes11/com/govee/base2light/pact/newdetail/sub/SubMode4Color.java:42-49
@@ -3295,6 +3455,7 @@ families:
           brightness_range: [1, 100]
           connect_reads: [brightness, gradual, color_group]
           connect_writes: []
+          heartbeat: power
           by_firmware:
             - { min_soft_version: "1.06.00", min_hard_version: "1.00.02", scene_versions: [0, 1, 2, 3], doc: "supportPartBrightness4BleWifi: hard >= 1.00.02 and soft >= 1.06.00 (both parsable)" }
           doc: >-
@@ -3335,7 +3496,7 @@ families:
             - split_rgbiclight/com/govee/rgbiclight/Support.java:98-114,197-235,402-407,498-501
             - split_rgbiclight/com/govee/dreamcolorlightv1/LightVersionServiceImpl.java:76-91,110-133,145-148,155-175
             - split_rgbiclight/com/govee/rgbiclight/ControllerStrategyConfig.java:383-390,896-1015,1077,1103-1105
-            - split_rgbiclight/com/govee/rgbiclight/VM4Light.java:882-970,1140-1147,1184-1188,1683-1702
+            - split_rgbiclight/com/govee/rgbiclight/VM4Light.java:728-730,882-970,1140-1147,1184-1188,1683-1702
             - base-classes11/com/govee/base2light/kt/general_controller/Controller4ColorInfoByGroup.java:145-175
             - base-classes11/com/govee/base2light/pact/newdetail/OpInfo4Detail.java:743-812
             - base-classes11/com/govee/base2light/pact/newdetail/sub/SubMode4Color.java:42-49
@@ -3371,6 +3532,7 @@ families:
           brightness_range: [1, 100]
           connect_reads: [brightness, color_group]
           connect_writes: []
+          heartbeat: power
           by_firmware:
             - { min_soft_version: "1.06.00", min_hard_version: "1.00.02", scene_versions: [0, 1, 2, 3], doc: "supportPartBrightness4BleWifi: hard >= 1.00.02 and soft >= 1.06.00 (both parsable)" }
           doc: >-
@@ -3402,7 +3564,7 @@ families:
             - split_rgbiclight/com/govee/rgbiclight/Support.java:98-114,197-235,509-512
             - split_rgbiclight/com/govee/dreamcolorlightv1/LightVersionServiceImpl.java:76-91,110-133,145-148,155-175
             - split_rgbiclight/com/govee/rgbiclight/ControllerStrategyConfig.java:383-390,896-1015,1077,1103-1105
-            - split_rgbiclight/com/govee/rgbiclight/VM4Light.java:882-970,1683-1702
+            - split_rgbiclight/com/govee/rgbiclight/VM4Light.java:728-730,882-970,1683-1702
             - base-classes11/com/govee/base2light/kt/general_controller/Controller4ColorInfoByGroup.java:145-175
             - base-classes11/com/govee/base2light/pact/newdetail/OpInfo4Detail.java:743-812
             - base-classes11/com/govee/base2light/pact/newdetail/sub/SubMode4Color.java:42-49
@@ -3436,6 +3598,7 @@ families:
           brightness_range: [1, 100]
           connect_reads: [brightness, gradual, color_group]
           connect_writes: []
+          heartbeat: power
           by_firmware:
             - { min_soft_version: "1.06.00", min_hard_version: "1.00.02", scene_versions: [0, 1, 2, 3], doc: "supportPartBrightness4BleWifi: hard >= 1.00.02 and soft >= 1.06.00 (both parsable)" }
           doc: >-
@@ -3467,7 +3630,7 @@ families:
             - split_rgbiclight/com/govee/rgbiclight/Support.java:98-114,197-235,506-508
             - split_rgbiclight/com/govee/dreamcolorlightv1/LightVersionServiceImpl.java:76-91,110-133,145-148,155-175
             - split_rgbiclight/com/govee/rgbiclight/ControllerStrategyConfig.java:383-390,896-1015,1077,1103-1105
-            - split_rgbiclight/com/govee/rgbiclight/VM4Light.java:882-970,1683-1702
+            - split_rgbiclight/com/govee/rgbiclight/VM4Light.java:728-730,882-970,1683-1702
             - base-classes11/com/govee/base2light/kt/general_controller/Controller4ColorInfoByGroup.java:145-175
             - base-classes11/com/govee/base2light/pact/newdetail/OpInfo4Detail.java:743-812
             - base-classes11/com/govee/base2light/pact/newdetail/sub/SubMode4Color.java:42-49
@@ -3501,6 +3664,7 @@ families:
           brightness_range: [1, 100]
           connect_reads: [brightness, gradual, color_group]
           connect_writes: []
+          heartbeat: power
           doc: >-
             H616C (goodsType 207, Support.f0) on the rgbiclight AcNewDetail screen (Model4BleIot.t -> /rgbic/newdetail).
             Connect: ControllerStrategyConfig.E1 at both pacts (supportV2UIV1 excludes 207; supportV2UIV3 holds, 207's
@@ -3535,7 +3699,7 @@ families:
             - split_rgbiclight/com/govee/rgbiclight/Support.java:98-114,197-235,479-482
             - split_rgbiclight/com/govee/dreamcolorlightv1/LightVersionServiceImpl.java:76-91,110-133,145-148,155-175
             - split_rgbiclight/com/govee/rgbiclight/ControllerStrategyConfig.java:383-390,896-1015,1077,1103-1105
-            - split_rgbiclight/com/govee/rgbiclight/VM4Light.java:882-970,1683-1702
+            - split_rgbiclight/com/govee/rgbiclight/VM4Light.java:728-730,882-970,1683-1702
             - base-classes11/com/govee/base2light/kt/general_controller/Controller4ColorInfoByGroup.java:145-175
             - base-classes11/com/govee/base2light/pact/newdetail/OpInfo4Detail.java:743-812
             - base-classes11/com/govee/base2light/pact/newdetail/sub/SubMode4Color.java:42-49
@@ -3569,6 +3733,7 @@ families:
           brightness_range: [1, 100]
           connect_reads: [brightness, gradual, color_group]
           connect_writes: []
+          heartbeat: power
           by_firmware:
             - { min_soft_version: "1.06.00", min_hard_version: "1.00.02", scene_versions: [0, 1, 2, 3], doc: "supportPartBrightness4BleWifi: hard >= 1.00.02 and soft >= 1.06.00 (both parsable)" }
           doc: >-
@@ -3603,7 +3768,7 @@ families:
             - split_rgbiclight/com/govee/rgbiclight/Support.java:98-114,197-235,402-407,469-471
             - split_rgbiclight/com/govee/dreamcolorlightv1/LightVersionServiceImpl.java:76-91,110-133,145-148,155-175
             - split_rgbiclight/com/govee/rgbiclight/ControllerStrategyConfig.java:383-390,896-1015,1077,1099-1105
-            - split_rgbiclight/com/govee/rgbiclight/VM4Light.java:882-970,1140-1147,1184-1188,1683-1702
+            - split_rgbiclight/com/govee/rgbiclight/VM4Light.java:728-730,882-970,1140-1147,1184-1188,1683-1702
             - base-classes11/com/govee/base2light/kt/general_controller/Controller4ColorInfoByGroup.java:145-175
             - base-classes11/com/govee/base2light/pact/newdetail/OpInfo4Detail.java:743-812
             - base-classes11/com/govee/base2light/pact/newdetail/sub/SubMode4Color.java:42-49
@@ -3864,6 +4029,7 @@ families:
           kelvin_range: [2000, 9000]
           connect_reads: [brightness]
           connect_writes: []
+          heartbeat: power
           doc: >-
             H6052 (tablelampv1 pact Model.u -> H6052NewDetailActivity -> H6052NewDetailVM). Colour Config.bu: RGB Bytes.f,
             CCT Bytes.p in the both-slot form. The 0x0d report is [r, g, b] only (H6052InfoDetail.G), so a CCT the lamp holds
@@ -3886,6 +4052,7 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/content/scene/ScenesConfigBean.java:78-87,212-219,231-233
             - base-classes10/com/govee/base2light/ble/ScenesOp.java:541-551
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:619,1107-1111,1129-1133,1167-1169,1614-1616,1754-1775
+            - split_hollowlamp/com/govee/tablelampv1/newAdjust/h6052/H6052NewDetailVM.java:281-283
         "128": { models: [H6078], power_live: [push_30], mode_color_parse: kelvin_0d }   # H6078; split_hollowlamp/com/govee/tablelampv1/newAdjust/H6078InfoDetail.java:304-342
       wire_cipher: runtime
       wire:
@@ -4246,6 +4413,7 @@ families:
           status_read: [cmd_41, color_group]
           connect_reads: []
           connect_writes: []
+          heartbeat: heartbeat
           doc: >-
             H60B1 (goodsType 300: KmpGoodsType, H60B1SceneConfig.match) on the H60B1ViewModel screen (H60B1ConfigDetail).
             Accepted pact (1,1) only: H60B1Support.a registers it for 300, and the screen's n4 tests protocol (1,1) for 300.
@@ -4269,7 +4437,7 @@ families:
             - base-classes2/com/govee/shared/checker/KmpGoodsType.java:191
             - base-classes2/com/govee/shared/config/h60b1/H60B1SceneConfig.java:46-48
             - split_floorlamp/com/govee/h60b1/detail/H60B1ConfigDetail.java:43-100
-            - split_floorlamp/com/govee/h60b1/detail/H60B1ViewModel.java:114-140,149-165,857-866,971-995
+            - split_floorlamp/com/govee/h60b1/detail/H60B1ViewModel.java:114-140,149-165,522-524,857-866,971-995
             - split_floorlamp/com/govee/h60b1/detail/Info4Detail.java:364-395
             - split_floorlamp/com/govee/h60b1/detail/mode/H60B1ColorMode.java:392-440,465-479
             - split_floorlamp/com/govee/h60b1/diy/H60B1DiyConfig.java:111-112
@@ -5097,6 +5265,7 @@ families:
           scene_dialect: legacy_scene
           connect_reads: [brightness, gradual, color_group]
           connect_writes: []
+          heartbeat: heartbeat
           doc: >-
             H6098 / H8098 on the pact_h6099 detail screen (NewDetailVm; DetailConfig covers 191 / 336 / 203 / H66A0).
             H6098 is goodsType 203 (KmpGoodsType RGBIC_CAMERA_TV_H6098, H6098SceneConfig.match). Pacts:
@@ -5150,6 +5319,8 @@ families:
             - base-classes10/com/govee/base2light/ac/diyNew/config/DiyNewConfig.java:61-65,140-146
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:564-566
             - base-classes11/com/govee/base2light/pact/newdetail/content/color/ColorViewModel.java:1133-1147
+            - split_h6099/com/govee/pact_h6099/pact/Model.java:42-51
+            - base-classes11/com/govee/base2light/pact/newdetail/ShareVM.java:1348-1350
         "336":   # H6690, the pact_h6099 detail screen (NewDetailVm)
           models: [H6690]
           power_read: aa01
@@ -5163,6 +5334,7 @@ families:
           scene_dialect: legacy_scene
           connect_reads: [brightness, gradual, color_group]
           connect_writes: []
+          heartbeat: heartbeat
           doc: >-
             H6690 (goodsType 336 = KmpGoodsType GOODS_TYPE_VALUE_H6690; H6690SceneConfig.match) on the pact_h6099 detail
             screen (NewDetailVm; DetailConfig covers 336), with H6098 / H8098 (203). Pact (1,1): Support.addSupportPact
@@ -5211,6 +5383,8 @@ families:
             - base-classes10/com/govee/base2light/ac/diyNew/config/DiyNewConfig.java:61-65,140-146
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:564-566
             - base-classes11/com/govee/base2light/pact/newdetail/content/color/ColorViewModel.java:1133-1147
+            - split_h6099/com/govee/pact_h6099/pact/Model.java:42-51
+            - base-classes11/com/govee/base2light/pact/newdetail/ShareVM.java:1348-1350
         "327": { models: [H66A0], power_read: aa01, power_live: [push_30] }   # H66A0; Kelvin [2700, 6500]; realtime colour version 2 (see realtime_color)
         "273": { models: [H6097], power_read: aa01, power_live: [heartbeat_aa01, push_30] }   # H6097; aa 01 heartbeat and ee 30 bit 0 of frame[3]; split_h6099/com/govee/pact_h6099/adjust/h6097/Info4Detail.java:463-524
         "253": { models: [H605A], power_read: aa01, power_live: [heartbeat_aa01] }   # H605A; its ee 30 handler carries no power; split_h6099/com/govee/pact_h6099/adjust/newdetail/Info4Detail.java:761-826
@@ -5278,6 +5452,7 @@ families:
           scene_dialect: legacy_scene
           connect_reads: [brightness]
           connect_writes: []
+          heartbeat: power
           doc: >-
             H7040 (camping lantern; goodsType 36 = KmpGoodsType CAMPING_LIGHT_BLE_V1, H7040SceneConfig.match) on the h7040
             detail screen (NewDetailVm, registered by NewDetailsConfig.initH7040). Accepted pact (1,1) only
@@ -5296,14 +5471,16 @@ families:
             scene_dialect is legacy_scene and the bundled catalog holds no sceneType-5 scene that leads 0x50. Not
             modelled: the aa 0b SOS read the screen adds at connect (NewDetailVm.o5 -> q5, SosController); nothing on
             the control path reads it. Not hardware-verified.
+            Heartbeat: aa 01 (NewDetailVm.I3 = Support.supportPactV1, true only at exactly the accepted pact (1,1));
+            at any other pact the screen would send aa 00, so widening the pacts revisits it.
           doc-ref:
-            - split_outdoorlight/com/govee/h7040/pact/Support.java:48-55,143-145
+            - split_outdoorlight/com/govee/h7040/pact/Support.java:48-55,126-141,143-145
             - split_outdoorlight/com/govee/h7040/pact/NewDetailsConfig.java:42-135
             - base-classes2/com/govee/shared/checker/KmpGoodsType.java:96
             - base-classes2/com/govee/shared/config/h7040/H7040SceneConfig.java:45-47
             - split_outdoorlight/com/govee/h7040/pact/deviceitem/Model.java:86-89
             - split_outdoorlight/com/govee/h7040/detail/Compose4InfoBle$iControllerStrategy$1.java:91-141
-            - split_outdoorlight/com/govee/h7040/detail/NewDetailVm.java:306-309,416-467,1018-1025,1174-1195
+            - split_outdoorlight/com/govee/h7040/detail/NewDetailVm.java:306-309,416-467,652-659,1018-1025,1174-1195
             - split_outdoorlight/com/govee/h7040/detail/Info4Detail.java:150-161,496-522
             - split_outdoorlight/com/govee/h7040/detail/H7085DiyNewConfig.java:35,91
             - split_outdoorlight/com/govee/h7040/H7040ApplicationImp.java:29
@@ -5365,6 +5542,7 @@ families:
           scene_dialect: legacy_scene
           connect_reads: [brightness, color_group]
           connect_writes: []
+          heartbeat: power
           doc: >-
             B7080 (goodsType 45 = KmpGoodsType CAR_BOTTOM_LIGHT) on the h7080 NewDetail screen (H708012DetailConfig). The
             SKU tie is the h7080 Support tables: the SKU constant B7080 with its add-list icon, the guide gif b7080 for 45, and
@@ -5385,12 +5563,14 @@ families:
             0x50 goes through the family's new-DIY parsers (H7085DiyNewConfig registers 45 / 55 / 56 at app init), which
             are not modelled; every other scene goes through parseSceneV1 (BaseSceneViewMode.r3), so scene_dialect is
             legacy_scene and the bundled catalog holds no sceneType-5 scene that leads 0x50. Not hardware-verified.
+            Heartbeat: aa 01 (NewDetailVm.I3 = Support.supportPactV1, true only at exactly the accepted pact (2,1));
+            at any other pact the screen would send aa 00, so widening the pacts revisits it.
           doc-ref:
-            - split_outdoorlight/com/govee/h7080/pact/Support.java:27-29,52-66,68-76,85-97,94-96,116-118
+            - split_outdoorlight/com/govee/h7080/pact/Support.java:27-29,52-66,68-76,85-97,94-96,116-118,133-165
             - base-classes2/com/govee/shared/checker/KmpGoodsType.java:97-99
             - split_outdoorlight/com/govee/h7080/adjust/H708012DetailConfig.java:42-100
             - split_outdoorlight/com/govee/h7080/adjust/detail/Compose4InfoBle$iControllerStrategy$1.java:111-179
-            - split_outdoorlight/com/govee/h7080/adjust/detail/NewDetailVm.java:190-227,293-323,948-955,1095-1116
+            - split_outdoorlight/com/govee/h7080/adjust/detail/NewDetailVm.java:190-227,293-323,614-621,948-955,1095-1116
             - split_outdoorlight/com/govee/h7080/adjust/detail/Info4Detail.java:479-515
             - split_outdoorlight/com/govee/h7080/adjust/h7085/H7085DiyNewConfig.java:101-106
             - split_outdoorlight/com/govee/h7080/H7080ApplicationImp.java:34
@@ -5416,6 +5596,7 @@ families:
           scene_dialect: legacy_scene
           connect_reads: [brightness, color_group]
           connect_writes: []
+          heartbeat: power
           doc: >-
             B7081 (goodsType 55 = KmpGoodsType CAR_BOTTOM_LIGHT_8) on the h7080 NewDetail screen (H708012DetailConfig). The
             SKU tie is the h7080 Support tables: the SKU constant B7081 with its add-list icon, the guide gif b7081 for 55, and
@@ -5436,12 +5617,14 @@ families:
             0x50 goes through the family's new-DIY parsers (H7085DiyNewConfig registers 45 / 55 / 56 at app init), which
             are not modelled; every other scene goes through parseSceneV1 (BaseSceneViewMode.r3), so scene_dialect is
             legacy_scene and the bundled catalog holds no sceneType-5 scene that leads 0x50. Not hardware-verified.
+            Heartbeat: aa 01 (NewDetailVm.I3 = Support.supportPactV1, true only at exactly the accepted pact (2,1));
+            at any other pact the screen would send aa 00, so widening the pacts revisits it.
           doc-ref:
-            - split_outdoorlight/com/govee/h7080/pact/Support.java:27-29,52-66,68-76,85-97,94-96,116-118
+            - split_outdoorlight/com/govee/h7080/pact/Support.java:27-29,52-66,68-76,85-97,94-96,116-118,133-165
             - base-classes2/com/govee/shared/checker/KmpGoodsType.java:97-99
             - split_outdoorlight/com/govee/h7080/adjust/H708012DetailConfig.java:42-100
             - split_outdoorlight/com/govee/h7080/adjust/detail/Compose4InfoBle$iControllerStrategy$1.java:111-179
-            - split_outdoorlight/com/govee/h7080/adjust/detail/NewDetailVm.java:190-227,293-323,948-955,1095-1116
+            - split_outdoorlight/com/govee/h7080/adjust/detail/NewDetailVm.java:190-227,293-323,614-621,948-955,1095-1116
             - split_outdoorlight/com/govee/h7080/adjust/detail/Info4Detail.java:479-515
             - split_outdoorlight/com/govee/h7080/adjust/h7085/H7085DiyNewConfig.java:101-106
             - split_outdoorlight/com/govee/h7080/H7080ApplicationImp.java:34
@@ -5467,6 +5650,7 @@ families:
           scene_dialect: legacy_scene
           connect_reads: [brightness, color_group]
           connect_writes: []
+          heartbeat: power
           doc: >-
             B7082 (goodsType 56 = KmpGoodsType CAR_BOTTOM_LIGHT_6) on the h7080 NewDetail screen (H708012DetailConfig). The
             SKU tie is the h7080 Support tables: the SKU constant B7082 with its add-list icon, the guide gif b7082 for 56, and
@@ -5487,12 +5671,14 @@ families:
             0x50 goes through the family's new-DIY parsers (H7085DiyNewConfig registers 45 / 55 / 56 at app init), which
             are not modelled; every other scene goes through parseSceneV1 (BaseSceneViewMode.r3), so scene_dialect is
             legacy_scene and the bundled catalog holds no sceneType-5 scene that leads 0x50. Not hardware-verified.
+            Heartbeat: aa 01 (NewDetailVm.I3 = Support.supportPactV1, true only at exactly the accepted pact (2,1));
+            at any other pact the screen would send aa 00, so widening the pacts revisits it.
           doc-ref:
-            - split_outdoorlight/com/govee/h7080/pact/Support.java:27-29,52-66,68-76,85-97,94-96,116-118
+            - split_outdoorlight/com/govee/h7080/pact/Support.java:27-29,52-66,68-76,85-97,94-96,116-118,133-165
             - base-classes2/com/govee/shared/checker/KmpGoodsType.java:97-99
             - split_outdoorlight/com/govee/h7080/adjust/H708012DetailConfig.java:42-100
             - split_outdoorlight/com/govee/h7080/adjust/detail/Compose4InfoBle$iControllerStrategy$1.java:111-179
-            - split_outdoorlight/com/govee/h7080/adjust/detail/NewDetailVm.java:190-227,293-323,948-955,1095-1116
+            - split_outdoorlight/com/govee/h7080/adjust/detail/NewDetailVm.java:190-227,293-323,614-621,948-955,1095-1116
             - split_outdoorlight/com/govee/h7080/adjust/detail/Info4Detail.java:479-515
             - split_outdoorlight/com/govee/h7080/adjust/h7085/H7085DiyNewConfig.java:101-106
             - split_outdoorlight/com/govee/h7080/H7080ApplicationImp.java:34
@@ -5558,6 +5744,7 @@ families:
           status_read: [cmd_41, color_group]
           connect_reads: []
           connect_writes: []
+          heartbeat: heartbeat
           doc: >-
             H7056 (goodsType 304, KmpGoodsType; H7056SceneConfig.match) on the h7056 detail screen (H7056ViewModel,
             H7056ConfigDetail). Its connect read is the 0xAC status read alone, ac 03 02 41 a5 (Compose4BaseInfoSingleRead ->
@@ -5581,7 +5768,7 @@ families:
             - base-classes2/com/govee/shared/config/h7056/H7056SceneConfig.java:54-56
             - split_outdoorlight/com/govee/h7056/pact/H7056Support.java:42-47,56-58,94-96
             - split_outdoorlight/com/govee/h7056/detail/H7056ConfigDetail.java:51-120
-            - split_outdoorlight/com/govee/h7056/detail/H7056ViewModel.java:146-171,859-869,973-992
+            - split_outdoorlight/com/govee/h7056/detail/H7056ViewModel.java:146-171,539-541,859-869,973-992
             - split_outdoorlight/com/govee/h7056/detail/Info4Detail.java:362-393
             - split_outdoorlight/com/govee/h7056/diy/H7056DiyConfig.java:128
             - split_outdoorlight/com/govee/h7056/H7056ApplicationImp.java:46
@@ -5689,6 +5876,7 @@ families:
           kelvin_range: [2200, 6500]
           connect_reads: [brightness, color_group]
           connect_writes: []
+          heartbeat: power
           doc: >-
             H6087 (goodsType 77: H6087SceneConfig.match) on the h7050 VM4Light screen (its n4 = Support.supportPact:
             (1,1)). Connect (ControllerStrategyConfig.B, chosen for 77): versions, Wi-Fi versions and MAC, the sync-time
@@ -5713,7 +5901,7 @@ families:
             not modelled; every other scene goes through parseSceneV1 (BaseSceneViewMode.r3), so scene_dialect is
             legacy_scene and the bundled catalog holds no sceneType-5 scene that leads 0x50. Not hardware-verified.
           doc-ref:
-            - split_h7050/com/govee/h7050/adjust/newAdjust/VM4Light.java:255-281,825-832,974-993,557-562,595-599
+            - split_h7050/com/govee/h7050/adjust/newAdjust/VM4Light.java:255-281,424-426,825-832,974-993,557-562,595-599
             - split_h7050/com/govee/h7050/pact/Support.java:66,210-260,282-326,570-579,104-106,355-361
             - base-classes2/com/govee/shared/config/h6087/H6087SceneConfig.java:45-47
             - split_h7050/com/govee/h7050/adjust/newAdjust/ColorControllerConfig.java:301-407,127-152
@@ -5750,6 +5938,7 @@ families:
           scene_versions: [0, 1, 2, 3]
           connect_reads: [brightness, color_group]
           connect_writes: []
+          heartbeat: power
           doc: >-
             H6088 (goodsType 157 = KmpGoodsType GOODS_TYPE_VALUE_H6088; H6088SceneConfig.match) on the h7050 VM4Light
             screen (its n4 = Support.supportPact: (1,1) / (2,1)). Connect (ControllerStrategyConfig.O, chosen for 157):
@@ -5775,7 +5964,7 @@ families:
             not modelled; every other scene goes through parseSceneV1 (BaseSceneViewMode.r3), so scene_dialect is
             legacy_scene and the bundled catalog holds no sceneType-5 scene that leads 0x50. Not hardware-verified.
           doc-ref:
-            - split_h7050/com/govee/h7050/adjust/newAdjust/VM4Light.java:255-281,825-832,974-993,557-562,595-599
+            - split_h7050/com/govee/h7050/adjust/newAdjust/VM4Light.java:255-281,424-426,825-832,974-993,557-562,595-599
             - split_h7050/com/govee/h7050/pact/Support.java:66,210-260,282-326,570-579,712-714,128-133,355-361
             - base-classes2/com/govee/shared/checker/KmpGoodsType.java:180
             - base-classes2/com/govee/shared/config/h6088/H6088SceneConfig.java:45-47
@@ -5815,6 +6004,7 @@ families:
           brightness_range: [1, 100]
           connect_reads: [brightness, gradual, color_group]
           connect_writes: []
+          heartbeat: power
           doc: >-
             H7050 on the h7050 NewDetailVM screen (h7050515253 NewDetailActivity, Model.t). Its n4 is goodsType-only;
             the accepted pact is (1,1). Connect: the default Compose4InfoBleIot read (versions, Wi-Fi versions and MAC,
@@ -5840,7 +6030,7 @@ families:
             - split_h7050/com/govee/h7050/adjust/newAdjust/h7050515253/NewDetailVM$connectBleSuc$1.java:70-81,97-119
             - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4InfoBleIot.java:74-85
             - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4InfoBleIot$iControllerStrategy$1.java:154-250
-            - split_h7050/com/govee/h7050/adjust/newAdjust/h7050515253/NewDetailVM.java:102-116,163-192,471-473,511-512,712-719,816-835
+            - split_h7050/com/govee/h7050/adjust/newAdjust/h7050515253/NewDetailVM.java:102-116,163-192,380-382,471-473,511-512,712-719,816-835
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:324-336,551-560,3610-4241,4340-4343,11798-11801,930-934,11544-11547
             - base-classes11/com/govee/base2light/pact/newdetail/IColorModeFuc.java:101-104
             - split_h7050/com/govee/h7050/adjust/newAdjust/h7050515253/NewDetailConfig.java:187-196
@@ -5866,6 +6056,7 @@ families:
           brightness_range: [1, 100]
           connect_reads: [brightness, gradual, color_group]
           connect_writes: []
+          heartbeat: power
           doc: >-
             H7060 on the h7050 H70606162DetailVM screen (Model.t sends 76 / 98 / 107 to H70606162NewDetailActivity). Its
             n4 is goodsType-only; the accepted pact is (1,1). Connect: the default Compose4InfoBleIot read (the
@@ -5887,7 +6078,7 @@ families:
             - base-classes2/com/govee/shared/config/h7060/H7060SceneConfig.java:45-47
             - split_h7050/com/govee/h7050/adjust/newAdjust/h60616263/H70606162DetailVM$connectBleSuc$1.java:70-81,97-119
             - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4InfoBleIot$iControllerStrategy$1.java:154-250
-            - split_h7050/com/govee/h7050/adjust/newAdjust/h60616263/H70606162DetailVM.java:102-116,163-192,475-477,515-516,716-723,820-839
+            - split_h7050/com/govee/h7050/adjust/newAdjust/h60616263/H70606162DetailVM.java:102-116,163-192,380-382,475-477,515-516,716-723,820-839
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:324-336,551-560,4430-4433,14676-14679
             - base-classes11/com/govee/base2light/pact/newdetail/IColorModeFuc.java:101-104
             - split_h7050/com/govee/h7050/adjust/newAdjust/h60616263/NewDetailConfig.java:95-104
@@ -5912,6 +6103,7 @@ families:
           brightness_range: [1, 100]
           connect_reads: [brightness, gradual, color_group]
           connect_writes: []
+          heartbeat: power
           doc: >-
             H7051 on the h7050 NewDetailVM screen (Model.t). It is as H7050 (46): the default Compose4InfoBleIot connect
             read (aa 04, aa a3, aa 01, aa 05, after the time-sync write and the info reads), then the direct aa a5
@@ -5931,7 +6123,7 @@ families:
             - base-classes2/com/govee/shared/config/h7051/H7051SceneConfig.java:45-47
             - split_h7050/com/govee/h7050/adjust/newAdjust/h7050515253/NewDetailVM$connectBleSuc$1.java:70-81,97-119
             - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4InfoBleIot$iControllerStrategy$1.java:154-250
-            - split_h7050/com/govee/h7050/adjust/newAdjust/h7050515253/NewDetailVM.java:163-192,511-512,816-835
+            - split_h7050/com/govee/h7050/adjust/newAdjust/h7050515253/NewDetailVM.java:163-192,380-382,511-512,816-835
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:324-336,551-560,4345-4348,11954-11957
             - base-classes11/com/govee/base2light/pact/newdetail/IColorModeFuc.java:101-104
             - split_h7050/com/govee/h7050/adjust/newAdjust/h7050515253/NewDetailConfig.java:187-196
@@ -5956,6 +6148,7 @@ families:
           brightness_range: [1, 100]
           connect_reads: [brightness, gradual, color_group]
           connect_writes: []
+          heartbeat: power
           doc: >-
             H7062 on the h7050 H70606162DetailVM screen (Model.t). Connect: the default Compose4InfoBleIot read (the
             time-sync write and info reads, aa 04, aa a3, aa 01, aa 05), then the direct aa a5 groups of 4 over
@@ -5974,7 +6167,7 @@ families:
             - base-classes2/com/govee/shared/config/h7062/H7062SceneConfig.java:45-47
             - split_h7050/com/govee/h7050/adjust/newAdjust/h60616263/H70606162DetailVM$connectBleSuc$1.java:70-81,97-119
             - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4InfoBleIot$iControllerStrategy$1.java:154-250
-            - split_h7050/com/govee/h7050/adjust/newAdjust/h60616263/H70606162DetailVM.java:163-192,475-477,515-516,820-839
+            - split_h7050/com/govee/h7050/adjust/newAdjust/h60616263/H70606162DetailVM.java:163-192,380-382,475-477,515-516,820-839
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:324-336,551-560,4420-4423,14357-14360
             - base-classes11/com/govee/base2light/pact/newdetail/IColorModeFuc.java:101-104
             - split_h7050/com/govee/h7050/adjust/newAdjust/h60616263/NewDetailConfig.java:95-104
@@ -5999,6 +6192,7 @@ families:
           brightness_range: [1, 100]
           connect_reads: [brightness, gradual, color_group]
           connect_writes: []
+          heartbeat: power
           doc: >-
             H7065 on the h7050 NewDetailVM screen (Model.t). Connect: the default Compose4InfoBleIot read (the time-sync
             write and info reads, aa 04, aa a3, aa 01, aa 05), then one direct aa a5 group of 4 over
@@ -6018,7 +6212,7 @@ families:
             - base-classes2/com/govee/shared/config/h7065/H7065SceneConfig.java:45-47
             - split_h7050/com/govee/h7050/adjust/newAdjust/h7050515253/NewDetailVM$connectBleSuc$1.java:70-81,97-119
             - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4InfoBleIot$iControllerStrategy$1.java:154-250
-            - split_h7050/com/govee/h7050/adjust/newAdjust/h7050515253/NewDetailVM.java:163-192,471-473,511-512,816-835
+            - split_h7050/com/govee/h7050/adjust/newAdjust/h7050515253/NewDetailVM.java:163-192,380-382,471-473,511-512,816-835
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:324-336,551-560,4335-4338,11632-11635
             - base-classes11/com/govee/base2light/pact/newdetail/IColorModeFuc.java:101-104
             - split_h7050/com/govee/h7050/adjust/newAdjust/h7050515253/NewDetailConfig.java:187-196
@@ -6043,6 +6237,7 @@ families:
           brightness_range: [1, 100]
           connect_reads: [brightness, gradual, color_group]
           connect_writes: []
+          heartbeat: power
           doc: >-
             H7055 on the h7050 NewDetailVM screen (Model.t). Connect: the default Compose4InfoBleIot read (the time-sync
             write and info reads, aa 04, aa a3, aa 01, aa 05), then one direct aa a5 group of 4 over
@@ -6061,7 +6256,7 @@ families:
             - base-classes2/com/govee/shared/config/h7055/H7055SceneConfig.java:45-47
             - split_h7050/com/govee/h7050/adjust/newAdjust/h7050515253/NewDetailVM$connectBleSuc$1.java:70-81,97-119
             - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4InfoBleIot$iControllerStrategy$1.java:154-250
-            - split_h7050/com/govee/h7050/adjust/newAdjust/h7050515253/NewDetailVM.java:163-192,471-473,511-512,816-835
+            - split_h7050/com/govee/h7050/adjust/newAdjust/h7050515253/NewDetailVM.java:163-192,380-382,471-473,511-512,816-835
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:324-336,551-560,4365-4368,12587-12590
             - base-classes11/com/govee/base2light/pact/newdetail/IColorModeFuc.java:101-104
             - split_h7050/com/govee/h7050/adjust/newAdjust/h7050515253/NewDetailConfig.java:187-196
@@ -6086,6 +6281,7 @@ families:
           brightness_range: [1, 100]
           connect_reads: [brightness, gradual, color_group]
           connect_writes: []
+          heartbeat: power
           doc: >-
             H7066 on the h7050 NewDetailVM screen (Model.t). Connect: the default Compose4InfoBleIot read (the time-sync
             write and info reads, aa 04, aa a3, aa 01, aa 05), then one direct aa a5 group of 4 over
@@ -6104,7 +6300,7 @@ families:
             - base-classes2/com/govee/shared/config/h7066/H7066SceneConfig.java:45-47
             - split_h7050/com/govee/h7050/adjust/newAdjust/h7050515253/NewDetailVM$connectBleSuc$1.java:70-81,97-119
             - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4InfoBleIot$iControllerStrategy$1.java:154-250
-            - split_h7050/com/govee/h7050/adjust/newAdjust/h7050515253/NewDetailVM.java:163-192,471-473,511-512,816-835
+            - split_h7050/com/govee/h7050/adjust/newAdjust/h7050515253/NewDetailVM.java:163-192,380-382,471-473,511-512,816-835
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:324-336,551-560,4330-4333,11468-11471
             - base-classes11/com/govee/base2light/pact/newdetail/IColorModeFuc.java:101-104
             - split_h7050/com/govee/h7050/adjust/newAdjust/h7050515253/NewDetailConfig.java:187-196
@@ -6129,6 +6325,7 @@ families:
           brightness_range: [1, 100]
           connect_reads: [brightness, gradual, color_group]
           connect_writes: []
+          heartbeat: power
           doc: >-
             H7052 on the h7050 NewDetailVM screen (Model.t). Its n4 is goodsType-only; the accepted pacts are (1,1) and
             (2,1) (Support.supportPactV2). Connect: the default Compose4InfoBleIot read (the time-sync write and info
@@ -6150,7 +6347,7 @@ families:
             - base-classes2/com/govee/shared/config/h7052/H7052SceneConfig.java:53-55
             - split_h7050/com/govee/h7050/adjust/newAdjust/h7050515253/NewDetailVM$connectBleSuc$1.java:70-81,97-119
             - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4InfoBleIot$iControllerStrategy$1.java:154-250
-            - split_h7050/com/govee/h7050/adjust/newAdjust/h7050515253/NewDetailVM.java:102-116,163-192,511-512,712-719,816-835
+            - split_h7050/com/govee/h7050/adjust/newAdjust/h7050515253/NewDetailVM.java:102-116,163-192,380-382,511-512,712-719,816-835
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:324-336,551-560,4350-4353,12116-12119
             - base-classes11/com/govee/base2light/pact/newdetail/IColorModeFuc.java:101-104
             - split_h7050/com/govee/h7050/adjust/newAdjust/h7050515253/NewDetailConfig.java:187-196
@@ -6175,6 +6372,7 @@ families:
           brightness_range: [1, 100]
           connect_reads: [brightness, gradual, color_group]
           connect_writes: []
+          heartbeat: power
           doc: >-
             H7053 on the h7050 NewDetailVM screen (Model.t), as H7052 (218). The accepted pacts are (1,1) and (2,1)
             (Support.supportPactV2). Connect: the default Compose4InfoBleIot read (aa 04, aa a3, aa 01, the M4 aa 41
@@ -6194,7 +6392,7 @@ families:
             - base-classes2/com/govee/shared/config/h7053/H7053SceneConfig.java:53-55
             - split_h7050/com/govee/h7050/adjust/newAdjust/h7050515253/NewDetailVM$connectBleSuc$1.java:70-81,97-119
             - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4InfoBleIot$iControllerStrategy$1.java:154-250
-            - split_h7050/com/govee/h7050/adjust/newAdjust/h7050515253/NewDetailVM.java:102-116,163-192,511-512,816-835
+            - split_h7050/com/govee/h7050/adjust/newAdjust/h7050515253/NewDetailVM.java:102-116,163-192,380-382,511-512,816-835
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:324-336,551-560,4355-4358,12272-12275
             - base-classes11/com/govee/base2light/pact/newdetail/IColorModeFuc.java:101-104
             - split_h7050/com/govee/h7050/adjust/newAdjust/h7050515253/NewDetailConfig.java:187-196
@@ -6219,6 +6417,7 @@ families:
           brightness_range: [1, 100]
           connect_reads: [brightness, gradual, color_group]
           connect_writes: []
+          heartbeat: power
           doc: >-
             H7063 on the h7050 NewDetailVM screen (Model.t). Its n4 is goodsType-only; the accepted pacts are (1,1) and
             (2,1). Connect: the default Compose4InfoBleIot read (the time-sync write and info reads, aa 04, aa a3, aa
@@ -6239,7 +6438,7 @@ families:
             - base-classes2/com/govee/shared/config/h7063/H7063SceneConfig.java:45-47
             - split_h7050/com/govee/h7050/adjust/newAdjust/h7050515253/NewDetailVM$connectBleSuc$1.java:70-81,97-119
             - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4InfoBleIot$iControllerStrategy$1.java:154-250
-            - split_h7050/com/govee/h7050/adjust/newAdjust/h7050515253/NewDetailVM.java:102-116,163-192,471-473,511-512,816-835
+            - split_h7050/com/govee/h7050/adjust/newAdjust/h7050515253/NewDetailVM.java:102-116,163-192,380-382,471-473,511-512,816-835
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:324-336,551-560,4360-4363,12431-12434
             - base-classes11/com/govee/base2light/pact/newdetail/IColorModeFuc.java:101-104
             - split_h7050/com/govee/h7050/adjust/newAdjust/h7050515253/NewDetailConfig.java:187-196
@@ -6360,6 +6559,7 @@ families:
           status_read: [cmd_41, color_group]
           connect_reads: []
           connect_writes: []
+          heartbeat: heartbeat
           doc: >-
             H1630 (goodsType 364 = KmpGoodsType GOODS_TYPE_VALUE_H1630; H1630SceneConfig.match; h7050 Support.x) on the
             h7050 VM4LightH1630 screen (H1630DetailConfig). Pacts: Support.addSupportPact registers (1,1), (1,2) and
@@ -6396,7 +6596,7 @@ families:
             - base-classes2/com/govee/shared/config/h1630/H1630SceneConfig.java:54-56
             - split_h7050/com/govee/h7050/newdetail/h1630/H1630DetailConfig.java:103-170
             - split_h7050/com/govee/h7050/newdetail/h1630/VM4LightH1630$afterConnectedSingleReadDeviceInfo$1.java:96-123,151-180
-            - split_h7050/com/govee/h7050/newdetail/h1630/VM4LightH1630.java:375-392,1149-1168
+            - split_h7050/com/govee/h7050/newdetail/h1630/VM4LightH1630.java:375-392,553-555,1149-1168
             - split_h7050/com/govee/h7050/newdetail/Info4Detail.java:363-373,422-454,527-529
             - base-classes11/com/govee/base2light/kt/general_controller/Controller4ColorInfoByGroup.java:177-193
             - split_h7050/com/govee/h7050/newdetail/h1630/diy/H1630DiyConfig.java:36

@@ -399,18 +399,24 @@ enums:
       id: heartbeat
       -orig-id: SINGLE_HEART_BEAT
       doc: |
-        heartbeat (H60A1 / H60A6); as a 0xAC TLV tag, 0 is ordinary, not padding
+        heartbeat: the AA 00 keep-alive of the newdetail screens whose I3 is false (ConnectHeartbeat type 2),
+        H60A6, H60B1, H6098 / H8098 / H6690, H7056 and H1630 / R1630 (devices.yaml timing.heartbeat, clientRow
+        heartbeat); as a 0xAC TLV tag, 0 is ordinary, not padding
       doc-ref:
         - base-classes10/com/govee/base2light/ble/controller/BleProtocolConstants.java:125
+        - base-classes12/com/govee/common2light/capability/connect/ConnectHeartbeat.java:15-17,26-38
         - firmware-h60a6-wifi/decompiled/H60A6_ble_dispatcher.c:241-242
         - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4BaseInfoSingleRead.java:254-285
     0x01:
       id: power
       -orig-id: [SINGLE_SWITCH, SINGLE_HEART, SINGLE_MAIN_SWITCH]
       doc: |
-        33 01 write, AA 01 reply and push, TLV 0x01 (value byte 0 != 0 = on)
+        33 01 write, AA 01 reply and push, TLV 0x01 (value byte 0 != 0 = on); AA 01 is also the keep-alive
+        (ConnectHeartbeat type 1, where the screen's I3 is true; the plug screens' HeartController /
+        HeartGMessage; devices.yaml timing.heartbeat)
       doc-ref:
         - base-classes10/com/govee/base2light/ble/controller/BleProtocolConstants.java:161
+        - base-classes10/com/govee/base2light/ble/controller/HeartController.java:19-21
         - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4BaseInfoSingleRead.java:286-288
     0x02:
       id: cmd_02
@@ -614,9 +620,12 @@ enums:
     0x33:
       id: volume
       -orig-id: SINGLE_VOLUME
-      doc: H6047 AA 33 reply [bar1 << 4 | bar0][flag]
+      doc: |
+        H6047 AA 33 reply [bar1 << 4 | bar0][flag]; AA 33 is also the keep-alive of ConnectHeartbeat type 3 and of
+        the H610A screen's IHeart (striplight ComposeHeartController, SINGLE_LR_SWITCH)
       doc-ref:
         - base-classes10/com/govee/base2light/ble/controller/BleProtocolConstants.java:165
+        - split_h6062/com/govee/striplight/ble/ComposeHeartController.java:9-11
         - H6047 handler @0x010069f0
     0x34:
       id: swap_light
@@ -633,10 +642,14 @@ enums:
       id: cmd_36
       -orig-id: [SINGLE_WORRY_FREE_AT_NIGHT]
       doc: |
-        per form_36: bars [left][right], [index][state] or H6057 worry-free
+        per form_36: bars [left][right], [index][state] or H6057 worry-free; AA 36 is also the H6047 / H6042
+        keep-alive: the old detail screen's IHeart (NewDetailVm.A3 -> ComposeLightHeartController, which BleComm.l
+        sends in place of ConnectHeartbeat's byte); ConnectHeartbeat.c type 4 maps to the same read
       doc-ref:
         - base-classes10/com/govee/base2light/ble/controller/BleProtocolConstants.java:173
-        - split_h6047/com/govee/h6047/detail/NewDetailVm.java:696-718
+        - split_h6047/com/govee/h6047/ble/controller/ComposeLightHeartController.java:9-11
+        - split_h6047/com/govee/h6047/detail/NewDetailVm.java:574-614,696-718
+        - base-classes11/com/govee/base2light/pact/newdetail/ble/BleComm.java:76-84
         - split_hollowlamp/com/govee/h6057/origin/newDetail/H6057SettingActivity.java:846-850
     0x37:
       id: prompt_tone

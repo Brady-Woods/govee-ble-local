@@ -37,16 +37,32 @@ Reliability rules this module enforces (each one learned from live failures):
   never retried; a write the device refuses is :class:`GoveeBleCommandRejected`).
 * Junk notifications (late handshake retransmits, frames failing the XOR
   checksum) are dropped at the source, so they can't be mistaken for replies.
+* The heartbeat (``heartbeat``: the keep-alive read the app's control screen sends
+  while the link is up; spec devices.yaml timing.heartbeat) is armed once a session
+  is set up and stopped with every teardown and link loss, so exactly one chain of
+  ticks runs per session. ``fixed_rate`` ticks every ``HEARTBEAT_INTERVAL``;
+  ``after_quiet`` also restarts the wait when each operation that sent a frame
+  ends. A tick that finds the link busy (an operation holding or waiting for the
+  lock, a :meth:`GoveeConnection.hold_heartbeat`, or the last beat still writing)
+  is dropped, not queued. A beat is one write, bounded by
+  ``HEARTBEAT_WRITE_TIMEOUT``, whose failure is logged at DEBUG and changes nothing;
+  it never touches the idle timer or the warm window, and a disconnect (idle,
+  ``disconnect`` or ``close``) or an operation that wants the link cancels a beat
+  still writing rather than wait for it (the app writes its beat off its command
+  queue), so no command waits for a beat and the link lasts exactly as long as
+  without it. Its reply stays in the receive queue for the next operation to drain.
+  With ``heartbeat=None`` nothing is armed, whatever ``heartbeat_timing`` says.
 """
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import math
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 from dataclasses import dataclass
-from typing import Final, Literal, TypeVar, overload
+from typing import Final, Literal, TypeVar, get_args, overload
 
 from bleak.backends.characteristic import BleakGATTCharacteristic
 from bleak.backends.device import BLEDevice
@@ -63,6 +79,8 @@ from ..const import (
     HANDSHAKE_ECHO_WINDOW,
     HANDSHAKE_STEP2_TIMEOUT,
     HANDSHAKE_TIMEOUT,
+    HEARTBEAT_INTERVAL,
+    HEARTBEAT_WRITE_TIMEOUT,
     IDLE_DISCONNECT_DELAY,
     NOTIFY_CHAR_UUID,
     OPERATION_TIMEOUT,
@@ -92,6 +110,7 @@ from ..models import Encryption
 from ..wire._spec import BgcInfo as _BgcInfo, Frame as _Frame
 from ..wire.build import (
     PRO_MULTI_AC,
+    PRO_READ,
     PRO_WRITE,
 )
 from ..wire.describe import describe_frame
@@ -128,6 +147,12 @@ _MAX_WRITE_PAYLOAD: Final = 509
 _TRANSPORT_ERRORS: Final = (BleakError, EOFError, ConnectionError)
 
 _T = TypeVar("_T")
+
+# When the heartbeat goes out (spec devices.yaml clientRow heartbeat_timing): "fixed_rate" = every
+# HEARTBEAT_INTERVAL from the session's start (AbsBle.HeartRunnable); "after_quiet" = HEARTBEAT_INTERVAL after
+# the last operation that sent a frame, each one restarting the wait (the ctlchannel HeartHandler.e, which
+# restarts it on every send; goodsType 43).
+HeartbeatTiming = Literal["fixed_rate", "after_quiet"]
 
 
 def _err_text(err: BaseException) -> str:
@@ -233,6 +258,8 @@ class GoveeConnection:
         frame_log: str | None = None,
         session_frames: Callable[[], list[bytes]] | None = None,
         session_ack: bool = True,
+        heartbeat: bytes | None = None,
+        heartbeat_timing: HeartbeatTiming = "fixed_rate",
     ) -> None:
         self._ble_device = ble_device
         self._encryption = encryption
@@ -279,6 +306,31 @@ class GoveeConnection:
         # when its task ends.
         self._teardowns: dict[asyncio.Task[None], float] = {}
         self._active_until = 0.0  # loop time; warm-window end after a user command
+        # The keep-alive read to send while the link is up (None: none) and when (HeartbeatTiming). Checked
+        # here, before any I/O: a 20-byte aa read with its checksum, and a known timing. Without a heartbeat
+        # the timing is ignored: no chain is ever armed (_arm_heartbeat), so neither timing sends a beat or
+        # restarts a wait (_run), and the link gets what 1.5.0's did.
+        if heartbeat is not None and not (
+                isinstance(heartbeat, (bytes, bytearray)) and len(heartbeat) == FRAME_LEN
+                and heartbeat[0] == PRO_READ and checksum_ok(bytes(heartbeat))):
+            raise GoveeBleInvalidValue(
+                f"{self.address}: a heartbeat is a {FRAME_LEN}-byte 0x{PRO_READ:02X} read with its checksum, "
+                f"got {heartbeat!r}")
+        if heartbeat_timing not in get_args(HeartbeatTiming):
+            raise GoveeBleInvalidValue(
+                f"{self.address}: heartbeat_timing must be one of {get_args(HeartbeatTiming)}, "
+                f"got {heartbeat_timing!r}")
+        self._heartbeat = None if heartbeat is None else bytes(heartbeat)
+        self._heartbeat_timing = heartbeat_timing
+        self._heartbeat_timer: asyncio.TimerHandle | None = None   # the next tick, while a chain runs
+        self._heartbeat_beat: asyncio.Task[None] | None = None    # the last tick's write
+        # Callers holding or waiting for the lock (_locked), and open holds (hold_heartbeat): a tick that
+        # finds either is dropped.
+        self._lock_wanted = 0
+        self._holds = 0
+        # Frames written to the link (_raw_write), so an after_quiet operation restarts the wait only when it
+        # sent one (HeartHandler.e restarts it on a send, not on a connect() that finds the link up).
+        self._tx_count = 0
 
     @property
     def address(self) -> str:
@@ -478,7 +530,8 @@ class GoveeConnection:
 
     async def disconnect(self) -> None:
         """Drop the session and link now (bounded by ``DISCONNECT_TIMEOUT``)."""
-        async with self._lock:
+        self._cancel_beat()   # a beat still writing doesn't hold the teardown up
+        async with self._locked():
             self._cancel_idle_timer()
             await self._disconnect_locked()
 
@@ -571,6 +624,7 @@ class GoveeConnection:
                 self._drain()
                 await self._client.start_notify(NOTIFY_CHAR_UUID, self._notify_from(self._client))
             await self._prepare_session()
+            self._arm_heartbeat()   # the session is set up: the first beat one interval from now
         # A failed / half-open connect must not leave a stale client behind: the next
         # attempt would reuse it and hit "Service Discovery has not been performed yet".
         # Every branch tears it down so each retry starts clean.
@@ -739,12 +793,14 @@ class GoveeConnection:
         if client is not self._client:
             return  # a superseded client finishing its teardown late
         _LOGGER.debug("%s: disconnected", self.address)
+        self._stop_heartbeat()
         self._reset_session()
         # Drop the stale client so the next operation re-establishes from scratch.
         self._client = None
         self._enqueue(None)  # wake any waiter now instead of at its timeout
 
     async def _disconnect_locked(self) -> None:
+        self._stop_heartbeat()
         self._reset_session()
         client, self._client = self._client, None
         if client is None:
@@ -813,7 +869,9 @@ class GoveeConnection:
         return client
 
     async def _raw_write(self, frame: bytes) -> None:
-        await self._require_client().write_gatt_char(WRITE_CHAR_UUID, frame, response=False)
+        client = self._require_client()
+        self._tx_count += 1
+        await client.write_gatt_char(WRITE_CHAR_UUID, frame, response=False)
 
     def _encrypt(self, frame_plaintext: bytes) -> bytes:
         """Pure transform: plaintext frame -> wire bytes (no logging/capture)."""
@@ -836,7 +894,14 @@ class GoveeConnection:
     async def _run(self, op: Callable[[], Awaitable[_T]], *, extend_warm: bool) -> _T:
         """Run one public operation: lock, deadline, idle-timer bookkeeping, and
         normalization of every transport failure to a GoveeBleError."""
-        async with self._lock:
+        if self._lock.locked():
+            # A beat still writing holds it: cancel that write rather than queue behind it (the app writes its
+            # beat off its command queue, so a command never waits for one). Held by an operation instead, a
+            # beat not yet started drops itself anyway (_link_busy). Only when held: a beat created in this
+            # loop pass, beside a connect() that finds the link up and returns at once, still goes out.
+            self._cancel_beat()
+        async with self._locked():
+            sent = self._tx_count
             self._cancel_idle_timer()
             if extend_warm:
                 self._active_until = asyncio.get_running_loop().time() + ACTIVE_IDLE_DELAY
@@ -868,6 +933,10 @@ class GoveeConnection:
                 ) from err
             finally:
                 self._schedule_idle_timer()
+                # Only a running chain restarts, and none runs without a heartbeat (whatever the timing).
+                if (self._heartbeat_timing == "after_quiet" and self._heartbeat_timer is not None
+                        and self._tx_count != sent):
+                    self._arm_heartbeat()   # it wrote a frame: restart the wait (HeartHandler.e)
 
     @overload
     async def send(
@@ -1125,8 +1194,114 @@ class GoveeConnection:
         task.add_done_callback(self._background.discard)
 
     async def _idle_disconnect_task(self, generation: int) -> None:
-        async with self._lock:
+        if generation == self._idle_generation:
+            self._cancel_beat()   # the idle delay is up: a beat still writing doesn't extend the link
+        async with self._locked():
             if generation != self._idle_generation:
                 return  # an operation ran since the timer fired
             self._idle_timer = None
             await self._disconnect_locked()
+
+    # -- heartbeat ----------------------------------------------------------
+
+    @contextlib.asynccontextmanager
+    async def _locked(self) -> AsyncIterator[None]:
+        """The connection lock, counted while it is held or waited for (``_lock_wanted``), so a heartbeat tick
+        between a release and the next waiter's wake-up (when ``asyncio.Lock.locked()`` is False) still finds
+        the link busy and is dropped, not queued behind the waiter. Every operation, ``disconnect`` and the
+        idle disconnect take it; only a beat takes the lock bare (:meth:`_beat`)."""
+        self._lock_wanted += 1
+        try:
+            async with self._lock:
+                yield
+        finally:
+            self._lock_wanted -= 1
+
+    @contextlib.contextmanager
+    def hold_heartbeat(self) -> Iterator[None]:
+        """Send no heartbeat while the block runs: for several operations that belong together (a poll's
+        reads, a scene's upload and its activation), between which the app sends none (it skips its heartbeat
+        while a compose or multi-packet send is in flight, ``AbsBle.I``, and while its connect read runs). It
+        takes no lock and nests: other operations still run, and a tick due meanwhile is dropped. No I/O."""
+        self._holds += 1
+        try:
+            yield
+        finally:
+            self._holds -= 1
+
+    def _link_busy(self) -> bool:
+        """An operation holds or waits for the lock, a :meth:`hold_heartbeat` is open, or the last beat (other
+        than the caller's own) is still writing: a tick then sends nothing."""
+        beat = self._heartbeat_beat
+        writing = beat is not None and not beat.done() and beat is not asyncio.current_task()
+        return self._lock_wanted > 0 or self._lock.locked() or self._holds > 0 or writing
+
+    def _arm_heartbeat(self) -> None:
+        """(Re)start the chain on the current session: the next tick ``HEARTBEAT_INTERVAL`` from now,
+        replacing any armed one (so one chain runs). Nothing without a heartbeat, once closed, or with no
+        link. Called once the session is set up (the app sends no beat before its connect-time info read is
+        over: ShareVM.R -> updateSkipHeart, Ble4NewDetail.Q), and on an after_quiet connection when an
+        operation that sent a frame ends."""
+        self._stop_heartbeat()
+        if self._heartbeat is None or self._closed or self._client is None:
+            return
+        self._heartbeat_timer = asyncio.get_running_loop().call_later(
+            HEARTBEAT_INTERVAL, self._heartbeat_fired, self._client)
+
+    def _stop_heartbeat(self) -> None:
+        """End the chain (every teardown and link loss); a beat still writing ends at its bound, or sooner
+        when a disconnect or the next operation cancels it (:meth:`_cancel_beat`)."""
+        if self._heartbeat_timer is not None:
+            self._heartbeat_timer.cancel()
+            self._heartbeat_timer = None
+
+    def _cancel_beat(self) -> None:
+        """Cancel a beat still writing, ahead of a teardown (``disconnect``, ``close`` and the idle
+        disconnect) or an operation (:meth:`_run`), which would otherwise wait for the lock until the write
+        ends or reaches ``HEARTBEAT_WRITE_TIMEOUT``: the link then closes when the idle policy says, and a
+        command goes out when it is sent, as without a heartbeat. The beat gives the lock up as it unwinds."""
+        beat = self._heartbeat_beat
+        if beat is not None and not beat.done():
+            beat.cancel()
+
+    def _heartbeat_fired(self, client: BleakClientWithServiceCache) -> None:
+        """One tick: re-arm at the interval (a fixed rate), then start the beat unless the link is busy, where
+        the tick is dropped, not queued (AbsHeartRunnable.a; HeartRunnable.c reposts either way). The chain
+        ends on a closed connection or a link that is gone or superseded."""
+        self._stop_heartbeat()
+        if self._closed or client is not self._client or not self.is_connected:
+            return
+        loop = asyncio.get_running_loop()
+        self._heartbeat_timer = loop.call_later(HEARTBEAT_INTERVAL, self._heartbeat_fired, client)
+        if self._link_busy():
+            return
+        task = loop.create_task(self._beat(client, self._tx_count))
+        self._heartbeat_beat = task
+        self._background.add(task)
+        task.add_done_callback(self._background.discard)
+
+    async def _beat(self, client: BleakClientWithServiceCache, sent: int) -> None:
+        """Write one heartbeat to ``client`` under the lock, with no ack or reply wait (the app's heart is a
+        write outside its command queue: AbsBleComm.z -> ControllerComm.m), bounded by
+        ``HEARTBEAT_WRITE_TIMEOUT`` and cancelled by a disconnect or an operation that wants the link
+        (:meth:`_cancel_beat`). ``sent`` is the frame count at the tick: on after_quiet, a tick whose beat
+        has not started when an operation sends a frame (one that ran and ended in the tick's loop pass)
+        drops itself, since that send restarted the wait (HeartHandler.e). Its reply stays in the receive
+        queue, which the next operation drains. A failure is logged at DEBUG and changes nothing: no
+        teardown and no count (the app counts none; EventHeart is not retried), so a dead link shows at the
+        next operation's write retry. Never touches the idle timer or the warm window."""
+        frame = self._heartbeat
+        if frame is None or self._link_busy():
+            return   # an operation started since the tick
+        if self._heartbeat_timing == "after_quiet" and self._tx_count != sent:
+            return   # an operation sent a frame since the tick (in the same loop pass): the wait restarted
+        async with self._lock:   # free, and no one waits for it: taken without a yield
+            if client is not self._client or not self.is_connected:
+                return
+            try:
+                async with asyncio.timeout(HEARTBEAT_WRITE_TIMEOUT):
+                    await self._send_frame(frame)
+            except (GoveeBleError, *_TRANSPORT_ERRORS, TimeoutError) as err:
+                _LOGGER.debug("%s: heartbeat not sent: %s", self.address, _err_text(err))
+            except Exception as err:   # a background beat never raises
+                _LOGGER.debug("%s: heartbeat failed: %r", self.address, err, exc_info=err)

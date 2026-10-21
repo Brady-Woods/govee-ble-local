@@ -17,8 +17,9 @@ doesn't name is copied whole with every property its schema declares. So no key 
 wherever it occurs. Before writing, the generator checks the BLE routes over the whole document (a SKU
 that a modelled row and a hardware_verified / app_traced row both list is refused), resolves every row with
 support, of every level, with the library's own resolver (devices/_resolve.py, standard library only), which
-checks each value the library uses, and checks each colour decode and each status_read TLV type against
-govee_common.ksy, so a missing fact, or one the library can't serve, fails here and never at import.
+checks each value the library uses, and checks each colour decode, each status_read TLV type and each
+heartbeat command against govee_common.ksy, so a missing fact, or one the library can't serve, fails here and
+never at import.
 
 The rows also take the routes of the committed catalogue snapshot, spec/govee_catalog.json (the build reads
 it and nothing fetched): _resolve.catalogue over the whole document, by the snapshot's precedence. A SKU no
@@ -77,8 +78,8 @@ KEEP: dict[str, tuple[str, ...]] = {
         "models", "connectivity", "pacts", "support", "power_read", "power_live", "mode_color_parse",
         "mode_color_parse_status", "relay_power", "relay_on_mask", "advert_on_mask", "color_scheme",
         "color_functions", "capabilities", "zones", "account_lock", "scene_dialect", *_ROW_FACTS,
-        "mode_reports_kelvin", "status_read", "connect_reads", "connect_writes", "power_resync", "ic_pieces",
-        "by_pact", "by_firmware"),
+        "mode_reports_kelvin", "status_read", "connect_reads", "connect_writes", "heartbeat",
+        "heartbeat_timing", "power_resync", "ic_pieces", "by_pact", "by_firmware"),
     "#/$defs/clientModel": ("mode_color_parse", "mode_color_parse_status", "kelvin_range", "brightness_range",
                             "scene_power_on", "by_pact", "by_firmware"),
     "#/$defs/clientBranch": (
@@ -233,6 +234,19 @@ def _check_status_reads(families: tuple[dict[str, Any], ...]) -> None:
                                    "enum command")
 
 
+def _check_heartbeats(families: tuple[dict[str, Any], ...], beats: tuple[str, ...]) -> None:
+    """Every row's heartbeat is a govee_common::command member, whose code the library sends
+    (devices/profile.py), and one of ``beats``, the keep-alive reads a screen sends (the resolver's
+    ``HEARTBEATS``, which devices/profile.py also checks)."""
+    members = _members("command")
+    for fam in families:
+        for gt, row in fam["client_profile"]["by_goods_type"].items():
+            beat = row.get("heartbeat")
+            if beat is not None and (beat not in members or beat not in beats):
+                raise GenError(f"{fam['id']} goodsType {gt}: heartbeat {beat!r} is not a keep-alive read "
+                               f"(govee_common enum command, one of {sorted(beats)})")
+
+
 def load(raw: bytes) -> Any:
     """devices.yaml ``raw`` parsed (libyaml's safe loader where PyYAML has it)."""
     loader = getattr(yaml, "CSafeLoader", None) or yaml.SafeLoader
@@ -344,6 +358,7 @@ def project(doc: dict[str, Any], schema: dict[str, Any], catalogue: Mapping[str,
         table, families = projected["mode_color_parse"], projected["families"]
         _check_decodes(table)
         _check_status_reads(families)
+        _check_heartbeats(families, resolve.HEARTBEATS)
         resolve.profiles(families, table, resolve.LEVELS)   # modelled rows too: the opt-in builds them
     except resolve.SpecError as exc:
         raise GenError(str(exc)) from None

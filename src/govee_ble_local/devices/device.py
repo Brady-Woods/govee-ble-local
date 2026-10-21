@@ -168,7 +168,10 @@ class Device:
         after every handshake on a profile that requires one (:meth:`set_secret` can supply it
         later). ``frame_log=<path>`` persists a JSONL session capture. ``idle_disconnect`` is the
         seconds of inactivity after which the link is dropped: None uses the library default
-        (``const.IDLE_DISCONNECT_DELAY``), 0 or less keeps the link up.
+        (``const.IDLE_DISCONNECT_DELAY``), 0 or less keeps the link up. While the link is up the device sends
+        its profile's keep-alive read (:attr:`.DeviceProfile.heartbeat`), which never keeps it up longer. A
+        profile with ``heartbeat=None`` sends none, whatever its ``heartbeat_timing``: to turn it off on a
+        SKU whose profile has one, ``Device(dataclasses.replace(profile, heartbeat=None), ...)``.
 
         Raises GoveeBleInvalidValue if ``secret`` is not exactly 8 bytes."""
         self.profile = profile
@@ -229,6 +232,10 @@ class Device:
             session_ack=profile.relay,
             frame_log=frame_log,
             idle_disconnect=IDLE_DISCONNECT_DELAY if idle_disconnect is None else idle_disconnect,
+            # The screen's keep-alive while the link is up (spec devices.yaml timing.heartbeat). Without one
+            # the connection ignores the timing and arms nothing: no beat at all.
+            heartbeat=None if profile.heartbeat is None else build.heartbeat(profile.heartbeat),
+            heartbeat_timing=profile.heartbeat_timing,
         )
 
     def _learn_pact(self, adv: GoveeAdvertisement | None) -> bool:
@@ -875,10 +882,11 @@ class Device:
         :attr:`.DeviceProfile.power_resync` then re-reads as its app does (:meth:`_resync_after_power`);
         a failure there is only logged."""
         self._require(Capability.POWER)
-        async with self._zone_power_lock():
-            await self._commit(self._power_frames(on), lambda: self._apply_power(on),
-                               zones=dict.fromkeys(self._power_zones(), on), fixture=True)
-        await self._resync_after_power()
+        with self._conn.hold_heartbeat():   # the power write and its re-read: no heartbeat between them
+            async with self._zone_power_lock():
+                await self._commit(self._power_frames(on), lambda: self._apply_power(on),
+                                   zones=dict.fromkeys(self._power_zones(), on), fixture=True)
+            await self._resync_after_power()
 
     async def _resync_after_power(self) -> None:
         """gt 50 / 90 (:attr:`.DeviceProfile.power_resync`): after every acked power write the app
@@ -886,7 +894,8 @@ class Device:
         299-301`` -> ``G()`` = ``BleOpV2.o0:141-171`` / ``BleOpV4.l0:124-147``): ``aa 06``, ``aa 07 03``,
         ``33 b5``, then per-outlet timer and delay reads, which the library does not model. The power
         write already succeeded and its state is applied, so a failure here neither raises nor undoes
-        it. Other profiles send nothing."""
+        it. Other profiles send nothing. The caller holds the heartbeat across the power write and this
+        (``GoveeConnection.hold_heartbeat``)."""
         if not self.profile.power_resync:
             return
         try:
@@ -957,11 +966,12 @@ class Device:
             elif kelvin is not None:
                 _fold.apply_kelvin(self.profile, self._state, kelvin)
 
-        async with self._zone_power_lock():
-            await self._commit(frames, apply, fixture=power,
-                               zones=dict.fromkeys(self._power_zones(), True) if power else None)
-        if power:
-            await self._resync_after_power()
+        with self._conn.hold_heartbeat():   # as set_power: the power write and its re-read
+            async with self._zone_power_lock():
+                await self._commit(frames, apply, fixture=power,
+                                   zones=dict.fromkeys(self._power_zones(), True) if power else None)
+            if power:
+                await self._resync_after_power()
 
     async def turn_off(self) -> None:
         """Power off; equivalent to ``set_power(False)``."""
@@ -1139,8 +1149,10 @@ class Device:
         GoveeBleInvalidValue (also a GoveeBleNotSupported) for an unknown zone."""
         z = self._zone(name)
         if self.profile.bar_switch:
+            # The bar read and the 33 36 it feeds are one read-modify-write: no heartbeat between them.
             async with self._bar_lock:
-                await self._set_bar_power(z.power_index, on)
+                with self._conn.hold_heartbeat():
+                    await self._set_bar_power(z.power_index, on)
             return
 
         def apply() -> None:
@@ -1316,8 +1328,9 @@ class Device:
         The upload and the activation go out back to back: the app sends them as one composed
         controller (``BaseSceneViewMode.getSceneComposeController`` -> ``Compose4DefWrite4Multi``, an
         ``AbsComposeControllerWithOpResult`` that ``AbsComposeComm`` writes controller by
-        controller). So no other scene write (``_scene_lock``) and no read-back (``_read_gate``: a
-        poll waits for the activation) lands between them; other setters are not held back."""
+        controller). So no other scene write (``_scene_lock``), no read-back (``_read_gate``: a
+        poll waits for the activation) and no heartbeat (the app skips it while a compose is in flight,
+        ``AbsBle.I``) lands between them; other setters are not held back."""
         self._require(Capability.SCENES)
         soft, hard = self._versions_missing(scenes=True)
         if soft or hard:   # the set depends on a version not read yet: read it before the lookup
@@ -1334,29 +1347,31 @@ class Device:
             return _scene_upload_frames(scene, dialect, versions, mtu=size) or []
 
         async with self._scene_lock, self._zone_power_lock(), self._read_gate:
-            await self._send_pending_unlock()   # before the upload, not between it and the activation
-            lead = self._scene_power_frames()
-            if frames:
-                if lead:   # the app prepends the switch to the whole composed write, upload included
-                    # The switch is folded in only with the activation: until then a zone it lights that
-                    # the state holds off loses its stamp, and if the switch or the upload raises, every
-                    # zone does (a whole-device power write that may have reached the device, as in _commit).
-                    lit = dict.fromkeys(self._power_zones(), True)
-                    _fold.unconfirm_contradicted(self._state, lit)
-                    try:
-                        await self._conn.send_many(lead)
+            with self._conn.hold_heartbeat():
+                await self._send_pending_unlock()   # before the upload, not between it and the activation
+                lead = self._scene_power_frames()
+                if frames:
+                    if lead:   # the app prepends the switch to the whole composed write, upload included
+                        # The switch is folded in only with the activation: until then a zone it lights that
+                        # the state holds off loses its stamp, and if the switch or the upload raises, every
+                        # zone does (a whole-device power write that may have reached the device, as in
+                        # _commit).
+                        lit = dict.fromkeys(self._power_zones(), True)
+                        _fold.unconfirm_contradicted(self._state, lit)
+                        try:
+                            await self._conn.send_many(lead)
+                            await self._conn.send_unacked(sized)
+                        except BaseException:
+                            _fold.unconfirm_zones(self._state)
+                            raise
+                        finally:
+                            # As _commit does; counted as raised either way (no profile has both a global
+                            # switch and this lead).
+                            self._post_zone_power(lead, lit, {}, acked=False)
+                        lead = []
+                    else:
                         await self._conn.send_unacked(sized)
-                    except BaseException:
-                        _fold.unconfirm_zones(self._state)
-                        raise
-                    finally:
-                        # As _commit does; counted as raised either way (no profile has both a global
-                        # switch and this lead).
-                        self._post_zone_power(lead, lit, {}, acked=False)
-                    lead = []
-                else:
-                    await self._conn.send_unacked(sized)
-            await self._activate_scene(scene.code, lead)
+                await self._activate_scene(scene.code, lead)
 
     # -- misc settings ------------------------------------------------------
     async def set_gradual(self, on: bool) -> None:
@@ -1427,6 +1442,12 @@ class Device:
         and ``connect_timeout`` a finite number > 0 (where given)."""
         budget = (None if connect_attempts is None and connect_timeout is None
                   else ConnectBudget(connect_attempts, connect_timeout))
+        # The poll is the app's connect read, during which it sends no heartbeat: none between its reads.
+        with self._conn.hold_heartbeat():
+            return await self._update(budget)
+
+    async def _update(self, budget: ConnectBudget | None) -> DeviceState:
+        """:meth:`update`'s body, its connect limits resolved, with the heartbeat held."""
         discarded_before = self._discarded_reads
         await self._send_pending_unlock(budget)
         if not self._scenes_warm and Capability.SCENES in self.capabilities:

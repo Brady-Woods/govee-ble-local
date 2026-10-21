@@ -24,6 +24,7 @@ from govee_ble_local.devices.profile import PROFILES, DeviceProfile, RelayPower,
 from govee_ble_local.models import Capability as C
 from govee_ble_local.models import Encryption as E
 from govee_ble_local.models import Zone
+from govee_ble_local.transport.connection import HeartbeatTiming
 from govee_ble_local.wire.build import ColorScheme
 
 _ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -88,6 +89,14 @@ _CHANGED: dict[tuple[str, str], tuple[Any, Any]] = {
     ("H6641", "gradual"): (False, True),
     # The spec's name for the bars' 0x15 decode (one Kelvin per bar); the decode itself is unchanged.
     ("H6047", "mode_color_parse"): ("kelvin_15", "kelvin_pair_15"),
+    # 1.6.0: each row's keep-alive read (devices.yaml clientRow heartbeat); master sent none. aa 00 on the
+    # VM4LightH60A6 screen, aa 36 on the H6047's, aa 01 everywhere else, after 2 s of quiet on goodsType 43.
+    ("H60A6", "heartbeat"): (None, 0x00),
+    ("H6047", "heartbeat"): (None, 0x36),
+    **{(sku, "heartbeat"): (None, 0x01) for sku in (
+        "H61A8", "H6004", "H6006", "H6008", "H6052", "H6641", "H6188", "H6062", "H6061", "H5080", "H5083",
+        "H5085", "H5082", "H5089", "H5160", "H5161")},
+    **{(sku, "heartbeat_timing"): ("fixed_rate", "after_quiet") for sku in ("H5080", "H5083", "H5085")},
 }
 
 # (soft, hard) versions: unread, the H61A8 bench unit, and the reference self-test's other two.
@@ -104,6 +113,7 @@ def test_the_generated_table_is_masters_hand_table_but_for_the_spec_fixes() -> N
     # The resolver's value sets (standard library only) are the profile's Literals.
     assert set(_resolve.COLOR_SCHEMES) == set(get_args(ColorScheme))
     assert set(_resolve.RELAY_POWERS) == set(get_args(RelayPower))
+    assert set(_resolve.HEARTBEAT_TIMINGS) == set(get_args(HeartbeatTiming))
     routes = _resolve.routes(FAMILIES)
     reference = _reference()
     yaml = require_optional("yaml", reason="the reference resolver reads spec/devices.yaml")
@@ -353,6 +363,18 @@ _REFUSED: tuple[tuple[str, str, _Edit, str], ...] = (
      "by_model scene_power_on on a row without the scenes capability"),
     ("h5080", "50", lambda f: _row(f, "50").update(relay_power="all_outlet"), "relay_power 'all_outlet'"),
     ("h5080", "43", lambda f: _row(f, "43").update(advert_on_mask=300), "advert_on_mask 300"),
+    # the heartbeat
+    ("bulblightv3", "64", lambda f: _row(f, "64").pop("heartbeat"), "no heartbeat"),
+    ("bulblightv3", "64", lambda f: _row(f, "64").update(heartbeat="brightness"),
+     "heartbeat 'brightness' is not a keep-alive read"),
+    ("bulblightv3", "64", lambda f: _row(f, "64").update(heartbeat="cmd_zz"), "heartbeat 'cmd_zz'"),
+    ("h5080", "43", lambda f: _row(f, "43").update(heartbeat_timing="later"), "heartbeat_timing 'later'"),
+    ("bulblightv3", "64", lambda f: _row(f, "64").update(heartbeat="heartbeat"),
+     "heartbeat heartbeat where power_live ['heartbeat_aa01'] take power from the reply to power"),
+    ("h6047", "119", lambda f: _row(f, "119").update(heartbeat="power"),
+     "heartbeat power where power_live ['heartbeat_aa36'] take power from the reply to cmd_36"),
+    ("h5080", "50", lambda f: _row(f, "50").update(heartbeat="heartbeat"),
+     "where power_live [] and the relay take power from the reply to power"),
 )
 
 

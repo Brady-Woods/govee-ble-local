@@ -8,6 +8,75 @@ model, from which the shipped readers are generated).
 
 ## [Unreleased]
 
+### Fixed
+- **A held link no longer drops about 10 s after the last command** (#30). The app's control screen sends a
+  keep-alive read every 2000 ms while the link is up, and the firmware drops a link that has had no write for
+  10-11 s (H6006 `FUN_9b02801c`, and H5083, H60A6 and the H6047 BLE MCU the same; the H6008 has no such timer):
+  a field A19 bulb (an H6006 by the device manifest; the address match is inferred) dropped 10.45 s after its
+  last write, and the H5083 firmware simulation ended the 30 s warm window (`ACTIVE_IDLE_DELAY`) at about 11 s.
+  `GoveeConnection` now sends the profile's heartbeat while the link is up, so a link lasts as long as the
+  library's idle policy says and no longer: 8 s after a poll, the 30 s warm window after a write, or for good
+  with `idle_disconnect=0`.
+  - The frame is the row's (`aa 01` on most SKUs, `aa 00` on H60A6, H60B1, H6098 / H8098 / H6690, H7056 and
+    H1630 / R1630, `aa 36` on H6047 / H6042), the read the screen's view model picks (`ShareVM.K3` ->
+    `ConnectHeartbeat.c`, an `IHeart`, or the plug screens' heart controllers).
+  - Timing: a fixed 2 s rate from the moment the session is set up (handshake, unlock, session writes), so no
+    beat goes out at link-up (`AbsBle.HeartRunnable`); on goodsType 43 (H5080 / H5083 / H5085) 2 s after the
+    last operation that sent a frame, each one restarting the wait (the ctlchannel `HeartHandler.e`, which
+    restarts it on every send; a `connect()` that finds the link up sends nothing and restarts nothing).
+  - A tick is dropped, not queued, while an operation holds or waits for the link, or while a poll's reads, a
+    scene's upload and activation, an H6047 bar read-modify-write or a plug's power write and re-read run
+    (`GoveeConnection.hold_heartbeat`), so no beat lands between frames the app sends back to back. `Device`
+    now calls `GoveeConnection.hold_heartbeat()` (a synchronous context manager) in `update()`, `set_power()`
+    (so `turn_off()` too), `turn_on()`, an H6047 bar's `set_zone_power()` and every `set_scene_by_name()` (an
+    activate-only scene too; `set_scene(code)` holds nothing), so a test double that replaces `Device._conn`
+    needs one too (a no-op is enough).
+  - A beat is one write, bounded at `const.HEARTBEAT_WRITE_TIMEOUT` (1 s, new), never waits for an ack, and its
+    failure is logged at DEBUG only. It never touches the idle timer or the warm window, and a disconnect (the
+    idle one, `disconnect()` or `close()`) or an operation that wants the link cancels a beat still writing
+    rather than wait for it, so no command waits for a beat (the app writes its beat off its command queue) and
+    neither the idle close nor the warm window moves. Its reply is not folded into state: it stays in the
+    receive queue, which the next operation drains, as an `ee 30` push does (a deviation from the app, which
+    folds `aa 01` / `aa 36` / plug replies; the follow-up is to fold heartbeat replies and `ee 30` pushes
+    through one hook).
+  - Every frame a link held under 2 s sends is unchanged, as is every profile field but the two new ones.
+    Home Assistant's 1 s post-poll idle leaves room for at most one beat after a poll; command links now really
+    stay up 30 s, holding a proxy connection slot that long. `const.ACTIVE_IDLE_DELAY` keeps its name and value.
+  - Source-modelled; not live-verified (the bench check is a later step).
+
+### Added
+- `DeviceProfile.heartbeat` (keyword-only, `int | None`, default None) and `DeviceProfile.heartbeat_timing`
+  (keyword-only, `"fixed_rate"` or `"after_quiet"`, default `"fixed_rate"`): the command code of the keep-alive
+  read the SKU's control screen sends, and when. Every generated profile has one (its devices.yaml row's); a
+  profile built by hand keeps 1.5.0's behaviour and sends none. To turn it off for any supported SKU, build the
+  `Device` from `dataclasses.replace(profile, heartbeat=None)`, the one field: without a heartbeat the timing
+  is ignored, so H5080 / H5083 / H5085's `"after_quiet"` needs no reset and no beat goes out on either timing.
+  Validated at construction: one of the four keep-alive command codes (`0x00`, `0x01`, `0x33`, `0x36`) or
+  None, and a known timing (checked with or without a heartbeat). Also `build.heartbeat(command)` (the
+  `aa <command>` read) and `const.HEARTBEAT_INTERVAL` (2.0 s) / `const.HEARTBEAT_WRITE_TIMEOUT` (1.0 s).
+
+### Spec
+- `devices.yaml` clientRow `heartbeat` (a govee_common command id: `power`, `heartbeat`, `volume` or `cmd_36`)
+  and `heartbeat_timing` (`fixed_rate`, the default, or `after_quiet`), required on every row with support, with
+  no family default, so an untraced row can't inherit one. All 66 supported rows are set (104 SKUs with the
+  modelled ones), each citing its deciding view-model method in doc-ref: 58 `power`, 6 `heartbeat` (`aa 00`: the
+  screens whose `I3` is false), 2 `cmd_36` (`NewDetailVm.A3` -> `ComposeLightHeartController`), and
+  `after_quiet` only on h5080 43. The traced unsupported rows are annotated too: h6047 277 / 288 / 298
+  `heartbeat`, striplight 80 `volume`. The h7040 / h7080 rows' docs note that their screens send `aa 01` only at
+  exactly pacts (1,1) / (2,1) and `aa 00` at any other; a test pins those pacts.
+- `timing.heartbeat` (typed in the schema): the 2000 ms interval, both timings, the skip rules, what the app
+  does with the reply and with a failure, the FIRMWARE-SOURCED drop without it (H6006, H5083, H60A6, H6047; none
+  on H6008), and the library's deviations as PROCEDURAL notes (the link follows the idle policy; ticks dropped
+  while the link is busy or a sequence holds it; the first beat one interval after the session is set up, and
+  on after_quiet the wait restarted when each operation that sent a frame ends; the reply left in the queue,
+  with the follow-up named; one bounded write, not retried, cut short by a disconnect or an operation).
+- The generator keeps both keys and checks each heartbeat against govee_common's command enum and the
+  resolver's `HEARTBEATS` (the four keep-alive reads, whose codes `DeviceProfile` accepts); the resolver
+  requires it and checks it one way against `power_live`: `heartbeat_aa01` / `heartbeat_aa36` /
+  `heartbeat_aa33` need `power` / `cmd_36` / `volume`, and a relay row `power`. No `.ksy` grammar change (the
+  beat is the existing `read_request`); the govee_common `heartbeat`, `power`, `volume` and `cmd_36` command docs
+  name their keep-alive use. `spec/docs/GOVEE_BLE_GATT_PROTOCOL.md` describes the heartbeat per screen.
+
 ## [1.5.0] — 2026-10-20
 
 ### Added
