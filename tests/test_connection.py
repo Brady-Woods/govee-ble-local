@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
+import logging
 import time
 from pathlib import Path
 
@@ -25,7 +26,7 @@ from govee_ble_local.transport import framelog
 from govee_ble_local.transport.connection import GoveeConnection
 from govee_ble_local.wire import redact
 
-from fake_ble import FakeGovee, ble_device, frame
+from fake_ble import FakeGovee, ble_device, frame, virtual_time
 
 ADDR = "AA:BB:CC:DD:EE:FF"
 
@@ -480,3 +481,303 @@ async def test_send_unacked_sizes_frames_for_the_link_they_go_out_on(monkeypatch
     await c.send_unacked(plan, gap=0)
     assert sizes == [244, 64]
     assert [f[2] for f in fake.received] == [244, 64]
+
+
+# -- disconnect(): the early release behind Device.release() -----------------------------------------
+_W1, _W2, _W3 = frame(0x33, 0x01, 0x01), frame(0x33, 0x04, 0x10), frame(0x33, 0x04, 0x20)
+
+
+def _ack_after(fake: FakeGovee, delay: float) -> None:
+    """Ack every write ``delay`` seconds after it (a slow proxy), on a plaintext link."""
+    fake.on_write = lambda client, plain: client.push(frame(0x33, plain[1], 0x00), delay)
+
+
+async def test_disconnect_after_a_write_drops_the_link_and_ends_the_warm_window(monkeypatch, fast) -> None:
+    fake = FakeGovee()
+    c = _make(monkeypatch, fake)
+    c._idle_disconnect = 8.0
+    assert await c.send(_W1) is not None
+    assert c._idle_timer is not None and c._active_until > 0
+    assert await c.disconnect() is True
+    assert fake.disconnects == 1 and not c.is_connected and c._client is None
+    assert c._idle_timer is None and c._active_until == 0.0
+
+
+@pytest.mark.parametrize("ended_by", ["disconnect", "device drop"])
+async def test_a_read_after_the_link_ended_gets_the_base_idle_delay(monkeypatch, fast, ended_by) -> None:
+    # WAS (1.5.0): the window survived the link, so a read that reconnected 5 s after a write kept its link
+    # until the write's 30 s were up (_schedule_idle_timer's max()), 25 s rather than the idle delay.
+    fake = FakeGovee()
+    c = _make(monkeypatch, fake)
+    c._idle_disconnect = 8.0
+    loop = asyncio.get_running_loop()
+    with virtual_time():
+        await c.send(_W1)
+        await asyncio.sleep(5.0)
+        if ended_by == "disconnect":
+            await c.disconnect()
+        else:
+            fake.clients[-1].drop()   # the device ends the link itself (most do at about 9-10 s)
+        assert c._active_until == 0.0
+        await c.query(frame(0xAA, 0x01), opcode=0xAA, terminal=0x01, idle_gap=None)
+        timer = c._idle_timer
+        assert len(fake.clients) == 2 and timer is not None
+        assert timer.when() - loop.time() == pytest.approx(8.0)
+    await c.close()
+
+
+@pytest.mark.parametrize("failed", ["write that got no link", "read whose write found the link dead"])
+async def test_a_failed_operations_teardown_ends_the_warm_window(monkeypatch, fast, failed) -> None:
+    # WAS: only disconnect() and a device-side drop ended the window, so after a failed write (which opened
+    # it), or a failed operation's teardown inside a write's 30 s, it outlived the link and the next session
+    # kept its link until those 30 s were up. A drop that shows up as a failed write (BlueZ "Not connected")
+    # never reaches _on_disconnect: the teardown forgets the client first, so its late callback is ignored.
+    fake = FakeGovee(encrypted=False)
+    c = _make(monkeypatch, fake)
+    c._idle_disconnect = 8.0
+    loop = asyncio.get_running_loop()
+    with virtual_time():
+        if failed == "write that got no link":
+            fake.establish_error = BleakError("no connection slot")
+            with pytest.raises(GoveeBleConnectionError):
+                await c.send(_W1)
+            fake.establish_error = None
+        else:
+            await c.send(_W1)
+            await asyncio.sleep(3.0)
+            fake.write_error = BleakError("Not connected")
+            with pytest.raises(GoveeBleConnectionError):
+                await c.query(frame(0xAA, 0x01), opcode=0xAA, terminal=0x01, idle_gap=None)
+            fake.write_error = None
+        assert c._client is None and c._active_until == 0.0
+        await asyncio.sleep(2.0)
+        await c.query(frame(0xAA, 0x01), opcode=0xAA, terminal=0x01, idle_gap=None)
+        timer = c._idle_timer
+        assert timer is not None and timer.when() - loop.time() == pytest.approx(8.0)
+    await c.close()
+
+
+async def test_a_write_retried_on_a_fresh_link_keeps_its_warm_window(monkeypatch, fast) -> None:
+    # The device-side drop that ends a window can land inside a write, whose retry then goes out on a new
+    # link: the window is the write's, on the link it ended on.
+    fake = FakeGovee(encrypted=False)
+    c = _make(monkeypatch, fake)
+    c._idle_disconnect = 8.0
+
+    def drop_first_link(client, plain) -> None:
+        if fake.clients.index(client) == 0:
+            asyncio.get_running_loop().call_later(0.02, client.drop)
+        else:
+            client.push(frame(0x33, plain[1], 0x00), 0.005)
+
+    fake.on_write = drop_first_link
+    loop = asyncio.get_running_loop()
+    with virtual_time():
+        t0 = loop.time()
+        assert await c.send(_W1) is not None
+        assert len(fake.clients) == 2 and c.is_connected
+        assert c._active_until == pytest.approx(t0 + conn_mod.ACTIVE_IDLE_DELAY)
+        timer = c._idle_timer
+        assert timer is not None and timer.when() == pytest.approx(t0 + conn_mod.ACTIVE_IDLE_DELAY)
+    await c.close()
+
+
+async def test_a_write_whose_link_drops_with_its_ack_leaves_no_window(monkeypatch, fast) -> None:
+    fake = FakeGovee(encrypted=False)
+    fake.ack_then_drop_links = 1   # ack, then the link-lost sentinel, in one loop tick
+    c = _make(monkeypatch, fake)
+    c._idle_disconnect = 8.0
+    assert await c.send(_W1) is not None
+    assert not c.is_connected and c._active_until == 0.0 and c._idle_timer is None
+
+
+async def test_disconnect_waits_for_the_running_write(monkeypatch, fast) -> None:
+    fake = FakeGovee(encrypted=False)
+    _ack_after(fake, 0.05)
+    c = _make(monkeypatch, fake)
+    with virtual_time():
+        await c.connect()
+        client = fake.clients[0]
+        real = client.disconnect
+        seen: list[bool] = []
+
+        async def recording() -> None:
+            seen.append(write.done() and write.result() is not None)   # the write had its ack by then
+            await real()
+
+        client.disconnect = recording  # type: ignore[method-assign]
+        write = asyncio.ensure_future(c.send(_W1))
+        await asyncio.sleep(0)
+        assert c._lock.locked()          # the write holds the link, waiting for its ack
+        assert await c.disconnect() is True
+        assert seen == [True] and fake.disconnects == 1
+
+
+async def test_disconnect_is_fifo_with_the_operations_around_it(monkeypatch, fast) -> None:
+    # A runs, B is queued before the disconnect, C after it: A and B go out on the first link, then it drops,
+    # and C connects again.
+    fake = FakeGovee(encrypted=False)
+    _ack_after(fake, 0.05)
+    c = _make(monkeypatch, fake)
+    with virtual_time():
+        await c.connect()
+        a = asyncio.ensure_future(c.send(_W1))
+        await asyncio.sleep(0)
+        assert c._lock.locked()
+        b = asyncio.ensure_future(c.send(_W2))
+        await asyncio.sleep(0)
+        d = asyncio.ensure_future(c.disconnect())
+        await asyncio.sleep(0)
+        later = asyncio.ensure_future(c.send(_W3))
+        acks = await asyncio.gather(a, b, d, later)
+    assert acks[2] is True and None not in acks
+    assert fake.establish_calls == 2 and fake.disconnects == 1
+    assert fake.clients[0].writes == [_W1, _W2] and fake.clients[1].writes == [_W3]
+    await c.close()
+
+
+async def test_disconnect_asks_keep_under_the_lock_after_the_operations_before_it(monkeypatch, fast) -> None:
+    # Device.release(): keep() is asked once the lock is held, after the running write and the one queued
+    # before the disconnect, on the link they went out on (link_number); True keeps the link: False.
+    fake = FakeGovee(encrypted=False)
+    _ack_after(fake, 0.05)
+    c = _make(monkeypatch, fake)
+    asked: list[tuple[int, int]] = []
+
+    def keep() -> bool:
+        asked.append((len(fake.clients[0].writes), c.link_number))
+        return True
+
+    with virtual_time():
+        assert c.link_number == 0
+        await c.connect()
+        a = asyncio.ensure_future(c.send(_W1))
+        await asyncio.sleep(0)
+        b = asyncio.ensure_future(c.send(_W2))
+        await asyncio.sleep(0)
+        results = await asyncio.gather(a, b, c.disconnect(keep=keep))
+        assert results[2] is False and asked == [(2, 1)]
+        assert c.is_connected and fake.disconnects == 0
+        assert await c.disconnect(keep=lambda: False) is True and c.link_number == 0
+        await c.connect()
+        assert c.link_number == 2                    # each new link takes the next number
+    await c.close()
+
+
+async def test_an_idle_task_queued_behind_disconnect_does_nothing(monkeypatch, fast) -> None:
+    fake = FakeGovee(encrypted=False)
+    c = _make(monkeypatch, fake)
+    c._idle_disconnect = 8.0
+    await c.connect()
+    client = fake.clients[0]
+    drops: list[int] = []
+    teardowns: list[int] = []
+    real_drop, real_teardown = client.disconnect, c._disconnect_locked
+
+    async def counted_drop() -> None:
+        drops.append(1)
+        await real_drop()
+
+    async def counted_teardown() -> None:
+        teardowns.append(1)
+        await real_teardown()
+
+    client.disconnect = counted_drop  # type: ignore[method-assign]
+    monkeypatch.setattr(c, "_disconnect_locked", counted_teardown)
+    generation = c._idle_generation
+    async with c._lock:                  # the link is busy: disconnect() queues, then the fired idle task
+        d = asyncio.ensure_future(c.disconnect())
+        await asyncio.sleep(0)
+        c._idle_fired(generation)        # the timer fires while disconnect() waits
+        await asyncio.sleep(0)
+        assert c._lock_wanted == 2
+    assert await d is True
+    for _ in range(5):
+        await asyncio.sleep(0)
+    assert not c._background             # the idle task ran and returned on its stale generation
+    assert drops == [1] and teardowns == [1]
+
+
+async def test_disconnect_returns_at_its_bound_when_the_proxy_wedges(monkeypatch, fast, caplog) -> None:
+    caplog.set_level(logging.DEBUG, logger="govee_ble_local")
+    fake = FakeGovee()
+    c = _make(monkeypatch, fake)
+    await c.connect()
+    fake.disconnect_hangs = True
+    loop = asyncio.get_running_loop()
+    with virtual_time():
+        t = loop.time()
+        assert await c.disconnect() is True          # nothing raised
+        assert loop.time() - t == pytest.approx(conn_mod.DISCONNECT_TIMEOUT)
+        for _ in range(3):
+            await asyncio.sleep(0)
+    assert fake.disconnect_started == 1 and not c._background and not c._teardowns   # the teardown cancelled
+    assert any("abandoning it" in r.getMessage() and r.levelno == logging.DEBUG for r in caplog.records)
+    assert c._client is None and not c._lock.locked()
+
+
+async def test_a_disconnect_error_is_only_logged(monkeypatch, fast, caplog) -> None:
+    caplog.set_level(logging.DEBUG, logger="govee_ble_local")
+    fake = FakeGovee()
+    c = _make(monkeypatch, fake)
+    await c.connect()
+    fake.disconnect_error = BleakError("proxy went away")
+    assert await c.disconnect() is True
+    await asyncio.sleep(0)
+    errors = [r for r in caplog.records if "disconnect error" in r.getMessage()]
+    assert errors and all(r.levelno == logging.DEBUG for r in errors)
+    assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+    assert c._client is None
+
+
+async def test_disconnect_cancelled_while_it_waits_for_the_lock_drops_nothing(monkeypatch, fast) -> None:
+    fake = FakeGovee(encrypted=False)
+    _ack_after(fake, 0.05)
+    c = _make(monkeypatch, fake)
+    with virtual_time():
+        await c.connect()
+        write = asyncio.ensure_future(c.send(_W1))
+        await asyncio.sleep(0)
+        d = asyncio.ensure_future(c.disconnect())
+        await asyncio.sleep(0)
+        d.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await d
+        assert await write is not None               # the running write is unaffected
+    assert c.is_connected and fake.disconnects == 0 and c._lock_wanted == 0
+    await c.send(_W2)                                # and the link still serves the next one
+    assert fake.establish_calls == 1
+    await c.close()
+
+
+async def test_disconnect_cancelled_during_the_teardown_leaves_it_to_its_bound(monkeypatch, fast) -> None:
+    fake = FakeGovee()
+    c = _make(monkeypatch, fake)
+    await c.connect()
+    fake.disconnect_hangs = True
+    loop = asyncio.get_running_loop()
+    with virtual_time():
+        t = loop.time()
+        d = asyncio.ensure_future(c.disconnect())
+        for _ in range(3):
+            await asyncio.sleep(0)
+        assert fake.disconnect_started == 1 and not d.done()   # in the teardown's wait
+        d.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await d
+        [(teardown, abandon_at)] = c._teardowns.items()
+        assert abandon_at == pytest.approx(t + conn_mod.DISCONNECT_TIMEOUT)
+        assert not c._lock.locked() and c._client is None and not teardown.done()
+        await asyncio.sleep(conn_mod.DISCONNECT_TIMEOUT + 0.01)
+        assert teardown.cancelled() and not c._teardowns   # abandoned at the bound, detached from the caller
+
+
+async def test_disconnect_after_close_is_a_no_op(monkeypatch, fast) -> None:
+    fake = FakeGovee(encrypted=False)
+    c = _make(monkeypatch, fake)
+    await c.connect()
+    await c.close()
+    assert await c.disconnect() is False
+    with pytest.raises(GoveeBleConnectionError, match="connection closed"):
+        await c.send(_W1)
+    assert fake.establish_calls == 1 and fake.disconnects == 1

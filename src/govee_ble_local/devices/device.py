@@ -207,11 +207,16 @@ class Device:
         self._zone_power_posted: dict[int, set[bool]] = {}
         # Serializes the bar-switch read-modify-write in set_zone_power (one frame carries both
         # bars). Lock order: _scene_lock, then this, then _read_gate, then the connection lock;
-        # never take it from inside a connection operation.
+        # never take it from inside a connection operation. release() takes all four, in that order.
         self._bar_lock = asyncio.Lock()
         # Serializes scene writes, so a scene's upload and its activation are never split by another
         # scene's (the connection lock is per-operation). Outermost lock (see _bar_lock).
         self._scene_lock = asyncio.Lock()
+        # Write calls and release() calls are numbered as they start, before any lock or I/O (_ticket), and
+        # _link_write is (link, number): the latest-numbered write call whose frames went out on that link
+        # (GoveeConnection.link_number, _wrote). release() keeps a link a write called after it wrote on.
+        self._tickets = 0
+        self._link_write = (0, -1)
         # Held by a scene write across its upload and activation, and briefly by every read-back
         # (_read_reply, _query_status), so no poll lands between the two (see set_scene_by_name).
         # Innermost device lock: taken after _scene_lock and _bar_lock, before the connection lock.
@@ -511,11 +516,14 @@ class Device:
             self._unlock_pending = True
         self._secret = checked
 
-    async def _send_pending_unlock(self, budget: ConnectBudget | None = None) -> None:
+    async def _send_pending_unlock(
+        self, budget: ConnectBudget | None = None, *, ticket: int | None = None,
+    ) -> None:
         """Send the ``33 b2`` unlock for a secret set while the session was already up (see
         :meth:`set_secret`). Without a live session nothing is sent: the next session setup sends
         it. A rejection is a GoveeBleAuthError, as at session setup; an unacked unlock is only
-        logged, as at session setup (``GoveeConnection._prepare_session``). ``budget``: the
+        logged, as at session setup (``GoveeConnection._prepare_session``). ``ticket``: the write call it goes
+        out for (:meth:`_commit`), recorded once it went out (:meth:`_wrote`). ``budget``: the
         calling poll's connect limits (:meth:`update`); a timeout that leaves the session down (the
         write retry's reconnect ran out of them) is raised, and the next session setup sends the
         unlock."""
@@ -545,6 +553,8 @@ class Device:
             # setup sends it anyway, and a set_secret() during the write has re-armed it itself.
             if not done and self._conn.is_connected and self._secret == secret:
                 self._unlock_pending = True
+            if done and ticket is not None:
+                self._wrote(ticket)
 
     def _check_kelvin(self, kelvin: int) -> int:
         """The Kelvin that goes on the wire (and into ``state``) for ``kelvin``: clamped to the
@@ -608,8 +618,44 @@ class Device:
         await self._send_pending_unlock()
         await self._conn.connect()
 
+    async def release(self) -> bool:
+        """Drop the BLE link now instead of at the idle timer, and end the warm window a write opened
+        (``const.ACTIVE_IDLE_DELAY``), for a caller that knows no follow-up is coming (a voice command, an
+        automation, one device of a burst), so the link's connection slot frees at once.
+
+        The Device stays usable: the next operation connects again (link, handshake, unlock, session frames),
+        as after an idle disconnect, with no warm window left over (a read gets the base idle delay; a write
+        opens its own). It takes the Device's locks in their order (``_scene_lock``, ``_bar_lock``,
+        ``_read_gate``, then the connection's), so it waits for each link operation already running or queued
+        before it (each lock is FIFO), and never lands inside a sequence: a :meth:`set_scene_by_name` (its
+        version read and catalog load, its upload and its activation), or an H6047 bar's ``aa 36`` read and
+        the ``33 36`` built from it. It can land between the steps of a call no device lock spans (a poll's
+        reads, a plug's power write and its re-read): those later steps reconnect (a plug's re-read ends with
+        its ``33 b5`` time sync, a write, which opens a fresh warm window on the new link). A write called
+        after it either queues behind it and reconnects or, if it reaches the link first (a setter that takes
+        no device lock, or is handed one, while release() waits for one), keeps the link and its window: the
+        release then drops nothing and returns False. That is the link it wrote on: a write its caller
+        cancels before its frames go out, or one whose link has gone since, keeps nothing. The heartbeat stops
+        with the link; the next session arms its own.
+
+        Returns True when a link was up and was dropped, False when it dropped nothing: no link, after
+        :meth:`stop` (it never reopens the connection), or a write called after it wrote on the link that is
+        up. Never raises a GoveeBleError: the teardown is bounded by ``const.DISCONNECT_TIMEOUT`` and its
+        errors are logged at DEBUG. Cancelled while it waits for a lock, it leaves the queue and drops
+        nothing; cancelled during the teardown, the teardown runs on, detached, to that bound."""
+        ticket = self._ticket()
+        async with self._scene_lock, self._bar_lock, self._read_gate:
+            # Asked under the connection lock, after every operation queued before the drop: a write called
+            # after this release whose frames went out on the link that is up keeps it, with its window. One
+            # that never got there (cancelled while it waited), or wrote on a link since gone, does not.
+            dropped = await self._conn.disconnect(keep=lambda: self._kept_for(ticket))
+            if dropped:
+                _LOGGER.debug("%s (%s): link released by caller", self.address, self._sku)
+            return dropped
+
     async def stop(self) -> None:
-        """Disconnect and refuse further I/O (the owner is being torn down)."""
+        """Disconnect and refuse further I/O (the owner is being torn down). To drop the link and keep the
+        Device usable, use :meth:`release`."""
         await self._conn.close()
 
     def _mark_authoritative(self) -> None:
@@ -637,6 +683,25 @@ class Device:
         self._power_unsure = True
         self._power_unsure_seq += 1
 
+    def _wrote(self, ticket: int) -> None:
+        """Record that write call ``ticket``'s frames went out on the link that is up (``_link_write``)."""
+        link = self._conn.link_number
+        if not link:
+            return
+        at, latest = self._link_write
+        self._link_write = (link, max(latest, ticket) if at == link else ticket)
+
+    def _kept_for(self, ticket: int) -> bool:
+        """Whether a write called after call ``ticket`` wrote on the link that is up (:meth:`release`)."""
+        at, latest = self._link_write
+        return at != 0 and at == self._conn.link_number and latest > ticket
+
+    def _ticket(self) -> int:
+        """The next call number: a write call or :meth:`release` takes one as it starts, before any lock or
+        I/O (see ``_link_write``)."""
+        self._tickets += 1
+        return self._tickets
+
     def _zone_power_lock(self) -> contextlib.AbstractAsyncContextManager[None]:
         """``_bar_lock`` on a bar-switch device (whose zone write is a read-modify-write of both bars,
         :meth:`_set_bar_power`), else a no-op: every writer of ``zone_power`` takes it, so a bar write
@@ -651,9 +716,14 @@ class Device:
 
     async def _commit(
         self, frames: bytes | list[bytes], apply: Callable[[], None], *, authoritative: bool = True,
-        zones: Mapping[int, bool] | None = None, fixture: bool = False,
+        zones: Mapping[int, bool] | None = None, fixture: bool = False, ticket: int | None = None,
     ) -> None:
         """Write ``frames`` and fold the change into state: the protocol every setter follows.
+
+        ``ticket``: the write call's number (:meth:`_ticket`), taken before its first lock or I/O; None takes
+        one now, for a setter that reaches this with no await before it. Once its frames went out it is
+        recorded with the link they went out on (:meth:`_wrote`), which a :meth:`release` called before it
+        keeps.
 
         One frame goes out with ``send``, a list with ``send_many`` (one connection-lock hold, each
         frame ack-verified in order). Once the write succeeded: bump ``_mutation_seq`` (an in-flight
@@ -685,7 +755,8 @@ class Device:
         :attr:`.DeviceProfile.global_power` fixture the zone power the frames hand the firmware's message
         thread is kept for the next status read, acked or not (``_zone_power_posted``,
         :meth:`_read_status`)."""
-        await self._send_pending_unlock()
+        mine = self._ticket() if ticket is None else ticket
+        await self._send_pending_unlock(ticket=mine)
         batch = [frames] if isinstance(frames, bytes) else frames
         wake = self._wake_power(batch)
         try:
@@ -693,7 +764,9 @@ class Device:
                 await self._conn.send(frames)
             else:
                 await self._conn.send_many(frames)
-        except BaseException:
+        except BaseException as err:
+            if not isinstance(err, asyncio.CancelledError):
+                self._wrote(mine)   # a refusal: it went out on a link that is still up
             wake = {**wake, **self._wake_power(batch)}
             _fold.unconfirm_zones(self._state, None if fixture else (zones or ()))
             _fold.unconfirm_contradicted(self._state, wake)
@@ -701,6 +774,7 @@ class Device:
             if zones and not any(zones.values()):
                 self._set_power_unsure()
             raise
+        self._wrote(mine)
         wake = {**wake, **self._wake_power(batch)}   # a power-off applied while this write waited
         known_on = self._state.is_on is True and not self._power_unsure
         self._mutated()
@@ -882,10 +956,11 @@ class Device:
         :attr:`.DeviceProfile.power_resync` then re-reads as its app does (:meth:`_resync_after_power`);
         a failure there is only logged."""
         self._require(Capability.POWER)
+        ticket = self._ticket()
         with self._conn.hold_heartbeat():   # the power write and its re-read: no heartbeat between them
             async with self._zone_power_lock():
                 await self._commit(self._power_frames(on), lambda: self._apply_power(on),
-                                   zones=dict.fromkeys(self._power_zones(), on), fixture=True)
+                                   zones=dict.fromkeys(self._power_zones(), on), fixture=True, ticket=ticket)
             await self._resync_after_power()
 
     async def _resync_after_power(self) -> None:
@@ -935,6 +1010,7 @@ class Device:
         pick = _check_rgb(rgb) if rgb is not None else None
         pct = _check_pct(brightness) if brightness is not None else None
         kelvin = self._check_kelvin(kelvin) if kelvin is not None else None
+        ticket = self._ticket()
         if pick is not None or kelvin is not None:
             await self._ensure_segment_count()
         frames: list[bytes] = []
@@ -969,7 +1045,8 @@ class Device:
         with self._conn.hold_heartbeat():   # as set_power: the power write and its re-read
             async with self._zone_power_lock():
                 await self._commit(frames, apply, fixture=power,
-                                   zones=dict.fromkeys(self._power_zones(), True) if power else None)
+                                   zones=dict.fromkeys(self._power_zones(), True) if power else None,
+                                   ticket=ticket)
             if power:
                 await self._resync_after_power()
 
@@ -1002,10 +1079,11 @@ class Device:
         its own segment count (H6062) does not answer that read."""
         self._require(Capability.RGB)
         pick = _check_rgb(rgb)
+        ticket = self._ticket()
         await self._ensure_segment_count()
         span = self._kelvin_range()   # once: the frame and the state use the same range
         await self._commit(self._color_rgb_frames(pick, span),
-                           lambda: _fold.apply_rgb(self.profile, self._state, pick, span))
+                           lambda: _fold.apply_rgb(self.profile, self._state, pick, span), ticket=ticket)
 
     async def set_color_temp(self, kelvin: int) -> None:
         """Set the whole-device colour temperature (clears rgb and active scene).
@@ -1018,11 +1096,12 @@ class Device:
         carries the app's tint."""
         self._require(Capability.COLOR_TEMP)
         sent = self._check_kelvin(kelvin)
+        ticket = self._ticket()
         await self._ensure_segment_count()
         frame = self._build_or_unsupported(
             build.color_temp, sent, self.profile.color_scheme, self.segment_count,
             pieces=self.profile.segments or None)
-        await self._commit(frame, lambda: _fold.apply_kelvin(self.profile, self._state, sent))
+        await self._commit(frame, lambda: _fold.apply_kelvin(self.profile, self._state, sent), ticket=ticket)
 
     async def set_segment_rgb(self, indices: Sequence[int], rgb: tuple[int, int, int]) -> None:
         """Set the colour of selected segments (indices 0 .. :attr:`segment_count` - 1).
@@ -1033,6 +1112,7 @@ class Device:
         self._require(Capability.SEGMENTS)
         pick = _check_rgb(rgb)
         r, g, b = pick
+        ticket = self._ticket()
         await self._ensure_segment_count()
         n = self.segment_count
         frame = self._build_or_unsupported(
@@ -1045,7 +1125,7 @@ class Device:
             _fold.update_segments(self._state, carried, rgb=pick)
             self._state.scene_code = None   # a segment colour write leaves scene mode, as set_rgb does
 
-        await self._commit(frame, apply)
+        await self._commit(frame, apply, ticket=ticket)
 
     async def set_segment_brightness(self, indices: Sequence[int], pct: int) -> None:
         """Set brightness in percent (clamped to 1..100; 0 is never sent) on selected segments (indices
@@ -1058,6 +1138,7 @@ class Device:
         that read."""
         self._require(Capability.SEGMENTS)
         level = _check_pct(pct)
+        ticket = self._ticket()
         await self._ensure_segment_count()
         n = self.segment_count
         frame = self._build_or_unsupported(
@@ -1069,7 +1150,7 @@ class Device:
             _fold.update_segments(self._state, carried, brightness=level)
             self._state.scene_code = None   # the 33 05 15 02 write is a colour-mode write too
 
-        await self._commit(frame, apply)
+        await self._commit(frame, apply, ticket=ticket)
 
     def _carried(self, indices: Sequence[int], mask_cap: int) -> list[int]:
         """The ``indices`` a 0x15 frame's segment mask carries: past the body's ``mask_cap`` bytes the app's
@@ -1103,6 +1184,7 @@ class Device:
         self._require(Capability.SEGMENTS)
         self._require(Capability.COLOR_TEMP)
         sent = self._check_kelvin(kelvin)
+        ticket = self._ticket()
         await self._ensure_segment_count()
         n = self.segment_count
         frame = self._build_or_unsupported(
@@ -1111,7 +1193,7 @@ class Device:
         def apply() -> None:
             self._state.scene_code = None   # a colour-mode write leaves scene mode, as set_color_temp does
 
-        await self._commit(frame, apply)
+        await self._commit(frame, apply, ticket=ticket)
 
     # -- zones --------------------------------------------------------------
     def _zone(self, name: str) -> Zone:
@@ -1150,9 +1232,10 @@ class Device:
         z = self._zone(name)
         if self.profile.bar_switch:
             # The bar read and the 33 36 it feeds are one read-modify-write: no heartbeat between them.
+            ticket = self._ticket()
             async with self._bar_lock:
                 with self._conn.hold_heartbeat():
-                    await self._set_bar_power(z.power_index, on)
+                    await self._set_bar_power(z.power_index, on, ticket)
             return
 
         def apply() -> None:
@@ -1162,9 +1245,10 @@ class Device:
 
         await self._commit(build.zone_power(z.power_index, on), apply, zones={z.power_index: on})
 
-    async def _set_bar_power(self, index: int, on: bool) -> None:
+    async def _set_bar_power(self, index: int, on: bool, ticket: int) -> None:
         """Bar-switch read-modify-write; the caller holds ``_bar_lock`` (which every other writer of
-        ``zone_power`` on a bar-switch device takes too, :meth:`_zone_power_lock`).
+        ``zone_power`` on a bar-switch device takes too, :meth:`_zone_power_lock`) and took the call's
+        ``ticket`` before it (:meth:`_commit`).
 
         The ``33 36`` carries both bars, and the app builds it from bars its ``aa 36`` heartbeat keeps current
         (h6047 ``NewDetailVm.D5:669-720`` sends the stored left / right flags, ``Info4Detail.D`` / ``F``,
@@ -1207,7 +1291,7 @@ class Device:
         target[index] = on
         # 33 36 sets both bars (H6047 FUN_01006934 @0x01006956-0x01006962), so both are confirmed.
         await self._commit(build.bar_switch(target[0], target[1]),
-                           lambda: self._apply_zone_power(target, (0, 1)), zones=target)
+                           lambda: self._apply_zone_power(target, (0, 1)), zones=target, ticket=ticket)
 
     async def _read_bar_switch(self, budget: ConnectBudget | None = None) -> _ReadResult:
         """Read the bar switch into state: "applied" (bars and the derived on/off were read back),
@@ -1233,6 +1317,7 @@ class Device:
             raise GoveeBleNotSupported(f"{self._sku}: zone {name!r} has no segments")
         pick = _check_rgb(rgb)
         r, g, b = pick
+        ticket = self._ticket()
         await self._ensure_segment_count()
         n = self.segment_count
         kelvin_range = self._kelvin_range()
@@ -1247,7 +1332,7 @@ class Device:
             _fold.apply_zone_kelvin(self.profile, self._state, {z.power_index: build.rgb_as_kelvin(
                 r, g, b, self.profile.color_scheme, kelvin_range)})
 
-        await self._commit(frame, apply)
+        await self._commit(frame, apply, ticket=ticket)
 
     async def set_zone_color_temp(self, name: str, kelvin: int) -> None:
         """Colour temperature for one zone (its segment mask). Physically supported on the
@@ -1264,6 +1349,7 @@ class Device:
         z = self._zone(name)
         if not z.segments:
             raise GoveeBleNotSupported(f"{self._sku}: zone {name!r} has no segments")
+        ticket = self._ticket()
         await self._ensure_segment_count()
         n = self.segment_count
         frame = self._build_or_unsupported(
@@ -1273,7 +1359,7 @@ class Device:
             self._state.scene_code = None   # a zone colour write leaves scene mode, as set_color_temp does
             _fold.apply_zone_kelvin(self.profile, self._state, {z.power_index: sent})
 
-        await self._commit(frame, apply)
+        await self._commit(frame, apply, ticket=ticket)
 
     # -- scenes -------------------------------------------------------------
     async def set_scene(self, code: int) -> None:
@@ -1281,8 +1367,9 @@ class Device:
 
         Raises GoveeBleNotSupported without SCENES."""
         self._require(Capability.SCENES)
+        ticket = self._ticket()
         async with self._scene_lock, self._zone_power_lock():
-            await self._activate_scene(code, self._scene_power_frames())
+            await self._activate_scene(code, self._scene_power_frames(), ticket)
 
     def _scene_power_frames(self) -> list[bytes]:
         """The power-on that leads a scene write on a :attr:`.DeviceProfile.scene_power_on` device not
@@ -1292,14 +1379,16 @@ class Device:
             return self._power_frames(True)
         return []
 
-    async def _activate_scene(self, code: int, lead: list[bytes]) -> None:
+    async def _activate_scene(self, code: int, lead: list[bytes], ticket: int) -> None:
         """Send the ``33 05 04`` activation, after the ``lead`` frames (:meth:`_scene_power_frames`), and
         apply its state (the device is on, in that scene, with no solid colour); the caller holds
-        ``_scene_lock`` and :meth:`_zone_power_lock`."""
+        ``_scene_lock`` and :meth:`_zone_power_lock` and took the call's ``ticket`` before them
+        (:meth:`_commit`)."""
         activate = build.scene_activate(code)
         await self._commit([*lead, activate] if lead else activate,
                            lambda: _fold.apply_scene(self.profile, self._state, code),
-                           zones=dict.fromkeys(self._power_zones(), True) if lead else None, fixture=True)
+                           zones=dict.fromkeys(self._power_zones(), True) if lead else None, fixture=True,
+                           ticket=ticket)
 
     def scene_upload_frames(self, scene: Scene, *, mtu: int = 20) -> list[bytes] | None:
         """The a3/a4 frames that upload ``scene`` to this device (per its profile's scene
@@ -1330,8 +1419,19 @@ class Device:
         ``AbsComposeControllerWithOpResult`` that ``AbsComposeComm`` writes controller by
         controller). So no other scene write (``_scene_lock``), no read-back (``_read_gate``: a
         poll waits for the activation) and no heartbeat (the app skips it while a compose is in flight,
-        ``AbsBle.I``) lands between them; other setters are not held back."""
+        ``AbsBle.I``) lands between them; other setters are not held back. ``_scene_lock`` is held for
+        the whole call, the version read and the catalog load included, so a :meth:`release` called
+        after it starts drops the link after the activation."""
         self._require(Capability.SCENES)
+        ticket = self._ticket()
+        # The whole call under _scene_lock, the version read and the catalog load (a worker-thread hop)
+        # included: a release() called after it starts waits for it, and drops the link after the activation.
+        async with self._scene_lock:
+            await self._scene_by_name(name, ticket)
+
+    async def _scene_by_name(self, name: str, ticket: int) -> None:
+        """:meth:`set_scene_by_name`'s body: the caller holds ``_scene_lock`` and took the call's
+        ``ticket``."""
         soft, hard = self._versions_missing(scenes=True)
         if soft or hard:   # the set depends on a version not read yet: read it before the lookup
             await self._read_missing_versions(soft, hard)
@@ -1346,9 +1446,10 @@ class Device:
             # Re-planned for the link it goes out on: the 0xA4 graffiti frames take its MTU.
             return _scene_upload_frames(scene, dialect, versions, mtu=size) or []
 
-        async with self._scene_lock, self._zone_power_lock(), self._read_gate:
+        async with self._zone_power_lock(), self._read_gate:
             with self._conn.hold_heartbeat():
-                await self._send_pending_unlock()   # before the upload, not between it and the activation
+                # Before the upload, not between it and the activation.
+                await self._send_pending_unlock(ticket=ticket)
                 lead = self._scene_power_frames()
                 if frames:
                     if lead:   # the app prepends the switch to the whole composed write, upload included
@@ -1371,7 +1472,7 @@ class Device:
                         lead = []
                     else:
                         await self._conn.send_unacked(sized)
-                await self._activate_scene(scene.code, lead)
+                await self._activate_scene(scene.code, lead, ticket)
 
     # -- misc settings ------------------------------------------------------
     async def set_gradual(self, on: bool) -> None:

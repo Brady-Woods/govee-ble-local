@@ -22,6 +22,10 @@ Reliability rules this module enforces (each one learned from live failures):
   session: neither its late disconnect callback nor its notifications.
 * The idle-disconnect timer can never fire after newer activity (generation
   counter), and its task is held so it can't be garbage-collected mid-flight.
+  The warm window a write opens (``ACTIVE_IDLE_DELAY``) lives with the link it
+  ends on: every teardown (``disconnect``, the idle one, a failed operation's)
+  and a device-side drop end it, so the next session starts at the base idle
+  delay (a write on it opens its own window).
 * Teardown is detached and bounded: ``client.disconnect()`` runs as its own task
   (not cancelled with the caller) and is awaited for at most ``DISCONNECT_TIMEOUT``,
   so a wedged proxy can't hold the device lock; at that bound it is abandoned
@@ -284,7 +288,7 @@ class GoveeConnection:
         self._session_cipher: FrameCipher | None = None
         self._ready = False  # connected AND session set up
         # Links establish_connection has brought up: tells the session retry whether a failed
-        # attempt got a link (_open_session_locked).
+        # attempt got a link (_open_session_locked), and numbers the link that is up (link_number).
         self._links_opened = 0
         self._closed = False
         self._bgc_version: int | None = None  # cached after the first successful read
@@ -339,6 +343,12 @@ class GoveeConnection:
     @property
     def is_connected(self) -> bool:
         return self._client is not None and self._client.is_connected and self._ready
+
+    @property
+    def link_number(self) -> int:
+        """Which link is up: the count of links established so far while one is up (each new link takes the
+        next number), 0 with none. No I/O."""
+        return self._links_opened if self._client is not None else 0
 
     @property
     def encryption(self) -> Encryption:
@@ -528,12 +538,23 @@ class GoveeConnection:
         Raises only :class:`GoveeBleError` subclasses."""
         await self._run(self._ensure_connected_locked, extend_warm=False)
 
-    async def disconnect(self) -> None:
-        """Drop the session and link now (bounded by ``DISCONNECT_TIMEOUT``)."""
+    async def disconnect(self, *, keep: Callable[[], bool] | None = None) -> bool:
+        """Drop the session and link now (bounded by ``DISCONNECT_TIMEOUT``) and end any warm window a write
+        opened (``ACTIVE_IDLE_DELAY``, :meth:`_disconnect_locked`), so the next session starts at the base
+        idle delay (a write on it opens its own window). It waits for the running operation and every one
+        queued before it (the lock is FIFO); one queued after it reconnects. ``keep`` is asked once the lock
+        is held, after all of those: True keeps the link and drops nothing (``Device.release``: the link is a
+        later write's). Returns whether a link was up and was dropped: False when there was none (a no-op, as
+        after :meth:`close`) or ``keep`` kept it. Never raises a GoveeBleError: the teardown's errors are
+        logged at DEBUG (:meth:`_disconnect_done`)."""
         self._cancel_beat()   # a beat still writing doesn't hold the teardown up
         async with self._locked():
+            if keep is not None and keep():
+                return False
             self._cancel_idle_timer()
+            dropped = self._client is not None
             await self._disconnect_locked()
+            return dropped
 
     async def close(self) -> None:
         """Disconnect and refuse further operations (owner is being torn down)."""
@@ -795,6 +816,10 @@ class GoveeConnection:
         _LOGGER.debug("%s: disconnected", self.address)
         self._stop_heartbeat()
         self._reset_session()
+        # The warm window ends with the link, as at every teardown (_disconnect_locked): a read that
+        # reconnects after a device-side drop gets the base idle delay, not what was left of a write's
+        # window (a write running now opens it again on the link it ends on, _run).
+        self._active_until = 0.0
         # Drop the stale client so the next operation re-establishes from scratch.
         self._client = None
         self._enqueue(None)  # wake any waiter now instead of at its timeout
@@ -802,6 +827,10 @@ class GoveeConnection:
     async def _disconnect_locked(self) -> None:
         self._stop_heartbeat()
         self._reset_session()
+        # The warm window ends with the link, whoever tears it down (disconnect(), the idle timer, a failed
+        # operation, a connect attempt that failed): the next session starts at the base idle delay, and a
+        # write that ends on a fresh link opens the window again there (_run).
+        self._active_until = 0.0
         client, self._client = self._client, None
         if client is None:
             return
@@ -903,8 +932,9 @@ class GoveeConnection:
         async with self._locked():
             sent = self._tx_count
             self._cancel_idle_timer()
+            warm_until = asyncio.get_running_loop().time() + ACTIVE_IDLE_DELAY
             if extend_warm:
-                self._active_until = asyncio.get_running_loop().time() + ACTIVE_IDLE_DELAY
+                self._active_until = warm_until
             deadline = asyncio.timeout(OPERATION_TIMEOUT)
             try:
                 async with deadline:
@@ -932,6 +962,11 @@ class GoveeConnection:
                     f"{self.address}: unexpected transport error: {err!r}"
                 ) from err
             finally:
+                if extend_warm and self._client is not None:
+                    # A teardown or a device-side drop mid-operation ended the window (_disconnect_locked,
+                    # _on_disconnect); a write that ends with a link up (its retry on a fresh link,
+                    # _write_locked) went out on this one, which keeps it.
+                    self._active_until = warm_until
                 self._schedule_idle_timer()
                 # Only a running chain restarts, and none runs without a heartbeat (whatever the timing).
                 if (self._heartbeat_timing == "after_quiet" and self._heartbeat_timer is not None

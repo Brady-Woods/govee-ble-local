@@ -87,7 +87,16 @@ advertisement, build a capability-driven `Device`, then drive it.
   `set_scene` / `set_scene_by_name`, and `update()` (read-back). Introspection:
   `capabilities`, `zones`, `min_kelvin` / `max_kelvin`, `scene_names` (the scenes the Govee app lists at
   the device's scene set, `scene_versions`), `state`, `register_callback`. Methods for unsupported
-  capabilities raise `GoveeBleNotSupported`.
+  capabilities raise `GoveeBleNotSupported`. The link comes up with the first operation (or `connect()`)
+  and drops `idle_disconnect` seconds after the last one (8 s by default), or 30 s after a command
+  (`const.ACTIVE_IDLE_DELAY`, so quick follow-ups skip the reconnect). `release()` drops it now and
+  ends that window, for a caller that knows no follow-up is coming (a voice command, an automation, a
+  burst across many devices): it waits for each link operation already running or queued (FIFO) and
+  never splits a scene's upload from its activation or an H6047 bar read from its write, but it can land
+  between a poll's reads or a plug's power write and its re-read (their later steps reconnect; a plug's
+  re-read ends with a `33 b5` write, which holds the new link a fresh 30 s); a command called after it
+  that writes on the link first keeps the link and its window. It returns whether it dropped a link and
+  never raises a `GoveeBleError`; the next operation reconnects. `stop()` closes the device for good.
 - **`DeviceState`** — parsed state: `is_on`, `brightness` (0–100), `rgb_color`,
   `color_temp_kelvin`, `segments` (`list[Segment]`), `zone_power`, `zone_power_confirmed` (when each
   zone's power was last learned from the device), `zone_color_temp_kelvin` (H6047

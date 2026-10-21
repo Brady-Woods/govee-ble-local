@@ -43,8 +43,43 @@ model, from which the shipped readers are generated).
     Home Assistant's 1 s post-poll idle leaves room for at most one beat after a poll; command links now really
     stay up 30 s, holding a proxy connection slot that long. `const.ACTIVE_IDLE_DELAY` keeps its name and value.
   - Source-modelled; not live-verified (the bench check is a later step).
+- **A poll that reconnects inside a write's 30 s warm window no longer keeps the new link until those 30 s
+  end**: the window now lives with the link, so every teardown ends it (`GoveeConnection.disconnect()`, which
+  now returns whether a link was up; the idle one; a failed operation's), and so does a device-side drop. Such
+  a poll gets the base idle delay. A write whose link drops mid-write and that is retried on a fresh link
+  keeps its window there.
 
 ### Added
+- **`Device.release() -> bool`**: drop the BLE link now and end the 30 s warm window a write opened
+  (`const.ACTIVE_IDLE_DELAY`), keeping the Device usable; the next operation reconnects (link, handshake,
+  unlock, session frames) with no window left over: a poll gets the base idle delay, a command opens its own
+  30 s window. For a caller that knows no follow-up is coming (a voice command, an automation, one device of
+  a multi-device burst), so a held link stops holding a proxy connection slot. Asked by the Home Assistant
+  integration, to hold the link only while a person uses the GUI.
+  - It takes the Device's locks in their documented order (`_scene_lock`, `_bar_lock`, `_read_gate`, then
+    the connection's), so each link operation running or queued before it finishes on the current link (each
+    lock is FIFO), and it never lands between a scene's upload and its activation or between an H6047 bar's
+    `aa 36` read and its `33 36` write. It can land between the steps of a call that no Device lock spans (a
+    poll's reads, a plug's power write and its re-read); those later steps reconnect, as does an operation
+    queued after it (a plug's re-read ends with its `33 b5` time sync, a write, so that new link opens a fresh
+    30 s window). A `set_scene_by_name()` holds `_scene_lock` for the whole call, its version read and catalog
+    load included, so a release called after it starts drops the link after the activation.
+  - A write called after it either queues behind it and reconnects or, if it reaches the link first (a setter
+    that takes no Device lock, or is handed one, while `release()` waits for one), keeps the link and its
+    window: the release then drops nothing and returns False. That is checked per link, under the connection
+    lock, after every operation queued before the drop: a write its caller cancels before its frames go out,
+    or one whose link has gone since, keeps nothing.
+  - Returns True when a link was up and was dropped, False when it dropped nothing (no link up, after
+    `stop()`, which it never reopens, or a write called after it wrote on the link that is up). It never raises
+    a `GoveeBleError`: the teardown is bounded by `const.DISCONNECT_TIMEOUT` and its errors are logged at DEBUG.
+    Cancelled while it waits for a lock, it drops nothing; cancelled during the teardown, the teardown runs on
+    to that bound. A dropped link logs its own DEBUG line, `link released by caller`.
+  - `release()` calls `GoveeConnection.disconnect(keep=...)` and returns its result, so a test double that
+    replaces `Device._conn` needs an `async def disconnect(self, *, keep=None) -> bool` once its tests call
+    `release()` (`keep`, when given, is asked under the connection lock: True keeps the link and returns False).
+  - The heartbeat stops with the link and the next session arms its own (one chain). A secret set on the
+    live session (`set_secret()`) goes out once, in the next session's setup.
+  - The warm window it ends lives with the link (see Fixed).
 - `DeviceProfile.heartbeat` (keyword-only, `int | None`, default None) and `DeviceProfile.heartbeat_timing`
   (keyword-only, `"fixed_rate"` or `"after_quiet"`, default `"fixed_rate"`): the command code of the keep-alive
   read the SKU's control screen sends, and when. Every generated profile has one (its devices.yaml row's); a
