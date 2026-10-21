@@ -8,6 +8,49 @@ model, from which the shipped readers are generated).
 
 ## [Unreleased]
 
+## [1.6.1] — 2026-10-21
+
+### Fixed
+- **A device whose advertised name isn't a Govee name, or that has none, now gets the cipher its advertisement
+  announces.** `create_device`, `make_device` and the `Device` constructor read the encrypt flag and the pact from
+  the Govee manufacturer data whatever the local name, as the app's light control screen reads a bound device's.
+  `Device.ingest_advertisement` learns the pact (and, as before, the on/off) the same way. Until now the flag and
+  the pact were read only under a Govee name (`identify()`, the port of the add-device scan's
+  `BaseBleProcessor.parse`); otherwise the profile's default cipher was used and the pact stayed unknown.
+  - **What it fixes:** on 2026-10-21 Home Assistant's record for a lab H6008 carried a neighbour's name
+    (`5134P0098101970F`) and its company-0x2E28 entry beside the bulb's own Govee block (header 0x43: encrypted,
+    pact 1,1). Every session then came up plaintext, which the bulb's SW1.01.25 firmware never answers from a
+    normal host, and the light could not be controlled. The bulb itself advertises only `GVH6008…`; the record was
+    merged on the ESPHome-proxy path (habluetooth keeps the longer name and unions the manufacturer data) and
+    persisted across a Home Assistant restart. The same merge had hit both lab H6008s and an H60A6 since
+    2026-10-13. The name gate dates from 1.0.0; reproduced on 1.5.0 and 1.6.0.
+  - **What the app does:** the light control screen finds a bound device by its stored MAC (`AbsViewMode4Op.s0`,
+    `AbsViewMode4OpWithOtaCheck.s2`; the name only when no MAC is stored) and parses the broadcast's pact block with
+    the stored goodsType (`AbsViewMode4OpWithOtaCheck.j1` -> `GoodsType.parseBleBroadcastPactInfo` ->
+    `BleUtil.parseBleBroadcastPact`, which skips another company's 0xFF entry). `AbsViewMode4OpWithOtaCheck.w2`
+    stores the encrypt flag per MAC (`BleBroadVersionCache.c`/`d`), and `EncryptionUtils.isEncryptionSupported`
+    reads it, with the BGC read, at connect. The H5083 plug screen reads the flag the same way. The H5085 / H5089
+    plug screen (`BlePactV1.r`) also needs the stored name to match; with a foreign name it connects by MAC on the
+    flag it remembered from earlier broadcasts, which is the device's own block again.
+  - **What stays:** discovery keeps the name gate. `identify()`, `from_advertisement()`, `scanner.supported()` and
+    `scanner.match()`/`discover()` still treat a non-Govee name as not a Govee device, as the app's add-device scan
+    does. Without a Govee pact block the profile default is still used (the app's light screen refuses such a
+    broadcast, `AbsViewMode4Op.onScanEvent` -> `p0(999)`, or connects by MAC on its remembered flag). A
+    Govee-named advertisement reads as before, and the cipher is still fixed when the Device is built: the app
+    re-learns the flag from every broadcast, the library does not (yet).
+  - **New for such a device, as for a Govee-named one:** its pact now routes the profile
+    (`profile_for(sku, pact=...)`), so a SKU outside the pact fallback whose rows refuse the advertised pact raises
+    `GoveeBleNotSupported` from `create_device` (`make_device` returns None), as the app's light screen refuses it
+    (`AbsViewMode4Op.onScanEvent`: `O1` false -> `p0(999)`). Its flag can also say plaintext. With several Govee
+    entries in one merged record, the first one read decides, as under a Govee name. A caller that works out the
+    routing pact itself should read it the same way, with `identify.parse_manufacturer_data()`, not `identify()`.
+  - No public API change. Traced against the app (decomp 7.7.02) and the H6008 SW1.01.25 image (`FUN_9b024170`
+    builds only `GVH6008` + 4 MAC digits; `FUN_9b04341c` -> `FUN_9b0433ec` set the 0x40 bit and pact 1,1).
+  - **Live-verified on the bench** (2026-10-21, the Mac, both lab H6008s, reads only): built from the bulb's own
+    advert merged with the neighbour's name and 0x2E28 entry, the fix gives `aes_rc4_psk` and pact (1,1), and the
+    handshake and all six reads are answered (8 of 8 frames); 1.6.0 gives plaintext and pact None, and none of
+    its six reads is answered. From the unmerged advert, the fix gives the same encrypted session on both.
+
 ## [1.6.0] — 2026-10-21
 
 ### Added

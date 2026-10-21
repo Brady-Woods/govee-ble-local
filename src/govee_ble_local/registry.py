@@ -9,7 +9,7 @@ from bleak.backends.scanner import AdvertisementData
 from .devices.device import Device
 from .devices.profile import DeviceProfile, profile_for, supported_skus
 from .exceptions import GoveeBleNotSupported
-from .identify import GoveeAdvertisement, from_advertisement
+from .identify import GoveeAdvertisement, _bound_advertisement
 
 __all__ = [
     "Device",
@@ -53,13 +53,15 @@ def create_device(
 ) -> Device:
     """Construct a capability-driven Device for `sku`.
 
-    Pass the device's advertisement (bleak's, or ``DiscoveredDevice.advertisement``): its encrypt
-    flag picks the command channel, and its pact the SKU's spec row (``profile_for(sku, pact=...)``),
-    so the profile, and with it every capability, is settled here, before any entity is built. Without
-    one the SKU's profile default cipher is used, which is wrong for a device whose firmware encrypts
+    Pass the device's advertisement (bleak's, or ``DiscoveredDevice.advertisement``): its encrypt flag picks
+    the command channel, and its pact the SKU's spec row (``profile_for(sku, pact=...)``), so the profile, and
+    with it every capability, is settled here, before any entity is built. Both are read from its Govee
+    manufacturer data whatever the advertised name, as the app's light control screen reads a bound device's;
+    only discovery (:mod:`.scanner`) needs a Govee name. Without an advertisement, or one without a Govee pact
+    block, the SKU's profile default cipher is used, which is wrong for a device whose firmware encrypts
     although the profile says plaintext (e.g. the H6008), and a SKU that several rows list needs
-    ``goods_type``. ``allow_modelled`` also admits a ``modelled`` row (inferred from the app, not
-    traced; see ``profile_for``).
+    ``goods_type``. ``allow_modelled`` also admits a ``modelled`` row (inferred from the app, not traced; see
+    ``profile_for``).
 
     Pass ``secret`` (the 8-byte account-lock key, ``build.SECRET_LEN``) for a device whose profile
     requires one (the plug family); it is sent after every handshake. ``Device.set_secret`` can
@@ -81,7 +83,7 @@ def create_device(
 
     Raises GoveeBleNotSupported if `sku` has no DeviceProfile (at the advertised pact), and
     GoveeBleInvalidValue if ``secret`` is not exactly 8 bytes."""
-    adv = from_advertisement(advertisement_data, ble_device.name)
+    adv = _bound_advertisement(advertisement_data, ble_device.name, sku)
     pact = adv.pact if adv is not None else None
     profile = profile_for(sku, pact=pact, goods_type=goods_type, allow_modelled=allow_modelled)
     if profile is None:

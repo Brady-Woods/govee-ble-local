@@ -24,7 +24,8 @@ from govee_ble_local.exceptions import (
     GoveeBleNotSupported,
     GoveeBleTimeout,
 )
-from govee_ble_local.identify import from_advertisement
+from govee_ble_local import registry, scanner
+from govee_ble_local.identify import _bound_advertisement, from_advertisement, identify
 from govee_ble_local.models import Capability, Encryption
 
 
@@ -103,7 +104,7 @@ def _adv(name: str | None, mfg: dict[int, bytes]) -> Any:
 
 def _encryption(d: Device, raw: Any) -> Encryption:
     """The mode ``d`` resolves for a raw advert, parsed once as the constructor does."""
-    return d._resolve_encryption(from_advertisement(raw, d._ble_device.name))
+    return d._resolve_encryption(_bound_advertisement(raw, d._ble_device.name, d.sku))
 
 
 # ── advertisement-driven encryption ─────────────────────────────────────────
@@ -123,11 +124,70 @@ def test_encryption_falls_back_to_profile_without_usable_advert() -> None:
     d = _dev("H60A6")
     assert d._resolve_encryption(None) is Encryption.AES_RC4_PSK
     assert _encryption(d, None) is Encryption.AES_RC4_PSK
-    # manufacturer data present but the name is not a Govee name -> identify() is None
-    adv = _adv("SomethingElse", {0x8801: bytes([0xEC, 0, 1, 2])})
-    assert _encryption(d, adv) is Encryption.AES_RC4_PSK
+    # a non-Govee name without a Govee pact block (another company's entry only, or none)
+    foreign = {0x2E28: bytes.fromhex("89304dad0000")}
+    assert _encryption(d, _adv("SomethingElse", foreign)) is Encryption.AES_RC4_PSK
+    assert _encryption(d, _adv("SomethingElse", {})) is Encryption.AES_RC4_PSK
     # a Govee name without manufacturer data: pact unknown, so the profile default stands
     assert _encryption(d, _adv("Govee_H60A6_ABCD", {})) is Encryption.AES_RC4_PSK
+
+
+# A bound device's advert under a name that isn't a Govee name: the H6008 whose Home Assistant record carried
+# a neighbour's name and company-0x2E28 entry (2026-10-21) beside its own Govee block (header 0x43: encrypted,
+# broadcast version 3, pact 1,1; switch byte 1, on, as the bulb's clean advert has it). The app's light
+# control screen matches a bound device by MAC and reads that block whatever the name (identify module
+# docstring); its add-device scan gates on the name.
+_RENAMED = "5134P0098101970F"
+_RENAMED_MFG = {0x8843: bytes.fromhex("ec0001010100"), 0x2E28: bytes.fromhex("89304dad0000")}
+
+
+def test_bound_device_reads_the_encrypt_flag_whatever_its_name() -> None:
+    # (advertised name, BLEDevice name): renamed in both, the advert nameless with a renamed BLEDevice (the
+    # fallback name), and no name anywhere.
+    for adv_name, ble_name in ((_RENAMED, _RENAMED), (None, _RENAMED), (None, None)):
+        d = registry.create_device(ble_device("AA:BB:CC:DD:EE:32", ble_name), "H6008",
+                                   _adv(adv_name, _RENAMED_MFG))
+        assert (d.encryption, d.pact) == (Encryption.AES_RC4_PSK, (1, 1))   # was NONE (the profile's), None
+    direct = Device(profile_for("H6008"), ble_device("AA:BB:CC:DD:EE:32", _RENAMED),
+                    _adv(_RENAMED, _RENAMED_MFG), sku="H6008")
+    assert (direct.encryption, direct.pact) == (Encryption.AES_RC4_PSK, (1, 1))
+    made = make_device(ble_device("AA:BB:CC:DD:EE:32", _RENAMED), "H6008", _adv(_RENAMED, _RENAMED_MFG))
+    assert made is not None and made.encryption is Encryption.AES_RC4_PSK
+    # Its flag decides either way, as under a Govee name: clear on an AES-default profile, it says plaintext.
+    plain = _dev("H60A6")
+    assert _encryption(plain, _adv(_RENAMED, {0x8801: bytes([0xEC, 0x00, 0x01, 0x02])})) is Encryption.NONE
+
+
+def test_a_govee_name_reads_the_same_on_both_paths() -> None:
+    adv = _adv("GVH60082691", _RENAMED_MFG)
+    assert _bound_advertisement(adv, None, "H6008") == from_advertisement(adv) == identify(
+        "GVH60082691", _RENAMED_MFG)
+
+
+def test_discovery_keeps_the_name_gate() -> None:
+    # The add-device scan drops a non-Govee name (BaseBleProcessor.parse), and no app path takes a SKU from
+    # manufacturer data alone: discovery adopts nothing new.
+    assert from_advertisement(_adv(_RENAMED, _RENAMED_MFG)) is None
+    assert not scanner.supported(_RENAMED, _RENAMED_MFG)
+    assert scanner.match(ble_device("AA:BB:CC:DD:EE:32", _RENAMED), _adv(_RENAMED, _RENAMED_MFG)) is None
+
+
+def test_bound_device_at_a_pact_its_rows_refuse_is_not_supported() -> None:
+    # A renamed advert's pact now routes the profile too, as the app's control screen refuses a pact the
+    # goodsType doesn't accept (AbsViewMode4Op.onScanEvent, O1 -> p0(999)). H6042's rows take (1,1) and (2,1).
+    adv = _adv(_RENAMED, {0x8843: bytes([0xEC, 0x00, 0x01, 0x02])})
+    with pytest.raises(GoveeBleNotSupported, match="at pact 1,2"):
+        registry.create_device(ble_device("AA:BB:CC:DD:EE:33", _RENAMED), "H6042", adv)
+    assert make_device(ble_device("AA:BB:CC:DD:EE:33", _RENAMED), "H6042", adv) is None
+
+
+def test_ingest_reads_a_renamed_advert() -> None:
+    d = Device(profile_for("H6008"), ble_device("AA:BB:CC:DD:EE:34", _RENAMED), sku="H6008")
+    calls: list[object] = []
+    d.register_callback(calls.append)
+    assert d.pact is None
+    assert d.ingest_advertisement(_adv(_RENAMED, _RENAMED_MFG)) is True   # its on/off: switch byte 1
+    assert (d.pact, d.state.is_on, len(calls)) == ((1, 1), True, 1)
 
 
 def test_encryption_constructor_uses_advertisement() -> None:

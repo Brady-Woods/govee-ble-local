@@ -92,7 +92,7 @@ def match(ble_device: BLEDevice, advertisement_data: AdvertisementData, *,
 
     Attributes are read defensively (``getattr``) so a partial advertisement
     object is tolerated; the name falls back to the BLEDevice's (:func:`.identify.from_advertisement`,
-    the one copy of this normalisation that Device uses too)."""
+    which a Device's reading of its advertisements starts from too)."""
     adv = from_advertisement(advertisement_data, ble_device.name)
     if adv is None:
         return None
