@@ -5,6 +5,7 @@ queued."""
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import itertools
 import logging
 
@@ -158,6 +159,42 @@ async def test_a_waiting_operation_drops_the_tick(monkeypatch: pytest.MonkeyPatc
         assert c._heartbeat_beat is None and beats(fake) == 0
     finally:
         c._lock_wanted -= 1
+    await c.close()
+
+
+@pytest.mark.parametrize("hold", [False, True])
+async def test_a_beat_created_before_an_operation_is_dropped_not_queued(monkeypatch: pytest.MonkeyPatch,
+                                                                         fast: None, hold: bool) -> None:
+    # A tick finds the link free and creates its beat, but before the beat starts an operation takes the lock
+    # (without a hold) or a hold_heartbeat() opens (with one, as update() opens it before its first read). The
+    # beat checks again as it starts and sends nothing: it doesn't queue on the lock and go out once the
+    # operation ends. The operation never cancels it (the lock was free when it came), so it ends on its own.
+    fake = FakeGovee()
+    c = _make(monkeypatch, fake)
+    gate = asyncio.Event()
+    with virtual_time():
+        await c.connect()
+
+        async def slow() -> None:            # an operation that holds the link until the gate opens
+            await c._ensure_connected_locked()
+            await gate.wait()
+
+        with contextlib.ExitStack() as stack:
+            op = None if hold else asyncio.ensure_future(c._run(slow, extend_warm=False))   # not started yet
+            c._heartbeat_fired(c._client)  # type: ignore[arg-type]   # the tick: the link is free
+            beat = c._heartbeat_beat
+            assert beat is not None and not beat.done()
+            if hold:
+                stack.enter_context(c.hold_heartbeat())
+                op = asyncio.ensure_future(c._run(slow, extend_warm=False))
+            await asyncio.sleep(0)            # the operation (if queued first) takes the lock, then the beat
+            assert beat.done() and not beat.cancelled() and c._lock.locked()
+            gate.set()
+            await op
+            await asyncio.sleep(0.01)
+            assert beats(fake) == 0           # not sent when the operation ended
+        await asyncio.sleep(conn_mod.HEARTBEAT_INTERVAL)
+        assert beats(fake) == 1               # the chain runs on: the next tick beats
     await c.close()
 
 
@@ -369,6 +406,38 @@ async def test_close_during_a_beat_leaves_no_timer_or_task(monkeypatch: pytest.M
         assert c._heartbeat_timer is None and not c._background
 
 
+async def test_a_close_cancelled_while_it_waits_stops_the_chain(monkeypatch: pytest.MonkeyPatch,
+                                                                 fast: None) -> None:
+    # close() stops the chain before it waits for the lock: cancelled there (behind an operation holding the
+    # link), it leaves no tick armed though its teardown never ran, and no beat goes out after it. WAS: the
+    # tick stayed armed until it next fired and found the connection closed.
+    fake = FakeGovee()
+    c = _make(monkeypatch, fake)
+    gate = asyncio.Event()
+    with virtual_time():
+        await c.connect()
+
+        async def slow() -> None:
+            await c._ensure_connected_locked()
+            await gate.wait()
+
+        op = asyncio.ensure_future(c._run(slow, extend_warm=False))
+        await asyncio.sleep(0)
+        closing = asyncio.ensure_future(c.close())
+        await asyncio.sleep(0)
+        assert not closing.done() and c._lock_wanted == 2      # waits behind the operation
+        closing.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await closing
+        assert c._heartbeat_timer is None and c.is_connected    # the chain stopped; the link not torn down
+        gate.set()
+        await op
+        await asyncio.sleep(10 * conn_mod.HEARTBEAT_INTERVAL)
+        assert beats(fake) == 0 and c._heartbeat_timer is None and c._heartbeat_beat is None
+        await c.close()                         # closed again: the teardown runs
+    assert not c.is_connected and fake.disconnects == 1
+
+
 async def test_link_loss_stops_it_and_a_reconnect_runs_one_chain(monkeypatch: pytest.MonkeyPatch,
                                                                   fast: None) -> None:
     fake = FakeGovee()
@@ -559,6 +628,14 @@ async def test_no_heartbeat_on_a_session_that_never_came_up(monkeypatch: pytest.
 def test_a_heartbeat_must_be_a_checked_read(bad: bytes) -> None:
     with pytest.raises(GoveeBleInvalidValue):
         GoveeConnection(ble_device(ADDR, "x"), heartbeat=bad)
+
+
+@pytest.mark.parametrize("command", [0x04, 0x41, 0x99, 0x100, -1, True, 1.0, "aa01", None])
+def test_build_heartbeat_takes_only_a_keep_alive_read(command: object) -> None:
+    # The four keep-alive reads only (the resolver's HEARTBEATS, as DeviceProfile.heartbeat): any other
+    # command, a known one included, is a GoveeBleInvalidValue, never another read or a raw enum error.
+    with pytest.raises(GoveeBleInvalidValue, match="keep-alive read"):
+        build.heartbeat(command)  # type: ignore[arg-type]
 
 
 @pytest.mark.parametrize("heartbeat", [BEAT, None])

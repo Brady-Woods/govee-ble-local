@@ -557,8 +557,10 @@ class GoveeConnection:
             return dropped
 
     async def close(self) -> None:
-        """Disconnect and refuse further operations (owner is being torn down)."""
+        """Disconnect and refuse further operations (owner is being torn down). The heartbeat chain stops at
+        once, before the wait for the lock, so a close cancelled while it waits leaves no tick armed."""
         self._closed = True
+        self._stop_heartbeat()
         await self.disconnect()
 
     async def _ensure_connected_locked(self, budget: ConnectBudget | None = None) -> None:

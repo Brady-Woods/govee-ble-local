@@ -22,6 +22,7 @@ from collections.abc import Callable, Sequence
 from typing import Any, Final, Literal, Never
 
 from ..const import FRAME_LEN, SCENE_A3_HEADER_LEN, SCENE_A3_PIECE_LEN
+from ..devices._resolve import HEARTBEATS as _HEARTBEATS   # standard library only: no import cycle
 from ..exceptions import GoveeBleInvalidValue, GoveeBleNotSupported
 from . import _spec
 from ._spec import Common as _C, Frame as _F
@@ -124,6 +125,8 @@ CMD_SECRET_READ: Final = int(_C.Command.secret_read)             # 0xB1
 CMD_SECRET_WRITE: Final = int(_C.Command.secret_write)           # 0xB2
 CMD_PLUG_SPEC: Final = int(_C.Command.plug_spec)                 # 0xB3
 CMD_PLUG_SYNC_TIME: Final = int(_C.Command.plug_sync_time)       # 0xB5
+# The keep-alive reads' command codes (heartbeat): aa 01, aa 00, aa 33 and aa 36, the resolver's HEARTBEATS.
+_HEARTBEAT_CODES: Final = frozenset(int(_C.Command[name]) for name in _HEARTBEATS)
 
 # mode (0x05) sub-mode (enum govee_common::sub_mode)
 SUB_SCENE: Final = int(_C.SubMode.scene)                 # 0x04
@@ -827,7 +830,11 @@ def heartbeat(command: int) -> bytes:
     as the app's heart controllers build it (``Controller4HeartCommon`` for ``ConnectHeartbeat.c``'s byte, an
     ``IHeart``'s controller, ``HeartGMessage.getSendBytes``). ``command`` is a govee_common command code:
     aa 01 (``power``, the same bytes as :func:`power_query`), aa 00, aa 33 or aa 36 (the same bytes as
-    :func:`bar_switch_query`)."""
+    :func:`bar_switch_query`): the four codes ``DeviceProfile.heartbeat`` accepts. Raises GoveeBleInvalidValue
+    for any other ``command``, a bool or non-int included."""
+    if isinstance(command, bool) or not isinstance(command, int) or command not in _HEARTBEAT_CODES:
+        raise GoveeBleInvalidValue(
+            f"heartbeat must be a keep-alive read (0x00, 0x01, 0x33 or 0x36), got {command!r}")
     return _request(_C.Command(command))
 
 

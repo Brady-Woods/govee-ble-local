@@ -1,8 +1,9 @@
 """The heartbeat held across a Device's multi-operation sequences (GoveeConnection.hold_heartbeat): a poll's
-reads, a scene's upload and activation, a bar read-modify-write and a plug's power write with its re-read go
-out with no beat between them, however long the gaps (here 1-2.5 s of virtual time after each step, as a scene
-catalog load or a slow proxy makes), while the unheld control run shows a beat landing in such a gap. Over the
-generic fake peripheral, real transport and wire layer."""
+reads, a scene's upload and activation, a bar read-modify-write, a plug's power write with its re-read and an
+H6062's segment-count read with the colour write it sizes go out with no beat between them, however long the
+gaps (here 1-2.5 s of virtual time after each step, as a scene catalog load or a slow proxy makes), while the
+unheld control run shows a beat landing in such a gap. Over the generic fake peripheral, real transport and
+wire layer."""
 from __future__ import annotations
 
 import asyncio
@@ -20,6 +21,7 @@ from govee_ble_local.wire import build
 
 from fake_ble import FakeGovee, ble_device, frame, virtual_time
 from test_connection import H60A6_BURST
+from test_device_races import _H6062_COLOUR
 
 
 @pytest.fixture(autouse=True)
@@ -122,6 +124,27 @@ async def test_a_bar_read_modify_write_holds_the_beat(monkeypatch: pytest.Monkey
     assert sent[-1] == write
     # aa 36 is both the bar read and this SKU's heartbeat: held, the one aa 36 is the read.
     assert sent.count(read) == (1 if held else 2)
+    await dev.stop()
+
+
+@pytest.mark.parametrize("call", list(_H6062_COLOUR))
+@pytest.mark.parametrize("held", [True, False])
+async def test_a_segment_count_read_and_the_write_it_sizes_hold_the_beat(monkeypatch: pytest.MonkeyPatch,
+                                                                         held: bool, call: str) -> None:
+    # H6062 reads its segment count (aa 41) before its first colour write, as the app does in its connect
+    # read, during which it sends no heartbeat: none between the read and the write, as in a poll.
+    fake = FakeGovee(encrypted=False)
+    fake.read_replies[0x41] = frame(0xAA, 0x41, 0x00, 0x64, 0x0A)
+    dev = _device(monkeypatch, fake, "H6062", held=held)
+    assert dev.profile.section_count_read and dev.profile.heartbeat == 0x01
+    beat = build.heartbeat(0x01)
+    await dev.connect()
+    _slow(monkeypatch, dev, "query", 2.5)
+    with virtual_time(), _span(fake) as sent:
+        await _H6062_COLOUR[call](dev)
+    heads = [f[:2].hex() for f in sent if f != beat]
+    assert heads[0] == "aa41" and heads[-1] == "3305"
+    assert (beat in sent) is not held
     await dev.stop()
 
 

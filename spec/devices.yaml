@@ -140,8 +140,9 @@ timing:
       - >-
         PROCEDURAL (govee-ble-local): a tick is dropped while any operation holds or waits for the link, or while a
         multi-operation sequence holds the heartbeat (a poll's reads, a scene's upload and activation, a bar
-        read-modify-write, a plug's power write and re-sync); the app skips for a compose or multi-packet send and its
-        info read only, not for a plain write.
+        read-modify-write, a plug's power write and re-sync, the aa 41 section_count_read the library makes before an
+        H6062's first colour write (the app's is in its connect read) and that write); the app skips for a compose or
+        multi-packet send and its info read only, not for a plain write.
       - >-
         PROCEDURAL (govee-ble-local): the first beat comes one interval after the session is set up (the handshake,
         any unlock and the session writes), not on the app's connect phase (at most 2 s apart); the legacy plug

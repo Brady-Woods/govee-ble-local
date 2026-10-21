@@ -634,9 +634,10 @@ class Device:
         its ``33 b5`` time sync, a write, which opens a fresh warm window on the new link). A write called
         after it either queues behind it and reconnects or, if it reaches the link first (a setter that takes
         no device lock, or is handed one, while release() waits for one), keeps the link and its window: the
-        release then drops nothing and returns False. That is the link it wrote on: a write its caller
-        cancels before its frames go out, or one whose link has gone since, keeps nothing. The heartbeat stops
-        with the link; the next session arms its own.
+        release then drops nothing and returns False. That is the link it wrote on, whether the device acked
+        the write or refused it (a GoveeBleCommandRejected still reached the device); a write its caller
+        cancels (before or after its frames go out), or one whose link has gone since, keeps nothing. The
+        heartbeat stops with the link; the next session arms its own.
 
         Returns True when a link was up and was dropped, False when it dropped nothing: no link, after
         :meth:`stop` (it never reopens the connection), or a write called after it wrote on the link that is
@@ -646,8 +647,9 @@ class Device:
         ticket = self._ticket()
         async with self._scene_lock, self._bar_lock, self._read_gate:
             # Asked under the connection lock, after every operation queued before the drop: a write called
-            # after this release whose frames went out on the link that is up keeps it, with its window. One
-            # that never got there (cancelled while it waited), or wrote on a link since gone, does not.
+            # after this release that ended on the link that is up, acked or refused, keeps it, with its
+            # window. One cancelled (while it waited or after its frames went out), or that wrote on a link
+            # since gone, does not.
             dropped = await self._conn.disconnect(keep=lambda: self._kept_for(ticket))
             if dropped:
                 _LOGGER.debug("%s (%s): link released by caller", self.address, self._sku)
@@ -721,9 +723,10 @@ class Device:
         """Write ``frames`` and fold the change into state: the protocol every setter follows.
 
         ``ticket``: the write call's number (:meth:`_ticket`), taken before its first lock or I/O; None takes
-        one now, for a setter that reaches this with no await before it. Once its frames went out it is
-        recorded with the link they went out on (:meth:`_wrote`), which a :meth:`release` called before it
-        keeps.
+        one now, for a setter that reaches this with no await before it. Once the write ends, acked or
+        failed (a refusal reached the device), it is recorded with the link its frames went out on
+        (:meth:`_wrote`), which a :meth:`release` called before it keeps; a cancelled one is not recorded,
+        even after its frames went out.
 
         One frame goes out with ``send``, a list with ``send_many`` (one connection-lock hold, each
         frame ack-verified in order). Once the write succeeded: bump ``_mutation_seq`` (an in-flight
@@ -1011,38 +1014,40 @@ class Device:
         pct = _check_pct(brightness) if brightness is not None else None
         kelvin = self._check_kelvin(kelvin) if kelvin is not None else None
         ticket = self._ticket()
-        if pick is not None or kelvin is not None:
-            await self._ensure_segment_count()
-        frames: list[bytes] = []
-        if power:
-            self._require(Capability.POWER)
-            frames += self._power_frames(True)
-        if pct is not None:
-            self._require(Capability.BRIGHTNESS)
-            frames.append(self._brightness_frame(pct))
-        span = self._kelvin_range()   # once: the frame and the state use the same range
-        if pick is not None:
-            self._require(Capability.RGB)
-            frames += self._color_rgb_frames(pick, span)
-        elif kelvin is not None:
-            self._require(Capability.COLOR_TEMP)
-            frames.append(self._build_or_unsupported(
-                build.color_temp, kelvin, self.profile.color_scheme, self.segment_count,
-                pieces=self.profile.segments or None))
-        if not frames:
-            return
-
-        def apply() -> None:
+        # H6062's aa 41 read and the write it sizes, and as set_power the power write and its re-read: no
+        # heartbeat between them.
+        with self._conn.hold_heartbeat():
+            if pick is not None or kelvin is not None:
+                await self._ensure_segment_count()
+            frames: list[bytes] = []
             if power:
-                self._apply_power(True)
+                self._require(Capability.POWER)
+                frames += self._power_frames(True)
             if pct is not None:
-                self._state.brightness = pct
+                self._require(Capability.BRIGHTNESS)
+                frames.append(self._brightness_frame(pct))
+            span = self._kelvin_range()   # once: the frame and the state use the same range
             if pick is not None:
-                _fold.apply_rgb(self.profile, self._state, pick, span)
+                self._require(Capability.RGB)
+                frames += self._color_rgb_frames(pick, span)
             elif kelvin is not None:
-                _fold.apply_kelvin(self.profile, self._state, kelvin)
+                self._require(Capability.COLOR_TEMP)
+                frames.append(self._build_or_unsupported(
+                    build.color_temp, kelvin, self.profile.color_scheme, self.segment_count,
+                    pieces=self.profile.segments or None))
+            if not frames:
+                return
 
-        with self._conn.hold_heartbeat():   # as set_power: the power write and its re-read
+            def apply() -> None:
+                if power:
+                    self._apply_power(True)
+                if pct is not None:
+                    self._state.brightness = pct
+                if pick is not None:
+                    _fold.apply_rgb(self.profile, self._state, pick, span)
+                elif kelvin is not None:
+                    _fold.apply_kelvin(self.profile, self._state, kelvin)
+
             async with self._zone_power_lock():
                 await self._commit(frames, apply, fixture=power,
                                    zones=dict.fromkeys(self._power_zones(), True) if power else None,
@@ -1080,10 +1085,11 @@ class Device:
         self._require(Capability.RGB)
         pick = _check_rgb(rgb)
         ticket = self._ticket()
-        await self._ensure_segment_count()
-        span = self._kelvin_range()   # once: the frame and the state use the same range
-        await self._commit(self._color_rgb_frames(pick, span),
-                           lambda: _fold.apply_rgb(self.profile, self._state, pick, span), ticket=ticket)
+        with self._conn.hold_heartbeat():   # H6062's aa 41 read and its write: no beat between
+            await self._ensure_segment_count()
+            span = self._kelvin_range()   # once: the frame and the state use the same range
+            await self._commit(self._color_rgb_frames(pick, span),
+                               lambda: _fold.apply_rgb(self.profile, self._state, pick, span), ticket=ticket)
 
     async def set_color_temp(self, kelvin: int) -> None:
         """Set the whole-device colour temperature (clears rgb and active scene).
@@ -1097,11 +1103,13 @@ class Device:
         self._require(Capability.COLOR_TEMP)
         sent = self._check_kelvin(kelvin)
         ticket = self._ticket()
-        await self._ensure_segment_count()
-        frame = self._build_or_unsupported(
-            build.color_temp, sent, self.profile.color_scheme, self.segment_count,
-            pieces=self.profile.segments or None)
-        await self._commit(frame, lambda: _fold.apply_kelvin(self.profile, self._state, sent), ticket=ticket)
+        with self._conn.hold_heartbeat():   # H6062's aa 41 read and its write: no beat between
+            await self._ensure_segment_count()
+            frame = self._build_or_unsupported(
+                build.color_temp, sent, self.profile.color_scheme, self.segment_count,
+                pieces=self.profile.segments or None)
+            await self._commit(frame, lambda: _fold.apply_kelvin(self.profile, self._state, sent),
+                               ticket=ticket)
 
     async def set_segment_rgb(self, indices: Sequence[int], rgb: tuple[int, int, int]) -> None:
         """Set the colour of selected segments (indices 0 .. :attr:`segment_count` - 1).
@@ -1113,19 +1121,20 @@ class Device:
         pick = _check_rgb(rgb)
         r, g, b = pick
         ticket = self._ticket()
-        await self._ensure_segment_count()
-        n = self.segment_count
-        frame = self._build_or_unsupported(
-            build.segment_rgb, _mask(indices, n), r, g, b, self.profile.color_scheme, n,
-            self._kelvin_range())
+        with self._conn.hold_heartbeat():   # H6062's aa 41 read and its write: no beat between
+            await self._ensure_segment_count()
+            n = self.segment_count
+            frame = self._build_or_unsupported(
+                build.segment_rgb, _mask(indices, n), r, g, b, self.profile.color_scheme, n,
+                self._kelvin_range())
 
-        carried = self._carried(indices, build.COLOR_MASK_CAP)
+            carried = self._carried(indices, build.COLOR_MASK_CAP)
 
-        def apply() -> None:
-            _fold.update_segments(self._state, carried, rgb=pick)
-            self._state.scene_code = None   # a segment colour write leaves scene mode, as set_rgb does
+            def apply() -> None:
+                _fold.update_segments(self._state, carried, rgb=pick)
+                self._state.scene_code = None   # a segment colour write leaves scene mode, as set_rgb does
 
-        await self._commit(frame, apply, ticket=ticket)
+            await self._commit(frame, apply, ticket=ticket)
 
     async def set_segment_brightness(self, indices: Sequence[int], pct: int) -> None:
         """Set brightness in percent (clamped to 1..100; 0 is never sent) on selected segments (indices
@@ -1139,18 +1148,19 @@ class Device:
         self._require(Capability.SEGMENTS)
         level = _check_pct(pct)
         ticket = self._ticket()
-        await self._ensure_segment_count()
-        n = self.segment_count
-        frame = self._build_or_unsupported(
-            build.segment_brightness, _mask(indices, n), level, self.profile.color_scheme, n)
+        with self._conn.hold_heartbeat():   # H6062's aa 41 read and its write: no beat between
+            await self._ensure_segment_count()
+            n = self.segment_count
+            frame = self._build_or_unsupported(
+                build.segment_brightness, _mask(indices, n), level, self.profile.color_scheme, n)
 
-        carried = self._carried(indices, build.BRIGHTNESS_MASK_CAP)
+            carried = self._carried(indices, build.BRIGHTNESS_MASK_CAP)
 
-        def apply() -> None:
-            _fold.update_segments(self._state, carried, brightness=level)
-            self._state.scene_code = None   # the 33 05 15 02 write is a colour-mode write too
+            def apply() -> None:
+                _fold.update_segments(self._state, carried, brightness=level)
+                self._state.scene_code = None   # the 33 05 15 02 write is a colour-mode write too
 
-        await self._commit(frame, apply, ticket=ticket)
+            await self._commit(frame, apply, ticket=ticket)
 
     def _carried(self, indices: Sequence[int], mask_cap: int) -> list[int]:
         """The ``indices`` a 0x15 frame's segment mask carries: past the body's ``mask_cap`` bytes the app's
@@ -1185,15 +1195,17 @@ class Device:
         self._require(Capability.COLOR_TEMP)
         sent = self._check_kelvin(kelvin)
         ticket = self._ticket()
-        await self._ensure_segment_count()
-        n = self.segment_count
-        frame = self._build_or_unsupported(
-            build.segment_color_temp, _mask(indices, n), sent, self.profile.color_scheme, n)
+        with self._conn.hold_heartbeat():   # H6062's aa 41 read and its write: no beat between
+            await self._ensure_segment_count()
+            n = self.segment_count
+            frame = self._build_or_unsupported(
+                build.segment_color_temp, _mask(indices, n), sent, self.profile.color_scheme, n)
 
-        def apply() -> None:
-            self._state.scene_code = None   # a colour-mode write leaves scene mode, as set_color_temp does
+            def apply() -> None:
+                # A colour-mode write leaves scene mode, as set_color_temp does.
+                self._state.scene_code = None
 
-        await self._commit(frame, apply, ticket=ticket)
+            await self._commit(frame, apply, ticket=ticket)
 
     # -- zones --------------------------------------------------------------
     def _zone(self, name: str) -> Zone:
@@ -1318,21 +1330,22 @@ class Device:
         pick = _check_rgb(rgb)
         r, g, b = pick
         ticket = self._ticket()
-        await self._ensure_segment_count()
-        n = self.segment_count
-        kelvin_range = self._kelvin_range()
-        frame = self._build_or_unsupported(
-            build.segment_rgb, _mask(z.segments, n), r, g, b, self.profile.color_scheme, n, kelvin_range)
+        with self._conn.hold_heartbeat():   # as set_segment_rgb; no zoned profile reads aa 41
+            await self._ensure_segment_count()
+            n = self.segment_count
+            kelvin_range = self._kelvin_range()
+            frame = self._build_or_unsupported(
+                build.segment_rgb, _mask(z.segments, n), r, g, b, self.profile.color_scheme, n, kelvin_range)
 
-        def apply() -> None:
-            _fold.update_segments(self._state, z.segments, rgb=pick)
-            self._state.scene_code = None   # a zone colour write leaves scene mode, as set_rgb does
-            # A pick equal to a tint colour went out as the zone's CCT frame (build.rgb_as_kelvin):
-            # the bar then reports that Kelvin, like set_zone_color_temp.
-            _fold.apply_zone_kelvin(self.profile, self._state, {z.power_index: build.rgb_as_kelvin(
-                r, g, b, self.profile.color_scheme, kelvin_range)})
+            def apply() -> None:
+                _fold.update_segments(self._state, z.segments, rgb=pick)
+                self._state.scene_code = None   # a zone colour write leaves scene mode, as set_rgb does
+                # A pick equal to a tint colour went out as the zone's CCT frame (build.rgb_as_kelvin):
+                # the bar then reports that Kelvin, like set_zone_color_temp.
+                _fold.apply_zone_kelvin(self.profile, self._state, {z.power_index: build.rgb_as_kelvin(
+                    r, g, b, self.profile.color_scheme, kelvin_range)})
 
-        await self._commit(frame, apply, ticket=ticket)
+            await self._commit(frame, apply, ticket=ticket)
 
     async def set_zone_color_temp(self, name: str, kelvin: int) -> None:
         """Colour temperature for one zone (its segment mask). Physically supported on the
@@ -1350,16 +1363,18 @@ class Device:
         if not z.segments:
             raise GoveeBleNotSupported(f"{self._sku}: zone {name!r} has no segments")
         ticket = self._ticket()
-        await self._ensure_segment_count()
-        n = self.segment_count
-        frame = self._build_or_unsupported(
-            build.segment_color_temp, _mask(z.segments, n), sent, self.profile.color_scheme, n)
+        with self._conn.hold_heartbeat():   # as set_segment_rgb; no zoned profile reads aa 41
+            await self._ensure_segment_count()
+            n = self.segment_count
+            frame = self._build_or_unsupported(
+                build.segment_color_temp, _mask(z.segments, n), sent, self.profile.color_scheme, n)
 
-        def apply() -> None:
-            self._state.scene_code = None   # a zone colour write leaves scene mode, as set_color_temp does
-            _fold.apply_zone_kelvin(self.profile, self._state, {z.power_index: sent})
+            def apply() -> None:
+                # A zone colour write leaves scene mode, as set_color_temp does.
+                self._state.scene_code = None
+                _fold.apply_zone_kelvin(self.profile, self._state, {z.power_index: sent})
 
-        await self._commit(frame, apply, ticket=ticket)
+            await self._commit(frame, apply, ticket=ticket)
 
     # -- scenes -------------------------------------------------------------
     async def set_scene(self, code: int) -> None:
@@ -1844,7 +1859,9 @@ class Device:
         (``AbsComposeControllerWithOpResult.onOvertime`` fails the connect read), so a profile with
         ``section_count_read`` does the same lazily here and sends nothing if the device does not
         answer, rather than guessing a mask. A no-op on every other profile and once the count is
-        known."""
+        known. Every caller holds the heartbeat across this read and the write it sizes
+        (``GoveeConnection.hold_heartbeat``), as :meth:`update` holds its reads: the app reads the count
+        in its connect read, during which it sends none (``ShareVM.R`` -> ``updateSkipHeart``)."""
         if (self.profile.section_count_read and self._segment_count is None
                 and not await self._read_section_count()):
             raise GoveeBleError(

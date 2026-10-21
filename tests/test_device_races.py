@@ -496,6 +496,32 @@ async def test_release_gives_way_to_a_later_write_that_reaches_the_link_first(
     await dev.stop()
 
 
+async def test_release_gives_way_to_a_later_write_the_device_refuses(
+        monkeypatch: pytest.MonkeyPatch, fast_acks: None, caplog: pytest.LogCaptureFixture) -> None:
+    # As above, but the device refuses the setter's 33 04 (acked with status 1): it still reached the device
+    # on the link that is up, so that link keeps the write's 30 s window and the release drops nothing.
+    caplog.set_level(logging.DEBUG, logger="govee_ble_local")
+    fake = FakeGovee(encrypted=False)
+    dev = _live(monkeypatch, fake, "H6006")
+    await dev.connect()
+    reading, go = _gate_reads(monkeypatch, dev, 0x01)
+    read = asyncio.ensure_future(dev._read_reply(build.power_query()))
+    await reading.wait()
+    release = asyncio.ensure_future(dev.release())
+    await _settle()
+    assert not release.done() and dev._bar_lock.locked()   # holds the earlier locks, waits for _read_gate
+    fake.ack_status = 1                                      # the device refuses the next write
+    with pytest.raises(GoveeBleCommandRejected):
+        await dev.set_brightness(50)                         # called after release(): refused on this link
+    go.set()
+    await read
+    assert await release is False
+    assert dev._conn.is_connected and dev._conn._active_until > 0 and not _released(caplog)
+    assert len(fake.clients) == 1 and fake.disconnects == 0
+    assert [w for w in fake.clients[0].writes if w[:2] == b"\x33\x04"]
+    await dev.stop()
+
+
 async def test_release_gives_way_to_a_bar_write_handed_the_bar_lock_before_it(
         monkeypatch: pytest.MonkeyPatch, fast_acks: None) -> None:
     # H6047: release() waits for _scene_lock behind a scene, and a set_power called after it waits for
