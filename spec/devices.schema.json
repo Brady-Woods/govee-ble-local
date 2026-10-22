@@ -338,7 +338,7 @@
         "type": "string",
         "pattern": "^([\\w$./-]+\\.(java|c|kt|smali):\\d+(-\\d+)?(,\\s?\\d+(-\\d+)?)*|H[0-9A-Z]{4}(/H[0-9A-Z]{4})? [\\w.'<>-]+ @0x[0-9a-f]{6,8}(-0x[0-9a-f]{6,8})?)$"
       },
-      "description": "Citations in the .ksy doc-ref form (spec/checks/lint.py REF_FILE / REF_ADDR): a decompiled file's path:line relative to decomp-7.7.02, or IMAGE symbol @0xaddr. A path under govee-apk-decompiled/sources/ is a Govee Home 7.5.12 (1088) path, used where the 7.7.02 capture lacks the code (the h604a rows, whose 7.7.02 module pact_h604a is not captured); the row's doc says so."
+      "description": "Citations in the .ksy doc-ref form (spec/checks/lint.py REF_FILE / REF_ADDR): a decompiled file's path:line relative to decomp-7.7.02, or IMAGE symbol @0xaddr. A path under govee-apk-decompiled/sources/ is a Govee Home 7.5.12 (1088) path, used where the 7.7.02 capture lacks the code (the h604a rows, whose 7.7.02 module pact_h604a is not captured, and the h3a5x 386 row); the row's doc says so."
     },
     "clientRow": {
       "type": "object",

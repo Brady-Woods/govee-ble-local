@@ -103,7 +103,8 @@ model, from which the shipped readers are generated).
   `pact_required` (Spec, below): `profile_for`, `is_supported_sku`, `make_device` and `create_device` refuse
   these three without a pact, rather than serve a pact-less record the (2,1) status profile with the plaintext
   cipher fallback. `create_device` with the advertisement still builds them: an encrypted (2,1) advert, as both
-  bench units send, gives the status profile and AES (checked offline, not on the bench). They join the pact-gated SKUs above, 19 in all with H6119
+  bench units send, gives the status profile and AES (checked offline, not on the bench). They join the pact-gated
+  SKUs above, 19 in all with H6119
   (`supported_skus()` lists them; a caller passes the advert's pact), so the integration's setup fix for
   those covers them too.
 - **Brightness on a SKU whose range the pact picks** (`DeviceProfile.brightness_by_pact`: stringlightv2 H6121
@@ -241,7 +242,8 @@ model, from which the shipped readers are generated).
   - devices.yaml now has 305 goodsType rows in 96 families (184 in 91): 186 with `support` (66), of them 146
     `app_traced`, 36 `modelled` and the same 4 `hardware_verified`, and 119 without (118). 66 of the 186 had
     support at 1.6.1 and keep it; the trace gave 87 more rows support. The other 33 take it through the library
-    and spec changes under Added, Changed, Fixed and Spec: h6069 284, h3700 383, h7076 313, h70dx 267-269, bulblightv3 342, the four h1162 rows, h70b1 134,
+    and spec changes under Added, Changed, Fixed and Spec: h6069 284, h3700 383, h7076 313, h70dx 267-269,
+    bulblightv3 342, the four h1162 rows, h70b1 134,
     h70bx 216, the six status-read rows (h6092 334 / 333 / 401, h7072 371 / 294, h70b6 341), the nine BK target
     rows and the five Glide panel rows (h6061 96 / 97 / 121 / 163 / 228), all `app_traced` but h7072 294, h6119
     44 and the Glide panels (`modelled`).
