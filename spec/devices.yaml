@@ -149,16 +149,20 @@ timing:
         screens have no info gate at all. On an after_quiet row the wait restarts when each operation that sent a
         frame ends, not at each send within it (HeartHandler.e restarts it on every send).
       - >-
-        PROCEDURAL (govee-ble-local): on a status row whose power_live has heartbeat_aa01, the library follows the
-        screen, which reads the 0xAC burst once per connect and then takes the switch from each aa 01 reply
-        (ShareVM.N3 -> J3): it makes the status read once per link (a poll on a link it was made on reads nothing
-        more) and folds each reply's byte 2 == 1 into the power, but only a reply that arrives with no other frame
-        sent since its beat (one sent after it, a power write or a read, may have changed what the reply reports),
-        where the app takes every aa 01 notification. The screen's re-read on a change (Compose4Off2On: the timer,
-        sleep and wake reads and aa 05, then the screen's aa a5 groups) is not modelled. Every other reply is not
-        folded into state: it is left in the receive queue, which the next operation drains (as it drains an ee 30
-        push), and the poll's own power read stands in for it (aa 01 on a polled row; the status read's TLV 0x01
-        on an aa 00 status row, whose reply carries no switch, BleComm.G).
+        PROCEDURAL (govee-ble-local): the reply is not folded into state except on a status row that says
+        heartbeat_power. It is left in the receive queue, which the next operation drains (as it drains an ee 30
+        push), and the poll's own power read stands in for it: aa 01 on a polled row, and the status read's TLV 0x01
+        on a status row. The screen of a status row on the aa 01 keep-alive reads the 0xAC burst once per connect
+        and then takes the switch from each aa 01 reply (ShareVM.N3 -> J3); on straightfloorlamp 69, h6069 284,
+        rgbiclight 351 / 352 and h61d3 263, J3 also re-reads on each change (Compose4Off2On: the timer, sleep and
+        wake reads and aa 05, then the screen's aa a5 groups), while on h7086 293, h7020 296, h7076 313 and h3700
+        383 it sets the switch alone. Only h61d3 263 says heartbeat_power (behind allow_modelled): the library makes
+        its status read once per link (a poll on a link it was made on reads nothing more) and folds each reply's
+        byte 2 == 1 into the power, but only a reply that arrives with no other frame sent since its beat (one sent
+        after it, a power write or a read, may have changed what the reply reports), where the app takes every aa 01
+        notification; the re-read on a change is not modelled. The status rows admitted before 1.9.0 on the aa 01
+        keep-alive (the eight others above) read the status on every poll. The follow-up: fold heartbeat replies and
+        ee 30 pushes through one hook.
       - >-
         PROCEDURAL (govee-ble-local): one write without response, bounded at 1 s and not retried, and cut short by
         a disconnect or an operation that wants the link (above), where the app's runs to its end beside its command
@@ -169,6 +173,15 @@ timing:
       - base-classes12/com/govee/common2light/capability/connect/ConnectHeartbeat.java:15-17,26-38
       - base-classes11/com/govee/base2light/pact/newdetail/ShareVM.java:979-1015,1348-1350,1362-1364,1401-1408
       - base-classes11/com/govee/base2light/pact/newdetail/ble/BleComm.java:37-47,76-84
+      - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4Off2On.java:44-80
+      - split_hollowlamp/com/govee/straightfloorlamp/adjust/VM4Light.java:613-642
+      - split_h6061/com/govee/cubelight/newdetails/CubeVM4Light.java:535-557
+      - split_rgbiclight/com/govee/rgbiclight/VM4Light.java:732-748
+      - split_h61d3/com/govee/h61d3/adjustNew/VM4Light.java:222-259,315-327,827-829
+      - split_outdoorlight/com/govee/h7086/adjust/VM4Light.java:267-279
+      - split_h7050/com/govee/h7020/newDetail/NewDetailVM.java:744-756
+      - split_h7075/com/govee/h7075/h7076/H7076DetailVM.java:331-343
+      - split_h7075/com/govee/h7075/h3700/H3700DetailVM.java:332-344
       - base-classes11/com/govee/base2light/pact/newdetail/ble/Ble4NewDetail.java:32-37
       - split_bulblightstringv1/com/govee/bulblightstringv1/bulblight/VM4Light.java:420-447
       - split_h6047/com/govee/h6047/detail/NewDetailVm.java:581-612
@@ -2350,7 +2363,7 @@ families:
         "263":   # H703A / H703B, the H703ADetailActivity screen: the 0xAC status read replaces connectBleSuc
           models: [H703A, H703B]
           pacts: ["1,1"]
-          support: app_traced
+          support: modelled
           power_read: ac_status
           capabilities: [power, brightness, rgb, color_temp]
           zones: []
@@ -2362,6 +2375,7 @@ families:
           connect_reads: []
           connect_writes: []
           heartbeat: power
+          heartbeat_power: true
           doc: >-
             H703A / H703B. Model.t opens H703ADetailActivity (VM4Light) for H61D3Support.l0, and VM4Light.d0 takes Y4: the
             connect is the 0xAC status read alone, ext types {0x41, 0xA5, 0x40, 0x16}, with no aa 01 / aa 05 / aa a5. TLV
@@ -2372,13 +2386,19 @@ families:
             brightness. Kelvin: KelvinConfig 263 -> version 2 = [2700, 6500]; brightness version 1. Live power: the ee 30
             switch push (VM4Light.z5) and the aa 01 heartbeat reply (VM4Light.I3; ShareVM.N3 -> J3 -> D5), the family's
             power_live. The screen reads the burst once per connect and then follows the heartbeat, and so does the
-            library (once per link, then each reply's switch). The request names only the four extra types, and whether
-            the firmware returns TLVs 0x01 / 0x04 / 0x05 unasked is not in the app: absent, the read gives off and
-            brightness 100, in the app as in the library, and the first heartbeat reply corrects the power. Not
-            modelled:
-            the re-read on a switch change (D5 -> Compose4Off2On, then aa a5 01), and the ee 30 push. RGB is read back
-            from the TLV 0xA5 as the screen reads it (wire f_a5 single_record): one
-            [brightness, R, G, B] record at bytes 1-4 from a value of 5 bytes or more, byte 0 unread, applied at the one
+            library (heartbeat_power: the status read once per link, then each reply's switch,
+            timing.heartbeat.deviations). MODELLED, for two gaps. First, the request names only the four extra types,
+            and whether the firmware returns TLVs 0x01 / 0x04 / 0x05 unasked is not in the app (no unit on the bench).
+            Absent, the read gives off and brightness 100, in the app as in the library; the app's screen stays
+            connected and its first heartbeat reply corrects the power. The library's correction reaches only
+            a link that outlives a beat, through the state callbacks: the state a poll returns on a fresh link is the
+            status read's, so a client that polls on fresh links (Home Assistant's, with the idle disconnect) would
+            read off on every poll. Second, J3's re-read on a switch change (D5 -> Compose4Off2On: the timer, sleep
+            and wake reads and aa 05, then G5's one aa a5 01 group) is not modelled, so on a link that stays up the
+            mode and colour are the link's status read's and the library's own writes, and a poll there reads nothing
+            back. Not modelled either: the ee 30 push. RGB is read back from the TLV 0xA5 as the screen reads it (wire
+            f_a5 single_record): one [brightness, R, G, B] record at bytes 1-4 from a value of 5 bytes or more, byte 0
+            unread, applied at the one
             piece (VM4Light$afterConnectedSingleReadDeviceInfo$1.n -> SubMode4Color.l). The library folds it as the
             whole-device colour before the same burst's TLV 0x05, so a Kelvin above 0 there still reads as colour
             temperature and a scene clears it; the app holds both. Not listed: the TimerConfig.f time sync before the
@@ -2390,8 +2410,9 @@ families:
             - split_h61d3/com/govee/h61d3/pact/H703ABBleIotSkuItem.java:7-9
             - split_h61d3/com/govee/h61d3/pact/Model.java:108-120
             - split_h61d3/com/govee/h61d3/adjustNew/H703ADetailActivity.java:34,111-114
-            - split_h61d3/com/govee/h61d3/adjustNew/VM4Light.java:458-464,703-797,811-813,827-829,952-977,1065-1075,1299-1307
+            - split_h61d3/com/govee/h61d3/adjustNew/VM4Light.java:222-259,315-327,458-464,703-797,811-813,827-829,952-977,1065-1075,1299-1307
             - base-classes11/com/govee/base2light/pact/newdetail/ShareVM.java:1004-1012,1348-1363
+            - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4Off2On.java:44-80
             - split_h61d3/com/govee/h61d3/adjustNew/VM4Light$afterConnectedSingleReadDeviceInfo$1.java:46-68,79-97,100-153,163-199
             - split_h61d3/com/govee/h61d3/adjustNew/Info4Detail.java:498-506,559-607,767-803
             - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4BaseInfoSingleRead.java:161-179,229,286-299
@@ -4406,10 +4427,9 @@ families:
             Kelvin-tint pick or the colour-temperature slider (ColorViewModel.U, Config.I[284][4] on) Bytes.p in the
             both-slot form (scheme h6006). Brightness: no BrightnessConfig entry, version 1 = percent [1, 100]
             (BrightnessConfig.b -> 33 04). Kelvin: no KelvinConfig entry, version 0 = [2000, 9000]. Scenes untraced
-            (ScenesConfigBean op set Support.supportScenesOpSet(284) = {5}, applied by CubeSceneViewModeV2). The
-            keep-alive reply is the live power (the library reads the status once per link and then follows the reply
-            too, timing.heartbeat.deviations); its re-read on a change is not
-            modelled. Not hardware-verified (no H6069 on the bench).
+            (ScenesConfigBean op set Support.supportScenesOpSet(284) = {5}, applied by CubeSceneViewModeV2). Not
+            modelled: the keep-alive reply as live power (the library re-reads the status read's TLV 0x01 every poll
+            instead, timing.heartbeat.deviations). Not hardware-verified (no H6069 on the bench).
           doc-ref:
             - split_h6061/com/govee/cubelight/pact/Support.java:63,75-76,126-131,151-170,613-615,924-926,936-938,962-964
             - base-classes2/com/govee/shared/checker/KmpGoodsType.java:179
@@ -8199,9 +8219,8 @@ families:
             (switchTrigger -> ControllerSwitch.d). The keep-alive is aa 01 (I3 true: ConnectHeartbeat type 1), and its
             reply is the screen's live power (ShareVM.N3 -> J3, which also queues the Compose4Off2On re-read on every
             change, off as well as on); the screen has no ee 30 parser (Z3 adds only brightness and IC-count pushes,
-            not modelled). The library reads the status once per link and then takes the power from the reply too
-            (timing.heartbeat.deviations); the Compose4Off2On re-read is not modelled. Brightness 33 04 percent (no
-            BrightnessConfig
+            not modelled). The library takes power from the status read it repeats every poll instead of the reply
+            (timing.heartbeat.deviations); the frames sent are the app's. Brightness 33 04 percent (no BrightnessConfig
             key). Colour on the ColorModeV1_2 strip (RgbIcLightRegistry, Support.g; picks fill the selected pieces):
             ColorModeControllerConfig.c -> Config.F -> Config.x[351] = 0 -> Config.J[0] Yt -> Bytes.h / Bytes.r, white
             type Config.P[351] = 1, the h60a6 15 01 frames; a whole-strip Kelvin is the colour page's all pick
@@ -8276,9 +8295,8 @@ families:
             one-time Matter info read after it, MatterManager.r via the 352 MatterInterceptor, are not listed), its TLV
             0x01 / 0x04 / 0x05 / 0x40 / 0xA5 read as on
             351, 15 pieces (ColorPieceConfig.j), no aa 01 / aa 05 read, no 0xB1 / 0xB2; power 33 01, keep-alive aa 01
-            whose reply is the screen's live power (J3 re-reads on every change, not modelled; the library reads the
-            status once per link and then follows the reply too); brightness 33 04 percent; colour Config.x[352] = 0 ->
-            Yt (Bytes.h / Bytes.r, white
+            whose reply is the screen's live power (J3 re-reads on every change; the library takes power from the status
+            read it repeats every poll instead); brightness 33 04 percent; colour Config.x[352] = 0 -> Yt (Bytes.h / Bytes.r, white
             type Config.P[352] = 1) on the ColorModeV1_2 strip, the colour page's all-Kelvin Bytes.r over 15 pieces, the
             illumination tab's VM4Light.configKelvinController -> Bytes.C(K, 15, 1) with 33 04 in one write, segment brightness
             Config.z[352] = 0 -> 15 02; Config.I[352] all on; Kelvin KelvinConfig.Config.p4 by pact. Gradual (TLV 0x05
@@ -9770,12 +9788,11 @@ families:
             call sends the colour tab's single frame. Colour-strip palettes at (2,1) go out as the 0xA3 multi-packet
             (Config.C[69]); the library sends no palettes. Kelvin: KelvinConfig.Config.N2, version 2 = [2700, 6500] at
             pactType 2 ([2200, 6500] at (1,1)). Keep-alive: aa 01 (VM4Light.I3), fixed rate; live power is its reply
-            and the ee 30 push (the family's power_live). The app reads the 0xAC status once per connect and then takes
-            the on/off from each aa 01 heartbeat reply (VM4Light.J3), and so does the library (once per link, then each
-            reply's switch). Not modelled: J3's re-read on a change (Compose4Off2On); the ee 30 push; the TLV 0xA3
-            gradual flag, so there is no gradual capability; and the connect's time sync (library-wide). On the
-            first poll the library also sends its aa 06 / aa 07 03 / aa 07 02 device-info reads. This screen never sends
-            those
+            and the ee 30 push (the family's power_live). Not modelled: the on/off
+            the app takes from each aa 01 heartbeat reply (VM4Light.J3) and its re-read on a change; the TLV 0xA3
+            gradual flag, so there is no gradual capability; and the connect's time sync (library-wide). Check on
+            hardware: the library repeats the 0xAC read every poll, where the app reads it once per connect. On the
+            first poll it also sends its aa 06 / aa 07 03 / aa 07 02 device-info reads. This screen never sends those
             (its versions and device id come from TLV 0x07, records 0x10 / 0x11, Compose4BaseInfoSingleRead.w), but
             the H6076 firmware answers all three: FIRMWARE-SOURCED, a hardware observation (rule 6), as on the H60A6
             (read-only bench 2026-10-21, both units, soft 1.04.05, BENCH_20261021_h6076_h61c3.md). Cipher: runtime, from
@@ -15955,9 +15972,8 @@ families:
             (Controller4ColorInfoByGroup.q with Support.i = 4), 0xA3 gradual if present. Power: switchTrigger sends the one
             ControllerSwitch 33 01; no zone frame (the colour strip's left / right buttons only select pieces 0-1 / 2-3),
             so zones none. Keep-alive aa 01 (I3 true -> ConnectHeartbeat type 1), whose reply byte 2 is the screen's live
-            power (ShareVM.N3 -> J3; the family's power_live; the library reads the status once per link and then
-            follows the reply too, timing.heartbeat.deviations). Brightness 33 04 percent (no BrightnessConfig key,
-            version 1).
+            power (ShareVM.N3 -> J3; the family's power_live; the library re-reads the status read's TLV 0x01 every poll
+            instead). Brightness 33 04 percent (no BrightnessConfig key, version 1).
             Colour: DelegateColorV2 with the h7086 ColorMode strip; no capability provider for 293, so the legacy maps:
             Config.x[293] = 0 -> Config.J[0] Yt -> Bytes.h (RGB) / Bytes.r white type Config.P[293] = 1 (CCT, ff ff ff
             lead, tint), the h60a6 15 01 frames over a 4-piece mask (ColorPieceConfig.j: set Z -> 4); segment
@@ -18441,8 +18457,8 @@ families:
             Support.supportSceneOp(313) = {0, 1, 2, 3, 5, 6}); no bundled catalog). Gradual is not offered: Config.I[313][0]
             (supportGradual) is false, so DelegateColorV2.C1 -> DelegateColorV2Part.Z0 hides the switch; Config.G[313] = 0
             names a builder the screen never calls. The bundled mode list (base.apk localSkuComponentConfigs.json) gives
-            H7076 no illumination tab (13), so the colour page is the one Kelvin path. The aa 01 keep-alive reply is
-            the live power (the library reads the status once per link and then follows the reply too,
+            H7076 no illumination tab (13), so the colour page is the one Kelvin path. Not modelled: the aa 01
+            keep-alive reply as live power (the library re-reads the status read's TLV 0x01 every poll instead,
             timing.heartbeat.deviations). Not hardware-verified.
           doc-ref:
             - base-classes2/com/govee/shared/checker/KmpGoodsType.java:249
@@ -18655,9 +18671,9 @@ families:
             the colour page's all-pieces Bytes.r Kelvin frame, then 33 04. The library matches the colour page's Kelvin
             write (as H60A6). Scenes
             untraced (ScenesConfigBean(2, 1, Support.supportSceneOp(383) = {0, 1, 2, 3, 6}); H3700DiyConfig registers 383's
-            new-DIY parsers at app init); no bundled catalog. The aa 01 keep-alive reply is the live power
-            (the library reads the status once per link and then follows the reply too, timing.heartbeat.deviations).
-            Not hardware-verified.
+            new-DIY parsers at app init); no bundled catalog. Not modelled: the aa 01 keep-alive reply as live power
+            (the library re-reads the status read's TLV 0x01 every poll instead, timing.heartbeat.deviations). Not
+            hardware-verified.
           doc-ref:
             - split_h7075/com/govee/h7075/pact/Support.java:122,180-184,228-238,243-250,318-319,459-474,517-522,524-538,575-581
             - split_h7075/com/govee/h7075/multi/AddResultActivity.java:55

@@ -237,11 +237,11 @@ class Device:
         # never from inside a connection operation; no other device lock is taken under it.
         self._tap_lock = asyncio.Lock()
         self._discarded_reads = 0        # cumulative count of discarded stale reads
-        # DeviceProfile.heartbeat_power on the aa 01 keep-alive: the status read once per link, then the
-        # power from each keep-alive reply (_on_beat_reply). _status_link: the link
+        # DeviceProfile.heartbeat_power on the aa 01 keep-alive, unzoned: the status read once per link, then
+        # the power from each keep-alive reply (_on_beat_reply). _status_link: the link
         # (GoveeConnection.link_number) the last status read that brought state back was made on; 0 for none.
         self._follows_beat = (profile.heartbeat_power and profile.readback == "status"
-                              and profile.heartbeat == _POWER_BEAT)
+                              and profile.heartbeat == _POWER_BEAT and not profile.zones)
         self._status_link = 0
         self._callbacks: list[StateCallback] = []
         self._advert_ignore_until = 0.0   # monotonic; see ADVERT_SUPPRESS_SECONDS
@@ -713,13 +713,14 @@ class Device:
             self._mark_authoritative()
 
     def _on_beat_reply(self, reply: bytes) -> None:
-        """A reply to the aa 01 keep-alive on a :attr:`.DeviceProfile.heartbeat_power` profile, handed over by
-        the connection only while no other frame has gone out since the beat (``GoveeConnection``'s
-        ``heartbeat_reply``): the power, on at a byte of 1, as the screen takes it from each reply
-        (``ShareVM.N3`` -> ``J3``). It is a power read (:meth:`_finish_read`), so the advertised on/off waits;
-        the callbacks fire when it changes ``is_on`` (``J3`` acts only on a change) or ends the optimistic
-        state. The screen's re-read on a change (``Compose4Off2On``: timers, sleep and wake, aa 05) is not
-        modelled."""
+        """A frame notified while no other frame has gone out since the aa 01 keep-alive, on a
+        :attr:`.DeviceProfile.heartbeat_power` profile (``GoveeConnection``'s ``heartbeat_reply``). Read
+        through the spec, the beat's reply gives the power, on at a byte of 1, as the screen takes it from
+        each reply (``ShareVM.N3`` -> ``J3``); any other frame is not an aa 01 reply and is left alone. It is
+        a power read (:meth:`_finish_read`), so the advertised on/off waits; the callbacks fire when it
+        changes ``is_on`` (``J3`` acts only on a change) or ends the optimistic state. The screen's re-read on
+        a change (``Compose4Off2On``: timers, sleep and wake, the aa 05 mode, then the screen's colour groups)
+        is not modelled, so the mode and colour stay the link's status read's."""
         on = parse.parse_light_power(reply, wire_profile(self.profile), heartbeat=True)
         if on is None:
             return
@@ -1785,7 +1786,9 @@ class Device:
 
         On a :attr:`.DeviceProfile.heartbeat_power` profile (a status row on the aa 01 keep-alive) the status
         read is made once per link, as the screen reads it once per connect: a poll on a link it already
-        brought state back on makes no status read, the power there following each keep-alive reply.
+        brought state back on makes no status read (so nothing is read back after a write there), the power
+        there following each keep-alive reply, which reaches the callbacks; the mode and colour stay the
+        link's status read's and the writes'. A poll on a fresh link returns its status read's power.
 
         On a ``session="per_command"`` profile it makes no connection: the app's device-list card reads
         nothing over GATT (its power is the advertisement's, :meth:`ingest_advertisement`, and its brightness

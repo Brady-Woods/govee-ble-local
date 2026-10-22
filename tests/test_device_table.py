@@ -416,6 +416,8 @@ _REFUSED: tuple[tuple[str, str, _Edit, str], ...] = (
      "heartbeat power where power_live ['heartbeat_aa36'] take power from the reply to cmd_36"),
     ("h5080", "50", lambda f: _row(f, "50").update(heartbeat="heartbeat"),
      "where power_live [] and the relay take power from the reply to power"),
+    ("bulblightv3", "64", lambda f: _row(f, "64").update(heartbeat_power=True),
+     "heartbeat_power is served only on an unzoned status row"),
     # the session (the device-list card's per_command rows)
     ("tablelampv1", "22", lambda f: _row(f, "22").update(session="card"), "session 'card'"),
     ("tablelampv1", "22", lambda f: _row(f, "22").update(power_read="advert"),

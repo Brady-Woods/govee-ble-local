@@ -135,12 +135,14 @@ the row lacks fails the build: nothing defaults silently.
   (``fixed_rate`` unless the row says ``after_quiet``). A row's live power checks it, one way only: a
   ``heartbeat_aa01`` / ``heartbeat_aa36`` / ``heartbeat_aa33`` power_live needs the heartbeat ``power`` /
   ``cmd_36`` / ``volume``, and a relay row ``power`` (a plug's outlets are the aa 01 reply's); a
-  ``push_30``-only row may send any. On a status row with ``heartbeat_aa01`` the library follows the screen:
-  the status read once per link, then the power from each aa 01 keep-alive reply (``ShareVM.N3`` -> ``J3``;
-  ``DeviceProfile.heartbeat_power``), on an unzoned row only (the reply is the one switch). It folds no other
+  ``push_30``-only row may send any. A status row that says ``heartbeat_power`` (an opt-in, served only with
+  ``heartbeat_aa01``, heartbeat ``power`` and no zones: the reply is the one switch) follows the screen: the
+  status read once per link, then the power from each aa 01 keep-alive reply (``ShareVM.N3`` -> ``J3``;
+  ``DeviceProfile.heartbeat_power``). Every status row on the aa 01 keep-alive has that screen, but only h61d3
+  263 opts in: the others were admitted reading the status on every poll. The library folds no other
   keep-alive reply and no ee 30 push into state: the poll's own power read stands in for them, aa 01 on a
-  polled row (``heartbeat_aa01``), the aa 36 bar read for ``heartbeat_aa36``, and either for a ``push_30``
-  with its wire ``f_ee_30``.
+  polled row and the status read's TLV 0x01 on a status row (``heartbeat_aa01`` on either), the aa 36 bar read
+  for ``heartbeat_aa36``, and either for a ``push_30`` with its wire ``f_ee_30``.
 - The session (:data:`SESSIONS`): a row is ``held`` unless it says ``session: per_command``, the device-list
   card's path, where the control screen has no BLE control (DECISIONS.md 6). Such a row reads nothing over
   GATT (``power_read: advert``, the advert's switch byte: ``DeviceProfile.readback`` ``"none"``), writes
@@ -253,6 +255,7 @@ class Row(TypedDict, total=False):
     power_live: tuple[str, ...]
     heartbeat: str
     heartbeat_timing: str
+    heartbeat_power: bool
     mode_color_parse: str
     mode_color_parse_status: str
     relay_power: str
@@ -1075,8 +1078,8 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
     lives = row.get("power_live", cp.get("power_live")) or ()
     for live in lives:
         if not live_served.get(live, False):
-            fail(f"power_live {live} is not served (the library polls aa 01 or follows the status row's "
-                 "aa 01 keep-alive, reads the aa 36 bars, and an ee 30 push needs its wire f_ee_30)")
+            fail(f"power_live {live} is not served (the library polls aa 01 or the status read's TLV 0x01, "
+                 "the aa 36 bars, and an ee 30 push needs its wire f_ee_30)")
     heartbeat = need(row.get("heartbeat"), "heartbeat")
     if heartbeat == "none" and not card:
         fail("heartbeat none on a held row is not served (a held link sends the screen's keep-alive)")
@@ -1091,12 +1094,13 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
     if sent and sent != {heartbeat}:
         fail(f"heartbeat {heartbeat} where power_live {list(lives)}{' and the relay' if relay else ''} take "
              f"power from the reply to {' / '.join(sorted(sent))}")
-    # A status row that takes its power from the aa 01 keep-alive reply reads the status once per link
-    # (DeviceProfile.heartbeat_power); the reply is the whole device's one switch (ShareVM.N3 -> J3).
-    beat_power = readback == "status" and "heartbeat_aa01" in lives
-    if beat_power and row.get("zones"):
-        fail("power_live heartbeat_aa01 on a zoned status row is not served (the keep-alive reply is the one "
-             "switch)")
+    # The row's opt-in: the status read once per link, then the power from each aa 01 keep-alive reply
+    # (DeviceProfile.heartbeat_power), which is the whole device's one switch (ShareVM.N3 -> J3). Its
+    # heartbeat is then power (the check above).
+    beat_power = bool(row.get("heartbeat_power", False))
+    if beat_power and not (readback == "status" and "heartbeat_aa01" in lives and not row.get("zones")):
+        fail("heartbeat_power is served only on an unzoned status row whose power_live has heartbeat_aa01 "
+             "(the keep-alive reply is the one switch)")
     _check_mode(w, readback, fail)
     # A light's aa 01 rule, as a plug's: the heartbeat's beats the connect read's (module doc).
     nonzero = [name for name in ("light_heartbeat_nonzero", "light_nonzero") if power.get(name, False)]

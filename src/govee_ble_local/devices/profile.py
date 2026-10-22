@@ -438,16 +438,21 @@ class DeviceProfile:
     card sends nothing else, and a scene upload or a bar's read-modify-write would hold a link past its
     session."""
     heartbeat_power: bool = field(default=False, kw_only=True)
-    """``readback="status"`` with the ``aa 01`` keep-alive (:attr:`heartbeat` ``0x01``) only, and ignored
-    otherwise: the screen reads the 0xAC status once per connect and then takes the power from each keep-alive
+    """Follow the screen's ``aa 01`` keep-alive power: ``readback="status"`` with the ``aa 01`` keep-alive
+    (:attr:`heartbeat` ``0x01``) and no :attr:`zones` only (the reply is the one switch), and ignored
+    otherwise. The screen reads the 0xAC status once per connect and then takes the power from each keep-alive
     reply (``ShareVM.N3`` -> ``J3``, on at byte 2 == 1; ``BleComm.G`` hands it the aa 01 replies of a type-1
-    heartbeat): a devices.yaml status row whose ``power_live`` has ``heartbeat_aa01``. So
-    :meth:`~.device.Device.update` makes the status read once per link, and a poll on a link it brought state
-    back on reads nothing more, while each keep-alive reply that arrives with no other frame sent since its
-    beat sets ``state.is_on`` (a reply that may predate a write or a read is dropped). The screen's re-read on
-    a change (``Compose4Off2On``) is not modelled. False (the default: every other profile, and the status
-    rows on the aa 00 keep-alive, H60A6's, whose reply carries no switch): the status read on every poll, the
-    reply left unread."""
+    heartbeat). With it, :meth:`~.device.Device.update` makes the status read once per link, and a poll on a
+    link it brought state back on reads nothing more, while each keep-alive reply that arrives with no other
+    frame sent since its beat sets ``state.is_on`` (a reply that may predate a write or a read is dropped) and
+    reaches the state callbacks. So the state a poll returns on a fresh link is its status read's, whose TLV
+    0x01 stands in for the reply, and a poll on a warm link reads nothing back. The screen's re-read on a
+    change (``Compose4Off2On``: the aa 05 mode, then its colour groups) is not modelled: on a link that stays
+    up, the mode and colour are the status read's and the library's own writes. Set by a devices.yaml status
+    row's ``heartbeat_power: true`` (h61d3 263 alone, behind ``allow_modelled``). False (the default: every
+    other profile, among them the other status rows on the aa 01 keep-alive, whose screens do the same, and
+    the ones on the aa 00 keep-alive, H60A6's, whose reply carries no switch): the status read on every poll,
+    the reply left unread."""
 
     def __post_init__(self) -> None:
         """Validate each field: GoveeBleInvalidValue (a ValueError) on a value no Device can use.
