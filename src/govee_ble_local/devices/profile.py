@@ -327,7 +327,11 @@ class DeviceProfile:
     ``brightness_range``: stringlightv2 goodsType 1 reports percent at pact (2, 1)). ``Device`` writes and
     reads brightness with the range in force, so with entries and no pact heard it writes none (the write
     raises GoveeBleNotSupported) and reads none (``state.brightness`` stays None): the byte's meaning waits
-    for the pact."""
+    for the pact. Such a SKU routes without a pact, so a ``Device`` set up from a pact-less record
+    (``create_device`` with no advertisement, or one without a Govee pact block: the stringlightv2 SKUs
+    H6121 / H6141 / H6142 / H6154 / H6195, H6170 / H6196 / H613G) refuses every brightness command until
+    ``Device.ingest_advertisement`` hears the pact, ``turn_on(brightness=...)`` included, which then sends
+    nothing, not even the power-on; power, colour and colour temperature work meanwhile."""
     ic_num_read_only: bool = field(default=False, kw_only=True)
     """Ignored with :attr:`color_readback_live_ic` or :attr:`color_readback_ic_sections`. Without them: the
     screen reads the ``aa 40`` IC count at
@@ -732,7 +736,9 @@ def _accepts(route: _Route, pact: tuple[int, int] | None) -> bool:
     doc). A pact-conditioned reassignment's target row needs it: the app takes the rewrite to that row only
     for a record whose pact meets the gate, and keeps a record without one at its source goodsType. So does
     each row of a SKU a pairing write names at an exact pact: without the pact the library can't tell the
-    row's facts from those the app runs at the write's pact (H615A-E's (65535, 255))."""
+    row's facts from those the app runs at the write's pact (H615A-E's (65535, 255)). And so does a
+    ``pact_required`` row: its goodsType also runs, at pacts the row doesn't list, a path the row doesn't
+    serve (straightfloorlamp 69's (1,1)), so a pact-less advert may be one of those."""
     if pact is None:
         return not route.needs_pact
     return route.pacts is None or pact in route.pacts
@@ -781,8 +787,10 @@ def profile_for(sku: str, *, pact: tuple[int, int] | None = None, goods_type: in
     to its one ``hardware_verified`` / ``app_traced`` profile, as in 1.x, so no released unit is demoted.
     A SKU whose routes all need a pact is unsupported without one, whatever the goodsType: one only
     pact-conditioned reassignments' target rows route, as the app keeps a pact-less unit at its source
-    goodsType, and one a pairing write names at an exact pact (H615A-E), whose pact-less advert may carry
-    that pact, where the app runs other frames than the row's."""
+    goodsType; one a pairing write names at an exact pact (H615A-E), whose pact-less advert may carry
+    that pact, where the app runs other frames than the row's; and one only ``pact_required`` rows route
+    (H6076 / H8076 / R16D0), whose pact-less advert may carry a pact where the app runs a path the row
+    doesn't serve."""
     key = sku.upper()
     for table in (_ADMITTED, _MODELLED) if allow_modelled else (_ADMITTED,):
         hits = {id(r.profile): r.profile for r in table[1].get(key, ())
@@ -858,8 +866,8 @@ def supported_skus(*, allow_modelled: bool = False) -> list[str]:
     """All supported SKUs, sorted: every SKU a ``hardware_verified`` or ``app_traced`` row routes (and with
     ``allow_modelled`` a ``modelled`` one), at one pact at least. A SKU that several rows list needs the pact
     or the goodsType to pick its profile, and one whose routes all need a pact (a pact-conditioned
-    reassignment's target rows, or a SKU a pairing write names at an exact pact) needs its pact
-    (:func:`profile_for`)."""
+    reassignment's target rows, a SKU a pairing write names at an exact pact, or a ``pact_required`` row's)
+    needs its pact (:func:`profile_for`)."""
     skus = set(_ADMITTED[1])
     if allow_modelled:
         skus |= set(_MODELLED[1])

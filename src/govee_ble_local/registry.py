@@ -61,8 +61,11 @@ def create_device(
     block, the SKU's profile default cipher is used, which is wrong for a device whose firmware encrypts
     although the profile says plaintext (e.g. the H6008), a SKU that several rows list needs
     ``goods_type``, and a SKU whose routes all need a pact (a pact-conditioned reassignment's target rows,
-    or a SKU a pairing write names at an exact pact) is unsupported (``profile_for``). ``allow_modelled``
-    also admits a ``modelled`` row (inferred from the app, not traced; see ``profile_for``).
+    a SKU a pairing write names at an exact pact, or a ``pact_required`` row's: H6076 / H8076 / R16D0) is
+    unsupported (``profile_for``). A SKU whose brightness range the pact picks
+    (``DeviceProfile.brightness_by_pact``) is built, but refuses brightness until
+    ``Device.ingest_advertisement`` hears the pact. ``allow_modelled`` also admits a ``modelled`` row
+    (inferred from the app, not traced; see ``profile_for``).
 
     Pass ``secret`` (the 8-byte account-lock key, ``build.SECRET_LEN``) for a device whose profile
     requires one (the plug family); it is sent after every handshake. ``Device.set_secret`` can

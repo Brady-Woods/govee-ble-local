@@ -75,8 +75,12 @@ advertisement, build a capability-driven `Device`, then drive it.
   or bleak's own): its encrypt flag selects the command channel, which some firmwares set differently
   from the SKU's default (H6008), and its pact the SKU's devices.yaml row. `is_supported_sku(sku)` /
   `supported_skus()` / `profile_for(sku)` query the table; `profile_for` and `is_supported_sku` take
-  `pact=` / `goods_type=` to pick between rows, and `allow_modelled=True` (also on `supported_skus`,
-  `create_device`, `supported`, `match` and `discover`) admits the rows the spec marks `modelled`
+  `pact=` / `goods_type=` to pick between rows. A SKU served only on a pact-gated row (the BK-firmware
+  rows, H615A-E and H6076 / H8076 / R16D0) needs `pact=`: `supported_skus()` lists it, but without the
+  advertisement's pact (`GoveeAdvertisement.pact`) `is_supported_sku` and `profile_for` refuse it
+  (`create_device` with the advertisement, `supported`, `match` and `discover` pass it already).
+  `allow_modelled=True` (also on `supported_skus`, `create_device`, `supported`, `match` and
+  `discover`) admits the rows the spec marks `modelled`
   (inferred from the app, not traced), which are off by default (`device_profile_for(sku)` is a
   deprecated alias of `profile_for`, removed in 2.0).
 - **`Device`** — one capability-gated class (behaviour comes from its `DeviceProfile`, not

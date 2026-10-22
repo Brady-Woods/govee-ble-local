@@ -411,7 +411,8 @@ def ble_rows(reg: dict[str, Any], sku: str, pact: tuple[int, int] | None = None)
     the pact (any listed pact when no pact is advertised, but on the goodsType a pact-conditioned
     assigned_goods_type item rewrites the SKU to: the app rewrites only a record whose pact meets the gate;
     and on no row of a SKU a bind item names: its write's pact runs other facts than the row's, so a client
-    without the pact can't tell them apart); a row without pacts is never a route. Exactly one row is a
+    without the pact can't tell them apart; and on a pact_required row, whose goodsType the app also runs at
+    other pacts on a path the row doesn't serve); a row without pacts is never a route. Exactly one row is a
     route; none or several leave the SKU unrouted unless the caller knows the goodsType."""
     gated = {(model, item.get("goods_type")) for fam in reg.get("families", [])
              for item in fam.get("assigned_goods_type") or []
@@ -426,7 +427,7 @@ def ble_rows(reg: dict[str, Any], sku: str, pact: tuple[int, int] | None = None)
             if ("support" not in row or sku not in (row.get("models") or []) or pacts is None
                     or "ble" not in (row.get("connectivity") or fam.get("connectivity") or [])):
                 continue
-            if pact is None and ((sku, int(gt)) in gated or sku in paired):
+            if pact is None and ((sku, int(gt)) in gated or sku in paired or row.get("pact_required")):
                 continue
             if pacts == "any" or pact is None or f"{pact[0]},{pact[1]}" in pacts:
                 out.append((fam["id"], int(gt)))
@@ -545,12 +546,15 @@ def _selftest(*, strict: bool = False) -> int:
         reg = yaml.safe_load(path.read_text(encoding="utf-8"))
         check("BLE routes: H6004 -> bulblightv3 64 (10 is IoT-only); H60A6 at (1,3) -> 303, at (2,1) none; "
               "H6114 -> h6114 39 at (10,1), none without a pact (the BK rewrite's gate); H615E -> "
-              "stringlightv2 108 at (2,1), none at its pairing write's (65535,255) or without a pact",
+              "stringlightv2 108 at (2,1), none at its pairing write's (65535,255) or without a pact; "
+              "H6076 -> straightfloorlamp 69 at (2,1), none without a pact (pact_required)",
               ble_rows(reg, "H6004") == [("bulblightv3", 64)]
               and ble_rows(reg, "H60A6", (1, 3)) == [("h60ax", 303)] and ble_rows(reg, "H60A6", (2, 1)) == []
               and ble_rows(reg, "H6114", (10, 1)) == [("h6114", 39)] and ble_rows(reg, "H6114") == []
               and ble_rows(reg, "H615E", (2, 1)) == [("stringlightv2", 108)]
-              and ble_rows(reg, "H615E", (65535, 255)) == [] and ble_rows(reg, "H615E") == [])
+              and ble_rows(reg, "H615E", (65535, 255)) == [] and ble_rows(reg, "H615E") == []
+              and ble_rows(reg, "H6076", (2, 1)) == [("straightfloorlamp", 69)]
+              and ble_rows(reg, "H6076") == [])
         check("device-list card rows: H70B2 -> h70b2 185 at (1,1) only; H6631 -> h6630 286 at (2,4), where "
               "H6630 has no row; each a per_command session with no keep-alive",
               ble_rows(reg, "H70B2", (1, 1)) == [("h70b2", 185)] and ble_rows(reg, "H70B2", (1, 2)) == []

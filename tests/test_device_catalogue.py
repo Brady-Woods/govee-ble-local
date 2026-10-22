@@ -32,11 +32,13 @@ def test_the_catalogue_routes_only_skus_no_row_lists() -> None:
     committed = _resolve.catalogue(fams, gen.snapshot())
     assert [line.split(":")[0] for line in committed.review] == [f"H613{c}" for c in "ABCDEF"]
     assert not committed.unrouted and committed.added
-    for (_fam, gt), skus in committed.added.items():
+    for (fam_id, gt), skus in committed.added.items():
+        row = next(f for f in fams if f["id"] == fam_id)["client_profile"]["by_goods_type"][gt]
+        pact = _resolve._pact(row["pacts"][0]) if row.get("pact_required") else None   # R16D0's row needs one
         for sku in skus:
-            p = profile_for(sku, allow_modelled=True)   # the SKU takes its row's support level
+            p = profile_for(sku, pact=pact, allow_modelled=True)   # the SKU takes its row's support level
             assert p is not None and sku in p.skus, sku
-            assert p is profile_for(sku, goods_type=int(gt), allow_modelled=True), sku
+            assert p is profile_for(sku, pact=pact, goods_type=int(gt), allow_modelled=True), sku
             assert profile_for(sku, pact=(9, 9), allow_modelled=True) is None, sku   # no 1.x pact fallback
 
     # A catalogue route's support is its row's capped at app_traced: the bulb row's bench check isn't theirs.
