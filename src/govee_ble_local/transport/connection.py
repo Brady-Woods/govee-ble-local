@@ -1137,10 +1137,10 @@ class GoveeConnection:
         :meth:`send_unacked` paces an upload) with no drain between them, then ``frame``, the unit's last
         packet (the ``33 05 15 00`` of goodsType 411's colour write), and the unit is done on the first
         ``a3 <comm>`` notification (``isSameController``: proType 0xA3 and the START's comm byte), which may
-        come before ``frame`` goes out: its byte 3 is the result (``onResult`` at ``MultiController.b()`` = 3;
-        :func:`..wire.parse.parse_multi_ack`), and anything but 0 raises :class:`GoveeBleCommandRejected`. A
-        ``33`` ack of ``frame`` is not the unit's, as the app's controller doesn't take it. No ack within
-        ``WRITE_ACK_TIMEOUT``: GoveeBleTimeout."""
+        come before ``frame`` goes out: a whole frame whose byte 3 is 0 accepts the unit (``onResult`` at
+        ``MultiController.b()`` = 3; :func:`..wire.parse.parse_multi_ack`), and anything else raises
+        :class:`GoveeBleCommandRejected`. A ``33`` ack of ``frame`` is not the unit's, as the app's controller
+        doesn't take it. No ack within ``WRITE_ACK_TIMEOUT``: GoveeBleTimeout."""
         comm = multi_unit_comm(run[0])   # checked by _write_units before the operation
         if _LOGGER.isEnabledFor(logging.DEBUG):
             _LOGGER.debug("%s: TX 0xA3 unit 0x%02X: %d packets, then %s", self.address, comm, len(run),
@@ -1153,11 +1153,9 @@ class GoveeConnection:
         ack = await self._await_reply(PRO_MULTI_A3, comm, WRITE_ACK_TIMEOUT)
         if ack is None:
             raise GoveeBleTimeout(f"{self.address}: no ack for the 0xA3 unit 0x{comm:02X}")
-        result = parse_multi_ack(ack)
-        if result != 0:
+        if not parse_multi_ack(ack):
             _LOGGER.debug("%s: device rejected the 0xA3 unit 0x%02X (%s)", self.address, comm, shown_hex(ack))
-            raise GoveeBleCommandRejected(
-                f"{self.address}: device rejected the 0xA3 unit 0x{comm:02X} (result {result!r})")
+            raise GoveeBleCommandRejected(f"{self.address}: device rejected the 0xA3 unit 0x{comm:02X}")
         return ack
 
     async def send_unacked(

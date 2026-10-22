@@ -1582,7 +1582,14 @@ types:
           - base-classes11/com/govee/base2light/kt/general_controller/MultiController.java:35-51,68-74
           - base-classes10/com/govee/base2light/ble/controller/AbsControllerNoEvent4Multi.java:31-33,80-98
       is_multi_ok:
-        value: multi_result == 0
+        value: _io.size == 18 and multi_result == 0
+        doc: |
+          a MultiController unit's ack accepts the unit: a whole 20-byte frame
+          (this body's 18 bytes between the proType and the checksum) whose byte
+          3 is 0 (onResult: bArr.length == 20 and bArr[b()] == 0); a shorter
+          a3 <comm> frame fails the unit
+        doc-ref:
+          - base-classes10/com/govee/base2light/ble/controller/AbsControllerNoEvent4Multi.java:80-82,96-97
   matter_packet:
     doc: |
       FIRMWARE-SOURCED, CAUTION: one 20-byte 0x3F Matter-factory unit

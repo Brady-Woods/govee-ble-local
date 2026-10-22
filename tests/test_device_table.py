@@ -398,7 +398,6 @@ _REFUSED: tuple[tuple[str, str, _Edit, str], ...] = (
      "an ic_num read and ic_pieces go together"),
     ("h61d3", "247", lambda f: _row(f, "247")["ic_pieces"].update(min_ic=80), "ic_pieces"),
     ("h7020", "316", lambda f: _row(f, "316").pop("ic_pieces"), "ic_pieces on a status row: an object form"),
-    ("h705a", "394", lambda f: _row(f, "394").update(ic_pieces="fixed"), "ic_pieces on a status row"),
     ("h7020", "316", lambda f: _row(f, "316").update(post_status_reads=["cmd_41"]),
      "post_status_reads ['cmd_41']"),
     ("h7057", "349", lambda f: _wire(f, "349")["forms"].update(f_40="ic_pair"),

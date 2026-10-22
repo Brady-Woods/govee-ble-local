@@ -641,11 +641,15 @@ def _selftest(*, strict: bool = False) -> int:
     upload = _module("govee_upload").GoveeUpload
     multi = _ready(upload(upload.UploadKind.color_multi, upload.UploadForm.wire,
                           _stream(bytes.fromhex("01ffffff0fa0ffd5a1ff7f")), None, None))
-    ack = parse_frame(append_bcc(bytes([0xA3, 0x6E, 0x00, 0x01]) + bytes(15)), "rx").body
-    check("0xA3 colour value (Config.gu: Bytes.t over 15 pieces) and the unit ack's byte 3 (MultiController)",
-          (multi.value.kelvin, multi.value.tint.g, multi.value.mask.bits[14:17])
-          == (4000, 0xD5, [True, False])
-          and multi.value.is_cct and ack.multi_result == 1 and not ack.is_multi_ok and ack.is_ok)
+    acks = [parse_frame(raw, "rx").body for raw in (
+        append_bcc(bytes([0xA3, 0x6E, 0x00, 0x01]) + bytes(15)), append_bcc(bytes([0xA3, 0x6E, 0x00, 0x00])),
+        bytes([0xA3, 0x6E, 0x00, 0x00, 0xA3 ^ 0x6E]))]   # a refused byte 3, a whole ack, a short frame
+    check("0xA3 colour value (Config.gu: Bytes.t over 15 pieces) and the unit ack: byte 3 of a whole 20-byte "
+          "frame (MultiController, AbsControllerNoEvent4Multi.onResult)",
+          (multi.value.kelvin, multi.value.tint.g, multi.value.mask.bits[14:17], multi.value.len_value)
+          == (4000, 0xD5, [True, False], 11)
+          and multi.value.is_cct and acks[0].multi_result == 1 and acks[0].is_ok
+          and [a.is_multi_ok for a in acks] == [False, True, False])
     whole = make_profile(f_a5="color_group", rule="whole_groups", num_per_group=4, has_brightness=True,
                          num_pieces=10)
     placed = [parse_status(bytes([0xA5, 17, g, *([1] * 16)]), whole).tlvs[0].value.body.body

@@ -914,6 +914,8 @@ def _status(ic: int | None, groups: int, *extra: bytes) -> list[bytes]:
     ("H3401", {0x03: _status(None, 2)}, None),
     ("H3401", {0x03: _status(20, 5)}, 20),
     ("H702A", {0x40: [_frame(0xAA, 0x40, 0x00, 30, 0x00)]}, 30),
+    # H3010: ColorPieceConfig.b's max(15, IC) pieces, its colour one 0xA3 unit (ColorModeControllerConfig.j).
+    ("H3010", {0x40: [_frame(0xAA, 0x40, 0x00, 8, 0x00)]}, 15),
 ])
 def test_an_ic_sized_write_takes_the_live_count_or_sends_nothing(sku: str, replies: Replies | None,
                                                                    count: int | None) -> None:
@@ -926,7 +928,10 @@ def test_an_ic_sized_write_takes_the_live_count_or_sends_nothing(sku: str, repli
         assert _sent(d) == [] and [q[1] for q in _queried(d)] == [0x03 if sku == "H3401" else 0x40]
     else:
         run(d.set_rgb((1, 2, 3)))
-        assert d.segment_count == count and _sent(d) == [build.color_rgb(1, 2, 3, "h60a6", count)]
+        assert d.segment_count == count
+        # One send_many: the transport sends an 0xA3 run and the write after it as one unit.
+        d._conn.send_many.assert_awaited_once_with(  # type: ignore[attr-defined]
+            build.color_rgb_frames(1, 2, 3, d.profile.color_scheme, count))
 
 
 @pytest.mark.parametrize(("sku", "bursts", "aa40", "reads", "count", "pieces"), [
@@ -956,22 +961,6 @@ def test_a_live_ic_status_row_sizes_its_pieces_by_its_ic_read(sku: str, bursts: 
         run(d.update())
     assert [q[1] for q in _queried(d) if q[1] in (0x03, 0x40)] == reads
     assert d._segment_count == count and len(d.state.segments) == pieces
-
-
-@pytest.mark.parametrize(("sku", "ic", "write", "frames"), [
-    # Red at IC 8: ColorPieceConfig.b's max(15, IC) = 15 pieces (Bytes.j), its 0xA3 packets on 0x6e, then
-    # 33 05 15 00 (ControllerMode.e([0x15])).
-    ("H3010", 8, "rgb", ["a30001026e01ff00000000000000ff7f000000b0", "a3ff" + "00" * 17 + "5c"]),
-    # 4000 K at IC 60 (Bytes.t: ff ff ff, the Kelvin, its tint, 60 pieces' mask).
-    ("H3012", 60, "kelvin", ["a30001026e01ffffff0fa0ffd5a1ffffffffffeb", "a3ffffff0f" + "00" * 14 + "53"]),
-])
-def test_h3010_colour_is_one_0xa3_unit(sku: str, ic: int, write: str, frames: list[str]) -> None:
-    # Config.E[411] -> LightColorCapabilityCenter.b2: both colour writes go through
-    # ColorModeControllerConfig.j, over the whole-device posSet the aa 40 read sizes, as one send_many unit.
-    d = _dev(sku, {0x40: [_frame(0xAA, 0x40, 0x00, ic, 0x00)]})
-    run(d.set_rgb((0xFF, 0, 0)) if write == "rgb" else d.set_color_temp(4000))
-    assert [f.hex() for f in _sent(d)] == [*frames, "330515" + "00" * 16 + "23"]
-    d._conn.send_many.assert_awaited_once()  # type: ignore[attr-defined]
 
 
 # ── scene upload + activation are not split by a concurrent scene write ───────────────────

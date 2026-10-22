@@ -80,17 +80,14 @@ def multi_unit_comm(frame: bytes) -> int:
     return int(start.comm_byte)
 
 
-def parse_multi_ack(frame: bytes) -> int | None:
-    """The result a MultiController unit reads from its ``a3 <comm>`` ack (``upload_ack.multi_result``, frame
-    byte 3, 0 = success: ``AbsControllerNoEvent4Multi.onResult`` at ``MultiController.b()`` = 3 for
-    ``Companion.a`` / ``c``), else None (another frame, or one shorter than a whole ack, which onResult
-    refuses)."""
-    if len(frame) != FRAME_LEN:
-        return None
+def parse_multi_ack(frame: bytes) -> bool | None:
+    """Whether a MultiController unit's ``a3 <comm>`` ack accepts the unit (``upload_ack.is_multi_ok``: a
+    whole 20-byte frame whose byte 3 is 0, ``AbsControllerNoEvent4Multi.onResult`` at ``MultiController.b()``
+    = 3 for ``Companion.a`` / ``c``), or None for a frame that doesn't read as an 0xA3 reply."""
     f = _spec.try_read_frame(frame, _spec.RX, _spec.PLAIN)
     if f is None or f.pro_type != _C.ProType.multi_write_v1:
         return None
-    return int(f.body.multi_result)
+    return bool(f.body.is_multi_ok)
 
 
 def _reply(frame: bytes, prof: Any = _REPLY) -> Any:

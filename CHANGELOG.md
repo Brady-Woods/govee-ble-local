@@ -397,16 +397,20 @@ model, from which the shipped readers are generated).
     7f ..`, `a3 ff ..`, `33 05 15 00 ..`); `build.color_temp_frames` is the whole-device colour temperature as
     the frames the app sends (`[color_temp(...)]` on every other scheme, byte for byte); `color_rgb`,
     `color_temp` and the segment builders refuse `h3010` with GoveeBleNotSupported (whole device only: the
-    Part tab is account-sized, ColorModeH3010). `build.color_mode_switch` is `33 05 15 00`;
-    `build.piece_cap` is the most pieces a live count sizes a scheme's writes by (4095 on `h3010`, 112
-    elsewhere).
+    Part tab is account-sized, ColorModeH3010). The unit is the spec's `color_multi_value`, written at its own
+    `len_value` with its `len_cap` mask; with no count it spans 15 pieces, H3010's before its first IC read.
+    `build.color_mode_switch` is `33 05 15 00`; `build.piece_cap` is the most pieces a scheme's whole-device
+    write carries (on `h3010` all one 0xA3 upload's mask can span, 34584, as `BleUtils.X` has no cap; 112, as
+    before, elsewhere), which bounds a live `Device.segment_count` after the row's own IC rule (4095 on 411)
+    and `Device.set_segment_count`, so a count the device reported always passes back in.
   - `GoveeConnection.send_many` takes a run of 0xA3 frames, from its START, directly before a write as one
     unit (`AbsControllerNoEvent4Multi`): the run streamed paced (`UNACKED_SEND_GAP`) with no drain between,
-    then the write, and the unit done on its `a3 <comm>` ack, whose byte 3 is the result
-    (`onResult` at `MultiController.b()` = 3: 0 done, else GoveeBleCommandRejected); the write's own `33` ack
-    is not the unit's. No ack: the whole unit goes once more on a fresh link, then GoveeBleTimeout. Every other
-    frame list sends as before (each write ack-verified), and any other non-write frame is still refused.
-    `wire.parse.multi_unit_comm` / `parse_multi_ack` read the START's comm byte and the ack through the spec.
+    then the write, and the unit done on its `a3 <comm>` ack: a whole 20-byte frame whose byte 3 is 0 accepts
+    it (`onResult` at `MultiController.b()` = 3), and anything else raises GoveeBleCommandRejected; the write's
+    own `33` ack is not the unit's. No ack: the whole unit goes once more on a fresh link, then
+    GoveeBleTimeout. Every other frame list sends as before (each write ack-verified), and any other non-write
+    frame is still refused. `wire.parse.multi_unit_comm` / `parse_multi_ack` read the START's comm byte and the
+    ack (`upload_ack.is_multi_ok`) through the spec.
   - `Device.set_color_temp` and `turn_on(kelvin=)` take `color_temp_frames`: one frame still goes out with
     `send`, the unit with `send_many`.
 
@@ -796,12 +800,14 @@ model, from which the shipped readers are generated).
   checks both readers and the whole-group rule.
 - **goodsType 411's 0xA3 colour value and its unit's ack.** govee_ble_frame `comm_byte::sub_mode_color_multi`
   (0x6e, BleProtocolConstants) and `upload_ack.multi_result` / `is_multi_ok` (frame byte 3, which a
-  MultiController unit reads as its result); govee_upload `upload_kind::color_multi` and `color_multi_value`
-  (`[op][colour][kelvin][tint][mask]`, Config.gu's Bytes.j / Bytes.t, its mask a `seg_mask` with no cap);
-  govee_common `seg_mask`'s cap is a `u2`, so an uncapped mask can carry more than 255 bytes.
-  devices.schema.json `color_scheme` gains `h3010`; h7020 411 is written out with `color_scheme: h3010`,
-  `ic_pieces {15, 4095, 1}` and `readback_pieces: ic_count`, `app_traced`. The reference self-test reads the
-  value and the ack.
+  MultiController unit reads as its result, accepting it only on a whole 20-byte frame:
+  `AbsControllerNoEvent4Multi.onResult`); govee_upload `upload_kind::color_multi` and `color_multi_value`
+  (`[op][colour][kelvin][tint][mask]`, Config.gu's Bytes.j / Bytes.t, its mask a `seg_mask` with no cap,
+  `len_cap`, and its `len_head` / `len_value` the lengths it is written at); govee_common `seg_mask`'s cap is a
+  `u2`, so an uncapped mask can carry more than 255 bytes. devices.schema.json `color_scheme` gains `h3010`;
+  h7020 411 is written out with `color_scheme: h3010`, `ic_pieces {15, 4095, 1}` and `readback_pieces:
+  ic_count`, `app_traced`. The reference self-test reads the value, its length and the acks, a short one
+  refused.
 
 ## [1.6.1] — 2026-10-21
 

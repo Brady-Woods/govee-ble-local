@@ -116,10 +116,9 @@ def _unhandled(value: Never, field: str) -> Never:
     raise GoveeBleError(f"unsupported {field} {value!r}")
 
 
-def _check_segment_count(count: int) -> None:
-    if isinstance(count, bool) or not isinstance(count, int) or not 1 <= count <= build.MAX_MASK_SEGMENTS:
-        raise GoveeBleInvalidValue(
-            f"segment count must be an integer in 1..{build.MAX_MASK_SEGMENTS}, got {count!r}")
+def _check_segment_count(count: int, cap: int) -> None:
+    if isinstance(count, bool) or not isinstance(count, int) or not 1 <= count <= cap:
+        raise GoveeBleInvalidValue(f"segment count must be an integer in 1..{cap}, got {count!r}")
 
 
 def _mask(indices: Sequence[int], segments: int) -> int:
@@ -337,12 +336,14 @@ class Device:
         """Override the profile's segment count with one the device reported (e.g. a
         runtime read of its segment/section count); ``None`` reverts to the profile value.
 
-        Raises GoveeBleInvalidValue unless ``count`` is 1..112 (``build.MAX_MASK_SEGMENTS``, the most
-        positions any body the library writes carries). Does not touch the connection or any state; on a
+        Raises GoveeBleInvalidValue unless ``count`` is between 1 and ``build.piece_cap`` of the profile's
+        colour scheme, the most positions its whole-device write carries: 112 on the 0x15 bodies
+        (``build.MAX_MASK_SEGMENTS``), and on ``h3010`` every piece one 0xA3 colour unit's mask spans, so any
+        :attr:`segment_count` the device reported passes. Does not touch the connection or any state; on a
         profile whose device reports its count (see :attr:`segment_count`) the next poll's read replaces
         it."""
         if count is not None:
-            _check_segment_count(count)
+            _check_segment_count(count, build.piece_cap(self.profile.color_scheme))
         self._segment_count = count
 
     @property

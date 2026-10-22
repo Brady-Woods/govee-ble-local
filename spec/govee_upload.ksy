@@ -957,9 +957,20 @@ types:
         type: govee_common::rgb
         doc: the picked or tint colour of a colour temperature, else 0
       - id: mask
-        type: govee_common::seg_mask(num_pieces, 0xffff)
+        type: govee_common::seg_mask(num_pieces, len_cap)
         doc: every piece's bit, LSB first (BleUtils.X)
     instances:
+      len_cap:
+        value: 0xffff
+        doc: no mask byte cap (BleUtils.X writes every piece's bit)
+      len_head:
+        value: 9
+        doc: |
+          the bytes before the mask, op (1), colour (3), Kelvin (2) and tint (3);
+          a wire value's mask is every bit after them ((_io.size - 9) * 8 pieces)
+      len_value:
+        value: len_head + mask.len_mask
+        doc: the value's length, the head and the mask
       is_cct:
         value: kelvin != 0
         doc: a colour temperature (Bytes.t)

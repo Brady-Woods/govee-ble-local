@@ -299,7 +299,8 @@ def normalize_kelvin(kelvin: int, lo: int | None = None, hi: int | None = None) 
 # (coerceAtMost). The library reads the cap off a built node: the 0x15 RGB and CCT frames 7 bytes
 # (op15_color form kelvin_tint), per-segment brightness 14 (op15_brightness), the 0x0b frame 13
 # (color_0b_rgb_mask, read where it is built). MAX_MASK_BYTES is the widest cap of the 0x15 bodies, so
-# MAX_MASK_SEGMENTS is the most segments any body the library writes can address.
+# MAX_MASK_SEGMENTS is the most segments any single-frame body the library writes can address (an h3010 0xA3
+# colour value's mask has no cap: piece_cap).
 LEGACY_MASK_SEGMENTS: Final = 16
 _FORM_KELVIN_TINT: Final = int(_C.Form1501.kelvin_tint)   # [slot rgb][kelvin][tint][mask]: H60A6 family
 _FORM_KELVIN: Final = int(_C.Form1501.kelvin)             # [rgb][kelvin][mask]: colour version 5, H6061
@@ -467,10 +468,10 @@ H6061_MAX_PANELS: Final = 23
 H6061_KELVIN_RANGE: Final = (2000, 9000)   # KelvinConfig: no entry for 51 -> version 0
 
 # Segment count a whole-device builder assumes when the caller passes none (``Device`` always passes
-# the profile's count): ``h60a6`` and ``h61a8`` take their namesake SKU's count (H60A6 13 segments, H61A8
-# 15, the 0x0b frames' strip), and ``h6061`` the device's piece count (:func:`_h6061_panels`). The 0x0d
-# schemes carry no mask.
-_DEFAULT_SEGMENTS: Final[dict[ColorScheme, int]] = {"h60a6": 13, "h61a8": 15}
+# the profile's count): ``h60a6``, ``h61a8`` and ``h3010`` take their namesake SKU's count (H60A6 13 segments,
+# H61A8 15, the 0x0b frames' strip, H3010 the 15 pieces before its first IC read), and ``h6061`` the device's
+# piece count (:func:`_h6061_panels`). The 0x0d schemes carry no mask.
+_DEFAULT_SEGMENTS: Final[dict[ColorScheme, int]] = {"h60a6": 13, "h61a8": 15, "h3010": 15}
 
 
 def _segments_or_default(scheme: ColorScheme, segments: int | None) -> int:
@@ -524,15 +525,25 @@ def _h6061_color_temp(kelvin: int, panels: int | None, tint: tuple[int, int, int
 # with the op15 set_mode frame. The app's unit is done on an A3 6E ack whose byte 3 is 0
 # (AbsControllerNoEvent4Multi.onResult at MultiController.e); the transport's ``send_many`` sends the run and
 # the write as that unit.
-H3010_MAX_PIECES: Final = 0x0FFF   # the most an h3010 body is built for: the checked aa 40 count's most
-_H3010_DEFAULT_PIECES: Final = 15   # ColorPieceConfig.b's least for 411 (q() <= 15 ? 15 : q())
+def _color_multi_value(pieces: int, **fields: Any) -> Any:
+    """The spec's ``color_multi_value`` over ``pieces``, its ``fields`` set (the mask is the caller's)."""
+    return _spec.node(_spec.Upload.ColorMultiValue, None, pieces, **fields)
+
+
+# The value bytes ahead of its mask (the spec's len_head), and so the most pieces its uncapped mask can span
+# within one 0xA3 upload (SCENE_A3_MAX_VALUE).
+_COLOR_MULTI_HEAD_LEN: Final = int(_color_multi_value(0).len_head)
 
 
 def piece_cap(scheme: ColorScheme) -> int:
-    """The most pieces a live count sizes a whole-device write of ``scheme`` by: :data:`H3010_MAX_PIECES` on
-    ``h3010``, whose mask has no cap (``BleUtils.X``), else :data:`MAX_MASK_SEGMENTS`, the most any 0x15 body
-    carries, so every larger count writes the same bytes."""
-    return H3010_MAX_PIECES if scheme == "h3010" else MAX_MASK_SEGMENTS
+    """The most pieces a whole-device write of ``scheme`` carries, and so the most a live count or
+    ``Device.set_segment_count`` sizes it by: on ``h3010``, whose mask has no cap (``BleUtils.X``), every
+    piece the value's mask can span in one 0xA3 upload (:data:`SCENE_A3_MAX_VALUE` after the value's head);
+    else :data:`MAX_MASK_SEGMENTS`, the most any 0x15 body carries, so every larger count writes the same
+    bytes. A row's own IC rule bounds its live count first (devices.yaml ``ic_pieces``)."""
+    if scheme == "h3010":
+        return 8 * (SCENE_A3_MAX_VALUE - _COLOR_MULTI_HEAD_LEN)
+    return MAX_MASK_SEGMENTS
 
 
 def color_mode_switch() -> bytes:
@@ -543,16 +554,17 @@ def color_mode_switch() -> bytes:
 
 def _color_multi_frames(color: tuple[int, int, int], pieces: int | None, kelvin: int = 0,
                         tint: tuple[int, int, int] = (0, 0, 0)) -> list[bytes]:
-    """The h3010 colour unit over every one of ``pieces`` (None: the 15 before any count): the 0xA3
-    packets of ``[01] <color> <kelvin u2be> <tint> <mask>`` (``Config.gu``: ``Bytes.j`` / ``Bytes.t``), the
-    mask ``BleUtils.X`` of the whole-device posSet with no cap, then ``33 05 15 00``. GoveeBleInvalidValue
-    for a count outside 1..:data:`H3010_MAX_PIECES`."""
-    n = _H3010_DEFAULT_PIECES if pieces is None else pieces
-    _check_range("piece count", n, 1, H3010_MAX_PIECES)
-    value = _spec.node(_spec.Upload.ColorMultiValue, None, n, op=_C.Op15.set_color, color=_spec.rgb(*color),
-                       kelvin=kelvin, tint=_spec.rgb(*tint))
-    value.mask = _spec.seg_mask(value, n, 0xFFFF, (1 << n) - 1)
-    body = _spec.serialize(value, 9 + int(value.mask.len_mask))
+    """The h3010 colour unit over every one of ``pieces`` (None: the scheme's default,
+    :data:`_DEFAULT_SEGMENTS`): the 0xA3 packets of the spec's ``color_multi_value`` ``[01] <color> <kelvin
+    u2be> <tint> <mask>`` (``Config.gu``: ``Bytes.j`` / ``Bytes.t``), the mask ``BleUtils.X`` of the
+    whole-device posSet with no cap, then ``33 05 15 00``. GoveeBleInvalidValue for a count outside
+    1..:func:`piece_cap`."""
+    n = _segments_or_default("h3010", pieces)
+    _check_range("piece count", n, 1, piece_cap("h3010"))
+    value = _color_multi_value(n, op=_C.Op15.set_color, color=_spec.rgb(*color), kelvin=kelvin,
+                               tint=_spec.rgb(*tint))
+    value.mask = _spec.seg_mask(value, n, int(value.len_cap), (1 << n) - 1)
+    body = _spec.serialize(value, int(value.len_value))
     return [*scene_upload_a3(body, COMM_COLOR_MULTI), color_mode_switch()]
 
 
@@ -900,6 +912,12 @@ def scene_activate(code: int) -> bytes:
     return _mode_frame(_PLAIN, _C.SubMode.scene, _params(_F.SceneSelect, effect=code, music_code=0))
 
 
+# The most frames one 0xA3 upload has (its packet count is one byte, and seq 0xFF marks the END), and so the
+# most value bytes it carries: every frame's chunk but the START's head.
+SCENE_A3_MAX_PACKETS: Final = 0xFF
+SCENE_A3_MAX_VALUE: Final = SCENE_A3_MAX_PACKETS * SCENE_A3_PIECE_LEN - SCENE_A3_HEADER_LEN
+
+
 def scene_upload_a3(value: bytes, comm_byte: int) -> list[bytes]:
     """0xA3 scene/DIY upload, ``MultipleControllerCommV1.makeSendBytesV2`` with a one-byte
     ``commBytes`` (``makeSendBytesV1``): the stream ``[0x01 marker, packet_count, comm_byte, value…]``
@@ -911,8 +929,7 @@ def scene_upload_a3(value: bytes, comm_byte: int) -> list[bytes]:
     # value that fits in START is two frames. That short-value START + empty END form is
     # source-modeled; not live-verified until checked on the H6006/H6008 bench.
     pieces = max(2, ceil_div(SCENE_A3_HEADER_LEN + len(value), SCENE_A3_PIECE_LEN))
-    if pieces > 0xFF:
-        # The count is one byte and seq 0xFF is the end marker.
+    if pieces > SCENE_A3_MAX_PACKETS:
         raise GoveeBleInvalidValue(f"scene payload too large for 0xA3 upload ({pieces} packets)")
     inline = SCENE_A3_PIECE_LEN - SCENE_A3_HEADER_LEN   # value bytes in START
 

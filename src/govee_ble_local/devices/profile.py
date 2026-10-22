@@ -481,7 +481,8 @@ class DeviceProfile:
     built strip when a read changes it, ``ColorMode.Y`` / ``ColorModeV1.K``, while the h61d3 and H7067 strips
     keep the count they were built with until a calibration or settings event, a first-session difference
     their rows' docs name): :attr:`~.device.Device.segment_count` becomes each poll's count (at most
-    ``build.MAX_MASK_SEGMENTS``), so it is the whole-device mask and the segment index bound, and a write that
+    ``build.piece_cap`` of :attr:`color_scheme`: 112 on the 0x15 bodies, more on ``h3010``'s uncapped 0xA3
+    mask), so it is the whole-device mask and the segment index bound, and a write that
     carries a mask before any count is known reads ``aa 40`` first (on a status profile its IC read: the
     status read whose TLV 0x40 carries it, or the first of :attr:`ic_reads_around_status`) and raises
     GoveeBleError, sending nothing, when the device gives no usable count, as a ``section_count_read`` profile
