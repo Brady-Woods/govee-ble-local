@@ -218,7 +218,8 @@ model, from which the shipped readers are generated).
 - **`DeviceProfile.segment_color_temp`** (keyword-only, default True; the spec's clientRow
   `segment_color_temp`): whether `Device.set_segment_color_temp` may send a colour temperature to a piece
   selection, as the app's Part-tab Kelvin item sends one (`DelegateColorV2Part.Z0` ->
-  `LightColorCapabilityCenter.C2` -> `SupportPartColorTemConfig.b`; Changed, below). The generated table sets
+  `LightColorCapabilityCenter.C2` -> `SupportPartColorTemConfig.b`; Changed, below), but false on the H60A6
+  and H6047, whose item widens every pick to whole zones (the user's decision 24). The generated table sets
   it from the row; a profile built by hand keeps 1.x's behaviour. Where it is false, `set_segment_color_temp`
   raises GoveeBleNotSupported before any I/O, and `set_color_temp` is the device's colour temperature. It
   doesn't govern `set_zone_color_temp`, which needs SEGMENTS, COLOR_TEMP and a zone with segments, as in 1.6.1.
@@ -310,10 +311,10 @@ model, from which the shipped readers are generated).
   `readback="polled"` and no brightness no longer reads aa 04 or sets `state.brightness`. The resolver keeps
   the rule strict both ways: a polled row's `connect_reads` lists `brightness` exactly when the row has the
   capability.
-- **Colour temperature on a piece selection only where the app's screen sends one** (new keyword-only
-  `DeviceProfile.segment_color_temp`, default True). The colour page's All tab sends its Kelvin over every
-  piece (`DelegateColorV2.G0`). Only the Part tab's Kelvin item goes to the selected pieces, and
-  `DelegateColorV2Part.Z0` adds it only where `LightColorCapabilityCenter.C2` holds. For every supported
+- **Colour temperature on a piece selection only where the app's colour page has a Part-tab Kelvin item**
+  (new keyword-only `DeviceProfile.segment_color_temp`, default True). The colour page's All tab sends its
+  Kelvin over every piece (`DelegateColorV2.G0`). Only the Part tab's Kelvin item goes to the selected pieces,
+  and `DelegateColorV2Part.Z0` adds it only where `LightColorCapabilityCenter.C2` holds. For every supported
   goodsType that is `SupportPartColorTemConfig.b`: the goodsType is in its list d (its pact-(2,1) test for 112
   adds nothing, as 112 is in d too). Where the row's new `segment_color_temp` is false,
   `Device.set_segment_color_temp` now raises GoveeBleNotSupported before any I/O. Its docstring no longer names
@@ -347,18 +348,21 @@ model, from which the shipped readers are generated).
   behind `allow_modelled`); in all, 112 SKUs have none (87 / 25) and 63 keep it (35 / 28). Source-traced
   (Govee Home 7.7.02), not live-verified. H61A8's bench check (2026-10-17) sent its Kelvin over all 15
   segments only, so no hardware observation supports a masked Kelvin on these rows.
-- **H60A6 and H6047: no colour temperature on a piece selection, as in the app** (the user's decision 24,
-  2026-10-22). Both screens have the Part tab's Kelvin item (list d), but it widens every pick to a whole zone.
-  On the H60A6 a selection that holds a ring piece goes to the whole ring 0-11, with piece 12 as picked
+- **H60A6 and H6047: no `set_segment_color_temp`, matching the app's Part-tab Kelvin** (the user's decision
+  24, 2026-10-22). Both screens have the Part tab's Kelvin item (list d), but it widens every pick to a whole
+  zone. On the H60A6 a selection that holds a ring piece goes to the whole ring 0-11, with piece 12 as picked
   (`ColorModeH60A6.canClickColorTem:519-541` over `F`); on the H6047 it goes to each bar it touches, 0-4 / 5-9
-  (`ColorMode10Segment.canClickColorTem:655-691` with `q0` / `r0`). Neither screen sends a Kelvin to part of
-  a zone, which 1.6.1's `set_segment_color_temp` sent as selected. Rows h60ax 303 and h6047 119 now say
-  `segment_color_temp: false`, so on both `set_segment_color_temp` raises GoveeBleNotSupported before any I/O.
-  Whole-device Kelvin (`set_color_temp`, `turn_on(kelvin=)`), zone Kelvin (`set_zone_color_temp`, over the
-  masks that widening gives: H60A6 main `00 10` / background `ff 0f`, H6047 left `1f 00` / right `e0 03`)
-  and per-segment brightness are unchanged. A refusal only, with no frame change, so no bench run. An
-  integration that gates on the field (the integrator note under Added) offers no segment colour temperature
-  on the two; their zones keep it.
+  (`ColorMode10Segment.canClickColorTem:655-691` with `q0` / `r0`). Neither Part tab's Kelvin item sends one
+  to part of a zone, which 1.6.1's `set_segment_color_temp` sent as selected. Rows h60ax 303 and h6047 119
+  now say `segment_color_temp: false`, so on both `set_segment_color_temp` raises GoveeBleNotSupported before
+  any I/O. Whole-device Kelvin (`set_color_temp`, `turn_on(kelvin=)`), zone Kelvin (`set_zone_color_temp`,
+  over the masks that widening gives: H60A6 main `00 10` / background `ff 0f`, H6047 left `1f 00` / right
+  `e0 03`) and per-segment brightness are unchanged, and so is `set_segment_rgb`'s tint-colour pick: the
+  app's RGB picker doesn't widen, and sends an in-range tint colour to the selection as it is, as a masked
+  Kelvin frame (`ColorModeH60A6.canClickColor:503-516`, `ColorMode10Segment.canClickColor:613-652`,
+  `Config.Yt`). A refusal only, with no frame change, so no bench run. An integration that gates on the
+  field (the integrator note under Added) offers no segment colour temperature on the two; their zones keep
+  it.
 - Nothing else for existing SKUs (H6188's colour temperature, H6061's whole-device RGB and the segment
   brightness of H6098 / H8098 / H6690 are under Fixed, and the 42 SKUs without segment colour temperature and
   the device-info reads of H60B1 / H7056 / H1630 / R1630 are in this section). Each other SKU of the 104
@@ -665,24 +669,27 @@ model, from which the shipped readers are generated).
 - **Per-SKU connect writes.** `devices.schema.json` `clientModel` takes `connect_writes` (the row's stays
   required), which `govee_reference.client_row` applies for the SKU. bulblightv3's `by_model` gives H14A1 /
   R14A1 / H14C2 / R14C2 `[light_effect_stop]` over row 342's `[]`.
-- **`segment_color_temp`, whether a screen sends a Kelvin to a piece selection.** `devices.schema.json`
-  clientRow takes the boolean, with the app trace in its description: `DelegateColorV2Part.Z0` (:686-704) adds
-  the Part tab's Kelvin item only where `LightColorCapabilityCenter.C2` holds. C2 falls back, as no supported
-  goodsType has a capability spec (only fanlight 359 / 368 register one), to `SupportPartColorTemConfig.b`:
-  list d, 112 at pact (2,1), H7022 / H7024 at goodsType 0 (`SupportPartColorTemConfig.java:36-55,71-91`). The
-  All tab's Kelvin covers every piece (`DelegateColorV2.G0`). Each of the 108 rows with support that keeps
-  `segments` and `color_temp` after its colour scheme's drops now states it, 34 true and 74 false, with that
-  doc-ref. The resolver requires it on exactly those rows and refuses it on any other. Two list-d rows say
-  false, by the user's decision 24 (Changed): h60ax 303 and h6047 119, whose strips widen every Part-tab Kelvin
-  pick to a whole zone. Docs corrected where
-  they said a non-list-d screen's Kelvin follows the piece selection (pact_h605b 120 / 360, h7050 157), or
-  called the missing refusal a library gap (h6047 277). pact_h605b 142 / 243 now say their Part tab has no
-  Kelvin item, next to their note that an in-range tint-colour pick on the selected pieces still sends a
-  partial-mask Kelvin (`canClickColor` -> `ColorViewModel.p0` -> `Config.Yt` -> `Bytes.r`), the frame
+- **`segment_color_temp`, whether `set_segment_color_temp` may send a Kelvin to a piece selection.**
+  `devices.schema.json` clientRow takes the boolean, with the app trace in its description:
+  `DelegateColorV2Part.Z0` (:686-704) adds the Part tab's Kelvin item only where `LightColorCapabilityCenter.C2`
+  holds. C2 falls back, as no supported goodsType has a capability spec (only fanlight 359 / 368 register one),
+  to `SupportPartColorTemConfig.b`: list d, 112 at pact (2,1), H7022 / H7024 at goodsType 0
+  (`SupportPartColorTemConfig.java:36-55,71-91`). The All tab's Kelvin covers every piece
+  (`DelegateColorV2.G0`). Each of the 108 rows with support that keeps `segments` and `color_temp` after its
+  colour scheme's drops now states it, 34 true and 74 false, with that doc-ref. The resolver requires it on
+  exactly those rows and refuses it on any other. Two list-d rows say false, by the user's decision 24
+  (Changed): h60ax 303 and h6047 119, whose Part-tab Kelvin item widens every pick to whole zones. The held
+  h60ax 356 / 373 (H1232 / H1252, behind `allow_modelled`) widen the same way
+  (`ColorModeH1232.canClickColorTem:486-508`, `ColorModeH1252.canClickColorTem:562-584`) and still say true: the
+  decision names 303 and 119 only, so whether they follow is the user's call (both rows' `doc` say so). Docs
+  corrected where they said a non-list-d screen's Kelvin follows the piece selection (pact_h605b 120 / 360,
+  h7050 157), or called the missing refusal a library gap (h6047 277). pact_h605b 142 / 243 now say their Part
+  tab has no Kelvin item, next to their note that an in-range tint-colour pick on the selected pieces still
+  sends a partial-mask Kelvin (`canClickColor` -> `ColorViewModel.p0` -> `Config.Yt` -> `Bytes.r`), the frame
   `set_segment_rgb` sends for a tint colour (`build.rgb_as_kelvin`). h6047 277 now takes its all-pieces Kelvin
   from the All tab (`DelegateColorV2.G0`), not from the strip's `canClickColorTem`, which no Part-tab Kelvin
-  item reaches there. h7050 77 / 157 take their colour-page flags from `DelegateColorV2.C1`, not from the
-  older `DelegateColor`, which no screen builds, and cite that path.
+  item reaches there. h7050 77 / 157 take their colour-page flags from `DelegateColorV2.C1`, not from the older
+  `DelegateColor`, which no screen builds, and cite that path.
 - **The aa 01 "on when != 0" rules.** `govee_profile` `power_rule` gains `light_nonzero` (the connect read)
   and `light_heartbeat_nonzero` (the aa 01 heartbeat; false = as `light_nonzero`), the light counterparts of
   `relay_on_mask` and `relay_heartbeat_on_mask`. `govee_state` `power_state.is_on` reads a light's reply as on

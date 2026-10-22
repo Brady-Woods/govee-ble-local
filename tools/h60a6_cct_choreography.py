@@ -106,7 +106,7 @@ async def main() -> int:
         # ── STRETCH: per-segment CCT across all n segments (0..11 background ring + 12 main panel) ──
         n = dev.profile.segments
         if not dev.profile.segment_color_temp:
-            print("     per-segment CCT skipped: the profile sends no Kelvin to a piece selection")
+            print("     per-segment CCT skipped: the profile refuses set_segment_color_temp")
         else:
             evens = list(range(0, n, 2))
             odds = list(range(1, n, 2))

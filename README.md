@@ -97,9 +97,10 @@ advertisement, build a capability-driven `Device`, then drive it.
   last returned the on/off, while `state.is_on` still holds it). `advertised_on(advertisement_data)`
   decodes an advertisement's on/off as the device does, without changing state; `ingest_advertisement`
   folds it in. Methods for unsupported capabilities raise `GoveeBleNotSupported`, and so does
-  `set_segment_color_temp` where the SKU's screen sends no Kelvin to a piece selection
-  (`DeviceProfile.segment_color_temp`: SEGMENTS and COLOR_TEMP together don't promise it;
-  `set_zone_color_temp` doesn't read the field). The link
+  `set_segment_color_temp` where `DeviceProfile.segment_color_temp` is false: where the SKU's colour page
+  has no Part-tab Kelvin item, and on the H60A6 and H6047, whose item widens every pick to whole zones (the
+  user's decision 24). SEGMENTS and COLOR_TEMP together don't promise it; `set_zone_color_temp` doesn't
+  read the field. The link
   comes up with the first operation (or `connect()`) and drops `idle_disconnect` seconds after the last one
   (8 s by default), or 30 s after a command (`const.ACTIVE_IDLE_DELAY`, so quick follow-ups skip the
   reconnect). While it is up the `Device` sends the keep-alive read the SKU's control screen sends every 2 s

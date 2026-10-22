@@ -833,11 +833,13 @@ families:
             as it is, except on pact (1, >= 3) (H -> Support.supportPartTem; the bench units advertise (1,3)) while a ring
             piece is selected (F) and the 12 ring pieces show one Kelvin-table colour (G -> ColorUtils.r): then the 15 02
             mask covers the whole ring 0-11, with piece 12 as picked. No fixed segment_brightness_groups says that, so the
-            row carries none and the library sends the selection's own bits. No Kelvin on a piece selection
+            row carries none and the library sends the selection's own bits. No segment Kelvin
             (segment_color_temp false, the user's decision 24, 2026-10-22): the Part tab's Kelvin item, which 303 has
             (SupportPartColorTemConfig list d), widens a selection that holds a ring piece to the whole ring 0-11, with
-            piece 12 as picked (ColorModeH60A6.canClickColorTem:519-541 over F:140-150), so the screen sends no Kelvin to
-            part of a zone, and Device.set_segment_color_temp refuses before any I/O (1.6.1 sent the selection as it is).
+            piece 12 as picked (ColorModeH60A6.canClickColorTem:519-541 over F:140-150), so that item sends no Kelvin
+            to part of a zone, and Device.set_segment_color_temp refuses before any I/O (1.6.1 sent the selection as it
+            is). The RGB picker doesn't widen: an in-range tint-colour pick goes to the selection as it is, as a masked
+            Kelvin frame (canClickColor:503-516 -> Config.Yt), and set_segment_rgb still sends it so.
             The zone lights keep Kelvin: set_zone_color_temp sends the zones' own masks, the ring ff 0f and the panel
             00 10, which that widening gives; segment brightness is unchanged. Timing:
             the app reads the burst once per connect and then keeps the link with the aa 00 heartbeat and its ee 30
@@ -859,7 +861,8 @@ families:
             and 03 @0x9b04a5bc), and the bench unit answered them (2026-10-15).
           doc-ref:
             - split_h60ax/com/govee/pact_h60a0/pact/Support.java:91-100,154-159,434-436,438-444,472-482
-            - split_h60ax/com/govee/pact_h60a0/adjust/h60a6/ColorModeH60A6.java:140-162,483-500,519-541
+            - split_h60ax/com/govee/pact_h60a0/adjust/h60a6/ColorModeH60A6.java:140-162,483-500,503-516,519-541
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:12960-12968
             - base-classes10/com/govee/base2kt/utils/ColorUtils.java:355-367
             - base-classes2/com/govee/shared/checker/KmpGoodsType.java:189
             - split_h60ax/com/govee/pact_h60a0/adjust/h60a6/VM4LightH60A6$afterConnectedSingleReadDeviceInfo$1.java:46-53,133,158-161
@@ -989,8 +992,11 @@ families:
             mask is BleUtils.X, 3 bytes. Colour-tab Kelvin on (Config.I[356][4]), the one-frame Bytes.r. Ring scoping,
             as on 303: with any ring piece picked, the Kelvin goes to the whole ring 0-15 with piece 16 as picked
             (canClickColorTem, G), and so does brightness while the ring holds one Kelvin tint (canClickBrightness,
-            I); a segment brightness or Kelvin on part of the ring then is a frame the app does not send. Kelvin
-            version 2 = [2700, 6500]; brightness version 1. No 0xB2. Scenes not traced. Held behind allow_modelled:
+            I); a segment brightness or Kelvin on part of the ring then is a frame the app does not send. The Kelvin
+            widening is the H60A6's (ColorModeH1232.canClickColorTem:486-508 over G:384-394), but the row still says
+            segment_color_temp: true: the user's decision 24 set it false on 303 and 119 only, and whether 356 follows
+            is the user's call (until then set_segment_color_temp sends the selection as it is). Kelvin version 2 =
+            [2700, 6500]; brightness version 1. No 0xB2. Scenes not traced. Held behind allow_modelled:
             the library's global_power zone model (both zones confirmed after 33 01, 33 04 / 33 05 waking every
             zone) is H60A6 FIRMWARE-SOURCED; no H1232 firmware is in hand, and the app's switch ack sets only the
             main switch (VM4LightH60A6.K5). Admit after a bench check or a library mode with the app's model. Device
@@ -1097,7 +1103,9 @@ families:
             zone, 0-15 by the background (ColorModeH1252.K). Colour: Config.x[373] = 0 on every pact -> Config.Yt ->
             Bytes.h / Bytes.r, white type Config.P = 1; colour-tab Kelvin on (Config.I[373][4]). Ring scoping as on
             356: Kelvin with any ring piece picked, and brightness while the ring holds one Kelvin tint, go to the
-            whole ring 0-15 with piece 16 as picked (ColorModeH1252.canClickColorTem / canClickBrightness). Kelvin
+            whole ring 0-15 with piece 16 as picked (ColorModeH1252.canClickColorTem:562-584 over G:145-155 /
+            canClickBrightness); segment_color_temp stays true, as on 356, until the user decides (decision 24 names
+            303 and 119 only). Kelvin
             version 2 = [2700, 6500] (KelvinConfig; Support.getColorTemRange's legacy [2200, 6500] for 373 is not
             read by the screen, which takes KelvinConfig.m); brightness version 1. No 0xB2. Scenes not traced. Held
             behind allow_modelled: the library's global_power zone model (both zones confirmed after 33 01,
@@ -1246,22 +1254,26 @@ families:
             not captured): with the left bar switched off (33 36 00 01) while the fixture was on, 33 01 00 then 33 01 01 lit
             both bars again, as the next poll's aa 36 read back; so did an off and on alone, and one after both bars were
             switched off with the fixture off. It is the firmware's model (FIRMWARE-SOURCED: the power handler sets both bar
-            flags from its byte, FUN_01004f32 @0x01004f5c-0x01004f60 -> FUN_01002720). No Kelvin on a piece selection
+            flags from its byte, FUN_01004f32 @0x01004f5c-0x01004f60 -> FUN_01002720). No segment Kelvin
             (segment_color_temp false, the user's decision 24, 2026-10-22): the Part tab's Kelvin item, which 119 has
             (SupportPartColorTemConfig list d), widens the selection to each bar it touches, 0-4 and 5-9 (DetailConfig's
-            strip ColorMode10Segment; its canClickColorTem:655-691 with q0:799-801 / r0:803-805 over p0:425-436), so the
-            screen sends no Kelvin to part of a bar, and Device.set_segment_color_temp refuses before any I/O (1.6.1 sent
-            the selection as it is). The zone lights keep Kelvin: set_zone_color_temp sends the bars' own masks, left
+            strip ColorMode10Segment; its canClickColorTem:655-691 with q0:799-801 / r0:803-805 over p0:425-436), so that
+            item sends no Kelvin to part of a bar, and Device.set_segment_color_temp refuses before any I/O (1.6.1 sent
+            the selection as it is). The RGB picker doesn't widen the mask: an in-range tint-colour pick goes to the
+            selection as it is, as a masked Kelvin frame (canClickColor:613-652 -> NewDetailVm.configColorController:880
+            -> H6047ColorControllerConfig.a:43-73 -> Config.J[0] = Config.Yt), and set_segment_rgb still sends it so.
+            The zone lights keep Kelvin: set_zone_color_temp sends the bars' own masks, left
             1f 00 and right e0 03, which that widening gives; segment brightness is unchanged.
           doc-ref:
             - split_h6047/com/govee/h6047/pact/Support.java:43-45,121-129,186-188,345-350
             - split_h6047/com/govee/h6047/detail/config/DetailConfig.java:100-108
-            - split_h6047/com/govee/h6047/detail/mode/ColorMode10Segment.java:425-436,655-691,799-805
+            - split_h6047/com/govee/h6047/detail/mode/ColorMode10Segment.java:425-436,613-652,655-691,799-805
+            - split_h6047/com/govee/h6047/detail/group/H6047ColorControllerConfig.java:43-73
             - base-classes2/com/govee/shared/config/h6047/H6047SceneConfig.java:45-47
             - split_h6047/com/govee/h6047/detail/NewDetailVm$connectBleSuc$1.java:141-161
-            - split_h6047/com/govee/h6047/detail/NewDetailVm.java:574-614,630-651,695-699,862-864
+            - split_h6047/com/govee/h6047/detail/NewDetailVm.java:574-614,630-651,695-699,862-864,876-881
             - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4InfoBleIot$iControllerStrategy$1.java:229-233
-            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:3946,16858-16861
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:3946,5522-5526,12960-12968,16858-16861
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:406,654-658,1702-1704
             - base-classes10/com/govee/base2light/capability/legacy/LegacyColorCapabilityProvider.java:218-221
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:251-259
