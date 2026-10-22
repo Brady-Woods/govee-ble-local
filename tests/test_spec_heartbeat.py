@@ -125,9 +125,12 @@ def test_a_heartbeat_power_live_names_the_read_the_screen_sends() -> None:
 
 
 def test_the_transport_interval_is_the_specs() -> None:
-    beat = _doc()["timing"]["heartbeat"]
+    timing = _doc()["timing"]
+    beat = timing["heartbeat"]
     assert const.HEARTBEAT_INTERVAL * 1000 == beat["interval_ms"] == 2000
     assert const.HEARTBEAT_WRITE_TIMEOUT < const.HEARTBEAT_INTERVAL
+    # The device-list card's spacing of its per-command sessions (GoveeConnection.send_once).
+    assert round(const.PER_COMMAND_SESSION_GAP * 1000) == timing["per_command"]["gap_ms"] == 1100
 
 
 def test_the_pact_gated_aa01_rows_keep_their_pacts() -> None:

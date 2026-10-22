@@ -186,6 +186,59 @@ timing:
       - H60A6 FUN_9b02a2bc @0x9b02a2bc
       - H6047 FUN_01005ce8 @0x010064f4
       - H6008 FUN_9b02c0d4 @0x9b02c0d4
+  per_command:
+    gap_ms: 1100
+    command_timeout_ms: 29500
+    client: >-
+      The device-list card (clientRow session per_command) builds a fresh client for each command
+      (CardCommManagerProxy.comm2Device -> u -> triggerBleCmd$2 -> CardCommManagerProxy.a ->
+      ClientUnionFactory.buildBleMgr(address, service, characteristic, null, 30000, true)): a 30 s connect budget, up to
+      3 reconnects and a null heart message, so no keep-alive goes out (BleClientProxy funcRealTimeLoop returns on a
+      null one). It connects by the account's address without a scan and sets the link up as every link is set up
+      (EncryptionBluetoothGattCallback): service discovery, an MTU of 512, the BGC read, and the key handshake where
+      the address is flagged encrypted. Notifications (CCCD 0x2902) are enabled at its first write
+      (NotificationEnbleChecker).
+    send: >-
+      The command's one frame (AbsDeviceModel4BleIot.k / l; A0 is null, so nothing goes ahead of it) goes out as a
+      GMessageMulti whose q() is true, so ClientUnionMgr.excuBusinessSend registers no reply timeout and after the
+      write runs only its connection check. The write's completion is the success; the device's reply is not read.
+    close: >-
+      The client is closed once the frame is sent (sendBleMsg, CardCommManagerProxy.q: in the re-decompile of
+      base.apk with jadx 1.5.6, as the tree's copy did not decompile), or on a timeout (triggerBleCmd$2). The next
+      session to the same address starts gap_ms after this one's release at the earliest: triggerBleCmd$2 delays by
+      the rest of CardCommManagerProxy.s.
+    deviations:
+      - >-
+        PROCEDURAL (govee-ble-local): after the write it reads the device's reply for up to the write-ack timeout
+        (1.5 s) and raises on a rejection (a reply with a non-zero status), where the card reads none. No reply, or a
+        link lost while it waits, is still a success, and nothing more is sent, so the wire carries the card's one
+        frame. The link closes up to 1.5 s later than the card's, only while the device stays silent.
+      - >-
+        PROCEDURAL (govee-ble-local): as on every row, the BGC read is made once per Device, notifications are
+        enabled right after the link comes up (the handshake needs them), no MTU is requested, and the cipher comes
+        from the advert's 0x40 flag or the BGC version, not from the account's supportEnc.
+      - >-
+        PROCEDURAL (govee-ble-local): a command is bounded at 45 s (OPERATION_TIMEOUT), not 29.5 s; the IoT leg the
+        card runs beside the BLE one, and its race, are not modelled.
+      - >-
+        PROCEDURAL (govee-ble-local): power and brightness in one call are two sessions, power first, as the card's
+        two taps (its switch, then its slider, which it enables only while the switch shows on); a brightness while
+        the light is not known to be on is sent after a power-on session.
+    doc-ref:
+      - base-classes2/com/govee/home/main/CardCommManagerProxy.java:82-83,166-180,202-235,616-641
+      - base-classes2/com/govee/home/main/CardCommManagerProxy$triggerBleCmd$2.java:183-308
+      - base-classes13/com/govee/ctlchannel/ClientUnionFactory.java:82-96
+      - base-classes13/com/govee/ctlchannel/ble/BleClientProxy.java:493-505,982,1260,1830
+      - base-classes13/com/govee/ctlchannel/message/GMessageMulti.java:18-31
+      - base-classes13/com/govee/ctlchannel/message/GMessage.java:471-473,757-759
+      - base-classes13/com/govee/ctlchannel/ClientUnionMgr.java:1516,1532-1543
+      - base-classes13/com/govee/encryp/ble/EncryptionBluetoothGattCallback.java:77-150,188-246
+      - base-classes13/com/govee/ctlchannel/ble/VirtualBleClient.java:998-1046,1109-1160
+      - base-classes13/com/govee/ctlchannel/ble/NotificationEnbleChecker.java:51,65-205
+      - base-classes13/com/govee/encryp/ble/EncryptionUtils.java:32-37
+      - base-classes3/com/govee/kt/AbsDeviceModel4BleIot.java:38-41,49-89
+      - base-classes3/com/govee/kt/ui/device/base/AbsLightModel4BleIot.java:253-305,575-605
+      - base-classes3/com/govee/kt/ui/device/LightHolderConvert.java:627
 
 # ─────────────── Per-device authorization secret (families tagged `encryption: secret_key_pairing`) ───────────────
 # secret_key_pairing = account-lock only; the wire cipher is picked at connect from the advert / BGC info (BleUtil.java:839).

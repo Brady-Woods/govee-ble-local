@@ -63,6 +63,25 @@ model, from which the shipped readers are generated).
     each, soft 1.04.05, hard 3.05.00. One unit's mode TLV is a short `15 01`. The row's own decode
     (`gradual_14`, where 0x15 isn't decoded) reads that burst in full; the H60A6 default decode gave an empty
     reply.
+- **A write-only row type: the app's device-list card** (`DeviceProfile.session`, `"held"` by default, or
+  `"per_command"`; `GoveeConnection.send_once`). It is for SKUs whose control screen has no BLE control, where
+  the user chose to follow the card (DECISIONS.md 6). On a `per_command` profile:
+  - each write is a session of its own: connect (the BGC read and the handshake as on every connect), write the
+    one frame, read the reply for at most the write-ack timeout, disconnect. A refusal (a non-zero status)
+    raises `GoveeBleCommandRejected` and applies nothing; no reply counts as success, as on the card, and
+    nothing is retried or sent twice. Each session starts at least 1.1 s (`const.PER_COMMAND_SESSION_GAP`,
+    `CardCommManagerProxy.s`) after the last one's release, failed or not;
+  - `turn_on(power=True, brightness=x)` is two sessions, power first, and a brightness while the device is not
+    known to be on is sent after a power-on session (the card's switch, then its slider). Each applies its own
+    state, so an acked power-on stays when the brightness fails. Colour is refused;
+  - `update()` and `connect()` make no connection, and `read_secret()` raises `GoveeBleNotSupported`: the card
+    reads nothing over GATT. On/off is the advertisement's switch byte and the last acked write; brightness is
+    the last sent, and the state stays `optimistic`;
+  - no heartbeat, idle timer or warm window: no link outlives its write.
+
+  Every `held` path is unchanged by construction: `_commit`, `turn_on`, `set_brightness`, `update`,
+  `connect` and `_read_reply` dispatch a `per_command` profile to its own branch first. Not live-verified: no
+  unit is on the bench.
 
 ### Changed
 - Nothing for existing SKUs. Each of the 104 SKUs admitted at 1.6.1 (98 by default, 6 behind
@@ -95,6 +114,20 @@ model, from which the shipped readers are generated).
   - The catalogue snapshot routes 31 SKUs no row lists (15 before). For review: H613A-F (catalogue 39, named
     by h613839's (65535,255) bind item), where it was H615E.
   - rgbiclight 351 / 352 now record the R617G / R618D catalogue route, as h7057 274 does H8057's.
+- **The device-list card's session, as spec vocabulary.**
+  - `clientRow.session`: `held` (absent; the control screen's) or `per_command` (the card's:
+    `CardCommManagerProxy.comm2Device` -> `u` -> `triggerBleCmd$2`).
+  - `power_read: advert`: no GATT read, the advert's switch byte as the card reads it, and
+    `heartbeat: none`: no keep-alive on a path that holds no link (the card's null heart message). A
+    `heartbeat_timing` beside `none` is refused by the schema.
+  - `timing.per_command`: the 1100 ms spacing, the 29.5 s command bound, the client, the send and the close,
+    with the library's deviations (it reads the reply for a refusal) and the citations.
+  - `govee_manufacturer_data` `is_on`: a light's advert on/off (`AbsBaseBleModel.z`), which
+    `identify.parse_broadcast_onoff` now reads (the same decode as before, now from the spec).
+  - The resolver serves `per_command` only on a row that reads nothing, writes nothing on connect, holds no
+    link, has no lock, zones or pieces and carries only power and brightness; `advert` and `none` on a held
+    row are not served. The coupling stays in the resolver, not the schema, so a firmware-confirmed read could
+    later join a `per_command` row (design review R3).
 
 ## [1.6.1] — 2026-10-21
 

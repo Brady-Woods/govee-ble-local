@@ -33,6 +33,9 @@ from .brightness import percent_to_raw
 SceneDialect = Literal["A", "B_h60a6", "B_h6052"]
 # "status" (0xAC burst) | "polled" (aa 01/04/05) | "plug" (aa 01 relay bitmask) | "none"
 ReadBack = Literal["status", "polled", "plug", "none"]
+# How the writes reach the device (DeviceProfile.session): "held" = one link across commands and reads (the
+# control screens'); "per_command" = a session of its own per write (the device-list card's).
+SessionMode = Literal["held", "per_command"]
 ColorReadBack = Literal["", "mechanism_b", "mechanism_a_direct"]
 # How the colour sub-modes of an ``aa 05`` mode report are decoded (the SKU's Info4Detail mode parse): a
 # name of the spec's mode_color_parse table (devices.yaml ``mode_color_parse``, which maps each colour
@@ -211,7 +214,8 @@ class DeviceProfile:
     1.3.0's ``33 01 11 / 10``."""
     advert_on_mask: int | None = field(default=None, kw_only=True)
     """Plug advertisement on/off: the bits of the advertised switch byte that make the device "on";
-    None (every light) = the byte equals 1 (``AbsBaseBleModel.A``).
+    None (every light) = the byte equals 1 (``AbsBaseBleModel.z``; the spec's ``govee_manufacturer_data``
+    ``is_on``).
 
     The plugs' device-list models decode it per goodsType (h5080 ``Model.A``,
     ``Model4Plug2.A``), which is not always the read-back's :attr:`relay_on_mask` (devices.yaml's plug
@@ -345,6 +349,19 @@ class DeviceProfile:
     last operation that sent a frame, each one restarting the wait (goodsType 43's ctlchannel
     ``HeartHandler.e``, which restarts it on every send: H5080, H5083 and H5085). Checked either way, and
     ignored without a :attr:`heartbeat`: then no beat goes out at all, on either timing."""
+    session: SessionMode = field(default="held", kw_only=True)
+    """How the writes reach the device: ``"held"`` (the default: the control screens' rows, and a profile built
+    by hand) keeps one link across commands and reads, acks each write and runs the :attr:`heartbeat`;
+    ``"per_command"`` is the app's device-list card (a devices.yaml ``session: per_command`` row, for a SKU whose
+    control screen has no BLE control). On it each write is a session of its own
+    (``GoveeConnection.send_once``): connect, write the one frame, read the reply for at most the write-ack
+    timeout (a refusal raises GoveeBleCommandRejected), disconnect, each session at least
+    ``const.PER_COMMAND_SESSION_GAP`` after the last one's release (``CardCommManagerProxy.s``). So
+    ``Device.update`` makes no connection, ``Device.connect`` opens nothing, a read (``Device.read_secret``)
+    raises GoveeBleNotSupported, ``turn_on`` sends power and brightness as two sessions, power first, and a
+    brightness while the device is not known to be on goes after a power-on session (the card's switch, then
+    its slider). :attr:`heartbeat` (None on those rows), ``idle_disconnect`` and :attr:`heartbeat_timing` do
+    nothing with it: no link outlives its write."""
 
     def __post_init__(self) -> None:
         """Validate each field: GoveeBleInvalidValue (a ValueError) on a value no Device can use.
@@ -369,6 +386,7 @@ class DeviceProfile:
             ("color_readback", ColorReadBack),
             ("relay_power", RelayPower),
             ("heartbeat_timing", HeartbeatTiming),
+            ("session", SessionMode),
         ):
             value = getattr(self, name)
             if value not in get_args(allowed):
@@ -557,7 +575,7 @@ def _from_spec(skus: tuple[str, ...], facts: Mapping[str, Any]) -> DeviceProfile
     kw["scene_versions"] = frozenset(kw["scene_versions"])
     if "status_read" in kw:
         kw["status_read"] = tuple(int(_CMD[name]) for name in kw["status_read"])
-    kw["heartbeat"] = int(_CMD[kw["heartbeat"]])
+    kw["heartbeat"] = None if kw["heartbeat"] == "none" else int(_CMD[kw["heartbeat"]])
     return DeviceProfile(skus=skus, **kw)
 
 

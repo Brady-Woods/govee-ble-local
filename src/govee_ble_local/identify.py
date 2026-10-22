@@ -146,11 +146,11 @@ def parse_manufacturer_data(mfg: dict[int, bytes]) -> tuple[bool, int, int, int]
 def parse_broadcast_onoff(mfg: dict[int, bytes], *, on_mask: int | None = None) -> bool | None:
     """The device's on/off state from its advertisement — PASSIVE, no connection.
 
-    Port of BleUtil.parseBleBroadOnOff + AbsBaseBleModel.A: the byte right after
+    Port of BleUtil.parseBleBroadOnOff + AbsBaseBleModel.z: the byte right after
     pactType(2)+pactCode(1) in the Govee mfg data (scanRecord i+8; bleak value
-    index 4) == 1 means ON. Only a broadcast whose header byte (the company-id low
-    byte, scanRecord i+2), read as a signed Java byte, is >= 2 carries it: a v0/v1
-    header (or one with bit 7 set) is skipped, and the app logs that the broadcast has
+    index 4) == 1 means ON (the spec's ``govee_manufacturer_data`` ``is_on``). Only a broadcast whose
+    header byte (the company-id low byte, scanRecord i+2), read as a signed Java byte, is >= 2 carries
+    it: a v0/v1 header (or one with bit 7 set) is skipped, and the app logs that the broadcast has
     no switch state. Returns True/False, or None if the advertisement doesn't carry it
     (not a Govee broadcast / header below 2 / too short).
 
@@ -162,8 +162,7 @@ def parse_broadcast_onoff(mfg: dict[int, bytes], *, on_mask: int | None = None) 
         # (signed) scanRecord[i6 + 2] >= 2) and a byte after pact_code, its switch_byte.
         if not entry.has_switch_state:
             continue
-        switch = int(entry.switch_byte)
-        return switch == 1 if on_mask is None else bool(switch & on_mask)
+        return bool(entry.is_on) if on_mask is None else bool(int(entry.switch_byte) & on_mask)
     return None
 
 
