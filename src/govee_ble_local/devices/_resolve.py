@@ -101,8 +101,11 @@ the row lacks fails the build: nothing defaults silently.
   ``f_a5: color_group``, a requested ``color_group`` or any 0xA5 the bare read's reply carries, as the
   h70dx screen parses each, ``VM4H70DX.g5``; any other 0xA5 is skipped), and the TLV 0x05's mode decode
   (mode_status over mode). The library takes the zone bits from TLV 0x30, so a
-  requested ``cmd_30`` needs ``f_30: zone_power``. A pact branch may only drop ``color_group``, which
-  becomes ``status_color_groups_pact`` (one pact type, from its lowest code that keeps it). A polled row
+  requested ``cmd_30`` needs ``f_30: zone_power`` (at any pact). A row's pact branches that only drop
+  ``color_group`` become ``status_color_groups_pact`` (one pact type, from its lowest code that keeps it:
+  H60A6's); otherwise each branch with another read becomes that pact's exact read
+  (``DeviceProfile.status_read_by_pact``, :func:`_status_branches`), which a SKU of the pact fallback (below)
+  can't take, and the forms and the colour-group decode serve every read. A polled row
   reads its power from aa 01, or, with ``power_read: aa34_detail``, from the aa 34 device-detail read
   (``DeviceProfile.detail_power_read``; wire ``f_34: device_detail``; never on a bar row, and with no aa 01
   to take a ``heartbeat_aa01`` power from). A polled row
@@ -151,8 +154,9 @@ the row lacks fails the build: nothing defaults silently.
 - Pact branches are at the row's listed pacts only (a branch elsewhere is reached by no device: it raises),
   and a family with a row with support takes ``by_model`` / ``wire.by_model`` entries only for SKUs one of
   its rows lists or the catalogue snapshot routes to one of them (:func:`sku_entries`). ``status_read``
-  becomes the gate above, and ``scene_versions`` becomes ``scene_versions_by_pact``, which
-  ``Device.scene_versions`` applies with the advertised pact before the firmware entries;
+  becomes the gate or the exact-pact reads above, and ``scene_versions`` becomes
+  ``scene_versions_by_pact``, which ``Device.scene_versions`` applies with the advertised pact before the
+  firmware entries;
   ``kelvin_range`` and ``brightness_range`` become
   ``kelvin_by_pact`` / ``brightness_by_pact``, which ``Device`` applies with the advertised pact the same
   way (goodsType 261 at pact (4, 1); a pact Kelvin range needs a base one and no Kelvin firmware branch, a
@@ -866,11 +870,16 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
             fail(f"pact branch {key} on {sorted(facts - _PACT_FACTS)} is not served")
     scenes_by_pact = tuple(sorted((_pact(key), _scene_set(branch["scene_versions"], fail))
                                   for key, branch in by_pact.items() if "scene_versions" in branch))
-    gate = None
+    gate: tuple[int, int] | None = None
+    status_by_pact: tuple[tuple[tuple[int, int], tuple[str, ...]], ...] = ()
     if status_read is not None:
         if len(set(status_read)) != len(status_read):
             fail(f"status_read {list(status_read)} (distinct TLV types)")
-        gate = _status_gate(row, tuple(status_read), fail)
+        gate, status_by_pact = _status_branches(row, sku, tuple(status_read), fail)
+    # Every read the row's status requests make, at any pact: the forms and the colour-group decode serve
+    # each.
+    status_reads = (tuple(status_read), *(read for _key, read in status_by_pact)) if status_read is not None \
+        else ()
 
     row_caps = frozenset(need(row.get("capabilities"), "capabilities"))
     if not row_caps <= {*CAPABILITIES, "gradual"}:
@@ -1010,7 +1019,7 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
             fail(f"colour read-back with f_a5 {forms.get('f_a5')!r}")
     # The status read takes colour groups from TLV 0xA5 where it requests them, or on the bare read (whose
     # screen parses each 0xA5 that arrives, VM4H70DX.g5), and the row reads them so.
-    status_groups = (status_read is not None and ("color_group" in status_read or not status_read)
+    status_groups = (any("color_group" in read or not read for read in status_reads)
                      and forms.get("f_a5") == "color_group")
     if (color_readback or status_groups) and cp.get("has_brightness") is not True:
         fail("a colour-group read without has_brightness true (the library reads [brightness, r, g, b])")
@@ -1145,6 +1154,8 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
         out["kelvin_with_brightness"] = True
     if status_read is not None:
         out["status_read"] = tuple(status_read)   # command names; devices/profile.py takes their codes
+        if status_by_pact:
+            out["status_read_by_pact"] = status_by_pact
         decode: dict[str, Any] = {f: forms[f] for f in _STATUS_TLV_FORMS
                                   if forms.get(f, "unknown") != "unknown"}
         if status_groups:
@@ -1185,7 +1196,7 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
         unknown = {out["mode_color_parse"], status or out["mode_color_parse"]} - set(parse_names)
         if unknown:
             fail(f"mode_color_parse {sorted(unknown)} not in the mode_color_parse table")
-    _check_forms(forms, _forms_used(out, caps, tuple(status_read or ()), relay), fail)
+    _check_forms(forms, _forms_used(out, caps, tuple(t for read in status_reads for t in read), relay), fail)
     return out
 
 
@@ -1331,16 +1342,38 @@ def _pact(key: str) -> tuple[int, int]:
     return pact_type, code
 
 
-def _status_gate(row: Row, status_read: tuple[str, ...], fail: Fail) -> tuple[int, int] | None:
-    """``status_color_groups_pact`` from the row's pact branches: None when every pact's status read asks for
-    the 0xA5 colour groups, else the ``(pact type, lowest code)`` of the pacts that do. ``fail`` unless each
-    branch's read is the row's ``status_read``, or it without ``color_group``, and the pacts that keep the
-    groups are one pact type from that code up (the gate the library implements), each within a byte."""
+def _status_branches(row: Row, sku: str, status_read: tuple[str, ...], fail: Fail
+                     ) -> tuple[tuple[int, int] | None,
+                                tuple[tuple[tuple[int, int], tuple[str, ...]], ...]]:
+    """``(status_color_groups_pact, status_read_by_pact)`` from the row's pact branches' ``status_read``.
+    Where each branch's read is the row's, or it without ``color_group``, the first is the gate
+    (:func:`_status_gate`) and the second empty: H60A6's, the one gate form. Otherwise no gate, and every
+    branch whose read differs from the row's is its own exact-pact read, ``((pact type, code), names)`` in
+    pact order, which ``Device`` sends at that advertised pact (the spec's ``client_row``; the row's own read
+    at any other pact and before one is heard), as the H7070 screen adds 0x42 at (1, 2) / (2, 1)
+    (``VM4LightH7070.T4``, ``Support.supportEffectChange``). ``fail`` on a branch with a repeated type, and on
+    a branch of that kind on a SKU of the 1.x pact fallback (:data:`PACT_FALLBACK_SKUS`): a pact no row lists
+    still routes such a SKU to the row, and there the gate decides its read, as in 1.x (D3)."""
     short = tuple(t for t in status_read if t != "color_group")
     branches = {key: tuple(branch["status_read"])
                 for key, branch in (row.get("by_pact") or {}).items() if "status_read" in branch}
-    if any(read not in (status_read, short) for read in branches.values()):
-        fail("a pact's status_read is the row's with more than color_group dropped")
+    for key, read in branches.items():
+        if len(set(read)) != len(read):
+            fail(f"pact {key} status_read {list(read)} (distinct TLV types)")
+    if all(read in (status_read, short) for read in branches.values()):
+        return _status_gate(row, status_read, branches, fail), ()
+    if sku.upper() in PACT_FALLBACK_SKUS:
+        fail("a pact's status_read is the row's with more than color_group dropped, on a SKU of the 1.x pact "
+             "fallback (D3: its colour-group gate decides the read at a pact no row lists)")
+    return None, tuple(sorted((_pact(key), read) for key, read in branches.items() if read != status_read))
+
+
+def _status_gate(row: Row, status_read: tuple[str, ...], branches: Mapping[str, tuple[str, ...]],
+                 fail: Fail) -> tuple[int, int] | None:
+    """``status_color_groups_pact`` from the row's pact ``branches``, each the row's ``status_read`` or it
+    without ``color_group``: None when every pact's status read asks for the 0xA5 colour groups, else the
+    ``(pact type, lowest code)`` of the pacts that do. ``fail`` unless the pacts that keep the groups are one
+    pact type from that code up (the gate the library implements), each within a byte."""
     without = {k for k, read in branches.items() if read != status_read}
     if not without:
         return None

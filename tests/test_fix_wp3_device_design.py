@@ -361,7 +361,9 @@ def test_brightness_max_must_be_positive() -> None:
     for bad in (k41, {**k41, **base, "kelvin_by_hardware": (("3.08.01", 2700, 6500),)},
                 {**base, "kelvin_by_pact": (((4, 1), 9500, 9900),)},                  # outside the base
                 {**base, "kelvin_by_pact": (((4, 1), 2000, 2500), ((4, 2), 8000, 9000))},   # none on all
-                {"brightness_by_pact": (((2, 1), (0, 300)),)}):
+                {"brightness_by_pact": (((2, 1), (0, 300)),)},
+                {"status_read_by_pact": (((1, 2), (0x41, 0x41)),)},                         # a repeated type
+                {"status_read_by_pact": (((1, 2), (0x41,)), ((1, 2), (0x42,)))}):           # a pact twice
         with pytest.raises(GoveeBleInvalidValue, match="_by_pact"):
             DeviceProfile(skus=("HX",), capabilities=frozenset(), **bad)  # type: ignore[arg-type]
     d = Device(DeviceProfile(skus=("HX",), capabilities=frozenset(), **base, **k41, brightness_range=(6, 254),

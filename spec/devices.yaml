@@ -19161,9 +19161,10 @@ families:
             - split_h6092/com/govee/h6092/newDetail/r1810/DelegateOperateColorR1810.java:352,373,401,762
             - split_h6092/com/govee/h6092/newDetail/h6095/OperateControllerBuild.java:133-151
             - split_h6092/com/govee/h6092/newDetail/h6095/VM4LightH6095.java:469,537-547,734-771,857,864-872,1214-1216,1317-1329,1513-1520,1727-1750
-        "283":   # H7070, the AcNewDetailH7070 screen; no support: a pact adds 0x42 to the status read (doc)
+        "283":   # H7070, the AcNewDetailH7070 screen (0xAC status read; 0x42 added at (1,2) / (2,1))
           models: [H7070]
           pacts: ["1,1", "1,2", "2,1"]
+          support: app_traced
           capabilities: [power, brightness]
           zones: []
           account_lock: false
@@ -19176,19 +19177,27 @@ families:
           connect_writes: []
           heartbeat: heartbeat
           doc: >-
-            H7070 on AcNewDetailH7070 (Model.t). Connect (VM4LightH7070.T4): ac 03 <n> 41 0c, plus 42 where
-            Support.supportEffectChange holds (pact (1, >= 2) or type >= 2); TLV 0x01 power, 0x04 brightness, 0x05 the
-            mode (Info4DetailH7070.H reads byte 0 unguarded: an empty one fails the read), 0x41 the power-off memory
+            H7070 on AcNewDetailH7070 (Model.t; pacts (1,1) / (1,2) / (2,1), Support.addSupportPact). Connect
+            (VM4LightH7070.T4): ac 03 <n> 41 0c, plus 42 where Support.supportEffectChange(goodsType, pactType,
+            pactCode) holds for 283 (pact (1, >= 2) or type >= 2): ac 03 02 41 0c at (1,1), ac 03 03 41 0c 42 at (1,2) /
+            (2,1), the row's read and its pact branches (DeviceProfile.status_read_by_pact: the read at the advertised
+            pact, the row's own before one is heard). TLV 0x01 power, 0x04 brightness, 0x05 the mode
+            (Info4DetailH7070.H reads byte 0 unguarded: an empty one fails the read), 0x41 the power-off memory
             (value[1] unguarded), 0x0c the operate info and 0x42 the effect-change switch (not modelled). Default
-            header: 33 01 (switchTrigger -> ControllerSwitch.d), 33 04 percent (BrightnessConfig.b). Keep-alive aa 00 (I3
-            false); live power ee 30 bit 0 of frame[3] (VM4LightH7070.h5), after which the screen re-reads
-            (Compose4Off2OnH7070), which the library does not send; no child-switch write. No support: the 0x42 a pact
-            adds is no branch the library follows (a pact branch may only drop color_group).
+            header: 33 01 (switchTrigger -> ControllerSwitch.d), 33 04 percent (BrightnessConfig.b). Keep-alive aa 00
+            (I3 false); live power ee 30 bit 0 of frame[3] (VM4LightH7070.h5), after which the screen re-reads
+            (Compose4Off2OnH7070), which the library does not send; no child-switch write. Known gap, as on 333: X4
+            reads TLV 0x42 byte 0 and passes TLV 0x0c to OperateModeInfoH7070.E (283 and 333; 334 takes
+            OperateModeInfoH7071.q), unguarded, so an empty 0x42 or a short 0x0c fails the app's whole status read,
+            while the library (no form for either) still applies the burst's power and brightness. Scenes untraced.
+            Not hardware-verified.
           doc-ref:
             - split_h6092/com/govee/h6092/pact/Support.java:87-95,264-266,304-312
             - split_h6092/com/govee/h6092/pact/Model.java:66-68
             - split_h6092/com/govee/h6092/newDetail/h7070/VM4LightH7070.java:99-131,181-215,288-320,529-534,578-593,827-850
             - split_h6092/com/govee/h6092/newDetail/h7070/Info4DetailH7070.java:269-272
+            - split_h6092/com/govee/h6092/newDetail/h7070/OperateModeInfoH7070.java:35-71
+            - base-classes11/com/govee/base2light/kt/comm/Info4BleIotDevice.java:208-218,585-587
             - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4BaseInfoSingleRead.java:247-345
         "334":   # H7071, the AcNewDetailH7070 screen (0xAC status read)
           models: [H7071]

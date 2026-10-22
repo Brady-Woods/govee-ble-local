@@ -564,9 +564,13 @@ def _selftest(*, strict: bool = False) -> int:
               == [([0, 1, 2, 3], [2000, 9000]), ([0, 1, 2, 3], [2700, 6500]), ([0, 1, 2, 3], [2000, 9000])]
               and client_row(reg, "dreamcolorlightv1", 19, hard="10.00.00")["kelvin_range"] == [2000, 9000]
               and [r["scene_versions"] for r in h6168] == [[0, 1, 2, 3], [0, 1, 2], [0, 1, 2]])
-        check("H60A6 pact (1,1): no 0xA5 in the status read; with the pact unknown the row's own applies",
+        check("H60A6 pact (1,1): no 0xA5 in the status read; H7070 adds 0x42 at (1,2) / (2,1); with the pact "
+              "unknown the row's own applies",
               client_row(reg, "h60ax", 303, pact=(1, 1))["status_read"] == ["cmd_41", "cmd_30"]
-              and client_row(reg, "h60ax", 303)["status_read"] == ["cmd_41", "cmd_30", "color_group"])
+              and client_row(reg, "h60ax", 303)["status_read"] == ["cmd_41", "cmd_30", "color_group"]
+              and [client_row(reg, "h6092", 283, pact=p)["status_read"]
+                   for p in (None, (1, 1), (1, 2), (2, 1))]
+              == [["cmd_41", "cmd_0c"]] * 2 + [["cmd_41", "cmd_0c", "write_check_ic"]] * 2)
 
     try:
         _gbf()

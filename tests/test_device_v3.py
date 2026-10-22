@@ -617,6 +617,13 @@ def test_the_status_request_is_the_profiles_status_read() -> None:
     assert _status_frames(d)[0][:7].hex() == "ac0304" "41a54016"
     d._pact = (1, 1)
     assert _status_frames(d)[0][:6].hex() == "ac0303" "414016"
+    # A pact branch that adds a type is that pact's exact read (status_read_by_pact): H7070 asks for 0x42 at
+    # (1, 2) / (2, 1) only (VM4LightH7070.T4), the row's own read at (1, 1) and before a pact is heard.
+    h7070 = Device(profile_for("H7070"), ble_device("AA:BB:CC:DD:EE:23", "GVH7070"))
+    assert _status_frames(h7070)[0][:5].hex() == "ac0302" "410c"
+    for pact, read in (((1, 2), "ac0303" "410c42"), ((2, 1), "ac0303" "410c42"), ((1, 1), "ac0302" "410c")):
+        h7070._pact = pact
+        assert _status_frames(h7070)[0][:len(read) // 2].hex() == read, pact
     # An empty status_read is the bare read (the h70dx screen's, VM4H70DX.e5), and the TLV 0xA5 its reply
     # carries unrequested is read as colour groups, as that screen parses each one (VM4H70DX.g5).
     bare = next(p for p in PROFILES if p.status_read == ())

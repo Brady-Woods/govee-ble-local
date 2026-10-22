@@ -259,7 +259,7 @@ class Device:
     def _learn_pact(self, adv: GoveeAdvertisement | None) -> bool:
         """Remember the advertised ``(pact_type, pact_code)``; the app reads the same pair
         (``BleUtil.parseBleBroadcastPact``) into the device model. Exposed as :attr:`pact`; it decides
-        whether the 0xAC status read asks for colour groups (:meth:`_wants_color_groups`), and picks the
+        the TLV types the 0xAC status read requests (:meth:`_status_types`), and picks the
         profile's pact entries for the scene set and the Kelvin and brightness ranges. An advertisement
         without pact info changes nothing. Returns whether :attr:`pact` changed.
 
@@ -609,7 +609,7 @@ class Device:
         which are fresher than the advert's. The pact is not: no command or read sets it. Any change of
         the pact counts, since :attr:`pact` is itself exposed and the values it picks (:attr:`min_kelvin`
         / :attr:`max_kelvin`, :attr:`scene_versions`, the brightness range and whether brightness can be
-        written yet, the 0xAC status read's colour groups) may change with it. An advertisement without
+        written yet, the 0xAC status read's TLV types) may change with it. An advertisement without
         pact info, or with the pact already heard, leaves it as it was."""
         mfg = getattr(advertisement_data, "manufacturer_data", None)
         if not mfg:
@@ -1935,9 +1935,12 @@ class Device:
         return self._pact[0] == gate[0] and self._pact[1] >= gate[1]
 
     def _status_types(self) -> tuple[int, ...]:
-        """The TLV types the 0xAC status read requests: the profile's ``status_read``, without the 0xA5
-        colour groups where :meth:`_wants_color_groups` rules them out."""
-        types = self.profile.status_read
+        """The TLV types the 0xAC status read requests: the advertised pact's ``status_read_by_pact`` entry,
+        else the profile's ``status_read`` (no entry, or no pact heard), without the 0xA5 colour groups where
+        :meth:`_wants_color_groups` rules them out. Worked out for each request, so a pact heard later
+        changes the next one."""
+        types = dict(self.profile.status_read_by_pact).get(self._pact, self.profile.status_read) \
+            if self._pact is not None else self.profile.status_read
         if self._wants_color_groups():
             return types
         return tuple(t for t in types if t != reassemble.TYPE_COLOR_GROUP)
