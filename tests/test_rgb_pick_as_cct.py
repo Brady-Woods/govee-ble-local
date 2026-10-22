@@ -49,7 +49,7 @@ def _rgb(colour: int) -> tuple[int, int, int]:
 def _dev(sku: str, segments: int | None = None) -> Device:
     d = create_device(ble_device("AA:BB:CC:DD:EE:99", sku), sku, allow_modelled=True)
     if segments is not None:
-        d.set_segment_count(segments)      # H6062 reports its own count; skip the aa 41 read
+        d.set_segment_count(segments)      # a device that reports its own count: skip its aa 41 / aa 40 read
     sent: list[bytes] = []
 
     async def send(frame: bytes, **_k: object) -> None:
@@ -106,7 +106,7 @@ GOLDEN_WHOLE = [
     # (sku, segment count override, picked colour, frame). 0x15: white slot ff ff ff, picked colour as tint
     ("H60A6", None, 0xFFB969, "33051501ffffff0bb8ffb969ff1f0000000000a1"),    # 13 segments, mask 1fff
     ("H60A6", None, 0xFFB46B, "33051501ffffff0bb8ffb46bff1f0000000000ae"),    # second tint of 3000 K
-    ("H6641", None, 0xE5E9FF, "33051501ffffff1f40e5e9ffffff000000000071"),    # 16 segments, 8000 K
+    ("H6641", 14, 0xE5E9FF, "33051501ffffff1f40e5e9ffff3f0000000000b1"),      # 14 pieces (IC 70), 8000 K
     ("H6062", 15, 0xFFE7CC, "33051501ffffff1388ffe7ccff7f000000000012"),      # 15 sections, 5000 K
     ("H6047", None, 0xFFC987, "33051501ffffff0dacffc987ff03000000000031"),    # both bars, 3500 K
     # 0x0d: picked colour, K, then the FIRST tint of K (the same frame for the h6188 scheme)
@@ -119,7 +119,7 @@ GOLDEN_WHOLE = [
     ("H6004", None, 0xFFB46B, "33050dffb46b0bb8ffb969000000000000000087"),
     ("H6006", None, 0xFFD5A1, "33050dffd5a10fa0ffd5a1000000000000000094"),
     # white type rgb_self_tem_color, every piece: the slot is 00 00 00 (Bytes.r kind 3, 12 pieces)
-    ("H61E5", None, 0xFFB969, "330515010000000bb8ffb969ff0f00000000004e"),
+    ("H61E5", 12, 0xFFB969, "330515010000000bb8ffb969ff0f00000000004e"),
 ]
 
 
@@ -127,7 +127,7 @@ def test_the_golden_literals_equal_the_independent_frame_builders() -> None:
     # recomputed here (checksums included), so a wrong literal cannot hide a wrong builder
     assert bytes.fromhex(GOLDEN_WHOLE[0][3]) == _cct15(3000, (0xFF, 0xB9, 0x69), 0xFF, 0x1F)
     assert bytes.fromhex(GOLDEN_WHOLE[1][3]) == _cct15(3000, (0xFF, 0xB4, 0x6B), 0xFF, 0x1F)
-    assert bytes.fromhex(GOLDEN_WHOLE[2][3]) == _cct15(8000, (0xE5, 0xE9, 0xFF), 0xFF, 0xFF)
+    assert bytes.fromhex(GOLDEN_WHOLE[2][3]) == _cct15(8000, (0xE5, 0xE9, 0xFF), 0xFF, 0x3F)
     assert bytes.fromhex(GOLDEN_WHOLE[3][3]) == _cct15(5000, (0xFF, 0xE7, 0xCC), 0xFF, 0x7F)
     assert bytes.fromhex(GOLDEN_WHOLE[4][3]) == _cct15(3500, (0xFF, 0xC9, 0x87), 0xFF, 0x03)
     assert bytes.fromhex(GOLDEN_WHOLE[5][3]) == _cct0d(4000, (0xFF, 0xD5, 0xA1))
@@ -184,13 +184,13 @@ def test_h60a6_zone_picks_are_one_cct_frame_with_the_zone_mask() -> None:
 
 
 def test_segment_picks_are_one_cct_frame_with_the_segment_mask() -> None:
-    d = _dev("H6641")
+    d = _dev("H6641", 14)
     asyncio.run(d.set_segment_rgb([0, 3], (0xE5, 0xE9, 0xFF)))
     assert [f.hex() for f in _sent(d)] == [_cct15(8000, (0xE5, 0xE9, 0xFF), 0x09, 0x00).hex()]
     d = _dev("H6062", 33)                           # more than 16 segments: a 5-byte mask
     asyncio.run(d.set_segment_rgb([32], (0xFF, 0xE7, 0xCC)))
     assert _sent(d) == [_cct15(5000, (0xFF, 0xE7, 0xCC), 0, 0, 0, 0, 1)]
-    d = _dev("H61E5")             # rgb_self_tem_color on some pieces: the tint in the slot, Kelvin and tint 0
+    d = _dev("H61E5", 12)         # rgb_self_tem_color on some pieces: the tint in the slot, Kelvin and tint 0
     asyncio.run(d.set_segment_rgb([0], (0xFF, 0xB9, 0x69)))
     assert _sent(d) == [_frame(0x33, 0x05, 0x15, 0x01, 0xFF, 0xB9, 0x69, 0, 0, 0, 0, 0, 0x01, 0x00)]
 
@@ -210,7 +210,7 @@ def test_slider_paths_are_unchanged() -> None:
     d = _dev("H6008")
     asyncio.run(d.set_color_temp(4000))
     assert _sent(d) == [_cct0d(4000, (0xFF, 0xD5, 0xA1))]
-    d = _dev("H61E5")                   # white type rgb_self_tem_color over every piece: slot 00 00 00
+    d = _dev("H61E5", 12)               # white type rgb_self_tem_color over every piece: slot 00 00 00
     asyncio.run(d.set_color_temp(3000))
     asyncio.run(d.turn_on(kelvin=3000))
     whole = bytes.fromhex(GOLDEN_WHOLE[-1][3])
@@ -218,7 +218,7 @@ def test_slider_paths_are_unchanged() -> None:
 
 
 # ── every table colour, every scheme: CCT iff inside the SKU's inclusive range ─
-WHOLE_CASES = [("H60A6", None), ("H6641", None), ("H6062", 15), ("H6047", None),
+WHOLE_CASES = [("H60A6", None), ("H6641", 14), ("H6062", 15), ("H6047", None),
                ("H6188", None), ("H6008", None), ("H6004", None), ("H6052", None), ("H6006", None)]
 
 
@@ -280,7 +280,7 @@ def test_2000k_colour_is_rgb_below_a_2700k_minimum_and_cct_at_a_2000k_minimum() 
     asyncio.run(d.set_rgb((0xFF, 0x8D, 0x0B)))
     assert _sent(d)[0].hex() == "33050dff8d0b0000000000000000000000000042"
     for sku in ("H6641", "H6052", "H6188", "H6062"):                       # minimum 2000
-        d = _dev(sku, 15 if sku == "H6062" else None)
+        d = _dev(sku, {"H6062": 15, "H6641": 14}.get(sku))
         asyncio.run(d.set_rgb((0xFF, 0x8D, 0x0B)))
         assert d.state.color_temp_kelvin == 2000, sku
 
@@ -395,7 +395,7 @@ def test_h61a8_sends_the_apps_0x15_frames() -> None:
 # ── state after a conversion: Kelvin, no rgb (the app syncs the Kelvin) ──────
 # kelvin None: a SKU without COLOR_TEMP (H7318, legacy_02) keeps the picked colour, as ColorViewModel.u0 does.
 @pytest.mark.parametrize(("sku", "segments", "colour", "kelvin"),
-                         [("H60A6", None, 0xFFB969, 3000), ("H6641", None, 0xE5E9FF, 8000),
+                         [("H60A6", None, 0xFFB969, 3000), ("H6641", 14, 0xE5E9FF, 8000),
                           ("H6062", 15, 0xFFE7CC, 5000), ("H6047", None, 0xFFC987, 3500),
                           ("H6188", None, 0xFFD1A3, 4000), ("H6008", None, 0xFFB46B, 3000),
                           ("H6004", None, 0xFFB969, 3000), ("H6052", None, 0xFF8D0B, 2000),
@@ -430,6 +430,6 @@ def test_h6047_state_tracks_the_kelvin_per_bar() -> None:
 
 
 def test_segment_pick_updates_the_segment_colour_state() -> None:
-    d = _dev("H6641")
+    d = _dev("H6641", 14)
     asyncio.run(d.set_segment_rgb([2], (0xE5, 0xE9, 0xFF)))
     assert [(s.index, s.rgb) for s in d.state.segments] == [(2, (0xE5, 0xE9, 0xFF))]

@@ -133,10 +133,18 @@ the row lacks fails the build: nothing defaults silently.
   gradual control) is made on every poll too and its
   reply discarded (``DeviceProfile.gradual_read_only``), on a polled light row only: that is where the
   default read is traced (the h7050 screens), and a status or plug row's reads are its own strategy's. An
-  ``ic_num`` read goes with ``ic_pieces`` and the direct colour read-back: it sizes the read-back's pieces
-  (H6641), or, with ``ic_pieces: sections``, its two section bytes do
-  (``DeviceProfile.color_readback_ic_sections``), or, with ``ic_pieces: fixed``, it is made on every poll and
-  discarded (``DeviceProfile.ic_num_read_only``: a fixed piece count). Every command
+  ``ic_num`` read goes with ``ic_pieces`` and the direct colour read-back: an object form's rule over the IC
+  count sizes the read-back's pieces (``DeviceProfile.color_readback_live_ic``: the count clamped and divided,
+  rounding up, or down under ``rounding: floor``, H6641 and the h705a rows, an IC of 0 no count under
+  ``skip_zero``, h705a 184; an IC table, H6609; or two strips' counts capped and summed, H1A45:
+  ``_readback.live_ic_pieces``; on a row whose wire ``f_40`` is ``ic_pair`` the screen reads the reply with
+  the IC-pair reader, ``DeviceProfile.color_readback_ic_pair_reader``, no count where it throws, which the
+  pair rule needs), and the writes (``color_writes_live_ic``:
+  each poll's pieces are ``Device.segment_count``, the whole-device mask and the segment index bound, as the
+  screen's strip takes them from the stored IC, ``ColorPieceConfig.c``; the wire ``num_segments`` is only the
+  count before the first read), or, with ``ic_pieces: sections``, its two section bytes size the read-back's
+  alone (``DeviceProfile.color_readback_ic_sections``), or, with ``ic_pieces: fixed``, it is made on every
+  poll and discarded (``DeviceProfile.ic_num_read_only``: a fixed piece count). Every command
   form the library sends or reads for the row must be the row's (wire ``forms``), a polled row's aa 05 reply
   is read with the row's wire ``mode`` (``DeviceProfile.mode_decode``, over the spec's default,
   :data:`_MODE_UNSET`), and a colour-group read is of 4-byte records in the row's wire
@@ -214,7 +222,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
-from typing import Any, Final, NamedTuple, NoReturn, Required, TypedDict
+from typing import Any, Final, NamedTuple, NoReturn, NotRequired, Required, TypedDict
 
 
 # ── the projected devices.yaml (devices.schema.json definitions) ────────────────────────────────────
@@ -226,10 +234,30 @@ class ZoneRow(TypedDict):
 
 
 class IcPieces(TypedDict):
-    """``clientRow.ic_pieces``."""
+    """``clientRow.ic_pieces``: the IC count clamped and divided."""
     min_ic: int
     max_ic: int
     ic_per_piece: int
+    rounding: NotRequired[str]
+    skip_zero: NotRequired[bool]
+
+
+class IcEntry(TypedDict):
+    """``clientRow.ic_pieces.table`` item."""
+    ic: int
+    pieces: int
+
+
+class IcTable(TypedDict):
+    """``clientRow.ic_pieces``: pieces by the IC count's value."""
+    table: tuple[IcEntry, ...]
+    otherwise: int
+
+
+class IcPair(TypedDict):
+    """``clientRow.ic_pieces``: two strips' IC counts, each capped and summed."""
+    pair_max: int
+    otherwise: int
 
 
 class Branch(TypedDict, total=False):
@@ -291,7 +319,7 @@ class Row(TypedDict, total=False):
     connect_reads: tuple[str, ...]
     connect_writes: tuple[str, ...]
     power_resync: bool
-    ic_pieces: IcPieces | str
+    ic_pieces: IcPieces | IcTable | IcPair | str
     by_pact: dict[str, Branch]
     by_firmware: tuple[FirmwareBranch, ...]
 
@@ -1130,12 +1158,16 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
     ic = row.get("ic_pieces")
     if ("ic_num" in reads) != (ic is not None) or (ic is not None and color_readback != "mechanism_a_direct"):
         fail("an ic_num read and ic_pieces go together, with the direct colour read-back")
-    sized = None if ic is None or isinstance(ic, str) else ic   # the IC count sizes the pieces (H6641)
     if isinstance(ic, str) and ic not in ("fixed", "sections"):
-        fail(f"ic_pieces {ic!r} (fixed, sections, or the IC sizing)")
-    if sized is not None and not (0 <= sized["min_ic"] <= sized["max_ic"] and sized["ic_per_piece"] >= 1):
-        fail(f"ic_pieces {dict(sized)} (min_ic <= max_ic, ic_per_piece >= 1)")
-    live_ic = sized is not None
+        fail(f"ic_pieces {ic!r} (fixed, sections, or an IC rule)")
+    # An object form: a rule over the live IC count (H6641's clamp and divisor, the h705a floor, H6609's
+    # table, H1A45's pair).
+    ic_rule = {} if ic is None or isinstance(ic, str) else _ic_rule(ic, fail)
+    live_ic = bool(ic_rule)
+    if live_ic and forms.get("f_40") == "ic_pair":   # ControllerIcNum.e reads the reply: none where it throws
+        ic_rule["color_readback_ic_pair_reader"] = True
+    elif "color_readback_ic_pair_cap" in ic_rule:
+        fail("ic_pieces pair_max without wire f_40 ic_pair (the pair is the IC-pair reader's)")
     section_count = "cmd_41" in reads
     if section_count and forms.get("f_41") != "section_count":
         fail("an aa 41 read without f_41 section_count")
@@ -1213,6 +1245,7 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
         "color_readback": color_readback,
         "color_readback_per_batch": int(per_group) if color_readback == "mechanism_a_direct" else 3,
         "color_readback_live_ic": live_ic,
+        "color_writes_live_ic": live_ic,   # the live pieces size the writes too (ColorPieceConfig.c)
         "color_readback_ic_sections": ic == "sections",
         "detail_power_read": power_read == "aa34_detail",
         "ic_num_read_only": ic == "fixed",
@@ -1266,9 +1299,7 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
         mode = {**_MODE_UNSET, **w["mode"]}   # the aa 05 reply's (_check_mode: no mode_status)
         if mode != _MODE_UNSET:
             out["mode_decode"] = tuple(sorted(mode.items()))
-    if sized is not None:
-        out["color_readback_ic_range"] = (sized["min_ic"], sized["max_ic"])
-        out["color_readback_ic_per_piece"] = sized["ic_per_piece"]
+    out.update(ic_rule)
     if relay:
         relay_power = need(row.get("relay_power", cp.get("relay_power")), "relay_power")
         if relay_power not in RELAY_POWERS:
@@ -1296,6 +1327,40 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
         if unknown:
             fail(f"mode_color_parse {sorted(unknown)} not in the mode_color_parse table")
     _check_forms(forms, _forms_used(out, caps, tuple(t for read in status_reads for t in read), relay), fail)
+    return out
+
+
+# clientRow ic_pieces rounding (DeviceProfile.color_readback_ic_rounding).
+IC_ROUNDINGS: Final = ("ceil", "floor")
+
+
+def _ic_rule(ic: IcPieces | IcTable | IcPair, fail: Fail) -> dict[str, Any]:
+    """An object form of ``ic_pieces`` as the DeviceProfile fields that hold its rule over the live IC count:
+    the clamp, divisor, (where it is not ``ceil``) rounding and (where set) ``skip_zero``; or the ``(IC,
+    pieces)`` table; or the pair cap; the last two with the pieces ``otherwise``."""
+    rule: Mapping[str, Any] = ic
+    if "table" in rule:
+        table = tuple((entry["ic"], entry["pieces"]) for entry in rule["table"])
+        if (not table or len({at for at, _n in table}) != len(table)
+                or not all(at >= 0 and n >= 1 for at, n in table) or rule["otherwise"] < 1):
+            fail(f"ic_pieces {dict(rule)} (distinct ics >= 0, pieces and otherwise >= 1)")
+        return {"color_readback_ic_table": table, "color_readback_ic_otherwise": rule["otherwise"]}
+    if "pair_max" in rule:
+        if rule["pair_max"] < 1 or rule["otherwise"] < 1:
+            fail(f"ic_pieces {dict(rule)} (pair_max and otherwise >= 1)")
+        return {"color_readback_ic_pair_cap": rule["pair_max"],
+                "color_readback_ic_otherwise": rule["otherwise"]}
+    rounding, skip_zero = rule.get("rounding", "ceil"), rule.get("skip_zero", False)
+    if not (0 <= rule["min_ic"] <= rule["max_ic"] and rule["ic_per_piece"] >= 1 and rounding in IC_ROUNDINGS
+            and isinstance(skip_zero, bool)):
+        fail(f"ic_pieces {dict(rule)} (min_ic <= max_ic, ic_per_piece >= 1, rounding one of "
+             f"{list(IC_ROUNDINGS)}, skip_zero a boolean)")
+    out: dict[str, Any] = {"color_readback_ic_range": (rule["min_ic"], rule["max_ic"]),
+                           "color_readback_ic_per_piece": rule["ic_per_piece"]}
+    if rounding != "ceil":
+        out["color_readback_ic_rounding"] = rounding
+    if skip_zero:   # VM4H608A.S4: an IC of 0 stores no count
+        out["color_readback_ic_skip_zero"] = True
     return out
 
 

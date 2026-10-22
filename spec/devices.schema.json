@@ -409,14 +409,46 @@
               "properties": {
                 "min_ic": { "type": "integer", "minimum": 0 },
                 "max_ic": { "type": "integer", "minimum": 0 },
-                "ic_per_piece": { "type": "integer", "minimum": 1 }
+                "ic_per_piece": { "type": "integer", "minimum": 1 },
+                "rounding": { "enum": ["ceil", "floor"], "description": "How the division rounds: ceil (absent: IC / n + (IC % n != 0), H61D3Support.e) or floor (Java's integer division IC / n, h705a Support.b for 125 / 240)." },
+                "skip_zero": { "type": "boolean", "description": "true = an IC count of 0 gives no count, as a failed read: the screen's IC check skips it and keeps the count it stored (h705a VM4H608A.S4 for 184), so the writes keep the count they have and that poll's walk is skipped. Absent = 0 is a count." }
               },
-              "description": "ceil(clamp(IC, min_ic, max_ic) / ic_per_piece) pieces."
+              "description": "clamp(IC, min_ic, max_ic) / ic_per_piece pieces, rounded as rounding says (up when absent)."
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["table", "otherwise"],
+              "properties": {
+                "table": {
+                  "type": "array",
+                  "minItems": 1,
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["ic", "pieces"],
+                    "properties": { "ic": { "type": "integer", "minimum": 0 }, "pieces": { "type": "integer", "minimum": 1 } }
+                  },
+                  "description": "IC counts the rule names, each with its pieces (an IC at most once)."
+                },
+                "otherwise": { "type": "integer", "minimum": 1, "description": "The pieces at any other IC count." }
+              },
+              "description": "Pieces by the IC count's value: the entry's where the IC equals its ic, else otherwise (h6609 Support.getColorPieceSize(173, IC): 18 at 36, else 14)."
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["pair_max", "otherwise"],
+              "properties": {
+                "pair_max": { "type": "integer", "minimum": 1, "description": "The most pieces each strip's IC count gives." },
+                "otherwise": { "type": "integer", "minimum": 1, "description": "The pieces when the reply carries no second strip." }
+              },
+              "description": "Two strips: min(IC 1, pair_max) + min(IC 2, pair_max) where the IC-pair reader (ControllerIcNum.e) returns a second pair, the first IC is not 0 (the list VM4Light.h5 keeps) and the second is above 0, else otherwise; no count where that reader throws (govee_state ic_count app_pair_fails). H61D3Support.e and ColorModeH1A45's strip for goodsType 375: min(ic1, 15) + min(ic2, 15), else 30."
             },
             { "const": "fixed", "description": "The IC count sizes nothing: the screen's piece count is fixed (the row's static pieces)." },
             { "const": "sections", "description": "The read-back walks the aa 40 reply's two section bytes summed as Java bytes (govee_state ic_count section_sum, as the sectioned IC-pair reader ControllerIcNum.d passes them on) when the sum is not 0, else the row's static pieces, in Java's sum / group + (sum % group != 0) groups (none below 1); no walk where the reader throws (rgbiclight VM4Light.N5). Writes keep the static pieces." }
           ],
-          "description": "The colour pieces from the IC count read at connect (connect_reads ic_num)."
+          "description": "The colour pieces from the IC count read at connect (connect_reads ic_num): an object form derives them from the aa 40 reply's IC count (govee_state ic_count ic_count_checked; no count where it is absent), or from its IC pair. Where the row's wire f_40 is ic_pair the screen reads the reply with the IC-pair reader (ControllerIcNum.e), and there is no count where that reader throws (govee_state ic_count app_pair_fails: either IC field 0x1000 or more), whichever form; the pair form needs it. An object form's pieces size the direct read-back's walk and every colour write: they are every pick's position set, the whole-device mask included, with no cap but the rule's, as the screens that size their strip by the IC count build it (ColorPieceConfig.c over the stored IC; the row's doc names its strip). A strip that the connect read does not resize (the h61d3 and H7067 screens store the count without posting deviceInfoChanged; the row's doc says so) keeps the count it was built with until a calibration or settings event, so in the first app session after the IC changed with no app connected its picks have the old count, where the library's writes take the new one. The row's wire num_segments is then only the count before the first read. sections sizes the read-back alone."
         },
         "by_pact": { "type": "object", "propertyNames": { "pattern": "^[0-9]+,[0-9]+$" }, "additionalProperties": { "$ref": "#/$defs/clientBranch" }, "description": "Pact branches, keyed 'pactType,pactCode' (decimal) (clientBranch)." },
         "by_firmware": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/clientFirmware" }, "description": "Firmware branches, applied after by_pact (clientFirmware)." },

@@ -2326,7 +2326,14 @@ families:
             the afterConnected one). Connect: the default Compose4InfoBleIot read (aa 01, aa 04, aa a3 through
             ControllerGradual4BleWifi, aa 05), the aa 40 IC count (ReadIcController, bytes 0-1 signed, clamped to [41, 70]),
             then the direct aa a5 groups of H61D3Support.t = 4 over ceil(IC / 5) pieces (VM4Light.w5); the reply's third
-            byte is not used. Gradual: the screen reads the flag at connect (that aa a3) and writes it 33 a3. Live
+            byte is not used. The same pieces size every colour write: the strip (ColorMode, its colorPiece supplier
+            ColorPieceConfig.c over the stored IC, ViewColorMode.y0 / z0) is every pick's position set, so a 70-IC
+            strip's whole-device mask is ff 3f (14 pieces). The connect read stores the count (VM4Light.k5 -> G0,
+            uploaded by T5) and posts no deviceInfoChanged, so a built strip keeps its count until a calibration
+            (VM4Light.d5) or sub-IC event posts one (ColorMode.M -> V). A documented divergence: in the first app
+            session after the IC changed with no app connected, the app's strip has the old count and the library's
+            writes the new one (the next screen open builds the strip from the stored new count). The other h61d3
+            IC-sized rows read and store the count the same way. Gradual: the screen reads the flag at connect (that aa a3) and writes it 33 a3. Live
             (firmware 1.01.13): aa a3 answers, 33 a3 01 / 00 are acked and read back, and BLE brightness steps fade with the
             flag on or off. Scenes: the control screen's set {0, 1, 2, 3} (ConfigDetail); version 10 is not offered there. Kelvin
             version 0 = [2000, 9000] (KelvinConfig has no 247 key); brightness version 1 = percent. Live: ac 03 03 41 30 a5
@@ -2341,7 +2348,10 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:3756-3758,4625-4627,10848-10851,13068-13069
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:402-405
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:198-212,251-259
-            - split_h61d3/com/govee/h61d3/adjustNew/VM4Light.java:811-813
+            - split_h61d3/com/govee/h61d3/adjustNew/VM4Light.java:398-405,502-513,583-589,811-813
+            - split_h61d3/com/govee/h61d3/adjustNew/color/ColorMode.java:82-100,120-157,274-296
+            - base-classes11/com/govee/base2light/pact/newdetail/content/color/ViewColorMode.java:376-390
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/ColorPieceConfig.java:62-252
         "263":   # H703A / H703B, the H703ADetailActivity screen: the 0xAC status read replaces connectBleSuc
           models: [H703A, H703B]
           pacts: ["1,1"]
@@ -2477,7 +2487,7 @@ families:
         "239":   # H61E5, the adjustNew screen of row 242 with white type 3
           models: [H61E5]
           pacts: ["1,1", "2,1"]
-          support: modelled   # traced, held: the live piece count and the segment-brightness gate (doc)
+          support: modelled   # traced, held: the segment-brightness gate (doc)
           white_type: rgb_self_tem_color
           color_temp_control: whole_device
           color_functions: [segment_brightness, color_temperature]
@@ -2503,13 +2513,12 @@ families:
             some pieces and the library refuses one. The partial Bytes.r form comes only from an RGB pick of a tint colour
             on some pieces (canClickColor, posSet = the selection). The illumination tab's Kelvin (Config.N[0] = EM ->
             Bytes.C, which leads ff ff ff here) is a second path, not modelled. Config.I all true; gradual Config.G = 0 (33
-            a3 <on>). Kelvin: KelvinConfig 239 -> version 2 = [2700, 6500]; brightness version 1. Held behind
-            allow_modelled for two colour-page differences: (1) the app's posSet is the live piece count (ColorMode.x, the
-            colorPiece supplier: ceil(IC / 3)) and the library's mask the cap of 12, so a tint-colour pick over exactly the
-            live pieces is whole in the app (00 00 00 lead) but partial in the library (the tint as RGB) until the live count
-            sizes the writes (pieces-live-write-count; below the cap a whole-strip write is also the same frame over a wider
-            mask, as on 242); (2) ColorMode.canClickBrightness refuses segment brightness while a selected piece shows a
-            Kelvin tint colour (R -> ColorUtils.o), a gate the library doesn't model. Scenes untraced. Not
+            a3 <on>). Kelvin: KelvinConfig 239 -> version 2 = [2700, 6500]; brightness version 1. The app's posSet is the
+            live piece count (ColorMode.x, the colorPiece supplier: ceil(IC / 3)), which the library's writes take too
+            since 1.9.0 (row 247, with its first-session divergence), so a tint-colour pick over every live piece is
+            whole in both (00 00 00 lead). Held behind allow_modelled for one colour-page difference:
+            ColorMode.canClickBrightness refuses segment brightness while a selected piece shows a Kelvin tint colour (R
+            -> ColorUtils.o), a gate the library doesn't model. Scenes untraced. Not
             hardware-verified.
           doc-ref:
             - split_h61d3/com/govee/h61d3/pact/H61D3Support.java:727-743,853-861,1131-1204,1314-1316,1547-1561
@@ -2549,8 +2558,9 @@ families:
             ff ff ff) is not modelled. The screen and connect are row 242's: aa 40 clamped to H61D3Support.s = 0..60,
             ceil(IC / 4) pieces, at most 15, direct aa a5 groups of 4. Colour (ColorMode): ColorModeControllerConfig.c ->
             Config.x = 0 -> Config.Yt; Config.I all true; gradual Config.G = 0 (33 a3 <on>). Kelvin: KelvinConfig 246 ->
-            version 2 = [2700, 6500]; brightness version 1. Held behind allow_modelled for row 239's two differences: the
-            live piece count (ceil(IC / 4)) against the cap of 15, and the segment-brightness gate (canClickBrightness).
+            version 2 = [2700, 6500]; brightness version 1. The writes take the live piece count (ceil(IC / 4), at most
+            15), as row 239's. Held behind allow_modelled for row 239's difference, the segment-brightness gate
+            (canClickBrightness).
             Scenes untraced. Not hardware-verified.
           doc-ref:
             - split_h61d3/com/govee/h61d3/pact/H61D3Support.java:727-743,862-869,1131-1204,1314-1316,1547-1561
@@ -2566,9 +2576,10 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/ColorModeControllerConfig.java:205-257,730-785
             - base-classes10/com/govee/base2light/capability/color/LightColorCapabilityCenter.java:1078-1089,1118-1125
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:401-411,433-437,1714-1716
-        "375":   # H1A45; no support: the two-IC piece count has no library form (G2)
+        "375":   # H1A45, the adjustNew screen with ColorModeH1A45
           models: [H1A45]
           pacts: ["1,1", "1,2"]
+          support: app_traced
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments, gradual]
           zones: []
@@ -2576,11 +2587,12 @@ families:
           scene_dialect: untraced
           kelvin_range: [1000, 10000]
           brightness_range: [1, 100]
-          connect_reads: [brightness, gradual, color_group]
+          connect_reads: [brightness, gradual, ic_num, color_group]
           connect_writes: []
           heartbeat: power
+          ic_pieces: { pair_max: 15, otherwise: 30 }
           doc: >-
-            H1A45. NO SUPPORT. Model.t -> NewLightDetailActivity; VM4Light.j5 reads aa 40 with the pair parser
+            H1A45. Model.t -> NewLightDetailActivity; VM4Light.j5 reads aa 40 with the pair parser
             (ControllerIcNum.e) and keeps [ic1, ic2]; pieces = min(ic1, 15) + min(ic2, 15), or 30 when the reply carries one
             count (H61D3Support.e for V(375); ColorPieceConfig.j case LightRecycleViewGesture.W); ColorModeH1A45 draws two
             15-piece strips with no per-strip power (zones none). The 7.7.02 colour tables key 375 as the named constant
@@ -2590,17 +2602,24 @@ families:
             33 a3 <on>; relative brightness Config.z -> WU = 0, and Config.i0 -> TV -> ColorModeControllerConfig.z ->
             Bytes.G 15 02 <bri> <mask> (as row 367). Kelvin: KelvinConfig key 375 -> T1 = version 5 = [1000, 10000].
             Brightness: no BrightnessConfig key, version 1, percent. 7.5.12 has the same values. Apart from the pieces
-            this is row 367's screen and colour config. connect_reads leaves out ic_num although the screen sends aa 40:
-            the read is the pair form, which ic_pieces cannot state, and the schema ties ic_num to ic_pieces (gap G2,
-            the row's one blocker). Scenes untraced.
+            this is row 367's screen and colour config. ic_pieces states the pair rule (pair_max 15, otherwise 30), which
+            sizes the aa a5 walk (VM4Light.w5 over H61D3Support.k), and the strip ColorModeH1A45.d0 draws from the same
+            list (o0 / p0: strip 1 then strip 2, one contiguous position set), so every colour, segment-brightness and
+            Kelvin pick's position set too (canClickColor / canClickBrightness / canClickColorTem, per position). A reply
+            that drops its second IC after a pair keeps the pair's count in the app until the screen closes (VM4Light.h5
+            stores none), while the library takes 30 at that read. The strip is drawn when the view attaches
+            (ColorModeH1A45.m -> d0) and redrawn only on deviceInfoChanged, which the connect read doesn't post
+            (VM4Light.h5 -> G0 / T5, S5), so the first app session after the IC pair changed with no app connected keeps
+            the old strip where the library takes the new count (row 247's divergence). Not hardware-verified. Scenes
+            untraced.
           doc-ref:
             - split_h61d3/com/govee/h61d3/pact/H61D3Support.java:542-555,786-788,945-953,1131-1154
             - base-classes2/com/govee/shared/checker/KmpGoodsType.java:146
             - split_h61d3/com/govee/h61d3/pact/H1A45BleIotSkuItem.java:7-9
-            - split_h61d3/com/govee/h61d3/adjustNew/VM4Light.java:542-581,636-669,1182-1199
+            - split_h61d3/com/govee/h61d3/adjustNew/VM4Light.java:398-405,542-581,636-669,904-911,1182-1199
             - base-classes11/com/govee/base2light/kt/general_controller/ControllerIcNum.java:141-157
             - split_h61d3/com/govee/h61d3/adjustNew/ConfigDetail.java:94-106
-            - split_h61d3/com/govee/h61d3/adjustNew/color/ColorModeH1A45.java:91-125,188-209,1063-1066
+            - split_h61d3/com/govee/h61d3/adjustNew/color/ColorModeH1A45.java:91-125,166-209,606-623,933-990,1047-1091
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/ColorModeControllerConfig.java:730-765,1184-1196
             - base-classes11/com/govee/base2light/pact/newdetail/content/color/ColorViewModel.java:715-742
             - base-classes11/com/govee/base2light/pact/newdetail/IColorModeFuc.java:94-98
@@ -2697,10 +2716,9 @@ families:
             (KmpGoodsType.GOODS_TYPE_VALUE_H61B0_B3_B6, the H61B0B3B6BleIotSkuItem) and has no per-SKU branch on this path
             but the DynamicDomainConfig entry (H61D3Support.y0), so it runs as H61B3. H61B0's IC count is unknown: the
             catalogue snapshot has no H61B0 entry (H61B3 ic 30, H61B6 ic 100), the app names it only as a SKU string
-            (H61D3Support.c) with no count of its own, and no unit is on the bench. The live aa 40 count sizes only
-            the read-back; the library writes the static 15-piece mask (the row's 15, the app's min(IC, 15) cap), so
-            H61B0 is served on the assumption that it reports at least 15 ICs, as the catalogue's H61B3 / H61B6 do,
-            until a live write mask lands.
+            (H61D3Support.c) with no count of its own, and no unit is on the bench. The live aa 40 count sizes the
+            read-back and every write (min(IC, 15), as row 247's live mask), so H61B0 assumes no count but the one
+            before the first read, the row's 15 (the app's cap).
           doc-ref:
             - split_h61d3/com/govee/h61d3/pact/H61D3Support.java:887-895,1206-1208,1016-1019,1155-1158,1203,1557-1558,1576-1578
             - base-classes2/com/govee/shared/checker/KmpGoodsType.java:200
@@ -2729,7 +2747,7 @@ families:
         "299":   # H61B8 / H61B9
           models: [H61B8, H61B9]
           pacts: ["1,1", "2,2"]
-          support: modelled
+          support: app_traced
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments, scenes, gradual]
           zones: []
@@ -2747,10 +2765,10 @@ families:
             VM4Light.j5): Compose4InfoBleIot read (aa 04, aa a3, aa 01, extra reads, aa 05), the aa 40 IC count, direct
             aa a5 groups of 4. Pieces = ceil(IC / 5) with NO app clamp (H61D3Support.s has no 299 range; e takes divisor
             5 for 261 / 299). max_ic 4095 is the largest count the app's reader keeps (a count of 0x1000 or more takes
-            ReadIcController.a's byte-swap branch). MODELLED: the static write-mask width has no app value (the app's
-            mask is the live piece count, unbounded); num_segments 56 is the most positions a 17-byte kelvin_tint frame
-            carries (Bytes.r copies at most 17 - 10 = 7 mask bytes), so a whole-device write covers any strip the frame
-            can address. Colour: ColorMode, Config.x = 0, Config.P = 1, Config.I all true; Config.B[299] = true
+            ReadIcController.a's byte-swap branch). Every colour write takes the live pieces, unbounded, as the strip does
+            (ColorMode's colorPiece, ColorPieceConfig.b, which divides 299's IC by 5), with row 247's first-session
+            divergence (the connect read stores the count without resizing a built strip); num_segments 56 is only the
+            count before the first aa 40 read. Colour: ColorMode, Config.x = 0, Config.P = 1, Config.I all true; Config.B[299] = true
             (brightness-group special) changes only the relative-brightness frames, which the library does not send.
             Kelvin version 2 = [2700, 6500]; brightness version 1 = percent; scenes {0, 1, 2, 3}. No account lock, as
             the traced rows. Not hardware-verified. Scene apply (BaseSceneViewMode.k3): a sceneType-5 scene whose param
@@ -2776,6 +2794,8 @@ families:
             - split_h61d3/com/govee/h61d3/H61D3Application.java:221
             - base-classes11/com/govee/base2light/pact/newdetail/content/scene/BaseSceneViewMode.java:864-903,1152-1200
             - base-classes10/com/govee/base2light/ac/diyNew/config/DiyNewConfig.java:61-65,140-146
+            - split_h61d3/com/govee/h61d3/adjustNew/color/ColorMode.java:82-100,120-157,274-296
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/ColorPieceConfig.java:62-252
         "367":   # H1A43 / H1A44
           models: [H1A43, H1A44]
           pacts: ["1,1", "1,2", "1,3"]
@@ -3212,7 +3232,7 @@ families:
         "261":   # H61F2 / H61F5 / H61F6
           models: [H61F2, H61F5, H61F6]
           pacts: ["2,2", "3,1", "4,1"]
-          support: modelled
+          support: app_traced
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments, scenes, gradual]
           zones: []
@@ -3230,8 +3250,10 @@ families:
             H61F2 / H61F5 / H61F6. Same screen and connect as the traced rows (j0 in VM4Light.j5): aa 04, aa a3, aa 01,
             aa 40, aa 05, direct aa a5 groups of 4; ColorModeV2, Config.x = 0, Config.P = 1, Config.I all true. Kelvin,
             pact-gated: KelvinConfig.R2 gives version 5 = [1000, 10000] at pact (4, 1) and version 2 = [2700, 6500]
-            otherwise (H61D3Support.n0 / o say the same), hence the by_pact 4,1 range. Modelled, as 299: pieces =
-            ceil(IC / 5) with no app clamp, so max_ic 4095 and num_segments 56 have no app value. Brightness version 1;
+            otherwise (H61D3Support.n0 / o say the same), hence the by_pact 4,1 range. Pieces = ceil(IC / 5) with no app
+            clamp (max_ic 4095, as 299), and every colour write takes them, as the strip does (ColorModeV2's colorPiece,
+            ColorPieceConfig.b; it too is resized only on deviceInfoChanged, ColorModeV2.V, so row 247's first-session
+            divergence holds); num_segments 56 is only the count before the first aa 40 read. Brightness version 1;
             scenes {0, 1, 2, 3}; no account lock. Scene apply (BaseSceneViewMode.k3): a sceneType-5 scene whose param
             starts 0x50 goes through the new-DIY parser H61F6DiyConfig registers for this goodsType at app init
             (ConfigDetail, from H61D3Application), which is not modelled; every other scene goes through parseSceneV1
@@ -3252,28 +3274,30 @@ families:
             - split_h61d3/com/govee/h61d3/H61D3Application.java:221
             - base-classes11/com/govee/base2light/pact/newdetail/content/scene/BaseSceneViewMode.java:864-903,1152-1200
             - base-classes10/com/govee/base2light/ac/diyNew/config/DiyNewConfig.java:61-65,140-146
+            - split_h61d3/com/govee/h61d3/adjustNew/color/ColorModeV2.java:82-100,120-157,273-295
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/ColorPieceConfig.java:62-252
       wire_cipher: runtime
       wire:
         forms: { f_01: light, f_09: datetime_epoch, f_ee_30: main_bit0_a }
         by_goods_type:
-          "247": { forms: { f_a5: color_group, f_15_01: kelvin_tint }, counts: { num_segments: 16 }, group: { rule: fixed, num_per_group: 4 }, doc: "H6641: direct aa a5 groups of H61D3Support.t = 4 (split_h61d3/com/govee/h61d3/adjustNew/VM4Light.java:636-669); 16 = the library's mask bound for ceil(IC / 5), not an app value: the live count is ceil(clamp(IC, 41, 70) / 5), at most 14" }
+          "247": { forms: { f_a5: color_group, f_15_01: kelvin_tint }, counts: { num_segments: 14 }, group: { rule: fixed, num_per_group: 4 }, doc: "H6641: direct aa a5 groups of H61D3Support.t = 4 (split_h61d3/com/govee/h61d3/adjustNew/VM4Light.java:636-669); 14 = the most pieces ceil(clamp(IC, 41, 70) / 5) gives (H61D3Support.s, e), the count before the first aa 40 read; every write takes the live count" }
           "263": { forms: { f_40: ic_pair, f_15_01: kelvin_tint }, counts: { num_segments: 1 }, doc: "H703A / H703B: 1 piece (H61D3Support.e); TLV 0x40 by the IC pair reader (split_h61d3/com/govee/h61d3/adjustNew/VM4Light$afterConnectedSingleReadDeviceInfo$1.java:125-126)" }
           "202": { forms: { f_a5: color_group, f_15_01: kelvin_tint }, counts: { num_segments: 14 }, group: { rule: fixed, num_per_group: 4 }, doc: "H61D2..H61D6: four direct aa a5 groups of 4 over a fixed 14 pieces (split_h61d3/com/govee/h61d3/adjust/newdetail/VM4LightH61d3.java:380-407; ColorPieceConfig.j, base-classes11/com/govee/base2light/pact/newdetail/config/fuc/ColorPieceConfig.java:385-386)" }
-          "239": { forms: { f_a5: color_group, f_15_01: kelvin_tint }, counts: { num_segments: 12 }, group: { rule: fixed, num_per_group: 4 }, doc: "H61E5: aa a5 groups of 4 (split_h61d3/com/govee/h61d3/adjustNew/VM4Light.java:636-669); 12 = ceil(36 / 3), the cap of H61D3Support.e over s(239); the frame layout is kelvin_tint, its white slot the row's white_type" }
-          "246": { forms: { f_a5: color_group, f_15_01: kelvin_tint }, counts: { num_segments: 15 }, group: { rule: fixed, num_per_group: 4 }, doc: "H61E6: aa a5 groups of 4 (split_h61d3/com/govee/h61d3/adjustNew/VM4Light.java:636-669); 15 = ceil(60 / 4), the cap of H61D3Support.e over s(246); the frame layout is kelvin_tint, its white slot the row's white_type" }
+          "239": { forms: { f_a5: color_group, f_15_01: kelvin_tint }, counts: { num_segments: 12 }, group: { rule: fixed, num_per_group: 4 }, doc: "H61E5: aa a5 groups of 4 (split_h61d3/com/govee/h61d3/adjustNew/VM4Light.java:636-669); 12 = ceil(36 / 3), the cap of H61D3Support.e over s(239), the count before the first aa 40 read (every write takes the live count); the frame layout is kelvin_tint, its white slot the row's white_type" }
+          "246": { forms: { f_a5: color_group, f_15_01: kelvin_tint }, counts: { num_segments: 15 }, group: { rule: fixed, num_per_group: 4 }, doc: "H61E6: aa a5 groups of 4 (split_h61d3/com/govee/h61d3/adjustNew/VM4Light.java:636-669); 15 = ceil(60 / 4), the cap of H61D3Support.e over s(246), the count before the first aa 40 read (every write takes the live count); the frame layout is kelvin_tint, its white slot the row's white_type" }
           "375": { forms: { f_40: ic_pair, f_a5: color_group, f_15_01: kelvin_tint }, counts: { num_segments: 30 }, group: { rule: fixed, num_per_group: 4 }, doc: "H1A45: 30 = 15 + 15, the cap of H61D3Support.e(375); the connect IC read is the pair form (ControllerIcNum.e, split_h61d3/com/govee/h61d3/adjustNew/VM4Light.java:551-575); 15 01 = Config.x[LightRecycleViewGesture.W] = 0 -> Yt (Bytes.h / Bytes.r type 1, base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:1894-1898,10935-10938,6519-6523,15581-15584)" }
-          "242": { forms: { f_a5: color_group, f_15_01: kelvin_tint }, counts: { num_segments: 14 }, group: { rule: fixed, num_per_group: 4 }, doc: "H6640: aa a5 groups of 4 (split_h61d3/com/govee/h61d3/adjustNew/VM4Light.java:636-669); 14 = the cap of H61D3Support.e(242); the app's mask is the live piece count (as 247's 16)" }
-          "264": { forms: { f_a5: color_group, f_15_01: kelvin_tint }, counts: { num_segments: 15 }, group: { rule: fixed, num_per_group: 4 }, doc: "H61B3 / H61B6: aa a5 groups of 4 (split_h61d3/com/govee/h61d3/adjustNew/VM4Light.java:636-669); 15 = the cap of H61D3Support.e(264); the app's mask is the live piece count (as 247's 16)" }
-          "299": { forms: { f_a5: color_group, f_15_01: kelvin_tint }, counts: { num_segments: 56 }, group: { rule: fixed, num_per_group: 4 }, doc: "H61B8 / H61B9: direct aa a5 groups of 4; 56 is MODELLED (no app cap on the pieces): the most mask positions a 17-byte kelvin_tint frame carries" }
-          "367": { forms: { f_a5: color_group, f_15_01: kelvin_tint }, counts: { num_segments: 15 }, group: { rule: fixed, num_per_group: 4 }, doc: "H1A43 / H1A44: aa a5 groups of 4 (split_h61d3/com/govee/h61d3/adjustNew/VM4Light.java:636-669); 15 = the cap of H61D3Support.e(367); the app's mask is the live piece count (as 247's 16)" }
-          "384": { forms: { f_a5: color_group, f_15_01: kelvin_tint }, counts: { num_segments: 7 }, group: { rule: fixed, num_per_group: 4 }, doc: "H1B6A: aa a5 groups of 4 (split_h61d3/com/govee/h61d3/adjustNew/VM4Light.java:636-669); 7 = the cap of H61D3Support.e(384); the app's mask is the live piece count (as 247's 16)" }
-          "387": { forms: { f_a5: color_group, f_15_01: kelvin_tint }, counts: { num_segments: 6 }, group: { rule: fixed, num_per_group: 4 }, doc: "H1AB1: aa a5 groups of 4 (split_h61d3/com/govee/h61d3/adjustNew/VM4Light.java:636-669); 6 = the cap of H61D3Support.e(387); the app's mask is the live piece count (as 247's 16)" }
-          "388": { forms: { f_a5: color_group, f_15_01: kelvin_tint }, counts: { num_segments: 10 }, group: { rule: fixed, num_per_group: 4 }, doc: "H1AB2: aa a5 groups of 4 (split_h61d3/com/govee/h61d3/adjustNew/VM4Light.java:636-669); 10 = the cap of H61D3Support.e(388); the app's mask is the live piece count (as 247's 16)" }
-          "389": { forms: { f_a5: color_group, f_15_01: kelvin_tint }, counts: { num_segments: 20 }, group: { rule: fixed, num_per_group: 4 }, doc: "H1AB3: aa a5 groups of 4 (split_h61d3/com/govee/h61d3/adjustNew/VM4Light.java:636-669); 20 = the cap of H61D3Support.e(389); the app's mask is the live piece count (as 247's 16)" }
-          "400": { forms: { f_a5: color_group, f_15_01: kelvin_tint }, counts: { num_segments: 5 }, group: { rule: fixed, num_per_group: 4 }, doc: "H1A42: aa a5 groups of 4 (split_h61d3/com/govee/h61d3/adjustNew/VM4Light.java:636-669); 5 = the cap of H61D3Support.e(400); the app's mask is the live piece count (as 247's 16)" }
-          "403": { forms: { f_a5: color_group, f_15_01: kelvin_tint }, counts: { num_segments: 8 }, group: { rule: fixed, num_per_group: 4 }, doc: "H1AA2: aa a5 groups of 4 (split_h61d3/com/govee/h61d3/adjustNew/VM4Light.java:636-669); 8 = the cap of H61D3Support.e(403); the app's mask is the live piece count (as 247's 16)" }
-          "404": { forms: { f_a5: color_group, f_15_01: kelvin_tint }, counts: { num_segments: 10 }, group: { rule: fixed, num_per_group: 4 }, doc: "H1AA5: aa a5 groups of 4 (split_h61d3/com/govee/h61d3/adjustNew/VM4Light.java:636-669); 10 = the cap of H61D3Support.e(404); the app's mask is the live piece count (as 247's 16)" }
-          "261": { forms: { f_a5: color_group, f_15_01: kelvin_tint }, counts: { num_segments: 56 }, group: { rule: fixed, num_per_group: 4 }, doc: "H61F2 / H61F5 / H61F6: direct aa a5 groups of 4; 56 is modelled (no app cap on the pieces)" }
+          "242": { forms: { f_a5: color_group, f_15_01: kelvin_tint }, counts: { num_segments: 14 }, group: { rule: fixed, num_per_group: 4 }, doc: "H6640: aa a5 groups of 4 (split_h61d3/com/govee/h61d3/adjustNew/VM4Light.java:636-669); 14 = the cap of H61D3Support.e(242), the count before the first aa 40 read; every write takes the live count (as 247)" }
+          "264": { forms: { f_a5: color_group, f_15_01: kelvin_tint }, counts: { num_segments: 15 }, group: { rule: fixed, num_per_group: 4 }, doc: "H61B3 / H61B6: aa a5 groups of 4 (split_h61d3/com/govee/h61d3/adjustNew/VM4Light.java:636-669); 15 = the cap of H61D3Support.e(264), the count before the first aa 40 read; every write takes the live count (as 247)" }
+          "299": { forms: { f_a5: color_group, f_15_01: kelvin_tint }, counts: { num_segments: 56 }, group: { rule: fixed, num_per_group: 4 }, doc: "H61B8 / H61B9: direct aa a5 groups of 4; 56 is the count before the first aa 40 read (no app cap on the pieces; every write takes the live count)" }
+          "367": { forms: { f_a5: color_group, f_15_01: kelvin_tint }, counts: { num_segments: 15 }, group: { rule: fixed, num_per_group: 4 }, doc: "H1A43 / H1A44: aa a5 groups of 4 (split_h61d3/com/govee/h61d3/adjustNew/VM4Light.java:636-669); 15 = the cap of H61D3Support.e(367), the count before the first aa 40 read; every write takes the live count (as 247)" }
+          "384": { forms: { f_a5: color_group, f_15_01: kelvin_tint }, counts: { num_segments: 7 }, group: { rule: fixed, num_per_group: 4 }, doc: "H1B6A: aa a5 groups of 4 (split_h61d3/com/govee/h61d3/adjustNew/VM4Light.java:636-669); 7 = the cap of H61D3Support.e(384), the count before the first aa 40 read; every write takes the live count (as 247)" }
+          "387": { forms: { f_a5: color_group, f_15_01: kelvin_tint }, counts: { num_segments: 6 }, group: { rule: fixed, num_per_group: 4 }, doc: "H1AB1: aa a5 groups of 4 (split_h61d3/com/govee/h61d3/adjustNew/VM4Light.java:636-669); 6 = the cap of H61D3Support.e(387), the count before the first aa 40 read; every write takes the live count (as 247)" }
+          "388": { forms: { f_a5: color_group, f_15_01: kelvin_tint }, counts: { num_segments: 10 }, group: { rule: fixed, num_per_group: 4 }, doc: "H1AB2: aa a5 groups of 4 (split_h61d3/com/govee/h61d3/adjustNew/VM4Light.java:636-669); 10 = the cap of H61D3Support.e(388), the count before the first aa 40 read; every write takes the live count (as 247)" }
+          "389": { forms: { f_a5: color_group, f_15_01: kelvin_tint }, counts: { num_segments: 20 }, group: { rule: fixed, num_per_group: 4 }, doc: "H1AB3: aa a5 groups of 4 (split_h61d3/com/govee/h61d3/adjustNew/VM4Light.java:636-669); 20 = the cap of H61D3Support.e(389), the count before the first aa 40 read; every write takes the live count (as 247)" }
+          "400": { forms: { f_a5: color_group, f_15_01: kelvin_tint }, counts: { num_segments: 5 }, group: { rule: fixed, num_per_group: 4 }, doc: "H1A42: aa a5 groups of 4 (split_h61d3/com/govee/h61d3/adjustNew/VM4Light.java:636-669); 5 = the cap of H61D3Support.e(400), the count before the first aa 40 read; every write takes the live count (as 247)" }
+          "403": { forms: { f_a5: color_group, f_15_01: kelvin_tint }, counts: { num_segments: 8 }, group: { rule: fixed, num_per_group: 4 }, doc: "H1AA2: aa a5 groups of 4 (split_h61d3/com/govee/h61d3/adjustNew/VM4Light.java:636-669); 8 = the cap of H61D3Support.e(403), the count before the first aa 40 read; every write takes the live count (as 247)" }
+          "404": { forms: { f_a5: color_group, f_15_01: kelvin_tint }, counts: { num_segments: 10 }, group: { rule: fixed, num_per_group: 4 }, doc: "H1AA5: aa a5 groups of 4 (split_h61d3/com/govee/h61d3/adjustNew/VM4Light.java:636-669); 10 = the cap of H61D3Support.e(404), the count before the first aa 40 read; every write takes the live count (as 247)" }
+          "261": { forms: { f_a5: color_group, f_15_01: kelvin_tint }, counts: { num_segments: 56 }, group: { rule: fixed, num_per_group: 4 }, doc: "H61F2 / H61F5 / H61F6: direct aa a5 groups of 4; 56 as 299" }
     models: [H61B0, H61B3, H61B6, H61B8, H61B9, H61D2, H61D3, H61D4, H61D5, H61D6, H61E5, H61E6, H61F2, H61F5, H61F6, H1A42, H1A43, H1A44, H1A45, H1AB1, H1AB2, H1AB3, H1B6A, H6640, H6641, H703A, H703B, H1AA2, H1AA5]
     goods_types: [202, 239, 242, 246, 247, 261, 263, 264, 299, 367, 375, 384, 387, 388, 389, 400, 403, 404]   # 403 = H1AA2, 404 = H1AA5, 367 = H1A43 / H1A44; base-classes9/com/govee/base2home/pfd/Config.java:226
     delivery: feature_split
@@ -12597,22 +12621,23 @@ families:
       power_read: aa01
       power_live: [push_30]
       by_goods_type:   # the screen is picked per goodsType; split_h6840/com/govee/h6609/pact/Model.java:52-77
-        "173":   # H6609, the newdetail NewDetailAc screen; no support (doc)
+        "173":   # H6609, the newdetail NewDetailAc screen; modelled, segments withheld (doc)
           models: [H6609]
           pacts: ["1,1"]
+          support: modelled
           power_read: aa01
           power_live: [push_30]   # ee 30 when frame[2] == 1, power bit 0 of frame[3] (NewDetailVm.f5)
           mode_color_parse: kelvin_15   # newdetail/Info4Detail.java:663-706
-          color_functions: [segment_brightness, color_temperature]
-          capabilities: [power, brightness, rgb, color_temp, segments, gradual]
+          capabilities: [power, brightness, rgb, color_temp, gradual]
           zones: []
           account_lock: false
           scene_dialect: untraced
           kelvin_range: [2000, 9000]
           brightness_range: [1, 100]
-          connect_reads: [brightness, gradual, color_group]
+          connect_reads: [brightness, gradual, ic_num, color_group]
           connect_writes: []
           heartbeat: heartbeat
+          ic_pieces: { table: [{ ic: 36, pieces: 18 }], otherwise: 14 }
           doc: >-
             H6609 on NewDetailAc (Model.t via DetailConfig.b), pact (1,1) (Support.addSupportPact, n4 supportPactV1).
             Connect: the default Compose4InfoBleIot read (aa 04, aa a3, aa 01, the extra aa 40 IC count, aa 05), then direct
@@ -12626,14 +12651,18 @@ families:
             canClickColorTem), but segment brightness (Config.z = 0, 15 02) is group-expanded: canClickBrightness widens
             the selection to whole groups, {0-2, 3-6, 7-9, 10-13} at 14 pieces and {0-2, 3-8, 9-11, 12-17} at 18 (gap 7).
             Config.A[173] = 1 (the colour-brightness group mode) changes only the multi-colour strip and effect applies
-            (ColorModeControllerConfig.w -> l, 15 04 group frames), none of the frames above. Held without support (gap
-            1): the pieces are 18 when the app's IC q() is 36, else 14 (getColorPieceSize, ColorPieceConfig.Config.j0),
-            sizing the aa a5 reads (4 or 5 groups), the strip (ColorMode18 / ColorMode14Rect4ReverseSelect) and so the
-            write mask. q() is the bound IC from the pairing aa 40 (DefInfo.G0(bleExt.getIc()), IcNumController.u) on the
+            (ColorModeControllerConfig.w -> l, 15 04 group frames), none of the frames above. Pieces (ic_pieces table): 18
+            when the app's IC q() is 36, else 14 (getColorPieceSize, ColorPieceConfig.Config.j0), sizing the aa a5 reads
+            (4 or 5 groups) and the strip (DetailConfig: ColorMode18 / ColorMode14Rect4ReverseSelect), so every write's
+            mask (ff ff 03 or ff 3f for the whole device). q() is the bound IC from the pairing aa 40 (DefInfo.G0(bleExt.getIc()), IcNumController.u) on the
             device-list entry, replaced by the server's SKU IC (SkuIcManager.d, /appsku/v1/skus, 0 if absent) when it is
             <= 0 (AbsAcLightDetail.K1), and always the server's SKU IC on the screen straight after pairing
-            (NewDetailAc.Companion.c). The connect aa 40 is stored only (Info4Detail.u0) and sizes nothing; connect_reads
-            leaves out ic_num because the schema ties it to ic_pieces, which can't state the rule. The automation builder
+            (NewDetailAc.Companion.c). The connect aa 40 is stored only (Info4Detail.u0) and sizes nothing. MODELLED for one
+            inferred fact: the library applies the rule to the connect aa 40, the one IC a client can read, so its masks and
+            walk are the app's only where the device reports the IC its account stores. Segments are withheld (as h61d3
+            202): the library's 15 02 takes any selection, the strips only whole groups (gap 7). So color_functions is
+            left out: Config.I[173] is all on, and the resolver ties its segment_brightness flag to segments. The
+            automation builder
             (Comm.makeColorController4BleComm -> SubModeColorV1 op 1 / 2) writes the same 0x15 bytes.
           doc-ref:
             - split_h6840/com/govee/h6609/pact/Model.java:62-65
@@ -13000,7 +13029,7 @@ families:
         counts: { num_segments: 10 }   # goodsType 260's default (every other goodsType sets its own): ColorPieceConfig.b / H70c4Support.b default 10
         group: { num_per_group: 4 }
         by_goods_type:
-          "173": { forms: { f_15_01: kelvin_tint }, counts: { num_segments: 18 }, group: { rule: fixed }, doc: "pieces follow the app's IC q(): 18 at IC 36, else 14 (split_h6840/com/govee/h6609/pact/Support.java:146-149; base-classes11/com/govee/base2light/pact/newdetail/config/fuc/ColorPieceConfig.java:1651-1654). q() is the bound pairing IC, or the server's SKU IC (SkuIcManager.d) when that is <= 0 and on the first screen after pairing (base-classes11/com/govee/base2light/pact/newdetail/AbsAcLightDetail.java:594-601; split_h6840/com/govee/h6609/newdetail/NewDetailAc.java:118), never the connect aa 40. 18 is the branch the catalogue's default IC (36, Product.ic) selects; the library has no IC-equality rule, so the row has no support" }
+          "173": { forms: { f_15_01: kelvin_tint }, counts: { num_segments: 18 }, group: { rule: fixed }, doc: "pieces follow the app's IC q(): 18 at IC 36, else 14 (split_h6840/com/govee/h6609/pact/Support.java:146-149; base-classes11/com/govee/base2light/pact/newdetail/config/fuc/ColorPieceConfig.java:1651-1654). q() is the bound pairing IC, or the server's SKU IC (SkuIcManager.d) when that is <= 0 and on the first screen after pairing (base-classes11/com/govee/base2light/pact/newdetail/AbsAcLightDetail.java:594-601; split_h6840/com/govee/h6609/newdetail/NewDetailAc.java:118), never the connect aa 40. 18 is the branch the catalogue's default IC (36, Product.ic) selects, the most pieces the rule gives (ic_pieces table), the count before the first aa 40 read; every write takes the live count" }
           "181": { forms: { f_15_01: kelvin_tint }, counts: { num_segments: 10 }, group: { rule: fixed } }
           "260": { forms: { f_15_01: kelvin_tint }, group: { rule: fixed }, doc: "pieces per SKU in wire.by_model: the colour strip's position set (ColorPieceConfig.b) and the read-back (H70c4Support.b) agree for every SKU but at IC 1000, where H70C4 / H70C5 / H70C7 / H6870 / H80C4 read back 20 (the row is modelled on it)" }
           "362": { forms: { f_41: power_memory, f_15_01: kelvin_tint }, counts: { num_segments: 10 }, group: { rule: from_len } }
@@ -13666,7 +13695,7 @@ families:
         "125":   # H705A / H705B / H705C / H801B, the newDetail AcNewDetail screen (VM4Light)
           models: [H705A, H705B, H705C, H801B]
           pacts: ["1,1", "1,2"]
-          support: modelled
+          support: app_traced
           color_scheme: h60a6
           power_read: aa01
           power_live: [heartbeat_aa01, push_30]
@@ -13680,25 +13709,25 @@ families:
           connect_reads: [brightness, gradual, ic_num, color_group]
           connect_writes: []
           heartbeat: power
-          ic_pieces: { min_ic: 0, max_ic: 4095, ic_per_piece: 4 }
+          ic_pieces: { min_ic: 0, max_ic: 4095, ic_per_piece: 4, rounding: floor }
           doc: >-
             H705A / H705B / H705C (AddDeviceM names them at 125; H705ASceneConfig.match) and H801B (Support.i: its ThemeM key and
             SegmentSetAc's 3-segment default; the catalogue's goodsType 125; the app routes by goodsType, SubLib.keys =
             Support.E). Model.t opens AcNewDetail (B0) for 125; VM4Light.n4 = Support.E: pacts (1,1) and (1,2) (Support.a, Pact.d.b). Connect: the default
             Compose4InfoBleIot read (sync time, versions, Wi-Fi, timers, sleep, wake, aa 04, aa a3, aa 01), then VM4Light.i5's
-            aa 40 IC count (ControllerIcNum: bytes 0-1 signed, the 0x1000+ branch never stores), aa 05 (Info4Detail.V,
-            kelvin_15), then the direct aa a5 groups of Support.f = 4 over Support.b(125, IC) pieces (VM4Light.F5); no aa 48
+            aa 40 IC count (ControllerIcNum.b -> e, the IC-pair reader, wire f_40 ic_pair: bytes 0-1 signed, and no count
+            stored where either IC field, bytes 0-1 or 3-4, is 0x1000 or more), aa 05 (Info4Detail.V, kelvin_15), then the direct aa a5 groups of Support.f = 4 over Support.b(125, IC) pieces (VM4Light.F5); no aa 48
             part-scene read (PartScenesCheckUtil.i is never true for 125). Not listed: the IC notify parser on pact code 1. Power: switchTrigger writes the one ControllerSwitch (33 01), no zone switch; I3 is true for 125
             only, so the keep-alive is aa 01 (ConnectHeartbeat type 1) and J3 takes power from it; the ee 30 switch push
             (DefParser bit 0 of byte 1) too. Colour: Config.x[125] = 0 -> Config.J[0] = Yt (Bytes.h; Bytes.r with white
             type Config.P[125] = 1 for a Kelvin or a tint colour), segment brightness Config.z[125] = 0 -> Bytes.G,
             gradual Config.G[125] = 0 -> Bytes.w (33 a3), Config.I[125] all on; brightness BrightnessConfig.b ->
             ControllerBrightness, percent; Kelvin version 0 = [2000, 9000] (no KelvinConfig key; Support.c agrees).
-            MODELLED, two gaps: (1) the app's pieces are floor(IC / 4) (Support.b, ColorPieceConfig h0, ColorMode.Y),
-            where ic_pieces rounds up, so a count that is not a multiple of 4 walks one aa a5 group more when floor(IC / 4)
-            is a multiple of 4 (after a segment-count change the settings page sets IC = segments x 12, VM4Light.c5); (2) the write mask
-            is the live piece count with no app cap, and num_segments 56 is the most positions a 17-byte kelvin_tint frame
-            carries (as h61d3 299). Not hardware-verified.
+            Pieces: floor(IC / 4) in Java's integer division (Support.b, ColorPieceConfig h0, ColorMode.Y; ic_pieces
+            rounding floor); after a segment-count change the settings page sets IC = segments x 12 (VM4Light.c5).
+            Every colour write takes the live pieces (the connect read's VM4Light.j5 posts deviceInfoChanged when the count
+            changes, and ColorMode.Y resizes the strip to it), with no app cap; num_segments 56 is only the count before
+            the first aa 40 read. Not hardware-verified.
           doc-ref:
             - split_h705a/com/govee/h705a/pact/Support.java:49-50,117,137-140,176-189,237-240,242-253,306,317-320,338-342,378-381
             - split_h705a/com/govee/h705a/pact/SubLib.java:20-26
@@ -13712,7 +13741,7 @@ families:
             - split_h705a/com/govee/h705a/newDetail/VM4Light$connectBleSuc$1.java:40-83,93-123
             - split_h705a/com/govee/h705a/newDetail/VM4Light.java:215-249,576-641,789-800,895-922,942-963,1024-1030,1246-1253,1427-1451
             - split_h705a/com/govee/h705a/newDetail/Info4Detail.java:437-485,796-833
-            - split_h705a/com/govee/h705a/newDetail/ColorMode.java:83-84,121-129,288-289,402-449
+            - split_h705a/com/govee/h705a/newDetail/ColorMode.java:83-84,121-149,288-289,402-449
             - split_h705a/com/govee/h705a/newDetail/SettingAcNewH705ABC.java:159
             - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4InfoBleIot.java:74-85
             - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4InfoBleIot$iControllerStrategy$1.java:155-250
@@ -13738,7 +13767,7 @@ families:
         "240":   # H705D / H705E / H705F / H805A / H805B / H805C / H805D, the newDetail AcNewDetail screen (VM4Light)
           models: [H705D, H705E, H705F, H805A, H805B, H805C, H805D]
           pacts: ["1,1", "1,2", "2,1"]
-          support: modelled
+          support: app_traced
           color_scheme: h60a6
           power_read: aa01
           power_live: [push_30]
@@ -13752,7 +13781,7 @@ families:
           connect_reads: [brightness, gradual, ic_num, color_group]
           connect_writes: []
           heartbeat: heartbeat
-          ic_pieces: { min_ic: 0, max_ic: 4095, ic_per_piece: 4 }
+          ic_pieces: { min_ic: 0, max_ic: 4095, ic_per_piece: 4, rounding: floor }
           doc: >-
             H705D / H705E / H705F / H805A / H805B / H805C (AddDeviceM names them at 240) and H805D (Support.D tests it with
             240); H705DSceneConfig.match. The screen of row 125 (Model.t B0 -> AcNewDetail, VM4Light), pacts (1,1), (1,2),
@@ -13767,9 +13796,8 @@ families:
             (KelvinConfig 240 -> 2; Support.c agrees). Config.A[240] = 1 makes the colour-strip and snapshot path send 15 04
             group frames, where the library sends per-colour 15 01 masks (a divergence, as pact_h6099 203). A wheel drag
             streams a5 02 83 R G B real-time frames (Config.g0[240] = 2, ColorModeControllerConfig.r); touch-up sends the
-            normal 15 01 write, which the library matches (the drag frames are not modelled). MODELLED for
-            the two gaps of row 125 (floor(IC / 4) pieces; the live, uncapped write mask, num_segments 56). Not
-            hardware-verified.
+            normal 15 01 write, which the library matches (the drag frames are not modelled). Pieces floor(IC / 4),
+            as row 125 (ic_pieces rounding floor), and the writes take them as there. Not hardware-verified.
           doc-ref:
             - split_h705a/com/govee/h705a/pact/Support.java:117,142-145,171-174,176-221,279-293,317-329,338-349,378-381
             - split_h705a/com/govee/h705a/pact/Model.java:166-234
@@ -13780,7 +13808,7 @@ families:
             - split_h705a/com/govee/h705a/newDetail/VM4Light$connectBleSuc$1.java:40-83,93-123
             - split_h705a/com/govee/h705a/newDetail/VM4Light.java:215-249,576-641,789-800,895-922,1024-1030,1246-1253,1427-1451
             - split_h705a/com/govee/h705a/newDetail/Info4Detail.java:437-485,796-833
-            - split_h705a/com/govee/h705a/newDetail/ColorMode.java:83-84,121-129,288-289,402-449
+            - split_h705a/com/govee/h705a/newDetail/ColorMode.java:83-84,121-149,288-289,402-449
             - split_h705a/com/govee/h705a/newDetail/SettingAcNewH705DEF.java:206,606
             - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4InfoBleIot$iControllerStrategy$1.java:155-250
             - base-classes11/com/govee/base2light/kt/general_controller/ControllerIcNum.java:64-90,141-162,173-175
@@ -13852,7 +13880,7 @@ families:
         "250":   # H7067 / H7068 / H7069, the h706789 NewDetailActivity screen (VM4Light)
           models: [H7067, H7068, H7069]
           pacts: ["1,1"]
-          support: modelled
+          support: app_traced
           color_scheme: h60a6
           power_read: aa01
           power_live: [push_30]
@@ -13870,7 +13898,7 @@ families:
           doc: >-
             H7067 / H7068 / H7069 (AddDeviceM names them at 250; H7067SceneConfig.match). Model.t (C0) opens the h706789
             NewDetailActivity; VM4Light.n4 = Support.E: pact (1,1) only. Connect: the default Compose4InfoBleIot read (aa 04,
-            aa a3, aa 01), VM4Light.P4's aa 40 IC count and aa 41 power-off memory (a setting read, decision D2, not
+            aa a3, aa 01), VM4Light.P4's aa 40 IC count (the IC-pair reader, as row 125) and aa 41 power-off memory (a setting read, decision D2, not
             listed), aa 05 (Info4Detail.N, kelvin_15), then the direct aa a5 groups of 4 over Support.b(250, IC) = IC pieces
             (VM4Light.Y4); the colour strip (h706789 ColorMode) is the IC count too, and so is the 'All' colour and Kelvin
             path's posSet (ColorModeUtil.a -> ColorPieceConfig.c -> LegacyColorCapabilityProvider.t -> ColorPieceConfig.j: 250
@@ -13879,9 +13907,13 @@ families:
             (Bytes.h / Bytes.r, white type Config.P[250] = 1), Config.z = 0 -> Bytes.G; Config.I[250] = {false, true, true,
             true, true}: no gradual toggle, so the default aa a3 read is read and discarded (gradual_read_only); brightness
             percent; Kelvin version 2 = [2700, 6500] (KelvinConfig 250 -> 2). Config.C[250] (colour-brightness multi-packet) applies only
-            on the strip / snapshot path. MODELLED: the write mask is the live IC count with no app cap; num_segments 56 is the
-            most positions a 17-byte kelvin_tint frame carries (as h61d3 299). A negative IC reply of -1..-3 the app walks as
-            one group, the library as none. Not hardware-verified.
+            on the strip / snapshot path. Every colour write takes the live IC count, with no app cap: the strip (h706789
+            ColorMode, updateColorPiece: its size is the stored IC, ColorMode.V) is sized when the view attaches
+            (ColorMode.m -> O -> V) and resized only on deviceInfoChanged (ColorMode.M -> N -> V), which the connect
+            read doesn't post (VM4Light.Q4 stores the count and uploads it with h5) and the segment setting does
+            (VM4Light.O4). A documented divergence: in the first app session after the IC changed with no app connected,
+            the app's strip has the old count and the library's writes the new one. num_segments 56 is only the count before the first aa 40 read. A negative IC reply of -1..-3 the app
+            walks as one group, the library as none (as h61d3 264). Not hardware-verified.
           doc-ref:
             - split_h705a/com/govee/h705a/pact/Support.java:147-150,206-213,294-298,326,346-349,378-381
             - split_h705a/com/govee/h705a/pact/Model.java:98-150,214-224
@@ -13890,9 +13922,9 @@ families:
             - base-classes2/com/govee/shared/config/h7067/H7067SceneConfig.java:45-47
             - split_h705a/com/govee/h705a/h706789/H7067NewDetailsConfig.java:52-64
             - split_h705a/com/govee/h705a/h706789/VM4Light$connectBleSuc$1.java:40-81,91-121
-            - split_h705a/com/govee/h705a/h706789/VM4Light.java:120-142,189-219,418-423,488-503,764-771,869-891
+            - split_h705a/com/govee/h705a/h706789/VM4Light.java:120-142,189-219,418-423,441-452,488-503,764-771,869-891
             - split_h705a/com/govee/h705a/h706789/Info4Detail.java:366-409,572-602
-            - split_h705a/com/govee/h705a/h706789/ColorMode.java:80-81,279
+            - split_h705a/com/govee/h705a/h706789/ColorMode.java:80-81,126-150,272-282,452-456
             - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4InfoBleIot$iControllerStrategy$1.java:155-250
             - base-classes11/com/govee/base2light/kt/general_controller/ControllerIcNum.java:64-90,141-162,173-175
             - base-classes11/com/govee/base2light/kt/general_controller/Controller4ColorInfoByGroup.java:37-41,160-175
@@ -13909,7 +13941,7 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/ColorPieceConfig.java:62-131,256-259,354-367,1036-1038,1677-1722
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:240-242,254-269,329-342,401-411,539-543,1377-1379
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:63-85,199-215,251-259
-        "184":   # H608A / H608B / H608C / H608D / H808A, the AcNewDetail4H608A screen (VM4H608A)
+        "184":   # H608A / H608B / H608C / H608D / H808A, the AcNewDetail4H608A screen (VM4H608A); modelled: the first walk waits on the user (doc)
           models: [H608A, H608B, H608C, H608D, H808A]
           pacts: ["1,1", "2,1"]
           support: modelled
@@ -13927,22 +13959,26 @@ families:
           connect_reads: [brightness, gradual, ic_num, color_group]
           connect_writes: []
           heartbeat: power
-          ic_pieces: { min_ic: 1, max_ic: 4095, ic_per_piece: 5 }
+          ic_pieces: { min_ic: 1, max_ic: 4095, ic_per_piece: 5, skip_zero: true }
           doc: >-
             H608A-D / H808A (H808aMatterHelper's interceptor tests them with 184; H608ASceneConfig.match; KmpGoodsType
             GOODS_TYPE_VALUE_H608A). Model.t jumps to AcNewDetail4H608A; VM4H608A.n4 takes Support.k: pacts (1,1) and (2,1).
             Connect: Compose4InfoBleIot with the screen's own strategy (ControllerStrategyConfig.q, which replaces the default
-            one): versions, Wi-Fi, sync time, timers, wake, sleep, aa 01, aa 04, aa a3, aa 40 (IC and section count), aa 41
+            one): versions, Wi-Fi, sync time, timers, wake, sleep, aa 01, aa 04, aa a3, aa 40 (IC and section count, by the
+            IC-pair reader ControllerIcNum.b -> e, wire f_40 ic_pair: no count where either IC field is 0x1000 or more), aa 41
             power-off memory (a setting read, decision D2, not listed), aa 05 (OpInfo4Detail, the kelvin strategy), then
             the direct aa a5 groups of 4 over Support.b(184, IC) = max(ceil(IC / 5), 1) pieces (VM4H608A.a5; ic_pieces
             min_ic 1 gives the same). Power: the one ControllerSwitch (33 01), no zone switch; I3 true, so the aa 01
             keep-alive carries power (J3); no ee 30 parser. Colour: Config.x[184] = 0 -> Yt (Bytes.h / Bytes.r, white type
             Config.P[184] = 1), Config.z[184] = 0 -> Bytes.G, Config.G[184] = 0 -> Bytes.w; Config.I has no 184, so the
             strip's ColorModeV1.normalFucSupport (all on) gives the gradual toggle and Kelvin; brightness percent; Kelvin
-            version 0 = [2000, 9000] (no KelvinConfig key). MODELLED: the write mask is the live piece count with no app cap
-            (num_segments 56, as h61d3 299). A documented divergence that does not by itself keep the row modelled, left
-            to the user's decision (pieces-persisted-ic-first-walk): the app sizes its first aa a5 walk from the IC the
-            screen opened with, the account's stored BleExt.ic (Model.t; VM4H608A$connectBleSuc$1.l -> a5 over
+            version 0 = [2000, 9000] (no KelvinConfig key). Every colour write takes the live pieces (ColorModeV1.K resizes
+            the strip to Support.b over the IC each read stores), with no app cap; num_segments 56 is only the count before
+            the first aa 40 read. An IC of 0 is no count (ic_pieces skip_zero): VM4H608A.S4 skips it and keeps the count
+            it stored, so the library keeps the count it has (none before its first read: a colour write then raises,
+            sending nothing) and skips that poll's walk, where the app walks its stored count. MODELLED, held for the
+            user's decision on one documented divergence (pieces-persisted-ic-first-walk): the app sizes its first aa a5
+            walk from the IC the screen opened with, the account's stored BleExt.ic (Model.t; VM4H608A$connectBleSuc$1.l -> a5 over
             deviceInfo.q()), and folds this session's aa 40 count only afterwards (ControllerStrategyConfig.A keeps it in
             the compose's Info4BleIot; VM4H608A.S4 skips 0 and an unchanged count, then sets it and uploads it with
             updateDeviceIc); an IC notify re-walks with the new count (VM4H608A.d5) and the strip resizes to it
@@ -14030,11 +14066,11 @@ families:
       wire:
         forms: { f_01: light, f_09: datetime_epoch }
         by_goods_type:
-          "125": { forms: { f_a5: color_group, f_15_01: kelvin_tint, f_ee_30: main_bit0_a }, counts: { num_segments: 56 }, group: { rule: fixed, num_per_group: 4 }, doc: "H705A-C: direct aa a5 groups of Support.f = 4 (split_h705a/com/govee/h705a/newDetail/VM4Light.java:215-249); 56 is MODELLED (no app cap on floor(IC / 4)): the most mask positions a 17-byte kelvin_tint frame carries" }
-          "240": { forms: { f_a5: color_group, f_15_01: kelvin_tint, f_ee_30: main_bit0_a }, counts: { num_segments: 56 }, group: { rule: fixed, num_per_group: 4 }, doc: "H705D-F / H805A-D: as 125" }
+          "125": { forms: { f_40: ic_pair, f_a5: color_group, f_15_01: kelvin_tint, f_ee_30: main_bit0_a }, counts: { num_segments: 56 }, group: { rule: fixed, num_per_group: 4 }, doc: "H705A-C: direct aa a5 groups of Support.f = 4 (split_h705a/com/govee/h705a/newDetail/VM4Light.java:215-249); 56 is the count before the first aa 40 read (no app cap on floor(IC / 4); every write takes the live count)" }
+          "240": { forms: { f_40: ic_pair, f_a5: color_group, f_15_01: kelvin_tint, f_ee_30: main_bit0_a }, counts: { num_segments: 56 }, group: { rule: fixed, num_per_group: 4 }, doc: "H705D-F / H805A-D: as 125" }
           "180": { forms: { f_a5: color_group, f_15_01: kelvin_tint, f_ee_30: main_bit0_a }, group: { rule: fixed, num_per_group: 4 }, doc: "H706A-C: aa a5 groups of 4 over the aa a1 0b segment count (split_h705a/com/govee/h705a/pact/Support.java:321-323); the CCT is kelvin_tint with the row's white_type slot (00 00 00)" }
-          "250": { forms: { f_a5: color_group, f_15_01: kelvin_tint, f_ee_30: main_bit0_a }, counts: { num_segments: 56 }, group: { rule: fixed, num_per_group: 4 }, doc: "H7067-9: direct aa a5 groups of 4 over IC pieces (split_h705a/com/govee/h705a/h706789/VM4Light.java:189-219); 56 is MODELLED, as 125" }
-          "184": { forms: { f_a5: color_group, f_15_01: kelvin_tint }, counts: { num_segments: 56 }, group: { rule: fixed, num_per_group: 4 }, doc: "H608A-D / H808A: direct aa a5 groups of 4 over max(ceil(IC / 5), 1) pieces (split_h705a/com/govee/h705a/adjust/h608a/VM4H608A.java:252-276); no ee 30 parser; 56 is MODELLED, as 125" }
+          "250": { forms: { f_40: ic_pair, f_a5: color_group, f_15_01: kelvin_tint, f_ee_30: main_bit0_a }, counts: { num_segments: 56 }, group: { rule: fixed, num_per_group: 4 }, doc: "H7067-9: direct aa a5 groups of 4 over IC pieces (split_h705a/com/govee/h705a/h706789/VM4Light.java:189-219); 56 as 125" }
+          "184": { forms: { f_40: ic_pair, f_a5: color_group, f_15_01: kelvin_tint }, counts: { num_segments: 56 }, group: { rule: fixed, num_per_group: 4 }, doc: "H608A-D / H808A: direct aa a5 groups of 4 over max(ceil(IC / 5), 1) pieces (split_h705a/com/govee/h705a/adjust/h608a/VM4H608A.java:252-276); no ee 30 parser; 56 as 125" }
           "394": { forms: { f_40: one_count, f_41: power_memory, f_a3: gradual, f_a5: color_group, f_15_01: kelvin_tint }, counts: { num_segments: 56 }, group: { rule: fixed, num_per_group: 4 }, doc: "H3401: TLV 0xA3 byte 0, TLV 0x40 bytes 0-1 signed, TLV 0x41 byte 1, each TLV 0xA5 [index, 4 records] (split_h705a/com/govee/h705a/h3401/H3401DetailVM$afterConnectedSingleReadDeviceInfo$1.java:103-104, 111-125, 126-127, 134-135); 56 is MODELLED (no app cap on the IC pieces)" }
     models: [H705A, H705B, H705C, H801B, H705D, H705E, H705F, H805A, H805B, H805C, H805D, H706A, H706B, H706C, H806A, H806C, H7067, H7068, H7069, H608A, H608B, H608C, H608D, H808A, H3401]   # add/AddDeviceM.java:24-82, matterconfig/H808aMatterHelper.java:18-60, pact/Support.java:28-89 (H801B / H806A / H806C: Support.i / g / h, catalogue goodsTypes 125 / 180); H61C2 / H61C3 / H61C5 are not routed here (split_rgbiclight SupportV2, goodsType 141)
     goods_types: [125, 180, 184, 240, 250, 394]   # pact/Support.java:117
