@@ -8535,9 +8535,11 @@ families:
             <tint>; Config.I[40] = AO turns the colour-temperature slider on (Kelvin version 0 = [2000, 9000]); one
             colour piece (ColorPieceConfig.Config.x), no segments. Heartbeat aa 01 (VM4Light.I3). The H615A-E bind item
             below writes goodsType 40 only at an advert pact of exactly (65535,255) (NewRgb2TLUtil.isNewRgb2TL4BleIot,
-            an exact compare), where the colour version is 4 (legacy_02, Bytes.a / Bytes.o); no row lists that pact,
-            so a unit advertising it is not served (the library reads that item as an exact-pact condition, not as
-            a refusal of the SKU at every pact). Bundled mode list [15, 9, 10, 8, 11] for H615A, [15, 9, 10, 8, 11,
+            an exact compare), where the colour version is 4 (legacy_02, Bytes.a / Bytes.o) and the brightness raw
+            [6, 254] (Support4StringLightV2.b); no row lists that pact, so a unit advertising it is not served (the
+            library reads that item as an exact-pact condition, not as a refusal of the SKU at every pact), and
+            nor is one whose advert carries no pact, which may be that unit: the row is a route only on an
+            advertised (2,1) (the schema's bind pact). Bundled mode list [15, 9, 10, 8, 11] for H615A, [15, 9, 10, 8, 11,
             20] for H615B-D: no illumination tab, so the colour tab's Bytes.p is the colour-temperature frame (the
             server-supplied list is not in the APK, as row 2). Scenes untraced. Not hardware-verified.
           doc-ref:
@@ -8571,7 +8573,8 @@ families:
             H615E at its cloud goodsType 108 (AbsGroupFactor.c1), pact (2,1): every fact as row 40 (SubLib4BleIot ->
             Model4BleIot -> /rgb/newdetail; uiv3 L reads; percent brightness; colour h6006 through Config.x[108] = aw,
             2 off the NewRgb2TL pact; Config.I[108] = CO, colour temperature on, [2000, 9000]; one piece; aa 01
-            heartbeat). Its (65535,255) pairing writes goodsType 40 (the bind item below), a pact no row lists. Bundled
+            heartbeat). Its (65535,255) pairing writes goodsType 40 (the bind item below), a pact no row lists, so as
+            on row 40 the row is a route only on an advertised (2,1). Bundled
             mode list [15, 9, 10, 8, 11, 20], no illumination tab. Scenes untraced. Not hardware-verified.
           doc-ref:
             - split_rgblight/com/govee/stringlightv2/pact/Support.java:90-96,170-175

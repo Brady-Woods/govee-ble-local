@@ -409,13 +409,16 @@ def ble_rows(reg: dict[str, Any], sku: str, pact: tuple[int, int] | None = None)
     that knows only the SKU and the advertised pact may route `sku` to. A row qualifies when it has support,
     its models list the SKU, its connectivity (else the family's) holds ble, and its pacts are 'any' or hold
     the pact (any listed pact when no pact is advertised, but on the goodsType a pact-conditioned
-    assigned_goods_type item rewrites the SKU to: the app rewrites only a record whose pact meets the gate);
-    a row without pacts is never a route. Exactly one row is a route; none or several leave the SKU unrouted
-    unless the caller knows the goodsType."""
+    assigned_goods_type item rewrites the SKU to: the app rewrites only a record whose pact meets the gate;
+    and on no row of a SKU a bind item names: its write's pact runs other facts than the row's, so a client
+    without the pact can't tell them apart); a row without pacts is never a route. Exactly one row is a
+    route; none or several leave the SKU unrouted unless the caller knows the goodsType."""
     gated = {(model, item.get("goods_type")) for fam in reg.get("families", [])
              for item in fam.get("assigned_goods_type") or []
              if set(item.get("condition") or {}) == {"min_pact_type", "min_pact_code"}
              for model in item.get("models") or []}
+    paired = {model for fam in reg.get("families", []) for item in fam.get("assigned_goods_type") or []
+              if item.get("context") == "bind" for model in item.get("models") or []}
     out: list[tuple[str, int]] = []
     for fam in reg.get("families", []):
         for gt, row in ((fam.get("client_profile") or {}).get("by_goods_type") or {}).items():
@@ -423,7 +426,7 @@ def ble_rows(reg: dict[str, Any], sku: str, pact: tuple[int, int] | None = None)
             if ("support" not in row or sku not in (row.get("models") or []) or pacts is None
                     or "ble" not in (row.get("connectivity") or fam.get("connectivity") or [])):
                 continue
-            if pact is None and (sku, int(gt)) in gated:
+            if pact is None and ((sku, int(gt)) in gated or sku in paired):
                 continue
             if pacts == "any" or pact is None or f"{pact[0]},{pact[1]}" in pacts:
                 out.append((fam["id"], int(gt)))
@@ -542,12 +545,12 @@ def _selftest(*, strict: bool = False) -> int:
         reg = yaml.safe_load(path.read_text(encoding="utf-8"))
         check("BLE routes: H6004 -> bulblightv3 64 (10 is IoT-only); H60A6 at (1,3) -> 303, at (2,1) none; "
               "H6114 -> h6114 39 at (10,1), none without a pact (the BK rewrite's gate); H615E -> "
-              "stringlightv2 108 at (2,1), none at its pairing write's (65535,255)",
+              "stringlightv2 108 at (2,1), none at its pairing write's (65535,255) or without a pact",
               ble_rows(reg, "H6004") == [("bulblightv3", 64)]
               and ble_rows(reg, "H60A6", (1, 3)) == [("h60ax", 303)] and ble_rows(reg, "H60A6", (2, 1)) == []
               and ble_rows(reg, "H6114", (10, 1)) == [("h6114", 39)] and ble_rows(reg, "H6114") == []
               and ble_rows(reg, "H615E", (2, 1)) == [("stringlightv2", 108)]
-              and ble_rows(reg, "H615E", (65535, 255)) == [])
+              and ble_rows(reg, "H615E", (65535, 255)) == [] and ble_rows(reg, "H615E") == [])
         check("device-list card rows: H70B2 -> h70b2 185 at (1,1) only; H6631 -> h6630 286 at (2,4), where "
               "H6630 has no row; each a per_command session with no keep-alive",
               ble_rows(reg, "H70B2", (1, 1)) == [("h70b2", 185)] and ble_rows(reg, "H70B2", (1, 2)) == []

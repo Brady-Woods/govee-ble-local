@@ -328,11 +328,15 @@ model, from which the shipped readers are generated).
   SKU and accepts that pact (or `any`), and the generator lists each (SKU, pact) route no row carries for review
   (`_resolve.bind_review`: the eleven at (65535, 255)). A pairing item without a pact is refused on a routed SKU
   as before. It admits **H615A / H615B / H615C / H615D** (stringlightv2 40) and **H615E** (108) by default
-  (`app_traced`), at pact (2,1), the only one their rows list: the rgblight control screen as stringlightv2 1
-  (`Model4BleIot` -> `/rgb/newdetail`; the uiv3 reads, `Support4StringLightV2.L`), percent brightness, the
-  h6006 frames (`Config.x[40]` / `[108]` = 2 off the NewRgb2TL pact), [2000, 9000] and the aa 01 keep-alive.
-  A unit advertising (65535, 255), where the app runs colour version 4 (the `legacy_02` frames) and the pairing
-  write's goodsType, is still refused: no row lists that pact. Not hardware-verified.
+  (`app_traced`), on an advertised pact (2,1) only, the one their rows list: the rgblight control screen as
+  stringlightv2 1 (`Model4BleIot` -> `/rgb/newdetail`; the uiv3 reads, `Support4StringLightV2.L`), percent
+  brightness, the h6006 frames (`Config.x[40]` / `[108]` = 2 off the NewRgb2TL pact), [2000, 9000] and the
+  aa 01 keep-alive. A unit advertising (65535, 255), where the app runs colour version 4 (the `legacy_02`
+  frames), raw brightness [6, 254] (`Support4StringLightV2.b`) and the pairing write's goodsType, is refused:
+  no row lists that pact. So is a unit whose advert carries no pact, which may be such a unit: each route of a
+  SKU a pairing write names needs an advertised pact (`_resolve.Route.needs_pact`, as on the BK rows' target
+  routes, above). As for those, `supported_skus()` lists H615A-E, but `is_supported_sku(sku)`, `profile_for`,
+  `make_device` and `create_device` refuse one without a pact: pass the advert's. Not hardware-verified.
 - **A later advert's pact re-selects the row** (`devices.profile.reroute`, which `Device` follows on every
   advertisement it reads, and at construction). Where a pact heard after the Device was built routes its SKU to
   another row whose profile differs from the held one only in what a pact picks within a row (the status read,
@@ -443,8 +447,11 @@ model, from which the shipped readers are generated).
   H6075 are new routes.
 - The exact-pact pairing write changes no other SKU: each of the 330 the table admitted before it (257 by
   default, 73 behind `allow_modelled`) resolves to the same profile, field by field, at every pact its rows
-  list, at (99, 99) and at none, with and without `allow_modelled`; no runtime code reads the pairing items.
-  H615A-E join the profile H6159 heads (`DeviceProfile.skus`), whose facts they share; H6159 stays first.
+  list, at (99, 99) and at none, with and without `allow_modelled`; the routes read the pairing items only to
+  refuse H615A-E without a pact (no SKU a pairing item names was supported before). H615A-E join the profile
+  H6159 heads (`DeviceProfile.skus`), whose facts they share; H6159 stays first. The warning a Device logs
+  for a later pact none of its rows accepts no longer says the app takes another row there: it may run the
+  unit on other facts (H615A-E at (65535, 255)).
 - No SKU's resolved profile changes with the re-selection, and a Device whose advertised pact matches its
   route keeps its profile and frames. Only a SKU with two routes whose profiles differ just in what a pact
   picks can move: H6118, H6194 and H6179 (above). `Device.profile` is no longer fixed for the life of a Device

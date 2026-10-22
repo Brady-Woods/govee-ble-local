@@ -38,7 +38,11 @@ the row lacks fails the build: nothing defaults silently.
   ``isNewRgb2TL4BleIot``, an exact compare), so it says nothing about the SKU at any other pact. A row of
   another goodsType that lists one of its SKUs and accepts that pact (or ``any``) raises, and a (SKU, pact)
   route no row of its goodsType carries is for review (:func:`bind_review`; H615A-E and H613A-F at
-  (65535, 255) are). A pact-conditioned item is routing data instead: its SKUs are listed on the row of its
+  (65535, 255) are). Each route of its SKUs needs an advertised pact (``Route.needs_pact``,
+  :func:`bind_skus`): without one the library can't tell the row's pact from the write's, where the app runs
+  other facts (H615A-E at (65535, 255): colour version 4 and raw brightness, ``Config.Zv`` / ``Config.aw``,
+  ``Support4StringLightV2.b``), as it can't pick between two rows that differ. A pact-conditioned item is
+  routing data instead: its SKUs are listed on the row of its
   goodsType with the pacts at or above its gate, and on a row of a goodsType it rewrites from with pacts
   below it, so the
   advertised pact picks the row the app's rewrite picks. A row that lists one of them with pacts on the
@@ -47,8 +51,8 @@ the row lacks fails the build: nothing defaults silently.
   an advertisement without one: the app rewrites only a record whose pact meets the gate, and a record without
   one holds 0 (``SkuToGoodsTypeUtil.f``:66-99 over ``OldRgbBkUtil.a`` / ``.b``:75-97, the pact
   ``OldBleModel.itemClickOp``:52-60 copies, the int fields ``Info4BleIotDevice.p`` / ``.v``:90-91), so it
-  runs the source goodsType. A target-row route carries the gate (``Route.gate``), and
-  ``profile.profile_for`` takes it only on an advertised pact. A SKU that a ``modelled`` row and an admitted
+  runs the source goodsType. A target-row route needs an advertised pact too (``Route.needs_pact``), and
+  ``profile.profile_for`` takes it only with one. A SKU that a ``modelled`` row and an admitted
   row both list raises too: the spec's routing (``ble_rows``) counts both wherever both accept the pact, and
   the opt-in must leave the admitted routes as they are.
 - The pact fallback (decision D3), the 1.x compatibility rule: 1.4.0 routed each of its 18 SKUs whatever
@@ -538,10 +542,10 @@ class Route(NamedTuple):
     goods_type: int
     pacts: frozenset[tuple[int, int]] | None
     """The ``(pactType, pactCode)`` pairs the row accepts; None = any (``pacts: any``)."""
-    gate: tuple[int, int] | None
-    """The ``(min_pact_type, min_pact_code)`` of a pact-conditioned ``assigned_goods_type`` item whose target
-    goodsType this row is, where the item names the SKU (:func:`pact_gates`): the route is taken only on an
-    advertised pact, never without one (the module doc). None for every other route."""
+    needs_pact: bool
+    """The route is taken only on an advertised pact, never without one (the module doc): the row is the
+    target goodsType of a pact-conditioned ``assigned_goods_type`` item that names the SKU
+    (:func:`pact_gates`), or a pairing item with a pact names the SKU (:func:`bind_skus`)."""
 
 
 def _layer(*layers: Mapping[str, Any]) -> dict[str, Any]:
@@ -684,10 +688,18 @@ def bind_review(families: Sequence[Family]) -> tuple[str, ...]:
     return tuple(_binds(families))
 
 
+def bind_skus(families: Sequence[Family]) -> frozenset[str]:
+    """The SKUs (upper-cased) that a pairing item with a pact (:func:`bind_pact`) of ``families`` names: each
+    of their routes needs an advertised pact (``Route.needs_pact``, the module doc)."""
+    return frozenset(sku.upper() for fam in families for item in fam.get("assigned_goods_type") or ()
+                     if bind_pact(item) is not None
+                     for sku in item.get("models") or () if isinstance(sku, str))
+
+
 def pact_gates(families: Sequence[Family]) -> dict[str, dict[int, tuple[int, int]]]:
     """``{SKU upper-cased: {target goodsType: gate}}`` for each pact-conditioned ``assigned_goods_type`` item
-    of ``families`` (:func:`pact_gate`), for each SKU it names: the routes :func:`profiles` gives a
-    ``Route.gate``."""
+    of ``families`` (:func:`pact_gate`), for each SKU it names: the target routes :func:`profiles` marks
+    ``Route.needs_pact``."""
     gates: dict[str, dict[int, tuple[int, int]]] = {}
     for fam in families:
         for item in fam.get("assigned_goods_type") or ():
@@ -862,12 +874,13 @@ def profiles(families: Sequence[Family], parse_names: Collection[str], admitted:
     """``[(skus, fields, routes)]``: DeviceProfile field values for each group of (row, SKU) routes at a
     support level in ``admitted`` (a catalogue route's is :func:`catalogue_support`) whose resolved facts are
     identical, in devices.yaml order (row models, then its catalogue routes, within a row), with those routes
-    (a route at a pact-conditioned item's target goodsType carries its gate, :func:`pact_gates`).
+    (``Route.needs_pact`` on a route at a pact-conditioned item's target goodsType, :func:`pact_gates`, and on
+    each route of a SKU a pairing item with a pact names, :func:`bind_skus`).
     ``parse_names`` are the mode_color_parse table's names; ``catalogued`` are the SKUs (upper-case) with a
     bundled scene catalog, the only ones offered scenes (None: no cut). SpecError on a fact missing or not
     served."""
     groups: dict[str, tuple[list[str], dict[str, Any], list[Route]]] = {}
-    gates = pact_gates(families)
+    gates, paired = pact_gates(families), bind_skus(families)
     for fam, gt, row, sku in _members(families, admitted):
         pacts = row.get("pacts", "any")   # every route has pacts (_members); 'any' tests none
         accepted = None if isinstance(pacts, str) else frozenset(_pact(p) for p in pacts)
@@ -875,7 +888,8 @@ def profiles(families: Sequence[Family], parse_names: Collection[str], admitted:
         skus, _same, members = groups.setdefault(repr(sorted(fields.items())), ([], fields, []))
         if sku not in skus:
             skus.append(sku)
-        members.append(Route(sku, int(gt), accepted, gates.get(sku.upper(), {}).get(int(gt))))
+        members.append(Route(sku, int(gt), accepted,
+                             sku.upper() in paired or int(gt) in gates.get(sku.upper(), {})))
     return [(tuple(skus), fields, tuple(members)) for skus, fields, members in groups.values()]
 
 

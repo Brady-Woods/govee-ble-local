@@ -718,22 +718,23 @@ def _from_spec(skus: tuple[str, ...], facts: Mapping[str, Any]) -> DeviceProfile
 
 
 class _Route(NamedTuple):
-    """One BLE row's route for a SKU: its goodsType, its accepted pacts (None = any), its profile, and the
-    gate of the pact-conditioned reassignment whose target row it is (``_resolve.Route.gate``; None for
-    every other route)."""
+    """One BLE row's route for a SKU: its goodsType, its accepted pacts (None = any), its profile, and whether
+    it is taken only on an advertised pact (``_resolve.Route.needs_pact``)."""
     goods_type: int
     pacts: frozenset[tuple[int, int]] | None
     profile: DeviceProfile
-    gate: tuple[int, int] | None
+    needs_pact: bool
 
 
 def _accepts(route: _Route, pact: tuple[int, int] | None) -> bool:
     """Whether ``route`` serves an advertisement with ``pact`` (None: none advertised): at one of its pacts
-    (any, on a ``pacts: any`` row), and with none only where no pact-conditioned reassignment gates it. The
-    app takes the rewrite to that row only for a record whose pact meets the gate, and keeps a record without
-    one at its source goodsType (``_resolve`` module doc), so a pact-less advert never reaches the row."""
+    (any, on a ``pacts: any`` row), and with none only where the route doesn't need one (``_resolve`` module
+    doc). A pact-conditioned reassignment's target row needs it: the app takes the rewrite to that row only
+    for a record whose pact meets the gate, and keeps a record without one at its source goodsType. So does
+    each row of a SKU a pairing write names at an exact pact: without the pact the library can't tell the
+    row's facts from those the app runs at the write's pact (H615A-E's (65535, 255))."""
     if pact is None:
-        return route.gate is None
+        return not route.needs_pact
     return route.pacts is None or pact in route.pacts
 
 
@@ -749,7 +750,7 @@ def _table(families: tuple[_resolve.Family, ...], admitted: frozenset[str]
         profiles.append(p)
         for route in members:
             routes.setdefault(route.sku.upper(), []).append(
-                _Route(route.goods_type, route.pacts, p, route.gate))
+                _Route(route.goods_type, route.pacts, p, route.needs_pact))
     return tuple(profiles), {sku: tuple(hits) for sku, hits in routes.items()}
 
 
@@ -769,7 +770,7 @@ def profile_for(sku: str, *, pact: tuple[int, int] | None = None, goods_type: in
 
     The candidates are the spec's BLE rows that list ``sku`` and accept the advertised ``pact``
     (``(pact_type, pact_code)``, ``GoveeAdvertisement.pact``; None: none advertised, which any row accepts
-    but the target row of a pact-conditioned reassignment, ``_accepts``), at ``goods_type`` where given.
+    but one whose route needs a pact, ``_accepts``), at ``goods_type`` where given.
     Exactly one candidate (or several with identical facts) is the SKU's profile; several that differ are
     unsupported: pass the goodsType to pick one. The rows are the ``hardware_verified`` and ``app_traced``
     ones; ``allow_modelled`` also takes ``modelled`` rows (inferred, not traced), and as the build refuses a
@@ -778,8 +779,10 @@ def profile_for(sku: str, *, pact: tuple[int, int] | None = None, goods_type: in
     ``Pact.i`` refuses a pact the goodsType doesn't accept), but for the 1.x pact fallback (decision D3,
     ``_resolve.PACT_FALLBACK_SKUS``): at a pact no row accepts, each of the 18 SKUs 1.4.0 shipped still routes
     to its one ``hardware_verified`` / ``app_traced`` profile, as in 1.x, so no released unit is demoted.
-    A SKU whose rows are all such target rows needs its pact: without one it is unsupported, whatever the
-    goodsType, as the app keeps a pact-less unit at its source goodsType."""
+    A SKU whose routes all need a pact is unsupported without one, whatever the goodsType: one only
+    pact-conditioned reassignments' target rows route, as the app keeps a pact-less unit at its source
+    goodsType, and one a pairing write names at an exact pact (H615A-E), whose pact-less advert may carry
+    that pact, where the app runs other frames than the row's."""
     key = sku.upper()
     for table in (_ADMITTED, _MODELLED) if allow_modelled else (_ADMITTED,):
         hits = {id(r.profile): r.profile for r in table[1].get(key, ())
@@ -854,8 +857,9 @@ def _routed(routed: DeviceProfile | None, profile: DeviceProfile) -> bool:
 def supported_skus(*, allow_modelled: bool = False) -> list[str]:
     """All supported SKUs, sorted: every SKU a ``hardware_verified`` or ``app_traced`` row routes (and with
     ``allow_modelled`` a ``modelled`` one), at one pact at least. A SKU that several rows list needs the pact
-    or the goodsType to pick its profile, and one only a pact-conditioned reassignment's target row routes
-    needs its pact (:func:`profile_for`)."""
+    or the goodsType to pick its profile, and one whose routes all need a pact (a pact-conditioned
+    reassignment's target rows, or a SKU a pairing write names at an exact pact) needs its pact
+    (:func:`profile_for`)."""
     skus = set(_ADMITTED[1])
     if allow_modelled:
         skus |= set(_MODELLED[1])

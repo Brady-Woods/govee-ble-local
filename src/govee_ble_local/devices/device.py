@@ -268,8 +268,9 @@ class Device:
         the two differ only in what a pact picks within a row (``profile.reroute``: the BK rows' brightness
         range, H6118 / H6194 / H6179 at (10, 1) after an advert without a pact), as the app runs the row the
         unit's pact gives it; :attr:`profile` is then that profile, and the capabilities, zones and the link
-        are unchanged. Otherwise (the app's scan would refuse the device, or the other row differs in more)
-        the profile is kept and a warning is logged, once per change of pact."""
+        are unchanged. Otherwise (the app's scan would refuse the device, or it runs the device on other
+        facts: another row that differs in more, or a pairing write's pact no row lists, H615A-E's
+        (65535, 255)) the profile is kept and a warning is logged, once per change of pact."""
         if adv is None or adv.pact is None or adv.pact == self._pact:
             return False
         self._pact = adv.pact
@@ -282,7 +283,7 @@ class Device:
                 return True
             _LOGGER.warning(
                 "%s (%s): advertises pact %d,%d, which no row of its profile accepts (the app's scan refuses "
-                "it there or takes another row); it keeps the profile it was built with",
+                "it there, or runs it on other facts); it keeps the profile it was built with",
                 self._ble_device.address, self._sku, *adv.pact,
             )
         return True
