@@ -32,6 +32,7 @@ from fake_ble import ble_device
 
 from govee_ble_local.devices.device import Device, make_device
 from govee_ble_local.exceptions import GoveeBleInvalidValue
+from govee_ble_local.models import Capability
 from govee_ble_local.wire import _spec
 from govee_ble_local.wire import build as b
 from govee_ble_local.wire.cct import tint_for_kelvin
@@ -132,12 +133,13 @@ def test_zone_and_segment_cct_carry_tint() -> None:
 _MAIN_4000 = "33051501ffffff0fa0ffd5a10010"
 _RING_4000 = "33051501ffffff0fa0ffd5a1ff0f"
 _ALL_4000 = "33051501ffffff0fa0ffd5a1ff1f"
+_WHOLE_4000 = "33050dffd5a10fa0ffd5a1000000"   # pact (1, 1): the 0x0d form, no mask
 
 
 @pytest.mark.parametrize(("adv", "frame"), [
     (None, _ALL_4000), (_adv("H60A6", 1, 3), _ALL_4000), (_adv("H60A6", 1, 9), _ALL_4000),
     (_adv("H60A6", 1, 2), _ALL_4000), (_adv("H60A6", 1, 0), _ALL_4000), (_adv("H60A6", 2, 9), _ALL_4000),
-    (_adv("H60A6", 1, 1), "33050dffd5a10fa0ffd5a1000000")])
+    (_adv("H60A6", 1, 1), _WHOLE_4000)])
 def test_h60a6_whole_device_cct_is_one_frame_in_its_pacts_form(adv: Any, frame: str) -> None:
     # DelegateColorV2.G0 / KelvinConfig.b: one 15 01 frame, mask bits 0-12 (ff 1f), on pact (1, >= 2); a pact
     # no row lists, or none, keeps the row's 0x15 form (the 1.x pact fallback). At (1, 1) the colour tab's
@@ -147,6 +149,11 @@ def test_h60a6_whole_device_cct_is_one_frame_in_its_pacts_form(adv: Any, frame: 
     assert [_hex14(f) for f in _sent(d)] == [frame]
     d._conn.send.assert_awaited_once()  # type: ignore[attr-defined]
     assert d.state.color_temp_kelvin == 4000 and d.state.rgb_color is None
+    # The header's two zones and their 33 30 indexes at every pact (VM4LightH60A6.y5:1373-1383); at (1, 1) one
+    # colour piece (getColorPieceSize(303, 1, 1) = 1), so no segments and on/off-only zones.
+    assert [(z.name, z.power_index) for z in d.zones] == [("main", 0), ("background", 1)]
+    assert (d.segment_count, Capability.SEGMENTS in d.capabilities, any(z.segments for z in d.zones)) == (
+        (0, False, False) if frame == _WHOLE_4000 else (13, True, True))
 
 
 def test_h60a6_pact_is_learned_from_the_advertisement() -> None:
