@@ -370,11 +370,11 @@ class DeviceProfile:
     selection. The control screen's All tab sends its Kelvin over every piece (``DelegateColorV2.G0``), and
     only its Part tab's Kelvin item over the selected ones, an item ``DelegateColorV2Part.Z0`` adds only
     where ``LightColorCapabilityCenter.C2`` holds: ``SupportPartColorTemConfig.b``'s goodsTypes (a
-    devices.yaml row's ``segment_color_temp``), but false on the H60A6 and H6047 by the user's decision 24,
-    and on the held H1232 / H1252 by its extension: their Part-tab Kelvin item widens every pick to whole
-    zones (``ColorModeH60A6.canClickColorTem``, ``ColorMode10Segment.canClickColorTem``,
-    ``ColorModeH1232.canClickColorTem``, ``ColorModeH1252.canClickColorTem``), so it sends none to part of
-    one. False: ``set_segment_color_temp`` raises
+    devices.yaml row's ``segment_color_temp``), but false on the four SKUs whose Part-tab Kelvin item widens
+    every pick to whole zones, so it sends none to part of one: H60A6 and H6047 (the user's decision 24;
+    ``ColorModeH60A6.canClickColorTem``, ``ColorMode10Segment.canClickColorTem``), and H1232 and H1252
+    (held, behind ``allow_modelled``; decision 25, D11; ``ColorModeH1232.canClickColorTem``,
+    ``ColorModeH1252.canClickColorTem``). False: ``set_segment_color_temp`` raises
     GoveeBleNotSupported before any I/O, and the device's colour temperature is
     :meth:`~.device.Device.set_color_temp`'s. It does not govern :meth:`~.device.Device.set_zone_color_temp`,
     whose frame masks a zone's pieces: that needs SEGMENTS, COLOR_TEMP and a zone with segments only. It

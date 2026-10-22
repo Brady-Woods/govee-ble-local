@@ -82,9 +82,9 @@ the row lacks fails the build: nothing defaults silently.
   resolves no colour scheme or Kelvin range for a plug), and elsewhere they need a colour scheme. A row that
   keeps ``segments`` and ``color_temp`` after those drops says whether ``set_segment_color_temp`` may send a
   Kelvin to a piece selection (``segment_color_temp``, which becomes ``DeviceProfile.segment_color_temp``:
-  the Part tab's Kelvin item, ``DelegateColorV2Part.Z0`` -> ``LightColorCapabilityCenter.C2``, but false on
-  h60ax 303 / h6047 119, whose item widens to whole zones, by the user's decision 24); a row that keeps fewer
-  may not say.
+  the Part tab's Kelvin item, ``DelegateColorV2Part.Z0`` -> ``LightColorCapabilityCenter.C2``, but false
+  where that item widens to whole zones, on the SKUs ``DeviceProfile.segment_color_temp`` lists); a row that
+  keeps fewer may not say.
   An ``untraced`` scene dialect drops ``scenes``; ``none`` is activate only. Scenes need a bundled catalog, as
   every SKU of 1.4.0 that offers them ships one: a SKU the scene store has no catalog for
   (``scenes/store.json``, the generated ``SCENE_CATALOGS``, which :func:`profiles` takes as ``catalogued``) is

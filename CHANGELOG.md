@@ -226,14 +226,15 @@ model, from which the shipped readers are generated).
 - **`DeviceProfile.segment_color_temp`** (keyword-only, default True; the spec's clientRow
   `segment_color_temp`): whether `Device.set_segment_color_temp` may send a colour temperature to a piece
   selection, as the app's Part-tab Kelvin item sends one (`DelegateColorV2Part.Z0` ->
-  `LightColorCapabilityCenter.C2` -> `SupportPartColorTemConfig.b`; Changed, below), but false on the H60A6
-  and H6047, whose item widens every pick to whole zones (the user's decision 24). The generated table sets
+  `LightColorCapabilityCenter.C2` -> `SupportPartColorTemConfig.b`; Changed, below), but false on the SKUs
+  whose item widens every pick to whole zones (the field's docstring lists them). The generated table sets
   it from the row; a profile built by hand keeps 1.x's behaviour. Where it is false, `set_segment_color_temp`
   raises GoveeBleNotSupported before any I/O, and `set_color_temp` is the device's colour temperature. It
   doesn't govern `set_zone_color_temp`, which needs SEGMENTS, COLOR_TEMP and a zone with segments, as in 1.6.1.
   **For integrators:** SEGMENTS plus COLOR_TEMP in `capabilities` no longer means `set_segment_color_temp`
   works. Gate a per-segment colour-temperature control on `profile.segment_color_temp` as well. A per-zone
-  one needs only COLOR_TEMP and the profile's zones; don't gate it on the field. The Home Assistant
+  one needs what `set_zone_color_temp` needs, SEGMENTS, COLOR_TEMP and a zone with segments; don't gate it
+  on the field. The Home Assistant
   integration's segment entities take COLOR_TEMP from the two capabilities alone, so on the 42 released SKUs
   listed under Changed their colour temperature would raise GoveeBleNotSupported.
 - **H1162 / H1163 / H1167 / H1168** (h1162 goodsTypes 87 / 137 / 182 / 186), the Music Sync boxes, admitted by
