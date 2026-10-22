@@ -31,7 +31,8 @@ from .brightness import percent_to_raw
 # "B_h60a6" = H60A6 DIY (0x58; 0xA4-MTU graffiti / 0xA3 DIY by length gate);
 # "B_h6052" = H6052 type-5 professional graffiti (commByte 9).
 SceneDialect = Literal["A", "B_h60a6", "B_h6052"]
-# "status" (0xAC burst) | "polled" (aa 01/04/05) | "plug" (aa 01 relay bitmask) | "none"
+# "status" (0xAC burst) | "polled" (aa 01, then aa 04 with Capability.BRIGHTNESS and aa 05 with a capability
+# the mode report carries: device._MODE_REPORT_CAPS) | "plug" (aa 01 relay bitmask) | "none"
 ReadBack = Literal["status", "polled", "plug", "none"]
 ColorReadBack = Literal["", "mechanism_b", "mechanism_a_direct"]
 # How the colour sub-modes of an ``aa 05`` mode report are decoded (the SKU's Info4Detail mode parse): a
@@ -275,9 +276,10 @@ class DeviceProfile:
     the order of the spec's resolution (``govee_reference.client_row``); a pact not yet heard applies none."""
     status_read: tuple[int, ...] = field(default=_H60A6_STATUS_READ, kw_only=True)
     """``readback="status"``: the TLV types the 0xAC status read requests, in request order (command codes;
-    a devices.yaml row's ``status_read``). The default is the H60A6's ``0x41, 0x30, 0xA5``, 1.x's request.
-    The 0xA5 colour groups are left out while :attr:`status_color_groups_pact` rules them out (a list is
-    kept as a tuple)."""
+    a devices.yaml row's ``status_read``); empty is the bare read ``ac 03 00``, which requests none and gets
+    the TLVs the firmware chooses (the h70dx screen's). The default is the H60A6's ``0x41, 0x30, 0xA5``,
+    1.x's request. The 0xA5 colour groups are left out while :attr:`status_color_groups_pact` rules them out
+    (a list is kept as a tuple)."""
     status_decode: tuple[tuple[str, str | int | bool], ...] = field(
         default=_H60A6_STATUS_DECODE, kw_only=True)
     """``readback="status"``: how the 0xAC reply is read, a devices.yaml row's wire facts as ``(govee_profile
@@ -315,7 +317,11 @@ class DeviceProfile:
     ``brightness_range``: stringlightv2 goodsType 1 reports percent at pact (2, 1)). ``Device`` writes and
     reads brightness with the range in force, so with entries and no pact heard it writes none (the write
     raises GoveeBleNotSupported) and reads none (``state.brightness`` stays None): the byte's meaning waits
-    for the pact."""
+    for the pact. Such a SKU routes without a pact, so a ``Device`` set up from a pact-less record
+    (``create_device`` with no advertisement, or one without a Govee pact block: the stringlightv2 SKUs
+    H6121 / H6141 / H6142 / H6154 / H6195, H6170 / H6196 / H613G) refuses every brightness command until
+    ``Device.ingest_advertisement`` hears the pact, ``turn_on(brightness=...)`` included, which then sends
+    nothing, not even the power-on; power, colour and colour temperature work meanwhile."""
     ic_num_read_only: bool = field(default=False, kw_only=True)
     """Ignored with :attr:`color_readback_live_ic`. Without it: the screen reads the ``aa 40`` IC count at
     connect, but its piece count is fixed (``getColorPieceSize`` whatever the IC: h6609 goodsType 181), so
@@ -345,6 +351,51 @@ class DeviceProfile:
     last operation that sent a frame, each one restarting the wait (goodsType 43's ctlchannel
     ``HeartHandler.e``, which restarts it on every send: H5080, H5083 and H5085). Checked either way, and
     ignored without a :attr:`heartbeat`: then no beat goes out at all, on either timing."""
+    light_nonzero: bool = field(default=False, kw_only=True)
+    """``readback="polled"``: the ``aa 01`` reply reads on for any non-zero byte (the spec's
+    ``power_rule.light_nonzero``). It is the rule the library's poll follows: as with :attr:`relay_on_mask`,
+    the row's heartbeat rule where it has one (its wire ``power.light_heartbeat_nonzero``: H1168's aa 01
+    heartbeat, ``HeartControllerWithBattery.parseValidBytes``, which replaces the connect read's ``== 1``
+    within 2 s), else its connect read's (``power.light_nonzero``: the legacy
+    ``SwitchController.parseValidBytes`` on the H1162 / H1163 / H1167 standalone screen, the H70BX connect
+    read ``AfterConnectSuccessReadDeviceInfo.w``). False, the default: on only for a byte of 1
+    (``ControllerSwitch.Companion.c``), as every other light screen reads it. Ignored on a plug, whose byte is
+    a relay mask (:attr:`relay_on_mask`). It covers the poll only: on such a row an advertisement's switch
+    byte still reads on only for 1 (:meth:`~.device.Device.advertised_on`), as the app's device list decodes
+    it for every light (``AbsBaseBleModel.z:393-397`` over ``BleUtil.parseBleBroadOnOff:719-744``; the h1162
+    ``Model.z:149-157`` calls it, and the H1168 and H70BX models inherit it), so a byte of 2 reads off in
+    the advertisement and on in the poll."""
+    segment_color_temp: bool = field(default=True, kw_only=True)
+    """Whether :meth:`~.device.Device.set_segment_color_temp` may send a colour temperature to a piece
+    selection. The control screen's All tab sends its Kelvin over every piece (``DelegateColorV2.G0``), and
+    only its Part tab's Kelvin item over the selected ones, an item ``DelegateColorV2Part.Z0`` adds only
+    where ``LightColorCapabilityCenter.C2`` holds: ``SupportPartColorTemConfig.b``'s goodsTypes (a
+    devices.yaml row's ``segment_color_temp``), but false on the H60A6 and H6047 by the user's decision 24,
+    and on the held H1232 / H1252 by its extension: their Part-tab Kelvin item widens every pick to whole
+    zones (``ColorModeH60A6.canClickColorTem``, ``ColorMode10Segment.canClickColorTem``,
+    ``ColorModeH1232.canClickColorTem``, ``ColorModeH1252.canClickColorTem``), so it sends none to part of
+    one. False: ``set_segment_color_temp`` raises
+    GoveeBleNotSupported before any I/O, and the device's colour temperature is
+    :meth:`~.device.Device.set_color_temp`'s. It does not govern :meth:`~.device.Device.set_zone_color_temp`,
+    whose frame masks a zone's pieces: that needs SEGMENTS, COLOR_TEMP and a zone with segments only. It
+    means nothing without SEGMENTS and COLOR_TEMP in :attr:`capabilities`. True by default, so a profile
+    built by hand keeps 1.x's behaviour; the generated table sets it from the row (the default on a row
+    without both capabilities). An RGB pick that is a Kelvin tint colour still goes to the selected pieces
+    as the Kelvin frame (``Config.Yt``), as the app sends it, whatever this says."""
+    segment_brightness_groups: tuple[tuple[int, ...], ...] = field(default=(), kw_only=True)
+    """Disjoint groups of segment indices that :meth:`~.device.Device.set_segment_brightness` widens a
+    selection to: every segment of each group holding a selected one goes into the ``33 05 15 02`` mask and
+    the state fold, as the screen's strip widens it before the write (a devices.yaml row's
+    ``segment_brightness_groups``: ``ColorMode14Rect4ReverseSelect.canClickBrightness`` and
+    ``H605CColorMode.canClickBrightness``, {0-2} / {3-6} / {7-9} / {10-13}). Empty, the default: the
+    selection as it is."""
+    device_info_reads: bool = field(default=True, kw_only=True)
+    """Whether :meth:`~.device.Device.update` makes the ``aa 06`` / ``aa 07 03`` / ``aa 07 02`` device-info
+    reads (``_readback.read_device_info``), and later the re-read of a version a firmware-gated fact still
+    waits for. True, the default, as in 1.6.1. False on a ``readback="status"`` row whose screen sends none of
+    them (a devices.yaml status row's ``device_info_reads: none``: every status row but the H60A6's and the
+    H6076's, whose reads are firmware-sourced): the versions and device id then come from the status reply's
+    TLV 0x07 alone, on every poll, as on the screen (``Compose4BaseInfoSingleRead.w``)."""
 
     def __post_init__(self) -> None:
         """Validate each field: GoveeBleInvalidValue (a ValueError) on a value no Device can use.
@@ -397,11 +448,16 @@ class DeviceProfile:
         if isinstance(self.status_read, list):
             object.__setattr__(self, "status_read", tuple(self.status_read))
         types = self.status_read
-        if (not isinstance(types, tuple) or not types or len(set(types)) != len(types)
+        if (not isinstance(types, tuple) or len(set(types)) != len(types)
                 or not all(isinstance(t, int) and not isinstance(t, bool) and 0 <= t <= 0xFF for t in types)):
-            raise GoveeBleInvalidValue(
-                f"{where}: status_read={types!r} (distinct command codes, at least one)")
+            raise GoveeBleInvalidValue(f"{where}: status_read={types!r} (distinct command codes)")
         self._check_status_decode(where)
+        groups = self.segment_brightness_groups
+        if not (isinstance(groups, tuple) and all(
+                isinstance(g, tuple) and g and all(_index(i) for i in g) for g in groups)
+                and len({i for g in groups for i in g}) == sum(map(len, groups))):
+            raise GoveeBleInvalidValue(f"{where}: segment_brightness_groups={groups!r} (a tuple of disjoint, "
+                                       "non-empty tuples of segment indices)")
         if self.color_readback_per_batch < 1:   # a group size of 0 would never finish a read-back
             raise GoveeBleInvalidValue(
                 f"{where}: color_readback_per_batch={self.color_readback_per_batch!r}")
@@ -538,6 +594,11 @@ def _raw_range(span: tuple[int, ...]) -> bool:
     return 0 <= lo < hi <= 0xFF and percent_to_raw(100, lo, hi) <= 0xFF
 
 
+def _index(value: object) -> bool:
+    """A segment index: a non-negative int, not a bool."""
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+
 def _pact_key(pact: tuple[int, ...]) -> bool:
     """A ``(pact_type, pact_code)`` key of non-negative ints."""
     return len(pact) == 2 and all(isinstance(v, int) and not isinstance(v, bool) and v >= 0 for v in pact)
@@ -562,10 +623,26 @@ def _from_spec(skus: tuple[str, ...], facts: Mapping[str, Any]) -> DeviceProfile
 
 
 class _Route(NamedTuple):
-    """One BLE row's route for a SKU: its goodsType, its accepted pacts (None = any) and its profile."""
+    """One BLE row's route for a SKU: its goodsType, its accepted pacts (None = any), its profile, and
+    whether it is taken only on an advertised pact (``_resolve.Route.needs_pact``: the target row of a
+    pact-conditioned reassignment, or a ``pact_required`` row)."""
     goods_type: int
     pacts: frozenset[tuple[int, int]] | None
     profile: DeviceProfile
+    needs_pact: bool
+
+
+def _accepts(route: _Route, pact: tuple[int, int] | None) -> bool:
+    """Whether ``route`` serves an advertisement with ``pact`` (None: none advertised): at one of its pacts
+    (any, on a ``pacts: any`` row), and with none only where the route doesn't need one. The app takes a
+    pact-conditioned rewrite to its target row only for a record whose pact meets the gate, and keeps a
+    record without one at its source goodsType (``_resolve`` module doc), so a pact-less advert never reaches
+    that row; and a ``pact_required`` row's goodsType also runs, at pacts the row doesn't list, a path the
+    row doesn't serve (the (1,1) of straightfloorlamp 69 and the h70b3 rows), so a pact-less advert may be
+    one of those."""
+    if pact is None:
+        return not route.needs_pact
+    return route.pacts is None or pact in route.pacts
 
 
 def _table(families: tuple[_resolve.Family, ...], admitted: frozenset[str]
@@ -579,7 +656,8 @@ def _table(families: tuple[_resolve.Family, ...], admitted: frozenset[str]
         p = _from_spec(skus, facts)
         profiles.append(p)
         for route in members:
-            routes.setdefault(route.sku.upper(), []).append(_Route(route.goods_type, route.pacts, p))
+            routes.setdefault(route.sku.upper(), []).append(
+                _Route(route.goods_type, route.pacts, p, route.needs_pact))
     return tuple(profiles), {sku: tuple(hits) for sku, hits in routes.items()}
 
 
@@ -597,21 +675,25 @@ def profile_for(sku: str, *, pact: tuple[int, int] | None = None, goods_type: in
                 allow_modelled: bool = False) -> DeviceProfile | None:
     """The profile for ``sku`` (case-insensitive), or None if unsupported.
 
-    The candidates are the spec's BLE rows that list ``sku`` and accept the advertised ``pact``
-    (``(pact_type, pact_code)``, ``GoveeAdvertisement.pact``; None: any), at ``goods_type`` where given.
-    Exactly one candidate (or several with identical facts) is the SKU's profile; several that differ are
-    unsupported: pass the goodsType to pick one. The rows are the ``hardware_verified`` and ``app_traced``
+    The candidates are the spec's BLE rows that list ``sku`` and accept the advertised ``pact`` (``(pact_type,
+    pact_code)``, ``GoveeAdvertisement.pact``; None: none advertised, which any row accepts but the target row
+    of a pact-conditioned reassignment and a ``pact_required`` row, ``_accepts``), at ``goods_type`` where
+    given. Exactly one candidate (or several with identical facts) is the SKU's profile; several that differ
+    are unsupported: pass the goodsType to pick one. The rows are the ``hardware_verified`` and ``app_traced``
     ones; ``allow_modelled`` also takes ``modelled`` rows (inferred, not traced), and as the build refuses a
     SKU that rows of both kinds list (``_resolve.routes``), it only adds SKUs, never changes a route. A SKU is
     served only at its rows' pacts, as the app's scan serves it (``AbsBaseBleModel.e``: ``checkProtocol`` ->
     ``Pact.i`` refuses a pact the goodsType doesn't accept), but for the 1.x pact fallback (decision D3,
     ``_resolve.PACT_FALLBACK_SKUS``): at a pact no row accepts, each of the 18 SKUs 1.4.0 shipped still routes
-    to its one ``hardware_verified`` / ``app_traced`` profile, as in 1.x, so no released unit is demoted."""
+    to its one ``hardware_verified`` / ``app_traced`` profile, as in 1.x, so no released unit is demoted. A
+    SKU whose rows are all such rows needs its pact: without one it is unsupported, whatever the goodsType, as
+    the app keeps a pact-less unit at its source goodsType (a reassignment) or may run it on a path the row
+    doesn't serve (``pact_required``: H6076 / H8076 / R16D0, and the ``modelled`` h70b3 rows' H70B3 / H70B4 /
+    H70B5 / H6810 / H6811 / H8811)."""
     key = sku.upper()
     for table in (_ADMITTED, _MODELLED) if allow_modelled else (_ADMITTED,):
         hits = {id(r.profile): r.profile for r in table[1].get(key, ())
-                if (pact is None or r.pacts is None or pact in r.pacts)
-                and (goods_type is None or r.goods_type == goods_type)}
+                if _accepts(r, pact) and (goods_type is None or r.goods_type == goods_type)}
         if hits:
             return next(iter(hits.values())) if len(hits) == 1 else None
     if pact is not None and key in _resolve.PACT_FALLBACK_SKUS:   # D3, the 1.x compatibility rule
@@ -631,7 +713,7 @@ def refuses_pact(profile: DeviceProfile, sku: str, pact: tuple[int, int]) -> boo
     key = sku.upper()
     mine = [r for table in (_ADMITTED, _MODELLED) for r in table[1].get(key, ())
             if _routed(r.profile, profile)]
-    if not mine or any(r.pacts is None or pact in r.pacts for r in mine):
+    if not mine or any(_accepts(r, pact) for r in mine):
         return False
     return not _routed(profile_for(key, pact=pact), profile)
 
@@ -645,8 +727,9 @@ def _routed(routed: DeviceProfile | None, profile: DeviceProfile) -> bool:
 
 def supported_skus(*, allow_modelled: bool = False) -> list[str]:
     """All supported SKUs, sorted: every SKU a ``hardware_verified`` or ``app_traced`` row routes (and with
-    ``allow_modelled`` a ``modelled`` one). A SKU that several rows list needs the pact or the goodsType to
-    pick its profile (:func:`profile_for`)."""
+    ``allow_modelled`` a ``modelled`` one), at one pact at least. A SKU that several rows list needs the pact
+    or the goodsType to pick its profile, and one that only rows needing a pact route (a pact-conditioned
+    reassignment's target row, a ``pact_required`` row) needs its pact (:func:`profile_for`)."""
     skus = set(_ADMITTED[1])
     if allow_modelled:
         skus |= set(_MODELLED[1])
@@ -665,9 +748,11 @@ def wire_profile(profile: DeviceProfile) -> Any:
     """The spec's ``govee_profile`` for the device facts a reply's decode depends on: the mode decode
     (:attr:`DeviceProfile.mode_color_parse`, and the bars' 0x15 on a :attr:`DeviceProfile.bar_switch`
     device) for the aa 05 report, the status TLV 0x05's (``mode_status``:
-    :attr:`DeviceProfile.mode_color_parse_status`, else the same), the plug's relay mask
-    (:attr:`DeviceProfile.relay_on_mask`, the aa 01 heartbeat rule the library's poll follows:
-    ``power_state.is_on_heartbeat``), and on a ``readback="status"`` profile the 0xAC reply's decode
+    :attr:`DeviceProfile.mode_color_parse_status`, else the same), the aa 01 power rule (on a
+    ``readback="plug"`` profile its relay mask, :attr:`DeviceProfile.relay_on_mask`, as the aa 01 heartbeat
+    rule the library's poll follows: ``power_state.is_on_heartbeat``; else a light's, masks 0, with
+    :attr:`DeviceProfile.light_nonzero`, the poll's rule, as both ``light_nonzero`` and
+    ``light_heartbeat_nonzero``), and on a ``readback="status"`` profile the 0xAC reply's decode
     (:attr:`DeviceProfile.status_decode`: its forms and colour-group form, and the TLV 0x05's music layout and
     empty-value rule in ``mode_status``), which ``reassemble.status_profile`` reads the status stream with.
     Cached per set of facts (``_spec.profile``)."""
@@ -682,7 +767,12 @@ def wire_profile(profile: DeviceProfile) -> Any:
         colours = mode_status if mode_status is not None else _decode(profile, profile.mode_color_parse)
         mode_status = {**colours, "music": int(_C.MusicDecode[facts.get("music", "not_decoded")]),
                        "empty_fails": bool(facts.get("empty_fails", False))}
+    # The aa 01 reply's rule follows the read the profile makes: the plug read's relay mask, else a light's
+    # (masks 0, govee_profile power_rule); each is already the rule the poll follows, so it fills both the
+    # connect-read and the heartbeat params.
+    mask = profile.relay_on_mask if profile.readback == "plug" else 0
     return _spec.profile(**_decode(profile, profile.mode_color_parse),
                          mode_status=None if mode_status is None else tuple(sorted(mode_status.items())),
-                         relay_on_mask=profile.relay_on_mask, relay_heartbeat_on_mask=profile.relay_on_mask,
+                         relay_on_mask=mask, relay_heartbeat_on_mask=mask,
+                         light_nonzero=profile.light_nonzero, light_heartbeat_nonzero=profile.light_nonzero,
                          **reads)

@@ -257,8 +257,8 @@
           "properties": {
             "has_brightness": { "type": "boolean", "description": "Per-segment 0xA5 colour read-back record: true = 4-byte [brightness,R,G,B], false = 3-byte [R,G,B] (an aa a2 colour group is always 3-byte)." },
             "color_scheme": { "type": "string", "description": "Colour-write byte-layout family selecting the op15/0x0d variant (e.g. 'h60a6', 'h6006')." },
-            "power_read": { "type": "string", "enum": ["aa01", "ac_status"], "description": "Power source at connect (govee_state power_state.is_on): 'aa01' = the aa 01 read, on when the byte == 1; 'ac_status' = TLV 0x01 of the 0xAC/0x03 status burst (no aa 01 read), on when the byte != 0." },
-            "power_live": { "type": "array", "uniqueItems": true, "items": { "type": "string", "enum": ["heartbeat_aa01", "heartbeat_aa36", "heartbeat_aa33", "push_30"] }, "description": "Live power after connect: 'heartbeat_aa01' = aa 01 heartbeat, on when frame byte 2 == 1; 'heartbeat_aa36' = aa 36 heartbeat, per bar byte 2 / 3 == 1; 'heartbeat_aa33' = aa 33 switch heartbeat, on when byte 2 != 0; 'push_30' = the ee 30 notify (layout: wire forms.f_ee_30)." },
+            "power_read": { "type": "string", "enum": ["aa01", "ac_status"], "description": "Power source at connect (govee_state power_state.is_on): 'aa01' = the aa 01 read, on when the byte == 1 (any non-zero byte under the wire power light_nonzero); 'ac_status' = TLV 0x01 of the 0xAC/0x03 status burst (no aa 01 read), on when the byte != 0." },
+            "power_live": { "type": "array", "uniqueItems": true, "items": { "type": "string", "enum": ["heartbeat_aa01", "heartbeat_aa36", "heartbeat_aa33", "push_30"] }, "description": "Live power after connect: 'heartbeat_aa01' = aa 01 heartbeat, on when frame byte 2 == 1 (!= 0 under the wire power light_heartbeat_nonzero or light_nonzero); 'heartbeat_aa36' = aa 36 heartbeat, per bar byte 2 / 3 == 1; 'heartbeat_aa33' = aa 33 switch heartbeat, on when byte 2 != 0; 'push_30' = the ee 30 notify (layout: wire forms.f_ee_30)." },
             "mode_color_parse": { "$ref": "#/$defs/modeColorParse", "description": "The family's default colour-report strategy; by_goods_type.<gt>, else by_model.<SKU>, overrides it, then that entry's by_pact and every matching by_firmware (clientBranch, clientFirmware); 'none' = no colour sub-mode decoded." },
             "mode_color_parse_status": { "$ref": "#/$defs/modeColorParse", "description": "Strategy for the 0x05 TLV of the 0xAC status burst where it differs from the aa 05 reply (absent = mode_color_parse)." },
             "by_model": { "type": "object", "propertyNames": { "pattern": "^[A-Za-z0-9]+$" }, "additionalProperties": { "$ref": "#/$defs/clientModel" }, "description": "Per-SKU overrides (keys = a model of the family): the colour report and the Kelvin and brightness ranges; a by_goods_type entry for the device's gt wins over it." },
@@ -338,7 +338,7 @@
         "type": "string",
         "pattern": "^([\\w$./-]+\\.(java|c|kt|smali):\\d+(-\\d+)?(,\\s?\\d+(-\\d+)?)*|H[0-9A-Z]{4}(/H[0-9A-Z]{4})? [\\w.'<>-]+ @0x[0-9a-f]{6,8}(-0x[0-9a-f]{6,8})?)$"
       },
-      "description": "Citations in the .ksy doc-ref form (spec/checks/lint.py REF_FILE / REF_ADDR): a decompiled file's path:line relative to decomp-7.7.02, or IMAGE symbol @0xaddr."
+      "description": "Citations in the .ksy doc-ref form (spec/checks/lint.py REF_FILE / REF_ADDR): a decompiled file's path:line relative to decomp-7.7.02, or IMAGE symbol @0xaddr. A path under govee-apk-decompiled/sources/ is a Govee Home 7.5.12 (1088) path, used where the 7.7.02 capture lacks the code (the h604a rows, whose 7.7.02 module pact_h604a is not captured, and the h3a5x 386 row); the row's doc says so."
     },
     "clientRow": {
       "type": "object",
@@ -352,8 +352,9 @@
             { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "pattern": "^[0-9]+,[0-9]+$" } },
             { "const": "any" }
           ],
-          "description": "The 'pactType,pactCode' pairs (decimal) the app accepts for this goodsType (Support.addSupportPact); 'any' where the route tests no pact (a goodsType-0 SKU match). A row without pacts is never a route. On a row that a pact-conditioned assigned_goods_type item reassigns its SKUs to, only the pairs at or above its gate; on a row of a goodsType it reassigns from, only pairs below it."
+          "description": "The 'pactType,pactCode' pairs (decimal) the app accepts for this goodsType (Support.addSupportPact); 'any' where the route tests no pact (a goodsType-0 SKU match). A row without pacts is never a route. On a row that a pact-conditioned assigned_goods_type item reassigns its SKUs to, only the pairs at or above its gate, and such a row is never a route for an advertisement without a pact (the app rewrites only a record whose pact meets the gate); on a row of a goodsType it reassigns from, only pairs below it."
         },
+        "pact_required": { "const": true, "description": "The row is a route only for an advertisement that carries a pact, as a pact-conditioned reassignment's target row is (pacts above): the app accepts other pacts for this goodsType that run a path this row doesn't serve, so a unit advertising none may be one of them. The row's doc names those pacts and their path. Never on a row whose pacts are 'any'." },
         "support": { "enum": ["hardware_verified", "app_traced", "modelled"], "description": "The row's evidence. app_traced = the row's facts traced on the control-screen path and cited in doc-ref (a gap the trace knows of is named in doc); hardware_verified = app_traced, and the control path also observed on a device (doc names the device, the date and what was seen); modelled = inferred, not traced, or traced but held because the library does not yet send what the app sends (doc names the gap); admitted only on the client's opt-in." },
         "power_read": { "$ref": "#/$defs/family/properties/client_profile/properties/power_read" },
         "power_live": { "$ref": "#/$defs/family/properties/client_profile/properties/power_live" },
@@ -367,6 +368,7 @@
         "color_scheme": { "$ref": "#/$defs/family/properties/client_profile/properties/color_scheme" },
         "color_functions": { "$ref": "#/$defs/colorFunctions" },
         "capabilities": { "$ref": "#/$defs/clientCapabilities" },
+        "segment_color_temp": { "type": "boolean", "description": "Whether the client may send a colour temperature to a piece selection (DeviceProfile.segment_color_temp, which set_segment_color_temp reads), as the control screen's Part-tab Kelvin item does. The colour page's All tab sends its Kelvin over every piece (DelegateColorV2.G0, base-classes11/com/govee/base2light/pact/newdetail/content/colorv2/DelegateColorV2.java:240-252); only the Part tab's Kelvin item goes to the selected pieces, through the strip's canClickColorTem (DelegateColorV2Part.b1 / c1, DelegateColorV2Part.java:317-341), and DelegateColorV2Part.Z0 adds that item only where LightColorCapabilityCenter.C2 holds (DelegateColorV2Part.java:686-704). C2 reads the goodsType's LightCapabilitySpec, which only fanlight 359 / 368 register (split_fanlight/com/govee/fanlight/FanlightApplicationImp.java:33-36), else SupportPartColorTemConfig.b (LightColorCapabilityCenter.java:665-677, LegacyColorCapabilityProvider.H, base-classes10/com/govee/base2light/capability/legacy/LegacyColorCapabilityProvider.java:85-88): true for a goodsType in its list d, for 112 at pact (2,1) (its map e, though 112 is in d as well) and, at goodsType 0, for H7022 / H7024 (base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:36-55,71-91). So it is true on those goodsTypes, but false on h60ax 303 (ColorModeH60A6.canClickColorTem, split_h60ax/com/govee/pact_h60a0/adjust/h60a6/ColorModeH60A6.java:519-541) and h6047 119 (ColorMode10Segment.canClickColorTem, split_h6047/com/govee/h6047/detail/mode/ColorMode10Segment.java:655-691) by the user's decision 24, and on the held h60ax 356 / 373 (H1232 / H1252; ColorModeH1232.canClickColorTem, split_h60ax/com/govee/pact_h60a0/adjust/h1232/ColorModeH1232.java:486-508; ColorModeH1252.canClickColorTem, split_h60ax/com/govee/pact_h60a0/adjust/h1252/ColorModeH1252.java:562-584) by its extension (decision 25, D11): their Part-tab Kelvin item widens every pick to whole zones, so it sends none to part of one. A zone's Kelvin doesn't read it. Every 7.7.02 light colour page is DelegateColorV2 (DelegateCurMode.B; the older DelegateColor is built by no screen). Required on a row with support whose capabilities keep segments and color_temp after its colour scheme's drops, and refused on any other row with support. An RGB pick that is a Kelvin tint colour still goes out as a masked Kelvin frame (Config.Yt), whatever this says." },
         "zones": {
           "type": "array",
           "items": {
@@ -381,13 +383,20 @@
           },
           "description": "Independently switched zones; [] = unzoned."
         },
+        "segment_brightness_groups": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "integer", "minimum": 0 } },
+          "description": "The colour pieces (mask bits) the colour page's segment-brightness slider widens a selection to, as disjoint groups: before the 33 05 15 02 write (Bytes.G) the screen's strip sets every piece of each group that holds a selected piece (its IColorOpListener.canClickBrightness, e.g. ColorMode14Rect4ReverseSelect's {0-2} / {3-6} / {7-9} / {10-13}), and both the write's mask and the screen's brightness fold (ColorViewModel.m0's afterOpBrightnessSet) cover that union. Absent = the selection as it is. Needs a segment-brightness frame (color_functions segment_brightness with segments)."
+        },
         "account_lock": { "type": "boolean", "description": "The control screen sends the 0xB2 secret check after the handshake on every connect, and the device ignores commands until it does. The family encryption tag secret_key_pairing describes the pairing / group flows, not this." },
         "scene_dialect": { "enum": ["legacy_scene", "diy_graffiti", "tablelamp_h6052_type5_diy", "none", "untraced"], "description": "How the control screen uploads a scene: a key of scenes.upload.dialects (legacy_scene = ScenesOp.parseSceneV1 for every sceneType, also on a goodsType that registers a new-DIY parser, where BaseSceneViewMode.r3 first takes a sceneType-5 scene whose param leads 0x50; the library uploads no sceneType-5 scene under legacy_scene, so a legacy_scene SKU's bundled catalog holds none that the app uploads: none leading 0x50, and none at all where the scene versions hold a sceneType-5 branch of parseSceneV1 (7 to 13; tools/fetch_scenes.py leaves them out); diy_graffiti / tablelamp_h6052_type5_diy = that dialect for sceneType 5, parseSceneV1 for the rest), 'none' = activate only, 'untraced' = the apply path is not traced." },
         "scene_versions": { "$ref": "#/$defs/family/properties/specs/properties/scene_versions" },
         "kelvin_range": { "$ref": "#/$defs/family/properties/specs/properties/kelvin_range", "description": "[min, max] CCT in kelvin of this goodsType's colour page; wins over the family's specs.kelvin_range." },
         "brightness_range": { "$ref": "#/$defs/family/properties/specs/properties/brightness_range" },
         "mode_reports_kelvin": { "type": "boolean", "description": "false = the device's aa 05 colour report carries Kelvin 0 after a colour-temperature write, so the Kelvin last written stands, as the screen keeps what it set (hardware-observed; doc names the device); absent = the report carries it." },
-        "status_read": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "$ref": "#/$defs/commandId" }, "description": "The connect read is the 0xAC status read (no aa 01 / aa 05 reads): the types it requests (govee_ble_frame status_read_args.types), in request order; absent = no status read." },
+        "status_read": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/commandId" }, "description": "The connect read is the 0xAC status read (no aa 01 / aa 05 reads): the types it requests (govee_ble_frame status_read_args.types), in request order; [] = the bare read ac 03 00, no types requested, whose reply carries the TLVs the firmware chooses (Compose4BaseInfoSingleRead.Companion.a passes no ext bytes; the h70dx screen); absent = no status read." },
+        "device_info_reads": { "enum": ["none", "firmware"], "description": "A status row (status_read): whether the library adds its aa 06 / aa 07 03 / aa 07 02 device-info reads to the first poll. none = the screen sends none of them (doc cites its Compose4BaseInfoSingleRead connect read, whose reply's TLV 0x07 carries the versions and device id: Compose4BaseInfoSingleRead.w, and the callback that takes them), so the library sends none either and takes them from TLV 0x07 alone; firmware = the library sends them where the screen does not, a FIRMWARE-SOURCED extension (CLAUDE.md rule 6) that doc cites (a firmware handler or a bench observation). There is no third value: a status row without that evidence sends none, as its screen does (the user's decision, 2026-10-22). Absent on every other row, where the library always sends them." },
         "connect_reads": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/commandId" }, "description": "The state reads (aa <command>) the control screen sends at connect besides the power read (power_read / relay_on_mask) and the aa 05 mode read (mode_color_parse), in the app's order; device-info, timer and Wi-Fi reads are not listed." },
         "connect_writes": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/commandId" }, "description": "The writes sent on every connect after the handshake and any account_lock check, in order." },
         "power_resync": { "type": "boolean", "description": "Plugs: after each acked power write the screen re-runs its connect sequence (device-info reads, connect_writes)." },
@@ -416,6 +425,8 @@
       "allOf": [
         { "if": { "required": ["support"] }, "then": { "required": ["models", "pacts", "capabilities", "zones", "account_lock", "connect_reads", "connect_writes", "heartbeat", "doc", "doc-ref"] } },
         { "if": { "required": ["heartbeat_timing"] }, "then": { "required": ["heartbeat"] } },
+        { "if": { "required": ["support", "status_read"] }, "then": { "required": ["device_info_reads"] } },
+        { "if": { "required": ["device_info_reads"] }, "then": { "required": ["status_read"] } },
         { "if": { "required": ["support", "connectivity"] }, "then": { "properties": { "connectivity": { "contains": { "const": "ble" } } } } },
         { "if": { "required": ["capabilities"], "properties": { "capabilities": { "contains": { "const": "scenes" } } } }, "then": { "required": ["scene_dialect"] } },
         { "if": { "required": ["support", "relay_power"] }, "then": { "required": ["power_resync"] } },
@@ -433,13 +444,14 @@
     "clientModel": {
       "type": "object",
       "additionalProperties": false,
-      "description": "A per-SKU override: mode_color_parse, the Kelvin and brightness ranges (used where the SKU's by_goods_type row has none), their pact and firmware branches, and the scene apply's power-on.",
+      "description": "A per-SKU override: mode_color_parse, the Kelvin and brightness ranges (used where the SKU's by_goods_type row has none), their pact and firmware branches, the scene apply's power-on, and the connect writes.",
       "properties": {
         "mode_color_parse": { "$ref": "#/$defs/modeColorParse" },
         "mode_color_parse_status": { "$ref": "#/$defs/family/properties/client_profile/properties/mode_color_parse_status" },
         "kelvin_range": { "$ref": "#/$defs/family/properties/specs/properties/kelvin_range", "description": "[min, max] CCT in kelvin of this SKU's colour page (KelvinConfig by SKU); the row's own kelvin_range wins over it." },
         "brightness_range": { "$ref": "#/$defs/family/properties/specs/properties/brightness_range", "description": "This SKU's brightness range; the row's own brightness_range wins over it." },
         "scene_power_on": { "type": "boolean", "description": "true = the control screen writes the power-on switch (33 01 01, SwitchControllerConfig.d) ahead of a scene or DIY apply while its stored switch state for the device is off, and an unknown state reads as off (ApplyOffNeedOpenConfig's SKU set, ApplyOffNeedOpenHelper.b / .d, DeviceSwitchConfig.getSwitch); absent = false. Only on a SKU whose row offers scenes." },
+        "connect_writes": { "$ref": "#/$defs/clientRow/properties/connect_writes", "description": "This SKU's connect writes, replacing its row's, which stay required for the row's other SKUs: the screen splits them by SKU within one goodsType (bulblight Support.c at 342). Only on a SKU that one row of the family lists." },
         "by_pact": { "$ref": "#/$defs/clientRow/properties/by_pact" },
         "by_firmware": { "$ref": "#/$defs/clientRow/properties/by_firmware" }
       }
@@ -924,6 +936,14 @@
           "minimum": 0,
           "maximum": 255,
           "description": "aa 01 heartbeat: on when (byte & mask) != 0, 0 = as relay_on_mask; written in hex in the YAML."
+        },
+        "light_nonzero": {
+          "type": "boolean",
+          "description": "A light's aa 01 connect read is on at any non-zero byte, as the screen's decoder reads it (the legacy SwitchController, the H70BX connect read); absent or false = on at == 1 (ControllerSwitch.Companion.c)."
+        },
+        "light_heartbeat_nonzero": {
+          "type": "boolean",
+          "description": "A light's aa 01 heartbeat is on at any non-zero byte where its connect read is on at == 1 (H1168: HeartControllerWithBattery, Compose4ReadAllInfo); absent or false = as light_nonzero. The library's poll follows the heartbeat rule, as with relay_heartbeat_on_mask."
         }
       }
     },

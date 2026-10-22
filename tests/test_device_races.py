@@ -14,6 +14,7 @@ import asyncio
 import logging
 import time
 from collections.abc import Callable, Sequence
+from dataclasses import replace
 from typing import Any
 
 import pytest
@@ -214,8 +215,7 @@ def _record_queries(d: Device) -> list[bytes]:
 def test_only_plugs_send_the_session_time_sync() -> None:
     for profile in PROFILES:
         for sku in profile.skus:
-            d = make_device(ble_device("AA:BB:CC:DD:EE:71", sku), sku)
-            assert d is not None
+            d = Device(profile, ble_device("AA:BB:CC:DD:EE:71", sku), sku=sku)
             provider = d._conn._session_frames
             assert (provider is not None) == (profile.relay or profile.light_effect_stop), sku
             if provider is not None:
@@ -781,12 +781,19 @@ async def test_a_write_queued_behind_release_reconnects(monkeypatch: pytest.Monk
     await dev.stop()
 
 
+def _hand_built_segment_kelvin(d: Device) -> Any:
+    """set_segment_color_temp's aa 41 read, on a hand-built profile that keeps
+    ``DeviceProfile.segment_color_temp``'s default: the table's H6062 refuses it before any I/O."""
+    d.profile = replace(d.profile, segment_color_temp=True)
+    return d.set_segment_color_temp([0, 1], 4000)
+
+
 _H6062_COLOUR: dict[str, Callable[[Device], Any]] = {
     "set_rgb": lambda d: d.set_rgb((255, 0, 0)),
     "set_color_temp": lambda d: d.set_color_temp(4000),
     "set_segment_rgb": lambda d: d.set_segment_rgb([0, 1], (255, 0, 0)),
     "set_segment_brightness": lambda d: d.set_segment_brightness([0, 1], 40),
-    "set_segment_color_temp": lambda d: d.set_segment_color_temp([0, 1], 4000),
+    "set_segment_color_temp(hand-built)": _hand_built_segment_kelvin,
     "turn_on(rgb)": lambda d: d.turn_on(rgb=(255, 0, 0)),
 }
 

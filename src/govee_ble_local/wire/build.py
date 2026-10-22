@@ -180,11 +180,14 @@ _FORM_0B_RGB_MASK: Final = int(_C.Form0b.rgb_mask)
 # H6161 and H6163 by their firmware. No built-in profile uses it: the H61A8 (goodsType 19) sends the h60a6
 # forms, as do 123 and the other dreamcolorlightv1 goodsTypes from 19 up (devices.yaml dreamcolorlightv1
 # client_profile); it stays for custom profiles.
-# "h6188" = 0x0d rgblight strip: same RGB frame as h6006, but the CCT is the white-slot form
-# `0d ff ff ff <K> <tint>` (Config.GM -> Bytes.A); this one is NOT the h6006 form.
-# "h6061" = Glide Hexa panels, 0x15 family with its own whole-device writes: RGB is ceil(n/4)
-# group frames `15 04 <group> RGB x<=4` (Bytes.m), CCT is `15 01 <tint> <K> <24-bit mask>`
-# (Bytes.u). See the "Glide Hexa" section below.
+# "h6188" = 0x0d with the white-slot CCT: same RGB frame as h6006, but the CCT is `0d ff ff ff <K> <tint>`
+# (Config.N[2] = Config.GM -> Bytes.A), NOT the h6006 form. It is the illumination tab's Kelvin write
+# (H8015, via KelvinConfig.b) and the rgblight group / automation frame; it is no longer H6188's, whose
+# colour tab sends the h6006 form (devices.yaml h6188 row). The name is kept: it is the public ColorScheme
+# literal.
+# "h6061" = Glide Hexa panels, 0x15 colour version 5 (Config.Zt), whole device only: RGB is
+# `15 01 R G B 00 00 <mask>` (Bytes.l), CCT `15 01 <tint> <K> <mask>` (Bytes.u), one frame each. See the
+# "Glide Hexa" section below.
 # Every scheme with a colour-temperature mode also sends an RGB pick that is exactly one of the
 # Kelvin tint colours (within the SKU's range) as a CCT frame instead of RGB, with the picked colour
 # as the tint (rgb_as_kelvin); h61a8 has no CCT and always sends RGB.
@@ -401,18 +404,17 @@ def _op15_color_frame(form: int, rgb: tuple[int, int, int], mask: int, positions
     return _op15_frame(prof, _C.Op15.set_color, data)
 
 # ── Glide Hexa (H6061) whole-device writes ───────────────────────────────────
-# Source (Govee Home 7.7.02, split pact_h6061 + base.apk): the panel count n is the size of the
-# user's layout, else the goodsType's piece count ColorPieceConfig.j, ColorPieceConfig.Companion.f(gt)
-# (devices.yaml h6061 wire counts.num_segments, the profile's segments; Device passes it as ``pieces``):
-# Support.getBulbStringMaxNum(51) = 23 on the H6061, the default.
+# Source (Govee Home 7.7.02, split pact_h6061 + base.apk): the colour screen's all tab (DelegateColorV2.F0
+# for a colour, G0 for the slider) writes every panel of the user's stored layout, a posSet of
+# CubeColorModeV2.realMyColorPiece = max(layout size, 1) (ColorModeUtil.e), through
+# ColorModeControllerConfig.c -> Config.J[5] = Config.Zt: one 15 01 frame, Bytes.l for an RGB pick and
+# Bytes.u for a Kelvin tint (the spec's op15_color, form kelvin). The device never reports the layout; the
+# goodsType's panel count stands in for it (devices.yaml h6061 wire counts.num_segments, the profile's
+# segments; Device passes it as ``pieces``): Support.getBulbStringMaxNum(51) = 23 on the H6061, the
+# default. The 15 04 group frames (Bytes.m) are the colour-stripe path (ColorViewModel.O ->
+# ColorModeControllerConfig.k), which the library doesn't send.
 H6061_MAX_PANELS: Final = 23
-H6061_GROUP_SIZE: Final = 4          # Bytes.m / BleUtils.w0(colors, 4): four colours per group frame
-H6061_MASK_BYTES: Final = 3          # ColorPieceConfig.k: the H6061's 23 pieces round up to 24 positions
-OP15_SET_GROUP_COLOR: Final = int(_C.Op15.set_color_group)   # 0x04; Bytes.m: [0x15, 0x04, group, RGB x<=4]
 H6061_KELVIN_RANGE: Final = (2000, 9000)   # KelvinConfig: no entry for 51 -> version 0
-_FORM_RGB_GROUP: Final = int(_C.Form1504.rgb_group)
-# H6061's frames: op 0x04 is the RGB group form, op 0x01 the colour-version-5 form over its posSet.
-_PROFILE_H6061_GROUP: Final = _spec.profile(f_15_04=_FORM_RGB_GROUP)
 
 # Segment count a whole-device builder assumes when the caller passes none (``Device`` always passes
 # the profile's count): ``h60a6`` and ``h61a8`` take their namesake SKU's count (H60A6 13 segments, H61A8
@@ -426,57 +428,46 @@ def _segments_or_default(scheme: ColorScheme, segments: int | None) -> int:
     return segments if segments is not None else _DEFAULT_SEGMENTS.get(scheme, 0)
 
 
-def _h6061_panels(panels: int | None, pieces: int | None) -> tuple[int, int]:
+def _h6061_panels(panels: int | None, pieces: int | None, *, expand_one: bool) -> tuple[int, int]:
     """``(panels written, mask positions)`` for a layout of ``panels`` panels (None: the whole device) on a
-    device of ``pieces`` (``ColorPieceConfig.j``; None: the H6061's 23).
+    device of ``pieces`` (None: the H6061's 23).
 
-    More than ``j`` is refused: ``ColorPieceConfig.Config.s0`` returns nothing for a colour set longer
-    than ``j``, so the app sends no colour at all. A single colour set with ``j`` > 1 is expanded to ``j``
-    colours in ``s0``, so a one-panel layout is written as ``j`` panels. The mask spans
-    ``ColorPieceConfig.k``, ``j`` rounded up to whole bytes (23 pieces: 24 positions)."""
+    More than ``pieces`` is refused (the profile's count is a full layout). The panels written are the app's
+    posSet, ``max(L, 1)`` (``CubeColorModeV2.realMyColorPiece``), so one panel is mask ``01 00``.
+    ``expand_one`` writes a one-panel layout as ``pieces`` panels instead, the colour-stripe path's
+    single-colour expansion (``ColorPieceConfig.Config.s0``): the CCT frames keep it as admitted at 1.6.1
+    (decision 9 approves the RGB frame only), a known divergence from ``Bytes.u`` that only an explicit
+    one-panel count reaches. The mask spans ``pieces`` rounded up to whole bytes (23 pieces: 24 positions);
+    past the panels written it is zero, as the app's shorter ``BleUtils.X`` / two-byte mask is followed by
+    the zero fill."""
     j = H6061_MAX_PANELS if pieces is None else pieces
     n = j if panels is None else panels
     _check_range("panel count", n, 1, j)
-    return (j if n == 1 else n), 8 * ceil_div(j, 8)
+    return (j if expand_one and n == 1 else n), 8 * ceil_div(j, 8)
 
-def _h6061_group_frames(r: int, g: int, b: int, panels: int | None, pieces: int | None) -> list[bytes]:
-    """Whole-device RGB: ``33 05 15 04 <group from 1> R G B x<=4``, one frame per group of four
-    panels, the last carrying only the remaining panels (23 panels: 6 frames, the last with 3
-    colours). ``ColorModeControllerConfig.k`` -> ``w`` -> ``l`` (colour-brightness-group mode 1,
-    ``Config.A[51]``) -> ``Bytes.m``."""
-    n, _positions = _h6061_panels(panels, pieces)
 
-    def group_frame(group: int) -> bytes:
-        count = min(H6061_GROUP_SIZE, n - (group - 1) * H6061_GROUP_SIZE)
-        # op15_rgb_group carries four colours: the ones past the group's count are black (the zero fill).
-        colors = [_spec.rgb(r, g, b) if k < count else _spec.rgb(0, 0, 0) for k in range(H6061_GROUP_SIZE)]
-
-        def data(c15: Any) -> Any:
-            grp = _spec.node(_F.Op15Group, c15, _FORM_RGB_GROUP)
-            grp.body = _spec.node(_F.Op15RgbGroup, grp, group=group, colors=colors)
-            return grp
-        return _op15_frame(_PROFILE_H6061_GROUP, _C.Op15.set_color_group, data)
-
-    return [group_frame(group) for group in range(1, ceil_div(n, H6061_GROUP_SIZE) + 1)]
+def _h6061_color(rgb: tuple[int, int, int], kelvin: int, panels: int | None, pieces: int | None, *,
+                 expand_one: bool = False) -> bytes:
+    """Whole-device ``33 05 15 01 <rgb> <kelvin u2be> <mask>`` (``Config.Zt``), the first ``panels`` mask
+    bits set, LSB first (23 panels: ``ff ff 7f``): ``Bytes.l`` (an RGB pick, Kelvin 0) or ``Bytes.u`` (CCT,
+    the tint in the colour slot, not ``ff ff ff``), over the posSet of :func:`_h6061_panels`."""
+    n, positions = _h6061_panels(panels, pieces, expand_one=expand_one)
+    return _op15_color_frame(_FORM_KELVIN, rgb, all_segments_mask(n), positions, kelvin)
 
 
 def _h6061_color_temp(kelvin: int, panels: int | None, tint: tuple[int, int, int] | None = None,
                       pieces: int | None = None) -> bytes:
-    """Whole-device CCT: ``33 05 15 01 <tint RGB> <kelvin u2be> <mask>``, the first ``panels`` mask bits
-    set, LSB first (23 panels: ``ff ff 7f``). ``Config.x[51]`` = 5 -> ``Config.J[5]`` = ``Config.Zt`` ->
-    ``Bytes.u(kelvin, positions, tint)``; the mask is ``BleUtils.X`` over the ``ColorPieceConfig.k``
-    position set (24 on the H6061, :func:`_h6061_panels`). The tint sits in the colour slot (not
-    ``ff ff ff``). ``tint`` defaults to the app's tint for ``kelvin`` (the slider path); an RGB pick that
-    is itself a tint colour passes that exact colour (``Zt`` writes the picked colour, whichever of the
-    Kelvin step's two colours it is)."""
-    n, positions = _h6061_panels(panels, pieces)
-    return _op15_color_frame(_FORM_KELVIN, tint if tint is not None else tint_for_kelvin(kelvin),
-                             all_segments_mask(n), positions, kelvin)
+    """Whole-device CCT: ``Config.Zt`` -> ``Bytes.u(kelvin, posSet, tint)`` (:func:`_h6061_color`), a
+    one-panel layout written as every panel (:func:`_h6061_panels` ``expand_one``). ``tint`` defaults to
+    the app's tint for ``kelvin`` (the slider path); an RGB pick that is itself a tint colour passes that
+    exact colour (``Zt`` writes the picked colour, whichever of the Kelvin step's two colours it is)."""
+    return _h6061_color(tint if tint is not None else tint_for_kelvin(kelvin), kelvin, panels, pieces,
+                        expand_one=True)
 
 
 # Schemes whose colour screen turns an RGB pick that is exactly a Kelvin tint colour into a CCT write
 # (every scheme with CCT; h61a8 has none). Config.Yt (0x15 family, h60a6) / Config.bu (0x0d family,
-# h6006 and h6188) / ColorModeControllerConfig.k + Config.Zt (h6061), all keyed on KelvinConfig.i.
+# h6006 and h6188) / Config.Zt (h6061), all keyed on KelvinConfig.i.
 _RGB_PICK_AS_KELVIN_SCHEMES: Final[frozenset[ColorScheme]] = frozenset({"h60a6", "h6006", "h6188", "h6061"})
 
 
@@ -488,8 +479,7 @@ def rgb_as_kelvin(r: int, g: int, b: int, scheme: ColorScheme,
     ``KelvinConfig.i(colour)`` (full ARGB equality with one of the 178 Kelvin tint colours,
     :func:`wire.cct.kelvin_for_tint`, AND that Kelvin inside the SKU's inclusive ``[lo, hi]`` range)
     and write ``KelvinConfig.c(colour)`` as a CCT frame instead of RGB: ``Config.Yt`` (0x15 family,
-    ``h60a6``), ``Config.bu`` (0x0d family, ``h6006`` and ``h6188``) and, for a whole-device colour
-    set with one colour, ``ColorModeControllerConfig.k`` -> ``Config.Zt`` (``h6061``).
+    ``h60a6``), ``Config.bu`` (0x0d family, ``h6006`` and ``h6188``) and ``Config.Zt`` (``h6061``).
     ``kelvin_range`` is the SKU's range (the profile's min/max Kelvin); ``h6061`` defaults to its
     own [2000, 9000], any other scheme without a range cannot tell and returns None, as does
     ``h61a8`` (no colour temperature)."""
@@ -539,28 +529,28 @@ def _rgb_pick_color_temp(r: int, g: int, b: int, kelvin: int, scheme: ColorSchem
 def color_rgb_frames(r: int, g: int, b: int, scheme: ColorScheme, segments: int | None = None,
                      kelvin_range: tuple[int, int] | None = None, *,
                      pieces: int | None = None) -> list[bytes]:
-    """Whole-device RGB pick as the frames the app sends: one for every scheme except ``h6061``, whose
-    panels are written in groups of four (see :func:`color_rgb`, which is the plain single-frame form).
-    An RGB that is a Kelvin tint colour within ``kelvin_range`` (the SKU's range) is sent as one CCT
+    """Whole-device RGB pick as the frames the app sends: one on every scheme, :func:`color_rgb`, except
+    that an RGB that is a Kelvin tint colour within ``kelvin_range`` (the SKU's range) is sent as one CCT
     frame instead, exactly as the app does, on every scheme with a colour-temperature mode (see
     :func:`rgb_as_kelvin` and :func:`_rgb_pick_color_temp`); ``kelvin_range`` None sends plain RGB
     (``h6061`` defaults to its own range). ``segments`` None is the scheme's default count
-    (:data:`_DEFAULT_SEGMENTS`; on ``h6061`` every panel, the app's fallback). ``pieces`` is an
-    ``h6061`` device's panel count (the profile's ``segments``; None: the H6061's 23), which bounds
-    ``segments`` and sizes the mask (:func:`_h6061_panels`); other schemes ignore it."""
+    (:data:`_DEFAULT_SEGMENTS`; on ``h6061`` every panel). ``pieces`` is an ``h6061`` device's panel count
+    (the profile's ``segments``; None: the H6061's 23), which bounds ``segments`` and sizes the mask
+    (:func:`_h6061_panels`); other schemes ignore it."""
     _check_rgb(r, g, b)
     kelvin = rgb_as_kelvin(r, g, b, scheme, kelvin_range)
     if kelvin is not None:
         return [_rgb_pick_color_temp(r, g, b, kelvin, scheme, segments, pieces=pieces)]
-    if scheme == "h6061":
-        return _h6061_group_frames(r, g, b, segments, pieces)
-    return [color_rgb(r, g, b, scheme, segments)]
+    return [color_rgb(r, g, b, scheme, segments, pieces=pieces)]
 
 
-def color_rgb(r: int, g: int, b: int, scheme: ColorScheme, segments: int | None = None) -> bytes:
+def color_rgb(r: int, g: int, b: int, scheme: ColorScheme, segments: int | None = None, *,
+              pieces: int | None = None) -> bytes:
     """Solid RGB, per-family SubModeColor.getWriteBytes (whole-device = all-segments mask;
-    ``segments`` None is the scheme's default count, :data:`_DEFAULT_SEGMENTS`). ``h6061`` has no
-    single-frame form (it needs :func:`color_rgb_frames`): GoveeBleNotSupported."""
+    ``segments`` None is the scheme's default count, :data:`_DEFAULT_SEGMENTS`). ``h6061`` =
+    ``15 01 R G B 00 00 <mask>`` over ``segments`` panels of a device of ``pieces`` (``Config.Zt`` ->
+    ``Bytes.l``, :func:`_h6061_color`); other schemes ignore ``pieces``. The plain frame only: an RGB pick
+    that is a Kelvin tint colour goes out as CCT, which :func:`color_rgb_frames` picks."""
     _check_rgb(r, g, b)
     match scheme:
         case "h60a6":
@@ -573,7 +563,7 @@ def color_rgb(r: int, g: int, b: int, scheme: ColorScheme, segments: int | None 
         case "h61a8":
             return _rgbic0b_frame((r, g, b), all_segments_mask(_segments_or_default(scheme, segments)))
         case "h6061":
-            raise GoveeBleNotSupported("h6061 whole-device RGB is several frames; use color_rgb_frames")
+            return _h6061_color((r, g, b), 0, segments, pieces)
         case _:
             _unsupported_scheme(scheme)
 
@@ -581,10 +571,11 @@ def color_rgb(r: int, g: int, b: int, scheme: ColorScheme, segments: int | None 
 def color_temp(kelvin: int, scheme: ColorScheme, segments: int | None = None, *,
                pieces: int | None = None) -> bytes:
     """Whole-device colour temperature, always with the app's Kelvin->RGB tint
-    (``wire.cct.tint_for_kelvin``): ``h6006`` = ``0d <tint> <K> <tint>``, ``h6188`` =
-    ``0d ff ff ff <K> <tint>``, ``h60a6`` = ``15 01 ff ff ff <K> <tint> <mask>`` (this is just
+    (``wire.cct.tint_for_kelvin``): ``h6006`` = ``0d <tint> <K> <tint>`` (the colour tab's
+    ``Config.bu -> Bytes.p``), ``h6188`` = ``0d ff ff ff <K> <tint>`` (the illumination tab's
+    ``Config.GM -> Bytes.A``), ``h60a6`` = ``15 01 ff ff ff <K> <tint> <mask>`` (this is just
     segment_color_temp with the all-segments mask), ``h6061`` = ``15 01 <tint> <K> <mask>`` over
-    ``segments`` panels of a device of ``pieces`` (as in :func:`color_rgb_frames`; ``segments`` None is
+    ``segments`` panels of a device of ``pieces`` (as in :func:`color_rgb`; ``segments`` None is
     the scheme's default count, :data:`_DEFAULT_SEGMENTS`). ``h61a8`` has no colour temperature:
     GoveeBleNotSupported. The builder sends ``kelvin`` as given; the ``Device`` layer applies
     :func:`normalize_kelvin` first."""
@@ -597,11 +588,12 @@ def color_temp(kelvin: int, scheme: ColorScheme, segments: int | None = None, *,
             return segment_color_temp(all_segments_mask(n), kelvin, scheme, n)
         case "h6006":
             # Config.bu -> Bytes.p(tint, K): [0d, tint r g b, kelvin u2be, tint r g b] - the tint
-            # sits in BOTH colour slots (H6008/H6006/H6052; also H6004 via the same builder).
+            # sits in BOTH colour slots (H6008/H6006/H6052/H6188; also H6004 via the same builder).
             tint = tint_for_kelvin(kelvin)
             return _cct0d_frame(tint, kelvin, tint)
         case "h6188":
-            # Config.GM -> Bytes.A(kelvin, RGB_WHITE): [0d, ff ff ff, kelvin u2be, tint r g b].
+            # Config.GM -> Bytes.A(kelvin, RGB_WHITE): [0d, ff ff ff, kelvin u2be, tint r g b] (the
+            # illumination tab via KelvinConfig.b, H8015; group control and automations elsewhere).
             return _cct0d_frame((0xFF, 0xFF, 0xFF), kelvin, tint_for_kelvin(kelvin))
         case "h6061":
             return _h6061_color_temp(kelvin, segments, pieces=pieces)
@@ -930,8 +922,8 @@ def section_count_query() -> bytes:
 
 def status_query(*, full: bool = False, types: Sequence[int] | None = None) -> bytes:
     """0xAC status request: [AC, 03, N, cmd…] (``status_request`` with ``status_read_args``): the TLV
-    ``types`` requested, in order (command codes, the device's ``DeviceProfile.status_read``); None = the
-    H60A6's, 0x41 and 0x30, and with ``full`` the 0xA5 colour groups.
+    ``types`` requested, in order (command codes, the device's ``DeviceProfile.status_read``; empty = the bare
+    read ``ac 03 00``); None = the H60A6's, 0x41 and 0x30, and with ``full`` the 0xA5 colour groups.
 
     Device sends its profile's types, without 0xA5 where the advertised pact rules the colour groups out
     (``DeviceProfile.status_color_groups_pact``; H60A6 pact (1, 1): ``ac 03 02 41 30``)."""

@@ -249,10 +249,13 @@ _LEAVES: Final[dict[str, dict[str, str | None]]] = {
     "DeviceCounts": {"num_segments": None, "num_levels": None},
     "ColorGroupForm": {"rule": "GroupCountRule", "num_per_group": None, "has_brightness": None,
                        "num_pieces": None},
-    "PowerRule": {"relay_on_mask": None, "relay_heartbeat_on_mask": None},
+    "PowerRule": {"relay_on_mask": None, "relay_heartbeat_on_mask": None, "light_nonzero": None,
+                  "light_heartbeat_nonzero": None},
     "ModeDecode": {"c02": "ColorDecode", "c0b": "ColorDecode", "c0d": "ColorDecode", "c14": "ColorDecode",
                    "c15": "ColorDecode", "music": "MusicDecode", "empty_fails": None},
 }
+_FLAGS: Final = ("has_brightness", "empty_fails", "light_nonzero",
+                 "light_heartbeat_nonzero")   # the bool params: false when left out
 
 
 def make_profile(**facts: Any) -> Any:
@@ -260,11 +263,11 @@ def make_profile(**facts: Any) -> Any:
     so make_profile() is the all-zero analyzer profile (GENERIC): overloaded bodies stay raw bytes.
 
     Keys: the command_forms selectors f_01 .. f_ee_40; num_segments, num_levels; rule, num_per_group,
-    has_brightness, num_pieces; relay_on_mask, relay_heartbeat_on_mask; and the mode decode c02, c0b,
-    c0d, c14, c15, music, empty_fails (one mode_decode object serves both mode and mode_status). An
-    enum-typed fact may be given by its member name, e.g. make_profile(f_15_01="kelvin_tint").
-    Generated parents check a profile param by identity: build one object per set of device facts and
-    reuse it (the library's wire_profile() does this from devices.yaml)."""
+    has_brightness, num_pieces; relay_on_mask, relay_heartbeat_on_mask, light_nonzero,
+    light_heartbeat_nonzero; and the mode decode c02, c0b, c0d, c14, c15, music, empty_fails (one mode_decode
+    object serves both mode and mode_status). An enum-typed fact may be given by its member name, e.g.
+    make_profile(f_15_01="kelvin_tint"). Generated parents check a profile param by identity: build one object
+    per set of device facts and reuse it (the library's wire_profile() does this from devices.yaml)."""
     profile_cls = _module("govee_profile").GoveeProfile
     common = _module("govee_common").GoveeCommon
     unknown = set(facts) - {k for params in _LEAVES.values() for k in params}
@@ -274,7 +277,7 @@ def make_profile(**facts: Any) -> Any:
     for leaf, params in _LEAVES.items():
         kw: dict[str, Any] = {}
         for key, enum_name in params.items():
-            value = facts.get(key, False if key in ("has_brightness", "empty_fails") else 0)
+            value = facts.get(key, False if key in _FLAGS else 0)
             if isinstance(value, str):
                 if enum_name is None:
                     raise TypeError(f"{key} takes a number, not {value!r}")
@@ -403,14 +406,23 @@ def ble_rows(reg: dict[str, Any], sku: str, pact: tuple[int, int] | None = None)
     """PROCEDURAL (BLE routing, devices.schema.json clientRow): the (family id, goodsType) rows a BLE client
     that knows only the SKU and the advertised pact may route `sku` to. A row qualifies when it has support,
     its models list the SKU, its connectivity (else the family's) holds ble, and its pacts are 'any' or hold
-    the pact (any listed pact when the pact is unknown); a row without pacts is never a route. Exactly one
-    row is a route; none or several leave the SKU unrouted unless the caller knows the goodsType."""
+    the pact (any listed pact when no pact is advertised, but on the goodsType a pact-conditioned
+    assigned_goods_type item rewrites the SKU to: the app rewrites only a record whose pact meets the gate;
+    and on a pact_required row, whose goodsType the app also runs at other pacts on a path the row doesn't
+    serve); a row without pacts is never a route. Exactly one row is a route; none or several leave the SKU
+    unrouted unless the caller knows the goodsType."""
+    gated = {(model, item.get("goods_type")) for fam in reg.get("families", [])
+             for item in fam.get("assigned_goods_type") or []
+             if set(item.get("condition") or {}) == {"min_pact_type", "min_pact_code"}
+             for model in item.get("models") or []}
     out: list[tuple[str, int]] = []
     for fam in reg.get("families", []):
         for gt, row in ((fam.get("client_profile") or {}).get("by_goods_type") or {}).items():
             pacts = row.get("pacts")
             if ("support" not in row or sku not in (row.get("models") or []) or pacts is None
                     or "ble" not in (row.get("connectivity") or fam.get("connectivity") or [])):
+                continue
+            if pact is None and ((sku, int(gt)) in gated or row.get("pact_required")):
                 continue
             if pacts == "any" or pact is None or f"{pact[0]},{pact[1]}" in pacts:
                 out.append((fam["id"], int(gt)))
@@ -435,9 +447,10 @@ def client_row(reg: dict[str, Any], family_id: str, goods_type: int, *, sku: str
     family specs. With the device's ``sku``, a range the row lacks (kelvin_range, brightness_range) comes
     from the SKU's client_profile.by_model entry before the family specs, and that entry's by_firmware
     items carry it too, ahead of the row's items. The row's own range wins over the model's and its
-    branches (the library refuses a by_model range under it). Only the ranges: the by_model colour report
-    is not resolved here. Versions compare field by field, but a kelvin_range item's gate is a string
-    compare, as the app's (KelvinConfig.Config.z2: versionHard.compareTo("3.08.01") >= 0).
+    branches (the library refuses a by_model range under it). The SKU's connect_writes replace the row's
+    (the screen's split by SKU within one goodsType). Only those: the by_model colour report is not resolved
+    here. Versions compare field by field, but a kelvin_range item's gate is a string compare, as the app's
+    (KelvinConfig.Config.z2: versionHard.compareTo("3.08.01") >= 0).
 
     Known difference: where several kelvin_range items hold, the last in list order wins here, while the
     library takes the one with the highest version (``_fold.kelvin_range``); the two agree when the items
@@ -449,6 +462,8 @@ def client_row(reg: dict[str, Any], family_id: str, goods_type: int, *, sku: str
     ranges = {k for k in ("kelvin_range", "brightness_range") if k not in row}   # the model's to give
     out = {k: v for k, v in row.items() if k not in ("by_pact", "by_firmware", "doc", "doc-ref")}
     out.update({k: model[k] for k in ranges if k in model})
+    if "connect_writes" in model:
+        out["connect_writes"] = model["connect_writes"]
     for k in ("scene_versions", "kelvin_range", "brightness_range"):
         if k not in out and k in (fam.get("specs") or {}):
             out[k] = fam["specs"][k]
@@ -524,9 +539,14 @@ def _selftest(*, strict: bool = False) -> int:
               profile_for(profs, "H6001", 0) == fams["bulblightv3"] and "H6006" not in profs
               and profile_for(profs, "H6006", 64) == fams["bulblightv3"])
         reg = yaml.safe_load(path.read_text(encoding="utf-8"))
-        check("BLE routes: H6004 -> bulblightv3 64 (10 is IoT-only); H60A6 at (1,3) -> 303, at (2,1) none",
+        check("BLE routes: H6004 -> bulblightv3 64 (10 is IoT-only); H60A6 at (1,3) -> 303, at (2,1) none; "
+              "H6114 -> h6114 39 at (10,1), none without a pact (the BK rewrite's gate); H6076 -> "
+              "straightfloorlamp 69 at (2,1), none without a pact (pact_required)",
               ble_rows(reg, "H6004") == [("bulblightv3", 64)]
-              and ble_rows(reg, "H60A6", (1, 3)) == [("h60ax", 303)] and ble_rows(reg, "H60A6", (2, 1)) == [])
+              and ble_rows(reg, "H60A6", (1, 3)) == [("h60ax", 303)] and ble_rows(reg, "H60A6", (2, 1)) == []
+              and ble_rows(reg, "H6114", (10, 1)) == [("h6114", 39)] and ble_rows(reg, "H6114") == []
+              and ble_rows(reg, "H6076", (2, 1)) == [("straightfloorlamp", 69)]
+              and ble_rows(reg, "H6076") == [])
         h61a8 = [client_row(reg, "dreamcolorlightv1", 19, pact=pact, soft=s, hard=h)
                  for pact, s, h in (((1, 1), "3.03.18", "3.01.10"), ((1, 1), "1.03.00", "3.08.01"),
                                     ((1, 2), "1.05.00", "1.00.01"))]
@@ -561,6 +581,18 @@ def _selftest(*, strict: bool = False) -> int:
     check("read reply AA 04 (rx) -> brightness 100", f.body.state.body.level == 100)
     check("read request AA 04 (tx) -> read_request brightness",
           parse_frame(fr, "tx").body.command == command.brightness)
+
+    def light_on(state: int, beat: bool = False, **power: Any) -> bool:
+        reply = parse_frame(append_bcc(bytes([0xAA, 0x01, state])), "rx", make_profile(**power))
+        return bool(reply.body.state.body.is_on_heartbeat if beat else reply.body.state.body.is_on)
+
+    check("AA 01 reply: a light is on at 1 only, at any non-zero byte under light_nonzero (and in the "
+          "heartbeat under light_heartbeat_nonzero too); a plug by mask",
+          [light_on(s) for s in (0, 1, 2)] == [False, True, False]
+          and [light_on(s, light_nonzero=True) for s in (0, 1, 2)] == [False, True, True]
+          and [light_on(s, beat, light_heartbeat_nonzero=True) for beat in (False, True)
+               for s in (0, 1, 2)] == [False, True, False, False, True, True]
+          and [light_on(s, relay_on_mask=0x01) for s in (0x10, 0x11)] == [False, True])
     try:
         parse_frame(fr[:19] + bytes([fr[19] ^ 1]))
         check("parse_frame refuses a bad checksum", False)
@@ -589,7 +621,10 @@ def _selftest(*, strict: bool = False) -> int:
     g3 = group_reply(False, [255, 0, 0, 0, 255, 0])
     check("aa a5 reply, no brightness -> 3B records", g3.records[0].r == 255 and g3.records[1].g == 255)
 
-    from govee_commands import build_op15_color_temp_bytes_r  # the catalogue imports this module
+    from govee_commands import (  # the catalogue imports this module
+        build_op15_color_temp_bytes_r,
+        build_op15_color_v5,
+    )
 
     wr = parse_frame(build_op15_color_temp_bytes_r((100, 50, 16), 2700, [True, True] + [False] * 14),
                      "tx", make_profile(f_15_01="kelvin_tint", num_segments=16))
@@ -597,6 +632,11 @@ def _selftest(*, strict: bool = False) -> int:
     check("build_op15_color_temp_bytes_r round-trips slot, kelvin and tint",
           (ext.color.r, ext.color.g, ext.color.b, ext.kelvin) == (0xFF, 0xFF, 0xFF, 2700)
           and (ext.tint.r, ext.tint.g, ext.tint.b) == (100, 50, 16) and ext.is_cct)
+    v5 = parse_frame(build_op15_color_v5(0x12, 0x34, 0x56, (1 << 23) - 1, mask_bytes=3), "tx",
+                     make_profile(f_15_01="kelvin", num_segments=23)).body.params.params.data
+    check("build_op15_color_v5 RGB pick (Bytes.l, H6061) reads as RGB, kelvin 0, over 23 panels",
+          (v5.color.r, v5.color.g, v5.color.b, v5.kelvin) == (0x12, 0x34, 0x56, 0) and not v5.is_cct
+          and v5.mask.bits[:24] == [True] * 23 + [False])
 
     k05 = append_bcc(bytes([0x33, 0x05, 0x15, 0x05, 0x0A, 0x8C]))
     kw = parse_frame(k05, "tx", make_profile(f_15_05="kelvin"))

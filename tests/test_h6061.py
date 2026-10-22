@@ -1,7 +1,8 @@
 """H6061 (Glide Hexa light panels, cubelight split), phase 1: the "h6061" colour scheme.
 
-Whole-device RGB as ceil(n/4) group frames, whole-device CCT as `15 01 <tint> <K> <24-bit mask>`,
-the polled read-back with the mode 0x0d [R, G, B, kelvin] report, and the `aa a5` group reads.
+Whole-device RGB as one `15 01 R G B 00 00 <mask>` frame (Bytes.l), whole-device CCT as
+`15 01 <tint> <K> <mask>` (Bytes.u), the polled read-back with the mode 0x0d [R, G, B, kelvin] report, and
+the `aa a5` group reads.
 
 All expectations are derived from the decompiled Govee Home 7.7.02 app (see the H6061 profile entry
 and the h6061 family in spec/devices.yaml for citations); none are hardware-verified."""
@@ -103,38 +104,7 @@ def test_device_default_panel_count_is_23() -> None:
     assert d.segment_count == 23 and d.min_kelvin == 2000 and d.max_kelvin == 9000
 
 
-# ── RGB: ceil(n/4) group frames (Bytes.m) ────────────────────────────────────
-def test_rgb_23_panels_is_six_group_frames_golden() -> None:
-    frames = b.color_rgb_frames(0x12, 0x34, 0x56, "h6061", 23)
-    colour = "123456"
-    assert [f.hex() for f in frames[:5]] == [
-        _frame(0x33, 0x05, 0x15, 0x04, g, *bytes.fromhex(colour * 4)).hex() for g in range(1, 6)]
-    # the last group carries the remaining 3 colours
-    assert frames[5] == _frame(0x33, 0x05, 0x15, 0x04, 6, *bytes.fromhex(colour * 3))
-    assert frames[0][:8].hex() == "3305150401123456"
-    assert frames[5][:4 + 1 + 9].hex() == "33051504" + "06" + colour * 3
-    assert frames[5][14:19] == bytes(5)
-    assert all(len(f) == 20 and checksum_ok(f) for f in frames)
-
-
-@pytest.mark.parametrize(("panels", "colours_per_frame"), [
-    (2, [2]), (3, [3]), (4, [4]), (5, [4, 1]), (8, [4, 4]), (10, [4, 4, 2]), (12, [4, 4, 4]),
-    (20, [4] * 5), (22, [4] * 5 + [2]), (23, [4] * 5 + [3]),
-])
-def test_rgb_group_count_and_sizes(panels: int, colours_per_frame: list[int]) -> None:
-    frames = b.color_rgb_frames(9, 8, 7, "h6061", panels)
-    assert len(frames) == -(-panels // 4) == len(colours_per_frame)
-    for i, (f, n) in enumerate(zip(frames, colours_per_frame, strict=True), start=1):
-        assert f[:5].hex() == f"33051504{i:02x}"                      # group index is 1-based
-        assert f[5:5 + 3 * n] == bytes([9, 8, 7]) * n
-        assert f[5 + 3 * n:19] == bytes(14 - 3 * n)                   # nothing after the colours
-
-
-def test_one_panel_is_written_as_23_like_the_app() -> None:
-    # ColorPieceConfig.Config.s0: a one-colour set with piece count 23 is expanded to 23 colours.
-    assert b.color_rgb_frames(1, 2, 3, "h6061", 1) == b.color_rgb_frames(1, 2, 3, "h6061", 23)
-
-
+# ── RGB: one 15 01 R G B 00 00 <mask> frame (Bytes.l) ───────────────────────
 @pytest.mark.parametrize("panels", [0, 24, 56, -1])
 def test_panel_count_outside_1_to_23_is_refused(panels: int) -> None:
     with pytest.raises(GoveeBleInvalidValue, match="panel count"):
@@ -148,21 +118,9 @@ def test_rgb_channels_validated() -> None:
         b.color_rgb_frames(256, 0, 0, "h6061", 23)
 
 
-def test_other_schemes_still_give_one_frame() -> None:
-    for scheme in ("h60a6", "h6006", "h6188", "h61a8"):
+def test_every_scheme_gives_one_rgb_frame() -> None:
+    for scheme in ("h60a6", "h6006", "h6188", "h61a8", "h6061"):
         assert b.color_rgb_frames(1, 2, 3, scheme, 13) == [b.color_rgb(1, 2, 3, scheme, 13)]
-
-
-def test_single_frame_rgb_and_segment_builders_refuse_h6061() -> None:
-    # the scheme can't express it: GoveeBleNotSupported (the Device re-raises it with the SKU)
-    with pytest.raises(GoveeBleNotSupported, match="color_rgb_frames"):
-        b.color_rgb(1, 2, 3, "h6061", 23)
-    with pytest.raises(GoveeBleNotSupported, match="whole-device only"):
-        b.segment_rgb(1, 1, 2, 3, "h6061", 23)
-    with pytest.raises(GoveeBleNotSupported, match="whole-device only"):
-        b.segment_color_temp(1, 4000, "h6061", 23)
-    with pytest.raises(GoveeBleNotSupported, match="whole-device only"):
-        b.segment_brightness(1, 50, "h6061", 23)
 
 
 # ── CCT: 15 01 <tint> <kelvin u2be> <24-bit mask> (Bytes.u) ──────────────────
@@ -206,13 +164,10 @@ def test_cct_is_not_the_white_slot_form() -> None:
 
 
 # ── Device: writes ───────────────────────────────────────────────────────────
-def test_set_rgb_sends_the_group_frames_and_updates_state() -> None:
+def test_set_rgb_sends_one_frame_and_updates_state() -> None:
     d = _dev()
     asyncio.run(d.set_rgb((1, 2, 3)))
-    f = _sent(d)
-    assert len(f) == 6 and [x[4] for x in f] == [1, 2, 3, 4, 5, 6]
-    assert all(x[:4].hex() == "33051504" for x in f)
-    assert f[5][5:14] == bytes([1, 2, 3] * 3) and f[5][14:19] == bytes(5)
+    assert [x[:12].hex() for x in _sent(d)] == ["33051501010203" + "0000" + "ffff7f"]
     d._conn.send_many.assert_awaited_once()   # type: ignore[attr-defined]
     assert d.state.rgb_color == (1, 2, 3) and d.state.color_temp_kelvin is None
 
@@ -247,13 +202,11 @@ def test_power_and_brightness_are_plain_percent_frames() -> None:
     assert d.state.brightness == 1
 
 
-def test_turn_on_batches_power_brightness_then_group_frames() -> None:
+def test_turn_on_batches_power_brightness_then_the_colour() -> None:
     d = _dev()
     asyncio.run(d.turn_on(brightness=50, rgb=(10, 20, 30)))
-    f = _sent(d)
-    assert f[0][:3].hex() == "330101" and f[1][:3].hex() == "330432"
-    assert [x[:5].hex() for x in f[2:]] == [f"33051504{g:02x}" for g in range(1, 7)]
-    assert len(f) == 8
+    assert [x[:3].hex() for x in _sent(d)] == ["330101", "330432", "330515"]
+    assert _sent(d)[2] == b.color_rgb(10, 20, 30, "h6061", 23)
 
 
 def test_turn_on_with_kelvin_sends_the_cct_frame() -> None:
@@ -278,14 +231,12 @@ def test_segments_and_scenes_not_supported_in_phase_1() -> None:
 
 
 # ── panel-count override (Device.set_segment_count) ──────────────────────────
-def test_panel_count_override_changes_groups_and_mask() -> None:
+def test_panel_count_override_changes_the_mask() -> None:
     d = _dev()
     d.set_segment_count(10)                                 # a layout of 10 panels
     asyncio.run(d.set_rgb((1, 2, 3)))
-    assert [x[4] for x in _sent(d)] == [1, 2, 3] and _sent(d)[2][5:11] == bytes([1, 2, 3] * 2)
-    assert _sent(d)[2][11:19] == bytes(8)
     asyncio.run(d.set_color_temp(4000))
-    assert _sent(d)[3][9:12].hex() == "ff0300"
+    assert [f[9:12].hex() for f in _sent(d)] == ["ff0300", "ff0300"]
     d.set_segment_count(None)
     assert d.segment_count == 23
 
@@ -302,14 +253,12 @@ def test_panel_count_above_23_is_refused_at_write_time() -> None:
 
 def test_the_panel_count_is_the_profiles() -> None:
     # The device's piece count is its row's wire counts.num_segments (the profile's segments; 25 on
-    # goodsType 96): seven group frames, and the CCT mask over 32 positions, ColorPieceConfig.k.
+    # goodsType 96): the RGB and CCT masks over 25 panels, four bytes.
     d = _dev()
     d.profile = dataclasses.replace(d.profile, segments=25)
     asyncio.run(d.set_rgb((1, 2, 3)))
-    assert [x[4] for x in _sent(d)] == [1, 2, 3, 4, 5, 6, 7]
-    assert _sent(d)[6][5:11] == bytes([1, 2, 3]) + bytes(3)
     asyncio.run(d.set_color_temp(4000))
-    assert _sent(d)[7][9:14].hex() == "ffffff0100"
+    assert [f[9:14].hex() for f in _sent(d)] == ["ffffff0100", "ffffff0100"]
 
 
 # ── read-back ────────────────────────────────────────────────────────────────
@@ -345,7 +294,7 @@ def test_the_0x0d_report_is_the_bulb_layout_not_the_rgblight_one() -> None:
 
 # CubeNewInfo4Detail.U (7.7.02 split_h6061) decodes mode bytes 13 (colour), 4, 10 and 19 only and
 # logs anything else as "is not support!", so a 0x15 report leaves the app's colour as it was, even
-# though the H6061 itself writes 0x15 frames (33 05 15 04 group RGB, 33 05 15 01 CCT).
+# though the H6061 itself writes 0x15 frames (33 05 15 01 RGB and CCT).
 def _h6061() -> DeviceProfile:
     p = profile_for("H6061")
     assert p is not None
@@ -357,7 +306,7 @@ def test_profile_decodes_only_the_0x0d_colour_report() -> None:
 
 
 @pytest.mark.parametrize("report", [
-    _frame(0xAA, 0x05, 0x15, 0x04, 0x01, 0xFF, 0x00, 0x00),        # the group-RGB write's shape
+    _frame(0xAA, 0x05, 0x15, 0x04, 0x01, 0xFF, 0x00, 0x00),        # a colour-stripe group's shape
     _frame(0xAA, 0x05, 0x15, 0x01, 0xFF, 0xAE, 0x54, 0x0A, 0x8C),  # the CCT write's shape
     _frame(0xAA, 0x05, 0x15, 0x01, 0x00, 0x0A, 0x8C),              # the bulbs' 0x15 kelvin layout
     _frame(0xAA, 0x05, 0x0B, 0x00, 0x0A, 0x8C),                    # another colour sub-mode
@@ -481,10 +430,9 @@ def test_field_test_runs_end_to_end_and_restores(tmp_path: Path, monkeypatch: py
     assert rep["initial_state"]["brightness"] == 50 and rep["initial_state"]["rgb_color"] == [1, 2, 3]
     assert len(rep["steps"]) == 13 and rep["steps"][0]["step"] == "power_off"
     assert all(r["sent"] == "ok" and r["observed"] is None for r in rep["steps"])
-    # the restore re-applied brightness, then the colour as the six group frames
+    # the restore re-applied brightness, then the colour as one frame
     sent = _sent(d)
-    assert sent[-7][:3].hex() == "330432"
-    assert [f[:5].hex() for f in sent[-6:]] == [f"33051504{g:02x}" for g in range(1, 7)]
+    assert sent[-2][:3].hex() == "330432" and sent[-1] == b.color_rgb(1, 2, 3, "h6061", 23)
     assert "AA:BB:CC:DD:EE:61" not in report_path.read_text()
     assert rep["device"]["address"] == "AA:BB:CC:xx:xx:xx"
 
@@ -520,20 +468,24 @@ def test_rgb_pick_equal_to_a_tint_colour_is_sent_as_cct_golden() -> None:
 
 
 def test_kelvin_range_is_2000_to_9000_inclusive() -> None:
-    assert len(b.color_rgb_frames(0xFF, 0x87, 0x00, "h6061", 23)) == 6    # 1900 K: below the range
-    assert b.color_rgb_frames(0xFF, 0x8D, 0x0B, "h6061", 23)[0][7:9].hex() == "07d0"      # 2000 K
-    assert b.color_rgb_frames(0xD9, 0xE1, 0xFF, "h6061", 23)[0][7:9].hex() == "2328"      # 9000 K
-    assert len(b.color_rgb_frames(0xD8, 0xE0, 0xFF, "h6061", 23)) == 6    # 9100 K: above the range
-    assert len(b.color_rgb_frames(0xFF, 0x38, 0x00, "h6061", 23)) == 6    # 1000 K (second colour)
+    def kelvin(rgb: tuple[int, int, int], span: tuple[int, int] | None = None) -> str:
+        frames = b.color_rgb_frames(*rgb, "h6061", 23, span)
+        assert len(frames) == 1
+        return frames[0][7:9].hex()                                        # 0000: the RGB frame
+
+    assert kelvin((0xFF, 0x87, 0x00)) == "0000"    # 1900 K: below the range
+    assert kelvin((0xFF, 0x8D, 0x0B)) == "07d0"    # 2000 K
+    assert kelvin((0xD9, 0xE1, 0xFF)) == "2328"    # 9000 K
+    assert kelvin((0xD8, 0xE0, 0xFF)) == "0000"    # 9100 K: above the range
+    assert kelvin((0xFF, 0x38, 0x00)) == "0000"    # 1000 K (second colour)
     # an explicit (narrower) range is honoured
-    assert len(b.color_rgb_frames(0xFF, 0xAE, 0x54, "h6061", 23, (3000, 9000))) == 6
+    assert kelvin((0xFF, 0xAE, 0x54), (3000, 9000)) == "0000"
     assert b.rgb_as_kelvin(0xFF, 0xAE, 0x54, "h6061", (2000, 2700)) == 2700
 
 
 def test_near_misses_and_other_colours_stay_rgb() -> None:
     for rgb in ((0xFF, 0xAE, 0x55), (0xFE, 0xAE, 0x54), (255, 255, 255), (255, 0, 0), (0, 0, 0)):
-        frames = b.color_rgb_frames(*rgb, "h6061", 23)
-        assert len(frames) == 6 and frames[0][:5].hex() == "3305150401", rgb
+        assert b.color_rgb_frames(*rgb, "h6061", 23) == [b.color_rgb(*rgb, "h6061", 23)], rgb
 
 
 def test_tint_pick_uses_the_panel_count_mask() -> None:

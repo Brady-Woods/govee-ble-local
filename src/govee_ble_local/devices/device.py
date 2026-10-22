@@ -60,7 +60,8 @@ _ReadResult = Literal["applied", "stale", "none"]
 # A polled profile reads the aa 05 mode report when it has any capability the report carries: the
 # active scene, or the solid colour / colour temperature of the colour sub-mode (the 0x0d bulbs
 # report their colour only there). The app's connect read includes aa 05 for every polled SKU in
-# the profile table (see the profile notes); a test pins that each of them still issues it.
+# the profile table with one of them; the power-only and power-and-brightness screens (H7004 /
+# H7017, ControllerStrategyConfig.k1) send none. A test pins that each of the others still issues it.
 _MODE_REPORT_CAPS: Final = frozenset({Capability.SCENES, Capability.COLOR_TEMP, Capability.RGB})
 
 
@@ -552,6 +553,18 @@ class Device:
         if cap not in self.profile.capabilities:
             raise GoveeBleNotSupported(f"{self._sku}: {cap.name} not supported")
 
+    def _require_segment_color_temp(self) -> None:
+        """A Kelvin on a piece selection: SEGMENTS, COLOR_TEMP and :attr:`.DeviceProfile.segment_color_temp`
+        (false where the app's Kelvin covers every piece, and on the H60A6 and H6047 by decision 24, whose
+        Part-tab Kelvin covers whole zones). :meth:`set_segment_color_temp` only: a zone's Kelvin doesn't read
+        it."""
+        self._require(Capability.SEGMENTS)
+        self._require(Capability.COLOR_TEMP)
+        if not self.profile.segment_color_temp:
+            zones = ", or over a zone: set_zone_color_temp" if self.profile.zones else ""
+            raise GoveeBleNotSupported(f"{self._sku}: no colour temperature on a piece selection (the app "
+                                       f"sends it over every piece: set_color_temp{zones})")
+
     def _unlock_frames(self) -> list[bytes]:
         return [build.secret_check(self._secret)] if self._secret else []
 
@@ -658,12 +671,11 @@ class Device:
         return build.normalize_kelvin(kelvin, self.min_kelvin, self.max_kelvin)
 
     def _color_rgb_frames(self, rgb: tuple[int, int, int], span: tuple[int, int] | None) -> list[bytes]:
-        """Frames for a whole-device RGB pick: one, except on a profile whose colour scheme writes the
-        panels in groups (``h6061``: ``ceil(n/4)`` frames over :attr:`segment_count` panels). On every
-        scheme with a colour-temperature mode, a colour that is exactly one of the app's Kelvin tint
-        colours within the Kelvin range ``span`` (:meth:`_kelvin_range`, taken once per write so the
-        frame and the state agree) is the single CCT frame instead, as the app sends it
-        (:func:`build.rgb_as_kelvin`)."""
+        """The frame for a whole-device RGB pick, over :attr:`segment_count` segments (``h6061``: panels of
+        a device of the profile's ``segments``). On every scheme with a colour-temperature mode, a colour
+        that is exactly one of the app's Kelvin tint colours within the Kelvin range ``span``
+        (:meth:`_kelvin_range`, taken once per write so the frame and the state agree) is the CCT frame
+        instead, as the app sends it (:func:`build.rgb_as_kelvin`)."""
         r, g, b = rgb
         return self._build_or_unsupported(
             build.color_rgb_frames, r, g, b, self.profile.color_scheme, self.segment_count, span,
@@ -1281,7 +1293,12 @@ class Device:
     async def set_segment_brightness(self, indices: Sequence[int], pct: int) -> None:
         """Set brightness in percent (clamped to 1..100; 0 is never sent) on selected segments (indices
         as in :meth:`set_segment_rgb`). The app's segment slider runs 1..100 (``ViewColorMode.t0:232-235``
-        / ``DelegateColorV2Part.t0:459-462``: ``setProgressRange({1, 100})``).
+        / ``DelegateColorV2Part.t0:459-462``: ``setProgressRange({1, 100})``). On a profile with
+        :attr:`~.profile.DeviceProfile.segment_brightness_groups` the write and the state cover every
+        segment of each group that holds one of ``indices``, as the screen's strip widens the selection
+        before the write (``canClickBrightness`` -> ``DelegateColorV2Part.U:217-230`` ->
+        ``ColorViewModel.m0``). An empty ``indices`` still sends a zero mask, where the app's strips refuse an
+        empty selection with a toast and send nothing (a follow-up).
 
         Raises GoveeBleNotSupported without SEGMENTS or for colour schemes without per-segment
         brightness (the h61a8 0x0b scheme); GoveeBleInvalidValue for a non-int ``pct`` or a bad index;
@@ -1293,16 +1310,29 @@ class Device:
         with self._conn.hold_heartbeat():   # H6062's aa 41 read and its write: no beat between
             await self._ensure_segment_count()
             n = self.segment_count
+            pieces = self._brightness_pieces(indices, n)
             frame = self._build_or_unsupported(
-                build.segment_brightness, _mask(indices, n), level, self.profile.color_scheme, n)
+                build.segment_brightness, _mask(pieces, n), level, self.profile.color_scheme, n)
 
-            carried = self._carried(indices, build.BRIGHTNESS_MASK_CAP)
+            carried = self._carried(pieces, build.BRIGHTNESS_MASK_CAP)
 
             def apply() -> None:
                 _fold.update_segments(self._state, carried, brightness=level)
                 self._state.scene_code = None   # the 33 05 15 02 write is a colour-mode write too
 
             await self._commit(frame, apply, ticket=ticket)
+
+    def _brightness_pieces(self, indices: Sequence[int], segments: int) -> list[int]:
+        """The segments a segment-brightness write covers: ``indices``, or on a profile with
+        ``segment_brightness_groups`` (checked first, as :func:`_mask` checks them) their union with every
+        group holding one of them, below ``segments`` (the strip's ``canClickBrightness``)."""
+        groups = self.profile.segment_brightness_groups
+        if not groups:
+            return list(indices)
+        _mask(indices, segments)
+        picked = set(indices)
+        return sorted(picked.union(*((i for i in g if i < segments)
+                                     for g in groups if picked.intersection(g))))
 
     def _carried(self, indices: Sequence[int], mask_cap: int) -> list[int]:
         """The ``indices`` a 0x15 frame's segment mask carries: past the body's ``mask_cap`` bytes the app's
@@ -1330,14 +1360,16 @@ class Device:
         """Colour temperature on selected segments (0x15 family only — the CCT frame
         carries the segment mask). ``kelvin`` is clamped and rounded as in :meth:`set_color_temp`.
 
-        Raises GoveeBleNotSupported without SEGMENTS/COLOR_TEMP or for non-maskable schemes;
-        GoveeBleInvalidValue for a non-int ``kelvin`` or a bad index; GoveeBleError if a device
-        that reports its own segment count (H6062) does not answer that read."""
-        self._require(Capability.SEGMENTS)
-        self._require(Capability.COLOR_TEMP)
+        Raises GoveeBleNotSupported without SEGMENTS/COLOR_TEMP, where
+        :attr:`.DeviceProfile.segment_color_temp` is false (no Part-tab Kelvin item, or on the H60A6 and H6047
+        one that widens to whole zones, the user's decision 24) or for non-maskable schemes;
+        GoveeBleInvalidValue for a non-int ``kelvin`` or a bad index; GoveeBleError if a hand-built
+        profile with :attr:`.DeviceProfile.section_count_read` does not answer that read (no table profile
+        reaches it: H6062, the one row that reads its segment count, has segment_color_temp false)."""
+        self._require_segment_color_temp()
         sent = self._check_kelvin(kelvin)
         ticket = self._ticket()
-        with self._conn.hold_heartbeat():   # H6062's aa 41 read and its write: no beat between
+        with self._conn.hold_heartbeat():   # a section_count_read aa 41 read and its write: no beat between
             await self._ensure_segment_count()
             n = self.segment_count
             frame = self._build_or_unsupported(
@@ -1497,10 +1529,17 @@ class Device:
         0x15 family (H60A6/H6047), whose CCT frame carries a segment mask. ``kelvin`` is clamped
         and rounded as in :meth:`set_color_temp`.
 
-        Raises GoveeBleNotSupported without SEGMENTS/COLOR_TEMP, for a zone without segments or for
-        a colour scheme whose CCT frame carries no segment mask; GoveeBleInvalidValue for an unknown
-        zone (also a GoveeBleNotSupported) or a non-int ``kelvin``; GoveeBleError if a device that
-        reports its own segment count (H6062) does not answer that read."""
+        :attr:`.DeviceProfile.segment_color_temp` doesn't gate it: that field is the Kelvin on a piece
+        selection (:meth:`set_segment_color_temp`). A zone's Kelvin goes over the zone's own mask, the mask
+        the app's Part tab widens a Kelvin pick to on both zoned screens (H60A6: the ring 0-11, piece 12 as
+        picked, ``ColorModeH60A6.canClickColorTem:519-541``; H6047: each bar touched, 0-4 / 5-9,
+        ``ColorMode10Segment.canClickColorTem:655-691``).
+
+        Raises GoveeBleNotSupported without SEGMENTS/COLOR_TEMP, for a zone without segments or for a
+        colour scheme whose CCT frame carries no segment mask; GoveeBleInvalidValue for an unknown zone
+        (also a GoveeBleNotSupported) or a non-int ``kelvin``; GoveeBleError if a hand-built profile with
+        :attr:`.DeviceProfile.section_count_read` does not answer that read (no zoned table profile reads
+        aa 41)."""
         self._require(Capability.SEGMENTS)
         self._require(Capability.COLOR_TEMP)
         sent = self._check_kelvin(kelvin)
@@ -1761,8 +1800,11 @@ class Device:
             await self._read_reply(build.gradual_query(), budget)
         # Device-info (mac/hw/fw/serial) — static-ish, read once the device answers one of them; then a
         # version a firmware-gated fact tests that the read did not bring back, alone, on each later poll.
+        # Neither where the profile makes no device-info reads: each status read's TLV 0x07 brings them
+        # (_fold.apply_status).
         missing = self._versions_missing()
-        if (not self._device_info_read or any(missing)) and self.profile.readback != "none":
+        if ((not self._device_info_read or any(missing)) and self.profile.readback != "none"
+                and self.profile.device_info_reads):
             try:
                 if not self._device_info_read:
                     await self._read_device_info(budget, state_read=state_read)
@@ -1826,7 +1868,11 @@ class Device:
     def _versions_missing(self, *, scenes: bool = False) -> tuple[bool, bool]:
         """The version reads a firmware-gated fact of the profile still waits for, ``(aa 06, aa 07 03)``:
         each version such a fact tests (:func:`._fold.gated_versions`; ``scenes``: the scene set's gates
-        only) that is not read yet. Until it is read its gates count as met (the newest firmware's facts)."""
+        only) that is not read yet. Until it is read its gates count as met (the newest firmware's facts).
+        Neither on a profile without :attr:`~.profile.DeviceProfile.device_info_reads`: it makes no version
+        read, and each status read's TLV 0x07 brings the versions in."""
+        if not self.profile.device_info_reads:
+            return False, False
         soft, hard = _fold.gated_versions(self.profile, scenes=scenes)
         return (soft and self._state.firmware_version is None, hard and self._state.hardware_version is None)
 
@@ -1946,7 +1992,9 @@ class Device:
 
     async def _read_polled(self, budget: ConnectBudget | None = None) -> bool:
         """The polled read-back (aa 01 / aa 04 / aa 36 / aa 41 / aa 05); returns whether a live field
-        came back (see :meth:`_read_status`)."""
+        came back (see :meth:`_read_status`). The aa 04 brightness read goes with the brightness
+        capability, as the app's connect read does (``ControllerStrategyConfig.k1`` reads aa 04 on H7017
+        only, and H7004's screen has no brightness), and aa 05 with :data:`_MODE_REPORT_CAPS`."""
         drops = self._power_read_drops   # when the power read is issued (_stamp_power_read)
 
         def apply_power(on: bool) -> None:
@@ -1965,13 +2013,17 @@ class Device:
 
         # Always read power: a device turned on externally (app, remote, wall
         # switch) must be noticed even when we last saw it off.
-        # A light is on only for a byte of 1, as the app's control screens read it (parse_light_power).
+        # A light is on only for a byte of 1, as the app's control screens read it, or for any non-zero byte
+        # where its screen reads it so (DeviceProfile.light_nonzero; parse_light_power).
+        prof = wire_profile(self.profile)
         since = self._power_unsure_seq   # when the read that gives the on/off is issued (_finish_read)
         power_read = await self._read_command(
-            "power", build.power_query(), parse.parse_light_power, apply_power, budget) == "applied"
+            "power", build.power_query(), lambda r: parse.parse_light_power(r, prof), apply_power,
+            budget) == "applied"
         applied = power_read   # see _read_status / _finish_read
-        if await self._read_command("brightness", build.brightness_query(),
-                                    parse.parse_brightness, apply_brightness, budget) == "applied":
+        if Capability.BRIGHTNESS in self.capabilities and await self._read_command(
+                "brightness", build.brightness_query(), parse.parse_brightness, apply_brightness,
+                budget) == "applied":
             applied = True
         if self.profile.bar_switch:
             bars_since = self._power_unsure_seq

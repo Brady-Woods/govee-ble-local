@@ -299,21 +299,24 @@ def test_device_wide_cct_frames_carry_tint_and_runtime_width() -> None:
     d.set_segment_count(24)
     run(d.set_color_temp(4000))
     assert _sent(d)[0][:15].hex() == "33051501ffffff0fa0ffd5a1ffffff"
-    # Per-segment CCT on a >16-segment device: tint plus the wide mask.
+    # Per-segment CCT on a >16-segment device: tint plus the wide mask (an H6098: no Kelvin to an H60A6
+    # piece selection, decision 24).
+    s = _dev("H6098")
+    s.set_segment_count(24)
+    run(s.set_segment_color_temp([17], 4000))
+    assert _sent(s)[0][:15].hex() == "33051501ffffff0fa0ffd5a1000002"
+    # The per-zone frames keep the tint and use the wide width too.
     d2 = _dev("H60A6")
     d2.set_segment_count(24)
-    run(d2.set_segment_color_temp([17], 4000))
-    assert _sent(d2)[0][:15].hex() == "33051501ffffff0fa0ffd5a1000002"
-    # The per-zone frames keep the tint and use the wide width too.
     run(d2.set_zone_color_temp("main", 4000))
     run(d2.set_zone_color_temp("background", 4000))
-    zone_frames = _sent(d2)[1:]
+    zone_frames = _sent(d2)
     assert [f[:15].hex() for f in zone_frames] == [
         "33051501ffffff0fa0ffd5a1001000", "33051501ffffff0fa0ffd5a1ff0f00"]
 
 
 def test_segment_writes_use_runtime_width_and_bounds() -> None:
-    d = _dev("H60A6")
+    d = _dev("H6098")   # an H60A6 refuses set_segment_color_temp (decision 24)
     d.set_segment_count(23)
     run(d.set_segment_rgb([0, 22], (1, 2, 3)))
     run(d.set_segment_brightness([16], 40))
@@ -356,10 +359,11 @@ def test_zone_writes_use_runtime_width() -> None:
 
 def test_unsupported_scheme_still_raises_not_supported_with_a_count() -> None:
     # A custom profile pairing SEGMENTS with the mask-less 0x0d scheme is accepted (as 1.3.0); the
-    # builder refuses the frame, with the SKU named (the table's build refuses the pairing itself).
-    d = _dev("H60A6", color_scheme="h6006")
+    # builder refuses the frame, with the SKU named (the table's build refuses the pairing itself). The
+    # hand-built 1.x default segment_color_temp (the H60A6 row's is false, decision 24) lets it get there.
+    d = _dev("H60A6", color_scheme="h6006", segment_color_temp=True)
     d.set_segment_count(23)
-    with pytest.raises(GoveeBleNotSupported, match=r"^H60A6: "):
+    with pytest.raises(GoveeBleNotSupported, match=r"^H60A6: h6006 colour-temperature is whole-device only"):
         run(d.set_segment_color_temp([1], 4000))
     assert d._sent == []  # type: ignore[attr-defined]
 

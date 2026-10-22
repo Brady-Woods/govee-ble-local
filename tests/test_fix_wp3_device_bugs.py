@@ -265,17 +265,19 @@ def test_non_int_segment_brightness_is_invalid_value() -> None:
 
 # ── WP3-032 / WP3-046: segment and zone colour writes leave scene mode ────────────────────
 @pytest.mark.parametrize(
-    "write",
+    ("write", "overrides"),
     [
-        lambda d: d.set_segment_rgb([0, 1], (255, 0, 0)),
-        lambda d: d.set_segment_brightness([0], 40),
-        lambda d: d.set_segment_color_temp([0, 1], 4000),
-        lambda d: d.set_zone_rgb("background", (255, 0, 0)),
-        lambda d: d.set_zone_color_temp("background", 4000),
+        (lambda d: d.set_segment_rgb([0, 1], (255, 0, 0)), {}),
+        (lambda d: d.set_segment_brightness([0], 40), {}),
+        # A hand-built profile's default (1.x's): no table SKU with segment Kelvin has scenes, and the H60A6
+        # row refuses set_segment_color_temp (decision 24).
+        (lambda d: d.set_segment_color_temp([0, 1], 4000), {"segment_color_temp": True}),
+        (lambda d: d.set_zone_rgb("background", (255, 0, 0)), {}),
+        (lambda d: d.set_zone_color_temp("background", 4000), {}),
     ],
 )
-def test_masked_colour_write_clears_the_active_scene(write: Any) -> None:
-    d = _dev("H60A6")
+def test_masked_colour_write_clears_the_active_scene(write: Any, overrides: dict[str, Any]) -> None:
+    d = _dev("H60A6", **overrides)
     run(d.set_scene(5))
     assert d.state.scene_code == 5
     run(write(d))

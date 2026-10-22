@@ -84,9 +84,9 @@ def test_a_0x07_block_the_app_skips_is_the_one_status_device_info_leaves_raw() -
 
 
 def test_the_analyzer_labels_unknown_values_from_the_readers_fields() -> None:
-    assert describe.describe_frame(_frame(0x33, 0x7E), "tx")[0] == "write/cmd=0x7e"
-    assert describe.describe_frame(_frame(0xAA, 0x7E), "rx")[0] == "read/cmd=0x7e"
-    assert describe.describe_frame(_frame(0xEE, 0x7E), "rx")[0] == "notify/sub=0x7e"
+    assert describe.describe_frame(_frame(0x33, 0x7F), "tx")[0] == "write/cmd=0x7f"
+    assert describe.describe_frame(_frame(0xAA, 0x7F), "rx")[0] == "read/cmd=0x7f"
+    assert describe.describe_frame(_frame(0xEE, 0x7F), "rx")[0] == "notify/sub=0x7f"
 
 
 def test_the_handshake_reply_is_read_by_the_frame_reader() -> None:

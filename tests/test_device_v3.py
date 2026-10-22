@@ -9,6 +9,7 @@ import time
 from unittest.mock import AsyncMock
 
 import pytest
+from conftest import routing_pact
 from fake_ble import ble_device, status_burst, unacked_via
 
 from govee_ble_local.devices.device import Device, make_device
@@ -58,7 +59,9 @@ def _reply(*b: int) -> bytes:
 def test_all_profiles_construct() -> None:
     for p in PROFILES:
         for sku in p.skus:
-            d = make_device(ble_device("AA:BB:CC:DD:EE:20", sku), sku)
+            pact = routing_pact(sku)   # a SKU only a gated target row routes is built from its advert's pact
+            adv = None if pact is None else GoveeAdvertisement(sku, f"GV{sku}", False, 0, *pact)
+            d = make_device(ble_device("AA:BB:CC:DD:EE:20", sku), sku, adv)
             assert d is not None and d.sku == sku.upper()
             assert d.capabilities == p.capabilities
     assert make_device(ble_device("AA:BB:CC:DD:EE:20", "H9999"), "H9999") is None
@@ -167,6 +170,23 @@ def test_segment_brightness_is_clamped_to_the_sliders_1_to_100(pct: int, sent: i
     assert {s.index: s.brightness for s in d.state.segments} == {12: sent}
 
 
+@pytest.mark.parametrize("sku", ["H6098", "H6690"])   # released at 1.6.1; the user's M2, "Match the app"
+@pytest.mark.parametrize(("indices", "mask", "folded"), [
+    ([0], 0x0007, [0, 1, 2]), ([3], 0x0078, [3, 4, 5, 6]), ([2, 10, 2], 0x3C07, [0, 1, 2, 10, 11, 12, 13])])
+def test_segment_brightness_widens_to_the_strips_groups(sku: str, indices: list[int], mask: int,
+                                                        folded: list[int]) -> None:
+    # ColorMode14Rect4ReverseSelect.canClickBrightness:379-421 sets every piece of each group {0-2} / {3-6} /
+    # {7-9} / {10-13} holding a selected one before the 15 02 write (DelegateColorV2Part.U:217-230 ->
+    # ColorViewModel.m0, which folds that set): the profile's segment_brightness_groups, on the pact_h6099
+    # screen's 203 (H6098 / H8098) and 336 (H6690) rows.
+    d = _dev(sku)
+    asyncio.run(d.set_segment_brightness(indices, 40))
+    assert _sent(d)[-1][:7] == bytes([0x33, 0x05, 0x15, 0x02, 40]) + mask.to_bytes(2, "little")
+    assert {s.index: s.brightness for s in d.state.segments} == dict.fromkeys(folded, 40)
+    with pytest.raises(GoveeBleInvalidValue, match="segment_brightness_groups"):
+        dataclasses.replace(d.profile, segment_brightness_groups=((0, 1), (1,)))
+
+
 def test_zone_bar_vs_direct() -> None:
     h60a6 = _dev("H60A6")            # per-zone 33 30
     asyncio.run(h60a6.set_zone_power("background", False))
@@ -220,7 +240,7 @@ def test_zone_and_segment_color_temp() -> None:
     asyncio.run(dm.set_zone_color_temp("main", 5000))
     assert _sent(dm)[0][12:14] == bytes([0x00, 0x10])        # mask 0x1000 (bit 12 only)
 
-    d2 = _dev("H60A6")
+    d2 = _dev("H6098")   # no Kelvin to an H60A6 piece selection (decision 24); the H6098 sends the selection
     asyncio.run(d2.set_segment_color_temp([0, 1, 2], 3000))
     assert _sent(d2)[0][12:14] == bytes([0x07, 0x00])        # mask {0,1,2}
 
@@ -614,6 +634,14 @@ def test_the_status_request_is_the_profiles_status_read() -> None:
     assert _status_frames(d)[0][:7].hex() == "ac0304" "41a54016"
     d._pact = (1, 1)
     assert _status_frames(d)[0][:6].hex() == "ac0303" "414016"
+    # An empty status_read is the bare read (the h70dx screen's, VM4H70DX.e5), and the TLV 0xA5 its reply
+    # carries unrequested is read as colour groups, as that screen parses each one (VM4H70DX.g5).
+    bare = next(p for p in PROFILES if p.status_read == ())
+    assert _status_frames(Device(bare, ble_device("AA:BB:CC:DD:EE:22", "GVH70D1")))[0][:4].hex() == "ac030000"
+    group = bytes([0xA5, 17, 0x01, *(90, 1, 2, 3) * 4])
+    st = reassemble.parse_status(status_burst(bytes([0x01, 0x01, 0x01]) + group), pieces=bare.segments,
+                                 decode=wire_profile(bare))
+    assert st.is_on is True and [(s.index, s.rgb) for s in st.segments] == [(i, (1, 2, 3)) for i in range(4)]
 
 
 def test_the_status_reply_is_read_with_the_profiles_status_decode() -> None:

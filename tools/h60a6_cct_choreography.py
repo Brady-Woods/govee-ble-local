@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Live H60A6 colour-temperature choreography — exercises masked / per-zone / per-segment CCT.
+"""Live H60A6 colour-temperature choreography — exercises masked / per-zone CCT, and per-segment CCT
+on a profile that allows it (``DeviceProfile.segment_color_temp``). The H60A6's doesn't since decision 24
+(its Part-tab Kelvin widens every pick to a whole zone, ``ColorModeH60A6.canClickColorTem``): skipped.
 
 ONE persistent connection (idle-disconnect disabled). Each step prints an OBSERVE line and
 pauses so you can watch the light; commands rely on the built-in write ACK (a 0x33 send raises
@@ -103,22 +105,26 @@ async def main() -> int:
 
         # ── STRETCH: per-segment CCT across all n segments (0..11 background ring + 12 main panel) ──
         n = dev.profile.segments
-        evens = list(range(0, n, 2))
-        odds = list(range(1, n, 2))
-        await group(
-            f"per-segment ALTERNATING: even segs {MAX_K}K / odd segs {MIN_K}K",
-            lambda: dev.set_segment_color_temp(evens, MAX_K),
-            lambda: dev.set_segment_color_temp(odds, MIN_K),
-        )
-        ladder = [MIN_K + round((MAX_K - MIN_K) * i / (n - 1)) for i in range(n)]
-        await group(
-            f"per-segment GRADIENT low->high across {n} segs: {ladder}",
-            *[functools.partial(dev.set_segment_color_temp, [i], k) for i, k in enumerate(ladder)],
-        )
-        await group(
-            "per-segment GRADIENT reversed (high->low)",
-            *[functools.partial(dev.set_segment_color_temp, [i], k) for i, k in enumerate(reversed(ladder))],
-        )
+        if not dev.profile.segment_color_temp:
+            print("     per-segment CCT skipped: the profile refuses set_segment_color_temp")
+        else:
+            evens = list(range(0, n, 2))
+            odds = list(range(1, n, 2))
+            await group(
+                f"per-segment ALTERNATING: even segs {MAX_K}K / odd segs {MIN_K}K",
+                lambda: dev.set_segment_color_temp(evens, MAX_K),
+                lambda: dev.set_segment_color_temp(odds, MIN_K),
+            )
+            ladder = [MIN_K + round((MAX_K - MIN_K) * i / (n - 1)) for i in range(n)]
+            await group(
+                f"per-segment GRADIENT low->high across {n} segs: {ladder}",
+                *[functools.partial(dev.set_segment_color_temp, [i], k) for i, k in enumerate(ladder)],
+            )
+            await group(
+                "per-segment GRADIENT reversed (high->low)",
+                *[functools.partial(dev.set_segment_color_temp, [i], k)
+                  for i, k in enumerate(reversed(ladder))],
+            )
 
         # reset both on at the midpoint
         await group(

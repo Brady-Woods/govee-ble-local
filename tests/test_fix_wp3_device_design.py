@@ -209,12 +209,18 @@ def test_state_and_callbacks_still_share_the_live_object() -> None:
 
 # ── WP3-022 / WP3-051 / WP3-063 / WP3-064 / WP3-027 / WP3-035: profile validation ──────────
 def test_every_table_profile_is_valid_and_skus_are_unique() -> None:
-    seen: set[str] = set()
+    owners: dict[str, list[DeviceProfile]] = {}
     for p in PROFILES:
         assert dataclasses.replace(p) == p                     # re-validates
+        assert len({sku.upper() for sku in p.skus}) == len(p.skus)
         for sku in p.skus:
-            assert sku.upper() not in seen
-            seen.add(sku.upper())
+            owners.setdefault(sku.upper(), []).append(p)
+    # A SKU in two profiles (carlightv1 6 / 39: raw vs percent brightness) is told apart by the advertised
+    # pact.
+    for sku, profiles in owners.items():
+        if len(profiles) > 1:
+            pacts = {pact for route in profile_mod._ADMITTED[1][sku] for pact in route.pacts or ()}
+            assert {id(profile_for(sku, pact=pact)) for pact in pacts} == {id(p) for p in profiles}, sku
 
 
 @pytest.mark.parametrize("skus", [(), ("",), "H6008", (None,), []])
@@ -430,7 +436,7 @@ _SETTERS: list[tuple[str, Callable[[Device], Any], bool]] = [
     ("H6008", lambda d: d.set_color_temp(4000), True),
     ("H60A6", lambda d: d.set_segment_rgb([0], (1, 2, 3)), True),
     ("H60A6", lambda d: d.set_segment_brightness([0], 30), True),
-    ("H60A6", lambda d: d.set_segment_color_temp([0], 4000), True),
+    ("H6098", lambda d: d.set_segment_color_temp([0], 4000), True),   # none on an H60A6 (decision 24)
     ("H60A6", lambda d: d.set_zone_power("main", True), True),
     ("H60A6", lambda d: d.set_zone_rgb("main", (1, 2, 3)), True),
     ("H60A6", lambda d: d.set_zone_color_temp("main", 4000), True),
@@ -550,9 +556,15 @@ def test_direct_walk_groups_follow_the_profile() -> None:
 
 
 # ── WP3-060: the aa 05 read is gated on capabilities, not colour-scheme names ──────────────
-@pytest.mark.parametrize("p", [p for p in PROFILES if p.readback == "polled"], ids=lambda p: p.skus[0])
+# Scoped to the rows with a field the report carries. H7017 (power and brightness) reads none: its app
+# connect set has no aa 05 (ControllerStrategyConfig.k1), which the capability gate below follows.
+_REPORTED = frozenset({Capability.RGB, Capability.COLOR_TEMP, Capability.SCENES})
+
+
+@pytest.mark.parametrize("p", [p for p in PROFILES if p.readback == "polled" and p.capabilities & _REPORTED],
+                         ids=lambda p: p.skus[0])
 def test_every_polled_profile_still_reads_the_mode_report(p: DeviceProfile) -> None:
-    d = _dev(p.skus[0])
+    d = _mocked(Device(p, ble_device("AA:BB:CC:DD:EE:3B", p.skus[0]), sku=p.skus[0]))
     run(d._read_polled())
     assert build.mode_query() in _queried(d)
 
@@ -561,9 +573,11 @@ def test_mode_report_read_follows_the_capabilities() -> None:
     plain = _unchecked("H6008", capabilities=frozenset({Capability.POWER, Capability.BRIGHTNESS}))
     run(plain._read_polled())
     assert build.mode_query() not in _queried(plain)           # nothing the report carries
+    assert build.brightness_query() in _queried(plain)
     rgb_only = _unchecked("H6008", capabilities=frozenset({Capability.POWER, Capability.RGB}))
     run(rgb_only._read_polled())
     assert build.mode_query() in _queried(rgb_only)            # its colour is only reported there
+    assert build.brightness_query() not in _queried(rgb_only)  # aa 04 goes with the capability (H7004)
 
 
 # ── WP3-082: no read-back between a scene's upload and its activation ──────────────────────

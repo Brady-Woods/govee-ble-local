@@ -13,7 +13,9 @@ from typing import Any
 import pytest
 from conftest import require_optional
 
+from govee_ble_local._generated.devices import FAMILIES
 from govee_ble_local.devices import _resolve
+from govee_ble_local.devices.profile import profile_for
 
 _ROOT = pathlib.Path(__file__).resolve().parent.parent
 
@@ -28,15 +30,17 @@ def test_pact_conditioned_reassignments_are_rows_the_pact_picks() -> None:
         rows[gt] = {**rows.get(gt, {}), **row}
         return out
 
-    # Every target row carries its SKUs; no source row exists yet, so each below-gate route is for review,
-    # and so is a second row at the target goodsType that lists the SKU without pacts (h7090 44's H6119).
+    # Every target row carries its SKUs but barelightv1 17, which leaves H6171 off until its aa 40 read
+    # is modelled (the barelightv1 trace, G4). Each other line is a below-gate route no source row carries
+    # yet, or a source row that lists the SKU without pacts (the unsupported goodsType-0 rows: h6159 0).
     review = _resolve.reassignment_review(fams)
-    assert all("pacts below" in line for line in review if not line.startswith("H6119: also listed"))
-    assert any(line.startswith("H6171: no goodsType-13 row") for line in review)
-    assert any(line.startswith("H6119: also listed by h7090 goodsType 44") for line in review)
+    assert all("pacts below" in line or "goodsType 0, without pacts" in line
+               for line in review if not line.startswith("H6171: no goodsType-17 row"))
+    assert any(line.startswith("H6171: no goodsType-17 row") for line in review)
+    assert any(line.startswith("H6159: also listed by h6159 goodsType 0") for line in review)
     # A source row below the gate carries the route; one at or above it, or a target pact below it, disagrees.
-    assert not any(line.startswith("H6171:") for line in _resolve.reassignment_review(
-        edited("barelightv1", "13", models=["H6171"], pacts=["1,1"])))
+    assert not any(line.startswith("H6159:") for line in _resolve.reassignment_review(
+        edited("h6159", "0", pacts=["1,1"])))
     for fam_id, gt, row in (("barelightv1", "13", {"models": ["H6171"], "pacts": ["10,2"]}),
                             ("barelightv1", "17", {"pacts": ["1,1", "10,1"]}),
                             ("barelightv1", "13", {"models": ["H6171"], "pacts": "any"})):
@@ -52,6 +56,24 @@ def test_pact_conditioned_reassignments_are_rows_the_pact_picks() -> None:
     supported = {"families": edited("barelightv1", "17", support="modelled"), "mode_color_parse": {}}
     projected = gen.Projector(schema).project(gen._supported(supported, _resolve.LEVELS), "#")
     _resolve.routes(projected["families"])
+    # A target row is never the route without an advertised pact: the app rewrites only a record whose pact
+    # meets the gate, and runs a pact-less one at its source goodsType (profile.profile_for).
+    served = [(sku, gt) for sku, targets in _resolve.pact_gates(FAMILIES).items()
+              for gt, gate in targets.items()
+              if profile_for(sku, pact=gate, goods_type=gt, allow_modelled=True) is not None]
+    assert served and all(profile_for(sku, goods_type=gt, allow_modelled=True) is None for sku, gt in served)
+    # Nor is a pact_required row (straightfloorlamp 69, the modelled h70b3 rows), whose goodsType the app
+    # also runs, at another pact, on a path the row doesn't serve; and the flag means nothing on a row that
+    # takes any pact.
+    required = [(sku, int(gt), _resolve._pact(row["pacts"][0])) for fam in FAMILIES
+                for gt, row in (fam.get("client_profile") or {}).get("by_goods_type", {}).items()
+                if row.get("pact_required")
+                for sku in (*row.get("models", ()), *row.get("catalogue_models", ()))]
+    assert required and all(profile_for(sku, pact=pact, goods_type=gt, allow_modelled=True) is not None
+                            and profile_for(sku, goods_type=gt, allow_modelled=True) is None
+                            for sku, gt, pact in required)
+    with pytest.raises(_resolve.SpecError, match=r"^h6188 goodsType 0: pact_required on a row whose pacts"):
+        _resolve.routes(edited("h6188", "0", pact_required=True))
 
 
 def _load(path: pathlib.Path, name: str) -> Any:

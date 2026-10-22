@@ -21,10 +21,12 @@ from govee_ble_local import supported_skus
 from govee_ble_local._generated.devices import FAMILIES
 from govee_ble_local.devices import _fold, _resolve
 from govee_ble_local.devices.profile import PROFILES, DeviceProfile, RelayPower, profile_for, wire_profile
+from govee_ble_local.exceptions import GoveeBleNotSupported
 from govee_ble_local.models import Capability as C
 from govee_ble_local.models import Encryption as E
 from govee_ble_local.models import Zone
 from govee_ble_local.transport.connection import HeartbeatTiming
+from govee_ble_local.wire import build
 from govee_ble_local.wire.build import ColorScheme
 
 _ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -97,6 +99,15 @@ _CHANGED: dict[tuple[str, str], tuple[Any, Any]] = {
         "H61A8", "H6004", "H6006", "H6008", "H6052", "H6641", "H6188", "H6062", "H6061", "H5080", "H5083",
         "H5085", "H5082", "H5089", "H5160", "H5161")},
     **{(sku, "heartbeat_timing"): ("fixed_rate", "after_quiet") for sku in ("H5080", "H5083", "H5085")},
+    # 1.7.0: the colour tab's Kelvin frame (Config.bu -> Bytes.p), not the group-control white slot
+    # (decision 3).
+    ("H6188", "color_scheme"): ("h6188", "h6006"),
+    # 1.7.0: no Part-tab Kelvin item on goodsTypes 19 / 247 / 41 (not in SupportPartColorTemConfig.d), so no
+    # Kelvin on a piece selection.
+    **{(sku, "segment_color_temp"): (True, False) for sku in ("H61A8", "H6641", "H6062")},
+    # 1.7.0: the Part-tab Kelvin of goodsTypes 303 / 119 widens every pick to a whole zone, so none goes to
+    # part of one (the user's decision 24).
+    **{(sku, "segment_color_temp"): (True, False) for sku in ("H60A6", "H6047")},
 }
 
 # (soft, hard) versions: unread, the H61A8 bench unit, and the reference self-test's other two.
@@ -106,14 +117,23 @@ _FIRMWARE = ((None, None), ("3.03.18", "3.01.10"), ("1.03.00", "3.08.01"), ("1.0
 def test_the_generated_table_is_masters_hand_table_but_for_the_spec_fixes() -> None:
     assert set(_MASTER) <= set(supported_skus())
     # D3's 1.x pact fallback is frozen at these 18; every SKU admitted later is served only at its rows'
-    # pacts, as the app's checkProtocol (Pact.i) serves it.
+    # pacts, as the app's checkProtocol (Pact.i) serves it. The H7004 and H7017 rows are pacts: any, so
+    # (99, 99) is one of them: their screens run no pact test (h7017 Model.t; VM4Light.X0 false at 0).
     assert set(_MASTER) == _resolve.PACT_FALLBACK_SKUS
-    assert not [sku for sku in supported_skus(allow_modelled=True)
-                if sku not in _MASTER and profile_for(sku, pact=(99, 99), allow_modelled=True) is not None]
+    assert [sku for sku in supported_skus(allow_modelled=True) if sku not in _MASTER
+            and profile_for(sku, pact=(99, 99), allow_modelled=True) is not None] == ["H7004", "H7017"]
     # The resolver's value sets (standard library only) are the profile's Literals.
     assert set(_resolve.COLOR_SCHEMES) == set(get_args(ColorScheme))
     assert set(_resolve.RELAY_POWERS) == set(get_args(RelayPower))
     assert set(_resolve.HEARTBEAT_TIMINGS) == set(get_args(HeartbeatTiming))
+
+    def builds_segment_brightness(scheme: Any) -> bool:
+        try:
+            return bool(build.segment_brightness(1, 50, scheme, 1))
+        except GoveeBleNotSupported:
+            return False
+    built = {s for s in _resolve.COLOR_SCHEMES if builds_segment_brightness(s)}
+    assert built == _resolve.SEGMENT_BRIGHTNESS_SCHEMES
     routes = _resolve.routes(FAMILIES)
     reference = _reference()
     yaml = require_optional("yaml", reason="the reference resolver reads spec/devices.yaml")
@@ -254,6 +274,10 @@ _REFUSED: tuple[tuple[str, str, _Edit, str], ...] = (
     ("striplight", "41", lambda f: _wire(f)["forms"].update(f_41="power_memory"),
      "an aa 41 read without f_41"),
     ("h6047", "119", lambda f: _wire(f, "119")["forms"].update(f_36="bar_index"), "the aa 36 read and f_36"),
+    ("h60ax", "303", lambda f: _wire(f, "303").setdefault("power", {}).update(light_nonzero=True),
+     "wire power light_nonzero is served on a polled light row only"),
+    ("h70b1", "134", lambda f: _wire(f)["power"].update(light_heartbeat_nonzero=True),
+     "wire power light_heartbeat_nonzero with heartbeat heartbeat"),
     ("striplight", "41", lambda f: _wire(f)["group"].update(num_per_group=0), "wire group num_per_group 0"),
     ("h60ax", "303", lambda f: _wire(f, "303")["group"].update(rule="unknown"), "wire group rule 'unknown'"),
     # family facts
@@ -326,6 +350,12 @@ _REFUSED: tuple[tuple[str, str, _Edit, str], ...] = (
      "the family color_scheme h61a8 would drop ['color_temp']"),
     ("dreamcolorlightv1", "19", lambda f: _row(f, "19")["color_functions"].remove("color_temperature"),
      "color_functions ['segment_brightness'] disagree"),
+    ("dreamcolorlightv1", "19", lambda f: _row(f, "19")["capabilities"].remove("segments"),
+     "color_functions ['segment_brightness', 'color_temperature'] disagree"),   # h60a6 has the 15 02 frame
+    ("dreamcolorlightv1", "19", lambda f: _row(f, "19").pop("segment_color_temp"),
+     "segment_color_temp goes with"),
+    ("bulblightv3", "64", lambda f: _row(f, "64").update(segment_color_temp=False),
+     "segment_color_temp goes with"),
     ("bulblightv3", "64", lambda f: _row(f, "64").update(scene_dialect="graffiti"),
      "scene_dialect 'graffiti'"),
     ("h6047", "119", lambda f: _row(f, "119").update(scene_versions=[0, -1]), "scene_versions [0, -1]"),
@@ -335,14 +365,24 @@ _REFUSED: tuple[tuple[str, str, _Edit, str], ...] = (
     ("h6047", "119", lambda f: _row(f, "119").pop("brightness_range"), "no brightness_range"),
     ("h60ax", "303", lambda f: _row(f, "303").pop("account_lock"), "no account_lock"),
     ("h6047", "119", lambda f: _row(f, "119")["zones"][1]["segments"].append(42), "zone right segments"),
+    ("pact_h6099", "203", lambda f: _row(f, "203").update(segment_brightness_groups=[[0, 1], [1, 2]]),
+     "segment_brightness_groups [[0, 1], [1, 2]] are not disjoint groups of the 14 segments"),
+    ("bulblightv3", "64", lambda f: _row(f, "64").update(segment_brightness_groups=[[0]]),
+     "segment_brightness_groups without the segment-brightness frame"),
     ("h6061", "51", lambda f: _wire(f, "51").pop("counts"), "segments or a colour read-back without"),
     # reads and writes
     ("bulblightv3", "64", lambda f: _row(f, "64").update(power_read="aa33"), "power_read 'aa33'"),
     ("h60ax", "303", lambda f: _row(f, "303").update(power_read="aa01"),
      "power_read 'aa01' with status_read"),
+    ("h60ax", "303", lambda f: _row(f, "303").pop("device_info_reads"),
+     "device_info_reads None on a status row"),
+    ("h60ax", "303", lambda f: _row(f, "303").update(device_info_reads="unverified"),
+     "device_info_reads 'unverified'"),
     ("bulblightv3", "64", lambda f: _row(f, "64")["connect_reads"].append("cmd_ac"),
      "connect_reads ['cmd_ac']"),
     ("tablelampv1", "22", lambda f: _row(f, "22").update(connect_reads=[]), "connect_reads lists brightness"),
+    ("h7017", "0", lambda f: _row(f, "0")["capabilities"].remove("brightness"),
+     "connect_reads lists brightness exactly on a polled row with the brightness capability"),
     ("h6047", "119", lambda f: _row(f, "119")["connect_reads"].remove("gradual"),
      "connect_reads lists gradual"),
     ("h5080", "43", lambda f: _row(f, "43")["connect_reads"].append("gradual"),
@@ -356,6 +396,8 @@ _REFUSED: tuple[tuple[str, str, _Edit, str], ...] = (
     ("h5080", "43", lambda f: _row(f, "43").update(connect_writes=[]), "connect_writes []"),
     ("bulblightv3", "64", lambda f: _row(f, "64").update(connect_writes=["plug_sync_time"]),
      "connect_writes ['plug_sync_time']"),
+    ("bulblightv3", "342", lambda f: _row(f, "348")["models"].append("H14A1"),
+     "by_model connect_writes on a SKU that rows ['342', '348'] list"),
     # plugs
     ("h5080", "50", lambda f: _row(f, "50").pop("power_resync"), "no power_resync"),
     ("bulblightv3", "64", lambda f: _row(f, "64").update(power_resync=True), "power_resync on a light"),
@@ -409,6 +451,17 @@ def test_the_generator_keeps_data_keys_and_raises_on_a_missing_fact() -> None:
         return {sku for group, _fields, _routes in _resolve.profiles(cut, table, levels) for sku in group}
 
     assert "H6052" not in skus(_resolve.ADMITTED) and "H6052" in skus(_resolve.MODELLED)
+    # A SKU's by_model connect_writes replaces its row's for that SKU alone (bulblight Support.c's split).
+    split = edited("bulblightv3", lambda f: f["client_profile"]["by_model"].update(
+        H6006={"connect_writes": ["light_effect_stop"]}))
+    table, cut = gen.project(split, schema)
+    stops = {sku: fields["light_effect_stop"] for group, fields, _routes in _resolve.profiles(cut, table)
+             for sku in group}
+    assert stops["H6006"] and not stops["H6008"]
+    # The segment-brightness flag calls for segments only where the row's scheme has that frame (h60a6's
+    # 15 02, refused above without them): on an h6006 row it binds nothing, as on H6071 / H6075 (no frame).
+    gen.project(edited("bulblightv3", lambda f: _row(f, "342").update(
+        color_functions=["segment_brightness", "color_temperature"])), schema)
 
 
 def _reference() -> Any:
