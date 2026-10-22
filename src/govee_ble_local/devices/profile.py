@@ -119,7 +119,8 @@ class DeviceProfile:
     segments: int = 0
     """Segment count: the whole-device mask width and the segment index bound (H6061: its panel
     count); 0 for a single-colour device. ``Device.set_segment_count`` overrides it with a count the
-    device reports."""
+    device reports, and so does the device's own read of it on a :attr:`section_count_read` or
+    :attr:`color_writes_live_ic` profile (``Device.segment_count``)."""
     zones: tuple[Zone, ...] = ()
     """Independently switchable zones (empty for an unzoned device)."""
     scene_versions: frozenset[int] = field(default_factory=frozenset)
@@ -459,6 +460,15 @@ class DeviceProfile:
     color_readback_ic_otherwise: int | None = field(default=None, kw_only=True)
     """The pieces at an IC count :attr:`color_readback_ic_table` doesn't list, and on a reply without the
     second strip :attr:`color_readback_ic_pair_cap` needs: 1 or more, and set with either of them."""
+    color_writes_live_ic: bool = field(default=False, kw_only=True)
+    """With :attr:`color_readback_live_ic`: the live pieces size the writes too, as the screen's strip takes
+    them from the IC each aa 40 read stores (``ColorPieceConfig.c``; h61d3 ``ColorMode.V``, h705a
+    ``ColorMode.Y``): :attr:`~.device.Device.segment_count` becomes each poll's count (at most
+    ``build.MAX_MASK_SEGMENTS``), so it is the whole-device mask and the segment index bound, and a write that
+    carries a mask before any count is known reads ``aa 40`` first and raises GoveeBleError, sending nothing,
+    when the device gives no usable count, as a ``section_count_read`` profile does. :attr:`segments` is then
+    only the count before the first read. Every IC-sized devices.yaml row (``ic_pieces`` object form) sets it;
+    False (the default): the writes keep :attr:`segments`."""
 
     def __post_init__(self) -> None:
         """Validate each field: GoveeBleInvalidValue (a ValueError) on a value no Device can use.
@@ -537,6 +547,9 @@ class DeviceProfile:
             raise GoveeBleInvalidValue(
                 f"{where}: color_readback_ic_per_piece={self.color_readback_ic_per_piece!r}")
         self._check_ic_rules(where)
+        if self.color_writes_live_ic and not self.color_readback_live_ic:
+            raise GoveeBleInvalidValue(f"{where}: color_writes_live_ic without color_readback_live_ic (the "
+                                       "live pieces come from its aa 40 read)")
         for name in ("kelvin_by_hardware", "kelvin_by_software"):
             if isinstance(getattr(self, name), list):
                 object.__setattr__(self, name, tuple(map(tuple, getattr(self, name))))

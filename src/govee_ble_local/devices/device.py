@@ -320,17 +320,23 @@ class Device:
 
     @property
     def segment_count(self) -> int:
-        """Segments this device addresses: the count it reported at runtime
-        (:meth:`set_segment_count`) if any, else the profile's static ``segments``. Sets the
-        whole-device mask and its byte width (2 bytes up to 16 segments, ceil(n/8) above)."""
+        """Segments this device addresses: the count it reported at runtime if any, else the profile's
+        static ``segments``. Sets the whole-device mask and its byte width (2 bytes up to 16 segments,
+        ceil(n/8) above) and bounds the segment indices. The device's own read sets it on a
+        ``section_count_read`` profile (H6062's aa 41) and on a ``color_writes_live_ic`` one (the live pieces
+        of each poll's aa 40 read: H6641, the other IC-sized rows), as does :meth:`set_segment_count`, until
+        the next such read. A caller that offers one entity per segment reads it after the first
+        :meth:`update`."""
         return self._segment_count if self._segment_count is not None else self.profile.segments
 
     def set_segment_count(self, count: int | None) -> None:
         """Override the profile's segment count with one the device reported (e.g. a
         runtime read of its segment/section count); ``None`` reverts to the profile value.
 
-        Raises GoveeBleInvalidValue unless ``count`` is 1..56 (the widest mask, 7 bytes, the
-        app encodes). Does not touch the connection or any state."""
+        Raises GoveeBleInvalidValue unless ``count`` is 1..112 (``build.MAX_MASK_SEGMENTS``, the most
+        positions any body the library writes carries). Does not touch the connection or any state; on a
+        profile whose device reports its count (see :attr:`segment_count`) the next poll's read replaces
+        it."""
         if count is not None:
             _check_segment_count(count)
         self._segment_count = count
@@ -1070,10 +1076,10 @@ class Device:
         COLOR_TEMP) or when the colour scheme can't express it, and for a ``brightness`` while the
         device's brightness range waits for the advertised pact (as :meth:`set_brightness`), before
         any write, so the power-on is not sent either; GoveeBleError if a device that reports its own
-        segment count (H6062) does not answer that read. On a profile whose screen sets colour temperature on
-        its illumination tab (:attr:`.DeviceProfile.kelvin_with_brightness`) a ``kelvin`` goes out as that
-        tab's pair, the Kelvin frame then ``33 04`` (``brightness``, else the held one, read first when
-        unknown: GoveeBleError, before any write, when it stays unknown).
+        segment count (H6062, an IC-sized row) does not answer that read. On a profile whose screen sets
+        colour temperature on its illumination tab (:attr:`.DeviceProfile.kelvin_with_brightness`) a
+        ``kelvin`` goes out as that tab's pair, the Kelvin frame then ``33 04`` (``brightness``, else the
+        held one, read first when unknown: GoveeBleError, before any write, when it stays unknown).
 
         On a ``session="per_command"`` profile each part is a session of its own (:meth:`_turn_on_taps`)."""
         if self.profile.session == "per_command":
@@ -1088,8 +1094,8 @@ class Device:
         # A 33 04 writer, and with a kelvin the illumination pair: under _held_brightness_lock, build to
         # write.
         async with self._held_brightness_lock():
-            # H6062's aa 41 read and the write it sizes, and as set_power the power write and its re-read: no
-            # heartbeat between them.
+            # A segment-count read and the write it sizes, and as set_power the power write and its re-read:
+            # no heartbeat between them.
             with self._conn.hold_heartbeat():
                 if pick is not None or kelvin is not None:
                     await self._ensure_segment_count()
@@ -1215,11 +1221,11 @@ class Device:
 
         Raises GoveeBleNotSupported without RGB; GoveeBleInvalidValue (before any I/O) unless
         ``rgb`` is an (r, g, b) triple of ints in 0..255; GoveeBleError if a device that reports
-        its own segment count (H6062) does not answer that read."""
+        its own segment count (H6062, an IC-sized row) does not answer that read."""
         self._require(Capability.RGB)
         pick = _check_rgb(rgb)
         ticket = self._ticket()
-        with self._conn.hold_heartbeat():   # H6062's aa 41 read and its write: no beat between
+        with self._conn.hold_heartbeat():   # a segment-count read and its write: no beat between
             await self._ensure_segment_count()
             span = self._kelvin_range()   # once: the frame and the state use the same range
             await self._commit(self._color_rgb_frames(pick, span),
@@ -1229,7 +1235,7 @@ class Device:
         """Set the whole-device colour temperature (clears rgb and active scene).
 
         Raises GoveeBleNotSupported without COLOR_TEMP and GoveeBleInvalidValue for a non-int;
-        GoveeBleError if a device that reports its own segment count (H6062) does not answer
+        GoveeBleError if a device that reports its own segment count (H6062, an IC-sized row) does not answer
         that read. Like the app, an out-of-range value is clamped to the device's Kelvin range
         (:attr:`min_kelvin` / :attr:`max_kelvin`; not rejected) and then rounded to the nearest 100 K,
         the only values the app sends; the Kelvin actually sent is what ``state`` keeps, and the frame
@@ -1242,7 +1248,7 @@ class Device:
         ticket = self._ticket()
         # The pair's 33 04 and its write under one hold, so no brightness write lands between them.
         async with self._held_brightness_lock():
-            with self._conn.hold_heartbeat():   # H6062's aa 41 read and its write: no beat between
+            with self._conn.hold_heartbeat():   # a segment-count read and its write: no beat between
                 await self._ensure_segment_count()
                 frame = self._build_or_unsupported(
                     build.color_temp, sent, self.profile.color_scheme, self.segment_count,
@@ -1290,12 +1296,12 @@ class Device:
 
         Raises GoveeBleNotSupported without SEGMENTS; GoveeBleInvalidValue for a bad index or
         unless ``rgb`` is an (r, g, b) triple of ints in 0..255; GoveeBleError if a device that
-        reports its own segment count (H6062) does not answer that read."""
+        reports its own segment count (H6062, an IC-sized row) does not answer that read."""
         self._require(Capability.SEGMENTS)
         pick = _check_rgb(rgb)
         r, g, b = pick
         ticket = self._ticket()
-        with self._conn.hold_heartbeat():   # H6062's aa 41 read and its write: no beat between
+        with self._conn.hold_heartbeat():   # a segment-count read and its write: no beat between
             await self._ensure_segment_count()
             n = self.segment_count
             frame = self._build_or_unsupported(
@@ -1317,12 +1323,12 @@ class Device:
 
         Raises GoveeBleNotSupported without SEGMENTS or for colour schemes without per-segment
         brightness (the h61a8 0x0b scheme); GoveeBleInvalidValue for a non-int ``pct`` or a bad index;
-        GoveeBleError if a device that reports its own segment count (H6062) does not answer
+        GoveeBleError if a device that reports its own segment count (H6062, an IC-sized row) does not answer
         that read."""
         self._require(Capability.SEGMENTS)
         level = _check_pct(pct)
         ticket = self._ticket()
-        with self._conn.hold_heartbeat():   # H6062's aa 41 read and its write: no beat between
+        with self._conn.hold_heartbeat():   # a segment-count read and its write: no beat between
             await self._ensure_segment_count()
             n = self.segment_count
             frame = self._build_or_unsupported(
@@ -1365,14 +1371,14 @@ class Device:
         Raises GoveeBleNotSupported without SEGMENTS/COLOR_TEMP, for non-maskable schemes, or where the
         screen writes colour temperature over the whole device only
         (:attr:`.DeviceProfile.whole_device_kelvin`); GoveeBleInvalidValue for a non-int ``kelvin`` or a bad
-        index; GoveeBleError if a device that reports its own segment count (H6062) does not answer that
-        read."""
+        index; GoveeBleError if a device that reports its own segment count (H6062, an IC-sized row) does
+        not answer that read."""
         self._require(Capability.SEGMENTS)
         self._require(Capability.COLOR_TEMP)
         self._require_masked_kelvin()
         sent = self._check_kelvin(kelvin)
         ticket = self._ticket()
-        with self._conn.hold_heartbeat():   # H6062's aa 41 read and its write: no beat between
+        with self._conn.hold_heartbeat():   # a segment-count read and its write: no beat between
             await self._ensure_segment_count()
             n = self.segment_count
             frame = self._build_or_unsupported(
@@ -1507,7 +1513,7 @@ class Device:
         Raises GoveeBleNotSupported without SEGMENTS/RGB or for a zone without segments;
         GoveeBleInvalidValue for an unknown zone (also a GoveeBleNotSupported) or unless ``rgb`` is
         an (r, g, b) triple of ints in 0..255; GoveeBleError if a device that reports its own
-        segment count (H6062) does not answer that read."""
+        segment count (H6062, an IC-sized row) does not answer that read."""
         self._require(Capability.SEGMENTS)
         self._require(Capability.RGB)
         z = self._zone(name)
@@ -1544,7 +1550,7 @@ class Device:
         temperature over the whole device only (:attr:`.DeviceProfile.whole_device_kelvin`);
         GoveeBleInvalidValue for an
         unknown zone (also a GoveeBleNotSupported) or a non-int ``kelvin``; GoveeBleError if a device that
-        reports its own segment count (H6062) does not answer that read."""
+        reports its own segment count (H6062, an IC-sized row) does not answer that read."""
         self._require(Capability.SEGMENTS)
         self._require(Capability.COLOR_TEMP)
         self._require_masked_kelvin()
@@ -1919,11 +1925,29 @@ class Device:
     async def _read_mechanism_a_direct(self, budget: ConnectBudget | None = None) -> None:
         """H6047/H6641/H6062/H6061 per-segment colour via Controller4ColorInfoByGroup's direct
         per-group requests (``aa a5 <group>``; :func:`._readback.walk_mechanism_a_direct`), applied
-        whole unless a setter raced it."""
+        whole unless a setter raced it. On a live-IC profile the poll's one ``aa 40`` read comes first
+        (:meth:`_read_live_ic`); without a count the walk is skipped."""
+        pieces = None
+        if self.profile.color_readback_live_ic:
+            pieces = await self._read_live_ic(budget)
+            if pieces is None:
+                return
         await self._read_fresh(
             "segment colour",
-            lambda: _readback.walk_mechanism_a_direct(self, lambda f: self._read_reply(f, budget)),
+            lambda: _readback.walk_mechanism_a_direct(self, lambda f: self._read_reply(f, budget), pieces),
             self._apply_segments)
+
+    async def _read_live_ic(self, budget: ConnectBudget | None = None) -> int | None:
+        """The live IC count's ``aa 40`` read (:func:`._readback.read_live_ic`): its pieces, or None. On a
+        ``color_writes_live_ic`` profile a count of 1 or more becomes :attr:`segment_count`, at most
+        ``build.MAX_MASK_SEGMENTS`` (a body carries no more: every count above writes the same bytes), as
+        the screen resizes its strip to each IC read (h61d3 ``ColorMode.V``, h705a ``ColorMode.Y``). A device
+        fact, not optimistic state, so it is adopted whatever a setter did meanwhile; no count leaves it as
+        it was."""
+        pieces = await _readback.read_live_ic(self, lambda f: self._read_reply(f, budget))
+        if self.profile.color_writes_live_ic and pieces is not None and pieces >= 1:
+            self._segment_count = min(pieces, build.MAX_MASK_SEGMENTS)
+        return pieces
 
     def _wants_color_groups(self) -> bool:
         """Whether the 0xAC status read asks for the 0xA5 colour groups (``status_color_groups_pact``):
@@ -2070,16 +2094,23 @@ class Device:
         """Make sure the device's own segment count is known before a write that carries a segment
         mask. The app always reads it on connect and cannot control the device without it
         (``AbsComposeControllerWithOpResult.onOvertime`` fails the connect read), so a profile with
-        ``section_count_read`` does the same lazily here and sends nothing if the device does not
-        answer, rather than guessing a mask. A no-op on every other profile and once the count is
+        ``section_count_read`` (aa 41) or ``color_writes_live_ic`` (aa 40, whose pieces the strip and so
+        every pick's position set take) does the same lazily here and sends nothing if the device gives no
+        usable count, rather than guessing a mask. A no-op on every other profile and once the count is
         known. Every caller holds the heartbeat across this read and the write it sizes
         (``GoveeConnection.hold_heartbeat``), as :meth:`update` holds its reads: the app reads the count
         in its connect read, during which it sends none (``ShareVM.R`` -> ``updateSkipHeart``)."""
-        if (self.profile.section_count_read and self._segment_count is None
+        if (self._segment_count is None and self.profile.section_count_read
                 and not await self._read_section_count()):
             raise GoveeBleError(
                 f"{self._sku}: the device did not report its segment count (aa 41); "
                 "not sending a colour frame with a guessed segment mask")
+        if self._segment_count is None and self.profile.color_writes_live_ic:
+            await self._read_live_ic()
+            if self._segment_count is None:
+                raise GoveeBleError(
+                    f"{self._sku}: the device did not report a usable IC count (aa 40); "
+                    "not sending a colour frame with a guessed segment mask")
 
     async def _read_fresh(
         self, what: str, read: Callable[[], Awaitable[_T | None]], apply: Callable[[_T], None]

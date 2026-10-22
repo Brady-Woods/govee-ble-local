@@ -90,6 +90,10 @@ _CHANGED: dict[tuple[str, str], tuple[Any, Any]] = {
     ("H6641", "scene_versions"): (frozenset({0, 1, 2, 3, 10}), frozenset({0, 1, 2, 3})),
     # The screen reads aa a3 at connect and writes 33 a3, which an H6641 answers and acks (bench, 2026-10-18).
     ("H6641", "gradual"): (False, True),
+    # 1.9.0: the live piece count sizes the writes (decision 2; ColorPieceConfig.c, ColorMode.V), and the
+    # count before the first aa 40 read is the most it gives, ceil(70 / 5) = 14 (H61D3Support.s / e).
+    ("H6641", "color_writes_live_ic"): (False, True),
+    ("H6641", "segments"): (16, 14),
     # The spec's name for the bars' 0x15 decode (one Kelvin per bar); the decode itself is unchanged.
     ("H6047", "mode_color_parse"): ("kelvin_15", "kelvin_pair_15"),
     # 1.6.0: each row's keep-alive read (devices.yaml clientRow heartbeat); master sent none. aa 00 on the

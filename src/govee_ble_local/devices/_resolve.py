@@ -116,10 +116,12 @@ the row lacks fails the build: nothing defaults silently.
   ``ic_num`` read goes with ``ic_pieces`` and the direct colour read-back: an object form's rule over the IC
   count sizes the read-back's pieces (``DeviceProfile.color_readback_live_ic``: the count clamped and divided,
   rounding up, or down under ``rounding: floor``, H6641 and the h705a rows; an IC table, H6609; or two strips'
-  counts capped and summed, H1A45: ``_readback.live_ic_pieces``), or, with ``ic_pieces: sections``, its two
-  section bytes do
-  (``DeviceProfile.color_readback_ic_sections``), or, with ``ic_pieces: fixed``, it is made on every poll and
-  discarded (``DeviceProfile.ic_num_read_only``: a fixed piece count). Every command
+  counts capped and summed, H1A45: ``_readback.live_ic_pieces``), and the writes (``color_writes_live_ic``:
+  each poll's pieces are ``Device.segment_count``, the whole-device mask and the segment index bound, as the
+  screen's strip takes them from the stored IC, ``ColorPieceConfig.c``; the wire ``num_segments`` is only the
+  count before the first read), or, with ``ic_pieces: sections``, its two section bytes size the read-back's
+  alone (``DeviceProfile.color_readback_ic_sections``), or, with ``ic_pieces: fixed``, it is made on every
+  poll and discarded (``DeviceProfile.ic_num_read_only``: a fixed piece count). Every command
   form the library sends or reads for the row must be the row's (wire ``forms``), a polled row's aa 05 reply
   is read with the row's wire ``mode`` (``DeviceProfile.mode_decode``, over the spec's default,
   :data:`_MODE_UNSET`), and a colour-group read is of 4-byte records in the row's wire
@@ -1131,6 +1133,7 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
         "color_readback": color_readback,
         "color_readback_per_batch": int(per_group) if color_readback == "mechanism_a_direct" else 3,
         "color_readback_live_ic": live_ic,
+        "color_writes_live_ic": live_ic,   # the live pieces size the writes too (ColorPieceConfig.c)
         "color_readback_ic_sections": ic == "sections",
         "detail_power_read": power_read == "aa34_detail",
         "ic_num_read_only": ic == "fixed",

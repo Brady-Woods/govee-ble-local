@@ -341,6 +341,7 @@ def test_h6641_mechanism_a_direct_readback_via_live_ic(ic: int, pieces: int) -> 
     d._conn.query = _h6641_ic_query(ic, 7, asked)  # type: ignore[method-assign]
     asyncio.run(d._read_mechanism_a_direct())
     assert asked == list(range(1, -(-pieces // 4) + 1))           # exactly the app's aa a5 reads
+    assert d.segment_count == pieces                                # the writes' count too (ColorMode.V)
     segs = d.state.segments
     assert [s.index for s in segs] == list(range(pieces))          # no phantom padding segments
     last = pieces - 1
@@ -369,6 +370,7 @@ def test_h6641_segment_control_wired() -> None:
     d = _dev("H6641")
     assert Capability.SEGMENTS in d.capabilities
     assert d.profile.readback == "polled" and d.profile.color_readback == "mechanism_a_direct"
+    d.set_segment_count(14)                  # the live count (aa 40), as a poll adopts it
     asyncio.run(d.set_segment_rgb([0, 1, 2], (0, 0, 255)))
     f = _sent(d)[0]
     assert f.hex().startswith("33051501")   # 0x15 set-color (RGBIC per-segment)

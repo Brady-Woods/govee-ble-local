@@ -37,6 +37,10 @@ def run(coro: Any) -> Any:
     return asyncio.run(coro)
 
 
+# An aa 40 reply of IC 70 (14 pieces on H6641): an IC-sized row's colour write reads it first.
+_IC_70: Replies = {0x40: [_frame(0xAA, 0x40, 0x00, 70, 0x00)]}
+
+
 def _dev(sku: str, replies: Replies | None = None, **profile_overrides: Any) -> Device:
     """Device with a mocked connection. ``replies`` maps the request's command byte (frame[1]) to
     reply frames, or to a function of the request frame returning them."""
@@ -283,7 +287,7 @@ def test_masked_colour_write_clears_the_active_scene(write: Any) -> None:
 
 
 def test_h6641_segment_rgb_clears_scene() -> None:
-    d = _dev("H6641")
+    d = _dev("H6641", _IC_70)
     run(d.set_scene(5))
     run(d.set_segment_rgb([0], (1, 2, 3)))
     assert d.state.scene_code is None
@@ -573,7 +577,7 @@ def test_scene_report_clears_the_colours(sku: str) -> None:
     # The H60A6 reads its mode from the status burst's 0x05 TLV; the others from aa 05.
     replies = ({0x03: _mode_burst(0x04, 0x10, 0x00)} if sku == "H60A6"
                else {0x05: [_frame(0xAA, 0x05, 0x04, 0x10, 0x00)]})
-    d = _dev(sku, replies)
+    d = _dev(sku, {**replies, **_IC_70})
     run(d.set_color_temp(4000))
     run(d._read_status() if d.profile.readback == "status" else d._read_polled())
     assert d.state.scene_code == 16
@@ -601,7 +605,7 @@ def test_h6062_0d_report_is_not_read_as_bulb_rgb() -> None:
 
 @pytest.mark.parametrize("sku", ["H6641", "H6047"])
 def test_0d_report_is_ignored_where_the_app_does_not_parse_it(sku: str) -> None:
-    d = _dev(sku, {0x05: [_frame(0xAA, 0x05, 0x0D, 0x01, 0x0F, 0xA0)]})
+    d = _dev(sku, {0x05: [_frame(0xAA, 0x05, 0x0D, 0x01, 0x0F, 0xA0)], **_IC_70})
     run(d.set_rgb((9, 8, 7)))
     run(d._read_polled())
     assert d.state.rgb_color == (9, 8, 7) and d.state.color_temp_kelvin is None
@@ -754,6 +758,8 @@ def test_live_ic_profile_needs_its_ic_derivation() -> None:
                       color_readback_ic_otherwise=14)):
         with pytest.raises(ValueError, match="color_readback_ic_table"):
             DeviceProfile(skus=("HX",), capabilities=frozenset(), **rule)   # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="color_writes_live_ic"):   # its count comes from the live read
+        DeviceProfile(skus=("HX",), capabilities=frozenset(), color_writes_live_ic=True)
 
 
 def _ic(count: int) -> parse.IcCount:
@@ -882,6 +888,26 @@ def test_h6641_ic_count_from_the_swap_branch_skips_the_walk(ic: int) -> None:
                        0xA5: [_frame(0xAA, 0xA5, 1, *([50, 1, 2, 3] * 4))]})
     run(d._read_mechanism_a_direct())
     assert [q[1] for q in _queried(d)] == [0x40] and d.state.segments == []
+
+
+@pytest.mark.parametrize(("ic", "count"), [
+    (None, None),                   # no aa 40 reply
+    ((0x10, 0x00, 0x00), None),     # IC 0x1000: the app's reader stores no count
+    ((0x00, 0x00, 0x00), None),     # IC 0: no pieces
+    ((0x00, 0xC8, 0x00), 112),      # IC 200 on H7067 (pieces = IC, no app cap): the widest mask
+])
+def test_an_ic_sized_write_takes_the_live_count_or_sends_nothing(ic: tuple[int, ...] | None,
+                                                                   count: int | None) -> None:
+    # color_writes_live_ic: before the first poll a masked write reads aa 40 (ColorPieceConfig.c sizes the
+    # strip from the IC it stores), and without a usable count nothing is sent, as on H6062's aa 41.
+    d = _dev("H7067", {0x40: [_frame(0xAA, 0x40, *ic)]} if ic else None)
+    if count is None:
+        with pytest.raises(GoveeBleError, match=r"\(aa 40\)"):
+            run(d.set_rgb((1, 2, 3)))
+        assert _sent(d) == [] and [q[1] for q in _queried(d)] == [0x40]
+    else:
+        run(d.set_rgb((1, 2, 3)))
+        assert d.segment_count == count and _sent(d) == [build.color_rgb(1, 2, 3, "h60a6", count)]
 
 
 # ── scene upload + activation are not split by a concurrent scene write ───────────────────

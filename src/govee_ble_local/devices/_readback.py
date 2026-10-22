@@ -114,7 +114,8 @@ async def walk_mechanism_b(dev: ReadTarget, read_reply: ReadReply) -> list[Segme
     return parse.bulb_groups_to_segments(batches, per_batch) or None
 
 
-async def walk_mechanism_a_direct(dev: ReadTarget, read_reply: ReadReply) -> list[Segment] | None:
+async def walk_mechanism_a_direct(dev: ReadTarget, read_reply: ReadReply,
+                                  live_pieces: int | None = None) -> list[Segment] | None:
     """H6047/H6641 per-segment colour via Controller4ColorInfoByGroup's direct per-group
     requests (AA A5 <group>), or None when the walk was skipped or no group came back. A different
     controller from H61A8's mechanism_b (BulbGroupColorV2); they only share the wire opcode. Group
@@ -122,7 +123,8 @@ async def walk_mechanism_a_direct(dev: ReadTarget, read_reply: ReadReply) -> lis
     every current SKU). The total piece count — and hence the group count, ceil(pieces / group size) —
     comes from either a static per-SKU value (`color_readback_segments`/`segments`; H6047 uses its
     10 `segments`) or, when `color_readback_live_ic` is set (H6641), a live `0x40` IC-count read
-    derived the way the app does (:func:`live_ic_pieces`). When that read fails the app still walks
+    derived the way the app does (:func:`live_ic_pieces`; ``live_pieces``, where the caller made that read:
+    ``Device`` makes it once per poll, as it sizes the writes too). When that read fails the app still walks
     the groups from the IC count it stored earlier; the library has none, so it skips the walk. With
     `color_readback_ic_sections` (goodsTypes 141 / 204) the same read's section sum sizes the walk, else the
     static count when it is 0, in Java's group count (:func:`_java_group_count`); a failed read skips it.
@@ -139,7 +141,7 @@ async def walk_mechanism_a_direct(dev: ReadTarget, read_reply: ReadReply) -> lis
     profile = dev.profile
     group_size = profile.color_readback_per_batch   # >= 1 (DeviceProfile); the spec's num_per_group
     if profile.color_readback_live_ic:
-        live = await read_live_ic(dev, read_reply)
+        live = live_pieces if live_pieces is not None else await read_live_ic(dev, read_reply)
         if live is None:
             return None
         total = live
