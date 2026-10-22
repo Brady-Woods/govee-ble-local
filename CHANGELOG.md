@@ -100,6 +100,30 @@ model, from which the shipped readers are generated).
   - Design: `govee-apks/library-audit/DESIGN_relearn_advert_cipher.md`.
 
 ### Fixed
+- **A failed read of the BGC-info characteristic (2b12) now fails that connect attempt, and no frame is sent on
+  its link.** Until now a lookup error (`client.services` raising) or a `BleakError` from the read ran the session
+  on the advertised mode. On a device that reports BGC 1 but advertises plaintext, that session sent plaintext
+  frames an encrypted device ignores. The attempt now raises `GoveeBleConnectionError` ("BGC read failed" or
+  "BGC lookup failed"), the link is torn down, and the session loop reads again on a new link, up to
+  `SESSION_ATTEMPTS`. A link-level error from the read (`EOFError`, `BrokenPipeError`) already failed the attempt;
+  it now carries the same message. A read that times out raises `GoveeBleTimeout` ("BGC read timed out") and is
+  retried the same way. Nothing is cached from a failed read, so the next connect reads again.
+  - **What the app does:** it sends nothing on a link whose 2b12 read failed. `BgcInfoReader.a` waits for a read
+    callback even when the read didn't start, and `BgcInfoReaderPool.checkNeedParseInfo` takes only a status-0
+    read, so `EncryptionBluetoothGattCallback.r`, which starts the handshake or the plaintext session, never runs.
+    A device with no 2b12 is unchanged: its session uses the advertised mode, as in the app.
+  - **Kept, by decision:** the result is still read once per Device and cached. The app reads 2b12 on every connect
+    (`BgcInfoReaderPool.onConnectedInfoChange` resets the reader on connect and drops it on disconnect). So a
+    firmware update that changes the version is seen by the next Device, after a Home Assistant reload or restart.
+    The AES-GCM refusal without a link, once a read gives 2, stays.
+  - **Bench, 2026-10-21, reads only.** No device in range has 2b12 under 1910. A connect-only survey covered 14:
+    four H60A6s on SW1.00.41, both H6008s on SW1.01.25, two H6006s, the H6047, H6052, H61A8, H61C3, H6641 and
+    H5083. So a real 2b12 read, and a real read failure, are covered by unit tests only.
+    - With 2b12 absent, the H60A6 and the H6008 ran two sessions each on the advertised AES-RC4 with every read
+      answered.
+    - With one lookup error injected on the H60A6's first link, that link carried no frame. The second link
+      handshook and its reads were answered.
+  - Design: `govee-apks/library-audit/DESIGN_bgc_reread_per_connect.md`.
 - Docstrings cited the app's per-model advert decode as `AbsBaseBleModel.A`, h5080 `Model.A` and
   `Model4Plug2.A`; in the 7.7.02 decompile the method is `z`.
 
