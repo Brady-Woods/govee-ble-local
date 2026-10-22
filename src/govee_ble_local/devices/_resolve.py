@@ -31,10 +31,16 @@ the row lacks fails the build: nothing defaults silently.
   (:data:`MODELLED`) only where the caller opts in (the user's "app-traced by default"). Every row with
   support is resolved and checked, whatever its level. A row with support that is no BLE route (no models,
   pacts or ble link) raises, and so does an ``assigned_goods_type`` item in any family that names a routed
-  SKU (case-insensitively), unless its condition tests the pact alone: the library routes by SKU and pact,
-  so it can't follow a firmware-gated rewrite or an unconditioned pairing write (left for later). A
-  pact-conditioned item is routing data instead: its SKUs are listed on the row of its goodsType with the
-  pacts at or above its gate, and on a row of a goodsType it rewrites from with pacts below it, so the
+  SKU (case-insensitively), unless its condition tests the pact alone or it is a pairing write with a pact:
+  the library routes by SKU and pact, so it can't follow a firmware-gated rewrite or a pairing write with
+  no pact. A pairing (``bind``) item's ``pact`` is an exact-pact condition (:func:`bind_pact`): the app
+  writes its goodsType into the record only at exactly that advertised pact (``NewRgb2TLUtil.isNewRgb2TL`` /
+  ``isNewRgb2TL4BleIot``, an exact compare), so it says nothing about the SKU at any other pact. A row of
+  another goodsType that lists one of its SKUs and accepts that pact (or ``any``) raises, and a (SKU, pact)
+  route no row of its goodsType carries is for review (:func:`bind_review`; H615A-E and H613A-F at
+  (65535, 255) are). A pact-conditioned item is routing data instead: its SKUs are listed on the row of its
+  goodsType with the pacts at or above its gate, and on a row of a goodsType it rewrites from with pacts
+  below it, so the
   advertised pact picks the row the app's rewrite picks. A row that lists one of them with pacts on the
   wrong side raises, and a route no row carries yet is for review (:func:`reassignment_review`). Those SKUs
   are outside the pact fallback (below), so a pact below the gate never reaches the target row, and nor does
@@ -61,8 +67,9 @@ the row lacks fails the build: nothing defaults silently.
   opt-in. Such a SKU is served only at the row's pacts, outside the pact fallback. A SKU a row lists
   keeps the spec's route, unless its catalogue goodsType is a conflict (non-zero, and none of its rows'),
   which only an ``assigned_goods_type`` item citing the app's rewrite of it settles: one whose
-  ``from_goods_type`` names the catalogue goodsType, or, with none, one that the pact conditions (an
-  unconditioned pairing write, H615E's, settles nothing). An unsettled one is unrouted and on the
+  ``from_goods_type`` names the catalogue goodsType, or, with none, one that the pact conditions (a
+  pairing write, which applies at its own pact alone, settles nothing). An unsettled one is unrouted and on
+  the
   generator's review list. The snapshot's ``ic`` is read nowhere: no row's app trace cites the app's read
   of it (``CategoriesConfig.getDefIcNum``), and no count is derived from it.
 - A row's colour scheme drops the capabilities it has no frame for (:data:`SCHEME_LACKS`), but only a
@@ -389,6 +396,7 @@ class AssignedGoodsType(TypedDict, total=False):
     goods_type: int
     from_goods_type: tuple[int, ...]
     condition: AssignedCondition
+    pact: str
 
 
 class Family(TypedDict, total=False):
@@ -573,15 +581,17 @@ def routes(families: Sequence[Family]) -> dict[str, tuple[Family, str, str]]:
                 hits.append((fam, gt, sku, admitted))
     for fam in families:
         for item in fam.get("assigned_goods_type") or ():
-            if pact_gate(item) is not None:
-                continue   # routing data: _reassignments checks it against the rows
+            if pact_gate(item) is not None or bind_pact(item) is not None:
+                continue   # routing data: _reassignments and _binds check it against the rows
             for sku in item.get("models") or ():
                 if isinstance(sku, str) and sku.upper() in listed:
                     owner, gt, routed, _admitted = listed[sku.upper()][0]
                     raise SpecError(f"{owner['id']} goodsType {gt} ({routed}): {fam['id']} "
                                     f"assigned_goods_type reassigns it to goodsType {item.get('goods_type')} "
-                                    "(the library follows only a pact-conditioned reassignment)")
+                                    "(the library follows only a pact-conditioned reassignment or a "
+                                    "pairing write's exact pact)")
     _reassignments(families)
+    _binds(families)
     return {key: hits[0][:3] for key, hits in listed.items() if len(hits) == 1 and hits[0][3]}
 
 
@@ -614,6 +624,61 @@ def pact_gate(item: AssignedGoodsType) -> tuple[int, int] | None:
     if set(cond) != {"min_pact_type", "min_pact_code"} or pact_type is None or code is None:
         return None
     return int(pact_type), int(code)
+
+
+def bind_pact(item: AssignedGoodsType) -> tuple[int, int] | None:
+    """A pairing (``bind``) item's ``pact`` as ``(pactType, pactCode)``: the advertised pact at which, and
+    only at which, the app writes the item's goodsType into the record it creates
+    (``NewRgb2TLUtil.isNewRgb2TL`` / ``isNewRgb2TL4BleIot`` compare the pact exactly). None for a device-list
+    item (a ``condition`` or a ``from_goods_type``) and for an item without a pact."""
+    if "pact" not in item or "condition" in item or "from_goods_type" in item:
+        return None
+    return _pact(item["pact"])
+
+
+def _binds(families: Sequence[Family]) -> list[str]:
+    """Check each pairing item with a pact (:func:`bind_pact`) against the rows, and give the (SKU, pact)
+    routes no row carries yet, one review line each. At that pact the app runs the SKU at the item's
+    goodsType, so a row of another goodsType that lists the SKU must not accept the pact (``any`` accepts
+    every pact): SpecError. A row at the item's goodsType that lists the SKU and accepts the pact carries the
+    route; one that lists it without ``pacts`` is for review, as is a route no row carries."""
+    review: list[str] = []
+    for fam in families:
+        for item in fam.get("assigned_goods_type") or ():
+            pact, target = bind_pact(item), item.get("goods_type")
+            if pact is None:
+                continue
+            rule = f"{fam['id']} pairing write, goodsType {target} at exactly pact {pact[0]},{pact[1]}"
+            for sku in item.get("models") or ():
+                if not isinstance(sku, str):
+                    continue
+                carried = False
+                for owner in families:
+                    for gt, row in ((owner.get("client_profile") or {}).get("by_goods_type") or {}).items():
+                        listed = {m.upper() for m in row.get("models") or () if isinstance(m, str)}
+                        if sku.upper() not in listed:
+                            continue
+                        if "pacts" not in row:
+                            if int(gt) == target:
+                                review.append(f"{sku}: also listed by {owner['id']} goodsType {gt}, without "
+                                              f"pacts ({rule})")
+                            continue
+                        pacts = row["pacts"]
+                        accepts = isinstance(pacts, str) or any(_pact(p) == pact for p in pacts)
+                        if accepts and int(gt) != target:
+                            raise SpecError(f"{owner['id']} goodsType {gt} ({sku}): pacts {pacts} accept "
+                                            f"the pact of the {rule}, where the app runs it at goodsType "
+                                            f"{target}")
+                        carried = carried or accepts
+                if not carried:
+                    review.append(f"{sku}: no goodsType-{target} row with pact {pact[0]},{pact[1]} ({rule})")
+    return review
+
+
+def bind_review(families: Sequence[Family]) -> tuple[str, ...]:
+    """The (SKU, pact) routes of the pairing items with a pact that no row of ``families`` (the whole
+    document) carries yet, one line each, for the generator to print (:func:`_binds`)."""
+    return tuple(_binds(families))
 
 
 def pact_gates(families: Sequence[Family]) -> dict[str, dict[int, tuple[int, int]]]:
@@ -687,8 +752,9 @@ def reassignment_review(families: Sequence[Family]) -> tuple[str, ...]:
 
 def _rewrites(item: AssignedGoodsType, code: int) -> bool:
     """An ``assigned_goods_type`` item cites the app's rewrite of catalogue goodsType ``code``: its
-    ``from_goods_type`` names it, or, with none (from any goodsType), its condition tests the pact. An
-    unconditioned or firmware-gated item from any goodsType (H615E's pairing write) cites none."""
+    ``from_goods_type`` names it, or, with none (from any goodsType), its condition tests the pact. A
+    firmware-gated item from any goodsType, or a pairing write (which applies at its own pact alone), cites
+    none."""
     sources = item.get("from_goods_type")
     return code in sources if sources is not None else pact_gate(item) is not None
 
@@ -725,12 +791,11 @@ def catalogue(families: Sequence[Family], snapshot: Mapping[str, int]) -> Catalo
     when it is non-zero and none of those rows has it. An ``assigned_goods_type`` item of a listing row's
     family that names the SKU at that row's goodsType settles it when the item is the app's cited rewrite of
     that catalogue goodsType (:func:`_rewrites`; :func:`routes` checks or refuses that item on a routed SKU).
-    Any other item, such as an unconditioned pairing write, settles nothing. An unsettled conflict is for
-    review, and a row with
-    support no longer routes the SKU. A SKU no row lists routes to the BLE row with support at its
-    catalogue goodsType when that is the only row at it, but never at 0 (the legacy code, not H6188's
-    goodsType-0 row); an ``assigned_goods_type`` item naming it (the app rewrites its goodsType), or rows of
-    several families at that goodsType, leave it for review."""
+    Any other item, such as a pairing write (at its own pact alone), settles nothing. An unsettled conflict is
+    for review, and a row with support no longer routes the SKU. A SKU no row lists routes to the BLE row
+    with support at its catalogue goodsType when that is the only row at it, but never at 0 (the legacy code,
+    not H6188's goodsType-0 row); an ``assigned_goods_type`` item naming it (the app rewrites its goodsType),
+    or rows of several families at that goodsType, leave it for review."""
     listed: dict[str, list[tuple[Family, str, Row]]] = {}
     rows_at: dict[int, list[tuple[Family, str, Row]]] = {}
     for fam in families:

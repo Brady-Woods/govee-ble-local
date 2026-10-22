@@ -69,7 +69,7 @@ KEEP: dict[str, tuple[str, ...]] = {
     "#/$defs/modeColorStrategy": ("sub_modes",),
     "#/$defs/family": ("id", "connectivity", "specs", "encryption", "assigned_goods_type", "client_profile"),
     "#/$defs/family/properties/specs": _ROW_FACTS,
-    "#/$defs/assignedGoodsType": ("models", "goods_type", "from_goods_type", "condition"),
+    "#/$defs/assignedGoodsType": ("models", "goods_type", "from_goods_type", "condition", "pact"),
     "#/$defs/family/properties/client_profile": (
         "has_brightness", "color_scheme", "power_read", "power_live", "mode_color_parse",
         "mode_color_parse_status", "relay_power", "relay_on_mask", "advert_on_mask", "by_model",
@@ -377,6 +377,7 @@ def render(raw: bytes, schema: dict[str, Any]) -> tuple[str, list[str]]:
     resolve = _resolver()
     routed = resolve.catalogue(doc["families"], catalogue)
     reassigned = resolve.reassignment_review(doc["families"])
+    paired = resolve.bind_review(doc["families"])
     only = frozenset(sku for skus in routed.added.values() for sku in skus)
     fmt = pprint.PrettyPrinter(width=110, sort_dicts=False).pformat
     return "\n".join([
@@ -398,7 +399,9 @@ def render(raw: bytes, schema: dict[str, Any]) -> tuple[str, list[str]]:
     ]), [f">> catalogue snapshot: {len(only)} SKUs routed that no devices.yaml row lists, "
          f"{len(routed.review)} for review", *(f"   review: {line}" for line in routed.review),
          f">> pact-conditioned reassignments: {len(reassigned)} for review",
-         *(f"   review: {line}" for line in reassigned)]
+         *(f"   review: {line}" for line in reassigned),
+         f">> exact-pact pairing writes: {len(paired)} for review",
+         *(f"   review: {line}" for line in paired)]
 
 
 def main(argv: list[str] | None = None) -> int:

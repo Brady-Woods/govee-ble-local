@@ -541,10 +541,13 @@ def _selftest(*, strict: bool = False) -> int:
               and profile_for(profs, "H6006", 64) == fams["bulblightv3"])
         reg = yaml.safe_load(path.read_text(encoding="utf-8"))
         check("BLE routes: H6004 -> bulblightv3 64 (10 is IoT-only); H60A6 at (1,3) -> 303, at (2,1) none; "
-              "H6114 -> h6114 39 at (10,1), none without a pact (the BK rewrite's gate)",
+              "H6114 -> h6114 39 at (10,1), none without a pact (the BK rewrite's gate); H615E -> "
+              "stringlightv2 108 at (2,1), none at its pairing write's (65535,255)",
               ble_rows(reg, "H6004") == [("bulblightv3", 64)]
               and ble_rows(reg, "H60A6", (1, 3)) == [("h60ax", 303)] and ble_rows(reg, "H60A6", (2, 1)) == []
-              and ble_rows(reg, "H6114", (10, 1)) == [("h6114", 39)] and ble_rows(reg, "H6114") == [])
+              and ble_rows(reg, "H6114", (10, 1)) == [("h6114", 39)] and ble_rows(reg, "H6114") == []
+              and ble_rows(reg, "H615E", (2, 1)) == [("stringlightv2", 108)]
+              and ble_rows(reg, "H615E", (65535, 255)) == [])
         check("device-list card rows: H70B2 -> h70b2 185 at (1,1) only; H6631 -> h6630 286 at (2,4), where "
               "H6630 has no row; each a per_command session with no keep-alive",
               ble_rows(reg, "H70B2", (1, 1)) == [("h70b2", 185)] and ble_rows(reg, "H70B2", (1, 2)) == []

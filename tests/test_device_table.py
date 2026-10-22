@@ -258,6 +258,8 @@ _REFUSED: tuple[tuple[str, str, _Edit, str], ...] = (
      "bulblightv3 assigned_goods_type reassigns it"),
     ("dreamcolorlightv1", "19", lambda f: _row(f, "19")["models"].append("H6163"),
      "h6160 assigned_goods_type reassigns it to goodsType 19"),
+    ("stringlightv2", "40", lambda f: f["assigned_goods_type"][0].pop("pact"),
+     "stringlightv2 assigned_goods_type reassigns it to goodsType 40"),   # a pairing write with no pact
     # wire branches, mode decodes and forms
     ("h60ax", "303", lambda f: _wire(f, "303")["by_pact"]["1,1"]["group"].update(num_pieces=2),
      "wire by_goods_type 303 by_pact 1,1 is not served"),

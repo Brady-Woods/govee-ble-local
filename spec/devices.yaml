@@ -8506,8 +8506,75 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:1694-1698,4775-4779,5537-5541,9369-9372,12346-12349
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/ColorModeControllerConfig.java:207-256
             - split_rgblight/com/govee/rgblight/VM4Light.java:648-650
-        "40": { models: [H615A, H615B, H615C, H615D], pacts: ["2,1"], capabilities: [power, brightness, rgb, color_temp], color_functions: [color_temperature], zones: [], account_lock: false, scene_dialect: untraced, brightness_range: [1, 100], connect_reads: [brightness], connect_writes: [], heartbeat: power }   # traced as row 2 at (2,1) (Support4StringLightV2.L, uiv3; Config.I[40]; colour h6006: Config.x[40] = 2 at (2,1) -> Config.J[2] = bu); held, no support: the unconditioned H615A-E bind item below names these SKUs (library gap); Support.java:170-172; Config.java:1719-1723,13138-13141
-        "108": { models: [H615E], pacts: ["2,1"], capabilities: [power, brightness, rgb, color_temp], color_functions: [color_temperature], zones: [], account_lock: false, scene_dialect: untraced, brightness_range: [1, 100], connect_reads: [brightness], connect_writes: [], heartbeat: power }   # H615E's cloud goodsType (AbsGroupFactor.c1); as 40 at (2,1), colour h6006 (Config.x[108] = 2 at (2,1)); held by the same bind item; Support.java:173-175; Config.java:1724-1728,4770-4774,13305-13308
+        "40":   # stringlightv2 SubLib4BleIot (BLE + Wi-Fi) -> Model4BleIot -> /rgb/newdetail; at (2,1) only (the (65535,255) bind below is that pact's alone)
+          models: [H615A, H615B, H615C, H615D]
+          pacts: ["2,1"]
+          support: app_traced
+          capabilities: [power, brightness, rgb, color_temp]
+          color_functions: [color_temperature]
+          zones: []
+          account_lock: false
+          scene_dialect: untraced
+          brightness_range: [1, 100]
+          connect_reads: [brightness]
+          connect_writes: []
+          heartbeat: power
+          doc: >-
+            H615A / H615B / H615C / H615D at cloud goodsType 40, pact (2,1) (Support.addSupportPact): SubLib4BleIot ->
+            Model4BleIot (Pact.i at (2,1); Model4BleIot.e skips it only for the NewRgb2TL pact (65535,255)) ->
+            Model4BleIot.t -> /rgb/newdetail, the rgblight AcNewDetail and VM4Light, as row 1. The connect read set is
+            ControllerStrategyConfig.B1 as uiv3 (Support4StringLightV2.L: 40 / 108 at (2,1)): the versions, the
+            TimerConfig.f time sync (not listed), timer / wake / sleep reads, aa 04, aa 01, the Wi-Fi version and MAC
+            reads (device info, not listed) and aa 05 (rgb_kelvin_tint). Brightness percent: Support4StringLightV2.b
+            returns [1, 100] where I holds, and I is true under L. Colour h6006: Config.x[40] = Zv gives 2 off the
+            NewRgb2TL pact (4 at it), so Config.J[2] = bu: RGB Bytes.f, the Kelvin slider's tint Bytes.p 0d <tint> <K>
+            <tint>; Config.I[40] = AO turns the colour-temperature slider on (Kelvin version 0 = [2000, 9000]); one
+            colour piece (ColorPieceConfig.Config.x), no segments. Heartbeat aa 01 (VM4Light.I3). The H615A-E bind item
+            below writes goodsType 40 only at an advert pact of exactly (65535,255) (NewRgb2TLUtil.isNewRgb2TL4BleIot,
+            an exact compare), where the colour version is 4 (legacy_02, Bytes.a / Bytes.o); no row lists that pact,
+            so a unit advertising it is not served (the library reads that item as an exact-pact condition, not as
+            a refusal of the SKU at every pact). Bundled mode list [15, 9, 10, 8, 11] for H615A, [15, 9, 10, 8, 11,
+            20] for H615B-D: no illumination tab, so the colour tab's Bytes.p is the colour-temperature frame (the
+            server-supplied list is not in the APK, as row 2). Scenes untraced. Not hardware-verified.
+          doc-ref:
+            - split_rgblight/com/govee/stringlightv2/pact/Support.java:90-96,170-175
+            - split_rgblight/com/govee/stringlightv2/pact/SubLib4BleIot.java:20-26
+            - split_rgblight/com/govee/stringlightv2/pact/Model4BleIot.java:47-68
+            - base-classes3/com/govee/kt/ui/device/base/AbsBaseBleModel.java:158-174
+            - split_rgblight/com/govee/rgblight/ControllerStrategyConfig.java:874-959,1355-1399
+            - split_rgblight/com/govee/stringlightv2/Support4StringLightV2.java:233-252,290-307,316-322
+            - base-classes9/com/govee/base2home/pact/support/NewRgb2TLUtil.java:15-16,74-84,140-142
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:232-257,1719-1723,4760-4764,5537-5541,8893-8896,13138-13141
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/ColorModeControllerConfig.java:207-256
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:291-299,431-450
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:254-269,329-341,402-411
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/ColorPieceConfig.java:354-412,1725-1788
+            - split_rgblight/com/govee/rgblight/VM4Light.java:580-602,648-650,1639-1662
+        "108":   # H615E's cloud goodsType (AbsGroupFactor.c1); as 40 at (2,1)
+          models: [H615E]
+          pacts: ["2,1"]
+          support: app_traced
+          capabilities: [power, brightness, rgb, color_temp]
+          color_functions: [color_temperature]
+          zones: []
+          account_lock: false
+          scene_dialect: untraced
+          brightness_range: [1, 100]
+          connect_reads: [brightness]
+          connect_writes: []
+          heartbeat: power
+          doc: >-
+            H615E at its cloud goodsType 108 (AbsGroupFactor.c1), pact (2,1): every fact as row 40 (SubLib4BleIot ->
+            Model4BleIot -> /rgb/newdetail; uiv3 L reads; percent brightness; colour h6006 through Config.x[108] = aw,
+            2 off the NewRgb2TL pact; Config.I[108] = CO, colour temperature on, [2000, 9000]; one piece; aa 01
+            heartbeat). Its (65535,255) pairing writes goodsType 40 (the bind item below), a pact no row lists. Bundled
+            mode list [15, 9, 10, 8, 11, 20], no illumination tab. Scenes untraced. Not hardware-verified.
+          doc-ref:
+            - split_rgblight/com/govee/stringlightv2/pact/Support.java:90-96,170-175
+            - split_rgblight/com/govee/stringlightv2/pact/Model4BleIot.java:47-68
+            - split_rgblight/com/govee/stringlightv2/Support4StringLightV2.java:233-252,290-307,316-322
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:1724-1728,4770-4774,9214-9217,13305-13308
+            - split_rgblight/com/govee/rgblight/VM4Light.java:648-650
       wire:
         forms: { f_01: light, f_09: datetime_epoch }
     models: [H6121, H6141, H6142, H6154, H6170, H6178, H6192, H6195, H6196, H6197, H615A, H615B, H615C, H615D, H615E, H616B]   # stringlightv2 Support constants (Support.java:62-83); H6197 has no cloud goodsType (unrouted); H6109 / H6110 / H6159 (h6159), H6118 / H6194 (carlightv1), H6138 (h613839) and H6160 (h6160) are SKU- or goodsType-6-keyed elsewhere

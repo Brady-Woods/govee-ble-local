@@ -289,13 +289,13 @@
         "from_goods_type": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "integer", "minimum": 0 }, "description": "device_list only: record goodsTypes whose route reaches the rewriting click handler (0 for a SKU-keyed one)." },
         "condition": { "$ref": "#/$defs/assignedGoodsTypeCondition" },
         "goods_type": { "type": "integer", "minimum": 1 },
-        "pact": { "type": "string", "pattern": "^[0-9]+,[0-9]+$", "description": "bind only: the 'pactType,pactCode' (decimal) written with goods_type." },
+        "pact": { "type": "string", "pattern": "^[0-9]+,[0-9]+$", "description": "bind only (required there): the 'pactType,pactCode' (decimal) written with goods_type, which is also the one advertised pact the write is made at (the rule compares the advert's pact with exactly this pair: NewRgb2TLUtil.isNewRgb2TL / isNewRgb2TL4BleIot), so the item says nothing about the SKUs at any other pact. A row of another goodsType that lists one of its SKUs must not accept this pact (nor any)." },
         "rule": { "type": "string", "enum": ["OldRgbBkUtil.isOldRgbBk", "OldRgbBkUtil.isOldRgbBk4BleWifi", "OldRgbicBkUtil.isRgbicBk4Ble", "OldCarBkUtil.isBkCar", "OldDreamColorUtil.checkSupportNewDreamColorFuc", "OldDreamColorUtil.checkSupportNewDreamColorFuc4BleWifi", "OldBulbUtil.checkSupportH6005Fuc", "NewRgb2TLUtil.checkDeviceConfig", "NewRgb2TLUtil.checkDeviceConfig4BleIot"], "description": "The app predicate (com.govee.base2home.pact.support) that decides it; condition restates it on the record." },
         "doc": { "type": "string", "description": "Where the app does it (path:line relative to decomp-7.7.02)." }
       },
       "allOf": [
         { "if": { "properties": { "context": { "const": "device_list" } } }, "then": { "required": ["from_goods_type"], "not": { "required": ["pact"] } } },
-        { "if": { "properties": { "context": { "const": "bind" } } }, "then": { "not": { "anyOf": [ { "required": ["from_goods_type"] }, { "required": ["condition"] } ] } } }
+        { "if": { "properties": { "context": { "const": "bind" } } }, "then": { "required": ["pact"], "not": { "anyOf": [ { "required": ["from_goods_type"] }, { "required": ["condition"] } ] } } }
       ]
     },
     "assignedGoodsTypeCondition": {

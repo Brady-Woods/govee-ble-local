@@ -11,12 +11,13 @@ model, from which the shipped readers are generated).
 ### Added
 - **158 more SKUs, traced from the app's device list** (spec rows; no library code changed but the
   illumination-tab pair that promotes H60A4 / H80A4 and the aa 40 section sum that promotes H61A9, below): 102
-  admitted by default (`app_traced`) and 56 behind `allow_modelled` (`modelled`). The entries below admit 57
+  admitted by default (`app_traced`) and 56 behind `allow_modelled` (`modelled`). The entries below admit 62
   more by default (16 through the resolver changes; H1162 / H1163 / H1167 / H1168, H70B1 and H70BC; 17 through
   the status-read command ids and the BK pact gate; the 10 SKUs of the `legacy_02` colour scheme; H7061;
-  H70B2, H6630, H8630 and H6631 on the device-list card; H7070 on its pact's status read; and H6071 / H6075 on
-  the `kelvin_v9` scheme) and 11 more behind `allow_modelled` (H7072, H6119, the five Glide panels, H61E5 /
-  H61E6 and H60A1 / H80A1), for 257 admitted by default and 73 behind `allow_modelled` in all. None is
+  H70B2, H6630, H8630 and H6631 on the device-list card; H7070 on its pact's status read; H6071 / H6075 on
+  the `kelvin_v9` scheme; and H615A-E, whose pairing write is read as an exact-pact condition) and 11 more
+  behind `allow_modelled` (H7072, H6119, the five Glide panels, H61E5 / H61E6 and H60A1 / H80A1), for 262
+  admitted by default and 73 behind `allow_modelled` in all. None is
   hardware-verified (the only bench check, below, was read-only), and none has a bundled scene catalog, so none
   is offered scenes. Each is listed with its family and goodsType; † marks a SKU no row lists that the
   catalogue snapshot (`spec/govee_catalog.json`) routes to that row by its goodsType alone (16 of them).
@@ -318,6 +319,18 @@ model, from which the shipped readers are generated).
   slider sends nothing, and `kelvin_v9` has no segment-brightness frame, so the flag calls for no `segments`
   (the user's decision 4). Not modelled: the `33 09` clock sync and the timer, wake-up and sleep reads. Not
   hardware-verified: neither is on the bench, and the aa 05 echo after a `15 04` write is unread.
+- **A pairing write's pact is an exact-pact condition.** An `assigned_goods_type` item of the pairing flow
+  (`context: bind`) writes its goodsType into the record only when the advertised pact is exactly its `pact`
+  (`NewRgb2TLUtil.isNewRgb2TL` / `isNewRgb2TL4BleIot`: H615A-E -> 40 and H613A-F -> 39, at (65535, 255)), so it
+  no longer refuses its SKUs at every pact: the build refuses only a row of another goodsType that lists such a
+  SKU and accepts that pact (or `any`), and the generator lists each (SKU, pact) route no row carries for review
+  (`_resolve.bind_review`: the eleven at (65535, 255)). A pairing item without a pact is refused on a routed SKU
+  as before. It admits **H615A / H615B / H615C / H615D** (stringlightv2 40) and **H615E** (108) by default
+  (`app_traced`), at pact (2,1), the only one their rows list: the rgblight control screen as stringlightv2 1
+  (`Model4BleIot` -> `/rgb/newdetail`; the uiv3 reads, `Support4StringLightV2.L`), percent brightness, the
+  h6006 frames (`Config.x[40]` / `[108]` = 2 off the NewRgb2TL pact), [2000, 9000] and the aa 01 keep-alive.
+  A unit advertising (65535, 255), where the app runs colour version 4 (the `legacy_02` frames) and the pairing
+  write's goodsType, is still refused: no row lists that pact. Not hardware-verified.
 
 ### Changed
 - **A polled profile reads aa 04 only with `Capability.BRIGHTNESS`**, as the app's connect read does
@@ -399,6 +412,10 @@ model, from which the shipped readers are generated).
   at none, with and without `allow_modelled`, and every builder's frames on the six schemes before it are as
   before. `ColorScheme` (and `DeviceProfile.color_scheme`) gains the member, an additive change. H6071 and
   H6075 are new routes.
+- The exact-pact pairing write changes no other SKU: each of the 330 the table admitted before it (257 by
+  default, 73 behind `allow_modelled`) resolves to the same profile, field by field, at every pact its rows
+  list, at (99, 99) and at none, with and without `allow_modelled`; no runtime code reads the pairing items.
+  H615A-E join the profile H6159 heads (`DeviceProfile.skus`), whose facts they share; H6159 stays first.
 
 ### Fixed
 - **H6188: colour temperature now sends the colour tab's frame** `33 05 0d <tint> <K> <tint>`
@@ -437,17 +454,17 @@ model, from which the shipped readers are generated).
   `modelled`; one that needs library work has no `support` and names the gap in its `doc`. A verification
   pass challenged each family's rows; they were repaired, and demoted (to `modelled`, or to no `support`)
   where a core claim didn't hold.
-  - devices.yaml now has 305 goodsType rows in 96 families (184 in 91): 203 with `support` (66), of them 164
-    `app_traced`, 35 `modelled` and the same 4 `hardware_verified`, and 102 without (118). The trace gave 153
-    of them support. The other 50 take it through the library and spec changes under Added, Changed, Fixed
+  - devices.yaml now has 305 goodsType rows in 96 families (184 in 91): 205 with `support` (66), of them 166
+    `app_traced`, 35 `modelled` and the same 4 `hardware_verified`, and 100 without (118). The trace gave 153
+    of them support. The other 52 take it through the library and spec changes under Added, Changed, Fixed
     and Spec: h6069 284, h3700 383, h7076 313, h70dx 267-269, bulblightv3 342, the four h1162 rows, h70b1 134,
     h70bx 216, the six status-read rows (h6092 334 / 333 / 401, h7072 371 / 294, h70b6 341), the nine BK target
     rows, the five Glide panel rows (h6061 96 / 97 / 121 / 163 / 228), the seven `legacy_02` rows (h6105,
     h6107, h6129, h6185, h73101217, h7318 and h6165, each goodsType 0), h60ax 235 and h61d3 239 / 246 (the
     colour-temperature work, which also promoted h60ax 302 to `app_traced`), h7050 98 (H7061's two heads;
     the aa 40 section sum promoted dreamcolorlightv1 204 to `app_traced`) and the three device-list card rows
-    (h70b2 185, h6630 285 / 286), h6092 283 (H7070's exact-pact status read) and h6071 57 / 67 (the
-    `kelvin_v9` scheme), all `app_traced` but
+    (h70b2 185, h6630 285 / 286), h6092 283 (H7070's exact-pact status read), h6071 57 / 67 (the
+    `kelvin_v9` scheme) and stringlightv2 40 / 108 (the exact-pact pairing write), all `app_traced` but
     h7072 294, h6119 44, the Glide panels, h60ax 235 and h61d3 239 / 246 (`modelled`).
   - Two goodsType add-ons were traced and checked on their own: straightfloorlamp 69 (H6076 / H8076,
     `app_traced`, with the bench reads above) and rgbiclight 141 (H61C2 / H61C3 / H61C5).
@@ -595,6 +612,11 @@ model, from which the shipped readers are generated).
   off. h60ax 302 (with
   `color_functions: [segment_brightness]`, `Config.I[302]` = hQ) states it and is `app_traced`; h60ax 235
   states it too (`modelled`). bulblightv3 328 doesn't yet, and stays `modelled` (above).
+- **A pairing item's `pact`** (devices.schema.json `assignedGoodsType`): required on a `bind` item, and documented
+  as the one advertised pact the write is made at; the generated table keeps it (`tools/gen_devices.py`), which
+  prints the pairing routes for review. stringlightv2 40 / 108 get `support: app_traced` and full rows (`doc`,
+  `doc-ref`) at their (2,1) facts, and the reference self-test checks H615E's route at (2,1) and none at
+  (65535, 255).
 - **`kelvin_v9`** is a `color_scheme` (devices.schema.json's enum and its description), and the spec's
   `op15_kelvin_v9` now cites its selection path (`Config.N[9]` = `JM`, `Config.x[57]` / `[67]`, the colour
   page's `Config.J[9]` = `hu`). h6071's `client_profile` names it, and rows 57 / 67 get `support: app_traced` and
