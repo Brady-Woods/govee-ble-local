@@ -135,10 +135,12 @@ the row lacks fails the build: nothing defaults silently.
   (``fixed_rate`` unless the row says ``after_quiet``). A row's live power checks it, one way only: a
   ``heartbeat_aa01`` / ``heartbeat_aa36`` / ``heartbeat_aa33`` power_live needs the heartbeat ``power`` /
   ``cmd_36`` / ``volume``, and a relay row ``power`` (a plug's outlets are the aa 01 reply's); a
-  ``push_30``-only row may send any. The library folds no keep-alive reply or ee 30 push into state: the
-  poll's own power read stands in for them, aa 01 on a polled row and the status read's TLV 0x01 on a
-  status row (``heartbeat_aa01`` on either), the aa 36 bar read for ``heartbeat_aa36``, and either for a
-  ``push_30`` with its wire ``f_ee_30``.
+  ``push_30``-only row may send any. On a status row with ``heartbeat_aa01`` the library follows the screen:
+  the status read once per link, then the power from each aa 01 keep-alive reply (``ShareVM.N3`` -> ``J3``;
+  ``DeviceProfile.heartbeat_power``), on an unzoned row only (the reply is the one switch). It folds no other
+  keep-alive reply and no ee 30 push into state: the poll's own power read stands in for them, aa 01 on a
+  polled row (``heartbeat_aa01``), the aa 36 bar read for ``heartbeat_aa36``, and either for a ``push_30``
+  with its wire ``f_ee_30``.
 - The session (:data:`SESSIONS`): a row is ``held`` unless it says ``session: per_command``, the device-list
   card's path, where the control screen has no BLE control (DECISIONS.md 6). Such a row reads nothing over
   GATT (``power_read: advert``, the advert's switch byte: ``DeviceProfile.readback`` ``"none"``), writes
@@ -1073,8 +1075,8 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
     lives = row.get("power_live", cp.get("power_live")) or ()
     for live in lives:
         if not live_served.get(live, False):
-            fail(f"power_live {live} is not served (the library polls aa 01 or the status read's TLV 0x01, "
-                 "the aa 36 bars, and an ee 30 push needs its wire f_ee_30)")
+            fail(f"power_live {live} is not served (the library polls aa 01 or follows the status row's "
+                 "aa 01 keep-alive, reads the aa 36 bars, and an ee 30 push needs its wire f_ee_30)")
     heartbeat = need(row.get("heartbeat"), "heartbeat")
     if heartbeat == "none" and not card:
         fail("heartbeat none on a held row is not served (a held link sends the screen's keep-alive)")
@@ -1089,6 +1091,12 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
     if sent and sent != {heartbeat}:
         fail(f"heartbeat {heartbeat} where power_live {list(lives)}{' and the relay' if relay else ''} take "
              f"power from the reply to {' / '.join(sorted(sent))}")
+    # A status row that takes its power from the aa 01 keep-alive reply reads the status once per link
+    # (DeviceProfile.heartbeat_power); the reply is the whole device's one switch (ShareVM.N3 -> J3).
+    beat_power = readback == "status" and "heartbeat_aa01" in lives
+    if beat_power and row.get("zones"):
+        fail("power_live heartbeat_aa01 on a zoned status row is not served (the keep-alive reply is the one "
+             "switch)")
     _check_mode(w, readback, fail)
     # A light's aa 01 rule, as a plug's: the heartbeat's beats the connect read's (module doc).
     nonzero = [name for name in ("light_heartbeat_nonzero", "light_nonzero") if power.get(name, False)]
@@ -1155,6 +1163,8 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
         out["whole_device_kelvin"] = True
     if control == "illumination":
         out["kelvin_with_brightness"] = True
+    if beat_power:
+        out["heartbeat_power"] = True
     if status_read is not None:
         out["status_read"] = tuple(status_read)   # command names; devices/profile.py takes their codes
         decode: dict[str, Any] = {f: forms[f] for f in _STATUS_TLV_FORMS

@@ -19,7 +19,7 @@ from govee_ble_local.scenes import load_scenes
 from govee_ble_local.transport import connection as conn_mod
 from govee_ble_local.wire import build
 
-from fake_ble import FakeGovee, ble_device, frame, virtual_time
+from fake_ble import FakeGovee, ble_device, frame, status_burst, virtual_time
 from test_connection import H60A6_BURST
 from test_device_races import _H6062_COLOUR
 
@@ -86,6 +86,28 @@ async def test_a_poll_sends_no_beat_between_its_reads(monkeypatch: pytest.Monkey
             assert fake.received[-1] == beat   # the chain kept running: the next tick beats
         else:
             assert beat in polled   # the gaps leave room for a beat: the hold is what keeps it out
+    await dev.stop()
+
+
+@pytest.mark.parametrize(("sku", "follows"), [("H6076", True), ("H60A6", False)])
+async def test_a_status_row_on_the_aa_01_keep_alive_reads_once_a_link_and_follows_the_reply(
+        monkeypatch: pytest.MonkeyPatch, sku: str, follows: bool) -> None:
+    # straightfloorlamp VM4Light.d0 reads the 0xAC status once per connect, then ShareVM.N3 -> J3 takes the
+    # power from each aa 01 keep-alive reply (DeviceProfile.heartbeat_power). H60A6's aa 00 reply carries no
+    # switch (BleComm.G): it reads the status on every poll, as before.
+    fake = FakeGovee()
+    fake.status_burst = status_burst(bytes([0x01, 0x01, 0x01]))   # on
+    fake.read_replies[0x01] = frame(0xAA, 0x01, 0x00)              # the keep-alive reply: off
+    dev = _device(monkeypatch, fake, sku, held=True)
+    assert dev.profile.heartbeat_power is follows
+    with virtual_time():
+        await dev.update()
+        assert dev.state.is_on is True
+        await asyncio.sleep(conn_mod.HEARTBEAT_INTERVAL + 0.1)    # a beat and its reply
+        with _span(fake) as polled:
+            await dev.update()
+    assert dev.state.is_on is not follows
+    assert any(f[0] == 0xAC for f in polled) is not follows
     await dev.stop()
 
 

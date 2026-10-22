@@ -57,7 +57,9 @@ Reliability rules this module enforces (each one learned from live failures):
   ``disconnect`` or ``close``) or an operation that wants the link cancels a beat
   still writing rather than wait for it (the app writes its beat off its command
   queue), so no command waits for a beat and the link lasts exactly as long as
-  without it. Its reply stays in the receive queue for the next operation to drain.
+  without it. Its reply stays in the receive queue for the next operation to drain; with
+  ``heartbeat_reply`` it is also handed to that callback, but only while no other frame has gone out
+  since the beat (one sent after it may have changed what the reply reports).
   With ``heartbeat=None`` nothing is armed, whatever ``heartbeat_timing`` says.
 """
 from __future__ import annotations
@@ -268,6 +270,7 @@ class GoveeConnection:
         session_ack: bool = True,
         heartbeat: bytes | None = None,
         heartbeat_timing: HeartbeatTiming = "fixed_rate",
+        heartbeat_reply: Callable[[bytes], None] | None = None,
     ) -> None:
         self._ble_device = ble_device
         self._encryption = encryption
@@ -335,6 +338,13 @@ class GoveeConnection:
         self._heartbeat_timing = heartbeat_timing
         self._heartbeat_timer: asyncio.TimerHandle | None = None   # the next tick, while a chain runs
         self._heartbeat_beat: asyncio.Task[None] | None = None    # the last tick's write
+        # Called with each notified reply to the beat (a frame with its command) that arrives while no other
+        # frame has gone out since the beat's write: ``_tx_count`` is still ``_beat_tx``, the count right
+        # after that write (None before the session's first beat). A frame sent after the beat (a power
+        # write, a read) may have changed what the reply reports, so that reply goes only to the queue. The
+        # callback runs in the notify callback and must not raise. None: the reply only stays in the queue.
+        self._heartbeat_reply = heartbeat_reply
+        self._beat_tx: int | None = None
         # Callers holding or waiting for the lock (_locked), and open holds (hold_heartbeat): a tick that
         # finds either is dropped.
         self._lock_wanted = 0
@@ -509,6 +519,10 @@ class GoveeConnection:
                     "%s: RX unrecognised frame %s (%s)",
                     self.address, describe_frame(plain, "rx")[0], plain.hex(),
                 )
+        beat = self._heartbeat
+        if (self._heartbeat_reply is not None and beat is not None and self._beat_tx == self._tx_count
+                and plain[:2] == beat[:2]):
+            self._heartbeat_reply(plain)   # a reply to the beat, with nothing sent since it
         self._enqueue(plain)  # plaintext: survives a disconnect nulling the session key
 
     def _drain(self) -> None:
@@ -818,6 +832,7 @@ class GoveeConnection:
         self._session_key = None
         self._session_cipher = None
         self._ready = False
+        self._beat_tx = None   # the next session's replies answer its own beats
 
     def _on_disconnect(self, client: BleakClientWithServiceCache) -> None:
         if client is not self._client:
@@ -1389,7 +1404,8 @@ class GoveeConnection:
         (:meth:`_cancel_beat`). ``sent`` is the frame count at the tick: on after_quiet, a tick whose beat
         has not started when an operation sends a frame (one that ran and ended in the tick's loop pass)
         drops itself, since that send restarted the wait (HeartHandler.e). Its reply stays in the receive
-        queue, which the next operation drains. A failure is logged at DEBUG and changes nothing: no
+        queue, which the next operation drains, and goes to ``heartbeat_reply`` too while nothing else has
+        been sent since (``_beat_tx``). A failure is logged at DEBUG and changes nothing: no
         teardown and no count (the app counts none; EventHeart is not retried), so a dead link shows at the
         next operation's write retry. Never touches the idle timer or the warm window."""
         frame = self._heartbeat
@@ -1403,6 +1419,7 @@ class GoveeConnection:
             try:
                 async with asyncio.timeout(HEARTBEAT_WRITE_TIMEOUT):
                     await self._send_frame(frame)
+                self._beat_tx = self._tx_count   # its replies, until another frame goes out (heartbeat_reply)
             except (GoveeBleError, *_TRANSPORT_ERRORS, TimeoutError) as err:
                 _LOGGER.debug("%s: heartbeat not sent: %s", self.address, _err_text(err))
             except Exception as err:   # a background beat never raises

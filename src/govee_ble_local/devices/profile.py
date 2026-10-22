@@ -437,6 +437,17 @@ class DeviceProfile:
     :attr:`capabilities` POWER and BRIGHTNESS only and no :attr:`zones` (GoveeBleInvalidValue otherwise): the
     card sends nothing else, and a scene upload or a bar's read-modify-write would hold a link past its
     session."""
+    heartbeat_power: bool = field(default=False, kw_only=True)
+    """``readback="status"`` with the ``aa 01`` keep-alive (:attr:`heartbeat` ``0x01``) only, and ignored
+    otherwise: the screen reads the 0xAC status once per connect and then takes the power from each keep-alive
+    reply (``ShareVM.N3`` -> ``J3``, on at byte 2 == 1; ``BleComm.G`` hands it the aa 01 replies of a type-1
+    heartbeat): a devices.yaml status row whose ``power_live`` has ``heartbeat_aa01``. So
+    :meth:`~.device.Device.update` makes the status read once per link, and a poll on a link it brought state
+    back on reads nothing more, while each keep-alive reply that arrives with no other frame sent since its
+    beat sets ``state.is_on`` (a reply that may predate a write or a read is dropped). The screen's re-read on
+    a change (``Compose4Off2On``) is not modelled. False (the default: every other profile, and the status
+    rows on the aa 00 keep-alive, H60A6's, whose reply carries no switch): the status read on every poll, the
+    reply left unread."""
 
     def __post_init__(self) -> None:
         """Validate each field: GoveeBleInvalidValue (a ValueError) on a value no Device can use.

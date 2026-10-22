@@ -11,11 +11,12 @@ model, from which the shipped readers are generated).
 ### Added
 - **158 more SKUs, traced from the app's device list** (spec rows; no library code changed but the
   illumination-tab pair that promotes H60A4 / H80A4 and the aa 40 section sum that promotes H61A9, below): 102
-  admitted by default (`app_traced`) and 56 behind `allow_modelled` (`modelled`). The entries below admit 54
+  admitted by default (`app_traced`) and 56 behind `allow_modelled` (`modelled`). The entries below admit 56
   more by default (16 through the resolver changes; H1162 / H1163 / H1167 / H1168, H70B1 and H70BC; 17 through
-  the status-read command ids and the BK pact gate; the 10 SKUs of the `legacy_02` colour scheme; H7061; and
-  H70B2, H6630, H8630 and H6631 on the device-list card) and 11 more behind `allow_modelled` (H7072, H6119, the
-  five Glide panels, H61E5 / H61E6 and H60A1 / H80A1), for 254 admitted by default and 73 behind
+  the status-read command ids and the BK pact gate; the 10 SKUs of the `legacy_02` colour scheme; H7061;
+  H70B2, H6630, H8630 and H6631 on the device-list card; and H703A / H703B, promoted from `modelled` by the
+  one-record TLV 0xA5 and the keep-alive power) and 11 more behind `allow_modelled` (H7072, H6119, the
+  five Glide panels, H61E5 / H61E6 and H60A1 / H80A1), for 256 admitted by default and 71 behind
   `allow_modelled` in all. None is
   hardware-verified (the only bench check, below, was read-only), and none has a bundled scene catalog, so none
   is offered scenes. Each is listed with its family and goodsType; † marks a SKU no row lists that the
@@ -51,7 +52,8 @@ model, from which the shipped readers are generated).
   Behind `allow_modelled` (the facts are traced, but the library doesn't yet do everything the app does on
   every unit; each row's `doc` names the difference):
   - h60ax: **H1270** (346), **H1232** (356), **H1252** (373);
-  - h61d3: **H61D2 / H61D3 / H61D4 / H61D5 / H61D6** (202), **H703A / H703B** (263);
+  - h61d3: **H61D2 / H61D3 / H61D4 / H61D5 / H61D6** (202), and **H703A / H703B** (263), which are admitted
+    by default now (below);
   - dreamcolorlightv2: **H611A / H6143 / H6144** (21); homelightv1: **H6148** (16); hollowlamp: **H6058**
     (59); h7090: **H7090** (44); h1741: **H1741 / R1741** (365);
   - h6609: **H70C4 / H70C5 / H70C7 / H70C9 / H7084 / H6870 / H6871 / R6871 / H80C4**, **H80C5**† (260);
@@ -302,6 +304,13 @@ model, from which the shipped readers are generated).
   `state` keeps one. The request is unchanged (`ac 03 04 41 a5 40 16`), and no other row reads the form, so no
   other SKU's decoded state changes. Source-modelled: no H703A / H703B is on the bench, and what the firmware
   puts in byte 0 is unread.
+- **H703A / H703B (h61d3 263) are admitted by default (`app_traced`)**, no longer behind `allow_modelled`. Every
+  app fact of the row was traced; the two library differences that held it are gone: the TLV 0xA5 colour (above)
+  and the power, which its screen reads once per connect and then takes from each aa 01 keep-alive reply
+  (`ShareVM.N3` -> `VM4Light.J3` -> `D5`; Changed, below). The request names only four extra types, and
+  whether the firmware returns TLVs 0x01 / 0x04 / 0x05 unasked is not in the app: absent, the read gives off and
+  brightness 100 in the app as in the library, and the first keep-alive reply corrects the power. Not
+  hardware-verified: no H703A / H703B is on the bench.
 
 ### Changed
 - **A polled profile reads aa 04 only with `Capability.BRIGHTNESS`**, as the app's connect read does
@@ -320,9 +329,31 @@ model, from which the shipped readers are generated).
   after them (`create_device` and `make_device` always pass the SKU). The pact gate on the BK rows (Added) is
   new routing for new SKUs only: no SKU it covers was supported at 1.6.1.
 - The resolver serves `power_live: heartbeat_aa01` on a status row (`power_read: ac_status`), not only on a
-  polled one. The library folds no keep-alive reply on either kind: the poll's own power read stands in for
-  it, aa 01 on a polled row and the status read's TLV 0x01 on a status row. `power_live` is a resolver gate
-  only (no `DeviceProfile` field), so no profile, frame or decoded state moves.
+  polled one. On a polled row the poll's own aa 01 read stands in for the keep-alive reply; on a status row the
+  library now follows the reply (next entry).
+- **A status row on the aa 01 keep-alive reads its status once per link and takes the power from each
+  keep-alive reply, as the app does** (`DeviceProfile.heartbeat_power`, keyword-only, default False). These
+  screens read the 0xAC status once per connect (`afterConnectedSingleReadDeviceInfo`, from `d0`) and then set
+  the switch from byte 2 == 1 of every aa 01 reply (`BleComm.G` -> `ShareVM.N3` -> `J3`, ConnectHeartbeat type
+  1). The library re-read the burst on every poll and left the reply in the receive queue, so on a link that
+  stayed up (a write's warm window, `idle_disconnect` off) it re-read what the app never does and applied the
+  missing-TLV defaults each time. Now `Device.update` makes the status read once per link (a poll on a link it
+  brought state back on reads nothing more), and each keep-alive reply that arrives with no other frame sent
+  since its beat (`GoveeConnection(heartbeat_reply=...)`) sets `state.is_on` as a power read; a reply that may
+  predate a write or a read is dropped, where the app takes every aa 01 notification. The screens' re-read on a
+  change (`Compose4Off2On`: timers, sleep and wake, aa 05, then their aa a5 groups) is not modelled. The resolver
+  sets the field on every status row whose `power_live` has `heartbeat_aa01` (it refuses a zoned one: the reply
+  is the one switch). That changes the reads and the decoded power of these SKUs, each screen checked
+  (`I3` true, `J3` sets the switch, no `IHeart`): **H6076 / H8076 / R16D0** (straightfloorlamp 69,
+  `VM4Light.J3`), **H6069 / H8069** (h6069 284, `CubeVM4Light.J3`), **H617G / R617G** and **H618G / R618D**
+  (rgbiclight 351 / 352, `VM4Light.J3`), **H7086** (h7086 293, `VM4Light.J3`), **H7025 / H8025** (h7020 296,
+  `NewDetailVM.J3`), **H7076** (h7076 313, `H7076DetailVM.J3`), **H3700** (h3700 383, `H3700DetailVM.J3`) and
+  **H703A / H703B** (h61d3 263, `VM4Light.J3` -> `D5`). Their frames are unchanged, and on a fresh link (every
+  Home Assistant poll after the idle disconnect) so is the poll. Every other profile has the default: H60A6 and
+  the other status rows on the aa 00 keep-alive, whose reply carries no switch (`BleComm.G` hands on type 1
+  only), read the status on every poll as before, and polled, plug and card rows are untouched.
+  Source-modelled: the bench H6076s answered an aa 01 read, the keep-alive's frame, with the on their TLV 0x01
+  gave (read-only, 2026-10-21), but the warm-link poll and the fold are not live-verified.
 - `DeviceProfile.status_read` may be empty: the bare status read `ac 03 00` (`build.status_query(types=())`).
   On such a profile the reply's TLV 0xA5 is read as colour groups where the row's `f_a5` is `color_group`,
   though it was not requested. Every status row admitted before requests at least one type, so its request
@@ -609,6 +640,15 @@ model, from which the shipped readers are generated).
   devices.schema.json's wire `f_a5` gains the member, and the h61d3 263 wire gains `f_a5: single_record`; the
   resolver serves it only where the row's `status_read` requests `color_group` over one piece, never for a
   direct read. The reference's self-test reads both lengths.
+- **The aa 01 keep-alive reply on a status row** (`timing.heartbeat.deviations`): the library follows it on a
+  status row whose `power_live` has `heartbeat_aa01` (the status read once per link, then byte 2 == 1 of each
+  reply with no frame sent since its beat); every other reply stays unread. **h61d3 263 is `app_traced`**
+  (was `modelled`), its doc rewritten. The docs of seven of the eight other rows that follow the reply say so
+  now (straightfloorlamp 69, h6069 284, rgbiclight 351 / 352, h7086 293, h7076 313 and h3700 383); h7020 296's
+  named no library behaviour and is unchanged. `govee_state` `power_state.is_on_heartbeat` now cites the
+  newdetail light's rule, on at 1 (`BleComm.G`, `ShareVM.N3`), which `parse.parse_light_power(heartbeat=True)`
+  reads. The h61d3 `status_read` note's "absent TLVs leave brightness 0" is corrected to
+  100, the fresh `DeviceBaseInfoFromDevice`'s (`DeviceBaseInfoFromDevice.java:70-80`).
 
 ## [1.6.1] — 2026-10-21
 

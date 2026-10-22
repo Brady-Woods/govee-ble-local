@@ -204,8 +204,11 @@ types:
           ((power.relay_on_mask == 0 and power.light_heartbeat_nonzero) ? state != 0 : is_on)
         doc: |
           on in the aa 01 heartbeat: by relay_heartbeat_on_mask when set, a
-          light's at != 0 under light_heartbeat_nonzero, else as is_on
+          light's at != 0 under light_heartbeat_nonzero, else as is_on (a
+          newdetail light's at == 1: ShareVM.N3 sets the switch from it)
         doc-ref:
+          - base-classes11/com/govee/base2light/pact/newdetail/ble/BleComm.java:37-47
+          - base-classes11/com/govee/base2light/pact/newdetail/ShareVM.java:1004-1012
           - split_plugnew/com/govee/h5080/adjust/v2/BleOpV2.java:216-217
           - split_plugnew/com/govee/h5080/adjust/h5089/BleOp4H5089.java:331-332
           - base-classes10/com/govee/base2light/ble/controller/HeartControllerWithBattery.java:85-90

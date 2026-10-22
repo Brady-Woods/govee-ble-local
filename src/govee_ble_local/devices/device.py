@@ -62,6 +62,9 @@ _ReadResult = Literal["applied", "stale", "none"]
 # the profile table with one of them; the power-only and power-and-brightness screens (H7004 /
 # H7017, ControllerStrategyConfig.k1) send none. A test pins that each of the others still issues it.
 _MODE_REPORT_CAPS: Final = frozenset({Capability.SCENES, Capability.COLOR_TEMP, Capability.RGB})
+# The aa 01 keep-alive's command, whose reply a heartbeat_power profile follows
+# (DeviceProfile.heartbeat_power).
+_POWER_BEAT: Final = reassemble.TYPE_SWITCH
 
 
 class _BudgetKw(TypedDict, total=False):
@@ -234,6 +237,12 @@ class Device:
         # never from inside a connection operation; no other device lock is taken under it.
         self._tap_lock = asyncio.Lock()
         self._discarded_reads = 0        # cumulative count of discarded stale reads
+        # DeviceProfile.heartbeat_power on the aa 01 keep-alive: the status read once per link, then the
+        # power from each keep-alive reply (_on_beat_reply). _status_link: the link
+        # (GoveeConnection.link_number) the last status read that brought state back was made on; 0 for none.
+        self._follows_beat = (profile.heartbeat_power and profile.readback == "status"
+                              and profile.heartbeat == _POWER_BEAT)
+        self._status_link = 0
         self._callbacks: list[StateCallback] = []
         self._advert_ignore_until = 0.0   # monotonic; see ADVERT_SUPPRESS_SECONDS
         # (pact_type, pact_code) from the Govee advertisement, or None until one is heard.
@@ -254,6 +263,7 @@ class Device:
             # the connection ignores the timing and arms nothing: no beat at all.
             heartbeat=None if profile.heartbeat is None else build.heartbeat(profile.heartbeat),
             heartbeat_timing=profile.heartbeat_timing,
+            heartbeat_reply=self._on_beat_reply if self._follows_beat else None,
         )
 
     def _learn_pact(self, adv: GoveeAdvertisement | None) -> bool:
@@ -701,6 +711,31 @@ class Device:
             if since == self._power_unsure_seq:
                 self._power_unsure = False
             self._mark_authoritative()
+
+    def _on_beat_reply(self, reply: bytes) -> None:
+        """A reply to the aa 01 keep-alive on a :attr:`.DeviceProfile.heartbeat_power` profile, handed over by
+        the connection only while no other frame has gone out since the beat (``GoveeConnection``'s
+        ``heartbeat_reply``): the power, on at a byte of 1, as the screen takes it from each reply
+        (``ShareVM.N3`` -> ``J3``). It is a power read (:meth:`_finish_read`), so the advertised on/off waits;
+        the callbacks fire when it changes ``is_on`` (``J3`` acts only on a change) or ends the optimistic
+        state. The screen's re-read on a change (``Compose4Off2On``: timers, sleep and wake, aa 05) is not
+        modelled."""
+        on = parse.parse_light_power(reply, wire_profile(self.profile), heartbeat=True)
+        if on is None:
+            return
+        changed = on != self._state.is_on or self._state.optimistic
+        self._state.is_on = on
+        self._finish_read(True, True, self._power_unsure_seq)
+        if changed:
+            self._notify()
+
+    def _status_on_link(self) -> bool:
+        """Whether this poll's status read is already made: on a :attr:`.DeviceProfile.heartbeat_power`
+        profile, once on the link that is up (it brought state back there), as the screen reads the 0xAC
+        status once per connect and then follows the keep-alive reply (:meth:`_on_beat_reply`). Always False
+        elsewhere."""
+        link = self._conn.link_number
+        return self._follows_beat and link != 0 and link == self._status_link
 
     def _set_power_unsure(self) -> None:
         """``is_on`` may say on for a device that is off (see ``_power_unsure``)."""
@@ -1748,6 +1783,10 @@ class Device:
         Raises GoveeBleInvalidValue, before any I/O, unless ``connect_attempts`` is an integer >= 1
         and ``connect_timeout`` a finite number > 0 (where given).
 
+        On a :attr:`.DeviceProfile.heartbeat_power` profile (a status row on the aa 01 keep-alive) the status
+        read is made once per link, as the screen reads it once per connect: a poll on a link it already
+        brought state back on makes no status read, the power there following each keep-alive reply.
+
         On a ``session="per_command"`` profile it makes no connection: the app's device-list card reads
         nothing over GATT (its power is the advertisement's, :meth:`ingest_advertisement`, and its brightness
         the last it sent), so the call notifies and returns the state, which stays ``optimistic``."""
@@ -1777,7 +1816,11 @@ class Device:
                 self._scenes_warm, self._scenes_error = True, None
         state_read = False   # this poll's state read brought a live field back (_finish_read)
         if self.profile.readback == "status":
-            state_read = await self._read_status(budget)
+            if self._status_on_link():
+                _LOGGER.debug("%s (%s): status read once on this link; the power follows the keep-alive",
+                              self.address, self._sku)
+            else:
+                state_read = await self._read_status(budget)
         elif self.profile.readback == "polled":
             state_read = await self._read_polled(budget)
         elif self.profile.readback == "plug":
@@ -1992,6 +2035,8 @@ class Device:
         await self._read_fresh(
             "status", lambda: _readback.status_burst(self, lambda: self._query_status(budget)), apply)
         self._finish_read(applied, power_read, since)
+        if applied:
+            self._status_link = self._conn.link_number   # the link this read was made on (_status_on_link)
         return applied
 
     async def _read_polled(self, budget: ConnectBudget | None = None) -> bool:
