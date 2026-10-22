@@ -231,8 +231,9 @@ model, from which the shipped readers are generated).
     them drops three reads it sends at 1.6.1; the `firmware` rows are the hardware-backed ones.
   - No SKU admitted at 1.6.1 changes. Only the 12 SKUs above move, and only in that one field. They are
     source-traced, not live-verified: none of them is on the bench.
-  - README's `DeviceState` entry now says where device info comes from: the aa 06 / aa 07 03 / aa 07 02
-    reads, or on a status row the status reply's TLV 0x07, by the row's `device_info_reads`.
+  - README's `DeviceState` entry, and `DeviceState`'s device-info comment and `device_id` docstring, now say
+    where device info comes from: the aa 06 / aa 07 03 / aa 07 02 reads, or on a status row the status
+    reply's TLV 0x07, by the row's `device_info_reads`.
 
 ### Fixed
 - **H6188: colour temperature now sends the colour tab's frame** `33 05 0d <tint> <K> <tint>`
