@@ -144,15 +144,22 @@ def test_kelvin_range_bounds_inclusive_and_undefined_range_allows() -> None:
     assert len(_sent(t)) == 1
 
 
-def test_zone_rgb_and_color_temp_require_capabilities() -> None:
-    caps = frozenset({Capability.POWER, Capability.BRIGHTNESS})
-    d = _dev("H60A6", capabilities=caps)
+@pytest.mark.parametrize(("sku", "overrides", "call"), [
+    ("H60A6", {"capabilities": frozenset({Capability.POWER, Capability.BRIGHTNESS})},
+     lambda d: d.set_zone_rgb("background", (1, 2, 3))),
+    ("H60A6", {"capabilities": frozenset({Capability.COLOR_TEMP})},   # SEGMENTS missing
+     lambda d: d.set_zone_color_temp("background", 4000)),
+    # No Kelvin to a piece selection (DeviceProfile.segment_color_temp), so none to a zone's pieces either.
+    ("H60A6", {"segment_color_temp": False}, lambda d: d.set_zone_color_temp("background", 4000)),
+    # A fresh H6062 (striplight 41, no Part-tab Kelvin) is refused before its aa 41 segment-count read.
+    ("H6062", {}, lambda d: d.set_segment_color_temp([0], 4000)),
+])
+def test_zone_and_segment_colour_setters_refuse_before_any_io(sku: str, overrides: dict[str, Any],
+                                                              call: Any) -> None:
+    d = _dev(sku, **overrides)
     with pytest.raises(GoveeBleNotSupported):
-        run(d.set_zone_rgb("background", (1, 2, 3)))
-    only_ct = _dev("H60A6", capabilities=frozenset({Capability.COLOR_TEMP}))
-    with pytest.raises(GoveeBleNotSupported):  # SEGMENTS missing
-        run(only_ct.set_zone_color_temp("background", 4000))
-    assert _sent(d) == [] and _sent(only_ct) == []
+        run(call(d))
+    assert _sent(d) == [] and _queried(d) == []
 
 
 def test_set_rgb_out_of_range_invalid_value_nothing_sent() -> None:

@@ -16,7 +16,7 @@ from govee_ble_local.devices.brightness import percent_to_device, percent_to_raw
 from govee_ble_local.devices.device import Device
 from govee_ble_local.devices.profile import profile_for
 from govee_ble_local.exceptions import GoveeBleInvalidValue
-from govee_ble_local.models import Encryption
+from govee_ble_local.models import Capability, Encryption
 from govee_ble_local.transport import connection as conn_mod
 from govee_ble_local.transport.connection import GoveeConnection
 from govee_ble_local.wire import build, parse, reassemble
@@ -279,14 +279,18 @@ def _scripted(sku: str, replies: dict[int, bytes]) -> Device:
     return d
 
 
-@pytest.mark.parametrize("sku", ["H6047", "H61A8", "H6006", "H6008", "H6052", "H6641"])
+@pytest.mark.parametrize("sku", ["H6047", "H61A8", "H6006", "H6008", "H6052", "H6641", "H7004"])
 @pytest.mark.parametrize(("byte", "on"), [(0x00, False), (0x01, True), (0x02, False), (0xFF, False)])
 def test_polled_lights_are_on_only_for_one(sku: str, byte: int, on: bool) -> None:
-    # Every curated polled light screen decodes aa 01 with ControllerSwitch.Companion.c (== 1).
-    # Source-modelled for 0x02 / 0xFF: the firmware only ever stores 0 or 1.
+    # Every curated polled light screen decodes aa 01 with ControllerSwitch.Companion.c (== 1), and so does
+    # H7004's (ControllerStrategyConfig.k1). Source-modelled for 0x02 / 0xFF: the firmware stores 0 or 1.
     d = _scripted(sku, {0x01: frame(0xAA, 0x01, byte)})
     asyncio.run(d._read_polled())
     assert d.state.is_on is on
+    # H7004 is power-only (the user's decision, "Ship power-only"): its poll reads aa 01 alone, as k1 reads no
+    # aa 04 or aa 05 for it; every other SKU here reads more.
+    asked = [c.args[0][:2].hex() for c in d._conn.query.call_args_list]   # type: ignore[attr-defined]
+    assert (asked == ["aa01"]) is (d.capabilities == {Capability.POWER}) is (sku == "H7004")
 
 
 def test_h6047_bars_still_override_the_aa01_decode() -> None:
