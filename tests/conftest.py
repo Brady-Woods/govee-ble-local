@@ -115,6 +115,21 @@ def scene_store(sku: str, catalog: dict[str, dict[str, Any]]) -> str:
     return json.dumps({"pool": pool, "skus": {sku: list(range(len(pool)))}, "by_set": {}})
 
 
+def routing_pact(sku: str, *, goods_type: int | None = None,
+                 allow_modelled: bool = False) -> tuple[int, int] | None:
+    """None where ``sku`` routes without a pact (at ``goods_type`` where given), else the lowest pact one of its
+    rows (at ``goods_type``) lists: a pact-conditioned reassignment's target row is served on an advertised pact
+    alone (profile_for), so a SKU it routes needs one there, also when its source row routes it without."""
+    from govee_ble_local.devices import profile as profile_mod
+
+    if profile_mod.profile_for(sku, goods_type=goods_type, allow_modelled=allow_modelled) is not None:
+        return None
+    tables = (profile_mod._ADMITTED, profile_mod._MODELLED) if allow_modelled else (profile_mod._ADMITTED,)
+    pacts = sorted(pact for table in tables for route in table[1].get(sku.upper(), ())
+                   if goods_type is None or route.goods_type == goods_type for pact in route.pacts or ())
+    return pacts[0] if pacts else None
+
+
 def no_heartbeat(profile: Any) -> Any:
     """``profile`` sending no heartbeat (1.5.0's behaviour): for a test that pins exactly what a link held
     2 s or more sends, or the device's own timer without the beat. The documented opt-out, the one field

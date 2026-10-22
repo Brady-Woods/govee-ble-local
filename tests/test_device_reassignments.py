@@ -13,7 +13,9 @@ from typing import Any
 import pytest
 from conftest import require_optional
 
+from govee_ble_local._generated.devices import FAMILIES
 from govee_ble_local.devices import _resolve
+from govee_ble_local.devices.profile import profile_for
 
 _ROOT = pathlib.Path(__file__).resolve().parent.parent
 
@@ -54,6 +56,12 @@ def test_pact_conditioned_reassignments_are_rows_the_pact_picks() -> None:
     supported = {"families": edited("barelightv1", "17", support="modelled"), "mode_color_parse": {}}
     projected = gen.Projector(schema).project(gen._supported(supported, _resolve.LEVELS), "#")
     _resolve.routes(projected["families"])
+    # A target row is never the route without an advertised pact: the app rewrites only a record whose pact
+    # meets the gate, and runs a pact-less one at its source goodsType (profile.profile_for).
+    served = [(sku, gt) for sku, targets in _resolve.pact_gates(FAMILIES).items()
+              for gt, gate in targets.items()
+              if profile_for(sku, pact=gate, goods_type=gt, allow_modelled=True) is not None]
+    assert served and all(profile_for(sku, goods_type=gt, allow_modelled=True) is None for sku, gt in served)
 
 
 def _load(path: pathlib.Path, name: str) -> Any:

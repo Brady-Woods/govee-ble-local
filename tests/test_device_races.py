@@ -214,8 +214,7 @@ def _record_queries(d: Device) -> list[bytes]:
 def test_only_plugs_send_the_session_time_sync() -> None:
     for profile in PROFILES:
         for sku in profile.skus:
-            d = make_device(ble_device("AA:BB:CC:DD:EE:71", sku), sku)
-            assert d is not None
+            d = Device(profile, ble_device("AA:BB:CC:DD:EE:71", sku), sku=sku)
             provider = d._conn._session_frames
             assert (provider is not None) == (profile.relay or profile.light_effect_stop), sku
             if provider is not None:

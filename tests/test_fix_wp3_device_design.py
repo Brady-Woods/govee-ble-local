@@ -209,12 +209,17 @@ def test_state_and_callbacks_still_share_the_live_object() -> None:
 
 # ── WP3-022 / WP3-051 / WP3-063 / WP3-064 / WP3-027 / WP3-035: profile validation ──────────
 def test_every_table_profile_is_valid_and_skus_are_unique() -> None:
-    seen: set[str] = set()
+    owners: dict[str, list[DeviceProfile]] = {}
     for p in PROFILES:
         assert dataclasses.replace(p) == p                     # re-validates
+        assert len({sku.upper() for sku in p.skus}) == len(p.skus)
         for sku in p.skus:
-            assert sku.upper() not in seen
-            seen.add(sku.upper())
+            owners.setdefault(sku.upper(), []).append(p)
+    # A SKU in two profiles (carlightv1 6 / 39: raw vs percent brightness) is told apart by the advertised pact.
+    for sku, profiles in owners.items():
+        if len(profiles) > 1:
+            pacts = {pact for route in profile_mod._ADMITTED[1][sku] for pact in route.pacts or ()}
+            assert {id(profile_for(sku, pact=pact)) for pact in pacts} == {id(p) for p in profiles}, sku
 
 
 @pytest.mark.parametrize("skus", [(), ("",), "H6008", (None,), []])
@@ -558,7 +563,7 @@ _REPORTED = frozenset({Capability.RGB, Capability.COLOR_TEMP, Capability.SCENES}
 @pytest.mark.parametrize("p", [p for p in PROFILES if p.readback == "polled" and p.capabilities & _REPORTED],
                          ids=lambda p: p.skus[0])
 def test_every_polled_profile_still_reads_the_mode_report(p: DeviceProfile) -> None:
-    d = _dev(p.skus[0])
+    d = _mocked(Device(p, ble_device("AA:BB:CC:DD:EE:3B", p.skus[0]), sku=p.skus[0]))
     run(d._read_polled())
     assert build.mode_query() in _queried(d)
 

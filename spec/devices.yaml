@@ -3554,12 +3554,14 @@ families:
       wire_cipher: runtime
       by_goods_type:
         "40":   # BK BLE+Wi-Fi firmware: h6159 Model.itemClickOp rewrites the goodsType-0 record to 40 at pact >= (2,1).
-          # Held, no support: every fact is app-traced, but the library routes an advert with no parseable pact here
-          # (profile_for: pact None = any), and the app never drives one at 40 (AbsViewMode4Op.onScanEvent refuses it;
-          # a legacy-named unit's pact is never parsed, h6159's pairing records none, and it runs at 0). Set
-          # support: app_traced once the library refuses pact None for these SKUs; nothing else changes (h6159.md gap 5).
+          # Served only on an advertised pact at or above the gate. The app never drives a pact-less advert at 40
+          # (AbsViewMode4Op.onScanEvent refuses it; a legacy-named unit's pact is never parsed, h6159's pairing records
+          # none, and it runs at 0), and profile_for takes a gated target row only on an advertised pact
+          # (profile._accepts; h6159.md gap 5, the row's one blocker until then). Without a pact these SKUs stay
+          # unsupported while row 0 has no support.
           models: [H6159, H6110, H6109, H614B, H614E]
           pacts: ["2,1"]
+          support: app_traced
           color_scheme: h6006
           capabilities: [power, brightness, rgb, color_temp]
           color_functions: [color_temperature]
@@ -3702,13 +3704,13 @@ families:
       wire_cipher: runtime
       by_goods_type:
         "40":   # H6160 BK BLE+Wi-Fi firmware: rgblight/add Model.itemClickOp rewrites the goodsType-0 record to 40 at pact >= (2,1)
-          # Held, no support: every fact is app-traced, but the library routes an advert with no parseable pact here
-          # (profile_for: pact None = any), and the app never drives one at 40 (AbsViewMode4Op.onScanEvent -> j1 null ->
-          # message 999). A below-gate (Telink) H6160 would get 0x0d colour and percent brightness instead of its goodsType-0
-          # 0x02 frames and raw [20, 254]. Set support: app_traced once the library refuses pact None for H6160; nothing
-          # else changes (h6160.md G6 and "Disputed"; as h6159 gap 5).
+          # Served only on an advertised pact at or above the gate. The app never drives a pact-less advert at 40
+          # (AbsViewMode4Op.onScanEvent -> j1 null -> message 999), and a below-gate (Telink) H6160 runs at goodsType 0
+          # with 0x02 frames and raw [20, 254]; profile_for takes a gated target row only on an advertised pact
+          # (profile._accepts; h6160.md G6, the row's one blocker until then, as h6159 gap 5).
           models: [H6160]
           pacts: ["2,1"]
+          support: app_traced
           power_read: aa01
           power_live: [heartbeat_aa01]
           mode_color_parse: rgb_kelvin_tint
@@ -3743,9 +3745,9 @@ families:
             [2000, 9000]. Brightness: the rgblight
             interceptor (Support4StringLightV2.E / b) gives percent at (2,1); the header writes 33 04. One colour piece
             (ColorPieceConfig.n by SKU), so no segments. Power 33 01, heartbeat aa 01 (VM4Light.I3). No 0xB2 on a control
-            connect. Scenes not traced. Not hardware-verified. Held without support (disputed): the library sends a pact-less
-            advert here, which the app never does (below the gate H6160 runs at goodsType 0, Config.x[0] = Hu = 4 -> fu 0x02
-            colour, BrightnessConfig g[H6160] = A2 raw [20, 254]); restore app_traced once pact None is refused for H6160.
+            connect. Scenes not traced. Not hardware-verified. Served only on an advertised pact (profile_for refuses pact
+            None on this gated target row): below the gate H6160 runs at goodsType 0, Config.x[0] = Hu = 4 -> fu 0x02
+            colour, BrightnessConfig g[H6160] = A2 raw [20, 254], which row 0 holds without support.
           doc-ref:
             - split_rgblight/com/govee/rgblight/add/SubLib.java:26-28
             - split_rgblight/com/govee/rgblight/add/Model.java:51-60
@@ -4502,9 +4504,10 @@ families:
       power_live: [heartbeat_aa01]   # VM4Light.I3 true -> ShareVM.K3 = aa 01, reply byte 2 -> J3; split_rgblight/com/govee/rgblight/VM4Light.java:648-650
       wire_cipher: runtime
       by_goods_type:
-        "39":   # BK firmware (pact >= (10,1)): OldBleModel.itemClickOp -> SkuToGoodsTypeUtil.f rewrites the record's 0 to 39; traced, held without support (library gap: profile_for routes a pact-less advert here, which the app never runs at 39)
+        "39":   # BK firmware (pact >= (10,1)): OldBleModel.itemClickOp -> SkuToGoodsTypeUtil.f rewrites the record's 0 to 39; served only on an advertised pact (profile_for refuses pact None on a gated target row; the app never runs a pact-less advert at 39)
           models: [H6113]
           pacts: ["10,1", "10,2"]
+          support: app_traced
           color_scheme: h6188
           capabilities: [power, brightness, rgb]
           color_functions: []
@@ -4524,9 +4527,9 @@ families:
             OldRgbBkUtil.parseOldRgbBkLight); an ihoment_ / Govee_ / Minger_ name reads none (BaseBleProcessor.c) and pairs
             at (0,0), so it stays 0. VM4Light.X0 then checks the advert pact against Support4StringLightV2.A and refuses an
             advert with no parseable pact (AbsViewMode4Op.onScanEvent, message 999); at 39 that leaves (10,1) / (10,2),
-            goodsType 39's registered pacts. Held without support: profile_for treats a missing pact as any, so the library
-            would send this row's frames to a pact-less unit the app runs at goodsType 0; add support app_traced once it
-            refuses pact None here (nothing else changes). The H6113Support tests all need goodsType 0, so 39 runs the
+            goodsType 39's registered pacts. Served only on an advertised pact: profile_for refuses pact None on this gated
+            target row, as the app runs a pact-less unit at goodsType 0 (row 0, no support). The H6113Support tests all
+            need goodsType 0, so 39 runs the
             generic BK path: Support4StringLightV2.K makes the pacts uiv4, and
             ControllerStrategyConfig.B1 reads soft and hard version, writes the TimerConfig.f time sync (not listed, as on
             the other newdetail rows), reads timer / wake / sleep, aa 04, aa 01 and aa 05 (strategy a, rgb_kelvin_tint), and
@@ -4816,9 +4819,10 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:324-348,378-395,1366-1370,4780-4784,9605-9657,10225-10249
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:199-215,251-259,301-305,956-959
             - base-classes9/com/govee/base2home/ota/OtaType.java:69-92
-        "44":   # BK car firmware (pact >= (10,1)) on the rgbiclight AcNewDetail; no support until library gap G3 (doc)
+        "44":   # BK car firmware (pact >= (10,1)) on the rgbiclight AcNewDetail; modelled, served only on an advertised pact (G3, doc)
           models: [H6119]
           pacts: ["10,1", "10,2"]   # pairing: split_rgbiclight/com/govee/h7090/pact/Support.java:35-40; control screen: AbsViewMode4Op.onScanEvent -> VM4Light.n4 -> rgbiclight Support.C, Support.b entry 44 = (10,1), (10,2) exact (split_rgbiclight/com/govee/rgbiclight/Support.java:85-95,414-531); all at or above the (10,1) gate
+          support: modelled
           mode_color_parse: kelvin
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments]   # no gradual: the app writes 33 a3 but never reads aa a3 here, and the library's gradual reads aa a3 (gap G5)
@@ -4840,11 +4844,11 @@ families:
             Info4BleIot.z() / A() while building the list, on the fresh Info4BleIot whose versions are still "" (q0 = 0),
             so aa a3 is never sent and gradual is dropped (the 33 a3 write stays a fact, gap G5). One 33 01 switch, aa 01
             keep-alive, no 0xB1 / 0xB2. Colour: Config.x[44] = 0 (Yt: Bytes.h / Bytes.r), P = 1, I all on, z = 0 (15 02),
-            G = 0 (33 a3); Kelvin [2000, 9000]. HELD, no support: the library routes a pact-less H6119 advert here
-            (profile_for pact None = any), which this screen refuses (G3). Once G3 lands it is modelled, two inferences:
-            (1) the record's stored hard >= 1.00.03 and soft >= 1.06.00 (Support.j), assumed met by BK firmware, for the
-            aa a5 groups; (2) percent brightness needs a non-Telink hard version (BrightnessConfig D3), assumed for the
-            BK chip. Scenes untraced. Not hardware-verified.
+            G = 0 (33 a3); Kelvin [2000, 9000]. Served only on an advertised pact: profile_for refuses pact None on this
+            gated target row, as this screen refuses a pact-less advert (G3, the row's blocker until then). Modelled, two
+            inferences: (1) the record's stored hard >= 1.00.03 and soft >= 1.06.00 (Support.j), assumed met by BK
+            firmware, for the aa a5 groups; (2) percent brightness needs a non-Telink hard version (BrightnessConfig
+            D3), assumed for the BK chip. Scenes untraced. Not hardware-verified.
           doc-ref:
             - base-classes11/com/govee/base2light/kt/comm/AbsViewMode4Op.java:1936-1985,2218-2222
             - base-classes11/com/govee/base2light/kt/comm/AbsViewMode4OpWithOtaCheck.java:271-283,568-591,598-610
@@ -5578,9 +5582,10 @@ families:
             - split_rgblight/com/govee/rgblight/ControllerStrategyConfig.java:1402-1404
             - split_rgblight/com/govee/rgblight/VM4Light.java:652-717,1096-1125
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:341-345
-        "39":   # BK firmware (pactType >= 10, pactCode >= 1): OldBleModel rewrites the record's 0 to 39 for the screen. No support: a no-pact advert would reach this row (library gap, doc)
+        "39":   # BK firmware (pactType >= 10, pactCode >= 1): OldBleModel rewrites the record's 0 to 39 for the screen. Served only on an advertised pact (doc)
           models: [H6181]
           pacts: ["10,1", "10,2"]
+          support: app_traced
           color_scheme: h6006
           color_functions: [color_temperature]
           capabilities: [power, brightness, rgb, color_temp]
@@ -5594,12 +5599,11 @@ families:
           connect_writes: []
           heartbeat: power
           doc: >-
-            H6181 on BK firmware, rgblight AcNewDetail at goodsType 39. Every fact below is traced, but support is
-            withheld for a library gap: profile_for(pact=None) reaches this row, while the app keeps an H6181 whose
-            advert has no pact block at goodsType 0 (OldRgbBkUtil.parseOldRgbBkLight needs a parsed pact,
-            OldRgbBkUtil.a pactType >= 10 and pactCode >= 1), where it sends 33 05 02 frames and raw [20, 254]
-            brightness. Restore app_traced once a pact-gated reassignment routes here only on an advertised pact
-            at or above the gate. Colour: Config.x[39] = Yv gives version 2 (H6181 is no NewRgb2TL), Config.J[2] =
+            H6181 on BK firmware, rgblight AcNewDetail at goodsType 39. Served only on an advertised pact at or above
+            the gate: profile_for refuses pact None on this gated target row, as the app keeps an H6181 whose advert
+            has no pact block at goodsType 0 (OldRgbBkUtil.parseOldRgbBkLight needs a parsed pact, OldRgbBkUtil.a
+            pactType >= 10 and pactCode >= 1), where it sends 33 05 02 frames and raw [20, 254] brightness (row 0, no
+            support). Colour: Config.x[39] = Yv gives version 2 (H6181 is no NewRgb2TL), Config.J[2] =
             bu: RGB Bytes.f, a Kelvin or Kelvin-tint pick Bytes.p (ColorViewModel.p0 / U ->
             ColorModeControllerConfig.c), the h6006 forms; one colour piece. Connect ControllerStrategyConfig.B1
             (Support4StringLightV2.J via K: goodsType 39 at (10,1) / (10,2)): soft and hard version, the
@@ -5677,9 +5681,10 @@ families:
             - base-classes11/com/govee/base2light/kt/comm/Info4BleIotDevice.java:351-353,472-480
             - split_rgblight/com/govee/rgblight/ControllerStrategyConfig.java:1252-1297,1405-1407
             - split_rgblight/com/govee/rgblight/mode/ModeParseStrategyConfig.java:48-64
-        "40":   # H6182 on BK firmware: the device list rewrites a record at or above the (2,1) gate to 40; support held (app_traced in content) until the library refuses or reroutes H6182 at pact None (gap 4)
+        "40":   # H6182 on BK firmware: the device list rewrites a record at or above the (2,1) gate to 40; served only on an advertised pact (gap 4, doc)
           models: [H6182]
           pacts: ["2,1"]
+          support: app_traced
           color_scheme: h6006
           mode_color_parse: rgb_kelvin_tint
           capabilities: [power, brightness, rgb, color_temp]
@@ -5706,11 +5711,11 @@ families:
             Support4StringLightV2.A, Support4CarLight.d) also passes (1,1) / (1,2) / (2,2) / (10,1) / (10,2) at 40, where G
             through J are false, so no connect read set is picked, and the range is c(H6182) = [20, 254]; not routed.
             Disputed 2026-10-21: two doc-wording claims (the BK scan's pact test, the n4 pact list), both corrected here;
-            no fact or frame changed, support stays held for gap 4.
-            No support yet: the app never runs a pact-less H6182 at 40 (an ihoment_ / Govee_ / Minger_ name pairs at 0 with
+            no fact or frame changed.
+            Served only on an advertised pact (gap 4, the row's one blocker until profile_for refused pact None on a gated
+            target row): the app never runs a pact-less H6182 at 40 (an ihoment_ / Govee_ / Minger_ name pairs at 0 with
             no pact read, BaseBleProcessor.c; a GBK_ one reaches 40 only through a parsed pact block, parseOldRgbBkLight; and
-            at 40 the screen fails a broadcast without one, VM4Light.X0 -> AbsViewMode4Op.onScanEvent p0(999)), but the
-            library routes pact None to every row, so this row would send 0x0d frames and [1, 100] to goodsType-0 units.
+            at 40 the screen fails a broadcast without one, VM4Light.X0 -> AbsViewMode4Op.onScanEvent p0(999)).
             Scenes not traced. Not hardware-verified.
           doc-ref:
             - split_rgblight/com/govee/rgblight/add/Model.java:41-60
@@ -8641,11 +8646,12 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/ShareVM.java:1004-1015,1362-1364
             - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4Off2On.java:45-81,99-107
             - base-classes12/com/govee/common2light/capability/connect/ConnectHeartbeat.java:15-38
-        "17":   # BK firmware: a 13 record runs as 17 at pacts >= (10,1) (assigned_goods_type), and a GBK_-named (10,3) advert is paired as 17; 17's pacts at or above that gate (not 17's (1,1) / (1,2)). H6171 is left off: it adds the aa 40 read (doc). Traced, held without support (library gap: profile_for routes a pact-less advert here, where the app runs the record's goodsType, 13 on a non-BK unit)
+        "17":   # BK firmware: a 13 record runs as 17 at pacts >= (10,1) (assigned_goods_type), and a GBK_-named (10,3) advert is paired as 17; 17's pacts at or above that gate (not 17's (1,1) / (1,2)). H6171 is left off: it adds the aa 40 read (doc). Served only on an advertised pact (profile_for refuses pact None on a gated target row; the app runs the record's goodsType, 13 on a non-BK unit)
           models: [H6145, H6146, H6147]
           color_scheme: h60a6
           color_functions: [segment_brightness, color_temperature]
           pacts: ["10,1", "10,2", "10,3"]
+          support: app_traced
           capabilities: [power, brightness, rgb, color_temp, segments, gradual]
           zones: []
           account_lock: false
@@ -8657,16 +8663,14 @@ families:
           connect_writes: []
           heartbeat: power
           doc: >-
-            HELD (fully traced, no support) for one routing gap. profile_for treats a missing advert pact as any, so with
-            this row supported a pact-less H6145 / H6146 / H6147 (no Govee pact block, or a device built with no advert)
-            gets these BK frames. The app never picks 17 from a live advert: the scan drops a pact-less advert of these
-            SKUs on every name path (BaseBleProcessor.c / d / e / f / g return null when
+            Served only on an advertised pact: profile_for refuses pact None on this gated target row (the row's one
+            blocker until it did), so a pact-less H6145 / H6146 / H6147 (no Govee pact block, or a device built with no
+            advert) is unsupported while row 13 has no support. The app never picks 17 from a live advert: the scan
+            drops a pact-less advert of these SKUs on every name path (BaseBleProcessor.c / d / e / f / g return null when
             GoodsType.parseBleBroadcastPactInfo(13, ...) is null), the screen refuses one (AbsViewMode4Op.onScanEvent:
             VM4Light.X0, j1 null, message 999), and the screen's scan-timeout connect (message 1005, t0(false)) runs the
             record's goodsType, which Model.itemClickOp sets from the stored pact: 13 on a non-BK (1,x) unit, which takes
-            raw [20, 254] brightness, 33 14 gradual and, below its firmware gate, 0x0b colour and aa a2 read-back. Add
-            support app_traced once the library refuses pact None for this SKU (or the 13 row carries support, which
-            makes pact None ambiguous and refused); nothing else changes.
+            raw [20, 254] brightness, 33 14 gradual and, below its firmware gate, 0x0b colour and aa a2 read-back.
             H6145 / H6146 / H6147 with BK firmware. A (10,1) / (10,2) unit is paired as 13 (dreamcolorlightv1
             ConnectDialog's goodsTypeCheck), and barelightv1 Model.itemClickOp rewrites it to 17 when
             OldRgbicBkUtil.isRgbicBk4Ble holds (pactType >= 10 and pactCode >= 1). A GBK_-named (10,3) advert is tagged 17
@@ -9701,9 +9705,10 @@ families:
             - base-classes12/com/govee/common2light/capability/connect/ConnectHeartbeat.java:15-17
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/ColorPieceConfig.java:354-452,901-905,1041-1043,1725-1789
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/TimerConfig.java:169-182
-        "39":   # the BK rewrite at >= (10,1): carlightv1 Model.itemClickOp setGoodsType(39) -> /rgb/newdetail. Traced to app_traced, held without support (library gap): with it the SKUs get two differing profiles (raw vs percent brightness) and resolve to none without the advert pact (profile_for / is_supported_sku), as the HA config flow asks
+        "39":   # the BK rewrite at >= (10,1): carlightv1 Model.itemClickOp setGoodsType(39) -> /rgb/newdetail. Served only on an advertised pact: profile_for refuses pact None on a gated target row, so without one the SKUs keep row 6 (raw brightness), the profile is_supported_sku / the HA config flow find, and at (10,1) / (10,2) take this one (percent)
           models: [H6118, H6194]
           pacts: ["10,1", "10,2"]
+          support: app_traced
           capabilities: [power, brightness, rgb, color_temp]
           color_functions: [color_temperature]
           zones: []
@@ -10717,7 +10722,7 @@ families:
       power_read: ac_status   # TLV 0x01 of the 0xAC burst; it wins over TLV 0x42 bit 7
       power_live: [push_30]   # ee 30 whole-lamp power = bit 7 of frame[3] (top / side / bottom = bits 6 / 5 / 4), not bit 0
       by_goods_type:
-        "301":   # H60B0 / H60B3 / R60B3, the H60B0DetailAC -> VM4H60B0 screen. NO SUPPORT: h60b0.md gaps G1-G4 (colour scheme, 0x2C status type, TLV 0x42 zone bits, the white-only bottom zone)
+        "301":   # H60B0 / H60B3 / R60B3, the H60B0DetailAC -> VM4H60B0 screen. NO SUPPORT: h60b0.md gaps G1, G3, G4 (colour scheme, TLV 0x42 zone bits, the white-only bottom zone)
           models: [H60B0, H60B3, R60B3]
           pacts: ["1,1", "1,2", "1,3"]
           power_live: []   # ee 30 frame[3] bit 7 whole / 6 top / 5 side / 4 bottom (VM4H60B0.x5): no form_ee_30 member (gap G5)
@@ -10729,7 +10734,7 @@ families:
           scene_dialect: untraced
           kelvin_range: [2700, 6500]
           brightness_range: [1, 100]
-          status_read: [cmd_41, color_group, write_check_ic, cmd_2c]   # NO SUPPORT: ac 03 04 41 a5 42 2c; govee_common::command has no 0x2C member (gap G2)
+          status_read: [cmd_41, color_group, write_check_ic, cmd_2c]   # ac 03 04 41 a5 42 2c
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -12861,7 +12866,7 @@ families:
       by_goods_type:
         "329":   # H70B6, the H70B6DeviceDetailActivity / VM4SplicingH70B6 screen
           models: [H70B6]
-          pacts: ["1,1"]   # the app also accepts (1,2) / (1,3) (Config4H70B6Manager.b); withheld: there the status read adds 0x7D / 0x7E, which the library can't name (gap)
+          pacts: ["1,1"]   # the app also accepts (1,2) / (1,3) (Config4H70B6Manager.b); withheld: there the status read adds 0x7D / 0x7E, a pact branch the library can't follow (a branch may only drop color_group)
           support: app_traced
           capabilities: [power, brightness, rgb, color_temp]
           zones: []
@@ -12884,6 +12889,8 @@ families:
             Kelvin version 0 = [2000, 9000]; brightness version 1 = percent. No 0xB1 / 0xB2 on the control screen
             (account_lock false). Not modelled: the aa 25 01 Wi-Fi OTA read and the TimerConfig.f time sync queued
             before the status read, MTU 512, scenes (untraced), DIY / graffiti, music, feast, splicing, display.
+            Known gap: VM4H70B6.n5 reads TLV 0x39 byte 0 unguarded (:645-653), so an empty 0x39 fails the app's whole
+            status read, while the library (no form for it) still applies the burst's power and brightness.
             Not hardware-verified.
           doc-ref:
             - split_h70b1/com/govee/h70b6/Support.java:21-26,57-75,99-104
@@ -12914,14 +12921,15 @@ families:
             - base-classes10/com/govee/base2light/capability/color/LightColorCapabilityCenter.java:537-539,1286-1297
             - base-classes10/com/govee/base2light/capability/legacy/LegacyColorCapabilityProvider.java:218-221
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:63-86,252-258,853-857,1156-1159
-        "341":   # H70B8, the same screen; held: its status read names 0x7D / 0x7E (gap), so no support
+        "341":   # H70B8, the same screen; its status read adds 0x7D / 0x7E
           models: [H70B8]
           pacts: ["1,1"]
+          support: app_traced
           capabilities: [power, brightness, rgb, color_temp]
           zones: []
           account_lock: false
           scene_dialect: untraced
-          status_read: [cmd_41, check_direction, cmd_7d, cmd_7e]   # cmd_7d / cmd_7e are not govee_common command members yet (gap)
+          status_read: [cmd_41, check_direction, cmd_7d, cmd_7e]
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -12930,15 +12938,16 @@ families:
             Pact (1,1) only: Pact.b(341, (1,1)), the screen's n4 -> Config4H70B8Manager.c. Every core fact is the 329
             row's (Config.x[341] = nw = 2 -> bu, the h6006 scheme; Config.I[341] = {F,F,F,F,T}; no KelvinConfig entry ->
             [2000, 9000]; brightness version S1 = 1 = percent; aa 00 keep-alive; ee 30 push), but its status read is
-            ac 03 04 41 39 7d 7e (Support.e / d hold for 341 on every pact), and govee_common has no command member for
-            0x7D (24-hour clock) or 0x7E (temperature unit), so the library can't send that frame: no support until it
-            can. The screen also reads aa 60 01 (feast, Support.i holds for 341) before aa 25 01, not modelled. Not
-            hardware-verified.
+            ac 03 04 41 39 7d 7e (Support.e / d hold for 341 on every pact): TLV 0x7D the 24-hour clock and 0x7E the
+            temperature unit, both read raw (not modelled). The screen also reads aa 60 01 (feast, Support.i holds for
+            341) before aa 25 01, not modelled. Known gap, as 329's 0x39: n5 reads byte 0 of TLV 0x39, 0x7D and 0x7E
+            unguarded, so an empty one fails the app's whole status read, while the library (no form for them) still
+            applies the burst's power and brightness. Not hardware-verified.
           doc-ref:
             - split_h70b1/com/govee/h70b8/Config4H70B8Manager.java:82-101
             - split_h70b1/com/govee/h70b8/H70b8ApplicationImp.java:36-37
             - split_h70b1/com/govee/h70b6/Support.java:21-26,57-75,92-97
-            - split_h70b1/com/govee/h70b6/adjust/VM4H70B6.java:479-506,1222-1229
+            - split_h70b1/com/govee/h70b6/adjust/VM4H70B6.java:479-506,631-669,1222-1229
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:1784-1788,4820-4824,11025-11028,15367-15370
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:858-862,1171-1174
       wire_cipher: runtime
@@ -13829,9 +13838,10 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/ColorPieceConfig.java:354-452,901-905,1041-1043,1725-1789
             - base-classes11/com/govee/base2light/pact/newdetail/ShareVM.java:979-1015
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/TimerConfig.java:169-182,463-475
-        "39":   # the BK rewrite at >= (10,1): ModelBle.itemClickOp setGoodsType(39) -> /rgb/newdetail. Traced to app_traced, held without support (library gap): with it H6179 gets two differing profiles (raw vs percent brightness) and resolves to none without the advert pact (profile_for / is_supported_sku), as the HA config flow asks
+        "39":   # the BK rewrite at >= (10,1): ModelBle.itemClickOp setGoodsType(39) -> /rgb/newdetail. Served only on an advertised pact: profile_for refuses pact None on a gated target row, so without one H6179 keeps row 12 (raw brightness), the profile is_supported_sku / the HA config flow find, and at (10,1) / (10,2) takes this one (percent)
           models: [H6179]
           pacts: ["10,1", "10,2"]
+          support: app_traced
           capabilities: [power, brightness, rgb, color_temp]
           color_functions: [color_temperature]
           zones: []
@@ -17780,6 +17790,7 @@ families:
         "294":   # H7072 on the H7072AcLightDetail / H7072VM4Light screen (0xAC status read, 6 fixed pieces)
           models: [H7072]
           pacts: ["1,1", "1,3"]
+          support: modelled   # the TLV 0xA5 placement stride (doc)
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments]
           zones: []
@@ -17787,7 +17798,7 @@ families:
           scene_dialect: untraced
           kelvin_range: [2700, 6500]
           brightness_range: [1, 100]
-          status_read: [cmd_41, color_group, cmd_4b]   # NO SUPPORT: govee_common::command has no 0x4B member (library gap status_read_4b)
+          status_read: [cmd_41, color_group, cmd_4b]
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -17806,8 +17817,8 @@ families:
             ColorPieceConfig.j: 294 is in Config.g = 6); Config.I[294] has gradual, segment brightness and CCT on. Frames:
             Config.x[294] = 0 -> J[0] = Yt -> Bytes.h, CCT Bytes.r type 1 (Config.P[294] = 1), the segment brightness slider
             Config.z[294] = 0 -> L[0] = JR -> Bytes.G: the h60a6 forms. Brightness: BrightnessConfig.b -> 33 04, no version
-            entry = [1, 100]; Kelvin: KelvinConfig version 2 = [2700, 6500]. NO SUPPORT until govee_common::command names 0x4B
-            (gap status_read_4b). Then MODELLED, not app_traced: the app places each TLV 0xA5 group at (group - 1) x that
+            entry = [1, 100]; Kelvin: KelvinConfig version 2 = [2700, 6500]. TLV 0x4B (auto-dimming) is read raw. MODELLED,
+            not app_traced: the app places each TLV 0xA5 group at (group - 1) x that
             TLV's own record count (q5 -> r5 -> SubMode4Color.j), the library at (group - 1) x 4. The two agree when the 6
             records come in one TLV or in full 4-record groups, and differ for a 4 + 2 or 3 + 3 split; the firmware's split is
             untraced (gap status_a5_stride_per_tlv, or a bench check). A group 0 with records, or one starting past piece 6,
@@ -17849,6 +17860,7 @@ families:
         "371":   # H3351 on the same screen (0xAC status read, 1 colour piece)
           models: [H3351]
           pacts: ["1,1", "1,2", "1,3"]
+          support: app_traced
           color_functions: [color_temperature]
           capabilities: [power, brightness, rgb, color_temp]
           zones: []
@@ -17856,7 +17868,7 @@ families:
           scene_dialect: untraced
           kelvin_range: [1000, 10000]
           brightness_range: [1, 100]
-          status_read: [cmd_41, color_group, cmd_4b]   # NO SUPPORT: as 294 (status_read_4b)
+          status_read: [cmd_41, color_group, cmd_4b]
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -17875,8 +17887,8 @@ families:
             applies that burst's power or brightness, and the read ends failed (t5). The library drops or filters that group
             and applies the rest: a known gap (status_a5_stride_per_tlv), on bursts anomalous for a 1-piece lamp. Disputed
             2026-10-21: "they agree whatever the split" was wrong. Kelvin: KelvinConfig version 5 = [1000, 10000]
-            (Support.getColorTemRange(371) agrees). NO SUPPORT until govee_common::command names 0x4B (gap status_read_4b);
-            then app_traced, with that known gap named.
+            (Support.getColorTemRange(371) agrees). app_traced, with that known gap named; TLV 0x4B (auto-dimming) is
+            read raw.
             Not modelled: the real-time colour preview a5 02 83 R G B (Config.g0[371] = 2) that DelegateColorV2.B0 sends while
             the wheel is dragged (the release sends the Yt frame), music, DIY, timers, auto-dimming. Scenes untraced. Not
             hardware-verified.
@@ -17933,7 +17945,7 @@ families:
             17), the h60a6 forms with a 3-byte mask (BleUtils.X), but the RGB pick drops piece 16 (WW) from the posSet
             (H2800SegmentColorMode.canClickColor) and CCT-all sets all 17 (applyColorTemInAll); a non-uniform strip uses the
             15 04 group frames (Config.A[396] = 1). Kelvin version 2 = [2700, 6500]; BrightnessConfig version 1 = [1, 100].
-            Blocking gaps: status_read_4b, subswitch_power_36, zone_power_36_index, push_30_subswitch, rgb_skips_ww_piece.
+            Blocking gaps: subswitch_power_36, zone_power_36_index, push_30_subswitch, rgb_skips_ww_piece.
           doc-ref:
             - split_h7075/com/govee/h7075/h2800/H2800Config.java:62,68,80-95,97-168,174-176,200-216
             - split_h7075/com/govee/h7075/h2800/H2800Controllers.java:90-112,126-154
@@ -18111,7 +18123,7 @@ families:
           scene_dialect: untraced
           kelvin_range: [2700, 6500]
           brightness_range: [1, 100]
-          status_read: [ic_num, cmd_41, gradual, cmd_a1, cmd_48, color_group, cmd_45, cmd_16]   # cmd_a1 / cmd_48 / cmd_45 are not govee_common command members yet (gap)
+          status_read: [ic_num, cmd_41, gradual, cmd_a1, cmd_48, color_group, cmd_45, cmd_16]
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -18129,9 +18141,8 @@ families:
             (Controller4ColorInfoByGroup.r). Power 33 01, no zones. Colour: Config.x[326] = 0 -> Config.Yt -> Bytes.h, or
             Bytes.r white type 1 for a table tint (the h60a6 frames); segment brightness Config.z[326] = 0 -> Bytes.G.
             Brightness version 1 (percent). Keep-alive aa 00 (ShareVM.K3, no I3 override); power live from the ee 30 push,
-            whose every change re-reads aa 05 and the aa a5 walk (T5). Held: the status read's 0xA1 / 0x48 / 0x45 types have
-            no command id, and the segment count and its colour records are device-reported forms the library has no reader
-            for. Scenes untraced (versionArray {0, 1, 2, 3, 5}); the gradual switch is left out.
+            whose every change re-reads aa 05 and the aa a5 walk (T5). Held: the segment count (TLV 0xA1) and its colour
+            records are device-reported forms the library has no reader for. Scenes untraced (versionArray {0, 1, 2, 3, 5}); the gradual switch is left out.
           doc-ref:
             - split_h7075/com/govee/h7075/pact/Support.java:241-257,266-270,354-361,392-411,515-522,541-569,575-581
             - split_h7075/com/govee/h7075/add/AddDeviceM.java:53-55
@@ -18773,76 +18784,106 @@ families:
             - split_h6092/com/govee/h6092/newDetail/r1810/DelegateOperateColorR1810.java:352,373,401,762
             - split_h6092/com/govee/h6092/newDetail/h6095/OperateControllerBuild.java:133-151
             - split_h6092/com/govee/h6092/newDetail/h6095/VM4LightH6095.java:469,537-547,734-771,857,864-872,1214-1216,1317-1329,1513-1520,1727-1750
-        "283":   # H7070, the AcNewDetailH7070 screen; no support: the status read names 0x0c (doc)
+        "283":   # H7070, the AcNewDetailH7070 screen; no support: a pact adds 0x42 to the status read (doc)
           models: [H7070]
           pacts: ["1,1", "1,2", "2,1"]
           capabilities: [power, brightness]
           zones: []
           account_lock: false
+          scene_dialect: untraced
+          status_read: [cmd_41, cmd_0c]
+          by_pact:
+            "1,2": { status_read: [cmd_41, cmd_0c, write_check_ic] }   # Support.supportEffectChange
+            "2,1": { status_read: [cmd_41, cmd_0c, write_check_ic] }
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
           doc: >-
             H7070 on AcNewDetailH7070 (Model.t). Connect (VM4LightH7070.T4): ac 03 <n> 41 0c, plus 42 where
-            Support.supportEffectChange holds (pact (1, >= 2) or type >= 2); TLV 0x01 power, 0x04 brightness. Default
+            Support.supportEffectChange holds (pact (1, >= 2) or type >= 2); TLV 0x01 power, 0x04 brightness, 0x05 the
+            mode (Info4DetailH7070.H reads byte 0 unguarded: an empty one fails the read), 0x41 the power-off memory
+            (value[1] unguarded), 0x0c the operate info and 0x42 the effect-change switch (not modelled). Default
             header: 33 01 (switchTrigger -> ControllerSwitch.d), 33 04 percent (BrightnessConfig.b). Keep-alive aa 00 (I3
-            false); live power ee 30 bit 0 of frame[3] (VM4LightH7070.h5); no child-switch write. No support: the status
-            read's 0x0c (the operate-effect TLV) has no govee_common command id, so status_read can't name it, and the
-            0x42 a pact adds is no branch the library follows (a pact branch may only drop color_group).
+            false); live power ee 30 bit 0 of frame[3] (VM4LightH7070.h5), after which the screen re-reads
+            (Compose4Off2OnH7070), which the library does not send; no child-switch write. No support: the 0x42 a pact
+            adds is no branch the library follows (a pact branch may only drop color_group).
           doc-ref:
             - split_h6092/com/govee/h6092/pact/Support.java:87-95,264-266,304-312
             - split_h6092/com/govee/h6092/pact/Model.java:66-68
-            - split_h6092/com/govee/h6092/newDetail/h7070/VM4LightH7070.java:99-131,288-292,529-534,578-593,827-850
-        "334":   # H7071, the AcNewDetailH7070 screen; no support: as 283
+            - split_h6092/com/govee/h6092/newDetail/h7070/VM4LightH7070.java:99-131,181-215,288-320,529-534,578-593,827-850
+            - split_h6092/com/govee/h6092/newDetail/h7070/Info4DetailH7070.java:269-272
+            - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4BaseInfoSingleRead.java:247-345
+        "334":   # H7071, the AcNewDetailH7070 screen (0xAC status read)
           models: [H7071]
           pacts: ["1,1", "2,1"]
+          support: app_traced
           capabilities: [power, brightness]
           zones: []
           account_lock: false
+          scene_dialect: untraced
+          status_read: [cmd_41, cmd_0c]
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
           doc: >-
-            H7071 on the H7070 screen: ac 03 02 41 0c (supportEffectChange false for 334), the rest as 283. No support:
-            status_read can't name 0x0c.
+            H7071 on the H7070 screen: ac 03 02 41 0c (supportEffectChange false for 334); every other core fact as 283:
+            TLV 0x01 power, 0x04 brightness, 0x05 the mode (an empty one fails the read), 0x41 the power-off memory, 33
+            01, 33 04 percent, aa 00 keep-alive, ee 30 bit 0 of frame[3] (the screen's re-read after it is not sent).
+            Scenes untraced. Not hardware-verified.
           doc-ref:
             - split_h6092/com/govee/h6092/pact/Support.java:103-108,268-270,304-312
             - split_h6092/com/govee/h6092/pact/Model.java:66-68
-            - split_h6092/com/govee/h6092/newDetail/h7070/VM4LightH7070.java:99-131
-        "333":   # H7073, the AcNewDetailH7070 screen; no support: as 283
+            - split_h6092/com/govee/h6092/newDetail/h7070/VM4LightH7070.java:99-131,181-215
+        "333":   # H7073, the AcNewDetailH7070 screen (0xAC status read)
           models: [H7073]
           pacts: ["1,1"]
+          support: app_traced
           capabilities: [power, brightness]
           zones: []
           account_lock: false
+          scene_dialect: untraced
+          status_read: [cmd_41, cmd_0c, write_check_ic]
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
           doc: >-
-            H7073 on the H7070 screen: ac 03 03 41 0c 42 (supportEffectChange always true for 333), the rest as 283.
-            Pact (1,1) from AddDeviceM.addDeviceH7073, not Support.addSupportPact. No support: status_read can't name 0x0c.
+            H7073 on the H7070 screen: ac 03 03 41 0c 42 (supportEffectChange always true for 333), TLV 0x42 the
+            effect-change switch (not modelled); every other core fact as 283. Pact (1,1) from AddDeviceM.addDeviceH7073,
+            not Support.addSupportPact. Known gap: X4 reads TLV 0x42 byte 0 and passes TLV 0x0c to
+            OperateModeInfoH7070.E, which reads 15 bytes plus 3 per colour its byte 14 counts, all unguarded, so an
+            empty 0x42 or a short 0x0c fails the app's whole status read, while the library (no form for either) still
+            applies the burst's power and brightness. Scenes untraced. Not hardware-verified.
           doc-ref:
             - split_h6092/com/govee/h6092/add/AddDeviceM.java:50-58,70-72
             - split_h6092/com/govee/h6092/pact/Support.java:272-274,304-312,500-515
             - split_h6092/com/govee/h6092/pact/Model.java:66-68
-            - split_h6092/com/govee/h6092/newDetail/h7070/VM4LightH7070.java:99-131
-        "401":   # H3860, the AcNewDetailH3860 screen; no support: the status read names 0x0c / 0x45 (doc)
+            - split_h6092/com/govee/h6092/newDetail/h7070/VM4LightH7070.java:99-131,181-215
+            - split_h6092/com/govee/h6092/newDetail/h7070/OperateModeInfoH7070.java:35-71
+        "401":   # H3860, the AcNewDetailH3860 screen (0xAC status read)
           models: [H3860]
           pacts: ["1,1"]
+          support: app_traced
           capabilities: [power, brightness]
           zones: []
           account_lock: false
+          scene_dialect: untraced
+          status_read: [cmd_41, cmd_0c, cmd_45]
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
           doc: >-
-            H3860 on AcNewDetailH3860 (Model.t). Connect (VM4LightH3860.T4): ac 03 03 41 0c 45. Default header: 33 01
-            (switchTrigger -> ControllerSwitch.d), 33 04 percent. Keep-alive aa 00 (I3 false); live power ee 30 bit 0 of
-            frame[3]. No support: 0x0c and 0x45 have no govee_common command id, so status_read can't name them.
+            H3860 on AcNewDetailH3860 (Model.t). Connect (VM4LightH3860.T4): ac 03 03 41 0c 45; TLV 0x01 power, 0x04
+            brightness, 0x05 the mode (Info4DetailH3860.I reads byte 0 unguarded: an empty one fails the read), 0x41
+            the power-off memory (value[1] unguarded), 0x0c the operate info and 0x45 the pattern switch (not modelled).
+            Default header: 33 01 (switchTrigger -> ControllerSwitch.d), 33 04 percent. Keep-alive aa 00 (I3 false);
+            live power ee 30 bit 0 of frame[3]. Known gap: U4 reads TLV 0x45 byte 0 unguarded (:158-160), so an empty
+            0x45 fails the app's whole status read, while the library (no form for it) still applies the burst's power
+            and brightness. Scenes untraced. Not hardware-verified.
           doc-ref:
             - split_h6092/com/govee/h6092/pact/Support.java:118-120,236-238,381-396
             - split_h6092/com/govee/h6092/pact/Model.java:76-77
-            - split_h6092/com/govee/h6092/newDetail/h3860/VM4LightH3860.java:101-129,277,498-503,827-850
+            - split_h6092/com/govee/h6092/newDetail/h3860/VM4LightH3860.java:101-129,131-164,206-211,277,498-503,827-850
+            - split_h6092/com/govee/h6092/newDetail/h3860/Info4DetailH3860.java:286-290
         "331":   # H609D, the H609dDetailActivity screen; no support: the displayed power is derived (doc)
           models: [H609D]
           pacts: ["1,1"]
@@ -18865,6 +18906,10 @@ families:
         by_goods_type:
           "101": { forms: { f_09: clock, f_ee_30: unknown } }
           "167": { forms: { f_ee_30: unknown } }
+          "283": { forms: { f_41: power_memory }, mode: { empty_fails: true } }   # VM4LightH7070.X4 reads TLV 0x41 value[1] unguarded (:193-194); Info4DetailH7070.H TLV 0x05 byte 0 (:269-272)
+          "334": { forms: { f_41: power_memory }, mode: { empty_fails: true } }   # as 283
+          "333": { forms: { f_41: power_memory }, mode: { empty_fails: true } }   # as 283
+          "401": { forms: { f_41: power_memory }, mode: { empty_fails: true } }   # VM4LightH3860.U4 TLV 0x41 value[1] (:143-144); Info4DetailH3860.I TLV 0x05 byte 0 (:286-290)
     models: [H6092, H6093, H7070, H6095, H6094, H609D, H7073, H7071, R1810, H6091, H1811, H3860, H1880]   # SKU ties by maker class names; base-classes2/com/govee/shared/checker/KmpGoodsType.java:142-143
     goods_types: [101, 167, 271, 283, 322, 323, 331, 333, 334, 340, 399, 401, 402]   # pact/SubLib.java:19-26; base-classes9/com/govee/base2home/pfd/Config.java:214
     delivery: feature_split   # pact_h6092 (base-classes9/com/govee/base2home/pfd/Config.java:214)

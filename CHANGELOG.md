@@ -10,9 +10,10 @@ model, from which the shipped readers are generated).
 
 ### Added
 - **158 more SKUs, traced from the app's device list** (spec rows only; no library code changed): 99 admitted
-  by default (`app_traced`) and 59 behind `allow_modelled` (`modelled`). With the 22 SKUs the entries below
-  admit by default (16 through the resolver changes, and H1162 / H1163 / H1167 / H1168, H70B1 and H70BC),
-  that makes 219 admitted by default and 65 behind `allow_modelled` in all. None is
+  by default (`app_traced`) and 59 behind `allow_modelled` (`modelled`). The entries below admit 39 more by
+  default (16 through the resolver changes; H1162 / H1163 / H1167 / H1168, H70B1 and H70BC; and 17 through the
+  status-read command ids and the BK pact gate) and 2 more behind `allow_modelled` (H7072, H6119), for 236
+  admitted by default and 67 behind `allow_modelled` in all. None is
   hardware-verified (the only bench check, below, was read-only), and none has a bundled scene catalog, so none
   is offered scenes. Each is listed with its family and goodsType; † marks a SKU no row lists that the
   catalogue snapshot (`spec/govee_catalog.json`) routes to that row by its goodsType alone (16 of them).
@@ -20,8 +21,8 @@ model, from which the shipped readers are generated).
   Admitted by default:
   - stringlightv2: **H6121 / H6141 / H6142 / H6154 / H6195** (1), **H6170 / H6196**, **H613G**† (2),
     **H616B** (68), **H6178** (78), **H6192** (143);
-  - h6114: **H6114** (39); h613839: **H6138 / H6139** (39); carlightv1: **H6118 / H6194** (6); tvlightv1:
-    **H6179** (12); pact_tvlightv2: **H6198 / H6199** (24);
+  - h6114: **H6114** (39); h613839: **H6138 / H6139** (39), each on an advertised pact only (below);
+    carlightv1: **H6118 / H6194** (6); tvlightv1: **H6179** (12); pact_tvlightv2: **H6198 / H6199** (24);
   - h6047: **H6039** (277); h61d3: **H61B0** (264, with H61B3 / H61B6); dreamcolorlightv1: **H70A1 / H70A2 /
     H70A3** (193);
   - rgbiclight: **H61C2 / H61C3 / H61C5** (141), **H6671 / H6672** (332), **H617G**, **R617G**† (351),
@@ -66,6 +67,31 @@ model, from which the shipped readers are generated).
   (`app_traced`). After its connect reads the screen sends `33 25 01` (light_effect_stop) only for H14A1 /
   R14A1 / H14C2 / R14C2 (bulblight `Support.c`, `VM4Light.i5`), so those four SKUs carry it as a `by_model`
   connect write and the other four send none. Not hardware-verified (none is on the bench).
+- **Six more SKUs whose status read names TLV types the spec now has ids for** (Spec, below): by default
+  **H7071** (h6092 334), **H7073** (333) and **H3860** (401), power and brightness; **H3351** (h7072 371) and
+  **H70B8** (h70b6 341), power, brightness, RGB and colour temperature; and **H7072** (h7072 294) behind
+  `allow_modelled`. Each sends the app's request: `ac 03 02 41 0c`, `ac 03 03 41 0c 42`, `ac 03 03 41 0c 45`,
+  `ac 03 03 41 a5 4b` and `ac 03 04 41 39 7d 7e` (`VM4LightH7070.T4`, `VM4LightH3860.T4`, `H7072VM4Light`,
+  `VM4H70B6.i5`). H7072 stays `modelled`: the app places each TLV 0xA5 group at (group - 1) x that TLV's own
+  record count (`SubMode4Color.j`), the library at (group - 1) x 4, and its firmware's split is untraced. None is
+  hardware-verified.
+- **The BK-firmware rows, on an advertised pact only.** The app rewrites these SKUs to a BK goodsType only for a
+  record whose pact meets the gate, and keeps a record without a pact (an int 0) at its source goodsType
+  (`SkuToGoodsTypeUtil.f` over `OldRgbBkUtil.a` / `.b`; `OldRgbicBkUtil.isRgbicBk4Ble`; `OldCarBkUtil.isBkCar`),
+  so the library takes such a target row only on an advertised pact at or above the gate (`profile_for`,
+  `make_device`, `create_device` and `is_supported_sku`, whatever the goodsType). Each of these rows was held
+  for exactly that; nothing else on them changed:
+  - by default: h6159 **H6159 / H6110 / H6109 / H614B / H614E**, h6160 **H6160** and h6182 **H6182** (40, pact
+    (2,1)); h6113 **H6113** and h6181 **H6181** (39, (10,1) / (10,2)); barelightv1 **H6145 / H6146 / H6147** (17,
+    (10,1) to (10,3));
+  - behind `allow_modelled`: h6119 **H6119** (44, (10,1) / (10,2));
+  - the BK route of three SKUs above, carlightv1 **H6118 / H6194** and tvlightv1 **H6179** (39, (10,1) / (10,2),
+    percent brightness): without a pact, and at their own pacts, they keep their goodsType-6 / -12 rows.
+
+  These twelve, H6119 and H6114 / H6138 / H6139 have no admitted source row, so `supported_skus()` lists them,
+  but `is_supported_sku(sku)`, `profile_for`, `make_device` and `create_device` refuse one without a pact: pass
+  the advert's (`is_supported_sku(sku, pact=adv.pact)`; `scanner.supported()`, `discover()` and `create_device`
+  with the advertisement already do). Not hardware-verified: no gated SKU is on the bench.
 - **Bench, 2026-10-21 (the Mac, reads only):** one H61C3 and two H6076s, polled through `create_device` and
   `update()` on the new rows. A guard on `GoveeConnection._send_frame` refused any write; none was attempted.
   - **H61C3** (rgbiclight 141, pact (1,1), plaintext, `allow_modelled`): aa 01, aa 04, aa 05 01, aa 40,
@@ -120,9 +146,10 @@ model, from which the shipped readers are generated).
   rows list and at none, with and without `allow_modelled`, so its frames and decoded state are unchanged. Where a new SKU has the same facts it joins
   that SKU's profile (`DeviceProfile.skus`): H6118 / H6179 / H6194 with H6005, H6099 with H6098 / H8098 /
   H6690, H70A1-3 with H6176 / H61BC, H61B0 with H61B3 / H61B6, H14C0 / H14C1 / R14C0 / R14C1 with
-  H600A-H600D / H6011 / H6013 / H800B (H600A stays first). H6099 and H61B0 come first in theirs, so a
-  `Device` built from one of those profiles without `sku=` names itself after them (`create_device` and
-  `make_device` always pass the SKU).
+  H600A-H600D / H6011 / H6013 / H800B (H600A stays first), H6145-7 with H617C / H617E / H617F / H6168. H6099
+  and H61B0 come first in theirs, so a `Device` built from one of those profiles without `sku=` names itself
+  after them (`create_device` and `make_device` always pass the SKU). The pact gate on the BK rows (Added) is
+  new routing for new SKUs only: no SKU it covers was supported at 1.6.1.
 - The resolver serves `power_live: heartbeat_aa01` on a status row (`power_read: ac_status`), not only on a
   polled one. The library folds no keep-alive reply on either kind: the poll's own power read stands in for
   it, aa 01 on a polled row and the status read's TLV 0x01 on a status row. `power_live` is a resolver gate
@@ -164,11 +191,12 @@ model, from which the shipped readers are generated).
   `modelled`; one that needs library work has no `support` and names the gap in its `doc`. A verification
   pass challenged each family's rows; they were repaired, and demoted (to `modelled`, or to no `support`)
   where a core claim didn't hold.
-  - devices.yaml now has 305 goodsType rows in 96 families (184 in 91): 166 with `support` (66), of them 135
-    `app_traced`, 27 `modelled` and the same 4 `hardware_verified`, and 139 without (118). The trace gave 153
-    of them support; the other 13 (h6069 284, h3700 383, h7076 313, h70dx 267-269, bulblightv3 342, the four
-    h1162 rows, h70b1 134 and h70bx 216) are `app_traced` through the library changes under Added and
-    Changed.
+  - devices.yaml now has 305 goodsType rows in 96 families (184 in 91): 181 with `support` (66), of them 148
+    `app_traced`, 29 `modelled` and the same 4 `hardware_verified`, and 124 without (118). The trace gave 153
+    of them support. The other 28 take it through the library and spec changes under Added, Changed and Spec:
+    h6069 284, h3700 383, h7076 313, h70dx 267-269, bulblightv3 342, the four h1162 rows, h70b1 134, h70bx 216,
+    the six status-read rows (h6092 334 / 333 / 401, h7072 371 / 294, h70b6 341) and the nine BK target rows,
+    all `app_traced` but h7072 294 and h6119 44 (`modelled`).
   - Two goodsType add-ons were traced and checked on their own: straightfloorlamp 69 (H6076 / H8076,
     `app_traced`, with the bench reads above) and rgbiclight 141 (H61C2 / H61C3 / H61C5).
   - **rgbiclight 141 (H61C2 / H61C3 / H61C5) is `app_traced`, admitted by default** (pacts (1,1) / (2,1)): power,
@@ -250,6 +278,23 @@ model, from which the shipped readers are generated).
   reference self-test checks the rules on an aa 01 reply and heartbeat. `wire_profile` now gives a non-plug
   profile's power rule masks 0 (a light's), where it passed the unused relay default; no decode changes.
   USING_THE_KSY.md and the `relay_on_mask` doc give the four-param rule.
+- **Eight more `govee_common` command ids**, the TLV types the app's 0xAC status reads request: `cmd_0c`
+  (the H7070-screen operate info), `cmd_2c` (the H60B0 operate sub-mode), `cmd_45`, `cmd_48`, `cmd_4b`, `cmd_7d` /
+  `cmd_7e` (the H70B6 / H70B8 clock and temperature unit) and `cmd_a1` (the H707A segment info). None gets a
+  typed decode, so their values stay raw in the status stream's `rest`, as an unnamed tag's did: no admitted
+  SKU's request or decoded state changes. Only the frame analyzer's labels do (`write/cmd_4b`, where it said
+  `write/cmd=0x4b`).
+  - h6092 283 / 334 / 333 / 401 read TLV 0x41 as the power-off memory, so a burst whose 0x41 is shorter than
+    two bytes applies nothing, and mark an empty TLV 0x05 as the app's failed read (the library reads past that
+    one, as on H60A6): their screens read 0x41's byte 1 and 0x05's byte 0 unguarded (`VM4LightH7070.X4`,
+    `Info4DetailH7070.H`, `VM4LightH3860.U4`, `Info4DetailH3860.I`). h6092 283 (H7070) now states its status read; it stays held
+    because pacts (1,2) and (2,1) add 0x42, a pact branch the library can't follow.
+  - `write_check_ic` (0x42) also names the H7073 effect-change switch that 333's status read requests
+    (`GET_NECESSARY_INFO` / `controller_type_lamp_effect_change`, `VM4LightH7070.X4`); its value stays untyped.
+  - A known gap, named in the rows' `doc`: the same handlers read byte 0 of TLV 0x42 (333), 0x45 (401), 0x39
+    (h70b6 329 / 341) and 0x7D / 0x7E (341), and H7073's 0x0c layout (`OperateModeInfoH7070.E`), unguarded, so
+    an empty or short value fails the app's whole status read, while the library, with no form for them, still
+    applies the burst's power and brightness.
 
 ## [1.6.1] — 2026-10-21
 

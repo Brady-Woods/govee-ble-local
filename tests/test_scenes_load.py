@@ -19,7 +19,7 @@ from importlib import resources
 from types import SimpleNamespace
 
 import pytest
-from conftest import FakeSceneFiles, scene_store
+from conftest import FakeSceneFiles, routing_pact, scene_store
 from fake_ble import ble_device
 
 from govee_ble_local import profile_for, scenes, supported_skus
@@ -794,8 +794,8 @@ def test_the_scene_store_is_the_device_tables():
     offered: set[str] = set()
     for opt_in in (False, True):
         for sku in supported_skus(allow_modelled=opt_in):
-            p = profile_for(sku, allow_modelled=opt_in)
-            assert p is not None, sku   # every SKU routes without its pact
+            p = profile_for(sku, pact=routing_pact(sku, allow_modelled=opt_in), allow_modelled=opt_in)
+            assert p is not None, sku   # every SKU routes, at its pact where it needs one
             if Capability.SCENES in p.capabilities:
                 offered.add(sku)
     assert set(store["skus"]) == offered == set(EXPECTED)
