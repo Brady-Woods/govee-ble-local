@@ -37,20 +37,25 @@ model, from which the shipped readers are generated).
   result is None when the advertisement carries no switch byte (no Govee manufacturer data, a header below 2, too
   short). It is passive: it leaves the state as it is and ignores the window after a command or read in which
   `ingest_advertisement` ignores the advertised on/off. `ingest_advertisement` now decodes through it.
-  - **Why a Device method:** this mirrors the app's split. `BleUtil.parseBleBroadOnOff:719-744` reads the raw
-    byte the same way for every device, and each device model decodes it in its own `z(scanRecord)`:
-    `AbsBaseBleModel.z:393-397` for lights, h5080 `Model.z:254-265` and `Model4Plug2.z:269-290` for plugs. So
-    a caller no longer passes the mask itself. That replaces the Home Assistant integration's call to
-    `identify.parse_broadcast_onoff(..., on_mask=...)`, which is not in `__all__`.
+  - **Why a Device method:** this mirrors the app's split. `BleUtil.parseBleBroadOnOff` reads the raw byte the
+    same way for every device (the overload at `:719-744` for lights, the one at `:700-717` for plugs), and each
+    device model decodes it in its own `z(scanRecord)`: `AbsBaseBleModel.z:393-397` for lights, h5080
+    `Model.z:254-265` and `Model4Plug2.z:269-290` for plugs. So a caller no longer passes the mask itself. The
+    Home Assistant integration can use it in place of `identify.parse_broadcast_onoff(..., on_mask=...)`, which
+    is not in `__all__`.
+  - **What stays:** `identify.parse_broadcast_onoff` and `DeviceProfile.advert_on_mask` are unchanged and stay
+    supported through 1.x, because released integrations import them.
 - **`Device.power_read_at -> float | None`: when a read last returned the device's whole on/off.** The value is in
   `time.monotonic()` seconds, and only while `state.is_on` still holds what that read gave; otherwise None.
   - **What stamps it:** an answered 0xAC status read, a polled light's `aa 01`, a bar-switch device's `aa 36` (in
     a poll or before a bar write) and a plug's `aa 01` relay read. A poll that read nothing, a read discarded
     as stale, an advertisement and an acked write stamp nothing.
   - **What drops it:** any change to `is_on` that no read made, even one that later changes back. Also a power
-    write or scene activation that raises (it may have reached the device), a write that wakes a zoned device
-    not known to be on, and each case where `is_on` may say on for a device that is off. Those are the same
-    events that drop `DeviceState.zone_power_confirmed`. A read issued before a drop doesn't stamp after it.
+    write or scene activation that raises (it may have reached the device), including a `set_scene_by_name`
+    whose power-on lead or upload raises. Also a write that wakes a zoned device not known to be on, an acked
+    zone-on while `is_on` is not True (an H60A6 `33 30` zone-on also sets the main switch, FUN_9b0278dc
+    @0x9b02795e), and each case where `is_on` may say on for a device that is off. Those are the
+    `DeviceState.zone_power_confirmed` events. A read issued before a drop doesn't stamp after it.
   - **Why it's needed:** `DeviceState.optimistic` clears at the first answered read and is never set again, so
     a consumer could not tell a later poll that read the on/off from one that read nothing.
   - **Why on the Device:** it is not a `DeviceState` field, so `dataclasses.asdict(state)` and `snapshot()`

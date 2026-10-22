@@ -1259,6 +1259,58 @@ def test_a_power_write_that_raises_drops_the_stamp_whatever_its_power(
     assert d.state.is_on is True and d.power_read_at is None
 
 
+@pytest.mark.parametrize(("sku", "reply", "write"), [
+    # A scene activation targets the whole device (fixture): it lights an H6008 read off.
+    ("H6008", _replies({b"\xaa\x01": frame(0xAA, 0x01, 0)}), lambda d: d.set_scene(1)),
+    # A 33 30 zone-on targets its zone (zones), and also sets the H60A6 main switch.
+    ("H60A6", _status(0, 0, power=0), lambda d: d.set_zone_power("main", True)),
+], ids=["scene", "zone-on"])
+def test_a_scene_or_zone_write_that_raises_drops_a_read_off(
+        read_clock: _Clock, sku: str, reply: Callable[[bytes], list[bytes]],
+        write: Callable[[Device], Coroutine[Any, Any, None]]) -> None:
+    d, sent = _dev(sku, reply)
+    asyncio.run(d.update())
+    assert d.state.is_on is False and d.power_read_at == 100.0
+    _failing(d, sent, lambda _f: GoveeBleTimeout("no ack"))
+    with pytest.raises(GoveeBleTimeout):
+        asyncio.run(write(d))
+    assert d.state.is_on is False and d.power_read_at is None
+
+
+def test_an_acked_zone_on_drops_a_read_off_when_the_zones_are_unknown(read_clock: _Clock) -> None:
+    # FIRMWARE-SOURCED: an H60A6 33 30 zone-on sets the main switch (FUN_9b0278dc @0x9b02795e). With the other
+    # zone unknown the state can't derive is_on, so it stays False, which the read no longer vouches for.
+    burst = status_burst(bytes([0x01, 0x01, 0x00]))   # TLV 0x01 only: off, zones unknown
+    d, _ = _dev("H60A6", lambda fr: list(burst) if fr[0] == 0xAC else [])
+    asyncio.run(d.update())
+    assert d.state.is_on is False and d.state.zone_power == {} and d.power_read_at == 100.0
+    asyncio.run(d.set_zone_power("main", True))
+    assert d.state.is_on is False and d.state.zone_power == {0: True} and d.power_read_at is None
+
+
+@pytest.mark.parametrize(("by_name", "fails"), [
+    (False, "lead"), (False, "activation"), (True, "lead"), (True, "upload"), (True, "activation")],
+    ids=lambda v: {False: "set_scene", True: "set_scene_by_name"}.get(v, v))
+def test_a_scene_power_on_lead_or_scene_that_fails_drops_a_read_off(
+        read_clock: _Clock, by_name: bool, fails: str) -> None:
+    # As the zone stamps (ZONE-2): the lead is a whole-device power write. set_scene_by_name sends it on its
+    # own, then the upload, so a lead or upload that raises drops the stamp there too.
+    zoned = _scene_power_on()
+    probe, _ = _dev("H60A6", profile=zoned)
+    name = next(n for n, sc in load_scenes("H60A6").items() if probe.scene_upload_frames(sc))
+    d, sent = _dev("H60A6", _status(0, 0, power=0), profile=zoned)
+    asyncio.run(d.update())
+    assert d.state.is_on is False and d.power_read_at == 100.0
+    _failing(d, sent, lambda f: GoveeBleTimeout("no ack") if f[1] == {"lead": 0x30, "activation": 0x05}.get(
+        fails) else None)
+    if fails == "upload":
+        d._conn.send_unacked = AsyncMock(side_effect=GoveeBleTimeout("lost"))  # type: ignore[method-assign]
+    with pytest.raises(GoveeBleTimeout):
+        asyncio.run(d.set_scene_by_name(name) if by_name else d.set_scene(1))
+    assert any(f[:2].hex() == "3330" for f in sent)   # the lead went out
+    assert d.state.is_on is False and d.power_read_at is None
+
+
 def test_a_non_power_write_that_raises_keeps_the_stamp(read_clock: _Clock) -> None:
     d, sent = _dev("H6008", _replies({b"\xaa\x01": frame(0xAA, 0x01, 0)}))
     asyncio.run(d.update())
@@ -1312,17 +1364,29 @@ def test_a_status_reply_that_predates_an_acked_power_write_does_not_stamp(read_c
     assert d.state.is_on is False and d.power_read_at == 140.0
 
 
-def test_a_read_issued_before_a_drop_does_not_stamp_after_it(read_clock: _Clock) -> None:
-    d, _ = _dev("H60A6")
+@pytest.mark.parametrize(("sku", "power_read"), [
+    ("H60A6", b"\xac"),       # the 0xAC status read
+    ("H6008", b"\xaa\x01"),   # a polled light's aa 01
+], ids=["status", "polled"])
+def test_a_read_issued_before_a_drop_does_not_stamp_after_it(
+        read_clock: _Clock, sku: str, power_read: bytes) -> None:
+    # Only the read that gives the on/off sees the drop; the reads after it (brightness, device-info) don't.
+    d, _ = _dev(sku)
     burst = status_burst(bytes([0x01, 0x01, 0x01]))
+    drops = [True]   # the first power read only
 
     async def query(fr: bytes, **_k: object) -> list[bytes]:
-        d._set_power_unsure()   # a power-off raised while the read was in flight
-        return list(burst) if fr[0] == 0xAC else []
+        if fr[:len(power_read)] != power_read:
+            return []
+        if drops and drops.pop():
+            d._set_power_unsure()   # a power-off raised while the read was in flight
+        return list(burst) if fr[0] == 0xAC else [frame(0xAA, 0x01, 1)]
 
     d._conn.query = AsyncMock(side_effect=query)  # type: ignore[method-assign]
     asyncio.run(d.update())
     assert d.state.is_on is True and d.power_read_at is None
+    asyncio.run(d.update())   # issued after the drop: it stamps
+    assert d.power_read_at == 100.0
 
 
 @pytest.mark.parametrize(("gated", "stamped"), [(b"\xaa\x05", False), (b"\xaa\x04", True)])

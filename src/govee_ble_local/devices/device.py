@@ -403,7 +403,8 @@ class Device:
         - a power write or a scene activation raises, since it may have reached the device (as it drops
           ``DeviceState.zone_power_confirmed``);
         - a write wakes a zoned device not known to be on (an H60A6 or H6047 ``33 04`` / ``33 05``,
-          :meth:`_wake_power`);
+          :meth:`_wake_power`), or switches a zone on while ``is_on`` is not True (an H60A6 ``33 30`` zone-on
+          also sets the main switch, FUN_9b0278dc @0x9b02795e);
         - ``is_on`` may say on for a device that is off: a write that may have switched it off raised, an
           acked H60A6 zone-off may have switched the main switch off, or a status reply came before the device
           applied an acked power write (see ``DeviceState.zone_power_confirmed``).
@@ -627,8 +628,9 @@ class Device:
         the on/off in, outside its suppress window).
 
         The app reads the advertised switch byte the same way for every device
-        (``BleUtil.parseBleBroadOnOff:719-744``, :func:`.identify.parse_broadcast_onoff`), and each device
-        model decodes it in its own ``z(scanRecord)``: a light is on for a byte of 1
+        (``BleUtil.parseBleBroadOnOff``, :func:`.identify.parse_broadcast_onoff`: the overload at
+        ``:719-744`` for lights, the one at ``:700-717`` for plugs, the same read), and each device model
+        decodes it in its own ``z(scanRecord)``: a light is on for a byte of 1
         (``AbsBaseBleModel.z:393-397``), a plug for any bit of its profile's
         :attr:`.DeviceProfile.advert_on_mask` (h5080 ``Model.z:254-265``, ``Model4Plug2.z:269-290``). Read
         from the Govee manufacturer data whatever the advertised name. None also for an advertisement without
@@ -757,7 +759,7 @@ class Device:
         """A read issued when ``_power_read_drops`` was ``since`` returned the on/off now in ``is_on``: stamp
         it (:attr:`power_read_at`), unless a drop came after the read was issued."""
         on = self._state.is_on
-        if since == self._power_read_drops and on is not None:
+        if since == self._power_read_drops and on is not None:   # every read sets it; narrows the type
             self._power_read = (time.monotonic(), on)
 
     def _wrote(self, ticket: int) -> None:
@@ -836,7 +838,7 @@ class Device:
 
         No write vouches for :attr:`power_read_at`: an acked one that changes ``is_on`` drops it, and so does
         a power write (``zones`` or ``fixture``) that raises, whatever its power, and a write that wakes the
-        device while ``is_on`` is not True, acked or not."""
+        device or lights a zone while ``is_on`` is not True, acked or not."""
         mine = self._ticket() if ticket is None else ticket
         await self._send_pending_unlock(ticket=mine)
         batch = [frames] if isinstance(frames, bytes) else frames
@@ -865,7 +867,8 @@ class Device:
         self._mutated()
         apply()
         _fold.unconfirm_contradicted(self._state, wake)
-        if self._state.is_on != was_on or (wake and self._state.is_on is not True):
+        lights = bool(wake) or bool(zones and any(zones.values()))
+        if self._state.is_on != was_on or (lights and self._state.is_on is not True):
             self._drop_power_read()
         self._post_zone_power(batch, zones, wake, acked=True)
         if zones is not None and len(zones) == len(self.profile.zones):
@@ -1566,6 +1569,7 @@ class Device:
                             await self._conn.send_unacked(sized)
                         except BaseException:
                             _fold.unconfirm_zones(self._state)
+                            self._drop_power_read()   # a power write that may have reached the device
                             raise
                         finally:
                             # As _commit does; counted as raised either way (no profile has both a global
