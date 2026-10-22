@@ -458,6 +458,44 @@ model, from which the shipped readers are generated).
     reply's TLV 0x07, by the row's `device_info_reads`.
 
 ### Fixed
+- **H60A6 at pact (1,1) sends the app's whole-light 0x0d colour and Kelvin, and no longer offers segments or zone
+  colour and brightness (hass #30).** An H60A6 that advertises the app's older protocol, pact (1,1), got the
+  (1, >= 2) profile: 13 segments, the zones' colour and the 0x15 colour forms. The reporter's capture (soft 1.00.24,
+  hard 1.04.03) shows the device acks those writes (`33 05 00`) and ignores the colour and Kelvin ones: TLV 0x05
+  stays on the scene after every RGB and Kelvin write. `profile_for("H60A6", pact=(1, 1))` is now a profile of its
+  own, from the row's new pact route (Spec, below).
+  - **What it sends at (1,1):** RGB `33 05 0d R G B 00…` (`Bytes.f`), a Kelvin `33 05 0d <tint> <K> <tint>`
+    (`Bytes.p`), the h6006 frames, and an RGB pick that is a Kelvin tint as that Kelvin frame. Brightness
+    `33 04`, power `33 01`, zone power `33 30`, the scenes and the status read `ac 03 02 41 30` are as before. No
+    0x15 frame goes out.
+  - **What it no longer offers at (1,1):** `SEGMENTS` (0 segments), so `set_segment_rgb`,
+    `set_segment_brightness` and `set_segment_color_temp` raise `GoveeBleNotSupported` before any I/O. The zones
+    `main` and `background` keep their `power_index` 0 / 1, with no segments, so `set_zone_rgb` and
+    `set_zone_color_temp` raise before any I/O too, and `set_zone_power` works as before. The status read's
+    0xA5 colour-group decode goes with them (the read asks for none at (1,1), as before).
+  - **The app's path:** `Model.t` opens `VM4LightH60A6` at every pact, but at (1,1) the colour page is the
+    default one-piece page (`NewDetailConfig.h`: `ColorModeH60A6` only where `Support.supportPartColor4H60A6`
+    holds, code >= 2), and its writes take colour instruction `Config.x[303]` = `Config.kw` = 2 ->
+    `Config.J[2]` = `Config.bu` -> `Bytes.f` / `Bytes.p` (`Config.java:14902-14905`, `:5537-5541`,
+    `:13459-13467`). `Config.iQ` drops segment brightness there and `Config.AU` is -1, and the header's zone
+    toggles stay `33 30` (`VM4LightH60A6.y5:1373-1383`). The app's segment and zone brightness at (1,1) are
+    inferred from those tables, not shown by the capture.
+  - **The Kelvin path:** the app has two at (1,1): the colour tab's `Bytes.p` and the illumination mode's slider
+    (`View4IlluminationMode.I0` -> `KelvinConfig.b` -> `ColorModeControllerConfig.h` -> `Config.N[2]` =
+    `Config.GM` -> `Bytes.A`: `33 05 0d ff ff ff <K> <tint>`, then `33 04`). The library sends the colour tab's,
+    the coordinator's pick following the H6188 precedent (devlist-traces DECISIONS.md item 3), not a decision of
+    the user's; the row's doc records both.
+  - **What stays as it is:** H60A6 at (1,2) / (1,3); an H60A6 with no pact heard (no advertisement, or none with a
+    pact), which keeps the row's 13-segment 0x15 profile, the 1.x fallback; a pact no row lists (the 1.x pact
+    fallback of the 18 SKUs 1.4.0 shipped, `PACT_FALLBACK_SKUS`, unchanged); and every other SKU. A profile, frame
+    and refusal diff against master over every admitted SKU (with and without `allow_modelled`, at each listed
+    pact and with none) changes H60A6 at (1,1) only. A `Device` built before its pact was heard keeps its profile
+    when it then hears (1,1), and logs the existing warning that its profile's rows don't accept that pact
+    (`refuses_pact`); the next `create_device` from the advertisement routes it.
+  - **Evidence:** source-traced, not live-verified: there is no (1,1) unit on the bench. The reporter will test a
+    build. This is the user's decision on hass #30 (match the app). It replaces the divergence the firmware
+    session kept at (1,1) as a default (D3); the earlier G8 finding and its verification (batch 6) proposed the
+    same fix.
 - **A failed read of the BGC-info characteristic (2b12) now fails that connect attempt, and no frame is sent on
   its link.** Until now a lookup error (`client.services` raising) or a `BleakError` from the read ran the session
   on the advertised mode. On a device that reports BGC 1 but advertises plaintext, that session sent plaintext
@@ -526,6 +564,26 @@ model, from which the shipped readers are generated).
   `X:399-401`).
 
 ### Spec
+- **A pact branch can give its pact a profile of its own (h60ax 303 at (1,1), hass #30).** `clientBranch` takes
+  `color_scheme` and `zones` (`devices.schema.json`; `tools/gen_devices.py` KEEP; `_resolve.Branch`). A branch on
+  `color_scheme`, `zones` or `capabilities` makes its pact a route (`_resolve.pact_routes`): the resolver resolves
+  and checks the row with the branch's leaves, as `govee_reference.client_row` applies them, and with the wire
+  layer's `by_pact` branch at that pact over its layer. The route is taken at that pact only, and only on an
+  advertised pact (`Route.pact_required`); the row's own route serves its other pacts and an advertisement
+  without one. Where the branch drops `segments`, the row's `segment_color_temp` and `segment_brightness_groups`
+  are left out. A wire `by_pact` branch at any other pact still raises, and so does a pact route on a row whose
+  pacts are `any`. The two pins of D3's unread (1,1) branches, `_resolve._UNREAD_WIRE_BRANCHES` and
+  `_UNREAD_PACT_CAPABILITIES`, are gone (H60A6's were their only entries). `profile_for`'s 1.x pact fallback
+  routes a SKU as it routes a pact-less advertisement, so a pact route is never the fallback.
+- **A zone may have no segments** (`clientRow.zones[].segments`, `minItems` 0): a zone the screen only switches on
+  and off, with no zone colour or brightness.
+- **h60ax 303 `by_pact "1,1"`**: `color_scheme: h6006`, the zones `main` (power_index 0) and `background` (1) with
+  no segments, and the recorded capabilities `[power, brightness, rgb, color_temp, scenes]` and status_read
+  `[cmd_41, cmd_30]`. Its wire branch keeps `num_pieces: 1` and adds `counts: { num_segments: 0 }` (`Config.bu`
+  ignores posSet, so the 0x0d frames carry no mask). The row's doc replaces the "Divergence kept (decision D3)"
+  text with the app path (both Kelvin paths, CLAUDE.md rule 5), the reporter's observation and the earlier work
+  (`LIBRARY_DIVERGENCES_dd7c53e_SUMMARY.md:146-157`, `VERIFICATION_af77174.md` batch 6, `:259-290`), and cites
+  the new path in `doc-ref`.
 - **The device-list trace (Govee Home 7.7.02; 7.5.12 where a family says so).** Each of the 83 census families
   was traced as the app runs it: the device-list model, the detail screen, its view model, then the builders,
   with `Class.method` and line citations in each row's `doc` and `doc-ref`. Core control decided a row's

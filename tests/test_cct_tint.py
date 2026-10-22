@@ -128,20 +128,23 @@ def test_zone_and_segment_cct_carry_tint() -> None:
     ]
 
 
-# ── H60A6: one all-segments frame, whatever the advertised pact ──────────────
+# ── H60A6: one whole-device frame, in the advertised pact's form ─────────────
 _MAIN_4000 = "33051501ffffff0fa0ffd5a10010"
 _RING_4000 = "33051501ffffff0fa0ffd5a1ff0f"
 _ALL_4000 = "33051501ffffff0fa0ffd5a1ff1f"
 
 
-@pytest.mark.parametrize("adv", [None, _adv("H60A6", 1, 3), _adv("H60A6", 1, 9),
-                                 _adv("H60A6", 1, 2), _adv("H60A6", 1, 0), _adv("H60A6", 2, 9)])
-def test_h60a6_whole_device_cct_is_one_all_segments_frame(adv: Any) -> None:
-    # DelegateColorV2.G0 / KelvinConfig.b: one 15 01 frame, mask bits 0-12 (ff 1f), whatever the
-    # pact (below code 2 the app sends the 0x0d form, not modelled; unknown pact keeps the 0x15 form).
+@pytest.mark.parametrize(("adv", "frame"), [
+    (None, _ALL_4000), (_adv("H60A6", 1, 3), _ALL_4000), (_adv("H60A6", 1, 9), _ALL_4000),
+    (_adv("H60A6", 1, 2), _ALL_4000), (_adv("H60A6", 1, 0), _ALL_4000), (_adv("H60A6", 2, 9), _ALL_4000),
+    (_adv("H60A6", 1, 1), "33050dffd5a10fa0ffd5a1000000")])
+def test_h60a6_whole_device_cct_is_one_frame_in_its_pacts_form(adv: Any, frame: str) -> None:
+    # DelegateColorV2.G0 / KelvinConfig.b: one 15 01 frame, mask bits 0-12 (ff 1f), on pact (1, >= 2); a pact
+    # no row lists, or none, keeps the row's 0x15 form (the 1.x pact fallback). At (1, 1) the colour tab's
+    # 0x0d form, colour instruction 2 (Config.x[303] = Config.kw -> Config.bu -> Bytes.p; hass #30).
     d = _dev("H60A6", adv)
     asyncio.run(d.set_color_temp(4000))
-    assert [_hex14(f) for f in _sent(d)] == [_ALL_4000]
+    assert [_hex14(f) for f in _sent(d)] == [frame]
     d._conn.send.assert_awaited_once()  # type: ignore[attr-defined]
     assert d.state.color_temp_kelvin == 4000 and d.state.rgb_color is None
 

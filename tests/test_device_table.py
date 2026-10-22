@@ -157,10 +157,11 @@ def test_the_generated_table_is_masters_hand_table_but_for_the_spec_fixes() -> N
         for soft, hard in _FIRMWARE[1:] if new.scene_versions or new.scene_versions_by_firmware else ():
             ref = reference.client_row(registry, fam["id"], int(gt), soft=soft, hard=hard)
             assert _fold.scene_versions(new, soft, hard) == set(ref["scene_versions"]), (sku, soft, hard)
-    # One profile per group of identical facts (the bulbs, the goodsType-43 and -90 plugs), else one per SKU.
+    # One profile per group of identical facts (the bulbs, the goodsType-43 and -90 plugs), else one per SKU,
+    # and one more for H60A6's pact (1, 1) route (hass #30).
     groups = (tuple(sku for sku in p.skus if sku in _MASTER) for p in PROFILES)
     assert sorted(g for g in groups if g) == sorted([
-        ("H6004", "H6006", "H6008"), ("H5080", "H5083", "H5085"), ("H5160", "H5161"),
+        ("H6004", "H6006", "H6008"), ("H5080", "H5083", "H5085"), ("H5160", "H5161"), ("H60A6",),
         *((sku,) for sku in ("H60A6", "H6047", "H61A8", "H6052", "H6641", "H6188", "H6062", "H6061", "H5082",
                              "H5089"))])
 
@@ -260,8 +261,8 @@ _REFUSED: tuple[tuple[str, str, _Edit, str], ...] = (
     ("dreamcolorlightv1", "19", lambda f: _row(f, "19")["models"].append("H6163"),
      "h6160 assigned_goods_type reassigns it to goodsType 19"),
     # wire branches, mode decodes and forms
-    ("h60ax", "303", lambda f: _wire(f, "303")["by_pact"]["1,1"]["group"].update(num_pieces=2),
-     "wire by_goods_type 303 by_pact 1,1 is not served"),
+    ("h60ax", "303", lambda f: _wire(f, "303")["by_pact"].update({"1,2": {"group": {"num_pieces": 2}}}),
+     "wire by_goods_type 303 by_pact 1,2 is not served"),   # 1,1 is a pact route's (below)
     ("striplight", "41", lambda f: _wire(f, "41").update(
         by_firmware=[{"min_soft_version": "1.00.00", "forms": {"f_a5": "bulb_batch_v2"}}]),
      "wire by_goods_type 41 by_firmware 0 is not served"),
@@ -325,10 +326,11 @@ _REFUSED: tuple[tuple[str, str, _Edit, str], ...] = (
      "must each overlap the base [2700, 6500]"),
     ("h5080", "43", lambda f: _row(f, "43").update(by_pact={"1,1": {"brightness_range": [1, 100]}}),
      "a pact brightness_range without the brightness capability"),
-    ("bulblightv3", "64", lambda f: _row(f, "64").update(by_pact={"1,1": {"capabilities": ["power"]}}),
-     "pact branch 1,1 on ['capabilities']"),
-    ("h60ax", "303", lambda f: _row(f, "303")["by_pact"]["1,1"]["capabilities"].remove("scenes"),
-     "pact branch 1,1 on ['capabilities']"),
+    ("h7017", "0", lambda f: _row(f, "0").update(by_pact={"1,1": {"zones": []}}),
+     "needs listed pacts: its pact is a route of its own"),
+    # H60A6's pact (1, 1) route is resolved as a row, with that pact's wire (no segments)
+    ("h60ax", "303", lambda f: _row(f, "303")["by_pact"]["1,1"]["zones"][0]["segments"].append(12),
+     "zone main segments [12] are not all below the 0 segments"),
     ("h60ax", "303", lambda f: _row(f, "303").update(status_read=["cmd_41", "cmd_41"]),
      "status_read ['cmd_41', 'cmd_41'] (distinct"),
     ("h60ax", "303", lambda f: _row(f, "303")["status_read"].append("cmd_zz"),
