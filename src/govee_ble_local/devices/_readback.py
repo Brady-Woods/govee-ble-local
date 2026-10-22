@@ -125,6 +125,12 @@ async def walk_mechanism_a_direct(dev: ReadTarget, read_reply: ReadReply) -> lis
     derived the way the app does (:func:`live_ic_pieces`). When that read fails the app still walks
     the groups from the IC count it stored earlier; the library has none, so it skips the walk.
 
+    On goodsType 184 (H608A-D / H808A) the app sizes its first walk from the IC the screen opened with,
+    the account's stored count (``VM4H608A$connectBleSuc$1.l`` -> ``VM4H608A.a5``), and folds this
+    session's aa 40 count only afterwards (``VM4H608A.S4``, which also uploads it); the library sizes the
+    walk from this poll's aa 40. The two agree unless the IC changed while no app was connected, which the
+    app corrects on that same connect; the stored count is cloud data a local library doesn't have.
+
     Each reply is placed by the group that was asked for: Controller4ColorInfoByGroup's read
     callback drops the reply's own group byte (``Controller4ColorInfoByGroup.Companion.h``/``i``
     pass only the colours on; ``VM4Light.Q5`` places them by its loop index)."""
@@ -193,12 +199,14 @@ async def read_device_info(dev: ReadTarget, read_reply: ReadReply) -> bool:
     ``aa 06`` firmware, ``aa 07 03`` hardware version and ``aa 07 02`` device id (SN), read in that order.
     Each is handled by the firmware of every image analysed (H6006, H6008, H6047, H60A1, H60A6, H5083:
     ``ble_msg_get_version`` / ``ble_msg_get_dev_info`` 02 and 03 on the Realtek images, the H6047 command
-    table) and answered live by H60A6, H6047, H61A8, H6052, H6006, H6008 and H5083. Where the app sends
-    them: ``aa 06`` and ``aa 07 03`` are control-screen reads (``ControllerSoftVersion`` /
-    ``ControllerHardVersion``) on the lights except the H60A6, whose versions come from the 0xAC 0x07 TLV;
-    the H60A6 and gt 43 plug screens send neither, and ``aa 07 02`` (``SnController``) the app sends only
-    while pairing. Those reads are kept anyway as firmware-sourced extensions (CLAUDE.md rule 6; the plugs
-    have no other BLE source for them); the app does not use them there.
+    table) and answered live by H60A6, H6047, H61A8, H6052, H6006, H6008, H5083 and, a hardware observation
+    (bench 2026-10-21, soft 1.04.05), H6076. Where the app sends them: ``aa 06`` and ``aa 07 03`` are
+    control-screen reads (``ControllerSoftVersion`` / ``ControllerHardVersion``) on the lights except the
+    H60A6 and gt 69 at (2,1) (H6076 / H8076), whose versions and device id come from the 0xAC 0x07 TLV
+    (``Compose4BaseInfoSingleRead.w``); those screens and the gt 43 plug screens send neither, and
+    ``aa 07 02`` (``SnController``) the app sends only while pairing. Those reads are kept anyway as
+    firmware-sourced extensions (CLAUDE.md rule 6; the plugs have no other BLE source for them); the app does
+    not use them there.
 
     Not sent: ``aa 07 10`` (basic) and ``aa 07 11`` (Wi-Fi). No firmware image has a handler for either
     (most drop the request, which cost a timeout per poll; H60A1 / H60A6 echo it back as zeros) and the app
@@ -206,15 +214,16 @@ async def read_device_info(dev: ReadTarget, read_reply: ReadReply) -> bool:
     layouts exist only as the 0x10 / 0x11 records of the 0xAC 0x07 TLV. Unanswered reads leave fields None.
     ble_mac stays None unless a reply carries a MAC distinct from the connectable address (none confirmed
     yet: that address is otherwise the BLE MAC)."""
-    # aa 06 / aa 07 03: the app's control-screen reads on the lights except the H60A6 (and on the gt 50 /
-    # 90 plugs); FIRMWARE-SOURCED (CLAUDE.md rule 6) on the H60A6 and the gt 43 plugs, whose screens don't
-    # send them: Realtek ble_msg_get_version and ble_msg_get_dev_info selector 03 (get_hw_version), e.g.
-    # H60A6 sw 1.00.41 @0x9b04a4ac / @0x9b04a5bc, H5083 sw 1.00.30 @0x9b0318dc / @0x9b031984.
+    # aa 06 / aa 07 03: the app's control-screen reads on the lights except the H60A6 and the H6076 (and on
+    # the gt 50 / 90 plugs); FIRMWARE-SOURCED (CLAUDE.md rule 6) on the H60A6, the H6076 (answered on the
+    # bench, a hardware observation) and the gt 43 plugs, whose screens don't send them: Realtek
+    # ble_msg_get_version and ble_msg_get_dev_info selector 03 (get_hw_version), e.g. H60A6 sw 1.00.41
+    # @0x9b04a4ac / @0x9b04a5bc, H5083 sw 1.00.30 @0x9b0318dc / @0x9b031984.
     answered = await read_versions(dev, read_reply)
     # aa 07 02, FIRMWARE-SOURCED on every SKU (the app sends it only while pairing, SnController):
     # ble_msg_get_dev_info selector 02 (get_sn) on the Realtek images (e.g. H6006 @0x9b03c87c, H60A6
     # @0x9b04a528, H5083 @0x9b031924) and the H6047's aa 07 handler (@0x01005370); answered live by all
-    # seven bench SKUs.
+    # seven bench SKUs, and by the H6076 (a hardware observation, 2026-10-21).
     got, info = await read_info_reply(dev, read_reply, build.INFO_SN)
     if info is not None:
         _fold.merge_device_info(dev.state, serial=info.serial, hardware=info.hw_version)

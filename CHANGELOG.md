@@ -121,6 +121,19 @@ model, from which the shipped readers are generated).
     segment-brightness flags; h6160 19 also gets its aa 01 power read and keep-alive. Both stay held by their
     firmware-gated routes. A scratch stand-in (support added, the gates dropped) resolves H6163 at (2,1) to
     H61A8's profile but for its scenes and its SKU-keyed Kelvin.
+- **Doc corrections** (no frame, read or profile changes):
+  - `mode_color_parse.kelvin_15`: the library reads the 0x15 Kelvin signed, as the app's screens do (the
+    stale "reads it unsigned, gap item 16" note is gone; only the 1.x `rgb_kelvin` default reads unsigned).
+  - h7020: the H7015 -> 62, H7016 -> 63 and H3010 -> 411 ties are the catalogue's goodsTypes, as the app's scan
+    takes them (`Pact.f`), not inferred from the `addSupportPact` order.
+  - straightfloorlamp 69 (H6076 / H8076): the cipher is per device (the advert's 0x40 bit or the BGC read, the
+    app's `EncryptionUtils.isEncryptionSupported`), plaintext with neither, as in the app. The firmware answers
+    the library's aa 06 / aa 07 03 / aa 07 02 reads (bench 2026-10-21), which the app's screen doesn't send (it
+    reads TLV 0x07): a hardware-observed extension (rule 6), now cited as such here and in `read_device_info`.
+  - h705a 184 (H608A-D / H808A): the app sizes its first aa a5 walk from the IC stored in the account, the
+    library from the live aa 40. They differ only after a resize the app never saw. This is now documented, in
+    the row and in `walk_mechanism_a_direct`, as a divergence for the user to decide. The row stays `modelled`
+    for its write mask.
 
 ## [1.6.1] — 2026-10-21
 
