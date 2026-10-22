@@ -135,14 +135,16 @@ async def walk_mechanism_a_direct(dev: ReadTarget, read_reply: ReadReply,
     `color_readback_ic_sections` (goodsTypes 141 / 204) the same read's section sum sizes the walk, else the
     static count when it is 0, in Java's group count (:func:`_java_group_count`); a failed read skips it.
 
-    On goodsType 184 (H608A-D / H808A) the app sizes its first walk from the IC the screen opened with,
-    the account's stored count (``VM4H608A$connectBleSuc$1.l`` -> ``VM4H608A.a5``), and folds this
-    session's aa 40 count only afterwards (``VM4H608A.S4``, which also uploads it); the library sizes the
-    walk from this poll's aa 40. The two agree unless the IC changed while no app was connected, which the
-    app corrects on that same connect; the stored count is cloud data a local library doesn't have. An IC of
-    0, which ``S4`` skips, is no count (``color_readback_ic_skip_zero``): the library skips that poll's walk
-    where the app walks its stored count. The row stays ``modelled`` for this first walk until the user
-    decides on it (pieces-persisted-ic-first-walk).
+    On goodsType 184 (H608A-D / H808A) the app sizes its first walk from the server's per-SKU IC, not the
+    account's: ``AcNewDetail4H608A.e3`` drops the account IC that ``Model.t`` passes, so
+    ``AbsAcLightDetail.K1`` takes ``SkuIcManager.d(sku)`` (``/appsku/v1/skus``), and
+    ``VM4H608A$connectBleSuc$1.l`` -> ``VM4H608A.a5`` walks that. The library sizes the walk from this poll's
+    aa 40 instead, a divergence the user approved (decision 21(a), "Live count only"). The app itself settles
+    on the live count: it folds this session's aa 40 count after the walk (``VM4H608A.S4``, which also
+    uploads it with ``updateDeviceIc``), so only a connect's first walk differs, and only where the
+    device's IC differs from the per-SKU one. An IC of 0, which ``S4`` skips, is no count
+    (``color_readback_ic_skip_zero``): the library skips that poll's walk where the app walks the count it
+    holds.
 
     A group that gets no usable reply is skipped and the walk goes on; with ``stop_at_miss`` it ends there,
     keeping the groups read before it, as a compose ends at a step that fails
@@ -261,7 +263,7 @@ def live_ic_pieces(dev: ReadTarget, ic: parse.IcCount) -> int | None:
     ``ControllerIcNum.b`` and H1A45's ``ControllerIcNum.e``), that reader also throws on a second IC field
     of 0x1000 or more (:attr:`parse.IcCount.ic_pair` None, the spec's ``app_pair_fails``), so there is no
     count there either, whatever the rule. Under ``color_readback_ic_skip_zero`` an IC of 0 is none too:
-    h705a ``VM4H608A.S4`` (:516-538) skips it and keeps the count it stored (goodsType 184).
+    h705a ``VM4H608A.S4`` (:516-538) skips it and keeps the count the screen holds (goodsType 184).
 
     - The clamp and divisor, as the app derives them for H6641 (goodsType 247; h61d3, Govee Home 7.5.12
       names): ``ReadIcController.Companion.d`` clamps the count to ``H61D3Support.q(247)`` = 41..70

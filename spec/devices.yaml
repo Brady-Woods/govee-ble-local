@@ -14546,10 +14546,10 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:63-85,199-215,251-259
             - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
             - base-classes11/com/govee/base2light/pact/newdetail/content/colorv2/DelegateColorV2Part.java:686-704
-        "184":   # H608A / H608B / H608C / H608D / H808A, the AcNewDetail4H608A screen (VM4H608A); modelled: the first walk waits on the user (doc)
+        "184":   # H608A / H608B / H608C / H608D / H808A, the AcNewDetail4H608A screen (VM4H608A); the live first walk is the user's approved divergence (doc)
           models: [H608A, H608B, H608C, H608D, H808A]
           pacts: ["1,1", "2,1"]
-          support: modelled
+          support: app_traced
           mode_color_parse: kelvin
           color_scheme: h60a6
           power_read: aa01
@@ -14581,24 +14581,31 @@ families:
             version 0 = [2000, 9000] (no KelvinConfig key). Every colour write takes the live pieces (ColorModeV1.K resizes
             the strip to Support.b over the IC each read stores), with no app cap; num_segments 56 is only the count before
             the first aa 40 read. An IC of 0 is no count (ic_pieces skip_zero): VM4H608A.S4 skips it and keeps the count
-            it stored, so the library keeps the count it has (none before its first read: a colour write then raises,
-            sending nothing) and skips that poll's walk, where the app walks its stored count. MODELLED, held for the
-            user's decision on one documented divergence (pieces-persisted-ic-first-walk): the app sizes its first aa a5
-            walk from the IC the screen opened with, the account's stored BleExt.ic (Model.t; VM4H608A$connectBleSuc$1.l -> a5 over
-            deviceInfo.q()), and folds this session's aa 40 count only afterwards (ControllerStrategyConfig.A keeps it in
-            the compose's Info4BleIot; VM4H608A.S4 skips 0 and an unchanged count, then sets it and uploads it with
-            updateDeviceIc); an IC notify re-walks with the new count (VM4H608A.d5) and the strip resizes to it
-            (ColorModeV1.K). So the stored IC equals the live one after any connect, an in-app change or a pushed notify,
-            and the library's walk from this poll's aa 40 is the app's first walk but after a resize the app never saw,
-            which the app corrects on that same connect; the cloud IC is not available to a local library. In CCT mode
-            VM4H608A.b5 keeps the old colours and takes only the brightness bytes. Not hardware-verified.
+            the screen holds, so the library keeps the count it has (none before its first read: a colour write then
+            raises, sending nothing) and skips that poll's walk, where the app walks the count it holds. One divergence,
+            approved by the user (decision 21(a), "Live count only"): the app sizes its first aa a5 walk from the server's
+            per-SKU IC, not the account's and not the device's. Model.t puts the account's BleExt.ic in the bundle
+            (intent_ac_adjust_ic), but AcNewDetail4H608A.e3 builds the screen's device info from the scan and read extras
+            alone and drops it, so AbsAcLightDetail.K1 fills the IC of 0 from SkuIcManager.d(sku), the app's per-SKU table
+            (GET /appsku/v1/skus, IcApiServicer), and VM4H608A$connectBleSuc$1.l -> a5 walks Support.b(184, that IC). The
+            library walks over this poll's live aa 40 count instead. The app itself settles on the live count: it folds
+            this session's aa 40 count after the walk (ControllerStrategyConfig.A keeps it in the compose's Info4BleIot;
+            VM4H608A.S4 skips 0 and an unchanged count, then sets it and uploads it with updateDeviceIc); an IC notify
+            re-walks with the new count (VM4H608A.d5) and the strip resizes to it (ColorModeV1.K). So only a connect's
+            first walk differs, and only where the device's IC differs from the per-SKU one; the per-SKU table is server
+            data a local library doesn't have. In CCT mode VM4H608A.b5 keeps the old colours and takes only the
+            brightness bytes. Not hardware-verified.
           doc-ref:
             - split_h705a/com/govee/h705a/pact/Support.java:52-56,269-278,324-336,383-385,402-405
-            - split_h705a/com/govee/h705a/pact/Model.java:201-202,214-218
+            - split_h705a/com/govee/h705a/pact/Model.java:166-218
             - split_h705a/com/govee/h705a/matterconfig/H808aMatterHelper.java:18-60
             - base-classes2/com/govee/shared/checker/KmpGoodsType.java:181
             - base-classes2/com/govee/shared/config/h608a/H608ASceneConfig.java:45-47
             - split_h705a/com/govee/h705a/adjust/h608a/H608ANewDetailsConfig.java:52-64
+            - split_h705a/com/govee/h705a/adjust/h608a/AcNewDetail4H608A.java:31,146-206
+            - base-classes11/com/govee/base2light/pact/newdetail/AbsAcLightDetail.java:143,585-603
+            - base-classes10/com/govee/base2home/sku/ic/SkuIcManager.java:118-124
+            - base-classes10/com/govee/base2home/sku/ic/IcApiServicer.java:11
             - split_h705a/com/govee/h705a/adjust/h608a/VM4H608A$connectBleSuc$1.java:42-92,102-131
             - split_h705a/com/govee/h705a/adjust/h608a/ControllerStrategyConfig.java:47-57,184-203,210-299
             - split_h705a/com/govee/h705a/adjust/h608a/VM4H608A.java:252-295,312-334,456-475,516-538,560-574,849-858,1003-1027

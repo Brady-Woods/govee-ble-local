@@ -65,9 +65,10 @@ model, from which the shipped readers are generated).
 - **158 more SKUs, traced from the app's device list** (spec rows; no library code changed but three row facts,
   below: segment colour temperature, the segment-brightness groups and a status row's device-info reads; the
   illumination-tab pair that promotes H60A4 / H80A4, the aa 40 section sum that promotes H61A9, the segment split
-  that promotes H61D2-H61D6, the live piece count that promotes 14 h705a SKUs, the status rows' IC reads that
-  promote H3401 and H3510 / H3511, the per-SKU support level that promotes five h6609 260 SKUs, and H6057's
-  light-switch power, below): 127 admitted by default (`app_traced`) and 31 behind `allow_modelled` (`modelled`).
+  that promotes H61D2-H61D6, the live piece count that promotes 14 h705a SKUs and, by the user's decision on its
+  first walk, H608A-D / H808A, the status rows' IC reads that promote H3401 and H3510 / H3511, the per-SKU support
+  level that promotes five h6609 260 SKUs, and H6057's light-switch power, below): 132 admitted by default
+  (`app_traced`) and 26 behind `allow_modelled` (`modelled`).
   The entries below admit 117 more by default (16 through the resolver changes; H7004, H1162 / H1163 / H1167 /
   H1168, H70B1 and H70BC; 17 through the status-read command ids and the BK pact gate; the 10 SKUs of the
   `legacy_02` colour scheme; H7061; H70B2, H6630, H8630 and H6631 on the device-list card; H7070 on its pact's
@@ -78,7 +79,7 @@ model, from which the shipped readers are generated).
   through the aa 0f string count the nine h7020 bulb-string SKUs; the six H707A strings through the status read's
   segment count; and the 20 dreamcolorlightv1 71 / 123 SKUs through the per-SKU connect reads) and 17 more behind
   `allow_modelled` (H7072, H6119, the five Glide panels, H61E5 / H61E6, H60A1 / H80A1, H6609 and H706A / H706B /
-  H706C / H806A / H806C), for 343 admitted by default and 48 behind `allow_modelled` in all (with H8015, a 1.6.1 SKU
+  H706C / H806A / H806C), for 348 admitted by default and 43 behind `allow_modelled` in all (with H8015, a 1.6.1 SKU
   now admitted by default: Changed). None is
   hardware-verified (the only bench check, below, was read-only), and none has a bundled scene catalog, so none
   is offered scenes. Each is listed with its family and goodsType; † marks a SKU no row lists that the
@@ -114,7 +115,8 @@ model, from which the shipped readers are generated).
   - h7017: **H7017** (0), a grow light: power and brightness only, served at any pact, as its screen runs no
     pact test (`h7017 Model.t`);
   - h705a: **H705A / H705B / H705C / H801B** (125), **H705D / H705E / H705F / H805A / H805B / H805C / H805D**
-    (240), **H7067 / H7068 / H7069** (250), by the live piece count (below);
+    (240), **H7067 / H7068 / H7069** (250), by the live piece count, and **H608A / H608B / H608C / H608D /
+    H808A** (184), by the live piece count and the user's decision on its first walk (below);
   - h705a: **H3401** (394); h7057: **H3510**, **H3511**† (349), by the status rows' IC reads (below).
 
   Behind `allow_modelled` (the facts are traced, but the library doesn't yet do everything the app does on
@@ -125,7 +127,6 @@ model, from which the shipped readers are generated).
     (59); h7090: **H7090** (44); h1741: **H1741 / R1741** (365);
   - h6609: **H70C4 / H70C5 / H70C7 / H6870 / H80C4** (260, on their IC-gated read-back, below);
   - h70b3: **H70B3** (229), **H70B4** (230), **H70B5** (231), **H6810** (255), **H6811**, **H8811**† (256);
-  - h705a: **H608A / H608B / H608C / H608D / H808A** (184);
   - h604a: **H604B** (109), **H604D** (133), traced on Govee Home 7.5.12 only: 7.7.02 runs their screen from
     the on-demand module `pact_h604a` (`pfd/Config`), which the 7.7.02 capture doesn't hold, so the shipped path
     is unseen (the rows' `doc`; their doc-refs under `govee-apk-decompiled/sources/` are 7.5.12 paths).
@@ -532,12 +533,17 @@ model, from which the shipped readers are generated).
     **H705A / H705B / H705C / H801B** (125), **H705D / H705E / H705F / H805A / H805B / H805C / H805D** (240)
     and **H7067 / H7068 / H7069** (250); h61d3 **H61B8 / H61B9** (299) and **H61F2 / H61F5 / H61F6** (261),
     behind `allow_modelled` since 1.5.0.
-  - **H608A / H608B / H608C / H608D / H808A** (h705a 184) take the live count too and stay behind
-    `allow_modelled`: the app sizes its first aa a5 walk from the account's stored IC (`VM4H608A.a5` over
-    `q()`), where the library takes this poll's aa 40, a documented divergence that waits on the user's
-    decision. An IC of 0 is no count there (`DeviceProfile.color_readback_ic_skip_zero`, keyword-only, default
-    False): `VM4H608A.S4` skips it and keeps the stored count, so the library keeps the count it has (and
-    raises before its first one) where it would have written a one-piece mask.
+  - **H608A / H608B / H608C / H608D / H808A** (h705a 184) take the live count too and are admitted by default
+    (`app_traced`), with one divergence the user approved (decision 21(a), "Live count only"). The app sizes its
+    first aa a5 walk from the server's per-SKU IC, not the account's: `Model.t` passes the account's IC, but
+    `AcNewDetail4H608A.e3:146-206` drops it, so `AbsAcLightDetail.K1:594-596` takes `SkuIcManager.d:118-124`
+    (`GET /appsku/v1/skus`) and `VM4H608A.a5:252-254` walks that. The library walks this poll's aa 40 count. The
+    app then settles on the live count itself: `VM4H608A.S4:516-538` sets it and uploads it with
+    `updateDeviceIc`, so only a connect's first walk differs, and only where the device's IC differs from the
+    per-SKU one. An IC of 0 is no count there (`DeviceProfile.color_readback_ic_skip_zero`, keyword-only,
+    default False): `VM4H608A.S4` skips it and keeps the count the screen holds, so the library keeps the count
+    it has (and raises before its first one) where it would have written a one-piece mask. Not live-verified:
+    no 184 SKU is on the bench.
   - **H1A45** (h61d3 375), admitted by default (`app_traced`): its two strips' rule (above) sizes the walk and
     the strip (`ColorModeH1A45.d0`, one position set over both strips, per-position colour, brightness and
     colour temperature), and its colour config is keyed by the named constant `LightRecycleViewGesture.W`
@@ -1234,8 +1240,8 @@ model, from which the shipped readers are generated).
   `modelled`; one that needs library work has no `support` and names the gap in its `doc`. A verification
   pass challenged each family's rows; they were repaired, and demoted (to `modelled`, or to no `support`)
   where a core claim didn't hold.
-  - devices.yaml now has 305 goodsType rows in 96 families (184 in 91): 226 with `support` (66), of them 193
-    `app_traced`, 29 `modelled` and the same 4 `hardware_verified`, and 79 without (118). 66 of the 226 had support
+  - devices.yaml now has 305 goodsType rows in 96 families (184 in 91): 226 with `support` (66), of them 194
+    `app_traced`, 28 `modelled` and the same 4 `hardware_verified`, and 79 without (118). 66 of the 226 had support
     at 1.6.1 and keep it (bulblightv3 328 now `app_traced`); the trace gave 87 more rows support. The other 73 take
     it through the library and spec changes under Added, Changed, Fixed and Spec: h7004 0, h6069 284, h3700 383,
     h7076 313, h70dx 267-269, bulblightv3 342, the four h1162 rows, h70b1 134, h70bx 216, the six status-read rows
@@ -1343,10 +1349,11 @@ model, from which the shipped readers are generated).
     firmware-sourced (rule 6) only on the H60A6 and H6076, where a firmware image or the bench shows them
     answered, and every other status row sends none (`device_info_reads: none`, under Changed). The old text
     named only the H60A6 and goodsType 69 as exceptions.
-  - h705a 184 (H608A-D / H808A): the app sizes its first aa a5 walk from the IC stored in the account, the
-    library from the live aa 40. They differ only after a resize the app never saw. This is now documented, in
-    the row and in `walk_mechanism_a_direct`, as a divergence for the user to decide. The row stays `modelled`
-    for it (its write mask now takes the live count, Added).
+  - h705a 184 (H608A-D / H808A): the app sizes its first aa a5 walk from the server's per-SKU IC
+    (`AcNewDetail4H608A.e3` drops the account's IC, so `AbsAcLightDetail.K1` takes `SkuIcManager.d`), the
+    library from the live aa 40, which the app then settles on itself (`VM4H608A.S4`). The row and
+    `walk_mechanism_a_direct` document it as the divergence the user approved (decision 21(a), "Live count
+    only"), and the row is `app_traced` (its write mask now takes the live count, Added).
   - straightfloorlamp 69 (H6076 / H8076): the strip refuses per-piece brightness, with a toast and no `15 02`
     frame, while any piece shows a Kelvin-tint colour or none is selected (`ColorMode4H6076.canClickBrightness`:
     `ColorUtils.o`, `NumberUtils.A`); the library doesn't gate `set_segment_brightness` on it (not modelled).
@@ -1549,9 +1556,9 @@ model, from which the shipped readers are generated).
   position set, the whole-device mask included, with no cap but the rule's; a row's wire `num_segments` is then
   only the count before the first read, and `sections` sizes the read-back alone. The rows' docs name the
   strip that takes the count. h705a 125 / 240 / 250 and h61d3 299 / 261 become `app_traced` (their docs drop
-  the static-mask divergence; h705a 184 stays `modelled` for its first walk, and its `ic_pieces` gains
-  `skip_zero: true`, an IC of 0 no count), h61d3 375 `app_traced` and h6609 173 `modelled` (segments and
-  `color_functions` left out, its doc says why), and h61d3 247's `num_segments` is 14, the most
+  the static-mask divergence; h705a 184 too, its first walk the user's approved divergence, and its
+  `ic_pieces` gains `skip_zero: true`, an IC of 0 no count), h61d3 375 `app_traced` and h6609 173 `modelled`
+  (segments and `color_functions` left out, its doc says why), and h61d3 247's `num_segments` is 14, the most
   `ceil(clamp(IC, 41, 70) / 5)` gives, where it was the library's bound of 16. The h705a 125 / 240 / 250 / 184
   wire rows take `f_40: ic_pair`, the reader their screens read aa 40 with (the pair form needs it), and
   govee_common's `form_40::ic_pair` doc names that read.
