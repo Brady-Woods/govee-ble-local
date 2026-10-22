@@ -299,7 +299,10 @@ model, from which the shipped readers are generated).
   `ac a1`), and the walk is skipped until it is known. New: `build.special_info_query()`,
   `reassemble.parse_segment_ic()` and `reassemble.read_segment_ic()`, `GoveeConnection.query`'s keyword-only
   `burst_command` / `burst_sub` and `reassemble.burst_chunks`'s keyword-only `command` / `sub` (defaults: the
-  status read's, so every status burst assembles as before). No admitted row uses it. Source-modelled, not
+  status read's, so every status burst assembles as before). `govee-ble-analyze` (`describe`) judges a burst
+  by the reader its first chunk names: it labels the request `status-request/special_info` and counts a
+  complete reply on its own line (the new `StatusBurstReport.special_info`), not as a malformed status burst,
+  with an empty one a gap (the app's read fails on it). No admitted row uses it. Source-modelled, not
   live-verified: no goodsType 180 unit is on the bench.
 - **`DeviceProfile.kelvin_from_pieces`** (keyword-only, default False; a devices.yaml row's `kelvin_readback:
   pieces`): the colour-temperature state comes from the `aa a5` walk's pieces, as the goodsType 180 screen

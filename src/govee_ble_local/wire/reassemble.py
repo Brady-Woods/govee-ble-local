@@ -15,11 +15,11 @@ under the status read: its ``[tag][len][value]`` records (Compose4BaseInfoSingle
 ``govee_state`` of their tag on the status path (switch / brightness / mode / zone / power memory / colour
 groups / 0x07 device-info), and the app's walk stops where fewer than three bytes remain. The offline
 analyzer (:mod:`.describe`) judges and reads each captured burst with the same helpers (:func:`burst_chunks`,
-:func:`read_status_stream`) and adds its stricter verdicts on top.
+:func:`read_status_stream`, :func:`read_segment_ic`) and adds its stricter verdicts on top.
 
 The special-info read (``ac a1``, goodsType 180's segment count) replies by the same state machine under
 its own command and sub; :func:`parse_segment_ic` joins it and reads it through the same root under that
-reader (:func:`read_segment_ic`).
+reader (:func:`read_segment_ic`), as the analyzer does for a burst whose first chunk is that reader's.
 """
 from __future__ import annotations
 
@@ -283,12 +283,13 @@ def read_segment_ic(buf: bytes) -> Any:
     return _spec.read(_spec.StatusStream, buf, _spec.PLAIN, SPECIAL_INFO_COMMAND).segment_ic
 
 
-def reassemble(frames: list[bytes]) -> bytes:
+def reassemble(frames: list[bytes], *, command: int = BurstAssembler.command,
+               sub: int = BurstAssembler.sub) -> bytes:
     """Join a 0xAC burst: first chunk's data @ offset 7, the rest @ offset 2.
 
-    The chunks are the ones the app takes, in order (:func:`burst_chunks`); a burst that is not
-    complete joins to ``b""``."""
-    return _joined(frames)[0]
+    The chunks are the ones the app takes, in order (:func:`burst_chunks`, with the reader's ``command``
+    and ``sub``: the status read's by default); a burst that is not complete joins to ``b""``."""
+    return _joined(frames, command=command, sub=sub)[0]
 
 
 def read_status_stream(buf: bytes, *, pieces: int | None = None, decode: Any = None
