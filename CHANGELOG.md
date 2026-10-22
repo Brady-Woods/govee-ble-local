@@ -94,9 +94,18 @@ model, from which the shipped readers are generated).
   Open, and named in each row's `doc`: whether the advert's switch byte carries the on/off on these firmwares
   (the app's IoT poll, which corrects it, has no library counterpart, so the state is assumed), the BGC
   version (an AES-GCM unit gets `GoveeBleNotSupported` on every command), and whether a write needs the
-  `33 b2` unlock (a refusal raises `GoveeBleCommandRejected`). No SKU admitted at 1.6.1 changes: each of the
-  104 resolves to the same profile, field by field (`session` "held"), at every pact (0-10 x 0-10, (99, 99)
-  and none), at each goodsType, with and without `allow_modelled`.
+  `33 b2` unlock (a refusal raises `GoveeBleCommandRejected`). The row type and these rows change no other
+  SKU: each of the 262 the other rows route (194 by default) resolves to the profile it has without them,
+  field by field (`session` "held"), at every pact (0-10 x 0-10, (99, 99) and none), at each goodsType, with
+  and without `allow_modelled`. Against 1.6.1, the 104 SKUs admitted there differ only in
+  `DeviceProfile.skus`: 8 of them, on the 4 profiles new SKUs join (under Changed).
+  - **Home Assistant:** the integration's support for these rows (two calls for power and brightness, assumed
+    state, availability from the advertisement) needs this release, and its own release sets the `>=1.8.0`
+    floor. An integration from before it also accepts this release (`>=1.2.1,<2`) and gets the four SKUs, but
+    sends a power-on with every brightness change (their state stays `optimistic`): its one
+    `turn_on(power=True, brightness=x)` call is then two sessions inside its 60 s command timeout, so a slow
+    link can time out the brightness after the power-on landed and report the command failed. Release the two
+    together.
 
 ### Changed
 - Nothing for existing SKUs. Each of the 104 SKUs admitted at 1.6.1 (98 by default, 6 behind
@@ -145,8 +154,7 @@ model, from which the shipped readers are generated).
   - The advert's on/off is a `govee_state` `power_state` source, `advert`: the manufacturer data's
     `device_state` read as the power byte, on at 1 for a light (`AbsBaseBleModel.z`) and by the
     `govee_profile` `power_rule.advert_on_mask` for a plug (h5080 `Model.z` / `Model4Plug2.z`).
-    `identify.parse_broadcast_onoff` reads both through it (the same decodes as before, now from the spec;
-    `govee_manufacturer_data` keeps the `switch_byte` it reads).
+    `identify.parse_broadcast_onoff` reads both through it (the same decodes as before, now from the spec).
   - The resolver serves `per_command` only on a row that reads nothing, writes nothing on connect, holds no
     link, has no lock, zones or pieces and carries only power and brightness; `advert` and `none` on a held
     row are not served. The coupling stays in the resolver, not the schema, so a firmware-confirmed read could
