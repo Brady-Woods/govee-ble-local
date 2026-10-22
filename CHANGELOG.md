@@ -52,6 +52,15 @@ model, from which the shipped readers are generated).
   - h705a: **H705A / H705B / H705C / H801B** (125), **H608A / H608B / H608C / H608D / H808A** (184), **H705D /
     H705E / H705F / H805A / H805B / H805C / H805D** (240), **H7067 / H7068 / H7069** (250), **H3401** (394);
   - h7057: **H3510**, **H3511**† (349).
+- **The other Glide panels, behind `allow_modelled`**, on the fixed `h6061` scheme (Fixed, below): **H6066**
+  (96, 25 panels), **H6067** (97, 23), **H6065** (121, 20), **H606A** (163, 21) and **H6063** (228, 20). They run
+  H6061's screen and builders (cubelight `SubLib` keys, `Model.t` -> `CubeAcLightDetail` / `CubeVM4Light`;
+  `Config.x` = 5 and `Config.I[gt][4]` for all five), so they get its power, brightness, whole-device RGB and
+  colour temperature, and the `aa a5` read-back. They are `modelled` because the app sizes every mask and the
+  read-back from the user's stored panel layout, which the device never reports: the row's count is a full
+  layout's (`Support.getBulbStringMaxNum`; for H6065 `ColorPieceConfig.f(121)` = 20, where the read-back default
+  is 23). H6061 itself stays admitted by default, the user's explicit exception for the same inferred count.
+  Not hardware-verified.
 - **Bench, 2026-10-21 (the Mac, reads only):** one H61C3 and two H6076s, polled through `create_device` and
   `update()` on the new rows. A guard on `GoveeConnection._send_frame` refused any write; none was attempted.
   - **H61C3** (rgbiclight 141, pact (1,1), plaintext, `allow_modelled`): aa 01, aa 04, aa 05 01, aa 40,
@@ -112,6 +121,13 @@ model, from which the shipped readers are generated).
   path above; `color_group_write` (`Bytes.m`) is now labelled the colour-stripe path, and `color_temp_write`
   cites the slider's own path (`ColorViewModel.U` -> `c` -> `Zt`). The resolver checks that an `h6061` row with
   RGB or colour temperature carries the `f_15_01: kelvin` form (it checked `f_15_04: rgb_group` for RGB).
+  - The family's rows are re-cut from the trace (h6061.md), not from its patch, which withdrew H6061: 96 / 97 /
+    121 / 163 / 228 get their own traced rows (`modelled`, above), and 51 keeps `app_traced`, names the
+    inferred panel count and the user's decision, and drops `scenes` from `capabilities` (an `untraced` dialect
+    claims nothing; the resolver already dropped it, so the profile is unchanged).
+  - `specs.segments`, `wire.doc`, the `aa a5` read and the per-goodsType opcode (now `color_write_per_goodstype`)
+    say what the app sizes from the stored layout L and what the row's count stands in for; the brightness
+    opcode cites the screen's `BrightnessConfig.b`, not the device-list `Support.getBrightnessRange`.
 
 ## [1.6.1] — 2026-10-21
 

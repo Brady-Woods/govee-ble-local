@@ -3937,13 +3937,13 @@ families:
       power_read: aa01   # in the connect read set; CubeNewDetailsConfig$makeControllerStrategy$1.java:211-215
       power_live: [heartbeat_aa01]   # no ee 30 parser; CubeVM4Light.java:531-533
       wire_cipher: runtime
-      by_goods_type:   # mode_color_parse = the family default for all six; 51 carries the control facts, the others their models
-        "51":   # Glide Hexa (cubelight/pact/Support.getDefDeviceName :243-254)
+      by_goods_type:   # mode_color_parse = the family default for all six; one screen (CubeAcLightDetail / CubeVM4Light, colour on DelegateColorV2 + CubeColorModeV2) for all six, the rows differ in pacts and wire counts
+        "51":   # Glide Hexa (cubelight/pact/Support.getDefDeviceName :243-254). app_traced with the panel count inferred: the user's decision 9, 2026-10-21 (h6061.md, Open 1)
           models: [H6061]
           color_scheme: h6061
           pacts: ["1,1", "1,2", "1,3"]
           support: app_traced
-          capabilities: [power, brightness, rgb, color_temp, segments, scenes]
+          capabilities: [power, brightness, rgb, color_temp, segments]
           zones: []
           account_lock: false
           scene_dialect: untraced
@@ -3951,39 +3951,216 @@ families:
           connect_writes: []
           heartbeat: power
           doc: >-
-            H6061 on the cubelight screen, which offers per-panel colour and scenes; its scene apply path is not traced
-            (scene_dialect untraced). Panel count n: the user's layout size, else 23 (ColorPieceConfig.f(51)); the device
-            never reports one. Whole-device RGB: one 15 01 R G B 00 00 <mask> frame (DelegateColorV2.F0 -> ColorViewModel.p0
-            -> ColorModeControllerConfig.c -> Config.J[5] = Zt -> Bytes.l); the 15 04 Bytes.m groups are the colour-stripe
-            path (ColorViewModel.O -> k). CCT: the 15 01 Bytes.u frame (ColorViewModel.U -> c -> Zt), also for an RGB pick
-            that is a Kelvin tint colour (KelvinConfig.i). Connect reads
-            (CubeNewDetailsConfig.makeControllerStrategy): aa 04, aa 01, aa 05, then the aa a5 groups 1..ceil(n / 4)
-            (CubeVM4Light.l5). Kelvin version 0 = [2000, 9000]; brightness percent. No account lock on control connects:
-            0xB2 is sent only in the pairing flows (ConnectDialog extends AbsConnectDialog4Secret, PairAcV1). Not
-            hardware-verified (no H6061 on the bench).
+            H6061 on the cubelight screen (DelegateColorV2, CubeColorModeV2 as its panel canvas); scene apply not traced.
+            Whole-device RGB pick: one Bytes.l frame, 15 01 R G B 00 00 <mask> (DelegateColorV2.F0 -> C0 ->
+            ColorViewModel.p0 -> ColorModeControllerConfig.c -> Config.J[5] = Zt; Config.x[51] = 5, Config.az); the 15 04
+            Bytes.m groups are the colour-stripe path (ColorViewModel.O -> k). CCT (Config.I[51][4] shows the slider;
+            ColorViewModel.U -> c -> Zt): Bytes.u, 15 01 <tint> <K u16be> <mask>. Both masks cover the stored layout size L
+            (CubeColorModeV2.realMyColorPiece = max(L, 1); layout from CubeAcLightDetail.H3), which the device never
+            reports; 23 stands in for it, the read-back default (Support.getBulbStringMaxNum) and a full layout's count.
+            That inferred L would make the row modelled; it stays app_traced as the user's explicit exception (decision 9,
+            "Keep it, fix the frame"). Connect: a time sync (TimerConfig.f, not modelled), aa 04, aa 01, aa 05, then the
+            aa a5 groups 1..ceil(L / 4) (CubeVM4Light.l5). Kelvin version 0 = [2000, 9000]; brightness percent; one 33 01
+            switch, unzoned. 0xB2 only while pairing (ConnectDialog, PairAcV1). Not hardware-verified.
           doc-ref:
-            - split_h6061/com/govee/cubelight/pact/Support.java:99-107
+            - split_h6061/com/govee/cubelight/pact/Support.java:99-107,180-194
             - base-classes2/com/govee/shared/config/h6061/H6061SceneConfig.java:46-48
-            - split_h6061/com/govee/cubelight/newdetails/CubeVM4Light.java:531-533
-            - base-classes11/com/govee/base2light/pact/newdetail/content/colorv2/DelegateColorV2.java:220-253,771-777
+            - base-classes11/com/govee/base2light/pact/newdetail/content/colorv2/DelegateColorV2.java:220-253,771-777,1295-1303
             - base-classes11/com/govee/base2light/pact/newdetail/content/color/ColorViewModel.java:848-884,1388-1415
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/ColorModeControllerConfig.java:207-256
-            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:5521-5531,13124-13131
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:1231-1235,4700-4704,5521-5531,13124-13131,13321-13324
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:379-390,541-556
-        "96": { models: [H6066] }   # Glide Hexa Pro
-        "97": { models: [H6067] }   # Glide Tri
-        "121": { models: [H6065] }   # Govee Glide Y Lights (h6067/pact/Support.java:84)
-        "163": { models: [H606A] }   # Glide Hexa Ultra
-        "228": { models: [H6063] }   # Govee Gaming Wall Light
+            - split_h6061/com/govee/cubelight/newdetails/CubeAcLightDetail.java:134-157
+            - split_h6061/com/govee/cubelight/newdetails/color/CubeColorModeV2.java:505-508
+            - split_h6061/com/govee/cubelight/newdetails/CubeVM4Light.java:386-422,531-533,1177-1200
+            - split_h6061/com/govee/cubelight/newdetails/CubeNewDetailsConfig$makeControllerStrategy$1.java:145-226
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/TimerConfig.java:169-182
+        "96":   # Glide Hexa Pro (cubelight/pact/Support.getDefDeviceName :243-254). modelled: the panel count is inferred
+          models: [H6066]
+          color_scheme: h6061
+          pacts: ["1,1", "1,2"]
+          support: modelled
+          capabilities: [power, brightness, rgb, color_temp, segments]
+          zones: []
+          account_lock: false
+          scene_dialect: untraced
+          connect_reads: [brightness, color_group]
+          connect_writes: []
+          heartbeat: power
+          doc: >-
+            H6066 on the cubelight screen, the path and builders of 51; scene apply not traced. Whole-device RGB: one Bytes.l
+            frame, 15 01 R G B 00 00 <mask> (ColorViewModel.p0 -> ColorModeControllerConfig.c -> Zt; Config.x[96] = 5); CCT
+            (Config.I[96][4] shows the slider; ColorViewModel.U -> c -> Zt): Bytes.u over the same mask. Masks cover the
+            stored layout size L (realMyColorPiece = max(L, 1); BleUtils.X above 16 positions, else 2 bytes), which the
+            device never reports. Modelled: 25 stands in for L, the read-back default (Support.getBulbStringMaxNum(96): aa
+            a5 groups 1..7) and a full layout's count. Connect: a time sync (TimerConfig.f, not modelled), aa 04, aa 01,
+            aa 05, then the aa a5 groups (CubeVM4Light.l5). Kelvin version 0 = [2000, 9000]; brightness percent; one 33 01
+            switch, unzoned. Not hardware-verified.
+          doc-ref:
+            - split_h6061/com/govee/cubelight/pact/Support.java:108-113,180-194
+            - split_h6061/com/govee/cubelight/pact/H6066Maker.java:14-16
+            - base-classes2/com/govee/shared/config/h6066/H6066SceneConfig.java:46-48
+            - base-classes11/com/govee/base2light/pact/newdetail/content/colorv2/DelegateColorV2.java:220-253,771-777,1295-1303
+            - base-classes11/com/govee/base2light/pact/newdetail/content/color/ColorViewModel.java:848-884,1388-1415
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/ColorModeControllerConfig.java:207-256
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:1236-1240,4705-4709,13124-13131,13484-13487
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:379-390,541-556
+            - split_h6061/com/govee/cubelight/newdetails/color/CubeColorModeV2.java:505-508
+            - split_h6061/com/govee/cubelight/newdetails/CubeVM4Light.java:386-422,531-533,1177-1200
+            - split_h6061/com/govee/cubelight/newdetails/CubeNewDetailsConfig$makeControllerStrategy$1.java:145-226
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/TimerConfig.java:169-182
+        "97":   # Glide Tri (h6067/pact/Support.getDefDeviceName :80-85). modelled: the panel count is inferred
+          models: [H6067]
+          color_scheme: h6061
+          pacts: ["1,1", "1,2"]
+          support: modelled
+          capabilities: [power, brightness, rgb, color_temp, segments]
+          zones: []
+          account_lock: false
+          scene_dialect: untraced
+          connect_reads: [brightness, color_group]
+          connect_writes: []
+          heartbeat: power
+          doc: >-
+            H6067 on the cubelight screen (cubelight SubLib key 97; the h6067 package registers the same pacts and only the
+            add flow), the path and builders of 51; scene apply not traced. Whole-device RGB: one Bytes.l frame (Config.x[97]
+            = 5 -> Zt); CCT (Config.I[97][4]; ColorViewModel.U -> c -> Zt): Bytes.u over the same mask. Masks cover the
+            stored layout size L (realMyColorPiece = max(L, 1)), never reported. Modelled: 23 stands in for L, the
+            read-back default (Support.getBulbStringMaxNum(97): aa a5 groups 1..6) and a full layout's count. Connect: a
+            time sync (TimerConfig.f, not modelled), aa 04, aa 01, aa 05, then the aa a5 groups (CubeVM4Light.l5). Kelvin
+            version 0 = [2000, 9000]; brightness percent; one 33 01 switch, unzoned. Not hardware-verified.
+          doc-ref:
+            - split_h6061/com/govee/cubelight/pact/Support.java:132-137,180-194
+            - split_h6061/com/govee/h6067/pact/Support.java:56-63
+            - split_h6061/com/govee/h6067/pact/H6067Maker.java:14-16
+            - base-classes2/com/govee/shared/config/h6067/H6067SceneConfig.java:46-48
+            - base-classes11/com/govee/base2light/pact/newdetail/content/colorv2/DelegateColorV2.java:220-253,771-777,1295-1303
+            - base-classes11/com/govee/base2light/pact/newdetail/content/color/ColorViewModel.java:848-884,1388-1415
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/ColorModeControllerConfig.java:207-256
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:1256-1260,4725-4729,13124-13131,15047-15050
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:379-390,541-556
+            - split_h6061/com/govee/cubelight/newdetails/color/CubeColorModeV2.java:505-508
+            - split_h6061/com/govee/cubelight/newdetails/CubeVM4Light.java:386-422,531-533,1177-1200
+            - split_h6061/com/govee/cubelight/newdetails/CubeNewDetailsConfig$makeControllerStrategy$1.java:145-226
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/TimerConfig.java:169-182
+        "121":   # Govee Glide Y Lights (h6067/pact/Support.getDefDeviceName :80-85). modelled: the panel count is inferred, and a full layout's count too
+          models: [H6065]
+          color_scheme: h6061
+          pacts: ["1,1"]
+          support: modelled
+          capabilities: [power, brightness, rgb, color_temp, segments]
+          zones: []
+          account_lock: false
+          scene_dialect: untraced
+          connect_reads: [brightness, color_group]
+          connect_writes: []
+          heartbeat: power
+          doc: >-
+            H6065 on the cubelight screen, the path and builders of 51; scene apply not traced. Whole-device RGB: one Bytes.l
+            frame (Config.x[121] = 5 -> Zt); CCT (Config.I[121][4]; ColorViewModel.U -> c -> Zt): Bytes.u over the same
+            mask. Masks and the aa a5 read-back cover the stored layout size L (realMyColorPiece = max(L, 1);
+            CubeVM4Light.l5 and CubeNewInfo4Detail.U take L over the default), never reported. Modelled: 20 stands in for L,
+            ColorPieceConfig.f(121), the colour-stripe limit, taken as a full layout's count; with no layout stored the
+            read-back default is Support.getBulbStringMaxNum(121) = 23 (its default branch: 6 groups), so the full count is
+            itself inferred. Connect: a time sync (TimerConfig.f, not modelled), aa 04, aa 01, aa 05, then the aa a5 groups.
+            Kelvin version 0 = [2000, 9000]; brightness percent; one 33 01 switch, unzoned. Not hardware-verified.
+          doc-ref:
+            - split_h6061/com/govee/cubelight/pact/Support.java:138-140,180-194
+            - split_h6061/com/govee/h6067/pact/Support.java:64-66
+            - split_h6061/com/govee/h6067/pact/H6065Maker.java:14-16
+            - base-classes2/com/govee/shared/config/h6065/H6065SceneConfig.java:46-48
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/ColorPieceConfig.java:274-295
+            - base-classes11/com/govee/base2light/pact/newdetail/content/colorv2/DelegateColorV2.java:220-253,771-777,1295-1303
+            - base-classes11/com/govee/base2light/pact/newdetail/content/color/ColorViewModel.java:848-884,1388-1415
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/ColorModeControllerConfig.java:207-256
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:1261-1265,4730-4734,13124-13131,15202-15205
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:379-390,541-556
+            - split_h6061/com/govee/cubelight/newdetails/color/CubeColorModeV2.java:505-508
+            - split_h6061/com/govee/cubelight/newdetails/CubeVM4Light.java:386-422,531-533,1177-1200
+            - split_h6061/com/govee/cubelight/newdetails/CubeNewDetailsConfig$makeControllerStrategy$1.java:145-226
+            - split_h6061/com/govee/cubelight/newdetails/CubeNewInfo4Detail.java:488-517
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/TimerConfig.java:169-182
+        "163":   # Glide Hexa Ultra (cubelight/pact/Support.getDefDeviceName :243-254). modelled: the panel count is inferred
+          models: [H606A]
+          color_scheme: h6061
+          pacts: ["1,1", "2,1"]
+          support: modelled
+          capabilities: [power, brightness, rgb, color_temp, segments]
+          zones: []
+          account_lock: false
+          scene_dialect: untraced
+          connect_reads: [brightness, color_group]
+          connect_writes: []
+          heartbeat: power
+          doc: >-
+            H606A on the cubelight screen, the path and builders of 51; scene apply not traced. Whole-device RGB: one Bytes.l
+            frame (Config.x[163] = 5 -> Zt); CCT (Config.I[163][4]; ColorViewModel.U -> c -> Zt): Bytes.u over the same
+            mask. Masks cover the stored layout size L (realMyColorPiece = max(L, 1)), never reported. Modelled: 21 stands
+            in for L, the read-back default (Support.getBulbStringMaxNum(163): aa a5 groups 1..6) and a full layout's count.
+            Connect: a time sync (TimerConfig.f, not modelled), aa 04, aa 01, the extras (aa 07 07 DSP version,
+            Support.supportAiOta, a device-info read; aa 41 power-off memory, Support.supportPowerOffMemory, a setting read
+            left out, D2), aa 05, then the aa a5 groups. Kelvin version 0 = [2000, 9000]; brightness percent; one 33 01
+            switch, unzoned. Not hardware-verified.
+          doc-ref:
+            - split_h6061/com/govee/cubelight/pact/Support.java:114-119,180-194,715-717,924-926
+            - split_h6061/com/govee/cubelight/pact/H606AMaker.java:14-16
+            - base-classes2/com/govee/shared/config/h606a/H606ASceneConfig.java:46-48
+            - base-classes11/com/govee/base2light/pact/newdetail/content/colorv2/DelegateColorV2.java:220-253,771-777,1295-1303
+            - base-classes11/com/govee/base2light/pact/newdetail/content/color/ColorViewModel.java:848-884,1388-1415
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/ColorModeControllerConfig.java:207-256
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:1241-1245,4710-4714,13124-13131,13642-13645
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:379-390,541-556
+            - split_h6061/com/govee/cubelight/newdetails/CubeVM4Light$connectBleSuc$2.java:128-193
+            - split_h6061/com/govee/cubelight/newdetails/color/CubeColorModeV2.java:505-508
+            - split_h6061/com/govee/cubelight/newdetails/CubeVM4Light.java:386-422,531-533,1177-1200
+            - split_h6061/com/govee/cubelight/newdetails/CubeNewDetailsConfig$makeControllerStrategy$1.java:145-226
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/TimerConfig.java:169-182
+        "228":   # Govee Gaming Wall Light (cubelight/pact/Support.getDefDeviceName :243-254). modelled: the panel count is inferred
+          models: [H6063]
+          color_scheme: h6061
+          pacts: ["1,1", "2,1"]
+          support: modelled
+          capabilities: [power, brightness, rgb, color_temp, segments]
+          zones: []
+          account_lock: false
+          scene_dialect: untraced
+          connect_reads: [brightness, color_group]
+          connect_writes: []
+          heartbeat: power
+          doc: >-
+            H6063 on the cubelight screen, the path and builders of 51; scene apply not traced. Whole-device RGB: one Bytes.l
+            frame (Config.x[228] = 5 -> Zt); CCT (Config.I[228][4]; ColorViewModel.U -> c -> Zt): Bytes.u over the same
+            mask. Masks cover the stored layout size L (realMyColorPiece = max(L, 1); for 228 the layout is read with
+            Shape.f, CubeAcLightDetail.H3), never reported. Modelled: 20 stands in for L, the read-back default
+            (Support.getBulbStringMaxNum(228): aa a5 groups 1..5) and a full layout's count. Connect: a time sync
+            (TimerConfig.f, not modelled), aa 04, aa 01, the extras (aa 07 07 DSP version, a device-info read; aa 41
+            power-off memory, a setting read left out, D2; aa b9 layout MD5, Support.supportDeviceGraphics, read only to
+            prompt a layout re-check, CubeVM4Light.U4), aa 05, then the aa a5 groups. Kelvin version 0 = [2000, 9000];
+            brightness percent; one 33 01 switch, unzoned. Not hardware-verified.
+          doc-ref:
+            - split_h6061/com/govee/cubelight/pact/Support.java:120-125,180-194,715-717,784-786,924-926
+            - split_h6061/com/govee/cubelight/pact/H6063Maker.java:14-16
+            - base-classes2/com/govee/shared/config/h6063/H6063SceneConfig.java:46-48
+            - base-classes11/com/govee/base2light/pact/newdetail/content/colorv2/DelegateColorV2.java:220-253,771-777,1295-1303
+            - base-classes11/com/govee/base2light/pact/newdetail/content/color/ColorViewModel.java:848-884,1388-1415
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/ColorModeControllerConfig.java:207-256
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:1246-1250,4715-4719,13124-13131,13799-13802
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:379-390,541-556
+            - split_h6061/com/govee/cubelight/newdetails/CubeAcLightDetail.java:134-157
+            - split_h6061/com/govee/cubelight/newdetails/CubeVM4Light$connectBleSuc$2.java:128-193
+            - split_h6061/com/govee/cubelight/newdetails/color/CubeColorModeV2.java:505-508
+            - split_h6061/com/govee/cubelight/newdetails/CubeVM4Light.java:386-422,531-533,1177-1200
+            - split_h6061/com/govee/cubelight/newdetails/CubeNewDetailsConfig$makeControllerStrategy$1.java:145-226
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/TimerConfig.java:169-182
       wire:
-        doc: "whole-device RGB one Bytes.l frame (the 15 01 kelvin form with K = 0) and CCT Bytes.u (Config.x = 5 -> Config.J[5] = Zt); 15 04 Bytes.m groups only on the colour-stripe path (Config.A = 1); direct aa a5 groups of 4 (CubeVM4Light.l5); counts = ColorPieceConfig.f, the write limit"
+        doc: "whole-device RGB pick one Bytes.l frame (the 15 01 kelvin form with K = 0) and CCT Bytes.u (Config.x = 5 -> Config.J[5] = Zt); 15 04 Bytes.m groups only on the colour-stripe path (Config.A = 1); masks and direct aa a5 groups of 4 (CubeVM4Light.l5) over the stored layout size L; counts = the goodsType default, a full layout's count (L is never reported: inferred)"
         forms: { f_01: light, f_09: datetime_epoch, f_a5: color_group, f_15_01: kelvin, f_15_04: rgb_group }
         group: { rule: fixed, num_per_group: 4 }
         by_goods_type:
           "51": { counts: { num_segments: 23 } }
           "96": { counts: { num_segments: 25 } }
           "97": { counts: { num_segments: 23 } }
-          "121": { counts: { num_segments: 20 } }
+          "121": { counts: { num_segments: 20 } }   # ColorPieceConfig.f(121), the stripe limit, as a full layout; with no layout stored the read-back default is Support.getBulbStringMaxNum(121) = 23 (6 aa a5 groups)
           "163": { forms: { f_41: power_memory }, counts: { num_segments: 21 } }
           "228": { forms: { f_41: power_memory }, counts: { num_segments: 20 } }
     models: [H6061, H6066, H6067, H6065, H606A, H6063]   # SKU <-> goodsType from the KMP scene configs; base-classes2/com/govee/shared/checker/KmpGoodsType.java:70-71
@@ -3997,19 +4174,19 @@ families:
       - { name: color_group_write, cmd: "0x05", payload: "[0x15, 0x04, group (from 1), R, G, B x<=4]: a colour stripe, ceil(n/4) frames, the last carrying the remaining panels (n=23: 6 frames, last has 3 colours)", note: "The colour-stripe path only (not modelled): DelegateColorV2.u0 :1257 -> ColorViewModel.O :693-715 -> ColorModeControllerConfig.k :730-869 -> w :1114-1141 -> l :871-934 (colour-brightness-group mode Config.A[51] = 1) -> Bytes.m(group, colours) (Bytes.java:393-402) / BleUtils.w0(colours, 4). Never the whole-device colour pick (color_write)." }
       - { name: color_temp_write, cmd: "0x05", payload: "[0x15, 0x01, tintR, tintG, tintB, kelvin u2be, mask LSB first over the posSet (BleUtils.X above 16 positions, else 2 bytes; n=23 -> ff ff 7f)] (Bytes.u)", note: "Slider: DelegateColorV2.G0 :241-253 -> x0 -> ColorViewModel.U :848-884 -> ColorModeControllerConfig.c -> Config.J[5] = Zt -> Bytes.u(Constant.getColorTemKelvin(tint), posSet, tint) (Bytes.java:541-556), posSet = ColorModeUtil.e(tint, realMyColorPiece); an RGB pick that is a Kelvin tint colour in range takes the same frame (Zt, KelvinConfig.i). Config.I[51][4] only shows the slider (DelegateColorV2.C1 :779-806). NOT the ff ff ff white-slot form of h60ax/h6047/h61d3." }
       - { name: mode_read_color, cmd: "0x05", readable: true, payload: "AA 05 0D [R, G, B, kelvin s16be at bytes 3-4 (signed, big-endian)]; kelvin > 0 => colour-temperature mode, every panel shown as Constant.getTemColorByKelvin(k)[2] (derived from the Kelvin, 0 when k is not an exact table step in 1000..10000; the wire RGB discarded); kelvin <= 0 => the RGB (cubelight/newdetails/CubeNewInfo4Detail.java:142-153 ctor strategy, U :503-517). Read at connect and again by the heartbeat off->on re-read (CubeVM4Light.h5, cubelight/newdetails/CubeVM4Light.java:333-345). The app reads colour back as 0x0d although it writes 0x15; mode 0x15 is not parsed (CubeNewInfo4Detail.U handles 13 / 4 / 10 / 19 only)." }
-      - { name: per_segment_color_read, cmd: "0xa5", readable: true, payload: "per-group direct read `aa a5 <group>` for groups 1..ceil(n/4) after every aa 05 (CubeVM4Light.l5); reply [group, 4 x {brightness, R, G, B}] (Controller4ColorInfoByGroup) = mechanism A-direct" }
-      - { name: brightness, cmd: "0x04", readable: true, payload: "[percent 1..100] (Support.getBrightnessRange {1, 100, 0})" }
-      - { name: color_group_write_per_goodstype, cmd: "0x05", payload: "[0x15, 0x04, group (from 1), R, G, B x<=4] per group of 4 panels, n = layout size else ColorPieceConfig.f (96:25 -> 7 frames, 97:23 -> 6, 121:20 -> 5, 163:21 -> 6, 228:20 -> 5); CCT form (every panel one Kelvin-tint colour) [0x15, 0x01, tintR, tintG, tintB, kelvin u2be, mask LSB first over 8*ceil(f/8) positions, first n set] (96 n=25: ff ff ff 01; 97 n=23: ff ff 7f; 121 / 228 n=20: ff ff 0f; 163 n=21: ff ff 1f)", applies_to: "H6066, H6067, H6065, H606A, H6063", note: "The same builders as the H6061 color_group_write / color_temp_write: CubeColorModeV2 -> ColorModeControllerConfig.k base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/ColorModeControllerConfig.java:730-869 (Config.k0 gate :739-742 holds only 303; no GradientColorControllerConfig.f key :743; CCT gate Config.I[gt][4] :764-767) -> w :1114-1141 (M0 = Config.A[gt] = 1) -> l :871-934 -> Bytes.m (base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:393-402; BleUtils.w0 RGB triplets, base-classes10/com/govee/base2kt/utils/BleUtils.java:1271-1283); all one Kelvin tint -> mapR :770-784 -> Config.J[5] = Zt (Config.java:5527, 13124-13131) -> Bytes.u :541-556 (kelvin BleUtils.D of K, high byte first; mask BleUtils.X, BleUtils.java:406-438, over ColorPieceConfig.k positions, base-classes11/com/govee/base2light/pact/newdetail/config/fuc/ColorPieceConfig.java:454-469). Piece limit ColorPieceConfig.f :274-295 reached from j :354-452 at :445 (no cube goodsType in j's sets or the SKU switch n :566-743); ColorPieceConfig.Config.s0 :1926-1967 (registered for all seven, :1252-1256, 1278-1279) expands a single colour to f and sends nothing for more than f colours. The library's h6061 builder (23 panels, 3-byte mask) produces the 96 frames wrongly (25 panels, 4-byte mask) and expands a single colour to 23 instead of 20 / 21 for 121 / 163 / 228" }
+      - { name: per_segment_color_read, cmd: "0xa5", readable: true, payload: "per-group direct read `aa a5 <group>` for groups 1..ceil(L/4) after every aa 05, L = the stored layout size, else Support.getBulbStringMaxNum (CubeVM4Light.l5, cubelight/newdetails/CubeVM4Light.java:386-422); reply [group, 4 x {brightness, R, G, B}] (Controller4ColorInfoByGroup) = mechanism A-direct" }
+      - { name: brightness, cmd: "0x04", readable: true, payload: "[percent 1..100], all six (the screen's BrightnessConfig.b: no brightness entry for a cube goodsType, so version 1 = {1, 100}, base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:63-86, 199-214, 251-258; Support.getBrightnessRange {1, 100, 0} is the device-list / DIY path, cubelight/pact/Comm.java:72-80)" }
+      - { name: color_write_per_goodstype, cmd: "0x05", payload: "the frames of 51 for all five: whole-device RGB one Bytes.l frame, CCT one Bytes.u frame, masks over the stored layout size L (BleUtils.X above 16 positions, else 2 bytes): a full layout L = 96:25 (ff ff ff 01), 97:23 (ff ff 7f), 121:20 (ff ff 0f), 163:21 (ff ff 1f), 228:20 (ff ff 0f); no layout L = 1 (01 00). Colour stripes: 15 04 Bytes.m groups over ColorPieceConfig.f (96:25 -> 7 frames, 97:23 -> 6, 121:20 -> 5, 163:21 -> 6, 228:20 -> 5)", applies_to: "H6066, H6067, H6065, H606A, H6063", note: "Config.x[gt] = 5 for all six (base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:1231-1265), Config.J[5] = Zt (:5527, 13124-13131); the colour-strip interceptor gives CubeColorModeV2 for all six (split_h6061/com/govee/cubelight/newdetails/CubeNewDetailsConfig.java:147-160). ColorPieceConfig.f (base-classes11/com/govee/base2light/pact/newdetail/config/fuc/ColorPieceConfig.java:274-295) bounds only the stripe path (ColorPieceConfig.Config.s0 :1926-1967, registered for all seven :1252-1256, 1278-1279). The read-back (aa a5 groups, CubeVM4Light.l5 :386-422; Kelvin fill, CubeNewInfo4Detail.U :503-516 and R :447-482) takes L, else Support.getBulbStringMaxNum (121: 23, its default branch). The library sizes masks and read-back from wire counts.num_segments, which stands in for L (inferred); it writes an explicit one-panel count as every panel, the stripe path's expansion, where the app writes 01 00." }
       - { name: on_off_memory, cmd: "0x41", readable: true, payload: "read aa 41 -> [open != 0, type]; write [0x02, type]", applies_to: "H606A, H6063", note: "Support.supportPowerOffMemory 163 / 228 (/ 284) (cubelight/pact/Support.java:924-926): ControllerOnOffMemory.c added to the Compose4InfoBleIot read set (CubeVM4Light$connectBleSuc$2.java:142-148; base-classes11/com/govee/base2light/kt/general_controller/ControllerOnOffMemory.java:35-39,48-57; cmd 0x41 = BleProtocol.value_setting_device, base-classes11/com/govee/base2light/pact/feast/BleProtocol.java:36). Write CubeVM4Light.S4 :591-603 -> ControllerOnOffMemory.g :74-76." }
       - { name: device_graphics_md5_read, cmd: "0xb9", readable: true, payload: "read aa b9 -> the first 16 bytes (when the reply is longer than 16) = the device's layout MD5 (hex), compared with the app's shapes (CubeVM4Light.U4)", applies_to: "H6063", note: "Support.supportDeviceGraphics 228 only (cubelight/pact/Support.java:784-786); Controller4ExtBytes.b([0xB9]) read in the Compose4InfoBleIot extras (CubeVM4Light$connectBleSuc$2.java:149-169; base-classes11/com/govee/base2light/kt/general_controller/Controller4ExtBytes.java:49-63); mismatch -> v5 / GraphicalIdentificationActivity prompt (CubeVM4Light.java:605-619, 488-514). Not needed for control." }
-    # n = the user's layout size, else 23; the device never reports it, and a colour set over 23 sends nothing.
-    specs: { segments: "panel count n: the user's layout size (CubeDataSource), else the goodsType default. Colour write / single-colour expansion limit ColorPieceConfig.f = 51:23, 96:25, 97:23, 121:20, 163:21, 228:20 (a single colour is expanded to f; more than f colours sends nothing, ColorPieceConfig.Config.s0); read-back default Support.getBulbStringMaxNum = 51:23, 96:25, 97:23, 121:23, 163:21, 228:20 (aa a5 groups = ceil(n/4); 121 writes 20 but reads 6 groups / fills 23 pieces on a Kelvin report); CCT mask = ColorPieceConfig.k = 8*ceil(f/8) positions (32 for 96, 24 for the others); the device never reports n", kelvin_range: [2000, 9000], brightness_range: [1, 100], brightness_scaling: "raw percent", scene_versions: [] }   # kelvin [2000, 9000] and brightness {1, 100} by default; scene_versions left empty (phase 2)
+    # L = the user's stored layout size: writes cover max(L, 1) panels, the read-back L, else Support.getBulbStringMaxNum; the device never reports it. A colour stripe longer than ColorPieceConfig.f sends nothing.
+    specs: { segments: "panel count L: the user's stored layout size (CubeDataSource, CubeAcLightDetail.H3; Shape.f for 228), never reported by the device. The whole-device RGB (Bytes.l) and CCT (Bytes.u) writes cover max(L, 1) positions (CubeColorModeV2.realMyColorPiece; mask BleUtils.X above 16 positions, else 2 bytes); the aa a5 read-back and the Kelvin-report fill take L, else Support.getBulbStringMaxNum = 51:23, 96:25, 97:23, 121:23, 163:21, 228:20 (groups = ceil(L/4)). Colour-stripe limit ColorPieceConfig.f = 51:23, 96:25, 97:23, 121:20, 163:21, 228:20 (a single colour is expanded to f; more than f colours sends nothing, ColorPieceConfig.Config.s0). wire counts.num_segments = a full layout's count (inferred)", kelvin_range: [2000, 9000], brightness_range: [1, 100], brightness_scaling: "raw percent", scene_versions: [] }   # kelvin [2000, 9000] and brightness {1, 100} by default; scene_versions left empty (phase 2)
     encryption: none   # 0xB2 only while pairing; no secret on control connects
     notify:   # the parsers CubeVM4Light registers for every goodsType (51 included)
       - { sub_type: "0x11", meaning: "wifi connect result (byte0 == 0 connected): ShareVM.Z3 base-classes11/com/govee/base2light/pact/newdetail/ShareVM.java:1600-1608 and CubeVM4Light.Z3 split_h6061/com/govee/cubelight/newdetails/CubeVM4Light.java:650-657 (DefParser.makeWifiNotifyParser default 17 -> Q, base-classes11/com/govee/base2light/kt/general_parser/DefParser.java:188-193, 324-331, 89-95)" }
       - { sub_type: "0x20", meaning: "brightness [u8] -> CubeVM4Light.p5 (CubeNewInfo4Detail.d) :465-477, registered :658-662 (makeBrightnessNotifyParser default 32 -> p, DefParser.java:97-102, 334-341, 195-199)" }
     confidence: medium   # source-derived from the 7.7.02 app; not hardware-verified
-    sources: ["pact_h6061: cubelight/pact/Support.java:97-115 (addSupportPact), 176-178 (getBrightnessRange), 180-198 (getBulbStringMaxNum)", "cubelight/newdetails/CubeNewDetailsConfig.java:287 + CubeNewDetailsConfig$makeControllerStrategy$1.java:148-225 (aa 04 :206 / aa 01 :211 / aa 05 :219-225 reads)", "cubelight/newdetails/CubeNewInfo4Detail.java:140-154 (0x0d parse strategy), 447-482 (parseMode), 488-535 (parseModeValidBytes)", "cubelight/newdetails/CubeVM4Light.java:386-422 (l5: aa a5 group reads)", "cubelight/newdetails/color/CubeColorModeV2.java:98-130, 154-169, 312-336, 415-436 (colour set, canClickColorTem)", "cubelight/add/ConnectDialog.java:14, cubelight/add/PairAcV1.java (pairing-only secret)", "base2light/pact/newdetail/config/fuc/color/ColorModeControllerConfig.java:730-870 (k), 871-935 (l), 1114-1142 (w)", "base2light/pact/newdetail/config/fuc/color/Config.java:5527 (J[5]), 13124 (Zt), 13321 (az: x[51]=5), 15460 (oO: I[51]), 15816 (qX: A[51]=1)", "base2light/pact/newdetail/config/fuc/color/Bytes.java:393-402 (m), 541-556 (u)", "base2kt/utils/BleUtils.java:406-438 (X), 1077-1097 (r), 1271-1283 (w0)", "base2light/pact/newdetail/config/fuc/ColorPieceConfig.java:274-278 (f: 51 -> 23), 354-452 (j), 454-469 (k), 745-756 (o), 1926-1967 (s0)", "base2light/pact/newdetail/config/fuc/KelvinConfig.java:193-200, 376-408 (default [2000, 9000])", "base2home/Constant.java:585-598 (getColorTemKelvin), 987-1005 (getTemColorByKelvin)", "base-classes9/com/govee/base2home/pfd/Config.java:107-115 (pact_h6061: 51, 96, 163, 228, 97, 121, 284)", "split_h6061/com/govee/cubelight/H6061ModuleInitImp.java:14-24; cubelight/H6061ApplicationImp.java:28-40; h6067/H6067ApplicationImp.java:24-30; h6067/add/WifiChooseAc.java:69", "cubelight/pact/SubLib.java:19-26; cubelight/pact/Register4Item.java:14-19; cubelight/pact/DeviceItem.java:17-20; cubelight/pact/Model.java:95-98", "cubelight/pact/Support.java:59-84 (SKU / goodsType constants, p), 97-140 (pacts), 151-170, 176-194, 197-217, 243-254, 327-332, 621-623, 715-717, 719-782, 784-786, 924-926, 936-938, 962-964", "h6067/pact/Support.java:45-70, 76-85, 142-153 (H6067 = 97, H6065 = 121)", "base-classes2/com/govee/shared/config/h6061/H6061SceneConfig.java:46-48, base-classes2/com/govee/shared/config/h6066/H6066SceneConfig.java:46-48, base-classes2/com/govee/shared/config/h6067/H6067SceneConfig.java:46-48, base-classes2/com/govee/shared/config/h6065/H6065SceneConfig.java:46-48, base-classes2/com/govee/shared/config/h606a/H606ASceneConfig.java:46-48, base-classes2/com/govee/shared/config/h6063/H6063SceneConfig.java:46-48; base-classes2/com/govee/shared/checker/KmpGoodsType.java:70-71,107-109,178", "cubelight/newdetails/CubeVM4Light.java:333-345 (h5), 386-438 (l5, m5), 465-477 (p5), 531-564 (I3, J3), 591-603 (S4), 605-619 (U4), 650-664 (Z3), 695-702, 763-780 (d0), 1006-1010 (n4)", "cubelight/newdetails/CubeVM4Light$connectBleSuc$2.java:47-60, 86-104, 125-193; cubelight/newdetails/CubeNewDetailsConfig$makeControllerStrategy$1.java:116-123, 145-226", "cubelight/newdetails/CubeNewDetailsConfig.java:147-160, 164, 284-288; cubelight/newdetails/CubeNewInfo4Detail.java:141-153, 221-226, 488-538, 784-822", "base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:1231-1265 (x), 2120, 3209-3238 (A), 3314, 4700-4734 (I), 5520, 5521-5582 (J), 13124-13131 (Zt)", "base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/ColorModeControllerConfig.java:730-869, 871-934, 1114-1141; Bytes.java:393-402, 541-556", "base-classes11/com/govee/base2light/pact/newdetail/config/fuc/ColorPieceConfig.java:274-295, 354-452, 454-469, 1252-1279, 1926-1967", "base-classes10/com/govee/base2light/capability/color/LightColorCapabilityCenter.java:219-221, 933-940, 1201-1206 and capability/center/LightCapabilityRead.java:114-140 (no spec -> LegacyColorCapabilityProvider -> the Config maps; the only providers are fanlight 359 / 368, split_fanlight/com/govee/fanlight/FanlightApplicationImp.java:33-36)"]
+    sources: ["pact_h6061: cubelight/pact/Support.java:97-115 (addSupportPact), 176-178 (getBrightnessRange), 180-198 (getBulbStringMaxNum)", "cubelight/newdetails/CubeNewDetailsConfig.java:287 + CubeNewDetailsConfig$makeControllerStrategy$1.java:148-225 (aa 04 :206 / aa 01 :211 / aa 05 :219-225 reads)", "cubelight/newdetails/CubeNewInfo4Detail.java:140-154 (0x0d parse strategy), 447-482 (parseMode), 488-535 (parseModeValidBytes)", "cubelight/newdetails/CubeVM4Light.java:386-422 (l5: aa a5 group reads)", "cubelight/newdetails/color/CubeColorModeV2.java:98-130, 154-169, 312-336, 415-436 (colour set, canClickColorTem)", "cubelight/add/ConnectDialog.java:14, cubelight/add/PairAcV1.java (pairing-only secret)", "base2light/pact/newdetail/config/fuc/color/ColorModeControllerConfig.java:730-870 (k), 871-935 (l), 1114-1142 (w)", "base2light/pact/newdetail/config/fuc/color/Config.java:5527 (J[5]), 13124 (Zt), 13321 (az: x[51]=5), 15460 (oO: I[51]), 15816 (qX: A[51]=1)", "base2light/pact/newdetail/config/fuc/color/Bytes.java:393-402 (m), 541-556 (u)", "base2kt/utils/BleUtils.java:406-438 (X), 1077-1097 (r), 1271-1283 (w0)", "base2light/pact/newdetail/config/fuc/ColorPieceConfig.java:274-278 (f: 51 -> 23), 354-452 (j), 454-469 (k), 745-756 (o), 1926-1967 (s0)", "base2light/pact/newdetail/config/fuc/KelvinConfig.java:193-200, 376-408 (default [2000, 9000])", "base2home/Constant.java:585-598 (getColorTemKelvin), 987-1005 (getTemColorByKelvin)", "base-classes9/com/govee/base2home/pfd/Config.java:107-115 (pact_h6061: 51, 96, 163, 228, 97, 121, 284)", "split_h6061/com/govee/cubelight/H6061ModuleInitImp.java:14-24; cubelight/H6061ApplicationImp.java:28-40; h6067/H6067ApplicationImp.java:24-30; h6067/add/WifiChooseAc.java:69", "cubelight/pact/SubLib.java:19-26; cubelight/pact/Register4Item.java:14-19; cubelight/pact/DeviceItem.java:17-20; cubelight/pact/Model.java:95-98", "cubelight/pact/Support.java:59-84 (SKU / goodsType constants, p), 97-140 (pacts), 151-170, 176-194, 197-217, 243-254, 327-332, 621-623, 715-717, 719-782, 784-786, 924-926, 936-938, 962-964", "h6067/pact/Support.java:45-70, 76-85, 142-153 (H6067 = 97, H6065 = 121)", "base-classes2/com/govee/shared/config/h6061/H6061SceneConfig.java:46-48, base-classes2/com/govee/shared/config/h6066/H6066SceneConfig.java:46-48, base-classes2/com/govee/shared/config/h6067/H6067SceneConfig.java:46-48, base-classes2/com/govee/shared/config/h6065/H6065SceneConfig.java:46-48, base-classes2/com/govee/shared/config/h606a/H606ASceneConfig.java:46-48, base-classes2/com/govee/shared/config/h6063/H6063SceneConfig.java:46-48; base-classes2/com/govee/shared/checker/KmpGoodsType.java:70-71,107-109,178", "cubelight/newdetails/CubeVM4Light.java:333-345 (h5), 386-438 (l5, m5), 465-477 (p5), 531-564 (I3, J3), 591-603 (S4), 605-619 (U4), 650-664 (Z3), 695-702, 763-780 (d0), 1006-1010 (n4)", "cubelight/newdetails/CubeVM4Light$connectBleSuc$2.java:47-60, 86-104, 125-193; cubelight/newdetails/CubeNewDetailsConfig$makeControllerStrategy$1.java:116-123, 145-226", "cubelight/newdetails/CubeNewDetailsConfig.java:147-160, 164, 284-288; cubelight/newdetails/CubeNewInfo4Detail.java:141-153, 221-226, 488-538, 784-822", "base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:1231-1265 (x), 2120, 3209-3238 (A), 3314, 4700-4734 (I), 5520, 5521-5582 (J), 13124-13131 (Zt)", "base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/ColorModeControllerConfig.java:730-869, 871-934, 1114-1141; Bytes.java:393-402, 541-556", "base-classes11/com/govee/base2light/pact/newdetail/config/fuc/ColorPieceConfig.java:274-295, 354-452, 454-469, 1252-1279, 1926-1967", "base-classes10/com/govee/base2light/capability/color/LightColorCapabilityCenter.java:219-221, 933-940, 1201-1206 and capability/center/LightCapabilityRead.java:114-140 (no spec -> LegacyColorCapabilityProvider -> the Config maps; the only providers are fanlight 359 / 368, split_fanlight/com/govee/fanlight/FanlightApplicationImp.java:33-36)", "base-classes11/com/govee/base2light/pact/newdetail/content/colorv2/DelegateColorV2.java:220-253 (F0 / G0, the all tab), 771-777 (C0), 1295-1303 (x0); content/color/ColorViewModel.java:848-884 (U), 1388-1415 (p0); config/fuc/color/ColorModeControllerConfig.java:207-256 (c); Bytes.java:379-390 (l); colorv2/ColorModeUtil.java:60-86, 140-146; split_h6061/com/govee/cubelight/newdetails/color/CubeColorModeV2.java:505-508 (realMyColorPiece): the whole-device colour path; k / w / l / Bytes.m are the colour-stripe path (ColorViewModel.O :693-715, DelegateColorV2.u0 :1257)", "base-classes11/com/govee/base2light/pact/newdetail/config/fuc/TimerConfig.java:169-182 + general_controller/ControllerSyncTime.java:31-35 (the connect time sync, makeControllerStrategy$1 :148)"]
 
   - id: h6069
     category: panel   # "Govee Gaming Wall Light" (cubelight/pact/Support.getDefDeviceName :243-254, the same name as 228)

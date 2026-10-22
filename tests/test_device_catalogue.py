@@ -50,13 +50,13 @@ def test_the_catalogue_routes_only_skus_no_row_lists() -> None:
         "H0064": 64,     # no row lists it: its goodsType's row routes it
         "H0999": 999,    # no row at its goodsType: unsupported
         "H6052": 23,     # a routed SKU, a conflict with no cited rewrite: unrouted, for review
-        "H6066": 23,     # the same on a row without support: for review
+        "H3A51": 23,     # the same on a row without support: for review
         "H6171": 13,     # barelightv1's assigned_goods_type cites the app's 13 -> 17: settled
         "H6159": 64,     # no row lists it, but h6159's assigned_goods_type rewrites it: for review
         "H6004": 10,     # one of the SKU's rows has the catalogue's goodsType: agreed
     })
     assert cat.added == {("bulblightv3", "64"): ("H0064",)} and cat.unrouted == {"H6052"}
-    assert [line.split(":")[0] for line in cat.review] == ["H6052", "H6066", "H6159"]
+    assert [line.split(":")[0] for line in cat.review] == ["H3A51", "H6052", "H6159"]
     twin = copy.deepcopy(fams)   # a goodsType with rows in two families routes neither
     rows = next(f for f in twin if f["id"] == "h6047")["client_profile"]["by_goods_type"]
     rows["64"] = {"models": ["H6047"]}
