@@ -124,7 +124,14 @@ the row lacks fails the build: nothing defaults silently.
   screen's strip takes them from the stored IC, ``ColorPieceConfig.c``; the wire ``num_segments`` is only the
   count before the first read), or, with ``ic_pieces: sections``, its two section bytes size the read-back's
   alone (``DeviceProfile.color_readback_ic_sections``), or, with ``ic_pieces: fixed``, it is made on every
-  poll and discarded (``DeviceProfile.ic_num_read_only``: a fixed piece count). Every command
+  poll and discarded (``DeviceProfile.ic_num_read_only``: a fixed piece count). A status row takes an object
+  form with one IC source: the status read's TLV 0x40 (a requested ``ic_num``, read as its wire ``f_40``
+  ``one_count`` / ``one_count_u16`` says; a TLV 0x40 ahead of the 0xA5 TLVs sizes the same burst's colour
+  groups, as the screen's lambda stores the count before it reads them), or aa 40 reads around the status
+  read (``connect_reads`` / ``post_status_reads`` ``ic_num``, ``DeviceProfile.ic_reads_around_status``: the
+  h7020 4702ABC connect). Its pieces size the writes and the status read's colour groups, or with
+  ``readback_pieces: ic_count`` the groups are placed over the IC count itself
+  (``DeviceProfile.color_readback_ic_raw``: ``Support.getColorPieceSize(gt, IC)``). Every command
   form the library sends or reads for the row must be the row's (wire ``forms``), a polled row's aa 05 reply
   is read with the row's wire ``mode`` (``DeviceProfile.mode_decode``, over the spec's default,
   :data:`_MODE_UNSET`), and a colour-group read is of 4-byte records in the row's wire
@@ -298,6 +305,8 @@ class Row(TypedDict, total=False):
     connect_writes: tuple[str, ...]
     power_resync: bool
     ic_pieces: IcPieces | IcTable | IcPair | str
+    post_status_reads: tuple[str, ...]
+    readback_pieces: str
     by_pact: dict[str, Branch]
     by_firmware: tuple[FirmwareBranch, ...]
 
@@ -503,7 +512,7 @@ _READBACK: Final = {"aa01": "polled", "ac_status": "status", "aa34_detail": "pol
 # The forms of the TLVs the status stream reads (govee_state's TLV-typed tags; reassemble.status_profile): the
 # row's own, in DeviceProfile.status_decode. f_a5 goes in only where the 0xA5 TLV is read as colour groups.
 _STATUS_TLV_FORMS: Final = ("f_30", "f_36", "f_40", "f_41", "f_a3")
-_GROUP_RULES: Final = frozenset({"from_len", "fixed", "by_pieces"})   # govee_common::group_count_rule, read
+_GROUP_RULES: Final = frozenset({"from_len", "fixed", "by_pieces", "whole_groups"})   # group_count_rule
 _READS: Final = frozenset({"brightness", "gradual", "cmd_36", "color_group", "ic_num", "cmd_41"})
 _PACT_FACTS: Final = frozenset({"status_read", "scene_versions", "kelvin_range", "brightness_range"})
 # Pact branches whose capabilities the library leaves unread: (family, goodsType, pact key) -> the branch's
@@ -1052,18 +1061,37 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
         fail(f"wire group rule {group.get('rule')!r} (the status read counts its colour groups' records by "
              "it)")
     ic = row.get("ic_pieces")
-    if ("ic_num" in reads) != (ic is not None) or (ic is not None and color_readback != "mechanism_a_direct"):
-        fail("an ic_num read and ic_pieces go together, with the direct colour read-back")
+    post = row.get("post_status_reads")
+    if post is not None and (status_read is None or set(post) != {"ic_num"}):
+        fail(f"post_status_reads {list(post)} (an aa 40 read after a status read, ic_num, is served)")
+    around = ("ic_num" in reads, "ic_num" in (post or ()))   # the aa 40 reads around the status read
+    tlv_ic = status_read is not None and "ic_num" in status_read and ic is not None
+    if status_read is None:
+        if ("ic_num" in reads) != (ic is not None) or (
+                ic is not None and color_readback != "mechanism_a_direct"):
+            fail("an ic_num read and ic_pieces go together, with the direct colour read-back")
+    elif any(around) != (ic is not None and not tlv_ic) or isinstance(ic, str) or (tlv_ic and any(around)):
+        fail("ic_pieces on a status row: an object form with one IC source, the status read's TLV 0x40 "
+             "(status_read ic_num) or aa 40 reads around it (connect_reads / post_status_reads ic_num), "
+             "which need it")
+    if tlv_ic and forms.get("f_40") not in ("one_count", "one_count_u16"):
+        fail(f"ic_pieces from the status read's TLV 0x40 with f_40 {forms.get('f_40')!r} (one_count or "
+             "one_count_u16: the one-count readers)")
     if isinstance(ic, str) and ic not in ("fixed", "sections"):
         fail(f"ic_pieces {ic!r} (fixed, sections, or an IC rule)")
     # An object form: a rule over the live IC count (H6641's clamp and divisor, the h705a floor, H6609's
     # table, H1A45's pair).
     ic_rule = {} if ic is None or isinstance(ic, str) else _ic_rule(ic, fail)
     live_ic = bool(ic_rule)
-    if live_ic and forms.get("f_40") == "ic_pair":   # ControllerIcNum.e reads the reply: none where it throws
+    if live_ic and not tlv_ic and forms.get("f_40") == "ic_pair":   # ControllerIcNum.e reads the aa 40 reply
         ic_rule["color_readback_ic_pair_reader"] = True
     elif "color_readback_ic_pair_cap" in ic_rule:
-        fail("ic_pieces pair_max without wire f_40 ic_pair (the pair is the IC-pair reader's)")
+        fail("ic_pieces pair_max without wire f_40 ic_pair on an aa 40 read (the pair is the IC-pair "
+             "reader's)")
+    readback_ic = row.get("readback_pieces")
+    if readback_ic is not None and (readback_ic != "ic_count" or not status_groups or not live_ic):
+        fail(f"readback_pieces {readback_ic!r} (ic_count, on a status row with an ic_pieces object form that "
+             "reads colour groups)")
     section_count = "cmd_41" in reads
     if section_count and forms.get("f_41") != "section_count":
         fail("an aa 41 read without f_41 section_count")
@@ -1190,6 +1218,10 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
         if mode != _MODE_UNSET:
             out["mode_decode"] = tuple(sorted(mode.items()))
     out.update(ic_rule)
+    if status_read is not None and any(around):
+        out["ic_reads_around_status"] = around
+    if readback_ic is not None:
+        out["color_readback_ic_raw"] = True
     if relay:
         relay_power = need(row.get("relay_power", cp.get("relay_power")), "relay_power")
         if relay_power not in RELAY_POWERS:
