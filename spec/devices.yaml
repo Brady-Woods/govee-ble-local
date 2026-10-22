@@ -18125,7 +18125,7 @@ families:
           kelvin_range: [2700, 6500]
           brightness_range: [1, 100]
           status_read: [cmd_41, color_group, cmd_4b]
-          device_info_reads: unverified
+          device_info_reads: none
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -18150,7 +18150,11 @@ families:
             records come in one TLV or in full 4-record groups, and differ for a 4 + 2 or 3 + 3 split; the firmware's split is
             untraced (gap status_a5_stride_per_tlv, or a bench check). A group 0 with records, or one starting past piece 6,
             makes SubMode4Color.j throw and fails the app's whole read, which the library reads past (same gap). Not modelled: gradual (the screen reads it from the 0x15
-            mode byte, no aa a3 read), music, DIY, timers, auto-dimming. Scenes untraced. Not hardware-verified.
+            mode byte, no aa a3 read), music, DIY, timers, auto-dimming. Scenes untraced. Device info (device_info_reads
+            none): o5 queues no aa 06 / aa 07 read (its one goodsType branch, H2800Config.d = 396, adds a requested
+            type), and its success callback s5 takes the soft and hard versions from the reply's TLV 0x07 (k2(e(), d());
+            Compose4BaseInfoSingleRead.w), as on 371, so the library sends none either and folds the versions and device
+            id from TLV 0x07 alone. Not hardware-verified.
           doc-ref:
             - split_h7075/com/govee/h7075/pact/Support.java:61,120-122,145-187,227-251,327-330,422-438,524-539,575-581
             - split_h7075/com/govee/h7075/pact/SubLib.java:23-30
@@ -18160,10 +18164,11 @@ families:
             - base-classes2/com/govee/shared/config/h7072/H7072SceneConfig.java:46-48
             - split_h7075/com/govee/h7075/h7072/H7072Config.java:51-63,69-147
             - split_h7075/com/govee/h7075/h7072/H7072AcLightDetail.java:174-175
+            - split_h7075/com/govee/h7075/h2800/H2800Config.java:174-176
             - split_h7075/com/govee/h7075/h7072/H7072VM4Light.java:168-173,257-269,524-568,585-588,650-680,779-812,825-833,861-931,948-970,1144-1159,1287-1311,1343-1386,1397-1399,1609-1625,1749-1773,2035-2056
             - split_h7075/com/govee/h7075/h7072/H7072VM4Light$notifySwitchChange$3.java:78-125
             - split_h7075/com/govee/h7075/h7072/H7072Info4Detail.java:60,219-221,472-504,666-672,757-794
-            - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4BaseInfoSingleRead.java:161-180,215-237,247-345
+            - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4BaseInfoSingleRead.java:161-180,215-237,247-345,370-437
             - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4Off2On.java:45-81
             - base-classes11/com/govee/base2light/pact/newdetail/sub/SubMode4Color.java:113-147
             - base-classes11/com/govee/base2light/pact/newdetail/ShareVM.java:979-1015,1298-1301,1348-1350,1362-1364

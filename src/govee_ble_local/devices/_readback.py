@@ -213,8 +213,8 @@ async def read_device_info(dev: ReadTarget, read_reply: ReadReply) -> bool:
 
     The library sends all three on the first poll of every profile with a read-back, but a status profile
     without ``DeviceProfile.device_info_reads`` (a status row's ``device_info_reads: none``: H6039, H6069 /
-    H8069, H3751, H7045, H7046, H3351, H70D1-3 / H80D1), which takes them from TLV 0x07 alone, as its screen
-    does, and never calls this. Where the app doesn't send them, they are FIRMWARE-SOURCED extensions
+    H8069, H3751, H7045, H7046, H3351, H7072, H70D1-3 / H80D1), which takes them from TLV 0x07 alone, as its
+    screen does, and never calls this. Where the app doesn't send them, they are FIRMWARE-SOURCED extensions
     (CLAUDE.md rule 6) only where a firmware image or the bench shows them answered: on the H60A6 and H6076
     status screens (``device_info_reads: firmware``) and on the gt 43 plugs, which have no other BLE source
     for them. On the other status rows (``device_info_reads: unverified``, e.g. rgbiclight 332 / 351 / 352:
