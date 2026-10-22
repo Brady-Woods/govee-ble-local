@@ -12775,6 +12775,8 @@ families:
             Kelvin version 0 = [2000, 9000]; brightness version 1 = percent. No 0xB1 / 0xB2 on the control screen
             (account_lock false). Not modelled: the aa 25 01 Wi-Fi OTA read and the TimerConfig.f time sync queued
             before the status read, MTU 512, scenes (untraced), DIY / graffiti, music, feast, splicing, display.
+            Known gap: VM4H70B6.n5 reads TLV 0x39 byte 0 unguarded (:645-653), so an empty 0x39 fails the app's whole
+            status read, while the library (no form for it) still applies the burst's power and brightness.
             Not hardware-verified.
           doc-ref:
             - split_h70b1/com/govee/h70b6/Support.java:21-26,57-75,99-104
@@ -12824,12 +12826,14 @@ families:
             [2000, 9000]; brightness version S1 = 1 = percent; aa 00 keep-alive; ee 30 push), but its status read is
             ac 03 04 41 39 7d 7e (Support.e / d hold for 341 on every pact): TLV 0x7D the 24-hour clock and 0x7E the
             temperature unit, both read raw (not modelled). The screen also reads aa 60 01 (feast, Support.i holds for
-            341) before aa 25 01, not modelled. Not hardware-verified.
+            341) before aa 25 01, not modelled. Known gap, as 329's 0x39: n5 reads byte 0 of TLV 0x39, 0x7D and 0x7E
+            unguarded, so an empty one fails the app's whole status read, while the library (no form for them) still
+            applies the burst's power and brightness. Not hardware-verified.
           doc-ref:
             - split_h70b1/com/govee/h70b8/Config4H70B8Manager.java:82-101
             - split_h70b1/com/govee/h70b8/H70b8ApplicationImp.java:36-37
             - split_h70b1/com/govee/h70b6/Support.java:21-26,57-75,92-97
-            - split_h70b1/com/govee/h70b6/adjust/VM4H70B6.java:479-506,1222-1229
+            - split_h70b1/com/govee/h70b6/adjust/VM4H70B6.java:479-506,631-669,1222-1229
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:1784-1788,4820-4824,11025-11028,15367-15370
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:858-862,1171-1174
       wire_cipher: runtime
@@ -18717,12 +18721,16 @@ families:
           doc: >-
             H7073 on the H7070 screen: ac 03 03 41 0c 42 (supportEffectChange always true for 333), TLV 0x42 the
             effect-change switch (not modelled); every other core fact as 283. Pact (1,1) from AddDeviceM.addDeviceH7073,
-            not Support.addSupportPact. Scenes untraced. Not hardware-verified.
+            not Support.addSupportPact. Known gap: X4 reads TLV 0x42 byte 0 and passes TLV 0x0c to
+            OperateModeInfoH7070.E, which reads 15 bytes plus 3 per colour its byte 14 counts, all unguarded, so an
+            empty 0x42 or a short 0x0c fails the app's whole status read, while the library (no form for either) still
+            applies the burst's power and brightness. Scenes untraced. Not hardware-verified.
           doc-ref:
             - split_h6092/com/govee/h6092/add/AddDeviceM.java:50-58,70-72
             - split_h6092/com/govee/h6092/pact/Support.java:272-274,304-312,500-515
             - split_h6092/com/govee/h6092/pact/Model.java:66-68
             - split_h6092/com/govee/h6092/newDetail/h7070/VM4LightH7070.java:99-131,181-215
+            - split_h6092/com/govee/h6092/newDetail/h7070/OperateModeInfoH7070.java:35-71
         "401":   # H3860, the AcNewDetailH3860 screen (0xAC status read)
           models: [H3860]
           pacts: ["1,1"]
@@ -18740,7 +18748,9 @@ families:
             brightness, 0x05 the mode (Info4DetailH3860.I reads byte 0 unguarded: an empty one fails the read), 0x41
             the power-off memory (value[1] unguarded), 0x0c the operate info and 0x45 the pattern switch (not modelled).
             Default header: 33 01 (switchTrigger -> ControllerSwitch.d), 33 04 percent. Keep-alive aa 00 (I3 false);
-            live power ee 30 bit 0 of frame[3]. Scenes untraced. Not hardware-verified.
+            live power ee 30 bit 0 of frame[3]. Known gap: U4 reads TLV 0x45 byte 0 unguarded (:158-160), so an empty
+            0x45 fails the app's whole status read, while the library (no form for it) still applies the burst's power
+            and brightness. Scenes untraced. Not hardware-verified.
           doc-ref:
             - split_h6092/com/govee/h6092/pact/Support.java:118-120,236-238,381-396
             - split_h6092/com/govee/h6092/pact/Model.java:76-77

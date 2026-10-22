@@ -132,6 +132,12 @@ model, from which the shipped readers are generated).
     one, as on H60A6): their screens read 0x41's byte 1 and 0x05's byte 0 unguarded (`VM4LightH7070.X4`,
     `Info4DetailH7070.H`, `VM4LightH3860.U4`, `Info4DetailH3860.I`). h6092 283 (H7070) now states its status read; it stays held
     because pacts (1,2) and (2,1) add 0x42, a pact branch the library can't follow.
+  - `write_check_ic` (0x42) also names the H7073 effect-change switch that 333's status read requests
+    (`GET_NECESSARY_INFO` / `controller_type_lamp_effect_change`, `VM4LightH7070.X4`); its value stays untyped.
+  - A known gap, named in the rows' `doc`: the same handlers read byte 0 of TLV 0x42 (333), 0x45 (401), 0x39
+    (h70b6 329 / 341) and 0x7D / 0x7E (341), and H7073's 0x0c layout (`OperateModeInfoH7070.E`), unguarded, so
+    an empty or short value fails the app's whole status read, while the library, with no form for them, still
+    applies the burst's power and brightness.
 
 ## [1.6.1] — 2026-10-21
 

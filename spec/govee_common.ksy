@@ -704,13 +704,17 @@ enums:
         - split_h6062/com/govee/striplight/newdetail/ControllerIcSegmentNum.java:40-54
     0x42:
       id: write_check_ic
-      -orig-id: SINGLE_WRITE_CHECK_IC
+      -orig-id: [SINGLE_WRITE_CHECK_IC, GET_NECESSARY_INFO, controller_type_lamp_effect_change]
       doc: |
-        firmware-sourced H60A6 calibration: 01 enter, 02 step, FF save, 00 exit
+        firmware-sourced H60A6 calibration: 01 enter, 02 step, FF save, 00 exit;
+        also the H7073 effect-change switch, requested by the H7070-screen status
+        read (TLV 0x42 byte 0 == 1 = on), value not typed
       doc-ref:
         - base-classes10/com/govee/base2light/ble/controller/BleProtocolConstants.java:175
         - firmware-h60a6-wifi/decompiled/H60A6_ble_dispatcher.c:483-548
         - H60A6 code @0x9b0269fe
+        - split_h6092/com/govee/h6092/ble/BleProtocol.java:7,22
+        - split_h6092/com/govee/h6092/newDetail/h7070/VM4LightH7070.java:110-113,213-215
     0x43:
       id: check_ic_amount
       -orig-id: [SINGLE_WRITE_CHECK_IC_AMOUNT, OP_COMMAND_TYPE_0X43]
