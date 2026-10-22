@@ -13973,6 +13973,7 @@ families:
         "0":   # catalogue goodsType 0; VM4Light.X0 runs no pact check at 0
           models: [H7004]
           pacts: any
+          support: app_traced
           capabilities: [power]
           zones: []
           account_lock: false
@@ -13987,15 +13988,16 @@ families:
             ahead of H7004BleProcessor, so h7004/add/BleConnectDialog is reached only at a non-zero scan goodsType. The
             device list (SubLib keys H7004, Model.t) opens /rgb/newdetail (VM4Light), whose connected content for H7004
             is the plant UI (RgbLightDetailRegistrar r0 -> DelegateConnectSuccess -> ConnectSuccess4Plant): power and the
-            red:blue ratio only. No brightness (VM4Light.supportBrightness is false for H7004; k1 adds
-            ControllerBrightness for H7017 only), no RGB, Kelvin, segments or scene UI. Connect (ControllerStrategyConfig.k1): aa 06, aa 07 03, the 33 09
+            red:blue ratio only. No brightness (VM4Light.supportBrightness is false for H7004, so the screen's
+            default header, AbsAcLightDetail's DelegateHeader, hides its brightness slider in DelegateHeader.X; k1
+            adds ControllerBrightness for H7017 only), no RGB, Kelvin, segments or scene UI. Connect (ControllerStrategyConfig.k1): aa 06, aa 07 03, the 33 09
             clock sync (TimerConfig.f, version 2), aa 0a 00 / aa 0a 01 (timers), aa 01, aa 0d (red:blue). Power 33 01 01 /
             00 (VM4Light.switchTrigger -> ControllerSwitch.d), read back from the aa 01 reply (byte 0 == 1) and the aa 01
             heartbeat (VM4Light.I3 true, Ble4NewDetail's AbsBle 2000 ms fixed rate). No account lock
-            (AbsBleConnectDialog reads versions only). The library could serve it as a power-only row (with no
-            brightness capability its poll reads aa 01 and no aa 04 or aa 05, as k1). Held without support until the
-            user decides whether a power-only grow light ships before its red:blue control (33 0d <red> 01, aa 0d),
-            GAPS_SCOPE decision 10; the timers and the 33 09 clock sync are not modelled. Not hardware-verified.
+            (AbsBleConnectDialog reads versions only). A power-only row, admitted by the user's decision (2026-10-22,
+            "Ship power-only"): with no brightness capability the library's poll reads aa 01 and no aa 04 or aa 05,
+            as k1. Not modelled (never a blocker): the red:blue ratio (33 0d <red> 01, aa 0d), the timers and the
+            33 09 clock sync. Not hardware-verified.
           doc-ref:
             - split_rgblight/com/govee/rgblight/VM4Light.java:806-810
             - base-classes9/com/govee/base2home/pact/Pact.java:94-97
@@ -14009,6 +14011,8 @@ families:
             - split_rgblight/com/govee/rgblight/h7004/DelegateConnectSuccess.java:85-105
             - split_rgblight/com/govee/rgblight/ControllerStrategyConfig.java:1301-1351,1414-1416
             - split_rgblight/com/govee/rgblight/VM4Light.java:1610-1616
+            - base-classes11/com/govee/base2light/pact/newdetail/AbsAcLightDetail.java:964-969
+            - base-classes11/com/govee/base2light/pact/newdetail/header/DelegateHeader.java:687-693
             - split_rgblight/com/govee/rgblight/VM4Light.java:1639-1662
             - base-classes11/com/govee/base2light/kt/general_controller/ControllerSwitch.java:30-34,60-75
             - split_rgblight/com/govee/rgblight/VM4Light.java:648-650

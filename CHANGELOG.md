@@ -34,11 +34,11 @@ model, from which the shipped readers are generated).
     Discovery keeps the name gate as before.
 - **158 more SKUs, traced from the app's device list** (spec rows only; no library code changed but three
   row facts, below: segment colour temperature, the segment-brightness groups and a status row's
-  device-info reads): 97 admitted
-  by default (`app_traced`) and 61 behind `allow_modelled` (`modelled`). The entries below admit 39 more by
-  default (16 through the resolver changes; H1162 / H1163 / H1167 / H1168, H70B1 and H70BC; and 17 through the
-  status-read command ids and the BK pact gate) and 7 more behind `allow_modelled` (H7072, H6119 and the five
-  Glide panels), for 234 admitted by default and 74 behind `allow_modelled` in all. None is
+  device-info reads): 97 admitted by default (`app_traced`) and 61 behind `allow_modelled` (`modelled`). The
+  entries below admit 40 more by default (16 through the resolver changes; H7004, H1162 / H1163 / H1167 /
+  H1168, H70B1 and H70BC; and 17 through the status-read command ids and the BK pact gate) and 7 more behind
+  `allow_modelled` (H7072, H6119 and the five Glide panels), for 235 admitted by default and 74 behind
+  `allow_modelled` in all. None is
   hardware-verified (the only bench check, below, was read-only), and none has a bundled scene catalog, so none
   is offered scenes. Each is listed with its family and goodsType; † marks a SKU no row lists that the
   catalogue snapshot (`spec/govee_catalog.json`) routes to that row by its goodsType alone (16 of them).
@@ -158,6 +158,13 @@ model, from which the shipped readers are generated).
     each, soft 1.04.05, hard 3.05.00. One unit's mode TLV is a short `15 01`. The row's own decode
     (`gradual_14`, where 0x15 isn't decoded) reads that burst in full; the H60A6 default decode gave an empty
     reply.
+- **H7004** (h7004 goodsType 0), a grow light, admitted by default (`app_traced`) as a power-only row at any
+  pact, following the user's decision (2026-10-22: "Ship power-only"); `VM4Light.X0` runs no pact check at
+  goodsType 0. Its screen reads aa 01 and the device info, never aa 04 or aa 05
+  (`ControllerStrategyConfig.k1`), and offers no brightness: `VM4Light.supportBrightness` is false for H7004,
+  so the screen's default header hides its slider (`DelegateHeader.X`). So the row has no brightness, and the
+  library's poll reads aa 01 alone. The red:blue ratio (`33 0d`, aa 0d), the timers and the `33 09` clock sync
+  are not modelled. Not hardware-verified.
 - **`DeviceProfile.light_nonzero`** (keyword-only, default False; the spec's `power_rule.light_nonzero`): a
   polled light whose screen reads the aa 01 reply as on for any non-zero byte, as the legacy
   `SwitchController.parseValidBytes` and the H70BX connect read (`AfterConnectSuccessReadDeviceInfo.w`) do. A
@@ -371,14 +378,13 @@ model, from which the shipped readers are generated).
   `modelled`; one that needs library work has no `support` and names the gap in its `doc`. A verification
   pass challenged each family's rows; they were repaired, and demoted (to `modelled`, or to no `support`)
   where a core claim didn't hold.
-  - devices.yaml now has 305 goodsType rows in 96 families (184 in 91): 186 with `support` (66), of them 146
-    `app_traced`, 36 `modelled` and the same 4 `hardware_verified`, and 119 without (118). 66 of the 186 had
-    support at 1.6.1 and keep it; the trace gave 87 more rows support. The other 33 take it through the library
-    and spec changes under Added, Changed, Fixed and Spec: h6069 284, h3700 383, h7076 313, h70dx 267-269,
-    bulblightv3 342, the four h1162 rows, h70b1 134,
-    h70bx 216, the six status-read rows (h6092 334 / 333 / 401, h7072 371 / 294, h70b6 341), the nine BK target
-    rows and the five Glide panel rows (h6061 96 / 97 / 121 / 163 / 228), all `app_traced` but h7072 294, h6119
-    44 and the Glide panels (`modelled`).
+  - devices.yaml now has 305 goodsType rows in 96 families (184 in 91): 187 with `support` (66), of them 147
+    `app_traced`, 36 `modelled` and the same 4 `hardware_verified`, and 118 without (118). 66 of the 187 had
+    support at 1.6.1 and keep it; the trace gave 87 more rows support. The other 34 take it through the library
+    and spec changes under Added, Changed, Fixed and Spec: h7004 0, h6069 284, h3700 383, h7076 313, h70dx
+    267-269, bulblightv3 342, the four h1162 rows, h70b1 134, h70bx 216, the six status-read rows (h6092 334 /
+    333 / 401, h7072 371 / 294, h70b6 341), the nine BK target rows and the five Glide panel rows (h6061 96 /
+    97 / 121 / 163 / 228), all `app_traced` but h7072 294, h6119 44 and the Glide panels (`modelled`).
   - Two goodsType add-ons were traced and checked on their own: straightfloorlamp 69 (H6076 / H8076,
     `app_traced`, with the bench reads above, on an advertised pact only: `pact_required`, below) and
     rgbiclight 141 (H61C2 / H61C3 / H61C5).
@@ -413,10 +419,6 @@ model, from which the shipped readers are generated).
   - The catalogue snapshot routes 33 SKUs no row lists (15 before), H8069 and H80D1 among them. For review:
     H613A-F (catalogue 39, named by h613839's (65535,255) bind item), where it was H615E.
   - rgbiclight 351 / 352 now record the R617G / R618D catalogue route, as h7057 274 does H8057's.
-  - h7004 0 (H7004, a grow light) is traced as a power-only row the library can serve (its screen reads aa 01
-    and the device info, never aa 04 or aa 05: `ControllerStrategyConfig.k1`, `VM4Light.supportBrightness`
-    false), and held without `support` until the user decides whether a power-only grow light ships before
-    its red:blue control (`33 0d`, aa 0d).
 - **`segment_brightness_groups`, a clientRow fact** (devices.schema.json): the disjoint groups the colour
   page's segment-brightness slider widens a selection to before the `33 05 15 02` write (Bytes.G), which
   becomes `DeviceProfile.segment_brightness_groups`. The resolver serves it only on a row with that frame
