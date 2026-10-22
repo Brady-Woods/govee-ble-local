@@ -97,7 +97,10 @@ the row lacks fails the build: nothing defaults silently.
   (``fixed_rate`` unless the row says ``after_quiet``). A row's live power checks it, one way only: a
   ``heartbeat_aa01`` / ``heartbeat_aa36`` / ``heartbeat_aa33`` power_live needs the heartbeat ``power`` /
   ``cmd_36`` / ``volume``, and a relay row ``power`` (a plug's outlets are the aa 01 reply's); a
-  ``push_30``-only row may send any.
+  ``push_30``-only row may send any. The library folds no keep-alive reply or ee 30 push into state: the
+  poll's own power read stands in for them, aa 01 on a polled row and the status read's TLV 0x01 on a
+  status row (``heartbeat_aa01`` on either), the aa 36 bar read for ``heartbeat_aa36``, and either for a
+  ``push_30`` with its wire ``f_ee_30``.
 - Wire branches: the library reads the wire with the pact and the firmware unknown, so a wire ``by_pact`` /
   ``by_firmware`` branch raises, but for the unread ones of :data:`_UNREAD_WIRE_BRANCHES` (H60A6 pact (1,
   1)'s one colour piece: decision D3, the library keeps the row's 13).
@@ -876,13 +879,13 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
         need(resync, "power_resync")
     elif resync:
         fail("power_resync on a light (the library re-syncs a plug's session only)")
-    live_served = {"heartbeat_aa01": readback == "polled", "heartbeat_aa36": bar,
+    live_served = {"heartbeat_aa01": readback in ("polled", "status"), "heartbeat_aa36": bar,
                    "push_30": forms.get("f_ee_30", "unknown") != "unknown"}
     lives = row.get("power_live", cp.get("power_live")) or ()
     for live in lives:
         if not live_served.get(live, False):
-            fail(f"power_live {live} is not served (the library polls aa 01, the aa 36 bars or the status "
-                 "read, and an ee 30 push needs its wire f_ee_30)")
+            fail(f"power_live {live} is not served (the library polls aa 01 or the status read's TLV 0x01, "
+                 "the aa 36 bars, and an ee 30 push needs its wire f_ee_30)")
     heartbeat = need(row.get("heartbeat"), "heartbeat")
     timing = row.get("heartbeat_timing", "fixed_rate")
     if timing not in HEARTBEAT_TIMINGS:

@@ -62,7 +62,7 @@ def test_the_schema_requires_a_heartbeat_on_every_supported_row() -> None:
     doc = _doc()
     schema = json.loads((_SPEC / "devices.schema.json").read_text(encoding="utf-8"))
     rows = _rows(doc)
-    assert len(rows) == 153 and all(row["heartbeat"] in _BEATS for _fam, _gt, row in rows)
+    assert len(rows) == 156 and all(row["heartbeat"] in _BEATS for _fam, _gt, row in rows)
     jsonschema.validate(instance=doc, schema=schema)
     missing = copy.deepcopy(doc)
     next(f for f in missing["families"] if f["id"] == "h60ax")["client_profile"]["by_goods_type"]["303"].pop(
@@ -101,11 +101,9 @@ def test_each_skus_profile_sends_its_rows_heartbeat() -> None:
 
 
 def test_a_heartbeat_power_live_names_the_read_the_screen_sends() -> None:
-    # The resolver's one-way cross-check (devices/_resolve.py), as the traces found it on all 153 rows: the
-    # screens that take their power from a heartbeat reply send that read, and the plugs read their outlets
-    # from aa 01. Nothing ties a push_30-only row to aa 00, which 53 send. Three status rows send aa 01 but
-    # list only push_30 (h61d3 263, straightfloorlamp 69, h7020 296), and three with no ee 30 parser list
-    # nothing (rgbiclight 351 / 352, h7086 293): the library takes heartbeat_aa01 power on a polled row only.
+    # The resolver's one-way cross-check (devices/_resolve.py), as the traces found it on all 156 rows: the
+    # screens that take their power from a heartbeat reply send that read, on a polled or a status row, and
+    # the plugs read their outlets from aa 01. Nothing ties a push_30-only row to aa 00, which 53 send.
     # h705a 394 sends aa 00 and has no live power source.
     found: collections.Counter[tuple[tuple[str, ...], bool, str]] = collections.Counter()
     for fam, _gt, row in _rows(_doc()):
@@ -113,13 +111,11 @@ def test_a_heartbeat_power_live_names_the_read_the_screen_sends() -> None:
         relay = "relay_power" in row
         found[lives, relay, row["heartbeat"]] += 1
     assert found == {
-        (("heartbeat_aa01",), False, "power"): 63,
-        (("heartbeat_aa01", "push_30"), False, "power"): 24,
+        (("heartbeat_aa01",), False, "power"): 69,
+        (("heartbeat_aa01", "push_30"), False, "power"): 27,
         (("heartbeat_aa36",), False, "cmd_36"): 2,
         ((), True, "power"): 4,
         (("push_30",), False, "heartbeat"): 53,
-        (("push_30",), False, "power"): 3,
-        ((), False, "power"): 3,
         ((), False, "heartbeat"): 1,
     }
 
@@ -143,13 +139,14 @@ def test_the_traced_unsupported_rows_keep_their_heartbeat() -> None:
     # Traced but not supported: no profile is built from these rows, so neither the resolver nor the
     # generator reads them. h6047 288 / 298: VM4H6038.I3 returns false, so aa 00; striplight 80:
     # power_live [heartbeat_aa33], so aa 33 (the resolver's one-way rule). The 1.7.0 trace run added 136
-    # such rows, each doc saying why it is held (h6047 277 is now supported); they are pinned by count.
+    # such rows, each doc saying why it is held (h6047 277, h6069 284, h3700 383 and h7076 313 are now
+    # supported); they are pinned by count.
     got = {(fam["id"], gt): row["heartbeat"] for fam in _doc()["families"]
            for gt, row in ((fam.get("client_profile") or {}).get("by_goods_type") or {}).items()
            if "heartbeat" in row and "support" not in row}
     assert {key: got.get(key) for key in (("h6047", "288"), ("h6047", "298"), ("striplight", "80"))} == {
         ("h6047", "288"): "heartbeat", ("h6047", "298"): "heartbeat", ("striplight", "80"): "volume"}
-    assert collections.Counter(got.values()) == {"power": 88, "heartbeat": 45, "volume": 5, "cmd_36": 1}
+    assert collections.Counter(got.values()) == {"power": 85, "heartbeat": 45, "volume": 5, "cmd_36": 1}
 
 
 @pytest.mark.parametrize("name", _BEATS)

@@ -150,7 +150,9 @@ timing:
         frame ends, not at each send within it (HeartHandler.e restarts it on every send).
       - >-
         PROCEDURAL (govee-ble-local): the reply is not folded into state. It is left in the receive queue, which the
-        next operation drains (as it drains an ee 30 push). The follow-up: fold heartbeat replies and ee 30 pushes
+        next operation drains (as it drains an ee 30 push). The poll's own power read stands in for it: aa 01 on a
+        polled row, and the status read's TLV 0x01 on a status row, whose app reads the 0xAC burst once per connect
+        and then follows the reply (ShareVM.N3 -> J3). The follow-up: fold heartbeat replies and ee 30 pushes
         through one hook.
       - >-
         PROCEDURAL (govee-ble-local): one write without response, bounded at 1 s and not retried, and cut short by
@@ -2266,7 +2268,6 @@ families:
           pacts: ["1,1"]
           support: modelled
           power_read: ac_status
-          power_live: [push_30]
           capabilities: [power, brightness, rgb, color_temp]
           zones: []
           account_lock: false
@@ -2285,9 +2286,9 @@ families:
             Colour: Config.x = 0 -> Config.Yt -> Bytes.h / Bytes.r with white type Config.P = 1, the h60a6 frames over a
             one-piece mask; Config.I = {F, F, F, F, T}: colour temperature, no gradual (no Config.G key), no segment
             brightness. Kelvin: KelvinConfig 263 -> version 2 = [2700, 6500]; brightness version 1. Live power: the ee 30
-            switch push (VM4Light.z5) and the aa 01 heartbeat reply (VM4Light.I3; ShareVM.N3 -> J3 -> D5). MODELLED: the
-            screen reads the burst once per connect and then follows the heartbeat, while the library re-reads the burst
-            every poll and takes no heartbeat power on a status row; the request names only the four extra types, and
+            switch push (VM4Light.z5) and the aa 01 heartbeat reply (VM4Light.I3; ShareVM.N3 -> J3 -> D5), the family's
+            power_live. MODELLED: the screen reads the burst once per connect and then follows the heartbeat, while the
+            library re-reads the burst every poll and folds no heartbeat reply; the request names only the four extra types, and
             whether the firmware returns TLVs 0x01 / 0x04 / 0x05 unasked is not in the app (absent, every poll would read
             off, brightness 100). The library skips the TLV 0xA5 colour (one record at bytes 1-4, byte 0 unread by the app;
             f_a5 left unset), so RGB has no read-back. Not listed: the TimerConfig.f time sync before the read. No account
@@ -4017,6 +4018,7 @@ families:
           models: [H6069]
           color_scheme: h6006
           pacts: ["1,1", "2,1"]
+          support: app_traced
           color_functions: [color_temperature]
           capabilities: [power, brightness, rgb, color_temp]
           zones: []
@@ -4039,9 +4041,9 @@ families:
             Kelvin-tint pick or the colour-temperature slider (ColorViewModel.U, Config.I[284][4] on) Bytes.p in the
             both-slot form (scheme h6006). Brightness: no BrightnessConfig entry, version 1 = percent [1, 100]
             (BrightnessConfig.b -> 33 04). Kelvin: no KelvinConfig entry, version 0 = [2000, 9000]. Scenes untraced
-            (ScenesConfigBean op set Support.supportScenesOpSet(284) = {5}, applied by CubeSceneViewModeV2). Every core
-            fact is traced, but the row has no support yet: the library serves the heartbeat_aa01 live power (the family's)
-            on polled rows only, and this is a status-read row. Not hardware-verified (no H6069 on the bench).
+            (ScenesConfigBean op set Support.supportScenesOpSet(284) = {5}, applied by CubeSceneViewModeV2). Not
+            modelled: the keep-alive reply as live power (the library re-reads the status read's TLV 0x01 every poll
+            instead, timing.heartbeat.deviations). Not hardware-verified (no H6069 on the bench).
           doc-ref:
             - split_h6061/com/govee/cubelight/pact/Support.java:63,75-76,126-131,151-170,613-615,924-926,936-938,962-964
             - base-classes2/com/govee/shared/checker/KmpGoodsType.java:179
@@ -7749,6 +7751,7 @@ families:
           color_scheme: h60a6
           color_functions: [segment_brightness, color_temperature]
           power_read: ac_status
+          power_live: [heartbeat_aa01]
           capabilities: [power, brightness, rgb, color_temp, segments]
           zones: []
           account_lock: false
@@ -7772,9 +7775,8 @@ families:
             (switchTrigger -> ControllerSwitch.d). The keep-alive is aa 01 (I3 true: ConnectHeartbeat type 1), and its
             reply is the screen's live power (ShareVM.N3 -> J3, which also queues the Compose4Off2On re-read on every
             change, off as well as on); the screen has no ee 30 parser (Z3 adds only brightness and IC-count pushes,
-            not modelled). The library serves
-            heartbeat_aa01 only on a polled row, so the row lists no power_live and takes power from the status read
-            it repeats every poll (gap); the frames sent are the app's. Brightness 33 04 percent (no BrightnessConfig
+            not modelled). The library takes power from the status read it repeats every poll instead of the reply
+            (timing.heartbeat.deviations); the frames sent are the app's. Brightness 33 04 percent (no BrightnessConfig
             key). Colour on the ColorModeV1_2 strip (RgbIcLightRegistry, Support.g; picks fill the selected pieces):
             ColorModeControllerConfig.c -> Config.F -> Config.x[351] = 0 -> Config.J[0] Yt -> Bytes.h / Bytes.r, white
             type Config.P[351] = 1, the h60a6 15 01 frames; a whole-strip Kelvin is the colour page's all pick
@@ -7830,6 +7832,7 @@ families:
           color_scheme: h60a6
           color_functions: [segment_brightness, color_temperature]
           power_read: ac_status
+          power_live: [heartbeat_aa01]
           capabilities: [power, brightness, rgb, color_temp, segments]
           zones: []
           account_lock: false
@@ -7848,8 +7851,8 @@ families:
             one-time Matter info read after it, MatterManager.r via the 352 MatterInterceptor, are not listed), its TLV
             0x01 / 0x04 / 0x05 / 0x40 / 0xA5 read as on
             351, 15 pieces (ColorPieceConfig.j), no aa 01 / aa 05 read, no 0xB1 / 0xB2; power 33 01, keep-alive aa 01
-            whose reply is the screen's live power (J3 re-reads on every change; no power_live: the library takes power from the status read it
-            repeats every poll, gap); brightness 33 04 percent; colour Config.x[352] = 0 -> Yt (Bytes.h / Bytes.r, white
+            whose reply is the screen's live power (J3 re-reads on every change; the library takes power from the status
+            read it repeats every poll instead); brightness 33 04 percent; colour Config.x[352] = 0 -> Yt (Bytes.h / Bytes.r, white
             type Config.P[352] = 1) on the ColorModeV1_2 strip, the colour page's all-Kelvin Bytes.r over 15 pieces, the
             illumination tab's VM4Light.configKelvinController -> Bytes.C(K, 15, 1) with 33 04 in one write, segment brightness
             Config.z[352] = 0 -> 15 02; Config.I[352] all on; Kelvin KelvinConfig.Config.p4 by pact. Gradual (TLV 0x05
@@ -9316,7 +9319,6 @@ families:
           scene_versions: [0, 1, 2, 3]
           kelvin_range: [2700, 6500]
           power_read: ac_status
-          power_live: [push_30]
           mode_color_parse_status: gradual_14
           status_read: [color_group, gradual]
           connect_reads: []
@@ -9342,7 +9344,8 @@ families:
             KelvinConfig.b -> ColorModeControllerConfig.h -> Config.EM -> Bytes.C). The library's colour-temperature
             call sends the colour tab's single frame. Colour-strip palettes at (2,1) go out as the 0xA3 multi-packet
             (Config.C[69]); the library sends no palettes. Kelvin: KelvinConfig.Config.N2, version 2 = [2700, 6500] at
-            pactType 2 ([2200, 6500] at (1,1)). Keep-alive: aa 01 (VM4Light.I3), fixed rate. Not modelled: the on/off
+            pactType 2 ([2200, 6500] at (1,1)). Keep-alive: aa 01 (VM4Light.I3), fixed rate; live power is its reply
+            and the ee 30 push (the family's power_live). Not modelled: the on/off
             the app takes from each aa 01 heartbeat reply (VM4Light.J3) and its re-read on a change; the TLV 0xA3
             gradual flag, so there is no gradual capability; and the connect's time sync (library-wide). Check on
             hardware: the library repeats the 0xAC read every poll, where the app reads it once per connect. It also
@@ -15404,7 +15407,6 @@ families:
           support: app_traced
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments]
-          power_live: []   # gap: the app's live power is the aa 01 heartbeat reply (family power_live); the library serves heartbeat_aa01 on polled rows only, so this row takes power from the status read it repeats every poll
           zones: []
           account_lock: false
           scene_dialect: untraced
@@ -15425,7 +15427,8 @@ families:
             (Controller4ColorInfoByGroup.q with Support.i = 4), 0xA3 gradual if present. Power: switchTrigger sends the one
             ControllerSwitch 33 01; no zone frame (the colour strip's left / right buttons only select pieces 0-1 / 2-3),
             so zones none. Keep-alive aa 01 (I3 true -> ConnectHeartbeat type 1), whose reply byte 2 is the screen's live
-            power (ShareVM.N3 -> J3; gap, power_live above). Brightness 33 04 percent (no BrightnessConfig key, version 1).
+            power (ShareVM.N3 -> J3; the family's power_live; the library re-reads the status read's TLV 0x01 every poll
+            instead). Brightness 33 04 percent (no BrightnessConfig key, version 1).
             Colour: DelegateColorV2 with the h7086 ColorMode strip; no capability provider for 293, so the legacy maps:
             Config.x[293] = 0 -> Config.J[0] Yt -> Bytes.h (RGB) / Bytes.r white type Config.P[293] = 1 (CCT, ff ff ff
             lead, tint), the h60a6 15 01 frames over a 4-piece mask (ColorPieceConfig.j: set Z -> 4); segment
@@ -17090,7 +17093,6 @@ families:
           pacts: ["1,1"]
           support: app_traced
           power_read: ac_status
-          power_live: [push_30]
           mode_color_parse_status: gradual_15
           color_scheme: h60a6
           capabilities: [power, brightness, rgb, color_temp]   # segments left out: the per-segment mask width is account data (doc)
@@ -17110,8 +17112,8 @@ families:
             as on the H60A6 row) and the 0xAC status read ac 03 02 41 a5 alone, no aa 01 / aa 05 / 0xB2 (account_lock false;
             the app's control-screen path for it is not cited): TLV 0x01 power, 0x04 brightness, 0x05 mode (Info4Detail.V:
             gradual byte only), 0x41 power-off memory, 0xA5 [group, 4 x {bri, R, G, B}]. Keep-alive: I3 is true, so aa 01
-            (ConnectHeartbeat type 1); the library does not take power from that reply on a status row, so power_live is the
-            ee 30 push (bit 0 of value[1], makeSwitchNotifyParser). Power: switchTrigger writes the one ControllerSwitch (33
+            (ConnectHeartbeat type 1); live power is that reply (ShareVM.N3 -> J3) and the ee 30 push (bit 0 of value[1],
+            makeSwitchNotifyParser), the family's power_live. Power: switchTrigger writes the one ControllerSwitch (33
             01), zones none. Colour: DelegateColorV2's All tab (F0 colour, G0 Kelvin) writes over ColorModeUtil.a ->
             ColorPieceConfig.c = 15 pieces whatever the account says (ColorPieceConfig.j's fallback; no LightCapabilitySpec is
             registered); Config.x[296] = 0 -> Config.J[0] = Yt -> Bytes.h, CCT Bytes.r type 1 (Config.P[296] = 1): the h60a6
@@ -17157,7 +17159,7 @@ families:
           connectivity: [ble]
           pacts: ["1,1", "1,2", "1,3", "1,4"]
           power_read: ac_status
-          power_live: []
+          power_live: [heartbeat_aa01]
           mode_color_parse_status: gradual_15
           color_scheme: h60a6
           capabilities: [power, brightness, rgb, color_temp]   # segments left out as on 296 (doc)
@@ -17176,8 +17178,8 @@ families:
             the time-sync write and the 0xAC status read ac 03 03 42 41 a5 alone: TLV 0x01 power, 0x04 brightness, 0x05 mode
             (gradual byte only), 0x41 power-off memory, 0x42 light sense + battery, 0xA5 groups of 4. No aa 01 / aa 05 / 0xB2
             (account_lock false; the app's control-screen path for it is not cited). Keep-alive: aa 01 (I3 true). Live power:
-            none the library serves (NewDetailVM.G5 reads an ee 30 with value[0] == 3 as battery, so wire f_ee_30 stays
-            unknown). Power: the header's power button (H3001HeaderDelegate.U) calls switchTrigger, the one ControllerSwitch
+            that reply (ShareVM.N3 -> J3), not the ee 30 push (NewDetailVM.G5 reads an ee 30 with value[0] == 3 as battery,
+            so wire f_ee_30 stays unknown). Power: the header's power button (H3001HeaderDelegate.U) calls switchTrigger, the one ControllerSwitch
             (33 01), only while light-sense mode is off. Light-sense mode is TLV 0x42 byte 0 bit 0 (LightSenseInfo.f(), posted
             to y5 and persisted in LightSenseModeLocal), or before that read the persisted flag, which the pact-code-3
             advertisement's byte 3 == 2 also sets (H3001Model.x); while it is on the button shows the light-sense icon and
@@ -17874,7 +17876,7 @@ families:
         "313":   # H7076, the H7076DetailVM screen (H7076DetailActivity)
           models: [H7076]
           pacts: ["1,1"]
-          # no support: the library serves power_live heartbeat_aa01 on a polled row only (library gap; h7076.md)
+          support: app_traced
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments]
           zones: []
@@ -17907,9 +17909,9 @@ families:
             Support.supportSceneOp(313) = {0, 1, 2, 3, 5, 6}); no bundled catalog). Gradual is not offered: Config.I[313][0]
             (supportGradual) is false, so DelegateColorV2.C1 -> DelegateColorV2Part.Z0 hides the switch; Config.G[313] = 0
             names a builder the screen never calls. The bundled mode list (base.apk localSkuComponentConfigs.json) gives
-            H7076 no illumination tab (13), so the colour page is the one Kelvin path. Held
-            without support: live power is the aa 01 heartbeat reply (power_live heartbeat_aa01) on a status row, which
-            the library serves on a polled row only; every other fact here resolves. Not hardware-verified.
+            H7076 no illumination tab (13), so the colour page is the one Kelvin path. Not modelled: the aa 01
+            keep-alive reply as live power (the library re-reads the status read's TLV 0x01 every poll instead,
+            timing.heartbeat.deviations). Not hardware-verified.
           doc-ref:
             - base-classes2/com/govee/shared/checker/KmpGoodsType.java:249
             - split_h7075/com/govee/h7075/pact/Support.java:228-239,243-251,349-351,377-390,502-513,517-539,575-581,607-609
@@ -18081,6 +18083,7 @@ families:
         "383":   # H3700, the h7075 H3700DetailActivity screen (H3700DetailVM)
           models: [H3700]
           pacts: ["1,1"]
+          support: app_traced
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments]
           zones: []
@@ -18121,9 +18124,9 @@ families:
             the colour page's all-pieces Bytes.r Kelvin frame, then 33 04. The library matches the colour page's Kelvin
             write (as H60A6). Scenes
             untraced (ScenesConfigBean(2, 1, Support.supportSceneOp(383) = {0, 1, 2, 3, 6}); H3700DiyConfig registers 383's
-            new-DIY parsers at app init); no bundled catalog. No support yet (library gap): the live power is the aa 01
-            heartbeat reply (power_live heartbeat_aa01, the family's), which the library reads on a polled row only, not
-            on a status-read row; every other fact resolves. Not hardware-verified.
+            new-DIY parsers at app init); no bundled catalog. Not modelled: the aa 01 keep-alive reply as live power
+            (the library re-reads the status read's TLV 0x01 every poll instead, timing.heartbeat.deviations). Not
+            hardware-verified.
           doc-ref:
             - split_h7075/com/govee/h7075/pact/Support.java:122,180-184,228-238,243-250,318-319,459-474,517-522,524-538,575-581
             - split_h7075/com/govee/h7075/multi/AddResultActivity.java:55

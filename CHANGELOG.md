@@ -52,6 +52,10 @@ model, from which the shipped readers are generated).
   - h705a: **H705A / H705B / H705C / H801B** (125), **H608A / H608B / H608C / H608D / H808A** (184), **H705D /
     H705E / H705F / H805A / H805B / H805C / H805D** (240), **H7067 / H7068 / H7069** (250), **H3401** (394);
   - h7057: **H3510**, **H3511**† (349).
+- **H6069 / H8069**† (h6069 284), **H3700** (h3700 383) and **H7076** (h7076 313), admitted by default
+  (`app_traced`). Each is a status-read row whose screen takes its live power from the aa 01 keep-alive reply
+  (`power_live: [heartbeat_aa01]`), which the resolver now serves on a status row as it does on a polled one
+  (below). Not hardware-verified (none is on the bench).
 - **Bench, 2026-10-21 (the Mac, reads only):** one H61C3 and two H6076s, polled through `create_device` and
   `update()` on the new rows. A guard on `GoveeConnection._send_frame` refused any write; none was attempted.
   - **H61C3** (rgbiclight 141, pact (1,1), plaintext, `allow_modelled`): aa 01, aa 04, aa 05 01, aa 40,
@@ -72,6 +76,10 @@ model, from which the shipped readers are generated).
   H6690, H70A1-3 with H6176 / H61BC, H61B0 with H61B3 / H61B6. H6099 and H61B0 come first in theirs, so a
   `Device` built from one of those profiles without `sku=` names itself after them (`create_device` and
   `make_device` always pass the SKU).
+- The resolver serves `power_live: heartbeat_aa01` on a status row (`power_read: ac_status`), not only on a
+  polled one. The library folds no keep-alive reply on either kind: the poll's own power read stands in for
+  it, aa 01 on a polled row and the status read's TLV 0x01 on a status row. `power_live` is a resolver gate
+  only (no `DeviceProfile` field), so no profile, frame or decoded state moves.
 
 ### Spec
 - **The device-list trace (Govee Home 7.7.02; 7.5.12 where a family says so).** Each of the 83 census families
@@ -95,6 +103,11 @@ model, from which the shipped readers are generated).
   - The catalogue snapshot routes 31 SKUs no row lists (15 before). For review: H613A-F (catalogue 39, named
     by h613839's (65535,255) bind item), where it was H615E.
   - rgbiclight 351 / 352 now record the R617G / R618D catalogue route, as h7057 274 does H8057's.
+- **The status rows with an aa 01 keep-alive state the app's live power.** straightfloorlamp 69, h7020 296 and
+  h61d3 263 drop their `[push_30]` override and h7086 293 its `[]`, so each takes its family's list again;
+  rgbiclight 351 / 352 and h7020 361 list `[heartbeat_aa01]`. Each screen's `I3` is true (ConnectHeartbeat
+  type 1), and `ShareVM.N3` takes the switch from the reply (`J3`). The overrides only worked around the
+  resolver gate above. No profile changes.
 
 ## [1.6.1] — 2026-10-21
 
