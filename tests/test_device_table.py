@@ -489,6 +489,10 @@ def test_the_generator_keeps_data_keys_and_raises_on_a_missing_fact() -> None:
     stops = {sku: fields["light_effect_stop"] for group, fields, _routes in _resolve.profiles(cut, table)
              for sku in group}
     assert stops["H6006"] and not stops["H6008"]
+    # So do its connect_reads and ic_pieces: rgbiclight E1's aa 40 read for H61A0 alone at 71.
+    walks = {sku: profile_for(sku) for sku in ("H61A0", "H619B")}
+    assert {sku: p is not None and p.color_readback_ic_sections for sku, p in walks.items()} == {
+        "H61A0": True, "H619B": False}
     # The segment-brightness flag calls for segments only where the row's scheme has that frame (h60a6's
     # 15 02, refused above without them): on an h6006 row it binds nothing, as on H6071 / H6075 (no frame).
     gen.project(edited("bulblightv3", lambda f: _row(f, "342").update(

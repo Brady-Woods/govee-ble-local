@@ -124,10 +124,11 @@ the row lacks fails the build: nothing defaults silently.
   ``skip_zero``, h705a 184; an IC table, H6609; or two strips' counts capped and summed, H1A45:
   ``_readback.live_ic_pieces``; on a row whose wire ``f_40`` is ``ic_pair`` the screen reads the reply with
   the IC-pair reader, ``DeviceProfile.color_readback_ic_pair_reader``, no count where it throws, which the
-  pair rule needs; a SKU's ``by_model`` ``ic_pieces`` replaces its row's, on a SKU one row lists, where the
-  screen sizes the pieces by SKU: h6609 ``H70c4Support.b`` at 260), and, but under a table's
-  ``readback_only`` (the walk alone; the writes keep the static pieces, and a read with no count walks them:
-  ``_readback.walk_pieces``), the writes (``color_writes_live_ic``:
+  pair rule needs; a SKU's ``by_model`` ``ic_pieces`` and ``connect_reads`` replace its row's, on a SKU one
+  row lists, where the screen sizes the pieces or adds the aa 40 read by SKU: h6609 ``H70c4Support.b`` at
+  260, rgbiclight ``ControllerStrategyConfig.E1``'s ``supportBindWithIcNum`` / ``supportIcFresh`` at 71 /
+  123), and, but under a table's ``readback_only`` (the walk alone; the writes keep the static pieces, and a
+  read with no count walks them: ``_readback.walk_pieces``), the writes (``color_writes_live_ic``:
   each poll's pieces are ``Device.segment_count``, the whole-device mask and the segment index bound, as the
   screen's strip takes them from the stored IC, ``ColorPieceConfig.c``; the wire ``num_segments`` is only the
   count before the first read), or, with ``ic_pieces: sections``, its two section bytes size the read-back's
@@ -141,8 +142,8 @@ the row lacks fails the build: nothing defaults silently.
   ``light_effect_stop`` (``DeviceProfile.light_effect_stop``), each sent once per session after the
   handshake and any unlock. A SKU's ``by_model`` ``connect_writes`` replaces its row's, where the screen
   splits them by SKU within one goodsType (bulblight ``Support.c`` at 342), on a SKU one row of the family
-  lists (a ``by_model`` entry is family-wide; ``connect_writes``, ``ic_pieces`` and ``support`` on another
-  SKU raise). A SKU's ``by_model`` ``scene_power_on`` (the power-on ahead
+  lists (a ``by_model`` entry is family-wide; ``connect_reads``, ``connect_writes``, ``ic_pieces`` and
+  ``support`` on another SKU raise). A SKU's ``by_model`` ``scene_power_on`` (the power-on ahead
   of a scene apply, H6009 / H6010) becomes ``DeviceProfile.scene_power_on``, on a row with ``scenes`` only.
 - The keep-alive: every row names the read its screen sends while the link is up (``heartbeat``, no family
   default), which becomes ``DeviceProfile.heartbeat`` (its command code), and its ``heartbeat_timing``
@@ -319,6 +320,7 @@ class ClientModel(TypedDict, total=False):
     kelvin_range: tuple[int, ...]
     brightness_range: tuple[int, ...]
     scene_power_on: bool
+    connect_reads: tuple[str, ...]
     connect_writes: tuple[str, ...]
     ic_pieces: IcPieces | IcTable | IcPair | str
     support: str
@@ -853,7 +855,7 @@ def profiles(families: Sequence[Family], parse_names: Collection[str], admitted:
 
 # The by_model facts that replace a row's for the SKU (clientModel), on the one row of its family that lists
 # it.
-_ROW_OVERRIDES: Final = ("connect_writes", "ic_pieces", "support")
+_ROW_OVERRIDES: Final = ("connect_reads", "connect_writes", "ic_pieces", "support")
 
 
 def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
@@ -1052,7 +1054,7 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
         readback = _READBACK[power_read]
         if (readback == "status") != (status_read is not None):
             fail(f"power_read {power_read!r} with status_read {status_read!r}")
-    reads = set(need(row.get("connect_reads"), "connect_reads"))
+    reads = set(need(model.get("connect_reads", row.get("connect_reads")), "connect_reads"))
     if not reads <= _READS:
         fail(f"connect_reads {sorted(reads - _READS)} are not served")
     if ("brightness" in reads) != (readback == "polled" and "brightness" in caps):

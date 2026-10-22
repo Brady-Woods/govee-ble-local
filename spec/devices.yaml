@@ -7334,10 +7334,12 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:240-243,254-269,329-342,402-411,1069-1073,1147-1149
             - base-classes10/com/govee/base2light/capability/legacy/LegacyColorCapabilityProvider.java:218-221
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:199-215,252-258
-        "71":   # no support: pact-dependent read-back (library gaps)
+        "71":   # narrowed to pact (3,2), the one pact whose group size and segment-brightness flag the library can follow (doc); H61A0 / H61A1 / H61A2 add the aa 40 read (by_model)
           models: [H618C, H619B, H619C, H619D, H619E, H61A0, H61A1, H61A2, H61A3, H61A5]
-          pacts: ["2,1", "2,2", "3,2"]
+          pacts: ["3,2"]
+          support: app_traced
           color_scheme: h60a6
+          color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments, gradual]
           zones: []
           account_lock: false
@@ -7348,61 +7350,71 @@ families:
           connect_writes: []
           heartbeat: power
           doc: >-
-            NO SUPPORT (library gaps). goodsType 71 (Support.f0; the catalogue snapshot gives these ten SKUs 71, and also
-            H6172 / H6173 / H618E / H618F / H61B2, which no family lists) on the rgbiclight AcNewDetail screen. Pacts
-            (2,1), (2,2), (3,2), all ControllerStrategyConfig.E1 (supportV2UIV3 via uiV34): aa 01, aa 04, aa a3
-            (supportGradual), aa 41 at (3,2) only (supportPowerOffMemory), aa 05 (kelvin parse), then N5's aa a5 groups of
-            [brightness, R, G, B] (part brightness 2) over 15 pieces. The control frames are the h60a6 ones at every pact:
-            Config.x[71] = 0 -> Yt -> Bytes.h / Bytes.r, white slot Config.P[71] = 1, masks over ColorPieceConfig.j = 15,
-            gradual Config.G[71] = 0 (33 a3), segment brightness Config.z[71] = 0 (15 02), Kelvin version 0 = [2000, 9000],
-            brightness percent; one ControllerSwitch, zones none. Held by three facts the library cannot follow: (1) the
-            group size is 4 at pact (3,2) and 3 at (2,1) / (2,2) (getOneGroupColorSize: supportRgbWithBrightnessOnePkg4Colors
-            is pactType >= 3 and pactCode >= 2 for 71), a wire group by pact; (2) the colour page's segment-brightness flag
-            Config.I[71] = [true, true, true, UN, true] is on at pact >= (3,2) or at soft >= 1.06.00 and hard >= 1.00.02,
-            off below (color_functions and the segments capability would branch on pact and firmware; color_functions is
-            left out); (3) H61A0 / H61A1 / H61A2 (supportBindWithIcNum: Jump.b) send aa 40 (ControllerIcNum.d) and N5
-            walks sum(its two section bytes) pieces.
+            goodsType 71 (Support.f0; the catalogue snapshot gives these ten SKUs 71, and also H6172 / H6173 / H618E /
+            H618F / H61B2, which no family lists, routed here by it) on the rgbiclight AcNewDetail screen. The app
+            registers pacts (2,1), (2,2) and (3,2); the row lists (3,2) alone, where every gate below is fixed (the
+            library refuses the other two). Connect: ControllerStrategyConfig.E1 (supportV2UIV3 via uiV34): aa 01, aa 04,
+            aa a3 (supportGradual), aa 40 for H61A0 / H61A1 / H61A2 only (supportBindWithIcNum: Jump.b; supportIcFresh is
+            false at 71), aa 41 (supportPowerOffMemory at (3,2), a setting read left out, D2), aa 05 (kelvin parse), then
+            VM4Light.N5's aa a5 groups of [brightness, R, G, B] (part brightness 2: no 71 SKU is in the firmware-gated
+            g1 / i1 lists) in groups of 4 at (3,2) (getOneGroupColorSize: supportRgbWithBrightnessOnePkg4Colors is
+            pactType >= 3 and pactCode >= 2 for 71; 3 at (2,1) / (2,2)), over getBulbStringMaxNum = 15 pieces, or for
+            H61A0 / H61A1 / H61A2 the aa 40 reply's section sum when it is not 0 (VM4Light.N5 over info4BleIot.q(), as
+            on 204: their by_model ic_pieces sections). Control frames: Config.x[71] = 0 -> Yt -> Bytes.h / Bytes.r, white
+            slot Config.P[71] = 1, masks over ColorPieceConfig.j = 15, gradual Config.G[71] = 0 (33 a3), segment
+            brightness Config.z[71] = 0 (15 02), offered by the colour page's flag Config.I[71] = [true, true, true, UN,
+            true], UN true at pact >= (3,2), Kelvin version 0 = [2000, 9000], brightness percent; one ControllerSwitch,
+            zones none. Keep-alive aa 01 (VM4Light.I3). The library sends the reads in its poll order (aa 05 before
+            aa 40, as on 204). Not modelled: the Wi-Fi version / MAC reads, the time sync, the off-to-on re-read (as on
+            204). Scenes not traced. Not hardware-verified.
           doc-ref:
-            - split_rgbiclight/com/govee/dreamcolorlightv1/pact/Support.java:164,287-298,670-684,986-1004,1403-1405,1476-1487,1713-1730,1775-1786,1805-1812,1814-1819,1911-1957,1973-2005
+            - split_rgbiclight/com/govee/dreamcolorlightv1/pact/Support.java:164,196-210,287-298,670-684,986-1004,1403-1405,1476-1487,1713-1760,1775-1786,1805-1812,1814-1819,1911-1957,1973-2005
             - split_rgbiclight/com/govee/rgbiclight/neonlight/recommend/Jump.java:27
-            - split_rgbiclight/com/govee/rgbiclight/Support.java:454-458
-            - split_rgbiclight/com/govee/dreamcolorlightv1/LightVersionServiceImpl.java:76-91,110-133
+            - split_rgbiclight/com/govee/rgbiclight/Support.java:98-114,262-264,454-458
+            - split_rgbiclight/com/govee/dreamcolorlightv1/LightVersionServiceImpl.java:76-91,110-133,155-161
             - split_rgbiclight/com/govee/rgbiclight/ControllerStrategyConfig.java:300-338,896-1015,1018-1114
             - split_rgbiclight/com/govee/rgbiclight/VM4Light.java:882-970
             - base-classes11/com/govee/base2light/pact/newdetail/content/colorv2/DelegateColorV2.java:779-806
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:1135,2437,3776,4600,5769,10318-10321,11458-11461,11665-11668,12121-12124,12277-12283,16503-16506
-        "123":   # no support: pact- and SKU-dependent aa 40 sizing (library gap)
+        "123":   # narrowed to pact (2,1), where the aa 40 read is H61B5's alone (doc); H61B5 adds it (by_model)
           models: [H61E0, H61E1, H61B5, H80B5]
-          pacts: ["2,1", "2,2", "3,1"]
+          pacts: ["2,1"]
+          support: app_traced
           color_scheme: h60a6
+          color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments, gradual]
           zones: []
           account_lock: false
           scene_dialect: untraced
           kelvin_range: [2000, 9000]
           brightness_range: [1, 100]
+          connect_reads: [brightness, gradual, color_group]
           connect_writes: []
           heartbeat: power
           doc: >-
-            NO SUPPORT (library gap). goodsType 123 (Support.f0; catalogue snapshot 123, which also gives H61B1, listed by
-            no family) on the rgbiclight AcNewDetail screen. Pacts (2,1), (2,2), (3,1), all ControllerStrategyConfig.E1
-            (supportV2UIV3 / supportV2UIV4). Control frames as 136: Config.x[123] = Bv = 0 (Support4DreamColorV1.m is 2
-            for 123) -> Yt -> h60a6 15 01; no Config.P / I / z / G entry, so white slot 1, the ColorModeV1_2 flags
-            (gradual, segment brightness = part brightness, colour temperature all on), 33 a3 and 15 02 through the
-            rgbiclight fallbacks; Kelvin [2000, 9000]; brightness percent; masks over ColorPieceConfig.j = 15. The
-            connect read and read-back are what the library cannot follow: aa 40 (ControllerIcNum.d) is sent for H61B5 at
-            every pact and for H61E0 / H61E1 / H80B5 at (2,2) / (3,1) only (supportIcFresh), and N5 then walks
-            sum(the two section bytes) pieces (cuttable strips: H61B5 / H80B5 have the length-calibration notify 0x46);
-            groups of 4 for H61B5 / H80B5, 3 for H61E0 / H61E1 (getOneGroupColorSize); aa 41 for H61B5 / H80B5
-            (supportPowerOffMemory). connect_reads is left out: it differs by pact and SKU. After the E1 info read
-            (VM4Light.q5 -> r5) the screen calls VM4Light.m5, which for H61E0 / H61E1 at soft >= 3.00.57
-            (LowBlueLightConfig.a, a string compare) sends the low-blue-light read aa ba 01 (ControllerEyeshadow.d, 100 ms
-            later); not modelled.
+            goodsType 123 (Support.f0; catalogue snapshot 123, which also gives H61B1, listed by no family, routed here by
+            it) on the rgbiclight AcNewDetail screen. The app registers pacts (2,1), (2,2) and (3,1), all
+            ControllerStrategyConfig.E1 (supportV2UIV3 / supportV2UIV4); the row lists (2,1) alone, the one pact where
+            the aa 40 read is SKU-fixed (the library refuses the other two). Connect: aa 01, aa 04, aa a3 (supportGradual),
+            aa 40 (ControllerIcNum.d) for H61B5 only at (2,1) (supportIcFresh: H61B5 at every pact, the others at (2,2) /
+            (3,x), never H61B1; H61B5's by_model connect_reads and ic_pieces sections), aa 41 for H61B5 / H80B5
+            (supportPowerOffMemory, a setting read left out, D2), aa 05 (kelvin parse), then VM4Light.N5's aa a5 groups of
+            [brightness, R, G, B] (part brightness 2: no 123 SKU is in the firmware-gated g1 / i1 lists), 4 a group for
+            H61B5 / H80B5 and 3 for the others (getOneGroupColorSize; wire.by_model), over getBulbStringMaxNum = 15, or for
+            H61B5 the aa 40 reply's section sum when it is not 0 (a cuttable strip: the length-calibration notify 0x46).
+            Control frames as 136: Config.x[123] = Bv = 0 (Support4DreamColorV1.m is 2 for 123) -> Yt -> h60a6 15 01; no
+            Config.P / I / z / G entry, so white slot 1, the ColorModeV1_2 flags (gradual, segment brightness = part
+            brightness, colour temperature all on), 33 a3 and 15 02 through the rgbiclight fallbacks; Kelvin [2000, 9000];
+            brightness percent; masks over ColorPieceConfig.j = 15; keep-alive aa 01. The library sends the reads in its
+            poll order (aa 05 before aa 40, as on 204). After the E1 info read (VM4Light.q5 -> r5) the screen calls
+            VM4Light.m5, which for H61E0 / H61E1 at soft >= 3.00.57 (LowBlueLightConfig.a, a string compare) sends the
+            low-blue-light read aa ba 01 (ControllerEyeshadow.d, 100 ms later); not modelled (a feature read). Scenes not
+            traced. Not hardware-verified.
           doc-ref:
-            - split_rgbiclight/com/govee/dreamcolorlightv1/pact/Support.java:164,314-322,1026-1040,1476-1487,1775-1786,1814-1819,1955-1957
+            - split_rgbiclight/com/govee/dreamcolorlightv1/pact/Support.java:164,196-210,314-322,972-974,1026-1040,1344-1349,1446-1448,1476-1487,1713-1760,1775-1786,1814-1819,1955-1957
             - base-classes9/com/govee/base2home/pact/support/Support4DreamColorV1.java:107-163
-            - split_rgbiclight/com/govee/rgbiclight/Support.java:70-77,488-492
-            - split_rgbiclight/com/govee/dreamcolorlightv1/LightVersionServiceImpl.java:76-91,130-133
+            - split_rgbiclight/com/govee/rgbiclight/Support.java:70-77,98-114,262-264,488-492
+            - split_rgbiclight/com/govee/dreamcolorlightv1/LightVersionServiceImpl.java:76-91,110-133,155-161
             - split_rgbiclight/com/govee/rgbiclight/ControllerStrategyConfig.java:300-338,896-1015
             - split_rgbiclight/com/govee/rgbiclight/VM4Light.java:592-598,600-635,882-970,1140-1147,1184-1188,1218-1222,1616-1631
             - split_rgbiclight/com/govee/rgbiclight/VM4Light$checkLowBlueLight$1$1.java:53-75
@@ -7485,6 +7497,11 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:353-367,1479,2120,2742,3117,3996,4241,5020,5520,6209,6669,8898-8901,10141-10144,13098-13101,13779-13782,13994-13997
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:315-326,474-501
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:329-342,402-411,494-498,1104,1247-1249
+      by_model:   # the aa 40 read by SKU (rgbiclight ControllerStrategyConfig.E1 :898-899, :981-992): supportBindWithIcNum (split_rgbiclight/com/govee/dreamcolorlightv1/pact/Support.java:1403-1405; the Jump.b list H61A0 / H61A1 / H61A2, split_rgbiclight/com/govee/rgbiclight/neonlight/recommend/Jump.java:27) at 71, supportIcFresh (:1476-1487; H61B5 at every pact) at 123; VM4Light.N5 then walks the reply's section sum (split_rgbiclight/com/govee/rgbiclight/VM4Light.java:917-923)
+        H61A0: { connect_reads: [brightness, gradual, ic_num, color_group], ic_pieces: sections }
+        H61A1: { connect_reads: [brightness, gradual, ic_num, color_group], ic_pieces: sections }
+        H61A2: { connect_reads: [brightness, gradual, ic_num, color_group], ic_pieces: sections }
+        H61B5: { connect_reads: [brightness, gradual, ic_num, color_group], ic_pieces: sections }
       wire:
         doc: "15 01 = Config.J[0] Yt (Bytes.r / Bytes.h); 0x0b = Bytes.d (colour-instruction 3: 17 / 18 below their gates, and by SKU (Config.w) H6102, H6163 and H6117 by their firmware; 123's Config.x Bv is 0, as Support4DreamColorV1.h is true for every goodsType but 17 / 18 / 19); mechanism-B batches (BulbGroupColor / BulbGroupColorV2); pieces Support.getBulbStringMaxNum (split_rgbiclight/com/govee/dreamcolorlightv1/pact/Support.java:670-709)"
         forms: { f_01: light, f_09: datetime_epoch, f_a2: bulb_batch_v1, f_a5: bulb_batch_v2, f_0b: rgb_mask, f_15_01: kelvin_tint }
@@ -7501,6 +7518,14 @@ families:
           "176": { forms: { f_a5: color_group }, group: { rule: fixed, num_per_group: 4 }, doc: "H6176 / H61BC: VM4Light.N5 reads Controller4ColorInfoByGroup groups of getOneGroupColorSize = 4 [brightness, R, G, B] records over the family's 15 pieces (4 groups)" }
           "178": { forms: { f_a5: color_group }, group: { rule: fixed, num_per_group: 4 }, doc: "H61BA: VM4Light.N5 reads Controller4ColorInfoByGroup groups of getOneGroupColorSize = 4 [brightness, R, G, B] records over the family's 15 pieces (4 groups)" }
           "207": { forms: { f_a5: color_group }, group: { rule: fixed, num_per_group: 4 }, doc: "H616C: VM4Light.N5 reads Controller4ColorInfoByGroup groups of getOneGroupColorSize = 4 (207 named) [brightness, R, G, B] records over the family's 15 pieces (4 groups)" }
+          "71": { forms: { f_a5: color_group }, group: { rule: fixed, num_per_group: 4 }, doc: "71 at pact (3,2): VM4Light.N5 reads Controller4ColorInfoByGroup groups of getOneGroupColorSize = 4 (supportRgbWithBrightnessOnePkg4Colors(71, 3, 2)) [brightness, R, G, B] records over the family's 15 pieces (4 groups), or H61A0 / H61A1 / H61A2's aa 40 section sum (split_rgbiclight/com/govee/dreamcolorlightv1/pact/Support.java:1814-1819; split_rgbiclight/com/govee/dreamcolorlightv1/LightVersionServiceImpl.java:76-91)" }
+          "123": { forms: { f_a5: color_group }, group: { rule: fixed }, doc: "123: VM4Light.N5 reads Controller4ColorInfoByGroup groups of [brightness, R, G, B] records, getOneGroupColorSize by SKU (wire.by_model: 4 for H61B5 / H80B5, 3 for H61E0 / H61E1 / H61B1; split_rgbiclight/com/govee/dreamcolorlightv1/LightVersionServiceImpl.java:76-91), over the family's 15 pieces, or H61B5's aa 40 section sum" }
+        by_model:   # 123's group size by SKU: getOneGroupColorSize (split_rgbiclight/com/govee/dreamcolorlightv1/LightVersionServiceImpl.java:76-91, isH61B5 / isH80B5)
+          H61E0: { group: { num_per_group: 3 } }
+          H61E1: { group: { num_per_group: 3 } }
+          H61B1: { group: { num_per_group: 3 } }
+          H61B5: { group: { num_per_group: 4 } }
+          H80B5: { group: { num_per_group: 4 } }
     models: [H6102, H611B, H611Z, H6123, H614C, H612A, H612B, H612C, H612D, H612E, H612F, H6168, H616C, H617A, H617C, H617E, H617F, H619A, H61A0, H61A8, H61A9, H61E0, H61E1, H70A1, H70A2, H70A3, H618C, H61A1, H61A2, H61A3, H61A5, H619B, H619C, H619D, H619E, H618A, H619Z, H61B5, H80B5, H61BE, H61BC, H6176, H61BA, H6175, H6169]   # these lists are what the code names; the cloud may hold other SKUs under these goodsTypes
     goods_types: [17, 18, 19, 70, 73, 204, 207, 71, 74, 75, 83, 123, 136, 175, 176, 178, 187, 193, 234, 262]   # 19 = H61A8, 204 = H61A9, 207 = H616C, 70 = H617C / H617E / H617F; split_rgbiclight/com/govee/dreamcolorlightv1/pact/Support.java:164
     delivery: feature_split   # pact_rgbiclight (base-classes9/com/govee/base2home/pfd/Config.java:257,260)
