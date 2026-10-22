@@ -72,12 +72,16 @@ model, from which the shipped readers are generated).
     nothing is retried or sent twice. Each session starts at least 1.1 s (`const.PER_COMMAND_SESSION_GAP`,
     `CardCommManagerProxy.s`) after the last one's release, failed or not;
   - `turn_on(power=True, brightness=x)` is two sessions, power first, and a brightness while the device is not
-    known to be on is sent after a power-on session (the card's switch, then its slider). Each applies its own
-    state, so an acked power-on stays when the brightness fails. Colour is refused;
+    known to be on is sent after a power-on session (the card's switch, then its slider), with no other write
+    of the `Device` between the two. Each applies its own state once its write completes, so a completed
+    power-on stays when the brightness fails. Colour is refused;
   - `update()` and `connect()` make no connection, and `read_secret()` raises `GoveeBleNotSupported`: the card
-    reads nothing over GATT. On/off is the advertisement's switch byte and the last acked write; brightness is
-    the last sent, and the state stays `optimistic`;
-  - no heartbeat, idle timer or warm window: no link outlives its write.
+    reads nothing over GATT. On/off is the advertisement's switch byte and the last completed write (acked, or
+    unanswered, as on the card); brightness is the last sent, and the state stays `optimistic`;
+  - no heartbeat, idle timer or warm window: no link outlives its write;
+  - a `DeviceProfile(session="per_command")` takes POWER and BRIGHTNESS only and no zones
+    (`GoveeBleInvalidValue` otherwise): a scene upload or a bar's read-modify-write would hold a link past its
+    session.
 
   Every `held` path is unchanged by construction: `_commit`, `turn_on`, `set_brightness`, `update`,
   `connect` and `_read_reply` dispatch a `per_command` profile to its own branch first. Not live-verified: no

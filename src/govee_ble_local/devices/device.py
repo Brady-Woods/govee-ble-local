@@ -222,6 +222,11 @@ class Device:
         # (_read_reply, _query_status), so no poll lands between the two (see set_scene_by_name).
         # Innermost device lock: taken after _scene_lock and _bar_lock, before the connection lock.
         self._read_gate = asyncio.Lock()
+        # A session="per_command" profile's writes (the device-list card's taps): held by each of its commits
+        # (_commit) and across a _turn_on_taps call's power-on and brightness, so no other write lands between
+        # the two (the card's slider sends only while its switch shows on). Taken before the connection lock,
+        # never from inside a connection operation; no other device lock is taken under it.
+        self._tap_lock = asyncio.Lock()
         self._discarded_reads = 0        # cumulative count of discarded stale reads
         self._callbacks: list[StateCallback] = []
         self._advert_ignore_until = 0.0   # monotonic; see ADVERT_SUPPRESS_SECONDS
@@ -767,9 +772,10 @@ class Device:
         thread is kept for the next status read, acked or not (``_zone_power_posted``,
         :meth:`_read_status`).
 
-        A ``session="per_command"`` profile commits through :meth:`_commit_once` instead."""
+        A ``session="per_command"`` profile commits through :meth:`_commit_once` instead, under ``_tap_lock``."""
         if self.profile.session == "per_command":
-            await self._commit_once(frames, apply, authoritative=authoritative)
+            async with self._tap_lock:
+                await self._commit_once(frames, apply, authoritative=authoritative)
             return
         mine = self._ticket() if ticket is None else ticket
         await self._send_pending_unlock(ticket=mine)
@@ -810,7 +816,8 @@ class Device:
     ) -> None:
         """:meth:`_commit` on a ``session="per_command"`` profile: one tap of the app's device-list card, its one
         frame on a session of its own (``GoveeConnection.send_once``; ``AbsDeviceModel4BleIot.k`` / ``l`` build
-        one frame each, as ``A0`` is null). Once the write is done: bump ``_mutation_seq``, ``apply`` the state,
+        one frame each, as ``A0`` is null). The caller holds ``_tap_lock``. Once the write is done (acked, or
+        unanswered, as on the card): bump ``_mutation_seq``, ``apply`` the state,
         make it authoritative over the advertised on/off unless ``authoritative`` is False, and notify, as the
         card saves a switch on its own success (``AbsLightModel4BleIot.w0``) and shows the brightness it sent. A
         failed or refused write raises and applies nothing. More than one frame raises GoveeBleNotSupported
@@ -1106,9 +1113,11 @@ class Device:
         (``state.is_on`` not True), ``power`` or not (the user's call, DECISIONS.md 6: the card's two taps,
         each a frame it sends). The checks run first, before any I/O, as on a held profile: GoveeBleInvalidValue
         for a bad value, GoveeBleNotSupported without the capability a part needs, for an ``rgb`` or ``kelvin``
-        (the card sends no colour), and while the brightness range waits for the advertised pact. Each tap
-        applies its own state once done, so a failed brightness leaves an acked power-on in state, as the card
-        saves the switch on its own success (``AbsLightModel4BleIot.w0``)."""
+        (the card sends no colour), and while the brightness range waits for the advertised pact. Both taps go
+        out under ``_tap_lock``, which every per_command write takes, so no other write lands between them, and
+        whether the light is known to be on is read under it. Each tap applies its own state once done, so a
+        failed brightness leaves a completed power-on in state, as the card saves the switch on its own success
+        (``AbsLightModel4BleIot.w0``)."""
         if rgb is not None and kelvin is not None:
             raise GoveeBleInvalidValue("turn_on: pass either rgb or kelvin, not both")
         if rgb is not None:
@@ -1125,16 +1134,18 @@ class Device:
         if rgb is not None or kelvin is not None:
             self._require(Capability.RGB if rgb is not None else Capability.COLOR_TEMP)
             raise GoveeBleNotSupported(f"{self._sku}: a per_command session sends power and brightness only")
-        if power or (frame is not None and self._state.is_on is not True
-                     and Capability.POWER in self.capabilities):
-            await self.set_power(True)
-        if frame is not None and pct is not None:
-            level = pct
+        async with self._tap_lock:
+            if power or (frame is not None and self._state.is_on is not True
+                         and Capability.POWER in self.capabilities):
+                await self._commit_once(self._power_frames(True), lambda: self._apply_power(True),
+                                        authoritative=True)
+            if frame is not None and pct is not None:
+                level = pct
 
-            def apply() -> None:
-                self._state.brightness = level
+                def apply() -> None:
+                    self._state.brightness = level
 
-            await self._commit_once(frame, apply, authoritative=True)
+                await self._commit_once(frame, apply, authoritative=True)
 
     async def turn_off(self) -> None:
         """Power off; equivalent to ``set_power(False)``."""
@@ -1151,7 +1162,7 @@ class Device:
         session first (:meth:`_turn_on_taps`)."""
         if self.profile.session == "per_command":
             self._require(Capability.BRIGHTNESS)
-            await self._turn_on_taps(brightness=pct, rgb=None, kelvin=None, power=False)
+            await self._turn_on_taps(brightness=_check_pct(pct), rgb=None, kelvin=None, power=False)
             return
         self._require(Capability.BRIGHTNESS)
         level = _check_pct(pct)

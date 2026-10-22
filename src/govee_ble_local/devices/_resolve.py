@@ -366,8 +366,9 @@ COLOR_SCHEMES: Final = ("h60a6", "h6006", "h6188", "h61a8", "h6061")   # wire.bu
 RELAY_POWERS: Final = ("outlet0", "all_outlets", "total_switch")        # devices.profile.RelayPower
 HEARTBEAT_TIMINGS: Final = ("fixed_rate", "after_quiet")         # transport.connection.HeartbeatTiming
 SESSIONS: Final = ("held", "per_command")                          # devices.profile.SessionMode
-# What a per_command row (the device-list card's session) may carry: the card's two writes.
-_CARD_CAPABILITIES: Final = frozenset({"power", "brightness"})
+# What a per_command row (the device-list card's session) may carry: the card's two writes (DeviceProfile checks
+# a hand-built per_command profile against it too).
+CARD_CAPABILITIES: Final = frozenset({"power", "brightness"})
 # The keep-alive reads a screen sends (clientRow heartbeat, govee_common command ids; DeviceProfile.heartbeat
 # takes their codes): ConnectHeartbeat.c's four types (1 aa 01, 2 aa 00, 3 aa 33, 4 aa 36), which cover the
 # IHeart controllers' aa 36 / aa 33 and the plug screens' aa 01.
@@ -806,8 +807,8 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
                 ("zones", bool(row.get("zones"))),
                 ("ic_pieces", "ic_pieces" in row),
                 ("power_resync", bool(row.get("power_resync"))),
-                (f"capabilities {sorted(row_caps - _CARD_CAPABILITIES)} (the card sends only 33 01 and 33 04)",
-                 not row_caps <= _CARD_CAPABILITIES)):
+                (f"capabilities {sorted(row_caps - CARD_CAPABILITIES)} (the card sends only 33 01 and 33 04)",
+                 not row_caps <= CARD_CAPABILITIES)):
             if there:
                 fail(f"{what} on a per_command row is not served yet")
     caps = set(row_caps)

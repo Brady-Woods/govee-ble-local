@@ -360,8 +360,11 @@ class DeviceProfile:
     ``Device.update`` makes no connection, ``Device.connect`` opens nothing, a read (``Device.read_secret``)
     raises GoveeBleNotSupported, ``turn_on`` sends power and brightness as two sessions, power first, and a
     brightness while the device is not known to be on goes after a power-on session (the card's switch, then
-    its slider). :attr:`heartbeat` (None on those rows), ``idle_disconnect`` and :attr:`heartbeat_timing` do
-    nothing with it: no link outlives its write."""
+    its slider), with no other write between the two. :attr:`heartbeat` (None on those rows),
+    ``idle_disconnect`` and :attr:`heartbeat_timing` do nothing with it: no link outlives its write. It takes
+    :attr:`capabilities` POWER and BRIGHTNESS only and no :attr:`zones` (GoveeBleInvalidValue otherwise): the
+    card sends nothing else, and a scene upload or a bar's read-modify-write would hold a link past its
+    session."""
 
     def __post_init__(self) -> None:
         """Validate each field: GoveeBleInvalidValue (a ValueError) on a value no Device can use.
@@ -369,7 +372,9 @@ class DeviceProfile:
         Fail at construction, not silently at poll time, on a typo. Values that are each valid but
         that the builders can't serve together (a capability the colour scheme has no frame for, a
         live IC read without its derivation) are accepted here, as in 1.3.0; the setter or read concerned
-        then raises GoveeBleNotSupported or does without. The generated table's values are checked, those
+        then raises GoveeBleNotSupported or does without. A ``session="per_command"`` profile is the exception:
+        it takes POWER and BRIGHTNESS only and no zones (:attr:`session`), as a scene upload or a bar's
+        read-modify-write would hold a link past its session. The generated table's values are checked, those
         combinations included, when it is built (devices/_resolve.py), so none reaches this check."""
         if isinstance(self.skus, list):
             # 1.3.0 accepted a list; keep it as the declared tuple, so the frozen profile stays hashable.
@@ -445,6 +450,11 @@ class DeviceProfile:
                 isinstance(beat, bool) or not isinstance(beat, int) or beat not in _HEARTBEATS):
             raise GoveeBleInvalidValue(
                 f"{where}: heartbeat={beat!r} (0x00, 0x01, 0x33 or 0x36: a keep-alive read, or None)")
+        card = frozenset(map(Capability, _resolve.CARD_CAPABILITIES))   # the card's 33 01 and 33 04
+        if self.session == "per_command" and (not self.capabilities <= card or self.zones):
+            raise GoveeBleInvalidValue(
+                f"{where}: session='per_command' takes capabilities {sorted(c.value for c in card)} only and no "
+                f"zones; got {sorted(c.value for c in self.capabilities)} and {len(self.zones)} zones")
 
     def _check_ranges_by_pact(self, where: str) -> None:
         """:attr:`kelvin_by_pact` / :attr:`brightness_by_pact`'s rules: ``(pact_type, pact_code)`` keys of
