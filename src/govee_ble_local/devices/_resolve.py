@@ -63,7 +63,11 @@ the row lacks fails the build: nothing defaults silently.
 - A row's colour scheme drops the capabilities it has no frame for (:data:`SCHEME_LACKS`), but only a
   scheme the row names itself: a family default that would drop one raises. ``rgb``, ``color_temp`` or
   ``segments`` on a relay row raises (the library resolves no colour scheme or Kelvin range for a plug), and
-  elsewhere they need a colour scheme. An ``untraced`` scene dialect drops ``scenes``; ``none`` is activate
+  elsewhere they need a colour scheme. ``color_temp`` needs a Kelvin range, and so does ``rgb`` under a
+  scheme whose RGB write makes the app's Kelvin-tint test whatever the screen offers
+  (:data:`_PICK_TEST_SCHEMES`: ``legacy_02``, whose ``Config.fu`` runs ``KelvinConfig.i`` on every pick, on
+  the H7310 / H7318 / H6165 rows without a Kelvin slider too). An ``untraced`` scene dialect drops ``scenes``;
+  ``none`` is activate
   only. Scenes need a bundled catalog, as every SKU of 1.4.0 that offers them ships one: a SKU the scene
   store has no catalog for (``scenes/store.json``, the generated ``SCENE_CATALOGS``, which
   :func:`profiles` takes as ``catalogued``) is offered no ``scenes``, its row's scene facts still checked.
@@ -352,7 +356,7 @@ ADMITTED: Final = frozenset({"hardware_verified", "app_traced"})
 MODELLED: Final = frozenset({"modelled"})   # admitted only on the caller's opt-in
 LEVELS: Final = ADMITTED | MODELLED
 CAPABILITIES: Final = ("power", "brightness", "rgb", "color_temp", "segments", "scenes")   # models.Capability
-COLOR_SCHEMES: Final = ("h60a6", "h6006", "h6188", "h61a8", "h6061")   # wire.build.ColorScheme
+COLOR_SCHEMES: Final = ("h60a6", "h6006", "h6188", "h61a8", "h6061", "legacy_02")   # wire.build.ColorScheme
 RELAY_POWERS: Final = ("outlet0", "all_outlets", "total_switch")        # devices.profile.RelayPower
 HEARTBEAT_TIMINGS: Final = ("fixed_rate", "after_quiet")         # transport.connection.HeartbeatTiming
 # The keep-alive reads a screen sends (clientRow heartbeat, govee_common command ids; DeviceProfile.heartbeat
@@ -366,13 +370,19 @@ _LIVE_HEARTBEATS: Final[Mapping[str, str]] = {
 # (only from a scheme the row names itself):
 #  - h61a8 (the 0x0b frames): no colour temperature (build.color_temp / segment_color_temp);
 #  - h6006 / h6188 (0x0d): no segment mask in any colour frame (Bytes.f / p / A);
-#  - h6061: whole-device only; per-panel colour needs the user's layout, which is not modelled.
+#  - h6061: whole-device only; per-panel colour needs the user's layout, which is not modelled;
+#  - legacy_02 (0x02): Config.fu drops the position set, and Bytes.a / o carry no mask.
 SCHEME_LACKS: Final[Mapping[str, frozenset[str]]] = {
     "h61a8": frozenset({"color_temp"}),
     "h6006": frozenset({"segments"}),
     "h6188": frozenset({"segments"}),
     "h6061": frozenset({"segments"}),
+    "legacy_02": frozenset({"segments"}),
 }
+# Schemes whose RGB write tests every pick against the Kelvin range, whether or not the row has colour
+# temperature, so a row with rgb needs a kelvin_range: legacy_02's Config.fu runs KelvinConfig.i on every
+# colour, the H7310 / H7318 / H6165 screens with no Kelvin slider included.
+_PICK_TEST_SCHEMES: Final = frozenset({"legacy_02"})
 # Wire branches the library leaves unread on purpose: (family, layer, branch) -> the branch exactly.
 _UNREAD_WIRE_BRANCHES: Final[Mapping[tuple[str, str, str], Mapping[str, Any]]] = {
     ("h60ax", "by_goods_type 303", "by_pact 1,1"): {"group": {"num_pieces": 1}},
@@ -795,6 +805,9 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
     scenes = _scene_set(need(layered.get("scene_versions"), "scene_versions"), fail) if uploads else ()
     if "color_temp" in caps:
         need(layered.get("kelvin_range"), "kelvin_range")
+    if scheme in _PICK_TEST_SCHEMES and "rgb" in caps and layered.get("kelvin_range") is None:
+        fail(f"no kelvin_range: a {scheme} row with rgb needs one, as its colour write sends a pick that "
+             "is a Kelvin tint colour in the range as colour temperature (KelvinConfig.i)")
     kelvin = (_kelvin(layered["kelvin_range"], "kelvin_range", fail)
               if layered.get("kelvin_range") is not None and not relay else None)
     _check_kelvin_by_firmware(kelvin, kelvin_by_version, fail)

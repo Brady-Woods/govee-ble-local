@@ -562,17 +562,22 @@ types:
             'govee_common::sub_mode::color_rgbic_15': color_15_write(profile)
   color_02_write:
     doc: |
-      33 05 02 legacy colour: [rgb] for RGB, [ff ff ff][01][tint rgb] for a
+      33 05 02 legacy colour, colour instruction version 4 (Config.J[4] =
+      Config.fu): [rgb] for RGB (Bytes.a); [ff ff ff][01][tint rgb] for a
+      pick that is a Kelvin tint colour in the SKU's range, the Kelvin
+      slider's tint included (Bytes.o). No Kelvin and no segment mask: fu
+      drops the position set. Bytes.y builds the white_tint form from a
       Kelvin.
     doc-ref:
-      - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:212-222
-      - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:587-604
+      - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:5557-5561,14090-14094
+      - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:212-222,422-428,587-604
+      - base-classes11/com/govee/base2light/pact/newdetail/content/color/ColorViewModel.java:848-884
     seq:
       - id: color
         type: govee_common::rgb
       - id: white_flag
         type: u1
-        doc: 1 for the Kelvin form, 0 for RGB
+        enum: color_02_flag
       - id: tint
         type: govee_common::rgb
   scene_select:
@@ -1807,6 +1812,15 @@ enums:
       id: light_off
     0x01:
       id: light_on
+  color_02_flag:
+    0x00:
+      id: rgb
+      doc: Bytes.a, the colour as given; the tint is zero
+    0x01:
+      id: white_tint
+      doc: Bytes.o / Bytes.y, white in the colour slot and the tint after it
+      doc-ref:
+        - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:422-428,587-604
   relay_write:
     0x10:
       id: relay0_off

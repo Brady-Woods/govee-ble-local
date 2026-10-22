@@ -14,7 +14,7 @@ from govee_ble_local.exceptions import GoveeBleError, GoveeBleInvalidValue, Gove
 from govee_ble_local.wire import build as b
 from govee_ble_local.wire.cct import tint_for_kelvin
 
-ALL_SCHEMES: tuple[b.ColorScheme, ...] = ("h60a6", "h6006", "h61a8", "h6188", "h6061")
+ALL_SCHEMES: tuple[b.ColorScheme, ...] = ("h60a6", "h6006", "h61a8", "h6188", "h6061", "legacy_02")
 
 
 # ── a scheme that can't express the request: GoveeBleNotSupported, not a bare ValueError ──
@@ -73,7 +73,7 @@ def test_unknown_scheme_is_refused_not_sent_as_h60a6() -> None:
 # The colour sub-mode each scheme's frames use (33 05 <sub> ...); nothing may fall through to another's.
 _FAMILY: dict[b.ColorScheme, int] = {
     "h60a6": b.SUB_COLOR_15, "h6061": b.SUB_COLOR_15, "h61a8": b.SUB_COLOR_0B,
-    "h6006": b.SUB_COLOR_0D, "h6188": b.SUB_COLOR_0D,
+    "h6006": b.SUB_COLOR_0D, "h6188": b.SUB_COLOR_0D, "legacy_02": b.SUB_COLOR_02,
 }
 _TINT_2700 = (0xFF, 0xAE, 0x54)   # a Kelvin tint colour: the CCT-pick path on every scheme with CCT
 # builder -> (call, the schemes that can express it)

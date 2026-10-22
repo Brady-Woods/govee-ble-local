@@ -9,6 +9,26 @@ model, from which the shipped readers are generated).
 ## [Unreleased]
 
 ### Added
+- **The legacy 0x02 colour scheme, `legacy_02`, and 10 SKUs on it, admitted by default (`app_traced`)**:
+  H6105 (h6105), H6107 (h6107), H6129 (h6129), H6185 (h6185), H7310 / H7312 / H7317 (h73101217), H7318
+  (h7318) and H6165 / H6166 (h6165), all at goodsType 0 and any pact. Their colour screens run colour
+  instruction version 4 (`ColorModeControllerConfig.c` -> `Config.F`: `Config.w[SKU]` = 4, else `Config.x[0]`
+  = `Config.Hu` = 4 -> `Config.J[4]` = `Config.fu`), which `wire.build` now sends:
+  - RGB as `33 05 02 R G B` (`Bytes.a`);
+  - a pick that is one of the app's Kelvin tint colours in the SKU's range as `33 05 02 ff ff ff 01 <the
+    colour>` (`KelvinConfig.i` -> `Bytes.o`). `fu` makes that test on the H7310 / H7312 / H7317 / H7318 /
+    H6165 / H6166 screens too, which have no colour-temperature control, over their KelvinConfig version 0
+    range [2000, 9000];
+  - colour temperature (H6105 / H6107 / H6129 / H6185) as the Kelvin's tint in that form: the Kelvin slider
+    sends `Constant.getTemColorByKelvin(K)[2]` through `fu` (`ColorViewModel.U`), so no Kelvin is on the wire;
+  - no segment frame: `fu` ignores the position set.
+
+  None is hardware-verified: no light on the bench runs colour version 4, and none may be sent a 0x02 frame.
+  The `0x0d` white-slot colour-temperature frame (`Config.GM` -> `Bytes.A`) is not part of the scheme: it comes
+  only from the illumination tab (`View4IlluminationMode` -> `configKelvinController`) and same-model group
+  control, and none of these SKUs' bundled mode lists has the illumination tab. H6113 / H6181 and the other
+  goodsType-0 rows on colour version 4 stay held for their other gaps (routing below the gate, the
+  `rgb_flag_tint` read-back, the GATT service, firmware gates).
 - **158 more SKUs, traced from the app's device list** (spec rows only; no library code changed): 96 admitted
   by default (`app_traced`) and 62 behind `allow_modelled` (`modelled`), for 194 and 68 in all. None is
   hardware-verified (the only bench check, below, was read-only), and none has a bundled scene catalog, so none
@@ -72,8 +92,20 @@ model, from which the shipped readers are generated).
   H6690, H70A1-3 with H6176 / H61BC, H61B0 with H61B3 / H61B6. H6099 and H61B0 come first in theirs, so a
   `Device` built from one of those profiles without `sku=` names itself after them (`create_device` and
   `make_device` always pass the SKU).
+- The `legacy_02` scheme changes no admitted SKU: every profile of the 1.7.0 table resolves as before, field by
+  field, at every listed pact, at (99, 99) and at none, with and without `allow_modelled`; the 10 SKUs above
+  are the only new routes.
 
 ### Spec
+- **`color_02_write` (govee_ble_frame) is the `legacy_02` scheme's frame**, now citing the writer the library
+  follows (`Config.fu` -> `Bytes.a` / `Bytes.o`, from `ColorViewModel.U` / `p0`), and its `white_flag` takes a
+  new enum, `color_02_flag` (`rgb` = Bytes.a, `white_tint` = Bytes.o / Bytes.y). `spec/govee_reference.py`
+  checks that `govee_commands.build_color_legacy` reads back as both forms.
+- **devices.yaml**: `color_scheme: legacy_02` and `support: app_traced` on h6105, h6107, h6129, h6185,
+  h73101217, h7318 and h6165 "0"; `specs.kelvin_range: [2000, 9000]` on h73101217, h7318 and h6165 (the range of
+  `fu`'s Kelvin-tint test, `KelvinConfig.Config.i[0]` = `P1` = 0; those screens have no colour temperature). The
+  resolver now requires a `kelvin_range` on a `legacy_02` row with `rgb`. devices.schema.json lists the six
+  colour schemes as `color_scheme`'s enum.
 - **The device-list trace (Govee Home 7.7.02; 7.5.12 where a family says so).** Each of the 83 census families
   was traced as the app runs it: the device-list model, the detail screen, its view model, then the builders,
   with `Class.method` and line citations in each row's `doc` and `doc-ref`. Core control decided a row's
