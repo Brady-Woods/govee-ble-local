@@ -16,7 +16,7 @@ from govee_ble_local.devices.profile import PROFILES, profile_for, wire_profile
 from govee_ble_local.exceptions import GoveeBleInvalidValue, GoveeBleNotSupported
 from govee_ble_local.identify import GoveeAdvertisement
 from govee_ble_local.models import Capability
-from govee_ble_local.wire import build, reassemble
+from govee_ble_local.wire import _spec, build, reassemble
 from govee_ble_local.scenes import Scene
 
 
@@ -643,6 +643,16 @@ def test_the_status_reply_is_read_with_the_profiles_status_decode() -> None:
     for bad in ((("f_a5", "color_group"),), (("f_99", "x"),), (("num_per_group", 0),)):
         with pytest.raises(GoveeBleInvalidValue, match="status_decode"):
             dataclasses.replace(h60a6, status_decode=bad)
+    # The aa 05 reply's music layout and empty-value rule are the profile's mode_decode (a devices.yaml polled
+    # row's wire mode), unset by default.
+    music = dataclasses.replace(h60a6, mode_decode=[("music", "v2_default"), ("empty_fails", True)])
+    assert (wire_profile(music).mode.music, wire_profile(music).mode.empty_fails) == (
+        _spec.Common.MusicDecode.v2_default, True)
+    assert wire_profile(h60a6).mode.music == _spec.Common.MusicDecode.not_decoded
+    twice = (("music", "v1_flagged"), ("music", "v2_default"))
+    for bad_mode in ((("music", "v9"),), (("empty_fails", 1),), twice):
+        with pytest.raises(GoveeBleInvalidValue, match="mode_decode"):
+            dataclasses.replace(h60a6, mode_decode=bad_mode)
 
 
 @pytest.mark.parametrize("sku", ["H1630", "R1630"])

@@ -365,6 +365,15 @@ class DeviceProfile:
     brightness, else the held one). The tab writes every piece, so the segment and zone colour-temperature
     setters raise GoveeBleNotSupported. False (the default, every SKU before 1.8.0): the Kelvin frame
     alone."""
+    mode_decode: tuple[tuple[str, str | bool], ...] = field(default=(), kw_only=True)
+    """The ``aa 05`` mode report's music layout and empty-value rule, where the screen's parse sets them: a
+    devices.yaml polled row's wire ``mode`` (h60a1 ``Info4Detail.Q`` on H60A1 / H80A1: ``music`` v2_default,
+    ``empty_fails``), as ``(govee_profile mode_decode param, value)`` pairs: ``music`` a govee_common
+    music_decode member name, ``empty_fails`` a flag (each once; a list is kept as a tuple). Empty (the
+    default, every SKU before 1.8.0) is the spec's default decode: the music sub-mode 0x13 is not decoded. The
+    colour sub-modes are :attr:`mode_color_parse`'s, and ``empty_fails`` governs only a status TLV 0x05, so
+    of the reply only a music report decodes differently; a music report sets no colour or scene in
+    ``state``. A status profile's TLV 0x05 takes :attr:`status_decode`'s."""
 
     def __post_init__(self) -> None:
         """Validate each field: GoveeBleInvalidValue (a ValueError) on a value no Device can use.
@@ -426,6 +435,7 @@ class DeviceProfile:
             raise GoveeBleInvalidValue(
                 f"{where}: status_read={types!r} (distinct command codes, at least one)")
         self._check_status_decode(where)
+        self._check_mode_decode(where)
         if self.color_readback_per_batch < 1:   # a group size of 0 would never finish a read-back
             raise GoveeBleInvalidValue(
                 f"{where}: color_readback_per_batch={self.color_readback_per_batch!r}")
@@ -503,6 +513,22 @@ class DeviceProfile:
             ok = ok and facts.get("group_rule", "unknown") != "unknown" and "num_per_group" in facts \
                 and facts.get("has_brightness") is True
         if not ok:
+            raise GoveeBleInvalidValue(bad)
+
+    def _check_mode_decode(self, where: str) -> None:
+        """:attr:`mode_decode`'s rules: ``(param, value)`` pairs, each param once, ``music`` a member name of
+        govee_common music_decode and ``empty_fails`` a bool (a list is kept as a tuple)."""
+        bad = f"{where}: mode_decode={self.mode_decode!r}"
+        try:
+            pairs: tuple[tuple[Any, ...], ...] = tuple(tuple(pair) for pair in self.mode_decode)
+            facts: dict[Any, Any] = dict(pair for pair in pairs if len(pair) == 2)
+        except TypeError:
+            raise GoveeBleInvalidValue(bad) from None
+        object.__setattr__(self, "mode_decode", pairs)
+        music = _STATUS_ENUMS["music"]
+        if len(facts) != len(pairs) or not all(
+                (name == "music" and isinstance(value, str) and value in music.__members__)
+                or (name == "empty_fails" and isinstance(value, bool)) for name, value in facts.items()):
             raise GoveeBleInvalidValue(bad)
 
     def _check_scene_versions_by_pact(self, where: str) -> None:
@@ -687,8 +713,9 @@ def _decode(profile: DeviceProfile, name: str) -> dict[str, int]:
 
 def wire_profile(profile: DeviceProfile) -> Any:
     """The spec's ``govee_profile`` for the device facts a reply's decode depends on: the mode decode
-    (:attr:`DeviceProfile.mode_color_parse`, and the bars' 0x15 on a :attr:`DeviceProfile.bar_switch`
-    device) for the aa 05 report, the status TLV 0x05's (``mode_status``:
+    (:attr:`DeviceProfile.mode_color_parse`, the bars' 0x15 on a :attr:`DeviceProfile.bar_switch`
+    device, and :attr:`DeviceProfile.mode_decode`'s music layout and empty-value rule) for the aa 05 report,
+    the status TLV 0x05's (``mode_status``:
     :attr:`DeviceProfile.mode_color_parse_status`, else the same), the plug's relay mask
     (:attr:`DeviceProfile.relay_on_mask`, the aa 01 heartbeat rule the library's poll follows:
     ``power_state.is_on_heartbeat``), and on a ``readback="status"`` profile the 0xAC reply's decode
@@ -706,6 +733,11 @@ def wire_profile(profile: DeviceProfile) -> Any:
         colours = mode_status if mode_status is not None else _decode(profile, profile.mode_color_parse)
         mode_status = {**colours, "music": int(_C.MusicDecode[facts.get("music", "not_decoded")]),
                        "empty_fails": bool(facts.get("empty_fails", False))}
+    reply = dict(profile.mode_decode)   # the aa 05 reply's music layout and empty-value rule
+    if "music" in reply:
+        reads["music"] = int(_C.MusicDecode[reply["music"]])
+    if "empty_fails" in reply:
+        reads["empty_fails"] = bool(reply["empty_fails"])
     return _spec.profile(**_decode(profile, profile.mode_color_parse),
                          mode_status=None if mode_status is None else tuple(sorted(mode_status.items())),
                          relay_on_mask=profile.relay_on_mask, relay_heartbeat_on_mask=profile.relay_on_mask,

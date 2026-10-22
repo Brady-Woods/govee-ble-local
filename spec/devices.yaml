@@ -669,7 +669,7 @@ families:
       color_scheme: h60a6
       wire_cipher: runtime
       mode_color_parse: kelvin_15_rgb_kelvin_0d   # every pact, aa 05 and TLV 0x05 alike; split_h60ax/com/govee/pact_h60a0/adjust/h60a1/Info4Detail.java:380
-      by_goods_type:   # 188, 235, 324, 370 and 390 carry no support (h60ax.md gaps); 346 / 356 / 373 are held (modelled)
+      by_goods_type:   # 188, 324, 370 and 390 carry no support (h60ax.md gaps); 235 / 346 / 356 / 373 are held (modelled)
         "188":   # H60A0 on AcNewDetailH60A0; no support: its own colour builder and the 33 36 zone form (doc)
           models: [H60A0]
           pacts: ["1,1"]
@@ -701,9 +701,11 @@ families:
         "235":   # H60A1 / H80A1 on the h60a1 AcNewDetail (VM4Light)
           models: [H60A1, H80A1]
           pacts: ["1,1", "2,1"]
+          support: modelled   # traced, held: the Kelvin range below hard 1.04.03 (doc)
           power_read: aa01
           power_live: [push_30]
           color_temp_control: illumination
+          color_functions: [segment_brightness]
           capabilities: [power, brightness, rgb, color_temp, segments]
           zones: []
           account_lock: false
@@ -723,13 +725,16 @@ families:
             the family h60a6 frames; segments picked per piece (ColorMode.canClickColor). The colour tab has no Kelvin
             (Config.I[235][4] false, ColorMode.canClickColorTem null); the illumination tab (mode 13 in the SKU's
             localSkuComponentConfigs list) writes Config.N[0] = Bytes.C(K, 14, 1) and then 33 04 as one compose
-            (View4IlluminationMode.I0; color_temp_control illumination). Main switch 33 01; no zone switch. No
-            support, for two library gaps: the polled aa 05 reply is parsed by Info4Detail.Q (wire mode music
-            v2_default, empty_fails), where the library reads a polled reply with the default decode only; and the
-            Kelvin range is KelvinConfig.Config.Y2, a numeric hard-version gate (BleUtils.isHigherVersion):
+            (View4IlluminationMode.I0; color_temp_control illumination, with illuminationCur()[0] = Info4Detail.i,
+            the aa 04 brightness). Config.I[235] = zN: segment brightness on, colour temperature off. Main switch 33
+            01; no zone switch. The polled aa 05 reply is parsed by Info4Detail.Q (the family wire mode, music
+            v2_default; DeviceProfile.mode_decode). Held behind allow_modelled for one gap: the Kelvin range is
+            KelvinConfig.Config.Y2, a numeric hard-version gate (BleUtils.isHigherVersion) the library can't compare:
             version 2 = [2700, 6500] from hard 1.04.03, else version 1 = [2200, 6500]. The row's [2700, 6500] is the
-            range valid on every revision. Brightness version 1. No 0xB2 on the connect. Not listed: the time-sync
-            write, the timer, sleep and wake reads. Scenes not traced.
+            range valid on every revision, so below 1.04.03 the library offers no 2200-2600 K and sends an RGB pick of
+            one of those ten tint colours as RGB (Bytes.h), where the app's KelvinConfig.i, over [2200, 6500], sends it
+            as Bytes.r (kelvin-numeric-hard-gate). Brightness version 1. No 0xB2 on the connect. Not listed: the
+            time-sync write, the timer, sleep and wake reads. Scenes not traced. Not hardware-verified.
           doc-ref:
             - split_h60ax/com/govee/pact_h60a0/pact/Support.java:79-86,130-132,417-432
             - split_h60ax/com/govee/pact_h60a0/pact/Model.java:137-140
@@ -743,8 +748,9 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:231-257,277-292,1065-1069,4510-4514,5522-5526,5615-5619,5674-5678,9515-9517,12960-12968,13509-13512,16008-16011,17193-17196
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:98-130,315-326,474-501
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/ColorModeControllerConfig.java:207-256,499-525
-            - base-classes11/com/govee/base2light/pact/newdetail/content/illumination/View4IlluminationMode.java:612-660
-            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:329-342,401-411,423-427,1434-1436
+            - base-classes11/com/govee/base2light/pact/newdetail/content/illumination/View4IlluminationMode.java:236-239,612-668
+            - split_h60ax/com/govee/pact_h60a0/adjust/h60a1/VM4Light.java:608-612,643-647,718-721
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:193-200,329-342,401-411,423-427,1434-1436
             - base-classes10/com/govee/base2kt/utils/BleUtils.java:74-79,327-335
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:198-215,251-258
             - base-classes10/com/govee/base2light/capability/legacy/LegacyColorCapabilityProvider.java:151-154,178-181,235-241,299-301

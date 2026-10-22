@@ -85,6 +85,15 @@ model, from which the shipped readers are generated).
   `modelled` to `app_traced`, admitted by default, not hardware-verified: **H60A4 / H80A4** (h60ax 302:
   `Bytes.C(K, 11, 1)`, the h60a6 frame over every piece) and **H8015** (bulblightv3 328: `Config.N[2]` =
   `Bytes.A`, the h6188 frame).
+- **A polled row's aa 05 decode** (`DeviceProfile.mode_decode`): the aa 05 mode report is read with the row's
+  wire `mode` (its music layout and empty-value rule), where the resolver refused any but the default on a
+  polled row. Empty by default, so every other profile reads its reports as before (the same cached
+  `govee_profile`). Only a music report decodes differently, and it folds to the same state. It admits
+  **H60A1 / H80A1** (h60ax 235) behind `allow_modelled`: h60a1 `Info4Detail.Q` (music v2_default), the
+  illumination tab's Kelvin + brightness pair, 14 pieces. They stay `modelled` for the Kelvin range: the app's
+  is [2200, 6500] below hardware 1.04.03 (`KelvinConfig.Config.Y2`, a numeric compare), the library's the
+  [2700, 6500] valid on every revision, so on that hardware an RGB pick of one of the ten 2200-2600 K tint
+  colours goes out as RGB where the app sends a colour-temperature frame. Not hardware-verified.
 
 ### Changed
 - Nothing for existing SKUs. Each of the 104 SKUs admitted at 1.6.1 (98 by default, 6 behind
@@ -134,7 +143,10 @@ model, from which the shipped readers are generated).
   and the h60a6 or h6188 scheme (the two whose colour-temperature frame is a `Config.N` builder: `Bytes.C`,
   `Bytes.A`), and then lets the colour page's `color_temperature` flag be off. h60ax 302 (with
   `color_functions: [segment_brightness]`, `Config.I[302]` = hQ) and bulblightv3 328 state it and are
-  `app_traced`; h60ax 235 states it and stays without support (its polled aa 05 decode and numeric Kelvin gate).
+  `app_traced`; h60ax 235 states it too.
+- h60ax 235 is `modelled` (above), with `color_functions: [segment_brightness]` (`Config.I[235]` = zN). No
+  `.ksy` change: govee_state already reads an aa 05 reply with the profile's `mode` decode, and its empty-value
+  rule only for a status TLV.
 
 ## [1.6.1] — 2026-10-21
 

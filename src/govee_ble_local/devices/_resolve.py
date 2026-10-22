@@ -95,8 +95,9 @@ the row lacks fails the build: nothing defaults silently.
   (H6641), or, with ``ic_pieces: fixed``, it is made on every poll and discarded
   (``DeviceProfile.ic_num_read_only``: a fixed piece count). Every command
   form the library sends or reads for the row must be the row's (wire ``forms``), a polled row's aa 05 reply
-  is read with the spec's default decode (:data:`_MODE_UNSET`), and a colour-group read is of 4-byte
-  records in the row's wire ``group.num_per_group`` (and, in the status read, its ``group.rule``).
+  is read with the row's wire ``mode`` (``DeviceProfile.mode_decode``, over the spec's default,
+  :data:`_MODE_UNSET`), and a colour-group read is of 4-byte records in the row's wire
+  ``group.num_per_group`` (and, in the status read, its ``group.rule``).
 - The writes on every connect (``connect_writes``): a plug's ``plug_sync_time``, and on a light nothing or
   ``light_effect_stop`` (``DeviceProfile.light_effect_stop``), each sent once per session after the
   handshake and any unlock. A SKU's ``by_model`` ``scene_power_on`` (the power-on ahead of a scene apply,
@@ -396,9 +397,9 @@ SCHEME_LACKS: Final[Mapping[str, frozenset[str]]] = {
 _UNREAD_WIRE_BRANCHES: Final[Mapping[tuple[str, str, str], Mapping[str, Any]]] = {
     ("h60ax", "by_goods_type 303", "by_pact 1,1"): {"group": {"num_pieces": 1}},
 }
-# The mode decode (wireMode) the library reads a polled row's aa 05 replies with: the spec's default, every
-# leaf unset (profile.wire_profile passes neither). A status row's TLV 0x05 takes the row's own
-# (DeviceProfile.status_decode).
+# The spec's default mode decode (wireMode), every leaf unset: what a row's wire mode is laid over. A polled
+# row's aa 05 replies take the row's own (DeviceProfile.mode_decode, emitted only where it differs from this),
+# a status row's TLV 0x05 too (DeviceProfile.status_decode).
 _MODE_UNSET: Final[ModeDecode] = {"music": "not_decoded", "empty_fails": False}
 # The family encryption tags the library implements: plaintext, the AES-RC4 PSK channel, and the account
 # lock, whose cipher is resolved at connect (aes_gcm_v2 is detected at connect but not implemented).
@@ -995,6 +996,10 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
                           has_brightness=True)
         decode.update({**_MODE_UNSET, **w["mode"], **w["mode_status"]})   # the TLV 0x05's
         out["status_decode"] = tuple(sorted(decode.items()))
+    if readback == "polled":
+        mode = {**_MODE_UNSET, **w["mode"]}   # the aa 05 reply's (_check_mode: no mode_status)
+        if mode != _MODE_UNSET:
+            out["mode_decode"] = tuple(sorted(mode.items()))
     if sized is not None:
         out["color_readback_ic_range"] = (sized["min_ic"], sized["max_ic"])
         out["color_readback_ic_per_piece"] = sized["ic_per_piece"]
@@ -1050,14 +1055,11 @@ def _wire(fam: Family, gt: str, sku: str, fail: Fail) -> dict[str, Any]:
 def _check_mode(w: Mapping[str, Any], readback: str, fail: Fail) -> None:
     """The row's wire ``mode`` / ``mode_status`` must be a decode the library reads its mode reports with: on
     a status row any (the TLV 0x05 takes the row's own, mode_status over mode, ``status_decode``), on a
-    polled row the aa 05 reply's, the spec's default (:data:`_MODE_UNSET`; no mode_status: it has no status
+    polled row any ``mode`` (the aa 05 reply takes it, ``mode_decode``) and no mode_status (it has no status
     read), none on a plug."""
     if readback == "status":
         return
-    if readback == "polled":
-        served = {**_MODE_UNSET, **w["mode"]} == _MODE_UNSET and not w["mode_status"]
-    else:
-        served = not w["mode"] and not w["mode_status"]
+    served = not w["mode_status"] and (readback == "polled" or not w["mode"])
     if not served:
         fail(f"wire mode {w['mode']} / mode_status {w['mode_status']} is not a decode the library reads with")
 

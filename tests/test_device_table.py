@@ -247,7 +247,7 @@ _REFUSED: tuple[tuple[str, str, _Edit, str], ...] = (
     ("striplight", "41", lambda f: _wire(f, "41").update(
         by_firmware=[{"min_soft_version": "1.00.00", "forms": {"f_a5": "bulb_batch_v2"}}]),
      "wire by_goods_type 41 by_firmware 0 is not served"),
-    ("striplight", "41", lambda f: _wire(f).update(mode={"music": "v1_flagged"}), "wire mode"),
+    ("striplight", "41", lambda f: _wire(f).update(mode_status={"music": "v1_flagged"}), "wire mode"),
     ("h60ax", "303", lambda f: _wire(f, "303")["forms"].update(f_30="light_direction"),
      "wire forms f_30 'light_direction', where the library uses zone_power"),
     ("dreamcolorlightv1", "19", lambda f: (_row(f, "19").update(color_scheme="h61a8"),
