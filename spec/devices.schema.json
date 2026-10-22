@@ -257,7 +257,7 @@
           "properties": {
             "has_brightness": { "type": "boolean", "description": "Per-segment 0xA5 colour read-back record: true = 4-byte [brightness,R,G,B], false = 3-byte [R,G,B] (an aa a2 colour group is always 3-byte)." },
             "color_scheme": { "type": "string", "description": "Colour-write byte-layout family selecting the op15/0x0d variant (e.g. 'h60a6', 'h6006')." },
-            "power_read": { "type": "string", "enum": ["aa01", "ac_status"], "description": "Power source at connect (govee_state power_state.is_on): 'aa01' = the aa 01 read, on when the byte == 1; 'ac_status' = TLV 0x01 of the 0xAC/0x03 status burst (no aa 01 read), on when the byte != 0." },
+            "power_read": { "type": "string", "enum": ["aa01", "ac_status", "aa34_detail"], "description": "Power source at connect (govee_state power_state.is_on): 'aa01' = the aa 01 read, on when the byte == 1; 'ac_status' = TLV 0x01 of the 0xAC/0x03 status burst (no aa 01 read), on when the byte != 0; 'aa34_detail' = the aa 34 device-detail read (no aa 01 read; wire f_34 device_detail), on when the header main switch shows on (govee_state device_detail.main_switch_on: the light open or white noise playing; H6057)." },
             "power_live": { "type": "array", "uniqueItems": true, "items": { "type": "string", "enum": ["heartbeat_aa01", "heartbeat_aa36", "heartbeat_aa33", "push_30"] }, "description": "Live power after connect: 'heartbeat_aa01' = aa 01 heartbeat, on when frame byte 2 == 1; 'heartbeat_aa36' = aa 36 heartbeat, per bar byte 2 / 3 == 1; 'heartbeat_aa33' = aa 33 switch heartbeat, on when byte 2 != 0; 'push_30' = the ee 30 notify (layout: wire forms.f_ee_30)." },
             "mode_color_parse": { "$ref": "#/$defs/modeColorParse", "description": "The family's default colour-report strategy; by_goods_type.<gt>, else by_model.<SKU>, overrides it, then that entry's by_pact and every matching by_firmware (clientBranch, clientFirmware); 'none' = no colour sub-mode decoded." },
             "mode_color_parse_status": { "$ref": "#/$defs/modeColorParse", "description": "Strategy for the 0x05 TLV of the 0xAC status burst where it differs from the aa 05 reply (absent = mode_color_parse)." },
@@ -759,6 +759,13 @@
             "light_direction"
           ],
           "description": "govee_profile command_forms.f_30 (govee_common::form_30)."
+        },
+        "f_34": {
+          "enum": [
+            "unknown",
+            "device_detail"
+          ],
+          "description": "govee_profile command_forms.f_34 (govee_common::form_34)."
         },
         "f_36": {
           "enum": [

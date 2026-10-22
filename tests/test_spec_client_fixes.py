@@ -294,6 +294,22 @@ def test_h6047_bars_still_override_the_aa01_decode() -> None:
     assert d.state.is_on is True and d.state.zone_power == {0: True, 1: False}
 
 
+@pytest.mark.parametrize(("flags", "music", "on"), [
+    (0x80, 0x00, True),    # the light open
+    (0x7F, 0x00, False),   # every other switch flag
+    (0x00, 0x90, True),    # white noise playing with the light off: the main switch shows on
+    (0x00, 0x80, False),   # the play bit outside white-noise mode
+])
+def test_h6057_reads_its_power_from_the_aa34_detail(flags: int, music: int, on: bool) -> None:
+    # power_read aa34_detail: aa 04, aa 34 and aa 05, no aa 01, in Compose4InfoBleIotH6057's order; on while
+    # the header main switch (33 01) shows on (H6057DelegateHeader.E0).
+    d = _scripted("H6057", {0x34: frame(0xAA, 0x34, flags, 0x64, music, 0x00, 0x32, 0x50),
+                            0x01: frame(0xAA, 0x01, 0x01)})
+    asyncio.run(d._read_polled())
+    sent = [c.args[0][:2].hex() for c in d._conn.query.call_args_list]   # type: ignore[attr-defined]
+    assert sent == ["aa04", "aa34", "aa05"] and d.state.is_on is on
+
+
 @pytest.mark.parametrize(("sku", "byte", "on"), [
     ("H5082", 0x02, True), ("H5080", 0x02, False), ("H5160", 0x08, False), ("H5160", 0x04, True),
 ])

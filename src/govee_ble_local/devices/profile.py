@@ -33,6 +33,9 @@ from .brightness import percent_to_raw
 SceneDialect = Literal["A", "B_h60a6", "B_h6052"]
 # "status" (0xAC burst) | "polled" (aa 01/04/05) | "plug" (aa 01 relay bitmask) | "none"
 ReadBack = Literal["status", "polled", "plug", "none"]
+# The power read of a "polled" read-back: "aa01" (aa 01, on for a byte of 1) | "aa34_detail" (the H6057's
+# aa 34 device-detail read, on while its header main switch shows on).
+PowerRead = Literal["aa01", "aa34_detail"]
 ColorReadBack = Literal["", "mechanism_b", "mechanism_a_direct"]
 # How the colour sub-modes of an ``aa 05`` mode report are decoded (the SKU's Info4Detail mode parse): a
 # name of the spec's mode_color_parse table (devices.yaml ``mode_color_parse``, which maps each colour
@@ -354,6 +357,12 @@ class DeviceProfile:
     rgbiclight screen, ``VM4Light.N5``: goodsTypes 141 and 204). No walk when the read fails or its
     reader would throw (an IC field of 0x1000 or more). Writes keep the static :attr:`segments`; a
     devices.yaml row with ``ic_pieces: sections``."""
+    power_read: PowerRead = field(default="aa01", kw_only=True)
+    """``readback="polled"``: where the poll reads the power from, see :data:`PowerRead` (a devices.yaml row's
+    ``power_read``). ``"aa34_detail"`` (H6057) reads ``aa 34`` in place of ``aa 01``, after the ``aa 04``
+    brightness read, as its screen's connect list orders them (``Compose4InfoBleIotH6057``); on while the
+    header main switch (``33 01``) shows on: the light open or white noise playing. Ignored on every other
+    read-back."""
 
     def __post_init__(self) -> None:
         """Validate each field: GoveeBleInvalidValue (a ValueError) on a value no Device can use.
@@ -375,6 +384,7 @@ class DeviceProfile:
             ("color_scheme", ColorScheme),
             ("scene_dialect", SceneDialect),
             ("readback", ReadBack),
+            ("power_read", PowerRead),
             ("color_readback", ColorReadBack),
             ("relay_power", RelayPower),
             ("heartbeat_timing", HeartbeatTiming),

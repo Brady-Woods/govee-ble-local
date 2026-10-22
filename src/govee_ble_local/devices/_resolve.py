@@ -77,6 +77,9 @@ the row lacks fails the build: nothing defaults silently.
   the TLV 0x05's mode decode (mode_status over mode). The library takes the zone bits from TLV 0x30, so a
   requested ``cmd_30`` needs ``f_30: zone_power``. A pact branch may only drop ``color_group``, which
   becomes ``status_color_groups_pact`` (one pact type, from its lowest code that keeps it). A polled row
+  reads its power from aa 01, or, with ``power_read: aa34_detail``, from the aa 34 device-detail read
+  (``DeviceProfile.power_read``; wire ``f_34: device_detail``; never on a bar row, and with no aa 01 to take a
+  ``heartbeat_aa01`` power from). A polled row
   reads aa 04 on every poll and a gradual row ``aa a3``, so ``connect_reads`` lists ``brightness`` exactly
   on a polled row and ``gradual`` wherever the capability is; a ``gradual`` read without the capability (the
   screen's default ``Compose4InfoBleIot`` read, with no gradual control) is made on every poll too and its
@@ -389,7 +392,8 @@ _CIPHERS: Final = frozenset({"none", "aes_v1", "secret_key_pairing"})
 # scenes.upload.dialects -> DeviceProfile.scene_dialect; "none" = activate only.
 _DIALECTS: Final = {"legacy_scene": "A", "diy_graffiti": "B_h60a6", "tablelamp_h6052_type5_diy": "B_h6052",
                     "none": "A"}
-_READBACK: Final = {"aa01": "polled", "ac_status": "status"}   # power_read -> DeviceProfile.readback
+# power_read -> DeviceProfile.readback ("aa34_detail" also becomes DeviceProfile.power_read)
+_READBACK: Final = {"aa01": "polled", "ac_status": "status", "aa34_detail": "polled"}
 # The forms of the TLVs the status stream reads (govee_state's TLV-typed tags; reassemble.status_profile): the
 # row's own, in DeviceProfile.status_decode. f_a5 goes in only where the 0xA5 TLV is read as colour groups.
 _STATUS_TLV_FORMS: Final = ("f_30", "f_36", "f_40", "f_41", "f_a3")
@@ -817,7 +821,7 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
     if bright_by_pact and bright is None:
         fail("a pact brightness_range without the brightness capability")
 
-    readback = "plug"
+    readback, power_read = "plug", ""
     if not relay:
         power_read = need(row.get("power_read", cp.get("power_read")), "power_read")
         if power_read not in _READBACK:
@@ -872,6 +876,8 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
     bar = forms.get("f_36") == "bar_pair"
     if ("cmd_36" in reads) != bar:
         fail("the aa 36 read and f_36 bar_pair go together")
+    if power_read == "aa34_detail" and bar:
+        fail("power_read aa34_detail on a bar row (the bars' power is the aa 36 read's)")
     writes = tuple(need(row.get("connect_writes"), "connect_writes"))
     if writes not in ((("plug_sync_time",),) if relay else ((), ("light_effect_stop",))):
         fail(f"connect_writes {list(writes)} (the library sends the plug time sync on every relay row, and "
@@ -881,7 +887,7 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
         need(resync, "power_resync")
     elif resync:
         fail("power_resync on a light (the library re-syncs a plug's session only)")
-    live_served = {"heartbeat_aa01": readback == "polled", "heartbeat_aa36": bar,
+    live_served = {"heartbeat_aa01": power_read == "aa01", "heartbeat_aa36": bar,
                    "push_30": forms.get("f_ee_30", "unknown") != "unknown"}
     lives = row.get("power_live", cp.get("power_live")) or ()
     for live in lives:
@@ -961,6 +967,8 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
     if sized is not None:
         out["color_readback_ic_range"] = (sized["min_ic"], sized["max_ic"])
         out["color_readback_ic_per_piece"] = sized["ic_per_piece"]
+    if power_read == "aa34_detail":
+        out["power_read"] = power_read
     if relay:
         relay_power = need(row.get("relay_power", cp.get("relay_power")), "relay_power")
         if relay_power not in RELAY_POWERS:
@@ -1029,8 +1037,11 @@ def _forms_used(out: Mapping[str, Any], caps: Collection[str], status_read: Sequ
                 relay: bool) -> list[tuple[str, str]]:
     """``[(command form, the member the library sends or reads)]`` for one resolved row: the power frame, a
     plug's total switch, the colour scheme's frames, and the zone switch and the zone bits the status read
-    takes from TLV 0x30 (the colour read-back, aa 41 and aa 36 forms are checked where they are derived)."""
+    takes from TLV 0x30, and the aa 34 device detail a power_read aa34_detail row reads (the colour read-back,
+    aa 41 and aa 36 forms are checked where they are derived)."""
     used = [("f_01", "relays" if relay else "light")]
+    if out.get("power_read") == "aa34_detail":
+        used.append(("f_34", "device_detail"))
     if relay and out.get("relay_power") == "total_switch":
         used.append(("f_02", "total_switch"))
     scheme = out.get("color_scheme")

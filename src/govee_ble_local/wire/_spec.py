@@ -204,8 +204,8 @@ def build_frame(pro_type: Any, prof: Any, make_body: Any, length: int) -> bytes:
 def profile(
     *,
     f_01: int = 0, f_02: int = 0, f_09: int = 0, f_12: int = 0, f_13: int = 0, f_14: int = 0,
-    f_30: int = 0, f_36: int = 0, f_40: int = 0, f_41: int = 0, f_a2: int = 0, f_a3: int = 0,
-    f_a5: int = 0, f_b0: int = 0,
+    f_30: int = 0, f_34: int = 0, f_36: int = 0, f_40: int = 0, f_41: int = 0, f_a2: int = 0,
+    f_a3: int = 0, f_a5: int = 0, f_b0: int = 0,
     f_0b: int = 0, f_15_01: int = 0, f_15_04: int = 0, f_15_05: int = 0, f_ee_30: int = 0,
     f_ee_40: int = 0,
     num_segments: int = 0, num_levels: int = 0,
@@ -224,9 +224,9 @@ def profile(
     same mode can decode differently."""
     p = Profile
     forms = p.CommandForms(
-        f_01=f_01, f_02=f_02, f_09=f_09, f_12=f_12, f_13=f_13, f_14=f_14, f_30=f_30, f_36=f_36, f_40=f_40,
-        f_41=f_41, f_a2=f_a2, f_a3=f_a3, f_a5=f_a5, f_b0=f_b0, f_0b=f_0b, f_15_01=f_15_01, f_15_04=f_15_04,
-        f_15_05=f_15_05, f_ee_30=f_ee_30, f_ee_40=f_ee_40)
+        f_01=f_01, f_02=f_02, f_09=f_09, f_12=f_12, f_13=f_13, f_14=f_14, f_30=f_30, f_34=f_34, f_36=f_36,
+        f_40=f_40, f_41=f_41, f_a2=f_a2, f_a3=f_a3, f_a5=f_a5, f_b0=f_b0, f_0b=f_0b, f_15_01=f_15_01,
+        f_15_04=f_15_04, f_15_05=f_15_05, f_ee_30=f_ee_30, f_ee_40=f_ee_40)
     decode = p.ModeDecode(c02=c02, c0b=c0b, c0d=c0d, c14=c14, c15=c15, music=music, empty_fails=empty_fails)
     status = decode if mode_status is None else p.ModeDecode(
         **{"c02": 0, "c0b": 0, "c0d": 0, "c14": 0, "c15": 0, "music": music, "empty_fails": empty_fails,

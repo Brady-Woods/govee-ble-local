@@ -1801,8 +1801,8 @@ class Device:
         return applied
 
     async def _read_polled(self, budget: ConnectBudget | None = None) -> bool:
-        """The polled read-back (aa 01 / aa 04 / aa 36 / aa 41 / aa 05); returns whether a live field
-        came back (see :meth:`_read_status`)."""
+        """The polled read-back (aa 01 or aa 34 / aa 04 / aa 36 / aa 41 / aa 05); returns whether a live
+        field came back (see :meth:`_read_status`)."""
         def apply_power(on: bool) -> None:
             self._state.is_on = on
             held = self._state.zone_power
@@ -1819,13 +1819,21 @@ class Device:
         # Always read power: a device turned on externally (app, remote, wall
         # switch) must be noticed even when we last saw it off.
         # A light is on only for a byte of 1, as the app's control screens read it (parse_light_power).
+        detail = self.profile.power_read == "aa34_detail"
         since = self._power_unsure_seq   # when the read that gives the on/off is issued (_finish_read)
-        power_read = await self._read_command(
+        power_read = not detail and await self._read_command(
             "power", build.power_query(), parse.parse_light_power, apply_power, budget) == "applied"
         applied = power_read   # see _read_status / _finish_read
         if await self._read_command("brightness", build.brightness_query(),
                                     parse.parse_brightness, apply_brightness, budget) == "applied":
             applied = True
+        if detail:
+            # H6057: no aa 01; the aa 34 device-detail read after aa 04, as the screen's connect list sends
+            # them (Compose4InfoBleIotH6057), on while the header main switch shows on (parse_detail_power).
+            since = self._power_unsure_seq
+            if await self._read_command("power", build.device_detail_query(), parse.parse_detail_power,
+                                        apply_power, budget) == "applied":
+                applied = power_read = True
         if self.profile.bar_switch:
             bars_since = self._power_unsure_seq
             if await self._read_bar_switch(budget) == "applied":

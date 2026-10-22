@@ -10286,9 +10286,11 @@ families:
     client_profile:
       mode_color_parse: gradual_0d   # goodsType 104; 0x0b is the game sub-mode; split_hollowlamp/com/govee/h6057/origin/newDetail/H6057Info4Detail.java:414-456
       by_goods_type:
-        "104":   # H6057, the H6057DetailActivity screen; held: no support (power read-back is the aa 34 detail read; light vs main switch)
+        "104":   # H6057, the H6057DetailActivity screen; power from the aa 34 detail read (the header main switch)
           models: [H6057]
           pacts: ["1,1"]
+          support: app_traced
+          power_read: aa34_detail
           color_scheme: h6006
           capabilities: [power, brightness, rgb, color_temp]
           zones: []
@@ -10302,15 +10304,18 @@ families:
           heartbeat: heartbeat
           doc: >-
             H6057 (Support.b; SubLib keys Support.d = {104}; Model.t -> H6057DetailActivity -> H6057DetailVM), pact (1,1)
-            only (Support.addSupportPact, H6057Config.f). HELD, no support: the light-open flag is bit 7 of byte 0 of the aa 34
-            device-detail reply (Controllers.f / d, H6057DetailVM.v5 -> H6057Info4Detail.g), live from the ee 30 01 <bit 0>
-            push (DeviceInfoNotifyParse.m); the screen never sends aa 01 and reads no 0xAC status, so the library has no
-            power_read for it. Two header switches with two states (H6057DelegateHeader.E0 / D0): ivLightSwitch shows the
-            light flag and writes the light alone, 33 30 <!light> (h5, command_light_switch; a one-byte light_direction body,
-            not the library's 33 30 <index> <state> zone frame); btnSwitch shows light OR white-noise isPlay (aa 34 bytes 2-3,
-            ee 30 04) and writes 33 01 00 when either is on, 33 01 01 only when both are off (switchTrigger ->
-            ControllerSwitch.d; 33 01 00 also clears isPlay, D5). Which one backs an HA light's power is open: 33 30 matches
-            the read-back in every state, 33 01 01 is not the app's frame while white noise plays. Connect
+            only (Support.addSupportPact, H6057Config.f). The screen never sends aa 01 and reads no 0xAC status: its state
+            read is the aa 34 device-detail reply (Controllers.f / e, H6057DetailVM.v5), whose byte 0 bit 7 is the
+            light-open flag (H6057Info4Detail.g / H) and byte 2 the music flags (white-noise isPlay); live updates are the ee
+            30 01 / 04 pushes (DeviceInfoNotifyParse.m / n, not consumed). Two header switches with two states
+            (H6057DelegateHeader.E0 / D0): ivLightSwitch shows the light flag and writes the light alone, 33 30 <!light> (h5,
+            command_light_switch; a one-byte light_direction body, not the library's 33 30 <index> <state> zone frame);
+            btnSwitch, the global switch, shows light OR white-noise isPlay and writes 33 01 00 when either is on, 33 01 01
+            only when both are off (switchTrigger -> ControllerSwitch.d; 33 01 00 also clears isPlay, D5). The library's
+            power is the global switch, as on every row: power_read aa34_detail reads its state (govee_state device_detail
+            main_switch_on) from aa 34 on each poll, after aa 04, so set_power's 33 01 <on> is the frame btnSwitch sends in
+            every state. The light-only 33 30 switch is not modelled (whether an HA light should drive it instead is the
+            user's call). Connect
             (Compose4InfoBleIotH6057): aa 06, the time sync, aa 07, timer, wake-up and sleep reads (not listed), aa 04, aa 34,
             aa 05. No 33 b2 (no Controller4Secret on this path). Heartbeat aa 00 (I3 false; J3 empty). Brightness 33 04
             <1..100> (BrightnessConfig.b, version 1).
@@ -10355,7 +10360,7 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/ModeConfig.java:308-314,543-547,561
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/ModeConfig$Companion$checkLocalSkuComponentsConfigs$2.java:53-75
       wire:
-        forms: { f_01: light, f_09: datetime_epoch, f_30: light_direction, f_36: worry_free }
+        forms: { f_01: light, f_09: datetime_epoch, f_30: light_direction, f_34: device_detail, f_36: worry_free }
     models: [H6057]
     goods_types: [104]
     delivery: feature_split   # pact_hollowlamp (base-classes9/com/govee/base2home/pfd/Config.java:241)
@@ -18492,7 +18497,7 @@ families:
           zones: []
           account_lock: false
           scene_dialect: untraced
-          status_read: [swap_light, color_group]
+          status_read: [cmd_34, color_group]
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -18542,7 +18547,7 @@ families:
           zones: []
           account_lock: false
           scene_dialect: untraced
-          status_read: [swap_light, color_group]
+          status_read: [cmd_34, color_group]
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -18569,7 +18574,7 @@ families:
           zones: []
           account_lock: false
           scene_dialect: untraced
-          status_read: [swap_light, color_group]
+          status_read: [cmd_34, color_group]
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -18594,7 +18599,7 @@ families:
           zones: []
           account_lock: false
           scene_dialect: untraced
-          status_read: [swap_light, color_group]
+          status_read: [cmd_34, color_group]
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -18623,7 +18628,7 @@ families:
           zones: []
           account_lock: false
           scene_dialect: untraced
-          status_read: [swap_light, color_group, cmd_41]
+          status_read: [cmd_34, color_group, cmd_41]
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat

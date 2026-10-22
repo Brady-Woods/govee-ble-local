@@ -36,12 +36,12 @@ _Command = _C.Command
 # One colour-group record as the group parsers return it: (brightness | None, r, g, b).
 GroupRecord = tuple[int | None, int, int, int]
 
-# The reply bodies the single-reply decoders read, as the library reads them: aa 36 is the two bars
-# (form_36 bar_pair: H6047), aa 41 the H6062 section count (form_41 section_count), aa a2 / aa a5 the
-# mechanism-B batches (form_a2 bulb_batch_v1, form_a5 bulb_batch_v2: H61A8). Nothing else here depends on
-# a device fact.
+# The reply bodies the single-reply decoders read, as the library reads them: aa 34 is the H6057 device
+# detail (form_34 device_detail), aa 36 the two bars (form_36 bar_pair: H6047), aa 41 the H6062 section
+# count (form_41 section_count), aa a2 / aa a5 the mechanism-B batches (form_a2 bulb_batch_v1, form_a5
+# bulb_batch_v2: H61A8). Nothing else here depends on a device fact.
 _REPLY: Final = _spec.profile(
-    f_36=int(_C.Form36.bar_pair), f_41=int(_C.Form41.section_count),
+    f_34=int(_C.Form34.device_detail), f_36=int(_C.Form36.bar_pair), f_41=int(_C.Form41.section_count),
     f_a2=int(_C.FormA2.bulb_batch_v1), f_a5=int(_C.FormA5.bulb_batch_v2))
 
 
@@ -132,6 +132,14 @@ def parse_light_power(frame: bytes) -> bool | None:
     None if this is not an aa 01 reply. Not for plugs, whose byte is a relay mask (:func:`parse_power`)."""
     b = _reply_state(frame, _Command.power)
     return None if b is None else bool(b.is_on)
+
+
+def parse_detail_power(frame: bytes) -> bool | None:
+    """AA 34 reply on the H6057 (the device-detail read, form_34 ``device_detail``): on while the header's
+    main switch shows on, the light open or white noise playing (the spec's ``device_detail.main_switch_on``;
+    ``Controllers.e``, ``H6057DelegateHeader.E0``), or None if this is not an aa 34 reply that reads."""
+    b = getattr(_reply_state(frame, _Command.cmd_34), "body", None)
+    return None if b is None else bool(b.main_switch_on)
 
 
 def parse_relay_on(frame: bytes, prof: Any) -> bool | None:

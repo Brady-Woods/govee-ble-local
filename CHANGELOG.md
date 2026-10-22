@@ -82,6 +82,16 @@ model, from which the shipped readers are generated).
   side). No Kelvin is read from the report itself (its default parse's `s16be(r1, g1)` is head 1's red and green).
   New `parse.HeadPair` in `parse.ModeColor`. Every frame is the h60a6 one the row already resolved to. Source-modelled,
   not live-verified: no H7061 on the bench, and what the heads report after a CCT write is unread.
+- **H6057 (h6057 104), a night light with a white-noise speaker, admitted by default (`app_traced`).** Its screen
+  never reads aa 01: its state read is the aa 34 device-detail reply (`Controllers.f` / `e`, `H6057DetailVM.v5`).
+  New `power_read: aa34_detail` (`DeviceProfile.power_read`, keyword-only, default `"aa01"`): the poll reads aa 04,
+  then aa 34 in place of aa 01, then aa 05, the screen's connect order (`Compose4InfoBleIotH6057`). The power is
+  the header's main switch, the one `33 01` drives, and it reads on while that switch shows on: the light open
+  (byte 0 bit 7) or white noise playing (byte 2 bits 4 and 7; `H6057DelegateHeader.E0`). So `set_power`'s
+  `33 01 <on>` is the frame that switch sends in every state (`switchTrigger`: `33 01 01` only when both are off).
+  The screen's light-only switch (`33 30 <on>`, which shows the light flag alone) is not modelled; whether an HA
+  light should drive it instead is open for a decision. New `build.device_detail_query` and
+  `parse.parse_detail_power`. Source-modelled, not live-verified: no H6057 on the bench and no firmware dump.
 
 ### Changed
 - Nothing for existing SKUs. Each of the 104 SKUs admitted at 1.6.1 (98 by default, 6 behind
@@ -118,6 +128,13 @@ model, from which the shipped readers are generated).
   as Java bytes, absent where the sectioned IC-pair reader `ControllerIcNum.d` throws, `app_pair_fails`), and
   devices.schema.json's `ic_pieces` gains `sections`. rgbiclight 141 and dreamcolorlightv1 204 take it (204's
   wire gains `f_40: ic_pair`, the reader the bytes come from).
+- **Command 0x34 is `cmd_34` (was `swap_light`), overloaded by the new `form_34`:** H6047's `33 34` bar swap (an
+  empty write) and H6057's `aa 34` device detail (`form_34: device_detail`). `govee_profile` gains `f_34`, and
+  `govee_state` the `cmd_34_state` / `device_detail` types (`[switch flags][battery][music flags][music code]
+  [volume][brightness]`, with `light_open`, `white_noise_playing` and `main_switch_on`). Only the generated enum
+  name changes for existing readers (`Command.swap_light` -> `Command.cmd_34`; nothing in the library used it).
+  The h6092 rows' `status_read` follows the rename. devices.schema.json: `power_read` gains `aa34_detail`, the
+  wire forms `f_34`; the h6057 wire gains `f_34: device_detail`.
 
 ## [1.6.1] — 2026-10-21
 

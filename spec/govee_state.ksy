@@ -46,6 +46,8 @@ seq:
         'govee_common::command::new_timer': timer_slots
         'govee_common::command::cmd_30': >-
           cmd_30_state(profile.forms.f_30, source)
+        'govee_common::command::cmd_34': >-
+          cmd_34_state(profile.forms.f_34, source)
         'govee_common::command::cmd_36': >-
           cmd_36_state(profile.forms.f_36, source)
         'govee_common::command::ic_num': ic_count
@@ -1119,6 +1121,75 @@ types:
         if: >-
           form != govee_common::form_30::light_direction
           or source == source::status_tlv
+  cmd_34_state:
+    doc: |
+      Command 0x34 under form_34: device_detail for the aa 34 reply (H6057);
+      other combinations stay in rest.
+    params:
+      - id: form
+        type: u1
+        enum: govee_common::form_34
+      - id: source
+        type: u1
+        enum: source
+    seq:
+      - id: body
+        type:
+          switch-on: form
+          cases:
+            'govee_common::form_34::device_detail': device_detail
+        if: >-
+          form == govee_common::form_34::device_detail
+          and source == source::read_reply
+  device_detail:
+    doc: |
+      Form device_detail of 0x34: the H6057 aa 34 reply, [switch flags][battery]
+      [music flags][music code][volume][brightness] (Controllers.e). The screen's
+      header has two switches: the light switch shows light_open, the main switch
+      (33 01) shows main_switch_on.
+    doc-ref:
+      - split_hollowlamp/com/govee/h6057/origin/newDetail/controller/Controllers.java:30-58
+      - split_hollowlamp/com/govee/h6057/origin/newDetail/controller/DeviceInfoNotifyParse.java:61-70
+      - split_hollowlamp/com/govee/h6057/origin/newDetail/H6057DetailVM.java:517-545,571-588
+      - base-classes12/com/govee/base2light/util/ParseUtils.java:54-56,72-74
+    seq:
+      - id: switch_flags
+        type: u1
+        doc: |
+          bit 7 the light open; bits 6-2 energy saving, power-on without
+          interruption, worry-free, prompt tone and guide light (SwitchInfo)
+      - id: battery
+        type: u1
+      - id: music_flags
+        type: u1
+        doc: |
+          bit 6 Bluetooth audio, bit 5 game, bit 4 white noise, bit 3 group
+          control; bit 7 playing, read only in white-noise mode (MusicTypeInfo)
+      - id: music_code
+        type: u1
+      - id: volume
+        type: u1
+      - id: brightness
+        type: u1
+    instances:
+      light_open:
+        value: (switch_flags & 0x80) != 0
+        doc: the light-open flag, the light switch's state (H6057Info4Detail.H)
+        doc-ref:
+          - split_hollowlamp/com/govee/h6057/origin/newDetail/H6057Info4Detail.java:208-210
+      white_noise_playing:
+        value: (music_flags & 0x10) != 0 and (music_flags & 0x80) != 0
+        doc: MusicTypeInfo isPlay (set only in white-noise mode)
+        doc-ref:
+          - split_hollowlamp/com/govee/h6057/origin/newDetail/controller/MusicTypeInfo.java:117-119
+      main_switch_on:
+        value: light_open or white_noise_playing
+        doc: |
+          the header main switch's state: the light open or white noise
+          playing; it writes 33 01 01 only when both are off, else 33 01 00
+        doc-ref:
+          - split_hollowlamp/com/govee/h6057/origin/newDetail/H6057DelegateHeader.java:183-213
+          - split_hollowlamp/com/govee/h6057/origin/newDetail/H6057DetailVM.java:1231-1264
   cmd_36_state:
     doc: |
       Command 0x36 under form_36: bar_pair for the aa 36 reply (H6047),
