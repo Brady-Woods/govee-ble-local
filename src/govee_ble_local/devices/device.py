@@ -555,9 +555,8 @@ class Device:
 
     def _require_segment_color_temp(self) -> None:
         """A Kelvin on a piece selection: SEGMENTS, COLOR_TEMP and :attr:`.DeviceProfile.segment_color_temp`
-        (false where the app's Kelvin covers every piece, and on the H60A6 and H6047 by decision 24, whose
-        Part-tab Kelvin covers whole zones). :meth:`set_segment_color_temp` only: a zone's Kelvin doesn't read
-        it."""
+        (false where the app's Kelvin covers every piece, and on the SKUs that field lists, whose Part-tab
+        Kelvin covers whole zones). :meth:`set_segment_color_temp` only: a zone's Kelvin doesn't read it."""
         self._require(Capability.SEGMENTS)
         self._require(Capability.COLOR_TEMP)
         if not self.profile.segment_color_temp:
@@ -1361,8 +1360,8 @@ class Device:
         carries the segment mask). ``kelvin`` is clamped and rounded as in :meth:`set_color_temp`.
 
         Raises GoveeBleNotSupported without SEGMENTS/COLOR_TEMP, where
-        :attr:`.DeviceProfile.segment_color_temp` is false (no Part-tab Kelvin item, or on the H60A6 and H6047
-        one that widens to whole zones, the user's decision 24) or for non-maskable schemes;
+        :attr:`.DeviceProfile.segment_color_temp` is false (no Part-tab Kelvin item, or one that widens to
+        whole zones, on the SKUs that field lists) or for non-maskable schemes;
         GoveeBleInvalidValue for a non-int ``kelvin`` or a bad index; GoveeBleError if a hand-built
         profile with :attr:`.DeviceProfile.section_count_read` does not answer that read (no table profile
         reaches it: H6062, the one row that reads its segment count, has segment_color_temp false)."""
