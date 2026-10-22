@@ -765,6 +765,7 @@ families:
           kelvin_range: [2700, 6500]
           brightness_range: [1, 100]
           status_read: [cmd_41, color_group]
+          device_info_reads: unverified
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -808,6 +809,7 @@ families:
           kelvin_range: [2700, 6500]
           brightness_range: [1, 100]
           status_read: [cmd_41, cmd_30, color_group]
+          device_info_reads: firmware
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -838,13 +840,22 @@ families:
             calls, not captured): with the main panel switched off (33 30 00 00) while the fixture was on, 33 01 00 then
             33 01 01 lit both zones again, as the next poll read back; so did an off and on alone, and one after both zones
             were switched off with the fixture off. It is the firmware's model (FIRMWARE-SOURCED: 33 01 sets the main flag
-            and both zone flags from its byte, FUN_9b0278dc mode 0 @0x9b02791c-0x9b027930).
+            and both zone flags from its byte, FUN_9b0278dc mode 0 @0x9b02791c-0x9b027930). Device info (device_info_reads
+            firmware): the screen queues no aa 06 / aa 07 read, and its success callback
+            (VM4LightH60A6$afterConnectedSingleReadDeviceInfo$1.l) takes the versions from the reply's TLV 0x07 (k2(e(), d());
+            Compose4BaseInfoSingleRead.w). The library's aa 06 / aa 07 03 / aa 07 02 reads are FIRMWARE-SOURCED (rule 6): the
+            sw 1.00.41 image handles all three (ble_msg_get_version @0x9b04a4ac; ble_msg_get_dev_info selector 02 @0x9b04a528
+            and 03 @0x9b04a5bc), and the bench unit answered them (2026-10-15).
           doc-ref:
             - split_h60ax/com/govee/pact_h60a0/pact/Support.java:91-100,154-159,434-436,438-444,472-482
             - split_h60ax/com/govee/pact_h60a0/adjust/h60a6/ColorModeH60A6.java:140-162,483-500
             - base-classes10/com/govee/base2kt/utils/ColorUtils.java:355-367
             - base-classes2/com/govee/shared/checker/KmpGoodsType.java:189
-            - split_h60ax/com/govee/pact_h60a0/adjust/h60a6/VM4LightH60A6$afterConnectedSingleReadDeviceInfo$1.java:133,158-161
+            - split_h60ax/com/govee/pact_h60a0/adjust/h60a6/VM4LightH60A6$afterConnectedSingleReadDeviceInfo$1.java:46-53,133,158-161
+            - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4BaseInfoSingleRead.java:309-310,370-437
+            - H60A6 ble_msg_get_version @0x9b04a4ac
+            - H60A6 ble_msg_get_dev_info @0x9b04a528
+            - H60A6 ble_msg_get_dev_info @0x9b04a5bc
             - split_h60ax/com/govee/pact_h60a0/adjust/h60a6/VM4LightH60A6.java:684-686,691-697,1212-1216,1252-1271
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:405-408,789-792,1426-1428
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:251-259
@@ -888,6 +899,7 @@ families:
           kelvin_range: [2700, 6500]
           brightness_range: [1, 100]
           status_read: [cmd_41, cmd_30, color_group]
+          device_info_reads: unverified
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -942,6 +954,7 @@ families:
           kelvin_range: [2700, 6500]
           brightness_range: [1, 100]
           status_read: [cmd_41, cmd_30, color_group]
+          device_info_reads: unverified
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -1046,6 +1059,7 @@ families:
           kelvin_range: [2700, 6500]
           brightness_range: [1, 100]
           status_read: [cmd_41, cmd_30, color_group]
+          device_info_reads: unverified
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -1289,6 +1303,7 @@ families:
           kelvin_range: [2700, 6500]
           brightness_range: [1, 100]
           status_read: [cmd_41, color_group, check_direction]
+          device_info_reads: none
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -1322,7 +1337,9 @@ families:
             percent. Not modelled: gradual (33 a3 at Config.G[277] = 0 from the colour page, its state only in TLV 0x05; no
             aa a3 read on the BLE connect, VM4Light.c5 runs on the IoT path), the TimerConfig.f sync-time controller queued
             before the status read, music, DIY, calibration. Scenes untraced (ScenesConfigBean(2, 1, {0, 1, 2, 3, 5, 10})).
-            Not hardware-verified.
+            Device info (device_info_reads none): W4 queues no aa 06 / aa 07 read, and its success callback Z4 takes the
+            soft and hard versions from the reply's TLV 0x07 (k2(e(), d()); Compose4BaseInfoSingleRead.w), so the library
+            sends none either and folds the versions and device id from TLV 0x07 alone. Not hardware-verified.
           doc-ref:
             - split_h6047/com/govee/h6047/pact/Support.java:58-63,114-119,121-129,145-153,345-350
             - split_h6047/com/govee/h6047/pact/H6039Item.java:20-22
@@ -1330,7 +1347,7 @@ families:
             - split_h6047/com/govee/h6047/pact/Model.java:44-59
             - base-classes2/com/govee/shared/config/h6039/H6039SceneConfig.java:56-59
             - split_h6047/com/govee/h6047/newdetail/H6039AcLightDetail.java:83-85
-            - split_h6047/com/govee/h6047/newdetail/vm/VM4Light.java:128-134,258-334,365-383,455-460,592-600,616-626,663-678,713-716,761-763,907-935,970-983,1004-1040,1092-1116,1231-1244
+            - split_h6047/com/govee/h6047/newdetail/vm/VM4Light.java:128-134,258-348,365-383,455-460,592-600,616-626,663-678,713-716,761-763,907-935,970-983,1004-1040,1092-1116,1231-1244
             - split_h6047/com/govee/h6047/newdetail/Info4Detail.java:121-128,400-433
             - split_h6047/com/govee/h6047/newdetail/NewDetailConfig.java:66-78,82
             - split_h6047/com/govee/h6047/newdetail/color/H6039ColorMode.java:114-140,166-173,234-243,272-275,452-503,529-537
@@ -1344,7 +1361,7 @@ families:
             - split_h6047/com/govee/h6047/pact/Support.java:155-161
             - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
             - base-classes11/com/govee/base2light/pact/newdetail/ble/BleComm.java:37-47
-            - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4BaseInfoSingleRead.java:166-180,247-260,283-308
+            - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4BaseInfoSingleRead.java:166-180,247-260,283-310,370-437
             - base-classes11/com/govee/base2light/kt/general_controller/ControllerSingleRead.java:80-83
             - base-classes11/com/govee/base2light/kt/general_controller/Controller4ColorInfoByGroup.java:160-175
             - base-classes11/com/govee/base2light/kt/general_parser/DefParser.java:83-87,181-186
@@ -2306,6 +2323,7 @@ families:
           kelvin_range: [2700, 6500]
           brightness_range: [1, 100]
           status_read: [cmd_41, color_group, ic_num, cmd_16]
+          device_info_reads: unverified
           connect_reads: []
           connect_writes: []
           heartbeat: power
@@ -4346,6 +4364,7 @@ families:
           account_lock: false
           scene_dialect: untraced
           status_read: [cmd_41]
+          device_info_reads: none
           connect_reads: []
           connect_writes: []
           heartbeat: power
@@ -4364,7 +4383,10 @@ families:
             (BrightnessConfig.b -> 33 04). Kelvin: no KelvinConfig entry, version 0 = [2000, 9000]. Scenes untraced
             (ScenesConfigBean op set Support.supportScenesOpSet(284) = {5}, applied by CubeSceneViewModeV2). Not
             modelled: the keep-alive reply as live power (the library re-reads the status read's TLV 0x01 every poll
-            instead, timing.heartbeat.deviations). Not hardware-verified (no H6069 on the bench).
+            instead, timing.heartbeat.deviations). Device info (device_info_reads none): the 284 path (d0 -> x5) queues no
+            aa 06 / aa 07 read, and its success callback (CubeVM4Light$singleReadInfoDevice$1.h) takes the soft and hard
+            versions from the reply's TLV 0x07 (k2(e(), d()); Compose4BaseInfoSingleRead.w), so the library sends none either
+            and folds the versions and device id from TLV 0x07 alone. Not hardware-verified (no H6069 on the bench).
           doc-ref:
             - split_h6061/com/govee/cubelight/pact/Support.java:63,75-76,126-131,151-170,613-615,924-926,936-938,962-964
             - base-classes2/com/govee/shared/checker/KmpGoodsType.java:179
@@ -4374,7 +4396,7 @@ families:
             - split_h6061/com/govee/cubelight/newdetails/CubeVM4Light$singleReadInfoDevice$1.java:37-56,77-100
             - split_h6061/com/govee/cubelight/newdetails/CubeNewDetailsConfig.java:75-102,156-160,290-303
             - split_h6061/com/govee/cubelight/newdetails/CubeNewInfo4Detail.java:141-153,488-538
-            - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4BaseInfoSingleRead.java:166-180,215-237,247-345
+            - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4BaseInfoSingleRead.java:166-180,215-237,247-345,370-437
             - base-classes11/com/govee/base2light/pact/newdetail/ShareVM.java:979-1015,1348-1364
             - base-classes12/com/govee/common2light/capability/connect/ConnectHeartbeat.java:15-38
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:232-257,353-368,1251-1255,4720-4724,5537-5541,13459-13467,14892-14895,16088-16091
@@ -8073,6 +8095,7 @@ families:
           kelvin_range: [2000, 9000]
           brightness_range: [1, 100]
           status_read: [ic_num, cmd_41, color_group]
+          device_info_reads: unverified
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -8155,6 +8178,7 @@ families:
           brightness_range: [1, 100]
           by_pact: { "1,2": { kelvin_range: [2000, 9000], doc: "KelvinConfig.Config.l4: version 0 at pact type 1, code >= 2; version 2 = [2700, 6500] below" } }
           status_read: [ic_num, color_group]
+          device_info_reads: unverified
           connect_reads: []
           connect_writes: []
           heartbeat: power
@@ -8238,6 +8262,7 @@ families:
           brightness_range: [1, 100]
           by_pact: { "1,2": { kelvin_range: [2000, 9000], doc: "KelvinConfig.Config.p4: version 0 at pact type 1, code >= 2; version 2 = [2700, 6500] below" } }
           status_read: [ic_num, color_group]
+          device_info_reads: unverified
           connect_reads: []
           connect_writes: []
           heartbeat: power
@@ -9722,6 +9747,7 @@ families:
           power_read: ac_status
           mode_color_parse_status: gradual_14
           status_read: [color_group, gradual]
+          device_info_reads: firmware
           connect_reads: []
           connect_writes: []
           heartbeat: power
@@ -9768,8 +9794,9 @@ families:
             hardware: the library repeats the 0xAC read every poll, where the app reads it once per connect. On the
             first poll it also sends its aa 06 / aa 07 03 / aa 07 02 device-info reads. This screen never sends those
             (its versions and device id come from TLV 0x07, records 0x10 / 0x11, Compose4BaseInfoSingleRead.w), but
-            the H6076 firmware answers all three: FIRMWARE-SOURCED, a hardware observation (rule 6), as on the H60A6
-            (read-only bench 2026-10-21, both units, soft 1.04.05, BENCH_20261021_h6076_h61c3.md). Cipher: runtime, from
+            the H6076 firmware answers all three: FIRMWARE-SOURCED, a hardware observation (rule 6; device_info_reads
+            firmware), as on the H60A6 (read-only bench 2026-10-21, both units, soft 1.04.05,
+            BENCH_20261021_h6076_h61c3.md). Cipher: runtime, from
             the advert's 0x40 bit or the BGC read (EncryptionUtils.isEncryptionSupported); with neither, the connect is
             plaintext, the app's own default (BleBroadVersionCache.g); the bench's (2,1) units advertise the encrypted
             channel and completed the handshake. Scenes: legacy_scene over {0, 1, 2, 3}, with no bundled catalog yet.
@@ -11001,6 +11028,7 @@ families:
           account_lock: false
           scene_dialect: legacy_scene
           status_read: [cmd_41, color_group]
+          device_info_reads: unverified
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -11686,6 +11714,7 @@ families:
           kelvin_range: [2700, 6500]
           brightness_range: [1, 100]
           status_read: [color_group, write_check_ic]
+          device_info_reads: unverified
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -12280,6 +12309,7 @@ families:
           account_lock: false
           scene_dialect: untraced
           status_read: [cmd_41]
+          device_info_reads: unverified
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -12336,6 +12366,7 @@ families:
           account_lock: false
           scene_dialect: untraced
           status_read: [cmd_41]
+          device_info_reads: unverified
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -12361,6 +12392,7 @@ families:
           account_lock: false
           scene_dialect: untraced
           status_read: [cmd_41]
+          device_info_reads: unverified
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -12385,6 +12417,7 @@ families:
           account_lock: false
           scene_dialect: untraced
           status_read: [cmd_41]
+          device_info_reads: unverified
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -12649,6 +12682,7 @@ families:
           kelvin_range: [2700, 9000]
           brightness_range: [1, 100]
           status_read: [cmd_41, color_group]
+          device_info_reads: unverified
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -12699,6 +12733,7 @@ families:
           kelvin_range: [2000, 9000]
           brightness_range: [1, 100]
           status_read: [cmd_41, color_group]
+          device_info_reads: unverified
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -12747,6 +12782,7 @@ families:
           kelvin_range: [2000, 9000]
           brightness_range: [1, 100]
           status_read: [cmd_41, color_group]
+          device_info_reads: unverified
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -12791,6 +12827,7 @@ families:
           kelvin_range: [2000, 9000]
           brightness_range: [1, 100]
           status_read: [cmd_41, color_group]
+          device_info_reads: unverified
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -12913,6 +12950,7 @@ families:
           kelvin_range: [2000, 9000]
           brightness_range: [1, 100]
           status_read: [cmd_41, check_direction, ic_num]
+          device_info_reads: unverified
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -12988,6 +13026,7 @@ families:
           kelvin_range: [2000, 9000]
           brightness_range: [1, 100]
           status_read: [cmd_41, check_direction, ic_num]
+          device_info_reads: unverified
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -13015,6 +13054,7 @@ families:
           kelvin_range: [2000, 9000]
           brightness_range: [1, 100]
           status_read: [cmd_41, check_direction, ic_num]
+          device_info_reads: unverified
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -13041,6 +13081,7 @@ families:
           kelvin_range: [2000, 9000]
           brightness_range: [1, 100]
           status_read: [cmd_41, check_direction]
+          device_info_reads: unverified
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -13069,6 +13110,7 @@ families:
           kelvin_range: [2000, 9000]
           brightness_range: [1, 100]
           status_read: [cmd_41, check_direction]
+          device_info_reads: unverified
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -13137,6 +13179,7 @@ families:
           account_lock: false
           scene_dialect: untraced
           status_read: [cmd_41]
+          device_info_reads: unverified
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -13243,6 +13286,7 @@ families:
           account_lock: false
           scene_dialect: untraced
           status_read: [cmd_41, check_direction]
+          device_info_reads: unverified
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -13300,6 +13344,7 @@ families:
           account_lock: false
           scene_dialect: untraced
           status_read: [cmd_41, check_direction, cmd_7d, cmd_7e]
+          device_info_reads: unverified
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -13375,6 +13420,7 @@ families:
           kelvin_range: [2000, 9000]
           brightness_range: [1, 100]
           status_read: []
+          device_info_reads: none
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -13398,7 +13444,10 @@ families:
             Config.I[267] has all five flags on. Kelvin: no KelvinConfig entry, version 0 = [2000, 9000]; brightness
             BrightnessConfig.i[267] = 1 = [1, 100], ControllerBrightness. Not in the row: the gradual switch (flag [0],
             Config.G[267] = 0, read back from TLV 0xA3 only, where the library reads aa a3), scenes (ScenesConfigBean {0, 2,
-            3, 5}, H70dxSceneViewMode; apply path untraced), DIY / graffiti / music, the MTU request, timers. Not
+            3, 5}, H70dxSceneViewMode; apply path untraced), DIY / graffiti / music, the MTU request, timers. Device info
+            (device_info_reads none): e5 queues no aa 06 / aa 07 read, and its success callback i5 takes the soft and hard
+            versions from the reply's TLV 0x07 (k2(e(), d()); Compose4BaseInfoSingleRead.w), so the library sends none either
+            and folds the versions and device id from whatever TLV 0x07 the bare read's reply carries. Not
             hardware-verified.
           doc-ref:
             - split_h70b1/com/govee/h70dx/Support.java:25,42-50
@@ -13413,7 +13462,7 @@ families:
             - split_h70b1/com/govee/h70dx/adjust/delegate/DelegateSublevelColor.java:249-349
             - base-classes2/com/govee/shared/checker/KmpGoodsType.java:264-266
             - base-classes9/com/govee/base2home/pfd/Config.java:245
-            - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4BaseInfoSingleRead.java:155-158,215-237,247-345
+            - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4BaseInfoSingleRead.java:155-158,215-237,247-345,370-437
             - base-classes11/com/govee/base2light/kt/general_controller/ControllerSingleRead.java:80-83,93-95
             - base-classes10/com/govee/base2light/ble/controller/AbsController4BleSingleSendMultiBack.java:157-160
             - base-classes10/com/govee/base2kt/utils/BleUtils.java:1030-1041
@@ -13445,13 +13494,14 @@ families:
           kelvin_range: [2000, 9000]
           brightness_range: [1, 100]
           status_read: []
+          device_info_reads: none
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
           doc: >-
-            H70D2 (Support.d(268)): the 267 row's screen, connect read and frames. Config.x / z / P / I[268] are 267's (0, 0,
-            1, all on), BrightnessConfig.i[268] = 1, no KelvinConfig entry, ColorPieceConfig.j 10 pieces; the same bare 0xAC
-            status read. Not hardware-verified.
+            H70D2 (Support.d(268)): the 267 row's screen, connect read, device info and frames. Config.x / z / P /
+            I[268] are 267's (0, 0, 1, all on), BrightnessConfig.i[268] = 1, no KelvinConfig entry, ColorPieceConfig.j 10
+            pieces; the same bare 0xAC status read. Not hardware-verified.
           doc-ref:
             - split_h70b1/com/govee/h70dx/Support.java:25,42-50
             - split_h70b1/com/govee/h70dx/ConfigH70DX.java:120-127
@@ -13472,13 +13522,14 @@ families:
           kelvin_range: [2000, 9000]
           brightness_range: [1, 100]
           status_read: []
+          device_info_reads: none
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
           doc: >-
-            H70D3 (Support.d(269)): the 267 row's screen, connect read and frames. Config.x / z / P / I[269] are 267's (0, 0,
-            1, all on), BrightnessConfig.i[269] = 1, no KelvinConfig entry, ColorPieceConfig.j 10 pieces; the same bare 0xAC
-            status read. Not hardware-verified.
+            H70D3 (Support.d(269)): the 267 row's screen, connect read, device info and frames. Config.x / z / P /
+            I[269] are 267's (0, 0, 1, all on), BrightnessConfig.i[269] = 1, no KelvinConfig entry, ColorPieceConfig.j 10
+            pieces; the same bare 0xAC status read. Not hardware-verified.
           doc-ref:
             - split_h70b1/com/govee/h70dx/Support.java:25,42-50
             - split_h70b1/com/govee/h70dx/ConfigH70DX.java:120-127
@@ -13852,6 +13903,7 @@ families:
           kelvin_range: [1000, 10000]
           brightness_range: [1, 100]
           status_read: [cmd_41, ic_num, color_group]
+          device_info_reads: unverified
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -15950,6 +16002,7 @@ families:
           account_lock: false
           scene_dialect: legacy_scene
           status_read: [cmd_41, color_group]
+          device_info_reads: unverified
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -16046,6 +16099,7 @@ families:
           kelvin_range: [2700, 6500]
           brightness_range: [1, 100]
           status_read: [cmd_41, color_group]
+          device_info_reads: unverified
           connect_reads: []
           connect_writes: []
           heartbeat: power
@@ -16885,6 +16939,7 @@ families:
           scene_dialect: untraced
           kelvin_range: [2700, 6500]
           status_read: [cmd_41, color_group]
+          device_info_reads: unverified
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -16952,6 +17007,7 @@ families:
           scene_dialect: untraced
           kelvin_range: [2700, 6500]
           status_read: [cmd_41, color_group]
+          device_info_reads: unverified
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -17002,6 +17058,7 @@ families:
           scene_dialect: untraced
           kelvin_range: [2700, 6500]
           status_read: [cmd_41, color_group]
+          device_info_reads: unverified
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -17064,6 +17121,7 @@ families:
           scene_dialect: untraced
           kelvin_range: [2700, 6500]
           status_read: [cmd_41, color_group]
+          device_info_reads: unverified
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -17112,6 +17170,7 @@ families:
           scene_dialect: untraced
           kelvin_range: [2700, 6500]
           status_read: [cmd_41, color_group]
+          device_info_reads: unverified
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -17161,6 +17220,7 @@ families:
           scene_dialect: untraced
           kelvin_range: [1000, 10000]
           status_read: [cmd_41, color_group]
+          device_info_reads: unverified
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -17215,6 +17275,7 @@ families:
           by_firmware:
             - { min_soft_version: "1.00.08", kelvin_range: [1000, 10000], doc: "KelvinConfig.Config.J3: versionSoft (Info4BleIotDevice.a0) compared as a string with 1.00.08; the All tab's Kelvin strip range (KelvinConfig.m) and Config.Yt's Kelvin test both read it" }
           status_read: [cmd_41, color_group]
+          device_info_reads: unverified
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -17269,6 +17330,7 @@ families:
           scene_dialect: untraced
           kelvin_range: [2700, 6500]
           status_read: [cmd_41, color_group]
+          device_info_reads: unverified
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -17325,6 +17387,7 @@ families:
           by_firmware:
             - { min_soft_version: "1.00.09", kelvin_range: [1000, 10000], doc: "KelvinConfig.Config.h4: versionSoft (Info4BleIotDevice.a0) compared as a string with 1.00.09; the All tab's Kelvin strip range (KelvinConfig.m) and Config.Yt's Kelvin test both read it" }
           status_read: [check_direction, cmd_41, color_group]
+          device_info_reads: unverified
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -17393,6 +17456,7 @@ families:
           by_firmware:
             - { min_soft_version: "1.00.09", kelvin_range: [1000, 10000], doc: "KelvinConfig.Config.i4: versionSoft (Info4BleIotDevice.a0) compared as a string with 1.00.09; the All tab's Kelvin strip range (KelvinConfig.m) and Config.Yt's Kelvin test both read it" }
           status_read: [check_direction, cmd_41, color_group]
+          device_info_reads: unverified
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -17447,6 +17511,7 @@ families:
           scene_dialect: untraced
           kelvin_range: [1000, 10000]
           status_read: [cmd_41, ic_num, color_group]
+          device_info_reads: unverified
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -17560,6 +17625,7 @@ families:
           account_lock: false
           scene_dialect: legacy_scene
           status_read: [cmd_41, color_group]
+          device_info_reads: unverified
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -17659,6 +17725,7 @@ families:
           account_lock: false
           scene_dialect: untraced
           status_read: [cmd_41, ic_num, color_group]
+          device_info_reads: none
           by_pact: { "1,3": { kelvin_range: [1000, 10000] } }
           connect_reads: []
           connect_writes: []
@@ -17687,7 +17754,10 @@ families:
             otherwise, hence the by_pact 1,3 range over the family's. Brightness: BrightnessConfig.b -> 33 04,
             version 1 = percent (no entry, no interceptor). Segments are not offered: the part tab's bulb count is
             the live ic / 55 (H7045ColorMode.x = info.J(), set from TLV 0x40), which the library cannot size. Scenes
-            untraced. Not hardware-verified.
+            untraced. Device info (device_info_reads none): P4 queues no aa 06 / aa 07 read, and its success callback
+            (H7045DetailVM$afterConnectedSingleReadDeviceInfo$1.n) takes the soft and hard versions from the reply's TLV 0x07
+            (k2(e(), d()); Compose4BaseInfoSingleRead.w), so the library sends none either and folds the versions and device
+            id from TLV 0x07 alone. Not hardware-verified.
           doc-ref:
             - split_h7050/com/govee/h7050/pact/Support.java:52-53,66,190-194,256-258,348-353,430-432,705-708
             - base-classes2/com/govee/shared/checker/KmpGoodsType.java:236
@@ -17697,11 +17767,11 @@ families:
             - split_h7050/com/govee/h7050/newdetail/h7045/H7045DetailConfig.java:141-239
             - split_h7050/com/govee/h7050/newdetail/h7045/H7045DetailActivity.java:38,111-112
             - split_h7050/com/govee/h7050/newdetail/h7045/H7045DetailVM.java:136-142,319-331,447-459,567-586,691-696,1002-1026
-            - split_h7050/com/govee/h7050/newdetail/h7045/H7045DetailVM$afterConnectedSingleReadDeviceInfo$1.java:49-94,140-158,174-206
+            - split_h7050/com/govee/h7050/newdetail/h7045/H7045DetailVM$afterConnectedSingleReadDeviceInfo$1.java:49-94,107-114,140-158,174-206
             - split_h7050/com/govee/h7050/newdetail/h7045/H7045Info4Detail.java:398-430,495-497
             - split_h7050/com/govee/h7050/newdetail/h7045/mode/H7045ColorMode.java:75-77,198-226,319-323
             - split_h7050/com/govee/h7050/ble/BleProtocol.java:14
-            - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4BaseInfoSingleRead.java:161-180,215-237,247-345
+            - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4BaseInfoSingleRead.java:161-180,215-237,247-345,370-437
             - base-classes11/com/govee/base2light/kt/general_controller/Controller4ColorInfoByGroup.java:177-194
             - base-classes11/com/govee/base2light/pact/newdetail/ShareVM.java:979-1015,1348-1350,1362-1364
             - base-classes11/com/govee/base2light/pact/newdetail/ble/BleComm.java:37-46,76-84
@@ -17776,6 +17846,7 @@ families:
           kelvin_range: [2700, 6500]
           brightness_range: [1, 100]
           status_read: [cmd_41, color_group]
+          device_info_reads: unverified
           connect_reads: []
           connect_writes: []
           heartbeat: power
@@ -18229,6 +18300,7 @@ families:
           by_firmware:
             - { min_soft_version: "1.00.11", kelvin_range: [1000, 10000], doc: "KelvinConfig.Config.o4: Info4BleIotDevice.a0 (the soft version) compared as a string with 1.00.11 -> version 5, else version 2" }
           status_read: [cmd_41, color_group]
+          device_info_reads: none
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -18253,7 +18325,11 @@ families:
             branch). Not modelled: the 3-colour gradient pick 33 05 15 05 (GradientColorControllerConfig.k -> Bytes.n), the
             0x40 gradient strip, the real-time colour preview a5 02 83 R G B (Config.g0[354] = 2) sent while the wheel is
             dragged (the pick on release sends the Yt frame), the combine / splice reads and writes (0x43 / 0x44 / 0x45 /
-            0x4d, only when spliced), music, DIY, graffiti, timers. Scenes untraced. Not hardware-verified.
+            0x4d, only when spliced), music, DIY, graffiti, timers. Scenes untraced. Device info (device_info_reads none):
+            c5 queues no aa 06 / aa 07 read, and its success callback (H3751DetailVM$afterConnectedSingleReadDeviceInfo$1.p)
+            takes the soft and hard versions from the reply's TLV 0x07 (k2(e(), d()); Compose4BaseInfoSingleRead.w), the soft
+            one the by_firmware Kelvin gate tests; so the library sends none either and folds the versions and device id from
+            TLV 0x07 alone. Not hardware-verified.
           doc-ref:
             - split_h7075/com/govee/h7075/pact/Support.java:120-122,323-325,515-539,575-581
             - split_h7075/com/govee/h7075/pact/SubLib.java:23-30
@@ -18267,7 +18343,7 @@ families:
             - split_h7075/com/govee/h7075/h3751/H3751DetailVM$afterConnectedSingleReadDeviceInfo$1.java:67-95,108-133,143-177
             - split_h7075/com/govee/h7075/h3751/H3751Info4Detail.java:137-145,236-238,450-481,741-777
             - split_h7075/com/govee/h7075/h7072/H7072Info4Detail.java:60
-            - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4BaseInfoSingleRead.java:161-180,215-237,247-345
+            - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4BaseInfoSingleRead.java:161-180,215-237,247-345,370-437
             - base-classes11/com/govee/base2light/kt/general_controller/ControllerSingleRead.java:80-83
             - base-classes11/com/govee/base2light/kt/general_controller/Controller4ColorInfoByGroup.java:37-42,160-194
             - base-classes11/com/govee/base2light/pact/newdetail/ShareVM.java:979-1002,1299-1301,1362-1364
@@ -18291,6 +18367,7 @@ families:
             - base-classes12/com/govee/common2light/registry/LightCapabilityRegistry.java:95-110
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:240-242,254-260,329-342,381-388,401-411,864-868,1104,1642-1648
             - base-classes11/com/govee/base2light/kt/comm/Info4BleIotDevice.java:366-368,470-475
+            - base-classes11/com/govee/base2light/kt/comm/AbsViewMode4OpWithOtaCheck.java:598-610
             - base-classes11/com/govee/base2light/pact/newdetail/content/illumination/View4IlluminationMode.java:626-629
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:63-85,131-151,199-215,251-259
       wire_cipher: runtime
@@ -18343,6 +18420,7 @@ families:
           kelvin_range: [2700, 6500]
           brightness_range: [1, 100]
           status_read: [cmd_41, color_group, cmd_4b]
+          device_info_reads: none
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -18367,7 +18445,11 @@ families:
             records come in one TLV or in full 4-record groups, and differ for a 4 + 2 or 3 + 3 split; the firmware's split is
             untraced (gap status_a5_stride_per_tlv, or a bench check). A group 0 with records, or one starting past piece 6,
             makes SubMode4Color.j throw and fails the app's whole read, which the library reads past (same gap). Not modelled: gradual (the screen reads it from the 0x15
-            mode byte, no aa a3 read), music, DIY, timers, auto-dimming. Scenes untraced. Not hardware-verified.
+            mode byte, no aa a3 read), music, DIY, timers, auto-dimming. Scenes untraced. Device info (device_info_reads
+            none): o5 queues no aa 06 / aa 07 read (its one goodsType branch, H2800Config.d = 396, adds a requested
+            type), and its success callback s5 takes the soft and hard versions from the reply's TLV 0x07 (k2(e(), d());
+            Compose4BaseInfoSingleRead.w), as on 371, so the library sends none either and folds the versions and device
+            id from TLV 0x07 alone. Not hardware-verified.
           doc-ref:
             - split_h7075/com/govee/h7075/pact/Support.java:61,120-122,145-187,227-251,327-330,422-438,524-539,575-581
             - split_h7075/com/govee/h7075/pact/SubLib.java:23-30
@@ -18377,10 +18459,11 @@ families:
             - base-classes2/com/govee/shared/config/h7072/H7072SceneConfig.java:46-48
             - split_h7075/com/govee/h7075/h7072/H7072Config.java:51-63,69-147
             - split_h7075/com/govee/h7075/h7072/H7072AcLightDetail.java:174-175
+            - split_h7075/com/govee/h7075/h2800/H2800Config.java:174-176
             - split_h7075/com/govee/h7075/h7072/H7072VM4Light.java:168-173,257-269,524-568,585-588,650-680,779-812,825-833,861-931,948-970,1144-1159,1287-1311,1343-1386,1397-1399,1609-1625,1749-1773,2035-2056
             - split_h7075/com/govee/h7075/h7072/H7072VM4Light$notifySwitchChange$3.java:78-125
             - split_h7075/com/govee/h7075/h7072/H7072Info4Detail.java:60,219-221,472-504,666-672,757-794
-            - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4BaseInfoSingleRead.java:161-180,215-237,247-345
+            - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4BaseInfoSingleRead.java:161-180,215-237,247-345,370-437
             - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4Off2On.java:45-81
             - base-classes11/com/govee/base2light/pact/newdetail/sub/SubMode4Color.java:113-147
             - base-classes11/com/govee/base2light/pact/newdetail/ShareVM.java:979-1015,1298-1301,1348-1350,1362-1364
@@ -18414,6 +18497,7 @@ families:
           kelvin_range: [1000, 10000]
           brightness_range: [1, 100]
           status_read: [cmd_41, color_group, cmd_4b]
+          device_info_reads: none
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -18435,8 +18519,10 @@ families:
             (Support.getColorTemRange(371) agrees). app_traced, with that known gap named; TLV 0x4B (auto-dimming) is
             read raw.
             Not modelled: the real-time colour preview a5 02 83 R G B (Config.g0[371] = 2) that DelegateColorV2.B0 sends while
-            the wheel is dragged (the release sends the Yt frame), music, DIY, timers, auto-dimming. Scenes untraced. Not
-            hardware-verified.
+            the wheel is dragged (the release sends the Yt frame), music, DIY, timers, auto-dimming. Scenes untraced. Device
+            info (device_info_reads none): o5 queues no aa 06 / aa 07 read, and its success callback s5 takes the soft and
+            hard versions from the reply's TLV 0x07 (k2(e(), d()); Compose4BaseInfoSingleRead.w), so the library sends none
+            either and folds the versions and device id from TLV 0x07 alone. Not hardware-verified.
           doc-ref:
             - split_h7075/com/govee/h7075/h3351/H3351Config.java:55,61,73-88,90-148,154-156,179-195
             - split_h7075/com/govee/h7075/pact/Support.java:241-251,312-315,524-539,575-581
@@ -18449,7 +18535,7 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/sub/SubMode4Color.java:113-147
             - base-classes11/com/govee/base2light/kt/general_controller/Controller4ColorInfoByGroup.java:160-175
             - base-classes10/com/govee/base2kt/utils/BleUtils.java:272-274
-            - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4BaseInfoSingleRead.java:229-237,247-345,347-360
+            - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4BaseInfoSingleRead.java:229-237,247-345,347-360,370-437
             - base-classes10/com/govee/base2light/ble/controller/AbsController4BleSingleSendMultiBack.java:240-261,273-308
             - base-classes10/com/govee/base2light/ble/controller/AbsComposeControllerWithOpResult.java:287-311,315-341
             - base-classes10/com/govee/base2light/ble/comm/ComposeBleComm.java:190-211
@@ -18566,6 +18652,7 @@ families:
           account_lock: false
           scene_dialect: untraced
           status_read: [cmd_41, color_group]
+          device_info_reads: unverified
           connect_reads: []
           connect_writes: []
           heartbeat: power
@@ -18774,6 +18861,7 @@ families:
           account_lock: false
           scene_dialect: untraced
           status_read: [cmd_41, color_group]
+          device_info_reads: unverified
           connect_reads: []
           connect_writes: [light_effect_stop]
           heartbeat: power
@@ -19371,6 +19459,7 @@ families:
           account_lock: false
           scene_dialect: untraced
           status_read: [cmd_41, cmd_0c]
+          device_info_reads: unverified
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -19392,6 +19481,7 @@ families:
           account_lock: false
           scene_dialect: untraced
           status_read: [cmd_41, cmd_0c, write_check_ic]
+          device_info_reads: unverified
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -19417,6 +19507,7 @@ families:
           account_lock: false
           scene_dialect: untraced
           status_read: [cmd_41, cmd_0c, cmd_45]
+          device_info_reads: unverified
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat

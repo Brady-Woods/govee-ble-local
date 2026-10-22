@@ -111,7 +111,12 @@ the row lacks fails the build: nothing defaults silently.
   (``DeviceProfile.ic_num_read_only``: a fixed piece count). Every command
   form the library sends or reads for the row must be the row's (wire ``forms``), a polled row's aa 05 reply
   is read with the spec's default decode (:data:`_MODE_UNSET`), and a colour-group read is of 4-byte
-  records in the row's wire ``group.num_per_group`` (and, in the status read, its ``group.rule``).
+  records in the row's wire ``group.num_per_group`` (and, in the status read, its ``group.rule``). Every
+  status row names its ``device_info_reads`` and no other row does: whether the library adds the aa 06 /
+  aa 07 03 / aa 07 02 device-info reads it makes on every other row (``DeviceProfile.device_info_reads``). At
+  ``none`` it doesn't, and takes the versions and device id from the status reply's TLV 0x07 alone, as the
+  screen does (``Compose4BaseInfoSingleRead.w``); at ``firmware`` (a FIRMWARE-SOURCED extension the row
+  cites) and ``unverified`` (no evidence yet) it does.
 - The writes on every connect (``connect_writes``): a plug's ``plug_sync_time``, and on a light nothing or
   ``light_effect_stop`` (``DeviceProfile.light_effect_stop``), each sent once per session after the
   handshake and any unlock. A SKU's ``by_model`` ``connect_writes`` replaces its row's, where the screen
@@ -248,6 +253,7 @@ class Row(TypedDict, total=False):
     brightness_range: tuple[int, ...]
     mode_reports_kelvin: bool
     status_read: tuple[str, ...]
+    device_info_reads: str
     connect_reads: tuple[str, ...]
     connect_writes: tuple[str, ...]
     power_resync: bool
@@ -441,6 +447,8 @@ _STATUS_TLV_FORMS: Final = ("f_30", "f_36", "f_40", "f_41", "f_a3")
 _GROUP_RULES: Final = frozenset({"from_len", "fixed", "by_pieces"})   # govee_common::group_count_rule, read
 _READS: Final = frozenset({"brightness", "gradual", "cmd_36", "color_group", "ic_num", "cmd_41"})
 _PACT_FACTS: Final = frozenset({"status_read", "scene_versions", "kelvin_range", "brightness_range"})
+# clientRow device_info_reads, a status row's (module doc): the device-info reads are sent but at "none".
+_DEVICE_INFO_READS: Final = ("none", "firmware", "unverified")
 # Pact branches whose capabilities the library leaves unread: (family, goodsType, pact key) -> the branch's
 # capabilities exactly. D3: H60A6 at pact (1, 1) keeps the row's capabilities.
 _UNREAD_PACT_CAPABILITIES: Final[Mapping[tuple[str, str, str], tuple[str, ...]]] = {
@@ -907,6 +915,11 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
         readback = _READBACK[power_read]
         if (readback == "status") != (status_read is not None):
             fail(f"power_read {power_read!r} with status_read {status_read!r}")
+    info_reads = row.get("device_info_reads")
+    if (info_reads is None) == (readback == "status"):
+        fail(f"device_info_reads {info_reads!r} on a {readback} row (each status row names it, no other)")
+    if info_reads is not None and info_reads not in _DEVICE_INFO_READS:
+        fail(f"device_info_reads {info_reads!r} (one of {list(_DEVICE_INFO_READS)})")
     reads = set(need(row.get("connect_reads"), "connect_reads"))
     if not reads <= _READS:
         fail(f"connect_reads {sorted(reads - _READS)} are not served")
@@ -1034,6 +1047,7 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
         "kelvin_by_hardware": () if by_soft else tuple(sorted(kelvin_by_version, reverse=True)),
         "kelvin_by_software": tuple(sorted(kelvin_by_version, reverse=True)) if by_soft else (),
         "mode_reports_kelvin": bool(row.get("mode_reports_kelvin", True)),
+        "device_info_reads": info_reads != "none",
         "light_effect_stop": writes == ("light_effect_stop",),
         "scene_power_on": bool(model.get("scene_power_on", False)),
         "heartbeat": heartbeat,    # a command name; devices/profile.py takes its code

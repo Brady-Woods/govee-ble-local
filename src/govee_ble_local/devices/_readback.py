@@ -211,12 +211,15 @@ async def read_device_info(dev: ReadTarget, read_reply: ReadReply) -> bool:
     43 plug screens don't send them either, and ``aa 07 02`` (``SnController``) the app sends only while
     pairing.
 
-    The library sends all three on the first poll of every profile with a read-back, whatever the path. Where
-    the app doesn't, they are FIRMWARE-SOURCED extensions (CLAUDE.md rule 6) only where a firmware image or
-    the bench shows them answered: on the H60A6 and H6076 status screens and on the gt 43 plugs, which have
-    no other BLE source for them. On the other status rows (e.g. rgbiclight 332 / 351 / 352: H6671 / H6672,
-    H617G / H618G) no firmware or bench evidence backs them yet: they are unverified extra reads, the
-    status-row-versions-from-tlv07 item, left for the user to decide.
+    The library sends all three on the first poll of every profile with a read-back, but a status profile
+    without ``DeviceProfile.device_info_reads`` (a status row's ``device_info_reads: none``: H6039, H6069 /
+    H8069, H3751, H7045, H7046, H3351, H7072, H70D1-3 / H80D1), which takes them from TLV 0x07 alone, as its
+    screen does, and never calls this. Where the app doesn't send them, they are FIRMWARE-SOURCED extensions
+    (CLAUDE.md rule 6) only where a firmware image or the bench shows them answered: on the H60A6 and H6076
+    status screens (``device_info_reads: firmware``) and on the gt 43 plugs, which have no other BLE source
+    for them. On the other status rows (``device_info_reads: unverified``, e.g. rgbiclight 332 / 351 / 352:
+    H6671 / H6672, H617G / H618G) no firmware or bench evidence backs them yet: they are unverified extra
+    reads, the status-row-versions-from-tlv07 item, left for the user to decide.
 
     Not sent: ``aa 07 10`` (basic) and ``aa 07 11`` (Wi-Fi). No firmware image has a handler for either
     (most drop the request, which cost a timeout per poll; H60A1 / H60A6 echo it back as zeros) and the app
@@ -230,7 +233,8 @@ async def read_device_info(dev: ReadTarget, read_reply: ReadReply) -> bool:
     # (CLAUDE.md rule 6) only on the H60A6 and the gt 43 plugs (Realtek ble_msg_get_version and
     # ble_msg_get_dev_info selector 03, get_hw_version: H60A6 sw 1.00.41 @0x9b04a4ac / @0x9b04a5bc, H5083
     # sw 1.00.30 @0x9b0318dc / @0x9b031984) and on the H6076 (answered on the bench, a hardware
-    # observation); on the other status rows they are unverified extra reads (status-row-versions-from-tlv07).
+    # observation); on the other status rows that make them (device_info_reads: unverified) they are
+    # unverified extra reads (status-row-versions-from-tlv07).
     answered = await read_versions(dev, read_reply)
     # aa 07 02, FIRMWARE-SOURCED (the app sends it only while pairing, SnController): ble_msg_get_dev_info
     # selector 02 (get_sn) on the Realtek images (e.g. H6006 @0x9b03c87c, H60A6 @0x9b04a528, H5083

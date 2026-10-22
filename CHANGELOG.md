@@ -32,8 +32,9 @@ model, from which the shipped readers are generated).
     can't grow a field without a MAJOR. Released Home Assistant integrations import both, so both keep their
     signatures and results through 1.x; a new way of reading a merged record goes in a new function.
     Discovery keeps the name gate as before.
-- **158 more SKUs, traced from the app's device list** (spec rows only; no library code changed but two
-  row facts, below: segment colour temperature and the segment-brightness groups): 97 admitted
+- **158 more SKUs, traced from the app's device list** (spec rows only; no library code changed but three
+  row facts, below: segment colour temperature, the segment-brightness groups and a status row's
+  device-info reads): 97 admitted
   by default (`app_traced`) and 61 behind `allow_modelled` (`modelled`). The entries below admit 39 more by
   default (16 through the resolver changes; H1162 / H1163 / H1167 / H1168, H70B1 and H70BC; and 17 through the
   status-read command ids and the BK pact gate) and 7 more behind `allow_modelled` (H7072, H6119 and the five
@@ -283,6 +284,39 @@ model, from which the shipped readers are generated).
   version for them (no `Config.y` / `Config.z` entry), so it sends no frame and the one-piece lamps have no
   segments. They stay without support until their colour-temperature scheme and the Kelvin + brightness pair
   land. Every admitted row with the flag is on `h60a6`, so no profile changes.
+- **Twelve new status-row SKUs take their versions and device id from TLV 0x07 alone and send no
+  device-info reads**, as their screens do: eleven admitted, and H7072 behind `allow_modelled`. This is option A
+  of the `status-row-versions-from-tlv07` decision.
+  - Each status row now names its `device_info_reads` (`devices.schema.json` clientRow). It is required on every
+    row with `status_read` and refused on any other row.
+    - `none`: the screen's connect read (`Compose4BaseInfoSingleRead`) queues no aa 06 / aa 07 read, and its
+      success callback takes the soft and hard versions from the reply's TLV 0x07
+      (`Compose4BaseInfoSingleRead.w`, then `k2(e(), d())`). Each row's `doc` cites its own callback.
+    - `firmware`: the library's reads are a cited rule-6 extension.
+    - `unverified`: the library's reads still lack firmware or bench evidence.
+  - `DeviceProfile.device_info_reads` is new, keyword-only and True by default. It is False at `none`. There,
+    `Device.update` sends none of the aa 06 / aa 07 03 / aa 07 02 reads, nor the re-read of a version that a
+    firmware-gated fact waits for. It folds the versions and device id from each burst's TLV 0x07, as it
+    already did.
+  - `none`: H6039 (h6047 277), H6069 and H8069 (h6069 284), H3751 (h3751 354), H7045 and H7046 (h7045 338),
+    H3351 (h7072 371) and H7072 (294, behind `allow_modelled`), and H70D1, H80D1, H70D2 and H70D3 (h70dx
+    267-269). H7072 and H3351 share one screen path (`H7072VM4Light.o5` / `s5`, whose one goodsType branch is
+    H2800's 396). The catalogue snapshot routes H8069 and H80D1. H3751's soft version still feeds its
+    `by_firmware` Kelvin gate, now from TLV 0x07, as on the screen (`KelvinConfig.Config.o4` reads
+    `Info4BleIotDevice.a0`, which `k2` sets).
+  - `firmware`: H60A6, from the handlers in its sw 1.00.41 image, and H6076 / H8076 / R16D0, from the H6076
+    bench (2026-10-21).
+  - Every other status row is `unverified` and keeps its reads: 47 rows, 64 SKUs. Four are 1.6.1 SKUs (H60B1,
+    H7056, H1630 and R1630), 42 are new admitted SKUs and 18 are behind `allow_modelled`. Each connects through
+    `Compose4BaseInfoSingleRead` too, but these rows' callbacks and controller lists are not cited for it yet.
+  - A row can move to `none` later with a one-word change and its cited callback. Moving a released or
+    hardware-backed row is the user's decision. H60B1, H7056, H1630 and R1630 are released, so moving one of
+    them drops three reads it sends at 1.6.1; the `firmware` rows are the hardware-backed ones.
+  - No SKU admitted at 1.6.1 changes. Only the 12 SKUs above move, and only in that one field. They are
+    source-traced, not live-verified: none of them is on the bench.
+  - README's `DeviceState` entry, and `DeviceState`'s device-info comment and `device_id` docstring, now say
+    where device info comes from: the aa 06 / aa 07 03 / aa 07 02 reads, or on a status row the status
+    reply's TLV 0x07, by the row's `device_info_reads`.
 
 ### Fixed
 - **H6188: colour temperature now sends the colour tab's frame** `33 05 0d <tint> <K> <tint>`
@@ -434,8 +468,9 @@ model, from which the shipped readers are generated).
     sends none of them and takes its versions and device id from TLV 0x07. The library's reads there are
     firmware-sourced (rule 6) only on the H60A6 and H6076, where a firmware image or the bench shows them
     answered. On the other status rows, such as rgbiclight 332 / 351 / 352 (H6671 / H6672, H617G / H618G),
-    they are unverified extra reads (`status-row-versions-from-tlv07`), still an open decision. The old text
-    named only the H60A6 and goodsType 69 as exceptions.
+    they are unverified extra reads (`status-row-versions-from-tlv07`), still an open decision there
+    (`device_info_reads: unverified`; the rows that now send none are under Changed). The old text named only
+    the H60A6 and goodsType 69 as exceptions.
   - h705a 184 (H608A-D / H808A): the app sizes its first aa a5 walk from the IC stored in the account, the
     library from the live aa 40. They differ only after a resize the app never saw. This is now documented, in
     the row and in `walk_mechanism_a_direct`, as a divergence for the user to decide. The row stays `modelled`

@@ -114,7 +114,10 @@ advertisement, build a capability-driven `Device`, then drive it.
   zone's power was last learned from the device), `zone_color_temp_kelvin` (H6047
   reads one Kelvin per bar), `gradual`, `scene_code`, plus
   device-info (`device_id` / `serial_number`, `wifi_mac`, `hardware_version`, `firmware_version`,
-  `ble_mac`), read with the Govee app's own frames (`aa 06`, `aa 07 03`, `aa 07 02`).
+  `ble_mac`). It comes from the `aa 06`, `aa 07 03` and `aa 07 02` reads (the Govee app's own frames)
+  and, on a status-read SKU, from the status reply's TLV 0x07. A status row's `device_info_reads` in
+  `spec/devices.yaml` says whether the library sends the three reads there too: at `none` it sends none
+  and takes these fields from TLV 0x07 alone, as the app's screen does.
 - **`Capability`** — `POWER`, `BRIGHTNESS`, `RGB`, `COLOR_TEMP`, `SEGMENTS`, `SCENES`.
 
 Curated SKUs: **H60A6**, **H6047**, **H61A8**, **H6004** (the BLE revision; the Wi-Fi-only one can't be controlled over BLE), **H6006/H6008**, **H6052**, **H6641**, **H6188**, **H6062**, **H6061** (Glide Hexa: whole-device power, brightness, colour and colour temperature), and the
