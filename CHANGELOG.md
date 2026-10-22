@@ -91,11 +91,12 @@ model, from which the shipped readers are generated).
   then aa 34 in place of aa 01, then aa 05, the screen's connect order (`Compose4InfoBleIotH6057`), and takes the
   state of the header's main switch, the one `33 01` drives: on while the light is open (byte 0 bit 7) or white
   noise plays (byte 2 bits 4 and 7; `H6057DelegateHeader.E0`). New `build.device_detail_query` and
-  `parse.parse_detail_power`. H6057 (h6057 104) stays held, with no `support`, until the user picks the switch that
-  backs an HA light's power. With white noise playing and the light off, the main switch reads on while the screen
-  shows the light closed (`switchCur` is the light flag alone), and `set_power(True)` still sends `33 01 01`, which
-  the main switch never sends then (`switchTrigger`). The light switch (`33 30`) matches the screen in every state,
-  but the library has no per-row power write for it. Source-modelled: no H6057 on the bench and no firmware dump.
+  `parse.parse_detail_power`; the frame describer (`wire.describe`) reads the aa 34 reply as `wire.parse` does.
+  H6057 (h6057 104) stays held, with no `support`, until the user picks the switch that backs an HA light's power.
+  With white noise playing and the light off, the main switch reads on while the screen shows the light closed
+  (`switchCur` is the light flag alone), and `set_power(True)` still sends `33 01 01`, which the main switch never
+  sends then (`switchTrigger`). The light switch (`33 30`) matches the screen in every state, but the library has
+  no per-row power write for it. Source-modelled: no H6057 on the bench and no firmware dump.
 
 ### Changed
 - Nothing for existing SKUs. Each of the 104 SKUs admitted at 1.6.1 (98 by default, 6 behind

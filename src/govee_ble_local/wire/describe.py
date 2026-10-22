@@ -61,10 +61,10 @@ _UPLOAD_CHUNK_TYPES = (_ProType.multi_write, _ProType.multi_write_v1, _ProType.m
 _TX_ROUTES = frozenset(int(r) for r in _F.Route if int(r) < 0x100)
 
 # The forms a frame is described in: a light's 33 01, and the aa replies as wire.parse reads them (the
-# H6047 bars' aa 36, the H6062 aa 41, H61A8's aa a2 / aa a5 batches).
+# H6057 aa 34 device detail, the H6047 bars' aa 36, the H6062 aa 41, H61A8's aa a2 / aa a5 batches).
 _DESCRIBE = _spec.profile(
-    f_01=int(_C.Form01.light), f_36=int(_C.Form36.bar_pair), f_41=int(_C.Form41.section_count),
-    f_a2=int(_C.FormA2.bulb_batch_v1), f_a5=int(_C.FormA5.bulb_batch_v2))
+    f_01=int(_C.Form01.light), f_34=int(_C.Form34.device_detail), f_36=int(_C.Form36.bar_pair),
+    f_41=int(_C.Form41.section_count), f_a2=int(_C.FormA2.bulb_batch_v1), f_a5=int(_C.FormA5.bulb_batch_v2))
 
 # TLV tags the reassembled 0xAC status reply is known to carry: a status_tlv's tag is a command (enum
 # command; Compose4BaseInfoSingleRead.u and the per-SKU status reads), the 0x00 padding sentinel included.
