@@ -175,11 +175,11 @@ def test_h60a6_turn_on_with_kelvin_batches_one_cct_frame() -> None:
 
 
 def test_illumination_tab_kelvin_is_the_kelvin_then_the_held_brightness() -> None:
-    # DeviceProfile.kelvin_with_brightness (H60A1, h60ax 235, polled): View4IlluminationMode.I0 writes the
-    # Kelvin frame (Config.N[0] = EM -> Bytes.C, over all 14 pieces) then 33 04 <illuminationCur()[0]> in one
-    # Compose4DefWrite.
-    kelvin, held = b.color_temp(4000, "h60a6", 14), b.brightness(42)
-    d = _dev("H60A1")
+    # DeviceProfile.kelvin_with_brightness (H8015, bulblightv3 328, polled; app_traced since the user's
+    # sign-off): View4IlluminationMode.I0 writes the Kelvin frame (Config.N[2] = GM -> Bytes.A) then 33 04
+    # <illuminationCur()[0]> in one Compose4DefWrite.
+    kelvin, held = b.color_temp(4000, "h6188"), b.brightness(42)
+    d = _dev("H8015")
     d.state.brightness = 42
     asyncio.run(d.set_color_temp(4000))
     asyncio.run(d.turn_on(kelvin=4000))
@@ -189,11 +189,11 @@ def test_illumination_tab_kelvin_is_the_kelvin_then_the_held_brightness() -> Non
     assert d.state.brightness == 77 and d.state.color_temp_kelvin == 4000
     # Unknown: the row's own read (aa 04) first, then the pair; unanswered, nothing is written.
     reply = _frame(0xAA, 0x04, 55)
-    d = _dev("H60A1")
+    d = _dev("H8015")
     d._conn.query = AsyncMock(return_value=[reply])  # type: ignore[method-assign]
     asyncio.run(d.set_color_temp(4000))
     assert _sent(d) == [kelvin, b.brightness(55)]
-    d = _dev("H60A1")
+    d = _dev("H8015")
     d._conn.query = AsyncMock(return_value=[])  # type: ignore[method-assign]
     with pytest.raises(GoveeBleError, match="brightness is not known"):
         asyncio.run(d.set_color_temp(4000))
@@ -205,7 +205,7 @@ def test_illumination_tab_kelvin_is_the_kelvin_then_the_held_brightness() -> Non
     asyncio.run(d.set_color_temp(4000))
     assert _sent(d) == [b.color_temp(4000, "h60a6", 11), b.brightness(55)]
     # A brightness write still in flight when the pair starts: the pair re-sends the new level, not the old.
-    d = _dev("H60A1")
+    d = _dev("H8015")
     d.state.brightness = 42
 
     async def acked(frames: list[bytes]) -> None:   # one link, each frame acked in turn

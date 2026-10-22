@@ -70,8 +70,8 @@ model, from which the shipped readers are generated).
   the BK pact gate; the 10 SKUs of the `legacy_02` colour scheme; H7061; H70B2, H6630, H8630 and H6631 on the
   device-list card; H7070 on its pact's status read; H6071 / H6075 on the `kelvin_v9` scheme; and H615A-E,
   whose pairing write is read as an exact-pact condition) and 11 more behind `allow_modelled` (H7072, H6119,
-  the five Glide panels, H61E5 / H61E6 and H60A1 / H80A1), for 266 admitted by default and 70 behind
-  `allow_modelled` in all. None is
+  the five Glide panels, H61E5 / H61E6 and H60A1 / H80A1), for 267 admitted by default and 69 behind
+  `allow_modelled` in all (with H8015, a 1.6.1 SKU now admitted by default: Changed). None is
   hardware-verified (the only bench check, below, was read-only), and none has a bundled scene catalog, so none
   is offered scenes. Each is listed with its family and goodsType; † marks a SKU no row lists that the
   catalogue snapshot (`spec/govee_catalog.json`) routes to that row by its goodsType alone (16 of them).
@@ -313,10 +313,9 @@ model, from which the shipped readers are generated).
   level its screen holds, not the old one; the pair's state takes the level it sent. The tab writes every piece,
   so the profile is `whole_device_kelvin` (the segment and zone Kelvin setters raise). Promoted from
   `modelled` to `app_traced`, admitted by default, not hardware-verified: **H60A4 / H80A4** (h60ax 302:
-  `Bytes.C(K, 11, 1)`, the h60a6 frame over every piece). **H8015** (bulblightv3 328: `Config.N[2]` =
-  `Bytes.A`, the h6188 frame) sends the same pair in the app, but its row doesn't state it yet: H8015 has been
-  served behind `allow_modelled` since 1.6.1, and the trailing `33 04` would change its bytes, which waits for
-  the user's sign-off. It stays `modelled`, with its 1.6.1 profile and frames.
+  `Bytes.C(K, 11, 1)`, the h60a6 frame over every piece) and, on the user's sign-off, **H8015** (bulblightv3
+  328: `Config.N[2]` = `Bytes.A`, the h6188 frame), behind `allow_modelled` since 1.6.1, whose bytes change
+  (Changed).
 - **A polled row's aa 05 decode** (`DeviceProfile.mode_decode`): the aa 05 mode report is read with the row's
   wire `mode` (its music layout and empty-value rule), where the resolver refused any but the default on a
   polled row. Empty by default, so every other profile reads its reports as before (the same cached
@@ -551,8 +550,9 @@ model, from which the shipped readers are generated).
   (Govee Home 7.7.02), not live-verified. H61A8's bench check (2026-10-17) sent its Kelvin over all 15 segments
   only, so no hardware observation supports a masked Kelvin on these rows.
 - Nothing else for existing SKUs (H6188's colour temperature, H6061's whole-device RGB and the segment
-  brightness of H6098 / H8098 / H6690 are under Fixed, and the 40 SKUs without segment colour temperature
-  and the device-info reads of H60B1 / H7056 / H1630 / R1630 are in this section). Each other SKU of the 104
+  brightness of H6098 / H8098 / H6690 are under Fixed, and the 40 SKUs without segment colour temperature,
+  the device-info reads of H60B1 / H7056 / H1630 / R1630 and H8015's colour-temperature pair are in this
+  section). Each other SKU of the 104
   admitted at 1.6.1 (98
   by default, 6 behind `allow_modelled`) resolves to the same profile at every pact its rows list and at none,
   with and without `allow_modelled`, so its frames and decoded state are unchanged. Where a new SKU has the
@@ -664,8 +664,23 @@ model, from which the shipped readers are generated).
   field under Added; hass-govee-ble-local's segment lights need that follow-up (they offer colour temperature
   whenever the device has `COLOR_TEMP`). A profile built by hand with `whole_device_kelvin=True` is refused
   too, whatever its `segment_color_temp`. Every SKU of 1.6.1 has `whole_device_kelvin=False`.
-- No SKU of 1.6.1 takes the illumination pair: each keeps `kelvin_with_brightness=False` and its one-frame
-  colour-temperature write, H8015 included (above).
+- **H8015 (bulblightv3 328) sends the app's colour-temperature pair and is admitted by default
+  (`app_traced`)**, on the user's sign-off (2026-10-22: "Approve"). Since 1.6.1 it was served behind
+  `allow_modelled` with the Kelvin frame alone. Its screen's only colour-temperature control is the
+  illumination tab, which writes the Kelvin frame and then `33 04` <the brightness it holds> as one write
+  (`View4IlluminationMode.I0`: `Config.N[2]` = `Config.GM` -> `Bytes.A`, then `BrightnessConfig.b` of
+  `illuminationCur()[0]`, the aa 04 brightness). Its row now says `color_temp_control: illumination`, so:
+  - `set_color_temp(4000)` with brightness 42 held sends `33 05 0d ff ff ff 0f a0 ff d5 a1 ...` and then
+    `33 04 2a ...`, each acked in order, where 1.6.1 sent the first frame alone;
+  - with the brightness unknown it reads aa 04 first, and with no reply it raises GoveeBleError and writes
+    nothing;
+  - `turn_on(kelvin=)` sends the Kelvin frame before its `33 04` (the given brightness, else the held one);
+  - the profile is `kelvin_with_brightness` and `whole_device_kelvin` (H8015 has no segments, so nothing else
+    is refused).
+
+  Every other frame, read and decode is as before. Source-traced (Govee Home 7.7.02), not live-verified: there
+  is no H8015 on the bench. Every other SKU of 1.6.1 keeps `kelvin_with_brightness=False` and its one-frame
+  colour-temperature write.
 - The read-back work changes no other SKU: each of the 322 the table admitted before it (246 by default, 76
   behind `allow_modelled`) but H61A9 and H61C2 / H61C3 / H61C5 (Added) resolves to the same profile, field by
   field, at every pact its rows list, at (99, 99) and at none, with and without `allow_modelled`
@@ -743,7 +758,7 @@ model, from which the shipped readers are generated).
   its only colour-temperature control. Only bytes 3-5 and the checksum of the `set_color_temp` /
   `turn_on(kelvin=)` frame change; RGB, the RGB pick of a tint colour, and the decoded state are as before.
   `DeviceProfile.color_scheme` for H6188 is now `"h6006"`. The `"h6188"` scheme keeps its name and frame for
-  H8015 (behind `allow_modelled`), whose illumination tab sends it. Source-traced (Govee Home 7.7.02), not
+  H8015 (admitted by default since its pair, Changed), whose illumination tab sends it. Source-traced (Govee Home 7.7.02), not
   live-verified: there is no H6188 on the bench.
 - **H6061 whole-device RGB is now the app's one frame** (the user's decision, 2026-10-21: "Keep it, fix the
   frame"). The `h6061` scheme sent a colour as `ceil(n / 4)` `33 05 15 04 <group> RGB x4` frames (`Bytes.m`),
@@ -788,9 +803,9 @@ model, from which the shipped readers are generated).
   `modelled`; one that needs library work has no `support` and names the gap in its `doc`. A verification
   pass challenged each family's rows; they were repaired, and demoted (to `modelled`, or to no `support`)
   where a core claim didn't hold.
-  - devices.yaml now has 305 goodsType rows in 96 families (184 in 91): 206 with `support` (66), of them 166
-    `app_traced`, 36 `modelled` and the same 4 `hardware_verified`, and 99 without (118). 66 of the 206 had
-    support at 1.6.1 and keep it; the trace gave 87 more rows support. The other 53 take it through the library
+  - devices.yaml now has 305 goodsType rows in 96 families (184 in 91): 206 with `support` (66), of them 167
+    `app_traced`, 35 `modelled` and the same 4 `hardware_verified`, and 99 without (118). 66 of the 206 had
+    support at 1.6.1 and keep it (bulblightv3 328 now `app_traced`); the trace gave 87 more rows support. The other 53 take it through the library
     and spec changes under Added, Changed, Fixed and Spec: h7004 0, h6069 284, h3700 383, h7076 313, h70dx
     267-269, bulblightv3 342, the four h1162 rows, h70b1 134, h70bx 216, the six status-read rows (h6092 334 /
     333 / 401, h7072 371 / 294, h70b6 341), the nine BK target rows, the five Glide panel rows (h6061 96 / 97 /
@@ -1019,7 +1034,8 @@ model, from which the shipped readers are generated).
   builder: `Bytes.C`, `Bytes.A`, `Bytes.D`), and then lets the colour page's `color_temperature` flag be
   off. h60ax 302 (with
   `color_functions: [segment_brightness]`, `Config.I[302]` = hQ) states it and is `app_traced`; h60ax 235
-  states it too (`modelled`). bulblightv3 328 doesn't yet, and stays `modelled` (above).
+  states it too (`modelled`), and so does bulblightv3 328 (H8015), now `app_traced` on the user's sign-off
+  (Changed).
 - **`color_functions` and segment brightness** (devices.schema.json descriptions): `segment_brightness` needs
   `segments` on a scheme with the `15 02` frame, and a row with segments offers segment brightness only where
   it is listed or `color_functions` is absent. h61d3 202 gets `segments`, `color_temp_control: whole_device`
