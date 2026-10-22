@@ -392,6 +392,8 @@ _REFUSED: tuple[tuple[str, str, _Edit, str], ...] = (
      "heartbeat 'heartbeat' (no link is held: none only) on a per_command row"),
     ("h70b2", "185", lambda f: _row(f, "185").update(connect_reads=["gradual"]),
      "connect_reads ['gradual'] on a per_command row"),
+    ("h70b2", "185", lambda f: _row(f, "185").update(connect_writes=["light_effect_stop"]),
+     "connect_writes ['light_effect_stop'] on a per_command row"),
     ("h70b2", "185", lambda f: _row(f, "185").update(account_lock=True), "account_lock true (the card sends no"),
     ("h70b2", "185", lambda f: _row(f, "185").update(zones=[{"id": "main", "power_index": 0, "segments": [0]}]),
      "zones on a per_command row"),

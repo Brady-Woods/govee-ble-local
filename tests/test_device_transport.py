@@ -232,7 +232,8 @@ async def test_a_per_command_profile_sends_each_write_on_its_own_session(monkeyp
         with pytest.raises(GoveeBleCommandRejected):
             await dev.set_power(False)
         assert dev.state.is_on is True and fake.received[6:] == [build.switch(False)]
-        fake.on_write = None
+        # The link lost while the reply is awaited: the write went out, which is the card's success.
+        fake.on_write = lambda client, _plain: asyncio.get_running_loop().call_later(0.005, client.drop)
         await dev.set_power(False)
     assert dev.state.is_on is False and len(fake.clients) == len(starts) == 8
     assert all(c.writes and not c.is_connected for c in fake.clients)
