@@ -10396,7 +10396,7 @@ families:
         "57":   # H6071; no support: no color_scheme builds the CCT write 33 05 15 04 <K u16be> (library gap, h6071.md)
           models: [H6071]
           pacts: ["1,1"]
-          color_functions: [segment_brightness, color_temperature]   # Config.I[57] = bQ {false, true, true, true, true}; the segment-brightness slider has no builder (no relative-brightness version), so no segments (library gap G4, h6071.md)
+          color_functions: [segment_brightness, color_temperature]   # Config.I[57] = bQ {false, true, true, true, true}; the segment-brightness slider has no builder (no relative-brightness version), so no segments; the flag binds segments only where the scheme has that frame (_resolve SEGMENT_BRIGHTNESS_SCHEMES)
           capabilities: [power, brightness, color_temp]
           zones: []
           account_lock: true
@@ -10468,7 +10468,7 @@ families:
         "67":   # H6075; the 57 screen and frames (Config.x[67] = Qv = 9); no support for the same gap
           models: [H6075]
           pacts: ["1,1"]
-          color_functions: [segment_brightness, color_temperature]   # Config.I[67] = aQ {false, true, true, true, true}; no relative-brightness builder, so no segments (G4, h6071.md)
+          color_functions: [segment_brightness, color_temperature]   # Config.I[67] = aQ {false, true, true, true, true}; no relative-brightness builder, so no segments (as 57)
           capabilities: [power, brightness, color_temp]
           zones: []
           account_lock: true

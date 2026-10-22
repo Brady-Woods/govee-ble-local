@@ -95,6 +95,13 @@ model, from which the shipped readers are generated).
 - A SKU's `by_model` `connect_writes` replaces its row's (`DeviceProfile.light_effect_stop`), where a screen
   splits its connect write by SKU within one goodsType; the build refuses one on a SKU that two rows of its
   family list. No SKU admitted before has one.
+- The resolver ties a row's `segment_brightness` colour-page flag (`color_functions`) to the `segments`
+  capability only where the row's colour scheme has a segment-brightness frame (`h60a6`'s `33 05 15 02`,
+  `Bytes.G`; `_resolve.SEGMENT_BRIGHTNESS_SCHEMES`), not on the flag alone. H6071 / H6075 (h6071 57 / 67) keep
+  their traced flag: the app shows the slider (`Config.I[57]` / `[67]`), but there is no relative-brightness
+  version for them (no `Config.y` / `Config.z` entry), so it sends no frame and the one-piece lamps have no
+  segments. They stay without support until their colour-temperature scheme and the Kelvin + brightness pair
+  land. Every admitted row with the flag is on `h60a6`, so no profile changes.
 
 ### Spec
 - **The device-list trace (Govee Home 7.7.02; 7.5.12 where a family says so).** Each of the 83 census families

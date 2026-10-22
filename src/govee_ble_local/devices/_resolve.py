@@ -61,7 +61,12 @@ the row lacks fails the build: nothing defaults silently.
   generator's review list. The snapshot's ``ic`` is read nowhere: no row's app trace cites the app's read
   of it (``CategoriesConfig.getDefIcNum``), and no count is derived from it.
 - A row's colour scheme drops the capabilities it has no frame for (:data:`SCHEME_LACKS`), but only a
-  scheme the row names itself: a family default that would drop one raises. ``rgb``, ``color_temp`` or
+  scheme the row names itself: a family default that would drop one raises. A traced ``color_functions``
+  agrees with the capabilities: ``color_temperature`` with ``color_temp``, and ``segment_brightness`` with
+  ``segments`` only where the row's scheme has a segment-brightness frame
+  (:data:`SEGMENT_BRIGHTNESS_SCHEMES`). Elsewhere the flag alone calls for nothing: the slider has no frame
+  the library could send (H6071 / H6075's one-piece lamps, with no relative-brightness version and no
+  scheme yet; h61a8's 0x0b segment colour). ``rgb``, ``color_temp`` or
   ``segments`` on a relay row raises (the library resolves no colour scheme or Kelvin range for a plug), and
   elsewhere they need a colour scheme. An ``untraced`` scene dialect drops ``scenes``; ``none`` is activate
   only. Scenes need a bundled catalog, as every SKU of 1.4.0 that offers them ships one: a SKU the scene
@@ -381,6 +386,10 @@ SCHEME_LACKS: Final[Mapping[str, frozenset[str]]] = {
     "h6188": frozenset({"segments"}),
     "h6061": frozenset({"segments"}),
 }
+# The colour schemes with a segment-brightness frame (wire.build.segment_brightness: 33 05 15 02, Bytes.G),
+# the frame the colour page's segment-brightness slider sends; the only rows whose color_functions flag for
+# it calls for segments.
+SEGMENT_BRIGHTNESS_SCHEMES: Final = frozenset({"h60a6"})
 # Wire branches the library leaves unread on purpose: (family, layer, branch) -> the branch exactly.
 _UNREAD_WIRE_BRANCHES: Final[Mapping[tuple[str, str, str], Mapping[str, Any]]] = {
     ("h60ax", "by_goods_type 303", "by_pact 1,1"): {"group": {"num_pieces": 1}},
@@ -792,7 +801,8 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
     caps -= lacks
     cf = row.get("color_functions")
     if cf is not None and (("color_temperature" in cf) != ("color_temp" in row_caps)
-                           or ("segment_brightness" in cf) != ("segments" in row_caps)):
+                           or (scheme in SEGMENT_BRIGHTNESS_SCHEMES
+                               and ("segment_brightness" in cf) != ("segments" in row_caps))):
         fail(f"color_functions {list(cf)} disagree with capabilities {sorted(row_caps)}")
     dialect = row.get("scene_dialect")
     if "scenes" in caps and dialect not in (*_DIALECTS, "untraced"):
