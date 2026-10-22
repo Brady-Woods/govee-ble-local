@@ -79,8 +79,8 @@ advertisement, build a capability-driven `Device`, then drive it.
   `.encryption_known`) `create_device` routes by, e.g. the pact it refused. `is_supported_sku(sku)` /
   `supported_skus()` / `profile_for(sku)` query the table; `profile_for` and `is_supported_sku` take
   `pact=` / `goods_type=` to pick between rows. A SKU served only on a pact-gated row (the BK-firmware
-  rows, H6076 / H8076 / R16D0, and behind `allow_modelled` the h70b3 rows' H70B3 / H70B4 / H70B5 / H6810 /
-  H6811 / H8811) needs `pact=`: `supported_skus()` lists it, but without the advertisement's pact
+  rows, H6076 / H8076 / R16D0, H70B6, and behind `allow_modelled` the h70b3 rows' H70B3 / H70B4 / H70B5 /
+  H6810 / H6811 / H8811) needs `pact=`: `supported_skus()` lists it, but without the advertisement's pact
   (`GoveeAdvertisement.pact`) `is_supported_sku` and `profile_for` refuse it (`create_device` with the
   advertisement, `supported`, `match` and `discover` pass it already). `allow_modelled=True` (also on
   `supported_skus`, `create_device`, `supported`, `match` and `discover`) admits the rows the spec marks
@@ -98,8 +98,8 @@ advertisement, build a capability-driven `Device`, then drive it.
   decodes an advertisement's on/off as the device does, without changing state; `ingest_advertisement`
   folds it in. Methods for unsupported capabilities raise `GoveeBleNotSupported`, and so does
   `set_segment_color_temp` where `DeviceProfile.segment_color_temp` is false: where the SKU's colour page
-  has no Part-tab Kelvin item, and on the H60A6 and H6047, whose item widens every pick to whole zones (the
-  user's decision 24). SEGMENTS and COLOR_TEMP together don't promise it; `set_zone_color_temp` doesn't
+  has no Part-tab Kelvin item, and where that item widens every pick to whole zones (the field's docstring
+  lists those SKUs). SEGMENTS and COLOR_TEMP together don't promise it; `set_zone_color_temp` doesn't
   read the field. The link
   comes up with the first operation (or `connect()`) and drops `idle_disconnect` seconds after the last one
   (8 s by default), or 30 s after a command (`const.ACTIVE_IDLE_DELAY`, so quick follow-ups skip the

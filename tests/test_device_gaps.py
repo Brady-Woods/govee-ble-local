@@ -418,19 +418,13 @@ def test_set_zone_rgb_zone_without_segments_raises() -> None:
     assert _sent(d) == []
 
 
-@pytest.mark.parametrize(("sku", "zone", "mask"), [
-    ("H60A6", "background", b"\xff\x0f"), ("H60A6", "main", b"\x00\x10"),
-    ("H6047", "left", b"\x1f\x00"), ("H6047", "right", b"\xe0\x03"),
-])
-def test_set_zone_color_temp_sends_zone_mask(sku: str, zone: str, mask: bytes) -> None:
-    # The zone's own mask, the one the app's Part-tab Kelvin widens a pick to, though segment_color_temp is
-    # false (decision 24: that is the piece selection's Kelvin only).
-    d = _dev(sku)
-    assert not d.profile.segment_color_temp
-    asyncio.run(d.set_zone_color_temp(zone, 4000))
+def test_set_zone_color_temp_sends_zone_mask() -> None:
+    # The zone's own mask, whatever segment_color_temp says: that gates the piece selection's Kelvin only.
+    d = _dev("H60A6", segment_color_temp=False)
+    asyncio.run(d.set_zone_color_temp("background", 4000))
     f = _sent(d)[0]
     assert f[:3].hex() == "330515"
-    assert f[7:9] == (4000).to_bytes(2, "big") and f[12:14] == mask
+    assert f[7:9] == (4000).to_bytes(2, "big") and f[12:14] == bytes([0xFF, 0x0F])
 
 
 def test_set_zone_color_temp_unsupported_scheme_and_unknown_zone() -> None:

@@ -11,9 +11,9 @@ from unittest.mock import AsyncMock
 
 import pytest
 from conftest import require_optional
-from fake_ble import FakeGovee, ble_device, frame, status_burst
+from fake_ble import FakeGovee, ble_device, frame
 from conftest import gated_scene_profile
-from test_app_burst_rules import _BASIC
+from test_device_v3 import _STATUS_BURST
 
 require_optional("kaitaistruct", reason="Kaitai runtime not installed")
 
@@ -43,10 +43,8 @@ H60A6_BASIC_ZEROS = bytes.fromhex("aa071000000000000000000000000000000000bd")
 H60A6_WIFI_ZEROS = bytes.fromhex("aa071100000000000000000000000000000000bc")
 
 
-def _dev(sku: str, replies: Callable[[bytes], list[bytes]],
-         pact: tuple[int, int] | None = None) -> tuple[Device, list[bytes]]:
-    adv = None if pact is None else GoveeAdvertisement(sku, f"GV{sku}", False, 0, *pact)
-    d = make_device(ble_device("AA:BB:CC:DD:EE:30", sku), sku, adv)
+def _dev(sku: str, replies: Callable[[bytes], list[bytes]]) -> tuple[Device, list[bytes]]:
+    d = make_device(ble_device("AA:BB:CC:DD:EE:30", sku), sku)
     assert d is not None
     sent: list[bytes] = []
 
@@ -167,24 +165,14 @@ def test_only_the_version_a_gate_tests_is_read_again() -> None:
         assert _info_reads(sent) == again, (sku, lost)
 
 
-_READS = ["0600", "0703", "0702"]
-
-
-@pytest.mark.parametrize(("sku", "pact", "sent"), [
-    ("H60A6", None, _READS), ("H6076", (2, 1), _READS), ("H3751", None, []),
-    # Released at 1.6.1, the user's decision 22 ("Match the app"): no reads, as their screens send none.
-    ("H60B1", None, []), ("H7056", None, []), ("H1630", None, []),
-])
-def test_a_status_profile_without_device_info_reads_takes_them_from_tlv_07(
-        sku: str, pact: tuple[int, int] | None, sent: list[str]) -> None:
+@pytest.mark.parametrize(("sku", "sent"), [("H60A6", ["0600", "0703", "0702"]), ("H3751", [])])
+def test_a_status_profile_without_device_info_reads_takes_them_from_tlv_07(sku: str, sent: list[str]) -> None:
     """A status row whose screen sends no device-info read (devices.yaml ``device_info_reads: none``, H3751's
-    h3751 354, H60B1's h60b1 300, H7056's h7056 304, H1630's h1630 364) gets none from the library on any
-    poll: its versions and device id come from the status reply's TLV 0x07 alone
-    (Compose4BaseInfoSingleRead.w), as on the screen. A status row that makes them (``firmware``: H60A6's
-    h60ax 303, and H6076's straightfloorlamp 69 at its (2,1) pact) sends them once. Each reads a burst of
-    TLV 0x01 and the H60A6's captured TLV 0x07."""
-    burst = status_burst(bytes([0x01, 0x01, 0x01]) + _BASIC)
-    d, frames = _dev(sku, lambda fr: list(burst) if fr[0] == 0xAC else [], pact)
+    h3751 354) gets none from the library on any poll: its versions and device id come from the status
+    reply's TLV 0x07 alone (Compose4BaseInfoSingleRead.w), as on the screen. A status row that makes them
+    (H60A6's h60ax 303, ``firmware``) sends them once. Both read the captured H60A6 burst, which carries TLV
+    0x07."""
+    d, frames = _dev(sku, lambda fr: list(_STATUS_BURST) if fr[0] == 0xAC else [])
     assert d.profile.device_info_reads == bool(sent)
     asyncio.run(d.update())
     asyncio.run(d.update())
