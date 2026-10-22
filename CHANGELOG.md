@@ -9,10 +9,11 @@ model, from which the shipped readers are generated).
 ## [Unreleased]
 
 ### Added
-- **158 more SKUs, traced from the app's device list** (spec rows only; no library code changed): 96 admitted
-  by default (`app_traced`) and 62 behind `allow_modelled` (`modelled`), for 194 and 68 in all. None is
-  hardware-verified (the only bench check, below, was read-only), and none has a bundled scene catalog, so none
-  is offered scenes. Each is listed with its family and goodsType; † marks a SKU no row lists that the
+- **162 more SKUs, traced from the app's device list**: 98 admitted by default (`app_traced`) and 64 behind
+  `allow_modelled` (`modelled`), for 196 and 70 in all. 158 of them came as spec rows alone (no library code
+  changed); the colour-temperature work below adds H61E5 / H61E6 and H60A1 / H80A1 behind `allow_modelled` and
+  promotes H60A4 / H80A4 to the default table. None is hardware-verified (the only bench check, below, was
+  read-only), and none has a bundled scene catalog, so none is offered scenes. Each is listed with its family and goodsType; † marks a SKU no row lists that the
   catalogue snapshot (`spec/govee_catalog.json`) routes to that row by its goodsType alone (16 of them).
 
   Admitted by default:
@@ -20,8 +21,8 @@ model, from which the shipped readers are generated).
     **H616B** (68), **H6178** (78), **H6192** (143);
   - h6114: **H6114** (39); h613839: **H6138 / H6139** (39); carlightv1: **H6118 / H6194** (6); tvlightv1:
     **H6179** (12); pact_tvlightv2: **H6198 / H6199** (24);
-  - h6047: **H6039** (277); h61d3: **H61B0** (264, with H61B3 / H61B6); dreamcolorlightv1: **H70A1 / H70A2 /
-    H70A3** (193);
+  - h60ax: **H60A4 / H80A4** (302); h6047: **H6039** (277); h61d3: **H61B0** (264, with H61B3 / H61B6);
+    dreamcolorlightv1: **H70A1 / H70A2 / H70A3** (193);
   - rgbiclight: **H6671 / H6672** (332), **H617G**, **R617G**† (351), **H618G**, **R618D**† (352);
   - hollowlamp: **H6050** (27), **H6051** (37), **H6055** (42), **H6073** (58), **H6059** (84); tablelampv1:
     **H6078** (128); straightfloorlamp: **H6076 / H8076**, **R16D0**† (69), **H16C0** (377);
@@ -42,8 +43,9 @@ model, from which the shipped readers are generated).
 
   Behind `allow_modelled` (the facts are traced, but the library doesn't yet do everything the app does on
   every unit; each row's `doc` names the difference):
-  - h60ax: **H60A4 / H80A4** (302), **H1270** (346), **H1232** (356), **H1252** (373);
-  - h61d3: **H61D2 / H61D3 / H61D4 / H61D5 / H61D6** (202), **H703A / H703B** (263);
+  - h60ax: **H60A1 / H80A1** (235), **H1270** (346), **H1232** (356), **H1252** (373);
+  - h61d3: **H61D2 / H61D3 / H61D4 / H61D5 / H61D6** (202), **H61E5** (239), **H61E6** (246), **H703A /
+    H703B** (263);
   - dreamcolorlightv1: **H61A9** (204); dreamcolorlightv2: **H611A / H6143 / H6144** (21); rgbiclight:
     **H61C2 / H61C3 / H61C5** (141); homelightv1: **H6148** (16); hollowlamp: **H6058** (59); h7090:
     **H7090** (44); h1741: **H1741 / R1741** (365);
@@ -128,7 +130,7 @@ model, from which the shipped readers are generated).
   GoveeBleNotSupported, because the app has no Kelvin on part of those devices. Check
   `device.profile.whole_device_kelvin` before offering colour temperature on a segment or zone entity;
   hass-govee-ble-local's segment lights need that follow-up (they offer colour temperature whenever the device
-  has `COLOR_TEMP`). Every profile of 1.7.0 has `whole_device_kelvin=False`.
+  has `COLOR_TEMP`). Every SKU of 1.6.1 has `whole_device_kelvin=False`.
 - No SKU of 1.6.1 takes the illumination pair: each keeps `kelvin_with_brightness=False` and its one-frame
   colour-temperature write, H8015 included (above).
 
@@ -143,8 +145,10 @@ model, from which the shipped readers are generated).
   `modelled`; one that needs library work has no `support` and names the gap in its `doc`. A verification
   pass challenged each family's rows; they were repaired, and demoted (to `modelled`, or to no `support`)
   where a core claim didn't hold.
-  - devices.yaml now has 305 goodsType rows in 96 families (184 in 91): 153 with `support` (66), of them 121
-    `app_traced`, 28 `modelled` and the same 4 `hardware_verified`, and 152 without (118).
+  - devices.yaml now has 305 goodsType rows in 96 families (184 in 91): 156 with `support` (66), of them 122
+    `app_traced`, 30 `modelled` and the same 4 `hardware_verified`, and 149 without (118). h60ax 235 and h61d3
+    239 / 246 took their support (`modelled`) from the colour-temperature work below, which also promoted h60ax
+    302 to `app_traced`.
   - Two goodsType add-ons were traced and checked on their own: straightfloorlamp 69 (H6076 / H8076,
     `app_traced`, with the bench reads above) and rgbiclight 141 (H61C2 / H61C3 / H61C5, `modelled`).
   - Nothing new is hardware-verified. The only bench evidence is the read-only H6076 / H61C3 check above.
