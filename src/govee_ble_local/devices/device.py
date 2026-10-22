@@ -474,8 +474,10 @@ class Device:
         seconds, while ``is_on`` still holds what that read gave; None when no read has, or it no longer does.
 
         Stamped only by a read that returned the on/off: an answered 0xAC status read (its TLV 0x01; a reply
-        without one reads off, as the app's does), the ``aa 01`` power read of a polled light, the ``aa 36``
-        bar read of a bar-switch device (in a poll, or before a bar write), and a plug's ``aa 01`` relay read.
+        without one reads off, as the app's does), the ``aa 01`` power read of a polled light, the ``aa 34``
+        device-detail read that replaces it on the H6057 (its light flag,
+        :attr:`.DeviceProfile.detail_power_read`), the ``aa 36`` bar read of a bar-switch device (in a poll,
+        or before a bar write), and a plug's ``aa 01`` relay read.
         A read that returned no on/off (an unanswered poll, a brightness or mode reply), a read discarded as
         stale, an advertisement and an acked write stamp nothing: a poll that read nothing leaves the stamp of
         the read before it.

@@ -308,7 +308,7 @@ def test_a_detail_power_read_polls_aa34_in_place_of_aa01(flags: int, music: int,
                             0x01: frame(0xAA, 0x01, 0x01)})
     asyncio.run(d._read_polled())
     sent = [c.args[0][:2].hex() for c in d._conn.query.call_args_list]   # type: ignore[attr-defined]
-    assert sent == ["aa04", "aa34", "aa05"] and d.state.is_on is on
+    assert sent == ["aa04", "aa34", "aa05"] and d.state.is_on is on and d.power_read_at is not None
     d._advert_ignore_until = 0.0
     adv = type("Adv", (), {"manufacturer_data": {0x8802: bytes([0xEC, 0x00, 0x01, 0x01, int(not on)])}})()
     assert d.advertised_on(adv) is None and d.ingest_advertisement(adv) is False   # type: ignore[arg-type]

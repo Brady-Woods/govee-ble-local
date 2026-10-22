@@ -47,9 +47,10 @@ model, from which the shipped readers are generated).
     supported through 1.x, because released integrations import them.
 - **`Device.power_read_at -> float | None`: when a read last returned the device's whole on/off.** The value is in
   `time.monotonic()` seconds, and only while `state.is_on` still holds what that read gave; otherwise None.
-  - **What stamps it:** an answered 0xAC status read, a polled light's `aa 01`, a bar-switch device's `aa 36` (in
-    a poll or before a bar write) and a plug's `aa 01` relay read. A poll that read nothing, a read discarded
-    as stale, an advertisement and an acked write stamp nothing.
+  - **What stamps it:** an answered 0xAC status read, a polled light's `aa 01` (on the H6057 the `aa 34`
+    device-detail read that replaces it, its light flag: `DeviceProfile.detail_power_read`), a bar-switch
+    device's `aa 36` (in a poll or before a bar write) and a plug's `aa 01` relay read. A poll that read nothing,
+    a read discarded as stale, an advertisement and an acked write stamp nothing.
   - **What drops it:** any change to `is_on` that no read made, even one that later changes back. Also a power
     write or scene activation that raises (it may have reached the device), including a `set_scene_by_name`
     whose power-on lead or upload raises. Also a write that wakes a zoned device not known to be on, an acked
