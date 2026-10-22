@@ -73,7 +73,10 @@ advertisement, build a capability-driven `Device`, then drive it.
   idle_disconnect=None, goods_type=None, allow_modelled=False)`** — construct a `Device` for the SKU
   (raises `GoveeBleNotSupported` if unsupported). Pass the advertisement (`DiscoveredDevice.advertisement`
   or bleak's own): its encrypt flag selects the command channel, which some firmwares set differently
-  from the SKU's default (H6008), and its pact the SKU's devices.yaml row. `is_supported_sku(sku)` /
+  from the SKU's default (H6008), and its pact the SKU's devices.yaml row. Both are read whatever the
+  advertised name; `bound_advertisement(advertisement_data, sku, *, fallback_name=None)` is that read on
+  its own, for a caller with no `Device` yet: the `GoveeAdvertisement` (`.pact`, `.encrypted`,
+  `.encryption_known`) `create_device` routes by, e.g. the pact it refused. `is_supported_sku(sku)` /
   `supported_skus()` / `profile_for(sku)` query the table; `profile_for` and `is_supported_sku` take
   `pact=` / `goods_type=` to pick between rows, and `allow_modelled=True` (also on `supported_skus`,
   `create_device`, `supported`, `match` and `discover`) admits the rows the spec marks `modelled`
