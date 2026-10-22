@@ -1576,11 +1576,11 @@ class Device:
         Raises GoveeBleNotSupported without SEGMENTS/COLOR_TEMP, where
         :attr:`.DeviceProfile.segment_color_temp` is false (no Part-tab Kelvin item, or on the H60A6 and H6047
         one that widens to whole zones, the user's decision 24), where
-        :attr:`.DeviceProfile.whole_device_kelvin` is set (segment_color_temp is false there too) or for
-        non-maskable schemes; GoveeBleInvalidValue for a non-int ``kelvin`` or a bad index; GoveeBleError if
-        a hand-built profile with :attr:`.DeviceProfile.section_count_read` does not answer that read (no
-        table profile reaches it: H6062, the one row that reads its segment count, has segment_color_temp
-        false)."""
+        :attr:`.DeviceProfile.whole_device_kelvin` is set (a table profile with it and SEGMENTS has
+        segment_color_temp false too) or for non-maskable schemes; GoveeBleInvalidValue for a non-int
+        ``kelvin`` or a bad index; GoveeBleError if a hand-built profile with
+        :attr:`.DeviceProfile.section_count_read` does not answer that read (no table profile reaches it:
+        H6062, the one row that reads its segment count, has segment_color_temp false)."""
         self._require_masked_kelvin(pieces=True)
         sent = self._check_kelvin(kelvin)
         ticket = self._ticket()

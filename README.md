@@ -103,7 +103,8 @@ advertisement, build a capability-driven `Device`, then drive it.
   item, and on the H60A6 and H6047, whose item widens every pick to whole zones (the user's decision 24).
   SEGMENTS and COLOR_TEMP together don't promise it; `set_zone_color_temp` doesn't read the field. Both
   raise it where the SKU's screen writes colour temperature over the whole device only
-  (`DeviceProfile.whole_device_kelvin`, where `segment_color_temp` is false too). The link
+  (`DeviceProfile.whole_device_kelvin`; a table profile with it and `SEGMENTS` has `segment_color_temp` false
+  too). The link
   comes up with the first operation (or `connect()`) and drops `idle_disconnect` seconds after the last one
   (8 s by default), or 30 s after a command (`const.ACTIVE_IDLE_DELAY`, so quick follow-ups skip the
   reconnect). While it is up the `Device` sends the keep-alive read the SKU's control screen sends every 2 s
