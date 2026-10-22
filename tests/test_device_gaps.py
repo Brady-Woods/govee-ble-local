@@ -24,8 +24,8 @@ from govee_ble_local.exceptions import (
     GoveeBleNotSupported,
     GoveeBleTimeout,
 )
-from govee_ble_local import registry, scanner
-from govee_ble_local.identify import _bound_advertisement, from_advertisement, identify
+from govee_ble_local import bound_advertisement, registry, scanner
+from govee_ble_local.identify import from_advertisement, identify
 from govee_ble_local.models import Capability, Encryption
 
 
@@ -104,7 +104,7 @@ def _adv(name: str | None, mfg: dict[int, bytes]) -> Any:
 
 def _encryption(d: Device, raw: Any) -> Encryption:
     """The mode ``d`` resolves for a raw advert, parsed once as the constructor does."""
-    return d._resolve_encryption(_bound_advertisement(raw, d._ble_device.name, d.sku))
+    return d._resolve_encryption(bound_advertisement(raw, d.sku, fallback_name=d._ble_device.name))
 
 
 # ── advertisement-driven encryption ─────────────────────────────────────────
@@ -159,9 +159,37 @@ def test_bound_device_reads_the_encrypt_flag_whatever_its_name() -> None:
 
 
 def test_a_govee_name_reads_the_same_on_both_paths() -> None:
-    adv = _adv("GVH60082691", _RENAMED_MFG)
-    assert _bound_advertisement(adv, None, "H6008") == from_advertisement(adv) == identify(
-        "GVH60082691", _RENAMED_MFG)
+    # Pact, flag and name as discovery reads them; the SKU is the caller's even when the name carries another.
+    adv = _adv("GVH60062691", _RENAMED_MFG)
+    found = from_advertisement(adv)
+    assert found is not None and found == identify("GVH60062691", _RENAMED_MFG) and found.sku == "H6006"
+    read = bound_advertisement(adv, "h6008")
+    assert read is not None and read.sku == "H6008"
+    assert (read.pact, read.encrypted, read.encryption_known, read.broadcast_version, read.name) == (
+        found.pact, found.encrypted, found.encryption_known, found.broadcast_version, found.name)
+
+
+def test_a_caller_without_a_device_reads_what_create_device_reads() -> None:
+    # The public bound_advertisement is create_device's own read: renamed, nameless and Govee-named adverts
+    # give the pact and encrypt flag the Device is built with. The SKU is the caller's, upper-cased; the name
+    # is the advertised one, else the BLEDevice's (a Govee BLEDevice name doesn't win over a renamed advert).
+    for adv_name, ble_name in ((_RENAMED, _RENAMED), (None, _RENAMED), (None, None), ("GVH60082691", None),
+                               (_RENAMED, "GVH60082691")):
+        raw = _adv(adv_name, _RENAMED_MFG)
+        read = bound_advertisement(raw, "h6008", fallback_name=ble_name)
+        d = registry.create_device(ble_device("AA:BB:CC:DD:EE:35", ble_name), "H6008", raw)
+        assert read is not None and read.encryption_known
+        assert (read.sku, read.pact, read.encrypted) == ("H6008", d.pact, True)
+        assert d.encryption is Encryption.AES_RC4_PSK
+        assert read.name == (adv_name or ble_name or "")
+    # At a pact the SKU's rows refuse, it reads the pact create_device's GoveeBleNotSupported names.
+    refused = bound_advertisement(_adv(_RENAMED, {0x8843: bytes([0xEC, 0x00, 0x01, 0x02])}), "H6042")
+    assert refused is not None and refused.pact == (1, 2)
+    # No Govee pact block: None under a non-Govee name (or no advert), an unknown pact under a Govee name.
+    assert bound_advertisement(_adv(_RENAMED, {0x2E28: bytes.fromhex("89304dad0000")}), "H6008") is None
+    assert bound_advertisement(None, "H6008") is None
+    named = bound_advertisement(_adv("GVH60082691", {}), "H6008")
+    assert named is not None and named.pact is None and not named.encryption_known
 
 
 def test_discovery_keeps_the_name_gate() -> None:
