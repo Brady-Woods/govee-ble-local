@@ -649,6 +649,9 @@ def test_the_status_reply_is_read_with_the_profiles_status_decode() -> None:
     assert (wire_profile(music).mode.music, wire_profile(music).mode.empty_fails) == (
         _spec.Common.MusicDecode.v2_default, True)
     assert wire_profile(h60a6).mode.music == _spec.Common.MusicDecode.not_decoded
+    # The resolver emits it from a polled row's wire mode (H60A1, h60ax 235: h60a1 Info4Detail.Q).
+    h60a1 = profile_for("H60A1", allow_modelled=True)
+    assert h60a1 is not None and h60a1.mode_decode == (("empty_fails", True), ("music", "v2_default"))
     twice = (("music", "v1_flagged"), ("music", "v2_default"))
     for bad_mode in ((("music", "v9"),), (("empty_fails", 1),), twice):
         with pytest.raises(GoveeBleInvalidValue, match="mode_decode"):

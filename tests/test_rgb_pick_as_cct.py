@@ -190,6 +190,9 @@ def test_segment_picks_are_one_cct_frame_with_the_segment_mask() -> None:
     d = _dev("H6062", 33)                           # more than 16 segments: a 5-byte mask
     asyncio.run(d.set_segment_rgb([32], (0xFF, 0xE7, 0xCC)))
     assert _sent(d) == [_cct15(5000, (0xFF, 0xE7, 0xCC), 0, 0, 0, 0, 1)]
+    d = _dev("H61E5")             # rgb_self_tem_color on some pieces: the tint in the slot, Kelvin and tint 0
+    asyncio.run(d.set_segment_rgb([0], (0xFF, 0xB9, 0x69)))
+    assert _sent(d) == [_frame(0x33, 0x05, 0x15, 0x01, 0xFF, 0xB9, 0x69, 0, 0, 0, 0, 0, 0x01, 0x00)]
 
 
 def test_segment_color_temp_default_tint_is_the_first_tint_and_the_tint_is_overridable() -> None:
@@ -210,6 +213,11 @@ def test_slider_paths_are_unchanged() -> None:
     d = _dev("H6008")
     asyncio.run(d.set_color_temp(4000))
     assert _sent(d) == [_cct0d(4000, (0xFF, 0xD5, 0xA1))]
+    d = _dev("H61E5")                   # white type rgb_self_tem_color over every piece: slot 00 00 00
+    asyncio.run(d.set_color_temp(3000))
+    asyncio.run(d.turn_on(kelvin=3000))
+    whole = bytes.fromhex(GOLDEN_WHOLE[-1][3])
+    assert _sent(d) == [whole, b.switch(True), whole]
 
 
 # ── every table colour, every scheme: CCT iff inside the SKU's inclusive range ─

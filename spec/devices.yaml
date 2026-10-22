@@ -785,8 +785,8 @@ families:
             canClickColorTem null). The illumination tab (mode 13), the only colour-temperature control, writes
             Config.N[0] = Bytes.C(K, 11, 1), the h60a6 frame over every piece, then 33 04 <illuminationCur()[0] =
             Info4Detail.i> in one Compose4DefWrite (View4IlluminationMode.I0; color_temp_control illumination). That
-            brightness is the status read's TLV 0x04 (DeviceBaseInfoFromDevice.b, 100 when the TLV is absent: the
-            library then sends nothing rather than a guessed 33 04). Kelvin KelvinConfig version 2 = [2700, 6500];
+            brightness is the status read's TLV 0x04 (DeviceBaseInfoFromDevice.b), 100 when a reply carries none
+            (its constructor's value), which the library then sends too. Kelvin KelvinConfig version 2 = [2700, 6500];
             brightness version 1 (percent). Main switch 33 01; no zone switch. No 0xB2. Scenes not traced. Not
             hardware-verified.
           doc-ref:

@@ -90,8 +90,9 @@ model, from which the shipped readers are generated).
   the app writes the Kelvin frame and then `33 04` <the brightness it holds> as one write
   (`View4IlluminationMode.I0`, one `Compose4DefWrite`). `set_color_temp` now sends that pair, each frame acked
   in order, and `turn_on(kelvin=)` sends the Kelvin frame before `33 04` (the given brightness, else the held
-  one). An unknown brightness is read first with the profile's own read (the status read, or aa 04); if it
-  stays unknown, GoveeBleError and nothing is written (never a guessed `33 04`). On such a profile the pair and
+  one). An unknown brightness is read first with the profile's own read: the status read (whose reply holds
+  100 when it carries no TLV 0x04, as the app's `DeviceBaseInfoFromDevice` does) or aa 04. If no reply comes,
+  GoveeBleError and nothing is written (never a guessed `33 04`). On such a profile the pair and
   every `33 04` writer (`set_brightness`, `turn_on`) hold one Device lock from build to write, so a
   `set_color_temp` started while a `set_brightness` is in flight re-sends the new level, as the app re-sends the
   level its screen holds, not the old one; the pair's state takes the level it sent. The tab writes every piece,

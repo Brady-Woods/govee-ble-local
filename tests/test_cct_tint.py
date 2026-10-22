@@ -27,7 +27,7 @@ from unittest.mock import AsyncMock
 import pytest
 import spec_read
 from conftest import require_optional
-from fake_ble import ble_device
+from fake_ble import ble_device, status_burst
 
 from govee_ble_local.devices.device import Device
 from govee_ble_local.exceptions import GoveeBleError, GoveeBleInvalidValue, GoveeBleNotSupported
@@ -197,6 +197,12 @@ def test_illumination_tab_kelvin_is_the_kelvin_then_the_held_brightness() -> Non
     with pytest.raises(GoveeBleError, match="brightness is not known"):
         asyncio.run(d.set_color_temp(4000))
     assert _sent(d) == []
+    # A status row (H60A4, h60ax 302, 11 pieces) reads its 0xAC burst instead (TLV 0x04 = 55).
+    d = _dev("H60A4")
+    d._conn.query = AsyncMock(  # type: ignore[method-assign]
+        return_value=status_burst(bytes([0x01, 0x01, 0x01, 0x04, 0x01, 55])))
+    asyncio.run(d.set_color_temp(4000))
+    assert _sent(d) == [b.color_temp(4000, "h60a6", 11), b.brightness(55)]
     # A brightness write still in flight when the pair starts: the pair re-sends the new level, not the old.
     d = _dev("H60A1")
     d.state.brightness = 42
