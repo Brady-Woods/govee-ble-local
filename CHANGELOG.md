@@ -282,6 +282,9 @@ model, from which the shipped readers are generated).
   answers nothing else. The same goes for any SKU whose default is plaintext while its firmware encrypts.
   `Device.ingest_advertisement` now reads the encrypt flag too, whatever the advertised name, and hands it to the
   connection (new `GoveeConnection.set_advertised_encryption`, which returns the mode the next session uses).
+  - **For test doubles:** a stand-in that replaces `Device._conn` now needs `set_advertised_encryption(mode)`
+    returning an `Encryption`, because `ingest_advertisement` calls it whenever an advertisement's Govee entries
+    agree on a flag that differs from the last one learned.
   - **When it applies:** from the next session on, never to the session that is up. `_prepare_session` is the
     only place a session's mode is set, from the advertised mode as it is when the setup starts. No link is
     dropped for it; a session that is up and answering already proves its cipher. `encryption` reports the
