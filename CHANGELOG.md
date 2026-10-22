@@ -10,11 +10,11 @@ model, from which the shipped readers are generated).
 
 ### Added
 - **158 more SKUs, traced from the app's device list** (spec rows; no library code changed but H61A9's read-back,
-  below): 97 admitted by default (`app_traced`) and 61 behind `allow_modelled` (`modelled`). With H7061 and H6057
-  (below), 197 and 67 in all. None is hardware-verified (the only bench check, below, was read-only), and none has
-  a bundled scene catalog, so none is offered scenes. Each is listed with its family and goodsType; † marks a SKU
-  no row lists that the catalogue snapshot (`spec/govee_catalog.json`) routes to that row by its goodsType alone
-  (16 of them).
+  below): 97 admitted by default (`app_traced`) and 61 behind `allow_modelled` (`modelled`). With H7061 (below),
+  196 and 67 in all. None is hardware-verified (the only bench check, below, was read-only), and none has a bundled
+  scene catalog, so none is offered scenes. Each is listed with its family and goodsType; † marks a SKU no row
+  lists that the catalogue snapshot (`spec/govee_catalog.json`) routes to that row by its goodsType alone (16 of
+  them).
 
   Admitted by default:
   - stringlightv2: **H6121 / H6141 / H6142 / H6154 / H6195** (1), **H6170 / H6196**, **H613G**† (2),
@@ -85,16 +85,17 @@ model, from which the shipped readers are generated).
   side). No Kelvin is read from the report itself (its default parse's `s16be(r1, g1)` is head 1's red and green).
   New `parse.HeadPair` in `parse.ModeColor`. Every frame is the h60a6 one the row already resolved to. Source-modelled,
   not live-verified: no H7061 on the bench, and what the heads report after a CCT write is unread.
-- **H6057 (h6057 104), a night light with a white-noise speaker, admitted by default (`app_traced`).** Its screen
-  never reads aa 01: its state read is the aa 34 device-detail reply (`Controllers.f` / `e`, `H6057DetailVM.v5`).
-  New `power_read: aa34_detail` (`DeviceProfile.power_read`, keyword-only, default `"aa01"`): the poll reads aa 04,
-  then aa 34 in place of aa 01, then aa 05, the screen's connect order (`Compose4InfoBleIotH6057`). The power is
-  the header's main switch, the one `33 01` drives, and it reads on while that switch shows on: the light open
-  (byte 0 bit 7) or white noise playing (byte 2 bits 4 and 7; `H6057DelegateHeader.E0`). So `set_power`'s
-  `33 01 <on>` is the frame that switch sends in every state (`switchTrigger`: `33 01 01` only when both are off).
-  The screen's light-only switch (`33 30 <on>`, which shows the light flag alone) is not modelled; whether an HA
-  light should drive it instead is open for a decision. New `build.device_detail_query` and
-  `parse.parse_detail_power`. Source-modelled, not live-verified: no H6057 on the bench and no firmware dump.
+- **The aa 34 device-detail power read (H6057's screen); no row is served by it yet.** H6057's screen never reads
+  aa 01: its state read is the aa 34 device-detail reply (`Controllers.f` / `e`, `H6057DetailVM.v5`). New
+  `power_read: aa34_detail` (`DeviceProfile.power_read`, keyword-only, default `"aa01"`): the poll reads aa 04,
+  then aa 34 in place of aa 01, then aa 05, the screen's connect order (`Compose4InfoBleIotH6057`), and takes the
+  state of the header's main switch, the one `33 01` drives: on while the light is open (byte 0 bit 7) or white
+  noise plays (byte 2 bits 4 and 7; `H6057DelegateHeader.E0`). New `build.device_detail_query` and
+  `parse.parse_detail_power`. H6057 (h6057 104) stays held, with no `support`, until the user picks the switch that
+  backs an HA light's power. With white noise playing and the light off, the main switch reads on while the screen
+  shows the light closed (`switchCur` is the light flag alone), and `set_power(True)` still sends `33 01 01`, which
+  the main switch never sends then (`switchTrigger`). The light switch (`33 30`) matches the screen in every state,
+  but the library has no per-row power write for it. Source-modelled: no H6057 on the bench and no firmware dump.
 
 ### Changed
 - Nothing for existing SKUs. Each of the 104 SKUs admitted at 1.6.1 (98 by default, 6 behind
@@ -116,8 +117,8 @@ model, from which the shipped readers are generated).
   `modelled`; one that needs library work has no `support` and names the gap in its `doc`. A verification
   pass challenged each family's rows; they were repaired, and demoted (to `modelled`, or to no `support`)
   where a core claim didn't hold.
-  - devices.yaml now has 305 goodsType rows in 96 families (184 in 91): 155 with `support` (66), of them 124
-    `app_traced`, 27 `modelled` and the same 4 `hardware_verified`, and 150 without (118).
+  - devices.yaml now has 305 goodsType rows in 96 families (184 in 91): 154 with `support` (66), of them 123
+    `app_traced`, 27 `modelled` and the same 4 `hardware_verified`, and 151 without (118).
   - Two goodsType add-ons were traced and checked on their own: straightfloorlamp 69 (H6076 / H8076,
     `app_traced`, with the bench reads above) and rgbiclight 141 (H61C2 / H61C3 / H61C5, `modelled`).
   - Nothing new is hardware-verified. The only bench evidence is the read-only H6076 / H61C3 check above.

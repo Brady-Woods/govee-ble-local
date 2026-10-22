@@ -1174,9 +1174,14 @@ types:
     instances:
       light_open:
         value: (switch_flags & 0x80) != 0
-        doc: the light-open flag, the light switch's state (H6057Info4Detail.H)
+        doc: |
+          the light-open flag (H6057Info4Detail.H): the light switch's state, and
+          the screen's on / off (switchCur), which shows the closed screen while
+          it is clear
         doc-ref:
           - split_hollowlamp/com/govee/h6057/origin/newDetail/H6057Info4Detail.java:208-210
+          - split_hollowlamp/com/govee/h6057/origin/newDetail/H6057DetailVM.java:1226-1228
+          - base-classes11/com/govee/base2light/pact/newdetail/content/success/ViewConnectSuccess.java:97-108,141-173
       white_noise_playing:
         value: (music_flags & 0x10) != 0 and (music_flags & 0x80) != 0
         doc: MusicTypeInfo isPlay (set only in white-noise mode)

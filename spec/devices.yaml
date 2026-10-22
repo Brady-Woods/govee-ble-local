@@ -10288,10 +10288,9 @@ families:
     client_profile:
       mode_color_parse: gradual_0d   # goodsType 104; 0x0b is the game sub-mode; split_hollowlamp/com/govee/h6057/origin/newDetail/H6057Info4Detail.java:414-456
       by_goods_type:
-        "104":   # H6057, the H6057DetailActivity screen; power from the aa 34 detail read (the header main switch)
+        "104":   # H6057, the H6057DetailActivity screen; held: no support (which header switch backs the power is open)
           models: [H6057]
           pacts: ["1,1"]
-          support: app_traced
           power_read: aa34_detail
           color_scheme: h6006
           capabilities: [power, brightness, rgb, color_temp]
@@ -10306,18 +10305,25 @@ families:
           heartbeat: heartbeat
           doc: >-
             H6057 (Support.b; SubLib keys Support.d = {104}; Model.t -> H6057DetailActivity -> H6057DetailVM), pact (1,1)
-            only (Support.addSupportPact, H6057Config.f). The screen never sends aa 01 and reads no 0xAC status: its state
-            read is the aa 34 device-detail reply (Controllers.f / e, H6057DetailVM.v5), whose byte 0 bit 7 is the
-            light-open flag (H6057Info4Detail.g / H) and byte 2 the music flags (white-noise isPlay); live updates are the ee
-            30 01 / 04 pushes (DeviceInfoNotifyParse.m / n, not consumed). Two header switches with two states
+            only (Support.addSupportPact, H6057Config.f). HELD, no support: which header switch backs an HA light's power
+            is the user's decision (h6057 trace, library gap 2), and neither choice is served as the app serves it yet.
+            The screen never sends aa 01 and reads no 0xAC status: its state read is the aa 34 device-detail reply
+            (Controllers.f / e, H6057DetailVM.v5), whose byte 0 bit 7 is the light-open flag (H6057Info4Detail.g / H) and
+            byte 2 the music flags (white-noise isPlay); live updates are the ee 30 01 / 04 pushes (DeviceInfoNotifyParse.m
+            / n, not consumed). The screen's on / off is the light flag alone: switchCur is H6057Info4Detail.H, and while it
+            is off ViewConnectSuccess.J shows the close delegate (H6057DelegateClose, through H6057Config.a; a playing hint
+            while white noise plays, B) and hides the colour and brightness controls. Two header switches
             (H6057DelegateHeader.E0 / D0): ivLightSwitch shows the light flag and writes the light alone, 33 30 <!light> (h5,
             command_light_switch; a one-byte light_direction body, not the library's 33 30 <index> <state> zone frame);
             btnSwitch, the global switch, shows light OR white-noise isPlay and writes 33 01 00 when either is on, 33 01 01
             only when both are off (switchTrigger -> ControllerSwitch.d; 33 01 00 also clears isPlay, D5). The library's
-            power is the global switch, as on every row: power_read aa34_detail reads its state (govee_state device_detail
-            main_switch_on) from aa 34 on each poll, after aa 04, so set_power's 33 01 <on> is the frame btnSwitch sends in
-            every state. The light-only 33 30 switch is not modelled (whether an HA light should drive it instead is the
-            user's call). Connect
+            power is the global switch, as on every row, and power_read aa34_detail reads that switch's state (govee_state
+            device_detail main_switch_on) from aa 34 on each poll, after aa 04. That leaves two gaps with white noise
+            playing and the light off: the light reads on while the screen shows it closed (and offers no colour or
+            brightness), and set_power, which has no state gate, still sends 33 01 01, a frame the main switch never sends
+            then (a plain HA turn_on sends power). The light switch would match the screen's on / off in every state
+            (light_open, 33 30), but the library has no per-row power write for it. Open: the choice, and a bench check
+            of 33 01 01 while white noise plays. Connect
             (Compose4InfoBleIotH6057): aa 06, the time sync, aa 07, timer, wake-up and sleep reads (not listed), aa 04, aa 34,
             aa 05. No 33 b2 (no Controller4Secret on this path). Heartbeat aa 00 (I3 false; J3 empty). Brightness 33 04
             <1..100> (BrightnessConfig.b, version 1).
@@ -10341,6 +10347,8 @@ families:
             - split_hollowlamp/com/govee/h6057/origin/newDetail/controller/MusicTypeInfo.java:117-119,150-151
             - split_hollowlamp/com/govee/h6057/origin/newDetail/H6057Info4Detail.java:127-143,208-210,414-456,601-607
             - split_hollowlamp/com/govee/h6057/origin/newDetail/H6057DelegateHeader.java:183-213,505-511,567-592,713-744,930-944
+            - split_hollowlamp/com/govee/h6057/origin/newDetail/H6057DelegateClose.java:64-82
+            - base-classes11/com/govee/base2light/pact/newdetail/content/success/ViewConnectSuccess.java:97-108,111-139,141-173
             - split_hollowlamp/com/govee/h6057/origin/ble/BleProtocol.java:7
             - base-classes12/com/govee/base2light/util/ParseUtils.java:55-57,72-74
             - base-classes10/com/govee/base2light/ble/comm/AbsNotify.java:17-41
