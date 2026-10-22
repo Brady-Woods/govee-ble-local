@@ -84,9 +84,11 @@ the row lacks fails the build: nothing defaults silently.
   (mode_status over mode). The library takes the zone bits from TLV 0x30, so a
   requested ``cmd_30`` needs ``f_30: zone_power``. A pact branch may only drop ``color_group``, which
   becomes ``status_color_groups_pact`` (one pact type, from its lowest code that keeps it). A polled row
-  reads aa 04 on every poll and a gradual row ``aa a3``, so ``connect_reads`` lists ``brightness`` exactly
-  on a polled row and ``gradual`` wherever the capability is; a ``gradual`` read without the capability (the
-  screen's default ``Compose4InfoBleIot`` read, with no gradual control) is made on every poll too and its
+  with the brightness capability reads aa 04 on every poll (one without it reads none, as H7004's screen
+  doesn't: ``ControllerStrategyConfig.k1``) and a gradual row ``aa a3``, so ``connect_reads`` lists
+  ``brightness`` exactly on a polled row with the capability and ``gradual`` wherever the capability is; a
+  ``gradual`` read without the capability (the screen's default ``Compose4InfoBleIot`` read, with no
+  gradual control) is made on every poll too and its
   reply discarded (``DeviceProfile.gradual_read_only``), on a polled light row only: that is where the
   default read is traced (the h7050 screens), and a status or plug row's reads are its own strategy's. An
   ``ic_num`` read goes with ``ic_pieces`` and the direct colour read-back: it sizes the read-back's pieces
@@ -137,6 +139,13 @@ the row lacks fails the build: nothing defaults silently.
   Support.getSupportScenesOpSet). Before the read, each version not yet read meets its own gates, so the
   newest firmware's set applies, as 1.x assumed, and the Kelvin range is the one valid on every revision.
   Any other firmware fact or gate raises.
+- Light power read-back: a polled light's aa 01 reply is on at a byte of 1
+  (``ControllerSwitch.Companion.c``), or at any non-zero byte where the row's wire ``power`` says
+  ``light_nonzero`` (the connect read's own decoder: the legacy ``SwitchController``, the H70BX connect
+  read) or ``light_heartbeat_nonzero`` (the aa 01 heartbeat's, where the connect read takes == 1: H1168's
+  ``HeartControllerWithBattery``). Either becomes ``DeviceProfile.light_nonzero``: as for a plug, the
+  heartbeat rule beats the connect read's. On a status or plug row either raises (neither reads a light's
+  aa 01 reply), and ``light_heartbeat_nonzero`` raises without the aa 01 heartbeat (``heartbeat: power``).
 - Plug power read-back: the wire's ``relay_heartbeat_on_mask`` beats the row's ``relay_on_mask``, because
   every aa 01 poll the library makes follows the heartbeat rule (``power_state.is_on_heartbeat``). So for
   goodsTypes 50 and 307 the row's 0xFF (the connect read's) is never consumed, and the library uses their
@@ -257,6 +266,8 @@ class WireGroup(TypedDict, total=False):
 class WirePower(TypedDict, total=False):
     """``wirePower``."""
     relay_heartbeat_on_mask: int
+    light_nonzero: bool
+    light_heartbeat_nonzero: bool
 
 
 class WireMode(TypedDict, total=False):
@@ -845,8 +856,9 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
     reads = set(need(row.get("connect_reads"), "connect_reads"))
     if not reads <= _READS:
         fail(f"connect_reads {sorted(reads - _READS)} are not served")
-    if ("brightness" in reads) != (readback == "polled"):
-        fail("connect_reads lists brightness exactly on a polled row (the library reads aa 04 every poll)")
+    if ("brightness" in reads) != (readback == "polled" and "brightness" in caps):
+        fail("connect_reads lists brightness exactly on a polled row with the brightness capability (the "
+             "library reads aa 04 on every poll of one)")
     if "gradual" in caps and "gradual" not in reads:
         fail("connect_reads lists gradual with the capability (the library reads aa a3 for it)")
     if "gradual" in reads and "gradual" not in caps and readback != "polled":
@@ -924,6 +936,14 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
         fail(f"heartbeat {heartbeat} where power_live {list(lives)}{' and the relay' if relay else ''} take "
              f"power from the reply to {' / '.join(sorted(sent))}")
     _check_mode(w, readback, fail)
+    # A light's aa 01 rule, as a plug's: the heartbeat's beats the connect read's (module doc).
+    nonzero = [name for name in ("light_heartbeat_nonzero", "light_nonzero") if power.get(name, False)]
+    if nonzero and readback != "polled":
+        fail(f"wire power {nonzero[0]} is served on a polled light row only (the aa 01 reply the library "
+             "reads on every poll)")
+    if "light_heartbeat_nonzero" in nonzero and heartbeat != "power":
+        fail(f"wire power light_heartbeat_nonzero with heartbeat {heartbeat} (it is the aa 01 heartbeat's "
+             "rule)")
 
     zones = tuple((z["id"], z["power_index"], tuple(z["segments"])) for z in need(row.get("zones"), "zones"))
     lock = bool(need(row.get("account_lock"), "account_lock"))
@@ -961,6 +981,7 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
         "scene_power_on": bool(model.get("scene_power_on", False)),
         "heartbeat": heartbeat,    # a command name; devices/profile.py takes its code
         "heartbeat_timing": timing,
+        "light_nonzero": bool(nonzero),
     }
     if out["scene_power_on"] and "scenes" not in row_caps:
         fail("by_model scene_power_on on a row without the scenes capability")

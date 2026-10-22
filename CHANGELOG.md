@@ -10,8 +10,9 @@ model, from which the shipped readers are generated).
 
 ### Added
 - **158 more SKUs, traced from the app's device list** (spec rows only; no library code changed): 99 admitted
-  by default (`app_traced`) and 59 behind `allow_modelled` (`modelled`). With the 16 that the next three
-  entries admit by default, that makes 213 admitted by default and 65 behind `allow_modelled` in all. None is
+  by default (`app_traced`) and 59 behind `allow_modelled` (`modelled`). With the 22 SKUs the entries below
+  admit by default (16 through the resolver changes, and H1162 / H1163 / H1167 / H1168, H70B1 and H70BC),
+  that makes 219 admitted by default and 65 behind `allow_modelled` in all. None is
   hardware-verified (the only bench check, below, was read-only), and none has a bundled scene catalog, so none
   is offered scenes. Each is listed with its family and goodsType; † marks a SKU no row lists that the
   catalogue snapshot (`spec/govee_catalog.json`) routes to that row by its goodsType alone (16 of them).
@@ -76,8 +77,44 @@ model, from which the shipped readers are generated).
     each, soft 1.04.05, hard 3.05.00. One unit's mode TLV is a short `15 01`. The row's own decode
     (`gradual_14`, where 0x15 isn't decoded) reads that burst in full; the H60A6 default decode gave an empty
     reply.
+- **`DeviceProfile.light_nonzero`** (keyword-only, default False; the spec's `power_rule.light_nonzero`): a
+  polled light whose screen reads the aa 01 reply as on for any non-zero byte, as the legacy
+  `SwitchController.parseValidBytes` and the H70BX connect read (`AfterConnectSuccessReadDeviceInfo.w`) do. A
+  devices.yaml row opts in with its wire `power.light_nonzero` (the connect read) or
+  `power.light_heartbeat_nonzero` (the aa 01 heartbeat, where the connect read takes 1: H1168's
+  `HeartControllerWithBattery`). As with a plug's `relay_on_mask`, the field is the rule the library's poll
+  follows, the heartbeat's where the row has one. Every other light still reads on only for a byte of 1
+  (`ControllerSwitch.Companion.c`), so no admitted SKU's decoded state changes. `parse.parse_light_power`
+  takes the profile's `wire_profile` for the rule (default: on at 1).
+- **H1162 / H1163 / H1167 / H1168** (h1162 goodsTypes 87 / 137 / 182 / 186), the Music Sync boxes, admitted by
+  default (`app_traced`) as power-only rows at pact (1,1), following the user's decision to match the
+  standalone screen. The switch turns the box's music sync on or off: `33 01 <on>`, polled with aa 01 and kept
+  alive with an aa 01 heartbeat (fixed 2 s). H1162 / H1163 / H1167 match `AdjustActivity` (`Model.t`, cloud
+  gid <= 0), whose aa 01 reply is on at any non-zero byte (`SwitchController.parseValidBytes`, the rows' wire
+  `power.light_nonzero`). H1168 has no standalone screen: its row is the header switch of
+  `AcMusicFeastDetail4H1168` (`VM4MusicFeast.G4` -> `DeviceToggleController`; the screen class is set in
+  base.apk's `assets/base2home_config.properties`). Its aa 01 connect read is on at 1 (`Compose4ReadAllInfo`),
+  but the 2 s aa 01 heartbeat that replaces it is on at any non-zero byte (`VM4MusicFeast.onEventHeart`,
+  `HeartControllerWithBattery.parseValidBytes`), and the library's poll follows the heartbeat (the row's wire
+  `power.light_heartbeat_nonzero`). The Music Feast screen (group control, CLAUDE.md rule 5) is the
+  documented other path for H1162 / H1163 / H1167. The feast frames (`33 60`,
+  `aa 60`), music, the battery and H1168's `33 60 01` feast-effect toggle are not modelled. Not
+  hardware-verified.
+- **H70B1** (h70b1 goodsType 134) and **H70BC** (h70bx goodsType 216), splicing panels on the H70BX screen,
+  admitted by default (`app_traced`) at pacts (1,1) and (2,1): power, brightness, RGB and colour temperature on
+  the h6006 frames, one piece, and the aa 00 keep-alive. Power is read back by the polled aa 01 read, on at any
+  non-zero byte as the screen's decoder reads it (`AfterConnectSuccessReadDeviceInfo.w`; the rows' wire
+  `power.light_nonzero`). That decoder was all the rows waited for; every core frame was traced. The app's
+  live `ee 30` power push is traced too (`power_live: [push_30]`), but the library doesn't read `ee 30` pushes
+  yet. Splicing, the aa 39 direction read and scenes are not modelled. Not hardware-verified.
 
 ### Changed
+- **A polled profile reads aa 04 only with `Capability.BRIGHTNESS`**, as the app's connect read does
+  (`ControllerStrategyConfig.k1` adds the aa 04 read for H7017 and not H7004). Every polled profile the table
+  had before carries the capability, so their reads are unchanged; a `DeviceProfile` built by hand with
+  `readback="polled"` and no brightness no longer reads aa 04 or sets `state.brightness`. The resolver keeps the
+  rule strict both ways: a polled row's `connect_reads` lists `brightness` exactly when the row has the
+  capability.
 - Nothing else for existing SKUs (H6188's colour temperature is under Fixed). Each other SKU of the 104
   admitted at 1.6.1 (98 by default, 6 behind `allow_modelled`) resolves to the same profile at every pact its
   rows list and at none, with and without `allow_modelled`, so its frames and decoded state are unchanged. Where a new SKU has the same facts it joins
@@ -127,10 +164,11 @@ model, from which the shipped readers are generated).
   `modelled`; one that needs library work has no `support` and names the gap in its `doc`. A verification
   pass challenged each family's rows; they were repaired, and demoted (to `modelled`, or to no `support`)
   where a core claim didn't hold.
-  - devices.yaml now has 305 goodsType rows in 96 families (184 in 91): 160 with `support` (66), of them 129
-    `app_traced`, 27 `modelled` and the same 4 `hardware_verified`, and 145 without (118). The trace gave 153
-    of them support; the other 7 (h6069 284, h3700 383, h7076 313, h70dx 267-269, bulblightv3 342) are
-    `app_traced` through the resolver changes under Changed.
+  - devices.yaml now has 305 goodsType rows in 96 families (184 in 91): 166 with `support` (66), of them 135
+    `app_traced`, 27 `modelled` and the same 4 `hardware_verified`, and 139 without (118). The trace gave 153
+    of them support; the other 13 (h6069 284, h3700 383, h7076 313, h70dx 267-269, bulblightv3 342, the four
+    h1162 rows, h70b1 134 and h70bx 216) are `app_traced` through the library changes under Added and
+    Changed.
   - Two goodsType add-ons were traced and checked on their own: straightfloorlamp 69 (H6076 / H8076,
     `app_traced`, with the bench reads above) and rgbiclight 141 (H61C2 / H61C3 / H61C5).
   - **rgbiclight 141 (H61C2 / H61C3 / H61C5) is `app_traced`, admitted by default** (pacts (1,1) / (2,1)): power,
@@ -148,6 +186,10 @@ model, from which the shipped readers are generated).
   - The catalogue snapshot routes 33 SKUs no row lists (15 before), H8069 and H80D1 among them. For review:
     H613A-F (catalogue 39, named by h613839's (65535,255) bind item), where it was H615E.
   - rgbiclight 351 / 352 now record the R617G / R618D catalogue route, as h7057 274 does H8057's.
+  - h7004 0 (H7004, a grow light) is traced as a power-only row the library can serve (its screen reads aa 01
+    and the device info, never aa 04 or aa 05: `ControllerStrategyConfig.k1`, `VM4Light.supportBrightness`
+    false), and held without `support` until the user decides whether a power-only grow light ships before
+    its red:blue control (`33 0d`, aa 0d).
 - **Screen facts on three held rows** (still without `support`; no SKU's profile changes):
   - h61d3 375 (H1A45): its colour config is traced after all. The 7.7.02 tables key 375 by the named constant
     `LightRecycleViewGesture.W`, which a search for the number missed. It is row 367's: the h60a6 `15 01` frames,
@@ -198,6 +240,16 @@ model, from which the shipped readers are generated).
 - **Per-SKU connect writes.** `devices.schema.json` `clientModel` takes `connect_writes` (the row's stays
   required), which `govee_reference.client_row` applies for the SKU. bulblightv3's `by_model` gives H14A1 /
   R14A1 / H14C2 / R14C2 `[light_effect_stop]` over row 342's `[]`.
+- **The aa 01 "on when != 0" rules.** `govee_profile` `power_rule` gains `light_nonzero` (the connect read)
+  and `light_heartbeat_nonzero` (the aa 01 heartbeat; false = as `light_nonzero`), the light counterparts of
+  `relay_on_mask` and `relay_heartbeat_on_mask`. `govee_state` `power_state.is_on` reads a light's reply as on
+  for any non-zero byte under `light_nonzero`, and `is_on_heartbeat` also under `light_heartbeat_nonzero`
+  (still `== 1` without them; the status TLV and the plug masks are unchanged). devices.schema.json's
+  `wirePower` takes both as a row's wire `power`; the resolver serves them on a polled light row only, and
+  `light_heartbeat_nonzero` with the aa 01 heartbeat only. `govee_reference.make_profile` takes both, and the
+  reference self-test checks the rules on an aa 01 reply and heartbeat. `wire_profile` now gives a non-plug
+  profile's power rule masks 0 (a light's), where it passed the unused relay default; no decode changes.
+  USING_THE_KSY.md and the `relay_on_mask` doc give the four-param rule.
 
 ## [1.6.1] — 2026-10-21
 

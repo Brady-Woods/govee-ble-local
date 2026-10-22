@@ -153,15 +153,19 @@ types:
           - split_h60ax/com/govee/pact_h60a0/pact/Support.java:154-159
   power_rule:
     doc: |
-      CONTEXT: when the aa 01 reply byte means on: a light (masks 0) at byte
-      == 1, a plug (relay bitmask, bit i = relay i) at (byte & mask) != 0.
+      CONTEXT: when the aa 01 reply byte means on, at the connect read and
+      in the aa 01 heartbeat: a light (masks 0) at byte == 1, or at any
+      non-zero byte under light_nonzero / light_heartbeat_nonzero; a plug
+      (relay bitmask, bit i = relay i) at (byte & mask) != 0.
     doc-ref:
       - base-classes11/com/govee/base2light/kt/general_controller/ControllerSwitch.java:32
       - split_plugnew/com/govee/h5080/ble/controller/SwitchControllerV2.java:29-45
     params:
       - id: relay_on_mask
         type: u1
-        doc: connect-read mask; 0 = a light (on when the byte == 1)
+        doc: |
+          connect-read mask; 0 = a light (on when the byte == 1, or != 0
+          under light_nonzero)
         doc-ref:
           - split_plugnew/com/govee/h5080/adjust/newdetail/H5083NewDetailRepository.java:167
           - split_plugnew/com/govee/h5080/ble/controller/EventSwitchV2.java:48-59
@@ -173,6 +177,24 @@ types:
           - split_plugnew/com/govee/h5080/ble/controller/HeartControllerV2.java:17-35
           - split_plugnew/com/govee/h5080/adjust/v2/BleOpV2.java:216-231
           - split_plugnew/com/govee/h5080/adjust/h5089/BleOp4H5089.java:331-341
+      - id: light_nonzero
+        type: bool
+        doc: |
+          a light's (masks 0) connect read is on at any non-zero byte, as the
+          legacy SwitchController and the H70BX connect read decode it; false =
+          at == 1
+        doc-ref:
+          - base-classes10/com/govee/base2light/ble/controller/SwitchController.java:29-33
+          - split_h70b1/com/govee/h70bx/controller/AfterConnectSuccessReadDeviceInfo.java:176-178
+      - id: light_heartbeat_nonzero
+        type: bool
+        doc: |
+          a light's (masks 0) aa 01 heartbeat is on at any non-zero byte, as
+          HeartControllerWithBattery decodes it where the connect read takes
+          == 1 (H1168's Compose4ReadAllInfo); false = as light_nonzero
+        doc-ref:
+          - base-classes10/com/govee/base2light/ble/controller/HeartControllerWithBattery.java:85-90
+          - base-classes3/com/govee/home/main/device/moment/musicfeast/h1168/VM4MusicFeast.java:1418-1440
   mode_decode:
     doc: |
       CONTEXT: the screen's mode-report decode per colour sub-mode cXX (aa 05

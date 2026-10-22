@@ -567,9 +567,11 @@ def test_mode_report_read_follows_the_capabilities() -> None:
     plain = _unchecked("H6008", capabilities=frozenset({Capability.POWER, Capability.BRIGHTNESS}))
     run(plain._read_polled())
     assert build.mode_query() not in _queried(plain)           # nothing the report carries
+    assert build.brightness_query() in _queried(plain)
     rgb_only = _unchecked("H6008", capabilities=frozenset({Capability.POWER, Capability.RGB}))
     run(rgb_only._read_polled())
     assert build.mode_query() in _queried(rgb_only)            # its colour is only reported there
+    assert build.brightness_query() not in _queried(rgb_only)  # aa 04 goes with the capability (H7004)
 
 
 # ── WP3-082: no read-back between a scene's upload and its activation ──────────────────────

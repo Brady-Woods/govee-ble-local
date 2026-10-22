@@ -247,14 +247,15 @@ def test_light_power_is_on_only_for_one() -> None:
 
 
 def test_polled_light_reads_power_with_the_light_rule() -> None:
-    d = _dev("H6008")
-
     async def query(fr: bytes, **_k: object) -> list[bytes]:
         return [frame(0xAA, 0x01, 0x02)] if fr[1] == 0x01 else []
 
-    d._conn.query = AsyncMock(side_effect=query)  # type: ignore[method-assign]
-    asyncio.run(d._read_polled())
-    assert d.state.is_on is False
+    # On for a byte of 1 only, or for any non-zero byte where the row's screen reads it so (light_nonzero):
+    # H1168's connect read takes 1, its aa 01 heartbeat any non-zero byte, and the poll follows the heartbeat.
+    for d, on in ((_dev("H6008"), False), (_dev("H1168"), True)):
+        d._conn.query = AsyncMock(side_effect=query)  # type: ignore[method-assign]
+        asyncio.run(d._read_polled())
+        assert d.state.is_on is on
 
 
 # ── F1 (faa2cb7 review): light vs plug power decode ──────────────────────────────────────────

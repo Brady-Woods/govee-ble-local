@@ -31,7 +31,8 @@ from .brightness import percent_to_raw
 # "B_h60a6" = H60A6 DIY (0x58; 0xA4-MTU graffiti / 0xA3 DIY by length gate);
 # "B_h6052" = H6052 type-5 professional graffiti (commByte 9).
 SceneDialect = Literal["A", "B_h60a6", "B_h6052"]
-# "status" (0xAC burst) | "polled" (aa 01/04/05) | "plug" (aa 01 relay bitmask) | "none"
+# "status" (0xAC burst) | "polled" (aa 01, then aa 04 with Capability.BRIGHTNESS and aa 05 with a capability
+# the mode report carries: device._MODE_REPORT_CAPS) | "plug" (aa 01 relay bitmask) | "none"
 ReadBack = Literal["status", "polled", "plug", "none"]
 ColorReadBack = Literal["", "mechanism_b", "mechanism_a_direct"]
 # How the colour sub-modes of an ``aa 05`` mode report are decoded (the SKU's Info4Detail mode parse): a
@@ -346,6 +347,16 @@ class DeviceProfile:
     last operation that sent a frame, each one restarting the wait (goodsType 43's ctlchannel
     ``HeartHandler.e``, which restarts it on every send: H5080, H5083 and H5085). Checked either way, and
     ignored without a :attr:`heartbeat`: then no beat goes out at all, on either timing."""
+    light_nonzero: bool = field(default=False, kw_only=True)
+    """``readback="polled"``: the ``aa 01`` reply reads on for any non-zero byte (the spec's
+    ``power_rule.light_nonzero``). It is the rule the library's poll follows: as with :attr:`relay_on_mask`,
+    the row's heartbeat rule where it has one (its wire ``power.light_heartbeat_nonzero``: H1168's aa 01
+    heartbeat, ``HeartControllerWithBattery.parseValidBytes``, which replaces the connect read's ``== 1``
+    within 2 s), else its connect read's (``power.light_nonzero``: the legacy
+    ``SwitchController.parseValidBytes`` on the H1162 / H1163 / H1167 standalone screen, the H70BX connect
+    read ``AfterConnectSuccessReadDeviceInfo.w``). False, the default: on only for a byte of 1
+    (``ControllerSwitch.Companion.c``), as every other light screen reads it. Ignored on a plug, whose byte is
+    a relay mask (:attr:`relay_on_mask`)."""
 
     def __post_init__(self) -> None:
         """Validate each field: GoveeBleInvalidValue (a ValueError) on a value no Device can use.
@@ -665,9 +676,12 @@ def wire_profile(profile: DeviceProfile) -> Any:
     """The spec's ``govee_profile`` for the device facts a reply's decode depends on: the mode decode
     (:attr:`DeviceProfile.mode_color_parse`, and the bars' 0x15 on a :attr:`DeviceProfile.bar_switch`
     device) for the aa 05 report, the status TLV 0x05's (``mode_status``:
-    :attr:`DeviceProfile.mode_color_parse_status`, else the same), the plug's relay mask
-    (:attr:`DeviceProfile.relay_on_mask`, the aa 01 heartbeat rule the library's poll follows:
-    ``power_state.is_on_heartbeat``), and on a ``readback="status"`` profile the 0xAC reply's decode
+    :attr:`DeviceProfile.mode_color_parse_status`, else the same), the aa 01 power rule (on a
+    ``readback="plug"`` profile its relay mask, :attr:`DeviceProfile.relay_on_mask`, as the aa 01 heartbeat
+    rule the library's poll follows: ``power_state.is_on_heartbeat``; else a light's, masks 0, with
+    :attr:`DeviceProfile.light_nonzero`, the poll's rule, as both ``light_nonzero`` and
+    ``light_heartbeat_nonzero``), and on a ``readback="status"`` profile the 0xAC
+    reply's decode
     (:attr:`DeviceProfile.status_decode`: its forms and colour-group form, and the TLV 0x05's music layout and
     empty-value rule in ``mode_status``), which ``reassemble.status_profile`` reads the status stream with.
     Cached per set of facts (``_spec.profile``)."""
@@ -682,7 +696,12 @@ def wire_profile(profile: DeviceProfile) -> Any:
         colours = mode_status if mode_status is not None else _decode(profile, profile.mode_color_parse)
         mode_status = {**colours, "music": int(_C.MusicDecode[facts.get("music", "not_decoded")]),
                        "empty_fails": bool(facts.get("empty_fails", False))}
+    # The aa 01 reply's rule follows the read the profile makes: the plug read's relay mask, else a light's
+    # (masks 0, govee_profile power_rule); each is already the rule the poll follows, so it fills both the
+    # connect-read and the heartbeat params.
+    mask = profile.relay_on_mask if profile.readback == "plug" else 0
     return _spec.profile(**_decode(profile, profile.mode_color_parse),
                          mode_status=None if mode_status is None else tuple(sorted(mode_status.items())),
-                         relay_on_mask=profile.relay_on_mask, relay_heartbeat_on_mask=profile.relay_on_mask,
+                         relay_on_mask=mask, relay_heartbeat_on_mask=mask,
+                         light_nonzero=profile.light_nonzero, light_heartbeat_nonzero=profile.light_nonzero,
                          **reads)

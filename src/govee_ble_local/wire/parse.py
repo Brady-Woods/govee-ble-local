@@ -13,7 +13,8 @@ Values are returned **as the device sends them** (no rescaling): brightness is t
 reported byte, which every curated SKU sends as a 0..100 percent (a device reporting
 0..255 would set ``DeviceProfile.brightness_max`` accordingly; scaling is the Device
 layer's job), and power is the raw byte so plugs can read it as a relay bitmask, while
-lights are on only for a byte of 1 (:func:`parse_light_power`).
+lights are on for a byte of 1, or of any non-zero value where their screen reads it so
+(:func:`parse_light_power`).
 """
 from __future__ import annotations
 
@@ -126,11 +127,15 @@ def parse_power(frame: bytes) -> int | None:
     return None if b is None else int(b.state)
 
 
-def parse_light_power(frame: bytes) -> bool | None:
-    """AA 01 reply on a light: on only when the byte is 1, the spec's ``power_state.is_on`` with no relay
-    mask (ControllerSwitch.Companion.c, ControllerSwitch.java:32, and the aa 01 heartbeat ShareVM.N3), or
-    None if this is not an aa 01 reply. Not for plugs, whose byte is a relay mask (:func:`parse_power`)."""
-    b = _reply_state(frame, _Command.power)
+def parse_light_power(frame: bytes, prof: Any = _REPLY) -> bool | None:
+    """AA 01 reply on a light: the spec's ``power_state.is_on`` with no relay mask, by ``prof``'s power rule
+    (``devices.profile.wire_profile``): on only when the byte is 1 (ControllerSwitch.Companion.c,
+    ControllerSwitch.java:32, and the aa 01 heartbeat ShareVM.N3), the default, or at any non-zero byte
+    under ``light_nonzero`` (the legacy SwitchController.parseValidBytes, the H70BX connect read
+    AfterConnectSuccessReadDeviceInfo.w, and where the row's heartbeat rule says so, H1168's
+    HeartControllerWithBattery: ``DeviceProfile.light_nonzero`` is the rule the poll follows); None if this
+    is not an aa 01 reply. Not for plugs, whose byte is a relay mask (:func:`parse_power`)."""
+    b = _reply_state(frame, _Command.power, prof)
     return None if b is None else bool(b.is_on)
 
 
