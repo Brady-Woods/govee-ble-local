@@ -94,8 +94,10 @@ model, from which the shipped readers are generated).
   stays unknown, GoveeBleError and nothing is written (never a guessed `33 04`). The tab writes every piece,
   so the profile is `whole_device_kelvin` (the segment and zone Kelvin setters raise). Promoted from
   `modelled` to `app_traced`, admitted by default, not hardware-verified: **H60A4 / H80A4** (h60ax 302:
-  `Bytes.C(K, 11, 1)`, the h60a6 frame over every piece) and **H8015** (bulblightv3 328: `Config.N[2]` =
-  `Bytes.A`, the h6188 frame).
+  `Bytes.C(K, 11, 1)`, the h60a6 frame over every piece). **H8015** (bulblightv3 328: `Config.N[2]` =
+  `Bytes.A`, the h6188 frame) sends the same pair in the app, but its row doesn't state it yet: H8015 has been
+  served behind `allow_modelled` since 1.6.1, and the trailing `33 04` would change its bytes, which waits for
+  the user's sign-off. It stays `modelled`, with its 1.6.1 profile and frames.
 - **A polled row's aa 05 decode** (`DeviceProfile.mode_decode`): the aa 05 mode report is read with the row's
   wire `mode` (its music layout and empty-value rule), where the resolver refused any but the default on a
   polled row. Empty by default, so every other profile reads its reports as before (the same cached
@@ -123,9 +125,8 @@ model, from which the shipped readers are generated).
   `device.profile.whole_device_kelvin` before offering colour temperature on a segment or zone entity;
   hass-govee-ble-local's segment lights need that follow-up (they offer colour temperature whenever the device
   has `COLOR_TEMP`). Every profile of 1.7.0 has `whole_device_kelvin=False`.
-- H8015, behind `allow_modelled` since 1.6.1, is now admitted by default, and its `set_color_temp` /
-  `turn_on(kelvin=)` add the trailing `33 04` (above). Every other SKU keeps `kelvin_with_brightness=False` and
-  its one-frame colour-temperature write.
+- No SKU of 1.6.1 takes the illumination pair: each keeps `kelvin_with_brightness=False` and its one-frame
+  colour-temperature write, H8015 included (above).
 
 ### Spec
 - **The device-list trace (Govee Home 7.7.02; 7.5.12 where a family says so).** Each of the 83 census families
@@ -162,8 +163,8 @@ model, from which the shipped readers are generated).
   `illumination` the resolver needs the color_temp and brightness capabilities, percent brightness with no pact
   branch, and the h60a6 or h6188 scheme (the two whose colour-temperature frame is a `Config.N` builder:
   `Bytes.C`, `Bytes.A`), and then lets the colour page's `color_temperature` flag be off. h60ax 302 (with
-  `color_functions: [segment_brightness]`, `Config.I[302]` = hQ) and bulblightv3 328 state it and are
-  `app_traced`; h60ax 235 states it too.
+  `color_functions: [segment_brightness]`, `Config.I[302]` = hQ) states it and is `app_traced`; h60ax 235
+  states it too (`modelled`). bulblightv3 328 doesn't yet, and stays `modelled` (above).
 - h60ax 235 is `modelled` (above), with `color_functions: [segment_brightness]` (`Config.I[235]` = zN). No
   `.ksy` change: govee_state already reads an aa 05 reply with the profile's `mode` decode, and its empty-value
   rule only for a status TLV.

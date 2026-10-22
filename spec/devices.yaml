@@ -2091,9 +2091,8 @@ families:
         "328":   # H8015, the bulblight AcNewDetail with its local illumination-only mode list
           models: [H8015]
           pacts: ["1,1"]
-          support: app_traced
+          support: modelled   # traced, held: its Kelvin + brightness pair changes a 1.6.1 SKU's bytes (doc)
           color_scheme: h6188
-          color_temp_control: illumination
           capabilities: [power, brightness, color_temp]
           zones: []
           account_lock: false
@@ -2120,10 +2119,14 @@ families:
             only other write, sendLightEndController (33 25 01, VM4Light.i5), is gated by bulblight Support.c, which
             excludes 328. The connect pact check accepts any pact (bulblight Support.e: 328 is not a Support4BulbLightV3
             goodsType); the accepted pact is (1,1). No account lock: no 0xB2 in the connect strategy or callback.
-            The illumination tab, the screen's only colour-temperature control, writes the Kelvin frame and 33 04
-            <the current brightness> as one Compose4DefWrite (View4IlluminationMode.I0: the Kelvin controller, then
-            BrightnessConfig.b of illuminationCur()[0], the aa 04 brightness the screen holds), which the library
-            sends since 1.8.0 (color_temp_control illumination). Not hardware-verified.
+            Held behind allow_modelled (support: modelled), though the facts above are traced: the illumination tab,
+            the screen's only colour-temperature control, writes the Kelvin frame and 33 04 <the current brightness>
+            as one Compose4DefWrite (View4IlluminationMode.I0: the Kelvin controller, then BrightnessConfig.b of
+            illuminationCur()[0], the aa 04 brightness the screen holds), where Device.set_color_temp sends the Kelvin
+            frame alone ("Match the Govee app", rule 1). The library sends that pair since 1.8.0 (color_temp_control
+            illumination), but this row doesn't state it yet: H8015 has been served behind allow_modelled since
+            1.6.1, and the trailing 33 04 would change its bytes, which waits for the user's sign-off. Not
+            hardware-verified.
           doc-ref:
             - split_bulblightstringv1/com/govee/bulblightv3/pact/Support.java:90-92,289-304
             - split_bulblightstringv1/com/govee/bulblightv3/pact/Model.java:29-38

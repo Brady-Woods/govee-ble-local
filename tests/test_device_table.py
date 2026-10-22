@@ -327,7 +327,7 @@ _REFUSED: tuple[tuple[str, str, _Edit, str], ...] = (
      "white_type rgb_black on the h6006 scheme"),
     ("bulblightv3", "64", lambda f: _row(f, "64").update(color_temp_control="illumination"),
      "color_temp_control illumination on h6006"),
-    ("bulblightv3", "328", lambda f: _row(f, "328").update(brightness_range=[20, 254]),
+    ("h60ax", "302", lambda f: _row(f, "302").update(brightness_range=[20, 254]),
      "color_temp_control illumination needs percent brightness"),
     ("h60ax", "302", lambda f: _row(f, "302")["capabilities"].remove("brightness"),
      "color_temp_control illumination needs the color_temp and brightness capabilities"),
