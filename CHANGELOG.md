@@ -33,7 +33,8 @@ model, from which the shipped readers are generated).
   goodsType-0 rows on colour version 4 stay held for their other gaps (routing below the gate, the
   `rgb_flag_tint` read-back, the GATT service, firmware gates, chip-gated brightness).
 - **158 more SKUs, traced from the app's device list** (spec rows only; no library code changed): 96 admitted
-  by default (`app_traced`) and 62 behind `allow_modelled` (`modelled`), for 194 and 68 in all. None is
+  by default (`app_traced`) and 62 behind `allow_modelled` (`modelled`), for 194 and 68 in all; with the 10
+  `legacy_02` SKUs above, 204 by default and 272 with `allow_modelled` (`supported_skus()`). None is
   hardware-verified (the only bench check, below, was read-only), and none has a bundled scene catalog, so none
   is offered scenes. Each is listed with its family and goodsType; † marks a SKU no row lists that the
   catalogue snapshot (`spec/govee_catalog.json`) routes to that row by its goodsType alone (16 of them).
@@ -129,8 +130,9 @@ model, from which the shipped readers are generated).
   `modelled`; one that needs library work has no `support` and names the gap in its `doc`. A verification
   pass challenged each family's rows; they were repaired, and demoted (to `modelled`, or to no `support`)
   where a core claim didn't hold.
-  - devices.yaml now has 305 goodsType rows in 96 families (184 in 91): 153 with `support` (66), of them 121
-    `app_traced`, 28 `modelled` and the same 4 `hardware_verified`, and 152 without (118).
+  - devices.yaml now has 305 goodsType rows in 96 families (184 in 91): 160 with `support` (66), of them 128
+    `app_traced` (121 from this trace, 7 the `legacy_02` rows above), 28 `modelled` and the same 4
+    `hardware_verified`, and 145 without (118).
   - Two goodsType add-ons were traced and checked on their own: straightfloorlamp 69 (H6076 / H8076,
     `app_traced`, with the bench reads above) and rgbiclight 141 (H61C2 / H61C3 / H61C5, `modelled`).
   - Nothing new is hardware-verified. The only bench evidence is the read-only H6076 / H61C3 check above.
