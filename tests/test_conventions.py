@@ -70,7 +70,7 @@ def test_all_resolves_and_sorted():
     assert pkg.__all__ == sorted(pkg.__all__, key=key)
     for n in ("Encryption", "Scene", "StateCallback", "GoveeBleInvalidValue",
               "profile_for", "device_profile_for", "GoveeBleHandshakeError",
-              "GoveeCloudError", "GoveeCloudAuthError", "supported", "match"):
+              "GoveeCloudError", "GoveeCloudAuthError", "supported", "match", "bound_advertisement"):
         assert n in pkg.__all__
 
 

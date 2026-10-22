@@ -750,9 +750,12 @@ types:
   op15_brightness:
     doc: |
       33 05 15 02 [pct][seg_mask(num_segments, len_cap)]: one brightness for
-      the masked segments.
+      the masked segments. The mask is the strip's position set, which some
+      strips widen to whole groups before the write (devices.yaml
+      segment_brightness_groups).
     doc-ref:
       - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:172-181
+      - base-classes11/com/govee/base2light/pact/newdetail/commom/color/ColorMode14Rect4ReverseSelect.java:379-421
       - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:5591-5595,10567-10570
       - split_h60ax/com/govee/pact_h60a0/ble/v1/SubModeColorV1.java:672-683
     params:

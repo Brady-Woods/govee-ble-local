@@ -24,8 +24,8 @@ from govee_ble_local.exceptions import (
     GoveeBleNotSupported,
     GoveeBleTimeout,
 )
-from govee_ble_local import registry, scanner
-from govee_ble_local.identify import _bound_advertisement, from_advertisement, identify
+from govee_ble_local import bound_advertisement, registry, scanner
+from govee_ble_local.identify import from_advertisement, identify
 from govee_ble_local.models import Capability, Encryption
 
 
@@ -104,7 +104,7 @@ def _adv(name: str | None, mfg: dict[int, bytes]) -> Any:
 
 def _encryption(d: Device, raw: Any) -> Encryption:
     """The mode ``d`` resolves for a raw advert, parsed once as the constructor does."""
-    return d._resolve_encryption(_bound_advertisement(raw, d._ble_device.name, d.sku))
+    return d._resolve_encryption(bound_advertisement(raw, d.sku, fallback_name=d._ble_device.name))
 
 
 # ── advertisement-driven encryption ─────────────────────────────────────────
@@ -159,9 +159,37 @@ def test_bound_device_reads_the_encrypt_flag_whatever_its_name() -> None:
 
 
 def test_a_govee_name_reads_the_same_on_both_paths() -> None:
-    adv = _adv("GVH60082691", _RENAMED_MFG)
-    assert _bound_advertisement(adv, None, "H6008") == from_advertisement(adv) == identify(
-        "GVH60082691", _RENAMED_MFG)
+    # Pact, flag and name as discovery reads them; the SKU is the caller's even when the name carries another.
+    adv = _adv("GVH60062691", _RENAMED_MFG)
+    found = from_advertisement(adv)
+    assert found is not None and found == identify("GVH60062691", _RENAMED_MFG) and found.sku == "H6006"
+    read = bound_advertisement(adv, "h6008")
+    assert read is not None and read.sku == "H6008"
+    assert (read.pact, read.encrypted, read.encryption_known, read.broadcast_version, read.name) == (
+        found.pact, found.encrypted, found.encryption_known, found.broadcast_version, found.name)
+
+
+def test_a_caller_without_a_device_reads_what_create_device_reads() -> None:
+    # The public bound_advertisement is create_device's own read: renamed, nameless and Govee-named adverts
+    # give the pact and encrypt flag the Device is built with. The SKU is the caller's, upper-cased; the name
+    # is the advertised one, else the BLEDevice's (a Govee BLEDevice name doesn't win over a renamed advert).
+    for adv_name, ble_name in ((_RENAMED, _RENAMED), (None, _RENAMED), (None, None), ("GVH60082691", None),
+                               (_RENAMED, "GVH60082691")):
+        raw = _adv(adv_name, _RENAMED_MFG)
+        read = bound_advertisement(raw, "h6008", fallback_name=ble_name)
+        d = registry.create_device(ble_device("AA:BB:CC:DD:EE:35", ble_name), "H6008", raw)
+        assert read is not None and read.encryption_known
+        assert (read.sku, read.pact, read.encrypted) == ("H6008", d.pact, True)
+        assert d.encryption is Encryption.AES_RC4_PSK
+        assert read.name == (adv_name or ble_name or "")
+    # At a pact the SKU's rows refuse, it reads the pact create_device's GoveeBleNotSupported names.
+    refused = bound_advertisement(_adv(_RENAMED, {0x8843: bytes([0xEC, 0x00, 0x01, 0x02])}), "H6042")
+    assert refused is not None and refused.pact == (1, 2)
+    # No Govee pact block: None under a non-Govee name (or no advert), an unknown pact under a Govee name.
+    assert bound_advertisement(_adv(_RENAMED, {0x2E28: bytes.fromhex("89304dad0000")}), "H6008") is None
+    assert bound_advertisement(None, "H6008") is None
+    named = bound_advertisement(_adv("GVH60082691", {}), "H6008")
+    assert named is not None and named.pact is None and not named.encryption_known
 
 
 def test_discovery_keeps_the_name_gate() -> None:
@@ -188,6 +216,76 @@ def test_ingest_reads_a_renamed_advert() -> None:
     assert d.pact is None
     assert d.ingest_advertisement(_adv(_RENAMED, _RENAMED_MFG)) is True   # its on/off: switch byte 1
     assert (d.pact, d.state.is_on, len(calls)) == ((1, 1), True, 1)
+
+
+# ── re-learning the encrypt flag (Device.ingest_advertisement, _learn_cipher) ─────
+# The app overwrites its per-MAC flag from each parsed broadcast (BleBroadVersionCache.d); a Device hands what
+# it hears to its connection for the next session. Header 0x43: encrypted, version 3; 0x03: plaintext.
+_ENCRYPTED = {0x8843: bytes.fromhex("ec0001010100")}
+_PLAINTEXT = {0x8803: bytes.fromhex("ec0001010100")}
+_MIXED = {**_PLAINTEXT, **_ENCRYPTED}   # a merged record: both headers, the older first
+
+
+def _bound(sku: str, adv: Any = None) -> Device:
+    """A Device on a real (idle) connection, built for ``sku`` from ``adv``."""
+    return Device(profile_for(sku), ble_device("AA:BB:CC:DD:EE:35", _RENAMED), adv, sku=sku)
+
+
+def test_ingest_relearns_the_flag_for_the_next_session(caplog: pytest.LogCaptureFixture) -> None:
+    # An H6008 built before any advert was heard has the profile's plaintext default; its own encrypted
+    # advert now picks the next session's.
+    d = _bound("H6008")
+    calls: list[object] = []
+    d.register_callback(calls.append)
+    assert d.encryption is Encryption.NONE
+    with caplog.at_level(logging.INFO, logger="govee_ble_local"):
+        # True for its on/off; the flag adds no callback
+        assert d.ingest_advertisement(_adv(_RENAMED, _ENCRYPTED)) is True
+    assert d.encryption is Encryption.AES_RC4_PSK and len(calls) == 1
+    assert "advertises the aes_rc4_psk command channel; the next session uses aes_rc4_psk\n" in caplog.text
+    caplog.clear()
+    with caplog.at_level(logging.INFO, logger="govee_ble_local"):
+        d.ingest_advertisement(_adv(_RENAMED, _ENCRYPTED))   # heard again: nothing new
+        d.ingest_advertisement(_adv(_RENAMED, _PLAINTEXT))   # and back (BleBroadVersionCache.d:135)
+    assert d.encryption is Encryption.NONE and caplog.text.count("command channel") == 1
+
+
+def test_ingest_names_a_bgc_verdict_over_the_flag(caplog: pytest.LogCaptureFixture) -> None:
+    d = _bound("H6008", _adv(_RENAMED, _ENCRYPTED))
+    d._conn._bgc_version, d._conn._bgc_checked = 1, True   # as an earlier session's BGC read left it
+    with caplog.at_level(logging.INFO, logger="govee_ble_local"):
+        d.ingest_advertisement(_adv(_RENAMED, _PLAINTEXT))
+    # flag OR BGC (EncryptionUtils.isEncryptionSupported): a plaintext flag never downgrades a BGC-1 device
+    assert d.encryption is Encryption.AES_RC4_PSK
+    assert ("advertises the none command channel; the next session uses aes_rc4_psk (its BGC version "
+            "overrides the advertised flag)") in caplog.text
+
+
+def test_ingest_keeps_the_cipher_on_a_mixed_record(caplog: pytest.LogCaptureFixture) -> None:
+    d = _bound("H6008", _adv(_RENAMED, _ENCRYPTED))
+    with caplog.at_level(logging.INFO, logger="govee_ble_local"):
+        d.ingest_advertisement(_adv(_RENAMED, _MIXED))
+        d.ingest_advertisement(_adv(_RENAMED, _MIXED))   # still mixed: warned once
+    assert d.encryption is Encryption.AES_RC4_PSK
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1 and "headers 0x03, 0x43" in warnings[0].getMessage()
+    assert ("the advertised mode stays aes_rc4_psk (a BGC version of 1 or 2 overrides it)"
+            in warnings[0].getMessage())
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger="govee_ble_local"):
+        d.ingest_advertisement(_adv(_RENAMED, _ENCRYPTED))   # agrees again (a cleared or rebuilt record)
+        d.ingest_advertisement(_adv(_RENAMED, _MIXED))       # a new spell: warned again
+    assert len(caplog.records) == 1 and d.encryption is Encryption.AES_RC4_PSK
+
+
+def test_ingest_without_a_flag_keeps_the_cipher() -> None:
+    d = _bound("H60A6")   # profile default: AES
+    version_0 = {0x8800: bytes.fromhex("ec0001010100")}   # header 0x00: no pact broadcast (version 0)
+    for mfg in ({0x2E28: bytes.fromhex("89304dad0000")}, version_0, {0x8801: bytes([0xEC, 0x00])}):
+        d.ingest_advertisement(_adv(_RENAMED, mfg))
+        assert d.encryption is Encryption.AES_RC4_PSK
+    d.ingest_advertisement(_adv("Govee_H60A6_ABCD", {}))   # a Govee name alone says nothing either
+    assert d.encryption is Encryption.AES_RC4_PSK
 
 
 def test_encryption_constructor_uses_advertisement() -> None:

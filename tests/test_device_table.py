@@ -103,6 +103,9 @@ _CHANGED: dict[tuple[str, str], tuple[Any, Any]] = {
     # 1.7.0: the colour tab's Kelvin frame (Config.bu -> Bytes.p), not the group-control white slot
     # (decision 3).
     ("H6188", "color_scheme"): ("h6188", "h6006"),
+    # 1.7.0: no Part-tab Kelvin item on goodsTypes 19 / 247 / 41 (not in SupportPartColorTemConfig.d), so no
+    # Kelvin on a piece selection.
+    **{(sku, "segment_color_temp"): (True, False) for sku in ("H61A8", "H6641", "H6062")},
 }
 
 # (soft, hard) versions: unread, the H61A8 bench unit, and the reference self-test's other two.
@@ -113,12 +116,14 @@ def test_the_generated_table_is_masters_hand_table_but_for_the_spec_fixes() -> N
     assert set(_MASTER) <= set(supported_skus())
     # D3's 1.x pact fallback is frozen at these 18; every SKU admitted later is served only at its rows'
     # pacts, as the app's checkProtocol (Pact.i) serves it. The rows that are pacts: any have (99, 99) among
-    # them: h7017 Model.t opens its screen with no pact test, nor do the SKU-routed goodsType-0 legacy_02 rows
-    # (the h6105 / h6127 / h6129 / h6185 and h73101217 / h7318 / h6165 Models, and their screens' scans).
+    # them: their screens run no pact test (h7017 Model.t; H7004's VM4Light.X0 false at 0), nor do the
+    # SKU-routed goodsType-0 legacy_02 rows (the h6105 / h6127 / h6129 / h6185 and h73101217 / h7318 / h6165
+    # Models, and their screens' scans).
     assert set(_MASTER) == _resolve.PACT_FALLBACK_SKUS
     assert [sku for sku in supported_skus(allow_modelled=True) if sku not in _MASTER
             and profile_for(sku, pact=(99, 99), allow_modelled=True) is not None] == [
-        "H6105", "H6107", "H6129", "H6165", "H6166", "H6185", "H7017", "H7310", "H7312", "H7317", "H7318"]
+        "H6105", "H6107", "H6129", "H6165", "H6166", "H6185", "H7004", "H7017", "H7310", "H7312", "H7317",
+        "H7318"]
     # The resolver's value sets (standard library only) are the profile's Literals.
     assert set(_resolve.COLOR_SCHEMES) == set(get_args(ColorScheme))
     assert set(_resolve.RELAY_POWERS) == set(get_args(RelayPower))
@@ -370,6 +375,10 @@ _REFUSED: tuple[tuple[str, str, _Edit, str], ...] = (
      "color_functions ['segment_brightness'] disagree"),
     ("dreamcolorlightv1", "19", lambda f: _row(f, "19")["capabilities"].remove("segments"),
      "color_functions ['segment_brightness', 'color_temperature'] disagree"),   # h60a6 has the 15 02 frame
+    ("dreamcolorlightv1", "19", lambda f: _row(f, "19").pop("segment_color_temp"),
+     "segment_color_temp goes with"),
+    ("bulblightv3", "64", lambda f: _row(f, "64").update(segment_color_temp=False),
+     "segment_color_temp goes with"),
     ("bulblightv3", "64", lambda f: _row(f, "64").update(scene_dialect="graffiti"),
      "scene_dialect 'graffiti'"),
     ("h6047", "119", lambda f: _row(f, "119").update(scene_versions=[0, -1]), "scene_versions [0, -1]"),
@@ -380,11 +389,19 @@ _REFUSED: tuple[tuple[str, str, _Edit, str], ...] = (
     ("h6047", "119", lambda f: _row(f, "119").pop("brightness_range"), "no brightness_range"),
     ("h60ax", "303", lambda f: _row(f, "303").pop("account_lock"), "no account_lock"),
     ("h6047", "119", lambda f: _row(f, "119")["zones"][1]["segments"].append(42), "zone right segments"),
+    ("pact_h6099", "203", lambda f: _row(f, "203").update(segment_brightness_groups=[[0, 1], [1, 2]]),
+     "segment_brightness_groups [[0, 1], [1, 2]] are not disjoint groups of the 14 segments"),
+    ("bulblightv3", "64", lambda f: _row(f, "64").update(segment_brightness_groups=[[0]]),
+     "segment_brightness_groups without the segment-brightness frame"),
     ("h6061", "51", lambda f: _wire(f, "51").pop("counts"), "segments or a colour read-back without"),
     # reads and writes
     ("bulblightv3", "64", lambda f: _row(f, "64").update(power_read="aa33"), "power_read 'aa33'"),
     ("h60ax", "303", lambda f: _row(f, "303").update(power_read="aa01"),
      "power_read 'aa01' with status_read"),
+    ("h60ax", "303", lambda f: _row(f, "303").pop("device_info_reads"),
+     "device_info_reads None on a status row"),
+    ("h60ax", "303", lambda f: _row(f, "303").update(device_info_reads="unverified"),
+     "device_info_reads 'unverified'"),
     ("bulblightv3", "64", lambda f: _row(f, "64")["connect_reads"].append("cmd_ac"),
      "connect_reads ['cmd_ac']"),
     ("tablelampv1", "22", lambda f: _row(f, "22").update(connect_reads=[]), "connect_reads lists brightness"),

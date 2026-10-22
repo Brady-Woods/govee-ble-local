@@ -226,11 +226,12 @@ def test_illumination_tab_kelvin_is_the_kelvin_then_the_held_brightness() -> Non
     asyncio.run(race())
     assert _sent(d) == [b.brightness(80), kelvin, b.brightness(80)] and d.state.brightness == 80
     # The tab writes every piece: no masked Kelvin (H60A4, h60ax 302, has segments); nor on H61E5, whose
-    # colour page's Kelvin pick is whole-strip (color_temp_control whole_device).
+    # colour page's Kelvin pick is whole-strip (color_temp_control whole_device). Both rows say so with
+    # segment_color_temp false, the one fact an integrator gates on.
     for sku in ("H60A4", "H61E5"):
         d = _dev(sku)
-        assert d.profile.whole_device_kelvin
-        with pytest.raises(GoveeBleNotSupported, match="whole-device only"):
+        assert d.profile.whole_device_kelvin and not d.profile.segment_color_temp
+        with pytest.raises(GoveeBleNotSupported, match="no colour temperature on a piece selection"):
             asyncio.run(d.set_segment_color_temp([0], 4000))
 
 

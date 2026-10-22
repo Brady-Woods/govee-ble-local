@@ -73,7 +73,10 @@ advertisement, build a capability-driven `Device`, then drive it.
   idle_disconnect=None, goods_type=None, allow_modelled=False)`** — construct a `Device` for the SKU
   (raises `GoveeBleNotSupported` if unsupported). Pass the advertisement (`DiscoveredDevice.advertisement`
   or bleak's own): its encrypt flag selects the command channel, which some firmwares set differently
-  from the SKU's default (H6008), and its pact the SKU's devices.yaml row. `is_supported_sku(sku)` /
+  from the SKU's default (H6008), and its pact the SKU's devices.yaml row. Both are read whatever the
+  advertised name; `bound_advertisement(advertisement_data, sku, *, fallback_name=None)` is that read on
+  its own, for a caller with no `Device` yet: the `GoveeAdvertisement` (`.pact`, `.encrypted`,
+  `.encryption_known`) `create_device` routes by, e.g. the pact it refused. `is_supported_sku(sku)` /
   `supported_skus()` / `profile_for(sku)` query the table; `profile_for` and `is_supported_sku` take
   `pact=` / `goods_type=` to pick between rows. A SKU served only on a pact-gated row (the BK-firmware
   rows, H615A-E and H6076 / H8076 / R16D0) needs `pact=`: `supported_skus()` lists it, but without the
@@ -92,8 +95,13 @@ advertisement, build a capability-driven `Device`, then drive it.
   `capabilities`, `zones`, `min_kelvin` / `max_kelvin`, `scene_names` (the scenes the Govee app lists at
   the device's scene set, `scene_versions`), `supports_segment_brightness` (whether
   `set_segment_brightness` works: a device with `SEGMENTS` may have segment colour without it, as the
-  H61D2-H61D6 colour page does), `state`, `register_callback`. Methods for unsupported
-  capabilities raise `GoveeBleNotSupported`. The link comes up with the first operation (or `connect()`)
+  H61D2-H61D6 colour page does), `state`, `register_callback`, `power_read_at` (when a read last returned
+  the on/off, while `state.is_on` still holds it). `advertised_on(advertisement_data)` decodes an
+  advertisement's on/off as the device does, without changing state; `ingest_advertisement` folds it in.
+  Methods for unsupported capabilities raise `GoveeBleNotSupported`, and so do `set_segment_color_temp` /
+  `set_zone_color_temp` where the SKU's screen sends its Kelvin only over every piece
+  (`DeviceProfile.segment_color_temp`: SEGMENTS and COLOR_TEMP together don't promise them). The link
+  comes up with the first operation (or `connect()`)
   and drops `idle_disconnect` seconds after the last one (8 s by default), or 30 s after a command
   (`const.ACTIVE_IDLE_DELAY`, so quick follow-ups skip the reconnect). While it is up the `Device` sends
   the keep-alive read the SKU's control screen sends every 2 s (`DeviceProfile.heartbeat`), which never
@@ -111,7 +119,11 @@ advertisement, build a capability-driven `Device`, then drive it.
   zone's power was last learned from the device), `zone_color_temp_kelvin` (H6047
   reads one Kelvin per bar), `gradual`, `scene_code`, plus
   device-info (`device_id` / `serial_number`, `wifi_mac`, `hardware_version`, `firmware_version`,
-  `ble_mac`), read with the Govee app's own frames (`aa 06`, `aa 07 03`, `aa 07 02`).
+  `ble_mac`). It comes from the `aa 06`, `aa 07 03` and `aa 07 02` reads (the Govee app's own frames)
+  and, on a status-read SKU, from the status reply's TLV 0x07. A status row's `device_info_reads` in
+  `spec/devices.yaml` says whether the library sends the three reads there too: at `none` it sends none
+  and takes these fields from TLV 0x07 alone, as the app's screen does. Every status row is at `none` but
+  the H60A6's and the H6076's (`firmware`: their firmware answers the reads).
 - **`Capability`** — `POWER`, `BRIGHTNESS`, `RGB`, `COLOR_TEMP`, `SEGMENTS`, `SCENES`.
 
 Curated SKUs: **H60A6**, **H6047**, **H61A8**, **H6004** (the BLE revision; the Wi-Fi-only one can't be controlled over BLE), **H6006/H6008**, **H6052**, **H6641**, **H6188**, **H6062**, **H6061** (Glide Hexa: whole-device power, brightness, colour and colour temperature), and the

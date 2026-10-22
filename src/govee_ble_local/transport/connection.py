@@ -254,6 +254,9 @@ class GoveeConnection:
     The command channel is secured per `encryption`: AES_RC4_PSK negotiates a
     session key and encrypts every frame with it; NONE sends plaintext;
     AES_GCM (BGC version 2) is detected but not yet implemented.
+
+    `encryption` is the advertised mode each session starts from (:meth:`set_advertised_encryption`
+    replaces it), refined by the BGC read; a session keeps the mode it was set up with to its end.
     """
 
     def __init__(
@@ -270,6 +273,11 @@ class GoveeConnection:
         heartbeat_timing: HeartbeatTiming = "fixed_rate",
     ) -> None:
         self._ble_device = ble_device
+        # Where a session starts: the device's advertised encrypt flag (the app's per-MAC flag,
+        # BleBroadVersionCache), as last handed over (set_advertised_encryption), else the constructor's.
+        self._advert_encryption = encryption
+        # The mode of the session on the link: set only while a session is being set up
+        # (_prepare_session), so a mode handed over meanwhile waits for the next session.
         self._encryption = encryption
         # Optional bidirectional frame capture (frame_log arg or $GOVEE_FRAME_LOG).
         self._framelog = FrameLog.resolve(frame_log, ble_device.address)
@@ -359,8 +367,34 @@ class GoveeConnection:
 
     @property
     def encryption(self) -> Encryption:
-        """The command-channel mode actually in use (refined by the BGC read)."""
-        return self._encryption
+        """The command-channel mode: while a link is up, its session's (refined by the BGC read); with no
+        link, the mode the next session starts from (:meth:`_session_mode`). No I/O."""
+        return self._encryption if self._client is not None else self._session_mode()
+
+    def set_advertised_encryption(self, encryption: Encryption) -> Encryption:
+        """Hand over the mode the device now advertises (its encrypt flag): ``NONE`` or ``AES_RC4_PSK``. The
+        next session starts from it; a session that is up, or being set up, keeps its own mode to its end.
+        As in the app, a BGC version of 1 or 2 overrides it (``EncryptionUtils.isEncryptionSupported`` = the
+        per-MAC flag OR ``BgcInfoReader.g()``). Returns the mode the next session uses as things stand: the
+        cached BGC verdict if there is one, else ``encryption``. No I/O.
+
+        Raises GoveeBleInvalidValue for anything else: AES_GCM is only ever the BGC read's, and a mode's
+        string value is not the mode (the session's mode is tested by identity)."""
+        if encryption is not Encryption.NONE and encryption is not Encryption.AES_RC4_PSK:
+            raise GoveeBleInvalidValue(
+                f"{self.address}: an advertised encrypt flag is NONE or AES_RC4_PSK, got {encryption!r}")
+        self._advert_encryption = encryption
+        return self._session_mode()
+
+    def _session_mode(self, advertised: Encryption | None = None) -> Encryption:
+        """The mode a session set up now uses: the cached BGC verdict (1 = AES_RC4_PSK, 2 = AES_GCM),
+        else ``advertised`` (default: the advertised mode now), for a BGC version 0, no BGC
+        characteristic, or no BGC read yet."""
+        if self._bgc_version == int(_BgcInfo.EncryptVersion.aes_gcm):
+            return Encryption.AES_GCM
+        if self._bgc_version == int(_BgcInfo.EncryptVersion.aes_rc4_psk):
+            return Encryption.AES_RC4_PSK
+        return self._advert_encryption if advertised is None else advertised
 
     @property
     def write_payload_size(self) -> int:
@@ -578,8 +612,9 @@ class GoveeConnection:
             raise GoveeBleConnectionError(f"{self.address}: connection closed")
         if self.is_connected:
             return
-        if self._bgc_checked and self._encryption is Encryption.AES_GCM:
-            # Settled (the BGC result is cached): don't open a link just to refuse again.
+        if self._bgc_checked and self._session_mode() is Encryption.AES_GCM:
+            # Settled (the BGC result is cached): don't open a link just to refuse again. A BGC 2 is
+            # AES-GCM whatever is advertised; otherwise a re-advertised mode lifts this.
             raise GoveeBleNotSupported(
                 f"{self.address}: AES-GCM (V2) handshake not yet implemented"
             )
@@ -680,11 +715,25 @@ class GoveeConnection:
         """Read the BGC-info characteristic and return the device's
         encryptVersion (0/1/2), or None if the characteristic is absent.
         Port of BgcInfoReader.a()/d(): data[0] is the format; for format 1 or
-        2 the version is data[1]. Static per device, so read once."""
+        2 the version is data[1].
+
+        Read once per connection object, so once per Device, and the result cached. The app reads it on
+        every connect: BgcInfoReaderPool.onConnectedInfoChange (BgcInfoReaderPool.java:72-87) resets the
+        reader on connect and drops it on disconnect, and each link reads 2b12 again before its first frame:
+        EncryptionBluetoothGattCallback.m:85-88 after the MTU exchange, l:69-72 when it fails, or
+        onServicesDiscovered:199-203 when no MTU request starts. The library keeps the one read by
+        decision (2026-10-21), so a firmware update that changes the version is seen by the next Device.
+
+        Raises GoveeBleConnectionError when the lookup or the read fails, and GoveeBleTimeout when the
+        read times out. Nothing is cached, so the session loop's next attempt reads again on a new link.
+        The app sends no frame on a link whose 2b12 read failed: BgcInfoReader.a:63-77 returns true even
+        when readCharacteristic fails, so the caller returns and waits for onCharacteristicRead, which
+        calls EncryptionBluetoothGattCallback.r (the handshake or the plaintext session) only for a
+        status-0 2b12 read (BgcInfoReaderPool.checkNeedParseInfo:46, onCharacteristicRead:129-137)."""
         if self._bgc_checked:
             return self._bgc_version
         client = self._require_client()
-        # Port of BgcInfoReader.a (BgcInfoReader.java:58-72): walk gatt.getServices() and take
+        # Port of BgcInfoReader.a (BgcInfoReader.java:51-62): walk gatt.getServices() and take
         # the FIRST service whose UUID is Constants.d (...1910), then its Constants.b (...2b12)
         # characteristic. bleak's UUID lookups don't match that: get_service() raises when two
         # services share 1910, and the collection-wide get_characteristic() raises because 2b12
@@ -694,33 +743,37 @@ class GoveeConnection:
             service = next((s for s in client.services if s.uuid == SERVICE_UUID), None)
             char = service.get_characteristic(BGC_INFO_CHAR_UUID) if service is not None else None
         except BleakError as err:  # client.services: "Service Discovery has not been performed yet"
-            _LOGGER.debug("%s: BGC lookup failed: %s", self.address, err)
-            return None  # not cached: the advertised mode stands, retried next connect
+            raise GoveeBleConnectionError(
+                f"{self.address}: BGC lookup failed: {_err_text(err)}") from err
         if char is None:
             version = None
         else:
             try:
                 data = bytes(await client.read_gatt_char(char))
-            except BleakError as err:
-                _LOGGER.debug("%s: BGC read failed: %s", self.address, err)
-                return None  # transient: try again next connect
+            except _TRANSPORT_ERRORS as err:
+                raise GoveeBleConnectionError(
+                    f"{self.address}: BGC read failed: {_err_text(err)}") from err
+            except TimeoutError as err:
+                raise GoveeBleTimeout(f"{self.address}: BGC read timed out") from err
             version = bgc_encrypt_version(data)   # the spec's bgc_info (BgcInfoReader.a / .d)
         self._bgc_version, self._bgc_checked = version, True
         return version
 
     async def _prepare_session(self) -> None:
-        """Refine the encryption mode (BGC read), run the handshake if needed,
-        send post-handshake unlock frames, then the session frames, and mark the session ready."""
+        """Pick the session's encryption mode (the advertised mode, refined by the BGC read), run the
+        handshake if needed, send post-handshake unlock frames, then the session frames, and mark the
+        session ready."""
         self._reset_session()
         self._drain()
         self._require_client()
-        # BGC is authoritative for the version (1=RC4, 2=GCM); 0/absent keeps the
-        # advertisement-derived mode (isEncryptionSupported = adv OR bgc).
-        bgc_version = await self._read_bgc_encrypt_version()
-        if bgc_version == int(_BgcInfo.EncryptVersion.aes_gcm):
-            self._encryption = Encryption.AES_GCM
-        elif bgc_version == int(_BgcInfo.EncryptVersion.aes_rc4_psk):
-            self._encryption = Encryption.AES_RC4_PSK
+        # The only place the session's mode is set: from the advertised mode as it is now, so one handed
+        # over later (set_advertised_encryption), even during the BGC read, waits for the next session.
+        # BGC is authoritative for the version (1=RC4, 2=GCM); 0/absent keeps the advertised mode
+        # (isEncryptionSupported = adv OR bgc). A failed read fails this attempt before any frame is sent.
+        advertised = self._advert_encryption
+        self._encryption = self._session_mode(advertised)
+        await self._read_bgc_encrypt_version()
+        self._encryption = self._session_mode(advertised)
         if self._encryption is Encryption.AES_GCM:
             raise GoveeBleNotSupported(
                 f"{self.address}: AES-GCM (V2) handshake not yet implemented"
