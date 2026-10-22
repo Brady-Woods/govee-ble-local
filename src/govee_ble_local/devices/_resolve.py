@@ -1106,9 +1106,8 @@ def _forms_used(out: Mapping[str, Any], caps: Collection[str], status_read: Sequ
     scheme = out.get("color_scheme")
     if scheme == "h60a6" and set(caps) & {"rgb", "color_temp", "segments"}:
         used.append(("f_15_01", "kelvin_tint"))
-    if scheme == "h6061":
-        used += [*([("f_15_04", "rgb_group")] if "rgb" in caps else ()),
-                 *([("f_15_01", "kelvin")] if "color_temp" in caps else ())]
+    if scheme == "h6061" and set(caps) & {"rgb", "color_temp"}:
+        used.append(("f_15_01", "kelvin"))
     if scheme == "h61a8" and set(caps) & {"rgb", "segments"}:
         used.append(("f_0b", "rgb_mask"))
     if (out["zones"] and not out["bar_switch"]) or "cmd_30" in status_read:

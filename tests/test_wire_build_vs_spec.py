@@ -149,21 +149,22 @@ def test_color_temp_15_h60a6_up_to_16_segments() -> None:
                 tint_for_kelvin(kelvin), kelvin, [True] * segments)
 
 
-def test_h6061_color_temp() -> None:
-    for panels in range(1, b.H6061_MAX_PANELS + 1):
-        n = b.H6061_MAX_PANELS if panels == 1 else panels   # a one-panel layout is written as 23
-        for kelvin in range(2000, 9001, 500):
-            assert b.color_temp(kelvin, "h6061", panels) == C.build_op15_color_v5(
-                *tint_for_kelvin(kelvin), (1 << n) - 1, kelvin=kelvin, mask_bytes=b.H6061_MASK_BYTES)
+def test_h6061_rgb_and_color_temp() -> None:
+    # Config.Zt: one frame each, Bytes.l (an RGB pick, Kelvin 0) and Bytes.u (CCT), with the app's mask width
+    # (makeSelectedTwoBytes up to 16 positions, else BleUtils.X).
+    def mask_of(n: int) -> tuple[int, int]:
+        return (1 << n) - 1, 2 if n <= 16 else -(-n // 8)
 
-
-def test_h6061_rgb_group_frames() -> None:
     r = _rng(5)
     for panels in range(1, b.H6061_MAX_PANELS + 1):
-        n = b.H6061_MAX_PANELS if panels == 1 else panels
         rgb = _not_tint(r)
+        mask, width = mask_of(panels)
         assert b.color_rgb_frames(*rgb, "h6061", panels) == [
-            C.build_op15_color_group(g, [rgb] * min(4, n - (g - 1) * 4)) for g in range(1, -(-n // 4) + 1)]
+            C.build_op15_color_v5(*rgb, mask, mask_bytes=width)]
+        mask, width = mask_of(b.H6061_MAX_PANELS if panels == 1 else panels)   # CCT: one panel written as 23
+        for kelvin in range(2000, 9001, 500):
+            assert b.color_temp(kelvin, "h6061", panels) == C.build_op15_color_v5(
+                *tint_for_kelvin(kelvin), mask, kelvin=kelvin, mask_bytes=width)
 
 
 # ── colour: an RGB pick that is a Kelvin tint colour goes out as CCT ──────────
@@ -192,8 +193,7 @@ def test_rgb_pick_as_kelvin_h6061_default_range() -> None:
         if 2000 <= kelvin <= 9000:   # KelvinConfig: no entry for goodsType 51 -> version 0
             assert frames == [C.build_op15_color_v5(*rgb, (1 << 23) - 1, kelvin=kelvin, mask_bytes=3)]
         else:
-            assert frames == [C.build_op15_color_group(g, [rgb] * min(4, 23 - (g - 1) * 4))
-                              for g in range(1, 7)]
+            assert frames == [C.build_op15_color_v5(*rgb, (1 << 23) - 1, mask_bytes=3)]
 
 
 # ── colour: segments ─────────────────────────────────────────────────────────
@@ -381,7 +381,6 @@ _ENUM_CONSTANTS: dict[str, tuple[int, str]] = {
     "SUB_SCENE": (0x04, "SubMode.scene"), "SUB_COLOR_15": (0x15, "SubMode.color_rgbic_15"),
     "SUB_COLOR_0D": (0x0D, "SubMode.color_cct_0d"), "SUB_COLOR_0B": (0x0B, "SubMode.color_rgbic_0b"),
     "OP15_SET_COLOR": (0x01, "Op15.set_color"), "OP15_SET_BRIGHTNESS": (0x02, "Op15.set_brightness"),
-    "OP15_SET_GROUP_COLOR": (0x04, "Op15.set_color_group"),
 }
 
 

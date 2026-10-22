@@ -618,7 +618,10 @@ def _selftest(*, strict: bool = False) -> int:
     g3 = group_reply(False, [255, 0, 0, 0, 255, 0])
     check("aa a5 reply, no brightness -> 3B records", g3.records[0].r == 255 and g3.records[1].g == 255)
 
-    from govee_commands import build_op15_color_temp_bytes_r  # the catalogue imports this module
+    from govee_commands import (  # the catalogue imports this module
+        build_op15_color_temp_bytes_r,
+        build_op15_color_v5,
+    )
 
     wr = parse_frame(build_op15_color_temp_bytes_r((100, 50, 16), 2700, [True, True] + [False] * 14),
                      "tx", make_profile(f_15_01="kelvin_tint", num_segments=16))
@@ -626,6 +629,11 @@ def _selftest(*, strict: bool = False) -> int:
     check("build_op15_color_temp_bytes_r round-trips slot, kelvin and tint",
           (ext.color.r, ext.color.g, ext.color.b, ext.kelvin) == (0xFF, 0xFF, 0xFF, 2700)
           and (ext.tint.r, ext.tint.g, ext.tint.b) == (100, 50, 16) and ext.is_cct)
+    v5 = parse_frame(build_op15_color_v5(0x12, 0x34, 0x56, (1 << 23) - 1, mask_bytes=3), "tx",
+                     make_profile(f_15_01="kelvin", num_segments=23)).body.params.params.data
+    check("build_op15_color_v5 RGB pick (Bytes.l, H6061) reads as RGB, kelvin 0, over 23 panels",
+          (v5.color.r, v5.color.g, v5.color.b, v5.kelvin) == (0x12, 0x34, 0x56, 0) and not v5.is_cct
+          and v5.mask.bits[:24] == [True] * 23 + [False])
 
     k05 = append_bcc(bytes([0x33, 0x05, 0x15, 0x05, 0x0A, 0x8C]))
     kw = parse_frame(k05, "tx", make_profile(f_15_05="kelvin"))

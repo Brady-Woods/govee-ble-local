@@ -62,7 +62,7 @@ def test_the_schema_requires_a_heartbeat_on_every_supported_row() -> None:
     doc = _doc()
     schema = json.loads((_SPEC / "devices.schema.json").read_text(encoding="utf-8"))
     rows = _rows(doc)
-    assert len(rows) == 181 and all(row["heartbeat"] in _BEATS for _fam, _gt, row in rows)
+    assert len(rows) == 186 and all(row["heartbeat"] in _BEATS for _fam, _gt, row in rows)
     jsonschema.validate(instance=doc, schema=schema)
     missing = copy.deepcopy(doc)
     next(f for f in missing["families"] if f["id"] == "h60ax")["client_profile"]["by_goods_type"]["303"].pop(
@@ -102,7 +102,7 @@ def test_each_skus_profile_sends_its_rows_heartbeat() -> None:
 
 
 def test_a_heartbeat_power_live_names_the_read_the_screen_sends() -> None:
-    # The resolver's one-way cross-check (devices/_resolve.py), as the traces found it on all 181 rows: the
+    # The resolver's one-way cross-check (devices/_resolve.py), as the traces found it on all 186 rows: the
     # screens that take their power from a heartbeat reply send that read, on a polled or a status row, and
     # the plugs read their outlets from aa 01. Nothing ties a push_30-only row to aa 00, which 64 send.
     # h705a 394 sends aa 00 and has no live power source.
@@ -112,7 +112,7 @@ def test_a_heartbeat_power_live_names_the_read_the_screen_sends() -> None:
         relay = "relay_power" in row
         found[lives, relay, row["heartbeat"]] += 1
     assert found == {
-        (("heartbeat_aa01",), False, "power"): 83,
+        (("heartbeat_aa01",), False, "power"): 88,
         (("heartbeat_aa01", "push_30"), False, "power"): 27,
         (("heartbeat_aa36",), False, "cmd_36"): 2,
         ((), True, "power"): 4,

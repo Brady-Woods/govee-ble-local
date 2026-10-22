@@ -12,8 +12,8 @@ model, from which the shipped readers are generated).
 - **158 more SKUs, traced from the app's device list** (spec rows only; no library code changed): 99 admitted
   by default (`app_traced`) and 59 behind `allow_modelled` (`modelled`). The entries below admit 39 more by
   default (16 through the resolver changes; H1162 / H1163 / H1167 / H1168, H70B1 and H70BC; and 17 through the
-  status-read command ids and the BK pact gate) and 2 more behind `allow_modelled` (H7072, H6119), for 236
-  admitted by default and 67 behind `allow_modelled` in all. None is
+  status-read command ids and the BK pact gate) and 7 more behind `allow_modelled` (H7072, H6119 and the five
+  Glide panels), for 236 admitted by default and 72 behind `allow_modelled` in all. None is
   hardware-verified (the only bench check, below, was read-only), and none has a bundled scene catalog, so none
   is offered scenes. Each is listed with its family and goodsType; † marks a SKU no row lists that the
   catalogue snapshot (`spec/govee_catalog.json`) routes to that row by its goodsType alone (16 of them).
@@ -92,6 +92,15 @@ model, from which the shipped readers are generated).
   but `is_supported_sku(sku)`, `profile_for`, `make_device` and `create_device` refuse one without a pact: pass
   the advert's (`is_supported_sku(sku, pact=adv.pact)`; `scanner.supported()`, `discover()` and `create_device`
   with the advertisement already do). Not hardware-verified: no gated SKU is on the bench.
+- **The other Glide panels, behind `allow_modelled`**, on the fixed `h6061` scheme (Fixed, below): **H6066**
+  (96, 25 panels), **H6067** (97, 23), **H6065** (121, 20), **H606A** (163, 21) and **H6063** (228, 20). They run
+  H6061's screen and builders (cubelight `SubLib` keys, `Model.t` -> `CubeAcLightDetail` / `CubeVM4Light`;
+  `Config.x` = 5 and `Config.I[gt][4]` for all five), so they get its power, brightness, whole-device RGB and
+  colour temperature, and the `aa a5` read-back. They are `modelled` because the app sizes every mask and the
+  read-back from the user's stored panel layout, which the device never reports: the row's count is a full
+  layout's (`Support.getBulbStringMaxNum`; for H6065 `ColorPieceConfig.f(121)` = 20, where the read-back default
+  is 23). H6061 itself stays admitted by default, the user's explicit exception for the same inferred count.
+  Not hardware-verified.
 - **Bench, 2026-10-21 (the Mac, reads only):** one H61C3 and two H6076s, polled through `create_device` and
   `update()` on the new rows. A guard on `GoveeConnection._send_frame` refused any write; none was attempted.
   - **H61C3** (rgbiclight 141, pact (1,1), plaintext, `allow_modelled`): aa 01, aa 04, aa 05 01, aa 40,
@@ -141,10 +150,10 @@ model, from which the shipped readers are generated).
   `readback="polled"` and no brightness no longer reads aa 04 or sets `state.brightness`. The resolver keeps the
   rule strict both ways: a polled row's `connect_reads` lists `brightness` exactly when the row has the
   capability.
-- Nothing else for existing SKUs (H6188's colour temperature is under Fixed). Each other SKU of the 104
-  admitted at 1.6.1 (98 by default, 6 behind `allow_modelled`) resolves to the same profile at every pact its
-  rows list and at none, with and without `allow_modelled`, so its frames and decoded state are unchanged. Where a new SKU has the same facts it joins
-  that SKU's profile (`DeviceProfile.skus`): H6118 / H6179 / H6194 with H6005, H6099 with H6098 / H8098 /
+- Nothing else for existing SKUs (H6188's colour temperature and H6061's whole-device RGB are under Fixed).
+  Each other SKU of the 104 admitted at 1.6.1 (98 by default, 6 behind `allow_modelled`) resolves to the same
+  profile at every pact its rows list and at none, with and without `allow_modelled`, so its frames and decoded
+  state are unchanged. Where a new SKU has the same facts it joins that SKU's profile (`DeviceProfile.skus`): H6118 / H6179 / H6194 with H6005, H6099 with H6098 / H8098 /
   H6690, H70A1-3 with H6176 / H61BC, H61B0 with H61B3 / H61B6, H14C0 / H14C1 / R14C0 / R14C1 with
   H600A-H600D / H6011 / H6013 / H800B (H600A stays first), H6145-7 with H617C / H617E / H617F / H6168. H6099
   and H61B0 come first in theirs, so a `Device` built from one of those profiles without `sku=` names itself
@@ -179,6 +188,21 @@ model, from which the shipped readers are generated).
   `DeviceProfile.color_scheme` for H6188 is now `"h6006"`. The `"h6188"` scheme keeps its name and frame for
   H8015 (behind `allow_modelled`), whose illumination tab sends it. Source-traced (Govee Home 7.7.02), not
   live-verified: there is no H6188 on the bench.
+- **H6061 whole-device RGB is now the app's one frame** (the user's decision, 2026-10-21: "Keep it, fix the
+  frame"). The `h6061` scheme sent a colour as `ceil(n / 4)` `33 05 15 04 <group> RGB x4` frames (`Bytes.m`),
+  which the app sends only for colour stripes (`ColorViewModel.O` -> `ColorModeControllerConfig.k`). The colour
+  screen's pick goes `DelegateColorV2.F0` -> `ColorViewModel.p0` -> `ColorModeControllerConfig.c` ->
+  `Config.J[5]` = `Config.Zt` -> `Bytes.l`: one `33 05 15 01 R G B 00 00 <mask>` frame, the spec's
+  `op15_color` kelvin form with Kelvin 0, over the same panel mask as the colour-temperature frame (H6061:
+  `ff ff 7f`). `set_rgb` and `turn_on(rgb=)` now send that frame; colour temperature, an RGB pick that is a
+  Kelvin tint colour, and every other H6061 frame are unchanged. At an explicit one-panel count
+  (`Device.set_segment_count(1)`) the RGB frame is the app's too, mask `01 00` (the app writes
+  `max(layout, 1)` panels, `CubeColorModeV2.realMyColorPiece`); the colour-temperature frame there still
+  writes every panel, as in 1.6.1, where the app's `Bytes.u` writes the one: a known divergence, left for
+  the user to decide, that no built-in profile reaches. `build.color_rgb` now builds the `h6061` frame
+  (it raised GoveeBleNotSupported) and takes `pieces=` as `color_temp` does; `build.color_rgb_frames` returns
+  one frame on every scheme. Source-modelled: no H6061 is on the bench, so this is checked against the app's
+  code only.
 
 ### Spec
 - **The device-list trace (Govee Home 7.7.02; 7.5.12 where a family says so).** Each of the 83 census families
@@ -191,12 +215,13 @@ model, from which the shipped readers are generated).
   `modelled`; one that needs library work has no `support` and names the gap in its `doc`. A verification
   pass challenged each family's rows; they were repaired, and demoted (to `modelled`, or to no `support`)
   where a core claim didn't hold.
-  - devices.yaml now has 305 goodsType rows in 96 families (184 in 91): 181 with `support` (66), of them 148
-    `app_traced`, 29 `modelled` and the same 4 `hardware_verified`, and 124 without (118). The trace gave 153
-    of them support. The other 28 take it through the library and spec changes under Added, Changed and Spec:
-    h6069 284, h3700 383, h7076 313, h70dx 267-269, bulblightv3 342, the four h1162 rows, h70b1 134, h70bx 216,
-    the six status-read rows (h6092 334 / 333 / 401, h7072 371 / 294, h70b6 341) and the nine BK target rows,
-    all `app_traced` but h7072 294 and h6119 44 (`modelled`).
+  - devices.yaml now has 305 goodsType rows in 96 families (184 in 91): 186 with `support` (66), of them 148
+    `app_traced`, 34 `modelled` and the same 4 `hardware_verified`, and 119 without (118). The trace gave 153
+    of them support. The other 33 take it through the library and spec changes under Added, Changed, Fixed
+    and Spec: h6069 284, h3700 383, h7076 313, h70dx 267-269, bulblightv3 342, the four h1162 rows, h70b1 134,
+    h70bx 216, the six status-read rows (h6092 334 / 333 / 401, h7072 371 / 294, h70b6 341), the nine BK target
+    rows and the five Glide panel rows (h6061 96 / 97 / 121 / 163 / 228), all `app_traced` but h7072 294, h6119
+    44 and the Glide panels (`modelled`).
   - Two goodsType add-ons were traced and checked on their own: straightfloorlamp 69 (H6076 / H8076,
     `app_traced`, with the bench reads above) and rgbiclight 141 (H61C2 / H61C3 / H61C5).
   - **rgbiclight 141 (H61C2 / H61C3 / H61C5) is `app_traced`, admitted by default** (pacts (1,1) / (2,1)): power,
@@ -295,6 +320,17 @@ model, from which the shipped readers are generated).
     (h70b6 329 / 341) and 0x7D / 0x7E (341), and H7073's 0x0c layout (`OperateModeInfoH7070.E`), unguarded, so
     an empty or short value fails the app's whole status read, while the library, with no form for them, still
     applies the burst's power and brightness.
+- **h6061: the whole-device RGB pick is `Bytes.l`.** The family's new `color_write` opcode records it, with the
+  path above; `color_group_write` (`Bytes.m`) is now labelled the colour-stripe path, and `color_temp_write`
+  cites the slider's own path (`ColorViewModel.U` -> `c` -> `Zt`). The resolver checks that an `h6061` row with
+  RGB or colour temperature carries the `f_15_01: kelvin` form (it checked `f_15_04: rgb_group` for RGB).
+  - The family's rows are re-cut from the trace (h6061.md), not from its patch, which withdrew H6061: 96 / 97 /
+    121 / 163 / 228 get their own traced rows (`modelled`, above), and 51 keeps `app_traced`, names the
+    inferred panel count and the user's decision, and drops `scenes` from `capabilities` (an `untraced` dialect
+    claims nothing; the resolver already dropped it, so the profile is unchanged).
+  - `specs.segments`, `wire.doc`, the `aa a5` read and the per-goodsType opcode (now `color_write_per_goodstype`)
+    say what the app sizes from the stored layout L and what the row's count stands in for; the brightness
+    opcode cites the screen's `BrightnessConfig.b`, not the device-list `Support.getBrightnessRange`.
 
 ## [1.6.1] — 2026-10-21
 

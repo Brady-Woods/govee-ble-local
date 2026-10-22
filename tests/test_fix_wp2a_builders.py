@@ -19,7 +19,6 @@ ALL_SCHEMES: tuple[b.ColorScheme, ...] = ("h60a6", "h6006", "h61a8", "h6188", "h
 
 # ── a scheme that can't express the request: GoveeBleNotSupported, not a bare ValueError ──
 @pytest.mark.parametrize(("call", "match"), [
-    (lambda: b.color_rgb(1, 2, 3, "h6061", 23), "color_rgb_frames"),
     (lambda: b.color_temp(4000, "h61a8", 15), "h61a8"),
     (lambda: b.segment_rgb(1, 1, 2, 3, "h6061", 23), "whole-device only"),
     (lambda: b.segment_color_temp(1, 4000, "h61a8", 15), "h61a8"),
@@ -81,7 +80,7 @@ _BUILDERS: dict[str, tuple[Callable[[b.ColorScheme], bytes | list[bytes]], froze
     "color_rgb_frames": (lambda s: b.color_rgb_frames(1, 2, 3, s), frozenset(ALL_SCHEMES)),
     "color_rgb_frames tint pick": (lambda s: b.color_rgb_frames(*_TINT_2700, s, None, (2000, 9000)),
                                    frozenset(ALL_SCHEMES)),
-    "color_rgb": (lambda s: b.color_rgb(1, 2, 3, s), frozenset(ALL_SCHEMES) - {"h6061"}),
+    "color_rgb": (lambda s: b.color_rgb(1, 2, 3, s), frozenset(ALL_SCHEMES)),
     "color_temp": (lambda s: b.color_temp(4000, s), frozenset(ALL_SCHEMES) - {"h61a8"}),
     "segment_rgb": (lambda s: b.segment_rgb(1, 1, 2, 3, s), frozenset({"h60a6", "h61a8"})),
     "segment_rgb tint pick": (lambda s: b.segment_rgb(1, *_TINT_2700, s, 13, (2000, 9000)),
@@ -132,7 +131,7 @@ def test_h6061_default_is_the_apps_23_panels() -> None:
     assert b.color_temp(4000, "h6061") == b.color_temp(4000, "h6061", 23)
     assert b.color_temp(4000, "h6061")[9:12] == bytes([0xFF, 0xFF, 0x7F])
     assert b.color_rgb_frames(1, 2, 3, "h6061") == b.color_rgb_frames(1, 2, 3, "h6061", 23)
-    assert len(b.color_rgb_frames(1, 2, 3, "h6061")) == 6
+    assert b.color_rgb_frames(1, 2, 3, "h6061")[0][9:12] == bytes([0xFF, 0xFF, 0x7F])
 
 
 def test_h61a8_default_is_its_15_segments() -> None:
