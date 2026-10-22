@@ -208,11 +208,14 @@ model, from which the shipped readers are generated).
   B7082, H6098 / H8098, H6690, H61B3 / H61B6, H1A42, H1A43 / H1A44, H1AA2, H1AA5, H1B6A, and H61F2 / H61F5 /
   H61F6 (behind `allow_modelled`). Every zoned profile (H60A6, H6047, H1270, H1232 / H1252) keeps it, so no
   table SKU's zone colour temperature changes. Three profiles split on the fact: H1AB2 leaves H1AA5's, H7066
-  leaves H7055's, and H7094 leaves H7057 / H8057 / H8066's. Of the new SKUs, 70 have no segment colour
-  temperature (47 by default, 23 behind `allow_modelled`) and 42 keep it (17 by default, 25 behind
-  `allow_modelled`); in all, 110 SKUs have none (85 / 25) and 65 keep it (37 / 28). Source-traced (Govee Home
-  7.7.02), not live-verified. H61A8's bench check (2026-10-17) sent its Kelvin over all 15 segments only, so no
-  hardware observation supports a masked Kelvin on these rows.
+  leaves H7055's, and H7094 leaves H7057 / H8057 / H8066's. H1AA5 and H7066, second in theirs at 1.6.1, now
+  come first in their own, so a `Device` built from H1AA5's or H7066's profile without `sku=` names itself
+  after them, not H1AB2 or H7055 (`create_device` and `make_device` always pass the SKU). H1AB2's and H7055's
+  profiles keep their first SKU, and H7057 / H8057 / H8066 / H7094 are new. Of the new SKUs, 70 have no
+  segment colour temperature (47 by default, 23 behind `allow_modelled`) and 42 keep it (17 by default, 25
+  behind `allow_modelled`); in all, 110 SKUs have none (85 / 25) and 65 keep it (37 / 28). Source-traced
+  (Govee Home 7.7.02), not live-verified. H61A8's bench check (2026-10-17) sent its Kelvin over all 15 segments
+  only, so no hardware observation supports a masked Kelvin on these rows.
 - Nothing else for existing SKUs (H6188's colour temperature and H6061's whole-device RGB are under Fixed, and
   the 40 SKUs without segment colour temperature are above). Each other SKU of the 104 admitted at 1.6.1 (98
   by default, 6 behind `allow_modelled`) resolves to the same profile at every pact its rows list and at none,
