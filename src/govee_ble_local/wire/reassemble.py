@@ -39,9 +39,10 @@ TYPE_MODE = int(_C.Command.mode)                 # 0x05
 TYPE_DEVICE_INFO = int(_C.Command.device_info)   # 0x07
 TYPE_ZONE = int(_C.Command.cmd_30)               # 0x30
 TYPE_SEG_INFO = int(_C.Command.cmd_41)           # 0x41: the seg / IC info (power memory) TLV
+TYPE_SEGMENT_INFO = int(_C.Command.cmd_a1)        # 0xA1: the H707A segment info (f_a1 segment_info)
 TYPE_COLOR_GROUP = int(_C.Command.color_group)   # 0xA5
 # The forms of the TLVs the status stream reads (govee_state's TLV-typed tags), from the device's decode.
-_TLV_FORMS: Final = ("f_30", "f_36", "f_40", "f_41", "f_a3", "f_a5")
+_TLV_FORMS: Final = ("f_30", "f_36", "f_40", "f_41", "f_a1", "f_a3", "f_a5")
 _COLOR_DECODES: Final = ("c02", "c0b", "c0d", "c14", "c15")
 # The tags whose value parse_status reads fields of (the mode's is kept whole, None when it is empty).
 _READS_A_VALUE: Final = frozenset({TYPE_SWITCH, TYPE_BRIGHTNESS, TYPE_ZONE, TYPE_DEVICE_INFO})
@@ -99,6 +100,9 @@ class StatusReply:
     # carries (pact_h60a0 h60a1.Info4Detail.Q reads it; the last 0x05 TLV wins, as each overwrites there).
     # Left out of equality: a generated object compares by identity, and the fold reads it.
     mode: Any = field(default=None, compare=False)
+    # The 0xA1 TLV's segment count (f_a1 segment_info: the H707A screen's colour-page piece count,
+    # H707AInfo4Detail.G0); the last one wins. Device adopts it (DeviceProfile.status_segment_count).
+    segment_count: int | None = None
 
 
 def _chunk_of(fr: bytes) -> Any:
@@ -397,6 +401,10 @@ def parse_status(frames: list[bytes], *, pieces: int | None = None, decode: Any 
             st.brightness = int(v.level)
         elif typ == TYPE_MODE:
             st.mode = v   # the mode_report, read with the device's colour decode
+        elif typ == TYPE_SEGMENT_INFO:
+            seg = getattr(v, "body", None)   # the segment_info, read under f_a1 segment_info only
+            if seg is not None:
+                st.segment_count = int(seg.segment_count)
         elif typ == TYPE_ZONE:
             # bit0 of each byte (VM4LightH60A6$afterConnectedSingleReadDeviceInfo$1.o:
             # ParseUtils.getBit2Boolean(b, 1) = (b >> 0) & 1); the other bits are not zone power.

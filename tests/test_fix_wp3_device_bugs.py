@@ -762,6 +762,8 @@ def test_live_ic_profile_needs_its_ic_derivation() -> None:
             DeviceProfile(skus=("HX",), capabilities=frozenset(), **rule)   # type: ignore[arg-type]
     with pytest.raises(ValueError, match="color_writes_live_ic"):   # its count comes from the live read
         DeviceProfile(skus=("HX",), capabilities=frozenset(), color_writes_live_ic=True)
+    with pytest.raises(ValueError, match="status_segment_count"):   # its count is the status read's TLV 0xA1
+        DeviceProfile(skus=("HX",), capabilities=frozenset(), readback="polled", status_segment_count=True)
 
 
 def _ic(count: int) -> parse.IcCount:
@@ -892,23 +894,33 @@ def test_h6641_ic_count_from_the_swap_branch_skips_the_walk(ic: int) -> None:
     assert [q[1] for q in _queried(d)] == [0x40] and d.state.segments == []
 
 
-@pytest.mark.parametrize(("ic", "count"), [
-    (None, None),                   # no aa 40 reply
-    ((0x00, 0x00, 0x00), None),     # IC 0: no pieces
-    ((0x00, 0xC8, 0x00), 112),      # IC 200 on H7067 (pieces = IC, no app cap): the widest mask
+_A1 = 0xA1   # the H707A status read's segment-info TLV (form_a1 segment_info): [count][IC per segment]
+
+
+@pytest.mark.parametrize(("sku", "replies", "count", "asked"), [
+    ("H7067", None, None, [0x40]),                                       # no aa 40 reply
+    ("H7067", {0x40: [_frame(0xAA, 0x40, 0x00, 0x00, 0x00)]}, None, [0x40]),   # IC 0: no pieces
+    # IC 200 on H7067 (pieces = IC, no app cap): the widest mask
+    ("H7067", {0x40: [_frame(0xAA, 0x40, 0x00, 0xC8, 0x00)]}, 112, [0x40]),
+    # H707C cut to 8 segments: the status read's TLV 0xA1 count (H707AInfo4Detail.G0), not its factory 12
+    ("H707C", {0x03: status_burst(bytes([_A1, 4, 8, 54, 54, 36]))}, 8, [0x03]),
+    ("H707C", {0x03: status_burst(bytes([_A1, 1, 0]))}, None, [0x03]),   # a count of 0: none
 ])
-def test_an_ic_sized_write_takes_the_live_count_or_sends_nothing(ic: tuple[int, ...] | None,
-                                                                   count: int | None) -> None:
-    # color_writes_live_ic: before the first poll a masked write reads aa 40 (ColorPieceConfig.c sizes the
-    # strip from the IC it stores), and without a usable count nothing is sent, as on H6062's aa 41.
-    d = _dev("H7067", {0x40: [_frame(0xAA, 0x40, *ic)]} if ic else None)
+def test_a_device_counted_write_takes_its_count_or_sends_nothing(
+    sku: str, replies: Replies | None, count: int | None, asked: list[int],
+) -> None:
+    # color_writes_live_ic / status_segment_count: before the first poll a masked write reads the device's
+    # count (aa 40, whose IC sizes the strip, ColorPieceConfig.c; or the 0xAC status read's TLV 0xA1), and
+    # without a usable count nothing is sent, as on H6062's aa 41.
+    d = _dev(sku, replies)
     if count is None:
-        with pytest.raises(GoveeBleError, match=r"\(aa 40\)"):
+        with pytest.raises(GoveeBleError, match="not sending a colour frame"):
             run(d.set_rgb((1, 2, 3)))
-        assert _sent(d) == [] and [q[1] for q in _queried(d)] == [0x40]
+        assert _sent(d) == [] and [q[1] for q in _queried(d)] == asked
     else:
         run(d.set_rgb((1, 2, 3)))
         assert d.segment_count == count and _sent(d) == [build.color_rgb(1, 2, 3, "h60a6", count)]
+        assert [q[1] for q in _queried(d)] == asked
 
 
 # ── scene upload + activation are not split by a concurrent scene write ───────────────────

@@ -13,12 +13,13 @@ model, from which the shipped readers are generated).
   illumination-tab pair that promotes H60A4 / H80A4, the aa 40 section sum that promotes H61A9, the live
   piece count that promotes 14 h705a SKUs and the per-SKU support level that promotes five h6609 260 SKUs,
   below): 121 admitted by default (`app_traced`) and 37 behind `allow_modelled` (`modelled`). The entries below
-  admit 60 more by default (16 through the resolver changes;
+  admit 66 more by default (16 through the resolver changes;
   H1162 / H1163 / H1167 / H1168, H70B1 and H70BC; 17 through the status-read command ids and the BK pact gate;
   the 10 SKUs of the `legacy_02` colour scheme; H7061; H70B2, H6630, H8630 and H6631 on the device-list card;
-  and through the live piece count H1A45 and the five h61d3 SKUs behind `allow_modelled` since 1.5.0, H61B8 /
-  H61B9 / H61F2 / H61F5 / H61F6) and 12 more behind `allow_modelled` (H7072, H6119, the five Glide panels,
-  H61E5 / H61E6, H60A1 / H80A1 and H6609), for 279 admitted by default and 50 behind `allow_modelled` in all.
+  through the live piece count H1A45 and the five h61d3 SKUs behind `allow_modelled` since 1.5.0, H61B8 /
+  H61B9 / H61F2 / H61F5 / H61F6; and the six H707A strings through the status read's segment count) and 12
+  more behind `allow_modelled` (H7072, H6119, the five Glide panels, H61E5 / H61E6, H60A1 / H80A1 and H6609),
+  for 285 admitted by default and 50 behind `allow_modelled` in all.
   None is
   hardware-verified (the only bench check, below, was read-only), and none has a bundled scene catalog, so none
   is offered scenes. Each is listed with its family and goodsType; † marks a SKU no row lists that the
@@ -374,6 +375,22 @@ model, from which the shipped readers are generated).
     split would be a pair the app never sends; the row stays modelled for its inferred L.
 
   Source-traced, not live-verified: no 260 SKU is on the bench. No Bluetooth was used.
+- **H707A / H707B / H707C / R707A / R707B / R707C** (h707a 326, the H707ABCDetailVM screen), admitted by default
+  (`app_traced`) at pacts (1,1) / (2,1) / (3,1): power, brightness, RGB, colour temperature ([2700, 6500], [1000,
+  10000] at (3,1)) and segments, on the h60a6 frames (`Config.x[326]` = 0 -> `Yt`; `15 02` segment
+  brightness). These outdoor strings are cut by the user, so the screen sizes every mask by the segment count
+  the device reports in its 0xAC status read, TLV 0xA1 value[0] (pieces-segment-info-tlv-a1;
+  `H707AInfo4Detail.G0` -> `Info4BleIotDevice.P0` and `SegmentIcDataCache`, then the colour page's resize,
+  `H707AColorMode.X`). `DeviceProfile.status_segment_count` (keyword-only, default False; a status row that
+  requests `cmd_a1`): `Device.segment_count` becomes each status read's count (at most 112; a count of 0, which
+  the page skips, leaves it), and a masked write before the first read makes the status read first and raises
+  GoveeBleError, sending nothing, when the device reports none, as H6062's aa 41 does. The status read is the
+  app's `ac 03 08 40 41 a3 a1 48 a5 45 16`; `DeviceProfile.segments` (the uncut 6 / 9 / 12 by suffix,
+  `Support.f`) is only the count before it. `reassemble.StatusReply.segment_count` carries the TLV's count.
+  Not read back: the TLV 0xA5 gradient record (no wire form; skipped, as on H3751), so the colour state is not
+  read. Not sent: the `33 09` time sync the screen writes before its status read (as on the other status rows).
+  The aa 06 / aa 07 device-info reads are unverified extra reads here (status-row-versions-from-tlv07).
+  Source-traced, not live-verified: none is on the bench. No Bluetooth was used.
 
 ### Changed
 - **A polled profile reads aa 04 only with `Capability.BRIGHTNESS`**, as the app's connect read does
@@ -513,16 +530,17 @@ model, from which the shipped readers are generated).
   `modelled`; one that needs library work has no `support` and names the gap in its `doc`. A verification
   pass challenged each family's rows; they were repaired, and demoted (to `modelled`, or to no `support`)
   where a core claim didn't hold.
-  - devices.yaml now has 305 goodsType rows in 96 families (184 in 91): 202 with `support` (66), of them 168
-    `app_traced`, 30 `modelled` and the same 4 `hardware_verified`, and 103 without (118). The trace gave 153
-    of them support. The other 49 take it through the library and spec changes under Added, Changed, Fixed
+  - devices.yaml now has 305 goodsType rows in 96 families (184 in 91): 203 with `support` (66), of them 169
+    `app_traced`, 30 `modelled` and the same 4 `hardware_verified`, and 102 without (118). The trace gave 153
+    of them support. The other 50 take it through the library and spec changes under Added, Changed, Fixed
     and Spec: h6069 284, h3700 383, h7076 313, h70dx 267-269, bulblightv3 342, the four h1162 rows, h70b1 134,
     h70bx 216, the six status-read rows (h6092 334 / 333 / 401, h7072 371 / 294, h70b6 341), the nine BK target
     rows, the five Glide panel rows (h6061 96 / 97 / 121 / 163 / 228), the seven `legacy_02` rows (h6105,
     h6107, h6129, h6185, h73101217, h7318 and h6165, each goodsType 0), h60ax 235 and h61d3 239 / 246 (the
     colour-temperature work, which also promoted h60ax 302 to `app_traced`), h7050 98 (H7061's two heads;
     the aa 40 section sum promoted dreamcolorlightv1 204 to `app_traced`) and the three device-list card rows
-    (h70b2 185, h6630 285 / 286), and h61d3 375 and h6609 173 (the IC piece rules), all `app_traced` but h7072
+    (h70b2 185, h6630 285 / 286), h61d3 375 and h6609 173 (the IC piece rules), and h707a 326 (the TLV 0xA1
+    segment count), all `app_traced` but h7072
     294, h6119 44, the Glide panels, h60ax 235, h61d3 239 / 246 and h6609 173 (`modelled`). The live piece
     count promoted h705a 125 / 240 / 250 and h61d3 299 / 261 to `app_traced`, and the read-back piece count
     h6609 260 (five of its SKUs held `modelled` by their own `support`).
@@ -610,9 +628,9 @@ model, from which the shipped readers are generated).
   USING_THE_KSY.md and the `relay_on_mask` doc give the four-param rule.
 - **Eight more `govee_common` command ids**, the TLV types the app's 0xAC status reads request: `cmd_0c`
   (the H7070-screen operate info), `cmd_2c` (the H60B0 operate sub-mode), `cmd_45`, `cmd_48`, `cmd_4b`, `cmd_7d` /
-  `cmd_7e` (the H70B6 / H70B8 clock and temperature unit) and `cmd_a1` (the H707A segment info). None gets a
-  typed decode, so their values stay raw in the status stream's `rest`, as an unnamed tag's did: no admitted
-  SKU's request or decoded state changes. Only the frame analyzer's labels do (`write/cmd_4b`, where it said
+  `cmd_7e` (the H70B6 / H70B8 clock and temperature unit) and `cmd_a1` (the H707A segment info). None but
+  `cmd_a1` (under `form_a1`, below) gets a typed decode, so their values stay raw in the status stream's `rest`,
+  as an unnamed tag's did: no admitted SKU's request or decoded state changes. Only the frame analyzer's labels do (`write/cmd_4b`, where it said
   `write/cmd=0x4b`).
   - h6092 283 / 334 / 333 / 401 read TLV 0x41 as the power-off memory, so a burst whose 0x41 is shorter than
     two bytes applies nothing, and mark an empty TLV 0x05 as the app's failed read (the library reads past that
@@ -721,6 +739,15 @@ model, from which the shipped readers are generated).
   `ceil(clamp(IC, 41, 70) / 5)` gives, where it was the library's bound of 16. The h705a 125 / 240 / 250 / 184
   wire rows take `f_40: ic_pair`, the reader their screens read aa 40 with (the pair form needs it), and
   govee_common's `form_40::ic_pair` doc names that read.
+- **TLV 0xA1, the H707A segment info** (govee_common `form_a1`: `unknown`, `segment_info`; govee_profile
+  `command_forms.f_a1`; govee_state `cmd_a1_state` -> `segment_info`, `[segment_count u1][segment_ics u1...]`,
+  the status TLV only, with `H707AInfo4Detail.G0`, the reply's lambda, `SegmentIcDataCache` and
+  `H707AColorMode` cited). An empty value fails the app's read (`app_read_fails`: `G0` reads byte 0
+  unguarded). devices.schema.json `wireForms.f_a1`; a status row that requests `cmd_a1` needs `f_a1:
+  segment_info`, and the resolver projects it as `status_segment_count`. h707a 326 takes `support:
+  app_traced`, the family wire `f_a1: segment_info` and `wire.by_model` counts (`Support.f`), and its doc says
+  what the library leaves out. `govee_reference.make_profile` takes `f_a1`, and the self-test reads a 0xA1
+  TLV and its empty-value failure.
 
 ## [1.6.1] — 2026-10-21
 

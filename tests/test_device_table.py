@@ -400,6 +400,8 @@ _REFUSED: tuple[tuple[str, str, _Edit, str], ...] = (
     ("h5080", "43", lambda f: _row(f, "43").update(connect_writes=[]), "connect_writes []"),
     ("bulblightv3", "64", lambda f: _row(f, "64").update(connect_writes=["plug_sync_time"]),
      "connect_writes ['plug_sync_time']"),
+    ("h707a", "326", lambda f: f["client_profile"]["wire"]["forms"].pop("f_a1"),
+     "a requested cmd_a1 and wire f_a1 segment_info go together"),
     ("bulblightv3", "342", lambda f: _row(f, "348")["models"].append("H14A1"),
      "by_model ['connect_writes'] on a SKU that rows ['342', '348'] list"),
     # plugs

@@ -75,7 +75,8 @@ _H60A6_STATUS_DECODE: Final = (
 # has_brightness / empty_fails are flags.
 _C = _spec.Common
 _STATUS_ENUMS: Final[Mapping[str, Any]] = MappingProxyType({
-    "f_30": _C.Form30, "f_36": _C.Form36, "f_40": _C.Form40, "f_41": _C.Form41, "f_a3": _C.FormA3,
+    "f_30": _C.Form30, "f_36": _C.Form36, "f_40": _C.Form40, "f_41": _C.Form41, "f_a1": _C.FormA1,
+    "f_a3": _C.FormA3,
     "f_a5": _C.FormA5, "group_rule": _C.GroupCountRule, "music": _C.MusicDecode})
 _STATUS_FLAGS: Final = ("has_brightness", "empty_fails")
 
@@ -485,6 +486,17 @@ class DeviceProfile:
     but a ``readback_only`` rule's (h6609 goodsType 260: the strip is sized once by ``ColorPieceConfig.b``,
     the walk by ``H70c4Support.b``), whose walk covers the static pieces where the read gives no count;
     False (the default): the writes keep :attr:`segments`."""
+    status_segment_count: bool = field(default=False, kw_only=True)
+    """``readback="status"``: the 0xAC status read's TLV 0xA1 (:attr:`status_decode` ``f_a1``
+    ``segment_info``) reports the device's segment count, its first byte, which the screen takes as its
+    colour page's piece count and so as every colour, colour-temperature and segment-brightness mask (the
+    H707A / H707B / H707C strings, cut by the user: ``H707AInfo4Detail.G0`` -> ``Info4BleIotDevice.P0`` /
+    ``SegmentIcDataCache``, ``H707AColorMode.X``). :attr:`~.device.Device.segment_count` becomes each read's
+    count, at most ``build.MAX_MASK_SEGMENTS`` (a count of 0 leaves it, as it leaves the page), and a write
+    that carries a mask before any count is known makes the status read first and raises GoveeBleError,
+    sending nothing, when the device reports none, as a :attr:`section_count_read` profile does.
+    :attr:`segments` is then only the count before the first read (a devices.yaml status row that requests
+    ``cmd_a1``). False (the default): the status read sizes nothing."""
 
     def __post_init__(self) -> None:
         """Validate each field: GoveeBleInvalidValue (a ValueError) on a value no Device can use.
@@ -566,6 +578,9 @@ class DeviceProfile:
         if self.color_writes_live_ic and not self.color_readback_live_ic:
             raise GoveeBleInvalidValue(f"{where}: color_writes_live_ic without color_readback_live_ic (the "
                                        "live pieces come from its aa 40 read)")
+        if self.status_segment_count and self.readback != "status":
+            raise GoveeBleInvalidValue(f"{where}: status_segment_count on readback={self.readback!r} (the "
+                                       "count is the 0xAC status read's TLV 0xA1)")
         for name in ("kelvin_by_hardware", "kelvin_by_software"):
             if isinstance(getattr(self, name), list):
                 object.__setattr__(self, name, tuple(map(tuple, getattr(self, name))))

@@ -104,7 +104,10 @@ the row lacks fails the build: nothing defaults silently.
   h70dx screen parses each, ``VM4H70DX.g5``; any other 0xA5 is skipped), and the TLV 0x05's mode decode
   (mode_status over mode). The library takes the zone bits from TLV 0x30, so a
   requested ``cmd_30`` needs ``f_30: zone_power``. A pact branch may only drop ``color_group``, which
-  becomes ``status_color_groups_pact`` (one pact type, from its lowest code that keeps it). A polled row
+  becomes ``status_color_groups_pact`` (one pact type, from its lowest code that keeps it). A requested
+  ``cmd_a1`` and the wire ``f_a1: segment_info`` go together: that TLV's count is the device's segment count
+  (``DeviceProfile.status_segment_count``: the H707A screen's colour page, ``H707AInfo4Detail.G0``), and the
+  wire ``num_segments`` is the count before the first read. A polled row
   reads its power from aa 01, or, with ``power_read: aa34_detail``, from the aa 34 device-detail read
   (``DeviceProfile.detail_power_read``; wire ``f_34: device_detail``; never on a bar row, and with no aa 01
   to take a ``heartbeat_aa01`` power from). A polled row
@@ -511,7 +514,7 @@ _DIALECTS: Final = {"legacy_scene": "A", "diy_graffiti": "B_h60a6", "tablelamp_h
 _READBACK: Final = {"aa01": "polled", "ac_status": "status", "aa34_detail": "polled", "advert": "none"}
 # The forms of the TLVs the status stream reads (govee_state's TLV-typed tags; reassemble.status_profile): the
 # row's own, in DeviceProfile.status_decode. f_a5 goes in only where the 0xA5 TLV is read as colour groups.
-_STATUS_TLV_FORMS: Final = ("f_30", "f_36", "f_40", "f_41", "f_a3")
+_STATUS_TLV_FORMS: Final = ("f_30", "f_36", "f_40", "f_41", "f_a1", "f_a3")
 _GROUP_RULES: Final = frozenset({"from_len", "fixed", "by_pieces"})   # govee_common::group_count_rule, read
 _READS: Final = frozenset({"brightness", "gradual", "cmd_36", "color_group", "ic_num", "cmd_41"})
 _PACT_FACTS: Final = frozenset({"status_read", "scene_versions", "kelvin_range", "brightness_range"})
@@ -1097,6 +1100,10 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
     section_count = "cmd_41" in reads
     if section_count and forms.get("f_41") != "section_count":
         fail("an aa 41 read without f_41 section_count")
+    # The H707A status screen's TLV 0xA1: its segment count sizes every mask (H707AInfo4Detail.G0).
+    segment_info = status_read is not None and "cmd_a1" in status_read
+    if segment_info != (forms.get("f_a1") == "segment_info"):
+        fail("a requested cmd_a1 and wire f_a1 segment_info go together (the status read's segment count)")
     bar = forms.get("f_36") == "bar_pair"
     if ("cmd_36" in reads) != bar:
         fail("the aa 36 read and f_36 bar_pair go together")
@@ -1170,6 +1177,7 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
         "detail_power_read": power_read == "aa34_detail",
         "ic_num_read_only": ic == "fixed",
         "section_count_read": section_count,
+        "status_segment_count": segment_info,
         "brightness_range": raw_bright,
         "kelvin_by_pact": kelvin_by_pact,
         "brightness_by_pact": bright_by_pact,

@@ -837,6 +837,13 @@
           ],
           "description": "govee_profile command_forms.f_41 (govee_common::form_41)."
         },
+        "f_a1": {
+          "enum": [
+            "unknown",
+            "segment_info"
+          ],
+          "description": "govee_profile command_forms.f_a1 (govee_common::form_a1). On a status row that requests cmd_a1, segment_info's count (TLV 0xA1 value[0]) is the device's segment count, which sizes every mask and the segment index (the library's segment_count; wire num_segments is the count before the first read)."
+        },
         "f_a2": {
           "enum": [
             "unknown",

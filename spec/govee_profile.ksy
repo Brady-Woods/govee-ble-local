@@ -76,6 +76,10 @@ types:
         type: u1
         enum: govee_common::form_41
         doc: aa 41, TLV 0x41 (power memory vs section count)
+      - id: f_a1
+        type: u1
+        enum: govee_common::form_a1
+        doc: TLV 0xA1, the status screen's segment-info read
       - id: f_a2
         type: u1
         enum: govee_common::form_a2

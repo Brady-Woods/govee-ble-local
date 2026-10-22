@@ -242,7 +242,7 @@ def _stream(buf: bytes) -> Any:
 
 
 _FORMS: Final = ("f_01", "f_02", "f_09", "f_12", "f_13", "f_14", "f_30", "f_34", "f_36", "f_40", "f_41",
-                 "f_a2", "f_a3", "f_a5", "f_b0", "f_0b", "f_15_01", "f_15_04", "f_15_05", "f_ee_30",
+                 "f_a1", "f_a2", "f_a3", "f_a5", "f_b0", "f_0b", "f_15_01", "f_15_04", "f_15_05", "f_ee_30",
                  "f_ee_40")
 # govee_profile struct -> its params, each with the govee_common enum it takes (None: a plain number)
 _LEAVES: Final[dict[str, dict[str, str | None]]] = {
@@ -615,6 +615,11 @@ def _selftest(*, strict: bool = False) -> int:
     padded = parse_status(tlv + bytes(7), status_profile)
     check("0xAC status: trailing zero padding reads as type-0 TLVs and a 1-byte tail",
           len([t for t in padded.tlvs if t.tag != 0]) == 3 and padded.tail == b"\x00")
+    segs = parse_status(bytes([0xA1, 0, 0xA1, 4, 3, 54, 54, 36]), make_profile(f_a1="segment_info")).tlvs
+    check("0xAC status: TLV 0xA1 segment_info [count][IC per segment]; an empty one fails the app's read",
+          segs[0].app_read_fails and not segs[1].app_read_fails
+          and segs[1].value.body.body.segment_count == 3
+          and list(segs[1].value.body.body.segment_ics) == [54, 54, 36])
 
     def group_reply(has_brightness: bool, records: Sequence[int]) -> Any:
         prof = make_profile(f_a5="color_group", rule="fixed", num_per_group=2, has_brightness=has_brightness)

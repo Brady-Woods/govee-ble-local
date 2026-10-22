@@ -323,9 +323,10 @@ class Device:
         """Segments this device addresses: the count it reported at runtime if any, else the profile's
         static ``segments``. Sets the whole-device mask and its byte width (2 bytes up to 16 segments,
         ceil(n/8) above) and bounds the segment indices. The device's own read sets it on a
-        ``section_count_read`` profile (H6062's aa 41) and on a ``color_writes_live_ic`` one (the live pieces
-        of each poll's aa 40 read: H6641, the other IC-sized rows), as does :meth:`set_segment_count`, until
-        the next such read. A caller that offers one entity per segment reads it after the first
+        ``section_count_read`` profile (H6062's aa 41), on a ``color_writes_live_ic`` one (the live pieces
+        of each poll's aa 40 read: H6641, the other IC-sized rows) and on a ``status_segment_count`` one (each
+        status read's TLV 0xA1: H707A / H707B / H707C), as does :meth:`set_segment_count`, until the next such
+        read. A caller that offers one entity per segment reads it after the first
         :meth:`update`."""
         return self._segment_count if self._segment_count is not None else self.profile.segments
 
@@ -2015,10 +2016,14 @@ class Device:
             for i in st.zone_power:
                 posted.pop(i, None)
 
+        async def burst() -> reassemble.StatusReply:
+            st = await _readback.status_burst(self, lambda: self._query_status(budget))
+            self._adopt_status_segments(st)   # a device fact: adopted whatever a setter did meanwhile
+            return st
+
         # The burst is the whole poll, as the app's connect read is: its 0x05 TLV carries the mode
         # (_fold.apply_status), so no aa 05 read follows it.
-        await self._read_fresh(
-            "status", lambda: _readback.status_burst(self, lambda: self._query_status(budget)), apply)
+        await self._read_fresh("status", burst, apply)
         self._finish_read(applied, power_read, since)
         return applied
 
@@ -2094,16 +2099,25 @@ class Device:
         self._segment_count = sc.section_num
         return True
 
+    def _adopt_status_segments(self, st: reassemble.StatusReply) -> None:
+        """On a ``status_segment_count`` profile, adopt a status read's TLV 0xA1 segment count as
+        :attr:`segment_count` (at most ``build.MAX_MASK_SEGMENTS``: every larger count writes the same bytes),
+        as the H707A screen sizes its colour page by it (``H707AInfo4Detail.G0``, ``H707AColorMode.X``); a
+        read without one, or with a count of 0, which the page skips, leaves it as it was."""
+        if self.profile.status_segment_count and st.segment_count:
+            self._segment_count = min(st.segment_count, build.MAX_MASK_SEGMENTS)
+
     async def _ensure_segment_count(self) -> None:
         """Make sure the device's own segment count is known before a write that carries a segment
         mask. The app always reads it on connect and cannot control the device without it
         (``AbsComposeControllerWithOpResult.onOvertime`` fails the connect read), so a profile with
-        ``section_count_read`` (aa 41) or ``color_writes_live_ic`` (aa 40, whose pieces the strip and so
-        every pick's position set take) does the same lazily here and sends nothing if the device gives no
-        usable count, rather than guessing a mask. A no-op on every other profile and once the count is
-        known. Every caller holds the heartbeat across this read and the write it sizes
-        (``GoveeConnection.hold_heartbeat``), as :meth:`update` holds its reads: the app reads the count
-        in its connect read, during which it sends none (``ShareVM.R`` -> ``updateSkipHeart``)."""
+        ``section_count_read`` (aa 41), ``color_writes_live_ic`` (aa 40, whose pieces the strip and so
+        every pick's position set take) or ``status_segment_count`` (the 0xAC status read's TLV 0xA1) does
+        the same lazily here and sends nothing if the device gives no usable count, rather than guessing a
+        mask. A no-op on every other profile and once the count is known. Every caller holds the heartbeat
+        across this read and the write it sizes (``GoveeConnection.hold_heartbeat``), as :meth:`update` holds
+        its reads: the app reads the count in its connect read, during which it sends none (``ShareVM.R`` ->
+        ``updateSkipHeart``)."""
         if (self._segment_count is None and self.profile.section_count_read
                 and not await self._read_section_count()):
             raise GoveeBleError(
@@ -2114,6 +2128,12 @@ class Device:
             if self._segment_count is None:
                 raise GoveeBleError(
                     f"{self._sku}: the device did not report a usable IC count (aa 40); "
+                    "not sending a colour frame with a guessed segment mask")
+        if self._segment_count is None and self.profile.status_segment_count:
+            self._adopt_status_segments(await _readback.status_burst(self, self._query_status))
+            if self._segment_count is None:
+                raise GoveeBleError(
+                    f"{self._sku}: the device did not report its segment count (0xAC TLV 0xA1); "
                     "not sending a colour frame with a guessed segment mask")
 
     async def _read_fresh(
