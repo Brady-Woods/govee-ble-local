@@ -746,20 +746,34 @@ def test_live_ic_profile_needs_its_ic_derivation() -> None:
                       color_readback_ic_range=(1, 2), color_readback_ic_per_piece=0)
     with pytest.raises(ValueError, match="color_readback_ic_range"):
         DeviceProfile(skus=("HX",), capabilities=frozenset(), color_readback_ic_range=(5, 2))
+    with pytest.raises(ValueError, match="color_readback_ic_rounding"):
+        DeviceProfile(skus=("HX",), capabilities=frozenset(), color_readback_ic_rounding="half")   # type: ignore[arg-type]
+    for rule in (dict(color_readback_ic_table=((36, 18),)), dict(color_readback_ic_otherwise=14),
+                 dict(color_readback_ic_table=((36, 18), (36, 9)), color_readback_ic_otherwise=14),
+                 dict(color_readback_ic_table=((36, 18),), color_readback_ic_pair_cap=15,
+                      color_readback_ic_otherwise=14)):
+        with pytest.raises(ValueError, match="color_readback_ic_table"):
+            DeviceProfile(skus=("HX",), capabilities=frozenset(), **rule)   # type: ignore[arg-type]
+
+
+def _ic(count: int) -> parse.IcCount:
+    ic = parse.parse_ic_count(_frame(0xAA, 0x40, (count >> 8) & 0xFF, count & 0xFF, 0x05))
+    assert ic is not None
+    return ic
 
 
 def test_live_ic_without_a_clamp_uses_the_reported_count() -> None:
     profile = DeviceProfile(skus=("HX",), capabilities=frozenset(), color_readback_live_ic=True,
                             color_readback_ic_per_piece=5)
     d = Device(profile, ble_device("AA:BB:CC:DD:EE:3C", "HX"))
-    assert _readback.live_ic_pieces(d, 23) == 5          # ceil(23 / 5), no clamp
-    assert _readback.live_ic_pieces(d, -1) == 0          # a negative count (aa 40 ff ff) is no pieces
+    assert _readback.live_ic_pieces(d, _ic(23)) == 5     # ceil(23 / 5), no clamp
+    assert _readback.live_ic_pieces(d, _ic(-1)) == 0     # a negative count (aa 40 ff ff) is no pieces
     # The app never stores a count of 0x1000 or more: the spec's ic_count_checked is None there.
-    ic = parse.parse_ic_count(_frame(0xAA, 0x40, 0x10, 0x00, 0x05))
-    assert ic is not None and ic.ic_count == 0x1000 and ic.ic_count_checked is None
+    ic = _ic(0x1000)
+    assert ic.ic_count == 0x1000 and ic.ic_count_checked is None and _readback.live_ic_pieces(d, ic) is None
     h6641 = make_device(ble_device("AA:BB:CC:DD:EE:3D", "H6641"), "H6641")
     assert h6641 is not None
-    assert _readback.live_ic_pieces(h6641, 23) == 9      # clamped to 41, ceil(41 / 5)
+    assert _readback.live_ic_pieces(h6641, _ic(23)) == 9   # clamped to 41, ceil(41 / 5)
 
 
 # ── WP3-081: a secret set on a live session is sent before the next command ───────────────

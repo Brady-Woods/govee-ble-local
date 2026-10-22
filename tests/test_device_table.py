@@ -21,7 +21,7 @@ from govee_ble_local import supported_skus
 from govee_ble_local._generated.devices import FAMILIES
 from govee_ble_local.devices import _fold, _resolve
 from govee_ble_local.devices.profile import (
-    PROFILES, DeviceProfile, RelayPower, SessionMode, profile_for, wire_profile)
+    PROFILES, DeviceProfile, IcRounding, RelayPower, SessionMode, profile_for, wire_profile)
 from govee_ble_local.exceptions import GoveeBleNotSupported
 from govee_ble_local.models import Capability as C
 from govee_ble_local.models import Encryption as E
@@ -133,6 +133,7 @@ def test_the_generated_table_is_masters_hand_table_but_for_the_spec_fixes() -> N
     assert built == _resolve.SEGMENT_BRIGHTNESS_SCHEMES
     assert set(_resolve.WHITE_TYPES) == set(get_args(WhiteType))
     assert set(_resolve.SESSIONS) == set(get_args(SessionMode))
+    assert set(_resolve.IC_ROUNDINGS) == set(get_args(IcRounding))
     routes = _resolve.routes(FAMILIES)
     reference = _reference()
     yaml = require_optional("yaml", reason="the reference resolver reads spec/devices.yaml")

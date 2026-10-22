@@ -38,6 +38,9 @@ ReadBack = Literal["status", "polled", "plug", "none"]
 # control screens'); "per_command" = a session of its own per write (the device-list card's).
 SessionMode = Literal["held", "per_command"]
 ColorReadBack = Literal["", "mechanism_b", "mechanism_a_direct"]
+# How a live IC count divides into pieces (DeviceProfile.color_readback_ic_rounding): "ceil" rounds up,
+# "floor" is Java's integer division.
+IcRounding = Literal["ceil", "floor"]
 # How the colour sub-modes of an ``aa 05`` mode report are decoded (the SKU's Info4Detail mode parse): a
 # name of the spec's mode_color_parse table (devices.yaml ``mode_color_parse``, which maps each colour
 # sub-mode to a color_decode; :func:`wire_profile`), e.g. "kelvin_15_rgb_kelvin_0d" (H60A6) or
@@ -179,9 +182,10 @@ class DeviceProfile:
     from it instead of a static :attr:`color_readback_segments`, as the app does for SKUs whose
     segmentation isn't knowable from the static device table (H6641).
 
-    The IC count is clamped to :attr:`color_readback_ic_range` and divided (rounding up) by
-    :attr:`color_readback_ic_per_piece`; the group count is then ceil(pieces / group size). The
-    reply's third byte is not used."""
+    The IC count is clamped to :attr:`color_readback_ic_range` and divided by
+    :attr:`color_readback_ic_per_piece`, rounding as :attr:`color_readback_ic_rounding` says (up by
+    default), unless :attr:`color_readback_ic_table` or :attr:`color_readback_ic_pair_cap` gives the rule;
+    the group count is then ceil(pieces / group size). The reply's third byte is not used."""
     section_count_read: bool = False
     """The device reports its own segment count with `aa 41` -> [IC s16be, sectionNum u8]
     (striplight ControllerIcSegmentNum; H6062).
@@ -435,6 +439,26 @@ class DeviceProfile:
     :attr:`capabilities` POWER and BRIGHTNESS only and no :attr:`zones` (GoveeBleInvalidValue otherwise): the
     card sends nothing else, and a scene upload or a bar's read-modify-write would hold a link past its
     session."""
+    color_readback_ic_rounding: IcRounding = field(default="ceil", kw_only=True)
+    """How :attr:`color_readback_live_ic` divides the clamped IC count by :attr:`color_readback_ic_per_piece`:
+    ``"ceil"`` rounds up (the default, every profile before 1.9.0: ``H61D3Support.e``), ``"floor"`` is Java's
+    integer division (h705a ``Support.b`` for goodsTypes 125 / 240: IC / 4). A devices.yaml ``ic_pieces``
+    ``rounding``."""
+    color_readback_ic_table: tuple[tuple[int, int], ...] = field(default=(), kw_only=True)
+    """:attr:`color_readback_live_ic` by the IC count's value, in place of the clamp and divisor: ``(IC,
+    pieces)`` entries, each IC once, and :attr:`color_readback_ic_otherwise` at any other count (h6609
+    ``Support.getColorPieceSize(173, IC)``: 18 at 36, else 14; a devices.yaml ``ic_pieces`` ``table``). Empty
+    (the default): the clamp and divisor (a list is kept as a tuple)."""
+    color_readback_ic_pair_cap: int | None = field(default=None, kw_only=True)
+    """:attr:`color_readback_live_ic` from two strips, in place of the clamp and divisor: where the aa 40
+    reply's IC-pair reader returns a second pair (``ControllerIcNum.e``), its first IC is not 0 (the list
+    ``VM4Light.h5`` keeps) and its second is above 0, ``min(IC 1, cap) + min(IC 2, cap)`` pieces, else
+    :attr:`color_readback_ic_otherwise`; no count where that reader throws (``H61D3Support.e`` and
+    ``ColorModeH1A45`` for goodsType 375: cap 15, else 30; a devices.yaml ``ic_pieces`` ``pair_max``). None
+    (the default): the reply's one IC count."""
+    color_readback_ic_otherwise: int | None = field(default=None, kw_only=True)
+    """The pieces at an IC count :attr:`color_readback_ic_table` doesn't list, and on a reply without the
+    second strip :attr:`color_readback_ic_pair_cap` needs: 1 or more, and set with either of them."""
 
     def __post_init__(self) -> None:
         """Validate each field: GoveeBleInvalidValue (a ValueError) on a value no Device can use.
@@ -463,6 +487,7 @@ class DeviceProfile:
             ("heartbeat_timing", HeartbeatTiming),
             ("white_type", WhiteType),
             ("session", SessionMode),
+            ("color_readback_ic_rounding", IcRounding),
         ):
             value = getattr(self, name)
             if value not in get_args(allowed):
@@ -511,6 +536,7 @@ class DeviceProfile:
         if self.color_readback_ic_per_piece < 1:
             raise GoveeBleInvalidValue(
                 f"{where}: color_readback_ic_per_piece={self.color_readback_ic_per_piece!r}")
+        self._check_ic_rules(where)
         for name in ("kelvin_by_hardware", "kelvin_by_software"):
             if isinstance(getattr(self, name), list):
                 object.__setattr__(self, name, tuple(map(tuple, getattr(self, name))))
@@ -532,6 +558,26 @@ class DeviceProfile:
             raise GoveeBleInvalidValue(
                 f"{where}: session='per_command' takes capabilities {sorted(c.value for c in card)} only and "
                 f"no zones; got {sorted(c.value for c in self.capabilities)} and {len(self.zones)} zones")
+
+    def _check_ic_rules(self, where: str) -> None:
+        """The IC rules' fields: :attr:`color_readback_ic_table` ``(IC, pieces)`` entries of ints, each IC
+        0 or more and once, the pieces 1 or more; :attr:`color_readback_ic_pair_cap` None or 1 or more; not
+        both; and :attr:`color_readback_ic_otherwise` 1 or more where either is set, else None (a list is kept
+        as a tuple)."""
+        table = tuple(tuple(entry) for entry in self.color_readback_ic_table)
+        object.__setattr__(self, "color_readback_ic_table", table)
+        cap, otherwise = self.color_readback_ic_pair_cap, self.color_readback_ic_otherwise
+
+        def count(value: object, low: int) -> bool:
+            return isinstance(value, int) and not isinstance(value, bool) and value >= low
+
+        if not (all(len(e) == 2 and count(e[0], 0) and count(e[1], 1) for e in table)
+                and len({e[0] for e in table}) == len(table)
+                and (cap is None or count(cap, 1)) and not (table and cap is not None)
+                and (count(otherwise, 1) if table or cap is not None else otherwise is None)):
+            raise GoveeBleInvalidValue(
+                f"{where}: color_readback_ic_table={table!r}, color_readback_ic_pair_cap={cap!r}, "
+                f"color_readback_ic_otherwise={otherwise!r}")
 
     def _check_ranges_by_pact(self, where: str) -> None:
         """:attr:`kelvin_by_pact` / :attr:`brightness_by_pact`'s rules: ``(pact_type, pact_code)`` keys of

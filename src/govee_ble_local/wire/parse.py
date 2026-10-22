@@ -463,17 +463,24 @@ class IcCount:
     # (the spec's ``section_sum``, ``ControllerIcNum.d``): None where that reader throws (``app_pair_fails``)
     # or the reply is under 6 bytes.
     section_sum: int | None = None
+    # The IC counts the IC-pair reader returns (``ControllerIcNum.e``): ``(ic_count,)``, with ``ic_count_2``
+    # after it where the reply carries a second pair (the spec's ``has_second_pair``), or None where that
+    # reader throws (``app_pair_fails``).
+    ic_pair: tuple[int, ...] | None = None
 
 
 def parse_ic_count(frame: bytes) -> IcCount | None:
-    """AA 40 reply: the live IC count, the reply's third byte and the section sum (see :class:`IcCount`)."""
+    """AA 40 reply: the live IC count, the reply's third byte, the section sum and the IC-pair reader's counts
+    (see :class:`IcCount`)."""
     b = _reply_state(frame, _Command.ic_num)
     if b is None or getattr(b, "segment", None) is None:   # shorter than [ic_count s2][segment]
         return None
     checked, sections = b.ic_count_checked, b.section_sum
+    second = (int(b.ic_count_2),) if b.has_second_pair else ()
+    pair = None if b.app_pair_fails else (int(b.ic_count), *second)
     return IcCount(ic_count=int(b.ic_count), segment_count=int(b.segment),
                    ic_count_checked=None if checked is None else int(checked),
-                   section_sum=None if sections is None else int(sections))
+                   section_sum=None if sections is None else int(sections), ic_pair=pair)
 
 
 @dataclass(frozen=True)

@@ -2555,7 +2555,7 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/ColorModeControllerConfig.java:205-257,730-785
             - base-classes10/com/govee/base2light/capability/color/LightColorCapabilityCenter.java:1078-1089,1118-1125
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:401-411,433-437,1714-1716
-        "375":   # H1A45; no support: the two-IC piece count has no library form (G2)
+        "375":   # H1A45; no support: its colour writes take the live two-IC count (G2)
           models: [H1A45]
           pacts: ["1,1", "1,2"]
           color_functions: [segment_brightness, color_temperature]
@@ -2565,9 +2565,10 @@ families:
           scene_dialect: untraced
           kelvin_range: [1000, 10000]
           brightness_range: [1, 100]
-          connect_reads: [brightness, gradual, color_group]
+          connect_reads: [brightness, gradual, ic_num, color_group]
           connect_writes: []
           heartbeat: power
+          ic_pieces: { pair_max: 15, otherwise: 30 }
           doc: >-
             H1A45. NO SUPPORT. Model.t -> NewLightDetailActivity; VM4Light.j5 reads aa 40 with the pair parser
             (ControllerIcNum.e) and keeps [ic1, ic2]; pieces = min(ic1, 15) + min(ic2, 15), or 30 when the reply carries one
@@ -2579,9 +2580,10 @@ families:
             33 a3 <on>; relative brightness Config.z -> WU = 0, and Config.i0 -> TV -> ColorModeControllerConfig.z ->
             Bytes.G 15 02 <bri> <mask> (as row 367). Kelvin: KelvinConfig key 375 -> T1 = version 5 = [1000, 10000].
             Brightness: no BrightnessConfig key, version 1, percent. 7.5.12 has the same values. Apart from the pieces
-            this is row 367's screen and colour config. connect_reads leaves out ic_num although the screen sends aa 40:
-            the read is the pair form, which ic_pieces cannot state, and the schema ties ic_num to ic_pieces (gap G2,
-            the row's one blocker). Scenes untraced.
+            this is row 367's screen and colour config. ic_pieces states the pair rule (pair_max 15, otherwise 30), which
+            sizes the aa a5 walk (VM4Light.w5 over H61D3Support.k) and the strip ColorModeH1A45.d0 draws from the same
+            list (o0 / p0), so the colour writes' position set too: held until the writes take the live count (G2).
+            Scenes untraced.
           doc-ref:
             - split_h61d3/com/govee/h61d3/pact/H61D3Support.java:542-555,786-788,945-953,1131-1154
             - base-classes2/com/govee/shared/checker/KmpGoodsType.java:146
@@ -2589,7 +2591,7 @@ families:
             - split_h61d3/com/govee/h61d3/adjustNew/VM4Light.java:542-581,636-669,1182-1199
             - base-classes11/com/govee/base2light/kt/general_controller/ControllerIcNum.java:141-157
             - split_h61d3/com/govee/h61d3/adjustNew/ConfigDetail.java:94-106
-            - split_h61d3/com/govee/h61d3/adjustNew/color/ColorModeH1A45.java:91-125,188-209,1063-1066
+            - split_h61d3/com/govee/h61d3/adjustNew/color/ColorModeH1A45.java:91-125,188-209,606-623,933-990,1063-1091
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/ColorModeControllerConfig.java:730-765,1184-1196
             - base-classes11/com/govee/base2light/pact/newdetail/content/color/ColorViewModel.java:715-742
             - base-classes11/com/govee/base2light/pact/newdetail/IColorModeFuc.java:94-98
@@ -12465,9 +12467,10 @@ families:
           scene_dialect: untraced
           kelvin_range: [2000, 9000]
           brightness_range: [1, 100]
-          connect_reads: [brightness, gradual, color_group]
+          connect_reads: [brightness, gradual, ic_num, color_group]
           connect_writes: []
           heartbeat: heartbeat
+          ic_pieces: { table: [{ ic: 36, pieces: 18 }], otherwise: 14 }
           doc: >-
             H6609 on NewDetailAc (Model.t via DetailConfig.b), pact (1,1) (Support.addSupportPact, n4 supportPactV1).
             Connect: the default Compose4InfoBleIot read (aa 04, aa a3, aa 01, the extra aa 40 IC count, aa 05), then direct
@@ -12487,8 +12490,8 @@ families:
             write mask. q() is the bound IC from the pairing aa 40 (DefInfo.G0(bleExt.getIc()), IcNumController.u) on the
             device-list entry, replaced by the server's SKU IC (SkuIcManager.d, /appsku/v1/skus, 0 if absent) when it is
             <= 0 (AbsAcLightDetail.K1), and always the server's SKU IC on the screen straight after pairing
-            (NewDetailAc.Companion.c). The connect aa 40 is stored only (Info4Detail.u0) and sizes nothing; connect_reads
-            leaves out ic_num because the schema ties it to ic_pieces, which can't state the rule. The automation builder
+            (NewDetailAc.Companion.c). The connect aa 40 is stored only (Info4Detail.u0) and sizes nothing; ic_pieces states
+            the rule (the table) over the one IC a client can read, the connect aa 40. The automation builder
             (Comm.makeColorController4BleComm -> SubModeColorV1 op 1 / 2) writes the same 0x15 bytes.
           doc-ref:
             - split_h6840/com/govee/h6609/pact/Model.java:62-65
@@ -12855,7 +12858,7 @@ families:
         counts: { num_segments: 10 }   # goodsType 260's default (every other goodsType sets its own): ColorPieceConfig.b / H70c4Support.b default 10
         group: { num_per_group: 4 }
         by_goods_type:
-          "173": { forms: { f_15_01: kelvin_tint }, counts: { num_segments: 18 }, group: { rule: fixed }, doc: "pieces follow the app's IC q(): 18 at IC 36, else 14 (split_h6840/com/govee/h6609/pact/Support.java:146-149; base-classes11/com/govee/base2light/pact/newdetail/config/fuc/ColorPieceConfig.java:1651-1654). q() is the bound pairing IC, or the server's SKU IC (SkuIcManager.d) when that is <= 0 and on the first screen after pairing (base-classes11/com/govee/base2light/pact/newdetail/AbsAcLightDetail.java:594-601; split_h6840/com/govee/h6609/newdetail/NewDetailAc.java:118), never the connect aa 40. 18 is the branch the catalogue's default IC (36, Product.ic) selects; the library has no IC-equality rule, so the row has no support" }
+          "173": { forms: { f_15_01: kelvin_tint }, counts: { num_segments: 18 }, group: { rule: fixed }, doc: "pieces follow the app's IC q(): 18 at IC 36, else 14 (split_h6840/com/govee/h6609/pact/Support.java:146-149; base-classes11/com/govee/base2light/pact/newdetail/config/fuc/ColorPieceConfig.java:1651-1654). q() is the bound pairing IC, or the server's SKU IC (SkuIcManager.d) when that is <= 0 and on the first screen after pairing (base-classes11/com/govee/base2light/pact/newdetail/AbsAcLightDetail.java:594-601; split_h6840/com/govee/h6609/newdetail/NewDetailAc.java:118), never the connect aa 40. 18 is the branch the catalogue's default IC (36, Product.ic) selects, the most pieces the rule gives (ic_pieces table)" }
           "181": { forms: { f_15_01: kelvin_tint }, counts: { num_segments: 10 }, group: { rule: fixed } }
           "260": { forms: { f_15_01: kelvin_tint }, group: { rule: fixed }, doc: "pieces per SKU in wire.by_model: the colour strip's position set (ColorPieceConfig.b) and the read-back (H70c4Support.b) agree for every SKU but at IC 1000, where H70C4 / H70C5 / H70C7 / H6870 / H80C4 read back 20 (the row is modelled on it)" }
           "362": { forms: { f_41: power_memory, f_15_01: kelvin_tint }, counts: { num_segments: 10 }, group: { rule: from_len } }
@@ -13535,7 +13538,7 @@ families:
           connect_reads: [brightness, gradual, ic_num, color_group]
           connect_writes: []
           heartbeat: power
-          ic_pieces: { min_ic: 0, max_ic: 4095, ic_per_piece: 4 }
+          ic_pieces: { min_ic: 0, max_ic: 4095, ic_per_piece: 4, rounding: floor }
           doc: >-
             H705A / H705B / H705C (AddDeviceM names them at 125; H705ASceneConfig.match) and H801B (Support.i: its ThemeM key and
             SegmentSetAc's 3-segment default; the catalogue's goodsType 125; the app routes by goodsType, SubLib.keys =
@@ -13549,11 +13552,10 @@ families:
             type Config.P[125] = 1 for a Kelvin or a tint colour), segment brightness Config.z[125] = 0 -> Bytes.G,
             gradual Config.G[125] = 0 -> Bytes.w (33 a3), Config.I[125] all on; brightness BrightnessConfig.b ->
             ControllerBrightness, percent; Kelvin version 0 = [2000, 9000] (no KelvinConfig key; Support.c agrees).
-            MODELLED, two gaps: (1) the app's pieces are floor(IC / 4) (Support.b, ColorPieceConfig h0, ColorMode.Y),
-            where ic_pieces rounds up, so a count that is not a multiple of 4 walks one aa a5 group more when floor(IC / 4)
-            is a multiple of 4 (after a segment-count change the settings page sets IC = segments x 12, VM4Light.c5); (2) the write mask
-            is the live piece count with no app cap, and num_segments 56 is the most positions a 17-byte kelvin_tint frame
-            carries (as h61d3 299). Not hardware-verified.
+            Pieces: floor(IC / 4) in Java's integer division (Support.b, ColorPieceConfig h0, ColorMode.Y; ic_pieces
+            rounding floor); after a segment-count change the settings page sets IC = segments x 12 (VM4Light.c5).
+            MODELLED: the write mask is the live piece count with no app cap, and num_segments 56 is the most positions a
+            17-byte kelvin_tint frame carries (as h61d3 299). Not hardware-verified.
           doc-ref:
             - split_h705a/com/govee/h705a/pact/Support.java:49-50,117,137-140,176-189,237-240,242-253,306,317-320,338-342,378-381
             - split_h705a/com/govee/h705a/pact/SubLib.java:20-26
@@ -13607,7 +13609,7 @@ families:
           connect_reads: [brightness, gradual, ic_num, color_group]
           connect_writes: []
           heartbeat: heartbeat
-          ic_pieces: { min_ic: 0, max_ic: 4095, ic_per_piece: 4 }
+          ic_pieces: { min_ic: 0, max_ic: 4095, ic_per_piece: 4, rounding: floor }
           doc: >-
             H705D / H705E / H705F / H805A / H805B / H805C (AddDeviceM names them at 240) and H805D (Support.D tests it with
             240); H705DSceneConfig.match. The screen of row 125 (Model.t B0 -> AcNewDetail, VM4Light), pacts (1,1), (1,2),
@@ -13622,9 +13624,9 @@ families:
             (KelvinConfig 240 -> 2; Support.c agrees). Config.A[240] = 1 makes the colour-strip and snapshot path send 15 04
             group frames, where the library sends per-colour 15 01 masks (a divergence, as pact_h6099 203). A wheel drag
             streams a5 02 83 R G B real-time frames (Config.g0[240] = 2, ColorModeControllerConfig.r); touch-up sends the
-            normal 15 01 write, which the library matches (the drag frames are not modelled). MODELLED for
-            the two gaps of row 125 (floor(IC / 4) pieces; the live, uncapped write mask, num_segments 56). Not
-            hardware-verified.
+            normal 15 01 write, which the library matches (the drag frames are not modelled). Pieces floor(IC / 4),
+            as row 125 (ic_pieces rounding floor). MODELLED for row 125's write mask (the live, uncapped piece count,
+            num_segments 56). Not hardware-verified.
           doc-ref:
             - split_h705a/com/govee/h705a/pact/Support.java:117,142-145,171-174,176-221,279-293,317-329,338-349,378-381
             - split_h705a/com/govee/h705a/pact/Model.java:166-234

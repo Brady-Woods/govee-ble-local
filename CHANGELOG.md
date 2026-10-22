@@ -290,6 +290,21 @@ model, from which the shipped readers are generated).
     `turn_on(power=True, brightness=x)` call is then two sessions inside its 60 s command timeout, so a slow
     link can time out the brightness after the power-on landed and report the command failed. Release the two
     together.
+- **The live IC count's piece rules** (`ic_pieces` object forms, read from the aa 40 reply on the direct colour
+  read-back). Besides the clamp and divisor, which rounded up (H6641: `H61D3Support.e`), the walk now follows:
+  - **floor**, Java's integer division (`DeviceProfile.color_readback_ic_rounding`, keyword-only, default
+    `"ceil"`): h705a `Support.b` gives goodsTypes 125 / 240 `IC / 4` pieces;
+  - **an IC table** (`color_readback_ic_table` with `color_readback_ic_otherwise`, keyword-only, default empty /
+    None): h6609 `Support.getColorPieceSize(173, IC)` gives 18 pieces at IC 36, else 14;
+  - **two strips** (`color_readback_ic_pair_cap` with `color_readback_ic_otherwise`, keyword-only, default
+    None): where the IC-pair reader (`ControllerIcNum.e`) returns a second pair, the first IC is not 0
+    (`VM4Light.h5` keeps no other) and the second is above 0, `min(IC 1, 15) + min(IC 2, 15)`, else 30
+    (`H61D3Support.e` for goodsType 375, H1A45); none where that reader throws.
+
+  `parse.IcCount` gains `ic_pair` (the counts that reader returns). `_readback.live_ic_pieces` now takes the
+  parsed reply and returns None where the app's reader stores no count. Every profile that had a live IC
+  count before keeps its rule (rounding up, no table, no pair), so its reads are unchanged; the h705a rows are
+  under Changed. H6609 and H1A45 have no support yet: their writes need the live count too.
 
 ### Changed
 - **A polled profile reads aa 04 only with `Capability.BRIGHTNESS`**, as the app's connect read does
@@ -362,6 +377,13 @@ model, from which the shipped readers are generated).
   pact its rows list, at (99, 99) and at none, with and without `allow_modelled`. `identify.parse_broadcast_onoff`
   now reads the advert's switch byte through the spec (`power_state`, source `advert`) and gives the same on/off
   as before for every SKU. H70B2, H6630, H8630 and H6631 are new routes.
+- **H705A / H705B / H705C / H801B (h705a 125) and H705D / H705E / H705F / H805A / H805B / H805C / H805D (240),
+  behind `allow_modelled`: the colour read-back walks `floor(IC / 4)` pieces**, the app's (`Support.b`,
+  `ColorMode.Y`), where it rounded up: at an IC count that is not a multiple of 4 it placed one piece more, and
+  read one aa a5 group more where `floor(IC / 4)` is a multiple of 4. They stay `modelled` for their write mask
+  (the live, uncapped piece count). No other SKU's profile changes: each resolves to the same one, field by
+  field, at every pact its rows list, at (99, 99) and at none, with and without `allow_modelled`. Not
+  hardware-verified: none is on the bench.
 
 ### Fixed
 - **H6188: colour temperature now sends the colour tab's frame** `33 05 0d <tint> <K> <tint>`
@@ -590,6 +612,12 @@ model, from which the shipped readers are generated).
   advert power, the pact gate) and the two facts that rest on the unsaved jadx re-decompile named in prose.
   285 / 286's `heartbeat: heartbeat` was the control screen's held link, not the card's. The reference's
   self-test checks their routes and session.
+- **`ic_pieces` gains the app's other piece rules** (devices.schema.json): `rounding: ceil | floor` on the
+  clamp-and-divide form, `{table: [{ic, pieces}], otherwise}` and `{pair_max, otherwise}`. h705a 125 / 240
+  take `rounding: floor`; h6609 173 takes `{table: [{ic: 36, pieces: 18}], otherwise: 14}` and h61d3 375
+  `{pair_max: 15, otherwise: 30}`, each with the `ic_num` read its screen sends (the schema ties the two, and
+  neither form could be stated before). 173 and 375 stay without support. No `.ksy` change: govee_state's
+  `ic_count` already has the second pair (`has_second_pair`) and the reader's failure (`app_pair_fails`).
 
 ## [1.6.1] — 2026-10-21
 

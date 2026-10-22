@@ -139,21 +139,10 @@ async def walk_mechanism_a_direct(dev: ReadTarget, read_reply: ReadReply) -> lis
     profile = dev.profile
     group_size = profile.color_readback_per_batch   # >= 1 (DeviceProfile); the spec's num_per_group
     if profile.color_readback_live_ic:
-        ic_reply = await read_reply(build.ic_count_query())
-        ic = parse.parse_ic_count(ic_reply) if ic_reply else None
-        if ic is None:
-            _LOGGER.debug(
-                "%s (%s): live IC-count read failed; skipping segment colour read-back",
-                dev.address, dev.sku,
-            )
+        live = await read_live_ic(dev, read_reply)
+        if live is None:
             return None
-        if ic.ic_count_checked is None:
-            _LOGGER.debug(
-                "%s (%s): implausible live IC count 0x%04x; skipping segment colour read-back",
-                dev.address, dev.sku, ic.ic_count,
-            )
-            return None
-        total = live_ic_pieces(dev, ic.ic_count_checked)
+        total = live
         group_count = build.ceil_div(total, group_size)
     elif profile.color_readback_ic_sections:
         sections = await _section_sum(dev, read_reply)
@@ -206,24 +195,66 @@ def _java_group_count(pieces: int, group_size: int) -> int:
     return max(0, (whole if pieces >= 0 else -whole) + (part != 0))
 
 
-def live_ic_pieces(dev: ReadTarget, ic: int) -> int:
-    """Colour pieces for a live ``aa 40`` IC count (``ic``: :attr:`parse.IcCount.ic_count_checked`), as
-    the app derives them for H6641 (goodsType 247; h61d3, Govee Home 7.5.12 names):
-    ``ReadIcController.Companion.d`` reads bytes 0..1 as a signed short (``BleUtil.getSignedShort``, the
-    spec's ``ic_count_signed``) and clamps it to ``H61D3Support.q(247)`` = 41..70
-    (``color_readback_ic_range``); ``H61D3Support.e(247, ic)`` = ceil(ic / 5) pieces
-    (``color_readback_ic_per_piece``), the ``bulbStringMaxNum`` of ``VM4Light.P5``. The reply's
-    third byte is never used.
+async def read_live_ic(dev: ReadTarget, read_reply: ReadReply) -> int | None:
+    """The ``aa 40`` read of :attr:`~.profile.DeviceProfile.color_readback_live_ic`: the pieces
+    :func:`live_ic_pieces` derives from its reply, or None (logged) when the read failed or the app's reader
+    would store no count."""
+    reply = await read_reply(build.ic_count_query())
+    ic = parse.parse_ic_count(reply) if reply else None
+    if ic is None:
+        _LOGGER.debug("%s (%s): live IC-count read failed; skipping segment colour read-back",
+                      dev.address, dev.sku)
+        return None
+    pieces = live_ic_pieces(dev, ic)
+    if pieces is None:
+        _LOGGER.debug("%s (%s): implausible live IC count 0x%04x; skipping segment colour read-back",
+                      dev.address, dev.sku, ic.ic_count)
+    return pieces
 
-    A count of 0x1000 or more never gets here: ``ReadIcController.Companion.a`` then takes its
-    byte-swap branch, which indexes past the 2-byte array it was given, so the app's read callback
-    never stores the count (``VM4Light.D5`` does not run), the same as a failed read; the spec's
-    ``ic_count_checked`` is None there and the walk skips."""
-    ic_range = dev.profile.color_readback_ic_range
+
+def live_ic_pieces(dev: ReadTarget, ic: parse.IcCount) -> int | None:
+    """Colour pieces (0 or more) for a live ``aa 40`` reply, by the profile's rule (the spec's ``ic_pieces``
+    object forms), or None where the app's reader stores no count, the same as a failed read.
+
+    The one-count rules take bytes 0..1 as a signed short (``BleUtil.getSignedShort``, the spec's
+    ``ic_count_checked``). A count of 0x1000 or more has none: ``ReadIcController.Companion.a`` then takes
+    its byte-swap branch, which indexes past the 2-byte array it was given, so the app's read callback never
+    stores it (``VM4Light.D5`` does not run). The reply's third byte is never used.
+
+    - The clamp and divisor, as the app derives them for H6641 (goodsType 247; h61d3, Govee Home 7.5.12
+      names): ``ReadIcController.Companion.d`` clamps the count to ``H61D3Support.q(247)`` = 41..70
+      (``color_readback_ic_range``); ``H61D3Support.e(247, ic)`` = ceil(ic / 5) pieces
+      (``color_readback_ic_per_piece``), the ``bulbStringMaxNum`` of ``VM4Light.P5``. h705a ``Support.b``
+      (:317-336) divides 125 / 240's count by 4 in Java's integer division
+      (``color_readback_ic_rounding`` floor).
+    - The table (``color_readback_ic_table``): h6609 ``Support.getColorPieceSize(173, IC)`` (:146-149), 18
+      pieces at IC 36, else 14 (``color_readback_ic_otherwise``).
+    - The pair (``color_readback_ic_pair_cap``): the counts ``ControllerIcNum.e`` returns
+      (:attr:`parse.IcCount.ic_pair`; it throws on an IC field of 0x1000 or more, and then there are none).
+      ``VM4Light.j5`` (:551-575) keeps the first and the second's IC, ``VM4Light.h5`` (:1182-1199) stores the
+      two only where the first is not 0, and ``H61D3Support.e`` (:1142-1153) gives ``min(IC 1, 15) + min(IC
+      2, 15)`` for two whose second is above 0, else 30 (goodsType 375)."""
+    profile = dev.profile
+    otherwise = profile.color_readback_ic_otherwise or 0   # set with either rule (DeviceProfile)
+    cap = profile.color_readback_ic_pair_cap
+    if cap is not None:
+        pair = ic.ic_pair
+        if pair is None:
+            return None
+        if len(pair) == 2 and pair[0] != 0 and pair[1] > 0:
+            return max(0, min(pair[0], cap) + min(pair[1], cap))
+        return otherwise
+    count = ic.ic_count_checked
+    if count is None:
+        return None
+    if profile.color_readback_ic_table:
+        return dict(profile.color_readback_ic_table).get(count, otherwise)
+    ic_range = profile.color_readback_ic_range
     # Every table profile has its clamp (devices/_resolve.py); a custom profile without one uses the
     # reported count as it is, never below 0.
-    clamped = max(0, ic) if ic_range is None else max(ic_range[0], min(ic_range[1], ic))
-    return build.ceil_div(clamped, dev.profile.color_readback_ic_per_piece)
+    clamped = max(0, count) if ic_range is None else max(ic_range[0], min(ic_range[1], count))
+    per = profile.color_readback_ic_per_piece
+    return clamped // per if profile.color_readback_ic_rounding == "floor" else build.ceil_div(clamped, per)
 
 
 async def read_device_info(dev: ReadTarget, read_reply: ReadReply) -> bool:
