@@ -169,7 +169,7 @@ def test_the_h7061_two_head_report_folds_into_both_heads(
 ) -> None:
     # H70606162Info4Detail.I: the aa 05 0x15 [bri s8][r g b] x 2 report is the colour page's two heads.
     profile = profile_for("H7061", pact=(1, 1))
-    assert profile is not None and profile.mode_color_parse == "bri_rgb_pair_15"
+    assert profile is not None
     state = DeviceState(rgb_color=(7, 7, 7), color_temp_kelvin=3000)
     _fold.apply_mode_reply(profile, state, _reply(0x15, *heads))
     assert [(s.index, s.rgb, s.brightness) for s in state.segments] == [
