@@ -2747,8 +2747,13 @@ families:
             stores none), while the library takes 30 at that read. The strip is drawn when the view attaches
             (ColorModeH1A45.m -> d0) and redrawn only on deviceInfoChanged, which the connect read doesn't post
             (VM4Light.h5 -> G0 / T5, S5), so the first app session after the IC pair changed with no app connected keeps
-            the old strip where the library takes the new count (row 247's divergence). Not hardware-verified. Scenes
-            untraced.
+            the old strip where the library takes the new count (row 247's divergence). Not hardware-verified. Part-tab
+            Kelvin (segment_color_temp true): 375 is in SupportPartColorTemConfig.d, so DelegateColorV2Part.Z0 adds the
+            Part tab's Kelvin item (LightColorCapabilityCenter.C2 -> E2 -> LegacyColorCapabilityProvider.H ->
+            SupportPartColorTemConfig.b), and ColorModeH1A45.canClickColorTem sets the Kelvin's tint at each checked
+            position (X()), both strips' one position set. Segment brightness: ColorModeH1A45.canClickBrightness sets
+            the level on the selected pieces as they are, with no widening to groups (no segment_brightness_groups:
+            decision 12 widens only where the strip does). Scenes untraced.
           doc-ref:
             - split_h61d3/com/govee/h61d3/pact/H61D3Support.java:542-555,786-788,945-953,1131-1154
             - base-classes2/com/govee/shared/checker/KmpGoodsType.java:146
@@ -2756,7 +2761,7 @@ families:
             - split_h61d3/com/govee/h61d3/adjustNew/VM4Light.java:398-405,542-581,636-669,904-911,1182-1199
             - base-classes11/com/govee/base2light/kt/general_controller/ControllerIcNum.java:141-157
             - split_h61d3/com/govee/h61d3/adjustNew/ConfigDetail.java:94-106
-            - split_h61d3/com/govee/h61d3/adjustNew/color/ColorModeH1A45.java:91-125,166-209,606-623,933-990,1047-1091
+            - split_h61d3/com/govee/h61d3/adjustNew/color/ColorModeH1A45.java:91-125,166-209,606-623,933-990,1047-1091,131-161
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/ColorModeControllerConfig.java:730-765,1184-1196
             - base-classes11/com/govee/base2light/pact/newdetail/content/color/ColorViewModel.java:715-742
             - base-classes11/com/govee/base2light/pact/newdetail/IColorModeFuc.java:94-98
@@ -2764,6 +2769,10 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:1894-1898,2987-2991,4151-4155,5300-5304,6519-6523,8706-8710,9664-9667,10935-10938,12161-12165,12627-12630,15137-15140,15581-15584
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:401-411,919-923,1361-1363
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/ColorPieceConfig.java:197-209
+            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
+            - base-classes11/com/govee/base2light/pact/newdetail/content/colorv2/DelegateColorV2Part.java:686-704
+            - base-classes10/com/govee/base2light/capability/color/LightColorCapabilityCenter.java:665-677
+            - base-classes10/com/govee/base2light/capability/legacy/LegacyColorCapabilityProvider.java:85-88
         "242":   # H6640
           models: [H6640]
           pacts: ["1,1", "2,1"]
@@ -2917,7 +2926,11 @@ families:
             starts 0x50 goes through the new-DIY parser H61F6DiyConfig registers for this goodsType at app init
             (ConfigDetail, from H61D3Application), which is not modelled; every other scene goes through parseSceneV1
             (BaseSceneViewMode.r3), so scene_dialect is legacy_scene and the bundled catalog holds no sceneType-5 scene
-            that leads 0x50.
+            that leads 0x50. No Kelvin over a piece selection (segment_color_temp false): 299 is not in
+            SupportPartColorTemConfig.d, so DelegateColorV2Part.Z0 adds no Part-tab Kelvin item
+            (LightColorCapabilityCenter.C2), and the All tab's Kelvin over every piece is the screen's only one. Segment
+            brightness: ColorMode.canClickBrightness sets the level on the selected pieces as they are, with no widening
+            to groups (no segment_brightness_groups: decision 12 widens only where the strip does).
           doc-ref:
             - split_h61d3/com/govee/h61d3/pact/H61D3Support.java:919-927,1223-1225,1016-1019,1185-1192,1557-1558,1576-1578
             - split_h61d3/com/govee/h61d3/pact/Model.java:108-120
@@ -2936,9 +2949,11 @@ families:
             - split_h61d3/com/govee/h61d3/H61D3Application.java:221
             - base-classes11/com/govee/base2light/pact/newdetail/content/scene/BaseSceneViewMode.java:864-903,1152-1200
             - base-classes10/com/govee/base2light/ac/diyNew/config/DiyNewConfig.java:61-65,140-146
-            - split_h61d3/com/govee/h61d3/adjustNew/color/ColorMode.java:82-100,120-157,274-296
+            - split_h61d3/com/govee/h61d3/adjustNew/color/ColorMode.java:82-100,120-157,274-296,349-370
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/ColorPieceConfig.java:62-252
             - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
+            - base-classes11/com/govee/base2light/pact/newdetail/content/colorv2/DelegateColorV2Part.java:686-704
+            - base-classes10/com/govee/base2light/capability/color/LightColorCapabilityCenter.java:665-677
         "367":   # H1A43 / H1A44
           models: [H1A43, H1A44]
           pacts: ["1,1", "1,2", "1,3"]
@@ -3418,7 +3433,12 @@ families:
             starts 0x50 goes through the new-DIY parser H61F6DiyConfig registers for this goodsType at app init
             (ConfigDetail, from H61D3Application), which is not modelled; every other scene goes through parseSceneV1
             (BaseSceneViewMode.r3), so scene_dialect is legacy_scene and the bundled catalog holds no sceneType-5 scene
-            that leads 0x50.
+            that leads 0x50. Part-tab Kelvin (segment_color_temp true): 261 is in SupportPartColorTemConfig.d, so
+            DelegateColorV2Part.Z0 adds the Part tab's Kelvin item (LightColorCapabilityCenter.C2 -> E2 ->
+            LegacyColorCapabilityProvider.H -> SupportPartColorTemConfig.b), and ColorModeV2.canClickColorTem tints the
+            selected pieces. Segment brightness: ColorModeV2.canClickBrightness sets the level on the selected pieces as
+            they are, with no widening to groups (no segment_brightness_groups: decision 12 widens only where the strip
+            does).
           doc-ref:
             - split_h61d3/com/govee/h61d3/pact/H61D3Support.java:896-908,1322-1324,1016-1019,1185-1192,1483-1490,1557-1558,1576-1578
             - split_h61d3/com/govee/h61d3/pact/Model.java:108-120
@@ -3434,9 +3454,12 @@ families:
             - split_h61d3/com/govee/h61d3/H61D3Application.java:221
             - base-classes11/com/govee/base2light/pact/newdetail/content/scene/BaseSceneViewMode.java:864-903,1152-1200
             - base-classes10/com/govee/base2light/ac/diyNew/config/DiyNewConfig.java:61-65,140-146
-            - split_h61d3/com/govee/h61d3/adjustNew/color/ColorModeV2.java:82-100,120-157,273-295
+            - split_h61d3/com/govee/h61d3/adjustNew/color/ColorModeV2.java:82-100,120-157,273-295,339-360,391-431
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/ColorPieceConfig.java:62-252
             - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
+            - base-classes11/com/govee/base2light/pact/newdetail/content/colorv2/DelegateColorV2Part.java:686-704
+            - base-classes10/com/govee/base2light/capability/color/LightColorCapabilityCenter.java:665-677
+            - base-classes10/com/govee/base2light/capability/legacy/LegacyColorCapabilityProvider.java:85-88
       wire_cipher: runtime
       wire:
         forms: { f_01: light, f_09: datetime_epoch, f_ee_30: main_bit0_a }
@@ -7606,8 +7629,13 @@ families:
             walk, aa a3, then on the first poll the device-info reads. So aa 05 comes before aa 40, aa a3 after the
             walk and the device info last: an order divergence (CLAUDE.md rule 1), not a missing read, as on 141,
             whose doc records it; following the app's connect order is a library-wide item. Not modelled: the Wi-Fi
-            version / MAC reads, the time sync, the off-to-on re-read (as on 204). Scenes not traced. Not
-            hardware-verified.
+            version / MAC reads, the time sync, the off-to-on re-read (as on 204). Scenes not traced. No Kelvin over a
+            piece selection (segment_color_temp false): 71 is not in SupportPartColorTemConfig.d, so
+            DelegateColorV2Part.Z0 adds no Part-tab Kelvin item (LightColorCapabilityCenter.C2; the family note), and
+            the All tab's Kelvin over every piece is the screen's only one. Segment brightness:
+            ColorModeV1_2.canClickBrightness (the strip the RgbIcLightRegistry interceptor gives the family) sets the
+            level on the selected pieces as they are, with no widening to groups (no segment_brightness_groups: decision
+            12 widens only where the strip does). Not hardware-verified.
           doc-ref:
             - split_rgbiclight/com/govee/dreamcolorlightv1/pact/Support.java:164,196-210,287-298,670-684,986-1004,1403-1405,1476-1487,1713-1760,1775-1786,1805-1812,1814-1819,1911-1957,1973-2005
             - split_rgbiclight/com/govee/rgbiclight/neonlight/recommend/Jump.java:27
@@ -7617,6 +7645,11 @@ families:
             - split_rgbiclight/com/govee/rgbiclight/VM4Light.java:882-970
             - base-classes11/com/govee/base2light/pact/newdetail/content/colorv2/DelegateColorV2.java:779-806
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:1135,2437,3776,4600,5769,10318-10321,11458-11461,11665-11668,12121-12124,12277-12283,16503-16506
+            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
+            - base-classes11/com/govee/base2light/pact/newdetail/content/colorv2/DelegateColorV2Part.java:686-704
+            - base-classes10/com/govee/base2light/capability/color/LightColorCapabilityCenter.java:665-677
+            - split_rgbiclight/com/govee/rgbiclight/RgbIcLightRegistry.java:553-580
+            - split_rgbiclight/com/govee/rgbiclight/mode/color/ColorModeV1_2.java:278-291
         "123":   # narrowed to pact (2,1), where the aa 40 read is H61B5's alone (doc); H61B5 adds it (by_model)
           models: [H61E0, H61E1, H61B5, H80B5]
           pacts: ["2,1"]
@@ -7652,8 +7685,13 @@ families:
             then on the first poll the device-info reads): an order divergence (CLAUDE.md rule 1), not a missing read,
             as on 141. After the E1 info read (VM4Light.q5 -> r5) the screen calls VM4Light.m5, which for H61E0 / H61E1
             at soft >= 3.00.57 (LowBlueLightConfig.a, a string compare) sends the low-blue-light read aa ba 01
-            (ControllerEyeshadow.d, 100 ms later); not modelled (a feature read). Scenes not traced. Not
-            hardware-verified.
+            (ControllerEyeshadow.d, 100 ms later); not modelled (a feature read). Scenes not traced. No Kelvin over a
+            piece selection (segment_color_temp false): 123 is not in SupportPartColorTemConfig.d, so
+            DelegateColorV2Part.Z0 adds no Part-tab Kelvin item (LightColorCapabilityCenter.C2; the family note), and
+            the All tab's Kelvin over every piece is the screen's only one. Segment brightness:
+            ColorModeV1_2.canClickBrightness (the strip the RgbIcLightRegistry interceptor gives the family) sets the
+            level on the selected pieces as they are, with no widening to groups (no segment_brightness_groups: decision
+            12 widens only where the strip does). Not hardware-verified.
           doc-ref:
             - split_rgbiclight/com/govee/dreamcolorlightv1/pact/Support.java:164,196-210,314-322,972-974,1026-1040,1344-1349,1446-1448,1476-1487,1713-1760,1775-1786,1814-1819,1955-1957
             - base-classes9/com/govee/base2home/pact/support/Support4DreamColorV1.java:107-163
@@ -7665,6 +7703,11 @@ families:
             - base-classes11/com/govee/base2light/lowBlueLightControl/LowBlueLightConfig.java:16-20,37-44
             - base-classes11/com/govee/base2light/kt/general_controller/ControllerEyeshadow.java:87-97,263-265
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:1599,9115-9122
+            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
+            - base-classes11/com/govee/base2light/pact/newdetail/content/colorv2/DelegateColorV2Part.java:686-704
+            - base-classes10/com/govee/base2light/capability/color/LightColorCapabilityCenter.java:665-677
+            - split_rgbiclight/com/govee/rgbiclight/RgbIcLightRegistry.java:553-580
+            - split_rgbiclight/com/govee/rgbiclight/mode/color/ColorModeV1_2.java:278-291
         "234":   # no support: runtime IC-sized pieces (library gap)
           models: [H612A, H612B, H612C, H612D, H612E, H612F]
           pacts: ["1,1", "1,2", "2,1"]
@@ -13143,7 +13186,12 @@ families:
             static 10. At IC 1000 the app walks 20 pieces and shows none of them: the colour page hands the strip the
             20-long read-back (DelegateColor.d0 -> SubMode4Color.d), and the strip applies a colour or brightness
             array only of its own length, 10 (H70C456789ColorMode.updateColor / updateBrightness), so the library
-            makes that walk and leaves the segment state as it was (DeviceProfile.color_readback_ic_walk_only). Not
+            makes that walk and leaves the segment state as it was (DeviceProfile.color_readback_ic_walk_only). Part-tab
+            Kelvin (segment_color_temp true): 260 is in SupportPartColorTemConfig.d, so DelegateColorV2Part.Z0 adds the
+            Part tab's Kelvin item (LightColorCapabilityCenter.C2 -> E2 -> LegacyColorCapabilityProvider.H ->
+            SupportPartColorTemConfig.b), and H70C456789ColorMode.canClickColorTem tints the selected pieces. Segment
+            brightness: H70C456789ColorMode.canClickBrightness sets the level on the selected pieces as they are, with
+            no widening to groups (no segment_brightness_groups: decision 12 widens only where the strip does). Not
             hardware-verified.
           doc-ref:
             - split_h6840/com/govee/h6609/pact/Model.java:72-73
@@ -13157,7 +13205,7 @@ families:
             - split_h6840/com/govee/h6609/adjust/new_detail/viewmodel/DetailViewModel.java:472-512,557-576,798-830,977-1002,1014-1034,1186-1193,1424-1434,1643-1667
             - split_h6840/com/govee/h6609/adjust/new_detail/H70c4Config.java:189-201
             - split_h6840/com/govee/h6609/adjust/new_detail/Info4Detail.java:887-901
-            - split_h6840/com/govee/h6609/adjust/new_detail/mode/H70C456789ColorMode.java:84-117,250-266,330-366,449-525
+            - split_h6840/com/govee/h6609/adjust/new_detail/mode/H70C456789ColorMode.java:84-117,250-266,330-366,449-525,310-327
             - base-classes11/com/govee/base2light/pact/newdetail/content/color/DelegateColor.java:164-169
             - base-classes11/com/govee/base2light/mode/graffiti/H70c4Support.java:101-132
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/ColorPieceConfig.java:62-85,354-367,1036-1038,1121-1123,1677-1687
@@ -13170,6 +13218,9 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/ShareVM.java:1005-1009,1362-1364
             - base-classes10/com/govee/base2light/ble/BleUtil.java:474-486
             - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
+            - base-classes11/com/govee/base2light/pact/newdetail/content/colorv2/DelegateColorV2Part.java:686-704
+            - base-classes10/com/govee/base2light/capability/color/LightColorCapabilityCenter.java:665-677
+            - base-classes10/com/govee/base2light/capability/legacy/LegacyColorCapabilityProvider.java:85-88
         "362":   # H6860 / R6860 / H6861 / R6861, the H6860DetailActivity screen
           models: [H6860, R6860, H6861, R6861]
           pacts: ["1,1"]
@@ -14165,7 +14216,12 @@ families:
             rounding floor); after a segment-count change the settings page sets IC = segments x 12 (VM4Light.c5).
             Every colour write takes the live pieces (the connect read's VM4Light.j5 posts deviceInfoChanged when the count
             changes, and ColorMode.Y resizes the strip to it), with no app cap; num_segments 56 is only the count before
-            the first aa 40 read. Not hardware-verified.
+            the first aa 40 read. Part-tab Kelvin (segment_color_temp true): 125 is in SupportPartColorTemConfig.d, so
+            DelegateColorV2Part.Z0 adds the Part tab's Kelvin item (LightColorCapabilityCenter.C2 -> E2 ->
+            LegacyColorCapabilityProvider.H -> SupportPartColorTemConfig.b), and ColorMode.canClickColorTem tints the
+            selected pieces. Segment brightness: ColorMode.canClickBrightness sets the level on the selected pieces as
+            they are, with no widening to groups (no segment_brightness_groups: decision 12 widens only where the strip
+            does). Not hardware-verified.
           doc-ref:
             - split_h705a/com/govee/h705a/pact/Support.java:49-50,117,137-140,176-189,237-240,242-253,306,317-320,338-342,378-381
             - split_h705a/com/govee/h705a/pact/SubLib.java:20-26
@@ -14179,7 +14235,7 @@ families:
             - split_h705a/com/govee/h705a/newDetail/VM4Light$connectBleSuc$1.java:40-83,93-123
             - split_h705a/com/govee/h705a/newDetail/VM4Light.java:215-249,576-641,789-800,895-922,942-963,1024-1030,1246-1253,1427-1451
             - split_h705a/com/govee/h705a/newDetail/Info4Detail.java:437-485,796-833
-            - split_h705a/com/govee/h705a/newDetail/ColorMode.java:83-84,121-149,288-289,402-449
+            - split_h705a/com/govee/h705a/newDetail/ColorMode.java:83-84,121-149,288-289,402-449,377-399
             - split_h705a/com/govee/h705a/newDetail/SettingAcNewH705ABC.java:159
             - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4InfoBleIot.java:74-85
             - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4InfoBleIot$iControllerStrategy$1.java:155-250
@@ -14196,13 +14252,14 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/ColorModeControllerConfig.java:207-256,985-1019
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:232-257,277-292,380-395,548-560,1110-1114,2427-2431,3716-3720,4565-4569,5522-5526,5603-5613,5719-5723,8975-8978,9349-9352,10707-10710,11347-11350,12960-12968,14171-14173,14942-14945,10567-10570
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:172-181,315-326,474-501,564-566
-            - base-classes10/com/govee/base2light/capability/color/LightColorCapabilityCenter.java:881-892,933-940,1078-1090,1104-1125
-            - base-classes10/com/govee/base2light/capability/legacy/LegacyColorCapabilityProvider.java:151-154,178-181,212-215,294-297
+            - base-classes10/com/govee/base2light/capability/color/LightColorCapabilityCenter.java:881-892,933-940,1078-1090,1104-1125,665-677
+            - base-classes10/com/govee/base2light/capability/legacy/LegacyColorCapabilityProvider.java:151-154,178-181,212-215,294-297,85-88
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/ColorPieceConfig.java:1058-1067,1641-1644
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:240-242,254-269,329-342,401-411
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:63-85,199-215,251-259
             - base-classes11/com/govee/base2light/pact/newdetail/header/DelegateHeader.java:492-495
             - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
+            - base-classes11/com/govee/base2light/pact/newdetail/content/colorv2/DelegateColorV2Part.java:686-704
         "240":   # H705D / H705E / H705F / H805A / H805B / H805C / H805D, the newDetail AcNewDetail screen (VM4Light)
           models: [H705D, H705E, H705F, H805A, H805B, H805C, H805D]
           pacts: ["1,1", "1,2", "2,1"]
@@ -14237,7 +14294,12 @@ families:
             group frames, where the library sends per-colour 15 01 masks (a divergence, as pact_h6099 203). A wheel drag
             streams a5 02 83 R G B real-time frames (Config.g0[240] = 2, ColorModeControllerConfig.r); touch-up sends the
             normal 15 01 write, which the library matches (the drag frames are not modelled). Pieces floor(IC / 4),
-            as row 125 (ic_pieces rounding floor), and the writes take them as there. Not hardware-verified.
+            as row 125 (ic_pieces rounding floor), and the writes take them as there. No Kelvin over a piece selection
+            (segment_color_temp false): 240 is not in SupportPartColorTemConfig.d, so DelegateColorV2Part.Z0 adds no
+            Part-tab Kelvin item (LightColorCapabilityCenter.C2), and the All tab's Kelvin over every piece is the
+            screen's only one. Segment brightness: ColorMode.canClickBrightness sets the level on the selected pieces as
+            they are, with no widening to groups (no segment_brightness_groups: decision 12 widens only where the strip
+            does). Not hardware-verified.
           doc-ref:
             - split_h705a/com/govee/h705a/pact/Support.java:117,142-145,171-174,176-221,279-293,317-329,338-349,378-381
             - split_h705a/com/govee/h705a/pact/Model.java:166-234
@@ -14248,7 +14310,7 @@ families:
             - split_h705a/com/govee/h705a/newDetail/VM4Light$connectBleSuc$1.java:40-83,93-123
             - split_h705a/com/govee/h705a/newDetail/VM4Light.java:215-249,576-641,789-800,895-922,1024-1030,1246-1253,1427-1451
             - split_h705a/com/govee/h705a/newDetail/Info4Detail.java:437-485,796-833
-            - split_h705a/com/govee/h705a/newDetail/ColorMode.java:83-84,121-149,288-289,402-449
+            - split_h705a/com/govee/h705a/newDetail/ColorMode.java:83-84,121-149,288-289,402-449,377-399
             - split_h705a/com/govee/h705a/newDetail/SettingAcNewH705DEF.java:206,606
             - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4InfoBleIot$iControllerStrategy$1.java:155-250
             - base-classes11/com/govee/base2light/kt/general_controller/ControllerIcNum.java:64-90,141-162,173-175
@@ -14264,12 +14326,13 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/view/ViewColor.java:414-427
             - base-classes11/com/govee/base2light/pact/newdetail/content/scene/partScenes/util/PartScenesCheckUtil.java:20-34
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:172-181,315-326,474-501,564-566
-            - base-classes10/com/govee/base2light/capability/color/LightColorCapabilityCenter.java:881-892,933-940,1078-1090,1104-1125
+            - base-classes10/com/govee/base2light/capability/color/LightColorCapabilityCenter.java:881-892,933-940,1078-1090,1104-1125,665-677
             - base-classes10/com/govee/base2light/capability/legacy/LegacyColorCapabilityProvider.java:151-154,178-181,212-215,294-297
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/ColorPieceConfig.java:1058-1062,1636-1639
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:240-242,254-269,329-342,401-411,438-442,1207-1209
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:63-85,199-215,251-259
             - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
+            - base-classes11/com/govee/base2light/pact/newdetail/content/colorv2/DelegateColorV2Part.java:686-704
         "180":   # H706A / H706B / H706C / H806A / H806C, the newDetail AcNewDetail screen with ColorModeV2
           models: [H706A, H706B, H706C, H806A, H806C]
           pacts: ["1,1", "1,2", "2,1"]
@@ -14320,7 +14383,13 @@ families:
             segment-brightness pick while a selected piece shows a tint colour of that table (ColorModeV2 and
             ColorMode.canClickBrightness: Y -> ColorUtils.o, a toast and no frame), where the library sends the 15
             02 frame. Config.A[180] = 1 (15 04 strip groups); a wheel drag streams a5 02 83 R G B real-time frames
-            (Config.g0[180] = 2), touch-up the normal colour write. Not hardware-verified.
+            (Config.g0[180] = 2), touch-up the normal colour write. Part-tab Kelvin (segment_color_temp true): 180 is in
+            SupportPartColorTemConfig.d, so DelegateColorV2Part.Z0 adds the Part tab's Kelvin item
+            (LightColorCapabilityCenter.C2 -> E2 -> LegacyColorCapabilityProvider.H -> SupportPartColorTemConfig.b), and
+            ColorModeV2.canClickColorTem tints the selected pieces while the piece selector shows (every piece
+            otherwise). Segment brightness: ColorModeV2.canClickBrightness sets the level on the selected pieces as they
+            are, with no widening to groups (no segment_brightness_groups: decision 12 widens only where the strip
+            does). Not hardware-verified.
           doc-ref:
             - split_h705a/com/govee/h705a/pact/Support.java:43-47,152-155,190-197,254-268,321-323,343-345,352-370,449-453,455-465
             - split_h705a/com/govee/h705a/pact/SubLib.java:20-26
@@ -14335,7 +14404,7 @@ families:
             - base-classes11/com/govee/base2light/kt/general_controller/ControllerDspVersionInDeviceInfo.java:51-69
             - base-classes11/com/govee/base2light/kt/general_controller/ControllerReadSpecialInfoMultiBack.java:100-109,131-133
             - base-classes10/com/govee/base2light/ble/controller/AbsController4BleSingleSendMultiBack.java:100-103,158-165,227-230
-            - split_h705a/com/govee/h705a/newDetail/ColorModeV2.java:256-273,339-365,416-437,440-488
+            - split_h705a/com/govee/h705a/newDetail/ColorModeV2.java:256-273,339-365,415-437,440-488
             - split_h705a/com/govee/h705a/newDetail/ColorMode.java:378-399
             - split_h705a/com/govee/h705a/adjust/h706abc/SegmentIcDataConfig.java:13-55
             - base-classes11/com/govee/base2light/pact/newdetail/sub/SubMode4Color.java:72-74,113-147,253-255
@@ -14345,6 +14414,10 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:63-85,199-215,251-259
             - base-classes10/com/govee/base2kt/utils/ColorUtils.java:107-114,141-143,203-205,255-294,320-328,335-369,394-396
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:489-493,1235-1237
+            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
+            - base-classes11/com/govee/base2light/pact/newdetail/content/colorv2/DelegateColorV2Part.java:686-704
+            - base-classes10/com/govee/base2light/capability/color/LightColorCapabilityCenter.java:665-677
+            - base-classes10/com/govee/base2light/capability/legacy/LegacyColorCapabilityProvider.java:85-88
         "250":   # H7067 / H7068 / H7069, the h706789 NewDetailActivity screen (VM4Light)
           models: [H7067, H7068, H7069]
           pacts: ["1,1"]
@@ -14382,7 +14455,12 @@ families:
             read doesn't post (VM4Light.Q4 stores the count and uploads it with h5) and the segment setting does
             (VM4Light.O4). A documented divergence: in the first app session after the IC changed with no app connected,
             the app's strip has the old count and the library's writes the new one. num_segments 56 is only the count before the first aa 40 read. A negative IC reply of -1..-3 the app
-            walks as one group, the library as none (as h61d3 264). Not hardware-verified.
+            walks as one group, the library as none (as h61d3 264). No Kelvin over a piece selection (segment_color_temp
+            false): 250 is not in SupportPartColorTemConfig.d, so DelegateColorV2Part.Z0 adds no Part-tab Kelvin item
+            (LightColorCapabilityCenter.C2), and the All tab's Kelvin over every piece is the screen's only one. Segment
+            brightness: the h706789 ColorMode.canClickBrightness sets the level on the selected pieces as they are, with
+            no widening to groups (no segment_brightness_groups: decision 12 widens only where the strip does). Not
+            hardware-verified.
           doc-ref:
             - split_h705a/com/govee/h705a/pact/Support.java:147-150,206-213,294-298,326,346-349,378-381
             - split_h705a/com/govee/h705a/pact/Model.java:98-150,214-224
@@ -14393,7 +14471,7 @@ families:
             - split_h705a/com/govee/h705a/h706789/VM4Light$connectBleSuc$1.java:40-81,91-121
             - split_h705a/com/govee/h705a/h706789/VM4Light.java:120-142,189-219,418-423,441-452,488-503,764-771,869-891
             - split_h705a/com/govee/h705a/h706789/Info4Detail.java:366-409,572-602
-            - split_h705a/com/govee/h705a/h706789/ColorMode.java:80-81,126-150,272-282,452-456
+            - split_h705a/com/govee/h705a/h706789/ColorMode.java:80-81,126-150,272-282,452-456,368-384
             - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4InfoBleIot$iControllerStrategy$1.java:155-250
             - base-classes11/com/govee/base2light/kt/general_controller/ControllerIcNum.java:64-90,141-162,173-175
             - base-classes11/com/govee/base2light/kt/general_controller/Controller4ColorInfoByGroup.java:37-41,160-175
@@ -14404,13 +14482,14 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/ColorModeControllerConfig.java:207-256,1016-1019
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:232-257,277-292,353-368,380-395,548-560,1120-1124,2417-2421,3453-3457,4575-4579,5522-5526,5729-5733,9289-9292,11020-11023,11045-11048,12960-12968,14413-14416,15252-15255
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:172-181,315-326,474-501
-            - base-classes10/com/govee/base2light/capability/color/LightColorCapabilityCenter.java:215-217,875-903,933-940,1078-1090,1104-1125
+            - base-classes10/com/govee/base2light/capability/color/LightColorCapabilityCenter.java:215-217,875-903,933-940,1078-1090,1104-1125,665-677
             - base-classes10/com/govee/base2light/capability/legacy/LegacyColorCapabilityProvider.java:265-268
             - base-classes11/com/govee/base2light/pact/newdetail/content/colorv2/ColorModeUtil.java:60-87
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/ColorPieceConfig.java:62-131,256-259,354-367,1036-1038,1677-1722
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:240-242,254-269,329-342,401-411,539-543,1377-1379
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:63-85,199-215,251-259
             - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
+            - base-classes11/com/govee/base2light/pact/newdetail/content/colorv2/DelegateColorV2Part.java:686-704
         "184":   # H608A / H608B / H608C / H608D / H808A, the AcNewDetail4H608A screen (VM4H608A); modelled: the first walk waits on the user (doc)
           models: [H608A, H608B, H608C, H608D, H808A]
           pacts: ["1,1", "2,1"]
@@ -14530,7 +14609,12 @@ families:
             no controller list) queues no aa 06 / aa 07 read, and its success callback
             (H3401DetailVM$afterConnectedSingleReadDeviceInfo$1.l) takes the soft and hard versions from the reply's TLV
             0x07 (k2(e(), d()); Compose4BaseInfoSingleRead.w), so the library sends none either and folds the versions
-            and device id from TLV 0x07 alone. Not hardware-verified.
+            and device id from TLV 0x07 alone. Part-tab Kelvin (segment_color_temp true): 394 is in
+            SupportPartColorTemConfig.d, so DelegateColorV2Part.Z0 adds the Part tab's Kelvin item
+            (LightColorCapabilityCenter.C2 -> E2 -> LegacyColorCapabilityProvider.H -> SupportPartColorTemConfig.b), and
+            H3401ColorMode.canClickColorTem tints the selected pieces. Segment brightness:
+            H3401ColorMode.canClickBrightness sets the level on the selected pieces as they are, with no widening to
+            groups (no segment_brightness_groups: decision 12 widens only where the strip does). Not hardware-verified.
           doc-ref:
             - split_h705a/com/govee/h705a/pact/Support.java:88-89,132-135,222-229,299-303,326,347,378-384
             - split_h705a/com/govee/h705a/pact/Model.java:225-228
@@ -14541,7 +14625,7 @@ families:
             - split_h705a/com/govee/h705a/h3401/H3401DetailVM$afterConnectedSingleReadDeviceInfo$1.java:44-66,77-95,98-162,172-206
             - split_h705a/com/govee/h705a/h3401/H3401DetailVM.java:114-120,158-190,396-412,582-584,730-737,846-870
             - split_h705a/com/govee/h705a/h3401/H3401DetailInfo.java:201-266,399-433
-            - split_h705a/com/govee/h705a/h3401/H3401ColorMode.java:88-89,140-150
+            - split_h705a/com/govee/h705a/h3401/H3401ColorMode.java:88-89,140-150,471-487,505-529
             - base-classes10/com/govee/base2light/ble/BleUtil.java:304-306
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/ColorPieceConfig.java:62-132,256-259,354-367,1677-1722
             - base-classes11/com/govee/base2light/pact/newdetail/content/colorv2/DelegateColorV2.java:219-251
@@ -14558,6 +14642,9 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:240-242,254-269,329-342,401-411,1054-1058,1734-1736
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:63-85,199-215,883-887,1221-1224
             - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
+            - base-classes11/com/govee/base2light/pact/newdetail/content/colorv2/DelegateColorV2Part.java:686-704
+            - base-classes10/com/govee/base2light/capability/color/LightColorCapabilityCenter.java:665-677
+            - base-classes10/com/govee/base2light/capability/legacy/LegacyColorCapabilityProvider.java:85-88
       wire:
         forms: { f_01: light, f_09: datetime_epoch }
         by_goods_type:
@@ -18236,7 +18323,9 @@ families:
             no controller list) queues no aa 06 / aa 07 read, and its success callback
             (VM4LightH351011$afterConnectedSingleReadDeviceInfo$1.m) takes the soft and hard versions from the reply's
             TLV 0x07 (k2(e(), d()); Compose4BaseInfoSingleRead.w), so the library sends none either and folds the
-            versions and device id from TLV 0x07 alone. Not hardware-verified.
+            versions and device id from TLV 0x07 alone. Segment brightness: ColorModeH351011.canClickBrightness sets the
+            level on the selected pieces as they are, with no widening to groups (no segment_brightness_groups: decision
+            12 widens only where the strip does). Not hardware-verified.
           doc-ref:
             - base-classes2/com/govee/shared/checker/KmpGoodsType.java:162
             - split_h7050/com/govee/h7050/pact/deviceitem/Model.java:61-94
@@ -18250,7 +18339,7 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/sub/SubMode4Color.java:113-147
             - base-classes11/com/govee/base2light/pact/newdetail/content/colorv2/ColorModeUtil.java:60-87
             - split_h7050/com/govee/h7050/newdetail/h351011/H351011DetailConfig.java:105-116
-            - split_h7050/com/govee/h7050/newdetail/h351011/ColorModeH351011.java:310-316
+            - split_h7050/com/govee/h7050/newdetail/h351011/ColorModeH351011.java:310-316,276-284
             - split_h7050/com/govee/h7050/newdetail/Info4Detail.java:422-454
             - base-classes11/com/govee/base2light/kt/comm/Info4BleIotDevice.java:228-230,246-248,280-282,620-622
             - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4BaseInfoSingleRead.java:161-180,222-236,247-345
@@ -18727,13 +18816,18 @@ families:
             when that is above 0, which no read sets (Config.I[318] has segment brightness and CCT on, gradual off).
             Wheel-drag real-time frames (Config.g0) are not modelled; touch-up sends the normal write. Brightness:
             BrightnessConfig.b -> 33 04, version 1 = percent; Kelvin: KelvinConfig version 2 (c4) = [2700, 6500]. Scenes
-            untraced. Not hardware-verified.
+            untraced. Device info (device_info_reads none): NewDetailVM.d0 -> g5 runs the compose
+            (NewDetailVM$afterConnectedSingleReadDeviceInfo$1.invokeSuspend, Compose4BaseInfoSingleRead.Companion.b, no
+            controller list), which queues no aa 06 / aa 07 read, and its success callback
+            (NewDetailVM$afterConnectedSingleReadDeviceInfo$1.o) takes the soft and hard versions from the reply's TLV
+            0x07 (k2(e(), d()); Compose4BaseInfoSingleRead.w), so the library sends none either and folds the versions
+            and device id from TLV 0x07 alone. Not hardware-verified.
           doc-ref:
             - split_h7050/com/govee/h7020/pact/Support.java:96-166,383-385,477-479,595-631,697-704,719-721
             - split_h7050/com/govee/h7020/pact/SubLib4BleIot.java:20-31
             - split_h7050/com/govee/h7020/pact/Model4BleIot.java:41-44
-            - split_h7050/com/govee/h7020/newDetail/NewDetailVM.java:666-676,735-742,975-1013,1012-1031,1308-1315,1432-1463,1514-1538
-            - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4BaseInfoSingleRead.java:161-180,215-237,247-345
+            - split_h7050/com/govee/h7020/newDetail/NewDetailVM.java:666-676,735-742,975-1013,1012-1031,1308-1315,1432-1463,1514-1538,621-627
+            - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4BaseInfoSingleRead.java:161-180,215-237,247-345,370-380
             - base-classes11/com/govee/base2light/pact/newdetail/ShareVM.java:1362-1364
             - base-classes11/com/govee/base2light/kt/general_parser/DefParser.java:83-87
             - base-classes11/com/govee/base2light/kt/general_controller/ControllerSwitch.java:50-62
@@ -18746,7 +18840,7 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/ColorModeControllerConfig.java:207-256
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:315-326,474-501
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:63-85,199-214
-            - split_h7050/com/govee/h7020/newDetail/NewDetailVM$afterConnectedSingleReadDeviceInfo$1.java:52-115,194-238
+            - split_h7050/com/govee/h7020/newDetail/NewDetailVM$afterConnectedSingleReadDeviceInfo$1.java:52-149,194-240
             - split_h7050/com/govee/h7020/newDetail/controller/SegmentSettingController.java:34-37
             - base-classes10/com/govee/base2light/ble/BleUtil.java:285-302
             - base-classes2/com/govee/shared/checker/KmpGoodsType.java:230
@@ -18779,13 +18873,18 @@ families:
             it runs the status read first); aa 01 keep-alive and ee 30 push; 33 01 power, no zones; Config.x[337] = 0 -> Yt,
             Config.P[337] = 1: the h60a6 forms, whole-device only (the Part tab is account-sized, as on 296; Config.I[337]
             has segment brightness and CCT on, gradual off); BrightnessConfig version 1 = percent; KelvinConfig version 2 (j4)
-            = [2700, 6500]. Scenes untraced. Not hardware-verified.
+            = [2700, 6500]. Scenes untraced. Device info (device_info_reads none): NewDetailVM.d0 -> g5 runs the compose
+            (NewDetailVM$afterConnectedSingleReadDeviceInfo$1.invokeSuspend, Compose4BaseInfoSingleRead.Companion.b, no
+            controller list), which queues no aa 06 / aa 07 read, and its success callback
+            (NewDetailVM$afterConnectedSingleReadDeviceInfo$1.o) takes the soft and hard versions from the reply's TLV
+            0x07 (k2(e(), d()); Compose4BaseInfoSingleRead.w), so the library sends none either and folds the versions
+            and device id from TLV 0x07 alone. Not hardware-verified.
           doc-ref:
             - split_h7050/com/govee/h7020/pact/Support.java:96-166,383-385,477-479,595-631,697-704,719-721
             - split_h7050/com/govee/h7020/pact/SubLib4BleIot.java:20-31
             - split_h7050/com/govee/h7020/pact/Model4BleIot.java:41-44
-            - split_h7050/com/govee/h7020/newDetail/NewDetailVM.java:666-676,735-742,975-1013,1012-1031,1308-1315,1432-1463,1514-1538
-            - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4BaseInfoSingleRead.java:161-180,215-237,247-345
+            - split_h7050/com/govee/h7020/newDetail/NewDetailVM.java:666-676,735-742,975-1013,1012-1031,1308-1315,1432-1463,1514-1538,621-627
+            - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4BaseInfoSingleRead.java:161-180,215-237,247-345,370-380
             - base-classes11/com/govee/base2light/pact/newdetail/ShareVM.java:1362-1364
             - base-classes11/com/govee/base2light/kt/general_parser/DefParser.java:83-87
             - base-classes11/com/govee/base2light/kt/general_controller/ControllerSwitch.java:50-62
@@ -18798,7 +18897,7 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/ColorModeControllerConfig.java:207-256
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:315-326,474-501
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:63-85,199-214
-            - split_h7050/com/govee/h7020/newDetail/NewDetailVM$afterConnectedSingleReadDeviceInfo$1.java:52-115,194-238
+            - split_h7050/com/govee/h7020/newDetail/NewDetailVM$afterConnectedSingleReadDeviceInfo$1.java:52-149,194-240
             - split_h7050/com/govee/h7020/newDetail/controller/SegmentSettingController.java:34-37
             - base-classes10/com/govee/base2light/ble/BleUtil.java:285-302
             - base-classes2/com/govee/shared/checker/KmpGoodsType.java:231
@@ -18848,13 +18947,19 @@ families:
             is the account record's J() wide; Config.I[316] has segment brightness and CCT on, gradual off). Wheel-drag
             real-time frames (Config.g0[316] = 2: a5 02 83 R G B) are not modelled; touch-up sends the normal write.
             Brightness: BrightnessConfig version 1 = percent; Kelvin: KelvinConfig version 2 (Z3) = [2700, 6500]. Scenes
-            untraced. Not hardware-verified.
+            untraced. Device info (device_info_reads none): NewDetailVM.d0 -> h5 runs the compose
+            (NewDetailVM$afterConnectedSingleReadDeviceInfo4702ABC$1.invokeSuspend,
+            Compose4BaseInfoSingleRead.Companion.c), whose controller list is the one Controller4IcNumber aa 40 read, no
+            version read; its success callback (NewDetailVM$afterConnectedSingleReadDeviceInfo4702ABC$1.o) takes the
+            soft and hard versions from the reply's TLV 0x07 (k2(e(), d()); Compose4BaseInfoSingleRead.w) and then sends
+            s5's reads (aa 40, the power-off memory), none a version read, so the library sends no aa 06 / aa 07 either
+            and folds the versions and device id from TLV 0x07 alone. Not hardware-verified.
           doc-ref:
             - split_h7050/com/govee/h7020/pact/Support.java:96-166,383-385,477-479,595-631,697-704,719-721
             - split_h7050/com/govee/h7020/pact/SubLib4BleIot.java:20-31
             - split_h7050/com/govee/h7020/pact/Model4BleIot.java:41-44
-            - split_h7050/com/govee/h7020/newDetail/NewDetailVM.java:666-676,735-742,975-1013,1012-1031,1308-1315,1432-1463,1514-1538
-            - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4BaseInfoSingleRead.java:161-180,215-237,247-345
+            - split_h7050/com/govee/h7020/newDetail/NewDetailVM.java:666-676,735-742,975-1013,1012-1031,1308-1315,1432-1463,1514-1538,1104-1110
+            - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4BaseInfoSingleRead.java:161-180,215-237,247-345,370-380
             - base-classes11/com/govee/base2light/pact/newdetail/ShareVM.java:1362-1364
             - base-classes11/com/govee/base2light/kt/general_parser/DefParser.java:83-87
             - base-classes11/com/govee/base2light/kt/general_controller/ControllerSwitch.java:50-62
@@ -18906,14 +19011,20 @@ families:
             write before it reads aa 40 first. aa 01 keep-alive and ee 30 push; 33 01 power, no zones; Config.x[391] = 0 ->
             Yt, Config.P[391] = 1: the h60a6 forms, whole-device only (the Part tab is account-sized, as on 296; Config.I[391]
             has segment brightness and CCT on, gradual off); wheel-drag real-time frames (Config.g0[391] = 2) not modelled;
-            BrightnessConfig version 1 = percent; KelvinConfig version 5 (k2) = [1000, 10000]. Scenes untraced. Not
-            hardware-verified.
+            BrightnessConfig version 1 = percent; KelvinConfig version 5 (k2) = [1000, 10000]. Scenes untraced. Device
+            info (device_info_reads none): NewDetailVM.d0 -> h5 runs the compose
+            (NewDetailVM$afterConnectedSingleReadDeviceInfo4702ABC$1.invokeSuspend,
+            Compose4BaseInfoSingleRead.Companion.c), whose controller list is the one Controller4IcNumber aa 40 read, no
+            version read; its success callback (NewDetailVM$afterConnectedSingleReadDeviceInfo4702ABC$1.o) takes the
+            soft and hard versions from the reply's TLV 0x07 (k2(e(), d()); Compose4BaseInfoSingleRead.w) and then sends
+            s5's reads (aa 40, the power-off memory), none a version read, so the library sends no aa 06 / aa 07 either
+            and folds the versions and device id from TLV 0x07 alone. Not hardware-verified.
           doc-ref:
             - split_h7050/com/govee/h7020/pact/Support.java:96-166,383-385,477-479,595-631,697-704,719-721
             - split_h7050/com/govee/h7020/pact/SubLib4BleIot.java:20-31
             - split_h7050/com/govee/h7020/pact/Model4BleIot.java:41-44
-            - split_h7050/com/govee/h7020/newDetail/NewDetailVM.java:666-676,735-742,975-1013,1012-1031,1308-1315,1432-1463,1514-1538
-            - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4BaseInfoSingleRead.java:161-180,215-237,247-345
+            - split_h7050/com/govee/h7020/newDetail/NewDetailVM.java:666-676,735-742,975-1013,1012-1031,1308-1315,1432-1463,1514-1538,1104-1110
+            - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4BaseInfoSingleRead.java:161-180,215-237,247-345,370-380
             - base-classes11/com/govee/base2light/pact/newdetail/ShareVM.java:1362-1364
             - base-classes11/com/govee/base2light/kt/general_parser/DefParser.java:83-87
             - base-classes11/com/govee/base2light/kt/general_controller/ControllerSwitch.java:50-62
@@ -18976,17 +19087,24 @@ families:
             colour-strip path (ColorModeControllerConfig.k) is untraced. Gradual left out (non-core): Config.I[411]
             (vR) has the toggle, and a status row's gradual read is a library gap. Wheel-drag real-time frames
             (Config.g0[411] = 2) are not modelled. Scenes untraced. Not hardware-verified: no H301x has been seen
-            answering the unit, so its ack and timing are source-traced only.
+            answering the unit, so its ack and timing are source-traced only. Device info (device_info_reads none):
+            NewDetailVM.d0 -> h5 runs the compose
+            (NewDetailVM$afterConnectedSingleReadDeviceInfo4702ABC$1.invokeSuspend,
+            Compose4BaseInfoSingleRead.Companion.c), whose controller list is the one Controller4IcNumber aa 40 read, no
+            version read; its success callback (NewDetailVM$afterConnectedSingleReadDeviceInfo4702ABC$1.o) takes the
+            soft and hard versions from the reply's TLV 0x07 (k2(e(), d()); Compose4BaseInfoSingleRead.w) and then sends
+            s5's reads (aa 40, the power-off memory), none a version read, so the library sends no aa 06 / aa 07 either
+            and folds the versions and device id from TLV 0x07 alone.
           doc-ref:
             - split_h7050/com/govee/h7020/pact/Support.java:62-65,96-166,313-362,383-385,477-479,595-597,697-704,719-721
             - split_h7050/com/govee/h7020/pact/SubLib4BleIot.java:20-31
             - split_h7050/com/govee/h7020/pact/Model4BleIot.java:41-44
-            - split_h7050/com/govee/h7020/newDetail/NewDetailVM.java:666-676,735-742,975-1013,1308-1315,1432-1463,1514-1538
+            - split_h7050/com/govee/h7020/newDetail/NewDetailVM.java:666-676,735-742,975-1013,1308-1315,1432-1463,1514-1538,1104-1110
             - split_h7050/com/govee/h7020/newDetail/NewDetailVM$afterConnectedSingleReadDeviceInfo4702ABC$1.java:48-61,64-92,135-176,186-232
             - split_h7050/com/govee/h7020/newDetail/controller/Controller4IcNumber.java:47-61,66-92,103-106
             - split_h7050/com/govee/h7020/newDetail/h3010123/ColorModeH3010.java:98-104,391-393,432-434
             - base-classes10/com/govee/base2light/ble/controller/AbsComposeControllerWithOpResult.java:287-311
-            - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4BaseInfoSingleRead.java:161-180,215-237,247-345
+            - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4BaseInfoSingleRead.java:161-180,215-237,247-345,370-380
             - base-classes11/com/govee/base2light/pact/newdetail/ShareVM.java:1362-1364
             - base-classes11/com/govee/base2light/kt/general_parser/DefParser.java:83-87
             - base-classes11/com/govee/base2light/kt/general_controller/ControllerSwitch.java:50-62
@@ -20173,23 +20291,34 @@ families:
             the TLV the screen requests. The wire num_segments (Support.f: 6 / 9 / 12 by suffix A / B / C, the
             uncut strings) is only the count before that read. Not read back: the TLV 0xA5 gradient record
             [segment][brightness][3 x RGB] (no wire form, skipped, as on H3751), so colour state is not read.
-            Scenes untraced (versionArray {0, 1, 2, 3, 5}); the gradual switch is left out. Not hardware-verified.
+            Scenes untraced (versionArray {0, 1, 2, 3, 5}); the gradual switch is left out. Part-tab Kelvin
+            (segment_color_temp true): 326 is in SupportPartColorTemConfig.d, so DelegateColorV2Part.Z0 adds the Part
+            tab's Kelvin item (LightColorCapabilityCenter.C2 -> E2 -> LegacyColorCapabilityProvider.H ->
+            SupportPartColorTemConfig.b), and H707AColorMode.canClickColorTem tints the selected bulbs while the segment
+            view shows (every bulb otherwise). Segment brightness: H707AColorMode.canClickBrightness sets the level on
+            the selected pieces as they are, with no widening to groups (no segment_brightness_groups: decision 12
+            widens only where the strip does). Device info (device_info_reads none): the compose
+            (H707ABCDetailVM$afterConnectedSingleReadDeviceInfo$1.invokeSuspend, Compose4BaseInfoSingleRead.Companion.b,
+            no controller list) queues no aa 06 / aa 07 read, and its success callback
+            (H707ABCDetailVM$afterConnectedSingleReadDeviceInfo$1.n) takes the soft and hard versions from the reply's
+            TLV 0x07 (k2(e(), d()); Compose4BaseInfoSingleRead.w), so the library sends none either and folds the
+            versions and device id from TLV 0x07 alone. Not hardware-verified.
           doc-ref:
             - split_h7075/com/govee/h7075/pact/Support.java:241-257,266-270,354-361,392-411,515-522,541-569,575-581
             - split_h7075/com/govee/h7075/add/AddDeviceM.java:53-55
             - split_h7075/com/govee/h7075/H7075Application.java:46,50,63
             - split_h7075/com/govee/h7075/pact/Model.java:171-173,217-220
             - split_h7075/com/govee/h7075/pact/SubLib.java:24-30
-            - split_h7075/com/govee/h7075/h707A/H707ABCDetailVM$afterConnectedSingleReadDeviceInfo$1.java:53-172,185-209,248-283
+            - split_h7075/com/govee/h7075/h707A/H707ABCDetailVM$afterConnectedSingleReadDeviceInfo$1.java:53-172,185-209,248-284
             - split_h7075/com/govee/h7075/ble/BleProtocol.java:10,12,13
             - split_h7075/com/govee/h7075/h7072/H7072Info4Detail.java:60
             - split_h7075/com/govee/h7075/h3751/combine/CombineDeviceController.java:25
             - split_h7075/com/govee/h7075/h707A/H707ABCDetailVM.java:361-385,428-457,513-525,671-677,856-861,906-913,1095-1115,1206-1208,1422-1429,1625-1649
             - split_h7075/com/govee/h7075/h707A/setting/SegmentIcDataCache.java:74-117
             - split_h7075/com/govee/h7075/h707A/H707AInfo4Detail.java:223-259,311-357,614-662,664-702
-            - split_h7075/com/govee/h7075/h707A/mode/H707AColorMode.java:84-111,128-139,231-273,354-425
+            - split_h7075/com/govee/h7075/h707A/mode/H707AColorMode.java:84-111,128-139,231-273,354-425,330-351
             - split_h7075/com/govee/h7075/h707A/H707ABCDetailConfig.java:135-147,171-180
-            - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4BaseInfoSingleRead.java:161-180,215-237,247-345
+            - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4BaseInfoSingleRead.java:161-180,215-237,247-345,370-380
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/TimerConfig.java:169-182,463-479
             - base-classes11/com/govee/base2light/kt/general_controller/ControllerSyncTime.java:30-35,62-73
             - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4Off2On.java:45-80
@@ -20203,13 +20332,15 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/ColorModeControllerConfig.java:207-256,1069-1098
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:232-257,353-367,380-395,1794-1798,2897-2901,5205-5209,5521-5526,5590-5601,6424-6428,9684-9687,12557-12560,12960-12968,15002-15005,15681-15684
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:172-181,315-326,474-501
-            - base-classes10/com/govee/base2light/capability/color/LightColorCapabilityCenter.java:392-394,933-940,1104-1115,1286-1297
-            - base-classes10/com/govee/base2light/capability/legacy/LegacyColorCapabilityProvider.java:294-297
+            - base-classes10/com/govee/base2light/capability/color/LightColorCapabilityCenter.java:392-394,933-940,1104-1115,1286-1297,665-677
+            - base-classes10/com/govee/base2light/capability/legacy/LegacyColorCapabilityProvider.java:294-297,85-88
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:240-242,254-269,329-342,404-411,829-833,1538-1540
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:98-114,199-215,247-259
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/ColorPieceConfig.java:444-451
             - base-classes11/com/govee/base2light/kt/comm/Info4BleIotDevice.java:208-218,228-230,246-248,258-264,280-282,620-622
             - base-classes11/com/govee/base2light/kt/general_controller/ControllerIcNum.java:140-156
+            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
+            - base-classes11/com/govee/base2light/pact/newdetail/content/colorv2/DelegateColorV2Part.java:686-704
       wire:
         doc: "status lambda: TLV 0x40 by the IC pair reader, TLV 0x41 value[1], TLV 0xA1 the segment info, TLV 0xA3 byte 0 (split_h7075/com/govee/h7075/h707A/H707ABCDetailVM$afterConnectedSingleReadDeviceInfo$1.java:59-66, 85-87, 94-105, 141-142); the segment records of TLV 0xA5 have no form yet (h707a.md); counts are the uncut strings' (Support.f), the count before the first TLV 0xA1"
         forms: { f_01: light, f_09: datetime_epoch, f_40: ic_pair, f_41: power_memory, f_a1: segment_info, f_a3: gradual, f_15_01: kelvin_tint, f_ee_30: main_bit0_a }

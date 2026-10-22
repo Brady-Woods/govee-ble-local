@@ -1600,6 +1600,20 @@ model, from which the shipped readers are generated).
   TLV and its empty-value failure. govee_state's `ic_count.segment_signed` doc names the screen's use of TLV
   0x40's segment byte (the IC-pair reader's second value), which sizes the page where the IC changed and no
   0xA1 follows (`H707ABCDetailVM$afterConnectedSingleReadDeviceInfo$1.l` -> `n6`).
+- **The rows 1.9.0 adds or promotes carry the user's decisions 11, 12 and 13, each re-traced and cited in its `doc`
+  and `doc-ref`.** `segment_color_temp` by `SupportPartColorTemConfig.d` (the Part tab's Kelvin item,
+  `DelegateColorV2Part.Z0` -> `LightColorCapabilityCenter.C2`): true on h61d3 375 / 261, h705a 125 / 180 / 394,
+  h707a 326, h6609 260 and h7057 349, whose strips' `canClickColorTem` tint the selected pieces, and false on
+  dreamcolorlightv1 71 / 123, h61d3 299 and h705a 240 / 250. No `segment_brightness_groups`: each of their strips'
+  `canClickBrightness` (ColorModeH1A45, ColorModeV1_2, the h61d3 and h705a ColorMode / ColorModeV2,
+  H70C456789ColorMode, the h706789 ColorMode, H3401ColorMode, ColorModeH351011, H707AColorMode) sets the selected
+  pieces as they are, where `ColorMode14Rect4ReverseSelect` / `H605CColorMode` widen to groups. `device_info_reads:
+  none` on the new status rows, h7020 316 / 318 / 337 / 391 / 411 and h707a 326: their composes queue no aa 06 / aa
+  07 read (316 / 391 / 411 pass the one `Controller4IcNumber` aa 40 read) and their success callbacks take the
+  versions from TLV 0x07 (`NewDetailVM$afterConnectedSingleReadDeviceInfo$1.o` and `...4702ABC$1.o`,
+  `H707ABCDetailVM$afterConnectedSingleReadDeviceInfo$1.n`, each through `k2(e(), d())`); h705a 394 and h7057 349
+  took it on 1.8.0. The values came in with the merge of 1.8.0 (the resolver requires them); this adds the traces,
+  and no profile, frame or read changes.
 
 ## [1.6.1] — 2026-10-21
 
