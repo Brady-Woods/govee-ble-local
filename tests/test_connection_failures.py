@@ -92,7 +92,8 @@ async def test_advertised_aes_gcm_refused(monkeypatch) -> None:
 
 # -- an advertised mode handed over later (set_advertised_encryption) ------------
 # The app overwrites its per-MAC encrypt flag from every parsed broadcast (BleBroadVersionCache.d) and reads
-# it at connect (EncryptionUtils.isEncryptionSupported = the flag OR BgcInfoReader.g()).
+# it, OR'd with BgcInfoReader.g(), on every frame read, written or notified
+# (EncryptionUtils.isEncryptionSupported); its light screen writes it just before it connects.
 
 async def test_advertised_mode_applies_from_the_next_session(monkeypatch) -> None:
     fake = FakeGovee()   # an encrypted device

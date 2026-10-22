@@ -204,8 +204,8 @@ def _bound(sku: str, adv: Any = None) -> Device:
 
 
 def test_ingest_relearns_the_flag_for_the_next_session(caplog: pytest.LogCaptureFixture) -> None:
-    # H6076's case (gap L7, devlist-traces/straightfloorlamp-69.md) on an H6008: built before any advert was
-    # heard, it has the profile's plaintext default; its own encrypted advert now picks the next session's.
+    # An H6008 built before any advert was heard has the profile's plaintext default; its own encrypted
+    # advert now picks the next session's.
     d = _bound("H6008")
     calls: list[object] = []
     d.register_callback(calls.append)
@@ -241,7 +241,8 @@ def test_ingest_keeps_the_cipher_on_a_mixed_record(caplog: pytest.LogCaptureFixt
     assert d.encryption is Encryption.AES_RC4_PSK
     warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
     assert len(warnings) == 1 and "headers 0x03, 0x43" in warnings[0].getMessage()
-    assert "stays aes_rc4_psk" in warnings[0].getMessage()
+    assert ("the advertised mode stays aes_rc4_psk (a BGC version of 1 or 2 overrides it)"
+            in warnings[0].getMessage())
     caplog.clear()
     with caplog.at_level(logging.WARNING, logger="govee_ble_local"):
         d.ingest_advertisement(_adv(_RENAMED, _ENCRYPTED))   # agrees again (a cleared or rebuilt record)

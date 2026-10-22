@@ -34,7 +34,7 @@ model, from which the shipped readers are generated).
   - **What the app does:** `BleBroadVersionCache.d` overwrites a per-MAC flag, true or false, from each parsed
     broadcast: `AbsViewMode4OpWithOtaCheck.w2`, `AbsBlePact.t`, the H5083 screen, the add-device scan, and the
     group and OTA paths. Only a broadcast whose pact parses writes it (`GoodsType.parseBleBroadcastPactInfo`).
-    `EncryptionUtils.isEncryptionSupported` reads it with the BGC on every GATT callback and write
+    `EncryptionUtils.isEncryptionSupported` reads it with the BGC on every frame read, written or notified
     (`EncryptionBluetoothGattCallback`, `EncryptWriter.encryptWriteCharacteristic`). The light screen writes it
     from the scan just before it connects, so in practice it holds for a session (`AbsViewMode4Op.onScanEvent`
     stops the scan, parses the matched broadcast, then connects).

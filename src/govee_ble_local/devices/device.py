@@ -291,8 +291,9 @@ class Device:
     def _learn_cipher(self, mfg: dict[int, bytes]) -> None:
         """Re-learn the advertised encrypt flag for the next session, as the app overwrites its per-MAC
         flag from each parsed broadcast (``BleBroadVersionCache.d:109-142``, from
-        ``AbsViewMode4OpWithOtaCheck.w2``). The app reads that flag on every GATT callback and write
-        (``EncryptionUtils.isEncryptionSupported``, ``EncryptWriter.encryptWriteCharacteristic:42``), but
+        ``AbsViewMode4OpWithOtaCheck.w2``). The app reads that flag on every frame read, written or notified
+        (``EncryptionUtils.isEncryptionSupported``, from ``EncryptionBluetoothGattCallback`` :114 / :139 /
+        :156 / :219 / :233 and ``EncryptWriter.encryptWriteCharacteristic:42``), but
         writes it from the scan just before it connects (``AbsViewMode4Op.onScanEvent:1956-1985``). Here a
         session already up keeps its mode, and a BGC version of 1 or 2 still overrides the flag
         (:meth:`.GoveeConnection.set_advertised_encryption`); the INFO line names both.

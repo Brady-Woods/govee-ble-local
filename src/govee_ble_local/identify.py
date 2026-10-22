@@ -21,7 +21,8 @@ The app reads an advertisement two ways, and so does the library:
   block with the stored goodsType (``AbsViewMode4OpWithOtaCheck.j1`` ->
   ``GoodsType.parseBleBroadcastPactInfo``), whatever the name. ``AbsViewMode4OpWithOtaCheck.w2`` stores the
   encrypt flag per MAC (``BleBroadVersionCache.c`` / ``d``), and the cipher is chosen from it on every
-  GATT callback and write (``EncryptionUtils.isEncryptionSupported``, from ``EncryptionBluetoothGattCallback``
+  frame read, written or notified (``EncryptionUtils.isEncryptionSupported``, from
+  ``EncryptionBluetoothGattCallback``
   and ``EncryptWriter.encryptWriteCharacteristic:42``); the screen writes it from the scan just before it
   connects (``AbsViewMode4Op.onScanEvent``), so in practice it holds for a session. A Device, built for a
   SKU its caller already knows, reads its advertisements that way (:func:`_bound_advertisement`).
