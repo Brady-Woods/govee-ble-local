@@ -3932,7 +3932,7 @@ families:
     category: panel
     client_profile:
       has_brightness: true   # 4-byte records, no goodsType gate; split_h6061/com/govee/cubelight/newdetails/CubeVM4Light.java:386-422
-      color_scheme: h6061   # same frame layout for all six; panel count and mask width differ (the library's 23 panels / 3-byte mask fit 51 / 97 only)
+      color_scheme: h6061   # all six: whole-device RGB one Bytes.l 15 01 frame, CCT one Bytes.u 15 01 frame (Config.Zt); the masks cover the panel count
       mode_color_parse: rgb_kelvin_0d   # all six, every pact; split_h6061/com/govee/cubelight/newdetails/CubeNewInfo4Detail.java:488-538
       power_read: aa01   # in the connect read set; CubeNewDetailsConfig$makeControllerStrategy$1.java:211-215
       power_live: [heartbeat_aa01]   # no ee 30 parser; CubeVM4Light.java:531-533
@@ -3953,8 +3953,10 @@ families:
           doc: >-
             H6061 on the cubelight screen, which offers per-panel colour and scenes; its scene apply path is not traced
             (scene_dialect untraced). Panel count n: the user's layout size, else 23 (ColorPieceConfig.f(51)); the device
-            never reports one. RGB: ceil(n / 4) 15 04 group frames (Config.A[51] = 1, Bytes.m); CCT: the 15 01 Bytes.u frame
-            when every panel gets one Kelvin tint and Config.I[51][4] holds. Connect reads
+            never reports one. Whole-device RGB: one 15 01 R G B 00 00 <mask> frame (DelegateColorV2.F0 -> ColorViewModel.p0
+            -> ColorModeControllerConfig.c -> Config.J[5] = Zt -> Bytes.l); the 15 04 Bytes.m groups are the colour-stripe
+            path (ColorViewModel.O -> k). CCT: the 15 01 Bytes.u frame (ColorViewModel.U -> c -> Zt), also for an RGB pick
+            that is a Kelvin tint colour (KelvinConfig.i). Connect reads
             (CubeNewDetailsConfig.makeControllerStrategy): aa 04, aa 01, aa 05, then the aa a5 groups 1..ceil(n / 4)
             (CubeVM4Light.l5). Kelvin version 0 = [2000, 9000]; brightness percent. No account lock on control connects:
             0xB2 is sent only in the pairing flows (ConnectDialog extends AbsConnectDialog4Secret, PairAcV1). Not
@@ -3963,13 +3965,18 @@ families:
             - split_h6061/com/govee/cubelight/pact/Support.java:99-107
             - base-classes2/com/govee/shared/config/h6061/H6061SceneConfig.java:46-48
             - split_h6061/com/govee/cubelight/newdetails/CubeVM4Light.java:531-533
+            - base-classes11/com/govee/base2light/pact/newdetail/content/colorv2/DelegateColorV2.java:220-253,771-777
+            - base-classes11/com/govee/base2light/pact/newdetail/content/color/ColorViewModel.java:848-884,1388-1415
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/ColorModeControllerConfig.java:207-256
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:5521-5531,13124-13131
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:379-390,541-556
         "96": { models: [H6066] }   # Glide Hexa Pro
         "97": { models: [H6067] }   # Glide Tri
         "121": { models: [H6065] }   # Govee Glide Y Lights (h6067/pact/Support.java:84)
         "163": { models: [H606A] }   # Glide Hexa Ultra
         "228": { models: [H6063] }   # Govee Gaming Wall Light
       wire:
-        doc: "RGB Bytes.m groups (Config.A[51] = 1), CCT Bytes.u (Config.x[51] = 5); direct aa a5 groups of 4 (CubeVM4Light.l5); counts = ColorPieceConfig.f, the write limit"
+        doc: "whole-device RGB one Bytes.l frame (the 15 01 kelvin form with K = 0) and CCT Bytes.u (Config.x = 5 -> Config.J[5] = Zt); 15 04 Bytes.m groups only on the colour-stripe path (Config.A = 1); direct aa a5 groups of 4 (CubeVM4Light.l5); counts = ColorPieceConfig.f, the write limit"
         forms: { f_01: light, f_09: datetime_epoch, f_a5: color_group, f_15_01: kelvin, f_15_04: rgb_group }
         group: { rule: fixed, num_per_group: 4 }
         by_goods_type:
@@ -3983,11 +3990,12 @@ families:
     goods_types: [51, 96, 97, 121, 163, 228]   # cubelight SubLib keys; nothing on the colour path branches on pact; 284 is the entry h6069
     delivery: feature_split
     connectivity: [ble, wifi]
-    protocol: { single_packet: true, mode_command: "0x05" }   # whole-device RGB = one frame per group of 4 panels; scenes / DIY not modelled
+    protocol: { single_packet: true, mode_command: "0x05" }   # whole-device RGB and CCT = one 15 01 frame each (group frames only for colour stripes); scenes / DIY not modelled
     submodes: { color: "0x15", color_alt: "0x0d", scene: "0x04" }   # color_alt 0x0d = the colour read-back report; writes use 0x15
     opcodes:
-      - { name: color_group_write, cmd: "0x05", payload: "[0x15, 0x04, group (from 1), R, G, B x<=4]: whole-device RGB = ceil(n/4) frames, the last carrying the remaining panels (n=23: 6 frames, last has 3 colours)", note: "ColorModeControllerConfig.k -> w -> l (colour-brightness-group mode Config.A[51]=1, not in Config.D) -> Bytes.m(group, colours) / BleUtils.w0(colours, 4). Skipped (CCT frame below instead) when all panels are one colour that is a Kelvin tint colour in range: ColorUtils.q + KelvinConfig.i(colour) + Config.I[51][4]; the picked colour is then the tint and Constant.getColorTemKelvin(colour) the Kelvin." }
-      - { name: color_temp_write, cmd: "0x05", payload: "[0x15, 0x01, tintR, tintG, tintB, kelvin u2be, mask LSB first (24 bits: first n set; n=23 -> ff ff 7f)]", note: "Config.x[51]=5 -> Config.J[5]=Config.Zt -> Bytes.u(Constant.getColorTemKelvin(tint), positions, tint); taken when every panel gets one Kelvin-tint colour and Config.I[51][4] (CCT) is true; mask = BleUtils.X over ColorPieceConfig.k (24 positions). NOT the ff ff ff white-slot form of h60ax/h6047/h61d3." }
+      - { name: color_write, cmd: "0x05", payload: "[0x15, 0x01, R, G, B, 0x00, 0x00, mask LSB first over the posSet (BleUtils.X, ceil(n/8) bytes, above 16 positions; else BleUtils.makeSelectedTwoBytes, 2 bytes; n=23 -> ff ff 7f)] (Bytes.l): one frame for a whole-device RGB pick", note: "DelegateColorV2.F0 (the all tab, bound in E0; base-classes11/com/govee/base2light/pact/newdetail/content/colorv2/DelegateColorV2.java:220-235, 816-835) -> posSet ColorModeUtil.e(colour, CubeColorModeV2.realMyColorPiece = max(layout size, 1)) (base-classes11/com/govee/base2light/pact/newdetail/content/colorv2/ColorModeUtil.java:60-86, 140-146; split_h6061/com/govee/cubelight/newdetails/color/CubeColorModeV2.java:505-508; CubeVM4Light.applySingleColorInAll is the null default) -> C0 :771-777 -> ColorViewModel.p0 (base-classes11/com/govee/base2light/pact/newdetail/content/color/ColorViewModel.java:1388-1415) -> ColorModeControllerConfig.c (base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/ColorModeControllerConfig.java:207-256) -> Config.J[5] = Zt (Config.java:5527-5531, 13124-13131) -> Bytes.l (Bytes.java:379-390), or the CCT frame when KelvinConfig.i holds for the colour. Bytes.l is the 15 01 kelvin form with K = 0 (govee_ble_frame op15_color)." }
+      - { name: color_group_write, cmd: "0x05", payload: "[0x15, 0x04, group (from 1), R, G, B x<=4]: a colour stripe, ceil(n/4) frames, the last carrying the remaining panels (n=23: 6 frames, last has 3 colours)", note: "The colour-stripe path only (not modelled): DelegateColorV2.u0 :1257 -> ColorViewModel.O :693-715 -> ColorModeControllerConfig.k :730-869 -> w :1114-1141 -> l :871-934 (colour-brightness-group mode Config.A[51] = 1) -> Bytes.m(group, colours) (Bytes.java:393-402) / BleUtils.w0(colours, 4). Never the whole-device colour pick (color_write)." }
+      - { name: color_temp_write, cmd: "0x05", payload: "[0x15, 0x01, tintR, tintG, tintB, kelvin u2be, mask LSB first over the posSet (BleUtils.X above 16 positions, else 2 bytes; n=23 -> ff ff 7f)] (Bytes.u)", note: "Slider: DelegateColorV2.G0 :241-253 -> x0 -> ColorViewModel.U :848-884 -> ColorModeControllerConfig.c -> Config.J[5] = Zt -> Bytes.u(Constant.getColorTemKelvin(tint), posSet, tint) (Bytes.java:541-556), posSet = ColorModeUtil.e(tint, realMyColorPiece); an RGB pick that is a Kelvin tint colour in range takes the same frame (Zt, KelvinConfig.i). Config.I[51][4] only shows the slider (DelegateColorV2.C1 :779-806). NOT the ff ff ff white-slot form of h60ax/h6047/h61d3." }
       - { name: mode_read_color, cmd: "0x05", readable: true, payload: "AA 05 0D [R, G, B, kelvin s16be at bytes 3-4 (signed, big-endian)]; kelvin > 0 => colour-temperature mode, every panel shown as Constant.getTemColorByKelvin(k)[2] (derived from the Kelvin, 0 when k is not an exact table step in 1000..10000; the wire RGB discarded); kelvin <= 0 => the RGB (cubelight/newdetails/CubeNewInfo4Detail.java:142-153 ctor strategy, U :503-517). Read at connect and again by the heartbeat off->on re-read (CubeVM4Light.h5, cubelight/newdetails/CubeVM4Light.java:333-345). The app reads colour back as 0x0d although it writes 0x15; mode 0x15 is not parsed (CubeNewInfo4Detail.U handles 13 / 4 / 10 / 19 only)." }
       - { name: per_segment_color_read, cmd: "0xa5", readable: true, payload: "per-group direct read `aa a5 <group>` for groups 1..ceil(n/4) after every aa 05 (CubeVM4Light.l5); reply [group, 4 x {brightness, R, G, B}] (Controller4ColorInfoByGroup) = mechanism A-direct" }
       - { name: brightness, cmd: "0x04", readable: true, payload: "[percent 1..100] (Support.getBrightnessRange {1, 100, 0})" }

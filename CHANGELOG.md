@@ -71,7 +71,20 @@ model, from which the shipped readers are generated).
   that SKU's profile (`DeviceProfile.skus`): H6118 / H6179 / H6194 with H6005, H6099 with H6098 / H8098 /
   H6690, H70A1-3 with H6176 / H61BC, H61B0 with H61B3 / H61B6. H6099 and H61B0 come first in theirs, so a
   `Device` built from one of those profiles without `sku=` names itself after them (`create_device` and
-  `make_device` always pass the SKU).
+  `make_device` always pass the SKU). The one exception is H6061's whole-device RGB frame (Fixed, below).
+
+### Fixed
+- **H6061 whole-device RGB is now the app's one frame** (the user's decision, 2026-10-21: "Keep it, fix the
+  frame"). The `h6061` scheme sent a colour as `ceil(n / 4)` `33 05 15 04 <group> RGB x4` frames (`Bytes.m`),
+  which the app sends only for colour stripes (`ColorViewModel.O` -> `ColorModeControllerConfig.k`). The colour
+  screen's pick goes `DelegateColorV2.F0` -> `ColorViewModel.p0` -> `ColorModeControllerConfig.c` ->
+  `Config.J[5]` = `Config.Zt` -> `Bytes.l`: one `33 05 15 01 R G B 00 00 <mask>` frame, the spec's
+  `op15_color` kelvin form with Kelvin 0, over the same panel mask as the colour-temperature frame (H6061:
+  `ff ff 7f`). `set_rgb` and `turn_on(rgb=)` now send that frame; colour temperature, an RGB pick that is a
+  Kelvin tint colour, and every other H6061 frame are unchanged. `build.color_rgb` now builds the `h6061` frame
+  (it raised GoveeBleNotSupported) and takes `pieces=` as `color_temp` does; `build.color_rgb_frames` returns
+  one frame on every scheme. Source-modelled: no H6061 is on the bench, so this is checked against the app's
+  code only.
 
 ### Spec
 - **The device-list trace (Govee Home 7.7.02; 7.5.12 where a family says so).** Each of the 83 census families
@@ -95,6 +108,10 @@ model, from which the shipped readers are generated).
   - The catalogue snapshot routes 31 SKUs no row lists (15 before). For review: H613A-F (catalogue 39, named
     by h613839's (65535,255) bind item), where it was H615E.
   - rgbiclight 351 / 352 now record the R617G / R618D catalogue route, as h7057 274 does H8057's.
+- **h6061: the whole-device RGB pick is `Bytes.l`.** The family's new `color_write` opcode records it, with the
+  path above; `color_group_write` (`Bytes.m`) is now labelled the colour-stripe path, and `color_temp_write`
+  cites the slider's own path (`ColorViewModel.U` -> `c` -> `Zt`). The resolver checks that an `h6061` row with
+  RGB or colour temperature carries the `f_15_01: kelvin` form (it checked `f_15_04: rgb_group` for RGB).
 
 ## [1.6.1] — 2026-10-21
 

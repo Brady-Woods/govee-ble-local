@@ -567,12 +567,11 @@ class Device:
         return build.normalize_kelvin(kelvin, self.min_kelvin, self.max_kelvin)
 
     def _color_rgb_frames(self, rgb: tuple[int, int, int], span: tuple[int, int] | None) -> list[bytes]:
-        """Frames for a whole-device RGB pick: one, except on a profile whose colour scheme writes the
-        panels in groups (``h6061``: ``ceil(n/4)`` frames over :attr:`segment_count` panels). On every
-        scheme with a colour-temperature mode, a colour that is exactly one of the app's Kelvin tint
-        colours within the Kelvin range ``span`` (:meth:`_kelvin_range`, taken once per write so the
-        frame and the state agree) is the single CCT frame instead, as the app sends it
-        (:func:`build.rgb_as_kelvin`)."""
+        """The frame for a whole-device RGB pick, over :attr:`segment_count` segments (``h6061``: panels of
+        a device of the profile's ``segments``). On every scheme with a colour-temperature mode, a colour
+        that is exactly one of the app's Kelvin tint colours within the Kelvin range ``span``
+        (:meth:`_kelvin_range`, taken once per write so the frame and the state agree) is the CCT frame
+        instead, as the app sends it (:func:`build.rgb_as_kelvin`)."""
         r, g, b = rgb
         return self._build_or_unsupported(
             build.color_rgb_frames, r, g, b, self.profile.color_scheme, self.segment_count, span,
