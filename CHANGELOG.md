@@ -18,8 +18,8 @@ model, from which the shipped readers are generated).
   Admitted by default:
   - stringlightv2: **H6121 / H6141 / H6142 / H6154 / H6195** (1), **H6170 / H6196**, **H613G**† (2),
     **H616B** (68), **H6178** (78), **H6192** (143);
-  - h6114: **H6114** (39); h613839: **H6138 / H6139** (39); carlightv1: **H6118 / H6194** (6); tvlightv1:
-    **H6179** (12); pact_tvlightv2: **H6198 / H6199** (24);
+  - h6114: **H6114** (39); h613839: **H6138 / H6139** (39), each on an advertised pact only (below);
+    carlightv1: **H6118 / H6194** (6); tvlightv1: **H6179** (12); pact_tvlightv2: **H6198 / H6199** (24);
   - h6047: **H6039** (277); h61d3: **H61B0** (264, with H61B3 / H61B6); dreamcolorlightv1: **H70A1 / H70A2 /
     H70A3** (193);
   - rgbiclight: **H6671 / H6672** (332), **H617G**, **R617G**† (351), **H618G**, **R618D**† (352);
@@ -60,6 +60,23 @@ model, from which the shipped readers are generated).
   `VM4H70B6.i5`). H7072 stays `modelled`: the app places each TLV 0xA5 group at (group - 1) x that TLV's own
   record count (`SubMode4Color.j`), the library at (group - 1) x 4, and its firmware's split is untraced. None is
   hardware-verified.
+- **The BK-firmware rows, on an advertised pact only.** The app rewrites these SKUs to a BK goodsType only for a
+  record whose pact meets the gate, and keeps a record without a pact (an int 0) at its source goodsType
+  (`SkuToGoodsTypeUtil.f` over `OldRgbBkUtil.a` / `.b`; `OldRgbicBkUtil.isRgbicBk4Ble`; `OldCarBkUtil.isBkCar`),
+  so the library takes such a target row only on an advertised pact at or above the gate (`profile_for`,
+  `make_device`, `create_device` and `is_supported_sku`, whatever the goodsType). Each of these rows was held
+  for exactly that; nothing else on them changed:
+  - by default: h6159 **H6159 / H6110 / H6109 / H614B / H614E**, h6160 **H6160** and h6182 **H6182** (40, pact
+    (2,1)); h6113 **H6113** and h6181 **H6181** (39, (10,1) / (10,2)); barelightv1 **H6145 / H6146 / H6147** (17,
+    (10,1) to (10,3));
+  - behind `allow_modelled`: h6119 **H6119** (44, (10,1) / (10,2));
+  - the BK route of three SKUs above, carlightv1 **H6118 / H6194** and tvlightv1 **H6179** (39, (10,1) / (10,2),
+    percent brightness): without a pact, and at their own pacts, they keep their goodsType-6 / -12 rows.
+
+  These twelve, H6119 and H6114 / H6138 / H6139 have no admitted source row, so `supported_skus()` lists them,
+  but `is_supported_sku(sku)`, `profile_for`, `make_device` and `create_device` refuse one without a pact: pass
+  the advert's (`is_supported_sku(sku, pact=adv.pact)`; `scanner.supported()`, `discover()` and `create_device`
+  with the advertisement already do). Not hardware-verified: no gated SKU is on the bench.
 - **Bench, 2026-10-21 (the Mac, reads only):** one H61C3 and two H6076s, polled through `create_device` and
   `update()` on the new rows. A guard on `GoveeConnection._send_frame` refused any write; none was attempted.
   - **H61C3** (rgbiclight 141, pact (1,1), plaintext, `allow_modelled`): aa 01, aa 04, aa 05 01, aa 40,
@@ -77,20 +94,10 @@ model, from which the shipped readers are generated).
   `allow_modelled`) resolves to the same profile at every pact its rows list and at none, with and without
   `allow_modelled`, so its frames and decoded state are unchanged. Where a new SKU has the same facts it joins
   that SKU's profile (`DeviceProfile.skus`): H6118 / H6179 / H6194 with H6005, H6099 with H6098 / H8098 /
-  H6690, H70A1-3 with H6176 / H61BC, H61B0 with H61B3 / H61B6. H6099 and H61B0 come first in theirs, so a
-  `Device` built from one of those profiles without `sku=` names itself after them (`create_device` and
-  `make_device` always pass the SKU).
-- **A SKU that a pact-conditioned `assigned_goods_type` item names reaches the item's target row only on an
-  advertised pact.** The app rewrites such a SKU (the BK lights: H6114, H6138 / H6139, H6113, H6181, H6159,
-  H6160, H6182, H6119, H6145-7, and the car / TV lights) to the gated goodsType only for a record whose pact
-  meets the gate; a record without a pact holds 0 and stays at its source goodsType (`SkuToGoodsTypeUtil.f`
-  over `OldRgbBkUtil.a` / `.b`). `profile_for(pact=None)` gave the gated row instead, so a pact-less advert
-  would have got, for example, H6114's raw [20, 254] brightness frames. Now a route at a target row needs the
-  pact (`profile_for`, `make_device`, `create_device` and `is_supported_sku`, whatever the goodsType), and with
-  no source row admitted yet, H6114, H6138 and H6139 are unsupported without one. An advert that carries a pact
-  at or above the gate routes as before, so `scanner.supported()` / `discover()` and a caller that passes the
-  advert's pact are unaffected; `supported_skus()` still lists the three. Every other SKU, the 18
-  `PACT_FALLBACK_SKUS` included, routes as before at every pact and at none.
+  H6690, H70A1-3 with H6176 / H61BC, H61B0 with H61B3 / H61B6, H6145-7 with H617C / H617E / H617F / H6168.
+  H6099 and H61B0 come first in theirs, so a `Device` built from one of those profiles without `sku=` names
+  itself after them (`create_device` and `make_device` always pass the SKU). The pact gate on the BK rows
+  (Added) is new routing for new SKUs only: no SKU it covers was supported at 1.6.1.
 
 ### Spec
 - **The device-list trace (Govee Home 7.7.02; 7.5.12 where a family says so).** Each of the 83 census families
@@ -103,8 +110,8 @@ model, from which the shipped readers are generated).
   `modelled`; one that needs library work has no `support` and names the gap in its `doc`. A verification
   pass challenged each family's rows; they were repaired, and demoted (to `modelled`, or to no `support`)
   where a core claim didn't hold.
-  - devices.yaml now has 305 goodsType rows in 96 families (184 in 91): 153 with `support` (66), of them 121
-    `app_traced`, 28 `modelled` and the same 4 `hardware_verified`, and 152 without (118).
+  - devices.yaml now has 305 goodsType rows in 96 families (184 in 91): 168 with `support` (66), of them 134
+    `app_traced`, 30 `modelled` and the same 4 `hardware_verified`, and 137 without (118).
   - Two goodsType add-ons were traced and checked on their own: straightfloorlamp 69 (H6076 / H8076,
     `app_traced`, with the bench reads above) and rgbiclight 141 (H61C2 / H61C3 / H61C5, `modelled`).
   - Nothing new is hardware-verified. The only bench evidence is the read-only H6076 / H61C3 check above.
