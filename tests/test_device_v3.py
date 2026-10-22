@@ -364,6 +364,34 @@ def test_h6641_group_reply_is_placed_by_the_requested_group() -> None:
     assert d._conn.query.await_count == 4                          # aa 40 + 3 aa a5, not 255
 
 
+@pytest.mark.parametrize(("count", "segments", "groups"), [
+    (2, 30, 10),      # 2 strings x 15 bulbs, aa a5 groups of 3
+    (8, 112, 40),     # 120 pieces: the masks carry 112, the walk takes all 120 (NewDetailVM.D5)
+    (None, 30, 0),    # no aa 0f reply: no count, so no walk (the static 30 stays for nothing)
+])
+def test_a_bulb_string_poll_reads_aa0f_and_walks_its_pieces(count: int | None, segments: int,
+                                                             groups: int) -> None:
+    # h7020 bulb-string rows: the poll reads aa 0f between aa 04 and aa 05, as the screen's connect places
+    # it (Compose4InfoBleIot / Compose4InfoBle with NewDetailVM.s5), adopts count x bulbs per string as the
+    # segment count, and walks ceil(pieces / group) aa a5 groups (NewDetailVM.D5).
+    d = _dev("H7020")
+    asked: list[bytes] = []
+
+    def _q(frame: bytes, **_kw: object) -> list[bytes]:
+        asked.append(frame)
+        if frame[1] == 0x0F:
+            return [] if count is None else [_reply(0xAA, 0x0F, count)]
+        if frame[1] == 0xA5:
+            return [_reply(0xAA, 0xA5, frame[2], *[v for i in range(3) for v in (40, frame[2], i, 0)])]
+        return [_reply(0xAA, frame[1], 0x01)]
+
+    d._conn.query = AsyncMock(side_effect=_q)  # type: ignore[method-assign]
+    asyncio.run(d.update())
+    assert [f[1] for f in asked[:4]] == [0x01, 0x04, 0x0F, 0x05]
+    assert [f[2] for f in asked if f[1] == 0xA5] == list(range(1, groups + 1))
+    assert d.segment_count == segments and len(d.state.segments) == 3 * groups
+
+
 def test_h6641_segment_control_wired() -> None:
     # H6641: per-segment control (write) + mechanism A-direct colour read-back (Controller4-
     # ColorInfoByGroup, `aa a5 <group>` — the 0xAC status burst is source-confirmed zero for gt 247).

@@ -507,6 +507,14 @@ def parse_ic_count(frame: bytes) -> IcCount | None:
                    section_sum=None if sections is None else int(sections), ic_pair=pair)
 
 
+def parse_light_num(frame: bytes) -> int | None:
+    """AA 0F reply: the bulb-string count, byte 0 read as a Java byte (``light_num_state``; h7020
+    ``Controller4BulbNum.Companion.c`` / ``d``), so 0x80 or more is negative; None for another frame or an
+    empty reply."""
+    b = _reply_state(frame, _Command.light_num)
+    return None if b is None else int(b.count)
+
+
 @dataclass(frozen=True)
 class SectionCount:
     """AA 41 reply on the H6062 (``striplight`` ``ControllerIcSegmentNum``): the device's IC

@@ -762,6 +762,9 @@ def test_live_ic_profile_needs_its_ic_derivation() -> None:
             DeviceProfile(skus=("HX",), capabilities=frozenset(), **rule)   # type: ignore[arg-type]
     with pytest.raises(ValueError, match="color_writes_live_ic"):   # its count comes from the live read
         DeviceProfile(skus=("HX",), capabilities=frozenset(), color_writes_live_ic=True)
+    for per_unit in (-1, True):   # the aa 0f string count's pieces per string: 0 (no read) or more
+        with pytest.raises(ValueError, match="light_num_per_unit"):
+            DeviceProfile(skus=("HX",), capabilities=frozenset(), light_num_per_unit=per_unit)
 
 
 def _ic(count: int) -> parse.IcCount:
@@ -916,16 +919,24 @@ def _status(ic: int | None, groups: int, *extra: bytes) -> list[bytes]:
     ("H702A", {0x40: [_frame(0xAA, 0x40, 0x00, 30, 0x00)]}, 30),
     # H3010: ColorPieceConfig.b's max(15, IC) pieces, its colour one 0xA3 unit (ColorModeControllerConfig.j).
     ("H3010", {0x40: [_frame(0xAA, 0x40, 0x00, 8, 0x00)]}, 15),
+    # aa 0f (NewDetailVM.u5): 2 strings x 25 bulbs on H7041; no reply, or a negative count (a Java byte), is
+    # none; a count of 0 is the app's empty pick, a zero mask.
+    ("H7041", {0x0F: [_frame(0xAA, 0x0F, 2)]}, 50),
+    ("H7041", None, None),
+    ("H7041", {0x0F: [_frame(0xAA, 0x0F, 0x80)]}, None),
+    ("H7041", {0x0F: [_frame(0xAA, 0x0F, 0)]}, 0),
 ])
 def test_an_ic_sized_write_takes_the_live_count_or_sends_nothing(sku: str, replies: Replies | None,
                                                                    count: int | None) -> None:
-    # color_writes_live_ic: before the first poll a masked write reads its IC first (ColorPieceConfig.c sizes
-    # the strip from the IC it stores), and without a usable count nothing is sent, as on H6062's aa 41.
+    # color_writes_live_ic / light_num_per_unit: before the first poll a masked write reads its IC or the
+    # aa 0f string count first (ColorPieceConfig.c sizes the strip from the IC it stores), and without a
+    # usable count nothing is sent, as on H6062's aa 41.
     d = _dev(sku, replies)
+    first = {"H3401": 0x03, "H7041": 0x0F}.get(sku, 0x40)
     if count is None:
-        with pytest.raises(GoveeBleError, match="usable IC count"):
+        with pytest.raises(GoveeBleError, match=r"usable (IC|string) count"):
             run(d.set_rgb((1, 2, 3)))
-        assert _sent(d) == [] and [q[1] for q in _queried(d)] == [0x03 if sku == "H3401" else 0x40]
+        assert _sent(d) == [] and [q[1] for q in _queried(d)] == [first]
     else:
         run(d.set_rgb((1, 2, 3)))
         assert d.segment_count == count

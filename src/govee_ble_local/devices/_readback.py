@@ -121,8 +121,11 @@ async def walk_mechanism_a_direct(dev: ReadTarget, read_reply: ReadReply,
     controller from H61A8's mechanism_b (BulbGroupColorV2); they only share the wire opcode. Group
     size is the profile's `color_readback_per_batch` (the spec row's wire group num_per_group, 4 on
     every current SKU). The total piece count — and hence the group count, ceil(pieces / group size) —
-    comes from either a static per-SKU value (`color_readback_segments`/`segments`; H6047 uses its
-    10 `segments`) or, when `color_readback_live_ic` is set (H6641), a live `0x40` IC-count read
+    comes from either the segment count (`color_readback_segments`, else ``Device.segment_count``: the
+    static `segments`, H6047's 10, or the count an aa 41 read reported, H6062; on the h7020 bulb strings
+    ``live_pieces``, the last aa 0f read's pieces, which may pass the 112 the masks carry, as
+    ``NewDetailVM.D5`` walks them all) or, when `color_readback_live_ic` is set (H6641), a live `0x40`
+    IC-count read
     derived the way the app does (:func:`live_ic_pieces`; ``live_pieces``, where the caller made that read:
     ``Device`` makes it once per poll, as it sizes the writes too). When that read fails the app still walks
     the groups from the IC count it stored earlier; the library has none, so it skips the walk. With
@@ -160,7 +163,8 @@ async def walk_mechanism_a_direct(dev: ReadTarget, read_reply: ReadReply,
         # throws before it places a group).
         total = max(0, wanted)
     else:
-        total = profile.color_readback_segments or dev.segment_count
+        total = (live_pieces if live_pieces is not None
+                 else profile.color_readback_segments or dev.segment_count)
         group_count = build.ceil_div(total, group_size)
 
     groups: list[tuple[int, list[tuple[int, int, int, int]]]] = []

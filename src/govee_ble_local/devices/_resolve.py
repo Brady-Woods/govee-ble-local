@@ -161,7 +161,12 @@ the row lacks fails the build: nothing defaults silently.
   read (the 0xAC special-info read ``ac a1``, whose segment IC record gives the device's segment count, the
   goodsType 180 screen's: ``DeviceProfile.special_info_read``) sizes the masks and the walk as the aa 41
   section count does, so it goes on a polled row with ``segments``, never with that read or an IC-sized
-  read-back. Every command
+  read-back. A ``light_num`` read (aa 0f, the string count) goes with ``light_num_pieces``, on a polled light
+  row only (the h7020 bulb-string screens' connect, ``NewDetailVM.s5``) and as the row's one live count (no
+  ``ic_pieces`` object form, no aa 41 section count, no ``special_info`` read): the count times ``per_unit``
+  is the screen's stored IC (``NewDetailVM.u5``), so it sizes the writes and the direct read-back as an
+  object form's pieces do (``DeviceProfile.light_num_per_unit``), and the wire ``num_segments`` is the count
+  before the first read. Every command
   form the library sends or reads for the row must be the row's (wire ``forms``), a polled row's aa 05 reply
   is read with the row's wire ``mode`` (``DeviceProfile.mode_decode``, over the spec's default,
   :data:`_MODE_UNSET`), and a colour-group read is of 4-byte records in the row's wire
@@ -281,6 +286,11 @@ class IcPair(TypedDict):
     otherwise: int
 
 
+class LightNumPieces(TypedDict):
+    """``clientRow.light_num_pieces``: the aa 0f string count times the pieces per unit."""
+    per_unit: int
+
+
 class Branch(TypedDict, total=False):
     """``clientBranch``: a pact branch of a row."""
     mode_color_parse: str
@@ -345,6 +355,7 @@ class Row(TypedDict, total=False):
     ic_pieces: IcPieces | IcTable | IcPair | str
     post_status_reads: tuple[str, ...]
     readback_pieces: str
+    light_num_pieces: LightNumPieces
     by_pact: dict[str, Branch]
     by_firmware: tuple[FirmwareBranch, ...]
 
@@ -564,7 +575,7 @@ _READBACK: Final = {"aa01": "polled", "ac_status": "status", "aa34_detail": "pol
 _STATUS_TLV_FORMS: Final = ("f_30", "f_36", "f_40", "f_41", "f_a3")
 _GROUP_RULES: Final = frozenset({"from_len", "fixed", "by_pieces", "whole_groups"})   # group_count_rule
 _READS: Final = frozenset({"brightness", "gradual", "cmd_36", "color_group", "ic_num", "cmd_41",
-                           "special_info"})
+                           "special_info", "light_num"})
 _PACT_FACTS: Final = frozenset({"status_read", "scene_versions", "kelvin_range", "brightness_range"})
 # Pact branches whose capabilities the library leaves unread: (family, goodsType, pact key) -> the branch's
 # capabilities exactly. D3: H60A6 at pact (1, 1) keeps the row's capabilities.
@@ -1244,6 +1255,20 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
                                      or live_ic or ic == "sections"):
         fail(f"kelvin_readback {piece_kelvin!r} (one of {list(KELVIN_READBACKS)}, with color_temp and the "
              "direct colour read-back whose pieces it reads, on a polled row whose walk is not IC-sized)")
+    # The aa 0f string count times the pieces per unit (h7020 NewDetailVM.u5): the row's one live count.
+    light_num = row.get("light_num_pieces")
+    if ("light_num" in reads) != (light_num is not None):
+        fail("an aa 0f light_num read and light_num_pieces go together")
+    per_unit = 0 if light_num is None else light_num["per_unit"]
+    if light_num is not None:
+        if readback != "polled":
+            fail("an aa 0f light_num read is served on a polled light row only (the h7020 bulb-string "
+                 "screens' aa-read connect)")
+        if live_ic or section_count or special_info:
+            fail("light_num_pieces with another live piece count (an ic_pieces object form, the aa 41 "
+                 "section count or the special_info read)")
+        if not (_is_int(per_unit) and per_unit >= 1):
+            fail(f"light_num_pieces per_unit {per_unit!r} (1 or more)")
     bar = forms.get("f_36") == "bar_pair"
     if ("cmd_36" in reads) != bar:
         fail("the aa 36 read and f_36 bar_pair go together")
@@ -1348,8 +1373,11 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
     }
     if out["scene_power_on"] and "scenes" not in row_caps:
         fail("by_model scene_power_on on a row without the scenes capability")
-    if ("segments" in row_caps or color_readback) and not out["segments"]:   # before SCHEME_LACKS (h6061)
+    # Before SCHEME_LACKS (h6061); a live string count's num_segments is the count before its first read.
+    if ("segments" in row_caps or color_readback or per_unit) and not out["segments"]:
         fail("segments or a colour read-back without wire counts num_segments")
+    if per_unit:
+        out["light_num_per_unit"] = per_unit
     for name, _index, segs in zones:
         if not all(0 <= s < out["segments"] for s in segs):
             fail(f"zone {name} segments {list(segs)} are not all below the {out['segments']} segments")

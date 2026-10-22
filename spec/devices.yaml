@@ -18344,24 +18344,370 @@ families:
             - base-classes10/com/govee/base2light/ble/controller/BleProtocolConstants.java:200
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:254-260,329-342,402-411,1099-1103,1211-1213
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:63-85,199-214
-        "53": { models: [H7020], pacts: ["1,1", "2,1"], kelvin_range: [2000, 9000], connect_reads: [brightness, gradual, light_num, color_group], heartbeat: power }   # no support: pieces = aa 0f string count x 15 (live); gap live_piece_count_bulb. App order (Q5, Compose4InfoBleIot + s5): aa 04, aa a3, aa 01, aa 0f, aa 41 (ControllerOnOffMemory.c, a setting read left out, D2), aa 05, aa a5. H7028 (catalogue 53, named nowhere on the app's BLE path) routes here by goodsType alone
-        "54": { models: [H7021], pacts: ["1,1"], kelvin_range: [2000, 9000], connect_reads: [brightness, gradual, light_num, color_group], heartbeat: power }   # as 53 (aa 41 after aa 0f, left out, D2)
-        "62": { models: [H7015], connectivity: [ble], pacts: ["1,1"], kelvin_range: [2000, 9000], connect_reads: [brightness, light_num, color_group], heartbeat: power }   # no support: h7020 Compose4InfoBle (M5): aa 04, aa 01, aa 0f, aa 41 (ControllerOnOffMemory.c, a setting read left out, D2), aa 05, aa a5 (no aa a3); pieces = aa 0f count x 15 (live). Catalogue goodsType 62; facts identical to 63
-        "63": { models: [H7016], connectivity: [ble], pacts: ["1,1"], kelvin_range: [2000, 9000], connect_reads: [brightness, light_num, color_group], heartbeat: power }   # as 62 (aa 41 after aa 0f, left out, D2). Catalogue goodsType 63; facts identical to 62
-        "100": { models: [H7041], pacts: ["1,2"], kelvin_range: [2000, 9000], connect_reads: [brightness, gradual, light_num, color_group], heartbeat: power }   # no support: reads as 53 (aa 41 after aa 0f, left out, D2); pieces = aa 0f count x 25 (live)
-        "102": { models: [H7042], pacts: ["1,2"], kelvin_range: [2000, 9000], connect_reads: [brightness, gradual, light_num, color_group], heartbeat: power }   # as 100 (aa 41 after aa 0f, left out, D2)
-        "149": { models: [H7029], connectivity: [ble], pacts: ["1,1"], kelvin_range: [2000, 9000], connect_reads: [brightness, light_num, color_group], heartbeat: power }   # no support: reads as 62 (aa 41 after aa 0f, left out, D2); pieces = the aa 0f count itself (live)
-        "161": { models: [H7033], pacts: ["1,1", "1,2"], kelvin_range: [2000, 9000], connect_reads: [brightness, gradual, light_num, color_group], heartbeat: power }   # no support: reads as 53, the aa 41 after aa 0f sent with ext byte [02] (ControllerOnOffMemory.d, a setting read left out, D2; a form the library lacks); pieces = aa 0f count x 10 (live)
+        "53":   # H7020, the h7020 NewDetailVM screen (Q5: Compose4InfoBleIot + s5); pieces = the aa 0f string count x 15. H7028 routes here by its catalogue goodsType alone
+          models: [H7020]
+          pacts: ["1,1", "2,1"]
+          support: app_traced
+          color_scheme: h60a6
+          capabilities: [power, brightness, rgb, color_temp]   # segments left out as on 296: the Part tab's width is account data (doc)
+          zones: []
+          account_lock: false
+          scene_dialect: untraced
+          kelvin_range: [2000, 9000]
+          brightness_range: [1, 100]
+          connect_reads: [brightness, gradual, light_num, color_group]
+          connect_writes: []
+          heartbeat: power
+          light_num_pieces: { per_unit: 15 }
+          doc: >-
+            H7020 (KmpGoodsType 53 BULB_STRING; catalogue goodsType 53) on the h7020 NewDetailVM screen (SubLib4BleIot keys
+            Support.L -> DeviceItem4BleIot -> Model4BleIot.t -> NewDetailActivity; n4 = Support.isSupportNewDetail,
+            goodsType only; pacts (1,1) and (2,1), Support.addSupportPact). H7028 (catalogue 53, named nowhere on the
+            app's BLE path) takes these goodsType-keyed facts. Connect (NewDetailVM.d0 -> Q5, Compose4InfoBleIot with the
+            s5 list): the time sync, versions, Wi-Fi reads, timers, sleep and wake-up (not listed), aa 04, aa a3 (the
+            gradual flag; Config.I[53] has gradual off, so it is read and discarded), aa 01, then s5's aa 0f
+            (Controller4BulbNum) and aa 41 (ControllerOnOffMemory.c, the power-off memory, a setting read left out, D2),
+            aa 05, then the aa a5 groups of Support.getOneGroupColorSize = 3, ceil(q() / 3) of them (P5 / T5 -> D5).
+            The aa 0f reply's byte 0 is the string count; u5 stores count x Support.getBulbStringSetting(53)[1] = 15 as
+            the IC (Info4BleIotDevice.G0), so 15 pieces per string. No 0xB2 (account_lock false). Keep-alive aa 01 (I3
+            true, ShareVM.K3 type 1); live power that reply and the ee 30 push. Power: switchTrigger writes one 33 01;
+            zones none. Brightness: BrightnessConfig.b -> 33 04, version 1 percent. Colour: the All tab
+            (DelegateColorV2.F0 / G0) sizes each pick by ColorModeUtil.a -> ColorPieceConfig.c at the pick (ColorModeV1
+            overrides neither realMyColorPiece nor getSupportColorSize), which for 53 is ColorPieceConfig.b over the
+            stored IC divided by 1, so every whole-device frame spans the live count, as the library's (aa 0f on each
+            poll and before the first masked write); Config.x[53] = 0 -> Config.J[0] = Yt -> Bytes.h, CCT Bytes.r white
+            type 1 (Config.P[53] = 1): the h60a6 forms, mask makeSelectedTwoBytes up to 16 pieces, else BleUtils.X cut to
+            7 bytes. Segments are left out as on 296: the Part tab's ColorModeV1 strip is Info4BleIotDevice.J() wide (the
+            account's segmentCount) when that is above 0. Kelvin: KelvinConfig version 0 = [2000, 9000]. Divergences: the
+            library sends no masked frame until an aa 0f reply gives it a count, as on H6062's aa 41 (the app's connect
+            read makes the aa 0f read before the screen controls the device; its stored IC before that is the
+            account's), and a negative count (a Java byte of 0x80 or more, on which the app's pick throws in
+            ColorModeUtil.e and sends nothing) leaves it none, so its next masked write reads aa 0f again. u5 stores
+            any count unbounded, and the library takes the rest as the app does: 0 is the app's empty pick (the
+            NewDetailVM IColorModeFuc defaults leave the pick to ColorModeUtil.e, an empty posSet: two zero mask
+            bytes, and D5 walks no group), and more than 112 pieces are written with the 112-position mask (the same
+            7 bytes after the cut) and walked in full. The string-count setting reaches none of these: it offers at
+            most 2 strings (SegmentNumSettingDialog.t). Scenes untraced. Not hardware-verified.
+          doc-ref:
+            - split_h7050/com/govee/h7020/pact/Support.java:80,90,96-106,364-381,477-479,697-704,735-743
+            - split_h7050/com/govee/h7020/pact/SubLib4BleIot.java:20-31
+            - split_h7050/com/govee/h7020/pact/Model4BleIot.java:41-44
+            - base-classes2/com/govee/shared/checker/KmpGoodsType.java:92
+            - split_h7050/com/govee/h7020/newDetail/NewDetailVM.java:184-210,429-442,678-702,735-742,794-811,832-850,853-881,888-899,975-1013,1168-1179,1308-1315,1432-1463,1514-1538
+            - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4InfoBleIot$iControllerStrategy$1.java:224-250
+            - split_h7050/com/govee/h7020/ble/Controller4BulbNum.java:24-27,43-46,57-59
+            - base-classes11/com/govee/base2light/kt/general_controller/Controller4ColorInfoByGroup.java:37-42,112-121
+            - split_h7050/com/govee/h7020/newDetail/Info4Detail.java:469-503
+            - base-classes11/com/govee/base2light/pact/newdetail/ShareVM.java:1362-1364
+            - base-classes11/com/govee/base2light/kt/general_controller/ControllerSwitch.java:50-62
+            - split_h7050/com/govee/h7020/newDetail/NewDetailConfig.java:91-103
+            - split_h7050/com/govee/h7020/newDetail/mode/ColorModeV1.java:89-111,387-389,428-430
+            - base-classes11/com/govee/base2light/pact/newdetail/content/color/IColorOpListener.java:33-35,48-50
+            - base-classes11/com/govee/base2light/pact/newdetail/IColorModeFuc.java:41-43,62-64
+            - base-classes11/com/govee/base2light/pact/newdetail/content/colorv2/DelegateColorV2.java:219-251
+            - base-classes11/com/govee/base2light/pact/newdetail/content/colorv2/ColorModeUtil.java:60-87,140-146
+            - base-classes11/com/govee/base2light/kt/comm/Info4BleIotDevice.java:246-248
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/ColorPieceConfig.java:62-135,256-259,354-370,1121-1125,1677-1722
+            - base-classes10/com/govee/base2light/capability/color/LightColorCapabilityCenter.java:875-905
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/ColorModeControllerConfig.java:207-256
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:232-257,965-969,2120,4400-4404,5520,6044-6048,6669,12668-12671,12960-12968,13712-13715,16987-16990
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:315-326,474-501
+            - base-classes10/com/govee/base2kt/utils/BleUtils.java:406-438
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:254-269,329-342,401-411
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:63-85,199-214,251-259
+            - split_h7050/com/govee/h7020/newDetail/widget/SegmentNumSettingDialog.java:219-233
+        "54":   # H7021, as 53 at pact (1,1); pieces = the aa 0f string count x 15
+          models: [H7021]
+          pacts: ["1,1"]
+          support: app_traced
+          color_scheme: h60a6
+          capabilities: [power, brightness, rgb, color_temp]   # segments left out as on 53
+          zones: []
+          account_lock: false
+          scene_dialect: untraced
+          kelvin_range: [2000, 9000]
+          brightness_range: [1, 100]
+          connect_reads: [brightness, gradual, light_num, color_group]
+          connect_writes: []
+          heartbeat: power
+          light_num_pieces: { per_unit: 15 }
+          doc: >-
+            H7021 (KmpGoodsType 54 BULB_STRING_V2; catalogue goodsType 54), as row 53 at pact (1,1) alone
+            (Support.addSupportPact): the same screen and connect (Q5: aa 04, aa a3 read and discarded, aa 01, aa 0f, the
+            aa 41 power-off memory left out under D2, aa 05, aa a5 groups of 3), pieces = the aa 0f string count x
+            Support.getBulbStringSetting(54)[1] = 15 (NewDetailVM.u5), and its colour config the same (Config.x[54] = 0,
+            Config.P[54] = 1, Config.I[54] gradual off and colour temperature on): h60a6 whole-device frames over the live
+            count; segments left out (the Part tab is account-sized). Kelvin version 0 = [2000, 9000]. The divergences of
+            row 53. Scenes untraced. Not hardware-verified.
+          doc-ref:
+            - split_h7050/com/govee/h7020/pact/Support.java:80,90,96-106,364-381,477-479,697-704,735-743
+            - split_h7050/com/govee/h7020/pact/SubLib4BleIot.java:20-31
+            - split_h7050/com/govee/h7020/pact/Model4BleIot.java:41-44
+            - base-classes2/com/govee/shared/checker/KmpGoodsType.java:93
+            - split_h7050/com/govee/h7020/newDetail/NewDetailVM.java:184-210,429-442,678-702,735-742,794-811,832-850,975-1013,1432-1463,1514-1538
+            - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4InfoBleIot$iControllerStrategy$1.java:224-250
+            - split_h7050/com/govee/h7020/ble/Controller4BulbNum.java:24-27,43-46,57-59
+            - base-classes11/com/govee/base2light/pact/newdetail/content/colorv2/DelegateColorV2.java:219-251
+            - base-classes11/com/govee/base2light/pact/newdetail/content/colorv2/ColorModeUtil.java:60-87
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/ColorPieceConfig.java:62-135,256-259,354-370,1677-1722
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:232-257,960-964,2120,4395-4399,5520,6049-6053,6669,12512-12515,12960-12968,13554-13557,17153-17156
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:315-326,474-501
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:254-269,329-342,401-411
+            - split_h7050/com/govee/h7020/newDetail/widget/SegmentNumSettingDialog.java:219-233
+        "62":   # H7015 (BLE only), the h7020 NewDetailVM screen (M5: the h7020 Compose4InfoBle + s5, no aa a3); pieces = the aa 0f string count x 15
+          models: [H7015]
+          connectivity: [ble]
+          pacts: ["1,1"]
+          support: app_traced
+          color_scheme: h60a6
+          capabilities: [power, brightness, rgb, color_temp]   # segments left out as on 53
+          zones: []
+          account_lock: false
+          scene_dialect: untraced
+          kelvin_range: [2000, 9000]
+          brightness_range: [1, 100]
+          connect_reads: [brightness, light_num, color_group]
+          connect_writes: []
+          heartbeat: power
+          light_num_pieces: { per_unit: 15 }
+          doc: >-
+            H7015 (KmpGoodsType 62 BULB_STRING_V3; catalogue goodsType 62), BLE only: SubLib keys Support.K -> DeviceItem
+            -> Model.t -> NewDetailActivity, the screen of row 53 at pact (1,1). Connect (d0 -> M5, the h7020
+            Compose4InfoBle with the s5 list, no Wi-Fi reads and no aa a3): the time sync, versions, timers, sleep and
+            wake-up (not listed), aa 04, aa 01, aa 0f, the aa 41 power-off memory (left out, D2), aa 05, then the aa a5
+            groups of 3 (P5 -> D5). Pieces = the aa 0f string count x Support.getBulbStringSetting(62)[1] = 15
+            (NewDetailVM.u5); colour config as 53's (Config.x[62] = 0, Config.P[62] = 1, Config.I[62] gradual off and
+            colour temperature on): h60a6 whole-device frames over the live count; segments left out (the Part tab is
+            account-sized). Kelvin version 0 = [2000, 9000]. The divergences of row 53. The H7015 tie is the catalogue's,
+            corroborated by Support.getDefBulbNum and the addSupportPact icons (family models). Scenes untraced. Not
+            hardware-verified.
+          doc-ref:
+            - split_h7050/com/govee/h7020/pact/Support.java:79,90,109-116,364-381,477-479,697-704
+            - split_h7050/com/govee/h7020/pact/SubLib.java:20-33
+            - split_h7050/com/govee/h7020/pact/Model.java:66-69
+            - base-classes2/com/govee/shared/checker/KmpGoodsType.java:94
+            - split_h7050/com/govee/h7020/newDetail/NewDetailVM.java:184-210,333-351,383-396,678-702,735-742,832-850,975-1013,1432-1463,1514-1538
+            - split_h7050/com/govee/h7020/newDetail/Compose4InfoBle$iControllerStrategy$1.java:112-178
+            - split_h7050/com/govee/h7020/ble/Controller4BulbNum.java:24-27,43-46,57-59
+            - base-classes11/com/govee/base2light/pact/newdetail/content/colorv2/DelegateColorV2.java:219-251
+            - base-classes11/com/govee/base2light/pact/newdetail/content/colorv2/ColorModeUtil.java:60-87
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/ColorPieceConfig.java:62-135,256-259,354-370,1677-1722
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:232-257,970-974,2120,4405-4409,5520,6039-6043,6669,12824-12827,12960-12968,13869-13872,16828-16831
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:315-326,474-501
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:254-269,329-342,401-411
+            - split_h7050/com/govee/h7020/newDetail/widget/SegmentNumSettingDialog.java:219-233
+        "63":   # H7016 (BLE only), as 62; pieces = the aa 0f string count x 15
+          models: [H7016]
+          connectivity: [ble]
+          pacts: ["1,1"]
+          support: app_traced
+          color_scheme: h60a6
+          capabilities: [power, brightness, rgb, color_temp]   # segments left out as on 53
+          zones: []
+          account_lock: false
+          scene_dialect: untraced
+          kelvin_range: [2000, 9000]
+          brightness_range: [1, 100]
+          connect_reads: [brightness, light_num, color_group]
+          connect_writes: []
+          heartbeat: power
+          light_num_pieces: { per_unit: 15 }
+          doc: >-
+            H7016 (KmpGoodsType 63 BULB_STRING_V4; catalogue goodsType 63), BLE only, as row 62: the same routing (SubLib
+            keys Support.K -> Model.t), pact (1,1), connect (M5: aa 04, aa 01, aa 0f, the aa 41 power-off memory left out
+            under D2, aa 05, aa a5 groups of 3), pieces = the aa 0f string count x Support.getBulbStringSetting(63)[1] = 15
+            (NewDetailVM.u5) and colour config (Config.x[63] = 0, Config.P[63] = 1, Config.I[63] gradual off and colour
+            temperature on): h60a6 whole-device frames over the live count; segments left out (the Part tab is
+            account-sized). Kelvin version 0 = [2000, 9000]. The divergences of row 53. The H7016 tie is the catalogue's,
+            as on 62. Scenes untraced. Not hardware-verified.
+          doc-ref:
+            - split_h7050/com/govee/h7020/pact/Support.java:79,90,109-116,364-381,477-479,697-704
+            - split_h7050/com/govee/h7020/pact/SubLib.java:20-33
+            - split_h7050/com/govee/h7020/pact/Model.java:66-69
+            - base-classes2/com/govee/shared/checker/KmpGoodsType.java:95
+            - split_h7050/com/govee/h7020/newDetail/NewDetailVM.java:184-210,333-351,383-396,678-702,735-742,832-850,975-1013,1432-1463,1514-1538
+            - split_h7050/com/govee/h7020/newDetail/Compose4InfoBle$iControllerStrategy$1.java:112-178
+            - split_h7050/com/govee/h7020/ble/Controller4BulbNum.java:24-27,43-46,57-59
+            - base-classes11/com/govee/base2light/pact/newdetail/content/colorv2/DelegateColorV2.java:219-251
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/ColorPieceConfig.java:62-135,256-259,354-370,1677-1722
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:232-257,975-979,2120,4410-4414,5520,6034-6038,6669,12960-12968,12985-12988,14029-14032,16666-16669
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:315-326,474-501
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:254-269,329-342,401-411
+            - split_h7050/com/govee/h7020/newDetail/widget/SegmentNumSettingDialog.java:219-233
+        "100":   # H7041, as 53 at pact (1,2); pieces = the aa 0f string count x 25
+          models: [H7041]
+          pacts: ["1,2"]
+          support: app_traced
+          color_scheme: h60a6
+          capabilities: [power, brightness, rgb, color_temp]   # segments left out as on 53
+          zones: []
+          account_lock: false
+          scene_dialect: untraced
+          kelvin_range: [2000, 9000]
+          brightness_range: [1, 100]
+          connect_reads: [brightness, gradual, light_num, color_group]
+          connect_writes: []
+          heartbeat: power
+          light_num_pieces: { per_unit: 25 }
+          doc: >-
+            H7041 (KmpGoodsType 100 OUTDOOR_LIGHT_BULB; catalogue goodsType 100), as row 53 at pact (1,2), its only pact
+            (Support.addSupportPact): the same screen and connect (Q5: aa 04, aa a3 read and discarded, aa 01, aa 0f, the
+            aa 41 power-off memory left out under D2, aa 05), then aa a5 groups of Support.getOneGroupColorSize = 4.
+            Pieces = the aa 0f string count x Support.getBulbStringSetting(100, 1, 2)[1] = 25 (Support.j is [true, true]
+            at pact (1,2); NewDetailVM.u5); colour config as 53's (Config.x[100] = 0, Config.P[100] = 1, Config.I[100]
+            gradual off and colour temperature on): h60a6 whole-device frames over the live count (two strings, 50
+            pieces, take a 7-byte mask); segments left out (the Part tab is account-sized). Kelvin version 0 = [2000,
+            9000]. The divergences of row 53. Scenes untraced. Not hardware-verified.
+          doc-ref:
+            - split_h7050/com/govee/h7020/pact/Support.java:80,90,117-122,364-381,477-479,643-645,697-704,735-743
+            - split_h7050/com/govee/h7020/pact/SubLib4BleIot.java:20-31
+            - split_h7050/com/govee/h7020/pact/Model4BleIot.java:41-44
+            - base-classes2/com/govee/shared/checker/KmpGoodsType.java:315
+            - split_h7050/com/govee/h7020/newDetail/NewDetailVM.java:184-210,429-442,678-702,735-742,794-811,832-850,975-1013,1432-1463,1514-1538
+            - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4InfoBleIot$iControllerStrategy$1.java:224-250
+            - split_h7050/com/govee/h7020/ble/Controller4BulbNum.java:24-27,43-46,57-59
+            - base-classes11/com/govee/base2light/pact/newdetail/content/colorv2/DelegateColorV2.java:219-251
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/ColorPieceConfig.java:62-135,256-259,354-370,1677-1722
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:232-257,955-959,2120,4385-4389,5520,6054-6058,6669,8848-8851,12356-12359,12960-12968,13229-13232
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:315-326,474-501
+            - base-classes10/com/govee/base2kt/utils/BleUtils.java:406-438
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:254-269,329-342,401-411
+            - split_h7050/com/govee/h7020/newDetail/widget/SegmentNumSettingDialog.java:219-233
+        "102":   # H7042, as 100; pieces = the aa 0f string count x 25
+          models: [H7042]
+          pacts: ["1,2"]
+          support: app_traced
+          color_scheme: h60a6
+          capabilities: [power, brightness, rgb, color_temp]   # segments left out as on 53
+          zones: []
+          account_lock: false
+          scene_dialect: untraced
+          kelvin_range: [2000, 9000]
+          brightness_range: [1, 100]
+          connect_reads: [brightness, gradual, light_num, color_group]
+          connect_writes: []
+          heartbeat: power
+          light_num_pieces: { per_unit: 25 }
+          doc: >-
+            H7042 (KmpGoodsType 102 OUTDOOR_LIGHT_BULB_V2; catalogue goodsType 102), as row 100: pact (1,2) alone, the
+            same connect (Q5: aa 04, aa a3 read and discarded, aa 01, aa 0f, the aa 41 power-off memory left out under
+            D2, aa 05, aa a5 groups of 4), pieces = the aa 0f string count x Support.getBulbStringSetting(102, 1, 2)[1] =
+            25 (NewDetailVM.u5) and colour config (Config.x[102] = 0, Config.P[102] = 1, Config.I[102] gradual off and
+            colour temperature on): h60a6 whole-device frames over the live count; segments left out (the Part tab is
+            account-sized). Kelvin version 0 = [2000, 9000]. The divergences of row 53. Scenes untraced. Not
+            hardware-verified.
+          doc-ref:
+            - split_h7050/com/govee/h7020/pact/Support.java:80,90,117-122,364-381,477-479,647-649,697-704,735-743
+            - split_h7050/com/govee/h7020/pact/SubLib4BleIot.java:20-31
+            - split_h7050/com/govee/h7020/pact/Model4BleIot.java:41-44
+            - base-classes2/com/govee/shared/checker/KmpGoodsType.java:316
+            - split_h7050/com/govee/h7050/newdetail/h351011/MusicModeH351011.java:46
+            - split_h7050/com/govee/h7020/newDetail/NewDetailVM.java:184-210,429-442,678-702,735-742,794-811,832-850,975-1013,1432-1463,1514-1538
+            - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4InfoBleIot$iControllerStrategy$1.java:224-250
+            - split_h7050/com/govee/h7020/ble/Controller4BulbNum.java:24-27,43-46,57-59
+            - base-classes11/com/govee/base2light/pact/newdetail/content/colorv2/DelegateColorV2.java:219-251
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/ColorPieceConfig.java:62-135,256-259,354-370,1677-1722
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:232-257,950-954,2120,4390-4394,5520,6059-6063,6669,9010-9013,12197-12200,12960-12968,13391-13394
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:315-326,474-501
+            - base-classes10/com/govee/base2kt/utils/BleUtils.java:406-438
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:254-269,329-342,401-411
+            - split_h7050/com/govee/h7020/newDetail/widget/SegmentNumSettingDialog.java:219-233
+        "149":   # H7029 (BLE only), as 62; pieces = the aa 0f count itself
+          models: [H7029]
+          connectivity: [ble]
+          pacts: ["1,1"]
+          support: app_traced
+          color_scheme: h60a6
+          capabilities: [power, brightness, rgb, color_temp]   # segments left out as on 53
+          zones: []
+          account_lock: false
+          scene_dialect: untraced
+          kelvin_range: [2000, 9000]
+          brightness_range: [1, 100]
+          connect_reads: [brightness, light_num, color_group]
+          connect_writes: []
+          heartbeat: power
+          light_num_pieces: { per_unit: 1 }
+          doc: >-
+            H7029 (KmpGoodsType 149 BLE_RGBWW_BALL_LIGHT; catalogue goodsType 149), BLE only, as row 62: SubLib keys
+            Support.K -> Model.t, pact (1,1), connect M5 (aa 04, aa 01, aa 0f, the aa 41 power-off memory left out under
+            D2, aa 05, aa a5 groups of 3). On 149 NewDetailVM.u5 (Support.isGoodsTypeH7029) stores the aa 0f count itself
+            as the IC, and only its string count, ceil(count / 8), in the settings, so the pieces are the count
+            (per_unit 1). Colour config as 53's (Config.x[149] = 0, Config.P[149] = 1, Config.I[149] gradual off and
+            colour temperature on): h60a6 whole-device frames over the live count; segments left out (the Part tab is
+            account-sized). Kelvin version 0 = [2000, 9000]. The divergences of row 53 (the setting offers at most 3
+            strings of 8). Scenes untraced. Not hardware-verified.
+          doc-ref:
+            - split_h7050/com/govee/h7020/pact/Support.java:79,90,125-127,364-381,477-479,623-625,697-704
+            - split_h7050/com/govee/h7020/pact/SubLib.java:20-33
+            - split_h7050/com/govee/h7020/pact/Model.java:66-69
+            - base-classes2/com/govee/shared/checker/KmpGoodsType.java:54
+            - split_h7050/com/govee/h7020/newDetail/NewDetailVM.java:184-210,333-351,383-396,678-702,735-742,832-850,975-1013,1207-1218,1432-1463,1514-1538
+            - split_h7050/com/govee/h7020/newDetail/Compose4InfoBle$iControllerStrategy$1.java:112-178
+            - split_h7050/com/govee/h7020/ble/Controller4BulbNum.java:24-27,43-46,57-59
+            - base-classes11/com/govee/base2light/pact/newdetail/content/colorv2/DelegateColorV2.java:219-251
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/ColorPieceConfig.java:62-135,256-259,354-370,1677-1722
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:232-257,980-984,2120,4415-4419,5520,6029-6033,6669,12960-12968,13149-13152,14185-14188,16508-16511
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:315-326,474-501
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:254-269,329-342,401-411
+            - split_h7050/com/govee/h7020/newDetail/widget/SegmentNumSettingDialog.java:219-233
+        "161":   # H7033, as 53 with pacts (1,1) / (1,2); pieces = the aa 0f string count x 10
+          models: [H7033]
+          pacts: ["1,1", "1,2"]
+          support: app_traced
+          color_scheme: h60a6
+          capabilities: [power, brightness, rgb, color_temp]   # segments left out as on 53 (H7033ColorMode's Part tab is J() x 2 wide)
+          zones: []
+          account_lock: false
+          scene_dialect: untraced
+          kelvin_range: [2000, 9000]
+          brightness_range: [1, 100]
+          connect_reads: [brightness, gradual, light_num, color_group]
+          connect_writes: []
+          heartbeat: power
+          light_num_pieces: { per_unit: 10 }
+          doc: >-
+            H7033 (KmpGoodsType 161 OUTDOOR_H7033; catalogue goodsType 161), as row 53 at pacts (1,1) and (1,2)
+            (Support.addSupportPact): the same connect (Q5: aa 04, aa a3 read and discarded, aa 01, aa 0f, then the aa 41
+            power-off memory sent with ext byte [02], ControllerOnOffMemory.d, a setting read left out under D2, aa 05),
+            then aa a5 groups of Support.getOneGroupColorSize = 4. Pieces = the aa 0f string count x
+            Support.getBulbStringSetting(161)[1] = 10 (NewDetailVM.u5). Its colour strip is H7033ColorMode
+            (NewDetailConfig), which like ColorModeV1 overrides neither realMyColorPiece nor getSupportColorSize, so the
+            All tab's picks take ColorPieceConfig.c at the pick, the live count; colour config as 53's (Config.x[161] =
+            0, Config.P[161] = 1, Config.I[161] gradual off and colour temperature on): h60a6 whole-device frames.
+            Segments left out: H7033ColorMode's Part tab is account-sized (J() x 2). Kelvin version 0 = [2000, 9000].
+            The divergences of row 53 (the setting offers at most 3 strings). Scenes untraced. Not hardware-verified.
+          doc-ref:
+            - split_h7050/com/govee/h7020/pact/Support.java:80,90,128-133,364-381,477-479,635-637,697-704
+            - split_h7050/com/govee/h7020/pact/SubLib4BleIot.java:20-31
+            - split_h7050/com/govee/h7020/pact/Model4BleIot.java:41-44
+            - base-classes2/com/govee/shared/checker/KmpGoodsType.java:314
+            - split_h7050/com/govee/h7020/newDetail/NewDetailVM.java:184-210,429-442,678-702,735-742,794-811,832-850,975-1013,1432-1463,1514-1538
+            - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4InfoBleIot$iControllerStrategy$1.java:224-250
+            - split_h7050/com/govee/h7020/ble/Controller4BulbNum.java:24-27,43-46,57-59
+            - split_h7050/com/govee/h7020/newDetail/NewDetailConfig.java:104-117
+            - split_h7050/com/govee/h7020/newDetail/mode/H7033ColorMode.java:351-353,392-394
+            - base-classes11/com/govee/base2light/pact/newdetail/content/colorv2/DelegateColorV2.java:219-251
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/ColorPieceConfig.java:62-135,256-259,354-370,1677-1722
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:232-257,935-939,2120,4380-4384,5520,6074-6078,6669,9480-9483,11716-11719,12960-12968,13063-13066
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:315-326,474-501
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:254-269,329-342,401-411
+            - split_h7050/com/govee/h7020/newDetail/widget/SegmentNumSettingDialog.java:219-233
         "221": { models: [H7037, H7038, H7039], pacts: ["1,1", "2,1"], kelvin_range: [2000, 9000], heartbeat: power }   # no support: Q5 (Compose4InfoBleIot + s5): aa 04, aa a3, aa 01, aa 40 IC, aa 41 (a setting read left out, D2), aa 05, then aa a5 groups of 4, i.e. connect_reads [brightness, gradual, ic_num, color_group], not written because ic_num needs ic_pieces and the app clamps the IC nowhere; pieces = the IC count (live, unclamped); gap live_piece_count_ic
       wire_cipher: runtime
       wire:
-        doc: "group size Support.getOneGroupColorSize (h7020 Support.java:477-479); pieces from the live IC / bulb count; TLV 0x40 bytes 0-1 unsigned on the 296 / 318 / 337 / 361 status read (requested on 318 / 337), not the 316 / 391 / 411 one (split_h7050/com/govee/h7020/newDetail/NewDetailVM.java:975-1013; split_h7050/com/govee/h7020/newDetail/NewDetailVM$afterConnectedSingleReadDeviceInfo$1.java:66-67, 202-203)"
+        doc: "group size Support.getOneGroupColorSize (h7020 Support.java:477-479); pieces from the live IC / bulb count; on the aa 0f rows (53 / 54 / 62 / 63 / 100 / 102 / 149 / 161) num_segments is Support.getBulbStringSetting [0] x [1], the IC NewDetailVM.u5 stores at the most strings the string-count setting offers ([0], SegmentNumSettingDialog.t) with [1] pieces each (on 161 the setting's dialog shows half of [1] per string, NewSettingActivity.g4, but u5 stores [1]) (split_h7050/com/govee/h7020/pact/Support.java:364-381; split_h7050/com/govee/h7020/newDetail/NewDetailVM.java:678-702; split_h7050/com/govee/h7020/newDetail/widget/SegmentNumSettingDialog.java:219-233; split_h7050/com/govee/h7020/newDetail/NewSettingActivity.java:552-569), only the count before the first aa 0f read; TLV 0x40 bytes 0-1 unsigned on the 296 / 318 / 337 / 361 status read (requested on 318 / 337), not the 316 / 391 / 411 one (split_h7050/com/govee/h7020/newDetail/NewDetailVM.java:975-1013; split_h7050/com/govee/h7020/newDetail/NewDetailVM$afterConnectedSingleReadDeviceInfo$1.java:66-67, 202-203)"
         forms: { f_01: light, f_09: datetime_epoch, f_41: power_memory, f_a5: color_group, f_ee_30: main_bit0_a }
         group: { rule: fixed, num_per_group: 3 }
         by_goods_type:
-          "100": { group: { num_per_group: 4 } }
-          "102": { group: { num_per_group: 4 } }
-          "161": { group: { num_per_group: 4 } }
+          "53": { forms: { f_15_01: kelvin_tint }, counts: { num_segments: 30 } }
+          "54": { forms: { f_15_01: kelvin_tint }, counts: { num_segments: 30 } }
+          "62": { forms: { f_15_01: kelvin_tint }, counts: { num_segments: 30 } }
+          "63": { forms: { f_15_01: kelvin_tint }, counts: { num_segments: 30 } }
+          "100": { forms: { f_15_01: kelvin_tint }, counts: { num_segments: 50 }, group: { num_per_group: 4 } }
+          "102": { forms: { f_15_01: kelvin_tint }, counts: { num_segments: 50 }, group: { num_per_group: 4 } }
+          "149": { forms: { f_15_01: kelvin_tint }, counts: { num_segments: 24 } }
+          "161": { forms: { f_15_01: kelvin_tint }, counts: { num_segments: 30 }, group: { num_per_group: 4 } }
           "221": { group: { num_per_group: 4 } }
           "296": { forms: { f_40: one_count_u16, f_15_01: kelvin_tint }, counts: { num_segments: 15 }, group: { num_per_group: 4 }, doc: "H7025: 15 write pieces (ColorPieceConfig.j fallback, base-classes11/com/govee/base2light/pact/newdetail/config/fuc/ColorPieceConfig.java:444-449); 33 05 15 01 by Bytes.h / Bytes.r" }
           "316": { forms: { f_15_01: kelvin_tint }, counts: { num_segments: 56 }, group: { num_per_group: 4 }, doc: "H702A-C: 56 is the count before the first aa 40 read (no app cap on the IC pieces; every write takes the live count)" }

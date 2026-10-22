@@ -1150,6 +1150,12 @@ def ic_count_query() -> bytes:
     return _request(_C.Command.ic_num)
 
 
+def light_num_query() -> bytes:
+    """aa 0f: read the bulb-string count (h7020 ``Controller4BulbNum``, no selector; reply: parse_light_num),
+    which the bulb-string screens size their colour pieces from (``NewDetailVM.u5``)."""
+    return _request(_C.Command.light_num)
+
+
 # 0x41: striplight SINGLE_IC_SEGMENT_NUM (H6062), the form_41 ``section_count`` reply; power memory on the
 # other SKUs.
 CMD_SECTION_COUNT: Final = int(_C.Command.cmd_41)

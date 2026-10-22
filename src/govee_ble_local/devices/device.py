@@ -197,6 +197,8 @@ class Device:
         # over (_adopt_ic: the IC rule's pieces, or the IC itself under color_readback_ic_raw), uncapped;
         # None until a count is known: segment_count stands in.
         self._status_count: int | None = None
+        # The last aa 0f read's pieces, unclamped: the aa a5 walk takes them all (_read_light_num).
+        self._light_num_pieces: int | None = None
         self._device_info_read = False   # device-info (mac/hw/fw/sn) read once, lazily
         self._polled_once = False        # for the one-time INFO "first poll" line
         # Mutation sequence (BUG-4): bumped by every state-mutating setter when it applies its
@@ -358,11 +360,12 @@ class Device:
         """Segments this device addresses: the count it reported at runtime if any, else the profile's
         static ``segments``. Sets the whole-device mask and its byte width (2 bytes up to 16 segments,
         ceil(n/8) above) and bounds the segment indices. The device's own read sets it on a
-        ``section_count_read`` profile (H6062's aa 41), on a ``special_info_read`` one (goodsType 180's ac a1)
-        and on a ``color_writes_live_ic`` one (the live pieces of each poll's aa 40 read: H6641, the other
-        IC-sized rows; on a status row, of its status read's TLV 0x40 or the aa 40 reads around it), as does
-        :meth:`set_segment_count`, until the next such read. A caller that offers one entity per segment reads
-        it after the first :meth:`update`."""
+        ``section_count_read`` profile (H6062's aa 41), on a ``special_info_read`` one (goodsType 180's
+        ac a1), on a ``color_writes_live_ic`` one (the live pieces of each poll's aa 40 read: H6641, the other
+        IC-sized rows; on a status row, of its status read's TLV 0x40 or the aa 40 reads around it) and on a
+        ``light_num_per_unit`` one (each poll's aa 0f string count times the bulbs per string, which may be 0:
+        the h7020 bulb-string rows), as does :meth:`set_segment_count`, until the next such read. A caller
+        that offers one entity per segment reads it after the first :meth:`update`."""
         return self._segment_count if self._segment_count is not None else self.profile.segments
 
     def set_segment_count(self, count: int | None) -> None:
@@ -378,6 +381,7 @@ class Device:
         if count is not None:
             _check_segment_count(count, build.piece_cap(self.profile.color_scheme))
         self._segment_count = count
+        self._light_num_pieces = None   # the walk takes this count too, until the next aa 0f read
 
     @property
     def min_kelvin(self) -> int | None:
@@ -1878,7 +1882,8 @@ class Device:
         if self.profile.color_readback == "mechanism_b":
             await self._read_mechanism_b(budget)
         elif self.profile.color_readback == "mechanism_a_direct":
-            if self._reads_segment_count and self._segment_count is None:
+            if ((self._reads_segment_count or self.profile.light_num_per_unit)
+                    and self._segment_count is None):
                 _LOGGER.debug("%s (%s): segment count unknown; skipping segment colour read-back",
                               self.address, self._sku)
             else:
@@ -2006,19 +2011,21 @@ class Device:
         whole unless a setter raced it, with the colour temperature read from the pieces where the profile
         takes it from them (:attr:`.DeviceProfile.kelvin_from_pieces`, :func:`._fold.apply_piece_kelvin`),
         under the mode the poll's aa 05 report showed. On a live-IC profile the poll's one ``aa 40`` read
-        comes first (:meth:`_read_live_ic`); without a count the walk is skipped."""
+        comes first (:meth:`_read_live_ic`); without a count the walk is skipped. On a ``light_num_per_unit``
+        profile it walks the last ``aa 0f`` read's pieces, uncapped (:meth:`_read_light_num`)."""
         pieces = None
         if self.profile.color_readback_live_ic:
             pieces = await self._read_live_ic(budget)
             if pieces is None:
                 return
+        elif self.profile.light_num_per_unit:
+            pieces = self._light_num_pieces   # past the masks' 112, as NewDetailVM.D5 walks them
 
         def apply(segments: list[Segment]) -> None:
             self._apply_segments(segments)
             if self.profile.kelvin_from_pieces:   # the walk's pieces: static or device-reported (_resolve)
                 count = self.profile.color_readback_segments or self.segment_count
                 _fold.apply_piece_kelvin(self._state, count, self._polled_color_mode)
-
         await self._read_fresh(
             "segment colour",
             lambda: _readback.walk_mechanism_a_direct(self, lambda f: self._read_reply(f, budget), pieces),
@@ -2245,6 +2252,10 @@ class Device:
             # The app's connect order: aa 01, aa 04, aa 41, aa 05 (ControllerStrategyConfig.O); on goodsType
             # 180 the ac a1 special-info read, among the extras before aa 05 (VM4Light.i5 -> x5).
             await self._read_segment_count(budget)
+        elif self.profile.light_num_per_unit:
+            # Between aa 01 and aa 05, as the h7020 Compose4InfoBle / Compose4InfoBleIot connect places the
+            # s5 reads (NewDetailVM.s5: aa 0f, then the aa 41 power-off memory the library leaves out).
+            await self._read_light_num(budget)
         if self.capabilities & _MODE_REPORT_CAPS and await self._read_mode(budget) == "applied":
             applied = True
         self._finish_read(applied, power_read, since)
@@ -2309,13 +2320,40 @@ class Device:
             return await self._read_special_info(budget)
         return await self._read_section_count(budget)
 
+    async def _read_light_num(self, budget: ConnectBudget | None = None) -> bool:
+        """Read the bulb-string count (``aa 0f``) and take count x ``light_num_per_unit`` as the pieces,
+        which the h7020 screen stores as its IC on every connect with no bound (``NewDetailVM.u5`` ->
+        ``Info4BleIotDevice.G0``): its colour strip takes that count at each pick (``ColorPieceConfig.c``)
+        and ``NewDetailVM.D5`` walks ``ceil(pieces / group)`` aa a5 groups, none below 1. Pieces of 0 or
+        more become :attr:`segment_count`, at most ``build.MAX_MASK_SEGMENTS``: the 0x15 colour bodies cut
+        the mask at 7 bytes (``Bytes.h`` / ``Bytes.r``), so every count above writes the app's bytes, and
+        the walk takes all of them (:meth:`_read_mechanism_a_direct`). A count of 0 is the app's empty pick
+        (``ColorModeUtil.e`` over IC 0: the two zero mask bytes, and no walk). A negative count (a Java
+        byte of 0x80 or more), on which the app's pick throws (``ColorModeUtil.e``'s ``new int[n]``) and
+        sends nothing, leaves no count: the walk is skipped and the next masked write reads aa 0f again
+        (:meth:`_ensure_segment_count`). Returns whether a count of 0 or more came back; no reply leaves the
+        count as it was, as the app keeps the IC it stored. A device fact, not optimistic state, so it is
+        adopted whatever a setter did meanwhile."""
+        reply = await self._read_reply(build.light_num_query(), budget)
+        count = parse.parse_light_num(reply) if reply else None
+        if count is None or count < 0:
+            _LOGGER.debug("%s (%s): aa 0f string-count read gave no usable count (%s)",
+                          self.address, self._sku, count)
+            if count is not None:
+                self._segment_count = self._light_num_pieces = None
+            return False
+        self._light_num_pieces = count * self.profile.light_num_per_unit
+        self._segment_count = min(self._light_num_pieces, build.MAX_MASK_SEGMENTS)
+        return True
+
     async def _ensure_segment_count(self) -> None:
         """Make sure the device's own segment count is known before a write that carries a segment
         mask. The app always reads it on connect and cannot control the device without it
         (``AbsComposeControllerWithOpResult.onOvertime`` fails the connect read; the ac a1 read's
         ``isTempTryComm`` is false), so a profile with ``section_count_read`` (aa 41), ``special_info_read``
-        (ac a1) or ``color_writes_live_ic`` (aa 40, whose pieces the strip and so every pick's position set
-        take; on a status row the status read that carries its TLV 0x40, or the aa 40 read that starts it:
+        (ac a1), ``light_num_per_unit`` (aa 0f, the string count) or ``color_writes_live_ic`` (aa 40; on
+        either of the last two the pieces the strip and so every pick's position set take; on a status row
+        the status read that carries its TLV 0x40, or the aa 40 read that starts it:
         :meth:`_status_ic_source`) does the same lazily here and sends nothing if the device gives no usable
         count, rather than guessing a mask. A no-op on every other profile and once the count is known. Every
         caller holds the heartbeat across this read and the write it sizes
@@ -2326,6 +2364,11 @@ class Device:
             read = "ac a1" if self.profile.special_info_read else "aa 41"
             raise GoveeBleError(
                 f"{self._sku}: the device did not report its segment count ({read}); "
+                "not sending a colour frame with a guessed segment mask")
+        if (self._segment_count is None and self.profile.light_num_per_unit
+                and not await self._read_light_num()):
+            raise GoveeBleError(
+                f"{self._sku}: the device did not report a usable string count (aa 0f); "
                 "not sending a colour frame with a guessed segment mask")
         if self._segment_count is None and self.profile.color_writes_live_ic:
             # A status row's IC comes with its status read, the TLV 0x40 (the app's connect read), or from the

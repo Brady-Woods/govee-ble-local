@@ -691,6 +691,10 @@ def _selftest(*, strict: bool = False) -> int:
           seg.num_segments == 12 and seg.ic_per_segment == [5] * 12 and not seg.app_read_fails
           and parse_status(b"", reader=0xA1).segment_ic.app_read_fails)
 
+    check("aa 0f reply: the string count is byte 0 read as a Java byte (Controller4BulbNum.Companion.d)",
+          [parse_frame(append_bcc(bytes([0xAA, 0x0F, n])), "rx").body.state.body.count for n in (2, 0x80)]
+          == [2, -128])
+
     def detail_reply(*data: int) -> Any:
         prof = make_profile(f_34="device_detail")
         return parse_frame(append_bcc(bytes([0xAA, 0x34, *data])), "rx", prof).body.state.body.body
