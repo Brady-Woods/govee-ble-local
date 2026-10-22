@@ -2444,13 +2444,15 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:1035-1039,3676-3680,4480-4484,5754-5758,15067-15070,16038-16041,16238-16241,16533-16536
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:98-128,474-501
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:401-411,433-437,1714-1716
-        "375":   # H1A45; no support: 7.7.02 builds no colour frame for 375, and the two-IC piece count has no library form
+        "375":   # H1A45; no support: the two-IC piece count has no library form (G2)
           models: [H1A45]
           pacts: ["1,1", "1,2"]
-          capabilities: [power, brightness, rgb, color_temp, segments]
+          color_functions: [segment_brightness, color_temperature]
+          capabilities: [power, brightness, rgb, color_temp, segments, gradual]
           zones: []
           account_lock: false
           scene_dialect: untraced
+          kelvin_range: [1000, 10000]
           brightness_range: [1, 100]
           connect_reads: [brightness, gradual, color_group]
           connect_writes: []
@@ -2458,13 +2460,17 @@ families:
           doc: >-
             H1A45. NO SUPPORT. Model.t -> NewLightDetailActivity; VM4Light.j5 reads aa 40 with the pair parser
             (ControllerIcNum.e) and keeps [ic1, ic2]; pieces = min(ic1, 15) + min(ic2, 15), or 30 when the reply carries one
-            count (H61D3Support.e for V(375)); ColorModeH1A45 draws two 15-piece strips with no per-strip power (zones none).
-            In 7.7.02 the shared colour tables have no 375 key (Config.x, P, I, G; KelvinConfig), so
-            ColorModeControllerConfig.k resolves no colour-instruction version and VM4Light's fallback
-            configColorStripController builds nothing: the screen's colour and Kelvin frames are not traceable in 7.7.02
-            (7.5.12 has Config.x[375] = 0, P = 1 and a KelvinConfig 375 key). No Kelvin range is stated. connect_reads
-            leaves out ic_num although the screen sends aa 40: the read is the pair form, which ic_pieces cannot state,
-            and the schema ties ic_num to ic_pieces (gap G2). Scenes untraced.
+            count (H61D3Support.e for V(375); ColorPieceConfig.j case LightRecycleViewGesture.W); ColorModeH1A45 draws two
+            15-piece strips with no per-strip power (zones none). The 7.7.02 colour tables key 375 as the named constant
+            LightRecycleViewGesture.W (= 375), which a search for the number misses: Config.x -> Lw = 0 -> Config.J[0] Yt
+            -> Bytes.h, and Bytes.r for a tint colour, with white type Config.P -> pH = 1 (the h60a6 15 01 frames);
+            Config.I -> EQ all on (gradual, segment brightness, colour temperature); gradual Config.G -> mM = 0 -> Bytes.w
+            33 a3 <on>; relative brightness Config.z -> WU = 0, and Config.i0 -> TV -> ColorModeControllerConfig.z ->
+            Bytes.G 15 02 <bri> <mask> (as row 367). Kelvin: KelvinConfig key 375 -> T1 = version 5 = [1000, 10000].
+            Brightness: no BrightnessConfig key, version 1, percent. 7.5.12 has the same values. Apart from the pieces
+            this is row 367's screen and colour config. connect_reads leaves out ic_num although the screen sends aa 40:
+            the read is the pair form, which ic_pieces cannot state, and the schema ties ic_num to ic_pieces (gap G2,
+            the row's one blocker). Scenes untraced.
           doc-ref:
             - split_h61d3/com/govee/h61d3/pact/H61D3Support.java:542-555,786-788,945-953,1131-1154
             - base-classes2/com/govee/shared/checker/KmpGoodsType.java:146
@@ -2473,9 +2479,13 @@ families:
             - base-classes11/com/govee/base2light/kt/general_controller/ControllerIcNum.java:141-157
             - split_h61d3/com/govee/h61d3/adjustNew/ConfigDetail.java:94-106
             - split_h61d3/com/govee/h61d3/adjustNew/color/ColorModeH1A45.java:91-125,188-209,1063-1066
-            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/ColorModeControllerConfig.java:730-765
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/ColorModeControllerConfig.java:730-765,1184-1196
             - base-classes11/com/govee/base2light/pact/newdetail/content/color/ColorViewModel.java:715-742
             - base-classes11/com/govee/base2light/pact/newdetail/IColorModeFuc.java:94-98
+            - base-classes11/com/govee/base2light/light/v1/LightRecycleViewGesture.java:29
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:1894-1898,2987-2991,4151-4155,5300-5304,6519-6523,8706-8710,9664-9667,10935-10938,12161-12165,12627-12630,15137-15140,15581-15584
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:401-411,919-923,1361-1363
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/ColorPieceConfig.java:197-209
         "242":   # H6640
           models: [H6640]
           pacts: ["1,1", "2,1"]
@@ -3124,7 +3134,7 @@ families:
           "202": { forms: { f_a5: color_group, f_15_01: kelvin_tint }, counts: { num_segments: 14 }, group: { rule: fixed, num_per_group: 4 }, doc: "H61D2..H61D6: four direct aa a5 groups of 4 over a fixed 14 pieces (split_h61d3/com/govee/h61d3/adjust/newdetail/VM4LightH61d3.java:380-407; ColorPieceConfig.j, base-classes11/com/govee/base2light/pact/newdetail/config/fuc/ColorPieceConfig.java:385-386)" }
           "239": { forms: { f_a5: color_group, f_15_01: kelvin_tint }, counts: { num_segments: 12 }, group: { rule: fixed, num_per_group: 4 }, doc: "H61E5: aa a5 groups of 4 (split_h61d3/com/govee/h61d3/adjustNew/VM4Light.java:636-669); 12 = ceil(36 / 3), the cap of H61D3Support.e over s(239); the frame layout is kelvin_tint, its white lead is the gap" }
           "246": { forms: { f_a5: color_group, f_15_01: kelvin_tint }, counts: { num_segments: 15 }, group: { rule: fixed, num_per_group: 4 }, doc: "H61E6: aa a5 groups of 4 (split_h61d3/com/govee/h61d3/adjustNew/VM4Light.java:636-669); 15 = ceil(60 / 4), the cap of H61D3Support.e over s(246); the frame layout is kelvin_tint, its white lead is the gap" }
-          "375": { forms: { f_40: ic_pair, f_a5: color_group }, counts: { num_segments: 30 }, group: { rule: fixed, num_per_group: 4 }, doc: "H1A45: 30 = 15 + 15, the cap of H61D3Support.e(375); the connect IC read is the pair form (ControllerIcNum.e, split_h61d3/com/govee/h61d3/adjustNew/VM4Light.java:551-575); no colour form is traceable in 7.7.02" }
+          "375": { forms: { f_40: ic_pair, f_a5: color_group, f_15_01: kelvin_tint }, counts: { num_segments: 30 }, group: { rule: fixed, num_per_group: 4 }, doc: "H1A45: 30 = 15 + 15, the cap of H61D3Support.e(375); the connect IC read is the pair form (ControllerIcNum.e, split_h61d3/com/govee/h61d3/adjustNew/VM4Light.java:551-575); 15 01 = Config.x[LightRecycleViewGesture.W] = 0 -> Yt (Bytes.h / Bytes.r type 1, base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:1894-1898,10935-10938,6519-6523,15581-15584)" }
           "242": { forms: { f_a5: color_group, f_15_01: kelvin_tint }, counts: { num_segments: 14 }, group: { rule: fixed, num_per_group: 4 }, doc: "H6640: aa a5 groups of 4 (split_h61d3/com/govee/h61d3/adjustNew/VM4Light.java:636-669); 14 = the cap of H61D3Support.e(242); the app's mask is the live piece count (as 247's 16)" }
           "264": { forms: { f_a5: color_group, f_15_01: kelvin_tint }, counts: { num_segments: 15 }, group: { rule: fixed, num_per_group: 4 }, doc: "H61B3 / H61B6: aa a5 groups of 4 (split_h61d3/com/govee/h61d3/adjustNew/VM4Light.java:636-669); 15 = the cap of H61D3Support.e(264); the app's mask is the live piece count (as 247's 16)" }
           "299": { forms: { f_a5: color_group, f_15_01: kelvin_tint }, counts: { num_segments: 56 }, group: { rule: fixed, num_per_group: 4 }, doc: "H61B8 / H61B9: direct aa a5 groups of 4; 56 is MODELLED (no app cap on the pieces): the most mask positions a 17-byte kelvin_tint frame carries" }
@@ -3683,6 +3693,7 @@ families:
     # goodsType 0 (Telink, H6160Support.f) 0x02. H6163 / H6117 are SKU-keyed to the rgbiclight h6160 Model: hard >= 1.00.02 runs
     # as goodsType 19 on /rgbic/newdetail (the rgbiclight VM4Light), older hardware as goodsType 0 on the rgbiclight/h6160 AcNewDetail.
     client_profile:
+      has_brightness: true   # the 19 row's aa a5 records are [brightness, R, G, B] (VM4Light.N5 under part brightness); rows 40 and 0 read no aa a5 groups
       mode_color_parse: rgb_flag_tint   # H6160 at goodsType 0: VM4Light.v5 takes strategy b when H6160Support.f (goodsType 0); split_rgblight/com/govee/rgblight/VM4Light.java:580-602, mode/ModeParseStrategyConfig.java:52-62
       wire_cipher: runtime
       by_goods_type:
@@ -3819,12 +3830,16 @@ families:
           models: [H6163, H6117]
           pacts: ["1,1", "1,2", "2,1", "2,2", "3,1"]
           mode_color_parse: kelvin
-          capabilities: [power, brightness, rgb, color_temp, segments]
+          capabilities: [power, brightness, rgb, color_temp, segments, gradual]
           color_functions: [segment_brightness, color_temperature]
           zones: []
           account_lock: false
           scene_dialect: untraced
           kelvin_range: [2000, 9000]
+          power_read: aa01
+          power_live: [heartbeat_aa01]
+          connect_reads: [brightness, gradual, color_group]
+          connect_writes: []
           heartbeat: power
           doc: >-
             The rgbiclight h6160 Model.itemClickOp sets goodsType 19 and jumps to /rgbic/newdetail (rgbiclight AcNewDetail,
@@ -3832,15 +3847,26 @@ families:
             holds: the device record's BLE hard version >= 1.00.02. The h6160 newdetail interceptors take goodsType 0 only
             (OldSkuSupport.supportH6163H6117), so the screen is the plain 19 one: it checks the advertised pact against 19's
             DeviceGoodsType set (Support.C), aa 01 heartbeat (VM4Light.I3), and the 19 read strategy (ControllerStrategyConfig.G0
-            has no SKU branch for these). Colour differs from H61A8: Config.w by SKU (vz / wz) wins over Config.x[19]: version 0
+            has no SKU branch for these: r1 at (1,1) / (1,2), supportV2UIV1, and E1 above, supportV2UIV3; both read aa 01,
+            aa 04, aa a3 and aa 05, then N5's colour groups, with no aa 40 as no supportBindWithIcNum SKU is here). Colour
+            differs from H61A8: Config.w by SKU (vz / wz) wins over Config.x[19]: version 0
             (h60a6 15 01 frames) at soft >= 1.06.00, else version 3 (h61a8 0x0b, no CCT form). Colour-page flags Config.H GR /
             HR: segment brightness on at pact >= (2,1), or at hard >= 1.00.02 and soft >= 1.06.00; colour temperature on.
             Kelvin: KelvinConfig.Config.i[19] = z2 gives [2700, 6500] only to SKU H61A8, so [2000, 9000]. Brightness
             BrightnessConfig g[H6163 / H6117] = p3 / q3: raw [6, 254] on Telink hardware, else percent (a chip test, not
-            modelled). Pieces: ColorPieceConfig.n's SKU switch is decompiled incorrectly; its visible blocks return null
-            at this hardware (19's count follows) and 15 / 1 on old hardware by soft 1.03.18. The row states the soft >=
-            1.06.00 branch; the piece count, read-back form and part-brightness gate are not resolved (open). Not
-            hardware-verified.
+            modelled). Pieces 15: ColorPieceConfig.n's SKU switch is decompiled incorrectly (the jadx WARN blocks); its
+            bytecode (jadx -m fallback) returns null for H6163 / H6117 when checkSupportNewDreamColorFuc4BleWifi(sku,
+            hard) holds, so ColorPieceConfig.j finds 19 in none of its sets and gives its default 15, as
+            Support.getBulbStringMaxNum(19) does. Read-back (VM4Light.N5 through Support.Companion.D ->
+            supportPartBrightness): part brightness is on at pact >= (2,1) (isBkProtocol for 19) and, below that, for these
+            SKUs (i1) at hard >= 1.00.02 with soft >= 1.06.00 (supportPartBrightness4BleWifi; N5 passes the BLE connect's
+            empty Wi-Fi version); then aa a5 [brightness, R, G, B] three records a frame (getOneGroupColorSize: 19 is not
+            in supportRgbWithBrightnessOnePkg4Colors), 5 groups, H61A8's bulb_batch_v2; else aa a2 [R, G, B] in groups of
+            4 (generateReadController4OnlyColor), only at (1,x) below soft 1.06.00, where the colour is also the 0x0b
+            frame. Segment brightness: Config.y wV / xV = 0 (15 02) at pact >= (2,1), or at hard >= 1.00.02 with soft >=
+            1.06.00, else -1. Gradual: checkGradualBytesVersion reads Config.G[19] at goodsType != 0, VK = 0 for every
+            SKU, so 33 a3, and supportGradual(19) adds the aa a3 read, as on H61A8. The row states the soft >= 1.06.00
+            branch. Not hardware-verified.
           doc-ref:
             - split_rgbiclight/com/govee/rgbiclight/h6160/sku/Model.java:50-70
             - base-classes9/com/govee/base2home/pact/support/OldDreamColorUtil.java:100-104
@@ -3848,17 +3874,23 @@ families:
             - split_rgbiclight/com/govee/rgbiclight/h6160/newdetail/OldSkuSupport.java:26-35
             - split_rgbiclight/com/govee/rgbiclight/VM4Light.java:728-730,1048-1051,1451-1458
             - split_rgbiclight/com/govee/rgbiclight/Support.java:85-96,212-214,447-453
-            - split_rgbiclight/com/govee/rgbiclight/ControllerStrategyConfig.java:1018-1114
+            - split_rgbiclight/com/govee/rgbiclight/ControllerStrategyConfig.java:896-1015,1018-1114,1526-1608
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:232-256,803-812,4293-4302,9997-10012,10171-10186,11549-11559,16633-16639,16795-16801
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:1064-1068,1790-1792
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:198-212,524-532,1406-1419
-            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/ColorPieceConfig.java:496-530
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/ColorPieceConfig.java:354-452,496-560
             - base-classes10/com/govee/base2kt/utils/BleUtils.java:74-79,327-335
+            - split_rgbiclight/com/govee/dreamcolorlightv1/pact/Support.java:196-208,247-280,670-684,986-1004,1713-1758,1814-1819,1911-1957
+            - split_rgbiclight/com/govee/dreamcolorlightv1/LightVersionServiceImpl.java:76-91,126-128,155-161
+            - split_rgbiclight/com/govee/rgbiclight/VM4Light.java:882-970
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:324-336,2120-2131,3806-3810,12421-12424,16746-16753,16908-16915
       by_model:
         H6163: { mode_color_parse: rgb_flag_tint_no_0d, by_firmware: [ { min_soft_version: "1.03.18", mode_color_parse: rgb_kelvin_tint_no_0d } ] }   # old hardware (< 1.00.02); flag form below firmware 1.03.18; split_rgbiclight/com/govee/rgbiclight/h6160/newdetail/InfoDetail.java:236-273
         H6117: { mode_color_parse: rgb_flag_tint_no_0d, by_firmware: [ { min_soft_version: "1.03.18", mode_color_parse: rgb_kelvin_tint_no_0d } ] }   # as H6163
       wire:
         forms: { f_01: light, f_09: datetime_epoch }
+        by_goods_type:
+          "19": { forms: { f_15_01: kelvin_tint, f_0b: rgb_mask, f_a5: bulb_batch_v2, f_a2: bulb_batch_v1 }, counts: { num_segments: 15 }, doc: "H6163 / H6117 at 19: 15 pieces (ColorPieceConfig.n null at hard >= 1.00.02, then j's default); VM4Light.N5 reads aa a5 V2 batches of 3 [brightness, R, G, B] under part brightness (pact >= (2,1), or hard >= 1.00.02 with soft >= 1.06.00), else aa a2 groups of 4 [R, G, B]; colour 15 01 (Yt) at soft >= 1.06.00, else 0x0b (Config.w vz / wz)" }
         by_model:
           H6160: { forms: { f_09: clock } }
     models: [H6160, H6163, H6117]
@@ -5038,6 +5070,7 @@ families:
   - id: h6127
     category: rgbic_strip
     client_profile:
+      has_brightness: true   # the 17 row's aa a5 records are [brightness, R, G, B] (VM4Light.N5 under part brightness); the 0 row reads no colour groups
       mode_color_parse: kelvin_02_nocct   # versionSoft < 1.03.01; split_rgbiclight/com/govee/h6127/newdetail/InfoDetail.java:104-132
       power_read: aa01
       power_live: [heartbeat_aa01]
@@ -5102,6 +5135,8 @@ families:
           models: [H6116, H6127, H6161]
           pacts: ["1,1", "1,2", "10,1", "10,2", "10,3"]   # the screen's advert pact gate: rgbiclight Support.b goodsType 17; split_rgbiclight/com/govee/rgbiclight/Support.java:423-429
           mode_color_parse: kelvin   # every pact via the off->on re-read; split_rgbiclight/com/govee/h6127/sku/Model.java:64-67
+          capabilities: [power, brightness, rgb, color_temp, segments, gradual]
+          color_functions: [segment_brightness, color_temperature]
           zones: []
           account_lock: false
           scene_dialect: untraced
@@ -5133,6 +5168,13 @@ families:
             with hard >= 1.00.03 (Config.B), else 3 (h61a8 0x0b, no CCT form): version 0 at every (10,x) pact, by firmware at
             (1,x). Brightness: the same SKU-map Telink gates as the 0 row (BrightnessConfig reads the SKU before the
             goodsType). Kelvin: KelvinConfig.Config.i has no 17, so version 0, [2000, 9000]. Keep-alive aa 01 (VM4Light.I3).
+            Pieces 15: in the bytecode (jadx -m fallback) of ColorPieceConfig.n, whose decompile is the WARN blocks, H6116
+            / H6127 / H6161 share one block that returns null when checkSupportNewDreamColorFuc(sku, soft) holds, so
+            ColorPieceConfig.j(17) gives its default 15 (H6127 / H6161 are not merged with H6163 / H6117). Colour-page
+            flags: no Config.H or Config.y entry for these SKUs, so Config.I[17] = PN [on, on, on, QN, on], segment
+            brightness QN and relative brightness Config.z[17] = IS (0, so 15 02) at pact >= (10,1), or at soft >= 1.06.00
+            with hard >= 1.00.03; gradual Config.G[17] = NK: 0 (33 a3) at pactType >= 10, else 1 (33 14). Which of S0 and
+            e1 runs is set by the advertised pact, which the scan writes into the device info before G0 picks.
             Not hardware-verified.
           doc-ref:
             - split_rgbiclight/com/govee/h6127/sku/Model.java:57-67,75-80
@@ -5153,11 +5195,14 @@ families:
             - base-classes11/com/govee/base2light/kt/general_controller/Controller4ColorInfoByGroup.java:37-48
             - base-classes11/com/govee/base2light/kt/general_controller/ControllerGradual.java:71-73
             - base-classes11/com/govee/base2light/kt/general_controller/ControllerGradual4BleWifi.java:112-113
-            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:202-215,232-256,828-842,14762-14765,14917-14920,15072-15075
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:202-215,232-256,828-842,2407-2411,3766-3770,4590-4594,10417-10420,10572-10578,11156-11159,11473-11476,11637-11643,14762-14765,14917-14920,15072-15075
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:199-215,311-320,429-433,1196-1199,1461-1464,1476-1479
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:252-260,328-341,402-417
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/ColorPieceConfig.java:354-452,496-560
       wire:
         forms: { f_01: light, f_09: datetime_epoch }
+        by_goods_type:
+          "17": { forms: { f_14: gradual, f_0b: rgb_mask, f_15_01: kelvin_tint, f_a5: bulb_batch_v2, f_a2: bulb_batch_v1 }, counts: { num_segments: 15 }, doc: "15 pieces (ColorPieceConfig.n null at soft >= 1.03.01, then j's default); gradual Config.G[17] = 0 (33 a3) at pactType >= 10, else 1 (33 14, read aa 14 by ControllerGradual command 20 on S0); colour Config.A = Config.B ? 0 (15 01, Yt) : 3 (0x0b); read-back VM4Light.N5: aa a5 V2 batches of 3 [brightness, R, G, B] under part brightness (pact >= (10,1), or soft >= 1.06.00 with hard >= 1.00.03), else aa a2 groups of 4 [R, G, B]; as h612526 17" }
     models: [H6116, H6127, H6161]   # Sku.e less H6107 (the h6107 entry); split_rgbiclight/com/govee/h6127/sku/Sku.java:14
     goods_types: [0]   # H6127BleProcessor requires goodsType 0; the record stays 0 (17 is only the screen's DefInfo)
     assigned_goods_type:

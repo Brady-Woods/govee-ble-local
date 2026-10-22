@@ -112,6 +112,15 @@ model, from which the shipped readers are generated).
   - The catalogue snapshot routes 31 SKUs no row lists (15 before). For review: H613A-F (catalogue 39, named
     by h613839's (65535,255) bind item), where it was H615E.
   - rgbiclight 351 / 352 now record the R617G / R618D catalogue route, as h7057 274 does H8057's.
+- **Screen facts on three held rows** (still without `support`; no SKU's profile changes):
+  - h61d3 375 (H1A45): its colour config is traced after all. The 7.7.02 tables key 375 by the named constant
+    `LightRecycleViewGesture.W`, which a search for the number missed. It is row 367's: the h60a6 `15 01` frames,
+    gradual `33 a3`, `15 02` segment brightness and Kelvin [1000, 10000]. Only the two-IC piece count holds it.
+  - h6160 19 (H6163 / H6117) and h6127 17 (H6116 / H6127 / H6161): 15 pieces each (the bytecode of
+    `ColorPieceConfig.n`, whose decompile is broken), the aa a5 / aa a2 read-back gate, and the gradual and
+    segment-brightness flags; h6160 19 also gets its aa 01 power read and keep-alive. Both stay held by their
+    firmware-gated routes. A scratch stand-in (support added, the gates dropped) resolves H6163 at (2,1) to
+    H61A8's profile but for its scenes and its SKU-keyed Kelvin.
 
 ## [1.6.1] — 2026-10-21
 
