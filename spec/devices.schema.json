@@ -821,7 +821,8 @@
           "enum": [
             "unknown",
             "color_group",
-            "bulb_batch_v2"
+            "bulb_batch_v2",
+            "single_record"
           ],
           "description": "govee_profile command_forms.f_a5 (govee_common::form_a5)."
         },

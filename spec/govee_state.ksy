@@ -1278,7 +1278,7 @@ types:
   cmd_a5_state:
     doc: |
       Command 0xA5 under form_a5 (the reply does not say which); bulb_batch_v2
-      is reply only.
+      is reply only, single_record status TLV only.
     params:
       - id: form
         type: u1
@@ -1296,9 +1296,12 @@ types:
             'govee_common::form_a5::color_group': >-
               color_group(group, source, group.has_brightness)
             'govee_common::form_a5::bulb_batch_v2': bulb_batch_v2
+            'govee_common::form_a5::single_record': color_single_record(group)
         if: >-
-          form != govee_common::form_a5::bulb_batch_v2
-          or source == source::read_reply
+          (form != govee_common::form_a5::bulb_batch_v2
+          or source == source::read_reply)
+          and (form != govee_common::form_a5::single_record
+          or source == source::status_tlv)
   cmd_b0_state:
     doc: Command 0xB0 under form_b0 (plug_delay -> plug_delay_state).
     params:
@@ -1395,6 +1398,36 @@ types:
       app_read_fails:
         value: places_by_group and (is_short or app_rejects_group)
         doc: the TLV screen's colour-group parse throws on this group
+  color_single_record:
+    doc: |
+      Form single_record of TLV 0xA5 (the H703A / H703B status screen,
+      goodsType 263): one [brightness][r][g][b] record at bytes 1-4. The
+      screen reads it only from a value of 5 bytes or more, never reads byte
+      0, and never fails the status read on it; it hands the one record to
+      SubMode4Color.l, which replaces the piece colours only when the piece
+      count is 1 (H61D3Support.e gives 263 one piece).
+    doc-ref:
+      - split_h61d3/com/govee/h61d3/adjustNew/VM4Light$afterConnectedSingleReadDeviceInfo$1.java:100-104,114-124
+      - base-classes11/com/govee/base2light/pact/newdetail/sub/SubMode4Color.java:180-201
+      - split_h61d3/com/govee/h61d3/pact/H61D3Support.java:1160-1161,1326-1328,1340-1342
+    params:
+      - id: group
+        type: govee_profile::color_group_form
+    seq:
+      - id: unread
+        size: 1
+        if: is_read
+        doc: byte 0, which the screen never reads
+      - id: record
+        type: govee_common::bri_rgb
+        if: is_read
+    instances:
+      is_read:
+        value: _io.size >= 5
+        doc: the screen reads the record only from a value of 5 bytes or more
+      app_applies:
+        value: is_read and group.num_pieces == 1
+        doc: SubMode4Color.l takes its one record only at a piece count of 1
   bulb_batch_v1:
     doc: |
       Form bulb_batch_v1 of 0xA2: the H61A8 batch [batch_seq][4 x rgb],

@@ -290,6 +290,18 @@ model, from which the shipped readers are generated).
     `turn_on(power=True, brightness=x)` call is then two sessions inside its 60 s command timeout, so a slow
     link can time out the brightness after the power-on landed and report the command failed. Release the two
     together.
+- **H703A / H703B (h61d3 263): RGB read-back from the status read's TLV 0xA5.** The screen reads that TLV as
+  one `[brightness, R, G, B]` record at bytes 1-4, from a value of 5 bytes or more, never reads byte 0, and never
+  fails the read on it (`VM4Light$afterConnectedSingleReadDeviceInfo$1.n`); `SubMode4Color.l` takes the record
+  only at a piece count of 1, which 263 has (`H61D3Support.e`). The library skipped the TLV (its colour groups
+  would fail the burst on group byte 0), so these SKUs had no colour read-back. It now reads it under the new
+  wire form `f_a5: single_record` (Spec, below) into `reassemble.StatusReply.color` (the last such TLV wins;
+  default None), and `_fold.apply_status` folds it as the whole-device colour before the same burst's TLV 0x05,
+  so a Kelvin above 0 there still reads as colour temperature, a Kelvin of 0 keeps the colour, and a scene
+  clears it. That order is a library choice: the app holds the Kelvin and the piece colour side by side, and
+  `state` keeps one. The request is unchanged (`ac 03 04 41 a5 40 16`), and no other row reads the form, so no
+  other SKU's decoded state changes. Source-modelled: no H703A / H703B is on the bench, and what the firmware
+  puts in byte 0 is unread.
 
 ### Changed
 - **A polled profile reads aa 04 only with `Capability.BRIGHTNESS`**, as the app's connect read does
@@ -590,6 +602,13 @@ model, from which the shipped readers are generated).
   advert power, the pact gate) and the two facts that rest on the unsaved jadx re-decompile named in prose.
   285 / 286's `heartbeat: heartbeat` was the control screen's held link, not the card's. The reference's
   self-test checks their routes and session.
+- **`form_a5` gains `single_record` (3)**, the H703A / H703B status screen's TLV 0xA5: `govee_state`
+  `cmd_a5_state` reads it, status TLV only, as the new `color_single_record` (`unread` byte 0 and a `bri_rgb`
+  `record`, each read only from a value of 5 bytes or more, `is_read`; `app_applies` at a piece count of 1, as
+  `SubMode4Color.l` takes it). It is never an `app_read_fails` term: the screen never throws on it.
+  devices.schema.json's wire `f_a5` gains the member, and the h61d3 263 wire gains `f_a5: single_record`; the
+  resolver serves it only where the row's `status_read` requests `color_group` over one piece, never for a
+  direct read. The reference's self-test reads both lengths.
 
 ## [1.6.1] — 2026-10-21
 

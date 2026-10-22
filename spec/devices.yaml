@@ -2369,9 +2369,13 @@ families:
             power_live. MODELLED: the screen reads the burst once per connect and then follows the heartbeat, while the
             library re-reads the burst every poll and folds no heartbeat reply; the request names only the four extra types, and
             whether the firmware returns TLVs 0x01 / 0x04 / 0x05 unasked is not in the app (absent, every poll would read
-            off, brightness 100). The library skips the TLV 0xA5 colour (one record at bytes 1-4, byte 0 unread by the app;
-            f_a5 left unset), so RGB has no read-back. Not listed: the TimerConfig.f time sync before the read. No account
-            lock (SecretController is sent only in PairViewModel). Scenes untraced. Not hardware-verified.
+            off, brightness 100). RGB is read back from the TLV 0xA5 as the screen reads it (wire f_a5 single_record): one
+            [brightness, R, G, B] record at bytes 1-4 from a value of 5 bytes or more, byte 0 unread, applied at the one
+            piece (VM4Light$afterConnectedSingleReadDeviceInfo$1.n -> SubMode4Color.l). The library folds it as the
+            whole-device colour before the same burst's TLV 0x05, so a Kelvin above 0 there still reads as colour
+            temperature and a scene clears it; the app holds both. Not listed: the TimerConfig.f time sync before the
+            read. No account lock (SecretController is sent only in PairViewModel). Scenes untraced. Not
+            hardware-verified.
           doc-ref:
             - split_h61d3/com/govee/h61d3/pact/H61D3Support.java:914-918,790-803,1160-1161,1340-1342
             - base-classes2/com/govee/shared/checker/KmpGoodsType.java:235
@@ -2384,6 +2388,7 @@ families:
             - split_h61d3/com/govee/h61d3/adjustNew/Info4Detail.java:498-506,559-607,767-803
             - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4BaseInfoSingleRead.java:161-179,229,286-299
             - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/DeviceBaseInfoFromDevice.java:70-80,144-146,182-184
+            - base-classes11/com/govee/base2light/pact/newdetail/sub/SubMode4Color.java:180-201
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/ColorPieceConfig.java:354-452,1725-1745
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:231-257,277-292,352-368,1311-1315,4825-4829,5522-5526,5944-5948,11176-11179,12960-12968,13829-13832,16770-16773
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:315-326,474-501
@@ -3241,7 +3246,7 @@ families:
         forms: { f_01: light, f_09: datetime_epoch, f_ee_30: main_bit0_a }
         by_goods_type:
           "247": { forms: { f_a5: color_group, f_15_01: kelvin_tint }, counts: { num_segments: 16 }, group: { rule: fixed, num_per_group: 4 }, doc: "H6641: direct aa a5 groups of H61D3Support.t = 4 (split_h61d3/com/govee/h61d3/adjustNew/VM4Light.java:636-669); 16 = the library's mask bound for ceil(IC / 5), not an app value: the live count is ceil(clamp(IC, 41, 70) / 5), at most 14" }
-          "263": { forms: { f_40: ic_pair, f_15_01: kelvin_tint }, counts: { num_segments: 1 }, doc: "H703A / H703B: 1 piece (H61D3Support.e); TLV 0x40 by the IC pair reader (split_h61d3/com/govee/h61d3/adjustNew/VM4Light$afterConnectedSingleReadDeviceInfo$1.java:125-126)" }
+          "263": { forms: { f_40: ic_pair, f_a5: single_record, f_15_01: kelvin_tint }, counts: { num_segments: 1 }, doc: "H703A / H703B: 1 piece (H61D3Support.e); TLV 0x40 by the IC pair reader (split_h61d3/com/govee/h61d3/adjustNew/VM4Light$afterConnectedSingleReadDeviceInfo$1.java:125-126); TLV 0xA5 as one [brightness, R, G, B] record at bytes 1-4 from a value of 5 bytes or more, byte 0 unread (:114-124; SubMode4Color.l, base-classes11/com/govee/base2light/pact/newdetail/sub/SubMode4Color.java:180-201)" }
           "202": { forms: { f_a5: color_group, f_15_01: kelvin_tint }, counts: { num_segments: 14 }, group: { rule: fixed, num_per_group: 4 }, doc: "H61D2..H61D6: four direct aa a5 groups of 4 over a fixed 14 pieces (split_h61d3/com/govee/h61d3/adjust/newdetail/VM4LightH61d3.java:380-407; ColorPieceConfig.j, base-classes11/com/govee/base2light/pact/newdetail/config/fuc/ColorPieceConfig.java:385-386)" }
           "239": { forms: { f_a5: color_group, f_15_01: kelvin_tint }, counts: { num_segments: 12 }, group: { rule: fixed, num_per_group: 4 }, doc: "H61E5: aa a5 groups of 4 (split_h61d3/com/govee/h61d3/adjustNew/VM4Light.java:636-669); 12 = ceil(36 / 3), the cap of H61D3Support.e over s(239); the frame layout is kelvin_tint, its white slot the row's white_type" }
           "246": { forms: { f_a5: color_group, f_15_01: kelvin_tint }, counts: { num_segments: 15 }, group: { rule: fixed, num_per_group: 4 }, doc: "H61E6: aa a5 groups of 4 (split_h61d3/com/govee/h61d3/adjustNew/VM4Light.java:636-669); 15 = ceil(60 / 4), the cap of H61D3Support.e over s(246); the frame layout is kelvin_tint, its white slot the row's white_type" }

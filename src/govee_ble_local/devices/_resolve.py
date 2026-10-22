@@ -99,7 +99,10 @@ the row lacks fails the build: nothing defaults silently.
   (``DeviceProfile.status_decode``, ``reassemble.status_profile``): the forms of the TLVs the status stream
   reads (:data:`_STATUS_TLV_FORMS`), the colour-group form where it reads the 0xA5 TLV as colour groups (under
   ``f_a5: color_group``, a requested ``color_group`` or any 0xA5 the bare read's reply carries, as the
-  h70dx screen parses each, ``VM4H70DX.g5``; any other 0xA5 is skipped), and the TLV 0x05's mode decode
+  h70dx screen parses each, ``VM4H70DX.g5``), or the one-record form under ``f_a5: single_record`` (one
+  ``[brightness, r, g, b]`` record at bytes 1-4, the H703A screen's
+  ``$afterConnectedSingleReadDeviceInfo$1.n`` over ``SubMode4Color.l``: a requested ``color_group`` over one
+  piece, and never a direct read; any other 0xA5 is skipped), and the TLV 0x05's mode decode
   (mode_status over mode). The library takes the zone bits from TLV 0x30, so a
   requested ``cmd_30`` needs ``f_30: zone_power``. A pact branch may only drop ``color_group``, which
   becomes ``status_color_groups_pact`` (one pact type, from its lowest code that keeps it). A polled row
@@ -473,7 +476,8 @@ _DIALECTS: Final = {"legacy_scene": "A", "diy_graffiti": "B_h60a6", "tablelamp_h
 # GATT read, on a per_command row only).
 _READBACK: Final = {"aa01": "polled", "ac_status": "status", "aa34_detail": "polled", "advert": "none"}
 # The forms of the TLVs the status stream reads (govee_state's TLV-typed tags; reassemble.status_profile): the
-# row's own, in DeviceProfile.status_decode. f_a5 goes in only where the 0xA5 TLV is read as colour groups.
+# row's own, in DeviceProfile.status_decode. f_a5 goes in only where the 0xA5 TLV is read as colour groups or
+# as the one record (single_record).
 _STATUS_TLV_FORMS: Final = ("f_30", "f_36", "f_40", "f_41", "f_a3")
 _GROUP_RULES: Final = frozenset({"from_len", "fixed", "by_pieces"})   # govee_common::group_count_rule, read
 _READS: Final = frozenset({"brightness", "gradual", "cmd_36", "color_group", "ic_num", "cmd_41"})
@@ -1014,6 +1018,14 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
                      and forms.get("f_a5") == "color_group")
     if (color_readback or status_groups) and cp.get("has_brightness") is not True:
         fail("a colour-group read without has_brightness true (the library reads [brightness, r, g, b])")
+    # The one-record TLV 0xA5 (H703A / H703B): the status read's, and SubMode4Color.l takes it at one piece
+    # only.
+    single_record = forms.get("f_a5") == "single_record"
+    if single_record and (status_read is None or "color_group" not in status_read):
+        fail("f_a5 single_record without color_group in the status read (it is the status TLV 0xA5's form)")
+    if single_record and counts.get("num_segments") != 1:
+        fail(f"f_a5 single_record over wire counts num_segments {counts.get('num_segments')!r} "
+             "(SubMode4Color.l takes its one record at one piece only)")
     # Either read walks the row's group size (Controller4ColorInfoByGroup takes it from its caller), and the
     # status read counts each group's records by the row's rule.
     per_group = group.get("num_per_group")
@@ -1150,6 +1162,8 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
         if status_groups:
             decode.update(f_a5="color_group", group_rule=group["rule"], num_per_group=int(per_group),
                           has_brightness=True)
+        elif single_record:
+            decode.update(f_a5="single_record")
         decode.update({**_MODE_UNSET, **w["mode"], **w["mode_status"]})   # the TLV 0x05's
         out["status_decode"] = tuple(sorted(decode.items()))
     if readback == "polled":
