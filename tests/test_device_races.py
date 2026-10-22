@@ -785,7 +785,6 @@ _H6062_COLOUR: dict[str, Callable[[Device], Any]] = {
     "set_color_temp": lambda d: d.set_color_temp(4000),
     "set_segment_rgb": lambda d: d.set_segment_rgb([0, 1], (255, 0, 0)),
     "set_segment_brightness": lambda d: d.set_segment_brightness([0, 1], 40),
-    "set_segment_color_temp": lambda d: d.set_segment_color_temp([0, 1], 4000),
     "turn_on(rgb)": lambda d: d.turn_on(rgb=(255, 0, 0)),
 }
 

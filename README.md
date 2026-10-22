@@ -91,7 +91,8 @@ advertisement, build a capability-driven `Device`, then drive it.
   `set_scene` / `set_scene_by_name`, and `update()` (read-back). Introspection:
   `capabilities`, `zones`, `min_kelvin` / `max_kelvin`, `scene_names` (the scenes the Govee app lists at
   the device's scene set, `scene_versions`), `state`, `register_callback`. Methods for unsupported
-  capabilities raise `GoveeBleNotSupported`. The link comes up with the first operation (or `connect()`)
+  capabilities raise `GoveeBleNotSupported`, and so do `set_segment_color_temp` / `set_zone_color_temp`
+  where the SKU's screen sends its Kelvin only over every piece (`DeviceProfile.segment_color_temp`). The link comes up with the first operation (or `connect()`)
   and drops `idle_disconnect` seconds after the last one (8 s by default), or 30 s after a command
   (`const.ACTIVE_IDLE_DELAY`, so quick follow-ups skip the reconnect). While it is up the `Device` sends
   the keep-alive read the SKU's control screen sends every 2 s (`DeviceProfile.heartbeat`), which never

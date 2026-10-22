@@ -171,10 +171,38 @@ model, from which the shipped readers are generated).
   `readback="polled"` and no brightness no longer reads aa 04 or sets `state.brightness`. The resolver keeps the
   rule strict both ways: a polled row's `connect_reads` lists `brightness` exactly when the row has the
   capability.
-- Nothing else for existing SKUs (H6188's colour temperature and H6061's whole-device RGB are under Fixed).
-  Each other SKU of the 104 admitted at 1.6.1 (98 by default, 6 behind `allow_modelled`) resolves to the same
-  profile at every pact its rows list and at none, with and without `allow_modelled`, so its frames and decoded
-  state are unchanged. Where a new SKU has the same facts it joins that SKU's profile (`DeviceProfile.skus`): H6118 / H6179 / H6194 with H6005, H6099 with H6098 / H8098 /
+- **Colour temperature on a piece selection only where the app's screen sends one** (new keyword-only
+  `DeviceProfile.segment_color_temp`, default True). The colour page's All tab sends its Kelvin over every
+  piece (`DelegateColorV2.G0`). Only the Part tab's Kelvin item goes to the selected pieces, and
+  `DelegateColorV2Part.Z0` adds it only where `LightColorCapabilityCenter.C2` holds. For every supported
+  goodsType that is `SupportPartColorTemConfig.b`: the goodsType is in its list d (its pact-(2,1) test for 112
+  adds nothing, as 112 is in d too). Where the row's new `segment_color_temp` is false,
+  `Device.set_segment_color_temp` and `set_zone_color_temp` now raise GoveeBleNotSupported before any I/O.
+  `set_color_temp` and `turn_on(kelvin=)` don't change, and nor does a segment RGB pick that is a Kelvin tint
+  colour, which the app sends as a masked Kelvin frame too (`Config.Yt`). **40 of the 104 SKUs admitted at
+  1.6.1 lose segment colour temperature:**
+  - dreamcolorlightv1: H61A8 (19), H617C / H617E / H617F (70), H617A (73), H618A / H802A (74), H619A (75),
+    H6167 / H619Z (83), H6168 (136), H61BE (175), H6176 / H61BC (176), H61BA (178), H6175 (187), H616C /
+    H616D / H616E (207), H6169 (262);
+  - striplight: H6062 (41), H610B (114);
+  - h7050: H7050 (46), H7060 (76), H7051 (105), H7062 (107), H7065 (113), H6088 (157), H7066 (171), H7052
+    (218), H7053 (219), H7063 (227);
+  - h61d3: H6640 (242), H6641 (247), H1AB1 (387), H1AB2 (388), H1AB3 (389), and H61B8 / H61B9 (299, behind
+    `allow_modelled`);
+  - h7056: H7056 (304).
+
+  The 23 that keep it are on list-d goodsTypes: H60A6, H6047, H6042, H6087, H7055, H60B1, B7080 / B7081 /
+  B7082, H6098 / H8098, H6690, H61B3 / H61B6, H1A42, H1A43 / H1A44, H1AA2, H1AA5, H1B6A, and H61F2 / H61F5 /
+  H61F6 (behind `allow_modelled`). Every zoned profile (H60A6, H6047, H1270, H1232 / H1252) keeps it, so no
+  table SKU's zone colour temperature changes. Three profiles split on the fact: H1AB2 leaves H1AA5's, H7066
+  leaves H7055's, and H7094 leaves H7057 / H8057 / H8066's. Of the new SKUs, 70 have no segment colour
+  temperature (49 by default, 21 behind `allow_modelled`) and 42 keep it. Source-traced (Govee Home 7.7.02),
+  not live-verified. H61A8's bench check (2026-10-17) sent its Kelvin over all 15 segments only, so no hardware
+  observation supports a masked Kelvin on these rows.
+- Nothing else for existing SKUs (H6188's colour temperature and H6061's whole-device RGB are under Fixed, and
+  the 40 SKUs without segment colour temperature are above). Each other SKU of the 104 admitted at 1.6.1 (98
+  by default, 6 behind `allow_modelled`) resolves to the same profile at every pact its rows list and at none,
+  with and without `allow_modelled`, so its frames and decoded state are unchanged. Where a new SKU has the same facts it joins that SKU's profile (`DeviceProfile.skus`): H6118 / H6179 / H6194 with H6005, H6099 with H6098 / H8098 /
   H6690, H70A1-3 with H6176 / H61BC, H61B0 with H61B3 / H61B6, H14C0 / H14C1 / R14C0 / R14C1 with
   H600A-H600D / H6011 / H6013 / H800B (H600A stays first), H6145-7 with H617C / H617E / H617F / H6168. H6099
   and H61B0 come first in theirs, so a `Device` built from one of those profiles without `sku=` names itself
@@ -359,6 +387,16 @@ model, from which the shipped readers are generated).
 - **Per-SKU connect writes.** `devices.schema.json` `clientModel` takes `connect_writes` (the row's stays
   required), which `govee_reference.client_row` applies for the SKU. bulblightv3's `by_model` gives H14A1 /
   R14A1 / H14C2 / R14C2 `[light_effect_stop]` over row 342's `[]`.
+- **`segment_color_temp`, whether a screen sends a Kelvin to a piece selection.** `devices.schema.json` clientRow
+  takes the boolean, with the app trace in its description: `DelegateColorV2Part.Z0` (:686-704) adds the Part
+  tab's Kelvin item only where `LightColorCapabilityCenter.C2` holds. C2 falls back, as no supported goodsType
+  has a capability spec (only fanlight 359 / 368 register one), to `SupportPartColorTemConfig.b`: list d, 112 at
+  pact (2,1), H7022 / H7024 at goodsType 0 (`SupportPartColorTemConfig.java:36-55,71-91`). The All tab's
+  Kelvin covers every piece (`DelegateColorV2.G0`). Each of the 108 rows with support that keeps `segments`
+  and `color_temp` after its colour scheme's drops now states it, 36 true and 72 false, with that doc-ref. The
+  resolver requires it on exactly those rows and refuses it on any other. Docs corrected where they said a
+  non-list-d screen's Kelvin follows the piece selection (pact_h605b 120 / 360, h7050 157), or called the
+  missing refusal a library gap (h6047 277, pact_h605b 142 / 243).
 - **The aa 01 "on when != 0" rules.** `govee_profile` `power_rule` gains `light_nonzero` (the connect read)
   and `light_heartbeat_nonzero` (the aa 01 heartbeat; false = as `light_nonzero`), the light counterparts of
   `relay_on_mask` and `relay_heartbeat_on_mask`. `govee_state` `power_state.is_on` reads a light's reply as on

@@ -361,6 +361,19 @@ class DeviceProfile:
     read ``AfterConnectSuccessReadDeviceInfo.w``). False, the default: on only for a byte of 1
     (``ControllerSwitch.Companion.c``), as every other light screen reads it. Ignored on a plug, whose byte is
     a relay mask (:attr:`relay_on_mask`)."""
+    segment_color_temp: bool = field(default=True, kw_only=True)
+    """Whether a colour temperature may go to a piece selection:
+    :meth:`~.device.Device.set_segment_color_temp`, and :meth:`~.device.Device.set_zone_color_temp`, whose
+    frame masks the zone's pieces. The control screen's All tab sends its Kelvin over every piece
+    (``DelegateColorV2.G0``), and only its Part tab's Kelvin item over the selected ones, an item
+    ``DelegateColorV2Part.Z0`` adds only where ``LightColorCapabilityCenter.C2`` holds:
+    ``SupportPartColorTemConfig.b``'s goodsTypes (a devices.yaml row's ``segment_color_temp``). False: both
+    raise GoveeBleNotSupported, and the device's one colour temperature is
+    :meth:`~.device.Device.set_color_temp`'s. It means nothing without SEGMENTS and COLOR_TEMP in
+    :attr:`capabilities`. True by default, so a profile built by hand keeps 1.x's behaviour; the generated
+    table sets it from the row (the default on a row without both capabilities). An RGB pick that is a Kelvin
+    tint colour still goes to the selected pieces as the Kelvin frame (``Config.Yt``), as the app sends it,
+    whatever this says."""
 
     def __post_init__(self) -> None:
         """Validate each field: GoveeBleInvalidValue (a ValueError) on a value no Device can use.
