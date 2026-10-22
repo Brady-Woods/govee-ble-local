@@ -62,6 +62,43 @@ model, from which the shipped readers are generated).
     don't carry it. A consumer that compares `asdict(state)` between polls (the Home Assistant integration
     does) sees no change from a re-read.
 
+### Changed
+- **A Device now re-learns its command channel from later advertisements, for its next session, as the app
+  does.** Until now the cipher was fixed when the `Device` was built: its advertisement's encrypt flag, else the
+  profile default. A device built before any of its advertisements was heard stayed on that default for the
+  Device's life. Such a device is an H6008, whose default is plaintext but whose SW1.01.25 firmware encrypts and
+  answers nothing else. The same goes for any SKU whose default is plaintext while its firmware encrypts.
+  `Device.ingest_advertisement` now reads the encrypt flag too, whatever the advertised name, and hands it to the
+  connection (new `GoveeConnection.set_advertised_encryption`, which returns the mode the next session uses).
+  - **When it applies:** from the next session on, never to the session that is up. `_prepare_session` is the
+    only place a session's mode is set, from the advertised mode as it is when the setup starts. No link is
+    dropped for it; a session that is up and answering already proves its cipher. `encryption` reports the
+    session's mode while a link is up, and the one the next session starts from when none is.
+  - **Merged records:** Home Assistant's record keeps every manufacturer-data key it has heard for the address
+    (habluetooth merges `{**prev, **new}`, as BlueZ does), and the Govee header, with its encrypt bit, is part of
+    the key. A header change, or another device's frame merged under the address, therefore leaves two Govee
+    entries, the older one first. The flag is learned only when every Govee pact entry carries the same one. A
+    mixed record keeps the cipher and logs one WARNING per spell, naming the headers. The constructor is
+    unchanged (the first entry, as in 1.6.1).
+  - **BGC:** a BGC `encryptVersion` of 1 or 2 still overrides the advertised flag (`isEncryptionSupported` = the
+    flag OR the BGC), so a plaintext flag never downgrades a BGC-1 device; the INFO line says so. A cached BGC 2
+    still refuses AES-GCM without a link. An AES-GCM mode given to the constructor with no BGC characteristic is
+    now lifted by a later advertised flag. The BGC result is still read once per Device; the app reads it on
+    every connect.
+  - **What the app does:** `BleBroadVersionCache.d` overwrites a per-MAC flag, true or false, from each parsed
+    broadcast: `AbsViewMode4OpWithOtaCheck.w2`, `AbsBlePact.t`, the H5083 screen, the add-device scan, and the
+    group and OTA paths. Only a broadcast whose pact parses writes it (`GoodsType.parseBleBroadcastPactInfo`).
+    `EncryptionUtils.isEncryptionSupported` reads it with the BGC on every frame read, written or notified
+    (`EncryptionBluetoothGattCallback`, `EncryptWriter.encryptWriteCharacteristic`). The light screen writes it
+    from the scan just before it connects, so in practice it holds for a session (`AbsViewMode4Op.onScanEvent`
+    stops the scan, parses the matched broadcast, then connects).
+  - **Live-verified** 2026-10-21 on both bench H6008s (SW1.01.25, no BGC characteristic), reads only:
+    - built with no advert, the first session went out plaintext and none of its `aa` reads was answered;
+    - after each bulb's own advert (header 0x43) was ingested, the next session handshook AES-RC4 and every read
+      was answered;
+    - a mixed record kept the cipher and warned.
+  - Design: `govee-apks/library-audit/DESIGN_relearn_advert_cipher.md`.
+
 ### Fixed
 - Docstrings cited the app's per-model advert decode as `AbsBaseBleModel.A`, h5080 `Model.A` and
   `Model4Plug2.A`; in the 7.7.02 decompile the method is `z`.

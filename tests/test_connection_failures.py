@@ -90,6 +90,102 @@ async def test_advertised_aes_gcm_refused(monkeypatch) -> None:
     assert len(fake.clients) == 1
 
 
+# -- an advertised mode handed over later (set_advertised_encryption) ------------
+# The app overwrites its per-MAC encrypt flag from every parsed broadcast (BleBroadVersionCache.d) and reads
+# it, OR'd with BgcInfoReader.g(), on every frame read, written or notified
+# (EncryptionUtils.isEncryptionSupported); its light screen writes it just before it connects.
+
+async def test_advertised_mode_applies_from_the_next_session(monkeypatch) -> None:
+    fake = FakeGovee()   # an encrypted device
+    fake.bgc = None      # without a BGC characteristic: the advertised mode decides
+    c = _make(monkeypatch, fake, encryption=Encryption.NONE)
+    await c.connect()
+    c.set_advertised_encryption(Encryption.AES_RC4_PSK)
+    assert c.encryption is Encryption.NONE   # the session that is up keeps its mode
+    await c.disconnect()
+    assert c.encryption is Encryption.AES_RC4_PSK   # the mode the next session starts from
+    await c.send(frame(0x33, 0x01, 0x01))   # handshakes on the new link, so the device reads (and acks) it
+    assert c.encryption is Encryption.AES_RC4_PSK and fake.received[-1][:3] == bytes([0x33, 0x01, 0x01])
+    assert len(fake.clients) == 2
+
+
+async def test_advertised_mode_handed_over_during_setup_waits(monkeypatch) -> None:
+    fake = FakeGovee(encrypted=False)   # plaintext, no BGC characteristic
+    c = _make(monkeypatch, fake)
+    read_bgc = c._read_bgc_encrypt_version
+
+    async def heard_meanwhile() -> int | None:
+        c.set_advertised_encryption(Encryption.AES_RC4_PSK)   # an advertisement lands during the BGC read
+        return await read_bgc()
+
+    monkeypatch.setattr(c, "_read_bgc_encrypt_version", heard_meanwhile)
+    await c.send(frame(0x33, 0x01, 0x01))   # the session set up with the mode it started from
+    assert c.encryption is Encryption.NONE and fake.received[-1][:3] == bytes([0x33, 0x01, 0x01])
+    await c.disconnect()
+    assert c.encryption is Encryption.AES_RC4_PSK
+
+
+async def test_session_mode_is_set_before_the_bgc_read(monkeypatch) -> None:
+    # Frames that arrive during the BGC read are captured under the new session's mode, not the last one's.
+    fake = FakeGovee()
+    fake.bgc = None
+    c = _make(monkeypatch, fake, encryption=Encryption.NONE)
+    c.set_advertised_encryption(Encryption.AES_RC4_PSK)
+    seen: list[Encryption] = []
+    read_bgc = c._read_bgc_encrypt_version
+
+    async def spy() -> int | None:
+        seen.append(c.encryption)   # a link is up: the session's mode
+        return await read_bgc()
+
+    monkeypatch.setattr(c, "_read_bgc_encrypt_version", spy)
+    await c.connect()
+    assert seen == [Encryption.AES_RC4_PSK]
+
+
+async def test_bgc_verdict_overrides_an_advertised_mode(monkeypatch) -> None:
+    fake = FakeGovee()   # BGC encryptVersion 1
+    c = _make(monkeypatch, fake)
+    await c.connect()
+    await c.disconnect()
+    # a plaintext flag never downgrades a BGC 1 device, and the hand-over says so
+    assert c.set_advertised_encryption(Encryption.NONE) is Encryption.AES_RC4_PSK
+    assert c.encryption is Encryption.AES_RC4_PSK
+    await c.send(frame(0x33, 0x01, 0x01))
+    assert c.encryption is Encryption.AES_RC4_PSK and fake.bgc_reads == 1   # the cached verdict
+
+
+async def test_bgc_v2_refusal_outlasts_an_advertised_mode(monkeypatch) -> None:
+    fake = FakeGovee()
+    fake.bgc = _BGC_V2
+    c = _make(monkeypatch, fake)
+    with pytest.raises(GoveeBleNotSupported):
+        await c.connect()
+    c.set_advertised_encryption(Encryption.AES_RC4_PSK)
+    with pytest.raises(GoveeBleNotSupported):   # AES-GCM whatever is advertised: still no second link
+        await c.connect()
+    assert c.encryption is Encryption.AES_GCM and len(fake.clients) == 1
+
+
+async def test_advertised_mode_lifts_an_advertised_aes_gcm_refusal(monkeypatch) -> None:
+    fake = FakeGovee()
+    fake.bgc = None
+    c = _make(monkeypatch, fake, encryption=Encryption.AES_GCM)
+    with pytest.raises(GoveeBleNotSupported):
+        await c.connect()
+    c.set_advertised_encryption(Encryption.AES_RC4_PSK)   # only the BGC read settles AES-GCM for good
+    await c.connect()
+    assert c.is_connected and c.encryption is Encryption.AES_RC4_PSK and len(fake.clients) == 2
+
+
+@pytest.mark.parametrize("mode", [Encryption.AES_GCM, "aes_rc4_psk"])
+def test_set_advertised_encryption_takes_an_advertised_flag_only(mode: object) -> None:
+    c = GoveeConnection(ble_device(ADDR, "GVH60A6X"), encryption=Encryption.NONE)
+    with pytest.raises(GoveeBleInvalidValue, match="NONE or AES_RC4_PSK"):
+        c.set_advertised_encryption(mode)  # type: ignore[arg-type]
+    assert c.encryption is Encryption.NONE
+
+
 async def test_connect_timeout_maps_to_ble_timeout(monkeypatch) -> None:
     fake = FakeGovee()
     fake.establish_error = TimeoutError()
