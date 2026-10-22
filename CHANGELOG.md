@@ -52,7 +52,8 @@ model, from which the shipped readers are generated).
   frames an encrypted device ignores. The attempt now raises `GoveeBleConnectionError` ("BGC read failed" or
   "BGC lookup failed"), the link is torn down, and the session loop reads again on a new link, up to
   `SESSION_ATTEMPTS`. A link-level error from the read (`EOFError`, `BrokenPipeError`) already failed the attempt;
-  it now carries the same message. Nothing is cached from a failed read, so the next connect reads again.
+  it now carries the same message. A read that times out raises `GoveeBleTimeout` ("BGC read timed out") and is
+  retried the same way. Nothing is cached from a failed read, so the next connect reads again.
   - **What the app does:** it sends nothing on a link whose 2b12 read failed. `BgcInfoReader.a` waits for a read
     callback even when the read didn't start, and `BgcInfoReaderPool.checkNeedParseInfo` takes only a status-0
     read, so `EncryptionBluetoothGattCallback.r`, which starts the handshake or the plaintext session, never runs.

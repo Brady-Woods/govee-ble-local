@@ -243,12 +243,17 @@ async def test_bgc_read_error_fails_the_attempt_and_the_next_link_reads_again(mo
     assert c.is_connected and c.encryption is Encryption.AES_RC4_PSK and c._bgc_checked
 
 
-@pytest.mark.parametrize("exc", [BleakError("read failed"), EOFError(), BrokenPipeError()])
-async def test_bgc_read_error_on_every_link_fails_the_connect(monkeypatch, exc) -> None:
+@pytest.mark.parametrize(("exc", "raised", "message"), [
+    (BleakError("read failed"), GoveeBleConnectionError, "BGC read failed: read failed"),
+    (EOFError(), GoveeBleConnectionError, "BGC read failed: EOFError"),
+    (BrokenPipeError(), GoveeBleConnectionError, "BGC read failed: BrokenPipeError"),
+    (TimeoutError(), GoveeBleTimeout, "BGC read timed out"),
+])
+async def test_bgc_read_error_on_every_link_fails_the_connect(monkeypatch, exc, raised, message) -> None:
     fake = FakeGovee()
     fake.bgc_read_error = exc
     c = _make(monkeypatch, fake)
-    with pytest.raises(GoveeBleConnectionError, match=f"BGC read failed: {str(exc) or type(exc).__name__}"):
+    with pytest.raises(raised, match=message):
         await c.connect()
     assert len(fake.clients) == SESSION_ATTEMPTS and fake.bgc_reads == SESSION_ATTEMPTS
     assert all(not cl.is_connected and cl.writes == [] for cl in fake.clients)

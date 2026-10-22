@@ -712,15 +712,17 @@ class GoveeConnection:
 
         Read once per connection object, so once per Device, and the result cached. The app reads it on
         every connect: BgcInfoReaderPool.onConnectedInfoChange (BgcInfoReaderPool.java:72-87) resets the
-        reader on connect and drops it on disconnect, and each link reads 2b12 again before its first frame
-        (EncryptionBluetoothGattCallback.onServicesDiscovered:190-207). The library keeps the one read by
+        reader on connect and drops it on disconnect, and each link reads 2b12 again before its first frame:
+        EncryptionBluetoothGattCallback.m:85-88 after the MTU exchange, l:69-72 when it fails, or
+        onServicesDiscovered:199-203 when no MTU request starts. The library keeps the one read by
         decision (2026-10-21), so a firmware update that changes the version is seen by the next Device.
 
-        Raises GoveeBleConnectionError when the lookup or the read fails, and caches nothing, so the
-        session loop's next attempt reads again on a new link. The app sends no frame on a link whose
-        2b12 read failed: BgcInfoReader.a:69-77 waits for a read callback that, unstarted, never
-        comes, and BgcInfoReaderPool.checkNeedParseInfo:46 takes only a status-0 read, so
-        EncryptionBluetoothGattCallback.r never runs."""
+        Raises GoveeBleConnectionError when the lookup or the read fails, and GoveeBleTimeout when the
+        read times out. Nothing is cached, so the session loop's next attempt reads again on a new link.
+        The app sends no frame on a link whose 2b12 read failed: BgcInfoReader.a:63-77 returns true even
+        when readCharacteristic fails, so the caller returns and waits for onCharacteristicRead, which
+        calls EncryptionBluetoothGattCallback.r (the handshake or the plaintext session) only for a
+        status-0 2b12 read (BgcInfoReaderPool.checkNeedParseInfo:46, onCharacteristicRead:129-137)."""
         if self._bgc_checked:
             return self._bgc_version
         client = self._require_client()
@@ -744,6 +746,8 @@ class GoveeConnection:
             except _TRANSPORT_ERRORS as err:
                 raise GoveeBleConnectionError(
                     f"{self.address}: BGC read failed: {_err_text(err)}") from err
+            except TimeoutError as err:
+                raise GoveeBleTimeout(f"{self.address}: BGC read timed out") from err
             version = bgc_encrypt_version(data)   # the spec's bgc_info (BgcInfoReader.a / .d)
         self._bgc_version, self._bgc_checked = version, True
         return version
