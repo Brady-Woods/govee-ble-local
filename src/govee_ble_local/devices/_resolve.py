@@ -365,7 +365,8 @@ _LIVE_HEARTBEATS: Final[Mapping[str, str]] = {
 # The capabilities a colour scheme has no frame for (wire.build refuses them), which a row's resolution drops
 # (only from a scheme the row names itself):
 #  - h61a8 (the 0x0b frames): no colour temperature (build.color_temp / segment_color_temp);
-#  - h6006 / h6188 (0x0d): no segment mask in any colour frame (Bytes.f / p / A);
+#  - h6006 / h6188 (0x0d; h6188 is the white-slot Bytes.A colour temperature of the illumination tab): no
+#    segment mask in any colour frame (Bytes.f / p / A);
 #  - h6061: whole-device only; per-panel colour needs the user's layout, which is not modelled.
 SCHEME_LACKS: Final[Mapping[str, frozenset[str]]] = {
     "h61a8": frozenset({"color_temp"}),

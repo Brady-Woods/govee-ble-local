@@ -97,6 +97,8 @@ _CHANGED: dict[tuple[str, str], tuple[Any, Any]] = {
         "H61A8", "H6004", "H6006", "H6008", "H6052", "H6641", "H6188", "H6062", "H6061", "H5080", "H5083",
         "H5085", "H5082", "H5089", "H5160", "H5161")},
     **{(sku, "heartbeat_timing"): ("fixed_rate", "after_quiet") for sku in ("H5080", "H5083", "H5085")},
+    # 1.7.0: the colour tab's Kelvin frame (Config.bu -> Bytes.p), not the group-control white slot (decision 3).
+    ("H6188", "color_scheme"): ("h6188", "h6006"),
 }
 
 # (soft, hard) versions: unread, the H61A8 bench unit, and the reference self-test's other two.
