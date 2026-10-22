@@ -366,18 +366,18 @@ class DeviceProfile:
     ``Model.z:149-157`` calls it, and the H1168 and H70BX models inherit it), so a byte of 2 reads off in
     the advertisement and on in the poll."""
     segment_color_temp: bool = field(default=True, kw_only=True)
-    """Whether a colour temperature may go to a piece selection:
-    :meth:`~.device.Device.set_segment_color_temp`, and :meth:`~.device.Device.set_zone_color_temp`, whose
-    frame masks the zone's pieces. The control screen's All tab sends its Kelvin over every piece
-    (``DelegateColorV2.G0``), and only its Part tab's Kelvin item over the selected ones, an item
-    ``DelegateColorV2Part.Z0`` adds only where ``LightColorCapabilityCenter.C2`` holds:
-    ``SupportPartColorTemConfig.b``'s goodsTypes (a devices.yaml row's ``segment_color_temp``). False: both
-    raise GoveeBleNotSupported, and the device's one colour temperature is
-    :meth:`~.device.Device.set_color_temp`'s. It means nothing without SEGMENTS and COLOR_TEMP in
-    :attr:`capabilities`. True by default, so a profile built by hand keeps 1.x's behaviour; the generated
-    table sets it from the row (the default on a row without both capabilities). An RGB pick that is a Kelvin
-    tint colour still goes to the selected pieces as the Kelvin frame (``Config.Yt``), as the app sends it,
-    whatever this says."""
+    """Whether :meth:`~.device.Device.set_segment_color_temp` may send a colour temperature to a piece
+    selection. The control screen's All tab sends its Kelvin over every piece (``DelegateColorV2.G0``), and
+    only its Part tab's Kelvin item over the selected ones, an item ``DelegateColorV2Part.Z0`` adds only
+    where ``LightColorCapabilityCenter.C2`` holds: ``SupportPartColorTemConfig.b``'s goodsTypes (a
+    devices.yaml row's ``segment_color_temp``). False: ``set_segment_color_temp`` raises
+    GoveeBleNotSupported before any I/O, and the device's colour temperature is
+    :meth:`~.device.Device.set_color_temp`'s. It does not govern :meth:`~.device.Device.set_zone_color_temp`,
+    whose frame masks a zone's pieces: that needs SEGMENTS, COLOR_TEMP and a zone with segments only. It
+    means nothing without SEGMENTS and COLOR_TEMP in :attr:`capabilities`. True by default, so a profile
+    built by hand keeps 1.x's behaviour; the generated table sets it from the row (the default on a row
+    without both capabilities). An RGB pick that is a Kelvin tint colour still goes to the selected pieces
+    as the Kelvin frame (``Config.Yt``), as the app sends it, whatever this says."""
     segment_brightness_groups: tuple[tuple[int, ...], ...] = field(default=(), kw_only=True)
     """Disjoint groups of segment indices that :meth:`~.device.Device.set_segment_brightness` widens a
     selection to: every segment of each group holding a selected one goes into the ``33 05 15 02`` mask and

@@ -357,8 +357,10 @@ def test_set_zone_rgb_zone_without_segments_raises() -> None:
     assert _sent(d) == []
 
 
-def test_set_zone_color_temp_sends_zone_mask() -> None:
-    d = _dev("H60A6")
+@pytest.mark.parametrize("overrides", [{}, {"segment_color_temp": False}])
+def test_set_zone_color_temp_sends_zone_mask(overrides: dict[str, Any]) -> None:
+    # The zone's own mask, whatever segment_color_temp says (that is the piece selection's Kelvin only).
+    d = _dev("H60A6", **overrides)
     asyncio.run(d.set_zone_color_temp("background", 4000))
     f = _sent(d)[0]
     assert f[:3].hex() == "330515"

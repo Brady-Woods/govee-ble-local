@@ -555,12 +555,14 @@ class Device:
 
     def _require_segment_color_temp(self) -> None:
         """A Kelvin on a piece selection: SEGMENTS, COLOR_TEMP and a screen whose Part tab sends one
-        (:attr:`.DeviceProfile.segment_color_temp`; elsewhere the app's only Kelvin covers every piece)."""
+        (:attr:`.DeviceProfile.segment_color_temp`; elsewhere the app's Kelvin covers every piece, or on a
+        zoned screen a whole zone). :meth:`set_segment_color_temp` only: a zone's Kelvin doesn't read it."""
         self._require(Capability.SEGMENTS)
         self._require(Capability.COLOR_TEMP)
         if not self.profile.segment_color_temp:
+            zones = ", or over a zone: set_zone_color_temp" if self.profile.zones else ""
             raise GoveeBleNotSupported(f"{self._sku}: no colour temperature on a piece selection (the app "
-                                       "sends it over every piece: set_color_temp)")
+                                       f"sends it over every piece: set_color_temp{zones})")
 
     def _unlock_frames(self) -> list[bytes]:
         return [build.secret_check(self._secret)] if self._secret else []
@@ -1525,13 +1527,19 @@ class Device:
         0x15 family (H60A6/H6047), whose CCT frame carries a segment mask. ``kelvin`` is clamped
         and rounded as in :meth:`set_color_temp`.
 
-        Raises GoveeBleNotSupported without SEGMENTS/COLOR_TEMP, where the SKU's screen sends no Kelvin to a
-        piece selection (:attr:`.DeviceProfile.segment_color_temp`), for a zone without segments or for
-        a colour scheme whose CCT frame carries no segment mask; GoveeBleInvalidValue for an unknown
-        zone (also a GoveeBleNotSupported) or a non-int ``kelvin``; GoveeBleError if a hand-built profile
-        with :attr:`.DeviceProfile.section_count_read` does not answer that read (no zoned table profile
-        reads aa 41)."""
-        self._require_segment_color_temp()
+        :attr:`.DeviceProfile.segment_color_temp` doesn't gate it: that field is the Kelvin on a piece
+        selection (:meth:`set_segment_color_temp`). A zone's Kelvin goes over the zone's own mask, the mask
+        the app's Part tab widens a Kelvin pick to on both zoned screens (H60A6: the ring 0-11, piece 12 as
+        picked, ``ColorModeH60A6.canClickColorTem:519-541``; H6047: each bar touched, 0-4 / 5-9,
+        ``ColorMode10Segment.canClickColorTem:655-691``).
+
+        Raises GoveeBleNotSupported without SEGMENTS/COLOR_TEMP, for a zone without segments or for a
+        colour scheme whose CCT frame carries no segment mask; GoveeBleInvalidValue for an unknown zone
+        (also a GoveeBleNotSupported) or a non-int ``kelvin``; GoveeBleError if a hand-built profile with
+        :attr:`.DeviceProfile.section_count_read` does not answer that read (no zoned table profile reads
+        aa 41)."""
+        self._require(Capability.SEGMENTS)
+        self._require(Capability.COLOR_TEMP)
         sent = self._check_kelvin(kelvin)
         z = self._zone(name)
         if not z.segments:

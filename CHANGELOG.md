@@ -216,18 +216,21 @@ model, from which the shipped readers are generated).
   list decodes it for every light (`AbsBaseBleModel.z` over `BleUtil.parseBleBroadOnOff`), so a byte of 2
   reads off in the advertisement and on in the poll.
 - **`DeviceProfile.segment_color_temp`** (keyword-only, default True; the spec's clientRow
-  `segment_color_temp`): whether a colour temperature may go to a piece selection, as the app's Part-tab
-  Kelvin item sends one (`DelegateColorV2Part.Z0` -> `LightColorCapabilityCenter.C2` ->
-  `SupportPartColorTemConfig.b`; Changed, below). The generated table sets it from the row; a profile built by
-  hand keeps 1.x's behaviour. Where it is false, `Device.set_segment_color_temp` and `set_zone_color_temp`
-  raise GoveeBleNotSupported before any I/O, and `set_color_temp` is the device's one colour temperature.
+  `segment_color_temp`): whether `Device.set_segment_color_temp` may send a colour temperature to a piece
+  selection, as the app's Part-tab Kelvin item sends one (`DelegateColorV2Part.Z0` ->
+  `LightColorCapabilityCenter.C2` -> `SupportPartColorTemConfig.b`; Changed, below). The generated table sets
+  it from the row; a profile built by hand keeps 1.x's behaviour. Where it is false, `set_segment_color_temp`
+  raises GoveeBleNotSupported before any I/O, and `set_color_temp` is the device's colour temperature. It
+  doesn't govern `set_zone_color_temp`, which needs SEGMENTS, COLOR_TEMP and a zone with segments, as in 1.6.1.
   **For integrators:** SEGMENTS plus COLOR_TEMP in `capabilities` no longer means `set_segment_color_temp`
-  works. Gate a per-segment or per-zone colour-temperature control on `profile.segment_color_temp` as well.
-  The Home Assistant integration's segment entities take COLOR_TEMP from the two capabilities alone, so on the
-  40 released SKUs listed under Changed their colour temperature would raise GoveeBleNotSupported.
+  works. Gate a per-segment colour-temperature control on `profile.segment_color_temp` as well. A per-zone
+  one needs only COLOR_TEMP and the profile's zones; don't gate it on the field. The Home Assistant
+  integration's segment entities take COLOR_TEMP from the two capabilities alone, so on the 40 released SKUs
+  listed under Changed their colour temperature would raise GoveeBleNotSupported.
   - **Frozen for integrators:** the field's name, keyword-only form, default (True) and meaning stay as they
-    are through 1.x, so an integration can gate on `getattr(profile, "segment_color_temp", True)` and run on
-    1.6.x and later alike.
+    are through 1.x. The meaning is whether `set_segment_color_temp` may send a colour temperature to a piece
+    selection; `set_zone_color_temp` doesn't read it. An integration can gate on
+    `getattr(profile, "segment_color_temp", True)` and run on 1.6.x and later alike.
 - **H1162 / H1163 / H1167 / H1168** (h1162 goodsTypes 87 / 137 / 182 / 186), the Music Sync boxes, admitted by
   default (`app_traced`) as power-only rows at pact (1,1), following the user's decision to match the
   standalone screen. The switch turns the box's music sync on or off: `33 01 <on>`, polled with aa 01 and kept
@@ -313,13 +316,13 @@ model, from which the shipped readers are generated).
   `DelegateColorV2Part.Z0` adds it only where `LightColorCapabilityCenter.C2` holds. For every supported
   goodsType that is `SupportPartColorTemConfig.b`: the goodsType is in its list d (its pact-(2,1) test for 112
   adds nothing, as 112 is in d too). Where the row's new `segment_color_temp` is false,
-  `Device.set_segment_color_temp` and `set_zone_color_temp` now raise GoveeBleNotSupported before any I/O.
-  Their docstrings no longer name H6062 for the aa 41 segment-count read: H6062 is refused first, so only a
-  hand-built `section_count_read` profile reaches that read. `set_color_temp` and `turn_on(kelvin=)` don't
-  change, and nor does a segment RGB pick that is a Kelvin tint colour, which the app sends as a masked Kelvin
-  frame too (`Config.Yt`). So SEGMENTS and COLOR_TEMP together no longer mean `set_segment_color_temp` works
-  (the integrator note under Added). **40 of the 104 SKUs admitted at 1.6.1 lose segment colour temperature**
-  (38 by default, 2 behind `allow_modelled`):
+  `Device.set_segment_color_temp` now raises GoveeBleNotSupported before any I/O. Its docstring no longer names
+  H6062 for the aa 41 segment-count read: H6062 is refused first, so only a hand-built `section_count_read`
+  profile reaches that read. `set_zone_color_temp` doesn't read the field: it sends a zone's own mask, as in
+  1.6.1. `set_color_temp` and `turn_on(kelvin=)` don't change, and nor does a segment RGB pick that is a Kelvin
+  tint colour, which the app sends as a masked Kelvin frame too (`Config.Yt`). So SEGMENTS and COLOR_TEMP
+  together no longer mean `set_segment_color_temp` works (the integrator note under Added). **40 of the 104 SKUs
+  admitted at 1.6.1 lose segment colour temperature** (38 by default, 2 behind `allow_modelled`):
   - dreamcolorlightv1: H61A8 (19), H617C / H617E / H617F (70), H617A (73), H618A / H802A (74), H619A (75),
     H6167 / H619Z (83), H6168 (136), H61BE (175), H6176 / H61BC (176), H61BA (178), H6175 (187), H616C /
     H616D / H616E (207), H6169 (262);
@@ -332,8 +335,8 @@ model, from which the shipped readers are generated).
 
   The 23 that keep it are on list-d goodsTypes: H60A6, H6047, H6042, H6087, H7055, H60B1, B7080 / B7081 /
   B7082, H6098 / H8098, H6690, H61B3 / H61B6, H1A42, H1A43 / H1A44, H1AA2, H1AA5, H1B6A, and H61F2 / H61F5 /
-  H61F6 (behind `allow_modelled`). Every zoned profile (H60A6, H6047, H1270, H1232 / H1252) keeps it, so no
-  table SKU's zone colour temperature changes. Three profiles split on the fact: H1AB2 leaves H1AA5's, H7066
+  H61F6 (behind `allow_modelled`). No table SKU's zone colour temperature changes: `set_zone_color_temp`
+  doesn't read the field. Three profiles split on the fact: H1AB2 leaves H1AA5's, H7066
   leaves H7055's, and H7094 leaves H7057 / H8057 / H8066's. H1AA5 and H7066, second in theirs at 1.6.1, now
   come first in their own, so a `Device` built from H1AA5's or H7066's profile without `sku=` names itself
   after them, not H1AB2 or H7055 (`create_device` and `make_device` always pass the SKU). H1AB2's and H7055's
@@ -571,8 +574,7 @@ model, from which the shipped readers are generated).
   app widens it to the whole ring once a ring piece is selected (`ColorModeH60A6.canClickColorTem` over `F`)
   and to each bar touched (`ColorMode10Segment.canClickColorTem` with `q0` / `r0`), where
   `set_segment_color_temp` sends the selection as it is. The user has decided to drop it on both rows instead
-  (decision 24, 2026-10-22: `segment_color_temp` false, zone Kelvin kept); that is not applied yet, as
-  `set_zone_color_temp` reads the field too.
+  (decision 24, 2026-10-22: `segment_color_temp` false, zone Kelvin kept); that is not applied yet.
 - **Screen facts on three held rows** (still without `support`; no SKU's profile changes):
   - h61d3 375 (H1A45): its colour config is traced after all. The 7.7.02 tables key 375 by the named
     constant `LightRecycleViewGesture.W`, which a search for the number missed. It is row 367's: the h60a6

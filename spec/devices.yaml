@@ -837,7 +837,7 @@ families:
             widens a selection that holds a ring piece to the whole ring 0-11, with piece 12 as picked
             (ColorModeH60A6.canClickColorTem:519-541 over F:140-150), where set_segment_color_temp sends the selection
             as it is. The user has decided (2026-10-22) to drop the Kelvin on a piece selection here (segment_color_temp
-            false), with the zones keeping theirs; not applied yet, as set_zone_color_temp reads the field too. Timing:
+            false), with the zones keeping theirs; not applied yet. Timing:
             the app reads the burst once per connect and then keeps the link with the aa 00 heartbeat and its ee 30
             pushes. HARDWARE-VERIFIED on an H60A6 (bench 2026-10-12 to 2026-10-16): the segment-map probe drove piece 12
             (the main panel) and pieces 0-11 (the ring) to opposite colours and read them back apart; 33 01 00 clears
@@ -1248,8 +1248,7 @@ families:
             item widens the selection to each bar it touches, 0-4 and 5-9 (DetailConfig's strip ColorMode10Segment; its
             canClickColorTem:655-690 with q0:799-801 / r0:803-805 over p0:425-436), where set_segment_color_temp sends the
             selection as it is. The user has decided (2026-10-22) to drop the Kelvin on a piece selection here
-            (segment_color_temp false), with the bars keeping theirs; not applied yet, as set_zone_color_temp reads the
-            field too.
+            (segment_color_temp false), with the bars keeping theirs; not applied yet.
           doc-ref:
             - split_h6047/com/govee/h6047/pact/Support.java:43-45,121-129,186-188,345-350
             - split_h6047/com/govee/h6047/detail/config/DetailConfig.java:100-108
