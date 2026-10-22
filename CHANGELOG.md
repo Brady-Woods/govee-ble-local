@@ -68,12 +68,23 @@ model, from which the shipped readers are generated).
   colour page hands `Bytes.r` (the app's ColorTemperatureType, through `LightColorCapabilityCenter.d1` ->
   `Config.H`): `rgb_white` = `ff ff ff` (the default, every SKU before), `rgb_black` = `00 00 00`, and
   `rgb_self_tem_color` = `00 00 00` over every piece and, over some, the tint as the colour with Kelvin and tint
-  zero (the plain RGB bytes of the tint). It applies to `set_color_temp`, `turn_on(kelvin=)`, the segment and
-  zone Kelvin writes, and an RGB pick that is a Kelvin tint colour; the builders `color_temp`,
-  `segment_color_temp`, `segment_rgb` and `color_rgb_frames` take `white_type=`. Only an h60a6 profile may set
-  another value. It admits **H61E5** (h61d3 239) and **H61E6** (246), `app_traced`, not hardware-verified: the
-  ColorMode colour page (`ColorModeControllerConfig.c` -> `Config.Yt` -> `Bytes.r`) with `Config.P` = 3. Their
-  illumination tab's Kelvin (`Bytes.C`, `ff ff ff` for them) is a second path and not modelled.
+  zero (the plain RGB bytes of the tint). It applies to every colour-temperature frame an h60a6 profile sends:
+  `set_color_temp`, `turn_on(kelvin=)`, an RGB pick that is a Kelvin tint colour, and the segment and zone Kelvin
+  writes where the screen has them; the builders `color_temp`, `segment_color_temp`, `segment_rgb` and
+  `color_rgb_frames` take `white_type=`. Only an h60a6 profile may set another value. It admits **H61E5** (h61d3
+  239) and **H61E6** (246) behind `allow_modelled`, not hardware-verified: the ColorMode colour page
+  (`ColorModeControllerConfig.c` -> `Config.Yt` -> `Bytes.r`) with `Config.P` = 3. Their Kelvin pick is
+  whole-strip (`ColorMode.canClickColorTem`, `H61D3Support.i0`), so their segment Kelvin is refused (below) and
+  only an RGB pick of a tint colour on some segments takes the partial form. They stay `modelled` for two
+  colour-page differences: the app's posSet is the live piece count and the library's mask the cap (12 / 15), so
+  a tint-colour pick over exactly the live pieces is whole in the app and partial in the library; and the app
+  refuses segment brightness while a selected piece shows a Kelvin tint colour, which the library doesn't gate.
+  Their illumination tab's Kelvin (`Bytes.C`, `ff ff ff` for them) is a second path and not modelled.
+- **Whole-device-only colour temperature** (`DeviceProfile.whole_device_kelvin`, devices.yaml
+  `color_temp_control: whole_device`). Where the screen has no Kelvin on part of the device,
+  `set_segment_color_temp` and `set_zone_color_temp` raise GoveeBleNotSupported, as a masked Kelvin is a frame the
+  app never sends. It is set by `whole_device` (a colour page whose Kelvin pick always sets every piece: H61E5 /
+  H61E6) and by `illumination` (below), whose tab writes every piece.
 - **Colour temperature from the illumination tab** (`DeviceProfile.kelvin_with_brightness`, devices.yaml
   `color_temp_control: illumination`). Where a screen sets colour temperature on its illumination tab alone,
   the app writes the Kelvin frame and then `33 04` <the brightness it holds> as one write
@@ -81,7 +92,7 @@ model, from which the shipped readers are generated).
   in order, and `turn_on(kelvin=)` sends the Kelvin frame before `33 04` (the given brightness, else the held
   one). An unknown brightness is read first with the profile's own read (the status read, or aa 04); if it
   stays unknown, GoveeBleError and nothing is written (never a guessed `33 04`). The tab writes every piece,
-  so the segment and zone Kelvin setters raise GoveeBleNotSupported on such a profile. Promoted from
+  so the profile is `whole_device_kelvin` (the segment and zone Kelvin setters raise). Promoted from
   `modelled` to `app_traced`, admitted by default, not hardware-verified: **H60A4 / H80A4** (h60ax 302:
   `Bytes.C(K, 11, 1)`, the h60a6 frame over every piece) and **H8015** (bulblightv3 328: `Config.N[2]` =
   `Bytes.A`, the h6188 frame).
@@ -105,6 +116,13 @@ model, from which the shipped readers are generated).
   `make_device` always pass the SKU).
 - The white slot changes no admitted SKU: each resolves to `white_type="rgb_white"`, whose frames are 1.7.0's
   byte for byte.
+- For integrators: `Capability.SEGMENTS` with `Capability.COLOR_TEMP` no longer means the segment and zone Kelvin
+  setters work. On a `DeviceProfile.whole_device_kelvin` profile (H60A4 / H80A4 by default; H61E5 / H61E6 and
+  H60A1 / H80A1 behind `allow_modelled`) `set_segment_color_temp` and `set_zone_color_temp` raise
+  GoveeBleNotSupported, because the app has no Kelvin on part of those devices. Check
+  `device.profile.whole_device_kelvin` before offering colour temperature on a segment or zone entity;
+  hass-govee-ble-local's segment lights need that follow-up (they offer colour temperature whenever the device
+  has `COLOR_TEMP`). Every profile of 1.7.0 has `whole_device_kelvin=False`.
 - H8015, behind `allow_modelled` since 1.6.1, is now admitted by default, and its `set_color_temp` /
   `turn_on(kelvin=)` add the trailing `33 04` (above). Every other SKU keeps `kelvin_with_brightness=False` and
   its one-frame colour-temperature write.
@@ -138,10 +156,12 @@ model, from which the shipped readers are generated).
   `rgb_self_tem_color`; h705a 180 states `rgb_black` and the `kelvin_tint` form, and stays without support (its
   aa a1 0b piece count and its Kelvin read-back are still gaps). The reference self-test reads a `rgb_black` and
   a partial `rgb_self_tem_color` frame.
-- **`color_temp_control`** (devices.schema.json clientRow; `illumination`, absent = the one-frame write). The
-  resolver takes it with the color_temp and brightness capabilities, percent brightness with no pact branch,
-  and the h60a6 or h6188 scheme (the two whose colour-temperature frame is a `Config.N` builder: `Bytes.C`,
-  `Bytes.A`), and then lets the colour page's `color_temperature` flag be off. h60ax 302 (with
+- **`color_temp_control`** (devices.schema.json clientRow; `illumination` or `whole_device`, absent = the
+  colour page's one-frame write over the selected pieces). `whole_device` needs the color_temp capability; h61d3
+  239 / 246 state it (`ColorMode.canClickColorTem` returns every piece for `H61D3Support.i0`). For
+  `illumination` the resolver needs the color_temp and brightness capabilities, percent brightness with no pact
+  branch, and the h60a6 or h6188 scheme (the two whose colour-temperature frame is a `Config.N` builder:
+  `Bytes.C`, `Bytes.A`), and then lets the colour page's `color_temperature` flag be off. h60ax 302 (with
   `color_functions: [segment_brightness]`, `Config.I[302]` = hQ) and bulblightv3 328 state it and are
   `app_traced`; h60ax 235 states it too.
 - h60ax 235 is `modelled` (above), with `color_functions: [segment_brightness]` (`Config.I[235]` = zN). No

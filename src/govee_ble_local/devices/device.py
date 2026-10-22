@@ -1232,10 +1232,11 @@ class Device:
         """Colour temperature on selected segments (0x15 family only — the CCT frame
         carries the segment mask). ``kelvin`` is clamped and rounded as in :meth:`set_color_temp`.
 
-        Raises GoveeBleNotSupported without SEGMENTS/COLOR_TEMP, for non-maskable schemes, or where colour
-        temperature is the illumination tab's (:attr:`.DeviceProfile.kelvin_with_brightness`);
-        GoveeBleInvalidValue for a non-int ``kelvin`` or a bad index; GoveeBleError if a device
-        that reports its own segment count (H6062) does not answer that read."""
+        Raises GoveeBleNotSupported without SEGMENTS/COLOR_TEMP, for non-maskable schemes, or where the
+        screen writes colour temperature over the whole device only
+        (:attr:`.DeviceProfile.whole_device_kelvin`); GoveeBleInvalidValue for a non-int ``kelvin`` or a bad
+        index; GoveeBleError if a device that reports its own segment count (H6062) does not answer that
+        read."""
         self._require(Capability.SEGMENTS)
         self._require(Capability.COLOR_TEMP)
         self._require_masked_kelvin()
@@ -1255,12 +1256,12 @@ class Device:
             await self._commit(frame, apply, ticket=ticket)
 
     def _require_masked_kelvin(self) -> None:
-        """GoveeBleNotSupported on a profile whose colour temperature is the illumination tab's
-        (:attr:`.DeviceProfile.kelvin_with_brightness`): the tab writes every piece, and the screen has no
-        Kelvin on part of the device, so a masked Kelvin is a frame the app never sends."""
-        if self.profile.kelvin_with_brightness:
-            raise GoveeBleNotSupported(
-                f"{self._sku}: colour temperature is whole-device only (the illumination tab's)")
+        """GoveeBleNotSupported on a profile whose screen writes colour temperature over the whole device
+        only (:attr:`.DeviceProfile.whole_device_kelvin`: the illumination tab, or a colour page whose Kelvin
+        pick sets every piece): the screen has no Kelvin on part of the device, so a masked Kelvin is a
+        frame the app never sends."""
+        if self.profile.whole_device_kelvin:
+            raise GoveeBleNotSupported(f"{self._sku}: colour temperature is whole-device only")
 
     # -- zones --------------------------------------------------------------
     def _zone(self, name: str) -> Zone:
@@ -1409,8 +1410,9 @@ class Device:
         and rounded as in :meth:`set_color_temp`.
 
         Raises GoveeBleNotSupported without SEGMENTS/COLOR_TEMP, for a zone without segments, for
-        a colour scheme whose CCT frame carries no segment mask, or where colour temperature is the
-        illumination tab's (:attr:`.DeviceProfile.kelvin_with_brightness`); GoveeBleInvalidValue for an
+        a colour scheme whose CCT frame carries no segment mask, or where the screen writes colour
+        temperature over the whole device only (:attr:`.DeviceProfile.whole_device_kelvin`);
+        GoveeBleInvalidValue for an
         unknown zone (also a GoveeBleNotSupported) or a non-int ``kelvin``; GoveeBleError if a device that
         reports its own segment count (H6062) does not answer that read."""
         self._require(Capability.SEGMENTS)

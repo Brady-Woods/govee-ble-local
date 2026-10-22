@@ -29,8 +29,9 @@ import spec_read
 from conftest import require_optional
 from fake_ble import ble_device
 
-from govee_ble_local.devices.device import Device, make_device
+from govee_ble_local.devices.device import Device
 from govee_ble_local.exceptions import GoveeBleError, GoveeBleInvalidValue, GoveeBleNotSupported
+from govee_ble_local.registry import create_device
 from govee_ble_local.wire import _spec
 from govee_ble_local.wire import build as b
 from govee_ble_local.wire.cct import tint_for_kelvin
@@ -56,8 +57,7 @@ def _frame(*payload: int) -> bytes:
 
 
 def _dev(sku: str, adv: Any = None) -> Device:
-    d = make_device(ble_device("AA:BB:CC:DD:EE:19", sku), sku, adv)
-    assert d is not None
+    d = create_device(ble_device("AA:BB:CC:DD:EE:19", sku), sku, adv, allow_modelled=True)
     sent: list[bytes] = []
 
     async def send(frame: bytes, **_k: object) -> None:
@@ -196,10 +196,13 @@ def test_illumination_tab_kelvin_is_the_kelvin_then_the_held_brightness() -> Non
     with pytest.raises(GoveeBleError, match="brightness is not known"):
         asyncio.run(d.set_color_temp(4000))
     assert _sent(d) == []
-    # The tab writes every piece: no masked Kelvin (H60A4, h60ax 302, has segments).
-    d = _dev("H60A4")
-    with pytest.raises(GoveeBleNotSupported, match="whole-device only"):
-        asyncio.run(d.set_segment_color_temp([0], 4000))
+    # The tab writes every piece: no masked Kelvin (H60A4, h60ax 302, has segments); nor on H61E5, whose
+    # colour page's Kelvin pick is whole-strip (color_temp_control whole_device).
+    for sku in ("H60A4", "H61E5"):
+        d = _dev(sku)
+        assert d.profile.whole_device_kelvin
+        with pytest.raises(GoveeBleNotSupported, match="whole-device only"):
+            asyncio.run(d.set_segment_color_temp([0], 4000))
 
 
 # ── 0x0d both-slot form ──────────────────────────────────────────────────────

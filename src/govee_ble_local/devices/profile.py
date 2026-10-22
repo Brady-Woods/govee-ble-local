@@ -351,9 +351,20 @@ class DeviceProfile:
     ColorTemperatureType (:data:`..wire.build.WhiteType`). ``"rgb_white"`` (the default, every SKU before
     1.8.0) leads ``ff ff ff``; ``"rgb_black"`` ``00 00 00``; ``"rgb_self_tem_color"`` (H61E5 / H61E6)
     ``00 00 00`` over every segment and, over some, the tint as the colour with Kelvin and tint zero. It
-    applies to every colour-temperature frame: :meth:`~.device.Device.set_color_temp`, the segment and zone
-    ones, and an RGB pick that is a Kelvin tint colour. Only an ``h60a6`` profile may set another than the
-    default."""
+    applies to every colour-temperature frame the profile sends: :meth:`~.device.Device.set_color_temp`,
+    ``turn_on(kelvin=)``, an RGB pick that is a Kelvin tint colour (whole or on some segments), and the
+    segment and zone Kelvin where :attr:`whole_device_kelvin` doesn't refuse them (it does on H61E5 / H61E6,
+    so there only a tint-colour pick on some segments takes the partial form). Only an ``h60a6`` profile may
+    set another than the default."""
+    whole_device_kelvin: bool = field(default=False, kw_only=True)
+    """The SKU's screen writes colour temperature over the whole device only, never over part of it (a
+    devices.yaml row's ``color_temp_control``: ``whole_device``, whose colour page's Kelvin pick always sets
+    every piece, h61d3 ``ColorMode.canClickColorTem`` on H61E5 / H61E6; or ``illumination``, see
+    :attr:`kelvin_with_brightness`). :meth:`~.device.Device.set_segment_color_temp` and
+    :meth:`~.device.Device.set_zone_color_temp` then raise GoveeBleNotSupported: a Kelvin on some segments
+    is a frame the app never sends. A caller that offers colour temperature per segment or per zone (on
+    :attr:`~..models.Capability.SEGMENTS` or zones with :attr:`~..models.Capability.COLOR_TEMP`) checks
+    this first. False (the default, every SKU before 1.8.0): the masked Kelvin is the app's."""
     kelvin_with_brightness: bool = field(default=False, kw_only=True)
     """The SKU's screen sets colour temperature on its illumination tab alone (a devices.yaml row's
     ``color_temp_control: illumination``), which writes the Kelvin frame and then ``33 04`` <the current
@@ -362,9 +373,8 @@ class DeviceProfile:
     :meth:`~.device.Device.set_color_temp` sends both, each frame acked in order, re-sending the brightness
     ``state`` holds (read first, with the profile's own read, when unknown), and
     :meth:`~.device.Device.turn_on` with a ``kelvin`` sends the Kelvin frame before ``33 04`` (the given
-    brightness, else the held one). The tab writes every piece, so the segment and zone colour-temperature
-    setters raise GoveeBleNotSupported. False (the default, every SKU before 1.8.0): the Kelvin frame
-    alone."""
+    brightness, else the held one). The tab writes every piece, so it needs :attr:`whole_device_kelvin`.
+    False (the default, every SKU before 1.8.0): the Kelvin frame alone."""
     mode_decode: tuple[tuple[str, str | bool], ...] = field(default=(), kw_only=True)
     """The ``aa 05`` mode report's music layout and empty-value rule, where the screen's parse sets them: a
     devices.yaml polled row's wire ``mode`` (h60a1 ``Info4Detail.Q`` on H60A1 / H80A1: ``music`` v2_default,
@@ -406,6 +416,9 @@ class DeviceProfile:
         if self.white_type != DEFAULT_WHITE_TYPE and self.color_scheme != "h60a6":
             raise GoveeBleInvalidValue(f"{where}: white_type={self.white_type!r} on color_scheme="
                                        f"{self.color_scheme!r} (only the h60a6 frame has the white slot)")
+        if self.kelvin_with_brightness and not self.whole_device_kelvin:
+            raise GoveeBleInvalidValue(f"{where}: kelvin_with_brightness without whole_device_kelvin (the "
+                                       "illumination tab writes every piece)")
         for name in ("mode_color_parse", "mode_color_parse_status"):
             value = getattr(self, name)
             if value not in _DECODES and not (value is None and name == "mode_color_parse_status"):

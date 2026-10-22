@@ -24,9 +24,10 @@ from unittest.mock import AsyncMock
 import pytest
 from fake_ble import ble_device
 
-from govee_ble_local.devices.device import Device, make_device
+from govee_ble_local.devices.device import Device
 from govee_ble_local.devices.profile import profile_for
 from govee_ble_local.exceptions import GoveeBleInvalidValue
+from govee_ble_local.registry import create_device
 from govee_ble_local.wire import build as b
 from govee_ble_local.wire.cct import _KELVIN_BY_TINT, kelvin_for_tint, tint_for_kelvin
 
@@ -46,8 +47,7 @@ def _rgb(colour: int) -> tuple[int, int, int]:
 
 
 def _dev(sku: str, segments: int | None = None) -> Device:
-    d = make_device(ble_device("AA:BB:CC:DD:EE:99", sku), sku)
-    assert d is not None
+    d = create_device(ble_device("AA:BB:CC:DD:EE:99", sku), sku, allow_modelled=True)
     if segments is not None:
         d.set_segment_count(segments)      # H6062 reports its own count; skip the aa 41 read
     sent: list[bytes] = []

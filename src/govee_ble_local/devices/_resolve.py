@@ -71,7 +71,10 @@ the row lacks fails the build: nothing defaults silently.
   ``brightness`` capabilities, percent brightness with no pact branch (so the held value round-trips), and the
   h60a6 or h6188 scheme, whose colour-temperature frame is the tab's builder (h60a6 not at
   ``rgb_self_tem_color``, whose tab slot is ``ff ff ff``); the colour page's ``color_temperature`` flag then
-  doesn't decide ``color_temp`` (``color_functions``). An ``untraced`` scene dialect drops ``scenes``;
+  doesn't decide ``color_temp`` (``color_functions``). ``color_temp_control: whole_device`` (the colour page's
+  Kelvin pick always writes every piece, as h61d3 ``ColorMode.canClickColorTem`` does on 239 / 246) needs
+  ``color_temp``. Either value becomes ``DeviceProfile.whole_device_kelvin``: no Kelvin on part of the
+  device. An ``untraced`` scene dialect drops ``scenes``;
   ``none`` is activate only. Scenes need a bundled catalog, as every SKU of 1.4.0 that offers them ships
   one: a SKU the scene store has no catalog for (``scenes/store.json``, the generated ``SCENE_CATALOGS``,
   which :func:`profiles` takes as ``catalogued``) is offered no ``scenes``, its row's scene facts still
@@ -373,6 +376,9 @@ _WHITE_DEFAULT: Final = "rgb_white"
 # the slot it gives each white type): h60a6 = Bytes.C (N[0]) and h6188 = Bytes.A (N[2]). The h6006 and h6061
 # CCT frames (Bytes.p, Bytes.u) are colour-page builders only.
 _ILLUMINATION_SCHEMES: Final = frozenset({"h60a6", "h6188"})
+# clientRow color_temp_control: how the screen writes colour temperature where it isn't the colour page's Kelvin
+# over the selected pieces (absent). Either value gives DeviceProfile.whole_device_kelvin.
+COLOR_TEMP_CONTROLS: Final = ("illumination", "whole_device")
 RELAY_POWERS: Final = ("outlet0", "all_outlets", "total_switch")        # devices.profile.RelayPower
 HEARTBEAT_TIMINGS: Final = ("fixed_rate", "after_quiet")         # transport.connection.HeartbeatTiming
 # The keep-alive reads a screen sends (clientRow heartbeat, govee_common command ids; DeviceProfile.heartbeat
@@ -811,7 +817,8 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
     cf = row.get("color_functions")
     # The colour page's flags decide color_temp only where the colour page sets it: not under the
     # illumination tab's control.
-    if cf is not None and ((control is None and ("color_temperature" in cf) != ("color_temp" in row_caps))
+    page_kelvin = control != "illumination"
+    if cf is not None and ((page_kelvin and ("color_temperature" in cf) != ("color_temp" in row_caps))
                            or ("segment_brightness" in cf) != ("segments" in row_caps)):
         fail(f"color_functions {list(cf)} disagree with capabilities {sorted(row_caps)}")
     dialect = row.get("scene_dialect")
@@ -842,9 +849,11 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
          for key, branch in by_pact.items() if "brightness_range" in branch], key=lambda e: e[0]))
     if bright_by_pact and bright is None:
         fail("a pact brightness_range without the brightness capability")
-    if control is not None:
-        if control != "illumination":
-            fail(f"color_temp_control {control!r} (illumination, or absent)")
+    if control is not None and control not in COLOR_TEMP_CONTROLS:
+        fail(f"color_temp_control {control!r} (one of {list(COLOR_TEMP_CONTROLS)}, or absent)")
+    if control == "whole_device" and "color_temp" not in caps:
+        fail("color_temp_control whole_device needs the color_temp capability")
+    if control == "illumination":
         if not {"color_temp", "brightness"} <= caps:
             fail("color_temp_control illumination needs the color_temp and brightness capabilities (the tab "
                  "writes the Kelvin and the brightness)")
@@ -985,7 +994,9 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
         out["color_scheme"] = scheme
     if white != _WHITE_DEFAULT:
         out["white_type"] = white
-    if control is not None:
+    if control is not None:   # neither the tab nor a whole_device page writes a Kelvin on part of the device
+        out["whole_device_kelvin"] = True
+    if control == "illumination":
         out["kelvin_with_brightness"] = True
     if status_read is not None:
         out["status_read"] = tuple(status_read)   # command names; devices/profile.py takes their codes
