@@ -212,10 +212,10 @@ class DeviceProfile:
     1.3.0's ``33 01 11 / 10``."""
     advert_on_mask: int | None = field(default=None, kw_only=True)
     """Plug advertisement on/off: the bits of the advertised switch byte that make the device "on";
-    None (every light) = the byte equals 1 (``AbsBaseBleModel.A``).
+    None (every light) = the byte equals 1 (``AbsBaseBleModel.z``).
 
-    The plugs' device-list models decode it per goodsType (h5080 ``Model.A``,
-    ``Model4Plug2.A``), which is not always the read-back's :attr:`relay_on_mask` (devices.yaml's plug
+    The plugs' device-list models decode it per goodsType (h5080 ``Model.z``,
+    ``Model4Plug2.z``), which is not always the read-back's :attr:`relay_on_mask` (devices.yaml's plug
     rows)."""
     color_readback_ic_range: tuple[int, int] | None = field(default=None, kw_only=True)
     """The (min, max) clamp for the live IC count (see :attr:`color_readback_live_ic`)."""

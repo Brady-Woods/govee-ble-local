@@ -83,7 +83,10 @@ class DeviceState:
     # ``aa 05 15`` reply carries one kelvin per bar) fill it. ``color_temp_kelvin`` is the
     # whole-device value and is set only while every zone agrees.
     zone_color_temp_kelvin: dict[int, int] = field(default_factory=dict)
-    optimistic: bool = False                 # True if not read back from the device
+    # A Device's state starts with optimistic True; the first read that brings a live field back clears it for
+    # good, and a later poll that reads nothing leaves it False. Device.power_read_at says when a read last
+    # returned the on/off.
+    optimistic: bool = False
     # Device-info (static-ish), populated where the device supports read-back: from the aa 06 /
     # aa 07 03 / aa 07 02 reads and, on a status-read SKU, the status reply's TLV 0x07; at a
     # devices.yaml status row's `device_info_reads: none`, from TLV 0x07 alone (no read is sent).
