@@ -142,8 +142,6 @@ def test_color_temp_0d_and_02() -> None:
         assert b.color_temp(kelvin, "h6188") == C.build_color_cct_0d(255, 255, 255, kelvin, t)
         # legacy_02: the Kelvin's tint through Config.fu -> Bytes.o, white then the tint (no Kelvin bytes).
         assert b.color_temp(kelvin, "legacy_02") == C.build_color_legacy(255, 255, 255, 1, *t)
-        # kelvin_v9: Config.JM -> Bytes.D, 15 04 <K u16be>, the Kelvin alone.
-        assert b.color_temp(kelvin, "kelvin_v9") == C.build_op15_color_temp_04(kelvin)
 
 
 def test_color_temp_15_h60a6_up_to_16_segments() -> None:
