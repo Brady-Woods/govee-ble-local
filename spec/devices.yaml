@@ -2414,15 +2414,17 @@ families:
             direct aa a5 groups of 4 over a fixed 14 pieces (VM4LightH61d3.n5; ColorPieceConfig.j: 14); no aa 40 read.
             Colour screen: DelegateCurMode builds DelegateColorV2 (DeviceDetailConfig.R finds no colour delegate for 202),
             whose part view takes ColorModeH61d3 as its strip view (DeviceDetailConfig.Q, the H61D3Application
-            IColorStripInterceptor); frames go through ColorViewModel and ColorModeControllerConfig.k: Config.x = 0 ->
-            Config.Yt -> Bytes.h / Bytes.r, white type Config.P = 1, the h60a6 frames over a 14-piece mask. Config.I = {T,
+            IColorStripInterceptor); a colour pick (DelegateColorV2.F0 / T0) goes DelegateColorV2.C0 -> ColorViewModel.p0
+            -> ColorModeControllerConfig.c (not .j: LightColorCapabilityCenter.b2 falls back to the over-56-piece check
+            Config.Companion.P, and Config.E has no 202), one frame over the selected pieces: Config.x = 0 -> Config.J[0] = Config.Yt -> Bytes.h /
+            Bytes.r, white type Config.P = 1, the h60a6 frames over a 14-piece mask. Config.I = {T,
             T, T, F, T} (read by DelegateColorV2.C1): gradual and colour temperature; I[3] = false hides
             groupRelativeBrightness and leaves its slider unwired (DelegateColorV2Part.Z0 / t0), so the screen never sends
             33 05 15 02, though the builder exists (Config.z = 0 -> Config.L[0] = JR -> Bytes.G). The colour-temperature
             pick always covers all 14 pieces (ColorModeH61d3.canClickColorTem: color_temp_control whole_device, so the
             library refuses a Kelvin on some segments); the colour pick masks the selected pieces (canClickColor), a pick
-            that is a Kelvin tint colour going out as the partial Bytes.r frame (ColorModeControllerConfig.k groups the
-            pieces by colour -> Config.Yt). So the row has segments, and its color_functions [color_temperature] turns
+            that is a Kelvin tint colour going out as the partial Bytes.r frame over those pieces (ColorViewModel.p0 ->
+            ColorModeControllerConfig.c -> Config.Yt). So the row has segments, and its color_functions [color_temperature] turns
             segment brightness off (DeviceProfile.segment_brightness: set_segment_brightness raises, no 15 02 is sent).
             Promoted from modelled (disputed 2026-10-21, when the library offered segment brightness and masked Kelvin
             on every row with segments) to app_traced: every frame it sends is the screen's.
@@ -2430,7 +2432,8 @@ families:
             [2700, 6500]; brightness version 1. Mode: aa 05 through H61d3NewInfo4Detail.R, the SubMode4Color 0x15 parse
             (kelvin_15). Heartbeat aa 01 (VM4LightH61d3.I3); ee 30 switch push. Not listed: the aa 41 power-off-memory and
             aa 24 IC-point (recognition) reads, the TimerConfig.f time sync, the saved-colour-stripe 33 05 15 03
-            (DelegateColorV2.u0 -> ColorViewModel.O -> Config.K[0] = IR -> Bytes.F), the multi-colour palette gate
+            (DelegateColorV2.u0 -> ColorViewModel.O -> ColorModeControllerConfig.k, which groups the pieces by colour,
+            -> Config.K[0] = IR -> Bytes.F), the multi-colour palette gate
             (SupportMultiColorConfig.a via LightColorCapabilityCenter.w2: H61D4 / H61D5 need soft 1.00.16). No account
             lock (SecretController is sent only in PairViewModel). The per-SKU IC count H61D3Support.r (28 to 140) sizes
             only the scrawl and recognition views. Scenes untraced (SceneViewModelH61d3, versions {0, 1, 2, 3, 5}). Not
@@ -2452,16 +2455,16 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/content/success/DelegateCurMode.java:185-205
             - base-classes11/com/govee/base2light/pact/newdetail/DeviceDetailConfig.java:261-285,494-512,614-616,657-661
             - base-classes11/com/govee/base2light/pact/newdetail/DeviceDetailParams.java:440-459,595-597,605-608,929-936
-            - base-classes11/com/govee/base2light/pact/newdetail/content/colorv2/DelegateColorV2.java:454-457,490-496,779-806,1036-1050,1257-1270,1295-1303
+            - base-classes11/com/govee/base2light/pact/newdetail/content/colorv2/DelegateColorV2.java:219-232,413-419,454-457,490-496,771-806,1036-1050,1257-1270,1295-1303
             - base-classes11/com/govee/base2light/pact/newdetail/content/colorv2/DelegateColorV2Part.java:181-191,217-230,317-336,459-487,651-683
-            - base-classes11/com/govee/base2light/pact/newdetail/content/color/ColorViewModel.java:693-715,848,1283-1302
+            - base-classes11/com/govee/base2light/pact/newdetail/content/color/ColorViewModel.java:693-715,848,1283-1302,1388-1414
             - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4InfoBleIot$iControllerStrategy$1.java:154-251
             - base-classes11/com/govee/base2light/kt/general_controller/Controller4ColorInfoByGroup.java:37-41,160-175
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/ColorPieceConfig.java:354-452,1451-1470
-            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:216-225,231-257,277-292,352-368,380-394,551-560,1070-1074,2387-2391,3117,3736-3740,4515-4519,5522-5526,5583-5601,5602-5613,5679-5683,8888-8891,9674-9677,10136-10139,10412-10415,10567-10570,12960-12968,13667-13670,14171-14173,16163-16166
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:216-225,231-257,277-292,352-368,380-394,438-449,551-560,602-605,1070-1074,2387-2391,3117,3581-3592,3736-3740,4515-4519,5522-5526,5583-5601,5602-5613,5679-5683,8888-8891,9674-9677,10136-10139,10412-10415,10567-10570,12960-12968,13667-13670,14171-14173,16163-16166
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:98-128,153-181,315-326,474-501,564-566
-            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/ColorModeControllerConfig.java:730-785,810-835,1016-1019,1069-1098
-            - base-classes10/com/govee/base2light/capability/color/LightColorCapabilityCenter.java:843-850
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/ColorModeControllerConfig.java:207-256,730-870,1016-1019,1069-1098
+            - base-classes10/com/govee/base2light/capability/color/LightColorCapabilityCenter.java:843-850,1104-1115
             - base-classes9/com/govee/base2home/color/SupportMultiColorConfig.java:52-67
             - base-classes10/com/govee/base2light/capability/legacy/LegacyColorCapabilityProvider.java:58-110,153,180,214,234-240,260-263,296-305
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:328-342,401-411,473-477,1746-1748

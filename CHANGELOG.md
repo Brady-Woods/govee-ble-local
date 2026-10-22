@@ -358,8 +358,8 @@ model, from which the shipped readers are generated).
   I/O; an untraced `color_functions` keeps the 1.x rule (on). Segment colour and the segment Kelvin rules are
   unchanged. It promotes **H61D2 / H61D3 / H61D4 / H61D5 / H61D6** (h61d3 202) from `modelled` to `app_traced`,
   admitted by default and now with segments: the screen's colour pick masks the selected pieces
-  (`ColorModeH61d3.canClickColor`, the h60a6 frame over 14 pieces, a Kelvin tint colour as the partial
-  `Bytes.r`), its Kelvin pick sets every piece (`canClickColorTem`: `color_temp_control: whole_device`, so the
+  (`ColorModeH61d3.canClickColor`; `ColorViewModel.p0` -> `ColorModeControllerConfig.c`, one h60a6 frame over
+  the selected of 14 pieces, a Kelvin tint colour as the partial `Bytes.r`), its Kelvin pick sets every piece (`canClickColorTem`: `color_temp_control: whole_device`, so the
   segment and zone Kelvin setters raise), and its segment-brightness slider is hidden (`Config.I[202][3]`
   false, `DelegateColorV2Part.Z0`). Not hardware-verified.
 
