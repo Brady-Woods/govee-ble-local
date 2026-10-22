@@ -6,6 +6,7 @@ SoftVersionController / HardVersionController / SnController.parseValidBytes.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 from collections.abc import Callable
 from unittest.mock import AsyncMock
 
@@ -13,6 +14,7 @@ import pytest
 from conftest import require_optional
 from fake_ble import FakeGovee, ble_device, frame
 from conftest import gated_scene_profile
+from test_device_v3 import _STATUS_BURST
 
 require_optional("kaitaistruct", reason="Kaitai runtime not installed")
 
@@ -162,6 +164,23 @@ def test_only_the_version_a_gate_tests_is_read_again() -> None:
         sent.clear()
         asyncio.run(d.update())
         assert _info_reads(sent) == again, (sku, lost)
+
+
+@pytest.mark.parametrize(("reads", "sent"), [(True, ["0600", "0703", "0702"]), (False, [])])
+def test_a_status_profile_without_device_info_reads_takes_them_from_tlv_07(reads: bool,
+                                                                            sent: list[str]) -> None:
+    """A status row whose screen sends no device-info read (devices.yaml ``device_info_reads: none``) gets
+    none from the library on any poll: its versions and device id come from the status reply's TLV 0x07 alone
+    (Compose4BaseInfoSingleRead.w), as on the screen. A status row that makes them sends them once. The
+    captured H60A6 burst carries TLV 0x07."""
+    d, frames = _dev("H60A6", lambda fr: list(_STATUS_BURST) if fr[0] == 0xAC else [])
+    d.profile = dataclasses.replace(d.profile, device_info_reads=reads)
+    asyncio.run(d.update())
+    asyncio.run(d.update())
+    assert _info_reads(frames) == sent
+    st = d.state
+    assert (st.firmware_version, st.hardware_version, st.serial_number) == (
+        "1.00.41", "1.04.03", "2D:DB:5C:E7:53:F4:74:56")
 
 
 def test_h60a6_device_id_comes_from_the_sn_read_despite_zeroed_basic() -> None:

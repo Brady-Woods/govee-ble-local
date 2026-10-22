@@ -1619,8 +1619,11 @@ class Device:
             await self._read_reply(build.gradual_query(), budget)
         # Device-info (mac/hw/fw/serial) — static-ish, read once the device answers one of them; then a
         # version a firmware-gated fact tests that the read did not bring back, alone, on each later poll.
+        # Neither where the profile makes no device-info reads: each status read's TLV 0x07 brings them
+        # (_fold.apply_status).
         missing = self._versions_missing()
-        if (not self._device_info_read or any(missing)) and self.profile.readback != "none":
+        if ((not self._device_info_read or any(missing)) and self.profile.readback != "none"
+                and self.profile.device_info_reads):
             try:
                 if not self._device_info_read:
                     await self._read_device_info(budget, state_read=state_read)
@@ -1683,7 +1686,11 @@ class Device:
     def _versions_missing(self, *, scenes: bool = False) -> tuple[bool, bool]:
         """The version reads a firmware-gated fact of the profile still waits for, ``(aa 06, aa 07 03)``:
         each version such a fact tests (:func:`._fold.gated_versions`; ``scenes``: the scene set's gates
-        only) that is not read yet. Until it is read its gates count as met (the newest firmware's facts)."""
+        only) that is not read yet. Until it is read its gates count as met (the newest firmware's facts).
+        Neither on a profile without :attr:`~.profile.DeviceProfile.device_info_reads`: it makes no version
+        read, and each status read's TLV 0x07 brings the versions in."""
+        if not self.profile.device_info_reads:
+            return False, False
         soft, hard = _fold.gated_versions(self.profile, scenes=scenes)
         return (soft and self._state.firmware_version is None, hard and self._state.hardware_version is None)
 
