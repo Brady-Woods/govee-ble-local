@@ -80,6 +80,17 @@ model, from which the shipped readers are generated).
   H6690, H70A1-3 with H6176 / H61BC, H61B0 with H61B3 / H61B6. H6099 and H61B0 come first in theirs, so a
   `Device` built from one of those profiles without `sku=` names itself after them (`create_device` and
   `make_device` always pass the SKU).
+- **A SKU that a pact-conditioned `assigned_goods_type` item names reaches the item's target row only on an
+  advertised pact.** The app rewrites such a SKU (the BK lights: H6114, H6138 / H6139, H6113, H6181, H6159,
+  H6160, H6182, H6119, H6145-7, and the car / TV lights) to the gated goodsType only for a record whose pact
+  meets the gate; a record without a pact holds 0 and stays at its source goodsType (`SkuToGoodsTypeUtil.f`
+  over `OldRgbBkUtil.a` / `.b`). `profile_for(pact=None)` gave the gated row instead, so a pact-less advert
+  would have got, for example, H6114's raw [20, 254] brightness frames. Now a route at a target row needs the
+  pact (`profile_for`, `make_device`, `create_device` and `is_supported_sku`, whatever the goodsType), and with
+  no source row admitted yet, H6114, H6138 and H6139 are unsupported without one. An advert that carries a pact
+  at or above the gate routes as before, so `scanner.supported()` / `discover()` and a caller that passes the
+  advert's pact are unaffected; `supported_skus()` still lists the three. Every other SKU, the 18
+  `PACT_FALLBACK_SKUS` included, routes as before at every pact and at none.
 
 ### Spec
 - **The device-list trace (Govee Home 7.7.02; 7.5.12 where a family says so).** Each of the 83 census families

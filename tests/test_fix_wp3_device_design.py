@@ -558,7 +558,7 @@ _REPORTED = frozenset({Capability.RGB, Capability.COLOR_TEMP, Capability.SCENES}
 @pytest.mark.parametrize("p", [p for p in PROFILES if p.readback == "polled" and p.capabilities & _REPORTED],
                          ids=lambda p: p.skus[0])
 def test_every_polled_profile_still_reads_the_mode_report(p: DeviceProfile) -> None:
-    d = _dev(p.skus[0])
+    d = _mocked(Device(p, ble_device("AA:BB:CC:DD:EE:3B", p.skus[0]), sku=p.skus[0]))
     run(d._read_polled())
     assert build.mode_query() in _queried(d)
 

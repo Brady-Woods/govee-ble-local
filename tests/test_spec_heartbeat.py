@@ -14,7 +14,7 @@ import sys
 from typing import Any
 
 import pytest
-from conftest import require_optional
+from conftest import require_optional, routing_pact
 
 from govee_ble_local import const, supported_skus
 from govee_ble_local._generated.devices import FAMILIES
@@ -88,7 +88,8 @@ def test_each_skus_profile_sends_its_rows_heartbeat() -> None:
             ref = reference.client_row(doc, fam["id"], int(gt))
             want = (int(_C.Command[ref["heartbeat"]]), ref.get("heartbeat_timing", "fixed_rate"))
             for sku in (*row.get("models", ()), *row.get("catalogue_models", ())):
-                profile = profile_for(sku, goods_type=int(gt), allow_modelled=True)
+                profile = profile_for(sku, pact=routing_pact(sku, allow_modelled=True), goods_type=int(gt),
+                                      allow_modelled=True)
                 assert profile is not None, (sku, gt)
                 assert (profile.heartbeat, profile.heartbeat_timing) == want, (sku, gt)
                 seen.add(sku.upper())
@@ -214,7 +215,7 @@ async def test_the_documented_opt_out_turns_the_beat_off_on_every_sku(
     skus = supported_skus(allow_modelled=True)
     timings = set()
     for sku in skus:
-        profile = profile_for(sku, allow_modelled=True)
+        profile = profile_for(sku, pact=routing_pact(sku, allow_modelled=True), allow_modelled=True)
         assert profile is not None and profile.heartbeat is not None, sku
         off = dataclasses.replace(profile, heartbeat=None)
         assert (off.heartbeat, off.heartbeat_timing) == (None, profile.heartbeat_timing), sku

@@ -9,6 +9,7 @@ import time
 from unittest.mock import AsyncMock
 
 import pytest
+from conftest import routing_pact
 from fake_ble import ble_device, status_burst, unacked_via
 
 from govee_ble_local.devices.device import Device, make_device
@@ -58,7 +59,9 @@ def _reply(*b: int) -> bytes:
 def test_all_profiles_construct() -> None:
     for p in PROFILES:
         for sku in p.skus:
-            d = make_device(ble_device("AA:BB:CC:DD:EE:20", sku), sku)
+            pact = routing_pact(sku)   # a SKU only a gated target row routes is built from its advert's pact
+            adv = None if pact is None else GoveeAdvertisement(sku, f"GV{sku}", False, 0, *pact)
+            d = make_device(ble_device("AA:BB:CC:DD:EE:20", sku), sku, adv)
             assert d is not None and d.sku == sku.upper()
             assert d.capabilities == p.capabilities
     assert make_device(ble_device("AA:BB:CC:DD:EE:20", "H9999"), "H9999") is None
