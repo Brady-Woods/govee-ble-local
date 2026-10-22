@@ -65,10 +65,17 @@ the row lacks fails the build: nothing defaults silently.
   ``segments`` on a relay row raises (the library resolves no colour scheme or Kelvin range for a plug), and
   elsewhere they need a colour scheme. A row's ``white_type`` (the slot of the h60a6 colour-temperature
   frame, Bytes.r's white type: ``DeviceProfile.white_type``) other than ``rgb_white``, the default, needs the
-  h60a6 scheme. An ``untraced`` scene dialect drops ``scenes``; ``none`` is activate
-  only. Scenes need a bundled catalog, as every SKU of 1.4.0 that offers them ships one: a SKU the scene
-  store has no catalog for (``scenes/store.json``, the generated ``SCENE_CATALOGS``, which
-  :func:`profiles` takes as ``catalogued``) is offered no ``scenes``, its row's scene facts still checked.
+  h60a6 scheme. A row's ``color_temp_control: illumination`` (the screen sets colour temperature on its
+  illumination tab alone, ``View4IlluminationMode.I0``: the Kelvin frame, then ``33 04`` <the current
+  brightness>) becomes ``DeviceProfile.kelvin_with_brightness``. It needs the ``color_temp`` and
+  ``brightness`` capabilities, percent brightness with no pact branch (so the held value round-trips), and the
+  h60a6 or h6188 scheme, whose colour-temperature frame is the tab's builder (h60a6 not at
+  ``rgb_self_tem_color``, whose tab slot is ``ff ff ff``); the colour page's ``color_temperature`` flag then
+  doesn't decide ``color_temp`` (``color_functions``). An ``untraced`` scene dialect drops ``scenes``;
+  ``none`` is activate only. Scenes need a bundled catalog, as every SKU of 1.4.0 that offers them ships
+  one: a SKU the scene store has no catalog for (``scenes/store.json``, the generated ``SCENE_CATALOGS``,
+  which :func:`profiles` takes as ``catalogued``) is offered no ``scenes``, its row's scene facts still
+  checked.
   An ``untraced`` colour parse on a row with ``rgb`` or ``color_temp`` raises (``none`` is a traced value:
   the screen parses no colour).
 - The reads the library makes: the 0xAC status read is the row's ``status_read``, in its order
@@ -202,6 +209,7 @@ class Row(TypedDict, total=False):
     advert_on_mask: int
     color_scheme: str
     white_type: str
+    color_temp_control: str
     color_functions: tuple[str, ...]
     capabilities: tuple[str, ...]
     zones: tuple[ZoneRow, ...]
@@ -360,6 +368,10 @@ COLOR_SCHEMES: Final = ("h60a6", "h6006", "h6188", "h61a8", "h6061")   # wire.bu
 # without one takes (Bytes.r's ff ff ff, every row before 1.8.0).
 WHITE_TYPES: Final = ("rgb_black", "rgb_white", "rgb_self_tem_color")
 _WHITE_DEFAULT: Final = "rgb_white"
+# The schemes whose colour-temperature frame is an illumination-tab Kelvin builder (Config.N[Config.x], with
+# the slot it gives each white type): h60a6 = Bytes.C (N[0]) and h6188 = Bytes.A (N[2]). The h6006 and h6061
+# CCT frames (Bytes.p, Bytes.u) are colour-page builders only.
+_ILLUMINATION_SCHEMES: Final = frozenset({"h60a6", "h6188"})
 RELAY_POWERS: Final = ("outlet0", "all_outlets", "total_switch")        # devices.profile.RelayPower
 HEARTBEAT_TIMINGS: Final = ("fixed_rate", "after_quiet")         # transport.connection.HeartbeatTiming
 # The keep-alive reads a screen sends (clientRow heartbeat, govee_common command ids; DeviceProfile.heartbeat
@@ -794,8 +806,11 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
     if lacks and "color_scheme" not in row:
         fail(f"the family color_scheme {scheme} would drop {sorted(lacks)}: the row must name it")
     caps -= lacks
+    control = row.get("color_temp_control")
     cf = row.get("color_functions")
-    if cf is not None and (("color_temperature" in cf) != ("color_temp" in row_caps)
+    # The colour page's flags decide color_temp only where the colour page sets it: not under the
+    # illumination tab's control.
+    if cf is not None and ((control is None and ("color_temperature" in cf) != ("color_temp" in row_caps))
                            or ("segment_brightness" in cf) != ("segments" in row_caps)):
         fail(f"color_functions {list(cf)} disagree with capabilities {sorted(row_caps)}")
     dialect = row.get("scene_dialect")
@@ -826,6 +841,18 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
          for key, branch in by_pact.items() if "brightness_range" in branch], key=lambda e: e[0]))
     if bright_by_pact and bright is None:
         fail("a pact brightness_range without the brightness capability")
+    if control is not None:
+        if control != "illumination":
+            fail(f"color_temp_control {control!r} (illumination, or absent)")
+        if not {"color_temp", "brightness"} <= caps:
+            fail("color_temp_control illumination needs the color_temp and brightness capabilities (the tab "
+                 "writes the Kelvin and the brightness)")
+        if raw_bright is not None or bright_by_pact:
+            fail("color_temp_control illumination needs percent brightness, no pact branch (33 04 re-sends "
+                 "the held value)")
+        if scheme not in _ILLUMINATION_SCHEMES or white == "rgb_self_tem_color":
+            fail(f"color_temp_control illumination on {scheme} / {white} (the tab's Kelvin builder is the "
+                 "h60a6 or h6188 frame, whose slot is ff ff ff for rgb_self_tem_color)")
 
     readback = "plug"
     if not relay:
@@ -957,6 +984,8 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
         out["color_scheme"] = scheme
     if white != _WHITE_DEFAULT:
         out["white_type"] = white
+    if control is not None:
+        out["kelvin_with_brightness"] = True
     if status_read is not None:
         out["status_read"] = tuple(status_read)   # command names; devices/profile.py takes their codes
         decode: dict[str, Any] = {f: forms[f] for f in _STATUS_TLV_FORMS

@@ -30,7 +30,7 @@ from conftest import require_optional
 from fake_ble import ble_device
 
 from govee_ble_local.devices.device import Device, make_device
-from govee_ble_local.exceptions import GoveeBleInvalidValue
+from govee_ble_local.exceptions import GoveeBleError, GoveeBleInvalidValue, GoveeBleNotSupported
 from govee_ble_local.wire import _spec
 from govee_ble_local.wire import build as b
 from govee_ble_local.wire.cct import tint_for_kelvin
@@ -171,6 +171,35 @@ def test_h60a6_turn_on_with_kelvin_batches_one_cct_frame() -> None:
     assert _hex14(_sent(d)[2]) == _ALL_4000
     d._conn.send_many.assert_awaited_once()  # type: ignore[attr-defined]
     assert d.state.color_temp_kelvin == 4000
+
+
+def test_illumination_tab_kelvin_is_the_kelvin_then_the_held_brightness() -> None:
+    # DeviceProfile.kelvin_with_brightness (H8015, bulblightv3 328): View4IlluminationMode.I0 writes the
+    # Kelvin frame (Config.N[2] = GM -> Bytes.A) then 33 04 <illuminationCur()[0]> in one Compose4DefWrite.
+    kelvin, held = b.color_temp(4000, "h6188"), b.brightness(42)
+    d = _dev("H8015")
+    d.state.brightness = 42
+    asyncio.run(d.set_color_temp(4000))
+    asyncio.run(d.turn_on(kelvin=4000))
+    asyncio.run(d.turn_on(kelvin=4000, brightness=77))   # the given brightness, after the Kelvin
+    on = b.switch(True)
+    assert _sent(d) == [kelvin, held, on, kelvin, held, on, kelvin, b.brightness(77)]
+    assert d.state.brightness == 77 and d.state.color_temp_kelvin == 4000
+    # Unknown: the row's own read (aa 04) first, then the pair; unanswered, nothing is written.
+    reply = _frame(0xAA, 0x04, 55)
+    d = _dev("H8015")
+    d._conn.query = AsyncMock(return_value=[reply])  # type: ignore[method-assign]
+    asyncio.run(d.set_color_temp(4000))
+    assert _sent(d) == [kelvin, b.brightness(55)]
+    d = _dev("H8015")
+    d._conn.query = AsyncMock(return_value=[])  # type: ignore[method-assign]
+    with pytest.raises(GoveeBleError, match="brightness is not known"):
+        asyncio.run(d.set_color_temp(4000))
+    assert _sent(d) == []
+    # The tab writes every piece: no masked Kelvin (H60A4, h60ax 302, has segments).
+    d = _dev("H60A4")
+    with pytest.raises(GoveeBleNotSupported, match="whole-device only"):
+        asyncio.run(d.set_segment_color_temp([0], 4000))
 
 
 # ── 0x0d both-slot form ──────────────────────────────────────────────────────

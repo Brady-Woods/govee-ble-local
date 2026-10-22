@@ -354,6 +354,17 @@ class DeviceProfile:
     applies to every colour-temperature frame: :meth:`~.device.Device.set_color_temp`, the segment and zone
     ones, and an RGB pick that is a Kelvin tint colour. Only an ``h60a6`` profile may set another than the
     default."""
+    kelvin_with_brightness: bool = field(default=False, kw_only=True)
+    """The SKU's screen sets colour temperature on its illumination tab alone (a devices.yaml row's
+    ``color_temp_control: illumination``), which writes the Kelvin frame and then ``33 04`` <the current
+    brightness> as one write (``View4IlluminationMode.I0``: the Kelvin controller, then
+    ``BrightnessConfig.b`` of ``illuminationCur()[0]``, in one ``Compose4DefWrite``). So
+    :meth:`~.device.Device.set_color_temp` sends both, each frame acked in order, re-sending the brightness
+    ``state`` holds (read first, with the profile's own read, when unknown), and
+    :meth:`~.device.Device.turn_on` with a ``kelvin`` sends the Kelvin frame before ``33 04`` (the given
+    brightness, else the held one). The tab writes every piece, so the segment and zone colour-temperature
+    setters raise GoveeBleNotSupported. False (the default, every SKU before 1.8.0): the Kelvin frame
+    alone."""
 
     def __post_init__(self) -> None:
         """Validate each field: GoveeBleInvalidValue (a ValueError) on a value no Device can use.

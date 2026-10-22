@@ -1011,7 +1011,10 @@ class Device:
         COLOR_TEMP) or when the colour scheme can't express it, and for a ``brightness`` while the
         device's brightness range waits for the advertised pact (as :meth:`set_brightness`), before
         any write, so the power-on is not sent either; GoveeBleError if a device that reports its own
-        segment count (H6062) does not answer that read."""
+        segment count (H6062) does not answer that read. On a profile whose screen sets colour temperature on
+        its illumination tab (:attr:`.DeviceProfile.kelvin_with_brightness`) a ``kelvin`` goes out as that
+        tab's pair, the Kelvin frame then ``33 04`` (``brightness``, else the held one, read first when
+        unknown: GoveeBleError, before any write, when it stays unknown)."""
         if rgb is not None and kelvin is not None:
             raise GoveeBleInvalidValue("turn_on: pass either rgb or kelvin, not both")
         pick = _check_rgb(rgb) if rgb is not None else None
@@ -1027,7 +1030,9 @@ class Device:
             if power:
                 self._require(Capability.POWER)
                 frames += self._power_frames(True)
-            if pct is not None:
+            # The illumination tab's pair (View4IlluminationMode.I0): the brightness follows the Kelvin.
+            pair = kelvin is not None and self.profile.kelvin_with_brightness
+            if pct is not None and not pair:
                 self._require(Capability.BRIGHTNESS)
                 frames.append(self._brightness_frame(pct))
             span = self._kelvin_range()   # once: the frame and the state use the same range
@@ -1039,6 +1044,10 @@ class Device:
                 frames.append(self._build_or_unsupported(
                     build.color_temp, kelvin, self.profile.color_scheme, self.segment_count,
                     pieces=self.profile.segments or None, white_type=self.profile.white_type))
+                if pair:
+                    self._require(Capability.BRIGHTNESS)
+                    level = pct if pct is not None else await self._held_brightness()
+                    frames.append(self._brightness_frame(level))
             if not frames:
                 return
 
@@ -1103,7 +1112,10 @@ class Device:
         that read. Like the app, an out-of-range value is clamped to the device's Kelvin range
         (:attr:`min_kelvin` / :attr:`max_kelvin`; not rejected) and then rounded to the nearest 100 K,
         the only values the app sends; the Kelvin actually sent is what ``state`` keeps, and the frame
-        carries the app's tint."""
+        carries the app's tint. On a profile whose screen sets colour temperature on its illumination tab
+        (:attr:`.DeviceProfile.kelvin_with_brightness`) the write is that tab's pair: the Kelvin frame, then
+        ``33 04`` <the held brightness>, each acked in order; the brightness is read first when unknown, and
+        GoveeBleError, with nothing written, when it stays unknown."""
         self._require(Capability.COLOR_TEMP)
         sent = self._check_kelvin(kelvin)
         ticket = self._ticket()
@@ -1112,8 +1124,36 @@ class Device:
             frame = self._build_or_unsupported(
                 build.color_temp, sent, self.profile.color_scheme, self.segment_count,
                 pieces=self.profile.segments or None, white_type=self.profile.white_type)
-            await self._commit(frame, lambda: _fold.apply_kelvin(self.profile, self._state, sent),
+            frames: bytes | list[bytes] = frame
+            if self.profile.kelvin_with_brightness:
+                # The illumination tab's pair (View4IlluminationMode.I0): Kelvin, then 33 04 <held>.
+                frames = [frame, self._brightness_frame(await self._held_brightness())]
+            await self._commit(frames, lambda: _fold.apply_kelvin(self.profile, self._state, sent),
                                ticket=ticket)
+
+    async def _held_brightness(self) -> int:
+        """The brightness the illumination tab's pair re-sends
+        (:attr:`.DeviceProfile.kelvin_with_brightness`): ``state.brightness``, as the app sends
+        ``illuminationCur()[0]``, the brightness its screen holds from its connect read (h60a1
+        ``Info4Detail.i``, from the 0xAC TLV 0x04; bulblight ``VM4Light``, from aa 04). When it is not known,
+        the profile's own read runs once first (the status read, else aa 04), and GoveeBleError, before any
+        write, when it is still unknown: a guessed ``33 04`` would change the brightness.
+        GoveeBleNotSupported without BRIGHTNESS. The caller holds the heartbeat."""
+        self._require(Capability.BRIGHTNESS)
+        if self._state.brightness is None:
+            if self.profile.readback == "status":
+                await self._read_status()
+            elif self.profile.readback == "polled":
+                def apply(raw: int) -> None:
+                    self._state.brightness = self._brightness_pct(raw)
+
+                await self._read_command(
+                    "brightness", build.brightness_query(), parse.parse_brightness, apply)
+        held = self._state.brightness
+        if held is None:
+            raise GoveeBleError(f"{self._sku}: the brightness is not known (its read was not answered); not "
+                                "sending the colour temperature with a guessed brightness")
+        return held
 
     async def set_segment_rgb(self, indices: Sequence[int], rgb: tuple[int, int, int]) -> None:
         """Set the colour of selected segments (indices 0 .. :attr:`segment_count` - 1).
@@ -1192,11 +1232,13 @@ class Device:
         """Colour temperature on selected segments (0x15 family only — the CCT frame
         carries the segment mask). ``kelvin`` is clamped and rounded as in :meth:`set_color_temp`.
 
-        Raises GoveeBleNotSupported without SEGMENTS/COLOR_TEMP or for non-maskable schemes;
+        Raises GoveeBleNotSupported without SEGMENTS/COLOR_TEMP, for non-maskable schemes, or where colour
+        temperature is the illumination tab's (:attr:`.DeviceProfile.kelvin_with_brightness`);
         GoveeBleInvalidValue for a non-int ``kelvin`` or a bad index; GoveeBleError if a device
         that reports its own segment count (H6062) does not answer that read."""
         self._require(Capability.SEGMENTS)
         self._require(Capability.COLOR_TEMP)
+        self._require_masked_kelvin()
         sent = self._check_kelvin(kelvin)
         ticket = self._ticket()
         with self._conn.hold_heartbeat():   # H6062's aa 41 read and its write: no beat between
@@ -1211,6 +1253,14 @@ class Device:
                 self._state.scene_code = None
 
             await self._commit(frame, apply, ticket=ticket)
+
+    def _require_masked_kelvin(self) -> None:
+        """GoveeBleNotSupported on a profile whose colour temperature is the illumination tab's
+        (:attr:`.DeviceProfile.kelvin_with_brightness`): the tab writes every piece, and the screen has no
+        Kelvin on part of the device, so a masked Kelvin is a frame the app never sends."""
+        if self.profile.kelvin_with_brightness:
+            raise GoveeBleNotSupported(
+                f"{self._sku}: colour temperature is whole-device only (the illumination tab's)")
 
     # -- zones --------------------------------------------------------------
     def _zone(self, name: str) -> Zone:
@@ -1358,12 +1408,14 @@ class Device:
         0x15 family (H60A6/H6047), whose CCT frame carries a segment mask. ``kelvin`` is clamped
         and rounded as in :meth:`set_color_temp`.
 
-        Raises GoveeBleNotSupported without SEGMENTS/COLOR_TEMP, for a zone without segments or for
-        a colour scheme whose CCT frame carries no segment mask; GoveeBleInvalidValue for an unknown
-        zone (also a GoveeBleNotSupported) or a non-int ``kelvin``; GoveeBleError if a device that
+        Raises GoveeBleNotSupported without SEGMENTS/COLOR_TEMP, for a zone without segments, for
+        a colour scheme whose CCT frame carries no segment mask, or where colour temperature is the
+        illumination tab's (:attr:`.DeviceProfile.kelvin_with_brightness`); GoveeBleInvalidValue for an
+        unknown zone (also a GoveeBleNotSupported) or a non-int ``kelvin``; GoveeBleError if a device that
         reports its own segment count (H6062) does not answer that read."""
         self._require(Capability.SEGMENTS)
         self._require(Capability.COLOR_TEMP)
+        self._require_masked_kelvin()
         sent = self._check_kelvin(kelvin)
         z = self._zone(name)
         if not z.segments:

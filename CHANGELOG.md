@@ -74,6 +74,17 @@ model, from which the shipped readers are generated).
   another value. It admits **H61E5** (h61d3 239) and **H61E6** (246), `app_traced`, not hardware-verified: the
   ColorMode colour page (`ColorModeControllerConfig.c` -> `Config.Yt` -> `Bytes.r`) with `Config.P` = 3. Their
   illumination tab's Kelvin (`Bytes.C`, `ff ff ff` for them) is a second path and not modelled.
+- **Colour temperature from the illumination tab** (`DeviceProfile.kelvin_with_brightness`, devices.yaml
+  `color_temp_control: illumination`). Where a screen sets colour temperature on its illumination tab alone,
+  the app writes the Kelvin frame and then `33 04` <the brightness it holds> as one write
+  (`View4IlluminationMode.I0`, one `Compose4DefWrite`). `set_color_temp` now sends that pair, each frame acked
+  in order, and `turn_on(kelvin=)` sends the Kelvin frame before `33 04` (the given brightness, else the held
+  one). An unknown brightness is read first with the profile's own read (the status read, or aa 04); if it
+  stays unknown, GoveeBleError and nothing is written (never a guessed `33 04`). The tab writes every piece,
+  so the segment and zone Kelvin setters raise GoveeBleNotSupported on such a profile. Promoted from
+  `modelled` to `app_traced`, admitted by default, not hardware-verified: **H60A4 / H80A4** (h60ax 302:
+  `Bytes.C(K, 11, 1)`, the h60a6 frame over every piece) and **H8015** (bulblightv3 328: `Config.N[2]` =
+  `Bytes.A`, the h6188 frame).
 
 ### Changed
 - Nothing for existing SKUs. Each of the 104 SKUs admitted at 1.6.1 (98 by default, 6 behind
@@ -85,6 +96,9 @@ model, from which the shipped readers are generated).
   `make_device` always pass the SKU).
 - The white slot changes no admitted SKU: each resolves to `white_type="rgb_white"`, whose frames are 1.7.0's
   byte for byte.
+- H8015, behind `allow_modelled` since 1.6.1, is now admitted by default, and its `set_color_temp` /
+  `turn_on(kelvin=)` add the trailing `33 04` (above). Every other SKU keeps `kelvin_with_brightness=False` and
+  its one-frame colour-temperature write.
 
 ### Spec
 - **The device-list trace (Govee Home 7.7.02; 7.5.12 where a family says so).** Each of the 83 census families
@@ -115,6 +129,12 @@ model, from which the shipped readers are generated).
   `rgb_self_tem_color`; h705a 180 states `rgb_black` and the `kelvin_tint` form, and stays without support (its
   aa a1 0b piece count and its Kelvin read-back are still gaps). The reference self-test reads a `rgb_black` and
   a partial `rgb_self_tem_color` frame.
+- **`color_temp_control`** (devices.schema.json clientRow; `illumination`, absent = the one-frame write). The
+  resolver takes it with the color_temp and brightness capabilities, percent brightness with no pact branch,
+  and the h60a6 or h6188 scheme (the two whose colour-temperature frame is a `Config.N` builder: `Bytes.C`,
+  `Bytes.A`), and then lets the colour page's `color_temperature` flag be off. h60ax 302 (with
+  `color_functions: [segment_brightness]`, `Config.I[302]` = hQ) and bulblightv3 328 state it and are
+  `app_traced`; h60ax 235 states it and stays without support (its polled aa 05 decode and numeric Kelvin gate).
 
 ## [1.6.1] — 2026-10-21
 
