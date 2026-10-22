@@ -818,7 +818,13 @@ families:
             dialect (commByte 0x58), the rest through parseSceneV1. Kelvin version 2 = [2700, 6500]; brightness version 1 =
             percent. Divergence kept (decision D3): on pact (1,1) the app has one colour piece and sends the 0x0d colour form
             below code 2 (Config.kw), while the library sends the 0x15 forms and offers the 13 segments and the zones' colour;
-            the zones' power writes are the same. Timing: the app reads the burst once per connect and then keeps the link
+            the zones' power writes are the same. Not modelled, a note for the user's decision: the colour page's segment
+            brightness widens by colour state, not by fixed groups. ColorModeH60A6.canClickBrightness passes the selection
+            as it is, except on pact (1, >= 3) (H -> Support.supportPartTem; the bench units advertise (1,3)) while a ring
+            piece is selected (F) and the 12 ring pieces show one Kelvin-table colour (G -> ColorUtils.r): then the 15 02
+            mask covers the whole ring 0-11, with piece 12 as picked. No fixed segment_brightness_groups says that, so the
+            row carries none and the library sends the selection's own bits. Timing: the app reads the burst once per
+            connect and then keeps the link
             with the aa 00 heartbeat and its ee 30 pushes. HARDWARE-VERIFIED on an H60A6 (bench 2026-10-12 to 2026-10-16):
             the segment-map probe drove piece 12 (the main panel) and pieces 0-11 (the ring) to opposite colours and read them
             back apart; 33 01 00 clears and 33 01 01 lights both zones; the 0xA3 diy_graffiti upload (live capture); control
@@ -831,7 +837,9 @@ families:
             were switched off with the fixture off. It is the firmware's model (FIRMWARE-SOURCED: 33 01 sets the main flag
             and both zone flags from its byte, FUN_9b0278dc mode 0 @0x9b02791c-0x9b027930).
           doc-ref:
-            - split_h60ax/com/govee/pact_h60a0/pact/Support.java:91-100,154-159,434-436,472-482
+            - split_h60ax/com/govee/pact_h60a0/pact/Support.java:91-100,154-159,434-436,438-444,472-482
+            - split_h60ax/com/govee/pact_h60a0/adjust/h60a6/ColorModeH60A6.java:140-162,483-500
+            - base-classes10/com/govee/base2kt/utils/ColorUtils.java:355-367
             - base-classes2/com/govee/shared/checker/KmpGoodsType.java:189
             - split_h60ax/com/govee/pact_h60a0/adjust/h60a6/VM4LightH60A6$afterConnectedSingleReadDeviceInfo$1.java:133,158-161
             - split_h60ax/com/govee/pact_h60a0/adjust/h60a6/VM4LightH60A6.java:684-686,691-697,1212-1216,1252-1271

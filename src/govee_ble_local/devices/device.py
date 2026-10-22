@@ -1147,7 +1147,8 @@ class Device:
         :attr:`~.profile.DeviceProfile.segment_brightness_groups` the write and the state cover every
         segment of each group that holds one of ``indices``, as the screen's strip widens the selection
         before the write (``canClickBrightness`` -> ``DelegateColorV2Part.U:217-230`` ->
-        ``ColorViewModel.m0``).
+        ``ColorViewModel.m0``). An empty ``indices`` still sends a zero mask, where the app's strips refuse an
+        empty selection with a toast and send nothing (a follow-up).
 
         Raises GoveeBleNotSupported without SEGMENTS or for colour schemes without per-segment
         brightness (the h61a8 0x0b scheme); GoveeBleInvalidValue for a non-int ``pct`` or a bad index;

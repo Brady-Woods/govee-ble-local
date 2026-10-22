@@ -249,7 +249,12 @@ model, from which the shipped readers are generated).
   brightness on every segment of the widened set in `state.segments`. So in Home Assistant a brightness change
   on one segment entity also moves the other segments of its group, as it does in the app. Only the `15 02`
   frame's mask bytes and checksum change; every other frame, read and decode is as before. Source-traced (Govee
-  Home 7.7.02), not live-verified: none of these SKUs is on the bench.
+  Home 7.7.02), not live-verified: none of these SKUs is on the bench. A follow-up, not changed here: an empty
+  selection still sends a zero-mask frame (`33 05 15 02 [pct] 00 00`), on these SKUs and every other
+  segment-brightness profile, where the app's strips show a toast and send nothing (`canClickBrightness`
+  returns null for an empty set: `ColorMode14Rect4ReverseSelect.canClickBrightness:380-383` via `e0:480-482`,
+  `H605CColorMode.canClickBrightness:497-500`, and the H60A6's `ColorModeH60A6.canClickBrightness:484-487` via
+  `X:399-401`).
 
 ### Spec
 - **The device-list trace (Govee Home 7.7.02; 7.5.12 where a family says so).** Each of the 83 census families
@@ -321,7 +326,12 @@ model, from which the shipped readers are generated).
   at :536, short of the return at :538). The row docs that called these strips' frames
   byte-identical to the h60a6 scheme (the pact_h6099 `color_scheme` note) or left the widening out now say
   that the `15 02` mask is the widened set. The held rows whose strips widen too (pact_h605b 82 / 138 / 172 /
-  192, pact_h6099 253, h6609 173) keep no groups until they are admitted.
+  192, pact_h6099 253, h6609 173) keep no groups until they are admitted. The H60A6's strip (h60a6 303,
+  released) widens too, but by colour state rather than by fixed groups, so its row records it in the doc
+  only and the library is unchanged: `ColorModeH60A6.canClickBrightness:483-500` sends the selection as it is,
+  except on pact (1, >= 3) (`Support.supportPartTem`) while a ring piece is selected and the 12 ring pieces
+  show one Kelvin-table colour (`ColorModeH60A6.F` / `G`), when the mask covers the whole ring 0-11 with piece
+  12 as picked. Modelling it is the user's decision.
 - **Screen facts on three held rows** (still without `support`; no SKU's profile changes):
   - h61d3 375 (H1A45): its colour config is traced after all. The 7.7.02 tables key 375 by the named constant
     `LightRecycleViewGesture.W`, which a search for the number missed. It is row 367's: the h60a6 `15 01` frames,
