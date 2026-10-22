@@ -338,6 +338,8 @@ _REFUSED: tuple[tuple[str, str, _Edit, str], ...] = (
      "pact 1,2 status_read ['cmd_41', 'cmd_41'] (distinct"),
     ("h6092", "283", lambda f: _row(f, "283")["by_pact"]["1,2"]["status_read"].append("cmd_30"),
      "wire forms f_30 None, where the library uses zone_power"),
+    ("h6071", "57", lambda f: _wire(f)["forms"].pop("f_15_04"),
+     "wire forms f_15_04 None, where the library uses kelvin_v9"),
     ("h60ax", "303", lambda f: _row(f, "303").update(pacts="any"), "needs listed pacts"),
     ("h60ax", "303", lambda f: _row(f, "303").update(pacts=["1,1", "1,2", "2,3"]), "not one pact type"),
     ("h60ax", "303", lambda f: _row(f, "303")["by_pact"].update({"1,3": {"status_read": _STATUS_PAIR}}),

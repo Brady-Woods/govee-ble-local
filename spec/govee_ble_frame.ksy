@@ -817,9 +817,15 @@ types:
         repeat: expr
         repeat-expr: 4
   op15_kelvin_v9:
-    doc: '[kelvin u16be], colour instruction version 9.'
+    doc: |
+      [kelvin u16be], colour instruction version 9: a Kelvin and nothing else (no
+      colour, tint or segment mask). The illumination tab's Kelvin builder for it is
+      Config.N[9] = JM, and the colour page's Config.J[9] = hu maps every pick to a
+      Kelvin and writes the same; Config.x gives version 9 to goodsTypes 57 and 67
+      (H6071 / H6075). The library's kelvin_v9 colour scheme.
     doc-ref:
       - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:133-139
+      - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:1674-1683,5640-5645,10543-10545,11706-11709,11869-11872,14418-14427
     seq:
       - id: kelvin
         type: u2

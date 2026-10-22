@@ -10815,14 +10815,17 @@ families:
   # Module pact_floorlamp: three packages, three screens, three entries (base-classes9/com/govee/base2home/pfd/Config.java:157-162).
   - id: h6071
     category: lamp
-    client_profile:   # no BLE segment colour read; the colour / CCT write 15 04 <K> matches no color_scheme
+    client_profile:   # no BLE segment colour read; the colour / CCT write is 15 04 <K> (kelvin_v9)
+      color_scheme: kelvin_v9   # colour instruction 9: Config.x[57] / [67] = 9 -> Config.N[9] = JM -> Bytes.D, 33 05 15 04 <K u16be>, a Kelvin only (no RGB frame, mask or tint); base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:1674-1683,5640-5645,10543-10545; Bytes.java:133-139
       mode_color_parse: rgb_kelvin_15   # CAUTION: the app writes 0x15 as [0x04][K u16be]; if the device echoes that, this [r,g,b][K s16be] read is wrong (split_floorlamp/com/govee/h6071/newdetail/InfoDetail.java:278-302); the IoT status path's old parser reads [x][K u16be] instead (split_floorlamp/com/govee/h6071/ble/SubModeColor.java:73-75, iot/CmdStatusV0)
       power_read: aa01   # in the connect read set; ControllerSwitch.java:31
       power_live: [heartbeat_aa01]   # no ee 30 parser; newdetail/VM4Light.java:267-269
       by_goods_type:
-        "57":   # H6071; no support: no color_scheme builds the CCT write 33 05 15 04 <K u16be> (library gap, h6071.md)
+        "57":   # H6071: the illumination tab's Kelvin + brightness pair on the kelvin_v9 frame
           models: [H6071]
           pacts: ["1,1"]
+          support: app_traced
+          color_temp_control: illumination   # the bundled mode list is [10, 13] (scene, illumination: no colour page), base.apk assets/localSkuComponentConfigs.json "H6071"; VM4Light overrides neither ShareVM.C3 nor X3
           color_functions: [segment_brightness, color_temperature]   # Config.I[57] = bQ {false, true, true, true, true}; the segment-brightness slider has no builder (no relative-brightness version), so no segments; the flag binds segments only where the scheme has that frame (_resolve SEGMENT_BRIGHTNESS_SCHEMES)
           capabilities: [power, brightness, color_temp]
           zones: []
@@ -10852,9 +10855,13 @@ families:
             -> KelvinConfig.m), and ColorViewModel.U round-trips the Kelvin through a colour, so that page can send a
             Kelvin outside [2200, 6500]; the row keeps the illumination tab's range (family specs). Colour-page flags
             (Config.I[57] = bQ): segment brightness and colour temperature on; the segment-brightness slider has no
-            relative-brightness version (Config.L null), so it sends no frame and the row has no segments. No library
-            colour scheme builds 15 04 <K>, so the row has no support; it also needs the Kelvin + brightness pair (as
-            H8015, bulblightv3 328). One piece (Support.a), no colour read-back. Scenes untraced. Not hardware-verified.
+            relative-brightness version (Config.L null), so it sends no frame and the row has no segments. The
+            bundled mode list (ModeConfig.e, the local fallback of ShareVM.Y3: assets/localSkuComponentConfigs.json)
+            is [10, 13], scene and illumination, with no colour page (9), so the illumination tab is the colour
+            temperature control: color_temp_control illumination, the kelvin_v9 scheme's 15 04 <K> then 33 04 (the
+            server's per-device list, which Y3 prefers, is not in the APK). One piece (Support.a), no colour
+            read-back. Not modelled: the 33 09 clock sync and the timer, wake-up and sleep reads. Scenes untraced.
+            Not hardware-verified (no H6071 on the bench; the aa 05 echo after a 15 04 write is unread).
           doc-ref:
             - split_floorlamp/com/govee/h6071/pact/Support.java:35-38,45,57,80-93,106-114,197-212,219-226
             - split_floorlamp/com/govee/h6071/pact/SubLib.java:20-26
@@ -10867,7 +10874,8 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4InfoBleIot.java:74-84,117-121
             - split_floorlamp/com/govee/h6071/newdetail/InfoDetail.java:100-125,278-302
             - base-classes11/com/govee/base2light/pact/newdetail/sub/SubMode4Color.java:239-251
-            - base-classes11/com/govee/base2light/pact/newdetail/ShareVM.java:979-1015,1348-1350,1362-1364
+            - base-classes11/com/govee/base2light/pact/newdetail/ShareVM.java:979-1015,1310-1315,1348-1350,1362-1364,1450-1453,1467-1598
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/ModeConfig.java:308-314
             - base-classes12/com/govee/common2light/capability/connect/ConnectHeartbeat.java:15-17,26-38
             - base-classes12/com/govee/base2light/vm4sku2op/Controller4Secret.java:29-38
             - base-classes11/com/govee/base2light/kt/comm/DefInfo.java:106-110
@@ -10892,9 +10900,11 @@ families:
             - base-classes11/com/govee/base2light/kt/general_controller/ControllerSyncTime.java:37-41
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/TimerConfig.java:169-182,463-479
             - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4TimerSync.java:53-75
-        "67":   # H6075; the 57 screen and frames (Config.x[67] = Qv = 9); no support for the same gap
+        "67":   # H6075; the 57 screen and frames (Config.x[67] = Qv = 9)
           models: [H6075]
           pacts: ["1,1"]
+          support: app_traced
+          color_temp_control: illumination   # bundled mode list [10, 13], as 57 (localSkuComponentConfigs.json "H6075")
           color_functions: [segment_brightness, color_temperature]   # Config.I[67] = aQ {false, true, true, true, true}; no relative-brightness builder, so no segments (as 57)
           capabilities: [power, brightness, color_temp]
           zones: []
@@ -10913,8 +10923,8 @@ families:
             100 K steps; no RGB frame. The colour page's Kelvin widget spans KelvinConfig version 0 = [2000, 9000], as
             for 57. Colour-page flags Config.I[67] = aQ: segment brightness and colour temperature on, with no
             relative-brightness builder, so no segments. One piece (Support.a; ColorPieceConfig.n also returns 1 for
-            H6075). No support: no library colour scheme builds 15 04 <K>, and the Kelvin + brightness pair is not
-            sent. Scenes untraced. Not hardware-verified.
+            H6075). Bundled mode list [10, 13] (no colour page), so colour temperature is the illumination tab's
+            pair, as 57. Scenes untraced. Not hardware-verified (no H6075 on the bench).
           doc-ref:
             - split_floorlamp/com/govee/h6071/pact/Support.java:35-38,45,57,80-93,106-114,197-212,219-226
             - split_floorlamp/com/govee/h6071/pact/Model.java:28-47
@@ -10922,7 +10932,8 @@ families:
             - split_floorlamp/com/govee/h6071/newdetail/VM4Light.java:75-81,267-297,359-361,404-411,485-489,537-561
             - split_floorlamp/com/govee/h6071/newdetail/VM4Light$afterConnectedSingleReadDeviceInfo$1$4$1.java:123-185
             - split_floorlamp/com/govee/h6071/newdetail/InfoDetail.java:100-125,278-302
-            - base-classes11/com/govee/base2light/pact/newdetail/ShareVM.java:1005-1015,1348-1350,1362-1364
+            - base-classes11/com/govee/base2light/pact/newdetail/ShareVM.java:1005-1015,1310-1315,1348-1350,1362-1364,1450-1453,1467-1598
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/ModeConfig.java:308-314
             - base-classes11/com/govee/base2light/pact/newdetail/content/illumination/View4IlluminationMode.java:187-208,612-660
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:72-122,240-242,254-269,329-342,402-411
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/ColorModeControllerConfig.java:207-256,499-526,1069-1082

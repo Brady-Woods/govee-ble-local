@@ -70,8 +70,8 @@ the row lacks fails the build: nothing defaults silently.
   agrees with the capabilities: ``color_temperature`` with ``color_temp``, and ``segment_brightness`` with
   ``segments`` only where the row's scheme has a segment-brightness frame
   (:data:`SEGMENT_BRIGHTNESS_SCHEMES`). Elsewhere the flag alone calls for nothing: the slider has no frame
-  the library could send (H6071 / H6075's one-piece lamps, with no relative-brightness version and no
-  scheme yet; h61a8's 0x0b segment colour). ``rgb``, ``color_temp`` or
+  the library could send (H6071 / H6075's one-piece kelvin_v9 lamps, with no relative-brightness version;
+  h61a8's 0x0b segment colour). ``rgb``, ``color_temp`` or
   ``segments`` on a relay row raises (the library resolves no colour scheme or Kelvin range for a plug), and
   elsewhere they need a colour scheme. ``color_temp`` needs a Kelvin range, and so does ``rgb`` under every
   scheme with a colour-temperature mode (all but h61a8, :data:`SCHEME_LACKS`): its RGB writer runs the app's
@@ -82,9 +82,10 @@ the row lacks fails the build: nothing defaults silently.
   sets colour temperature on its illumination tab alone, ``View4IlluminationMode.I0``: the Kelvin frame, then
   ``33 04`` <the current brightness>) becomes ``DeviceProfile.kelvin_with_brightness``. It needs the
   ``color_temp`` and ``brightness`` capabilities, percent brightness with no pact branch (so the held value
-  round-trips), and the h60a6 or h6188 scheme, whose colour-temperature frame is the tab's builder (h60a6
-  not at ``rgb_self_tem_color``, whose tab slot is ``ff ff ff``); the colour page's ``color_temperature``
-  flag then doesn't decide ``color_temp`` (``color_functions``). ``color_temp_control: whole_device`` (the
+  round-trips), and the h60a6, h6188 or kelvin_v9 scheme, whose colour-temperature frame is the tab's builder
+  (h60a6 not at ``rgb_self_tem_color``, whose tab slot is ``ff ff ff``); the colour page's
+  ``color_temperature`` flag then doesn't decide ``color_temp`` (``color_functions``).
+  ``color_temp_control: whole_device`` (the
   colour page's Kelvin pick always writes every piece, as h61d3 ``ColorMode.canClickColorTem`` does on 239 /
   246) needs ``color_temp``. Either value becomes ``DeviceProfile.whole_device_kelvin``: no Kelvin on part of
   the device. An ``untraced`` scene dialect drops ``scenes``; ``none`` is activate only. Scenes need a
@@ -416,15 +417,16 @@ ADMITTED: Final = frozenset({"hardware_verified", "app_traced"})
 MODELLED: Final = frozenset({"modelled"})   # admitted only on the caller's opt-in
 LEVELS: Final = ADMITTED | MODELLED
 CAPABILITIES: Final = ("power", "brightness", "rgb", "color_temp", "segments", "scenes")   # models.Capability
-COLOR_SCHEMES: Final = ("h60a6", "h6006", "h6188", "h61a8", "h6061", "legacy_02")   # wire.build.ColorScheme
+COLOR_SCHEMES: Final = ("h60a6", "h6006", "h6188", "h61a8", "h6061", "legacy_02",
+                         "kelvin_v9")   # wire.build.ColorScheme
 # The h60a6 colour-temperature slot types (clientRow white_type; wire.build.WhiteType), and the default a row
 # without one takes (Bytes.r's ff ff ff, every row before 1.8.0).
 WHITE_TYPES: Final = ("rgb_black", "rgb_white", "rgb_self_tem_color")
 _WHITE_DEFAULT: Final = "rgb_white"
 # The schemes whose colour-temperature frame is an illumination-tab Kelvin builder (Config.N[Config.x], with
-# the slot it gives each white type): h60a6 = Bytes.C (N[0]) and h6188 = Bytes.A (N[2]). The h6006 and h6061
-# CCT frames (Bytes.p, Bytes.u) are colour-page builders only.
-_ILLUMINATION_SCHEMES: Final = frozenset({"h60a6", "h6188"})
+# the slot it gives each white type): h60a6 = Bytes.C (N[0]), h6188 = Bytes.A (N[2]) and kelvin_v9 = Bytes.D
+# (N[9] = JM). The h6006 and h6061 CCT frames (Bytes.p, Bytes.u) are colour-page builders only.
+_ILLUMINATION_SCHEMES: Final = frozenset({"h60a6", "h6188", "kelvin_v9"})
 # clientRow color_temp_control: how the screen writes colour temperature where it isn't the colour page's
 # Kelvin over the selected pieces (absent). Either value gives DeviceProfile.whole_device_kelvin.
 COLOR_TEMP_CONTROLS: Final = ("illumination", "whole_device")
@@ -447,13 +449,16 @@ _LIVE_HEARTBEATS: Final[Mapping[str, str]] = {
 #  - h6006 / h6188 (0x0d; h6188 is the white-slot Bytes.A colour temperature of the illumination tab): no
 #    segment mask in any colour frame (Bytes.f / p / A);
 #  - h6061: whole-device only; per-panel colour needs the user's layout, which is not modelled;
-#  - legacy_02 (0x02): Config.fu drops the position set, and Bytes.a / o carry no mask.
+#  - legacy_02 (0x02): Config.fu drops the position set, and Bytes.a / o carry no mask;
+#  - kelvin_v9 (15 04 <K>, Bytes.D): a Kelvin only, so no RGB frame (Config.J[9] = hu turns a pick into a
+#    Kelvin) and no mask.
 SCHEME_LACKS: Final[Mapping[str, frozenset[str]]] = {
     "h61a8": frozenset({"color_temp"}),
     "h6006": frozenset({"segments"}),
     "h6188": frozenset({"segments"}),
     "h6061": frozenset({"segments"}),
     "legacy_02": frozenset({"segments"}),
+    "kelvin_v9": frozenset({"rgb", "segments"}),
 }
 # The colour schemes with a segment-brightness frame (wire.build.segment_brightness: 33 05 15 02, Bytes.G),
 # the frame the colour page's segment-brightness slider sends; the only rows whose color_functions flag for
@@ -987,7 +992,7 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
                  "the held value)")
         if scheme not in _ILLUMINATION_SCHEMES or white == "rgb_self_tem_color":
             fail(f"color_temp_control illumination on {scheme} / {white} (the tab's Kelvin builder is the "
-                 "h60a6 or h6188 frame, whose slot is ff ff ff for rgb_self_tem_color)")
+                 "h60a6, h6188 or kelvin_v9 frame, the h60a6 slot ff ff ff for rgb_self_tem_color)")
 
     readback, power_read = "plug", ""
     if not relay:
@@ -1249,6 +1254,8 @@ def _forms_used(out: Mapping[str, Any], caps: Collection[str], status_read: Sequ
         used.append(("f_15_01", "kelvin"))
     if scheme == "h61a8" and set(caps) & {"rgb", "segments"}:
         used.append(("f_0b", "rgb_mask"))
+    if scheme == "kelvin_v9" and "color_temp" in caps:
+        used.append(("f_15_04", "kelvin_v9"))
     if (out["zones"] and not out["bar_switch"]) or "cmd_30" in status_read:
         used.append(("f_30", "zone_power"))
     return used
