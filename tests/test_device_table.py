@@ -102,6 +102,9 @@ _CHANGED: dict[tuple[str, str], tuple[Any, Any]] = {
     # 1.7.0: the colour tab's Kelvin frame (Config.bu -> Bytes.p), not the group-control white slot
     # (decision 3).
     ("H6188", "color_scheme"): ("h6188", "h6006"),
+    # 1.7.0: no Part-tab Kelvin item on goodsTypes 19 / 247 / 41 (not in SupportPartColorTemConfig.d), so no
+    # Kelvin on a piece selection.
+    **{(sku, "segment_color_temp"): (True, False) for sku in ("H61A8", "H6641", "H6062")},
 }
 
 # (soft, hard) versions: unread, the H61A8 bench unit, and the reference self-test's other two.
@@ -346,6 +349,10 @@ _REFUSED: tuple[tuple[str, str, _Edit, str], ...] = (
      "color_functions ['segment_brightness'] disagree"),
     ("dreamcolorlightv1", "19", lambda f: _row(f, "19")["capabilities"].remove("segments"),
      "color_functions ['segment_brightness', 'color_temperature'] disagree"),   # h60a6 has the 15 02 frame
+    ("dreamcolorlightv1", "19", lambda f: _row(f, "19").pop("segment_color_temp"),
+     "segment_color_temp goes with"),
+    ("bulblightv3", "64", lambda f: _row(f, "64").update(segment_color_temp=False),
+     "segment_color_temp goes with"),
     ("bulblightv3", "64", lambda f: _row(f, "64").update(scene_dialect="graffiti"),
      "scene_dialect 'graffiti'"),
     ("h6047", "119", lambda f: _row(f, "119").update(scene_versions=[0, -1]), "scene_versions [0, -1]"),

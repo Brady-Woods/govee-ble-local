@@ -76,10 +76,14 @@ the row lacks fails the build: nothing defaults silently.
   the library could send (H6071 / H6075's one-piece lamps, with no relative-brightness version and no
   scheme yet; h61a8's 0x0b segment colour). ``rgb``, ``color_temp`` or
   ``segments`` on a relay row raises (the library resolves no colour scheme or Kelvin range for a plug), and
-  elsewhere they need a colour scheme. An ``untraced`` scene dialect drops ``scenes``; ``none`` is activate
-  only. Scenes need a bundled catalog, as every SKU of 1.4.0 that offers them ships one: a SKU the scene
-  store has no catalog for (``scenes/store.json``, the generated ``SCENE_CATALOGS``, which
-  :func:`profiles` takes as ``catalogued``) is offered no ``scenes``, its row's scene facts still checked.
+  elsewhere they need a colour scheme. A row that keeps ``segments`` and ``color_temp`` after those drops
+  says whether its screen sends a Kelvin over a piece selection (``segment_color_temp``, which becomes
+  ``DeviceProfile.segment_color_temp``: the Part tab's Kelvin item, ``DelegateColorV2Part.Z0`` ->
+  ``LightColorCapabilityCenter.C2``); a row that keeps fewer may not say. An ``untraced`` scene dialect
+  drops ``scenes``; ``none`` is activate only. Scenes need a bundled catalog, as every SKU of 1.4.0 that
+  offers them ships one: a SKU the scene store has no catalog for (``scenes/store.json``, the generated
+  ``SCENE_CATALOGS``, which :func:`profiles` takes as ``catalogued``) is offered no ``scenes``, its row's
+  scene facts still checked.
   An ``untraced`` colour parse on a row with ``rgb`` or ``color_temp`` raises (``none`` is a traced value:
   the screen parses no colour).
 - The reads the library makes: the 0xAC status read is the row's ``status_read``, in its order
@@ -231,6 +235,7 @@ class Row(TypedDict, total=False):
     color_scheme: str
     color_functions: tuple[str, ...]
     capabilities: tuple[str, ...]
+    segment_color_temp: bool
     zones: tuple[ZoneRow, ...]
     account_lock: bool
     scene_dialect: str
@@ -855,6 +860,7 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
     if lacks and "color_scheme" not in row:
         fail(f"the family color_scheme {scheme} would drop {sorted(lacks)}: the row must name it")
     caps -= lacks
+    part_kelvin = row.get("segment_color_temp")
     cf = row.get("color_functions")
     if cf is not None and (("color_temperature" in cf) != ("color_temp" in row_caps)
                            or (scheme in SEGMENT_BRIGHTNESS_SCHEMES
@@ -993,6 +999,7 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
     lock = bool(need(row.get("account_lock"), "account_lock"))
     out: dict[str, Any] = {
         "capabilities": tuple(c for c in CAPABILITIES if c in caps),
+        "segment_color_temp": part_kelvin is not False,   # True, the default, where it means nothing
         "aes_fallback": lock or (fam["id"], gt) in _AES_FALLBACK_ROWS,
         "segments": int(counts.get("num_segments", 0)),
         "zones": zones,
@@ -1075,6 +1082,9 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
         if unknown:
             fail(f"mode_color_parse {sorted(unknown)} not in the mode_color_parse table")
     _check_forms(forms, _forms_used(out, caps, tuple(status_read or ()), relay), fail)
+    if ({"segments", "color_temp"} <= caps) != (part_kelvin is not None):
+        fail("segment_color_temp goes with segments and color_temp (the colour scheme's drops applied): "
+             "whether the screen sends a Kelvin over a piece selection")
     return out
 
 

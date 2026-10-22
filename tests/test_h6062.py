@@ -16,11 +16,12 @@ from unittest.mock import AsyncMock
 
 import pytest
 from fake_ble import ble_device, unacked_via
+from test_device_races import _hand_built_segment_kelvin
 
 from govee_ble_local import Capability, Encryption
 from govee_ble_local.devices.device import Device, make_device
 from govee_ble_local.devices.profile import profile_for
-from govee_ble_local.exceptions import GoveeBleError, GoveeBleInvalidValue
+from govee_ble_local.exceptions import GoveeBleError, GoveeBleInvalidValue, GoveeBleNotSupported
 from govee_ble_local.scenes import load_scenes
 from govee_ble_local.wire import build as b
 from govee_ble_local.wire import parse
@@ -162,13 +163,14 @@ def test_segment_writes_golden_n19() -> None:
     asyncio.run(d.set_segment_rgb([9, 10], (0, 255, 0)))
     asyncio.run(d.set_segment_rgb([18], (0, 0, 255)))
     asyncio.run(d.set_segment_brightness([18], 20))              # Bytes.G: 15 02 <pct> <mask>
-    asyncio.run(d.set_segment_color_temp([9], 2700))
+    # 41 is not in SupportPartColorTemConfig.d: no Part-tab Kelvin item, so no masked Kelvin frame.
+    with pytest.raises(GoveeBleNotSupported, match="piece selection"):
+        asyncio.run(d.set_segment_color_temp([9], 2700))
     assert t.sent == [
         _c("010203", "010000"),
         _c("00ff00", "000600"),
         _c("0000ff", "000004"),
         _hex("3305150214" + "000004"),
-        _hex("33051501ffffff0a8cffae54" + "000200"),
     ]
 
 
@@ -235,8 +237,8 @@ def test_unanswered_or_unusable_count_sends_no_colour_frame(reply: list[bytes]) 
     for call in (lambda: t.dev.set_rgb((1, 2, 3)), lambda: t.dev.set_color_temp(4000),
                  lambda: t.dev.set_segment_rgb([0], (1, 2, 3)),
                  lambda: t.dev.set_segment_brightness([0], 10),
-                 lambda: t.dev.set_segment_color_temp([0], 4000),
-                 lambda: t.dev.turn_on(rgb=(1, 2, 3))):
+                 lambda: t.dev.turn_on(rgb=(1, 2, 3)),
+                 lambda: _hand_built_segment_kelvin(t.dev)):   # last: it keeps its profile
         with pytest.raises(GoveeBleError, match="aa 41"):
             asyncio.run(call())
     assert t.sent == []

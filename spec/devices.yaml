@@ -758,6 +758,7 @@ families:
           power_read: ac_status
           power_live: [push_30]
           capabilities: [power, brightness, rgb, color_temp, segments]
+          segment_color_temp: false
           zones: []
           account_lock: false
           scene_dialect: untraced
@@ -789,6 +790,7 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:1754-1758,5185-5189,6194-6198,13519-13522,14373-14376,14434-14437
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:401-411,779-783,1393-1395
             - base-classes11/com/govee/base2light/pact/newdetail/content/illumination/View4IlluminationMode.java:612-660
+            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
         "303":   # H60A6
           models: [H60A6]
           power_read: ac_status
@@ -796,6 +798,7 @@ families:
           pacts: ["1,1", "1,2", "1,3"]
           support: hardware_verified
           capabilities: [power, brightness, rgb, color_temp, segments, scenes]
+          segment_color_temp: true
           zones:
             - { id: main, power_index: 0, segments: [12] }
             - { id: background, power_index: 1, segments: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11] }
@@ -838,6 +841,7 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:405-408,789-792,1426-1428
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:251-259
             - H60A6 FUN_9b0278dc @0x9b02791c-0x9b027930
+            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
         "324":   # H60C1; no support: the 7.7.02 app registers no pact for 324
           models: [H60C1]
           mode_color_parse: gradual_15   # split_h60ax/com/govee/pact_h60a0/adjust/h60c1/Info4DetailH60C1.java:381
@@ -867,6 +871,7 @@ families:
           power_read: ac_status
           power_live: [push_30]
           capabilities: [power, brightness, rgb, color_temp, segments]
+          segment_color_temp: true
           zones:
             - { id: main, power_index: 0, segments: [12] }
             - { id: background, power_index: 1, segments: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11] }
@@ -912,6 +917,7 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:329-342,401-411,859-863,1630-1632
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:198-215,251-258
             - base-classes12/com/govee/common2light/capability/connect/ConnectHeartbeat.java:15-38
+            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
         "356":   # H1232 on the H60A6 screen (AcNewDetailH60A6, VM4LightH60A6), two zones
           models: [H1232]
           pacts: ["1,1"]
@@ -919,6 +925,7 @@ families:
           power_read: ac_status
           power_live: [push_30]
           capabilities: [power, brightness, rgb, color_temp, segments]
+          segment_color_temp: true
           zones:
             - { id: main, power_index: 0, segments: [16] }
             - { id: background, power_index: 1, segments: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15] }
@@ -963,6 +970,7 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:172-181,315-326,474-501
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:329-342,401-411,909-913,1337-1339
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:198-215,251-258
+            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
         "370":   # H1250 on AcNewDetailH1250 (VM4LightH1250), two zones; no support: an empty TLV 0xA5 fails the library's status read (G7, doc)
           models: [H1250]
           pacts: ["1,1"]
@@ -1021,6 +1029,7 @@ families:
           power_read: ac_status
           power_live: [push_30]
           capabilities: [power, brightness, rgb, color_temp, segments]
+          segment_color_temp: true
           zones:
             - { id: main, power_index: 0, segments: [16] }
             - { id: background, power_index: 1, segments: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15] }
@@ -1059,6 +1068,7 @@ families:
             - split_h60ax/com/govee/pact_h60a0/adjust/h1252/ColorModeH1252.java:145-185,490-505,524-584,705-720
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:231-257,277-292,1944-1948,5345-5349,5522-5526,6534-6538,11186-11189,12663-12666,12960-12968,16053-16056
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:329-342,401-411,929-933,1385-1387
+            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
         "390":   # H12D0 on AcNewDetailH12D0 (VM4LightH12D0); no support: three zones
           models: [H12D0]
           pacts: ["1,1", "1,2"]
@@ -1154,6 +1164,7 @@ families:
           pacts: ["1,1"]
           support: app_traced
           capabilities: [power, brightness, rgb, color_temp, segments, scenes, gradual]
+          segment_color_temp: true
           zones:
             - { id: left, power_index: 0, segments: [0, 1, 2, 3, 4] }
             - { id: right, power_index: 1, segments: [5, 6, 7, 8, 9] }
@@ -1198,6 +1209,7 @@ families:
             - split_h6047/com/govee/h6047/ble/controller/ComposeLightHeartController.java:9-11
             - H6047 FUN_01004f32 @0x01004f5c-0x01004f60
             - H6047 FUN_01002720 @0x01002720
+            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
         "196":   # H6043, the old detail screen; no support: the per-bar write 33 36 <index> <state> is a library gap
           models: [H6043]
           pacts: ["1,1", "2,1"]
@@ -1262,6 +1274,7 @@ families:
           mode_color_parse: gradual_15
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments]
+          segment_color_temp: false
           zones: []
           account_lock: false
           scene_dialect: untraced
@@ -1290,10 +1303,13 @@ families:
             (DefParser switch parser, bit 0 of frame[3]). Power: one switch, switchTrigger writes 33 01; no per-bar control,
             zones none. Colour page: H6039ColorMode over 12 pieces (ConfigLightIndex4H6039 reorders only the UI by
             calibration; the mask bit is the device piece); the default colour controller takes Config.x[277] = 0 ->
-            Config.J[0] = Yt (Bytes.h / Bytes.r, white type Config.P[277] = 1), the h60a6 forms; Kelvin only with every
-            piece selected (canClickColorTem; 277 is not in SupportPartColorTemConfig.d), so the app sends no sub-mask CCT
-            (library gap: Device.set_segment_color_temp), and the illumination slider Bytes.C(K, 12, 1), the same
-            all-pieces frame; Config.I[277] all five flags on; segment brightness Config.z[277] = 0 (Bytes.G). Kelvin
+            Config.J[0] = Yt (Bytes.h / Bytes.r, white type Config.P[277] = 1), the h60a6 forms; the Kelvin is the All
+            tab's, over every piece (DelegateColorV2.G0 -> x0 -> ColorViewModel.U), since 277 is not in
+            SupportPartColorTemConfig.d and the Part tab has no Kelvin item (DelegateColorV2Part.Z0 adds it only where
+            LightColorCapabilityCenter.C2 holds, so H6039ColorMode.canClickColorTem is never reached), so the app
+            sends no sub-mask CCT (segment_color_temp false: Device.set_segment_color_temp refuses), and the
+            illumination slider Bytes.C(K, 12, 1), the same all-pieces frame; Config.I[277] all five flags on; segment
+            brightness Config.z[277] = 0 (Bytes.G). Kelvin
             version 2 = [2700, 6500] (KelvinConfig maps 277 -> 2; Support.getColorTemRange the same); brightness version 1 =
             percent. Not modelled: gradual (33 a3 at Config.G[277] = 0 from the colour page, its state only in TLV 0x05; no
             aa a3 read on the BLE connect, VM4Light.c5 runs on the IoT path), the TimerConfig.f sync-time controller queued
@@ -1313,12 +1329,12 @@ families:
             - split_h6047/com/govee/h6047/newdetail/color/H6039ColorMode$initVM$2.java:56-74,97-103
             - base-classes11/com/govee/base2light/pact/newdetail/content/success/DelegateCurMode.java:185-205,424-466
             - base-classes11/com/govee/base2light/pact/newdetail/BaseViewDelegate.java:57-66
-            - base-classes11/com/govee/base2light/pact/newdetail/content/colorv2/DelegateColorV2.java:666-673,949-977,1006-1012
-            - base-classes11/com/govee/base2light/pact/newdetail/content/colorv2/DelegateColorV2Part.java:173-191,849-856
+            - base-classes11/com/govee/base2light/pact/newdetail/content/colorv2/DelegateColorV2.java:241-253,666-673,831-835,949-977,1006-1012,1295-1303
+            - base-classes11/com/govee/base2light/pact/newdetail/content/colorv2/DelegateColorV2Part.java:173-191,686-704,849-856
             - base-classes11/com/govee/base2light/pact/newdetail/DeviceDetailConfig.java:260-272
             - split_h6047/com/govee/h6047/newdetail/ConfigLightIndex4H6039.java:22-28
             - split_h6047/com/govee/h6047/pact/Support.java:155-161
-            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39
+            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
             - base-classes11/com/govee/base2light/pact/newdetail/ble/BleComm.java:37-47
             - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4BaseInfoSingleRead.java:166-180,247-260,283-308
             - base-classes11/com/govee/base2light/kt/general_controller/ControllerSingleRead.java:80-83
@@ -1439,6 +1455,7 @@ families:
           support: app_traced
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments, scenes, gradual]
+          segment_color_temp: true
           zones: []
           account_lock: false
           scene_dialect: legacy_scene
@@ -1499,6 +1516,7 @@ families:
             - split_h6047/com/govee/h6047/detail/config/DiyConfig.java:14-26
             - base-classes11/com/govee/base2light/pact/newdetail/content/scene/BaseSceneViewMode.java:880-893,1152-1200
             - split_h6047/com/govee/h6047/ble/controller/ComposeLightHeartController.java:9-11
+            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
       wire_cipher: runtime
       wire:
         doc: "33 36: [54, left, right] on the old detail screen except H6043 [54, index, state] (split_h6047/com/govee/h6047/detail/NewDetailVm.java:695-699); colour groups: Controller4ColorInfoByGroup (base-classes11/com/govee/base2light/kt/general_controller/Controller4ColorInfoByGroup.java:145-175)"
@@ -2235,6 +2253,7 @@ families:
           pacts: ["1,1", "2,1"]
           support: app_traced
           capabilities: [power, brightness, rgb, color_temp, segments, scenes, gradual]
+          segment_color_temp: false
           zones: []
           account_lock: false
           scene_dialect: legacy_scene
@@ -2266,6 +2285,7 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:402-405
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:198-212,251-259
             - split_h61d3/com/govee/h61d3/adjustNew/VM4Light.java:811-813
+            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
         "263":   # H703A / H703B, the H703ADetailActivity screen: the 0xAC status read replaces connectBleSuc
           models: [H703A, H703B]
           pacts: ["1,1"]
@@ -2500,6 +2520,7 @@ families:
           support: app_traced
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments, scenes, gradual]
+          segment_color_temp: false
           zones: []
           account_lock: false
           scene_dialect: legacy_scene
@@ -2546,12 +2567,14 @@ families:
             - split_h61d3/com/govee/h61d3/H61D3Application.java:221
             - base-classes11/com/govee/base2light/pact/newdetail/content/scene/BaseSceneViewMode.java:864-903,1152-1200
             - base-classes10/com/govee/base2light/ac/diyNew/config/DiyNewConfig.java:61-65,140-146
+            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
         "264":   # H61B0 / H61B3 / H61B6
           models: [H61B0, H61B3, H61B6]
           pacts: ["1,1", "2,1"]
           support: app_traced
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments, scenes, gradual]
+          segment_color_temp: true
           zones: []
           account_lock: false
           scene_dialect: legacy_scene
@@ -2612,12 +2635,14 @@ families:
             - split_h61d3/com/govee/h61d3/H61D3Application.java:221
             - base-classes11/com/govee/base2light/pact/newdetail/content/scene/BaseSceneViewMode.java:864-903,1152-1200
             - base-classes10/com/govee/base2light/ac/diyNew/config/DiyNewConfig.java:61-65,140-146
+            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
         "299":   # H61B8 / H61B9
           models: [H61B8, H61B9]
           pacts: ["1,1", "2,2"]
           support: modelled
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments, scenes, gradual]
+          segment_color_temp: false
           zones: []
           account_lock: false
           scene_dialect: legacy_scene
@@ -2662,12 +2687,14 @@ families:
             - split_h61d3/com/govee/h61d3/H61D3Application.java:221
             - base-classes11/com/govee/base2light/pact/newdetail/content/scene/BaseSceneViewMode.java:864-903,1152-1200
             - base-classes10/com/govee/base2light/ac/diyNew/config/DiyNewConfig.java:61-65,140-146
+            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
         "367":   # H1A43 / H1A44
           models: [H1A43, H1A44]
           pacts: ["1,1", "1,2", "1,3"]
           support: app_traced
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments, scenes, gradual]
+          segment_color_temp: true
           zones: []
           account_lock: false
           scene_dialect: legacy_scene
@@ -2715,12 +2742,14 @@ families:
             - split_h61d3/com/govee/h61d3/H61D3Application.java:221
             - base-classes11/com/govee/base2light/pact/newdetail/content/scene/BaseSceneViewMode.java:864-903,1152-1200
             - base-classes10/com/govee/base2light/ac/diyNew/config/DiyNewConfig.java:61-65,140-146
+            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
         "384":   # H1B6A
           models: [H1B6A]
           pacts: ["1,1"]
           support: app_traced
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments, scenes, gradual]
+          segment_color_temp: true
           zones: []
           account_lock: false
           scene_dialect: legacy_scene
@@ -2770,12 +2799,14 @@ families:
             - split_h61d3/com/govee/h61d3/H61D3Application.java:221
             - base-classes11/com/govee/base2light/pact/newdetail/content/scene/BaseSceneViewMode.java:864-903,1152-1200
             - base-classes10/com/govee/base2light/ac/diyNew/config/DiyNewConfig.java:61-65,140-146
+            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
         "387":   # H1AB1
           models: [H1AB1]
           pacts: ["1,1", "1,2"]
           support: app_traced
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments, scenes, gradual]
+          segment_color_temp: false
           zones: []
           account_lock: false
           scene_dialect: legacy_scene
@@ -2823,12 +2854,14 @@ families:
             - split_h61d3/com/govee/h61d3/H61D3Application.java:221
             - base-classes11/com/govee/base2light/pact/newdetail/content/scene/BaseSceneViewMode.java:864-903,1152-1200
             - base-classes10/com/govee/base2light/ac/diyNew/config/DiyNewConfig.java:61-65,140-146
+            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
         "388":   # H1AB2
           models: [H1AB2]
           pacts: ["1,1", "1,2"]
           support: app_traced
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments, scenes, gradual]
+          segment_color_temp: false
           zones: []
           account_lock: false
           scene_dialect: legacy_scene
@@ -2876,12 +2909,14 @@ families:
             - split_h61d3/com/govee/h61d3/H61D3Application.java:221
             - base-classes11/com/govee/base2light/pact/newdetail/content/scene/BaseSceneViewMode.java:864-903,1152-1200
             - base-classes10/com/govee/base2light/ac/diyNew/config/DiyNewConfig.java:61-65,140-146
+            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
         "389":   # H1AB3
           models: [H1AB3]
           pacts: ["1,1", "1,2"]
           support: app_traced
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments, scenes, gradual]
+          segment_color_temp: false
           zones: []
           account_lock: false
           scene_dialect: legacy_scene
@@ -2930,12 +2965,14 @@ families:
             - split_h61d3/com/govee/h61d3/H61D3Application.java:221
             - base-classes11/com/govee/base2light/pact/newdetail/content/scene/BaseSceneViewMode.java:864-903,1152-1200
             - base-classes10/com/govee/base2light/ac/diyNew/config/DiyNewConfig.java:61-65,140-146
+            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
         "400":   # H1A42
           models: [H1A42]
           pacts: ["1,1", "1,2"]
           support: app_traced
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments, scenes, gradual]
+          segment_color_temp: true
           zones: []
           account_lock: false
           scene_dialect: legacy_scene
@@ -2983,12 +3020,14 @@ families:
             - split_h61d3/com/govee/h61d3/H61D3Application.java:221
             - base-classes11/com/govee/base2light/pact/newdetail/content/scene/BaseSceneViewMode.java:864-903,1152-1200
             - base-classes10/com/govee/base2light/ac/diyNew/config/DiyNewConfig.java:61-65,140-146
+            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
         "403":   # H1AA2
           models: [H1AA2]
           pacts: ["1,1", "1,2"]
           support: app_traced
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments, scenes, gradual]
+          segment_color_temp: true
           zones: []
           account_lock: false
           scene_dialect: legacy_scene
@@ -3039,12 +3078,14 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/content/scene/BaseSceneViewMode.java:864-903,1152-1200
             - base-classes10/com/govee/base2light/ac/diyNew/config/DiyNewConfig.java:61-65,140-146
             - base-classes2/com/govee/shared/checker/KmpGoodsType.java:147
+            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
         "404":   # H1AA5
           models: [H1AA5]
           pacts: ["1,1", "1,2"]
           support: app_traced
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments, scenes, gradual]
+          segment_color_temp: true
           zones: []
           account_lock: false
           scene_dialect: legacy_scene
@@ -3095,12 +3136,14 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/content/scene/BaseSceneViewMode.java:864-903,1152-1200
             - base-classes10/com/govee/base2light/ac/diyNew/config/DiyNewConfig.java:61-65,140-146
             - base-classes2/com/govee/shared/checker/KmpGoodsType.java:148
+            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
         "261":   # H61F2 / H61F5 / H61F6
           models: [H61F2, H61F5, H61F6]
           pacts: ["2,2", "3,1", "4,1"]
           support: modelled
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments, scenes, gradual]
+          segment_color_temp: true
           zones: []
           account_lock: false
           scene_dialect: legacy_scene
@@ -3138,6 +3181,7 @@ families:
             - split_h61d3/com/govee/h61d3/H61D3Application.java:221
             - base-classes11/com/govee/base2light/pact/newdetail/content/scene/BaseSceneViewMode.java:864-903,1152-1200
             - base-classes10/com/govee/base2light/ac/diyNew/config/DiyNewConfig.java:61-65,140-146
+            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
       wire_cipher: runtime
       wire:
         forms: { f_01: light, f_09: datetime_epoch, f_ee_30: main_bit0_a }
@@ -3203,6 +3247,7 @@ families:
           pacts: ["1,1", "1,2", "2,1", "2,2", "3,1", "4,1"]
           support: app_traced
           capabilities: [power, brightness, rgb, color_temp, segments, scenes]
+          segment_color_temp: false
           zones: []
           account_lock: false
           scene_dialect: legacy_scene
@@ -3228,6 +3273,7 @@ families:
             - split_h6062/com/govee/striplight/newdetail/NewDetailRegister.java:200-218
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:4056-4058,12111-12114
             - split_h6062/com/govee/striplight/newdetail/VM4Light.java:620-624,647-649
+            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
         "80":   # H610A; no support: the library can't serve its piece count, half switch or aa 33 live power (striplight.md)
           models: [H610A]
           pacts: ["1,1"]
@@ -3302,6 +3348,7 @@ families:
           support: app_traced
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments, scenes]
+          segment_color_temp: false
           zones: []
           account_lock: false
           scene_dialect: untraced
@@ -3345,6 +3392,7 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:63-85,199-215,252-259
             - base-classes11/com/govee/base2light/pact/newdetail/content/scene/BaseSceneViewMode.java:864-903,1152-1200
             - base-classes10/com/govee/base2light/ac/diyNew/config/DiyNewConfig.java:61-65,140-146
+            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
       wire_cipher: runtime
       wire:
         doc: "aa 41 [IC s16be][sectionNum] (ControllerIcSegmentNum); direct aa a5 groups of 4 (split_h6062/com/govee/striplight/newdetail/VM4Light.java:363-407); the live sectionNum replaces num_segments"
@@ -5036,6 +5084,7 @@ families:
           mode_color_parse: kelvin
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments]   # no gradual: the app writes 33 a3 but never reads aa a3 here, and the library's gradual reads aa a3 (gap G5)
+          segment_color_temp: false
           zones: []
           account_lock: false
           scene_dialect: untraced
@@ -5103,6 +5152,7 @@ families:
             - split_rgbiclight/com/govee/rgbiclight/SupportH6119.java:22-28
             - split_rgbiclight/com/govee/rgbiclight/RgbIcLightRegistry.java:762-775
             - split_rgbiclight/com/govee/h7090/pact/AbsEffectOp4Ble.java:315-353
+            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
       wire:
         doc: "Both goodsTypes walk 6 pieces (ColorPieceConfig.j: H6119, and 44 in set c0) in aa a5 groups of getOneGroupColorSize = 3 (LightVersionServiceImpl: H6119 -> 3); f_14 is the legacy h6119 BleComm gradual (BleProtocol 20), which the 7.7.02 control screen does not send"
         forms: { f_01: light, f_09: datetime_epoch, f_14: gradual, f_a5: color_group, f_15_01: kelvin_tint }
@@ -6185,6 +6235,10 @@ families:
       power_live: [heartbeat_aa01]
       wire_cipher: runtime
       by_goods_type:
+        # segment_color_temp is false on every row of the family: no goodsType of it is in SupportPartColorTemConfig.d
+        # (base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91), so the colour page's Part tab
+        # has no Kelvin item (DelegateColorV2Part.Z0 :686-704 -> LightColorCapabilityCenter.C2) and the screen's only Kelvin
+        # is the All tab's, over every piece (DelegateColorV2.G0, base-classes11/com/govee/base2light/pact/newdetail/content/colorv2/DelegateColorV2.java:240-252).
         # 19 (H61A8) colour page: Model4BleIot.t (split_rgbiclight/com/govee/dreamcolorlightv1/pact/Model4BleIot.java:41-46) -> /rgbic/newdetail
         # (rgbiclight AcNewDetail); DelegateCurMode.B (base-classes11/com/govee/base2light/pact/newdetail/content/success/DelegateCurMode.java:185-205)
         # builds DelegateColorV2, as DeviceDetailConfig.R (base-classes11/com/govee/base2light/pact/newdetail/DeviceDetailConfig.java:275-285) finds
@@ -6207,6 +6261,7 @@ families:
           pacts: ["1,1", "1,2", "2,1", "2,2", "3,1"]
           support: hardware_verified
           capabilities: [power, brightness, rgb, color_temp, segments, scenes, gradual]
+          segment_color_temp: false
           zones: []
           account_lock: false
           scene_dialect: legacy_scene
@@ -6267,6 +6322,7 @@ families:
             - base-classes9/com/govee/base2home/ota/OtaType.java:69-70,84-85
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:3806,12421-12424
             - split_rgbiclight/com/govee/rgbiclight/VM4Light.java:728-730
+            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
         "70":
           models: [H617C, H617E, H617F]
           connectivity: [ble]
@@ -6275,6 +6331,7 @@ families:
           pacts: ["10,1"]
           support: app_traced
           capabilities: [power, brightness, rgb, color_temp, segments, scenes, gradual]
+          segment_color_temp: false
           zones: []
           account_lock: false
           scene_dialect: legacy_scene
@@ -6332,6 +6389,7 @@ families:
             - split_rgbiclight/com/govee/rgbiclight/newdiy/RgbicDiyConfig.java:24-40
             - base-classes11/com/govee/base2light/pact/newdetail/content/scene/BaseSceneViewMode.java:864-903,1152-1200
             - base-classes10/com/govee/base2light/ac/diyNew/config/DiyNewConfig.java:61-65,140-146
+            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
         "73":
           models: [H617A]
           connectivity: [ble]
@@ -6340,6 +6398,7 @@ families:
           pacts: ["10,1"]
           support: app_traced
           capabilities: [power, brightness, rgb, color_temp, segments, scenes]
+          segment_color_temp: false
           zones: []
           account_lock: false
           scene_dialect: legacy_scene
@@ -6396,6 +6455,7 @@ families:
             - split_rgbiclight/com/govee/rgbiclight/newdiy/RgbicDiyConfig.java:24-40
             - base-classes11/com/govee/base2light/pact/newdetail/content/scene/BaseSceneViewMode.java:864-903,1152-1200
             - base-classes10/com/govee/base2light/ac/diyNew/config/DiyNewConfig.java:61-65,140-146
+            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
         "74":
           models: [H618A]
           color_scheme: h60a6
@@ -6403,6 +6463,7 @@ families:
           pacts: ["2,1", "3,1"]
           support: app_traced
           capabilities: [power, brightness, rgb, color_temp, segments, scenes]
+          segment_color_temp: false
           zones: []
           account_lock: false
           scene_dialect: legacy_scene
@@ -6464,6 +6525,7 @@ families:
             - split_rgbiclight/com/govee/rgbiclight/newdiy/RgbicDiyConfig.java:24-40
             - base-classes11/com/govee/base2light/pact/newdetail/content/scene/BaseSceneViewMode.java:864-903,1152-1200
             - base-classes10/com/govee/base2light/ac/diyNew/config/DiyNewConfig.java:61-65,140-146
+            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
         "75":
           models: [H619A]
           color_scheme: h60a6
@@ -6471,6 +6533,7 @@ families:
           pacts: ["2,1"]
           support: app_traced
           capabilities: [power, brightness, rgb, color_temp, segments, scenes, gradual]
+          segment_color_temp: false
           zones: []
           account_lock: false
           scene_dialect: legacy_scene
@@ -6525,6 +6588,7 @@ families:
             - split_rgbiclight/com/govee/rgbiclight/newdiy/RgbicDiyConfig.java:24-40
             - base-classes11/com/govee/base2light/pact/newdetail/content/scene/BaseSceneViewMode.java:864-903,1152-1200
             - base-classes10/com/govee/base2light/ac/diyNew/config/DiyNewConfig.java:61-65,140-146
+            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
         "83":
           models: [H619Z]
           color_scheme: h60a6
@@ -6532,6 +6596,7 @@ families:
           pacts: ["2,1"]
           support: app_traced
           capabilities: [power, brightness, rgb, color_temp, segments, scenes]
+          segment_color_temp: false
           zones: []
           account_lock: false
           scene_dialect: legacy_scene
@@ -6591,6 +6656,7 @@ families:
             - split_rgbiclight/com/govee/rgbiclight/newdiy/RgbicDiyConfig.java:24-40
             - base-classes11/com/govee/base2light/pact/newdetail/content/scene/BaseSceneViewMode.java:864-903,1152-1200
             - base-classes10/com/govee/base2light/ac/diyNew/config/DiyNewConfig.java:61-65,140-146
+            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
         "136":
           models: [H6168]
           color_scheme: h60a6
@@ -6598,6 +6664,7 @@ families:
           pacts: ["2,1"]
           support: app_traced
           capabilities: [power, brightness, rgb, color_temp, segments, scenes, gradual]
+          segment_color_temp: false
           zones: []
           account_lock: false
           scene_dialect: legacy_scene
@@ -6659,6 +6726,7 @@ families:
             - split_rgbiclight/com/govee/rgbiclight/newdiy/RgbicDiyConfig.java:24-40
             - base-classes11/com/govee/base2light/pact/newdetail/content/scene/BaseSceneViewMode.java:864-903,1152-1200
             - base-classes10/com/govee/base2light/ac/diyNew/config/DiyNewConfig.java:61-65,140-146
+            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
         "175":   # H61BE
           models: [H61BE]
           pacts: ["1,1", "2,1"]
@@ -6666,6 +6734,7 @@ families:
           color_scheme: h60a6
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments, scenes, gradual]
+          segment_color_temp: false
           zones: []
           account_lock: false
           scene_dialect: legacy_scene
@@ -6733,6 +6802,7 @@ families:
             - split_rgbiclight/com/govee/rgbiclight/newdiy/RgbicDiyConfig.java:24-40,62-63
             - base-classes11/com/govee/base2light/pact/newdetail/content/scene/BaseSceneViewMode.java:864-903,1152-1200
             - base-classes10/com/govee/base2light/ac/diyNew/config/DiyNewConfig.java:61-65,140-146
+            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
         "176":   # H6176 / H61BC
           models: [H6176, H61BC]
           pacts: ["1,1", "2,1"]
@@ -6740,6 +6810,7 @@ families:
           color_scheme: h60a6
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments, scenes, gradual]
+          segment_color_temp: false
           zones: []
           account_lock: false
           scene_dialect: legacy_scene
@@ -6810,6 +6881,7 @@ families:
             - split_rgbiclight/com/govee/rgbiclight/newdiy/RgbicDiyConfig.java:24-40
             - base-classes11/com/govee/base2light/pact/newdetail/content/scene/BaseSceneViewMode.java:864-903,1152-1200
             - base-classes10/com/govee/base2light/ac/diyNew/config/DiyNewConfig.java:61-65,140-146
+            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
         "178":   # H61BA
           models: [H61BA]
           pacts: ["1,1", "2,1"]
@@ -6817,6 +6889,7 @@ families:
           color_scheme: h60a6
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments, scenes]
+          segment_color_temp: false
           zones: []
           account_lock: false
           scene_dialect: legacy_scene
@@ -6876,6 +6949,7 @@ families:
             - split_rgbiclight/com/govee/rgbiclight/newdiy/RgbicDiyConfig.java:24-40
             - base-classes11/com/govee/base2light/pact/newdetail/content/scene/BaseSceneViewMode.java:864-903,1152-1200
             - base-classes10/com/govee/base2light/ac/diyNew/config/DiyNewConfig.java:61-65,140-146
+            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
         "187":   # H6175
           models: [H6175]
           pacts: ["1,1"]
@@ -6883,6 +6957,7 @@ families:
           color_scheme: h60a6
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments, scenes, gradual]
+          segment_color_temp: false
           zones: []
           account_lock: false
           scene_dialect: legacy_scene
@@ -6942,6 +7017,7 @@ families:
             - split_rgbiclight/com/govee/rgbiclight/newdiy/RgbicDiyConfig.java:24-40
             - base-classes11/com/govee/base2light/pact/newdetail/content/scene/BaseSceneViewMode.java:864-903,1152-1200
             - base-classes10/com/govee/base2light/ac/diyNew/config/DiyNewConfig.java:61-65,140-146
+            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
         "207":   # H616C
           models: [H616C]
           pacts: ["1,1", "2,1"]
@@ -6949,6 +7025,7 @@ families:
           color_scheme: h60a6
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments, scenes, gradual]
+          segment_color_temp: false
           zones: []
           account_lock: false
           scene_dialect: legacy_scene
@@ -7011,6 +7088,7 @@ families:
             - split_rgbiclight/com/govee/rgbiclight/newdiy/RgbicDiyConfig.java:24-40
             - base-classes11/com/govee/base2light/pact/newdetail/content/scene/BaseSceneViewMode.java:864-903,1152-1200
             - base-classes10/com/govee/base2light/ac/diyNew/config/DiyNewConfig.java:61-65,140-146
+            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
         "262":   # H6169
           models: [H6169]
           pacts: ["2,1"]
@@ -7018,6 +7096,7 @@ families:
           color_scheme: h60a6
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments, scenes, gradual]
+          segment_color_temp: false
           zones: []
           account_lock: false
           scene_dialect: legacy_scene
@@ -7083,6 +7162,7 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/content/scene/BaseSceneViewMode.java:864-903,1152-1200
             - base-classes10/com/govee/base2light/ac/diyNew/config/DiyNewConfig.java:61-65,140-146
             - split_rgbiclight/com/govee/dreamcolorlightv1/ble/BulbGroupColorV2.java:16-33
+            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
         "193":   # H70A1 / H70A2 / H70A3
           models: [H70A1, H70A2, H70A3]
           pacts: ["1,1", "3,1"]
@@ -7090,6 +7170,7 @@ families:
           color_scheme: h60a6
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments, gradual]
+          segment_color_temp: false
           zones: []
           account_lock: false
           scene_dialect: untraced
@@ -7150,6 +7231,7 @@ families:
             - base-classes10/com/govee/base2light/capability/legacy/LegacyColorCapabilityProvider.java:218-221
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:199-215,252-258
             - base-classes10/com/govee/base2light/colortemp/ColorTemConfig.java:386-389
+            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
         "204":   # H61A9
           models: [H61A9]
           pacts: ["1,1", "2,1"]
@@ -7157,6 +7239,7 @@ families:
           color_scheme: h60a6
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments, gradual]
+          segment_color_temp: false
           zones: []
           account_lock: false
           scene_dialect: untraced
@@ -7211,6 +7294,7 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:240-243,254-269,329-342,402-411,1069-1073,1147-1149
             - base-classes10/com/govee/base2light/capability/legacy/LegacyColorCapabilityProvider.java:218-221
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:199-215,252-258
+            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
         "71":   # no support: pact-dependent read-back (library gaps)
           models: [H618C, H619B, H619C, H619D, H619E, H61A0, H61A1, H61A2, H61A3, H61A5]
           pacts: ["2,1", "2,2", "3,2"]
@@ -7423,6 +7507,7 @@ families:
           pacts: ["1,1", "1,2", "2,1"]
           support: modelled
           capabilities: [power, brightness, rgb, color_temp, segments, gradual]
+          segment_color_temp: false
           zones: []
           account_lock: false
           scene_dialect: untraced
@@ -7498,6 +7583,7 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/ShareVM.java:1362-1364
             - base-classes12/com/govee/common2light/capability/connect/ConnectHeartbeat.java:15-38
             - base-classes9/com/govee/base2home/ota/OtaType.java:69-118
+            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
       wire:
         doc: "goodsType 21 on the AcNewDetail: 15 01 = Config.J[0] Yt (Bytes.h / Bytes.r), 0x0b = Config.J[3] cu (Bytes.d) below the part-brightness gate; read-back Controller4ColorInfoByGroup over 15 pieces: aa a5 4-byte records 3 a frame (Support.d = 3) with part brightness, else aa a2 3-byte records 4 a frame; aa 14 on this screen is the Wi-Fi MAC read (ControllerWifiMacAddress default 0x14, ControllerStrategyConfig.V1), the 0x14 gradual is the legacy BleProtocol's (split_rgbiclight/com/govee/dreamcolorlightv2/ble/BleProtocol.java:6), which the screen never sends"
         forms: { f_01: light, f_09: datetime_epoch, f_14: wifi_mac, f_a2: bulb_batch_v1, f_a5: bulb_batch_v2, f_0b: rgb_mask, f_15_01: kelvin_tint }
@@ -7863,6 +7949,7 @@ families:
           power_read: aa01
           power_live: [heartbeat_aa01]
           capabilities: [power, brightness, rgb, color_temp, segments, scenes]
+          segment_color_temp: false
           zones: []
           account_lock: false
           scene_dialect: legacy_scene
@@ -7960,6 +8047,7 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/TimerConfig.java:169-182
             - base-classes11/com/govee/base2light/pact/newdetail/content/scene/BaseSceneViewMode.java:864-903
             - split_rgbiclight/com/govee/rgbiclight/newdiy/RgbicDiyConfig.java:24-40
+            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
         "332":   # H6671 / H6672, AcNewDetailH667172 (VM4LightH667172), the 0xAC status read
           models: [H6671, H6672]
           pacts: ["1,1", "2,1"]
@@ -7970,6 +8058,7 @@ families:
           power_live: [push_30]
           mode_color_parse: gradual_15   # 0xAC TLV 0x05 and the off->on aa 05 alike; split_rgbiclight/com/govee/rgbiclight/h667172/Info4DetailH667172.java:348
           capabilities: [power, brightness, rgb, color_temp, segments]
+          segment_color_temp: false
           zones: []
           account_lock: false
           scene_dialect: untraced
@@ -8039,6 +8128,7 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:98-130,172-182,315-326,474-501
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:119-122,193-200,240-242,254-269,329-342,401-411
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:199-215,250-258
+            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
         "351":   # H617G (R617G by the catalogue), the rgbiclight AcNewDetail screen (VM4Light), the 0xAC status read
           models: [H617G]
           connectivity: [ble]
@@ -8049,6 +8139,7 @@ families:
           power_read: ac_status
           power_live: [heartbeat_aa01]
           capabilities: [power, brightness, rgb, color_temp, segments]
+          segment_color_temp: false
           zones: []
           account_lock: false
           scene_dialect: untraced
@@ -8121,6 +8212,7 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:98-130,172-182,315-326,474-501
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:119-122,193-200,240-242,254-269,329-342,401-411,854-858,1104,1606-1608
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:199-215,250-258
+            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
         "352":   # H618G (R618D by the catalogue), the rgbiclight AcNewDetail screen (VM4Light), the 0xAC status read
           models: [H618G]
           pacts: ["1,1", "1,2"]
@@ -8130,6 +8222,7 @@ families:
           power_read: ac_status
           power_live: [heartbeat_aa01]
           capabilities: [power, brightness, rgb, color_temp, segments]
+          segment_color_temp: false
           zones: []
           account_lock: false
           scene_dialect: untraced
@@ -8171,6 +8264,7 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/ColorPieceConfig.java:256-259,354-452
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:1145-1149,2447-2451,4610-4614,5779-5783,10632-10635,11990-11993,12592-12595,16823-16826
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:401-411,869-873,1104,1658-1660
+            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
       wire:
         forms: { f_01: light, f_09: datetime_epoch }
         by_goods_type:
@@ -8863,6 +8957,7 @@ families:
           pacts: ["10,1", "10,2", "10,3"]
           support: app_traced
           capabilities: [power, brightness, rgb, color_temp, segments, gradual]
+          segment_color_temp: false
           zones: []
           account_lock: false
           scene_dialect: untraced
@@ -8960,6 +9055,7 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4Off2On.java:45-81,99-107
             - base-classes12/com/govee/common2light/capability/connect/ConnectHeartbeat.java:15-38
             - base-classes11/com/govee/base2light/kt/comm/Info4BleIotDevice.java:208-218,295-297,351-353,366-368,585-587
+            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
       wire:
         doc: "Both goodsTypes on the AcNewDetail: 15 01 = Config.J[0] Yt (Bytes.h / Bytes.r), 0x0b = Config.J[3] cu (Bytes.d, 13 below its firmware gate only), segment brightness 15 02 = Config.L[0] (Bytes.G); read-back Controller4ColorInfoByGroup (VM4Light.N5) over 15 pieces: aa a5 4-byte [bri, R, G, B] records 3 a frame under part brightness (17 at its BK pacts; 13 above its gate), else aa a2 3-byte [R, G, B] records 4 a frame"
         forms: { f_01: light, f_09: datetime_epoch, f_a2: bulb_batch_v1, f_a5: bulb_batch_v2, f_0b: rgb_mask, f_15_01: kelvin_tint }
@@ -9609,6 +9705,7 @@ families:
           color_scheme: h60a6
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments, scenes]
+          segment_color_temp: false
           zones: []
           account_lock: false
           scene_dialect: legacy_scene
@@ -9702,6 +9799,7 @@ families:
             - base-classes11/com/govee/base2light/kt/general_parser/DefParser.java:76-81,304-311
             - base-classes13/com/govee/encryp/ble/EncryptionUtils.java:32-37
             - base-classes13/com/govee/db/memory/model/BleBroadVersionCache.java:182-198
+            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
         "312":   # H60B2, the AcNewDetail screen; no support: its sub-light switch is a library gap (straightfloorlamp.md)
           models: [H60B2]
           pacts: ["1,1"]
@@ -9758,6 +9856,7 @@ families:
           color_scheme: h60a6
           color_functions: [segment_brightness, color_temperature]   # Config.I[377] = AQ = all five on
           capabilities: [power, brightness, rgb, color_temp, segments, gradual]
+          segment_color_temp: false
           zones: []
           account_lock: false
           scene_dialect: untraced
@@ -9817,6 +9916,7 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:240-243,329-342,380-388,400-410,899-903,1104,1730-1732
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:63-85,199-214,252-258
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/ColorPieceConfig.java:354-383,1016-1018,1606-1613
+            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
       wire_cipher: runtime
       wire:
         doc: "aa a5 groups after every aa 05 (adjust/VM4Light.java:481-521); pieces / group size Support.java:89-110, 143-148"
@@ -10070,6 +10170,7 @@ families:
           power_live: [heartbeat_aa01, push_30]
           mode_color_parse: kelvin_15   # 0x15 only; split_rgbiclight/com/govee/h7090/adjust/newDetail/Info4Detail.java:118-161
           capabilities: [power, brightness, rgb, color_temp, segments, gradual]
+          segment_color_temp: false
           zones: []
           account_lock: false
           scene_dialect: untraced
@@ -10130,6 +10231,7 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:193-200,240-243,254-269,329-342,402-411
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:199-215,252-259
             - base-classes11/com/govee/base2light/group/AbsGroupFactor.java:109
+            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
       wire:
         forms: { f_01: light, f_09: datetime_epoch, f_a5: color_group }
         group: { rule: fixed }
@@ -10175,6 +10277,7 @@ families:
           support: modelled   # traced, held: in CCT the app keeps the tint fill as the segment colours (VM4Light.i5), the library the aa a5 RGB (doc)
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments, gradual]
+          segment_color_temp: false
           zones: []
           account_lock: false
           scene_dialect: untraced
@@ -10233,6 +10336,7 @@ families:
             - base-classes10/com/govee/base2light/capability/legacy/LegacyColorCapabilityProvider.java:62-68,218-221,235-241,260-263
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:199-215,252-259
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/TimerConfig.java:169-182
+            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
         "127":   # H7095; no support: its left / right switch (33 33 nibble pair) and the aa 33 / aa 31 connect reads are not built by the library
           models: [H7095]
           pacts: ["1,1"]
@@ -10324,6 +10428,7 @@ families:
           pacts: ["1,1"]
           support: modelled   # traced on 7.5.12 only; 7.7.02 ships the screen in the uncaptured pact_h604a module (doc)
           capabilities: [power, brightness, rgb, color_temp, segments, gradual]
+          segment_color_temp: false
           zones: []
           account_lock: false
           scene_dialect: untraced
@@ -10381,11 +10486,13 @@ families:
             - govee-apk-decompiled/sources/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:67-104,228-235,904-927
             - govee-apk-decompiled/sources/com/govee/base2light/pact/newdetail/config/fuc/ColorPieceConfig.java:75-170,603-605,1122-1141
             - govee-apk-decompiled/sources/com/govee/base2light/pact/newdetail/content/color/DelegateColor.java:506-515
+            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
         "133":   # H604D, strip only (no zone UI)
           models: [H604D]
           pacts: ["1,1"]
           support: modelled   # as 109: traced on 7.5.12 only (doc)
           capabilities: [power, brightness, rgb, color_temp, segments, gradual]
+          segment_color_temp: false
           zones: []
           account_lock: false
           scene_dialect: untraced
@@ -10410,6 +10517,7 @@ families:
             - govee-apk-decompiled/sources/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:1608-1613,7233-7238,13531-13534
             - govee-apk-decompiled/sources/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:737-742,1726-1728
             - govee-apk-decompiled/sources/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:922-927,1177-1180
+            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
         "95":   # H604A: strip + two lamps, independently switched; no support (the 33 36 three-zone form is a library gap)
           models: [H604A]
           pacts: ["1,1"]
@@ -10880,6 +10988,7 @@ families:
           support: app_traced
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments, scenes]
+          segment_color_temp: true
           zones: []
           account_lock: false
           scene_dialect: legacy_scene
@@ -10927,6 +11036,7 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/content/scene/BaseSceneViewMode.java:864-903,1152-1200
             - base-classes10/com/govee/base2light/ac/diyNew/config/DiyNewConfig.java:61-65,140-146
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:315-326,474-501
+            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
       wire_cipher: runtime
       wire:
         forms: { f_01: light, f_09: datetime_epoch, f_41: power_memory, f_a5: color_group, f_15_01: kelvin_tint, f_ee_30: main_bit0_a }
@@ -11561,6 +11671,7 @@ families:
           support: modelled   # traced, held: the status TLV 0xA5 colour read-back placement is inferred (doc)
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments]
+          segment_color_temp: false
           zones: []
           account_lock: false
           scene_dialect: untraced
@@ -11639,6 +11750,7 @@ families:
             - base-classes10/com/govee/base2light/capability/legacy/LegacyColorCapabilityProvider.java:151-154,178-181,294-297
             - base-classes11/com/govee/base2light/pact/newdetail/sub/SubMode4Color.java:41-48,180-201
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/ModeConfig$Companion$checkLocalSkuComponentsConfigs$2.java:55
+            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
       wire_cipher: runtime
       wire:
         forms: { f_01: light, f_09: datetime_epoch, f_15_01: kelvin_tint, f_a5: color_group, f_ee_30: main_bit0_a }
@@ -12401,6 +12513,7 @@ families:
           mode_color_parse: kelvin_15   # newdetail/h70c1c2cb/H70C1C2CBDetailInfo.java:127-135, 414-441
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments, gradual]
+          segment_color_temp: false
           zones: []
           account_lock: false
           scene_dialect: untraced
@@ -12448,6 +12561,7 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:315-326,474-501,564-566
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/ColorPieceConfig.java:256-259,354-396,873-877,926-928,1418-1428
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:329-342,401-411
+            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
         "260":   # the H70C4NewDetailActivity screen (adjust/new_detail DetailViewModel)
           models: [H70C4, H70C5, H70C7, H70C9, H7084, H6870, H6871, R6871, H80C4]   # H7084's tie is medium (H70CDiyConfig only)
           pacts: ["1,1"]
@@ -12457,6 +12571,7 @@ families:
           mode_color_parse: kelvin_15   # adjust/new_detail/Info4Detail.java:687-713
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments, gradual]
+          segment_color_temp: true
           zones: []
           account_lock: false
           scene_dialect: untraced
@@ -12509,6 +12624,7 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4InfoBleIot$iControllerStrategy$1.java:154-251
             - base-classes11/com/govee/base2light/pact/newdetail/ShareVM.java:1005-1009,1362-1364
             - base-classes10/com/govee/base2light/ble/BleUtil.java:474-486
+            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
         "362":   # H6860 / R6860 / H6861 / R6861, the H6860DetailActivity screen
           models: [H6860, R6860, H6861, R6861]
           pacts: ["1,1"]
@@ -12518,6 +12634,7 @@ families:
           mode_color_parse: gradual_15   # 0xAC TLV 0x05 reads the gradual byte only; h6860/H6860Info4Detail.java:123-130, 412-449
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments]
+          segment_color_temp: true
           zones: []
           account_lock: false
           scene_dialect: untraced
@@ -12559,6 +12676,7 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:315-326,474-501
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:401-411,894-898,1718-1720
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:63-86,863-867,1181-1184
+            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
         "374":   # H6350, the H6350DetailActivity screen
           models: [H6350]
           pacts: ["1,1"]
@@ -12614,6 +12732,7 @@ families:
           mode_color_parse: gradual_15   # 0xAC TLV 0x05, gradual byte only; h6850/H6850Info4Detail.java:123-131, 412-449
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments]
+          segment_color_temp: true
           zones: []
           account_lock: false
           scene_dialect: untraced
@@ -12649,6 +12768,7 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:401-411,954-958,1458-1460
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:63-86,873-877,1201-1204
             - base-classes11/com/govee/base2light/pact/newdetail/ShareVM.java:1348-1350,1362-1364
+            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
         "392":   # H6351, the H6350DetailActivity screen (as 374)
           models: [H6351]
           pacts: ["1,1"]
@@ -13240,6 +13360,7 @@ families:
           support: app_traced
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments]
+          segment_color_temp: false
           zones: []
           account_lock: false
           scene_dialect: untraced
@@ -13302,12 +13423,14 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:193-200,253-260,329-342,401-411
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:63-85,199-215,251-259,758-772,1501-1504
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/ColorPieceConfig.java:354-395,873-876,926-927,1418-1428
+            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
         "268":   # H70D2, as 267
           models: [H70D2]
           pacts: ["1,1", "2,1"]
           support: app_traced
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments]
+          segment_color_temp: false
           zones: []
           account_lock: false
           scene_dialect: untraced
@@ -13327,12 +13450,14 @@ families:
             - base-classes2/com/govee/shared/checker/KmpGoodsType.java:264-266
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:1191-1195,2562-2566,3856-3860,4690-4694,5799-5803,12046-12049,15147-15150,15641-15644,9005-9008
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:763-767,1516-1519
+            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
         "269":   # H70D3, as 267
           models: [H70D3]
           pacts: ["1,1", "2,1"]
           support: app_traced
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments]
+          segment_color_temp: false
           zones: []
           account_lock: false
           scene_dialect: untraced
@@ -13352,6 +13477,7 @@ families:
             - base-classes2/com/govee/shared/checker/KmpGoodsType.java:264-266
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:1196-1200,2567-2571,3861-3865,4695-4699,5804-5808,12202-12205,15302-15305,15796-15799,9164-9167
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:768-772,901-904
+            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
       wire_cipher: runtime
       wire:
         doc: "status lambda: TLV 0xA3 byte 0 (split_h70b1/com/govee/h70dx/vm/VM4H70DX.java:517-518)"
@@ -13395,6 +13521,7 @@ families:
           power_live: [heartbeat_aa01, push_30]
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments, gradual]
+          segment_color_temp: true
           zones: []
           account_lock: false
           scene_dialect: untraced
@@ -13458,6 +13585,7 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:240-242,254-269,329-342,401-411
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:63-85,199-215,251-259
             - base-classes11/com/govee/base2light/pact/newdetail/header/DelegateHeader.java:492-495
+            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
         "240":   # H705D / H705E / H705F / H805A / H805B / H805C / H805D, the newDetail AcNewDetail screen (VM4Light)
           models: [H705D, H705E, H705F, H805A, H805B, H805C, H805D]
           pacts: ["1,1", "1,2", "2,1"]
@@ -13467,6 +13595,7 @@ families:
           power_live: [push_30]
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments, gradual]
+          segment_color_temp: false
           zones: []
           account_lock: false
           scene_dialect: untraced
@@ -13524,6 +13653,7 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/ColorPieceConfig.java:1058-1062,1636-1639
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:240-242,254-269,329-342,401-411,438-442,1207-1209
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:63-85,199-215,251-259
+            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
         "180":   # H706A / H706B / H706C / H806A / H806C, the newDetail AcNewDetail screen with ColorModeV2: blocked (see doc)
           models: [H706A, H706B, H706C, H806A, H806C]
           pacts: ["1,1", "1,2", "2,1"]
@@ -13579,6 +13709,7 @@ families:
           power_live: [push_30]
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments]
+          segment_color_temp: false
           zones: []
           account_lock: false
           scene_dialect: untraced
@@ -13630,6 +13761,7 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/ColorPieceConfig.java:62-131,256-259,354-367,1036-1038,1677-1722
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:240-242,254-269,329-342,401-411,539-543,1377-1379
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:63-85,199-215,251-259
+            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
         "184":   # H608A / H608B / H608C / H608D / H808A, the AcNewDetail4H608A screen (VM4H608A)
           models: [H608A, H608B, H608C, H608D, H808A]
           pacts: ["1,1", "2,1"]
@@ -13640,6 +13772,7 @@ families:
           power_live: [heartbeat_aa01]
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments, gradual]
+          segment_color_temp: true
           zones: []
           account_lock: false
           scene_dialect: untraced
@@ -13693,6 +13826,7 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:172-181,315-326,474-501,564-566
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:240-242,254-269,329-342,401-411
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:63-85,199-215,251-259
+            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
         "394":   # H3401, the H3401DetailActivity screen (H3401DetailVM)
           models: [H3401]
           pacts: ["1,1"]
@@ -13703,6 +13837,7 @@ families:
           power_read: ac_status
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments]
+          segment_color_temp: true
           zones: []
           account_lock: false
           scene_dialect: untraced
@@ -13748,6 +13883,7 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:172-181,315-326,474-501
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:240-242,254-269,329-342,401-411,1054-1058,1734-1736
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:63-85,199-215,883-887,1221-1224
+            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
       wire:
         forms: { f_01: light, f_09: datetime_epoch }
         by_goods_type:
@@ -14152,6 +14288,7 @@ families:
           color_scheme: h60a6   # pacts (2,1)-(4,1): Config.x[24] = pu -> 0 -> Config.J[0] = Yt (Bytes.h / Bytes.r type 1); (1,1) -> J[6] = eu -> Bytes.c
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments, gradual]
+          segment_color_temp: false
           zones: []
           account_lock: false
           scene_dialect: untraced
@@ -14220,6 +14357,7 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/content/illumination/View4IlluminationMode.java:613-640
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:63-114,199-215,252-259,743-747,898,1431-1434
             - base-classes11/com/govee/base2light/kt/general_controller/Controller4ColorInfoByGroup.java:37-49,111-131,145-175
+            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
       wire:
         doc: "colour groups: aa a5 [group 1..4], 4 records of [brightness, R, G, B] over Support.getBulbStringMaxNum = 15 pieces, Support.getOneGroupColorSize = 4 (split_tvlightv4/com/govee/pact_tvlightv2/pact/Support.java:100-122; VM4Light.n5); ee 30 switch push [detail][flags_a] read as bit 0 of flags_a (DefParser.O getBit2Boolean(value[1], 1))"
         forms: { f_01: light, f_09: datetime_epoch, f_a5: color_group, f_ee_30: main_bit0_a }
@@ -14635,6 +14773,7 @@ families:
           power_live: [heartbeat_aa01]
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments, gradual]
+          segment_color_temp: false
           zones: []
           account_lock: false
           scene_dialect: untraced
@@ -14660,8 +14799,10 @@ families:
             ConnectHeartbeat type 1 = aa 01, whose reply byte 2 sets the switch (ShareVM.N3); the ee 30 push sets
             power only where I3 is false. Colour: the default DelegateColorV2 with the H605CColorMode strip;
             Config.I[120] all flags on; Config.x[120] = 0 -> Config.J[0] = Yt: Bytes.h, or Bytes.r (white type
-            Config.P = 1) for a Kelvin tint (the Kelvin tab sends the tint over the piece selection,
-            H605CColorMode.canClickColorTem -> canClickColor, ColorViewModel.U); no Config.A / C entry, so the strip sends the per-colour 15 01 masks, its brightness
+            Config.P = 1) for a Kelvin tint (the All tab sends the Kelvin's tint over every piece, DelegateColorV2.G0 ->
+            ColorViewModel.U; 120 is not in SupportPartColorTemConfig.d, so the Part tab has no Kelvin item and
+            H605CColorMode.canClickColorTem is never reached: segment_color_temp false); no Config.A / C entry, so the
+            strip sends the per-colour 15 01 masks, its brightness
             Bytes.G groups (Config.i0[120] -> ColorModeControllerConfig.z). 14 pieces (Support.getColorPieceSize,
             ColorPieceConfig.j set P). Kelvin: no KelvinConfig entry, version 0 = [2000, 9000]. Brightness
             BrightnessConfig.b -> ControllerBrightness, percent. Gradual: Config.G[120] = 0 -> Bytes.w (33 a3), read
@@ -14690,6 +14831,7 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/ColorPieceConfig.java:385-387,945-947,1451-1471
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:193-200,240-242,254-268,402-411
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:63-85,199-215,252-259
+            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
         "138":   # H6601 (NewDetailHdmiAc, light-bar kit). Blocked: three switched zones, 33 36 [index, state] with an aa 07 08 read-back (gap)
           models: [H6601]
           pacts: ["1,1", "2,1"]
@@ -14730,6 +14872,7 @@ families:
           power_live: [push_30]
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments, gradual]
+          segment_color_temp: false
           zones: []
           account_lock: false
           scene_dialect: untraced
@@ -14757,13 +14900,16 @@ families:
             on; Config.x = 0 -> Config.J[0] = Yt: Bytes.h, or Bytes.r (white type Config.P = 1) for a Kelvin tint;
             segment brightness Bytes.G. The colour strip sends 15 04 groups (Config.A = 1, Bytes.m) with 15 03
             brightness groups, where the library's h60a6 scheme sends per-colour 15 01 masks (a divergence, not a
-            missing frame, as on pact_h6099 203). The Kelvin slider always selects all 14 pieces
-            (ColorMode14Rect4ReverseSelect.canClickColorTem, built with w false by HdmiDetailConfig), so its Kelvin goes
-            out with the full mask (set_color_temp is byte-identical). A partial-mask Bytes.r still goes out when a
-            colour pick on the selected pieces is an in-range tint colour: canClickColor returns the piece selection
-            whatever w, and ColorViewModel.p0 -> ColorModeControllerConfig.c -> Config.Yt sends Bytes.r over it
-            (KelvinConfig.i). So set_segment_color_temp's sub-mask frame is one the screen sends, through that pick
-            rather than the slider (a scoping note, same bytes). 14 pieces (Support.getColorPieceSize, ColorPieceConfig.j
+            missing frame, as on pact_h6099 203). The screen's Kelvin item sends the full mask only: the All tab's
+            covers every piece (DelegateColorV2.G0), and 142 is not in SupportPartColorTemConfig.d, so the Part tab
+            has no Kelvin item (whose ColorMode14Rect4ReverseSelect.canClickColorTem, built with w false by
+            HdmiDetailConfig, would select all 14 pieces too); segment_color_temp false, so
+            Device.set_segment_color_temp refuses and set_color_temp sends the screen's frame. A partial-mask Bytes.r
+            still goes out when a colour pick on the selected pieces is an in-range tint colour: canClickColor returns
+            the piece selection whatever w, and ColorViewModel.p0 -> ColorModeControllerConfig.c -> Config.Yt sends
+            Bytes.r over it (KelvinConfig.i). The library sends that frame from set_segment_rgb with a tint colour
+            (build.rgb_as_kelvin), whatever segment_color_temp says (a scoping note, same bytes). 14 pieces
+            (Support.getColorPieceSize, ColorPieceConfig.j
             set P). Kelvin: no KelvinConfig entry, version 0 = [2000, 9000]. Brightness BrightnessConfig.b ->
             ControllerBrightness, percent. Gradual: Config.G[142] = 0 -> Bytes.w (33 a3), read at connect. Scenes
             untraced. Not hardware-verified.
@@ -14791,6 +14937,7 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/ColorPieceConfig.java:385-387,945-947,1451-1471
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:193-200,240-242,254-268,402-411
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:63-85,199-215,252-259
+            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
         "172":   # H6608 (NewDetailAc). Blocked: three switched zones, 33 36 [index, state] with an aa 07 08 read-back (gap)
           models: [H6608]
           pacts: ["1,1"]
@@ -14860,6 +15007,7 @@ families:
           power_live: [push_30]
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments, gradual]
+          segment_color_temp: false
           zones: []
           account_lock: false
           scene_dialect: untraced
@@ -14880,11 +15028,11 @@ families:
             discarded (stored only, Info4Detail.R0; ic_pieces fixed), the direct aa a5 groups 1..4 of 4, 33 01 only
             (HdmiDetailConfig.b false: no lamp switch, zones none), aa 00 heartbeat with the ee 30 bit 0 power push,
             Config.x = 0 Yt (Bytes.h / Bytes.r type 1), Config.I all on, the 15 04 strip groups (Config.A = 1) against
-            the library's per-colour 15 01 masks, the Kelvin slider over all 14 pieces
-            (ColorMode14Rect4ReverseSelect w false) and a partial-mask Bytes.r only from an in-range tint-colour pick
-            on the selected pieces (canClickColor -> ColorViewModel.p0 -> Config.Yt: the frame
-            set_segment_color_temp sends, a scoping note), 14 pieces, Kelvin version 0 = [2000, 9000], percent
-            brightness, gradual
+            the library's per-colour 15 01 masks, the Kelvin item over all 14 pieces only (the All tab's; 243 is not
+            in SupportPartColorTemConfig.d, so the Part tab has no Kelvin item: segment_color_temp false) and a
+            partial-mask Bytes.r only from an in-range tint-colour pick on the selected pieces (canClickColor ->
+            ColorViewModel.p0 -> Config.Yt: set_segment_rgb's tint frame, build.rgb_as_kelvin, a scoping note), 14
+            pieces, Kelvin version 0 = [2000, 9000], percent brightness, gradual
             Config.G = 0 (33 a3). The aa 41 power-off memory read (supportOffMemory) is a setting read left out.
             Scenes untraced. Not hardware-verified.
           doc-ref:
@@ -14908,6 +15056,7 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/ColorPieceConfig.java:385-387,1451-1471
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:254-268,402-411
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:199-215,252-259
+            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
         "360":   # H2A40, NewDetailAc with the H2A40 header (camera calibration only)
           models: [H2A40]
           pacts: ["1,1"]
@@ -14915,6 +15064,7 @@ families:
           power_live: [push_30]
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments, gradual]
+          segment_color_temp: false
           zones: []
           account_lock: false
           scene_dialect: untraced
@@ -14943,8 +15093,10 @@ families:
             Config.J[0] = Yt: Bytes.h, or Bytes.r (white type Config.P = 1) for a Kelvin tint; segment brightness
             Bytes.G. The colour strip sends 15 04 groups (Config.A = 1, Bytes.m) with 15 03 brightness groups, where
             the library's h60a6 scheme sends per-colour 15 01 masks (a divergence, not a missing frame, as on
-            pact_h6099 203). The Kelvin tap follows the piece selection (ColorMode14Rect4ReverseSelect built with w
-            true by DetailConfigH2A40), so segment Kelvin is the app's. 14 pieces (Support.getColorPieceSize,
+            pact_h6099 203). Colour temperature covers every piece, from the All tab (DelegateColorV2.G0): 360 is
+            not in SupportPartColorTemConfig.d, so the Part tab has no Kelvin item, and the strip's canClickColorTem
+            (ColorMode14Rect4ReverseSelect built with w true by DetailConfigH2A40, which would follow the piece
+            selection) is never reached (segment_color_temp false). 14 pieces (Support.getColorPieceSize,
             ColorPieceConfig.j set P). Kelvin: KelvinConfig version 0 for 360 = [2000, 9000]. Brightness percent. Gradual: Config.G[360] = 0 -> Bytes.w (33 a3), read at
             connect. Scenes untraced (its own DelegateSceneV2). The realtime colour (Config.g0) and segment real-colour
             (Config.h0) flags are not modelled. Not hardware-verified.
@@ -14969,6 +15121,7 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/ColorPieceConfig.java:385-387,1451-1471
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:254-268,402-411,904-908,1742-1744
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:199-215,252-259
+            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
       wire:
         doc: "colour groups: NewDetailVm.K5 / NewDetailHdmiVm.B5 read ceil(getColorPieceSize / 4) direct aa a5 groups of getOneGroupColorSize = 4 (split_h6099/com/govee/pact_h605b/pact/Support.java:149-166,189-191); ee 30 [01][flags]: bit 0 power, bits 1 / 2 / 3 left / right / middle (NewDetailVm.P5, NewDetailHdmiVm.H5; BleUtil.parseBytes4Bit index 7 = bit 0)"
         forms: { f_01: light, f_09: datetime_epoch, f_a5: color_group, f_15_01: kelvin_tint, f_ee_30: generic_flags }
@@ -15018,6 +15171,7 @@ families:
           support: app_traced
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments, gradual]
+          segment_color_temp: true
           zones: []
           account_lock: false
           scene_dialect: untraced
@@ -15059,6 +15213,7 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:240-242,254-268,329-342,402-407
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:63-85,199-215,252-259
             - base-classes11/com/govee/base2light/pact/newdetail/content/colorv2/DelegateColorV2.java:219-233,764-776,816-850
+            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
         "203":   # H6098 / H8098, the pact_h6099 detail screen (NewDetailVm)
           models: [H6098, H8098]
           power_read: aa01
@@ -15067,6 +15222,7 @@ families:
           support: app_traced
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments, scenes, gradual]
+          segment_color_temp: true
           zones: []
           account_lock: false
           scene_dialect: legacy_scene
@@ -15128,6 +15284,7 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/content/color/ColorViewModel.java:1133-1147
             - split_h6099/com/govee/pact_h6099/pact/Model.java:42-51
             - base-classes11/com/govee/base2light/pact/newdetail/ShareVM.java:1348-1350
+            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
         "336":   # H6690, the pact_h6099 detail screen (NewDetailVm)
           models: [H6690]
           power_read: aa01
@@ -15136,6 +15293,7 @@ families:
           support: app_traced
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments, scenes, gradual]
+          segment_color_temp: true
           zones: []
           account_lock: false
           scene_dialect: legacy_scene
@@ -15192,6 +15350,7 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/content/color/ColorViewModel.java:1133-1147
             - split_h6099/com/govee/pact_h6099/pact/Model.java:42-51
             - base-classes11/com/govee/base2light/pact/newdetail/ShareVM.java:1348-1350
+            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
         "327":   # H66A0, the pact_h6099 detail screen (NewDetailVm), as 203 / 336
           models: [H66A0]
           power_read: aa01
@@ -15200,6 +15359,7 @@ families:
           support: app_traced
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments, gradual]
+          segment_color_temp: true
           zones: []
           account_lock: false
           scene_dialect: untraced
@@ -15241,6 +15401,7 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:63-85,199-215,252-259
             - base-classes11/com/govee/base2light/pact/newdetail/content/colorv2/DelegateColorV2.java:219-233,253-266,327-346,764-776,816-850
             - base-classes11/com/govee/base2light/pact/newdetail/content/color/ColorViewModel.java:1253-1281
+            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
         "273":   # H6097, H6097DetailActivity (VM4Light)
           models: [H6097]
           power_read: aa01
@@ -15249,6 +15410,7 @@ families:
           support: app_traced
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments, gradual]
+          segment_color_temp: true
           zones: []
           account_lock: false
           scene_dialect: untraced
@@ -15301,6 +15463,7 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/content/color/ColorViewModel.java:693-715
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:240-242,254-268,329-342,402-407
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:63-85,199-215,252-259
+            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
         "253":   # H605A, H605ANewDetail (H605ADetailViewModel); no support: three independently switched lamps (gap)
           models: [H605A]
           power_read: aa01
@@ -15498,6 +15661,7 @@ families:
           support: app_traced
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments, scenes]
+          segment_color_temp: true
           zones: []
           account_lock: false
           scene_dialect: legacy_scene
@@ -15546,12 +15710,14 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:63-85,199-215,252-259
             - base-classes11/com/govee/base2light/pact/newdetail/content/scene/BaseSceneViewMode.java:864-903,1152-1200
             - base-classes10/com/govee/base2light/ac/diyNew/config/DiyNewConfig.java:61-65,140-146
+            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
         "55":   # B7081
           models: [B7081]
           pacts: ["2,1"]
           support: app_traced
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments, scenes]
+          segment_color_temp: true
           zones: []
           account_lock: false
           scene_dialect: legacy_scene
@@ -15600,12 +15766,14 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:63-85,199-215,252-259
             - base-classes11/com/govee/base2light/pact/newdetail/content/scene/BaseSceneViewMode.java:864-903,1152-1200
             - base-classes10/com/govee/base2light/ac/diyNew/config/DiyNewConfig.java:61-65,140-146
+            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
         "56":   # B7082
           models: [B7082]
           pacts: ["2,1"]
           support: app_traced
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments, scenes]
+          segment_color_temp: true
           zones: []
           account_lock: false
           scene_dialect: legacy_scene
@@ -15654,6 +15822,7 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:63-85,199-215,252-259
             - base-classes11/com/govee/base2light/pact/newdetail/content/scene/BaseSceneViewMode.java:864-903,1152-1200
             - base-classes10/com/govee/base2light/ac/diyNew/config/DiyNewConfig.java:61-65,140-146
+            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
       wire:
         forms: { f_01: light, f_09: datetime_epoch, f_a5: color_group }
         group: { rule: fixed, num_per_group: 3 }
@@ -15699,6 +15868,7 @@ families:
           support: app_traced
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments, scenes]
+          segment_color_temp: false
           zones: []
           account_lock: false
           scene_dialect: legacy_scene
@@ -15747,6 +15917,7 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:63-85,252-259,848-852,1141-1144
             - base-classes11/com/govee/base2light/pact/newdetail/content/scene/BaseSceneViewMode.java:864-903,1152-1200
             - base-classes10/com/govee/base2light/ac/diyNew/config/DiyNewConfig.java:61-65,140-146
+            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
       wire_cipher: runtime
       wire:
         forms: { f_01: light, f_09: datetime_epoch, f_41: power_memory, f_a5: color_group, f_15_01: kelvin_tint, f_ee_30: main_bit0_a }
@@ -15791,6 +15962,7 @@ families:
           support: app_traced
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments]
+          segment_color_temp: true
           zones: []
           account_lock: false
           scene_dialect: untraced
@@ -15844,6 +16016,7 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:329-342,398-411,704-708,1104,1199-1201
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:63-86,199-215,252-259
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/ColorPieceConfig.java:354-420,1096-1100,1554-1564
+            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
       wire_cipher: runtime
       wire:
         doc: "status lambda: TLV 0x41 value[1], 0xA5 [group, 4 x {bri, R, G, B}] (Controller4ColorInfoByGroup.q, 4 per group: Support.i), 0xA3 byte 0 (split_outdoorlight/com/govee/h7086/adjust/VM4Light$afterConnectedSingleReadDeviceInfo$1.java:96-135)"
@@ -15891,6 +16064,7 @@ families:
           support: app_traced
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments, scenes]
+          segment_color_temp: true
           zones: []
           account_lock: false
           scene_dialect: legacy_scene
@@ -15907,14 +16081,16 @@ families:
             heartbeat off->on aa 05 re-read is not parsed. No 0xB2 in the connect read (account_lock false; the app's
             control-screen path for it is not cited). The aa 41 read is a setting read left out (decision D2); the
             sync-time write is not listed, as on the H60A6 row. Power: switchTrigger writes the one ControllerSwitch (33
-            01), with no zone switch, so zones none. Colour page: the ColorMode4H6087 strip; Config.e has no 77 entry,
-            so DelegateColor takes the strip's normalFucSupport (gradual off, the other four flags on): no gradual
-            toggle (ColorModeControllerConfig.p also finds no Config.G version for 77), [3] segment brightness and [4]
-            colour temperature on. Frames: colour and the colour page's Kelvin slider both go ColorControllerConfig.d ->
-            Config.J[0] = Yt (Bytes.h, or Bytes.r for a Kelvin tint) with the selected pieces' mask, over 4 pieces
-            (ColorMode4H6087.canClickColorTem; ColorViewModel.applyColorTem falls back to the VM because Config.x has no
-            77); ColorControllerConfig.j -> Config.N[0] (Bytes.C, all pieces) is the illumination tab's builder, which
-            is not traced on this screen; brightness BrightnessConfig.b -> ControllerBrightness, percent (no
+            01), with no zone switch, so zones none. Colour page: the default DelegateColorV2 (DelegateCurMode.B) with
+            the ColorMode4H6087 strip; Config.e has no 77 entry, so DelegateColorV2.C1 takes the strip's normalFucSupport
+            (gradual off, the other four flags on): no gradual toggle (ColorModeControllerConfig.p also finds no Config.G
+            version for 77), [3] segment brightness and [4] colour temperature on. Frames: colour and the Part tab's
+            Kelvin item (77 is in SupportPartColorTemConfig.d, so DelegateColorV2Part.Z0 adds it; DelegateColorV2Part.b1
+            -> ColorMode4H6087.canClickColorTem) both go ColorControllerConfig.d -> Config.J[0] = Yt (Bytes.h, or
+            Bytes.r for a Kelvin tint) with the selected pieces' mask, over 4 pieces, and the All tab's Kelvin
+            (DelegateColorV2.G0) with every piece's (ColorViewModel.applyColorTem falls back to the VM because Config.x
+            has no 77); ColorControllerConfig.j -> Config.N[0] (Bytes.C, all pieces) is the illumination tab's builder,
+            which is not traced on this screen; brightness BrightnessConfig.b -> ControllerBrightness, percent (no
             BrightnessConfig entry). Kelvin: KelvinConfig maps 77 to version 1 = [2200, 6500], the range the colour page
             reads (KelvinConfig.m; Support.getColorTemRange agrees), so kelvin_range is [2200, 6500], not the family
             intersection [2700, 6500]. Scenes: ScenesConfigBean opScenesSet {0, 1, 2, 3}, version (0, 0)
@@ -15932,8 +16108,9 @@ families:
             - split_h7050/com/govee/h7050/adjust/newAdjust/h60616263/NewDetailConfig.java:126-148
             - split_h7050/com/govee/h7050/adjust/newAdjust/h60616263/diy/H6087DiyConfig.java:81
             - split_h7050/com/govee/h7050/H7050ApplicationImp.java:87
-            - base-classes11/com/govee/base2light/pact/newdetail/content/success/DelegateCurMode.java:185-202
-            - base-classes11/com/govee/base2light/pact/newdetail/content/colorv2/DelegateColorV2.java:779-801
+            - base-classes11/com/govee/base2light/pact/newdetail/content/success/DelegateCurMode.java:154,185-202
+            - base-classes11/com/govee/base2light/pact/newdetail/content/colorv2/DelegateColorV2.java:241-253,463-469,779-801,831-835,1036-1040,1295-1303
+            - base-classes11/com/govee/base2light/pact/newdetail/content/colorv2/DelegateColorV2Part.java:317-341,547-549,651-664,686-704
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/ColorModeControllerConfig.java:1016-1019,222-228,985-1008
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:353-367,551-560,12960-12968,5615-5619,9515-9517
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:240-242,254-260,329-342,402-411,664-668,1738-1740
@@ -15943,10 +16120,9 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/content/scene/BaseSceneViewMode.java:864-903,1152-1200
             - base-classes10/com/govee/base2light/ac/diyNew/config/DiyNewConfig.java:61-65,140-146
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:98-130
-            - base-classes11/com/govee/base2light/pact/newdetail/content/color/ViewColorMode.java:596-646
-            - base-classes11/com/govee/base2light/pact/newdetail/content/color/DelegateColor.java:226-229,345-352,476-485
             - base-classes11/com/govee/base2light/pact/newdetail/content/color/ColorViewModel.java:858,883-899,1133-1147
             - base-classes11/com/govee/base2light/pact/newdetail/content/illumination/View4IlluminationMode.java:613-622
+            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
         "157":   # H6088: as 77, 6 pieces in 2 groups
           models: [H6088]
           mode_color_parse: kelvin
@@ -15954,6 +16130,7 @@ families:
           support: app_traced
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments, scenes]
+          segment_color_temp: false
           zones: []
           account_lock: false
           scene_dialect: legacy_scene
@@ -15971,12 +16148,16 @@ families:
             parsed. No 0xB2 in the connect read (account_lock false; the app's control-screen path for it is not cited).
             The aa 41 read is a setting read left out (decision D2); the sync-time write is not listed, as on the H60A6
             row. Power: switchTrigger writes the one ControllerSwitch (33 01), with no zone switch, so zones none.
-            Colour page: the ColorMode4H6088 strip; Config.e has no 157 entry, so DelegateColor takes the strip's
-            normalFucSupport (gradual off, the other four flags on): no gradual toggle (ColorModeControllerConfig.p also
-            finds no Config.G version for 157), [3] segment brightness and [4] colour temperature on. Frames: colour and
-            the colour page's Kelvin slider both go ColorControllerConfig.d -> Config.J[0] = Yt (Bytes.h, or Bytes.r for
-            a Kelvin tint) with the selected pieces' mask, over 6 pieces (ColorMode4H6088.canClickColorTem;
-            ColorViewModel.applyColorTem falls back to the VM because Config.x has no 157); ColorControllerConfig.j ->
+            Colour page: the default DelegateColorV2 (DelegateCurMode.B) with the ColorMode4H6088 strip; Config.e has
+            no 157 entry, so DelegateColorV2.C1 takes the strip's normalFucSupport (gradual off, the other four flags
+            on): no gradual toggle (ColorModeControllerConfig.p also finds no Config.G version for 157), [3] segment
+            brightness and [4] colour temperature on (the All tab's Kelvin item, DelegateColorV2All.m0). Frames: colour
+            and the All tab's Kelvin both go ColorControllerConfig.d -> Config.J[0] = Yt (Bytes.h, or Bytes.r for
+            a Kelvin tint) over 6 pieces (ColorViewModel.applyColorTem falls back to the VM because Config.x has no
+            157): a colour with the selected pieces' mask, the Kelvin over every piece (DelegateColorV2.G0 -> x0 ->
+            ColorViewModel.U), since 157 is not in SupportPartColorTemConfig.d and the Part tab has no Kelvin item
+            (DelegateColorV2Part.Z0 adds it only where LightColorCapabilityCenter.C2 holds, so
+            ColorMode4H6088.canClickColorTem is never reached: segment_color_temp false); ColorControllerConfig.j ->
             Config.N[0] (Bytes.C, all pieces) is the illumination tab's builder, which is not traced on this screen;
             brightness BrightnessConfig.b -> ControllerBrightness, percent (no BrightnessConfig entry). Kelvin:
             KelvinConfig maps 157 to version 2 = [2700, 6500], the family's value (Support.getColorTemRange agrees).
@@ -15996,8 +16177,10 @@ families:
             - split_h7050/com/govee/h7050/adjust/newAdjust/h60616263/NewDetailConfig.java:171-193
             - split_h7050/com/govee/h7050/adjust/newAdjust/h60616263/diy/H6088DiyConfig.java:80
             - split_h7050/com/govee/h7050/H7050ApplicationImp.java:88
-            - base-classes11/com/govee/base2light/pact/newdetail/content/success/DelegateCurMode.java:185-202
-            - base-classes11/com/govee/base2light/pact/newdetail/content/colorv2/DelegateColorV2.java:779-801
+            - base-classes11/com/govee/base2light/pact/newdetail/content/success/DelegateCurMode.java:154,185-202
+            - base-classes11/com/govee/base2light/pact/newdetail/content/colorv2/DelegateColorV2.java:241-253,779-801,831-835,1295-1303
+            - base-classes11/com/govee/base2light/pact/newdetail/content/colorv2/DelegateColorV2All.java:436-466
+            - base-classes11/com/govee/base2light/pact/newdetail/content/colorv2/DelegateColorV2Part.java:651-664,686-704
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/ColorModeControllerConfig.java:1016-1019,222-228,985-1008
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:353-367,551-560,12960-12968,5615-5619,9515-9517
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:240-242,254-260,329-342,402-411,669-673,1750-1752
@@ -16007,10 +16190,9 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/content/scene/BaseSceneViewMode.java:864-903,1152-1200
             - base-classes10/com/govee/base2light/ac/diyNew/config/DiyNewConfig.java:61-65,140-146
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:98-130
-            - base-classes11/com/govee/base2light/pact/newdetail/content/color/ViewColorMode.java:596-646
-            - base-classes11/com/govee/base2light/pact/newdetail/content/color/DelegateColor.java:226-229,345-352,476-485
             - base-classes11/com/govee/base2light/pact/newdetail/content/color/ColorViewModel.java:858,883-899,1133-1147
             - base-classes11/com/govee/base2light/pact/newdetail/content/illumination/View4IlluminationMode.java:613-622
+            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
         "98":   # H7061 two-head flood light, the H70606162DetailVM screen; no aa a5 group reads (support withheld: library gap, the bri_rgb_pair fold)
           models: [H7061]
           pacts: ["1,1"]
@@ -16089,6 +16271,7 @@ families:
           support: app_traced
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments, scenes]
+          segment_color_temp: false
           zones: []
           account_lock: false
           scene_dialect: legacy_scene
@@ -16135,12 +16318,14 @@ families:
             - split_h7050/com/govee/h7050/H7050ApplicationImp.java:89-94
             - base-classes11/com/govee/base2light/pact/newdetail/content/scene/BaseSceneViewMode.java:864-903,1152-1200
             - base-classes10/com/govee/base2light/ac/diyNew/config/DiyNewConfig.java:61-65,140-146
+            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
         "76":   # H7060, the H70606162DetailVM screen
           models: [H7060]
           pacts: ["1,1"]
           support: app_traced
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments, scenes]
+          segment_color_temp: false
           zones: []
           account_lock: false
           scene_dialect: legacy_scene
@@ -16182,12 +16367,14 @@ families:
             - split_h7050/com/govee/h7050/H7050ApplicationImp.java:89-94
             - base-classes11/com/govee/base2light/pact/newdetail/content/scene/BaseSceneViewMode.java:864-903,1152-1200
             - base-classes10/com/govee/base2light/ac/diyNew/config/DiyNewConfig.java:61-65,140-146
+            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
         "105":   # H7051, the h7050515253 NewDetailVM screen
           models: [H7051]
           pacts: ["1,1"]
           support: app_traced
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments, scenes]
+          segment_color_temp: false
           zones: []
           account_lock: false
           scene_dialect: legacy_scene
@@ -16227,12 +16414,14 @@ families:
             - split_h7050/com/govee/h7050/H7050ApplicationImp.java:89-94
             - base-classes11/com/govee/base2light/pact/newdetail/content/scene/BaseSceneViewMode.java:864-903,1152-1200
             - base-classes10/com/govee/base2light/ac/diyNew/config/DiyNewConfig.java:61-65,140-146
+            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
         "107":   # H7062, the H70606162DetailVM screen
           models: [H7062]
           pacts: ["1,1"]
           support: app_traced
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments, scenes]
+          segment_color_temp: false
           zones: []
           account_lock: false
           scene_dialect: legacy_scene
@@ -16271,12 +16460,14 @@ families:
             - split_h7050/com/govee/h7050/H7050ApplicationImp.java:89-94
             - base-classes11/com/govee/base2light/pact/newdetail/content/scene/BaseSceneViewMode.java:864-903,1152-1200
             - base-classes10/com/govee/base2light/ac/diyNew/config/DiyNewConfig.java:61-65,140-146
+            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
         "113":   # H7065, the h7050515253 NewDetailVM screen
           models: [H7065]
           pacts: ["1,1"]
           support: app_traced
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments, scenes]
+          segment_color_temp: false
           zones: []
           account_lock: false
           scene_dialect: legacy_scene
@@ -16316,12 +16507,14 @@ families:
             - split_h7050/com/govee/h7050/H7050ApplicationImp.java:89-94
             - base-classes11/com/govee/base2light/pact/newdetail/content/scene/BaseSceneViewMode.java:864-903,1152-1200
             - base-classes10/com/govee/base2light/ac/diyNew/config/DiyNewConfig.java:61-65,140-146
+            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
         "116":   # H7055, the h7050515253 NewDetailVM screen
           models: [H7055]
           pacts: ["1,1"]
           support: app_traced
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments, scenes]
+          segment_color_temp: true
           zones: []
           account_lock: false
           scene_dialect: legacy_scene
@@ -16360,12 +16553,14 @@ families:
             - split_h7050/com/govee/h7050/H7050ApplicationImp.java:89-94
             - base-classes11/com/govee/base2light/pact/newdetail/content/scene/BaseSceneViewMode.java:864-903,1152-1200
             - base-classes10/com/govee/base2light/ac/diyNew/config/DiyNewConfig.java:61-65,140-146
+            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
         "171":   # H7066, the h7050515253 NewDetailVM screen
           models: [H7066]
           pacts: ["1,1"]
           support: app_traced
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments, scenes]
+          segment_color_temp: false
           zones: []
           account_lock: false
           scene_dialect: legacy_scene
@@ -16404,12 +16599,14 @@ families:
             - split_h7050/com/govee/h7050/H7050ApplicationImp.java:89-94
             - base-classes11/com/govee/base2light/pact/newdetail/content/scene/BaseSceneViewMode.java:864-903,1152-1200
             - base-classes10/com/govee/base2light/ac/diyNew/config/DiyNewConfig.java:61-65,140-146
+            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
         "218":   # H7052, the h7050515253 NewDetailVM screen
           models: [H7052]
           pacts: ["1,1", "2,1"]
           support: app_traced
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments, scenes]
+          segment_color_temp: false
           zones: []
           account_lock: false
           scene_dialect: legacy_scene
@@ -16451,12 +16648,14 @@ families:
             - split_h7050/com/govee/h7050/H7050ApplicationImp.java:89-94
             - base-classes11/com/govee/base2light/pact/newdetail/content/scene/BaseSceneViewMode.java:864-903,1152-1200
             - base-classes10/com/govee/base2light/ac/diyNew/config/DiyNewConfig.java:61-65,140-146
+            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
         "219":   # H7053, the h7050515253 NewDetailVM screen
           models: [H7053]
           pacts: ["1,1", "2,1"]
           support: app_traced
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments, scenes]
+          segment_color_temp: false
           zones: []
           account_lock: false
           scene_dialect: legacy_scene
@@ -16496,12 +16695,14 @@ families:
             - split_h7050/com/govee/h7050/H7050ApplicationImp.java:89-94
             - base-classes11/com/govee/base2light/pact/newdetail/content/scene/BaseSceneViewMode.java:864-903,1152-1200
             - base-classes10/com/govee/base2light/ac/diyNew/config/DiyNewConfig.java:61-65,140-146
+            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
         "227":   # H7063, the h7050515253 NewDetailVM screen
           models: [H7063]
           pacts: ["1,1", "2,1"]
           support: app_traced
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments, scenes]
+          segment_color_temp: false
           zones: []
           account_lock: false
           scene_dialect: legacy_scene
@@ -16542,6 +16743,7 @@ families:
             - split_h7050/com/govee/h7050/H7050ApplicationImp.java:89-94
             - base-classes11/com/govee/base2light/pact/newdetail/content/scene/BaseSceneViewMode.java:864-903,1152-1200
             - base-classes10/com/govee/base2light/ac/diyNew/config/DiyNewConfig.java:61-65,140-146
+            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
       wire_cipher: runtime
       wire:
         doc: "groups Support.getOneGroupNum, pieces getBulbStringMaxNum (Support.java:282-383)"
@@ -16600,6 +16802,7 @@ families:
           support: app_traced
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments]
+          segment_color_temp: false
           zones: []
           account_lock: false
           scene_dialect: untraced
@@ -16666,6 +16869,7 @@ families:
           support: app_traced
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments]
+          segment_color_temp: false
           zones: []
           account_lock: false
           scene_dialect: untraced
@@ -16715,6 +16919,7 @@ families:
           support: app_traced
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments]
+          segment_color_temp: true
           zones: []
           account_lock: false
           scene_dialect: untraced
@@ -16776,6 +16981,7 @@ families:
           support: app_traced
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments]
+          segment_color_temp: true
           zones: []
           account_lock: false
           scene_dialect: untraced
@@ -16823,6 +17029,7 @@ families:
           support: app_traced
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments]
+          segment_color_temp: false
           zones: []
           account_lock: false
           scene_dialect: untraced
@@ -16871,6 +17078,7 @@ families:
           support: app_traced
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments]
+          segment_color_temp: false
           zones: []
           account_lock: false
           scene_dialect: untraced
@@ -16922,6 +17130,7 @@ families:
           support: app_traced
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments]
+          segment_color_temp: false
           zones: []
           account_lock: false
           scene_dialect: untraced
@@ -16977,6 +17186,7 @@ families:
           support: app_traced
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments]
+          segment_color_temp: false
           zones: []
           account_lock: false
           scene_dialect: untraced
@@ -17030,6 +17240,7 @@ families:
           support: app_traced
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments]
+          segment_color_temp: false
           zones: []
           account_lock: false
           scene_dialect: untraced
@@ -17097,6 +17308,7 @@ families:
           support: app_traced
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments]
+          segment_color_temp: false
           zones: []
           account_lock: false
           scene_dialect: untraced
@@ -17152,6 +17364,7 @@ families:
           support: modelled   # the piece count is the IC's at run time; the row takes it from the SKU (doc)
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments]
+          segment_color_temp: true
           zones: []
           account_lock: false
           scene_dialect: untraced
@@ -17690,6 +17903,7 @@ families:
           support: app_traced
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments, gradual]
+          segment_color_temp: false
           zones: []
           account_lock: false
           scene_dialect: untraced
@@ -17772,6 +17986,7 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/content/scene/extParam/SceneExtParamHelper.java:419-421
             - base-classes11/com/govee/base2light/pact/newdetail/content/scene/local/ScenesConfig.java:64-78
             - base-classes10/com/govee/base2light/connect/constant/AddDeviceConfig.java:514-520
+            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
     models: [H7075]
     goods_types: [205]   # 205 = H7075; pacts (1,1) / (2,1) / (3,1), any pact accepted
     delivery: feature_split   # pact_h7075 (base-classes9/com/govee/base2home/pfd/Config.java:204)
@@ -17808,6 +18023,7 @@ families:
           support: app_traced
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments, gradual]
+          segment_color_temp: false
           zones: []
           account_lock: false
           scene_dialect: untraced
@@ -17882,6 +18098,7 @@ families:
             - base-classes10/com/govee/base2light/capability/color/LightColorCapabilityCenter.java:537-539,1286-1297
             - base-classes10/com/govee/base2light/capability/legacy/LegacyColorCapabilityProvider.java:212-221
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:63-85,199-215,247-259
+            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
       wire_cipher: runtime
       wire:
         forms: { f_01: light, f_09: datetime_epoch, f_a5: color_group, f_15_01: kelvin_tint, f_ee_30: main_bit0_a }
@@ -18042,6 +18259,7 @@ families:
           support: modelled   # the TLV 0xA5 placement stride (doc)
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments]
+          segment_color_temp: false
           zones: []
           account_lock: false
           scene_dialect: untraced
@@ -18106,6 +18324,7 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:172-182,315-326,474-501
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:240-242,402-411,448-452,1104,1478-1480
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:63-85,96-110,251-259
+            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
         "371":   # H3351 on the same screen (0xAC status read, 1 colour piece)
           models: [H3351]
           pacts: ["1,1", "1,2", "1,3"]
@@ -18265,6 +18484,7 @@ families:
           support: app_traced
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments]
+          segment_color_temp: true
           zones: []
           account_lock: false
           scene_dialect: untraced
@@ -18327,6 +18547,7 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:240-242,254-269,329-342,402-411,759-763,1345-1347
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/ColorPieceConfig.java:353-447,996-998,1096-1099,1554-1566
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:63-86,199-214,252-258
+            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
       wire_cipher: runtime
       wire:
         doc: "status lambda: TLV 0xA3 byte 0 (split_h7075/com/govee/h7075/h7076/H7076DetailVM$afterConnectedSingleReadDeviceInfo$1.java:126-127)"
@@ -18471,6 +18692,7 @@ families:
           support: app_traced
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments]
+          segment_color_temp: true
           zones: []
           account_lock: false
           scene_dialect: untraced
@@ -18554,6 +18776,7 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/DeviceDetailConfig.java:449-459,620-623
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/ModeConfig.java:308-313
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/ModeConfig$Companion$checkLocalSkuComponentsConfigs$2.java:53-75
+            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
       wire_cipher: runtime
       wire:
         doc: "status lambda: TLV 0x41 value[1], TLV 0xA5 one group of 4 records, TLV 0xA3 byte 0 (split_h7075/com/govee/h7075/h3700/H3700DetailVM$afterConnectedSingleReadDeviceInfo$1.java:104-129)"
