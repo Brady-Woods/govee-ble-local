@@ -8474,7 +8474,7 @@ families:
             - base-classes11/com/govee/base2light/kt/general_controller/Controller4ExtBytesTempTry.java:46-61
             - base-classes11/com/govee/base2light/kt/general_controller/Controller4ColorInfoByGroup.java:44-49,122-131,145-158
             - base-classes11/com/govee/base2light/kt/general_controller/ControllerSwitch.java:30-67
-            - base-classes11/com/govee/base2light/kt/general_controller/ControllerBrightness.java:30-77
+            - base-classes11/com/govee/base2light/kt/general_controller/ControllerBrightness.java:30-75
             - base-classes11/com/govee/base2light/pact/newdetail/ShareVM.java:979-1008,1362-1363
             - base-classes12/com/govee/common2light/capability/connect/ConnectHeartbeat.java:15-38
             - base-classes11/com/govee/base2light/pact/newdetail/header/DelegateHeader.java:486-495

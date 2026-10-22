@@ -340,9 +340,11 @@ model, from which the shipped readers are generated).
   - h61d3 263 (H703A / H703B) is `modelled` for its colour read-back alone (TLV 0xA5's one-record form, no RGB
     read-back). Its doc no longer gives the per-poll burst re-read, the unfolded heartbeat or the unasked base
     TLVs as reasons: they hold on every status row, the `app_traced` ones included, and set no row's level.
-  - Two doc-ref line ranges past their file's end are corrected: h60ax 302's
-    `VM4Light$afterConnectedSingleReadDeviceInfo$1.java` (176 lines) and pact_tvlightv3 112's
-    `MTURequestManager.java` (54 lines).
+  - Three doc-ref line ranges past their file's end are corrected: h60ax 302's
+    `VM4Light$afterConnectedSingleReadDeviceInfo$1.java` (176 lines), pact_tvlightv3 112's
+    `MTURequestManager.java` (54 lines) and bulblightstringv1 3's `ControllerBrightness.java` (76 lines; now
+    `:30-75`, `Companion.c` to `getCommandType`). No other doc-ref in `devices.yaml` cites a missing file or a
+    line past its end.
 - **The status rows with an aa 01 keep-alive state the app's live power.** straightfloorlamp 69, h7020 296 and
   h61d3 263 drop their `[push_30]` override and h7086 293 its `[]`, so each takes its family's list again;
   rgbiclight 351 / 352 and h7020 361 list `[heartbeat_aa01]`. Each screen's `I3` is true (ConnectHeartbeat
