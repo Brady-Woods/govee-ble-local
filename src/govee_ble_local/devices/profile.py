@@ -584,9 +584,11 @@ class DeviceProfile:
     first that goes unanswered as the compose does (``AbsComposeControllerWithOpResult.onOvertime``). Those
     are the device's segment colours where the profile has SEGMENTS over exactly these pieces
     (straightfloorlamp 69: 7, rgbiclight 351 / 352: 15), and are read and not applied elsewhere (h6069 284's
-    140 pixels, h61d3 263's one piece: their state's colour is the mode report's). The compose's timer, sleep
-    and wake reads are left out, as the library's connect reads leave the setting reads out. A change that
-    comes while a re-read runs sets the power and sends no re-read of its own, as the app skips a
+    140, h61d3 263's one piece: their state's colour is the mode report's). h6069 284's 140 is the screen's
+    count when no shape layout is stored, and the layout's size otherwise (``CubeVM4Light.l5``); the library
+    has none, so it walks 140 (an open question for the user, devices.yaml's row doc). The compose's timer,
+    sleep and wake reads are left out, as the library's connect reads leave the setting reads out. A change
+    that comes while a re-read runs sets the power and sends no re-read of its own, as the app skips a
     ``Compose4Off2On`` that comes while a compose is in flight (``ComposeYieldGuard.skipIncomingIfBusy``). A
     devices.yaml status row's ``heartbeat_reread: { pieces }``: 7 on straightfloorlamp 69, 140 on h6069 284,
     15 on rgbiclight 351 / 352 and 1 on h61d3 263."""

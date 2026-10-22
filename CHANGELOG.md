@@ -629,8 +629,10 @@ model, from which the shipped readers are generated).
     (`AbsViewMode4Op.doCommController:1074` -> `ComposeYieldGuard.skipIncomingIfBusy:21-31` with `AbsBle.I`
     true, `Compose4Off2On.yieldToInFlightCompose:142-144`); `Device.stop` cancels a re-read still running.
   - **Rows** (Changed, below): straightfloorlamp 69 (H6076 / H8076 / R16D0: aa 05 then groups 1-2 over 7 pieces,
-    applied), h6069 284 (H6069 / H8069: aa 05 then groups 1-35 over the 140 pixels, read and not applied: a
-    one-piece colour tab), rgbiclight 351 / 352 (H617G / R617G, H618G / R618D: aa 05 then groups 1-4 over 15 pieces,
+    applied), h6069 284 (H6069 / H8069: aa 05 then groups 1-35 over 140 pieces, read and not applied: a
+    one-piece colour tab; 140 is the screen's count when no shape layout is stored, which the library has none of,
+    where with a stored layout of n shapes the app sends groups 1 .. ceil(n / 4), `CubeVM4Light.l5`, an open
+    question for the user), rgbiclight 351 / 352 (H617G / R617G, H618G / R618D: aa 05 then groups 1-4 over 15 pieces,
     applied), h61d3 263 (H703A / H703B, behind `allow_modelled`: aa 05 then group 1 over its one piece, not
     applied); and with no re-read, as their `J3` sets the switch alone, h7086 293 (H7086), h7020 296 (H7025 /
     H8025), h7076 313 (H7076) and h3700 383 (H3700). The fields are ignored on a zoned profile (the reply is the one
@@ -925,11 +927,11 @@ model, from which the shipped readers are generated).
   until now. Now a poll makes the 0xAC read once per link, and on a link it already read nothing goes out: the power
   there follows each keep-alive reply, which stamps `Device.power_read_at` and reaches the callbacks. On 69, 284,
   351 and 352 a reply that changes the power sends the screen's re-read at once on that link: `aa 05`, then the `aa
-  a5` groups (69: 1-2, 351 / 352: 1-4, both applied as the segments; 284: 1-35, read and not applied). H703A / H703B
-  (h61d3 263, behind `allow_modelled`) gain the re-read too (`aa 05`, `aa a5 01`, not applied). The other frames,
-  the first poll's reads and the decoded state of a fresh link's poll are unchanged; their profiles also carry
-  `color_readback_per_batch` 4 on the re-reading rows (it was 3, unused on a status row). Source-traced (Govee Home
-  7.7.02), not live-verified.
+  a5` groups (69: 1-2, 351 / 352: 1-4, both applied as the segments; 284: 1-35, the no-layout count, read and not
+  applied). H703A / H703B (h61d3 263, behind `allow_modelled`) gain the re-read too (`aa 05`, `aa a5 01`, not
+  applied). The other frames, the first poll's reads and the decoded state of a fresh link's poll are unchanged;
+  their profiles also carry `color_readback_per_batch` 4 on the re-reading rows (it was 3, unused on a status row).
+  Source-traced (Govee Home 7.7.02), not live-verified.
 - **A whole-device colour or Kelvin write sets every segment the state holds.** Until now `set_rgb`,
   `set_color_temp` and `turn_on(rgb=...)` / `turn_on(kelvin=...)` left `state.segments` as they were, so the state
   held the new whole-device colour beside the segment colours from before the write until a read brought them back.
@@ -1590,8 +1592,10 @@ model, from which the shipped readers are generated).
   (the user's decision 17): straightfloorlamp 69, h6069 284, rgbiclight 351 / 352, h7086 293, h7020 296, h7076 313,
   h3700 383 and h61d3 263, each `J3` re-traced (`I3` true, then `ShareVM.N3` -> `J3`). The four whose `J3` re-reads
   say `heartbeat_reread`, with the pieces the screen's walk takes: 7 on 69 (straightfloorlamp `VM4Light.p5` -> `t5`,
-  `Support.getBulbStringMaxNum(69)` / `getOneGroupColorSize(69)` = 4), 140 on 284 (`CubeVM4Light.h5` -> `l5`,
-  `Support.getBulbStringMaxNum(284)`), 15 on 351 / 352 (rgbiclight `VM4Light.G5` -> `O5` -> `N5`: `Support.b` / `d`
+  `Support.getBulbStringMaxNum(69)` / `getOneGroupColorSize(69)` = 4), 140 on 284 (`CubeVM4Light.h5` -> `l5`:
+  the stored shape layout's size, `CubeNewInfo4Detail.v`, from `CubeDataSource.d` through `CubeAcLightDetail.H3`,
+  and `Support.getBulbStringMaxNum(284)` = 140 only when none is stored; the library has no layout, so the row
+  takes the no-layout count, which the row's doc names as open for the user), 15 on 351 / 352 (rgbiclight `VM4Light.G5` -> `O5` -> `N5`: `Support.b` / `d`
   / `D`) and 1 on 263 (h61d3 `VM4Light.D5` -> `G5` -> `w5`, `H61D3Support.e` / `t`; its wire gains `group: { rule:
   fixed, num_per_group: 4 }`). `timing.heartbeat.deviations` says what the library sends and where it differs (the
   re-read at once on the reply's link, the beat held, the setting reads left out, a miss ending it, the colours
