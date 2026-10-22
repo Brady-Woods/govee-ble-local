@@ -20,9 +20,11 @@ The app reads an advertisement two ways, and so does the library:
   ``AbsViewMode4OpWithOtaCheck.s2``; the name only when no MAC is stored) and parses the broadcast's pact
   block with the stored goodsType (``AbsViewMode4OpWithOtaCheck.j1`` ->
   ``GoodsType.parseBleBroadcastPactInfo``), whatever the name. ``AbsViewMode4OpWithOtaCheck.w2`` stores the
-  encrypt flag per MAC (``BleBroadVersionCache.c`` / ``d``), and the cipher is chosen from it at connect
-  (``EncryptionUtils.isEncryptionSupported``). A Device, built for a SKU its caller already knows, reads its
-  advertisements that way (:func:`_bound_advertisement`).
+  encrypt flag per MAC (``BleBroadVersionCache.c`` / ``d``), and the cipher is chosen from it on every
+  GATT callback and write (``EncryptionUtils.isEncryptionSupported``, from ``EncryptionBluetoothGattCallback``
+  and ``EncryptWriter.encryptWriteCharacteristic:42``); the screen writes it from the scan just before it
+  connects (``AbsViewMode4Op.onScanEvent``), so in practice it holds for a session. A Device, built for a
+  SKU its caller already knows, reads its advertisements that way (:func:`_bound_advertisement`).
 - Other bound-device paths: the H5083 plug screen reads the flag the same way. The H5085 / H5089 plug screen
   (``BlePactV1.r``) also needs the stored name to match, and with a foreign name connects by MAC on the flag
   it remembered from earlier broadcasts. The light screen refuses a matched broadcast without a pact block

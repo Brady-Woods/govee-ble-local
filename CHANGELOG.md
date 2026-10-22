@@ -8,14 +8,15 @@ model, from which the shipped readers are generated).
 
 ## [Unreleased]
 
-### Added
+### Changed
 - **A Device now re-learns its command channel from later advertisements, for its next session, as the app
-  does.** Until now the cipher was fixed when the `Device` was built (its advertisement's encrypt flag, else the
-  profile default), so a device built before any of its advertisements was heard stayed on the profile default
-  for the Device's life. That was the H6076 (goodsType 69, the device-list trace's gap L7) and any SKU whose default is plaintext but
-  whose firmware encrypts. `Device.ingest_advertisement` now reads the encrypt flag too, whatever the advertised
-  name, and hands it to the connection (new `GoveeConnection.set_advertised_encryption`).
-  - **When it applies:** from the next session on, never to the session that is up: `_prepare_session` is the
+  does.** Until now the cipher was fixed when the `Device` was built: its advertisement's encrypt flag, else the
+  profile default. A device built before any of its advertisements was heard stayed on that default for the
+  Device's life. Such a device is an H6008, whose default is plaintext but whose SW1.01.25 firmware encrypts and
+  answers nothing else. The same goes for any SKU whose default is plaintext while its firmware encrypts.
+  `Device.ingest_advertisement` now reads the encrypt flag too, whatever the advertised name, and hands it to the
+  connection (new `GoveeConnection.set_advertised_encryption`, which returns the mode the next session uses).
+  - **When it applies:** from the next session on, never to the session that is up. `_prepare_session` is the
     only place a session's mode is set, from the advertised mode as it is when the setup starts. No link is
     dropped for it; a session that is up and answering already proves its cipher. `encryption` reports the
     session's mode while a link is up, and the one the next session starts from when none is.
@@ -26,18 +27,22 @@ model, from which the shipped readers are generated).
     mixed record keeps the cipher and logs one WARNING per spell, naming the headers. The constructor is
     unchanged (the first entry, as in 1.6.1).
   - **BGC:** a BGC `encryptVersion` of 1 or 2 still overrides the advertised flag (`isEncryptionSupported` = the
-    flag OR the BGC), so a plaintext flag never downgrades a BGC-1 device. A cached BGC 2 still refuses AES-GCM
-    without a link. An AES-GCM mode given to the constructor with no BGC characteristic is now lifted by a later
-    advertised flag. The BGC result is still read once per Device; the app reads it on every connect.
+    flag OR the BGC), so a plaintext flag never downgrades a BGC-1 device; the INFO line says so. A cached BGC 2
+    still refuses AES-GCM without a link. An AES-GCM mode given to the constructor with no BGC characteristic is
+    now lifted by a later advertised flag. The BGC result is still read once per Device; the app reads it on
+    every connect.
   - **What the app does:** `BleBroadVersionCache.d` overwrites a per-MAC flag, true or false, from each parsed
-    broadcast (`AbsViewMode4OpWithOtaCheck.w2`, `AbsBlePact.t`, the H5083 screen, the add-device scan, group and
-    OTA paths). Only a broadcast whose pact parses writes it (`GoodsType.parseBleBroadcastPactInfo`).
-    `EncryptionUtils.isEncryptionSupported` reads it with the BGC. The light screen stops its scan, parses the
-    matched broadcast, then connects (`AbsViewMode4Op.onScanEvent`).
-  - **Live-verified** 2026-10-21 on both bench H6008s (SW1.01.25, no BGC characteristic), reads only. Built with no
-    advert, the first session went out plaintext and none of its `aa` reads was answered. After each bulb's own
-    advert (header 0x43) was ingested, the next session handshook AES-RC4 and every read was answered. A mixed
-    record kept the cipher and warned.
+    broadcast: `AbsViewMode4OpWithOtaCheck.w2`, `AbsBlePact.t`, the H5083 screen, the add-device scan, and the
+    group and OTA paths. Only a broadcast whose pact parses writes it (`GoodsType.parseBleBroadcastPactInfo`).
+    `EncryptionUtils.isEncryptionSupported` reads it with the BGC on every GATT callback and write
+    (`EncryptionBluetoothGattCallback`, `EncryptWriter.encryptWriteCharacteristic`). The light screen writes it
+    from the scan just before it connects, so in practice it holds for a session (`AbsViewMode4Op.onScanEvent`
+    stops the scan, parses the matched broadcast, then connects).
+  - **Live-verified** 2026-10-21 on both bench H6008s (SW1.01.25, no BGC characteristic), reads only:
+    - built with no advert, the first session went out plaintext and none of its `aa` reads was answered;
+    - after each bulb's own advert (header 0x43) was ingested, the next session handshook AES-RC4 and every read
+      was answered;
+    - a mixed record kept the cipher and warned.
   - Design: `govee-apks/library-audit/DESIGN_relearn_advert_cipher.md`.
 
 ## [1.6.1] — 2026-10-21

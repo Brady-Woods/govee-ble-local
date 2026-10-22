@@ -364,11 +364,12 @@ class GoveeConnection:
         link, the mode the next session starts from (:meth:`_session_mode`). No I/O."""
         return self._encryption if self._client is not None else self._session_mode()
 
-    def set_advertised_encryption(self, encryption: Encryption) -> None:
+    def set_advertised_encryption(self, encryption: Encryption) -> Encryption:
         """Hand over the mode the device now advertises (its encrypt flag): ``NONE`` or ``AES_RC4_PSK``. The
         next session starts from it; a session that is up, or being set up, keeps its own mode to its end.
         As in the app, a BGC version of 1 or 2 overrides it (``EncryptionUtils.isEncryptionSupported`` = the
-        per-MAC flag OR ``BgcInfoReader.g()``). No I/O.
+        per-MAC flag OR ``BgcInfoReader.g()``). Returns the mode the next session uses as things stand: the
+        cached BGC verdict if there is one, else ``encryption``. No I/O.
 
         Raises GoveeBleInvalidValue for anything else: AES_GCM is only ever the BGC read's, and a mode's
         string value is not the mode (the session's mode is tested by identity)."""
@@ -376,6 +377,7 @@ class GoveeConnection:
             raise GoveeBleInvalidValue(
                 f"{self.address}: an advertised encrypt flag is NONE or AES_RC4_PSK, got {encryption!r}")
         self._advert_encryption = encryption
+        return self._session_mode()
 
     def _session_mode(self, advertised: Encryption | None = None) -> Encryption:
         """The mode a session set up now uses: the cached BGC verdict (1 = AES_RC4_PSK, 2 = AES_GCM),

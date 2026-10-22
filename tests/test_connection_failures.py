@@ -124,12 +124,31 @@ async def test_advertised_mode_handed_over_during_setup_waits(monkeypatch) -> No
     assert c.encryption is Encryption.AES_RC4_PSK
 
 
+async def test_session_mode_is_set_before_the_bgc_read(monkeypatch) -> None:
+    # Frames that arrive during the BGC read are captured under the new session's mode, not the last one's.
+    fake = FakeGovee()
+    fake.bgc = None
+    c = _make(monkeypatch, fake, encryption=Encryption.NONE)
+    c.set_advertised_encryption(Encryption.AES_RC4_PSK)
+    seen: list[Encryption] = []
+    read_bgc = c._read_bgc_encrypt_version
+
+    async def spy() -> int | None:
+        seen.append(c.encryption)   # a link is up: the session's mode
+        return await read_bgc()
+
+    monkeypatch.setattr(c, "_read_bgc_encrypt_version", spy)
+    await c.connect()
+    assert seen == [Encryption.AES_RC4_PSK]
+
+
 async def test_bgc_verdict_overrides_an_advertised_mode(monkeypatch) -> None:
     fake = FakeGovee()   # BGC encryptVersion 1
     c = _make(monkeypatch, fake)
     await c.connect()
     await c.disconnect()
-    c.set_advertised_encryption(Encryption.NONE)   # a plaintext flag never downgrades a BGC 1 device
+    # a plaintext flag never downgrades a BGC 1 device, and the hand-over says so
+    assert c.set_advertised_encryption(Encryption.NONE) is Encryption.AES_RC4_PSK
     assert c.encryption is Encryption.AES_RC4_PSK
     await c.send(frame(0x33, 0x01, 0x01))
     assert c.encryption is Encryption.AES_RC4_PSK and fake.bgc_reads == 1   # the cached verdict

@@ -291,9 +291,11 @@ class Device:
     def _learn_cipher(self, mfg: dict[int, bytes]) -> None:
         """Re-learn the advertised encrypt flag for the next session, as the app overwrites its per-MAC
         flag from each parsed broadcast (``BleBroadVersionCache.d:109-142``, from
-        ``AbsViewMode4OpWithOtaCheck.w2``) and reads it at connect
-        (``EncryptionUtils.isEncryptionSupported``). A session already up keeps its mode, and a BGC
-        version of 1 or 2 still overrides it (:meth:`.GoveeConnection.set_advertised_encryption`).
+        ``AbsViewMode4OpWithOtaCheck.w2``). The app reads that flag on every GATT callback and write
+        (``EncryptionUtils.isEncryptionSupported``, ``EncryptWriter.encryptWriteCharacteristic:42``), but
+        writes it from the scan just before it connects (``AbsViewMode4Op.onScanEvent:1956-1985``). Here a
+        session already up keeps its mode, and a BGC version of 1 or 2 still overrides the flag
+        (:meth:`.GoveeConnection.set_advertised_encryption`); the INFO line names both.
 
         Learned only when every Govee pact entry of the advertisement carries the same flag
         (:func:`.identify._pact_encrypt_flags`). An advertisement with none says nothing, as a broadcast
@@ -308,7 +310,8 @@ class Device:
                 self._cipher_ambiguous = True
                 _LOGGER.warning(
                     "%s (%s): advertises Govee headers %s, encrypted and plaintext (a merged advertisement "
-                    "record: an earlier header, or another device's frame); the command channel stays %s",
+                    "record: an earlier header, or another device's frame); the advertised mode stays %s "
+                    "(a BGC version of 1 or 2 overrides it)",
                     self.address, self._sku, ", ".join(f"0x{header:02x}" for header in flags),
                     self._advert_encryption.value,
                 )
@@ -320,10 +323,11 @@ class Device:
         if mode is self._advert_encryption:
             return
         self._advert_encryption = mode
-        self._conn.set_advertised_encryption(mode)
+        upcoming = self._conn.set_advertised_encryption(mode)
         _LOGGER.info(
-            "%s (%s): advertises the %s command channel; the next session starts from it",
-            self.address, self._sku, mode.value,
+            "%s (%s): advertises the %s command channel; the next session uses %s%s",
+            self.address, self._sku, mode.value, upcoming.value,
+            "" if upcoming is mode else " (its BGC version overrides the advertised flag)",
         )
 
     # -- identity / state ---------------------------------------------------

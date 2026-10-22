@@ -214,12 +214,23 @@ def test_ingest_relearns_the_flag_for_the_next_session(caplog: pytest.LogCapture
         # True for its on/off; the flag adds no callback
         assert d.ingest_advertisement(_adv(_RENAMED, _ENCRYPTED)) is True
     assert d.encryption is Encryption.AES_RC4_PSK and len(calls) == 1
-    assert "advertises the aes_rc4_psk command channel; the next session starts from it" in caplog.text
+    assert "advertises the aes_rc4_psk command channel; the next session uses aes_rc4_psk\n" in caplog.text
     caplog.clear()
     with caplog.at_level(logging.INFO, logger="govee_ble_local"):
         d.ingest_advertisement(_adv(_RENAMED, _ENCRYPTED))   # heard again: nothing new
         d.ingest_advertisement(_adv(_RENAMED, _PLAINTEXT))   # and back (BleBroadVersionCache.d:135)
     assert d.encryption is Encryption.NONE and caplog.text.count("command channel") == 1
+
+
+def test_ingest_names_a_bgc_verdict_over_the_flag(caplog: pytest.LogCaptureFixture) -> None:
+    d = _bound("H6008", _adv(_RENAMED, _ENCRYPTED))
+    d._conn._bgc_version, d._conn._bgc_checked = 1, True   # as an earlier session's BGC read left it
+    with caplog.at_level(logging.INFO, logger="govee_ble_local"):
+        d.ingest_advertisement(_adv(_RENAMED, _PLAINTEXT))
+    # flag OR BGC (EncryptionUtils.isEncryptionSupported): a plaintext flag never downgrades a BGC-1 device
+    assert d.encryption is Encryption.AES_RC4_PSK
+    assert ("advertises the none command channel; the next session uses aes_rc4_psk (its BGC version "
+            "overrides the advertised flag)") in caplog.text
 
 
 def test_ingest_keeps_the_cipher_on_a_mixed_record(caplog: pytest.LogCaptureFixture) -> None:
