@@ -67,8 +67,9 @@ model, from which the shipped readers are generated).
   illumination-tab pair that promotes H60A4 / H80A4, the aa 40 section sum that promotes H61A9, the segment split
   that promotes H61D2-H61D6, the live piece count that promotes 14 h705a SKUs and, by the user's decision on its
   first walk, H608A-D / H808A, the status rows' IC reads that promote H3401 and H3510 / H3511, the per-SKU support
-  level that promotes five h6609 260 SKUs, and H6057's light-switch power, below): 132 admitted by default
-  (`app_traced`) and 26 behind `allow_modelled` (`modelled`).
+  level that promotes five h6609 260 SKUs, the colour page's Kelvin-tint read-back that promotes the six h70b3
+  SKUs, and H6057's light-switch power, below): 138 admitted by default (`app_traced`) and 20 behind
+  `allow_modelled` (`modelled`).
   The entries below admit 121 more by default (16 through the resolver changes; H7004, H1162 / H1163 / H1167 /
   H1168, H70B1 and H70BC; 17 through the status-read command ids and the BK pact gate; the 10 SKUs of the
   `legacy_02` colour scheme; H7061; H70B2, H6630, H8630 and H6631 on the device-list card; H7070 on its pact's
@@ -79,7 +80,7 @@ model, from which the shipped readers are generated).
   through the aa 0f string count the nine h7020 bulb-string SKUs; the six H707A strings through the status read's
   segment count; the 20 dreamcolorlightv1 71 / 123 SKUs through the per-SKU connect reads; and four Glide panels at
   the layout editor's cap) and 13 more behind `allow_modelled` (H7072, H6119, the Glide H6063, H61E5 / H61E6, H60A1 /
-  H80A1, H6609 and H706A / H706B / H706C / H806A / H806C), for 352 admitted by default and 39 behind
+  H80A1, H6609 and H706A / H706B / H706C / H806A / H806C), for 358 admitted by default and 33 behind
   `allow_modelled` in all (with H8015, a 1.6.1 SKU
   now admitted by default: Changed). None is
   hardware-verified (the only bench check, below, was read-only), and none has a bundled scene catalog, so none
@@ -113,6 +114,8 @@ model, from which the shipped readers are generated).
   - h7020: **H7025**, **H8025**† (296); h7045: **H7045 / H7046** (338); h7075: **H7075** (205); h7078:
     **H7078** (245); h7086: **H7086** (293); h70b6: **H70B6** (329); h6800: **H6800** (272); h3751:
     **H3751** (354);
+  - h70b3: **H70B3** (229), **H70B4** (230), **H70B5** (231), **H6810** (255), **H6811**, **H8811**† (256), by the
+    colour page's Kelvin-tint read-back (Changed, below);
   - h7017: **H7017** (0), a grow light: power and brightness only, served at any pact, as its screen runs no
     pact test (`h7017 Model.t`);
   - h705a: **H705A / H705B / H705C / H801B** (125), **H705D / H705E / H705F / H805A / H805B / H805C / H805D**
@@ -127,7 +130,6 @@ model, from which the shipped readers are generated).
   - dreamcolorlightv2: **H611A / H6143 / H6144** (21); homelightv1: **H6148** (16); hollowlamp: **H6058**
     (59); h7090: **H7090** (44); h1741: **H1741 / R1741** (365);
   - h6609: **H70C4 / H70C5 / H70C7 / H6870 / H80C4** (260, on their IC-gated read-back, below);
-  - h70b3: **H70B3** (229), **H70B4** (230), **H70B5** (231), **H6810** (255), **H6811**, **H8811**† (256);
   - h604a: **H604B** (109), **H604D** (133), traced on Govee Home 7.5.12 only: 7.7.02 runs their screen from
     the on-demand module `pact_h604a` (`pfd/Config`), which the 7.7.02 capture doesn't hold, so the shipped path
     is unseen (the rows' `doc`; their doc-refs under `govee-apk-decompiled/sources/` are 7.5.12 paths).
@@ -856,6 +858,25 @@ model, from which the shipped readers are generated).
   H6065 (Added), whose facts it shares at 20 panels (`DeviceProfile.skus`, a grouping change). A smaller layout
   is exact only with the account's layout (D10, a later release). Source-traced, not live-verified: no H6061 is
   on the bench.
+- **On the screens whose 0x0d report the app decodes as `[r, g, b][kelvin]` with no Kelvin test
+  (`rgb_kelvin_0d_nocct`), a reported colour that is one of the app's Kelvin tint colours, inside the device's
+  range, now reads as that colour temperature, as the app shows it** (CLAUDE.md rule 3; the user's decision 25,
+  2026-10-22). The decode (the 0x0d strategy of the h70bx, h70b3 and h6840 `Info4Detail`s) stores the
+  report's Kelvin and never tests it, and the library reported the RGB. The app's colour page shows the
+  report's one colour as the colour temperature `KelvinConfig.c:119-122` of it when `KelvinConfig.i:193-200`
+  holds (a table colour whose Kelvin lies in the range, inclusive), else as that colour:
+  `DelegateCurMode.createView:185-203` ->
+  `ColorViewModel.initColor4Device:1182-1224` -> `DelegateColorV2.w1:666-730` -> `W1:1105-1123`. So `state` now
+  holds `color_temp_kelvin` with `rgb_color` unset for such a report, by the same test an RGB pick's write
+  uses (`devices._fold`), from the status reply's TLV 0x05 and from an `aa 05` reply alike. The report's Kelvin
+  bytes are still not read. Any other colour, and a tint outside [2000, 9000], stays RGB.
+  - Admitted by default and changed: H6800 (h6800 272), H70B1 (h70b1 134), H70BC (h70bx 216), H6840 / H8840†
+    (h6840 278), H6841 / H8841† (325), H6842 / R6842† (381), H6843 (382), H70B6 (h70b6 329) and H70B8 (341).
+    The fold also promotes the h70b3 rows (Added); H70B6's profile now also serves H6810, H6811 and H8811,
+    whose facts it shares (`DeviceProfile.skus`, a grouping change; no other admitted SKU's profile changes).
+  - State only: no frame changes. Where the firmware echoes the tint of a `Bytes.p` write (a colour-temperature
+    write, or an RGB pick of a tint colour) in the report, the device now reads back as the Kelvin that was
+    sent; whether it does is not hardware-checked. Not live-verified: none of these SKUs is on the bench.
 - **A Device now re-learns its command channel from later advertisements, for its next session, as the app
   does.** Until now the cipher was fixed when the `Device` was built: its advertisement's encrypt flag, else the
   profile default. A device built before any of its advertisements was heard stayed on that default for the
@@ -998,7 +1019,7 @@ model, from which the shipped readers are generated).
   segment brightness (h61d3 202).
 - **Every status row but the H60A6's and the H6076's takes its versions and device id from TLV 0x07 alone and
   sends no device-info reads**, as its screen does (the user's decision, 2026-10-22: "Skip them", option A of
-  the `status-row-versions-from-tlv07` decision). That is 95 SKUs: 81 admitted by default and 14 behind
+  the `status-row-versions-from-tlv07` decision). That is 95 SKUs: 87 admitted by default and 8 behind
   `allow_modelled`. **Four of them were released at 1.6.1 and change:** H60B1 (h60b1 300), H7056 (h7056 304),
   H1630 and R1630 (h1630 364) no longer send `aa 06` / `aa 07 03` / `aa 07 02` on their first poll.
   - Each status row now names its `device_info_reads` (`devices.schema.json` clientRow). It is required on every
@@ -1032,10 +1053,10 @@ model, from which the shipped readers are generated).
       versions from TLV 0x07);
     - the status rows 1.9.0 admits or promotes: h705a H3401 (394), h7057 H3510 / H3511 (349), h7020 H702A /
       H702B / H702C (316), H7026 / H8026 (318), H7027 (337), H30D0 / H30D1 (391), H3010 / H3011 / H3012 /
-      H3013 (411), and h707a H707A / H707B / H707C / R707A / R707B / R707C (326).
+      H3013 (411), h707a H707A / H707B / H707C / R707A / R707B / R707C (326), and h70b3 H70B3 (229), H70B4
+      (230), H70B5 (231), H6810 (255), H6811 / H8811 (256).
   - `none`, behind `allow_modelled`: h60ax H1270 (346), H1232 (356), H1252 (373); h61d3
-    H703A / H703B (263); h1741 H1741 / R1741 (365); h70b3 H70B3 (229), H70B4 (230), H70B5 (231), H6810 (255),
-    H6811 / H8811 (256); h7072 H7072 (294).
+    H703A / H703B (263); h1741 H1741 / R1741 (365); h7072 H7072 (294).
   - The catalogue snapshot routes H8069, H80D1, R617G, R618D, H8840, H8841, R6842, H8057, H8025, H3511, H30D1
     and H8811. H7072 and H3351 share one screen path (`H7072VM4Light.o5` / `s5`, whose one goodsType branch is
     H2800's 396). H1232 and H1252 run the H60A6's screen, but the H60A6's evidence for its reads is its own
@@ -1264,8 +1285,8 @@ model, from which the shipped readers are generated).
   `modelled`; one that needs library work has no `support` and names the gap in its `doc`. A verification
   pass challenged each family's rows; they were repaired, and demoted (to `modelled`, or to no `support`)
   where a core claim didn't hold.
-  - devices.yaml now has 305 goodsType rows in 96 families (184 in 91): 226 with `support` (66), of them 198
-    `app_traced`, 24 `modelled` and the same 4 `hardware_verified`, and 79 without (118). 66 of the 226 had support
+  - devices.yaml now has 305 goodsType rows in 96 families (184 in 91): 226 with `support` (66), of them 203
+    `app_traced`, 19 `modelled` and the same 4 `hardware_verified`, and 79 without (118). 66 of the 226 had support
     at 1.6.1 and keep it (bulblightv3 328 now `app_traced`); the trace gave 87 more rows support. The other 73 take
     it through the library and spec changes under Added, Changed, Fixed and Spec: h7004 0, h6069 284, h3700 383,
     h7076 313, h70dx 267-269, bulblightv3 342, the four h1162 rows, h70b1 134, h70bx 216, the six status-read rows
@@ -1279,10 +1300,11 @@ model, from which the shipped readers are generated).
     h7020 316 / 318 / 337 / 391 (the status rows' IC reads), h7020 411 (the 0xA3 colour unit), the eight h7020
     bulb-string rows (53 / 54 / 62 / 63 / 100 / 102 / 149 / 161, the aa 0f string count), h707a 326 (the TLV 0xA1
     segment count) and dreamcolorlightv1 71 / 123 (narrowed, with the per-SKU connect reads), all `app_traced` but
-    h7072 294, h6119 44, the Glide panels, h60ax 235, h61d3 239 / 246, h6609 173 and h705a 180 (`modelled`). The
+    h7072 294, h6119 44, the Glide h6061 228, h60ax 235, h61d3 239 / 246, h6609 173 and h705a 180 (`modelled`). The
     segment split promoted the trace's h61d3 202, the live piece count h705a 125 / 240 / 250 and h61d3 299 / 261,
     the status rows' IC reads h705a 394 and h7057 349, and the read-back piece count h6609 260 (five of its SKUs
-    held `modelled` by their own `support`), to `app_traced`.
+    held `modelled` by their own `support`), to `app_traced`, and the colour page's Kelvin-tint read-back the
+    trace's h70b3 229 / 230 / 231 / 255 / 256.
   - Two goodsType add-ons were traced and checked on their own: straightfloorlamp 69 (H6076 / H8076,
     `app_traced`, with the bench reads above, on an advertised pact only: `pact_required`, below) and
     rgbiclight 141 (H61C2 / H61C3 / H61C5).

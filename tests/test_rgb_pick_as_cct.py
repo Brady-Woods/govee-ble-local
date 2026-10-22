@@ -13,6 +13,10 @@ full ARGB int is exactly one of the 178 colours of the Kelvin tint table (``Cons
   ``33 05 0d <picked RGB> <K u2be> <first tint of K>``;
 * H6061 is covered in tests/test_h6061.py (``Config.Zt``), including its unchanged [2000, 9000] range.
 
+The read side follows the same rule where the decode never tests a Kelvin (``rgb_kelvin_0d_nocct``): the
+stock colour page shows a one-colour report that is such a tint as its colour temperature
+(``DelegateColorV2.W1`` via ``KelvinConfig.i`` / ``c``).
+
 Every expected frame is either built by the independent ``_cct15`` / ``_cct0d`` helpers below or is
 a hex literal checked against them; none of it is hardware-verified."""
 from __future__ import annotations
@@ -22,13 +26,16 @@ from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
-from fake_ble import ble_device
+from fake_ble import ble_device, status_burst
 
+from govee_ble_local.devices import _fold
 from govee_ble_local.devices.device import Device
-from govee_ble_local.devices.profile import profile_for
+from govee_ble_local.devices.profile import profile_for, wire_profile
 from govee_ble_local.exceptions import GoveeBleInvalidValue
+from govee_ble_local.models import DeviceState
 from govee_ble_local.registry import create_device
 from govee_ble_local.wire import build as b
+from govee_ble_local.wire import reassemble
 from govee_ble_local.wire.cct import _KELVIN_BY_TINT, kelvin_for_tint, tint_for_kelvin
 
 
@@ -413,6 +420,27 @@ def test_state_after_a_conversion_and_back(sku: str, segments: int | None, colou
     asyncio.run(d.turn_on(rgb=_rgb(colour)))
     assert (d.state.rgb_color, d.state.color_temp_kelvin) == after
     assert d.state.last_color_temp_kelvin == kelvin
+
+
+# A report of one Kelvin tint colour in range reads as that colour temperature on the rgb_kelvin_0d_nocct
+# screens, from the status TLV 0x05 and from an aa 05 reply alike; the report's Kelvin bytes are not read.
+@pytest.mark.parametrize(("sku", "body", "shown"), [
+    ("H70B3", (0x0D, 0xFF, 0xD5, 0xA1, 0x0F, 0xA0), (None, 4000)),                 # 4000 K's first tint
+    ("H70B1", (0x0D, 0xFF, 0xD1, 0xA3, 0x00, 0x00), (None, 4000)),                 # its second, Kelvin 0
+    ("H6800", (0x0D, 0xFF, 0x33, 0x00, 0x0F, 0xA0), ((0xFF, 0x33, 0x00), None)),   # 1000 K: off [2000, 9000]
+    ("H6840", (0x0D, 0xFF, 0xD5, 0xA2, 0x0F, 0xA0), ((0xFF, 0xD5, 0xA2), None)),   # one channel off the table
+])
+def test_a_reported_kelvin_tint_reads_as_that_colour_temperature(
+    sku: str, body: tuple[int, ...], shown: tuple[tuple[int, int, int] | None, int | None],
+) -> None:
+    p = profile_for(sku, pact=(2, 1))      # a pact each row lists
+    assert p is not None and p.mode_color_parse == "rgb_kelvin_0d_nocct"
+    burst = reassemble.parse_status(status_burst(bytes([0x05, len(body), *body])), decode=wire_profile(p))
+    via_status, via_reply = DeviceState(rgb_color=(9, 9, 9)), DeviceState(rgb_color=(9, 9, 9))
+    _fold.apply_status(p, via_status, burst)
+    _fold.apply_mode_reply(p, via_reply, _frame(0xAA, 0x05, *body))
+    for state in (via_status, via_reply):
+        assert (state.rgb_color, state.color_temp_kelvin) == shown
 
 
 def test_h6047_state_tracks_the_kelvin_per_bar() -> None:

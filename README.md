@@ -158,7 +158,9 @@ report. Because it reports the same `15 01 00 00` after an RGB write too, a Kelv
 Read-back decodes the `aa 05` mode report the way the app's control screen does for each SKU. The
 H6052's screen reads its colour report as RGB only, so after a poll an H6052 in colour-temperature
 mode reports the report's colour as `rgb_color` (for a CCT the app or this library set, the Kelvin's
-tint) and no `color_temp_kelvin`.
+tint) and no `color_temp_kelvin`. Where a screen's decode never tests the report's Kelvin but its colour page
+shows a reported Kelvin tint colour in range as that colour temperature (H70B1, H70BC, H6800, H6840-H6843,
+H70B6, H70B8, H70B3-H70B5, H6810, H6811), `state` reports it the same way.
 
 H70B2, H6630, H8630 and H6631 follow the Govee app's device-list card, as their control screens have no
 BLE control (`DeviceProfile.session == "per_command"`): power and brightness only, each write a session of

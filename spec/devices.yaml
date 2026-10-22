@@ -507,7 +507,7 @@ mode_color_decode:
   rgb_kelvin_0d_nocct:
     layout: "[r, g, b u8][kelvin s16be]; nothing after body byte 4 is read"
     kelvin_signed: true
-    cct_rule: "none: the colour is always the RGB [r, g, b]; the signed Kelvin is stored (SubMode4Color.b) but never tested"
+    cct_rule: "the decode makes no CCT test (the signed Kelvin is stored, SubMode4Color.b, and never tested), but the stock colour page does: the report's one colour (SubMode4Color.d) is shown as colour temperature KelvinConfig.c of it when it is a Kelvin tint in the device range (KelvinConfig.i: one of the table's colours whose Kelvin lies in the range, inclusive), else as that RGB colour (DelegateCurMode.createView -> ColorViewModel.initColor4Device -> DelegateColorV2.w1 -> W1; base-classes11/com/govee/base2light/pact/newdetail/content/success/DelegateCurMode.java:185-203, content/color/ColorViewModel.java:1182-1224, content/colorv2/DelegateColorV2.java:625-630,666-730,1105-1123, config/fuc/KelvinConfig.java:119-122,193-200; base-classes10/com/govee/base2kt/utils/ColorUtils.java:261-276). The library folds it so (devices._fold, the same test as an RGB pick's write)"
     doc: "com.govee.h70bx.Info4Detail ctor strategy (split_h70b1/com/govee/h70bx/Info4Detail.java:125-133, base2home getSignedShort), run by E :266-267 (from VM4H70BXNewDetail.T5, split_h70b1/com/govee/h70bx/viewmodel/VM4H70BXNewDetail.java:361-370)."
   rgb:
     layout: "[r, g, b u8]; nothing after body byte 2 is read (no Kelvin or tint)"
@@ -621,7 +621,7 @@ mode_color_parse:
     doc: "0x0d only: H6050 / H6051 / H6073 (hollowlamp 27 / 37 / 58, the H60501 screen)."
   rgb_kelvin_0d_nocct:
     sub_modes: { "0x0d": rgb_kelvin_0d_nocct }
-    doc: "0x0d only, RGB with a stored Kelvin: the H70BX screen (H70B1 / H70B2 / H70BC). Further: h6840 (278 / 325 / 381 / 382, the 0xAC TLV 0x05), and the com.govee.h70b3.adjust Info4Detail copy of that strategy (split_h70b1/com/govee/h70b3/adjust/Info4Detail.java:149-157) on h70b3 (229 / 230 / 231 / 255 / 256), h6800 (272) and h70b6 (329 / 341)."
+    doc: "0x0d only, RGB with a stored Kelvin, a Kelvin tint in range shown as its colour temperature (cct_rule): the H70BX screen (H70B1 / H70B2 / H70BC). Further: h6840 (278 / 325 / 381 / 382, the 0xAC TLV 0x05), and the com.govee.h70b3.adjust Info4Detail copy of that strategy (split_h70b1/com/govee/h70b3/adjust/Info4Detail.java:149-157) on h70b3 (229 / 230 / 231 / 255 / 256), h6800 (272) and h70b6 (329 / 341)."
   rgb_all:
     sub_modes: { "0x15": rgb, "0x0b": rgb, "0x02": rgb, "0x0d": rgb }
     doc: "The four colour sub-modes alike as [r, g, b] (rgblight ModeParseStrategyConfig.c): H7310 / H7312 / H7317."
@@ -13627,14 +13627,14 @@ families:
     category: splicing_panel   # "Smart Curtain Lights" with splicing; string_light is the alternative
     client_profile:
       color_scheme: h6006   # byte-identical h6006 builder: Config.x[229 / 230 / 231] = 2 (Config.java:1080-1094), Config.x[255 / 256] = 2 (Config.java:1291-1300) -> Config.J[2] = bu
-      mode_color_parse: rgb_kelvin_0d_nocct   # 229 / 230 / 231 / 255 / 256, every pact (0xAC burst, or aa reads at pact (1,1)); split_h70b1/com/govee/h70b3/adjust/Info4Detail.java:666-710. The parse layout is exact (the wire Kelvin is never tested), but the stock colour page shows a single reported colour that is a Kelvin tint in [2000, 9000] as that colour temperature (DelegateCurMode -> ColorViewModel.initColor4Device -> DelegateColorV2.W1, KelvinConfig.i / c): a presentation rule no strategy expresses, so the library reports that tint as RGB (library gap 2, h70b3.md). Whether the firmware echoes the Bytes.p tint in the report is not hardware-checked, so the rows are modelled
+      mode_color_parse: rgb_kelvin_0d_nocct   # 229 / 230 / 231 / 255 / 256, every pact (0xAC burst, or aa reads at pact (1,1)); split_h70b1/com/govee/h70b3/adjust/Info4Detail.java:666-710. The parse layout is exact (the wire Kelvin is never tested), and the stock colour page shows a single reported colour that is a Kelvin tint in [2000, 9000] as that colour temperature (DelegateCurMode -> ColorViewModel.initColor4Device -> DelegateColorV2.W1, KelvinConfig.i / c); the library folds the report the same way (the decode's cct_rule), so it shows what the app shows whether or not the firmware echoes the Bytes.p tint (not hardware-checked)
       power_read: ac_status   # pact (1,1) reads aa 01 instead, on when byte != 0; the schema has no per-pact power_read, so the rows leave (1,1) out
       power_live: [push_30]   # heartbeat type 2, not heartbeat_aa01
       by_goods_type:   # one screen for all five (H70B3B4B5DeviceDetailActivity, VM4H70B345Splicing); pact (1,1) is left out of every row (the aa-read connect, see doc)
         "229":   # H70B3, 1 base unit
           models: [H70B3]
           pacts: ["1,2", "2,1", "2,2", "2,3"]   # (1,1) registered too but read by aa 01 / aa 04 / aa 05: not served
-          support: modelled   # downgraded 2026-10-21: the colour-temperature read-back is inferred (h70b3.md "Disputed")
+          support: app_traced   # 2026-10-22, decision 25: the library folds a Kelvin-tint report as the colour page does (doc)
           capabilities: [power, brightness, rgb, color_temp]
           zones: []
           account_lock: false
@@ -13665,18 +13665,19 @@ families:
             Colour read-back: TLV 0x05 0x0d is [r, g, b][kelvin s16be] with the Kelvin stored but never tested; the stock colour
             page (Support.i / j set no colour-view interceptor, the DeviceDetailParams.Build.U field DeviceDetailConfig.R
             reads, so DelegateCurMode builds ColorViewModel + DelegateColorV2) shows a single colour that is a Kelvin tint in
-            range (KelvinConfig.i) as colour temperature KelvinConfig.c of it, which the library does not express (it
-            reports the tint as RGB; library gap).
+            range (KelvinConfig.i) as colour temperature KelvinConfig.c of it, and the library folds the report the same
+            way (the rgb_kelvin_0d_nocct cct_rule: DelegateColorV2.W1 over KelvinConfig.i / c).
             Kelvin: KelvinConfig has no 229 key -> version 0 = [2000, 9000]. Keep-alive: the aa 00 heartbeat (ShareVM.I3
             false -> ConnectHeartbeat type 2; no override), live power from the ee 30 push (DefParser switch parser, bit 0
             of frame[3]). No 0xB1 / 0xB2 on the control connect (account_lock false; the secret is the pairing flow's).
             Scenes untraced here (ScenesConfigBean op set {0, 1, 5}). Not listed: the TimerConfig.f time sync, the aa 60 01
             feast read the screen adds on firmware soft >= 1.01.00 and hard >= 3.06.01 (Support.a0), and the aa 43 / aa 44
-            splicing reads it adds only when the cloud splicing state is non-zero (VM4H70B345Splicing.V5). Support modelled
-            (disputed 2026-10-21, h70b3.md "Disputed"): the colour-temperature read-back is inferred. If the firmware echoes
-            the Bytes.p tint in the report's RGB slot, the app shows colour temperature where the library reports RGB; the
-            echo is not hardware-checked, and no admitted row has this difference (tablelampv1 22 reports ff ff ff, not a
-            tint). Every frame the library sends is traced. Device info (device_info_reads none): u5
+            splicing reads it adds only when the cloud splicing state is non-zero (VM4H70B345Splicing.V5). Support
+            app_traced (the user's decision 25, 2026-10-22; modelled after the 2026-10-21 dispute, h70b3.md "Disputed",
+            while the library reported a Kelvin-tint report as RGB): whether the firmware echoes the Bytes.p tint in the
+            report's RGB slot is not hardware-checked, but the library now shows what the app shows either way. The pact
+            gate for the (1,1) connect (pact_required) comes with the master merge (d2ecd20); until then a record with no
+            advertised pact is accepted. Every frame the library sends is traced. Device info (device_info_reads none): u5
             (Compose4BaseInfoSingleRead.Companion.c) queues no aa 06 / aa 07 read: its controller list holds only the
             room-feast SingleController read (where Support.a0 holds) and V5, which is empty on a standalone unit
             (VM4H70B345.V5; VM4H70B345Splicing.V5 at splicing state 0); its success callback y5 takes the soft and hard
@@ -13716,7 +13717,7 @@ families:
         "230":   # H70B4, 2 units
           models: [H70B4]
           pacts: ["1,2", "2,1", "2,2", "2,3"]   # (1,1) left out, as on 229
-          support: modelled   # downgraded 2026-10-21: the colour-temperature read-back is inferred (h70b3.md "Disputed")
+          support: app_traced   # 2026-10-22, decision 25: the library folds a Kelvin-tint report as the colour page does (doc)
           capabilities: [power, brightness, rgb, color_temp]
           zones: []
           account_lock: false
@@ -13733,8 +13734,9 @@ families:
             same u5 status read ac 03 03 41 39 40 on every pact but (1,1), the same writes (33 01, 33 04, Config.x[230] = 2
             -> bu: Bytes.f / Bytes.p, Config.I[230][4] = true), Kelvin version 0 = [2000, 9000] and brightness version 1;
             the aa 00 heartbeat and the ee 30 push. Not listed, as on 229: the time sync, the firmware-gated aa 60 01 feast
-            read and the splicing reads. Support modelled, as on 229: the colour-temperature read-back is inferred
-            (h70b3.md "Disputed"). Device info (device_info_reads none): as on 229, u5 queues no aa 06 / aa 07 read and
+            read and the splicing reads. Support app_traced, as on 229: the library folds a Kelvin-tint report as the
+            colour page does; the pact gate comes with the master merge (d2ecd20), as on 229. Device info
+            (device_info_reads none): as on 229, u5 queues no aa 06 / aa 07 read and
             its success callback y5 takes the soft and hard versions from the reply's TLV 0x07 (g1 and k2(e(), d());
             Compose4BaseInfoSingleRead.w), so the library sends none either and folds the versions and device id from
             TLV 0x07 alone. Not hardware-verified.
@@ -13747,7 +13749,7 @@ families:
         "231":   # H70B5, 3 units
           models: [H70B5]
           pacts: ["1,2", "2,1"]   # (1,1) left out, as on 229
-          support: modelled   # downgraded 2026-10-21: the colour-temperature read-back is inferred (h70b3.md "Disputed")
+          support: app_traced   # 2026-10-22, decision 25: the library folds a Kelvin-tint report as the colour page does (doc)
           capabilities: [power, brightness, rgb, color_temp]
           zones: []
           account_lock: false
@@ -13763,8 +13765,9 @@ families:
             H70B5 (KmpGoodsType 231), the 229 screen and facts: Support.I registers (1,1) (1,2) (2,1) only (AddDeviceM.f),
             the same u5 status read ac 03 03 41 39 40 on (1,2) and (2,1), the same writes (Config.x[231] = 2 -> bu,
             Config.I[231][4] = true), Kelvin [2000, 9000], brightness percent; the aa 00 heartbeat and the ee 30 push. Not
-            listed, as on 229. Support modelled, as on 229: the colour-temperature read-back is inferred (h70b3.md
-            "Disputed"). Device info (device_info_reads none): as on 229, u5 queues no aa 06 / aa 07 read and its
+            listed, as on 229. Support app_traced, as on 229: the library folds a Kelvin-tint report as the colour page
+            does; the pact gate comes with the master merge (d2ecd20), as on 229. Device info (device_info_reads none):
+            as on 229, u5 queues no aa 06 / aa 07 read and its
             success callback y5 takes the soft and hard versions from the reply's TLV 0x07 (g1 and k2(e(), d());
             Compose4BaseInfoSingleRead.w), so the library sends none either and folds the versions and device id from
             TLV 0x07 alone. Not hardware-verified.
@@ -13777,7 +13780,7 @@ families:
         "255":   # H6810, no TLV 0x40 (device count forced to 1)
           models: [H6810]
           pacts: ["2,1", "2,2", "2,3"]   # (1,1) left out, as on 229
-          support: modelled   # downgraded 2026-10-21: the colour-temperature read-back is inferred (h70b3.md "Disputed")
+          support: app_traced   # 2026-10-22, decision 25: the library folds a Kelvin-tint report as the colour page does (doc)
           capabilities: [power, brightness, rgb, color_temp]
           zones: []
           account_lock: false
@@ -13795,8 +13798,9 @@ families:
             the device count is set to 1 (VM4H70B345.u5 :796-801, x5 :889-891); (1,1) reads by r6 and is left out. The same
             writes (Config.x[255] = 2 -> bu: Bytes.f / Bytes.p, Config.I[255][4] = true), Kelvin version 0 = [2000, 9000],
             brightness version 1; the aa 00 heartbeat and the ee 30 push. Not listed: the time sync and the splicing reads
-            (the feast read is 229 / 230 / 231 only). Support modelled, as on 229: the colour-temperature read-back is
-            inferred (h70b3.md "Disputed"). Device info (device_info_reads none): as on 229, u5 queues no aa 06 / aa 07
+            (the feast read is 229 / 230 / 231 only). Support app_traced, as on 229: the library folds a Kelvin-tint
+            report as the colour page does; the pact gate comes with the master merge (d2ecd20), as on 229. Device info
+            (device_info_reads none): as on 229, u5 queues no aa 06 / aa 07
             read and its success callback y5 takes the soft and hard versions from the reply's TLV 0x07 (g1 and k2(e(),
             d()); Compose4BaseInfoSingleRead.w), so the library sends none either and folds the versions and device id
             from TLV 0x07 alone. Not hardware-verified.
@@ -13809,7 +13813,7 @@ families:
         "256":   # H6811, as 255
           models: [H6811]
           pacts: ["2,1", "2,2", "2,3"]   # (1,1) left out, as on 229
-          support: modelled   # downgraded 2026-10-21: the colour-temperature read-back is inferred (h70b3.md "Disputed")
+          support: app_traced   # 2026-10-22, decision 25: the library folds a Kelvin-tint report as the colour page does (doc)
           capabilities: [power, brightness, rgb, color_temp]
           zones: []
           account_lock: false
@@ -13825,7 +13829,8 @@ families:
             H6811 (KmpGoodsType 256), the 255 facts: Support.F registers (1,1) (2,1) (2,2) (2,3) (AddDeviceM.c); the status
             read ac 03 02 41 39 on every pact but (1,1), device count 1; Config.x[256] = 2 -> bu, Config.I[256][4] = true,
             Kelvin [2000, 9000], brightness percent; the aa 00 heartbeat and the ee 30 push. Not listed, as on 255. Support
-            modelled, as on 229: the colour-temperature read-back is inferred (h70b3.md "Disputed"). Device info
+            app_traced, as on 229: the library folds a Kelvin-tint report as the colour page does; the pact gate comes
+            with the master merge (d2ecd20), as on 229. Device info
             (device_info_reads none): as on 229, u5 queues no aa 06 / aa 07 read and its success callback y5 takes the
             soft and hard versions from the reply's TLV 0x07 (g1 and k2(e(), d()); Compose4BaseInfoSingleRead.w), so the
             library sends none either and folds the versions and device id from TLV 0x07 alone. Not hardware-verified.

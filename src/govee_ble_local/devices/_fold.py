@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Collection, Iterable, Mapping, Sequence
-from typing import Any
+from typing import Any, Final
 
 from ..models import Capability, DeviceState, Segment
 from ..wire import build, parse, reassemble
@@ -431,8 +431,8 @@ def _apply_mode(profile: DeviceProfile, state: DeviceState, m: Any) -> None:
     the 0x0d report, so it clears ``color_temp_kelvin``, except where the report carries no Kelvin,
     ``DeviceProfile.mode_reports_kelvin`` False: the H61A8, whose 0 leaves the Kelvin the library sent);
     the bars' pair sets the per-bar Kelvin; a colour
-    layout sets the colour or the colour temperature. A sub-mode the SKU's parse ignores leaves the
-    colour as it was.
+    layout sets the colour or the colour temperature, as the screen shows it (:func:`_as_shown`). A sub-mode
+    the SKU's parse ignores leaves the colour as it was.
 
     Sub-mode 0xA1 is not a scene here, matching what the screen shows. Base
     ``OpInfo4Detail.x:786`` (bulbs, H6188, H61A8) hands an 0xA1 report to ``SubMode4Scene`` like 0x04,
@@ -454,7 +454,35 @@ def _apply_mode(profile: DeviceProfile, state: DeviceState, m: Any) -> None:
     elif isinstance(color, parse.HeadPair):
         _apply_head_pair(profile, state, color)
     elif color is not None:
-        state.rgb_color, state.color_temp_kelvin = color
+        state.rgb_color, state.color_temp_kelvin = _as_shown(profile, state, color)
+
+
+# The mode decodes whose colour report the stock colour page shows as a colour temperature when it is one
+# colour that is a Kelvin tint in the device's range, a test the decode itself never makes (devices.yaml
+# mode_color_parse, its cct_rule): the 0x0d strategy of the h70bx, h70b3, h6800, h70b6 and h6840 screens.
+_TINT_SHOWN_AS_KELVIN: Final = frozenset({"rgb_kelvin_0d_nocct"})
+
+
+def _as_shown(profile: DeviceProfile, state: DeviceState, color: parse.ColorReport) -> parse.ColorReport:
+    """A colour report ``(rgb, kelvin)`` as the screen shows it. On a :data:`_TINT_SHOWN_AS_KELVIN` decode, an
+    RGB that is one of the app's tint colours (:func:`~..wire.cct.kelvin_for_tint`) whose Kelvin lies in the
+    device's inclusive range (:func:`kelvin_range`) is that colour temperature, with no RGB colour. The
+    report's one colour (``SubMode4Color.d``) reaches ``DelegateColorV2.W1:1105-1123``
+    (``DelegateCurMode.createView:185-203`` -> ``ColorViewModel.initColor4Device:1182-1224`` -> ``v1:625-630``
+    -> ``w1:666-730``), which shows the Kelvin slider at ``KelvinConfig.c:119-122`` of it when
+    ``KelvinConfig.i:193-200`` holds (``ColorUtils.i:261-276``, inclusive), else the colour. The report's own
+    Kelvin bytes are not read, as the app never tests them. The same rule as a write's
+    (:func:`apply_rgb`), so a tint the library sent reads back as the Kelvin it sent. Any other report, and
+    a profile without COLOR_TEMP, stays as decoded."""
+    rgb, _kelvin = color
+    if (rgb is None or profile.mode_color_parse not in _TINT_SHOWN_AS_KELVIN
+            or Capability.COLOR_TEMP not in profile.capabilities):
+        return color
+    span = kelvin_range(profile, state.hardware_version, soft=state.firmware_version)
+    tint = kelvin_for_tint(rgb)
+    if span is None or tint is None or not span[0] <= tint <= span[1]:
+        return color
+    return None, tint
 
 
 def _apply_head_pair(profile: DeviceProfile, state: DeviceState, pair: parse.HeadPair) -> None:
