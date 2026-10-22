@@ -311,9 +311,12 @@ model, from which the shipped readers are generated).
 - **The live piece count sizes the colour writes on every IC-sized row** (`DeviceProfile.color_writes_live_ic`,
   keyword-only, default False; every devices.yaml row with an `ic_pieces` object form sets it, and it needs
   `color_readback_live_ic`). These screens take their colour strip, and so every pick's position set and the
-  whole-device mask, from the IC the aa 40 read stores, with no cap but their rule's (`ColorPieceConfig.c`;
-  h61d3 `ColorMode.V`, h705a `ColorMode.Y` / `ColorModeV1.K` and the H7067 strip's `updateColorPiece`), where
-  the library wrote the row's static count. `Device.segment_count` is now each poll's live pieces (the poll's
+  whole-device mask, from the stored IC, which the aa 40 read updates, with no cap but their rule's
+  (`ColorPieceConfig.c`), where the library wrote the row's static count. The h705a screens resize a built
+  strip when a read changes the count (`ColorMode.Y`, `ColorModeV1.K`); the h61d3 and H7067 screens store it
+  without resizing (`VM4Light.k5` / `h5` / `Q4`), so in the first app session after the IC changed with no app
+  connected their strip keeps the old count where the library takes the new one, a divergence each row's doc
+  names. `Device.segment_count` is now each poll's live pieces (the poll's
   one aa 40 read, in its place before the aa a5 groups; at most 112, `build.MAX_MASK_SEGMENTS`, the most
   positions any body carries, so every larger count writes the same bytes): the whole-device mask and the
   segment index bound. Before the first poll a write that carries a mask reads aa 40 first, and raises
@@ -427,7 +430,8 @@ model, from which the shipped readers are generated).
   static count, and the library refuses a segment index at or past it. hass-govee-ble-local builds one segment
   entity per `profile.segments`; it needs to size them from `device.segment_count` after the first refresh
   (and reload when the count changes): until then a strip shorter than the profile's count shows entities
-  whose writes raise GoveeBleInvalidValue. Every other SKU resolves to the same profile, field by field, at
+  whose writes raise GoveeBleInvalidValue, and H6641's `segment_14` / `segment_15` entities (its count is now
+  at most 14) need removing. Release the two together. Every other SKU resolves to the same profile, field by field, at
   every pact its rows list, at (99, 99) and at none, with and without `allow_modelled`.
 
 ### Fixed
@@ -466,7 +470,7 @@ model, from which the shipped readers are generated).
   count). A unit at its rule's cap sends the bytes it sent before, but H6641, whose old 16 was above its cap:
   its `DeviceProfile.segments` is now 14, the most its rule gives (`H61D3Support.s` / `e`), where it was 16, a
   library bound. Behind `allow_modelled`, H61E5 / H61E6 (239 / 246, the same screen) take the live mask too; they stay
-  `modelled` for their white type. The reads are unchanged: one aa 40 per poll, in its place. Source-traced,
+  `modelled` for their segment-brightness gate (`ColorMode.canClickBrightness`). The reads are unchanged: one aa 40 per poll, in its place. Source-traced,
   not live-verified: the visible check on the bench H6641 (one whole-device colour with the live mask) is to
   follow.
 

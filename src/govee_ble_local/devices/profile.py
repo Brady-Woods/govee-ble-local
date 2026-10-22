@@ -474,8 +474,10 @@ class DeviceProfile:
     a count."""
     color_writes_live_ic: bool = field(default=False, kw_only=True)
     """With :attr:`color_readback_live_ic`: the live pieces size the writes too, as the screen's strip takes
-    them from the IC each aa 40 read stores (``ColorPieceConfig.c``; h61d3 ``ColorMode.V``, h705a
-    ``ColorMode.Y``): :attr:`~.device.Device.segment_count` becomes each poll's count (at most
+    them from the stored IC, which each aa 40 read updates (``ColorPieceConfig.c``; the h705a screens resize a
+    built strip when a read changes it, ``ColorMode.Y`` / ``ColorModeV1.K``, while the h61d3 and H7067 strips
+    keep the count they were built with until a calibration or settings event, a first-session difference
+    their rows' docs name): :attr:`~.device.Device.segment_count` becomes each poll's count (at most
     ``build.MAX_MASK_SEGMENTS``), so it is the whole-device mask and the segment index bound, and a write that
     carries a mask before any count is known reads ``aa 40`` first and raises GoveeBleError, sending nothing,
     when the device gives no usable count, as a ``section_count_read`` profile does. :attr:`segments` is then

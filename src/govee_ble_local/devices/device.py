@@ -1940,10 +1940,13 @@ class Device:
     async def _read_live_ic(self, budget: ConnectBudget | None = None) -> int | None:
         """The live IC count's ``aa 40`` read (:func:`._readback.read_live_ic`): its pieces, or None. On a
         ``color_writes_live_ic`` profile a count of 1 or more becomes :attr:`segment_count`, at most
-        ``build.MAX_MASK_SEGMENTS`` (a body carries no more: every count above writes the same bytes), as
-        the screen resizes its strip to each IC read (h61d3 ``ColorMode.V``, h705a ``ColorMode.Y``). A device
-        fact, not optimistic state, so it is adopted whatever a setter did meanwhile; no count leaves it as
-        it was."""
+        ``build.MAX_MASK_SEGMENTS`` (a body carries no more: every count above writes the same bytes): the
+        screen's strip takes its count from the IC the read stores (``ColorPieceConfig.c``). The h705a
+        screens resize a built strip when a read changes it (``ColorMode.Y``, ``ColorModeV1.K``); the h61d3
+        and H7067 ones store the count without resizing (``VM4Light.k5`` / ``h5`` / ``Q4``), so in the first
+        app session after the IC changed with no app connected their strip keeps the old count, where the
+        library takes the new one (each row's doc). A device fact, not optimistic state, so it is adopted
+        whatever a setter did meanwhile; no count leaves it as it was."""
         pieces = await _readback.read_live_ic(self, lambda f: self._read_reply(f, budget))
         if self.profile.color_writes_live_ic and pieces is not None and pieces >= 1:
             self._segment_count = min(pieces, build.MAX_MASK_SEGMENTS)
