@@ -12,12 +12,16 @@ vouches for a lit zone only while TLV 0x01 says on (MISSED-2); a status reply th
 write the firmware acked but has not applied vouches for no zone it contradicts (ZPC-2); a poll clears the
 power doubt only from a read issued after it arose (ZPC-4); a scene activation vouches for no zone (F7); an
 H6047 bar write reads the bars first unless the other bar is freshly confirmed (F2); and a batch's frames are
-never split by another write (MISSED-4)."""
+never split by another write (MISSED-4).
+
+``Device.power_read_at`` is the whole-device on/off's stamp: set only by a read that returned it, and dropped
+on the same events, plus any change to ``is_on`` that no read made."""
 from __future__ import annotations
 
 import asyncio
 import contextlib
 import dataclasses
+import time
 import types
 from collections.abc import Callable, Coroutine
 from typing import Any
@@ -29,6 +33,7 @@ from fake_ble import FakeGovee, ble_device, frame, status_burst, unacked_via
 
 from govee_ble_local.const import SESSION_ATTEMPTS, ZONE_POWER_FRESH_SECONDS
 from govee_ble_local.devices import _fold
+from govee_ble_local.devices import device as device_mod
 from govee_ble_local.devices.device import Device, make_device
 from govee_ble_local.devices.profile import DeviceProfile, profile_for
 from govee_ble_local.exceptions import GoveeBleCommandRejected, GoveeBleConnectionError, GoveeBleTimeout
@@ -1140,3 +1145,267 @@ def test_a_possible_wake_does_not_vouch_for_a_posted_zone_off(clock: _Clock) -> 
     assert d.state.zone_power == {0: True, 1: True} and 0 not in d.state.zone_power_confirmed
     asyncio.run(d.update())
     assert d.state.zone_power == {0: False, 1: True} and d.state.zone_power_confirmed == {0: 120.0, 1: 120.0}
+
+
+# ── Device.power_read_at: when a read last returned the whole-device on/off ──────────────────────
+@pytest.fixture
+def read_clock(clock: _Clock, monkeypatch: pytest.MonkeyPatch) -> _Clock:
+    """``clock`` for the Device's own monotonic reads too: power_read_at and the advert suppress window."""
+    monkeypatch.setattr(device_mod, "time", types.SimpleNamespace(
+        monotonic=clock, time=time.time, localtime=time.localtime))
+    return clock
+
+
+def _replies(table: dict[bytes, bytes]) -> Callable[[bytes], list[bytes]]:
+    """Answer each ``aa`` read whose first two bytes ``table`` lists with that frame; the rest go
+    unanswered."""
+    return lambda fr: [table[fr[:2]]] if fr[:2] in table else []
+
+
+def test_a_status_read_with_the_on_off_stamps_power_read_at(read_clock: _Clock) -> None:
+    d, _ = _dev("H60A6", _status(1, 0))
+    assert d.power_read_at is None
+    asyncio.run(d.update())
+    assert d.state.is_on is True and d.power_read_at == 100.0
+    read_clock.now = 130.0
+    asyncio.run(d.update())
+    assert d.power_read_at == 130.0
+
+
+def test_a_poll_that_reads_no_on_off_keeps_the_stamp_before_it(read_clock: _Clock) -> None:
+    # The integration's C2: optimistic clears once, so a poll that read nothing looked like a fresh read.
+    reply = {"burst": _status(0, 0, power=0)}
+    d, _ = _dev("H60A6", lambda fr: reply["burst"](fr))
+    asyncio.run(d.update())
+    assert d.state.is_on is False and d.power_read_at == 100.0 and d.state.optimistic is False
+    read_clock.now = 130.0
+    reply["burst"] = lambda _fr: []   # connected, every read unanswered
+    asyncio.run(d.update())
+    assert d.state.optimistic is False and d.power_read_at == 100.0
+
+
+def test_a_first_poll_that_reads_nothing_stamps_nothing(read_clock: _Clock) -> None:
+    d, _ = _dev("H60A6")
+    asyncio.run(d.update())
+    assert d.power_read_at is None
+
+
+def test_the_polled_power_read_stamps_and_a_brightness_reply_does_not(read_clock: _Clock) -> None:
+    table = {b"\xaa\x01": frame(0xAA, 0x01, 1), b"\xaa\x04": frame(0xAA, 0x04, 0x80)}
+    d, _ = _dev("H6008", _replies(table))
+    asyncio.run(d.update())
+    assert d.state.is_on is True and d.power_read_at == 100.0
+    read_clock.now = 130.0
+    del table[b"\xaa\x01"]
+    asyncio.run(d.update())
+    assert d.power_read_at == 100.0
+
+
+def test_a_plug_relay_read_stamps_power_read_at(read_clock: _Clock) -> None:
+    d, _ = _dev("H5080", _replies({b"\xaa\x01": frame(0xAA, 0x01, 0x01)}))
+    asyncio.run(d.update())
+    assert d.state.is_on is True and d.power_read_at == 100.0
+
+
+def test_a_bar_read_stamps_and_the_bar_write_after_it_drops_what_it_changes(read_clock: _Clock) -> None:
+    # The aa 36 read before a bar write gives the on/off (either bar lit); the 33 36 that switches the last
+    # lit bar off changes it, which no read said.
+    d, _ = _dev("H6047", _bars(0, 1))
+    asyncio.run(d.set_zone_power("left", True))   # reads the bars first (unknown), then 33 36 [1][1]
+    assert d.state.is_on is True and d.power_read_at == 100.0
+    asyncio.run(d.set_zone_power("left", False))  # 33 36 [0][1]: still on
+    assert d.power_read_at == 100.0
+    asyncio.run(d.set_zone_power("right", False))  # 33 36 [0][0]: off, derived from the bars
+    assert d.state.is_on is False and d.power_read_at is None
+
+
+def test_an_advert_that_changes_is_on_drops_the_stamp_for_good(read_clock: _Clock) -> None:
+    d, _ = _dev("H60A6", _status(1, 1))
+    asyncio.run(d.update())
+    read_clock.now = 120.0   # past ADVERT_SUPPRESS_SECONDS
+    d.ingest_advertisement(_advert(True))  # type: ignore[arg-type]
+    assert d.power_read_at == 100.0   # it agrees
+    assert d.ingest_advertisement(_advert(False)) is True  # type: ignore[arg-type]
+    assert d.power_read_at is None
+    d.ingest_advertisement(_advert(True))  # type: ignore[arg-type]
+    assert d.state.is_on is True and d.power_read_at is None   # back to what the read said, but not read
+
+
+def test_an_acked_write_keeps_the_stamp_only_while_is_on_holds(read_clock: _Clock) -> None:
+    d, _ = _dev("H60A6", _status(1, 1))
+    asyncio.run(d.update())
+    asyncio.run(d.set_brightness(50))   # known on: no wake
+    asyncio.run(d.set_power(True))
+    assert d.power_read_at == 100.0
+    asyncio.run(d.set_power(False))
+    assert d.power_read_at is None
+    asyncio.run(d.set_power(True))
+    assert d.power_read_at is None
+
+
+@pytest.mark.parametrize("on", [True, False])
+@pytest.mark.parametrize(("sku", "reply"), [
+    ("H60A6", _status(1, 1)),
+    ("H5080", _replies({b"\xaa\x01": frame(0xAA, 0x01, 0x01)})),
+])
+def test_a_power_write_that_raises_drops_the_stamp_whatever_its_power(
+        read_clock: _Clock, sku: str, reply: Callable[[bytes], list[bytes]], on: bool) -> None:
+    d, sent = _dev(sku, reply)
+    asyncio.run(d.update())
+    assert d.power_read_at == 100.0
+    _failing(d, sent, lambda _f: GoveeBleTimeout("no ack"))
+    with pytest.raises(GoveeBleTimeout):
+        asyncio.run(d.set_power(on))
+    assert d.state.is_on is True and d.power_read_at is None
+
+
+@pytest.mark.parametrize(("sku", "reply", "write"), [
+    # A scene activation targets the whole device (fixture): it lights an H6008 read off.
+    ("H6008", _replies({b"\xaa\x01": frame(0xAA, 0x01, 0)}), lambda d: d.set_scene(1)),
+    # A 33 30 zone-on targets its zone (zones), and also sets the H60A6 main switch.
+    ("H60A6", _status(0, 0, power=0), lambda d: d.set_zone_power("main", True)),
+], ids=["scene", "zone-on"])
+def test_a_scene_or_zone_write_that_raises_drops_a_read_off(
+        read_clock: _Clock, sku: str, reply: Callable[[bytes], list[bytes]],
+        write: Callable[[Device], Coroutine[Any, Any, None]]) -> None:
+    d, sent = _dev(sku, reply)
+    asyncio.run(d.update())
+    assert d.state.is_on is False and d.power_read_at == 100.0
+    _failing(d, sent, lambda _f: GoveeBleTimeout("no ack"))
+    with pytest.raises(GoveeBleTimeout):
+        asyncio.run(write(d))
+    assert d.state.is_on is False and d.power_read_at is None
+
+
+def test_an_acked_zone_on_drops_a_read_off_when_the_zones_are_unknown(read_clock: _Clock) -> None:
+    # FIRMWARE-SOURCED: an H60A6 33 30 zone-on sets the main switch (FUN_9b0278dc @0x9b02795e). With the other
+    # zone unknown the state can't derive is_on, so it stays False, which the read no longer vouches for.
+    burst = status_burst(bytes([0x01, 0x01, 0x00]))   # TLV 0x01 only: off, zones unknown
+    d, _ = _dev("H60A6", lambda fr: list(burst) if fr[0] == 0xAC else [])
+    asyncio.run(d.update())
+    assert d.state.is_on is False and d.state.zone_power == {} and d.power_read_at == 100.0
+    asyncio.run(d.set_zone_power("main", True))
+    assert d.state.is_on is False and d.state.zone_power == {0: True} and d.power_read_at is None
+
+
+@pytest.mark.parametrize(("by_name", "fails"), [
+    (False, "lead"), (False, "activation"), (True, "lead"), (True, "upload"), (True, "activation")],
+    ids=lambda v: {False: "set_scene", True: "set_scene_by_name"}.get(v, v))
+def test_a_scene_power_on_lead_or_scene_that_fails_drops_a_read_off(
+        read_clock: _Clock, by_name: bool, fails: str) -> None:
+    # As the zone stamps (ZONE-2): the lead is a whole-device power write. set_scene_by_name sends it on its
+    # own, then the upload, so a lead or upload that raises drops the stamp there too.
+    zoned = _scene_power_on()
+    probe, _ = _dev("H60A6", profile=zoned)
+    name = next(n for n, sc in load_scenes("H60A6").items() if probe.scene_upload_frames(sc))
+    d, sent = _dev("H60A6", _status(0, 0, power=0), profile=zoned)
+    asyncio.run(d.update())
+    assert d.state.is_on is False and d.power_read_at == 100.0
+    _failing(d, sent, lambda f: GoveeBleTimeout("no ack") if f[1] == {"lead": 0x30, "activation": 0x05}.get(
+        fails) else None)
+    if fails == "upload":
+        d._conn.send_unacked = AsyncMock(side_effect=GoveeBleTimeout("lost"))  # type: ignore[method-assign]
+    with pytest.raises(GoveeBleTimeout):
+        asyncio.run(d.set_scene_by_name(name) if by_name else d.set_scene(1))
+    assert any(f[:2].hex() == "3330" for f in sent)   # the lead went out
+    assert d.state.is_on is False and d.power_read_at is None
+
+
+def test_a_non_power_write_that_raises_keeps_the_stamp(read_clock: _Clock) -> None:
+    d, sent = _dev("H6008", _replies({b"\xaa\x01": frame(0xAA, 0x01, 0)}))
+    asyncio.run(d.update())
+    _failing(d, sent, lambda _f: GoveeBleTimeout("no ack"))
+    with pytest.raises(GoveeBleTimeout):
+        asyncio.run(d.set_brightness(50))
+    assert d.state.is_on is False and d.power_read_at == 100.0
+
+
+@pytest.mark.parametrize("acked", [True, False])
+def test_a_wake_drops_a_read_off(read_clock: _Clock, acked: bool) -> None:
+    # FIRMWARE-SOURCED: an H60A6 33 04 with the main switch off lights the fixture (MSG_SET_TURN(1)), which
+    # the state does not fold in: is_on stays False, so the read no longer vouches for it.
+    d, sent = _dev("H60A6", _status(0, 0, power=0))
+    asyncio.run(d.update())
+    assert d.state.is_on is False and d.power_read_at == 100.0
+    if not acked:
+        _failing(d, sent, lambda _f: GoveeBleTimeout("no ack"))
+    with pytest.raises(GoveeBleTimeout) if not acked else contextlib.nullcontext():
+        asyncio.run(d.set_brightness(50))
+    assert d.state.is_on is False and d.power_read_at is None
+
+
+def test_an_acked_zone_off_that_may_switch_the_main_off_drops_the_stamp(read_clock: _Clock) -> None:
+    # ZPC-1: a 33 30 off over the main zone while the background's power is unknown may leave no zone lit,
+    # which switches the main switch off; is_on stays True.
+    burst = status_burst(bytes([0x01, 0x01, 0x01]))   # TLV 0x01 only: on, zones unknown
+    d, _ = _dev("H60A6", lambda fr: list(burst) if fr[0] == 0xAC else [])
+    asyncio.run(d.update())
+    assert d.power_read_at == 100.0
+    asyncio.run(d.set_zone_power("main", False))
+    assert d.state.is_on is True and d._power_unsure is True and d.power_read_at is None
+
+
+def test_a_status_reply_that_predates_an_acked_power_write_does_not_stamp(read_clock: _Clock) -> None:
+    # ZPC-2, FIRMWARE-SOURCED: the H60A6 acks a 33 01 once it has posted it and applies it later, so the reply
+    # answered in between reports the old on/off. The read after it stamps.
+    d, _ = _dev("H60A6")
+    dev = {"main": 1, 0: 1, 1: 1}
+    _flags_h60a6(d, dev, lag=True)
+    asyncio.run(d.update())
+    assert d.power_read_at == 100.0
+    read_clock.now = 110.0
+    asyncio.run(d.set_power(False))
+    assert d.power_read_at is None
+    read_clock.now = 110.5
+    asyncio.run(d.update())   # answered before the message thread ran: TLV 0x01 still says on
+    assert d.state.is_on is True and d.power_read_at is None
+    read_clock.now = 140.0
+    asyncio.run(d.update())
+    assert d.state.is_on is False and d.power_read_at == 140.0
+
+
+@pytest.mark.parametrize(("sku", "power_read"), [
+    ("H60A6", b"\xac"),       # the 0xAC status read
+    ("H6008", b"\xaa\x01"),   # a polled light's aa 01
+], ids=["status", "polled"])
+def test_a_read_issued_before_a_drop_does_not_stamp_after_it(
+        read_clock: _Clock, sku: str, power_read: bytes) -> None:
+    # Only the read that gives the on/off sees the drop; the reads after it (brightness, device-info) don't.
+    d, _ = _dev(sku)
+    burst = status_burst(bytes([0x01, 0x01, 0x01]))
+    drops = [True]   # the first power read only
+
+    async def query(fr: bytes, **_k: object) -> list[bytes]:
+        if fr[:len(power_read)] != power_read:
+            return []
+        if drops and drops.pop():
+            d._set_power_unsure()   # a power-off raised while the read was in flight
+        return list(burst) if fr[0] == 0xAC else [frame(0xAA, 0x01, 1)]
+
+    d._conn.query = AsyncMock(side_effect=query)  # type: ignore[method-assign]
+    asyncio.run(d.update())
+    assert d.state.is_on is True and d.power_read_at is None
+    asyncio.run(d.update())   # issued after the drop: it stamps
+    assert d.power_read_at == 100.0
+
+
+@pytest.mark.parametrize(("gated", "stamped"), [(b"\xaa\x05", False), (b"\xaa\x04", True)])
+def test_a_poll_raced_by_a_failed_power_off_stamps_only_a_read_issued_after_it(
+        read_clock: _Clock, gated: bytes, stamped: bool) -> None:
+    # ZPC-4's race: the off lands after the poll's power reads (aa 05 gated), or between its aa 01 and its
+    # aa 36 (aa 04 gated), whose bars then give the on/off.
+    d = _h6047_poll_raced_by_a_failed_off(gated)
+    assert (d.power_read_at is not None) is stamped
+    assert d.state.is_on is (not stamped)
+
+
+def test_power_read_at_is_not_in_the_state(read_clock: _Clock) -> None:
+    # On the Device, so a consumer that compares asdict(state) between polls sees a re-read of the same state
+    # as no change, whatever its time.
+    d, _ = _dev("H6008", _replies({b"\xaa\x01": frame(0xAA, 0x01, 1)}))
+    asyncio.run(d.update())
+    before = dataclasses.asdict(d.state)
+    read_clock.now = 130.0
+    asyncio.run(d.update())
+    assert dataclasses.asdict(d.state) == before and d.power_read_at == 130.0
+    assert "power_read_at" not in before

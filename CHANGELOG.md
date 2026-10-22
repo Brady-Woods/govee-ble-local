@@ -32,6 +32,35 @@ model, from which the shipped readers are generated).
     can't grow a field without a MAJOR. Released Home Assistant integrations import both, so both keep their
     signatures and results through 1.x; a new way of reading a merged record goes in a new function.
     Discovery keeps the name gate as before.
+- **`Device.advertised_on(advertisement_data) -> bool | None`: an advertisement's on/off, decoded as this device
+  decodes it.** A light is on for a switch byte of 1, a plug for any bit of its profile's `advert_on_mask`. The
+  result is None when the advertisement carries no switch byte (no Govee manufacturer data, a header below 2, too
+  short). It is passive: it leaves the state as it is and ignores the window after a command or read in which
+  `ingest_advertisement` ignores the advertised on/off. `ingest_advertisement` now decodes through it.
+  - **Why a Device method:** this mirrors the app's split. `BleUtil.parseBleBroadOnOff` reads the raw byte the
+    same way for every device (the overload at `:719-744` for lights, the one at `:700-717` for plugs), and each
+    device model decodes it in its own `z(scanRecord)`: `AbsBaseBleModel.z:393-397` for lights, h5080
+    `Model.z:254-265` and `Model4Plug2.z:269-290` for plugs. So a caller no longer passes the mask itself. The
+    Home Assistant integration can use it in place of `identify.parse_broadcast_onoff(..., on_mask=...)`, which
+    is not in `__all__`.
+  - **What stays:** `identify.parse_broadcast_onoff` and `DeviceProfile.advert_on_mask` are unchanged and stay
+    supported through 1.x, because released integrations import them.
+- **`Device.power_read_at -> float | None`: when a read last returned the device's whole on/off.** The value is in
+  `time.monotonic()` seconds, and only while `state.is_on` still holds what that read gave; otherwise None.
+  - **What stamps it:** an answered 0xAC status read, a polled light's `aa 01`, a bar-switch device's `aa 36` (in
+    a poll or before a bar write) and a plug's `aa 01` relay read. A poll that read nothing, a read discarded
+    as stale, an advertisement and an acked write stamp nothing.
+  - **What drops it:** any change to `is_on` that no read made, even one that later changes back. Also a power
+    write or scene activation that raises (it may have reached the device), including a `set_scene_by_name`
+    whose power-on lead or upload raises. Also a write that wakes a zoned device not known to be on, an acked
+    zone-on while `is_on` is not True (an H60A6 `33 30` zone-on also sets the main switch, FUN_9b0278dc
+    @0x9b02795e), and each case where `is_on` may say on for a device that is off. Those are the
+    `DeviceState.zone_power_confirmed` events. A read issued before a drop doesn't stamp after it.
+  - **Why it's needed:** `DeviceState.optimistic` clears at the first answered read and is never set again, so
+    a consumer could not tell a later poll that read the on/off from one that read nothing.
+  - **Why on the Device:** it is not a `DeviceState` field, so `dataclasses.asdict(state)` and `snapshot()`
+    don't carry it. A consumer that compares `asdict(state)` between polls (the Home Assistant integration
+    does) sees no change from a re-read.
 
 ### Changed
 - **A Device now re-learns its command channel from later advertisements, for its next session, as the app
@@ -69,6 +98,10 @@ model, from which the shipped readers are generated).
       was answered;
     - a mixed record kept the cipher and warned.
   - Design: `govee-apks/library-audit/DESIGN_relearn_advert_cipher.md`.
+
+### Fixed
+- Docstrings cited the app's per-model advert decode as `AbsBaseBleModel.A`, h5080 `Model.A` and
+  `Model4Plug2.A`; in the 7.7.02 decompile the method is `z`.
 
 ## [1.6.1] — 2026-10-21
 

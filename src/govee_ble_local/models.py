@@ -83,7 +83,10 @@ class DeviceState:
     # ``aa 05 15`` reply carries one kelvin per bar) fill it. ``color_temp_kelvin`` is the
     # whole-device value and is set only while every zone agrees.
     zone_color_temp_kelvin: dict[int, int] = field(default_factory=dict)
-    optimistic: bool = False                 # True if not read back from the device
+    # A Device's state starts with optimistic True; the first read that brings a live field back clears it for
+    # good, and a later poll that reads nothing leaves it False. Device.power_read_at says when a read last
+    # returned the on/off.
+    optimistic: bool = False
     # Device-info (static-ish), populated where the device supports read-back.
     wifi_mac: str | None = None
     hardware_version: str | None = None

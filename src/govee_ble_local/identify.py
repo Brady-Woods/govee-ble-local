@@ -167,7 +167,7 @@ def _pact_encrypt_flags(mfg: dict[int, bytes]) -> dict[int, bool]:
 def parse_broadcast_onoff(mfg: dict[int, bytes], *, on_mask: int | None = None) -> bool | None:
     """The device's on/off state from its advertisement — PASSIVE, no connection.
 
-    Port of BleUtil.parseBleBroadOnOff + AbsBaseBleModel.A: the byte right after
+    Port of BleUtil.parseBleBroadOnOff + AbsBaseBleModel.z: the byte right after
     pactType(2)+pactCode(1) in the Govee mfg data (scanRecord i+8; bleak value
     index 4) == 1 means ON. Only a broadcast whose header byte (the company-id low
     byte, scanRecord i+2), read as a signed Java byte, is >= 2 carries it: a v0/v1
@@ -176,8 +176,8 @@ def parse_broadcast_onoff(mfg: dict[int, bytes], *, on_mask: int | None = None) 
     (not a Govee broadcast / header below 2 / too short).
 
     ``on_mask`` decodes the byte as a bitmask instead: ON when any of its bits is set. The plugs'
-    device-list models do that (h5080 ``Model.A``, ``Model4Plug2.A``; see
-    ``DeviceProfile.advert_on_mask``)."""
+    device-list models do that (h5080 ``Model.z``, ``Model4Plug2.z``; see
+    ``DeviceProfile.advert_on_mask``). ``Device.advertised_on`` applies the device's own mask."""
     for entry in _govee_entries(mfg):
         # has_switch_state: a header byte >= 2 read signed (BleUtil.parseBleBroadOnOff:
         # (signed) scanRecord[i6 + 2] >= 2) and a byte after pact_code, its switch_byte.
