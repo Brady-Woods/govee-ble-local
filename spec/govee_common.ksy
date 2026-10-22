@@ -903,7 +903,8 @@ enums:
       id: color_group
       -orig-id: MSG_READ_BULB_LIGHT_COLOR_WITH_BRIGHTNESS
       doc: |
-        per form_a5: AA A5 / TLV 0xA5 bri_rgb group, or the H61A8 V2 batch
+        per form_a5: AA A5 / TLV 0xA5 bri_rgb group, the H61A8 V2 batch, or
+        the H703A one-record TLV
       doc-ref:
         - base-classes10/com/govee/base2light/ble/controller/BleProtocolConstants.java:28
         - base-classes11/com/govee/base2light/kt/general_controller/Controller4ColorInfoByGroup.java:37-42
@@ -1721,6 +1722,16 @@ enums:
       doc: H61A8 mechanism-B V2 batch [batch][3 x bri_rgb]
       doc-ref:
         - split_rgbiclight/com/govee/dreamcolorlightv1/ble/BulbGroupColorV2.java:16-33
+    3:
+      id: single_record
+      doc: |
+        TLV 0xA5 of the H703A / H703B status read (goodsType 263): one
+        bri_rgb record at bytes 1-4, read only from a value of 5 bytes or
+        more; byte 0 is never read, and the record replaces the colour only
+        at a piece count of 1
+      doc-ref:
+        - split_h61d3/com/govee/h61d3/adjustNew/VM4Light$afterConnectedSingleReadDeviceInfo$1.java:100-104,114-124
+        - base-classes11/com/govee/base2light/pact/newdetail/sub/SubMode4Color.java:180-201
   form_b0:
     0:
       id: unknown

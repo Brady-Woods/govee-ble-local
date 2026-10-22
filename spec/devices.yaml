@@ -149,11 +149,20 @@ timing:
         screens have no info gate at all. On an after_quiet row the wait restarts when each operation that sent a
         frame ends, not at each send within it (HeartHandler.e restarts it on every send).
       - >-
-        PROCEDURAL (govee-ble-local): the reply is not folded into state. It is left in the receive queue, which the
-        next operation drains (as it drains an ee 30 push). The poll's own power read stands in for it: aa 01 on a
-        polled row, and the status read's TLV 0x01 on a status row, whose app reads the 0xAC burst once per connect
-        and then follows the reply (ShareVM.N3 -> J3). The follow-up: fold heartbeat replies and ee 30 pushes
-        through one hook.
+        PROCEDURAL (govee-ble-local): the reply is not folded into state except on a status row that says
+        heartbeat_power. It is left in the receive queue, which the next operation drains (as it drains an ee 30
+        push), and the poll's own power read stands in for it: aa 01 on a polled row, and the status read's TLV 0x01
+        on a status row. The screen of a status row on the aa 01 keep-alive reads the 0xAC burst once per connect
+        and then takes the switch from each aa 01 reply (ShareVM.N3 -> J3); on straightfloorlamp 69, h6069 284,
+        rgbiclight 351 / 352 and h61d3 263, J3 also re-reads on each change (Compose4Off2On: the timer, sleep and
+        wake reads and aa 05, then the screen's aa a5 groups), while on h7086 293, h7020 296, h7076 313 and h3700
+        383 it sets the switch alone. Only h61d3 263 says heartbeat_power (behind allow_modelled): the library makes
+        its status read once per link (a poll on a link it was made on reads nothing more) and folds each reply's
+        byte 2 == 1 into the power, but only a reply that arrives with no other frame sent since its beat (one sent
+        after it, a power write or a read, may have changed what the reply reports), where the app takes every aa 01
+        notification; the re-read on a change is not modelled. The status rows admitted before 1.9.0 on the aa 01
+        keep-alive (the eight others above) read the status on every poll. The follow-up: fold heartbeat replies and
+        ee 30 pushes through one hook.
       - >-
         PROCEDURAL (govee-ble-local): one write without response, bounded at 1 s and not retried, and cut short by
         a disconnect or an operation that wants the link (above), where the app's runs to its end beside its command
@@ -164,6 +173,15 @@ timing:
       - base-classes12/com/govee/common2light/capability/connect/ConnectHeartbeat.java:15-17,26-38
       - base-classes11/com/govee/base2light/pact/newdetail/ShareVM.java:979-1015,1348-1350,1362-1364,1401-1408
       - base-classes11/com/govee/base2light/pact/newdetail/ble/BleComm.java:37-47,76-84
+      - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4Off2On.java:44-80
+      - split_hollowlamp/com/govee/straightfloorlamp/adjust/VM4Light.java:613-642
+      - split_h6061/com/govee/cubelight/newdetails/CubeVM4Light.java:535-557
+      - split_rgbiclight/com/govee/rgbiclight/VM4Light.java:732-748
+      - split_h61d3/com/govee/h61d3/adjustNew/VM4Light.java:222-259,315-327,827-829
+      - split_outdoorlight/com/govee/h7086/adjust/VM4Light.java:267-279
+      - split_h7050/com/govee/h7020/newDetail/NewDetailVM.java:744-756
+      - split_h7075/com/govee/h7075/h7076/H7076DetailVM.java:331-343
+      - split_h7075/com/govee/h7075/h3700/H3700DetailVM.java:332-344
       - base-classes11/com/govee/base2light/pact/newdetail/ble/Ble4NewDetail.java:32-37
       - split_bulblightstringv1/com/govee/bulblightstringv1/bulblight/VM4Light.java:420-447
       - split_h6047/com/govee/h6047/detail/NewDetailVm.java:581-612
@@ -2367,6 +2385,7 @@ families:
           connect_reads: []
           connect_writes: []
           heartbeat: power
+          heartbeat_power: true
           doc: >-
             H703A / H703B. Model.t opens H703ADetailActivity (VM4Light) for H61D3Support.l0, and VM4Light.d0 takes Y4: the
             connect is the 0xAC status read alone, ext types {0x41, 0xA5, 0x40, 0x16}, with no aa 01 / aa 05 / aa a5. TLV
@@ -2376,28 +2395,41 @@ families:
             one-piece mask; Config.I = {F, F, F, F, T}: colour temperature, no gradual (no Config.G key), no segment
             brightness. Kelvin: KelvinConfig 263 -> version 2 = [2700, 6500]; brightness version 1. Live power: the ee 30
             switch push (VM4Light.z5) and the aa 01 heartbeat reply (VM4Light.I3; ShareVM.N3 -> J3 -> D5), the family's
-            power_live. MODELLED for the colour read-back alone: the library skips the TLV 0xA5 colour (one record at
-            bytes 1-4, byte 0 unread by the app; f_a5 left unset), so RGB has no read-back. Two notes hold on every
-            status row, the app_traced ones included (straightfloorlamp 69, h7076 313, h7020 296, the h7057 rows), and
-            set no row's level: the screen reads the burst once per connect and then follows its live power (here the
-            heartbeat reply and the ee 30 push), where the library re-reads the burst every poll and folds neither
-            (library-wide, the resolver's keep-alive rule);
-            and the request names only extra TLV types (here the four above), so the base TLVs 0x01 / 0x04 / 0x05 must
-            come unasked, which the app's code doesn't show (the H60A6 and H6076 benches do; absent, every poll would
-            read off, brightness 100). Not listed: the TimerConfig.f time sync before the read. No account
-            lock (SecretController is sent only in PairViewModel). Scenes untraced. Not hardware-verified.
+            power_live. The screen reads the burst once per connect and then follows the heartbeat, and so does the
+            library (heartbeat_power: the status read once per link, then each reply's switch,
+            timing.heartbeat.deviations). MODELLED for one gap of its own: J3's re-read on a switch change (D5 ->
+            Compose4Off2On: the timer, sleep and wake reads and aa 05, then G5's one aa a5 01 group) is not modelled,
+            so on a link that stays up the mode and colour are the link's status read's and the library's own writes,
+            and a poll there reads nothing back. Not modelled either: the ee 30 push. One note holds on every status
+            row, the app_traced ones included (straightfloorlamp 69, h7076 313, h7020 296, the h7057 rows), and sets
+            no row's level: the request names only extra TLV types (here the four above), and whether the firmware
+            returns TLVs 0x01 / 0x04 / 0x05 unasked is not in the app (the H60A6 and H6076 benches do; no unit of this
+            row is on the bench). Absent, the read gives off and brightness 100, in the app as in the library; the
+            app's screen stays connected and its first heartbeat reply corrects the power. The library's correction
+            reaches only a link that outlives a beat, through the state callbacks: the state a poll returns on a fresh
+            link is the status read's, so a client that polls on fresh links (Home Assistant's, with the idle
+            disconnect) would read off on every poll, as on any status row. RGB is read back from the TLV 0xA5 as the
+            screen reads it (wire f_a5 single_record): one [brightness, R, G, B] record at bytes 1-4 from a value of 5
+            bytes or more, byte 0 unread, applied at the one
+            piece (VM4Light$afterConnectedSingleReadDeviceInfo$1.n -> SubMode4Color.l). The library folds it as the
+            whole-device colour before the same burst's TLV 0x05, so a Kelvin above 0 there still reads as colour
+            temperature and a scene clears it; the app holds both. Not listed: the TimerConfig.f time sync before the
+            read. No account lock (SecretController is sent only in PairViewModel). Scenes untraced. Not
+            hardware-verified.
           doc-ref:
             - split_h61d3/com/govee/h61d3/pact/H61D3Support.java:914-918,790-803,1160-1161,1340-1342
             - base-classes2/com/govee/shared/checker/KmpGoodsType.java:235
             - split_h61d3/com/govee/h61d3/pact/H703ABBleIotSkuItem.java:7-9
             - split_h61d3/com/govee/h61d3/pact/Model.java:108-120
             - split_h61d3/com/govee/h61d3/adjustNew/H703ADetailActivity.java:34,111-114
-            - split_h61d3/com/govee/h61d3/adjustNew/VM4Light.java:458-464,703-797,811-813,827-829,952-977,1065-1075,1299-1307
+            - split_h61d3/com/govee/h61d3/adjustNew/VM4Light.java:222-259,315-327,458-464,703-797,811-813,827-829,952-977,1065-1075,1299-1307
             - base-classes11/com/govee/base2light/pact/newdetail/ShareVM.java:1004-1012,1348-1363
+            - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4Off2On.java:44-80
             - split_h61d3/com/govee/h61d3/adjustNew/VM4Light$afterConnectedSingleReadDeviceInfo$1.java:46-68,79-97,100-153,163-199
             - split_h61d3/com/govee/h61d3/adjustNew/Info4Detail.java:498-506,559-607,767-803
             - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4BaseInfoSingleRead.java:161-179,229,286-299
             - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/DeviceBaseInfoFromDevice.java:70-80,144-146,182-184
+            - base-classes11/com/govee/base2light/pact/newdetail/sub/SubMode4Color.java:180-201
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/ColorPieceConfig.java:354-452,1725-1745
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:231-257,277-292,352-368,1311-1315,4825-4829,5522-5526,5944-5948,11176-11179,12960-12968,13829-13832,16770-16773
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:315-326,474-501
@@ -3281,7 +3313,7 @@ families:
         forms: { f_01: light, f_09: datetime_epoch, f_ee_30: main_bit0_a }
         by_goods_type:
           "247": { forms: { f_a5: color_group, f_15_01: kelvin_tint }, counts: { num_segments: 14 }, group: { rule: fixed, num_per_group: 4 }, doc: "H6641: direct aa a5 groups of H61D3Support.t = 4 (split_h61d3/com/govee/h61d3/adjustNew/VM4Light.java:636-669); 14 = the most pieces ceil(clamp(IC, 41, 70) / 5) gives (H61D3Support.s, e), the count before the first aa 40 read; every write takes the live count" }
-          "263": { forms: { f_40: ic_pair, f_15_01: kelvin_tint }, counts: { num_segments: 1 }, doc: "H703A / H703B: 1 piece (H61D3Support.e); TLV 0x40 by the IC pair reader (split_h61d3/com/govee/h61d3/adjustNew/VM4Light$afterConnectedSingleReadDeviceInfo$1.java:125-126)" }
+          "263": { forms: { f_40: ic_pair, f_a5: single_record, f_15_01: kelvin_tint }, counts: { num_segments: 1 }, doc: "H703A / H703B: 1 piece (H61D3Support.e); TLV 0x40 by the IC pair reader (split_h61d3/com/govee/h61d3/adjustNew/VM4Light$afterConnectedSingleReadDeviceInfo$1.java:125-126); TLV 0xA5 as one [brightness, R, G, B] record at bytes 1-4 from a value of 5 bytes or more, byte 0 unread (:114-124; SubMode4Color.l, base-classes11/com/govee/base2light/pact/newdetail/sub/SubMode4Color.java:180-201)" }
           "202": { forms: { f_a5: color_group, f_15_01: kelvin_tint }, counts: { num_segments: 14 }, group: { rule: fixed, num_per_group: 4 }, doc: "H61D2..H61D6: four direct aa a5 groups of 4 over a fixed 14 pieces (split_h61d3/com/govee/h61d3/adjust/newdetail/VM4LightH61d3.java:380-407; ColorPieceConfig.j, base-classes11/com/govee/base2light/pact/newdetail/config/fuc/ColorPieceConfig.java:385-386)" }
           "239": { forms: { f_a5: color_group, f_15_01: kelvin_tint }, counts: { num_segments: 12 }, group: { rule: fixed, num_per_group: 4 }, doc: "H61E5: aa a5 groups of 4 (split_h61d3/com/govee/h61d3/adjustNew/VM4Light.java:636-669); 12 = ceil(36 / 3), the cap of H61D3Support.e over s(239), the count before the first aa 40 read (every write takes the live count); the frame layout is kelvin_tint, its white slot the row's white_type" }
           "246": { forms: { f_a5: color_group, f_15_01: kelvin_tint }, counts: { num_segments: 15 }, group: { rule: fixed, num_per_group: 4 }, doc: "H61E6: aa a5 groups of 4 (split_h61d3/com/govee/h61d3/adjustNew/VM4Light.java:636-669); 15 = ceil(60 / 4), the cap of H61D3Support.e over s(246), the count before the first aa 40 read (every write takes the live count); the frame layout is kelvin_tint, its white slot the row's white_type" }
@@ -3313,7 +3345,7 @@ families:
       - { name: take_photo, cmd: "0x26", payload: "[1,100,R,G,B] start (a) / [0] stop (b)" }
       - { name: video_recognition, cmd: "0xed" }
       - { name: secret_write, cmd: "0xb2", note: "read 0xB1; 8-byte base64-decoded secret" }
-      - { name: status_read, cmd: "0x03", pro_type: "0xac", readable: true, applies_to: "H703A, H703B", payload: "request ac 03 04 41 a5 40 16 00..00 xor: Compose4BaseInfoSingleRead.Companion.c prefixes the ext list with its length (base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4BaseInfoSingleRead.java:161-179); ext list {0x41, 0xA5, 0x40, 0x16} (split_h61d3/com/govee/h61d3/adjustNew/VM4Light$afterConnectedSingleReadDeviceInfo$1.java:169, BleProtocol.j = 0xA5 split_h61d3/com/govee/h61d3/ble/BleProtocol.java:16); frame = BleUtils.p(0xAC, 0x03, ext) (base-classes10/com/govee/base2light/ble/controller/AbsController4BleSingleSendMultiBack.java:157-165, base-classes10/com/govee/base2kt/utils/BleUtils.java:1030-1041; command 3, base-classes11/com/govee/base2light/kt/general_controller/ControllerSingleRead.java:80-83). Reply: multi-packet, first [ac, 00, pkgCount u16le, lastLen, 03, 00, 12 data bytes from offset 7] (or lastLen bytes when pkgCount == 1), middle [ac, seq, 17 bytes], last [ac, ff, lastLen bytes] (AbsController4BleSingleSendMultiBack.java:77-79,100-149,175-199,202-225,236-261), concatenated into a TLV stream [type, len (signed byte), value[len]] (Compose4BaseInfoSingleRead.u :253-285). TLVs the app decodes: 0x01 power (value[0] != 0, :286-292), 0x04 brightness (value[0] u8, :293-299), 0x05 mode (value = [sub-mode, body], :300-308 -> screen callback m -> Info4Detail.S -> W, kelvin_15), 0x07 device info (sub 0x10 device id / soft / hard / dsp, 0x11 Wi-Fi MAC / Wi-Fi soft / hard, :309-310,370-437), 0x11 sleep, 0x12 wake-up, 0x23 timers (:311-334); every other type -> screen callback n (split_h61d3/com/govee/h61d3/adjustNew/VM4Light$afterConnectedSingleReadDeviceInfo$1.java:100-153): 0x41 power-off memory = value[1] (:105-113), 0xA5 segment colour (per_segment_color_read), 0x40 IC (value [ic1 s16be, b, (ic2 s16be, b)] -> [ic1] or [ic1, ic2], ControllerIcNum.e base-classes11/com/govee/base2light/kt/general_controller/ControllerIcNum.java:141-157; :125-140), 0x16 effect-flow direction = value[0] u8 (:141-150)", note: "263 only: VM4Light.d0 -> Y4 when H61D3Support.l0(gt) (gt == 263, split_h61d3/com/govee/h61d3/pact/H61D3Support.java:1340-1342; split_h61d3/com/govee/h61d3/adjustNew/VM4Light.java:1065-1075, 458-464). The request names only the 4 extra types; the base TLVs are decoded whenever present (which ones the firmware returns unasked is not in the app). TLVs are applied in reply order (the 0x05 CCT tint fill and the 0xA5 colour both write the one piece; the later TLV wins). A sync-time controller (TimerConfig.f) is sent before it (Compose4BaseInfoSingleRead.java:229). Success -> $afterConnectedSingleReadDeviceInfo$1.k :46-68 -> Info4Detail.p0 (power, brightness, timers; absent TLVs leave power false / brightness 0)." }
+      - { name: status_read, cmd: "0x03", pro_type: "0xac", readable: true, applies_to: "H703A, H703B", payload: "request ac 03 04 41 a5 40 16 00..00 xor: Compose4BaseInfoSingleRead.Companion.c prefixes the ext list with its length (base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4BaseInfoSingleRead.java:161-179); ext list {0x41, 0xA5, 0x40, 0x16} (split_h61d3/com/govee/h61d3/adjustNew/VM4Light$afterConnectedSingleReadDeviceInfo$1.java:169, BleProtocol.j = 0xA5 split_h61d3/com/govee/h61d3/ble/BleProtocol.java:16); frame = BleUtils.p(0xAC, 0x03, ext) (base-classes10/com/govee/base2light/ble/controller/AbsController4BleSingleSendMultiBack.java:157-165, base-classes10/com/govee/base2kt/utils/BleUtils.java:1030-1041; command 3, base-classes11/com/govee/base2light/kt/general_controller/ControllerSingleRead.java:80-83). Reply: multi-packet, first [ac, 00, pkgCount u16le, lastLen, 03, 00, 12 data bytes from offset 7] (or lastLen bytes when pkgCount == 1), middle [ac, seq, 17 bytes], last [ac, ff, lastLen bytes] (AbsController4BleSingleSendMultiBack.java:77-79,100-149,175-199,202-225,236-261), concatenated into a TLV stream [type, len (signed byte), value[len]] (Compose4BaseInfoSingleRead.u :253-285). TLVs the app decodes: 0x01 power (value[0] != 0, :286-292), 0x04 brightness (value[0] u8, :293-299), 0x05 mode (value = [sub-mode, body], :300-308 -> screen callback m -> Info4Detail.S -> W, kelvin_15), 0x07 device info (sub 0x10 device id / soft / hard / dsp, 0x11 Wi-Fi MAC / Wi-Fi soft / hard, :309-310,370-437), 0x11 sleep, 0x12 wake-up, 0x23 timers (:311-334); every other type -> screen callback n (split_h61d3/com/govee/h61d3/adjustNew/VM4Light$afterConnectedSingleReadDeviceInfo$1.java:100-153): 0x41 power-off memory = value[1] (:105-113), 0xA5 segment colour (per_segment_color_read), 0x40 IC (value [ic1 s16be, b, (ic2 s16be, b)] -> [ic1] or [ic1, ic2], ControllerIcNum.e base-classes11/com/govee/base2light/kt/general_controller/ControllerIcNum.java:141-157; :125-140), 0x16 effect-flow direction = value[0] u8 (:141-150)", note: "263 only: VM4Light.d0 -> Y4 when H61D3Support.l0(gt) (gt == 263, split_h61d3/com/govee/h61d3/pact/H61D3Support.java:1340-1342; split_h61d3/com/govee/h61d3/adjustNew/VM4Light.java:1065-1075, 458-464). The request names only the 4 extra types; the base TLVs are decoded whenever present (which ones the firmware returns unasked is not in the app). TLVs are applied in reply order (the 0x05 CCT tint fill and the 0xA5 colour both write the one piece; the later TLV wins). A sync-time controller (TimerConfig.f) is sent before it (Compose4BaseInfoSingleRead.java:229). Success -> $afterConnectedSingleReadDeviceInfo$1.k :46-68 -> Info4Detail.p0 (power, brightness, timers; absent TLVs leave power false / brightness 100, the fresh DeviceBaseInfoFromDevice's, base-classes11/com/govee/base2light/pact/newdetail/ble/controller/DeviceBaseInfoFromDevice.java:70-80; the aa 01 keep-alive reply then sets the power, ShareVM.N3 -> VM4Light.J3)." }
       - { name: per_segment_color_read, cmd: "0xa5", readable: true, applies_to: "H703A, H703B", payload: "263 connect: TLV 0xA5 of the 0xAC status reply, value = [byte 0 not read, brightness u8, R, G, B, ...]; read only when len >= 5, ONE record (bytes 1-4) -> SubMode4Color.l(1, [rgb], [brightness]) (split_h61d3/com/govee/h61d3/adjustNew/VM4Light$afterConnectedSingleReadDeviceInfo$1.java:114-124; base-classes11/com/govee/base2light/pact/newdetail/sub/SubMode4Color.java:180-201, which keeps the old colour unless the piece count is 1); piece count H61D3Support.k -> e = 1 for 263 (split_h61d3/com/govee/h61d3/pact/H61D3Support.java:1326-1328,1160-1161). 263 off->on / snapshot: ONE direct `aa a5 01` group read -> [group, 4 x {brightness, R, G, B}], record 0 used (VM4Light.w5 :636-669, group size H61D3Support.t = 4 :1576-1578, x5 :671-686 -> SubMode4Color.j :113-147 clips to 1 piece), appended after the aa 05 re-read by G5 :315-327 (Compose4Off2On, via D5 :222-258 from J3 :827-829 or the ee 30 switch notify z5 :703-748) and by N5 :365-380 when the mode is colour (Compose4SnapshotReadMode, K5 :831-853)", note: "the TLV value's byte 0 is never read; in the aa a5 group reply that position is the group index, for the TLV it is not established. No aa a5 read at connect for 263 (the single read replaces connectBleSuc)." }
     # H6641's Kelvin range and scene versionArray are its by_goods_type row's; other h61d3 SKUs vary.
     specs: { segments: "H6641/247 read-back N = ceil(IC_count / 5) [d=5 RESOLVED: H61D3Support.e() sets the divisor to 5 before the 247 branch, which inherits it (smali :L8c, :Lb3)]; 4 records/group; mechanism A-DIRECT: per-group direct `aa a5 <group>` reads (Controller4ColorInfoByGroup via Compose4InfoBleIot, proType 0xAA) — NOT the 0xAC status burst; record = 4-byte [brightness,R,G,B] (part_brightness/T0 true for 247). 263 (H703A/H703B): 1 piece (H61D3Support.e, split_h61d3/com/govee/h61d3/pact/H61D3Support.java:1160-1161); colour at connect from TLV 0xA5 of the 0xAC status read (one [_, brightness, R, G, B] record), after off->on / snapshot from one aa a5 01 group read" }

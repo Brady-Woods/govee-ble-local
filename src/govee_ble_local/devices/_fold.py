@@ -363,6 +363,13 @@ def apply_status(
         # merge so the rest keep their last known values.
         state.segments = parse.merge_segments(state.segments, st.segments)
         applied = True
+    if st.color is not None:
+        # The one-record 0xA5 (H703A / H703B): the one piece's colour, folded as the whole-device colour
+        # before the same burst's mode, which then decides: a Kelvin above 0 reads as colour temperature, 0
+        # keeps the colour, a scene clears it. A library choice: the app holds the Kelvin (Info4Detail.W) and
+        # the piece colour (SubMode4Color.l) side by side, and state keeps one of the two.
+        state.rgb_color, state.color_temp_kelvin = st.color, None
+        applied = True
     if st.mode is not None:
         # The 0x05 TLV is the mode, as the app reads it on connect (no separate aa 05 read): the same
         # [sub_mode, params] body an aa 05 reply carries, read in the stream with the same per-SKU decode.

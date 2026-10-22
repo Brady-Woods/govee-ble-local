@@ -629,6 +629,16 @@ def _selftest(*, strict: bool = False) -> int:
     check("0xAC status: 3 TLVs (power/brightness/colour-group)", len(reals) == 3)
     check("0xAC status: colour group 3x4B",  # status_tlv.value = govee_state -> cmd_a5_state -> color_group
           reals[2].tag == command.color_group and len(reals[2].value.body.body.records) == 3)
+    single = make_profile(f_a5="single_record", num_pieces=1)
+    one, short = (parse_status(bytes([0xA5, len(v), *v]), single).tlvs[0].value.body.body
+                  for v in ((0xFF, 0x40, 0x11, 0x22, 0x33), (0x00, 0x40, 0x11, 0x22)))
+    two = parse_status(bytes([0xA5, 5, 0xFF, 0x40, 0x11, 0x22, 0x33]),
+                       make_profile(f_a5="single_record", num_pieces=2)).tlvs[0].value.body.body
+    check("0xAC status: single_record TLV 0xA5 (H703A) is one record at bytes 1-4 from a 5-byte value, "
+          "byte 0 unread, applied at one piece only; a shorter one reads none",
+          one.app_applies and (one.record.brightness, one.record.r, one.record.b) == (0x40, 0x11, 0x33)
+          and two.is_read and not two.app_applies
+          and not short.is_read and getattr(short, "record", None) is None)
     padded = parse_status(tlv + bytes(7), status_profile)
     check("0xAC status: trailing zero padding reads as type-0 TLVs and a 1-byte tail",
           len([t for t in padded.tlvs if t.tag != 0]) == 3 and padded.tail == b"\x00")

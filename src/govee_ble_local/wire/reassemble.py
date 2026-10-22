@@ -94,6 +94,10 @@ class StatusReply:
     brightness: int | None = None            # raw reported value: 0..100 on curated SKUs (brightness_max)
     zone_power: dict[int, bool] = field(default_factory=dict)
     segments: list[Segment] = field(default_factory=list)
+    # The whole-device colour from a one-record 0xA5 TLV (f_a5 single_record: the H703A / H703B status
+    # screen, whose one record SubMode4Color.l takes at one piece); the last such TLV wins, as each replaces
+    # the colours.
+    color: tuple[int, int, int] | None = None
     # Device-info from the 0x07 TLV (BLE-only devices report it ONLY here — was the MAC-anchor).
     serial_number: str | None = None
     wifi_mac: str | None = None
@@ -352,9 +356,12 @@ def parse_status(frames: list[bytes], *, pieces: int | None = None, decode: Any 
     group byte of 0x80 or more), while a group starting exactly at the end (``pieces`` a multiple of 4) is
     a no-op and skipped (``color_group.is_placed``). ``pieces`` None takes the count from the TLV len and
     drops group 0. With ``pieces``, no segment is set at or past it (a ``from_len`` count is the TLV
-    len's, not the device's). A 0xA5 TLV the decode doesn't read as colour groups (its ``f_a5`` is not
-    ``color_group``: a record shape the library doesn't read) is skipped. A 0x30 TLV the decode doesn't
-    read as zone bits (its ``f_30`` is not ``zone_power``) is skipped too.
+    len's, not the device's). Under ``f_a5`` ``single_record`` (the H703A / H703B screen) a 0xA5 TLV is one
+    ``[brightness, r, g, b]`` record at bytes 1-4, read from a value of 5 bytes or more and taken only at one
+    piece (``SubMode4Color.l``), as ``StatusReply.color``, the last such TLV winning; a shorter one, or one
+    over another piece count, is skipped and never fails the read. A 0xA5 TLV the decode reads neither way
+    (its ``f_a5`` is neither: a record shape the library doesn't read) is skipped. A 0x30 TLV the decode
+    doesn't read as zone bits (its ``f_30`` is not ``zone_power``) is skipped too.
     Device-info: the last block wins, as the app's setters do (``Compose4BaseInfoSingleRead.w:370-437``):
     a basic 0x10 block sets the serial when its UID is valid and always sets the versions (None when
     zero); a Wi-Fi 0x11 block always sets the Wi-Fi MAC (None when zero). The 0x11 block's versions are
@@ -384,6 +391,7 @@ def parse_status(frames: list[bytes], *, pieces: int | None = None, decode: Any 
         return st
     prof = status_profile(pieces, decode)
     reads_groups = int(prof.forms.f_a5) == int(_C.FormA5.color_group)
+    reads_record = int(prof.forms.f_a5) == int(_C.FormA5.single_record)
     reads_zones = int(prof.forms.f_30) == int(_C.Form30.zone_power)
     stream, err = read_status_stream(buf, pieces=pieces, decode=decode)
     tlvs = list(getattr(stream, "tlvs", None) or [])
@@ -397,6 +405,14 @@ def parse_status(frames: list[bytes], *, pieces: int | None = None, decode: Any 
     groups: list[tuple[int, list[parse.GroupRecord]]] = []
     for tlv in tlvs:
         typ = int(tlv.tag)
+        if typ == TYPE_COLOR_GROUP and reads_record:
+            # $afterConnectedSingleReadDeviceInfo$1.n:114-124 reads one record from a value of 5 bytes or
+            # more and never throws; SubMode4Color.l:180-201 takes it at one piece only
+            # (color_single_record.app_applies).
+            one = tlv.value.body.body
+            if one.app_applies:
+                st.color = (int(one.record.r), int(one.record.g), int(one.record.b))
+            continue
         if typ == TYPE_COLOR_GROUP:
             if not reads_groups:
                 continue

@@ -89,7 +89,7 @@ types:
       - id: f_a5
         type: u1
         enum: govee_common::form_a5
-        doc: aa a5, TLV 0xA5 (colour group vs H61A8 batch)
+        doc: aa a5, TLV 0xA5 (colour group vs H61A8 batch vs one record)
       - id: f_b0
         type: u1
         enum: govee_common::form_b0

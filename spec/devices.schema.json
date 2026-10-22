@@ -373,6 +373,7 @@
           ],
           "description": "The keep-alive read the control screen sends while the link is up (timing.heartbeat): aa <command> with the zero fill, govee_ble_frame read_request with no selector. The command is a govee_common::command member id: the ConnectHeartbeat type the screen's view model picks, ShareVM.K3 = ConnectHeartbeat.a(I3()): 1 power = aa 01 when I3 is true, 2 heartbeat = aa 00 when it is false (ConnectHeartbeat.c also maps 3 -> aa 33 and 4 -> aa 36); or the controller of the IHeart its A3 sets (BleComm.l: aa 36 on H6047 / H6042, aa 33 on H610A); or the plug screens' (h5080 BleComm.l HeartControllerV2, ctlchannel HeartGMessage: aa 01); or 'none' where the path sends none. Set on each row with support, which cites the deciding Class.method in doc-ref; no family default." },
         "heartbeat_timing": { "enum": ["fixed_rate", "after_quiet"], "description": "When the heartbeat goes out (timing.heartbeat.timing): 'fixed_rate' = every interval_ms from the screen's start (AbsBle.HeartRunnable; a tick due while the link is busy is dropped, not queued); 'after_quiet' = interval_ms after the last frame the screen sent, every send restarting the wait (ctlchannel HeartHandler.e). Absent = fixed_rate." },
+        "heartbeat_power": { "type": "boolean", "description": "true = the library follows the screen's aa 01 keep-alive power on this status row (timing.heartbeat.deviations; DeviceProfile.heartbeat_power): the 0xAC status read once per link, as the screen reads it once per connect (afterConnectedSingleReadDeviceInfo), then the power from byte 2 == 1 of each aa 01 reply (BleComm.G -> ShareVM.N3 -> J3). Only on a status row (power_read ac_status) whose power_live has heartbeat_aa01, with heartbeat power and no zones (the reply is the one switch). An opt-in, not a fact the app adds: every status row on the aa 01 keep-alive has that screen behaviour. Absent = the status read on every poll, its TLV 0x01 standing in for the reply, as on every status row admitted before 1.9.0." },
         "mode_color_parse": { "$ref": "#/$defs/modeColorParse" },
         "mode_color_parse_status": { "$ref": "#/$defs/family/properties/client_profile/properties/mode_color_parse_status" },
         "relay_power": { "$ref": "#/$defs/family/properties/client_profile/properties/relay_power" },
@@ -862,7 +863,8 @@
           "enum": [
             "unknown",
             "color_group",
-            "bulb_batch_v2"
+            "bulb_batch_v2",
+            "single_record"
           ],
           "description": "govee_profile command_forms.f_a5 (govee_common::form_a5)."
         },

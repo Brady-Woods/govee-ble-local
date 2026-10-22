@@ -301,9 +301,11 @@ class DeviceProfile:
     param, value)`` pairs: the forms of the TLVs the status stream reads (``f_30``, ``f_36``, ``f_40``,
     ``f_41``, ``f_a3``, ``f_a5``: govee_common enum names), the colour-group form where it reads TLV 0xA5 as
     colour groups (``f_a5`` ``"color_group"`` with ``group_rule``, ``num_per_group`` and ``has_brightness``
-    true), and the TLV 0x05's ``music`` layout and ``empty_fails`` rule. A form left out is unknown: that TLV
-    is not read, and a 0xA5 TLV not read as colour groups is skipped. The default is the H60A6 status
-    screen's, 1.x's decode (a list is kept as a tuple)."""
+    true), and the TLV 0x05's ``music`` layout and ``empty_fails`` rule. ``f_a5`` ``"single_record"``
+    (H703A / H703B) reads it as one ``[brightness, r, g, b]`` record, the whole-device colour of a one-piece
+    device, and needs no group facts. A form left out is unknown: that TLV is not read, and a 0xA5 TLV read
+    neither way is skipped. The default is the H60A6 status screen's, 1.x's decode (a list is kept as a
+    tuple)."""
     light_effect_stop: bool = field(default=False, kw_only=True)
     """A light whose screen writes ``33 25 01`` (``light_effect_stop``) on connect (a devices.yaml row's
     ``connect_writes``; bulblight ``VM4Light$connectBleSuc$1.j`` -> ``VM4Light.i5``): every session sends it
@@ -529,6 +531,22 @@ class DeviceProfile:
     that Kelvin, when there is one, goes to ``state.last_color_temp_kelvin`` only, as g5 syncs it whatever the
     mode. A poll whose walk lost a group, or whose ``aa 05`` read went unanswered, leaves both as they were.
     Source-modelled, not live-verified."""
+    heartbeat_power: bool = field(default=False, kw_only=True)
+    """Follow the screen's ``aa 01`` keep-alive power: ``readback="status"`` with the ``aa 01`` keep-alive
+    (:attr:`heartbeat` ``0x01``) and no :attr:`zones` only (the reply is the one switch), and ignored
+    otherwise. The screen reads the 0xAC status once per connect and then takes the power from each keep-alive
+    reply (``ShareVM.N3`` -> ``J3``, on at byte 2 == 1; ``BleComm.G`` hands it the aa 01 replies of a type-1
+    heartbeat). With it, :meth:`~.device.Device.update` makes the status read once per link, and a poll on a
+    link it brought state back on reads nothing more, while each keep-alive reply that arrives with no other
+    frame sent since its beat sets ``state.is_on`` (a reply that may predate a write or a read is dropped) and
+    reaches the state callbacks. So the state a poll returns on a fresh link is its status read's, whose TLV
+    0x01 stands in for the reply, and a poll on a warm link reads nothing back. The screen's re-read on a
+    change (``Compose4Off2On``: the aa 05 mode, then its colour groups) is not modelled: on a link that stays
+    up, the mode and colour are the status read's and the library's own writes. Set by a devices.yaml status
+    row's ``heartbeat_power: true`` (h61d3 263 alone, behind ``allow_modelled``). False (the default: every
+    other profile, among them the other status rows on the aa 01 keep-alive, whose screens do the same, and
+    the ones on the aa 00 keep-alive, H60A6's, whose reply carries no switch): the status read on every poll,
+    the reply left unread."""
 
     def __post_init__(self) -> None:
         """Validate each field: GoveeBleInvalidValue (a ValueError) on a value no Device can use.
@@ -698,7 +716,8 @@ class DeviceProfile:
         """:attr:`status_decode`'s rules: ``(param, value)`` pairs, each param once and one of
         :data:`_STATUS_ENUMS` (a member name of its enum), ``num_per_group`` (1..255) or a flag (a bool);
         colour groups (``f_a5`` ``"color_group"``) need their rule, group size and 4-byte records, which is
-        what the status read reads (a list is kept as a tuple)."""
+        what the status read reads, and the one record (``"single_record"``) needs nothing more (a list is
+        kept as a tuple)."""
         bad = f"{where}: status_decode={self.status_decode!r}"
         try:
             pairs: tuple[tuple[Any, ...], ...] = tuple(tuple(pair) for pair in self.status_decode)
