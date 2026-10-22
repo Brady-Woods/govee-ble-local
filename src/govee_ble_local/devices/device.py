@@ -43,7 +43,7 @@ from ..transport.connection import ConnectBudget, GoveeConnection
 from ..wire import build, parse, reassemble
 from . import _fold, _readback
 from .brightness import percent_to_device
-from .profile import DeviceProfile, profile_for, refuses_pact, wire_profile
+from .profile import DeviceProfile, profile_for, refuses_pact, reroute, wire_profile
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -263,13 +263,23 @@ class Device:
         profile's pact entries for the scene set and the Kelvin and brightness ranges. An advertisement
         without pact info changes nothing. Returns whether :attr:`pact` changed.
 
-        The profile was routed when the device was built (``create_device``) and is kept: a pact heard
-        later that none of its rows accepts, where the app's scan would refuse the device or take another
-        row (``profile.refuses_pact``), is logged as a warning, once per change of pact."""
+        The profile was routed when the device was built (``create_device``). A pact heard later that none
+        of its rows accepts, where the app's screen takes another row, re-selects that row's profile when
+        the two differ only in what a pact picks within a row (``profile.reroute``: the BK rows' brightness
+        range, H6118 / H6194 / H6179 at (10, 1) after an advert without a pact), as the app runs the row the
+        unit's pact gives it; :attr:`profile` is then that profile, and the capabilities, zones and the link
+        are unchanged. Otherwise (the app's scan would refuse the device, or the other row differs in more)
+        the profile is kept and a warning is logged, once per change of pact."""
         if adv is None or adv.pact is None or adv.pact == self._pact:
             return False
         self._pact = adv.pact
         if refuses_pact(self.profile, self._sku, adv.pact):
+            other = reroute(self.profile, self._sku, adv.pact)
+            if other is not None:
+                _LOGGER.info("%s (%s): advertises pact %d,%d, which routes it to another row; it takes that "
+                             "row's profile", self._ble_device.address, self._sku, *adv.pact)
+                self.profile = other
+                return True
             _LOGGER.warning(
                 "%s (%s): advertises pact %d,%d, which no row of its profile accepts (the app's scan refuses "
                 "it there or takes another row); it keeps the profile it was built with",

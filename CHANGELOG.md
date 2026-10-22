@@ -331,6 +331,20 @@ model, from which the shipped readers are generated).
   h6006 frames (`Config.x[40]` / `[108]` = 2 off the NewRgb2TL pact), [2000, 9000] and the aa 01 keep-alive.
   A unit advertising (65535, 255), where the app runs colour version 4 (the `legacy_02` frames) and the pairing
   write's goodsType, is still refused: no row lists that pact. Not hardware-verified.
+- **A later advert's pact re-selects the row** (`devices.profile.reroute`, which `Device` follows on every
+  advertisement it reads, and at construction). Where a pact heard after the Device was built routes its SKU to
+  another row whose profile differs from the held one only in what a pact picks within a row (the status read,
+  the scene set, the Kelvin and brightness ranges, the SKU list), `Device.profile` becomes that row's profile,
+  as the app's screen runs the row the unit's pact gives it. The capabilities, zones, segments, cipher fallback,
+  keep-alive, unlock and connect writes are equal by construction, so the link and a caller's entities stay
+  valid; the callbacks fire as for any pact change. It serves the BK route of **H6118 / H6194** (carlightv1)
+  and **H6179** (tvlightv1): built from an advert without a pact they take goodsType 6 / 12's raw brightness
+  [20, 254], and an advert at (10, 1) / (10, 2) now moves them to goodsType 39's percent brightness, as the
+  app's rewrite does (`OldRgbBkUtil.isOldRgbBk`, `Model.itemClickOp` / `ModelBle.itemClickOp`); a later
+  (1, x) moves them back. Any other change of row (a pact the app's scan refuses, or another row's
+  capabilities) keeps the profile and logs the warning as before. The support check already takes the
+  advertised pact (`is_supported_sku(sku, pact=)`, `scanner.supported`, `create_device`, `make_device`).
+  Source-modelled, not live-verified: none of the three is on the bench.
 
 ### Changed
 - **A polled profile reads aa 04 only with `Capability.BRIGHTNESS`**, as the app's connect read does
@@ -416,6 +430,10 @@ model, from which the shipped readers are generated).
   default, 73 behind `allow_modelled`) resolves to the same profile, field by field, at every pact its rows
   list, at (99, 99) and at none, with and without `allow_modelled`; no runtime code reads the pairing items.
   H615A-E join the profile H6159 heads (`DeviceProfile.skus`), whose facts they share; H6159 stays first.
+- No SKU's resolved profile changes with the re-selection, and a Device whose advertised pact matches its
+  route keeps its profile and frames. Only a SKU with two routes whose profiles differ just in what a pact
+  picks can move: H6118, H6194 and H6179 (above). `Device.profile` is no longer fixed for the life of a Device
+  on those three; read it after a pact change (the callbacks fire).
 
 ### Fixed
 - **H6188: colour temperature now sends the colour tab's frame** `33 05 0d <tint> <K> <tint>`

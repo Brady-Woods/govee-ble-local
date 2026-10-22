@@ -14,7 +14,7 @@ separate account-lock capability.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field, fields, replace
 from types import MappingProxyType
 from typing import Any, Final, Literal, NamedTuple, get_args
 
@@ -99,7 +99,9 @@ class DeviceProfile:
     ``capabilities`` gate the setters; the other fields choose the frames each setter sends
     (``color_scheme``, ``relay``, ``bar_switch``, ...), the reads :meth:`~.device.Device.update`
     makes (``readback``, ``color_readback``, ...) and how their replies are decoded. A
-    :class:`~.device.Device` reads its profile once, at construction. The table of supported SKUs
+    :class:`~.device.Device` takes its profile at construction, and another row's only where a later
+    advertised pact routes its SKU there and the two differ in nothing but what a pact picks
+    (:func:`reroute`). The table of supported SKUs
     is :data:`PROFILES`; :func:`profile_for` looks one up. Construction validates each field and
     raises GoveeBleInvalidValue (a ValueError) on a value no Device can use."""
 
@@ -794,6 +796,42 @@ def refuses_pact(profile: DeviceProfile, sku: str, pact: tuple[int, int]) -> boo
     if not mine or any(_accepts(r, pact) for r in mine):
         return False
     return not _routed(profile_for(key, pact=pact), profile)
+
+
+# The DeviceProfile fields an advertised pact picks within one row (a row's by_pact branches: its status read,
+# scene set and Kelvin and brightness ranges, _resolve._PACT_FACTS), and the SKU list: a Device reads each
+# per call, with the pact. A later pact that routes the SKU to another row whose profile differs only in
+# these is followed (reroute); any other difference would change a held link (the cipher fallback, the
+# keep-alive, the unlock, the session frames) or the entities a caller built from the capabilities, zones
+# and segments.
+_PACT_PICKED: Final = frozenset({
+    "skus", "status_read", "status_read_by_pact", "status_color_groups_pact", "scene_versions",
+    "scene_versions_by_pact", "min_kelvin", "max_kelvin", "kelvin_by_pact", "brightness_range",
+    "brightness_by_pact"})
+
+
+def reroute(profile: DeviceProfile, sku: str, pact: tuple[int, int]) -> DeviceProfile | None:
+    """The profile a Device built on ``profile`` for ``sku`` takes when an advertisement carries ``pact``, or
+    None to keep ``profile``. Where ``pact`` doesn't route ``sku`` to ``profile`` (:func:`refuses_pact`: a
+    routed profile, or it with only its heartbeat cleared) and :func:`profile_for` routes it, at the same
+    admission (``allow_modelled`` where ``profile`` is a ``modelled`` row's), to another profile that differs
+    only in what a pact picks within a row (:data:`_PACT_PICKED`), that profile, with the heartbeat cleared
+    where ``profile``'s is: the row the app's screen runs for a unit at that pact (the BK rows: H6118 /
+    H6194 / H6179 at (10, 1) take goodsType 39's percent brightness, at (1, 1) goodsType 6 / 12's raw one).
+    None for a hand-built profile, a pact the SKU's rows refuse, and a row whose capabilities, zones,
+    segments or session facts differ (``Device._learn_pact`` then warns and keeps its profile)."""
+    if not refuses_pact(profile, sku, pact):
+        return None
+    key = sku.upper()
+    modelled = any(_routed(r.profile, profile) for r in _MODELLED[1].get(key, ()))
+    other = profile_for(key, pact=pact, allow_modelled=modelled)
+    if other is None:
+        return None
+    if profile.heartbeat is None:
+        other = replace(other, heartbeat=None)
+    same = all(getattr(profile, f.name) == getattr(other, f.name) for f in fields(DeviceProfile)
+               if f.name not in _PACT_PICKED)
+    return other if same else None
 
 
 def _routed(routed: DeviceProfile | None, profile: DeviceProfile) -> bool:

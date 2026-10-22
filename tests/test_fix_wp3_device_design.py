@@ -277,6 +277,15 @@ def test_a_sku_several_rows_list_is_routed_by_its_pact(monkeypatch: pytest.Monke
     d._learn_pact(dataclasses.replace(adv, pact_type=1))   # unchanged: not logged again
     assert d.pact == (1, 1) and d.profile is dimmer
     assert [r.getMessage().split(": ", 1)[1][:28] for r in caplog.records] == ["advertises pact 1,1, which n"]
+    # Where the other row differs only in what a pact picks within a row, the later pact re-selects it, as the
+    # app runs the row the unit's pact gives it (profile.reroute): an H6118 built without a pact has goodsType
+    # 6's raw brightness, and its BK pact (10, 1) gives goodsType 39's percent; (1, 1) gives 6 back.
+    bk = make_device(ble_device("AA:BB:CC:DD:EE:3E", "ihoment_H6118_ABCD"), "H6118")
+    assert bk is not None and bk.profile is profile_for("H6118") and bk.profile.brightness_range == (20, 254)
+    for pact, raw in (((10, 1), None), ((1, 1), (20, 254))):
+        bk._learn_pact(GoveeAdvertisement("H6118", "ihoment_H6118_ABCD", False, 3, *pact))
+        assert bk.profile is profile_for("H6118", pact=pact) and bk.profile.brightness_range == raw, pact
+    assert len(caplog.records) == 1   # neither re-selection warns
 
 
 def test_a_modelled_row_needs_the_opt_in(monkeypatch: pytest.MonkeyPatch) -> None:
