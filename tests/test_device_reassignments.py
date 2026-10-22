@@ -28,15 +28,17 @@ def test_pact_conditioned_reassignments_are_rows_the_pact_picks() -> None:
         rows[gt] = {**rows.get(gt, {}), **row}
         return out
 
-    # Every target row carries its SKUs; no source row exists yet, so each below-gate route is for review,
-    # and so is a second row at the target goodsType that lists the SKU without pacts (h7090 44's H6119).
+    # Every target row carries its SKUs but barelightv1 17, which leaves H6171 off until its aa 40 read
+    # is modelled (the barelightv1 trace, G4). Each other line is a below-gate route no source row carries
+    # yet, or a source row that lists the SKU without pacts (the unsupported goodsType-0 rows: h6159 0).
     review = _resolve.reassignment_review(fams)
-    assert all("pacts below" in line for line in review if not line.startswith("H6119: also listed"))
-    assert any(line.startswith("H6171: no goodsType-13 row") for line in review)
-    assert any(line.startswith("H6119: also listed by h7090 goodsType 44") for line in review)
+    assert all("pacts below" in line or "goodsType 0, without pacts" in line
+               for line in review if not line.startswith("H6171: no goodsType-17 row"))
+    assert any(line.startswith("H6171: no goodsType-17 row") for line in review)
+    assert any(line.startswith("H6159: also listed by h6159 goodsType 0") for line in review)
     # A source row below the gate carries the route; one at or above it, or a target pact below it, disagrees.
-    assert not any(line.startswith("H6171:") for line in _resolve.reassignment_review(
-        edited("barelightv1", "13", models=["H6171"], pacts=["1,1"])))
+    assert not any(line.startswith("H6159:") for line in _resolve.reassignment_review(
+        edited("h6159", "0", pacts=["1,1"])))
     for fam_id, gt, row in (("barelightv1", "13", {"models": ["H6171"], "pacts": ["10,2"]}),
                             ("barelightv1", "17", {"pacts": ["1,1", "10,1"]}),
                             ("barelightv1", "13", {"models": ["H6171"], "pacts": "any"})):

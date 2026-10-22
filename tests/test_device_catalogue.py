@@ -26,10 +26,11 @@ def test_the_catalogue_routes_only_skus_no_row_lists() -> None:
     schema = json.loads((_ROOT / "spec" / "devices.schema.json").read_text(encoding="utf-8"))
     doc = gen.load((_ROOT / "spec" / "devices.yaml").read_bytes())
     fams = doc["families"]
-    # The committed snapshot unroutes no listed SKU, and each SKU it routes is supported on its row. H615E's
-    # conflict (catalogue 108, row 40) is for review: its item is an unconditioned pairing write, no rewrite.
+    # The committed snapshot unroutes no listed SKU, and each SKU it routes is supported on its row. H613A-F
+    # (catalogue 39, listed by no row) are for review: stringlightv2's 39 row has support, but h613839's
+    # assigned_goods_type item names them (their (65535,255) bind). H615E is now on stringlightv2 108.
     committed = _resolve.catalogue(fams, gen.snapshot())
-    assert [line.split(":")[0] for line in committed.review] == ["H615E"]
+    assert [line.split(":")[0] for line in committed.review] == [f"H613{c}" for c in "ABCDEF"]
     assert not committed.unrouted and committed.added
     for (_fam, gt), skus in committed.added.items():
         for sku in skus:
@@ -61,13 +62,15 @@ def test_the_catalogue_routes_only_skus_no_row_lists() -> None:
     rows["64"] = {"models": ["H6047"]}
     assert [line.split(":")[0] for line in _resolve.catalogue(twin, {"H0064": 64}).review] == ["H0064"]
     # The build: an added SKU joins its row's profile, and a row its only SKU leaves is dropped. A by_model
-    # entry needs its SKU's row or catalogue route (H6009 / H6010's scene_power_on are catalogue routes).
+    # entry needs its SKU's row or catalogue route (H6009 / H6010's scene_power_on and H3511's wire counts
+    # are catalogue routes).
     with pytest.raises(SystemExit, match=re.escape("bulblightv3 by_model ['H6009', 'H6010']: no row")):
         gen.project(doc, schema, {"H0064": 64})
-    table, cut = gen.project(doc, schema, {"H0064": 64, "H6052": 23, "H6009": 64, "H6010": 64})
+    table, cut = gen.project(doc, schema, {"H0064": 64, "H6052": 23, "H6009": 64, "H6010": 64, "H3511": 349})
     groups = [skus for skus, _fields, _routes in _resolve.profiles(cut, table)]
     assert ("H6004", "H6006", "H6008", "H0064") in groups and not any("H6052" in g for g in groups)
-    assert "tablelampv1" not in {f["id"] for f in cut}   # its only row with support was 22
+    lamp = next(f for f in cut if f["id"] == "tablelampv1")["client_profile"]["by_goods_type"]
+    assert "22" not in lamp and "128" in lamp   # row 22 (H6052 alone) is dropped; 128 (H6078) is kept
 
 
 def test_the_snapshot_holds_only_each_skus_goods_type_and_ic(tmp_path: pathlib.Path) -> None:

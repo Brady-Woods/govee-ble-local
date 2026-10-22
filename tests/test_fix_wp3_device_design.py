@@ -550,7 +550,13 @@ def test_direct_walk_groups_follow_the_profile() -> None:
 
 
 # ── WP3-060: the aa 05 read is gated on capabilities, not colour-scheme names ──────────────
-@pytest.mark.parametrize("p", [p for p in PROFILES if p.readback == "polled"], ids=lambda p: p.skus[0])
+# Scoped to the rows with a field the report carries. H7017 (power and brightness) reads none: its app
+# connect set has no aa 05 (ControllerStrategyConfig.k1), which the capability gate below follows.
+_REPORTED = frozenset({Capability.RGB, Capability.COLOR_TEMP, Capability.SCENES})
+
+
+@pytest.mark.parametrize("p", [p for p in PROFILES if p.readback == "polled" and p.capabilities & _REPORTED],
+                         ids=lambda p: p.skus[0])
 def test_every_polled_profile_still_reads_the_mode_report(p: DeviceProfile) -> None:
     d = _dev(p.skus[0])
     run(d._read_polled())
