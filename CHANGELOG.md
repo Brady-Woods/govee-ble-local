@@ -9,11 +9,12 @@ model, from which the shipped readers are generated).
 ## [Unreleased]
 
 ### Added
-- **158 more SKUs, traced from the app's device list** (spec rows only; no library code changed): 96 admitted
-  by default (`app_traced`) and 62 behind `allow_modelled` (`modelled`), for 194 and 68 in all. None is
-  hardware-verified (the only bench check, below, was read-only), and none has a bundled scene catalog, so none
-  is offered scenes. Each is listed with its family and goodsType; † marks a SKU no row lists that the
-  catalogue snapshot (`spec/govee_catalog.json`) routes to that row by its goodsType alone (16 of them).
+- **158 more SKUs, traced from the app's device list** (spec rows; no library code changed but H61A9's read-back,
+  below): 97 admitted by default (`app_traced`) and 61 behind `allow_modelled` (`modelled`). With H7061 and H6057
+  (below), 197 and 67 in all. None is hardware-verified (the only bench check, below, was read-only), and none has
+  a bundled scene catalog, so none is offered scenes. Each is listed with its family and goodsType; † marks a SKU
+  no row lists that the catalogue snapshot (`spec/govee_catalog.json`) routes to that row by its goodsType alone
+  (16 of them).
 
   Admitted by default:
   - stringlightv2: **H6121 / H6141 / H6142 / H6154 / H6195** (1), **H6170 / H6196**, **H613G**† (2),
@@ -21,7 +22,7 @@ model, from which the shipped readers are generated).
   - h6114: **H6114** (39); h613839: **H6138 / H6139** (39); carlightv1: **H6118 / H6194** (6); tvlightv1:
     **H6179** (12); pact_tvlightv2: **H6198 / H6199** (24);
   - h6047: **H6039** (277); h61d3: **H61B0** (264, with H61B3 / H61B6); dreamcolorlightv1: **H70A1 / H70A2 /
-    H70A3** (193);
+    H70A3** (193), **H61A9** (204);
   - rgbiclight: **H6671 / H6672** (332), **H617G**, **R617G**† (351), **H618G**, **R618D**† (352);
   - hollowlamp: **H6050** (27), **H6051** (37), **H6055** (42), **H6073** (58), **H6059** (84); tablelampv1:
     **H6078** (128); straightfloorlamp: **H6076 / H8076**, **R16D0**† (69), **H16C0** (377);
@@ -44,9 +45,9 @@ model, from which the shipped readers are generated).
   every unit; each row's `doc` names the difference):
   - h60ax: **H60A4 / H80A4** (302), **H1270** (346), **H1232** (356), **H1252** (373);
   - h61d3: **H61D2 / H61D3 / H61D4 / H61D5 / H61D6** (202), **H703A / H703B** (263);
-  - dreamcolorlightv1: **H61A9** (204); dreamcolorlightv2: **H611A / H6143 / H6144** (21); rgbiclight:
-    **H61C2 / H61C3 / H61C5** (141); homelightv1: **H6148** (16); hollowlamp: **H6058** (59); h7090:
-    **H7090** (44); h1741: **H1741 / R1741** (365);
+  - dreamcolorlightv2: **H611A / H6143 / H6144** (21); rgbiclight: **H61C2 / H61C3 / H61C5** (141);
+    homelightv1: **H6148** (16); hollowlamp: **H6058** (59); h7090: **H7090** (44); h1741: **H1741 / R1741**
+    (365);
   - h6609: **H70C4 / H70C5 / H70C7 / H70C9 / H7084 / H6870 / H6871 / R6871 / H80C4**, **H80C5**† (260);
   - h70b3: **H70B3** (229), **H70B4** (230), **H70B5** (231), **H6810** (255), **H6811**, **H8811**† (256);
   - h705a: **H705A / H705B / H705C / H801B** (125), **H608A / H608B / H608C / H608D / H808A** (184), **H705D /
@@ -63,16 +64,18 @@ model, from which the shipped readers are generated).
     each, soft 1.04.05, hard 3.05.00. One unit's mode TLV is a short `15 01`. The row's own decode
     (`gradual_14`, where 0x15 isn't decoded) reads that burst in full; the H60A6 default decode gave an empty
     reply.
-- **H61A9 (dreamcolorlightv1 204) and H61C2 / H61C3 / H61C5 (rgbiclight 141) are admitted by default
-  (`app_traced`), no longer behind `allow_modelled`:** the library now sizes their colour read-back as the app
-  does. `VM4Light.N5` reads `N / g + (N % g != 0)` `aa a5` groups (Java division, none below 1) and keeps the
-  first N pieces, N being the aa 40 reply's two section bytes summed as Java bytes (`ControllerIcNum.d` ->
-  `ControllerStrategyConfig.R1`), or the static count (15 / 18) when the sum is 0. Where that reader throws
-  (an IC field of 0x1000 or more) the app walks nothing, and now neither does the library. New
-  `DeviceProfile.color_readback_ic_sections` (keyword-only, default False; devices.yaml `ic_pieces: sections`).
-  The aa 40 read keeps its place in the poll, and for a section sum of 0, 13, 14 or 15 the frames are the
-  ones sent before (the bench H61C3 reads 0). Source-modelled: no H61A9, H61C2 or H61C5 is on the bench, and no
-  non-zero sum has been read. The live-IC rows (H6641 and the other h61d3 rows) keep their walk.
+- **The colour read-back of H61A9 (dreamcolorlightv1 204) and H61C2 / H61C3 / H61C5 (rgbiclight 141) is sized as
+  the app sizes it, and H61A9 is admitted by default (`app_traced`; listed above), no longer behind
+  `allow_modelled`.** `VM4Light.N5` reads `N / g + (N % g != 0)` `aa a5` groups (Java division, none below 1) and
+  keeps the first N pieces, N being the aa 40 reply's two section bytes summed as Java bytes (`ControllerIcNum.d`
+  -> `ControllerStrategyConfig.R1`), or the static count (15 / 18) when the sum is 0. Where that reader throws (an
+  IC field of 0x1000 or more) the app walks nothing, and now neither does the library. New
+  `DeviceProfile.color_readback_ic_sections` (keyword-only, default False; devices.yaml `ic_pieces: sections`). The
+  aa 40 read keeps its place in the poll. The frames are the ones sent before for a section sum of 0 or 13-15 on
+  141 (groups of 3, 15 static; the bench H61C3 reads 0) and of 0 or 17-20 on 204 (groups of 4, 18 static).
+  Rgbiclight 141 stays `modelled` here: its promotion on the H61C3 bench reading is a separate change (the user's
+  decision 1); this one makes its connect walk exact. Source-modelled: no H61A9, H61C2 or H61C5 is on the bench,
+  and no non-zero sum has been read. The live-IC rows (H6641 and the other h61d3 rows) keep their walk.
 - **H7061 (h7050 98), a two-head flood light, admitted by default (`app_traced`).** Its aa 05 0x15 report is two
   `[bri s8][r g b]` head records (`bri_rgb_pair_15`), which the library decoded but did not fold. It now folds
   them as the colour page holds them (`H70606162Info4Detail.I`; `H7061ColorMode.updateColor` /
@@ -113,8 +116,8 @@ model, from which the shipped readers are generated).
   `modelled`; one that needs library work has no `support` and names the gap in its `doc`. A verification
   pass challenged each family's rows; they were repaired, and demoted (to `modelled`, or to no `support`)
   where a core claim didn't hold.
-  - devices.yaml now has 305 goodsType rows in 96 families (184 in 91): 153 with `support` (66), of them 121
-    `app_traced`, 28 `modelled` and the same 4 `hardware_verified`, and 152 without (118).
+  - devices.yaml now has 305 goodsType rows in 96 families (184 in 91): 155 with `support` (66), of them 124
+    `app_traced`, 27 `modelled` and the same 4 `hardware_verified`, and 150 without (118).
   - Two goodsType add-ons were traced and checked on their own: straightfloorlamp 69 (H6076 / H8076,
     `app_traced`, with the bench reads above) and rgbiclight 141 (H61C2 / H61C3 / H61C5, `modelled`).
   - Nothing new is hardware-verified. The only bench evidence is the read-only H6076 / H61C3 check above.
@@ -126,8 +129,7 @@ model, from which the shipped readers are generated).
   - rgbiclight 351 / 352 now record the R617G / R618D catalogue route, as h7057 274 does H8057's.
 - **The aa 40 section sum.** `govee_state` `ic_count` gains `segment_2_signed` and `section_sum` (bytes 2 and 5
   as Java bytes, absent where the sectioned IC-pair reader `ControllerIcNum.d` throws, `app_pair_fails`), and
-  devices.schema.json's `ic_pieces` gains `sections`. rgbiclight 141 and dreamcolorlightv1 204 take it (204's
-  wire gains `f_40: ic_pair`, the reader the bytes come from).
+  devices.schema.json's `ic_pieces` gains `sections`. rgbiclight 141 and dreamcolorlightv1 204 take it.
 - **Command 0x34 is `cmd_34` (was `swap_light`), overloaded by the new `form_34`:** H6047's `33 34` bar swap (an
   empty write) and H6057's `aa 34` device detail (`form_34: device_detail`). `govee_profile` gains `f_34`, and
   `govee_state` the `cmd_34_state` / `device_detail` types (`[switch flags][battery][music flags][music code]

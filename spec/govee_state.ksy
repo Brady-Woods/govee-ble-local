@@ -1443,8 +1443,10 @@ types:
           the two section bytes (2 and 5) summed as Java bytes, as the sectioned
           IC-pair reader (ControllerIcNum.d) passes them on: the rgbiclight screen's
           colour read-back walks this many pieces when it is not 0, else its static
-          count. Absent where that reader throws (app_pair_fails: the read never
-          completes, so the screen walks nothing).
+          count. Absent where that reader throws, so the read never completes and
+          the screen walks nothing: below 6 bytes (it reads bytes 3-5 whatever the
+          length; an aa 40 read reply carries 17) or on an IC field of 0x1000 or
+          more (app_pair_fails).
         doc-ref:
           - base-classes11/com/govee/base2light/kt/general_controller/ControllerIcNum.java:64-74,111-139
           - split_rgbiclight/com/govee/rgbiclight/ControllerStrategyConfig.java:329-339,981-991

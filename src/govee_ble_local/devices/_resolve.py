@@ -87,9 +87,8 @@ the row lacks fails the build: nothing defaults silently.
   default read is traced (the h7050 screens), and a status or plug row's reads are its own strategy's. An
   ``ic_num`` read goes with ``ic_pieces`` and the direct colour read-back: it sizes the read-back's pieces
   (H6641), or, with ``ic_pieces: sections``, its two section bytes do
-  (``DeviceProfile.color_readback_ic_sections``, read with the wire's ``f_40: ic_pair``), or, with
-  ``ic_pieces: fixed``, it is made on every poll and discarded (``DeviceProfile.ic_num_read_only``: a fixed
-  piece count). Every command
+  (``DeviceProfile.color_readback_ic_sections``), or, with ``ic_pieces: fixed``, it is made on every poll and
+  discarded (``DeviceProfile.ic_num_read_only``: a fixed piece count). Every command
   form the library sends or reads for the row must be the row's (wire ``forms``), a polled row's aa 05 reply
   is read with the spec's default decode (:data:`_MODE_UNSET`), and a colour-group read is of 4-byte
   records in the row's wire ``group.num_per_group`` (and, in the status read, its ``group.rule``).
@@ -867,9 +866,6 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
     if sized is not None and not (0 <= sized["min_ic"] <= sized["max_ic"] and sized["ic_per_piece"] >= 1):
         fail(f"ic_pieces {dict(sized)} (min_ic <= max_ic, ic_per_piece >= 1)")
     live_ic = sized is not None
-    # The section bytes are the sectioned IC-pair reader's (ControllerIcNum.d), the wire's f_40 ic_pair.
-    if ic == "sections" and forms.get("f_40") != "ic_pair":
-        fail("ic_pieces sections without f_40 ic_pair (the reader the section bytes come from)")
     section_count = "cmd_41" in reads
     if section_count and forms.get("f_41") != "section_count":
         fail("an aa 41 read without f_41 section_count")

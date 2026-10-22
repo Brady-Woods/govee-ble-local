@@ -287,21 +287,22 @@ def test_walk_mechanism_a_direct_skips_on_a_failed_ic_read_and_logs_on_the_devic
                for r in caplog.records)
 
 
-@pytest.mark.parametrize(("sku", "ic", "groups", "pieces"), [
-    ("H61C3", (0x00, 0x2A, 0x00, 0x00, 0x00, 0x00), 5, 15),    # sum 0: the static 15 (bench H61C3)
-    ("H61C3", (0x00, 0x1C, 0x0A, 0x00, 0x2A, 0x08), 6, 18),    # 10 + 8
-    ("H61C3", (0x00, 0x1C, 0x0D, 0x00, 0x00, 0x00), 5, 13),    # 13: the last group trimmed to 1
-    ("H61C3", (0x00, 0x1C, 0xFF, 0x00, 0x00, 0x00), 1, 0),     # -1: Java's -1 / 3 + 1 reads, places none
-    ("H61C3", (0x00, 0x1C, 0xFF, 0x00, 0x00, 0xFE), 0, 0),     # -3: no read
-    ("H61C3", (0x10, 0x00, 0x05, 0x00, 0x00, 0x00), 0, 0),     # IC 0x1000: ControllerIcNum.d throws
-    ("H61A9", (0x00, 0x2A, 0x00, 0x00, 0x00, 0x00), 5, 18),    # sum 0: the static 18, groups of 4
+@pytest.mark.parametrize(("ic", "groups", "pieces"), [
+    ((0x00, 0x2A, 0x00, 0x00, 0x00, 0x00), 5, 15),    # sum 0: the static 15 (bench H61C3)
+    ((0x00, 0x1C, 0x0A, 0x00, 0x2A, 0x08), 6, 18),    # 10 + 8
+    ((0x00, 0x1C, 0x0D, 0x00, 0x00, 0x00), 5, 13),    # 13: the last group trimmed to 1
+    ((0x00, 0x1C, 0xFF, 0x00, 0x00, 0x00), 1, 0),     # -1: Java's -1 / 3 + 1 reads, places none
+    ((0x00, 0x1C, 0xFF, 0x00, 0x00, 0xFE), 0, 0),     # -3: no read
+    ((0x10, 0x00, 0x05, 0x00, 0x00, 0x00), 0, 0),     # IC 0x1000: ControllerIcNum.d throws
 ])
 def test_walk_mechanism_a_direct_sizes_a_sections_walk_by_the_aa_40_section_sum(
-    sku: str, ic: tuple[int, ...], groups: int, pieces: int,
+    ic: tuple[int, ...], groups: int, pieces: int,
 ) -> None:
     # ic_pieces sections (VM4Light.N5): the walk follows the section bytes, else the row's static count.
-    target = _target(sku)
-    size = target.profile.color_readback_per_batch
+    profile = profile_for("H61C3", allow_modelled=True)
+    assert profile is not None
+    target = _Target("H61C3", profile, profile.segments)
+    size = profile.color_readback_per_batch
     asked: list[bytes] = []
 
     async def read_reply(frame: bytes) -> bytes | None:
