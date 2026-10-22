@@ -9,6 +9,29 @@ model, from which the shipped readers are generated).
 ## [Unreleased]
 
 ### Added
+- **`bound_advertisement(advertisement_data, sku, *, fallback_name=None)`, in `__all__`.** It reads an
+  advertisement's pact and encrypt flag from its Govee manufacturer data whatever the local name, for a caller
+  that has no `Device` yet. It returns the public `GoveeAdvertisement` (`.pact`, `.encrypted`,
+  `.encryption_known`), or None when the name isn't a Govee name and there's no Govee pact block.
+  - **What it is:** the read `create_device`, `make_device` and the `Device` make of their advertisement since
+    1.6.1, until now package-internal as `identify._bound_advertisement`. Its pact is the pact `create_device`
+    routes the profile by. After a `GoveeBleNotSupported` it is the pact that was refused, even for a renamed or
+    nameless Home Assistant record, where `identify()`'s name gate returns None.
+  - **Labels:** `.sku` is always the caller's `sku`, upper-cased, whatever SKU a Govee name carries; `.name` is
+    the advertised name, else `fallback_name`, else `""`. Neither changes the pact or the flag. Until now a
+    Govee name's own SKU labelled the internal read; nothing read it.
+  - **Merged records:** with more than one Govee pact entry, the first in the dict's order gives the pact and
+    the flag, as `create_device` and the `Device` constructor take them.
+  - **App basis, for the light goodsTypes:** the control screen matches a bound device by its stored MAC, not
+    its name (`AbsViewMode4OpWithOtaCheck.s2:766-774`). It parses the broadcast with the stored goodsType
+    (`AbsViewMode4OpWithOtaCheck.j1:570-591` -> `GoodsType.parseBleBroadcastPactInfo:1564-1578` ->
+    `BleUtil.parseBleBroadcastPact:779-803`) and keeps the encrypt flag (`AbsViewMode4OpWithOtaCheck.w2:171-178`).
+    The caller's `sku` stands for that stored device.
+  - **What stays as it is:** `identify.identify` and `identify.parse_manufacturer_data`, the raw parser under
+    this read, stay out of `__all__`; the bare `(encrypted, broadcast_version, pact_type, pact_code)` tuple
+    can't grow a field without a MAJOR. Released Home Assistant integrations import both, so both keep their
+    signatures and results through 1.x; a new way of reading a merged record goes in a new function.
+    Discovery keeps the name gate as before.
 - **158 more SKUs, traced from the app's device list** (spec rows only; no library code changed): 97 admitted
   by default (`app_traced`) and 61 behind `allow_modelled` (`modelled`). The entries below admit 39 more by
   default (16 through the resolver changes; H1162 / H1163 / H1167 / H1168, H70B1 and H70BC; and 17 through the

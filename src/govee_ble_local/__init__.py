@@ -26,7 +26,7 @@ from .exceptions import (
     GoveeCloudAuthError,
     GoveeCloudError,
 )
-from .identify import GoveeAdvertisement
+from .identify import GoveeAdvertisement, bound_advertisement
 from .models import Capability, DeviceState, Encryption, Segment, Zone
 from .registry import (
     create_device,
@@ -70,6 +70,7 @@ __all__ = [
     "StateCallback",
     "Zone",
     "__version__",
+    "bound_advertisement",
     "create_device",
     "device_profile_for",
     "discover",
