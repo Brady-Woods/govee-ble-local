@@ -68,6 +68,12 @@ model, from which the shipped readers are generated).
   aa 04 or aa 05 (`ControllerStrategyConfig.k1`; `VM4Light.supportBrightness` is false for H7004), so the
   library's poll reads aa 01 alone. The red:blue ratio (`33 0d`, aa 0d), the timers and the `33 09` clock sync
   are not modelled. Not hardware-verified.
+- **`DeviceProfile.power_nonzero`** (keyword-only, default False): a polled light whose screen reads the aa 01
+  reply as on for any non-zero byte, as the legacy `SwitchController.parseValidBytes` and the H70BX connect read
+  (`AfterConnectSuccessReadDeviceInfo.w`) do. A devices.yaml row opts in with its wire `power.light_nonzero`.
+  Every other light still reads on only for a byte of 1 (`ControllerSwitch.Companion.c`), so no admitted SKU's
+  decoded state changes. `parse.parse_light_power` takes the profile's `wire_profile` for the rule (default:
+  on at 1).
 
 ### Changed
 - **A polled profile reads aa 04 only with `Capability.BRIGHTNESS`**, as the app's connect read does
@@ -106,6 +112,12 @@ model, from which the shipped readers are generated).
   - The catalogue snapshot routes 31 SKUs no row lists (15 before). For review: H613A-F (catalogue 39, named
     by h613839's (65535,255) bind item), where it was H615E.
   - rgbiclight 351 / 352 now record the R617G / R618D catalogue route, as h7057 274 does H8057's.
+- **The aa 01 "on when != 0" rule.** `govee_profile` `power_rule` gains `light_nonzero`, and `govee_state`
+  `power_state.is_on` reads a light's reply as on for any non-zero byte under it (still `== 1` without it; the
+  status TLV and the plug masks are unchanged). devices.schema.json's `wirePower` takes it as a row's wire
+  `power.light_nonzero`, served on a polled light row only. `govee_reference.make_profile` takes it, and the
+  reference self-test checks the three rules on an aa 01 reply. `wire_profile` now gives a non-plug profile's
+  power rule masks 0 (a light's), where it passed the unused relay default; no decode changes.
 
 ## [1.6.1] — 2026-10-21
 

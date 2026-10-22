@@ -154,7 +154,8 @@ types:
   power_rule:
     doc: |
       CONTEXT: when the aa 01 reply byte means on: a light (masks 0) at byte
-      == 1, a plug (relay bitmask, bit i = relay i) at (byte & mask) != 0.
+      == 1, or at any non-zero byte under light_nonzero; a plug (relay
+      bitmask, bit i = relay i) at (byte & mask) != 0.
     doc-ref:
       - base-classes11/com/govee/base2light/kt/general_controller/ControllerSwitch.java:32
       - split_plugnew/com/govee/h5080/ble/controller/SwitchControllerV2.java:29-45
@@ -173,6 +174,15 @@ types:
           - split_plugnew/com/govee/h5080/ble/controller/HeartControllerV2.java:17-35
           - split_plugnew/com/govee/h5080/adjust/v2/BleOpV2.java:216-231
           - split_plugnew/com/govee/h5080/adjust/h5089/BleOp4H5089.java:331-341
+      - id: light_nonzero
+        type: bool
+        doc: |
+          a light (masks 0) is on at any non-zero byte, as the legacy
+          SwitchController and the H70BX connect read decode it; false = at == 1
+        doc-ref:
+          - base-classes10/com/govee/base2light/ble/controller/SwitchController.java:29-33
+          - base-classes10/com/govee/base2light/ble/controller/HeartControllerWithBattery.java:85-90
+          - split_h70b1/com/govee/h70bx/controller/AfterConnectSuccessReadDeviceInfo.java:176-178
   mode_decode:
     doc: |
       CONTEXT: the screen's mode-report decode per colour sub-mode cXX (aa 05

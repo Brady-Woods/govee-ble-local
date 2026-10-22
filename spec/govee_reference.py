@@ -249,10 +249,11 @@ _LEAVES: Final[dict[str, dict[str, str | None]]] = {
     "DeviceCounts": {"num_segments": None, "num_levels": None},
     "ColorGroupForm": {"rule": "GroupCountRule", "num_per_group": None, "has_brightness": None,
                        "num_pieces": None},
-    "PowerRule": {"relay_on_mask": None, "relay_heartbeat_on_mask": None},
+    "PowerRule": {"relay_on_mask": None, "relay_heartbeat_on_mask": None, "light_nonzero": None},
     "ModeDecode": {"c02": "ColorDecode", "c0b": "ColorDecode", "c0d": "ColorDecode", "c14": "ColorDecode",
                    "c15": "ColorDecode", "music": "MusicDecode", "empty_fails": None},
 }
+_FLAGS: Final = ("has_brightness", "empty_fails", "light_nonzero")   # the bool params: false when left out
 
 
 def make_profile(**facts: Any) -> Any:
@@ -260,8 +261,8 @@ def make_profile(**facts: Any) -> Any:
     so make_profile() is the all-zero analyzer profile (GENERIC): overloaded bodies stay raw bytes.
 
     Keys: the command_forms selectors f_01 .. f_ee_40; num_segments, num_levels; rule, num_per_group,
-    has_brightness, num_pieces; relay_on_mask, relay_heartbeat_on_mask; and the mode decode c02, c0b,
-    c0d, c14, c15, music, empty_fails (one mode_decode object serves both mode and mode_status). An
+    has_brightness, num_pieces; relay_on_mask, relay_heartbeat_on_mask, light_nonzero; and the mode decode
+    c02, c0b, c0d, c14, c15, music, empty_fails (one mode_decode object serves both mode and mode_status). An
     enum-typed fact may be given by its member name, e.g. make_profile(f_15_01="kelvin_tint").
     Generated parents check a profile param by identity: build one object per set of device facts and
     reuse it (the library's wire_profile() does this from devices.yaml)."""
@@ -274,7 +275,7 @@ def make_profile(**facts: Any) -> Any:
     for leaf, params in _LEAVES.items():
         kw: dict[str, Any] = {}
         for key, enum_name in params.items():
-            value = facts.get(key, False if key in ("has_brightness", "empty_fails") else 0)
+            value = facts.get(key, False if key in _FLAGS else 0)
             if isinstance(value, str):
                 if enum_name is None:
                     raise TypeError(f"{key} takes a number, not {value!r}")
@@ -561,6 +562,15 @@ def _selftest(*, strict: bool = False) -> int:
     check("read reply AA 04 (rx) -> brightness 100", f.body.state.body.level == 100)
     check("read request AA 04 (tx) -> read_request brightness",
           parse_frame(fr, "tx").body.command == command.brightness)
+
+    def light_on(state: int, **power: Any) -> bool:
+        return bool(parse_frame(append_bcc(bytes([0xAA, 0x01, state])), "rx",
+                                make_profile(**power)).body.state.body.is_on)
+
+    check("AA 01 reply: a light is on at 1 only, at any non-zero byte under light_nonzero; a plug by mask",
+          [light_on(s) for s in (0, 1, 2)] == [False, True, False]
+          and [light_on(s, light_nonzero=True) for s in (0, 1, 2)] == [False, True, True]
+          and [light_on(s, relay_on_mask=0x01) for s in (0x10, 0x11)] == [False, True])
     try:
         parse_frame(fr[:19] + bytes([fr[19] ^ 1]))
         check("parse_frame refuses a bad checksum", False)

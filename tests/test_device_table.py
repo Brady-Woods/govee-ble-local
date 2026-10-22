@@ -255,6 +255,8 @@ _REFUSED: tuple[tuple[str, str, _Edit, str], ...] = (
     ("striplight", "41", lambda f: _wire(f)["forms"].update(f_41="power_memory"),
      "an aa 41 read without f_41"),
     ("h6047", "119", lambda f: _wire(f, "119")["forms"].update(f_36="bar_index"), "the aa 36 read and f_36"),
+    ("h60ax", "303", lambda f: _wire(f, "303").setdefault("power", {}).update(light_nonzero=True),
+     "wire power light_nonzero is served on a polled light row only"),
     ("striplight", "41", lambda f: _wire(f)["group"].update(num_per_group=0), "wire group num_per_group 0"),
     ("h60ax", "303", lambda f: _wire(f, "303")["group"].update(rule="unknown"), "wire group rule 'unknown'"),
     # family facts
