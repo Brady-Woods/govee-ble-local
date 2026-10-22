@@ -110,6 +110,9 @@ _CHANGED: dict[tuple[str, str], tuple[Any, Any]] = {
     # 1.7.0: no Part-tab Kelvin item on goodsTypes 19 / 247 / 41 (not in SupportPartColorTemConfig.d), so no
     # Kelvin on a piece selection.
     **{(sku, "segment_color_temp"): (True, False) for sku in ("H61A8", "H6641", "H6062")},
+    # 1.9.0: a full layout is the layout editor's cap, Constants.o(0) = 20 hexagons (decision D1 (a)), not the
+    # read-back default with no layout, Support.getBulbStringMaxNum(51) = 23.
+    ("H6061", "segments"): (23, 20),
 }
 
 # (soft, hard) versions: unread, the H61A8 bench unit, and the reference self-test's other two.

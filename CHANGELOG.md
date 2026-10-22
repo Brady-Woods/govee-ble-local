@@ -69,7 +69,7 @@ model, from which the shipped readers are generated).
   first walk, H608A-D / H808A, the status rows' IC reads that promote H3401 and H3510 / H3511, the per-SKU support
   level that promotes five h6609 260 SKUs, and H6057's light-switch power, below): 132 admitted by default
   (`app_traced`) and 26 behind `allow_modelled` (`modelled`).
-  The entries below admit 117 more by default (16 through the resolver changes; H7004, H1162 / H1163 / H1167 /
+  The entries below admit 121 more by default (16 through the resolver changes; H7004, H1162 / H1163 / H1167 /
   H1168, H70B1 and H70BC; 17 through the status-read command ids and the BK pact gate; the 10 SKUs of the
   `legacy_02` colour scheme; H7061; H70B2, H6630, H8630 and H6631 on the device-list card; H7070 on its pact's
   status read; H6071 / H6075 on the `kelvin_v9` scheme; H615A-E, whose pairing write is read as an exact-pact
@@ -77,9 +77,10 @@ model, from which the shipped readers are generated).
   `allow_modelled` since 1.5.0, H61B8 / H61B9 / H61F2 / H61F5 / H61F6; through the status rows' IC reads H702A /
   H702B / H702C, H7026 / H8026, H7027 and H30D0 / H30D1; through the 0xA3 colour unit H3010 / H3011 / H3012 / H3013;
   through the aa 0f string count the nine h7020 bulb-string SKUs; the six H707A strings through the status read's
-  segment count; and the 20 dreamcolorlightv1 71 / 123 SKUs through the per-SKU connect reads) and 17 more behind
-  `allow_modelled` (H7072, H6119, the five Glide panels, H61E5 / H61E6, H60A1 / H80A1, H6609 and H706A / H706B /
-  H706C / H806A / H806C), for 348 admitted by default and 43 behind `allow_modelled` in all (with H8015, a 1.6.1 SKU
+  segment count; the 20 dreamcolorlightv1 71 / 123 SKUs through the per-SKU connect reads; and four Glide panels at
+  the layout editor's cap) and 13 more behind `allow_modelled` (H7072, H6119, the Glide H6063, H61E5 / H61E6, H60A1 /
+  H80A1, H6609 and H706A / H706B / H706C / H806A / H806C), for 352 admitted by default and 39 behind
+  `allow_modelled` in all (with H8015, a 1.6.1 SKU
   now admitted by default: Changed). None is
   hardware-verified (the only bench check, below, was read-only), and none has a bundled scene catalog, so none
   is offered scenes. Each is listed with its family and goodsType; † marks a SKU no row lists that the
@@ -183,15 +184,20 @@ model, from which the shipped readers are generated).
   every brightness command until `Device.ingest_advertisement` hears the pact, `turn_on(brightness=...)`
   included, which then sends nothing, not even the power-on. Power, colour and colour temperature work
   meanwhile. Documented in `brightness_by_pact` and `create_device`; no behaviour changed.
-- **The other Glide panels, behind `allow_modelled`**, on the fixed `h6061` scheme (Fixed, below): **H6066**
-  (96, 25 panels), **H6067** (97, 23), **H6065** (121, 20), **H606A** (163, 21) and **H6063** (228, 20). They run
-  H6061's screen and builders (cubelight `SubLib` keys, `Model.t` -> `CubeAcLightDetail` / `CubeVM4Light`;
-  `Config.x` = 5 and `Config.I[gt][4]` for all five), so they get its power, brightness, whole-device RGB and
-  colour temperature, and the `aa a5` read-back. They are `modelled` because the app sizes every mask and the
-  read-back from the user's stored panel layout, which the device never reports: the row's count is a full
-  layout's (`Support.getBulbStringMaxNum`; for H6065 `ColorPieceConfig.f(121)` = 20, where the read-back default
-  is 23). H6061 itself stays admitted by default, the user's explicit exception for the same inferred count.
-  Not hardware-verified.
+- **The other Glide panels**, on the fixed `h6061` scheme (Fixed, below): **H6066** (96, 25 panels), **H6067** (97,
+  20), **H6065** (121, 20) and **H606A** (163, 21) admitted by default (`app_traced`), and **H6063** (228, 20) behind
+  `allow_modelled`. They run H6061's screen and builders (cubelight `SubLib` keys, `Model.t` -> `CubeAcLightDetail` /
+  `CubeVM4Light`; `Config.x` = 5 and `Config.I[gt][4]` for all five), so they get its power, brightness,
+  whole-device RGB and colour temperature, and the `aa a5` read-back. The app sizes every mask and the read-back
+  from the user's stored panel layout, which the device never reports, so each row's count is a full layout's: the
+  layout editor's cap for the goodsType's shape (`Support.getShapeViewType` -> `Constants.o:400-425`, 25 / 20 / 20
+  / 21; the editor shows no add point at the cap, `BasicShapeBusiness.x:989-991` / `x0:1017-1019`, and
+  `SplicePreviewAc.d1` refuses one). The four are `app_traced` at a full layout, the user's decision D1 (a), which
+  extends decision 9 (H6061, Changed); a smaller layout is exact only with the account's layout, which a later
+  release reads (D10). H6067's count was 23, `Support.getBulbStringMaxNum(97)`, the read-back default with no
+  layout stored, which the editor can't make. H6063 stays `modelled`: its layout is not made in the editor but
+  reported by the device (`GraphicalIdentificationActivity.m1:467-534`, at pairing and at the settings re-check),
+  which accepts 1..21 panels, so a full layout is not shown to be its 20. Not hardware-verified.
 - **Bench, 2026-10-21 (the Mac, reads only):** one H61C3 and two H6076s, polled through `create_device` and
   `update()` on the new rows. A guard on `GoveeConnection._send_frame` refused any write; none was attempted.
   - **H61C3** (rgbiclight 141, pact (1,1), plaintext, `allow_modelled`): aa 01, aa 04, aa 05 01, aa 40,
@@ -775,9 +781,10 @@ model, from which the shipped readers are generated).
     modelled for one inferred fact, as H6609 (173): the app's IC there is the one its pairing aa 40 read stored
     (`DefInfo.G0`; the connect aa 40 goes to `Info4Detail.v`, which nothing reads), and the library applies
     the table to the connect aa 40.
-  - H6065 (h6061 121) is not changed: its read-back (23 pieces) and writes (one panel) differ only with no
-    layout stored, and with a stored layout L both are L (`CubeVM4Light.l5`, `realMyColorPiece`), so a 23 / 20
-    split would be a pair the app never sends; the row stays modelled for its inferred L.
+  - H6065 (h6061 121) keeps one count for both: its read-back (23 pieces) and writes (one panel) differ only with
+    no layout stored, and with a stored layout L both are L (`CubeVM4Light.l5`, `realMyColorPiece`), so a 23 / 20
+    split would be a pair the app never sends; its count is a full layout's, the layout editor's 20 (the Glide
+    panels, above).
 
   Source-traced, not live-verified: no 260 SKU is on the bench. No Bluetooth was used.
 - **H707A / H707B / H707C / R707A / R707B / R707C** (h707a 326, the H707ABCDetailVM screen), admitted by default
@@ -832,6 +839,23 @@ model, from which the shipped readers are generated).
   read-back.
 
 ### Changed
+- **H6061 (h6061 51) is sized at 20 panels, the app's layout-editor cap, where it was 23** (the user's decision D1
+  (a), 2026-10-22). The app sizes its masks and read-back from the user's stored layout L
+  (`CubeColorModeV2.realMyColorPiece:505-508`, `CubeVM4Light.l5:386-422`), which the device never reports, and the
+  row's count stands in for a full layout. The layout editor caps an H6061 layout at 20 hexagons
+  (`Support.getShapeViewType:334-354` gives shape type 0, `Constants.o:400-402` gives 20;
+  `BasicShapeBusiness.x:989-991` / `x0:1017-1019` show no add point at the cap, and `SplicePreviewAc.d1:189-192`
+  refuses one), so 23 (`Support.getBulbStringMaxNum:180-194`, the read-back default with no layout stored) is no
+  layout the app can store. The bytes change at a full layout:
+  - the whole-device RGB (`Bytes.l`) and colour-temperature (`Bytes.u`) masks go from `ff ff 7f` to `ff ff 0f`;
+  - the `aa a5` read-back walks 5 groups, not 6;
+  - `Device.segment_count`, the profile's `segments` and the panel bound go from 23 to 20 (a count above 20 from
+    `Device.set_segment_count` is refused at write time, as one above 23 was).
+
+  `wire.build`'s `h6061` default count (`H6061_MAX_PANELS`) is 20 too. H6061's profile now also serves H6067 and
+  H6065 (Added), whose facts it shares at 20 panels (`DeviceProfile.skus`, a grouping change). A smaller layout
+  is exact only with the account's layout (D10, a later release). Source-traced, not live-verified: no H6061 is
+  on the bench.
 - **A Device now re-learns its command channel from later advertisements, for its next session, as the app
   does.** Until now the cipher was fixed when the `Device` was built: its advertisement's encrypt flag, else the
   profile default. A device built before any of its advertisements was heard stayed on that default for the
@@ -1189,8 +1213,8 @@ model, from which the shipped readers are generated).
   screen's pick goes `DelegateColorV2.F0` -> `ColorViewModel.p0` -> `ColorModeControllerConfig.c` ->
   `Config.J[5]` = `Config.Zt` -> `Bytes.l`: one `33 05 15 01 R G B 00 00 <mask>` frame, the spec's
   `op15_color` kelvin form with Kelvin 0, over the same panel mask as the colour-temperature frame (H6061:
-  `ff ff 7f`). `set_rgb` and `turn_on(rgb=)` now send that frame; colour temperature, an RGB pick that is a
-  Kelvin tint colour, and every other H6061 frame are unchanged. At an explicit one-panel count
+  `ff ff 0f`, its 20 panels, Changed). `set_rgb` and `turn_on(rgb=)` now send that frame; colour temperature,
+  an RGB pick that is a Kelvin tint colour, and every other H6061 frame are unchanged. At an explicit one-panel count
   (`Device.set_segment_count(1)`) the RGB frame is the app's too, mask `01 00` (the app writes
   `max(layout, 1)` panels, `CubeColorModeV2.realMyColorPiece`); the colour-temperature frame there still
   writes every panel, as in 1.6.1, where the app's `Bytes.u` writes the one: a known divergence, left for
@@ -1240,8 +1264,8 @@ model, from which the shipped readers are generated).
   `modelled`; one that needs library work has no `support` and names the gap in its `doc`. A verification
   pass challenged each family's rows; they were repaired, and demoted (to `modelled`, or to no `support`)
   where a core claim didn't hold.
-  - devices.yaml now has 305 goodsType rows in 96 families (184 in 91): 226 with `support` (66), of them 194
-    `app_traced`, 28 `modelled` and the same 4 `hardware_verified`, and 79 without (118). 66 of the 226 had support
+  - devices.yaml now has 305 goodsType rows in 96 families (184 in 91): 226 with `support` (66), of them 198
+    `app_traced`, 24 `modelled` and the same 4 `hardware_verified`, and 79 without (118). 66 of the 226 had support
     at 1.6.1 and keep it (bulblightv3 328 now `app_traced`); the trace gave 87 more rows support. The other 73 take
     it through the library and spec changes under Added, Changed, Fixed and Spec: h7004 0, h6069 284, h3700 383,
     h7076 313, h70dx 267-269, bulblightv3 342, the four h1162 rows, h70b1 134, h70bx 216, the six status-read rows
@@ -1442,12 +1466,18 @@ model, from which the shipped readers are generated).
   cites the slider's own path (`ColorViewModel.U` -> `c` -> `Zt`). The resolver checks that an `h6061` row with
   RGB or colour temperature carries the `f_15_01: kelvin` form (it checked `f_15_04: rgb_group` for RGB).
   - The family's rows are re-cut from the trace (h6061.md), not from its patch, which withdrew H6061: 96 / 97 /
-    121 / 163 / 228 get their own traced rows (`modelled`, above), and 51 keeps `app_traced`, names the
-    inferred panel count and the user's decision, and drops `scenes` from `capabilities` (an `untraced` dialect
-    claims nothing; the resolver already dropped it, so the profile is unchanged).
+    121 / 163 / 228 get their own traced rows (above: 96 / 97 / 121 / 163 `app_traced` at a full layout, 228
+    `modelled`), and 51 keeps `app_traced`, names the panel count and the user's decisions, and drops `scenes`
+    from `capabilities` (an `untraced` dialect claims nothing; the resolver already dropped it, so the profile is
+    unchanged).
   - `specs.segments`, `wire.doc`, the `aa a5` read and the per-goodsType opcode (now `color_write_per_goodstype`)
     say what the app sizes from the stored layout L and what the row's count stands in for; the brightness
     opcode cites the screen's `BrightnessConfig.b`, not the device-list `Support.getBrightnessRange`.
+  - A full layout is the layout editor's cap for the goodsType's shape (`Constants.o`, by
+    `Support.getShapeViewType`; `BasicShapeBusiness.x` / `x0`): the wire `num_segments` of 51 and 97 go from 23,
+    `Support.getBulbStringMaxNum`'s read-back default with no layout stored, to 20 (H6061, Changed), and 96 / 121 /
+    163 already held their caps, 25 / 20 / 21. 228's layout is the device's own report of up to 21 panels
+    (`GraphicalIdentificationActivity.m1`), so its 20, the read-back default, stays inferred; its doc says so.
 - **`color_02_write` (govee_ble_frame) is the `legacy_02` scheme's frame**, now citing the writer the library
   follows (`Config.fu` -> `Bytes.a` / `Bytes.o`, from `ColorViewModel.U` / `p0`), and its `white_flag` takes a
   new enum, `color_02_flag` (`rgb` = Bytes.a, `white_tint` = Bytes.o / Bytes.y). `spec/govee_reference.py`

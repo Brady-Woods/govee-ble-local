@@ -722,11 +722,11 @@ def _selftest(*, strict: bool = False) -> int:
     check("build_op15_color_temp_bytes_r round-trips slot, kelvin and tint",
           (ext.color.r, ext.color.g, ext.color.b, ext.kelvin) == (0xFF, 0xFF, 0xFF, 2700)
           and (ext.tint.r, ext.tint.g, ext.tint.b) == (100, 50, 16) and ext.is_cct)
-    v5 = parse_frame(build_op15_color_v5(0x12, 0x34, 0x56, (1 << 23) - 1, mask_bytes=3), "tx",
-                     make_profile(f_15_01="kelvin", num_segments=23)).body.params.params.data
-    check("build_op15_color_v5 RGB pick (Bytes.l, H6061) reads as RGB, kelvin 0, over 23 panels",
+    v5 = parse_frame(build_op15_color_v5(0x12, 0x34, 0x56, (1 << 20) - 1, mask_bytes=3), "tx",
+                     make_profile(f_15_01="kelvin", num_segments=20)).body.params.params.data
+    check("build_op15_color_v5 RGB pick (Bytes.l, H6061) reads as RGB, kelvin 0, over 20 panels",
           (v5.color.r, v5.color.g, v5.color.b, v5.kelvin) == (0x12, 0x34, 0x56, 0) and not v5.is_cct
-          and v5.mask.bits[:24] == [True] * 23 + [False])
+          and v5.mask.bits[:24] == [True] * 20 + [False] * 4)
 
     from govee_commands import build_color_legacy
 

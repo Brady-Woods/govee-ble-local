@@ -21,13 +21,13 @@ ALL_SCHEMES: tuple[b.ColorScheme, ...] = (
 # ── a scheme that can't express the request: GoveeBleNotSupported, not a bare ValueError ──
 @pytest.mark.parametrize(("call", "match"), [
     (lambda: b.color_temp(4000, "h61a8", 15), "h61a8"),
-    (lambda: b.segment_rgb(1, 1, 2, 3, "h6061", 23), "whole-device only"),
+    (lambda: b.segment_rgb(1, 1, 2, 3, "h6061", 20), "whole-device only"),
     (lambda: b.segment_color_temp(1, 4000, "h61a8", 15), "h61a8"),
     (lambda: b.segment_color_temp(1, 4000, "h6006"), "h6006"),
     (lambda: b.segment_color_temp(1, 4000, "h6188"), "h6188"),
-    (lambda: b.segment_color_temp(1, 4000, "h6061", 23), "whole-device only"),
+    (lambda: b.segment_color_temp(1, 4000, "h6061", 20), "whole-device only"),
     (lambda: b.segment_brightness(1, 50, "h61a8", 15), "h61a8"),
-    (lambda: b.segment_brightness(1, 50, "h6061", 23), "whole-device only"),
+    (lambda: b.segment_brightness(1, 50, "h6061", 20), "whole-device only"),
 ])
 def test_scheme_limits_raise_not_supported(call: Callable[[], bytes], match: str) -> None:
     with pytest.raises(GoveeBleNotSupported, match=match) as info:
@@ -132,12 +132,12 @@ def test_brightness_ints_still_clamp() -> None:
 
 
 # ── segment-count defaults: per scheme, never another SKU's count ────────────
-def test_h6061_default_is_the_apps_23_panels() -> None:
-    # Used to be H60A6's 13: a 13-panel mask ff 1f 00 the app never sends.
-    assert b.color_temp(4000, "h6061") == b.color_temp(4000, "h6061", 23)
-    assert b.color_temp(4000, "h6061")[9:12] == bytes([0xFF, 0xFF, 0x7F])
-    assert b.color_rgb_frames(1, 2, 3, "h6061") == b.color_rgb_frames(1, 2, 3, "h6061", 23)
-    assert b.color_rgb_frames(1, 2, 3, "h6061")[0][9:12] == bytes([0xFF, 0xFF, 0x7F])
+def test_h6061_default_is_the_apps_20_panels() -> None:
+    # Used to be H60A6's 13: a 13-panel mask ff 1f 00 the app never sends. 20: the layout editor's cap.
+    assert b.color_temp(4000, "h6061") == b.color_temp(4000, "h6061", 20)
+    assert b.color_temp(4000, "h6061")[9:12] == bytes([0xFF, 0xFF, 0x0F])
+    assert b.color_rgb_frames(1, 2, 3, "h6061") == b.color_rgb_frames(1, 2, 3, "h6061", 20)
+    assert b.color_rgb_frames(1, 2, 3, "h6061")[0][9:12] == bytes([0xFF, 0xFF, 0x0F])
 
 
 def test_h61a8_default_is_its_15_segments() -> None:

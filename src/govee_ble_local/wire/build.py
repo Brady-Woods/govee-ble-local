@@ -467,9 +467,11 @@ def _op15_color_frame(form: int, rgb: tuple[int, int, int], mask: int, positions
 # Bytes.u for a Kelvin tint (the spec's op15_color, form kelvin). The device never reports the layout; the
 # goodsType's panel count stands in for it
 # (devices.yaml h6061 wire counts.num_segments, the profile's segments; Device passes it as ``pieces``):
-# Support.getBulbStringMaxNum(51) = 23 on the H6061, the default. The 15 04 group frames (Bytes.m) are the
-# colour-stripe path (ColorViewModel.O -> ColorModeControllerConfig.k), which the library doesn't send.
-H6061_MAX_PANELS: Final = 23
+# a full layout, 20 on the H6061, the default: the layout editor's cap for its hexagons (Constants.o(0),
+# BasicShapeBusiness.x / x0). Support.getBulbStringMaxNum(51) = 23 is only the read-back default with no
+# layout stored. The 15 04 group frames (Bytes.m) are the colour-stripe path (ColorViewModel.O ->
+# ColorModeControllerConfig.k), which the library doesn't send.
+H6061_MAX_PANELS: Final = 20
 H6061_KELVIN_RANGE: Final = (2000, 9000)   # KelvinConfig: no entry for 51 -> version 0
 
 # Segment count a whole-device builder assumes when the caller passes none (``Device`` always passes
@@ -486,14 +488,14 @@ def _segments_or_default(scheme: ColorScheme, segments: int | None) -> int:
 
 def _h6061_panels(panels: int | None, pieces: int | None, *, expand_one: bool) -> tuple[int, int]:
     """``(panels written, mask positions)`` for a layout of ``panels`` panels (None: the whole device) on a
-    device of ``pieces`` (None: the H6061's 23).
+    device of ``pieces`` (None: the H6061's 20).
 
     More than ``pieces`` is refused (the profile's count is a full layout). The panels written are the app's
     posSet, ``max(L, 1)`` (``CubeColorModeV2.realMyColorPiece``), so one panel is mask ``01 00``.
     ``expand_one`` writes a one-panel layout as ``pieces`` panels instead, the colour-stripe path's
     single-colour expansion (``ColorPieceConfig.Config.s0``): the CCT frames keep it as admitted at 1.6.1
     (decision 9 approves the RGB frame only), a known divergence from ``Bytes.u`` that only an explicit
-    one-panel count reaches. The mask spans ``pieces`` rounded up to whole bytes (23 pieces: 24 positions);
+    one-panel count reaches. The mask spans ``pieces`` rounded up to whole bytes (20 pieces: 24 positions);
     past the panels written it is zero, as the app's shorter ``BleUtils.X`` / two-byte mask is followed by
     the zero fill."""
     j = H6061_MAX_PANELS if pieces is None else pieces
@@ -505,7 +507,7 @@ def _h6061_panels(panels: int | None, pieces: int | None, *, expand_one: bool) -
 def _h6061_color(rgb: tuple[int, int, int], kelvin: int, panels: int | None, pieces: int | None, *,
                  expand_one: bool = False) -> bytes:
     """Whole-device ``33 05 15 01 <rgb> <kelvin u2be> <mask>`` (``Config.Zt``), the first ``panels`` mask
-    bits set, LSB first (23 panels: ``ff ff 7f``): ``Bytes.l`` (an RGB pick, Kelvin 0) or ``Bytes.u`` (CCT,
+    bits set, LSB first (20 panels: ``ff ff 0f``): ``Bytes.l`` (an RGB pick, Kelvin 0) or ``Bytes.u`` (CCT,
     the tint in the colour slot, not ``ff ff ff``), over the posSet of :func:`_h6061_panels`."""
     n, positions = _h6061_panels(panels, pieces, expand_one=expand_one)
     return _op15_color_frame(_FORM_KELVIN, rgb, all_segments_mask(n), positions, kelvin)
@@ -680,7 +682,7 @@ def color_rgb_frames(r: int, g: int, b: int, scheme: ColorScheme, segments: int 
     ``white_type`` slot); ``kelvin_range`` None sends plain RGB
     (``h6061`` defaults to its own range). ``segments`` None is the scheme's default count
     (:data:`_DEFAULT_SEGMENTS`; on ``h6061`` every panel). ``pieces`` is an ``h6061`` device's panel count
-    (the profile's ``segments``; None: the H6061's 23), which bounds ``segments`` and sizes the mask
+    (the profile's ``segments``; None: the H6061's 20), which bounds ``segments`` and sizes the mask
     (:func:`_h6061_panels`); other schemes ignore it. ``h3010`` sends one 0xA3 unit of several frames over
     ``segments`` pieces (:func:`_color_multi_frames`)."""
     _check_rgb(r, g, b)
