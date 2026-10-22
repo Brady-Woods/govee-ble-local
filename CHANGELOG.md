@@ -940,8 +940,10 @@ model, from which the shipped readers are generated).
   - Spec corrections the trace made inside family blocks change no admitted SKU. For example, H6171 is off
     barelightv1 17 (it reads aa 40 there, which the row's other SKUs don't), H6119 is off h7090 44 (h7090's
     screen never opens for it), and H615E is listed on stringlightv2 108, its catalogue goodsType.
-  - The catalogue snapshot routes 33 SKUs no row lists (15 before), H8069 and H80D1 among them. For review:
-    H613A-F (catalogue 39, named by h613839's (65535,255) bind item), where it was H615E.
+  - The catalogue snapshot routes 41 SKUs no row lists (15 before), H8069 and H80D1 among them, and H30D1,
+    H7028, H61B1 and H6172 / H6173 / H618E / H618F / H61B2 on the h7020 and dreamcolorlightv1 rows written out
+    since the trace. For review: H613A-F (catalogue 39, named by h613839's (65535,255) bind item), where it was
+    H615E.
   - rgbiclight 351 / 352 now record the R617G / R618D catalogue route, as h7057 274 does H8057's.
   - h7004 0 (H7004, a grow light) is traced as a power-only row the library can serve (its screen reads aa 01
     and the device info, never aa 04 or aa 05: `ControllerStrategyConfig.k1`, `VM4Light.supportBrightness`
