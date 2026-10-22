@@ -10995,7 +10995,8 @@ families:
     # still routes 95 / 109 / 122 / 133 to it) is not in the 7.7.02 capture. Row doc-refs under govee-apk-decompiled/sources
     # are 7.5.12 paths. The 7.7.02 legacy base maps for these goodsTypes (colour version 0, white type 1, Kelvin version 0)
     # agree, but 7.7.02 reads a module-registered LightCapabilitySpec first (LightColorCapabilityCenter.i3), and whether the
-    # uncaptured module registers one for 95 / 109 / 122 / 133 can't be seen.
+    # uncaptured module registers one for 95 / 109 / 122 / 133 can't be seen. 109 / 133 are app_traced on the 7.5.12 trace,
+    # the user's decision 25 (D3 (a), 2026-10-22); a re-trace waits on a capture of the module.
     client_profile:
       has_brightness: true
       color_scheme: h60a6
@@ -11006,7 +11007,7 @@ families:
         "109":   # H604B, strip only (no zone UI)
           models: [H604B]
           pacts: ["1,1"]
-          support: modelled   # traced on 7.5.12 only; 7.7.02 ships the screen in the uncaptured pact_h604a module (doc)
+          support: app_traced   # on the 7.5.12 trace (decision 25, D3 (a)); the 7.7.02 module pact_h604a is uncaptured (doc)
           capabilities: [power, brightness, rgb, color_temp, segments, gradual]
           segment_color_temp: false
           zones: []
@@ -11019,20 +11020,25 @@ families:
           heartbeat: power
           ic_pieces: fixed
           doc: >-
-            H604B. MODELLED: traced on Govee Home 7.5.12 (1088) only, and that is not the shipped path. 7.5.12 has the
-            h604a code in its base APK (its pfd/Config registers no pact_h604a module), while 7.7.02 moved it to the
-            on-demand PFD module pact_h604a (base-classes9/com/govee/base2home/pfd/Config.java:242 routes 95 / 109 / 122
-            / 133 there), which the 7.7.02 capture doesn't hold; and 7.7.02 reads a module-registered LightCapabilitySpec
-            first (LightColorCapabilityCenter.i3), which the module may register for these goodsTypes. Every doc-ref
-            below under govee-apk-decompiled/sources is a 7.5.12 path, so the row stays behind allow_modelled until the
-            7.7.02 module is captured and re-traced. On 7.5.12: Model.u opens H604xNewDetailAc
+            H604B. APP_TRACED on the Govee Home 7.5.12 (1088) trace, by the user's decision 25 (D3 (a), 2026-10-22), though
+            7.5.12 is not the shipped path. 7.5.12 has the h604a code in its base APK (its pfd/Config registers no
+            pact_h604a module), while 7.7.02 moved it to the on-demand PFD module pact_h604a
+            (base-classes9/com/govee/base2home/pfd/Config.java:242 routes 95 / 109 / 122 / 133 there), which the 7.7.02
+            capture doesn't hold; and 7.7.02 reads a module-registered LightCapabilitySpec first
+            (LightColorCapabilityCenter.i3), which the module may register for these goodsTypes. Every doc-ref below under
+            govee-apk-decompiled/sources is a 7.5.12 path; a re-trace waits on a capture of the 7.7.02 module (the user's
+            Play login or a phone). The 7.7.02 base the module runs on agrees where it shows: its legacy maps (family
+            comment), and the keep-alive hook keeps the boolean a screen VM overrides (ShareVM.M3 passes K3 =
+            ConnectHeartbeat.a(I3()), 1 for true, to BleComm.J, whose l sends Controller4HeartCommon(aa 01) for 1), so a
+            module VM that keeps 7.5.12's i4 true still sends aa 01. On 7.5.12: Model.u opens H604xNewDetailAc
             (H604xVM); the zone header and lamp pickers are for 95 / 122 only, so 109 uses the generic header: 33 01 from
             switchTrigger, 33 04 [1, 100] from BrightnessConfig version 1. Connect: the default Compose4InfoBleIot read (aa 04,
             aa a3, aa 01, then the screen's extras, aa 05) and direct aa a5 01..04 groups of getOneGroupColorSize = 4 over
             getBulbStringMaxNum(109) = 14 pieces (W5). The aa 40 IC count is read and stored but sizes nothing. Colour:
             Config.y[109] = 0 -> K[0] = Xs -> Bytes.h, or Bytes.r with white type Q[109] = 1 when the pick is a Kelvin tint;
             the colour-temperature tab sends the tint through the same builder, always over all 14 pieces
-            (ColorModeH604x.canClickColorTem), so a part-mask CCT comes only from an RGB pick of an exact tint; segment
+            (ColorModeH604x.canClickColorTem; segment_color_temp false, and 7.7.02's SupportPartColorTemConfig.d lists
+            neither 109 nor 133), so a part-mask CCT comes only from an RGB pick of an exact tint; segment
             brightness 15 02 (Bytes.G), refused while any piece holds a tint (canClickBrightness); gradual 33 a3 (Bytes.w); KelvinConfig
             version 0 = [2000, 9000]. Heartbeat aa 01 (i4 true, newdetail BleComm.l); ee 30 power push. No 0xB2 check on the
             control path. Not modelled: the extra connect reads aa ad, aa 36, aa a9 00 and aa ac (camera, zone flags with no
@@ -11041,6 +11047,9 @@ families:
           doc-ref:
             - base-classes9/com/govee/base2home/pfd/Config.java:242
             - base-classes10/com/govee/base2light/capability/color/LightColorCapabilityCenter.java:1201-1206
+            - base-classes11/com/govee/base2light/pact/newdetail/ShareVM.java:979-990,1348-1350,1362-1364
+            - base-classes11/com/govee/base2light/pact/newdetail/ble/BleComm.java:57-59,76-84
+            - base-classes12/com/govee/common2light/capability/connect/ConnectHeartbeat.java:15-17,26-38
             - govee-apk-decompiled/sources/com/govee/h604a/pact/Support.java:61,89-106,112-114,134-136,158-164,265-267
             - govee-apk-decompiled/sources/com/govee/h604a/pact/H604bItem.java:7
             - govee-apk-decompiled/sources/com/govee/h604a/pact/SubLib.java:22-28
@@ -11070,7 +11079,7 @@ families:
         "133":   # H604D, strip only (no zone UI)
           models: [H604D]
           pacts: ["1,1"]
-          support: modelled   # as 109: traced on 7.5.12 only (doc)
+          support: app_traced   # as 109: on the 7.5.12 trace (decision 25, D3 (a)) (doc)
           capabilities: [power, brightness, rgb, color_temp, segments, gradual]
           segment_color_temp: false
           zones: []
@@ -11083,9 +11092,10 @@ families:
           heartbeat: power
           ic_pieces: fixed
           doc: >-
-            H604D. MODELLED as 109: traced on Govee Home 7.5.12 only (its doc-refs are 7.5.12 paths), while 7.7.02 runs
-            goodsType 133 from the uncaptured pact_h604a module. On 7.5.12: the same screen, connect and frames as 109
-            (row "109"; Support.isH604bType holds for both). 14 pieces
+            H604D. APP_TRACED as 109, by the user's decision 25 (D3 (a)): traced on Govee Home 7.5.12 only (its doc-refs
+            are 7.5.12 paths), while 7.7.02 runs goodsType 133 from the uncaptured pact_h604a module. On 7.5.12: the same
+            screen, connect, frames and aa 01 keep-alive as 109 (row "109"; Support.isH604bType holds for both), the
+            colour-temperature pick over all 14 pieces (segment_color_temp false). 14 pieces
             (getBulbStringMaxNum, ColorPieceConfig set e()), colour version Config.y[133] = 0 with white type Q[133] = 1,
             KelvinConfig version 0 = [2000, 9000], brightness version 1 = [1, 100], gradual version 0. Pact (1, 1) only
             (addSupportPact registers 133 with 109's protocol object). Not modelled: as 109.

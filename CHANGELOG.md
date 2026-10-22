@@ -68,8 +68,8 @@ model, from which the shipped readers are generated).
   that promotes H61D2-H61D6, the live piece count that promotes 14 h705a SKUs and, by the user's decision on its
   first walk, H608A-D / H808A, the status rows' IC reads that promote H3401 and H3510 / H3511, the per-SKU support
   level that promotes five h6609 260 SKUs, the colour page's Kelvin-tint read-back that promotes the six h70b3
-  SKUs, and H6057's light-switch power, below): 138 admitted by default (`app_traced`) and 20 behind
-  `allow_modelled` (`modelled`).
+  SKUs, the user's decision on their 7.5.12 trace that promotes H604B / H604D, and H6057's light-switch power,
+  below): 140 admitted by default (`app_traced`) and 18 behind `allow_modelled` (`modelled`).
   The entries below admit 121 more by default (16 through the resolver changes; H7004, H1162 / H1163 / H1167 /
   H1168, H70B1 and H70BC; 17 through the status-read command ids and the BK pact gate; the 10 SKUs of the
   `legacy_02` colour scheme; H7061; H70B2, H6630, H8630 and H6631 on the device-list card; H7070 on its pact's
@@ -80,7 +80,7 @@ model, from which the shipped readers are generated).
   through the aa 0f string count the nine h7020 bulb-string SKUs; the six H707A strings through the status read's
   segment count; the 20 dreamcolorlightv1 71 / 123 SKUs through the per-SKU connect reads; and four Glide panels at
   the layout editor's cap) and 13 more behind `allow_modelled` (H7072, H6119, the Glide H6063, H61E5 / H61E6, H60A1 /
-  H80A1, H6609 and H706A / H706B / H706C / H806A / H806C), for 358 admitted by default and 33 behind
+  H80A1, H6609 and H706A / H706B / H706C / H806A / H806C), for 360 admitted by default and 31 behind
   `allow_modelled` in all (with H8015, a 1.6.1 SKU
   now admitted by default: Changed). None is
   hardware-verified (the only bench check, below, was read-only), and none has a bundled scene catalog, so none
@@ -116,6 +116,9 @@ model, from which the shipped readers are generated).
     **H3751** (354);
   - h70b3: **H70B3** (229), **H70B4** (230), **H70B5** (231), **H6810** (255), **H6811**, **H8811**† (256), by the
     colour page's Kelvin-tint read-back (Changed, below);
+  - h604a: **H604B** (109), **H604D** (133), on their Govee Home 7.5.12 trace, by the user's decision: 7.7.02 runs
+    their screen from the on-demand module `pact_h604a` (`pfd/Config`), which the 7.7.02 capture doesn't hold, so
+    the shipped path is unseen (Spec, below);
   - h7017: **H7017** (0), a grow light: power and brightness only, served at any pact, as its screen runs no
     pact test (`h7017 Model.t`);
   - h705a: **H705A / H705B / H705C / H801B** (125), **H705D / H705E / H705F / H805A / H805B / H805C / H805D**
@@ -129,10 +132,7 @@ model, from which the shipped readers are generated).
   - h61d3: **H703A / H703B** (263);
   - dreamcolorlightv2: **H611A / H6143 / H6144** (21); homelightv1: **H6148** (16); hollowlamp: **H6058**
     (59); h7090: **H7090** (44); h1741: **H1741 / R1741** (365);
-  - h6609: **H70C4 / H70C5 / H70C7 / H6870 / H80C4** (260, on their IC-gated read-back, below);
-  - h604a: **H604B** (109), **H604D** (133), traced on Govee Home 7.5.12 only: 7.7.02 runs their screen from
-    the on-demand module `pact_h604a` (`pfd/Config`), which the 7.7.02 capture doesn't hold, so the shipped path
-    is unseen (the rows' `doc`; their doc-refs under `govee-apk-decompiled/sources/` are 7.5.12 paths).
+  - h6609: **H70C4 / H70C5 / H70C7 / H6870 / H80C4** (260, on their IC-gated read-back, below).
 - **H6069 / H8069**† (h6069 284), **H3700** (h3700 383) and **H7076** (h7076 313), admitted by default
   (`app_traced`). Each is a status-read row whose screen takes its live power from the aa 01 keep-alive reply
   (`power_live: [heartbeat_aa01]`), which the resolver now serves on a status row as it does on a polled one
@@ -1285,8 +1285,8 @@ model, from which the shipped readers are generated).
   `modelled`; one that needs library work has no `support` and names the gap in its `doc`. A verification
   pass challenged each family's rows; they were repaired, and demoted (to `modelled`, or to no `support`)
   where a core claim didn't hold.
-  - devices.yaml now has 305 goodsType rows in 96 families (184 in 91): 226 with `support` (66), of them 203
-    `app_traced`, 19 `modelled` and the same 4 `hardware_verified`, and 79 without (118). 66 of the 226 had support
+  - devices.yaml now has 305 goodsType rows in 96 families (184 in 91): 226 with `support` (66), of them 205
+    `app_traced`, 17 `modelled` and the same 4 `hardware_verified`, and 79 without (118). 66 of the 226 had support
     at 1.6.1 and keep it (bulblightv3 328 now `app_traced`); the trace gave 87 more rows support. The other 73 take
     it through the library and spec changes under Added, Changed, Fixed and Spec: h7004 0, h6069 284, h3700 383,
     h7076 313, h70dx 267-269, bulblightv3 342, the four h1162 rows, h70b1 134, h70bx 216, the six status-read rows
@@ -1304,16 +1304,21 @@ model, from which the shipped readers are generated).
     segment split promoted the trace's h61d3 202, the live piece count h705a 125 / 240 / 250 and h61d3 299 / 261,
     the status rows' IC reads h705a 394 and h7057 349, and the read-back piece count h6609 260 (five of its SKUs
     held `modelled` by their own `support`), to `app_traced`, and the colour page's Kelvin-tint read-back the
-    trace's h70b3 229 / 230 / 231 / 255 / 256.
+    trace's h70b3 229 / 230 / 231 / 255 / 256; the user's decision promoted its h604a 109 / 133 (below).
   - Two goodsType add-ons were traced and checked on their own: straightfloorlamp 69 (H6076 / H8076,
     `app_traced`, with the bench reads above, on an advertised pact only: `pact_required`, below) and
     rgbiclight 141 (H61C2 / H61C3 / H61C5).
-  - h604a 109 / 133 (H604B / H604D) are `modelled`, not `app_traced`: their trace is on Govee Home 7.5.12, which
-    has the h604a screen in its base APK, while 7.7.02 runs it from the on-demand module `pact_h604a`
-    (`pfd/Config.java:242`), which the 7.7.02 capture doesn't hold, and reads a module-registered
-    `LightCapabilitySpec` first (`LightColorCapabilityCenter.i3`), so the shipped path is unseen. Each row's
-    `doc` says so; `devices.schema.json`'s `docRef` and the `source_app` line name `govee-apk-decompiled/sources/`
-    as the 7.5.12 root of their doc-refs.
+  - h604a 109 / 133 (H604B / H604D) are `app_traced` on their Govee Home 7.5.12 trace, the user's decision 25
+    (D3 (a), 2026-10-22). 7.5.12 has the h604a screen in its base APK, while 7.7.02 runs it from the on-demand
+    module `pact_h604a` (`pfd/Config.java:242`), which the 7.7.02 capture doesn't hold, and reads a
+    module-registered `LightCapabilitySpec` first (`LightColorCapabilityCenter.i3`), so the shipped path is
+    unseen; a re-trace waits on a capture of the module. What the 7.7.02 base shows agrees: its legacy colour,
+    white-type and Kelvin maps for 109 / 133, and the keep-alive hook a screen's view model overrides
+    (`ShareVM.M3:979-990` passes `K3:1362-1364` = `ConnectHeartbeat.a(I3())` to `BleComm.J:57-59`; true is aa 01),
+    which 7.5.12's `H604xVM.i4` sets true. Both rows keep `segment_color_temp: false`: the colour-temperature
+    pick covers all 14 pieces (`ColorModeH604x.canClickColorTem`), and 7.7.02's `SupportPartColorTemConfig.d`
+    lists neither goodsType. Each row's `doc` says so; `devices.schema.json`'s `docRef` and the `source_app` line
+    name `govee-apk-decompiled/sources/` as the 7.5.12 root of their doc-refs.
   - **`pact_required`**, a new `clientRow` fact (`devices.schema.json`; `tools/gen_devices.py` KEEP): the row
     is a route only for an advertisement that carries a pact, as a pact-conditioned reassignment's target row
     is, because the app also accepts other pacts for its goodsType that run a path the row doesn't serve.
