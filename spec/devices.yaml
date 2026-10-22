@@ -12871,10 +12871,11 @@ families:
       mode_color_parse: none   # 0x15 only selects colour mode (its parser is empty); colours come from the 0xA5 records; split_h70b1/com/govee/h70dx/adjust/Info4Detail.java:137-171
       power_read: ac_status   # TLV 0x01
       power_live: [push_30]   # no heartbeat_aa01: the aa 00 keep-alive reply is never read for power (base-classes11/com/govee/base2light/pact/newdetail/ble/BleComm.java:37-47)
-      by_goods_type:   # no support: the screen's 0xAC status read requests no types (ac 03 00), which the library can't send (h70dx.md)
+      by_goods_type:   # the screen's 0xAC status read requests no types (ac 03 00, status_read [])
         "267":   # H70D1, the h70dx detail screen (VM4H70DX)
           models: [H70D1]
           pacts: ["1,1", "2,1"]
+          support: app_traced
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments]
           zones: []
@@ -12882,6 +12883,7 @@ families:
           scene_dialect: untraced
           kelvin_range: [2000, 9000]
           brightness_range: [1, 100]
+          status_read: []
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -12893,9 +12895,9 @@ families:
             unlisted as on H60A6 / H7056; no aa 01 / aa 05; no 0xB2, so account_lock false, the app's control-screen path for
             it not cited). Reply: TLV 0x01 power, 0x04 brightness, 0x05 mode (the 0x15 colour parse is empty), and g5 takes
             whatever 0x41 (power-off memory, value[1]), 0xA3 (gradual), 0x39 (install count, direction) and 0xA5 (10 pieces,
-            groups of 4 {bri, R, G, B}) the firmware returns. NO SUPPORT: the library's status_read needs at least one type
-            and reads TLV 0xA5 as colour groups only where it requests them, so it can't send the app's bare read (library
-            gap). Power: switchTrigger writes 33 01 (ControllerSwitch), no zone switch; live power the ee 30 push (DefParser
+            groups of 4 {bri, R, G, B}) the firmware returns: status_read [], the bare read, whose reply's TLV 0xA5 the
+            library reads as colour groups as the screen does. Which TLVs the firmware returns is not in the app (no H70D on
+            the bench). Power: switchTrigger writes 33 01 (ControllerSwitch), no zone switch; live power the ee 30 push (DefParser
             switch parser, bit 0 of frame[3]), then the off->on re-read (Compose4Off2On: aa 23 / 11 / 12 / 05, then aa 04);
             keep-alive aa 00 (ShareVM.K3 = ConnectHeartbeat.a(false) = 2; VM4H70DX overrides neither I3 nor A3), whose reply
             carries no power (BleComm.G runs the ShareVM.N3 -> J3 power callback only on an aa 01 heartbeat). Colour page:
@@ -12941,6 +12943,7 @@ families:
         "268":   # H70D2, as 267
           models: [H70D2]
           pacts: ["1,1", "2,1"]
+          support: app_traced
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments]
           zones: []
@@ -12948,13 +12951,14 @@ families:
           scene_dialect: untraced
           kelvin_range: [2000, 9000]
           brightness_range: [1, 100]
+          status_read: []
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
           doc: >-
             H70D2 (Support.d(268)): the 267 row's screen, connect read and frames. Config.x / z / P / I[268] are 267's (0, 0,
-            1, all on), BrightnessConfig.i[268] = 1, no KelvinConfig entry, ColorPieceConfig.j 10 pieces. No support: the
-            same bare 0xAC status read (library gap). Not hardware-verified.
+            1, all on), BrightnessConfig.i[268] = 1, no KelvinConfig entry, ColorPieceConfig.j 10 pieces; the same bare 0xAC
+            status read. Not hardware-verified.
           doc-ref:
             - split_h70b1/com/govee/h70dx/Support.java:25,42-50
             - split_h70b1/com/govee/h70dx/ConfigH70DX.java:120-127
@@ -12964,6 +12968,7 @@ families:
         "269":   # H70D3, as 267
           models: [H70D3]
           pacts: ["1,1", "2,1"]
+          support: app_traced
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments]
           zones: []
@@ -12971,13 +12976,14 @@ families:
           scene_dialect: untraced
           kelvin_range: [2000, 9000]
           brightness_range: [1, 100]
+          status_read: []
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
           doc: >-
             H70D3 (Support.d(269)): the 267 row's screen, connect read and frames. Config.x / z / P / I[269] are 267's (0, 0,
-            1, all on), BrightnessConfig.i[269] = 1, no KelvinConfig entry, ColorPieceConfig.j 10 pieces. No support: the
-            same bare 0xAC status read (library gap). Not hardware-verified.
+            1, all on), BrightnessConfig.i[269] = 1, no KelvinConfig entry, ColorPieceConfig.j 10 pieces; the same bare 0xAC
+            status read. Not hardware-verified.
           doc-ref:
             - split_h70b1/com/govee/h70dx/Support.java:25,42-50
             - split_h70b1/com/govee/h70dx/ConfigH70DX.java:120-127

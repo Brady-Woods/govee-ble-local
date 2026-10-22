@@ -70,11 +70,13 @@ the row lacks fails the build: nothing defaults silently.
   An ``untraced`` colour parse on a row with ``rgb`` or ``color_temp`` raises (``none`` is a traced value:
   the screen parses no colour).
 - The reads the library makes: the 0xAC status read is the row's ``status_read``, in its order
-  (``DeviceProfile.status_read``, ``build.status_query(types=)``), and its reply is read with the row's own
-  wire facts (``DeviceProfile.status_decode``, ``reassemble.status_profile``): the forms of the TLVs the
-  status stream reads (:data:`_STATUS_TLV_FORMS`), the colour-group form where it reads the 0xA5 TLV as
-  colour groups (a requested ``color_group`` under ``f_a5: color_group``; any other 0xA5 is skipped), and
-  the TLV 0x05's mode decode (mode_status over mode). The library takes the zone bits from TLV 0x30, so a
+  (``DeviceProfile.status_read``, ``build.status_query(types=)``; ``[]`` is the bare ``ac 03 00``, the h70dx
+  screen's, which requests no type), and its reply is read with the row's own wire facts
+  (``DeviceProfile.status_decode``, ``reassemble.status_profile``): the forms of the TLVs the status stream
+  reads (:data:`_STATUS_TLV_FORMS`), the colour-group form where it reads the 0xA5 TLV as colour groups (under
+  ``f_a5: color_group``, a requested ``color_group`` or any 0xA5 the bare read's reply carries, as the
+  h70dx screen parses each, ``VM4H70DX.g5``; any other 0xA5 is skipped), and the TLV 0x05's mode decode
+  (mode_status over mode). The library takes the zone bits from TLV 0x30, so a
   requested ``cmd_30`` needs ``f_30: zone_power``. A pact branch may only drop ``color_group``, which
   becomes ``status_color_groups_pact`` (one pact type, from its lowest code that keeps it). A polled row
   reads aa 04 on every poll and a gradual row ``aa a3``, so ``connect_reads`` lists ``brightness`` exactly
@@ -765,8 +767,8 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
                                   for key, branch in by_pact.items() if "scene_versions" in branch))
     gate = None
     if status_read is not None:
-        if not status_read or len(set(status_read)) != len(status_read):
-            fail(f"status_read {list(status_read)} (distinct TLV types, at least one)")
+        if len(set(status_read)) != len(status_read):
+            fail(f"status_read {list(status_read)} (distinct TLV types)")
         gate = _status_gate(row, tuple(status_read), fail)
 
     row_caps = frozenset(need(row.get("capabilities"), "capabilities"))
@@ -842,8 +844,10 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
             forms.get("f_a5", ""), "")
         if not color_readback:
             fail(f"colour read-back with f_a5 {forms.get('f_a5')!r}")
-    # The status read takes colour groups from TLV 0xA5 where it requests them and the row reads them so.
-    status_groups = "color_group" in (status_read or ()) and forms.get("f_a5") == "color_group"
+    # The status read takes colour groups from TLV 0xA5 where it requests them, or on the bare read (whose
+    # screen parses each 0xA5 that arrives, VM4H70DX.g5), and the row reads them so.
+    status_groups = (status_read is not None and ("color_group" in status_read or not status_read)
+                     and forms.get("f_a5") == "color_group")
     if (color_readback or status_groups) and cp.get("has_brightness") is not True:
         fail("a colour-group read without has_brightness true (the library reads [brightness, r, g, b])")
     # Either read walks the row's group size (Controller4ColorInfoByGroup takes it from its caller), and the

@@ -56,6 +56,10 @@ model, from which the shipped readers are generated).
   (`app_traced`). Each is a status-read row whose screen takes its live power from the aa 01 keep-alive reply
   (`power_live: [heartbeat_aa01]`), which the resolver now serves on a status row as it does on a polled one
   (below). Not hardware-verified (none is on the bench).
+- **H70D1 / H80D1**† (h70dx 267), **H70D2** (268) and **H70D3** (269), admitted by default (`app_traced`). Their
+  screen's connect read is the bare 0xAC status read `ac 03 00`, which requests no TLV type
+  (`VM4H70DX.e5`), and it parses each TLV the reply carries, the 0xA5 colour groups included
+  (`VM4H70DX.g5`). Which TLVs the firmware returns is not in the app; not hardware-verified.
 - **Bench, 2026-10-21 (the Mac, reads only):** one H61C3 and two H6076s, polled through `create_device` and
   `update()` on the new rows. A guard on `GoveeConnection._send_frame` refused any write; none was attempted.
   - **H61C3** (rgbiclight 141, pact (1,1), plaintext, `allow_modelled`): aa 01, aa 04, aa 05 01, aa 40,
@@ -80,6 +84,10 @@ model, from which the shipped readers are generated).
   polled one. The library folds no keep-alive reply on either kind: the poll's own power read stands in for
   it, aa 01 on a polled row and the status read's TLV 0x01 on a status row. `power_live` is a resolver gate
   only (no `DeviceProfile` field), so no profile, frame or decoded state moves.
+- `DeviceProfile.status_read` may be empty: the bare status read `ac 03 00` (`build.status_query(types=())`).
+  On such a profile the reply's TLV 0xA5 is read as colour groups where the row's `f_a5` is `color_group`,
+  though it was not requested. Every status row admitted before requests at least one type, so its request
+  and decode are unchanged.
 
 ### Spec
 - **The device-list trace (Govee Home 7.7.02; 7.5.12 where a family says so).** Each of the 83 census families
@@ -108,6 +116,10 @@ model, from which the shipped readers are generated).
   rgbiclight 351 / 352 and h7020 361 list `[heartbeat_aa01]`. Each screen's `I3` is true (ConnectHeartbeat
   type 1), and `ShareVM.N3` takes the switch from the reply (`J3`). The overrides only worked around the
   resolver gate above. No profile changes.
+- **The bare status read.** `devices.schema.json` clientRow `status_read` allows `[]` (`minItems` 0), the
+  read `ac 03 00` with no type requested. `govee_ble_frame` `status_read_args.num_types` documents 0 as that
+  read (`Compose4BaseInfoSingleRead.Companion.a` passes no ext bytes), and `govee_commands`'
+  `build_status_request` self-check covers it.
 
 ## [1.6.1] — 2026-10-21
 

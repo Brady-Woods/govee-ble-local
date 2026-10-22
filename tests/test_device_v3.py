@@ -614,6 +614,14 @@ def test_the_status_request_is_the_profiles_status_read() -> None:
     assert _status_frames(d)[0][:7].hex() == "ac0304" "41a54016"
     d._pact = (1, 1)
     assert _status_frames(d)[0][:6].hex() == "ac0303" "414016"
+    # An empty status_read is the bare read (the h70dx screen's, VM4H70DX.e5), and the TLV 0xA5 its reply
+    # carries unrequested is read as colour groups, as that screen parses each one (VM4H70DX.g5).
+    bare = next(p for p in PROFILES if p.status_read == ())
+    assert _status_frames(Device(bare, ble_device("AA:BB:CC:DD:EE:22", "GVH70D1")))[0][:4].hex() == "ac030000"
+    group = bytes([0xA5, 17, 0x01, *(90, 1, 2, 3) * 4])
+    st = reassemble.parse_status(status_burst(bytes([0x01, 0x01, 0x01]) + group), pieces=bare.segments,
+                                 decode=wire_profile(bare))
+    assert st.is_on is True and [(s.index, s.rgb) for s in st.segments] == [(i, (1, 2, 3)) for i in range(4)]
 
 
 def test_the_status_reply_is_read_with_the_profiles_status_decode() -> None:

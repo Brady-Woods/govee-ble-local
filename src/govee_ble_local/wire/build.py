@@ -930,8 +930,8 @@ def section_count_query() -> bytes:
 
 def status_query(*, full: bool = False, types: Sequence[int] | None = None) -> bytes:
     """0xAC status request: [AC, 03, N, cmd…] (``status_request`` with ``status_read_args``): the TLV
-    ``types`` requested, in order (command codes, the device's ``DeviceProfile.status_read``); None = the
-    H60A6's, 0x41 and 0x30, and with ``full`` the 0xA5 colour groups.
+    ``types`` requested, in order (command codes, the device's ``DeviceProfile.status_read``; empty = the bare
+    read ``ac 03 00``); None = the H60A6's, 0x41 and 0x30, and with ``full`` the 0xA5 colour groups.
 
     Device sends its profile's types, without 0xA5 where the advertised pact rules the colour groups out
     (``DeviceProfile.status_color_groups_pact``; H60A6 pact (1, 1): ``ac 03 02 41 30``)."""

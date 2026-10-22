@@ -1119,6 +1119,16 @@ types:
     seq:
       - id: num_types
         type: u1
+        doc: |
+          0 = the bare read ac 03 00: no ext bytes (Compose4BaseInfoSingleRead.Companion.a
+          passes none, so ControllerSingleRead sends the command and the zero fill), and
+          the reply carries the TLVs the firmware chooses. The h70dx screen's
+          (VM4H70DX.e5), which parses each TLV that arrives (VM4H70DX.g5).
+        doc-ref:
+          - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4BaseInfoSingleRead.java:156-158,215-237
+          - base-classes11/com/govee/base2light/kt/general_controller/ControllerSingleRead.java:80-83
+          - base-classes10/com/govee/base2light/ble/controller/AbsController4BleSingleSendMultiBack.java:157-160
+          - split_h70b1/com/govee/h70dx/vm/VM4H70DX.java:463-489,502-540
       - id: types
         type: u1
         enum: govee_common::command
