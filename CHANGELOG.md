@@ -94,8 +94,8 @@ model, from which the shipped readers are generated).
   - h7057: **H7057**, **H8057**† (274), **H7058** (275), **H7093** (289), **H7094** (290), **H8066** (305),
     **H7087** (315), **H3501** (339), **H3500** (345), **H3200** (353), **H8067** (393);
   - h7020: **H7025**, **H8025**† (296); h7045: **H7045 / H7046** (338); h7075: **H7075** (205); h7078:
-    **H7078** (245); h7086: **H7086** (293); h70b6: **H70B6** (329); h6800: **H6800** (272); h3751:
-    **H3751** (354);
+    **H7078** (245); h7086: **H7086** (293); h70b6: **H70B6** (329), on an advertised pact only (below);
+    h6800: **H6800** (272); h3751: **H3751** (354);
   - h7017: **H7017** (0), a grow light: power and brightness only, served at any pact, as its screen runs no
     pact test (`h7017 Model.t`).
 
@@ -168,8 +168,16 @@ model, from which the shipped readers are generated).
   rows serve: `Support.N` is false only at (1,1), so `VM4H70B345.d0` runs `r6`
   (`AfterConnectSuccessReadDeviceInfo`, which reads aa 06 and aa 07 among others). The rows leave (1,1) out,
   and now they are `pact_required` too: a pact-less record, which may be a (1,1) unit, is refused rather than
-  given the status profile. With them the pact-gated SKUs are 25, 18 by default and 7 behind `allow_modelled`
-  (H6119 and these six).
+  given the status profile.
+- **H70B6** (h70b6 329) **on an advertised pact only**, as straightfloorlamp 69. The app accepts (1,1), (1,2)
+  and (1,3) for goodsType 329 (`Config4H70B6Manager.b:112-127`), and above (1,1) its status read adds TLVs
+  0x7D and 0x7E, `ac 03 04 41 39 7d 7e` (`Support.d` / `e:57-75`, `VM4H70B6.i5:478-488`). The row serves (1,1)
+  only, so it is now `pact_required` too: a pact-less record, which may be a (1,2) / (1,3) unit, is refused
+  rather than polled with the (1,1) read `ac 03 02 41 39`. The app never runs the screen without a pact: it
+  starts from the account's stored pact (`h70b6 Model.t:104-105`), takes each matched broadcast's pact block
+  before it connects, and doesn't connect for a broadcast without one (`AbsViewMode4Op.onScanEvent:1960-1983`
+  -> handler 999). With it the pact-gated SKUs are 26, 19 by default and 7 behind `allow_modelled` (H6119 and
+  the six h70b3 SKUs). Not hardware-verified (no H70B6 is on the bench).
 - **Brightness on a SKU whose range the pact picks** (`DeviceProfile.brightness_by_pact`: stringlightv2 H6121
   / H6141 / H6142 / H6154 / H6195, H6170 / H6196 / H613G†). These route without a pact, but a `Device` set up
   from a pact-less record (`create_device` with no advertisement, or one without a Govee pact block) refuses
@@ -544,7 +552,8 @@ model, from which the shipped readers are generated).
     `_resolve.Route.pact_required`): the row is a route only for an advertisement that carries a pact, as a
     pact-conditioned reassignment's target row is, because the app also accepts other pacts for its goodsType
     that run a path the row doesn't serve. straightfloorlamp 69 and the five h70b3 rows set it (on both
-    screens (1,1) runs the polled connect read). `govee_reference.ble_rows` skips such a row without a pact
+    screens (1,1) runs the polled connect read), and so does h70b6 329 (above (1,1) its status read adds 0x7D
+    / 0x7E). `govee_reference.ble_rows` skips such a row without a pact
     (its self-test checks H6076), and the resolver refuses one whose pacts are `any`.
   - h6113 39 (H6113) names colour scheme `h6006`, the colour tab's `Config.J[2] = bu` frames its screen sends,
     not `h6188`, whose white-slot CCT (the illumination tab's `Bytes.A`) the screen never sends. The row has
