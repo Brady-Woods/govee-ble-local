@@ -10,9 +10,10 @@ model, from which the shipped readers are generated).
 
 ### Added
 - **158 more SKUs, traced from the app's device list** (spec rows only; no library code changed): 96 admitted
-  by default (`app_traced`) and 62 behind `allow_modelled` (`modelled`), for 194 and 68 in all. None is
-  hardware-verified (the only bench check, below, was read-only), and none has a bundled scene catalog, so none
-  is offered scenes. Each is listed with its family and goodsType; † marks a SKU no row lists that the
+  by default (`app_traced`) and 62 behind `allow_modelled` (`modelled`). With the six SKUs admitted further
+  down (H1162 / H1163 / H1167 / H1168, H70B1 and H70BC), the library serves 200 SKUs by default and 68 more
+  behind `allow_modelled`, 268 in all. None is hardware-verified (the only bench check, below, was read-only),
+  and none has a bundled scene catalog, so none is offered scenes. Each is listed with its family and goodsType; † marks a SKU no row lists that the
   catalogue snapshot (`spec/govee_catalog.json`) routes to that row by its goodsType alone (16 of them).
 
   Admitted by default:
@@ -88,10 +89,11 @@ model, from which the shipped readers are generated).
   hardware-verified.
 - **H70B1** (h70b1 goodsType 134) and **H70BC** (h70bx goodsType 216), splicing panels on the H70BX screen,
   admitted by default (`app_traced`) at pacts (1,1) and (2,1): power, brightness, RGB and colour temperature on
-  the h6006 frames, one piece, aa 00 keep-alive and the ee 30 power push. Every core frame was traced; the rows
-  waited only for the screen's aa 01 decoder, on at any non-zero byte
-  (`AfterConnectSuccessReadDeviceInfo.w`), which they now read with the wire `power.light_nonzero`. Splicing,
-  the aa 39 direction read and scenes are not modelled. Not hardware-verified.
+  the h6006 frames, one piece, and the aa 00 keep-alive. Power is read back by the polled aa 01 read, on at any
+  non-zero byte as the screen's decoder reads it (`AfterConnectSuccessReadDeviceInfo.w`; the rows' wire
+  `power.light_nonzero`). That decoder was all the rows waited for; every core frame was traced. The app's
+  live `ee 30` power push is traced too (`power_live: [push_30]`), but the library doesn't read `ee 30` pushes
+  yet. Splicing, the aa 39 direction read and scenes are not modelled. Not hardware-verified.
 
 ### Changed
 - **A polled profile reads aa 04 only with `Capability.BRIGHTNESS`**, as the app's connect read does
@@ -119,8 +121,9 @@ model, from which the shipped readers are generated).
   `modelled`; one that needs library work has no `support` and names the gap in its `doc`. A verification
   pass challenged each family's rows; they were repaired, and demoted (to `modelled`, or to no `support`)
   where a core claim didn't hold.
-  - devices.yaml now has 305 goodsType rows in 96 families (184 in 91): 153 with `support` (66), of them 121
-    `app_traced`, 28 `modelled` and the same 4 `hardware_verified`, and 152 without (118).
+  - devices.yaml now has 305 goodsType rows in 96 families (184 in 91): 159 with `support` (66), of them 127
+    `app_traced`, 28 `modelled` and the same 4 `hardware_verified`, and 146 without (118). The counts include
+    the six rows admitted under Added for H1162-H1168, H70B1 and H70BC.
   - Two goodsType add-ons were traced and checked on their own: straightfloorlamp 69 (H6076 / H8076,
     `app_traced`, with the bench reads above) and rgbiclight 141 (H61C2 / H61C3 / H61C5, `modelled`).
   - Nothing new is hardware-verified. The only bench evidence is the read-only H6076 / H61C3 check above.
