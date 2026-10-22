@@ -16,7 +16,7 @@ from ..models import Capability, DeviceState, Segment
 from ..wire import build, parse, reassemble
 from ..wire.cct import kelvin_for_tint, tint_for_kelvin
 from .brightness import raw_to_percent
-from ._resolve import version
+from ._resolve import parse_version
 from .profile import DeviceProfile, wire_profile
 
 
@@ -85,12 +85,11 @@ def gated_versions(profile: DeviceProfile, *, scenes: bool = False) -> tuple[boo
 
 def _meets(text: str | None, gate: str) -> bool:
     """Whether a device version meets a ``min_*`` gate: ``""`` is no gate, an unread version (None) meets
-    it, and a read one compares field by field (one that does not parse meets none)."""
-    need = version(gate)
-    if need is None or text is None:
+    it, and a read one compares as the app's (:func:`._resolve.parse_version`: one int of the digits, so
+    ``1.6.0`` is below ``1.06.00``; one that does not parse is 0, which meets none)."""
+    if not gate or text is None:
         return True
-    have = version(text)
-    return have is not None and have >= need
+    return parse_version(text) >= parse_version(gate)
 
 
 def brightness_range(profile: DeviceProfile, pact: tuple[int, int] | None = None) -> tuple[int, int] | None:

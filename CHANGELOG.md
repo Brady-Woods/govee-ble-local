@@ -1193,6 +1193,16 @@ model, from which the shipped readers are generated).
   every pact its rows list, at (99, 99) and at none, with and without `allow_modelled`.
 
 ### Fixed
+- **A scene firmware gate (`DeviceProfile.scene_versions_by_firmware`) compares versions as the app's
+  `BleUtil.parseVersion` does** (`BleUtil.java:1112-1121`; `UtilSku.parseVersion`, `NumberUtil.parseVersion` and
+  `BleUtils.q0` are the same function): the digits with the dots removed, as one int, 0 when empty or
+  unparsable, where it compared field by field. The two orders differ on a version whose fields are not two
+  digits: `1.6.0` (160) is below `1.06.00` (10600), and `2.1.10` (2110) below `1.00.02` (10002). No profile the
+  library ships has such a gate (the dreamcolorlightv1 part-brightness gates wait for their scene catalogs), so
+  no device changes; a hand-built profile with one does. The spec's reference resolver
+  (`govee_reference.client_row`) and the profile's gate check follow, and one parse,
+  `devices._resolve.parse_version`, now serves every version compare. The Kelvin gates stay string compares
+  (`KelvinConfig`).
 - **A failed read of the BGC-info characteristic (2b12) now fails that connect attempt, and no frame is sent on
   its link.** Until now a lookup error (`client.services` raising) or a `BleakError` from the read ran the session
   on the advertised mode. On a device that reports BGC 1 but advertises plaintext, that session sent plaintext

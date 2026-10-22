@@ -437,12 +437,21 @@ def ble_rows(reg: dict[str, Any], sku: str, pact: tuple[int, int] | None = None)
     return out
 
 
-def _version(text: str | None) -> tuple[int, ...] | None:
-    """modeColorVersion 'a.bb.cc' as a tuple compared field by field; None for an empty or unparsable one."""
+def _parse_version(text: str | None) -> int:
+    """PROCEDURAL: a firmware version as the app's numeric compares parse it (BleUtil.parseVersion,
+    base-classes9/com/govee/base2home/pact/BleUtil.java:1112-1121, UtilSku / NumberUtil.parseVersion; and
+    BleUtils.q0, base-classes10/com/govee/base2kt/utils/BleUtils.java:1065-1074, the same function): the text
+    with its dots removed, as one int (1.06.00 is 10600, 1.6.0 is 160), 0 when it is empty or
+    Integer.parseInt refuses it (an optional sign, then decimal digits, within 32 bits)."""
+    digits = str(text or "").replace(".", "")
+    sign = digits[:1] in ("+", "-")
+    if not digits[sign:].isdecimal():
+        return 0
     try:
-        return tuple(int(f) for f in str(text).split(".")) if text else None
-    except ValueError:
-        return None
+        value = int(digits)
+    except ValueError:   # more digits than int() takes from a str
+        return 0
+    return value if -(2**31) <= value < 2**31 else 0
 
 
 def client_row(reg: dict[str, Any], family_id: str, goods_type: int, *, sku: str | None = None,
@@ -457,9 +466,9 @@ def client_row(reg: dict[str, Any], family_id: str, goods_type: int, *, sku: str
     items carry it too, ahead of the row's items. The row's own range wins over the model's and its
     branches (the library refuses a by_model range under it). The SKU's connect_reads, connect_writes,
     ic_pieces and support replace the row's (the screen's split by SKU within one goodsType). Only those:
-    the by_model colour report is not resolved here. Versions compare field by field, but a kelvin_range
-    item's gate is a string
-    compare, as the app's (KelvinConfig.Config.z2: versionHard.compareTo("3.08.01") >= 0).
+    the by_model colour report is not resolved here. Versions compare as the app's BleUtil.parseVersion
+    (_parse_version: 1.6.0 is below 1.06.00), but a kelvin_range item's gate is a string compare, as the
+    app's (KelvinConfig.Config.z2: versionHard.compareTo("3.08.01") >= 0).
 
     Known difference: where several kelvin_range items hold, the last in list order wins here, while the
     library takes the one with the highest version (``_fold.kelvin_range``); the two agree when the items
@@ -484,8 +493,7 @@ def client_row(reg: dict[str, Any], family_id: str, goods_type: int, *, sku: str
     def holds(gate: str, dev: str | None, as_string: bool) -> bool:
         if as_string:
             return bool(dev) and str(dev) >= gate
-        need, got = _version(gate), _version(dev)
-        return need is not None and got is not None and got >= need
+        return dev is not None and _parse_version(dev) >= _parse_version(gate)
 
     items = [*({k: v for k, v in item.items() if k.startswith("min_") or k in ranges}
                for item in model.get("by_firmware") or []), *(row.get("by_firmware") or [])]

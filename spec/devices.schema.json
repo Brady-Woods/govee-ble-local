@@ -324,7 +324,7 @@
     "modeColorVersion": {
       "type": "string",
       "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
-      "description": "A firmware version 'a.bb.cc', compared field by field; an empty or unparsable device version fails (the older branch applies)."
+      "description": "A firmware version 'a.bb.cc', compared as the app's BleUtil.parseVersion compares it (base-classes9/com/govee/base2home/pact/BleUtil.java:1112-1121; BleUtils.q0, base-classes10/com/govee/base2kt/utils/BleUtils.java:1065-1074, is the same: the digits with the dots removed, as one int, so 1.6.0 is below 1.06.00); an empty or unparsable device version parses to 0 and fails (the older branch applies). A kelvin_range item's gate is a string compare instead (KelvinConfig)."
     },
     "commandId": {
       "type": "string",

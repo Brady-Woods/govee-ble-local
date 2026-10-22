@@ -256,7 +256,8 @@ the row lacks fails the build: nothing defaults silently.
   ones over its own ``kelvin_range`` (bulblightv3 H14A1), never both, and on one version. A ``by_model``
   range under the row's own (which wins) raises. A ``scene_versions`` item gated on the soft and / or hard
   version becomes ``scene_versions_by_firmware`` (the dreamcolorlightv1 rows' part-brightness gates,
-  Support.getSupportScenesOpSet). Before the read, each version not yet read meets its own gates, so the
+  Support.getSupportScenesOpSet), compared as :func:`parse_version` (``BleUtil.parseVersion``). Every gate is
+  a version that parses above 0. Before the read, each version not yet read meets its own gates, so the
   newest firmware's set applies, as 1.x assumed, and the Kelvin range is the one valid on every revision.
   Any other firmware fact or gate raises.
 - Light power read-back: a polled light's aa 01 reply is on at a byte of 1
@@ -648,15 +649,25 @@ _NUMERIC_KELVIN_GATES: Final[Mapping[int, str]] = {
 _STRING_GATE: Final = re.compile(r"\d+\.\d{2}\.\d{2}")
 _PERCENT: Final = (1, 100)
 _BLOCKS: Final = ("forms", "counts", "group", "power", "mode", "mode_status")
+# Integer.parseInt's form: an optional sign, then decimal digits (Character.digit, radix 10).
+_JAVA_INT: Final = re.compile(r"[+-]?\d+")
 
 
-def version(text: str | None) -> tuple[int, ...] | None:
-    """A firmware version (``1.06.00``) as a tuple compared field by field (``govee_reference._version``);
-    None for an unread or unparsable one."""
+def parse_version(text: str | None) -> int:
+    """A firmware version as the app's numeric compares parse it: the text with its dots removed, as one int
+    (``1.06.00`` is 10600, ``1.6.0`` 160), 0 when it is empty or ``Integer.parseInt`` refuses it (no digits,
+    another character, past the 32-bit range); as ``govee_reference._parse_version``. That is
+    ``BleUtil.parseVersion`` (base-classes9/com/govee/base2home/pact/BleUtil.java:1112-1121;
+    ``UtilSku.parseVersion`` and ``NumberUtil.parseVersion`` are the same) and ``BleUtils.q0``
+    (base-classes10/com/govee/base2kt/utils/BleUtils.java:1065-1074), the one function under both."""
+    digits = (text or "").replace(".", "")
+    if not _JAVA_INT.fullmatch(digits):
+        return 0
     try:
-        return tuple(int(f) for f in text.split(".")) if text else None
-    except ValueError:
-        return None
+        value = int(digits)
+    except ValueError:   # more digits than int() takes from a str (sys.get_int_max_str_digits)
+        return 0
+    return value if -(2**31) <= value < 2**31 else 0
 
 
 def _is_int(value: object) -> bool:
@@ -1681,7 +1692,7 @@ def _firmware(row: Row | ClientModel, fail: Fail) -> tuple[list[tuple[str, str, 
     for item in row.get("by_firmware") or ():
         gates: dict[str, Any] = {k: v for k, v in item.items() if k.startswith("min_")}
         facts: dict[str, Any] = {k: v for k, v in item.items() if not k.startswith("min_")}
-        if not all(version(v) for v in gates.values()):
+        if not all(isinstance(v, str) and parse_version(v) > 0 for v in gates.values()):
             fail(f"firmware gates {gates} are not all a.bb.cc versions")
         if "kelvin_range" in facts:
             if len(facts) != 1 or set(gates) not in ({"min_hard_version"}, {"min_soft_version"}):

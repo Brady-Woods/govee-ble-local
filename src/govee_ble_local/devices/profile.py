@@ -283,8 +283,9 @@ class DeviceProfile:
     min_hard_version, versions)`` entries, ``""`` for no gate on that version, of which each one whose gates
     the device's soft (``aa 06``) and hard (``aa 07 03``) versions meet applies, in order, the last winning,
     after :attr:`scene_versions_by_pact` (a devices.yaml row's ``by_firmware``: the dreamcolorlightv1 rows'
-    part-brightness gates, ``Support.getSupportScenesOpSet``). Versions compare field by field
-    (``1.06.00``). A version not yet read meets every gate on it, as the newest firmware would, so until the
+    part-brightness gates, ``Support.getSupportScenesOpSet``). Versions compare as the app's
+    ``BleUtil.parseVersion`` does (the digits, dots removed, as one int: ``1.06.00`` is 10600, and ``1.6.0``
+    160, below it). A version not yet read meets every gate on it, as the newest firmware would, so until the
     device-info read the last entry's set applies (1.x's assumption), and a single unread version does not
     hold back the other's gates (``Device.update`` reads a missing one again on the next poll); a read
     version that does not parse meets none."""
@@ -937,7 +938,7 @@ class DeviceProfile:
         object.__setattr__(self, "scene_versions_by_firmware", gated)
         for soft, hard, versions in gated:
             gates = [g for g in (soft, hard) if g != ""]
-            if (not gates or not all(isinstance(g, str) and _resolve.version(g) is not None for g in gates)
+            if (not gates or not all(isinstance(g, str) and _resolve.parse_version(g) > 0 for g in gates)
                     or not all(isinstance(v, int) and not isinstance(v, bool) and v >= 0 for v in versions)):
                 raise GoveeBleInvalidValue(f"{where}: scene_versions_by_firmware={gated!r}")
 
