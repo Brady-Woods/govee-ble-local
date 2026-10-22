@@ -2086,9 +2086,10 @@ class Device:
         read is made once per link, as the screen reads it once per connect: a poll on a link it already
         brought state back on makes no status read (so nothing is read back after a write there), the power
         there following each keep-alive reply, which reaches the callbacks; the mode and colour stay the
-        link's status read's and the writes', but where a reply changes the power on a profile with
-        :attr:`.DeviceProfile.heartbeat_reread_pieces`, which re-reads them at once as the screen does. A poll
-        on a fresh link returns its status read's power.
+        link's status read's and the writes' (a whole-device colour or Kelvin write sets every segment the
+        state holds, as the app's whole-strip pick does), but where a reply changes the power on a profile
+        with :attr:`.DeviceProfile.heartbeat_reread_pieces`, which re-reads them at once as the screen does. A
+        poll on a fresh link returns its status read's power.
 
         On a ``session="per_command"`` profile it makes no connection: the app's device-list card reads
         nothing over GATT (its power is the advertisement's, :meth:`ingest_advertisement`, and its brightness

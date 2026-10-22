@@ -930,6 +930,17 @@ model, from which the shipped readers are generated).
   the first poll's reads and the decoded state of a fresh link's poll are unchanged; their profiles also carry
   `color_readback_per_batch` 4 on the re-reading rows (it was 3, unused on a status row). Source-traced (Govee Home
   7.7.02), not live-verified.
+- **A whole-device colour or Kelvin write sets every segment the state holds.** Until now `set_rgb`,
+  `set_color_temp` and `turn_on(rgb=...)` / `turn_on(kelvin=...)` left `state.segments` as they were, so the state
+  held the new whole-device colour beside the segment colours from before the write until a read brought them back.
+  On the keep-alive rows with segments (H6076 / H8076 / R16D0, H617G / R617G, H618G / R618D, above), whose poll reads
+  no status again on that link, that lasted the link. Now each segment the state holds takes the picked colour, or
+  for a Kelvin the app's tint for it (`Constant.getTemColorByKelvin(K)[2]`, `wire.cct.tint_for_kelvin`), its
+  brightness kept (`_fold.fill_segments`), as the newdetail colour page's whole-strip pick selects every piece at
+  that colour (`DelegateCurMode.createView:185-203` -> `DelegateColorV2.F0:220-235` / `G0:241-253` ->
+  `ColorModeUtil.e:140-146`). A segment the state doesn't hold stays unknown, and a later segment read-back
+  replaces them as before. This holds on every profile whose state holds segments, released ones included; no
+  frame changes.
 - The resolver serves `power_live: heartbeat_aa01` on a status row (`power_read: ac_status`), not only on a
   polled one. The library folds no keep-alive reply on either kind (but on a `heartbeat_power` row, Added): the
   poll's own power read stands in for it, aa 01 on a polled row and the status read's TLV 0x01 on a status row.

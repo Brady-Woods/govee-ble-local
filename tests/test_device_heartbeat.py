@@ -18,6 +18,7 @@ from govee_ble_local.devices.device import Device
 from govee_ble_local.scenes import load_scenes
 from govee_ble_local.transport import connection as conn_mod
 from govee_ble_local.wire import build
+from govee_ble_local.wire.cct import tint_for_kelvin
 
 from fake_ble import FakeGovee, ble_device, frame, status_burst, virtual_time
 from test_connection import H60A6_BURST
@@ -128,6 +129,13 @@ async def test_a_status_row_on_the_aa_01_keep_alive_reads_once_a_link_and_follow
             assert dev.power_read_at is None and dev.state.is_on is False
             await asyncio.sleep(conn_mod.HEARTBEAT_INTERVAL)
             assert dev.power_read_at is not None
+            # The link reads no status again, so a whole-device write sets every held piece, as the app's
+            # whole-strip pick does (DelegateColorV2.F0 / G0 -> ColorModeUtil.e): H617G's 15 from the re-read.
+            held = len(dev.state.segments)
+            await dev.set_color_temp(3000)
+            assert [s.rgb for s in dev.state.segments] == [tint_for_kelvin(3000)] * held
+            await dev.set_rgb((1, 2, 3))
+            assert [s.rgb for s in dev.state.segments] == [(1, 2, 3)] * held
         await dev.release()
         with _span(fake) as fresh:
             await dev.update()

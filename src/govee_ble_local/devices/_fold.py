@@ -14,7 +14,7 @@ from typing import Any
 
 from ..models import Capability, DeviceState, Segment
 from ..wire import build, parse, reassemble
-from ..wire.cct import kelvin_for_tint
+from ..wire.cct import kelvin_for_tint, tint_for_kelvin
 from .brightness import raw_to_percent
 from ._resolve import version
 from .profile import DeviceProfile, wire_profile
@@ -215,7 +215,10 @@ def apply_rgb(profile: DeviceProfile, state: DeviceState, rgb: tuple[int, int, i
     A profile without COLOR_TEMP keeps the colour, though its frame may be the colour-temperature form
     (``legacy_02``'s ``Bytes.o`` on H7310 / H7318 / H6165): the app keeps the picked colours
     (``ColorViewModel.u0``: ``SubMode4Color.p``) and its ``syncKelvin`` has no Kelvin control to drive on
-    those screens (``VM4Light.syncKelvin``; ``Config.EO`` gives them no colour temperature)."""
+    those screens (``VM4Light.syncKelvin``; ``Config.EO`` gives them no colour temperature).
+
+    Every segment the state holds takes the picked colour, whichever frame carried it
+    (:func:`fill_segments`)."""
     kelvin = (build.rgb_as_kelvin(*rgb, profile.color_scheme, span)
               if Capability.COLOR_TEMP in profile.capabilities else None)
     if kelvin is None:
@@ -225,15 +228,32 @@ def apply_rgb(profile: DeviceProfile, state: DeviceState, rgb: tuple[int, int, i
     state.scene_code = None
     apply_zone_kelvin(profile, state, {0: kelvin, 1: kelvin})
     _remember_kelvin(state)
+    fill_segments(state, rgb)
 
 
 def apply_kelvin(profile: DeviceProfile, state: DeviceState, kelvin: int) -> None:
     """A whole-device colour-temperature write: that Kelvin, no RGB colour and no active scene
-    (both bars of a bar-switch device)."""
+    (both bars of a bar-switch device), and every segment the state holds at the app's tint for it
+    (:func:`fill_segments`)."""
     state.color_temp_kelvin, state.rgb_color = kelvin, None
     state.scene_code = None
     apply_zone_kelvin(profile, state, {0: kelvin, 1: kelvin})
     _remember_kelvin(state)
+    fill_segments(state, tint_for_kelvin(kelvin))
+
+
+def fill_segments(state: DeviceState, rgb: tuple[int, int, int]) -> None:
+    """A whole-device colour or colour-temperature write sets every piece: each segment ``state.segments``
+    holds takes ``rgb``, its brightness kept, and a segment it does not hold stays unknown. The newdetail
+    colour page (``DelegateCurMode.createView:185-203``) applies a whole-strip pick over every piece:
+    ``DelegateColorV2.F0:220-235`` (a colour) and ``G0:241-253`` (a Kelvin, as its tint
+    ``Constant.getTemColorByKelvin(K)[2]``: :func:`~..wire.cct.tint_for_kelvin`) select every position at that
+    colour (``ColorModeUtil.e:140-146``). So the state does not keep the segment colours from before the write
+    beside the whole-device colour it now holds (a status row that follows the keep-alive reads no status
+    again on its link, :attr:`~.profile.DeviceProfile.heartbeat_power`); a later read-back of the segments
+    replaces them, as before."""
+    if state.segments:
+        state.segments = [Segment(seg.index, rgb, seg.brightness) for seg in state.segments]
 
 
 def apply_scene(profile: DeviceProfile, state: DeviceState, code: int) -> None:
