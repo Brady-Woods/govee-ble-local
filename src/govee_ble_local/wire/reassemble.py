@@ -10,15 +10,16 @@ data bytes sit at offset 7. Chunks are taken only in order (:class:`BurstAssembl
 an early or a late chunk is ignored, and only a complete burst is joined: the app decodes nothing
 from an incomplete one.
 
-The joined buffer is then read in one go through the spec's ``govee_status_stream(profile)`` root: its
-``[tag][len][value]`` records (Compose4BaseInfoSingleRead.u) each carry the ``govee_state`` of their tag on
-the status path (switch / brightness / mode / zone / power memory / colour groups / 0x07 device-info), and
-the app's walk stops where fewer than three bytes remain. The offline analyzer (:mod:`.describe`) judges
-and reads each captured burst with the same helpers (:func:`burst_chunks`, :func:`read_status_stream`) and
-adds its stricter verdicts on top.
+The joined buffer is then read in one go through the spec's ``govee_status_stream(profile, reader)`` root
+under the status read: its ``[tag][len][value]`` records (Compose4BaseInfoSingleRead.u) each carry the
+``govee_state`` of their tag on the status path (switch / brightness / mode / zone / power memory / colour
+groups / 0x07 device-info), and the app's walk stops where fewer than three bytes remain. The offline
+analyzer (:mod:`.describe`) judges and reads each captured burst with the same helpers (:func:`burst_chunks`,
+:func:`read_status_stream`) and adds its stricter verdicts on top.
 
 The special-info read (``ac a1``, goodsType 180's segment count) replies by the same state machine under
-its own command and sub; :func:`parse_segment_ic` joins it and reads it as the spec's ``segment_ic_info``.
+its own command and sub; :func:`parse_segment_ic` joins it and reads it through the same root under that
+reader (:func:`read_segment_ic`).
 """
 from __future__ import annotations
 
@@ -264,15 +265,22 @@ def parse_segment_ic(frames: list[bytes]) -> int | None:
     """The segment count of a special-info reply (``ac a1``, :func:`.build.special_info_query`): the
     burst's chunks under command ``special_info`` and sub ``segment_ic`` joined as the app joins them
     (:class:`BurstAssembler`, ``AbsController4BleSingleSendMultiBack.f`` matches bytes 5 / 6 of the first
-    chunk), read as the spec's ``segment_ic_info``, whose first byte is the count (``Info4Detail.z0``: a
-    Java byte). None for an incomplete burst or an empty payload (z0 stores nothing from one). The count
-    is not range-checked here (``Device`` takes 1 to the most a mask can carry); the IC per segment, which
-    only the graffiti and segment-settings pages read, is not used."""
+    chunk), read as the spec's ``segment_ic_info`` (:func:`read_segment_ic`), whose first byte is the count
+    (``Info4Detail.z0``: a Java byte). None for an incomplete burst or an empty payload (z0 stores nothing
+    from one). The count is not range-checked here (``Device`` takes 1 to the most a mask can carry); the IC
+    per segment, which only the graffiti and segment-settings pages read, is not used."""
     buf, complete = _joined(frames, command=SPECIAL_INFO_COMMAND, sub=SEGMENT_IC_SUB)
     if not complete:
         return None
-    info = _spec.read(_spec.State.SegmentIcInfo, buf)
+    info = read_segment_ic(buf)
     return None if info.app_read_fails else int(info.num_segments)
+
+
+def read_segment_ic(buf: bytes) -> Any:
+    """A joined special-info reply read through the spec's ``govee_status_stream`` root under the reader
+    ``special_info``: its ``segment_ic`` record (``segment_ic_info``: ``num_segments``, ``ic_per_segment``,
+    ``app_read_fails`` for an empty payload). The record needs no device context (the plain profile)."""
+    return _spec.read(_spec.StatusStream, buf, _spec.PLAIN, SPECIAL_INFO_COMMAND).segment_ic
 
 
 def reassemble(frames: list[bytes]) -> bytes:
@@ -295,7 +303,7 @@ def read_status_stream(buf: bytes, *, pieces: int | None = None, decode: Any = N
     reads the len signed and fails on a negative one; the spec's ``len_value`` is valid only up to 0x7f),
     a value that runs past the stream's end (u()'s copy of it throws), or a value its type can't read. The
     stream's ``tlvs`` then end with the record it stopped in (:func:`._spec.read_partial`)."""
-    return _spec.read_partial(_spec.StatusStream, buf, status_profile(pieces, decode))
+    return _spec.read_partial(_spec.StatusStream, buf, status_profile(pieces, decode), BurstAssembler.command)
 
 
 _GroupRead = tuple[int, list[parse.GroupRecord]] | Literal["skip", "fail"]

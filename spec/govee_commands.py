@@ -4240,7 +4240,7 @@ def build_diy_create_gif(diy_code: int, diy_id: int) -> bytes:
 def read_special_info_a1() -> bytes:
     """0xAC A1 single-send/multi-back special-info read (govee_ble_frame status_command special_info), reply
     matched on byte5 = 0xA1, byte6 = sub 0x0B (status_sub segment_ic: [segments][IC per segment ...],
-    govee_state segment_ic_info) (ControllerReadSpecialInfoMultiBack.Companion.k
+    govee_status_stream segment_ic_info) (ControllerReadSpecialInfoMultiBack.Companion.k
     base-classes11/com/govee/base2light/kt/general_controller/ControllerReadSpecialInfoMultiBack.java:100-109;
     AbsController4BleSingleSendMultiBack.f/getNextCommBytes/getProType
     base-classes10/com/govee/base2light/ble/controller/AbsController4BleSingleSendMultiBack.java:100-103,158-165).

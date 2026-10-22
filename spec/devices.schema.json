@@ -334,7 +334,7 @@
     "connectRead": {
       "anyOf": [
         { "$ref": "#/$defs/commandId", "description": "An aa <command> read, by its govee_common::command id." },
-        { "const": "special_info", "description": "The 0xAC special-info read ac a1 (govee_ble_frame.ksy status_command special_info), whose reply's segment IC record (sub segment_ic, govee_state segment_ic_info) is the device's segment count: the goodsType 180 screen's (VM4Light.x5)." }
+        { "const": "special_info", "description": "The 0xAC special-info read ac a1 (govee_ble_frame.ksy status_command special_info), whose reply's segment IC record (sub segment_ic, govee_status_stream segment_ic_info) is the device's segment count: the goodsType 180 screen's (VM4Light.x5)." }
       ],
       "description": "One connect read (clientRow connect_reads)."
     },

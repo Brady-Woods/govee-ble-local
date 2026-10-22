@@ -203,8 +203,9 @@ def chunk_ac(tlv: bytes, cmd: int = 0x03, sub: int = 0x00) -> list[bytes]:
 # Import the ksc-generated parser. Kept lazy so the framing helpers above work even before you compile it.
 # ksc writes one module per .ksy file (govee_ble_frame, govee_status_stream, govee_state, govee_profile,
 # govee_common, ...). The six roots: govee_ble_frame(direction, profile) for one GATT value,
-# govee_status_stream(profile) for a joined 0xAC burst, govee_upload(kind, form) for a joined upload value
-# or a cloud blob, govee_manufacturer_data / govee_scan_record for adverts, govee_bgc_info for GATT 2b12.
+# govee_status_stream(profile, reader) for a joined 0xAC burst, govee_upload(kind, form) for a joined
+# upload value or a cloud blob, govee_manufacturer_data / govee_scan_record for adverts, govee_bgc_info for
+# GATT 2b12.
 
 _READER_MODULES = (
     "govee_ble_frame",                              # a fresh `ksc -t python *.ksy` on sys.path
@@ -317,12 +318,13 @@ def parse_frame(frame: bytes, direction: str = "rx", profile: Any = None) -> Any
     return f
 
 
-def parse_status(tlv_buffer: bytes, profile: Any = None) -> Any:
-    """A joined 0xAC buffer -> GoveeStatusStream: ``tlvs`` (status_tlv: tag, len_value, value =
-    govee_state) while 3 or more bytes remain, then the 0-2 byte ``tail``, as the app's walk (tag 0 is an
-    ordinary TLV). ``profile`` as for parse_frame."""
+def parse_status(tlv_buffer: bytes, profile: Any = None, reader: int = 0x03) -> Any:
+    """A joined 0xAC buffer -> GoveeStatusStream, read by ``reader`` (the request's status_command): for the
+    status read (0x03) ``tlvs`` (status_tlv: tag, len_value, value = govee_state) while 3 or more bytes
+    remain, then the 0-2 byte ``tail``, as the app's walk (tag 0 is an ordinary TLV); for the special-info
+    read (0xA1) its ``segment_ic`` record. ``profile`` as for parse_frame."""
     stream_cls = _module("govee_status_stream").GoveeStatusStream
-    return _ready(stream_cls(make_profile() if profile is None else profile, _stream(tlv_buffer)))
+    return _ready(stream_cls(make_profile() if profile is None else profile, reader, _stream(tlv_buffer)))
 
 
 # ───────────────────────── op15 segment masks (BleUtils.X / makeSelectedTwoBytes) ─────────────────────────
@@ -635,12 +637,11 @@ def _selftest(*, strict: bool = False) -> int:
           and ic_reply(0x00, 0x1C, 0xFF, 0x00, 0x00, 0xFE).section_sum == -3
           and ic_reply(0x10, 0x00, 0x05).section_sum is None)
 
-    seg_ic = _module("govee_state").GoveeState.SegmentIcInfo
-    seg = _ready(seg_ic(_stream(reassemble_ac(chunk_ac(bytes([12] + [5] * 12), 0xA1, 0x0B)))))
-    check("ac a1 special-info reply (sub 0x0B): two packets join to [12][IC x 12] (segment_ic_info); an "
-          "empty payload fails the app's read",
+    seg = parse_status(reassemble_ac(chunk_ac(bytes([12] + [5] * 12), 0xA1, 0x0B)), reader=0xA1).segment_ic
+    check("ac a1 special-info reply (sub 0x0B): two packets join to [12][IC x 12] (the stream's segment_ic, "
+          "no TLVs); an empty payload fails the app's read",
           seg.num_segments == 12 and seg.ic_per_segment == [5] * 12 and not seg.app_read_fails
-          and _ready(seg_ic(_stream(b""))).app_read_fails)
+          and parse_status(b"", reader=0xA1).segment_ic.app_read_fails)
 
     def detail_reply(*data: int) -> Any:
         prof = make_profile(f_34="device_detail")

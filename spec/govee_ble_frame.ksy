@@ -1924,7 +1924,7 @@ enums:
       id: special_info
       doc: |
         the special-info read AC A1 (no args); the reply's sub names its record:
-        segment_ic, a govee_state segment_ic_info (goodsType 180's connect read)
+        segment_ic, a govee_status_stream segment_ic_info (goodsType 180's connect read)
       doc-ref:
         - base-classes11/com/govee/base2light/kt/general_controller/ControllerReadSpecialInfoMultiBack.java:100-109,127-133
         - base-classes10/com/govee/base2light/ble/controller/AbsController4BleSingleSendMultiBack.java:100-103,158-165
@@ -1940,7 +1940,7 @@ enums:
       id: segment_ic
       doc: |
         the special-info read's segment IC record: [segments][IC per segment],
-        govee_state segment_ic_info
+        govee_status_stream segment_ic_info
       doc-ref:
         - base-classes11/com/govee/base2light/kt/general_controller/ControllerReadSpecialInfoMultiBack.java:100-109
         - base-classes11/com/govee/base2light/pact/feast/BleProtocol.java:25

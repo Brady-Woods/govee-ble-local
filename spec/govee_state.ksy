@@ -51,7 +51,6 @@ seq:
         'govee_common::command::cmd_36': >-
           cmd_36_state(profile.forms.f_36, source)
         'govee_common::command::ic_num': ic_count
-        'govee_common::command::cmd_a1': segment_ic_info
         'govee_common::command::cmd_41': >-
           cmd_41_state(profile.forms.f_41, source)
         'govee_common::command::color_group_rgb': >-
@@ -1513,33 +1512,6 @@ types:
           - split_h61d3/com/govee/h61d3/ble/controller/ReadIcController.java:68-95,102-110
           - base-classes10/com/govee/base2light/ble/controller/AbsControllerNoEvent4Single.java:122-127
           - split_h61d3/com/govee/h61d3/pact/H61D3Support.java:1547-1561
-  segment_ic_info:
-    doc: |
-      The segment IC record [num_segments][IC per segment ...], each a Java
-      byte: the joined payload of the 0xAC special-info read under sub
-      segment_ic (govee_ble_frame status_sub). goodsType 180 stores it in
-      SegmentIcDataConfig: num_segments is the colour page's piece count, the
-      write mask's width and the aa a5 walk's pieces, and the IC sum is the
-      device's IC.
-      PROCEDURAL: the client reads the joined payload as this type.
-    doc-ref:
-      - split_h705a/com/govee/h705a/newDetail/VM4Light.java:768-787
-      - split_h705a/com/govee/h705a/newDetail/Info4Detail.java:839-860
-      - split_h705a/com/govee/h705a/pact/Support.java:317-323
-      - split_h705a/com/govee/h705a/newDetail/ColorModeV2.java:339-365
-    seq:
-      - id: num_segments
-        type: s1
-        if: not _io.eof
-        doc: the segment count (Info4Detail.z0's bArr[0])
-      - id: ic_per_segment
-        type: s1
-        repeat: eos
-        doc: each segment's IC count, in order
-    instances:
-      app_read_fails:
-        value: _io.size == 0
-        doc: z0 reads byte 0 unguarded, so an empty payload stores nothing
   gradual_state:
     doc: |
       AA A3 reply / TLV 0xA3 (and 0x14 under form gradual): the gradual (fade)

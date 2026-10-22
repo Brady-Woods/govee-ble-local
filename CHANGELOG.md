@@ -297,9 +297,10 @@ model, from which the shipped readers are generated).
   sizes every mask and the `aa a5` walk, as the H6062's `aa 41` section count does: `update()` reads it before
   `aa 05`, a mask write reads it first while it is unknown and sends nothing without it (GoveeBleError naming
   `ac a1`), and the walk is skipped until it is known. New: `build.special_info_query()`,
-  `reassemble.parse_segment_ic()` and the keyword-only `burst_command` / `burst_sub` of `GoveeConnection.query`
-  and `reassemble.burst_chunks` (defaults: the status read's, so every status burst assembles as before). No
-  admitted row uses it. Source-modelled, not live-verified: no goodsType 180 unit is on the bench.
+  `reassemble.parse_segment_ic()` and `reassemble.read_segment_ic()`, `GoveeConnection.query`'s keyword-only
+  `burst_command` / `burst_sub` and `reassemble.burst_chunks`'s keyword-only `command` / `sub` (defaults: the
+  status read's, so every status burst assembles as before). No admitted row uses it. Source-modelled, not
+  live-verified: no goodsType 180 unit is on the bench.
 - **`DeviceProfile.kelvin_from_pieces`** (keyword-only, default False; a devices.yaml row's `kelvin_readback:
   pieces`): the colour-temperature state comes from the `aa a5` walk's pieces, as the goodsType 180 screen
   takes it after its connect read (`VM4Light.g5` -> `ColorUtils.r` -> `SubMode4Color.s`): once a poll's walk
@@ -620,9 +621,13 @@ model, from which the shipped readers are generated).
   self-test checks their routes and session.
 - **The 0xAC special-info read.** `govee_ble_frame.ksy`: `status_command` gains `special_info` (0xA1: `ac a1`,
   no args), and the reply chunk's sub byte takes the new `status_sub` enum (`none`, the status read's 0;
-  `segment_ic`, 0x0B). `govee_state.ksy`: the `segment_ic_info` record (`num_segments`, `ic_per_segment`, Java
-  bytes; `app_read_fails` for an empty payload), the `cmd_a1` case of the state switch (H707A's TLV 0xA1 stays
-  untyped). devices.schema.json: `connect_reads` items are a `connectRead`, a command id or `special_info`.
+  `segment_ic`, 0x0B). `govee_status_stream.ksy` is the joined 0xAC reply of either reader: the root takes the
+  `reader` (a `status_command`, the request's command, which the first chunk echoes) after the profile, and
+  reads the status read's TLV stream or the special-info read's `segment_ic`, the new `segment_ic_info` record
+  (`num_segments`, `ic_per_segment`, Java bytes; `app_read_fails` for an empty payload). No `aa a1` reply is
+  typed: no app path reads one, and H707A's status TLV 0xA1, which its screen reads with its own reader
+  (`H707AInfo4Detail.G0`: unsigned, IC / 3), stays untyped. devices.schema.json: `connect_reads` items are a
+  `connectRead`, a command id or `special_info`.
   The reference's self-test joins a two-packet reply and reads it. Corrections: the read is `ac a1` on proType
   0xAC, not `aa a1 0b` (0x0B is only the reply's sub), and it has callers (`govee_commands.read_special_info_a1`
   and OPCODE_COVERAGE's 0xa1 row said none): goodsType 180's connect read and its refreshes, and H707A-C's

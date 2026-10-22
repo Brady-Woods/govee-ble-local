@@ -4,7 +4,7 @@
 
 **Verification tiers.** `firmware-confirmed` — the opcode is handled by at least one of the six decompiled device firmwares (H6047 BlueX/RivieraWaves ARM Thumb-2; H6006/H6008/H5083/H60A1/H60A6 Realtek), so both ends agree; see `FIRMWARE_VALIDATION.md`. `source-modeled` — traced from the app only (the authority for what to send), not seen in a firmware image. A few opcodes also have `bench` hardware confirmation, noted inline.
 
-**In grammar?** The row's byte is read in the space its builders put it in: a command (byte 1 of a `33` / `3A` / `AA` frame), a sub-mode (byte 2 of `33 05`) or a proType (byte 0 of any other head); a byte the builders use only as a commByte or a status-read type counts as a command. `typed`: the spec has a body type for it (a `write_command` case for a write, a `govee_state` reply or `read_request` selector case for a read, a `mode_write` case for a sub-mode, a tx route with a body type for a proType); an overloaded byte is typed only under the profile form that names its layout (the `cmd_XX` wrappers). `named`: a member of `govee_common::command` / `sub_mode` / `pro_type` whose body is untyped (its bytes stay in the message's `rest`). `builder only`: neither. Upload values (the commByte payloads of A1 / A3 / A4) are typed by `govee_upload.ksy`, not counted here; see `SCENE_UPLOAD_ENCODING.md`.
+**In grammar?** The row's byte is read in the space its builders put it in: a command (byte 1 of a `33` / `3A` / `AA` frame), a sub-mode (byte 2 of `33 05`) or a proType (byte 0 of any other head); a byte the builders use only as a commByte or a status-read type counts as a command. `typed`: the spec has a body type for it (a `write_command` case for a write, a `govee_state` reply or `read_request` selector case, or a `govee_status_stream` reader (0xAC), for a read, a `mode_write` case for a sub-mode, a tx route with a body type for a proType); an overloaded byte is typed only under the profile form that names its layout (the `cmd_XX` wrappers). `named`: a member of `govee_common::command` / `sub_mode` / `pro_type` whose body is untyped (its bytes stay in the message's `rest`). `builder only`: neither. Upload values (the commByte payloads of A1 / A3 / A4) are typed by `govee_upload.ksy`, not counted here; see `SCENE_UPLOAD_ENCODING.md`.
 
 ## Opcodes with builders
 
@@ -940,7 +940,7 @@
 
 ### `0xa1` — source-modeled
 
-- **`read_special_info_a1`** (R): AC A1 (no ext bytes), zero-padded, XOR at byte 19; the reply (sub 0x0B) joins to [segments][IC per segment ...] (govee_state segment_ic_info)
+- **`read_special_info_a1`** (R): AC A1 (no ext bytes), zero-padded, XOR at byte 19; the reply (sub 0x0B) joins to [segments][IC per segment ...] (govee_status_stream segment_ic_info)
   - base-classes11/com/govee/base2light/kt/general_controller/ControllerReadSpecialInfoMultiBack.java:100-109 (Companion.k), :112-117 (ctor p/q/r), :127-133 (d/getCommandType); base-classes10/com/govee/base2light/ble/controller/AbsController4BleSingleSendMultiBack.java:158-160 (getNextCommBytes = BleUtils.Companion.p(proType, command, ext)), :163-165 (getProType = 0xAC)
 
 ### `0xa2` — source-modeled
