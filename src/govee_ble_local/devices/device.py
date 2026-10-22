@@ -1143,7 +1143,11 @@ class Device:
     async def set_segment_brightness(self, indices: Sequence[int], pct: int) -> None:
         """Set brightness in percent (clamped to 1..100; 0 is never sent) on selected segments (indices
         as in :meth:`set_segment_rgb`). The app's segment slider runs 1..100 (``ViewColorMode.t0:232-235``
-        / ``DelegateColorV2Part.t0:459-462``: ``setProgressRange({1, 100})``).
+        / ``DelegateColorV2Part.t0:459-462``: ``setProgressRange({1, 100})``). On a profile with
+        :attr:`~.profile.DeviceProfile.segment_brightness_groups` the write and the state cover every
+        segment of each group that holds one of ``indices``, as the screen's strip widens the selection
+        before the write (``canClickBrightness`` -> ``DelegateColorV2Part.U:217-230`` ->
+        ``ColorViewModel.m0``).
 
         Raises GoveeBleNotSupported without SEGMENTS or for colour schemes without per-segment
         brightness (the h61a8 0x0b scheme); GoveeBleInvalidValue for a non-int ``pct`` or a bad index;
@@ -1155,16 +1159,29 @@ class Device:
         with self._conn.hold_heartbeat():   # H6062's aa 41 read and its write: no beat between
             await self._ensure_segment_count()
             n = self.segment_count
+            pieces = self._brightness_pieces(indices, n)
             frame = self._build_or_unsupported(
-                build.segment_brightness, _mask(indices, n), level, self.profile.color_scheme, n)
+                build.segment_brightness, _mask(pieces, n), level, self.profile.color_scheme, n)
 
-            carried = self._carried(indices, build.BRIGHTNESS_MASK_CAP)
+            carried = self._carried(pieces, build.BRIGHTNESS_MASK_CAP)
 
             def apply() -> None:
                 _fold.update_segments(self._state, carried, brightness=level)
                 self._state.scene_code = None   # the 33 05 15 02 write is a colour-mode write too
 
             await self._commit(frame, apply, ticket=ticket)
+
+    def _brightness_pieces(self, indices: Sequence[int], segments: int) -> list[int]:
+        """The segments a segment-brightness write covers: ``indices``, or on a profile with
+        ``segment_brightness_groups`` (checked first, as :func:`_mask` checks them) their union with every
+        group holding one of them, below ``segments`` (the strip's ``canClickBrightness``)."""
+        groups = self.profile.segment_brightness_groups
+        if not groups:
+            return list(indices)
+        _mask(indices, segments)
+        picked = set(indices)
+        return sorted(picked.union(*((i for i in g if i < segments)
+                                     for g in groups if picked.intersection(g))))
 
     def _carried(self, indices: Sequence[int], mask_cap: int) -> list[int]:
         """The ``indices`` a 0x15 frame's segment mask carries: past the body's ``mask_cap`` bytes the app's

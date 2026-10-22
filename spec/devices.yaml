@@ -14636,6 +14636,7 @@ families:
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments, gradual]
           zones: []
+          segment_brightness_groups: [[0, 1, 2], [3, 4, 5, 6], [7, 8, 9], [10, 11, 12, 13]]   # H605CColorMode.canClickBrightness (split_h6099/com/govee/pact_h605b/newdetail/mode/H605CColorMode.java:272-299,496-536)
           account_lock: false
           scene_dialect: untraced
           kelvin_range: [2000, 9000]
@@ -14662,7 +14663,11 @@ families:
             Config.I[120] all flags on; Config.x[120] = 0 -> Config.J[0] = Yt: Bytes.h, or Bytes.r (white type
             Config.P = 1) for a Kelvin tint (the Kelvin tab sends the tint over the piece selection,
             H605CColorMode.canClickColorTem -> canClickColor, ColorViewModel.U); no Config.A / C entry, so the strip sends the per-colour 15 01 masks, its brightness
-            Bytes.G groups (Config.i0[120] -> ColorModeControllerConfig.z). 14 pieces (Support.getColorPieceSize,
+            Bytes.G groups (Config.i0[120] -> ColorModeControllerConfig.z). Segment brightness is not per piece: the
+            strip widens the selection to whole groups {0-2} / {3-6} / {7-9} / {10-13} before the Bytes.G 15 02 write
+            (H605CColorMode.canClickBrightness -> DelegateColorV2Part.U -> DelegateColorV2.Z0 -> ColorViewModel.m0,
+            which folds the widened set), so a pick of piece 0 sends mask 07 00 and of piece 3 78 00
+            (segment_brightness_groups). 14 pieces (Support.getColorPieceSize,
             ColorPieceConfig.j set P). Kelvin: no KelvinConfig entry, version 0 = [2000, 9000]. Brightness
             BrightnessConfig.b -> ControllerBrightness, percent. Gradual: Config.G[120] = 0 -> Bytes.w (33 a3), read
             at connect. Scenes untraced. Not hardware-verified.
@@ -14676,7 +14681,10 @@ families:
             - split_h6099/com/govee/pact_h605b/newdetail/viewmodel/NewDetailVm.java:276-327,367-399,952-975,1472-1480,1647-1681
             - split_h6099/com/govee/pact_h605b/newdetail/Info4Detail.java:174-186,276-278,762-790
             - split_h6099/com/govee/pact_h605b/ble/controller/compose/ControllerIcNum.java:29-40
-            - split_h6099/com/govee/pact_h605b/newdetail/mode/H605CColorMode.java:557-565
+            - split_h6099/com/govee/pact_h605b/newdetail/mode/H605CColorMode.java:272-299,496-536,557-565
+            - base-classes11/com/govee/base2light/pact/newdetail/content/colorv2/DelegateColorV2Part.java:217-230
+            - base-classes11/com/govee/base2light/pact/newdetail/content/colorv2/DelegateColorV2.java:490-496,1046-1050
+            - base-classes11/com/govee/base2light/pact/newdetail/content/color/ColorViewModel.java:1283-1345
             - base-classes11/com/govee/base2light/kt/comm/AbsViewMode4Op.java:1959-1986,2218-2222
             - base-classes11/com/govee/base2light/pact/newdetail/ShareVM.java:979-1015,1348-1364,1446-1448
             - base-classes12/com/govee/common2light/capability/connect/ConnectHeartbeat.java:15-38
@@ -14731,6 +14739,7 @@ families:
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments, gradual]
           zones: []
+          segment_brightness_groups: [[0, 1, 2], [3, 4, 5, 6], [7, 8, 9], [10, 11, 12, 13]]   # ColorMode14Rect4ReverseSelect.canClickBrightness (base-classes11/com/govee/base2light/pact/newdetail/commom/color/ColorMode14Rect4ReverseSelect.java:352-375,379-421,476-478)
           account_lock: false
           scene_dialect: untraced
           kelvin_range: [2000, 9000]
@@ -14755,7 +14764,10 @@ families:
             reply changes nothing; the ee 30 push [01][flags], flags bit 0 = power, sets the switch (H5 -> J3).
             Colour: the default DelegateColorV2 with the ColorMode14Rect4ReverseSelect strip; Config.I[142] all flags
             on; Config.x = 0 -> Config.J[0] = Yt: Bytes.h, or Bytes.r (white type Config.P = 1) for a Kelvin tint;
-            segment brightness Bytes.G. The colour strip sends 15 04 groups (Config.A = 1, Bytes.m) with 15 03
+            segment brightness Bytes.G, not per piece: the strip widens the selection to whole groups {0-2} / {3-6} /
+            {7-9} / {10-13} before the 15 02 write (ColorMode14Rect4ReverseSelect.canClickBrightness ->
+            DelegateColorV2Part.U -> DelegateColorV2.Z0 -> ColorViewModel.m0, which folds the widened set), so a pick
+            of piece 0 sends mask 07 00 and of piece 3 78 00 (segment_brightness_groups). The colour strip sends 15 04 groups (Config.A = 1, Bytes.m) with 15 03
             brightness groups, where the library's h60a6 scheme sends per-colour 15 01 masks (a divergence, not a
             missing frame, as on pact_h6099 203). The Kelvin slider always selects all 14 pieces
             (ColorMode14Rect4ReverseSelect.canClickColorTem, built with w false by HdmiDetailConfig), so its Kelvin goes
@@ -14777,7 +14789,10 @@ families:
             - split_h6099/com/govee/pact_h605b/newdetailhdmi/viewmodel/NewDetailHdmiVm.java:245-275,686-722,763-798,802-806,886-929,1269-1276,1552-1580
             - split_h6099/com/govee/pact_h605b/newdetailhdmi/Info4Detail.java:187-199,457-459,996-1015
             - split_h6099/com/govee/pact_h605b/ble/controller/compose/ControllerIcNum.java:29-40
-            - base-classes11/com/govee/base2light/pact/newdetail/commom/color/ColorMode14Rect4ReverseSelect.java:92-104,426-462
+            - base-classes11/com/govee/base2light/pact/newdetail/commom/color/ColorMode14Rect4ReverseSelect.java:92-104,352-375,379-421,426-462,476-478
+            - base-classes11/com/govee/base2light/pact/newdetail/content/colorv2/DelegateColorV2Part.java:217-230
+            - base-classes11/com/govee/base2light/pact/newdetail/content/colorv2/DelegateColorV2.java:490-496,1046-1050
+            - base-classes11/com/govee/base2light/pact/newdetail/content/color/ColorViewModel.java:1283-1345
             - base-classes10/com/govee/base2light/ble/BleUtil.java:474-486
             - base-classes11/com/govee/base2light/pact/newdetail/ShareVM.java:979-1015,1348-1364
             - base-classes12/com/govee/common2light/capability/connect/ConnectHeartbeat.java:15-38
@@ -14861,6 +14876,7 @@ families:
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments, gradual]
           zones: []
+          segment_brightness_groups: [[0, 1, 2], [3, 4, 5, 6], [7, 8, 9], [10, 11, 12, 13]]   # ColorMode14Rect4ReverseSelect.canClickBrightness (base-classes11/com/govee/base2light/pact/newdetail/commom/color/ColorMode14Rect4ReverseSelect.java:352-375,379-421,476-478)
           account_lock: false
           scene_dialect: untraced
           kelvin_range: [2000, 9000]
@@ -14880,9 +14896,10 @@ families:
             discarded (stored only, Info4Detail.R0; ic_pieces fixed), the direct aa a5 groups 1..4 of 4, 33 01 only
             (HdmiDetailConfig.b false: no lamp switch, zones none), aa 00 heartbeat with the ee 30 bit 0 power push,
             Config.x = 0 Yt (Bytes.h / Bytes.r type 1), Config.I all on, the 15 04 strip groups (Config.A = 1) against
-            the library's per-colour 15 01 masks, the Kelvin slider over all 14 pieces
-            (ColorMode14Rect4ReverseSelect w false) and a partial-mask Bytes.r only from an in-range tint-colour pick
-            on the selected pieces (canClickColor -> ColorViewModel.p0 -> Config.Yt: the frame
+            the library's per-colour 15 01 masks, segment brightness widened to the strip's groups
+            (ColorMode14Rect4ReverseSelect.canClickBrightness; segment_brightness_groups), the Kelvin slider over all
+            14 pieces (ColorMode14Rect4ReverseSelect w false) and a partial-mask Bytes.r only from an in-range
+            tint-colour pick on the selected pieces (canClickColor -> ColorViewModel.p0 -> Config.Yt: the frame
             set_segment_color_temp sends, a scoping note), 14 pieces, Kelvin version 0 = [2000, 9000], percent
             brightness, gradual
             Config.G = 0 (33 a3). The aa 41 power-off memory read (supportOffMemory) is a setting read left out.
@@ -14898,7 +14915,10 @@ families:
             - split_h6099/com/govee/pact_h605b/newdetailhdmi/viewmodel/NewDetailHdmiVm.java:245-275,686-722,763-798,802-806,886-929,1269-1276,1552-1580
             - split_h6099/com/govee/pact_h605b/newdetailhdmi/Info4Detail.java:187-199,457-459,996-1015
             - split_h6099/com/govee/pact_h605b/ble/controller/compose/ControllerIcNum.java:29-40
-            - base-classes11/com/govee/base2light/pact/newdetail/commom/color/ColorMode14Rect4ReverseSelect.java:92-104,426-462
+            - base-classes11/com/govee/base2light/pact/newdetail/commom/color/ColorMode14Rect4ReverseSelect.java:92-104,352-375,379-421,426-462,476-478
+            - base-classes11/com/govee/base2light/pact/newdetail/content/colorv2/DelegateColorV2Part.java:217-230
+            - base-classes11/com/govee/base2light/pact/newdetail/content/colorv2/DelegateColorV2.java:490-496,1046-1050
+            - base-classes11/com/govee/base2light/pact/newdetail/content/color/ColorViewModel.java:1283-1345
             - base-classes11/com/govee/base2light/pact/newdetail/ShareVM.java:979-1015,1348-1364
             - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4InfoBleIot$iControllerStrategy$1.java:155-250
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/ColorModeControllerConfig.java:207-256,730-935,1114-1142
@@ -14916,6 +14936,7 @@ families:
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments, gradual]
           zones: []
+          segment_brightness_groups: [[0, 1, 2], [3, 4, 5, 6], [7, 8, 9], [10, 11, 12, 13]]   # ColorMode14Rect4ReverseSelect.canClickBrightness (base-classes11/com/govee/base2light/pact/newdetail/commom/color/ColorMode14Rect4ReverseSelect.java:352-375,379-421,476-478)
           account_lock: false
           scene_dialect: untraced
           kelvin_range: [2000, 9000]
@@ -14941,7 +14962,8 @@ families:
             ee 30 push [01][flags], flags bit 0 = power, sets the switch (P5 -> J3). Colour: the default
             DelegateColorV2 with the ColorMode14Rect4ReverseSelect strip; Config.I[360] all flags on; Config.x = 0 ->
             Config.J[0] = Yt: Bytes.h, or Bytes.r (white type Config.P = 1) for a Kelvin tint; segment brightness
-            Bytes.G. The colour strip sends 15 04 groups (Config.A = 1, Bytes.m) with 15 03 brightness groups, where
+            Bytes.G, widened to the strip's groups {0-2} / {3-6} / {7-9} / {10-13} as on 142
+            (ColorMode14Rect4ReverseSelect.canClickBrightness; segment_brightness_groups). The colour strip sends 15 04 groups (Config.A = 1, Bytes.m) with 15 03 brightness groups, where
             the library's h60a6 scheme sends per-colour 15 01 masks (a divergence, not a missing frame, as on
             pact_h6099 203). The Kelvin tap follows the piece selection (ColorMode14Rect4ReverseSelect built with w
             true by DetailConfigH2A40), so segment Kelvin is the app's. 14 pieces (Support.getColorPieceSize,
@@ -14960,7 +14982,10 @@ families:
             - split_h6099/com/govee/pact_h605b/ble/controller/compose/ControllerIcNum.java:29-40
             - split_h6099/com/govee/pact_h605b/pact/SubLib.java:20-26
             - split_h6099/com/govee/pact_h605b/pact/Model.java:49-56
-            - base-classes11/com/govee/base2light/pact/newdetail/commom/color/ColorMode14Rect4ReverseSelect.java:92-104,443-462
+            - base-classes11/com/govee/base2light/pact/newdetail/commom/color/ColorMode14Rect4ReverseSelect.java:92-104,352-375,379-421,443-462,476-478
+            - base-classes11/com/govee/base2light/pact/newdetail/content/colorv2/DelegateColorV2Part.java:217-230
+            - base-classes11/com/govee/base2light/pact/newdetail/content/colorv2/DelegateColorV2.java:490-496,1046-1050
+            - base-classes11/com/govee/base2light/pact/newdetail/content/color/ColorViewModel.java:1283-1345
             - base-classes10/com/govee/base2light/ble/BleUtil.java:474-486
             - base-classes11/com/govee/base2light/pact/newdetail/ShareVM.java:979-1015,1348-1364
             - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4InfoBleIot$iControllerStrategy$1.java:155-250
@@ -15006,7 +15031,7 @@ families:
     category: tv_backlight   # H66A0 (327) may be an HDMI sync box; no name string found
     client_profile:
       has_brightness: true   # 4-byte [bri, R, G, B] records; base-classes11/com/govee/base2light/kt/general_controller/Controller4ColorInfoByGroup.java:160-175
-      color_scheme: h60a6   # byte-identical h60a6 0x15 frames; mask 2 bytes for 14 pieces, wider for H605A's 24
+      color_scheme: h60a6   # the h60a6 0x15 frames, mask 2 bytes for 14 pieces, wider for H605A's 24; every screen's strip widens a segment-brightness selection to its groups first (rows' segment_brightness_groups)
       wire_cipher: runtime
       mode_color_parse: kelvin_15   # every goodsType and pact; the aa a5 group reads overwrite the tint; split_h6099/com/govee/pact_h6099/detail/Info4Detail.java:749-808
       by_goods_type:
@@ -15019,6 +15044,7 @@ families:
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments, gradual]
           zones: []
+          segment_brightness_groups: [[0, 1, 2], [3, 4, 5, 6], [7, 8, 9], [10, 11, 12, 13]]   # ColorMode14Rect4ReverseSelect.canClickBrightness (base-classes11/com/govee/base2light/pact/newdetail/commom/color/ColorMode14Rect4ReverseSelect.java:352-375,379-421,476-478)
           account_lock: false
           scene_dialect: untraced
           connect_reads: [brightness, gradual, color_group]
@@ -15037,6 +15063,7 @@ families:
             true; gradual Config.G[191] = 0 -> Bytes.w. The strip sends 15 04 groups (Config.A[191] = 1), the 203
             divergence, and any per-piece brightness as 15 03 <group> frames (ColorModeControllerConfig.l -> x ->
             Bytes.I; no Config.B entry), so Config.z drives only the 15 02 write here (a disputed .md label, corrected). No realtime colour (no Config.g0 entry) and no segment real colour (no Config.h0 entry).
+            The 15 02 write covers the selection widened to whole groups, as on 203 (segment_brightness_groups).
             Kelvin: no KelvinConfig entry, version 0 = [2000, 9000]; brightness BrightnessConfig default [1, 100].
             14 pieces (Support.getColorPieceSize). Scenes untraced (no bundled catalog; the path is 203's).
             Not hardware-verified.
@@ -15059,6 +15086,11 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:240-242,254-268,329-342,402-407
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:63-85,199-215,252-259
             - base-classes11/com/govee/base2light/pact/newdetail/content/colorv2/DelegateColorV2.java:219-233,764-776,816-850
+            - base-classes11/com/govee/base2light/pact/newdetail/commom/color/ColorMode14Rect4ReverseSelect.java:92-104,352-375,379-421,476-478
+            - split_h6099/com/govee/pact_h6099/detail/config/DetailConfig.java:94-104,122-124
+            - base-classes11/com/govee/base2light/pact/newdetail/content/colorv2/DelegateColorV2Part.java:217-230
+            - base-classes11/com/govee/base2light/pact/newdetail/content/colorv2/DelegateColorV2.java:490-496,1046-1050
+            - base-classes11/com/govee/base2light/pact/newdetail/content/color/ColorViewModel.java:1283-1345
         "203":   # H6098 / H8098, the pact_h6099 detail screen (NewDetailVm)
           models: [H6098, H8098]
           power_read: aa01
@@ -15068,6 +15100,7 @@ families:
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments, scenes, gradual]
           zones: []
+          segment_brightness_groups: [[0, 1, 2], [3, 4, 5, 6], [7, 8, 9], [10, 11, 12, 13]]   # ColorMode14Rect4ReverseSelect.canClickBrightness (base-classes11/com/govee/base2light/pact/newdetail/commom/color/ColorMode14Rect4ReverseSelect.java:352-375,379-421,476-478)
           account_lock: false
           scene_dialect: legacy_scene
           connect_reads: [brightness, gradual, color_group]
@@ -15086,7 +15119,12 @@ families:
             flag plus three flags stored in Info4Detail (C0 / D0 / B0), not traced as light zones, so zones none. Colour
             page: the default DelegateColorV2 with the family colour strip; Config.I[203] has every flag on (gradual,
             segment brightness, colour temperature). Colour: version Config.x[203] = 0 -> Config.J[0] = Yt: Bytes.h, and
-            Bytes.r (white type 1) for a Kelvin-tint colour; segment brightness Config.L version 0 -> Bytes.G. The
+            Bytes.r (white type 1) for a Kelvin-tint colour; segment brightness Config.L version 0 -> Bytes.G, not per
+            piece: the family strip (DetailConfig's ColorMode14Rect4ReverseSelect, built for 191 / 203 / 327 / 336)
+            widens the selection to whole groups {0-2} / {3-6} / {7-9} / {10-13} before the 15 02 write
+            (ColorMode14Rect4ReverseSelect.canClickBrightness -> DelegateColorV2Part.U -> DelegateColorV2.Z0 ->
+            ColorViewModel.m0, which folds the widened set), so a pick of piece 0 sends mask 07 00 and of piece 3
+            78 00 (segment_brightness_groups; 1.6.1 sent the selection's own bits, 01 00 / 08 00). The
             colour strip sends 15 04 groups (Config.A = 1, Bytes.m) with 15 03 brightness groups, where the library's
             h60a6 scheme sends per-colour 15 01 masks (a divergence, not a missing frame). 14 pieces
             (Support.getColorPieceSize). Kelvin version 0 = [2000, 9000] (no KelvinConfig entry); brightness
@@ -15128,6 +15166,11 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/content/color/ColorViewModel.java:1133-1147
             - split_h6099/com/govee/pact_h6099/pact/Model.java:42-51
             - base-classes11/com/govee/base2light/pact/newdetail/ShareVM.java:1348-1350
+            - base-classes11/com/govee/base2light/pact/newdetail/commom/color/ColorMode14Rect4ReverseSelect.java:92-104,352-375,379-421,476-478
+            - split_h6099/com/govee/pact_h6099/detail/config/DetailConfig.java:94-104,122-124
+            - base-classes11/com/govee/base2light/pact/newdetail/content/colorv2/DelegateColorV2Part.java:217-230
+            - base-classes11/com/govee/base2light/pact/newdetail/content/colorv2/DelegateColorV2.java:490-496,1046-1050
+            - base-classes11/com/govee/base2light/pact/newdetail/content/color/ColorViewModel.java:1283-1345
         "336":   # H6690, the pact_h6099 detail screen (NewDetailVm)
           models: [H6690]
           power_read: aa01
@@ -15137,6 +15180,7 @@ families:
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments, scenes, gradual]
           zones: []
+          segment_brightness_groups: [[0, 1, 2], [3, 4, 5, 6], [7, 8, 9], [10, 11, 12, 13]]   # ColorMode14Rect4ReverseSelect.canClickBrightness (base-classes11/com/govee/base2light/pact/newdetail/commom/color/ColorMode14Rect4ReverseSelect.java:352-375,379-421,476-478)
           account_lock: false
           scene_dialect: legacy_scene
           connect_reads: [brightness, gradual, color_group]
@@ -15156,7 +15200,8 @@ families:
             B0), not traced as light zones, so zones none. Colour page: the default DelegateColorV2 with the family
             colour strip; Config.I[336] has every flag on (gradual, segment brightness, colour temperature). Colour:
             version Config.x = 0 -> Config.Yt: Bytes.h, and Bytes.r (white type 1) for a Kelvin-tint colour; segment
-            brightness Config.L version 0 -> Bytes.G. The colour strip sends 15 04 groups (Config.A = 1, Bytes.m) with
+            brightness Config.L version 0 -> Bytes.G over the selection widened to the strip's groups, as on 203
+            (segment_brightness_groups; 1.6.1 sent the selection's own bits). The colour strip sends 15 04 groups (Config.A = 1, Bytes.m) with
             15 03 brightness groups, where the library's h60a6 scheme sends per-colour 15 01 masks (a divergence, not a
             missing frame). 14 pieces (Support.getColorPieceSize). Kelvin version 0 = [2000, 9000] (no KelvinConfig
             entry); brightness BrightnessConfig.b -> ControllerBrightness, percent. Scenes: ScenesConfigBean(1, 1,
@@ -15192,6 +15237,11 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/content/color/ColorViewModel.java:1133-1147
             - split_h6099/com/govee/pact_h6099/pact/Model.java:42-51
             - base-classes11/com/govee/base2light/pact/newdetail/ShareVM.java:1348-1350
+            - base-classes11/com/govee/base2light/pact/newdetail/commom/color/ColorMode14Rect4ReverseSelect.java:92-104,352-375,379-421,476-478
+            - split_h6099/com/govee/pact_h6099/detail/config/DetailConfig.java:94-104,122-124
+            - base-classes11/com/govee/base2light/pact/newdetail/content/colorv2/DelegateColorV2Part.java:217-230
+            - base-classes11/com/govee/base2light/pact/newdetail/content/colorv2/DelegateColorV2.java:490-496,1046-1050
+            - base-classes11/com/govee/base2light/pact/newdetail/content/color/ColorViewModel.java:1283-1345
         "327":   # H66A0, the pact_h6099 detail screen (NewDetailVm), as 203 / 336
           models: [H66A0]
           power_read: aa01
@@ -15201,6 +15251,7 @@ families:
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments, gradual]
           zones: []
+          segment_brightness_groups: [[0, 1, 2], [3, 4, 5, 6], [7, 8, 9], [10, 11, 12, 13]]   # ColorMode14Rect4ReverseSelect.canClickBrightness (base-classes11/com/govee/base2light/pact/newdetail/commom/color/ColorMode14Rect4ReverseSelect.java:352-375,379-421,476-478)
           account_lock: false
           scene_dialect: untraced
           kelvin_range: [2700, 6500]
@@ -15217,7 +15268,9 @@ families:
             segment brightness Config.z[327] = 0 -> Bytes.G; Config.I[327] all true; gradual Config.G[327] = 0 ->
             Bytes.w; the strip sends 15 04 groups (Config.A[327] = 1), the 203 divergence, and any per-piece brightness
             as 15 03 <group> frames (ColorModeControllerConfig.l -> x -> Bytes.I; no Config.B entry), so Config.z drives
-            only the 15 02 write here (a disputed .md label, corrected). Kelvin: KelvinConfig
+            only the 15 02 write here (a disputed .md label, corrected). That write covers the selection widened to
+            whole groups: DetailConfig builds the family's ColorMode14Rect4ReverseSelect for 327 too
+            (DetailConfig.b), as on 203 (segment_brightness_groups). Kelvin: KelvinConfig
             version 2 (KelvinConfig.Config e4) = [2700, 6500]; brightness BrightnessConfig default [1, 100]. 14 pieces.
             The colour drag's realtime frame (Config.g0[327] = 2, the raw a5 02 83 R G B frame) and segment real colour
             (Config.h0[327] true) are not modelled: the picker's release sends the Bytes.h write. Scenes untraced
@@ -15241,6 +15294,11 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:63-85,199-215,252-259
             - base-classes11/com/govee/base2light/pact/newdetail/content/colorv2/DelegateColorV2.java:219-233,253-266,327-346,764-776,816-850
             - base-classes11/com/govee/base2light/pact/newdetail/content/color/ColorViewModel.java:1253-1281
+            - base-classes11/com/govee/base2light/pact/newdetail/commom/color/ColorMode14Rect4ReverseSelect.java:92-104,352-375,379-421,476-478
+            - split_h6099/com/govee/pact_h6099/detail/config/DetailConfig.java:94-104,122-124
+            - base-classes11/com/govee/base2light/pact/newdetail/content/colorv2/DelegateColorV2Part.java:217-230
+            - base-classes11/com/govee/base2light/pact/newdetail/content/colorv2/DelegateColorV2.java:490-496,1046-1050
+            - base-classes11/com/govee/base2light/pact/newdetail/content/color/ColorViewModel.java:1283-1345
         "273":   # H6097, H6097DetailActivity (VM4Light)
           models: [H6097]
           power_read: aa01
@@ -15250,6 +15308,7 @@ families:
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments, gradual]
           zones: []
+          segment_brightness_groups: [[0, 1, 2], [3, 4, 5, 6], [7, 8, 9], [10, 11, 12, 13]]   # h6097 ColorMode.canClickBrightness (split_h6099/com/govee/pact_h6099/adjust/h6097/ColorMode.java:463-530)
           account_lock: false
           scene_dialect: untraced
           connect_reads: [brightness, gradual, color_group]
@@ -15273,7 +15332,11 @@ families:
             one 15 03 <brightness x 14> frame after them (no Config.i0 entry, so Config.z[273] = 0 -> Config.K[0] ->
             Bytes.F), which the library, having no strip apply, never sends. Disputed and corrected: an earlier entry
             point, ViewColorMode.P, was wrong (no screen builds DelegateColor); the frame and the support stand. The
-            screen's own segment brightness is the 15 02 Bytes.G write. No realtime colour (no Config.g0 entry). Kelvin: no KelvinConfig entry,
+            screen's own segment brightness is the 15 02 Bytes.G write, over the selection widened to whole groups
+            {0-2} / {3-6} / {7-9} / {10-13}: the H6097 strip ORs the selection per group and sets every piece of a
+            group that holds one (h6097 ColorMode.canClickBrightness, built by H6097DetailConfig; then
+            DelegateColorV2Part.U -> DelegateColorV2.Z0 -> ColorViewModel.m0, which folds that set), so
+            segment_brightness_groups. No realtime colour (no Config.g0 entry). Kelvin: no KelvinConfig entry,
             [2000, 9000]; brightness BrightnessConfig default [1, 100]. 14 pieces. Mode report kelvin_15
             (h6097 Info4Detail.T). Scenes untraced (ScenesConfigBean(2, 1, {0, 1, 2, 3}); no bundled catalog).
             Not hardware-verified.
@@ -15301,6 +15364,11 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/content/color/ColorViewModel.java:693-715
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:240-242,254-268,329-342,402-407
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:63-85,199-215,252-259
+            - split_h6099/com/govee/pact_h6099/adjust/h6097/ColorMode.java:463-530
+            - split_h6099/com/govee/pact_h6099/adjust/h6097/H6097DetailConfig.java:34-46
+            - base-classes11/com/govee/base2light/pact/newdetail/content/colorv2/DelegateColorV2Part.java:217-230
+            - base-classes11/com/govee/base2light/pact/newdetail/content/colorv2/DelegateColorV2.java:490-496,1046-1050
+            - base-classes11/com/govee/base2light/pact/newdetail/content/color/ColorViewModel.java:1283-1345
         "253":   # H605A, H605ANewDetail (H605ADetailViewModel); no support: three independently switched lamps (gap)
           models: [H605A]
           power_read: aa01
@@ -15371,7 +15439,7 @@ families:
       - { name: color_write, cmd: "0x05", payload: "[0x15, 0x01, R, G, B, 0, 0, 0, 0, 0, mask]; mask = 2 bytes LE over 14 pieces (3 bytes, BleUtils.X, over the 24 of H605A)", note: "single colour (ColorViewModel.p0, base-classes11/com/govee/base2light/pact/newdetail/content/color/ColorViewModel.java:1388-1428) and the per-colour strip frames of 273: ColorModeControllerConfig.c (base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/ColorModeControllerConfig.java:207-256) -> colour version Config.x (191 Cu :1341, 203 Eu :1351, 336 Du :1346, 327 Fu :1356, 253 Yy :1221, 273 ru :1286, all 0) -> Config.J[0] = Config.Yt (color/Config.java:5521-5526, :12960-12968) -> Bytes.h (color/Bytes.java:315-327). The VM colour hooks are IColorModeFuc defaults that return null (detail/NewDetailVm.java:845-892; base-classes11/com/govee/base2light/pact/newdetail/IColorModeFuc.java:73-77, :94-98)" }
       - { name: color_temp_write, cmd: "0x05", payload: "[0x15, 0x01, 0xff, 0xff, 0xff, kelvin u16be, tintR, tintG, tintB, mask]", note: "ColorViewModel.U (applyColorTem :848-899) / p0 -> ColorModeControllerConfig.c -> Config.Yt: KelvinConfig.i(colour) true -> Bytes.r (color/Bytes.java:474-502) with whiteType 1 (Config.P 191 hF :5959, 336 iF :5964, 203 jF :5969, 327 kF :5974, 273 EE :5814, 253 GE :5824 all return 1) -> white slot ColorUtils.R = ff ff ff (base-classes10/com/govee/base2kt/utils/ColorUtils.java:203-205); K = KelvinConfig.c(tint) within the device range. A uniform Kelvin-tint colour strip takes this frame too (ColorModeControllerConfig.k :767-768 skips w() for it; Config.e flags all true: map I 191 XO / 336 YO / 203 ZO / 327 aP / 253 dO / 273 kN, color/Config.java:4435, :4645, :4875-4890)" }
       - { name: color_group_write, cmd: "0x05", applies_to: "H6099, H6098, H8098, H6690, H66A0, H605A", payload: "[0x15, 0x04, group (1..ceil(n/4)), 4 x {R, G, B}]; with a brightness set also [0x15, 0x03, group (1..), up to 14 x brightness]", note: "colour strip (ColorViewModel.O :693-729 -> ColorModeControllerConfig.k :730-870 -> w :1114-1142 -> l :871-935): colour-brightness group mode Config.A = 1 for 191 eX :3149, 336 fX :3154, 203 gX :3159, 327 hX :3164, 253 CX :3269 (returns 1: :13920, :14080, :14248, :14408, :9259); Bytes.m (color/Bytes.java:393-402, BleUtils.w0); brightness groups x() :1144-1171 -> Bytes.I (Bytes.java:202-212) because legacy Config.M (map B) has no entry (color/Config.java:398-409, :581-586). n = 14 (4 frames) or 24 for H605A (6 frames). 273 has no Config.A / D / C entry, so its strip is per-colour color_write / color_temp_write frames" }
-      - { name: segment_brightness_write, cmd: "0x05", payload: "[0x15, 0x02, pct, mask]", note: "ColorViewModel.m0 (:1283-1316) -> ColorModeControllerConfig.t (:1069-1099) -> relative-brightness version Config.L (map z: 191 yT :2607, 336 zT :2612, 203 AT :2617, 327 BT :2622, 253 WS :2467, 273 nT :2552, all 0) -> Config.D()[0] = JR (color/Config.java:10567-10570) -> Bytes.G (color/Bytes.java:172-181)" }
+      - { name: segment_brightness_write, cmd: "0x05", payload: "[0x15, 0x02, pct, mask]", note: "ColorViewModel.m0 (:1283-1316) -> ColorModeControllerConfig.t (:1069-1099) -> relative-brightness version Config.L (map z: 191 yT :2607, 336 zT :2612, 203 AT :2617, 327 BT :2622, 253 WS :2467, 273 nT :2552, all 0) -> Config.D()[0] = JR (color/Config.java:10567-10570) -> Bytes.G (color/Bytes.java:172-181). The mask is the strip's widened set, not the selection: every screen's canClickBrightness (ColorMode14Rect4ReverseSelect on 191 / 203 / 327 / 336, the H6097 ColorMode on 273, H605AColorMode on 253) sets every piece of each group {0-2} / {3-6} / {7-9} / {10-13} (on 253 also {14-18} / {19-23}) that holds a selected one, via DelegateColorV2Part.U -> DelegateColorV2.Z0 (rows' segment_brightness_groups)" }
       - { name: realtime_color, cmd: "0x02", pro_type: "0xa5", applies_to: "H66A0, H6690, H6098, H8098", payload: "H66A0 (327): raw 7 bytes [0xa5, 0x02, 0x83, R, G, B, sum8]; H6690 (336) and H6098 / H8098 (203) on pact (3,1) only: the version-0 color_write frame (33 05 15 01 R G B 00x5 mask, or the Kelvin-tint form) sent as the realtime frame; H6099 / H605A / H6097 send none", note: "Colour drag: DelegateColorV2.B0 (base-classes11/com/govee/base2light/pact/newdetail/content/colorv2/DelegateColorV2.java:764-769, gated by M1 :327-346 -> ColorModeControllerConfig.A, base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/ColorModeControllerConfig.java:79-83) -> ColorViewModel.l0 (base-classes11/com/govee/base2light/pact/newdetail/content/color/ColorViewModel.java:1253-1281) -> ColorModeControllerConfig.r (:1022-1043; version 0 -> d :258-290, 2 -> the raw a5 frame) with realtime version Config.g0 = Config.Companion.x() (color/Config.java:746-748): 203 SI = 0 at pact (3,1) else -1 (:8102, :11934-11937), 336 UI = 0 (:8112, :12252-12255), 327 WI = 2 (:8122, :12567-12570); no g0 entry for 191 / 253 / 273 (no realtime). The VM hook supportRealTimeColor is the null default on all three screens (detail/NewDetailVm.java:1183-1185; base-classes11/com/govee/base2light/pact/newdetail/IColorModeFuc.java:131-133). Device acceptance of the a5 frame not checked" }
       - { name: brightness, cmd: "0x04", readable: true, payload: "[percent 1..100]", note: "write BrightnessConfig.b -> ControllerBrightness.d (base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:63-86; base-classes11/com/govee/base2light/kt/general_controller/ControllerBrightness.java:51-53, :61-63); read in the default connect strategy (Compose4InfoBleIot$iControllerStrategy$1.java:224)" }
       - { name: per_segment_color_read, cmd: "0xa5", readable: true, payload: "aa a5 <group 1..ceil(n/4)> -> [group, 4 x {brightness, R, G, B}]; n = 14 (4 groups), 24 on H605A (6 groups)", note: "after every aa 05 reply: NewDetailVm.o5 :437-474, VM4Light.v5 :611-637, H605ADetailViewModel.A5 :149-188; Support.getColorPieceSize / getOneGroupColorSize (pact_h6099/pact/Support.java:121-123, :142-144)" }

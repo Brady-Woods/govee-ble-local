@@ -355,6 +355,10 @@ _REFUSED: tuple[tuple[str, str, _Edit, str], ...] = (
     ("h6047", "119", lambda f: _row(f, "119").pop("brightness_range"), "no brightness_range"),
     ("h60ax", "303", lambda f: _row(f, "303").pop("account_lock"), "no account_lock"),
     ("h6047", "119", lambda f: _row(f, "119")["zones"][1]["segments"].append(42), "zone right segments"),
+    ("pact_h6099", "203", lambda f: _row(f, "203").update(segment_brightness_groups=[[0, 1], [1, 2]]),
+     "segment_brightness_groups [[0, 1], [1, 2]] are not disjoint groups of the 14 segments"),
+    ("bulblightv3", "64", lambda f: _row(f, "64").update(segment_brightness_groups=[[0]]),
+     "segment_brightness_groups without the segment-brightness frame"),
     ("h6061", "51", lambda f: _wire(f, "51").pop("counts"), "segments or a colour read-back without"),
     # reads and writes
     ("bulblightv3", "64", lambda f: _row(f, "64").update(power_read="aa33"), "power_read 'aa33'"),

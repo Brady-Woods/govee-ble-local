@@ -382,6 +382,12 @@
           },
           "description": "Independently switched zones; [] = unzoned."
         },
+        "segment_brightness_groups": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "integer", "minimum": 0 } },
+          "description": "The colour pieces (mask bits) the colour page's segment-brightness slider widens a selection to, as disjoint groups: before the 33 05 15 02 write (Bytes.G) the screen's strip sets every piece of each group that holds a selected piece (its IColorOpListener.canClickBrightness, e.g. ColorMode14Rect4ReverseSelect's {0-2} / {3-6} / {7-9} / {10-13}), and both the write's mask and the screen's brightness fold (ColorViewModel.m0's afterOpBrightnessSet) cover that union. Absent = the selection as it is. Needs a segment-brightness frame (color_functions segment_brightness with segments)."
+        },
         "account_lock": { "type": "boolean", "description": "The control screen sends the 0xB2 secret check after the handshake on every connect, and the device ignores commands until it does. The family encryption tag secret_key_pairing describes the pairing / group flows, not this." },
         "scene_dialect": { "enum": ["legacy_scene", "diy_graffiti", "tablelamp_h6052_type5_diy", "none", "untraced"], "description": "How the control screen uploads a scene: a key of scenes.upload.dialects (legacy_scene = ScenesOp.parseSceneV1 for every sceneType, also on a goodsType that registers a new-DIY parser, where BaseSceneViewMode.r3 first takes a sceneType-5 scene whose param leads 0x50; the library uploads no sceneType-5 scene under legacy_scene, so a legacy_scene SKU's bundled catalog holds none that the app uploads: none leading 0x50, and none at all where the scene versions hold a sceneType-5 branch of parseSceneV1 (7 to 13; tools/fetch_scenes.py leaves them out); diy_graffiti / tablelamp_h6052_type5_diy = that dialect for sceneType 5, parseSceneV1 for the rest), 'none' = activate only, 'untraced' = the apply path is not traced." },
         "scene_versions": { "$ref": "#/$defs/family/properties/specs/properties/scene_versions" },

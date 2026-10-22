@@ -361,6 +361,13 @@ class DeviceProfile:
     read ``AfterConnectSuccessReadDeviceInfo.w``). False, the default: on only for a byte of 1
     (``ControllerSwitch.Companion.c``), as every other light screen reads it. Ignored on a plug, whose byte is
     a relay mask (:attr:`relay_on_mask`)."""
+    segment_brightness_groups: tuple[tuple[int, ...], ...] = field(default=(), kw_only=True)
+    """Disjoint groups of segment indices that :meth:`~.device.Device.set_segment_brightness` widens a
+    selection to: every segment of each group holding a selected one goes into the ``33 05 15 02`` mask and
+    the state fold, as the screen's strip widens it before the write (a devices.yaml row's
+    ``segment_brightness_groups``: ``ColorMode14Rect4ReverseSelect.canClickBrightness`` and
+    ``H605CColorMode.canClickBrightness``, {0-2} / {3-6} / {7-9} / {10-13}). Empty, the default: the
+    selection as it is."""
 
     def __post_init__(self) -> None:
         """Validate each field: GoveeBleInvalidValue (a ValueError) on a value no Device can use.
@@ -417,6 +424,12 @@ class DeviceProfile:
                 or not all(isinstance(t, int) and not isinstance(t, bool) and 0 <= t <= 0xFF for t in types)):
             raise GoveeBleInvalidValue(f"{where}: status_read={types!r} (distinct command codes)")
         self._check_status_decode(where)
+        groups = self.segment_brightness_groups
+        if not (isinstance(groups, tuple) and all(
+                isinstance(g, tuple) and g and all(_index(i) for i in g) for g in groups)
+                and len({i for g in groups for i in g}) == sum(map(len, groups))):
+            raise GoveeBleInvalidValue(f"{where}: segment_brightness_groups={groups!r} (a tuple of disjoint, "
+                                       "non-empty tuples of segment indices)")
         if self.color_readback_per_batch < 1:   # a group size of 0 would never finish a read-back
             raise GoveeBleInvalidValue(
                 f"{where}: color_readback_per_batch={self.color_readback_per_batch!r}")
@@ -551,6 +564,11 @@ def _raw_range(span: tuple[int, ...]) -> bool:
         return False
     lo, hi = span
     return 0 <= lo < hi <= 0xFF and percent_to_raw(100, lo, hi) <= 0xFF
+
+
+def _index(value: object) -> bool:
+    """A segment index: a non-negative int, not a bool."""
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
 
 
 def _pact_key(pact: tuple[int, ...]) -> bool:

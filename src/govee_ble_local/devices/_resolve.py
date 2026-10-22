@@ -74,7 +74,10 @@ the row lacks fails the build: nothing defaults silently.
   ``segments`` only where the row's scheme has a segment-brightness frame
   (:data:`SEGMENT_BRIGHTNESS_SCHEMES`). Elsewhere the flag alone calls for nothing: the slider has no frame
   the library could send (H6071 / H6075's one-piece lamps, with no relative-brightness version and no
-  scheme yet; h61a8's 0x0b segment colour). ``rgb``, ``color_temp`` or
+  scheme yet; h61a8's 0x0b segment colour). A row's ``segment_brightness_groups`` (the strip's
+  ``canClickBrightness`` groups) becomes ``DeviceProfile.segment_brightness_groups``, which the
+  segment-brightness write widens a selection to, on a row with that frame and ``segments`` only, as disjoint
+  groups of the row's segments. ``rgb``, ``color_temp`` or
   ``segments`` on a relay row raises (the library resolves no colour scheme or Kelvin range for a plug), and
   elsewhere they need a colour scheme. An ``untraced`` scene dialect drops ``scenes``; ``none`` is activate
   only. Scenes need a bundled catalog, as every SKU of 1.4.0 that offers them ships one: a SKU the scene
@@ -232,6 +235,7 @@ class Row(TypedDict, total=False):
     color_functions: tuple[str, ...]
     capabilities: tuple[str, ...]
     zones: tuple[ZoneRow, ...]
+    segment_brightness_groups: tuple[tuple[int, ...], ...]
     account_lock: bool
     scene_dialect: str
     scene_versions: tuple[int, ...]
@@ -990,12 +994,14 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
              "rule)")
 
     zones = tuple((z["id"], z["power_index"], tuple(z["segments"])) for z in need(row.get("zones"), "zones"))
+    groups = tuple(tuple(g) for g in row.get("segment_brightness_groups") or ())
     lock = bool(need(row.get("account_lock"), "account_lock"))
     out: dict[str, Any] = {
         "capabilities": tuple(c for c in CAPABILITIES if c in caps),
         "aes_fallback": lock or (fam["id"], gt) in _AES_FALLBACK_ROWS,
         "segments": int(counts.get("num_segments", 0)),
         "zones": zones,
+        "segment_brightness_groups": groups,
         "scene_versions": scenes,
         "scene_versions_by_firmware": tuple(scenes_by_firmware) if uploads else (),
         "scene_versions_by_pact": scenes_by_pact if uploads else (),
@@ -1034,6 +1040,12 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
     for name, _index, segs in zones:
         if not all(0 <= s < out["segments"] for s in segs):
             fail(f"zone {name} segments {list(segs)} are not all below the {out['segments']} segments")
+    if groups and ("segments" not in caps or scheme not in SEGMENT_BRIGHTNESS_SCHEMES):
+        fail("segment_brightness_groups without the segment-brightness frame (segments on an h60a6 row)")
+    pieces = [i for g in groups for i in g]
+    if len(set(pieces)) != len(pieces) or not all(0 <= i < out["segments"] for i in pieces):
+        fail(f"segment_brightness_groups {[list(g) for g in groups]} are not disjoint groups of the "
+             f"{out['segments']} segments")
     if scheme is not None:
         out["color_scheme"] = scheme
     if status_read is not None:
