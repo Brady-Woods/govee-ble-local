@@ -360,7 +360,11 @@ class DeviceProfile:
     ``SwitchController.parseValidBytes`` on the H1162 / H1163 / H1167 standalone screen, the H70BX connect
     read ``AfterConnectSuccessReadDeviceInfo.w``). False, the default: on only for a byte of 1
     (``ControllerSwitch.Companion.c``), as every other light screen reads it. Ignored on a plug, whose byte is
-    a relay mask (:attr:`relay_on_mask`)."""
+    a relay mask (:attr:`relay_on_mask`). It covers the poll only: on such a row an advertisement's switch
+    byte still reads on only for 1 (:meth:`~.device.Device.advertised_on`), as the app's device list decodes
+    it for every light (``AbsBaseBleModel.z:393-397`` over ``BleUtil.parseBleBroadOnOff:719-744``; the h1162
+    ``Model.z:149-157`` calls it, and the H1168 and H70BX models inherit it), so a byte of 2 reads off in
+    the advertisement and on in the poll."""
     segment_color_temp: bool = field(default=True, kw_only=True)
     """Whether a colour temperature may go to a piece selection:
     :meth:`~.device.Device.set_segment_color_temp`, and :meth:`~.device.Device.set_zone_color_temp`, whose
@@ -630,7 +634,8 @@ def _accepts(route: _Route, pact: tuple[int, int] | None) -> bool:
     pact-conditioned rewrite to its target row only for a record whose pact meets the gate, and keeps a
     record without one at its source goodsType (``_resolve`` module doc), so a pact-less advert never reaches
     that row; and a ``pact_required`` row's goodsType also runs, at pacts the row doesn't list, a path the
-    row doesn't serve (straightfloorlamp 69's (1,1)), so a pact-less advert may be one of those."""
+    row doesn't serve (the (1,1) of straightfloorlamp 69 and the h70b3 rows), so a pact-less advert may be
+    one of those."""
     if pact is None:
         return not route.needs_pact
     return route.pacts is None or pact in route.pacts
@@ -679,7 +684,8 @@ def profile_for(sku: str, *, pact: tuple[int, int] | None = None, goods_type: in
     to its one ``hardware_verified`` / ``app_traced`` profile, as in 1.x, so no released unit is demoted. A
     SKU whose rows are all such rows needs its pact: without one it is unsupported, whatever the goodsType, as
     the app keeps a pact-less unit at its source goodsType (a reassignment) or may run it on a path the row
-    doesn't serve (``pact_required``: H6076 / H8076 / R16D0)."""
+    doesn't serve (``pact_required``: H6076 / H8076 / R16D0, and the ``modelled`` h70b3 rows' H70B3 / H70B4 /
+    H70B5 / H6810 / H6811 / H8811)."""
     key = sku.upper()
     for table in (_ADMITTED, _MODELLED) if allow_modelled else (_ADMITTED,):
         hits = {id(r.profile): r.profile for r in table[1].get(key, ())

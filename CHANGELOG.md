@@ -106,7 +106,8 @@ model, from which the shipped readers are generated).
   - dreamcolorlightv1: **H61A9** (204); dreamcolorlightv2: **H611A / H6143 / H6144** (21); homelightv1:
     **H6148** (16); hollowlamp: **H6058** (59); h7090: **H7090** (44); h1741: **H1741 / R1741** (365);
   - h6609: **H70C4 / H70C5 / H70C7 / H70C9 / H7084 / H6870 / H6871 / R6871 / H80C4**, **H80C5**† (260);
-  - h70b3: **H70B3** (229), **H70B4** (230), **H70B5** (231), **H6810** (255), **H6811**, **H8811**† (256);
+  - h70b3: **H70B3** (229), **H70B4** (230), **H70B5** (231), **H6810** (255), **H6811**, **H8811**† (256),
+    each on an advertised pact only (below);
   - h705a: **H705A / H705B / H705C / H801B** (125), **H608A / H608B / H608C / H608D / H808A** (184), **H705D /
     H705E / H705F / H805A / H805B / H805C / H805D** (240), **H7067 / H7068 / H7069** (250), **H3401** (394);
   - h7057: **H3510**, **H3511**† (349);
@@ -157,10 +158,16 @@ model, from which the shipped readers are generated).
   `pact_required` (Spec, below): `profile_for`, `is_supported_sku`, `make_device` and `create_device` refuse
   these three without a pact, rather than serve a pact-less record the (2,1) status profile with the plaintext
   cipher fallback. `create_device` with the advertisement still builds them: an encrypted (2,1) advert, as both
-  bench units send, gives the status profile and AES (checked offline, not on the bench). They join the pact-gated
-  SKUs above, 19 in all with H6119
-  (`supported_skus()` lists them; a caller passes the advert's pact), so the integration's setup fix for
-  those covers them too.
+  bench units send, gives the status profile and AES (checked offline, not on the bench). They join the
+  pact-gated SKUs above (`supported_skus()` lists them; a caller passes the advert's pact), so the
+  integration's setup fix for those covers them too.
+- **H70B3 / H70B4 / H70B5 / H6810 / H6811 / H8811**† (h70b3 229 / 230 / 231 / 255 / 256, behind
+  `allow_modelled`) **on an advertised pact only**, as straightfloorlamp 69. The app registers (1,1) for each of
+  these goodsTypes too, and there the screen runs the polled connect read, not the 0xAC status read the rows
+  serve: `Support.N` is false only at (1,1), so `VM4H70B345.d0` runs `r6` (`AfterConnectSuccessReadDeviceInfo`,
+  which reads aa 06 and aa 07 among others). The rows leave (1,1) out, and now they are `pact_required` too:
+  a pact-less record, which may be a (1,1) unit, is refused rather than given the status profile. With them the
+  pact-gated SKUs are 25, 18 by default and 7 behind `allow_modelled` (H6119 and these six).
 - **Brightness on a SKU whose range the pact picks** (`DeviceProfile.brightness_by_pact`: stringlightv2 H6121
   / H6141 / H6142 / H6154 / H6195, H6170 / H6196 / H613G†). These route without a pact, but a `Device` set up
   from a pact-less record (`create_device` with no advertisement, or one without a Govee pact block) refuses
@@ -202,7 +209,10 @@ model, from which the shipped readers are generated).
   `HeartControllerWithBattery`). As with a plug's `relay_on_mask`, the field is the rule the library's poll
   follows, the heartbeat's where the row has one. Every other light still reads on only for a byte of 1
   (`ControllerSwitch.Companion.c`), so no admitted SKU's decoded state changes. `parse.parse_light_power`
-  takes the profile's `wire_profile` for the rule (default: on at 1).
+  takes the profile's `wire_profile` for the rule (default: on at 1). The field covers the poll only: on such a
+  row an advertisement's switch byte still reads on only for 1 (`Device.advertised_on`), as the app's device
+  list decodes it for every light (`AbsBaseBleModel.z` over `BleUtil.parseBleBroadOnOff`), so a byte of 2
+  reads off in the advertisement and on in the poll.
 - **`DeviceProfile.segment_color_temp`** (keyword-only, default True; the spec's clientRow
   `segment_color_temp`): whether a colour temperature may go to a piece selection, as the app's Part-tab Kelvin
   item sends one (`DelegateColorV2Part.Z0` -> `LightColorCapabilityCenter.C2` -> `SupportPartColorTemConfig.b`;
@@ -336,8 +346,8 @@ model, from which the shipped readers are generated).
   R14C1 with H600A-H600D / H6011 / H6013 / H800B (H600A stays first), H6145-7 with H617C / H617E / H617F /
   H6168. H6099 and H61B0 come first in theirs, so a `Device` built from one of those profiles without `sku=`
   names itself after them (`create_device` and `make_device` always pass the SKU). The pact gate on the BK
-  rows and on straightfloorlamp 69 (Added) is new routing for new SKUs only: no SKU it covers was supported at
-  1.6.1.
+  rows, on straightfloorlamp 69 and on the h70b3 rows (Added) is new routing for new SKUs only: no SKU it covers
+  was supported at 1.6.1.
 - `wire.build` drops the h6061 group-frame constants `H6061_GROUP_SIZE`, `H6061_MASK_BYTES` and
   `OP15_SET_GROUP_COLOR` (not in `__all__`), which only the old ceil(n / 4) `15 04` RGB frames used (Fixed,
   H6061).
@@ -509,7 +519,8 @@ model, from which the shipped readers are generated).
   - **`pact_required`**, a new `clientRow` fact (`devices.schema.json`; `tools/gen_devices.py` KEEP;
     `_resolve.Route.pact_required`): the row is a route only for an advertisement that carries a pact, as a
     pact-conditioned reassignment's target row is, because the app also accepts other pacts for its goodsType
-    that run a path the row doesn't serve. straightfloorlamp 69 sets it ((1,1) runs the polled connect read).
+    that run a path the row doesn't serve. straightfloorlamp 69 and the five h70b3 rows set it (on both screens
+    (1,1) runs the polled connect read).
     `govee_reference.ble_rows` skips such a row without a pact (its self-test checks H6076), and the resolver
     refuses one whose pacts are `any`.
   - h6113 39 (H6113) names colour scheme `h6006`, the colour tab's `Config.J[2] = bu` frames its screen sends,
@@ -549,7 +560,11 @@ model, from which the shipped readers are generated).
   only and the library is unchanged: `ColorModeH60A6.canClickBrightness:483-500` sends the selection as it is,
   except on pact (1, >= 3) (`Support.supportPartTem`) while a ring piece is selected and the 12 ring pieces
   show one Kelvin-table colour (`ColorModeH60A6.F` / `G`), when the mask covers the whole ring 0-11 with piece
-  12 as picked. Modelling it is the user's decision.
+  12 as picked. Modelling it is the user's decision. So is the Part-tab Kelvin of the H60A6 and the H6047
+  (h6047 119, released), unchanged since 1.6.1 and now recorded in both rows' `doc`: the app widens it to the
+  whole ring once a ring piece is selected (`ColorModeH60A6.canClickColorTem` over `F`) and to each bar touched
+  (`ColorMode10Segment.canClickColorTem` with `q0` / `r0`), where `set_segment_color_temp` sends the selection
+  as it is.
 - **Screen facts on three held rows** (still without `support`; no SKU's profile changes):
   - h61d3 375 (H1A45): its colour config is traced after all. The 7.7.02 tables key 375 by the named constant
     `LightRecycleViewGesture.W`, which a search for the number missed. It is row 367's: the h60a6 `15 01` frames,

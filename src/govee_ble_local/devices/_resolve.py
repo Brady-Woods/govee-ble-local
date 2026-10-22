@@ -44,7 +44,8 @@ the row lacks fails the build: nothing defaults silently.
   runs the source goodsType. A target-row route carries the gate (``Route.gate``), and
   ``profile.profile_for`` takes it only on an advertised pact. It takes a ``pact_required`` row's route
   (``Route.pact_required``) the same way: the app also accepts the row's goodsType at pacts that run a path
-  the row doesn't serve (straightfloorlamp 69's (1,1)), so a unit advertising no pact may be one of them.
+  the row doesn't serve (straightfloorlamp 69's (1,1), and the h70b3 rows' (1,1)), so a unit advertising no
+  pact may be one of them.
   ``pact_required`` with ``pacts: any`` raises. A SKU that a ``modelled`` row and an admitted row both list
   raises too: the spec's routing (``ble_rows``) counts both wherever both accept the pact, and the opt-in
   must leave the admitted routes as they are.

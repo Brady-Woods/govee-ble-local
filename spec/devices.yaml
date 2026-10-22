@@ -833,7 +833,10 @@ families:
             as it is, except on pact (1, >= 3) (H -> Support.supportPartTem; the bench units advertise (1,3)) while a ring
             piece is selected (F) and the 12 ring pieces show one Kelvin-table colour (G -> ColorUtils.r): then the 15 02
             mask covers the whole ring 0-11, with piece 12 as picked. No fixed segment_brightness_groups says that, so the
-            row carries none and the library sends the selection's own bits. Timing: the app reads the burst once per
+            row carries none and the library sends the selection's own bits. Also open for the user's decision, and as
+            it was at 1.6.1: the Part tab's Kelvin item widens a selection that holds a ring piece to the whole ring 0-11,
+            with piece 12 as picked (ColorModeH60A6.canClickColorTem:519-541 over F:140-150), where
+            set_segment_color_temp sends the selection as it is. Timing: the app reads the burst once per
             connect and then keeps the link
             with the aa 00 heartbeat and its ee 30 pushes. HARDWARE-VERIFIED on an H60A6 (bench 2026-10-12 to 2026-10-16):
             the segment-map probe drove piece 12 (the main panel) and pieces 0-11 (the ring) to opposite colours and read them
@@ -853,7 +856,7 @@ families:
             and 03 @0x9b04a5bc), and the bench unit answered them (2026-10-15).
           doc-ref:
             - split_h60ax/com/govee/pact_h60a0/pact/Support.java:91-100,154-159,434-436,438-444,472-482
-            - split_h60ax/com/govee/pact_h60a0/adjust/h60a6/ColorModeH60A6.java:140-162,483-500
+            - split_h60ax/com/govee/pact_h60a0/adjust/h60a6/ColorModeH60A6.java:140-162,483-500,519-541
             - base-classes10/com/govee/base2kt/utils/ColorUtils.java:355-367
             - base-classes2/com/govee/shared/checker/KmpGoodsType.java:189
             - split_h60ax/com/govee/pact_h60a0/adjust/h60a6/VM4LightH60A6$afterConnectedSingleReadDeviceInfo$1.java:46-53,133,158-161
@@ -1240,9 +1243,14 @@ families:
             not captured): with the left bar switched off (33 36 00 01) while the fixture was on, 33 01 00 then 33 01 01 lit
             both bars again, as the next poll's aa 36 read back; so did an off and on alone, and one after both bars were
             switched off with the fixture off. It is the firmware's model (FIRMWARE-SOURCED: the power handler sets both bar
-            flags from its byte, FUN_01004f32 @0x01004f5c-0x01004f60 -> FUN_01002720).
+            flags from its byte, FUN_01004f32 @0x01004f5c-0x01004f60 -> FUN_01002720). Open for the user's decision, and
+            as it was at 1.6.1: the Part tab's Kelvin item widens the selection to each bar it touches, 0-4 and 5-9
+            (DetailConfig's strip ColorMode10Segment; its canClickColorTem:655-690 with q0:799-801 / r0:803-805 over
+            p0:425-436), where set_segment_color_temp sends the selection as it is.
           doc-ref:
             - split_h6047/com/govee/h6047/pact/Support.java:43-45,121-129,186-188,345-350
+            - split_h6047/com/govee/h6047/detail/config/DetailConfig.java:100-108
+            - split_h6047/com/govee/h6047/detail/mode/ColorMode10Segment.java:425-436,655-690,799-805
             - base-classes2/com/govee/shared/config/h6047/H6047SceneConfig.java:45-47
             - split_h6047/com/govee/h6047/detail/NewDetailVm$connectBleSuc$1.java:141-161
             - split_h6047/com/govee/h6047/detail/NewDetailVm.java:574-614,630-651,695-699,862-864
@@ -13023,10 +13031,11 @@ families:
       mode_color_parse: rgb_kelvin_0d_nocct   # 229 / 230 / 231 / 255 / 256, every pact (0xAC burst, or aa reads at pact (1,1)); split_h70b1/com/govee/h70b3/adjust/Info4Detail.java:666-710. The parse layout is exact (the wire Kelvin is never tested), but the stock colour page shows a single reported colour that is a Kelvin tint in [2000, 9000] as that colour temperature (DelegateCurMode -> ColorViewModel.initColor4Device -> DelegateColorV2.W1, KelvinConfig.i / c): a presentation rule no strategy expresses, so the library reports that tint as RGB (library gap 2, h70b3.md). Whether the firmware echoes the Bytes.p tint in the report is not hardware-checked, so the rows are modelled
       power_read: ac_status   # pact (1,1) reads aa 01 instead, on when byte != 0; the schema has no per-pact power_read, so the rows leave (1,1) out
       power_live: [push_30]   # heartbeat type 2, not heartbeat_aa01
-      by_goods_type:   # one screen for all five (H70B3B4B5DeviceDetailActivity, VM4H70B345Splicing); pact (1,1) is left out of every row (the aa-read connect, see doc)
+      by_goods_type:   # one screen for all five (H70B3B4B5DeviceDetailActivity, VM4H70B345Splicing); pact (1,1) is left out of every row (the aa-read connect, see doc), so every row is pact_required
         "229":   # H70B3, 1 base unit
           models: [H70B3]
           pacts: ["1,2", "2,1", "2,2", "2,3"]   # (1,1) registered too but read by aa 01 / aa 04 / aa 05: not served
+          pact_required: true   # so a unit advertising no pact, which may be a (1,1) one, is refused (doc)
           support: modelled   # downgraded 2026-10-21: the colour-temperature read-back is inferred (h70b3.md "Disputed")
           capabilities: [power, brightness, rgb, color_temp]
           zones: []
@@ -13049,7 +13058,11 @@ families:
             strategy [r, g, b][kelvin s16be]), TLV 0x41 the power-off memory (value[1]), TLV 0x39 the direction, TLV 0x40
             byte 0 the device count. At pact (1,1) the connect is r6 (AfterConnectSuccessReadDeviceInfo: aa 06 / aa 07 /
             33 09 / timer / wake / sleep reads, aa 04, aa 01, aa 05, aa 40), a polled read-back this row can't also carry:
-            (1,1) is left out. Power: switchTrigger writes the one ControllerSwitch (33 01); no zone switch (zones none).
+            (1,1) is left out. Nothing but the pact tells a (1,1) unit apart (Support.N is false there, so
+            VM4H70B345.d0 runs r6), so the row is pact_required: profile_for, is_supported_sku, make_device and
+            create_device take it only on an advertised pact (profile._accepts), and a pact-less record, which may be a
+            (1,1) unit, is refused rather than given this status profile. Power: switchTrigger writes the one
+            ControllerSwitch (33 01); no zone switch (zones none).
             Brightness: BrightnessConfig.b -> 33 04 <pct>, no BrightnessConfig key -> version 1 = [1, 100]. Colour: the
             shared ColorViewModel -> ColorModeControllerConfig.c -> Config.F (no SKU key; Config.x[229] = 2) -> Config.J[2]
             = bu: Bytes.f (33 05 0d R G B) or, for a colour that is a Kelvin tint in range (KelvinConfig.i), Bytes.p
@@ -13109,6 +13122,7 @@ families:
         "230":   # H70B4, 2 units
           models: [H70B4]
           pacts: ["1,2", "2,1", "2,2", "2,3"]   # (1,1) left out, as on 229
+          pact_required: true   # as on 229
           support: modelled   # downgraded 2026-10-21: the colour-temperature read-back is inferred (h70b3.md "Disputed")
           capabilities: [power, brightness, rgb, color_temp]
           zones: []
@@ -13130,16 +13144,18 @@ families:
             (h70b3.md "Disputed"). Device info (device_info_reads none): as on 229, u5 queues no aa 06 / aa 07 read and
             its success callback y5 takes the soft and hard versions from the reply's TLV 0x07 (g1 and k2(e(), d());
             Compose4BaseInfoSingleRead.w), so the library sends none either and folds the versions and device id from
-            TLV 0x07 alone. Not hardware-verified.
+            TLV 0x07 alone. pact_required, as on 229: at (1,1) Support.N is false and VM4H70B345.d0 runs r6, so a
+            pact-less record, which may be a (1,1) unit, is refused. Not hardware-verified.
           doc-ref:
             - base-classes2/com/govee/shared/checker/KmpGoodsType.java:258
             - split_h70b1/com/govee/h70b3/add/AddDeviceM.java:85-96
             - split_h70b1/com/govee/h70b3/Support.java:292-317,416-421,504-511,1103-1106
-            - split_h70b1/com/govee/h70b3/adjust/vm/VM4H70B345.java:783-839,927-946,1275-1288
+            - split_h70b1/com/govee/h70b3/adjust/vm/VM4H70B345.java:721-739,783-839,927-946,1275-1288
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:1085-1089,4540-4544,9821-9824,16628-16631
         "231":   # H70B5, 3 units
           models: [H70B5]
           pacts: ["1,2", "2,1"]   # (1,1) left out, as on 229
+          pact_required: true   # as on 229
           support: modelled   # downgraded 2026-10-21: the colour-temperature read-back is inferred (h70b3.md "Disputed")
           capabilities: [power, brightness, rgb, color_temp]
           zones: []
@@ -13160,16 +13176,18 @@ families:
             "Disputed"). Device info (device_info_reads none): as on 229, u5 queues no aa 06 / aa 07 read and its
             success callback y5 takes the soft and hard versions from the reply's TLV 0x07 (g1 and k2(e(), d());
             Compose4BaseInfoSingleRead.w), so the library sends none either and folds the versions and device id from
-            TLV 0x07 alone. Not hardware-verified.
+            TLV 0x07 alone. pact_required, as on 229: at (1,1) Support.N is false and VM4H70B345.d0 runs r6, so a
+            pact-less record, which may be a (1,1) unit, is refused. Not hardware-verified.
           doc-ref:
             - base-classes2/com/govee/shared/checker/KmpGoodsType.java:259
             - split_h70b1/com/govee/h70b3/add/AddDeviceM.java:98-109
             - split_h70b1/com/govee/h70b3/Support.java:319-338,416-421,512-519,1108-1111
-            - split_h70b1/com/govee/h70b3/adjust/vm/VM4H70B345.java:783-839,927-946,1275-1288
+            - split_h70b1/com/govee/h70b3/adjust/vm/VM4H70B345.java:721-739,783-839,927-946,1275-1288
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:1090-1094,4545-4549,9976-9979,16790-16793
         "255":   # H6810, no TLV 0x40 (device count forced to 1)
           models: [H6810]
           pacts: ["2,1", "2,2", "2,3"]   # (1,1) left out, as on 229
+          pact_required: true   # as on 229
           support: modelled   # downgraded 2026-10-21: the colour-temperature read-back is inferred (h70b3.md "Disputed")
           capabilities: [power, brightness, rgb, color_temp]
           zones: []
@@ -13192,16 +13210,18 @@ families:
             inferred (h70b3.md "Disputed"). Device info (device_info_reads none): as on 229, u5 queues no aa 06 / aa 07
             read and its success callback y5 takes the soft and hard versions from the reply's TLV 0x07 (g1 and k2(e(),
             d()); Compose4BaseInfoSingleRead.w), so the library sends none either and folds the versions and device id
-            from TLV 0x07 alone. Not hardware-verified.
+            from TLV 0x07 alone. pact_required, as on 229: at (1,1) Support.N is false and VM4H70B345.d0 runs r6, so a
+            pact-less record, which may be a (1,1) unit, is refused. Not hardware-verified.
           doc-ref:
             - base-classes2/com/govee/shared/checker/KmpGoodsType.java:218
             - split_h70b1/com/govee/h70b3/add/AddDeviceM.java:39-50
             - split_h70b1/com/govee/h70b3/Support.java:217-239,416-421,453-458,520-527,704-717,768-777,1089-1091
-            - split_h70b1/com/govee/h70b3/adjust/vm/VM4H70B345.java:741-756,783-839,881-900,927-946,1275-1288
+            - split_h70b1/com/govee/h70b3/adjust/vm/VM4H70B345.java:721-739,741-756,783-839,881-900,927-946,1275-1288
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:1291-1295,4520-4524,9050-9053,16143-16146
         "256":   # H6811, as 255
           models: [H6811]
           pacts: ["2,1", "2,2", "2,3"]   # (1,1) left out, as on 229
+          pact_required: true   # as on 229
           support: modelled   # downgraded 2026-10-21: the colour-temperature read-back is inferred (h70b3.md "Disputed")
           capabilities: [power, brightness, rgb, color_temp]
           zones: []
@@ -13221,12 +13241,14 @@ families:
             modelled, as on 229: the colour-temperature read-back is inferred (h70b3.md "Disputed"). Device info
             (device_info_reads none): as on 229, u5 queues no aa 06 / aa 07 read and its success callback y5 takes the
             soft and hard versions from the reply's TLV 0x07 (g1 and k2(e(), d()); Compose4BaseInfoSingleRead.w), so the
-            library sends none either and folds the versions and device id from TLV 0x07 alone. Not hardware-verified.
+            library sends none either and folds the versions and device id from TLV 0x07 alone. pact_required, as on
+            229: at (1,1) Support.N is false and VM4H70B345.d0 runs r6, so a pact-less record, which may be a (1,1)
+            unit, is refused. Not hardware-verified.
           doc-ref:
             - base-classes2/com/govee/shared/checker/KmpGoodsType.java:219
             - split_h70b1/com/govee/h70b3/add/AddDeviceM.java:52-63
             - split_h70b1/com/govee/h70b3/Support.java:241-263,416-421,453-458,528-535,1094-1096
-            - split_h70b1/com/govee/h70b3/adjust/vm/VM4H70B345.java:783-839,881-900,927-946,1275-1288
+            - split_h70b1/com/govee/h70b3/adjust/vm/VM4H70B345.java:721-739,783-839,881-900,927-946,1275-1288
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:1296-1300,4525-4529,9209-9212,16298-16301
       wire_cipher: runtime
       wire:
