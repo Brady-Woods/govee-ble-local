@@ -16,6 +16,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 from fake_ble import ble_device, unacked_via
+from test_device_races import _hand_built_segment_kelvin
 
 from govee_ble_local import Capability, Encryption
 from govee_ble_local.devices.device import Device, make_device
@@ -236,7 +237,8 @@ def test_unanswered_or_unusable_count_sends_no_colour_frame(reply: list[bytes]) 
     for call in (lambda: t.dev.set_rgb((1, 2, 3)), lambda: t.dev.set_color_temp(4000),
                  lambda: t.dev.set_segment_rgb([0], (1, 2, 3)),
                  lambda: t.dev.set_segment_brightness([0], 10),
-                 lambda: t.dev.turn_on(rgb=(1, 2, 3))):
+                 lambda: t.dev.turn_on(rgb=(1, 2, 3)),
+                 lambda: _hand_built_segment_kelvin(t.dev)):   # last: it keeps its profile
         with pytest.raises(GoveeBleError, match="aa 41"):
             asyncio.run(call())
     assert t.sent == []
