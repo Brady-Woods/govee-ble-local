@@ -156,9 +156,12 @@ timing:
         takes the switch from each aa 01 reply (ShareVM.N3 -> J3); on straightfloorlamp 69, h6069 284, rgbiclight 351 /
         352 and h61d3 263, J3 also re-reads on each change (Compose4Off2On: the timer, sleep and wake reads and aa 05,
         then the screen's aa a5 groups), while on h7086 293, h7020 296, h7076 313 and h3700 383 it sets the switch
-        alone. Every one of them says heartbeat_power (the user's decision 17; h61d3 263 behind allow_modelled), and the
-        four re-reading screens heartbeat_reread: the library makes the status read once per link (a poll on a link it
-        was made on reads nothing more) and folds each reply's byte 2 == 1 into the power, a read that stamps
+        alone, as on h7020 316 / 318 / 337 / 391 / 411 (296's NewDetailVM: I3 true, J3 with no compose). The rows the
+        user's decision 17 named say heartbeat_power (69, 284, 351 / 352, 293, 296, 313, 383), and so does h61d3 263
+        (behind allow_modelled); h7020 316 / 318 / 337 / 391 / 411 don't, and read the status on every poll until the
+        user decides whether the decision covers them. The four re-reading screens say heartbeat_reread. On a row that
+        says heartbeat_power the library makes the status read once per link (a poll on a link it was made on reads
+        nothing more) and folds each reply's byte 2 == 1 into the power, a read that stamps
         Device.power_read_at with the drop count taken when its beat went out, but only a reply that arrives with no
         other frame sent since its beat (one sent after it, a power write or a read, may have changed what the reply
         reports), where the app takes every aa 01 notification. On a change it sends the re-read at once on the link the
@@ -182,7 +185,7 @@ timing:
       - split_rgbiclight/com/govee/rgbiclight/VM4Light.java:732-748
       - split_h61d3/com/govee/h61d3/adjustNew/VM4Light.java:222-259,315-327,827-829
       - split_outdoorlight/com/govee/h7086/adjust/VM4Light.java:267-279
-      - split_h7050/com/govee/h7020/newDetail/NewDetailVM.java:744-756
+      - split_h7050/com/govee/h7020/newDetail/NewDetailVM.java:735-756
       - split_h7075/com/govee/h7075/h7076/H7076DetailVM.java:331-343
       - split_h7075/com/govee/h7075/h3700/H3700DetailVM.java:332-344
       - base-classes11/com/govee/base2light/pact/newdetail/ble/Ble4NewDetail.java:32-37
@@ -18880,12 +18883,16 @@ families:
             controller list), which queues no aa 06 / aa 07 read, and its success callback
             (NewDetailVM$afterConnectedSingleReadDeviceInfo$1.o) takes the soft and hard versions from the reply's TLV
             0x07 (k2(e(), d()); Compose4BaseInfoSingleRead.w), so the library sends none either and folds the versions
-            and device id from TLV 0x07 alone. Not hardware-verified.
+            and device id from TLV 0x07 alone.
+            Keep-alive power: the screen takes the switch from each aa 01 reply (NewDetailVM.I3 true, J3 as on 296), but
+            the row doesn't say heartbeat_power (decision 17 named 296 alone of h7020's rows; open for the user), so the
+            library reads the status on every poll.
+            Not hardware-verified.
           doc-ref:
             - split_h7050/com/govee/h7020/pact/Support.java:96-166,383-385,477-479,595-631,697-704,719-721
             - split_h7050/com/govee/h7020/pact/SubLib4BleIot.java:20-31
             - split_h7050/com/govee/h7020/pact/Model4BleIot.java:41-44
-            - split_h7050/com/govee/h7020/newDetail/NewDetailVM.java:666-676,735-742,975-1013,1012-1031,1308-1315,1432-1463,1514-1538,621-627
+            - split_h7050/com/govee/h7020/newDetail/NewDetailVM.java:666-676,735-756,975-1013,1012-1031,1308-1315,1432-1463,1514-1538,621-627
             - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4BaseInfoSingleRead.java:161-180,215-237,247-345,370-380
             - base-classes11/com/govee/base2light/pact/newdetail/ShareVM.java:1362-1364
             - base-classes11/com/govee/base2light/kt/general_parser/DefParser.java:83-87
@@ -18937,12 +18944,16 @@ families:
             controller list), which queues no aa 06 / aa 07 read, and its success callback
             (NewDetailVM$afterConnectedSingleReadDeviceInfo$1.o) takes the soft and hard versions from the reply's TLV
             0x07 (k2(e(), d()); Compose4BaseInfoSingleRead.w), so the library sends none either and folds the versions
-            and device id from TLV 0x07 alone. Not hardware-verified.
+            and device id from TLV 0x07 alone.
+            Keep-alive power: the screen takes the switch from each aa 01 reply (NewDetailVM.I3 true, J3 as on 296), but
+            the row doesn't say heartbeat_power (decision 17 named 296 alone of h7020's rows; open for the user), so the
+            library reads the status on every poll.
+            Not hardware-verified.
           doc-ref:
             - split_h7050/com/govee/h7020/pact/Support.java:96-166,383-385,477-479,595-631,697-704,719-721
             - split_h7050/com/govee/h7020/pact/SubLib4BleIot.java:20-31
             - split_h7050/com/govee/h7020/pact/Model4BleIot.java:41-44
-            - split_h7050/com/govee/h7020/newDetail/NewDetailVM.java:666-676,735-742,975-1013,1012-1031,1308-1315,1432-1463,1514-1538,621-627
+            - split_h7050/com/govee/h7020/newDetail/NewDetailVM.java:666-676,735-756,975-1013,1012-1031,1308-1315,1432-1463,1514-1538,621-627
             - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4BaseInfoSingleRead.java:161-180,215-237,247-345,370-380
             - base-classes11/com/govee/base2light/pact/newdetail/ShareVM.java:1362-1364
             - base-classes11/com/govee/base2light/kt/general_parser/DefParser.java:83-87
@@ -19012,12 +19023,16 @@ families:
             version read; its success callback (NewDetailVM$afterConnectedSingleReadDeviceInfo4702ABC$1.o) takes the
             soft and hard versions from the reply's TLV 0x07 (k2(e(), d()); Compose4BaseInfoSingleRead.w) and then sends
             s5's reads (aa 40, the power-off memory), none a version read, so the library sends no aa 06 / aa 07 either
-            and folds the versions and device id from TLV 0x07 alone. Not hardware-verified.
+            and folds the versions and device id from TLV 0x07 alone.
+            Keep-alive power: the screen takes the switch from each aa 01 reply (NewDetailVM.I3 true, J3 as on 296), but
+            the row doesn't say heartbeat_power (decision 17 named 296 alone of h7020's rows; open for the user), so the
+            library reads the status on every poll.
+            Not hardware-verified.
           doc-ref:
             - split_h7050/com/govee/h7020/pact/Support.java:96-166,383-385,477-479,595-631,697-704,719-721
             - split_h7050/com/govee/h7020/pact/SubLib4BleIot.java:20-31
             - split_h7050/com/govee/h7020/pact/Model4BleIot.java:41-44
-            - split_h7050/com/govee/h7020/newDetail/NewDetailVM.java:666-676,735-742,975-1013,1012-1031,1308-1315,1432-1463,1514-1538,1104-1110
+            - split_h7050/com/govee/h7020/newDetail/NewDetailVM.java:666-676,735-756,975-1013,1012-1031,1308-1315,1432-1463,1514-1538,1104-1110
             - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4BaseInfoSingleRead.java:161-180,215-237,247-345,370-380
             - base-classes11/com/govee/base2light/pact/newdetail/ShareVM.java:1362-1364
             - base-classes11/com/govee/base2light/kt/general_parser/DefParser.java:83-87
@@ -19077,12 +19092,16 @@ families:
             version read; its success callback (NewDetailVM$afterConnectedSingleReadDeviceInfo4702ABC$1.o) takes the
             soft and hard versions from the reply's TLV 0x07 (k2(e(), d()); Compose4BaseInfoSingleRead.w) and then sends
             s5's reads (aa 40, the power-off memory), none a version read, so the library sends no aa 06 / aa 07 either
-            and folds the versions and device id from TLV 0x07 alone. Not hardware-verified.
+            and folds the versions and device id from TLV 0x07 alone.
+            Keep-alive power: the screen takes the switch from each aa 01 reply (NewDetailVM.I3 true, J3 as on 296), but
+            the row doesn't say heartbeat_power (decision 17 named 296 alone of h7020's rows; open for the user), so the
+            library reads the status on every poll.
+            Not hardware-verified.
           doc-ref:
             - split_h7050/com/govee/h7020/pact/Support.java:96-166,383-385,477-479,595-631,697-704,719-721
             - split_h7050/com/govee/h7020/pact/SubLib4BleIot.java:20-31
             - split_h7050/com/govee/h7020/pact/Model4BleIot.java:41-44
-            - split_h7050/com/govee/h7020/newDetail/NewDetailVM.java:666-676,735-742,975-1013,1012-1031,1308-1315,1432-1463,1514-1538,1104-1110
+            - split_h7050/com/govee/h7020/newDetail/NewDetailVM.java:666-676,735-756,975-1013,1012-1031,1308-1315,1432-1463,1514-1538,1104-1110
             - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4BaseInfoSingleRead.java:161-180,215-237,247-345,370-380
             - base-classes11/com/govee/base2light/pact/newdetail/ShareVM.java:1362-1364
             - base-classes11/com/govee/base2light/kt/general_parser/DefParser.java:83-87
@@ -19154,11 +19173,14 @@ families:
             soft and hard versions from the reply's TLV 0x07 (k2(e(), d()); Compose4BaseInfoSingleRead.w) and then sends
             s5's reads (aa 40, the power-off memory), none a version read, so the library sends no aa 06 / aa 07 either
             and folds the versions and device id from TLV 0x07 alone.
+            Keep-alive power: the screen takes the switch from each aa 01 reply (NewDetailVM.I3 true, J3 as on 296), but
+            the row doesn't say heartbeat_power (decision 17 named 296 alone of h7020's rows; open for the user), so the
+            library reads the status on every poll.
           doc-ref:
             - split_h7050/com/govee/h7020/pact/Support.java:62-65,96-166,313-362,383-385,477-479,595-597,697-704,719-721
             - split_h7050/com/govee/h7020/pact/SubLib4BleIot.java:20-31
             - split_h7050/com/govee/h7020/pact/Model4BleIot.java:41-44
-            - split_h7050/com/govee/h7020/newDetail/NewDetailVM.java:666-676,735-742,975-1013,1308-1315,1432-1463,1514-1538,1104-1110
+            - split_h7050/com/govee/h7020/newDetail/NewDetailVM.java:666-676,735-756,975-1013,1308-1315,1432-1463,1514-1538,1104-1110
             - split_h7050/com/govee/h7020/newDetail/NewDetailVM$afterConnectedSingleReadDeviceInfo4702ABC$1.java:48-61,64-92,135-176,186-232
             - split_h7050/com/govee/h7020/newDetail/controller/Controller4IcNumber.java:47-61,66-92,103-106
             - split_h7050/com/govee/h7020/newDetail/h3010123/ColorModeH3010.java:98-104,391-393,432-434

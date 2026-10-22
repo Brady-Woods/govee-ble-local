@@ -604,7 +604,10 @@ model, from which the shipped readers are generated).
   (`afterConnectedSingleReadDeviceInfo`, from `d0`) and then sets its switch from byte 2 == 1 of every keep-alive
   reply (`BleComm.G` -> `ShareVM.N3` -> `J3`, ConnectHeartbeat type 1); on a change, four of the screens also
   re-read the mode and colour (`J3` -> `Compose4Off2On`). The user's decision 17 ("Match the app") turns it on for
-  every such row, and the library now does the same:
+  the rows it named, and h61d3 263 has it too; the library now does the same on those rows. h7020 316 / 318 / 337 /
+  391 / 411 (H702A-C, H7026 / H8026, H7027, H30D0, H3010-H3013), admitted after the decision, run 296's screen
+  (`NewDetailVM.I3` true, `J3` sets the switch from each reply) but don't say it, so they read the status on every
+  poll until the user decides whether the decision covers them:
   - **The status read once per link.** `Device.update` makes it on the first poll of a link and reads nothing more
     on that link (so nothing is read back after a write there); a poll on a fresh link returns its status read's
     state.
@@ -920,14 +923,14 @@ model, from which the shipped readers are generated).
 - `wire.build` drops the h6061 group-frame constants `H6061_GROUP_SIZE`, `H6061_MASK_BYTES` and
   `OP15_SET_GROUP_COLOR` (not in `__all__`), which only the old ceil(n / 4) `15 04` RGB frames used (Fixed,
   H6061).
-- **The status rows on the aa 01 keep-alive follow it, as their screens do** (the user's decision 17, "Match the
-  app"; `heartbeat_power`, Added). **H6076 / H8076 / R16D0** (straightfloorlamp 69), **H6069 / H8069** (h6069 284),
-  **H617G / R617G** (rgbiclight 351), **H618G / R618D** (352), **H7086** (h7086 293), **H7025 / H8025** (h7020 296),
-  **H7076** (h7076 313) and **H3700** (h3700 383), all admitted by default in 1.7.0, read the status on every poll
-  until now. Now a poll makes the 0xAC read once per link, and on a link it already read nothing goes out: the power
-  there follows each keep-alive reply, which stamps `Device.power_read_at` and reaches the callbacks. On 69, 284,
-  351 and 352 a reply that changes the power sends the screen's re-read at once on that link: `aa 05`, then the `aa
-  a5` groups (69: 1-2, 351 / 352: 1-4, both applied as the segments; 284: 1-35, the no-layout count, read and not
+- **The released status rows on the aa 01 keep-alive follow it, as their screens do** (the user's decision 17,
+  "Match the app"; `heartbeat_power`, Added). **H6076 / H8076 / R16D0** (straightfloorlamp 69), **H6069 / H8069**
+  (h6069 284), **H617G / R617G** (rgbiclight 351), **H618G / R618D** (352), **H7086** (h7086 293), **H7025 / H8025**
+  (h7020 296), **H7076** (h7076 313) and **H3700** (h3700 383), all admitted by default in 1.7.0, read the status on
+  every poll until now. Now a poll makes the 0xAC read once per link, and on a link it already read nothing goes out:
+  the power there follows each keep-alive reply, which stamps `Device.power_read_at` and reaches the callbacks. On
+  69, 284, 351 and 352 a reply that changes the power sends the screen's re-read at once on that link: `aa 05`, then
+  the `aa a5` groups (69: 1-2, 351 / 352: 1-4, both applied as the segments; 284: 1-35, the no-layout count, read and not
   applied). H703A / H703B (h61d3 263, behind `allow_modelled`) gain the re-read too (`aa 05`, `aa a5 01`, not
   applied). The other frames, the first poll's reads and the decoded state of a fresh link's poll are unchanged;
   their profiles also carry `color_readback_per_batch` 4 on the re-reading rows (it was 3, unused on a status row).
@@ -1588,9 +1591,11 @@ model, from which the shipped readers are generated).
   devices.schema.json's clientRow takes the boolean and the `{ pieces }` object (and gen_devices keeps both). The
   resolver serves `heartbeat_power` only on an unzoned status row whose `power_live` has `heartbeat_aa01`, and
   `heartbeat_reread` only with it and with the wire group's `num_per_group` (its aa a5 group size, which becomes
-  `DeviceProfile.color_readback_per_batch` there). Every status row on the aa 01 keep-alive says `heartbeat_power`
-  (the user's decision 17): straightfloorlamp 69, h6069 284, rgbiclight 351 / 352, h7086 293, h7020 296, h7076 313,
-  h3700 383 and h61d3 263, each `J3` re-traced (`I3` true, then `ShareVM.N3` -> `J3`). The four whose `J3` re-reads
+  `DeviceProfile.color_readback_per_batch` there). The rows the user's decision 17 named say `heartbeat_power`
+  (straightfloorlamp 69, h6069 284, rgbiclight 351 / 352, h7086 293, h7020 296, h7076 313, h3700 383), and so does
+  h61d3 263, each `J3` re-traced (`I3` true, then `ShareVM.N3` -> `J3`). h7020 316 / 318 / 337 / 391 / 411 run 296's
+  screen (`NewDetailVM.I3:735-742` true, `J3:744-756`) and don't say it, pending the user's decision; the schema's
+  description and `timing.heartbeat.deviations` name them. The four whose `J3` re-reads
   say `heartbeat_reread`, with the pieces the screen's walk takes: 7 on 69 (straightfloorlamp `VM4Light.p5` -> `t5`,
   `Support.getBulbStringMaxNum(69)` / `getOneGroupColorSize(69)` = 4), 140 on 284 (`CubeVM4Light.h5` -> `l5`:
   the stored shape layout's size, `CubeNewInfo4Detail.v`, from `CubeDataSource.d` through `CubeAcLightDetail.H3`,
