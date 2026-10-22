@@ -382,9 +382,8 @@ model, from which the shipped readers are generated).
   H1630 and R1630 (h1630 364) no longer send `aa 06` / `aa 07 03` / `aa 07 02` on their first poll, by the
   user's decision for these four (decision 22, 2026-10-22: "Match the app"; their screens send none, e.g.
   `H60B1ViewModel.W4`, which takes the versions from TLV 0x07).
-  - Each status row now names its `device_info_reads` (`devices.schema.json` clientRow). It is
-    required on every row with `status_read` and refused on any other row. It has two values, and the
-    build refuses any other:
+  - Each status row now names its `device_info_reads` (`devices.schema.json` clientRow). It is required on
+    every row with `status_read` and refused on any other row. It has two values; the build refuses any other:
     - `none`: the screen's connect read (`Compose4BaseInfoSingleRead`) queues no aa 06 / aa 07 read, and its
       success callback takes the soft and hard versions from the reply's TLV 0x07
       (`Compose4BaseInfoSingleRead.w`, then `k2(e(), d())`, which sets them through `Info4BleIotDevice.g1`).
@@ -567,11 +566,13 @@ model, from which the shipped readers are generated).
   records it in the doc only and the library is unchanged: `ColorModeH60A6.canClickBrightness:483-500` sends
   the selection as it is, except on pact (1, >= 3) (`Support.supportPartTem`) while a ring piece is selected
   and the 12 ring pieces show one Kelvin-table colour (`ColorModeH60A6.F` / `G`), when the mask covers the
-  whole ring 0-11 with piece 12 as picked. Modelling it is the user's decision. So is the Part-tab Kelvin of
-  the H60A6 and the H6047 (h6047 119, released), unchanged since 1.6.1 and now recorded in both rows' `doc`:
-  the app widens it to the whole ring once a ring piece is selected (`ColorModeH60A6.canClickColorTem` over
-  `F`) and to each bar touched (`ColorMode10Segment.canClickColorTem` with `q0` / `r0`), where
-  `set_segment_color_temp` sends the selection as it is.
+  whole ring 0-11 with piece 12 as picked. Modelling it is the user's decision. The Part-tab Kelvin of the
+  H60A6 and the H6047 (h6047 119, released), unchanged since 1.6.1, is now recorded in both rows' `doc`: the
+  app widens it to the whole ring once a ring piece is selected (`ColorModeH60A6.canClickColorTem` over `F`)
+  and to each bar touched (`ColorMode10Segment.canClickColorTem` with `q0` / `r0`), where
+  `set_segment_color_temp` sends the selection as it is. The user has decided to drop it on both rows instead
+  (decision 24, 2026-10-22: `segment_color_temp` false, zone Kelvin kept); that is not applied yet, as
+  `set_zone_color_temp` reads the field too.
 - **Screen facts on three held rows** (still without `support`; no SKU's profile changes):
   - h61d3 375 (H1A45): its colour config is traced after all. The 7.7.02 tables key 375 by the named
     constant `LightRecycleViewGesture.W`, which a search for the number missed. It is row 367's: the h60a6
@@ -685,9 +686,8 @@ model, from which the shipped readers are generated).
     that one, as on H60A6): their screens read 0x41's byte 1 and 0x05's byte 0 unguarded (`VM4LightH7070.X4`,
     `Info4DetailH7070.H`, `VM4LightH3860.U4`, `Info4DetailH3860.I`). h6092 283 (H7070) now states its status
     read; it stays held because pacts (1,2) and (2,1) add 0x42, a pact branch the library can't follow.
-  - `write_check_ic` (0x42) also names the H7073 effect-change switch that 333's status read
-    requests (`GET_NECESSARY_INFO` / `controller_type_lamp_effect_change`, `VM4LightH7070.X4`); its
-    value stays untyped.
+  - `write_check_ic` (0x42) also names the H7073 effect-change switch that 333's status read requests
+    (`GET_NECESSARY_INFO` / `controller_type_lamp_effect_change`, `VM4LightH7070.X4`); its value is untyped.
   - A known gap, named in the rows' `doc`: the same handlers read byte 0 of TLV 0x42 (333), 0x45 (401), 0x39
     (h70b6 329 / 341) and 0x7D / 0x7E (341), and H7073's 0x0c layout (`OperateModeInfoH7070.E`), unguarded, so
     an empty or short value fails the app's whole status read, while the library, with no form for them, still

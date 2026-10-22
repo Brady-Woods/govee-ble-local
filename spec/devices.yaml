@@ -833,15 +833,16 @@ families:
             as it is, except on pact (1, >= 3) (H -> Support.supportPartTem; the bench units advertise (1,3)) while a ring
             piece is selected (F) and the 12 ring pieces show one Kelvin-table colour (G -> ColorUtils.r): then the 15 02
             mask covers the whole ring 0-11, with piece 12 as picked. No fixed segment_brightness_groups says that, so the
-            row carries none and the library sends the selection's own bits. Also open for the user's decision, and as
-            it was at 1.6.1: the Part tab's Kelvin item widens a selection that holds a ring piece to the whole ring 0-11,
-            with piece 12 as picked (ColorModeH60A6.canClickColorTem:519-541 over F:140-150), where
-            set_segment_color_temp sends the selection as it is. Timing: the app reads the burst once per
-            connect and then keeps the link
-            with the aa 00 heartbeat and its ee 30 pushes. HARDWARE-VERIFIED on an H60A6 (bench 2026-10-12 to 2026-10-16):
-            the segment-map probe drove piece 12 (the main panel) and pieces 0-11 (the ring) to opposite colours and read them
-            back apart; 33 01 00 clears and 33 01 01 lights both zones; the 0xA3 diy_graffiti upload (live capture); control
-            with no secret (account_lock false; the app's control-screen path for it is not cited). HARDWARE-VERIFIED that a
+            row carries none and the library sends the selection's own bits. As at 1.6.1, the Part tab's Kelvin item
+            widens a selection that holds a ring piece to the whole ring 0-11, with piece 12 as picked
+            (ColorModeH60A6.canClickColorTem:519-541 over F:140-150), where set_segment_color_temp sends the selection
+            as it is. The user has decided (2026-10-22) to drop the Kelvin on a piece selection here (segment_color_temp
+            false), with the zones keeping theirs; not applied yet, as set_zone_color_temp reads the field too. Timing:
+            the app reads the burst once per connect and then keeps the link with the aa 00 heartbeat and its ee 30
+            pushes. HARDWARE-VERIFIED on an H60A6 (bench 2026-10-12 to 2026-10-16): the segment-map probe drove piece 12
+            (the main panel) and pieces 0-11 (the ring) to opposite colours and read them back apart; 33 01 00 clears
+            and 33 01 01 lights both zones; the 0xA3 diy_graffiti upload (live capture); control with no secret
+            (account_lock false; the app's control-screen path for it is not cited). HARDWARE-VERIFIED that a
             whole-fixture on restores every zone (2026-10-20, through Home Assistant, on the H60A6 'hall 8407', run file
             govee-apks library-audit/heartbeat-1.6.0/zone_restore_20261021_010747.json; the device's name and SKU are from
             Home Assistant's device registry, and the frames named are the ones the library builds for the run's light
@@ -1243,10 +1244,12 @@ families:
             not captured): with the left bar switched off (33 36 00 01) while the fixture was on, 33 01 00 then 33 01 01 lit
             both bars again, as the next poll's aa 36 read back; so did an off and on alone, and one after both bars were
             switched off with the fixture off. It is the firmware's model (FIRMWARE-SOURCED: the power handler sets both bar
-            flags from its byte, FUN_01004f32 @0x01004f5c-0x01004f60 -> FUN_01002720). Open for the user's decision, and
-            as it was at 1.6.1: the Part tab's Kelvin item widens the selection to each bar it touches, 0-4 and 5-9
-            (DetailConfig's strip ColorMode10Segment; its canClickColorTem:655-690 with q0:799-801 / r0:803-805 over
-            p0:425-436), where set_segment_color_temp sends the selection as it is.
+            flags from its byte, FUN_01004f32 @0x01004f5c-0x01004f60 -> FUN_01002720). As at 1.6.1, the Part tab's Kelvin
+            item widens the selection to each bar it touches, 0-4 and 5-9 (DetailConfig's strip ColorMode10Segment; its
+            canClickColorTem:655-690 with q0:799-801 / r0:803-805 over p0:425-436), where set_segment_color_temp sends the
+            selection as it is. The user has decided (2026-10-22) to drop the Kelvin on a piece selection here
+            (segment_color_temp false), with the bars keeping theirs; not applied yet, as set_zone_color_temp reads the
+            field too.
           doc-ref:
             - split_h6047/com/govee/h6047/pact/Support.java:43-45,121-129,186-188,345-350
             - split_h6047/com/govee/h6047/detail/config/DetailConfig.java:100-108
@@ -13058,11 +13061,11 @@ families:
             strategy [r, g, b][kelvin s16be]), TLV 0x41 the power-off memory (value[1]), TLV 0x39 the direction, TLV 0x40
             byte 0 the device count. At pact (1,1) the connect is r6 (AfterConnectSuccessReadDeviceInfo: aa 06 / aa 07 /
             33 09 / timer / wake / sleep reads, aa 04, aa 01, aa 05, aa 40), a polled read-back this row can't also carry:
-            (1,1) is left out. Nothing but the pact tells a (1,1) unit apart (Support.N is false there, so
-            VM4H70B345.d0 runs r6), so the row is pact_required: profile_for, is_supported_sku, make_device and
-            create_device take it only on an advertised pact (profile._accepts), and a pact-less record, which may be a
-            (1,1) unit, is refused rather than given this status profile. Power: switchTrigger writes the one
-            ControllerSwitch (33 01); no zone switch (zones none).
+            (1,1) is left out. Nothing but the pact tells a (1,1) unit apart (Support.N is false there, so VM4H70B345.d0
+            runs r6), so the row is pact_required: with allow_modelled, profile_for, is_supported_sku and create_device
+            take it only on an advertised pact (profile._accepts), and a pact-less record, which may be a (1,1) unit, is
+            refused rather than given this status profile (make_device takes no allow_modelled, so it never builds this
+            modelled row). Power: switchTrigger writes the one ControllerSwitch (33 01); no zone switch (zones none).
             Brightness: BrightnessConfig.b -> 33 04 <pct>, no BrightnessConfig key -> version 1 = [1, 100]. Colour: the
             shared ColorViewModel -> ColorModeControllerConfig.c -> Config.F (no SKU key; Config.x[229] = 2) -> Config.J[2]
             = bu: Bytes.f (33 05 0d R G B) or, for a colour that is a Kelvin tint in range (KelvinConfig.i), Bytes.p
