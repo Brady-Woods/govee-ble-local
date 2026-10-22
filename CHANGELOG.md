@@ -222,7 +222,8 @@ model, from which the shipped readers are generated).
   `allow_modelled`.** `VM4Light.N5` reads `N / g + (N % g != 0)` `aa a5` groups (Java division, none below 1) and
   keeps the first N pieces, N being the aa 40 reply's two section bytes summed as Java bytes (`ControllerIcNum.d`
   -> `ControllerStrategyConfig.R1`), or the static count (15 / 18) when the sum is 0. Where that reader throws (an
-  IC field of 0x1000 or more) the app walks nothing, and now neither does the library. New
+  IC field of 0x1000 or more) the app walks nothing, and now neither does the library, nor when the aa 40 read
+  goes unanswered (it has no count to size the walk with). New
   `DeviceProfile.color_readback_ic_sections` (keyword-only, default False; devices.yaml `ic_pieces: sections`). The
   aa 40 read keeps its place in the poll. The frames are the ones sent before for a section sum of 0 or 13-15 on
   141 (groups of 3, 15 static; the bench H61C3 reads 0) and of 0 or 17-20 on 204 (groups of 4, 18 static).
@@ -327,7 +328,12 @@ model, from which the shipped readers are generated).
 - The `legacy_02` scheme changes no other SKU: each of the 308 the table admitted before it (236 by default,
   72 behind `allow_modelled`) resolves to the same profile, field by field, at every pact its rows list, at
   (99, 99) and at none, with and without `allow_modelled`; the 10 `legacy_02` SKUs (Added) are the only new
-  routes.
+  routes. One state rule it adds is not scheme-bound: a profile without `COLOR_TEMP` keeps an RGB pick that is a
+  Kelvin tint colour as `rgb_color`, though its frame is the colour-temperature form, as the colour page keeps
+  the picked colours (`ColorViewModel.u0`: `SubMode4Color.p`) and `syncKelvin` moves only an illumination tab
+  (rgblight `VM4Light.syncKelvin`). Of the SKUs admitted before, only H6113 at its BK pacts (h6113 39, the h6188
+  frames without colour temperature, the rgblight screen) has such a profile: after a pick of a tint colour in
+  [2000, 9000] its state now holds that colour where it held the Kelvin. Its frames are unchanged.
 - The colour-temperature work changes no other SKU: each of the 318 the table admitted before it (246 by
   default, 72 behind `allow_modelled`) but H60A4 / H80A4 resolves to the same profile, field by field, at every
   pact its rows list, at (99, 99) and at none, with and without `allow_modelled` (`white_type="rgb_white"`,
