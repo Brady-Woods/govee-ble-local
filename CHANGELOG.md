@@ -371,7 +371,8 @@ model, from which the shipped readers are generated).
     `_resolve.sku_support` gives a route's level.
   - **H70C9 / H7084 / H6871 / R6871** and, by the catalogue, **H80C5** (260) are promoted to the default table
     (`app_traced`): their walk and writes are the static 20 / 10 / 15 / 15 / 10 pieces at any IC, as the app's.
-    Their profiles are unchanged.
+    Their profiles are unchanged but for `DeviceProfile.skus`: H7084 and H80C5 no longer share theirs with
+    the five IC-gated SKUs below (a grouping change; every other field, and every frame, is the same).
   - **H70C4 / H70C5 / H70C7 / H6870 / H80C4** stay behind `allow_modelled`, now walking 20 pieces (5 groups)
     at IC 1000, whose read-back is not applied (above), and 10 otherwise, the writes still 10. They are
     modelled for one inferred fact, as H6609 (173): the app's IC there is the one its pairing aa 40 read stored
@@ -423,12 +424,15 @@ model, from which the shipped readers are generated).
     low-blue-light read `aa ba 01` from soft 3.00.57.
 
   Both rows: power, brightness, RGB, colour temperature ([2000, 9000]), segments (15 pieces, `15 02`) and the
-  gradual flag on the h60a6 frames, an aa 01 keep-alive, and the reads in the library's poll order (aa 05 before
-  aa 40, as on H61A9). Part brightness is on for every SKU here (none is in the firmware-gated `g1` / `i1`
-  lists), so the records carry brightness. Source-traced, not live-verified: none of these SKUs is on the
-  bench. No Bluetooth was used. H6171 (barelightv1 17, the fourth `supportBindWithIcNum` SKU) stays off its row:
-  that row reads the groups as `bulb_batch_v2` batches, whose walk has no section sum, and moving H6145 / H6146 /
-  H6147 to the direct walk would change admitted SKUs' read-back.
+  gradual flag on the h60a6 frames, an aa 01 keep-alive, and the reads in the library's fixed poll order, as on
+  rgbiclight 141 and H61A9: aa 05 before aa 40, aa a3 after the aa a5 walk and the device-info reads last, where
+  the app sends aa a3, aa 40, then aa 05 and the walk (`ControllerStrategyConfig.E1`), an order divergence each
+  row's doc names; following the app's connect order is a library-wide item. Part brightness is on for every SKU
+  here (none is in the firmware-gated `g1` / `i1` lists), so the records carry brightness. Source-traced, not
+  live-verified: none of these SKUs is on the bench. No Bluetooth was used. H6171 (barelightv1 17, the fourth
+  `supportBindWithIcNum` SKU) stays off its row: that row reads the groups as `bulb_batch_v2` batches, whose
+  walk has no section sum, and moving H6145 / H6146 / H6147 to the direct walk would change admitted SKUs'
+  read-back.
 
 ### Changed
 - **A polled profile reads aa 04 only with `Capability.BRIGHTNESS`**, as the app's connect read does
@@ -440,12 +444,14 @@ model, from which the shipped readers are generated).
 - Nothing else for existing SKUs (H6188's colour temperature and H6061's whole-device RGB are under Fixed).
   Each other SKU of the 104 admitted at 1.6.1 (98 by default, 6 behind `allow_modelled`) resolves to the same
   profile at every pact its rows list and at none, with and without `allow_modelled`, so its frames and decoded
-  state are unchanged. Where a new SKU has the same facts it joins that SKU's profile (`DeviceProfile.skus`): H6118 / H6179 / H6194 with H6005, H6099 with H6098 / H8098 /
-  H6690, H70A1-3 with H6176 / H61BC, H61B0 with H61B3 / H61B6, H14C0 / H14C1 / R14C0 / R14C1 with
-  H600A-H600D / H6011 / H6013 / H800B (H600A stays first), H6145-7 with H617C / H617E / H617F / H6168. H6099
-  and H61B0 come first in theirs, so a `Device` built from one of those profiles without `sku=` names itself
-  after them (`create_device` and `make_device` always pass the SKU). The pact gate on the BK rows (Added) is
-  new routing for new SKUs only: no SKU it covers was supported at 1.6.1.
+  state are unchanged. Where a new SKU has the same facts it joins that SKU's profile (`DeviceProfile.skus`):
+  H6118 / H6179 / H6194 with H6005, H6099 with H6098 / H8098 / H6690, H70A1-3 and thirteen dreamcolorlightv1 71
+  / 123 SKUs (H618C / H619B / H619C / H619D / H619E / H61A3 / H61A5 / H6172 / H6173 / H618E / H618F / H61B2 /
+  H80B5) with H6176 / H61BC, H61B0 with H61B3 / H61B6, H14C0 / H14C1 / R14C0 / R14C1 with H600A-H600D / H6011 /
+  H6013 / H800B (H600A stays first), H6145-7 with H617C / H617E / H617F / H6168. H6099 and H61B0 come first in
+  theirs, so a `Device` built from one of those profiles without `sku=` names itself after them (`create_device`
+  and `make_device` always pass the SKU). The pact gate on the BK rows (Added) is new routing for new SKUs only:
+  no SKU it covers was supported at 1.6.1.
 - The resolver serves `power_live: heartbeat_aa01` on a status row (`power_read: ac_status`), not only on a
   polled one. The library folds no keep-alive reply on either kind: the poll's own power read stands in for
   it, aa 01 on a polled row and the status read's TLV 0x01 on a status row. `power_live` is a resolver gate
