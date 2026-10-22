@@ -120,9 +120,18 @@ model, from which the shipped readers are generated).
     gradual `33 a3`, `15 02` segment brightness and Kelvin [1000, 10000]. Only the two-IC piece count holds it.
   - h6160 19 (H6163 / H6117) and h6127 17 (H6116 / H6127 / H6161): 15 pieces each (the bytecode of
     `ColorPieceConfig.n`, whose decompile is broken), the aa a5 / aa a2 read-back gate, and the gradual and
-    segment-brightness flags; h6160 19 also gets its aa 01 power read and keep-alive. Both stay held by their
-    firmware-gated routes. A scratch stand-in (support added, the gates dropped) resolves H6163 at (2,1) to
-    H61A8's profile but for its scenes and its SKU-keyed Kelvin.
+    segment-brightness flags; h6160 19 also gets its aa 01 power read and keep-alive. Both stay held, and not
+    by their firmware-gated routes alone:
+    - h6160 19 is also held by the family's H6163 / H6117 `by_model` entries. They are the old-hardware
+      (row 0) decode, a `mode_color_parse` with a firmware branch, but `by_model` applies family-wide, so it
+      reaches row 19 too. It has to move to row 0, or be restructured, before row 19 can take support.
+    - h6127 17 is also held by its (1,1) / (1,2) `by_pact` connect reads (aa 14, aa a2), which the library
+      doesn't serve.
+    - A scratch stand-in gave each row support and dropped its gate, and also the `by_model` entries (19) or
+      the (1,x) pacts and their branches (17). With that, H6163 at (2,1) resolves to H61A8's facts except its
+      scenes, its SKU-keyed Kelvin and `mode_reports_kelvin`, and H6116 at (10,1) to 15 segments,
+      bulb_batch_v2, gradual and [2000, 9000]. A stand-in that drops only the gates is refused by the
+      generator.
 - **Doc corrections** (no frame, read or profile changes):
   - `mode_color_parse.kelvin_15`: the library reads the 0x15 Kelvin signed, as the app's screens do (the
     stale "reads it unsigned, gap item 16" note is gone; only the 1.x `rgb_kelvin` default reads unsigned).

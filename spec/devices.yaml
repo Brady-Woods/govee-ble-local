@@ -3866,7 +3866,11 @@ families:
             frame. Segment brightness: Config.y wV / xV = 0 (15 02) at pact >= (2,1), or at hard >= 1.00.02 with soft >=
             1.06.00, else -1. Gradual: checkGradualBytesVersion reads Config.G[19] at goodsType != 0, VK = 0 for every
             SKU, so 33 a3, and supportGradual(19) adds the aa a3 read, as on H61A8. The row states the soft >= 1.06.00
-            branch. Not hardware-verified.
+            branch. The route isn't all that holds it. The family's by_model H6163 / H6117 entries (below) are the
+            old-hardware (< 1.00.02, row 0) decode, rgb_flag_tint_no_0d with a firmware branch. by_model applies
+            family-wide, so they reach this row too, where the parse is kelvin, and the resolver refuses both a by_model
+            firmware branch and a by_model fact under the row's own. They have to move to row 0, or the layer be
+            restructured, before this row can take support. Not hardware-verified.
           doc-ref:
             - split_rgbiclight/com/govee/rgbiclight/h6160/sku/Model.java:50-70
             - base-classes9/com/govee/base2home/pact/support/OldDreamColorUtil.java:100-104
