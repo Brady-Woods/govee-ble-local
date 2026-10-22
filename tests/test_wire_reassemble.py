@@ -130,14 +130,13 @@ def test_duplicate_chunks_collapse() -> None:
 
 
 # The ac a1 special-info read (goodsType 180): its reply, matched on bytes 5 / 6 = a1 0b, is [segments][IC per
-# segment ...] (ControllerReadSpecialInfoMultiBack.Companion.k, Info4Detail.z0). Hex goldens, XOR at byte 19.
-_SEG6 = "ac00010007a10b060a0a0a0a0a0a000000000006"                   # one packet: 6 segments, IC 10 each
+# segment ...] (ControllerReadSpecialInfoMultiBack.Companion.k, Info4Detail.z0). Hex goldens, XOR at byte 19;
+# the one-packet reply is test_h6062's, through Device.update().
 _SEG12 = ["ac00020001a10b0c05050505050505050505050c",                # two: 12 data bytes, then lastLen 1
           "acff050000000000000000000000000000000056"]
 
 
 @pytest.mark.parametrize(("frames", "count"), [
-    ([_SEG6], 6),
     (_SEG12, 12),
     (_SEG12[:1], None),                                       # the last packet lost: the read never ends
     (["ac00010000a10b00000000000000000000000007"], None),     # an empty payload: z0 stores nothing

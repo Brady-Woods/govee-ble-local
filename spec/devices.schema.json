@@ -420,7 +420,7 @@
               },
               "description": "ceil(clamp(IC, min_ic, max_ic) / ic_per_piece) pieces."
             },
-            { "const": "fixed", "description": "The IC count sizes nothing: the screen's piece count is fixed (the row's static pieces)." },
+            { "const": "fixed", "description": "The aa 40 IC count does not size the pieces: the screen reads it and the library discards it. The pieces are the row's static count, or, with the special_info connect read, the segment count the device reports (goodsType 180)." },
             { "const": "sections", "description": "The read-back walks the aa 40 reply's two section bytes summed as Java bytes (govee_state ic_count section_sum, as the sectioned IC-pair reader ControllerIcNum.d passes them on) when the sum is not 0, else the row's static pieces, in Java's sum / group + (sum % group != 0) groups (none below 1); no walk where the reader throws (rgbiclight VM4Light.N5). Writes keep the static pieces." }
           ],
           "description": "The colour pieces from the IC count read at connect (connect_reads ic_num)."

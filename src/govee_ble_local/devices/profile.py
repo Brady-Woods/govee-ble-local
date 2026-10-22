@@ -327,10 +327,11 @@ class DeviceProfile:
     ic_num_read_only: bool = field(default=False, kw_only=True)
     """Ignored with :attr:`color_readback_live_ic` or :attr:`color_readback_ic_sections`. Without them: the
     screen reads the ``aa 40`` IC count at
-    connect, but its piece count is fixed (``getColorPieceSize`` whatever the IC: h6609 goodsType 181), so
+    connect, but it does not size the pieces (``getColorPieceSize`` whatever the IC: h6609 goodsType 181), so
     :meth:`~.device.Device.update` reads it on every poll, before the colour read-back as the screen reads
-    it before the ``aa a5`` groups, and discards the reply; the read-back walks the static pieces (a
-    devices.yaml row with ``ic_pieces: fixed``)."""
+    it before the ``aa a5`` groups, and discards the reply; the read-back walks the static pieces, or with
+    :attr:`special_info_read` the segment count the device reports (goodsType 180; a devices.yaml row with
+    ``ic_pieces: fixed``)."""
     scene_power_on: bool = field(default=False, kw_only=True)
     """A scene write is led by the power-on switch (``33 01 01``) unless the device is known to be on: the
     screen prepends it to a scene apply while its stored switch state is off, and an unknown state reads as

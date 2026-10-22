@@ -119,7 +119,8 @@ the row lacks fails the build: nothing defaults silently.
   ``ic_num`` read goes with ``ic_pieces`` and the direct colour read-back: it sizes the read-back's pieces
   (H6641), or, with ``ic_pieces: sections``, its two section bytes do
   (``DeviceProfile.color_readback_ic_sections``), or, with ``ic_pieces: fixed``, it is made on every poll and
-  discarded (``DeviceProfile.ic_num_read_only``: a fixed piece count). A ``special_info`` read (the 0xAC
+  discarded (``DeviceProfile.ic_num_read_only``: the pieces are the static count, or the ``special_info``
+  read's). A ``special_info`` read (the 0xAC
   special-info read ``ac a1``, whose segment IC record gives the device's segment count, the goodsType
   180 screen's: ``DeviceProfile.special_info_read``) sizes the masks and the walk as the aa 41 section
   count does, so it goes on a polled row with ``segments``, never with that read or an IC-sized

@@ -321,7 +321,12 @@ model, from which the shipped readers are generated).
   gradual. The read-back is `aa 01`, `aa 04`, `ac a1`, `aa 05`, the discarded `aa 40`, the `aa a5` walk with
   the Kelvin from its pieces, and `aa a3`. `modelled` for one gap, which the row's `doc` names: the app's colour
   page refuses a segment-brightness pick while a selected piece shows a Kelvin tint colour, and the library
-  sends it. Not hardware-verified (none is on the bench).
+  sends it. Not hardware-verified (none is on the bench). Their `DeviceProfile.segments` is 12, only the bound
+  (the segment-settings page's most), as the H6062's 33 is: the unit's own count (the app's defaults are 6 on
+  H706A / H806A, 9 on H706B, 12 on H706C / H806C) is `Device.segment_count` once a poll has read it, and a
+  segment index at or past it raises. An integration that makes one entity per `profile.segments`
+  (hass-govee-ble-local's segment lights, disabled by default) offers 12, those past the unit's count
+  unusable, until it sizes them from `Device.segment_count`.
 
 ### Changed
 - **A polled profile reads aa 04 only with `Capability.BRIGHTNESS`**, as the app's connect read does
@@ -635,7 +640,9 @@ model, from which the shipped readers are generated).
   0xAC, not `aa a1 0b` (0x0B is only the reply's sub), and it has callers (`govee_commands.read_special_info_a1`
   and OPCODE_COVERAGE's 0xa1 row said none): goodsType 180's connect read and its refreshes, and H707A-C's
   refresh after its segment page. h705a 180 lists the read, `aa 40` as `ic_pieces: fixed` and a 12-segment
-  bound (the segment-settings page's most).
+  bound (the segment-settings page's most). devices.schema.json's `ic_pieces: fixed` (and
+  `DeviceProfile.ic_num_read_only`) now says what it means on that row too: the aa 40 count does not size the
+  pieces, which are the row's static count or, with the `special_info` read, the device-reported one.
 - **`clientRow.kelvin_readback`** (`pieces`; absent = the mode report's Kelvin): the screen reads its
   colour-temperature state from the read-back's pieces (goodsType 180's `VM4Light.g5` -> `ColorUtils.r`); the
   resolver takes it with `color_temp` and the direct colour read-back only, on a polled row whose walk is not
