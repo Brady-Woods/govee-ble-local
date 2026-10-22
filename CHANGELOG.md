@@ -32,8 +32,8 @@ model, from which the shipped readers are generated).
     can't grow a field without a MAJOR. Released Home Assistant integrations import both, so both keep their
     signatures and results through 1.x; a new way of reading a merged record goes in a new function.
     Discovery keeps the name gate as before.
-- **158 more SKUs, traced from the app's device list** (spec rows only; no library code changed but one
-  row fact, below: segment colour temperature): 97 admitted
+- **158 more SKUs, traced from the app's device list** (spec rows only; no library code changed but two
+  row facts, below: segment colour temperature and the segment-brightness groups): 97 admitted
   by default (`app_traced`) and 61 behind `allow_modelled` (`modelled`). The entries below admit 39 more by
   default (16 through the resolver changes; H1162 / H1163 / H1167 / H1168, H70B1 and H70BC; and 17 through the
   status-read command ids and the BK pact gate) and 7 more behind `allow_modelled` (H7072, H6119 and the five
@@ -197,6 +197,16 @@ model, from which the shipped readers are generated).
   `power.light_nonzero`). That decoder was all the rows waited for; every core frame was traced. The app's
   live `ee 30` power push is traced too (`power_live: [push_30]`), but the library doesn't read `ee 30` pushes
   yet. Splicing, the aa 39 direction read and scenes are not modelled. Not hardware-verified.
+- **`DeviceProfile.segment_brightness_groups`** (keyword-only, default `()`): disjoint groups of segment
+  indices. On a profile with groups, `Device.set_segment_brightness` sends the `33 05 15 02` mask over every
+  segment of each group that holds a requested index, and folds the brightness into `state.segments` over that
+  same set. That is what the colour strips of these screens do before the write, with the groups {0-2}, {3-6},
+  {7-9} and {10-13}: `ColorMode14Rect4ReverseSelect.canClickBrightness`, `H605CColorMode.canClickBrightness`
+  and the H6097 `ColorMode.canClickBrightness`, via `DelegateColorV2Part.U` -> `DelegateColorV2.Z0` ->
+  `ColorViewModel.m0`. A devices.yaml row sets it with `segment_brightness_groups` (Spec, below). The new SKUs
+  of pact_h605b 120 / 142 / 243 / 360 and pact_h6099 191 / 273 / 327 (H605C, H6602, H6604 / H8604, H2A40 /
+  H2A41, H6099, H6097, H66A0 / H66A1 / R2A80 / R2A81) get it as they are admitted, and so do three released
+  SKUs (Fixed, below). No other profile has groups, so every other segment-brightness frame is unchanged.
 
 ### Changed
 - **A polled profile reads aa 04 only with `Capability.BRIGHTNESS`**, as the app's connect read does
@@ -240,8 +250,9 @@ model, from which the shipped readers are generated).
   behind `allow_modelled`); in all, 110 SKUs have none (85 / 25) and 65 keep it (37 / 28). Source-traced
   (Govee Home 7.7.02), not live-verified. H61A8's bench check (2026-10-17) sent its Kelvin over all 15 segments
   only, so no hardware observation supports a masked Kelvin on these rows.
-- Nothing else for existing SKUs (H6188's colour temperature and H6061's whole-device RGB are under Fixed, and
-  the 40 SKUs without segment colour temperature are above). Each other SKU of the 104 admitted at 1.6.1 (98
+- Nothing else for existing SKUs (H6188's colour temperature, H6061's whole-device RGB and the segment
+  brightness of H6098 / H8098 / H6690 are under Fixed, and the 40 SKUs without segment colour temperature
+  are above). Each other SKU of the 104 admitted at 1.6.1 (98
   by default, 6 behind `allow_modelled`) resolves to the same profile at every pact its rows list and at none,
   with and without `allow_modelled`, so its frames and decoded state are unchanged. Where a new SKU has the
   same facts it joins that SKU's profile (`DeviceProfile.skus`): H6118 / H6179 / H6194 with H6005, H6099 with
@@ -298,6 +309,22 @@ model, from which the shipped readers are generated).
   (it raised GoveeBleNotSupported) and takes `pieces=` as `color_temp` does; `build.color_rgb_frames` returns
   one frame on every scheme. Source-modelled: no H6061 is on the bench, so this is checked against the app's
   code only.
+- **H6098 / H8098 (pact_h6099 203) and H6690 (336): segment brightness now covers the app's groups.** Their
+  screen's colour strip, the `ColorMode14Rect4ReverseSelect` that pact_h6099's `DetailConfig` builds for 191 /
+  203 / 327 / 336, widens any piece selection to whole groups {0-2}, {3-6}, {7-9} and {10-13} before the
+  `33 05 15 02` write (`ColorMode14Rect4ReverseSelect.canClickBrightness` -> `DelegateColorV2Part.U` ->
+  `DelegateColorV2.Z0` -> `ColorViewModel.m0`, which also folds the brightness over the widened set). 1.6.1 sent
+  the selection's own bits: `set_segment_brightness([0], ...)` sent mask `01 00` where the app sends `07 00`,
+  and `[3]` sent `08 00` where the app sends `78 00`. The library now sends the app's mask and sets that
+  brightness on every segment of the widened set in `state.segments`. So in Home Assistant a brightness change
+  on one segment entity also moves the other segments of its group, as it does in the app. Only the `15 02`
+  frame's mask bytes and checksum change; every other frame, read and decode is as before. Source-traced (Govee
+  Home 7.7.02), not live-verified: none of these SKUs is on the bench. A follow-up, not changed here: an empty
+  selection still sends a zero-mask frame (`33 05 15 02 [pct] 00 00`), on these SKUs and every other
+  segment-brightness profile, where the app's strips show a toast and send nothing (`canClickBrightness`
+  returns null for an empty set: `ColorMode14Rect4ReverseSelect.canClickBrightness:380-383` via `e0:480-482`,
+  `H605CColorMode.canClickBrightness:497-500`, and the H60A6's `ColorModeH60A6.canClickBrightness:484-487` via
+  `X:399-401`).
 
 ### Spec
 - **The device-list trace (Govee Home 7.7.02; 7.5.12 where a family says so).** Each of the 83 census families
@@ -356,6 +383,25 @@ model, from which the shipped readers are generated).
     and the device info, never aa 04 or aa 05: `ControllerStrategyConfig.k1`, `VM4Light.supportBrightness`
     false), and held without `support` until the user decides whether a power-only grow light ships before
     its red:blue control (`33 0d`, aa 0d).
+- **`segment_brightness_groups`, a clientRow fact** (devices.schema.json): the disjoint groups the colour
+  page's segment-brightness slider widens a selection to before the `33 05 15 02` write (Bytes.G), which
+  becomes `DeviceProfile.segment_brightness_groups`. The resolver serves it only on a row with that frame
+  (`segments` on an `h60a6` row), as disjoint groups of the row's segments. `govee_ble_frame` `op15_brightness`
+  now says its mask is the strip's position set, which some strips widen. Nine admitted rows carry {0-2} /
+  {3-6} / {7-9} / {10-13}, each traced to the strip its screen builds: pact_h605b 120 (`H605CColorMode`, from
+  `DetailConfig`), 142 / 243 (`ColorMode14Rect4ReverseSelect`, from `HdmiDetailConfig`) and 360 (the same strip,
+  from `DetailConfigH2A40`), and pact_h6099 191 / 203 / 327 / 336 (the same strip, from `DetailConfig`) and 273
+  (the H6097 `ColorMode`, from `H6097DetailConfig`). Each row cites its strip's whole `canClickBrightness`,
+  through the return that hands the widened set on (H605C: `H605CColorMode.java:496-539`, which had stopped
+  at :536, short of the return at :538). The row docs that called these strips' frames
+  byte-identical to the h60a6 scheme (the pact_h6099 `color_scheme` note) or left the widening out now say
+  that the `15 02` mask is the widened set. The held rows whose strips widen too (pact_h605b 82 / 138 / 172 /
+  192, pact_h6099 253, h6609 173) keep no groups until they are admitted. The H60A6's strip (h60a6 303,
+  released) widens too, but by colour state rather than by fixed groups, so its row records it in the doc
+  only and the library is unchanged: `ColorModeH60A6.canClickBrightness:483-500` sends the selection as it is,
+  except on pact (1, >= 3) (`Support.supportPartTem`) while a ring piece is selected and the 12 ring pieces
+  show one Kelvin-table colour (`ColorModeH60A6.F` / `G`), when the mask covers the whole ring 0-11 with piece
+  12 as picked. Modelling it is the user's decision.
 - **Screen facts on three held rows** (still without `support`; no SKU's profile changes):
   - h61d3 375 (H1A45): its colour config is traced after all. The 7.7.02 tables key 375 by the named constant
     `LightRecycleViewGesture.W`, which a search for the number missed. It is row 367's: the h60a6 `15 01` frames,

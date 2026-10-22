@@ -170,6 +170,21 @@ def test_segment_brightness_is_clamped_to_the_sliders_1_to_100(pct: int, sent: i
     assert {s.index: s.brightness for s in d.state.segments} == {12: sent}
 
 
+@pytest.mark.parametrize(("indices", "mask", "folded"), [
+    ([0], 0x0007, [0, 1, 2]), ([3], 0x0078, [3, 4, 5, 6]), ([2, 10, 2], 0x3C07, [0, 1, 2, 10, 11, 12, 13])])
+def test_segment_brightness_widens_to_the_strips_groups(indices: list[int], mask: int,
+                                                        folded: list[int]) -> None:
+    # ColorMode14Rect4ReverseSelect.canClickBrightness:379-421 sets every piece of each group {0-2} / {3-6} /
+    # {7-9} / {10-13} holding a selected one before the 15 02 write (DelegateColorV2Part.U:217-230 ->
+    # ColorViewModel.m0, which folds that set): the profile's segment_brightness_groups.
+    d = _dev("H6098")
+    asyncio.run(d.set_segment_brightness(indices, 40))
+    assert _sent(d)[-1][:7] == bytes([0x33, 0x05, 0x15, 0x02, 40]) + mask.to_bytes(2, "little")
+    assert {s.index: s.brightness for s in d.state.segments} == dict.fromkeys(folded, 40)
+    with pytest.raises(GoveeBleInvalidValue, match="segment_brightness_groups"):
+        dataclasses.replace(d.profile, segment_brightness_groups=((0, 1), (1,)))
+
+
 def test_zone_bar_vs_direct() -> None:
     h60a6 = _dev("H60A6")            # per-zone 33 30
     asyncio.run(h60a6.set_zone_power("background", False))
