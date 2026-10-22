@@ -14636,7 +14636,7 @@ families:
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments, gradual]
           zones: []
-          segment_brightness_groups: [[0, 1, 2], [3, 4, 5, 6], [7, 8, 9], [10, 11, 12, 13]]   # H605CColorMode.canClickBrightness (split_h6099/com/govee/pact_h605b/newdetail/mode/H605CColorMode.java:272-299,496-536)
+          segment_brightness_groups: [[0, 1, 2], [3, 4, 5, 6], [7, 8, 9], [10, 11, 12, 13]]   # H605CColorMode.canClickBrightness (split_h6099/com/govee/pact_h605b/newdetail/mode/H605CColorMode.java:272-299,496-539)
           account_lock: false
           scene_dialect: untraced
           kelvin_range: [2000, 9000]
@@ -14681,7 +14681,7 @@ families:
             - split_h6099/com/govee/pact_h605b/newdetail/viewmodel/NewDetailVm.java:276-327,367-399,952-975,1472-1480,1647-1681
             - split_h6099/com/govee/pact_h605b/newdetail/Info4Detail.java:174-186,276-278,762-790
             - split_h6099/com/govee/pact_h605b/ble/controller/compose/ControllerIcNum.java:29-40
-            - split_h6099/com/govee/pact_h605b/newdetail/mode/H605CColorMode.java:272-299,496-536,557-565
+            - split_h6099/com/govee/pact_h605b/newdetail/mode/H605CColorMode.java:272-299,496-539,557-565
             - base-classes11/com/govee/base2light/pact/newdetail/content/colorv2/DelegateColorV2Part.java:217-230
             - base-classes11/com/govee/base2light/pact/newdetail/content/colorv2/DelegateColorV2.java:490-496,1046-1050
             - base-classes11/com/govee/base2light/pact/newdetail/content/color/ColorViewModel.java:1283-1345

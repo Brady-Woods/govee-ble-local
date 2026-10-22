@@ -316,7 +316,9 @@ model, from which the shipped readers are generated).
   {3-6} / {7-9} / {10-13}, each traced to the strip its screen builds: pact_h605b 120 (`H605CColorMode`, from
   `DetailConfig`), 142 / 243 (`ColorMode14Rect4ReverseSelect`, from `HdmiDetailConfig`) and 360 (the same strip,
   from `DetailConfigH2A40`), and pact_h6099 191 / 203 / 327 / 336 (the same strip, from `DetailConfig`) and 273
-  (the H6097 `ColorMode`, from `H6097DetailConfig`). The row docs that called these strips' frames
+  (the H6097 `ColorMode`, from `H6097DetailConfig`). Each row cites its strip's whole `canClickBrightness`,
+  through the return that hands the widened set on (H605C: `H605CColorMode.java:496-539`, which had stopped
+  at :536, short of the return at :538). The row docs that called these strips' frames
   byte-identical to the h60a6 scheme (the pact_h6099 `color_scheme` note) or left the widening out now say
   that the `15 02` mask is the widened set. The held rows whose strips widen too (pact_h605b 82 / 138 / 172 /
   192, pact_h6099 253, h6609 173) keep no groups until they are admitted.
