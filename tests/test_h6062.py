@@ -338,18 +338,21 @@ def test_the_special_info_read_sizes_the_masks_and_the_walk() -> None:
     assert silent.sent == []
 
 
+# kelvin: (the Kelvin shown, the Kelvin held): g5 stores the pieces' Kelvin as the colour mode's and syncs a
+# non-zero one as the held Kelvin whatever the mode (VM4Light.g5); aa 05 stored its own first (Info4Detail.V).
 @pytest.mark.parametrize(("colours", "mode", "lost", "kelvin"), [
-    ([_TINT_4000] * 6, "15010bb8", None, 4000),                  # one tint colour: its Kelvin, over aa 05's
-    ([(0xFF, 0x33, 0x00)] * 6, "15010fa0", None, 1000),          # the whole table, below the row's 2200
-    ([_TINT_4000] * 5 + [(0xFF, 0xD1, 0xA3)], "15010fa0", None, None),   # 4000 K's other colour: not one
-    ([(1, 2, 3)] * 6, "15010fa0", None, None),                   # no tint: none, though aa 05 said 4000
-    ([_TINT_4000] * 6, "15010bb8", 2, 3000),                     # a lost group: aa 05's 3000 stands
-    ([_TINT_4000] * 6, "040100", None, None),                    # a scene shows no colour temperature
+    ([_TINT_4000] * 6, "15010bb8", None, (4000, 4000)),          # one tint colour: its Kelvin, over aa 05's
+    ([(0xFF, 0x33, 0x00)] * 6, "15010fa0", None, (1000, 1000)),  # the whole table, below the row's 2200
+    ([_TINT_4000] * 5 + [(0xFF, 0xD1, 0xA3)], "15010fa0", None, (None, 4000)),   # 4000 K's other colour
+    ([(1, 2, 3)] * 6, "15010fa0", None, (None, 4000)),           # no tint: none shown; aa 05's 4000 held
+    ([_TINT_4000] * 6, "15010bb8", 2, (3000, 3000)),             # a lost group: aa 05's 3000 stands
+    ([_TINT_4000] * 6, "040100", None, (None, 4000)),            # a scene shows no colour temperature
+    ([_TINT_4000] * 6, "1300000000", None, (None, 4000)),        # nor does music
 ])
-def test_the_kelvin_reads_back_from_the_pieces(
-        colours: list[tuple[int, int, int]], mode: str, lost: int | None, kelvin: int | None) -> None:
+def test_the_kelvin_reads_back_from_the_pieces(colours: list[tuple[int, int, int]], mode: str,
+                                               lost: int | None, kelvin: tuple[int | None, int]) -> None:
     st = asyncio.run(_h706a(colours, mode, lost).dev.update())
-    assert st.color_temp_kelvin == kelvin and st.rgb_color is None
+    assert (st.color_temp_kelvin, st.last_color_temp_kelvin) == kelvin and st.rgb_color is None
 
 
 def test_scene_activation_frame_needs_no_segment_count() -> None:

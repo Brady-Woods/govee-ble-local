@@ -303,10 +303,14 @@ model, from which the shipped readers are generated).
 - **`DeviceProfile.kelvin_from_pieces`** (keyword-only, default False; a devices.yaml row's `kelvin_readback:
   pieces`): the colour-temperature state comes from the `aa a5` walk's pieces, as the goodsType 180 screen
   takes it after its connect read (`VM4Light.g5` -> `ColorUtils.r` -> `SubMode4Color.s`): once a poll's walk
-  has read every piece, `state.color_temp_kelvin` is the Kelvin of their one colour when every piece shows the
-  same one and it is one of the app's 178 tint colours (the whole 1000-10000 K table, not the row's range),
-  else None, in place of the `aa 05` report's Kelvin. A walk that lost a group, or a scene report, leaves the
-  report's. No admitted row uses it.
+  has read every piece and the poll's `aa 05` report showed the colour mode, `state.color_temp_kelvin` is the
+  Kelvin of their one colour when every piece shows the same one and it is one of the app's 178 tint colours
+  (the whole 1000-10000 K table, not the row's range), else None, in place of the report's Kelvin. In another
+  mode (a scene, music, DIY) the screen shows no colour temperature, so only `state.last_color_temp_kelvin`
+  takes the pieces' Kelvin, as g5 syncs a non-zero one whatever the mode (`syncKelvin` -> `Info4Detail.f`);
+  when the pieces give none, the report's own Kelvin stays the held one (`Info4Detail.V`). A walk that lost a
+  group, or an unanswered `aa 05`, changes neither. The resolver takes `kelvin_readback` only on a polled row
+  whose walk is not IC-sized (the fold counts the static or device-reported pieces). No admitted row uses it.
 - **H706A / H706B / H706C / H806A / H806C** (h705a 180), behind `allow_modelled` (`modelled`): power,
   brightness (1-100), RGB, colour temperature [2200, 6500] with the white-type-0 slot (`00 00 00`), segment
   colour, colour temperature and brightness over the device's own segment count (the `ac a1` read, above), and
@@ -626,7 +630,8 @@ model, from which the shipped readers are generated).
   bound (the segment-settings page's most).
 - **`clientRow.kelvin_readback`** (`pieces`; absent = the mode report's Kelvin): the screen reads its
   colour-temperature state from the read-back's pieces (goodsType 180's `VM4Light.g5` -> `ColorUtils.r`); the
-  resolver takes it with `color_temp` and the direct colour read-back only. **h705a 180 gets `support:
+  resolver takes it with `color_temp` and the direct colour read-back only, on a polled row whose walk is not
+  IC-sized. **h705a 180 gets `support:
   modelled`** with `capabilities` `[power, brightness, rgb, color_temp, segments, gradual]` (Config.I[180] all
   on; Config.z / G = 0), `color_functions` and `kelvin_readback: pieces`. Its `doc` names the one gap that keeps
   it from `app_traced`: the colour page refuses a segment-brightness pick while a selected piece shows a tint

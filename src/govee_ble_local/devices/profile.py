@@ -450,10 +450,12 @@ class DeviceProfile:
     """``color_readback="mechanism_a_direct"`` only: the colour-temperature state comes from the read-back's
     pieces, not the ``aa 05`` report's Kelvin (a devices.yaml row's ``kelvin_readback: pieces``; goodsType
     180: ``VM4Light.g5`` -> ``ColorUtils.r`` of ``SubMode4Color.d``, then ``SubMode4Color.s``). Once a poll's
-    ``aa a5`` walk has read every piece, ``state.color_temp_kelvin`` is the Kelvin of their one colour when
-    they all show the same colour and it is one of the app's tint colours (its whole 1000-10000 K table, which
-    may lie outside :attr:`min_kelvin` / :attr:`max_kelvin`), else None (:func:`._fold.apply_piece_kelvin`). A
-    poll whose walk lost a group, or whose report put the device in a scene, leaves it as the report set it.
+    ``aa a5`` walk has read every piece, and the poll's ``aa 05`` report showed the colour mode,
+    ``state.color_temp_kelvin`` is the Kelvin of their one colour when they all show the same colour and it is
+    one of the app's tint colours (its whole 1000-10000 K table, which may lie outside :attr:`min_kelvin` /
+    :attr:`max_kelvin`), else None (:func:`._fold.apply_piece_kelvin`). In another mode (a scene, music, DIY)
+    that Kelvin, when there is one, goes to ``state.last_color_temp_kelvin`` only, as g5 syncs it whatever the
+    mode. A poll whose walk lost a group, or whose ``aa 05`` read went unanswered, leaves both as they were.
     Source-modelled, not live-verified."""
 
     def __post_init__(self) -> None:

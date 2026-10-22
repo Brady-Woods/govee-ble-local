@@ -14,7 +14,7 @@ import copy
 import logging
 import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from typing import Final, Literal, Never, ParamSpec, TypedDict, TypeVar
+from typing import Any, Final, Literal, Never, ParamSpec, TypedDict, TypeVar
 
 from bleak.backends.device import BLEDevice
 from bleak.backends.scanner import AdvertisementData
@@ -188,6 +188,9 @@ class Device:
         self._scenes_error: str | None = None
         self._state = DeviceState(optimistic=True)
         self._segment_count: int | None = None   # runtime-reported; overrides profile.segments
+        # Whether this poll's aa 05 report showed the colour mode, None until it answers (_read_mode): the
+        # mode a kelvin_from_pieces profile folds its pieces' Kelvin under (_fold.apply_piece_kelvin).
+        self._polled_color_mode: bool | None = None
         self._device_info_read = False   # device-info (mac/hw/fw/sn) read once, lazily
         self._polled_once = False        # for the one-time INFO "first poll" line
         # Mutation sequence (BUG-4): bumped by every state-mutating setter when it applies its
@@ -1920,12 +1923,13 @@ class Device:
         """H6047/H6641/H6062/H6061 per-segment colour via Controller4ColorInfoByGroup's direct
         per-group requests (``aa a5 <group>``; :func:`._readback.walk_mechanism_a_direct`), applied
         whole unless a setter raced it, with the colour temperature read from the pieces where the profile
-        takes it from them (:attr:`.DeviceProfile.kelvin_from_pieces`, :func:`._fold.apply_piece_kelvin`)."""
+        takes it from them (:attr:`.DeviceProfile.kelvin_from_pieces`, :func:`._fold.apply_piece_kelvin`),
+        under the mode the poll's aa 05 report showed."""
         def apply(segments: list[Segment]) -> None:
             self._apply_segments(segments)
-            if self.profile.kelvin_from_pieces:
-                _fold.apply_piece_kelvin(
-                    self._state, self.profile.color_readback_segments or self.segment_count)   # the walk's
+            if self.profile.kelvin_from_pieces:   # the walk's pieces: static or device-reported (_resolve)
+                pieces = self.profile.color_readback_segments or self.segment_count
+                _fold.apply_piece_kelvin(self._state, pieces, self._polled_color_mode)
 
         await self._read_fresh(
             "segment colour",
@@ -2055,10 +2059,17 @@ class Device:
         return applied
 
     async def _read_mode(self, budget: ConnectBudget | None = None) -> _ReadResult:
-        """Read the aa 05 mode report into state (:meth:`_apply_mode_reply`)."""
+        """Read the aa 05 mode report into state (:meth:`_apply_mode_reply`), and keep whether it showed the
+        colour mode (a colour sub-mode's layout, :func:`.parse.mode_color`) for the poll's walk."""
         prof = wire_profile(self.profile)
+        self._polled_color_mode = None
+
+        def apply(m: Any) -> None:
+            _fold.apply_mode(self.profile, self._state, m)
+            self._polled_color_mode = parse.mode_color(m) is not None
+
         return await self._read_command("mode", build.mode_query(), lambda r: parse.mode_reply(r, prof),
-                                        lambda m: _fold.apply_mode(self.profile, self._state, m), budget)
+                                        apply, budget)
 
     async def _read_section_count(self, budget: ConnectBudget | None = None) -> bool:
         """Read the segment count the device reports (``aa 41`` -> ``sectionNum``) and adopt it

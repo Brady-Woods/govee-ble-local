@@ -89,7 +89,8 @@ the row lacks fails the build: nothing defaults silently.
   246) needs ``color_temp``. Either value becomes ``DeviceProfile.whole_device_kelvin``: no Kelvin on part of
   the device. A row's ``kelvin_readback: pieces`` (the colour-temperature state read from the read-back's
   pieces, goodsType 180's ``VM4Light.g5``) becomes ``DeviceProfile.kelvin_from_pieces``; it needs
-  ``color_temp`` and the direct colour read-back. An ``untraced`` scene dialect drops ``scenes``; ``none`` is
+  ``color_temp`` and the direct colour read-back on a polled row, over the static or device-reported pieces
+  (not an IC-sized walk). An ``untraced`` scene dialect drops ``scenes``; ``none`` is
   activate only. Scenes need a bundled catalog, as every SKU of 1.4.0 that offers them ships one: a SKU the
   scene store has no catalog for (``scenes/store.json``, the generated ``SCENE_CATALOGS``, which
   :func:`profiles` takes as ``catalogued``) is offered no ``scenes``, its row's scene facts still checked.
@@ -1052,10 +1053,13 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
         fail("the special_info segment-count read on a polled row with segments only, without the aa 41 "
              "section count or an IC-sized read-back (one source sizes the masks and the walk)")
     piece_kelvin = row.get("kelvin_readback")
+    # The fold counts the static or device-reported pieces (an IC-sized walk counts others) and takes the
+    # mode from the same poll's aa 05 report (_fold.apply_piece_kelvin).
     if piece_kelvin is not None and (piece_kelvin not in KELVIN_READBACKS or "color_temp" not in caps
-                                     or color_readback != "mechanism_a_direct"):
+                                     or color_readback != "mechanism_a_direct" or readback != "polled"
+                                     or live_ic or ic == "sections"):
         fail(f"kelvin_readback {piece_kelvin!r} (one of {list(KELVIN_READBACKS)}, with color_temp and the "
-             "direct colour read-back whose pieces it reads)")
+             "direct colour read-back whose pieces it reads, on a polled row whose walk is not IC-sized)")
     bar = forms.get("f_36") == "bar_pair"
     if ("cmd_36" in reads) != bar:
         fail("the aa 36 read and f_36 bar_pair go together")

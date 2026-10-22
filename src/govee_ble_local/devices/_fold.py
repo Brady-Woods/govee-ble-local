@@ -451,23 +451,33 @@ def _apply_head_pair(profile: DeviceProfile, state: DeviceState, pair: parse.Hea
         state.rgb_color, state.color_temp_kelvin = None, kelvin
 
 
-def apply_piece_kelvin(state: DeviceState, pieces: int) -> None:
+def apply_piece_kelvin(state: DeviceState, pieces: int, color_mode: bool | None) -> None:
     """The colour-temperature state of a :attr:`~.profile.DeviceProfile.kelvin_from_pieces` device, read from
     the ``pieces`` colour pieces of ``state.segments`` that the poll's walk just set (goodsType 180:
     ``VM4Light.g5`` after the connect read's walk). ``ColorUtils.r`` takes the pieces' one colour when every
     piece shows the same one (``q``) and, when it is one of the app's tint colours (``C``: the whole
-    1000-10000 K table, :func:`..wire.cct.kelvin_for_tint`), its Kelvin, else 0, which ``SubMode4Color.s``
-    stores over the ``aa 05`` report's Kelvin; :func:`apply_kelvin_report` folds either. Nothing changes while
-    the report says the device is in a scene (no colour is shown), or when a piece is missing: the app applies
-    nothing from a connect read whose walk lost a group (``Compose4InfoBleIot`` fails whole)."""
+    1000-10000 K table, :func:`..wire.cct.kelvin_for_tint`), its Kelvin, else 0. g5 checks no mode: it stores
+    that value as the colour mode's Kelvin (``SubMode4Color.s``, over the ``aa 05`` report's), and a non-zero
+    one as the screen's held Kelvin too (``syncKelvin`` -> ``Info4Detail.f``), whatever the mode.
+
+    ``color_mode`` is what the same poll's ``aa 05`` report showed: True for the colour sub-mode, the colour
+    page (``Info4Detail.V`` / ``O``: 0x15 is mode 9), whose Kelvin :func:`apply_kelvin_report` then folds
+    (``color_temp_kelvin`` is set only in that mode); False for another mode (a scene, music, DIY), which
+    leaves ``color_temp_kelvin`` as the report left it and updates only ``last_color_temp_kelvin``. Nothing
+    changes when the report did not answer (None) or a piece is missing: the app applies nothing from a
+    connect read that lost a read (``Compose4InfoBleIot`` fails whole). The report's own Kelvin, which
+    :func:`apply_mode` remembered, stays the held one when the pieces give 0, as ``Info4Detail.V`` stored it
+    and g5 syncs only a non-zero Kelvin."""
     by_index = {s.index: s.rgb for s in state.segments}
     shown = [by_index.get(i) for i in range(pieces)]
-    if state.scene_code is not None or not shown or None in shown:
+    if color_mode is None or not shown or None in shown:
         return
     first = shown[0]
     kelvin = kelvin_for_tint(first) if first is not None and shown.count(first) == pieces else None
-    apply_kelvin_report(state, kelvin or 0)
-    _remember_kelvin(state)
+    if color_mode:
+        apply_kelvin_report(state, kelvin or 0)
+    if kelvin:
+        state.last_color_temp_kelvin = kelvin
 
 
 def apply_kelvin_report(state: DeviceState, kelvin: int) -> None:
