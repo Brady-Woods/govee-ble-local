@@ -82,6 +82,17 @@ model, from which the shipped readers are generated).
   Every `held` path is unchanged by construction: `_commit`, `turn_on`, `set_brightness`, `update`,
   `connect` and `_read_reply` dispatch a `per_command` profile to its own branch first. Not live-verified: no
   unit is on the bench.
+- **H70B2** (h70b2 185, pact (1,1)) and **H6630 / H8630** (h6630 285) and **H6631** (h6630 286), admitted by
+  default (`app_traced`) on that row type: power and brightness (1-100), the card's `33 01` and `33 04`, for
+  198 SKUs by default and 266 in all. Their control screens have no BLE control (185's pact check refuses
+  every scan hit; 285 / 286 send every command over IoT), so the rows follow the card, as the user decided
+  (DECISIONS.md 6, brightness kept on 285 / 286). Not live-verified: there is no unit and no firmware image.
+  Open, and named in each row's `doc`: whether the advert's switch byte carries the on/off on these firmwares
+  (the app's IoT poll, which corrects it, has no library counterpart, so the state is assumed), the BGC
+  version (an AES-GCM unit gets `GoveeBleNotSupported` on every command), and whether a write needs the
+  `33 b2` unlock (a refusal raises `GoveeBleCommandRejected`). No SKU admitted at 1.6.1 changes: each of the
+  104 resolves to the same profile, field by field (`session` "held"), at every pact (0-10 x 0-10, (99, 99)
+  and none), at each goodsType, with and without `allow_modelled`.
 
 ### Changed
 - Nothing for existing SKUs. Each of the 104 SKUs admitted at 1.6.1 (98 by default, 6 behind
@@ -128,6 +139,12 @@ model, from which the shipped readers are generated).
     link, has no lock, zones or pieces and carries only power and brightness; `advert` and `none` on a held
     row are not served. The coupling stays in the resolver, not the schema, so a firmware-confirmed read could
     later join a `per_command` row (design review R3).
+- **h70b2 185 and h6630 285 / 286 get `support: app_traced`** on the card's path (`session: per_command`,
+  `power_read: advert`, `heartbeat: none`, `brightness_range: [1, 100]`), with the card trace in `doc` and
+  `doc-ref` (card registration, model and BLE object, the frame builders, the slider gate, the session, the
+  advert power, the pact gate) and the two facts that rest on the unsaved jadx re-decompile named in prose.
+  285 / 286's `heartbeat: heartbeat` was the control screen's held link, not the card's. The reference's
+  self-test checks their routes and session.
 
 ## [1.6.1] — 2026-10-21
 

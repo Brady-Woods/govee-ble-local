@@ -353,7 +353,7 @@ class DeviceProfile:
     """How the writes reach the device: ``"held"`` (the default: the control screens' rows, and a profile built
     by hand) keeps one link across commands and reads, acks each write and runs the :attr:`heartbeat`;
     ``"per_command"`` is the app's device-list card (a devices.yaml ``session: per_command`` row, for a SKU whose
-    control screen has no BLE control). On it each write is a session of its own
+    control screen has no BLE control: H70B2, H6630, H8630, H6631). On it each write is a session of its own
     (``GoveeConnection.send_once``): connect, write the one frame, read the reply for at most the write-ack
     timeout (a refusal raises GoveeBleCommandRejected), disconnect, each session at least
     ``const.PER_COMMAND_SESSION_GAP`` after the last one's release (``CardCommManagerProxy.s``). So

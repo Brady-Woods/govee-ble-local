@@ -388,6 +388,15 @@ _REFUSED: tuple[tuple[str, str, _Edit, str], ...] = (
      "power_read 'aa01' (no GATT read: advert only) on a per_command row is not served yet"),
     ("h5080", "43", lambda f: _row(f, "43").update(session="per_command"),
      "a relay row (the card's 33 01 is the light switch) on a per_command row"),
+    ("h70b2", "185", lambda f: _row(f, "185").update(heartbeat="heartbeat"),
+     "heartbeat 'heartbeat' (no link is held: none only) on a per_command row"),
+    ("h70b2", "185", lambda f: _row(f, "185").update(connect_reads=["gradual"]),
+     "connect_reads ['gradual'] on a per_command row"),
+    ("h70b2", "185", lambda f: _row(f, "185").update(account_lock=True), "account_lock true (the card sends no"),
+    ("h70b2", "185", lambda f: _row(f, "185").update(zones=[{"id": "main", "power_index": 0, "segments": [0]}]),
+     "zones on a per_command row"),
+    ("h70b2", "185", lambda f: _row(f, "185")["capabilities"].append("rgb"),
+     "capabilities ['rgb'] (the card sends only 33 01 and 33 04) on a per_command row"),
 )
 
 

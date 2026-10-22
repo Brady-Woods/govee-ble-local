@@ -140,6 +140,14 @@ H6052's screen reads its colour report as RGB only, so after a poll an H6052 in 
 mode reports the report's colour as `rgb_color` (for a CCT the app or this library set, the Kelvin's
 tint) and no `color_temp_kelvin`.
 
+H70B2, H6630, H8630 and H6631 follow the Govee app's device-list card, as their control screens have no
+BLE control (`DeviceProfile.session == "per_command"`): power and brightness only, each write a session of
+its own (connect, one frame, disconnect, at least 1.1 s apart), with no read-back. `update()` and
+`connect()` open no link; on/off comes from the advertisement and the last command, brightness is the last
+one sent, and `state.optimistic` stays True. A brightness while the light is not known to be on is sent
+after a power-on. Not live-verified; a unit that reports AES-GCM (BGC version 2) gets
+`GoveeBleNotSupported` on every command.
+
 The H6047 follows the app's frames too: whole-device power is `33 01` (`33 36` is only the per-bar
 buttons, `set_zone_power`), read-back covers its 10 segments, `Device.zone_color_temp_kelvin(name)`
 gives each bar's Kelvin, and `set_gradual` toggles the fade flag.

@@ -62,8 +62,15 @@ def test_the_schema_requires_a_heartbeat_on_every_supported_row() -> None:
     doc = _doc()
     schema = json.loads((_SPEC / "devices.schema.json").read_text(encoding="utf-8"))
     rows = _rows(doc)
-    assert len(rows) == 153 and all(row["heartbeat"] in _BEATS for _fam, _gt, row in rows)
+    # The three device-list card rows (session per_command) hold no link, so they send none.
+    assert len(rows) == 156 and all(row["heartbeat"] in _BEATS or (row["heartbeat"], row.get("session")) == (
+        "none", "per_command") for _fam, _gt, row in rows)
     jsonschema.validate(instance=doc, schema=schema)
+    timed = copy.deepcopy(doc)   # no timing for a beat that never goes out
+    next(f for f in timed["families"] if f["id"] == "h70b2")["client_profile"]["by_goods_type"]["185"].update(
+        heartbeat_timing="fixed_rate")
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate(instance=timed, schema=schema)
     missing = copy.deepcopy(doc)
     next(f for f in missing["families"] if f["id"] == "h60ax")["client_profile"]["by_goods_type"]["303"].pop(
         "heartbeat")
@@ -86,7 +93,8 @@ def test_each_skus_profile_sends_its_rows_heartbeat() -> None:
             if "support" not in row:
                 continue
             ref = reference.client_row(doc, fam["id"], int(gt))
-            want = (int(_C.Command[ref["heartbeat"]]), ref.get("heartbeat_timing", "fixed_rate"))
+            beat = None if ref["heartbeat"] == "none" else int(_C.Command[ref["heartbeat"]])
+            want = (beat, ref.get("heartbeat_timing", "fixed_rate"))
             for sku in (*row.get("models", ()), *row.get("catalogue_models", ())):
                 profile = profile_for(sku, goods_type=int(gt), allow_modelled=True)
                 assert profile is not None, (sku, gt)
@@ -101,12 +109,13 @@ def test_each_skus_profile_sends_its_rows_heartbeat() -> None:
 
 
 def test_a_heartbeat_power_live_names_the_read_the_screen_sends() -> None:
-    # The resolver's one-way cross-check (devices/_resolve.py), as the traces found it on all 153 rows: the
+    # The resolver's one-way cross-check (devices/_resolve.py), as the traces found it on all 156 rows: the
     # screens that take their power from a heartbeat reply send that read, and the plugs read their outlets
     # from aa 01. Nothing ties a push_30-only row to aa 00, which 53 send. Three status rows send aa 01 but
     # list only push_30 (h61d3 263, straightfloorlamp 69, h7020 296), and three with no ee 30 parser list
     # nothing (rgbiclight 351 / 352, h7086 293): the library takes heartbeat_aa01 power on a polled row only.
-    # h705a 394 sends aa 00 and has no live power source.
+    # h705a 394 sends aa 00 and has no live power source. The three device-list card rows (h70b2 185, h6630
+    # 285 / 286) hold no link: no keep-alive and no live power but the advert.
     found: collections.Counter[tuple[tuple[str, ...], bool, str]] = collections.Counter()
     for fam, _gt, row in _rows(_doc()):
         lives = tuple(row.get("power_live", fam["client_profile"].get("power_live")) or ())
@@ -121,6 +130,7 @@ def test_a_heartbeat_power_live_names_the_read_the_screen_sends() -> None:
         (("push_30",), False, "power"): 3,
         ((), False, "power"): 3,
         ((), False, "heartbeat"): 1,
+        ((), False, "none"): 3,
     }
 
 
@@ -146,13 +156,14 @@ def test_the_traced_unsupported_rows_keep_their_heartbeat() -> None:
     # Traced but not supported: no profile is built from these rows, so neither the resolver nor the
     # generator reads them. h6047 288 / 298: VM4H6038.I3 returns false, so aa 00; striplight 80:
     # power_live [heartbeat_aa33], so aa 33 (the resolver's one-way rule). The 1.7.0 trace run added 136
-    # such rows, each doc saying why it is held (h6047 277 is now supported); they are pinned by count.
+    # such rows, each doc saying why it is held (h6047 277 is now supported); they are pinned by count. h6630
+    # 285 / 286 left them in 1.8.0, on the device-list card's path (heartbeat none).
     got = {(fam["id"], gt): row["heartbeat"] for fam in _doc()["families"]
            for gt, row in ((fam.get("client_profile") or {}).get("by_goods_type") or {}).items()
            if "heartbeat" in row and "support" not in row}
     assert {key: got.get(key) for key in (("h6047", "288"), ("h6047", "298"), ("striplight", "80"))} == {
         ("h6047", "288"): "heartbeat", ("h6047", "298"): "heartbeat", ("striplight", "80"): "volume"}
-    assert collections.Counter(got.values()) == {"power": 88, "heartbeat": 45, "volume": 5, "cmd_36": 1}
+    assert collections.Counter(got.values()) == {"power": 88, "heartbeat": 43, "volume": 5, "cmd_36": 1}
 
 
 @pytest.mark.parametrize("name", _BEATS)
@@ -218,7 +229,11 @@ async def test_the_documented_opt_out_turns_the_beat_off_on_every_sku(
     timings = set()
     for sku in skus:
         profile = profile_for(sku, allow_modelled=True)
-        assert profile is not None and profile.heartbeat is not None, sku
+        assert profile is not None, sku
+        if profile.session == "per_command":   # the device-list card's rows hold no link: nothing to opt out of
+            assert profile.heartbeat is None, sku
+            continue
+        assert profile.heartbeat is not None, sku
         off = dataclasses.replace(profile, heartbeat=None)
         assert (off.heartbeat, off.heartbeat_timing) == (None, profile.heartbeat_timing), sku
         # Still the row's profile for the advertised-pact check (Device._learn_pact's warning).

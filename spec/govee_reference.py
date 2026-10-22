@@ -527,6 +527,13 @@ def _selftest(*, strict: bool = False) -> int:
         check("BLE routes: H6004 -> bulblightv3 64 (10 is IoT-only); H60A6 at (1,3) -> 303, at (2,1) none",
               ble_rows(reg, "H6004") == [("bulblightv3", 64)]
               and ble_rows(reg, "H60A6", (1, 3)) == [("h60ax", 303)] and ble_rows(reg, "H60A6", (2, 1)) == [])
+        check("device-list card rows: H70B2 -> h70b2 185 at (1,1) only; H6631 -> h6630 286 at (2,4), where H6630 "
+              "has no row; each a per_command session with no keep-alive",
+              ble_rows(reg, "H70B2", (1, 1)) == [("h70b2", 185)] and ble_rows(reg, "H70B2", (1, 2)) == []
+              and ble_rows(reg, "H6631", (2, 4)) == [("h6630", 286)] and ble_rows(reg, "H6630", (2, 4)) == []
+              and all((r["session"], r["power_read"], r["heartbeat"]) == ("per_command", "advert", "none")
+                      for r in (client_row(reg, "h70b2", 185), client_row(reg, "h6630", 285),
+                                client_row(reg, "h6630", 286))))
         h61a8 = [client_row(reg, "dreamcolorlightv1", 19, pact=pact, soft=s, hard=h)
                  for pact, s, h in (((1, 1), "3.03.18", "3.01.10"), ((1, 1), "1.03.00", "3.08.01"),
                                     ((1, 2), "1.05.00", "1.00.01"))]
