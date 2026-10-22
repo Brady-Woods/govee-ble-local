@@ -213,6 +213,9 @@ model, from which the shipped readers are generated).
   per-zone colour-temperature control on `profile.segment_color_temp` as well. The Home Assistant
   integration's segment entities take COLOR_TEMP from the two capabilities alone, so on the 40 released SKUs
   listed under Changed their colour temperature would raise GoveeBleNotSupported.
+  - **Frozen for integrators:** the field's name, keyword-only form, default (True) and meaning stay as they are
+    through 1.x, so an integration can gate on `getattr(profile, "segment_color_temp", True)` and run on 1.6.x
+    and later alike.
 - **H1162 / H1163 / H1167 / H1168** (h1162 goodsTypes 87 / 137 / 182 / 186), the Music Sync boxes, admitted by
   default (`app_traced`) as power-only rows at pact (1,1), following the user's decision to match the
   standalone screen. The switch turns the box's music sync on or off: `33 01 <on>`, polled with aa 01 and kept
@@ -246,6 +249,41 @@ model, from which the shipped readers are generated).
   SKUs (Fixed, below). No other profile has groups, so every other segment-brightness frame is unchanged.
 
 ### Changed
+- **A Device now re-learns its command channel from later advertisements, for its next session, as the app
+  does.** Until now the cipher was fixed when the `Device` was built: its advertisement's encrypt flag, else the
+  profile default. A device built before any of its advertisements was heard stayed on that default for the
+  Device's life. Such a device is an H6008, whose default is plaintext but whose SW1.01.25 firmware encrypts and
+  answers nothing else. The same goes for any SKU whose default is plaintext while its firmware encrypts.
+  `Device.ingest_advertisement` now reads the encrypt flag too, whatever the advertised name, and hands it to the
+  connection (new `GoveeConnection.set_advertised_encryption`, which returns the mode the next session uses).
+  - **When it applies:** from the next session on, never to the session that is up. `_prepare_session` is the
+    only place a session's mode is set, from the advertised mode as it is when the setup starts. No link is
+    dropped for it; a session that is up and answering already proves its cipher. `encryption` reports the
+    session's mode while a link is up, and the one the next session starts from when none is.
+  - **Merged records:** Home Assistant's record keeps every manufacturer-data key it has heard for the address
+    (habluetooth merges `{**prev, **new}`, as BlueZ does), and the Govee header, with its encrypt bit, is part of
+    the key. A header change, or another device's frame merged under the address, therefore leaves two Govee
+    entries, the older one first. The flag is learned only when every Govee pact entry carries the same one. A
+    mixed record keeps the cipher and logs one WARNING per spell, naming the headers. The constructor is
+    unchanged (the first entry, as in 1.6.1).
+  - **BGC:** a BGC `encryptVersion` of 1 or 2 still overrides the advertised flag (`isEncryptionSupported` = the
+    flag OR the BGC), so a plaintext flag never downgrades a BGC-1 device; the INFO line says so. A cached BGC 2
+    still refuses AES-GCM without a link. An AES-GCM mode given to the constructor with no BGC characteristic is
+    now lifted by a later advertised flag. The BGC result is still read once per Device; the app reads it on
+    every connect.
+  - **What the app does:** `BleBroadVersionCache.d` overwrites a per-MAC flag, true or false, from each parsed
+    broadcast: `AbsViewMode4OpWithOtaCheck.w2`, `AbsBlePact.t`, the H5083 screen, the add-device scan, and the
+    group and OTA paths. Only a broadcast whose pact parses writes it (`GoodsType.parseBleBroadcastPactInfo`).
+    `EncryptionUtils.isEncryptionSupported` reads it with the BGC on every frame read, written or notified
+    (`EncryptionBluetoothGattCallback`, `EncryptWriter.encryptWriteCharacteristic`). The light screen writes it
+    from the scan just before it connects, so in practice it holds for a session (`AbsViewMode4Op.onScanEvent`
+    stops the scan, parses the matched broadcast, then connects).
+  - **Live-verified** 2026-10-21 on both bench H6008s (SW1.01.25, no BGC characteristic), reads only:
+    - built with no advert, the first session went out plaintext and none of its `aa` reads was answered;
+    - after each bulb's own advert (header 0x43) was ingested, the next session handshook AES-RC4 and every read
+      was answered;
+    - a mixed record kept the cipher and warned.
+  - Design: `govee-apks/library-audit/DESIGN_relearn_advert_cipher.md`.
 - **A polled profile reads aa 04 only with `Capability.BRIGHTNESS`**, as the app's connect read does
   (`ControllerStrategyConfig.k1` adds the aa 04 read for H7017 and not H7004). Every polled profile the table
   had before carries the capability, so their reads are unchanged; a `DeviceProfile` built by hand with
@@ -374,6 +412,30 @@ model, from which the shipped readers are generated).
     reply's TLV 0x07, by the row's `device_info_reads`.
 
 ### Fixed
+- **A failed read of the BGC-info characteristic (2b12) now fails that connect attempt, and no frame is sent on
+  its link.** Until now a lookup error (`client.services` raising) or a `BleakError` from the read ran the session
+  on the advertised mode. On a device that reports BGC 1 but advertises plaintext, that session sent plaintext
+  frames an encrypted device ignores. The attempt now raises `GoveeBleConnectionError` ("BGC read failed" or
+  "BGC lookup failed"), the link is torn down, and the session loop reads again on a new link, up to
+  `SESSION_ATTEMPTS`. A link-level error from the read (`EOFError`, `BrokenPipeError`) already failed the attempt;
+  it now carries the same message. A read that times out raises `GoveeBleTimeout` ("BGC read timed out") and is
+  retried the same way. Nothing is cached from a failed read, so the next connect reads again.
+  - **What the app does:** it sends nothing on a link whose 2b12 read failed. `BgcInfoReader.a` waits for a read
+    callback even when the read didn't start, and `BgcInfoReaderPool.checkNeedParseInfo` takes only a status-0
+    read, so `EncryptionBluetoothGattCallback.r`, which starts the handshake or the plaintext session, never runs.
+    A device with no 2b12 is unchanged: its session uses the advertised mode, as in the app.
+  - **Kept, by decision:** the result is still read once per Device and cached. The app reads 2b12 on every connect
+    (`BgcInfoReaderPool.onConnectedInfoChange` resets the reader on connect and drops it on disconnect). So a
+    firmware update that changes the version is seen by the next Device, after a Home Assistant reload or restart.
+    The AES-GCM refusal without a link, once a read gives 2, stays.
+  - **Bench, 2026-10-21, reads only.** No device in range has 2b12 under 1910. A connect-only survey covered 14:
+    four H60A6s on SW1.00.41, both H6008s on SW1.01.25, two H6006s, the H6047, H6052, H61A8, H61C3, H6641 and
+    H5083. So a real 2b12 read, and a real read failure, are covered by unit tests only.
+    - With 2b12 absent, the H60A6 and the H6008 ran two sessions each on the advertised AES-RC4 with every read
+      answered.
+    - With one lookup error injected on the H60A6's first link, that link carried no frame. The second link
+      handshook and its reads were answered.
+  - Design: `govee-apks/library-audit/DESIGN_bgc_reread_per_connect.md`.
 - Docstrings cited the app's per-model advert decode as `AbsBaseBleModel.A`, h5080 `Model.A` and
   `Model4Plug2.A`; in the 7.7.02 decompile the method is `z`.
 - **H6188: colour temperature now sends the colour tab's frame** `33 05 0d <tint> <K> <tint>`

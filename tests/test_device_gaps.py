@@ -218,6 +218,76 @@ def test_ingest_reads_a_renamed_advert() -> None:
     assert (d.pact, d.state.is_on, len(calls)) == ((1, 1), True, 1)
 
 
+# ── re-learning the encrypt flag (Device.ingest_advertisement, _learn_cipher) ─────
+# The app overwrites its per-MAC flag from each parsed broadcast (BleBroadVersionCache.d); a Device hands what
+# it hears to its connection for the next session. Header 0x43: encrypted, version 3; 0x03: plaintext.
+_ENCRYPTED = {0x8843: bytes.fromhex("ec0001010100")}
+_PLAINTEXT = {0x8803: bytes.fromhex("ec0001010100")}
+_MIXED = {**_PLAINTEXT, **_ENCRYPTED}   # a merged record: both headers, the older first
+
+
+def _bound(sku: str, adv: Any = None) -> Device:
+    """A Device on a real (idle) connection, built for ``sku`` from ``adv``."""
+    return Device(profile_for(sku), ble_device("AA:BB:CC:DD:EE:35", _RENAMED), adv, sku=sku)
+
+
+def test_ingest_relearns_the_flag_for_the_next_session(caplog: pytest.LogCaptureFixture) -> None:
+    # An H6008 built before any advert was heard has the profile's plaintext default; its own encrypted
+    # advert now picks the next session's.
+    d = _bound("H6008")
+    calls: list[object] = []
+    d.register_callback(calls.append)
+    assert d.encryption is Encryption.NONE
+    with caplog.at_level(logging.INFO, logger="govee_ble_local"):
+        # True for its on/off; the flag adds no callback
+        assert d.ingest_advertisement(_adv(_RENAMED, _ENCRYPTED)) is True
+    assert d.encryption is Encryption.AES_RC4_PSK and len(calls) == 1
+    assert "advertises the aes_rc4_psk command channel; the next session uses aes_rc4_psk\n" in caplog.text
+    caplog.clear()
+    with caplog.at_level(logging.INFO, logger="govee_ble_local"):
+        d.ingest_advertisement(_adv(_RENAMED, _ENCRYPTED))   # heard again: nothing new
+        d.ingest_advertisement(_adv(_RENAMED, _PLAINTEXT))   # and back (BleBroadVersionCache.d:135)
+    assert d.encryption is Encryption.NONE and caplog.text.count("command channel") == 1
+
+
+def test_ingest_names_a_bgc_verdict_over_the_flag(caplog: pytest.LogCaptureFixture) -> None:
+    d = _bound("H6008", _adv(_RENAMED, _ENCRYPTED))
+    d._conn._bgc_version, d._conn._bgc_checked = 1, True   # as an earlier session's BGC read left it
+    with caplog.at_level(logging.INFO, logger="govee_ble_local"):
+        d.ingest_advertisement(_adv(_RENAMED, _PLAINTEXT))
+    # flag OR BGC (EncryptionUtils.isEncryptionSupported): a plaintext flag never downgrades a BGC-1 device
+    assert d.encryption is Encryption.AES_RC4_PSK
+    assert ("advertises the none command channel; the next session uses aes_rc4_psk (its BGC version "
+            "overrides the advertised flag)") in caplog.text
+
+
+def test_ingest_keeps_the_cipher_on_a_mixed_record(caplog: pytest.LogCaptureFixture) -> None:
+    d = _bound("H6008", _adv(_RENAMED, _ENCRYPTED))
+    with caplog.at_level(logging.INFO, logger="govee_ble_local"):
+        d.ingest_advertisement(_adv(_RENAMED, _MIXED))
+        d.ingest_advertisement(_adv(_RENAMED, _MIXED))   # still mixed: warned once
+    assert d.encryption is Encryption.AES_RC4_PSK
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1 and "headers 0x03, 0x43" in warnings[0].getMessage()
+    assert ("the advertised mode stays aes_rc4_psk (a BGC version of 1 or 2 overrides it)"
+            in warnings[0].getMessage())
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger="govee_ble_local"):
+        d.ingest_advertisement(_adv(_RENAMED, _ENCRYPTED))   # agrees again (a cleared or rebuilt record)
+        d.ingest_advertisement(_adv(_RENAMED, _MIXED))       # a new spell: warned again
+    assert len(caplog.records) == 1 and d.encryption is Encryption.AES_RC4_PSK
+
+
+def test_ingest_without_a_flag_keeps_the_cipher() -> None:
+    d = _bound("H60A6")   # profile default: AES
+    version_0 = {0x8800: bytes.fromhex("ec0001010100")}   # header 0x00: no pact broadcast (version 0)
+    for mfg in ({0x2E28: bytes.fromhex("89304dad0000")}, version_0, {0x8801: bytes([0xEC, 0x00])}):
+        d.ingest_advertisement(_adv(_RENAMED, mfg))
+        assert d.encryption is Encryption.AES_RC4_PSK
+    d.ingest_advertisement(_adv("Govee_H60A6_ABCD", {}))   # a Govee name alone says nothing either
+    assert d.encryption is Encryption.AES_RC4_PSK
+
+
 def test_encryption_constructor_uses_advertisement() -> None:
     # A raw bleak-style advert (what Home Assistant passes to create_device) decides the mode the
     # connection is built with; the same H6008 profile without an advert keeps its default.

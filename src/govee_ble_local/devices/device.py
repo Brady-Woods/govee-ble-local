@@ -36,6 +36,7 @@ from ..exceptions import (
     GoveeBleUnknownName,
 )
 from ..identify import GoveeAdvertisement, bound_advertisement, parse_broadcast_onoff
+from ..identify import _pact_encrypt_flags
 from ..models import Capability, DeviceState, Encryption, Segment, Zone
 from ..scenes import Scene, async_load_scenes, load_scenes, scene_names_by_code
 from ..scenes import scene_upload_frames as _scene_upload_frames
@@ -165,7 +166,8 @@ class Device:
 
         ``advertisement_data`` (bleak's, or a parsed :class:`GoveeAdvertisement`) picks the command
         channel from its encrypt flag, read from its Govee manufacturer data whatever the advertised name;
-        without one (or without a Govee pact block) the profile default is used. ``sku`` names the
+        without one (or without a Govee pact block) the profile default is used. Later advertisements
+        re-learn it for the next session (:meth:`ingest_advertisement`). ``sku`` names the
         device (default: the profile's first SKU). ``secret`` is the 8-byte account-lock key, sent
         after every handshake on a profile that requires one (:meth:`set_secret` can supply it
         later). ``frame_log=<path>`` persists a JSONL session capture. ``idle_disconnect`` is the
@@ -238,6 +240,11 @@ class Device:
         adv = bound_advertisement(advertisement_data, self._sku, fallback_name=ble_device.name)
         self._learn_pact(adv)
         enc = self._resolve_encryption(adv)
+        # The mode each session starts from: the constructor's, then the last one an advertisement handed to
+        # the connection (_learn_cipher); and whether the last advertisement that said anything about it was
+        # ambiguous (its WARNING is logged once per spell).
+        self._advert_encryption = enc
+        self._cipher_ambiguous = False
         self._conn = GoveeConnection(
             ble_device,
             encryption=enc,
@@ -287,6 +294,49 @@ class Device:
         if adv is None or not adv.encryption_known:
             return self.profile.encryption
         return Encryption.AES_RC4_PSK if adv.encrypted else Encryption.NONE
+
+    def _learn_cipher(self, mfg: dict[int, bytes]) -> None:
+        """Re-learn the advertised encrypt flag for the next session, as the app overwrites its per-MAC
+        flag from each parsed broadcast (``BleBroadVersionCache.d:109-142``, from
+        ``AbsViewMode4OpWithOtaCheck.w2``). The app reads that flag on every frame read, written or notified
+        (``EncryptionUtils.isEncryptionSupported``, from ``EncryptionBluetoothGattCallback`` :114 / :139 /
+        :156 / :219 / :233 and ``EncryptWriter.encryptWriteCharacteristic:42``), but
+        writes it from the scan just before it connects (``AbsViewMode4Op.onScanEvent:1956-1985``). Here a
+        session already up keeps its mode, and a BGC version of 1 or 2 still overrides the flag
+        (:meth:`.GoveeConnection.set_advertised_encryption`); the INFO line names both.
+
+        Learned only when every Govee pact entry of the advertisement carries the same flag
+        (:func:`.identify._pact_encrypt_flags`). An advertisement with none says nothing, as a broadcast
+        without a pact block writes nothing in the app (``GoodsType.parseBleBroadcastPactInfo:1551-1561``).
+        One whose entries disagree is a merged record (another header heard earlier, or another device's
+        frame) whose latest broadcast can't be told: the cipher stays, with a WARNING once until an
+        advertisement agrees again."""
+        flags = _pact_encrypt_flags(mfg)
+        heard = set(flags.values())
+        if len(heard) > 1:
+            if not self._cipher_ambiguous:
+                self._cipher_ambiguous = True
+                _LOGGER.warning(
+                    "%s (%s): advertises Govee headers %s, encrypted and plaintext (a merged advertisement "
+                    "record: an earlier header, or another device's frame); the advertised mode stays %s "
+                    "(a BGC version of 1 or 2 overrides it)",
+                    self.address, self._sku, ", ".join(f"0x{header:02x}" for header in flags),
+                    self._advert_encryption.value,
+                )
+            return
+        if not heard:
+            return
+        self._cipher_ambiguous = False
+        mode = Encryption.AES_RC4_PSK if heard.pop() else Encryption.NONE
+        if mode is self._advert_encryption:
+            return
+        self._advert_encryption = mode
+        upcoming = self._conn.set_advertised_encryption(mode)
+        _LOGGER.info(
+            "%s (%s): advertises the %s command channel; the next session uses %s%s",
+            self.address, self._sku, mode.value, upcoming.value,
+            "" if upcoming is mode else " (its BGC version overrides the advertised flag)",
+        )
 
     # -- identity / state ---------------------------------------------------
     @property
@@ -363,7 +413,9 @@ class Device:
 
     @property
     def encryption(self) -> Encryption:
-        """The command-channel mode in use (advertisement + BGC refined)."""
+        """The command-channel mode (advertisement + BGC refined): while a link is up, its session's; with
+        none, the one the next session starts from, which a later advertisement may have changed
+        (:meth:`ingest_advertisement`)."""
         return self._conn.encryption
 
     @property
@@ -653,11 +705,13 @@ class Device:
         """Update passive state from a BLE advertisement — no connection needed.
 
         Reads on/off from the Govee manufacturer data (:meth:`advertised_on`, decoded with the profile's
-        ``advert_on_mask`` on the plugs) and the advertised pact (:attr:`pact`), both whatever the advertised
-        name. The command channel stays the one chosen when the Device was built.
+        ``advert_on_mask`` on the plugs), the advertised pact (:attr:`pact`) and the encrypt flag, all
+        whatever the advertised name. The flag picks the command channel of the next session, never of the
+        one that is up, and only when every Govee pact entry agrees on it (:meth:`_learn_cipher`); a BGC
+        version of 1 or 2 still overrides it (:attr:`encryption`).
         Returns True if `state.is_on` changed (so a caller can notify selectively). The callbacks also
         fire when the advertised :attr:`pact` changes: once per advertisement, with the pact already
-        stored, whether or not the on/off changed with it.
+        stored, whether or not the on/off changed with it. A change of the flag fires nothing.
 
         The on/off is ignored for ``ADVERT_SUPPRESS_SECONDS`` after a command or authoritative read,
         which are fresher than the advert's. The pact is not: no command or read sets it. Any change of
@@ -670,6 +724,7 @@ class Device:
             return False
         adv = bound_advertisement(advertisement_data, self._sku, fallback_name=self._ble_device.name)
         pact_changed = self._learn_pact(adv)
+        self._learn_cipher(mfg)
         on = self.advertised_on(advertisement_data)
         # Within the suppress window a command/read is fresher than the lagging advertised on/off.
         power_changed = False

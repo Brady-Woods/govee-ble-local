@@ -20,14 +20,19 @@ The app reads an advertisement two ways, and so does the library:
   ``AbsViewMode4OpWithOtaCheck.s2``; the name only when no MAC is stored) and parses the broadcast's pact
   block with the stored goodsType (``AbsViewMode4OpWithOtaCheck.j1`` ->
   ``GoodsType.parseBleBroadcastPactInfo``), whatever the name. ``AbsViewMode4OpWithOtaCheck.w2`` stores the
-  encrypt flag per MAC (``BleBroadVersionCache.c`` / ``d``), and the cipher is chosen from it at connect
-  (``EncryptionUtils.isEncryptionSupported``). A Device, built for a SKU its caller already knows, reads its
-  advertisements that way, through :func:`bound_advertisement`, which a caller with no Device can call too.
+  encrypt flag per MAC (``BleBroadVersionCache.c`` / ``d``), and the cipher is chosen from it on every
+  frame read, written or notified (``EncryptionUtils.isEncryptionSupported``, from
+  ``EncryptionBluetoothGattCallback`` and ``EncryptWriter.encryptWriteCharacteristic:42``); the screen
+  writes it from the scan just before it connects (``AbsViewMode4Op.onScanEvent``), so in practice it holds
+  for a session. A Device, built for a SKU its caller already knows, reads its advertisements that way,
+  through :func:`bound_advertisement`, which a caller with no Device can call too.
 - Other bound-device paths: the H5083 plug screen reads the flag the same way. The H5085 / H5089 plug screen
   (``BlePactV1.r``) also needs the stored name to match, and with a foreign name connects by MAC on the flag
   it remembered from earlier broadcasts. The light screen refuses a matched broadcast without a pact block
   (``AbsViewMode4Op.onScanEvent`` -> ``p0(999)``); the library uses the profile default then. The app
-  re-learns the flag from every broadcast; a Device fixes its cipher when it is built.
+  re-learns the flag from every broadcast (``BleBroadVersionCache.d``); a Device re-learns it from each
+  advertisement it ingests, for its next session, when every Govee pact entry agrees
+  (:func:`_pact_encrypt_flags`).
 - Group control (``GroupScanOpImp``) matches scan results by name; the library has no group control.
 """
 from __future__ import annotations
@@ -145,6 +150,20 @@ def parse_manufacturer_data(mfg: dict[int, bytes]) -> tuple[bool, int, int, int]
     return None
 
 
+def _pact_encrypt_flags(mfg: dict[int, bytes]) -> dict[int, bool]:
+    """The encrypt flag of every Govee pact entry of ``mfg``, by its header byte (the spec's ``flags``), in
+    the dict's order: the entries :func:`parse_manufacturer_data` would consider, all of them.
+
+    The app reads one broadcast and takes its first pact entry (``BleUtil.parseBleBroadcastPact:785-796``).
+    A scanner's record can hold more than one: Home Assistant's (habluetooth, and BlueZ before it) keeps every
+    manufacturer-data key it has heard for the address, each with its latest value. The header is part of the
+    key, so a device whose header changed, or another device's frame merged under its address, leaves two
+    Govee entries. Two entries never share a header (the key's high byte is the marker's 0x88).
+
+    Package-internal: :class:`~govee_ble_local.devices.device.Device` re-learns its cipher from it."""
+    return {int(entry.flags): bool(entry.encrypted) for entry in _govee_entries(mfg) if entry.has_pact}
+
+
 def parse_broadcast_onoff(mfg: dict[int, bytes], *, on_mask: int | None = None) -> bool | None:
     """The device's on/off state from its advertisement — PASSIVE, no connection.
 
@@ -229,7 +248,9 @@ def bound_advertisement(
     (``BleUtil.parseBleBroadcastPact:779-803`` reads one broadcast and returns the first) only while the dict
     holds one advertisement's entries. A scanner's merged record keeps every manufacturer-data key it has
     heard for the address, and the header byte is part of the key, so after a header change the stale entry
-    comes first.
+    comes first. A Device re-learns its cipher from a later advertisement only when every Govee pact entry
+    agrees on the flag (:meth:`.Device.ingest_advertisement`, :func:`_pact_encrypt_flags`); this read and
+    the constructor's stay on the first entry.
 
     App basis, for the light goodsTypes: the control screen finds a bound device by its stored MAC, not its
     name (``AbsViewMode4OpWithOtaCheck.s2:766-774``), and parses the broadcast with the stored goodsType
