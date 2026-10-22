@@ -228,10 +228,6 @@ model, from which the shipped readers are generated).
   one needs only COLOR_TEMP and the profile's zones; don't gate it on the field. The Home Assistant
   integration's segment entities take COLOR_TEMP from the two capabilities alone, so on the 42 released SKUs
   listed under Changed their colour temperature would raise GoveeBleNotSupported.
-  - **Frozen for integrators:** the field's name, keyword-only form, default (True) and meaning stay as they
-    are through 1.x. The meaning is whether `set_segment_color_temp` may send a colour temperature to a piece
-    selection; `set_zone_color_temp` doesn't read it. An integration can gate on
-    `getattr(profile, "segment_color_temp", True)` and run on 1.6.x and later alike.
 - **H1162 / H1163 / H1167 / H1168** (h1162 goodsTypes 87 / 137 / 182 / 186), the Music Sync boxes, admitted by
   default (`app_traced`) as power-only rows at pact (1,1), following the user's decision to match the
   standalone screen. The switch turns the box's music sync on or off: `33 01 <on>`, polled with aa 01 and kept
@@ -343,9 +339,9 @@ model, from which the shipped readers are generated).
   leaves H7055's, and H7094 leaves H7057 / H8057 / H8066's. H1AA5 and H7066, second in theirs at 1.6.1, now
   come first in their own, so a `Device` built from H1AA5's or H7066's profile without `sku=` names itself
   after them, not H1AB2 or H7055 (`create_device` and `make_device` always pass the SKU). H1AB2's and H7055's
-  profiles keep their first SKU, and H7057 / H8057 / H8066 / H7094 are new. Of the new SKUs, 70 have no
-  segment colour temperature (47 by default, 23 behind `allow_modelled`) and 42 keep it (17 by default, 25
-  behind `allow_modelled`); in all, 112 SKUs have none (87 / 25) and 63 keep it (35 / 28). Source-traced
+  profiles keep their first SKU, and H7057 / H8057 / H8066 / H7094 are new. Of the new SKUs, 72 have no
+  segment colour temperature (47 by default, 25 behind `allow_modelled`) and 40 keep it (17 by default, 23
+  behind `allow_modelled`); in all, 114 SKUs have none (87 / 27) and 61 keep it (35 / 26). Source-traced
   (Govee Home 7.7.02), not live-verified. H61A8's bench check (2026-10-17) sent its Kelvin over all 15
   segments only, so no hardware observation supports a masked Kelvin on these rows.
 - **H60A6 and H6047: no `set_segment_color_temp`, matching the app's Part-tab Kelvin** (the user's decision
@@ -676,12 +672,11 @@ model, from which the shipped readers are generated).
   to `SupportPartColorTemConfig.b`: list d, 112 at pact (2,1), H7022 / H7024 at goodsType 0
   (`SupportPartColorTemConfig.java:36-55,71-91`). The All tab's Kelvin covers every piece
   (`DelegateColorV2.G0`). Each of the 108 rows with support that keeps `segments` and `color_temp` after its
-  colour scheme's drops now states it, 34 true and 74 false, with that doc-ref. The resolver requires it on
-  exactly those rows and refuses it on any other. Two list-d rows say false, by the user's decision 24
-  (Changed): h60ax 303 and h6047 119, whose Part-tab Kelvin item widens every pick to whole zones. The held
-  h60ax 356 / 373 (H1232 / H1252, behind `allow_modelled`) widen the same way
-  (`ColorModeH1232.canClickColorTem:486-508`, `ColorModeH1252.canClickColorTem:562-584`) and still say true: the
-  decision names 303 and 119 only, so whether they follow is the user's call (both rows' `doc` say so). Docs
+  colour scheme's drops now states it, 32 true and 76 false, with that doc-ref. The resolver requires it on
+  exactly those rows and refuses it on any other. Four list-d rows say false, because their Part-tab Kelvin
+  item widens every pick to whole zones: h60ax 303 and h6047 119 by the user's decision 24 (Changed), and the
+  held h60ax 356 / 373 (H1232 / H1252, behind `allow_modelled`; `ColorModeH1232.canClickColorTem:486-508`,
+  `ColorModeH1252.canClickColorTem:562-584`) by its extension (the user's decision 25, D11). Docs
   corrected where they said a non-list-d screen's Kelvin follows the piece selection (pact_h605b 120 / 360,
   h7050 157), or called the missing refusal a library gap (h6047 277). pact_h605b 142 / 243 now say their Part
   tab has no Kelvin item, next to their note that an in-range tint-colour pick on the selected pieces still

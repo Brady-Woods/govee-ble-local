@@ -966,7 +966,7 @@ families:
           power_read: ac_status
           power_live: [push_30]
           capabilities: [power, brightness, rgb, color_temp, segments]
-          segment_color_temp: true
+          segment_color_temp: false
           zones:
             - { id: main, power_index: 0, segments: [16] }
             - { id: background, power_index: 1, segments: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15] }
@@ -993,9 +993,9 @@ families:
             as on 303: with any ring piece picked, the Kelvin goes to the whole ring 0-15 with piece 16 as picked
             (canClickColorTem, G), and so does brightness while the ring holds one Kelvin tint (canClickBrightness,
             I); a segment brightness or Kelvin on part of the ring then is a frame the app does not send. The Kelvin
-            widening is the H60A6's (ColorModeH1232.canClickColorTem:486-508 over G:384-394), but the row still says
-            segment_color_temp: true: the user's decision 24 set it false on 303 and 119 only, and whether 356 follows
-            is the user's call (until then set_segment_color_temp sends the selection as it is). Kelvin version 2 =
+            widening is the H60A6's (ColorModeH1232.canClickColorTem:486-508 over G:384-394), so the row says
+            segment_color_temp: false, as 303 does, by the user's extension of decision 24 to H1232 / H1252 (decision
+            25, D11): set_segment_color_temp refuses before any I/O, zone Kelvin is kept. Kelvin version 2 =
             [2700, 6500]; brightness version 1. No 0xB2. Scenes not traced. Held behind allow_modelled:
             the library's global_power zone model (both zones confirmed after 33 01, 33 04 / 33 05 waking every
             zone) is H60A6 FIRMWARE-SOURCED; no H1232 firmware is in hand, and the app's switch ack sets only the
@@ -1081,7 +1081,7 @@ families:
           power_read: ac_status
           power_live: [push_30]
           capabilities: [power, brightness, rgb, color_temp, segments]
-          segment_color_temp: true
+          segment_color_temp: false
           zones:
             - { id: main, power_index: 0, segments: [16] }
             - { id: background, power_index: 1, segments: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15] }
@@ -1104,8 +1104,8 @@ families:
             Bytes.h / Bytes.r, white type Config.P = 1; colour-tab Kelvin on (Config.I[373][4]). Ring scoping as on
             356: Kelvin with any ring piece picked, and brightness while the ring holds one Kelvin tint, go to the
             whole ring 0-15 with piece 16 as picked (ColorModeH1252.canClickColorTem:562-584 over G:145-155 /
-            canClickBrightness); segment_color_temp stays true, as on 356, until the user decides (decision 24 names
-            303 and 119 only). Kelvin
+            canClickBrightness); segment_color_temp is false, as on 356, by the user's extension of decision 24 to
+            H1232 / H1252 (decision 25, D11); zone Kelvin is kept. Kelvin
             version 2 = [2700, 6500] (KelvinConfig; Support.getColorTemRange's legacy [2200, 6500] for 373 is not
             read by the screen, which takes KelvinConfig.m); brightness version 1. No 0xB2. Scenes not traced. Held
             behind allow_modelled: the library's global_power zone model (both zones confirmed after 33 01,
