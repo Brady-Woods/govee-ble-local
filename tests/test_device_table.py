@@ -401,7 +401,7 @@ _REFUSED: tuple[tuple[str, str, _Edit, str], ...] = (
     ("bulblightv3", "64", lambda f: _row(f, "64").update(connect_writes=["plug_sync_time"]),
      "connect_writes ['plug_sync_time']"),
     ("bulblightv3", "342", lambda f: _row(f, "348")["models"].append("H14A1"),
-     "by_model connect_writes on a SKU that rows ['342', '348'] list"),
+     "by_model ['connect_writes'] on a SKU that rows ['342', '348'] list"),
     # plugs
     ("h5080", "50", lambda f: _row(f, "50").pop("power_resync"), "no power_resync"),
     ("bulblightv3", "64", lambda f: _row(f, "64").update(power_resync=True), "power_resync on a light"),
@@ -478,6 +478,8 @@ def test_the_generator_keeps_data_keys_and_raises_on_a_missing_fact() -> None:
         return {sku for group, _fields, _routes in _resolve.profiles(cut, table, levels) for sku in group}
 
     assert "H6052" not in skus(_resolve.ADMITTED) and "H6052" in skus(_resolve.MODELLED)
+    # A SKU's by_model support replaces its row's for that SKU alone (h6609 260's IC-gated read-back).
+    assert "H70C9" in skus(_resolve.ADMITTED) and "H70C4" in skus(_resolve.MODELLED) - skus(_resolve.ADMITTED)
     # A SKU's by_model connect_writes replaces its row's for that SKU alone (bulblight Support.c's split).
     split = edited("bulblightv3", lambda f: f["client_profile"]["by_model"].update(
         H6006={"connect_writes": ["light_effect_stop"]}))

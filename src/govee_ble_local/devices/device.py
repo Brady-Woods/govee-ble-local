@@ -1926,10 +1926,11 @@ class Device:
         """H6047/H6641/H6062/H6061 per-segment colour via Controller4ColorInfoByGroup's direct
         per-group requests (``aa a5 <group>``; :func:`._readback.walk_mechanism_a_direct`), applied
         whole unless a setter raced it. On a live-IC profile the poll's one ``aa 40`` read comes first
-        (:meth:`_read_live_ic`); without a count the walk is skipped."""
+        (:meth:`_read_live_ic`); without a count the walk is skipped, or covers the static pieces where the
+        rule sizes the walk alone (:func:`._readback.walk_pieces`)."""
         pieces = None
         if self.profile.color_readback_live_ic:
-            pieces = await self._read_live_ic(budget)
+            pieces = _readback.walk_pieces(self, await self._read_live_ic(budget))
             if pieces is None:
                 return
         await self._read_fresh(

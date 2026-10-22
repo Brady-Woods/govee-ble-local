@@ -125,7 +125,8 @@ async def walk_mechanism_a_direct(dev: ReadTarget, read_reply: ReadReply,
     10 `segments`) or, when `color_readback_live_ic` is set (H6641), a live `0x40` IC-count read
     derived the way the app does (:func:`live_ic_pieces`; ``live_pieces``, where the caller made that read:
     ``Device`` makes it once per poll, as it sizes the writes too). When that read fails the app still walks
-    the groups from the IC count it stored earlier; the library has none, so it skips the walk. With
+    the groups from the IC count it stored earlier; the library has none, so it skips the walk, but where the
+    rule sizes the walk alone (:func:`walk_pieces`: h6609 goodsType 260) it walks the static pieces. With
     `color_readback_ic_sections` (goodsTypes 141 / 204) the same read's section sum sizes the walk, else the
     static count when it is 0, in Java's group count (:func:`_java_group_count`); a failed read skips it.
 
@@ -144,7 +145,8 @@ async def walk_mechanism_a_direct(dev: ReadTarget, read_reply: ReadReply,
     profile = dev.profile
     group_size = profile.color_readback_per_batch   # >= 1 (DeviceProfile); the spec's num_per_group
     if profile.color_readback_live_ic:
-        live = live_pieces if live_pieces is not None else await read_live_ic(dev, read_reply)
+        live = (live_pieces if live_pieces is not None
+                else walk_pieces(dev, await read_live_ic(dev, read_reply)))
         if live is None:
             return None
         total = live
@@ -200,6 +202,19 @@ def _java_group_count(pieces: int, group_size: int) -> int:
     return max(0, (whole if pieces >= 0 else -whole) + (part != 0))
 
 
+def walk_pieces(dev: ReadTarget, live: int | None) -> int | None:
+    """The pieces a live-IC walk covers, from its ``aa 40`` read's pieces ``live`` (:func:`read_live_ic`):
+    those, or where the read gave no count, none (the walk is skipped: the app walks the count it stored,
+    which the library doesn't have) on a profile whose live pieces size the writes too, and the static pieces
+    (``color_readback_segments``, else the segment count) on one whose rule sizes the walk alone
+    (``color_writes_live_ic`` False: the devices.yaml ``readback_only`` table). That screen walks the IC it
+    stored at pairing (h6609 ``DetailViewModel.T5`` over ``H70c4Support.b(SKU, q())``) and writes the static
+    pieces; the static count is its walk at every IC but the table's."""
+    if live is not None or dev.profile.color_writes_live_ic:
+        return live
+    return dev.profile.color_readback_segments or dev.segment_count
+
+
 async def read_live_ic(dev: ReadTarget, read_reply: ReadReply) -> int | None:
     """The ``aa 40`` read of :attr:`~.profile.DeviceProfile.color_readback_live_ic`: the pieces
     :func:`live_ic_pieces` derives from its reply, or None (logged) when the read failed or the app's reader
@@ -238,7 +253,8 @@ def live_ic_pieces(dev: ReadTarget, ic: parse.IcCount) -> int | None:
       (:317-336) divides 125 / 240's count by 4 in Java's integer division
       (``color_readback_ic_rounding`` floor).
     - The table (``color_readback_ic_table``): h6609 ``Support.getColorPieceSize(173, IC)`` (:146-149), 18
-      pieces at IC 36, else 14 (``color_readback_ic_otherwise``).
+      pieces at IC 36, else 14 (``color_readback_ic_otherwise``); ``H70c4Support.b(SKU, IC)`` (:101-132) for
+      H70C4 / H70C5 / H70C7 / H6870 / H80C4 at goodsType 260, 20 at IC 1000, else 10, the walk's alone.
     - The pair (``color_readback_ic_pair_cap``): the counts ``ControllerIcNum.e`` returns
       (:attr:`parse.IcCount.ic_pair`). ``VM4Light.j5`` (:551-575) keeps the first and the second's IC,
       ``VM4Light.h5`` (:1182-1199) stores the two only where the first is not 0, and ``H61D3Support.e``

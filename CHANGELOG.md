@@ -10,14 +10,15 @@ model, from which the shipped readers are generated).
 
 ### Added
 - **158 more SKUs, traced from the app's device list** (spec rows; no library code changed but the
-  illumination-tab pair that promotes H60A4 / H80A4, the aa 40 section sum that promotes H61A9 and the live
-  piece count that promotes 14 h705a SKUs, below): 116 admitted by default (`app_traced`) and 42 behind
-  `allow_modelled` (`modelled`). The entries below admit 60 more by default (16 through the resolver changes;
+  illumination-tab pair that promotes H60A4 / H80A4, the aa 40 section sum that promotes H61A9, the live
+  piece count that promotes 14 h705a SKUs and the per-SKU support level that promotes five h6609 260 SKUs,
+  below): 121 admitted by default (`app_traced`) and 37 behind `allow_modelled` (`modelled`). The entries below
+  admit 60 more by default (16 through the resolver changes;
   H1162 / H1163 / H1167 / H1168, H70B1 and H70BC; 17 through the status-read command ids and the BK pact gate;
   the 10 SKUs of the `legacy_02` colour scheme; H7061; H70B2, H6630, H8630 and H6631 on the device-list card;
   and through the live piece count H1A45 and the five h61d3 SKUs behind `allow_modelled` since 1.5.0, H61B8 /
   H61B9 / H61F2 / H61F5 / H61F6) and 12 more behind `allow_modelled` (H7072, H6119, the five Glide panels,
-  H61E5 / H61E6, H60A1 / H80A1 and H6609), for 274 admitted by default and 55 behind `allow_modelled` in all.
+  H61E5 / H61E6, H60A1 / H80A1 and H6609), for 279 admitted by default and 50 behind `allow_modelled` in all.
   None is
   hardware-verified (the only bench check, below, was read-only), and none has a bundled scene catalog, so none
   is offered scenes. Each is listed with its family and goodsType; † marks a SKU no row lists that the
@@ -38,8 +39,9 @@ model, from which the shipped readers are generated).
   - h604a: **H604B** (109), **H604D** (133); h6022: **H6022 / H8022** (249); chassislightv1: **H7092** (162);
   - h6840: **H6840**, **H8840**† (278), **H6841**, **H8841**† (325), **H6842**, **R6842**† (381), **H6843**
     (382);
-  - h6609: **H70C1 / H70C2 / H70CB** (181), **H6860 / R6860 / H6861 / R6861** (362), **H6350** (374),
-    **H6850** (378), **H6351** (392);
+  - h6609: **H70C1 / H70C2 / H70CB** (181), **H70C9 / H7084 / H6871 / R6871**, **H80C5**† (260, by the per-SKU
+    support level, below), **H6860 / R6860 / H6861 / R6861** (362), **H6350** (374), **H6850** (378),
+    **H6351** (392);
   - pact_h605b: **H605C** (120), **H6602** (142), **H6604 / H8604** (243), **H2A40**, **H2A41**† (360);
     pact_h6099: **H6099** (191), **H6097** (273), **H66A0**, **H66A1 / R2A80 / R2A81**† (327);
   - h7057: **H7057**, **H8057**† (274), **H7058** (275), **H7093** (289), **H7094** (290), **H8066** (305),
@@ -58,7 +60,7 @@ model, from which the shipped readers are generated).
   - h61d3: **H61D2 / H61D3 / H61D4 / H61D5 / H61D6** (202), **H703A / H703B** (263);
   - dreamcolorlightv2: **H611A / H6143 / H6144** (21); homelightv1: **H6148** (16); hollowlamp: **H6058**
     (59); h7090: **H7090** (44); h1741: **H1741 / R1741** (365);
-  - h6609: **H70C4 / H70C5 / H70C7 / H70C9 / H7084 / H6870 / H6871 / R6871 / H80C4**, **H80C5**† (260);
+  - h6609: **H70C4 / H70C5 / H70C7 / H6870 / H80C4** (260, on their IC-gated read-back, below);
   - h70b3: **H70B3** (229), **H70B4** (230), **H70B5** (231), **H6810** (255), **H6811**, **H8811**† (256);
   - h705a: **H608A / H608B / H608C / H608D / H808A** (184), **H3401** (394);
   - h7057: **H3510**, **H3511**† (349).
@@ -346,6 +348,32 @@ model, from which the shipped readers are generated).
     colour temperature and the gradual flag are served, over 18 or 14 pieces.
 
   None is hardware-verified: none of these SKUs is on the bench.
+- **A read-back piece count apart from the write count, and a SKU's own piece rule and support level within
+  its row** (pieces-readback-vs-write-count). The h6609 260 screen (H70C4NewDetailActivity) walks aa a5 over
+  `H70c4Support.b(SKU, IC)` pieces (`DetailViewModel.T5`), where its colour strip's position set, and so every
+  write's mask, is `ColorPieceConfig.b`, sized once (`H70C456789ColorMode`'s constructor; the resize `T()` has
+  no caller): 20 against 10 at IC 1000 for H70C4 / H70C5 / H70C7 / H6870 / H80C4, the same count at any IC for
+  the other SKUs.
+  - Spec: devices.schema.json's `ic_pieces` table form gains `readback_only` (the walk alone; a read that
+    gives no count walks the static pieces), and `clientModel` (`by_model`) gains `ic_pieces` and `support`,
+    which replace the row's for that SKU, on a SKU one row of the family lists, as `connect_writes` does (the
+    generator refuses them on any other SKU). `govee_reference.client_row` applies them.
+  - Library: a readback-only rule sets `color_readback_live_ic` without `color_writes_live_ic`, so the poll's
+    one aa 40 read (where the discarded read was) sizes the walk and never `segment_count`;
+    `_readback.walk_pieces` gives the static pieces where it gives no count. `_resolve.sku_support` gives a
+    route's level.
+  - **H70C9 / H7084 / H6871 / R6871** and, by the catalogue, **H80C5** (260) are promoted to the default table
+    (`app_traced`): their walk and writes are the static 20 / 10 / 15 / 15 / 10 pieces at any IC, as the app's.
+    Their profiles are unchanged.
+  - **H70C4 / H70C5 / H70C7 / H6870 / H80C4** stay behind `allow_modelled`, now walking 20 pieces (5 groups)
+    at IC 1000 and 10 otherwise, the writes still 10. They are modelled for one inferred fact, as H6609 (173):
+    the app's IC there is the one its pairing aa 40 read stored (`DefInfo.G0`; the connect aa 40 goes to
+    `Info4Detail.v`, which nothing reads), and the library applies the table to the connect aa 40.
+  - H6065 (h6061 121) is not changed: its read-back (23 pieces) and writes (one panel) differ only with no
+    layout stored, and with a stored layout L both are L (`CubeVM4Light.l5`, `realMyColorPiece`), so a 23 / 20
+    split would be a pair the app never sends; the row stays modelled for its inferred L.
+
+  Source-traced, not live-verified: no 260 SKU is on the bench. No Bluetooth was used.
 
 ### Changed
 - **A polled profile reads aa 04 only with `Capability.BRIGHTNESS`**, as the app's connect read does
@@ -485,8 +513,8 @@ model, from which the shipped readers are generated).
   `modelled`; one that needs library work has no `support` and names the gap in its `doc`. A verification
   pass challenged each family's rows; they were repaired, and demoted (to `modelled`, or to no `support`)
   where a core claim didn't hold.
-  - devices.yaml now has 305 goodsType rows in 96 families (184 in 91): 202 with `support` (66), of them 167
-    `app_traced`, 31 `modelled` and the same 4 `hardware_verified`, and 103 without (118). The trace gave 153
+  - devices.yaml now has 305 goodsType rows in 96 families (184 in 91): 202 with `support` (66), of them 168
+    `app_traced`, 30 `modelled` and the same 4 `hardware_verified`, and 103 without (118). The trace gave 153
     of them support. The other 49 take it through the library and spec changes under Added, Changed, Fixed
     and Spec: h6069 284, h3700 383, h7076 313, h70dx 267-269, bulblightv3 342, the four h1162 rows, h70b1 134,
     h70bx 216, the six status-read rows (h6092 334 / 333 / 401, h7072 371 / 294, h70b6 341), the nine BK target
@@ -496,7 +524,8 @@ model, from which the shipped readers are generated).
     the aa 40 section sum promoted dreamcolorlightv1 204 to `app_traced`) and the three device-list card rows
     (h70b2 185, h6630 285 / 286), and h61d3 375 and h6609 173 (the IC piece rules), all `app_traced` but h7072
     294, h6119 44, the Glide panels, h60ax 235, h61d3 239 / 246 and h6609 173 (`modelled`). The live piece
-    count promoted h705a 125 / 240 / 250 and h61d3 299 / 261 to `app_traced`.
+    count promoted h705a 125 / 240 / 250 and h61d3 299 / 261 to `app_traced`, and the read-back piece count
+    h6609 260 (five of its SKUs held `modelled` by their own `support`).
   - Two goodsType add-ons were traced and checked on their own: straightfloorlamp 69 (H6076 / H8076,
     `app_traced`, with the bench reads above) and rgbiclight 141 (H61C2 / H61C3 / H61C5).
   - **rgbiclight 141 (H61C2 / H61C3 / H61C5) is `app_traced`, admitted by default** (pacts (1,1) / (2,1)): power,

@@ -12613,7 +12613,7 @@ families:
         "260":   # the H70C4NewDetailActivity screen (adjust/new_detail DetailViewModel)
           models: [H70C4, H70C5, H70C7, H70C9, H7084, H6870, H6871, R6871, H80C4]   # H7084's tie is medium (H70CDiyConfig only)
           pacts: ["1,1"]
-          support: modelled   # the read-back count of five SKUs rests on their IC not being 1000 (doc)
+          support: app_traced   # H70C4 / H70C5 / H70C7 / H6870 / H80C4 are modelled (by_model: their IC-gated read-back, doc)
           power_read: aa01
           power_live: [heartbeat_aa01, push_30]
           mode_color_parse: kelvin_15   # adjust/new_detail/Info4Detail.java:687-713
@@ -12641,14 +12641,17 @@ families:
             Kelvin version 4 = [2700, 9000]. Gradual: read at connect, written 33 a3 (Config.G[260] = 0 -> Bytes.w).
             Keep-alive aa 01 (I3 true; the reply's byte 2 is the power, ShareVM.N3 -> J3), ee 30 bit 0 (X5). Not listed:
             the aa 41 power-off memory read (D2), the aa 24 IC-point read after connect (g6), the MTU 512 request.
-            Modelled, and the inferred fact is the read-back count of H70C4 / H70C5 / H70C7 / H6870 / H80C4. T5 sizes the
-            aa a5 reads by H70c4Support.b(sku, info.q()), where q() is the IC the pairing aa 40 read stored (the server's SKU
-            IC when that is <= 0, AbsAcLightDetail.K1): at IC 1000 it
-            gives those five 20 pieces (5 groups), else 10 (3 groups). The row reads 10 (ic_pieces fixed; the library
-            has no IC-equality rule), which matches the app only if no unit reports IC 1000. The catalogue ICs (200 / 300
-            / 500 / 250 / 200) suggest none does, but the app can't settle it. The write mask stays ColorPieceConfig.b =
-            10 at any IC. H70C9, H6871 / R6871, H7084 and H80C5 are SKU-fixed and share the row's level. Not
-            hardware-verified.
+            Read-back count: T5 walks aa a5 groups over H70c4Support.b(sku, info.q()) pieces, which is SKU-fixed for H70C9
+            (20), H6871 / R6871 (15), H7084 and H80C5 (10, the default): those five walk and write their static pieces at
+            any IC (ic_pieces fixed; the aa 40 read is made and its count sizes nothing), app_traced. For H70C4 / H70C5 /
+            H70C7 / H6870 / H80C4 it is 20 at IC 1000, else 10, the walk's alone: the strip's position set stays
+            ColorPieceConfig.b = 10 (H70C456789ColorMode's constructor; its resize T() has no caller), so their by_model
+            ic_pieces is that table, readback_only. Those five are MODELLED for one inferred fact, as 173: q() is the IC
+            the pairing aa 40 read stored (PairAcV1 -> DefInfo.G0, bound after pairing too, WifiChooseAc; the server's SKU
+            IC when that is <= 0, AbsAcLightDetail.K1), and the connect aa 40 is stored in Info4Detail.v only (r0), which
+            nothing reads. The library applies the table to the connect aa 40, the one IC a client can read, so its walk
+            is the app's only where the device reports the IC it reported at pairing; a read with no count walks the
+            static 10. Not hardware-verified.
           doc-ref:
             - split_h6840/com/govee/h6609/pact/Model.java:72-73
             - split_h6840/com/govee/h6609/pact/Support.java:74-89,109-133,259-261
@@ -12660,7 +12663,8 @@ families:
             - split_h6840/com/govee/h6609/adjust/new_detail/viewmodel/DetailViewModel$connectBleSuc$1.java:80-91,107-151
             - split_h6840/com/govee/h6609/adjust/new_detail/viewmodel/DetailViewModel.java:472-512,557-576,798-830,977-1002,1014-1034,1186-1193,1424-1434,1643-1667
             - split_h6840/com/govee/h6609/adjust/new_detail/H70c4Config.java:189-201
-            - split_h6840/com/govee/h6609/adjust/new_detail/mode/H70C456789ColorMode.java:84-117,250-266,330-339
+            - split_h6840/com/govee/h6609/adjust/new_detail/Info4Detail.java:887-901
+            - split_h6840/com/govee/h6609/adjust/new_detail/mode/H70C456789ColorMode.java:84-117,250-266,330-366
             - base-classes11/com/govee/base2light/mode/graffiti/H70c4Support.java:101-132
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/ColorPieceConfig.java:62-85,354-367,1036-1038,1121-1123,1677-1687
             - base-classes11/com/govee/base2light/pact/newdetail/content/color/ColorViewModel.java:848-884,1388-1413
@@ -12878,6 +12882,12 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:2100-2104,9725-9728,6649-6653,11443-11446,5500-5504,16103-16106
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/ColorPieceConfig.java:397-399,880-882,931-933,1430-1435
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:1084-1088,1183-1185
+      by_model:   # goodsType 260's IC-gated read-back: H70c4Support.b (base-classes11/com/govee/base2light/mode/graffiti/H70c4Support.java:101-132) gives these five 20 pieces at IC 1000, else 10; the write mask stays ColorPieceConfig.b = 10 (row 260's doc)
+        H70C4: { support: modelled, ic_pieces: { table: [{ ic: 1000, pieces: 20 }], otherwise: 10, readback_only: true } }
+        H70C5: { support: modelled, ic_pieces: { table: [{ ic: 1000, pieces: 20 }], otherwise: 10, readback_only: true } }
+        H70C7: { support: modelled, ic_pieces: { table: [{ ic: 1000, pieces: 20 }], otherwise: 10, readback_only: true } }
+        H6870: { support: modelled, ic_pieces: { table: [{ ic: 1000, pieces: 20 }], otherwise: 10, readback_only: true } }
+        H80C4: { support: modelled, ic_pieces: { table: [{ ic: 1000, pieces: 20 }], otherwise: 10, readback_only: true } }
       wire_cipher: runtime
       wire:
         doc: "173 / 181 / 260 direct aa a5; 362 / 374 / 378 / 392 TLV (len - 1) / 4; 398 TLV 4 records; pieces split_h6840/com/govee/h6609/pact/Support.java:146-172"
@@ -12887,7 +12897,7 @@ families:
         by_goods_type:
           "173": { forms: { f_15_01: kelvin_tint }, counts: { num_segments: 18 }, group: { rule: fixed }, doc: "pieces follow the app's IC q(): 18 at IC 36, else 14 (split_h6840/com/govee/h6609/pact/Support.java:146-149; base-classes11/com/govee/base2light/pact/newdetail/config/fuc/ColorPieceConfig.java:1651-1654). q() is the bound pairing IC, or the server's SKU IC (SkuIcManager.d) when that is <= 0 and on the first screen after pairing (base-classes11/com/govee/base2light/pact/newdetail/AbsAcLightDetail.java:594-601; split_h6840/com/govee/h6609/newdetail/NewDetailAc.java:118), never the connect aa 40. 18 is the branch the catalogue's default IC (36, Product.ic) selects, the most pieces the rule gives (ic_pieces table), the count before the first aa 40 read; every write takes the live count" }
           "181": { forms: { f_15_01: kelvin_tint }, counts: { num_segments: 10 }, group: { rule: fixed } }
-          "260": { forms: { f_15_01: kelvin_tint }, group: { rule: fixed }, doc: "pieces per SKU in wire.by_model: the colour strip's position set (ColorPieceConfig.b) and the read-back (H70c4Support.b) agree for every SKU but at IC 1000, where H70C4 / H70C5 / H70C7 / H6870 / H80C4 read back 20 (the row is modelled on it)" }
+          "260": { forms: { f_15_01: kelvin_tint }, group: { rule: fixed }, doc: "pieces per SKU in wire.by_model: the colour strip's position set (ColorPieceConfig.b), and the read-back (H70c4Support.b) but at IC 1000, where H70C4 / H70C5 / H70C7 / H6870 / H80C4 read back 20 (their by_model ic_pieces)" }
           "362": { forms: { f_41: power_memory, f_15_01: kelvin_tint }, counts: { num_segments: 10 }, group: { rule: from_len } }
           "374": { forms: { f_41: power_memory, f_15_01: kelvin_tint }, counts: { num_segments: 1 }, group: { rule: from_len } }
           "378": { forms: { f_41: power_memory, f_15_01: kelvin_tint }, counts: { num_segments: 4 }, group: { rule: from_len } }

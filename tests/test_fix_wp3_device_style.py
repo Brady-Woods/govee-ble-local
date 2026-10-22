@@ -325,6 +325,9 @@ _PAIR = dict(color_readback_ic_range=None, color_readback_ic_pair_cap=15, color_
              color_readback_ic_pair_reader=True)
 _SKIP_ZERO = dict(color_readback_ic_range=(1, 4095), color_readback_ic_per_piece=5,
                   color_readback_ic_skip_zero=True)
+# h6609 260's readback_only table (H70c4Support.b): the walk alone; no count walks the static pieces.
+_WALK = dict(_TABLE, color_readback_ic_table=((1000, 20),), color_readback_ic_otherwise=10,
+             color_writes_live_ic=False)
 
 
 @pytest.mark.parametrize(("rule", "ic", "pieces"), [
@@ -337,6 +340,8 @@ _SKIP_ZERO = dict(color_readback_ic_range=(1, 4095), color_readback_ic_per_piece
     (_PAIR, (0x00, 0x14, 0x00), 30),                    # one strip: 30
     (_PAIR, (0x00, 0x00, 0x00, 0x00, 0x0C, 0x00), 30),  # first IC 0: VM4Light.h5 keeps no pair, 30
     (_PAIR, (0x00, 0x0A, 0x00, 0x10, 0x00, 0x00), 0),   # second IC 0x1000: ControllerIcNum.e throws
+    (_WALK, (0x03, 0xE8), 20),                         # H70C4 at IC 1000: 20 pieces, 5 groups
+    (_WALK, (0x10, 0x00), 14),                         # no count: the static pieces (H6641's 14)
 ])
 def test_walk_mechanism_a_direct_sizes_a_live_ic_walk_by_its_ic_rule(
     rule: dict[str, Any], ic: tuple[int, ...], pieces: int,

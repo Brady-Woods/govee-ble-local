@@ -481,7 +481,9 @@ class DeviceProfile:
     ``build.MAX_MASK_SEGMENTS``), so it is the whole-device mask and the segment index bound, and a write that
     carries a mask before any count is known reads ``aa 40`` first and raises GoveeBleError, sending nothing,
     when the device gives no usable count, as a ``section_count_read`` profile does. :attr:`segments` is then
-    only the count before the first read. Every IC-sized devices.yaml row (``ic_pieces`` object form) sets it;
+    only the count before the first read. Every IC-sized devices.yaml row (``ic_pieces`` object form) sets it
+    but a ``readback_only`` rule's (h6609 goodsType 260: the strip is sized once by ``ColorPieceConfig.b``,
+    the walk by ``H70c4Support.b``), whose walk covers the static pieces where the read gives no count;
     False (the default): the writes keep :attr:`segments`."""
 
     def __post_init__(self) -> None:

@@ -448,8 +448,9 @@ def client_row(reg: dict[str, Any], family_id: str, goods_type: int, *, sku: str
     family specs. With the device's ``sku``, a range the row lacks (kelvin_range, brightness_range) comes
     from the SKU's client_profile.by_model entry before the family specs, and that entry's by_firmware
     items carry it too, ahead of the row's items. The row's own range wins over the model's and its
-    branches (the library refuses a by_model range under it). The SKU's connect_writes replace the row's
-    (the screen's split by SKU within one goodsType). Only those: the by_model colour report is not resolved
+    branches (the library refuses a by_model range under it). The SKU's connect_writes, ic_pieces and
+    support replace the row's (the screen's split by SKU within one goodsType). Only those: the by_model
+    colour report is not resolved
     here. Versions compare field by field, but a kelvin_range item's gate is a string
     compare, as the app's (KelvinConfig.Config.z2: versionHard.compareTo("3.08.01") >= 0).
 
@@ -463,8 +464,7 @@ def client_row(reg: dict[str, Any], family_id: str, goods_type: int, *, sku: str
     ranges = {k for k in ("kelvin_range", "brightness_range") if k not in row}   # the model's to give
     out = {k: v for k, v in row.items() if k not in ("by_pact", "by_firmware", "doc", "doc-ref")}
     out.update({k: model[k] for k in ranges if k in model})
-    if "connect_writes" in model:
-        out["connect_writes"] = model["connect_writes"]
+    out.update({k: model[k] for k in ("connect_writes", "ic_pieces", "support") if k in model})
     for k in ("scene_versions", "kelvin_range", "brightness_range"):
         if k not in out and k in (fam.get("specs") or {}):
             out[k] = fam["specs"][k]

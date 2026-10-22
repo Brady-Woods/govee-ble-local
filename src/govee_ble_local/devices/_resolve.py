@@ -42,9 +42,11 @@ the row lacks fails the build: nothing defaults silently.
   one holds 0 (``SkuToGoodsTypeUtil.f``:66-99 over ``OldRgbBkUtil.a`` / ``.b``:75-97, the pact
   ``OldBleModel.itemClickOp``:52-60 copies, the int fields ``Info4BleIotDevice.p`` / ``.v``:90-91), so it
   runs the source goodsType. A target-row route carries the gate (``Route.gate``), and
-  ``profile.profile_for`` takes it only on an advertised pact. A SKU that a ``modelled`` row and an admitted
-  row both list raises too: the spec's routing (``ble_rows``) counts both wherever both accept the pact, and
-  the opt-in must leave the admitted routes as they are.
+  ``profile.profile_for`` takes it only on an advertised pact. A SKU's level is its row's, or its ``by_model``
+  ``support`` (:func:`sku_support`), on a SKU one row of the family lists, where its own fact is inferred and
+  the row's other SKUs' are traced (h6609 260: five SKUs' IC-gated read-back). A SKU that a ``modelled`` row
+  and an admitted row both list raises too: the spec's routing (``ble_rows``) counts both wherever both
+  accept the pact, and the opt-in must leave the admitted routes as they are.
 - The pact fallback (decision D3), the 1.x compatibility rule: 1.4.0 routed each of its 18 SKUs whatever
   pact its advertisement carried, so ``profile.profile_for`` still routes one of them
   (:data:`PACT_FALLBACK_SKUS`, frozen at those 18) to its only admitted profile at a pact no row accepts, and
@@ -119,7 +121,10 @@ the row lacks fails the build: nothing defaults silently.
   ``skip_zero``, h705a 184; an IC table, H6609; or two strips' counts capped and summed, H1A45:
   ``_readback.live_ic_pieces``; on a row whose wire ``f_40`` is ``ic_pair`` the screen reads the reply with
   the IC-pair reader, ``DeviceProfile.color_readback_ic_pair_reader``, no count where it throws, which the
-  pair rule needs), and the writes (``color_writes_live_ic``:
+  pair rule needs; a SKU's ``by_model`` ``ic_pieces`` replaces its row's, on a SKU one row lists, where the
+  screen sizes the pieces by SKU: h6609 ``H70c4Support.b`` at 260), and, but under a table's
+  ``readback_only`` (the walk alone; the writes keep the static pieces, and a read with no count walks them:
+  ``_readback.walk_pieces``), the writes (``color_writes_live_ic``:
   each poll's pieces are ``Device.segment_count``, the whole-device mask and the segment index bound, as the
   screen's strip takes them from the stored IC, ``ColorPieceConfig.c``; the wire ``num_segments`` is only the
   count before the first read), or, with ``ic_pieces: sections``, its two section bytes size the read-back's
@@ -133,7 +138,8 @@ the row lacks fails the build: nothing defaults silently.
   ``light_effect_stop`` (``DeviceProfile.light_effect_stop``), each sent once per session after the
   handshake and any unlock. A SKU's ``by_model`` ``connect_writes`` replaces its row's, where the screen
   splits them by SKU within one goodsType (bulblight ``Support.c`` at 342), on a SKU one row of the family
-  lists (a ``by_model`` entry is family-wide). A SKU's ``by_model`` ``scene_power_on`` (the power-on ahead
+  lists (a ``by_model`` entry is family-wide; ``connect_writes``, ``ic_pieces`` and ``support`` on another
+  SKU raise). A SKU's ``by_model`` ``scene_power_on`` (the power-on ahead
   of a scene apply, H6009 / H6010) becomes ``DeviceProfile.scene_power_on``, on a row with ``scenes`` only.
 - The keep-alive: every row names the read its screen sends while the link is up (``heartbeat``, no family
   default), which becomes ``DeviceProfile.heartbeat`` (its command code), and its ``heartbeat_timing``
@@ -231,6 +237,7 @@ class IcTable(TypedDict):
     """``clientRow.ic_pieces``: pieces by the IC count's value."""
     table: tuple[IcEntry, ...]
     otherwise: int
+    readback_only: NotRequired[bool]
 
 
 class IcPair(TypedDict):
@@ -310,6 +317,8 @@ class ClientModel(TypedDict, total=False):
     brightness_range: tuple[int, ...]
     scene_power_on: bool
     connect_writes: tuple[str, ...]
+    ic_pieces: IcPieces | IcTable | IcPair | str
+    support: str
     by_pact: dict[str, Branch]
     by_firmware: tuple[FirmwareBranch, ...]
 
@@ -581,8 +590,8 @@ def routes(families: Sequence[Family]) -> dict[str, tuple[Family, str, str]]:
             if not _is_route(fam, row):
                 raise SpecError(f"{fam['id']} goodsType {gt}: a row with support needs models, pacts and a "
                                 "ble link")
-            admitted = row["support"] in ADMITTED
             for sku in row.get("models") or ():
+                admitted = sku_support(fam, row, sku) in ADMITTED
                 hits = listed.setdefault(sku.upper(), [])
                 other = next((h for h in hits if h[3] != admitted), None)
                 if other is not None:
@@ -719,6 +728,14 @@ def _is_route(fam: Family, row: Row) -> bool:
         row.get("connectivity") or fam.get("connectivity") or ())
 
 
+def sku_support(fam: Family, row: Row, sku: str) -> str:
+    """The support level of ``sku`` on ``row`` of ``fam``, a SKU the row lists: its ``by_model`` ``support``
+    where it has one (a SKU whose own fact is inferred where the row's others are traced: h6609 260's
+    IC-gated read-back), else the row's ("" for none)."""
+    model = ((fam.get("client_profile") or {}).get("by_model") or {}).get(sku) or {}
+    return model.get("support", row.get("support", ""))
+
+
 def catalogue_support(level: str) -> str:
     """The support level of a SKU only the catalogue snapshot routes to a row at ``level``: the row's, capped
     at ``app_traced``."""
@@ -800,10 +817,11 @@ def _members(families: Sequence[Family], admitted: Collection[str]) -> Iterator[
     :func:`catalogue_support`."""
     for fam in families:
         for gt, row in ((fam.get("client_profile") or {}).get("by_goods_type") or {}).items():
-            level, route = row.get("support", ""), _is_route(fam, row)
-            own = (row.get("models") or ()) if route and level in admitted else ()
+            if not _is_route(fam, row):
+                continue
+            own = (sku for sku in row.get("models") or () if sku_support(fam, row, sku) in admitted)
             via = ((row.get("catalogue_models") or ())
-                   if route and catalogue_support(level) in admitted else ())
+                   if catalogue_support(row.get("support", "")) in admitted else ())
             yield from ((fam, gt, row, sku) for sku in (*own, *via))
 
 
@@ -830,6 +848,11 @@ def profiles(families: Sequence[Family], parse_names: Collection[str], admitted:
     return [(tuple(skus), fields, tuple(members)) for skus, fields, members in groups.values()]
 
 
+# The by_model facts that replace a row's for the SKU (clientModel), on the one row of its family that lists
+# it.
+_ROW_OVERRIDES: Final = ("connect_writes", "ic_pieces", "support")
+
+
 def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
             catalogued: Collection[str] | None = None) -> dict[str, Any]:
     """One routed SKU's DeviceProfile field values (see the module doc for the rules)."""
@@ -852,6 +875,13 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
     if model.get("by_pact") or any(k != "kelvin_range" and not k.startswith("min_")
                                    for item in model.get("by_firmware") or () for k in item):
         fail("by_model pact / firmware branches are not served (but a firmware kelvin_range)")
+    per_row = sorted(k for k in _ROW_OVERRIDES if k in model)
+    if per_row:   # the SKU's own, on the one row of the family that lists it
+        listing = [g for g, r in (cp.get("by_goods_type") or {}).items() if "support" in r
+                   and sku.upper() in {m.upper() for m in r.get("models") or () if isinstance(m, str)}]
+        if len(listing) != 1:
+            fail(f"by_model {per_row} on a SKU that rows {listing} list (the screen splits them by SKU "
+                 "within one goodsType: one row must list it)")
     if fam.get("encryption") not in _CIPHERS:
         fail(f"encryption {fam.get('encryption')!r} is not a cipher the library implements")
 
@@ -1051,7 +1081,7 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
     if status_groups and group.get("rule") not in _GROUP_RULES:
         fail(f"wire group rule {group.get('rule')!r} (the status read counts its colour groups' records by "
              "it)")
-    ic = row.get("ic_pieces")
+    ic = model.get("ic_pieces", row.get("ic_pieces"))   # the SKU's rule where its screen sizes it by SKU
     if ("ic_num" in reads) != (ic is not None) or (ic is not None and color_readback != "mechanism_a_direct"):
         fail("an ic_num read and ic_pieces go together, with the direct colour read-back")
     if isinstance(ic, str) and ic not in ("fixed", "sections"):
@@ -1072,14 +1102,7 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
         fail("the aa 36 read and f_36 bar_pair go together")
     if power_read == "aa34_detail" and bar:
         fail("power_read aa34_detail on a bar row (the bars' power is the aa 36 read's)")
-    writes = tuple(need(row.get("connect_writes"), "connect_writes"))
-    if "connect_writes" in model:   # the SKU's own, on the one row of the family that lists it
-        writes = tuple(model["connect_writes"])
-        listing = [g for g, r in (cp.get("by_goods_type") or {}).items() if "support" in r
-                   and sku.upper() in {m.upper() for m in r.get("models") or () if isinstance(m, str)}]
-        if len(listing) > 1:
-            fail(f"by_model connect_writes on a SKU that rows {listing} list (the screen splits them by SKU "
-                 "within one goodsType)")
+    writes = tuple(need(model.get("connect_writes", row.get("connect_writes")), "connect_writes"))
     if writes not in ((("plug_sync_time",),) if relay else ((), ("light_effect_stop",))):
         fail(f"connect_writes {list(writes)} (the library sends the plug time sync on every relay row, and "
              "light_effect_stop or nothing on a light)")
@@ -1141,7 +1164,8 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
         "color_readback": color_readback,
         "color_readback_per_batch": int(per_group) if color_readback == "mechanism_a_direct" else 3,
         "color_readback_live_ic": live_ic,
-        "color_writes_live_ic": live_ic,   # the live pieces size the writes too (ColorPieceConfig.c)
+        # the live pieces size the writes too (ColorPieceConfig.c), unless the rule sizes the walk alone
+        "color_writes_live_ic": live_ic and not (isinstance(ic, dict) and ic.get("readback_only", False)),
         "color_readback_ic_sections": ic == "sections",
         "detail_power_read": power_read == "aa34_detail",
         "ic_num_read_only": ic == "fixed",
@@ -1232,8 +1256,10 @@ def _ic_rule(ic: IcPieces | IcTable | IcPair, fail: Fail) -> dict[str, Any]:
     if "table" in rule:
         table = tuple((entry["ic"], entry["pieces"]) for entry in rule["table"])
         if (not table or len({at for at, _n in table}) != len(table)
-                or not all(at >= 0 and n >= 1 for at, n in table) or rule["otherwise"] < 1):
-            fail(f"ic_pieces {dict(rule)} (distinct ics >= 0, pieces and otherwise >= 1)")
+                or not all(at >= 0 and n >= 1 for at, n in table) or rule["otherwise"] < 1
+                or not isinstance(rule.get("readback_only", False), bool)):
+            fail(f"ic_pieces {dict(rule)} (distinct ics >= 0, pieces and otherwise >= 1, readback_only a "
+                 "boolean)")
         return {"color_readback_ic_table": table, "color_readback_ic_otherwise": rule["otherwise"]}
     if "pair_max" in rule:
         if rule["pair_max"] < 1 or rule["otherwise"] < 1:
