@@ -9,7 +9,7 @@ from bleak.backends.scanner import AdvertisementData
 from .devices.device import Device
 from .devices.profile import DeviceProfile, profile_for, supported_skus
 from .exceptions import GoveeBleNotSupported
-from .identify import GoveeAdvertisement, _bound_advertisement
+from .identify import GoveeAdvertisement, bound_advertisement
 
 __all__ = [
     "Device",
@@ -57,12 +57,13 @@ def create_device(
     the command channel, and its pact the SKU's spec row (``profile_for(sku, pact=...)``), so the profile, and
     with it every capability, is settled here, before any entity is built. Both are read from its Govee
     manufacturer data whatever the advertised name, as the app's light control screen reads a bound device's;
-    only discovery (:mod:`.scanner`) needs a Govee name. Without an advertisement, or one without a Govee pact
-    block, the SKU's profile default cipher is used, which is wrong for a device whose firmware encrypts
-    although the profile says plaintext (e.g. the H6008), a SKU that several rows list needs
-    ``goods_type``, and a SKU whose routes all need a pact (a pact-conditioned reassignment's target rows,
-    a SKU a pairing write names at an exact pact, or a ``pact_required`` row's: H6076 / H8076 / R16D0) is
-    unsupported (``profile_for``). A SKU whose brightness range the pact picks
+    only discovery (:mod:`.scanner`) needs a Govee name. :func:`~govee_ble_local.bound_advertisement` is that
+    read on its own, for a caller that wants the pact or the flag without a Device. Without an advertisement,
+    or one without a Govee pact block, the SKU's profile default cipher is used, which is wrong for a device
+    whose firmware encrypts although the profile says plaintext (e.g. the H6008), a SKU that several rows
+    list needs ``goods_type``, and a SKU whose routes all need a pact (a pact-conditioned reassignment's
+    target rows, a SKU a pairing write names at an exact pact, or a ``pact_required`` row's: H6076 / H8076 /
+    R16D0) is unsupported (``profile_for``). A SKU whose brightness range the pact picks
     (``DeviceProfile.brightness_by_pact``) is built, but refuses brightness until
     ``Device.ingest_advertisement`` hears the pact. ``allow_modelled`` also admits a ``modelled`` row
     (inferred from the app, not traced; see ``profile_for``).
@@ -87,7 +88,7 @@ def create_device(
 
     Raises GoveeBleNotSupported if `sku` has no DeviceProfile (at the advertised pact), and
     GoveeBleInvalidValue if ``secret`` is not exactly 8 bytes."""
-    adv = _bound_advertisement(advertisement_data, ble_device.name, sku)
+    adv = bound_advertisement(advertisement_data, sku, fallback_name=ble_device.name)
     pact = adv.pact if adv is not None else None
     profile = profile_for(sku, pact=pact, goods_type=goods_type, allow_modelled=allow_modelled)
     if profile is None:

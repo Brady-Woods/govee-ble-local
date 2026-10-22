@@ -85,8 +85,6 @@ def build_steps(ctx: PlanContext) -> list[Step]:
         s.append(Step(f"segment_{label}_brightness_20", partial(dev.set_segment_brightness, [idx], 20),
                       _segment_brightness(idx, 20),
                       f"Is the {label} segment (index {idx}) clearly DIMMER than the others?"))
-    s.append(Step("segment_middle_color_temp_2700", partial(dev.set_segment_color_temp, [mid], 2700),
-                  None, f"Is the middle segment (index {mid}) WARM white, the others unchanged?"))
     s += scene_steps(dev, dev.scene_names[:1], codes)
     return s
 
@@ -96,6 +94,7 @@ PLAN = register_plan(SkuPlan(
     title="H6062 Glide wall light",
     build_steps=build_steps,
     intro="H6062: segment count (aa 41), power, brightness, whole-device RGB and colour "
-          "temperature, per-segment colour / brightness / colour temperature, one scene.",
+          "temperature, per-segment colour / brightness, one scene (no per-segment colour temperature: "
+          "goodsType 41's screen sends its Kelvin over every segment).",
     snapshot_keys=(*DEFAULT_SNAPSHOT_KEYS, "segments"),
 ))

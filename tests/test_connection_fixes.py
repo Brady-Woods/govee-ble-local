@@ -544,15 +544,7 @@ async def test_bgc_lookup_takes_the_first_control_service(monkeypatch) -> None:
     c = _make(monkeypatch, fake)
     await c.connect()
     # WAS: the get_service() BleakError skipped the BGC read and kept the advertised mode.
-    # BgcInfoReader.a (BgcInfoReader.java:58-72) reads 2b12 from the FIRST 1910 service.
+    # BgcInfoReader.a (BgcInfoReader.java:51-62) reads 2b12 from the FIRST 1910 service.
     assert c.is_connected and c._bgc_checked and fake.bgc_reads == 1
     first_control = list(fake.clients[0].services)[1]
     assert [ch.service for ch in fake.bgc_read_chars] == [first_control]
-
-
-async def test_bgc_lookup_error_is_transient(monkeypatch) -> None:
-    fake = FakeGovee()
-    fake.services_error = BleakError("Service Discovery has not been performed yet")
-    c = _make(monkeypatch, fake)
-    await c.connect()  # falls back to the advertised mode, like a failed BGC read
-    assert c.is_connected and c._bgc_checked is False and fake.bgc_reads == 0

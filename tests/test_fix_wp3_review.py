@@ -166,23 +166,38 @@ def _adv(switch: int) -> object:
 
 
 @pytest.mark.parametrize(("sku", "switch", "on"), [
-    # goodsType 43, Model.A: (b & 1) == 1. WAS: off (b != 1). The H5083's own advert (switch = its relay,
+    # goodsType 43, Model.z: (b & 1) == 1. WAS: off (b != 1). The H5083's own advert (switch = its relay,
     # 0 / 1) is test_h5083_firmware.test_the_advert_identifies_the_plug_and_carries_its_relay.
     ("H5080", 0x11, True),
     ("H5080", 0x10, False),
     ("H5080", 0x02, False),
-    ("H5082", 0x02, True),     # goodsType 50/307, Model4Plug2.A: bit 0 or bit 1. WAS: off
+    ("H5082", 0x02, True),     # goodsType 50/307, Model4Plug2.z: bit 0 or bit 1. WAS: off
     ("H5089", 0x03, True),
     ("H5082", 0x04, False),
-    ("H5160", 0x08, True),     # goodsType 90, Model.A: (b & 0xFF) > 0. WAS: off
+    ("H5160", 0x08, True),     # goodsType 90, Model.z: (b & 0xFF) > 0. WAS: off
     ("H5161", 0x00, False),
-    ("H6008", 0x11, False),    # lights keep AbsBaseBleModel.A: b == 1
+    ("H6008", 0x11, False),    # lights keep AbsBaseBleModel.z: b == 1
     ("H6008", 0x01, True),
 ])
 def test_plug_advert_on_off_follows_the_app(sku: str, switch: int, on: bool) -> None:
+    # Device.advertised_on is the decode, passive; ingest_advertisement folds what it gives.
     d, log = _dev(sku)
+    assert d.advertised_on(_adv(switch)) is on and d.state.is_on is None   # type: ignore[arg-type]
     assert d.ingest_advertisement(_adv(switch)) is True        # type: ignore[arg-type]
     assert d.state.is_on is on and log == []
+
+
+def test_advertised_on_is_passive_and_ignores_the_suppress_window() -> None:
+    d, _ = _dev("H5080")
+    calls: list[object] = []
+    d.register_callback(calls.append)
+    asyncio.run(d.set_power(False))   # the advertised on/off is ignored for a while after it
+    calls.clear()
+    assert d.advertised_on(_adv(0x01)) is True and d.state.is_on is False and calls == []  # type: ignore[arg-type]
+    assert d.ingest_advertisement(_adv(0x01)) is False and d.state.is_on is False  # type: ignore[arg-type]
+    v1 = type("Adv", (), {"manufacturer_data": {0x8801: bytes([0xEC, 0, 0, 0, 1])}})()
+    assert d.advertised_on(v1) is None   # type: ignore[arg-type]  # header 1: no switch byte
+    assert d.advertised_on(object()) is None   # type: ignore[arg-type]  # no manufacturer data
 
 
 def test_parse_broadcast_onoff_mask() -> None:

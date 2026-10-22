@@ -57,7 +57,9 @@ types:
       - id: f_30
         type: u1
         enum: govee_common::form_30
-        doc: 33 30, aa 30, TLV 0x30 (zone power vs light direction)
+        doc: |
+          33 30, aa 30, TLV 0x30 (zone power vs light direction vs the H6057
+          light switch)
       - id: f_34
         type: u1
         enum: govee_common::form_34

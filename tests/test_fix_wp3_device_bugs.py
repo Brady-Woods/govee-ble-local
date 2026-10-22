@@ -956,9 +956,9 @@ _A1 = 0xA1   # the H707A status read's segment-info TLV (form_a1 segment_info): 
     ("H7041", {0x0F: [_frame(0xAA, 0x0F, 0x80)]}, None, [0x0F], False),
     ("H7041", {0x0F: [_frame(0xAA, 0x0F, 0)]}, 0, [0x0F], False),
     # H707C cut to 8 segments: the status read's TLV 0xA1 count (H707AInfo4Detail.G0), not its factory 12,
-    # before the write or from the poll (then the device-info reads)
+    # before the write or from the poll (no device-info reads: device_info_reads none)
     ("H707C", {0x03: status_burst(bytes([_A1, 4, 8, 54, 54, 36]))}, 8, [0x03], False),
-    ("H707C", {0x03: status_burst(bytes([_A1, 4, 8, 54, 54, 36]))}, 8, [0x03, 0x06, 0x07, 0x07], True),
+    ("H707C", {0x03: status_burst(bytes([_A1, 4, 8, 54, 54, 36]))}, 8, [0x03], True),
     ("H707C", {0x03: status_burst(bytes([_A1, 1, 0]))}, None, [0x03], False),   # a count of 0: none
     # no TLV 0xA1: TLV 0x40's segment byte, its IC (108) new to the Device (the lambda's 0x40 branch -> n6)
     ("H707C", {0x03: status_burst(bytes([0x40, 3, 0x00, 0x6C, 5]))}, 5, [0x03], False),

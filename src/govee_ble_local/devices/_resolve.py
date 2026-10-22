@@ -92,9 +92,17 @@ the row lacks fails the build: nothing defaults silently.
   ``color_functions`` without ``segment_brightness`` turns it off (h61d3 202: ``Config.I[202][3]`` false
   hides it), and an untraced one keeps the 1.x rule (on); segment colour stays. ``rgb``, ``color_temp`` or
   ``segments`` on a relay row raises (the library resolves no colour scheme or Kelvin range for a plug), and
-  elsewhere they need a colour scheme. ``color_temp`` needs a Kelvin range, and so does ``rgb`` under every
-  scheme with a colour-temperature mode (all but h61a8, :data:`SCHEME_LACKS`): its RGB writer runs the app's
-  Kelvin-tint test on every pick whatever the screen offers (``Config.Yt`` / ``bu`` / ``Zt`` / ``fu``:
+  elsewhere they need a colour scheme. A row's ``segment_brightness_groups`` (the strip's
+  ``canClickBrightness`` groups) becomes ``DeviceProfile.segment_brightness_groups``, which the
+  segment-brightness write widens a selection to, on a row with that frame and ``segments`` only, as disjoint
+  groups of the row's segments. A row that keeps ``segments`` and ``color_temp`` after those drops says
+  whether its screen sends a Kelvin over a piece selection (``segment_color_temp``, which becomes
+  ``DeviceProfile.segment_color_temp``: the Part tab's Kelvin item, ``DelegateColorV2Part.Z0`` ->
+  ``LightColorCapabilityCenter.C2``); a row that keeps fewer may not say, and a row with a
+  ``color_temp_control`` (below) says false. ``color_temp`` needs a Kelvin range, and so does ``rgb``
+  under every scheme with a colour-temperature mode (all but h61a8, :data:`SCHEME_LACKS`): its RGB writer
+  runs the app's Kelvin-tint test on every pick whatever the screen offers (``Config.Yt`` / ``bu`` / ``Zt`` /
+  ``fu``:
   ``KelvinConfig.i``; the H7310 / H7318 / H6165 rows have no Kelvin slider). A row's ``white_type`` (the slot
   of the h60a6 colour-temperature frame, Bytes.r's white type: ``DeviceProfile.white_type``) other than
   ``rgb_white``, the default, needs the h60a6 scheme. A row's ``color_temp_control: illumination`` (the screen
@@ -136,9 +144,11 @@ the row lacks fails the build: nothing defaults silently.
   (``DeviceProfile.status_segment_count``: the H707A screen's colour page, ``H707AInfo4Detail.G0``; a reply
   without it takes TLV 0x40's segment byte, read under ``f_40: ic_pair``, where its IC changed), and the
   wire ``num_segments`` is the count before the first read. A polled row
-  reads its power from aa 01, or, with ``power_read: aa34_detail``, from the aa 34 device-detail read
-  (``DeviceProfile.detail_power_read``; wire ``f_34: device_detail``; never on a bar row, and with no aa 01
-  to take a ``heartbeat_aa01`` power from). A polled row
+  reads its power from aa 01, or, with ``power_read: aa34_detail``, from the aa 34 device-detail read's
+  light flag (``DeviceProfile.detail_power_read``; wire ``f_34: device_detail``; never on a bar row, and with
+  no aa 01 to take a ``heartbeat_aa01`` power from), which goes with ``power_write: light_switch``: the power
+  write is then the H6057 light switch, ``33 30 <1 / 0>`` (``DeviceProfile.light_switch_power``; wire
+  ``f_30: light_switch``; never on a zoned row), whose state that flag is. A polled row
   with the brightness capability reads aa 04 on every poll (one without it reads none, as H7004's screen
   doesn't: ``ControllerStrategyConfig.k1``) and a gradual row ``aa a3``, so ``connect_reads`` lists
   ``brightness`` exactly on a polled row with the capability and ``gradual`` wherever the capability is; a
@@ -183,6 +193,11 @@ the row lacks fails the build: nothing defaults silently.
   is read with the row's wire ``mode`` (``DeviceProfile.mode_decode``, over the spec's default,
   :data:`_MODE_UNSET`), and a colour-group read is of 4-byte records in the row's wire
   ``group.num_per_group`` (and, in the status read, its ``group.rule``).
+  Every status row names its ``device_info_reads`` and no other row does: whether the library adds the aa 06 /
+  aa 07 03 / aa 07 02 device-info reads it makes on every other row (``DeviceProfile.device_info_reads``). At
+  ``none`` it doesn't, and takes the versions and device id from the status reply's TLV 0x07 alone, as the
+  screen does (``Compose4BaseInfoSingleRead.w``); at ``firmware`` (a FIRMWARE-SOURCED extension the row
+  cites: H60A6, H6076) it does. There is no third value: without that evidence a status row sends none.
 - The writes on every connect (``connect_writes``): a plug's ``plug_sync_time``, and on a light nothing or
   ``light_effect_stop`` (``DeviceProfile.light_effect_stop``), each sent once per session after the
   handshake and any unlock. A SKU's ``by_model`` ``connect_writes`` replaces its row's, where the screen
@@ -340,6 +355,7 @@ class Row(TypedDict, total=False):
     support: str
     session: str
     power_read: str
+    power_write: str
     power_live: tuple[str, ...]
     heartbeat: str
     heartbeat_timing: str
@@ -354,7 +370,9 @@ class Row(TypedDict, total=False):
     color_temp_control: str
     color_functions: tuple[str, ...]
     capabilities: tuple[str, ...]
+    segment_color_temp: bool
     zones: tuple[ZoneRow, ...]
+    segment_brightness_groups: tuple[tuple[int, ...], ...]
     account_lock: bool
     scene_dialect: str
     scene_versions: tuple[int, ...]
@@ -363,6 +381,7 @@ class Row(TypedDict, total=False):
     mode_reports_kelvin: bool
     kelvin_readback: str
     status_read: tuple[str, ...]
+    device_info_reads: str
     connect_reads: tuple[str, ...]
     connect_writes: tuple[str, ...]
     power_resync: bool
@@ -532,6 +551,10 @@ COLOR_TEMP_CONTROLS: Final = ("illumination", "whole_device")
 # clientRow kelvin_readback: where the read-back's colour temperature comes from where not the mode report's
 # Kelvin (absent). pieces gives DeviceProfile.kelvin_from_pieces.
 KELVIN_READBACKS: Final = ("pieces",)
+
+# clientRow power_write: the whole-device power write where it isn't the 33 01 main switch (absent):
+# light_switch = the H6057 light switch, 33 30 <1 / 0> (DeviceProfile.light_switch_power).
+POWER_WRITES: Final = ("light_switch",)
 RELAY_POWERS: Final = ("outlet0", "all_outlets", "total_switch")        # devices.profile.RelayPower
 HEARTBEAT_TIMINGS: Final = ("fixed_rate", "after_quiet")         # transport.connection.HeartbeatTiming
 SESSIONS: Final = ("held", "per_command")                          # devices.profile.SessionMode
@@ -594,6 +617,8 @@ _GROUP_RULES: Final = frozenset({"from_len", "fixed", "by_pieces", "whole_groups
 _READS: Final = frozenset({"brightness", "gradual", "cmd_36", "color_group", "ic_num", "cmd_41",
                            "special_info", "light_num"})
 _PACT_FACTS: Final = frozenset({"status_read", "scene_versions", "kelvin_range", "brightness_range"})
+# clientRow device_info_reads, a status row's (module doc): the device-info reads are sent but at "none".
+_DEVICE_INFO_READS: Final = ("none", "firmware")
 # Pact branches whose capabilities the library leaves unread: (family, goodsType, pact key) -> the branch's
 # capabilities exactly. D3: H60A6 at pact (1, 1) keeps the row's capabilities.
 _UNREAD_PACT_CAPABILITIES: Final[Mapping[tuple[str, str, str], tuple[str, ...]]] = {
@@ -1136,6 +1161,7 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
         fail(f"the family color_scheme {scheme} would drop {sorted(lacks)}: the row must name it")
     caps -= lacks
     control = row.get("color_temp_control")
+    part_kelvin = row.get("segment_color_temp")
     cf = row.get("color_functions")
     # The colour page's flags decide color_temp only where the colour page sets it: not under the
     # illumination tab's control.
@@ -1205,6 +1231,11 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
         readback = _READBACK[power_read]
         if (readback == "status") != (status_read is not None):
             fail(f"power_read {power_read!r} with status_read {status_read!r}")
+    info_reads = row.get("device_info_reads")
+    if (info_reads is None) == (readback == "status"):
+        fail(f"device_info_reads {info_reads!r} on a {readback} row (each status row names it, no other)")
+    if info_reads is not None and info_reads not in _DEVICE_INFO_READS:
+        fail(f"device_info_reads {info_reads!r} (one of {list(_DEVICE_INFO_READS)})")
     reads = set(need(model.get("connect_reads", row.get("connect_reads")), "connect_reads"))
     if not reads <= _READS:
         fail(f"connect_reads {sorted(reads - _READS)} are not served")
@@ -1316,6 +1347,12 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
         fail("the aa 36 read and f_36 bar_pair go together")
     if power_read == "aa34_detail" and bar:
         fail("power_read aa34_detail on a bar row (the bars' power is the aa 36 read's)")
+    power_write = row.get("power_write")
+    if power_write is not None and power_write not in POWER_WRITES:
+        fail(f"power_write {power_write!r} (one of {list(POWER_WRITES)}, or absent)")
+    if (power_write == "light_switch") != (power_read == "aa34_detail"):
+        fail("power_write light_switch and power_read aa34_detail go together (the H6057 light switch and "
+             "its light flag, the screen's on / off)")
     writes = tuple(need(model.get("connect_writes", row.get("connect_writes")), "connect_writes"))
     if writes not in ((("plug_sync_time",),) if relay else ((), ("light_effect_stop",))):
         fail(f"connect_writes {list(writes)} (the library sends the plug time sync on every relay row, and "
@@ -1364,12 +1401,17 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
              "rule)")
 
     zones = tuple((z["id"], z["power_index"], tuple(z["segments"])) for z in need(row.get("zones"), "zones"))
+    if power_write and zones:
+        fail(f"power_write {power_write} on a zoned row (it is the whole-device frame, no zone's)")
+    groups = tuple(tuple(g) for g in row.get("segment_brightness_groups") or ())
     lock = bool(need(row.get("account_lock"), "account_lock"))
     out: dict[str, Any] = {
         "capabilities": tuple(c for c in CAPABILITIES if c in caps),
+        "segment_color_temp": part_kelvin is not False,   # True, the default, where it means nothing
         "aes_fallback": lock or (fam["id"], gt) in _AES_FALLBACK_ROWS,
         "segments": int(counts.get("num_segments", 0)),
         "zones": zones,
+        "segment_brightness_groups": groups,
         "scene_versions": scenes,
         "scene_versions_by_firmware": tuple(scenes_by_firmware) if uploads else (),
         "scene_versions_by_pact": scenes_by_pact if uploads else (),
@@ -1389,6 +1431,7 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
         "color_writes_live_ic": live_ic and not ic_rule.get("color_readback_ic_walk_only", False),
         "color_readback_ic_sections": ic == "sections",
         "detail_power_read": power_read == "aa34_detail",
+        "light_switch_power": power_write == "light_switch",
         "ic_num_read_only": ic == "fixed",
         "section_count_read": section_count,
         "special_info_read": special_info,
@@ -1401,6 +1444,7 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
         "kelvin_by_hardware": () if by_soft else tuple(sorted(kelvin_by_version, reverse=True)),
         "kelvin_by_software": tuple(sorted(kelvin_by_version, reverse=True)) if by_soft else (),
         "mode_reports_kelvin": bool(row.get("mode_reports_kelvin", True)),
+        "device_info_reads": info_reads != "none",
         "light_effect_stop": writes == ("light_effect_stop",),
         "scene_power_on": bool(model.get("scene_power_on", False)),
         "heartbeat": heartbeat,    # a command name (or "none"); devices/profile.py takes its code
@@ -1418,6 +1462,12 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
     for name, _index, segs in zones:
         if not all(0 <= s < out["segments"] for s in segs):
             fail(f"zone {name} segments {list(segs)} are not all below the {out['segments']} segments")
+    if groups and ("segments" not in caps or scheme not in SEGMENT_BRIGHTNESS_SCHEMES):
+        fail("segment_brightness_groups without the segment-brightness frame (segments on an h60a6 row)")
+    pieces = [i for g in groups for i in g]
+    if len(set(pieces)) != len(pieces) or not all(0 <= i < out["segments"] for i in pieces):
+        fail(f"segment_brightness_groups {[list(g) for g in groups]} are not disjoint groups of the "
+             f"{out['segments']} segments")
     if scheme is not None:
         out["color_scheme"] = scheme
     if white != _WHITE_DEFAULT:
@@ -1483,6 +1533,11 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
         if unknown:
             fail(f"mode_color_parse {sorted(unknown)} not in the mode_color_parse table")
     _check_forms(forms, _forms_used(out, caps, tuple(t for read in status_reads for t in read), relay), fail)
+    if ({"segments", "color_temp"} <= caps) != (part_kelvin is not None):
+        fail("segment_color_temp goes with segments and color_temp (the colour scheme's drops applied): "
+             "whether the screen sends a Kelvin over a piece selection")
+    if control is not None and part_kelvin:   # whole_device_kelvin: no Kelvin on part of the device
+        fail(f"segment_color_temp true with color_temp_control {control} (its Kelvin covers every piece)")
     return out
 
 
@@ -1564,6 +1619,8 @@ def _forms_used(out: Mapping[str, Any], caps: Collection[str], status_read: Sequ
     used = [("f_01", "relays" if relay else "light")]
     if out.get("detail_power_read"):
         used.append(("f_34", "device_detail"))
+    if out.get("light_switch_power"):
+        used.append(("f_30", "light_switch"))
     if relay and out.get("relay_power") == "total_switch":
         used.append(("f_02", "total_switch"))
     scheme = out.get("color_scheme")

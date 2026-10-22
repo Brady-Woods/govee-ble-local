@@ -248,6 +248,7 @@ def test_zone_bar_gradual() -> None:
             assert b.bar_switch(left, right) == C.build_bar_switch_pair(left, right)
     for on in (True, False):
         assert b.gradual(on) == C.build_gradual(on)
+        assert b.light_switch(on) == C.build_h6057_light_switch(on)   # the H6057 light switch, form_30
 
 
 def test_scene_activate_every_code() -> None:

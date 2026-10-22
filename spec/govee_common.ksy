@@ -1625,10 +1625,19 @@ enums:
     2:
       id: light_direction
       doc: |
-        one-byte value (H6038 calibration direction, H6057 main light, H71xx)
+        one-byte value (H6038 calibration direction, H71xx chart report)
       doc-ref:
         - split_h6047/com/govee/h6047/newdetail/h6038/controller/CalibrationController.java:42-45
-        - split_hollowlamp/com/govee/h6057/origin/newDetail/H6057DetailVM.java:950-956
+        - base-classes12/com/govee/base_h71xx/sku_base/ble/controller/ReportChartController.java:24-31
+    3:
+      id: light_switch
+      doc: |
+        the H6057 header's light switch (command_light_switch 0x30), a one-byte
+        1 / 0 that switches the light alone, not the white-noise speaker; its
+        state reads back as the aa 34 device_detail light_open (no aa 30 read)
+      doc-ref:
+        - split_hollowlamp/com/govee/h6057/origin/newDetail/H6057DetailVM.java:949-967
+        - split_hollowlamp/com/govee/h6057/origin/ble/BleProtocol.java:7
   form_36:
     0:
       id: unknown

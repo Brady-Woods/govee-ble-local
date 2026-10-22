@@ -403,9 +403,11 @@ class DeviceProfile:
     every piece, h61d3 ``ColorMode.canClickColorTem`` on H61E5 / H61E6; or ``illumination``, see
     :attr:`kelvin_with_brightness`). :meth:`~.device.Device.set_segment_color_temp` and
     :meth:`~.device.Device.set_zone_color_temp` then raise GoveeBleNotSupported: a Kelvin on some segments
-    is a frame the app never sends. A caller that offers colour temperature per segment or per zone (on
-    :attr:`~..models.Capability.SEGMENTS` or zones with :attr:`~..models.Capability.COLOR_TEMP`) checks
-    this first. False (the default, every SKU before 1.8.0): the masked Kelvin is the app's."""
+    is a frame the app never sends, whatever :attr:`segment_color_temp` says. A table profile with it and
+    :attr:`~..models.Capability.SEGMENTS` also has :attr:`segment_color_temp` False (the row says so, and the
+    resolver refuses true beside a ``color_temp_control``), so a caller that offers colour temperature per
+    segment or per zone checks :attr:`segment_color_temp` alone. False (the default, every SKU before
+    1.8.0): the masked Kelvin is the app's."""
     kelvin_with_brightness: bool = field(default=False, kw_only=True)
     """The SKU's screen sets colour temperature on its illumination tab alone (a devices.yaml row's
     ``color_temp_control: illumination``), which writes the Kelvin frame and then ``33 04`` <the current
@@ -436,11 +438,23 @@ class DeviceProfile:
     detail_power_read: bool = field(default=False, kw_only=True)
     """``readback="polled"`` only: the poll reads the power from the ``aa 34`` device-detail read in place of
     ``aa 01``, after the ``aa 04`` brightness read, as the H6057 screen's connect list orders them
-    (``Compose4InfoBleIotH6057``), and takes the state of its header main switch (``33 01``): on while the
-    light is open or white noise plays (the spec's ``device_detail.main_switch_on``). A devices.yaml row with
-    ``power_read: aa34_detail``; none is served yet (h6057 104 is held: with white noise playing and the light
-    off, this reads on while the screen shows the light closed, and ``set_power(True)`` still sends
-    ``33 01 01``, which the main switch never sends then)."""
+    (``Compose4InfoBleIotH6057``), and takes its light-open flag (byte 0 bit 7, the spec's
+    ``device_detail.light_open``: ``Controllers.d``, ``H6057Info4Detail.H``): the screen's on / off and the
+    light switch's state (:attr:`light_switch_power`). So white noise playing with the light closed reads
+    off, as the screen shows it. A devices.yaml row with ``power_read: aa34_detail`` (H6057)."""
+    light_switch_power: bool = field(default=False, kw_only=True)
+    """The whole-device power is the H6057 header's light switch: :meth:`~.device.Device.set_power`,
+    ``turn_on`` and ``turn_off`` write ``33 30 <1 / 0>`` (the spec's ``cmd_30_write`` under form_30
+    ``light_switch``: ``H6057DetailVM.h5``, ``BleProtocol.command_light_switch``), the switch whose state
+    :attr:`detail_power_read` reads back, in place of the ``33 01`` main switch. It switches the light alone,
+    so ``turn_off`` leaves the white-noise speaker playing, as the screen's light switch does (the main
+    switch, which would stop it too, is never sent). That read is its only read-back: the advertised switch
+    byte is the device-list card's, whose toggle is the main switch, so no advertisement's on/off is taken
+    for it (:meth:`~.device.Device.advertised_on` is None). A devices.yaml row's ``power_write:
+    light_switch`` (h6057 104, the user's decision of 2026-10-22). The whole-device power frame only: no zone
+    or relay frame goes with it.
+    False (the default): the ``33 01`` main switch (or a zoned fixture's ``33 30`` per zone, or a plug's
+    relay frame)."""
     session: SessionMode = field(default="held", kw_only=True)
     """How the writes reach the device: ``"held"`` (the default: the control screens' rows, and a profile
     built by hand) keeps one link across commands and reads, acks each write and runs the :attr:`heartbeat`;
@@ -609,6 +623,33 @@ class DeviceProfile:
     before the first read (a devices.yaml status row that requests ``cmd_a1``). It needs ``0xA1`` in
     :attr:`status_read` and ``f_a1`` ``segment_info`` in :attr:`status_decode`. False (the default): the
     status read sizes nothing."""
+    segment_color_temp: bool = field(default=True, kw_only=True)
+    """Whether a colour temperature may go to a piece selection:
+    :meth:`~.device.Device.set_segment_color_temp`, and :meth:`~.device.Device.set_zone_color_temp`, whose
+    frame masks the zone's pieces. The control screen's All tab sends its Kelvin over every piece
+    (``DelegateColorV2.G0``), and only its Part tab's Kelvin item over the selected ones, an item
+    ``DelegateColorV2Part.Z0`` adds only where ``LightColorCapabilityCenter.C2`` holds:
+    ``SupportPartColorTemConfig.b``'s goodsTypes (a devices.yaml row's ``segment_color_temp``). False: both
+    raise GoveeBleNotSupported, and the device's one colour temperature is
+    :meth:`~.device.Device.set_color_temp`'s. It means nothing without SEGMENTS and COLOR_TEMP in
+    :attr:`capabilities`. True by default, so a profile built by hand keeps 1.x's behaviour; the generated
+    table sets it from the row (the default on a row without both capabilities). An RGB pick that is a Kelvin
+    tint colour still goes to the selected pieces as the Kelvin frame (``Config.Yt``), as the app sends it,
+    whatever this says."""
+    segment_brightness_groups: tuple[tuple[int, ...], ...] = field(default=(), kw_only=True)
+    """Disjoint groups of segment indices that :meth:`~.device.Device.set_segment_brightness` widens a
+    selection to: every segment of each group holding a selected one goes into the ``33 05 15 02`` mask and
+    the state fold, as the screen's strip widens it before the write (a devices.yaml row's
+    ``segment_brightness_groups``: ``ColorMode14Rect4ReverseSelect.canClickBrightness`` and
+    ``H605CColorMode.canClickBrightness``, {0-2} / {3-6} / {7-9} / {10-13}). Empty, the default: the
+    selection as it is."""
+    device_info_reads: bool = field(default=True, kw_only=True)
+    """Whether :meth:`~.device.Device.update` makes the ``aa 06`` / ``aa 07 03`` / ``aa 07 02`` device-info
+    reads (``_readback.read_device_info``), and later the re-read of a version a firmware-gated fact still
+    waits for. True, the default, as in 1.6.1. False on a ``readback="status"`` row whose screen sends none of
+    them (a devices.yaml status row's ``device_info_reads: none``: every status row but the H60A6's and the
+    H6076's, whose reads are firmware-sourced): the versions and device id then come from the status reply's
+    TLV 0x07 alone, on every poll, as on the screen (``Compose4BaseInfoSingleRead.w``)."""
 
     def __post_init__(self) -> None:
         """Validate each field: GoveeBleInvalidValue (a ValueError) on a value no Device can use.
@@ -683,6 +724,12 @@ class DeviceProfile:
                                        "distinct command codes)")
         self._check_status_decode(where)
         self._check_mode_decode(where)
+        groups = self.segment_brightness_groups
+        if not (isinstance(groups, tuple) and all(
+                isinstance(g, tuple) and g and all(_index(i) for i in g) for g in groups)
+                and len({i for g in groups for i in g}) == sum(map(len, groups))):
+            raise GoveeBleInvalidValue(f"{where}: segment_brightness_groups={groups!r} (a tuple of disjoint, "
+                                       "non-empty tuples of segment indices)")
         if self.color_readback_per_batch < 1:   # a group size of 0 would never finish a read-back
             raise GoveeBleInvalidValue(
                 f"{where}: color_readback_per_batch={self.color_readback_per_batch!r}")
@@ -898,6 +945,11 @@ def _raw_range(span: tuple[int, ...]) -> bool:
         return False
     lo, hi = span
     return 0 <= lo < hi <= 0xFF and percent_to_raw(100, lo, hi) <= 0xFF
+
+
+def _index(value: object) -> bool:
+    """A segment index: a non-negative int, not a bool."""
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
 
 
 def _pact_key(pact: tuple[int, ...]) -> bool:

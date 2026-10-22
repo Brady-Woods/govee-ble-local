@@ -35,7 +35,8 @@ from ..exceptions import (
     GoveeBleTimeout,
     GoveeBleUnknownName,
 )
-from ..identify import GoveeAdvertisement, _bound_advertisement, parse_broadcast_onoff
+from ..identify import GoveeAdvertisement, bound_advertisement, parse_broadcast_onoff
+from ..identify import _pact_encrypt_flags
 from ..models import Capability, DeviceState, Encryption, Segment, Zone
 from ..scenes import Scene, async_load_scenes, load_scenes, scene_names_by_code
 from ..scenes import scene_upload_frames as _scene_upload_frames
@@ -167,7 +168,8 @@ class Device:
 
         ``advertisement_data`` (bleak's, or a parsed :class:`GoveeAdvertisement`) picks the command
         channel from its encrypt flag, read from its Govee manufacturer data whatever the advertised name;
-        without one (or without a Govee pact block) the profile default is used. ``sku`` names the
+        without one (or without a Govee pact block) the profile default is used. Later advertisements
+        re-learn it for the next session (:meth:`ingest_advertisement`). ``sku`` names the
         device (default: the profile's first SKU). ``secret`` is the 8-byte account-lock key, sent
         after every handshake on a profile that requires one (:meth:`set_secret` can supply it
         later). ``frame_log=<path>`` persists a JSONL session capture. ``idle_disconnect`` is the
@@ -215,6 +217,12 @@ class Device:
         # a read issued after the last of them clears it (_finish_read).
         self._power_unsure = False
         self._power_unsure_seq = 0
+        # The last read that returned the whole-device on/off, as (time.monotonic(), the on/off it gave),
+        # while nothing since may have changed the device's power unseen (power_read_at). _power_read_drops
+        # counts the times it was dropped, so a read issued before a drop never stamps after it
+        # (_stamp_power_read).
+        self._power_read: tuple[float, bool] | None = None
+        self._power_read_drops = 0
         # H60A6 (global_power): for each zone a 33 01 / 33 30 write (or a 33 04 wake) set since the last
         # status reply carrying it, the powers it may end at once the firmware's message thread has applied
         # them (_post_zone_power). The firmware acks them before that thread applies them (see _read_status),
@@ -257,10 +265,15 @@ class Device:
         self._advert_ignore_until = 0.0   # monotonic; see ADVERT_SUPPRESS_SECONDS
         # (pact_type, pact_code) from the Govee advertisement, or None until one is heard.
         self._pact: tuple[int, int] | None = None
-        # Parsed once, used twice; read as a bound device's, whatever its name (_bound_advertisement).
-        adv = _bound_advertisement(advertisement_data, ble_device.name, self._sku)
+        # Parsed once, used twice; read as a bound device's, whatever its name (bound_advertisement).
+        adv = bound_advertisement(advertisement_data, self._sku, fallback_name=ble_device.name)
         self._learn_pact(adv)
         enc = self._resolve_encryption(adv)
+        # The mode each session starts from: the constructor's, then the last one an advertisement handed to
+        # the connection (_learn_cipher); and whether the last advertisement that said anything about it was
+        # ambiguous (its WARNING is logged once per spell).
+        self._advert_encryption = enc
+        self._cipher_ambiguous = False
         self._conn = GoveeConnection(
             ble_device,
             encryption=enc,
@@ -322,6 +335,49 @@ class Device:
         if adv is None or not adv.encryption_known:
             return self.profile.encryption
         return Encryption.AES_RC4_PSK if adv.encrypted else Encryption.NONE
+
+    def _learn_cipher(self, mfg: dict[int, bytes]) -> None:
+        """Re-learn the advertised encrypt flag for the next session, as the app overwrites its per-MAC
+        flag from each parsed broadcast (``BleBroadVersionCache.d:109-142``, from
+        ``AbsViewMode4OpWithOtaCheck.w2``). The app reads that flag on every frame read, written or notified
+        (``EncryptionUtils.isEncryptionSupported``, from ``EncryptionBluetoothGattCallback`` :114 / :139 /
+        :156 / :219 / :233 and ``EncryptWriter.encryptWriteCharacteristic:42``), but
+        writes it from the scan just before it connects (``AbsViewMode4Op.onScanEvent:1956-1985``). Here a
+        session already up keeps its mode, and a BGC version of 1 or 2 still overrides the flag
+        (:meth:`.GoveeConnection.set_advertised_encryption`); the INFO line names both.
+
+        Learned only when every Govee pact entry of the advertisement carries the same flag
+        (:func:`.identify._pact_encrypt_flags`). An advertisement with none says nothing, as a broadcast
+        without a pact block writes nothing in the app (``GoodsType.parseBleBroadcastPactInfo:1551-1561``).
+        One whose entries disagree is a merged record (another header heard earlier, or another device's
+        frame) whose latest broadcast can't be told: the cipher stays, with a WARNING once until an
+        advertisement agrees again."""
+        flags = _pact_encrypt_flags(mfg)
+        heard = set(flags.values())
+        if len(heard) > 1:
+            if not self._cipher_ambiguous:
+                self._cipher_ambiguous = True
+                _LOGGER.warning(
+                    "%s (%s): advertises Govee headers %s, encrypted and plaintext (a merged advertisement "
+                    "record: an earlier header, or another device's frame); the advertised mode stays %s "
+                    "(a BGC version of 1 or 2 overrides it)",
+                    self.address, self._sku, ", ".join(f"0x{header:02x}" for header in flags),
+                    self._advert_encryption.value,
+                )
+            return
+        if not heard:
+            return
+        self._cipher_ambiguous = False
+        mode = Encryption.AES_RC4_PSK if heard.pop() else Encryption.NONE
+        if mode is self._advert_encryption:
+            return
+        self._advert_encryption = mode
+        upcoming = self._conn.set_advertised_encryption(mode)
+        _LOGGER.info(
+            "%s (%s): advertises the %s command channel; the next session uses %s%s",
+            self.address, self._sku, mode.value, upcoming.value,
+            "" if upcoming is mode else " (its BGC version overrides the advertised flag)",
+        )
 
     # -- identity / state ---------------------------------------------------
     @property
@@ -420,7 +476,9 @@ class Device:
 
     @property
     def encryption(self) -> Encryption:
-        """The command-channel mode in use (advertisement + BGC refined)."""
+        """The command-channel mode (advertisement + BGC refined): while a link is up, its session's; with
+        none, the one the next session starts from, which a later advertisement may have changed
+        (:meth:`ingest_advertisement`)."""
         return self._conn.encryption
 
     @property
@@ -441,6 +499,41 @@ class Device:
     def is_on(self) -> bool | None:
         """Power state, or None if unknown."""
         return self._state.is_on
+
+    @property
+    def power_read_at(self) -> float | None:
+        """When a read last returned the device's whole on/off (``state.is_on``): ``time.monotonic()``
+        seconds, while ``is_on`` still holds what that read gave; None when no read has, or it no longer does.
+
+        Stamped only by a read that returned the on/off: an answered 0xAC status read (its TLV 0x01; a reply
+        without one reads off, as the app's does), the ``aa 01`` power read of a polled light, the ``aa 34``
+        device-detail read that replaces it on the H6057 (its light flag,
+        :attr:`.DeviceProfile.detail_power_read`), the ``aa 36`` bar read of a bar-switch device (in a poll,
+        or before a bar write), and a plug's ``aa 01`` relay read.
+        A read that returned no on/off (an unanswered poll, a brightness or mode reply), a read discarded as
+        stale, an advertisement and an acked write stamp nothing: a poll that read nothing leaves the stamp of
+        the read before it.
+
+        Dropped when the device may hold another on/off than ``is_on`` without a read saying so:
+
+        - anything but a read changes ``is_on`` (an advertisement, an acked write, the on/off derived from the
+          zones), even if it later changes back;
+        - a power write or a scene activation raises, since it may have reached the device (as it drops
+          ``DeviceState.zone_power_confirmed``);
+        - a write wakes a zoned device not known to be on (an H60A6 or H6047 ``33 04`` / ``33 05``,
+          :meth:`_wake_power`), or switches a zone on while ``is_on`` is not True (an H60A6 ``33 30`` zone-on
+          also sets the main switch, FUN_9b0278dc @0x9b02795e);
+        - ``is_on`` may say on for a device that is off: a write that may have switched it off raised, an
+          acked H60A6 zone-off may have switched the main switch off, or a status reply came before the device
+          applied an acked power write (see ``DeviceState.zone_power_confirmed``).
+
+        A read issued before a drop does not stamp after it. A zone's power has its own stamp,
+        ``DeviceState.zone_power_confirmed``. This one is on the Device, not in :class:`DeviceState`, so
+        ``dataclasses.asdict(state)`` and :meth:`snapshot` don't carry it."""
+        read = self._power_read
+        if read is None or read[1] != self._state.is_on:
+            return None
+        return read[0]
 
     @property
     def scene_names(self) -> list[str]:
@@ -524,6 +617,18 @@ class Device:
     def _require(self, cap: Capability) -> None:
         if cap not in self.profile.capabilities:
             raise GoveeBleNotSupported(f"{self._sku}: {cap.name} not supported")
+
+    def _require_segment_color_temp(self) -> None:
+        """A Kelvin on a piece selection: SEGMENTS, COLOR_TEMP and a screen whose Part tab sends one
+        (:attr:`.DeviceProfile.segment_color_temp`; elsewhere the app's only Kelvin covers every piece), and
+        not a screen that writes colour temperature over the whole device only
+        (:attr:`.DeviceProfile.whole_device_kelvin`: the illumination tab, or a colour page whose Kelvin pick
+        sets every piece; the table's ``segment_color_temp`` is False there too)."""
+        self._require(Capability.SEGMENTS)
+        self._require(Capability.COLOR_TEMP)
+        if not self.profile.segment_color_temp or self.profile.whole_device_kelvin:
+            raise GoveeBleNotSupported(f"{self._sku}: no colour temperature on a piece selection (the app "
+                                       "sends it over every piece: set_color_temp)")
 
     def _unlock_frames(self) -> list[bytes]:
         return [build.secret_check(self._secret)] if self._secret else []
@@ -646,15 +751,43 @@ class Device:
         self._ble_device = ble_device
         self._conn.update_ble_device(ble_device)
 
+    def advertised_on(self, advertisement_data: AdvertisementData) -> bool | None:
+        """The on/off ``advertisement_data`` carries, decoded as this device decodes it; None when it carries
+        none. PASSIVE: nothing is connected and the state is left as it is (:meth:`ingest_advertisement` folds
+        the on/off in, outside its suppress window).
+
+        The app reads the advertised switch byte the same way for every device
+        (``BleUtil.parseBleBroadOnOff``, :func:`.identify.parse_broadcast_onoff`: the overload at
+        ``:719-744`` for lights, the one at ``:700-717`` for plugs, the same read), and each device model
+        decodes it in its own ``z(scanRecord)``: a light is on for a byte of 1
+        (``AbsBaseBleModel.z:393-397``), a plug for any bit of its profile's
+        :attr:`.DeviceProfile.advert_on_mask` (h5080 ``Model.z:254-265``, ``Model4Plug2.z:269-290``). Read
+        from the Govee manufacturer data whatever the advertised name. None also for an advertisement without
+        manufacturer data, or whose Govee broadcast has no switch byte (a header below 2, too short).
+
+        Always None on a :attr:`.DeviceProfile.light_switch_power` profile (H6057): its power is the light
+        switch, which only the ``aa 34`` read reads back. The switch byte is the device-list card's
+        (``AbsBaseBleModel.z``), whose toggle writes the ``33 01`` main switch (``AbsLightModel4BleIot.v0`` ->
+        ``AbsDeviceModel4BleIot.l:72-88``), and the control screen never reads it, so nothing shows it to be
+        the light's state rather than the main switch's (on while white noise plays)."""
+        if self.profile.light_switch_power:
+            return None
+        mfg = getattr(advertisement_data, "manufacturer_data", None)
+        if not mfg:
+            return None
+        return parse_broadcast_onoff(mfg, on_mask=self.profile.advert_on_mask)
+
     def ingest_advertisement(self, advertisement_data: AdvertisementData) -> bool:
         """Update passive state from a BLE advertisement — no connection needed.
 
-        Reads on/off from the Govee manufacturer data (identify.parse_broadcast_onoff, decoded
-        with the profile's ``advert_on_mask`` on the plugs) and the advertised pact (:attr:`pact`), both
-        whatever the advertised name. The command channel stays the one chosen when the Device was built.
+        Reads on/off from the Govee manufacturer data (:meth:`advertised_on`, decoded with the profile's
+        ``advert_on_mask`` on the plugs; none on the H6057's light switch), the advertised pact (:attr:`pact`)
+        and the encrypt flag, all whatever the advertised name. The flag picks the command channel of the
+        next session, never of the one that is up, and only when every Govee pact entry agrees on it
+        (:meth:`_learn_cipher`); a BGC version of 1 or 2 still overrides it (:attr:`encryption`).
         Returns True if `state.is_on` changed (so a caller can notify selectively). The callbacks also
         fire when the advertised :attr:`pact` changes: once per advertisement, with the pact already
-        stored, whether or not the on/off changed with it.
+        stored, whether or not the on/off changed with it. A change of the flag fires nothing.
 
         The on/off is ignored for ``ADVERT_SUPPRESS_SECONDS`` after a command or authoritative read,
         which are fresher than the advert's. The pact is not: no command or read sets it. Any change of
@@ -665,13 +798,15 @@ class Device:
         mfg = getattr(advertisement_data, "manufacturer_data", None)
         if not mfg:
             return False
-        adv = _bound_advertisement(advertisement_data, self._ble_device.name, self._sku)
+        adv = bound_advertisement(advertisement_data, self._sku, fallback_name=self._ble_device.name)
         pact_changed = self._learn_pact(adv)
-        on = parse_broadcast_onoff(mfg, on_mask=self.profile.advert_on_mask)
+        self._learn_cipher(mfg)
+        on = self.advertised_on(advertisement_data)
         # Within the suppress window a command/read is fresher than the lagging advertised on/off.
         power_changed = False
         if on is not None and on != self._state.is_on and time.monotonic() >= self._advert_ignore_until:
             _fold.apply_advert_power(self.profile, self._state, on)   # zones kept consistent (state only)
+            self._drop_power_read()   # not a read (power_read_at)
             power_changed = True
         if power_changed or pact_changed:
             self._notify()
@@ -780,9 +915,24 @@ class Device:
         return self._follows_beat and link != 0 and link == self._status_link
 
     def _set_power_unsure(self) -> None:
-        """``is_on`` may say on for a device that is off (see ``_power_unsure``)."""
+        """``is_on`` may say on for a device that is off (see ``_power_unsure``), so no read vouches for it
+        (:attr:`power_read_at`)."""
         self._power_unsure = True
         self._power_unsure_seq += 1
+        self._drop_power_read()
+
+    def _drop_power_read(self) -> None:
+        """The device may hold another on/off than ``is_on`` without a read saying so
+        (:attr:`power_read_at`)."""
+        self._power_read = None
+        self._power_read_drops += 1
+
+    def _stamp_power_read(self, since: int) -> None:
+        """A read issued when ``_power_read_drops`` was ``since`` returned the on/off now in ``is_on``: stamp
+        it (:attr:`power_read_at`), unless a drop came after the read was issued."""
+        on = self._state.is_on
+        if since == self._power_read_drops and on is not None:   # every read sets it; narrows the type
+            self._power_read = (time.monotonic(), on)
 
     def _wrote(self, ticket: int) -> None:
         """Record that write call ``ticket``'s frames went out on the link that is up (``_link_write``)."""
@@ -869,8 +1019,12 @@ class Device:
         thread is kept for the next status read, acked or not (``_zone_power_posted``,
         :meth:`_read_status`).
 
+        No write vouches for :attr:`power_read_at`: an acked one that changes ``is_on`` drops it, and so does
+        a power write (``zones`` or ``fixture``) that raises, whatever its power, and a write that wakes the
+        device or lights a zone while ``is_on`` is not True, acked or not.
+
         A ``session="per_command"`` profile commits through :meth:`_commit_once` instead, under
-        ``_tap_lock``."""
+        ``_tap_lock`` (it makes no read, so it has no :attr:`power_read_at` to drop)."""
         if self.profile.session == "per_command":
             async with self._tap_lock:
                 await self._commit_once(frames, apply, authoritative=authoritative)
@@ -893,13 +1047,19 @@ class Device:
             self._post_zone_power(batch, zones, wake, acked=False)
             if zones and not any(zones.values()):
                 self._set_power_unsure()
+            if fixture or zones is not None or (wake and self._state.is_on is not True):
+                self._drop_power_read()
             raise
         self._wrote(mine)
         wake = {**wake, **self._wake_power(batch)}   # a power-off applied while this write waited
         known_on = self._state.is_on is True and not self._power_unsure
+        was_on = self._state.is_on
         self._mutated()
         apply()
         _fold.unconfirm_contradicted(self._state, wake)
+        lights = bool(wake) or bool(zones and any(zones.values()))
+        if self._state.is_on != was_on or (lights and self._state.is_on is not True):
+            self._drop_power_read()
         self._post_zone_power(batch, zones, wake, acked=True)
         if zones is not None and len(zones) == len(self.profile.zones):
             self._power_unsure = False
@@ -1036,7 +1196,10 @@ class Device:
         allows it - the global 33 01 switch (which on H60A6 also drives both
         zones; H6047's main switch sends it too - ``33 36`` is only its per-bar
         buttons, see :meth:`set_zone_power`). Only a zoned fixture without a
-        zone-driving master switch falls back to one 33 30 frame per zone."""
+        zone-driving master switch falls back to one 33 30 frame per zone, and the H6057
+        (:attr:`.DeviceProfile.light_switch_power`) sends its light switch, ``33 30 <1 / 0>``."""
+        if self.profile.light_switch_power:
+            return [build.light_switch(on)]
         if self.profile.zones and not self.profile.global_power and not self.profile.bar_switch:
             return [build.zone_power(z.power_index, on) for z in self.profile.zones]
         if self.profile.relay:
@@ -1093,7 +1256,9 @@ class Device:
         _fold.apply_power(self.profile, self._state, on, confirmed=self._power_zones())
 
     async def set_power(self, on: bool) -> None:
-        """Switch the device on or off.
+        """Switch the device on or off. On a :attr:`.DeviceProfile.light_switch_power` profile (H6057) this
+        is the light switch, ``33 30 <1 / 0>``: it switches the light alone, so off leaves the white-noise
+        speaker playing, as the screen's light switch does.
 
         Raises GoveeBleNotSupported without POWER; connection errors propagate. A plug with
         :attr:`.DeviceProfile.power_resync` then re-reads as its app does (:meth:`_resync_after_power`);
@@ -1259,7 +1424,8 @@ class Device:
                 await self._commit_once(frame, apply, authoritative=True)
 
     async def turn_off(self) -> None:
-        """Power off; equivalent to ``set_power(False)``."""
+        """Power off; equivalent to ``set_power(False)`` (on the H6057, the light alone: the white noise keeps
+        playing)."""
         await self.set_power(False)
 
     async def set_brightness(self, pct: int) -> None:
@@ -1391,7 +1557,12 @@ class Device:
     async def set_segment_brightness(self, indices: Sequence[int], pct: int) -> None:
         """Set brightness in percent (clamped to 1..100; 0 is never sent) on selected segments (indices
         as in :meth:`set_segment_rgb`). The app's segment slider runs 1..100 (``ViewColorMode.t0:232-235``
-        / ``DelegateColorV2Part.t0:459-462``: ``setProgressRange({1, 100})``).
+        / ``DelegateColorV2Part.t0:459-462``: ``setProgressRange({1, 100})``). On a profile with
+        :attr:`~.profile.DeviceProfile.segment_brightness_groups` the write and the state cover every
+        segment of each group that holds one of ``indices``, as the screen's strip widens the selection
+        before the write (``canClickBrightness`` -> ``DelegateColorV2Part.U:217-230`` ->
+        ``ColorViewModel.m0``). An empty ``indices`` still sends a zero mask, where the app's strips refuse an
+        empty selection with a toast and send nothing (a follow-up).
 
         Raises GoveeBleNotSupported without SEGMENTS, where the screen has no segment-brightness slider
         (:attr:`.DeviceProfile.segment_brightness`: H61D2-H61D6; :attr:`supports_segment_brightness`), or for
@@ -1406,16 +1577,29 @@ class Device:
         with self._conn.hold_heartbeat():   # a segment-count read and its write: no beat between
             await self._ensure_segment_count()
             n = self.segment_count
+            pieces = self._brightness_pieces(indices, n)
             frame = self._build_or_unsupported(
-                build.segment_brightness, _mask(indices, n), level, self.profile.color_scheme, n)
+                build.segment_brightness, _mask(pieces, n), level, self.profile.color_scheme, n)
 
-            carried = self._carried(indices, build.BRIGHTNESS_MASK_CAP)
+            carried = self._carried(pieces, build.BRIGHTNESS_MASK_CAP)
 
             def apply() -> None:
                 _fold.update_segments(self._state, carried, brightness=level)
                 self._state.scene_code = None   # the 33 05 15 02 write is a colour-mode write too
 
             await self._commit(frame, apply, ticket=ticket)
+
+    def _brightness_pieces(self, indices: Sequence[int], segments: int) -> list[int]:
+        """The segments a segment-brightness write covers: ``indices``, or on a profile with
+        ``segment_brightness_groups`` (checked first, as :func:`_mask` checks them) their union with every
+        group holding one of them, below ``segments`` (the strip's ``canClickBrightness``)."""
+        groups = self.profile.segment_brightness_groups
+        if not groups:
+            return list(indices)
+        _mask(indices, segments)
+        picked = set(indices)
+        return sorted(picked.union(*((i for i in g if i < segments)
+                                     for g in groups if picked.intersection(g))))
 
     def _carried(self, indices: Sequence[int], mask_cap: int) -> list[int]:
         """The ``indices`` a 0x15 frame's segment mask carries: past the body's ``mask_cap`` bytes the app's
@@ -1443,14 +1627,14 @@ class Device:
         """Colour temperature on selected segments (0x15 family only — the CCT frame
         carries the segment mask). ``kelvin`` is clamped and rounded as in :meth:`set_color_temp`.
 
-        Raises GoveeBleNotSupported without SEGMENTS/COLOR_TEMP, for non-maskable schemes, or where the
-        screen writes colour temperature over the whole device only
-        (:attr:`.DeviceProfile.whole_device_kelvin`); GoveeBleInvalidValue for a non-int ``kelvin`` or a bad
-        index; GoveeBleError if a device that reports its own segment count (H6062, an IC-sized row) does
-        not answer that read."""
-        self._require(Capability.SEGMENTS)
-        self._require(Capability.COLOR_TEMP)
-        self._require_masked_kelvin()
+        Raises GoveeBleNotSupported without SEGMENTS/COLOR_TEMP, where the SKU's screen sends no Kelvin to a
+        piece selection (:attr:`.DeviceProfile.segment_color_temp`, False wherever
+        :attr:`.DeviceProfile.whole_device_kelvin` is set) or for non-maskable schemes; GoveeBleInvalidValue
+        for a non-int ``kelvin`` or a bad index; GoveeBleError if a device that reports its own segment count
+        (an IC-sized row, or a hand-built profile with :attr:`.DeviceProfile.section_count_read`; H6062, the
+        one row that reads its aa 41 segment count, sends no Kelvin to a piece selection) does not answer that
+        read."""
+        self._require_segment_color_temp()
         sent = self._check_kelvin(kelvin)
         ticket = self._ticket()
         with self._conn.hold_heartbeat():   # a segment-count read and its write: no beat between
@@ -1465,14 +1649,6 @@ class Device:
                 self._state.scene_code = None
 
             await self._commit(frame, apply, ticket=ticket)
-
-    def _require_masked_kelvin(self) -> None:
-        """GoveeBleNotSupported on a profile whose screen writes colour temperature over the whole device
-        only (:attr:`.DeviceProfile.whole_device_kelvin`: the illumination tab, or a colour page whose Kelvin
-        pick sets every piece): the screen has no Kelvin on part of the device, so a masked Kelvin is a
-        frame the app never sends."""
-        if self.profile.whole_device_kelvin:
-            raise GoveeBleNotSupported(f"{self._sku}: colour temperature is whole-device only")
 
     # -- zones --------------------------------------------------------------
     def _zone(self, name: str) -> Zone:
@@ -1575,9 +1751,12 @@ class Device:
     async def _read_bar_switch(self, budget: ConnectBudget | None = None) -> _ReadResult:
         """Read the bar switch into state: "applied" (bars and the derived on/off were read back),
         "stale" (the reply was discarded: a setter applied state meanwhile) or "none" (no usable
-        reply)."""
+        reply). The derived on/off is a read of the device's (:attr:`power_read_at`)."""
+        drops = self._power_read_drops
+
         def apply(bars: tuple[bool, bool]) -> None:
             _fold.apply_bar_switch(self._state, bars)
+            self._stamp_power_read(drops)
 
         return await self._read_command(
             "bar-switch", build.bar_switch_query(), parse.parse_bar_switch, apply, budget)
@@ -1620,15 +1799,13 @@ class Device:
         0x15 family (H60A6/H6047), whose CCT frame carries a segment mask. ``kelvin`` is clamped
         and rounded as in :meth:`set_color_temp`.
 
-        Raises GoveeBleNotSupported without SEGMENTS/COLOR_TEMP, for a zone without segments, for
-        a colour scheme whose CCT frame carries no segment mask, or where the screen writes colour
-        temperature over the whole device only (:attr:`.DeviceProfile.whole_device_kelvin`);
-        GoveeBleInvalidValue for an
-        unknown zone (also a GoveeBleNotSupported) or a non-int ``kelvin``; GoveeBleError if a device that
-        reports its own segment count (H6062, an IC-sized row) does not answer that read."""
-        self._require(Capability.SEGMENTS)
-        self._require(Capability.COLOR_TEMP)
-        self._require_masked_kelvin()
+        Raises GoveeBleNotSupported without SEGMENTS/COLOR_TEMP, where the SKU's screen sends no Kelvin to a
+        piece selection (:attr:`.DeviceProfile.segment_color_temp`, False wherever
+        :attr:`.DeviceProfile.whole_device_kelvin` is set), for a zone without segments or for a colour scheme
+        whose CCT frame carries no segment mask; GoveeBleInvalidValue for an unknown zone (also a
+        GoveeBleNotSupported) or a non-int ``kelvin``; GoveeBleError if a hand-built profile that reads its
+        own segment count does not answer that read (no zoned table profile reads one)."""
+        self._require_segment_color_temp()
         sent = self._check_kelvin(kelvin)
         z = self._zone(name)
         if not z.segments:
@@ -1751,6 +1928,7 @@ class Device:
                             await self._conn.send_unacked(sized)
                         except BaseException:
                             _fold.unconfirm_zones(self._state)
+                            self._drop_power_read()   # a power write that may have reached the device
                             raise
                         finally:
                             # As _commit does; counted as raised either way (no profile has both a global
@@ -1906,8 +2084,11 @@ class Device:
             await self._read_reply(build.gradual_query(), budget)
         # Device-info (mac/hw/fw/serial) — static-ish, read once the device answers one of them; then a
         # version a firmware-gated fact tests that the read did not bring back, alone, on each later poll.
+        # Neither where the profile makes no device-info reads: each status read's TLV 0x07 brings them
+        # (_fold.apply_status).
         missing = self._versions_missing()
-        if (not self._device_info_read or any(missing)) and self.profile.readback != "none":
+        if ((not self._device_info_read or any(missing)) and self.profile.readback != "none"
+                and self.profile.device_info_reads):
             try:
                 if not self._device_info_read:
                     await self._read_device_info(budget, state_read=state_read)
@@ -1941,11 +2122,12 @@ class Device:
         set (:func:`.parse.parse_relay_on`): bit 0 on the single-outlet SKUs, as the app's
         BleOpV1/BleOpV3 detail screens read it. Returns whether the relay state was read back."""
         prof = wire_profile(self.profile)
+        since, drops = self._power_unsure_seq, self._power_read_drops
 
         def apply(on: bool) -> None:
             self._state.is_on = on
+            self._stamp_power_read(drops)
 
-        since = self._power_unsure_seq
         applied = await self._read_command(
             "plug power", build.power_query(), lambda r: parse.parse_relay_on(r, prof), apply,
             budget) == "applied"
@@ -1970,7 +2152,11 @@ class Device:
     def _versions_missing(self, *, scenes: bool = False) -> tuple[bool, bool]:
         """The version reads a firmware-gated fact of the profile still waits for, ``(aa 06, aa 07 03)``:
         each version such a fact tests (:func:`._fold.gated_versions`; ``scenes``: the scene set's gates
-        only) that is not read yet. Until it is read its gates count as met (the newest firmware's facts)."""
+        only) that is not read yet. Until it is read its gates count as met (the newest firmware's facts).
+        Neither on a profile without :attr:`~.profile.DeviceProfile.device_info_reads`: it makes no version
+        read, and each status read's TLV 0x07 brings the versions in."""
+        if not self.profile.device_info_reads:
+            return False, False
         soft, hard = _fold.gated_versions(self.profile, scenes=scenes)
         return (soft and self._state.firmware_version is None, hard and self._state.hardware_version is None)
 
@@ -2181,7 +2367,7 @@ class Device:
         # unsettled; the read after it does). Unless it does so for every posted zone, its on/off is not
         # trusted to rule a wake out either (_power_unsure).
         applied = power_read = False
-        since = self._power_unsure_seq
+        since, drops = self._power_unsure_seq, self._power_read_drops
         before, after = self.profile.ic_reads_around_status
         if before and not await self._read_status_ic(budget):
             # The aa 40 read is a mandatory step of the app's connect read, ahead of the 0xAC read
@@ -2204,6 +2390,8 @@ class Device:
             unsettled = [i for i, on in st.zone_power.items() if posted.get(i, {on}) != {on}]
             applied, power_read = _fold.apply_status(self.profile, self._state, st, self._pact,
                                                      unsettled=unsettled)
+            if power_read:
+                self._stamp_power_read(drops)   # TLV 0x01; dropped again just below if the reply may predate
             if power_read and any(i not in st.zone_power or i in unsettled for i in posted):
                 self._set_power_unsure()
             for i in st.zone_power:
@@ -2226,8 +2414,11 @@ class Device:
         field came back (see :meth:`_read_status`). The aa 04 brightness read goes with the brightness
         capability, as the app's connect read does (``ControllerStrategyConfig.k1`` reads aa 04 on H7017
         only, and H7004's screen has no brightness), and aa 05 with :data:`_MODE_REPORT_CAPS`."""
+        drops = self._power_read_drops   # when the power read is issued (_stamp_power_read)
+
         def apply_power(on: bool) -> None:
             self._state.is_on = on
+            self._stamp_power_read(drops)
             held = self._state.zone_power
             if self.profile.bar_switch and on != any(held.values()):
                 # aa 01 answers bar 0 | bar 1 (H6047 FUN_01004f32, query path 0x01004fb0-0x01004fd4), so
@@ -2256,7 +2447,8 @@ class Device:
             applied = True
         if detail:
             # H6057: no aa 01; the aa 34 device-detail read after aa 04, as the screen's connect list sends
-            # them (Compose4InfoBleIotH6057), on while the header main switch shows on (parse_detail_power).
+            # them (Compose4InfoBleIotH6057), on while the light is open (parse_detail_power), the state of
+            # the light switch its power writes (DeviceProfile.light_switch_power).
             since = self._power_unsure_seq
             if await self._read_command("power", build.device_detail_query(), parse.parse_detail_power,
                                         apply_power, budget) == "applied":
@@ -2501,7 +2693,7 @@ def make_device(
 
     As ``registry.create_device`` (which raises instead): the pact of ``advertisement_data`` picks the
     SKU's row (``profile_for(sku, pact=...)``), so a pact the SKU's rows refuse gives None."""
-    adv = _bound_advertisement(advertisement_data, ble_device.name, sku)
+    adv = bound_advertisement(advertisement_data, sku, fallback_name=ble_device.name)
     p = profile_for(sku, pact=adv.pact if adv is not None else None)
     if p is None:
         return None

@@ -83,12 +83,17 @@ class DeviceState:
     # ``aa 05 15`` reply carries one kelvin per bar) fill it. ``color_temp_kelvin`` is the
     # whole-device value and is set only while every zone agrees.
     zone_color_temp_kelvin: dict[int, int] = field(default_factory=dict)
-    optimistic: bool = False                 # True if not read back from the device
-    # Device-info (static-ish), populated where the device supports read-back.
+    # A Device's state starts with optimistic True; the first read that brings a live field back clears it for
+    # good, and a later poll that reads nothing leaves it False. Device.power_read_at says when a read last
+    # returned the on/off.
+    optimistic: bool = False
+    # Device-info (static-ish), populated where the device supports read-back: from the aa 06 /
+    # aa 07 03 / aa 07 02 reads and, on a status-read SKU, the status reply's TLV 0x07; at a
+    # devices.yaml status row's `device_info_reads: none`, from TLV 0x07 alone (no read is sent).
     wifi_mac: str | None = None
     hardware_version: str | None = None
     firmware_version: str | None = None
-    serial_number: str | None = None         # the device id (aa 07 02), same value as `device_id`
+    serial_number: str | None = None         # the device id, same value as `device_id`
     # A device-reported BLE MAC, IFF a device-info reply carries one distinct from the
     # connectable address (relevant only for rotating/random advertised addresses). No
     # curated SKU is confirmed to report this yet — stays None; the connectable address
@@ -172,5 +177,7 @@ class DeviceState:
     def device_id(self) -> str | None:
         """The device id the Govee app calls ``device``; an alias of ``serial_number``.
 
-        E.g. ``2D:DB:5C:E7:53:F4:74:56``, read with ``aa 07 02``."""
+        E.g. ``2D:DB:5C:E7:53:F4:74:56``, read with ``aa 07 02`` and, on a status-read SKU, from the status
+        reply's TLV 0x07. Where the SKU's status row says ``device_info_reads: none`` (spec/devices.yaml), the
+        library sends no ``aa 07 02`` and takes it from TLV 0x07 alone, as the app's screen does."""
         return self.serial_number

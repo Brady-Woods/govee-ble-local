@@ -169,6 +169,7 @@ _FORM_LIGHT: Final = int(_C.Form01.light)              # 33 01 [1 / 0]
 _FORM_RELAYS: Final = int(_C.Form01.relays)            # 33 01 [relay byte]
 _FORM_TOTAL_SWITCH: Final = int(_C.Form02.total_switch)
 _FORM_ZONE_POWER: Final = int(_C.Form30.zone_power)
+_FORM_LIGHT_SWITCH: Final = int(_C.Form30.light_switch)
 _FORM_BAR_PAIR: Final = int(_C.Form36.bar_pair)
 _FORM_0B_RGB_MASK: Final = int(_C.Form0b.rgb_mask)
 
@@ -926,6 +927,14 @@ def zone_power(zone: int, on: bool) -> bytes:
     _check_range("zone", zone, 0, 0xFF)
     return _write_frame(_spec.profile(f_30=_FORM_ZONE_POWER), _C.Command.cmd_30, _form_params(
         _F.Cmd30Write, _FORM_ZONE_POWER, _F.ZonePowerWrite, zone=zone, state=POWER_ON if on else POWER_OFF))
+
+
+def light_switch(on: bool) -> bytes:
+    """33 30 <1 / 0>: the H6057 header's light switch, the light alone (``H6057DetailVM.h5`` ->
+    ``ControllerSingle.c(BleProtocol.command_light_switch, ...)``): ``cmd_30_write`` under form_30
+    ``light_switch``, a one-byte body, not :func:`zone_power`'s ``<zone> <state>``."""
+    return _write_frame(_spec.profile(f_30=_FORM_LIGHT_SWITCH), _C.Command.cmd_30, _form_params(
+        _F.Cmd30Write, _FORM_LIGHT_SWITCH, _F.LightSwitchWrite, state=POWER_ON if on else POWER_OFF))
 
 
 def bar_switch(left: bool, right: bool) -> bytes:

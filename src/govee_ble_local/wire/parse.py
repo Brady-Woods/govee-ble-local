@@ -176,11 +176,12 @@ def parse_light_power(frame: bytes, prof: Any = _REPLY, *, heartbeat: bool = Fal
 
 
 def parse_detail_power(frame: bytes) -> bool | None:
-    """AA 34 reply on the H6057 (the device-detail read, form_34 ``device_detail``): on while the header's
-    main switch shows on, the light open or white noise playing (the spec's ``device_detail.main_switch_on``;
-    ``Controllers.e``, ``H6057DelegateHeader.E0``), or None if this is not an aa 34 reply that reads."""
+    """AA 34 reply on the H6057 (the device-detail read, form_34 ``device_detail``): on while the light is
+    open (the spec's ``device_detail.light_open``, byte 0 bit 7: ``Controllers.d``, ``H6057Info4Detail.H``),
+    the screen's on / off and its light switch's state, whatever the white noise does; None if this is not
+    an aa 34 reply that reads."""
     b = getattr(_reply_state(frame, _Command.cmd_34), "body", None)
-    return None if b is None else bool(b.main_switch_on)
+    return None if b is None else bool(b.light_open)
 
 
 def parse_relay_on(frame: bytes, prof: Any) -> bool | None:
