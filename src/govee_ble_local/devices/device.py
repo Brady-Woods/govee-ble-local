@@ -1203,12 +1203,13 @@ class Device:
 
         Raises GoveeBleNotSupported without SEGMENTS/COLOR_TEMP, where the SKU's screen sends no Kelvin to a
         piece selection (:attr:`.DeviceProfile.segment_color_temp`) or for non-maskable schemes;
-        GoveeBleInvalidValue for a non-int ``kelvin`` or a bad index; GoveeBleError if a device
-        that reports its own segment count (H6062) does not answer that read."""
+        GoveeBleInvalidValue for a non-int ``kelvin`` or a bad index; GoveeBleError if a hand-built
+        profile with :attr:`.DeviceProfile.section_count_read` does not answer that read (no table profile
+        reaches it: H6062, the one row that reads its segment count, sends no Kelvin to a piece selection)."""
         self._require_segment_color_temp()
         sent = self._check_kelvin(kelvin)
         ticket = self._ticket()
-        with self._conn.hold_heartbeat():   # H6062's aa 41 read and its write: no beat between
+        with self._conn.hold_heartbeat():   # a section_count_read aa 41 read and its write: no beat between
             await self._ensure_segment_count()
             n = self.segment_count
             frame = self._build_or_unsupported(
@@ -1368,8 +1369,9 @@ class Device:
         Raises GoveeBleNotSupported without SEGMENTS/COLOR_TEMP, where the SKU's screen sends no Kelvin to a
         piece selection (:attr:`.DeviceProfile.segment_color_temp`), for a zone without segments or for
         a colour scheme whose CCT frame carries no segment mask; GoveeBleInvalidValue for an unknown
-        zone (also a GoveeBleNotSupported) or a non-int ``kelvin``; GoveeBleError if a device that
-        reports its own segment count (H6062) does not answer that read."""
+        zone (also a GoveeBleNotSupported) or a non-int ``kelvin``; GoveeBleError if a hand-built profile
+        with :attr:`.DeviceProfile.section_count_read` does not answer that read (no zoned table profile
+        reads aa 41)."""
         self._require_segment_color_temp()
         sent = self._check_kelvin(kelvin)
         z = self._zone(name)

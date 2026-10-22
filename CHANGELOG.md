@@ -178,8 +178,10 @@ model, from which the shipped readers are generated).
   goodsType that is `SupportPartColorTemConfig.b`: the goodsType is in its list d (its pact-(2,1) test for 112
   adds nothing, as 112 is in d too). Where the row's new `segment_color_temp` is false,
   `Device.set_segment_color_temp` and `set_zone_color_temp` now raise GoveeBleNotSupported before any I/O.
-  `set_color_temp` and `turn_on(kelvin=)` don't change, and nor does a segment RGB pick that is a Kelvin tint
-  colour, which the app sends as a masked Kelvin frame too (`Config.Yt`). **40 of the 104 SKUs admitted at
+  Their docstrings no longer name H6062 for the aa 41 segment-count read: H6062 is refused first, so only a
+  hand-built `section_count_read` profile reaches that read. `set_color_temp` and `turn_on(kelvin=)` don't
+  change, and nor does a segment RGB pick that is a Kelvin tint colour, which the app sends as a masked Kelvin
+  frame too (`Config.Yt`). **40 of the 104 SKUs admitted at
   1.6.1 lose segment colour temperature:**
   - dreamcolorlightv1: H61A8 (19), H617C / H617E / H617F (70), H617A (73), H618A / H802A (74), H619A (75),
     H6167 / H619Z (83), H6168 (136), H61BE (175), H6176 / H61BC (176), H61BA (178), H6175 (187), H616C /
@@ -396,7 +398,10 @@ model, from which the shipped readers are generated).
   and `color_temp` after its colour scheme's drops now states it, 36 true and 72 false, with that doc-ref. The
   resolver requires it on exactly those rows and refuses it on any other. Docs corrected where they said a
   non-list-d screen's Kelvin follows the piece selection (pact_h605b 120 / 360, h7050 157), or called the
-  missing refusal a library gap (h6047 277, pact_h605b 142 / 243).
+  missing refusal a library gap (h6047 277, pact_h605b 142 / 243). h6047 277 now takes its all-pieces Kelvin
+  from the All tab (`DelegateColorV2.G0`), not from the strip's `canClickColorTem`, which no Part-tab Kelvin
+  item reaches there. h7050 77 / 157 take their colour-page flags from `DelegateColorV2.C1`, not from the older
+  `DelegateColor`, which no screen builds, and cite that path.
 - **The aa 01 "on when != 0" rules.** `govee_profile` `power_rule` gains `light_nonzero` (the connect read)
   and `light_heartbeat_nonzero` (the aa 01 heartbeat; false = as `light_nonzero`), the light counterparts of
   `relay_on_mask` and `relay_heartbeat_on_mask`. `govee_state` `power_state.is_on` reads a light's reply as on

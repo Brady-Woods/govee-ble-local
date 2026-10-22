@@ -1303,11 +1303,13 @@ families:
             (DefParser switch parser, bit 0 of frame[3]). Power: one switch, switchTrigger writes 33 01; no per-bar control,
             zones none. Colour page: H6039ColorMode over 12 pieces (ConfigLightIndex4H6039 reorders only the UI by
             calibration; the mask bit is the device piece); the default colour controller takes Config.x[277] = 0 ->
-            Config.J[0] = Yt (Bytes.h / Bytes.r, white type Config.P[277] = 1), the h60a6 forms; Kelvin only with every
-            piece selected (canClickColorTem; 277 is not in SupportPartColorTemConfig.d), so the app sends no sub-mask CCT
-            (segment_color_temp false: Device.set_segment_color_temp refuses), and the illumination slider Bytes.C(K,
-            12, 1), the same
-            all-pieces frame; Config.I[277] all five flags on; segment brightness Config.z[277] = 0 (Bytes.G). Kelvin
+            Config.J[0] = Yt (Bytes.h / Bytes.r, white type Config.P[277] = 1), the h60a6 forms; the Kelvin is the All
+            tab's, over every piece (DelegateColorV2.G0 -> x0 -> ColorViewModel.U), since 277 is not in
+            SupportPartColorTemConfig.d and the Part tab has no Kelvin item (DelegateColorV2Part.Z0 adds it only where
+            LightColorCapabilityCenter.C2 holds, so H6039ColorMode.canClickColorTem is never reached), so the app
+            sends no sub-mask CCT (segment_color_temp false: Device.set_segment_color_temp refuses), and the
+            illumination slider Bytes.C(K, 12, 1), the same all-pieces frame; Config.I[277] all five flags on; segment
+            brightness Config.z[277] = 0 (Bytes.G). Kelvin
             version 2 = [2700, 6500] (KelvinConfig maps 277 -> 2; Support.getColorTemRange the same); brightness version 1 =
             percent. Not modelled: gradual (33 a3 at Config.G[277] = 0 from the colour page, its state only in TLV 0x05; no
             aa a3 read on the BLE connect, VM4Light.c5 runs on the IoT path), the TimerConfig.f sync-time controller queued
@@ -1327,12 +1329,12 @@ families:
             - split_h6047/com/govee/h6047/newdetail/color/H6039ColorMode$initVM$2.java:56-74,97-103
             - base-classes11/com/govee/base2light/pact/newdetail/content/success/DelegateCurMode.java:185-205,424-466
             - base-classes11/com/govee/base2light/pact/newdetail/BaseViewDelegate.java:57-66
-            - base-classes11/com/govee/base2light/pact/newdetail/content/colorv2/DelegateColorV2.java:666-673,949-977,1006-1012
-            - base-classes11/com/govee/base2light/pact/newdetail/content/colorv2/DelegateColorV2Part.java:173-191,849-856
+            - base-classes11/com/govee/base2light/pact/newdetail/content/colorv2/DelegateColorV2.java:241-253,666-673,831-835,949-977,1006-1012,1295-1303
+            - base-classes11/com/govee/base2light/pact/newdetail/content/colorv2/DelegateColorV2Part.java:173-191,686-704,849-856
             - base-classes11/com/govee/base2light/pact/newdetail/DeviceDetailConfig.java:260-272
             - split_h6047/com/govee/h6047/newdetail/ConfigLightIndex4H6039.java:22-28
             - split_h6047/com/govee/h6047/pact/Support.java:155-161
-            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39
+            - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
             - base-classes11/com/govee/base2light/pact/newdetail/ble/BleComm.java:37-47
             - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4BaseInfoSingleRead.java:166-180,247-260,283-308
             - base-classes11/com/govee/base2light/kt/general_controller/ControllerSingleRead.java:80-83
@@ -16079,14 +16081,16 @@ families:
             heartbeat off->on aa 05 re-read is not parsed. No 0xB2 in the connect read (account_lock false; the app's
             control-screen path for it is not cited). The aa 41 read is a setting read left out (decision D2); the
             sync-time write is not listed, as on the H60A6 row. Power: switchTrigger writes the one ControllerSwitch (33
-            01), with no zone switch, so zones none. Colour page: the ColorMode4H6087 strip; Config.e has no 77 entry,
-            so DelegateColor takes the strip's normalFucSupport (gradual off, the other four flags on): no gradual
-            toggle (ColorModeControllerConfig.p also finds no Config.G version for 77), [3] segment brightness and [4]
-            colour temperature on. Frames: colour and the colour page's Kelvin slider both go ColorControllerConfig.d ->
-            Config.J[0] = Yt (Bytes.h, or Bytes.r for a Kelvin tint) with the selected pieces' mask, over 4 pieces
-            (ColorMode4H6087.canClickColorTem; ColorViewModel.applyColorTem falls back to the VM because Config.x has no
-            77); ColorControllerConfig.j -> Config.N[0] (Bytes.C, all pieces) is the illumination tab's builder, which
-            is not traced on this screen; brightness BrightnessConfig.b -> ControllerBrightness, percent (no
+            01), with no zone switch, so zones none. Colour page: the default DelegateColorV2 (DelegateCurMode.B) with
+            the ColorMode4H6087 strip; Config.e has no 77 entry, so DelegateColorV2.C1 takes the strip's normalFucSupport
+            (gradual off, the other four flags on): no gradual toggle (ColorModeControllerConfig.p also finds no Config.G
+            version for 77), [3] segment brightness and [4] colour temperature on. Frames: colour and the Part tab's
+            Kelvin item (77 is in SupportPartColorTemConfig.d, so DelegateColorV2Part.Z0 adds it; DelegateColorV2Part.b1
+            -> ColorMode4H6087.canClickColorTem) both go ColorControllerConfig.d -> Config.J[0] = Yt (Bytes.h, or
+            Bytes.r for a Kelvin tint) with the selected pieces' mask, over 4 pieces, and the All tab's Kelvin
+            (DelegateColorV2.G0) with every piece's (ColorViewModel.applyColorTem falls back to the VM because Config.x
+            has no 77); ColorControllerConfig.j -> Config.N[0] (Bytes.C, all pieces) is the illumination tab's builder,
+            which is not traced on this screen; brightness BrightnessConfig.b -> ControllerBrightness, percent (no
             BrightnessConfig entry). Kelvin: KelvinConfig maps 77 to version 1 = [2200, 6500], the range the colour page
             reads (KelvinConfig.m; Support.getColorTemRange agrees), so kelvin_range is [2200, 6500], not the family
             intersection [2700, 6500]. Scenes: ScenesConfigBean opScenesSet {0, 1, 2, 3}, version (0, 0)
@@ -16104,8 +16108,9 @@ families:
             - split_h7050/com/govee/h7050/adjust/newAdjust/h60616263/NewDetailConfig.java:126-148
             - split_h7050/com/govee/h7050/adjust/newAdjust/h60616263/diy/H6087DiyConfig.java:81
             - split_h7050/com/govee/h7050/H7050ApplicationImp.java:87
-            - base-classes11/com/govee/base2light/pact/newdetail/content/success/DelegateCurMode.java:185-202
-            - base-classes11/com/govee/base2light/pact/newdetail/content/colorv2/DelegateColorV2.java:779-801
+            - base-classes11/com/govee/base2light/pact/newdetail/content/success/DelegateCurMode.java:154,185-202
+            - base-classes11/com/govee/base2light/pact/newdetail/content/colorv2/DelegateColorV2.java:241-253,463-469,779-801,831-835,1036-1040,1295-1303
+            - base-classes11/com/govee/base2light/pact/newdetail/content/colorv2/DelegateColorV2Part.java:317-341,547-549,651-664,686-704
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/ColorModeControllerConfig.java:1016-1019,222-228,985-1008
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:353-367,551-560,12960-12968,5615-5619,9515-9517
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:240-242,254-260,329-342,402-411,664-668,1738-1740
@@ -16115,8 +16120,6 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/content/scene/BaseSceneViewMode.java:864-903,1152-1200
             - base-classes10/com/govee/base2light/ac/diyNew/config/DiyNewConfig.java:61-65,140-146
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:98-130
-            - base-classes11/com/govee/base2light/pact/newdetail/content/color/ViewColorMode.java:596-646
-            - base-classes11/com/govee/base2light/pact/newdetail/content/color/DelegateColor.java:226-229,345-352,476-485
             - base-classes11/com/govee/base2light/pact/newdetail/content/color/ColorViewModel.java:858,883-899,1133-1147
             - base-classes11/com/govee/base2light/pact/newdetail/content/illumination/View4IlluminationMode.java:613-622
             - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
@@ -16145,14 +16148,16 @@ families:
             parsed. No 0xB2 in the connect read (account_lock false; the app's control-screen path for it is not cited).
             The aa 41 read is a setting read left out (decision D2); the sync-time write is not listed, as on the H60A6
             row. Power: switchTrigger writes the one ControllerSwitch (33 01), with no zone switch, so zones none.
-            Colour page: the ColorMode4H6088 strip; Config.e has no 157 entry, so DelegateColor takes the strip's
-            normalFucSupport (gradual off, the other four flags on): no gradual toggle (ColorModeControllerConfig.p also
-            finds no Config.G version for 157), [3] segment brightness and [4] colour temperature on. Frames: colour and
-            the colour page's Kelvin slider both go ColorControllerConfig.d -> Config.J[0] = Yt (Bytes.h, or Bytes.r for
+            Colour page: the default DelegateColorV2 (DelegateCurMode.B) with the ColorMode4H6088 strip; Config.e has
+            no 157 entry, so DelegateColorV2.C1 takes the strip's normalFucSupport (gradual off, the other four flags
+            on): no gradual toggle (ColorModeControllerConfig.p also finds no Config.G version for 157), [3] segment
+            brightness and [4] colour temperature on (the All tab's Kelvin item, DelegateColorV2All.m0). Frames: colour
+            and the All tab's Kelvin both go ColorControllerConfig.d -> Config.J[0] = Yt (Bytes.h, or Bytes.r for
             a Kelvin tint) over 6 pieces (ColorViewModel.applyColorTem falls back to the VM because Config.x has no
-            157): a colour with the selected pieces' mask, the Kelvin over every piece, from the All tab
-            (DelegateColorV2.G0), since 157 is not in SupportPartColorTemConfig.d and the Part tab has no Kelvin item
-            (ColorMode4H6088.canClickColorTem is never reached: segment_color_temp false); ColorControllerConfig.j ->
+            157): a colour with the selected pieces' mask, the Kelvin over every piece (DelegateColorV2.G0 -> x0 ->
+            ColorViewModel.U), since 157 is not in SupportPartColorTemConfig.d and the Part tab has no Kelvin item
+            (DelegateColorV2Part.Z0 adds it only where LightColorCapabilityCenter.C2 holds, so
+            ColorMode4H6088.canClickColorTem is never reached: segment_color_temp false); ColorControllerConfig.j ->
             Config.N[0] (Bytes.C, all pieces) is the illumination tab's builder, which is not traced on this screen;
             brightness BrightnessConfig.b -> ControllerBrightness, percent (no BrightnessConfig entry). Kelvin:
             KelvinConfig maps 157 to version 2 = [2700, 6500], the family's value (Support.getColorTemRange agrees).
@@ -16172,8 +16177,10 @@ families:
             - split_h7050/com/govee/h7050/adjust/newAdjust/h60616263/NewDetailConfig.java:171-193
             - split_h7050/com/govee/h7050/adjust/newAdjust/h60616263/diy/H6088DiyConfig.java:80
             - split_h7050/com/govee/h7050/H7050ApplicationImp.java:88
-            - base-classes11/com/govee/base2light/pact/newdetail/content/success/DelegateCurMode.java:185-202
-            - base-classes11/com/govee/base2light/pact/newdetail/content/colorv2/DelegateColorV2.java:779-801
+            - base-classes11/com/govee/base2light/pact/newdetail/content/success/DelegateCurMode.java:154,185-202
+            - base-classes11/com/govee/base2light/pact/newdetail/content/colorv2/DelegateColorV2.java:241-253,779-801,831-835,1295-1303
+            - base-classes11/com/govee/base2light/pact/newdetail/content/colorv2/DelegateColorV2All.java:436-466
+            - base-classes11/com/govee/base2light/pact/newdetail/content/colorv2/DelegateColorV2Part.java:651-664,686-704
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/ColorModeControllerConfig.java:1016-1019,222-228,985-1008
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:353-367,551-560,12960-12968,5615-5619,9515-9517
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:240-242,254-260,329-342,402-411,669-673,1750-1752
@@ -16183,8 +16190,6 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/content/scene/BaseSceneViewMode.java:864-903,1152-1200
             - base-classes10/com/govee/base2light/ac/diyNew/config/DiyNewConfig.java:61-65,140-146
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:98-130
-            - base-classes11/com/govee/base2light/pact/newdetail/content/color/ViewColorMode.java:596-646
-            - base-classes11/com/govee/base2light/pact/newdetail/content/color/DelegateColor.java:226-229,345-352,476-485
             - base-classes11/com/govee/base2light/pact/newdetail/content/color/ColorViewModel.java:858,883-899,1133-1147
             - base-classes11/com/govee/base2light/pact/newdetail/content/illumination/View4IlluminationMode.java:613-622
             - base-classes9/com/govee/base2home/color/SupportPartColorTemConfig.java:39,71-91
