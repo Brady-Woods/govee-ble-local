@@ -63,8 +63,19 @@ model, from which the shipped readers are generated).
     each, soft 1.04.05, hard 3.05.00. One unit's mode TLV is a short `15 01`. The row's own decode
     (`gradual_14`, where 0x15 isn't decoded) reads that burst in full; the H60A6 default decode gave an empty
     reply.
+- **H7004** (h7004 goodsType 0), a grow light, admitted by default (`app_traced`) as a power-only row at any
+  pact (`VM4Light.X0` runs no pact check at goodsType 0). Its screen reads aa 01 and the device info, never
+  aa 04 or aa 05 (`ControllerStrategyConfig.k1`; `VM4Light.supportBrightness` is false for H7004), so the
+  library's poll reads aa 01 alone. The red:blue ratio (`33 0d`, aa 0d), the timers and the `33 09` clock sync
+  are not modelled. Not hardware-verified.
 
 ### Changed
+- **A polled profile reads aa 04 only with `Capability.BRIGHTNESS`**, as the app's connect read does
+  (`ControllerStrategyConfig.k1` adds the aa 04 read for H7017 and not H7004). Every polled profile the table
+  had before carries the capability, so their reads are unchanged; a `DeviceProfile` built by hand with
+  `readback="polled"` and no brightness no longer reads aa 04 or sets `state.brightness`. The resolver keeps the
+  rule strict both ways: a polled row's `connect_reads` lists `brightness` exactly when the row has the
+  capability.
 - Nothing for existing SKUs. Each of the 104 SKUs admitted at 1.6.1 (98 by default, 6 behind
   `allow_modelled`) resolves to the same profile at every pact its rows list and at none, with and without
   `allow_modelled`, so its frames and decoded state are unchanged. Where a new SKU has the same facts it joins

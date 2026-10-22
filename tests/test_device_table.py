@@ -106,11 +106,11 @@ _FIRMWARE = ((None, None), ("3.03.18", "3.01.10"), ("1.03.00", "3.08.01"), ("1.0
 def test_the_generated_table_is_masters_hand_table_but_for_the_spec_fixes() -> None:
     assert set(_MASTER) <= set(supported_skus())
     # D3's 1.x pact fallback is frozen at these 18; every SKU admitted later is served only at its rows'
-    # pacts, as the app's checkProtocol (Pact.i) serves it. H7017's row is pacts: any, so (99, 99) is one of
-    # them: h7017 Model.t opens its screen with no pact test.
+    # pacts, as the app's checkProtocol (Pact.i) serves it. The H7004 and H7017 rows are pacts: any, so
+    # (99, 99) is one of them: their screens run no pact test (h7017 Model.t; VM4Light.X0 false at 0).
     assert set(_MASTER) == _resolve.PACT_FALLBACK_SKUS
     assert [sku for sku in supported_skus(allow_modelled=True) if sku not in _MASTER
-            and profile_for(sku, pact=(99, 99), allow_modelled=True) is not None] == ["H7017"]
+            and profile_for(sku, pact=(99, 99), allow_modelled=True) is not None] == ["H7004", "H7017"]
     # The resolver's value sets (standard library only) are the profile's Literals.
     assert set(_resolve.COLOR_SCHEMES) == set(get_args(ColorScheme))
     assert set(_resolve.RELAY_POWERS) == set(get_args(RelayPower))
@@ -344,6 +344,8 @@ _REFUSED: tuple[tuple[str, str, _Edit, str], ...] = (
     ("bulblightv3", "64", lambda f: _row(f, "64")["connect_reads"].append("cmd_ac"),
      "connect_reads ['cmd_ac']"),
     ("tablelampv1", "22", lambda f: _row(f, "22").update(connect_reads=[]), "connect_reads lists brightness"),
+    ("h7017", "0", lambda f: _row(f, "0")["capabilities"].remove("brightness"),
+     "connect_reads lists brightness exactly on a polled row with the brightness capability"),
     ("h6047", "119", lambda f: _row(f, "119")["connect_reads"].remove("gradual"),
      "connect_reads lists gradual"),
     ("h5080", "43", lambda f: _row(f, "43")["connect_reads"].append("gradual"),

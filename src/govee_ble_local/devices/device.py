@@ -59,7 +59,8 @@ _ReadResult = Literal["applied", "stale", "none"]
 # A polled profile reads the aa 05 mode report when it has any capability the report carries: the
 # active scene, or the solid colour / colour temperature of the colour sub-mode (the 0x0d bulbs
 # report their colour only there). The app's connect read includes aa 05 for every polled SKU in
-# the profile table (see the profile notes); a test pins that each of them still issues it.
+# the profile table with one of them; the power-only and power-and-brightness screens (H7004 /
+# H7017, ControllerStrategyConfig.k1) send none. A test pins that each of the others still issues it.
 _MODE_REPORT_CAPS: Final = frozenset({Capability.SCENES, Capability.COLOR_TEMP, Capability.RGB})
 
 
@@ -1801,7 +1802,9 @@ class Device:
 
     async def _read_polled(self, budget: ConnectBudget | None = None) -> bool:
         """The polled read-back (aa 01 / aa 04 / aa 36 / aa 41 / aa 05); returns whether a live field
-        came back (see :meth:`_read_status`)."""
+        came back (see :meth:`_read_status`). The aa 04 brightness read goes with the brightness
+        capability, as the app's connect read does (``ControllerStrategyConfig.k1`` reads aa 04 on H7017
+        only, and H7004's screen has no brightness), and aa 05 with :data:`_MODE_REPORT_CAPS`."""
         def apply_power(on: bool) -> None:
             self._state.is_on = on
             held = self._state.zone_power
@@ -1822,8 +1825,9 @@ class Device:
         power_read = await self._read_command(
             "power", build.power_query(), parse.parse_light_power, apply_power, budget) == "applied"
         applied = power_read   # see _read_status / _finish_read
-        if await self._read_command("brightness", build.brightness_query(),
-                                    parse.parse_brightness, apply_brightness, budget) == "applied":
+        if Capability.BRIGHTNESS in self.capabilities and await self._read_command(
+                "brightness", build.brightness_query(), parse.parse_brightness, apply_brightness,
+                budget) == "applied":
             applied = True
         if self.profile.bar_switch:
             bars_since = self._power_unsure_seq

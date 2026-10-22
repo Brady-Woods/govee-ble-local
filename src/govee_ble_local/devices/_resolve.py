@@ -77,9 +77,11 @@ the row lacks fails the build: nothing defaults silently.
   the TLV 0x05's mode decode (mode_status over mode). The library takes the zone bits from TLV 0x30, so a
   requested ``cmd_30`` needs ``f_30: zone_power``. A pact branch may only drop ``color_group``, which
   becomes ``status_color_groups_pact`` (one pact type, from its lowest code that keeps it). A polled row
-  reads aa 04 on every poll and a gradual row ``aa a3``, so ``connect_reads`` lists ``brightness`` exactly
-  on a polled row and ``gradual`` wherever the capability is; a ``gradual`` read without the capability (the
-  screen's default ``Compose4InfoBleIot`` read, with no gradual control) is made on every poll too and its
+  with the brightness capability reads aa 04 on every poll (one without it reads none, as H7004's screen
+  doesn't: ``ControllerStrategyConfig.k1``) and a gradual row ``aa a3``, so ``connect_reads`` lists
+  ``brightness`` exactly on a polled row with the capability and ``gradual`` wherever the capability is; a
+  ``gradual`` read without the capability (the screen's default ``Compose4InfoBleIot`` read, with no
+  gradual control) is made on every poll too and its
   reply discarded (``DeviceProfile.gradual_read_only``), on a polled light row only: that is where the
   default read is traced (the h7050 screens), and a status or plug row's reads are its own strategy's. An
   ``ic_num`` read goes with ``ic_pieces`` and the direct colour read-back: it sizes the read-back's pieces
@@ -826,8 +828,9 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
     reads = set(need(row.get("connect_reads"), "connect_reads"))
     if not reads <= _READS:
         fail(f"connect_reads {sorted(reads - _READS)} are not served")
-    if ("brightness" in reads) != (readback == "polled"):
-        fail("connect_reads lists brightness exactly on a polled row (the library reads aa 04 every poll)")
+    if ("brightness" in reads) != (readback == "polled" and "brightness" in caps):
+        fail("connect_reads lists brightness exactly on a polled row with the brightness capability (the "
+             "library reads aa 04 on every poll of one)")
     if "gradual" in caps and "gradual" not in reads:
         fail("connect_reads lists gradual with the capability (the library reads aa a3 for it)")
     if "gradual" in reads and "gradual" not in caps and readback != "polled":

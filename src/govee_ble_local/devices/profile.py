@@ -31,7 +31,8 @@ from .brightness import percent_to_raw
 # "B_h60a6" = H60A6 DIY (0x58; 0xA4-MTU graffiti / 0xA3 DIY by length gate);
 # "B_h6052" = H6052 type-5 professional graffiti (commByte 9).
 SceneDialect = Literal["A", "B_h60a6", "B_h6052"]
-# "status" (0xAC burst) | "polled" (aa 01/04/05) | "plug" (aa 01 relay bitmask) | "none"
+# "status" (0xAC burst) | "polled" (aa 01, then aa 04 with Capability.BRIGHTNESS and aa 05 with a capability
+# the mode report carries: device._MODE_REPORT_CAPS) | "plug" (aa 01 relay bitmask) | "none"
 ReadBack = Literal["status", "polled", "plug", "none"]
 ColorReadBack = Literal["", "mechanism_b", "mechanism_a_direct"]
 # How the colour sub-modes of an ``aa 05`` mode report are decoded (the SKU's Info4Detail mode parse): a
