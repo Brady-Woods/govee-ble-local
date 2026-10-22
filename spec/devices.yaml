@@ -10626,7 +10626,7 @@ families:
       power_read: ac_status   # TLV 0x01 of the 0xAC burst; it wins over TLV 0x42 bit 7
       power_live: [push_30]   # ee 30 whole-lamp power = bit 7 of frame[3] (top / side / bottom = bits 6 / 5 / 4), not bit 0
       by_goods_type:
-        "301":   # H60B0 / H60B3 / R60B3, the H60B0DetailAC -> VM4H60B0 screen. NO SUPPORT: h60b0.md gaps G1-G4 (colour scheme, 0x2C status type, TLV 0x42 zone bits, the white-only bottom zone)
+        "301":   # H60B0 / H60B3 / R60B3, the H60B0DetailAC -> VM4H60B0 screen. NO SUPPORT: h60b0.md gaps G1, G3, G4 (colour scheme, TLV 0x42 zone bits, the white-only bottom zone)
           models: [H60B0, H60B3, R60B3]
           pacts: ["1,1", "1,2", "1,3"]
           power_live: []   # ee 30 frame[3] bit 7 whole / 6 top / 5 side / 4 bottom (VM4H60B0.x5): no form_ee_30 member (gap G5)
@@ -10638,7 +10638,7 @@ families:
           scene_dialect: untraced
           kelvin_range: [2700, 6500]
           brightness_range: [1, 100]
-          status_read: [cmd_41, color_group, write_check_ic, cmd_2c]   # NO SUPPORT: ac 03 04 41 a5 42 2c; govee_common::command has no 0x2C member (gap G2)
+          status_read: [cmd_41, color_group, write_check_ic, cmd_2c]   # ac 03 04 41 a5 42 2c
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -12747,7 +12747,7 @@ families:
       by_goods_type:
         "329":   # H70B6, the H70B6DeviceDetailActivity / VM4SplicingH70B6 screen
           models: [H70B6]
-          pacts: ["1,1"]   # the app also accepts (1,2) / (1,3) (Config4H70B6Manager.b); withheld: there the status read adds 0x7D / 0x7E, which the library can't name (gap)
+          pacts: ["1,1"]   # the app also accepts (1,2) / (1,3) (Config4H70B6Manager.b); withheld: there the status read adds 0x7D / 0x7E, a pact branch the library can't follow (a branch may only drop color_group)
           support: app_traced
           capabilities: [power, brightness, rgb, color_temp]
           zones: []
@@ -12800,14 +12800,15 @@ families:
             - base-classes10/com/govee/base2light/capability/color/LightColorCapabilityCenter.java:537-539,1286-1297
             - base-classes10/com/govee/base2light/capability/legacy/LegacyColorCapabilityProvider.java:218-221
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:63-86,252-258,853-857,1156-1159
-        "341":   # H70B8, the same screen; held: its status read names 0x7D / 0x7E (gap), so no support
+        "341":   # H70B8, the same screen; its status read adds 0x7D / 0x7E
           models: [H70B8]
           pacts: ["1,1"]
+          support: app_traced
           capabilities: [power, brightness, rgb, color_temp]
           zones: []
           account_lock: false
           scene_dialect: untraced
-          status_read: [cmd_41, check_direction, cmd_7d, cmd_7e]   # cmd_7d / cmd_7e are not govee_common command members yet (gap)
+          status_read: [cmd_41, check_direction, cmd_7d, cmd_7e]
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -12816,10 +12817,9 @@ families:
             Pact (1,1) only: Pact.b(341, (1,1)), the screen's n4 -> Config4H70B8Manager.c. Every core fact is the 329
             row's (Config.x[341] = nw = 2 -> bu, the h6006 scheme; Config.I[341] = {F,F,F,F,T}; no KelvinConfig entry ->
             [2000, 9000]; brightness version S1 = 1 = percent; aa 00 keep-alive; ee 30 push), but its status read is
-            ac 03 04 41 39 7d 7e (Support.e / d hold for 341 on every pact), and govee_common has no command member for
-            0x7D (24-hour clock) or 0x7E (temperature unit), so the library can't send that frame: no support until it
-            can. The screen also reads aa 60 01 (feast, Support.i holds for 341) before aa 25 01, not modelled. Not
-            hardware-verified.
+            ac 03 04 41 39 7d 7e (Support.e / d hold for 341 on every pact): TLV 0x7D the 24-hour clock and 0x7E the
+            temperature unit, both read raw (not modelled). The screen also reads aa 60 01 (feast, Support.i holds for
+            341) before aa 25 01, not modelled. Not hardware-verified.
           doc-ref:
             - split_h70b1/com/govee/h70b8/Config4H70B8Manager.java:82-101
             - split_h70b1/com/govee/h70b8/H70b8ApplicationImp.java:36-37
@@ -17653,6 +17653,7 @@ families:
         "294":   # H7072 on the H7072AcLightDetail / H7072VM4Light screen (0xAC status read, 6 fixed pieces)
           models: [H7072]
           pacts: ["1,1", "1,3"]
+          support: modelled   # the TLV 0xA5 placement stride (doc)
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments]
           zones: []
@@ -17660,7 +17661,7 @@ families:
           scene_dialect: untraced
           kelvin_range: [2700, 6500]
           brightness_range: [1, 100]
-          status_read: [cmd_41, color_group, cmd_4b]   # NO SUPPORT: govee_common::command has no 0x4B member (library gap status_read_4b)
+          status_read: [cmd_41, color_group, cmd_4b]
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -17679,8 +17680,8 @@ families:
             ColorPieceConfig.j: 294 is in Config.g = 6); Config.I[294] has gradual, segment brightness and CCT on. Frames:
             Config.x[294] = 0 -> J[0] = Yt -> Bytes.h, CCT Bytes.r type 1 (Config.P[294] = 1), the segment brightness slider
             Config.z[294] = 0 -> L[0] = JR -> Bytes.G: the h60a6 forms. Brightness: BrightnessConfig.b -> 33 04, no version
-            entry = [1, 100]; Kelvin: KelvinConfig version 2 = [2700, 6500]. NO SUPPORT until govee_common::command names 0x4B
-            (gap status_read_4b). Then MODELLED, not app_traced: the app places each TLV 0xA5 group at (group - 1) x that
+            entry = [1, 100]; Kelvin: KelvinConfig version 2 = [2700, 6500]. TLV 0x4B (auto-dimming) is read raw. MODELLED,
+            not app_traced: the app places each TLV 0xA5 group at (group - 1) x that
             TLV's own record count (q5 -> r5 -> SubMode4Color.j), the library at (group - 1) x 4. The two agree when the 6
             records come in one TLV or in full 4-record groups, and differ for a 4 + 2 or 3 + 3 split; the firmware's split is
             untraced (gap status_a5_stride_per_tlv, or a bench check). A group 0 with records, or one starting past piece 6,
@@ -17722,6 +17723,7 @@ families:
         "371":   # H3351 on the same screen (0xAC status read, 1 colour piece)
           models: [H3351]
           pacts: ["1,1", "1,2", "1,3"]
+          support: app_traced
           color_functions: [color_temperature]
           capabilities: [power, brightness, rgb, color_temp]
           zones: []
@@ -17729,7 +17731,7 @@ families:
           scene_dialect: untraced
           kelvin_range: [1000, 10000]
           brightness_range: [1, 100]
-          status_read: [cmd_41, color_group, cmd_4b]   # NO SUPPORT: as 294 (status_read_4b)
+          status_read: [cmd_41, color_group, cmd_4b]
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -17748,8 +17750,8 @@ families:
             applies that burst's power or brightness, and the read ends failed (t5). The library drops or filters that group
             and applies the rest: a known gap (status_a5_stride_per_tlv), on bursts anomalous for a 1-piece lamp. Disputed
             2026-10-21: "they agree whatever the split" was wrong. Kelvin: KelvinConfig version 5 = [1000, 10000]
-            (Support.getColorTemRange(371) agrees). NO SUPPORT until govee_common::command names 0x4B (gap status_read_4b);
-            then app_traced, with that known gap named.
+            (Support.getColorTemRange(371) agrees). app_traced, with that known gap named; TLV 0x4B (auto-dimming) is
+            read raw.
             Not modelled: the real-time colour preview a5 02 83 R G B (Config.g0[371] = 2) that DelegateColorV2.B0 sends while
             the wheel is dragged (the release sends the Yt frame), music, DIY, timers, auto-dimming. Scenes untraced. Not
             hardware-verified.
@@ -17806,7 +17808,7 @@ families:
             17), the h60a6 forms with a 3-byte mask (BleUtils.X), but the RGB pick drops piece 16 (WW) from the posSet
             (H2800SegmentColorMode.canClickColor) and CCT-all sets all 17 (applyColorTemInAll); a non-uniform strip uses the
             15 04 group frames (Config.A[396] = 1). Kelvin version 2 = [2700, 6500]; BrightnessConfig version 1 = [1, 100].
-            Blocking gaps: status_read_4b, subswitch_power_36, zone_power_36_index, push_30_subswitch, rgb_skips_ww_piece.
+            Blocking gaps: subswitch_power_36, zone_power_36_index, push_30_subswitch, rgb_skips_ww_piece.
           doc-ref:
             - split_h7075/com/govee/h7075/h2800/H2800Config.java:62,68,80-95,97-168,174-176,200-216
             - split_h7075/com/govee/h7075/h2800/H2800Controllers.java:90-112,126-154
@@ -17984,7 +17986,7 @@ families:
           scene_dialect: untraced
           kelvin_range: [2700, 6500]
           brightness_range: [1, 100]
-          status_read: [ic_num, cmd_41, gradual, cmd_a1, cmd_48, color_group, cmd_45, cmd_16]   # cmd_a1 / cmd_48 / cmd_45 are not govee_common command members yet (gap)
+          status_read: [ic_num, cmd_41, gradual, cmd_a1, cmd_48, color_group, cmd_45, cmd_16]
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
@@ -18002,9 +18004,8 @@ families:
             (Controller4ColorInfoByGroup.r). Power 33 01, no zones. Colour: Config.x[326] = 0 -> Config.Yt -> Bytes.h, or
             Bytes.r white type 1 for a table tint (the h60a6 frames); segment brightness Config.z[326] = 0 -> Bytes.G.
             Brightness version 1 (percent). Keep-alive aa 00 (ShareVM.K3, no I3 override); power live from the ee 30 push,
-            whose every change re-reads aa 05 and the aa a5 walk (T5). Held: the status read's 0xA1 / 0x48 / 0x45 types have
-            no command id, and the segment count and its colour records are device-reported forms the library has no reader
-            for. Scenes untraced (versionArray {0, 1, 2, 3, 5}); the gradual switch is left out.
+            whose every change re-reads aa 05 and the aa a5 walk (T5). Held: the segment count (TLV 0xA1) and its colour
+            records are device-reported forms the library has no reader for. Scenes untraced (versionArray {0, 1, 2, 3, 5}); the gradual switch is left out.
           doc-ref:
             - split_h7075/com/govee/h7075/pact/Support.java:241-257,266-270,354-361,392-411,515-522,541-569,575-581
             - split_h7075/com/govee/h7075/add/AddDeviceM.java:53-55
@@ -18645,76 +18646,100 @@ families:
             - split_h6092/com/govee/h6092/newDetail/r1810/DelegateOperateColorR1810.java:352,373,401,762
             - split_h6092/com/govee/h6092/newDetail/h6095/OperateControllerBuild.java:133-151
             - split_h6092/com/govee/h6092/newDetail/h6095/VM4LightH6095.java:469,537-547,734-771,857,864-872,1214-1216,1317-1329,1513-1520,1727-1750
-        "283":   # H7070, the AcNewDetailH7070 screen; no support: the status read names 0x0c (doc)
+        "283":   # H7070, the AcNewDetailH7070 screen; no support: a pact adds 0x42 to the status read (doc)
           models: [H7070]
           pacts: ["1,1", "1,2", "2,1"]
           capabilities: [power, brightness]
           zones: []
           account_lock: false
+          scene_dialect: untraced
+          status_read: [cmd_41, cmd_0c]
+          by_pact:
+            "1,2": { status_read: [cmd_41, cmd_0c, write_check_ic] }   # Support.supportEffectChange
+            "2,1": { status_read: [cmd_41, cmd_0c, write_check_ic] }
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
           doc: >-
             H7070 on AcNewDetailH7070 (Model.t). Connect (VM4LightH7070.T4): ac 03 <n> 41 0c, plus 42 where
-            Support.supportEffectChange holds (pact (1, >= 2) or type >= 2); TLV 0x01 power, 0x04 brightness. Default
+            Support.supportEffectChange holds (pact (1, >= 2) or type >= 2); TLV 0x01 power, 0x04 brightness, 0x05 the
+            mode (Info4DetailH7070.H reads byte 0 unguarded: an empty one fails the read), 0x41 the power-off memory
+            (value[1] unguarded), 0x0c the operate info and 0x42 the effect-change switch (not modelled). Default
             header: 33 01 (switchTrigger -> ControllerSwitch.d), 33 04 percent (BrightnessConfig.b). Keep-alive aa 00 (I3
-            false); live power ee 30 bit 0 of frame[3] (VM4LightH7070.h5); no child-switch write. No support: the status
-            read's 0x0c (the operate-effect TLV) has no govee_common command id, so status_read can't name it, and the
-            0x42 a pact adds is no branch the library follows (a pact branch may only drop color_group).
+            false); live power ee 30 bit 0 of frame[3] (VM4LightH7070.h5), after which the screen re-reads
+            (Compose4Off2OnH7070), which the library does not send; no child-switch write. No support: the 0x42 a pact
+            adds is no branch the library follows (a pact branch may only drop color_group).
           doc-ref:
             - split_h6092/com/govee/h6092/pact/Support.java:87-95,264-266,304-312
             - split_h6092/com/govee/h6092/pact/Model.java:66-68
-            - split_h6092/com/govee/h6092/newDetail/h7070/VM4LightH7070.java:99-131,288-292,529-534,578-593,827-850
-        "334":   # H7071, the AcNewDetailH7070 screen; no support: as 283
+            - split_h6092/com/govee/h6092/newDetail/h7070/VM4LightH7070.java:99-131,181-215,288-320,529-534,578-593,827-850
+            - split_h6092/com/govee/h6092/newDetail/h7070/Info4DetailH7070.java:269-272
+            - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4BaseInfoSingleRead.java:247-345
+        "334":   # H7071, the AcNewDetailH7070 screen (0xAC status read)
           models: [H7071]
           pacts: ["1,1", "2,1"]
+          support: app_traced
           capabilities: [power, brightness]
           zones: []
           account_lock: false
+          scene_dialect: untraced
+          status_read: [cmd_41, cmd_0c]
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
           doc: >-
-            H7071 on the H7070 screen: ac 03 02 41 0c (supportEffectChange false for 334), the rest as 283. No support:
-            status_read can't name 0x0c.
+            H7071 on the H7070 screen: ac 03 02 41 0c (supportEffectChange false for 334); every other core fact as 283:
+            TLV 0x01 power, 0x04 brightness, 0x05 the mode (an empty one fails the read), 0x41 the power-off memory, 33
+            01, 33 04 percent, aa 00 keep-alive, ee 30 bit 0 of frame[3] (the screen's re-read after it is not sent).
+            Scenes untraced. Not hardware-verified.
           doc-ref:
             - split_h6092/com/govee/h6092/pact/Support.java:103-108,268-270,304-312
             - split_h6092/com/govee/h6092/pact/Model.java:66-68
-            - split_h6092/com/govee/h6092/newDetail/h7070/VM4LightH7070.java:99-131
-        "333":   # H7073, the AcNewDetailH7070 screen; no support: as 283
+            - split_h6092/com/govee/h6092/newDetail/h7070/VM4LightH7070.java:99-131,181-215
+        "333":   # H7073, the AcNewDetailH7070 screen (0xAC status read)
           models: [H7073]
           pacts: ["1,1"]
+          support: app_traced
           capabilities: [power, brightness]
           zones: []
           account_lock: false
+          scene_dialect: untraced
+          status_read: [cmd_41, cmd_0c, write_check_ic]
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
           doc: >-
-            H7073 on the H7070 screen: ac 03 03 41 0c 42 (supportEffectChange always true for 333), the rest as 283.
-            Pact (1,1) from AddDeviceM.addDeviceH7073, not Support.addSupportPact. No support: status_read can't name 0x0c.
+            H7073 on the H7070 screen: ac 03 03 41 0c 42 (supportEffectChange always true for 333), TLV 0x42 the
+            effect-change switch (not modelled); every other core fact as 283. Pact (1,1) from AddDeviceM.addDeviceH7073,
+            not Support.addSupportPact. Scenes untraced. Not hardware-verified.
           doc-ref:
             - split_h6092/com/govee/h6092/add/AddDeviceM.java:50-58,70-72
             - split_h6092/com/govee/h6092/pact/Support.java:272-274,304-312,500-515
             - split_h6092/com/govee/h6092/pact/Model.java:66-68
-            - split_h6092/com/govee/h6092/newDetail/h7070/VM4LightH7070.java:99-131
-        "401":   # H3860, the AcNewDetailH3860 screen; no support: the status read names 0x0c / 0x45 (doc)
+            - split_h6092/com/govee/h6092/newDetail/h7070/VM4LightH7070.java:99-131,181-215
+        "401":   # H3860, the AcNewDetailH3860 screen (0xAC status read)
           models: [H3860]
           pacts: ["1,1"]
+          support: app_traced
           capabilities: [power, brightness]
           zones: []
           account_lock: false
+          scene_dialect: untraced
+          status_read: [cmd_41, cmd_0c, cmd_45]
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
           doc: >-
-            H3860 on AcNewDetailH3860 (Model.t). Connect (VM4LightH3860.T4): ac 03 03 41 0c 45. Default header: 33 01
-            (switchTrigger -> ControllerSwitch.d), 33 04 percent. Keep-alive aa 00 (I3 false); live power ee 30 bit 0 of
-            frame[3]. No support: 0x0c and 0x45 have no govee_common command id, so status_read can't name them.
+            H3860 on AcNewDetailH3860 (Model.t). Connect (VM4LightH3860.T4): ac 03 03 41 0c 45; TLV 0x01 power, 0x04
+            brightness, 0x05 the mode (Info4DetailH3860.I reads byte 0 unguarded: an empty one fails the read), 0x41
+            the power-off memory (value[1] unguarded), 0x0c the operate info and 0x45 the pattern switch (not modelled).
+            Default header: 33 01 (switchTrigger -> ControllerSwitch.d), 33 04 percent. Keep-alive aa 00 (I3 false);
+            live power ee 30 bit 0 of frame[3]. Scenes untraced. Not hardware-verified.
           doc-ref:
             - split_h6092/com/govee/h6092/pact/Support.java:118-120,236-238,381-396
             - split_h6092/com/govee/h6092/pact/Model.java:76-77
-            - split_h6092/com/govee/h6092/newDetail/h3860/VM4LightH3860.java:101-129,277,498-503,827-850
+            - split_h6092/com/govee/h6092/newDetail/h3860/VM4LightH3860.java:101-129,131-164,206-211,277,498-503,827-850
+            - split_h6092/com/govee/h6092/newDetail/h3860/Info4DetailH3860.java:286-290
         "331":   # H609D, the H609dDetailActivity screen; no support: the displayed power is derived (doc)
           models: [H609D]
           pacts: ["1,1"]
@@ -18737,6 +18762,10 @@ families:
         by_goods_type:
           "101": { forms: { f_09: clock, f_ee_30: unknown } }
           "167": { forms: { f_ee_30: unknown } }
+          "283": { forms: { f_41: power_memory }, mode: { empty_fails: true } }   # VM4LightH7070.X4 reads TLV 0x41 value[1] unguarded (:193-194); Info4DetailH7070.H TLV 0x05 byte 0 (:269-272)
+          "334": { forms: { f_41: power_memory }, mode: { empty_fails: true } }   # as 283
+          "333": { forms: { f_41: power_memory }, mode: { empty_fails: true } }   # as 283
+          "401": { forms: { f_41: power_memory }, mode: { empty_fails: true } }   # VM4LightH3860.U4 TLV 0x41 value[1] (:143-144); Info4DetailH3860.I TLV 0x05 byte 0 (:286-290)
     models: [H6092, H6093, H7070, H6095, H6094, H609D, H7073, H7071, R1810, H6091, H1811, H3860, H1880]   # SKU ties by maker class names; base-classes2/com/govee/shared/checker/KmpGoodsType.java:142-143
     goods_types: [101, 167, 271, 283, 322, 323, 331, 333, 334, 340, 399, 401, 402]   # pact/SubLib.java:19-26; base-classes9/com/govee/base2home/pfd/Config.java:214
     delivery: feature_split   # pact_h6092 (base-classes9/com/govee/base2home/pfd/Config.java:214)

@@ -471,6 +471,17 @@ enums:
       doc: delayed power-off
       doc-ref:
         - base-classes10/com/govee/base2light/ble/controller/BleProtocolConstants.java:111
+    0x0c:
+      id: cmd_0c
+      -orig-id: [sub_mode_operate_V2]
+      doc: |
+        the H7070-screen operate-effect info (the 0x0c operate sub-mode) as a
+        0xAC TLV; requested by the H7070 / H7071 / H7073 / H3860 status reads,
+        value not typed
+      doc-ref:
+        - split_h6092/com/govee/h6092/ble/BleProtocol.java:35
+        - split_h6092/com/govee/h6092/newDetail/h7070/VM4LightH7070.java:110,201-212
+        - split_h6092/com/govee/h6092/newDetail/h3860/VM4LightH3860.java:112,151-157
     0x0e:
       id: current_limit
       doc: |
@@ -600,6 +611,15 @@ enums:
       -orig-id: SINGLE_SORT_SCENE
       doc-ref:
         - base-classes10/com/govee/base2light/ble/controller/BleProtocolConstants.java:160
+    0x2c:
+      id: cmd_2c
+      -orig-id: [sub_mode_operate]
+      doc: |
+        the H60B0 operate sub-mode 0x2C as a 0xAC TLV; requested by the H60B0
+        status read, whose handler has no branch for it; value not typed
+      doc-ref:
+        - base-classes2/com/govee/h60b0/BleProtocolH60B0.java:24
+        - split_floorlamp/com/govee/h60b0/vm/VM4H60B0.java:274,304-345
     0x30:
       id: cmd_30
       -orig-id: [SINGLE_LIGHT_SWITCH, CALIBRATION, NOTIFY_DETAIL]
@@ -703,6 +723,17 @@ enums:
       doc-ref:
         - split_h6047/com/govee/h6047/newdetail/control/CalibrationController4H6048.java:23-24
         - split_h6047/com/govee/h6047/newdetail/control/CalibrationController4H6048.java:44-46
+    0x45:
+      id: cmd_45
+      -orig-id: [MONTAGE_BRIGHTNESS, FEAST_PATTER_SWITCH]
+      doc: |
+        montage brightness, or the H3860 pattern switch (TLV 0x45 byte 0 == 1 =
+        on); requested by the H3860 and H707A status reads, value not typed
+      doc-ref:
+        - base-classes10/com/govee/base2light/ble/controller/BleProtocolConstants.java:27
+        - split_h6092/com/govee/h6092/ble/BleProtocol.java:6
+        - split_h6092/com/govee/h6092/newDetail/h3860/VM4LightH3860.java:112,158-161
+        - split_h7075/com/govee/h7075/h707A/H707ABCDetailVM$afterConnectedSingleReadDeviceInfo$1.java:149,254
     0x46:
       id: reset_device_net
       -orig-id: [SINGLE_CHECK_IC, SINGLE_RESET_DEVICE_NET]
@@ -713,6 +744,26 @@ enums:
         - base-classes10/com/govee/base2light/ble/controller/BleProtocolConstants.java:156
         - firmware-h60a6-wifi/decompiled/H60A6_ble_dispatcher.c:454-468
         - firmware-h6008-wifi/decompiled/H6008_ble_dispatcher.c:117-119
+    0x48:
+      id: cmd_48
+      -orig-id: [PART_SCENES_SEGMENT_IC_INFO, indicator_light, SINGLE_MOTION_DELETE]
+      doc: |
+        scene segment IC info, the h7075 indicator light or motion delete;
+        requested by the H707A status read, value not typed
+      doc-ref:
+        - base-classes10/com/govee/base2light/ble/controller/BleProtocolConstants.java:99
+        - split_h7075/com/govee/h7075/ble/BleProtocol.java:14,21
+        - split_h7075/com/govee/h7075/h707A/H707ABCDetailVM$afterConnectedSingleReadDeviceInfo$1.java:106,254
+    0x4b:
+      id: cmd_4b
+      -orig-id: [H7072_BRIGHTNESS_MODE, brightness_sensor, SINGLE_READ_SPLICING_STATE]
+      doc: |
+        the H7072 auto-dimming info, the brightness sensor or the splicing state;
+        requested by the H7072 / H3351 / H2800 status read, value not typed
+      doc-ref:
+        - base-classes10/com/govee/base2light/ble/controller/BleProtocolConstants.java:20
+        - split_h7075/com/govee/h7075/ble/BleProtocol.java:18,20
+        - split_h7075/com/govee/h7075/h7072/H7072VM4Light.java:788-793,894-895
     0x50:
       id: movie_feast_set_device
     0x54:
@@ -792,11 +843,39 @@ enums:
       -orig-id: SINGLE_MUSIC_LIB_SET_SWITCH
       doc-ref:
         - base-classes10/com/govee/base2light/ble/controller/BleProtocolConstants.java:139
+    0x7d:
+      id: cmd_7d
+      doc: |
+        the H70B6 / H70B8 24-hour clock setting [on]; requested by their status
+        read (H70B8 always, H70B6 above pact (1,1)), value not typed
+      doc-ref:
+        - split_h70b1/com/govee/h70b6/pact/BleProtocol.java:19
+        - split_h70b1/com/govee/h70b6/Support.java:57-75
+        - split_h70b1/com/govee/h70b6/adjust/VM4H70B6.java:479-490
+    0x7e:
+      id: cmd_7e
+      doc: |
+        the H70B6 / H70B8 temperature unit [0 Celsius, else 1]; requested as
+        0x7D is, value not typed
+      doc-ref:
+        - split_h70b1/com/govee/h70b6/pact/BleProtocol.java:26
+        - split_h70b1/com/govee/h70b6/Support.java:57-75
+        - split_h70b1/com/govee/h70b6/adjust/VM4H70B6.java:479-490
     0x84:
       id: set_alarm_clock
       -orig-id: SET_DEVICE_ALARM_CLOCK
       doc-ref:
         - base-classes10/com/govee/base2light/ble/controller/BleProtocolConstants.java:102
+    0xa1:
+      id: cmd_a1
+      -orig-id: [READ_SEGMENT_LIGHT]
+      doc: |
+        the H707A segment IC info [segment count][per-segment IC x 3]; requested
+        by its status read, value not typed
+      doc-ref:
+        - split_h7075/com/govee/h7075/ble/BleProtocol.java:10
+        - split_h7075/com/govee/h7075/h707A/H707ABCDetailVM$afterConnectedSingleReadDeviceInfo$1.java:94,254
+        - split_h7075/com/govee/h7075/h707A/H707AInfo4Detail.java:311-357
     0xa2:
       id: color_group_rgb
       doc: |

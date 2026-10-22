@@ -52,6 +52,14 @@ model, from which the shipped readers are generated).
   - h705a: **H705A / H705B / H705C / H801B** (125), **H608A / H608B / H608C / H608D / H808A** (184), **H705D /
     H705E / H705F / H805A / H805B / H805C / H805D** (240), **H7067 / H7068 / H7069** (250), **H3401** (394);
   - h7057: **H3510**, **H3511**† (349).
+- **Six more SKUs whose status read names TLV types the spec now has ids for** (Spec, below): by default
+  **H7071** (h6092 334), **H7073** (333) and **H3860** (401), power and brightness; **H3351** (h7072 371) and
+  **H70B8** (h70b6 341), power, brightness, RGB and colour temperature; and **H7072** (h7072 294) behind
+  `allow_modelled`. Each sends the app's request: `ac 03 02 41 0c`, `ac 03 03 41 0c 42`, `ac 03 03 41 0c 45`,
+  `ac 03 03 41 a5 4b` and `ac 03 04 41 39 7d 7e` (`VM4LightH7070.T4`, `VM4LightH3860.T4`, `H7072VM4Light`,
+  `VM4H70B6.i5`). H7072 stays `modelled`: the app places each TLV 0xA5 group at (group - 1) x that TLV's own
+  record count (`SubMode4Color.j`), the library at (group - 1) x 4, and its firmware's split is untraced. None is
+  hardware-verified.
 - **Bench, 2026-10-21 (the Mac, reads only):** one H61C3 and two H6076s, polled through `create_device` and
   `update()` on the new rows. A guard on `GoveeConnection._send_frame` refused any write; none was attempted.
   - **H61C3** (rgbiclight 141, pact (1,1), plaintext, `allow_modelled`): aa 01, aa 04, aa 05 01, aa 40,
@@ -95,6 +103,17 @@ model, from which the shipped readers are generated).
   - The catalogue snapshot routes 31 SKUs no row lists (15 before). For review: H613A-F (catalogue 39, named
     by h613839's (65535,255) bind item), where it was H615E.
   - rgbiclight 351 / 352 now record the R617G / R618D catalogue route, as h7057 274 does H8057's.
+- **Eight more `govee_common` command ids**, the TLV types the app's 0xAC status reads request: `cmd_0c`
+  (the H7070-screen operate info), `cmd_2c` (the H60B0 operate sub-mode), `cmd_45`, `cmd_48`, `cmd_4b`, `cmd_7d` /
+  `cmd_7e` (the H70B6 / H70B8 clock and temperature unit) and `cmd_a1` (the H707A segment info). None gets a
+  typed decode, so their values stay raw in the status stream's `rest`, as an unnamed tag's did: no admitted
+  SKU's request or decoded state changes. Only the frame analyzer's labels do (`write/cmd_4b`, where it said
+  `write/cmd=0x4b`).
+  - h6092 283 / 334 / 333 / 401 read TLV 0x41 as the power-off memory, so a burst whose 0x41 is shorter than
+    two bytes applies nothing, and mark an empty TLV 0x05 as the app's failed read (the library reads past that
+    one, as on H60A6): their screens read 0x41's byte 1 and 0x05's byte 0 unguarded (`VM4LightH7070.X4`,
+    `Info4DetailH7070.H`, `VM4LightH3860.U4`, `Info4DetailH3860.I`). h6092 283 (H7070) now states its status read; it stays held
+    because pacts (1,2) and (2,1) add 0x42, a pact branch the library can't follow.
 
 ## [1.6.1] — 2026-10-21
 
