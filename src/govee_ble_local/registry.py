@@ -60,9 +60,11 @@ def create_device(
     only discovery (:mod:`.scanner`) needs a Govee name. Without an advertisement, or one without a Govee pact
     block, the SKU's profile default cipher is used, which is wrong for a device whose firmware encrypts
     although the profile says plaintext (e.g. the H6008), a SKU that several rows list needs
-    ``goods_type``, and a SKU served only on a pact-conditioned reassignment's target row is unsupported
-    (``profile_for``). ``allow_modelled`` also admits a ``modelled`` row (inferred from the app, not
-    traced; see ``profile_for``).
+    ``goods_type``, and a SKU served only on a row that needs a pact (a pact-conditioned reassignment's
+    target row, or a ``pact_required`` row: H6076 / H8076 / R16D0) is unsupported (``profile_for``). A SKU
+    whose brightness range the pact picks (``DeviceProfile.brightness_by_pact``) is built, but refuses
+    brightness until ``Device.ingest_advertisement`` hears the pact. ``allow_modelled`` also admits a
+    ``modelled`` row (inferred from the app, not traced; see ``profile_for``).
 
     Pass ``secret`` (the 8-byte account-lock key, ``build.SECRET_LEN``) for a device whose profile
     requires one (the plug family); it is sent after every handshake. ``Device.set_secret`` can

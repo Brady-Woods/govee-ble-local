@@ -42,9 +42,12 @@ the row lacks fails the build: nothing defaults silently.
   one holds 0 (``SkuToGoodsTypeUtil.f``:66-99 over ``OldRgbBkUtil.a`` / ``.b``:75-97, the pact
   ``OldBleModel.itemClickOp``:52-60 copies, the int fields ``Info4BleIotDevice.p`` / ``.v``:90-91), so it
   runs the source goodsType. A target-row route carries the gate (``Route.gate``), and
-  ``profile.profile_for`` takes it only on an advertised pact. A SKU that a ``modelled`` row and an admitted
-  row both list raises too: the spec's routing (``ble_rows``) counts both wherever both accept the pact, and
-  the opt-in must leave the admitted routes as they are.
+  ``profile.profile_for`` takes it only on an advertised pact. It takes a ``pact_required`` row's route
+  (``Route.pact_required``) the same way: the app also accepts the row's goodsType at pacts that run a path
+  the row doesn't serve (straightfloorlamp 69's (1,1)), so a unit advertising no pact may be one of them.
+  ``pact_required`` with ``pacts: any`` raises. A SKU that a ``modelled`` row and an admitted row both list
+  raises too: the spec's routing (``ble_rows``) counts both wherever both accept the pact, and the opt-in
+  must leave the admitted routes as they are.
 - The pact fallback (decision D3), the 1.x compatibility rule: 1.4.0 routed each of its 18 SKUs whatever
   pact its advertisement carried, so ``profile.profile_for`` still routes one of them
   (:data:`PACT_FALLBACK_SKUS`, frozen at those 18) to its only admitted profile at a pact no row accepts, and
@@ -214,6 +217,7 @@ class Row(TypedDict, total=False):
     catalogue_models: tuple[str, ...]
     connectivity: tuple[str, ...]
     pacts: tuple[str, ...] | str
+    pact_required: bool
     support: str
     power_read: str
     power_live: tuple[str, ...]
@@ -472,6 +476,15 @@ class Route(NamedTuple):
     """The ``(min_pact_type, min_pact_code)`` of a pact-conditioned ``assigned_goods_type`` item whose target
     goodsType this row is, where the item names the SKU (:func:`pact_gates`): the route is taken only on an
     advertised pact, never without one (the module doc). None for every other route."""
+    pact_required: bool
+    """The row's ``pact_required``: the route is taken only on an advertised pact, as a gated one is (the
+    module doc)."""
+
+    @property
+    def needs_pact(self) -> bool:
+        """Whether the route is taken only on an advertised pact: a gated route, or a ``pact_required``
+        row's."""
+        return self.gate is not None or self.pact_required
 
 
 def _layer(*layers: Mapping[str, Any]) -> dict[str, Any]:
@@ -486,12 +499,12 @@ def _layer(*layers: Mapping[str, Any]) -> dict[str, Any]:
 def routes(families: Sequence[Family]) -> dict[str, tuple[Family, str, str]]:
     """``{SKU upper-cased: (family, goodsType, SKU)}`` for each SKU that exactly one BLE row with support
     lists, when that row is admitted: the SKUs routed with neither the pact nor the goodsType. SpecError for
-    a row with support (any level) that is no BLE route, for a SKU that a ``modelled`` row and an admitted
-    row both list (the spec's ``ble_rows`` counts both wherever both accept the pact, so the opt-in would no
-    longer be additive), for a routed SKU that an ``assigned_goods_type`` item in any family names (matched
-    as the routes are, case-insensitively) unless the item's condition tests the pact alone, and for a row
-    that disagrees with a pact-conditioned item (:func:`_reassignments`). The generator runs it over the
-    whole document."""
+    a row with support (any level) that is no BLE route or is ``pact_required`` with ``pacts: any``, for a
+    SKU that a ``modelled`` row and an admitted row both list (the spec's ``ble_rows`` counts both wherever
+    both accept the pact, so the opt-in would no longer be additive), for a routed SKU that an
+    ``assigned_goods_type`` item in any family names (matched as the routes are, case-insensitively) unless
+    the item's condition tests the pact alone, and for a row that disagrees with a pact-conditioned item
+    (:func:`_reassignments`). The generator runs it over the whole document."""
     listed: dict[str, list[tuple[Family, str, str, bool]]] = {}
     for fam in families:
         rows = (fam.get("client_profile") or {}).get("by_goods_type") or {}
@@ -503,6 +516,9 @@ def routes(families: Sequence[Family]) -> dict[str, tuple[Family, str, str]]:
             if not _is_route(fam, row):
                 raise SpecError(f"{fam['id']} goodsType {gt}: a row with support needs models, pacts and a "
                                 "ble link")
+            if row.get("pact_required") and isinstance(row.get("pacts"), str):
+                raise SpecError(f"{fam['id']} goodsType {gt}: pact_required on a row whose pacts are 'any' "
+                                "(no pact to require)")
             admitted = row["support"] in ADMITTED
             for sku in row.get("models") or ():
                 hits = listed.setdefault(sku.upper(), [])
@@ -735,20 +751,21 @@ def profiles(families: Sequence[Family], parse_names: Collection[str], admitted:
     """``[(skus, fields, routes)]``: DeviceProfile field values for each group of (row, SKU) routes at a
     support level in ``admitted`` (a catalogue route's is :func:`catalogue_support`) whose resolved facts are
     identical, in devices.yaml order (row models, then its catalogue routes, within a row), with those routes
-    (a route at a pact-conditioned item's target goodsType carries its gate, :func:`pact_gates`).
-    ``parse_names`` are the mode_color_parse table's names; ``catalogued`` are the SKUs (upper-case) with a
-    bundled scene catalog, the only ones offered scenes (None: no cut). SpecError on a fact missing or not
-    served."""
+    (a route at a pact-conditioned item's target goodsType carries its gate, :func:`pact_gates`, and a
+    ``pact_required`` row's routes say so). ``parse_names`` are the mode_color_parse table's names;
+    ``catalogued`` are the SKUs (upper-case) with a bundled scene catalog, the only ones offered scenes (None:
+    no cut). SpecError on a fact missing or not served."""
     groups: dict[str, tuple[list[str], dict[str, Any], list[Route]]] = {}
     gates = pact_gates(families)
     for fam, gt, row, sku in _members(families, admitted):
         pacts = row.get("pacts", "any")   # every route has pacts (_members); 'any' tests none
         accepted = None if isinstance(pacts, str) else frozenset(_pact(p) for p in pacts)
+        required = bool(row.get("pact_required"))   # never with pacts 'any' (routes)
         fields = _fields(fam, gt, sku, parse_names, catalogued)
         skus, _same, members = groups.setdefault(repr(sorted(fields.items())), ([], fields, []))
         if sku not in skus:
             skus.append(sku)
-        members.append(Route(sku, int(gt), accepted, gates.get(sku.upper(), {}).get(int(gt))))
+        members.append(Route(sku, int(gt), accepted, gates.get(sku.upper(), {}).get(int(gt)), required))
     return [(tuple(skus), fields, tuple(members)) for skus, fields, members in groups.values()]
 
 

@@ -3,7 +3,7 @@
 # Capabilities mirror the app's compiled per-goodsType classes; only the IC/segment count (0x40) is read live.
 
 spec_version: "1.0.0"
-source_app: "com.govee.home 7.7.02; doc-ref paths are relative to decomp-7.7.02, and entries not re-traced since were read from 7.5.12 (1088)"
+source_app: "com.govee.home 7.7.02; doc-ref paths are relative to decomp-7.7.02, and entries not re-traced since were read from 7.5.12 (1088); a doc-ref under govee-apk-decompiled/sources/ is a 7.5.12 path (the h604a rows)"
 hex_note: "All byte values are hex strings like 0x33 unless noted."
 
 transport:
@@ -782,7 +782,7 @@ families:
             - split_h60ax/com/govee/pact_h60a0/pact/Support.java:87-91,134-136,356-371
             - split_h60ax/com/govee/pact_h60a0/pact/Model.java:137-140
             - split_h60ax/com/govee/pact_h60a0/adjust/h60a1/VM4Light$connectBleSuc$1.java:32-45
-            - split_h60ax/com/govee/pact_h60a0/adjust/h60a1/VM4Light$afterConnectedSingleReadDeviceInfo$1.java:65-98,140-178
+            - split_h60ax/com/govee/pact_h60a0/adjust/h60a1/VM4Light$afterConnectedSingleReadDeviceInfo$1.java:65-98,140-176
             - split_h60ax/com/govee/pact_h60a0/adjust/h60a1/VM4Light.java:107-113,513-515,565-579,808-813,955
             - split_h60ax/com/govee/pact_h60a0/adjust/h60a4/ColorModeH60A4.java:329-357
             - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4BaseInfoSingleRead.java:159-176,253-345
@@ -2290,11 +2290,15 @@ families:
             one-piece mask; Config.I = {F, F, F, F, T}: colour temperature, no gradual (no Config.G key), no segment
             brightness. Kelvin: KelvinConfig 263 -> version 2 = [2700, 6500]; brightness version 1. Live power: the ee 30
             switch push (VM4Light.z5) and the aa 01 heartbeat reply (VM4Light.I3; ShareVM.N3 -> J3 -> D5), the family's
-            power_live. MODELLED: the screen reads the burst once per connect and then follows the heartbeat, while the
-            library re-reads the burst every poll and folds no heartbeat reply; the request names only the four extra types, and
-            whether the firmware returns TLVs 0x01 / 0x04 / 0x05 unasked is not in the app (absent, every poll would read
-            off, brightness 100). The library skips the TLV 0xA5 colour (one record at bytes 1-4, byte 0 unread by the app;
-            f_a5 left unset), so RGB has no read-back. Not listed: the TimerConfig.f time sync before the read. No account
+            power_live. MODELLED for the colour read-back alone: the library skips the TLV 0xA5 colour (one record at
+            bytes 1-4, byte 0 unread by the app; f_a5 left unset), so RGB has no read-back. Two notes hold on every
+            status row, the app_traced ones included (straightfloorlamp 69, h7076 313, h7020 296, the h7057 rows), and
+            set no row's level: the screen reads the burst once per connect and then follows its live power (here the
+            heartbeat reply and the ee 30 push), where the library re-reads the burst every poll and folds neither
+            (library-wide, the resolver's keep-alive rule);
+            and the request names only extra TLV types (here the four above), so the base TLVs 0x01 / 0x04 / 0x05 must
+            come unasked, which the app's code doesn't show (the H60A6 and H6076 benches do; absent, every poll would
+            read off, brightness 100). Not listed: the TimerConfig.f time sync before the read. No account
             lock (SecretController is sent only in PairViewModel). Scenes untraced. Not hardware-verified.
           doc-ref:
             - split_h61d3/com/govee/h61d3/pact/H61D3Support.java:914-918,790-803,1160-1161,1340-1342
@@ -2577,7 +2581,12 @@ families:
             the multi-colour config SupportMultiColorConfig lists goodsType 264, and its h gives 3 at 264 for H61B6
             only, not H61B3; nothing this row models depends on it. H61B0 is goodsType 264 too
             (KmpGoodsType.GOODS_TYPE_VALUE_H61B0_B3_B6, the H61B0B3B6BleIotSkuItem) and has no per-SKU branch on this path
-            but the DynamicDomainConfig entry (H61D3Support.y0), so it runs as H61B3.
+            but the DynamicDomainConfig entry (H61D3Support.y0), so it runs as H61B3. H61B0's IC count is unknown: the
+            catalogue snapshot has no H61B0 entry (H61B3 ic 30, H61B6 ic 100), the app names it only as a SKU string
+            (H61D3Support.c) with no count of its own, and no unit is on the bench. The live aa 40 count sizes only
+            the read-back; the library writes the static 15-piece mask (the row's 15, the app's min(IC, 15) cap), so
+            H61B0 is served on the assumption that it reports at least 15 ICs, as the catalogue's H61B3 / H61B6 do,
+            until a live write mask lands.
           doc-ref:
             - split_h61d3/com/govee/h61d3/pact/H61D3Support.java:887-895,1206-1208,1016-1019,1155-1158,1203,1557-1558,1576-1578
             - base-classes2/com/govee/shared/checker/KmpGoodsType.java:200
@@ -3590,7 +3599,16 @@ families:
             stringlightv2's BleBroadcastProcessor (Support.i: 40 and exactly (2,1)), whose BleWifiNewBkConnectDialog
             records pact (2,1); its first screen (NewBKWifiChooseAc.R3) opens this screen at 40 / (2,1) with this row's
             frames. Disputed 2026-10-21: an earlier doc had the first screen run at 0 for BK units too, as evidence that
-            BK firmware takes 33 05 02; refuted, no frame here changes (h6159.md, Disputed). Scenes not traced. Not
+            BK firmware takes 33 05 02; refuted, no frame here changes (h6159.md, Disputed). Name prefix: the app's
+            scan takes a pact for these SKUs from a GBK_ name only (BaseBleProcessor.d -> b ->
+            OldRgbBkUtil.parseOldRgbBkLight). An ihoment_ / Govee_ / Minger_ name goes to BaseBleProcessor.c, which
+            for a goodsType-0 SKU (Pact.f gives 0, the catalogue's goodsType for all five) returns before
+            GoodsType.parseBleBroadcastPactInfo; only OldDreamColorUtil / OldBulbUtil would set a pact there, and
+            neither lists these SKUs. So in the app such a unit never runs at 40. The library reads the pact from the
+            0xEC88 manufacturer data whatever the name (identify, create_device) and routes on it, so a legacy-named
+            unit that advertises a (2,1) pact block gets this row where the app runs row 0 (no support). The library
+            doesn't route by name prefix; whether a non-GBK_ unit of these SKUs advertises a pact block at all is
+            unchecked (none is on the bench), so this is a documented divergence for review. Scenes not traced. Not
             hardware-verified.
           doc-ref:
             - split_rgblight/com/govee/h6159/sku/SubLib.java:21-31
@@ -3598,7 +3616,10 @@ families:
             - split_rgblight/com/govee/h6159/sku/Model.java:56-127
             - base-classes3/com/govee/kt/ui/device/base/AbsBaseBleModel.java:158-174,194-206
             - base-classes9/com/govee/base2home/pact/support/OldRgbBkUtil.java:57-73,87-97,186-188,254-279
-            - base-classes9/com/govee/base2home/main/choose/BaseBleProcessor.java:78-157,242-261
+            - base-classes9/com/govee/base2home/main/choose/BaseBleProcessor.java:58-157,242-261
+            - base-classes9/com/govee/base2home/pact/Pact.java:94-97
+            - base-classes9/com/govee/base2home/pact/support/OldDreamColorUtil.java:231-256
+            - base-classes9/com/govee/base2home/pact/support/OldBulbUtil.java:92-100
             - base-classes9/com/govee/base2home/main/choose/BleProcessorManager.java:31-37
             - split_rgblight/com/govee/rgblight/RgbLightRegistry.java:578-586
             - split_rgblight/com/govee/stringlightv2/add/BleBroadcastProcessor.java:57-79
@@ -4693,7 +4714,7 @@ families:
           models: [H6113]
           pacts: ["10,1", "10,2"]
           support: app_traced
-          color_scheme: h6188
+          color_scheme: h6006   # the colour tab's 0x0d frames (Config.J[2] = bu), as h6159 40 / H6188 (doc)
           capabilities: [power, brightness, rgb]
           color_functions: []
           zones: []
@@ -4710,18 +4731,22 @@ families:
             SkuToGoodsTypeUtil.f, which sets 39 for H6113 when OldRgbBkUtil.a holds on the record pact, and opens
             /rgb/newdetail. Only a GBK_ name with a parseable pact block scans with a pact (BaseBleProcessor.d -> b ->
             OldRgbBkUtil.parseOldRgbBkLight); an ihoment_ / Govee_ / Minger_ name reads none (BaseBleProcessor.c) and pairs
-            at (0,0), so it stays 0. VM4Light.X0 then checks the advert pact against Support4StringLightV2.A and refuses an
-            advert with no parseable pact (AbsViewMode4Op.onScanEvent, message 999); at 39 that leaves (10,1) / (10,2),
-            goodsType 39's registered pacts. Served only on an advertised pact: profile_for refuses pact None on this gated
+            at (0,0), so it stays 0 (the library reads the pact from the manufacturer data whatever the name, as on
+            h6159 40: a legacy-named unit that advertises a BK pact block routes here). VM4Light.X0 then checks the
+            advert pact against Support4StringLightV2.A and refuses an advert with no parseable pact
+            (AbsViewMode4Op.onScanEvent, message 999); at 39 that leaves (10,1) / (10,2), goodsType 39's registered
+            pacts. Served only on an advertised pact: profile_for refuses pact None on this gated
             target row, as the app runs a pact-less unit at goodsType 0 (row 0, no support). The H6113Support tests all
             need goodsType 0, so 39 runs the
             generic BK path: Support4StringLightV2.K makes the pacts uiv4, and
             ControllerStrategyConfig.B1 reads soft and hard version, writes the TimerConfig.f time sync (not listed, as on
             the other newdetail rows), reads timer / wake / sleep, aa 04, aa 01 and aa 05 (strategy a, rgb_kelvin_tint), and
-            no Wi-Fi reads (rgblight Support.g). Colour h6188: ColorViewModel.p0 -> ColorModeControllerConfig.c (the
+            no Wi-Fi reads (rgblight Support.g). Colour h6006: ColorViewModel.p0 -> ColorModeControllerConfig.c (the
             over-56-segment flag LightColorCapabilityCenter.b2 is false: Config.E holds goodsTypes 295 / 411 only) ->
             Config.F (no Config.w entry; Config.x[39] = Yv = 2) -> Config.J[2] = bu: Bytes.f 33 05 0d R G B, or Bytes.p
-            when the pick is a Kelvin tint colour inside KelvinConfig version 0 [2000, 9000]. Config.H["H6113"] = DR turns
+            when the pick is a Kelvin tint colour inside KelvinConfig version 0 [2000, 9000], the h6006 colour-tab frames
+            (the h6188 scheme's own CCT, the illumination tab's white-slot Bytes.A, is a frame this screen never sends;
+            the two schemes' RGB and tint-pick frames are the same bytes). Config.H["H6113"] = DR turns
             all five colour-page flags off, so there is no colour-temperature slider, gradual or segment brightness.
             Brightness is percent [1, 100] (the rgblight brightness interceptor, Support4StringLightV2.b on J), written
             33 04. One colour piece (ColorPieceConfig.n), so no segments. Power 33 01 (VM4Light.switchTrigger), heartbeat
@@ -9579,6 +9604,7 @@ families:
         "69":   # H6076 / H8076 (and the catalogue's R16D0); pact/Model.t -> AcNewDetail -> VM4Light
           models: [H6076, H8076]
           pacts: ["2,1"]   # the app also accepts (1,1): a polled route this row can't serve (doc)
+          pact_required: true   # so a unit advertising no pact, which may be a (1,1) one, is refused (doc)
           support: app_traced
           color_scheme: h60a6
           color_functions: [segment_brightness, color_temperature]
@@ -9601,14 +9627,30 @@ families:
             it, so the library routes it here by goodsType alone, at (2,1), capped at app_traced; no app code names
             R16D0 (only the bundled localSkuComponentConfigs.json, with H16C0's tab list), so its frames are goodsType
             69's. The app accepts pacts (1,1) and (2,1) (Support.addSupportPact, exact match). This row routes (2,1)
-            only, the pact of the user's units and the "H6076 iteration" (Support.isH6076Iteration): VM4Light.d0 -> Z4
+            only, the pact of the user's units and the "H6076 iteration" (Support.isH6076Iteration: goodsType 69 and
+            pactType 2): VM4Light.d0 -> Z4
             sends the TimerConfig time sync, then the 0xAC status read ac 03 02 a5 a3 alone (Compose4BaseInfoSingleRead).
             Its TLVs: 0x01 power (!= 0), 0x04 brightness, 0x05 mode (Info4Detail.T: 0x14 gradual only, 0x15 not
             decoded), 0x07 device id and versions, each 0xA5 one [group, (bri, r, g, b) x 4] group of the 7 pieces, and
-            0xA3 byte 0 the gradual flag. Colour: Config.x[69] = 0, white type 1, no 56-piece multi. So the colour
+            0xA3 byte 0 the gradual flag.
+            At (1,1) d0 runs the default connect read instead (VM4Light$connectBleSuc$1: Compose4InfoBleIot's aa 04,
+            aa a3, aa 01 and aa 05, then the colour groups from the aa 05 reply, VM4Light.t5), a polled route this row
+            doesn't serve, and nothing but the pact tells the two apart. So the row is pact_required: profile_for,
+            is_supported_sku, make_device and create_device take it only on an advertised pact, as they take a BK
+            target row (profile._accepts), and H6076 / H8076 / R16D0 need the advert's pact (pass pact=, or
+            create_device with the advertisement). Without that gate a pact-less record would get this (2,1) status
+            profile and the plaintext cipher fallback, where both bench units advertise (2,1) and negotiate AES.
+            Colour: Config.x[69] = 0, white type 1, no 56-piece multi. So the colour
             tab's picks are ColorViewModel.p0 -> ColorModeControllerConfig.c -> Config.Yt -> Bytes.h (15 01 RGB mask),
             and its CCT is ColorViewModel.U -> Yt -> Bytes.r (15 01 ff ff ff K tint mask). Both are byte-identical to
-            h60a6 over 7 segments, and CCT always covers all 7 pieces (ColorMode4H6076.canClickColorTem). The
+            h60a6 over 7 segments. Scoping notes (same bytes, as on 377): the Kelvin slider covers all 7 pieces
+            (ColorMode4H6076.canClickColorTem); a partial-mask Bytes.r goes out only when a colour pick on the selected
+            pieces is an in-range tint colour (canClickColor returns the selection -> ColorViewModel.p0 -> Yt,
+            KelvinConfig.i). The strip gates its per-piece brightness: canClickBrightness returns null, with a toast
+            and no 15 02 frame, while any piece shows a Kelvin-tint colour (R() = ColorUtils.o over the piece colours,
+            a tint of 1000-10000 K) or no piece is selected (S() = NumberUtils.A); the colour page writes only on a
+            non-null result (ViewColorMode.T, DelegateColorV2Part.U). The library doesn't gate
+            set_segment_brightness on either (not modelled). The
             Illumination tab (mode 13 in that JSON for H6076 and H8076; DelegateCurMode -> DelegateLighting) sends the
             same CCT bytes for the raw K and then 33 04 <brightness> in one write (View4IlluminationMode.I0 ->
             KelvinConfig.b -> ColorModeControllerConfig.h -> Config.EM -> Bytes.C). The library's colour-temperature
@@ -9635,9 +9677,14 @@ families:
             - split_hollowlamp/com/govee/straightfloorlamp/adjust/AcNewDetail.java:52-56,123-126
             - split_hollowlamp/com/govee/straightfloorlamp/adjust/VM4Light.java:102,290-296,577-589,609-648,709-728,798-799,816-827,1047-1059,1210-1233
             - split_hollowlamp/com/govee/straightfloorlamp/adjust/VM4Light$afterConnectedSingleReadDeviceInfo$1.java:43-51,99-128,149-185
+            - split_hollowlamp/com/govee/straightfloorlamp/adjust/VM4Light$connectBleSuc$1.java:91-102,113-163
             - split_hollowlamp/com/govee/straightfloorlamp/adjust/Info4Detail.java:430-534
             - split_hollowlamp/com/govee/straightfloorlamp/H6072ApplicationImp.java:104-112,165-176
-            - split_hollowlamp/com/govee/straightfloorlamp/ColorMode4H6076.java:345-375
+            - split_hollowlamp/com/govee/straightfloorlamp/ColorMode4H6076.java:111-138,323-376
+            - base-classes10/com/govee/base2kt/utils/ColorUtils.java:77-82,318-328,392-396
+            - base-classes10/com/govee/base2kt/utils/NumberUtils.java:53-61
+            - base-classes11/com/govee/base2light/pact/newdetail/content/color/ViewColorMode.java:700-713
+            - base-classes11/com/govee/base2light/pact/newdetail/content/colorv2/DelegateColorV2Part.java:217-230
             - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4BaseInfoSingleRead.java:166-180,215-237,247-345,370-420
             - base-classes11/com/govee/base2light/pact/newdetail/content/color/ColorViewModel.java:848-884,1388-1415
             - base-classes11/com/govee/base2light/pact/newdetail/content/illumination/View4IlluminationMode.java:613-665
@@ -10275,7 +10322,7 @@ families:
         "109":   # H604B, strip only (no zone UI)
           models: [H604B]
           pacts: ["1,1"]
-          support: app_traced
+          support: modelled   # traced on 7.5.12 only; 7.7.02 ships the screen in the uncaptured pact_h604a module (doc)
           capabilities: [power, brightness, rgb, color_temp, segments, gradual]
           zones: []
           account_lock: false
@@ -10287,7 +10334,13 @@ families:
           heartbeat: power
           ic_pieces: fixed
           doc: >-
-            H604B (Govee Home 7.5.12 only; 7.7.02 runs it from the uncaptured pact_h604a module). Model.u opens H604xNewDetailAc
+            H604B. MODELLED: traced on Govee Home 7.5.12 (1088) only, and that is not the shipped path. 7.5.12 has the
+            h604a code in its base APK (its pfd/Config registers no pact_h604a module), while 7.7.02 moved it to the
+            on-demand PFD module pact_h604a (base-classes9/com/govee/base2home/pfd/Config.java:242 routes 95 / 109 / 122
+            / 133 there), which the 7.7.02 capture doesn't hold; and 7.7.02 reads a module-registered LightCapabilitySpec
+            first (LightColorCapabilityCenter.i3), which the module may register for these goodsTypes. Every doc-ref
+            below under govee-apk-decompiled/sources is a 7.5.12 path, so the row stays behind allow_modelled until the
+            7.7.02 module is captured and re-traced. On 7.5.12: Model.u opens H604xNewDetailAc
             (H604xVM); the zone header and lamp pickers are for 95 / 122 only, so 109 uses the generic header: 33 01 from
             switchTrigger, 33 04 [1, 100] from BrightnessConfig version 1. Connect: the default Compose4InfoBleIot read (aa 04,
             aa a3, aa 01, then the screen's extras, aa 05) and direct aa a5 01..04 groups of getOneGroupColorSize = 4 over
@@ -10301,6 +10354,8 @@ families:
             UI here, white balance, video), the time sync, and aa 41 02 (power-off memory, H604xVM.I), read after every
             successful BLE connect read.
           doc-ref:
+            - base-classes9/com/govee/base2home/pfd/Config.java:242
+            - base-classes10/com/govee/base2light/capability/color/LightColorCapabilityCenter.java:1201-1206
             - govee-apk-decompiled/sources/com/govee/h604a/pact/Support.java:61,89-106,112-114,134-136,158-164,265-267
             - govee-apk-decompiled/sources/com/govee/h604a/pact/H604bItem.java:7
             - govee-apk-decompiled/sources/com/govee/h604a/pact/SubLib.java:22-28
@@ -10329,7 +10384,7 @@ families:
         "133":   # H604D, strip only (no zone UI)
           models: [H604D]
           pacts: ["1,1"]
-          support: app_traced
+          support: modelled   # as 109: traced on 7.5.12 only (doc)
           capabilities: [power, brightness, rgb, color_temp, segments, gradual]
           zones: []
           account_lock: false
@@ -10341,7 +10396,9 @@ families:
           heartbeat: power
           ic_pieces: fixed
           doc: >-
-            H604D: the same screen, connect and frames as 109 (row "109"; Support.isH604bType holds for both). 14 pieces
+            H604D. MODELLED as 109: traced on Govee Home 7.5.12 only (its doc-refs are 7.5.12 paths), while 7.7.02 runs
+            goodsType 133 from the uncaptured pact_h604a module. On 7.5.12: the same screen, connect and frames as 109
+            (row "109"; Support.isH604bType holds for both). 14 pieces
             (getBulbStringMaxNum, ColorPieceConfig set e()), colour version Config.y[133] = 0 with white type Q[133] = 1,
             KelvinConfig version 0 = [2000, 9000], brightness version 1 = [1, 100], gradual version 0. Pact (1, 1) only
             (addSupportPact registers 133 with 109's protocol object). Not modelled: as 109.
@@ -14364,7 +14421,7 @@ families:
             - split_tvlightv4/com/govee/pact_tvlightv3/detail/config/DetailConfig.java:86-102,115-127
             - split_tvlightv4/com/govee/pact_tvlightv3/detail/NewDetailVm.java:403-457,609-654,753-781,886-897
             - base-classes11/com/govee/base2light/pact/newdetail/ShareVM.java:979-982,2278-2288
-            - base-classes11/com/govee/base2light/pact/newdetail/ble/MTURequestManager.java:10-60
+            - base-classes11/com/govee/base2light/pact/newdetail/ble/MTURequestManager.java:10-54
             - base-classes11/com/govee/base2light/pact/newdetail/ble/GattCallbackImp.java:73-75
             - base-classes13/com/govee/encryp/ble/EncryptionBluetoothGattCallback.java:190-206
             - split_tvlightv4/com/govee/pact_tvlightv3/detail/mode/ColorMode10Segment.java:111-161
@@ -14700,10 +14757,13 @@ families:
             on; Config.x = 0 -> Config.J[0] = Yt: Bytes.h, or Bytes.r (white type Config.P = 1) for a Kelvin tint;
             segment brightness Bytes.G. The colour strip sends 15 04 groups (Config.A = 1, Bytes.m) with 15 03
             brightness groups, where the library's h60a6 scheme sends per-colour 15 01 masks (a divergence, not a
-            missing frame, as on pact_h6099 203). The Kelvin tap always selects all 14 pieces
-            (ColorMode14Rect4ReverseSelect.canClickColorTem, built with w false by HdmiDetailConfig), so the screen
-            sends Kelvin with the full mask only; the library's set_segment_color_temp is a frame it never sends
-            (scoping gap; set_color_temp is byte-identical). 14 pieces (Support.getColorPieceSize, ColorPieceConfig.j
+            missing frame, as on pact_h6099 203). The Kelvin slider always selects all 14 pieces
+            (ColorMode14Rect4ReverseSelect.canClickColorTem, built with w false by HdmiDetailConfig), so its Kelvin goes
+            out with the full mask (set_color_temp is byte-identical). A partial-mask Bytes.r still goes out when a
+            colour pick on the selected pieces is an in-range tint colour: canClickColor returns the piece selection
+            whatever w, and ColorViewModel.p0 -> ColorModeControllerConfig.c -> Config.Yt sends Bytes.r over it
+            (KelvinConfig.i). So set_segment_color_temp's sub-mask frame is one the screen sends, through that pick
+            rather than the slider (a scoping note, same bytes). 14 pieces (Support.getColorPieceSize, ColorPieceConfig.j
             set P). Kelvin: no KelvinConfig entry, version 0 = [2000, 9000]. Brightness BrightnessConfig.b ->
             ControllerBrightness, percent. Gradual: Config.G[142] = 0 -> Bytes.w (33 a3), read at connect. Scenes
             untraced. Not hardware-verified.
@@ -14717,14 +14777,14 @@ families:
             - split_h6099/com/govee/pact_h605b/newdetailhdmi/viewmodel/NewDetailHdmiVm.java:245-275,686-722,763-798,802-806,886-929,1269-1276,1552-1580
             - split_h6099/com/govee/pact_h605b/newdetailhdmi/Info4Detail.java:187-199,457-459,996-1015
             - split_h6099/com/govee/pact_h605b/ble/controller/compose/ControllerIcNum.java:29-40
-            - base-classes11/com/govee/base2light/pact/newdetail/commom/color/ColorMode14Rect4ReverseSelect.java:92-104,443-462
+            - base-classes11/com/govee/base2light/pact/newdetail/commom/color/ColorMode14Rect4ReverseSelect.java:92-104,426-462
             - base-classes10/com/govee/base2light/ble/BleUtil.java:474-486
             - base-classes11/com/govee/base2light/pact/newdetail/ShareVM.java:979-1015,1348-1364
             - base-classes12/com/govee/common2light/capability/connect/ConnectHeartbeat.java:15-38
             - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4InfoBleIot$iControllerStrategy$1.java:155-250
             - base-classes11/com/govee/base2light/pact/newdetail/content/success/DelegateCurMode.java:185-202
             - base-classes11/com/govee/base2light/pact/newdetail/content/colorv2/DelegateColorV2.java:779-801
-            - base-classes11/com/govee/base2light/pact/newdetail/content/color/ColorViewModel.java:848-957
+            - base-classes11/com/govee/base2light/pact/newdetail/content/color/ColorViewModel.java:848-957,1388-1413
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/ColorModeControllerConfig.java:207-256,730-935,1114-1142,985-1008
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:233-257,353-367,409-420,1381-1385,10768-10771,4905-4909,13722-13725,5989-5993,15257-15260,3179-3183,14882-14885,3936-3940,16538-16541,5521-5526,12960-12968
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:172-181,315-326,393-402,474-502,564-566
@@ -14820,9 +14880,11 @@ families:
             discarded (stored only, Info4Detail.R0; ic_pieces fixed), the direct aa a5 groups 1..4 of 4, 33 01 only
             (HdmiDetailConfig.b false: no lamp switch, zones none), aa 00 heartbeat with the ee 30 bit 0 power push,
             Config.x = 0 Yt (Bytes.h / Bytes.r type 1), Config.I all on, the 15 04 strip groups (Config.A = 1) against
-            the library's per-colour 15 01 masks, the Kelvin tap over all 14 pieces only
-            (ColorMode14Rect4ReverseSelect w false: the library's set_segment_color_temp is a frame the screen never
-            sends, a scoping gap), 14 pieces, Kelvin version 0 = [2000, 9000], percent brightness, gradual
+            the library's per-colour 15 01 masks, the Kelvin slider over all 14 pieces
+            (ColorMode14Rect4ReverseSelect w false) and a partial-mask Bytes.r only from an in-range tint-colour pick
+            on the selected pieces (canClickColor -> ColorViewModel.p0 -> Config.Yt: the frame
+            set_segment_color_temp sends, a scoping note), 14 pieces, Kelvin version 0 = [2000, 9000], percent
+            brightness, gradual
             Config.G = 0 (33 a3). The aa 41 power-off memory read (supportOffMemory) is a setting read left out.
             Scenes untraced. Not hardware-verified.
           doc-ref:
@@ -14836,11 +14898,13 @@ families:
             - split_h6099/com/govee/pact_h605b/newdetailhdmi/viewmodel/NewDetailHdmiVm.java:245-275,686-722,763-798,802-806,886-929,1269-1276,1552-1580
             - split_h6099/com/govee/pact_h605b/newdetailhdmi/Info4Detail.java:187-199,457-459,996-1015
             - split_h6099/com/govee/pact_h605b/ble/controller/compose/ControllerIcNum.java:29-40
-            - base-classes11/com/govee/base2light/pact/newdetail/commom/color/ColorMode14Rect4ReverseSelect.java:92-104,443-462
+            - base-classes11/com/govee/base2light/pact/newdetail/commom/color/ColorMode14Rect4ReverseSelect.java:92-104,426-462
             - base-classes11/com/govee/base2light/pact/newdetail/ShareVM.java:979-1015,1348-1364
             - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4InfoBleIot$iControllerStrategy$1.java:155-250
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/ColorModeControllerConfig.java:207-256,730-935,1114-1142
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:1386-1390,10925-10928,4910-4914,13879-13882,5994-5998,15415-15418,3184-3188,15037-15040,3941-3945,16696-16699,12960-12968
+            - base-classes11/com/govee/base2light/pact/newdetail/content/color/ColorViewModel.java:1388-1413
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:474-502
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/ColorPieceConfig.java:385-387,1451-1471
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:254-268,402-411
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:199-215,252-259

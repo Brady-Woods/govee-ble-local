@@ -408,9 +408,10 @@ def ble_rows(reg: dict[str, Any], sku: str, pact: tuple[int, int] | None = None)
     that knows only the SKU and the advertised pact may route `sku` to. A row qualifies when it has support,
     its models list the SKU, its connectivity (else the family's) holds ble, and its pacts are 'any' or hold
     the pact (any listed pact when no pact is advertised, but on the goodsType a pact-conditioned
-    assigned_goods_type item rewrites the SKU to: the app rewrites only a record whose pact meets the gate);
-    a row without pacts is never a route. Exactly one row is a route; none or several leave the SKU unrouted
-    unless the caller knows the goodsType."""
+    assigned_goods_type item rewrites the SKU to: the app rewrites only a record whose pact meets the gate;
+    and on a pact_required row, whose goodsType the app also runs at other pacts on a path the row doesn't
+    serve); a row without pacts is never a route. Exactly one row is a route; none or several leave the SKU
+    unrouted unless the caller knows the goodsType."""
     gated = {(model, item.get("goods_type")) for fam in reg.get("families", [])
              for item in fam.get("assigned_goods_type") or []
              if set(item.get("condition") or {}) == {"min_pact_type", "min_pact_code"}
@@ -422,7 +423,7 @@ def ble_rows(reg: dict[str, Any], sku: str, pact: tuple[int, int] | None = None)
             if ("support" not in row or sku not in (row.get("models") or []) or pacts is None
                     or "ble" not in (row.get("connectivity") or fam.get("connectivity") or [])):
                 continue
-            if pact is None and (sku, int(gt)) in gated:
+            if pact is None and ((sku, int(gt)) in gated or row.get("pact_required")):
                 continue
             if pacts == "any" or pact is None or f"{pact[0]},{pact[1]}" in pacts:
                 out.append((fam["id"], int(gt)))
@@ -540,10 +541,13 @@ def _selftest(*, strict: bool = False) -> int:
               and profile_for(profs, "H6006", 64) == fams["bulblightv3"])
         reg = yaml.safe_load(path.read_text(encoding="utf-8"))
         check("BLE routes: H6004 -> bulblightv3 64 (10 is IoT-only); H60A6 at (1,3) -> 303, at (2,1) none; "
-              "H6114 -> h6114 39 at (10,1), none without a pact (the BK rewrite's gate)",
+              "H6114 -> h6114 39 at (10,1), none without a pact (the BK rewrite's gate); H6076 -> "
+              "straightfloorlamp 69 at (2,1), none without a pact (pact_required)",
               ble_rows(reg, "H6004") == [("bulblightv3", 64)]
               and ble_rows(reg, "H60A6", (1, 3)) == [("h60ax", 303)] and ble_rows(reg, "H60A6", (2, 1)) == []
-              and ble_rows(reg, "H6114", (10, 1)) == [("h6114", 39)] and ble_rows(reg, "H6114") == [])
+              and ble_rows(reg, "H6114", (10, 1)) == [("h6114", 39)] and ble_rows(reg, "H6114") == []
+              and ble_rows(reg, "H6076", (2, 1)) == [("straightfloorlamp", 69)]
+              and ble_rows(reg, "H6076") == [])
         h61a8 = [client_row(reg, "dreamcolorlightv1", 19, pact=pact, soft=s, hard=h)
                  for pact, s, h in (((1, 1), "3.03.18", "3.01.10"), ((1, 1), "1.03.00", "3.08.01"),
                                     ((1, 2), "1.05.00", "1.00.01"))]
