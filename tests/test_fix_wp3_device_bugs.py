@@ -270,7 +270,7 @@ def test_non_int_segment_brightness_is_invalid_value() -> None:
         (lambda d: d.set_segment_rgb([0, 1], (255, 0, 0)), {}),
         (lambda d: d.set_segment_brightness([0], 40), {}),
         # A hand-built profile's default (1.x's): no table SKU with segment Kelvin has scenes, and the H60A6
-        # sends no Kelvin to a piece selection (decision 24).
+        # row refuses set_segment_color_temp (decision 24).
         (lambda d: d.set_segment_color_temp([0, 1], 4000), {"segment_color_temp": True}),
         (lambda d: d.set_zone_rgb("background", (255, 0, 0)), {}),
         (lambda d: d.set_zone_color_temp("background", 4000), {}),
