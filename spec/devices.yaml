@@ -7570,7 +7570,7 @@ families:
         "141":   # H61C2 / H61C3 / H61C5, the rgbiclight AcNewDetail screen (VM4Light)
           models: [H61C2, H61C3, H61C5]
           pacts: ["1,1", "2,1"]
-          support: modelled
+          support: app_traced   # promoted 2026-10-21 on the H61C3 bench reading (the user's decision 1; doc)
           color_scheme: h60a6
           color_functions: [segment_brightness, color_temperature]
           power_read: aa01
@@ -7587,8 +7587,9 @@ families:
           heartbeat: power
           ic_pieces: fixed
           doc: >-
-            MODELLED: the colour read-back's group count is inferred for H61C2 / H61C5 (below); every other fact is
-            traced. H61C2 / H61C3 / H61C5 (cloud goodsType 141; SupportV2.a -> SubLib4BleIot -> Model4BleIot.t ->
+            Every fact is traced; the one device-reported value the app reads, the aa 40 section sum that sizes the
+            connect aa a5 walk, is the H61C3 bench reading, which the user accepted for H61C2 / H61C5 (2026-10-21;
+            below). H61C2 / H61C3 / H61C5 (cloud goodsType 141; SupportV2.a -> SubLib4BleIot -> Model4BleIot.t ->
             /rgbic/newdetail, VM4Light). Pacts (1,1) / (2,1): SupportV2.Companion.a, AddDeviceM and the scan check
             VM4Light.n4 -> Support.C, whose Support.b() put for 141 the Java decompile drops and the bytecode (jadx -m
             fallback) has. Connect (VM4Light.o5 -> q5, ControllerStrategyConfig.E1 through Support.h(141)): device info,
@@ -7605,9 +7606,13 @@ families:
             AbsControllerNoEvent4Single.onResult, ComposeBleComm.K and AbsBle.W; EventBus only logs it), so the compose
             stays on aa 40 until its overtime fails it (Compose4InfoBleIot.result2Fail -> VM4Light.s5, BLE status 1): aa
             05 and the aa a5 walk never run. No such IC count is expected on these SKUs (VM4Light.u5: 28 / 42 / 70; the
-            bench H61C3 reports 42), so the library's walk is unaffected. Read-only bench 2026-10-21, H61C3 pact (1,1),
-            plaintext: aa 40 00 2a 00 00 00 00 (42 IC, N = 0), aa a5 01..05 15 pieces, 06 / 07 zero, so that unit
-            matches; H61C2 / H61C5 are unread (library gap G1, a section-sum ic_pieces). Colour: no Config.w SKU entry,
+            bench H61C3 reports 42), so the library's walk is unaffected. Read-only bench 2026-10-21
+            (BENCH_20261021_h6076_h61c3.md, library-audit/devlist-traces), H61C3 pact (1,1), plaintext: aa 40 00 2a 00
+            00 00 00 (42 IC, N = 0), aa a5 01..05 15 pieces, 06 / 07 zero, so that unit's connect walk is the
+            library's. H61C2 / H61C5 were not on the bench; the user accepted the H61C3 reading for them (decision 1,
+            2026-10-21). Were a unit to report a non-zero sum, the library's walk is still the one the app sends on
+            off->on, and the writes stay at 15 pieces; a section-sum ic_pieces would make the connect walk exact.
+            Colour: no Config.w SKU entry,
             Config.x[141] = 0 -> Config.J[0] Yt -> Bytes.h / Bytes.r with the white slot (Config.P[141] = 1): the h60a6
             15 01 frames over 15 pieces. Config.I[141] all on; segment brightness Config.z[141] = 0 -> 15 02 (Bytes.G).
             Gradual (Config.G[141] = 0 -> 33 a3) shows aa 05 byte 0 (DelegateColorV2 -> SubMode4Color.e), never an aa a3

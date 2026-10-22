@@ -9,8 +9,8 @@ model, from which the shipped readers are generated).
 ## [Unreleased]
 
 ### Added
-- **158 more SKUs, traced from the app's device list** (spec rows only; no library code changed): 96 admitted
-  by default (`app_traced`) and 62 behind `allow_modelled` (`modelled`), for 194 and 68 in all. None is
+- **158 more SKUs, traced from the app's device list** (spec rows only; no library code changed): 99 admitted
+  by default (`app_traced`) and 59 behind `allow_modelled` (`modelled`), for 197 and 65 in all. None is
   hardware-verified (the only bench check, below, was read-only), and none has a bundled scene catalog, so none
   is offered scenes. Each is listed with its family and goodsType; † marks a SKU no row lists that the
   catalogue snapshot (`spec/govee_catalog.json`) routes to that row by its goodsType alone (16 of them).
@@ -22,7 +22,8 @@ model, from which the shipped readers are generated).
     **H6179** (12); pact_tvlightv2: **H6198 / H6199** (24);
   - h6047: **H6039** (277); h61d3: **H61B0** (264, with H61B3 / H61B6); dreamcolorlightv1: **H70A1 / H70A2 /
     H70A3** (193);
-  - rgbiclight: **H6671 / H6672** (332), **H617G**, **R617G**† (351), **H618G**, **R618D**† (352);
+  - rgbiclight: **H61C2 / H61C3 / H61C5** (141), **H6671 / H6672** (332), **H617G**, **R617G**† (351),
+    **H618G**, **R618D**† (352);
   - hollowlamp: **H6050** (27), **H6051** (37), **H6055** (42), **H6073** (58), **H6059** (84); tablelampv1:
     **H6078** (128); straightfloorlamp: **H6076 / H8076**, **R16D0**† (69), **H16C0** (377);
   - h604a: **H604B** (109), **H604D** (133); h6022: **H6022 / H8022** (249); chassislightv1: **H7092** (162);
@@ -44,9 +45,8 @@ model, from which the shipped readers are generated).
   every unit; each row's `doc` names the difference):
   - h60ax: **H60A4 / H80A4** (302), **H1270** (346), **H1232** (356), **H1252** (373);
   - h61d3: **H61D2 / H61D3 / H61D4 / H61D5 / H61D6** (202), **H703A / H703B** (263);
-  - dreamcolorlightv1: **H61A9** (204); dreamcolorlightv2: **H611A / H6143 / H6144** (21); rgbiclight:
-    **H61C2 / H61C3 / H61C5** (141); homelightv1: **H6148** (16); hollowlamp: **H6058** (59); h7090:
-    **H7090** (44); h1741: **H1741 / R1741** (365);
+  - dreamcolorlightv1: **H61A9** (204); dreamcolorlightv2: **H611A / H6143 / H6144** (21); homelightv1:
+    **H6148** (16); hollowlamp: **H6058** (59); h7090: **H7090** (44); h1741: **H1741 / R1741** (365);
   - h6609: **H70C4 / H70C5 / H70C7 / H70C9 / H7084 / H6870 / H6871 / R6871 / H80C4**, **H80C5**† (260);
   - h70b3: **H70B3** (229), **H70B4** (230), **H70B5** (231), **H6810** (255), **H6811**, **H8811**† (256);
   - h705a: **H705A / H705B / H705C / H801B** (125), **H608A / H608B / H608C / H608D / H808A** (184), **H705D /
@@ -57,7 +57,7 @@ model, from which the shipped readers are generated).
   - **H61C3** (rgbiclight 141, pact (1,1), plaintext, `allow_modelled`): aa 01, aa 04, aa 05 01, aa 40,
     aa a5 01-05, aa 06, aa 07 03 and aa 07 02, all answered: on, brightness 100, 15 segments, soft 3.03.23,
     hard 3.01.10. The aa 40 reply's section sum is 0, so the app reads the 15 pieces (5 groups of 3) the row
-    has. The row stays `modelled` for now.
+    has. On that reading the row is `app_traced` (below).
   - **H6076 x2** (straightfloorlamp 69, pact (2,1), encrypted): the handshake, the app's status read
     `ac 03 02 a5 a3`, then aa 06 / aa 07 03 / aa 07 02, all answered: on, brightness 90 and 100, 7 segments
     each, soft 1.04.05, hard 3.05.00. One unit's mode TLV is a short `15 01`. The row's own decode
@@ -84,10 +84,16 @@ model, from which the shipped readers are generated).
   `modelled`; one that needs library work has no `support` and names the gap in its `doc`. A verification
   pass challenged each family's rows; they were repaired, and demoted (to `modelled`, or to no `support`)
   where a core claim didn't hold.
-  - devices.yaml now has 305 goodsType rows in 96 families (184 in 91): 153 with `support` (66), of them 121
-    `app_traced`, 28 `modelled` and the same 4 `hardware_verified`, and 152 without (118).
+  - devices.yaml now has 305 goodsType rows in 96 families (184 in 91): 153 with `support` (66), of them 122
+    `app_traced`, 27 `modelled` and the same 4 `hardware_verified`, and 152 without (118).
   - Two goodsType add-ons were traced and checked on their own: straightfloorlamp 69 (H6076 / H8076,
-    `app_traced`, with the bench reads above) and rgbiclight 141 (H61C2 / H61C3 / H61C5, `modelled`).
+    `app_traced`, with the bench reads above) and rgbiclight 141 (H61C2 / H61C3 / H61C5).
+  - **rgbiclight 141 (H61C2 / H61C3 / H61C5) is `app_traced`, admitted by default** (pacts (1,1) / (2,1)): power,
+    brightness, RGB, colour temperature [2000, 9000], 15 segments and `15 02` segment brightness. Its one
+    device-reported fact, the aa 40 section sum that sizes the app's connect aa a5 walk (`VM4Light.N5`), was
+    read as 0 on the bench H61C3 (`BENCH_20261021_h6076_h61c3.md`), so the app walks the row's 15 pieces; the
+    user accepted that reading for H61C2 / H61C5, which were not on the bench. Left out: gradual (the app reads
+    no aa a3 here), the `33 09` time sync and scenes (no catalog). Control is not hardware-verified.
   - Nothing new is hardware-verified. The only bench evidence is the read-only H6076 / H61C3 check above.
   - Spec corrections the trace made inside family blocks change no admitted SKU. For example, H6171 is off
     barelightv1 17 (it reads aa 40 there, which the row's other SKUs don't), H6119 is off h7090 44 (h7090's
