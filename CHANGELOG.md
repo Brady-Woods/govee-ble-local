@@ -10,7 +10,8 @@ model, from which the shipped readers are generated).
 
 ### Added
 - **158 more SKUs, traced from the app's device list** (spec rows only; no library code changed): 96 admitted
-  by default (`app_traced`) and 62 behind `allow_modelled` (`modelled`), for 194 and 68 in all. None is
+  by default (`app_traced`) and 62 behind `allow_modelled` (`modelled`). With the 16 that the next three
+  entries admit by default, that makes 210 admitted by default and 68 behind `allow_modelled` in all. None is
   hardware-verified (the only bench check, below, was read-only), and none has a bundled scene catalog, so none
   is offered scenes. Each is listed with its family and goodsType; † marks a SKU no row lists that the
   catalogue snapshot (`spec/govee_catalog.json`) routes to that row by its goodsType alone (16 of them).
@@ -81,7 +82,8 @@ model, from which the shipped readers are generated).
   `allow_modelled`) resolves to the same profile at every pact its rows list and at none, with and without
   `allow_modelled`, so its frames and decoded state are unchanged. Where a new SKU has the same facts it joins
   that SKU's profile (`DeviceProfile.skus`): H6118 / H6179 / H6194 with H6005, H6099 with H6098 / H8098 /
-  H6690, H70A1-3 with H6176 / H61BC, H61B0 with H61B3 / H61B6. H6099 and H61B0 come first in theirs, so a
+  H6690, H70A1-3 with H6176 / H61BC, H61B0 with H61B3 / H61B6, H14C0 / H14C1 / R14C0 / R14C1 with
+  H600A-H600D / H6011 / H6013 / H800B (H600A stays first). H6099 and H61B0 come first in theirs, so a
   `Device` built from one of those profiles without `sku=` names itself after them (`create_device` and
   `make_device` always pass the SKU).
 - The resolver serves `power_live: heartbeat_aa01` on a status row (`power_read: ac_status`), not only on a
@@ -93,8 +95,8 @@ model, from which the shipped readers are generated).
   though it was not requested. Every status row admitted before requests at least one type, so its request
   and decode are unchanged.
 - A SKU's `by_model` `connect_writes` replaces its row's (`DeviceProfile.light_effect_stop`), where a screen
-  splits its connect write by SKU within one goodsType; the build refuses one on a SKU that two rows of its
-  family list. No SKU admitted before has one.
+  splits its connect write by SKU within one goodsType; the build refuses one on a SKU that two supported rows
+  of its family list. No SKU admitted before has one.
 - The resolver ties a row's `segment_brightness` colour-page flag (`color_functions`) to the `segments`
   capability only where the row's colour scheme has a segment-brightness frame (`h60a6`'s `33 05 15 02`,
   `Bytes.G`; `_resolve.SEGMENT_BRIGHTNESS_SCHEMES`), not on the flag alone. H6071 / H6075 (h6071 57 / 67) keep
@@ -114,16 +116,18 @@ model, from which the shipped readers are generated).
   `modelled`; one that needs library work has no `support` and names the gap in its `doc`. A verification
   pass challenged each family's rows; they were repaired, and demoted (to `modelled`, or to no `support`)
   where a core claim didn't hold.
-  - devices.yaml now has 305 goodsType rows in 96 families (184 in 91): 153 with `support` (66), of them 121
-    `app_traced`, 28 `modelled` and the same 4 `hardware_verified`, and 152 without (118).
+  - devices.yaml now has 305 goodsType rows in 96 families (184 in 91): 160 with `support` (66), of them 128
+    `app_traced`, 28 `modelled` and the same 4 `hardware_verified`, and 145 without (118). The trace gave 153
+    of them support; the other 7 (h6069 284, h3700 383, h7076 313, h70dx 267-269, bulblightv3 342) are
+    `app_traced` through the resolver changes under Changed.
   - Two goodsType add-ons were traced and checked on their own: straightfloorlamp 69 (H6076 / H8076,
     `app_traced`, with the bench reads above) and rgbiclight 141 (H61C2 / H61C3 / H61C5, `modelled`).
   - Nothing new is hardware-verified. The only bench evidence is the read-only H6076 / H61C3 check above.
   - Spec corrections the trace made inside family blocks change no admitted SKU. For example, H6171 is off
     barelightv1 17 (it reads aa 40 there, which the row's other SKUs don't), H6119 is off h7090 44 (h7090's
     screen never opens for it), and H615E is listed on stringlightv2 108, its catalogue goodsType.
-  - The catalogue snapshot routes 31 SKUs no row lists (15 before). For review: H613A-F (catalogue 39, named
-    by h613839's (65535,255) bind item), where it was H615E.
+  - The catalogue snapshot routes 33 SKUs no row lists (15 before), H8069 and H80D1 among them. For review:
+    H613A-F (catalogue 39, named by h613839's (65535,255) bind item), where it was H615E.
   - rgbiclight 351 / 352 now record the R617G / R618D catalogue route, as h7057 274 does H8057's.
 - **The status rows with an aa 01 keep-alive state the app's live power.** straightfloorlamp 69, h7020 296 and
   h61d3 263 drop their `[push_30]` override and h7086 293 its `[]`, so each takes its family's list again;
