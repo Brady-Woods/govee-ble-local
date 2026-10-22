@@ -75,7 +75,8 @@ _H60A6_STATUS_DECODE: Final = (
 # has_brightness / empty_fails are flags.
 _C = _spec.Common
 _STATUS_ENUMS: Final[Mapping[str, Any]] = MappingProxyType({
-    "f_30": _C.Form30, "f_36": _C.Form36, "f_40": _C.Form40, "f_41": _C.Form41, "f_a3": _C.FormA3,
+    "f_30": _C.Form30, "f_36": _C.Form36, "f_40": _C.Form40, "f_41": _C.Form41, "f_a1": _C.FormA1,
+    "f_a3": _C.FormA3,
     "f_a5": _C.FormA5, "group_rule": _C.GroupCountRule, "music": _C.MusicDecode})
 _STATUS_FLAGS: Final = ("has_brightness", "empty_fails")
 
@@ -180,7 +181,8 @@ class DeviceProfile:
     The newdetail screens read getColorPieceSize pieces, while H6047's old detail screen reads
     getBulbStringMaxNum = the 10 write segments, so it leaves this None. None -> falls back to
     :attr:`segments`. Ignored when :attr:`color_readback_live_ic` is True (the live 0x40 read
-    supplies the count instead)."""
+    supplies the count instead), but as a :attr:`color_readback_ic_walk_only` profile's walk where that
+    read gives no count."""
     color_readback_live_ic: bool = False
     """mechanism_a_direct: read the live 0x40 IC count first and derive the colour-piece count
     from it instead of a static :attr:`color_readback_segments`, as the app does for SKUs whose
@@ -303,13 +305,13 @@ class DeviceProfile:
         default=_H60A6_STATUS_DECODE, kw_only=True)
     """``readback="status"``: how the 0xAC reply is read, a devices.yaml row's wire facts as ``(govee_profile
     param, value)`` pairs: the forms of the TLVs the status stream reads (``f_30``, ``f_36``, ``f_40``,
-    ``f_41``, ``f_a3``, ``f_a5``: govee_common enum names), the colour-group form where it reads TLV 0xA5 as
-    colour groups (``f_a5`` ``"color_group"`` with ``group_rule``, ``num_per_group`` and ``has_brightness``
-    true), and the TLV 0x05's ``music`` layout and ``empty_fails`` rule. ``f_a5`` ``"single_record"``
-    (H703A / H703B) reads it as one ``[brightness, r, g, b]`` record, the whole-device colour of a one-piece
-    device, and needs no group facts. A form left out is unknown: that TLV is not read, and a 0xA5 TLV read
-    neither way is skipped. The default is the H60A6 status screen's, 1.x's decode (a list is kept as a
-    tuple)."""
+    ``f_41``, ``f_a1``, ``f_a3``, ``f_a5``: govee_common enum names), the colour-group form where it reads
+    TLV 0xA5 as colour groups (``f_a5`` ``"color_group"`` with ``group_rule``, ``num_per_group`` and
+    ``has_brightness`` true), and the TLV 0x05's ``music`` layout and ``empty_fails`` rule. ``f_a5``
+    ``"single_record"`` (H703A / H703B) reads it as one ``[brightness, r, g, b]`` record, the whole-device
+    colour of a one-piece device, and needs no group facts. A form left out is unknown: that TLV is not read,
+    and a 0xA5 TLV read neither way is skipped. The default is the H60A6 status screen's, 1.x's decode (a list
+    is kept as a tuple)."""
     light_effect_stop: bool = field(default=False, kw_only=True)
     """A light whose screen writes ``33 25 01`` (``light_effect_stop``) on connect (a devices.yaml row's
     ``connect_writes``; bulblight ``VM4Light$connectBleSuc$1.j`` -> ``VM4Light.i5``): every session sends it
@@ -514,7 +516,8 @@ class DeviceProfile:
     status read whose TLV 0x40 carries it, or the first of :attr:`ic_reads_around_status`) and raises
     GoveeBleError, sending nothing, when the device gives no usable count, as a ``section_count_read`` profile
     does. :attr:`segments` is then only the count before the first read. Every IC-sized devices.yaml row
-    (``ic_pieces`` object form) sets it; False (the default): the writes keep :attr:`segments`."""
+    (``ic_pieces`` object form) sets it but a ``readback_only`` rule's (:attr:`color_readback_ic_walk_only`);
+    False (the default): the writes keep :attr:`segments`."""
     special_info_read: bool = field(default=False, kw_only=True)
     """``readback="polled"`` only, and not with :attr:`section_count_read`: the device reports its own
     segment count in the 0xAC special-info read (``ac a1``, its reply's segment IC record
@@ -579,6 +582,33 @@ class DeviceProfile:
     GoveeBleError, sending nothing, without one, as a :attr:`section_count_read` profile does, and the walk
     is skipped until a count is known. :attr:`segments` is then only the count before the first read. 0
     (the default): no ``aa 0f`` read."""
+    color_readback_ic_walk_only: bool = field(default=False, kw_only=True)
+    """With :attr:`color_readback_live_ic` and without :attr:`color_writes_live_ic`: the IC rule sizes the
+    walk alone, the screen's strip keeping the static pieces it was built with (h6609 goodsType 260: the
+    ``H70C456789ColorMode`` strip is sized once by ``ColorPieceConfig.b``, its resize ``T()`` has no caller,
+    while ``DetailViewModel.T5`` walks ``H70c4Support.b(SKU, IC)`` pieces; a devices.yaml ``ic_pieces``
+    table with ``readback_only``). So a read that gives no count walks the static pieces
+    (:attr:`color_readback_segments`, else the segment count), as the screen walks the IC it stored, where a
+    live-IC profile otherwise skips the walk; and a walk of other than
+    :attr:`~.device.Device.segment_count` pieces is not applied, as the strip applies a colour or brightness
+    read-back only of its own length (``H70C456789ColorMode.updateColor`` / ``updateBrightness``), so it
+    shows none of it. False (the default, every profile before 1.9.0): the live-IC walk is skipped without a
+    count and applied whole."""
+    status_segment_count: bool = field(default=False, kw_only=True)
+    """``readback="status"``: the 0xAC status read's TLV 0xA1 (:attr:`status_decode` ``f_a1``
+    ``segment_info``) reports the device's segment count, its first byte, which the screen takes as its
+    colour page's piece count and so as every colour, colour-temperature and segment-brightness mask (the
+    H707A / H707B / H707C strings, cut by the user: ``H707AInfo4Detail.G0`` -> ``Info4BleIotDevice.P0`` /
+    ``SegmentIcDataCache``, ``H707AColorMode.X``). :attr:`~.device.Device.segment_count` becomes each read's
+    count, at most ``build.MAX_MASK_SEGMENTS`` (a count of 0 leaves it, as it leaves the page), and a write
+    that carries a mask before any count is known makes the status read first and raises GoveeBleError,
+    sending nothing, when the device reports none, as a :attr:`section_count_read` profile does. A reply
+    without TLV 0xA1 takes TLV 0x40's segment byte (:attr:`status_decode` ``f_40`` ``ic_pair``) where its IC
+    differs from the one the screen holds, as the reply's lambda does (``n6``), the screen's IC being each
+    read's 0x40 IC and 0xA1 IC sum, and before the first read none. :attr:`segments` is then only the count
+    before the first read (a devices.yaml status row that requests ``cmd_a1``). It needs ``0xA1`` in
+    :attr:`status_read` and ``f_a1`` ``segment_info`` in :attr:`status_decode`. False (the default): the
+    status read sizes nothing."""
 
     def __post_init__(self) -> None:
         """Validate each field: GoveeBleInvalidValue (a ValueError) on a value no Device can use.
@@ -680,6 +710,17 @@ class DeviceProfile:
         if isinstance(per_unit, bool) or not isinstance(per_unit, int) or per_unit < 0:
             raise GoveeBleInvalidValue(
                 f"{where}: light_num_per_unit={per_unit!r} (0, no aa 0f read, or more)")
+        if self.color_readback_ic_walk_only and (
+                not self.color_readback_live_ic or self.color_writes_live_ic):
+            raise GoveeBleInvalidValue(f"{where}: color_readback_ic_walk_only needs color_readback_live_ic "
+                                       "and no color_writes_live_ic (the live pieces size the walk alone)")
+        if self.status_segment_count and (
+                self.readback != "status" or int(_C.Command.cmd_a1) not in self.status_read
+                or dict(self.status_decode).get("f_a1") != "segment_info"):
+            raise GoveeBleInvalidValue(
+                f"{where}: status_segment_count on readback={self.readback!r} with status_read="
+                f"{self.status_read!r} (the count is the 0xAC status read's TLV 0xA1, which it must request "
+                "and read as status_decode f_a1 segment_info)")
         for name in ("kelvin_by_hardware", "kelvin_by_software"):
             if isinstance(getattr(self, name), list):
                 object.__setattr__(self, name, tuple(map(tuple, getattr(self, name))))

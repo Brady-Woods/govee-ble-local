@@ -430,8 +430,10 @@ _REFUSED: tuple[tuple[str, str, _Edit, str], ...] = (
     ("h5080", "43", lambda f: _row(f, "43").update(connect_writes=[]), "connect_writes []"),
     ("bulblightv3", "64", lambda f: _row(f, "64").update(connect_writes=["plug_sync_time"]),
      "connect_writes ['plug_sync_time']"),
+    ("h707a", "326", lambda f: f["client_profile"]["wire"]["forms"].pop("f_a1"),
+     "a requested cmd_a1 and wire f_a1 segment_info go together"),
     ("bulblightv3", "342", lambda f: _row(f, "348")["models"].append("H14A1"),
-     "by_model connect_writes on a SKU that rows ['342', '348'] list"),
+     "by_model ['connect_writes'] on a SKU that rows ['342', '348'] list"),
     # plugs
     ("h5080", "50", lambda f: _row(f, "50").pop("power_resync"), "no power_resync"),
     ("bulblightv3", "64", lambda f: _row(f, "64").update(power_resync=True), "power_resync on a light"),
@@ -510,6 +512,8 @@ def test_the_generator_keeps_data_keys_and_raises_on_a_missing_fact() -> None:
         return {sku for group, _fields, _routes in _resolve.profiles(cut, table, levels) for sku in group}
 
     assert "H6052" not in skus(_resolve.ADMITTED) and "H6052" in skus(_resolve.MODELLED)
+    # A SKU's by_model support replaces its row's for that SKU alone (h6609 260's IC-gated read-back).
+    assert "H70C9" in skus(_resolve.ADMITTED) and "H70C4" in skus(_resolve.MODELLED) - skus(_resolve.ADMITTED)
     # A SKU's by_model connect_writes replaces its row's for that SKU alone (bulblight Support.c's split).
     split = edited("bulblightv3", lambda f: f["client_profile"]["by_model"].update(
         H6006={"connect_writes": ["light_effect_stop"]}))
@@ -517,6 +521,10 @@ def test_the_generator_keeps_data_keys_and_raises_on_a_missing_fact() -> None:
     stops = {sku: fields["light_effect_stop"] for group, fields, _routes in _resolve.profiles(cut, table)
              for sku in group}
     assert stops["H6006"] and not stops["H6008"]
+    # So do its connect_reads and ic_pieces: rgbiclight E1's aa 40 read for H61A0 alone at 71.
+    walks = {sku: profile_for(sku) for sku in ("H61A0", "H619B")}
+    assert {sku: p is not None and p.color_readback_ic_sections for sku, p in walks.items()} == {
+        "H61A0": True, "H619B": False}
     # The segment-brightness flag calls for segments only where the row's scheme has that frame (h60a6's
     # 15 02, refused above without them): on an h6006 row it binds nothing, as on H6071 / H6075 (no frame).
     gen.project(edited("bulblightv3", lambda f: _row(f, "342").update(

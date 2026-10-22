@@ -63,7 +63,7 @@ def test_the_schema_requires_a_heartbeat_on_every_supported_row() -> None:
     schema = json.loads((_SPEC / "devices.schema.json").read_text(encoding="utf-8"))
     rows = _rows(doc)
     # The three device-list card rows (session per_command) hold no link, so they send none.
-    assert len(rows) == 221 and all(row["heartbeat"] in _BEATS or (row["heartbeat"], row.get("session")) == (
+    assert len(rows) == 224 and all(row["heartbeat"] in _BEATS or (row["heartbeat"], row.get("session")) == (
         "none", "per_command") for _fam, _gt, row in rows)
     jsonschema.validate(instance=doc, schema=schema)
     timed = copy.deepcopy(doc)   # no timing for a beat that never goes out
@@ -110,9 +110,9 @@ def test_each_skus_profile_sends_its_rows_heartbeat() -> None:
 
 
 def test_a_heartbeat_power_live_names_the_read_the_screen_sends() -> None:
-    # The resolver's one-way cross-check (devices/_resolve.py), as the traces found it on all 221 rows: the
+    # The resolver's one-way cross-check (devices/_resolve.py), as the traces found it on all 224 rows: the
     # screens that take their power from a heartbeat reply send that read, on a polled or a status row, and
-    # the plugs read their outlets from aa 01. Nothing ties a push_30-only row to aa 00, which 68 send.
+    # the plugs read their outlets from aa 01. Nothing ties a push_30-only row to aa 00, which 69 send.
     # h705a 394 sends aa 00 and has no live power source. The three device-list card rows (h70b2 185, h6630
     # 285 / 286) hold no link: no keep-alive and no live power but the advert.
     found: collections.Counter[tuple[tuple[str, ...], bool, str]] = collections.Counter()
@@ -121,11 +121,11 @@ def test_a_heartbeat_power_live_names_the_read_the_screen_sends() -> None:
         relay = "relay_power" in row
         found[lives, relay, row["heartbeat"]] += 1
     assert found == {
-        (("heartbeat_aa01",), False, "power"): 100,
+        (("heartbeat_aa01",), False, "power"): 102,
         (("heartbeat_aa01", "push_30"), False, "power"): 43,
         (("heartbeat_aa36",), False, "cmd_36"): 2,
         ((), True, "power"): 4,
-        (("push_30",), False, "heartbeat"): 68,
+        (("push_30",), False, "heartbeat"): 69,
         ((), False, "heartbeat"): 1,
         ((), False, "none"): 3,
     }
@@ -159,15 +159,16 @@ def test_the_traced_unsupported_rows_keep_their_heartbeat() -> None:
     # supported, and in 1.8.0 the seven aa 01 legacy_02 rows, h61d3 239 / 246, h60ax 235, h7050 98, h6092
     # 283, h6071 57 / 67 and stringlightv2 40 / 108, and in 1.9.0 h705a 180 and, by their IC piece rules,
     # h6609 173 and h61d3 375, with h7020 316 / 318 / 337 / 391 / 411 (their status rows' IC reads; 411 with
-    # the 0xA3 colour unit) and the eight h7020 bulb-string rows (53 / 54 / 62 / 63 / 100 / 102 / 149 / 161:
-    # the aa 0f string count)); they are pinned by count. h6630 285 / 286 left them in 1.8.0, on the
+    # the 0xA3 colour unit), the eight h7020 bulb-string rows (53 / 54 / 62 / 63 / 100 / 102 / 149 / 161: the
+    # aa 0f string count), h707a 326 (its TLV 0xA1 segment count) and dreamcolorlightv1 71 / 123 (narrowed,
+    # with their SKUs' own aa 40 reads)); they are pinned by count. h6630 285 / 286 left them in 1.8.0, on the
     # device-list card's path (heartbeat none).
     got = {(fam["id"], gt): row["heartbeat"] for fam in _doc()["families"]
            for gt, row in ((fam.get("client_profile") or {}).get("by_goods_type") or {}).items()
            if "heartbeat" in row and "support" not in row}
     assert {key: got.get(key) for key in (("h6047", "288"), ("h6047", "298"), ("striplight", "80"))} == {
         ("h6047", "288"): "heartbeat", ("h6047", "298"): "heartbeat", ("striplight", "80"): "volume"}
-    assert collections.Counter(got.values()) == {"power": 43, "heartbeat": 28, "volume": 5, "cmd_36": 1}
+    assert collections.Counter(got.values()) == {"power": 41, "heartbeat": 27, "volume": 5, "cmd_36": 1}
 
 
 @pytest.mark.parametrize("name", _BEATS)

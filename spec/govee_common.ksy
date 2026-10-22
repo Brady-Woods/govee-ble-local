@@ -891,8 +891,8 @@ enums:
       id: cmd_a1
       -orig-id: [READ_SEGMENT_LIGHT]
       doc: |
-        the H707A segment IC info [segment count][per-segment IC x 3]; requested
-        by its status read, value not typed
+        the H707A segment IC info [segment count][IC count per segment];
+        requested by its status read, typed under form_a1
       doc-ref:
         - split_h7075/com/govee/h7075/ble/BleProtocol.java:10
         - split_h7075/com/govee/h7075/h707A/H707ABCDetailVM$afterConnectedSingleReadDeviceInfo$1.java:94,254
@@ -1721,6 +1721,18 @@ enums:
       doc: the H6062 section count [ic s16be][section s8]
       doc-ref:
         - split_h6062/com/govee/striplight/newdetail/ControllerIcSegmentNum.java:40-54
+  form_a1:
+    0:
+      id: unknown
+      doc: not known, or the status screen does not read TLV 0xA1; body raw
+    1:
+      id: segment_info
+      doc: |
+        the H707A status screen's segment info [segment count][IC count per
+        segment], TLV 0xA1 only; the count sizes its colour page
+      doc-ref:
+        - split_h7075/com/govee/h7075/h707A/H707ABCDetailVM$afterConnectedSingleReadDeviceInfo$1.java:94-105
+        - split_h7075/com/govee/h7075/h707A/H707AInfo4Detail.java:311-357
   form_a2:
     0:
       id: unknown

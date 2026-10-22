@@ -42,11 +42,12 @@ TYPE_BRIGHTNESS = int(_C.Command.brightness)     # 0x04
 TYPE_MODE = int(_C.Command.mode)                 # 0x05
 TYPE_DEVICE_INFO = int(_C.Command.device_info)   # 0x07
 TYPE_ZONE = int(_C.Command.cmd_30)               # 0x30
-TYPE_IC_COUNT = int(_C.Command.ic_num)           # 0x40: the IC count TLV
+TYPE_IC_COUNT = int(_C.Command.ic_num)           # 0x40: the IC count TLV (f_40)
 TYPE_SEG_INFO = int(_C.Command.cmd_41)           # 0x41: the seg / IC info (power memory) TLV
+TYPE_SEGMENT_INFO = int(_C.Command.cmd_a1)        # 0xA1: the H707A segment info (f_a1 segment_info)
 TYPE_COLOR_GROUP = int(_C.Command.color_group)   # 0xA5
 # The forms of the TLVs the status stream reads (govee_state's TLV-typed tags), from the device's decode.
-_TLV_FORMS: Final = ("f_30", "f_36", "f_40", "f_41", "f_a3", "f_a5")
+_TLV_FORMS: Final = ("f_30", "f_36", "f_40", "f_41", "f_a1", "f_a3", "f_a5")
 _COLOR_DECODES: Final = ("c02", "c0b", "c0d", "c14", "c15")
 # The TLV 0x40 forms read as one IC count (govee_common::form_40): signed, then unsigned.
 _ONE_COUNT_FORMS: Final = (int(_C.Form40.one_count), int(_C.Form40.one_count_u16))
@@ -115,6 +116,16 @@ class StatusReply:
     # stores it as the walk reaches it (Info4BleIotDevice.G0), so it is kept even where a later TLV fails
     # the read and no other state is used.
     ic_count: int | None = None
+    # The 0xA1 TLV's segment count (f_a1 segment_info: the H707A screen's colour-page piece count,
+    # H707AInfo4Detail.G0) and its IC counts summed (the IC G0 stores, Info4BleIotDevice.G0); the last one
+    # wins. Device adopts the count (DeviceProfile.status_segment_count).
+    segment_count: int | None = None
+    segment_ic_total: int | None = None
+    # The 0x40 TLV read by the IC-pair reader (f_40 ic_pair, ControllerIcNum.e): its IC count and its
+    # segment byte as a Java byte (the spec's ic_count.segment_signed), which the H707A screen takes as the
+    # count where the IC changed and no 0xA1 follows (H707ABCDetailVM$afterConnectedSingleReadDeviceInfo$1.l
+    # -> n6); the last one wins.
+    ic_segment: tuple[int, int] | None = None
 
 
 def _chunk_of(fr: bytes) -> Any:
@@ -441,6 +452,7 @@ def parse_status(frames: list[bytes], *, pieces: int | None = None, decode: Any 
     reads_record = int(prof.forms.f_a5) == int(_C.FormA5.single_record)
     reads_zones = int(prof.forms.f_30) == int(_C.Form30.zone_power)
     form_40 = int(prof.forms.f_40)
+    reads_ic_pair = form_40 == int(_C.Form40.ic_pair)
     stream, err = read_status_stream(buf, pieces=pieces, decode=decode)
     tlvs = list(getattr(stream, "tlvs", None) or [])
     lead = None if pieces_for_ic is None else _leading_ic(tlvs, form_40)
@@ -505,6 +517,14 @@ def parse_status(frames: list[bytes], *, pieces: int | None = None, decode: Any 
             st.brightness = int(v.level)
         elif typ == TYPE_MODE:
             st.mode = v   # the mode_report, read with the device's colour decode
+        elif typ == TYPE_SEGMENT_INFO:
+            seg = getattr(v, "body", None)   # the segment_info, read under f_a1 segment_info only
+            if seg is not None:
+                st.segment_count = int(seg.segment_count)
+                st.segment_ic_total = sum(int(ics) for ics in seg.segment_ics)   # G0: BleUtils.L of each
+        elif typ == TYPE_IC_COUNT and reads_ic_pair and v is not None:
+            # ControllerIcNum.e's first two values: its read never fails here (app_read_fails above).
+            st.ic_segment = (int(v.ic_count), int(v.segment_signed))
         elif typ == TYPE_ZONE:
             # bit0 of each byte (VM4LightH60A6$afterConnectedSingleReadDeviceInfo$1.o:
             # ParseUtils.getBit2Boolean(b, 1) = (b >> 0) & 1); the other bits are not zone power.

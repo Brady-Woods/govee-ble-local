@@ -441,9 +441,10 @@
                   },
                   "description": "IC counts the rule names, each with its pieces (an IC at most once)."
                 },
-                "otherwise": { "type": "integer", "minimum": 1, "description": "The pieces at any other IC count." }
+                "otherwise": { "type": "integer", "minimum": 1, "description": "The pieces at any other IC count." },
+                "readback_only": { "type": "boolean", "description": "true = the rule sizes the direct read-back's walk alone, and the colour writes keep the static pieces (wire num_segments), as the h6609 260 strip's position set is sized once by ColorPieceConfig.b (H70C456789ColorMode's constructor; its resize T() has no caller) while DetailViewModel.T5 walks H70c4Support.b(SKU, IC) pieces; a read that gives no count walks the static pieces, as the screen walks its stored IC's, and a walk of other than the static pieces is made and not applied, as the strip applies a read-back only of its own length (H70C456789ColorMode.updateColor / updateBrightness). The library's DeviceProfile.color_readback_ic_walk_only. Absent = the pieces size the writes too." }
               },
-              "description": "Pieces by the IC count's value: the entry's where the IC equals its ic, else otherwise (h6609 Support.getColorPieceSize(173, IC): 18 at 36, else 14)."
+              "description": "Pieces by the IC count's value: the entry's where the IC equals its ic, else otherwise (h6609 Support.getColorPieceSize(173, IC): 18 at 36, else 14; H70c4Support.b for H70C4 / H70C5 / H70C7 / H6870 / H80C4 at 260: 20 at 1000, else 10, the read-back only)."
             },
             {
               "type": "object",
@@ -504,7 +505,7 @@
     "clientModel": {
       "type": "object",
       "additionalProperties": false,
-      "description": "A per-SKU override: mode_color_parse, the Kelvin and brightness ranges (used where the SKU's by_goods_type row has none), their pact and firmware branches, the scene apply's power-on, and the connect writes.",
+      "description": "A per-SKU override: mode_color_parse, the Kelvin and brightness ranges (used where the SKU's by_goods_type row has none), their pact and firmware branches, the scene apply's power-on, the connect reads and writes, the piece rule and the support level.",
       "properties": {
         "mode_color_parse": { "$ref": "#/$defs/modeColorParse" },
         "mode_color_parse_status": { "$ref": "#/$defs/family/properties/client_profile/properties/mode_color_parse_status" },
@@ -512,6 +513,9 @@
         "brightness_range": { "$ref": "#/$defs/family/properties/specs/properties/brightness_range", "description": "This SKU's brightness range; the row's own brightness_range wins over it." },
         "scene_power_on": { "type": "boolean", "description": "true = the control screen writes the power-on switch (33 01 01, SwitchControllerConfig.d) ahead of a scene or DIY apply while its stored switch state for the device is off, and an unknown state reads as off (ApplyOffNeedOpenConfig's SKU set, ApplyOffNeedOpenHelper.b / .d, DeviceSwitchConfig.getSwitch); absent = false. Only on a SKU whose row offers scenes." },
         "connect_writes": { "$ref": "#/$defs/clientRow/properties/connect_writes", "description": "This SKU's connect writes, replacing its row's, which stay required for the row's other SKUs: the screen splits them by SKU within one goodsType (bulblight Support.c at 342). Only on a SKU that one row of the family lists." },
+        "connect_reads": { "$ref": "#/$defs/clientRow/properties/connect_reads", "description": "This SKU's connect reads, replacing its row's, which stay required for the row's other SKUs: the screen adds a read by SKU within one goodsType (rgbiclight ControllerStrategyConfig.E1 reads aa 40 where supportBindWithIcNum holds, H61A0 / H61A1 / H61A2 at 71, or supportIcFresh, H61B5 at 123 at every pact). Only on a SKU that one row of the family lists." },
+        "ic_pieces": { "$ref": "#/$defs/clientRow/properties/ic_pieces", "description": "This SKU's piece rule, replacing its row's (which the row's other SKUs keep): the screen sizes the pieces by SKU within one goodsType (h6609 H70c4Support.b at 260 tests the IC for five of its nine SKUs). Only on a SKU that one row of the family lists, with the row's ic_num read." },
+        "support": { "$ref": "#/$defs/clientRow/properties/support", "description": "This SKU's support level, replacing its row's: a SKU whose own fact is inferred where the row's other SKUs' are traced (h6609 260's IC-gated read-back for H70C4 / H70C5 / H70C7 / H6870 / H80C4); the row's doc names the reason. Only on a SKU that one row of the family lists." },
         "by_pact": { "$ref": "#/$defs/clientRow/properties/by_pact" },
         "by_firmware": { "$ref": "#/$defs/clientRow/properties/by_firmware" }
       }
@@ -864,6 +868,13 @@
             "section_count"
           ],
           "description": "govee_profile command_forms.f_41 (govee_common::form_41)."
+        },
+        "f_a1": {
+          "enum": [
+            "unknown",
+            "segment_info"
+          ],
+          "description": "govee_profile command_forms.f_a1 (govee_common::form_a1). On a status row that requests cmd_a1, segment_info's count (TLV 0xA1 value[0]) is the device's segment count, which sizes every mask and the segment index (the library's segment_count; wire num_segments is the count before the first read); a reply without it takes TLV 0x40's segment byte (f_40 ic_pair) where that TLV's IC changed, as the H707A screen's lambda does."
         },
         "f_a2": {
           "enum": [

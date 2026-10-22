@@ -54,9 +54,12 @@ the row lacks fails the build: nothing defaults silently.
   runs the source goodsType. A target-row route needs an advertised pact too (``Route.needs_pact``), and
   ``profile.profile_for`` takes it only with one. So does each route of a ``pact_required`` row: the app also
   accepts the row's goodsType at pacts that run a path the row doesn't serve (straightfloorlamp 69's (1,1)),
-  so a unit advertising no pact may be one of them. ``pact_required`` with ``pacts: any`` raises. A SKU that a
-  ``modelled`` row and an admitted row both list raises too: the spec's routing (``ble_rows``) counts both
-  wherever both accept the pact, and the opt-in must leave the admitted routes as they are.
+  so a unit advertising no pact may be one of them. ``pact_required`` with ``pacts: any`` raises. A SKU's
+  level is its row's, or its ``by_model`` ``support`` (:func:`sku_support`), on a SKU one row of the family
+  lists, where its own fact is inferred and the row's other SKUs' are traced (h6609 260: five SKUs' IC-gated
+  read-back). A SKU that a ``modelled`` row and an admitted row both list raises too: the spec's routing
+  (``ble_rows``) counts both wherever both accept the pact, and the opt-in must leave the admitted routes as
+  they are.
 - The pact fallback (decision D3), the 1.x compatibility rule: 1.4.0 routed each of its 18 SKUs whatever
   pact its advertisement carried, so ``profile.profile_for`` still routes one of them
   (:data:`PACT_FALLBACK_SKUS`, frozen at those 18) to its only admitted profile at a pact no row accepts, and
@@ -128,7 +131,11 @@ the row lacks fails the build: nothing defaults silently.
   ``color_group`` become ``status_color_groups_pact`` (one pact type, from its lowest code that keeps it:
   H60A6's); otherwise each branch with another read becomes that pact's exact read
   (``DeviceProfile.status_read_by_pact``, :func:`_status_branches`), which a SKU of the pact fallback (below)
-  can't take, and the forms and the colour-group decode serve every read. A polled row
+  can't take, and the forms and the colour-group decode serve every read. A requested ``cmd_a1`` and the wire
+  ``f_a1: segment_info`` go together: that TLV's count is the device's segment count
+  (``DeviceProfile.status_segment_count``: the H707A screen's colour page, ``H707AInfo4Detail.G0``; a reply
+  without it takes TLV 0x40's segment byte, read under ``f_40: ic_pair``, where its IC changed), and the
+  wire ``num_segments`` is the count before the first read. A polled row
   reads its power from aa 01, or, with ``power_read: aa34_detail``, from the aa 34 device-detail read
   (``DeviceProfile.detail_power_read``; wire ``f_34: device_detail``; never on a bar row, and with no aa 01
   to take a ``heartbeat_aa01`` power from). A polled row
@@ -145,7 +152,12 @@ the row lacks fails the build: nothing defaults silently.
   ``skip_zero``, h705a 184; an IC table, H6609; or two strips' counts capped and summed, H1A45:
   ``_readback.live_ic_pieces``; on a row whose wire ``f_40`` is ``ic_pair`` the screen reads the reply with
   the IC-pair reader, ``DeviceProfile.color_readback_ic_pair_reader``, no count where it throws, which the
-  pair rule needs), and the writes (``color_writes_live_ic``:
+  pair rule needs; a SKU's ``by_model`` ``ic_pieces`` and ``connect_reads`` replace its row's, on a SKU one
+  row lists, where the screen sizes the pieces or adds the aa 40 read by SKU: h6609 ``H70c4Support.b`` at
+  260, rgbiclight ``ControllerStrategyConfig.E1``'s ``supportBindWithIcNum`` / ``supportIcFresh`` at 71 /
+  123), and, but under a table's ``readback_only`` (``DeviceProfile.color_readback_ic_walk_only``: the walk
+  alone; the writes keep the static pieces, a read with no count walks them, ``_readback.walk_pieces``, and
+  a walk of other than the strip's pieces is not applied), the writes (``color_writes_live_ic``:
   each poll's pieces are ``Device.segment_count``, the whole-device mask and the segment index bound, as the
   screen's strip takes them from the stored IC, ``ColorPieceConfig.c``; the wire ``num_segments`` is only the
   count before the first read), or, with ``ic_pieces: sections``, its two section bytes size the read-back's
@@ -175,7 +187,8 @@ the row lacks fails the build: nothing defaults silently.
   ``light_effect_stop`` (``DeviceProfile.light_effect_stop``), each sent once per session after the
   handshake and any unlock. A SKU's ``by_model`` ``connect_writes`` replaces its row's, where the screen
   splits them by SKU within one goodsType (bulblight ``Support.c`` at 342), on a SKU one row of the family
-  lists (a ``by_model`` entry is family-wide). A SKU's ``by_model`` ``scene_power_on`` (the power-on ahead
+  lists (a ``by_model`` entry is family-wide; ``connect_reads``, ``connect_writes``, ``ic_pieces`` and
+  ``support`` on another SKU raise). A SKU's ``by_model`` ``scene_power_on`` (the power-on ahead
   of a scene apply, H6009 / H6010) becomes ``DeviceProfile.scene_power_on``, on a row with ``scenes`` only.
 - The keep-alive: every row names the read its screen sends while the link is up (``heartbeat``, no family
   default), which becomes ``DeviceProfile.heartbeat`` (its command code), and its ``heartbeat_timing``
@@ -278,6 +291,7 @@ class IcTable(TypedDict):
     """``clientRow.ic_pieces``: pieces by the IC count's value."""
     table: tuple[IcEntry, ...]
     otherwise: int
+    readback_only: NotRequired[bool]
 
 
 class IcPair(TypedDict):
@@ -367,7 +381,10 @@ class ClientModel(TypedDict, total=False):
     kelvin_range: tuple[int, ...]
     brightness_range: tuple[int, ...]
     scene_power_on: bool
+    connect_reads: tuple[str, ...]
     connect_writes: tuple[str, ...]
+    ic_pieces: IcPieces | IcTable | IcPair | str
+    support: str
     by_pact: dict[str, Branch]
     by_firmware: tuple[FirmwareBranch, ...]
 
@@ -572,7 +589,7 @@ _READBACK: Final = {"aa01": "polled", "ac_status": "status", "aa34_detail": "pol
 # The forms of the TLVs the status stream reads (govee_state's TLV-typed tags; reassemble.status_profile): the
 # row's own, in DeviceProfile.status_decode. f_a5 goes in only where the 0xA5 TLV is read as colour groups or
 # as the one record (single_record).
-_STATUS_TLV_FORMS: Final = ("f_30", "f_36", "f_40", "f_41", "f_a3")
+_STATUS_TLV_FORMS: Final = ("f_30", "f_36", "f_40", "f_41", "f_a1", "f_a3")
 _GROUP_RULES: Final = frozenset({"from_len", "fixed", "by_pieces", "whole_groups"})   # group_count_rule
 _READS: Final = frozenset({"brightness", "gradual", "cmd_36", "color_group", "ic_num", "cmd_41",
                            "special_info", "light_num"})
@@ -656,8 +673,8 @@ def routes(families: Sequence[Family]) -> dict[str, tuple[Family, str, str]]:
             if row.get("pact_required") and isinstance(row.get("pacts"), str):
                 raise SpecError(f"{fam['id']} goodsType {gt}: pact_required on a row whose pacts are 'any' "
                                 "(no pact to require)")
-            admitted = row["support"] in ADMITTED
             for sku in row.get("models") or ():
+                admitted = sku_support(fam, row, sku) in ADMITTED
                 hits = listed.setdefault(sku.upper(), [])
                 other = next((h for h in hits if h[3] != admitted), None)
                 if other is not None:
@@ -860,6 +877,14 @@ def _is_route(fam: Family, row: Row) -> bool:
         row.get("connectivity") or fam.get("connectivity") or ())
 
 
+def sku_support(fam: Family, row: Row, sku: str) -> str:
+    """The support level of ``sku`` on ``row`` of ``fam``, a SKU the row lists: its ``by_model`` ``support``
+    where it has one (a SKU whose own fact is inferred where the row's others are traced: h6609 260's
+    IC-gated read-back), else the row's ("" for none)."""
+    model = ((fam.get("client_profile") or {}).get("by_model") or {}).get(sku) or {}
+    return model.get("support", row.get("support", ""))
+
+
 def catalogue_support(level: str) -> str:
     """The support level of a SKU only the catalogue snapshot routes to a row at ``level``: the row's, capped
     at ``app_traced``."""
@@ -940,10 +965,11 @@ def _members(families: Sequence[Family], admitted: Collection[str]) -> Iterator[
     :func:`catalogue_support`."""
     for fam in families:
         for gt, row in ((fam.get("client_profile") or {}).get("by_goods_type") or {}).items():
-            level, route = row.get("support", ""), _is_route(fam, row)
-            own = (row.get("models") or ()) if route and level in admitted else ()
+            if not _is_route(fam, row):
+                continue
+            own = (sku for sku in row.get("models") or () if sku_support(fam, row, sku) in admitted)
             via = ((row.get("catalogue_models") or ())
-                   if route and catalogue_support(level) in admitted else ())
+                   if catalogue_support(row.get("support", "")) in admitted else ())
             yield from ((fam, gt, row, sku) for sku in (*own, *via))
 
 
@@ -973,6 +999,11 @@ def profiles(families: Sequence[Family], parse_names: Collection[str], admitted:
     return [(tuple(skus), fields, tuple(members)) for skus, fields, members in groups.values()]
 
 
+# The by_model facts that replace a row's for the SKU (clientModel), on the one row of its family that lists
+# it.
+_ROW_OVERRIDES: Final = ("connect_reads", "connect_writes", "ic_pieces", "support")
+
+
 def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
             catalogued: Collection[str] | None = None) -> dict[str, Any]:
     """One routed SKU's DeviceProfile field values (see the module doc for the rules)."""
@@ -995,6 +1026,13 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
     if model.get("by_pact") or any(k != "kelvin_range" and not k.startswith("min_")
                                    for item in model.get("by_firmware") or () for k in item):
         fail("by_model pact / firmware branches are not served (but a firmware kelvin_range)")
+    per_row = sorted(k for k in _ROW_OVERRIDES if k in model)
+    if per_row:   # the SKU's own, on the one row of the family that lists it
+        listing = [g for g, r in (cp.get("by_goods_type") or {}).items() if "support" in r
+                   and sku.upper() in {m.upper() for m in r.get("models") or () if isinstance(m, str)}]
+        if len(listing) != 1:
+            fail(f"by_model {per_row} on a SKU that rows {listing} list (the screen splits them by SKU "
+                 "within one goodsType: one row must list it)")
     if fam.get("encryption") not in _CIPHERS:
         fail(f"encryption {fam.get('encryption')!r} is not a cipher the library implements")
 
@@ -1167,7 +1205,7 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
         readback = _READBACK[power_read]
         if (readback == "status") != (status_read is not None):
             fail(f"power_read {power_read!r} with status_read {status_read!r}")
-    reads = set(need(row.get("connect_reads"), "connect_reads"))
+    reads = set(need(model.get("connect_reads", row.get("connect_reads")), "connect_reads"))
     if not reads <= _READS:
         fail(f"connect_reads {sorted(reads - _READS)} are not served")
     if ("brightness" in reads) != (readback == "polled" and "brightness" in caps):
@@ -1207,7 +1245,7 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
     if status_groups and group.get("rule") not in _GROUP_RULES:
         fail(f"wire group rule {group.get('rule')!r} (the status read counts its colour groups' records by "
              "it)")
-    ic = row.get("ic_pieces")
+    ic = model.get("ic_pieces", row.get("ic_pieces"))   # the SKU's rule where its screen sizes it by SKU
     post = row.get("post_status_reads")
     if post is not None and (status_read is None or set(post) != {"ic_num"}):
         fail(f"post_status_reads {list(post)} (an aa 40 read after a status read, ic_num, is served)")
@@ -1269,19 +1307,16 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
                  "section count or the special_info read)")
         if not (_is_int(per_unit) and per_unit >= 1):
             fail(f"light_num_pieces per_unit {per_unit!r} (1 or more)")
+    # The H707A status screen's TLV 0xA1: its segment count sizes every mask (H707AInfo4Detail.G0).
+    segment_info = status_read is not None and "cmd_a1" in status_read
+    if segment_info != (forms.get("f_a1") == "segment_info"):
+        fail("a requested cmd_a1 and wire f_a1 segment_info go together (the status read's segment count)")
     bar = forms.get("f_36") == "bar_pair"
     if ("cmd_36" in reads) != bar:
         fail("the aa 36 read and f_36 bar_pair go together")
     if power_read == "aa34_detail" and bar:
         fail("power_read aa34_detail on a bar row (the bars' power is the aa 36 read's)")
-    writes = tuple(need(row.get("connect_writes"), "connect_writes"))
-    if "connect_writes" in model:   # the SKU's own, on the one row of the family that lists it
-        writes = tuple(model["connect_writes"])
-        listing = [g for g, r in (cp.get("by_goods_type") or {}).items() if "support" in r
-                   and sku.upper() in {m.upper() for m in r.get("models") or () if isinstance(m, str)}]
-        if len(listing) > 1:
-            fail(f"by_model connect_writes on a SKU that rows {listing} list (the screen splits them by SKU "
-                 "within one goodsType)")
+    writes = tuple(need(model.get("connect_writes", row.get("connect_writes")), "connect_writes"))
     if writes not in ((("plug_sync_time",),) if relay else ((), ("light_effect_stop",))):
         fail(f"connect_writes {list(writes)} (the library sends the plug time sync on every relay row, and "
              "light_effect_stop or nothing on a light)")
@@ -1350,12 +1385,14 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
         "color_readback": color_readback,
         "color_readback_per_batch": int(per_group) if color_readback == "mechanism_a_direct" else 3,
         "color_readback_live_ic": live_ic,
-        "color_writes_live_ic": live_ic,   # the live pieces size the writes too (ColorPieceConfig.c)
+        # the live pieces size the writes too (ColorPieceConfig.c), unless the rule sizes the walk alone
+        "color_writes_live_ic": live_ic and not ic_rule.get("color_readback_ic_walk_only", False),
         "color_readback_ic_sections": ic == "sections",
         "detail_power_read": power_read == "aa34_detail",
         "ic_num_read_only": ic == "fixed",
         "section_count_read": section_count,
         "special_info_read": special_info,
+        "status_segment_count": segment_info,
         "brightness_range": raw_bright,
         "kelvin_by_pact": kelvin_by_pact,
         "brightness_by_pact": bright_by_pact,
@@ -1461,9 +1498,13 @@ def _ic_rule(ic: IcPieces | IcTable | IcPair, fail: Fail) -> dict[str, Any]:
     if "table" in rule:
         table = tuple((entry["ic"], entry["pieces"]) for entry in rule["table"])
         if (not table or len({at for at, _n in table}) != len(table)
-                or not all(at >= 0 and n >= 1 for at, n in table) or rule["otherwise"] < 1):
-            fail(f"ic_pieces {dict(rule)} (distinct ics >= 0, pieces and otherwise >= 1)")
-        return {"color_readback_ic_table": table, "color_readback_ic_otherwise": rule["otherwise"]}
+                or not all(at >= 0 and n >= 1 for at, n in table) or rule["otherwise"] < 1
+                or not isinstance(rule.get("readback_only", False), bool)):
+            fail(f"ic_pieces {dict(rule)} (distinct ics >= 0, pieces and otherwise >= 1, readback_only a "
+                 "boolean)")
+        walk_only = {"color_readback_ic_walk_only": True} if rule.get("readback_only", False) else {}
+        return {"color_readback_ic_table": table, "color_readback_ic_otherwise": rule["otherwise"],
+                **walk_only}
     if "pair_max" in rule:
         if rule["pair_max"] < 1 or rule["otherwise"] < 1:
             fail(f"ic_pieces {dict(rule)} (pair_max and otherwise >= 1)")

@@ -54,6 +54,8 @@ seq:
         'govee_common::command::ic_num': ic_count
         'govee_common::command::cmd_41': >-
           cmd_41_state(profile.forms.f_41, source)
+        'govee_common::command::cmd_a1': >-
+          cmd_a1_state(profile.forms.f_a1, source)
         'govee_common::command::color_group_rgb': >-
           cmd_a2_state(profile.forms.f_a2, profile.group, source)
         'govee_common::command::gradual': gradual_state
@@ -85,6 +87,7 @@ instances:
       or command == govee_common::command::cmd_36
       or command == govee_common::command::ic_num
       or command == govee_common::command::cmd_41
+      or command == govee_common::command::cmd_a1
       or command == govee_common::command::gradual
       or command == govee_common::command::color_group
     doc: TLV tags whose value has a traced app reader; other tags stay in rest
@@ -126,6 +129,8 @@ instances:
       and profile.forms.f_36 == govee_common::form_36::bar_index)
       or (command == govee_common::command::cmd_41
       and profile.forms.f_41 == govee_common::form_41::power_memory)
+      or (command == govee_common::command::cmd_a1
+      and profile.forms.f_a1 == govee_common::form_a1::segment_info)
       or (command == govee_common::command::color_group
       and profile.forms.f_a5 == govee_common::form_a5::color_group)
       ) : (
@@ -1260,6 +1265,49 @@ types:
         if: >-
           form != govee_common::form_41::section_count
           or source == source::read_reply
+  cmd_a1_state:
+    doc: |
+      Command 0xA1 under form_a1; segment_info is the status TLV only (the
+      screen reads no aa a1 reply).
+    params:
+      - id: form
+        type: u1
+        enum: govee_common::form_a1
+      - id: source
+        type: u1
+        enum: source
+    seq:
+      - id: body
+        type:
+          switch-on: form
+          cases:
+            'govee_common::form_a1::segment_info': segment_info
+        if: source == source::status_tlv
+  segment_info:
+    doc: |
+      TLV 0xA1 (form_a1 segment_info): the device's segment count, then each
+      segment's IC count, every byte unsigned (BleUtils.L). The H707A screen
+      takes the count as the device info's segment count (Info4BleIotDevice.P0,
+      read back by J()) and its colour page's piece count (SegmentIcDataCache,
+      the page's resize on deviceInfoChanged), which sizes every colour,
+      colour-temperature and segment-brightness mask; it writes the cache on
+      every read, after TLV 0x40's segment byte, so in a full reply its count
+      wins. A count of 0 leaves the page as it is. The IC counts sum to the
+      device's IC count.
+    doc-ref:
+      - split_h7075/com/govee/h7075/h707A/H707AInfo4Detail.java:311-357
+      - split_h7075/com/govee/h7075/h707A/H707ABCDetailVM$afterConnectedSingleReadDeviceInfo$1.java:59-79,94-105
+      - split_h7075/com/govee/h7075/h707A/H707ABCDetailVM.java:856-861
+      - split_h7075/com/govee/h7075/h707A/setting/SegmentIcDataCache.java:74-117
+      - split_h7075/com/govee/h7075/h707A/mode/H707AColorMode.java:83-111,128-139,231-273
+    seq:
+      - id: segment_count
+        type: u1
+        doc: the segment count, the colour page's piece count
+      - id: segment_ics
+        type: u1
+        repeat: eos
+        doc: each segment's IC count, in order
   cmd_a2_state:
     doc: |
       Command 0xA2 under form_a2; color_group_rgb always has 3-byte records.
@@ -1519,6 +1567,18 @@ types:
       segment_signed:
         value: 'segment >= 0x80 ? segment - 0x100 : segment'
         if: _io.size >= 3
+        doc: |
+          the segment byte read as a Java byte, the IC-pair reader's second value
+          (ControllerIcNum.e). The H707A status screen takes it as its colour
+          page's piece count where the TLV's IC differs from the one it holds
+          (its reply lambda's 0x40 branch -> n6 -> SegmentIcDataCache); a TLV
+          0xA1 later in the reply overwrites it, and a value of 0 or below
+          leaves the page as it is (H707AColorMode.X).
+        doc-ref:
+          - base-classes11/com/govee/base2light/kt/general_controller/ControllerIcNum.java:140-156
+          - split_h7075/com/govee/h7075/h707A/H707ABCDetailVM$afterConnectedSingleReadDeviceInfo$1.java:53-79,94-105
+          - split_h7075/com/govee/h7075/h707A/H707ABCDetailVM.java:856-861
+          - split_h7075/com/govee/h7075/h707A/mode/H707AColorMode.java:231-273
       segment_2_signed:
         value: 'segment_2 >= 0x80 ? segment_2 - 0x100 : segment_2'
         if: _io.size >= 6
