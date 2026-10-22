@@ -223,9 +223,12 @@ model, from which the shipped readers are generated).
     `Info4BleIotDevice.a0`, which `k2` sets).
   - `firmware`: H60A6, from the handlers in its sw 1.00.41 image, and H6076 / H8076 / R16D0, from the H6076
     bench (2026-10-21).
-  - Every other status row is `unverified` and keeps its reads. That covers the 1.6.1 rows H60B1, H7056 and
-    H1630 / R1630, 42 new admitted SKUs and the other 18 behind `allow_modelled`. Each connects through
+  - Every other status row is `unverified` and keeps its reads: 47 rows, 64 SKUs. Four are 1.6.1 SKUs (H60B1,
+    H7056, H1630 and R1630), 42 are new admitted SKUs and 18 are behind `allow_modelled`. Each connects through
     `Compose4BaseInfoSingleRead` too, but these rows' callbacks and controller lists are not cited for it yet.
+  - A row can move to `none` later with a one-word change and its cited callback. Moving a released or
+    hardware-backed row is the user's decision. H60B1, H7056, H1630 and R1630 are released, so moving one of
+    them drops three reads it sends at 1.6.1; the `firmware` rows are the hardware-backed ones.
   - No SKU admitted at 1.6.1 changes. Only the 12 SKUs above move, and only in that one field. They are
     source-traced, not live-verified: none of them is on the bench.
   - README's `DeviceState` entry now says where device info comes from: the aa 06 / aa 07 03 / aa 07 02

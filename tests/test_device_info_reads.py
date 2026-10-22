@@ -6,7 +6,6 @@ SoftVersionController / HardVersionController / SnController.parseValidBytes.
 from __future__ import annotations
 
 import asyncio
-import dataclasses
 from collections.abc import Callable
 from unittest.mock import AsyncMock
 
@@ -166,15 +165,15 @@ def test_only_the_version_a_gate_tests_is_read_again() -> None:
         assert _info_reads(sent) == again, (sku, lost)
 
 
-@pytest.mark.parametrize(("reads", "sent"), [(True, ["0600", "0703", "0702"]), (False, [])])
-def test_a_status_profile_without_device_info_reads_takes_them_from_tlv_07(reads: bool,
-                                                                            sent: list[str]) -> None:
-    """A status row whose screen sends no device-info read (devices.yaml ``device_info_reads: none``) gets
-    none from the library on any poll: its versions and device id come from the status reply's TLV 0x07 alone
-    (Compose4BaseInfoSingleRead.w), as on the screen. A status row that makes them sends them once. The
-    captured H60A6 burst carries TLV 0x07."""
-    d, frames = _dev("H60A6", lambda fr: list(_STATUS_BURST) if fr[0] == 0xAC else [])
-    d.profile = dataclasses.replace(d.profile, device_info_reads=reads)
+@pytest.mark.parametrize(("sku", "sent"), [("H60A6", ["0600", "0703", "0702"]), ("H3751", [])])
+def test_a_status_profile_without_device_info_reads_takes_them_from_tlv_07(sku: str, sent: list[str]) -> None:
+    """A status row whose screen sends no device-info read (devices.yaml ``device_info_reads: none``, H3751's
+    h3751 354) gets none from the library on any poll: its versions and device id come from the status
+    reply's TLV 0x07 alone (Compose4BaseInfoSingleRead.w), as on the screen. A status row that makes them
+    (H60A6's h60ax 303, ``firmware``) sends them once. Both read the captured H60A6 burst, which carries TLV
+    0x07."""
+    d, frames = _dev(sku, lambda fr: list(_STATUS_BURST) if fr[0] == 0xAC else [])
+    assert d.profile.device_info_reads == bool(sent)
     asyncio.run(d.update())
     asyncio.run(d.update())
     assert _info_reads(frames) == sent
