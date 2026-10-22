@@ -726,7 +726,7 @@ class GoveeConnection:
         if self._bgc_checked:
             return self._bgc_version
         client = self._require_client()
-        # Port of BgcInfoReader.a (BgcInfoReader.java:58-72): walk gatt.getServices() and take
+        # Port of BgcInfoReader.a (BgcInfoReader.java:51-62): walk gatt.getServices() and take
         # the FIRST service whose UUID is Constants.d (...1910), then its Constants.b (...2b12)
         # characteristic. bleak's UUID lookups don't match that: get_service() raises when two
         # services share 1910, and the collection-wide get_characteristic() raises because 2b12
