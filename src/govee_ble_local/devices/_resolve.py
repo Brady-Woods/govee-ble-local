@@ -53,13 +53,14 @@ the row lacks fails the build: nothing defaults silently.
   ``OldBleModel.itemClickOp``:52-60 copies, the int fields ``Info4BleIotDevice.p`` / ``.v``:90-91), so it
   runs the source goodsType. A target-row route needs an advertised pact too (``Route.needs_pact``), and
   ``profile.profile_for`` takes it only with one. So does each route of a ``pact_required`` row: the app also
-  accepts the row's goodsType at pacts that run a path the row doesn't serve (straightfloorlamp 69's (1,1)),
-  so a unit advertising no pact may be one of them. ``pact_required`` with ``pacts: any`` raises. A SKU that a
-  ``modelled`` row and an admitted row both list raises too: the spec's routing (``ble_rows``) counts both
-  wherever both accept the pact, and the opt-in must leave the admitted routes as they are.
+  accepts the row's goodsType at pacts that run a path the row doesn't serve (straightfloorlamp 69's (1,1),
+  and the h70b3 rows' (1,1)), so a unit advertising no pact may be one of them. ``pact_required`` with
+  ``pacts: any`` raises. A SKU that a ``modelled`` row and an admitted row both list raises too: the spec's
+  routing (``ble_rows``) counts both wherever both accept the pact, and the opt-in must leave the admitted
+  routes as they are.
 - The pact fallback (decision D3), the 1.x compatibility rule: 1.4.0 routed each of its 18 SKUs whatever
   pact its advertisement carried, so ``profile.profile_for`` still routes one of them
-  (:data:`PACT_FALLBACK_SKUS`, frozen at those 18) to its only admitted profile at a pact no row accepts, and
+  (:data:`PACT_FALLBACK_SKUS`, fixed at those 18) to its only admitted profile at a pact no row accepts, and
   no released unit is demoted by a pact its row doesn't list. Every other SKU (one a row lists, one only the
   catalogue snapshot routes, one of a reassignment) is served only at its rows' pacts, as the app's scan
   serves it: a device whose advertised pact its goodsType doesn't accept is refused
@@ -93,31 +94,30 @@ the row lacks fails the build: nothing defaults silently.
   ``canClickBrightness`` groups) becomes ``DeviceProfile.segment_brightness_groups``, which the
   segment-brightness write widens a selection to, on a row with that frame and ``segments`` only, as disjoint
   groups of the row's segments. A row that keeps ``segments`` and ``color_temp`` after those drops says
-  whether its screen sends a Kelvin over a piece selection (``segment_color_temp``, which becomes
-  ``DeviceProfile.segment_color_temp``: the Part tab's Kelvin item, ``DelegateColorV2Part.Z0`` ->
-  ``LightColorCapabilityCenter.C2``); a row that keeps fewer may not say, and a row with a
-  ``color_temp_control`` (below) says false. ``color_temp`` needs a Kelvin range, and so does ``rgb``
-  under every scheme with a colour-temperature mode (all but h61a8, :data:`SCHEME_LACKS`): its RGB writer
-  runs the app's Kelvin-tint test on every pick whatever the screen offers (``Config.Yt`` / ``bu`` / ``Zt`` /
-  ``fu``:
-  ``KelvinConfig.i``; the H7310 / H7318 / H6165 rows have no Kelvin slider). A row's ``white_type`` (the slot
-  of the h60a6 colour-temperature frame, Bytes.r's white type: ``DeviceProfile.white_type``) other than
-  ``rgb_white``, the default, needs the h60a6 scheme. A row's ``color_temp_control: illumination`` (the screen
-  sets colour temperature on its illumination tab alone, ``View4IlluminationMode.I0``: the Kelvin frame, then
-  ``33 04`` <the current brightness>) becomes ``DeviceProfile.kelvin_with_brightness``. It needs the
-  ``color_temp`` and ``brightness`` capabilities, percent brightness with no pact branch (so the held value
-  round-trips), and the h60a6, h6188 or kelvin_v9 scheme, whose colour-temperature frame is the tab's builder
-  (h60a6 not at ``rgb_self_tem_color``, whose tab slot is ``ff ff ff``); the colour page's
-  ``color_temperature`` flag then doesn't decide ``color_temp`` (``color_functions``).
-  ``color_temp_control: whole_device`` (the
-  colour page's Kelvin pick always writes every piece, as h61d3 ``ColorMode.canClickColorTem`` does on 239 /
-  246) needs ``color_temp``. Either value becomes ``DeviceProfile.whole_device_kelvin``: no Kelvin on part of
-  the device. An ``untraced`` scene dialect drops ``scenes``; ``none`` is activate only. Scenes need a
-  bundled catalog, as every SKU of 1.4.0 that offers them ships one: a SKU the scene store has no catalog for
+  whether ``set_segment_color_temp`` may send a Kelvin to a piece selection (``segment_color_temp``, which
+  becomes ``DeviceProfile.segment_color_temp``: the Part tab's Kelvin item, ``DelegateColorV2Part.Z0`` ->
+  ``LightColorCapabilityCenter.C2``, but false on h60ax 303 / h6047 119, whose item widens to whole zones, by
+  the user's decision 24, and on the held h60ax 356 / 373 by its extension, decision 25 D11); a row that keeps
+  fewer may not say, and a row with a ``color_temp_control`` (below) says false. ``color_temp`` needs a Kelvin
+  range, and so does ``rgb`` under every scheme with a colour-temperature mode (all but h61a8,
+  :data:`SCHEME_LACKS`): its RGB writer runs the app's Kelvin-tint test on every pick whatever the screen
+  offers (``Config.Yt`` / ``bu`` / ``Zt`` / ``fu``: ``KelvinConfig.i``; the H7310 / H7318 / H6165 rows have no
+  Kelvin slider). A row's ``white_type`` (the slot of the h60a6 colour-temperature frame, Bytes.r's white
+  type: ``DeviceProfile.white_type``) other than ``rgb_white``, the default, needs the h60a6 scheme. A row's
+  ``color_temp_control: illumination`` (the screen sets colour temperature on its illumination tab alone,
+  ``View4IlluminationMode.I0``: the Kelvin frame, then ``33 04`` <the current brightness>) becomes
+  ``DeviceProfile.kelvin_with_brightness``. It needs the ``color_temp`` and ``brightness`` capabilities,
+  percent brightness with no pact branch (so the held value round-trips), and the h60a6, h6188 or kelvin_v9
+  scheme, whose colour-temperature frame is the tab's builder (h60a6 not at ``rgb_self_tem_color``, whose tab
+  slot is ``ff ff ff``); the colour page's ``color_temperature`` flag then doesn't decide ``color_temp``
+  (``color_functions``). ``color_temp_control: whole_device`` (the colour page's Kelvin pick always writes
+  every piece, as h61d3 ``ColorMode.canClickColorTem`` does on 239 / 246) needs ``color_temp``. Either value
+  becomes ``DeviceProfile.whole_device_kelvin``: no Kelvin on part of the device.
+  An ``untraced`` scene dialect drops ``scenes``; ``none`` is activate only. Scenes need a bundled catalog, as
+  every SKU of 1.4.0 that offers them ships one: a SKU the scene store has no catalog for
   (``scenes/store.json``, the generated ``SCENE_CATALOGS``, which :func:`profiles` takes as ``catalogued``) is
-  offered no ``scenes``, its row's scene facts still checked.
-  An ``untraced`` colour parse on a row with ``rgb`` or ``color_temp`` raises (``none`` is a traced value:
-  the screen parses no colour).
+  offered no ``scenes``, its row's scene facts still checked. An ``untraced`` colour parse on a row with
+  ``rgb`` or ``color_temp`` raises (``none`` is a traced value: the screen parses no colour).
 - The reads the library makes: the 0xAC status read is the row's ``status_read``, in its order
   (``DeviceProfile.status_read``, ``build.status_query(types=)``; ``[]`` is the bare ``ac 03 00``, the h70dx
   screen's, which requests no type), and its reply is read with the row's own wire facts
@@ -208,13 +208,13 @@ the row lacks fails the build: nothing defaults silently.
   Support.getSupportScenesOpSet). Before the read, each version not yet read meets its own gates, so the
   newest firmware's set applies, as 1.x assumed, and the Kelvin range is the one valid on every revision.
   Any other firmware fact or gate raises.
-- Light power read-back: a polled light's aa 01 reply is on at a byte of 1
-  (``ControllerSwitch.Companion.c``), or at any non-zero byte where the row's wire ``power`` says
-  ``light_nonzero`` (the connect read's own decoder: the legacy ``SwitchController``, the H70BX connect
-  read) or ``light_heartbeat_nonzero`` (the aa 01 heartbeat's, where the connect read takes == 1: H1168's
-  ``HeartControllerWithBattery``). Either becomes ``DeviceProfile.light_nonzero``: as for a plug, the
-  heartbeat rule beats the connect read's. On a status or plug row either raises (neither reads a light's
-  aa 01 reply), and ``light_heartbeat_nonzero`` raises without the aa 01 heartbeat (``heartbeat: power``).
+- Light power read-back: a polled light's aa 01 reply is on at a byte of 1 (``ControllerSwitch.Companion.c``),
+  or at any non-zero byte where the row's wire ``power`` says ``light_nonzero`` (the connect read's own
+  decoder: the legacy ``SwitchController``, the H70BX connect read) or ``light_heartbeat_nonzero`` (the aa 01
+  heartbeat's, where the connect read takes == 1: H1168's ``HeartControllerWithBattery``). Either becomes
+  ``DeviceProfile.light_nonzero``: as for a plug, the heartbeat rule beats the connect read's. On a status or
+  plug row either raises (neither reads a light's aa 01 reply), and ``light_heartbeat_nonzero`` raises without
+  the aa 01 heartbeat (``heartbeat: power``).
 - Plug power read-back: the wire's ``relay_heartbeat_on_mask`` beats the row's ``relay_on_mask``, because
   every aa 01 poll the library makes follows the heartbeat rule (``power_state.is_on_heartbeat``). So for
   goodsTypes 50 and 307 the row's 0xFF (the connect read's) is never consumed, and the library uses their
@@ -534,8 +534,9 @@ _DEVICE_INFO_READS: Final = ("none", "firmware")
 _UNREAD_PACT_CAPABILITIES: Final[Mapping[tuple[str, str, str], tuple[str, ...]]] = {
     ("h60ax", "303", "1,1"): ("power", "brightness", "rgb", "color_temp", "scenes")}
 _AES_FALLBACK_ROWS: Final = frozenset({("h60ax", "303")})   # D4: 1.x's fallback, kept for the unlocked H60A6
-# D3, the 1.x pact fallback (module doc): the 18 SKUs 1.4.0 shipped, frozen. profile.profile_for still routes
-# one of them to its only admitted profile at a pact no row accepts; every other SKU only at its rows' pacts.
+# D3, the 1.x pact fallback (module doc): the 18 SKUs 1.4.0 shipped, a fixed set. profile.profile_for still
+# routes one of them to its only admitted profile at a pact no row accepts; every other SKU only at its rows'
+# pacts.
 PACT_FALLBACK_SKUS: Final = frozenset({
     "H60A6", "H6047", "H61A8", "H6004", "H6006", "H6008", "H6052", "H6641", "H6188", "H6062", "H6061",
     "H5080", "H5083", "H5085", "H5082", "H5089", "H5160", "H5161"})
@@ -1347,7 +1348,7 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
     _check_forms(forms, _forms_used(out, caps, tuple(t for read in status_reads for t in read), relay), fail)
     if ({"segments", "color_temp"} <= caps) != (part_kelvin is not None):
         fail("segment_color_temp goes with segments and color_temp (the colour scheme's drops applied): "
-             "whether the screen sends a Kelvin over a piece selection")
+             "whether set_segment_color_temp may send a Kelvin to a piece selection")
     if control is not None and part_kelvin:   # whole_device_kelvin: no Kelvin on part of the device
         fail(f"segment_color_temp true with color_temp_control {control} (its Kelvin covers every piece)")
     return out

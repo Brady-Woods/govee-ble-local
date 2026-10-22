@@ -113,13 +113,15 @@ def test_build_or_unsupported_propagates_invalid_value() -> None:
 @pytest.mark.parametrize(("kelvin", "sent"), [(100, 2700), (2699, 2700), (6501, 6500), (9000, 6500)])
 def test_kelvin_outside_profile_range_is_clamped(kelvin: int, sent: int) -> None:
     # 2700..6500, zones + segments; the app clamps (KelvinConfig.calibrationKelvin) and never rejects
-    for whole_device, make in (
-        (True, lambda d: d.set_color_temp(kelvin)),
-        (False, lambda d: d.set_segment_color_temp([0], kelvin)),
-        (False, lambda d: d.set_zone_color_temp("background", kelvin)),
-        (True, lambda d: d.turn_on(kelvin=kelvin)),
+    for sku, whole_device, make in (
+        ("H60A6", True, lambda d: d.set_color_temp(kelvin)),
+        # No Kelvin to an H60A6 piece selection (decision 24); the H60B1's strip, [2700, 6500] too, sends the
+        # selection (H60B1ColorMode.canClickColorTem:415 over N:136).
+        ("H60B1", False, lambda d: d.set_segment_color_temp([0], kelvin)),
+        ("H60A6", False, lambda d: d.set_zone_color_temp("background", kelvin)),
+        ("H60A6", True, lambda d: d.turn_on(kelvin=kelvin)),
     ):
-        d = _dev("H60A6")
+        d = _dev(sku)
         run(make(d))
         if whole_device:  # the segment/zone setters do not touch the whole-device state
             assert d.state.color_temp_kelvin == sent
@@ -144,15 +146,24 @@ def test_kelvin_range_bounds_inclusive_and_undefined_range_allows() -> None:
     assert len(_sent(t)) == 1
 
 
-def test_zone_rgb_and_color_temp_require_capabilities() -> None:
-    caps = frozenset({Capability.POWER, Capability.BRIGHTNESS})
-    d = _dev("H60A6", capabilities=caps)
+@pytest.mark.parametrize(("sku", "overrides", "call"), [
+    ("H60A6", {"capabilities": frozenset({Capability.POWER, Capability.BRIGHTNESS})},
+     lambda d: d.set_zone_rgb("background", (1, 2, 3))),
+    ("H60A6", {"capabilities": frozenset({Capability.COLOR_TEMP})},   # SEGMENTS missing
+     lambda d: d.set_zone_color_temp("background", 4000)),
+    # No Kelvin to a piece selection (DeviceProfile.segment_color_temp): the H60A6 / H6047 Part tab widens
+    # it to a whole zone (decision 24). A zone's goes (test_device_gaps).
+    ("H60A6", {}, lambda d: d.set_segment_color_temp([0], 4000)),
+    ("H6047", {}, lambda d: d.set_segment_color_temp([5], 4000)),
+    # A fresh H6062 (striplight 41, no Part-tab Kelvin) is refused before its aa 41 segment-count read.
+    ("H6062", {}, lambda d: d.set_segment_color_temp([0], 4000)),
+])
+def test_zone_and_segment_colour_setters_refuse_before_any_io(sku: str, overrides: dict[str, Any],
+                                                              call: Any) -> None:
+    d = _dev(sku, **overrides)
     with pytest.raises(GoveeBleNotSupported):
-        run(d.set_zone_rgb("background", (1, 2, 3)))
-    only_ct = _dev("H60A6", capabilities=frozenset({Capability.COLOR_TEMP}))
-    with pytest.raises(GoveeBleNotSupported):  # SEGMENTS missing
-        run(only_ct.set_zone_color_temp("background", 4000))
-    assert _sent(d) == [] and _sent(only_ct) == []
+        run(call(d))
+    assert _sent(d) == [] and _queried(d) == []
 
 
 def test_set_rgb_out_of_range_invalid_value_nothing_sent() -> None:
@@ -207,14 +218,14 @@ def test_setters_mark_authoritative(call: Any) -> None:
 def test_segment_and_zone_setters_mark_authoritative() -> None:
     from govee_ble_local.devices.device import time
 
-    for call in (
-        lambda d: d.set_segment_rgb([0], (1, 2, 3)),
-        lambda d: d.set_segment_brightness([0], 50),
-        lambda d: d.set_segment_color_temp([0], 4000),
-        lambda d: d.set_zone_rgb("background", (1, 2, 3)),
-        lambda d: d.set_zone_color_temp("background", 4000),
+    for sku, call in (
+        ("H60A6", lambda d: d.set_segment_rgb([0], (1, 2, 3))),
+        ("H60A6", lambda d: d.set_segment_brightness([0], 50)),
+        ("H6098", lambda d: d.set_segment_color_temp([0], 4000)),   # none on an H60A6 (decision 24)
+        ("H60A6", lambda d: d.set_zone_rgb("background", (1, 2, 3))),
+        ("H60A6", lambda d: d.set_zone_color_temp("background", 4000)),
     ):
-        d = _dev("H60A6")
+        d = _dev(sku)
         run(call(d))
         assert d._advert_ignore_until > time.monotonic()
 

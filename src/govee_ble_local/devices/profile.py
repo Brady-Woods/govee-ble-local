@@ -371,7 +371,11 @@ class DeviceProfile:
     ``SwitchController.parseValidBytes`` on the H1162 / H1163 / H1167 standalone screen, the H70BX connect
     read ``AfterConnectSuccessReadDeviceInfo.w``). False, the default: on only for a byte of 1
     (``ControllerSwitch.Companion.c``), as every other light screen reads it. Ignored on a plug, whose byte is
-    a relay mask (:attr:`relay_on_mask`)."""
+    a relay mask (:attr:`relay_on_mask`). It covers the poll only: on such a row an advertisement's switch
+    byte still reads on only for 1 (:meth:`~.device.Device.advertised_on`), as the app's device list decodes
+    it for every light (``AbsBaseBleModel.z:393-397`` over ``BleUtil.parseBleBroadOnOff:719-744``; the h1162
+    ``Model.z:149-157`` calls it, and the H1168 and H70BX models inherit it), so a byte of 2 reads off in
+    the advertisement and on in the poll."""
     white_type: WhiteType = field(default=DEFAULT_WHITE_TYPE, kw_only=True)
     """The slot of the ``h60a6`` colour-temperature frame (``33 05 15 01 <slot> <K> <tint> <mask>``), the
     white type the SKU's colour page hands ``Bytes.r``: a devices.yaml row's ``white_type``, the app's
@@ -392,8 +396,8 @@ class DeviceProfile:
     is a frame the app never sends, whatever :attr:`segment_color_temp` says. A table profile with it and
     :attr:`~..models.Capability.SEGMENTS` also has :attr:`segment_color_temp` False (the row says so, and the
     resolver refuses true beside a ``color_temp_control``), so a caller that offers colour temperature per
-    segment or per zone checks :attr:`segment_color_temp` alone. False (the default, every SKU before
-    1.8.0): the masked Kelvin is the app's."""
+    segment checks :attr:`segment_color_temp` alone, and no table profile with it has :attr:`zones`. False
+    (the default, every SKU before 1.8.0): the masked Kelvin is the app's."""
     kelvin_with_brightness: bool = field(default=False, kw_only=True)
     """The SKU's screen sets colour temperature on its illumination tab alone (a devices.yaml row's
     ``color_temp_control: illumination``), which writes the Kelvin frame and then ``33 04`` <the current
@@ -473,18 +477,22 @@ class DeviceProfile:
     ``Support.supportEffectChange``). A pact with no entry, or none heard yet, takes :attr:`status_read`
     (the spec's ``client_row``). Each pact once; each read distinct codes (lists are kept as tuples)."""
     segment_color_temp: bool = field(default=True, kw_only=True)
-    """Whether a colour temperature may go to a piece selection:
-    :meth:`~.device.Device.set_segment_color_temp`, and :meth:`~.device.Device.set_zone_color_temp`, whose
-    frame masks the zone's pieces. The control screen's All tab sends its Kelvin over every piece
-    (``DelegateColorV2.G0``), and only its Part tab's Kelvin item over the selected ones, an item
-    ``DelegateColorV2Part.Z0`` adds only where ``LightColorCapabilityCenter.C2`` holds:
-    ``SupportPartColorTemConfig.b``'s goodsTypes (a devices.yaml row's ``segment_color_temp``). False: both
-    raise GoveeBleNotSupported, and the device's one colour temperature is
-    :meth:`~.device.Device.set_color_temp`'s. It means nothing without SEGMENTS and COLOR_TEMP in
-    :attr:`capabilities`. True by default, so a profile built by hand keeps 1.x's behaviour; the generated
-    table sets it from the row (the default on a row without both capabilities). An RGB pick that is a Kelvin
-    tint colour still goes to the selected pieces as the Kelvin frame (``Config.Yt``), as the app sends it,
-    whatever this says."""
+    """Whether :meth:`~.device.Device.set_segment_color_temp` may send a colour temperature to a piece
+    selection. The control screen's All tab sends its Kelvin over every piece (``DelegateColorV2.G0``), and
+    only its Part tab's Kelvin item over the selected ones, an item ``DelegateColorV2Part.Z0`` adds only
+    where ``LightColorCapabilityCenter.C2`` holds: ``SupportPartColorTemConfig.b``'s goodsTypes (a
+    devices.yaml row's ``segment_color_temp``), but false on the H60A6 and H6047 by the user's decision 24,
+    and on the held H1232 / H1252 by its extension: their Part-tab Kelvin item widens every pick to whole
+    zones (``ColorModeH60A6.canClickColorTem``, ``ColorMode10Segment.canClickColorTem``,
+    ``ColorModeH1232.canClickColorTem``, ``ColorModeH1252.canClickColorTem``), so it sends none to part of
+    one. False: ``set_segment_color_temp`` raises GoveeBleNotSupported before any I/O, and the device's
+    colour temperature is :meth:`~.device.Device.set_color_temp`'s. It does not govern
+    :meth:`~.device.Device.set_zone_color_temp`, whose frame masks a zone's pieces: that needs SEGMENTS,
+    COLOR_TEMP and a zone with segments only (and no :attr:`whole_device_kelvin`, which no zoned table
+    profile has). It means nothing without SEGMENTS and COLOR_TEMP in :attr:`capabilities`. True by default,
+    so a profile built by hand keeps 1.x's behaviour; the generated table sets it from the row (the default
+    on a row without both capabilities). An RGB pick that is a Kelvin tint colour still goes to the selected
+    pieces as the Kelvin frame (``Config.Yt``), as the app sends it, whatever this says."""
     segment_brightness_groups: tuple[tuple[int, ...], ...] = field(default=(), kw_only=True)
     """Disjoint groups of segment indices that :meth:`~.device.Device.set_segment_brightness` widens a
     selection to: every segment of each group holding a selected one goes into the ``33 05 15 02`` mask and
@@ -511,7 +519,7 @@ class DeviceProfile:
         bar's read-modify-write would hold a link past its session. The generated table's values are checked,
         those combinations included, when it is built (devices/_resolve.py), so none reaches this check."""
         if isinstance(self.skus, list):
-            # 1.3.0 accepted a list; keep it as the declared tuple, so the frozen profile stays hashable.
+            # 1.3.0 accepted a list; keep it as the declared tuple, so the immutable profile stays hashable.
             object.__setattr__(self, "skus", tuple(self.skus))
         if (not isinstance(self.skus, tuple) or not self.skus
                 or not all(isinstance(sku, str) and sku for sku in self.skus)):
@@ -790,7 +798,8 @@ def _accepts(route: _Route, pact: tuple[int, int] | None) -> bool:
     each row of a SKU a pairing write names at an exact pact: without the pact the library can't tell the
     row's facts from those the app runs at the write's pact (H615A-E's (65535, 255)). And so does a
     ``pact_required`` row: its goodsType also runs, at pacts the row doesn't list, a path the row doesn't
-    serve (straightfloorlamp 69's (1,1)), so a pact-less advert may be one of those."""
+    serve (the (1,1) of straightfloorlamp 69 and the h70b3 rows), so a pact-less advert may be one of
+    those."""
     if pact is None:
         return not route.needs_pact
     return route.pacts is None or pact in route.pacts
@@ -841,8 +850,8 @@ def profile_for(sku: str, *, pact: tuple[int, int] | None = None, goods_type: in
     pact-conditioned reassignments' target rows route, as the app keeps a pact-less unit at its source
     goodsType; one a pairing write names at an exact pact (H615A-E), whose pact-less advert may carry
     that pact, where the app runs other frames than the row's; and one only ``pact_required`` rows route
-    (H6076 / H8076 / R16D0), whose pact-less advert may carry a pact where the app runs a path the row
-    doesn't serve."""
+    (H6076 / H8076 / R16D0, and the ``modelled`` h70b3 rows' H70B3 / H70B4 / H70B5 / H6810 / H6811 /
+    H8811), whose pact-less advert may carry a pact where the app runs a path the row doesn't serve."""
     key = sku.upper()
     for table in (_ADMITTED, _MODELLED) if allow_modelled else (_ADMITTED,):
         hits = {id(r.profile): r.profile for r in table[1].get(key, ())

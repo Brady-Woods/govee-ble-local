@@ -586,17 +586,22 @@ class Device:
         if cap not in self.profile.capabilities:
             raise GoveeBleNotSupported(f"{self._sku}: {cap.name} not supported")
 
-    def _require_segment_color_temp(self) -> None:
-        """A Kelvin on a piece selection: SEGMENTS, COLOR_TEMP and a screen whose Part tab sends one
-        (:attr:`.DeviceProfile.segment_color_temp`; elsewhere the app's only Kelvin covers every piece), and
-        not a screen that writes colour temperature over the whole device only
-        (:attr:`.DeviceProfile.whole_device_kelvin`: the illumination tab, or a colour page whose Kelvin pick
-        sets every piece; the table's ``segment_color_temp`` is False there too)."""
+    def _require_masked_kelvin(self, *, pieces: bool) -> None:
+        """A Kelvin on part of the device: SEGMENTS, COLOR_TEMP, and not a screen that writes colour
+        temperature over the whole device only (:attr:`.DeviceProfile.whole_device_kelvin`: the illumination
+        tab, or a colour page whose Kelvin pick sets every piece). On a piece selection (``pieces``,
+        :meth:`set_segment_color_temp`) also :attr:`.DeviceProfile.segment_color_temp` (false where the app's
+        Kelvin covers every piece, and on the H60A6 and H6047 by decision 24, whose Part-tab Kelvin covers
+        whole zones). A zone's Kelvin (:meth:`set_zone_color_temp`, ``pieces`` false) doesn't read it."""
         self._require(Capability.SEGMENTS)
         self._require(Capability.COLOR_TEMP)
-        if not self.profile.segment_color_temp or self.profile.whole_device_kelvin:
-            raise GoveeBleNotSupported(f"{self._sku}: no colour temperature on a piece selection (the app "
-                                       "sends it over every piece: set_color_temp)")
+        p = self.profile
+        if p.whole_device_kelvin or (pieces and not p.segment_color_temp):
+            where = "a piece selection" if pieces else "a zone"
+            zones = (", or over a zone: set_zone_color_temp"
+                     if pieces and p.zones and not p.whole_device_kelvin else "")
+            raise GoveeBleNotSupported(f"{self._sku}: no colour temperature on {where} (the app "
+                                       f"sends it over every piece: set_color_temp{zones})")
 
     def _unlock_frames(self) -> list[bytes]:
         return [build.secret_check(self._secret)] if self._secret else []
@@ -1568,13 +1573,15 @@ class Device:
         """Colour temperature on selected segments (0x15 family only — the CCT frame
         carries the segment mask). ``kelvin`` is clamped and rounded as in :meth:`set_color_temp`.
 
-        Raises GoveeBleNotSupported without SEGMENTS/COLOR_TEMP, where the SKU's screen sends no Kelvin to a
-        piece selection (:attr:`.DeviceProfile.segment_color_temp`, False wherever
-        :attr:`.DeviceProfile.whole_device_kelvin` is set) or for non-maskable schemes; GoveeBleInvalidValue
-        for a non-int ``kelvin`` or a bad index; GoveeBleError if a hand-built profile with
-        :attr:`.DeviceProfile.section_count_read` does not answer that read (no table profile reaches it:
-        H6062, the one row that reads its segment count, sends no Kelvin to a piece selection)."""
-        self._require_segment_color_temp()
+        Raises GoveeBleNotSupported without SEGMENTS/COLOR_TEMP, where
+        :attr:`.DeviceProfile.segment_color_temp` is false (no Part-tab Kelvin item, or on the H60A6 and H6047
+        one that widens to whole zones, the user's decision 24), where
+        :attr:`.DeviceProfile.whole_device_kelvin` is set (segment_color_temp is false there too) or for
+        non-maskable schemes; GoveeBleInvalidValue for a non-int ``kelvin`` or a bad index; GoveeBleError if
+        a hand-built profile with :attr:`.DeviceProfile.section_count_read` does not answer that read (no
+        table profile reaches it: H6062, the one row that reads its segment count, has segment_color_temp
+        false)."""
+        self._require_masked_kelvin(pieces=True)
         sent = self._check_kelvin(kelvin)
         ticket = self._ticket()
         with self._conn.hold_heartbeat():   # a section_count_read aa 41 read and its write: no beat between
@@ -1739,14 +1746,19 @@ class Device:
         0x15 family (H60A6/H6047), whose CCT frame carries a segment mask. ``kelvin`` is clamped
         and rounded as in :meth:`set_color_temp`.
 
-        Raises GoveeBleNotSupported without SEGMENTS/COLOR_TEMP, where the SKU's screen sends no Kelvin to a
-        piece selection (:attr:`.DeviceProfile.segment_color_temp`, False wherever
-        :attr:`.DeviceProfile.whole_device_kelvin` is set), for a zone without segments or for a colour scheme
-        whose CCT frame carries no segment mask; GoveeBleInvalidValue for an unknown zone (also a
-        GoveeBleNotSupported) or a non-int ``kelvin``; GoveeBleError if a hand-built profile with
-        :attr:`.DeviceProfile.section_count_read` does not answer that read (no zoned table profile reads
-        aa 41)."""
-        self._require_segment_color_temp()
+        :attr:`.DeviceProfile.segment_color_temp` doesn't gate it: that field is the Kelvin on a piece
+        selection (:meth:`set_segment_color_temp`). A zone's Kelvin goes over the zone's own mask, the mask
+        the app's Part tab widens a Kelvin pick to on both zoned screens (H60A6: the ring 0-11, piece 12 as
+        picked, ``ColorModeH60A6.canClickColorTem:519-541``; H6047: each bar touched, 0-4 / 5-9,
+        ``ColorMode10Segment.canClickColorTem:655-691``).
+
+        Raises GoveeBleNotSupported without SEGMENTS/COLOR_TEMP, where
+        :attr:`.DeviceProfile.whole_device_kelvin` is set (the screen writes colour temperature over the whole
+        device only), for a zone without segments or for a colour scheme whose CCT frame carries no segment
+        mask; GoveeBleInvalidValue for an unknown zone (also a GoveeBleNotSupported) or a non-int ``kelvin``;
+        GoveeBleError if a hand-built profile with :attr:`.DeviceProfile.section_count_read` does not answer
+        that read (no zoned table profile reads aa 41)."""
+        self._require_masked_kelvin(pieces=False)
         sent = self._check_kelvin(kelvin)
         z = self._zone(name)
         if not z.segments:

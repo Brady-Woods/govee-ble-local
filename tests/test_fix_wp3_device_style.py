@@ -154,11 +154,12 @@ def test_relay_follow_up_failure_logs_a_readable_reason(
 @pytest.mark.parametrize("indices", [(0, 2), range(0, 3, 2)], ids=["tuple", "range"])
 def test_segment_setters_take_any_index_sequence(indices: Sequence[int]) -> None:
     d, ref = _dev("H60A6"), _dev("H60A6")
-    for dev, idx in ((d, indices), (ref, [0, 2])):
+    k, kref = _dev("H6098"), _dev("H6098")   # no Kelvin to an H60A6 piece selection (decision 24)
+    for dev, kdev, idx in ((d, k, indices), (ref, kref, [0, 2])):
         run(dev.set_segment_rgb(idx, (1, 2, 3)))
         run(dev.set_segment_brightness(idx, 40))
-        run(dev.set_segment_color_temp(idx, 3000))
-    assert d._sent == ref._sent  # type: ignore[attr-defined]
+        run(kdev.set_segment_color_temp(idx, 3000))
+    assert d._sent == ref._sent and k._sent == kref._sent  # type: ignore[attr-defined]
     assert d.state.segments == ref.state.segments
     assert [s.index for s in d.state.segments] == [0, 2]
 

@@ -106,6 +106,9 @@ _CHANGED: dict[tuple[str, str], tuple[Any, Any]] = {
     # 1.7.0: no Part-tab Kelvin item on goodsTypes 19 / 247 / 41 (not in SupportPartColorTemConfig.d), so no
     # Kelvin on a piece selection.
     **{(sku, "segment_color_temp"): (True, False) for sku in ("H61A8", "H6641", "H6062")},
+    # 1.7.0: the Part-tab Kelvin of goodsTypes 303 / 119 widens every pick to a whole zone, so none goes to
+    # part of one (the user's decision 24).
+    **{(sku, "segment_color_temp"): (True, False) for sku in ("H60A6", "H6047")},
 }
 
 # (soft, hard) versions: unread, the H61A8 bench unit, and the reference self-test's other two.

@@ -115,11 +115,14 @@ def test_h6641_whole_device_cct_is_one_frame_with_tint() -> None:
     assert [_hex14(f) for f in _sent(d)] == ["33051501ffffff07d0ff8d0bffff"]   # 16 segments
 
 
-def test_h6047_zone_and_segment_cct_carry_tint() -> None:
+def test_zone_and_segment_cct_carry_tint() -> None:
     d = _dev("H6047")
     asyncio.run(d.set_zone_color_temp("left", 2700))
-    asyncio.run(d.set_segment_color_temp([5, 6], 2700))
-    assert [_hex14(f) for f in _sent(d)] == [
+    # No Kelvin to an H6047 piece selection (decision 24); the H6098's strip sends the selection as it is
+    # (ColorMode14Rect4ReverseSelect.canClickColorTem:443 -> canClickColor, w true: h6099 DetailConfig:100).
+    s = _dev("H6098")
+    asyncio.run(s.set_segment_color_temp([5, 6], 2700))
+    assert [_hex14(f) for f in _sent(d) + _sent(s)] == [
         "33051501ffffff0a8cffae541f00",     # left bar = segments 0..4
         "33051501ffffff0a8cffae546000",     # segments 5, 6
     ]
@@ -330,10 +333,10 @@ def test_device_rounds_the_kelvin_it_sends_and_keeps_in_state() -> None:
 
 
 def test_device_rounds_zone_and_segment_cct() -> None:
-    d = _dev("H60A6")
+    d, s = _dev("H60A6"), _dev("H6098")   # no Kelvin to an H60A6 piece selection (decision 24)
     asyncio.run(d.set_zone_color_temp("main", 4049))
-    asyncio.run(d.set_segment_color_temp([0], 4051))
-    assert [f[7:9].hex() for f in _sent(d)] == ["0fa0", "1004"]   # 4000, 4100
+    asyncio.run(s.set_segment_color_temp([0], 4051))
+    assert [f[7:9].hex() for f in _sent(d) + _sent(s)] == ["0fa0", "1004"]   # 4000, 4100
 
 
 # ── read-back of the new write ───────────────────────────────────────────────

@@ -885,7 +885,7 @@ families:
           pacts: ["1,1", "1,2", "1,3"]
           support: hardware_verified
           capabilities: [power, brightness, rgb, color_temp, segments, scenes]
-          segment_color_temp: true
+          segment_color_temp: false
           zones:
             - { id: main, power_index: 0, segments: [12] }
             - { id: background, power_index: 1, segments: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11] }
@@ -914,12 +914,20 @@ families:
             as it is, except on pact (1, >= 3) (H -> Support.supportPartTem; the bench units advertise (1,3)) while a ring
             piece is selected (F) and the 12 ring pieces show one Kelvin-table colour (G -> ColorUtils.r): then the 15 02
             mask covers the whole ring 0-11, with piece 12 as picked. No fixed segment_brightness_groups says that, so the
-            row carries none and the library sends the selection's own bits. Timing: the app reads the burst once per
-            connect and then keeps the link
-            with the aa 00 heartbeat and its ee 30 pushes. HARDWARE-VERIFIED on an H60A6 (bench 2026-10-12 to 2026-10-16):
-            the segment-map probe drove piece 12 (the main panel) and pieces 0-11 (the ring) to opposite colours and read them
-            back apart; 33 01 00 clears and 33 01 01 lights both zones; the 0xA3 diy_graffiti upload (live capture); control
-            with no secret (account_lock false; the app's control-screen path for it is not cited). HARDWARE-VERIFIED that a
+            row carries none and the library sends the selection's own bits. No segment Kelvin
+            (segment_color_temp false, the user's decision 24, 2026-10-22): the Part tab's Kelvin item, which 303 has
+            (SupportPartColorTemConfig list d), widens a selection that holds a ring piece to the whole ring 0-11, with
+            piece 12 as picked (ColorModeH60A6.canClickColorTem:519-541 over F:140-150), so that item sends no Kelvin
+            to part of a zone, and Device.set_segment_color_temp refuses before any I/O (1.6.1 sent the selection as it
+            is). The RGB picker doesn't widen: an in-range tint-colour pick goes to the selection as it is, as a masked
+            Kelvin frame (canClickColor:503-516 -> Config.Yt), and set_segment_rgb still sends it so.
+            The zone lights keep Kelvin: set_zone_color_temp sends the zones' own masks, the ring ff 0f and the panel
+            00 10, which that widening gives; segment brightness is unchanged. Timing:
+            the app reads the burst once per connect and then keeps the link with the aa 00 heartbeat and its ee 30
+            pushes. HARDWARE-VERIFIED on an H60A6 (bench 2026-10-12 to 2026-10-16): the segment-map probe drove piece 12
+            (the main panel) and pieces 0-11 (the ring) to opposite colours and read them back apart; 33 01 00 clears
+            and 33 01 01 lights both zones; the 0xA3 diy_graffiti upload (live capture); control with no secret
+            (account_lock false; the app's control-screen path for it is not cited). HARDWARE-VERIFIED that a
             whole-fixture on restores every zone (2026-10-20, through Home Assistant, on the H60A6 'hall 8407', run file
             govee-apks library-audit/heartbeat-1.6.0/zone_restore_20261021_010747.json; the device's name and SKU are from
             Home Assistant's device registry, and the frames named are the ones the library builds for the run's light
@@ -934,7 +942,8 @@ families:
             and 03 @0x9b04a5bc), and the bench unit answered them (2026-10-15).
           doc-ref:
             - split_h60ax/com/govee/pact_h60a0/pact/Support.java:91-100,154-159,434-436,438-444,472-482
-            - split_h60ax/com/govee/pact_h60a0/adjust/h60a6/ColorModeH60A6.java:140-162,483-500
+            - split_h60ax/com/govee/pact_h60a0/adjust/h60a6/ColorModeH60A6.java:140-162,483-500,503-516,519-541
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:12960-12968
             - base-classes10/com/govee/base2kt/utils/ColorUtils.java:355-367
             - base-classes2/com/govee/shared/checker/KmpGoodsType.java:189
             - split_h60ax/com/govee/pact_h60a0/adjust/h60a6/VM4LightH60A6$afterConnectedSingleReadDeviceInfo$1.java:46-53,133,158-161
@@ -1038,7 +1047,7 @@ families:
           power_read: ac_status
           power_live: [push_30]
           capabilities: [power, brightness, rgb, color_temp, segments]
-          segment_color_temp: true
+          segment_color_temp: false
           zones:
             - { id: main, power_index: 0, segments: [16] }
             - { id: background, power_index: 1, segments: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15] }
@@ -1064,8 +1073,11 @@ families:
             mask is BleUtils.X, 3 bytes. Colour-tab Kelvin on (Config.I[356][4]), the one-frame Bytes.r. Ring scoping,
             as on 303: with any ring piece picked, the Kelvin goes to the whole ring 0-15 with piece 16 as picked
             (canClickColorTem, G), and so does brightness while the ring holds one Kelvin tint (canClickBrightness,
-            I); a segment brightness or Kelvin on part of the ring then is a frame the app does not send. Kelvin
-            version 2 = [2700, 6500]; brightness version 1. No 0xB2. Scenes not traced. Held behind allow_modelled:
+            I); a segment brightness or Kelvin on part of the ring then is a frame the app does not send. The Kelvin
+            widening is the H60A6's (ColorModeH1232.canClickColorTem:486-508 over G:384-394), so the row says
+            segment_color_temp: false, as 303 does, by the user's extension of decision 24 to H1232 / H1252 (decision
+            25, D11): set_segment_color_temp refuses before any I/O, zone Kelvin is kept. Kelvin version 2 =
+            [2700, 6500]; brightness version 1. No 0xB2. Scenes not traced. Held behind allow_modelled:
             the library's global_power zone model (both zones confirmed after 33 01, 33 04 / 33 05 waking every
             zone) is H60A6 FIRMWARE-SOURCED; no H1232 firmware is in hand, and the app's switch ack sets only the
             main switch (VM4LightH60A6.K5). Admit after a bench check or a library mode with the app's model. Device
@@ -1150,7 +1162,7 @@ families:
           power_read: ac_status
           power_live: [push_30]
           capabilities: [power, brightness, rgb, color_temp, segments]
-          segment_color_temp: true
+          segment_color_temp: false
           zones:
             - { id: main, power_index: 0, segments: [16] }
             - { id: background, power_index: 1, segments: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15] }
@@ -1172,7 +1184,9 @@ families:
             zone, 0-15 by the background (ColorModeH1252.K). Colour: Config.x[373] = 0 on every pact -> Config.Yt ->
             Bytes.h / Bytes.r, white type Config.P = 1; colour-tab Kelvin on (Config.I[373][4]). Ring scoping as on
             356: Kelvin with any ring piece picked, and brightness while the ring holds one Kelvin tint, go to the
-            whole ring 0-15 with piece 16 as picked (ColorModeH1252.canClickColorTem / canClickBrightness). Kelvin
+            whole ring 0-15 with piece 16 as picked (ColorModeH1252.canClickColorTem:562-584 over G:145-155 /
+            canClickBrightness); segment_color_temp is false, as on 356, by the user's extension of decision 24 to
+            H1232 / H1252 (decision 25, D11); zone Kelvin is kept. Kelvin
             version 2 = [2700, 6500] (KelvinConfig; Support.getColorTemRange's legacy [2200, 6500] for 373 is not
             read by the screen, which takes KelvinConfig.m); brightness version 1. No 0xB2. Scenes not traced. Held
             behind allow_modelled: the library's global_power zone model (both zones confirmed after 33 01,
@@ -1290,7 +1304,7 @@ families:
           pacts: ["1,1"]
           support: app_traced
           capabilities: [power, brightness, rgb, color_temp, segments, scenes, gradual]
-          segment_color_temp: true
+          segment_color_temp: false
           zones:
             - { id: left, power_index: 0, segments: [0, 1, 2, 3, 4] }
             - { id: right, power_index: 1, segments: [5, 6, 7, 8, 9] }
@@ -1321,14 +1335,26 @@ families:
             not captured): with the left bar switched off (33 36 00 01) while the fixture was on, 33 01 00 then 33 01 01 lit
             both bars again, as the next poll's aa 36 read back; so did an off and on alone, and one after both bars were
             switched off with the fixture off. It is the firmware's model (FIRMWARE-SOURCED: the power handler sets both bar
-            flags from its byte, FUN_01004f32 @0x01004f5c-0x01004f60 -> FUN_01002720).
+            flags from its byte, FUN_01004f32 @0x01004f5c-0x01004f60 -> FUN_01002720). No segment Kelvin
+            (segment_color_temp false, the user's decision 24, 2026-10-22): the Part tab's Kelvin item, which 119 has
+            (SupportPartColorTemConfig list d), widens the selection to each bar it touches, 0-4 and 5-9 (DetailConfig's
+            strip ColorMode10Segment; its canClickColorTem:655-691 with q0:799-801 / r0:803-805 over p0:425-436), so that
+            item sends no Kelvin to part of a bar, and Device.set_segment_color_temp refuses before any I/O (1.6.1 sent
+            the selection as it is). The RGB picker doesn't widen the mask: an in-range tint-colour pick goes to the
+            selection as it is, as a masked Kelvin frame (canClickColor:613-652 -> NewDetailVm.configColorController:880
+            -> H6047ColorControllerConfig.a:43-73 -> Config.J[0] = Config.Yt), and set_segment_rgb still sends it so.
+            The zone lights keep Kelvin: set_zone_color_temp sends the bars' own masks, left
+            1f 00 and right e0 03, which that widening gives; segment brightness is unchanged.
           doc-ref:
             - split_h6047/com/govee/h6047/pact/Support.java:43-45,121-129,186-188,345-350
+            - split_h6047/com/govee/h6047/detail/config/DetailConfig.java:100-108
+            - split_h6047/com/govee/h6047/detail/mode/ColorMode10Segment.java:425-436,613-652,655-691,799-805
+            - split_h6047/com/govee/h6047/detail/group/H6047ColorControllerConfig.java:43-73
             - base-classes2/com/govee/shared/config/h6047/H6047SceneConfig.java:45-47
             - split_h6047/com/govee/h6047/detail/NewDetailVm$connectBleSuc$1.java:141-161
-            - split_h6047/com/govee/h6047/detail/NewDetailVm.java:574-614,630-651,695-699,862-864
+            - split_h6047/com/govee/h6047/detail/NewDetailVm.java:574-614,630-651,695-699,862-864,876-881
             - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4InfoBleIot$iControllerStrategy$1.java:229-233
-            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:3946,16858-16861
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:3946,5522-5526,12960-12968,16858-16861
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:406,654-658,1702-1704
             - base-classes10/com/govee/base2light/capability/legacy/LegacyColorCapabilityProvider.java:218-221
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:251-259
@@ -13346,10 +13372,11 @@ families:
       mode_color_parse: rgb_kelvin_0d_nocct   # 229 / 230 / 231 / 255 / 256, every pact (0xAC burst, or aa reads at pact (1,1)); split_h70b1/com/govee/h70b3/adjust/Info4Detail.java:666-710. The parse layout is exact (the wire Kelvin is never tested), but the stock colour page shows a single reported colour that is a Kelvin tint in [2000, 9000] as that colour temperature (DelegateCurMode -> ColorViewModel.initColor4Device -> DelegateColorV2.W1, KelvinConfig.i / c): a presentation rule no strategy expresses, so the library reports that tint as RGB (library gap 2, h70b3.md). Whether the firmware echoes the Bytes.p tint in the report is not hardware-checked, so the rows are modelled
       power_read: ac_status   # pact (1,1) reads aa 01 instead, on when byte != 0; the schema has no per-pact power_read, so the rows leave (1,1) out
       power_live: [push_30]   # heartbeat type 2, not heartbeat_aa01
-      by_goods_type:   # one screen for all five (H70B3B4B5DeviceDetailActivity, VM4H70B345Splicing); pact (1,1) is left out of every row (the aa-read connect, see doc)
+      by_goods_type:   # one screen for all five (H70B3B4B5DeviceDetailActivity, VM4H70B345Splicing); pact (1,1) is left out of every row (the aa-read connect, see doc), so every row is pact_required
         "229":   # H70B3, 1 base unit
           models: [H70B3]
           pacts: ["1,2", "2,1", "2,2", "2,3"]   # (1,1) registered too but read by aa 01 / aa 04 / aa 05: not served
+          pact_required: true   # so a unit advertising no pact, which may be a (1,1) one, is refused (doc)
           support: modelled   # downgraded 2026-10-21: the colour-temperature read-back is inferred (h70b3.md "Disputed")
           capabilities: [power, brightness, rgb, color_temp]
           zones: []
@@ -13372,7 +13399,11 @@ families:
             strategy [r, g, b][kelvin s16be]), TLV 0x41 the power-off memory (value[1]), TLV 0x39 the direction, TLV 0x40
             byte 0 the device count. At pact (1,1) the connect is r6 (AfterConnectSuccessReadDeviceInfo: aa 06 / aa 07 /
             33 09 / timer / wake / sleep reads, aa 04, aa 01, aa 05, aa 40), a polled read-back this row can't also carry:
-            (1,1) is left out. Power: switchTrigger writes the one ControllerSwitch (33 01); no zone switch (zones none).
+            (1,1) is left out. Nothing but the pact tells a (1,1) unit apart (Support.N is false there, so VM4H70B345.d0
+            runs r6), so the row is pact_required: with allow_modelled, profile_for, is_supported_sku and create_device
+            take it only on an advertised pact (profile._accepts), and a pact-less record, which may be a (1,1) unit, is
+            refused rather than given this status profile (make_device takes no allow_modelled, so it never builds this
+            modelled row). Power: switchTrigger writes the one ControllerSwitch (33 01); no zone switch (zones none).
             Brightness: BrightnessConfig.b -> 33 04 <pct>, no BrightnessConfig key -> version 1 = [1, 100]. Colour: the
             shared ColorViewModel -> ColorModeControllerConfig.c -> Config.F (no SKU key; Config.x[229] = 2) -> Config.J[2]
             = bu: Bytes.f (33 05 0d R G B) or, for a colour that is a Kelvin tint in range (KelvinConfig.i), Bytes.p
@@ -13432,6 +13463,7 @@ families:
         "230":   # H70B4, 2 units
           models: [H70B4]
           pacts: ["1,2", "2,1", "2,2", "2,3"]   # (1,1) left out, as on 229
+          pact_required: true   # as on 229
           support: modelled   # downgraded 2026-10-21: the colour-temperature read-back is inferred (h70b3.md "Disputed")
           capabilities: [power, brightness, rgb, color_temp]
           zones: []
@@ -13453,16 +13485,18 @@ families:
             (h70b3.md "Disputed"). Device info (device_info_reads none): as on 229, u5 queues no aa 06 / aa 07 read and
             its success callback y5 takes the soft and hard versions from the reply's TLV 0x07 (g1 and k2(e(), d());
             Compose4BaseInfoSingleRead.w), so the library sends none either and folds the versions and device id from
-            TLV 0x07 alone. Not hardware-verified.
+            TLV 0x07 alone. pact_required, as on 229: at (1,1) Support.N is false and VM4H70B345.d0 runs r6, so a
+            pact-less record, which may be a (1,1) unit, is refused. Not hardware-verified.
           doc-ref:
             - base-classes2/com/govee/shared/checker/KmpGoodsType.java:258
             - split_h70b1/com/govee/h70b3/add/AddDeviceM.java:85-96
             - split_h70b1/com/govee/h70b3/Support.java:292-317,416-421,504-511,1103-1106
-            - split_h70b1/com/govee/h70b3/adjust/vm/VM4H70B345.java:783-839,927-946,1275-1288
+            - split_h70b1/com/govee/h70b3/adjust/vm/VM4H70B345.java:721-739,783-839,927-946,1275-1288
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:1085-1089,4540-4544,9821-9824,16628-16631
         "231":   # H70B5, 3 units
           models: [H70B5]
           pacts: ["1,2", "2,1"]   # (1,1) left out, as on 229
+          pact_required: true   # as on 229
           support: modelled   # downgraded 2026-10-21: the colour-temperature read-back is inferred (h70b3.md "Disputed")
           capabilities: [power, brightness, rgb, color_temp]
           zones: []
@@ -13483,16 +13517,18 @@ families:
             "Disputed"). Device info (device_info_reads none): as on 229, u5 queues no aa 06 / aa 07 read and its
             success callback y5 takes the soft and hard versions from the reply's TLV 0x07 (g1 and k2(e(), d());
             Compose4BaseInfoSingleRead.w), so the library sends none either and folds the versions and device id from
-            TLV 0x07 alone. Not hardware-verified.
+            TLV 0x07 alone. pact_required, as on 229: at (1,1) Support.N is false and VM4H70B345.d0 runs r6, so a
+            pact-less record, which may be a (1,1) unit, is refused. Not hardware-verified.
           doc-ref:
             - base-classes2/com/govee/shared/checker/KmpGoodsType.java:259
             - split_h70b1/com/govee/h70b3/add/AddDeviceM.java:98-109
             - split_h70b1/com/govee/h70b3/Support.java:319-338,416-421,512-519,1108-1111
-            - split_h70b1/com/govee/h70b3/adjust/vm/VM4H70B345.java:783-839,927-946,1275-1288
+            - split_h70b1/com/govee/h70b3/adjust/vm/VM4H70B345.java:721-739,783-839,927-946,1275-1288
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:1090-1094,4545-4549,9976-9979,16790-16793
         "255":   # H6810, no TLV 0x40 (device count forced to 1)
           models: [H6810]
           pacts: ["2,1", "2,2", "2,3"]   # (1,1) left out, as on 229
+          pact_required: true   # as on 229
           support: modelled   # downgraded 2026-10-21: the colour-temperature read-back is inferred (h70b3.md "Disputed")
           capabilities: [power, brightness, rgb, color_temp]
           zones: []
@@ -13515,16 +13551,18 @@ families:
             inferred (h70b3.md "Disputed"). Device info (device_info_reads none): as on 229, u5 queues no aa 06 / aa 07
             read and its success callback y5 takes the soft and hard versions from the reply's TLV 0x07 (g1 and k2(e(),
             d()); Compose4BaseInfoSingleRead.w), so the library sends none either and folds the versions and device id
-            from TLV 0x07 alone. Not hardware-verified.
+            from TLV 0x07 alone. pact_required, as on 229: at (1,1) Support.N is false and VM4H70B345.d0 runs r6, so a
+            pact-less record, which may be a (1,1) unit, is refused. Not hardware-verified.
           doc-ref:
             - base-classes2/com/govee/shared/checker/KmpGoodsType.java:218
             - split_h70b1/com/govee/h70b3/add/AddDeviceM.java:39-50
             - split_h70b1/com/govee/h70b3/Support.java:217-239,416-421,453-458,520-527,704-717,768-777,1089-1091
-            - split_h70b1/com/govee/h70b3/adjust/vm/VM4H70B345.java:741-756,783-839,881-900,927-946,1275-1288
+            - split_h70b1/com/govee/h70b3/adjust/vm/VM4H70B345.java:721-739,741-756,783-839,881-900,927-946,1275-1288
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:1291-1295,4520-4524,9050-9053,16143-16146
         "256":   # H6811, as 255
           models: [H6811]
           pacts: ["2,1", "2,2", "2,3"]   # (1,1) left out, as on 229
+          pact_required: true   # as on 229
           support: modelled   # downgraded 2026-10-21: the colour-temperature read-back is inferred (h70b3.md "Disputed")
           capabilities: [power, brightness, rgb, color_temp]
           zones: []
@@ -13544,12 +13582,14 @@ families:
             modelled, as on 229: the colour-temperature read-back is inferred (h70b3.md "Disputed"). Device info
             (device_info_reads none): as on 229, u5 queues no aa 06 / aa 07 read and its success callback y5 takes the
             soft and hard versions from the reply's TLV 0x07 (g1 and k2(e(), d()); Compose4BaseInfoSingleRead.w), so the
-            library sends none either and folds the versions and device id from TLV 0x07 alone. Not hardware-verified.
+            library sends none either and folds the versions and device id from TLV 0x07 alone. pact_required, as on
+            229: at (1,1) Support.N is false and VM4H70B345.d0 runs r6, so a pact-less record, which may be a (1,1)
+            unit, is refused. Not hardware-verified.
           doc-ref:
             - base-classes2/com/govee/shared/checker/KmpGoodsType.java:219
             - split_h70b1/com/govee/h70b3/add/AddDeviceM.java:52-63
             - split_h70b1/com/govee/h70b3/Support.java:241-263,416-421,453-458,528-535,1094-1096
-            - split_h70b1/com/govee/h70b3/adjust/vm/VM4H70B345.java:783-839,881-900,927-946,1275-1288
+            - split_h70b1/com/govee/h70b3/adjust/vm/VM4H70B345.java:721-739,783-839,881-900,927-946,1275-1288
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:1296-1300,4525-4529,9209-9212,16298-16301
       wire_cipher: runtime
       wire:
