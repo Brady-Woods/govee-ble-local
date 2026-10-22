@@ -12,7 +12,8 @@ Golden frames are derived from the decompiled Govee Home 7.7.02 app, never from 
   ``00 10`` / ring ``ff 0f``. The two-frame main-then-ring form is only the colour-stripe apply path
   (``VM4LightH60A6.configColorStripController`` -> ``ControllerBuild.j``), not a Kelvin slider.
 * 0x0d both-slot form ``0d <tint> <K u2be> <tint>``: ``Config.bu`` -> ``Bytes.p`` (H6008, H6006,
-  H6052). Distinct from H6188's ``0d ff ff ff <K> <tint>`` (``Bytes.A``), covered in test_h6188.py.
+  H6052, H6188). Distinct from the white-slot ``0d ff ff ff <K> <tint>`` (``Bytes.A``) of the ``h6188``
+  scheme (H8015's illumination tab), checked at the builder in test_h6188.py.
 * Kelvin: clamped to the device range (``KelvinConfig.calibrationKelvin``) and whole 100 K steps.
 
 Tints used (``Constant.getTemColorByKelvin``): 2000 K ff8d0b, 2200 K ff9829, 2700 K ffae54,
