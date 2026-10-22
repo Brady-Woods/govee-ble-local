@@ -304,7 +304,7 @@ def _onoff(d: Device, mfg: dict[int, bytes]) -> bool | None:
     """Ingest ``mfg``. Returns the on/off it leaves, which ``advertised_on`` gave before and gives after."""
     before = d.advertised_on(_adv(_RENAMED, mfg))
     d.ingest_advertisement(_adv(_RENAMED, mfg))
-    assert d.advertised_on(_adv(_RENAMED, mfg)) is before
+    assert d.advertised_on(_adv(_RENAMED, mfg)) is before is d.state.is_on
     return d.state.is_on
 
 

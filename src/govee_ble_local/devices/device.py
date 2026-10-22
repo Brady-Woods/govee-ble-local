@@ -291,9 +291,9 @@ class Device:
     def _learn_advertised_pact(self, entries: dict[int, tuple[bool, tuple[int, int]]]) -> bool:
         """Learn the pact of an ingested advertisement (:meth:`_learn_pact`) when every Govee pact entry of it
         (:func:`.identify._pact_entries`) carries the same one, as :meth:`_learn_cipher` learns the flag. The
-        app reads the pact and the flag in one parse of one broadcast
-        (``BleUtil.parseBleBroadcastPact:779-803``), from the device card's broadcast handler
-        (``AbsBaseBleModel.y:383-390``, from ``AbsBleItem.B:107-130``).
+        app parses both from one broadcast (``BleUtil.parseBleBroadcastPact:779-803``): the device card keeps
+        the pact (``AbsBaseBleModel.y:383-390``, from ``AbsBleItem.B:107-130``), and the control screen keeps
+        the flag (``AbsViewMode4OpWithOtaCheck.j1:570-591`` -> ``w2:171-178``).
 
         An advertisement with no pact entry changes nothing, as the app's ``y`` keeps its pact then. One whose
         entries carry different pacts is a merged record (another header heard earlier, or another device's
