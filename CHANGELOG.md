@@ -624,8 +624,10 @@ model, from which the shipped readers are generated).
     (`AbsComposeControllerWithOpResult.onOvertime`; `_readback.walk_mechanism_a_direct(stop_at_miss=True)`). The
     colours are applied as segments where the profile has SEGMENTS over exactly those pieces, and read and not
     applied elsewhere. The compose's timer, sleep and wake reads are left out, as every connect read here leaves the
-    setting reads out. A change that comes while a re-read runs makes it run once more; `Device.stop` cancels a
-    re-read still running.
+    setting reads out. A change that comes while a re-read runs sets the power and sends no re-read of its own,
+    as the app skips a `Compose4Off2On` that comes while a compose is in flight
+    (`AbsViewMode4Op.doCommController:1074` -> `ComposeYieldGuard.skipIncomingIfBusy:21-31` with `AbsBle.I`
+    true, `Compose4Off2On.yieldToInFlightCompose:142-144`); `Device.stop` cancels a re-read still running.
   - **Rows** (Changed, below): straightfloorlamp 69 (H6076 / H8076 / R16D0: aa 05 then groups 1-2 over 7 pieces,
     applied), h6069 284 (H6069 / H8069: aa 05 then groups 1-35 over the 140 pixels, read and not applied: a
     one-piece colour tab), rgbiclight 351 / 352 (H617G / R617G, H618G / R618D: aa 05 then groups 1-4 over 15 pieces,

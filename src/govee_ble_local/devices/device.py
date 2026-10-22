@@ -263,10 +263,9 @@ class Device:
         self._status_link = 0
         # _power_read_drops when the last keep-alive went out (_on_beat_sent): a reply stamps power_read_at
         # only if no drop came after its beat. _reread: the running re-read a keep-alive power change started
-        # (DeviceProfile.heartbeat_reread_pieces); _reread_again: another change came while it ran.
+        # (DeviceProfile.heartbeat_reread_pieces).
         self._beat_drops = 0
         self._reread: asyncio.Task[None] | None = None
-        self._reread_again = False
         self._callbacks: list[StateCallback] = []
         self._advert_ignore_until = 0.0   # monotonic; see ADVERT_SUPPRESS_SECONDS
         # (pact_type, pact_code) from the Govee advertisement, or None until one is heard.
@@ -933,11 +932,15 @@ class Device:
             self._start_reread()
 
     def _start_reread(self) -> None:
-        """Start the keep-alive power change's re-read on the link that is up, or, while one runs, have it
-        run once more when it ends, as the app queues another compose (``doCommController``)."""
+        """Start the keep-alive power change's re-read on the link that is up. While one runs, the new one is
+        skipped (the reply has set the power already), as the app skips a ``Compose4Off2On`` that comes while
+        a compose is in flight: ``AbsViewMode4Op.doCommController:1074`` ->
+        ``ComposeYieldGuard.skipIncomingIfBusy:21-31`` (``result2Fail``) with ``AbsBle.I:250-261`` true, since
+        ``Compose4Off2On.yieldToInFlightCompose:142-144`` is true; ``J3`` has set the switch before that."""
         task = self._reread
         if task is not None and not task.done():
-            self._reread_again = True
+            _LOGGER.debug("%s (%s): a keep-alive re-read is running; this change's re-read is skipped",
+                          self.address, self._sku)
             return
         self._reread = asyncio.get_running_loop().create_task(
             self._reread_after_change(self._conn.link_number))
@@ -947,15 +950,11 @@ class Device:
         :attr:`.DeviceProfile.heartbeat_reread_pieces`), on link ``link`` alone: a link that has gone ends it
         with no connect. Run in a task of its own; a failure is logged at DEBUG and changes nothing, as the
         compose's failure changes nothing but the screen's loading dialog (``result2Fail``)."""
-        while True:
-            self._reread_again = False
-            try:
-                with self._conn.hold_heartbeat():   # the app sends no beat while a compose is in flight
-                    await self._reread_once(link)
-            except GoveeBleError as err:
-                _LOGGER.debug("%s (%s): the keep-alive re-read failed: %s", self.address, self._sku, err)
-            if not self._reread_again:
-                return
+        try:
+            with self._conn.hold_heartbeat():   # the app sends no beat while a compose is in flight
+                await self._reread_once(link)
+        except GoveeBleError as err:
+            _LOGGER.debug("%s (%s): the keep-alive re-read failed: %s", self.address, self._sku, err)
 
     async def _reread_once(self, link: int) -> None:
         """One re-read: ``aa 05`` (:meth:`_read_mode`), then, if it was answered, the screen's ``aa a5``

@@ -586,9 +586,10 @@ class DeviceProfile:
     (straightfloorlamp 69: 7, rgbiclight 351 / 352: 15), and are read and not applied elsewhere (h6069 284's
     140 pixels, h61d3 263's one piece: their state's colour is the mode report's). The compose's timer, sleep
     and wake reads are left out, as the library's connect reads leave the setting reads out. A change that
-    comes while a re-read runs makes it run once more, as the app queues another compose. A devices.yaml
-    status row's ``heartbeat_reread: { pieces }``: 7 on straightfloorlamp 69, 140 on h6069 284, 15 on
-    rgbiclight 351 / 352 and 1 on h61d3 263."""
+    comes while a re-read runs sets the power and sends no re-read of its own, as the app skips a
+    ``Compose4Off2On`` that comes while a compose is in flight (``ComposeYieldGuard.skipIncomingIfBusy``). A
+    devices.yaml status row's ``heartbeat_reread: { pieces }``: 7 on straightfloorlamp 69, 140 on h6069 284,
+    15 on rgbiclight 351 / 352 and 1 on h61d3 263."""
     ic_reads_around_status: tuple[bool, bool] = field(default=(False, False), kw_only=True)
     """``readback="status"`` with :attr:`color_readback_live_ic`: the poll's ``aa 40`` reads ``(before,
     after)`` the 0xAC status read, which give the live IC in place of a TLV 0x40 (a devices.yaml status row's
