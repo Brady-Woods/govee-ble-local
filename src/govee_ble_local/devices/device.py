@@ -1592,7 +1592,8 @@ class Device:
             pass
         else:
             _unhandled(self.profile.readback, "readback")
-        if self.profile.ic_num_read_only and not self.profile.color_readback_live_ic:
+        if (self.profile.ic_num_read_only and not self.profile.color_readback_live_ic
+                and not self.profile.color_readback_ic_sections):
             # The screen's connect read; it sizes nothing.
             await self._read_reply(build.ic_count_query(), budget)
         # Segment / single-colour read-back layered on top (spec Change 7).

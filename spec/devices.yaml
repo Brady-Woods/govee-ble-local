@@ -6866,7 +6866,7 @@ families:
         "204":   # H61A9
           models: [H61A9]
           pacts: ["1,1", "2,1"]
-          support: modelled
+          support: app_traced
           color_scheme: h60a6
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments, gradual]
@@ -6876,14 +6876,13 @@ families:
           kelvin_range: [2000, 9000]
           brightness_range: [1, 100]
           connect_reads: [brightness, gradual, ic_num, color_group]
-          ic_pieces: fixed
+          ic_pieces: sections
           connect_writes: []
           heartbeat: power
           by_firmware:
             - { min_hard_version: "3.08.01", kelvin_range: [2700, 6500], doc: "KelvinConfig.Config.A2 (goodsType 204): versionHard.compareTo(\"3.08.01\") >= 0 -> version 2 = [2700, 6500], else 0 = [2000, 9000]; a string compare" }
           doc: >-
-            MODELLED (one inferred fact, the read-back piece count). H61A9 (goodsType 204, Support.f0; catalogue snapshot
-            204) on the rgbiclight AcNewDetail screen (Model4BleIot.t -> /rgbic/newdetail). Pacts (1,1) and (2,1) (Pact.d,
+            H61A9 (goodsType 204, Support.f0; catalogue snapshot 204) on the rgbiclight AcNewDetail screen (Model4BleIot.t -> /rgbic/newdetail). Pacts (1,1) and (2,1) (Pact.d,
             the n4 map). Both take ControllerStrategyConfig.E1 (supportV2UIV1 excludes 204; supportV2UIV3 via uiV34): aa 01,
             aa 04, aa a3 (supportGradual), aa 40 (ControllerIcNum.d, as supportIcFresh is true for isGoodsTypeH61A9), aa 41
             (supportPowerOffMemory, left out), the DSP-version device-info read (left out), aa 05 (OpInfo4Detail.x,
@@ -6894,10 +6893,10 @@ families:
             = 0 -> Yt -> Bytes.h / Bytes.r (h60a6 15 01), white slot Config.P[204] = 1, masks over ColorPieceConfig.j = 18
             pieces (204 is in its set R, the getter g = 18; > 16 so BleUtils.X, 3 bytes). Flags Config.I[204] all on;
             gradual Config.G[204] = 0 -> 33 a3; segment brightness Config.z[204] = 0 -> 15 02. Kelvin KelvinConfig.A2 (by_firmware).
-            Brightness: no BrightnessConfig entry -> percent. THE INFERENCE: N5 walks sum(the aa 40 reply's two section
-            bytes) pieces when that sum is non-zero, else getBulbStringMaxNum(204) = 18; the library cannot size the walk
-            from the section bytes (a gap), so ic_pieces fixed reads aa 40 and walks the colour page's 18, which holds
-            only where the device reports sections summing to 18. The ee 22 IC-change push (VM4Light.Z3 -> T5) posts
+            Brightness: no BrightnessConfig entry -> percent. Read-back: N5 walks the signed sum of the aa 40 reply's two
+            section bytes (ControllerIcNum.d -> ControllerStrategyConfig.R1) when it is non-zero, else
+            getBulbStringMaxNum(204) = 18, in N / 4 + (N % 4 != 0) groups (ic_pieces sections; the wire's f_40
+            ic_pair). The ee 22 IC-change push (VM4Light.Z3 -> T5) posts
             getIcChanged here too, but only the unmodelled scrawl / DIY delegate observes it (DelegateCurMode.B); the
             ColorMode4H61A9 part view keeps its fixed 18. Scenes not traced. Not hardware-verified.
           doc-ref:
@@ -7086,7 +7085,7 @@ families:
           "175": { forms: { f_a5: color_group }, counts: { num_segments: 20 }, group: { rule: fixed, num_per_group: 4 }, doc: "H61BE: VM4Light.N5 reads Controller4ColorInfoByGroup groups of getOneGroupColorSize = 4 [brightness, R, G, B] records over getBulbStringMaxNum = 20 pieces (5 groups), not the family's 3-a-frame bulb_batch_v2" }
           "187": { forms: { f_a5: color_group }, counts: { num_segments: 10 }, group: { rule: fixed, num_per_group: 4 }, doc: "H6175: VM4Light.N5 reads Controller4ColorInfoByGroup groups of getOneGroupColorSize = 4 [brightness, R, G, B] records over getBulbStringMaxNum = 10 pieces (3 groups, the last trimmed to 2 pieces)" }
           "193": { forms: { f_a5: color_group }, group: { rule: fixed, num_per_group: 4 }, doc: "H70A1-3: VM4Light.N5 reads Controller4ColorInfoByGroup groups of getOneGroupColorSize = 4 (supportRgbWithBrightnessOnePkg4Colors(193)) [brightness, R, G, B] records over the family's 15 pieces (4 groups)" }
-          "204": { forms: { f_a5: color_group }, counts: { num_segments: 18 }, group: { rule: fixed, num_per_group: 4 }, doc: "H61A9: colour-page masks over ColorPieceConfig.j = 18 (set R); VM4Light.N5 reads Controller4ColorInfoByGroup groups of getOneGroupColorSize = 4 (isGoodsTypeH61A9) [brightness, R, G, B] records over sum(the aa 40 section bytes) when non-zero, else getBulbStringMaxNum(204) = 18 (the row's modelled 18)" }
+          "204": { forms: { f_40: ic_pair, f_a5: color_group }, counts: { num_segments: 18 }, group: { rule: fixed, num_per_group: 4 }, doc: "H61A9: colour-page masks over ColorPieceConfig.j = 18 (set R); VM4Light.N5 reads Controller4ColorInfoByGroup groups of getOneGroupColorSize = 4 (isGoodsTypeH61A9) [brightness, R, G, B] records over sum(the aa 40 section bytes) when non-zero, else getBulbStringMaxNum(204) = 18 (ic_pieces sections)" }
           "234": { forms: { f_0b: unknown, f_a5: color_group }, counts: { num_segments: 0 }, group: { rule: fixed, num_per_group: 4 }, doc: "H612x: the 15 01 frames are Config.x[234] = 0 -> Yt (the family's kelvin_tint, not unknown); aa a5 groups of 4 (supportRgbWithBrightnessOnePkg4Colors(234)); pieces at runtime: the colour page's ColorPieceConfig.h over the record's IC (H612A / B / C / F, set by aa 40 and the ee 22 push) or IC pair (H612D / E: whole-strip masks via ColorPieceConfig.j -> b, else its 30 / 30 and 40 / 40 defaults = 20; segment writes via the part view's P(), else ColorMode4H61BE's fixed 10 + 10), N5's sum(aa 40 section bytes), else get612xSectionNum (no static count)" }
           "176": { forms: { f_a5: color_group }, group: { rule: fixed, num_per_group: 4 }, doc: "H6176 / H61BC: VM4Light.N5 reads Controller4ColorInfoByGroup groups of getOneGroupColorSize = 4 [brightness, R, G, B] records over the family's 15 pieces (4 groups)" }
           "178": { forms: { f_a5: color_group }, group: { rule: fixed, num_per_group: 4 }, doc: "H61BA: VM4Light.N5 reads Controller4ColorInfoByGroup groups of getOneGroupColorSize = 4 [brightness, R, G, B] records over the family's 15 pieces (4 groups)" }
@@ -7570,7 +7569,7 @@ families:
         "141":   # H61C2 / H61C3 / H61C5, the rgbiclight AcNewDetail screen (VM4Light)
           models: [H61C2, H61C3, H61C5]
           pacts: ["1,1", "2,1"]
-          support: modelled
+          support: app_traced
           color_scheme: h60a6
           color_functions: [segment_brightness, color_temperature]
           power_read: aa01
@@ -7585,10 +7584,9 @@ families:
           connect_reads: [brightness, ic_num, color_group]
           connect_writes: []
           heartbeat: power
-          ic_pieces: fixed
+          ic_pieces: sections
           doc: >-
-            MODELLED: the colour read-back's group count is inferred for H61C2 / H61C5 (below); every other fact is
-            traced. H61C2 / H61C3 / H61C5 (cloud goodsType 141; SupportV2.a -> SubLib4BleIot -> Model4BleIot.t ->
+            H61C2 / H61C3 / H61C5 (cloud goodsType 141; SupportV2.a -> SubLib4BleIot -> Model4BleIot.t ->
             /rgbic/newdetail, VM4Light). Pacts (1,1) / (2,1): SupportV2.Companion.a, AddDeviceM and the scan check
             VM4Light.n4 -> Support.C, whose Support.b() put for 141 the Java decompile drops and the bytecode (jadx -m
             fallback) has. Connect (VM4Light.o5 -> q5, ControllerStrategyConfig.E1 through Support.h(141)): device info,
@@ -7597,17 +7595,17 @@ families:
             N5's aa a5 <g> reads of Support.d = 3 four-byte [bri, R, G, B] records (Support.D true), placed by the
             request. No aa a3 (supportGradual(141) false), no 0xAC read (Support.H: 351 / 352), no 0xB1 / 0xB2. Pieces:
             ColorPieceConfig.j(141) = 15 for the colour page and writes, whatever the IC (28 / 42 / 70). Read-back: N5
-            reads ceil(N / 3) groups, N = the signed sum of the aa 40 bytes 2 and 5 when non-zero (ControllerIcNum.d ->
-            R1 -> Info4BleIot.q), else 15; the off->on re-read (VM4Light.J3 -> Compose4Off2On -> G5 -> O5 with no
-            connect info) and an IC change (k5) always take 15. ic_pieces fixed is that 15-piece, 5-group walk, so it is
-            the connect walk only for N in {0, 13, 14, 15} (exact placement at 0 / 15). A signed IC field of
-            0x1000-0x7fff throws in ControllerIcNum.a and nothing in the app catches it (it unwinds through
-            AbsControllerNoEvent4Single.onResult, ComposeBleComm.K and AbsBle.W; EventBus only logs it), so the compose
-            stays on aa 40 until its overtime fails it (Compose4InfoBleIot.result2Fail -> VM4Light.s5, BLE status 1): aa
-            05 and the aa a5 walk never run. No such IC count is expected on these SKUs (VM4Light.u5: 28 / 42 / 70; the
-            bench H61C3 reports 42), so the library's walk is unaffected. Read-only bench 2026-10-21, H61C3 pact (1,1),
-            plaintext: aa 40 00 2a 00 00 00 00 (42 IC, N = 0), aa a5 01..05 15 pieces, 06 / 07 zero, so that unit
-            matches; H61C2 / H61C5 are unread (library gap G1, a section-sum ic_pieces). Colour: no Config.w SKU entry,
+            reads N / 3 + (N % 3 != 0) groups in Java division (none below 1) and keeps the first N pieces, N = the
+            signed sum of the aa 40 bytes 2 and 5 when non-zero (ControllerIcNum.d -> R1 -> Info4BleIot.q), else 15:
+            ic_pieces sections, the library's walk on every unit. The off->on re-read (VM4Light.J3 -> Compose4Off2On ->
+            G5 -> O5 with no connect info) and an IC change (k5) always take 15; the library's poll is the connect walk.
+            A signed IC field of 0x1000-0x7fff throws in ControllerIcNum.a and nothing in the app catches it (it unwinds
+            through AbsControllerNoEvent4Single.onResult, ComposeBleComm.K and AbsBle.W; EventBus only logs it), so the
+            compose stays on aa 40 until its overtime fails it (Compose4InfoBleIot.result2Fail -> VM4Light.s5, BLE
+            status 1): aa 05 and the aa a5 walk never run, and the library walks nothing either. No such IC count is
+            expected on these SKUs (VM4Light.u5: 28 / 42 / 70; the bench H61C3 reports 42). Read-only bench
+            2026-10-21, H61C3 pact (1,1), plaintext: aa 40 00 2a 00 00 00 00 (42 IC, N = 0), aa a5 01..05 15 pieces, 06
+            / 07 zero. Colour: no Config.w SKU entry,
             Config.x[141] = 0 -> Config.J[0] Yt -> Bytes.h / Bytes.r with the white slot (Config.P[141] = 1): the h60a6
             15 01 frames over 15 pieces. Config.I[141] all on; segment brightness Config.z[141] = 0 -> 15 02 (Bytes.G).
             Gradual (Config.G[141] = 0 -> 33 a3) shows aa 05 byte 0 (DelegateColorV2 -> SubMode4Color.e), never an aa a3
@@ -7875,7 +7873,7 @@ families:
       wire:
         forms: { f_01: light, f_09: datetime_epoch }
         by_goods_type:
-          "141": { forms: { f_40: ic_pair, f_a5: color_group, f_15_01: kelvin_tint }, counts: { num_segments: 15 }, group: { rule: fixed, num_per_group: 3 }, doc: "H61C2 / H61C3 / H61C5: 15 pieces whatever the SKU or IC count (ColorPieceConfig.j: 141 is in no piece set, so 15; base-classes11/com/govee/base2light/pact/newdetail/config/fuc/ColorPieceConfig.java:354-452); aa a5 groups of Support.d = 3 [bri, R, G, B] records placed by the request (split_rgbiclight/com/govee/rgbiclight/Support.java:216-235, VM4Light.java:917-962), over ceil(N / 3) groups at connect where N = the signed aa 40 bytes 2 + 5 when non-zero, else 15 (the library walks 15); the aa 40 reply is read by ControllerIcNum.d on 17 valid bytes, [ic1 s16be][sec1][ic2 s16be][sec2], throwing only on an IC field of 0x1000+ as ic_pair does (base-classes11/com/govee/base2light/kt/general_controller/ControllerIcNum.java:64-74,110-138); 33 05 15 01 = Config.J[0] Yt (Bytes.h / Bytes.r type 1)" }
+          "141": { forms: { f_40: ic_pair, f_a5: color_group, f_15_01: kelvin_tint }, counts: { num_segments: 15 }, group: { rule: fixed, num_per_group: 3 }, doc: "H61C2 / H61C3 / H61C5: 15 pieces whatever the SKU or IC count (ColorPieceConfig.j: 141 is in no piece set, so 15; base-classes11/com/govee/base2light/pact/newdetail/config/fuc/ColorPieceConfig.java:354-452); aa a5 groups of Support.d = 3 [bri, R, G, B] records placed by the request (split_rgbiclight/com/govee/rgbiclight/Support.java:216-235, VM4Light.java:917-962), over N / 3 + (N % 3 != 0) groups at connect where N = the signed aa 40 bytes 2 + 5 when non-zero, else 15 (ic_pieces sections); the aa 40 reply is read by ControllerIcNum.d on 17 valid bytes, [ic1 s16be][sec1][ic2 s16be][sec2], throwing only on an IC field of 0x1000+ as ic_pair does (base-classes11/com/govee/base2light/kt/general_controller/ControllerIcNum.java:64-74,110-138); 33 05 15 01 = Config.J[0] Yt (Bytes.h / Bytes.r type 1)" }
           "332": { forms: { f_40: one_count, f_41: power_memory, f_a5: color_group, f_15_01: kelvin_tint, f_ee_30: main_bit0_a }, counts: { num_segments: 14 }, group: { rule: fixed, num_per_group: 4 }, doc: "H6671 / H6672: TLV 0x40 bytes 0-1 signed, 0x41 value[1], 0xA5 one group of 4 records per TLV (split_rgbiclight/com/govee/rgbiclight/h667172/VM4LightH667172$afterConnectedSingleReadDeviceInfo$1.java:96-130); 14 = min(IC, 14) for an IC count of 14 or more (base-classes11/com/govee/base2light/pact/newdetail/config/fuc/ColorPieceConfig.java:189-193); ee 30 bit 0 of byte 1 (base-classes11/com/govee/base2light/kt/general_parser/DefParser.java:83-87)" }
           "351": { forms: { f_40: one_count, f_a5: color_group, f_15_01: kelvin_tint }, counts: { num_segments: 15 }, group: { rule: fixed, num_per_group: 4 }, doc: "the 0xAC read only on 351 / 352 (split_rgbiclight/com/govee/rgbiclight/Support.java:51, 179-182; split_rgbiclight/com/govee/rgbiclight/VM4Light.java:1476-1478); TLV 0x40 bytes 0-1 signed, 0xA5 one group of 4 records per TLV (split_rgbiclight/com/govee/rgbiclight/VM4Light.java:684-718); 15 pieces (ColorPieceConfig.j's default, base-classes11/com/govee/base2light/pact/newdetail/config/fuc/ColorPieceConfig.java:444-449)" }
           "352": { forms: { f_40: one_count, f_a5: color_group, f_15_01: kelvin_tint }, counts: { num_segments: 15 }, group: { rule: fixed, num_per_group: 4 }, doc: "as 351 (split_rgbiclight/com/govee/rgbiclight/VM4Light.java:684-726)" }

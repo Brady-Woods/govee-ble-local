@@ -589,6 +589,14 @@ def _selftest(*, strict: bool = False) -> int:
     g3 = group_reply(False, [255, 0, 0, 0, 255, 0])
     check("aa a5 reply, no brightness -> 3B records", g3.records[0].r == 255 and g3.records[1].g == 255)
 
+    def ic_reply(*data: int) -> Any:
+        return parse_frame(append_bcc(bytes([0xAA, 0x40, *data])), "rx").body.state.body
+
+    check("aa 40 reply: section_sum = bytes 2 + 5 as Java bytes, absent where ControllerIcNum.d throws",
+          ic_reply(0x00, 0x1C, 0x0A, 0x00, 0x2A, 0x08).section_sum == 18
+          and ic_reply(0x00, 0x1C, 0xFF, 0x00, 0x00, 0xFE).section_sum == -3
+          and ic_reply(0x10, 0x00, 0x05).section_sum is None)
+
     from govee_commands import build_op15_color_temp_bytes_r  # the catalogue imports this module
 
     wr = parse_frame(build_op15_color_temp_bytes_r((100, 50, 16), 2700, [True, True] + [False] * 14),

@@ -423,16 +423,21 @@ class IcCount:
     # their byte-order check fires (``ic_count_byte_order_suspect``, 0x1000 or more), where the app's read
     # throws and stores no count.
     ic_count_checked: int | None = None
+    # The two section bytes (2 and 5) summed as Java bytes, as the sectioned IC-pair reader passes them on
+    # (the spec's ``section_sum``, ``ControllerIcNum.d``): None where that reader throws (``app_pair_fails``)
+    # or the reply is under 6 bytes.
+    section_sum: int | None = None
 
 
 def parse_ic_count(frame: bytes) -> IcCount | None:
-    """AA 40 reply: the live IC count and the reply's third byte (see :class:`IcCount`)."""
+    """AA 40 reply: the live IC count, the reply's third byte and the section sum (see :class:`IcCount`)."""
     b = _reply_state(frame, _Command.ic_num)
     if b is None or getattr(b, "segment", None) is None:   # shorter than [ic_count s2][segment]
         return None
-    checked = b.ic_count_checked
+    checked, sections = b.ic_count_checked, b.section_sum
     return IcCount(ic_count=int(b.ic_count), segment_count=int(b.segment),
-                   ic_count_checked=None if checked is None else int(checked))
+                   ic_count_checked=None if checked is None else int(checked),
+                   section_sum=None if sections is None else int(sections))
 
 
 @dataclass(frozen=True)

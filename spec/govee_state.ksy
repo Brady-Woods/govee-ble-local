@@ -1361,6 +1361,23 @@ types:
       segment_signed:
         value: 'segment >= 0x80 ? segment - 0x100 : segment'
         if: _io.size >= 3
+      segment_2_signed:
+        value: 'segment_2 >= 0x80 ? segment_2 - 0x100 : segment_2'
+        if: _io.size >= 6
+        doc: the second section byte, read as a Java byte
+      section_sum:
+        value: segment_signed + segment_2_signed
+        if: _io.size >= 6 and not app_pair_fails
+        doc: |
+          the two section bytes (2 and 5) summed as Java bytes, as the sectioned
+          IC-pair reader (ControllerIcNum.d) passes them on: the rgbiclight screen's
+          colour read-back walks this many pieces when it is not 0, else its static
+          count. Absent where that reader throws (app_pair_fails: the read never
+          completes, so the screen walks nothing).
+        doc-ref:
+          - base-classes11/com/govee/base2light/kt/general_controller/ControllerIcNum.java:64-74,111-139
+          - split_rgbiclight/com/govee/rgbiclight/ControllerStrategyConfig.java:329-339,981-991
+          - split_rgbiclight/com/govee/rgbiclight/VM4Light.java:917-923,938-946
       has_second_pair:
         value: _io.size >= 6 and ic_count_2 != 0
       ic_total:

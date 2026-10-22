@@ -63,6 +63,16 @@ model, from which the shipped readers are generated).
     each, soft 1.04.05, hard 3.05.00. One unit's mode TLV is a short `15 01`. The row's own decode
     (`gradual_14`, where 0x15 isn't decoded) reads that burst in full; the H60A6 default decode gave an empty
     reply.
+- **H61A9 (dreamcolorlightv1 204) and H61C2 / H61C3 / H61C5 (rgbiclight 141) are admitted by default
+  (`app_traced`), no longer behind `allow_modelled`:** the library now sizes their colour read-back as the app
+  does. `VM4Light.N5` reads `N / g + (N % g != 0)` `aa a5` groups (Java division, none below 1) and keeps the
+  first N pieces, N being the aa 40 reply's two section bytes summed as Java bytes (`ControllerIcNum.d` ->
+  `ControllerStrategyConfig.R1`), or the static count (15 / 18) when the sum is 0. Where that reader throws
+  (an IC field of 0x1000 or more) the app walks nothing, and now neither does the library. New
+  `DeviceProfile.color_readback_ic_sections` (keyword-only, default False; devices.yaml `ic_pieces: sections`).
+  The aa 40 read keeps its place in the poll, and for a section sum of 0, 13, 14 or 15 the frames are the
+  ones sent before (the bench H61C3 reads 0). Source-modelled: no H61A9, H61C2 or H61C5 is on the bench, and no
+  non-zero sum has been read. The live-IC rows (H6641 and the other h61d3 rows) keep their walk.
 
 ### Changed
 - Nothing for existing SKUs. Each of the 104 SKUs admitted at 1.6.1 (98 by default, 6 behind
@@ -95,6 +105,10 @@ model, from which the shipped readers are generated).
   - The catalogue snapshot routes 31 SKUs no row lists (15 before). For review: H613A-F (catalogue 39, named
     by h613839's (65535,255) bind item), where it was H615E.
   - rgbiclight 351 / 352 now record the R617G / R618D catalogue route, as h7057 274 does H8057's.
+- **The aa 40 section sum.** `govee_state` `ic_count` gains `segment_2_signed` and `section_sum` (bytes 2 and 5
+  as Java bytes, absent where the sectioned IC-pair reader `ControllerIcNum.d` throws, `app_pair_fails`), and
+  devices.schema.json's `ic_pieces` gains `sections`. rgbiclight 141 and dreamcolorlightv1 204 take it (204's
+  wire gains `f_40: ic_pair`, the reader the bytes come from).
 
 ## [1.6.1] — 2026-10-21
 

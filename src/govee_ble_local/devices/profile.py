@@ -317,7 +317,8 @@ class DeviceProfile:
     raises GoveeBleNotSupported) and reads none (``state.brightness`` stays None): the byte's meaning waits
     for the pact."""
     ic_num_read_only: bool = field(default=False, kw_only=True)
-    """Ignored with :attr:`color_readback_live_ic`. Without it: the screen reads the ``aa 40`` IC count at
+    """Ignored with :attr:`color_readback_live_ic` or :attr:`color_readback_ic_sections`. Without them: the
+    screen reads the ``aa 40`` IC count at
     connect, but its piece count is fixed (``getColorPieceSize`` whatever the IC: h6609 goodsType 181), so
     :meth:`~.device.Device.update` reads it on every poll, before the colour read-back as the screen reads
     it before the ``aa a5`` groups, and discards the reply; the read-back walks the static pieces (a
@@ -345,6 +346,14 @@ class DeviceProfile:
     last operation that sent a frame, each one restarting the wait (goodsType 43's ctlchannel
     ``HeartHandler.e``, which restarts it on every send: H5080, H5083 and H5085). Checked either way, and
     ignored without a :attr:`heartbeat`: then no beat goes out at all, on either timing."""
+    color_readback_ic_sections: bool = field(default=False, kw_only=True)
+    """mechanism_a_direct only, and ignored with :attr:`color_readback_live_ic`: read the ``aa 40`` IC
+    reply first and walk as many pieces as its two section bytes sum to, as Java bytes (the spec's
+    ``ic_count.section_sum``), or the static pieces (:attr:`color_readback_segments`, else the segment
+    count) when the sum is 0, in Java's ``sum / group + (sum % group != 0)`` groups, none below 1 (the
+    rgbiclight screen, ``VM4Light.N5``: goodsTypes 141 and 204). No walk when the read fails or its
+    reader would throw (an IC field of 0x1000 or more). Writes keep the static :attr:`segments`; a
+    devices.yaml row with ``ic_pieces: sections``."""
 
     def __post_init__(self) -> None:
         """Validate each field: GoveeBleInvalidValue (a ValueError) on a value no Device can use.

@@ -123,7 +123,9 @@ async def walk_mechanism_a_direct(dev: ReadTarget, read_reply: ReadReply) -> lis
     comes from either a static per-SKU value (`color_readback_segments`/`segments`; H6047 uses its
     10 `segments`) or, when `color_readback_live_ic` is set (H6641), a live `0x40` IC-count read
     derived the way the app does (:func:`live_ic_pieces`). When that read fails the app still walks
-    the groups from the IC count it stored earlier; the library has none, so it skips the walk.
+    the groups from the IC count it stored earlier; the library has none, so it skips the walk. With
+    `color_readback_ic_sections` (goodsTypes 141 / 204) the same read's section sum sizes the walk, else the
+    static count when it is 0, in Java's group count (:func:`_java_group_count`); a failed read skips it.
 
     Each reply is placed by the group that was asked for: Controller4ColorInfoByGroup's read
     callback drops the reply's own group byte (``Controller4ColorInfoByGroup.Companion.h``/``i``
@@ -145,11 +147,21 @@ async def walk_mechanism_a_direct(dev: ReadTarget, read_reply: ReadReply) -> lis
                 dev.address, dev.sku, ic.ic_count,
             )
             return None
-        pieces = live_ic_pieces(dev, ic.ic_count_checked)
-        total = pieces
+        total = live_ic_pieces(dev, ic.ic_count_checked)
+        group_count = build.ceil_div(total, group_size)
+    elif profile.color_readback_ic_sections:
+        sections = await _section_sum(dev, read_reply)
+        if sections is None:
+            return None
+        # VM4Light.N5:917-923: the sum when it is not 0, else getBulbStringMaxNum, the static pieces.
+        wanted = sections or profile.color_readback_segments or dev.segment_count
+        group_count = _java_group_count(wanted, group_size)
+        # SubMode4Color.j keeps the first `wanted` pieces; a negative sum keeps none (P5's new int[N]
+        # throws before it places a group).
+        total = max(0, wanted)
     else:
         total = profile.color_readback_segments or dev.segment_count
-    group_count = build.ceil_div(total, group_size)
+        group_count = build.ceil_div(total, group_size)
 
     groups: list[tuple[int, list[tuple[int, int, int, int]]]] = []
     for g in range(1, group_count + 1):
@@ -164,6 +176,28 @@ async def walk_mechanism_a_direct(dev: ReadTarget, read_reply: ReadReply) -> lis
                           dev.address, dev.sku, parsed[0], g)
         groups.append((g, parsed[1]))
     return parse.direct_groups_to_segments(groups, group_size) or None
+
+
+async def _section_sum(dev: ReadTarget, read_reply: ReadReply) -> int | None:
+    """The ``aa 40`` read of :attr:`~.profile.DeviceProfile.color_readback_ic_sections`: its section sum
+    (:attr:`parse.IcCount.section_sum`), or None, and the walk skips, when the read failed or the app's
+    reader (``ControllerIcNum.d``) would throw on it: the screen's connect then stops at aa 40 and never
+    walks."""
+    reply = await read_reply(build.ic_count_query())
+    ic = parse.parse_ic_count(reply) if reply else None
+    if ic is None or ic.section_sum is None:
+        _LOGGER.debug("%s (%s): no section count from the aa 40 read; skipping segment colour read-back",
+                      dev.address, dev.sku)
+        return None
+    return ic.section_sum
+
+
+def _java_group_count(pieces: int, group_size: int) -> int:
+    """``pieces / group_size + (pieces % group_size != 0)`` in Java's truncating integer division, the aa a5
+    reads ``VM4Light.N5`` makes (:938-946; none when it is below 1): ``ceil(pieces / group_size)`` for a
+    count of 0 or more, and 1 for a negative count above ``-group_size``."""
+    whole, part = divmod(abs(pieces), group_size)
+    return max(0, (whole if pieces >= 0 else -whole) + (part != 0))
 
 
 def live_ic_pieces(dev: ReadTarget, ic: int) -> int:
