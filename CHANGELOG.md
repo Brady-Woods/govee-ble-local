@@ -630,7 +630,7 @@ model, from which the shipped readers are generated).
   `SubMode4Color.l` takes it). It is never an `app_read_fails` term: the screen never throws on it.
   devices.schema.json's wire `f_a5` gains the member, and the h61d3 263 wire gains `f_a5: single_record`; the
   resolver serves it only where the row's `status_read` requests `color_group` over one piece, never for a
-  direct read. The reference's self-test reads both lengths.
+  direct read. The reference's self-test reads both lengths and checks that two pieces apply none.
 - **`heartbeat_power`, a status row's opt-in to the aa 01 keep-alive power**: devices.schema.json's clientRow
   takes the boolean (and gen_devices keeps it), which the resolver serves only on an unzoned status row whose
   `power_live` has `heartbeat_aa01`, and which becomes `DeviceProfile.heartbeat_power` (Added). Every status row

@@ -337,9 +337,7 @@ _H703A_ONE = bytes([0xA5, 0x05, 0x00, 0x40, 0x11, 0x22, 0x33])   # [byte 0 unrea
 
 @pytest.mark.parametrize(("tlvs", "pieces", "rgb", "kelvin"), [
     (_H703A_ONE, 1, (0x11, 0x22, 0x33), None),
-    (bytes([0xA5, 0x04, 0x00, 0x40, 0x11, 0x22]), 1, None, None),       # under 5 bytes: none read, no failure
     (_H703A_ONE + bytes([0xA5, 0x09, 0x01, 1, 4, 5, 6, 9, 9, 9, 9]), 1, (4, 5, 6), None),   # the last wins
-    (_H703A_ONE, 2, None, None),                                         # taken at one piece only
     (bytes([0x05, 0x04, 0x15, 0x01, 0x0F, 0xA0]) + _H703A_ONE, 1, None, 4000),   # the mode's Kelvin decides
     (bytes([0x05, 0x04, 0x15, 0x01, 0x00, 0x00]) + _H703A_ONE, 1, (0x11, 0x22, 0x33), None),
 ])
