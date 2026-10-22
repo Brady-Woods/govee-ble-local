@@ -11,9 +11,9 @@ from unittest.mock import AsyncMock
 
 import pytest
 from conftest import require_optional
-from fake_ble import FakeGovee, ble_device, frame, status_burst
+from fake_ble import FakeGovee, ble_device, frame
 from conftest import gated_scene_profile
-from test_app_burst_rules import _BASIC
+from test_device_v3 import _STATUS_BURST
 
 require_optional("kaitaistruct", reason="Kaitai runtime not installed")
 
@@ -165,18 +165,14 @@ def test_only_the_version_a_gate_tests_is_read_again() -> None:
         assert _info_reads(sent) == again, (sku, lost)
 
 
-_READS = ["0600", "0703", "0702"]
-
-
-@pytest.mark.parametrize(("sku", "sent"), [("H60A6", _READS), ("H3751", [])])
+@pytest.mark.parametrize(("sku", "sent"), [("H60A6", ["0600", "0703", "0702"]), ("H3751", [])])
 def test_a_status_profile_without_device_info_reads_takes_them_from_tlv_07(sku: str, sent: list[str]) -> None:
     """A status row whose screen sends no device-info read (devices.yaml ``device_info_reads: none``, H3751's
     h3751 354) gets none from the library on any poll: its versions and device id come from the status
     reply's TLV 0x07 alone (Compose4BaseInfoSingleRead.w), as on the screen. A status row that makes them
-    (``firmware``: H60A6's h60ax 303) sends them once. Each reads a burst of TLV 0x01 and the H60A6's captured
-    TLV 0x07."""
-    burst = status_burst(bytes([0x01, 0x01, 0x01]) + _BASIC)
-    d, frames = _dev(sku, lambda fr: list(burst) if fr[0] == 0xAC else [])
+    (H60A6's h60ax 303, ``firmware``) sends them once. Both read the captured H60A6 burst, which carries TLV
+    0x07."""
+    d, frames = _dev(sku, lambda fr: list(_STATUS_BURST) if fr[0] == 0xAC else [])
     assert d.profile.device_info_reads == bool(sent)
     asyncio.run(d.update())
     asyncio.run(d.update())
