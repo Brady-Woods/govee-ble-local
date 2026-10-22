@@ -63,11 +63,6 @@ model, from which the shipped readers are generated).
     each, soft 1.04.05, hard 3.05.00. One unit's mode TLV is a short `15 01`. The row's own decode
     (`gradual_14`, where 0x15 isn't decoded) reads that burst in full; the H60A6 default decode gave an empty
     reply.
-- **H7004** (h7004 goodsType 0), a grow light, admitted by default (`app_traced`) as a power-only row at any
-  pact (`VM4Light.X0` runs no pact check at goodsType 0). Its screen reads aa 01 and the device info, never
-  aa 04 or aa 05 (`ControllerStrategyConfig.k1`; `VM4Light.supportBrightness` is false for H7004), so the
-  library's poll reads aa 01 alone. The red:blue ratio (`33 0d`, aa 0d), the timers and the `33 09` clock sync
-  are not modelled. Not hardware-verified.
 - **`DeviceProfile.light_nonzero`** (keyword-only, default False; the spec's `power_rule.light_nonzero`): a
   polled light whose screen reads the aa 01 reply as on for any non-zero byte, as the legacy
   `SwitchController.parseValidBytes` and the H70BX connect read (`AfterConnectSuccessReadDeviceInfo.w`) do. A
@@ -135,6 +130,10 @@ model, from which the shipped readers are generated).
   - The catalogue snapshot routes 31 SKUs no row lists (15 before). For review: H613A-F (catalogue 39, named
     by h613839's (65535,255) bind item), where it was H615E.
   - rgbiclight 351 / 352 now record the R617G / R618D catalogue route, as h7057 274 does H8057's.
+  - h7004 0 (H7004, a grow light) is traced as a power-only row the library can serve (its screen reads aa 01
+    and the device info, never aa 04 or aa 05: `ControllerStrategyConfig.k1`, `VM4Light.supportBrightness`
+    false), and held without `support` until the user decides whether a power-only grow light ships before
+    its red:blue control (`33 0d`, aa 0d).
 - **The aa 01 "on when != 0" rules.** `govee_profile` `power_rule` gains `light_nonzero` (the connect read)
   and `light_heartbeat_nonzero` (the aa 01 heartbeat; false = as `light_nonzero`), the light counterparts of
   `relay_on_mask` and `relay_heartbeat_on_mask`. `govee_state` `power_state.is_on` reads a light's reply as on

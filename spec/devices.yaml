@@ -13422,7 +13422,6 @@ families:
         "0":   # catalogue goodsType 0; VM4Light.X0 runs no pact check at 0
           models: [H7004]
           pacts: any
-          support: app_traced
           capabilities: [power]
           zones: []
           account_lock: false
@@ -13442,9 +13441,10 @@ families:
             clock sync (TimerConfig.f, version 2), aa 0a 00 / aa 0a 01 (timers), aa 01, aa 0d (red:blue). Power 33 01 01 /
             00 (VM4Light.switchTrigger -> ControllerSwitch.d), read back from the aa 01 reply (byte 0 == 1) and the aa 01
             heartbeat (VM4Light.I3 true, Ble4NewDetail's AbsBle 2000 ms fixed rate). No account lock
-            (AbsBleConnectDialog reads versions only). A power-only row: with no brightness capability the library's
-            poll reads aa 01 and no aa 04 or aa 05, as k1. Not modelled (never a blocker): the red:blue ratio (33 0d
-            <red> 01, aa 0d), the timers and the 33 09 clock sync. Not hardware-verified.
+            (AbsBleConnectDialog reads versions only). The library could serve it as a power-only row (with no
+            brightness capability its poll reads aa 01 and no aa 04 or aa 05, as k1). Held without support until the
+            user decides whether a power-only grow light ships before its red:blue control (33 0d <red> 01, aa 0d),
+            GAPS_SCOPE decision 10; the timers and the 33 09 clock sync are not modelled. Not hardware-verified.
           doc-ref:
             - split_rgblight/com/govee/rgblight/VM4Light.java:806-810
             - base-classes9/com/govee/base2home/pact/Pact.java:94-97
