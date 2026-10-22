@@ -11562,13 +11562,13 @@ families:
     client_profile:
       color_scheme: h6006   # byte-identical h6006 builder: no Config.w SKU key, Config.x[134] = yy = 2 -> Config.J[2] = bu; base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:232-257,1100-1104,5537-5541,13459-13467,17118-17121
       mode_color_parse: rgb_kelvin_0d_nocct   # goodsType 134 on the H70BX screen, the aa 05 reply (VM4H70BXNewDetail.T5 -> Info4Detail.E, the ctor's 0x0d strategy); split_h70b1/com/govee/h70bx/Info4Detail.java:125-133,252-285
-      power_read: aa01   # the read frame is aa 01 (AfterConnectSuccessReadDeviceInfo's ControllerSwitch), but its decode w is on when byte 0 != 0, not the schema's aa01 == 1 (ControllerSwitch.Companion.c, other screens); so 134 holds no support until the library has a nonzero aa 01 rule; split_h70b1/com/govee/h70bx/controller/AfterConnectSuccessReadDeviceInfo.java:111-117,176-185
+      power_read: aa01   # the read frame is aa 01 (AfterConnectSuccessReadDeviceInfo's ControllerSwitch), decoded by the screen's own w: on when byte 0 != 0 (wire power light_nonzero), not ControllerSwitch.Companion.c's == 1 (other screens); split_h70b1/com/govee/h70bx/controller/AfterConnectSuccessReadDeviceInfo.java:111-117,176-185
       power_live: [push_30]   # the ee 30 switch push (VM4H70BXNewDetail.Z3, DefParser switch parser); the keep-alive is aa 00 (type 2), whose reply changes no state (BleComm.G forwards only an aa 01 frame, only under type 1; ShareVM.A3 null)
       by_goods_type:
         "134":   # H70B1, H70BXDetailAc / VM4H70BXNewDetail (the screen 185 / 216 share; those goodsTypes are the h70b2 / h70bx families')
           models: [H70B1]
           pacts: ["1,1", "2,1"]
-          # no support: core frames traced, but the aa 01 power read-back is on for byte != 0 here and the library's aa01 is == 1 (library gap, h70b1.md)
+          support: app_traced
           capabilities: [power, brightness, rgb, color_temp]
           zones: []
           account_lock: false
@@ -11598,11 +11598,10 @@ families:
             colour only (v0). Kelvin: no KelvinConfig key -> version 0 = [2000, 9000] (Support.getColorTemRange [1000, 10000]
             feeds only the legacy origin SubModeColor / automation builders). No 0xB1 / 0xB2 on the control connect
             (account_lock false; Support.isForceCheckSecretCode false). Scenes untraced (ScenesConfigBean(2, 1, {0, 1, 5},
-            apply {1, 10}); the catalog key for H70B1 depends on the splice count, ScenesVersionConfig). Not
-            hardware-verified. Held without support: w reads aa 01 as on for any byte != 0 (DeviceInfoFromDevice.v -> Q5 ->
-            Info4Detail.e0 / d), but the library decodes a light's aa 01 as on only for byte == 1 (ControllerSwitch.Companion.c,
-            the other screens' rule), so a reply byte >= 2 reads off; it needs a nonzero aa 01 rule, or bench proof that H70B1
-            answers only 0 / 1.
+            apply {1, 10}); the catalog key for H70B1 depends on the splice count, ScenesVersionConfig). The aa 01 reply
+            is read as w reads it, on for any byte != 0 (DeviceInfoFromDevice.v -> Q5 -> Info4Detail.e0 / d: the wire
+            power light_nonzero), not as ControllerSwitch.Companion.c's byte == 1 (the other screens' rule). Not
+            hardware-verified.
           doc-ref:
             - base-classes2/com/govee/shared/checker/KmpGoodsType.java:56
             - base-classes11/com/govee/base2light/group/AbsGroupFactor.java:23
@@ -11636,6 +11635,7 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:63-86,199-215,247-259
       wire:
         forms: { f_01: light, f_09: datetime_epoch, f_ee_30: main_bit0_a }   # f_ee_30: makeSwitchNotifyParser (0x30) reads bit 0 of frame[3] (DefParser.O; ParseUtils.getBit2Boolean)
+        power: { light_nonzero: true }   # the aa 01 connect read's own decoder w: on when byte 0 != 0 (AfterConnectSuccessReadDeviceInfo.java:176-178)
     models: [H70B1]   # 134 is H70B1 only (KmpGoodsType, SkuItemClickH70B1; catalogue H70B1 134); H70B2 = 185 (h70b2), H70BC = 216 (h70bx) share the screen
     goods_types: [134]   # split_h70b1/com/govee/h70b1/origin/pact/Support.java:36
     delivery: feature_split   # pact_h70b1 (base-classes9/com/govee/base2home/pfd/Config.java:245)
@@ -11719,13 +11719,13 @@ families:
     client_profile:
       color_scheme: h6006   # byte-identical h6006 builder: no SKU key, Config.x[216] = 2 (xy) -> Config.J[2] = bu; base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:1095-1099,5537-5541,16952-16955
       mode_color_parse: rgb_kelvin_0d_nocct   # H70BC 216 on the H70BX screen, the aa 05 reply (VM4H70BXNewDetail.T5 -> Info4Detail.E); split_h70b1/com/govee/h70bx/Info4Detail.java:125-133,252-285
-      power_read: aa01   # the read frame is aa 01 (AfterConnectSuccessReadDeviceInfo's ControllerSwitch), but its decode w is on when byte 0 != 0, not the schema's aa01 == 1 (ControllerSwitch.Companion.c, base-classes11/com/govee/base2light/kt/general_controller/ControllerSwitch.java:29-32); the aa 01 reply domain is firmware-set and untraced, so 216 holds no support until the library has a nonzero aa 01 rule (library gap 3, h70bx.md); split_h70b1/com/govee/h70bx/controller/AfterConnectSuccessReadDeviceInfo.java:111-117,176-185
+      power_read: aa01   # the read frame is aa 01 (AfterConnectSuccessReadDeviceInfo's ControllerSwitch), decoded by the screen's own w: on when byte 0 != 0 (wire power light_nonzero), not ControllerSwitch.Companion.c's == 1 (base-classes11/com/govee/base2light/kt/general_controller/ControllerSwitch.java:29-32); split_h70b1/com/govee/h70bx/controller/AfterConnectSuccessReadDeviceInfo.java:111-117,176-185
       power_live: [push_30]   # the ee 30 switch push (VM4H70BXNewDetail.Z3, DefParser switch parser); the heartbeat is aa 00 (type 2), not heartbeat_aa01
       by_goods_type:
         "216":   # H70BC, H70BXDetailAc / VM4H70BXNewDetail (the screen 134 / 185 share; those goodsTypes are the h70b1 / h70b2 families')
           models: [H70BC]
           pacts: ["1,1", "2,1"]
-          # no support: core frames traced, but the aa 01 power read-back is on for byte != 0 here and the library's aa01 is == 1 (library gap 3, h70bx.md Disputed)
+          support: app_traced
           capabilities: [power, brightness, rgb, color_temp]
           zones: []
           account_lock: false
@@ -11741,9 +11741,8 @@ families:
             Pacts: Support.addSupportPact registers (1,1) and (2,1) for 216 (list e), which the screen's n4 checks; no core
             fact branches on the pact. Connect: d0 -> P5, AfterConnectSuccessReadDeviceInfo in order aa 06, aa 07 03, the
             33 09 time sync, the new-timer, wake and sleep reads, aa 04 (brightness), aa 01 (power, on for byte 0 != 0 by its own
-            decoder w, where the library's aa01 rule is byte == 1 and re-reads aa 01 every poll; the 33 01 <0/1> write and the
-            ee 30 bit-0 push don't bound the firmware's aa 01 reply, so the row holds no support, as h70b1 134 does, until the
-            library gets a nonzero aa 01 rule or the bench shows only 0x00 / 0x01), aa 07 07,
+            decoder w, as the library reads it with the wire power light_nonzero, not ControllerSwitch.Companion.c's byte
+            == 1), aa 07 07,
             then P5 adds aa 07 07 and the aa 05 01 mode read (T5 -> Info4Detail.E, the 0x0d strategy [r, g, b][kelvin s16be]:
             rgb_kelvin_0d_nocct). After it: the Wi-Fi reads (b6), the aa 39 direction read (U5, a setting read, left out)
             and, only at cloud splicing state 1, aa 43 sub-device versions (Y5). Power: switchTrigger writes ControllerSwitch
@@ -11786,6 +11785,7 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:63-86,199-215,247-259
       wire:
         forms: { f_01: light, f_09: datetime_epoch, f_ee_30: main_bit0_a }   # f_ee_30: makeSwitchNotifyParser (0x30) reads bit 0 of frame[3] (DefParser.O; ParseUtils.getBit2Boolean)
+        power: { light_nonzero: true }   # the aa 01 connect read's own decoder w: on when byte 0 != 0 (AfterConnectSuccessReadDeviceInfo.java:176-178)
     models: [H70BC]   # 216 is H70BC only (KmpGoodsType, SkuItemClickH70BC); H70B1 = 134 (h70b1), H70B2 = 185 (h70b2) share this screen
     goods_types: [216]   # 134 / 185 are listed under h70b1 / h70b2, so each goodsType names one family
     delivery: feature_split   # pact_h70b1 (base-classes9/com/govee/base2home/pfd/Config.java:245)

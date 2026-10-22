@@ -84,6 +84,12 @@ model, from which the shipped readers are generated).
   Music Feast screen (group control, CLAUDE.md rule 5) is the documented other path. The feast frames (`33 60`,
   `aa 60`), music, the battery and H1168's `33 60 01` feast-effect toggle are not modelled. Not
   hardware-verified.
+- **H70B1** (h70b1 goodsType 134) and **H70BC** (h70bx goodsType 216), splicing panels on the H70BX screen,
+  admitted by default (`app_traced`) at pacts (1,1) and (2,1): power, brightness, RGB and colour temperature on
+  the h6006 frames, one piece, aa 00 keep-alive and the ee 30 power push. Every core frame was traced; the rows
+  waited only for the screen's aa 01 decoder, on at any non-zero byte
+  (`AfterConnectSuccessReadDeviceInfo.w`), which they now read with the wire `power.light_nonzero`. Splicing,
+  the aa 39 direction read and scenes are not modelled. Not hardware-verified.
 
 ### Changed
 - **A polled profile reads aa 04 only with `Capability.BRIGHTNESS`**, as the app's connect read does
