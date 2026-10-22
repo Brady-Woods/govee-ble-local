@@ -87,7 +87,7 @@ model, from which the shipped readers are generated).
   not live-verified: no H7061 on the bench, and what the heads report after a CCT write is unread.
 - **The aa 34 device-detail power read (H6057's screen); no row is served by it yet.** H6057's screen never reads
   aa 01: its state read is the aa 34 device-detail reply (`Controllers.f` / `e`, `H6057DetailVM.v5`). New
-  `power_read: aa34_detail` (`DeviceProfile.power_read`, keyword-only, default `"aa01"`): the poll reads aa 04,
+  `power_read: aa34_detail` (`DeviceProfile.detail_power_read`, keyword-only, default False): the poll reads aa 04,
   then aa 34 in place of aa 01, then aa 05, the screen's connect order (`Compose4InfoBleIotH6057`), and takes the
   state of the header's main switch, the one `33 01` drives: on while the light is open (byte 0 bit 7) or white
   noise plays (byte 2 bits 4 and 7; `H6057DelegateHeader.E0`). New `build.device_detail_query` and

@@ -78,8 +78,8 @@ the row lacks fails the build: nothing defaults silently.
   requested ``cmd_30`` needs ``f_30: zone_power``. A pact branch may only drop ``color_group``, which
   becomes ``status_color_groups_pact`` (one pact type, from its lowest code that keeps it). A polled row
   reads its power from aa 01, or, with ``power_read: aa34_detail``, from the aa 34 device-detail read
-  (``DeviceProfile.power_read``; wire ``f_34: device_detail``; never on a bar row, and with no aa 01 to take a
-  ``heartbeat_aa01`` power from). A polled row
+  (``DeviceProfile.detail_power_read``; wire ``f_34: device_detail``; never on a bar row, and with no aa 01
+  to take a ``heartbeat_aa01`` power from). A polled row
   reads aa 04 on every poll and a gradual row ``aa a3``, so ``connect_reads`` lists ``brightness`` exactly
   on a polled row and ``gradual`` wherever the capability is; a ``gradual`` read without the capability (the
   screen's default ``Compose4InfoBleIot`` read, with no gradual control) is made on every poll too and its
@@ -391,7 +391,7 @@ _CIPHERS: Final = frozenset({"none", "aes_v1", "secret_key_pairing"})
 # scenes.upload.dialects -> DeviceProfile.scene_dialect; "none" = activate only.
 _DIALECTS: Final = {"legacy_scene": "A", "diy_graffiti": "B_h60a6", "tablelamp_h6052_type5_diy": "B_h6052",
                     "none": "A"}
-# power_read -> DeviceProfile.readback ("aa34_detail" also becomes DeviceProfile.power_read)
+# power_read -> DeviceProfile.readback ("aa34_detail" also sets DeviceProfile.detail_power_read)
 _READBACK: Final = {"aa01": "polled", "ac_status": "status", "aa34_detail": "polled"}
 # The forms of the TLVs the status stream reads (govee_state's TLV-typed tags; reassemble.status_profile): the
 # row's own, in DeviceProfile.status_decode. f_a5 goes in only where the 0xA5 TLV is read as colour groups.
@@ -927,6 +927,7 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
         "color_readback_per_batch": int(per_group) if color_readback == "mechanism_a_direct" else 3,
         "color_readback_live_ic": live_ic,
         "color_readback_ic_sections": ic == "sections",
+        "detail_power_read": power_read == "aa34_detail",
         "ic_num_read_only": ic == "fixed",
         "section_count_read": section_count,
         "brightness_range": raw_bright,
@@ -963,8 +964,6 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
     if sized is not None:
         out["color_readback_ic_range"] = (sized["min_ic"], sized["max_ic"])
         out["color_readback_ic_per_piece"] = sized["ic_per_piece"]
-    if power_read == "aa34_detail":
-        out["power_read"] = power_read
     if relay:
         relay_power = need(row.get("relay_power", cp.get("relay_power")), "relay_power")
         if relay_power not in RELAY_POWERS:
@@ -1036,7 +1035,7 @@ def _forms_used(out: Mapping[str, Any], caps: Collection[str], status_read: Sequ
     takes from TLV 0x30, and the aa 34 device detail a power_read aa34_detail row reads (the colour read-back,
     aa 41 and aa 36 forms are checked where they are derived)."""
     used = [("f_01", "relays" if relay else "light")]
-    if out.get("power_read") == "aa34_detail":
+    if out.get("detail_power_read"):
         used.append(("f_34", "device_detail"))
     if relay and out.get("relay_power") == "total_switch":
         used.append(("f_02", "total_switch"))

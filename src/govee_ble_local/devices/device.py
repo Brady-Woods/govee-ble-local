@@ -1819,7 +1819,7 @@ class Device:
         # Always read power: a device turned on externally (app, remote, wall
         # switch) must be noticed even when we last saw it off.
         # A light is on only for a byte of 1, as the app's control screens read it (parse_light_power).
-        detail = self.profile.power_read == "aa34_detail"
+        detail = self.profile.detail_power_read
         since = self._power_unsure_seq   # when the read that gives the on/off is issued (_finish_read)
         power_read = not detail and await self._read_command(
             "power", build.power_query(), parse.parse_light_power, apply_power, budget) == "applied"
