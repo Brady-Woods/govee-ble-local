@@ -35,7 +35,7 @@ _SEG = _LIGHT | {C.SEGMENTS}
 _BULB = dict(capabilities=_LIGHT, color_scheme="h6006", encryption=E.NONE, scene_versions=frozenset({1}),
              min_kelvin=2700, max_kelvin=6500, readback="polled", mode_color_parse="rgb_kelvin_tint")
 _PLUG = dict(capabilities=frozenset({C.POWER}), requires_secret=True, relay=True, readback="plug")
-# master e55498b, devices/profile.py PROFILES: each SKU's non-default fields. Frozen at 1.4.0's 18 SKUs: a row
+# master e55498b, devices/profile.py PROFILES: each SKU's non-default fields, for 1.4.0's 18 SKUs only: a row
 # admitted later is checked by the generator's rules (the table in the second test), not pinned here.
 _MASTER: dict[str, dict[str, Any]] = {
     "H60A6": dict(capabilities=_SEG, segments=13,
@@ -116,7 +116,7 @@ _FIRMWARE = ((None, None), ("3.03.18", "3.01.10"), ("1.03.00", "3.08.01"), ("1.0
 
 def test_the_generated_table_is_masters_hand_table_but_for_the_spec_fixes() -> None:
     assert set(_MASTER) <= set(supported_skus())
-    # D3's 1.x pact fallback is frozen at these 18; every SKU admitted later is served only at its rows'
+    # D3's 1.x pact fallback covers these 18 alone; every SKU admitted later is served only at its rows'
     # pacts, as the app's checkProtocol (Pact.i) serves it. The H7004 and H7017 rows are pacts: any, so
     # (99, 99) is one of them: their screens run no pact test (h7017 Model.t; VM4Light.X0 false at 0).
     assert set(_MASTER) == _resolve.PACT_FALLBACK_SKUS
