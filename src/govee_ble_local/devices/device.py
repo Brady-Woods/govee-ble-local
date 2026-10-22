@@ -1821,7 +1821,7 @@ class Device:
         # Always read power: a device turned on externally (app, remote, wall
         # switch) must be noticed even when we last saw it off.
         # A light is on only for a byte of 1, as the app's control screens read it, or for any non-zero byte
-        # where its screen reads it so (DeviceProfile.power_nonzero; parse_light_power).
+        # where its screen reads it so (DeviceProfile.light_nonzero; parse_light_power).
         prof = wire_profile(self.profile)
         since = self._power_unsure_seq   # when the read that gives the on/off is issued (_finish_read)
         power_read = await self._read_command(

@@ -258,7 +258,7 @@
             "has_brightness": { "type": "boolean", "description": "Per-segment 0xA5 colour read-back record: true = 4-byte [brightness,R,G,B], false = 3-byte [R,G,B] (an aa a2 colour group is always 3-byte)." },
             "color_scheme": { "type": "string", "description": "Colour-write byte-layout family selecting the op15/0x0d variant (e.g. 'h60a6', 'h6006')." },
             "power_read": { "type": "string", "enum": ["aa01", "ac_status"], "description": "Power source at connect (govee_state power_state.is_on): 'aa01' = the aa 01 read, on when the byte == 1 (any non-zero byte under the wire power light_nonzero); 'ac_status' = TLV 0x01 of the 0xAC/0x03 status burst (no aa 01 read), on when the byte != 0." },
-            "power_live": { "type": "array", "uniqueItems": true, "items": { "type": "string", "enum": ["heartbeat_aa01", "heartbeat_aa36", "heartbeat_aa33", "push_30"] }, "description": "Live power after connect: 'heartbeat_aa01' = aa 01 heartbeat, on when frame byte 2 == 1 (!= 0 under the wire power light_nonzero); 'heartbeat_aa36' = aa 36 heartbeat, per bar byte 2 / 3 == 1; 'heartbeat_aa33' = aa 33 switch heartbeat, on when byte 2 != 0; 'push_30' = the ee 30 notify (layout: wire forms.f_ee_30)." },
+            "power_live": { "type": "array", "uniqueItems": true, "items": { "type": "string", "enum": ["heartbeat_aa01", "heartbeat_aa36", "heartbeat_aa33", "push_30"] }, "description": "Live power after connect: 'heartbeat_aa01' = aa 01 heartbeat, on when frame byte 2 == 1 (!= 0 under the wire power light_heartbeat_nonzero or light_nonzero); 'heartbeat_aa36' = aa 36 heartbeat, per bar byte 2 / 3 == 1; 'heartbeat_aa33' = aa 33 switch heartbeat, on when byte 2 != 0; 'push_30' = the ee 30 notify (layout: wire forms.f_ee_30)." },
             "mode_color_parse": { "$ref": "#/$defs/modeColorParse", "description": "The family's default colour-report strategy; by_goods_type.<gt>, else by_model.<SKU>, overrides it, then that entry's by_pact and every matching by_firmware (clientBranch, clientFirmware); 'none' = no colour sub-mode decoded." },
             "mode_color_parse_status": { "$ref": "#/$defs/modeColorParse", "description": "Strategy for the 0x05 TLV of the 0xAC status burst where it differs from the aa 05 reply (absent = mode_color_parse)." },
             "by_model": { "type": "object", "propertyNames": { "pattern": "^[A-Za-z0-9]+$" }, "additionalProperties": { "$ref": "#/$defs/clientModel" }, "description": "Per-SKU overrides (keys = a model of the family): the colour report and the Kelvin and brightness ranges; a by_goods_type entry for the device's gt wins over it." },
@@ -927,7 +927,11 @@
         },
         "light_nonzero": {
           "type": "boolean",
-          "description": "A light's aa 01 reply is on at any non-zero byte, as the screen's decoder reads it (the legacy SwitchController, the H70BX connect read); absent or false = on at == 1 (ControllerSwitch.Companion.c)."
+          "description": "A light's aa 01 connect read is on at any non-zero byte, as the screen's decoder reads it (the legacy SwitchController, the H70BX connect read); absent or false = on at == 1 (ControllerSwitch.Companion.c)."
+        },
+        "light_heartbeat_nonzero": {
+          "type": "boolean",
+          "description": "A light's aa 01 heartbeat is on at any non-zero byte where its connect read is on at == 1 (H1168: HeartControllerWithBattery, Compose4ReadAllInfo); absent or false = as light_nonzero. The library's poll follows the heartbeat rule, as with relay_heartbeat_on_mask."
         }
       }
     },

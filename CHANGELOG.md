@@ -68,20 +68,27 @@ model, from which the shipped readers are generated).
   aa 04 or aa 05 (`ControllerStrategyConfig.k1`; `VM4Light.supportBrightness` is false for H7004), so the
   library's poll reads aa 01 alone. The red:blue ratio (`33 0d`, aa 0d), the timers and the `33 09` clock sync
   are not modelled. Not hardware-verified.
-- **`DeviceProfile.power_nonzero`** (keyword-only, default False): a polled light whose screen reads the aa 01
-  reply as on for any non-zero byte, as the legacy `SwitchController.parseValidBytes` and the H70BX connect read
-  (`AfterConnectSuccessReadDeviceInfo.w`) do. A devices.yaml row opts in with its wire `power.light_nonzero`.
-  Every other light still reads on only for a byte of 1 (`ControllerSwitch.Companion.c`), so no admitted SKU's
-  decoded state changes. `parse.parse_light_power` takes the profile's `wire_profile` for the rule (default:
-  on at 1).
+- **`DeviceProfile.light_nonzero`** (keyword-only, default False; the spec's `power_rule.light_nonzero`): a
+  polled light whose screen reads the aa 01 reply as on for any non-zero byte, as the legacy
+  `SwitchController.parseValidBytes` and the H70BX connect read (`AfterConnectSuccessReadDeviceInfo.w`) do. A
+  devices.yaml row opts in with its wire `power.light_nonzero` (the connect read) or
+  `power.light_heartbeat_nonzero` (the aa 01 heartbeat, where the connect read takes 1: H1168's
+  `HeartControllerWithBattery`). As with a plug's `relay_on_mask`, the field is the rule the library's poll
+  follows, the heartbeat's where the row has one. Every other light still reads on only for a byte of 1
+  (`ControllerSwitch.Companion.c`), so no admitted SKU's decoded state changes. `parse.parse_light_power`
+  takes the profile's `wire_profile` for the rule (default: on at 1).
 - **H1162 / H1163 / H1167 / H1168** (h1162 goodsTypes 87 / 137 / 182 / 186), the Music Sync boxes, admitted by
   default (`app_traced`) as power-only rows at pact (1,1), following the user's decision to match the
   standalone screen. The switch turns the box's music sync on or off: `33 01 <on>`, polled with aa 01 and kept
   alive with an aa 01 heartbeat (fixed 2 s). H1162 / H1163 / H1167 match `AdjustActivity` (`Model.t`, cloud
   gid <= 0), whose aa 01 reply is on at any non-zero byte (`SwitchController.parseValidBytes`, the rows' wire
-  `power.light_nonzero`). H1168 has no standalone screen: its row is the feast screen's header switch
-  (`VM4MusicFeast.G4` -> `DeviceToggleController`), whose aa 01 read is on at 1 (`Compose4ReadAllInfo`). The
-  Music Feast screen (group control, CLAUDE.md rule 5) is the documented other path. The feast frames (`33 60`,
+  `power.light_nonzero`). H1168 has no standalone screen: its row is the header switch of
+  `AcMusicFeastDetail4H1168` (`VM4MusicFeast.G4` -> `DeviceToggleController`; the screen class is set in
+  base.apk's `assets/base2home_config.properties`). Its aa 01 connect read is on at 1 (`Compose4ReadAllInfo`),
+  but the 2 s aa 01 heartbeat that replaces it is on at any non-zero byte (`VM4MusicFeast.onEventHeart`,
+  `HeartControllerWithBattery.parseValidBytes`), and the library's poll follows the heartbeat (the row's wire
+  `power.light_heartbeat_nonzero`). The Music Feast screen (group control, CLAUDE.md rule 5) is the
+  documented other path for H1162 / H1163 / H1167. The feast frames (`33 60`,
   `aa 60`), music, the battery and H1168's `33 60 01` feast-effect toggle are not modelled. Not
   hardware-verified.
 - **H70B1** (h70b1 goodsType 134) and **H70BC** (h70bx goodsType 216), splicing panels on the H70BX screen,
@@ -128,12 +135,16 @@ model, from which the shipped readers are generated).
   - The catalogue snapshot routes 31 SKUs no row lists (15 before). For review: H613A-F (catalogue 39, named
     by h613839's (65535,255) bind item), where it was H615E.
   - rgbiclight 351 / 352 now record the R617G / R618D catalogue route, as h7057 274 does H8057's.
-- **The aa 01 "on when != 0" rule.** `govee_profile` `power_rule` gains `light_nonzero`, and `govee_state`
-  `power_state.is_on` reads a light's reply as on for any non-zero byte under it (still `== 1` without it; the
-  status TLV and the plug masks are unchanged). devices.schema.json's `wirePower` takes it as a row's wire
-  `power.light_nonzero`, served on a polled light row only. `govee_reference.make_profile` takes it, and the
-  reference self-test checks the three rules on an aa 01 reply. `wire_profile` now gives a non-plug profile's
-  power rule masks 0 (a light's), where it passed the unused relay default; no decode changes.
+- **The aa 01 "on when != 0" rules.** `govee_profile` `power_rule` gains `light_nonzero` (the connect read)
+  and `light_heartbeat_nonzero` (the aa 01 heartbeat; false = as `light_nonzero`), the light counterparts of
+  `relay_on_mask` and `relay_heartbeat_on_mask`. `govee_state` `power_state.is_on` reads a light's reply as on
+  for any non-zero byte under `light_nonzero`, and `is_on_heartbeat` also under `light_heartbeat_nonzero`
+  (still `== 1` without them; the status TLV and the plug masks are unchanged). devices.schema.json's
+  `wirePower` takes both as a row's wire `power`; the resolver serves them on a polled light row only, and
+  `light_heartbeat_nonzero` with the aa 01 heartbeat only. `govee_reference.make_profile` takes both, and the
+  reference self-test checks the rules on an aa 01 reply and heartbeat. `wire_profile` now gives a non-plug
+  profile's power rule masks 0 (a light's), where it passed the unused relay default; no decode changes.
+  USING_THE_KSY.md and the `relay_on_mask` doc give the four-param rule.
 
 ## [1.6.1] — 2026-10-21
 

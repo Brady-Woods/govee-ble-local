@@ -132,8 +132,9 @@ def parse_light_power(frame: bytes, prof: Any = _REPLY) -> bool | None:
     (``devices.profile.wire_profile``): on only when the byte is 1 (ControllerSwitch.Companion.c,
     ControllerSwitch.java:32, and the aa 01 heartbeat ShareVM.N3), the default, or at any non-zero byte
     under ``light_nonzero`` (the legacy SwitchController.parseValidBytes, the H70BX connect read
-    AfterConnectSuccessReadDeviceInfo.w); None if this is not an aa 01 reply. Not for plugs, whose byte is a
-    relay mask (:func:`parse_power`)."""
+    AfterConnectSuccessReadDeviceInfo.w, and where the row's heartbeat rule says so, H1168's
+    HeartControllerWithBattery: ``DeviceProfile.light_nonzero`` is the rule the poll follows); None if this
+    is not an aa 01 reply. Not for plugs, whose byte is a relay mask (:func:`parse_power`)."""
     b = _reply_state(frame, _Command.power, prof)
     return None if b is None else bool(b.is_on)
 

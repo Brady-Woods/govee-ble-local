@@ -129,9 +129,11 @@ the row lacks fails the build: nothing defaults silently.
   Any other firmware fact or gate raises.
 - Light power read-back: a polled light's aa 01 reply is on at a byte of 1
   (``ControllerSwitch.Companion.c``), or at any non-zero byte where the row's wire ``power`` says
-  ``light_nonzero`` (the screen's own decoder: the legacy ``SwitchController``, the H70BX connect read),
-  which becomes ``DeviceProfile.power_nonzero``; on a status or plug row it raises (neither reads a light's
-  aa 01 reply).
+  ``light_nonzero`` (the connect read's own decoder: the legacy ``SwitchController``, the H70BX connect
+  read) or ``light_heartbeat_nonzero`` (the aa 01 heartbeat's, where the connect read takes == 1: H1168's
+  ``HeartControllerWithBattery``). Either becomes ``DeviceProfile.light_nonzero``: as for a plug, the
+  heartbeat rule beats the connect read's. On a status or plug row either raises (neither reads a light's
+  aa 01 reply), and ``light_heartbeat_nonzero`` raises without the aa 01 heartbeat (``heartbeat: power``).
 - Plug power read-back: the wire's ``relay_heartbeat_on_mask`` beats the row's ``relay_on_mask``, because
   every aa 01 poll the library makes follows the heartbeat rule (``power_state.is_on_heartbeat``). So for
   goodsTypes 50 and 307 the row's 0xFF (the connect read's) is never consumed, and the library uses their
@@ -252,6 +254,7 @@ class WirePower(TypedDict, total=False):
     """``wirePower``."""
     relay_heartbeat_on_mask: int
     light_nonzero: bool
+    light_heartbeat_nonzero: bool
 
 
 class WireMode(TypedDict, total=False):
@@ -905,10 +908,14 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
         fail(f"heartbeat {heartbeat} where power_live {list(lives)}{' and the relay' if relay else ''} take "
              f"power from the reply to {' / '.join(sorted(sent))}")
     _check_mode(w, readback, fail)
-    nonzero = power.get("light_nonzero", False)
+    # A light's aa 01 rule, as a plug's: the heartbeat's beats the connect read's (module doc).
+    nonzero = [name for name in ("light_heartbeat_nonzero", "light_nonzero") if power.get(name, False)]
     if nonzero and readback != "polled":
-        fail("wire power light_nonzero is served on a polled light row only (the aa 01 reply the library "
+        fail(f"wire power {nonzero[0]} is served on a polled light row only (the aa 01 reply the library "
              "reads on every poll)")
+    if "light_heartbeat_nonzero" in nonzero and heartbeat != "power":
+        fail(f"wire power light_heartbeat_nonzero with heartbeat {heartbeat} (it is the aa 01 heartbeat's "
+             "rule)")
 
     zones = tuple((z["id"], z["power_index"], tuple(z["segments"])) for z in need(row.get("zones"), "zones"))
     lock = bool(need(row.get("account_lock"), "account_lock"))
@@ -946,7 +953,7 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
         "scene_power_on": bool(model.get("scene_power_on", False)),
         "heartbeat": heartbeat,    # a command name; devices/profile.py takes its code
         "heartbeat_timing": timing,
-        "power_nonzero": bool(nonzero),
+        "light_nonzero": bool(nonzero),
     }
     if out["scene_power_on"] and "scenes" not in row_caps:
         fail("by_model scene_power_on on a row without the scenes capability")

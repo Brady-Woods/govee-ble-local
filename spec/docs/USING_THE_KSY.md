@@ -132,7 +132,9 @@ govee_profile(forms, counts, group, power, mode, mode_status)
           the level count of a 33 05 15 03 write
   group   color_group_form(rule, num_per_group, has_brightness, num_pieces): how an aa a5 / aa a2 reply
           or a TLV 0xA5 value is counted, and 4-byte [brightness, R, G, B] vs 3-byte [R, G, B] records
-  power   power_rule(relay_on_mask, relay_heartbeat_on_mask): the aa 01 rules (0 = a light, state == 1)
+  power   power_rule(relay_on_mask, relay_heartbeat_on_mask, light_nonzero, light_heartbeat_nonzero): the
+          aa 01 rules at the connect read and in the heartbeat (masks 0 = a light: state == 1, or state != 0
+          under light_nonzero, and in the heartbeat also under light_heartbeat_nonzero)
   mode, mode_status   mode_decode(c02, c0b, c0d, c14, c15, music, empty_fails): how the mode report
           (aa 05 reply / TLV 0x05) decodes each colour sub-mode and the music sub-mode
 ```
@@ -201,7 +203,7 @@ Common paths (`f.body` is chosen by `route`):
 | `33 04 <level>` tx | any | `body.params` level_write | `level` |
 | `33 05 15 01 …` tx | `f_15_01`, `num_segments` | `body.params` mode_write → `params` color_15_write → `data` op15_color | `color`, `kelvin`, `tint`, `mask.bits`, `is_cct` |
 | `33 xx <status>` rx | any | `body` write_ack | `command`, `result`, `is_ok` |
-| `AA 01 <state>` rx | `power` masks | `body` read_reply → `state` govee_state → `body` power_state | `state`, `is_on`, `is_on_heartbeat`, `relay0_is_on` … |
+| `AA 01 <state>` rx | `power` rule | `body` read_reply → `state` govee_state → `body` power_state | `state`, `is_on`, `is_on_heartbeat`, `relay0_is_on` … |
 | `AA 05 …` rx | `mode` | `body.state.body` mode_report | `sub_mode`, `params`, `is_color_sub_mode` |
 | `AA 07 10 …` rx | any | `body.state.body` device_info_record | `selector`, `info` (basic_info: `uid`, `sw_version`, …) |
 | `AA 40 …` rx | any | `body.state.body` ic_count | `ic_count`, `segment`, `ic_count_checked` |

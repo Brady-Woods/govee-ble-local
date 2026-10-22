@@ -249,11 +249,13 @@ _LEAVES: Final[dict[str, dict[str, str | None]]] = {
     "DeviceCounts": {"num_segments": None, "num_levels": None},
     "ColorGroupForm": {"rule": "GroupCountRule", "num_per_group": None, "has_brightness": None,
                        "num_pieces": None},
-    "PowerRule": {"relay_on_mask": None, "relay_heartbeat_on_mask": None, "light_nonzero": None},
+    "PowerRule": {"relay_on_mask": None, "relay_heartbeat_on_mask": None, "light_nonzero": None,
+                  "light_heartbeat_nonzero": None},
     "ModeDecode": {"c02": "ColorDecode", "c0b": "ColorDecode", "c0d": "ColorDecode", "c14": "ColorDecode",
                    "c15": "ColorDecode", "music": "MusicDecode", "empty_fails": None},
 }
-_FLAGS: Final = ("has_brightness", "empty_fails", "light_nonzero")   # the bool params: false when left out
+_FLAGS: Final = ("has_brightness", "empty_fails", "light_nonzero",
+                 "light_heartbeat_nonzero")   # the bool params: false when left out
 
 
 def make_profile(**facts: Any) -> Any:
@@ -261,7 +263,8 @@ def make_profile(**facts: Any) -> Any:
     so make_profile() is the all-zero analyzer profile (GENERIC): overloaded bodies stay raw bytes.
 
     Keys: the command_forms selectors f_01 .. f_ee_40; num_segments, num_levels; rule, num_per_group,
-    has_brightness, num_pieces; relay_on_mask, relay_heartbeat_on_mask, light_nonzero; and the mode decode
+    has_brightness, num_pieces; relay_on_mask, relay_heartbeat_on_mask, light_nonzero,
+    light_heartbeat_nonzero; and the mode decode
     c02, c0b, c0d, c14, c15, music, empty_fails (one mode_decode object serves both mode and mode_status). An
     enum-typed fact may be given by its member name, e.g. make_profile(f_15_01="kelvin_tint").
     Generated parents check a profile param by identity: build one object per set of device facts and
@@ -563,13 +566,16 @@ def _selftest(*, strict: bool = False) -> int:
     check("read request AA 04 (tx) -> read_request brightness",
           parse_frame(fr, "tx").body.command == command.brightness)
 
-    def light_on(state: int, **power: Any) -> bool:
-        return bool(parse_frame(append_bcc(bytes([0xAA, 0x01, state])), "rx",
-                                make_profile(**power)).body.state.body.is_on)
+    def light_on(state: int, beat: bool = False, **power: Any) -> bool:
+        reply = parse_frame(append_bcc(bytes([0xAA, 0x01, state])), "rx", make_profile(**power))
+        return bool(reply.body.state.body.is_on_heartbeat if beat else reply.body.state.body.is_on)
 
-    check("AA 01 reply: a light is on at 1 only, at any non-zero byte under light_nonzero; a plug by mask",
+    check("AA 01 reply: a light is on at 1 only, at any non-zero byte under light_nonzero (and in the "
+          "heartbeat under light_heartbeat_nonzero too); a plug by mask",
           [light_on(s) for s in (0, 1, 2)] == [False, True, False]
           and [light_on(s, light_nonzero=True) for s in (0, 1, 2)] == [False, True, True]
+          and [light_on(s, beat, light_heartbeat_nonzero=True) for beat in (False, True)
+               for s in (0, 1, 2)] == [False, True, False, False, True, True]
           and [light_on(s, relay_on_mask=0x01) for s in (0x10, 0x11)] == [False, True])
     try:
         parse_frame(fr[:19] + bytes([fr[19] ^ 1]))
