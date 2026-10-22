@@ -435,6 +435,17 @@ class DeviceProfile:
     :attr:`capabilities` POWER and BRIGHTNESS only and no :attr:`zones` (GoveeBleInvalidValue otherwise): the
     card sends nothing else, and a scene upload or a bar's read-modify-write would hold a link past its
     session."""
+    special_info_read: bool = field(default=False, kw_only=True)
+    """``readback="polled"`` only, and not with :attr:`section_count_read`: the device reports its own
+    segment count in the 0xAC special-info read (``ac a1``, its reply's segment IC record
+    ``[segments][IC per segment ...]``: the spec's ``segment_ic_info``; a devices.yaml row whose
+    ``connect_reads`` lists ``special_info``), which the goodsType 180 screen (H706A-C, H806A, H806C) makes
+    on every connect and stores (``VM4Light.x5`` -> ``Info4Detail.z0`` -> ``SegmentIcDataConfig``). That
+    count is the colour page's piece count, so the width of every mask (``ColorModeV2.d0``), and the pieces
+    the ``aa a5`` walk reads (``Support.b(180)``, ``VM4Light.F5``). As for :attr:`section_count_read`,
+    :meth:`~.device.Device.update` reads it on each poll, before ``aa 05`` and the walk as the app does, a
+    mask write reads it first while it is unknown and sends nothing without it, and :attr:`segments` is only
+    the profile's upper bound. Source-modelled, not live-verified."""
 
     def __post_init__(self) -> None:
         """Validate each field: GoveeBleInvalidValue (a ValueError) on a value no Device can use.

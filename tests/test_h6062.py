@@ -1,6 +1,7 @@
 """H6062 (Glide wall light, striplight split, goodsType 41): the h60a6 0x15 layout with the tint,
 the `aa 41` section-count read, masks that follow the device-reported segment count, the
-`aa a5` read-back walk of ceil(sectionNum / 4) groups, and the cloud-library scenes.
+`aa a5` read-back walk of ceil(sectionNum / 4) groups, and the cloud-library scenes; and the same
+device-reported count from the `ac a1` special-info read, goodsType 180's source.
 
 All expectations are derived from the decompiled Govee Home 7.7.02 app (see the H6062 entry in
 spec/devices.yaml for citations); none are hardware-verified. Golden frames are written out as hex
@@ -8,6 +9,7 @@ spec/devices.yaml for citations); none are hardware-verified. Golden frames are 
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import importlib
 import json
 from pathlib import Path
@@ -19,7 +21,7 @@ from fake_ble import ble_device, unacked_via
 
 from govee_ble_local import Capability, Encryption
 from govee_ble_local.devices.device import Device, make_device
-from govee_ble_local.devices.profile import profile_for
+from govee_ble_local.devices.profile import DeviceProfile, profile_for
 from govee_ble_local.exceptions import GoveeBleError, GoveeBleInvalidValue
 from govee_ble_local.scenes import load_scenes
 from govee_ble_local.wire import build as b
@@ -57,8 +59,10 @@ def _group(index: int, *records: tuple[int, int, int, int]) -> bytes:
 class _Dev:
     """A Device on a mocked connection that logs every query and write, in order."""
 
-    def __init__(self, replies: dict[int, list[bytes]] | None = None) -> None:
-        d = make_device(ble_device("AA:BB:CC:DD:EE:62", "H6062"), "H6062")
+    def __init__(self, replies: dict[int, list[bytes]] | None = None,
+                 profile: DeviceProfile | None = None) -> None:
+        d = (make_device(ble_device("AA:BB:CC:DD:EE:62", "H6062"), "H6062") if profile is None
+             else Device(profile, ble_device("AA:BB:CC:DD:EE:80", profile.skus[0]), sku=profile.skus[0]))
         assert d is not None
         self.dev: Device = d
         self.log: list[tuple[str, bytes]] = []
@@ -297,6 +301,29 @@ def test_update_without_an_answer_skips_the_walk_but_keeps_the_poll() -> None:
     st = asyncio.run(t.dev.update())
     assert [f for f in t.queried if f[1] == 0xA5] == []        # no guessed group count
     assert st.is_on is True and st.brightness == 50 and st.segments == []
+
+
+# ── the same count from the ac a1 special-info read (goodsType 180's: VM4Light.x5 -> Info4Detail.z0) ──
+_SPECIAL = dataclasses.replace(profile_for("H6062"), skus=("HX180",), section_count_read=False,
+                               special_info_read=True)
+_SIX_SEGMENTS = [bytes.fromhex("ac00010007a10b060a0a0a0a0a0a000000000006")]   # [6][IC 10 x 6], a1 0b head
+
+
+def test_the_special_info_read_sizes_the_masks_and_the_walk() -> None:
+    r = _poll_replies(6)
+    del r[0x41]
+    t = _Dev({**r, 0xA1: _SIX_SEGMENTS}, _SPECIAL)
+    st = asyncio.run(t.dev.update())
+    assert [f[:2].hex() for f in t.queried[:4]] == ["aa01", "aa04", "aca1", "aa05"]   # before aa 05, as x5
+    assert t.queried[2] == b.special_info_query() == _hex("aca1")
+    assert [f[2] for f in t.queried if f[1] == 0xA5] == [1, 2]
+    assert t.dev.segment_count == 6 and [s.index for s in st.segments] == list(range(6))
+    asyncio.run(t.dev.set_rgb((1, 2, 3)))
+    assert t.sent[-1] == _c("010203", "3f00")                  # six mask bits
+    silent = _Dev({0xA1: []}, _SPECIAL)
+    with pytest.raises(GoveeBleError, match="ac a1"):
+        asyncio.run(silent.dev.set_rgb((1, 2, 3)))
+    assert silent.sent == []
 
 
 def test_scene_activation_frame_needs_no_segment_count() -> None:

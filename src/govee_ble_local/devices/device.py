@@ -1794,7 +1794,7 @@ class Device:
         if self.profile.color_readback == "mechanism_b":
             await self._read_mechanism_b(budget)
         elif self.profile.color_readback == "mechanism_a_direct":
-            if self.profile.section_count_read and self._segment_count is None:
+            if self._reads_segment_count and self._segment_count is None:
                 _LOGGER.debug("%s (%s): segment count unknown; skipping segment colour read-back",
                               self.address, self._sku)
             else:
@@ -2039,9 +2039,10 @@ class Device:
             if await self._read_bar_switch(budget) == "applied":
                 applied = power_read = True   # the bars set is_on (device on iff either bar is on)
                 since = bars_since
-        if self.profile.section_count_read:
-            # The app's connect order: aa 01, aa 04, aa 41, aa 05 (ControllerStrategyConfig.O).
-            await self._read_section_count(budget)
+        if self._reads_segment_count:
+            # The app's connect order: aa 01, aa 04, aa 41, aa 05 (ControllerStrategyConfig.O); on goodsType
+            # 180 the ac a1 special-info read, among the extras before aa 05 (VM4Light.i5 -> x5).
+            await self._read_segment_count(budget)
         if self.capabilities & _MODE_REPORT_CAPS and await self._read_mode(budget) == "applied":
             applied = True
         self._finish_read(applied, power_read, since)
@@ -2066,19 +2067,54 @@ class Device:
         self._segment_count = sc.section_num
         return True
 
+    async def _read_special_info(self, budget: ConnectBudget | None = None) -> bool:
+        """Read the segment count the device reports in its 0xAC special-info reply (``ac a1``, sub
+        ``segment_ic``: ``reassemble.parse_segment_ic``) and adopt it as :attr:`segment_count`, as the
+        goodsType 180 screen does on every connect (``VM4Light.x5`` -> ``Info4Detail.z0``). Returns False
+        (state left as it was) when the burst is incomplete or the count is one the masks cannot carry.
+        The app keeps one count for all its devices (``SegmentIcDataConfig``, one persisted store); the
+        library keeps each device's own."""
+        async with self._read_gate:   # never between a scene's upload and its activation
+            await self._send_pending_unlock(budget)
+            frames = await self._conn.query(
+                build.special_info_query(), timeout=STATUS_READ_TIMEOUT,
+                burst_command=reassemble.SPECIAL_INFO_COMMAND, burst_sub=reassemble.SEGMENT_IC_SUB,
+                **_budget_kw(budget))
+        count = reassemble.parse_segment_ic([f for f in frames if f and f[0] == build.PRO_MULTI_AC])
+        if count is None or not 1 <= count <= build.MAX_MASK_SEGMENTS:
+            _LOGGER.debug("%s (%s): ac a1 special-info read gave no usable segment count (%s)",
+                          self.address, self._sku, count)
+            return False
+        self._segment_count = count
+        return True
+
+    @property
+    def _reads_segment_count(self) -> bool:
+        """Whether the device reports its own segment count (the aa 41 section count or the ac a1
+        special-info read), which then sizes every mask and the colour walk."""
+        return self.profile.section_count_read or self.profile.special_info_read
+
+    async def _read_segment_count(self, budget: ConnectBudget | None = None) -> bool:
+        """The profile's segment-count read: :meth:`_read_section_count` or :meth:`_read_special_info`."""
+        if self.profile.special_info_read:
+            return await self._read_special_info(budget)
+        return await self._read_section_count(budget)
+
     async def _ensure_segment_count(self) -> None:
         """Make sure the device's own segment count is known before a write that carries a segment
         mask. The app always reads it on connect and cannot control the device without it
-        (``AbsComposeControllerWithOpResult.onOvertime`` fails the connect read), so a profile with
-        ``section_count_read`` does the same lazily here and sends nothing if the device does not
-        answer, rather than guessing a mask. A no-op on every other profile and once the count is
-        known. Every caller holds the heartbeat across this read and the write it sizes
-        (``GoveeConnection.hold_heartbeat``), as :meth:`update` holds its reads: the app reads the count
-        in its connect read, during which it sends none (``ShareVM.R`` -> ``updateSkipHeart``)."""
-        if (self.profile.section_count_read and self._segment_count is None
-                and not await self._read_section_count()):
+        (``AbsComposeControllerWithOpResult.onOvertime`` fails the connect read; the ac a1 read's
+        ``isTempTryComm`` is false), so a profile with ``section_count_read`` or ``special_info_read``
+        does the same lazily here and sends nothing if the device does not answer, rather than guessing
+        a mask. A no-op on every other profile and once the count is known. Every caller holds the
+        heartbeat across this read and the write it sizes (``GoveeConnection.hold_heartbeat``), as
+        :meth:`update` holds its reads: the app reads the count in its connect read, during which it sends
+        none (``ShareVM.R`` -> ``updateSkipHeart``)."""
+        if (self._reads_segment_count and self._segment_count is None
+                and not await self._read_segment_count()):
+            read = "ac a1" if self.profile.special_info_read else "aa 41"
             raise GoveeBleError(
-                f"{self._sku}: the device did not report its segment count (aa 41); "
+                f"{self._sku}: the device did not report its segment count ({read}); "
                 "not sending a colour frame with a guessed segment mask")
 
     async def _read_fresh(

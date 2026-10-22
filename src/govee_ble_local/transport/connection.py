@@ -1213,6 +1213,8 @@ class GoveeConnection:
         terminal: int = QUERY_TERMINAL,
         idle_gap: float | None = BURST_IDLE_GAP,
         connect_budget: ConnectBudget | None = None,
+        burst_command: int = BurstAssembler.command,
+        burst_sub: int = BurstAssembler.sub,
     ) -> list[bytes]:
         """Send a query trigger and collect the resulting NOTIFY burst.
 
@@ -1230,7 +1232,9 @@ class GoveeConnection:
         read ends when the burst is complete (a one-packet reply, or the last packet
         once every packet before it is in) or failed (a first chunk whose lastLen
         doesn't fit), and only a chunk the app takes arms ``idle_gap``, so a stray
-        early 0xFF or a late chunk of an earlier burst doesn't end it.
+        early 0xFF or a late chunk of an earlier burst doesn't end it. ``burst_command``
+        and ``burst_sub`` are the reader's, whose first chunk the burst starts with: the
+        status read's by default, the special-info read's for ``ac a1``.
 
         ``connect_budget`` holds this operation's connect, not its reads, to its limits
         (:class:`ConnectBudget`)."""
@@ -1242,7 +1246,8 @@ class GoveeConnection:
             loop = asyncio.get_running_loop()
             deadline = loop.time() + timeout
             frames: list[bytes] = []
-            burst = BurstAssembler() if opcode == PRO_MULTI_AC else None
+            burst = (BurstAssembler(command=burst_command, sub=burst_sub) if opcode == PRO_MULTI_AC
+                     else None)
             seen_opcode = False
             while True:
                 remaining = deadline - loop.time()

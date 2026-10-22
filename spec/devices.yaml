@@ -13669,6 +13669,9 @@ families:
           zones: []
           account_lock: false
           scene_dialect: untraced
+          connect_reads: [brightness, gradual, ic_num, special_info, color_group]
+          connect_writes: []
+          ic_pieces: fixed
           doc: >-
             H706A / H706B / H706C (AddDeviceM names them at 180; H706ASceneConfig.match) and H806A / H806C (the catalogue's
             goodsType 180; Support.g / Support.h, with 6 and 12 segments in Support.d beside H706A-C, and in Support.t; the
@@ -13676,16 +13679,22 @@ families:
             VM4Light) with ColorModeV2: aa 01 read, aa 00 keep-alive (I3 false), ee 30 push, aa 05 kelvin_15, direct aa a5
             groups of 4, one ControllerSwitch (no zones), Kelvin version 1 = [2200, 6500]. Connect extras (VM4Light.i5, in
             order, all before aa 05): aa 40 (ControllerIcNum), aa 41 power-off memory, aa 45 montage brightness (soft >=
-            1.00.18), the aa a1 0b segment read (y5 -> x5), aa 48 part scenes (PartScenesCheckUtil.e: pact (1,>=2) or
+            1.00.18), the special-info read (y5 -> x5), aa 48 part scenes (PartScenesCheckUtil.e: pact (1,>=2) or
             (>=2,x), the Wi-Fi version gates, hard >= 3.04.01, soft >= 1.00.23), then the aa 07 07 DSP version read unless
-            Support.s (soft >= 1.02.01 and hard >= 3.07.01). The white type Config.P[180] = 0 (white_type rgb_black, which
-            the library serves since 1.8.0): Yt's Bytes.r sends a Kelvin (and a tint-colour RGB pick) as 33 05 15 01 00 00
-            00 <K> <tint> <mask>, not the ff ff ff slot. NO SUPPORT, two library gaps: (2) the pieces are
-            SegmentIcDataConfig's segment count, filled from the aa a1 0b multi-reply read (ControllerReadSpecialInfoMultiBack.k,
-            VM4Light.x5 -> Info4Detail.z0: [segments][IC per segment ...]), not the aa 40 IC; (3) the Kelvin is recovered from
-            the read-back colour (VM4Light.g5: ColorUtils.r of the first piece). Config.A[180] = 1 (15 04 strip groups); a
-            wheel drag streams a5 02 83 R G B real-time frames (Config.g0[180] = 2), touch-up the normal colour write. Not
-            hardware-verified.
+            Support.s (soft >= 1.02.01 and hard >= 3.07.01). Listed: aa 40, whose count the screen stores but no colour
+            path reads (ic_pieces fixed; z0 overwrites it with the segments' IC sum), and the special-info read. That read
+            is ac a1 on proType 0xAC, not aa a1 (ControllerReadSpecialInfoMultiBack.Companion.k: command 0xA1, no ext
+            bytes; AbsController4BleSingleSendMultiBack.getProType / getNextCommBytes); its multi-packet reply, matched on
+            sub 0x0B (f()), is [segments][IC per segment ...] (Info4Detail.z0 -> SegmentIcDataConfig), and that segment
+            count is the colour page's piece count (ColorModeV2.d0: every mask's width) and the aa a5 walk's
+            (Support.b(180), VM4Light.F5, built in the aa 05 callback after it). The app's isTempTryComm is false for
+            it, so its connect fails without an answer. The app's count is one store for every device
+            (SegmentIcDataConfig); the library keeps each device's. Not listed (settings and scenes): aa 41, aa 45, aa
+            48, the DSP read. The white type Config.P[180] = 0 (white_type rgb_black, which the library serves since
+            1.8.0): Yt's Bytes.r sends a Kelvin (and a tint-colour RGB pick) as 33 05 15 01 00 00 00 <K> <tint> <mask>,
+            not the ff ff ff slot. NO SUPPORT, one library gap: the Kelvin is recovered from the read-back colour
+            (VM4Light.g5: ColorUtils.r of the pieces). Config.A[180] = 1 (15 04 strip groups); a wheel drag streams a5
+            02 83 R G B real-time frames (Config.g0[180] = 2), touch-up the normal colour write. Not hardware-verified.
           doc-ref:
             - split_h705a/com/govee/h705a/pact/Support.java:43-47,152-155,190-197,254-268,321-323,343-345,352-370,449-453,455-465
             - split_h705a/com/govee/h705a/pact/SubLib.java:20-26
@@ -13699,6 +13708,9 @@ families:
             - base-classes11/com/govee/base2light/kt/general_controller/ControllerPartScenesInfo.java:69-71
             - base-classes11/com/govee/base2light/kt/general_controller/ControllerDspVersionInDeviceInfo.java:51-69
             - base-classes11/com/govee/base2light/kt/general_controller/ControllerReadSpecialInfoMultiBack.java:100-109,131-133
+            - base-classes10/com/govee/base2light/ble/controller/AbsController4BleSingleSendMultiBack.java:100-103,158-165,227-230
+            - split_h705a/com/govee/h705a/newDetail/ColorModeV2.java:339-365
+            - split_h705a/com/govee/h705a/adjust/h706abc/SegmentIcDataConfig.java:13-55
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:1115-1119,3139-3143,5724-5728,8202-8206,13606-13609,15097-15100,15122-15125
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/ColorModeControllerConfig.java:1022-1046
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:474-501
@@ -13887,7 +13899,7 @@ families:
         by_goods_type:
           "125": { forms: { f_a5: color_group, f_15_01: kelvin_tint, f_ee_30: main_bit0_a }, counts: { num_segments: 56 }, group: { rule: fixed, num_per_group: 4 }, doc: "H705A-C: direct aa a5 groups of Support.f = 4 (split_h705a/com/govee/h705a/newDetail/VM4Light.java:215-249); 56 is MODELLED (no app cap on floor(IC / 4)): the most mask positions a 17-byte kelvin_tint frame carries" }
           "240": { forms: { f_a5: color_group, f_15_01: kelvin_tint, f_ee_30: main_bit0_a }, counts: { num_segments: 56 }, group: { rule: fixed, num_per_group: 4 }, doc: "H705D-F / H805A-D: as 125" }
-          "180": { forms: { f_a5: color_group, f_15_01: kelvin_tint, f_ee_30: main_bit0_a }, group: { rule: fixed, num_per_group: 4 }, doc: "H706A-C: aa a5 groups of 4 over the aa a1 0b segment count (split_h705a/com/govee/h705a/pact/Support.java:321-323); the CCT is kelvin_tint with the row's white_type slot (00 00 00)" }
+          "180": { forms: { f_a5: color_group, f_15_01: kelvin_tint, f_ee_30: main_bit0_a }, counts: { num_segments: 12 }, group: { rule: fixed, num_per_group: 4 }, doc: "H706A-C / H806A / H806C: aa a5 groups of 4 over the special-info read's segment count (split_h705a/com/govee/h705a/pact/Support.java:321-323, 378-381), which sizes every mask too; 12 is only the bound, the most the segment-settings page offers (split_h705a/com/govee/h705a/adjust/h706abc/SegmentSetAcH706A.java:399-419, 609-616: 1..12): no write uses it; the CCT is kelvin_tint with the row's white_type slot (00 00 00)" }
           "250": { forms: { f_a5: color_group, f_15_01: kelvin_tint, f_ee_30: main_bit0_a }, counts: { num_segments: 56 }, group: { rule: fixed, num_per_group: 4 }, doc: "H7067-9: direct aa a5 groups of 4 over IC pieces (split_h705a/com/govee/h705a/h706789/VM4Light.java:189-219); 56 is MODELLED, as 125" }
           "184": { forms: { f_a5: color_group, f_15_01: kelvin_tint }, counts: { num_segments: 56 }, group: { rule: fixed, num_per_group: 4 }, doc: "H608A-D / H808A: direct aa a5 groups of 4 over max(ceil(IC / 5), 1) pieces (split_h705a/com/govee/h705a/adjust/h608a/VM4H608A.java:252-276); no ee 30 parser; 56 is MODELLED, as 125" }
           "394": { forms: { f_40: one_count, f_41: power_memory, f_a3: gradual, f_a5: color_group, f_15_01: kelvin_tint }, counts: { num_segments: 56 }, group: { rule: fixed, num_per_group: 4 }, doc: "H3401: TLV 0xA3 byte 0, TLV 0x40 bytes 0-1 signed, TLV 0x41 byte 1, each TLV 0xA5 [index, 4 records] (split_h705a/com/govee/h705a/h3401/H3401DetailVM$afterConnectedSingleReadDeviceInfo$1.java:103-104, 111-125, 126-127, 134-135); 56 is MODELLED (no app cap on the IC pieces)" }

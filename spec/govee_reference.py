@@ -182,7 +182,8 @@ def chunk_ac(tlv: bytes, cmd: int = 0x03, sub: int = 0x00) -> list[bytes]:
 
     ``sub`` (byte 6) must equal the reader's d() (AbsController4BleSingleSendMultiBack.f): 0 for the
     H60A6 status read (Compose4BaseInfoSingleRead builds a ControllerSingleRead with d() left at 0),
-    which is what the H60A6 sends."""
+    which is what the H60A6 sends; 0x0B under ``cmd`` 0xA1 for the special-info read's segment IC record
+    (ControllerReadSpecialInfoMultiBack.Companion.k, govee_ble_frame status_sub segment_ic)."""
     if len(tlv) <= _AC_FIRST_LEN:  # single packet: lastLen bytes @7, no further frames
         return [append_bcc(bytes([0xAC, 0x00, 1, 0, len(tlv), cmd, sub]) + tlv)]
     rest = tlv[_AC_FIRST_LEN:]
@@ -633,6 +634,13 @@ def _selftest(*, strict: bool = False) -> int:
           ic_reply(0x00, 0x1C, 0x0A, 0x00, 0x2A, 0x08).section_sum == 18
           and ic_reply(0x00, 0x1C, 0xFF, 0x00, 0x00, 0xFE).section_sum == -3
           and ic_reply(0x10, 0x00, 0x05).section_sum is None)
+
+    seg_ic = _module("govee_state").GoveeState.SegmentIcInfo
+    seg = _ready(seg_ic(_stream(reassemble_ac(chunk_ac(bytes([12] + [5] * 12), 0xA1, 0x0B)))))
+    check("ac a1 special-info reply (sub 0x0B): two packets join to [12][IC x 12] (segment_ic_info); an "
+          "empty payload fails the app's read",
+          seg.num_segments == 12 and seg.ic_per_segment == [5] * 12 and not seg.app_read_fails
+          and _ready(seg_ic(_stream(b""))).app_read_fails)
 
     def detail_reply(*data: int) -> Any:
         prof = make_profile(f_34="device_detail")

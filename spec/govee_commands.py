@@ -4238,11 +4238,17 @@ def build_diy_create_gif(diy_code: int, diy_id: int) -> bytes:
 
 
 def read_special_info_a1() -> bytes:
-    """FACTORY-ONLY (no decompiled caller): 0xAC A1 single-send/multi-back read, reply matched on byte5 =
-    0xA1, byte6 = sub 0x0B (ControllerReadSpecialInfoMultiBack.Companion.k
+    """0xAC A1 single-send/multi-back special-info read (govee_ble_frame status_command special_info), reply
+    matched on byte5 = 0xA1, byte6 = sub 0x0B (status_sub segment_ic: [segments][IC per segment ...],
+    govee_state segment_ic_info) (ControllerReadSpecialInfoMultiBack.Companion.k
     base-classes11/com/govee/base2light/kt/general_controller/ControllerReadSpecialInfoMultiBack.java:100-109;
     AbsController4BleSingleSendMultiBack.f/getNextCommBytes/getProType
     base-classes10/com/govee/base2light/ble/controller/AbsController4BleSingleSendMultiBack.java:100-103,158-165).
+    Callers: the goodsType 180 (H706A-C) screen's connect read and its refresh after the segment settings
+    and the part-scene read (refreshReadSegmentIcNum)
+    (split_h705a/com/govee/h705a/newDetail/VM4Light.java:604-606,1343-1347,1566-1572 -> Info4Detail.z0
+    :839-860), and H707A-C's refresh after its segment page
+    (split_h7075/com/govee/h7075/h707A/H707ABCDetailVM.java:267).
     """
     return append_bcc(bytes([0xAC, 0xA1]))
 

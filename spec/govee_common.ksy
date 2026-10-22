@@ -878,7 +878,9 @@ enums:
       -orig-id: [READ_SEGMENT_LIGHT]
       doc: |
         the H707A segment IC info [segment count][per-segment IC x 3]; requested
-        by its status read, value not typed
+        by its status read, its TLV value not typed. The govee_state record
+        segment_ic_info, which the 0xAC special-info reply carries (sub
+        segment_ic)
       doc-ref:
         - split_h7075/com/govee/h7075/ble/BleProtocol.java:10
         - split_h7075/com/govee/h7075/h707A/H707ABCDetailVM$afterConnectedSingleReadDeviceInfo$1.java:94,254

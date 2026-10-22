@@ -331,6 +331,13 @@
       "pattern": "^[a-z][a-z0-9_]*$",
       "description": "A govee_common::command member id (govee_common.ksy enum command), e.g. cmd_41, color_group, plug_sync_time."
     },
+    "connectRead": {
+      "anyOf": [
+        { "$ref": "#/$defs/commandId", "description": "An aa <command> read, by its govee_common::command id." },
+        { "const": "special_info", "description": "The 0xAC special-info read ac a1 (govee_ble_frame.ksy status_command special_info), whose reply's segment IC record (sub segment_ic, govee_state segment_ic_info) is the device's segment count: the goodsType 180 screen's (VM4Light.x5)." }
+      ],
+      "description": "One connect read (clientRow connect_reads)."
+    },
     "docRef": {
       "type": "array",
       "minItems": 1,
@@ -396,7 +403,7 @@
         "brightness_range": { "$ref": "#/$defs/family/properties/specs/properties/brightness_range" },
         "mode_reports_kelvin": { "type": "boolean", "description": "false = the device's aa 05 colour report carries Kelvin 0 after a colour-temperature write, so the Kelvin last written stands, as the screen keeps what it set (hardware-observed; doc names the device); absent = the report carries it." },
         "status_read": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/commandId" }, "description": "The connect read is the 0xAC status read (no aa 01 / aa 05 reads): the types it requests (govee_ble_frame status_read_args.types), in request order; [] = the bare read ac 03 00, no types requested, whose reply carries the TLVs the firmware chooses (Compose4BaseInfoSingleRead.Companion.a passes no ext bytes; the h70dx screen); absent = no status read." },
-        "connect_reads": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/commandId" }, "description": "The state reads (aa <command>) the control screen sends at connect besides the power read (power_read / relay_on_mask) and the aa 05 mode read (mode_color_parse), in the app's order; device-info, timer and Wi-Fi reads are not listed." },
+        "connect_reads": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/connectRead" }, "description": "The state reads the control screen sends at connect besides the power read (power_read / relay_on_mask) and the aa 05 mode read (mode_color_parse), in the app's order: aa <command> reads and the 0xAC special-info read (connectRead); device-info, timer and Wi-Fi reads are not listed." },
         "connect_writes": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/commandId" }, "description": "The writes sent on every connect after the handshake and any account_lock check, in order." },
         "power_resync": { "type": "boolean", "description": "Plugs: after each acked power write the screen re-runs its connect sequence (device-info reads, connect_writes)." },
         "ic_pieces": {

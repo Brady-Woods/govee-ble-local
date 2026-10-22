@@ -290,6 +290,16 @@ model, from which the shipped readers are generated).
     `turn_on(power=True, brightness=x)` call is then two sessions inside its 60 s command timeout, so a slow
     link can time out the brightness after the power-on landed and report the command failed. Release the two
     together.
+- **`DeviceProfile.special_info_read`** (keyword-only, default False; a devices.yaml row's `connect_reads`
+  entry `special_info`): the device reports its own segment count in the 0xAC special-info read `ac a1`,
+  whose multi-packet reply, under sub `0x0B`, is `[segments][IC per segment ...]` (the goodsType 180 screen's
+  connect read: `ControllerReadSpecialInfoMultiBack.Companion.k`, `VM4Light.x5` -> `Info4Detail.z0`). That count
+  sizes every mask and the `aa a5` walk, as the H6062's `aa 41` section count does: `update()` reads it before
+  `aa 05`, a mask write reads it first while it is unknown and sends nothing without it (GoveeBleError naming
+  `ac a1`), and the walk is skipped until it is known. New: `build.special_info_query()`,
+  `reassemble.parse_segment_ic()` and the keyword-only `burst_command` / `burst_sub` of `GoveeConnection.query`
+  and `reassemble.burst_chunks` (defaults: the status read's, so every status burst assembles as before). No
+  admitted row uses it. Source-modelled, not live-verified: no goodsType 180 unit is on the bench.
 
 ### Changed
 - **A polled profile reads aa 04 only with `Capability.BRIGHTNESS`**, as the app's connect read does
@@ -590,6 +600,16 @@ model, from which the shipped readers are generated).
   advert power, the pact gate) and the two facts that rest on the unsaved jadx re-decompile named in prose.
   285 / 286's `heartbeat: heartbeat` was the control screen's held link, not the card's. The reference's
   self-test checks their routes and session.
+- **The 0xAC special-info read.** `govee_ble_frame.ksy`: `status_command` gains `special_info` (0xA1: `ac a1`,
+  no args), and the reply chunk's sub byte takes the new `status_sub` enum (`none`, the status read's 0;
+  `segment_ic`, 0x0B). `govee_state.ksy`: the `segment_ic_info` record (`num_segments`, `ic_per_segment`, Java
+  bytes; `app_read_fails` for an empty payload), the `cmd_a1` case of the state switch (H707A's TLV 0xA1 stays
+  untyped). devices.schema.json: `connect_reads` items are a `connectRead`, a command id or `special_info`.
+  The reference's self-test joins a two-packet reply and reads it. Corrections: the read is `ac a1` on proType
+  0xAC, not `aa a1 0b` (0x0B is only the reply's sub), and it has callers (`govee_commands.read_special_info_a1`
+  and OPCODE_COVERAGE's 0xa1 row said none): goodsType 180's connect read and its refreshes, and H707A-C's
+  refresh after its segment page. h705a 180 lists the read, `aa 40` as `ic_pieces: fixed` and a 12-segment
+  bound (the segment-settings page's most); it stays without `support` (its Kelvin read-back).
 
 ## [1.6.1] — 2026-10-21
 

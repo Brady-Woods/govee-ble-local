@@ -16,6 +16,9 @@ the status path (switch / brightness / mode / zone / power memory / colour group
 the app's walk stops where fewer than three bytes remain. The offline analyzer (:mod:`.describe`) judges
 and reads each captured burst with the same helpers (:func:`burst_chunks`, :func:`read_status_stream`) and
 adds its stricter verdicts on top.
+
+The special-info read (``ac a1``, goodsType 180's segment count) replies by the same state machine under
+its own command and sub; :func:`parse_segment_ic` joins it and reads it as the spec's ``segment_ic_info``.
 """
 from __future__ import annotations
 
@@ -149,9 +152,13 @@ class BurstAssembler:
 
     The library checks lastLen before command and sub, while the app checks command and sub first, so a
     first chunk with both a bad lastLen and another command fails the read here where the app would
-    ignore it (approval item A7; no capture has one)."""
+    ignore it (approval item A7; no capture has one).
+
+    ``command`` and ``sub`` are the reader's (``getCommandType`` / ``d()``): the status read's 3 and 0 by
+    default, the special-info read's ``special_info`` and ``segment_ic`` for :func:`parse_segment_ic`
+    (``ControllerReadSpecialInfoMultiBack.Companion.k``), which reassembles by the same state machine."""
     command: int = int(_F.StatusCommand.status_read)
-    sub: int = 0
+    sub: int = int(_F.StatusSub.none)
     chunks: list[bytes] = field(default_factory=list)       # the chunks taken, in order
     status: Literal["waiting", "complete", "failed"] = "waiting"
     conflicts: int = 0    # chunk indices that arrived again with DIFFERENT bytes (diagnostics)
@@ -206,13 +213,15 @@ class BurstAssembler:
         return True
 
 
-def burst_chunks(frames: Iterable[bytes]) -> tuple[list[bytes], bool, int]:
-    """Run a burst's records through :class:`BurstAssembler`: ``(chunks, complete, conflicts)``.
+def burst_chunks(frames: Iterable[bytes], *, command: int = BurstAssembler.command,
+                 sub: int = BurstAssembler.sub) -> tuple[list[bytes], bool, int]:
+    """Run a burst's records through :class:`BurstAssembler` (the reader's ``command`` and ``sub``; the
+    status read's by default): ``(chunks, complete, conflicts)``.
 
     ``chunks`` are the chunks the app takes, in order (all of them, last packet included, when
     ``complete``); ``conflicts`` counts chunk indices that arrived again with DIFFERENT bytes. Only a
     complete burst is decoded (:func:`parse_status`), as in the app."""
-    asm = BurstAssembler()
+    asm = BurstAssembler(command=command, sub=sub)
     for fr in frames:
         asm.feed(fr)
     if asm.status == "failed":
@@ -240,10 +249,30 @@ def _join(chunks: list[bytes], complete: bool) -> bytes:
     return bytes(buf)
 
 
-def _joined(frames: list[bytes]) -> tuple[bytes, bool]:
+def _joined(frames: list[bytes], *, command: int = BurstAssembler.command,
+            sub: int = BurstAssembler.sub) -> tuple[bytes, bool]:
     """``(buffer, complete)`` for a burst: :func:`burst_chunks` then :func:`_join`."""
-    chunks, complete, _conflicts = burst_chunks(frames)
+    chunks, complete, _conflicts = burst_chunks(frames, command=command, sub=sub)
     return _join(chunks, complete), complete
+
+
+SPECIAL_INFO_COMMAND: Final = int(_F.StatusCommand.special_info)   # 0xA1: the special-info read's command
+SEGMENT_IC_SUB: Final = int(_F.StatusSub.segment_ic)               # 0x0B: its segment IC record
+
+
+def parse_segment_ic(frames: list[bytes]) -> int | None:
+    """The segment count of a special-info reply (``ac a1``, :func:`.build.special_info_query`): the
+    burst's chunks under command ``special_info`` and sub ``segment_ic`` joined as the app joins them
+    (:class:`BurstAssembler`, ``AbsController4BleSingleSendMultiBack.f`` matches bytes 5 / 6 of the first
+    chunk), read as the spec's ``segment_ic_info``, whose first byte is the count (``Info4Detail.z0``: a
+    Java byte). None for an incomplete burst or an empty payload (z0 stores nothing from one). The count
+    is not range-checked here (``Device`` takes 1 to the most a mask can carry); the IC per segment, which
+    only the graffiti and segment-settings pages read, is not used."""
+    buf, complete = _joined(frames, command=SPECIAL_INFO_COMMAND, sub=SEGMENT_IC_SUB)
+    if not complete:
+        return None
+    info = _spec.read(_spec.State.SegmentIcInfo, buf)
+    return None if info.app_read_fails else int(info.num_segments)
 
 
 def reassemble(frames: list[bytes]) -> bytes:
