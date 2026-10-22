@@ -1502,6 +1502,18 @@ types:
       segment_signed:
         value: 'segment >= 0x80 ? segment - 0x100 : segment'
         if: _io.size >= 3
+        doc: |
+          the segment byte read as a Java byte, the IC-pair reader's second value
+          (ControllerIcNum.e). The H707A status screen takes it as its colour
+          page's piece count where the TLV's IC differs from the one it holds
+          (its reply lambda's 0x40 branch -> n6 -> SegmentIcDataCache); a TLV
+          0xA1 later in the reply overwrites it, and a value of 0 or below
+          leaves the page as it is (H707AColorMode.X).
+        doc-ref:
+          - base-classes11/com/govee/base2light/kt/general_controller/ControllerIcNum.java:140-156
+          - split_h7075/com/govee/h7075/h707A/H707ABCDetailVM$afterConnectedSingleReadDeviceInfo$1.java:53-79,94-105
+          - split_h7075/com/govee/h7075/h707A/H707ABCDetailVM.java:856-861
+          - split_h7075/com/govee/h7075/h707A/mode/H707AColorMode.java:231-273
       segment_2_signed:
         value: 'segment_2 >= 0x80 ? segment_2 - 0x100 : segment_2'
         if: _io.size >= 6

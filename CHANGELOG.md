@@ -391,9 +391,15 @@ model, from which the shipped readers are generated).
   `H707AColorMode.X`). `DeviceProfile.status_segment_count` (keyword-only, default False; a status row that
   requests `cmd_a1`): `Device.segment_count` becomes each status read's count (at most 112; a count of 0, which
   the page skips, leaves it), and a masked write before the first read makes the status read first and raises
-  GoveeBleError, sending nothing, when the device reports none, as H6062's aa 41 does. The status read is the
-  app's `ac 03 08 40 41 a3 a1 48 a5 45 16`; `DeviceProfile.segments` (the uncut 6 / 9 / 12 by suffix,
-  `Support.f`) is only the count before it. `reassemble.StatusReply.segment_count` carries the TLV's count.
+  GoveeBleError, sending nothing, when the device reports none, as H6062's aa 41 does. A reply without TLV
+  0xA1 takes TLV 0x40's segment byte (the IC-pair reader's second value, above 0) where its IC differs from the
+  one the screen holds, as the reply's lambda does (its 0x40 branch -> `n6`); the library holds each read's
+  0x40 IC and 0xA1 IC sum, and before a Device's first read none, where the app holds the account's stored IC,
+  so a first reply without 0xA1 takes the byte where the app, for an unchanged IC, keeps the account's count
+  (the row's doc). The status read is the app's `ac 03 08 40 41 a3 a1 48 a5 45 16`; `DeviceProfile.segments`
+  (the uncut 6 / 9 / 12 by suffix, `Support.f`) is only the count before it. `reassemble.StatusReply` carries
+  the TLVs' facts: `segment_count` and `segment_ic_total` (0xA1) and `ic_segment` (0x40). The field needs
+  0xA1 in `status_read` and `status_decode` `f_a1` `segment_info` (GoveeBleInvalidValue otherwise).
   Not read back: the TLV 0xA5 gradient record (no wire form; skipped, as on H3751), so the colour state is not
   read. Not sent: the `33 09` time sync the screen writes before its status read (as on the other status rows).
   The aa 06 / aa 07 device-info reads are unverified extra reads here (status-row-versions-from-tlv07).
@@ -780,7 +786,9 @@ model, from which the shipped readers are generated).
   segment_info`, and the resolver projects it as `status_segment_count`. h707a 326 takes `support:
   app_traced`, the family wire `f_a1: segment_info` and `wire.by_model` counts (`Support.f`), and its doc says
   what the library leaves out. `govee_reference.make_profile` takes `f_a1`, and the self-test reads a 0xA1
-  TLV and its empty-value failure.
+  TLV and its empty-value failure. govee_state's `ic_count.segment_signed` doc names the screen's use of TLV
+  0x40's segment byte (the IC-pair reader's second value), which sizes the page where the IC changed and no
+  0xA1 follows (`H707ABCDetailVM$afterConnectedSingleReadDeviceInfo$1.l` -> `n6`).
 
 ## [1.6.1] — 2026-10-21
 

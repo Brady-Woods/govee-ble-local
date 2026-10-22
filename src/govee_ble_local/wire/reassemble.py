@@ -38,6 +38,7 @@ TYPE_BRIGHTNESS = int(_C.Command.brightness)     # 0x04
 TYPE_MODE = int(_C.Command.mode)                 # 0x05
 TYPE_DEVICE_INFO = int(_C.Command.device_info)   # 0x07
 TYPE_ZONE = int(_C.Command.cmd_30)               # 0x30
+TYPE_IC_NUM = int(_C.Command.ic_num)             # 0x40: the IC count (f_40)
 TYPE_SEG_INFO = int(_C.Command.cmd_41)           # 0x41: the seg / IC info (power memory) TLV
 TYPE_SEGMENT_INFO = int(_C.Command.cmd_a1)        # 0xA1: the H707A segment info (f_a1 segment_info)
 TYPE_COLOR_GROUP = int(_C.Command.color_group)   # 0xA5
@@ -101,8 +102,15 @@ class StatusReply:
     # Left out of equality: a generated object compares by identity, and the fold reads it.
     mode: Any = field(default=None, compare=False)
     # The 0xA1 TLV's segment count (f_a1 segment_info: the H707A screen's colour-page piece count,
-    # H707AInfo4Detail.G0); the last one wins. Device adopts it (DeviceProfile.status_segment_count).
+    # H707AInfo4Detail.G0) and its IC counts summed (the IC G0 stores, Info4BleIotDevice.G0); the last one
+    # wins. Device adopts the count (DeviceProfile.status_segment_count).
     segment_count: int | None = None
+    segment_ic_total: int | None = None
+    # The 0x40 TLV read by the IC-pair reader (f_40 ic_pair, ControllerIcNum.e): its IC count and its
+    # segment byte as a Java byte (the spec's ic_count.segment_signed), which the H707A screen takes as the
+    # count where the IC changed and no 0xA1 follows (H707ABCDetailVM$afterConnectedSingleReadDeviceInfo$1.l
+    # -> n6); the last one wins.
+    ic_segment: tuple[int, int] | None = None
 
 
 def _chunk_of(fr: bytes) -> Any:
@@ -351,6 +359,7 @@ def parse_status(frames: list[bytes], *, pieces: int | None = None, decode: Any 
     prof = status_profile(pieces, decode)
     reads_groups = int(prof.forms.f_a5) == int(_C.FormA5.color_group)
     reads_zones = int(prof.forms.f_30) == int(_C.Form30.zone_power)
+    reads_ic_pair = int(prof.forms.f_40) == int(_C.Form40.ic_pair)
     stream, err = read_status_stream(buf, pieces=pieces, decode=decode)
     tlvs = list(getattr(stream, "tlvs", None) or [])
     if err is not None:
@@ -405,6 +414,10 @@ def parse_status(frames: list[bytes], *, pieces: int | None = None, decode: Any 
             seg = getattr(v, "body", None)   # the segment_info, read under f_a1 segment_info only
             if seg is not None:
                 st.segment_count = int(seg.segment_count)
+                st.segment_ic_total = sum(int(ics) for ics in seg.segment_ics)   # G0: BleUtils.L of each
+        elif typ == TYPE_IC_NUM and reads_ic_pair and v is not None:
+            # ControllerIcNum.e's first two values: its read never fails here (app_read_fails above).
+            st.ic_segment = (int(v.ic_count), int(v.segment_signed))
         elif typ == TYPE_ZONE:
             # bit0 of each byte (VM4LightH60A6$afterConnectedSingleReadDeviceInfo$1.o:
             # ParseUtils.getBit2Boolean(b, 1) = (b >> 0) & 1); the other bits are not zone power.

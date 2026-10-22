@@ -106,7 +106,8 @@ the row lacks fails the build: nothing defaults silently.
   requested ``cmd_30`` needs ``f_30: zone_power``. A pact branch may only drop ``color_group``, which
   becomes ``status_color_groups_pact`` (one pact type, from its lowest code that keeps it). A requested
   ``cmd_a1`` and the wire ``f_a1: segment_info`` go together: that TLV's count is the device's segment count
-  (``DeviceProfile.status_segment_count``: the H707A screen's colour page, ``H707AInfo4Detail.G0``), and the
+  (``DeviceProfile.status_segment_count``: the H707A screen's colour page, ``H707AInfo4Detail.G0``; a reply
+  without it takes TLV 0x40's segment byte, read under ``f_40: ic_pair``, where its IC changed), and the
   wire ``num_segments`` is the count before the first read. A polled row
   reads its power from aa 01, or, with ``power_read: aa34_detail``, from the aa 34 device-detail read
   (``DeviceProfile.detail_power_read``; wire ``f_34: device_detail``; never on a bar row, and with no aa 01

@@ -18600,13 +18600,18 @@ families:
             segment_info), which the reply's lambda reads on every connect (H707AInfo4Detail.G0: P0 and the cache,
             then n6, after TLV 0x40's segment byte, so its count wins) and the colour page resizes to on the
             deviceInfoChanged it posts (H707AColorMode.N -> X; a count of 0 is skipped); the library takes each status
-            read's count, and a masked write before the first read makes the read first. The wire num_segments
-            (Support.f: 6 / 9 / 12 by suffix A / B / C, the uncut strings) is only the count before that read. Not
-            read back: the TLV 0xA5 gradient record [segment][brightness][3 x RGB] (no wire form, skipped, as on
-            H3751), so colour state is not read; TLV 0x40 is read for the app's failure rule only (the IC pair
-            reader), and its segment byte, which the page takes only when the IC changed and 0xA1 is absent, is not
-            used. The aa 06 / aa 07 device-info reads the library makes on a status row are unverified extra reads
-            here (status-row-versions-from-tlv07). Scenes untraced (versionArray {0, 1, 2, 3, 5}); the gradual switch
+            read's count, and a masked write before the first read makes the read first. A reply without TLV 0xA1
+            takes TLV 0x40's segment byte (the IC pair reader's second value, a Java byte, above 0), where its IC
+            differs from the one the screen holds (the lambda's 0x40 branch: G0, then n6), as the library tracks
+            it from each read's 0x40 IC and 0xA1 IC sum (G0 stores that sum). Before a Device's first read it
+            holds none, where the app holds the account's stored IC (Info4BleIotDevice.q(), cloud data), so a
+            first reply without 0xA1 takes the 0x40 byte where the app, for an unchanged IC, keeps the account's
+            segment count (J(), the page's start count): a first-session difference on firmware that leaves out
+            the TLV the screen requests. The wire num_segments (Support.f: 6 / 9 / 12 by suffix A / B / C, the
+            uncut strings) is only the count before that read. Not read back: the TLV 0xA5 gradient record
+            [segment][brightness][3 x RGB] (no wire form, skipped, as on H3751), so colour state is not read. The
+            aa 06 / aa 07 device-info reads the library makes on a status row are unverified extra reads here
+            (status-row-versions-from-tlv07). Scenes untraced (versionArray {0, 1, 2, 3, 5}); the gradual switch
             is left out. Not hardware-verified.
           doc-ref:
             - split_h7075/com/govee/h7075/pact/Support.java:241-257,266-270,354-361,392-411,515-522,541-569,575-581
@@ -18642,7 +18647,8 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:240-242,254-269,329-342,404-411,829-833,1538-1540
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:98-114,199-215,247-259
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/ColorPieceConfig.java:444-451
-            - base-classes11/com/govee/base2light/kt/comm/Info4BleIotDevice.java:208-218,246-248,258-264,280-282
+            - base-classes11/com/govee/base2light/kt/comm/Info4BleIotDevice.java:208-218,228-230,246-248,258-264,280-282,620-622
+            - base-classes11/com/govee/base2light/kt/general_controller/ControllerIcNum.java:140-156
       wire:
         doc: "status lambda: TLV 0x40 by the IC pair reader, TLV 0x41 value[1], TLV 0xA1 the segment info, TLV 0xA3 byte 0 (split_h7075/com/govee/h7075/h707A/H707ABCDetailVM$afterConnectedSingleReadDeviceInfo$1.java:59-66, 85-87, 94-105, 141-142); the segment records of TLV 0xA5 have no form yet (h707a.md); counts are the uncut strings' (Support.f), the count before the first TLV 0xA1"
         forms: { f_01: light, f_09: datetime_epoch, f_40: ic_pair, f_41: power_memory, f_a1: segment_info, f_a3: gradual, f_15_01: kelvin_tint, f_ee_30: main_bit0_a }

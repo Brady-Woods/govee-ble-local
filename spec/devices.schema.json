@@ -843,7 +843,7 @@
             "unknown",
             "segment_info"
           ],
-          "description": "govee_profile command_forms.f_a1 (govee_common::form_a1). On a status row that requests cmd_a1, segment_info's count (TLV 0xA1 value[0]) is the device's segment count, which sizes every mask and the segment index (the library's segment_count; wire num_segments is the count before the first read)."
+          "description": "govee_profile command_forms.f_a1 (govee_common::form_a1). On a status row that requests cmd_a1, segment_info's count (TLV 0xA1 value[0]) is the device's segment count, which sizes every mask and the segment index (the library's segment_count; wire num_segments is the count before the first read); a reply without it takes TLV 0x40's segment byte (f_40 ic_pair) where that TLV's IC changed, as the H707A screen's lambda does."
         },
         "f_a2": {
           "enum": [
