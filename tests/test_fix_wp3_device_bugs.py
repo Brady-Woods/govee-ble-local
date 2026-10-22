@@ -902,7 +902,7 @@ def test_h6641_ic_count_from_the_swap_branch_skips_the_walk(ic: int) -> None:
     ("H7041", 0x0F, (2,), 50),                   # aa 0f: 2 strings x 25 bulbs (NewDetailVM.u5)
     ("H7041", 0x0F, None, None),                 # no aa 0f reply
     ("H7041", 0x0F, (0x80,), None),              # a negative count (a Java byte): no pieces
-    ("H7041", 0x0F, (5,), None),                 # 125 pieces: more than any mask carries
+    ("H7041", 0x0F, (0,), 0),                    # a count of 0: the app's empty pick, a zero mask
 ])
 def test_an_ic_sized_write_takes_the_live_count_or_sends_nothing(
         sku: str, read: int, reply: tuple[int, ...] | None, count: int | None) -> None:

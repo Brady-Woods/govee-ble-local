@@ -488,12 +488,13 @@ class DeviceProfile:
     times this as its IC, the pieces its colour strip takes at each pick (h7020 ``NewDetailVM.u5``: the bulbs
     per string, ``Support.getBulbStringSetting`` [1], or 1 on goodsType 149, where the count is the pieces; a
     devices.yaml row's ``light_num_pieces``). :meth:`~.device.Device.update` reads it on every poll, after
-    ``aa 04`` and before ``aa 05``, and a count of 1 or more whose pieces a mask can carry (at most
-    ``build.MAX_MASK_SEGMENTS``) becomes :attr:`~.device.Device.segment_count`: the whole-device mask, the
-    segment index bound and the ``aa a5`` walk's pieces. A write that carries a mask before any count is known
-    reads it first and raises GoveeBleError, sending nothing, without one, as a :attr:`section_count_read`
-    profile does, and the walk is skipped until a count is known. :attr:`segments` is then only the count
-    before the first read. 0 (the default): no ``aa 0f`` read."""
+    ``aa 04`` and before ``aa 05``, and the pieces of a count of 0 or more become
+    :attr:`~.device.Device.segment_count`, at most ``build.MAX_MASK_SEGMENTS`` (the whole-device mask and
+    the segment index bound), while the ``aa a5`` walk takes them all (``NewDetailVM.D5``); a negative count
+    (a Java byte) is none. A write that carries a mask before any count is known reads it first and raises
+    GoveeBleError, sending nothing, without one, as a :attr:`section_count_read` profile does, and the walk
+    is skipped until a count is known. :attr:`segments` is then only the count before the first read. 0
+    (the default): no ``aa 0f`` read."""
 
     def __post_init__(self) -> None:
         """Validate each field: GoveeBleInvalidValue (a ValueError) on a value no Device can use.

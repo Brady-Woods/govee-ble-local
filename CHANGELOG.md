@@ -356,9 +356,13 @@ model, from which the shipped readers are generated).
   (`ColorPieceConfig.c`), and walks `ceil(pieces / group)` aa a5 groups (`NewDetailVM.D5`). The poll reads it
   between aa 04 and aa 05, as the screen's connect places it, and adopts the pieces as `Device.segment_count`:
   the whole-device mask and the aa a5 walk. Before the first count a write that carries a mask reads aa 0f
-  first and raises GoveeBleError, sending nothing, without one, as H6062's aa 41 does; a count below 1 or of
-  more than 112 pieces is none (the string-count setting offers at most 50), and the walk is skipped until a
-  count is known. `build.light_num_query` and `parse.parse_light_num` are the read and its reply.
+  first and raises GoveeBleError, sending nothing, without one, as H6062's aa 41 does, and the walk is skipped
+  until a count is known. The screen stores whatever count it reads, and the library takes it as the screen
+  does: past 112 pieces the writes take the 112-position mask (the same bytes: the 0x15 colour bodies cut it at
+  7) and the walk takes them all, as on the aa 40 live count; 0 is the app's empty pick (two zero mask bytes,
+  no walk); only a negative count (a Java byte, on which the app's pick throws) is none. The string-count
+  setting reaches none of these (it offers at most 50 pieces). `build.light_num_query` and
+  `parse.parse_light_num` are the read and its reply.
   - Admitted by default (`app_traced`): h7020 **H7020**, **H7028**† (53), **H7021** (54), **H7015** (62),
     **H7016** (63), **H7041** (100), **H7042** (102), **H7029** (149) and **H7033** (161): power, brightness,
     RGB and colour temperature on the h60a6 frames, over the live count, with the colour read-back. Segments are

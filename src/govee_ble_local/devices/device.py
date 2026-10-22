@@ -188,6 +188,8 @@ class Device:
         self._scenes_error: str | None = None
         self._state = DeviceState(optimistic=True)
         self._segment_count: int | None = None   # runtime-reported; overrides profile.segments
+        # The last aa 0f read's pieces, unclamped: the aa a5 walk takes them all (_read_light_num).
+        self._light_num_pieces: int | None = None
         self._device_info_read = False   # device-info (mac/hw/fw/sn) read once, lazily
         self._polled_once = False        # for the one-time INFO "first poll" line
         # Mutation sequence (BUG-4): bumped by every state-mutating setter when it applies its
@@ -325,9 +327,9 @@ class Device:
         ceil(n/8) above) and bounds the segment indices. The device's own read sets it on a
         ``section_count_read`` profile (H6062's aa 41), on a ``color_writes_live_ic`` one (the live pieces
         of each poll's aa 40 read: H6641, the other IC-sized rows) and on a ``light_num_per_unit`` one (each
-        poll's aa 0f string count times the bulbs per string: the h7020 bulb-string rows), as does
-        :meth:`set_segment_count`, until the next such read. A caller that offers one entity per segment reads
-        it after the first :meth:`update`."""
+        poll's aa 0f string count times the bulbs per string, which may be 0: the h7020 bulb-string rows), as
+        does :meth:`set_segment_count`, until the next such read. A caller that offers one entity per segment
+        reads it after the first :meth:`update`."""
         return self._segment_count if self._segment_count is not None else self.profile.segments
 
     def set_segment_count(self, count: int | None) -> None:
@@ -341,6 +343,7 @@ class Device:
         if count is not None:
             _check_segment_count(count)
         self._segment_count = count
+        self._light_num_pieces = None   # the walk takes this count too, until the next aa 0f read
 
     @property
     def min_kelvin(self) -> int | None:
@@ -1928,12 +1931,15 @@ class Device:
         """H6047/H6641/H6062/H6061 per-segment colour via Controller4ColorInfoByGroup's direct
         per-group requests (``aa a5 <group>``; :func:`._readback.walk_mechanism_a_direct`), applied
         whole unless a setter raced it. On a live-IC profile the poll's one ``aa 40`` read comes first
-        (:meth:`_read_live_ic`); without a count the walk is skipped."""
+        (:meth:`_read_live_ic`); without a count the walk is skipped. On a ``light_num_per_unit`` profile it
+        walks the last ``aa 0f`` read's pieces, uncapped (:meth:`_read_light_num`)."""
         pieces = None
         if self.profile.color_readback_live_ic:
             pieces = await self._read_live_ic(budget)
             if pieces is None:
                 return
+        elif self.profile.light_num_per_unit:
+            pieces = self._light_num_pieces   # past the masks' 112, as NewDetailVM.D5 walks them
         await self._read_fresh(
             "segment colour",
             lambda: _readback.walk_mechanism_a_direct(self, lambda f: self._read_reply(f, budget), pieces),
@@ -2100,21 +2106,29 @@ class Device:
         return True
 
     async def _read_light_num(self, budget: ConnectBudget | None = None) -> bool:
-        """Read the bulb-string count (``aa 0f``) and adopt count x ``light_num_per_unit`` pieces as
-        :attr:`segment_count`, as the h7020 screen stores them as its IC on every connect
-        (``NewDetailVM.u5``), the count its colour strip takes at each pick (``ColorPieceConfig.c``). Returns
-        False (count left as it was) when the device does not answer or reports a count below 1, which would
-        size no pieces, or one whose pieces no mask carries (above ``build.MAX_MASK_SEGMENTS``; the screen's
-        own setting offers at most 50, ``SegmentNumSettingDialog.t``). A device fact, not optimistic state, so
-        it is adopted whatever a setter did meanwhile."""
+        """Read the bulb-string count (``aa 0f``) and take count x ``light_num_per_unit`` as the pieces,
+        which the h7020 screen stores as its IC on every connect with no bound (``NewDetailVM.u5`` ->
+        ``Info4BleIotDevice.G0``): its colour strip takes that count at each pick (``ColorPieceConfig.c``)
+        and ``NewDetailVM.D5`` walks ``ceil(pieces / group)`` aa a5 groups, none below 1. Pieces of 0 or
+        more become :attr:`segment_count`, at most ``build.MAX_MASK_SEGMENTS``: the 0x15 colour bodies cut
+        the mask at 7 bytes (``Bytes.h`` / ``Bytes.r``), so every count above writes the app's bytes, and
+        the walk takes all of them (:meth:`_read_mechanism_a_direct`). A count of 0 is the app's empty pick
+        (``ColorModeUtil.e`` over IC 0: the two zero mask bytes, and no walk). A negative count (a Java
+        byte of 0x80 or more), on which the app's pick throws (``ColorModeUtil.e``'s ``new int[n]``) and
+        sends nothing, leaves no count: the walk is skipped and the next masked write reads aa 0f again
+        (:meth:`_ensure_segment_count`). Returns whether a count of 0 or more came back; no reply leaves the
+        count as it was, as the app keeps the IC it stored. A device fact, not optimistic state, so it is
+        adopted whatever a setter did meanwhile."""
         reply = await self._read_reply(build.light_num_query(), budget)
         count = parse.parse_light_num(reply) if reply else None
-        pieces = None if count is None else count * self.profile.light_num_per_unit
-        if pieces is None or not 1 <= pieces <= build.MAX_MASK_SEGMENTS:
+        if count is None or count < 0:
             _LOGGER.debug("%s (%s): aa 0f string-count read gave no usable count (%s)",
                           self.address, self._sku, count)
+            if count is not None:
+                self._segment_count = self._light_num_pieces = None
             return False
-        self._segment_count = pieces
+        self._light_num_pieces = count * self.profile.light_num_per_unit
+        self._segment_count = min(self._light_num_pieces, build.MAX_MASK_SEGMENTS)
         return True
 
     async def _ensure_segment_count(self) -> None:

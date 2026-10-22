@@ -17817,15 +17817,19 @@ families:
             account's segmentCount) when that is above 0. Kelvin: KelvinConfig version 0 = [2000, 9000]. Divergences: the
             library sends no masked frame until an aa 0f reply gives it a count, as on H6062's aa 41 (the app's connect
             read makes the aa 0f read before the screen controls the device; its stored IC before that is the
-            account's); a count below 1, or of more than 112 pieces, is no count (the app would size no pieces or a
-            negative number, or more positions than the library's masks carry; the string-count setting offers at most 2
-            strings, SegmentNumSettingDialog.t). Scenes untraced. Not hardware-verified.
+            account's), and a negative count (a Java byte of 0x80 or more, on which the app's pick throws in
+            ColorModeUtil.e and sends nothing) leaves it none, so its next masked write reads aa 0f again. u5 stores
+            any count unbounded, and the library takes the rest as the app does: 0 is the app's empty pick (the
+            NewDetailVM IColorModeFuc defaults leave the pick to ColorModeUtil.e, an empty posSet: two zero mask
+            bytes, and D5 walks no group), and more than 112 pieces are written with the 112-position mask (the same
+            7 bytes after the cut) and walked in full. The string-count setting reaches none of these: it offers at
+            most 2 strings (SegmentNumSettingDialog.t). Scenes untraced. Not hardware-verified.
           doc-ref:
             - split_h7050/com/govee/h7020/pact/Support.java:80,90,96-106,364-381,477-479,697-704,735-743
             - split_h7050/com/govee/h7020/pact/SubLib4BleIot.java:20-31
             - split_h7050/com/govee/h7020/pact/Model4BleIot.java:41-44
             - base-classes2/com/govee/shared/checker/KmpGoodsType.java:92
-            - split_h7050/com/govee/h7020/newDetail/NewDetailVM.java:184-210,429-442,678-702,735-742,794-811,832-850,853-881,975-1013,1168-1179,1308-1315,1432-1463,1514-1538
+            - split_h7050/com/govee/h7020/newDetail/NewDetailVM.java:184-210,429-442,678-702,735-742,794-811,832-850,853-881,888-899,975-1013,1168-1179,1308-1315,1432-1463,1514-1538
             - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4InfoBleIot$iControllerStrategy$1.java:224-250
             - split_h7050/com/govee/h7020/ble/Controller4BulbNum.java:24-27,43-46,57-59
             - base-classes11/com/govee/base2light/kt/general_controller/Controller4ColorInfoByGroup.java:37-42,112-121
@@ -17835,8 +17839,9 @@ families:
             - split_h7050/com/govee/h7020/newDetail/NewDetailConfig.java:91-103
             - split_h7050/com/govee/h7020/newDetail/mode/ColorModeV1.java:89-111,387-389,428-430
             - base-classes11/com/govee/base2light/pact/newdetail/content/color/IColorOpListener.java:33-35,48-50
+            - base-classes11/com/govee/base2light/pact/newdetail/IColorModeFuc.java:41-43,62-64
             - base-classes11/com/govee/base2light/pact/newdetail/content/colorv2/DelegateColorV2.java:219-251
-            - base-classes11/com/govee/base2light/pact/newdetail/content/colorv2/ColorModeUtil.java:60-87
+            - base-classes11/com/govee/base2light/pact/newdetail/content/colorv2/ColorModeUtil.java:60-87,140-146
             - base-classes11/com/govee/base2light/kt/comm/Info4BleIotDevice.java:246-248
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/ColorPieceConfig.java:62-135,256-259,354-370,1121-1125,1677-1722
             - base-classes10/com/govee/base2light/capability/color/LightColorCapabilityCenter.java:875-905
