@@ -365,6 +365,7 @@
         "relay_on_mask": { "$ref": "#/$defs/family/properties/client_profile/properties/relay_on_mask" },
         "advert_on_mask": { "$ref": "#/$defs/family/properties/client_profile/properties/advert_on_mask" },
         "color_scheme": { "$ref": "#/$defs/family/properties/client_profile/properties/color_scheme" },
+        "white_type": { "enum": ["rgb_black", "rgb_white", "rgb_self_tem_color"], "description": "The slot of the h60a6 scheme's colour-temperature frame (govee_ble_frame op15_color, form kelvin_tint): the white type the colour page hands Bytes.r, the app's ColorTemperatureType as LightColorCapabilityCenter.d1 gives it (Config.H: Config.O by SKU, else Config.P by goodsType, else 1) on the path the screen runs (ColorModeControllerConfig.c -> Config.Yt). rgb_white (1) = ff ff ff; rgb_black (0) = 00 00 00; rgb_self_tem_color (3) = 00 00 00 over a whole posSet and, over a partial one, the tint in the slot with Kelvin and tint zero. Absent = rgb_white. Not Config.P read raw: a screen whose colour page passes its own value takes that (the rgbiclight ColorControllerConfig passes 1, so goodsType 176, Config.P 0, is rgb_white), and RGB_SELF (2) builds as rgb_white in Bytes.r. The illumination tab's Kelvin (Config.N -> Bytes.C) tests rgb_black alone, so its slot can differ (rgb_self_tem_color leads ff ff ff there). Only on an h60a6 row." },
         "color_functions": { "$ref": "#/$defs/colorFunctions" },
         "capabilities": { "$ref": "#/$defs/clientCapabilities" },
         "zones": {

@@ -23,7 +23,7 @@ from ..exceptions import GoveeBleInvalidValue
 from ..models import Capability, Encryption, Zone
 from ..transport.connection import HeartbeatTiming
 from ..wire import _spec
-from ..wire.build import ColorScheme
+from ..wire.build import DEFAULT_WHITE_TYPE, ColorScheme, WhiteType
 from . import _resolve
 from .brightness import percent_to_raw
 
@@ -345,6 +345,15 @@ class DeviceProfile:
     last operation that sent a frame, each one restarting the wait (goodsType 43's ctlchannel
     ``HeartHandler.e``, which restarts it on every send: H5080, H5083 and H5085). Checked either way, and
     ignored without a :attr:`heartbeat`: then no beat goes out at all, on either timing."""
+    white_type: WhiteType = field(default=DEFAULT_WHITE_TYPE, kw_only=True)
+    """The slot of the ``h60a6`` colour-temperature frame (``33 05 15 01 <slot> <K> <tint> <mask>``), the
+    white type the SKU's colour page hands ``Bytes.r``: a devices.yaml row's ``white_type``, the app's
+    ColorTemperatureType (:data:`..wire.build.WhiteType`). ``"rgb_white"`` (the default, every SKU before
+    1.8.0) leads ``ff ff ff``; ``"rgb_black"`` ``00 00 00``; ``"rgb_self_tem_color"`` (H61E5 / H61E6)
+    ``00 00 00`` over every segment and, over some, the tint as the colour with Kelvin and tint zero. It
+    applies to every colour-temperature frame: :meth:`~.device.Device.set_color_temp`, the segment and zone
+    ones, and an RGB pick that is a Kelvin tint colour. Only an ``h60a6`` profile may set another than the
+    default."""
 
     def __post_init__(self) -> None:
         """Validate each field: GoveeBleInvalidValue (a ValueError) on a value no Device can use.
@@ -369,10 +378,14 @@ class DeviceProfile:
             ("color_readback", ColorReadBack),
             ("relay_power", RelayPower),
             ("heartbeat_timing", HeartbeatTiming),
+            ("white_type", WhiteType),
         ):
             value = getattr(self, name)
             if value not in get_args(allowed):
                 raise GoveeBleInvalidValue(f"{where}: {name}={value!r} not in {get_args(allowed)}")
+        if self.white_type != DEFAULT_WHITE_TYPE and self.color_scheme != "h60a6":
+            raise GoveeBleInvalidValue(f"{where}: white_type={self.white_type!r} on color_scheme="
+                                       f"{self.color_scheme!r} (only the h60a6 frame has the white slot)")
         for name in ("mode_color_parse", "mode_color_parse_status"):
             value = getattr(self, name)
             if value not in _DECODES and not (value is None and name == "mode_color_parse_status"):

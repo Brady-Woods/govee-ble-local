@@ -25,7 +25,7 @@ from govee_ble_local.models import Capability as C
 from govee_ble_local.models import Encryption as E
 from govee_ble_local.models import Zone
 from govee_ble_local.transport.connection import HeartbeatTiming
-from govee_ble_local.wire.build import ColorScheme
+from govee_ble_local.wire.build import ColorScheme, WhiteType
 
 _ROOT = pathlib.Path(__file__).resolve().parent.parent
 _LIGHT = frozenset({C.POWER, C.BRIGHTNESS, C.RGB, C.COLOR_TEMP, C.SCENES})
@@ -115,6 +115,7 @@ def test_the_generated_table_is_masters_hand_table_but_for_the_spec_fixes() -> N
     assert set(_resolve.COLOR_SCHEMES) == set(get_args(ColorScheme))
     assert set(_resolve.RELAY_POWERS) == set(get_args(RelayPower))
     assert set(_resolve.HEARTBEAT_TIMINGS) == set(get_args(HeartbeatTiming))
+    assert set(_resolve.WHITE_TYPES) == set(get_args(WhiteType))
     routes = _resolve.routes(FAMILIES)
     reference = _reference()
     yaml = require_optional("yaml", reason="the reference resolver reads spec/devices.yaml")
@@ -322,6 +323,8 @@ _REFUSED: tuple[tuple[str, str, _Edit, str], ...] = (
     ("h6188", "0", lambda f: f["client_profile"].pop("color_scheme"), "no color_scheme"),
     ("h5080", "307", lambda f: _row(f, "307")["capabilities"].append("rgb"), "['rgb'] on a relay row"),
     ("dreamcolorlightv1", "19", lambda f: _row(f, "19").update(color_scheme="h60a7"), "color_scheme 'h60a7'"),
+    ("bulblightv3", "64", lambda f: _row(f, "64").update(white_type="rgb_black"),
+     "white_type rgb_black on the h6006 scheme"),
     ("dreamcolorlightv1", "19", lambda f: (f["client_profile"].update(color_scheme="h61a8"),
                                            _row(f, "19").pop("color_scheme")),
      "the family color_scheme h61a8 would drop ['color_temp']"),

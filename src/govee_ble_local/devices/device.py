@@ -576,7 +576,7 @@ class Device:
         r, g, b = rgb
         return self._build_or_unsupported(
             build.color_rgb_frames, r, g, b, self.profile.color_scheme, self.segment_count, span,
-            pieces=self.profile.segments or None)
+            pieces=self.profile.segments or None, white_type=self.profile.white_type)
 
     def update_ble_device(self, ble_device: BLEDevice) -> None:
         """Swap in a fresh BLEDevice (e.g. a new scanner path) for later connects."""
@@ -1038,7 +1038,7 @@ class Device:
                 self._require(Capability.COLOR_TEMP)
                 frames.append(self._build_or_unsupported(
                     build.color_temp, kelvin, self.profile.color_scheme, self.segment_count,
-                    pieces=self.profile.segments or None))
+                    pieces=self.profile.segments or None, white_type=self.profile.white_type))
             if not frames:
                 return
 
@@ -1111,7 +1111,7 @@ class Device:
             await self._ensure_segment_count()
             frame = self._build_or_unsupported(
                 build.color_temp, sent, self.profile.color_scheme, self.segment_count,
-                pieces=self.profile.segments or None)
+                pieces=self.profile.segments or None, white_type=self.profile.white_type)
             await self._commit(frame, lambda: _fold.apply_kelvin(self.profile, self._state, sent),
                                ticket=ticket)
 
@@ -1130,7 +1130,7 @@ class Device:
             n = self.segment_count
             frame = self._build_or_unsupported(
                 build.segment_rgb, _mask(indices, n), r, g, b, self.profile.color_scheme, n,
-                self._kelvin_range())
+                self._kelvin_range(), white_type=self.profile.white_type)
 
             carried = self._carried(indices, build.COLOR_MASK_CAP)
 
@@ -1203,7 +1203,8 @@ class Device:
             await self._ensure_segment_count()
             n = self.segment_count
             frame = self._build_or_unsupported(
-                build.segment_color_temp, _mask(indices, n), sent, self.profile.color_scheme, n)
+                build.segment_color_temp, _mask(indices, n), sent, self.profile.color_scheme, n,
+                white_type=self.profile.white_type)
 
             def apply() -> None:
                 # A colour-mode write leaves scene mode, as set_color_temp does.
@@ -1339,7 +1340,8 @@ class Device:
             n = self.segment_count
             kelvin_range = self._kelvin_range()
             frame = self._build_or_unsupported(
-                build.segment_rgb, _mask(z.segments, n), r, g, b, self.profile.color_scheme, n, kelvin_range)
+                build.segment_rgb, _mask(z.segments, n), r, g, b, self.profile.color_scheme, n, kelvin_range,
+                white_type=self.profile.white_type)
 
             def apply() -> None:
                 _fold.update_segments(self._state, z.segments, rgb=pick)
@@ -1371,7 +1373,8 @@ class Device:
             await self._ensure_segment_count()
             n = self.segment_count
             frame = self._build_or_unsupported(
-                build.segment_color_temp, _mask(z.segments, n), sent, self.profile.color_scheme, n)
+                build.segment_color_temp, _mask(z.segments, n), sent, self.profile.color_scheme, n,
+                white_type=self.profile.white_type)
 
             def apply() -> None:
                 # A zone colour write leaves scene mode, as set_color_temp does.

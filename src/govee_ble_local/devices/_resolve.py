@@ -63,7 +63,9 @@ the row lacks fails the build: nothing defaults silently.
 - A row's colour scheme drops the capabilities it has no frame for (:data:`SCHEME_LACKS`), but only a
   scheme the row names itself: a family default that would drop one raises. ``rgb``, ``color_temp`` or
   ``segments`` on a relay row raises (the library resolves no colour scheme or Kelvin range for a plug), and
-  elsewhere they need a colour scheme. An ``untraced`` scene dialect drops ``scenes``; ``none`` is activate
+  elsewhere they need a colour scheme. A row's ``white_type`` (the slot of the h60a6 colour-temperature
+  frame, Bytes.r's white type: ``DeviceProfile.white_type``) other than ``rgb_white``, the default, needs the
+  h60a6 scheme. An ``untraced`` scene dialect drops ``scenes``; ``none`` is activate
   only. Scenes need a bundled catalog, as every SKU of 1.4.0 that offers them ships one: a SKU the scene
   store has no catalog for (``scenes/store.json``, the generated ``SCENE_CATALOGS``, which
   :func:`profiles` takes as ``catalogued``) is offered no ``scenes``, its row's scene facts still checked.
@@ -199,6 +201,7 @@ class Row(TypedDict, total=False):
     relay_on_mask: int
     advert_on_mask: int
     color_scheme: str
+    white_type: str
     color_functions: tuple[str, ...]
     capabilities: tuple[str, ...]
     zones: tuple[ZoneRow, ...]
@@ -353,6 +356,10 @@ MODELLED: Final = frozenset({"modelled"})   # admitted only on the caller's opt-
 LEVELS: Final = ADMITTED | MODELLED
 CAPABILITIES: Final = ("power", "brightness", "rgb", "color_temp", "segments", "scenes")   # models.Capability
 COLOR_SCHEMES: Final = ("h60a6", "h6006", "h6188", "h61a8", "h6061")   # wire.build.ColorScheme
+# The h60a6 colour-temperature slot types (clientRow white_type; wire.build.WhiteType), and the default a row
+# without one takes (Bytes.r's ff ff ff, every row before 1.8.0).
+WHITE_TYPES: Final = ("rgb_black", "rgb_white", "rgb_self_tem_color")
+_WHITE_DEFAULT: Final = "rgb_white"
 RELAY_POWERS: Final = ("outlet0", "all_outlets", "total_switch")        # devices.profile.RelayPower
 HEARTBEAT_TIMINGS: Final = ("fixed_rate", "after_quiet")         # transport.connection.HeartbeatTiming
 # The keep-alive reads a screen sends (clientRow heartbeat, govee_common command ids; DeviceProfile.heartbeat
@@ -778,6 +785,11 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
         need(scheme, "color_scheme")
     if scheme is not None and scheme not in COLOR_SCHEMES:
         fail(f"color_scheme {scheme!r} is not one the library builds")
+    white = row.get("white_type", _WHITE_DEFAULT)
+    if white not in WHITE_TYPES:
+        fail(f"white_type {white!r} (one of {list(WHITE_TYPES)})")
+    if white != _WHITE_DEFAULT and scheme != "h60a6":
+        fail(f"white_type {white} on the {scheme} scheme (the white slot is the h60a6 frame's, Bytes.r)")
     lacks = caps & SCHEME_LACKS.get(scheme or "", frozenset())
     if lacks and "color_scheme" not in row:
         fail(f"the family color_scheme {scheme} would drop {sorted(lacks)}: the row must name it")
@@ -943,6 +955,8 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
             fail(f"zone {name} segments {list(segs)} are not all below the {out['segments']} segments")
     if scheme is not None:
         out["color_scheme"] = scheme
+    if white != _WHITE_DEFAULT:
+        out["white_type"] = white
     if status_read is not None:
         out["status_read"] = tuple(status_read)   # command names; devices/profile.py takes their codes
         decode: dict[str, Any] = {f: forms[f] for f in _STATUS_TLV_FORMS

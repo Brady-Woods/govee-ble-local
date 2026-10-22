@@ -118,6 +118,8 @@ GOLDEN_WHOLE = [
     ("H6004", None, 0xFFB969, "33050dffb9690bb8ffb969000000000000000088"),
     ("H6004", None, 0xFFB46B, "33050dffb46b0bb8ffb969000000000000000087"),
     ("H6006", None, 0xFFD5A1, "33050dffd5a10fa0ffd5a1000000000000000094"),
+    # white type rgb_self_tem_color, every piece: the slot is 00 00 00 (Bytes.r kind 3, 12 pieces)
+    ("H61E5", None, 0xFFB969, "330515010000000bb8ffb969ff0f00000000004e"),
 ]
 
 

@@ -19,7 +19,7 @@ frame in the app for that family) and GoveeBleInvalidValue for bad caller input.
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from typing import Any, Final, Literal, Never
+from typing import Any, Final, Literal, Never, get_args
 
 from ..const import FRAME_LEN, SCENE_A3_HEADER_LEN, SCENE_A3_PIECE_LEN
 from ..devices._resolve import HEARTBEATS as _HEARTBEATS   # standard library only: no import cycle
@@ -190,11 +190,33 @@ _FORM_0B_RGB_MASK: Final = int(_C.Form0b.rgb_mask)
 # as the tint (rgb_as_kelvin); h61a8 has no CCT and always sends RGB.
 ColorScheme = Literal["h60a6", "h6006", "h61a8", "h6188", "h6061"]
 
+# The h60a6 colour-temperature frame's slot (op15_color kelvin_tint), the white type the colour page hands
+# Bytes.r: the app's ColorTemperatureType (LightColorCapabilityCenter.d1 -> Config.H: Config.O by SKU, else
+# Config.P by goodsType, else 1), named as the app names it. Bytes.r (Bytes.java:474-501):
+#   "rgb_white"          (1, and 2 RGB_SELF)  slot ff ff ff, then the Kelvin and the tint;
+#   "rgb_black"          (0)                  slot 00 00 00, then the Kelvin and the tint;
+#   "rgb_self_tem_color" (3)                  over a whole posSet as rgb_black; over a partial one (Bytes.x:
+#                                             a position unset) the tint in the slot, Kelvin and tint zero,
+#                                             the bytes of the plain RGB frame of the tint (Bytes.h).
+# Only the h60a6 scheme carries it (devices.yaml clientRow white_type; DeviceProfile.white_type).
+WhiteType = Literal["rgb_black", "rgb_white", "rgb_self_tem_color"]
+DEFAULT_WHITE_TYPE: Final[WhiteType] = "rgb_white"
+
 
 def _unsupported_scheme(scheme: Never) -> Never:
     """Exhaustiveness guard: mypy proves every builder handles each ``ColorScheme``; at runtime (a
     string outside the Literal) refuse rather than send another family's frame."""
     raise GoveeBleNotSupported(f"unknown colour scheme {scheme!r}")
+
+
+def _check_white_type(scheme: ColorScheme, white_type: WhiteType) -> None:
+    """GoveeBleNotSupported for a white type other than the default on a scheme other than ``h60a6``: only
+    the 0x15 colour-temperature frame has the slot (:data:`WhiteType`)."""
+    if white_type not in get_args(WhiteType):
+        raise GoveeBleInvalidValue(f"unknown white type {white_type!r}")
+    if white_type != DEFAULT_WHITE_TYPE and scheme != "h60a6":
+        raise GoveeBleNotSupported(f"{scheme} has no white slot (white type {white_type!r} is the h60a6 "
+                                   "scheme's)")
 
 
 def _check_range(name: str, value: int, lo: int, hi: int) -> int:
@@ -505,15 +527,16 @@ def rgb_as_kelvin(r: int, g: int, b: int, scheme: ColorScheme,
 
 
 def _rgb_pick_color_temp(r: int, g: int, b: int, kelvin: int, scheme: ColorScheme,
-                         segments: int | None, mask: int | None = None, pieces: int | None = None) -> bytes:
+                         segments: int | None, mask: int | None = None, pieces: int | None = None,
+                         white_type: WhiteType = DEFAULT_WHITE_TYPE) -> bytes:
     """The CCT frame the app writes for an RGB pick that :func:`rgb_as_kelvin` turned into
     ``kelvin``; the PICKED colour is the tint, not the table's first colour for ``kelvin`` (a Kelvin
     step has two colours). ``mask`` None is the whole device:
 
-    * ``h60a6`` (``Config.Yt`` -> ``Bytes.r``): ``15 01 ff ff ff <K> <picked RGB> <mask>``, one frame
+    * ``h60a6`` (``Config.Yt`` -> ``Bytes.r``): ``15 01 <slot> <K> <picked RGB> <mask>``, one frame
       with the mask the RGB frame would have used, all ``segments`` when ``mask`` is None (the slider
       path, :func:`color_temp`, is the same frame over the all-segments mask with the Kelvin's first
-      tint);
+      tint); the slot is the device's ``white_type`` (:data:`WhiteType`: ``ff ff ff`` by default);
     * ``h6006`` / ``h6188`` (``Config.bu`` -> ``Bytes.p``): ``0d <picked RGB> <K> <first tint of K>``,
       whole device (no mask), the same frame for both schemes (the white-slot form of the h6188
       slider is not used here);
@@ -524,7 +547,7 @@ def _rgb_pick_color_temp(r: int, g: int, b: int, kelvin: int, scheme: ColorSchem
             if mask is None:
                 segments = _segments_or_default(scheme, segments)
                 mask = all_segments_mask(segments)
-            return segment_color_temp(mask, kelvin, scheme, segments, tint=(r, g, b))
+            return segment_color_temp(mask, kelvin, scheme, segments, tint=(r, g, b), white_type=white_type)
         case "h6006" | "h6188":
             return _cct0d_frame((r, g, b), kelvin, tint_for_kelvin(kelvin))
         case "h6061":
@@ -538,20 +561,22 @@ def _rgb_pick_color_temp(r: int, g: int, b: int, kelvin: int, scheme: ColorSchem
 # ── colour ───────────────────────────────────────────────────────────────────
 def color_rgb_frames(r: int, g: int, b: int, scheme: ColorScheme, segments: int | None = None,
                      kelvin_range: tuple[int, int] | None = None, *,
-                     pieces: int | None = None) -> list[bytes]:
+                     pieces: int | None = None, white_type: WhiteType = DEFAULT_WHITE_TYPE) -> list[bytes]:
     """Whole-device RGB pick as the frames the app sends: one for every scheme except ``h6061``, whose
     panels are written in groups of four (see :func:`color_rgb`, which is the plain single-frame form).
     An RGB that is a Kelvin tint colour within ``kelvin_range`` (the SKU's range) is sent as one CCT
     frame instead, exactly as the app does, on every scheme with a colour-temperature mode (see
-    :func:`rgb_as_kelvin` and :func:`_rgb_pick_color_temp`); ``kelvin_range`` None sends plain RGB
+    :func:`rgb_as_kelvin` and :func:`_rgb_pick_color_temp`; on ``h60a6`` with the device's
+    ``white_type`` slot); ``kelvin_range`` None sends plain RGB
     (``h6061`` defaults to its own range). ``segments`` None is the scheme's default count
     (:data:`_DEFAULT_SEGMENTS`; on ``h6061`` every panel, the app's fallback). ``pieces`` is an
     ``h6061`` device's panel count (the profile's ``segments``; None: the H6061's 23), which bounds
     ``segments`` and sizes the mask (:func:`_h6061_panels`); other schemes ignore it."""
     _check_rgb(r, g, b)
+    _check_white_type(scheme, white_type)
     kelvin = rgb_as_kelvin(r, g, b, scheme, kelvin_range)
     if kelvin is not None:
-        return [_rgb_pick_color_temp(r, g, b, kelvin, scheme, segments, pieces=pieces)]
+        return [_rgb_pick_color_temp(r, g, b, kelvin, scheme, segments, pieces=pieces, white_type=white_type)]
     if scheme == "h6061":
         return _h6061_group_frames(r, g, b, segments, pieces)
     return [color_rgb(r, g, b, scheme, segments)]
@@ -579,11 +604,12 @@ def color_rgb(r: int, g: int, b: int, scheme: ColorScheme, segments: int | None 
 
 
 def color_temp(kelvin: int, scheme: ColorScheme, segments: int | None = None, *,
-               pieces: int | None = None) -> bytes:
+               pieces: int | None = None, white_type: WhiteType = DEFAULT_WHITE_TYPE) -> bytes:
     """Whole-device colour temperature, always with the app's Kelvin->RGB tint
     (``wire.cct.tint_for_kelvin``): ``h6006`` = ``0d <tint> <K> <tint>``, ``h6188`` =
-    ``0d ff ff ff <K> <tint>``, ``h60a6`` = ``15 01 ff ff ff <K> <tint> <mask>`` (this is just
-    segment_color_temp with the all-segments mask), ``h6061`` = ``15 01 <tint> <K> <mask>`` over
+    ``0d ff ff ff <K> <tint>``, ``h60a6`` = ``15 01 <slot> <K> <tint> <mask>`` (this is just
+    segment_color_temp with the all-segments mask; the slot is the ``white_type``'s, ``ff ff ff`` by
+    default), ``h6061`` = ``15 01 <tint> <K> <mask>`` over
     ``segments`` panels of a device of ``pieces`` (as in :func:`color_rgb_frames`; ``segments`` None is
     the scheme's default count, :data:`_DEFAULT_SEGMENTS`). ``h61a8`` has no colour temperature:
     GoveeBleNotSupported. The builder sends ``kelvin`` as given; the ``Device`` layer applies
@@ -591,10 +617,11 @@ def color_temp(kelvin: int, scheme: ColorScheme, segments: int | None = None, *,
     if scheme == "h61a8":
         raise GoveeBleNotSupported("h61a8 has no colour-temperature capability")
     _check_kelvin(kelvin)
+    _check_white_type(scheme, white_type)
     match scheme:
         case "h60a6":
             n = _segments_or_default(scheme, segments)
-            return segment_color_temp(all_segments_mask(n), kelvin, scheme, n)
+            return segment_color_temp(all_segments_mask(n), kelvin, scheme, n, white_type=white_type)
         case "h6006":
             # Config.bu -> Bytes.p(tint, K): [0d, tint r g b, kelvin u2be, tint r g b] - the tint
             # sits in BOTH colour slots (H6008/H6006/H6052; also H6004 via the same builder).
@@ -615,19 +642,22 @@ def color_temp(kelvin: int, scheme: ColorScheme, segments: int | None = None, *,
 # Bytes.A carry no mask. The segment builders below refuse it.
 def segment_rgb(mask: int, r: int, g: int, b: int, scheme: ColorScheme,
                 segments: int | None = None,
-                kelvin_range: tuple[int, int] | None = None) -> bytes:
+                kelvin_range: tuple[int, int] | None = None, *,
+                white_type: WhiteType = DEFAULT_WHITE_TYPE) -> bytes:
     """Per-segment RGB pick (mask selects segments); same layout as color_rgb. ``segments`` is the
     device's segment count, which sets the 0x15 mask width (see :func:`mask_width`); omitted,
     the mask is the legacy two bytes. On ``h60a6`` a colour that is a Kelvin tint colour within
-    ``kelvin_range`` (the SKU's range) is sent as the CCT frame ``15 01 ff ff ff <K> <picked RGB>
-    <mask>`` instead (``Config.Yt``, same mask), see :func:`rgb_as_kelvin`; ``kelvin_range`` None
+    ``kelvin_range`` (the SKU's range) is sent as the CCT frame ``15 01 <slot> <K> <picked RGB>
+    <mask>`` instead (``Config.Yt``, same mask; the ``white_type``'s slot, :func:`segment_color_temp`),
+    see :func:`rgb_as_kelvin`; ``kelvin_range`` None
     sends plain RGB. GoveeBleNotSupported on the whole-device-only schemes (0x0d, ``h6061``)."""
     _check_rgb(r, g, b)
+    _check_white_type(scheme, white_type)
     match scheme:
         case "h60a6":
             kelvin = rgb_as_kelvin(r, g, b, scheme, kelvin_range)
             if kelvin is not None:
-                return _rgb_pick_color_temp(r, g, b, kelvin, scheme, segments, mask)
+                return _rgb_pick_color_temp(r, g, b, kelvin, scheme, segments, mask, white_type=white_type)
             return _op15_color_frame(_FORM_KELVIN_TINT, (r, g, b), mask,
                                      _mask_positions(mask, segments, COLOR_MASK_CAP))
         case "h61a8":
@@ -640,11 +670,44 @@ def segment_rgb(mask: int, r: int, g: int, b: int, scheme: ColorScheme,
             _unsupported_scheme(scheme)
 
 
+_WHITE: Final = (0xFF, 0xFF, 0xFF)   # ColorUtils.R()
+_BLACK: Final = (0x00, 0x00, 0x00)   # ColorUtils.F()
+
+
+def _white_slot(white_type: WhiteType, mask: int, segments: int | None, kelvin: int,
+                tint: tuple[int, int, int]) -> tuple[tuple[int, int, int], int, tuple[int, int, int]]:
+    """``(slot, kelvin, tint)`` of an h60a6 colour-temperature frame over ``mask`` on a device of
+    ``segments`` segments, as ``Bytes.r`` fills them for the device's white type (:data:`WhiteType`;
+    Bytes.java:474-501). ``rgb_self_tem_color`` tests the posSet: whole when the mask sets all ``segments``
+    positions (``Bytes.x`` false), so it needs the count (GoveeBleInvalidValue without it)."""
+    match white_type:
+        case "rgb_white":
+            return _WHITE, kelvin, tint
+        case "rgb_black":
+            return _BLACK, kelvin, tint
+        case "rgb_self_tem_color":
+            if segments is None:
+                raise GoveeBleInvalidValue("white type 'rgb_self_tem_color' needs the device's segment count")
+            whole = all_segments_mask(segments)
+            return (_BLACK, kelvin, tint) if mask & whole == whole else (tint, 0, _BLACK)
+        case _:
+            _unknown_white_type(white_type)
+
+
+def _unknown_white_type(white_type: Never) -> Never:
+    """Exhaustiveness guard for :data:`WhiteType`, as :func:`_unsupported_scheme` is for the schemes."""
+    raise GoveeBleInvalidValue(f"unknown white type {white_type!r}")
+
+
 def segment_color_temp(mask: int, kelvin: int, scheme: ColorScheme,
                        segments: int | None = None,
-                       tint: tuple[int, int, int] | None = None) -> bytes:
-    """Colour temperature on selected segments (mask), ``15 01 ff ff ff <K u2be> <tint> <mask>``
-    (``Bytes.r`` type 1; the tint is ``Constant.getTemColorByKelvin``). ``segments`` is the
+                       tint: tuple[int, int, int] | None = None, *,
+                       white_type: WhiteType = DEFAULT_WHITE_TYPE) -> bytes:
+    """Colour temperature on selected segments (mask), ``15 01 <slot> <K u2be> <tint> <mask>``
+    (``Bytes.r``; the tint is ``Constant.getTemColorByKelvin``). The slot is the device's ``white_type``'s
+    (:data:`WhiteType`, :func:`_white_slot`): ``ff ff ff`` by default (Bytes.r type 1), ``00 00 00`` for
+    ``rgb_black``, and for ``rgb_self_tem_color`` ``00 00 00`` over every segment or, over some, the tint
+    with Kelvin and tint zero (which needs ``segments``). ``segments`` is the
     device's segment count, which sets the mask width (see :func:`mask_width`); omitted, the
     mask is the legacy two bytes. Only the 0x15 family
     embeds a segment mask in the CCT frame — the 0x0d frame has no mask (whole-device only) and
@@ -652,12 +715,14 @@ def segment_color_temp(mask: int, kelvin: int, scheme: ColorScheme,
     defaults to the app's tint for ``kelvin`` (the slider path); an RGB pick that is itself a tint
     colour passes that exact colour (``Config.Yt`` writes the picked colour, whichever of the Kelvin
     step's two colours it is)."""
+    _check_white_type(scheme, white_type)
     match scheme:
         case "h60a6":
             _check_kelvin(kelvin)
             positions = _mask_positions(mask, segments, COLOR_MASK_CAP)
-            return _op15_color_frame(_FORM_KELVIN_TINT, (0xFF, 0xFF, 0xFF), mask, positions, kelvin,
-                                     tint if tint is not None else tint_for_kelvin(kelvin))
+            slot, sent, shade = _white_slot(white_type, mask, segments, kelvin,
+                                            tint if tint is not None else tint_for_kelvin(kelvin))
+            return _op15_color_frame(_FORM_KELVIN_TINT, slot, mask, positions, sent, shade)
         case "h61a8":
             raise GoveeBleNotSupported("h61a8 has no colour-temperature capability")
         case "h6006" | "h6188":

@@ -63,6 +63,17 @@ model, from which the shipped readers are generated).
     each, soft 1.04.05, hard 3.05.00. One unit's mode TLV is a short `15 01`. The row's own decode
     (`gradual_14`, where 0x15 isn't decoded) reads that burst in full; the H60A6 default decode gave an empty
     reply.
+- **The h60a6 colour-temperature white slot** (`DeviceProfile.white_type`, devices.yaml `white_type`). The
+  h60a6 frame `33 05 15 01 <slot> <K> <tint> <mask>` now carries the slot of the SKU's white type, the value its
+  colour page hands `Bytes.r` (the app's ColorTemperatureType, through `LightColorCapabilityCenter.d1` ->
+  `Config.H`): `rgb_white` = `ff ff ff` (the default, every SKU before), `rgb_black` = `00 00 00`, and
+  `rgb_self_tem_color` = `00 00 00` over every piece and, over some, the tint as the colour with Kelvin and tint
+  zero (the plain RGB bytes of the tint). It applies to `set_color_temp`, `turn_on(kelvin=)`, the segment and
+  zone Kelvin writes, and an RGB pick that is a Kelvin tint colour; the builders `color_temp`,
+  `segment_color_temp`, `segment_rgb` and `color_rgb_frames` take `white_type=`. Only an h60a6 profile may set
+  another value. It admits **H61E5** (h61d3 239) and **H61E6** (246), `app_traced`, not hardware-verified: the
+  ColorMode colour page (`ColorModeControllerConfig.c` -> `Config.Yt` -> `Bytes.r`) with `Config.P` = 3. Their
+  illumination tab's Kelvin (`Bytes.C`, `ff ff ff` for them) is a second path and not modelled.
 
 ### Changed
 - Nothing for existing SKUs. Each of the 104 SKUs admitted at 1.6.1 (98 by default, 6 behind
@@ -72,6 +83,8 @@ model, from which the shipped readers are generated).
   H6690, H70A1-3 with H6176 / H61BC, H61B0 with H61B3 / H61B6. H6099 and H61B0 come first in theirs, so a
   `Device` built from one of those profiles without `sku=` names itself after them (`create_device` and
   `make_device` always pass the SKU).
+- The white slot changes no admitted SKU: each resolves to `white_type="rgb_white"`, whose frames are 1.7.0's
+  byte for byte.
 
 ### Spec
 - **The device-list trace (Govee Home 7.7.02; 7.5.12 where a family says so).** Each of the 83 census families
@@ -95,6 +108,13 @@ model, from which the shipped readers are generated).
   - The catalogue snapshot routes 31 SKUs no row lists (15 before). For review: H613A-F (catalogue 39, named
     by h613839's (65535,255) bind item), where it was H615E.
   - rgbiclight 351 / 352 now record the R617G / R618D catalogue route, as h7057 274 does H8057's.
+- **`white_type`** (devices.schema.json clientRow; `rgb_black`, `rgb_white`, `rgb_self_tem_color`, absent =
+  `rgb_white`): the white type the colour page hands `Bytes.r`, not `Config.P` read raw (the rgbiclight colour
+  page passes 1, so goodsType 176, `Config.P` 0, stays `rgb_white`; RGB_SELF builds as `rgb_white`). The
+  govee_ble_frame `op15_color` `color` field documents the slot per white type. h61d3 239 / 246 state
+  `rgb_self_tem_color`; h705a 180 states `rgb_black` and the `kelvin_tint` form, and stays without support (its
+  aa a1 0b piece count and its Kelvin read-back are still gaps). The reference self-test reads a `rgb_black` and
+  a partial `rgb_self_tem_color` frame.
 
 ## [1.6.1] — 2026-10-21
 

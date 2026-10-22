@@ -597,6 +597,16 @@ def _selftest(*, strict: bool = False) -> int:
     check("build_op15_color_temp_bytes_r round-trips slot, kelvin and tint",
           (ext.color.r, ext.color.g, ext.color.b, ext.kelvin) == (0xFF, 0xFF, 0xFF, 2700)
           and (ext.tint.r, ext.tint.g, ext.tint.b) == (100, 50, 16) and ext.is_cct)
+    # The white types (devices.yaml white_type): rgb_black's slot 00 00 00 is still CCT; rgb_self_tem_color
+    # over a partial posSet is the tint as plain RGB (kelvin 0).
+    prof16 = make_profile(f_15_01="kelvin_tint", num_segments=16)
+    black, partial = (parse_frame(build_op15_color_temp_bytes_r((100, 50, 16), 2700, pos, kind), "tx",
+                                  prof16).body.params.params.data
+                      for pos, kind in (([True] * 16, 0), ([True, False] * 8, 3)))
+    check("Bytes.r white types: rgb_black leads 00 00 00 at 2700 K; partial rgb_self_tem_color is RGB",
+          (black.color.r, black.color.g, black.color.b, black.kelvin, black.is_cct) == (0, 0, 0, 2700, True)
+          and (partial.color.r, partial.color.g, partial.color.b, partial.kelvin, partial.is_cct)
+          == (100, 50, 16, 0, False))
 
     k05 = append_bcc(bytes([0x33, 0x05, 0x15, 0x05, 0x0A, 0x8C]))
     kw = parse_frame(k05, "tx", make_profile(f_15_05="kelvin"))
