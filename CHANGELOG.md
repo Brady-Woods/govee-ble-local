@@ -74,6 +74,16 @@ model, from which the shipped readers are generated).
   Every other light still reads on only for a byte of 1 (`ControllerSwitch.Companion.c`), so no admitted SKU's
   decoded state changes. `parse.parse_light_power` takes the profile's `wire_profile` for the rule (default:
   on at 1).
+- **H1162 / H1163 / H1167 / H1168** (h1162 goodsTypes 87 / 137 / 182 / 186), the Music Sync boxes, admitted by
+  default (`app_traced`) as power-only rows at pact (1,1), following the user's decision to match the
+  standalone screen. The switch turns the box's music sync on or off: `33 01 <on>`, polled with aa 01 and kept
+  alive with an aa 01 heartbeat (fixed 2 s). H1162 / H1163 / H1167 match `AdjustActivity` (`Model.t`, cloud
+  gid <= 0), whose aa 01 reply is on at any non-zero byte (`SwitchController.parseValidBytes`, the rows' wire
+  `power.light_nonzero`). H1168 has no standalone screen: its row is the feast screen's header switch
+  (`VM4MusicFeast.G4` -> `DeviceToggleController`), whose aa 01 read is on at 1 (`Compose4ReadAllInfo`). The
+  Music Feast screen (group control, CLAUDE.md rule 5) is the documented other path. The feast frames (`33 60`,
+  `aa 60`), music, the battery and H1168's `33 60 01` feast-effect toggle are not modelled. Not
+  hardware-verified.
 
 ### Changed
 - **A polled profile reads aa 04 only with `Capability.BRIGHTNESS`**, as the app's connect read does

@@ -11339,15 +11339,18 @@ families:
       # none: no screen reads an aa 05 light-colour report. AdjustActivity reads no aa 05 (base-classes2/com/govee/h1162/ble/BleOpV1.java:170-183);
       # the H1162 feast-v0 screen reads aa 05 on firmware < 1.01.00, but as a music mode (musicfeast/ble/Ble.java:548-557, musicfeast/controller/MusicModeController.java:24-35).
       mode_color_parse: none
-      power_read: aa01   # AdjustActivity, the H1162 feast-v0 screen on firmware < 1.01.00, and the H1168 header switch. The feast screens of 87 (>= 1.01.00), 137 and 182 read aa 60 01 instead (h1162.md G2).
+      power_read: aa01   # AdjustActivity (87 / 137 / 182: on at any non-zero byte, SwitchController.parseValidBytes; wire power light_nonzero) and the H1168 header switch (on at == 1, Compose4ReadAllInfo). The feast screens of 87 (>= 1.01.00), 137 and 182, the other path, read aa 60 01 instead (h1162.md G2).
       power_live: [heartbeat_aa01]   # every screen: the aa 01 heartbeat's byte 2 (h1162 BleOpV1, musicfeast Ble.onEventHeart, v2 BleOp.onEventHeart, VM4MusicFeast.onEventHeart)
       by_goods_type:
-        # All four are blocked: the box has no light output of its own. Its screens switch the box (sync on / off)
-        # and address the Music Feast's sub-devices through it (33 60 <sub>, BleProtocolFeast). See h1162.md G1 / G2 / G3.
-        "87":   # H1162 Music Sync Box; blocked (G1, G2, G3)
+        # Decision 5 (the user, 2026-10-21, "Approved stand alone"): power-only rows on the box's own screen,
+        # AdjustActivity for 87 / 137 / 182 (CLAUDE.md rule 5: the Music Feast screen is group control, the
+        # documented other path) and the header switch for 186. The box has no light of its own: the switch
+        # turns music sync on or off. The feast, music and battery features are left out (h1162.md G1-G3).
+        "87":   # H1162 Music Sync Box
           models: [H1162]
           connectivity: [ble]
           pacts: ["1,1"]
+          support: app_traced
           capabilities: [power]
           zones: []
           account_lock: false
@@ -11357,19 +11360,19 @@ families:
           connect_writes: []
           scene_dialect: untraced
           doc: >-
-            H1162 (h1162 SubLib -> Model.t). gid <= 0 (cloud DeviceExt4H1168.gid): AdjustActivity, switch 33 01 <on>
-            (UiV1.onOffChange -> SwitchController), connect (BleOpV1.t) aa 06, aa 07 03, aa 01; no secret check
-            (AbsBleOpV1.m is null). gid > 0: Base2homeConfig.getH1162DetailAcClass(), a property-injected class name not
-            in the decompile. Disputed, unproven: that this is the feast-version-0 MusicFeastDetailAc (Model.t doesn't
-            call Constant.jump2MusicFeastDetail); it is indicated because MusicFeastDetailAc reads the gid key Model.t
-            puts (ConsV1.n = Constant.c) and musicFeastVersion(87) = 0. That screen picks its protocol from the cloud
-            centre device's versions (MusicFeastDetailAc.R3 -> Constant.getMusicIterationVersion). Soft < 1.01.00: switch
-            33 01 <on> (SwitchController), connect reads aa 01, aa 40 (sub-device count), aa 05 (a music mode). Soft
-            >= 1.01.00 or either version unparsable: switch 33 60 01 <on> (SwitchControllerV2), connect reads aa 60 01,
-            aa 60 06, aa 60 04, aa 60 02; from pairing, 33 60 01 01 and 33 60 04 01 replace the switch and unite reads
-            (musicfeast Ble.y, Ble.o). Keep-alive aa 01 on every screen (HeartControllerWithBattery: byte 2 = on, byte 3
-            = battery bits), AbsBle fixed rate. Blocked: the switch is the box's music-sync on / off, not a light (G1);
-            its frame depends on the cloud gid and firmware (G2); the feast connect reads aren't served (G3).
+            H1162 Music Sync Box (h1162 SubLib -> Model.t). Matches the box's own screen, AdjustActivity, which Model.t
+            opens while the cloud DeviceExt4H1168.gid <= 0 (decision 5; CLAUDE.md rule 5): power only. The switch writes
+            33 01 <on> (UiV1.onOffChange -> base2light SwitchController). Connect (BleOpV1.t): aa 06, aa 07 03, aa 01,
+            the aa 01 reply on at any non-zero byte (SwitchController.parseValidBytes: wire power light_nonzero); no
+            aa 04, aa 05 or 0xAC, and no secret check (AbsBleOpV1.m is null). Keep-alive aa 01 at AbsBle's fixed 2 s
+            rate (BleComm.l = HeartControllerWithBattery: byte 2 != 0 is on, byte 3 the battery bits). The other path,
+            documented and not matched: with gid > 0 Model.t opens Base2homeConfig.getH1162DetailAcClass(), a
+            property-injected class (the feast-version-0 MusicFeastDetailAc is indicated, unproven: it reads the gid
+            key Model.t puts and musicFeastVersion(87) = 0), the Music Feast's group control. Below soft 1.01.00 it
+            switches with 33 01 <on> and reads aa 01, aa 40 (sub-device count), aa 05 (a music mode); from 1.01.00, or
+            with an unparsable version, 33 60 01 <on> with aa 60 01, aa 60 06, aa 60 04, aa 60 02 (MusicFeastDetailAc.R3
+            -> Constant.getMusicIterationVersion; musicfeast Ble.y, Ble.o). Not modelled: the battery, the Music Feast
+            card and every feast frame. Not hardware-verified.
           doc-ref:
             - base-classes2/com/govee/h1162/Support.java:16-45,61-82,121-136
             - base-classes2/com/govee/h1162/pact/SubLib.java:21-27
@@ -11397,10 +11400,11 @@ families:
             - base-classes3/com/govee/home/main/device/moment/feastcontroller/DeviceResetController.java:16-18
             - base-classes3/com/govee/home/main/device/moment/feastcontroller/FeastBrightnessUniteController.java:14-17,23-25
             - base-classes3/com/govee/home/main/device/moment/feastcontroller/MusicModeControllerV2.java:24-26
-        "137":   # H1163 Music Sync Box 2; blocked (G1, G2, G3)
+        "137":   # H1163 Music Sync Box 2
           models: [H1163]
           connectivity: [ble]
           pacts: ["1,1"]
+          support: app_traced
           capabilities: [power]
           zones: []
           account_lock: false
@@ -11410,24 +11414,27 @@ families:
           connect_writes: []
           scene_dialect: untraced
           doc: >-
-            H1163 (same SubLib and Model as H1162). With the cloud gid <= 0 it opens AdjustActivity: the switch writes
-            33 01 <on>, connect reads aa 06, aa 07 03, aa 01 and the DSP version aa 07 07 (Support.otaType4Ai), keep-alive
-            aa 01. With gid > 0 Model.t opens Base2homeConfig.getH1163DetailAcClass(), property-injected and not in the
-            decompile; the feast-version-1 MusicFeastDetailAcV4 is indicated (musicFeastVersion(137) = 1, and it reads the
-            gid key) but unproven. Its switch writes the feast switch 33 60 01 <on> (MusicFeastM.s ->
-            FeastSwitchController); brightness is 33 60 03 [percent, sub index] (MusicFeastM.k). Connect
-            (ComposeController4AllInfo, run in list order): aa 60 06, aa 60 01 (33 60 01 01 when forcedOpenMainDevice &&
-            fromAdd), aa 60 02, aa 60 03, aa 60 04; then, only when the reset reply's byte 0 != 0, 33 60 07 (empty cloud
-            list) or the a3 sub-device list followed by aa 60 05. The sync is appended from inside the reset reply's
-            listener, after the constructor has queued the rest, so it runs last (corrected after dispute). Power is read
-            back with aa 60 01 and kept live by the aa 01 heartbeat's byte 2 (v2 BleOp.onEventHeart). Blocked: no light
-            output (G1), the power frame and read depend on the cloud gid (G2), and the feast connect sequence isn't
-            served (G3).
+            H1163 Music Sync Box 2 (same SubLib and Model as H1162). Matches AdjustActivity (gid <= 0; decision 5),
+            power only, as H1162: the switch writes 33 01 <on>; connect (BleOpV1.t) aa 06, aa 07 03, aa 01 (on at any
+            non-zero byte, SwitchController.parseValidBytes: wire power light_nonzero) and the DSP version aa 07 07
+            (Support.otaType4Ai), a version read the library leaves out; keep-alive aa 01. The other path, documented
+            and not matched: with gid > 0 Model.t opens Base2homeConfig.getH1163DetailAcClass(), property-injected (the
+            feast-version-1 MusicFeastDetailAcV4 is indicated, unproven: musicFeastVersion(137) = 1, and it reads the
+            gid key), the feast's group control. It switches with the feast switch 33 60 01 <on> (MusicFeastM.s ->
+            FeastSwitchController) and writes brightness as 33 60 03 [percent, sub index] (MusicFeastM.k). Its connect
+            (ComposeController4AllInfo, in list order) is aa 60 06, aa 60 01 (33 60 01 01 when forcedOpenMainDevice &&
+            fromAdd), aa 60 02, aa 60 03, aa 60 04, and last, only when the reset reply's byte 0 != 0, 33 60 07 (empty
+            cloud list) or the a3 sub-device list followed by aa 60 05. Power is read back with aa 60 01 and kept live
+            by the aa 01 heartbeat's byte 2 (v2 BleOp.onEventHeart). Not modelled: the battery and every feast frame.
+            Not hardware-verified.
           doc-ref:
             - base-classes2/com/govee/h1162/Support.java:38-40,117-119,138-153
             - base-classes2/com/govee/h1162/pact/H1163SkuItem.java:20-22
             - base-classes2/com/govee/h1162/pact/Model.java:87-106
             - base-classes2/com/govee/h1162/ble/BleOpV1.java:170-183
+            - base-classes2/com/govee/h1162/adjust/v1/UiV1.java:300-305
+            - base-classes10/com/govee/base2light/ble/controller/SwitchController.java:24-39
+            - base-classes10/com/govee/base2light/ble/controller/HeartControllerWithBattery.java:72-111
             - base-classes10/com/govee/base2light/ble/controller/DspVersionInDeviceInfoController.java:15-21
             - base-classes9/com/govee/base2home/config/Base2homeConfig.java:54,216-218
             - base-classes3/com/govee/home/main/device/moment/Constant.java:98-106,677-699
@@ -11444,10 +11451,11 @@ families:
             - base-classes3/com/govee/home/main/device/moment/musicfeast/v2/ble/MainDeviceResetController.java:56-58
             - base-classes3/com/govee/home/main/device/moment/musicfeast/v2/ble/ClearSubDeviceController.java:64-66
             - base-classes3/com/govee/home/main/device/moment/musicfeast/v2/ble/SubDeviceConnectStatusController.java:86-88
-        "182":   # H1167 light show box; blocked (G1, G2, G3)
+        "182":   # H1167 light show box
           models: [H1167]
           connectivity: [ble]
           pacts: ["1,1"]
+          support: app_traced
           capabilities: [power]
           zones: []
           account_lock: false
@@ -11457,20 +11465,25 @@ families:
           connect_writes: []
           scene_dialect: untraced
           doc: >-
-            H1167 (same SubLib and Model). gid <= 0: AdjustActivity, as H1163 (33 01 <on>, aa 06 / aa 07 03 / aa 01 /
-            aa 07 07, keep-alive aa 01). gid > 0: Model.t opens Base2homeConfig.getH1167DetailAcClass(), property-injected
-            and not in the decompile; the feast-version-3 AcMusicFeastDetailV3 is indicated (musicFeastVersion = 3, and it
-            reads the gid key) but unproven. Its switch writes 33 60 01 <on> (MusicFeastM.s); its brightness dialog lists
-            the centre box among the sub-devices but still writes 33 60 03 [percent, index] (MusicUIV4.p). Its connect is
-            H1163's ComposeController4AllInfo sequence in list order: aa 60 06, aa 60 01 (33 60 01 01 when forced on),
-            aa 60 02, aa 60 03, aa 60 04, and last, only when the reset reply's byte 0 != 0, 33 60 07 or the a3 list plus
-            aa 60 05 (the sync is appended at the end of the compose; corrected after dispute). Power is read back with
-            aa 60 01 and kept live by the aa 01 heartbeat's byte 2. Support.addSupportPact registers 182 with 137's
-            Protocol object; both are (1, 1). Blocked: G1, G2, G3.
+            H1167 light show box (same SubLib and Model). Matches AdjustActivity (gid <= 0; decision 5), power only, as
+            H1163: 33 01 <on>; connect aa 06, aa 07 03, aa 01 (on at any non-zero byte, SwitchController.parseValidBytes:
+            wire power light_nonzero) and aa 07 07 (left out); keep-alive aa 01. The other path, documented and not
+            matched: with gid > 0 Model.t opens Base2homeConfig.getH1167DetailAcClass(), property-injected (the
+            feast-version-3 AcMusicFeastDetailV3 is indicated, unproven: musicFeastVersion = 3, and it reads the gid
+            key). It switches with 33 60 01 <on> (MusicFeastM.s); its brightness dialog lists the centre box among the
+            sub-devices but still writes 33 60 03 [percent, index] (MusicUIV4.p). Its connect is H1163's
+            ComposeController4AllInfo sequence in list order (aa 60 06, aa 60 01, aa 60 02, aa 60 03, aa 60 04, then
+            the conditional list sync last); power is read back with aa 60 01 and kept live by the aa 01 heartbeat's
+            byte 2. Support.addSupportPact registers 182 with 137's Protocol object; both are (1, 1). Not modelled:
+            the battery and every feast frame. Not hardware-verified.
           doc-ref:
             - base-classes2/com/govee/h1162/Support.java:41-42,155-170
             - base-classes2/com/govee/h1162/pact/H1167SkuItem.java:20-22
             - base-classes2/com/govee/h1162/pact/Model.java:87-106
+            - base-classes2/com/govee/h1162/ble/BleOpV1.java:170-183
+            - base-classes2/com/govee/h1162/adjust/v1/UiV1.java:300-305
+            - base-classes10/com/govee/base2light/ble/controller/SwitchController.java:24-39
+            - base-classes10/com/govee/base2light/ble/controller/HeartControllerWithBattery.java:72-111
             - base-classes9/com/govee/base2home/config/Base2homeConfig.java:57,220-222
             - base-classes3/com/govee/home/main/device/moment/Constant.java:689-691
             - base-classes3/com/govee/home/main/device/moment/musicfeast/h1167/AcMusicFeastDetailV3.java:283,942
@@ -11479,9 +11492,10 @@ families:
             - base-classes3/com/govee/home/main/device/moment/musicfeast/v2/ble/ComposeController4AllInfo.java:226-323
             - base-classes10/com/govee/base2light/ble/controller/AbsComposeControllerWithOpResult.java:37,69-104,328-341
             - base-classes3/com/govee/home/main/device/moment/musicfeast/v2/ble/BleOp.java:401-406,510-531
-        "186":   # H1168 Sync Box (BLE + Wi-Fi); blocked (G1, G3)
+        "186":   # H1168 Sync Box (BLE + Wi-Fi)
           models: [H1168]
           pacts: ["1,1"]
+          support: app_traced
           capabilities: [power]
           zones: []
           account_lock: false
@@ -11491,21 +11505,21 @@ families:
           connect_writes: []
           scene_dialect: untraced
           doc: >-
-            H1168 (h1162 SubLib1168 -> DeviceItem1168 -> Model1168.t, which always opens
+            H1168 Sync Box (h1162 SubLib1168 -> DeviceItem1168 -> Model1168.t, which always opens
             Base2homeConfig.getH1168DetailAcClass(), property-injected and not in the decompile). The screen is
             AcMusicFeastDetail4H1168 / VM4MusicFeast on the h1162 Ble by strong indication, not proof: it reads exactly
-            the intent_ac_adjust_* / wifiMac / topic keys Model1168.t puts. Connect (Compose4ReadAllInfo, in list order):
-            aa 60 06, aa 01 (33 01 01 only when entered from pairing), player state and volume, aa 60 01, timers, sleep,
-            wake-up, aa 60 04, aa 60 03, aa 60 02, aa 41, the soft, hard and DSP versions, the Wi-Fi hard and soft
-            versions and the Wi-Fi MAC; last, only when the reset reply's byte 0 != 0, 33 60 07 (empty cloud list) or the
-            a3 sub-device list followed by aa 60 05 (appended from the reset reply's listener; corrected after dispute).
-            The header switch (ivSwitch -> VM4MusicFeast.G4 -> DeviceToggleController) writes 33 01 <on>; it is read back
-            by the aa 01 connect read and kept live by the aa 01 heartbeat's byte 2 (VM4MusicFeast.onEventHeart). The
-            separate feast-effect toggle (ivLightEnable -> T2 -> a5) writes 33 60 01 <on>; its state U3 comes from
-            DeviceOtherInfo.lightSwitch, which aa 60 01 sets but the later aa 41 reply replaces (aa 41 byte 0 & 0x40), and
-            E3 uses it to gate musicUi (unmodelled). Colour is the music mode's 33 60 02 [mode, R, G, B] (Y4), brightness
-            33 60 03 [percent, index] (s4). 33 30 [type, on] (l5) is a settings toggle (1 energy saving, 2 pairing status,
-            3 pairing voice; SettingAcH1168), not a zone. Blocked: G1, G3.
+            the intent_ac_adjust_* / wifiMac / topic keys Model1168.t puts. It has no standalone screen, so the row is
+            power-only on its header switch (decision 5): ivSwitch -> VM4MusicFeast.G4 -> DeviceToggleController writes
+            33 01 <on> (33 01 01 only when the screen is entered from pairing), read back by the aa 01 connect read, on
+            at == 1 (Compose4ReadAllInfo$3$1), and kept live by the aa 01 heartbeat's byte 2 (VM4MusicFeast.onEventHeart,
+            HeartControllerWithBattery). Left out, as feast parts or extras: the rest of the connect (Compose4ReadAllInfo,
+            in list order: aa 60 06 before the aa 01 read; then player state and volume, aa 60 01, timers, sleep,
+            wake-up, aa 60 04, aa 60 03, aa 60 02, aa 41, the soft, hard and DSP versions, the Wi-Fi versions and MAC;
+            last, only when the reset reply's byte 0 != 0, 33 60 07 or the a3 sub-device list followed by aa 60 05);
+            the feast-effect toggle 33 60 01 <on> (ivLightEnable -> T2 -> a5; its state from aa 41 byte 0 & 0x40,
+            which replaces aa 60 01's); the music-mode colour 33 60 02 [mode, R, G, B] (Y4); the feast brightness
+            33 60 03 [percent, index] (s4); the settings toggles 33 30 [type, on] (l5: 1 energy saving, 2 pairing
+            status, 3 pairing voice; not a zone); the battery. Not hardware-verified.
           doc-ref:
             - base-classes2/com/govee/h1162/Support.java:28-30,43-45,172-187
             - base-classes2/com/govee/h1162/pact/SubLib1168.java:23-30
@@ -11521,6 +11535,7 @@ families:
             - base-classes2/com/govee/h1162/h1168/DeviceOtherInfo.java:26,46-71,93-95
             - base-classes12/com/govee/base2light/util/ParseUtils.java:55-57,72-74
             - base-classes3/com/govee/home/main/device/moment/musicfeast/h1168/controller/DeviceToggleController.java:38-41,65-72
+            - base-classes10/com/govee/base2light/ble/controller/HeartControllerWithBattery.java:72-111
             - base-classes10/com/govee/base2light/ble/controller/AbsControllerNoEvent4Single.java:140-145
             - base-classes2/com/govee/h1162/h1168/SettingAcH1168.java:166-204
             - base-classes3/com/govee/home/main/device/moment/musicfeast/h1168/controller/ColorModeController.java:40-44,66-68
@@ -11528,6 +11543,10 @@ families:
             - base-classes3/com/govee/home/main/device/moment/musicfeast/v2/ble/Bytes4ColorMode.java:66-69
       wire:
         forms: { f_01: light, f_09: datetime_epoch }
+        by_goods_type:   # AdjustActivity's aa 01 decoder (BleOpV1.t -> base2light SwitchController.parseValidBytes): on at any non-zero byte
+          "87": { power: { light_nonzero: true } }
+          "137": { power: { light_nonzero: true } }
+          "182": { power: { light_nonzero: true } }
     models: [H1162, H1163, H1167, H1168]
     goods_types: [87, 137, 182, 186]   # h1162/Support.java:26-28
     delivery: base_apk   # in no PFD module; the code is base dex (base-classes2/com/govee/h1162)
