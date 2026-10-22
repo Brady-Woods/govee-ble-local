@@ -60,6 +60,10 @@ model, from which the shipped readers are generated).
   screen's connect read is the bare 0xAC status read `ac 03 00`, which requests no TLV type
   (`VM4H70DX.e5`), and it parses each TLV the reply carries, the 0xA5 colour groups included
   (`VM4H70DX.g5`). Which TLVs the firmware returns is not in the app; not hardware-verified.
+- **H14C0 / H14A1 / R14A1 / H14C2 / R14C2 / H14C1 / R14C0 / R14C1** (bulblightv3 342), admitted by default
+  (`app_traced`). After its connect reads the screen sends `33 25 01` (light_effect_stop) only for H14A1 /
+  R14A1 / H14C2 / R14C2 (bulblight `Support.c`, `VM4Light.i5`), so those four SKUs carry it as a `by_model`
+  connect write and the other four send none. Not hardware-verified (none is on the bench).
 - **Bench, 2026-10-21 (the Mac, reads only):** one H61C3 and two H6076s, polled through `create_device` and
   `update()` on the new rows. A guard on `GoveeConnection._send_frame` refused any write; none was attempted.
   - **H61C3** (rgbiclight 141, pact (1,1), plaintext, `allow_modelled`): aa 01, aa 04, aa 05 01, aa 40,
@@ -88,6 +92,9 @@ model, from which the shipped readers are generated).
   On such a profile the reply's TLV 0xA5 is read as colour groups where the row's `f_a5` is `color_group`,
   though it was not requested. Every status row admitted before requests at least one type, so its request
   and decode are unchanged.
+- A SKU's `by_model` `connect_writes` replaces its row's (`DeviceProfile.light_effect_stop`), where a screen
+  splits its connect write by SKU within one goodsType; the build refuses one on a SKU that two rows of its
+  family list. No SKU admitted before has one.
 
 ### Spec
 - **The device-list trace (Govee Home 7.7.02; 7.5.12 where a family says so).** Each of the 83 census families
@@ -120,6 +127,9 @@ model, from which the shipped readers are generated).
   read `ac 03 00` with no type requested. `govee_ble_frame` `status_read_args.num_types` documents 0 as that
   read (`Compose4BaseInfoSingleRead.Companion.a` passes no ext bytes), and `govee_commands`'
   `build_status_request` self-check covers it.
+- **Per-SKU connect writes.** `devices.schema.json` `clientModel` takes `connect_writes` (the row's stays
+  required), which `govee_reference.client_row` applies for the SKU. bulblightv3's `by_model` gives H14A1 /
+  R14A1 / H14C2 / R14C2 `[light_effect_stop]` over row 342's `[]`.
 
 ## [1.6.1] — 2026-10-21
 

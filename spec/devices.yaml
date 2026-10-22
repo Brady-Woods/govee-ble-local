@@ -1553,13 +1553,15 @@ families:
         H6009: { scene_power_on: true }
         H6010: { scene_power_on: true }
         # goodsType 342's Kelvin by SKU: KelvinConfig.Config.X2 (base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:402-411,554-558,1413-1423)
+        # and its connect write by SKU: VM4Light.i5 sends 33 25 01 where bulblight Support.c holds, at 342 the set {H14A1, R14A1, H14C2, R14C2} (split_bulblightstringv1/com/govee/bulblightstringv1/bulblight/Support.java:29-32; bulblight/VM4Light.java:966-983; bulblightv3/pact/Support.java:45,48)
         H14A1:
           kelvin_range: [2700, 6500]
+          connect_writes: [light_effect_stop]
           by_firmware:
             - { min_soft_version: "1.00.15", kelvin_range: [1000, 10000], doc: "KelvinConfig.Config.X2: H14A1 takes version 5 when versionSoft (Info4BleIotDevice.a0) compares as a string >= 1.00.15, else version 2" }
-        R14A1: { kelvin_range: [1000, 10000] }   # X2: version 5
-        H14C2: { kelvin_range: [2000, 6500] }    # X2: version 3
-        R14C2: { kelvin_range: [2000, 6500] }    # X2: version 3
+        R14A1: { kelvin_range: [1000, 10000], connect_writes: [light_effect_stop] }   # X2: version 5
+        H14C2: { kelvin_range: [2000, 6500], connect_writes: [light_effect_stop] }    # X2: version 3
+        R14C2: { kelvin_range: [2000, 6500], connect_writes: [light_effect_stop] }    # X2: version 3
         H14C0: { kelvin_range: [2700, 6500] }    # X2: default version 2
         H14C1: { kelvin_range: [2700, 6500] }    # X2: default version 2
         R14C0: { kelvin_range: [2700, 6500] }    # X2: default version 2
@@ -1839,9 +1841,10 @@ families:
             - split_bulblightstringv1/com/govee/bulblightstringv1/bulblight/BulbLightApplication.java:30-33
             - base-classes11/com/govee/base2light/pact/newdetail/content/scene/BaseSceneViewMode.java:864-903,1152-1200
             - base-classes10/com/govee/base2light/ac/diyNew/config/DiyNewConfig.java:61-65,140-146
-        "342":   # H14C0 / H14C1 / H14C2 / H14A1 / R14C0 / R14C1 / R14C2 / R14A1, the bulblight AcNewDetail; no support: the connect write splits by SKU (doc)
+        "342":   # H14C0 / H14C1 / H14C2 / H14A1 / R14C0 / R14C1 / R14C2 / R14A1, the bulblight AcNewDetail; the connect write splits by SKU (by_model)
           models: [H14C0, H14A1, R14A1, H14C2, R14C2, H14C1, R14C0, R14C1]
           pacts: ["1,1", "3,1"]
+          support: app_traced
           mode_color_parse: rgb_kelvin_tint
           color_functions: [color_temperature]
           capabilities: [power, brightness, rgb, color_temp]
@@ -1849,6 +1852,7 @@ families:
           account_lock: false
           scene_dialect: untraced
           connect_reads: [brightness]
+          connect_writes: []   # H14A1 / R14A1 / H14C2 / R14C2: [light_effect_stop] (by_model)
           heartbeat: power
           doc: >-
             H14C0 and the other seven on the bulblight AcNewDetail (bulblightv3 pact Model.t), the 64 / 348 screen. No
@@ -1875,9 +1879,8 @@ families:
             connect reads VM4Light.i5 sends 33 25 01 (light_effect_stop) only where bulblight Support.c holds, which at
             342 is the SKU set {H14A1, R14A1, H14C2, R14C2}: H14C0 / H14C1 / R14C0 / R14C1 get no connect write. On the
             first connect AbsViewMode4OpWithOtaCheck.K also runs the Matter gid flow (MatterSupport registers 342), an
-            unmodelled extra whose frames are not traced. A row's connect_writes is one list for all its SKUs and
-            by_model cannot carry one, so the row lists none and carries no support until the library takes the split
-            (library gap; bulblightv3.md). Scenes not traced: the 348 path (versionArray {0, 1}, Support4BulbLightV3.g;
+            unmodelled extra whose frames are not traced. So the row lists no connect write, and those four SKUs'
+            by_model entries list light_effect_stop. Scenes not traced: the 348 path (versionArray {0, 1}, Support4BulbLightV3.g;
             BulbDiyConfig.b registers 342) plus a KMP H14C0SceneConfig that matches 342. Not hardware-verified.
           doc-ref:
             - split_bulblightstringv1/com/govee/bulblightv3/pact/Support.java:93-98,175-177,195-206,272-287

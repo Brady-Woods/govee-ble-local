@@ -92,8 +92,10 @@ the row lacks fails the build: nothing defaults silently.
   records in the row's wire ``group.num_per_group`` (and, in the status read, its ``group.rule``).
 - The writes on every connect (``connect_writes``): a plug's ``plug_sync_time``, and on a light nothing or
   ``light_effect_stop`` (``DeviceProfile.light_effect_stop``), each sent once per session after the
-  handshake and any unlock. A SKU's ``by_model`` ``scene_power_on`` (the power-on ahead of a scene apply,
-  H6009 / H6010) becomes ``DeviceProfile.scene_power_on``, on a row with ``scenes`` only.
+  handshake and any unlock. A SKU's ``by_model`` ``connect_writes`` replaces its row's, where the screen
+  splits them by SKU within one goodsType (bulblight ``Support.c`` at 342), on a SKU one row of the family
+  lists (a ``by_model`` entry is family-wide). A SKU's ``by_model`` ``scene_power_on`` (the power-on ahead
+  of a scene apply, H6009 / H6010) becomes ``DeviceProfile.scene_power_on``, on a row with ``scenes`` only.
 - The keep-alive: every row names the read its screen sends while the link is up (``heartbeat``, no family
   default), which becomes ``DeviceProfile.heartbeat`` (its command code), and its ``heartbeat_timing``
   (``fixed_rate`` unless the row says ``after_quiet``). A row's live power checks it, one way only: a
@@ -229,6 +231,7 @@ class ClientModel(TypedDict, total=False):
     kelvin_range: tuple[int, ...]
     brightness_range: tuple[int, ...]
     scene_power_on: bool
+    connect_writes: tuple[str, ...]
     by_pact: dict[str, Branch]
     by_firmware: tuple[FirmwareBranch, ...]
 
@@ -875,6 +878,13 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
     if ("cmd_36" in reads) != bar:
         fail("the aa 36 read and f_36 bar_pair go together")
     writes = tuple(need(row.get("connect_writes"), "connect_writes"))
+    if "connect_writes" in model:   # the SKU's own, on the one row of the family that lists it
+        writes = tuple(model["connect_writes"])
+        listing = [g for g, r in (cp.get("by_goods_type") or {}).items() if "support" in r
+                   and sku.upper() in {m.upper() for m in r.get("models") or () if isinstance(m, str)}]
+        if len(listing) > 1:
+            fail(f"by_model connect_writes on a SKU that rows {listing} list (the screen splits them by SKU "
+                 "within one goodsType)")
     if writes not in ((("plug_sync_time",),) if relay else ((), ("light_effect_stop",))):
         fail(f"connect_writes {list(writes)} (the library sends the plug time sync on every relay row, and "
              "light_effect_stop or nothing on a light)")
