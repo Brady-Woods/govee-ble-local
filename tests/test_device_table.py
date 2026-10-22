@@ -20,7 +20,8 @@ from conftest import require_optional
 from govee_ble_local import supported_skus
 from govee_ble_local._generated.devices import FAMILIES
 from govee_ble_local.devices import _fold, _resolve
-from govee_ble_local.devices.profile import PROFILES, DeviceProfile, RelayPower, profile_for, wire_profile
+from govee_ble_local.devices.profile import (
+    PROFILES, DeviceProfile, RelayPower, SessionMode, profile_for, wire_profile)
 from govee_ble_local.exceptions import GoveeBleNotSupported
 from govee_ble_local.models import Capability as C
 from govee_ble_local.models import Encryption as E
@@ -131,6 +132,7 @@ def test_the_generated_table_is_masters_hand_table_but_for_the_spec_fixes() -> N
     built = {s for s in _resolve.COLOR_SCHEMES if builds_segment_brightness(s)}
     assert built == _resolve.SEGMENT_BRIGHTNESS_SCHEMES
     assert set(_resolve.WHITE_TYPES) == set(get_args(WhiteType))
+    assert set(_resolve.SESSIONS) == set(get_args(SessionMode))
     routes = _resolve.routes(FAMILIES)
     reference = _reference()
     yaml = require_optional("yaml", reason="the reference resolver reads spec/devices.yaml")
@@ -414,6 +416,29 @@ _REFUSED: tuple[tuple[str, str, _Edit, str], ...] = (
      "heartbeat power where power_live ['heartbeat_aa36'] take power from the reply to cmd_36"),
     ("h5080", "50", lambda f: _row(f, "50").update(heartbeat="heartbeat"),
      "where power_live [] and the relay take power from the reply to power"),
+    # the session (the device-list card's per_command rows)
+    ("tablelampv1", "22", lambda f: _row(f, "22").update(session="card"), "session 'card'"),
+    ("tablelampv1", "22", lambda f: _row(f, "22").update(power_read="advert"),
+     "power_read 'advert' on a held row is not served"),
+    ("tablelampv1", "22", lambda f: _row(f, "22").update(heartbeat="none"),
+     "heartbeat none on a held row is not served"),
+    ("tablelampv1", "22", lambda f: _row(f, "22").update(session="per_command"),
+     "power_read 'aa01' (no GATT read: advert only) on a per_command row is not served yet"),
+    ("h5080", "43", lambda f: _row(f, "43").update(session="per_command"),
+     "a relay row (the card's 33 01 is the light switch) on a per_command row"),
+    ("h70b2", "185", lambda f: _row(f, "185").update(heartbeat="heartbeat"),
+     "heartbeat 'heartbeat' (no link is held: none only) on a per_command row"),
+    ("h70b2", "185", lambda f: _row(f, "185").update(connect_reads=["gradual"]),
+     "connect_reads ['gradual'] on a per_command row"),
+    ("h70b2", "185", lambda f: _row(f, "185").update(connect_writes=["light_effect_stop"]),
+     "connect_writes ['light_effect_stop'] on a per_command row"),
+    ("h70b2", "185", lambda f: _row(f, "185").update(account_lock=True),
+     "account_lock true (the card sends no"),
+    ("h70b2", "185",
+     lambda f: _row(f, "185").update(zones=[{"id": "main", "power_index": 0, "segments": [0]}]),
+     "zones on a per_command row"),
+    ("h70b2", "185", lambda f: _row(f, "185")["capabilities"].append("rgb"),
+     "capabilities ['rgb'] (the card sends only 33 01 and 33 04) on a per_command row"),
 )
 
 

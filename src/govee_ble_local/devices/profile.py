@@ -34,6 +34,9 @@ SceneDialect = Literal["A", "B_h60a6", "B_h6052"]
 # "status" (0xAC burst) | "polled" (aa 01, then aa 04 with Capability.BRIGHTNESS and aa 05 with a capability
 # the mode report carries: device._MODE_REPORT_CAPS) | "plug" (aa 01 relay bitmask) | "none"
 ReadBack = Literal["status", "polled", "plug", "none"]
+# How the writes reach the device (DeviceProfile.session): "held" = one link across commands and reads (the
+# control screens'); "per_command" = a session of its own per write (the device-list card's).
+SessionMode = Literal["held", "per_command"]
 ColorReadBack = Literal["", "mechanism_b", "mechanism_a_direct"]
 # How the colour sub-modes of an ``aa 05`` mode report are decoded (the SKU's Info4Detail mode parse): a
 # name of the spec's mode_color_parse table (devices.yaml ``mode_color_parse``, which maps each colour
@@ -214,10 +217,11 @@ class DeviceProfile:
     1.3.0's ``33 01 11 / 10``."""
     advert_on_mask: int | None = field(default=None, kw_only=True)
     """Plug advertisement on/off: the bits of the advertised switch byte that make the device "on";
-    None (every light) = the byte equals 1 (``AbsBaseBleModel.A``).
+    None (every light) = the byte equals 1 (``AbsBaseBleModel.z``). Both read as the spec's ``govee_state``
+    ``power_state.is_on`` from the advert, with this mask as ``power_rule.advert_on_mask``.
 
-    The plugs' device-list models decode it per goodsType (h5080 ``Model.A``,
-    ``Model4Plug2.A``), which is not always the read-back's :attr:`relay_on_mask` (devices.yaml's plug
+    The plugs' device-list models decode it per goodsType (h5080 ``Model.z``,
+    ``Model4Plug2.z``), which is not always the read-back's :attr:`relay_on_mask` (devices.yaml's plug
     rows)."""
     color_readback_ic_range: tuple[int, int] | None = field(default=None, kw_only=True)
     """The (min, max) clamp for the live IC count (see :attr:`color_readback_live_ic`)."""
@@ -415,6 +419,22 @@ class DeviceProfile:
     ``power_read: aa34_detail``; none is served yet (h6057 104 is held: with white noise playing and the light
     off, this reads on while the screen shows the light closed, and ``set_power(True)`` still sends
     ``33 01 01``, which the main switch never sends then)."""
+    session: SessionMode = field(default="held", kw_only=True)
+    """How the writes reach the device: ``"held"`` (the default: the control screens' rows, and a profile
+    built by hand) keeps one link across commands and reads, acks each write and runs the :attr:`heartbeat`;
+    ``"per_command"`` is the app's device-list card (a devices.yaml ``session: per_command`` row, for a SKU
+    whose control screen has no BLE control: H70B2, H6630, H8630, H6631). On it each write is a session of its
+    own (``GoveeConnection.send_once``): connect, write the one frame, read the reply for at most the
+    write-ack timeout (a refusal raises GoveeBleCommandRejected), disconnect, each session at least
+    ``const.PER_COMMAND_SESSION_GAP`` after the last one's release (``CardCommManagerProxy.s``). So
+    ``Device.update`` makes no connection, ``Device.connect`` opens nothing, a read (``Device.read_secret``)
+    raises GoveeBleNotSupported, ``turn_on`` sends power and brightness as two sessions, power first, and a
+    brightness while the device is not known to be on goes after a power-on session (the card's switch, then
+    its slider), with no other write between the two. :attr:`heartbeat` (None on those rows),
+    ``idle_disconnect`` and :attr:`heartbeat_timing` do nothing with it: no link outlives its write. It takes
+    :attr:`capabilities` POWER and BRIGHTNESS only and no :attr:`zones` (GoveeBleInvalidValue otherwise): the
+    card sends nothing else, and a scene upload or a bar's read-modify-write would hold a link past its
+    session."""
 
     def __post_init__(self) -> None:
         """Validate each field: GoveeBleInvalidValue (a ValueError) on a value no Device can use.
@@ -422,8 +442,10 @@ class DeviceProfile:
         Fail at construction, not silently at poll time, on a typo. Values that are each valid but
         that the builders can't serve together (a capability the colour scheme has no frame for, a
         live IC read without its derivation) are accepted here, as in 1.3.0; the setter or read concerned
-        then raises GoveeBleNotSupported or does without. The generated table's values are checked, those
-        combinations included, when it is built (devices/_resolve.py), so none reaches this check."""
+        then raises GoveeBleNotSupported or does without. A ``session="per_command"`` profile is the
+        exception: it takes POWER and BRIGHTNESS only and no zones (:attr:`session`), as a scene upload or a
+        bar's read-modify-write would hold a link past its session. The generated table's values are checked,
+        those combinations included, when it is built (devices/_resolve.py), so none reaches this check."""
         if isinstance(self.skus, list):
             # 1.3.0 accepted a list; keep it as the declared tuple, so the frozen profile stays hashable.
             object.__setattr__(self, "skus", tuple(self.skus))
@@ -440,6 +462,7 @@ class DeviceProfile:
             ("relay_power", RelayPower),
             ("heartbeat_timing", HeartbeatTiming),
             ("white_type", WhiteType),
+            ("session", SessionMode),
         ):
             value = getattr(self, name)
             if value not in get_args(allowed):
@@ -504,6 +527,11 @@ class DeviceProfile:
                 isinstance(beat, bool) or not isinstance(beat, int) or beat not in _HEARTBEATS):
             raise GoveeBleInvalidValue(
                 f"{where}: heartbeat={beat!r} (0x00, 0x01, 0x33 or 0x36: a keep-alive read, or None)")
+        card = frozenset(map(Capability, _resolve.CARD_CAPABILITIES))   # the card's 33 01 and 33 04
+        if self.session == "per_command" and (not self.capabilities <= card or self.zones):
+            raise GoveeBleInvalidValue(
+                f"{where}: session='per_command' takes capabilities {sorted(c.value for c in card)} only and "
+                f"no zones; got {sorted(c.value for c in self.capabilities)} and {len(self.zones)} zones")
 
     def _check_ranges_by_pact(self, where: str) -> None:
         """:attr:`kelvin_by_pact` / :attr:`brightness_by_pact`'s rules: ``(pact_type, pact_code)`` keys of
@@ -650,7 +678,7 @@ def _from_spec(skus: tuple[str, ...], facts: Mapping[str, Any]) -> DeviceProfile
     kw["scene_versions"] = frozenset(kw["scene_versions"])
     if "status_read" in kw:
         kw["status_read"] = tuple(int(_CMD[name]) for name in kw["status_read"])
-    kw["heartbeat"] = int(_CMD[kw["heartbeat"]])
+    kw["heartbeat"] = None if kw["heartbeat"] == "none" else int(_CMD[kw["heartbeat"]])
     return DeviceProfile(skus=skus, **kw)
 
 

@@ -62,8 +62,15 @@ def test_the_schema_requires_a_heartbeat_on_every_supported_row() -> None:
     doc = _doc()
     schema = json.loads((_SPEC / "devices.schema.json").read_text(encoding="utf-8"))
     rows = _rows(doc)
-    assert len(rows) == 197 and all(row["heartbeat"] in _BEATS for _fam, _gt, row in rows)
+    # The three device-list card rows (session per_command) hold no link, so they send none.
+    assert len(rows) == 200 and all(row["heartbeat"] in _BEATS or (row["heartbeat"], row.get("session")) == (
+        "none", "per_command") for _fam, _gt, row in rows)
     jsonschema.validate(instance=doc, schema=schema)
+    timed = copy.deepcopy(doc)   # no timing for a beat that never goes out
+    next(f for f in timed["families"] if f["id"] == "h70b2")["client_profile"]["by_goods_type"]["185"].update(
+        heartbeat_timing="fixed_rate")
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate(instance=timed, schema=schema)
     missing = copy.deepcopy(doc)
     next(f for f in missing["families"] if f["id"] == "h60ax")["client_profile"]["by_goods_type"]["303"].pop(
         "heartbeat")
@@ -86,7 +93,8 @@ def test_each_skus_profile_sends_its_rows_heartbeat() -> None:
             if "support" not in row:
                 continue
             ref = reference.client_row(doc, fam["id"], int(gt))
-            want = (int(_C.Command[ref["heartbeat"]]), ref.get("heartbeat_timing", "fixed_rate"))
+            beat = None if ref["heartbeat"] == "none" else int(_C.Command[ref["heartbeat"]])
+            want = (beat, ref.get("heartbeat_timing", "fixed_rate"))
             for sku in (*row.get("models", ()), *row.get("catalogue_models", ())):
                 profile = profile_for(sku, pact=routing_pact(sku, goods_type=int(gt), allow_modelled=True),
                                       goods_type=int(gt), allow_modelled=True)
@@ -102,10 +110,11 @@ def test_each_skus_profile_sends_its_rows_heartbeat() -> None:
 
 
 def test_a_heartbeat_power_live_names_the_read_the_screen_sends() -> None:
-    # The resolver's one-way cross-check (devices/_resolve.py), as the traces found it on all 197 rows: the
+    # The resolver's one-way cross-check (devices/_resolve.py), as the traces found it on all 200 rows: the
     # screens that take their power from a heartbeat reply send that read, on a polled or a status row, and
     # the plugs read their outlets from aa 01. Nothing ties a push_30-only row to aa 00, which 65 send.
-    # h705a 394 sends aa 00 and has no live power source.
+    # h705a 394 sends aa 00 and has no live power source. The three device-list card rows (h70b2 185, h6630
+    # 285 / 286) hold no link: no keep-alive and no live power but the advert.
     found: collections.Counter[tuple[tuple[str, ...], bool, str]] = collections.Counter()
     for fam, _gt, row in _rows(_doc()):
         lives = tuple(row.get("power_live", fam["client_profile"].get("power_live")) or ())
@@ -118,13 +127,17 @@ def test_a_heartbeat_power_live_names_the_read_the_screen_sends() -> None:
         ((), True, "power"): 4,
         (("push_30",), False, "heartbeat"): 65,
         ((), False, "heartbeat"): 1,
+        ((), False, "none"): 3,
     }
 
 
 def test_the_transport_interval_is_the_specs() -> None:
-    beat = _doc()["timing"]["heartbeat"]
+    timing = _doc()["timing"]
+    beat = timing["heartbeat"]
     assert const.HEARTBEAT_INTERVAL * 1000 == beat["interval_ms"] == 2000
     assert const.HEARTBEAT_WRITE_TIMEOUT < const.HEARTBEAT_INTERVAL
+    # The device-list card's spacing of its per-command sessions (GoveeConnection.send_once).
+    assert round(const.PER_COMMAND_SESSION_GAP * 1000) == timing["per_command"]["gap_ms"] == 1100
 
 
 def test_the_pact_gated_aa01_rows_keep_their_pacts() -> None:
@@ -144,13 +157,14 @@ def test_the_traced_unsupported_rows_keep_their_heartbeat() -> None:
     # 342, h70dx 267-269, the four h1162 rows, h70b1 134, h70bx 216, the six status-read rows the new
     # command ids unblocked and the nine gated target rows the pact-None guard unblocked are now
     # supported, and in 1.8.0 the seven aa 01 legacy_02 rows, h61d3 239 / 246, h60ax 235 and h7050 98);
-    # they are pinned by count.
+    # they are pinned by count. h6630 285 / 286 left them in 1.8.0, on the device-list card's path
+    # (heartbeat none).
     got = {(fam["id"], gt): row["heartbeat"] for fam in _doc()["families"]
            for gt, row in ((fam.get("client_profile") or {}).get("by_goods_type") or {}).items()
            if "heartbeat" in row and "support" not in row}
     assert {key: got.get(key) for key in (("h6047", "288"), ("h6047", "298"), ("striplight", "80"))} == {
         ("h6047", "288"): "heartbeat", ("h6047", "298"): "heartbeat", ("striplight", "80"): "volume"}
-    assert collections.Counter(got.values()) == {"power": 61, "heartbeat": 33, "volume": 5, "cmd_36": 1}
+    assert collections.Counter(got.values()) == {"power": 61, "heartbeat": 31, "volume": 5, "cmd_36": 1}
 
 
 @pytest.mark.parametrize("name", _BEATS)
@@ -216,7 +230,11 @@ async def test_the_documented_opt_out_turns_the_beat_off_on_every_sku(
     timings = set()
     for sku in skus:
         profile = profile_for(sku, pact=routing_pact(sku, allow_modelled=True), allow_modelled=True)
-        assert profile is not None and profile.heartbeat is not None, sku
+        assert profile is not None, sku
+        if profile.session == "per_command":   # the device-list card's rows hold no link: no opt-out
+            assert profile.heartbeat is None, sku
+            continue
+        assert profile.heartbeat is not None, sku
         off = dataclasses.replace(profile, heartbeat=None)
         assert (off.heartbeat, off.heartbeat_timing) == (None, profile.heartbeat_timing), sku
         # Still the row's profile for the advertised-pact check (Device._learn_pact's warning).

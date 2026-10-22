@@ -155,12 +155,13 @@ types:
       - firmware-h60a1-wifi/decompiled/H60A1_ble_dispatcher.c:559-560
   power_state:
     doc: |
-      AA 01 reply / TLV 0x01: the power byte (a light's on flag or a plug's
-      relay bitmask), then one aux byte in a reply.
+      AA 01 reply / TLV 0x01 / the advert's switch byte: the power byte (a
+      light's on flag or a plug's relay bitmask), then one aux byte in a reply.
     doc-ref:
       - base-classes11/com/govee/base2light/kt/general_controller/ControllerSwitch.java:32
       - base-classes11/com/govee/base2light/pact/newdetail/ble/controller/Compose4BaseInfoSingleRead.java:286-288
       - split_plugnew/com/govee/h5080/ble/controller/SwitchControllerV2.java:29-45
+      - base-classes9/com/govee/base2home/pact/BleUtil.java:719-743
     params:
       - id: source
         type: u1
@@ -181,14 +182,22 @@ types:
       is_on:
         value: >-
           source == source::status_tlv ? state != 0 :
+          (source == source::advert ?
+          (power.advert_on_mask != 0 ? (state & power.advert_on_mask) != 0 : state == 1) :
           (power.relay_on_mask != 0 ? (state & power.relay_on_mask) != 0 :
-          (power.light_nonzero ? state != 0 : state == 1))
+          (power.light_nonzero ? state != 0 : state == 1)))
         doc: |
-          on at the connect read (reply) or in the status TLV; a light's reply
-          by the power rule (== 1, or != 0 under light_nonzero)
+          on at the connect read (reply), in the status TLV, or in the advert;
+          a light's reply by the power rule (== 1, or != 0 under
+          light_nonzero), a light's advert at == 1 and a plug's by its
+          advert_on_mask
         doc-ref:
           - base-classes10/com/govee/base2light/ble/controller/SwitchController.java:29-33
           - split_h70b1/com/govee/h70bx/controller/AfterConnectSuccessReadDeviceInfo.java:176-178
+          - base-classes3/com/govee/kt/ui/device/base/AbsBaseBleModel.java:393-407
+          - base-classes3/com/govee/kt/ui/device/base/AbsBleIotItem.java:77-101
+          - split_plugnew/com/govee/h5080/pact/Model.java:254-266
+          - split_plugnew/com/govee/h5080/pact/Model4Plug2.java:269-290
       is_on_heartbeat:
         value: >-
           power.relay_heartbeat_on_mask != 0 ? (state & power.relay_heartbeat_on_mask) != 0 :
@@ -1689,6 +1698,13 @@ enums:
     2:
       id: status_tlv
       doc: the value of a 0xAC status TLV (exactly len bytes)
+    3:
+      id: advert
+      doc: |
+        the Govee manufacturer data's device_state (power_state only: its
+        switch byte, where has_switch_state; govee_manufacturer_data)
+      doc-ref:
+        - base-classes9/com/govee/base2home/pact/BleUtil.java:700-717
   cct_test:
     0:
       id: none

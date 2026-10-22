@@ -71,6 +71,10 @@ HEARTBEAT_INTERVAL: Final = 2.0
 # Bound on one heartbeat's write, so a wedged proxy write can't hold the device lock (a heartbeat is not an
 # operation: OPERATION_TIMEOUT doesn't cover it). The app waits for no ack or reply either.
 HEARTBEAT_WRITE_TIMEOUT: Final = 1.0
+# The device-list card's session (a ``session: per_command`` row, GoveeConnection.send_once): the next session
+# to a device starts at least this long after the last one's release (CardCommManagerProxy.s = 1100 ms;
+# devices.yaml timing.per_command.gap_ms).
+PER_COMMAND_SESSION_GAP: Final = 1.1
 CONNECT_MAX_ATTEMPTS: Final = 3
 # A fresh link whose session setup (BGC read / handshake / unlock) fails is torn
 # down and re-established this many times in total before giving up.

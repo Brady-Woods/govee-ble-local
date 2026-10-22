@@ -188,6 +188,59 @@ timing:
       - H60A6 FUN_9b02a2bc @0x9b02a2bc
       - H6047 FUN_01005ce8 @0x010064f4
       - H6008 FUN_9b02c0d4 @0x9b02c0d4
+  per_command:
+    gap_ms: 1100
+    command_timeout_ms: 29500
+    client: >-
+      The device-list card (clientRow session per_command) builds a fresh client for each command
+      (CardCommManagerProxy.comm2Device -> u -> triggerBleCmd$2 -> CardCommManagerProxy.a ->
+      ClientUnionFactory.buildBleMgr(address, service, characteristic, null, 30000, true)): a 30 s connect budget, up to
+      3 reconnects and a null heart message, so no keep-alive goes out (BleClientProxy funcRealTimeLoop returns on a
+      null one). It connects by the account's address without a scan and sets the link up as every link is set up
+      (EncryptionBluetoothGattCallback): service discovery, an MTU of 512, the BGC read, and the key handshake where
+      the address is flagged encrypted. Notifications (CCCD 0x2902) are enabled at its first write
+      (NotificationEnbleChecker).
+    send: >-
+      The command's one frame (AbsDeviceModel4BleIot.k / l; A0 is null, so nothing goes ahead of it) goes out as a
+      GMessageMulti whose q() is true, so ClientUnionMgr.excuBusinessSend registers no reply timeout and after the
+      write runs only its connection check. The write's completion is the success; the device's reply is not read.
+    close: >-
+      The client is closed once the frame is sent (sendBleMsg, CardCommManagerProxy.q: in the re-decompile of
+      base.apk with jadx 1.5.6, as the tree's copy did not decompile), or on a timeout (triggerBleCmd$2). The next
+      session to the same address starts gap_ms after this one's release at the earliest: triggerBleCmd$2 delays by
+      the rest of CardCommManagerProxy.s.
+    deviations:
+      - >-
+        PROCEDURAL (govee-ble-local): after the write it reads the device's reply for up to the write-ack timeout
+        (1.5 s) and raises on a rejection (a reply with a non-zero status), where the card reads none. No reply, or a
+        link lost while it waits, is still a success, and nothing more is sent, so the wire carries the card's one
+        frame. The link closes up to 1.5 s later than the card's, only while the device stays silent.
+      - >-
+        PROCEDURAL (govee-ble-local): as on every row, the BGC read is made once per Device, notifications are
+        enabled right after the link comes up (the handshake needs them), no MTU is requested, and the cipher comes
+        from the advert's 0x40 flag or the BGC version, not from the account's supportEnc.
+      - >-
+        PROCEDURAL (govee-ble-local): a command is bounded at 45 s (OPERATION_TIMEOUT), not 29.5 s; the IoT leg the
+        card runs beside the BLE one, and its race, are not modelled.
+      - >-
+        PROCEDURAL (govee-ble-local): power and brightness in one call are two sessions, power first, as the card's
+        two taps (its switch, then its slider, which it enables only while the switch shows on); a brightness while
+        the light is not known to be on is sent after a power-on session.
+    doc-ref:
+      - base-classes2/com/govee/home/main/CardCommManagerProxy.java:82-83,166-180,202-235,616-641
+      - base-classes2/com/govee/home/main/CardCommManagerProxy$triggerBleCmd$2.java:183-308
+      - base-classes13/com/govee/ctlchannel/ClientUnionFactory.java:82-96
+      - base-classes13/com/govee/ctlchannel/ble/BleClientProxy.java:493-505,982,1260,1830
+      - base-classes13/com/govee/ctlchannel/message/GMessageMulti.java:18-31
+      - base-classes13/com/govee/ctlchannel/message/GMessage.java:471-473,757-759
+      - base-classes13/com/govee/ctlchannel/ClientUnionMgr.java:1516,1532-1543
+      - base-classes13/com/govee/encryp/ble/EncryptionBluetoothGattCallback.java:77-150,188-246
+      - base-classes13/com/govee/ctlchannel/ble/VirtualBleClient.java:998-1046,1109-1160
+      - base-classes13/com/govee/ctlchannel/ble/NotificationEnbleChecker.java:51,65-205
+      - base-classes13/com/govee/encryp/ble/EncryptionUtils.java:32-37
+      - base-classes3/com/govee/kt/AbsDeviceModel4BleIot.java:38-41,49-89
+      - base-classes3/com/govee/kt/ui/device/base/AbsLightModel4BleIot.java:253-305,575-605
+      - base-classes3/com/govee/kt/ui/device/LightHolderConvert.java:627
 
 # ─────────────── Per-device authorization secret (families tagged `encryption: secret_key_pairing`) ───────────────
 # secret_key_pairing = account-lock only; the wire cipher is picked at connect from the advert / BGC info (BleUtil.java:839).
@@ -12038,54 +12091,91 @@ families:
     client_profile:
       mode_color_parse: rgb_kelvin_0d_nocct   # the H70BX screen's strategy; on 185 its pact check (no 185 branch) refuses every scan hit and an IoT V2 status, so over BLE only a by-address connect after two empty 10 s scan windows reads it; split_h70b1/com/govee/h70bx/viewmodel/VM4H70BXNewDetail.java:1253-1276
       by_goods_type:
-        "185":   # no support: the control screen refuses goodsType 185 (doc); the app drives 185 only on its other paths (the device-list card, and the h70b1 EffectOp group / smart-room / colour-effect path); the user's call, not a library gap
-          models: [H70B2]   # KmpGoodsType GOODS_TYPE_VALUE_BLE_WIFI_CURTAIN_LIGHT_H70B2 = 185; SkuItemClickH70B2.getGoodsType; H70B2SceneConfig.match
-          pacts: ["1,1"]   # Support.addSupportPact pact.b(185, (1,1)); AddDeviceConfig pairs 185 at (1,1)
-          doc: "Blocked: the control screen refuses goodsType 185, and admitting it on another path is the user's decision (CLAUDE.md: stop and ask). 185 (H70B2) routes to the h70b1 SubLib, Model.t opens the H70BX screen (h70b2 Ble.s, Model.y0) and pairing accepts (1,1). Control screen: its pact check VM4H70BXNewDetail.n4 tests only 134 (Support.c) and 216 (Support.e), never 185's Support.d, so every BLE scan hit (AbsViewMode4Op.onScanEvent) and an IoT V2 status posts message 999 (link failed, app-too-old dialog, AbsAcLightDetail.s2); it reaches a 185 device only through the by-address fallback connect after two 10 s windows without the advert (t0), it has no colour-instruction version for 185 (Config.x keys 134 / 216, no Config.w key), so ColorModeControllerConfig.c builds no colour frame, and every H70BX delegate is gated to 134 / 216. Other app paths (CLAUDE.md rule 5): the device-list card (DeviceItem.v -> Model, gated by Pact.d only) sends power 33 01 <on> and brightness 33 04 <value> (AbsLightModel4BleIot.v0 / T). The h70b1 EffectOp (Support.g = {134, 185, 216}, registered in DiyM as IColorOp and ISmartRoomOp) drives 185 for group control (GroupApplyVM), smart-room devices (Device4Smart) and the colour-effect dialog (OpColorCommDialog4BleIot): power 33 01, brightness 33 04, colour 33 05 0d R G B 00 00 00 00 00 (Comm.makeColorController4BleComm -> SubModeColor.makeSubModeColor) and Kelvin 33 05 0d ff ff ff <K u16be> <tint RGB>, K 1000-10000 (SubModeColor.makeSubModeColor4Kelvin, Support.getColorTemRange), with an aa 00 keep-alive (IRoomOp4Ble.heartBytes = HeartControllerNoEvent, timing untraced) and a 33 b2 SecretKeyController write when a secret code is stored (pairController), but no status read, power read, connect read or colour read-back. No library scheme is byte-identical: h6188 has the same RGB and slider-CCT frames, but it sends an RGB pick on the tint table as a CCT frame, which this path never does. Disputed 2026-10-21: the earlier claims that the app has no colour or Kelvin frame for 185 and that the card is its only path were refuted by the EffectOp path; support stays unset."
+        "185":   # H70B2: the device-list card's BLE control (DECISIONS.md 6, "Follow the card"); the control screen refuses 185 (doc)
+          models: [H70B2]   # KmpGoodsType GOODS_TYPE_VALUE_BLE_WIFI_CURTAIN_LIGHT_H70B2 = 185; SkuItemClickH70B2.getGoodsType
+          pacts: ["1,1"]   # Support.addSupportPact pact.b(185, (1,1)); the card's gate AbsBaseBleModel.e -> Pact.i
+          support: app_traced
+          session: per_command   # the card's: one link per command (timing.per_command)
+          power_read: advert   # the card reads no state over GATT: on/off from the advert (AbsBaseBleModel.z)
+          capabilities: [power, brightness]   # the card's 33 01 and 33 04, nothing else
+          brightness_range: [1, 100]   # BrightnessConfig.d: no 185 / H70B2 key, so version 1 = {1, 100}
+          zones: []
+          account_lock: false   # AbsDeviceModel4BleIot.A0 is null: no 33 b2 ahead of the card's frame
+          connect_reads: []
+          connect_writes: []
+          heartbeat: none   # the card's client has a null heart message
+          scene_dialect: untraced
+          doc: >-
+            app_traced on the device-list card's path, the user's decision (DECISIONS.md 6, "Follow the card"; CLAUDE.md
+            rule 5), as the control screen has no BLE control for 185. Not live-verified: there is no unit and no
+            firmware image. The screen (Model.t -> H70BXDetailAc, VM4H70BXNewDetail) refuses 185: its pact check n4
+            tests 134 (Support.c) and 216 (Support.e) only, so every scan hit and an IoT V2 status posts message 999
+            (the app-too-old dialog, AbsAcLightDetail.s2), and it reaches a 185 device only by a by-address connect
+            after two empty 10 s scan windows (t0). The card: Register4Item adds the h70b1 SubLib (Support.f = {134,
+            185, 216}); DeviceItem.v gives the h70b1 Model (an AbsDeviceModel4BleIot), whose y0 for 185 is h70b2 Ble.s
+            on the standard 1910 / 2b11 UUIDs (h70b1 BleComm). Its switch sends 33 01 <on> (AbsLightModel4BleIot.v0 ->
+            AbsDeviceModel4BleIot.l: SwitchController) and its slider 33 04 <v> (T -> k: BrightnessController), v
+            1-100 unscaled (BrightnessConfig.d: no 185 or H70B2 key, so version 1 = {1, 100}), one frame each with
+            nothing ahead of it (A0 is null: no 33 b2). The slider sends only while the switch shows on
+            (LightHolderConvert: z = M() && J()), and never in the switch's session, so the library sends a brightness
+            for a light not known to be on after a power-on session (the card's two taps). The session is
+            timing.per_command (CardCommServiceImpl.send2Device -> CardCommManagerProxy.comm2Device -> u ->
+            triggerBleCmd$2): a fresh client with a null heart message, the link set up as every link is (MTU 512,
+            the BGC read, the key handshake where the address is flagged encrypted, the CCCD at the first write),
+            the frame as a GMessageMulti with no reply wait (q() true), then the client closed, sessions to one
+            address 1100 ms apart. Two of those facts rest on the jadx 1.5.6 re-decompile of base.apk, not on the
+            tree: GMessageMulti(list, false, 2, null) in the anonymous message's constructor, and the close() in
+            sendBleMsg (CardCommManagerProxy.q). The library also reads the reply for up to 1.5 s and raises on a
+            refusal (timing.per_command deviations). The card reads nothing over GATT: on/off is the advert's switch
+            byte (AbsBleIotItem.B -> AbsBaseBleModel.z: on when device_state[0] == 1) and brightness the last value
+            sent. The app also polls IoT status, which corrects a wrong or stale advert byte; the library has no
+            such source, so its state is assumed. The pact gate (AbsBaseBleModel.e -> Pact.i) passes (1,1) only, or
+            an advert without a pact. Other path, documented and not matched: the h70b1 EffectOp (group control,
+            smart-room devices, the colour-effect dialog: 33 01, 33 04, 33 05 0d colour and Kelvin, an aa 00
+            keep-alive, and a 33 b2 when a secret is stored). Open (firmware): whether device_state[0] carries the
+            on/off and refreshes within 15 s of a command; whether the unit has the BGC characteristic, and which
+            version (an AES-GCM unit, BGC 2, would get GoveeBleNotSupported on every command); whether it takes
+            plaintext without BGC; whether it needs the 33 b2 unlock before a 0x33 write (a refusal raises
+            GoveeBleCommandRejected); whether field units still report 185; and their advertised names. Scenes
+            untraced.
           doc-ref:
-            - "base-classes2/com/govee/shared/checker/KmpGoodsType.java:57"
-            - "split_h70b1/com/govee/h70b2/present/SkuItemClickH70B2.java:34-36"
-            - "base-classes2/com/govee/shared/config/h70b2/H70B2SceneConfig.java:46-49"
-            - "split_h70b1/com/govee/h70b1/origin/pact/Support.java:33-36, 54-56, 222-224"
-            - "split_h70b1/com/govee/h70b1/origin/pact/SubLib.java:19-26"
-            - "split_h70b1/com/govee/h70b1/origin/pact/Model.java:63-160, 167-173"
-            - "base-classes10/com/govee/base2light/connect/constant/AddDeviceConfig.java:180-191"
-            - "base-classes10/com/govee/base2light/connect/ui/PairActivity.java:321-324"
-            - "split_h70b1/com/module/router/pact_h70b1__ModuleRouter__Registered.java:98"
-            - "split_h70b1/com/govee/h70bx/viewmodel/VM4H70BXNewDetail.java:1253-1276"
-            - "base-classes11/com/govee/base2light/pact/newdetail/ShareVM.java:1367-1369, 1446-1448"
-            - "base-classes11/com/govee/base2light/kt/comm/AbsViewMode4Op.java:552-586, 1498-1526, 1632-1660, 1834-1857, 1937-1985, 2136-2150, 2204-2222"
-            - "base-classes11/com/govee/base2light/kt/comm/AbsViewMode4OpWithOtaCheck.java:270-283"
-            - "base-classes11/com/govee/base2light/pact/newdetail/AbsAcLightDetail.java:406-431, 612-616"
-            - "split_h70b1/com/govee/h70bx/ConfigDetail.java:55-58, 67-70, 78-81, 90-93, 100-103, 115-118, 139-142"
-            - "base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:232-256, 1095-1104"
-            - "base-classes10/com/govee/base2light/capability/legacy/LegacyColorCapabilityProvider.java:151-154"
-            - "base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/ColorModeControllerConfig.java:207-228"
-            - "split_h70b1/com/govee/h70b1/origin/pact/DeviceItem.java:57-60"
-            - "base-classes3/com/govee/kt/ui/device/base/AbsBaseBleModel.java:158-174"
-            - "base-classes9/com/govee/base2home/pact/Pact.java:103-111"
-            - "base-classes3/com/govee/kt/ui/device/base/AbsLightModel4BleIot.java:260-289, 575-605"
-            - "base-classes3/com/govee/kt/AbsDeviceModel4BleIot.java:51-89"
-            - "base-classes3/com/govee/home/route/CardCommServiceImpl.java:133-142"
-            - "base-classes2/com/govee/home/main/CardCommManagerProxy.java:203-235, 624-674"
-            - "base-classes10/com/govee/base2light/ble/controller/SwitchController.java:24-25, 37-39"
-            - "base-classes10/com/govee/base2light/ble/controller/BrightnessController.java:26-27, 37-39"
-            - "split_h70b1/com/govee/h70b1/origin/pact/bleiot/EffectOp.java:13-16"
-            - "split_h70b1/com/govee/h70b1/origin/pact/Support.java:37, 78, 100-102"
-            - "base-classes10/com/govee/base2light/ac/diy/DiyM.java:1543-1576"
-            - "split_h70b1/com/govee/h70b1/origin/pact/bleiot/AbsEffectOp4BleIot.java:105-138, 193-213, 230-296, 347-354"
-            - "split_h70b1/com/govee/h70b1/origin/pact/Comm.java:75-79, 85-89"
-            - "split_h70b1/com/govee/h70b1/origin/ble/SubModeColor.java:20-37, 67-78, 100-102"
-            - "split_h70b1/com/govee/h70b1/origin/ble/BleComm.java:10-11"
-            - "split_h70b1/com/govee/h70b1/origin/iot/OpColorCommDialog4BleIot.java:29-49, 63-65, 84-93"
-            - "base-classes9/com/govee/base2home/Constant.java:991-1008"
-            - "base-classes13/com/govee/eco/basegroup/viewmodel/GroupApplyVM.java:820-830"
-            - "base-classes13/com/govee/eco/basegroup/viewmodel/GroupApplyVM$sendColor$1.java:172-174"
-            - "base-classes13/com/govee/eco/basegroup/viewmodel/GroupApplyVM$sendColorTemp$1.java:186-189"
-            - "base-classes3/com/govee/home/main/device/smart/Device4Smart.java:146-151, 421-463, 527-578"
-            - "base-classes10/com/govee/base2light/ac/square/SquareDevice.java:77-79"
-            - "base-classes10/com/govee/base2light/ble/controller/HeartControllerNoEvent.java:9-12"
-            - "base-classes10/com/govee/base2light/ble/controller/SecretKeyController.java:22-26"
+            - base-classes2/com/govee/shared/checker/KmpGoodsType.java:57
+            - split_h70b1/com/govee/h70b2/present/SkuItemClickH70B2.java:34-36
+            - split_h70b1/com/govee/h70b1/origin/pact/Register4Item.java:14-19
+            - split_h70b1/com/govee/h70b1/origin/pact/SubLib.java:19-26
+            - split_h70b1/com/govee/h70b1/origin/pact/Support.java:33-37,46-56
+            - split_h70b1/com/govee/h70b1/origin/pact/DeviceItem.java:19,26-30,57-60
+            - split_h70b1/com/govee/h70b1/origin/pact/Model.java:29,63-160,162-174
+            - split_h70b1/com/govee/h70b2/origin/ble/Ble.java:11,35-37
+            - split_h70b1/com/govee/h70b1/origin/ble/BleComm.java:10-23
+            - split_h70b1/com/govee/h70bx/viewmodel/VM4H70BXNewDetail.java:1253-1276
+            - base-classes11/com/govee/base2light/kt/comm/AbsViewMode4Op.java:552-586,1834-1857,1937-1985,2136-2150,2204-2222
+            - base-classes11/com/govee/base2light/pact/newdetail/AbsAcLightDetail.java:406-431,612-616
+            - base-classes3/com/govee/kt/AbsDeviceModel4BleIot.java:38-41,49-89
+            - base-classes10/com/govee/base2light/ble/controller/AbsSingleController.java:22-30
+            - base-classes10/com/govee/base2light/ble/controller/SwitchController.java:13-16,23-26,36-39
+            - base-classes10/com/govee/base2light/ble/controller/BrightnessController.java:14-18,25-28,37-40
+            - base-classes10/com/govee/base2kt/utils/BleUtils.java:1030-1041,1260-1267
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:98-114,199-215,252-258
+            - base-classes3/com/govee/kt/ui/device/LightHolderConvert.java:627
+            - base-classes3/com/govee/kt/ui/device/base/AbsLightModel4BleIot.java:253-305,575-605
+            - base-classes3/com/govee/kt/ui/device/base/AbsBleIotItem.java:77-101
+            - base-classes3/com/govee/kt/ui/device/base/AbsBaseBleModel.java:143-145,158-174,393-407
+            - base-classes9/com/govee/base2home/pact/BleUtil.java:719-743
+            - base-classes9/com/govee/base2home/pact/Pact.java:103-111
+            - base-classes3/com/govee/home/route/CardCommServiceImpl.java:133-142
+            - base-classes2/com/govee/home/main/CardCommManagerProxy.java:83,166-180,202-235,616-641
+            - base-classes2/com/govee/home/main/CardCommManagerProxy$triggerBleCmd$2.java:183-308
+            - base-classes13/com/govee/ctlchannel/ClientUnionFactory.java:82-96
+            - base-classes13/com/govee/ctlchannel/ble/BleClientProxy.java:493-505,982,1260,1830
+            - base-classes13/com/govee/ctlchannel/message/GMessageMulti.java:18-31
+            - base-classes13/com/govee/ctlchannel/ClientUnionMgr.java:1516,1532-1543
+            - base-classes13/com/govee/encryp/ble/EncryptionBluetoothGattCallback.java:77-150,188-246
+            - base-classes13/com/govee/ctlchannel/ble/VirtualBleClient.java:998-1046,1109-1160
+            - base-classes13/com/govee/ctlchannel/ble/NotificationEnbleChecker.java:51,65-205
+            - base-classes13/com/govee/encryp/ble/EncryptionUtils.java:32-37
+            - split_h70b1/com/govee/h70b1/origin/pact/bleiot/EffectOp.java:13-16
+            - split_h70b1/com/govee/h70b1/origin/pact/bleiot/AbsEffectOp4BleIot.java:105-138,193-213,230-296,347-354
       wire:
         forms: { f_01: light, f_09: datetime_epoch }
     models: [H70B2]   # 185 only: KmpGoodsType.java:57; not 216 (H70BC) nor 134 (H70B1)
@@ -19245,82 +19335,184 @@ families:
       wire:
         forms: { f_01: light, f_09: datetime_epoch }
       by_goods_type:
-        "285":   # H6630 / H8630; no support: the control screen sends every command over IoT (doc, library gap G1)
-          models: [H6630, H8630]
-          pacts: ["1,1", "1,2", "2,1", "2,2", "2,3"]
-          heartbeat: heartbeat
+        "285":   # H6630 / H8630: the device-list card's BLE control (DECISIONS.md 6, "Follow the card"); the control screen commands over IoT only (doc)
+          models: [H6630, H8630]   # H6630Maker.getGoodsType = 285; AddDeviceM default names H6630 / H8630
+          pacts: ["1,1", "1,2", "2,1", "2,2", "2,3"]   # H6630Support.g, Pact.d.b(285, ...); the card's gate AbsBaseBleModel.e -> Pact.i
+          support: app_traced
+          session: per_command   # the card's: one link per command (timing.per_command)
+          power_read: advert   # the card reads no state over GATT: on/off from the advert (AbsBaseBleModel.z)
+          capabilities: [power, brightness]   # the card's 33 01 and 33 04, nothing else (brightness kept: DECISIONS.md 6)
+          brightness_range: [1, 100]   # BrightnessConfig.d: no 285 / H6630 / H8630 key, so version 1 = {1, 100}
           zones: []
+          account_lock: false   # AbsDeviceModel4BleIot.A0 is null: no 33 b2 ahead of the card's frame
+          connect_reads: []
+          connect_writes: []
+          heartbeat: none   # the card's client has a null heart message; the screen's aa 00 is the other path's
           scene_dialect: untraced
           doc: >-
-            H6630 / H8630 on H6630DetailActivity (Model.t; H6630ViewModel, pact check n4 = H6630Support.G, the 285 list).
-            No support: the control screen sends no control frame over BLE. Its changeBleStatus override R passes 1 (not
-            connected) to the base for every status, so isBleConnectSuc is never true and every command goes over IoT: the
-            global switch ControllerSwitch.d (33 01 <on>, switchTrigger) and the light sub-switch D5(1) (33 30 01 <on>, the
-            header ivLightSwitch) as ptReal, the slider (BrightnessConfig.b) as the JSON CmdBrightness alone
-            (doCommController4SyncCmdWrite). Read-back is IoT only: state onOff / brightness and the op's 0x41 record
-            (DeviceSwitchInfo, byte 0: 0x80 total, 0x40 light). The screen still holds a BLE link (tryConnect -> J1): d0
-            only calls R(2), which clears the heartbeat skip, so the aa 00 heartbeat (ShareVM.K3 = ConnectHeartbeat type 2)
-            runs every 2000 ms, with no status read or other read. The home-list card (DeviceItem; Model extends
-            AbsDeviceModel4BleIot) writes 33 01 <on> / 33 04 <value> over BLE beside the IoT command
-            (CardCommManagerProxy.comm2Device; no 0xB2, no read-back). That is not the screen's path (CLAUDE.md rule 5), so
-            adopting it is the user's call. No colour, Kelvin or segment page; the mode report (Info4Detail.T) maps scene,
-            DIY, display, music and playlist only. Zones: none (one light; the light sub-switch is no segment zone). The
-            room op is IoT-only (Smart4H663X). Scenes untraced.
+            app_traced on the device-list card's path, the user's decision (DECISIONS.md 6, "Follow the card", with
+            brightness kept; CLAUDE.md rule 5), as the control screen sends every command over IoT. Not live-verified:
+            there is no unit and no firmware image. The screen (H6630DetailActivity, H6630ViewModel, pact check n4 =
+            H6630Support.G) passes 1 (not connected) to the base for every BLE status (R), so isBleConnectSuc is never
+            true: the global switch (33 01) and the light sub-switch (33 30 01) go out as IoT ptReal
+            (doCommController) and the slider as the JSON CmdBrightness alone (l0); its held BLE link carries only the
+            aa 00 heartbeat (ShareVM.M3, K3 type 2, every 2000 ms). That screen, and the IoT-only room op (Smart4H663X),
+            are the other paths, documented and not matched. The card: RegisterItem adds the h6630 SubLib
+            (H6630Support.i = {285, 286}); DeviceItem.v gives the h6630 Model (an AbsDeviceModel4BleIot), whose y0 is
+            the feast Ble.s, matter BleComm, on the standard 1910 / 2b11 UUIDs. Its switch sends 33 01 <on>
+            (AbsLightModel4BleIot.v0 -> AbsDeviceModel4BleIot.l: SwitchController) and its slider 33 04 <v> (T -> k:
+            BrightnessController), v 1-100 unscaled (BrightnessConfig.d: no 285 or H6630 / H8630 key, so version 1 =
+            {1, 100}), one frame each with nothing ahead of it (A0 is null: no 33 b2, which only the family's BLE DIY /
+            square applies send, AbsEffectOp4BleIot.pairController). The h6630 Item1 overrides checkBleVis to false,
+            so on the new-big layout the switch and the slider work only while the device is IoT-online (M()), while
+            the small and big layouts' on and off buttons don't depend on it; and the BLE leg skips its write once the
+            IoT leg has succeeded (sendBleMsg), so on an IoT-online unit the BLE frame is rarely the one that lands.
+            The slider sends only while the switch shows on (LightHolderConvert: z = M() && J()), and never in the
+            switch's session, so the library sends a brightness for a light not known to be on after a power-on
+            session (the card's two taps). The session is timing.per_command (CardCommServiceImpl.send2Device ->
+            CardCommManagerProxy.comm2Device -> u -> triggerBleCmd$2): a fresh client with a null heart message, the
+            link set up as every link is (MTU 512, the BGC read, the key handshake where the address is flagged
+            encrypted, the CCCD at the first write), the frame as a GMessageMulti with no reply wait (q() true), then
+            the client closed, sessions to one address 1100 ms apart. Two of those facts rest on the jadx 1.5.6
+            re-decompile of base.apk, not on the tree: GMessageMulti(list, false, 2, null) in the anonymous message's
+            constructor, and the close() in sendBleMsg (CardCommManagerProxy.q). The library also reads the reply for
+            up to 1.5 s and raises on a refusal (timing.per_command deviations). The card reads nothing over GATT:
+            on/off is the advert's switch byte (AbsBleIotItem.B -> AbsBaseBleModel.z: on when device_state[0] == 1)
+            and brightness the last value sent. The app also polls IoT status, which corrects a wrong or stale advert
+            byte; the library has no such source, so its state is assumed. The pact gate (AbsBaseBleModel.e ->
+            Pact.i) passes (1,1), (1,2), (2,1), (2,2) and (2,3), or an advert without a pact; the 2,x pacts open no
+            further card control (H6630Support.c / d / e gate music, the indicator and IoT DIY). Open (firmware):
+            whether device_state[0] carries the on/off and refreshes within 15 s of a command; whether the unit has
+            the BGC characteristic, and which version (an AES-GCM unit, BGC 2, would get GoveeBleNotSupported on
+            every command); whether it takes plaintext without BGC; whether it needs the 33 b2 unlock before a 0x33
+            write (a refusal raises GoveeBleCommandRejected); and the advertised names. Scenes untraced.
           doc-ref:
-            - split_h6630/com/govee/h6630/pact/H6630Support.java:37-62,178-197,206-223,314-316
+            - base-classes2/com/govee/shared/checker/KmpGoodsType.java:210-211
             - split_h6630/com/govee/h6630/pact/H6630Maker.java:16-18
+            - split_h6630/com/govee/h6630/add/AddDeviceM.java:18-38
+            - split_h6630/com/govee/h6630/pact/RegisterItem.java:14-19
+            - split_h6630/com/govee/h6630/pact/SubLib.java:19-26
+            - split_h6630/com/govee/h6630/pact/H6630Support.java:37-44,206-243
+            - split_h6630/com/govee/h6630/H6630ApplicationImp.java:22-24
+            - split_h6630/com/govee/h6630/pact/DeviceItem.java:11,19-32
             - split_h6630/com/govee/h6630/pact/Model.java:14-37
-            - split_h6630/com/govee/h6630/pact/DeviceItem.java:11,28-32
-            - split_h6630/com/govee/h6630/add/AddDeviceM.java:18-29
-            - split_h6630/com/govee/h6630/detail/H6630ViewModel.java:1295-1313,1386-1387,1477-1486,1717-1719,1817-1826,1884-1893,2236-2260
-            - split_h6630/com/govee/h6630/detail/H6630DetailActivity.java:65,139-164,193-215,239-249
-            - split_h6630/com/govee/h6630/detail/header/H6630DelegateHeader.java:557-566,611-628,678-692,701-725
-            - split_h6630/com/govee/h6630/detail/H6630ConfigDetail.java:57-243
-            - split_h6630/com/govee/h6630/detail/Info4Detail.java:373-416,511-536,650-668
-            - split_h6630/com/govee/h6630/detail/DeviceSwitchInfo.java:38-40,59-66
-            - split_h6630/com/govee/h6630/scene/Smart4H663X.java:19-78
+            - base-classes11/com/govee/base2light/feast/cmd/Ble.java:9,13,27-29
+            - base-classes3/com/govee/matter/pact/BleComm.java:44-51,61-69
+            - split_h6630/com/govee/h6630/detail/H6630ViewModel.java:1477-1486,1717-1719,1884-1893,2236-2260
+            - split_h6630/com/govee/h6630/detail/header/H6630DelegateHeader.java:611-628,701-725
+            - base-classes11/com/govee/base2light/kt/comm/AbsViewMode4Op.java:856-874,1066-1091,1200-1202,1269-1284
+            - base-classes11/com/govee/base2light/pact/newdetail/ShareVM.java:342-347,979-1002,1362-1364
             - split_h6630/com/govee/h6630/pact/bleiot/AbsEffectOp4BleIot.java:107-134,208-220
-            - base-classes11/com/govee/base2light/kt/comm/AbsViewMode4Op.java:552-586,856-874,1066-1091,1200-1202,1269-1284,1401-1421,2161-2170
-            - base-classes11/com/govee/base2light/pact/newdetail/ShareVM.java:342-347,979-1002,1348-1350,1362-1364,1647-1676,2279-2287
-            - base-classes11/com/govee/base2light/pact/newdetail/AbsAcLightDetail.java:825-833
-            - base-classes11/com/govee/base2light/pact/newdetail/ble/BleComm.java:76-84
-            - base-classes11/com/govee/base2light/pact/newdetail/ble/Ble4NewDetail.java:32-37,79-85
-            - base-classes12/com/govee/common2light/capability/connect/ConnectHeartbeat.java:15-38
-            - base-classes10/com/govee/base2light/ble/AbsBle.java:79-137,237-239,597-602,686-690
-            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:62-86
-            - base-classes11/com/govee/base2light/kt/general_controller/ControllerSwitch.java:50-51,60-67,73-75
+            - split_h6630/com/govee/h6630/scene/Smart4H663X.java:19-78
             - base-classes3/com/govee/kt/AbsDeviceModel4BleIot.java:38-41,49-89
-            - base-classes3/com/govee/kt/ui/device/base/AbsLightModel4BleIot.java:260-290,575-605
-            - base-classes3/com/govee/kt/ui/device/base/AbsBleIotItem.java:131-137,160-165
-            - base-classes2/com/govee/home/main/CardCommManagerProxy.java:203-235,624-673
-        "286":   # H6631; no support: as 285
-          models: [H6631]
-          pacts: ["1,1", "1,2", "2,1", "2,2", "2,3", "2,4"]
-          heartbeat: heartbeat
+            - base-classes10/com/govee/base2light/ble/controller/AbsSingleController.java:22-30
+            - base-classes10/com/govee/base2light/ble/controller/SwitchController.java:13-16,23-26,36-39
+            - base-classes10/com/govee/base2light/ble/controller/BrightnessController.java:14-18,25-28,37-40
+            - base-classes10/com/govee/base2kt/utils/BleUtils.java:1030-1041,1260-1267
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:98-114,199-215,252-258
+            - base-classes3/com/govee/kt/ui/device/LightHolderConvert.java:627
+            - base-classes3/com/govee/kt/ui/device/Item1.java:75-77,83-85,95-97,159-165
+            - base-classes3/com/govee/kt/ui/device/base/AbsLightModel4BleIot.java:253-305,575-605
+            - base-classes3/com/govee/kt/ui/device/base/AbsBleIotItem.java:77-101
+            - base-classes3/com/govee/kt/ui/device/base/AbsBaseBleModel.java:143-145,158-174,393-407
+            - base-classes9/com/govee/base2home/pact/BleUtil.java:719-743
+            - base-classes9/com/govee/base2home/pact/Pact.java:103-111
+            - base-classes3/com/govee/home/route/CardCommServiceImpl.java:133-142
+            - base-classes2/com/govee/home/main/CardCommManagerProxy.java:83,166-180,202-235,616-674
+            - base-classes2/com/govee/home/main/CardCommManagerProxy$triggerBleCmd$2.java:183-308
+            - base-classes13/com/govee/ctlchannel/ClientUnionFactory.java:82-96
+            - base-classes13/com/govee/ctlchannel/ble/BleClientProxy.java:493-505,982,1260,1830
+            - base-classes13/com/govee/ctlchannel/message/GMessageMulti.java:18-31
+            - base-classes13/com/govee/ctlchannel/ClientUnionMgr.java:1516,1532-1543
+            - base-classes13/com/govee/encryp/ble/EncryptionBluetoothGattCallback.java:77-150,188-246
+            - base-classes13/com/govee/ctlchannel/ble/VirtualBleClient.java:998-1046,1109-1160
+            - base-classes13/com/govee/ctlchannel/ble/NotificationEnbleChecker.java:51,65-205
+            - base-classes13/com/govee/encryp/ble/EncryptionUtils.java:32-37
+        "286":   # H6631: the card's BLE control, as 285 (doc)
+          models: [H6631]   # H6631Maker.getGoodsType = 286; AddDeviceM default name H6631
+          pacts: ["1,1", "1,2", "2,1", "2,2", "2,3", "2,4"]   # H6630Support.g, Pact.d.b(286, ...): 285's and (2,4)
+          support: app_traced
+          session: per_command   # the card's: one link per command (timing.per_command)
+          power_read: advert   # the card reads no state over GATT: on/off from the advert (AbsBaseBleModel.z)
+          capabilities: [power, brightness]   # the card's 33 01 and 33 04, nothing else (brightness kept: DECISIONS.md 6)
+          brightness_range: [1, 100]   # BrightnessConfig.d: no 286 / H6631 key, so version 1 = {1, 100}
           zones: []
+          account_lock: false   # AbsDeviceModel4BleIot.A0 is null: no 33 b2 ahead of the card's frame
+          connect_reads: []
+          connect_writes: []
+          heartbeat: none   # the card's client has a null heart message; the screen's aa 00 is the other path's
           scene_dialect: untraced
           doc: >-
-            H6631 on the same H6630DetailActivity / H6630ViewModel screen (pact check n4 = H6630Support.I, the 286 list,
-            which adds 2,4). No support, as 285: every command goes over IoT (the 33 01 global switch and the 33 30 01 light
-            sub-switch as ptReal, brightness as the JSON CmdBrightness), with IoT-only read-back (state, 0x41
-            DeviceSwitchInfo); the screen's BLE link carries only the aa 00 heartbeat every 2000 ms, and the home-list card
-            writes 33 01 / 33 04 over BLE (another path: the user's call). 2,4 gates only extras (H6630Support.E: a camera
-            feature in settings, a music-mode option). No colour, Kelvin or segment page (H6630ConfigDetail,
-            Info4Detail.T). Zones: none. Scenes untraced.
+            app_traced on the device-list card's path, the user's decision (DECISIONS.md 6, "Follow the card", with
+            brightness kept; CLAUDE.md rule 5), as for 285: the same card and the same control screen
+            (H6630DetailActivity, H6630ViewModel, pact check n4 = H6630Support.I, the 286 list), which sends every
+            command over IoT (R passes 1 for every BLE status: the 33 01 switch and the 33 30 01 light sub-switch as
+            ptReal, the slider as the JSON CmdBrightness) and holds a BLE link for the aa 00 heartbeat only: the other
+            path, documented and not matched. Not live-verified: there is no unit and no firmware image. The card
+            (RegisterItem -> the h6630 SubLib, H6630Support.i = {285, 286}; DeviceItem.v -> the h6630 Model, an
+            AbsDeviceModel4BleIot; y0 = the feast Ble.s, matter BleComm, 1910 / 2b11) sends 33 01 <on>
+            (AbsLightModel4BleIot.v0 -> AbsDeviceModel4BleIot.l: SwitchController) and 33 04 <v> (T -> k:
+            BrightnessController), v 1-100 (BrightnessConfig.d: no 286 or H6631 key, so version 1 = {1, 100}), one
+            frame each with nothing ahead of it (A0 is null: no 33 b2). Its Item1 overrides checkBleVis to false, so
+            the new-big layout's switch and slider need the device IoT-online, the small and big layouts' on and off
+            buttons don't, and the BLE leg skips its write once IoT has succeeded. The slider sends only while the
+            switch shows on (LightHolderConvert: z = M() && J()), so a brightness for a light not known to be on goes
+            after a power-on session. The session is timing.per_command (CardCommManagerProxy.comm2Device -> u ->
+            triggerBleCmd$2): a fresh client with a null heart message, the usual link setup (MTU, BGC read,
+            handshake where flagged), the frame with no reply wait, then the client closed, sessions 1100 ms apart;
+            GMessageMulti(list, false, 2, null) and sendBleMsg's close() rest on the jadx 1.5.6 re-decompile of
+            base.apk, not on the tree. The library also reads the reply for up to 1.5 s and raises on a refusal. The
+            card reads nothing over GATT: on/off is the advert's switch byte (AbsBaseBleModel.z), brightness the last
+            sent; the app's IoT status poll, which would correct a stale advert byte, has no library counterpart, so
+            the state is assumed. The pact gate passes 285's pacts and (2,4), or an advert without a pact; (2,4)
+            gates only extras (H6630Support.f via E: a camera setting, a music option). Open (firmware): whether
+            device_state[0] carries the on/off and refreshes within 15 s of a command; the BGC characteristic and its
+            version (AES-GCM, BGC 2, would get GoveeBleNotSupported on every command); plaintext without BGC; whether
+            a 0x33 write needs the 33 b2 unlock (a refusal raises GoveeBleCommandRejected); the advertised names.
+            Scenes untraced.
           doc-ref:
-            - split_h6630/com/govee/h6630/pact/H6630Support.java:90-92,199-204,224-243,322-324
+            - base-classes2/com/govee/shared/checker/KmpGoodsType.java:210-211
             - split_h6630/com/govee/h6630/pact/H6631Maker.java:16-18
-            - split_h6630/com/govee/h6630/add/AddDeviceM.java:30-38
-            - split_h6630/com/govee/h6630/detail/H6630ViewModel.java:1295-1313,1477-1486,1717-1719,1884-1893,2236-2260
-            - split_h6630/com/govee/h6630/detail/header/H6630DelegateHeader.java:611-617,678-692
-            - split_h6630/com/govee/h6630/detail/Info4Detail.java:373-416,650-668
+            - split_h6630/com/govee/h6630/add/AddDeviceM.java:18-38
+            - split_h6630/com/govee/h6630/pact/RegisterItem.java:14-19
+            - split_h6630/com/govee/h6630/pact/SubLib.java:19-26
+            - split_h6630/com/govee/h6630/pact/H6630Support.java:37-44,206-243
+            - split_h6630/com/govee/h6630/H6630ApplicationImp.java:22-24
+            - split_h6630/com/govee/h6630/pact/DeviceItem.java:11,19-32
+            - split_h6630/com/govee/h6630/pact/Model.java:14-37
+            - base-classes11/com/govee/base2light/feast/cmd/Ble.java:9,13,27-29
+            - base-classes3/com/govee/matter/pact/BleComm.java:44-51,61-69
+            - split_h6630/com/govee/h6630/detail/H6630ViewModel.java:1477-1486,1717-1719,1884-1893,2236-2260
+            - split_h6630/com/govee/h6630/detail/header/H6630DelegateHeader.java:611-628,701-725
+            - base-classes11/com/govee/base2light/kt/comm/AbsViewMode4Op.java:856-874,1066-1091,1200-1202,1269-1284
+            - base-classes11/com/govee/base2light/pact/newdetail/ShareVM.java:342-347,979-1002,1362-1364
+            - split_h6630/com/govee/h6630/pact/bleiot/AbsEffectOp4BleIot.java:107-134,208-220
             - split_h6630/com/govee/h6630/scene/Smart4H663X.java:19-78
             - split_h6630/com/govee/h6630/detail/H6630SettingActivity.java:1080-1093
-            - split_h6630/com/govee/h6630/detail/delegate/MusicModeDelegate4H663X.java:400-402
-            - base-classes11/com/govee/base2light/kt/comm/AbsViewMode4Op.java:1066-1091,1200-1202,1269-1284
-            - base-classes11/com/govee/base2light/pact/newdetail/ShareVM.java:979-1002,1362-1364
-            - base-classes3/com/govee/kt/AbsDeviceModel4BleIot.java:49-89
-            - base-classes2/com/govee/home/main/CardCommManagerProxy.java:203-235
+            - base-classes3/com/govee/kt/AbsDeviceModel4BleIot.java:38-41,49-89
+            - base-classes10/com/govee/base2light/ble/controller/AbsSingleController.java:22-30
+            - base-classes10/com/govee/base2light/ble/controller/SwitchController.java:13-16,23-26,36-39
+            - base-classes10/com/govee/base2light/ble/controller/BrightnessController.java:14-18,25-28,37-40
+            - base-classes10/com/govee/base2kt/utils/BleUtils.java:1030-1041,1260-1267
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:98-114,199-215,252-258
+            - base-classes3/com/govee/kt/ui/device/LightHolderConvert.java:627
+            - base-classes3/com/govee/kt/ui/device/Item1.java:75-77,83-85,95-97,159-165
+            - base-classes3/com/govee/kt/ui/device/base/AbsLightModel4BleIot.java:253-305,575-605
+            - base-classes3/com/govee/kt/ui/device/base/AbsBleIotItem.java:77-101
+            - base-classes3/com/govee/kt/ui/device/base/AbsBaseBleModel.java:143-145,158-174,393-407
+            - base-classes9/com/govee/base2home/pact/BleUtil.java:719-743
+            - base-classes9/com/govee/base2home/pact/Pact.java:103-111
+            - base-classes3/com/govee/home/route/CardCommServiceImpl.java:133-142
+            - base-classes2/com/govee/home/main/CardCommManagerProxy.java:83,166-180,202-235,616-674
+            - base-classes2/com/govee/home/main/CardCommManagerProxy$triggerBleCmd$2.java:183-308
+            - base-classes13/com/govee/ctlchannel/ClientUnionFactory.java:82-96
+            - base-classes13/com/govee/ctlchannel/ble/BleClientProxy.java:493-505,982,1260,1830
+            - base-classes13/com/govee/ctlchannel/message/GMessageMulti.java:18-31
+            - base-classes13/com/govee/ctlchannel/ClientUnionMgr.java:1516,1532-1543
+            - base-classes13/com/govee/encryp/ble/EncryptionBluetoothGattCallback.java:77-150,188-246
+            - base-classes13/com/govee/ctlchannel/ble/VirtualBleClient.java:998-1046,1109-1160
+            - base-classes13/com/govee/ctlchannel/ble/NotificationEnbleChecker.java:51,65-205
+            - base-classes13/com/govee/encryp/ble/EncryptionUtils.java:32-37
     models: [H6630, H8630, H6631]   # 285 = H6630 / H8630, 286 = H6631; base-classes2/com/govee/shared/checker/KmpGoodsType.java:210-211
     goods_types: [285, 286]   # 285 pacts (1,1) (1,2) (2,1) (2,2) (2,3); 286 adds (2,4)
     delivery: feature_split   # pact_h6630 (base-classes9/com/govee/base2home/pfd/Config.java:156)

@@ -1,6 +1,8 @@
 """Device driven end-to-end over the fake peripheral (real transport, real wire layer)."""
 from __future__ import annotations
 
+import asyncio
+from collections.abc import Callable
 from types import SimpleNamespace
 from typing import Any
 
@@ -9,13 +11,15 @@ from conftest import FakeSceneFiles, gated_scene_profile, gated_scene_store
 
 from govee_ble_local import create_device
 from govee_ble_local.devices.device import Device
+from govee_ble_local.devices.profile import DeviceProfile
 from govee_ble_local import scenes as scenes_mod
-from govee_ble_local.exceptions import GoveeBleUnknownName
+from govee_ble_local.exceptions import GoveeBleCommandRejected, GoveeBleNotSupported, GoveeBleUnknownName
+from govee_ble_local.models import Capability, Encryption
 from govee_ble_local.scenes import load_scenes
 from govee_ble_local.transport import connection as conn_mod
 from govee_ble_local.wire import build
 
-from fake_ble import FakeGovee, ble_device, frame
+from fake_ble import SESSION_KEY, FakeGovee, ble_device, frame, virtual_time
 from test_connection import H60A6_BURST, IDLE_GAP, spy_rx_waits
 
 
@@ -179,6 +183,64 @@ async def test_update_ble_device_reaches_next_connect(monkeypatch) -> None:
     assert seen == [(newer, newer)]
     assert dev.name == "via-proxy"
     await dev.stop()
+
+
+@pytest.mark.parametrize("encrypted", [False, True])
+async def test_a_per_command_profile_sends_each_write_on_its_own_session(
+        monkeypatch, encrypted: bool) -> None:
+    # The device-list card's session (DeviceProfile.session "per_command"): one frame per link, the reply read
+    # only for a refusal, the link torn down after each, each one 1.1 s after the last release; no read.
+    fake = FakeGovee(encrypted=encrypted)
+    starts: list[tuple[float, float | None]] = []   # (loop time, the last release) at each connect
+
+    async def establish(*a: Any, **k: Any) -> Any:
+        starts.append((asyncio.get_running_loop().time(), dev._conn._released_at))
+        return await fake.establish(*a, **k)
+
+    monkeypatch.setattr(conn_mod, "establish_connection", establish)
+    profile = DeviceProfile(skus=("HX1",), capabilities=frozenset({Capability.POWER, Capability.BRIGHTNESS}),
+                            encryption=Encryption.NONE, session="per_command")
+    dev = Device(profile, ble_device("AA:BB:CC:DD:EE:01", "GVHX1"), sku="HX1")
+    key = SESSION_KEY if encrypted else None
+
+    def refuse(cmd: int) -> Callable[[Any, bytes], None]:
+        def ack(client: Any, plain: bytes) -> None:
+            client.push(fake._wire(frame(0x33, plain[1], int(plain[1] == cmd)), key), 0.005)
+        return ack
+
+    with virtual_time():
+        st = await dev.update()
+        await dev.connect()
+        with pytest.raises(GoveeBleNotSupported):
+            await dev.read_secret()
+        assert starts == [] and st.optimistic and st.is_on is None
+        # A brightness on a light not known to be on: the card's switch, then its slider.
+        await dev.set_brightness(50)
+        assert [f.hex() for f in fake.received] == [build.switch(True).hex(), build.brightness(50).hex()]
+        assert len(fake.clients) == 2 and not any(c.is_connected for c in fake.clients)
+        assert dev.state.is_on is True and dev.state.brightness == 50 and dev.state.optimistic
+        assert dev._conn._idle_timer is None and dev._conn._heartbeat_timer is None
+        await dev.turn_on(power=False, brightness=60)   # known on: the slider alone
+        fake.no_ack_cmds = {0x01}   # no reply: the write is the success, sent once
+        await dev.turn_off()
+        assert fake.received[2:] == [build.brightness(60), build.switch(False)]
+        fake.no_ack_cmds, fake.on_write = set(), refuse(0x04)
+        with pytest.raises(GoveeBleCommandRejected):   # the power-on lands, the refused brightness doesn't
+            await dev.turn_on(brightness=40)
+        assert fake.received[4:] == [build.switch(True), build.brightness(40)]
+        assert dev.state.is_on is True and dev.state.brightness == 60
+        fake.on_write = refuse(0x01)
+        with pytest.raises(GoveeBleCommandRejected):
+            await dev.set_power(False)
+        assert dev.state.is_on is True and fake.received[6:] == [build.switch(False)]
+        # The link lost while the reply is awaited: the write went out, which is the card's success.
+        fake.on_write = lambda client, _plain: asyncio.get_running_loop().call_later(0.005, client.drop)
+        await dev.set_power(False)
+    assert dev.state.is_on is False and len(fake.clients) == len(starts) == 8
+    assert all(c.writes and not c.is_connected for c in fake.clients)
+    assert all(start >= released + conn_mod.PER_COMMAND_SESSION_GAP
+               for start, released in starts[1:] if released is not None)
+    assert all(released is not None for _start, released in starts[1:])
 
 
 async def test_stop_closes(monkeypatch) -> None:

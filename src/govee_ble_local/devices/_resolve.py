@@ -136,6 +136,15 @@ the row lacks fails the build: nothing defaults silently.
   poll's own power read stands in for them, aa 01 on a polled row and the status read's TLV 0x01 on a
   status row (``heartbeat_aa01`` on either), the aa 36 bar read for ``heartbeat_aa36``, and either for a
   ``push_30`` with its wire ``f_ee_30``.
+- The session (:data:`SESSIONS`): a row is ``held`` unless it says ``session: per_command``, the device-list
+  card's path, where the control screen has no BLE control (DECISIONS.md 6). Such a row reads nothing over
+  GATT (``power_read: advert``, the advert's switch byte: ``DeviceProfile.readback`` ``"none"``), writes
+  nothing on connect, holds no link (``heartbeat: none``: ``DeviceProfile.heartbeat`` None) and carries only
+  power and brightness, the card's ``33 01`` / ``33 04``; the library sends each of its writes on a session of
+  its own (``DeviceProfile.session``, ``GoveeConnection.send_once``). Anything else on it (a read, a connect
+  write, a lock, zones, pieces, another capability, a relay) is not served yet, and ``advert`` and ``none``
+  on a held row are not served either: the spec keeps the two facts independent (a firmware-confirmed read
+  on the card's session is a later item).
 - Wire branches: the library reads the wire with the pact and the firmware unknown, so a wire ``by_pact`` /
   ``by_firmware`` branch raises, but for the unread ones of :data:`_UNREAD_WIRE_BRANCHES` (H60A6 pact (1,
   1)'s one colour piece: decision D3, the library keeps the row's 13).
@@ -234,6 +243,7 @@ class Row(TypedDict, total=False):
     connectivity: tuple[str, ...]
     pacts: tuple[str, ...] | str
     support: str
+    session: str
     power_read: str
     power_live: tuple[str, ...]
     heartbeat: str
@@ -416,6 +426,10 @@ _ILLUMINATION_SCHEMES: Final = frozenset({"h60a6", "h6188"})
 COLOR_TEMP_CONTROLS: Final = ("illumination", "whole_device")
 RELAY_POWERS: Final = ("outlet0", "all_outlets", "total_switch")        # devices.profile.RelayPower
 HEARTBEAT_TIMINGS: Final = ("fixed_rate", "after_quiet")         # transport.connection.HeartbeatTiming
+SESSIONS: Final = ("held", "per_command")                          # devices.profile.SessionMode
+# What a per_command row (the device-list card's session) may carry: the card's two writes (DeviceProfile
+# checks a hand-built per_command profile against it too).
+CARD_CAPABILITIES: Final = frozenset({"power", "brightness"})
 # The keep-alive reads a screen sends (clientRow heartbeat, govee_common command ids; DeviceProfile.heartbeat
 # takes their codes): ConnectHeartbeat.c's four types (1 aa 01, 2 aa 00, 3 aa 33, 4 aa 36), which cover the
 # IHeart controllers' aa 36 / aa 33 and the plug screens' aa 01.
@@ -455,8 +469,9 @@ _CIPHERS: Final = frozenset({"none", "aes_v1", "secret_key_pairing"})
 # scenes.upload.dialects -> DeviceProfile.scene_dialect; "none" = activate only.
 _DIALECTS: Final = {"legacy_scene": "A", "diy_graffiti": "B_h60a6", "tablelamp_h6052_type5_diy": "B_h6052",
                     "none": "A"}
-# power_read -> DeviceProfile.readback ("aa34_detail" also sets DeviceProfile.detail_power_read)
-_READBACK: Final = {"aa01": "polled", "ac_status": "status", "aa34_detail": "polled"}
+# power_read -> DeviceProfile.readback ("aa34_detail" also sets DeviceProfile.detail_power_read; "advert": no
+# GATT read, on a per_command row only).
+_READBACK: Final = {"aa01": "polled", "ac_status": "status", "aa34_detail": "polled", "advert": "none"}
 # The forms of the TLVs the status stream reads (govee_state's TLV-typed tags; reassemble.status_profile): the
 # row's own, in DeviceProfile.status_decode. f_a5 goes in only where the 0xA5 TLV is read as colour groups.
 _STATUS_TLV_FORMS: Final = ("f_30", "f_36", "f_40", "f_41", "f_a3")
@@ -860,6 +875,34 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
     row_caps = frozenset(need(row.get("capabilities"), "capabilities"))
     if not row_caps <= {*CAPABILITIES, "gradual"}:
         fail(f"capabilities {sorted(row_caps - {*CAPABILITIES, 'gradual'})}")
+    session = row.get("session", "held")
+    if session not in SESSIONS:
+        fail(f"session {session!r} (one of {list(SESSIONS)})")
+    card = session == "per_command"
+    if card:
+        # The device-list card's session (timing.per_command): its one frame, no GATT read, no connect write,
+        # no keep-alive, and only the card's 33 01 / 33 04. The rest is not served on it yet.
+        lives_here = row.get("power_live", cp.get("power_live")) or ()
+        for what, there in (
+                ("a relay row (the card's 33 01 is the light switch)", relay),
+                (f"power_read {row.get('power_read', cp.get('power_read'))!r} (no GATT read: advert only)",
+                 not relay and row.get("power_read", cp.get("power_read")) != "advert"),
+                (f"heartbeat {row.get('heartbeat')!r} (no link is held: none only)",
+                 row.get("heartbeat") != "none"),
+                ("a heartbeat_timing", "heartbeat_timing" in row),
+                (f"connect_reads {list(row.get('connect_reads') or ())}", bool(row.get("connect_reads"))),
+                (f"connect_writes {list(row.get('connect_writes') or ())}", bool(row.get("connect_writes"))),
+                ("a status_read", status_read is not None),
+                (f"power_live {list(lives_here)}", bool(lives_here)),
+                ("account_lock true (the card sends no 33 b2: AbsDeviceModel4BleIot.A0 is null)",
+                 bool(row.get("account_lock"))),
+                ("zones", bool(row.get("zones"))),
+                ("ic_pieces", "ic_pieces" in row),
+                ("power_resync", bool(row.get("power_resync"))),
+                (f"capabilities {sorted(row_caps - CARD_CAPABILITIES)} (the card sends only 33 01 and 33 04)",
+                 not row_caps <= CARD_CAPABILITIES)):
+            if there:
+                fail(f"{what} on a per_command row is not served yet")
     caps = set(row_caps)
     scheme = row.get("color_scheme") or cp.get("color_scheme")
     if row_caps & {"rgb", "color_temp", "segments"}:
@@ -942,6 +985,9 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
         power_read = need(row.get("power_read", cp.get("power_read")), "power_read")
         if power_read not in _READBACK:
             fail(f"power_read {power_read!r}")
+        if power_read == "advert" and not card:
+            fail("power_read 'advert' on a held row is not served (the library reads the power on a held "
+                 "link)")
         readback = _READBACK[power_read]
         if (readback == "status") != (status_read is not None):
             fail(f"power_read {power_read!r} with status_read {status_read!r}")
@@ -1018,6 +1064,8 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
             fail(f"power_live {live} is not served (the library polls aa 01 or the status read's TLV 0x01, "
                  "the aa 36 bars, and an ee 30 push needs its wire f_ee_30)")
     heartbeat = need(row.get("heartbeat"), "heartbeat")
+    if heartbeat == "none" and not card:
+        fail("heartbeat none on a held row is not served (a held link sends the screen's keep-alive)")
     timing = row.get("heartbeat_timing", "fixed_rate")
     if timing not in HEARTBEAT_TIMINGS:
         fail(f"heartbeat_timing {timing!r} (one of {list(HEARTBEAT_TIMINGS)})")
@@ -1075,9 +1123,10 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
         "mode_reports_kelvin": bool(row.get("mode_reports_kelvin", True)),
         "light_effect_stop": writes == ("light_effect_stop",),
         "scene_power_on": bool(model.get("scene_power_on", False)),
-        "heartbeat": heartbeat,    # a command name; devices/profile.py takes its code
+        "heartbeat": heartbeat,    # a command name (or "none"); devices/profile.py takes its code
         "heartbeat_timing": timing,
         "light_nonzero": bool(nonzero),
+        "session": session,
     }
     if out["scene_power_on"] and "scenes" not in row_caps:
         fail("by_model scene_power_on on a row without the scenes capability")
@@ -1163,7 +1212,7 @@ def _check_mode(w: Mapping[str, Any], readback: str, fail: Fail) -> None:
     """The row's wire ``mode`` / ``mode_status`` must be a decode the library reads its mode reports with: on
     a status row any (the TLV 0x05 takes the row's own, mode_status over mode, ``status_decode``), on a
     polled row any ``mode`` (the aa 05 reply takes it, ``mode_decode``) and no mode_status (it has no status
-    read), none on a plug."""
+    read), none on a plug or a per_command row (it reads no mode report)."""
     if readback == "status":
         return
     served = not w["mode_status"] and (readback == "polled" or not w["mode"])

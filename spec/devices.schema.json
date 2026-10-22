@@ -257,7 +257,7 @@
           "properties": {
             "has_brightness": { "type": "boolean", "description": "Per-segment 0xA5 colour read-back record: true = 4-byte [brightness,R,G,B], false = 3-byte [R,G,B] (an aa a2 colour group is always 3-byte)." },
             "color_scheme": { "type": "string", "enum": ["h60a6", "h6006", "h6188", "h61a8", "h6061", "legacy_02"], "description": "Colour-write byte-layout family, the app's colour instruction for the SKU (Config.J[version]): 'h60a6' = 0x15 with a segment mask (Bytes.h / Bytes.r), 'h6006' = 0x0d with the tint in both slots (Config.bu, Bytes.f / Bytes.p), 'h6188' = 0x0d with the white-slot CCT (Config.GM -> Bytes.A, the illumination tab's), 'h61a8' = 0x0b with no CCT (Config.cu, Bytes.d), 'h6061' = 0x15 colour version 5, whole device (Config.Zt: Bytes.l RGB, Bytes.u CCT), 'legacy_02' = 0x02, whole device (Config.fu: Bytes.a, and Bytes.o for a pick that is a Kelvin tint in the row's kelvin_range, which a row with rgb needs even without color_temp)." },
-            "power_read": { "type": "string", "enum": ["aa01", "ac_status", "aa34_detail"], "description": "Power source at connect (govee_state power_state.is_on): 'aa01' = the aa 01 read, on when the byte == 1 (any non-zero byte under the wire power light_nonzero); 'ac_status' = TLV 0x01 of the 0xAC/0x03 status burst (no aa 01 read), on when the byte != 0; 'aa34_detail' = the aa 34 device-detail read (no aa 01 read; wire f_34 device_detail), on when the header main switch shows on (govee_state device_detail.main_switch_on: the light open or white noise playing; H6057)." },
+            "power_read": { "type": "string", "enum": ["aa01", "ac_status", "aa34_detail", "advert"], "description": "Power source (govee_state power_state.is_on): 'aa01' = the aa 01 read at connect, on when the byte == 1 (any non-zero byte under the wire power light_nonzero); 'ac_status' = TLV 0x01 of the 0xAC/0x03 status burst (no aa 01 read), on when the byte != 0; 'aa34_detail' = the aa 34 device-detail read at connect (no aa 01 read; wire f_34 device_detail), on when the header main switch shows on (govee_state device_detail.main_switch_on: the light open or white noise playing; H6057); 'advert' = no GATT read: only the advertisement's switch byte, read as the device-list card reads it (source advert: govee_manufacturer_data device_state read as power_state, on when its byte == 1; AbsBleIotItem.B -> AbsBaseBleModel.z -> BleUtil.parseBleBroadOnOff)." },
             "power_live": { "type": "array", "uniqueItems": true, "items": { "type": "string", "enum": ["heartbeat_aa01", "heartbeat_aa36", "heartbeat_aa33", "push_30"] }, "description": "Live power after connect: 'heartbeat_aa01' = aa 01 heartbeat, on when frame byte 2 == 1 (!= 0 under the wire power light_heartbeat_nonzero or light_nonzero); 'heartbeat_aa36' = aa 36 heartbeat, per bar byte 2 / 3 == 1; 'heartbeat_aa33' = aa 33 switch heartbeat, on when byte 2 != 0; 'push_30' = the ee 30 notify (layout: wire forms.f_ee_30)." },
             "mode_color_parse": { "$ref": "#/$defs/modeColorParse", "description": "The family's default colour-report strategy; by_goods_type.<gt>, else by_model.<SKU>, overrides it, then that entry's by_pact and every matching by_firmware (clientBranch, clientFirmware); 'none' = no colour sub-mode decoded." },
             "mode_color_parse_status": { "$ref": "#/$defs/modeColorParse", "description": "Strategy for the 0x05 TLV of the 0xAC status burst where it differs from the aa 05 reply (absent = mode_color_parse)." },
@@ -265,7 +265,7 @@
             "by_goods_type": { "type": "object", "propertyNames": { "pattern": "^[0-9]+$" }, "additionalProperties": { "$ref": "#/$defs/clientRow" }, "description": "Per-goodsType rows (keys = the goodsType in decimal) that win over the family-level values; a key goods_types lacks is the goods_type of an assigned_goods_type item. A row with support is a BLE route for its models (clientRow)." },
             "relay_power": { "type": "string", "enum": ["outlet0", "all_outlets", "total_switch"], "description": "Plugs: what the detail screen's power button writes: 'outlet0' = 33 01 11 / 10 (relay 0), 'all_outlets' = 33 01 FF / F0, 'total_switch' = 33 02 01 / 00 (H5089) (split_plugnew/com/govee/h5080/ble/controller/)." },
             "relay_on_mask": { "type": "integer", "minimum": 1, "maximum": 255, "description": "Plugs: on at the connect read when (aa 01 reply byte 0 & relay_on_mask) != 0, bit i = relay i, absent = a light (govee_profile power_rule.relay_on_mask); an integer written in hex in the YAML." },
-            "advert_on_mask": { "type": "integer", "minimum": 1, "maximum": 255, "description": "Plugs: the device list reads on when (Govee AD switch byte & advert_on_mask) != 0 (govee_manufacturer_data device_state[0]); an integer written in hex in the YAML." },
+            "advert_on_mask": { "type": "integer", "minimum": 1, "maximum": 255, "description": "Plugs: the device list reads on when (Govee AD switch byte & advert_on_mask) != 0 (govee_profile power_rule.advert_on_mask: govee_manufacturer_data device_state read as govee_state power_state, source advert); an integer written in hex in the YAML." },
             "wire": { "$ref": "#/$defs/wire" },
             "wire_cipher": { "type": "string", "enum": ["runtime"], "description": "Always 'runtime': the cipher is resolved per connection from the advert encrypted bit / BGC info, never per SKU." }
           }
@@ -354,10 +354,16 @@
           ],
           "description": "The 'pactType,pactCode' pairs (decimal) the app accepts for this goodsType (Support.addSupportPact); 'any' where the route tests no pact (a goodsType-0 SKU match). A row without pacts is never a route. On a row that a pact-conditioned assigned_goods_type item reassigns its SKUs to, only the pairs at or above its gate, and such a row is never a route for an advertisement without a pact (the app rewrites only a record whose pact meets the gate); on a row of a goodsType it reassigns from, only pairs below it."
         },
-        "support": { "enum": ["hardware_verified", "app_traced", "modelled"], "description": "The row's evidence. app_traced = the row's facts traced on the control-screen path and cited in doc-ref (a gap the trace knows of is named in doc); hardware_verified = app_traced, and the control path also observed on a device (doc names the device, the date and what was seen); modelled = inferred, not traced, or traced but held because the library does not yet send what the app sends (doc names the gap); admitted only on the client's opt-in." },
+        "support": { "enum": ["hardware_verified", "app_traced", "modelled"], "description": "The row's evidence. app_traced = the row's facts traced on the control-screen path and cited in doc-ref (a gap the trace knows of is named in doc), or, on a session: per_command row, on the device-list card's path, where the control screen has no BLE control (doc names the decision); hardware_verified = app_traced, and the control path also observed on a device (doc names the device, the date and what was seen); modelled = inferred, not traced, or traced but held because the library does not yet send what the app sends (doc names the gap); admitted only on the client's opt-in." },
+        "session": { "enum": ["held", "per_command"], "description": "How the app's path holds the BLE link (absent = held). 'held' = the control screen's: one link across commands and reads, each write acked, the row's heartbeat running. 'per_command' = the device-list card's (timing.per_command; CardCommManagerProxy.comm2Device -> u -> triggerBleCmd$2): each command opens its own link, set up as every link is (the BGC read, the handshake where the advert or BGC says so), writes its one frame with no reply wait, then closes, and links to one address are at least timing.per_command.gap_ms apart." },
         "power_read": { "$ref": "#/$defs/family/properties/client_profile/properties/power_read" },
         "power_live": { "$ref": "#/$defs/family/properties/client_profile/properties/power_live" },
-        "heartbeat": { "$ref": "#/$defs/commandId", "enum": ["power", "heartbeat", "volume", "cmd_36"], "description": "The keep-alive read the control screen sends while the link is up (timing.heartbeat): aa <command> with the zero fill, govee_ble_frame read_request with no selector. The command is a govee_common::command member id: the ConnectHeartbeat type the screen's view model picks, ShareVM.K3 = ConnectHeartbeat.a(I3()): 1 power = aa 01 when I3 is true, 2 heartbeat = aa 00 when it is false (ConnectHeartbeat.c also maps 3 -> aa 33 and 4 -> aa 36); or the controller of the IHeart its A3 sets (BleComm.l: aa 36 on H6047 / H6042, aa 33 on H610A); or the plug screens' (h5080 BleComm.l HeartControllerV2, ctlchannel HeartGMessage: aa 01). Set on each row with support, which cites the deciding Class.method in doc-ref; no family default." },
+        "heartbeat": {
+          "oneOf": [
+            { "$ref": "#/$defs/commandId", "enum": ["power", "heartbeat", "volume", "cmd_36"] },
+            { "const": "none", "description": "No keep-alive: the path holds no link between commands (session per_command); the card builds its client with a null heart message (ClientUnionFactory.buildBleMgr), and the heart loop returns on it (BleClientProxy funcRealTimeLoop)." }
+          ],
+          "description": "The keep-alive read the control screen sends while the link is up (timing.heartbeat): aa <command> with the zero fill, govee_ble_frame read_request with no selector. The command is a govee_common::command member id: the ConnectHeartbeat type the screen's view model picks, ShareVM.K3 = ConnectHeartbeat.a(I3()): 1 power = aa 01 when I3 is true, 2 heartbeat = aa 00 when it is false (ConnectHeartbeat.c also maps 3 -> aa 33 and 4 -> aa 36); or the controller of the IHeart its A3 sets (BleComm.l: aa 36 on H6047 / H6042, aa 33 on H610A); or the plug screens' (h5080 BleComm.l HeartControllerV2, ctlchannel HeartGMessage: aa 01); or 'none' where the path sends none. Set on each row with support, which cites the deciding Class.method in doc-ref; no family default." },
         "heartbeat_timing": { "enum": ["fixed_rate", "after_quiet"], "description": "When the heartbeat goes out (timing.heartbeat.timing): 'fixed_rate' = every interval_ms from the screen's start (AbsBle.HeartRunnable; a tick due while the link is busy is dropped, not queued); 'after_quiet' = interval_ms after the last frame the screen sent, every send restarting the wait (ctlchannel HeartHandler.e). Absent = fixed_rate." },
         "mode_color_parse": { "$ref": "#/$defs/modeColorParse" },
         "mode_color_parse_status": { "$ref": "#/$defs/family/properties/client_profile/properties/mode_color_parse_status" },
@@ -418,7 +424,7 @@
       },
       "allOf": [
         { "if": { "required": ["support"] }, "then": { "required": ["models", "pacts", "capabilities", "zones", "account_lock", "connect_reads", "connect_writes", "heartbeat", "doc", "doc-ref"] } },
-        { "if": { "required": ["heartbeat_timing"] }, "then": { "required": ["heartbeat"] } },
+        { "if": { "required": ["heartbeat_timing"] }, "then": { "required": ["heartbeat"], "properties": { "heartbeat": { "not": { "const": "none" } } } } },
         { "if": { "required": ["support", "connectivity"] }, "then": { "properties": { "connectivity": { "contains": { "const": "ble" } } } } },
         { "if": { "required": ["capabilities"], "properties": { "capabilities": { "contains": { "const": "scenes" } } } }, "then": { "required": ["scene_dialect"] } },
         { "if": { "required": ["support", "relay_power"] }, "then": { "required": ["power_resync"] } },
@@ -928,7 +934,7 @@
     "wirePower": {
       "type": "object",
       "additionalProperties": false,
-      "description": "power_rule without relay_on_mask (that is the by_goods_type entry's relay_on_mask).",
+      "description": "power_rule without relay_on_mask and advert_on_mask (those are the by_goods_type entry's).",
       "properties": {
         "relay_heartbeat_on_mask": {
           "type": "integer",
@@ -1054,6 +1060,21 @@
             "failure": { "type": "string", "description": "How a beat is written, and what its failure does." },
             "firmware": { "type": "string", "description": "FIRMWARE-SOURCED: what the device does without it." },
             "deviations": { "type": "array", "minItems": 1, "items": { "type": "string" }, "description": "PROCEDURAL: where a client of this spec (govee-ble-local) differs from the app, each a decision." },
+            "doc-ref": { "$ref": "#/$defs/docRef" }
+          }
+        },
+        "per_command": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["gap_ms", "command_timeout_ms", "client", "send", "close", "deviations", "doc-ref"],
+          "description": "The device-list card's BLE session (clientRow session per_command): one link per command.",
+          "properties": {
+            "gap_ms": { "type": "integer", "minimum": 0, "description": "The least time between one session's release and the next session's start to the same address (CardCommManagerProxy.s)." },
+            "command_timeout_ms": { "type": "integer", "minimum": 1, "description": "The card's bound on one command, its BLE and IoT legs together (CardCommManagerProxy.r)." },
+            "client": { "type": "string", "description": "The client the card builds for a session, and its link setup." },
+            "send": { "type": "string", "description": "How the session's one frame goes out, and what counts as success." },
+            "close": { "type": "string", "description": "When the session ends." },
+            "deviations": { "type": "array", "minItems": 1, "items": { "type": "string" }, "description": "PROCEDURAL: where a client of this spec (govee-ble-local) differs from the card, each a decision." },
             "doc-ref": { "$ref": "#/$defs/docRef" }
           }
         }

@@ -11,11 +11,12 @@ model, from which the shipped readers are generated).
 ### Added
 - **158 more SKUs, traced from the app's device list** (spec rows; no library code changed but the
   illumination-tab pair that promotes H60A4 / H80A4 and the aa 40 section sum that promotes H61A9, below): 102
-  admitted by default (`app_traced`) and 56 behind `allow_modelled` (`modelled`). The entries below admit 50
+  admitted by default (`app_traced`) and 56 behind `allow_modelled` (`modelled`). The entries below admit 54
   more by default (16 through the resolver changes; H1162 / H1163 / H1167 / H1168, H70B1 and H70BC; 17 through
-  the status-read command ids and the BK pact gate; the 10 SKUs of the `legacy_02` colour scheme; and H7061)
-  and 11 more behind `allow_modelled` (H7072, H6119, the five Glide panels, H61E5 / H61E6 and H60A1 / H80A1),
-  for 250 admitted by default and 73 behind `allow_modelled` in all. None is
+  the status-read command ids and the BK pact gate; the 10 SKUs of the `legacy_02` colour scheme; H7061; and
+  H70B2, H6630, H8630 and H6631 on the device-list card) and 11 more behind `allow_modelled` (H7072, H6119, the
+  five Glide panels, H61E5 / H61E6 and H60A1 / H80A1), for 254 admitted by default and 73 behind
+  `allow_modelled` in all. None is
   hardware-verified (the only bench check, below, was read-only), and none has a bundled scene catalog, so none
   is offered scenes. Each is listed with its family and goodsType; † marks a SKU no row lists that the
   catalogue snapshot (`spec/govee_catalog.json`) routes to that row by its goodsType alone (16 of them).
@@ -249,6 +250,45 @@ model, from which the shipped readers are generated).
   (`switchCur` is the light flag alone), and `set_power(True)` still sends `33 01 01`, which the main switch never
   sends then (`switchTrigger`). The light switch (`33 30`) matches the screen in every state, but the library has
   no per-row power write for it. Source-modelled: no H6057 on the bench and no firmware dump.
+- **A write-only row type: the app's device-list card** (`DeviceProfile.session`, `"held"` by default, or
+  `"per_command"`; `GoveeConnection.send_once`). It is for SKUs whose control screen has no BLE control, where
+  the user chose to follow the card (DECISIONS.md 6). On a `per_command` profile:
+  - each write is a session of its own: connect (the BGC read and the handshake as on every connect), write the
+    one frame, read the reply for at most the write-ack timeout, disconnect. A refusal (a non-zero status)
+    raises `GoveeBleCommandRejected` and applies nothing; no reply counts as success, as on the card, and
+    nothing is retried or sent twice. Each session starts at least 1.1 s (`const.PER_COMMAND_SESSION_GAP`,
+    `CardCommManagerProxy.s`) after the last one's release, failed or not;
+  - `turn_on(power=True, brightness=x)` is two sessions, power first, and a brightness while the device is not
+    known to be on is sent after a power-on session (the card's switch, then its slider), with no other write
+    of the `Device` between the two. Each applies its own state once its write completes, so a completed
+    power-on stays when the brightness fails. Colour is refused;
+  - `update()` and `connect()` make no connection, and `read_secret()` raises `GoveeBleNotSupported`: the card
+    reads nothing over GATT. On/off is the advertisement's switch byte and the last completed write (acked, or
+    unanswered, as on the card); brightness is the last sent, and the state stays `optimistic`;
+  - no heartbeat, idle timer or warm window: no link outlives its write;
+  - a `DeviceProfile(session="per_command")` takes POWER and BRIGHTNESS only and no zones
+    (`GoveeBleInvalidValue` otherwise): a scene upload or a bar's read-modify-write would hold a link past its
+    session.
+
+  Every `held` path is unchanged by construction: `_commit`, `turn_on`, `set_brightness`, `update`,
+  `connect` and `_read_reply` dispatch a `per_command` profile to its own branch first. Not live-verified: no
+  unit is on the bench.
+- **H70B2** (h70b2 185, pact (1,1)) and **H6630 / H8630** (h6630 285) and **H6631** (h6630 286), admitted by
+  default (`app_traced`) on that row type: power and brightness (1-100), the card's `33 01` and `33 04`. Their
+  control screens have no BLE control (185's pact check refuses every scan hit; 285 / 286 send every command
+  over IoT), so the rows follow the card, as the user decided
+  (DECISIONS.md 6, brightness kept on 285 / 286). Not live-verified: there is no unit and no firmware image.
+  Open, and named in each row's `doc`: whether the advert's switch byte carries the on/off on these firmwares
+  (the app's IoT poll, which corrects it, has no library counterpart, so the state is assumed), the BGC
+  version (an AES-GCM unit gets `GoveeBleNotSupported` on every command), and whether a write needs the
+  `33 b2` unlock (a refusal raises `GoveeBleCommandRejected`). The row type changes no other SKU (Changed).
+  - **Home Assistant:** the integration's support for these rows (two calls for power and brightness, assumed
+    state, availability from the advertisement) needs this release, and its own release sets the `>=1.8.0`
+    floor. An integration from before it also accepts this release (`>=1.2.1,<2`) and gets the four SKUs, but
+    sends a power-on with every brightness change (their state stays `optimistic`): its one
+    `turn_on(power=True, brightness=x)` call is then two sessions inside its 60 s command timeout, so a slow
+    link can time out the brightness after the power-on landed and report the command failed. Release the two
+    together.
 
 ### Changed
 - **A polled profile reads aa 04 only with `Capability.BRIGHTNESS`**, as the app's connect read does
@@ -306,6 +346,16 @@ model, from which the shipped readers are generated).
   behind `allow_modelled`) but H61A9 and H61C2 / H61C3 / H61C5 (Added) resolves to the same profile, field by
   field, at every pact its rows list, at (99, 99) and at none, with and without `allow_modelled`
   (`color_readback_ic_sections` and `detail_power_read` False). H7061 is a new route.
+- The transport reads a write's command through the frame reader (`wire.parse.write_command`, the write
+  counterpart of `request_command`), for the ack it waits for: `GoveeConnection.send` with `expect_ack`,
+  `send_many` and `send_once` check each frame with it before any I/O, and the ack-verified write takes its
+  command from it. A `33` frame of 2 bytes (the proType and the checksum: no command) now raises
+  `GoveeBleInvalidValue` before any I/O instead of being sent. No frame the library builds changes.
+- The device-list card's row type changes no other SKU: each of the 323 the table admitted before it (250 by
+  default, 73 behind `allow_modelled`) resolves to the same profile, field by field (`session="held"`), at every
+  pact its rows list, at (99, 99) and at none, with and without `allow_modelled`. `identify.parse_broadcast_onoff`
+  now reads the advert's switch byte through the spec (`power_state`, source `advert`) and gives the same on/off
+  as before for every SKU. H70B2, H6630, H8630 and H6631 are new routes.
 
 ### Fixed
 - **H6188: colour temperature now sends the colour tab's frame** `33 05 0d <tint> <K> <tint>`
@@ -344,15 +394,16 @@ model, from which the shipped readers are generated).
   `modelled`; one that needs library work has no `support` and names the gap in its `doc`. A verification
   pass challenged each family's rows; they were repaired, and demoted (to `modelled`, or to no `support`)
   where a core claim didn't hold.
-  - devices.yaml now has 305 goodsType rows in 96 families (184 in 91): 197 with `support` (66), of them 158
-    `app_traced`, 35 `modelled` and the same 4 `hardware_verified`, and 108 without (118). The trace gave 153
-    of them support. The other 44 take it through the library and spec changes under Added, Changed, Fixed
+  - devices.yaml now has 305 goodsType rows in 96 families (184 in 91): 200 with `support` (66), of them 161
+    `app_traced`, 35 `modelled` and the same 4 `hardware_verified`, and 105 without (118). The trace gave 153
+    of them support. The other 47 take it through the library and spec changes under Added, Changed, Fixed
     and Spec: h6069 284, h3700 383, h7076 313, h70dx 267-269, bulblightv3 342, the four h1162 rows, h70b1 134,
     h70bx 216, the six status-read rows (h6092 334 / 333 / 401, h7072 371 / 294, h70b6 341), the nine BK target
     rows, the five Glide panel rows (h6061 96 / 97 / 121 / 163 / 228), the seven `legacy_02` rows (h6105,
     h6107, h6129, h6185, h73101217, h7318 and h6165, each goodsType 0), h60ax 235 and h61d3 239 / 246 (the
-    colour-temperature work, which also promoted h60ax 302 to `app_traced`) and h7050 98 (H7061's two heads;
-    the aa 40 section sum promoted dreamcolorlightv1 204 to `app_traced`), all `app_traced` but h7072 294,
+    colour-temperature work, which also promoted h60ax 302 to `app_traced`), h7050 98 (H7061's two heads;
+    the aa 40 section sum promoted dreamcolorlightv1 204 to `app_traced`) and the three device-list card rows
+    (h70b2 185, h6630 285 / 286), all `app_traced` but h7072 294,
     h6119 44, the Glide panels, h60ax 235 and h61d3 239 / 246 (`modelled`).
   - Two goodsType add-ons were traced and checked on their own: straightfloorlamp 69 (H6076 / H8076,
     `app_traced`, with the bench reads above) and rgbiclight 141 (H61C2 / H61C3 / H61C5).
@@ -511,6 +562,28 @@ model, from which the shipped readers are generated).
   name changes for existing readers (`Command.swap_light` -> `Command.cmd_34`; nothing in the library used it).
   The h6092 rows' `status_read` follows the rename. devices.schema.json: `power_read` gains `aa34_detail`, the
   wire forms `f_34`; the h6057 wire gains `f_34: device_detail`.
+- **The device-list card's session, as spec vocabulary.**
+  - `clientRow.session`: `held` (absent; the control screen's) or `per_command` (the card's:
+    `CardCommManagerProxy.comm2Device` -> `u` -> `triggerBleCmd$2`).
+  - `power_read: advert`: no GATT read, the advert's switch byte as the card reads it, and
+    `heartbeat: none`: no keep-alive on a path that holds no link (the card's null heart message). A
+    `heartbeat_timing` beside `none` is refused by the schema.
+  - `timing.per_command`: the 1100 ms spacing, the 29.5 s command bound, the client, the send and the close,
+    with the library's deviations (it reads the reply for a refusal) and the citations.
+  - The advert's on/off is a `govee_state` `power_state` source, `advert`: the manufacturer data's
+    `device_state` read as the power byte, on at 1 for a light (`AbsBaseBleModel.z`) and by the
+    `govee_profile` `power_rule.advert_on_mask` for a plug (h5080 `Model.z` / `Model4Plug2.z`).
+    `identify.parse_broadcast_onoff` reads both through it (the same decodes as before, now from the spec).
+  - The resolver serves `per_command` only on a row that reads nothing, writes nothing on connect, holds no
+    link, has no lock, zones or pieces and carries only power and brightness; `advert` and `none` on a held
+    row are not served. The coupling stays in the resolver, not the schema, so a firmware-confirmed read could
+    later join a `per_command` row (design review R3).
+- **h70b2 185 and h6630 285 / 286 get `support: app_traced`** on the card's path (`session: per_command`,
+  `power_read: advert`, `heartbeat: none`, `brightness_range: [1, 100]`), with the card trace in `doc` and
+  `doc-ref` (card registration, model and BLE object, the frame builders, the slider gate, the session, the
+  advert power, the pact gate) and the two facts that rest on the unsaved jadx re-decompile named in prose.
+  285 / 286's `heartbeat: heartbeat` was the control screen's held link, not the card's. The reference's
+  self-test checks their routes and session.
 
 ## [1.6.1] — 2026-10-21
 

@@ -211,7 +211,7 @@ def profile(
     num_segments: int = 0, num_levels: int = 0,
     group_rule: int = 0, num_per_group: int = 0, has_brightness: bool = False, num_pieces: int = 0,
     relay_on_mask: int = 0, relay_heartbeat_on_mask: int = 0, light_nonzero: bool = False,
-    light_heartbeat_nonzero: bool = False,
+    light_heartbeat_nonzero: bool = False, advert_on_mask: int = 0,
     c02: int = 0, c0b: int = 0, c0d: int = 0, c14: int = 0, c15: int = 0, music: int = 0,
     empty_fails: bool = False, mode_status: tuple[tuple[str, int], ...] | None = None,
 ) -> Any:
@@ -236,7 +236,8 @@ def profile(
              group=p.ColorGroupForm(rule=group_rule, num_per_group=num_per_group,
                                     has_brightness=has_brightness, num_pieces=num_pieces),
              power=p.PowerRule(relay_on_mask=relay_on_mask, relay_heartbeat_on_mask=relay_heartbeat_on_mask,
-                               light_nonzero=light_nonzero, light_heartbeat_nonzero=light_heartbeat_nonzero),
+                               light_nonzero=light_nonzero, light_heartbeat_nonzero=light_heartbeat_nonzero,
+                               advert_on_mask=advert_on_mask),
              mode=decode, mode_status=status)
 
 
