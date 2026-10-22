@@ -13,14 +13,14 @@ model, from which the shipped readers are generated).
   illumination-tab pair that promotes H60A4 / H80A4, the aa 40 section sum that promotes H61A9, the live
   piece count that promotes 14 h705a SKUs and the status rows' IC reads that promote H3401 and H3510 / H3511,
   below): 116 admitted by default (`app_traced`) and 42 behind `allow_modelled` (`modelled`). The entries below
-  admit 71 more by default (16 through the resolver changes;
+  admit 75 more by default (16 through the resolver changes;
   H1162 / H1163 / H1167 / H1168, H70B1 and H70BC; 17 through the status-read command ids and the BK pact gate;
   the 10 SKUs of the `legacy_02` colour scheme; H7061; H70B2, H6630, H8630 and H6631 on the device-list card;
   through the live piece count H1A45 and the five h61d3 SKUs behind `allow_modelled` since 1.5.0, H61B8 /
-  H61B9 / H61F2 / H61F5 / H61F6; and through the status rows' IC reads H3401, H3510 / H3511, H702A / H702B /
-  H702C, H7026 / H8026, H7027 and H30D0 / H30D1) and 12 more behind `allow_modelled` (H7072, H6119, the five
-  Glide panels, H61E5 / H61E6, H60A1 / H80A1 and H6609), for 285 admitted by default and 52 behind
-  `allow_modelled` in all.
+  H61B9 / H61F2 / H61F5 / H61F6; through the status rows' IC reads H3401, H3510 / H3511, H702A / H702B /
+  H702C, H7026 / H8026, H7027 and H30D0 / H30D1; and through the 0xA3 colour unit H3010 / H3011 / H3012 /
+  H3013) and 12 more behind `allow_modelled` (H7072, H6119, the five Glide panels, H61E5 / H61E6, H60A1 /
+  H80A1 and H6609), for 289 admitted by default and 52 behind `allow_modelled` in all.
   None is
   hardware-verified (the only bench check, below, was read-only), and none has a bundled scene catalog, so none
   is offered scenes. Each is listed with its family and goodsType; † marks a SKU no row lists that the
@@ -56,7 +56,7 @@ model, from which the shipped readers are generated).
     (240), **H7067 / H7068 / H7069** (250), by the live piece count (below);
   - h705a: **H3401** (394); h7057: **H3510**, **H3511**† (349); h7020: **H702A / H702B / H702C** (316),
     **H7026 / H8026** (318), **H7027** (337), **H30D0**, **H30D1**† (391), by the status rows' IC reads
-    (below).
+    (below), and **H3010 / H3011 / H3012 / H3013** (411), by the 0xA3 colour unit (below).
 
   Behind `allow_modelled` (the facts are traced, but the library doesn't yet do everything the app does on
   every unit; each row's `doc` names the difference):
@@ -383,6 +383,35 @@ model, from which the shipped readers are generated).
   not live-verified: none of these SKUs is on the bench. Like every status row, the new rows also get the
   library's aa 06 / aa 07 device-info reads, which no firmware or bench evidence backs on them yet
   (status-row-versions-from-tlv07).
+- **The `h3010` colour scheme: goodsType 411's colour write as one 0xA3 unit** (`ColorScheme` gains
+  `"h3010"`). Config.E[411] makes `LightColorCapabilityCenter.b2` true, so the colour page's single colour and
+  colour temperature go through `ColorModeControllerConfig.j`: one MultiController unit
+  (`MultiController.c(value, 0x6e, ControllerMode.e([0x15]))`), the 0xA3 packets of `Config.gu`'s value (Bytes.j
+  `[01] RGB [00 x5] <mask>` for an RGB pick, Bytes.t `[01] ff ff ff <K> <tint> <mask>` for a colour temperature
+  or a Kelvin-tint pick), its mask every piece's bit with no cap (`BleUtils.X`), then `33 05 15 00`.
+  - `build.color_rgb_frames` builds the unit (red at 15 pieces: `a3 00 01 02 6e 01 ff 00 00 00 00 00 00 00 ff
+    7f ..`, `a3 ff ..`, `33 05 15 00 ..`); `build.color_temp_frames` is the whole-device colour temperature as
+    the frames the app sends (`[color_temp(...)]` on every other scheme, byte for byte); `color_rgb`,
+    `color_temp` and the segment builders refuse `h3010` with GoveeBleNotSupported (whole device only: the
+    Part tab is account-sized, ColorModeH3010). `build.color_mode_switch` is `33 05 15 00`;
+    `build.piece_cap` is the most pieces a live count sizes a scheme's writes by (4095 on `h3010`, 112
+    elsewhere).
+  - `GoveeConnection.send_many` takes a run of 0xA3 frames, from its START, directly before a write as one
+    unit (`AbsControllerNoEvent4Multi`): the run streamed paced (`UNACKED_SEND_GAP`) with no drain between,
+    then the write, and the unit done on its `a3 <comm>` ack, whose byte 3 is the result
+    (`onResult` at `MultiController.b()` = 3: 0 done, else GoveeBleCommandRejected); the write's own `33` ack
+    is not the unit's. No ack: the whole unit goes once more on a fresh link, then GoveeBleTimeout. Every other
+    frame list sends as before (each write ack-verified), and any other non-write frame is still refused.
+    `wire.parse.multi_unit_comm` / `parse_multi_ack` read the START's comm byte and the ack through the spec.
+  - `Device.set_color_temp` and `turn_on(kelvin=)` take `color_temp_frames`: one frame still goes out with
+    `send`, the unit with `send_many`.
+
+  Admitted by default (`app_traced`): h7020 **H3010 / H3011 / H3012 / H3013** (411), whole-device control
+  (power, brightness, RGB, colour temperature), with the 4702ABC connect's aa 40 reads around the status read
+  (above) and `ColorPieceConfig.b`'s `max(15, IC)` pieces for the writes, the read-back over the IC itself.
+  Source-traced, not live-verified: no H301x is on the bench, and which ack its firmware sends to end the unit
+  is the app's (`a3 6e`, byte 3 = 0), not a capture's. Every SKU the table had before resolves to the same
+  profile, field by field, and sends the same frames (the golden-frame suites pass unchanged).
 
 ### Changed
 - **A polled profile reads aa 04 only with `Capability.BRIGHTNESS`**, as the app's connect read does
@@ -747,6 +776,14 @@ model, from which the shipped readers are generated).
   catalogue's IC, are gone: `num_segments` 8 is only the count before the first read); h7020 316 / 318 / 337 /
   391 are written out, `app_traced`; h7020 296 / 318 / 337 / 361 and h7045 take `f_40: one_count_u16`. The
   reference self-test checks both readers and the whole-group rule.
+- **goodsType 411's 0xA3 colour value and its unit's ack.** govee_ble_frame `comm_byte::sub_mode_color_multi`
+  (0x6e, BleProtocolConstants) and `upload_ack.multi_result` / `is_multi_ok` (frame byte 3, which a
+  MultiController unit reads as its result); govee_upload `upload_kind::color_multi` and `color_multi_value`
+  (`[op][colour][kelvin][tint][mask]`, Config.gu's Bytes.j / Bytes.t, its mask a `seg_mask` with no cap);
+  govee_common `seg_mask`'s cap is a `u2`, so an uncapped mask can carry more than 255 bytes.
+  devices.schema.json `color_scheme` gains `h3010`; h7020 411 is written out with `color_scheme: h3010`,
+  `ic_pieces {15, 4095, 1}` and `readback_pieces: ic_count`, `app_traced`. The reference self-test reads the
+  value and the ack.
 
 ## [1.6.1] — 2026-10-21
 

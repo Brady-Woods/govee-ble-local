@@ -449,7 +449,8 @@ ADMITTED: Final = frozenset({"hardware_verified", "app_traced"})
 MODELLED: Final = frozenset({"modelled"})   # admitted only on the caller's opt-in
 LEVELS: Final = ADMITTED | MODELLED
 CAPABILITIES: Final = ("power", "brightness", "rgb", "color_temp", "segments", "scenes")   # models.Capability
-COLOR_SCHEMES: Final = ("h60a6", "h6006", "h6188", "h61a8", "h6061", "legacy_02")   # wire.build.ColorScheme
+COLOR_SCHEMES: Final = ("h60a6", "h6006", "h6188", "h61a8", "h6061", "legacy_02",
+                         "h3010")   # wire.build.ColorScheme
 # The h60a6 colour-temperature slot types (clientRow white_type; wire.build.WhiteType), and the default a row
 # without one takes (Bytes.r's ff ff ff, every row before 1.8.0).
 WHITE_TYPES: Final = ("rgb_black", "rgb_white", "rgb_self_tem_color")
@@ -480,13 +481,16 @@ _LIVE_HEARTBEATS: Final[Mapping[str, str]] = {
 #  - h6006 / h6188 (0x0d; h6188 is the white-slot Bytes.A colour temperature of the illumination tab): no
 #    segment mask in any colour frame (Bytes.f / p / A);
 #  - h6061: whole-device only; per-panel colour needs the user's layout, which is not modelled;
-#  - legacy_02 (0x02): Config.fu drops the position set, and Bytes.a / o carry no mask.
+#  - legacy_02 (0x02): Config.fu drops the position set, and Bytes.a / o carry no mask;
+#  - h3010 (the 0xA3 colour unit): whole-device only; goodsType 411's Part tab (ColorModeH3010) is sized from
+#    the account's segment count and its strip path (ColorModeControllerConfig.k) is untraced.
 SCHEME_LACKS: Final[Mapping[str, frozenset[str]]] = {
     "h61a8": frozenset({"color_temp"}),
     "h6006": frozenset({"segments"}),
     "h6188": frozenset({"segments"}),
     "h6061": frozenset({"segments"}),
     "legacy_02": frozenset({"segments"}),
+    "h3010": frozenset({"segments"}),
 }
 # The colour schemes with a segment-brightness frame (wire.build.segment_brightness: 33 05 15 02, Bytes.G),
 # the frame the colour page's segment-brightness slider sends; the only rows whose color_functions flag for

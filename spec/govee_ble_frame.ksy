@@ -1572,6 +1572,17 @@ types:
     instances:
       is_ok:
         value: result == 0
+      multi_result:
+        value: 'rest.bytes.size > 0 ? rest.bytes[0] : 0'
+        doc: |
+          frame byte 3, which a MultiController unit's ack is read by
+          (AbsControllerNoEvent4Multi.onResult at b(), MultiController.e: 3 for
+          Companion.a and c); 0 = success
+        doc-ref:
+          - base-classes11/com/govee/base2light/kt/general_controller/MultiController.java:35-51,68-74
+          - base-classes10/com/govee/base2light/ble/controller/AbsControllerNoEvent4Multi.java:31-33,80-98
+      is_multi_ok:
+        value: multi_result == 0
   matter_packet:
     doc: |
       FIRMWARE-SOURCED, CAUTION: one 20-byte 0x3F Matter-factory unit
@@ -2157,6 +2168,16 @@ enums:
       doc-ref:
         - base-classes11/com/govee/base2light/pact/newdetail/content/daySync/DaySyncUtils.java:840
         - base-classes11/com/govee/base2light/pact/feast/BleProtocol.java:35
+    0x6e:
+      id: sub_mode_color_multi
+      -orig-id: sub_mode_color_multi
+      doc: |
+        goodsType 411's colour write (govee_upload color_multi_value), its
+        0xA3 packets followed by 33 05 15 00 in one MultiController unit
+      doc-ref:
+        - base-classes10/com/govee/base2light/ble/controller/BleProtocolConstants.java:200
+        - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/ColorModeControllerConfig.java:689-727
+        - base-classes11/com/govee/base2light/kt/general_controller/MultiController.java:47-66
     0xa4:
       id: part_scenes
       doc: partial scenes; an 0xA3 comm byte, not proType 0xA4

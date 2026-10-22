@@ -68,6 +68,31 @@ def parse_write_ack(frame: bytes) -> int | None:
     return int(f.body.result)
 
 
+def multi_unit_comm(frame: bytes) -> int:
+    """The comm byte of a built 0xA3 upload's START frame (``a3_packet`` index 0, ``a3_start.comm_byte``),
+    read by the frame reader: the command a MultiController unit's ack carries
+    (``AbsControllerNoEvent4Multi.isSameController``: proType 0xA3 and ``getCommandType``). ValueError for a
+    frame that isn't an 0xA3 START."""
+    f = _spec.try_read_frame(frame, _spec.TX, _spec.PLAIN)
+    start = None if f is None or f.pro_type != _C.ProType.multi_write_v1 else getattr(f.body, "start", None)
+    if start is None:
+        raise ValueError(f"not an 0xA3 upload START: {shown_hex(frame)}")
+    return int(start.comm_byte)
+
+
+def parse_multi_ack(frame: bytes) -> int | None:
+    """The result a MultiController unit reads from its ``a3 <comm>`` ack (``upload_ack.multi_result``, frame
+    byte 3, 0 = success: ``AbsControllerNoEvent4Multi.onResult`` at ``MultiController.b()`` = 3 for
+    ``Companion.a`` / ``c``), else None (another frame, or one shorter than a whole ack, which onResult
+    refuses)."""
+    if len(frame) != FRAME_LEN:
+        return None
+    f = _spec.try_read_frame(frame, _spec.RX, _spec.PLAIN)
+    if f is None or f.pro_type != _C.ProType.multi_write_v1:
+        return None
+    return int(f.body.multi_result)
+
+
 def _reply(frame: bytes, prof: Any = _REPLY) -> Any:
     """The ``read_reply`` body of a ``0xAA`` frame read under ``prof``, else None (another proType, or a
     reply that doesn't read)."""

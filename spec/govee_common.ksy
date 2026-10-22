@@ -173,8 +173,10 @@ types:
         doc: |
           the piece count, rounded up to a multiple of 8 on the brightness path
       - id: cap
-        type: u1
-        doc: the most mask bytes the body carries
+        type: u2
+        doc: |
+          the most mask bytes the body carries (0xffff: no cap, the 0xA3 colour
+          value's BleUtils.X)
     seq:
       - id: bits
         type: b1

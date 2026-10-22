@@ -55,6 +55,7 @@ seq:
         'upload_kind::bulb_diy': bulb_diy_value
         'upload_kind::wifi_credentials': wifi_credentials_value
         'upload_kind::iot_config': iot_config_value
+        'upload_kind::color_multi': color_multi_value((_io.size - 9) * 8)
     doc: the wire value or the cloud body after the lead; bytes when untyped
 instances:
   value_kind:
@@ -915,6 +916,53 @@ types:
         type: u2le
         repeat: expr
         repeat-expr: num_wide_pixels
+  color_multi_value:
+    doc: |
+      goodsType 411's colour write on 0xA3 commByte 0x6e (H3010-H3013: Config.E
+      makes LightColorCapabilityCenter.b2 true, so the colour page's single
+      colour and colour temperature go through ColorModeControllerConfig.j),
+      Config.x[411] = 8 -> Config.J[8] = gu: [op set_color][colour][kelvin]
+      [tint][mask]. An RGB pick that is no Kelvin tint colour is Bytes.j (the
+      colour; kelvin and tint 0); a colour temperature or a tint-colour pick is
+      Bytes.t (the white type's slot, ff ff ff for type 1 and 00 00 00 for 0,
+      then the Kelvin and the picked colour). The mask is BleUtils.X over the
+      whole-device posSet (ColorPieceConfig.c = max(15, IC)), ceil(n / 8) bytes
+      with no cap, unlike op15_color's len_cap. The app sends it as
+      MultiController.c(value, 0x6e, ControllerMode.e([0x15])): the 0xA3
+      packets (makeSendBytesV1), then 33 05 15 00 (op15 set_mode), the unit
+      done on an A3 6E ack whose byte 3 is 0 (upload_ack.multi_result). Read
+      as a wire value, num_pieces is every bit of the mask.
+    doc-ref:
+      - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/ColorModeControllerConfig.java:689-727
+      - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:5521-5582,14256-14262
+      - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:340-351,518-538
+      - base-classes11/com/govee/base2light/kt/general_controller/MultiController.java:47-66
+      - base-classes11/com/govee/base2light/pact/newdetail/content/color/ColorViewModel.java:848-884,1388-1413
+    params:
+      - id: num_pieces
+        type: u2
+        doc: the pieces the mask spans (the colour page's posSet)
+    seq:
+      - id: op
+        type: u1
+        enum: govee_common::op15
+        doc: set_color (Bytes.j / Bytes.t byte 0)
+      - id: color
+        type: govee_common::rgb
+        doc: the colour (Bytes.j), or the white type's slot (Bytes.t)
+      - id: kelvin
+        type: u2be
+        doc: 0 on an RGB pick
+      - id: tint
+        type: govee_common::rgb
+        doc: the picked or tint colour of a colour temperature, else 0
+      - id: mask
+        type: govee_common::seg_mask(num_pieces, 0xffff)
+        doc: every piece's bit, LSB first (BleUtils.X)
+    instances:
+      is_cct:
+        value: kelvin != 0
+        doc: a colour temperature (Bytes.t)
   color_strip_value:
     doc: |
       The per-segment colour-strip value on 0xA3 commByte 0x40, its segments
@@ -1111,6 +1159,9 @@ enums:
     15:
       id: iot_config
       doc: IoT / server-URL provisioning; 0xA3 commByte 0x08 (firmware side)
+    16:
+      id: color_multi
+      doc: goodsType 411's colour write; 0xA3 commByte 0x6e
   upload_form:
     1:
       id: wire

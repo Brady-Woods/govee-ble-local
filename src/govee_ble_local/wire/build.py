@@ -160,6 +160,8 @@ RELAY_ALL_OFF: Final = int(_F.RelayWrite.all_off)
 # professional graffiti sends v1_graffiti_multi_layer (0x09).
 COMM_H60A6: Final = int(_F.CommByte.cube_in_diy)
 COMM_H6052_GRAFFITI: Final = int(_F.CommByte.v1_graffiti_multi_layer)
+# goodsType 411's colour write (the h3010 scheme): its 0xA3 value goes out on sub_mode_color_multi (0x6e).
+COMM_COLOR_MULTI: Final = int(_F.CommByte.sub_mode_color_multi)
 
 # The command forms the builders write under (govee_profile command_forms): which body a shared command
 # carries is a device fact, not in the frame.
@@ -193,12 +195,18 @@ _FORM_0B_RGB_MASK: Final = int(_C.Form0b.rgb_mask)
 # device only (fu drops the position set): RGB `02 R G B` (Bytes.a); a Kelvin goes out as its tint colour,
 # `02 ff ff ff 01 <tint>` (Bytes.o), with no Kelvin on the wire. Config.w / Config.x give it to goodsType-0
 # SKUs such as H6105 / H6107 / H6129 / H6185 and the rgblight H7310 / H7312 / H7317 / H7318 / H6165 / H6166.
+# "h3010" = colour instruction version 8 (Config.J[8] = Config.gu), goodsType 411 (H3010-H3013), whole device
+# only: Config.E[411] sends the colour page's single colour and colour temperature through
+# ColorModeControllerConfig.j as one MultiController unit, the 0xA3 packets of the value
+# `[01] <colour> <K u2be> <tint> <mask>` on comm byte 0x6e (Bytes.j for RGB: K and tint 0; Bytes.t for CCT:
+# the white slot, K, the tint), its mask every piece's bit with no cap (BleUtils.X), then `33 05 15 00`. See
+# the "0xA3 colour" section below.
 # Every scheme with a colour-temperature mode also sends an RGB pick that is exactly one of the
 # Kelvin tint colours (within the SKU's range) as a CCT frame instead of RGB, with the picked colour
 # as the tint (rgb_as_kelvin); h61a8 has no CCT and always sends RGB. The writers make that test on every
 # pick without asking whether the screen offers colour temperature (Config.Yt / bu / Zt / fu), so it runs
 # on the legacy_02 SKUs with no colour-temperature control (H7310 / H7318 / H6165) too.
-ColorScheme = Literal["h60a6", "h6006", "h61a8", "h6188", "h6061", "legacy_02"]
+ColorScheme = Literal["h60a6", "h6006", "h61a8", "h6188", "h6061", "legacy_02", "h3010"]
 
 # The h60a6 colour-temperature frame's slot (op15_color kelvin_tint), the white type the colour page hands
 # Bytes.r: the app's ColorTemperatureType (LightColorCapabilityCenter.d1 -> Config.H: Config.O by SKU, else
@@ -507,11 +515,64 @@ def _h6061_color_temp(kelvin: int, panels: int | None, tint: tuple[int, int, int
                         expand_one=True)
 
 
+# ── 0xA3 colour (H3010-H3013, goodsType 411) ─────────────────────────────────
+# ColorModeControllerConfig.j (:689-727): MultiController.c(Config.gu(colour, posSet, white type), 0x6e,
+# ControllerMode.e([0x15])), the unit LightColorCapabilityCenter.b2 picks for both colour writes
+# (ColorViewModel.p0 :1412-1413, U :883-884). The value is the spec's govee_upload color_multi_value over the
+# whole-device posSet (ColorPieceConfig.c = max(15, IC); the device passes its live count), packetised as
+# every 0xA3 upload is (MultipleControllerCommV1.makeSendBytesV1 = :func:`scene_upload_a3`), and the unit ends
+# with the op15 set_mode frame. The app's unit is done on an A3 6E ack whose byte 3 is 0
+# (AbsControllerNoEvent4Multi.onResult at MultiController.e); the transport's ``send_many`` sends the run and
+# the write as that unit.
+H3010_MAX_PIECES: Final = 0x0FFF   # the most an h3010 body is built for: the checked aa 40 count's most
+_H3010_DEFAULT_PIECES: Final = 15   # ColorPieceConfig.b's least for 411 (q() <= 15 ? 15 : q())
+
+
+def piece_cap(scheme: ColorScheme) -> int:
+    """The most pieces a live count sizes a whole-device write of ``scheme`` by: :data:`H3010_MAX_PIECES` on
+    ``h3010``, whose mask has no cap (``BleUtils.X``), else :data:`MAX_MASK_SEGMENTS`, the most any 0x15 body
+    carries, so every larger count writes the same bytes."""
+    return H3010_MAX_PIECES if scheme == "h3010" else MAX_MASK_SEGMENTS
+
+
+def color_mode_switch() -> bytes:
+    """``33 05 15 00`` (op15 ``set_mode``, ``ControllerMode.e([0x15])``): the colour-mode switch that ends a
+    goodsType 411 colour unit (:func:`_color_multi_frames`)."""
+    return _op15_frame(_PLAIN, _C.Op15.set_mode, lambda _c15: None)
+
+
+def _color_multi_frames(color: tuple[int, int, int], pieces: int | None, kelvin: int = 0,
+                        tint: tuple[int, int, int] = (0, 0, 0)) -> list[bytes]:
+    """The h3010 colour unit over every one of ``pieces`` (None: the 15 before any count): the 0xA3
+    packets of ``[01] <color> <kelvin u2be> <tint> <mask>`` (``Config.gu``: ``Bytes.j`` / ``Bytes.t``), the
+    mask ``BleUtils.X`` of the whole-device posSet with no cap, then ``33 05 15 00``. GoveeBleInvalidValue
+    for a count outside 1..:data:`H3010_MAX_PIECES`."""
+    n = _H3010_DEFAULT_PIECES if pieces is None else pieces
+    _check_range("piece count", n, 1, H3010_MAX_PIECES)
+    value = _spec.node(_spec.Upload.ColorMultiValue, None, n, op=_C.Op15.set_color, color=_spec.rgb(*color),
+                       kelvin=kelvin, tint=_spec.rgb(*tint))
+    value.mask = _spec.seg_mask(value, n, 0xFFFF, (1 << n) - 1)
+    body = _spec.serialize(value, 9 + int(value.mask.len_mask))
+    return [*scene_upload_a3(body, COMM_COLOR_MULTI), color_mode_switch()]
+
+
+def _color_multi_rgb(r: int, g: int, b: int, pieces: int | None,
+                     kelvin_range: tuple[int, int] | None) -> list[bytes]:
+    """``Config.gu`` for an RGB pick: ``Bytes.t`` when the pick is a Kelvin tint colour in the range
+    (``KelvinConfig.i``; the white slot ``ff ff ff``, white type 1 = Config.P[411], the Kelvin and the
+    picked colour), else ``Bytes.j``."""
+    kelvin = rgb_as_kelvin(r, g, b, "h3010", kelvin_range)
+    if kelvin is not None:
+        return _color_multi_frames(_WHITE, pieces, kelvin, (r, g, b))
+    return _color_multi_frames((r, g, b), pieces)
+
+
 # Schemes whose colour screen turns an RGB pick that is exactly a Kelvin tint colour into a CCT write
 # (every scheme with CCT; h61a8 has none). Config.Yt (0x15 family, h60a6) / Config.bu (0x0d family,
-# h6006 and h6188) / Config.Zt (h6061) / Config.fu (legacy_02), all keyed on KelvinConfig.i.
+# h6006 and h6188) / Config.Zt (h6061) / Config.fu (legacy_02) / Config.gu (h3010), all keyed on
+# KelvinConfig.i.
 _RGB_PICK_AS_KELVIN_SCHEMES: Final[frozenset[ColorScheme]] = frozenset(
-    {"h60a6", "h6006", "h6188", "h6061", "legacy_02"})
+    {"h60a6", "h6006", "h6188", "h6061", "legacy_02", "h3010"})
 
 
 def rgb_as_kelvin(r: int, g: int, b: int, scheme: ColorScheme,
@@ -572,6 +633,8 @@ def _rgb_pick_color_temp(r: int, g: int, b: int, kelvin: int, scheme: ColorSchem
             return _color02_frame(_WHITE, (r, g, b))
         case "h61a8":   # rgb_as_kelvin never picks a Kelvin here
             raise GoveeBleNotSupported("h61a8 has no colour-temperature capability")
+        case "h3010":
+            raise GoveeBleNotSupported("h3010 sends a pick as a multi-packet unit (color_rgb_frames)")
         case _:
             _unsupported_scheme(scheme)
 
@@ -588,9 +651,12 @@ def color_rgb_frames(r: int, g: int, b: int, scheme: ColorScheme, segments: int 
     (``h6061`` defaults to its own range). ``segments`` None is the scheme's default count
     (:data:`_DEFAULT_SEGMENTS`; on ``h6061`` every panel). ``pieces`` is an ``h6061`` device's panel count
     (the profile's ``segments``; None: the H6061's 23), which bounds ``segments`` and sizes the mask
-    (:func:`_h6061_panels`); other schemes ignore it."""
+    (:func:`_h6061_panels`); other schemes ignore it. ``h3010`` sends one 0xA3 unit of several frames over
+    ``segments`` pieces (:func:`_color_multi_frames`)."""
     _check_rgb(r, g, b)
     _check_white_type(scheme, white_type)
+    if scheme == "h3010":   # Config.gu: one 0xA3 unit (:func:`_color_multi_rgb`)
+        return _color_multi_rgb(r, g, b, segments, kelvin_range)
     kelvin = rgb_as_kelvin(r, g, b, scheme, kelvin_range)
     if kelvin is not None:
         return [_rgb_pick_color_temp(r, g, b, kelvin, scheme, segments, pieces=pieces, white_type=white_type)]
@@ -619,8 +685,22 @@ def color_rgb(r: int, g: int, b: int, scheme: ColorScheme, segments: int | None 
             return _rgbic0b_frame((r, g, b), all_segments_mask(_segments_or_default(scheme, segments)))
         case "h6061":
             return _h6061_color((r, g, b), 0, segments, pieces)
+        case "h3010":
+            raise GoveeBleNotSupported("h3010 colour is a multi-packet unit (color_rgb_frames)")
         case _:
             _unsupported_scheme(scheme)
+
+
+def color_temp_frames(kelvin: int, scheme: ColorScheme, segments: int | None = None, *,
+                      pieces: int | None = None, white_type: WhiteType = DEFAULT_WHITE_TYPE) -> list[bytes]:
+    """Whole-device colour temperature as the frames the app sends: ``[color_temp(...)]`` on every scheme
+    but ``h3010``, whose ``Config.gu`` sends one 0xA3 unit (``Bytes.t``: the white slot ``ff ff ff``, the
+    Kelvin, the app's tint for it, the mask over ``segments`` pieces; :func:`_color_multi_frames`)."""
+    if scheme == "h3010":
+        _check_kelvin(kelvin)
+        _check_white_type(scheme, white_type)
+        return _color_multi_frames(_WHITE, segments, kelvin, tint_for_kelvin(kelvin))
+    return [color_temp(kelvin, scheme, segments, pieces=pieces, white_type=white_type)]
 
 
 def color_temp(kelvin: int, scheme: ColorScheme, segments: int | None = None, *,
@@ -660,6 +740,8 @@ def color_temp(kelvin: int, scheme: ColorScheme, segments: int | None = None, *,
             return _color02_frame(_WHITE, tint_for_kelvin(kelvin))
         case "h6061":
             return _h6061_color_temp(kelvin, segments, pieces=pieces)
+        case "h3010":
+            raise GoveeBleNotSupported("h3010 colour temperature is a multi-packet unit (color_temp_frames)")
         case _:
             _unsupported_scheme(scheme)
 
@@ -695,6 +777,8 @@ def segment_rgb(mask: int, r: int, g: int, b: int, scheme: ColorScheme,
             raise GoveeBleNotSupported(f"{scheme} colour is whole-device only (no segment mask)")
         case "h6061":
             raise GoveeBleNotSupported("h6061 is whole-device only (per-panel colour is not modelled)")
+        case "h3010":
+            raise GoveeBleNotSupported("h3010 is whole-device only (its Part tab is not modelled)")
         case _:
             _unsupported_scheme(scheme)
 
@@ -758,6 +842,8 @@ def segment_color_temp(mask: int, kelvin: int, scheme: ColorScheme,
         case "h6061":
             raise GoveeBleNotSupported(
                 "h6061 is whole-device only (per-panel colour temperature is not modelled)")
+        case "h3010":
+            raise GoveeBleNotSupported("h3010 is whole-device only (its Part tab is not modelled)")
         case _:
             _unsupported_scheme(scheme)
 
@@ -785,6 +871,8 @@ def segment_brightness(mask: int, pct: int, scheme: ColorScheme,
             raise GoveeBleNotSupported("legacy_02 has no per-segment brightness (0x02 is whole-device only)")
         case "h6061":
             raise GoveeBleNotSupported("h6061 is whole-device only (per-panel brightness is not modelled)")
+        case "h3010":
+            raise GoveeBleNotSupported("h3010 has no per-segment brightness (its Part tab is not modelled)")
         case _:
             _unsupported_scheme(scheme)
 

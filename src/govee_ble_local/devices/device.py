@@ -1119,9 +1119,9 @@ class Device:
                     frames += self._color_rgb_frames(pick, span)
                 elif kelvin is not None:
                     self._require(Capability.COLOR_TEMP)
-                    frames.append(self._build_or_unsupported(
-                        build.color_temp, kelvin, self.profile.color_scheme, self.segment_count,
-                        pieces=self.profile.segments or None, white_type=self.profile.white_type))
+                    frames += self._build_or_unsupported(
+                        build.color_temp_frames, kelvin, self.profile.color_scheme, self.segment_count,
+                        pieces=self.profile.segments or None, white_type=self.profile.white_type)
                     if pair:
                         self._require(Capability.BRIGHTNESS)
                         level = pct if pct is not None else await self._held_brightness()
@@ -1254,15 +1254,16 @@ class Device:
         async with self._held_brightness_lock():
             with self._conn.hold_heartbeat():   # a segment-count read and its write: no beat between
                 await self._ensure_segment_count()
-                frame = self._build_or_unsupported(
-                    build.color_temp, sent, self.profile.color_scheme, self.segment_count,
+                built = self._build_or_unsupported(
+                    build.color_temp_frames, sent, self.profile.color_scheme, self.segment_count,
                     pieces=self.profile.segments or None, white_type=self.profile.white_type)
-                frames: bytes | list[bytes] = frame
+                # One frame goes out with send, as before; goodsType 411's 0xA3 unit with send_many.
+                frames: bytes | list[bytes] = built[0] if len(built) == 1 else built
                 level: int | None = None
                 if self.profile.kelvin_with_brightness:
                     # The illumination tab's pair (View4IlluminationMode.I0): Kelvin, then 33 04 <held>.
                     level = await self._held_brightness()
-                    frames = [frame, self._brightness_frame(level)]
+                    frames = [*built, self._brightness_frame(level)]
 
                 def apply() -> None:
                     _fold.apply_kelvin(self.profile, self._state, sent)
@@ -1944,8 +1945,8 @@ class Device:
     async def _read_live_ic(self, budget: ConnectBudget | None = None) -> int | None:
         """The live IC count's ``aa 40`` read (:func:`._readback.read_live_ic`): its pieces, or None. On a
         ``color_writes_live_ic`` profile a count of 1 or more becomes :attr:`segment_count`, at most
-        ``build.MAX_MASK_SEGMENTS`` (a body carries no more: every count above writes the same bytes): the
-        screen's strip takes its count from the IC the read stores (``ColorPieceConfig.c``). The h705a
+        ``build.piece_cap`` (a 0x15 body carries no more than 112: every count above writes the same bytes):
+        the screen's strip takes its count from the IC the read stores (``ColorPieceConfig.c``). The h705a
         screens resize a built strip when a read changes it (``ColorMode.Y``, ``ColorModeV1.K``); the h61d3
         and H7067 ones store the count without resizing (``VM4Light.k5`` / ``h5`` / ``Q4``), so in the first
         app session after the IC changed with no app connected their strip keeps the old count, where the
@@ -1953,7 +1954,7 @@ class Device:
         whatever a setter did meanwhile; no count leaves it as it was."""
         pieces = await _readback.read_live_ic(self, lambda f: self._read_reply(f, budget))
         if self.profile.color_writes_live_ic and pieces is not None and pieces >= 1:
-            self._segment_count = min(pieces, build.MAX_MASK_SEGMENTS)
+            self._segment_count = min(pieces, build.piece_cap(self.profile.color_scheme))
         return pieces
 
     def _wants_color_groups(self) -> bool:
@@ -2022,8 +2023,8 @@ class Device:
 
     def _adopt_ic(self, ic: int) -> None:
         """Adopt a live-IC status profile's IC count, as the screen stores it (``Info4BleIotDevice.G0``): its
-        write pieces become :attr:`segment_count` (at most ``build.MAX_MASK_SEGMENTS``, as
-        :meth:`_read_live_ic`) and its read-back pieces the status read's (:meth:`_status_pieces`); a count
+        write pieces become :attr:`segment_count` (at most ``build.piece_cap``, as :meth:`_read_live_ic`) and
+        its read-back pieces the status read's (:meth:`_status_pieces`); a count
         that gives none keeps the counts there are. The screen's colour arrays take the new size
         (``SubMode4Color.j``), so segments past a smaller read-back count leave the state. A device fact, not
         optimistic state, so it is adopted whatever a setter did meanwhile."""
@@ -2032,7 +2033,7 @@ class Device:
             _LOGGER.debug("%s (%s): IC count %d gives no colour pieces; keeping the counts", self.address,
                           self._sku, ic)
         if pieces is not None:
-            self._segment_count = min(pieces, build.MAX_MASK_SEGMENTS)
+            self._segment_count = min(pieces, build.piece_cap(self.profile.color_scheme))
         if readback is not None:
             self._status_count = readback
             self._state.segments = [seg for seg in self._state.segments if seg.index < readback]
