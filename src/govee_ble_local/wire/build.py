@@ -133,6 +133,7 @@ SUB_SCENE: Final = int(_C.SubMode.scene)                 # 0x04
 SUB_COLOR_15: Final = int(_C.SubMode.color_rgbic_15)     # 0x15 (H60A6/H6047/H6641)
 SUB_COLOR_0D: Final = int(_C.SubMode.color_cct_0d)       # 0x0D (H6006/H6008/H6052 bulbs)
 SUB_COLOR_0B: Final = int(_C.SubMode.color_rgbic_0b)     # 0x0B (the h61a8 scheme's frames)
+SUB_COLOR_02: Final = int(_C.SubMode.color_legacy)       # 0x02 (the legacy_02 scheme's frames)
 
 # op15 (enum govee_common::op15) — sub-op after 0x15
 OP15_SET_COLOR: Final = int(_C.Op15.set_color)            # 0x01
@@ -188,10 +189,16 @@ _FORM_0B_RGB_MASK: Final = int(_C.Form0b.rgb_mask)
 # "h6061" = Glide Hexa panels, 0x15 colour version 5 (Config.Zt), whole device only: RGB is
 # `15 01 R G B 00 00 <mask>` (Bytes.l), CCT `15 01 <tint> <K> <mask>` (Bytes.u), one frame each.
 # See the "Glide Hexa" section below.
+# "legacy_02" = colour instruction version 4 (Config.J[4] = Config.fu), the legacy 0x02 sub-mode, whole
+# device only (fu drops the position set): RGB `02 R G B` (Bytes.a); a Kelvin goes out as its tint colour,
+# `02 ff ff ff 01 <tint>` (Bytes.o), with no Kelvin on the wire. Config.w / Config.x give it to goodsType-0
+# SKUs such as H6105 / H6107 / H6129 / H6185 and the rgblight H7310 / H7312 / H7317 / H7318 / H6165 / H6166.
 # Every scheme with a colour-temperature mode also sends an RGB pick that is exactly one of the
 # Kelvin tint colours (within the SKU's range) as a CCT frame instead of RGB, with the picked colour
-# as the tint (rgb_as_kelvin); h61a8 has no CCT and always sends RGB.
-ColorScheme = Literal["h60a6", "h6006", "h61a8", "h6188", "h6061"]
+# as the tint (rgb_as_kelvin); h61a8 has no CCT and always sends RGB. The writers make that test on every
+# pick without asking whether the screen offers colour temperature (Config.Yt / bu / Zt / fu), so it runs
+# on the legacy_02 SKUs with no colour-temperature control (H7310 / H7318 / H6165) too.
+ColorScheme = Literal["h60a6", "h6006", "h61a8", "h6188", "h6061", "legacy_02"]
 
 
 def _unsupported_scheme(scheme: Never) -> Never:
@@ -368,6 +375,19 @@ def _cct0d_frame(rgb: tuple[int, int, int], kelvin: int = 0,
         _F.Color0dWrite, color=_spec.rgb(*rgb), kelvin=kelvin, tint=_spec.rgb(*tint)))
 
 
+_WHITE: Final = (0xFF, 0xFF, 0xFF)   # ColorUtils.R: the colour slot of Bytes.o
+
+
+def _color02_frame(rgb: tuple[int, int, int], tint: tuple[int, int, int] | None = None) -> bytes:
+    """``33 05 02 [r, g, b][white_flag][tint r, g, b]`` (``color_02_write``), the frames ``Config.fu``
+    sends: with no ``tint``, ``rgb`` under flag ``rgb`` and a zero tint (``Bytes.a``); with one, flag
+    ``white_tint`` and the tint after ``rgb`` (``Bytes.o``, which ``fu`` calls with ``ColorUtils.R()``, white,
+    as ``rgb``)."""
+    flag = _F.Color02Flag.rgb if tint is None else _F.Color02Flag.white_tint
+    return _mode_frame(_PLAIN, _C.SubMode.color_legacy, _params(
+        _F.Color02Write, color=_spec.rgb(*rgb), white_flag=flag, tint=_spec.rgb(*(tint or (0, 0, 0)))))
+
+
 # The 0x0b frame's posSet: the two-byte mask of up to 16 segments the library writes.
 _PROFILE_0B: Final = _spec.profile(f_0b=_FORM_0B_RGB_MASK, num_segments=LEGACY_MASK_SEGMENTS)
 
@@ -467,8 +487,9 @@ def _h6061_color_temp(kelvin: int, panels: int | None, tint: tuple[int, int, int
 
 # Schemes whose colour screen turns an RGB pick that is exactly a Kelvin tint colour into a CCT write
 # (every scheme with CCT; h61a8 has none). Config.Yt (0x15 family, h60a6) / Config.bu (0x0d family,
-# h6006 and h6188) / Config.Zt (h6061), all keyed on KelvinConfig.i.
-_RGB_PICK_AS_KELVIN_SCHEMES: Final[frozenset[ColorScheme]] = frozenset({"h60a6", "h6006", "h6188", "h6061"})
+# h6006 and h6188) / Config.Zt (h6061) / Config.fu (legacy_02), all keyed on KelvinConfig.i.
+_RGB_PICK_AS_KELVIN_SCHEMES: Final[frozenset[ColorScheme]] = frozenset(
+    {"h60a6", "h6006", "h6188", "h6061", "legacy_02"})
 
 
 def rgb_as_kelvin(r: int, g: int, b: int, scheme: ColorScheme,
@@ -479,7 +500,10 @@ def rgb_as_kelvin(r: int, g: int, b: int, scheme: ColorScheme,
     ``KelvinConfig.i(colour)`` (full ARGB equality with one of the 178 Kelvin tint colours,
     :func:`wire.cct.kelvin_for_tint`, AND that Kelvin inside the SKU's inclusive ``[lo, hi]`` range)
     and write ``KelvinConfig.c(colour)`` as a CCT frame instead of RGB: ``Config.Yt`` (0x15 family,
-    ``h60a6``), ``Config.bu`` (0x0d family, ``h6006`` and ``h6188``) and ``Config.Zt`` (``h6061``).
+    ``h60a6``), ``Config.bu`` (0x0d family, ``h6006`` and ``h6188``), ``Config.Zt`` (``h6061``) and
+    ``Config.fu`` (``legacy_02``: the picked colour as the tint of its white form). None of them asks whether
+    the screen offers colour temperature, so the test runs on a SKU without one too (the legacy_02 H7310 /
+    H7318 / H6165, whose state keeps the colour: ``devices._fold.apply_rgb``).
     ``kelvin_range`` is the SKU's range (the profile's min/max Kelvin); ``h6061`` defaults to its
     own [2000, 9000], any other scheme without a range cannot tell and returns None, as does
     ``h61a8`` (no colour temperature)."""
@@ -508,7 +532,9 @@ def _rgb_pick_color_temp(r: int, g: int, b: int, kelvin: int, scheme: ColorSchem
       whole device (no mask), the same frame for both schemes (the white-slot form of the h6188
       slider is not used here);
     * ``h6061`` (``Config.Zt`` -> ``Bytes.u``): ``15 01 <picked RGB> <K> <mask>`` over the ``segments``
-      panels of a device of ``pieces`` (whole device only, :func:`_h6061_panels`)."""
+      panels of a device of ``pieces`` (whole device only, :func:`_h6061_panels`);
+    * ``legacy_02`` (``Config.fu`` -> ``Bytes.o``): ``02 ff ff ff 01 <picked RGB>``, whole device, with
+      no Kelvin on the wire."""
     match scheme:
         case "h60a6":
             if mask is None:
@@ -519,6 +545,8 @@ def _rgb_pick_color_temp(r: int, g: int, b: int, kelvin: int, scheme: ColorSchem
             return _cct0d_frame((r, g, b), kelvin, tint_for_kelvin(kelvin))
         case "h6061":
             return _h6061_color_temp(kelvin, segments, (r, g, b), pieces)
+        case "legacy_02":
+            return _color02_frame(_WHITE, (r, g, b))
         case "h61a8":   # rgb_as_kelvin never picks a Kelvin here
             raise GoveeBleNotSupported("h61a8 has no colour-temperature capability")
         case _:
@@ -560,6 +588,8 @@ def color_rgb(r: int, g: int, b: int, scheme: ColorScheme, segments: int | None 
             return _op15_color_frame(_FORM_KELVIN_TINT, (r, g, b), mask, positions)
         case "h6006" | "h6188":
             return _cct0d_frame((r, g, b))
+        case "legacy_02":   # Config.fu -> Bytes.a
+            return _color02_frame((r, g, b))
         case "h61a8":
             return _rgbic0b_frame((r, g, b), all_segments_mask(_segments_or_default(scheme, segments)))
         case "h6061":
@@ -573,7 +603,8 @@ def color_temp(kelvin: int, scheme: ColorScheme, segments: int | None = None, *,
     """Whole-device colour temperature, always with the app's Kelvin->RGB tint
     (``wire.cct.tint_for_kelvin``): ``h6006`` = ``0d <tint> <K> <tint>`` (the colour tab's
     ``Config.bu -> Bytes.p``), ``h6188`` = ``0d ff ff ff <K> <tint>`` (the illumination tab's
-    ``Config.GM -> Bytes.A``), ``h60a6`` = ``15 01 ff ff ff <K> <tint> <mask>`` (this is just
+    ``Config.GM -> Bytes.A``), ``legacy_02`` = ``02 ff ff ff 01 <tint>`` (``Config.fu -> Bytes.o``, no
+    Kelvin on the wire), ``h60a6`` = ``15 01 ff ff ff <K> <tint> <mask>`` (this is just
     segment_color_temp with the all-segments mask), ``h6061`` = ``15 01 <tint> <K> <mask>`` over
     ``segments`` panels of a device of ``pieces`` (as in :func:`color_rgb`; ``segments`` None is
     the scheme's default count, :data:`_DEFAULT_SEGMENTS`). ``h61a8`` has no colour temperature:
@@ -595,6 +626,11 @@ def color_temp(kelvin: int, scheme: ColorScheme, segments: int | None = None, *,
             # Config.GM -> Bytes.A(kelvin, RGB_WHITE): [0d, ff ff ff, kelvin u2be, tint r g b] (the
             # illumination tab via KelvinConfig.b, H8015; group control and automations elsewhere).
             return _cct0d_frame((0xFF, 0xFF, 0xFF), kelvin, tint_for_kelvin(kelvin))
+        case "legacy_02":
+            # ColorViewModel.U sends Constant.getTemColorByKelvin(K)[2] through ColorModeControllerConfig.c
+            # to Config.fu, which writes Bytes.o(white, tint): the Device clamps the Kelvin into the SKU's
+            # range first, so the tint is always one KelvinConfig.i finds in it.
+            return _color02_frame(_WHITE, tint_for_kelvin(kelvin))
         case "h6061":
             return _h6061_color_temp(kelvin, segments, pieces=pieces)
         case _:
@@ -604,7 +640,8 @@ def color_temp(kelvin: int, scheme: ColorScheme, segments: int | None = None, *,
 # The 0x0d family (h6006 / h6188) has no per-segment frame in the app: its colour writer, colour
 # instruction version 2 = Config.K[2] (Config.at in the current decompile, cited as Config.bu
 # above), takes the position set as an unused argument, and its builders Bytes.f / Bytes.p /
-# Bytes.A carry no mask. The segment builders below refuse it.
+# Bytes.A carry no mask. The segment builders below refuse it, and legacy_02 too: Config.fu ignores the
+# position set, and Bytes.a / Bytes.o carry no mask.
 def segment_rgb(mask: int, r: int, g: int, b: int, scheme: ColorScheme,
                 segments: int | None = None,
                 kelvin_range: tuple[int, int] | None = None) -> bytes:
@@ -624,7 +661,7 @@ def segment_rgb(mask: int, r: int, g: int, b: int, scheme: ColorScheme,
                                      _mask_positions(mask, segments, COLOR_MASK_CAP))
         case "h61a8":
             return _rgbic0b_frame((r, g, b), mask)
-        case "h6006" | "h6188":
+        case "h6006" | "h6188" | "legacy_02":
             raise GoveeBleNotSupported(f"{scheme} colour is whole-device only (no segment mask)")
         case "h6061":
             raise GoveeBleNotSupported("h6061 is whole-device only (per-panel colour is not modelled)")
@@ -652,7 +689,7 @@ def segment_color_temp(mask: int, kelvin: int, scheme: ColorScheme,
                                      tint if tint is not None else tint_for_kelvin(kelvin))
         case "h61a8":
             raise GoveeBleNotSupported("h61a8 has no colour-temperature capability")
-        case "h6006" | "h6188":
+        case "h6006" | "h6188" | "legacy_02":
             raise GoveeBleNotSupported(f"{scheme} colour-temperature is whole-device only (no segment mask)")
         case "h6061":
             raise GoveeBleNotSupported(
@@ -680,6 +717,8 @@ def segment_brightness(mask: int, pct: int, scheme: ColorScheme,
             raise GoveeBleNotSupported("h61a8 has no per-segment brightness")
         case "h6006" | "h6188":
             raise GoveeBleNotSupported(f"{scheme} has no per-segment brightness (0x0d is whole-device only)")
+        case "legacy_02":
+            raise GoveeBleNotSupported("legacy_02 has no per-segment brightness (0x02 is whole-device only)")
         case "h6061":
             raise GoveeBleNotSupported("h6061 is whole-device only (per-panel brightness is not modelled)")
         case _:

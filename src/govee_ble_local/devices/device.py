@@ -330,7 +330,9 @@ class Device:
         """Lowest supported colour temperature, or None if unconstrained. It may change once the
         hardware or soft version is read (:attr:`DeviceProfile.kelvin_by_hardware` /
         :attr:`DeviceProfile.kelvin_by_software`) or a pact is advertised
-        (:attr:`DeviceProfile.kelvin_by_pact`)."""
+        (:attr:`DeviceProfile.kelvin_by_pact`). On a device without COLOR_TEMP that has one (the
+        ``legacy_02`` H7310 / H7318 / H6165 rows) the range is not a colour temperature it offers: it only
+        decides which RGB picks go out in the colour-temperature form (:func:`build.rgb_as_kelvin`)."""
         span = self._kelvin_range()
         return self.profile.min_kelvin if span is None else span[0]
 

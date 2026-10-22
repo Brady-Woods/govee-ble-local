@@ -12,7 +12,7 @@ import time
 from collections.abc import Collection, Iterable, Mapping, Sequence
 from typing import Any
 
-from ..models import DeviceState, Segment
+from ..models import Capability, DeviceState, Segment
 from ..wire import build, parse, reassemble
 from .brightness import raw_to_percent
 from ._resolve import version
@@ -209,8 +209,14 @@ def apply_rgb(profile: DeviceProfile, state: DeviceState, rgb: tuple[int, int, i
     """A whole-device RGB write: the colour, or - when the app sends it as a colour temperature
     (``build.rgb_as_kelvin``) - that Kelvin, which is what the device reports (and what the app
     syncs to its Kelvin slider; both bars of a bar-switch device). ``span`` is the Kelvin range the
-    frame was built with (:func:`kelvin_range`), so the state follows what was sent."""
-    kelvin = build.rgb_as_kelvin(*rgb, profile.color_scheme, span)
+    frame was built with (:func:`kelvin_range`), so the state follows what was sent.
+
+    A profile without COLOR_TEMP keeps the colour, though its frame may be the colour-temperature form
+    (``legacy_02``'s ``Bytes.o`` on H7310 / H7318 / H6165): the app keeps the picked colours
+    (``ColorViewModel.u0``: ``SubMode4Color.p``) and its ``syncKelvin`` has no Kelvin control to drive on
+    those screens (``VM4Light.syncKelvin``; ``Config.EO`` gives them no colour temperature)."""
+    kelvin = (build.rgb_as_kelvin(*rgb, profile.color_scheme, span)
+              if Capability.COLOR_TEMP in profile.capabilities else None)
     if kelvin is None:
         state.rgb_color, state.color_temp_kelvin = rgb, None
     else:

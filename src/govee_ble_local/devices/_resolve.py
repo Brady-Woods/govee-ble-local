@@ -73,8 +73,12 @@ the row lacks fails the build: nothing defaults silently.
   the library could send (H6071 / H6075's one-piece lamps, with no relative-brightness version and no
   scheme yet; h61a8's 0x0b segment colour). ``rgb``, ``color_temp`` or
   ``segments`` on a relay row raises (the library resolves no colour scheme or Kelvin range for a plug), and
-  elsewhere they need a colour scheme. An ``untraced`` scene dialect drops ``scenes``; ``none`` is activate
-  only. Scenes need a bundled catalog, as every SKU of 1.4.0 that offers them ships one: a SKU the scene
+  elsewhere they need a colour scheme. ``color_temp`` needs a Kelvin range, and so does ``rgb`` under every
+  scheme with a colour-temperature mode (all but h61a8, :data:`SCHEME_LACKS`): its RGB writer runs the app's
+  Kelvin-tint test on every pick whatever the screen offers (``Config.Yt`` / ``bu`` / ``Zt`` / ``fu``:
+  ``KelvinConfig.i``; the H7310 / H7318 / H6165 rows have no Kelvin slider). An ``untraced`` scene dialect
+  drops ``scenes``; ``none`` is activate only. Scenes need a bundled catalog, as every SKU of 1.4.0 that
+  offers them ships one: a SKU the scene
   store has no catalog for (``scenes/store.json``, the generated ``SCENE_CATALOGS``, which
   :func:`profiles` takes as ``catalogued``) is offered no ``scenes``, its row's scene facts still checked.
   An ``untraced`` colour parse on a row with ``rgb`` or ``color_temp`` raises (``none`` is a traced value:
@@ -381,7 +385,7 @@ ADMITTED: Final = frozenset({"hardware_verified", "app_traced"})
 MODELLED: Final = frozenset({"modelled"})   # admitted only on the caller's opt-in
 LEVELS: Final = ADMITTED | MODELLED
 CAPABILITIES: Final = ("power", "brightness", "rgb", "color_temp", "segments", "scenes")   # models.Capability
-COLOR_SCHEMES: Final = ("h60a6", "h6006", "h6188", "h61a8", "h6061")   # wire.build.ColorScheme
+COLOR_SCHEMES: Final = ("h60a6", "h6006", "h6188", "h61a8", "h6061", "legacy_02")   # wire.build.ColorScheme
 RELAY_POWERS: Final = ("outlet0", "all_outlets", "total_switch")        # devices.profile.RelayPower
 HEARTBEAT_TIMINGS: Final = ("fixed_rate", "after_quiet")         # transport.connection.HeartbeatTiming
 # The keep-alive reads a screen sends (clientRow heartbeat, govee_common command ids; DeviceProfile.heartbeat
@@ -396,12 +400,14 @@ _LIVE_HEARTBEATS: Final[Mapping[str, str]] = {
 #  - h61a8 (the 0x0b frames): no colour temperature (build.color_temp / segment_color_temp);
 #  - h6006 / h6188 (0x0d; h6188 is the white-slot Bytes.A colour temperature of the illumination tab): no
 #    segment mask in any colour frame (Bytes.f / p / A);
-#  - h6061: whole-device only; per-panel colour needs the user's layout, which is not modelled.
+#  - h6061: whole-device only; per-panel colour needs the user's layout, which is not modelled;
+#  - legacy_02 (0x02): Config.fu drops the position set, and Bytes.a / o carry no mask.
 SCHEME_LACKS: Final[Mapping[str, frozenset[str]]] = {
     "h61a8": frozenset({"color_temp"}),
     "h6006": frozenset({"segments"}),
     "h6188": frozenset({"segments"}),
     "h6061": frozenset({"segments"}),
+    "legacy_02": frozenset({"segments"}),
 }
 # The colour schemes with a segment-brightness frame (wire.build.segment_brightness: 33 05 15 02, Bytes.G),
 # the frame the colour page's segment-brightness slider sends; the only rows whose color_functions flag for
@@ -852,6 +858,13 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
     scenes = _scene_set(need(layered.get("scene_versions"), "scene_versions"), fail) if uploads else ()
     if "color_temp" in caps:
         need(layered.get("kelvin_range"), "kelvin_range")
+    # Every scheme with a colour-temperature mode sends an RGB pick that is a Kelvin tint colour in the range
+    # as colour temperature, without testing the screen's support for it (Config.Yt / bu / Zt / fu:
+    # KelvinConfig.i; build.rgb_as_kelvin), so its rows need the range for rgb alone too.
+    if ("rgb" in caps and "color_temp" not in SCHEME_LACKS.get(scheme or "", frozenset())
+            and layered.get("kelvin_range") is None):
+        fail(f"no kelvin_range: a {scheme} row with rgb needs one, as its colour write sends a pick that "
+             "is a Kelvin tint colour in the range as colour temperature (KelvinConfig.i)")
     kelvin = (_kelvin(layered["kelvin_range"], "kelvin_range", fail)
               if layered.get("kelvin_range") is not None and not relay else None)
     _check_kelvin_by_firmware(kelvin, kelvin_by_version, fail)

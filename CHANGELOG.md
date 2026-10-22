@@ -10,10 +10,11 @@ model, from which the shipped readers are generated).
 
 ### Added
 - **158 more SKUs, traced from the app's device list** (spec rows only; no library code changed): 99 admitted
-  by default (`app_traced`) and 59 behind `allow_modelled` (`modelled`). The entries below admit 39 more by
-  default (16 through the resolver changes; H1162 / H1163 / H1167 / H1168, H70B1 and H70BC; and 17 through the
-  status-read command ids and the BK pact gate) and 7 more behind `allow_modelled` (H7072, H6119 and the five
-  Glide panels), for 236 admitted by default and 72 behind `allow_modelled` in all. None is
+  by default (`app_traced`) and 59 behind `allow_modelled` (`modelled`). The entries below admit 49 more by
+  default (16 through the resolver changes; H1162 / H1163 / H1167 / H1168, H70B1 and H70BC; 17 through the
+  status-read command ids and the BK pact gate; and the 10 SKUs of the `legacy_02` colour scheme) and 7 more
+  behind `allow_modelled` (H7072, H6119 and the five Glide panels), for 246 admitted by default and 72 behind
+  `allow_modelled` in all. None is
   hardware-verified (the only bench check, below, was read-only), and none has a bundled scene catalog, so none
   is offered scenes. Each is listed with its family and goodsType; † marks a SKU no row lists that the
   catalogue snapshot (`spec/govee_catalog.json`) routes to that row by its goodsType alone (16 of them).
@@ -142,6 +143,29 @@ model, from which the shipped readers are generated).
   `power.light_nonzero`). That decoder was all the rows waited for; every core frame was traced. The app's
   live `ee 30` power push is traced too (`power_live: [push_30]`), but the library doesn't read `ee 30` pushes
   yet. Splicing, the aa 39 direction read and scenes are not modelled. Not hardware-verified.
+- **The legacy 0x02 colour scheme, `legacy_02`, and 10 SKUs on it, admitted by default (`app_traced`)**:
+  H6105 (h6105), H6107 (h6107), H6129 (h6129), H6185 (h6185), H7310 / H7312 / H7317 (h73101217), H7318
+  (h7318) and H6165 / H6166 (h6165), all at goodsType 0 and any pact. Their colour screens run colour
+  instruction version 4 (`ColorModeControllerConfig.c` -> `Config.F`: `Config.w[SKU]` = 4, else `Config.x[0]`
+  = `Config.Hu` = 4 -> `Config.J[4]` = `Config.fu`), which `wire.build` now sends:
+  - RGB as `33 05 02 R G B` (`Bytes.a`);
+  - a pick that is one of the app's Kelvin tint colours in the SKU's range as `33 05 02 ff ff ff 01 <the
+    colour>` (`KelvinConfig.i` -> `Bytes.o`). `fu` makes that test on the H7310 / H7312 / H7317 / H7318 /
+    H6165 / H6166 screens too, which have no colour-temperature control, over their KelvinConfig version 0
+    range [2000, 9000]. On those six the state keeps the picked colour (`rgb_color`, no `color_temp_kelvin`
+    and no `last_color_temp_kelvin`), as the app does (`ColorViewModel.u0` keeps the colours, and
+    `VM4Light.syncKelvin` has no Kelvin control to move): they have no `COLOR_TEMP`, and their
+    `min_kelvin` / `max_kelvin` only pick the frame;
+  - colour temperature (H6105 / H6107 / H6129 / H6185) as the Kelvin's tint in that form: the Kelvin slider
+    sends `Constant.getTemColorByKelvin(K)[2]` through `fu` (`ColorViewModel.U`), so no Kelvin is on the wire;
+  - no segment frame: `fu` ignores the position set.
+
+  None is hardware-verified: no light on the bench runs colour version 4, and none may be sent a 0x02 frame.
+  The `0x0d` white-slot colour-temperature frame (`Config.GM` -> `Bytes.A`) is not part of the scheme: it comes
+  only from the illumination tab (`View4IlluminationMode` -> `configKelvinController`) and same-model group
+  control, and none of these SKUs' bundled mode lists has the illumination tab. H6113 / H6181 and the other
+  goodsType-0 rows on colour version 4 stay held for their other gaps (routing below the gate, the
+  `rgb_flag_tint` read-back, the GATT service, firmware gates, chip-gated brightness).
 
 ### Changed
 - **A polled profile reads aa 04 only with `Capability.BRIGHTNESS`**, as the app's connect read does
@@ -178,6 +202,10 @@ model, from which the shipped readers are generated).
   segments. They stay without support until their colour-temperature scheme and the Kelvin + brightness pair
   land. Every admitted row with the flag is on `h60a6`, so no profile changes.
 
+- The `legacy_02` scheme changes no other SKU: each of the 308 the table admitted before it (236 by default,
+  72 behind `allow_modelled`) resolves to the same profile, field by field, at every pact its rows list, at
+  (99, 99) and at none, with and without `allow_modelled`; the 10 `legacy_02` SKUs (Added) are the only new
+  routes.
 ### Fixed
 - **H6188: colour temperature now sends the colour tab's frame** `33 05 0d <tint> <K> <tint>`
   (`Config.bu -> Bytes.p`, scheme `h6006`) instead of the white-slot `33 05 0d ff ff ff <K> <tint>`
@@ -215,12 +243,13 @@ model, from which the shipped readers are generated).
   `modelled`; one that needs library work has no `support` and names the gap in its `doc`. A verification
   pass challenged each family's rows; they were repaired, and demoted (to `modelled`, or to no `support`)
   where a core claim didn't hold.
-  - devices.yaml now has 305 goodsType rows in 96 families (184 in 91): 186 with `support` (66), of them 148
-    `app_traced`, 34 `modelled` and the same 4 `hardware_verified`, and 119 without (118). The trace gave 153
-    of them support. The other 33 take it through the library and spec changes under Added, Changed, Fixed
+  - devices.yaml now has 305 goodsType rows in 96 families (184 in 91): 193 with `support` (66), of them 155
+    `app_traced`, 34 `modelled` and the same 4 `hardware_verified`, and 112 without (118). The trace gave 153
+    of them support. The other 40 take it through the library and spec changes under Added, Changed, Fixed
     and Spec: h6069 284, h3700 383, h7076 313, h70dx 267-269, bulblightv3 342, the four h1162 rows, h70b1 134,
     h70bx 216, the six status-read rows (h6092 334 / 333 / 401, h7072 371 / 294, h70b6 341), the nine BK target
-    rows and the five Glide panel rows (h6061 96 / 97 / 121 / 163 / 228), all `app_traced` but h7072 294, h6119
+    rows, the five Glide panel rows (h6061 96 / 97 / 121 / 163 / 228) and the seven `legacy_02` rows (h6105,
+    h6107, h6129, h6185, h73101217, h7318 and h6165, each goodsType 0), all `app_traced` but h7072 294, h6119
     44 and the Glide panels (`modelled`).
   - Two goodsType add-ons were traced and checked on their own: straightfloorlamp 69 (H6076 / H8076,
     `app_traced`, with the bench reads above) and rgbiclight 141 (H61C2 / H61C3 / H61C5).
@@ -331,6 +360,25 @@ model, from which the shipped readers are generated).
   - `specs.segments`, `wire.doc`, the `aa a5` read and the per-goodsType opcode (now `color_write_per_goodstype`)
     say what the app sizes from the stored layout L and what the row's count stands in for; the brightness
     opcode cites the screen's `BrightnessConfig.b`, not the device-list `Support.getBrightnessRange`.
+- **`color_02_write` (govee_ble_frame) is the `legacy_02` scheme's frame**, now citing the writer the library
+  follows (`Config.fu` -> `Bytes.a` / `Bytes.o`, from `ColorViewModel.U` / `p0`), and its `white_flag` takes a
+  new enum, `color_02_flag` (`rgb` = Bytes.a, `white_tint` = Bytes.o / Bytes.y). `spec/govee_reference.py`
+  checks that `govee_commands.build_color_legacy` reads back as both forms.
+- **devices.yaml**: `color_scheme: legacy_02` and `support: app_traced` on h6105, h6107, h6129, h6185,
+  h73101217, h7318 and h6165 "0"; `specs.kelvin_range: [2000, 9000]` on h73101217, h7318 and h6165 (the range of
+  `fu`'s Kelvin-tint test, `KelvinConfig.Config.i[0]` = `P1` = 0; those screens have no colour temperature). The
+  resolver now requires a `kelvin_range` on a row with `rgb` under every scheme with a colour-temperature mode
+  (all but h61a8), not only under `color_temp`: each of their writers (`Config.Yt` / `bu` / `Zt` / `fu`) runs
+  `KelvinConfig.i` on every pick whatever the screen offers, and without the range the library would send a
+  tint pick as plain RGB. Every row already has one, so no profile changes. devices.schema.json lists the six
+  colour schemes as `color_scheme`'s enum.
+- **devices.yaml, the held colour-version-4 rows** (bulblightv3 0 for H6001 below its pact gate, h6159 0, h6160
+  0, h6104, h6113 0, h6114 0, h6127 0, h613839 0, h6181 0, h6182 0, chassislightv1 11): their docs no longer say that no library
+  scheme builds the `Config.fu` 0x02 frames, which are now `legacy_02`'s. Each names the gaps that still hold it:
+  routing below the gate, the `rgb_flag_tint` (h6104: `rgb_flagnz_tint_02`) read-back that `parse.mode_color`
+  does not fold, the ffe0 / ffe1 GATT service, the soft-version route, chip-gated brightness, or firmware-gated
+  colour. Docs only: no row, value or profile changes. h6101's 0x02 frame stays a gap: it echoes the reported
+  tint (`SubModeColor.getWriteBytes`), which `legacy_02` doesn't.
 
 ## [1.6.1] — 2026-10-21
 

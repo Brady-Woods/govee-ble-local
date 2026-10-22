@@ -383,23 +383,26 @@ def test_h61a8_sends_the_apps_0x15_frames() -> None:
 
 
 # ── state after a conversion: Kelvin, no rgb (the app syncs the Kelvin) ──────
+# kelvin None: a SKU without COLOR_TEMP (H7318, legacy_02) keeps the picked colour, as ColorViewModel.u0 does.
 @pytest.mark.parametrize(("sku", "segments", "colour", "kelvin"),
                          [("H60A6", None, 0xFFB969, 3000), ("H6641", None, 0xE5E9FF, 8000),
                           ("H6062", 15, 0xFFE7CC, 5000), ("H6047", None, 0xFFC987, 3500),
                           ("H6188", None, 0xFFD1A3, 4000), ("H6008", None, 0xFFB46B, 3000),
                           ("H6004", None, 0xFFB969, 3000), ("H6052", None, 0xFF8D0B, 2000),
-                          ("H6006", None, 0xFFD5A1, 4000)])
+                          ("H6006", None, 0xFFD5A1, 4000), ("H7318", None, 0xFFAE54, None)])
 def test_state_after_a_conversion_and_back(sku: str, segments: int | None, colour: int,
-                                           kelvin: int) -> None:
+                                           kelvin: int | None) -> None:
     d = _dev(sku, segments)
     d._state.scene_code = 7
+    after = (None, kelvin) if kelvin is not None else (_rgb(colour), None)
     asyncio.run(d.set_rgb(_rgb(colour)))
-    assert d.state.color_temp_kelvin == kelvin and d.state.rgb_color is None
+    assert (d.state.rgb_color, d.state.color_temp_kelvin) == after
     assert d.state.scene_code is None
     asyncio.run(d.set_rgb((1, 2, 3)))
     assert d.state.rgb_color == (1, 2, 3) and d.state.color_temp_kelvin is None
     asyncio.run(d.turn_on(rgb=_rgb(colour)))
-    assert d.state.color_temp_kelvin == kelvin and d.state.rgb_color is None
+    assert (d.state.rgb_color, d.state.color_temp_kelvin) == after
+    assert d.state.last_color_temp_kelvin == kelvin
 
 
 def test_h6047_state_tracks_the_kelvin_per_bar() -> None:

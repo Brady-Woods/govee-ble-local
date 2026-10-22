@@ -1594,7 +1594,7 @@ families:
             Config.x[0] = Hu: for H6001, 2 when OldBulbUtil.isH6001Update (pactType >= 1 and pactCode >= 1), else 4.
             Version 2 = Config.J[2] = Config.bu (RGB Bytes.f 0x0d, a Kelvin tint pick Bytes.p: scheme h6006, the
             family's); version 4 = Config.J[4] = Config.fu (RGB Bytes.a = 33 05 02 R G B, a Kelvin tint pick Bytes.o =
-            33 05 02 ff ff ff 01 tR tG tB), which none of the library's schemes builds. Config.H[H6001] = colour
+            33 05 02 ff ff ff 01 tR tG tB), the library's legacy_02 scheme. Config.H[H6001] = colour
             temperature on. Kelvin version 0 = [2000, 9000] (KelvinConfig.Config.P1 has no H6001). Heartbeat aa 01
             (VM4Light.I3). No 33 25 write (bulblight Support.c excludes 0); no account lock. Held without support for
             three library gaps: the route is firmware-gated (the device-list rewrite to 20 from versionSoft 3.00.00; the
@@ -3634,7 +3634,7 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:63-114
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/ColorPieceConfig.java:354-364,566-660
             - split_rgblight/com/govee/rgblight/mode/ModeParseStrategyConfig.java:34-46
-        "0":   # held, no support: the goodsType-0 path writes RGB and CCT as 33 05 02 (no library colour scheme); H614A always, the others below the BK gate
+        "0":   # held, no support: the goodsType-0 path (H614A always, the others below the BK gate) has no pacts form (the gate's complement), and H614B / H614E brightness turns on the chip (library gaps); its 33 05 02 RGB and CCT are legacy_02's
           models: [H6159, H6110, H6109, H614A, H614B, H614E]
           capabilities: [power, brightness, rgb, color_temp]
           color_functions: [color_temperature]
@@ -3651,8 +3651,8 @@ families:
             ControllerStrategyConfig.s1: versions, Wi-Fi versions (not H6159), the time-sync write, timer, aa 04, aa 01,
             aa 05 (strategy a). Colour: the colour tab's RGB and Kelvin slider go ColorModeControllerConfig.c ->
             Config.x[0] = Hu = 4 for these SKUs -> Config.J[4] = fu: Bytes.a 33 05 02 R G B, and for a tint in range
-            (the slider's CCT or a tint pick) Bytes.o 33 05 02 ff ff ff 01 <tint>, no Kelvin on the wire. No library
-            scheme sends these 0x02 frames (gap). Config.I[0] = EO turns colour temperature on for these SKUs; Kelvin
+            (the slider's CCT or a tint pick) Bytes.o 33 05 02 ff ff ff 01 <tint>, no Kelvin on the wire: the
+            library's legacy_02 scheme. Config.I[0] = EO turns colour temperature on for these SKUs; Kelvin
             version 0 (KelvinConfig.P1) = [2000, 9000]; one piece. Brightness is not the interceptor's (goodsType 0 is
             outside Support4StringLightV2.E): BrightnessConfig's SKU map gives raw [6, 254] for H6159 / H6110 / H614A,
             [20, 254] for H6109, and for H614B / H614E [6, 254] on Telink hardware else percent (a hardware-type branch).
@@ -3804,8 +3804,9 @@ families:
             value). Colour: the RGB pick and the colour tab's Kelvin slider (ColorViewModel.U, K to its tint) both go
             ColorModeControllerConfig.c -> Config.x[0] = Hu = 4 for H6160 -> Config.J[4] = fu: Bytes.a 33 05 02 R G B, or for
             a tint in range (a colour-temperature pick, or an RGB pick equal to a tint) Bytes.o 33 05 02 ff ff ff 01 <tint>,
-            no Kelvin on the wire; the mode tabs have no illumination tab, so Config.N[2] = GM is not on this path. No
-            library scheme sends these 0x02 frames (gap). Config.H[H6160] = BR (colour
+            no Kelvin on the wire; the mode tabs have no illumination tab, so Config.N[2] = GM is not on this path.
+            These are the library's legacy_02 frames; the rgb_flag_tint read-back is not folded by the library
+            (gap). Config.H[H6160] = BR (colour
             temperature only); Kelvin KelvinConfig.P1 = version 0 = [2000, 9000]; brightness BrightnessConfig g[H6160] = A2 =
             version 0 = raw [20, 254] (goodsType 0 is outside the rgblight interceptor); one piece. Old-hardware H6163 /
             H6117 (OldSkuSupport.supportH6163H6117: goodsType 0 and hard < 1.00.02) open the rgbiclight/h6160 AcNewDetail
@@ -4472,7 +4473,8 @@ families:
 
   # H6104 (com.govee.h6104): SKU-keyed at goodsType 0, one screen on every firmware: Model.t opens the h6104 newdetail
   # NewDetailAc + NewDetailVm (the legacy adjust/AdjustAc is reached from nowhere). No row has support: the library
-  # builds no 0x02 colour frame and connects only to the 1910 vendor service, where this screen uses ffe0 / ffe1.
+  # connects only to the 1910 vendor service, where this screen uses ffe0 / ffe1, and does not fold its
+  # rgb_flagnz_tint_02 read-back. Its 0x02 colour frames are the library's legacy_02 scheme.
   - id: h6104
     category: rgbic_strip
     client_profile:
@@ -4481,7 +4483,7 @@ families:
       power_live: []   # no live BLE power read-back: the aa 01 heartbeat reply is discarded (Controller4HeartCommon.parseValidBytes), ShareVM.M3 wires N3 -> J3 only on a BleComm (Ble4NewUUID.bleComm is null)
       wire_cipher: runtime
       by_goods_type:
-        "0":   # SKU-routed at goodsType 0; no support: the 0x02 colour scheme and the ffe0 / ffe1 GATT service are library gaps
+        "0":   # SKU-routed at goodsType 0; no support: the ffe0 / ffe1 GATT service and the rgb_flagnz_tint_02 read-back are library gaps (its 0x02 colour frames are legacy_02's)
           models: [H6104]
           pacts: any
           capabilities: [power, brightness, rgb, color_temp]
@@ -4514,8 +4516,8 @@ families:
             [2000, 9000] (KelvinConfig.i) 33 05 02 ff ff ff 01 R G B (Bytes.o); the Kelvin pick sends its tint as that
             colour. One colour piece (Support.getColorPieceSize, ColorPieceConfig.n), no mask. Colour page (Config.I[0] = EO):
             colour temperature only, and only while not IoT-only (Info4BleIotDevice.n). Kelvin: KelvinConfig.Config.i[0] = P1
-            = 0, [2000, 9000]. Blocked: the 0x02 colour scheme and the ffe0 / ffe1 transport are library gaps. Not
-            hardware-verified.
+            = 0, [2000, 9000]. These are the library's legacy_02 frames. Blocked: the ffe0 / ffe1 transport and the
+            rgb_flagnz_tint_02 read-back (which the library does not fold) are library gaps. Not hardware-verified.
           doc-ref:
             - base-classes3/com/govee/kt/ui/device/SubConfig.java:46-62
             - split_rgblight/com/govee/h6104/sku/SubLib.java:22-30
@@ -4584,18 +4586,20 @@ families:
   # H6105 (com.govee.h6105, H6105Register via RgbIcLightRegistry): SKU-keyed at goodsType 0. The device list
   # (Model.itemClickOp) and pairing (BleConnectDialog.f0) always open the rgbiclight/h61050729 screen
   # (H6105NewDetailActivity + H6105VM4Light), every firmware; the legacy h6105 AdjustAc / ble classes are not the
-  # control screen. No support: the library builds no 0x02 colour frame.
+  # control screen. Colour is the 0x02 scheme legacy_02 (Config.fu).
   - id: h6105
     category: rgbic_strip
     client_profile:
+      color_scheme: legacy_02   # Config.x[0] = Hu -> 4 -> Config.J[4] = fu; base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:10225-10237,14090-14094
       mode_color_parse: kelvin_15   # H6105 screen at goodsType 0; split_rgbiclight/com/govee/rgbiclight/h61050729/Info4Detail.java:374-412
       power_read: aa01
       power_live: [heartbeat_aa01]
       wire_cipher: runtime
       by_goods_type:
-        "0":   # SKU-routed at goodsType 0; no support: the library builds no 0x02 colour frame
+        "0":   # SKU-routed at goodsType 0; colour legacy_02 (Config.fu)
           models: [H6105]
           pacts: any
+          support: app_traced
           capabilities: [power, brightness, rgb, color_temp]
           zones: []
           account_lock: false
@@ -4626,7 +4630,8 @@ families:
             ColorPieceConfig.n entry for H6105). Colour page: Config.H has no H6105, Config.I[0] = EO gives {false x4,
             true}: colour temperature only, no gradual, no segment brightness; mode list [15, 9, 10, 8, 11]
             (localSkuComponentConfigs.json). Kelvin: KelvinConfig.Config.i[0] = P1 = 0 for H6105, so [2000, 9000].
-            Blocked on the 0x02 colour scheme (library gap); every other core fact is here. Not hardware-verified.
+            The library sends these frames as its legacy_02 scheme. Not hardware-verified (no colour-version-4 light
+            on the bench).
           doc-ref:
             - split_rgbiclight/com/govee/rgbiclight/RgbIcLightRegistry.java:179
             - split_rgbiclight/com/govee/h6105/H6105Register.java:28-32
@@ -4671,7 +4676,7 @@ families:
     connectivity: [ble]   # H6105VM4Light.M1 false (no IoT channel); split_rgbiclight/com/govee/rgbiclight/h61050729/H6105VM4Light.java:352-354
     submodes: { color: "0x02", color_alt: "0x15", scene: "0x04", music: "0x03", diy: "0x0a" }   # written 0x02 (Config.fu); read back 0x15 / 0x04 / 0x0a / 0x03 (Info4Detail.w, h61050729/BleProtocol)
     opcodes:
-      - { name: color_write, cmd: "0x05", payload: "RGB: [0x02, R, G, B, 0...] (Bytes.a); a picked colour that is one of the Kelvin tint colours of [2000, 9000] (KelvinConfig.i), and every Kelvin pick (sent as its tint): [0x02, ff, ff, ff, 0x01, R, G, B, 0...] (Bytes.o(white, colour))", note: "Config.w has no H6105; Config.x[0] = Config.Hu -> 4 -> Config.J[4] = Config.fu, via ColorModeControllerConfig.c (ColorViewModel.p0 / U). The automation builder agrees (h6105/scenes/BleColorCmdBuilder -> Common.getModeController -> h6105/ble/SubModeColor: [0x02, R, G, B, 0, 0, 0, 0]). No library colour scheme builds sub-mode 0x02." }
+      - { name: color_write, cmd: "0x05", payload: "RGB: [0x02, R, G, B, 0...] (Bytes.a); a picked colour that is one of the Kelvin tint colours of [2000, 9000] (KelvinConfig.i), and every Kelvin pick (sent as its tint): [0x02, ff, ff, ff, 0x01, R, G, B, 0...] (Bytes.o(white, colour))", note: "Config.w has no H6105; Config.x[0] = Config.Hu -> 4 -> Config.J[4] = Config.fu, via ColorModeControllerConfig.c (ColorViewModel.p0 / U). The automation builder agrees (h6105/scenes/BleColorCmdBuilder -> Common.getModeController -> h6105/ble/SubModeColor: [0x02, R, G, B, 0, 0, 0, 0]). The library builds it as its legacy_02 scheme." }
     specs: { segments: "whole-strip colour only: Config.fu ignores the position set; the colour page draws 15 pieces (ColorPieceConfig.j default, no n entry)", kelvin_range: [2000, 9000], brightness_range: [20, 254], brightness_scaling: "raw, the header slider's own range (BrightnessConfig version 0)", scene_versions: [] }
     encryption: none   # no 0xB1 / 0xB2 account lock; plaintext by default
     confidence: medium   # source-derived from the 7.7.02 app; not hardware-verified
@@ -4759,7 +4764,7 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:62-85
             - base-classes11/com/govee/base2light/pact/newdetail/header/IBrightnessInterceptor.java:18-21
             - base-classes11/com/govee/base2light/pact/newdetail/ShareVM.java:979-1015,1362-1364
-        "0":   # pre-BK firmware: OldBleModel.itemClickOp keeps the record's goodsType 0; held, no pacts (library gaps: the device_list item needs pacts below its (10,1) gate here, and the 33 05 02 colour form has no scheme)
+        "0":   # pre-BK firmware: OldBleModel.itemClickOp keeps the record's goodsType 0; held, no pacts (library gaps: the device_list item needs pacts below its (10,1) gate here, and the rgb_flag_tint read-back is not folded; the 33 05 02 colour form is legacy_02's)
           models: [H6113]
           capabilities: [power, brightness, rgb]
           color_functions: []
@@ -4771,8 +4776,9 @@ families:
           heartbeat: power
           doc: >-
             Traced, held: H6113Support.a (H6113 at goodsType 0) selects ControllerStrategyConfig.Q1 (soft and hard version,
-            aa 04, aa 01, aa 05; no time sync, no timer reads) and ModeParseStrategyConfig.b (rgb_flag_tint). Colour is no
-            library scheme: ColorModeControllerConfig.c -> Config.F -> Config.x[0] = Hu, 4 for H6113 -> Config.J[4] = fu:
+            aa 04, aa 01, aa 05; no time sync, no timer reads) and ModeParseStrategyConfig.b (rgb_flag_tint, which the
+            library does not fold). Colour is the library's legacy_02 scheme: ColorModeControllerConfig.c -> Config.F ->
+            Config.x[0] = Hu, 4 for H6113 -> Config.J[4] = fu:
             Bytes.a 33 05 02 R G B, or Bytes.o 33 05 02 ff ff ff 01 R G B when the pick is a Kelvin tint colour.
             Config.H["H6113"] = DR: no colour-temperature slider. Brightness raw [20, 254] (no interceptor at 0:
             BrightnessConfig.Config.a g["H6113"] = B3 = 0). One piece, heartbeat aa 01, power 33 01. This path takes every
@@ -4816,7 +4822,7 @@ families:
     # OldBleItem and OldBleModel, whose itemClickOp opens the rgblight AcNewDetail + VM4Light (/rgb/newdetail, the H6188
     # screen) with goodsType 39 on BK firmware (pact >= (10,1)), else with 0 (H6113Support.a: the H6113 / H6114 screen).
     client_profile:
-      # No family color_scheme: the colour instruction differs by goodsType (ColorModeControllerConfig.Companion.c -> Config.Companion.F; Config.w has no H6114). 39: Config.x[39] = Yv = 2 -> J[2] = bu (0x0d, h6006, on row 39). 0: Config.x[0] = Hu = 4 -> J[4] = fu (0x02, no library scheme). base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:232-257,1366-1370,1714-1718,10225-10247,12975-12978
+      # No family color_scheme: the colour instruction differs by goodsType (ColorModeControllerConfig.Companion.c -> Config.Companion.F; Config.w has no H6114). 39: Config.x[39] = Yv = 2 -> J[2] = bu (0x0d, h6006, on row 39). 0: Config.x[0] = Hu = 4 -> J[4] = fu (0x02, legacy_02). base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:232-257,1366-1370,1714-1718,10225-10247,12975-12978
       mode_color_parse: rgb_flag_tint   # goodsType 0: VM4Light.v5 -> H6113Support.a -> ModeParseStrategyConfig.b; split_rgblight/com/govee/rgblight/VM4Light.java:580-602, split_rgblight/com/govee/h6113/H6113Support.java:21-26
       power_read: aa01   # ControllerSwitch read in ControllerStrategyConfig.B1 (39, :916-920) and Q1 (0, :1073-1077)
       power_live: [heartbeat_aa01]   # VM4Light.I3 true -> ShareVM.K3 = aa 01; split_rgblight/com/govee/rgblight/VM4Light.java:648-650
@@ -4903,7 +4909,7 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/ShareVM.java:1362-1364
             - base-classes12/com/govee/common2light/capability/connect/ConnectHeartbeat.java:15-17
             - base-classes11/com/govee/base2light/pact/newdetail/ble/BleComm.java:76-84
-        "0":   # pre-BK (TL) firmware: OldBleModel.itemClickOp keeps the record's goodsType 0; held, no pacts and no color_scheme (library gaps: the device_list item needs pacts below its (10,1) gate here, and the app tests none; the 0x02 colour forms of Config.J[4] = fu match no library scheme)
+        "0":   # pre-BK (TL) firmware: OldBleModel.itemClickOp keeps the record's goodsType 0; held, no pacts and no color_scheme (library gaps: the device_list item needs pacts below its (10,1) gate here, and the app tests none; the rgb_flag_tint read-back is not folded; the 0x02 colour forms of Config.J[4] = fu are legacy_02's)
           models: [H6114]
           capabilities: [power, brightness, rgb, color_temp]
           color_functions: [color_temperature]
@@ -4916,8 +4922,9 @@ families:
           doc: >-
             Traced, held: H6113Support.a (H6113 / H6114 at goodsType 0) gives ControllerStrategyConfig.Q1 (soft and hard
             version, aa 04, aa 01, aa 05: no time sync, no timer reads; no Wi-Fi reads, rgblight Support.g) and
-            ModeParseStrategyConfig.b (rgb_flag_tint, the family default). Colour is sub-mode 0x02, which no library
-            scheme builds: ColorModeControllerConfig.Companion.c -> Config.Companion.F (Config.w has no H6114;
+            ModeParseStrategyConfig.b (rgb_flag_tint, the family default, which the library does not fold). Colour is
+            sub-mode 0x02, the library's legacy_02 scheme: ColorModeControllerConfig.Companion.c -> Config.Companion.F
+            (Config.w has no H6114;
             Config.x[0] = Hu = 4) -> Config.J[4] = fu. RGB is Bytes.a 33 05 02 R G B, a Kelvin-tint pick Bytes.o 33 05
             02 ff ff ff 01 <pick>, and the colour page's CCT strip (ColorViewModel.U) sends fu(tint) = Bytes.o 33 05 02
             ff ff ff 01 <tint RGB>, with no Kelvin on the wire. VM4Light.configColorController's J[2] is only the
@@ -5301,8 +5308,9 @@ families:
             33 05 02 R G B (Bytes.a), a pick equal to a Kelvin tint of [2700, 6500] 33 05 02 ff ff ff 01 R G B (Bytes.o);
             the Kelvin pick sends its tint as that colour. No mask: one colour piece (ColorPieceConfig.n). Colour page
             (Config.I[0] = EO): colour temperature for all three; gradual too for H6127 / H6161, its builder not traced.
-            Kelvin: KelvinConfig.Config.i[0] = P1 = 2 for these SKUs, so [2700, 6500]. Blocked: the soft-version route,
-            the 0x02 colour scheme and the Telink brightness range are library gaps. Not hardware-verified.
+            Kelvin: KelvinConfig.Config.i[0] = P1 = 2 for these SKUs, so [2700, 6500]. The 0x02 frames are the
+            library's legacy_02 scheme. Blocked: the soft-version route and the Telink brightness range are library
+            gaps. Not hardware-verified.
           doc-ref:
             - base-classes3/com/govee/kt/ui/device/SubConfig.java:46-62
             - split_rgbiclight/com/govee/h6127/sku/SubLib.java:22-31
@@ -5413,18 +5421,20 @@ families:
     sources: ["h6127/ble/Mode.java", "h6127/ble/SubModeMusic.java:87-88 (sub-mode 0x01)", "h6127/ble/SubModeMusicV1.java:89-90 (sub-mode 0x03)"]
 
   # H6107: registered by com.govee.h6127 (Sku.e, SubLib, H6127BleProcessor) but always opened on the H6105 screen
-  # (rgbiclight/h61050729 H6105NewDetailActivity + H6105VM4Light) at goodsType 0, every firmware. Blocked: colour 0x02.
+  # (rgbiclight/h61050729 H6105NewDetailActivity + H6105VM4Light) at goodsType 0, every firmware. Colour 0x02 (legacy_02).
   - id: h6107
     category: rgbic_strip
     client_profile:
+      color_scheme: legacy_02   # Config.w[H6107] = mz -> Config.A(info, 4) = 4 -> Config.J[4] = fu; base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:210-215,843-847,14090-14094,15227-15230
       mode_color_parse: kelvin_15   # H6105 screen, every firmware; split_rgbiclight/com/govee/rgbiclight/h61050729/Info4Detail.java:374-412
       power_read: aa01
       power_live: [heartbeat_aa01]
       wire_cipher: runtime
       by_goods_type:
-        "0":   # SKU-routed at goodsType 0; no support: the library builds no 0x02 colour frame
+        "0":   # SKU-routed at goodsType 0; colour legacy_02 (Config.fu)
           models: [H6107]
           pacts: any
+          support: app_traced
           capabilities: [power, brightness, rgb, color_temp]
           zones: []
           account_lock: false
@@ -5452,8 +5462,8 @@ families:
             Kelvin pick sends Constant.getTemColorByKelvin(K)[2] as that colour, so no Kelvin goes on the wire. No mask:
             one colour piece (ColorPieceConfig.n). Colour page: Config.I[0] = EO gives H6107 {false x4, true}, colour
             temperature only (no gradual, no segment brightness); mode list [15, 9, 10, 8, 11, 20]
-            (localSkuComponentConfigs.json). Kelvin: KelvinConfig.Config.i[0] = P1 = 0, so [2000, 9000]. Blocked on the
-            0x02 colour scheme (library gap); every other fact is here. Not hardware-verified.
+            (localSkuComponentConfigs.json). Kelvin: KelvinConfig.Config.i[0] = P1 = 0, so [2000, 9000]. The library
+            sends these frames as its legacy_02 scheme. Not hardware-verified (no colour-version-4 light on the bench).
           doc-ref:
             - base-classes3/com/govee/kt/ui/device/SubConfig.java:46-62
             - split_rgbiclight/com/govee/h6127/sku/SubLib.java:22-31
@@ -5491,7 +5501,7 @@ families:
     connectivity: [ble]   # H6105VM4Light.M1 false (no IoT channel); split_rgbiclight/com/govee/rgbiclight/h61050729/H6105VM4Light.java:352-354
     submodes: { color: "0x02", color_alt: "0x15", scene: "0x04", music: "0x03", diy: "0x0a" }   # written 0x02 (Config.fu); read back 0x15 / 0x04 / 0x03 / 0x0a (Info4Detail.w, h61050729/BleProtocol)
     opcodes:
-      - { name: color_write, cmd: "0x05", payload: "RGB: [0x02, R, G, B, 0...] (Bytes.a); a picked colour that is one of the Kelvin tint colours of [2000, 9000] (KelvinConfig.i), and every Kelvin pick (sent as its tint): [0x02, ff, ff, ff, 0x01, R, G, B, 0...] (Bytes.o(white, colour))", note: "Config.w[H6107] = Config.mz -> Config.A(info, 4) = 4 -> Config.J[4] = Config.fu, via ColorModeControllerConfig.c (the unified builder ColorViewModel.p0 / U try first). No library colour scheme builds sub-mode 0x02." }
+      - { name: color_write, cmd: "0x05", payload: "RGB: [0x02, R, G, B, 0...] (Bytes.a); a picked colour that is one of the Kelvin tint colours of [2000, 9000] (KelvinConfig.i), and every Kelvin pick (sent as its tint): [0x02, ff, ff, ff, 0x01, R, G, B, 0...] (Bytes.o(white, colour))", note: "Config.w[H6107] = Config.mz -> Config.A(info, 4) = 4 -> Config.J[4] = Config.fu, via ColorModeControllerConfig.c (the unified builder ColorViewModel.p0 / U try first). The library builds it as its legacy_02 scheme." }
     specs: { segments: 0, kelvin_range: [2000, 9000], brightness_range: [20, 254], brightness_scaling: "raw, the header slider's own range (BrightnessConfig version 0)", scene_versions: [] }
     encryption: none   # no 0xB1 / 0xB2 account lock; plaintext by default
     confidence: medium   # source-derived from the 7.7.02 app; not hardware-verified
@@ -5500,18 +5510,20 @@ families:
   # H6129 (com.govee.h6129, H6129Register via RgbIcLightRegistry): SKU-keyed at goodsType 0. The device list
   # (Model.itemClickOp) and pairing (BleConnectDialog.f0) always open the rgbiclight/h61050729 screen
   # (H6105NewDetailActivity + H6105VM4Light), every firmware; the legacy h6129 AdjustAc / ble classes are not the
-  # control screen. No support: the library builds no 0x02 colour frame.
+  # control screen. Colour is the 0x02 scheme legacy_02 (Config.fu).
   - id: h6129
     category: rgbic_strip
     client_profile:
+      color_scheme: legacy_02   # Config.x[0] = Hu -> 4 -> Config.J[4] = fu; base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:10225-10251,14090-14094
       mode_color_parse: kelvin_15   # H6105 screen, always goodsType 0; split_rgbiclight/com/govee/rgbiclight/h61050729/Info4Detail.java:374-412
       power_read: aa01
       power_live: [heartbeat_aa01]
       wire_cipher: runtime
       by_goods_type:
-        "0":   # SKU-routed at goodsType 0; no support: the library builds no 0x02 colour frame
+        "0":   # SKU-routed at goodsType 0; colour legacy_02 (Config.fu)
           models: [H6129]
           pacts: any
+          support: app_traced
           capabilities: [power, brightness, rgb, color_temp]
           zones: []
           account_lock: false
@@ -5543,8 +5555,8 @@ families:
             (no ColorPieceConfig.n entry for H6129). Colour page: Config.H has no H6129, Config.I[0] = EO gives {false x4,
             true}: colour temperature only, no gradual, no segment brightness; mode list [15, 9, 10, 8, 11]
             (localSkuComponentConfigs.json; local fallback C3 [8, 9, 10]). Kelvin: KelvinConfig.Config.i[0] = P1 = 0 for
-            H6129, so [2000, 9000]. Blocked on the 0x02 colour scheme (library gap); every other core fact is here. Not
-            hardware-verified.
+            H6129, so [2000, 9000]. The library sends these frames as its legacy_02 scheme. Not hardware-verified (no
+            colour-version-4 light on the bench).
           doc-ref:
             - split_rgbiclight/com/govee/rgbiclight/RgbIcLightRegistry.java:182
             - split_rgbiclight/com/govee/h6129/H6129Register.java:27-35
@@ -5595,7 +5607,7 @@ families:
     connectivity: [ble]   # H6105VM4Light.M1 false (no IoT channel); split_rgbiclight/com/govee/rgbiclight/h61050729/H6105VM4Light.java:352-354
     submodes: { color: "0x02", color_alt: "0x15", scene: "0x04", music: "0x03", diy: "0x0a", diy_old: "0x07" }   # written 0x02 (Config.fu); read back 0x15 / 0x04 / 0x0a / 0x03 (Info4Detail.w); diy_old 0x07 is the legacy h6129/ble Mode's (SubModeOldDiy), the DIY path not traced
     opcodes:
-      - { name: color_write, cmd: "0x05", payload: "RGB: [0x02, R, G, B, 0...] (Bytes.a); a picked colour that is one of the Kelvin tint colours of [2000, 9000] (KelvinConfig.i), and every Kelvin pick (sent as its tint): [0x02, ff, ff, ff, 0x01, R, G, B, 0...] (Bytes.o(white, colour))", note: "Config.w has no H6129; Config.x[0] = Config.Hu -> 4 -> Config.J[4] = Config.fu, via ColorModeControllerConfig.c (ColorViewModel.p0 / U). The automation builder agrees (h6129/scenes/BleColorBuilder -> Common.getColorController -> h6129/ble/SubModeColor: [0x02, R, G, B, 0, 0, 0, 0]; its colour-temperature form [0x02, ff, ff, ff, 0x01, tint R, G, B]). No library colour scheme builds sub-mode 0x02." }
+      - { name: color_write, cmd: "0x05", payload: "RGB: [0x02, R, G, B, 0...] (Bytes.a); a picked colour that is one of the Kelvin tint colours of [2000, 9000] (KelvinConfig.i), and every Kelvin pick (sent as its tint): [0x02, ff, ff, ff, 0x01, R, G, B, 0...] (Bytes.o(white, colour))", note: "Config.w has no H6129; Config.x[0] = Config.Hu -> 4 -> Config.J[4] = Config.fu, via ColorModeControllerConfig.c (ColorViewModel.p0 / U). The automation builder agrees (h6129/scenes/BleColorBuilder -> Common.getColorController -> h6129/ble/SubModeColor: [0x02, R, G, B, 0, 0, 0, 0]; its colour-temperature form [0x02, ff, ff, ff, 0x01, tint R, G, B]). The library builds it as its legacy_02 scheme." }
     specs: { segments: "whole-strip colour only: Config.fu ignores the position set; the colour page draws 15 pieces (ColorPieceConfig.j default, no n entry)", kelvin_range: [2000, 9000], brightness_range: [20, 254], brightness_scaling: "raw, the header slider's own range (BrightnessConfig version 0)", scene_versions: [] }
     encryption: none   # no 0xB1 / 0xB2 account lock; plaintext by default
     confidence: medium   # source-derived from the 7.7.02 app; not hardware-verified
@@ -5608,7 +5620,7 @@ families:
     # goodsType 39 (stringlightv2 SubLib / Model) at the bound pact (65535,255).
     # No family colour scheme. The colour page (ColorViewModel.p0 / U -> ColorModeControllerConfig.c -> Config.F: no Config.w
     # entry, then Config.x by goodsType) gives row 39 version 2 (Config.Yv, 0x0d: scheme h6006, on the row), but goodsType 0
-    # (Config.Hu) and H613A-F at (65535,255) (Config.Yv) version 4, Config.J[4] = fu, sub-mode 0x02, which no library scheme builds.
+    # (Config.Hu) and H613A-F at (65535,255) (Config.Yv) version 4, Config.J[4] = fu, sub-mode 0x02, the library's legacy_02 scheme.
     client_profile:
       mode_color_parse: rgb_flag_tint   # goodsType 0 and H613A-F at 39 (Support4H613839.d -> ModeParseStrategyConfig.b); split_rgblight/com/govee/rgblight/VM4Light.java:580-602
       power_read: aa01   # ControllerSwitch read in ControllerStrategyConfig.B1 (:916-920) and W1 (:1180-1184)
@@ -5679,7 +5691,7 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/ColorPieceConfig.java:354-366,566-570,632-641
             - split_rgblight/com/govee/rgblight/RgbLightDetailRegistrar.java:36-49
             - split_rgblight/com/govee/rgblight/VM4Light$connectBleSuc$1.java:112-141
-        "0":   # pre-BK firmware: h613839 Model.itemClickOp keeps the record's goodsType 0 for every record pact OldRgbBkUtil.a refuses; held, no pacts, no colour scheme (library gaps: the complement of the (10,1) gate, and the sub-mode 0x02 colour form)
+        "0":   # pre-BK firmware: h613839 Model.itemClickOp keeps the record's goodsType 0 for every record pact OldRgbBkUtil.a refuses; held, no pacts, no colour scheme (library gaps: the complement of the (10,1) gate, and the rgb_flag_tint read-back is not folded; the sub-mode 0x02 colour form is legacy_02's)
           models: [H6138, H6139]
           capabilities: [power, brightness, rgb, color_temp]
           color_functions: [color_temperature]
@@ -5695,7 +5707,8 @@ families:
             (rgb_flag_tint). Colour is not row 39's: ColorModeControllerConfig.c -> Config.F takes Config.x[0] = Hu = 4
             for H6138 / H6139 (COLOR_MODE_0X02), so Config.J[4] = fu sends Bytes.a 33 05 02 R G B, and for a colour in
             the Kelvin tint table (every colour-page CCT, ColorViewModel.U) Bytes.o 33 05 02 ff ff ff 01 <tint>, with no
-            Kelvin bytes: no library scheme. Config.I[0] = EO turns the colour-temperature slider on for these SKUs.
+            Kelvin bytes: the library's legacy_02 scheme (its rgb_flag_tint read-back is not folded, a gap). Config.I[0]
+            = EO turns the colour-temperature slider on for these SKUs.
             Brightness is raw [6, 254] (no interceptor at 0: BrightnessConfig version 2 by SKU). Kelvin is version 0
             (KelvinConfig.Config.P1), one piece, heartbeat aa 01. Pacts: the route covers every record pact that
             OldRgbBkUtil.a refuses (pactType < 10 or pactCode < 1, e.g. (2,1), (10,0)), and the (0,0) a pact-less
@@ -5750,10 +5763,11 @@ families:
           connect_writes: []
           heartbeat: power
           doc: >-
-            Gap, no colour scheme: Config.x[0] = Hu gives H6181 colour version 4 (Config.J[4] = fu), so RGB is
+            Gaps: the pacts below the gate (above) and the rgb_flag_tint read-back, which the library does not fold.
+            Colour: Config.x[0] = Hu gives H6181 colour version 4 (Config.J[4] = fu), so RGB is
             33 05 02 R G B 00.. (Bytes.a) and a Kelvin pick, or an RGB pick equal to a Kelvin tint, is
-            33 05 02 ff ff ff 01 <tint> (Bytes.o), the legacy h6181 SubModeColor layout; the library builds no
-            0x02 flag-tint scheme. Otherwise traced: connect reads ControllerStrategyConfig.Q1 (aa 04, aa 01,
+            33 05 02 ff ff ff 01 <tint> (Bytes.o), the legacy h6181 SubModeColor layout: the library's legacy_02
+            scheme. Otherwise traced: connect reads ControllerStrategyConfig.Q1 (aa 04, aa 01,
             aa 05; no time-sync write), aa 05 parsed rgb_flag_tint, heartbeat aa 01 (VM4Light.I3; live power through
             VM4Light.g5, which re-reads with Compose4Off2OnH6113 on off->on only), one colour piece, brightness
             BrightnessConfig version 0 raw [20, 254], Kelvin version 0 [2000, 9000], colour page with the Kelvin
@@ -5835,7 +5849,7 @@ families:
       power_read: aa01   # both goodsTypes: the rgblight read sets g2 (0) / B1 (40) read aa 01; split_rgblight/com/govee/rgblight/ControllerStrategyConfig.java:874-958,1252-1297
       power_live: [heartbeat_aa01]   # VM4Light.I3 true -> ConnectHeartbeat 1 (aa 01); J3 / g5 set the switch from it
       by_goods_type:
-        "0":   # legacy H6182 (H6182Support.a: goodsType 0); held: colour 0x02, an OTA-type brightness gate, pacts below the gate (gaps); models left out until it has pacts (a row listing H6182 here needs them)
+        "0":   # legacy H6182 (H6182Support.a: goodsType 0); held: an OTA-type brightness gate, pacts below the gate, the rgb_flag_tint read-back (gaps; colour 0x02 is legacy_02's); models left out until it has pacts (a row listing H6182 here needs them)
           capabilities: [power, brightness, rgb, color_temp]
           zones: []
           account_lock: false
@@ -5848,7 +5862,8 @@ families:
             SkuBleProcessor pairs a goodsType-0 item with no pact test and VM4Light.X0 skips the screen's pact check at 0).
             No support, three gaps. Colour: ColorViewModel tries ColorModeControllerConfig.c before VM4Light's own J[2]
             builder; Config.x[0] = Hu gives 4 for H6182, so Config.J[4] fu, the 0x02 form: RGB 33 05 02 R G B (Bytes.a), a
-            Kelvin tint in range 33 05 02 ff ff ff 01 tR tG tB (Bytes.o); no library scheme builds it. Brightness:
+            Kelvin tint in range 33 05 02 ff ff ff 01 tR tG tB (Bytes.o): the library's legacy_02 scheme, but its
+            report (rgb_flag_tint, below) is one the library does not fold. Brightness:
             BrightnessConfig.g H6182 = C2, version 0 [20, 254] when the BLE hard version is Telink (OtaType.isTelinkOta:
             first field 1), else version 1 [1, 100]. Pacts: any below the (2,1) gate, or none advertised. Traced: one piece
             (ColorPieceConfig.n), colour flags FR (colour temperature only), Kelvin version 0 [2000, 9000], connect read g2
@@ -5947,18 +5962,20 @@ families:
   # H6185 (com.govee.h6185, H6185Register via RgbIcLightRegistry): SKU-keyed at goodsType 0. The device list
   # (Model.itemClickOp / t) and pairing (BleConnectDialog.f0) open the rgbiclight AcNewDetail (/rgbic/newdetail,
   # VM4Light) on every firmware; the legacy h6185 ble/ classes serve only the automation command builders
-  # (h6185/scenes, CmdBuilderManager). No support: the library builds no 0x02 colour frame.
+  # (h6185/scenes, CmdBuilderManager). Colour is the 0x02 scheme legacy_02 (Config.fu).
   - id: h6185
     category: rgb_strip
     client_profile:
+      color_scheme: legacy_02   # Config.x[0] = Hu -> 4 -> Config.J[4] = fu; base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:10225-10300,14090-14094
       mode_color_parse: kelvin   # VM4Light.t5 -> OpInfo4Detail.x: 0x02 through SubMode4Color's default parse [gradual][kelvin s16be]; Support.j skips the colour-group read; split_rgbiclight/com/govee/rgbiclight/VM4Light.java:650-669
       power_read: aa01
       power_live: [heartbeat_aa01]
       wire_cipher: runtime
       by_goods_type:
-        "0":   # SKU-routed at goodsType 0; no support: the library builds no 0x02 colour frame
+        "0":   # SKU-routed at goodsType 0; colour legacy_02 (Config.fu)
           models: [H6185]
           pacts: any
+          support: app_traced
           color_functions: [color_temperature]
           capabilities: [power, brightness, rgb, color_temp]
           zones: []
@@ -5988,8 +6005,8 @@ families:
             colour, so no Kelvin goes on the wire. One colour piece (ColorPieceConfig.n), no segments. Colour-page flags
             Config.I[0] = EO: colour temperature only (no gradual: Config.I's gradual version is null for H6185). Kelvin
             KelvinConfig.Config.i[0] = P1 = 0, [2000, 9000]. The automation builders send the same frames (legacy
-            SubModeColor [02 R G B flag tint]; brightness raw 20..254). Blocked on the 0x02 colour scheme (library gap);
-            every other core fact is here. Not hardware-verified.
+            SubModeColor [02 R G B flag tint]; brightness raw 20..254). The library sends these frames as its legacy_02
+            scheme. Not hardware-verified (no colour-version-4 light on the bench).
           doc-ref:
             - split_rgbiclight/com/govee/rgbiclight/RgbIcLightRegistry.java:184
             - split_rgbiclight/com/govee/h6185/H6185Register.java:24-30
@@ -6049,7 +6066,7 @@ families:
     # mic is mode sub-mode 0x05 (33 05 05 01), not a separate opcode.
     submodes: { color: "0x02", scene: "0x04", diy: "0x0a", mic: "0x05" }   # written 0x02 (Config.fu); read back 0x02 / 0x04 / 0x0a / 0x05 (OpInfo4Detail.x)
     opcodes:
-      - { name: color_write, cmd: "0x05", payload: "RGB: [0x02, R, G, B, 0...] (Bytes.a); a colour that is one of the Kelvin tint colours of [2000, 9000] (KelvinConfig.i), and every Kelvin pick (sent as Constant.getTemColorByKelvin(K)[2]): [0x02, ff, ff, ff, 0x01, R, G, B, 0...] (Bytes.o(white, colour)); no Kelvin bytes", note: "Config.w has no H6185; Config.x[0] = Config.Hu -> 4 (COLOR_MODE_0X02) -> Config.J[4] = Config.fu, via ColorModeControllerConfig.c (ColorViewModel.p0 / U). The automation builders agree (h6185/scenes/BleColorCmdBuilder / BleColorTempBuilder -> h6185/ble/SubModeColor.getWriteBytes [0x02, R, G, B, flag, tint R, G, B]). No library colour scheme builds sub-mode 0x02." }
+      - { name: color_write, cmd: "0x05", payload: "RGB: [0x02, R, G, B, 0...] (Bytes.a); a colour that is one of the Kelvin tint colours of [2000, 9000] (KelvinConfig.i), and every Kelvin pick (sent as Constant.getTemColorByKelvin(K)[2]): [0x02, ff, ff, ff, 0x01, R, G, B, 0...] (Bytes.o(white, colour)); no Kelvin bytes", note: "Config.w has no H6185; Config.x[0] = Config.Hu -> 4 (COLOR_MODE_0X02) -> Config.J[4] = Config.fu, via ColorModeControllerConfig.c (ColorViewModel.p0 / U). The automation builders agree (h6185/scenes/BleColorCmdBuilder / BleColorTempBuilder -> h6185/ble/SubModeColor.getWriteBytes [0x02, R, G, B, flag, tint R, G, B]). The library builds it as its legacy_02 scheme." }
     specs: { segments: 0, kelvin_range: [2000, 9000], brightness_range: [20, 254], brightness_scaling: "raw, the header slider's own range (BrightnessConfig version 0)", scene_versions: [] }   # one colour piece (ColorPieceConfig.n: H6185 -> 1)
     encryption: none   # no 0xB1 / 0xB2 account lock; plaintext by default
     confidence: high
@@ -7638,18 +7655,20 @@ families:
     confidence: low   # the colour-free capability set is inferred (cloud mode list untraced); the frames are traced
     sources: ["rgblight/Support.java:103 (H7316)", "base2light/pact/newdetail/ShareVM.java:1310-1315 (C3, bundled mode list), 1272-1284 (y4, cloud ModeSupport)", "eco/executeAction/config/ActionConfigManager.java:537 (H7316 automation actions: no colour)", "rgblight/VM4Light.java:893-938 (configColorController, J[2] fallback)"]
 
-  # H7310 / H7312 / H7317 (com.govee.h73101217, "pfdv1/h73101217" routed to the rgblight AcNewDetail). Blocked: colour 0x02.
+  # H7310 / H7312 / H7317 (com.govee.h73101217, "pfdv1/h73101217" routed to the rgblight AcNewDetail). Colour 0x02 (legacy_02).
   - id: h73101217
     category: rgb_strip
     client_profile:
+      color_scheme: legacy_02   # Config.w[H7310 / H7312 / H7317] = rz / sz / tz = 4 -> Config.J[4] = fu; base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:783-797,14090-14094
       mode_color_parse: rgb_all   # VM4Light.v5 H7310Config branch -> ModeParseStrategyConfig.c; split_rgblight/com/govee/rgblight/VM4Light.java:591-598, split_rgblight/com/govee/rgblight/mode/ModeParseStrategyConfig.java:67-77
       power_read: aa01
       power_live: [heartbeat_aa01]
       wire_cipher: runtime
       by_goods_type:
-        "0":   # SKU-routed at goodsType 0; no support: the library builds no 0x02 colour frame
+        "0":   # SKU-routed at goodsType 0; colour legacy_02 (Config.fu)
           models: [H7310, H7312, H7317]
           pacts: any
+          support: app_traced
           capabilities: [power, brightness, rgb]
           zones: []
           account_lock: false
@@ -7666,8 +7685,10 @@ families:
             group (ControllerStrategyConfig.U0, VM4Light.I3). Colour: ColorViewModel.p0 -> ColorModeControllerConfig.c ->
             Config.F -> Config.w[SKU] = 4 (COLOR_MODE_0X02) -> J[4] = Config.fu: RGB 33 05 02 R G B (Bytes.a), a pick equal
             to a Kelvin tint in [2000, 9000] 33 05 02 ff ff ff 01 R G B (Bytes.o). No CCT: Config.EO gives these SKUs
-            {false x5} (supportColorTemperature false) and the default mode list [9, 10, 11] has no illumination mode. Read-back
-            [r, g, b] (ModeParseStrategyConfig.c). Blocked on the 0x02 colour scheme (library gap).
+            {false x5} (supportColorTemperature false) and the default mode list [9, 10, 11] has no illumination mode. fu
+            still runs the Kelvin-tint test, over KelvinConfig version 0 (Config.i[0] = P1 = 0) = [2000, 9000], the family
+            kelvin_range, which serves only that test here. Read-back [r, g, b] (ModeParseStrategyConfig.c). The library
+            sends these frames as its legacy_02 scheme. Not hardware-verified (no colour-version-4 light on the bench).
           doc-ref:
             - split_rgblight/com/govee/h73101217/sku/SubLib.java:22-30
             - split_rgblight/com/govee/h73101217/sku/Sku.java:14
@@ -7686,6 +7707,7 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:214-222,423-428
             - base-classes12/com/govee/common2light/capability/color/ColorInstructionVersion.java:17
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:381-395
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:193-199,328-341,402-417,1287-1315
       wire:
         forms: { f_01: light, f_09: datetime_epoch }
     models: [H7310, H7312, H7317]   # H7310Config.b; split_rgblight/com/govee/rgblight/h7310/H7310Config.java:18
@@ -7695,8 +7717,9 @@ families:
     protocol: { single_packet: true, multi_dialects: ["0xA1", "0xA3"] }
     submodes: { color: "0x02" }
     opcodes:
-      - { name: color_write, cmd: "0x05", payload: "RGB: [0x02, R, G, B, 0...] (Bytes.a); a picked colour that is one of the Kelvin tint colours of [2000, 9000] (KelvinConfig.i): [0x02, ff, ff, ff, 0x01, R, G, B, 0...] (Bytes.o(white, colour))", note: "Config.w[SKU] -> 4 -> Config.J[4] = Config.fu, via ColorModeControllerConfig.c (the unified builder ColorViewModel.p0 tries first); VM4Light.configColorController's J[2] fallback is not reached. No library colour scheme builds sub-mode 0x02." }
-    specs: { segments: 0, brightness_range: [20, 254], brightness_scaling: "raw, the header slider's own range (BrightnessConfig version 0)", scene_versions: [] }
+      - { name: color_write, cmd: "0x05", payload: "RGB: [0x02, R, G, B, 0...] (Bytes.a); a picked colour that is one of the Kelvin tint colours of [2000, 9000] (KelvinConfig.i): [0x02, ff, ff, ff, 0x01, R, G, B, 0...] (Bytes.o(white, colour))", note: "Config.w[SKU] -> 4 -> Config.J[4] = Config.fu, via ColorModeControllerConfig.c (the unified builder ColorViewModel.p0 tries first); VM4Light.configColorController's J[2] fallback is not reached. The library builds it as its legacy_02 scheme." }
+    # kelvin_range: KelvinConfig version 0 (Config.i[0] = P1 = 0), the range of fu's Kelvin-tint test; no CCT control
+    specs: { segments: 0, kelvin_range: [2000, 9000], brightness_range: [20, 254], brightness_scaling: "raw, the header slider's own range (BrightnessConfig version 0)", scene_versions: [] }
     encryption: none
     notify:   # as rgblight: VM4Light.Z3 registers the same parsers on this screen; split_rgblight/com/govee/rgblight/VM4Light.java:822-831
       - { sub_type: "0x11", meaning: "wifi connect result (ShareVM.Z3, DefParser.makeWifiNotifyParser default 17); BLE-only SKUs" }
@@ -7704,18 +7727,20 @@ families:
     confidence: medium
     sources: ["h73101217/sku/SubLib.java:22-30", "rgblight/RgbLightRegistry.java:387 (pfdv1/h73101217 ROUTE_RGB_NEW_DETAIL)", "base2light/pact/newdetail/config/fuc/color/Config.java:783-797 (w -> 4), 14090-14094 (fu)"]
 
-  # H7318 (com.govee.h7318, "pfdv1/h7318" routed to the rgblight AcNewDetail). Blocked: colour 0x02.
+  # H7318 (com.govee.h7318, "pfdv1/h7318" routed to the rgblight AcNewDetail). Colour 0x02 (legacy_02).
   - id: h7318
     category: rgb_strip
     client_profile:
+      color_scheme: legacy_02   # Config.w[H7318] = uz = 4 -> Config.J[4] = fu; base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:798-802,14090-14094
       mode_color_parse: rgb_kelvin_tint   # VM4Light.v5 else branch -> ModeParseStrategyConfig.a; split_rgblight/com/govee/rgblight/VM4Light.java:580-602
       power_read: aa01
       power_live: [heartbeat_aa01]
       wire_cipher: runtime
       by_goods_type:
-        "0":   # SKU-routed at goodsType 0; no support: the library builds no 0x02 colour frame
+        "0":   # SKU-routed at goodsType 0; colour legacy_02 (Config.fu)
           models: [H7318]
           pacts: any
+          support: app_traced
           capabilities: [power, brightness, rgb]
           zones: []
           account_lock: false
@@ -7729,10 +7754,11 @@ families:
             no dialog, so the package's BleProcessor -> ConnectDialog is not the goodsType-0 path. The screen sends no 0xB1 /
             0xB2. Power 33 01, brightness 33 04 raw [20, 254] (BrightnessConfig version 0), keep-alive aa 01 (VM4Light.I3).
             Connect: ControllerStrategyConfig.b1 reads aa 06, aa 07, aa 04, aa 01, the aa 0b delay, two timers, then aa 05.
-            Colour as h73101217: Config.w = 4 -> Config.fu (0x02); no CCT (Config.EO {false x5}). Read-back by
+            Colour as h73101217: Config.w = 4 -> Config.fu (0x02); no CCT (Config.EO {false x5}), but fu's Kelvin-tint test
+            runs over KelvinConfig version 0 = [2000, 9000] (Config.i[0] = P1 = 0), the family kelvin_range. Read-back by
             ModeParseStrategyConfig.a, as the app; should the firmware echo a Kelvin-tint pick (02 ff ff ff 01 R G B, not
-            shown in the app) its Kelvin reads 0x01RR and both report a colour temperature (bench check). Blocked on the 0x02
-            colour scheme.
+            shown in the app) its Kelvin reads 0x01RR and both report a colour temperature (bench check). The library sends
+            these frames as its legacy_02 scheme. Not hardware-verified (no colour-version-4 light on the bench).
           doc-ref:
             - split_rgblight/com/govee/h7318/sku/SubLib.java:22-30
             - split_rgblight/com/govee/h7318/sku/Sku.java:9
@@ -7745,6 +7771,7 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/OpInfo4Detail.java:766-779
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:798-802,5557-5561,14090-14094,9605-9657
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:396-403
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:193-199,328-341,402-417,1287-1315
       wire:
         forms: { f_01: light, f_09: clock }
     models: [H7318]   # H7318Config.b; split_rgblight/com/govee/rgblight/h7318/H7318Config.java:16
@@ -7755,7 +7782,8 @@ families:
     submodes: { color: "0x02" }
     opcodes:
       - { name: color_write, cmd: "0x05", payload: "as h73101217.color_write: RGB [0x02, R, G, B, 0...] (Bytes.a); a Kelvin-tint pick [0x02, ff, ff, ff, 0x01, R, G, B, 0...] (Bytes.o)", note: "Config.w[H7318] = Config.uz = 4 -> Config.J[4] = Config.fu" }
-    specs: { segments: 0, brightness_range: [20, 254], brightness_scaling: "raw, the header slider's own range (BrightnessConfig version 0)", scene_versions: [] }
+    # kelvin_range: KelvinConfig version 0 (Config.i[0] = P1 = 0), the range of fu's Kelvin-tint test; no CCT control
+    specs: { segments: 0, kelvin_range: [2000, 9000], brightness_range: [20, 254], brightness_scaling: "raw, the header slider's own range (BrightnessConfig version 0)", scene_versions: [] }
     encryption: none
     notify:   # as rgblight: VM4Light.Z3 registers the same parsers on this screen; split_rgblight/com/govee/rgblight/VM4Light.java:822-831
       - { sub_type: "0x11", meaning: "wifi connect result (ShareVM.Z3, DefParser.makeWifiNotifyParser default 17); BLE-only SKUs" }
@@ -7763,18 +7791,20 @@ families:
     confidence: medium
     sources: ["h7318/sku/SubLib.java:22-30", "rgblight/ControllerStrategyConfig.java:1194-1250 (b1 read set)", "base2light/pact/newdetail/config/fuc/color/Config.java:798-802 (w -> 4)"]
 
-  # H6165 / H6166 (com.govee.h6165, "pfdv1/h6165" routed to the rgblight AcNewDetail). Blocked: colour 0x02.
+  # H6165 / H6166 (com.govee.h6165, "pfdv1/h6165" routed to the rgblight AcNewDetail). Colour 0x02 (legacy_02).
   - id: h6165
     category: rgb_strip
     client_profile:
+      color_scheme: legacy_02   # Config.w[H6165 / H6166] = nz / oz = 4 -> Config.J[4] = fu; base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:848-857,14090-14094
       mode_color_parse: rgb_kelvin_tint   # VM4Light.v5: H6165Config's test result is discarded, so the else branch -> ModeParseStrategyConfig.a; split_rgblight/com/govee/rgblight/VM4Light.java:580-602
       power_read: aa01
       power_live: [heartbeat_aa01]
       wire_cipher: runtime
       by_goods_type:
-        "0":   # SKU-routed at goodsType 0; no support: the library builds no 0x02 colour frame
+        "0":   # SKU-routed at goodsType 0; colour legacy_02 (Config.fu)
           models: [H6165, H6166]
           pacts: any
+          support: app_traced
           capabilities: [power, brightness, rgb]
           zones: []
           account_lock: false
@@ -7789,9 +7819,11 @@ families:
             01, brightness 33 04 raw [20, 254] (BrightnessConfig version 0 for both; the legacy Sku.getBrightnessRange [20,
             230] for H6166 is not on this screen), keep-alive aa 01 (VM4Light.I3). Connect: ControllerStrategyConfig.Q1 reads
             aa 06, aa 07, aa 04, aa 01, aa 05. Colour: Config.w = 4 (and Hu = 4) -> Config.fu (0x02); no CCT (Config.EO
-            default, index 4 false). Read-back by ModeParseStrategyConfig.a, as the app; should the firmware echo a
-            Kelvin-tint pick (02 ff ff ff 01 R G B, not shown in the app) its Kelvin reads 0x01RR and both report a colour
-            temperature (bench check). Blocked on the 0x02 colour scheme.
+            default, index 4 false), but fu's Kelvin-tint test runs over KelvinConfig version 0 = [2000, 9000]
+            (Config.i[0] = P1 = 0), the family kelvin_range. Read-back by ModeParseStrategyConfig.a, as the app; should
+            the firmware echo a Kelvin-tint pick (02 ff ff ff 01 R G B, not shown in the app) its Kelvin reads 0x01RR and
+            both report a colour temperature (bench check). The library sends these frames as its legacy_02 scheme. Not
+            hardware-verified (no colour-version-4 light on the bench).
           doc-ref:
             - split_rgblight/com/govee/h6165/sku/SubLib.java:22-30
             - split_rgblight/com/govee/h6165/sku/Sku.java:11
@@ -7805,6 +7837,7 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/OpInfo4Detail.java:766-779
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:848-857,10279-10288,5557-5561,14090-14094,9605-9657
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:371-380
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/KelvinConfig.java:193-199,328-341,402-417,1287-1315
       wire:
         forms: { f_01: light, f_09: datetime_epoch }
     models: [H6165, H6166]   # H6165Config.b; split_rgblight/com/govee/rgblight/h6165/H6165Config.java:16
@@ -7815,7 +7848,8 @@ families:
     submodes: { color: "0x02" }
     opcodes:
       - { name: color_write, cmd: "0x05", payload: "as h73101217.color_write: RGB [0x02, R, G, B, 0...] (Bytes.a); a Kelvin-tint pick [0x02, ff, ff, ff, 0x01, R, G, B, 0...] (Bytes.o)", note: "Config.w[H6165 / H6166] = Config.nz / oz = 4 -> Config.J[4] = Config.fu" }
-    specs: { segments: 0, brightness_range: [20, 254], brightness_scaling: "raw, the header slider's own range (BrightnessConfig version 0)", scene_versions: [] }
+    # kelvin_range: KelvinConfig version 0 (Config.i[0] = P1 = 0), the range of fu's Kelvin-tint test; no CCT control
+    specs: { segments: 0, kelvin_range: [2000, 9000], brightness_range: [20, 254], brightness_scaling: "raw, the header slider's own range (BrightnessConfig version 0)", scene_versions: [] }
     encryption: none
     notify:   # as rgblight: VM4Light.Z3 registers the same parsers on this screen; split_rgblight/com/govee/rgblight/VM4Light.java:822-831
       - { sub_type: "0x11", meaning: "wifi connect result (ShareVM.Z3, DefParser.makeWifiNotifyParser default 17); BLE-only SKUs" }
@@ -9982,7 +10016,7 @@ families:
             type 1 (aa 01). Colour: Config.w has no H6184, Config.x[11] = Jx, which returns version 0 (Config.J[0] Yt: the
             h60a6 15 01 frames, 7-piece mask) when hard >= 1.00.01 on a Telink chip and soft >= 1.06.00, or hard >=
             2.01.00, and version 4 otherwise (Config.J[4] fu: Bytes.a 02 R G B, or Bytes.o 02 ff ff ff 01 <tint> for a
-            Kelvin tint colour, whole device), a frame no library scheme builds. Colour-page flags Config.I[11] = oP:
+            Kelvin tint colour, whole device), the library's legacy_02 scheme. Colour-page flags Config.I[11] = oP:
             gradual always on, segment brightness only at hard >= 1.00.01 and soft >= 1.06.00. Config.G and Config.z have
             no 11, so ColorViewModel falls back to the screen VM: gradual 33 a3 <on> (ColorControllerConfig.i, Config.M[0]
             gK, Bytes.w) and segment brightness 15 02 (ColorControllerConfig.j, Config.L[0] JR, Bytes.G); gradual is a

@@ -111,11 +111,13 @@ _FIRMWARE = ((None, None), ("3.03.18", "3.01.10"), ("1.03.00", "3.08.01"), ("1.0
 def test_the_generated_table_is_masters_hand_table_but_for_the_spec_fixes() -> None:
     assert set(_MASTER) <= set(supported_skus())
     # D3's 1.x pact fallback is frozen at these 18; every SKU admitted later is served only at its rows'
-    # pacts, as the app's checkProtocol (Pact.i) serves it. H7017's row is pacts: any, so (99, 99) is one of
-    # them: h7017 Model.t opens its screen with no pact test.
+    # pacts, as the app's checkProtocol (Pact.i) serves it. The rows that are pacts: any have (99, 99) among
+    # them: h7017 Model.t opens its screen with no pact test, nor do the SKU-routed goodsType-0 legacy_02 rows
+    # (the h6105 / h6127 / h6129 / h6185 and h73101217 / h7318 / h6165 Models, and their screens' scans).
     assert set(_MASTER) == _resolve.PACT_FALLBACK_SKUS
     assert [sku for sku in supported_skus(allow_modelled=True) if sku not in _MASTER
-            and profile_for(sku, pact=(99, 99), allow_modelled=True) is not None] == ["H7017"]
+            and profile_for(sku, pact=(99, 99), allow_modelled=True) is not None] == [
+        "H6105", "H6107", "H6129", "H6165", "H6166", "H6185", "H7017", "H7310", "H7312", "H7317", "H7318"]
     # The resolver's value sets (standard library only) are the profile's Literals.
     assert set(_resolve.COLOR_SCHEMES) == set(get_args(ColorScheme))
     assert set(_resolve.RELAY_POWERS) == set(get_args(RelayPower))
@@ -350,6 +352,7 @@ _REFUSED: tuple[tuple[str, str, _Edit, str], ...] = (
      "scene_dialect 'graffiti'"),
     ("h6047", "119", lambda f: _row(f, "119").update(scene_versions=[0, -1]), "scene_versions [0, -1]"),
     ("h60ax", "303", lambda f: _row(f, "303").pop("kelvin_range"), "no kelvin_range"),   # nor in the specs
+    ("h7318", "0", lambda f: f["specs"].pop("kelvin_range"), "a legacy_02 row with rgb needs one"),   # no CCT
     ("h60ax", "303", lambda f: _row(f, "303").update(kelvin_range=[6500, 2700]), "kelvin_range [6500, 2700]"),
     ("h60ax", "303", lambda f: _row(f, "303").update(brightness_range=[0, 300]), "brightness_range [0, 300]"),
     ("h6047", "119", lambda f: _row(f, "119").pop("brightness_range"), "no brightness_range"),

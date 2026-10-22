@@ -635,6 +635,16 @@ def _selftest(*, strict: bool = False) -> int:
           (v5.color.r, v5.color.g, v5.color.b, v5.kelvin) == (0x12, 0x34, 0x56, 0) and not v5.is_cct
           and v5.mask.bits[:24] == [True] * 23 + [False])
 
+    from govee_commands import build_color_legacy
+
+    flag = _gbf().Color02Flag
+    rgb02, tint02 = (parse_frame(build_color_legacy(*args), "tx").body.params.params
+                     for args in ((0x11, 0x22, 0x33), (0xFF, 0xFF, 0xFF, 1, 0xFF, 0xAE, 0x54)))
+    check("build_color_legacy round-trips both Config.fu forms (color_02_write: Bytes.a, Bytes.o)",
+          (rgb02.color.r, rgb02.color.g, rgb02.color.b, rgb02.white_flag) == (0x11, 0x22, 0x33, flag.rgb)
+          and (tint02.color.r, tint02.white_flag) == (0xFF, flag.white_tint)
+          and (tint02.tint.r, tint02.tint.g, tint02.tint.b) == (0xFF, 0xAE, 0x54))
+
     k05 = append_bcc(bytes([0x33, 0x05, 0x15, 0x05, 0x0A, 0x8C]))
     kw = parse_frame(k05, "tx", make_profile(f_15_05="kelvin"))
     check("33 05 15 05 0a 8c (op15_kelvin, H60A0) reads 2700 K, big-endian",
