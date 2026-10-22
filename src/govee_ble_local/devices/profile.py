@@ -431,12 +431,14 @@ class DeviceProfile:
     light_switch_power: bool = field(default=False, kw_only=True)
     """The whole-device power is the H6057 header's light switch: :meth:`~.device.Device.set_power`,
     ``turn_on`` and ``turn_off`` write ``33 30 <1 / 0>`` (the spec's ``cmd_30_write`` under form_30
-    ``light_switch``: ``H6057DetailVM.h5``, ``BleProtocol.command_light_switch``) in place of the ``33 01``
-    main switch, whose state :attr:`detail_power_read` reads back. It switches the light alone, so
-    ``turn_off`` leaves the white-noise speaker playing, as the screen's light switch does (the main switch,
-    which would stop it too, is never sent). A devices.yaml row's ``power_write: light_switch`` (h6057 104,
-    the user's decision of 2026-10-22). The whole-device power frame only: no zone or relay frame goes with
-    it.
+    ``light_switch``: ``H6057DetailVM.h5``, ``BleProtocol.command_light_switch``), the switch whose state
+    :attr:`detail_power_read` reads back, in place of the ``33 01`` main switch. It switches the light alone,
+    so ``turn_off`` leaves the white-noise speaker playing, as the screen's light switch does (the main
+    switch, which would stop it too, is never sent). That read is its only read-back: the advertised switch
+    byte is the device-list card's, whose toggle is the main switch, so no advertisement's on/off is taken
+    for it (:meth:`~.device.Device.advertised_on` is None). A devices.yaml row's ``power_write:
+    light_switch`` (h6057 104, the user's decision of 2026-10-22). The whole-device power frame only: no zone
+    or relay frame goes with it.
     False (the default): the ``33 01`` main switch (or a zoned fixture's ``33 30`` per zone, or a plug's
     relay frame)."""
     session: SessionMode = field(default="held", kw_only=True)

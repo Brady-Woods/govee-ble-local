@@ -35,7 +35,7 @@ model, from which the shipped readers are generated).
 - **`Device.advertised_on(advertisement_data) -> bool | None`: an advertisement's on/off, decoded as this device
   decodes it.** A light is on for a switch byte of 1, a plug for any bit of its profile's `advert_on_mask`. The
   result is None when the advertisement carries no switch byte (no Govee manufacturer data, a header below 2, too
-  short). It is passive: it leaves the state as it is and ignores the window after a command or read in which
+  short), and always on the H6057, whose power is its light switch (below). It is passive: it leaves the state as it is and ignores the window after a command or read in which
   `ingest_advertisement` ignores the advertised on/off. `ingest_advertisement` now decodes through it.
   - **Why a Device method:** this mirrors the app's split. `BleUtil.parseBleBroadOnOff` reads the raw byte the
     same way for every device (the overload at `:719-744` for lights, the one at `:700-717` for plugs), and each
@@ -364,6 +364,13 @@ model, from which the shipped readers are generated).
     `33 30 01` / `33 30 00` (`H6057DelegateHeader.s0` -> `H6057DetailVM.h5`:
     `ControllerSingle.c(BleProtocol.command_light_switch, [1 / 0])`), in place of the `33 01` main switch, so
     the power and its read-back are the same switch in every state.
+  - **No advertised on/off:** the aa 34 read is the power's only read-back. `Device.advertised_on` is None on
+    this profile, so `ingest_advertisement` folds no on/off into `is_on` (it still learns the pact and the
+    encrypt flag). The device-list card reads the advert's switch byte (`AbsBaseBleModel.z`) and its toggle
+    writes the `33 01` main switch (`AbsLightModel4BleIot.v0` -> `AbsDeviceModel4BleIot.l`); the control
+    screen never reads it. The app doesn't settle which switch the byte carries (the screen also stores its
+    light flag in the card's switch cache, `AbsAcLightDetail.Q2`), and if it is the main switch, white noise
+    playing with the light closed would read on until the next poll.
   - **For integrators:** the light switch drives the light alone. `turn_off` closes the light and leaves the
     white-noise speaker playing, as the screen's light switch does; the library never sends the main switch
     (`33 01 00` would stop white noise too: `switchTrigger`, `D5`). White noise, its volume and the other

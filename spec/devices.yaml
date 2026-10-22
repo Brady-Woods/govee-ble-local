@@ -11093,9 +11093,14 @@ families:
             "Light switch 33 30"; power_write light_switch): set_power, turn_on and turn_off write 33 30 <1 / 0>, and
             power_read aa34_detail reads its state, the light flag (govee_state device_detail light_open), from aa 34
             on each poll, after aa 04, so the power and its read-back are the same switch and the screen's on / off in
-            every state. The library never sends the main switch's 33 01: turn_off closes the light and leaves white
-            noise playing, as the light switch does, and with white noise playing and the light closed the light
-            reads off, as the screen shows it. Brightness and colour are sent whatever the light flag (the library
+            every state. That read is the power's only read-back: the library takes no on/off from the advertised
+            switch byte here (Device.advertised_on is None). The device-list card reads that byte (AbsBaseBleModel.z)
+            and its toggle writes the 33 01 main switch (AbsLightModel4BleIot.v0 -> AbsDeviceModel4BleIot.l), the
+            control screen never reads it, and the app doesn't settle which switch it carries (the screen also stores
+            its light flag in the card's switch cache, AbsAcLightDetail.Q2); if it is the main switch, white noise
+            playing would read as the light on. The library never sends the main switch's 33 01: turn_off closes the
+            light and leaves white noise playing, as the light switch does, and with white noise playing and the
+            light closed the light reads off, as the screen shows it. Brightness and colour are sent whatever the light flag (the library
             doesn't hide them while it is off; turn_on, unless power=False, sends the light switch before them).
             Connect (Compose4InfoBleIotH6057): aa 06, the time sync, aa 07, timer, wake-up and sleep reads (not listed),
             aa 04, aa 34, aa 05. No 33 b2 (no Controller4Secret on this path). Heartbeat aa 00 (I3 false; J3 empty).
@@ -11124,6 +11129,10 @@ families:
             - split_hollowlamp/com/govee/h6057/origin/newDetail/H6057Info4Detail.java:127-143,208-210,414-456,601-607
             - split_hollowlamp/com/govee/h6057/origin/newDetail/H6057DelegateHeader.java:183-213,505-511,567-592,713-744,930-944
             - split_hollowlamp/com/govee/h6057/origin/newDetail/H6057DelegateClose.java:64-82
+            - base-classes3/com/govee/kt/ui/device/base/AbsBaseBleModel.java:393-400
+            - base-classes3/com/govee/kt/ui/device/base/AbsLightModel4BleIot.java:253-257,575-603
+            - base-classes3/com/govee/kt/AbsDeviceModel4BleIot.java:72-88
+            - base-classes11/com/govee/base2light/pact/newdetail/AbsAcLightDetail.java:314-318,676-680
             - base-classes11/com/govee/base2light/pact/newdetail/content/success/ViewConnectSuccess.java:97-108,111-139,141-173
             - split_hollowlamp/com/govee/h6057/origin/ble/BleProtocol.java:7
             - base-classes12/com/govee/base2light/util/ParseUtils.java:55-57,72-74

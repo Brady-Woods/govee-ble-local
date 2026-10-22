@@ -729,7 +729,15 @@ class Device:
         (``AbsBaseBleModel.z:393-397``), a plug for any bit of its profile's
         :attr:`.DeviceProfile.advert_on_mask` (h5080 ``Model.z:254-265``, ``Model4Plug2.z:269-290``). Read
         from the Govee manufacturer data whatever the advertised name. None also for an advertisement without
-        manufacturer data, or whose Govee broadcast has no switch byte (a header below 2, too short)."""
+        manufacturer data, or whose Govee broadcast has no switch byte (a header below 2, too short).
+
+        Always None on a :attr:`.DeviceProfile.light_switch_power` profile (H6057): its power is the light
+        switch, which only the ``aa 34`` read reads back. The switch byte is the device-list card's
+        (``AbsBaseBleModel.z``), whose toggle writes the ``33 01`` main switch (``AbsLightModel4BleIot.v0`` ->
+        ``AbsDeviceModel4BleIot.l:72-88``), and the control screen never reads it, so nothing shows it to be
+        the light's state rather than the main switch's (on while white noise plays)."""
+        if self.profile.light_switch_power:
+            return None
         mfg = getattr(advertisement_data, "manufacturer_data", None)
         if not mfg:
             return None
@@ -739,10 +747,10 @@ class Device:
         """Update passive state from a BLE advertisement — no connection needed.
 
         Reads on/off from the Govee manufacturer data (:meth:`advertised_on`, decoded with the profile's
-        ``advert_on_mask`` on the plugs), the advertised pact (:attr:`pact`) and the encrypt flag, all
-        whatever the advertised name. The flag picks the command channel of the next session, never of the
-        one that is up, and only when every Govee pact entry agrees on it (:meth:`_learn_cipher`); a BGC
-        version of 1 or 2 still overrides it (:attr:`encryption`).
+        ``advert_on_mask`` on the plugs; none on the H6057's light switch), the advertised pact (:attr:`pact`)
+        and the encrypt flag, all whatever the advertised name. The flag picks the command channel of the
+        next session, never of the one that is up, and only when every Govee pact entry agrees on it
+        (:meth:`_learn_cipher`); a BGC version of 1 or 2 still overrides it (:attr:`encryption`).
         Returns True if `state.is_on` changed (so a caller can notify selectively). The callbacks also
         fire when the advertised :attr:`pact` changes: once per advertisement, with the pact already
         stored, whether or not the on/off changed with it. A change of the flag fires nothing.
