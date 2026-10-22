@@ -1,10 +1,12 @@
 """H6061 plan (Glide Hexa light panels, ``cubelight`` split), phase 1: whole-device control.
 
 The H6061 profile was modelled from the decompiled Govee Home app without hardware. The panel count
-is the library default of 23, which is what the app uses when no layout is stored; a smaller
-installation may differ from the app's layout-sized writes (``Device.set_segment_count`` sets the
-size). The ``segments`` entry in each read-back is the per-group colour (``aa a5`` group replies);
-the raw ``aa 05`` and ``aa a5`` frames are in the frame capture.
+is the library default of 23: a full layout's count, and the app's read-back default when no layout
+is stored (``Support.getBulbStringMaxNum``). The app sizes its writes from the stored layout, and
+with none stored writes one panel (mask ``01 00``), so a smaller installation may differ
+(``Device.set_segment_count`` sets the size). The ``segments`` entry in each read-back is the
+per-group colour (``aa a5`` group replies); the raw ``aa 05`` and ``aa a5`` frames are in the frame
+capture.
 """
 from __future__ import annotations
 
@@ -50,6 +52,6 @@ PLAN = register_plan(SkuPlan(
     build_steps=build_steps,
     snapshot_keys=(*DEFAULT_SNAPSHOT_KEYS, "segments"),
     intro="H6061: power, brightness, whole-device RGB (one frame over all 23 panels: every panel must show "
-          "the colour) and colour temperature at 2000 / 4000 / 6500 / 9000 K. Panel count 23 (the app's "
-          "default). The original colour is restored as one colour on all panels.",
+          "the colour) and colour temperature at 2000 / 4000 / 6500 / 9000 K. Panel count 23 (a full "
+          "layout's). The original colour is restored as one colour on all panels.",
 ))

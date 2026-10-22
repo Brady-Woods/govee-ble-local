@@ -152,13 +152,16 @@ def test_color_temp_15_h60a6_up_to_16_segments() -> None:
 def test_h6061_rgb_and_color_temp() -> None:
     # Config.Zt: one frame each, Bytes.l (an RGB pick, Kelvin 0) and Bytes.u (CCT), with the app's mask width
     # (makeSelectedTwoBytes up to 16 positions, else BleUtils.X).
+    def mask_of(n: int) -> tuple[int, int]:
+        return (1 << n) - 1, 2 if n <= 16 else -(-n // 8)
+
     r = _rng(5)
     for panels in range(1, b.H6061_MAX_PANELS + 1):
-        n = b.H6061_MAX_PANELS if panels == 1 else panels   # the library writes a one-panel layout as 23
-        mask, width = (1 << n) - 1, 2 if n <= 16 else -(-n // 8)
         rgb = _not_tint(r)
+        mask, width = mask_of(panels)
         assert b.color_rgb_frames(*rgb, "h6061", panels) == [
             C.build_op15_color_v5(*rgb, mask, mask_bytes=width)]
+        mask, width = mask_of(b.H6061_MAX_PANELS if panels == 1 else panels)   # CCT: one panel written as 23
         for kelvin in range(2000, 9001, 500):
             assert b.color_temp(kelvin, "h6061", panels) == C.build_op15_color_v5(
                 *tint_for_kelvin(kelvin), mask, kelvin=kelvin, mask_bytes=width)
@@ -378,7 +381,6 @@ _ENUM_CONSTANTS: dict[str, tuple[int, str]] = {
     "SUB_SCENE": (0x04, "SubMode.scene"), "SUB_COLOR_15": (0x15, "SubMode.color_rgbic_15"),
     "SUB_COLOR_0D": (0x0D, "SubMode.color_cct_0d"), "SUB_COLOR_0B": (0x0B, "SubMode.color_rgbic_0b"),
     "OP15_SET_COLOR": (0x01, "Op15.set_color"), "OP15_SET_BRIGHTNESS": (0x02, "Op15.set_brightness"),
-    "OP15_SET_GROUP_COLOR": (0x04, "Op15.set_color_group"),
 }
 
 

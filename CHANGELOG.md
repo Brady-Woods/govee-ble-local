@@ -90,7 +90,11 @@ model, from which the shipped readers are generated).
   `Config.J[5]` = `Config.Zt` -> `Bytes.l`: one `33 05 15 01 R G B 00 00 <mask>` frame, the spec's
   `op15_color` kelvin form with Kelvin 0, over the same panel mask as the colour-temperature frame (H6061:
   `ff ff 7f`). `set_rgb` and `turn_on(rgb=)` now send that frame; colour temperature, an RGB pick that is a
-  Kelvin tint colour, and every other H6061 frame are unchanged. `build.color_rgb` now builds the `h6061` frame
+  Kelvin tint colour, and every other H6061 frame are unchanged. At an explicit one-panel count
+  (`Device.set_segment_count(1)`) the RGB frame is the app's too, mask `01 00` (the app writes
+  `max(layout, 1)` panels, `CubeColorModeV2.realMyColorPiece`); the colour-temperature frame there still
+  writes every panel, as in 1.6.1, where the app's `Bytes.u` writes the one: a known divergence, left for
+  the user to decide, that no built-in profile reaches. `build.color_rgb` now builds the `h6061` frame
   (it raised GoveeBleNotSupported) and takes `pieces=` as `color_temp` does; `build.color_rgb_frames` returns
   one frame on every scheme. Source-modelled: no H6061 is on the bench, so this is checked against the app's
   code only.

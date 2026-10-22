@@ -411,8 +411,6 @@ def _op15_color_frame(form: int, rgb: tuple[int, int, int], mask: int, positions
 # Support.getBulbStringMaxNum(51) = 23 on the H6061, the default. The 15 04 group frames (Bytes.m) are the
 # colour-stripe path (ColorViewModel.O -> ColorModeControllerConfig.k), which the library doesn't send.
 H6061_MAX_PANELS: Final = 23
-H6061_MASK_BYTES: Final = 3          # the H6061's 23 panels round up to 24 positions
-OP15_SET_GROUP_COLOR: Final = int(_C.Op15.set_color_group)   # 0x04; Bytes.m: [0x15, 0x04, group, RGB x<=4]
 H6061_KELVIN_RANGE: Final = (2000, 9000)   # KelvinConfig: no entry for 51 -> version 0
 
 # Segment count a whole-device builder assumes when the caller passes none (``Device`` always passes
@@ -427,37 +425,41 @@ def _segments_or_default(scheme: ColorScheme, segments: int | None) -> int:
     return segments if segments is not None else _DEFAULT_SEGMENTS.get(scheme, 0)
 
 
-def _h6061_panels(panels: int | None, pieces: int | None) -> tuple[int, int]:
+def _h6061_panels(panels: int | None, pieces: int | None, *, expand_one: bool) -> tuple[int, int]:
     """``(panels written, mask positions)`` for a layout of ``panels`` panels (None: the whole device) on a
     device of ``pieces`` (None: the H6061's 23).
 
-    More than ``pieces`` is refused (the profile's count is a full layout). A one-panel layout is written as
-    ``pieces`` panels, the single-colour expansion of the colour-stripe path (``ColorPieceConfig.Config.s0``);
-    the app's whole-device pick writes the one panel (``max(L, 1)``), which only an explicit one-panel count
-    reaches here. The mask spans ``pieces`` rounded up to whole bytes (23 pieces: 24 positions); past the
-    panels written it is zero, as the app's shorter ``BleUtils.X`` / two-byte mask is followed by the zero
-    fill."""
+    More than ``pieces`` is refused (the profile's count is a full layout). The panels written are the app's
+    posSet, ``max(L, 1)`` (``CubeColorModeV2.realMyColorPiece``), so one panel is mask ``01 00``.
+    ``expand_one`` writes a one-panel layout as ``pieces`` panels instead, the colour-stripe path's
+    single-colour expansion (``ColorPieceConfig.Config.s0``): the CCT frames keep it as admitted at 1.6.1
+    (decision 9 approves the RGB frame only), a known divergence from ``Bytes.u`` that only an explicit
+    one-panel count reaches. The mask spans ``pieces`` rounded up to whole bytes (23 pieces: 24 positions);
+    past the panels written it is zero, as the app's shorter ``BleUtils.X`` / two-byte mask is followed by
+    the zero fill."""
     j = H6061_MAX_PANELS if pieces is None else pieces
     n = j if panels is None else panels
     _check_range("panel count", n, 1, j)
-    return (j if n == 1 else n), 8 * ceil_div(j, 8)
+    return (j if expand_one and n == 1 else n), 8 * ceil_div(j, 8)
 
 
-def _h6061_color(rgb: tuple[int, int, int], kelvin: int, panels: int | None, pieces: int | None) -> bytes:
+def _h6061_color(rgb: tuple[int, int, int], kelvin: int, panels: int | None, pieces: int | None, *,
+                 expand_one: bool = False) -> bytes:
     """Whole-device ``33 05 15 01 <rgb> <kelvin u2be> <mask>`` (``Config.Zt``), the first ``panels`` mask
     bits set, LSB first (23 panels: ``ff ff 7f``): ``Bytes.l`` (an RGB pick, Kelvin 0) or ``Bytes.u`` (CCT,
     the tint in the colour slot, not ``ff ff ff``), over the posSet of :func:`_h6061_panels`."""
-    n, positions = _h6061_panels(panels, pieces)
+    n, positions = _h6061_panels(panels, pieces, expand_one=expand_one)
     return _op15_color_frame(_FORM_KELVIN, rgb, all_segments_mask(n), positions, kelvin)
 
 
 def _h6061_color_temp(kelvin: int, panels: int | None, tint: tuple[int, int, int] | None = None,
                       pieces: int | None = None) -> bytes:
-    """Whole-device CCT: ``Config.Zt`` -> ``Bytes.u(kelvin, posSet, tint)`` (:func:`_h6061_color`). ``tint``
-    defaults to the app's tint for ``kelvin`` (the slider path); an RGB pick that is itself a tint colour
-    passes that exact colour (``Zt`` writes the picked colour, whichever of the Kelvin step's two colours it
-    is)."""
-    return _h6061_color(tint if tint is not None else tint_for_kelvin(kelvin), kelvin, panels, pieces)
+    """Whole-device CCT: ``Config.Zt`` -> ``Bytes.u(kelvin, posSet, tint)`` (:func:`_h6061_color`), a
+    one-panel layout written as every panel (:func:`_h6061_panels` ``expand_one``). ``tint`` defaults to
+    the app's tint for ``kelvin`` (the slider path); an RGB pick that is itself a tint colour passes that
+    exact colour (``Zt`` writes the picked colour, whichever of the Kelvin step's two colours it is)."""
+    return _h6061_color(tint if tint is not None else tint_for_kelvin(kelvin), kelvin, panels, pieces,
+                        expand_one=True)
 
 
 # Schemes whose colour screen turns an RGB pick that is exactly a Kelvin tint colour into a CCT write
