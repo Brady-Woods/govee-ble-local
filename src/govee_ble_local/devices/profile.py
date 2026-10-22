@@ -439,6 +439,14 @@ class DeviceProfile:
     :attr:`capabilities` POWER and BRIGHTNESS only and no :attr:`zones` (GoveeBleInvalidValue otherwise): the
     card sends nothing else, and a scene upload or a bar's read-modify-write would hold a link past its
     session."""
+    segment_brightness: bool = field(default=True, kw_only=True)
+    """With :attr:`~..models.Capability.SEGMENTS`: the screen's colour page offers segment brightness, the
+    ``33 05 15 02`` slider (a devices.yaml row's ``color_functions`` with ``segment_brightness``, or none
+    traced: the 1.x rule). False where the page hides it (h61d3 202, H61D2-H61D6: ``Config.I[202][3]`` false,
+    so ``DelegateColorV2Part.Z0`` leaves the slider unwired) or the colour scheme has no such frame:
+    :meth:`~.device.Device.set_segment_brightness` then raises GoveeBleNotSupported before any I/O, and
+    :attr:`~.device.Device.supports_segment_brightness` is False. Segment colour is unaffected. True: the
+    default, every SKU before 1.8.0, and a profile built by hand."""
     status_read_by_pact: tuple[tuple[tuple[int, int], tuple[int, ...]], ...] = field(default=(), kw_only=True)
     """``readback="status"``: the 0xAC status reads that replace :attr:`status_read` on an advertised pact,
     ``((pact_type, pact_code), types)`` entries (command codes, in request order; a devices.yaml row's
@@ -481,6 +489,8 @@ class DeviceProfile:
         if self.white_type != DEFAULT_WHITE_TYPE and self.color_scheme != "h60a6":
             raise GoveeBleInvalidValue(f"{where}: white_type={self.white_type!r} on color_scheme="
                                        f"{self.color_scheme!r} (only the h60a6 frame has the white slot)")
+        if not isinstance(self.segment_brightness, bool):
+            raise GoveeBleInvalidValue(f"{where}: segment_brightness={self.segment_brightness!r} (a bool)")
         if self.kelvin_with_brightness and not self.whole_device_kelvin:
             raise GoveeBleInvalidValue(f"{where}: kelvin_with_brightness without whole_device_kelvin (the "
                                        "illumination tab writes every piece)")

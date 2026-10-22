@@ -2393,12 +2393,13 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/BrightnessConfig.java:198-212,251-259
             - split_h61d3/com/govee/h61d3/adjustNew/ConfigDetail.java:63-106,211-224
             - split_h61d3/com/govee/h61d3/add/PairViewModel.java:314,394
-        "202":   # H61D2 / H61D3 / H61D4 / H61D5 / H61D6, the adjust/newdetail screen (VM4LightH61d3); modelled: segments withheld (disputed 2026-10-21)
+        "202":   # H61D2 / H61D3 / H61D4 / H61D5 / H61D6, the adjust/newdetail screen (VM4LightH61d3): segment colour, no segment brightness, whole-strip Kelvin
           models: [H61D2, H61D3, H61D4, H61D5, H61D6]
           pacts: ["1,1", "2,1"]
-          support: modelled
-          capabilities: [power, brightness, rgb, color_temp, gradual]
-          color_functions: [color_temperature]
+          support: app_traced
+          capabilities: [power, brightness, rgb, color_temp, segments, gradual]
+          color_temp_control: whole_device   # ColorModeH61d3.canClickColorTem: every one of the 14 pieces, whatever is selected
+          color_functions: [color_temperature]   # Config.I[202] = AN {T, T, T, F, T}: no segment-brightness slider
           zones: []
           account_lock: false
           scene_dialect: untraced
@@ -2418,10 +2419,13 @@ families:
             T, T, F, T} (read by DelegateColorV2.C1): gradual and colour temperature; I[3] = false hides
             groupRelativeBrightness and leaves its slider unwired (DelegateColorV2Part.Z0 / t0), so the screen never sends
             33 05 15 02, though the builder exists (Config.z = 0 -> Config.L[0] = JR -> Bytes.G). The colour-temperature
-            pick always covers all 14 pieces (ColorModeH61d3.canClickColorTem); the colour pick masks the selected pieces
-            (canClickColor). MODELLED (disputed 2026-10-21): the library offers segment brightness and masked Kelvin on any
-            row with segments, and the resolver ties segment colour to segment brightness, so segments is left out and only
-            whole-device control is served; the screen's segment colour pick is the gap (segment-functions-split).
+            pick always covers all 14 pieces (ColorModeH61d3.canClickColorTem: color_temp_control whole_device, so the
+            library refuses a Kelvin on some segments); the colour pick masks the selected pieces (canClickColor), a pick
+            that is a Kelvin tint colour going out as the partial Bytes.r frame (ColorModeControllerConfig.k groups the
+            pieces by colour -> Config.Yt). So the row has segments, and its color_functions [color_temperature] turns
+            segment brightness off (DeviceProfile.segment_brightness: set_segment_brightness raises, no 15 02 is sent).
+            Promoted from modelled (disputed 2026-10-21, when the library offered segment brightness and masked Kelvin
+            on every row with segments) to app_traced: every frame it sends is the screen's.
             Gradual: Config.G = 0 -> Bytes.w = 33 a3 <on>, read at connect. Kelvin: KelvinConfig 202 -> version 2 =
             [2700, 6500]; brightness version 1. Mode: aa 05 through H61d3NewInfo4Detail.R, the SubMode4Color 0x15 parse
             (kelvin_15). Heartbeat aa 01 (VM4LightH61d3.I3); ee 30 switch push. Not listed: the aa 41 power-off-memory and

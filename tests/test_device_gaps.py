@@ -239,6 +239,17 @@ def test_segment_color_temp_unsupported_scheme_is_not_supported() -> None:
     with pytest.raises(GoveeBleNotSupported, match=r"^H6008: "):
         asyncio.run(d.set_segment_color_temp([0], 4000))  # h6006 CCT has no segment mask
     assert _sent(d) == []
+    # H61D2-H61D6 (h61d3 202): segment colour, but the colour page hides the segment-brightness slider
+    # (Config.I[202][3] false) and its Kelvin pick sets every piece, so neither goes out.
+    h61d2 = _dev("H61D2")
+    assert Capability.SEGMENTS in h61d2.capabilities and not h61d2.supports_segment_brightness
+    with pytest.raises(GoveeBleNotSupported, match=r"^H61D2: no segment brightness"):
+        asyncio.run(h61d2.set_segment_brightness([0], 50))
+    with pytest.raises(GoveeBleNotSupported, match=r"^H61D2: colour temperature is whole-device only"):
+        asyncio.run(h61d2.set_segment_color_temp([0], 4000))
+    assert _sent(h61d2) == [] and _dev("H60A6").supports_segment_brightness
+    asyncio.run(h61d2.set_segment_rgb([0, 13], (1, 2, 3)))
+    assert _sent(h61d2)[0][:7].hex() == "33051501010203" and _sent(h61d2)[0][12:14] == bytes([0x01, 0x20])
 
 
 def test_set_zone_rgb_sends_zone_mask_and_updates_segments() -> None:

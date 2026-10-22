@@ -437,7 +437,7 @@
       "minItems": 1,
       "uniqueItems": true,
       "items": { "enum": ["power", "brightness", "rgb", "color_temp", "segments", "scenes", "gradual"] },
-      "description": "The controls the goodsType's control screen offers on the BLE path, by control whichever page offers it (color_functions, where traced, is the colour page's own flag set and agrees with it): gradual = the 0xA3 gradual flag, segments = per-piece colour. The family specs and the row's layered facts give each one's range."
+      "description": "The controls the goodsType's control screen offers on the BLE path, by control whichever page offers it (color_functions, where traced, is the colour page's own flag set and agrees with it): gradual = the 0xA3 gradual flag, segments = per-piece colour (and segment brightness where color_functions has it, colorFunctions). The family specs and the row's layered facts give each one's range."
     },
     "clientModel": {
       "type": "object",
@@ -492,7 +492,7 @@
       "type": "array",
       "uniqueItems": true,
       "items": { "type": "string", "enum": ["segment_brightness", "color_temperature"] },
-      "description": "The colour page's segment-brightness and colour-temperature flags, the 4th and 5th of the app's five normal-function flags (color Config.e, base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:551-560): a listed name is on, an unlisted one off; absent = not traced. segment_brightness = the relative-brightness slider (its frame is the family's segment_brightness_write); color_temperature = the Kelvin slider over kelvin_range (the colour write's CCT form)."
+      "description": "The colour page's segment-brightness and colour-temperature flags, the 4th and 5th of the app's five normal-function flags (color Config.e, base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Config.java:551-560): a listed name is on, an unlisted one off; absent = not traced. segment_brightness = the relative-brightness slider (its frame is the family's segment_brightness_write); color_temperature = the Kelvin slider over kelvin_range (the colour write's CCT form). The library sends segment brightness (33 05 15 02) on a row with segments only where segment_brightness is listed, or color_functions is absent (the 1.x rule), and the colour scheme has that frame (h60a6); listed without segments on such a scheme is refused."
     },
     "modeColorStrategy": {
       "type": "object",

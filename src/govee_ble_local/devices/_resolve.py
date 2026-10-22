@@ -74,11 +74,14 @@ the row lacks fails the build: nothing defaults silently.
   of it (``CategoriesConfig.getDefIcNum``), and no count is derived from it.
 - A row's colour scheme drops the capabilities it has no frame for (:data:`SCHEME_LACKS`), but only a
   scheme the row names itself: a family default that would drop one raises. A traced ``color_functions``
-  agrees with the capabilities: ``color_temperature`` with ``color_temp``, and ``segment_brightness`` with
-  ``segments`` only where the row's scheme has a segment-brightness frame
-  (:data:`SEGMENT_BRIGHTNESS_SCHEMES`). Elsewhere the flag alone calls for nothing: the slider has no frame
-  the library could send (H6071 / H6075's one-piece kelvin_v9 lamps, with no relative-brightness version;
-  h61a8's 0x0b segment colour). ``rgb``, ``color_temp`` or
+  agrees with the capabilities: ``color_temperature`` with ``color_temp``, and ``segment_brightness`` needs
+  ``segments`` where the row's scheme has a segment-brightness frame (:data:`SEGMENT_BRIGHTNESS_SCHEMES`).
+  Elsewhere the flag alone calls for nothing: the slider has no frame the library could send (H6071 /
+  H6075's one-piece kelvin_v9 lamps, with no relative-brightness version; h61a8's 0x0b segment colour). A
+  row with ``segments`` offers segment brightness (``DeviceProfile.segment_brightness``, the ``15 02``
+  slider) only where its scheme has that frame and its colour page the slider: a traced
+  ``color_functions`` without ``segment_brightness`` turns it off (h61d3 202: ``Config.I[202][3]`` false
+  hides it), and an untraced one keeps the 1.x rule (on); segment colour stays. ``rgb``, ``color_temp`` or
   ``segments`` on a relay row raises (the library resolves no colour scheme or Kelvin range for a plug), and
   elsewhere they need a colour scheme. ``color_temp`` needs a Kelvin range, and so does ``rgb`` under every
   scheme with a colour-temperature mode (all but h61a8, :data:`SCHEME_LACKS`): its RGB writer runs the app's
@@ -1007,7 +1010,7 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
     page_kelvin = control != "illumination"
     if cf is not None and ((page_kelvin and ("color_temperature" in cf) != ("color_temp" in row_caps))
                            or (scheme in SEGMENT_BRIGHTNESS_SCHEMES
-                               and ("segment_brightness" in cf) != ("segments" in row_caps))):
+                               and "segment_brightness" in cf and "segments" not in row_caps)):
         fail(f"color_functions {list(cf)} disagree with capabilities {sorted(row_caps)}")
     dialect = row.get("scene_dialect")
     if "scenes" in caps and dialect not in (*_DIALECTS, "untraced"):
@@ -1220,6 +1223,10 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
         out["white_type"] = white
     if control is not None:   # neither the tab nor a whole_device page writes a Kelvin on part of the device
         out["whole_device_kelvin"] = True
+    # Segment brightness (15 02): the scheme's frame and the colour page's slider (untraced: the 1.x rule).
+    if "segments" in caps and not (scheme in SEGMENT_BRIGHTNESS_SCHEMES
+                                   and (cf is None or "segment_brightness" in cf)):
+        out["segment_brightness"] = False
     if control == "illumination":
         out["kelvin_with_brightness"] = True
     if status_read is not None:

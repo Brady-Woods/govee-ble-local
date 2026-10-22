@@ -324,6 +324,14 @@ class Device:
         return self.profile.capabilities
 
     @property
+    def supports_segment_brightness(self) -> bool:
+        """Whether :meth:`set_segment_brightness` can send: the profile has
+        :attr:`~govee_ble_local.models.Capability.SEGMENTS` and its screen the segment-brightness slider
+        (:attr:`.DeviceProfile.segment_brightness`). A caller offering brightness per segment or zone checks
+        it: H61D2-H61D6 have segment colour without segment brightness."""
+        return Capability.SEGMENTS in self.profile.capabilities and self.profile.segment_brightness
+
+    @property
     def zones(self) -> tuple[Zone, ...]:
         """The profile's independently-switchable zones (empty for unzoned devices)."""
         return self.profile.zones
@@ -1325,11 +1333,14 @@ class Device:
         as in :meth:`set_segment_rgb`). The app's segment slider runs 1..100 (``ViewColorMode.t0:232-235``
         / ``DelegateColorV2Part.t0:459-462``: ``setProgressRange({1, 100})``).
 
-        Raises GoveeBleNotSupported without SEGMENTS or for colour schemes without per-segment
-        brightness (the h61a8 0x0b scheme); GoveeBleInvalidValue for a non-int ``pct`` or a bad index;
-        GoveeBleError if a device that reports its own segment count (H6062) does not answer
-        that read."""
+        Raises GoveeBleNotSupported without SEGMENTS, where the screen has no segment-brightness slider
+        (:attr:`.DeviceProfile.segment_brightness`: H61D2-H61D6; :attr:`supports_segment_brightness`), or for
+        colour schemes without per-segment brightness (the h61a8 0x0b scheme); GoveeBleInvalidValue for a
+        non-int ``pct`` or a bad index; GoveeBleError if a device that reports its own segment count (H6062)
+        does not answer that read."""
         self._require(Capability.SEGMENTS)
+        if not self.profile.segment_brightness:
+            raise GoveeBleNotSupported(f"{self._sku}: no segment brightness on this control screen")
         level = _check_pct(pct)
         ticket = self._ticket()
         with self._conn.hold_heartbeat():   # H6062's aa 41 read and its write: no beat between
