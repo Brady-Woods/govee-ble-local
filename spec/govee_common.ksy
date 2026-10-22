@@ -495,10 +495,14 @@ enums:
         the bulb-string count: AA 0F read (reply govee_state light_num_state),
         which the h7020 bulb-string screens make at connect and size their colour
         pieces from; 33 0F writes it from the string-count setting
+        (NewSettingActivity.T3: ControllerSegment, one byte, the string count picked)
       doc-ref:
         - base-classes10/com/govee/base2light/ble/controller/BleProtocolConstants.java:178
         - split_h7050/com/govee/h7020/ble/Controller4BulbNum.java:24-27,43-46,57-59
         - split_h7050/com/govee/h7020/newDetail/NewDetailVM.java:678-702,1432-1463
+        - split_h7050/com/govee/h7020/newDetail/NewSettingActivity.java:357-382,579-585
+        - split_h7050/com/govee/h7020/newDetail/widget/SegmentNumSettingDialog.java:126-128,207-213
+        - base-classes11/com/govee/base2light/kt/general_controller/ControllerSegment.java:61-63,73-75
         - H6047 handler @0x01004ca0
     0x11:
       id: sleep

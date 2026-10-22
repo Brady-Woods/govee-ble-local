@@ -716,14 +716,16 @@ model, from which the shipped readers are generated).
   govee_common's `form_40::ic_pair` doc names that read.
 - **The aa 0f string count.** `govee_state` gains `light_num_state` (the `aa 0f` reply: `count`, byte 0 as a
   Java byte; read replies only, not a TLV the status read types), and `govee_common`'s command 0x0f
-  `light_num` its doc and citations (`Controller4BulbNum`, `NewDetailVM.s5` / `u5`). devices.schema.json
+  `light_num` its doc and citations (`Controller4BulbNum`, `NewDetailVM.s5` / `u5`, and the setting's 33 0F
+  write, `NewSettingActivity.T3` / `ControllerSegment`). devices.schema.json
   clientRow gains `light_num_pieces {per_unit}`: the count times `per_unit` is the screen's stored IC, so it
   sizes the writes and the direct read-back as an `ic_pieces` object form's pieces do, and the row's wire
   `num_segments` is the count before the first read. Two ties: a row with support that reads `light_num` has
   it, and it needs that read. The h7020 rows 53 / 54 / 62 / 63 / 100 / 102 / 149 / 161 get `support:
   app_traced` and their `per_unit` (15, 15, 15, 15, 25, 25, 1, 10), and their wire rows `f_15_01:
-  kelvin_tint` and `num_segments`, the most pieces the string-count setting offers (30, 30, 30, 30, 50, 50,
-  24, 30: `Support.getBulbStringSetting`, `SegmentNumSettingDialog.t`). The h61a8 bulb-string rows that also
+  kelvin_tint` and `num_segments`, `Support.getBulbStringSetting` [0] x [1] (30, 30, 30, 30, 50, 50, 24, 30):
+  the IC `NewDetailVM.u5` stores at the most strings the setting offers (`SegmentNumSettingDialog.t`; on 161
+  its dialog shows half of [1] per string, `NewSettingActivity.g4`). The h61a8 bulb-string rows that also
   read aa 0f (bulblightstringv1 3 / 5, h7022 0) stay without support and without `light_num_pieces`: their
   other gaps (the wide 0x0b mask, colour temperature as a tint, the aa a2 read-back) still hold them, and
   goodsType 3's 15-or-30 rule is more than a `per_unit`.
