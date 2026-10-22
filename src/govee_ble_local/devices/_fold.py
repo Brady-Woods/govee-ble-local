@@ -14,6 +14,7 @@ from typing import Any
 
 from ..models import Capability, DeviceState, Segment
 from ..wire import build, parse, reassemble
+from ..wire.cct import kelvin_for_tint
 from .brightness import raw_to_percent
 from ._resolve import version
 from .profile import DeviceProfile, wire_profile
@@ -448,6 +449,25 @@ def _apply_head_pair(profile: DeviceProfile, state: DeviceState, pair: parse.Hea
         state.rgb_color, state.color_temp_kelvin = shared, None
     else:
         state.rgb_color, state.color_temp_kelvin = None, kelvin
+
+
+def apply_piece_kelvin(state: DeviceState, pieces: int) -> None:
+    """The colour-temperature state of a :attr:`~.profile.DeviceProfile.kelvin_from_pieces` device, read from
+    the ``pieces`` colour pieces of ``state.segments`` that the poll's walk just set (goodsType 180:
+    ``VM4Light.g5`` after the connect read's walk). ``ColorUtils.r`` takes the pieces' one colour when every
+    piece shows the same one (``q``) and, when it is one of the app's tint colours (``C``: the whole
+    1000-10000 K table, :func:`..wire.cct.kelvin_for_tint`), its Kelvin, else 0, which ``SubMode4Color.s``
+    stores over the ``aa 05`` report's Kelvin; :func:`apply_kelvin_report` folds either. Nothing changes while
+    the report says the device is in a scene (no colour is shown), or when a piece is missing: the app applies
+    nothing from a connect read whose walk lost a group (``Compose4InfoBleIot`` fails whole)."""
+    by_index = {s.index: s.rgb for s in state.segments}
+    shown = [by_index.get(i) for i in range(pieces)]
+    if state.scene_code is not None or not shown or None in shown:
+        return
+    first = shown[0]
+    kelvin = kelvin_for_tint(first) if first is not None and shown.count(first) == pieces else None
+    apply_kelvin_report(state, kelvin or 0)
+    _remember_kelvin(state)
 
 
 def apply_kelvin_report(state: DeviceState, kelvin: int) -> None:

@@ -87,10 +87,12 @@ the row lacks fails the build: nothing defaults silently.
   flag then doesn't decide ``color_temp`` (``color_functions``). ``color_temp_control: whole_device`` (the
   colour page's Kelvin pick always writes every piece, as h61d3 ``ColorMode.canClickColorTem`` does on 239 /
   246) needs ``color_temp``. Either value becomes ``DeviceProfile.whole_device_kelvin``: no Kelvin on part of
-  the device. An ``untraced`` scene dialect drops ``scenes``; ``none`` is activate only. Scenes need a
-  bundled catalog, as every SKU of 1.4.0 that offers them ships one: a SKU the scene store has no catalog for
-  (``scenes/store.json``, the generated ``SCENE_CATALOGS``, which :func:`profiles` takes as ``catalogued``) is
-  offered no ``scenes``, its row's scene facts still checked.
+  the device. A row's ``kelvin_readback: pieces`` (the colour-temperature state read from the read-back's
+  pieces, goodsType 180's ``VM4Light.g5``) becomes ``DeviceProfile.kelvin_from_pieces``; it needs
+  ``color_temp`` and the direct colour read-back. An ``untraced`` scene dialect drops ``scenes``; ``none`` is
+  activate only. Scenes need a bundled catalog, as every SKU of 1.4.0 that offers them ships one: a SKU the
+  scene store has no catalog for (``scenes/store.json``, the generated ``SCENE_CATALOGS``, which
+  :func:`profiles` takes as ``catalogued``) is offered no ``scenes``, its row's scene facts still checked.
   An ``untraced`` colour parse on a row with ``rgb`` or ``color_temp`` raises (``none`` is a traced value:
   the screen parses no colour).
 - The reads the library makes: the 0xAC status read is the row's ``status_read``, in its order
@@ -269,6 +271,7 @@ class Row(TypedDict, total=False):
     kelvin_range: tuple[int, ...]
     brightness_range: tuple[int, ...]
     mode_reports_kelvin: bool
+    kelvin_readback: str
     status_read: tuple[str, ...]
     connect_reads: tuple[str, ...]
     connect_writes: tuple[str, ...]
@@ -428,6 +431,9 @@ _ILLUMINATION_SCHEMES: Final = frozenset({"h60a6", "h6188"})
 # clientRow color_temp_control: how the screen writes colour temperature where it isn't the colour page's
 # Kelvin over the selected pieces (absent). Either value gives DeviceProfile.whole_device_kelvin.
 COLOR_TEMP_CONTROLS: Final = ("illumination", "whole_device")
+# clientRow kelvin_readback: where the read-back's colour temperature comes from where not the mode report's
+# Kelvin (absent). pieces gives DeviceProfile.kelvin_from_pieces.
+KELVIN_READBACKS: Final = ("pieces",)
 RELAY_POWERS: Final = ("outlet0", "all_outlets", "total_switch")        # devices.profile.RelayPower
 HEARTBEAT_TIMINGS: Final = ("fixed_rate", "after_quiet")         # transport.connection.HeartbeatTiming
 SESSIONS: Final = ("held", "per_command")                          # devices.profile.SessionMode
@@ -1045,6 +1051,11 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
                          or isinstance(ic, dict) or ic == "sections"):
         fail("the special_info segment-count read on a polled row with segments only, without the aa 41 "
              "section count or an IC-sized read-back (one source sizes the masks and the walk)")
+    piece_kelvin = row.get("kelvin_readback")
+    if piece_kelvin is not None and (piece_kelvin not in KELVIN_READBACKS or "color_temp" not in caps
+                                     or color_readback != "mechanism_a_direct"):
+        fail(f"kelvin_readback {piece_kelvin!r} (one of {list(KELVIN_READBACKS)}, with color_temp and the "
+             "direct colour read-back whose pieces it reads)")
     bar = forms.get("f_36") == "bar_pair"
     if ("cmd_36" in reads) != bar:
         fail("the aa 36 read and f_36 bar_pair go together")
@@ -1154,6 +1165,8 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
         out["whole_device_kelvin"] = True
     if control == "illumination":
         out["kelvin_with_brightness"] = True
+    if piece_kelvin is not None:
+        out["kelvin_from_pieces"] = True
     if status_read is not None:
         out["status_read"] = tuple(status_read)   # command names; devices/profile.py takes their codes
         decode: dict[str, Any] = {f: forms[f] for f in _STATUS_TLV_FORMS

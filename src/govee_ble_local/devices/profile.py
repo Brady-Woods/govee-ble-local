@@ -446,6 +446,15 @@ class DeviceProfile:
     :meth:`~.device.Device.update` reads it on each poll, before ``aa 05`` and the walk as the app does, a
     mask write reads it first while it is unknown and sends nothing without it, and :attr:`segments` is only
     the profile's upper bound. Source-modelled, not live-verified."""
+    kelvin_from_pieces: bool = field(default=False, kw_only=True)
+    """``color_readback="mechanism_a_direct"`` only: the colour-temperature state comes from the read-back's
+    pieces, not the ``aa 05`` report's Kelvin (a devices.yaml row's ``kelvin_readback: pieces``; goodsType
+    180: ``VM4Light.g5`` -> ``ColorUtils.r`` of ``SubMode4Color.d``, then ``SubMode4Color.s``). Once a poll's
+    ``aa a5`` walk has read every piece, ``state.color_temp_kelvin`` is the Kelvin of their one colour when
+    they all show the same colour and it is one of the app's tint colours (its whole 1000-10000 K table, which
+    may lie outside :attr:`min_kelvin` / :attr:`max_kelvin`), else None (:func:`._fold.apply_piece_kelvin`). A
+    poll whose walk lost a group, or whose report put the device in a scene, leaves it as the report set it.
+    Source-modelled, not live-verified."""
 
     def __post_init__(self) -> None:
         """Validate each field: GoveeBleInvalidValue (a ValueError) on a value no Device can use.

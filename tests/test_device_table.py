@@ -394,6 +394,8 @@ _REFUSED: tuple[tuple[str, str, _Edit, str], ...] = (
     ("h61d3", "247", lambda f: _row(f, "247")["ic_pieces"].update(min_ic=80), "ic_pieces"),
     ("striplight", "41", lambda f: _row(f, "41")["connect_reads"].append("special_info"),
      "the special_info segment-count read on a polled row with segments only, without the aa 41"),
+    ("h60ax", "303", lambda f: _row(f, "303").update(kelvin_readback="pieces"),
+     "kelvin_readback 'pieces' (one of ['pieces'], with color_temp and the direct colour read-back"),
     ("h5080", "43", lambda f: _row(f, "43").update(connect_writes=[]), "connect_writes []"),
     ("bulblightv3", "64", lambda f: _row(f, "64").update(connect_writes=["plug_sync_time"]),
      "connect_writes ['plug_sync_time']"),

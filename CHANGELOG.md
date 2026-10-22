@@ -300,6 +300,20 @@ model, from which the shipped readers are generated).
   `reassemble.parse_segment_ic()` and the keyword-only `burst_command` / `burst_sub` of `GoveeConnection.query`
   and `reassemble.burst_chunks` (defaults: the status read's, so every status burst assembles as before). No
   admitted row uses it. Source-modelled, not live-verified: no goodsType 180 unit is on the bench.
+- **`DeviceProfile.kelvin_from_pieces`** (keyword-only, default False; a devices.yaml row's `kelvin_readback:
+  pieces`): the colour-temperature state comes from the `aa a5` walk's pieces, as the goodsType 180 screen
+  takes it after its connect read (`VM4Light.g5` -> `ColorUtils.r` -> `SubMode4Color.s`): once a poll's walk
+  has read every piece, `state.color_temp_kelvin` is the Kelvin of their one colour when every piece shows the
+  same one and it is one of the app's 178 tint colours (the whole 1000-10000 K table, not the row's range),
+  else None, in place of the `aa 05` report's Kelvin. A walk that lost a group, or a scene report, leaves the
+  report's. No admitted row uses it.
+- **H706A / H706B / H706C / H806A / H806C** (h705a 180), behind `allow_modelled` (`modelled`): power,
+  brightness (1-100), RGB, colour temperature [2200, 6500] with the white-type-0 slot (`00 00 00`), segment
+  colour, colour temperature and brightness over the device's own segment count (the `ac a1` read, above), and
+  gradual. The read-back is `aa 01`, `aa 04`, `ac a1`, `aa 05`, the discarded `aa 40`, the `aa a5` walk with
+  the Kelvin from its pieces, and `aa a3`. `modelled` for one gap, which the row's `doc` names: the app's colour
+  page refuses a segment-brightness pick while a selected piece shows a Kelvin tint colour, and the library
+  sends it. Not hardware-verified (none is on the bench).
 
 ### Changed
 - **A polled profile reads aa 04 only with `Capability.BRIGHTNESS`**, as the app's connect read does
@@ -609,7 +623,15 @@ model, from which the shipped readers are generated).
   0xAC, not `aa a1 0b` (0x0B is only the reply's sub), and it has callers (`govee_commands.read_special_info_a1`
   and OPCODE_COVERAGE's 0xa1 row said none): goodsType 180's connect read and its refreshes, and H707A-C's
   refresh after its segment page. h705a 180 lists the read, `aa 40` as `ic_pieces: fixed` and a 12-segment
-  bound (the segment-settings page's most); it stays without `support` (its Kelvin read-back).
+  bound (the segment-settings page's most).
+- **`clientRow.kelvin_readback`** (`pieces`; absent = the mode report's Kelvin): the screen reads its
+  colour-temperature state from the read-back's pieces (goodsType 180's `VM4Light.g5` -> `ColorUtils.r`); the
+  resolver takes it with `color_temp` and the direct colour read-back only. **h705a 180 gets `support:
+  modelled`** with `capabilities` `[power, brightness, rgb, color_temp, segments, gradual]` (Config.I[180] all
+  on; Config.z / G = 0), `color_functions` and `kelvin_readback: pieces`. Its `doc` names the one gap that keeps
+  it from `app_traced`: the colour page refuses a segment-brightness pick while a selected piece shows a tint
+  colour (`ColorModeV2` / `ColorMode.canClickBrightness`: `Y` -> `ColorUtils.o`, a toast and no frame), and the
+  library sends the `33 05 15 02` frame there.
 
 ## [1.6.1] — 2026-10-21
 

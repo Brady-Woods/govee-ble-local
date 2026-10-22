@@ -1919,11 +1919,17 @@ class Device:
     async def _read_mechanism_a_direct(self, budget: ConnectBudget | None = None) -> None:
         """H6047/H6641/H6062/H6061 per-segment colour via Controller4ColorInfoByGroup's direct
         per-group requests (``aa a5 <group>``; :func:`._readback.walk_mechanism_a_direct`), applied
-        whole unless a setter raced it."""
+        whole unless a setter raced it, with the colour temperature read from the pieces where the profile
+        takes it from them (:attr:`.DeviceProfile.kelvin_from_pieces`, :func:`._fold.apply_piece_kelvin`)."""
+        def apply(segments: list[Segment]) -> None:
+            self._apply_segments(segments)
+            if self.profile.kelvin_from_pieces:
+                _fold.apply_piece_kelvin(
+                    self._state, self.profile.color_readback_segments or self.segment_count)   # the walk's
+
         await self._read_fresh(
             "segment colour",
-            lambda: _readback.walk_mechanism_a_direct(self, lambda f: self._read_reply(f, budget)),
-            self._apply_segments)
+            lambda: _readback.walk_mechanism_a_direct(self, lambda f: self._read_reply(f, budget)), apply)
 
     def _wants_color_groups(self) -> bool:
         """Whether the 0xAC status read asks for the 0xA5 colour groups (``status_color_groups_pact``):

@@ -80,8 +80,8 @@ KEEP: dict[str, tuple[str, ...]] = {
         "mode_color_parse_status", "relay_power", "relay_on_mask", "advert_on_mask", "color_scheme",
         "white_type", "color_temp_control", "color_functions", "capabilities", "zones", "account_lock",
         "scene_dialect", *_ROW_FACTS,
-        "mode_reports_kelvin", "status_read", "connect_reads", "connect_writes", "heartbeat",
-        "heartbeat_timing", "power_resync", "ic_pieces", "by_pact", "by_firmware"),
+        "mode_reports_kelvin", "kelvin_readback", "status_read", "connect_reads", "connect_writes",
+        "heartbeat", "heartbeat_timing", "power_resync", "ic_pieces", "by_pact", "by_firmware"),
     "#/$defs/clientModel": ("mode_color_parse", "mode_color_parse_status", "kelvin_range", "brightness_range",
                             "scene_power_on", "connect_writes", "by_pact", "by_firmware"),
     "#/$defs/clientBranch": (
