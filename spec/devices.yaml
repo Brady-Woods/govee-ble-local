@@ -8118,6 +8118,7 @@ families:
           connect_reads: []
           connect_writes: []
           heartbeat: heartbeat
+          ic_pieces: { min_ic: 0, max_ic: 14, ic_per_piece: 1 }
           doc: >-
             H6671 / H6672 (goodsType 332: SupportV2.a, KmpGoodsType H6672; BLE + Wi-Fi, SubLib4BleIot) on
             AcNewDetailH667172 (Model4BleIot.t, SupportV2.k) with VM4LightH667172. Pacts (1,1) / (2,1)
@@ -8127,8 +8128,16 @@ families:
             TLV 0x01 power, 0x04 brightness, 0x05 mode (Info4DetailH667172.K: 0x15 gives the gradual byte only),
             0x40 the IC count (stored and uploaded), 0x41 the power-off memory (value[1]), 0xA5 colour groups of 4
             four-byte [bri, R, G, B] records (Controller4ColorInfoByGroup.q with 4). No aa 01 / aa 05 reads, no 0xB1 /
-            0xB2. Pieces = min(IC, 14) (ColorPieceConfig.j -> b, 332 in the w() set): 14 for the 44 / 56 ICs of an
-            uncut H6671 / H6672 (AcCutCaliH667172.l2); the library fixes 14 (a strip cut below 14 ICs has fewer, gap).
+            0xB2. Pieces = min(IC, 14) (ColorPieceConfig.j -> b, 332 in the w() set) over the IC the lambda stores
+            from each TLV 0x40 (getSignedShort, Info4BleIotDevice.G0) and reads back at each TLV 0xA5
+            (ColorPieceConfig.c), so a TLV 0x40 ahead of the 0xA5 TLVs (the request order) sizes that burst's
+            groups: 14 for the 44 / 56 ICs of an uncut H6671 / H6672 (AcCutCaliH667172.l2), fewer on a strip cut
+            below 14 ICs. ic_pieces {0, 14, 1} sizes every write and the read-back; num_segments 14 is only the
+            count before the first read, and a colour write before it runs the status read first, sending nothing
+            without a TLV 0x40 count. An IC count of 0 or below sizes nothing: the library keeps the counts it has
+            and places the burst's groups over them, where the app places them over the IC's pieces
+            (SubMode4Color.j): at 0 its strip goes empty and a second TLV 0xA5 group fails its read, and below 0 the
+            first group does, so that read applies nothing.
             Power 33 01 (switchTrigger -> ControllerSwitch.d); keep-alive aa 00 (I3 false: ConnectHeartbeat type 2;
             J3 is empty); live power the ee 30 push, bit 0 of byte 1 (DefParser.makeSwitchNotifyParser -> f5; Z3 also
             registers a brightness push parser, d5, not modelled).
@@ -8153,6 +8162,9 @@ families:
             - split_rgbiclight/com/govee/rgbiclight/h667172/DetailConfigH667172.java:34-47,59-68
             - split_rgbiclight/com/govee/rgbiclight/h667172/ColorModeH667172.java:245-272
             - split_rgbiclight/com/govee/rgbiclight/h667172/AcCutCaliH667172.java:155-169
+            - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/ColorPieceConfig.java:189-193,256-259,354-367,1677-1704
+            - base-classes11/com/govee/base2light/kt/comm/Info4BleIotDevice.java:228-230,620-622
+            - base-classes11/com/govee/base2light/pact/newdetail/sub/SubMode4Color.java:113-147
             - split_rgbiclight/com/govee/rgbiclight/add/AddDeviceM.java:21-28
             - base-classes11/com/govee/base2light/kt/comm/AbsViewMode4OpWithOtaCheck.java:352-358,804-816
             - base-classes3/com/govee/matter/MatterManager.java:210-222,540-549,641-649
@@ -8314,7 +8326,7 @@ families:
         forms: { f_01: light, f_09: datetime_epoch }
         by_goods_type:
           "141": { forms: { f_40: ic_pair, f_a5: color_group, f_15_01: kelvin_tint }, counts: { num_segments: 15 }, group: { rule: fixed, num_per_group: 3 }, doc: "H61C2 / H61C3 / H61C5: 15 pieces whatever the SKU or IC count (ColorPieceConfig.j: 141 is in no piece set, so 15; base-classes11/com/govee/base2light/pact/newdetail/config/fuc/ColorPieceConfig.java:354-452); aa a5 groups of Support.d = 3 [bri, R, G, B] records placed by the request (split_rgbiclight/com/govee/rgbiclight/Support.java:216-235, VM4Light.java:917-962), over N / 3 + (N % 3 != 0) groups at connect where N = the signed aa 40 bytes 2 + 5 when non-zero, else 15 (ic_pieces sections); the aa 40 reply is read by ControllerIcNum.d on 17 valid bytes, [ic1 s16be][sec1][ic2 s16be][sec2], throwing only on an IC field of 0x1000+ as ic_pair does (base-classes11/com/govee/base2light/kt/general_controller/ControllerIcNum.java:64-74,110-138); 33 05 15 01 = Config.J[0] Yt (Bytes.h / Bytes.r type 1)" }
-          "332": { forms: { f_40: one_count, f_41: power_memory, f_a5: color_group, f_15_01: kelvin_tint, f_ee_30: main_bit0_a }, counts: { num_segments: 14 }, group: { rule: fixed, num_per_group: 4 }, doc: "H6671 / H6672: TLV 0x40 bytes 0-1 signed, 0x41 value[1], 0xA5 one group of 4 records per TLV (split_rgbiclight/com/govee/rgbiclight/h667172/VM4LightH667172$afterConnectedSingleReadDeviceInfo$1.java:96-130); 14 = min(IC, 14) for an IC count of 14 or more (base-classes11/com/govee/base2light/pact/newdetail/config/fuc/ColorPieceConfig.java:189-193); ee 30 bit 0 of byte 1 (base-classes11/com/govee/base2light/kt/general_parser/DefParser.java:83-87)" }
+          "332": { forms: { f_40: one_count, f_41: power_memory, f_a5: color_group, f_15_01: kelvin_tint, f_ee_30: main_bit0_a }, counts: { num_segments: 14 }, group: { rule: fixed, num_per_group: 4 }, doc: "H6671 / H6672: TLV 0x40 bytes 0-1 signed, 0x41 value[1], 0xA5 one group of 4 records per TLV (split_rgbiclight/com/govee/rgbiclight/h667172/VM4LightH667172$afterConnectedSingleReadDeviceInfo$1.java:96-130); 14 is the count before the first status read, the most min(IC, 14) gives (base-classes11/com/govee/base2light/pact/newdetail/config/fuc/ColorPieceConfig.java:189-193; every write and the read-back take the live count); ee 30 bit 0 of byte 1 (base-classes11/com/govee/base2light/kt/general_parser/DefParser.java:83-87)" }
           "351": { forms: { f_40: one_count, f_a5: color_group, f_15_01: kelvin_tint }, counts: { num_segments: 15 }, group: { rule: fixed, num_per_group: 4 }, doc: "the 0xAC read only on 351 / 352 (split_rgbiclight/com/govee/rgbiclight/Support.java:51, 179-182; split_rgbiclight/com/govee/rgbiclight/VM4Light.java:1476-1478); TLV 0x40 bytes 0-1 signed, 0xA5 one group of 4 records per TLV (split_rgbiclight/com/govee/rgbiclight/VM4Light.java:684-718); 15 pieces (ColorPieceConfig.j's default, base-classes11/com/govee/base2light/pact/newdetail/config/fuc/ColorPieceConfig.java:444-449)" }
           "352": { forms: { f_40: one_count, f_a5: color_group, f_15_01: kelvin_tint }, counts: { num_segments: 15 }, group: { rule: fixed, num_per_group: 4 }, doc: "as 351 (split_rgbiclight/com/govee/rgbiclight/VM4Light.java:684-726)" }
     models: [H61C2, H61C3, H61C5, H617G, H6671, H6672, H618G]   # 141 = H61C2 / H61C3 / H61C5, 351 = H617G, 352 = H618G, 332 = H6671 / H6672
@@ -13898,7 +13910,9 @@ families:
             32767, 1} sizes every write and the read-back (the writes at most 112 positions, all Bytes.G's mask carries; Bytes.h
             carries 56), num_segments 56 is only the count before the first read, and a colour write before it runs the status
             read first, sending nothing without a TLV 0x40 count. An IC count of 0 or below sizes nothing: the library keeps the
-            counts it has, where the app's strip and read-back go empty. The aa 05 reply (kelvin_15_nocct) is read only after a
+            counts it has and places the burst's groups over them, where the app places them over the IC's pieces
+            (SubMode4Color.j): at 0 its strip goes empty and a second TLV 0xA5 group fails its read, and below 0 the first
+            group does, so that read applies nothing. The aa 05 reply (kelvin_15_nocct) is read only after a
             snapshot apply. Power: the one ControllerSwitch (33 01), no zone switch; I3 false (aa 00 keep-alive) and no ee 30
             parser, so no live power source. Colour: Config.x[394] = 0 -> Yt (Bytes.h / Bytes.r, white type Config.P[394] = 1),
             Config.z = 0 -> Bytes.G; brightness BrightnessConfig 394 -> version 1, percent; Kelvin version 5 = [1000, 10000]
@@ -17371,8 +17385,10 @@ families:
             The connect read stores the count without posting deviceInfoChanged (the lambda's 0x40 branch), so the
             Part tab's strip keeps the count it was built with: in the first app session after the IC changed across
             8 with no app connected, a segment pick's mask there has the old count, where the library's takes the new
-            one. An IC count of 0 or below leaves the read-back count as it was, where the app's goes empty. Scenes
-            not traced. Not hardware-verified.
+            one. An IC count of 0 (the count is unsigned) leaves the read-back count as it was, and the library places the
+            burst's groups over it, where the app places none (each lies past IC / 4 = 0 whole groups,
+            VM4LightH351011$afterConnectedSingleReadDeviceInfo$1.p) and applies the rest of the read. Scenes not
+            traced. Not hardware-verified.
           doc-ref:
             - base-classes2/com/govee/shared/checker/KmpGoodsType.java:162
             - split_h7050/com/govee/h7050/pact/deviceitem/Model.java:61-94
@@ -17837,7 +17853,9 @@ families:
             (ColorPieceConfig.b divides 318's by 1, over Config.w), uncapped: ic_pieces {0, 65535, 1} sizes every write
             (at most 112 positions; Bytes.h carries 56) and the read-back, num_segments 56 is only the count before the
             first read, and a colour write before it runs the status read first, sending nothing without a TLV 0x40 count.
-            An IC count of 0 sizes nothing: the library keeps its counts, where the app's go empty. Segments are left out,
+            An IC count of 0 sizes nothing: the library keeps its counts and places the burst's groups over them, where the
+            app places them over 0 pieces (SubMode4Color.j): its strip goes empty and a second TLV 0xA5 group fails its
+            read, which then applies nothing. Segments are left out,
             as on 296: the Part tab's ColorModeV1 strip is Info4BleIotDevice.J() wide (the account record's segmentCount)
             when that is above 0, which no read sets (Config.I[318] has segment brightness and CCT on, gradual off).
             Wheel-drag real-time frames (Config.g0) are not modelled; touch-up sends the normal write. Brightness:
@@ -17955,7 +17973,9 @@ families:
             pick, the stored IC (ColorPieceConfig.b divides 316's by 1), uncapped: ic_pieces {0, 4095, 1} sizes every write
             (at most 112 positions; Bytes.h carries 56) and the read-back; num_segments 56 is only the count before the
             first read, and a colour write before it reads aa 40 first, sending nothing without a count. An IC count of 0
-            sizes nothing: the library keeps its counts. Segments are left out, as on 296 (the Part tab's ColorModeV1 strip
+            sizes nothing: the library keeps its counts and places the burst's groups over them, where the app places them
+            over 0 pieces (SubMode4Color.j): its strip goes empty and a second TLV 0xA5 group fails its read, which then
+            applies nothing. Segments are left out, as on 296 (the Part tab's ColorModeV1 strip
             is the account record's J() wide; Config.I[316] has segment brightness and CCT on, gradual off). Wheel-drag
             real-time frames (Config.g0[316] = 2: a5 02 83 R G B) are not modelled; touch-up sends the normal write.
             Brightness: BrightnessConfig version 1 = percent; Kelvin: KelvinConfig version 2 (Z3) = [2700, 6500]. Scenes
