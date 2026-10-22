@@ -130,6 +130,13 @@ model, from which the shipped readers are generated).
     app's `EncryptionUtils.isEncryptionSupported`), plaintext with neither, as in the app. The firmware answers
     the library's aa 06 / aa 07 03 / aa 07 02 reads (bench 2026-10-21), which the app's screen doesn't send (it
     reads TLV 0x07): a hardware-observed extension (rule 6), now cited as such here and in `read_device_info`.
+  - `read_device_info` now says where the app sends these reads by connect path, not by SKU. A screen that
+    connects with the 0xAC status read (`Compose4BaseInfoSingleRead`, every `readback == "status"` profile)
+    sends none of them and takes its versions and device id from TLV 0x07. The library's reads there are
+    firmware-sourced (rule 6) only on the H60A6 and H6076, where a firmware image or the bench shows them
+    answered. On the other status rows, such as rgbiclight 332 / 351 / 352 (H6671 / H6672, H617G / H618G),
+    they are unverified extra reads (`status-row-versions-from-tlv07`), still an open decision. The old text
+    named only the H60A6 and goodsType 69 as exceptions.
   - h705a 184 (H608A-D / H808A): the app sizes its first aa a5 walk from the IC stored in the account, the
     library from the live aa 40. They differ only after a resize the app never saw. This is now documented, in
     the row and in `walk_mechanism_a_direct`, as a divergence for the user to decide. The row stays `modelled`
