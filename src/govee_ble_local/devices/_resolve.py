@@ -376,8 +376,8 @@ _WHITE_DEFAULT: Final = "rgb_white"
 # the slot it gives each white type): h60a6 = Bytes.C (N[0]) and h6188 = Bytes.A (N[2]). The h6006 and h6061
 # CCT frames (Bytes.p, Bytes.u) are colour-page builders only.
 _ILLUMINATION_SCHEMES: Final = frozenset({"h60a6", "h6188"})
-# clientRow color_temp_control: how the screen writes colour temperature where it isn't the colour page's Kelvin
-# over the selected pieces (absent). Either value gives DeviceProfile.whole_device_kelvin.
+# clientRow color_temp_control: how the screen writes colour temperature where it isn't the colour page's
+# Kelvin over the selected pieces (absent). Either value gives DeviceProfile.whole_device_kelvin.
 COLOR_TEMP_CONTROLS: Final = ("illumination", "whole_device")
 RELAY_POWERS: Final = ("outlet0", "all_outlets", "total_switch")        # devices.profile.RelayPower
 HEARTBEAT_TIMINGS: Final = ("fixed_rate", "after_quiet")         # transport.connection.HeartbeatTiming

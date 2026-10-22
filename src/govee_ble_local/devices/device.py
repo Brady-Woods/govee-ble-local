@@ -207,9 +207,14 @@ class Device:
         # so the next reply may predate them.
         self._zone_power_posted: dict[int, set[bool]] = {}
         # Serializes the bar-switch read-modify-write in set_zone_power (one frame carries both
-        # bars). Lock order: _scene_lock, then this, then _read_gate, then the connection lock;
-        # never take it from inside a connection operation. release() takes all four, in that order.
+        # bars). Lock order: _scene_lock, _brightness_lock, then this, then _read_gate, then the connection
+        # lock; never take it from inside a connection operation. release() takes all five, in that order.
         self._bar_lock = asyncio.Lock()
+        # On a kelvin_with_brightness profile, serializes every 33 04 writer (set_brightness, turn_on) with
+        # the illumination pair (set_color_temp, turn_on(kelvin=)), which re-sends the brightness state holds,
+        # so the pair never builds its 33 04 from a level a concurrent brightness write is changing
+        # (_held_brightness_lock). Taken after _scene_lock, before _bar_lock (see _bar_lock).
+        self._brightness_lock = asyncio.Lock()
         # Serializes scene writes, so a scene's upload and its activation are never split by another
         # scene's (the connection lock is per-operation). Outermost lock (see _bar_lock).
         self._scene_lock = asyncio.Lock()
@@ -629,13 +634,15 @@ class Device:
 
         The Device stays usable: the next operation connects again (link, handshake, unlock, session frames),
         as after an idle disconnect, with no warm window left over (a read gets the base idle delay; a write
-        opens its own). It takes the Device's locks in their order (``_scene_lock``, ``_bar_lock``,
-        ``_read_gate``, then the connection's), so it waits for each link operation already running or queued
-        before it (each lock is FIFO), and never lands inside a sequence: a :meth:`set_scene_by_name` (its
-        version read and catalog load, its upload and its activation), or an H6047 bar's ``aa 36`` read and
-        the ``33 36`` built from it. It can land between the steps of a call no device lock spans (a poll's
-        reads, a plug's power write and its re-read): those later steps reconnect (a plug's re-read ends with
-        its ``33 b5`` time sync, a write, which opens a fresh warm window on the new link). A write called
+        opens its own). It takes the Device's locks in their order (``_scene_lock``, ``_brightness_lock``,
+        ``_bar_lock``, ``_read_gate``, then the connection's), so it waits for each link operation already
+        running or queued before it (each lock is FIFO), and never lands inside a sequence: a
+        :meth:`set_scene_by_name` (its version read and catalog load, its upload and its activation), an H6047
+        bar's ``aa 36`` read and the ``33 36`` built from it, or the illumination pair's brightness read and
+        the pair built from it (:attr:`.DeviceProfile.kelvin_with_brightness`). It can land between the steps
+        of a call no device lock spans (a poll's reads, a plug's power write and its re-read): those later
+        steps reconnect (a plug's re-read ends with its ``33 b5`` time sync, a write, which opens a fresh warm
+        window on the new link). A write called
         after it either queues behind it and reconnects or, if it reaches the link first (a setter that takes
         no device lock, or is handed one, while release() waits for one), keeps the link and its window: the
         release then drops nothing and returns False. That is the link it wrote on, whether the device acked
@@ -649,7 +656,7 @@ class Device:
         errors are logged at DEBUG. Cancelled while it waits for a lock, it leaves the queue and drops
         nothing; cancelled during the teardown, the teardown runs on, detached, to that bound."""
         ticket = self._ticket()
-        async with self._scene_lock, self._bar_lock, self._read_gate:
+        async with self._scene_lock, self._brightness_lock, self._bar_lock, self._read_gate:
             # Asked under the connection lock, after every operation queued before the drop: a write called
             # after this release that ended on the link that is up, acked or refused, keeps it, with its
             # window. One cancelled (while it waited or after its frames went out), or that wrote on a link
@@ -707,6 +714,17 @@ class Device:
         I/O (see ``_link_write``)."""
         self._tickets += 1
         return self._tickets
+
+    def _held_brightness_lock(self) -> contextlib.AbstractAsyncContextManager[None]:
+        """``_brightness_lock`` on a :attr:`.DeviceProfile.kelvin_with_brightness` profile, else a no-op.
+        Every ``33 04`` writer takes it, and so does the illumination pair, across its build and its write:
+        the pair re-sends the brightness ``state`` holds, which a brightness write sets only once its frame is
+        acked, so without it a ``set_color_temp`` started while a ``set_brightness`` is in flight would
+        re-send the old level after the new one and leave the device there (``View4IlluminationMode.I0``
+        reads the level the screen holds, which its brightness control has already set)."""
+        if self.profile.kelvin_with_brightness:
+            return self._brightness_lock
+        return contextlib.nullcontext()
 
     def _zone_power_lock(self) -> contextlib.AbstractAsyncContextManager[None]:
         """``_bar_lock`` on a bar-switch device (whose zone write is a read-modify-write of both bars,
@@ -1021,52 +1039,56 @@ class Device:
         pct = _check_pct(brightness) if brightness is not None else None
         kelvin = self._check_kelvin(kelvin) if kelvin is not None else None
         ticket = self._ticket()
-        # H6062's aa 41 read and the write it sizes, and as set_power the power write and its re-read: no
-        # heartbeat between them.
-        with self._conn.hold_heartbeat():
-            if pick is not None or kelvin is not None:
-                await self._ensure_segment_count()
-            frames: list[bytes] = []
-            if power:
-                self._require(Capability.POWER)
-                frames += self._power_frames(True)
-            # The illumination tab's pair (View4IlluminationMode.I0): the brightness follows the Kelvin.
-            pair = kelvin is not None and self.profile.kelvin_with_brightness
-            if pct is not None and not pair:
-                self._require(Capability.BRIGHTNESS)
-                frames.append(self._brightness_frame(pct))
-            span = self._kelvin_range()   # once: the frame and the state use the same range
-            if pick is not None:
-                self._require(Capability.RGB)
-                frames += self._color_rgb_frames(pick, span)
-            elif kelvin is not None:
-                self._require(Capability.COLOR_TEMP)
-                frames.append(self._build_or_unsupported(
-                    build.color_temp, kelvin, self.profile.color_scheme, self.segment_count,
-                    pieces=self.profile.segments or None, white_type=self.profile.white_type))
-                if pair:
-                    self._require(Capability.BRIGHTNESS)
-                    level = pct if pct is not None else await self._held_brightness()
-                    frames.append(self._brightness_frame(level))
-            if not frames:
-                return
-
-            def apply() -> None:
+        # A 33 04 writer, and with a kelvin the illumination pair: under _held_brightness_lock, build to
+        # write.
+        async with self._held_brightness_lock():
+            # H6062's aa 41 read and the write it sizes, and as set_power the power write and its re-read: no
+            # heartbeat between them.
+            with self._conn.hold_heartbeat():
+                if pick is not None or kelvin is not None:
+                    await self._ensure_segment_count()
+                frames: list[bytes] = []
+                level = pct   # the 33 04 the frames carry (the pair's is the held one without pct)
                 if power:
-                    self._apply_power(True)
-                if pct is not None:
-                    self._state.brightness = pct
+                    self._require(Capability.POWER)
+                    frames += self._power_frames(True)
+                # The illumination tab's pair (View4IlluminationMode.I0): the brightness follows the Kelvin.
+                pair = kelvin is not None and self.profile.kelvin_with_brightness
+                if pct is not None and not pair:
+                    self._require(Capability.BRIGHTNESS)
+                    frames.append(self._brightness_frame(pct))
+                span = self._kelvin_range()   # once: the frame and the state use the same range
                 if pick is not None:
-                    _fold.apply_rgb(self.profile, self._state, pick, span)
+                    self._require(Capability.RGB)
+                    frames += self._color_rgb_frames(pick, span)
                 elif kelvin is not None:
-                    _fold.apply_kelvin(self.profile, self._state, kelvin)
+                    self._require(Capability.COLOR_TEMP)
+                    frames.append(self._build_or_unsupported(
+                        build.color_temp, kelvin, self.profile.color_scheme, self.segment_count,
+                        pieces=self.profile.segments or None, white_type=self.profile.white_type))
+                    if pair:
+                        self._require(Capability.BRIGHTNESS)
+                        level = pct if pct is not None else await self._held_brightness()
+                        frames.append(self._brightness_frame(level))
+                if not frames:
+                    return
 
-            async with self._zone_power_lock():
-                await self._commit(frames, apply, fixture=power,
-                                   zones=dict.fromkeys(self._power_zones(), True) if power else None,
-                                   ticket=ticket)
-            if power:
-                await self._resync_after_power()
+                def apply() -> None:
+                    if power:
+                        self._apply_power(True)
+                    if level is not None:
+                        self._state.brightness = level
+                    if pick is not None:
+                        _fold.apply_rgb(self.profile, self._state, pick, span)
+                    elif kelvin is not None:
+                        _fold.apply_kelvin(self.profile, self._state, kelvin)
+
+                async with self._zone_power_lock():
+                    await self._commit(frames, apply, fixture=power,
+                                       zones=dict.fromkeys(self._power_zones(), True) if power else None,
+                                       ticket=ticket)
+                if power:
+                    await self._resync_after_power()
 
     async def turn_off(self) -> None:
         """Power off; equivalent to ``set_power(False)``."""
@@ -1082,11 +1104,14 @@ class Device:
         for a non-int."""
         self._require(Capability.BRIGHTNESS)
         level = _check_pct(pct)
+        frame = self._brightness_frame(level)
+        ticket = self._ticket()
 
         def apply() -> None:
             self._state.brightness = level
 
-        await self._commit(self._brightness_frame(level), apply)
+        async with self._held_brightness_lock():   # not between the illumination pair's build and its write
+            await self._commit(frame, apply, ticket=ticket)
 
     # -- colour -------------------------------------------------------------
     async def set_rgb(self, rgb: tuple[int, int, int]) -> None:
@@ -1119,17 +1144,26 @@ class Device:
         self._require(Capability.COLOR_TEMP)
         sent = self._check_kelvin(kelvin)
         ticket = self._ticket()
-        with self._conn.hold_heartbeat():   # H6062's aa 41 read and its write: no beat between
-            await self._ensure_segment_count()
-            frame = self._build_or_unsupported(
-                build.color_temp, sent, self.profile.color_scheme, self.segment_count,
-                pieces=self.profile.segments or None, white_type=self.profile.white_type)
-            frames: bytes | list[bytes] = frame
-            if self.profile.kelvin_with_brightness:
-                # The illumination tab's pair (View4IlluminationMode.I0): Kelvin, then 33 04 <held>.
-                frames = [frame, self._brightness_frame(await self._held_brightness())]
-            await self._commit(frames, lambda: _fold.apply_kelvin(self.profile, self._state, sent),
-                               ticket=ticket)
+        # The pair's 33 04 and its write under one hold, so no brightness write lands between them.
+        async with self._held_brightness_lock():
+            with self._conn.hold_heartbeat():   # H6062's aa 41 read and its write: no beat between
+                await self._ensure_segment_count()
+                frame = self._build_or_unsupported(
+                    build.color_temp, sent, self.profile.color_scheme, self.segment_count,
+                    pieces=self.profile.segments or None, white_type=self.profile.white_type)
+                frames: bytes | list[bytes] = frame
+                level: int | None = None
+                if self.profile.kelvin_with_brightness:
+                    # The illumination tab's pair (View4IlluminationMode.I0): Kelvin, then 33 04 <held>.
+                    level = await self._held_brightness()
+                    frames = [frame, self._brightness_frame(level)]
+
+                def apply() -> None:
+                    _fold.apply_kelvin(self.profile, self._state, sent)
+                    if level is not None:   # the level the pair sent is the device's now
+                        self._state.brightness = level
+
+                await self._commit(frames, apply, ticket=ticket)
 
     async def _held_brightness(self) -> int:
         """The brightness the illumination tab's pair re-sends

@@ -197,6 +197,27 @@ def test_illumination_tab_kelvin_is_the_kelvin_then_the_held_brightness() -> Non
     with pytest.raises(GoveeBleError, match="brightness is not known"):
         asyncio.run(d.set_color_temp(4000))
     assert _sent(d) == []
+    # A brightness write still in flight when the pair starts: the pair re-sends the new level, not the old.
+    d = _dev("H60A1")
+    d.state.brightness = 42
+
+    async def acked(frames: list[bytes]) -> None:   # one link, each frame acked in turn
+        async with wire:
+            for frame in frames:
+                await asyncio.sleep(0.002)
+                _sent(d).append(frame)
+
+    async def send(frame: bytes, **_k: object) -> None:
+        await acked([frame])
+
+    async def race() -> None:
+        await asyncio.gather(d.set_brightness(80), d.set_color_temp(4000))
+
+    wire = asyncio.Lock()
+    d._conn.send = AsyncMock(side_effect=send)  # type: ignore[method-assign]
+    d._conn.send_many = AsyncMock(side_effect=acked)  # type: ignore[method-assign]
+    asyncio.run(race())
+    assert _sent(d) == [b.brightness(80), kelvin, b.brightness(80)] and d.state.brightness == 80
     # The tab writes every piece: no masked Kelvin (H60A4, h60ax 302, has segments); nor on H61E5, whose
     # colour page's Kelvin pick is whole-strip (color_temp_control whole_device).
     for sku in ("H60A4", "H61E5"):

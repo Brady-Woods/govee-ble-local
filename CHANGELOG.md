@@ -91,7 +91,10 @@ model, from which the shipped readers are generated).
   (`View4IlluminationMode.I0`, one `Compose4DefWrite`). `set_color_temp` now sends that pair, each frame acked
   in order, and `turn_on(kelvin=)` sends the Kelvin frame before `33 04` (the given brightness, else the held
   one). An unknown brightness is read first with the profile's own read (the status read, or aa 04); if it
-  stays unknown, GoveeBleError and nothing is written (never a guessed `33 04`). The tab writes every piece,
+  stays unknown, GoveeBleError and nothing is written (never a guessed `33 04`). On such a profile the pair and
+  every `33 04` writer (`set_brightness`, `turn_on`) hold one Device lock from build to write, so a
+  `set_color_temp` started while a `set_brightness` is in flight re-sends the new level, as the app re-sends the
+  level its screen holds, not the old one; the pair's state takes the level it sent. The tab writes every piece,
   so the profile is `whole_device_kelvin` (the segment and zone Kelvin setters raise). Promoted from
   `modelled` to `app_traced`, admitted by default, not hardware-verified: **H60A4 / H80A4** (h60ax 302:
   `Bytes.C(K, 11, 1)`, the h60a6 frame over every piece). **H8015** (bulblightv3 328: `Config.N[2]` =
