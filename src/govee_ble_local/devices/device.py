@@ -1128,7 +1128,10 @@ class Device:
         allows it - the global 33 01 switch (which on H60A6 also drives both
         zones; H6047's main switch sends it too - ``33 36`` is only its per-bar
         buttons, see :meth:`set_zone_power`). Only a zoned fixture without a
-        zone-driving master switch falls back to one 33 30 frame per zone."""
+        zone-driving master switch falls back to one 33 30 frame per zone, and the H6057
+        (:attr:`.DeviceProfile.light_switch_power`) sends its light switch, ``33 30 <1 / 0>``."""
+        if self.profile.light_switch_power:
+            return [build.light_switch(on)]
         if self.profile.zones and not self.profile.global_power and not self.profile.bar_switch:
             return [build.zone_power(z.power_index, on) for z in self.profile.zones]
         if self.profile.relay:
@@ -1185,7 +1188,9 @@ class Device:
         _fold.apply_power(self.profile, self._state, on, confirmed=self._power_zones())
 
     async def set_power(self, on: bool) -> None:
-        """Switch the device on or off.
+        """Switch the device on or off. On a :attr:`.DeviceProfile.light_switch_power` profile (H6057) this
+        is the light switch, ``33 30 <1 / 0>``: it switches the light alone, so off leaves the white-noise
+        speaker playing, as the screen's light switch does.
 
         Raises GoveeBleNotSupported without POWER; connection errors propagate. A plug with
         :attr:`.DeviceProfile.power_resync` then re-reads as its app does (:meth:`_resync_after_power`);
@@ -1351,7 +1356,8 @@ class Device:
                 await self._commit_once(frame, apply, authoritative=True)
 
     async def turn_off(self) -> None:
-        """Power off; equivalent to ``set_power(False)``."""
+        """Power off; equivalent to ``set_power(False)`` (on the H6057, the light alone: the white noise keeps
+        playing)."""
         await self.set_power(False)
 
     async def set_brightness(self, pct: int) -> None:
@@ -2229,7 +2235,8 @@ class Device:
             applied = True
         if detail:
             # H6057: no aa 01; the aa 34 device-detail read after aa 04, as the screen's connect list sends
-            # them (Compose4InfoBleIotH6057), on while the header main switch shows on (parse_detail_power).
+            # them (Compose4InfoBleIotH6057), on while the light is open (parse_detail_power), the state of
+            # the light switch its power writes (DeviceProfile.light_switch_power).
             since = self._power_unsure_seq
             if await self._read_command("power", build.device_detail_query(), parse.parse_detail_power,
                                         apply_power, budget) == "applied":

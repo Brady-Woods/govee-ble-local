@@ -441,6 +441,16 @@ _REFUSED: tuple[tuple[str, str, _Edit, str], ...] = (
      "heartbeat power where power_live ['heartbeat_aa36'] take power from the reply to cmd_36"),
     ("h5080", "50", lambda f: _row(f, "50").update(heartbeat="heartbeat"),
      "where power_live [] and the relay take power from the reply to power"),
+    # the power write (h6057's light switch, 33 30, with its aa 34 light-flag read-back)
+    ("h6057", "104", lambda f: _row(f, "104").update(power_write="main"),
+     "power_write 'main' (one of ['light_switch'], or absent)"),
+    ("h6057", "104", lambda f: _row(f, "104").pop("power_write"),
+     "power_write light_switch and power_read aa34_detail go together"),
+    ("h6057", "104",
+     lambda f: _row(f, "104").update(zones=[{"id": "light", "power_index": 0, "segments": []}]),
+     "power_write light_switch on a zoned row"),
+    ("h6057", "104", lambda f: _wire(f)["forms"].update(f_30="light_direction"),
+     "wire forms f_30 'light_direction', where the library uses light_switch"),
     # the session (the device-list card's per_command rows)
     ("tablelampv1", "22", lambda f: _row(f, "22").update(session="card"), "session 'card'"),
     ("tablelampv1", "22", lambda f: _row(f, "22").update(power_read="advert"),

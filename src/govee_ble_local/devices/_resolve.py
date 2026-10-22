@@ -131,9 +131,11 @@ the row lacks fails the build: nothing defaults silently.
   H60A6's); otherwise each branch with another read becomes that pact's exact read
   (``DeviceProfile.status_read_by_pact``, :func:`_status_branches`), which a SKU of the pact fallback (below)
   can't take, and the forms and the colour-group decode serve every read. A polled row
-  reads its power from aa 01, or, with ``power_read: aa34_detail``, from the aa 34 device-detail read
-  (``DeviceProfile.detail_power_read``; wire ``f_34: device_detail``; never on a bar row, and with no aa 01
-  to take a ``heartbeat_aa01`` power from). A polled row
+  reads its power from aa 01, or, with ``power_read: aa34_detail``, from the aa 34 device-detail read's
+  light flag (``DeviceProfile.detail_power_read``; wire ``f_34: device_detail``; never on a bar row, and with
+  no aa 01 to take a ``heartbeat_aa01`` power from), which goes with ``power_write: light_switch``: the power
+  write is then the H6057 light switch, ``33 30 <1 / 0>`` (``DeviceProfile.light_switch_power``; wire
+  ``f_30: light_switch``; never on a zoned row), whose state that flag is. A polled row
   with the brightness capability reads aa 04 on every poll (one without it reads none, as H7004's screen
   doesn't: ``ControllerStrategyConfig.k1``) and a gradual row ``aa a3``, so ``connect_reads`` lists
   ``brightness`` exactly on a polled row with the capability and ``gradual`` wherever the capability is; a
@@ -280,6 +282,7 @@ class Row(TypedDict, total=False):
     support: str
     session: str
     power_read: str
+    power_write: str
     power_live: tuple[str, ...]
     heartbeat: str
     heartbeat_timing: str
@@ -464,6 +467,9 @@ _ILLUMINATION_SCHEMES: Final = frozenset({"h60a6", "h6188", "kelvin_v9"})
 # clientRow color_temp_control: how the screen writes colour temperature where it isn't the colour page's
 # Kelvin over the selected pieces (absent). Either value gives DeviceProfile.whole_device_kelvin.
 COLOR_TEMP_CONTROLS: Final = ("illumination", "whole_device")
+# clientRow power_write: the whole-device power write where it isn't the 33 01 main switch (absent):
+# light_switch = the H6057 light switch, 33 30 <1 / 0> (DeviceProfile.light_switch_power).
+POWER_WRITES: Final = ("light_switch",)
 RELAY_POWERS: Final = ("outlet0", "all_outlets", "total_switch")        # devices.profile.RelayPower
 HEARTBEAT_TIMINGS: Final = ("fixed_rate", "after_quiet")         # transport.connection.HeartbeatTiming
 SESSIONS: Final = ("held", "per_command")                          # devices.profile.SessionMode
@@ -1168,6 +1174,12 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
         fail("the aa 36 read and f_36 bar_pair go together")
     if power_read == "aa34_detail" and bar:
         fail("power_read aa34_detail on a bar row (the bars' power is the aa 36 read's)")
+    power_write = row.get("power_write")
+    if power_write is not None and power_write not in POWER_WRITES:
+        fail(f"power_write {power_write!r} (one of {list(POWER_WRITES)}, or absent)")
+    if (power_write == "light_switch") != (power_read == "aa34_detail"):
+        fail("power_write light_switch and power_read aa34_detail go together (the H6057 light switch and "
+             "its light flag, the screen's on / off)")
     writes = tuple(need(row.get("connect_writes"), "connect_writes"))
     if "connect_writes" in model:   # the SKU's own, on the one row of the family that lists it
         writes = tuple(model["connect_writes"])
@@ -1216,6 +1228,8 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
              "rule)")
 
     zones = tuple((z["id"], z["power_index"], tuple(z["segments"])) for z in need(row.get("zones"), "zones"))
+    if power_write and zones:
+        fail(f"power_write {power_write} on a zoned row (it is the whole-device frame, no zone's)")
     groups = tuple(tuple(g) for g in row.get("segment_brightness_groups") or ())
     lock = bool(need(row.get("account_lock"), "account_lock"))
     out: dict[str, Any] = {
@@ -1242,6 +1256,7 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
         "color_readback_live_ic": live_ic,
         "color_readback_ic_sections": ic == "sections",
         "detail_power_read": power_read == "aa34_detail",
+        "light_switch_power": power_write == "light_switch",
         "ic_num_read_only": ic == "fixed",
         "section_count_read": section_count,
         "brightness_range": raw_bright,
@@ -1378,6 +1393,8 @@ def _forms_used(out: Mapping[str, Any], caps: Collection[str], status_read: Sequ
     used = [("f_01", "relays" if relay else "light")]
     if out.get("detail_power_read"):
         used.append(("f_34", "device_detail"))
+    if out.get("light_switch_power"):
+        used.append(("f_30", "light_switch"))
     if relay and out.get("relay_power") == "total_switch":
         used.append(("f_02", "total_switch"))
     scheme = out.get("color_scheme")

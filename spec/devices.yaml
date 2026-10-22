@@ -11058,10 +11058,12 @@ families:
     client_profile:
       mode_color_parse: gradual_0d   # goodsType 104; 0x0b is the game sub-mode; split_hollowlamp/com/govee/h6057/origin/newDetail/H6057Info4Detail.java:414-456
       by_goods_type:
-        "104":   # H6057, the H6057DetailActivity screen; held: no support (which header switch backs the power is open)
+        "104":   # H6057, the H6057DetailActivity screen; the HA power is the header's light switch, 33 30 (the user's decision)
           models: [H6057]
           pacts: ["1,1"]
-          power_read: aa34_detail
+          support: app_traced
+          power_read: aa34_detail   # device_detail light_open (byte 0 bit 7): the light switch's state, the screen's on / off
+          power_write: light_switch   # 33 30 <1 / 0>: H6057DetailVM.h5, BleProtocol.command_light_switch
           color_scheme: h6006
           capabilities: [power, brightness, rgb, color_temp]
           zones: []
@@ -11075,41 +11077,45 @@ families:
           heartbeat: heartbeat
           doc: >-
             H6057 (Support.b; SubLib keys Support.d = {104}; Model.t -> H6057DetailActivity -> H6057DetailVM), pact (1,1)
-            only (Support.addSupportPact, H6057Config.f). HELD, no support: which header switch backs an HA light's power
-            is the user's decision (h6057 trace, library gap 2), and neither choice is served as the app serves it yet.
-            The screen never sends aa 01 and reads no 0xAC status: its state read is the aa 34 device-detail reply
-            (Controllers.f / e, H6057DetailVM.v5), whose byte 0 bit 7 is the light-open flag (H6057Info4Detail.g / H) and
-            byte 2 the music flags (white-noise isPlay); live updates are the ee 30 01 / 04 pushes (DeviceInfoNotifyParse.m
-            / n, not consumed). The screen's on / off is the light flag alone: switchCur is H6057Info4Detail.H, and while it
-            is off ViewConnectSuccess.J shows the close delegate (H6057DelegateClose, through H6057Config.a; a playing hint
+            only (Support.addSupportPact, H6057Config.f). The screen never sends aa 01 and reads no 0xAC status: its
+            state read is the aa 34 device-detail reply (Controllers.f / e, H6057DetailVM.v5), whose byte 0 bit 7 is the
+            light-open flag (Controllers.d, getBit2Boolean(b, 8); H6057Info4Detail.g / H) and byte 2 the music flags
+            (white-noise isPlay); live updates are the ee 30 01 / 04 pushes (DeviceInfoNotifyParse.m / n, not
+            consumed). The screen's on / off is the light flag alone: switchCur is H6057Info4Detail.H, and while it is
+            off ViewConnectSuccess.J shows the close delegate (H6057DelegateClose, through H6057Config.a; a playing hint
             while white noise plays, B) and hides the colour and brightness controls. Two header switches
-            (H6057DelegateHeader.E0 / D0): ivLightSwitch shows the light flag and writes the light alone, 33 30 <!light> (h5,
-            command_light_switch; a one-byte body, form_30 light_switch, not the library's 33 30 <index> <state> zone frame);
-            btnSwitch, the global switch, shows light OR white-noise isPlay and writes 33 01 00 when either is on, 33 01 01
-            only when both are off (switchTrigger -> ControllerSwitch.d; 33 01 00 also clears isPlay, D5). The library's
-            power is the global switch, as on every row, and power_read aa34_detail reads that switch's state (govee_state
-            device_detail main_switch_on) from aa 34 on each poll, after aa 04. That leaves two gaps with white noise
-            playing and the light off: the light reads on while the screen shows it closed (and offers no colour or
-            brightness), and set_power, which has no state gate, still sends 33 01 01, a frame the main switch never sends
-            then (a plain HA turn_on sends power). The light switch would match the screen's on / off in every state
-            (light_open, 33 30), but the library has no per-row power write for it. Open: the choice, and a bench check
-            of 33 01 01 while white noise plays. Connect
-            (Compose4InfoBleIotH6057): aa 06, the time sync, aa 07, timer, wake-up and sleep reads (not listed), aa 04, aa 34,
-            aa 05. No 33 b2 (no Controller4Secret on this path). Heartbeat aa 00 (I3 false; J3 empty). Brightness 33 04
-            <1..100> (BrightnessConfig.b, version 1).
-            Colour Config.x[104] = 2 -> Config.J[2] = Config.bu: RGB Bytes.f, colour-tab CCT Bytes.p (h6006); one piece
-            (Support.getColorPieceSize), no segments, no gradual toggle (Config.I[104]: supportGradual false,
-            supportColorTemperature true); the local tab list (ModeConfig.e, asset localSkuComponentConfigs.json "H6057":
-            9, 10, 8, 20, 11, 23, 18, 15, 29) has no illumination tab (13), so the colour tab's Bytes.p is the screen's CCT.
-            Kelvin: KelvinConfig version 0 = [2000, 9000] (Support.getColorTemRange's [1000, 10000] is unused on the wire).
-            The aa 05 0x0d reply holds only the gradual byte. Scenes not traced.
+            (H6057DelegateHeader.E0 / D0): ivLightSwitch shows the light flag and writes the light alone, 33 30 <!light>
+            (s0 -> H6057DetailVM.h5: ControllerSingle.c(BleProtocol.command_light_switch, [1 / 0]), a one-byte body,
+            the spec's form_30 light_switch, not the library's 33 30 <index> <state> zone frame; on success i5 sets the
+            light flag to the written state); btnSwitch, the global switch, shows light OR white-noise isPlay and
+            writes 33 01 00 when either is on, 33 01 01 only when both are off (switchTrigger -> ControllerSwitch.d; 33
+            01 00 also clears isPlay, D5). The HA light's power is the light switch (the user's decision, 2026-10-22:
+            "Light switch 33 30"; power_write light_switch): set_power, turn_on and turn_off write 33 30 <1 / 0>, and
+            power_read aa34_detail reads its state, the light flag (govee_state device_detail light_open), from aa 34
+            on each poll, after aa 04, so the power and its read-back are the same switch and the screen's on / off in
+            every state. The library never sends the main switch's 33 01: turn_off closes the light and leaves white
+            noise playing, as the light switch does, and with white noise playing and the light closed the light
+            reads off, as the screen shows it. Brightness and colour are sent whatever the light flag (the library
+            doesn't hide them while it is off; turn_on, unless power=False, sends the light switch before them).
+            Connect (Compose4InfoBleIotH6057): aa 06, the time sync, aa 07, timer, wake-up and sleep reads (not listed),
+            aa 04, aa 34, aa 05. No 33 b2 (no Controller4Secret on this path). Heartbeat aa 00 (I3 false; J3 empty).
+            Brightness 33 04 <1..100> (BrightnessConfig.b, version 1). Colour Config.x[104] = 2 -> Config.J[2] =
+            Config.bu: RGB Bytes.f, colour-tab CCT Bytes.p (h6006); one piece (Support.getColorPieceSize), no segments,
+            no gradual toggle (Config.I[104]: supportGradual false, supportColorTemperature true); the local tab list
+            (ModeConfig.e, asset localSkuComponentConfigs.json "H6057": 9, 10, 8, 20, 11, 23, 18, 15, 29) has no
+            illumination tab (13), so the colour tab's Bytes.p is the screen's CCT. Kelvin: KelvinConfig version 0 =
+            [2000, 9000] (Support.getColorTemRange's [1000, 10000] is unused on the wire). The aa 05 0x0d reply holds
+            only the gradual byte. Not modelled: white noise (33 31 / 33 32 / 33 33), the game mode, the presets,
+            the settings-screen switches, the battery, the ee 30 pushes and the Compose4Off2On re-read after a live
+            light-on push. Scenes not traced. Not hardware-verified (no H6057 on the bench, no firmware image).
           doc-ref:
             - split_hollowlamp/com/govee/h6057/origin/pact/Support.java:34-36,57-65,78-84,163-169,175-177
             - split_hollowlamp/com/govee/h6057/origin/pact/SubLib.java:20-26
             - split_hollowlamp/com/govee/h6057/origin/pact/Model.java:101-104
             - split_hollowlamp/com/govee/straightfloorlamp/adjust/v1/RemoteControlAc.java:65
             - split_hollowlamp/com/govee/h6057/origin/newDetail/H6057Config.java:66,76-204,215-217,242-258
-            - split_hollowlamp/com/govee/h6057/origin/newDetail/H6057DetailVM.java:161-183,371-425,517-545,558-588,707-712,950-967,1065-1072,1226-1264
+            - split_hollowlamp/com/govee/h6057/origin/newDetail/H6057DetailVM.java:161-183,336-355,371-425,517-545,558-588,707-712,949-967,1065-1072,1226-1264
+            - base-classes11/com/govee/base2light/kt/general_controller/ControllerSingle.java:37-40
             - split_hollowlamp/com/govee/h6057/origin/newDetail/controller/Compose4InfoBleIotH6057.java:72-83
             - split_hollowlamp/com/govee/h6057/origin/newDetail/controller/Compose4InfoBleIotH6057$iControllerStrategy$1.java:110-173
             - split_hollowlamp/com/govee/h6057/origin/newDetail/controller/Controllers.java:34-70

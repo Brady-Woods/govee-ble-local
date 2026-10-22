@@ -424,11 +424,21 @@ class DeviceProfile:
     detail_power_read: bool = field(default=False, kw_only=True)
     """``readback="polled"`` only: the poll reads the power from the ``aa 34`` device-detail read in place of
     ``aa 01``, after the ``aa 04`` brightness read, as the H6057 screen's connect list orders them
-    (``Compose4InfoBleIotH6057``), and takes the state of its header main switch (``33 01``): on while the
-    light is open or white noise plays (the spec's ``device_detail.main_switch_on``). A devices.yaml row with
-    ``power_read: aa34_detail``; none is served yet (h6057 104 is held: with white noise playing and the light
-    off, this reads on while the screen shows the light closed, and ``set_power(True)`` still sends
-    ``33 01 01``, which the main switch never sends then)."""
+    (``Compose4InfoBleIotH6057``), and takes its light-open flag (byte 0 bit 7, the spec's
+    ``device_detail.light_open``: ``Controllers.d``, ``H6057Info4Detail.H``): the screen's on / off and the
+    light switch's state (:attr:`light_switch_power`). So white noise playing with the light closed reads
+    off, as the screen shows it. A devices.yaml row with ``power_read: aa34_detail`` (H6057)."""
+    light_switch_power: bool = field(default=False, kw_only=True)
+    """The whole-device power is the H6057 header's light switch: :meth:`~.device.Device.set_power`,
+    ``turn_on`` and ``turn_off`` write ``33 30 <1 / 0>`` (the spec's ``cmd_30_write`` under form_30
+    ``light_switch``: ``H6057DetailVM.h5``, ``BleProtocol.command_light_switch``) in place of the ``33 01``
+    main switch, whose state :attr:`detail_power_read` reads back. It switches the light alone, so
+    ``turn_off`` leaves the white-noise speaker playing, as the screen's light switch does (the main switch,
+    which would stop it too, is never sent). A devices.yaml row's ``power_write: light_switch`` (h6057 104,
+    the user's decision of 2026-10-22). The whole-device power frame only: no zone or relay frame goes with
+    it.
+    False (the default): the ``33 01`` main switch (or a zoned fixture's ``33 30`` per zone, or a plug's
+    relay frame)."""
     session: SessionMode = field(default="held", kw_only=True)
     """How the writes reach the device: ``"held"`` (the default: the control screens' rows, and a profile
     built by hand) keeps one link across commands and reads, acks each write and runs the :attr:`heartbeat`;

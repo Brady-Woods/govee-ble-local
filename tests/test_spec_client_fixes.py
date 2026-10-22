@@ -295,16 +295,22 @@ def test_h6047_bars_still_override_the_aa01_decode() -> None:
     assert d.state.is_on is True and d.state.zone_power == {0: True, 1: False}
 
 
-@pytest.mark.parametrize(("flags", "on"), [(0x80, True), (0x00, False)])
-def test_a_detail_power_read_polls_aa34_in_place_of_aa01(flags: int, on: bool) -> None:
-    # detail_power_read (power_read aa34_detail, the H6057 screen's read; no row is served by it yet, so
-    # on an h6006 polled profile): aa 04, aa 34 and aa 05, no aa 01, in Compose4InfoBleIotH6057's order.
-    # The bit decode is spec/govee_reference.py's.
-    d = _scripted("H6006", {0x34: frame(0xAA, 0x34, flags, 0x64, 0x00, 0x00, 0x32, 0x50),
-                            0x01: frame(0xAA, 0x01, 0x01)}, detail_power_read=True)
+@pytest.mark.parametrize(("flags", "music", "on"),
+                         [(0x80, 0x00, True), (0x00, 0x00, False), (0x00, 0x90, False)])
+def test_a_detail_power_read_polls_aa34_in_place_of_aa01(flags: int, music: int, on: bool) -> None:
+    # H6057 (power_read aa34_detail): aa 04, aa 34 and aa 05, no aa 01, in Compose4InfoBleIotH6057's order;
+    # the power is the light flag (device_detail light_open, bit 7), so white noise playing (music 0x90) with
+    # the light closed reads off. Its power write is that flag's switch, the light switch 33 30 (power_write
+    # light_switch, H6057DetailVM.h5), never the 33 01 main switch. The bit decode is
+    # spec/govee_reference.py's.
+    d = _scripted("H6057", {0x34: frame(0xAA, 0x34, flags, 0x64, music, 0x00, 0x32, 0x50),
+                            0x01: frame(0xAA, 0x01, 0x01)})
     asyncio.run(d._read_polled())
     sent = [c.args[0][:2].hex() for c in d._conn.query.call_args_list]   # type: ignore[attr-defined]
     assert sent == ["aa04", "aa34", "aa05"] and d.state.is_on is on
+    asyncio.run(d.turn_off())
+    asyncio.run(d.turn_on(brightness=40))
+    assert _sent(d) == [build.light_switch(False), build.light_switch(True), build.brightness(40)]
 
 
 @pytest.mark.parametrize(("sku", "byte", "on"), [

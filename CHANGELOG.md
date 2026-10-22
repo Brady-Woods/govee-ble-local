@@ -63,15 +63,17 @@ model, from which the shipped readers are generated).
     does) sees no change from a re-read.
 - **158 more SKUs, traced from the app's device list** (spec rows; no library code changed but three row
   facts, below: segment colour temperature, the segment-brightness groups and a status row's device-info
-  reads; and the illumination-tab pair that promotes H60A4 / H80A4, the aa 40 section sum that promotes H61A9
-  and the segment split that promotes H61D2-H61D6, below): 105 admitted by default (`app_traced`) and 53
-  behind `allow_modelled` (`modelled`). The entries below admit 63 more by default (16 through the resolver
+  reads; the illumination-tab pair that promotes H60A4 / H80A4, the aa 40 section sum that promotes H61A9,
+  the segment split that promotes H61D2-H61D6, and H6057's light-switch power, below): 105 admitted by
+  default (`app_traced`) and 53 behind `allow_modelled` (`modelled`). The entries below admit 64 more by
+  default (16 through the resolver
   changes; H7004, H1162 / H1163 / H1167 / H1168, H70B1 and H70BC; 17 through the status-read command ids and
   the BK pact gate; the 10 SKUs of the `legacy_02` colour scheme; H7061; H70B2, H6630, H8630 and H6631 on the
-  device-list card; H7070 on its pact's status read; H6071 / H6075 on the `kelvin_v9` scheme; and H615A-E,
-  whose pairing write is read as an exact-pact condition) and 11 more behind `allow_modelled` (H7072, H6119,
-  the five Glide panels, H61E5 / H61E6 and H60A1 / H80A1), for 267 admitted by default and 69 behind
-  `allow_modelled` in all (with H8015, a 1.6.1 SKU now admitted by default: Changed). None is
+  device-list card; H7070 on its pact's status read; H6071 / H6075 on the `kelvin_v9` scheme; H615A-E, whose
+  pairing write is read as an exact-pact condition; and H6057 on its light switch) and 11 more behind
+  `allow_modelled` (H7072, H6119, the five Glide panels, H61E5 / H61E6 and H60A1 / H80A1), for 268 admitted
+  by default and 69 behind `allow_modelled` in all (with H8015, a 1.6.1 SKU now admitted by default:
+  Changed). None is
   hardware-verified (the only bench check, below, was read-only), and none has a bundled scene catalog, so none
   is offered scenes. Each is listed with its family and goodsType; † marks a SKU no row lists that the
   catalogue snapshot (`spec/govee_catalog.json`) routes to that row by its goodsType alone (16 of them).
@@ -347,18 +349,30 @@ model, from which the shipped readers are generated).
   side). No Kelvin is read from the report itself (its default parse's `s16be(r1, g1)` is head 1's red and green).
   New `parse.HeadPair` in `parse.ModeColor`. Every frame is the h60a6 one the row already resolved to. Source-modelled,
   not live-verified: no H7061 on the bench, and what the heads report after a CCT write is unread.
-- **The aa 34 device-detail power read (H6057's screen); no row is served by it yet.** H6057's screen never reads
-  aa 01: its state read is the aa 34 device-detail reply (`Controllers.f` / `e`, `H6057DetailVM.v5`). New
-  `power_read: aa34_detail` (`DeviceProfile.detail_power_read`, keyword-only, default False): the poll reads aa 04,
-  then aa 34 in place of aa 01, then aa 05, the screen's connect order (`Compose4InfoBleIotH6057`), and takes the
-  state of the header's main switch, the one `33 01` drives: on while the light is open (byte 0 bit 7) or white
-  noise plays (byte 2 bits 4 and 7; `H6057DelegateHeader.E0`). New `build.device_detail_query` and
-  `parse.parse_detail_power`; the frame describer (`wire.describe`) reads the aa 34 reply as `wire.parse` does.
-  H6057 (h6057 104) stays held, with no `support`, until the user picks the switch that backs an HA light's power.
-  With white noise playing and the light off, the main switch reads on while the screen shows the light closed
-  (`switchCur` is the light flag alone), and `set_power(True)` still sends `33 01 01`, which the main switch never
-  sends then (`switchTrigger`). The light switch (`33 30`) matches the screen in every state, but the library has
-  no per-row power write for it. Source-modelled: no H6057 on the bench and no firmware dump.
+- **H6057 (h6057 104), admitted by default (`app_traced`): the HA power is its light switch, `33 30`, read back
+  from the aa 34 light flag** (the user's decision, 2026-10-22: "Light switch 33 30"). H6057's screen never
+  reads aa 01: its state read is the aa 34 device-detail reply (`Controllers.f` / `e`, `H6057DetailVM.v5`).
+  - **The read:** new `power_read: aa34_detail` (`DeviceProfile.detail_power_read`, keyword-only, default
+    False). The poll reads aa 04, then aa 34 in place of aa 01, then aa 05, the screen's connect order
+    (`Compose4InfoBleIotH6057`), and takes the light-open flag, byte 0 bit 7 (`Controllers.d`,
+    `H6057Info4Detail.H`): the screen's on / off, and the light switch's state. With white noise playing and
+    the light closed it reads off, as the screen shows it. New `build.device_detail_query` and
+    `parse.parse_detail_power`; the frame describer (`wire.describe`) reads the aa 34 reply as `wire.parse`
+    does.
+  - **The write:** new `power_write: light_switch` (`DeviceProfile.light_switch_power`, keyword-only, default
+    False) and `build.light_switch`. `set_power`, `turn_on` and `turn_off` write the header's light switch,
+    `33 30 01` / `33 30 00` (`H6057DelegateHeader.s0` -> `H6057DetailVM.h5`:
+    `ControllerSingle.c(BleProtocol.command_light_switch, [1 / 0])`), in place of the `33 01` main switch, so
+    the power and its read-back are the same switch in every state.
+  - **For integrators:** the light switch drives the light alone. `turn_off` closes the light and leaves the
+    white-noise speaker playing, as the screen's light switch does; the library never sends the main switch
+    (`33 01 00` would stop white noise too: `switchTrigger`, `D5`). White noise, its volume and the other
+    speaker controls are not modelled.
+  - The screen hides its colour and brightness controls while the light is closed (`ViewConnectSuccess.J`);
+    the library sends them whatever the light flag, and `turn_on` (unless `power=False`) sends the light
+    switch before them. Colour and colour temperature are the h6006 frames, Kelvin [2000, 9000], brightness
+    `33 04` percent, the aa 00 keep-alive. The ee 30 pushes are not read. Source-traced (Govee Home 7.7.02), not
+    live-verified: no H6057 on the bench and no firmware dump.
 - **A write-only row type: the app's device-list card** (`DeviceProfile.session`, `"held"` by default, or
   `"per_command"`; `GoveeConnection.send_once`). It is for SKUs whose control screen has no BLE control, where
   the user chose to follow the card (DECISIONS.md 6). On a `per_command` profile:
@@ -758,8 +772,8 @@ model, from which the shipped readers are generated).
   its only colour-temperature control. Only bytes 3-5 and the checksum of the `set_color_temp` /
   `turn_on(kelvin=)` frame change; RGB, the RGB pick of a tint colour, and the decoded state are as before.
   `DeviceProfile.color_scheme` for H6188 is now `"h6006"`. The `"h6188"` scheme keeps its name and frame for
-  H8015 (admitted by default since its pair, Changed), whose illumination tab sends it. Source-traced (Govee Home 7.7.02), not
-  live-verified: there is no H6188 on the bench.
+  H8015 (admitted by default since its pair, Changed), whose illumination tab sends it. Source-traced (Govee
+  Home 7.7.02), not live-verified: there is no H6188 on the bench.
 - **H6061 whole-device RGB is now the app's one frame** (the user's decision, 2026-10-21: "Keep it, fix the
   frame"). The `h6061` scheme sent a colour as `ceil(n / 4)` `33 05 15 04 <group> RGB x4` frames (`Bytes.m`),
   which the app sends only for colour stripes (`ColorViewModel.O` -> `ColorModeControllerConfig.k`). The colour
@@ -803,19 +817,20 @@ model, from which the shipped readers are generated).
   `modelled`; one that needs library work has no `support` and names the gap in its `doc`. A verification
   pass challenged each family's rows; they were repaired, and demoted (to `modelled`, or to no `support`)
   where a core claim didn't hold.
-  - devices.yaml now has 305 goodsType rows in 96 families (184 in 91): 206 with `support` (66), of them 167
-    `app_traced`, 35 `modelled` and the same 4 `hardware_verified`, and 99 without (118). 66 of the 206 had
-    support at 1.6.1 and keep it (bulblightv3 328 now `app_traced`); the trace gave 87 more rows support. The other 53 take it through the library
-    and spec changes under Added, Changed, Fixed and Spec: h7004 0, h6069 284, h3700 383, h7076 313, h70dx
-    267-269, bulblightv3 342, the four h1162 rows, h70b1 134, h70bx 216, the six status-read rows (h6092 334 /
-    333 / 401, h7072 371 / 294, h70b6 341), the nine BK target rows, the five Glide panel rows (h6061 96 / 97 /
-    121 / 163 / 228), the seven `legacy_02` rows (h6105, h6107, h6129, h6185, h73101217, h7318 and h6165, each
-    goodsType 0), h60ax 235 and h61d3 239 / 246 (the colour-temperature work, which also promoted h60ax 302 to
-    `app_traced`), h7050 98 (H7061's two heads; the aa 40 section sum promoted dreamcolorlightv1 204 to
-    `app_traced`) and the three device-list card rows (h70b2 185, h6630 285 / 286), h6092 283 (H7070's
-    exact-pact status read), h6071 57 / 67 (the `kelvin_v9` scheme) and stringlightv2 40 / 108 (the exact-pact
-    pairing write), all `app_traced` but h7072 294, h6119 44, the Glide panels, h60ax 235 and h61d3 239 / 246
-    (`modelled`). The segment split promoted the trace's h61d3 202 to `app_traced`.
+  - devices.yaml now has 305 goodsType rows in 96 families (184 in 91): 207 with `support` (66), of them 168
+    `app_traced`, 35 `modelled` and the same 4 `hardware_verified`, and 98 without (118). 66 of the 207 had
+    support at 1.6.1 and keep it (bulblightv3 328 now `app_traced`); the trace gave 87 more rows support. The
+    other 54 take it through the library and spec changes under Added, Changed, Fixed and Spec: h7004 0, h6069
+    284, h3700 383, h7076 313, h70dx 267-269, bulblightv3 342, the four h1162 rows, h70b1 134, h70bx 216, the
+    six status-read rows (h6092 334 / 333 / 401, h7072 371 / 294, h70b6 341), the nine BK target rows, the five
+    Glide panel rows (h6061 96 / 97 / 121 / 163 / 228), the seven `legacy_02` rows (h6105, h6107, h6129, h6185,
+    h73101217, h7318 and h6165, each goodsType 0), h60ax 235 and h61d3 239 / 246 (the colour-temperature work,
+    which also promoted h60ax 302 to `app_traced`), h7050 98 (H7061's two heads; the aa 40 section sum
+    promoted dreamcolorlightv1 204 to `app_traced`) and the three device-list card rows (h70b2 185, h6630 285 /
+    286), h6092 283 (H7070's exact-pact status read), h6071 57 / 67 (the `kelvin_v9` scheme), stringlightv2 40
+    / 108 (the exact-pact pairing write) and h6057 104 (the light switch), all `app_traced` but h7072 294, h6119
+    44, the Glide panels, h60ax 235 and h61d3 239 / 246 (`modelled`). The segment split promoted the trace's
+    h61d3 202 to `app_traced`.
   - Two goodsType add-ons were traced and checked on their own: straightfloorlamp 69 (H6076 / H8076,
     `app_traced`, with the bench reads above, on an advertised pact only: `pact_required`, below) and
     rgbiclight 141 (H61C2 / H61C3 / H61C5).
@@ -1070,6 +1085,12 @@ model, from which the shipped readers are generated).
   `light_switch` (was `light_direction`), and devices.schema.json's `f_30` enum gains it.
   `spec/govee_commands.py`'s `build_h6057_light_switch` is the reference the library's `build.light_switch` is
   checked against.
+- **`power_write`, a clientRow fact** (devices.schema.json; `tools/gen_devices.py` KEEP): the whole-device
+  power write where it isn't the `33 01` main switch. `light_switch` is the only value: the resolver needs
+  `power_read: aa34_detail` with it, and the other way round (the light flag is that switch's state), wire
+  `f_30: light_switch`, and no zones. h6057 104 states it and gets `support: app_traced`; its doc records both
+  header switches, the user's choice and what `turn_off` leaves playing. `power_read: aa34_detail` now reads
+  `device_detail.light_open`, not `main_switch_on` (the schema description says so).
 - **The device-list card's session, as spec vocabulary.**
   - `clientRow.session`: `held` (absent; the control screen's) or `per_command` (the card's:
     `CardCommManagerProxy.comm2Device` -> `u` -> `triggerBleCmd$2`).
