@@ -207,8 +207,9 @@ async def read_device_info(dev: ReadTarget, read_reply: ReadReply) -> bool:
     strategies, e.g. rgbiclight ``ControllerStrategyConfig.E1``, and the gt 50 / 90 plug screens). A screen
     that connects with the 0xAC status read sends neither: ``Compose4BaseInfoSingleRead`` queues only the
     ``TimerConfig.f`` time sync and the ``ControllerSingleRead``, and the versions and device id come from the
-    0xAC 0x07 TLV (``Compose4BaseInfoSingleRead.w``). That is every ``readback == "status"`` profile. The gt 43
-    plug screens don't send them either, and ``aa 07 02`` (``SnController``) the app sends only while pairing.
+    0xAC 0x07 TLV (``Compose4BaseInfoSingleRead.w``). That is every ``readback == "status"`` profile. The gt
+    43 plug screens don't send them either, and ``aa 07 02`` (``SnController``) the app sends only while
+    pairing.
 
     The library sends all three on the first poll of every profile with a read-back, whatever the path. Where
     the app doesn't, they are FIRMWARE-SOURCED extensions (CLAUDE.md rule 6) only where a firmware image or

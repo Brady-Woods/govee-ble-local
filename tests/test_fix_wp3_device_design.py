@@ -215,7 +215,8 @@ def test_every_table_profile_is_valid_and_skus_are_unique() -> None:
         assert len({sku.upper() for sku in p.skus}) == len(p.skus)
         for sku in p.skus:
             owners.setdefault(sku.upper(), []).append(p)
-    # A SKU in two profiles (carlightv1 6 / 39: raw vs percent brightness) is told apart by the advertised pact.
+    # A SKU in two profiles (carlightv1 6 / 39: raw vs percent brightness) is told apart by the advertised
+    # pact.
     for sku, profiles in owners.items():
         if len(profiles) > 1:
             pacts = {pact for route in profile_mod._ADMITTED[1][sku] for pact in route.pacts or ()}
