@@ -210,7 +210,15 @@ class BarKelvin:
     right: int
 
 
-ModeColor = KelvinReport | BarKelvin | ColorReport
+@dataclass(frozen=True)
+class HeadPair:
+    """H7061's 0x15 report (goodsType 98, the spec's ``bri_rgb_pair``): ``(brightness, rgb)`` for each lamp
+    head, the brightness a signed byte, as ``H70606162Info4Detail.I`` stores them (SubMode4Color's colours
+    and relative brightness). It carries no colour temperature."""
+    heads: tuple[tuple[int, Rgb], tuple[int, Rgb]]
+
+
+ModeColor = KelvinReport | BarKelvin | HeadPair | ColorReport
 
 
 def mode_reply(frame: bytes, prof: Any) -> Any:
@@ -261,7 +269,8 @@ def mode_color(m: Any, *, unsigned_kelvin: bool = False) -> ModeColor | None:
     * ``rgb_kelvin_tint`` (``ModeParseStrategyConfig.a``): ``(None, kelvin)`` for a Kelvin > 0 (``is_cct``),
       the tint as the colour for a negative one (``shows_tint``), else the colour;
     * ``rgb_kelvin`` (``[r, g, b][kelvin s16be]``): ``(None, kelvin)`` for a Kelvin > 0, else the colour;
-    * ``rgb_only`` (H6052InfoDetail.G): the colour.
+    * ``rgb_only`` (H6052InfoDetail.G): the colour;
+    * ``bri_rgb_pair`` (H7061's two heads, ``H70606162Info4Detail.I``): :class:`HeadPair`.
 
     ``unsigned_kelvin`` is the library's default ``"rgb_kelvin"`` parse, which no app screen uses: the
     Kelvin read unsigned (``s2 & 0xFFFF``), and on the 0x0d tint layout ANY non-zero Kelvin is CCT
@@ -295,6 +304,8 @@ def mode_color(m: Any, *, unsigned_kelvin: bool = False) -> ModeColor | None:
         return (None, int(layout.kelvin)) if layout.is_cct else (_rgb(layout.color), None)
     if isinstance(layout, _S.RgbOnly):
         return _rgb(layout.color), None
+    if isinstance(layout, _S.BriRgbPair):
+        return HeadPair(((int(layout.bri), _rgb(layout.color)), (int(layout.bri_b), _rgb(layout.color_b))))
     return None   # a layout no profile in the library selects
 
 

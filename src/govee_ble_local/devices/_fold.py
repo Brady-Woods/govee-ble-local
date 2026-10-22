@@ -417,8 +417,31 @@ def _apply_mode(profile: DeviceProfile, state: DeviceState, m: Any) -> None:
     elif isinstance(color, parse.KelvinReport):
         if color.kelvin > 0 or profile.mode_reports_kelvin:   # else the report can't say: keep what was sent
             apply_kelvin_report(state, color.kelvin)
+    elif isinstance(color, parse.HeadPair):
+        _apply_head_pair(profile, state, color)
     elif color is not None:
         state.rgb_color, state.color_temp_kelvin = color
+
+
+def _apply_head_pair(profile: DeviceProfile, state: DeviceState, pair: parse.HeadPair) -> None:
+    """H7061's two-head report (``H70606162Info4Detail.I``: SubMode4Color's colours and relative
+    brightness, the two head swatches and their "N%" of ``H7061ColorMode.updateColor`` /
+    ``updateBrightness``): head 1 is segment 0 and head 2 segment 1 (the colour page's posSet over its 2
+    pieces), each brightness clamped to the 0..100 state holds. The whole device has a colour only while
+    both heads show the same one; when that colour is an in-range Kelvin tint it is that colour temperature,
+    as the colour page maps a one-colour report to its Kelvin (``ColorViewModel.initColor4Device`` ->
+    ``KelvinConfig.f``) and as :func:`apply_rgb` folds the same pick. The report carries no Kelvin field
+    (its default parse's ``s16be(r1, g1)`` is head 1's red and green), so none is read from it."""
+    (bri_a, rgb_a), (bri_b, rgb_b) = pair.heads
+    state.segments = parse.merge_segments(state.segments, [
+        Segment(0, rgb_a, max(0, min(100, bri_a))), Segment(1, rgb_b, max(0, min(100, bri_b)))])
+    shared = rgb_a if rgb_a == rgb_b else None
+    span = kelvin_range(profile, state.hardware_version, soft=state.firmware_version)
+    kelvin = None if shared is None else build.rgb_as_kelvin(*shared, profile.color_scheme, span)
+    if kelvin is None:
+        state.rgb_color, state.color_temp_kelvin = shared, None
+    else:
+        state.rgb_color, state.color_temp_kelvin = None, kelvin
 
 
 def apply_kelvin_report(state: DeviceState, kelvin: int) -> None:

@@ -15622,9 +15622,10 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/content/color/DelegateColor.java:226-229,345-352,476-485
             - base-classes11/com/govee/base2light/pact/newdetail/content/color/ColorViewModel.java:858,883-899,1133-1147
             - base-classes11/com/govee/base2light/pact/newdetail/content/illumination/View4IlluminationMode.java:613-622
-        "98":   # H7061 two-head flood light, the H70606162DetailVM screen; no aa a5 group reads (support withheld: library gap, the bri_rgb_pair fold)
+        "98":   # H7061 two-head flood light, the H70606162DetailVM screen; no aa a5 group reads (the heads' colours come from the aa 05 report)
           models: [H7061]
           pacts: ["1,1"]
+          support: app_traced
           mode_color_parse: bri_rgb_pair_15
           color_functions: [segment_brightness, color_temperature]
           capabilities: [power, brightness, rgb, color_temp, segments, scenes]
@@ -15646,10 +15647,12 @@ families:
             H70606162Info4Detail.N runs the default strategy first (gradual = bri1 == 1, Kelvin field s16(r1, g1), kept
             as the screen's illumination Kelvin q when > 0), then I overwrites only the colours (SubMode4Color.d) and the
             relative brightness (.e). The layout has no Kelvin field of its own: s16(r1, g1) is head 1's red and green
-            bytes. mode_reports_kelvin is left absent, as on other app-decoded rows: the bri_rgb_pair fold decides the
-            Kelvin read-back from the app's path (the q artefact, and/or the KelvinConfig.f tint lookup if the colour
-            page runs ColorViewModel.initColor4Device), and false waits for a bench read after a CCT write. The
-            keep-alive is aa 01 (I3 true -> ConnectHeartbeat type 1). Main switch 33 01
+            bytes. The library folds the report as the colour page holds it: head 1 / head 2 colour and relative
+            brightness to segments 0 / 1 (H7061ColorMode.updateColor / updateBrightness), the whole-device colour only
+            while both heads match, and a matching in-range Kelvin tint as that colour temperature (the one-colour
+            lookup ColorViewModel.initColor4Device -> KelvinConfig.f, and the write side's tint pick); the q artefact
+            is not modelled. mode_reports_kelvin is left absent (the fold reads no Kelvin field); what the heads report
+            after a CCT write is unread on hardware. The keep-alive is aa 01 (I3 true -> ConnectHeartbeat type 1). Main switch 33 01
             (switchTrigger -> ControllerSwitch); no zone switch, the heads are colour pieces only. Colour page:
             H7061ColorMode, two head toggles over getBulbStringMaxNum(98) = 2 pieces. Frames: Config.x[98] = 0 ->
             Config.J[0] = Yt (Bytes.h, or Bytes.r with colour-temperature type Config.P[98] = 1 for a Kelvin tint) and
@@ -15659,9 +15662,7 @@ families:
             (Support.getColorTemRange agrees). Brightness: no BrightnessConfig entry, percent [1, 100]. No account
             lock. Scenes: ScenesConfigBean(2, 1, {0, 1, 2, 3}); scene apply as H7060 / H7062 (legacy_scene; the
             sceneType-5 0x50 branch goes to the H7061NewDiyConfig parser, not modelled); no bundled catalog. Not
-            listed: the time-sync write. No support yet: the library decodes the two head records but folds no colour
-            or head brightness from them (parse.mode_color), so the screen's colour read-back is not served. Disputed
-            2026-10-21: mode_reports_kelvin false (removed, above); the illumination tab's Bytes.C mask, whose piece
+            listed: the time-sync write. Disputed 2026-10-21: mode_reports_kelvin false (removed, above); the illumination tab's Bytes.C mask, whose piece
             count comes from ColorPieceConfig.c -> LightColorCapabilityCenter.M1 (segmentCount, untraced for 98), so
             its 03 00 is not established (that tab stays open; the colour page's 2-head posSet is traced). Not
             hardware-verified.

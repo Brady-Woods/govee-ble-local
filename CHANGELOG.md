@@ -73,6 +73,15 @@ model, from which the shipped readers are generated).
   The aa 40 read keeps its place in the poll, and for a section sum of 0, 13, 14 or 15 the frames are the
   ones sent before (the bench H61C3 reads 0). Source-modelled: no H61A9, H61C2 or H61C5 is on the bench, and no
   non-zero sum has been read. The live-IC rows (H6641 and the other h61d3 rows) keep their walk.
+- **H7061 (h7050 98), a two-head flood light, admitted by default (`app_traced`).** Its aa 05 0x15 report is two
+  `[bri s8][r g b]` head records (`bri_rgb_pair_15`), which the library decoded but did not fold. It now folds
+  them as the colour page holds them (`H70606162Info4Detail.I`; `H7061ColorMode.updateColor` /
+  `updateBrightness`): head 1 / head 2 to segments 0 / 1 with their brightness (clamped to 0..100), the
+  whole-device colour only while both heads show the same one, and a shared in-range Kelvin tint as that colour
+  temperature (`ColorViewModel.initColor4Device` -> `KelvinConfig.f`, as an RGB tint pick is folded on the write
+  side). No Kelvin is read from the report itself (its default parse's `s16be(r1, g1)` is head 1's red and green).
+  New `parse.HeadPair` in `parse.ModeColor`. Every frame is the h60a6 one the row already resolved to. Source-modelled,
+  not live-verified: no H7061 on the bench, and what the heads report after a CCT write is unread.
 
 ### Changed
 - Nothing for existing SKUs. Each of the 104 SKUs admitted at 1.6.1 (98 by default, 6 behind
