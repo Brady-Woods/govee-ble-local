@@ -119,8 +119,8 @@ class DeviceProfile:
     segments: int = 0
     """Segment count: the whole-device mask width and the segment index bound (H6061: its panel
     count); 0 for a single-colour device. ``Device.set_segment_count`` overrides it with a count the
-    device reports, and so does the device's own read of it on a :attr:`section_count_read` or
-    :attr:`color_writes_live_ic` profile (``Device.segment_count``)."""
+    device reports, and so does the device's own read of it on a :attr:`section_count_read`,
+    :attr:`color_writes_live_ic` or :attr:`light_num_per_unit` profile (``Device.segment_count``)."""
     zones: tuple[Zone, ...] = ()
     """Independently switchable zones (empty for an unzoned device)."""
     scene_versions: frozenset[int] = field(default_factory=frozenset)
@@ -483,6 +483,17 @@ class DeviceProfile:
     when the device gives no usable count, as a ``section_count_read`` profile does. :attr:`segments` is then
     only the count before the first read. Every IC-sized devices.yaml row (``ic_pieces`` object form) sets it;
     False (the default): the writes keep :attr:`segments`."""
+    light_num_per_unit: int = field(default=0, kw_only=True)
+    """``readback="polled"``: the screen reads the ``aa 0f`` string count at connect and stores the count
+    times this as its IC, the pieces its colour strip takes at each pick (h7020 ``NewDetailVM.u5``: the bulbs
+    per string, ``Support.getBulbStringSetting`` [1], or 1 on goodsType 149, where the count is the pieces; a
+    devices.yaml row's ``light_num_pieces``). :meth:`~.device.Device.update` reads it on every poll, after
+    ``aa 04`` and before ``aa 05``, and a count of 1 or more whose pieces a mask can carry (at most
+    ``build.MAX_MASK_SEGMENTS``) becomes :attr:`~.device.Device.segment_count`: the whole-device mask, the
+    segment index bound and the ``aa a5`` walk's pieces. A write that carries a mask before any count is known
+    reads it first and raises GoveeBleError, sending nothing, without one, as a :attr:`section_count_read`
+    profile does, and the walk is skipped until a count is known. :attr:`segments` is then only the count
+    before the first read. 0 (the default): no ``aa 0f`` read."""
 
     def __post_init__(self) -> None:
         """Validate each field: GoveeBleInvalidValue (a ValueError) on a value no Device can use.
@@ -564,6 +575,10 @@ class DeviceProfile:
         if self.color_writes_live_ic and not self.color_readback_live_ic:
             raise GoveeBleInvalidValue(f"{where}: color_writes_live_ic without color_readback_live_ic (the "
                                        "live pieces come from its aa 40 read)")
+        per_unit = self.light_num_per_unit
+        if isinstance(per_unit, bool) or not isinstance(per_unit, int) or per_unit < 0:
+            raise GoveeBleInvalidValue(
+                f"{where}: light_num_per_unit={per_unit!r} (0, no aa 0f read, or more)")
         for name in ("kelvin_by_hardware", "kelvin_by_software"):
             if isinstance(getattr(self, name), list):
                 object.__setattr__(self, name, tuple(map(tuple, getattr(self, name))))

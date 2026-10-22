@@ -12,12 +12,13 @@ model, from which the shipped readers are generated).
 - **158 more SKUs, traced from the app's device list** (spec rows; no library code changed but the
   illumination-tab pair that promotes H60A4 / H80A4, the aa 40 section sum that promotes H61A9 and the live
   piece count that promotes 14 h705a SKUs, below): 116 admitted by default (`app_traced`) and 42 behind
-  `allow_modelled` (`modelled`). The entries below admit 60 more by default (16 through the resolver changes;
+  `allow_modelled` (`modelled`). The entries below admit 69 more by default (16 through the resolver changes;
   H1162 / H1163 / H1167 / H1168, H70B1 and H70BC; 17 through the status-read command ids and the BK pact gate;
   the 10 SKUs of the `legacy_02` colour scheme; H7061; H70B2, H6630, H8630 and H6631 on the device-list card;
-  and through the live piece count H1A45 and the five h61d3 SKUs behind `allow_modelled` since 1.5.0, H61B8 /
-  H61B9 / H61F2 / H61F5 / H61F6) and 12 more behind `allow_modelled` (H7072, H6119, the five Glide panels,
-  H61E5 / H61E6, H60A1 / H80A1 and H6609), for 274 admitted by default and 55 behind `allow_modelled` in all.
+  through the live piece count H1A45 and the five h61d3 SKUs behind `allow_modelled` since 1.5.0, H61B8 /
+  H61B9 / H61F2 / H61F5 / H61F6; and through the aa 0f string count the nine h7020 bulb-string SKUs) and 12
+  more behind `allow_modelled` (H7072, H6119, the five Glide panels, H61E5 / H61E6, H60A1 / H80A1 and H6609),
+  for 283 admitted by default and 55 behind `allow_modelled` in all.
   None is
   hardware-verified (the only bench check, below, was read-only), and none has a bundled scene catalog, so none
   is offered scenes. Each is listed with its family and goodsType; † marks a SKU no row lists that the
@@ -346,6 +347,26 @@ model, from which the shipped readers are generated).
     colour temperature and the gradual flag are served, over 18 or 14 pieces.
 
   None is hardware-verified: none of these SKUs is on the bench.
+- **The aa 0f string count sizes the live piece count on the h7020 bulb-string rows**
+  (`DeviceProfile.light_num_per_unit`, keyword-only, default 0: no read; a devices.yaml row's
+  `light_num_pieces {per_unit}` with the `light_num` connect read). Their screen reads `aa 0f` at connect
+  (`NewDetailVM.s5`: `Controller4BulbNum`, byte 0 a Java byte) and stores the string count times the bulbs per
+  string as its IC (`NewDetailVM.u5`: `Support.getBulbStringSetting` [1], 15, 25 on goodsTypes 100 / 102 at
+  their pact (1,2), 10 on 161; on 149 the count itself), which its colour strip takes at each pick
+  (`ColorPieceConfig.c`), and walks `ceil(pieces / group)` aa a5 groups (`NewDetailVM.D5`). The poll reads it
+  between aa 04 and aa 05, as the screen's connect places it, and adopts the pieces as `Device.segment_count`:
+  the whole-device mask and the aa a5 walk. Before the first count a write that carries a mask reads aa 0f
+  first and raises GoveeBleError, sending nothing, without one, as H6062's aa 41 does; a count below 1 or of
+  more than 112 pieces is none (the string-count setting offers at most 50), and the walk is skipped until a
+  count is known. `build.light_num_query` and `parse.parse_light_num` are the read and its reply.
+  - Admitted by default (`app_traced`): h7020 **H7020**, **H7028**† (53), **H7021** (54), **H7015** (62),
+    **H7016** (63), **H7041** (100), **H7042** (102), **H7029** (149) and **H7033** (161): power, brightness,
+    RGB and colour temperature on the h60a6 frames, over the live count, with the colour read-back. Segments are
+    left out, as on H7025: the screen's per-segment strip is the account record's segment count wide.
+
+  Every other SKU resolves to the same profile, field by field, at every pact its rows list, at (99, 99) and at
+  none, with and without `allow_modelled`; no admitted SKU's frames or reads change. Not hardware-verified: none
+  of these SKUs is on the bench.
 
 ### Changed
 - **A polled profile reads aa 04 only with `Capability.BRIGHTNESS`**, as the app's connect read does
@@ -485,16 +506,17 @@ model, from which the shipped readers are generated).
   `modelled`; one that needs library work has no `support` and names the gap in its `doc`. A verification
   pass challenged each family's rows; they were repaired, and demoted (to `modelled`, or to no `support`)
   where a core claim didn't hold.
-  - devices.yaml now has 305 goodsType rows in 96 families (184 in 91): 202 with `support` (66), of them 167
-    `app_traced`, 31 `modelled` and the same 4 `hardware_verified`, and 103 without (118). The trace gave 153
-    of them support. The other 49 take it through the library and spec changes under Added, Changed, Fixed
+  - devices.yaml now has 305 goodsType rows in 96 families (184 in 91): 210 with `support` (66), of them 175
+    `app_traced`, 31 `modelled` and the same 4 `hardware_verified`, and 95 without (118). The trace gave 153
+    of them support. The other 57 take it through the library and spec changes under Added, Changed, Fixed
     and Spec: h6069 284, h3700 383, h7076 313, h70dx 267-269, bulblightv3 342, the four h1162 rows, h70b1 134,
     h70bx 216, the six status-read rows (h6092 334 / 333 / 401, h7072 371 / 294, h70b6 341), the nine BK target
     rows, the five Glide panel rows (h6061 96 / 97 / 121 / 163 / 228), the seven `legacy_02` rows (h6105,
     h6107, h6129, h6185, h73101217, h7318 and h6165, each goodsType 0), h60ax 235 and h61d3 239 / 246 (the
     colour-temperature work, which also promoted h60ax 302 to `app_traced`), h7050 98 (H7061's two heads;
     the aa 40 section sum promoted dreamcolorlightv1 204 to `app_traced`) and the three device-list card rows
-    (h70b2 185, h6630 285 / 286), and h61d3 375 and h6609 173 (the IC piece rules), all `app_traced` but h7072
+    (h70b2 185, h6630 285 / 286), h61d3 375 and h6609 173 (the IC piece rules), and the eight h7020
+    bulb-string rows (53 / 54 / 62 / 63 / 100 / 102 / 149 / 161, the aa 0f string count), all `app_traced` but h7072
     294, h6119 44, the Glide panels, h60ax 235, h61d3 239 / 246 and h6609 173 (`modelled`). The live piece
     count promoted h705a 125 / 240 / 250 and h61d3 299 / 261 to `app_traced`.
   - Two goodsType add-ons were traced and checked on their own: straightfloorlamp 69 (H6076 / H8076,
@@ -692,6 +714,19 @@ model, from which the shipped readers are generated).
   `ceil(clamp(IC, 41, 70) / 5)` gives, where it was the library's bound of 16. The h705a 125 / 240 / 250 / 184
   wire rows take `f_40: ic_pair`, the reader their screens read aa 40 with (the pair form needs it), and
   govee_common's `form_40::ic_pair` doc names that read.
+- **The aa 0f string count.** `govee_state` gains `light_num_state` (the `aa 0f` reply: `count`, byte 0 as a
+  Java byte; read replies only, not a TLV the status read types), and `govee_common`'s command 0x0f
+  `light_num` its doc and citations (`Controller4BulbNum`, `NewDetailVM.s5` / `u5`). devices.schema.json
+  clientRow gains `light_num_pieces {per_unit}`: the count times `per_unit` is the screen's stored IC, so it
+  sizes the writes and the direct read-back as an `ic_pieces` object form's pieces do, and the row's wire
+  `num_segments` is the count before the first read. Two ties: a row with support that reads `light_num` has
+  it, and it needs that read. The h7020 rows 53 / 54 / 62 / 63 / 100 / 102 / 149 / 161 get `support:
+  app_traced` and their `per_unit` (15, 15, 15, 15, 25, 25, 1, 10), and their wire rows `f_15_01:
+  kelvin_tint` and `num_segments`, the most pieces the string-count setting offers (30, 30, 30, 30, 50, 50,
+  24, 30: `Support.getBulbStringSetting`, `SegmentNumSettingDialog.t`). The h61a8 bulb-string rows that also
+  read aa 0f (bulblightstringv1 3 / 5, h7022 0) stay without support and without `light_num_pieces`: their
+  other gaps (the wide 0x0b mask, colour temperature as a tint, the aa a2 read-back) still hold them, and
+  goodsType 3's 15-or-30 rule is more than a `per_unit`.
 
 ## [1.6.1] — 2026-10-21
 

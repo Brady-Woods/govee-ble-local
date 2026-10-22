@@ -323,10 +323,11 @@ class Device:
         """Segments this device addresses: the count it reported at runtime if any, else the profile's
         static ``segments``. Sets the whole-device mask and its byte width (2 bytes up to 16 segments,
         ceil(n/8) above) and bounds the segment indices. The device's own read sets it on a
-        ``section_count_read`` profile (H6062's aa 41) and on a ``color_writes_live_ic`` one (the live pieces
-        of each poll's aa 40 read: H6641, the other IC-sized rows), as does :meth:`set_segment_count`, until
-        the next such read. A caller that offers one entity per segment reads it after the first
-        :meth:`update`."""
+        ``section_count_read`` profile (H6062's aa 41), on a ``color_writes_live_ic`` one (the live pieces
+        of each poll's aa 40 read: H6641, the other IC-sized rows) and on a ``light_num_per_unit`` one (each
+        poll's aa 0f string count times the bulbs per string: the h7020 bulb-string rows), as does
+        :meth:`set_segment_count`, until the next such read. A caller that offers one entity per segment reads
+        it after the first :meth:`update`."""
         return self._segment_count if self._segment_count is not None else self.profile.segments
 
     def set_segment_count(self, count: int | None) -> None:
@@ -1800,7 +1801,8 @@ class Device:
         if self.profile.color_readback == "mechanism_b":
             await self._read_mechanism_b(budget)
         elif self.profile.color_readback == "mechanism_a_direct":
-            if self.profile.section_count_read and self._segment_count is None:
+            if ((self.profile.section_count_read or self.profile.light_num_per_unit)
+                    and self._segment_count is None):
                 _LOGGER.debug("%s (%s): segment count unknown; skipping segment colour read-back",
                               self.address, self._sku)
             else:
@@ -2069,6 +2071,10 @@ class Device:
         if self.profile.section_count_read:
             # The app's connect order: aa 01, aa 04, aa 41, aa 05 (ControllerStrategyConfig.O).
             await self._read_section_count(budget)
+        elif self.profile.light_num_per_unit:
+            # Between aa 01 and aa 05, as the h7020 Compose4InfoBle / Compose4InfoBleIot connect places the
+            # s5 reads (NewDetailVM.s5: aa 0f, then the aa 41 power-off memory the library leaves out).
+            await self._read_light_num(budget)
         if self.capabilities & _MODE_REPORT_CAPS and await self._read_mode(budget) == "applied":
             applied = True
         self._finish_read(applied, power_read, since)
@@ -2093,20 +2099,44 @@ class Device:
         self._segment_count = sc.section_num
         return True
 
+    async def _read_light_num(self, budget: ConnectBudget | None = None) -> bool:
+        """Read the bulb-string count (``aa 0f``) and adopt count x ``light_num_per_unit`` pieces as
+        :attr:`segment_count`, as the h7020 screen stores them as its IC on every connect
+        (``NewDetailVM.u5``), the count its colour strip takes at each pick (``ColorPieceConfig.c``). Returns
+        False (count left as it was) when the device does not answer or reports a count below 1, which would
+        size no pieces, or one whose pieces no mask carries (above ``build.MAX_MASK_SEGMENTS``; the screen's
+        own setting offers at most 50, ``SegmentNumSettingDialog.t``). A device fact, not optimistic state, so
+        it is adopted whatever a setter did meanwhile."""
+        reply = await self._read_reply(build.light_num_query(), budget)
+        count = parse.parse_light_num(reply) if reply else None
+        pieces = None if count is None else count * self.profile.light_num_per_unit
+        if pieces is None or not 1 <= pieces <= build.MAX_MASK_SEGMENTS:
+            _LOGGER.debug("%s (%s): aa 0f string-count read gave no usable count (%s)",
+                          self.address, self._sku, count)
+            return False
+        self._segment_count = pieces
+        return True
+
     async def _ensure_segment_count(self) -> None:
         """Make sure the device's own segment count is known before a write that carries a segment
         mask. The app always reads it on connect and cannot control the device without it
         (``AbsComposeControllerWithOpResult.onOvertime`` fails the connect read), so a profile with
-        ``section_count_read`` (aa 41) or ``color_writes_live_ic`` (aa 40, whose pieces the strip and so
-        every pick's position set take) does the same lazily here and sends nothing if the device gives no
-        usable count, rather than guessing a mask. A no-op on every other profile and once the count is
-        known. Every caller holds the heartbeat across this read and the write it sizes
-        (``GoveeConnection.hold_heartbeat``), as :meth:`update` holds its reads: the app reads the count
-        in its connect read, during which it sends none (``ShareVM.R`` -> ``updateSkipHeart``)."""
+        ``section_count_read`` (aa 41), ``light_num_per_unit`` (aa 0f, the string count) or
+        ``color_writes_live_ic`` (aa 40; on either of the last two the pieces the strip and so every pick's
+        position set take) does the same lazily here and sends nothing if the device gives no usable count,
+        rather than guessing a mask. A no-op on every other profile and once the count is known. Every caller
+        holds the heartbeat across this read and the write it sizes (``GoveeConnection.hold_heartbeat``), as
+        :meth:`update` holds its reads: the app reads the count in its connect read, during which it sends
+        none (``ShareVM.R`` -> ``updateSkipHeart``)."""
         if (self._segment_count is None and self.profile.section_count_read
                 and not await self._read_section_count()):
             raise GoveeBleError(
                 f"{self._sku}: the device did not report its segment count (aa 41); "
+                "not sending a colour frame with a guessed segment mask")
+        if (self._segment_count is None and self.profile.light_num_per_unit
+                and not await self._read_light_num()):
+            raise GoveeBleError(
+                f"{self._sku}: the device did not report a usable string count (aa 0f); "
                 "not sending a colour frame with a guessed segment mask")
         if self._segment_count is None and self.profile.color_writes_live_ic:
             await self._read_live_ic()

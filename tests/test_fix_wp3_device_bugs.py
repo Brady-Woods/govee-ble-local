@@ -762,6 +762,9 @@ def test_live_ic_profile_needs_its_ic_derivation() -> None:
             DeviceProfile(skus=("HX",), capabilities=frozenset(), **rule)   # type: ignore[arg-type]
     with pytest.raises(ValueError, match="color_writes_live_ic"):   # its count comes from the live read
         DeviceProfile(skus=("HX",), capabilities=frozenset(), color_writes_live_ic=True)
+    for per_unit in (-1, True):   # the aa 0f string count's pieces per string: 0 (no read) or more
+        with pytest.raises(ValueError, match="light_num_per_unit"):
+            DeviceProfile(skus=("HX",), capabilities=frozenset(), light_num_per_unit=per_unit)
 
 
 def _ic(count: int) -> parse.IcCount:
@@ -892,20 +895,25 @@ def test_h6641_ic_count_from_the_swap_branch_skips_the_walk(ic: int) -> None:
     assert [q[1] for q in _queried(d)] == [0x40] and d.state.segments == []
 
 
-@pytest.mark.parametrize(("ic", "count"), [
-    (None, None),                   # no aa 40 reply
-    ((0x00, 0x00, 0x00), None),     # IC 0: no pieces
-    ((0x00, 0xC8, 0x00), 112),      # IC 200 on H7067 (pieces = IC, no app cap): the widest mask
+@pytest.mark.parametrize(("sku", "read", "reply", "count"), [
+    ("H7067", 0x40, None, None),                 # no aa 40 reply
+    ("H7067", 0x40, (0x00, 0x00, 0x00), None),   # IC 0: no pieces
+    ("H7067", 0x40, (0x00, 0xC8, 0x00), 112),    # IC 200 on H7067 (pieces = IC, no app cap): the widest mask
+    ("H7041", 0x0F, (2,), 50),                   # aa 0f: 2 strings x 25 bulbs (NewDetailVM.u5)
+    ("H7041", 0x0F, None, None),                 # no aa 0f reply
+    ("H7041", 0x0F, (0x80,), None),              # a negative count (a Java byte): no pieces
+    ("H7041", 0x0F, (5,), None),                 # 125 pieces: more than any mask carries
 ])
-def test_an_ic_sized_write_takes_the_live_count_or_sends_nothing(ic: tuple[int, ...] | None,
-                                                                   count: int | None) -> None:
-    # color_writes_live_ic: before the first poll a masked write reads aa 40 (ColorPieceConfig.c sizes the
-    # strip from the IC it stores), and without a usable count nothing is sent, as on H6062's aa 41.
-    d = _dev("H7067", {0x40: [_frame(0xAA, 0x40, *ic)]} if ic else None)
+def test_an_ic_sized_write_takes_the_live_count_or_sends_nothing(
+        sku: str, read: int, reply: tuple[int, ...] | None, count: int | None) -> None:
+    # color_writes_live_ic / light_num_per_unit: before the first poll a masked write reads aa 40 or aa 0f
+    # (ColorPieceConfig.c sizes the strip from the IC it stores), and without a usable count nothing is sent,
+    # as on H6062's aa 41.
+    d = _dev(sku, {read: [_frame(0xAA, read, *reply)]} if reply else None)
     if count is None:
-        with pytest.raises(GoveeBleError, match=r"\(aa 40\)"):
+        with pytest.raises(GoveeBleError, match=rf"\(aa {read:02x}\)"):
             run(d.set_rgb((1, 2, 3)))
-        assert _sent(d) == [] and [q[1] for q in _queried(d)] == [0x40]
+        assert _sent(d) == [] and [q[1] for q in _queried(d)] == [read]
     else:
         run(d.set_rgb((1, 2, 3)))
         assert d.segment_count == count and _sent(d) == [build.color_rgb(1, 2, 3, "h60a6", count)]

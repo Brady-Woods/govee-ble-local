@@ -449,6 +449,15 @@
           ],
           "description": "The colour pieces from the IC count read at connect (connect_reads ic_num): an object form derives them from the aa 40 reply's IC count (govee_state ic_count ic_count_checked; no count where it is absent), or from its IC pair. Where the row's wire f_40 is ic_pair the screen reads the reply with the IC-pair reader (ControllerIcNum.e), and there is no count where that reader throws (govee_state ic_count app_pair_fails: either IC field 0x1000 or more), whichever form; the pair form needs it. An object form's pieces size the direct read-back's walk and every colour write: they are every pick's position set, the whole-device mask included, with no cap but the rule's, as the screens that size their strip by the IC count build it (ColorPieceConfig.c over the stored IC; the row's doc names its strip). A strip that the connect read does not resize (the h61d3 and H7067 screens store the count without posting deviceInfoChanged; the row's doc says so) keeps the count it was built with until a calibration or settings event, so in the first app session after the IC changed with no app connected its picks have the old count, where the library's writes take the new one. The row's wire num_segments is then only the count before the first read. sections sizes the read-back alone."
         },
+        "light_num_pieces": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["per_unit"],
+          "properties": {
+            "per_unit": { "type": "integer", "minimum": 1, "description": "The pieces per unit of the count: the bulbs per string the screen multiplies it by (h7020 NewDetailVM.Y5: Support.getBulbStringSetting [1] at the row's goodsType and pact), or 1 where the screen stores the count itself (h7020 NewDetailVM.u5 on goodsType 149)." }
+          },
+          "description": "The colour pieces from the aa 0f string-count read at connect (connect_reads light_num): the reply's count (govee_state light_num_state count) times per_unit, which the screen stores as its IC (h7020 NewDetailVM.u5 -> Info4BleIotDevice.G0), so the count its colour strip takes at each pick (ColorPieceConfig.c over the stored IC; the row's doc names its strip). As an ic_pieces object form's pieces, they size the direct read-back's walk and every colour write, the whole-device mask included. A count below 1 is no count: the app would size no pieces or a negative number. The row's wire num_segments is only the count before the first read. A row with support that reads light_num has this; it is the row's one live piece count (no ic_pieces object form, no aa 41 section count)."
+        },
         "by_pact": { "type": "object", "propertyNames": { "pattern": "^[0-9]+,[0-9]+$" }, "additionalProperties": { "$ref": "#/$defs/clientBranch" }, "description": "Pact branches, keyed 'pactType,pactCode' (decimal) (clientBranch)." },
         "by_firmware": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/clientFirmware" }, "description": "Firmware branches, applied after by_pact (clientFirmware)." },
         "doc": { "type": "string" },
@@ -461,7 +470,9 @@
         { "if": { "required": ["capabilities"], "properties": { "capabilities": { "contains": { "const": "scenes" } } } }, "then": { "required": ["scene_dialect"] } },
         { "if": { "required": ["support", "relay_power"] }, "then": { "required": ["power_resync"] } },
         { "if": { "required": ["connect_reads"], "properties": { "connect_reads": { "contains": { "const": "ic_num" } } } }, "then": { "required": ["ic_pieces"] } },
-        { "if": { "required": ["ic_pieces"] }, "then": { "required": ["connect_reads"], "properties": { "connect_reads": { "contains": { "const": "ic_num" } } } } }
+        { "if": { "required": ["ic_pieces"] }, "then": { "required": ["connect_reads"], "properties": { "connect_reads": { "contains": { "const": "ic_num" } } } } },
+        { "if": { "required": ["support", "connect_reads"], "properties": { "connect_reads": { "contains": { "const": "light_num" } } } }, "then": { "required": ["light_num_pieces"] } },
+        { "if": { "required": ["light_num_pieces"] }, "then": { "required": ["connect_reads"], "properties": { "connect_reads": { "contains": { "const": "light_num" } } } } }
       ]
     },
     "clientCapabilities": {

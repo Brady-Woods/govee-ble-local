@@ -38,6 +38,7 @@ seq:
         'govee_common::command::mode': mode_report(decode)
         'govee_common::command::soft_version': govee_common::version_text
         'govee_common::command::device_info': device_info_record(source)
+        'govee_common::command::light_num': light_num_state
         'govee_common::command::cmd_12': cmd_12_state(profile.forms.f_12)
         'govee_common::command::cmd_13': cmd_13_state(profile.forms.f_13)
         'govee_common::command::cmd_14': cmd_14_state(profile.forms.f_14)
@@ -1426,6 +1427,21 @@ types:
         type: govee_common::bri_rgb
         repeat: expr
         repeat-expr: 3
+  light_num_state:
+    doc: |
+      AA 0F reply: the bulb-string count. The h7020 bulb-string screens read it
+      at connect (NewDetailVM.s5 on every goodsType without the aa 40 IC read)
+      and store count x the bulbs per string as the IC, the colour strip's piece
+      count, or on goodsType 149 the count itself (NewDetailVM.u5). Not a TLV the
+      status read types.
+    doc-ref:
+      - split_h7050/com/govee/h7020/ble/Controller4BulbNum.java:24-27,43-46
+      - split_h7050/com/govee/h7020/newDetail/NewDetailVM.java:678-702,832-850,1432-1463
+      - split_h7050/com/govee/h7020/pact/Support.java:364-381
+    seq:
+      - id: count
+        type: s1
+        doc: byte 0, read as a Java byte (a count of 0x80 or more is negative)
   ic_count:
     doc: |
       AA 40 reply / TLV 0x40: [ic_count s16be][segment], then a second
