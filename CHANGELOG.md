@@ -18,7 +18,10 @@ model, from which the shipped readers are generated).
   - a pick that is one of the app's Kelvin tint colours in the SKU's range as `33 05 02 ff ff ff 01 <the
     colour>` (`KelvinConfig.i` -> `Bytes.o`). `fu` makes that test on the H7310 / H7312 / H7317 / H7318 /
     H6165 / H6166 screens too, which have no colour-temperature control, over their KelvinConfig version 0
-    range [2000, 9000];
+    range [2000, 9000]. On those six the state keeps the picked colour (`rgb_color`, no `color_temp_kelvin`
+    and no `last_color_temp_kelvin`), as the app does (`ColorViewModel.u0` keeps the colours, and
+    `VM4Light.syncKelvin` has no Kelvin control to move): they have no `COLOR_TEMP`, and their
+    `min_kelvin` / `max_kelvin` only pick the frame;
   - colour temperature (H6105 / H6107 / H6129 / H6185) as the Kelvin's tint in that form: the Kelvin slider
     sends `Constant.getTemColorByKelvin(K)[2]` through `fu` (`ColorViewModel.U`), so no Kelvin is on the wire;
   - no segment frame: `fu` ignores the position set.
