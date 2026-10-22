@@ -28,10 +28,11 @@ from unittest.mock import AsyncMock
 import pytest
 import spec_read
 from conftest import require_optional
-from fake_ble import ble_device
+from fake_ble import ble_device, status_burst
 
-from govee_ble_local.devices.device import Device, make_device
-from govee_ble_local.exceptions import GoveeBleInvalidValue
+from govee_ble_local.devices.device import Device
+from govee_ble_local.exceptions import GoveeBleError, GoveeBleInvalidValue, GoveeBleNotSupported
+from govee_ble_local.registry import create_device
 from govee_ble_local.wire import _spec
 from govee_ble_local.wire import build as b
 from govee_ble_local.wire.cct import tint_for_kelvin
@@ -57,8 +58,7 @@ def _frame(*payload: int) -> bytes:
 
 
 def _dev(sku: str, adv: Any = None) -> Device:
-    d = make_device(ble_device("AA:BB:CC:DD:EE:19", sku), sku, adv)
-    assert d is not None
+    d = create_device(ble_device("AA:BB:CC:DD:EE:19", sku), sku, adv, allow_modelled=True)
     sent: list[bytes] = []
 
     async def send(frame: bytes, **_k: object) -> None:
@@ -172,6 +172,66 @@ def test_h60a6_turn_on_with_kelvin_batches_one_cct_frame() -> None:
     assert _hex14(_sent(d)[2]) == _ALL_4000
     d._conn.send_many.assert_awaited_once()  # type: ignore[attr-defined]
     assert d.state.color_temp_kelvin == 4000
+
+
+def test_illumination_tab_kelvin_is_the_kelvin_then_the_held_brightness() -> None:
+    # DeviceProfile.kelvin_with_brightness (H60A1, h60ax 235, polled): View4IlluminationMode.I0 writes the
+    # Kelvin frame (Config.N[0] = EM -> Bytes.C, over all 14 pieces) then 33 04 <illuminationCur()[0]> in one
+    # Compose4DefWrite.
+    kelvin, held = b.color_temp(4000, "h60a6", 14), b.brightness(42)
+    d = _dev("H60A1")
+    d.state.brightness = 42
+    asyncio.run(d.set_color_temp(4000))
+    asyncio.run(d.turn_on(kelvin=4000))
+    asyncio.run(d.turn_on(kelvin=4000, brightness=77))   # the given brightness, after the Kelvin
+    on = b.switch(True)
+    assert _sent(d) == [kelvin, held, on, kelvin, held, on, kelvin, b.brightness(77)]
+    assert d.state.brightness == 77 and d.state.color_temp_kelvin == 4000
+    # Unknown: the row's own read (aa 04) first, then the pair; unanswered, nothing is written.
+    reply = _frame(0xAA, 0x04, 55)
+    d = _dev("H60A1")
+    d._conn.query = AsyncMock(return_value=[reply])  # type: ignore[method-assign]
+    asyncio.run(d.set_color_temp(4000))
+    assert _sent(d) == [kelvin, b.brightness(55)]
+    d = _dev("H60A1")
+    d._conn.query = AsyncMock(return_value=[])  # type: ignore[method-assign]
+    with pytest.raises(GoveeBleError, match="brightness is not known"):
+        asyncio.run(d.set_color_temp(4000))
+    assert _sent(d) == []
+    # A status row (H60A4, h60ax 302, 11 pieces) reads its 0xAC burst instead (TLV 0x04 = 55).
+    d = _dev("H60A4")
+    d._conn.query = AsyncMock(  # type: ignore[method-assign]
+        return_value=status_burst(bytes([0x01, 0x01, 0x01, 0x04, 0x01, 55])))
+    asyncio.run(d.set_color_temp(4000))
+    assert _sent(d) == [b.color_temp(4000, "h60a6", 11), b.brightness(55)]
+    # A brightness write still in flight when the pair starts: the pair re-sends the new level, not the old.
+    d = _dev("H60A1")
+    d.state.brightness = 42
+
+    async def acked(frames: list[bytes]) -> None:   # one link, each frame acked in turn
+        async with wire:
+            for frame in frames:
+                await asyncio.sleep(0.002)
+                _sent(d).append(frame)
+
+    async def send(frame: bytes, **_k: object) -> None:
+        await acked([frame])
+
+    async def race() -> None:
+        await asyncio.gather(d.set_brightness(80), d.set_color_temp(4000))
+
+    wire = asyncio.Lock()
+    d._conn.send = AsyncMock(side_effect=send)  # type: ignore[method-assign]
+    d._conn.send_many = AsyncMock(side_effect=acked)  # type: ignore[method-assign]
+    asyncio.run(race())
+    assert _sent(d) == [b.brightness(80), kelvin, b.brightness(80)] and d.state.brightness == 80
+    # The tab writes every piece: no masked Kelvin (H60A4, h60ax 302, has segments); nor on H61E5, whose
+    # colour page's Kelvin pick is whole-strip (color_temp_control whole_device).
+    for sku in ("H60A4", "H61E5"):
+        d = _dev(sku)
+        assert d.profile.whole_device_kelvin
+        with pytest.raises(GoveeBleNotSupported, match="whole-device only"):
+            asyncio.run(d.set_segment_color_temp([0], 4000))
 
 
 # ── 0x0d both-slot form ──────────────────────────────────────────────────────

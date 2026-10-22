@@ -720,7 +720,16 @@ types:
     seq:
       - id: color
         type: govee_common::rgb
-        doc: the colour; kelvin_tint the slot; kelvin form the tint for CCT
+        doc: |
+          the colour; kelvin form the tint for CCT. kelvin_tint: for CCT the
+          slot of the device's white type (devices.yaml white_type): ff ff ff
+          (rgb_white), 00 00 00 (rgb_black, and rgb_self_tem_color over a whole
+          posSet), or the tint with kelvin and tint 0 (rgb_self_tem_color over
+          a partial posSet: the plain RGB bytes of the tint)
+        doc-ref:
+          - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:474-501,570-586
+          - base-classes10/com/govee/base2kt/utils/ColorUtils.java:141-143,203-205
+          - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/ColorModeControllerConfig.java:233-241
       - id: kelvin
         type: u2
         if: form != govee_common::form_15_01::basic

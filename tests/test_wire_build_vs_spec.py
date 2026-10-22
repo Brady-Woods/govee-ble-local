@@ -219,6 +219,13 @@ def test_segment_color_temp() -> None:
         mask, kelvin = _mask(r, segments), r.randrange(20, 91) * 100
         assert b.segment_color_temp(mask, kelvin, "h60a6", segments) == C.build_op15_color_temp_bytes_r(
             tint_for_kelvin(kelvin), kelvin, _pos_set(mask, segments))
+        # The white slot per white type (Bytes.r's kind: rgb_black 0, rgb_self_tem_color 3), whole and
+        # partial.
+        for white_type, kind in (("rgb_black", 0), ("rgb_self_tem_color", 3)):
+            for m in (mask, (1 << segments) - 1):
+                assert b.segment_color_temp(m, kelvin, "h60a6", segments, white_type=white_type) == \
+                    C.build_op15_color_temp_bytes_r(
+                        tint_for_kelvin(kelvin), kelvin, _pos_set(m, segments), kind)
 
 
 def test_segment_brightness_every_mask_width() -> None:

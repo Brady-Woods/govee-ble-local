@@ -9,11 +9,12 @@ model, from which the shipped readers are generated).
 ## [Unreleased]
 
 ### Added
-- **158 more SKUs, traced from the app's device list** (spec rows only; no library code changed): 99 admitted
-  by default (`app_traced`) and 59 behind `allow_modelled` (`modelled`). The entries below admit 49 more by
-  default (16 through the resolver changes; H1162 / H1163 / H1167 / H1168, H70B1 and H70BC; 17 through the
-  status-read command ids and the BK pact gate; and the 10 SKUs of the `legacy_02` colour scheme) and 7 more
-  behind `allow_modelled` (H7072, H6119 and the five Glide panels), for 246 admitted by default and 72 behind
+- **158 more SKUs, traced from the app's device list** (spec rows; no library code changed but the
+  illumination-tab pair that promotes H60A4 / H80A4, below): 101 admitted by default (`app_traced`) and 57
+  behind `allow_modelled` (`modelled`). The entries below admit 49 more by default (16 through the resolver
+  changes; H1162 / H1163 / H1167 / H1168, H70B1 and H70BC; 17 through the status-read command ids and the BK
+  pact gate; and the 10 SKUs of the `legacy_02` colour scheme) and 11 more behind `allow_modelled` (H7072,
+  H6119, the five Glide panels, H61E5 / H61E6 and H60A1 / H80A1), for 248 admitted by default and 74 behind
   `allow_modelled` in all. None is
   hardware-verified (the only bench check, below, was read-only), and none has a bundled scene catalog, so none
   is offered scenes. Each is listed with its family and goodsType; † marks a SKU no row lists that the
@@ -24,8 +25,8 @@ model, from which the shipped readers are generated).
     **H616B** (68), **H6178** (78), **H6192** (143);
   - h6114: **H6114** (39); h613839: **H6138 / H6139** (39), each on an advertised pact only (below);
     carlightv1: **H6118 / H6194** (6); tvlightv1: **H6179** (12); pact_tvlightv2: **H6198 / H6199** (24);
-  - h6047: **H6039** (277); h61d3: **H61B0** (264, with H61B3 / H61B6); dreamcolorlightv1: **H70A1 / H70A2 /
-    H70A3** (193);
+  - h60ax: **H60A4 / H80A4** (302, by the illumination-tab pair, below); h6047: **H6039** (277); h61d3:
+    **H61B0** (264, with H61B3 / H61B6); dreamcolorlightv1: **H70A1 / H70A2 / H70A3** (193);
   - rgbiclight: **H61C2 / H61C3 / H61C5** (141), **H6671 / H6672** (332), **H617G**, **R617G**† (351),
     **H618G**, **R618D**† (352);
   - hollowlamp: **H6050** (27), **H6051** (37), **H6055** (42), **H6073** (58), **H6059** (84); tablelampv1:
@@ -47,7 +48,7 @@ model, from which the shipped readers are generated).
 
   Behind `allow_modelled` (the facts are traced, but the library doesn't yet do everything the app does on
   every unit; each row's `doc` names the difference):
-  - h60ax: **H60A4 / H80A4** (302), **H1270** (346), **H1232** (356), **H1252** (373);
+  - h60ax: **H1270** (346), **H1232** (356), **H1252** (373);
   - h61d3: **H61D2 / H61D3 / H61D4 / H61D5 / H61D6** (202), **H703A / H703B** (263);
   - dreamcolorlightv1: **H61A9** (204); dreamcolorlightv2: **H611A / H6143 / H6144** (21); homelightv1:
     **H6148** (16); hollowlamp: **H6058** (59); h7090: **H7090** (44); h1741: **H1741 / R1741** (365);
@@ -166,6 +167,54 @@ model, from which the shipped readers are generated).
   control, and none of these SKUs' bundled mode lists has the illumination tab. H6113 / H6181 and the other
   goodsType-0 rows on colour version 4 stay held for their other gaps (routing below the gate, the
   `rgb_flag_tint` read-back, the GATT service, firmware gates, chip-gated brightness).
+- **The h60a6 colour-temperature white slot** (`DeviceProfile.white_type`, devices.yaml `white_type`). The
+  h60a6 frame `33 05 15 01 <slot> <K> <tint> <mask>` now carries the slot of the SKU's white type, the value its
+  colour page hands `Bytes.r` (the app's ColorTemperatureType, through `LightColorCapabilityCenter.d1` ->
+  `Config.H`): `rgb_white` = `ff ff ff` (the default, every SKU before), `rgb_black` = `00 00 00`, and
+  `rgb_self_tem_color` = `00 00 00` over every piece and, over some, the tint as the colour with Kelvin and tint
+  zero (the plain RGB bytes of the tint). It applies to every colour-temperature frame an h60a6 profile sends:
+  `set_color_temp`, `turn_on(kelvin=)`, an RGB pick that is a Kelvin tint colour, and the segment and zone Kelvin
+  writes where the screen has them; the builders `color_temp`, `segment_color_temp`, `segment_rgb` and
+  `color_rgb_frames` take `white_type=`. Only an h60a6 profile may set another value. It admits **H61E5** (h61d3
+  239) and **H61E6** (246) behind `allow_modelled`, not hardware-verified: the ColorMode colour page
+  (`ColorModeControllerConfig.c` -> `Config.Yt` -> `Bytes.r`) with `Config.P` = 3. Their Kelvin pick is
+  whole-strip (`ColorMode.canClickColorTem`, `H61D3Support.i0`), so their segment Kelvin is refused (below) and
+  only an RGB pick of a tint colour on some segments takes the partial form. They stay `modelled` for two
+  colour-page differences: the app's posSet is the live piece count and the library's mask the cap (12 / 15), so
+  a tint-colour pick over exactly the live pieces is whole in the app and partial in the library; and the app
+  refuses segment brightness while a selected piece shows a Kelvin tint colour, which the library doesn't gate.
+  Their illumination tab's Kelvin (`Bytes.C`, `ff ff ff` for them) is a second path and not modelled.
+- **Whole-device-only colour temperature** (`DeviceProfile.whole_device_kelvin`, devices.yaml
+  `color_temp_control: whole_device`). Where the screen has no Kelvin on part of the device,
+  `set_segment_color_temp` and `set_zone_color_temp` raise GoveeBleNotSupported, as a masked Kelvin is a frame the
+  app never sends. It is set by `whole_device` (a colour page whose Kelvin pick always sets every piece: H61E5 /
+  H61E6) and by `illumination` (below), whose tab writes every piece.
+- **Colour temperature from the illumination tab** (`DeviceProfile.kelvin_with_brightness`, devices.yaml
+  `color_temp_control: illumination`). Where a screen sets colour temperature on its illumination tab alone,
+  the app writes the Kelvin frame and then `33 04` <the brightness it holds> as one write
+  (`View4IlluminationMode.I0`, one `Compose4DefWrite`). `set_color_temp` now sends that pair, each frame acked
+  in order, and `turn_on(kelvin=)` sends the Kelvin frame before `33 04` (the given brightness, else the held
+  one). An unknown brightness is read first with the profile's own read: the status read (whose reply holds
+  100 when it carries no TLV 0x04, as the app's `DeviceBaseInfoFromDevice` does) or aa 04. If no reply comes,
+  GoveeBleError and nothing is written (never a guessed `33 04`). On such a profile the pair and
+  every `33 04` writer (`set_brightness`, `turn_on`) hold one Device lock from build to write, so a
+  `set_color_temp` started while a `set_brightness` is in flight re-sends the new level, as the app re-sends the
+  level its screen holds, not the old one; the pair's state takes the level it sent. The tab writes every piece,
+  so the profile is `whole_device_kelvin` (the segment and zone Kelvin setters raise). Promoted from
+  `modelled` to `app_traced`, admitted by default, not hardware-verified: **H60A4 / H80A4** (h60ax 302:
+  `Bytes.C(K, 11, 1)`, the h60a6 frame over every piece). **H8015** (bulblightv3 328: `Config.N[2]` =
+  `Bytes.A`, the h6188 frame) sends the same pair in the app, but its row doesn't state it yet: H8015 has been
+  served behind `allow_modelled` since 1.6.1, and the trailing `33 04` would change its bytes, which waits for
+  the user's sign-off. It stays `modelled`, with its 1.6.1 profile and frames.
+- **A polled row's aa 05 decode** (`DeviceProfile.mode_decode`): the aa 05 mode report is read with the row's
+  wire `mode` (its music layout and empty-value rule), where the resolver refused any but the default on a
+  polled row. Empty by default, so every other profile reads its reports as before (the same cached
+  `govee_profile`). Only a music report decodes differently, and it folds to the same state. It admits
+  **H60A1 / H80A1** (h60ax 235) behind `allow_modelled`: h60a1 `Info4Detail.Q` (music v2_default), the
+  illumination tab's Kelvin + brightness pair, 14 pieces. They stay `modelled` for the Kelvin range: the app's
+  is [2200, 6500] below hardware 1.04.03 (`KelvinConfig.Config.Y2`, a numeric compare), the library's the
+  [2700, 6500] valid on every revision, so on that hardware an RGB pick of one of the ten 2200-2600 K tint
+  colours goes out as RGB where the app sends a colour-temperature frame. Not hardware-verified.
 
 ### Changed
 - **A polled profile reads aa 04 only with `Capability.BRIGHTNESS`**, as the app's connect read does
@@ -201,11 +250,25 @@ model, from which the shipped readers are generated).
   version for them (no `Config.y` / `Config.z` entry), so it sends no frame and the one-piece lamps have no
   segments. They stay without support until their colour-temperature scheme and the Kelvin + brightness pair
   land. Every admitted row with the flag is on `h60a6`, so no profile changes.
-
 - The `legacy_02` scheme changes no other SKU: each of the 308 the table admitted before it (236 by default,
   72 behind `allow_modelled`) resolves to the same profile, field by field, at every pact its rows list, at
   (99, 99) and at none, with and without `allow_modelled`; the 10 `legacy_02` SKUs (Added) are the only new
   routes.
+- The colour-temperature work changes no other SKU: each of the 318 the table admitted before it (246 by
+  default, 72 behind `allow_modelled`) but H60A4 / H80A4 resolves to the same profile, field by field, at every
+  pact its rows list, at (99, 99) and at none, with and without `allow_modelled` (`white_type="rgb_white"`,
+  whose frames are as before byte for byte, `whole_device_kelvin` and `kelvin_with_brightness` False, and an
+  empty `mode_decode`). H60A4 / H80A4, behind `allow_modelled` before, take the pair (Added).
+- For integrators: `Capability.SEGMENTS` with `Capability.COLOR_TEMP` no longer means the segment and zone Kelvin
+  setters work. On a `DeviceProfile.whole_device_kelvin` profile (H60A4 / H80A4 by default; H61E5 / H61E6 and
+  H60A1 / H80A1 behind `allow_modelled`) `set_segment_color_temp` and `set_zone_color_temp` raise
+  GoveeBleNotSupported, because the app has no Kelvin on part of those devices. Check
+  `device.profile.whole_device_kelvin` before offering colour temperature on a segment or zone entity;
+  hass-govee-ble-local's segment lights need that follow-up (they offer colour temperature whenever the device
+  has `COLOR_TEMP`). Every SKU of 1.6.1 has `whole_device_kelvin=False`.
+- No SKU of 1.6.1 takes the illumination pair: each keeps `kelvin_with_brightness=False` and its one-frame
+  colour-temperature write, H8015 included (above).
+
 ### Fixed
 - **H6188: colour temperature now sends the colour tab's frame** `33 05 0d <tint> <K> <tint>`
   (`Config.bu -> Bytes.p`, scheme `h6006`) instead of the white-slot `33 05 0d ff ff ff <K> <tint>`
@@ -243,14 +306,15 @@ model, from which the shipped readers are generated).
   `modelled`; one that needs library work has no `support` and names the gap in its `doc`. A verification
   pass challenged each family's rows; they were repaired, and demoted (to `modelled`, or to no `support`)
   where a core claim didn't hold.
-  - devices.yaml now has 305 goodsType rows in 96 families (184 in 91): 193 with `support` (66), of them 155
-    `app_traced`, 34 `modelled` and the same 4 `hardware_verified`, and 112 without (118). The trace gave 153
-    of them support. The other 40 take it through the library and spec changes under Added, Changed, Fixed
+  - devices.yaml now has 305 goodsType rows in 96 families (184 in 91): 196 with `support` (66), of them 156
+    `app_traced`, 36 `modelled` and the same 4 `hardware_verified`, and 109 without (118). The trace gave 153
+    of them support. The other 43 take it through the library and spec changes under Added, Changed, Fixed
     and Spec: h6069 284, h3700 383, h7076 313, h70dx 267-269, bulblightv3 342, the four h1162 rows, h70b1 134,
     h70bx 216, the six status-read rows (h6092 334 / 333 / 401, h7072 371 / 294, h70b6 341), the nine BK target
-    rows, the five Glide panel rows (h6061 96 / 97 / 121 / 163 / 228) and the seven `legacy_02` rows (h6105,
-    h6107, h6129, h6185, h73101217, h7318 and h6165, each goodsType 0), all `app_traced` but h7072 294, h6119
-    44 and the Glide panels (`modelled`).
+    rows, the five Glide panel rows (h6061 96 / 97 / 121 / 163 / 228), the seven `legacy_02` rows (h6105,
+    h6107, h6129, h6185, h73101217, h7318 and h6165, each goodsType 0), and h60ax 235 and h61d3 239 / 246 (the
+    colour-temperature work, which also promoted h60ax 302 to `app_traced`), all `app_traced` but h7072 294,
+    h6119 44, the Glide panels, h60ax 235 and h61d3 239 / 246 (`modelled`).
   - Two goodsType add-ons were traced and checked on their own: straightfloorlamp 69 (H6076 / H8076,
     `app_traced`, with the bench reads above) and rgbiclight 141 (H61C2 / H61C3 / H61C5).
   - **rgbiclight 141 (H61C2 / H61C3 / H61C5) is `app_traced`, admitted by default** (pacts (1,1) / (2,1)): power,
@@ -379,6 +443,24 @@ model, from which the shipped readers are generated).
   does not fold, the ffe0 / ffe1 GATT service, the soft-version route, chip-gated brightness, or firmware-gated
   colour. Docs only: no row, value or profile changes. h6101's 0x02 frame stays a gap: it echoes the reported
   tint (`SubModeColor.getWriteBytes`), which `legacy_02` doesn't.
+- **`white_type`** (devices.schema.json clientRow; `rgb_black`, `rgb_white`, `rgb_self_tem_color`, absent =
+  `rgb_white`): the white type the colour page hands `Bytes.r`, not `Config.P` read raw (the rgbiclight colour
+  page passes 1, so goodsType 176, `Config.P` 0, stays `rgb_white`; RGB_SELF builds as `rgb_white`). The
+  govee_ble_frame `op15_color` `color` field documents the slot per white type. h61d3 239 / 246 state
+  `rgb_self_tem_color`; h705a 180 states `rgb_black` and the `kelvin_tint` form, and stays without support (its
+  aa a1 0b piece count and its Kelvin read-back are still gaps). The reference self-test reads a `rgb_black` and
+  a partial `rgb_self_tem_color` frame.
+- **`color_temp_control`** (devices.schema.json clientRow; `illumination` or `whole_device`, absent = the
+  colour page's one-frame write over the selected pieces). `whole_device` needs the color_temp capability; h61d3
+  239 / 246 state it (`ColorMode.canClickColorTem` returns every piece for `H61D3Support.i0`). For
+  `illumination` the resolver needs the color_temp and brightness capabilities, percent brightness with no pact
+  branch, and the h60a6 or h6188 scheme (the two whose colour-temperature frame is a `Config.N` builder:
+  `Bytes.C`, `Bytes.A`), and then lets the colour page's `color_temperature` flag be off. h60ax 302 (with
+  `color_functions: [segment_brightness]`, `Config.I[302]` = hQ) states it and is `app_traced`; h60ax 235
+  states it too (`modelled`). bulblightv3 328 doesn't yet, and stays `modelled` (above).
+- h60ax 235 is `modelled` (above), with `color_functions: [segment_brightness]` (`Config.I[235]` = zN). No
+  `.ksy` change: govee_state already reads an aa 05 reply with the profile's `mode` decode, and its empty-value
+  rule only for a status TLV.
 
 ## [1.6.1] — 2026-10-21
 

@@ -24,9 +24,10 @@ from unittest.mock import AsyncMock
 import pytest
 from fake_ble import ble_device
 
-from govee_ble_local.devices.device import Device, make_device
+from govee_ble_local.devices.device import Device
 from govee_ble_local.devices.profile import profile_for
 from govee_ble_local.exceptions import GoveeBleInvalidValue
+from govee_ble_local.registry import create_device
 from govee_ble_local.wire import build as b
 from govee_ble_local.wire.cct import _KELVIN_BY_TINT, kelvin_for_tint, tint_for_kelvin
 
@@ -46,8 +47,7 @@ def _rgb(colour: int) -> tuple[int, int, int]:
 
 
 def _dev(sku: str, segments: int | None = None) -> Device:
-    d = make_device(ble_device("AA:BB:CC:DD:EE:99", sku), sku)
-    assert d is not None
+    d = create_device(ble_device("AA:BB:CC:DD:EE:99", sku), sku, allow_modelled=True)
     if segments is not None:
         d.set_segment_count(segments)      # H6062 reports its own count; skip the aa 41 read
     sent: list[bytes] = []
@@ -118,6 +118,8 @@ GOLDEN_WHOLE = [
     ("H6004", None, 0xFFB969, "33050dffb9690bb8ffb969000000000000000088"),
     ("H6004", None, 0xFFB46B, "33050dffb46b0bb8ffb969000000000000000087"),
     ("H6006", None, 0xFFD5A1, "33050dffd5a10fa0ffd5a1000000000000000094"),
+    # white type rgb_self_tem_color, every piece: the slot is 00 00 00 (Bytes.r kind 3, 12 pieces)
+    ("H61E5", None, 0xFFB969, "330515010000000bb8ffb969ff0f00000000004e"),
 ]
 
 
@@ -188,6 +190,9 @@ def test_segment_picks_are_one_cct_frame_with_the_segment_mask() -> None:
     d = _dev("H6062", 33)                           # more than 16 segments: a 5-byte mask
     asyncio.run(d.set_segment_rgb([32], (0xFF, 0xE7, 0xCC)))
     assert _sent(d) == [_cct15(5000, (0xFF, 0xE7, 0xCC), 0, 0, 0, 0, 1)]
+    d = _dev("H61E5")             # rgb_self_tem_color on some pieces: the tint in the slot, Kelvin and tint 0
+    asyncio.run(d.set_segment_rgb([0], (0xFF, 0xB9, 0x69)))
+    assert _sent(d) == [_frame(0x33, 0x05, 0x15, 0x01, 0xFF, 0xB9, 0x69, 0, 0, 0, 0, 0, 0x01, 0x00)]
 
 
 def test_segment_color_temp_default_tint_is_the_first_tint_and_the_tint_is_overridable() -> None:
@@ -205,6 +210,11 @@ def test_slider_paths_are_unchanged() -> None:
     d = _dev("H6008")
     asyncio.run(d.set_color_temp(4000))
     assert _sent(d) == [_cct0d(4000, (0xFF, 0xD5, 0xA1))]
+    d = _dev("H61E5")                   # white type rgb_self_tem_color over every piece: slot 00 00 00
+    asyncio.run(d.set_color_temp(3000))
+    asyncio.run(d.turn_on(kelvin=3000))
+    whole = bytes.fromhex(GOLDEN_WHOLE[-1][3])
+    assert _sent(d) == [whole, b.switch(True), whole]
 
 
 # ── every table colour, every scheme: CCT iff inside the SKU's inclusive range ─

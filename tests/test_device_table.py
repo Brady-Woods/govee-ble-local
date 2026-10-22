@@ -27,7 +27,7 @@ from govee_ble_local.models import Encryption as E
 from govee_ble_local.models import Zone
 from govee_ble_local.transport.connection import HeartbeatTiming
 from govee_ble_local.wire import build
-from govee_ble_local.wire.build import ColorScheme
+from govee_ble_local.wire.build import ColorScheme, WhiteType
 
 _ROOT = pathlib.Path(__file__).resolve().parent.parent
 _LIGHT = frozenset({C.POWER, C.BRIGHTNESS, C.RGB, C.COLOR_TEMP, C.SCENES})
@@ -130,6 +130,7 @@ def test_the_generated_table_is_masters_hand_table_but_for_the_spec_fixes() -> N
             return False
     built = {s for s in _resolve.COLOR_SCHEMES if builds_segment_brightness(s)}
     assert built == _resolve.SEGMENT_BRIGHTNESS_SCHEMES
+    assert set(_resolve.WHITE_TYPES) == set(get_args(WhiteType))
     routes = _resolve.routes(FAMILIES)
     reference = _reference()
     yaml = require_optional("yaml", reason="the reference resolver reads spec/devices.yaml")
@@ -261,7 +262,7 @@ _REFUSED: tuple[tuple[str, str, _Edit, str], ...] = (
     ("striplight", "41", lambda f: _wire(f, "41").update(
         by_firmware=[{"min_soft_version": "1.00.00", "forms": {"f_a5": "bulb_batch_v2"}}]),
      "wire by_goods_type 41 by_firmware 0 is not served"),
-    ("striplight", "41", lambda f: _wire(f).update(mode={"music": "v1_flagged"}), "wire mode"),
+    ("striplight", "41", lambda f: _wire(f).update(mode_status={"music": "v1_flagged"}), "wire mode"),
     ("h60ax", "303", lambda f: _wire(f, "303")["forms"].update(f_30="light_direction"),
      "wire forms f_30 'light_direction', where the library uses zone_power"),
     ("dreamcolorlightv1", "19", lambda f: (_row(f, "19").update(color_scheme="h61a8"),
@@ -341,6 +342,17 @@ _REFUSED: tuple[tuple[str, str, _Edit, str], ...] = (
     ("h6188", "0", lambda f: f["client_profile"].pop("color_scheme"), "no color_scheme"),
     ("h5080", "307", lambda f: _row(f, "307")["capabilities"].append("rgb"), "['rgb'] on a relay row"),
     ("dreamcolorlightv1", "19", lambda f: _row(f, "19").update(color_scheme="h60a7"), "color_scheme 'h60a7'"),
+    ("bulblightv3", "64", lambda f: _row(f, "64").update(white_type="rgb_black"),
+     "white_type rgb_black on the h6006 scheme"),
+    ("bulblightv3", "64", lambda f: _row(f, "64").update(color_temp_control="illumination"),
+     "color_temp_control illumination on h6006"),
+    ("h60ax", "302", lambda f: _row(f, "302").update(brightness_range=[20, 254]),
+     "color_temp_control illumination needs percent brightness"),
+    ("h60ax", "302", lambda f: _row(f, "302")["capabilities"].remove("brightness"),
+     "color_temp_control illumination needs the color_temp and brightness capabilities"),
+    ("h61d3", "239", lambda f: (_row(f, "239")["capabilities"].remove("color_temp"),
+                                _row(f, "239")["color_functions"].remove("color_temperature")),
+     "color_temp_control whole_device needs the color_temp capability"),
     ("dreamcolorlightv1", "19", lambda f: (f["client_profile"].update(color_scheme="h61a8"),
                                            _row(f, "19").pop("color_scheme")),
      "the family color_scheme h61a8 would drop ['color_temp']"),

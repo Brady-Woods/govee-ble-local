@@ -1745,7 +1745,8 @@ enums:
     2:
       id: kelvin_tint
       doc: |
-        [rgb][kelvin u2be][tint rgb][seg_mask cap 7]; zeros for plain RGB
+        [rgb][kelvin u2be][tint rgb][seg_mask cap 7]; zeros for plain RGB; a
+        CCT's rgb is the device's white slot (op15_color color)
       doc-ref:
         - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:474-501
         - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/color/Bytes.java:315-326
