@@ -394,8 +394,8 @@ types:
         type: u1
   cmd_30_write:
     doc: |
-      33 30, per form_30; zone_power [1][0] and light_direction 1 are the same
-      bytes.
+      33 30, per form_30; zone_power [1][0], light_direction 1 and
+      light_switch light_on are the same bytes.
     params:
       - id: form
         type: u1
@@ -407,6 +407,7 @@ types:
           cases:
             'govee_common::form_30::zone_power': zone_power_write
             'govee_common::form_30::light_direction': light_direction_write
+            'govee_common::form_30::light_switch': light_switch_write
   zone_power_write:
     doc: pact_h60a0 per-zone on / off [zone][state], one frame per zone.
     doc-ref:
@@ -422,16 +423,32 @@ types:
         enum: light_power
   light_direction_write:
     doc: |
-      33 30 [value]: H6038 install direction, H6057 main-light switch, H71xx
-      chart report.
+      33 30 [value]: H6038 install direction, H71xx chart report.
     doc-ref:
       - split_h6047/com/govee/h6047/newdetail/h6038/controller/CalibrationController.java:42-45
-      - split_hollowlamp/com/govee/h6057/origin/newDetail/H6057DetailVM.java:950-956
       - base-classes12/com/govee/base_h71xx/sku_base/ble/controller/ReportChartController.java:24-31
     seq:
       - id: value
         type: u1
-        doc: H6038 direction 0..5; H6057 1 / 0; H71xx 1
+        doc: H6038 direction 0..5; H71xx 1
+  light_switch_write:
+    doc: |
+      33 30 [state]: the H6057 header's light switch (ivLightSwitch). It
+      writes the light alone, 1 to open and 0 to close it, and leaves the
+      white-noise speaker as it is (the main switch, 33 01, covers both); a
+      one-byte body, not zone_power's [zone][state]. The screen writes the
+      opposite of its light flag (SwitchInfo.j) and on success sets that flag
+      to the written state (i5), the state govee_state device_detail
+      light_open reads back from aa 34.
+    doc-ref:
+      - split_hollowlamp/com/govee/h6057/origin/newDetail/H6057DetailVM.java:336-355,949-967
+      - split_hollowlamp/com/govee/h6057/origin/ble/BleProtocol.java:7
+      - base-classes11/com/govee/base2light/kt/general_controller/ControllerSingle.java:37-40
+      - split_hollowlamp/com/govee/h6057/origin/newDetail/H6057DelegateHeader.java:567-571,713-717
+    seq:
+      - id: state
+        type: u1
+        enum: light_power
   cmd_36_write:
     doc: 33 36, per form_36
     params:

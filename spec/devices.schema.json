@@ -776,7 +776,8 @@
           "enum": [
             "unknown",
             "zone_power",
-            "light_direction"
+            "light_direction",
+            "light_switch"
           ],
           "description": "govee_profile command_forms.f_30 (govee_common::form_30)."
         },

@@ -11084,7 +11084,7 @@ families:
             is off ViewConnectSuccess.J shows the close delegate (H6057DelegateClose, through H6057Config.a; a playing hint
             while white noise plays, B) and hides the colour and brightness controls. Two header switches
             (H6057DelegateHeader.E0 / D0): ivLightSwitch shows the light flag and writes the light alone, 33 30 <!light> (h5,
-            command_light_switch; a one-byte light_direction body, not the library's 33 30 <index> <state> zone frame);
+            command_light_switch; a one-byte body, form_30 light_switch, not the library's 33 30 <index> <state> zone frame);
             btnSwitch, the global switch, shows light OR white-noise isPlay and writes 33 01 00 when either is on, 33 01 01
             only when both are off (switchTrigger -> ControllerSwitch.d; 33 01 00 also clears isPlay, D5). The library's
             power is the global switch, as on every row, and power_read aa34_detail reads that switch's state (govee_state
@@ -11140,7 +11140,7 @@ families:
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/ModeConfig.java:308-314,543-547,561
             - base-classes11/com/govee/base2light/pact/newdetail/config/fuc/ModeConfig$Companion$checkLocalSkuComponentsConfigs$2.java:53-75
       wire:
-        forms: { f_01: light, f_09: datetime_epoch, f_30: light_direction, f_34: device_detail, f_36: worry_free }
+        forms: { f_01: light, f_09: datetime_epoch, f_30: light_switch, f_34: device_detail, f_36: worry_free }
     models: [H6057]
     goods_types: [104]
     delivery: feature_split   # pact_hollowlamp (base-classes9/com/govee/base2home/pfd/Config.java:241)

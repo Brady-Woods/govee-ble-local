@@ -1121,6 +1121,8 @@ types:
   cmd_30_state:
     doc: |
       Command 0x30 under form_30; light_direction is read from the TLV only.
+      light_switch has no 0x30 read: its state is the aa 34 device_detail
+      light_open.
     params:
       - id: form
         type: u1
@@ -1192,12 +1194,14 @@ types:
       light_open:
         value: (switch_flags & 0x80) != 0
         doc: |
-          the light-open flag (H6057Info4Detail.H): the light switch's state, and
-          the screen's on / off (switchCur), which shows the closed screen while
-          it is clear
+          the light-open flag (H6057Info4Detail.H, bit 7: Controllers.d's
+          getBit2Boolean(b, 8)): the light switch's state (33 30 under form_30
+          light_switch), and the screen's on / off (switchCur), which shows the
+          closed screen while it is clear
         doc-ref:
           - split_hollowlamp/com/govee/h6057/origin/newDetail/H6057Info4Detail.java:208-210
           - split_hollowlamp/com/govee/h6057/origin/newDetail/H6057DetailVM.java:1226-1228
+          - split_hollowlamp/com/govee/h6057/origin/newDetail/controller/Controllers.java:34-45
           - base-classes11/com/govee/base2light/pact/newdetail/content/success/ViewConnectSuccess.java:97-108,141-173
       white_noise_playing:
         value: (music_flags & 0x10) != 0 and (music_flags & 0x80) != 0

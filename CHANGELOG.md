@@ -1062,6 +1062,14 @@ model, from which the shipped readers are generated).
   name changes for existing readers (`Command.swap_light` -> `Command.cmd_34`; nothing in the library used it).
   The h6092 rows' `status_read` follows the rename. devices.schema.json: `power_read` gains `aa34_detail`, the
   wire forms `f_34`; the h6057 wire gains `f_34: device_detail`.
+- **The H6057 light switch is its own `form_30` member, `light_switch`** (govee_common; `33 30 <1 / 0>`,
+  `BleProtocol.command_light_switch`, `H6057DetailVM.h5`), with the write type `light_switch_write`
+  (govee_ble_frame `cmd_30_write`, `state` a `light_power`), where `light_direction` had listed it with the
+  H6038 direction and the H71xx chart report. `device_detail.light_open` cites `Controllers.d` and names that
+  switch as its write; `cmd_30_state` notes that `light_switch` has no 0x30 read. The h6057 wire's `f_30` is
+  `light_switch` (was `light_direction`), and devices.schema.json's `f_30` enum gains it.
+  `spec/govee_commands.py`'s `build_h6057_light_switch` is the reference the library's `build.light_switch` is
+  checked against.
 - **The device-list card's session, as spec vocabulary.**
   - `clientRow.session`: `held` (absent; the control screen's) or `per_command` (the card's:
     `CardCommManagerProxy.comm2Device` -> `u` -> `triggerBleCmd$2`).
