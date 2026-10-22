@@ -132,7 +132,8 @@ govee_profile(forms, counts, group, power, mode, mode_status)
           the level count of a 33 05 15 03 write
   group   color_group_form(rule, num_per_group, has_brightness, num_pieces): how an aa a5 / aa a2 reply
           or a TLV 0xA5 value is counted, and 4-byte [brightness, R, G, B] vs 3-byte [R, G, B] records
-  power   power_rule(relay_on_mask, relay_heartbeat_on_mask): the aa 01 rules (0 = a light, state == 1)
+  power   power_rule(relay_on_mask, relay_heartbeat_on_mask, advert_on_mask): the aa 01 and advert rules
+          (0 = a light, state == 1)
   mode, mode_status   mode_decode(c02, c0b, c0d, c14, c15, music, empty_fails): how the mode report
           (aa 05 reply / TLV 0x05) decodes each colour sub-mode and the music sub-mode
 ```

@@ -153,8 +153,9 @@ types:
           - split_h60ax/com/govee/pact_h60a0/pact/Support.java:154-159
   power_rule:
     doc: |
-      CONTEXT: when the aa 01 reply byte means on: a light (masks 0) at byte
-      == 1, a plug (relay bitmask, bit i = relay i) at (byte & mask) != 0.
+      CONTEXT: when the aa 01 reply byte or the advert's switch byte means on:
+      a light (masks 0) at byte == 1, a plug (relay bitmask, bit i = relay i)
+      at (byte & mask) != 0.
     doc-ref:
       - base-classes11/com/govee/base2light/kt/general_controller/ControllerSwitch.java:32
       - split_plugnew/com/govee/h5080/ble/controller/SwitchControllerV2.java:29-45
@@ -173,6 +174,15 @@ types:
           - split_plugnew/com/govee/h5080/ble/controller/HeartControllerV2.java:17-35
           - split_plugnew/com/govee/h5080/adjust/v2/BleOpV2.java:216-231
           - split_plugnew/com/govee/h5080/adjust/h5089/BleOp4H5089.java:331-341
+      - id: advert_on_mask
+        type: u1
+        doc: |
+          the device list's advert switch-byte mask (devices.yaml
+          advert_on_mask); 0 = a light (on when the byte == 1)
+        doc-ref:
+          - base-classes3/com/govee/kt/ui/device/base/AbsBaseBleModel.java:393-407
+          - split_plugnew/com/govee/h5080/pact/Model.java:254-266
+          - split_plugnew/com/govee/h5080/pact/Model4Plug2.java:269-290
   mode_decode:
     doc: |
       CONTEXT: the screen's mode-report decode per colour sub-mode cXX (aa 05

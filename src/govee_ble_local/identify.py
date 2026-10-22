@@ -148,21 +148,24 @@ def parse_broadcast_onoff(mfg: dict[int, bytes], *, on_mask: int | None = None) 
 
     Port of BleUtil.parseBleBroadOnOff + AbsBaseBleModel.z: the byte right after
     pactType(2)+pactCode(1) in the Govee mfg data (scanRecord i+8; bleak value
-    index 4) == 1 means ON (the spec's ``govee_manufacturer_data`` ``is_on``). Only a broadcast whose
-    header byte (the company-id low byte, scanRecord i+2), read as a signed Java byte, is >= 2 carries
-    it: a v0/v1 header (or one with bit 7 set) is skipped, and the app logs that the broadcast has
-    no switch state. Returns True/False, or None if the advertisement doesn't carry it
+    index 4) == 1 means ON. Only a broadcast whose header byte (the company-id low byte, scanRecord
+    i+2), read as a signed Java byte, is >= 2 carries it: a v0/v1 header (or one with bit 7 set) is
+    skipped, and the app logs that the broadcast has no switch state. Returns True/False, or None if the advertisement doesn't carry it
     (not a Govee broadcast / header below 2 / too short).
 
     ``on_mask`` decodes the byte as a bitmask instead: ON when any of its bits is set. The plugs'
-    device-list models do that (h5080 ``Model.A``, ``Model4Plug2.A``; see
-    ``DeviceProfile.advert_on_mask``)."""
+    device-list models do that (h5080 ``Model.z``, ``Model4Plug2.z``; see
+    ``DeviceProfile.advert_on_mask``). Both decodes are the spec's: the entry's ``device_state`` read as a
+    ``govee_state`` ``power_state`` from the advert (``source`` advert, ``is_on``), with the mask as the
+    ``govee_profile`` ``power_rule.advert_on_mask`` (0 = a light)."""
     for entry in _govee_entries(mfg):
         # has_switch_state: a header byte >= 2 read signed (BleUtil.parseBleBroadOnOff:
         # (signed) scanRecord[i6 + 2] >= 2) and a byte after pact_code, its switch_byte.
         if not entry.has_switch_state:
             continue
-        return bool(entry.is_on) if on_mask is None else bool(int(entry.switch_byte) & on_mask)
+        rule = _spec.profile(advert_on_mask=on_mask or 0).power
+        return bool(_spec.read(_spec.State.PowerState, entry.device_state, _spec.State.Source.advert,
+                               rule).is_on)
     return None
 
 

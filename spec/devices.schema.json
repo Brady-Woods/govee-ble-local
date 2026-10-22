@@ -257,7 +257,7 @@
           "properties": {
             "has_brightness": { "type": "boolean", "description": "Per-segment 0xA5 colour read-back record: true = 4-byte [brightness,R,G,B], false = 3-byte [R,G,B] (an aa a2 colour group is always 3-byte)." },
             "color_scheme": { "type": "string", "description": "Colour-write byte-layout family selecting the op15/0x0d variant (e.g. 'h60a6', 'h6006')." },
-            "power_read": { "type": "string", "enum": ["aa01", "ac_status", "advert"], "description": "Power source (govee_state power_state.is_on): 'aa01' = the aa 01 read at connect, on when the byte == 1; 'ac_status' = TLV 0x01 of the 0xAC/0x03 status burst (no aa 01 read), on when the byte != 0; 'advert' = no GATT read: only the advertisement's switch byte, read as the device-list card reads it (govee_manufacturer_data is_on: on when device_state[0] == 1; AbsBleIotItem.B -> AbsBaseBleModel.z -> BleUtil.parseBleBroadOnOff)." },
+            "power_read": { "type": "string", "enum": ["aa01", "ac_status", "advert"], "description": "Power source (govee_state power_state.is_on): 'aa01' = the aa 01 read at connect, on when the byte == 1; 'ac_status' = TLV 0x01 of the 0xAC/0x03 status burst (no aa 01 read), on when the byte != 0; 'advert' = no GATT read: only the advertisement's switch byte, read as the device-list card reads it (source advert: govee_manufacturer_data device_state read as power_state, on when its byte == 1; AbsBleIotItem.B -> AbsBaseBleModel.z -> BleUtil.parseBleBroadOnOff)." },
             "power_live": { "type": "array", "uniqueItems": true, "items": { "type": "string", "enum": ["heartbeat_aa01", "heartbeat_aa36", "heartbeat_aa33", "push_30"] }, "description": "Live power after connect: 'heartbeat_aa01' = aa 01 heartbeat, on when frame byte 2 == 1; 'heartbeat_aa36' = aa 36 heartbeat, per bar byte 2 / 3 == 1; 'heartbeat_aa33' = aa 33 switch heartbeat, on when byte 2 != 0; 'push_30' = the ee 30 notify (layout: wire forms.f_ee_30)." },
             "mode_color_parse": { "$ref": "#/$defs/modeColorParse", "description": "The family's default colour-report strategy; by_goods_type.<gt>, else by_model.<SKU>, overrides it, then that entry's by_pact and every matching by_firmware (clientBranch, clientFirmware); 'none' = no colour sub-mode decoded." },
             "mode_color_parse_status": { "$ref": "#/$defs/modeColorParse", "description": "Strategy for the 0x05 TLV of the 0xAC status burst where it differs from the aa 05 reply (absent = mode_color_parse)." },
@@ -265,7 +265,7 @@
             "by_goods_type": { "type": "object", "propertyNames": { "pattern": "^[0-9]+$" }, "additionalProperties": { "$ref": "#/$defs/clientRow" }, "description": "Per-goodsType rows (keys = the goodsType in decimal) that win over the family-level values; a key goods_types lacks is the goods_type of an assigned_goods_type item. A row with support is a BLE route for its models (clientRow)." },
             "relay_power": { "type": "string", "enum": ["outlet0", "all_outlets", "total_switch"], "description": "Plugs: what the detail screen's power button writes: 'outlet0' = 33 01 11 / 10 (relay 0), 'all_outlets' = 33 01 FF / F0, 'total_switch' = 33 02 01 / 00 (H5089) (split_plugnew/com/govee/h5080/ble/controller/)." },
             "relay_on_mask": { "type": "integer", "minimum": 1, "maximum": 255, "description": "Plugs: on at the connect read when (aa 01 reply byte 0 & relay_on_mask) != 0, bit i = relay i, absent = a light (govee_profile power_rule.relay_on_mask); an integer written in hex in the YAML." },
-            "advert_on_mask": { "type": "integer", "minimum": 1, "maximum": 255, "description": "Plugs: the device list reads on when (Govee AD switch byte & advert_on_mask) != 0 (govee_manufacturer_data device_state[0]); an integer written in hex in the YAML." },
+            "advert_on_mask": { "type": "integer", "minimum": 1, "maximum": 255, "description": "Plugs: the device list reads on when (Govee AD switch byte & advert_on_mask) != 0 (govee_profile power_rule.advert_on_mask: govee_manufacturer_data device_state read as govee_state power_state, source advert); an integer written in hex in the YAML." },
             "wire": { "$ref": "#/$defs/wire" },
             "wire_cipher": { "type": "string", "enum": ["runtime"], "description": "Always 'runtime': the cipher is resolved per connection from the advert encrypted bit / BGC info, never per SKU." }
           }
@@ -923,7 +923,7 @@
     "wirePower": {
       "type": "object",
       "additionalProperties": false,
-      "description": "power_rule without relay_on_mask (that is the by_goods_type entry's relay_on_mask).",
+      "description": "power_rule without relay_on_mask and advert_on_mask (those are the by_goods_type entry's).",
       "properties": {
         "relay_heartbeat_on_mask": {
           "type": "integer",

@@ -92,19 +92,10 @@ instances:
   switch_byte:
     value: device_state[0]
     if: has_switch_state
-    doc: per-SKU; H5080 plugs use bit 0 (outlet 0) and bit 1 (outlet 1)
+    doc: |
+      per-SKU; H5080 plugs use bit 0 (outlet 0) and bit 1 (outlet 1). Its
+      on/off: device_state read as govee_state power_state (source advert)
     doc-ref:
       - base-classes9/com/govee/base2home/pact/BleUtil.java:711
       - split_plugnew/com/govee/h5080/pact/Model.java:254-266
       - split_plugnew/com/govee/h5080/pact/Model4Plug2.java:269-290
-  is_on:
-    value: switch_byte == 1
-    if: has_switch_state
-    doc: |
-      a light's on/off as its device-list card reads it: on when the switch byte is 1.
-      The plugs' models decode the byte by mask instead (devices.yaml advert_on_mask).
-      The only power source of a power_read advert row (the card path).
-    doc-ref:
-      - base-classes3/com/govee/kt/ui/device/base/AbsBaseBleModel.java:393-407
-      - base-classes3/com/govee/kt/ui/device/base/AbsBleIotItem.java:77-101
-      - base-classes9/com/govee/base2home/pact/BleUtil.java:719-743

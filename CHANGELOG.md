@@ -142,8 +142,11 @@ model, from which the shipped readers are generated).
     `heartbeat_timing` beside `none` is refused by the schema.
   - `timing.per_command`: the 1100 ms spacing, the 29.5 s command bound, the client, the send and the close,
     with the library's deviations (it reads the reply for a refusal) and the citations.
-  - `govee_manufacturer_data` `is_on`: a light's advert on/off (`AbsBaseBleModel.z`), which
-    `identify.parse_broadcast_onoff` now reads (the same decode as before, now from the spec).
+  - The advert's on/off is a `govee_state` `power_state` source, `advert`: the manufacturer data's
+    `device_state` read as the power byte, on at 1 for a light (`AbsBaseBleModel.z`) and by the
+    `govee_profile` `power_rule.advert_on_mask` for a plug (h5080 `Model.z` / `Model4Plug2.z`).
+    `identify.parse_broadcast_onoff` reads both through it (the same decodes as before, now from the spec;
+    `govee_manufacturer_data` keeps the `switch_byte` it reads).
   - The resolver serves `per_command` only on a row that reads nothing, writes nothing on connect, holds no
     link, has no lock, zones or pieces and carries only power and brightness; `advert` and `none` on a held
     row are not served. The coupling stays in the resolver, not the schema, so a firmware-confirmed read could
