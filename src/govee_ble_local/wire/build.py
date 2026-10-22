@@ -192,8 +192,9 @@ _FORM_0B_RGB_MASK: Final = int(_C.Form0b.rgb_mask)
 # SKUs such as H6105 / H6107 / H6129 / H6185 and the rgblight H7310 / H7312 / H7317 / H7318 / H6165 / H6166.
 # Every scheme with a colour-temperature mode also sends an RGB pick that is exactly one of the
 # Kelvin tint colours (within the SKU's range) as a CCT frame instead of RGB, with the picked colour
-# as the tint (rgb_as_kelvin); h61a8 has no CCT and always sends RGB. legacy_02 makes that test on a SKU
-# whose screen has no colour-temperature control too (Config.fu runs KelvinConfig.i on every pick).
+# as the tint (rgb_as_kelvin); h61a8 has no CCT and always sends RGB. The writers make that test on every
+# pick without asking whether the screen offers colour temperature (Config.Yt / bu / Zt / fu), so it runs
+# on the legacy_02 SKUs with no colour-temperature control (H7310 / H7318 / H6165) too.
 ColorScheme = Literal["h60a6", "h6006", "h61a8", "h6188", "h6061", "legacy_02"]
 
 
@@ -511,8 +512,9 @@ def rgb_as_kelvin(r: int, g: int, b: int, scheme: ColorScheme,
     and write ``KelvinConfig.c(colour)`` as a CCT frame instead of RGB: ``Config.Yt`` (0x15 family,
     ``h60a6``), ``Config.bu`` (0x0d family, ``h6006`` and ``h6188``), for a whole-device colour
     set with one colour ``ColorModeControllerConfig.k`` -> ``Config.Zt`` (``h6061``), and ``Config.fu``
-    (``legacy_02``: the picked colour as the tint of its white form, even where the screen offers no
-    colour temperature).
+    (``legacy_02``: the picked colour as the tint of its white form). None of them asks whether the screen
+    offers colour temperature, so the test runs on a SKU without one too (the legacy_02 H7310 / H7318 /
+    H6165, whose state keeps the colour: ``devices._fold.apply_rgb``).
     ``kelvin_range`` is the SKU's range (the profile's min/max Kelvin); ``h6061`` defaults to its
     own [2000, 9000], any other scheme without a range cannot tell and returns None, as does
     ``h61a8`` (no colour temperature)."""

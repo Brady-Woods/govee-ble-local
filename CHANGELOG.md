@@ -107,7 +107,10 @@ model, from which the shipped readers are generated).
 - **devices.yaml**: `color_scheme: legacy_02` and `support: app_traced` on h6105, h6107, h6129, h6185,
   h73101217, h7318 and h6165 "0"; `specs.kelvin_range: [2000, 9000]` on h73101217, h7318 and h6165 (the range of
   `fu`'s Kelvin-tint test, `KelvinConfig.Config.i[0]` = `P1` = 0; those screens have no colour temperature). The
-  resolver now requires a `kelvin_range` on a `legacy_02` row with `rgb`. devices.schema.json lists the six
+  resolver now requires a `kelvin_range` on a row with `rgb` under every scheme with a colour-temperature mode
+  (all but h61a8), not only under `color_temp`: each of their writers (`Config.Yt` / `bu` / `Zt` / `fu`) runs
+  `KelvinConfig.i` on every pick whatever the screen offers, and without the range the library would send a
+  tint pick as plain RGB. Every row already has one, so no profile changes. devices.schema.json lists the six
   colour schemes as `color_scheme`'s enum.
 - **The device-list trace (Govee Home 7.7.02; 7.5.12 where a family says so).** Each of the 83 census families
   was traced as the app runs it: the device-list model, the detail screen, its view model, then the builders,

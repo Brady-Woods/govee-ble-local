@@ -130,8 +130,9 @@ class DeviceProfile:
     Besides clamping CCT writes, the range decides which RGB picks are sent as CCT: a picked colour
     that equals one of the app's Kelvin tint colours (wire.cct, Constant.k2) is a CCT frame only when
     its Kelvin lies in [min_kelvin, max_kelvin] (KelvinConfig.i), on every scheme with a CCT mode
-    (build.rgb_as_kelvin; Config.Yt / bu / Zt / fu). On ``legacy_02`` the range drives that test even on a
-    SKU without COLOR_TEMP (Config.fu tests every pick), so such a profile carries one too."""
+    (build.rgb_as_kelvin; Config.Yt / bu / Zt / fu). Those writers test every pick whatever the screen
+    offers, so a profile with RGB on such a scheme carries a range even without COLOR_TEMP (the legacy_02
+    H7310 / H7318 / H6165), where it only picks the frame."""
     max_kelvin: int | None = None
     """Highest colour temperature of the SKU's Kelvin range, inclusive (see :attr:`min_kelvin`)."""
     requires_secret: bool = False

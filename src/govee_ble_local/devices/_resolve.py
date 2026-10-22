@@ -63,12 +63,12 @@ the row lacks fails the build: nothing defaults silently.
 - A row's colour scheme drops the capabilities it has no frame for (:data:`SCHEME_LACKS`), but only a
   scheme the row names itself: a family default that would drop one raises. ``rgb``, ``color_temp`` or
   ``segments`` on a relay row raises (the library resolves no colour scheme or Kelvin range for a plug), and
-  elsewhere they need a colour scheme. ``color_temp`` needs a Kelvin range, and so does ``rgb`` under a
-  scheme whose RGB write makes the app's Kelvin-tint test whatever the screen offers
-  (:data:`_PICK_TEST_SCHEMES`: ``legacy_02``, whose ``Config.fu`` runs ``KelvinConfig.i`` on every pick, on
-  the H7310 / H7318 / H6165 rows without a Kelvin slider too). An ``untraced`` scene dialect drops ``scenes``;
-  ``none`` is activate
-  only. Scenes need a bundled catalog, as every SKU of 1.4.0 that offers them ships one: a SKU the scene
+  elsewhere they need a colour scheme. ``color_temp`` needs a Kelvin range, and so does ``rgb`` under every
+  scheme with a colour-temperature mode (all but h61a8, :data:`SCHEME_LACKS`): its RGB writer runs the app's
+  Kelvin-tint test on every pick whatever the screen offers (``Config.Yt`` / ``bu`` / ``Zt`` / ``fu``:
+  ``KelvinConfig.i``; the H7310 / H7318 / H6165 rows have no Kelvin slider). An ``untraced`` scene dialect
+  drops ``scenes``; ``none`` is activate only. Scenes need a bundled catalog, as every SKU of 1.4.0 that
+  offers them ships one: a SKU the scene
   store has no catalog for (``scenes/store.json``, the generated ``SCENE_CATALOGS``, which
   :func:`profiles` takes as ``catalogued``) is offered no ``scenes``, its row's scene facts still checked.
   An ``untraced`` colour parse on a row with ``rgb`` or ``color_temp`` raises (``none`` is a traced value:
@@ -379,10 +379,6 @@ SCHEME_LACKS: Final[Mapping[str, frozenset[str]]] = {
     "h6061": frozenset({"segments"}),
     "legacy_02": frozenset({"segments"}),
 }
-# Schemes whose RGB write tests every pick against the Kelvin range, whether or not the row has colour
-# temperature, so a row with rgb needs a kelvin_range: legacy_02's Config.fu runs KelvinConfig.i on every
-# colour, the H7310 / H7318 / H6165 screens with no Kelvin slider included.
-_PICK_TEST_SCHEMES: Final = frozenset({"legacy_02"})
 # Wire branches the library leaves unread on purpose: (family, layer, branch) -> the branch exactly.
 _UNREAD_WIRE_BRANCHES: Final[Mapping[tuple[str, str, str], Mapping[str, Any]]] = {
     ("h60ax", "by_goods_type 303", "by_pact 1,1"): {"group": {"num_pieces": 1}},
@@ -805,7 +801,11 @@ def _fields(fam: Family, gt: str, sku: str, parse_names: Collection[str],
     scenes = _scene_set(need(layered.get("scene_versions"), "scene_versions"), fail) if uploads else ()
     if "color_temp" in caps:
         need(layered.get("kelvin_range"), "kelvin_range")
-    if scheme in _PICK_TEST_SCHEMES and "rgb" in caps and layered.get("kelvin_range") is None:
+    # Every scheme with a colour-temperature mode sends an RGB pick that is a Kelvin tint colour in the range as
+    # colour temperature, without testing the screen's support for it (Config.Yt / bu / Zt / fu: KelvinConfig.i;
+    # build.rgb_as_kelvin), so its rows need the range for rgb alone too.
+    if ("rgb" in caps and "color_temp" not in SCHEME_LACKS.get(scheme or "", frozenset())
+            and layered.get("kelvin_range") is None):
         fail(f"no kelvin_range: a {scheme} row with rgb needs one, as its colour write sends a pick that "
              "is a Kelvin tint colour in the range as colour temperature (KelvinConfig.i)")
     kelvin = (_kelvin(layered["kelvin_range"], "kelvin_range", fail)
