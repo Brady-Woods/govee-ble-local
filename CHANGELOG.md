@@ -309,8 +309,9 @@ model, from which the shipped readers are generated).
   `ShareVM.N3` -> `VM4Light.J3` -> `D5`, ConnectHeartbeat type 1). On such a profile `Device.update` makes the
   status read once per link (a poll on a link it brought state back on reads nothing more, so nothing is read
   back after a write there), and each keep-alive reply that arrives with no other frame sent since its beat
-  (`GoveeConnection(heartbeat_reply=...)`) sets `state.is_on` as a power read and reaches the state callbacks;
-  a reply that may predate a write or a read is dropped, where the app takes every aa 01 notification. The
+  sets `state.is_on` as a power read and reaches the state callbacks (`GoveeConnection(heartbeat_reply=...)`
+  hands over every frame notified then, and `Device` reads the aa 01 reply out through the spec); a reply that
+  may predate a write or a read is dropped, where the app takes every aa 01 notification. The
   field is ignored on a zoned profile (the reply is the one switch). Two gaps keep the row `modelled`. The
   request names only four extra types, and whether the firmware returns TLVs 0x01 / 0x04 / 0x05 unasked is not
   in the app: absent, the read gives off and brightness 100, in the app as in the library, and the keep-alive

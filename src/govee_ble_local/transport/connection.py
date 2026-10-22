@@ -58,8 +58,9 @@ Reliability rules this module enforces (each one learned from live failures):
   still writing rather than wait for it (the app writes its beat off its command
   queue), so no command waits for a beat and the link lasts exactly as long as
   without it. Its reply stays in the receive queue for the next operation to drain; with
-  ``heartbeat_reply`` it is also handed to that callback, but only while no other frame has gone out
-  since the beat (one sent after it may have changed what the reply reports).
+  ``heartbeat_reply`` every frame notified while no other frame has gone out since the beat (one sent
+  after it may have changed what the reply reports) is also handed to that callback, which reads the
+  reply out.
   With ``heartbeat=None`` nothing is armed, whatever ``heartbeat_timing`` says.
 """
 from __future__ import annotations
@@ -338,11 +339,12 @@ class GoveeConnection:
         self._heartbeat_timing = heartbeat_timing
         self._heartbeat_timer: asyncio.TimerHandle | None = None   # the next tick, while a chain runs
         self._heartbeat_beat: asyncio.Task[None] | None = None    # the last tick's write
-        # Called with each notified reply to the beat (a frame with its command) that arrives while no other
-        # frame has gone out since the beat's write: ``_tx_count`` is still ``_beat_tx``, the count right
-        # after that write (None before the session's first beat). A frame sent after the beat (a power
-        # write, a read) may have changed what the reply reports, so that reply goes only to the queue. The
-        # callback runs in the notify callback and must not raise. None: the reply only stays in the queue.
+        # Called with each frame notified while no other frame has gone out since the beat's write:
+        # ``_tx_count`` is still ``_beat_tx``, the count right after that write (None before the session's
+        # first beat). The callback reads the beat's reply out of them through the spec (Device: the aa 01
+        # power reply, parse.parse_light_power; None for any other frame). A frame sent after the beat (a
+        # power write, a read) may have changed what the reply reports, so that reply goes only to the queue.
+        # The callback runs in the notify callback and must not raise. None: the reply only stays queued.
         self._heartbeat_reply = heartbeat_reply
         self._beat_tx: int | None = None
         # Callers holding or waiting for the lock (_locked), and open holds (hold_heartbeat): a tick that
@@ -519,10 +521,8 @@ class GoveeConnection:
                     "%s: RX unrecognised frame %s (%s)",
                     self.address, describe_frame(plain, "rx")[0], plain.hex(),
                 )
-        beat = self._heartbeat
-        if (self._heartbeat_reply is not None and beat is not None and self._beat_tx == self._tx_count
-                and plain[:2] == beat[:2]):
-            self._heartbeat_reply(plain)   # a reply to the beat, with nothing sent since it
+        if self._heartbeat_reply is not None and self._beat_tx == self._tx_count:
+            self._heartbeat_reply(plain)   # nothing sent since the beat: the callback reads its reply out
         self._enqueue(plain)  # plaintext: survives a disconnect nulling the session key
 
     def _drain(self) -> None:
